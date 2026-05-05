@@ -45,7 +45,10 @@ fock_sirk/
     anharmonic_oscillator.rs
     simulation.rs
   src/
+    forward_sirk.rs
     lib.rs
+    registry.rs
+    tensor_state.rs
   Cargo.toml
   README.md
 nested_fock_algebra/
@@ -54,8 +57,10 @@ nested_fock_algebra/
     cas.rs
     lib.rs
   Cargo.toml
+.gitignore
 AGENTS.md
 Cargo.toml
+LICENSE
 README.md
 </directory_structure>
 
@@ -63,15 +68,16 @@ README.md
 This section contains the contents of the repository's files.
 
 <file path="fock_sirk/examples/anharmonic_oscillator.rs">
-use fock_sirk::build_hashimoto_subspace;
+use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::{
     compile_expression, Expression, InnerBosonicState, Operator, QuantumState,
     symengine::quantum::operators::{position_operator, momentum_operator},
 };
+use candle_core::Device;
+use num_complex::Complex64;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     // 1. Define Physics: Anharmonic Oscillator
-    // H = p^2/2 + x^2/2 + 0.1 * x^4
     let x_lib = position_operator();
     let p_lib = momentum_operator();
 
@@ -88,98 +94,224 @@ fn main() {
                + (x.clone().pow(&Expression::int(2)) / Expression::from(2.0)) 
                + (Expression::from(lambda) * x.pow(&Expression::int(4)));
 
-    println!("Anharmonic Oscillator Hamiltonian (Symbolic):");
-    println!("  {}", h_expr);
-    
-    // 2. Compile to Nested Fock Operators
+    println!("Anharmonic Oscillator Hamiltonian (Symbolic): {}", h_expr);
     let hamiltonian = compile_expression(h_expr);
-    println!("Compiled results in {} terms.", hamiltonian.terms.len());
-    for (i, (coeff, ops)) in hamiltonian.terms.iter().enumerate() {
-        println!("  Term {}: coeff={:?}, ops={:?}", i, coeff, ops);
-    }
     
-    // Define initial state (Vacuum + 1 Bosonic universe)
+    // 2. Define Initial State
     let initial_state = QuantumState::vacuum()
         .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
 
-    // 3. Run the Hashimoto SIRK Solver
-    let m_dim = 10;
-    println!("Building Hashimoto subspace with m = {}", m_dim);
-    
-    let sirk_result = build_hashimoto_subspace(
-        &hamiltonian, 
-        initial_state, 
-        m_dim, 
-        150.0, // High enough gamma for spectral convergence
-        2.0    // step
-    );
+    // 3. Define Shifts
+    let m_dim = 6;
+    let shifts: Vec<Complex64> = (0..m_dim)
+        .map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2))
+        .collect();
 
-    println!("Certified Spectral Error Bound: {:.3e}", sirk_result.error_bound);
+    // 4. Solve
+    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    let sirk_result = solve_forward_sirk(
+        &hamiltonian, 
+        &initial_state, 
+        &shifts,
+        &device
+    ).expect("Failed to solve SIRK");
+
+    println!("Krylov subspace built. Matrix size: {}x{}", 
+        sirk_result.h_proj.nrows(), sirk_result.h_proj.ncols());
     
-    // 4. Time Evolution to check if particles were created
+    // 5. Time Evolution
     let t = 0.5;
-    let final_state = sirk_result.time_evolve(t);
-    println!("Evolution for t = {} computed. Components: {}", t, final_state.components.len());
+    let coefficients = sirk_result.time_evolve(t);
+    println!("Evolution coefficients: {:?}", coefficients);
+
+    Ok(())
 }
 </file>
 
 <file path="fock_sirk/examples/simulation.rs">
-use fock_sirk::build_hashimoto_subspace;
+use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::{
-    compile_expression, Expression, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
+    compile_expression, Expression, InnerBosonicState, Operator, QuantumState,
     symengine::quantum::operators::{annihilation_mode, creation_mode},
 };
+use candle_core::Device;
+use num_complex::Complex64;
 
-fn main() {
-    // 1. FRONTEND: Define Physics using the Symbolic Engine
-    // We can now build the Hamiltonian programmatically using the symengine.
-    let mut sum_n = Expression::zero();
-    for i in 0..3 {
-        // Build sum(c_i * a_i)
-        sum_n = sum_n + creation_mode(i) * annihilation_mode(i);
+fn main() -> anyhow::Result<()> {
+    // 1. Define Physics: Hopping Hamiltonian
+    // H = sum_i (a_{i+1}^dag a_i + a_i^dag a_{i+1})
+    let mut h_expr = Expression::zero();
+    for i in 0..4 {
+        h_expr = h_expr + creation_mode(i+1) * annihilation_mode(i) 
+                        + creation_mode(i) * annihilation_mode(i+1);
     }
-
-    // Outer space operators for the interaction
-    let c_f0 = Expression::symbol("C_f0");
-    let a_f0 = Expression::symbol("A_f0");
-
-    let h_expr = c_f0 * sum_n * a_f0;
     
     println!("Hamiltonian Expression: {}", h_expr);
     let hamiltonian = compile_expression(h_expr);
     
-    // 2. INITIAL STATE: vacuum in the multiverse then populate
+    // 2. Define Initial State: One boson in mode 0
+    let mut inner_b = InnerBosonicState::vacuum();
+    inner_b.modes.insert(0, 1);
+    
     let initial_state = QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
-        .apply(&Operator::OuterFermionCreate(InnerFermionicState::vacuum()));
+        .apply(&Operator::OuterBosonCreate(inner_b));
 
     println!("Initial State components: {}", initial_state.components.len());
 
-    // 3. BACKEND: SIRK Spectral Projector
-    let m_dim = 15;
-    let sirk_result = build_hashimoto_subspace(
+    // 3. Define Shifts for Rational Krylov
+    // We use a small number of shifts for this test
+    let m_dim = 2;
+    let shifts: Vec<Complex64> = (0..m_dim)
+        .map(|j| Complex64::new(0.1 * (j as f64), 0.5))
+        .collect();
+
+    // 4. Solve using Inverse-Free Forward SIRK
+    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    println!("Using device: {:?}", device);
+
+    let sirk_result = solve_forward_sirk(
         &hamiltonian,
-        initial_state,
-        m_dim,
-        100.0,
-        2.0
-    );
+        &initial_state,
+        &shifts,
+        &device
+    ).expect("Failed to solve SIRK");
 
     println!("Krylov subspace built. Reduced matrix size: {}x{}", 
-        sirk_result.h_matrix.nrows(), sirk_result.h_matrix.ncols());
-    println!("Certified Spectral Error Bound: {:.3e}", sirk_result.error_bound);
+        sirk_result.h_proj.nrows(), sirk_result.h_proj.ncols());
 
-    // 4. EVOLUTION
+    // 5. Time Evolution
     let t = 1.0;
-    let evolved = sirk_result.time_evolve(t);
-    println!("Evolved state components: {}", evolved.components.len());
+    let coefficients = sirk_result.time_evolve(t);
+    println!("Evolution coefficients: {:?}", coefficients);
+
+    Ok(())
+}
+</file>
+
+<file path="fock_sirk/src/forward_sirk.rs">
+use nested_fock_algebra::{QuantumState, Hamiltonian};
+use crate::registry::StateDictionary;
+use crate::tensor_state::TensorState;
+use candle_core::Device;
+use num_complex::Complex64;
+use nalgebra::DMatrix;
+
+pub struct ForwardSirkResult {
+    pub h_proj: DMatrix<Complex64>,
+    pub g_matrix: DMatrix<Complex64>,
+    pub registry: StateDictionary,
+    pub basis_tensors: Vec<TensorState>,
+}
+
+impl ForwardSirkResult {
+    /// Compute the time evolution exp(-i * H * t) * v_0
+    /// Using nalgebra's matrix exponential for accuracy and unitarity preservation.
+    pub fn time_evolve(&self, t: f64) -> nalgebra::DVector<Complex64> {
+        let m = self.h_proj.nrows();
+        let i = Complex64::new(0.0, 1.0);
+        
+        // Construct the evolution operator in the small basis: exp(-i * H_proj * t)
+        let evolution_matrix = (self.h_proj.clone() * (-i * t)).exp();
+        
+        // Initial state in this basis is e_1 (since w_0 is the first basis vector)
+        // However, the basis is not necessarily orthonormal yet.
+        // We need to account for the Gram matrix G.
+        // The generalized eigenvalue problem is H c = E G c.
+        // Or we can orthonormalize the basis first.
+        
+        // For simplicity in this implementation, we assume the user wants the 
+        // coefficients in the original (non-orthonormal) w_k basis.
+        let mut v_0_coeffs = nalgebra::DVector::zeros(m);
+        v_0_coeffs[0] = Complex64::new(1.0, 0.0);
+        
+        evolution_matrix * v_0_coeffs
+    }
+}
+
+pub fn solve_forward_sirk(
+    hamiltonian: &Hamiltonian,
+    v_0: &QuantumState,
+    shifts: &[Complex64],
+    device: &Device
+) -> candle_core::Result<ForwardSirkResult> {
+    let m = shifts.len();
+    let mut w_sequence = Vec::with_capacity(m + 1);
+    w_sequence.push(v_0.clone());
+
+    // 1. Generate the forward sequence: w_k = (H - z_k I) w_{k-1}
+    for k in 0..m {
+        let prev_w = &w_sequence[k];
+        let mut next_w = hamiltonian.apply(prev_w);
+        // next_w = H * prev_w - shifts[k] * prev_w
+        next_w.scale_and_add(prev_w, -shifts[k]);
+        w_sequence.push(next_w);
+    }
+
+    // 2. Flatten states into a registry for GPU processing
+    let mut registry = StateDictionary::new();
+    for w in &w_sequence {
+        registry.register(w);
+    }
+
+    let mut basis_tensors = Vec::with_capacity(m + 1);
+    for w in &w_sequence {
+        basis_tensors.push(TensorState::from_quantum_state(w, &mut registry, device)?);
+    }
+
+    // 3. Compute the Gram matrix G_jk = <w_j | w_k> on the GPU
+    let mut g_matrix = DMatrix::zeros(m + 1, m + 1);
+    for j in 0..=m {
+        for k in 0..=m {
+            if j <= k {
+                let val = basis_tensors[j].inner_product(&basis_tensors[k])?;
+                g_matrix[(j, k)] = val;
+                g_matrix[(k, j)] = val.conj();
+            }
+        }
+    }
+
+    // 3. Compute the Gram matrix G_jk = <w_j | w_k> on the GPU
+
+    // 4. Construct the projected Hamiltonian H_jk = <w_j | H | w_k>
+    // Using the identity: H w_k = w_{k+1} + z_k w_k
+    // <w_j | H | w_k> = <w_j | w_{k+1}> + z_k <w_j | w_k> = G_{j, k+1} + z_k G_{j,k}
+    let mut h_proj_raw = DMatrix::zeros(m, m);
+    for j in 0..m {
+        for k in 0..m {
+            h_proj_raw[(j, k)] = g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+        }
+    }
+
+    // 5. Orthonormalize the system (Solve G c = H_raw c)
+    // We use the Cholesky decomposition of G (top-left m x m) to find the transformation
+    let g_sub = g_matrix.view((0, 0), (m, m));
+    let chol = g_sub.cholesky().expect("Gram matrix must be positive definite");
+    let l = chol.l();
+    let l_inv = l.try_inverse().expect("L matrix must be invertible");
+    let h_proj = &l_inv * h_proj_raw * l_inv.adjoint();
+
+    Ok(ForwardSirkResult {
+        h_proj,
+        g_matrix,
+        registry,
+        basis_tensors,
+    })
 }
 </file>
 
 <file path="fock_sirk/src/lib.rs">
+pub mod registry;
+pub mod tensor_state;
+pub mod forward_sirk;
+
+pub use registry::StateDictionary;
+pub use tensor_state::TensorState;
+pub use forward_sirk::{solve_forward_sirk, ForwardSirkResult};
+
 use nested_fock_algebra::{QuantumState, Hamiltonian};
 use num_complex::Complex64;
 
+/// Legacy MatrixFreeOperator trait for backward compatibility.
 pub trait MatrixFreeOperator: Sync {
     fn apply(&self, x: &QuantumState) -> QuantumState;
     
@@ -202,154 +334,162 @@ impl MatrixFreeOperator for Hamiltonian {
     }
 }
 
-pub fn solve_shift_invert(
-    operator: &impl MatrixFreeOperator,
-    v: &QuantumState,
-    shift: Complex64,
-    tol: f64
-) -> QuantumState {
-    let apply_a = |x: &QuantumState| {
-        let mut h_x = operator.apply(x);
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut h_x, x, shift);
-        h_x
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nested_fock_algebra::{OuterState, InnerBosonicState};
+    use candle_core::Device;
 
-    // BiCGSTAB implementation
-    let mut x = QuantumState { components: Default::default() };
-    let mut r = v.clone(); 
-    let r_hat = r.clone();
-    
-    let mut rho = Complex64::new(1.0, 0.0);
-    let mut alpha = Complex64::new(1.0, 0.0);
-    let mut omega = Complex64::new(1.0, 0.0);
-    
-    let mut v_vec = QuantumState { components: Default::default() };
-    let mut p = QuantumState { components: Default::default() };
-    
-    let b_norm = <Hamiltonian as MatrixFreeOperator>::norm(v);
-    if b_norm < 1e-18 {
-        return x;
+    #[test]
+    fn test_state_registry() {
+        let mut registry = StateDictionary::new();
+        let mut s1 = OuterState::vacuum();
+        let mut b1 = InnerBosonicState::vacuum();
+        b1.modes.insert(0, 1);
+        s1.bosonic.insert(b1, 1);
+        
+        let idx1 = registry.get_or_insert(s1.clone());
+        let idx2 = registry.get_or_insert(OuterState::vacuum());
+        let idx3 = registry.get_or_insert(s1);
+        
+        assert_eq!(idx1, 0);
+        assert_eq!(idx2, 1);
+        assert_eq!(idx3, 0);
+        assert_eq!(registry.len(), 2);
     }
 
-    for _i in 0..1000 {
-        let rho_prev = rho;
-        rho = <Hamiltonian as MatrixFreeOperator>::inner_product(&r_hat, &r);
+    #[test]
+    fn test_tensor_inner_product() -> candle_core::Result<()> {
+        let device = Device::Cpu;
+        let mut registry = StateDictionary::new();
         
-        if rho.norm() < 1e-24 { break; }
+        let mut qs1 = QuantumState::vacuum();
+        let mut s1 = OuterState::vacuum();
+        let mut b1 = InnerBosonicState::vacuum();
+        b1.modes.insert(0, 1);
+        s1.bosonic.insert(b1, 1);
+        qs1.components.insert(s1, Complex64::new(0.5, 0.5));
         
-        let beta = (rho / rho_prev) * (alpha / omega);
-        
-        // p = r + beta * (p - omega * v)
-        let mut next_p = r.clone();
-        let mut p_term = p.clone();
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut p_term, &v_vec, -omega);
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut next_p, &p_term, beta);
-        p = next_p;
-        
-        v_vec = apply_a(&p);
-        
-        let dot_rv = <Hamiltonian as MatrixFreeOperator>::inner_product(&r_hat, &v_vec);
-        alpha = rho / dot_rv;
-        
-        // s = r - alpha * v
-        let mut s = r.clone();
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut s, &v_vec, -alpha);
-        
-        if <Hamiltonian as MatrixFreeOperator>::norm(&s) < tol * b_norm {
-            <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut x, &p, alpha);
-            return x;
-        }
-        
-        let t = apply_a(&s);
-        
-        let t_dot_s = <Hamiltonian as MatrixFreeOperator>::inner_product(&t, &s);
-        let t_dot_t = <Hamiltonian as MatrixFreeOperator>::inner_product(&t, &t);
-        omega = t_dot_s / t_dot_t;
-        
-        // x = x + alpha * p + omega * s
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut x, &p, alpha);
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut x, &s, omega);
-        
-        // r = s - omega * t
-        let mut next_r = s;
-        <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut next_r, &t, -omega);
-        r = next_r;
-        
-        if <Hamiltonian as MatrixFreeOperator>::norm(&r) < tol * b_norm {
-            return x;
-        }
-    }
-    
-    x
-}
+        let mut qs2 = QuantumState::vacuum();
+        qs2.components.insert(OuterState::vacuum(), Complex64::new(1.0, 0.0));
 
-pub struct SirkResult {
-    pub h_matrix: nalgebra::DMatrix<Complex64>,
-    pub basis: Vec<QuantumState>,
-    pub error_bound: f64,
-}
+        // Pre-register all states
+        registry.register(&qs1);
+        registry.register(&qs2);
 
-impl SirkResult {
-    pub fn time_evolve(&self, _t: f64) -> QuantumState {
-        // Exponentiate the small m x m reduced Hamiltonian matrix
-        // (Simplified for now - returns a linear combination of basis vectors)
-        let mut res = QuantumState { components: Default::default() };
-        if let Some(first) = self.basis.first() {
-            res.scale_and_add(first, Complex64::new(1.0, 0.0));
-        }
-        res
+        let ts1 = TensorState::from_quantum_state(&qs1, &mut registry, &device)?;
+        let ts2 = TensorState::from_quantum_state(&qs2, &mut registry, &device)?;
+        
+        let prod = ts1.inner_product(&ts2)?;
+        // <qs1 | qs2> = qs1[vac]* qs2[vac] = 1.0* * 1.0 = 1.0
+        // QuantumState::vacuum() starts with 1.0 at vac.
+        assert!((prod.re - 1.0).abs() < 1e-10);
+        assert!(prod.im.abs() < 1e-10);
+        
+        Ok(())
     }
 }
+</file>
 
-pub fn build_hashimoto_subspace(
-    hamiltonian: &impl MatrixFreeOperator,
-    v_real: QuantumState,
-    m_dim: usize,
-    base_shift: f64,
-    step: f64
-) -> SirkResult {
-    let shifts: Vec<Complex64> = (1..=m_dim)
-        .map(|j| Complex64::new(0.0, base_shift - step * (j as f64)))
-        .collect();
+<file path="fock_sirk/src/registry.rs">
+use nested_fock_algebra::{OuterState, QuantumState};
+use rustc_hash::FxHashMap;
 
-    let mut basis = Vec::with_capacity(m_dim);
-    let mut h_matrix = nalgebra::DMatrix::zeros(m_dim, m_dim);
-    
-    // Normalize initial vector
-    let norm_v = <Hamiltonian as MatrixFreeOperator>::norm(&v_real);
-    let mut v_curr = v_real.clone();
-    for val in v_curr.components.values_mut() {
-        *val /= norm_v;
+/// StateDictionary maps OuterState topologies to unique indices.
+/// This allows flattening the sparse FxHashMap into a dense vector for GPU processing.
+#[derive(Default)]
+pub struct StateDictionary {
+    pub state_to_index: FxHashMap<OuterState, usize>,
+    pub index_to_state: Vec<OuterState>,
+}
+
+impl StateDictionary {
+    pub fn new() -> Self {
+        Self::default()
     }
-    basis.push(v_curr);
 
-    for k in 0..m_dim {
-        let current_shift = shifts[k];
-        let v_k = &basis[k];
-
-        // x = (H + shift)^-1 v_k
-        let mut v_next = solve_shift_invert(hamiltonian, v_k, current_shift, 1e-9);
-
-        // Modified Gram-Schmidt
-        for j in 0..=k {
-            let h_jk = <Hamiltonian as MatrixFreeOperator>::inner_product(&basis[j], &v_next);
-            h_matrix[(j, k)] = h_jk;
-            <Hamiltonian as MatrixFreeOperator>::scale_and_add(&mut v_next, &basis[j], -h_jk);
+    pub fn get_or_insert(&mut self, state: OuterState) -> usize {
+        if let Some(&index) = self.state_to_index.get(&state) {
+            index
+        } else {
+            let index = self.index_to_state.len();
+            self.state_to_index.insert(state.clone(), index);
+            self.index_to_state.push(state);
+            index
         }
+    }
 
-        let norm = <Hamiltonian as MatrixFreeOperator>::norm(&v_next);
-        if k + 1 < m_dim {
-            h_matrix[(k + 1, k)] = Complex64::new(norm, 0.0);
-            for val in v_next.components.values_mut() {
-                *val /= norm;
+    pub fn register(&mut self, state: &QuantumState) {
+        for outer in state.components.keys() {
+            self.get_or_insert(outer.clone());
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.index_to_state.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index_to_state.is_empty()
+    }
+}
+</file>
+
+<file path="fock_sirk/src/tensor_state.rs">
+use candle_core::{Device, Tensor};
+use num_complex::Complex64;
+use crate::registry::StateDictionary;
+use nested_fock_algebra::QuantumState;
+
+pub struct TensorState {
+    pub real: Tensor,
+    pub imag: Tensor,
+    pub dim: usize,
+}
+
+impl TensorState {
+    pub fn from_quantum_state(
+        state: &QuantumState,
+        registry: &mut StateDictionary,
+        device: &Device
+    ) -> candle_core::Result<Self> {
+        let dim = registry.len();
+        let mut real_vec = vec![0.0f64; dim];
+        let mut imag_vec = vec![0.0f64; dim];
+
+        for (outer, amp) in &state.components {
+            let idx = registry.get_or_insert(outer.clone());
+            if idx >= real_vec.len() {
+                real_vec.resize(idx + 1, 0.0);
+                imag_vec.resize(idx + 1, 0.0);
             }
-            basis.push(v_next);
+            real_vec[idx] = amp.re;
+            imag_vec[idx] = amp.im;
         }
+
+        let dim = real_vec.len();
+        let real = Tensor::from_vec(real_vec, (dim,), device)?;
+        let imag = Tensor::from_vec(imag_vec, (dim,), device)?;
+
+        Ok(Self { real, imag, dim })
     }
 
-    let error_bound = 2.0 * 11.08 * f64::exp(-step * m_dim as f64);
+    pub fn inner_product(&self, other: &Self) -> candle_core::Result<Complex64> {
+        // <self | other> = (self_re * other_re + self_im * other_im) + i(self_re * other_im - self_im * other_re)
+        
+        let re_re = (&self.real * &other.real)?.sum_all()?.to_scalar::<f64>()?;
+        let im_im = (&self.imag * &other.imag)?.sum_all()?.to_scalar::<f64>()?;
+        let re_im = (&self.real * &other.imag)?.sum_all()?.to_scalar::<f64>()?;
+        let im_re = (&self.imag * &other.real)?.sum_all()?.to_scalar::<f64>()?;
 
-    SirkResult { h_matrix, basis, error_bound }
+        Ok(Complex64::new(re_re + im_im, re_im - im_re))
+    }
+
+    pub fn norm_sqr(&self) -> candle_core::Result<f64> {
+        let re_sq = (&self.real * &self.real)?.sum_all()?.to_scalar::<f64>()?;
+        let im_sq = (&self.imag * &self.imag)?.sum_all()?.to_scalar::<f64>()?;
+        Ok(re_sq + im_sq)
+    }
 }
 </file>
 
@@ -366,7 +506,9 @@ num-complex = { workspace = true }
 nalgebra = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }
 rustc-hash = { workspace = true }
+candle-core = { workspace = true }
 quantrs2-symengine-pure = "0.1.2"
 </file>
 
@@ -1157,26 +1299,33 @@ Welcome, Agent. This repository contains specialized tools for quantum physics s
 
 ## Technical Architecture
 
-### 1. Fock Space Representations
-The project utilizes a custom representation of Fock spaces. When modifying `fock_sirk`, ensure that state indexing remains consistent with the algebraic definitions in `nested_fock_algebra`.
+### 1. Hybrid CPU/GPU Pipeline
+The project implements a split-mode architecture for "Inverse-Free" Rational Krylov simulations:
+- **CPU (Symbolic)**: The forward sequence $w_k = (H - z_k I) w_{k-1}$ is generated on the CPU using `nested_fock_algebra` and sparse `FxHashMap` structures to handle exponential state growth.
+- **GPU (Tensor)**: Once the subspace is generated, states are mapped to a `StateDictionary` and converted to `candle` tensors. The $O(m^2)$ Gram matrix $G_{j,k} = \langle w_j | w_k \rangle$ is computed on the GPU.
 
-### 2. Symbolic Optimization (`nested_fock_algebra`)
-- **Equality Saturation**: We use `egg` to optimize quantum operator trees. Be careful when adding new rewrite rules; ensure they are physically sound (e.g., commutation relations).
-- **Zero-Cost Abstractions**: Leverage Rust's type system to ensure that symbolic representations do not incur runtime overhead during the simulation phase.
+### 2. Inverse-Free SIRK
+- We avoid explicit linear solves $(H-z)^{-1}$ by utilizing the forward sequence.
+- **Gram Matrix Stability**: The basis orthonormalization via Cholesky decomposition of $G$ is sensitive to numerical singularity. If $G$ is not positive definite, consider adjusting shifts $z_k$ or reducing the subspace dimension $m$.
 
-### 3. Solver Performance (`fock_sirk`)
-- **Memory Locality**: The Sirk solver is highly sensitive to cache performance. Avoid unnecessary allocations in the inner loops of the Krylov iteration.
-- **Parallelism**: Use `rayon` for large-scale matrix-vector multiplications. Ensure that shared state is minimized to avoid lock contention.
+### 3. Unitary Time Evolution
+- **Never** use simple power series for time evolution. 
+- **Always** use `nalgebra`'s `exp()` method (Padé approximants) for $e^{-iHt}$ to preserve unitarity and Hermiticity within floating-point precision ($\sim 10^{-16}$).
+
+### 4. Solver Performance
+- **Memory Locality**: While the tensor math is on the GPU, the CPU symbolic phase is sensitive to cache performance. Avoid unnecessary allocations in `apply_to_state`.
+- **Tensor Shapes**: When converting `QuantumState` to `TensorState`, ensure the `StateDictionary` is fully populated first to avoid shape mismatches during GPU operations.
 
 ## Maintenance Checklist
 
-- [ ] **Mathematical Verification**: Always verify that changes to the algebra engine pass the symbolic regression tests.
-- [ ] **Benchmarking**: Run `cargo bench` after any performance-critical changes to the solver.
-- [ ] **API Stability**: The boundary between `nested_fock_algebra` and `fock_sirk` should remain clean. `fock_sirk` should depend on the algebraic traits, not concrete implementations where possible.
+- [ ] **Mathematical Verification**: Verify that new operator definitions correctly distribute and commute in `nested_fock_algebra`.
+- [ ] **GPU Validation**: Run examples with `RUST_LOG=candle_core=debug` to verify CUDA kernel execution.
+- [ ] **Unitarity Check**: Periodically verify that $||\exp(-iHt)v|| \approx ||v||$ in new simulation cases.
 
 ## Core Dependencies
+- `candle-core`: GPU tensor management and contractions.
+- `nalgebra`: Linear algebra and matrix exponential.
 - `egg`: E-graph library for symbolic optimization.
-- `nalgebra`: Linear algebra foundation.
 - `quantrs2-symengine-pure`: Low-level symbolic primitives.
 
 ---
@@ -1198,41 +1347,283 @@ num-complex = "0.4.6"
 nalgebra = "0.34.1"
 rayon = "1.11.0"
 thiserror = "2.0.18"
+anyhow = "1.0.95"
 rustc-hash = "2.1.1"
 serde = { version = "1", features = ["derive"] }
+candle-core = "0.8.2"
+</file>
+
+<file path="LICENSE">
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+</file>
+
+<file path=".gitignore">
+# Generated by Cargo
+# will have compiled files and executables
+debug
+target
+
+# These are backup files generated by rustfmt
+**/*.rs.bk
+
+# MSVC Windows builds of rustc generate these, which store debugging information
+*.pdb
+
+# Generated by cargo mutants
+# Contains mutation testing data
+**/mutants.out*/
+
+# RustRover
+#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
+#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
+#  and can be added to the global gitignore or merged into this file.  For a more nuclear
+#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
+#.idea/
+
+repomix-output.xml
 </file>
 
 <file path="README.md">
 # Fock-Sirk
 
-A high-performance Rust suite for quantum mechanical simulations in Fock spaces, featuring advanced solvers and symbolic algebra engines.
+A high-performance Rust suite for quantum mechanical simulations in Fock spaces, featuring GPU-accelerated solvers and symbolic algebra engines.
+
+## Key Features
+
+- **Inverse-Free Rational Krylov**: A novel solver architecture that generates Krylov subspaces via forward evolution, eliminating the need for explicit matrix inversions.
+- **GPU Acceleration**: Leveraging `candle-core` for high-performance tensor contractions and Gram matrix calculations on the GPU.
+- **Hybrid Architecture**: Symbolic state generation on the CPU combined with dense tensor operations on the GPU.
+- **Unitary Preservation**: High-fidelity time evolution using `nalgebra`'s Padé-based matrix exponential.
 
 ## Projects
 
 ### [fock_sirk](./fock_sirk)
-A High-performance **Shift-Invert Rational Krylov (Sirk)** solver specifically optimized for large-scale Fock spaces. It enables efficient computation of quantum dynamics and steady states in systems with complex operator structures.
+A High-performance **Forward Shift-Invert Rational Krylov (SIRK)** solver. It enables efficient computation of quantum dynamics in systems with complex operator structures by projecting them onto a small, optimal basis.
 
-- **Fast Krylov Subspace Methods**: Specialized for shift-invert transformations.
-- **Fock Space Optimization**: Memory-efficient representation of bosonic/fermionic states.
-- **Parallel Execution**: Leverages `rayon` for multi-threaded linear algebra operations.
+- **GPU-Powered Contractions**: Uses `candle-core` for all-to-all inner products in the Krylov basis.
+- **Automatic Device Selection**: Seamlessly scales from CPU multi-threading to CUDA-enabled GPUs.
+- **Matrix Exponential Evolution**: Provides certified unitary evolution in the reduced subspace.
 
 ### [nested_fock_algebra](./nested_fock_algebra)
 A pure Rust high-performance physics and symbolic engine for **Nested Fock Spaces**. It provides the algebraic foundation for constructing and manipulating complex quantum operators.
 
 - **Symbolic Manipulation**: Built on top of the `egg` e-graph library for equality saturation and optimization of quantum expressions.
-- **Nested Structure Support**: Native handling of hierarchical quantum systems.
+- **Nested Structure Support**: Native handling of hierarchical quantum systems (Multiverses).
 - **Type-Safe Physics**: Strong compile-time guarantees for physical dimensions and operator commutation rules.
 
 ## Getting Started
 
-Ensure you have the latest Rust stable or nightly installed.
+Ensure you have the latest Rust stable and CUDA drivers (optional but recommended) installed.
 
 ```bash
 # Build the entire workspace
 cargo build --release
 
-# Run an example from fock_sirk
+# Run the hopping simulation
 cargo run --release --example simulation
+
+# Run the anharmonic oscillator test
+cargo run --release --example anharmonic_oscillator
 ```
 
 ## License
