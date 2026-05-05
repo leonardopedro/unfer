@@ -1,0 +1,16 @@
+[package]
+name = "fock_sirk"
+version = "0.1.0"
+edition = "2024"
+description = "High-performance Shift-Invert Rational Krylov solver for Fock spaces."
+
+[dependencies]
+nested_fock_algebra = { path = "../nested_fock_algebra" }
+num-complex = { workspace = true }
+nalgebra = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+rustc-hash = { workspace = true }
+candle-core = { workspace = true }
+quantrs2-symengine-pure = "0.1.2"
