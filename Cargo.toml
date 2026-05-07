@@ -15,4 +15,4 @@ thiserror = "2.0.18"
 anyhow = "1.0.95"
 rustc-hash = "2.1.1"
 serde = { version = "1", features = ["derive"] }
-candle-core = "0.8.2"
+candle-core = { version = "0.8.2", features = ["cuda"] }

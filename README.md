@@ -1,44 +1,53 @@
 # Fock-Sirk
 
-A high-performance Rust suite for quantum mechanical simulations in Fock spaces, featuring GPU-accelerated solvers and symbolic algebra engines.
+A high-performance Rust suite for quantum mechanical and field theory simulations in Fock spaces. Fock-Sirk implements a novel **Inverse-Free Rational Krylov** architecture to solve for the dynamics of non-polynomial Hamiltonians (Navier-Stokes, Yang-Mills, Gravity) directly over probability-weighted Fock bases.
 
 ## Key Features
 
-- **Inverse-Free Rational Krylov**: A novel solver architecture that generates Krylov subspaces via forward evolution, eliminating the need for explicit matrix inversions.
-- **GPU Acceleration**: Leveraging `candle-core` for high-performance tensor contractions and Gram matrix calculations on the GPU.
-- **Hybrid Architecture**: Symbolic state generation on the CPU combined with dense tensor operations on the GPU.
-- **Unitary Preservation**: High-fidelity time evolution using `nalgebra`'s Padé-based matrix exponential.
+- **Inverse-Free Rational Krylov (SIRK)**: Generates optimal Krylov subspaces via forward evolution $w_k = (H - z_k I) w_{k-1}$, avoiding expensive $O(N^3)$ linear solvers.
+- **GPU-Accelerated Gram Matrices**: Uses `candle-core` with CUDA to compute $O(m^2)$ basis inner products in parallel, enabling the use of extremely high-dimensional state vectors.
+- **Field Theory Engine**: Native support for Hermitian fields, conjugate momenta, Majorana fermions, and BRST ghost sectors.
+- **Quadratic Ordering CAS**: Symbolic compiler that enforces zero vacuum expectation value $\langle 0 | H | 0 \rangle = 0$ to satisfy mass-gap and Millennium Prize constraints.
+- **Unitary Preservation**: Certified unitary evolution in the reduced subspace using Padé-based matrix exponentials.
 
-## Projects
+## Core Projects
 
 ### [fock_sirk](./fock_sirk)
-A High-performance **Forward Shift-Invert Rational Krylov (SIRK)** solver. It enables efficient computation of quantum dynamics in systems with complex operator structures by projecting them onto a small, optimal basis.
-
-- **GPU-Powered Contractions**: Uses `candle-core` for all-to-all inner products in the Krylov basis.
-- **Automatic Device Selection**: Seamlessly scales from CPU multi-threading to CUDA-enabled GPUs.
-- **Matrix Exponential Evolution**: Provides certified unitary evolution in the reduced subspace.
+The high-performance simulation kernel.
+- **Hybrid Pipeline**: CPU-based symbolic branching and GPU-based tensor contractions.
+- **Flexible Device Support**: Scales from multi-core CPUs to high-end CUDA GPUs.
+- **Subspace Evolution**: Real-time projection of dynamics onto energy-limited support spaces.
 
 ### [nested_fock_algebra](./nested_fock_algebra)
-A pure Rust high-performance physics and symbolic engine for **Nested Fock Spaces**. It provides the algebraic foundation for constructing and manipulating complex quantum operators.
-
-- **Symbolic Manipulation**: Built on top of the `egg` e-graph library for equality saturation and optimization of quantum expressions.
-- **Nested Structure Support**: Native handling of hierarchical quantum systems (Multiverses).
-- **Type-Safe Physics**: Strong compile-time guarantees for physical dimensions and operator commutation rules.
+The symbolic algebra and physics engine.
+- **AST Compiler**: Converts high-level QFT expressions into executable Fock-space operators.
+- **Field Theory Library**: Pre-built models for Navier-Stokes (dissipative fluid dynamics), Pure SU(3) Yang-Mills, and Einstein-Cartan Gravity.
+- **Symbolic Expansion**: Robust distribution and ordering logic for non-commuting operators.
 
 ## Getting Started
 
-Ensure you have the latest Rust stable and CUDA drivers (optional but recommended) installed.
+### Prerequisites
+- Rust (Stable)
+- CUDA Toolkit (12.x recommended)
+- `libcublas` and `nvcc` installed and on the path.
 
+### Installation & Execution
 ```bash
-# Build the entire workspace
+# Clone and build
 cargo build --release
 
-# Run the hopping simulation
-cargo run --release --example simulation
+# Run the Free Electromagnetic Field benchmark (GPU recommended)
+LD_LIBRARY_PATH=/lib/x86_64-linux-gnu cargo run --release --example free_em_field
 
-# Run the anharmonic oscillator test
-cargo run --release --example anharmonic_oscillator
+# Run the Navier-Stokes probability distribution solver
+LD_LIBRARY_PATH=/lib/x86_64-linux-gnu cargo run --release --example navier_stokes
+
+# Run the SU(3) Yang-Mills vacuum fluctuation test
+LD_LIBRARY_PATH=/lib/x86_64-linux-gnu cargo run --release --example yang_mills
 ```
+
+## Maintenance & Status
+Currently at **Phase 7** of the implementation plan. The project successfully validates the "Quantization due to time-evolution" thesis on quadratic and non-linear benchmarks.
 
 ## License
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

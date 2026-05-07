@@ -89,6 +89,18 @@ impl QuantumState {
         }
         self.components.retain(|_, v| v.norm_sqr() > 1e-24);
     }
+
+    pub fn create_boson(&self, idx: u32) -> Self {
+        let mut inner = InnerBosonicState::vacuum();
+        inner.modes.insert(idx, 1);
+        self.apply(&Operator::OuterBosonCreate(inner))
+    }
+
+    pub fn create_fermion(&self, idx: u32) -> Self {
+        let mut inner = InnerFermionicState::vacuum();
+        inner.modes.insert(idx);
+        self.apply(&Operator::OuterFermionCreate(inner))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -330,6 +342,46 @@ impl Hamiltonian {
 
 pub mod cas;
 pub use cas::{compile_expression, compile_to_fock};
+
+pub mod field_theory;
+pub use field_theory::*;
+
+pub mod models;
+pub use models::*;
+
+// --- Operators Builders ---
+
+pub fn inner_boson_create(idx: u32) -> Expression {
+    Expression::symbol(&format!("c_{}", idx))
+}
+
+pub fn inner_boson_annihilate(idx: u32) -> Expression {
+    Expression::symbol(&format!("a_{}", idx))
+}
+
+pub fn inner_fermion_create(idx: u32) -> Expression {
+    Expression::symbol(&format!("c_f{}", idx))
+}
+
+pub fn inner_fermion_annihilate(idx: u32) -> Expression {
+    Expression::symbol(&format!("a_f{}", idx))
+}
+
+pub fn outer_boson_create(idx: u32) -> Expression {
+    Expression::symbol(&format!("C_{}", idx))
+}
+
+pub fn outer_boson_annihilate(idx: u32) -> Expression {
+    Expression::symbol(&format!("A_{}", idx))
+}
+
+pub fn outer_fermion_create(idx: u32) -> Expression {
+    Expression::symbol(&format!("C_f{}", idx))
+}
+
+pub fn outer_fermion_annihilate(idx: u32) -> Expression {
+    Expression::symbol(&format!("A_f{}", idx))
+}
 
 /// Re-export the symbolic engine for high-level operator building.
 pub use quantrs2_symengine_pure as symengine;

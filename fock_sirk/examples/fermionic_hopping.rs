@@ -1,35 +1,31 @@
 use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::{
-    compile_expression, inner_boson_annihilate, inner_boson_create, Expression, InnerBosonicState,
-    Operator, QuantumState,
+    compile_expression, inner_fermion_annihilate, inner_fermion_create, QuantumState,
 };
 use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {
-    // 1. Define Physics: Hopping Hamiltonian
-    // H = sum_i (a_{i+1}^dag a_i + a_i^dag a_{i+1})
-    let mut h_expr = Expression::zero();
+    // 1. Define Physics: Fermionic Hopping Hamiltonian
+    // H = sum_i (c_{i+1}^dag c_i + c_i^dag c_{i+1})
+    // Fermionic operators anticommute, so order matters.
+    let mut h_expr = nested_fock_algebra::Expression::zero();
     for i in 0..4 {
-        h_expr = h_expr + inner_boson_create(i+1) * inner_boson_annihilate(i) 
-                        + inner_boson_create(i) * inner_boson_annihilate(i+1);
+        h_expr = h_expr + inner_fermion_create(i+1) * inner_fermion_annihilate(i) 
+                        + inner_fermion_create(i) * inner_fermion_annihilate(i+1);
     }
     
-    println!("Hamiltonian Expression: {}", h_expr);
+    println!("Fermionic Hamiltonian: {}", h_expr);
     let hamiltonian = compile_expression(h_expr);
     
-    // 2. Define Initial State: One boson in mode 0
-    let mut inner_b = InnerBosonicState::vacuum();
-    inner_b.modes.insert(0, 1);
-    
-    let initial_state = QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(inner_b));
+    // 2. Define Initial State: One fermion in mode 0
+    // We use the new helper method
+    let initial_state = QuantumState::vacuum().create_fermion(0);
 
     println!("Initial State components: {}", initial_state.components.len());
 
     // 3. Define Shifts for Rational Krylov
-    // We use a small number of shifts for this test
-    let m_dim = 2;
+    let m_dim = 4;
     let shifts: Vec<Complex64> = (0..m_dim)
         .map(|j| Complex64::new(0.1 * (j as f64), 0.5))
         .collect();
