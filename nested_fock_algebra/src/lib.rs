@@ -343,6 +343,12 @@ impl Hamiltonian {
 pub mod cas;
 pub use cas::{compile_expression, compile_to_fock};
 
+#[cfg(feature = "latex")]
+pub mod latex;
+#[cfg(feature = "latex")]
+pub use latex::compile_latex;
+
+
 pub mod field_theory;
 pub use field_theory::*;
 
@@ -386,3 +392,6 @@ pub fn outer_fermion_annihilate(idx: u32) -> Expression {
 /// Re-export the symbolic engine for high-level operator building.
 pub use quantrs2_symengine_pure as symengine;
 pub use quantrs2_symengine_pure::Expression;
+
+#[cfg(test)]
+mod unit_tests;

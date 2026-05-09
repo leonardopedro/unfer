@@ -11,6 +11,8 @@ nalgebra = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+serde_json = { workspace = true }
 rustc-hash = { workspace = true }
+
 candle-core = { workspace = true }
 quantrs2-symengine-pure = "0.1.2"

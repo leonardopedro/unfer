@@ -1,45 +1,84 @@
 use quantrs2_symengine_pure::Expression;
+use num_complex::Complex64;
 use crate::field_theory::*;
+use crate::{Hamiltonian, Operator};
 
-/// 1. Navier-Stokes Hamiltonian (PDF Eq. 41)
-/// H = \pi_i (u_j u_{i,j} - \nu u_{i,jj}) + h.c.
-/// We map:
-/// u_i -> mode i (0..3)
-/// u_{i,j} (first derivative) -> mode 3 + i*3 + j
-/// u_{i,jj} (Laplacian) -> mode 12 + i
+// ─────────────────────────────────────────────
+// Direct Hamiltonian term builder helpers
+// A hermitian field φ_i = a†_i + a_i expands as two Operator terms.
+// conjugate momentum π_i = i(a†_i - a_i) expands as two Operator terms.
+// ─────────────────────────────────────────────
+
+/// Returns the list of (coeff, op) pairs for a hermitian field φ_mode = a†_mode + a_mode.
+fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
+    vec![
+        (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
+        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
+    ]
+}
+
+/// Returns the list of (coeff, op) pairs for conjugate momentum π_mode = i(a†_mode - a_mode).
+fn momentum_ops(mode: u32) -> Vec<(Complex64, Operator)> {
+    vec![
+        (Complex64::new(0.0, 1.0), Operator::InnerBosonCreate(mode)),
+        (Complex64::new(0.0, -1.0), Operator::InnerBosonAnnihilate(mode)),
+    ]
+}
+
+/// Expand A·B product over all (coeff_a, op_a) × (coeff_b, op_b) pairs.
+fn product_terms(
+    a: &[(Complex64, Operator)],
+    b: &[(Complex64, Operator)],
+) -> Vec<(Complex64, Vec<Operator>)> {
+    let mut result = Vec::new();
+    for (ca, oa) in a {
+        for (cb, ob) in b {
+            result.push((ca * cb, vec![oa.clone(), ob.clone()]));
+        }
+    }
+    result
+}
+
+/// Adds terms c * A^2 = c * A * A to `terms`.
+fn add_quadratic(
+    terms: &mut Vec<(Complex64, Vec<Operator>)>,
+    coeff: f64,
+    ops: &[(Complex64, Operator)],
+) {
+    for t in product_terms(ops, ops) {
+        let c = Complex64::new(coeff, 0.0) * t.0;
+        if c.norm_sqr() > 1e-30 {
+            terms.push((c, t.1));
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// 1. Navier-Stokes Hamiltonian (Expression-based, still fast since it's quadratic)
+// ─────────────────────────────────────────────
 pub fn navier_stokes_hamiltonian(nu: f64) -> Expression {
     let mut h = Expression::zero();
-    
     for i in 0..3 {
         let pi_i = conjugate_momentum(i);
-        
         let mut advective = Expression::zero();
         for j in 0..3 {
             let u_j = hermitian_field(j);
             let u_ij = hermitian_field(3 + i * 3 + j);
             advective = advective + u_j * u_ij;
         }
-        
         let u_ijj = hermitian_field(12 + i);
         let diff = Expression::from(nu) * u_ijj;
-        
-        // H_forward = \pi_i * (advective - diff)
         let h_fwd = pi_i.clone() * (advective.clone() - diff.clone());
-        
-        // Hermitian conjugate (reversing the order since fields are self-adjoint)
-        let h_rev = (advective - diff) * Expression::symbol("neg") * pi_i; 
-        
+        let h_rev = (advective - diff) * Expression::symbol("neg") * pi_i;
         h = h + h_fwd + h_rev;
     }
     h
 }
 
-/// BRST Divergence Constraint for Navier Stokes
-/// \Omega = \int u_{j,j} \psi^\dagger
+/// BRST Divergence Constraint for Navier-Stokes: Ω = ∫ u_{j,j} ψ†
 pub fn navier_stokes_brst() -> Expression {
     let mut omega = Expression::zero();
     for j in 0..3 {
-        // u_{j,j} maps to 3 + j*3 + j
         let u_jj = hermitian_field(3 + j * 3 + j);
         let ghost_dagger = ghost_conjugate(j);
         omega = omega + u_jj * ghost_dagger;
@@ -47,41 +86,203 @@ pub fn navier_stokes_brst() -> Expression {
     omega
 }
 
-/// 2. Pure SU(3) Yang-Mills (PDF Eq. 125/128)
-/// H = -1/2 \pi^i_a \pi^i_a - 1/2 B_{ia} B_{ia}
-pub fn yang_mills_hamiltonian(g: f64) -> Expression {
-    let n_colors = 8; // SU(3) has 8 generators
-    let mut h = Expression::zero();
-    
-    // Kinetic term: -1/2 \pi^i_a \pi^i_a
-    for i in 0..3 {
-        for a in 0..n_colors {
-            let pi_ia = conjugate_momentum(i * n_colors + a);
-            h = h - (Expression::from(0.5) * pi_ia.clone() * pi_ia);
+// ─────────────────────────────────────────────
+// SU(3) structure constants f_abc (0-indexed, a,b,c in 0..7)
+// ─────────────────────────────────────────────
+fn su3_f(a: usize, b: usize, c: usize) -> f64 {
+    // Canonical nonzero entries (totally antisymmetric)
+    let table: &[(usize, usize, usize, f64)] = &[
+        (0, 1, 2, 1.0),
+        (0, 3, 6, 0.5),
+        (0, 4, 5, -0.5),
+        (1, 3, 5, 0.5),
+        (1, 4, 6, 0.5),
+        (2, 3, 4, 0.5),
+        (2, 5, 6, -0.5),
+        (3, 4, 7, 3.0f64.sqrt() / 2.0),
+        (5, 6, 7, 3.0f64.sqrt() / 2.0),
+    ];
+    for &(v1, v2, v3, val) in table {
+        let mut p = [v1, v2, v3];
+        p.sort();
+        let mut t = [a, b, c];
+        t.sort();
+        if p == t {
+            // Count swaps to get sign
+            let mut cur = [a, b, c];
+            let mut swaps = 0usize;
+            for i in 0..2 {
+                for j in 0..2 - i {
+                    if cur[j] > cur[j + 1] {
+                        cur.swap(j, j + 1);
+                        swaps += 1;
+                    }
+                }
+            }
+            return if swaps % 2 == 0 { val } else { -val };
         }
     }
-    
-    // Magnetic term: -1/2 B_{ia} B_{ia}
-    // (Omitted here for brevity: B_{ia} is constructed via \epsilon_{ijk} and f_{abc})
-    // In the 0D omitted space model, B_{ia} maps directly to non-linear combinations of A fields
-    // For this example we use a simplified version:
-    for i in 0..3 {
-        for a in 0..n_colors {
-            let a_ia = hermitian_field(i * n_colors + a);
-            h = h - (Expression::from(0.5) * Expression::from(g) * a_ia.clone() * a_ia);
-        }
-    }
-    
-    h
+    0.0
 }
 
-/// 3. Classical Gravity (Einstein-Cartan 3D Hamiltonian - PDF Eq. 139)
-/// Constructed using polymomentum P^{ab} and tetrads e^\beta_a.
-/// Mapped to generic Hermitian fields and Momenta modes.
-pub fn gravity_hamiltonian() -> Expression {
-    // Abstract representation of the polynomial constraints
-    let h = Expression::zero();
-    // Maps Sab * Sab - 2/3 (T)^2 + ... using hermitian_field(idx) and conjugate_momentum(idx)
-    // To be expanded based on the exact mode-mapping of the tetrads.
-    h
+fn epsilon3(i: usize, j: usize, k: usize) -> f64 {
+    match (i, j, k) {
+        (0, 1, 2) | (1, 2, 0) | (2, 0, 1) => 1.0,
+        (2, 1, 0) | (1, 0, 2) | (0, 2, 1) => -1.0,
+        _ => 0.0,
+    }
+}
+
+// ─────────────────────────────────────────────
+// 2. Full Pure SU(3) Yang-Mills  (Phase 8.1)
+//    H = -½ π^i_a π^i_a  -  ½ B_{ia} B_{ia}
+//    B_{ia} = ε_{ijk}(∂_j A^a_k + ½ g f_{abc} A^b_j A^c_k)
+//
+// We build Hamiltonian terms DIRECTLY — no Expression.expand() — so the
+// combinatorial explosion never occurs.
+// ─────────────────────────────────────────────
+pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
+    let n_colors: usize = 8;
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+
+    // ── Kinetic term:  -½ π^i_a π^i_a ──────────────────────────────
+    for i in 0..3 {
+        for a in 0..n_colors {
+            let mode = (i * n_colors + a) as u32;
+            let pi = momentum_ops(mode);
+            add_quadratic(&mut terms, -0.5, &pi);
+        }
+    }
+
+    // ── Magnetic term: -½ B_{ia} B_{ia} ────────────────────────────
+    // B_{ia} = Σ_{j,k} ε_{ijk} [ L_{jk,a}  +  NL_{jk,a} ]
+    // L_{jk,a}  = ∂_j A^a_k   → mapped to hermitian field mode (24 + (i*3+j)*n_colors + a)
+    // NL_{jk,a} = ½ g Σ_{b,c} f_{abc} A^b_j A^c_k
+    //
+    // B_{ia}^2 = (L + NL)^2 = L^2 + 2 L·NL + NL^2
+    // We accumulate each (i,a) slice then expand the square.
+    for i in 0..3 {
+        for a in 0..n_colors {
+            // Collect linear pieces (coeff, single-Operator) for this B_{ia}
+            let mut b_ia: Vec<(Complex64, Operator)> = Vec::new();
+
+            for j in 0..3 {
+                for k in 0..3 {
+                    let eps = epsilon3(i, j, k);
+                    if eps == 0.0 { continue; }
+
+                    // Linear part: ∂_j A^a_k → one hermitian field op pair
+                    let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
+                    for (c, op) in field_ops(da_mode) {
+                        b_ia.push((c * eps, op));
+                    }
+
+                    // Non-linear part: ½ g f_{abc} A^b_j A^c_k
+                    // Non-linear pieces are handled in the NL*NL and L*NL sections below.
+                }
+            }
+
+            // -½ B_{ia}^2 from linear (single-op) pieces only:
+            add_quadratic(&mut terms, -0.5, &b_ia);
+
+            // Non-linear quadratic (quartic) terms: -½ * NL_{ia} * NL_{ia}
+            // We add them as 4-operator terms directly.
+            for j in 0..3 {
+                for k in 0..3 {
+                    let eps_jk = epsilon3(i, j, k);
+                    if eps_jk == 0.0 { continue; }
+                    for b_idx in 0..n_colors {
+                        for c_idx in 0..n_colors {
+                            let fabc = su3_f(a, b_idx, c_idx);
+                            if fabc.abs() < 1e-15 { continue; }
+                            for j2 in 0..3 {
+                                for k2 in 0..3 {
+                                    let eps_j2k2 = epsilon3(i, j2, k2);
+                                    if eps_j2k2 == 0.0 { continue; }
+                                    for b2 in 0..n_colors {
+                                        for c2 in 0..n_colors {
+                                            let fabc2 = su3_f(a, b2, c2);
+                                            if fabc2.abs() < 1e-15 { continue; }
+                                            // -½ * (½g)^2 * eps * eps * f * f * A^b_j A^c_k A^b2_j2 A^c2_k2
+                                            let nl_coeff = -0.5 * (0.5 * g).powi(2)
+                                                * eps_jk * eps_j2k2 * fabc * fabc2;
+                                            if nl_coeff.abs() < 1e-30 { continue; }
+                                            let coeff = Complex64::new(nl_coeff, 0.0);
+                                            let m1 = (j * n_colors + b_idx) as u32;
+                                            let m2 = (k * n_colors + c_idx) as u32;
+                                            let m3 = (j2 * n_colors + b2) as u32;
+                                            let m4 = (k2 * n_colors + c2) as u32;
+                                            // Each field = c† + a, so 2^4=16 sub-terms
+                                            for (c1f, o1) in field_ops(m1) {
+                                                for (c2f, o2) in field_ops(m2) {
+                                                    for (c3f, o3) in field_ops(m3) {
+                                                        for (c4f, o4) in field_ops(m4) {
+                                                            let c_total = coeff * c1f * c2f * c3f * c4f;
+                                                            if c_total.norm_sqr() < 1e-30 { continue; }
+                                                            terms.push((c_total, vec![o1.clone(), o2.clone(), o3.clone(), o4.clone()]));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Cross terms: -½ * 2 * L * NL = -L * NL
+            for j in 0..3 {
+                for k in 0..3 {
+                    let eps = epsilon3(i, j, k);
+                    if eps == 0.0 { continue; }
+                    let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
+                    for b_idx in 0..n_colors {
+                        for c_idx in 0..n_colors {
+                            let fabc = su3_f(a, b_idx, c_idx);
+                            if fabc.abs() < 1e-15 { continue; }
+                            let nl_base = -0.5 * g * eps * fabc; // -1 * ½ * L*NL * 2 = -L*NL
+                            let coeff = Complex64::new(nl_base, 0.0);
+                            let mode_b = (j * n_colors + b_idx) as u32;
+                            let mode_c = (k * n_colors + c_idx) as u32;
+                            // L = field_ops(da_mode), NL_pair = field_ops(mode_b)*field_ops(mode_c)
+                            for (cl, ol) in field_ops(da_mode) {
+                                for (cb, ob) in field_ops(mode_b) {
+                                    for (cc, oc) in field_ops(mode_c) {
+                                        let c_total = coeff * cl * cb * cc;
+                                        if c_total.norm_sqr() < 1e-30 { continue; }
+                                        terms.push((c_total, vec![ol.clone(), ob.clone(), oc.clone()]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Hamiltonian { terms }
+}
+
+// ─────────────────────────────────────────────
+// 3. Einstein-Cartan Gravity (Phase 8.2)
+//    Simplified 3D constraint: H = Σ_{ia} (P_{ia}^2 - e_{ia}^2)
+//    Modes 0..8: tetrad e^a_i, Modes 9..17: polymomentum P^i_a
+// ─────────────────────────────────────────────
+pub fn gravity_hamiltonian() -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for i in 0..3 {
+        for a in 0..3 {
+            let p_mode = (9 + i * 3 + a) as u32;
+            let e_mode = (i * 3 + a) as u32;
+            let pi = momentum_ops(p_mode);
+            let ef = field_ops(e_mode);
+            add_quadratic(&mut terms, 1.0, &pi);
+            add_quadratic(&mut terms, -1.0, &ef);
+        }
+    }
+    Hamiltonian { terms }
 }

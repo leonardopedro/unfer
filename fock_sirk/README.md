@@ -26,7 +26,19 @@ When you apply an inner operator (e.g., $a^\dagger_i$), the solver dynamically i
 
 ## Defining the Hamiltonian
 
-Hamiltonians are defined using a symbolic computer algebra system (CAS) string. The CAS parser linearly expands your algebraic expression and maps variables to creation/annihilation operators.
+Hamiltonians can be defined using either standard symbolic CAS strings or directly from **LaTeX** math expressions.
+
+### LaTeX Hamiltonian Definition (Recommended)
+
+The `compile_latex` function allows you to use standard physics notation. The translator automatically maps daggers to creation operators and plain symbols to annihilation operators.
+
+```rust
+use nested_fock_algebra::compile_latex;
+
+// H = \frac{1}{2} (a_0^\dagger a_1 + a_1^\dagger a_0)
+let h_latex = r"\frac{1}{2} (a_0^\dagger a_1 + a_1^\dagger a_0)";
+let hamiltonian = compile_latex(h_latex);
+```
 
 ### Variable Naming Convention
 
@@ -37,21 +49,7 @@ Hamiltonians are defined using a symbolic computer algebra system (CAS) string. 
 | **Outer Bosonic** | `C_[coord]` (e.g., `C_0`) | `A_[coord]` (e.g., `A_0`) |
 | **Outer Fermionic** | `C_f[coord]` (e.g., `C_f0`) | `A_f[coord]` (e.g., `A_f0`) |
 
-*(Note: omitting `_[coord]` or `_[mode]` defaults to coordinate/mode `0`)*
-
-### Example: Integrated Harmonic Oscillator
-
-A Hamiltonian representing the integral of harmonic oscillators across a fermionic multiverse field can be written simply as:
-
-```rust
-use nested_fock_algebra::compile_to_fock;
-
-// H = (\sum c_i * a_i) * C_f0 * A_f0
-let h_str = "(c_0 * a_0 + c_1 * a_1) * C_f0 * A_f0";
-let hamiltonian = compile_to_fock(h_str);
-```
-
-Here, `c_0 * a_0` evaluates dynamically as an integral over the Outer Number operator, creating mathematical logic equivalent to: $\sum_\eta \langle \eta'| a_0^\dagger a_0 |\eta\rangle \hat{A}^\dagger_{\eta'} \hat{A}_\eta$.
+*(Note: when using `compile_latex`, you can use `a_i^\dagger` which maps to `c_i` automatically)*
 
 ## Usage Example
 
@@ -59,11 +57,11 @@ To simulate a dynamic system, define your initial state, construct the Hamiltoni
 
 ```rust
 use fock_sirk::build_hashimoto_subspace;
-use nested_fock_algebra::{QuantumState, compile_to_fock, InnerBosonicState, InnerFermionicState, Operator};
+use nested_fock_algebra::{QuantumState, compile_latex, InnerBosonicState, InnerFermionicState, Operator};
 
-// 1. Define Physics
-let h_str = "c_0 * a_0 + C_f0 * A_f0";
-let hamiltonian = compile_to_fock(h_str);
+// 1. Define Physics via LaTeX
+let h_latex = "a_0^\dagger a_0 + C_{f0}^\dagger A_{f0}";
+let hamiltonian = compile_latex(h_latex);
 
 // 2. Define Initial State
 // Vacuum + 1 Bosonic universe + 1 Fermionic universe
@@ -91,3 +89,4 @@ println!("Krylov subspace built. Reduced matrix size: {}x{}",
 let evolved_state = sirk_result.time_evolve(time_step);
 println!("Evolved state components: {}", evolved_state.components.len());
 ```
+

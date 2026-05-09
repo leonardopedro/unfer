@@ -47,8 +47,10 @@ fn main() -> anyhow::Result<()> {
         &hamiltonian,
         &v_0,
         &shifts,
-        &device
+        &device,
+        Some(&brst_charge)
     ).expect("Failed to solve SIRK");
+
 
     // 7. Extract the Non-deterministic Time-Evolution
     let t = 0.05;

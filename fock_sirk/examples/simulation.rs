@@ -42,8 +42,10 @@ fn main() -> anyhow::Result<()> {
         &hamiltonian,
         &initial_state,
         &shifts,
-        &device
+        &device,
+        None
     ).expect("Failed to solve SIRK");
+
 
     println!("Krylov subspace built. Reduced matrix size: {}x{}", 
         sirk_result.h_proj.nrows(), sirk_result.h_proj.ncols());

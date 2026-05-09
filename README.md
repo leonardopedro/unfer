@@ -6,6 +6,7 @@ A high-performance Rust suite for quantum mechanical and field theory simulation
 
 - **Inverse-Free Rational Krylov (SIRK)**: Generates optimal Krylov subspaces via forward evolution $w_k = (H - z_k I) w_{k-1}$, avoiding expensive $O(N^3)$ linear solvers.
 - **GPU-Accelerated Gram Matrices**: Uses `candle-core` with CUDA to compute $O(m^2)$ basis inner products in parallel, enabling the use of extremely high-dimensional state vectors.
+- **LaTeX Hamiltonian Translation**: Native support for translating physical LaTeX expressions (e.g., $c_i^\dagger a_i$) into executable operators via `mathhook`.
 - **Field Theory Engine**: Native support for Hermitian fields, conjugate momenta, Majorana fermions, and BRST ghost sectors.
 - **Quadratic Ordering CAS**: Symbolic compiler that enforces zero vacuum expectation value $\langle 0 | H | 0 \rangle = 0$ to satisfy mass-gap and Millennium Prize constraints.
 - **Unitary Preservation**: Certified unitary evolution in the reduced subspace using Padé-based matrix exponentials.
@@ -20,7 +21,8 @@ The high-performance simulation kernel.
 
 ### [nested_fock_algebra](./nested_fock_algebra)
 The symbolic algebra and physics engine.
-- **AST Compiler**: Converts high-level QFT expressions into executable Fock-space operators.
+- **LaTeX-to-Fock**: High-level translation of complex physics notation into Fock-space operators.
+- **AST Compiler**: Converts symbolic expressions into executable Hamiltonian terms.
 - **Field Theory Library**: Pre-built models for Navier-Stokes (dissipative fluid dynamics), Pure SU(3) Yang-Mills, and Einstein-Cartan Gravity.
 - **Symbolic Expansion**: Robust distribution and ordering logic for non-commuting operators.
 
@@ -47,7 +49,7 @@ LD_LIBRARY_PATH=/lib/x86_64-linux-gnu cargo run --release --example yang_mills
 ```
 
 ## Maintenance & Status
-Currently at **Phase 7** of the implementation plan. The project successfully validates the "Quantization due to time-evolution" thesis on quadratic and non-linear benchmarks.
+The project implementation is complete, successfully validating the "Quantization due to time-evolution" thesis on quadratic and non-linear benchmarks.
 
 ## License
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

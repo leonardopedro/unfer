@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "Pure Rust High-performance Physics & Symbolic Engine for Nested Fock spaces."
 
+[features]
+# latex feature gates mathhook (lalrpop-based, slow to compile).
+# Enable with: cargo build --features latex
+latex = ["mathhook"]
+
 [dependencies]
 num-complex = { workspace = true }
 rustc-hash = { workspace = true }
@@ -12,6 +17,8 @@ rayon = { workspace = true }
 serde = { workspace = true }
 egg = "0.11.0"
 quantrs2-symengine-pure = "0.1.2"
+mathhook = { workspace = true, optional = true }
+
 
 [[bin]]
 name = "nested_fock_example"

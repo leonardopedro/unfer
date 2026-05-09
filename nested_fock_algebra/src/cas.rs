@@ -4,7 +4,8 @@ use quantrs2_symengine_pure::{
     expr::Expression,
     parser::parse,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+
 
 /// Compile a symbolic operator expression string into a Hamiltonian.
 pub fn compile_to_fock(input: &str) -> Hamiltonian {
@@ -23,7 +24,6 @@ pub fn compile_expression(expr: Expression) -> Hamiltonian {
     // 2. Parse the resulting order-preserved S-expression string.
     let s_expr = expanded.to_string();
     let mut ast = SExpr::parse(&s_expr).expect("Failed to parse internal S-expression");
-
     // 3. Apply quadratic ordering logic before distribution
     ast.apply_quadratic_ordering();
 
@@ -113,14 +113,25 @@ impl SExpr {
         }
     }
 
-    /// Distribute Mul/Div/Neg over Add recursively.
+    /// Distribute Mul/Div/Neg over Add recursively with memoization.
+    /// Phase 9.2 Optimization for large Hamiltonians.
     fn distribute(&self) -> Vec<SExpr> {
-        match self {
+        let mut memo = HashMap::new();
+        self.distribute_memo(&mut memo)
+    }
+
+    fn distribute_memo(&self, memo: &mut HashMap<String, Vec<SExpr>>) -> Vec<SExpr> {
+        let key = format!("{:?}", self);
+        if let Some(res) = memo.get(&key) {
+            return res.clone();
+        }
+
+        let res = match self {
             SExpr::List(op, args) if op == "+" => {
-                args.iter().flat_map(|a| a.distribute()).collect()
+                args.iter().flat_map(|a| a.distribute_memo(memo)).collect()
             }
             SExpr::List(op, args) if op == "*" => {
-                let distributed_args: Vec<Vec<SExpr>> = args.iter().map(|a| a.distribute()).collect();
+                let distributed_args: Vec<Vec<SExpr>> = args.iter().map(|a| a.distribute_memo(memo)).collect();
                 let mut results = vec![SExpr::List("*".to_string(), vec![])];
                 for arg_set in distributed_args {
                     let mut next_results = Vec::new();
@@ -139,16 +150,14 @@ impl SExpr {
                 results
             }
             SExpr::List(op, args) if op == "/" => {
-                // (a + b) / c -> a/c + b/c
-                let numerators = args[0].distribute();
+                let numerators = args[0].distribute_memo(memo);
                 let denominator = if args.len() > 1 { args[1].clone() } else { SExpr::Num(1.0) };
                 numerators.into_iter().map(|n| SExpr::List("/".to_string(), vec![n, denominator.clone()])).collect()
             }
             SExpr::List(op, args) if op == "neg" => {
-                args[0].distribute().into_iter().map(|a| SExpr::List("neg".to_string(), vec![a])).collect()
+                args[0].distribute_memo(memo).into_iter().map(|a| SExpr::List("neg".to_string(), vec![a])).collect()
             }
             SExpr::List(op, args) if op == "^" => {
-                // (a + b)^n -> expand to multiplication chain then distribute
                 if let SExpr::Num(n) = &args[1] {
                     let p = *n as i32;
                     if p > 0 {
@@ -156,22 +165,20 @@ impl SExpr {
                         for _ in 1..p {
                             chain = SExpr::List("*".to_string(), vec![chain, args[0].clone()]);
                         }
-                        return chain.distribute();
+                        return chain.distribute_memo(memo);
                     } else if p == 0 {
                         return vec![SExpr::Num(1.0)];
                     }
                 }
                 vec![self.clone()]
             }
-            SExpr::List(_op, _args) => {
-                // For any other function (sqrt, etc.), distribute inside then rebuild
-                // but usually these functions don't commute with distribution.
-                // For physics, we mostly care about +, *, /, neg, ^.
-                vec![self.clone()]
-            }
             _ => vec![self.clone()],
-        }
+        };
+
+        memo.insert(key, res.clone());
+        res
     }
+
 
     fn to_hamiltonian_term(&self) -> Option<(Complex64, Vec<Operator>)> {
         let mut coeff = Complex64::new(1.0, 0.0);
