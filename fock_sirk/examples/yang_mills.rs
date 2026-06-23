@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
         .map(|j| Complex64::new(0.5, 0.5 * (j as f64)))
         .collect();
 
-    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    let device = fock_sirk::best_device();
     println!("Using device: {:?}", device);
 
     println!("Building Krylov Subspace for gluon vacuum fluctuations...");

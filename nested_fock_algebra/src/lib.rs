@@ -60,6 +60,12 @@ impl QuantumState {
         Self { components }
     }
 
+    /// The zero vector (no components) — the additive identity, distinct from
+    /// the physical vacuum `|0>`.
+    pub fn zero() -> Self {
+        Self { components: FxHashMap::default() }
+    }
+
     pub fn apply(&self, op: &Operator) -> Self {
         op.apply_to_state(self)
     }
@@ -90,6 +96,44 @@ impl QuantumState {
         self.components.retain(|_, v| v.norm_sqr() > 1e-24);
     }
 
+    /// The L2 norm `sqrt(<ψ|ψ>)`.
+    pub fn norm(&self) -> f64 {
+        Self::inner_product(self, self).re.max(0.0).sqrt()
+    }
+
+    /// Number of stored basis components.
+    pub fn len(&self) -> usize {
+        self.components.len()
+    }
+
+    /// True if the state has no components (the zero vector).
+    pub fn is_empty(&self) -> bool {
+        self.components.is_empty()
+    }
+
+    /// Drop components whose amplitude magnitude is `<= eps` (memory hygiene).
+    pub fn prune(&mut self, eps: f64) {
+        let thresh = eps * eps;
+        self.components.retain(|_, v| v.norm_sqr() > thresh);
+    }
+
+    /// Keep only the `k` components with the largest `|amplitude|^2`, dropping the
+    /// rest. A cheap bound on state growth; callers renormalize if needed.
+    pub fn truncate_top_k(&mut self, k: usize) {
+        if self.components.len() <= k {
+            return;
+        }
+        let mut entries: Vec<(OuterState, Complex64)> =
+            self.components.drain().collect();
+        entries.sort_by(|a, b| {
+            b.1.norm_sqr()
+                .partial_cmp(&a.1.norm_sqr())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        entries.truncate(k);
+        self.components = entries.into_iter().collect();
+    }
+
     pub fn create_boson(&self, idx: u32) -> Self {
         let mut inner = InnerBosonicState::vacuum();
         inner.modes.insert(idx, 1);
@@ -116,6 +160,21 @@ pub enum Operator {
 }
 
 impl Operator {
+    /// The Hermitian adjoint of a single ladder operator: creation and
+    /// annihilation swap, the mode/universe label is preserved.
+    pub fn adjoint(&self) -> Operator {
+        match self {
+            Operator::InnerBosonCreate(i) => Operator::InnerBosonAnnihilate(*i),
+            Operator::InnerBosonAnnihilate(i) => Operator::InnerBosonCreate(*i),
+            Operator::InnerFermionCreate(i) => Operator::InnerFermionAnnihilate(*i),
+            Operator::InnerFermionAnnihilate(i) => Operator::InnerFermionCreate(*i),
+            Operator::OuterBosonCreate(s) => Operator::OuterBosonAnnihilate(s.clone()),
+            Operator::OuterBosonAnnihilate(s) => Operator::OuterBosonCreate(s.clone()),
+            Operator::OuterFermionCreate(s) => Operator::OuterFermionAnnihilate(s.clone()),
+            Operator::OuterFermionAnnihilate(s) => Operator::OuterFermionCreate(s.clone()),
+        }
+    }
+
     pub fn apply_to_state(&self, state: &QuantumState) -> QuantumState {
         let mut next_components = FxHashMap::default();
 
@@ -327,6 +386,21 @@ pub struct Hamiltonian {
 }
 
 impl Hamiltonian {
+    /// The Hermitian adjoint `H†`. For each term `c · O_1 O_2 … O_n`, the adjoint
+    /// is `conj(c) · O_n† … O_2† O_1†` (conjugate the coefficient, reverse the
+    /// operator string, and adjoint each operator).
+    pub fn adjoint(&self) -> Hamiltonian {
+        let terms = self
+            .terms
+            .iter()
+            .map(|(coeff, ops)| {
+                let adj_ops = ops.iter().rev().map(|op| op.adjoint()).collect();
+                (coeff.conj(), adj_ops)
+            })
+            .collect();
+        Hamiltonian { terms }
+    }
+
     pub fn apply(&self, state: &QuantumState) -> QuantumState {
         let mut final_state = QuantumState { components: FxHashMap::default() };
         for (coeff, ops) in &self.terms {

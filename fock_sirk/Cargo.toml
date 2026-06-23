@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "High-performance Shift-Invert Rational Krylov solver for Fock spaces."
 
+[features]
+# CPU-only by default so the workspace builds and tests without a CUDA toolkit.
+# Enable GPU offload with: cargo build -p fock_sirk --features cuda
+default = []
+cuda = ["candle-core/cuda"]
+
 [dependencies]
 nested_fock_algebra = { path = "../nested_fock_algebra" }
 num-complex = { workspace = true }

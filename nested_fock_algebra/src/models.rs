@@ -54,36 +54,81 @@ fn add_quadratic(
 }
 
 // ─────────────────────────────────────────────
-// 1. Navier-Stokes Hamiltonian (Expression-based, still fast since it's quadratic)
+// 1. Navier-Stokes Hamiltonian
+//    Built directly as Hamiltonian terms — bypasses Expression::expand() which
+//    hangs on the high-order symbolic tree (AGENTS.md: combinatorial explosion
+//    avoidance). The original Expression-based version also had a bug where the
+//    "neg" symbol was treated as factor 1.0 instead of -1; building directly
+//    avoids that class of bug entirely.
+//
+//    H = Σ_i { π_i , A_i }   (anti-commutator → Hermitian)
+//    A_i = Σ_j u_j · u_{ij} − ν · u_{12+i}
 // ─────────────────────────────────────────────
-pub fn navier_stokes_hamiltonian(nu: f64) -> Expression {
-    let mut h = Expression::zero();
-    for i in 0..3 {
-        let pi_i = conjugate_momentum(i);
-        let mut advective = Expression::zero();
-        for j in 0..3 {
-            let u_j = hermitian_field(j);
-            let u_ij = hermitian_field(3 + i * 3 + j);
-            advective = advective + u_j * u_ij;
+pub fn navier_stokes_hamiltonian(nu: f64) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+
+    for i in 0..3u32 {
+        let pi = momentum_ops(i); // [(i, a†_i), (-i, a_i)]
+
+        // Build A_i = Σ_j u_j · u_{ij} − ν · u_{12+i} as (coeff, ops) pairs.
+        let mut a_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+
+        // Quadratic part: Σ_j u_j · u_{ij}
+        for j in 0..3u32 {
+            let u_j = field_ops(j);
+            let u_ij = field_ops(3 + i * 3 + j);
+            for (cj, oj) in &u_j {
+                for (cij, oij) in &u_ij {
+                    a_terms.push((cj * cij, vec![oj.clone(), oij.clone()]));
+                }
+            }
         }
-        let u_ijj = hermitian_field(12 + i);
-        let diff = Expression::from(nu) * u_ijj;
-        let h_fwd = pi_i.clone() * (advective.clone() - diff.clone());
-        let h_rev = (advective - diff) * Expression::symbol("neg") * pi_i;
-        h = h + h_fwd + h_rev;
+
+        // Linear part: −ν · u_{12+i}
+        let nu_c = Complex64::new(-nu, 0.0);
+        for (cd, od) in field_ops(12 + i) {
+            a_terms.push((nu_c * cd, vec![od]));
+        }
+
+        // H += π_i · A_i  (forward product)
+        for (cp, op) in &pi {
+            for (ca, oa) in &a_terms {
+                let mut ops = vec![op.clone()];
+                ops.extend(oa.iter().cloned());
+                let c = cp * ca;
+                if c.norm_sqr() > 1e-30 {
+                    terms.push((c, ops));
+                }
+            }
+        }
+
+        // H += A_i · π_i  (reverse product — Hermitian conjugate)
+        for (ca, oa) in &a_terms {
+            for (cp, op) in &pi {
+                let mut ops = oa.clone();
+                ops.push(op.clone());
+                let c = ca * cp;
+                if c.norm_sqr() > 1e-30 {
+                    terms.push((c, ops));
+                }
+            }
+        }
     }
-    h
+
+    Hamiltonian { terms }
 }
 
-/// BRST Divergence Constraint for Navier-Stokes: Ω = ∫ u_{j,j} ψ†
-pub fn navier_stokes_brst() -> Expression {
-    let mut omega = Expression::zero();
-    for j in 0..3 {
-        let u_jj = hermitian_field(3 + j * 3 + j);
-        let ghost_dagger = ghost_conjugate(j);
-        omega = omega + u_jj * ghost_dagger;
+/// BRST Divergence Constraint for Navier-Stokes: Ω = Σ_j u_{j,j} · c_j
+/// Built directly as Hamiltonian terms (bypasses Expression::expand()).
+pub fn navier_stokes_brst() -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for j in 0..3u32 {
+        let mode = 3 + j * 3 + j;
+        for (c, op) in field_ops(mode) {
+            terms.push((c, vec![op, Operator::InnerFermionAnnihilate(j)]));
+        }
     }
-    omega
+    Hamiltonian { terms }
 }
 
 // ─────────────────────────────────────────────
@@ -283,6 +328,25 @@ pub fn gravity_hamiltonian() -> Hamiltonian {
             add_quadratic(&mut terms, 1.0, &pi);
             add_quadratic(&mut terms, -1.0, &ef);
         }
+    }
+    Hamiltonian { terms }
+}
+
+// ─────────────────────────────────────────────
+// 4. Harmonic Chain (Stage 8 builtin — tests/demos)
+//    H = Σ_i ω a†_i a_i  (independent harmonic oscillators)
+//    A simple, hermitian, explosion-safe model for Born-rule tests.
+// ─────────────────────────────────────────────
+pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for i in 0..n_modes as u32 {
+        terms.push((
+            Complex64::new(omega, 0.0),
+            vec![
+                Operator::InnerBosonCreate(i),
+                Operator::InnerBosonAnnihilate(i),
+            ],
+        ));
     }
     Hamiltonian { terms }
 }

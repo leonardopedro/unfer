@@ -1,0 +1,269 @@
+# Plan: unfer as a Modular Probability Kernel (australVM modules + velysterm UI)
+
+> **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
+
+## Current status (re-verified 2026-06-22)
+
+**Nothing in this plan is implemented yet — this is a greenfield start from the existing 2-crate baseline.** Source last moved at commit `b1e5581 "working"` (2026-05-09); the only uncommitted item is `docs/` (this plan). All 18 stages are pending.
+
+- **Baseline that exists:** `unfer/` workspace = `nested_fock_algebra` + `fock_sirk` only. `Cargo.toml` still pins `candle-core = { version = "0.8.2", features = ["cuda"] }` (Stage 1 not done). No `unfer_protocol` / `prob_kernel` / `unfer_ffi` crates. `australVM` still has Cedar wired as core. `velysterm` has no `kernel_client` crate and no kernel PropKinds.
+- **Immediate next step:** Stage 1 (make CUDA optional) — it is the prerequisite for every CPU-based acceptance check below and must land first.
+- **Progress checklist** (mark `[x]` as stages complete):
+  - [x] S1 CUDA optional · [x] S2 Gram whitening · [x] S3 BRST projection · [x] S4 explosion bounds · [x] S5 Navier-Stokes test · [x] S6 restarted Krylov
+  - [x] S7 `unfer_protocol` · [x] S8 `prob_kernel` · [x] S9 `unfer_ffi`
+  - [x] S10 auth trait · [x] S11 JIT symbols · [x] S12 Austral bindings · [x] S13 module recipe
+  - [ ] S14 `kernel_client` · [ ] S15 PropKinds · [ ] S16 Bevy bridge · [ ] S17 agent interface · [ ] S18 docs/verify
+
+## Context
+
+**Why:** `unfer` (current dir) is a Rust quantum field theory simulator: `nested_fock_algebra` (symbolic Fock-space engine, LaTeX→Hamiltonian via `compile_latex`) + `fock_sirk` (GPU Shift-Invert Rational Krylov time-evolution solver). The user wants it to become the **kernel of a modular system that computes probabilities of events**:
+
+- **Probability semantics (decided):** Born-rule layer on the existing QFT core. Priors = initial `QuantumState` + `Hamiltonian`; data updates = projection/conditioning of the state; event probability = squared-amplitude mass of matching outer Fock states. The Fock/SIRK engine stays the substrate.
+- **Module mechanism (decided):** `$ROOT/australVM`'s recipe — Austral modules (.aui/.aum) → linear typecheck → CPS binary IR → Cranelift JIT (`safestos/cranelift`) → C scheduler, with hot-swap via CellDescriptor. Modules live in sibling folders `$ROOT/<name>` and call the kernel **in-process** via native symbols registered in the JIT (same mechanism as `au_print_int`, see `cranelift_init()` at `safestos/cranelift/src/lib.rs:69-72`). Cedar is demoted from core to an optional authorization backend; the unfer kernel takes its architectural seat.
+- **UI (decided):** `$ROOT/velysterm` (Bevy + Typst + Loro math editor, M1 done / M2 in progress) is the main human UI **and** AI-agent interface, in the spirit of Vercel Labs' Zero language: structured JSON, stable `UK-####` error codes, typed repair hints.
+- **Core improvement priorities (decided):** fix known limitations (BRST projection hack, Cholesky failures, CAS combinatorial explosion, disabled Navier-Stokes test) and performance/scalability (CPU fallback, pruning/memory bounds, restarted Krylov). 
+- More modules will be defined later → adding a module must be a documented, repeatable recipe (manifest + contract).
+
+**Verified anchors** (load-bearing facts; line numbers re-confirmed against commit `b1e5581` on 2026-06-22):
+- `unfer/Cargo.toml:19` — `candle-core = { version = "0.8.2", features = ["cuda"] }` (hard CUDA dep). → Stage 1.
+- `fock_sirk/src/forward_sirk.rs` — `solve_forward_sirk(hamiltonian, v_0, shifts, device, brst_charge: Option<&Hamiltonian>) -> candle_core::Result<ForwardSirkResult>` (`:49-55`); `ForwardSirkResult { h_proj, g_matrix, registry, basis_tensors }` (`:8-13`, **no `w_sequence` field — it is a local var dropped after the solve**, Stage 6 must retain it). **The fragile spot is `:140`**: `g_sub.cholesky().expect("Gram matrix must be positive definite")` then `h_proj = L_inv * h_proj_raw * L_inv.adjoint()` (`:139-143`) → Stage 2 replaces this. Simplified BRST subtraction at `:67-78` → Stage 3. `time_evolve(t)` (`:18-25`) returns coefficients **in the Cholesky-orthonormalized basis** with no path back to a `QuantumState`; reconstruction = `w_sequence · (L_inv.adjoint() · coeffs)` today, `w_sequence · (W · coeffs)` after Stage 2 whitening → Stages 2 & 6 depend on this.
+- `nested_fock_algebra/src/lib.rs` — `QuantumState` (`:52`) has `inner_product` + `scale_and_add` but **no `norm`/`prune`/`truncate_top_k`/`len`** (Stage 4 adds them); `Operator` (`:107`) and `Hamiltonian` (`:325`) have **no `adjoint()`** yet (Stage 3 adds them). `MatrixFreeOperator` trait (`fock_sirk/src/lib.rs:13`) provides a free `norm` helper but not as a `QuantumState` method.
+- `nested_fock_algebra/src/cas.rs` — entry points are `compile_expression(expr: Expression) -> Hamiltonian` (`:17`, **by value**) and `compile_to_fock(input: &str)` (`:11`); `compile_latex(latex: &str) -> Hamiltonian` lives in `latex.rs:5`. Stage 4 wraps these with bounded variants.
+- `nested_fock_algebra/src/models.rs` — builtins: `navier_stokes_hamiltonian(nu) -> Expression` (`:59`, **returns an Expression — needs `compile_expression`**), `navier_stokes_brst() -> Expression` (`:79`, the BRST charge for Stage 3's test), `yang_mills_hamiltonian(g) -> Hamiltonian` (`:144`, direct), `gravity_hamiltonian() -> Hamiltonian` (`:275`, direct). Stage 8 adds a `harmonic_chain` builtin here.
+- `nested_fock_algebra/src/unit_tests.rs:148-154` — `test_navier_stokes_compiles` is **fully commented out (a vacuous pass)**, not merely disabled; Stage 5 must make it actually exercise the solver, not just uncomment.
+- `australVM/safestos/cranelift/src/cps.rs:8-20` — `check_cedar_permission(caller, callee)`: whitelists `__`/`au_` prefixes and self-calls, otherwise asks Cedar `(caller, "Call", callee)`. So new `uk_*` kernel symbols flow through authorization automatically.
+- `australVM/safestos/cranelift/src/lib.rs:53-88` — `cranelift_init()` registers native symbols via `builder.symbol("au_print_int", ...)`. Kernel functions register here.
+- `velysterm/crates/mathed_core/src/markers.rs` — `PropKind` closed enum with `of(name)` mapper; adding kinds is additive. `semantics.rs` has `SemanticIndex`/`build_index`. 51 core tests.
+
+## Architecture (target state)
+
+```
+$ROOT/
+├── unfer/                      # THE KERNEL (this repo)
+│   ├── nested_fock_algebra/    # existing symbolic engine (improved)
+│   ├── fock_sirk/              # existing SIRK solver (improved, CPU-capable)
+│   ├── unfer_protocol/   NEW   # serde types, UK-#### codes, repair hints — THE contract
+│   ├── prob_kernel/      NEW   # Born-rule layer: Session, EventPredicate, condition()
+│   ├── unfer_ffi/        NEW   # cdylib/staticlib/rlib, handle-based C ABI: uk_*()
+│   └── docs/             NEW   # MODULES.md, PROTOCOL.md, ARCHITECTURE.md
+├── australVM/                  # MODULE RUNTIME
+│   └── safestos/cranelift/     # + auth.rs (AuthorizationEngine trait; Cedar optional
+│                               #   feature), + uk_* symbols in JIT, + modhost bin
+├── velysterm/                  # UI / AI INTERFACE
+│   └── crates/kernel_client/ NEW  # worker-thread client + parsers + unfer_agent bin
+│       crates/mathed_core/     # + PropKinds: Model, Prior, Event, Prob
+│       crates/mathed/          # + kernel_sys.rs Bevy bridge, overlay results
+└── demo_module/          NEW   # first module: module.toml + Austral cell + run_demo.sh
+```
+
+Data flow: modules (Austral cells) and velysterm both drive `prob_kernel::Session`; modules via the `uk_*` C ABI inside the safestos JIT (calls authorized per-module by manifest grants), velysterm via direct Rust dependency (same Session code path). AI agents use the `unfer_agent` NDJSON binary.
+
+Repos stay separate; sibling checkout layout is required and asserted by build scripts. Path deps: cranelift → `../../../unfer/unfer_ffi` (feature `unfer-kernel`), kernel_client → `../../../unfer/{prob_kernel,unfer_protocol}`.
+
+---
+
+## Workstream A — improve the unfer core (Stages 1–6)
+
+### Stage 1: Make CUDA optional (CPU fallback) — DO FIRST
+Nothing downstream is testable without CUDA-free builds.
+- `unfer/Cargo.toml`: drop `features = ["cuda"]` from the workspace `candle-core` dep.
+- `unfer/fock_sirk/Cargo.toml`: add `[features] default = []`, `cuda = ["candle-core/cuda"]`.
+- New `unfer/fock_sirk/src/device.rs`: `pub fn best_device() -> Device` — `Device::cuda_if_available(0)` under `#[cfg(feature = "cuda")]`, else `Device::Cpu`. Export from `lib.rs`. Update all 7 `fock_sirk/examples/*.rs` to use it.
+- **Accept:** `cargo test --workspace` passes without CUDA; `cargo build -p fock_sirk --features cuda` compiles (run only if nvcc present).
+
+### Stage 2: Gram-matrix robustness (replace bare Cholesky)
+- New `unfer/fock_sirk/src/linalg.rs`:
+  - `pub enum SirkError` (thiserror): `GramDegenerate { max_eig: f64 }`, `StateExplosion { components: usize, limit: usize }`, `BrstNotConverged { residual: f64 }`, `Numeric(String)`.
+  - `pub struct Whitening { pub w: DMatrix<Complex64>, pub rank: usize, pub dropped: usize }`
+  - `pub fn whiten_gram(g: &DMatrix<Complex64>, rel_tol: f64) -> Result<Whitening, SirkError>` — Hermitian eigendecomposition; keep eigenpairs `λ_i > rel_tol·λ_max`; `W = U_r Λ_r^{-1/2}`; `GramDegenerate` only at rank 0.
+- `forward_sirk.rs:139-143`: delete the `cholesky().expect(...)` + `L_inv` block (the `:140` panic site) and form `H̃ = Wᴴ H_proj_raw W` from `whiten_gram(g_sub, rel_tol)`; add `pub rank: usize` to `ForwardSirkResult`. **Store `W` too** (new field `pub w_whiten: DMatrix<Complex64>`) — `time_evolve` and Stage 6 reconstruction need it to map whitened-basis coefficients back to `w_sequence` coordinates (replacing the old `L_inv.adjoint()` mapping).
+- **Tests:** duplicated Krylov vector → reduced rank, no panic; harmonic-oscillator energy unchanged vs Stage-1 baseline within 1e-8.
+- **Accept:** `cargo test -p fock_sirk`.
+
+### Stage 3: Proper BRST orthogonal projection
+- `nested_fock_algebra/src/lib.rs`: add `Operator::adjoint()` (Create↔Annihilate) and `Hamiltonian::adjoint()` (conjugate coeffs, reverse + adjoint op strings).
+- New `unfer/fock_sirk/src/brst.rs`: `pub fn project_physical(w: &QuantumState, q: &Hamiltonian, tol: f64, max_iter: usize) -> Result<QuantumState, SirkError>` — `P w = w − Q† z` with `(Q Q†) z = Q w` solved matrix-free by CG (operator `x ↦ Q(Q†(x))` via `apply`). Needs `Hamiltonian::adjoint()` for `Q†` (add it to `lib.rs` per the anchor above).
+- `forward_sirk.rs:67-78`: replace the subtraction hack with `project_physical(...)`.
+- **Tests** (use `models::navier_stokes_brst()` compiled via `compile_expression`, or construct a small nilpotent `Q` directly — `yang_mills_hamiltonian` has no separately exported BRST charge): `‖Q(Pw)‖ < 1e-8`; idempotence `‖P(Pw) − Pw‖ < 1e-10`; self-adjointness `⟨v,Pw⟩=⟨Pv,w⟩`.
+- **Accept:** `cargo test -p fock_sirk brst`.
+
+### Stage 4: State-explosion bounds + bounded CAS expansion
+- `nested_fock_algebra/src/lib.rs`: add `QuantumState::{norm, prune(eps), truncate_top_k(k), len}`.
+- `forward_sirk.rs`: add `pub struct SirkOpts { prune_eps: f64, max_components: Option<usize>, brst_tol: f64 }` (with `Default`) and `solve_forward_sirk_with_opts(...) -> Result<ForwardSirkResult, SirkError>`. Change `solve_forward_sirk` to return `Result<_, SirkError>` and **update all callers** (discover with `grep -rn solve_forward_sirk`— 7 examples + tests). After each `w_k`: `prune(opts.prune_eps)`; over `max_components` → `SirkError::StateExplosion`.
+- `nested_fock_algebra/src/cas.rs`: add `ExpansionLimits { max_terms }` + `compile_expression_bounded(...) -> Result<Hamiltonian, CasError>` (`CasError::TermExplosion`, thiserror) by threading a counter through existing expansion. **Do not restructure quadratic-ordering logic**; existing `compile_expression` delegates with `usize::MAX`.
+- **Tests:** high-order expression returns `TermExplosion` (not OOM); energies stable under `prune_eps = 1e-12`.
+- **Accept:** `cargo test --workspace`.
+
+### Stage 5: Re-enable the Navier-Stokes test
+- `test_navier_stokes_compiles` (`unit_tests.rs:148-154`) is currently a **vacuous pass** (entire body commented out) — uncommenting alone is not enough; the test must actually run. Rebuild it to: `compile_expression_bounded(navier_stokes_hamiltonian(1e-3), &limits)` (note the builtin returns an `Expression`, so it must be compiled), assert non-empty terms, then drive `solve_forward_sirk_with_opts` with explicit `SirkOpts` + `Device::Cpu` and assert it returns `Ok` (or a *typed* `CasError::TermExplosion`/`SirkError`, not a panic). Expected original root cause: term explosion or Gram degeneracy (both handled by Stages 2 & 4). Fix `models.rs::navier_stokes_hamiltonian` only if a genuine math bug surfaces; document in the test comment.
+- **Accept:** `cargo test -p nested_fock_algebra -- navier` passes with a non-trivial assertion in < 120 s on CPU.
+
+### Stage 6: Restarted Krylov + state reconstruction (long-running evolution)
+- `forward_sirk.rs`: add `pub w_sequence: Vec<QuantumState>` to `ForwardSirkResult` (currently dropped after the solve — keep the `Vec` built at `:57-81`). Add `pub fn reconstruct(&self, coeffs: &DVector<Complex64>) -> QuantumState` — maps whitened-basis `coeffs` through the stored `w_whiten` (Stage 2) to `w_sequence` coordinates, then linearly combines `w_sequence` via `scale_and_add`. (This is the missing inverse of `time_evolve`, which today returns coefficients with no way back to a `QuantumState`.)
+- New `unfer/fock_sirk/src/evolve.rs`: `pub fn evolve_restarted(h, psi0, t, n_restarts, krylov_dim, device, brst, opts) -> Result<QuantumState, SirkError>` — loop: SIRK build → `time_evolve(t/n_restarts)` → `reconstruct` → `prune` → feed result back as the next `psi0` → repeat.
+- **Tests:** norm conservation `|‖ψ(t)‖−1| < 1e-6` across restarts (2-mode model); agreement with single-shot evolution within 1e-6 for small t.
+- **Accept:** `cargo test -p fock_sirk evolve`.
+
+---
+
+## Workstream B — protocol, Born-rule layer, FFI (Stages 7–9)
+
+### Stage 7: `unfer_protocol` crate (the single shared contract)
+- New `unfer/unfer_protocol/` (deps: serde, serde_json, thiserror only; add to workspace members). Files: `src/lib.rs`, `src/codes.rs`, `src/types.rs`.
+- `types.rs` (all serde):
+  - `ModelSpec { hamiltonian: HamiltonianSpec, prior: PriorSpec, solver: SolverSpec }`
+  - `HamiltonianSpec::{ Builtin { name, params }, Latex(String), Terms(Vec<TermSpec>) }`; `TermSpec { coeff_re, coeff_im, ops: Vec<OpSpec> }`; `OpSpec { kind: OpKind, level: Level, mode: u32 }`
+  - `PriorSpec::{ Vacuum, Bosons(Vec<(u32,u32)>), Fermions(Vec<u32>), Superposition(Vec<(f64,f64,PriorSpec)>) }`
+  - `EventPredicate::{ BosonModeTotal { mode, cmp: Cmp, value }, FermionModePresent { mode }, BosonUniverseCount { cmp, value }, FermionUniverseCount { cmp, value }, Vacuum, And(Vec<_>), Or(Vec<_>), Not(Box<_>) }`; `Cmp::{Eq,Ge,Le,Gt,Lt}`
+  - `SolverSpec { krylov_dim, prune_eps, max_components, restarts, device: DeviceSpec }`
+  - Agent envelopes: `AgentRequest { id, op, params }`, `AgentResponse { id, ok, result, error: Option<Diagnostic> }`
+- `codes.rs`: `Code(u32)` consts + `pub fn all() -> &'static [(u32, &'static str, &'static str)]` registry. Allocation: **1xxx validation** (1001 BadJson, 1002 UnknownBuiltinModel, 1003 BadEventPredicate, 1004 BadHandle, 1005 BufferTooSmall) · **2xxx solver** (2001 GramDegenerate, 2002 StateExplosion, 2003 ZeroProbabilityCondition, 2004 BrstNotConverged, 2005 CasTermExplosion) · **3xxx resource** (3001 CudaUnavailable, 3002 OutOfMemoryBudget) · **4xxx auth** (4001 CallDenied) · **5xxx internal** (5000 Internal).
+  - `Diagnostic { code, name, message, severity, hints: Vec<RepairHint>, data }`; `RepairHint { kind: HintKind, target, suggestion }`; `HintKind::{ReplaceValue, SetParam, ReduceScope, IncreaseLimit, UseAlternativeOp}` — this is the Zero-language-style machine surface.
+- **Tests:** serde round-trip every type; code uniqueness in `all()`.
+- **Accept:** `cargo test -p unfer_protocol`.
+
+### Stage 8: `prob_kernel` crate (Born-rule layer)
+- New `unfer/prob_kernel/` (deps: nested_fock_algebra, fock_sirk, unfer_protocol, num-complex, serde_json, thiserror). Files: `src/{lib,session,event,build,error}.rs`.
+- `event.rs`: `pub fn matches(outer: &OuterState, pred: &EventPredicate) -> bool` — pure, exhaustive; `BosonModeTotal` sums `inner.modes[mode] × universe_count` over the outer bosonic map.
+- `build.rs`: `build_hamiltonian(spec) -> Result<Hamiltonian, KernelError>` — `Builtin` dispatches to `models::{yang_mills, navier_stokes, gravity}_hamiltonian` + add a simple `harmonic_chain` builtin to `models.rs` for tests/demos; `Latex` via existing `compile_latex` (feature passthrough); `Terms` = direct construction (explosion-safe path). `build_prior(spec) -> Result<QuantumState, _>`.
+- `session.rs` (long-running handle, not batch):
+  ```rust
+  pub struct Session { /* state, hamiltonian, opts, device, t_now */ }
+  impl Session {
+      pub fn new(spec: &ModelSpec) -> Result<Self, KernelError>;
+      pub fn set_prior(&mut self, p: &PriorSpec) -> Result<(), KernelError>;
+      pub fn set_hamiltonian(&mut self, h: &HamiltonianSpec) -> Result<(), KernelError>;
+      pub fn evolve(&mut self, t: f64) -> Result<EvolveReport, KernelError>;   // evolve_restarted
+      pub fn probability(&self, e: &EventPredicate) -> Result<f64, KernelError>;
+      pub fn condition(&mut self, e: &EventPredicate) -> Result<f64, KernelError>; // returns prior P(e); UK-2003 if mass < eps
+      pub fn snapshot(&self, top_k: usize) -> StateSummary;
+  }
+  ```
+  `probability(E) = Σ_{s ⊨ E} |⟨s|ψ⟩|² / ‖ψ‖²`; `condition(E)` zeroes non-matching components then renormalizes.
+- `error.rs`: `KernelError` with `From<SirkError>`, `From<CasError>`, and `to_diagnostic() -> Diagnostic` mapping **every** variant to a UK code with ≥1 RepairHint (e.g. StateExplosion → `IncreaseLimit{target:"solver.max_components"}`).
+- **Tests:** probabilities sum to 1 on `harmonic_chain`; `condition(E)` then `probability(E)==1.0`; impossible event → UK-2003 with hint; post-evolve normalization within 1e-6.
+- **Accept:** `cargo test -p prob_kernel` (CPU).
+
+### Stage 9: `unfer_ffi` crate (handle-based C ABI)
+- New `unfer/unfer_ffi/` — `crate-type = ["cdylib", "staticlib", "rlib"]` (rlib so cranelift can take fn pointers via normal Rust dep). Files: `src/lib.rs`, `src/handles.rs`, `include/unfer_kernel.h` (hand-written doc-of-record).
+- Design: all params i64-compatible (ptr+len; `t` goes inside opts JSON — CPS IR calling convention is i64-centric). Return ≥0 = success (handle/byte count); <0 = `-code`. Buffer protocol: return total bytes needed, copy `min(needed, cap)`; caller re-calls with a bigger buffer.
+  ```c
+  int64_t uk_version(void);
+  int64_t uk_init(const uint8_t* cfg_json, int64_t len);
+  int64_t uk_model_create(const uint8_t* spec_json, int64_t len);   // ModelSpec → handle
+  int64_t uk_model_free(int64_t model);
+  int64_t uk_set_prior(int64_t model, const uint8_t* json, int64_t len);
+  int64_t uk_set_hamiltonian(int64_t model, const uint8_t* json, int64_t len);
+  int64_t uk_evolve(int64_t model, const uint8_t* opts_json, int64_t len);   // {"t":1.0,...}
+  int64_t uk_condition(int64_t model, const uint8_t* event_json, int64_t len);
+  int64_t uk_event_probability(int64_t model, const uint8_t* event_json, int64_t len);
+  int64_t uk_observe(int64_t model, const uint8_t* obs_json, int64_t len);
+  int64_t uk_get_result(int64_t model, uint8_t* buf, int64_t cap);
+  int64_t uk_last_error(uint8_t* buf, int64_t cap);
+  int64_t uk_subscribe(int64_t model, const uint8_t* query_json, int64_t len);
+  int64_t uk_poll(int64_t sub, uint8_t* buf, int64_t cap);          // v1: per-model event queue; provisional
+  ```
+- `handles.rs`: `Mutex<HashMap<i64, SessionEntry>>` + monotonic counter; `LAST_ERROR: Mutex<String>`; subscription table.
+- **Tests** (pure Rust calling extern fns with raw pointers): happy path create→prior→evolve→probability→free; bad handle → `-1004`; bad JSON → `-1001` + parseable Diagnostic from `uk_last_error`.
+- **Accept:** `cargo test -p unfer_ffi`; `nm -D target/release/libunfer_ffi.so | grep uk_model_create` finds the symbol.
+
+---
+
+## Workstream C — australVM rewiring + module recipe (Stages 10–13)
+
+### Stage 10: `AuthorizationEngine` trait; Cedar becomes optional
+- New `australVM/safestos/cranelift/src/auth.rs`:
+  ```rust
+  pub enum Decision { Allow, Deny }
+  pub trait AuthorizationEngine: Send + Sync {
+      fn authorize(&self, principal: &str, action: &str, resource: &str) -> Result<Decision, String>;
+  }
+  pub struct AllowAll;
+  pub struct ManifestAuthEngine { grants: HashMap<String, HashSet<String>> } // module → callable uk_* names
+  // from_toml_str, merge; global OnceLock<RwLock<Option<Box<dyn AuthorizationEngine>>>>; set_auth_engine; check()
+  #[no_mangle] pub extern "C" fn safestos_load_auth_manifest(ptr: *const u8, len: usize) -> i64;
+  ```
+  Fallback when no engine installed: Cedar engine if feature `cedar` on, else `AllowAll` with logged warning (preserves current behavior).
+- `cranelift/Cargo.toml`: `cedar-policy` → `optional = true`; `[features] default = ["cedar"]`, `cedar = ["dep:cedar-policy"]`.
+- `policy.rs`: gate behind `#[cfg(feature = "cedar")]`; add `impl AuthorizationEngine for CedarVmEngine`.
+- `cps.rs:8-20`: rename `check_cedar_permission` → `check_call_permission`; keep the `__`/`au_`/self-call short-circuit; body becomes `crate::auth::check(caller, "Call", callee)`. Update all call sites (`grep -rn check_cedar_permission`).
+- **Accept:** crate builds with default features AND `--no-default-features`; existing tests pass; unit test for `ManifestAuthEngine::from_toml_str` grant/deny.
+
+### Stage 11: Register kernel symbols in the JIT
+- `cranelift/Cargo.toml`: `unfer_ffi = { path = "../../../unfer/unfer_ffi", optional = true }`; feature `unfer-kernel = ["dep:unfer_ffi"]` in defaults.
+- `cranelift/src/lib.rs` in `cranelift_init()` after line 72: `#[cfg(feature = "unfer-kernel")]` block with `builder.symbol("uk_<name>", unfer_ffi::uk_<name> as *const u8);` for all 14 functions.
+- **Do NOT add `uk_` to the whitelist in `check_call_permission`** — authorizing kernel calls per-module is the point; modules get access only via manifest grants.
+- **Accept:** builds with default features; `#[test]` calling `unfer_ffi::uk_version()` proves linkage; end-to-end proof lands in Stage 13.
+
+### Stage 12: Austral-side kernel bindings
+- **Gate:** first verify the OCaml toolchain builds (`dune build` / repo's documented command in `$ROOT/australVM`). If it fails, record the blocker and skip to Stage 13's fallback (handwritten CPS test cell).
+- New `australVM/examples/kernel/UnferKernel.aui/.aum`: declare `uk_*` as foreign imports (mirror how `au_print_int` is declared — find with `grep -rn "au_print_int" --include=*.aum --include=*.aui`), exposing typed wrappers (`kernelVersion(): Int64`, `kernelModelCreate(spec: Address, len: Int64): Int64`, …). Prefer wrapping the handle in a linear type (no leak/double-free); if that fights the compiler subset, plain Int64 is acceptable v1 — document the choice.
+- **Accept:** module compiles to `.cps`; run through the scheduler prints `uk_version()`.
+
+### Stage 13: Module recipe + demo module + manifest enforcement
+- New sibling folder `$ROOT/demo_module/`:
+  - `module.toml` (normative example):
+    ```toml
+    [module]
+    name = "demo_module"
+    version = "0.1.0"
+    archetypes = ["prior_provider", "actor"]
+    entry = "src/DemoModule"
+    [grants]
+    kernel = ["uk_version","uk_model_create","uk_set_prior","uk_evolve","uk_event_probability","uk_get_result","uk_last_error","uk_model_free"]
+    ```
+  - `src/DemoModule.aui/.aum`: imports `UnferKernel`; `act` creates a `harmonic_chain` model, evolves t=1.0, reads `P(BosonModeTotal{mode:0,Eq,1})`, prints scaled integer. `build.sh` asserts sibling layout, invokes the austral compiler.
+- Host: new `australVM/safestos/cranelift/src/bin/modhost.rs` — loads auth manifest(s) via `safestos_load_auth_manifest`, reads `.cps` cells, JIT-compiles, runs entry export. (Avoids touching `scheduler.c`; hot-swap stays available via existing `__au_swap_module`/CellDescriptor.)
+- `run_demo.sh` in demo_module: build unfer_ffi → build cranelift crate → compile module (or use prebuilt CPS fallback from Stage 12 gate) → run modhost with manifest. Include the **negative test**: removing `uk_evolve` from grants must fail with the UK-4001 denial.
+- New `unfer/docs/MODULES.md` — THE recipe for future modules: folder layout, manifest schema, the three archetype contracts (exact Austral signatures: PriorProvider `provide_prior(model: Int64): Int64`; DataSource `update(model: Int64, payload: Address, len: Int64): Int64`; Actor `act(model: Int64): Int64`), lifecycle (build → load → grant → run → hot-swap → unload), and a numbered "add a module" checklist.
+- **Accept:** `bash $ROOT/demo_module/run_demo.sh` prints a probability in [0,1]; grant-removal negative test fails with denial.
+
+---
+
+## Workstream D — velysterm UI + AI interface (Stages 14–17)
+
+### Stage 14: `kernel_client` crate
+- New `velysterm/crates/kernel_client/` (workspace member; deps: `prob_kernel`/`unfer_protocol` via `../../../unfer/...` path deps, serde_json; **no Bevy**).
+- `src/lib.rs`: `KernelClient` with one worker thread + mpsc channels (kernel solves must never block the frame loop). `BlockRequest { block_id: u64, op: KernelOp }`; `KernelOp::{ DefineModel(ModelSpec), Evolve{model_block,t}, Probability{model_block,event}, Condition{model_block,event} }`; `BlockResponse { block_id, result: Result<Value, Diagnostic> }`; `submit`/`try_recv`. Worker owns `HashMap<u64, Session>` keyed by model-block id, with spec-hash caching (skip rebuild if unchanged).
+- `src/parse.rs`: `parse_model(text) -> Result<ModelSpec, Diagnostic>` — narrow v1: builtin syntax `name(key: value, ...)` (e.g. `yang_mills(g: 0.5)`) or `latex"..."` routed to `HamiltonianSpec::Latex`. `parse_event(text)` mini-grammar: `n(mode) == k`, `occupied(mode)`, `vacuum`, combinators `& | !`. Parse errors carry UK-1002/1003 with `ReplaceValue` hints listing valid names. **No general Typst-math→Hamiltonian compiler in v1** — documented extension point.
+- **Accept:** `cargo test -p kernel_client` (parser cases + worker integration test on CPU).
+
+### Stage 15: PropKinds in mathed_core (safe while M2 is unfinished)
+- `velysterm/crates/mathed_core/src/markers.rs`: add `PropKind::{Model, Prior, Event, Prob}` + `of()` mappings ("model"/"prior"/"event"/"prob"), following the existing `\function(#1,#2)`/`extra_args` statement convention (e.g. `\prob(heads)(#1…#2)`).
+- `mathed_core/src/semantics.rs`: in `build_index`, collect `KernelStatement { kind, block, name: Option<String>, body_text, span }` into `SemanticIndex.kernel_statements` (reuse existing segment/extra_args extraction).
+- **Accept:** `cargo test -p mathed_core` — new test: doc with `\model`/`\event`/`\prob` yields 3 KernelStatements with correct kinds/names/spans; existing 51 tests stay green.
+
+### Stage 16: Bevy bridge (GUI)
+- New `velysterm/crates/mathed/src/kernel_sys.rs`: `#[derive(Resource)] KernelBridge { client, results: HashMap<u64, Result<Value, Diagnostic>>, inflight, spec_hashes }`; systems `dispatch_kernel_requests` (after `sync_blocks`; uses block-damage tracking to resubmit only changed blocks) and `apply_kernel_results` (drains `try_recv`).
+- `mathed/src/main.rs` (~10 lines only — M2 is in flux, keep the diff minimal): insert resource, register both systems; extend `draw_overlay` to render `= 0.4231` (green) or `UK-2003` + first hint (red) next to each `\prob` span.
+- **Accept:** `cargo build -p mathed`; unit tests for the pure helper `statements_needing_dispatch(index, damage, spec_hashes) -> Vec<BlockRequest>`; manual smoke (type a model + prob statement, see the number) recorded in notes — not blocking.
+
+### Stage 17: AI-agent machine interface (Zero-language spirit)
+- New `velysterm/crates/kernel_client/src/bin/unfer_agent.rs`: NDJSON request/response loop on stdin/stdout. Ops: `version`, `create_model`, `set_prior`, `evolve`, `condition`, `probability`, `snapshot`, `list_codes` (dumps `codes::all()` so agents self-document). Every failure carries a `Diagnostic` with hints; unknown op → UK-1001 + `ReplaceValue` hint listing valid ops.
+- New `unfer/docs/PROTOCOL.md`: envelope schema, every op with request/response examples, full code table, repair-hint semantics, rules for allocating new codes.
+- **Accept:** `printf '{"id":"1","op":"version","params":{}}\n' | cargo run -p kernel_client --bin unfer_agent` → `{"id":"1","ok":true,...}`; bad op → `ok:false`, code 1001, non-empty hints; integration test via `std::process::Command`.
+
+---
+
+## Stage 18: Documentation, extension points, final verification
+- New `unfer/docs/ARCHITECTURE.md`: system diagram, sibling-folder convention, cross-repo dependency graph, and four documented extension points with checklists:
+  1. **Add a module** → MODULES.md checklist.
+  2. **Add a kernel op** → protocol type + Session method + `uk_` shim + JIT symbol + agent op + code allocation (file list).
+  3. **Add a PropKind** → markers.rs + semantics.rs + kernel_sys.rs.
+  4. **Add a builtin model** → `models.rs` + `build.rs` dispatch + parser name list.
+- Update `AGENTS.md` in all three repos (new crates/layout; note resolved limitations: BRST, Cholesky, explosion bounds, NS test, CPU fallback).
+
+## Final verification (run all)
+1. `cargo test --workspace` in `$ROOT/unfer` (CPU, no CUDA needed)
+2. `cargo test` in `$ROOT/australVM/safestos/cranelift` (default features) and `cargo build --no-default-features`
+3. `cargo test --workspace` in `$ROOT/velysterm`
+4. `bash $ROOT/demo_module/run_demo.sh` (incl. UK-4001 negative test)
+5. `unfer_agent` NDJSON echo test (Stage 17 acceptance)
+
+## Risks & mitigations
+- **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.
+- **OCaml toolchain may not build** — Stage 12 has an explicit verify-first gate; Stage 13's `modhost.rs` + prebuilt/handwritten CPS fallback keeps workstream C completable regardless.
+- **velysterm M2 unfinished** — Stages 14–15 touch only stable `mathed_core` + a new crate; the only M2-adjacent edit is ~10 isolated lines in `main.rs` (Stage 16).
+- **cas.rs fragility** — Stage 4 adds a bounded wrapper around existing expansion; no restructuring; existing tests untouched.
+- **`solve_forward_sirk` signature change** — Stage 4 explicitly updates all callers in one commit (`grep -rn solve_forward_sirk`).
+- **Cross-repo path deps** — build scripts assert the sibling layout with a clear error; `unfer-kernel` and `cedar` are cargo features so australVM still builds standalone.

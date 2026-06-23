@@ -1,0 +1,21 @@
+[package]
+name = "prob_kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Born-rule probability layer over the unfer QFT kernel."
+
+[features]
+default = []
+latex = ["nested_fock_algebra/latex"]
+cuda = ["fock_sirk/cuda", "candle-core/cuda"]
+
+[dependencies]
+nested_fock_algebra = { path = "../nested_fock_algebra" }
+fock_sirk = { path = "../fock_sirk" }
+unfer_protocol = { path = "../unfer_protocol" }
+num-complex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+candle-core = { workspace = true }

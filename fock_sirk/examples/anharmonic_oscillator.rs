@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
         .collect();
 
     // 4. Solve
-    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    let device = fock_sirk::best_device();
     let sirk_result = solve_forward_sirk(
         &hamiltonian, 
         &initial_state, 

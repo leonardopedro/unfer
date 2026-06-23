@@ -1,6 +1,6 @@
 use fock_sirk::{solve_forward_sirk};
 use nested_fock_algebra::{
-    compile_expression, QuantumState, Operator, InnerBosonicState
+    QuantumState, Operator, InnerBosonicState
 };
 use nested_fock_algebra::models::{navier_stokes_hamiltonian, navier_stokes_brst};
 use candle_core::Device;
@@ -10,13 +10,10 @@ fn main() -> anyhow::Result<()> {
     // 1. Viscosity parameter
     let nu = 1e-3;
 
-    // 2. Generate Symbolic Expressions
-    let h_expr = navier_stokes_hamiltonian(nu);
-    let brst_expr = navier_stokes_brst();
-    
-    println!("Compiling Navier-Stokes Hamiltonian...");
-    let hamiltonian = compile_expression(h_expr);
-    let brst_charge = compile_expression(brst_expr);
+    // 2. Build Hamiltonians directly (bypasses Expression::expand())
+    println!("Building Navier-Stokes Hamiltonian...");
+    let hamiltonian = navier_stokes_hamiltonian(nu);
+    let brst_charge = navier_stokes_brst();
 
     // 3. Define Initial State: 
     // Creating a state that mimics a specific velocity configuration
@@ -39,7 +36,7 @@ fn main() -> anyhow::Result<()> {
         .map(|j| Complex64::new(0.0, 0.1 * (j as f64)))
         .collect();
 
-    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    let device = fock_sirk::best_device();
     
     // 6. Execute Forward SIRK over the Phase Space
     println!("Solving Navier-Stokes dynamics over probability space...");

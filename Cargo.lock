@@ -1852,6 +1852,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prob_kernel"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "fock_sirk",
+ "nested_fock_algebra",
+ "num-complex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "unfer_protocol",
+]
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2680,6 +2694,25 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "ug",
+]
+
+[[package]]
+name = "unfer_ffi"
+version = "0.1.0"
+dependencies = [
+ "prob_kernel",
+ "serde",
+ "serde_json",
+ "unfer_protocol",
+]
+
+[[package]]
+name = "unfer_protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

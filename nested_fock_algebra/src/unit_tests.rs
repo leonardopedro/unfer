@@ -147,10 +147,13 @@ mod algebra_tests {
 
     #[test]
     fn test_navier_stokes_compiles() {
-        // let nu = 1e-3;
-        // let h_expr = navier_stokes_hamiltonian(nu);
-        // let h = compile_expression(h_expr);
-        // assert!(h.terms.len() > 0, "Navier-Stokes should compile to non-empty Hamiltonian");
+        // Stage 5: built directly as Hamiltonian terms — no Expression::expand() hang.
+        // The original Expression-based version hung in .expand() on the high-order
+        // symbolic tree; building terms directly (like yang_mills_hamiltonian) avoids
+        // the combinatorial explosion entirely (AGENTS.md).
+        let nu = 1e-3;
+        let h = navier_stokes_hamiltonian(nu);
+        assert!(!h.terms.is_empty(), "Navier-Stokes should produce a non-empty Hamiltonian");
     }
 
     // ── Inner product / norm ────────────────────────────────────────

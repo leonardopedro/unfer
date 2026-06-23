@@ -6,6 +6,35 @@ use quantrs2_symengine_pure::{
 };
 use std::collections::{BTreeMap, HashMap};
 
+/// A cap on how many flat terms a symbolic expansion may produce before the
+/// compiler aborts (instead of exhausting memory). High-order operator products
+/// distribute combinatorially: `(a+b)^n` yields `2^n` terms.
+#[derive(Debug, Clone)]
+pub struct ExpansionLimits {
+    pub max_terms: usize,
+}
+
+impl ExpansionLimits {
+    /// No limit — reproduces the historical unchecked behavior.
+    pub fn unbounded() -> Self {
+        Self { max_terms: usize::MAX }
+    }
+}
+
+impl Default for ExpansionLimits {
+    fn default() -> Self {
+        Self { max_terms: 100_000 }
+    }
+}
+
+/// Errors from bounded symbolic compilation.
+#[derive(Debug, thiserror::Error)]
+pub enum CasError {
+    #[error("expression expansion exploded: {terms} terms exceed the limit of {limit}")]
+    TermExplosion { terms: usize, limit: usize },
+    #[error("failed to parse expression: {0}")]
+    Parse(String),
+}
 
 /// Compile a symbolic operator expression string into a Hamiltonian.
 pub fn compile_to_fock(input: &str) -> Hamiltonian {
@@ -14,29 +43,46 @@ pub fn compile_to_fock(input: &str) -> Hamiltonian {
 }
 
 /// Compile a pre-constructed symbolic Expression into a Hamiltonian.
+///
+/// This is the historical unchecked entry point; it delegates to
+/// [`compile_expression_bounded`] with no term limit. Prefer the bounded
+/// variant when compiling untrusted or high-order expressions.
 pub fn compile_expression(expr: Expression) -> Hamiltonian {
+    compile_expression_bounded(expr, &ExpansionLimits::unbounded())
+        .expect("compile_expression: unbounded expansion cannot exceed the limit")
+}
+
+/// Compile a symbolic Expression into a Hamiltonian, aborting with
+/// [`CasError::TermExplosion`] if the distribution would exceed `limits.max_terms`.
+pub fn compile_expression_bounded(
+    expr: Expression,
+    limits: &ExpansionLimits,
+) -> Result<Hamiltonian, CasError> {
     // 1. We ONLY call .expand(), NOT .simplify().
     // The default simplify() pass assumes commutativity (a*b = b*a),
     // which would destroy the physics of non-commuting operators.
     // .expand() preserves order while distributing (a+b)*c -> a*c + b*c.
     let expanded = expr.expand();
-    
+
     // 2. Parse the resulting order-preserved S-expression string.
     let s_expr = expanded.to_string();
-    let mut ast = SExpr::parse(&s_expr).expect("Failed to parse internal S-expression");
+    let mut ast = SExpr::parse(&s_expr)
+        .ok_or_else(|| CasError::Parse("failed to parse internal S-expression".into()))?;
     // 3. Apply quadratic ordering logic before distribution
     ast.apply_quadratic_ordering();
 
-    // 4. Distribute all multiplication and division over sums to get a flat list of terms.
-    let distributed = ast.distribute();
+    // 4. Distribute multiplication/division over sums to a flat term list,
+    //    guarding against combinatorial explosion.
+    let mut memo = HashMap::new();
+    let distributed = ast.distribute_bounded(limits.max_terms, &mut memo)?;
 
     // 5. Map each term to a physical Hamiltonian term.
     let mut terms = Vec::new();
     for term in distributed {
         if let Some(h_term) = term.to_hamiltonian_term() {
             // QUADRATIC ORDERING ENFORCEMENT:
-            // If the term is a pure scalar (no operators) and we are applying 
-            // the Quadratic Ordering from the PDF, we drop it to ensure 
+            // If the term is a pure scalar (no operators) and we are applying
+            // the Quadratic Ordering from the PDF, we drop it to ensure
             // the vacuum expectation value <0|H|0> = 0.
             if h_term.1.is_empty() {
                 continue; // Drop pure constant terms (zero-point energy)
@@ -45,7 +91,7 @@ pub fn compile_expression(expr: Expression) -> Hamiltonian {
         }
     }
 
-    Hamiltonian { terms }
+    Ok(Hamiltonian { terms })
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +225,96 @@ impl SExpr {
         res
     }
 
+
+    /// Distribute Mul/Div/Neg/Pow over Add like [`distribute_memo`], but abort
+    /// with [`CasError::TermExplosion`] once the running term count would exceed
+    /// `limit`. The multiplicative `*` branch is guarded *before* forming the
+    /// cartesian product, so a `2^n` blow-up is caught early rather than after
+    /// allocating the whole product.
+    fn distribute_bounded(
+        &self,
+        limit: usize,
+        memo: &mut HashMap<String, Vec<SExpr>>,
+    ) -> Result<Vec<SExpr>, CasError> {
+        let key = format!("{:?}", self);
+        if let Some(res) = memo.get(&key) {
+            return Ok(res.clone());
+        }
+
+        let res = match self {
+            SExpr::List(op, args) if op == "+" => {
+                let mut acc = Vec::new();
+                for a in args {
+                    acc.extend(a.distribute_bounded(limit, memo)?);
+                    if acc.len() > limit {
+                        return Err(CasError::TermExplosion { terms: acc.len(), limit });
+                    }
+                }
+                acc
+            }
+            SExpr::List(op, args) if op == "*" => {
+                let mut distributed_args: Vec<Vec<SExpr>> = Vec::with_capacity(args.len());
+                for a in args {
+                    distributed_args.push(a.distribute_bounded(limit, memo)?);
+                }
+                let mut results = vec![SExpr::List("*".to_string(), vec![])];
+                for arg_set in distributed_args {
+                    let projected = results.len().saturating_mul(arg_set.len());
+                    if projected > limit {
+                        return Err(CasError::TermExplosion { terms: projected, limit });
+                    }
+                    let mut next_results = Vec::new();
+                    for r in results {
+                        for a in &arg_set {
+                            let mut new_args = match r.clone() {
+                                SExpr::List(_, current_args) => current_args,
+                                _ => vec![r.clone()],
+                            };
+                            new_args.push(a.clone());
+                            next_results.push(SExpr::List("*".to_string(), new_args));
+                        }
+                    }
+                    results = next_results;
+                }
+                results
+            }
+            SExpr::List(op, args) if op == "/" => {
+                let numerators = args[0].distribute_bounded(limit, memo)?;
+                let denominator = if args.len() > 1 { args[1].clone() } else { SExpr::Num(1.0) };
+                numerators
+                    .into_iter()
+                    .map(|n| SExpr::List("/".to_string(), vec![n, denominator.clone()]))
+                    .collect()
+            }
+            SExpr::List(op, args) if op == "neg" => args[0]
+                .distribute_bounded(limit, memo)?
+                .into_iter()
+                .map(|a| SExpr::List("neg".to_string(), vec![a]))
+                .collect(),
+            SExpr::List(op, args) if op == "^" => {
+                if let SExpr::Num(n) = &args[1] {
+                    let p = *n as i32;
+                    if p > 0 {
+                        let mut chain = args[0].clone();
+                        for _ in 1..p {
+                            chain = SExpr::List("*".to_string(), vec![chain, args[0].clone()]);
+                        }
+                        return chain.distribute_bounded(limit, memo);
+                    } else if p == 0 {
+                        return Ok(vec![SExpr::Num(1.0)]);
+                    }
+                }
+                vec![self.clone()]
+            }
+            _ => vec![self.clone()],
+        };
+
+        if res.len() > limit {
+            return Err(CasError::TermExplosion { terms: res.len(), limit });
+        }
+        memo.insert(key, res.clone());
+        Ok(res)
+    }
 
     fn to_hamiltonian_term(&self) -> Option<(Complex64, Vec<Operator>)> {
         let mut coeff = Complex64::new(1.0, 0.0);

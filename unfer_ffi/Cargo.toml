@@ -1,0 +1,20 @@
+[package]
+name = "unfer_ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Handle-based C ABI for the unfer probability kernel."
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = []
+latex = ["prob_kernel/latex"]
+cuda = ["prob_kernel/cuda"]
+
+[dependencies]
+prob_kernel = { path = "../prob_kernel" }
+unfer_protocol = { path = "../unfer_protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
         .collect();
 
     // 4. Solve using Inverse-Free Forward SIRK
-    let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+    let device = fock_sirk::best_device();
     println!("Using device: {:?}", device);
 
     let sirk_result = solve_forward_sirk(

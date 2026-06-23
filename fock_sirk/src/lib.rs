@@ -1,10 +1,19 @@
 pub mod registry;
 pub mod tensor_state;
 pub mod forward_sirk;
+pub mod device;
+pub mod linalg;
+pub mod brst;
+pub mod evolve;
 
 pub use registry::StateDictionary;
 pub use tensor_state::TensorState;
-pub use forward_sirk::{solve_forward_sirk, ForwardSirkResult};
+pub use forward_sirk::{
+    solve_forward_sirk, solve_forward_sirk_with_opts, ForwardSirkResult, SirkOpts,
+};
+pub use device::best_device;
+pub use linalg::{whiten_gram, SirkError, Whitening, GRAM_REL_TOL};
+pub use evolve::evolve_restarted;
 
 use nested_fock_algebra::{QuantumState, Hamiltonian};
 use num_complex::Complex64;
