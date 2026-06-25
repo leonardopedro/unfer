@@ -1,10 +1,8 @@
-use fock_sirk::{solve_forward_sirk};
-use nested_fock_algebra::{
-    compile_expression, QuantumState, Operator, InnerBosonicState
-};
-use nested_fock_algebra::field_theory::{hermitian_field, conjugate_momentum};
-use quantrs2_symengine_pure::Expression;
+use fock_sirk::solve_forward_sirk;
+use nested_fock_algebra::field_theory::{conjugate_momentum, hermitian_field};
+use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, compile_expression};
 use num_complex::Complex64;
+use quantrs2_symengine_pure::Expression;
 
 /// Generates the Hamiltonian for a 0D Free Electromagnetic Field
 /// H = 1/2 \pi^2 + 1/2 B^2
@@ -12,15 +10,15 @@ use num_complex::Complex64;
 /// We'll map A -> hermitian_field and \pi -> conjugate_momentum.
 fn free_em_hamiltonian() -> Expression {
     let mut h = Expression::zero();
-    
+
     // For 3 spatial components (i = 0, 1, 2)
     for i in 0..3 {
         let pi_i = conjugate_momentum(i);
         let a_i = hermitian_field(i); // Represents B field in 0D mapped abstraction
-        
+
         let kinetic = Expression::from(0.5) * pi_i.clone() * pi_i;
         let magnetic = Expression::from(0.5) * a_i.clone() * a_i;
-        
+
         h = h + kinetic + magnetic;
     }
     h
@@ -28,13 +26,13 @@ fn free_em_hamiltonian() -> Expression {
 
 fn main() -> anyhow::Result<()> {
     println!("--- Free Electromagnetic Field Validation ---");
-    
+
     let h_expr = free_em_hamiltonian();
     println!("Symbolic Hamiltonian: {}", h_expr);
-    
+
     // Compile using the standard CAS engine
     let hamiltonian = compile_expression(h_expr);
-    
+
     // Initial state: 1 photon in polarization mode 0
     let mut inner_b = InnerBosonicState::vacuum();
     inner_b.modes.insert(0, 1);
@@ -46,18 +44,15 @@ fn main() -> anyhow::Result<()> {
         .collect();
 
     let device = fock_sirk::best_device();
-    
-    let sirk_result = solve_forward_sirk(
-        &hamiltonian,
-        &v_0,
-        &shifts,
-        &device,
-        None
-    ).expect("Failed to solve SIRK");
 
+    let sirk_result = solve_forward_sirk(&hamiltonian, &v_0, &shifts, &device, None)
+        .expect("Failed to solve SIRK");
 
-    println!("Krylov subspace built. Reduced matrix size: {}x{}", 
-        sirk_result.h_proj.nrows(), sirk_result.h_proj.ncols());
+    println!(
+        "Krylov subspace built. Reduced matrix size: {}x{}",
+        sirk_result.h_proj.nrows(),
+        sirk_result.h_proj.ncols()
+    );
 
     // Evaluate the unitary time-evolution: e^{-i H t}
     let t = 1.0;

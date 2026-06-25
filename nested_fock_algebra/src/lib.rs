@@ -12,7 +12,9 @@ pub struct InnerBosonicState {
 
 impl InnerBosonicState {
     pub fn vacuum() -> Self {
-        Self { modes: BTreeMap::new() }
+        Self {
+            modes: BTreeMap::new(),
+        }
     }
 }
 
@@ -20,12 +22,14 @@ impl InnerBosonicState {
 /// Deriving Ord and PartialOrd guarantees Canonical Ordering for Fermion signs.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InnerFermionicState {
-    pub modes: BTreeSet<u32>, 
+    pub modes: BTreeSet<u32>,
 }
 
 impl InnerFermionicState {
     pub fn vacuum() -> Self {
-        Self { modes: BTreeSet::new() }
+        Self {
+            modes: BTreeSet::new(),
+        }
     }
 }
 
@@ -63,7 +67,9 @@ impl QuantumState {
     /// The zero vector (no components) — the additive identity, distinct from
     /// the physical vacuum `|0>`.
     pub fn zero() -> Self {
-        Self { components: FxHashMap::default() }
+        Self {
+            components: FxHashMap::default(),
+        }
     }
 
     pub fn apply(&self, op: &Operator) -> Self {
@@ -90,7 +96,10 @@ impl QuantumState {
 
     pub fn scale_and_add(&mut self, other: &Self, scale: Complex64) {
         for (state, val) in &other.components {
-            let entry = self.components.entry(state.clone()).or_insert(Complex64::new(0.0, 0.0));
+            let entry = self
+                .components
+                .entry(state.clone())
+                .or_insert(Complex64::new(0.0, 0.0));
             *entry += scale * val;
         }
         self.components.retain(|_, v| v.norm_sqr() > 1e-24);
@@ -123,8 +132,7 @@ impl QuantumState {
         if self.components.len() <= k {
             return;
         }
-        let mut entries: Vec<(OuterState, Complex64)> =
-            self.components.drain().collect();
+        let mut entries: Vec<(OuterState, Complex64)> = self.components.drain().collect();
         entries.sort_by(|a, b| {
             b.1.norm_sqr()
                 .partial_cmp(&a.1.norm_sqr())
@@ -149,13 +157,13 @@ impl QuantumState {
 
 #[derive(Debug, Clone)]
 pub enum Operator {
-    InnerBosonCreate(u32),       // a_dag_i
-    InnerBosonAnnihilate(u32),   // a_i
-    InnerFermionCreate(u32),     // c_dag_i
-    InnerFermionAnnihilate(u32), // c_i
-    OuterBosonCreate(InnerBosonicState), // A_dag_phi
-    OuterBosonAnnihilate(InnerBosonicState), // A_phi
-    OuterFermionCreate(InnerFermionicState), // C_dag_phi
+    InnerBosonCreate(u32),                       // a_dag_i
+    InnerBosonAnnihilate(u32),                   // a_i
+    InnerFermionCreate(u32),                     // c_dag_i
+    InnerFermionAnnihilate(u32),                 // c_i
+    OuterBosonCreate(InnerBosonicState),         // A_dag_phi
+    OuterBosonAnnihilate(InnerBosonicState),     // A_phi
+    OuterFermionCreate(InnerFermionicState),     // C_dag_phi
     OuterFermionAnnihilate(InnerFermionicState), // C_phi
 }
 
@@ -181,36 +189,39 @@ impl Operator {
         for (outer_basis, &amplitude) in &state.components {
             match self {
                 // --- OUTER OPERATORS (Direct manipulation of universes) ---
-                
                 Operator::OuterBosonCreate(target_inner) => {
                     let mut new_outer = outer_basis.clone();
                     let n = *new_outer.bosonic.get(target_inner).unwrap_or(&0);
                     new_outer.bosonic.insert(target_inner.clone(), n + 1);
                     let multiplier = ((n + 1) as f64).sqrt();
-                    *next_components.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
-                        += amplitude * multiplier;
+                    *next_components
+                        .entry(new_outer)
+                        .or_insert(Complex64::new(0.0, 0.0)) += amplitude * multiplier;
                 }
                 Operator::OuterBosonAnnihilate(target_inner) => {
                     if let Some(&n) = outer_basis.bosonic.get(target_inner)
-                        && n > 0 {
-                            let mut new_outer = outer_basis.clone();
-                            if n == 1 {
-                                new_outer.bosonic.remove(target_inner);
-                            } else {
-                                new_outer.bosonic.insert(target_inner.clone(), n - 1);
-                            }
-                            let multiplier = (n as f64).sqrt();
-                            *next_components.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
-                                += amplitude * multiplier;
+                        && n > 0
+                    {
+                        let mut new_outer = outer_basis.clone();
+                        if n == 1 {
+                            new_outer.bosonic.remove(target_inner);
+                        } else {
+                            new_outer.bosonic.insert(target_inner.clone(), n - 1);
                         }
+                        let multiplier = (n as f64).sqrt();
+                        *next_components
+                            .entry(new_outer)
+                            .or_insert(Complex64::new(0.0, 0.0)) += amplitude * multiplier;
+                    }
                 }
                 Operator::OuterFermionCreate(target_inner) => {
                     if !outer_basis.fermionic.contains(target_inner) {
                         let mut new_outer = outer_basis.clone();
                         new_outer.fermionic.insert(target_inner.clone());
                         let sign = self.fermion_sign(outer_basis, target_inner);
-                        *next_components.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
-                            += amplitude * sign;
+                        *next_components
+                            .entry(new_outer)
+                            .or_insert(Complex64::new(0.0, 0.0)) += amplitude * sign;
                     }
                 }
                 Operator::OuterFermionAnnihilate(target_inner) => {
@@ -218,60 +229,86 @@ impl Operator {
                         let mut new_outer = outer_basis.clone();
                         new_outer.fermionic.remove(target_inner);
                         let sign = self.fermion_sign(outer_basis, target_inner);
-                        *next_components.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
-                            += amplitude * sign;
+                        *next_components
+                            .entry(new_outer)
+                            .or_insert(Complex64::new(0.0, 0.0)) += amplitude * sign;
                     }
                 }
 
                 // --- INNER OPERATORS (Transitions within universes) ---
-                
                 Operator::InnerBosonCreate(mode) => {
-                    self.apply_inner_one_body_bosonic(outer_basis, amplitude, &mut next_components, |inner| {
-                        let mut next_inner = inner.clone();
-                        let n = *next_inner.modes.get(mode).unwrap_or(&0);
-                        next_inner.modes.insert(*mode, n + 1);
-                        Some((next_inner, ((n + 1) as f64).sqrt()))
-                    });
+                    self.apply_inner_one_body_bosonic(
+                        outer_basis,
+                        amplitude,
+                        &mut next_components,
+                        |inner| {
+                            let mut next_inner = inner.clone();
+                            let n = *next_inner.modes.get(mode).unwrap_or(&0);
+                            next_inner.modes.insert(*mode, n + 1);
+                            Some((next_inner, ((n + 1) as f64).sqrt()))
+                        },
+                    );
                 }
                 Operator::InnerBosonAnnihilate(mode) => {
-                    self.apply_inner_one_body_bosonic(outer_basis, amplitude, &mut next_components, |inner| {
-                        if let Some(&n) = inner.modes.get(mode)
-                            && n > 0 {
+                    self.apply_inner_one_body_bosonic(
+                        outer_basis,
+                        amplitude,
+                        &mut next_components,
+                        |inner| {
+                            if let Some(&n) = inner.modes.get(mode)
+                                && n > 0
+                            {
                                 let mut next_inner = inner.clone();
-                                if n == 1 { next_inner.modes.remove(mode); }
-                                else { next_inner.modes.insert(*mode, n - 1); }
+                                if n == 1 {
+                                    next_inner.modes.remove(mode);
+                                } else {
+                                    next_inner.modes.insert(*mode, n - 1);
+                                }
                                 return Some((next_inner, (n as f64).sqrt()));
                             }
-                        None
-                    });
+                            None
+                        },
+                    );
                 }
                 Operator::InnerFermionCreate(mode) => {
-                    self.apply_inner_one_body_fermionic(outer_basis, amplitude, &mut next_components, |inner| {
-                        if !inner.modes.contains(mode) {
-                            let mut next_inner = inner.clone();
-                            next_inner.modes.insert(*mode);
-                            let sign = inner.modes.iter().take_while(|&m| m < mode).count();
-                            let s = if sign % 2 == 1 { -1.0 } else { 1.0 };
-                            return Some((next_inner, s));
-                        }
-                        None
-                    });
+                    self.apply_inner_one_body_fermionic(
+                        outer_basis,
+                        amplitude,
+                        &mut next_components,
+                        |inner| {
+                            if !inner.modes.contains(mode) {
+                                let mut next_inner = inner.clone();
+                                next_inner.modes.insert(*mode);
+                                let sign = inner.modes.iter().take_while(|&m| m < mode).count();
+                                let s = if sign % 2 == 1 { -1.0 } else { 1.0 };
+                                return Some((next_inner, s));
+                            }
+                            None
+                        },
+                    );
                 }
                 Operator::InnerFermionAnnihilate(mode) => {
-                    self.apply_inner_one_body_fermionic(outer_basis, amplitude, &mut next_components, |inner| {
-                        if inner.modes.contains(mode) {
-                            let mut next_inner = inner.clone();
-                            next_inner.modes.remove(mode);
-                            let sign = inner.modes.iter().take_while(|&m| m < mode).count();
-                            let s = if sign % 2 == 1 { -1.0 } else { 1.0 };
-                            return Some((next_inner, s));
-                        }
-                        None
-                    });
+                    self.apply_inner_one_body_fermionic(
+                        outer_basis,
+                        amplitude,
+                        &mut next_components,
+                        |inner| {
+                            if inner.modes.contains(mode) {
+                                let mut next_inner = inner.clone();
+                                next_inner.modes.remove(mode);
+                                let sign = inner.modes.iter().take_while(|&m| m < mode).count();
+                                let s = if sign % 2 == 1 { -1.0 } else { 1.0 };
+                                return Some((next_inner, s));
+                            }
+                            None
+                        },
+                    );
                 }
             }
         }
-        QuantumState { components: next_components }
+        QuantumState {
+            components: next_components,
+        }
     }
 
     fn apply_inner_one_body_bosonic<F>(
@@ -279,22 +316,27 @@ impl Operator {
         outer: &OuterState,
         amp: Complex64,
         next: &mut FxHashMap<OuterState, Complex64>,
-        mut transition: F
-    ) where F: FnMut(&InnerBosonicState) -> Option<(InnerBosonicState, f64)> {
+        mut transition: F,
+    ) where
+        F: FnMut(&InnerBosonicState) -> Option<(InnerBosonicState, f64)>,
+    {
         for (phi, &count) in &outer.bosonic {
             if let Some((phi_prime, factor)) = transition(phi) {
                 if phi == &phi_prime {
                     let new_outer = outer.clone();
-                    *next.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
-                        += amp * factor * (count as f64);
+                    *next.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) +=
+                        amp * factor * (count as f64);
                 } else {
                     let mut new_outer = outer.clone();
-                    if count == 1 { new_outer.bosonic.remove(phi); }
-                    else { new_outer.bosonic.insert(phi.clone(), count - 1); }
-                    
+                    if count == 1 {
+                        new_outer.bosonic.remove(phi);
+                    } else {
+                        new_outer.bosonic.insert(phi.clone(), count - 1);
+                    }
+
                     let n = *new_outer.bosonic.get(&phi_prime).unwrap_or(&0);
                     new_outer.bosonic.insert(phi_prime, n + 1);
-                    
+
                     let multiplier = (count as f64).sqrt() * ((n + 1) as f64).sqrt() * factor;
                     *next.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) += amp * multiplier;
                 }
@@ -307,8 +349,10 @@ impl Operator {
         outer: &OuterState,
         amp: Complex64,
         next: &mut FxHashMap<OuterState, Complex64>,
-        mut transition: F
-    ) where F: FnMut(&InnerFermionicState) -> Option<(InnerFermionicState, f64)> {
+        mut transition: F,
+    ) where
+        F: FnMut(&InnerFermionicState) -> Option<(InnerFermionicState, f64)>,
+    {
         for phi in &outer.fermionic {
             if let Some((phi_prime, factor)) = transition(phi) {
                 if phi == &phi_prime {
@@ -318,12 +362,17 @@ impl Operator {
                     let mut new_outer = outer.clone();
                     new_outer.fermionic.remove(phi);
                     new_outer.fermionic.insert(phi_prime.clone());
-                    
+
                     let s1 = outer.fermionic.iter().take_while(|&s| s < phi).count();
-                    let s2 = new_outer.fermionic.iter().take_while(|&s| s < &phi_prime).count();
+                    let s2 = new_outer
+                        .fermionic
+                        .iter()
+                        .take_while(|&s| s < &phi_prime)
+                        .count();
                     let sign = if (s1 + s2) % 2 == 1 { -1.0 } else { 1.0 };
-                    
-                    *next.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) += amp * factor * sign;
+
+                    *next.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) +=
+                        amp * factor * sign;
                 }
             }
         }
@@ -346,16 +395,16 @@ mod tests {
         let vac = InnerBosonicState::vacuum();
         let mut initial = QuantumState::vacuum();
         initial = initial.apply(&Operator::OuterBosonCreate(vac.clone()));
-        
+
         let op_inner = Operator::InnerBosonCreate(0);
         let final_state = initial.apply(&op_inner);
-        
+
         assert_eq!(final_state.components.len(), 1);
         let (outer, &amp) = final_state.components.iter().next().unwrap();
-        
+
         // amp should be 1.0 * sqrt(1_outer) * sqrt(0+1_inner) = 1.0
         assert!((amp.re - 1.0).abs() < 1e-10);
-        
+
         let phi_prime = outer.bosonic.keys().next().unwrap();
         assert_eq!(phi_prime.modes.get(&0), Some(&1));
     }
@@ -365,14 +414,14 @@ mod tests {
         let phi1 = InnerFermionicState::vacuum();
         let mut phi2 = InnerFermionicState::vacuum();
         phi2.modes.insert(0); // |1_0>
-        
+
         let state = QuantumState::vacuum()
             .apply(&Operator::OuterFermionCreate(phi2.clone()))
             .apply(&Operator::OuterFermionCreate(phi1.clone()));
-            
+
         let op_ann_phi2 = Operator::OuterFermionAnnihilate(phi2);
         let final_state = state.apply(&op_ann_phi2);
-        
+
         let &amp = final_state.components.values().next().unwrap();
         assert!((amp.re + 1.0).abs() < 1e-10); // Expected -1.0
     }
@@ -400,7 +449,9 @@ impl Hamiltonian {
     }
 
     pub fn apply(&self, state: &QuantumState) -> QuantumState {
-        let mut final_state = QuantumState { components: FxHashMap::default() };
+        let mut final_state = QuantumState {
+            components: FxHashMap::default(),
+        };
         for (coeff, ops) in &self.terms {
             let mut current_state = state.clone();
             for op in ops.iter().rev() {
@@ -414,15 +465,14 @@ impl Hamiltonian {
 
 pub mod cas;
 pub use cas::{
-    compile_expression, compile_expression_bounded, compile_to_fock, compile_to_fock_bounded,
-    CasError, ExpansionLimits,
+    CasError, ExpansionLimits, compile_expression, compile_expression_bounded, compile_to_fock,
+    compile_to_fock_bounded,
 };
 
 #[cfg(feature = "latex")]
 pub mod latex;
 #[cfg(feature = "latex")]
 pub use latex::compile_latex;
-
 
 pub mod field_theory;
 pub use field_theory::*;

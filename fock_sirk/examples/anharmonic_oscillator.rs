@@ -1,7 +1,7 @@
 use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::{
-    compile_expression, Expression, InnerBosonicState, Operator, QuantumState,
-    symengine::quantum::operators::{position_operator, momentum_operator},
+    Expression, InnerBosonicState, Operator, QuantumState, compile_expression,
+    symengine::quantum::operators::{momentum_operator, position_operator},
 };
 use num_complex::Complex64;
 
@@ -19,16 +19,16 @@ fn main() -> anyhow::Result<()> {
         .substitute(&Expression::symbol("a_dag"), &Expression::symbol("c_0"));
 
     let lambda = 0.1;
-    let h_expr = (p.clone().pow(&Expression::int(2)) / Expression::from(2.0)) 
-               + (x.clone().pow(&Expression::int(2)) / Expression::from(2.0)) 
-               + (Expression::from(lambda) * x.pow(&Expression::int(4)));
+    let h_expr = (p.clone().pow(&Expression::int(2)) / Expression::from(2.0))
+        + (x.clone().pow(&Expression::int(2)) / Expression::from(2.0))
+        + (Expression::from(lambda) * x.pow(&Expression::int(4)));
 
     println!("Anharmonic Oscillator Hamiltonian (Symbolic): {}", h_expr);
     let hamiltonian = compile_expression(h_expr);
-    
+
     // 2. Define Initial State
-    let initial_state = QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let initial_state =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
 
     // 3. Define Shifts
     let m_dim = 6;
@@ -38,18 +38,15 @@ fn main() -> anyhow::Result<()> {
 
     // 4. Solve
     let device = fock_sirk::best_device();
-    let sirk_result = solve_forward_sirk(
-        &hamiltonian, 
-        &initial_state, 
-        &shifts,
-        &device,
-        None
-    ).expect("Failed to solve SIRK");
+    let sirk_result = solve_forward_sirk(&hamiltonian, &initial_state, &shifts, &device, None)
+        .expect("Failed to solve SIRK");
 
+    println!(
+        "Krylov subspace built. Matrix size: {}x{}",
+        sirk_result.h_proj.nrows(),
+        sirk_result.h_proj.ncols()
+    );
 
-    println!("Krylov subspace built. Matrix size: {}x{}", 
-        sirk_result.h_proj.nrows(), sirk_result.h_proj.ncols());
-    
     // 5. Time Evolution
     let t = 0.5;
     let coefficients = sirk_result.time_evolve(t);

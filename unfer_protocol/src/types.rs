@@ -91,15 +91,9 @@ impl OpSpec {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PriorSpec {
     Vacuum,
-    Bosons {
-        modes: Vec<(u32, u32)>,
-    },
-    Fermions {
-        modes: Vec<u32>,
-    },
-    Superposition {
-        terms: Vec<SuperpositionTerm>,
-    },
+    Bosons { modes: Vec<(u32, u32)> },
+    Fermions { modes: Vec<u32> },
+    Superposition { terms: Vec<SuperpositionTerm> },
 }
 
 impl PriorSpec {
@@ -142,32 +136,14 @@ pub enum Cmp {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventPredicate {
-    BosonModeTotal {
-        mode: u32,
-        cmp: Cmp,
-        value: u32,
-    },
-    FermionModePresent {
-        mode: u32,
-    },
-    BosonUniverseCount {
-        cmp: Cmp,
-        value: u32,
-    },
-    FermionUniverseCount {
-        cmp: Cmp,
-        value: u32,
-    },
+    BosonModeTotal { mode: u32, cmp: Cmp, value: u32 },
+    FermionModePresent { mode: u32 },
+    BosonUniverseCount { cmp: Cmp, value: u32 },
+    FermionUniverseCount { cmp: Cmp, value: u32 },
     Vacuum,
-    And {
-        parts: Vec<EventPredicate>,
-    },
-    Or {
-        parts: Vec<EventPredicate>,
-    },
-    Not {
-        inner: Box<EventPredicate>,
-    },
+    And { parts: Vec<EventPredicate> },
+    Or { parts: Vec<EventPredicate> },
+    Not { inner: Box<EventPredicate> },
 }
 
 impl EventPredicate {
@@ -199,7 +175,6 @@ pub enum DeviceSpec {
         device_id: u32,
     },
 }
-
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SolverSpec {

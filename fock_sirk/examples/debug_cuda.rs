@@ -12,7 +12,10 @@ fn main() {
         }
     }
 
-    println!("cuda_if_available(0) returns: {:?}", Device::cuda_if_available(0));
+    println!(
+        "cuda_if_available(0) returns: {:?}",
+        Device::cuda_if_available(0)
+    );
 }
 
 #[cfg(not(feature = "cuda"))]

@@ -1,5 +1,5 @@
-use num_complex::Complex64;
 use crate::{Hamiltonian, Operator};
+use num_complex::Complex64;
 
 // ─────────────────────────────────────────────
 // Direct Hamiltonian term builder helpers
@@ -11,7 +11,10 @@ use crate::{Hamiltonian, Operator};
 fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(1.0, 0.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -19,7 +22,10 @@ fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
 fn momentum_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(0.0, 1.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(0.0, -1.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(0.0, -1.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -212,7 +218,9 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
             for j in 0..3 {
                 for k in 0..3 {
                     let eps = epsilon3(i, j, k);
-                    if eps == 0.0 { continue; }
+                    if eps == 0.0 {
+                        continue;
+                    }
 
                     // Linear part: ∂_j A^a_k → one hermitian field op pair
                     let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
@@ -233,23 +241,37 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
             for j in 0..3 {
                 for k in 0..3 {
                     let eps_jk = epsilon3(i, j, k);
-                    if eps_jk == 0.0 { continue; }
+                    if eps_jk == 0.0 {
+                        continue;
+                    }
                     for b_idx in 0..n_colors {
                         for c_idx in 0..n_colors {
                             let fabc = su3_f(a, b_idx, c_idx);
-                            if fabc.abs() < 1e-15 { continue; }
+                            if fabc.abs() < 1e-15 {
+                                continue;
+                            }
                             for j2 in 0..3 {
                                 for k2 in 0..3 {
                                     let eps_j2k2 = epsilon3(i, j2, k2);
-                                    if eps_j2k2 == 0.0 { continue; }
+                                    if eps_j2k2 == 0.0 {
+                                        continue;
+                                    }
                                     for b2 in 0..n_colors {
                                         for c2 in 0..n_colors {
                                             let fabc2 = su3_f(a, b2, c2);
-                                            if fabc2.abs() < 1e-15 { continue; }
+                                            if fabc2.abs() < 1e-15 {
+                                                continue;
+                                            }
                                             // -½ * (½g)^2 * eps * eps * f * f * A^b_j A^c_k A^b2_j2 A^c2_k2
-                                            let nl_coeff = -0.5 * (0.5 * g).powi(2)
-                                                * eps_jk * eps_j2k2 * fabc * fabc2;
-                                            if nl_coeff.abs() < 1e-30 { continue; }
+                                            let nl_coeff = -0.5
+                                                * (0.5 * g).powi(2)
+                                                * eps_jk
+                                                * eps_j2k2
+                                                * fabc
+                                                * fabc2;
+                                            if nl_coeff.abs() < 1e-30 {
+                                                continue;
+                                            }
                                             let coeff = Complex64::new(nl_coeff, 0.0);
                                             let m1 = (j * n_colors + b_idx) as u32;
                                             let m2 = (k * n_colors + c_idx) as u32;
@@ -260,9 +282,20 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
                                                 for (c2f, o2) in field_ops(m2) {
                                                     for (c3f, o3) in field_ops(m3) {
                                                         for (c4f, o4) in field_ops(m4) {
-                                                            let c_total = coeff * c1f * c2f * c3f * c4f;
-                                                            if c_total.norm_sqr() < 1e-30 { continue; }
-                                                            terms.push((c_total, vec![o1.clone(), o2.clone(), o3.clone(), o4.clone()]));
+                                                            let c_total =
+                                                                coeff * c1f * c2f * c3f * c4f;
+                                                            if c_total.norm_sqr() < 1e-30 {
+                                                                continue;
+                                                            }
+                                                            terms.push((
+                                                                c_total,
+                                                                vec![
+                                                                    o1.clone(),
+                                                                    o2.clone(),
+                                                                    o3.clone(),
+                                                                    o4.clone(),
+                                                                ],
+                                                            ));
                                                         }
                                                     }
                                                 }
@@ -280,12 +313,16 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
             for j in 0..3 {
                 for k in 0..3 {
                     let eps = epsilon3(i, j, k);
-                    if eps == 0.0 { continue; }
+                    if eps == 0.0 {
+                        continue;
+                    }
                     let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
                     for b_idx in 0..n_colors {
                         for c_idx in 0..n_colors {
                             let fabc = su3_f(a, b_idx, c_idx);
-                            if fabc.abs() < 1e-15 { continue; }
+                            if fabc.abs() < 1e-15 {
+                                continue;
+                            }
                             let nl_base = -0.5 * g * eps * fabc; // -1 * ½ * L*NL * 2 = -L*NL
                             let coeff = Complex64::new(nl_base, 0.0);
                             let mode_b = (j * n_colors + b_idx) as u32;
@@ -295,8 +332,13 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
                                 for (cb, ob) in field_ops(mode_b) {
                                     for (cc, oc) in field_ops(mode_c) {
                                         let c_total = coeff * cl * cb * cc;
-                                        if c_total.norm_sqr() < 1e-30 { continue; }
-                                        terms.push((c_total, vec![ol.clone(), ob.clone(), oc.clone()]));
+                                        if c_total.norm_sqr() < 1e-30 {
+                                            continue;
+                                        }
+                                        terms.push((
+                                            c_total,
+                                            vec![ol.clone(), ob.clone(), oc.clone()],
+                                        ));
                                     }
                                 }
                             }

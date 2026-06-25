@@ -80,7 +80,11 @@ pub fn whiten_gram(g: &DMatrix<Complex64>, rel_tol: f64) -> Result<Whitening, Si
         }
     }
 
-    Ok(Whitening { w, rank, dropped: n - rank })
+    Ok(Whitening {
+        w,
+        rank,
+        dropped: n - rank,
+    })
 }
 
 #[cfg(test)]

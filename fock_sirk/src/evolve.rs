@@ -10,7 +10,7 @@ use candle_core::Device;
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use num_complex::Complex64;
 
-use crate::forward_sirk::{solve_forward_sirk_with_opts, SirkOpts};
+use crate::forward_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use crate::linalg::SirkError;
 
 /// Evolve `psi0` under `h` for total time `t`, using `n_restarts` Krylov restarts
@@ -88,8 +88,8 @@ mod tests {
     fn norm_conserved_across_restarts() {
         let device = Device::Cpu;
         let h = hopping_hamiltonian();
-        let v0 = QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
 
         let opts = SirkOpts::default();
         let psi_t = evolve_restarted(&h, &v0, 1.0, 3, 4, &device, None, &opts).unwrap();
@@ -105,8 +105,8 @@ mod tests {
     fn agrees_with_single_shot_for_small_t() {
         let device = Device::Cpu;
         let h = hopping_hamiltonian();
-        let v0 = QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
 
         let opts = SirkOpts::default();
         let shifts: Vec<Complex64> = (0..4)
@@ -119,8 +119,7 @@ mod tests {
         let psi_single = result.reconstruct(&coeffs_single);
 
         // Restarted: same total time, 2 restarts.
-        let psi_restarted =
-            evolve_restarted(&h, &v0, 0.01, 2, 4, &device, None, &opts).unwrap();
+        let psi_restarted = evolve_restarted(&h, &v0, 0.01, 2, 4, &device, None, &opts).unwrap();
 
         // The two states should agree closely for small t.
         let diff = {

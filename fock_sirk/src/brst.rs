@@ -116,12 +116,7 @@ mod tests {
     #[test]
     fn projection_kills_gauge_part() {
         let (q, s0, s1) = ghost_setup();
-        let w = combine(
-            &s0,
-            Complex64::new(0.6, 0.1),
-            &s1,
-            Complex64::new(0.0, 0.8),
-        );
+        let w = combine(&s0, Complex64::new(0.6, 0.1), &s1, Complex64::new(0.0, 0.8));
         let pw = project_physical(&w, &q, 1e-12, 100).unwrap();
         // Q(Pw) must vanish.
         assert!(norm(&q.apply(&pw)) < 1e-8, "Q(Pw) not annihilated");
@@ -135,7 +130,12 @@ mod tests {
     #[test]
     fn projection_is_idempotent() {
         let (q, s0, s1) = ghost_setup();
-        let w = combine(&s0, Complex64::new(0.3, -0.2), &s1, Complex64::new(0.7, 0.4));
+        let w = combine(
+            &s0,
+            Complex64::new(0.3, -0.2),
+            &s1,
+            Complex64::new(0.7, 0.4),
+        );
         let pw = project_physical(&w, &q, 1e-12, 100).unwrap();
         let ppw = project_physical(&pw, &q, 1e-12, 100).unwrap();
         let mut diff = ppw.clone();
@@ -147,12 +147,20 @@ mod tests {
     fn projection_is_self_adjoint() {
         let (q, s0, s1) = ghost_setup();
         let v = combine(&s0, Complex64::new(0.5, 0.0), &s1, Complex64::new(0.2, 0.3));
-        let w = combine(&s0, Complex64::new(0.1, -0.4), &s1, Complex64::new(0.9, 0.0));
+        let w = combine(
+            &s0,
+            Complex64::new(0.1, -0.4),
+            &s1,
+            Complex64::new(0.9, 0.0),
+        );
         let pv = project_physical(&v, &q, 1e-12, 100).unwrap();
         let pw = project_physical(&w, &q, 1e-12, 100).unwrap();
         // <v, Pw> == <Pv, w>
         let lhs = QuantumState::inner_product(&v, &pw);
         let rhs = QuantumState::inner_product(&pv, &w);
-        assert!((lhs - rhs).norm() < 1e-9, "P is not self-adjoint: {lhs} vs {rhs}");
+        assert!(
+            (lhs - rhs).norm() < 1e-9,
+            "P is not self-adjoint: {lhs} vs {rhs}"
+        );
     }
 }

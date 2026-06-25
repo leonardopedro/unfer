@@ -1,7 +1,7 @@
-use candle_core::{Device, Tensor};
-use num_complex::Complex64;
 use crate::registry::StateDictionary;
+use candle_core::{Device, Tensor};
 use nested_fock_algebra::QuantumState;
+use num_complex::Complex64;
 
 pub struct TensorState {
     pub real: Tensor,
@@ -13,7 +13,7 @@ impl TensorState {
     pub fn from_quantum_state(
         state: &QuantumState,
         registry: &mut StateDictionary,
-        device: &Device
+        device: &Device,
     ) -> candle_core::Result<Self> {
         let dim = registry.len();
         let mut real_vec = vec![0.0f64; dim];
@@ -38,7 +38,7 @@ impl TensorState {
 
     pub fn inner_product(&self, other: &Self) -> candle_core::Result<Complex64> {
         // <self | other> = (self_re * other_re + self_im * other_im) + i(self_re * other_im - self_im * other_re)
-        
+
         let re_re = (&self.real * &other.real)?.sum_all()?.to_scalar::<f64>()?;
         let im_im = (&self.imag * &other.imag)?.sum_all()?.to_scalar::<f64>()?;
         let re_im = (&self.real * &other.imag)?.sum_all()?.to_scalar::<f64>()?;

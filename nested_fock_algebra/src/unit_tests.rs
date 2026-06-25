@@ -1,10 +1,10 @@
 /// Fast unit tests for nested_fock_algebra — no candle/CUDA dependency.
 #[cfg(test)]
 mod algebra_tests {
-    use crate::*;
     use crate::cas::compile_to_fock;
-    use crate::models::{yang_mills_hamiltonian, gravity_hamiltonian, navier_stokes_hamiltonian};
     use crate::compile_expression;
+    use crate::models::{gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian};
+    use crate::*;
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
 
@@ -14,7 +14,10 @@ mod algebra_tests {
     fn test_compile_number_operator() {
         // c_0 * a_0  →  one term with two operators (InnerBosonCreate, InnerBosonAnnihilate)
         let h = compile_to_fock("c_0 * a_0");
-        assert!(!h.terms.is_empty(), "Number operator should produce at least one term");
+        assert!(
+            !h.terms.is_empty(),
+            "Number operator should produce at least one term"
+        );
         let (_, ops) = &h.terms[0];
         assert_eq!(ops.len(), 2);
         assert!(matches!(ops[0], Operator::InnerBosonCreate(0)));
@@ -58,7 +61,9 @@ mod algebra_tests {
         // N|0⟩ = 0  (vacuum has no quanta)
         let h = compile_to_fock("c_0 * a_0");
         let mut vacuum = QuantumState::vacuum();
-        vacuum = vacuum.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        vacuum = vacuum.apply(&Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
 
         let result = h.apply(&vacuum);
         assert!(result.components.is_empty(), "N|vac⟩ should be zero");
@@ -69,7 +74,9 @@ mod algebra_tests {
         // a†_0 |0⟩ = |1_0⟩ — one boson in mode 0
         let h = compile_to_fock("c_0");
         let mut vacuum = QuantumState::vacuum();
-        vacuum = vacuum.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        vacuum = vacuum.apply(&Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         let result = h.apply(&vacuum);
         assert!(!result.components.is_empty(), "a†|vac⟩ should not be empty");
     }
@@ -79,7 +86,9 @@ mod algebra_tests {
         // ⟨0| (c_0 * a_0 + c_1 * a_1) |0⟩ = 0
         let h = compile_to_fock("c_0 * a_0 + c_1 * a_1");
         let mut vac = QuantumState::vacuum();
-        vac = vac.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        vac = vac.apply(&Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         let applied = h.apply(&vac);
         let ip = QuantumState::inner_product(&vac, &applied);
         assert!(ip.norm_sqr() < 1e-20, "⟨0|H|0⟩ should be 0");
@@ -92,7 +101,10 @@ mod algebra_tests {
     fn test_latex_annihilation() {
         use crate::compile_latex;
         let h = compile_latex("a_0");
-        assert!(!h.terms.is_empty(), "LaTeX a_0 should compile to a non-empty Hamiltonian");
+        assert!(
+            !h.terms.is_empty(),
+            "LaTeX a_0 should compile to a non-empty Hamiltonian"
+        );
     }
 
     #[test]
@@ -129,7 +141,10 @@ mod algebra_tests {
         // Just sanity: non-empty, all terms have ops.
         assert!(h.terms.len() > 0, "Yang-Mills(g=0) should have terms");
         for (_, ops) in &h.terms {
-            assert!(!ops.is_empty(), "Each Y-M term must have at least one operator");
+            assert!(
+                !ops.is_empty(),
+                "Each Y-M term must have at least one operator"
+            );
         }
     }
 
@@ -138,11 +153,16 @@ mod algebra_tests {
         // H_YM |vac⟩ should be non-zero (vacuum fluctuations)
         let h = yang_mills_hamiltonian(1.0);
         let mut vac = QuantumState::vacuum();
-        vac = vac.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        vac = vac.apply(&Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         let result = h.apply(&vac);
         // The kinetic term π² = (ia† - ia)² creates/annihilates pairs from vacuum.
         // The result should be non-empty due to creation operators acting on vac.
-        assert!(!result.components.is_empty(), "H_YM|vac⟩ should be non-zero");
+        assert!(
+            !result.components.is_empty(),
+            "H_YM|vac⟩ should be non-zero"
+        );
     }
 
     #[test]
@@ -153,7 +173,10 @@ mod algebra_tests {
         // the combinatorial explosion entirely (AGENTS.md).
         let nu = 1e-3;
         let h = navier_stokes_hamiltonian(nu);
-        assert!(!h.terms.is_empty(), "Navier-Stokes should produce a non-empty Hamiltonian");
+        assert!(
+            !h.terms.is_empty(),
+            "Navier-Stokes should produce a non-empty Hamiltonian"
+        );
     }
 
     // ── Inner product / norm ────────────────────────────────────────
@@ -180,7 +203,7 @@ mod algebra_tests {
 
     #[test]
     fn test_bounded_cas_within_limit_succeeds() {
-        use crate::{compile_to_fock_bounded, ExpansionLimits};
+        use crate::{ExpansionLimits, compile_to_fock_bounded};
         // A small sum distributes to a handful of terms — well under the limit.
         let h = compile_to_fock_bounded("c_0 * a_0 + c_1 * a_1", &ExpansionLimits::default())
             .expect("small expression should compile within the default limit");
@@ -189,7 +212,7 @@ mod algebra_tests {
 
     #[test]
     fn test_bounded_cas_explosion_returns_error() {
-        use crate::{compile_to_fock_bounded, CasError, ExpansionLimits};
+        use crate::{CasError, ExpansionLimits, compile_to_fock_bounded};
         // A product of several sums distributes combinatorially (a+b)(c+d)(e+f)...
         // With a tiny limit, the compiler must abort with TermExplosion rather
         // than exhausting memory.
@@ -200,7 +223,10 @@ mod algebra_tests {
             .expect_err("high-order product should exceed the term limit");
         match err {
             CasError::TermExplosion { terms, limit } => {
-                assert!(terms > limit, "reported terms {terms} should exceed limit {limit}");
+                assert!(
+                    terms > limit,
+                    "reported terms {terms} should exceed limit {limit}"
+                );
                 assert_eq!(limit, 4);
             }
             other => panic!("expected TermExplosion, got {other:?}"),
@@ -209,14 +235,12 @@ mod algebra_tests {
 
     #[test]
     fn test_unbounded_matches_legacy_compile() {
-        use crate::{compile_to_fock, compile_to_fock_bounded, ExpansionLimits};
+        use crate::{ExpansionLimits, compile_to_fock, compile_to_fock_bounded};
         // The unbounded bounded-path must reproduce the historical result exactly.
         let legacy = compile_to_fock("c_0 * a_0 + c_1 * a_1");
-        let bounded = compile_to_fock_bounded(
-            "c_0 * a_0 + c_1 * a_1",
-            &ExpansionLimits::unbounded(),
-        )
-        .expect("unbounded compilation cannot exceed the limit");
+        let bounded =
+            compile_to_fock_bounded("c_0 * a_0 + c_1 * a_1", &ExpansionLimits::unbounded())
+                .expect("unbounded compilation cannot exceed the limit");
         assert_eq!(legacy.terms.len(), bounded.terms.len());
     }
 
@@ -228,7 +252,10 @@ mod algebra_tests {
         let big = s.norm();
         s.prune(1e-6);
         assert!(!s.is_empty(), "large component must survive pruning");
-        assert!((s.norm() - big).abs() < 1e-12, "pruning must not perturb surviving mass");
+        assert!(
+            (s.norm() - big).abs() < 1e-12,
+            "pruning must not perturb surviving mass"
+        );
     }
 
     #[test]
@@ -236,7 +263,9 @@ mod algebra_tests {
         // Build a 2-component state; truncate_top_k(1) keeps the larger one.
         let mut a = QuantumState::vacuum(); // vac, amp 1
         let mut other = QuantumState::vacuum();
-        other = other.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        other = other.apply(&Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         a.scale_and_add(&other, Complex64::new(0.1, 0.0)); // small second component
         assert_eq!(a.len(), 2);
         a.truncate_top_k(1);

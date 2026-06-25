@@ -110,7 +110,10 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
 }
 
 pub fn name_of(code: u32) -> Option<&'static str> {
-    all().iter().find(|(c, _, _)| *c == code).map(|(_, n, _)| *n)
+    all()
+        .iter()
+        .find(|(c, _, _)| *c == code)
+        .map(|(_, n, _)| *n)
 }
 
 pub fn description_of(code: u32) -> Option<&'static str> {

@@ -12,9 +12,7 @@ pub fn matches(outer: &OuterState, pred: &EventPredicate) -> bool {
             let total: u32 = outer
                 .bosonic
                 .iter()
-                .map(|(inner, &count)| {
-                    inner.modes.get(mode).copied().unwrap_or(0) * count
-                })
+                .map(|(inner, &count)| inner.modes.get(mode).copied().unwrap_or(0) * count)
                 .sum();
             cmp_eval(*cmp, total, *value)
         }
@@ -33,21 +31,13 @@ pub fn matches(outer: &OuterState, pred: &EventPredicate) -> bool {
             cmp_eval(*cmp, count, *value)
         }
 
-        EventPredicate::Vacuum => {
-            outer.bosonic.is_empty() && outer.fermionic.is_empty()
-        }
+        EventPredicate::Vacuum => outer.bosonic.is_empty() && outer.fermionic.is_empty(),
 
-        EventPredicate::And { parts } => {
-            parts.iter().all(|p| matches(outer, p))
-        }
+        EventPredicate::And { parts } => parts.iter().all(|p| matches(outer, p)),
 
-        EventPredicate::Or { parts } => {
-            parts.iter().any(|p| matches(outer, p))
-        }
+        EventPredicate::Or { parts } => parts.iter().any(|p| matches(outer, p)),
 
-        EventPredicate::Not { inner } => {
-            !matches(outer, inner)
-        }
+        EventPredicate::Not { inner } => !matches(outer, inner),
     }
 }
 

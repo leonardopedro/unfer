@@ -1,8 +1,7 @@
-use quantrs2_symengine_pure::Expression;
 use crate::{
-    inner_boson_create, inner_boson_annihilate, 
-    inner_fermion_create, inner_fermion_annihilate
+    inner_boson_annihilate, inner_boson_create, inner_fermion_annihilate, inner_fermion_create,
 };
+use quantrs2_symengine_pure::Expression;
 
 /// Represents a Classical/Quantum Field $\phi(x) = a^\dagger + a$
 pub fn hermitian_field(mode: u32) -> Expression {

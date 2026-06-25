@@ -176,18 +176,25 @@ fn round_trip_agent_request() {
 
 #[test]
 fn round_trip_agent_response_ok() {
-    rt(&AgentResponse::ok("req-42", serde_json::json!({"probability": 0.314})));
+    rt(&AgentResponse::ok(
+        "req-42",
+        serde_json::json!({"probability": 0.314}),
+    ));
 }
 
 #[test]
 fn round_trip_agent_response_err() {
-    let diag = Diagnostic::new(Code::STATE_EXPLOSION, "too many components", Severity::Error)
-        .with_hint(RepairHint::new(
-            HintKind::IncreaseLimit,
-            "solver.max_components",
-            "raise the limit or reduce the Krylov dimension",
-        ))
-        .with_data(serde_json::json!({"components": 99999, "limit": 50000}));
+    let diag = Diagnostic::new(
+        Code::STATE_EXPLOSION,
+        "too many components",
+        Severity::Error,
+    )
+    .with_hint(RepairHint::new(
+        HintKind::IncreaseLimit,
+        "solver.max_components",
+        "raise the limit or reduce the Krylov dimension",
+    ))
+    .with_data(serde_json::json!({"components": 99999, "limit": 50000}));
     rt(&AgentResponse::err("req-42", diag));
 }
 
@@ -263,8 +270,7 @@ fn code_uniqueness() {
 
 #[test]
 fn every_const_code_is_registered() {
-    let registered: std::collections::HashSet<u32> =
-        all().iter().map(|(c, _, _)| *c).collect();
+    let registered: std::collections::HashSet<u32> = all().iter().map(|(c, _, _)| *c).collect();
     for code in [
         Code::BAD_JSON,
         Code::UNKNOWN_BUILTIN_MODEL,
@@ -346,12 +352,9 @@ fn json_shape_event_predicate_nested() {
 
 #[test]
 fn json_shape_diagnostic() {
-    let d = Diagnostic::new(Code::STATE_EXPLOSION, "boom", Severity::Fatal)
-        .with_hint(RepairHint::new(
-            HintKind::IncreaseLimit,
-            "solver.max_components",
-            "raise it",
-        ));
+    let d = Diagnostic::new(Code::STATE_EXPLOSION, "boom", Severity::Fatal).with_hint(
+        RepairHint::new(HintKind::IncreaseLimit, "solver.max_components", "raise it"),
+    );
     let v: serde_json::Value = serde_json::to_value(&d).unwrap();
     assert_eq!(v["code"], 2002);
     assert_eq!(v["name"], "StateExplosion");

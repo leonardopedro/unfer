@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI64, Ordering},
     Mutex,
+    atomic::{AtomicBool, AtomicI64, Ordering},
 };
 
 use prob_kernel::Session;
@@ -59,9 +59,10 @@ pub fn with_session_mut<R>(handle: i64, f: impl FnOnce(&mut Session) -> R) -> Op
 pub fn set_last_result(handle: i64, json: String) {
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_mut()
-        && let Some(entry) = map.get_mut(&handle) {
-            entry.last_result = json;
-        }
+        && let Some(entry) = map.get_mut(&handle)
+    {
+        entry.last_result = json;
+    }
 }
 
 pub fn get_last_result(handle: i64) -> Option<String> {
@@ -72,7 +73,9 @@ pub fn get_last_result(handle: i64) -> Option<String> {
 
 pub fn free_session(handle: i64) -> bool {
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
-    guard.as_mut().is_some_and(|map| map.remove(&handle).is_some())
+    guard
+        .as_mut()
+        .is_some_and(|map| map.remove(&handle).is_some())
 }
 
 pub fn set_last_error(diag: &Diagnostic) {

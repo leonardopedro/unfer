@@ -1,13 +1,12 @@
 use candle_core::Device;
-use nested_fock_algebra::{
-    gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
-    yang_mills_hamiltonian, Hamiltonian, InnerBosonicState, InnerFermionicState, Operator,
-    QuantumState,
-};
 #[cfg(feature = "latex")]
 use nested_fock_algebra::compile_latex;
+use nested_fock_algebra::{
+    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
+    gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian, yang_mills_hamiltonian,
+};
 use num_complex::Complex64;
-use unfer_protocol::{HamiltonianSpec, OpKind, OpSpec, Level, PriorSpec, DeviceSpec};
+use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
 
 use crate::error::KernelError;
 
@@ -75,18 +74,10 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
 /// Convert a protocol [`OpSpec`] to a kernel [`Operator`].
 fn op_spec_to_operator(spec: &OpSpec) -> Result<Operator, KernelError> {
     Ok(match (spec.kind, spec.level) {
-        (OpKind::Create, Level::InnerBoson) => {
-            Operator::InnerBosonCreate(spec.mode)
-        }
-        (OpKind::Annihilate, Level::InnerBoson) => {
-            Operator::InnerBosonAnnihilate(spec.mode)
-        }
-        (OpKind::Create, Level::InnerFermion) => {
-            Operator::InnerFermionCreate(spec.mode)
-        }
-        (OpKind::Annihilate, Level::InnerFermion) => {
-            Operator::InnerFermionAnnihilate(spec.mode)
-        }
+        (OpKind::Create, Level::InnerBoson) => Operator::InnerBosonCreate(spec.mode),
+        (OpKind::Annihilate, Level::InnerBoson) => Operator::InnerBosonAnnihilate(spec.mode),
+        (OpKind::Create, Level::InnerFermion) => Operator::InnerFermionCreate(spec.mode),
+        (OpKind::Annihilate, Level::InnerFermion) => Operator::InnerFermionAnnihilate(spec.mode),
         (OpKind::Create, Level::OuterBoson) => {
             let mut s = InnerBosonicState::vacuum();
             s.modes.insert(spec.mode, 1);

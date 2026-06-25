@@ -135,7 +135,10 @@ fn condition_then_probability_is_one() {
     let cond_val: serde_json::Value =
         serde_json::from_str(&cond_json).expect("condition result is JSON");
     let prior_p = cond_val["prior_probability"].as_f64().unwrap();
-    assert!((prior_p - 0.5).abs() < 1e-10, "prior P(E) ~ 0.5, got {prior_p}");
+    assert!(
+        (prior_p - 0.5).abs() < 1e-10,
+        "prior P(E) ~ 0.5, got {prior_p}"
+    );
 
     let (ptr, len) = json_ptr(EVENT_BOSON_GE1.as_bytes());
     let r = uk_event_probability(model, ptr, len);
@@ -144,7 +147,10 @@ fn condition_then_probability_is_one() {
     let prob_val: serde_json::Value =
         serde_json::from_str(&prob_json).expect("probability result is JSON");
     let post_p = prob_val["probability"].as_f64().unwrap();
-    assert!((post_p - 1.0).abs() < 1e-10, "post P(E) ~ 1.0, got {post_p}");
+    assert!(
+        (post_p - 1.0).abs() < 1e-10,
+        "post P(E) ~ 1.0, got {post_p}"
+    );
 
     uk_model_free(model);
 }
@@ -249,7 +255,10 @@ fn set_prior_resets_state() {
     let prob_val: serde_json::Value =
         serde_json::from_str(&prob_json).expect("probability result is JSON");
     let p = prob_val["probability"].as_f64().unwrap();
-    assert!(p < 1e-10, "P(vacuum) should be ~0 after setting boson prior");
+    assert!(
+        p < 1e-10,
+        "P(vacuum) should be ~0 after setting boson prior"
+    );
 
     uk_model_free(model);
 }
@@ -278,7 +287,10 @@ fn unknown_builtin_returns_1002() {
 
     let err_json = read_error();
     let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
-    assert_eq!(diag["code"].as_u64(), Some(Code::UNKNOWN_BUILTIN_MODEL.raw() as u64));
+    assert_eq!(
+        diag["code"].as_u64(),
+        Some(Code::UNKNOWN_BUILTIN_MODEL.raw() as u64)
+    );
 }
 
 #[test]

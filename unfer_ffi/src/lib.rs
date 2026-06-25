@@ -1,6 +1,6 @@
 mod handles;
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use prob_kernel::Session;
 use unfer_protocol::{
@@ -65,7 +65,7 @@ fn parse_json<T: serde::de::DeserializeOwned>(ptr: *const u8, len: i64) -> Resul
                 Code::BAD_JSON,
                 format!("invalid UTF-8: {e}"),
                 Severity::Error,
-            ))
+            ));
         }
     };
     serde_json::from_str(json_str)
@@ -168,8 +168,7 @@ pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
         let report = handles::with_session_mut(model, |s| s.evolve(t))
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
-        let json = serde_json::to_string(&report)
-            .unwrap_or_else(|_| "{}".to_string());
+        let json = serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string());
         handles::set_last_result(model, json);
         Ok(0)
     })
@@ -230,12 +229,10 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
 /// `min(needed, cap)` into `buf`.  Returns <0 (-code) on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_get_result(model: i64, buf: *mut u8, cap: i64) -> i64 {
-    ffi_entry("uk_get_result", || {
-        match handles::get_last_result(model) {
-            Some(json) if !json.is_empty() => Ok(write_buf(buf, cap, &json)),
-            Some(_) => Ok(0),
-            None => Err(bad_handle(model)),
-        }
+    ffi_entry("uk_get_result", || match handles::get_last_result(model) {
+        Some(json) if !json.is_empty() => Ok(write_buf(buf, cap, &json)),
+        Some(_) => Ok(0),
+        None => Err(bad_handle(model)),
     })
 }
 

@@ -1,6 +1,6 @@
 use prob_kernel::{KernelError, Session};
 use unfer_protocol::{
-    Code, Cmp, DeviceSpec, EventPredicate, HamiltonianSpec, HintKind, ModelSpec, PriorSpec,
+    Cmp, Code, DeviceSpec, EventPredicate, HamiltonianSpec, HintKind, ModelSpec, PriorSpec,
     SolverSpec,
 };
 
@@ -47,7 +47,10 @@ fn probabilities_sum_to_one() {
         .expect("prob");
 
     assert!((p_vacuum - 0.5).abs() < 1e-10, "P(vacuum) = {p_vacuum}");
-    assert!((p_not_vacuum - 0.5).abs() < 1e-10, "P(not vacuum) = {p_not_vacuum}");
+    assert!(
+        (p_not_vacuum - 0.5).abs() < 1e-10,
+        "P(not vacuum) = {p_not_vacuum}"
+    );
     assert!(
         (p_vacuum + p_not_vacuum - 1.0).abs() < 1e-10,
         "P(E) + P(¬E) must sum to 1"
@@ -63,7 +66,10 @@ fn probabilities_sum_to_one_mutually_exclusive() {
     let p_one_boson = session.probability(&event_mode0_ge1()).expect("prob");
 
     assert!((p_vacuum - 0.5).abs() < 1e-10, "P(vacuum) = {p_vacuum}");
-    assert!((p_one_boson - 0.5).abs() < 1e-10, "P(boson>=1) = {p_one_boson}");
+    assert!(
+        (p_one_boson - 0.5).abs() < 1e-10,
+        "P(boson>=1) = {p_one_boson}"
+    );
     assert!(
         (p_vacuum + p_one_boson - 1.0).abs() < 1e-10,
         "mutually exclusive events must sum to 1"
@@ -159,10 +165,7 @@ fn post_evolve_probabilities_unchanged_for_eigenstate() {
 #[test]
 fn unknown_builtin_returns_uk1002() {
     let spec = ModelSpec {
-        hamiltonian: HamiltonianSpec::builtin(
-            "nonexistent_model",
-            serde_json::json!({}),
-        ),
+        hamiltonian: HamiltonianSpec::builtin("nonexistent_model", serde_json::json!({})),
         prior: PriorSpec::Vacuum,
         solver: SolverSpec::default(),
     };
@@ -172,9 +175,7 @@ fn unknown_builtin_returns_uk1002() {
     assert_eq!(diag.code, Code::UNKNOWN_BUILTIN_MODEL);
     assert!(!diag.hints.is_empty());
     assert!(
-        diag.hints[0]
-            .suggestion
-            .contains("harmonic_chain"),
+        diag.hints[0].suggestion.contains("harmonic_chain"),
         "hint should list valid builtin names"
     );
 }
@@ -182,10 +183,7 @@ fn unknown_builtin_returns_uk1002() {
 #[test]
 fn bad_builtin_params_returns_uk1001() {
     let spec = ModelSpec {
-        hamiltonian: HamiltonianSpec::builtin(
-            "harmonic_chain",
-            serde_json::json!({"n_modes": 2}),
-        ),
+        hamiltonian: HamiltonianSpec::builtin("harmonic_chain", serde_json::json!({"n_modes": 2})),
         prior: PriorSpec::Vacuum,
         solver: SolverSpec::default(),
     };

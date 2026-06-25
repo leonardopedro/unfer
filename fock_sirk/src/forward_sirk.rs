@@ -1,10 +1,10 @@
-use nested_fock_algebra::{QuantumState, Hamiltonian};
+use crate::linalg::SirkError;
 use crate::registry::StateDictionary;
 use crate::tensor_state::TensorState;
-use crate::linalg::SirkError;
 use candle_core::Device;
-use num_complex::Complex64;
 use nalgebra::DMatrix;
+use nested_fock_algebra::{Hamiltonian, QuantumState};
+use num_complex::Complex64;
 
 /// Default convergence tolerance for the per-step BRST projection.
 const BRST_TOL: f64 = 1e-10;
@@ -80,10 +80,10 @@ impl ForwardSirkResult {
         json!({
             "h_proj": data,
             "m_dim": self.h_proj.nrows()
-        }).to_string()
+        })
+        .to_string()
     }
 }
-
 
 /// Tunable bounds and tolerances for the SIRK solve.
 #[derive(Debug, Clone)]
@@ -99,7 +99,11 @@ pub struct SirkOpts {
 
 impl Default for SirkOpts {
     fn default() -> Self {
-        Self { prune_eps: 1e-12, max_components: None, brst_tol: BRST_TOL }
+        Self {
+            prune_eps: 1e-12,
+            max_components: None,
+            brst_tol: BRST_TOL,
+        }
     }
 }
 
@@ -150,13 +154,16 @@ pub fn solve_forward_sirk_with_opts(
         // Memory hygiene + explosion guard.
         next_w.prune(opts.prune_eps);
         if let Some(limit) = opts.max_components
-            && next_w.len() > limit {
-                return Err(SirkError::StateExplosion { components: next_w.len(), limit });
-            }
+            && next_w.len() > limit
+        {
+            return Err(SirkError::StateExplosion {
+                components: next_w.len(),
+                limit,
+            });
+        }
 
         w_sequence.push(next_w);
     }
-
 
     // 2. Flatten states into a registry for GPU processing
     let mut registry = StateDictionary::new();
@@ -176,14 +183,12 @@ pub fn solve_forward_sirk_with_opts(
     // 3. Compute the Gram matrix G_jk = <w_j | w_k> on the GPU
     // Parallelized using Rayon for Phase 9.1 performance milestone.
     use rayon::prelude::*;
-    
+
     let mut g_matrix = DMatrix::zeros(m + 1, m + 1);
-    
+
     // We compute only the upper triangle due to Hermiticity: G_kj = G_jk*
     // We flatten the indices to use par_iter
-    let indices: Vec<(usize, usize)> = (0..=m)
-        .flat_map(|j| (j..=m).map(move |k| (j, k)))
-        .collect();
+    let indices: Vec<(usize, usize)> = (0..=m).flat_map(|j| (j..=m).map(move |k| (j, k))).collect();
 
     let results: Vec<candle_core::Result<((usize, usize), Complex64)>> = indices
         .into_par_iter()
@@ -200,7 +205,6 @@ pub fn solve_forward_sirk_with_opts(
             g_matrix[(k, j)] = val.conj();
         }
     }
-
 
     // 3. Compute the Gram matrix G_jk = <w_j | w_k> on the GPU
 
@@ -250,8 +254,8 @@ mod tests {
     fn rank_deficient_gram_no_panic() {
         let device = Device::Cpu;
         let h = Hamiltonian { terms: vec![] };
-        let v0 = QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
         let res = solve_forward_sirk(&h, &v0, &shifts(4), &device, None)
             .expect("whitening must not panic on a rank-deficient Gram");
         assert_eq!(res.rank, 1, "all Krylov vectors are parallel => rank 1");
@@ -290,7 +294,11 @@ mod tests {
         let v0 = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(a));
 
         let res = solve_forward_sirk(&h, &v0, &shifts(4), &device, None).unwrap();
-        assert!(res.rank >= 2, "hopping spans a 2D Krylov space, got {}", res.rank);
+        assert!(
+            res.rank >= 2,
+            "hopping spans a 2D Krylov space, got {}",
+            res.rank
+        );
 
         // h_proj is Hermitian => real eigenvalues; the spectrum should bracket ±1.
         let eig = res.h_proj.clone().symmetric_eigen();
@@ -311,10 +319,13 @@ mod tests {
         let device = Device::Cpu;
         let h = nested_fock_algebra::models::navier_stokes_hamiltonian(1e-3);
 
-        assert!(!h.terms.is_empty(), "Navier-Stokes Hamiltonian must be non-empty");
+        assert!(
+            !h.terms.is_empty(),
+            "Navier-Stokes Hamiltonian must be non-empty"
+        );
 
-        let v0 = QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
 
         let opts = SirkOpts {
             prune_eps: 1e-12,

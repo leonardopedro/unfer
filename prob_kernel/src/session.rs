@@ -1,5 +1,5 @@
 use candle_core::Device;
-use fock_sirk::{evolve_restarted, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use unfer_protocol::{EventPredicate, HamiltonianSpec, ModelSpec, PriorSpec};
 
