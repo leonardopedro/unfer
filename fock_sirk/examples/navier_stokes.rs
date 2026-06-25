@@ -16,6 +16,8 @@ fn main() -> anyhow::Result<()> {
     // Creating a state that mimics a specific velocity configuration
     let mut inner_b = InnerBosonicState::vacuum();
     inner_b.modes.insert(0, 2); // 2 quanta in u_1
+    // mode index = base 3 + i*3 + j (here i = j = 1) → u_{2,2}
+    #[allow(clippy::identity_op)]
     inner_b.modes.insert(3 + 1 * 3 + 1, 1); // 1 quantum in u_{2,2}
 
     let v_0 = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner_b));

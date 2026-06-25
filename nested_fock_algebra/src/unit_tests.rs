@@ -2,9 +2,7 @@
 #[cfg(test)]
 mod algebra_tests {
     use crate::cas::compile_to_fock;
-    use crate::compile_expression;
     use crate::models::{gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian};
-    use crate::*;
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
 
@@ -124,7 +122,7 @@ mod algebra_tests {
         let h = gravity_hamiltonian();
         // 3*3 pairs, each with 2 ops squared = 4 terms per pair → 9*4 = 36 for P²
         // minus 9*4 = 36 for e² → 72 terms total
-        assert!(h.terms.len() > 0, "Gravity Hamiltonian should have terms");
+        assert!(!h.terms.is_empty(), "Gravity Hamiltonian should have terms");
         // All terms must have exactly 2 operators
         for (_, ops) in &h.terms {
             assert_eq!(ops.len(), 2, "Gravity terms should be quadratic");
@@ -139,7 +137,7 @@ mod algebra_tests {
         // Kinetic: 3*8 modes, each π_mode^2 = 4 terms → 3*8*4 = 96 kinetic terms.
         // Linear B²: ε_{ijk} gives 6 nonzero (i,j,k) triples × 8 colors × 4 field pairs = ... non-trivial.
         // Just sanity: non-empty, all terms have ops.
-        assert!(h.terms.len() > 0, "Yang-Mills(g=0) should have terms");
+        assert!(!h.terms.is_empty(), "Yang-Mills(g=0) should have terms");
         for (_, ops) in &h.terms {
             assert!(
                 !ops.is_empty(),
