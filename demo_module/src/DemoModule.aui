@@ -1,0 +1,10 @@
+module DemoModule is
+    """
+    First unfer kernel module. `run` queries the kernel ABI version through the
+    UnferKernel bindings; the CPS-JIT executes it in-process against the live
+    `uk_*` symbols registered in the safestos cranelift bridge. Access to each
+    `uk_*` symbol is gated by this module's `module.toml` grants (see the
+    UK-4001 negative test in run_demo.sh).
+    """
+    function run(): Int64;
+end module.

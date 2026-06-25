@@ -4,7 +4,6 @@ use nested_fock_algebra::{
 };
 use nested_fock_algebra::field_theory::{hermitian_field, conjugate_momentum};
 use quantrs2_symengine_pure::Expression;
-use candle_core::Device;
 use num_complex::Complex64;
 
 /// Generates the Hamiltonian for a 0D Free Electromagnetic Field

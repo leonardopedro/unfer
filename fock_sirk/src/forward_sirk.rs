@@ -149,11 +149,10 @@ pub fn solve_forward_sirk_with_opts(
 
         // Memory hygiene + explosion guard.
         next_w.prune(opts.prune_eps);
-        if let Some(limit) = opts.max_components {
-            if next_w.len() > limit {
+        if let Some(limit) = opts.max_components
+            && next_w.len() > limit {
                 return Err(SirkError::StateExplosion { components: next_w.len(), limit });
             }
-        }
 
         w_sequence.push(next_w);
     }

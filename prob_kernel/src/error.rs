@@ -151,7 +151,7 @@ impl KernelError {
                 .with_hint(RepairHint::new(
                     HintKind::ReplaceValue,
                     "event",
-                    &format!("fix predicate: {reason}"),
+                    format!("fix predicate: {reason}"),
                 ))
             }
 

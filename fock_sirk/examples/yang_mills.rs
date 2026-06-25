@@ -1,7 +1,6 @@
 use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::QuantumState;
 use nested_fock_algebra::models::yang_mills_hamiltonian;
-use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {

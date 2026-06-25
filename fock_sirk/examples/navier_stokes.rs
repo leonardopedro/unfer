@@ -3,7 +3,6 @@ use nested_fock_algebra::{
     QuantumState, Operator, InnerBosonicState
 };
 use nested_fock_algebra::models::{navier_stokes_hamiltonian, navier_stokes_brst};
-use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {

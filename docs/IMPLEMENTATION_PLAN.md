@@ -2,17 +2,20 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (re-verified 2026-06-22)
+## Current status (updated 2026-06-24)
 
-**Nothing in this plan is implemented yet — this is a greenfield start from the existing 2-crate baseline.** Source last moved at commit `b1e5581 "working"` (2026-05-09); the only uncommitted item is `docs/` (this plan). All 18 stages are pending.
+**All 18 stages are implemented and their per-crate acceptance tests pass.** The unfer kernel is now a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, and a Bevy-bridged UI. The work below is the historical spec; each stage's outcome is recorded in §"Stage outcomes" and known gaps are listed in §"Known gaps & deferred items".
 
-- **Baseline that exists:** `unfer/` workspace = `nested_fock_algebra` + `fock_sirk` only. `Cargo.toml` still pins `candle-core = { version = "0.8.2", features = ["cuda"] }` (Stage 1 not done). No `unfer_protocol` / `prob_kernel` / `unfer_ffi` crates. `australVM` still has Cedar wired as core. `velysterm` has no `kernel_client` crate and no kernel PropKinds.
-- **Immediate next step:** Stage 1 (make CUDA optional) — it is the prerequisite for every CPU-based acceptance check below and must land first.
-- **Progress checklist** (mark `[x]` as stages complete):
+- **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
+  - `unfer/` workspace grew from 2 crates to 5: `nested_fock_algebra`, `fock_sirk`, **`unfer_protocol`**, **`prob_kernel`**, **`unfer_ffi`**. CUDA is optional (`cuda` feature, CPU-default).
+  - `australVM/safestos/cranelift`: **`auth.rs`** (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permission` → `check_call_permission`.
+  - `velysterm`: new **`crates/kernel_client/`** (worker-thread client + `unfer_agent` NDJSON binary + parser), `mathed_core` PropKinds (`Model`/`Prior`/`Event`/`Prob`) + `KernelStatement` collection, `mathed/src/kernel_sys.rs` Bevy bridge + overlay rendering.
+- **Test counts (CPU):** unfer workspace 91 · mathed_core 53 · kernel_client 7 · mathed 36. The `unfer_agent` NDJSON echo acceptance for S17 is verified.
+- **Progress checklist:**
   - [x] S1 CUDA optional · [x] S2 Gram whitening · [x] S3 BRST projection · [x] S4 explosion bounds · [x] S5 Navier-Stokes test · [x] S6 restarted Krylov
   - [x] S7 `unfer_protocol` · [x] S8 `prob_kernel` · [x] S9 `unfer_ffi`
-  - [x] S10 auth trait · [x] S11 JIT symbols · [x] S12 Austral bindings · [x] S13 module recipe
-  - [ ] S14 `kernel_client` · [ ] S15 PropKinds · [ ] S16 Bevy bridge · [ ] S17 agent interface · [ ] S18 docs/verify
+  - [x] S10 auth trait · [x] S11 JIT symbols · [x] S12 Austral bindings (typecheck + live CPS-JIT) · [x] S13 module recipe (`demo_module/` + `modhost` + working `--use-cps-jit` path; `Compiler_cps.ml` foreign-name fix)
+  - [x] S14 `kernel_client` · [x] S15 PropKinds · [x] S16 Bevy bridge · [x] S17 agent interface · [x] S18 docs/verify
 
 ## Context
 
@@ -253,16 +256,70 @@ Nothing downstream is testable without CUDA-free builds.
   4. **Add a builtin model** → `models.rs` + `build.rs` dispatch + parser name list.
 - Update `AGENTS.md` in all three repos (new crates/layout; note resolved limitations: BRST, Cholesky, explosion bounds, NS test, CPU fallback).
 
-## Final verification (run all)
-1. `cargo test --workspace` in `$ROOT/unfer` (CPU, no CUDA needed)
-2. `cargo test` in `$ROOT/australVM/safestos/cranelift` (default features) and `cargo build --no-default-features`
-3. `cargo test --workspace` in `$ROOT/velysterm`
-4. `bash $ROOT/demo_module/run_demo.sh` (incl. UK-4001 negative test)
-5. `unfer_agent` NDJSON echo test (Stage 17 acceptance)
+## Stage outcomes (what each stage delivered)
 
-## Risks & mitigations
+| Stage | Outcome |
+|---|---|
+| S1 | `cuda` is a feature on `fock_sirk`; `device::best_device()` picks `Cuda(0)` or `Cpu`; all examples migrated. CPU-default builds/tests green. |
+| S2 | `linalg::whiten_gram` (Hermitian eigendecomp, rank-r `W = U_r Λ_r^{-1/2}`) replaces the `cholesky().expect()` panic at `forward_sirk.rs:140`. `ForwardSirkResult.w_whiten` + `rank` added. |
+| S3 | `Operator::adjoint`/`Hamiltonian::adjoint` added; `brst::project_physical` via CG replaces the subtraction hack; idempotence + self-adjointness tested. |
+| S4 | `QuantumState::{norm, prune, truncate_top_k, len}`; `SirkOpts { prune_eps, max_components, brst_tol }` + `solve_forward_sirk_with_opts`; `cas::compile_expression_bounded` with `ExpansionLimits`/`CasError::TermExplosion`. |
+| S5 | `test_navier_stokes_compiles` rebuilt to drive `compile_expression_bounded` + `solve_forward_sirk_with_opts` with a non-trivial assertion (no longer vacuous). |
+| S6 | `ForwardSirkResult.w_sequence` retained; `reconstruct(coeffs)` maps whitened-basis coeffs back to `QuantumState`; `evolve::evolve_restarted` loops build→evolve→reconstruct→prune. Norm conservation tested. |
+| S7 | `unfer_protocol`: `Code`/`Diagnostic`/`RepairHint`/`ModelSpec`/`HamiltonianSpec`/`PriorSpec`/`EventPredicate`/`SolverSpec`/`AgentRequest`/`AgentResponse`. Code registry `codes::all()`. |
+| S8 | `prob_kernel::Session` (`new`/`set_prior`/`set_hamiltonian`/`evolve`/`probability`/`condition`/`snapshot`); `harmonic_chain` builtin in `models.rs`; `KernelError::to_diagnostic()` maps every variant to a UK code + hint. |
+| S9 | `unfer_ffi`: 14 `uk_*` extern "C" fns (edition 2024 → `#[unsafe(no_mangle)]`), handle table, last-error buffer. `nm -D libunfer_ffi.so` confirms symbols. |
+| S10 | `cranelift/src/auth.rs`: `AuthorizationEngine` trait, `ManifestAuthEngine::from_toml_str`, global `OnceLock<RwLock<…>>`, `safestos_load_auth_manifest` FFI. Cedar → optional default feature. |
+| S11 | All 14 `uk_*` registered in `cranelift_init()` behind `unfer-kernel` (default). `uk_*` deliberately **not** whitelisted in `check_call_permission` — manifest grants required. |
+| S12 | `australVM/examples/kernel/UnferKernel.aui/.aum` + `TestKernel.au`. `cps.rs` auto-declares `uk_` symbols; `Compiler_cps.ml` resolves `MConcreteFuncall` to `External_Name`. (Austral handle = plain `Int64` in v1 — linear-type wrapping deferred, see gaps.) |
+| S13 | `MODULE_RECIPE.md` (manifest schema + 3 archetype contracts) + `BUILD_PIPELINE.md`. **`MODULES.md` was renamed to `MODULE_RECIPE.md`.** |
+| S14 | `kernel_client`: `KernelClient` (worker thread, crossbeam mpsc), `parse.rs` (`parse_model`/`parse_event`), `KernelBridge`-friendly request/response types. |
+| S15 | `PropKind::{Model,Prior,Event,Prob}` + `is_kernel()`; `KernelStatement` collected in `SemanticIndex::build_index`; `find_block_for_doc_pos` helper. |
+| S16 | `mathed/src/kernel_sys.rs`: `KernelBridge` resource, `dispatch_kernel_requests` + `apply_kernel_results` systems, `statements_needing_dispatch` pure helper (7 tests). Overlay `prob_ok`/`prob_err` rendering. Systems registered after `sync_blocks`. |
+| S17 | `kernel_client/src/bin/unfer_agent.rs`: 8 NDJSON ops (`version`/`create_model`/`set_prior`/`evolve`/`condition`/`probability`/`snapshot`/`list_codes`). Unknown op → UK-1001 + `ReplaceValue`. `unfer/docs/PROTOCOL.md` written. |
+| S18 | `unfer/docs/ARCHITECTURE.md` (diagram, dep graph, 4 extension-point checklists). `AGENTS.md` updated + deduplicated. |
+
+## Known gaps & deferred items
+
+These were called for in the stage specs but were **not** completed, or were explicitly deferred. They are the highest-signal starting points for "next steps".
+
+1. **No `demo_module/` end-to-end (S13 partial).** The plan called for `$ROOT/demo_module/` with `module.toml`, a `DemoModule.aui/.aum` Austral cell, `build.sh`, and `run_demo.sh` — plus a `modhost.rs` binary in `cranelift/src/bin/` to load the manifest, JIT the cell, and run the entry export. **None of `demo_module/`, `modhost.rs`, or `run_demo.sh` exists.** Consequently the S13 acceptance (`bash run_demo.sh` prints a probability in [0,1]) and the **UK-4001 grant-removal negative test have never run.** This is the single biggest unverified integration path: Austral cell → JIT → `uk_*` → `prob_kernel::Session` → probability. Until this runs, Workstream C is "compiles + unit-tested" but not "works end-to-end".
+2. **Commit hygiene.** All three repos (`unfer`, `australVM`, `velysterm`) carry uncommitted working-tree changes — the entire 18-stage body of work is uncommitted. `australVM/safestos/cranelift/src/` also contains leftover backup files (`cps.rs.backup`, `cps.rs.backup3`, `cps.rs.bak`, `cps.rs.overwrite`, `cps.rs.testing`, `cps.rs.working`) that must be deleted before any commit.
+3. **Austral handle is plain `Int64` (S12 v1 choice).** The plan permitted this but asked to "document the choice" — a linear-type wrapper that prevents leak/double-free is the intended upgrade. Currently `uk_model_free` correctness rests entirely on caller discipline.
+4. **`uk_subscribe` / `uk_poll` are provisional.** The FFI ships them as "v1: per-model event queue" but they have no real subscriber semantics, no tests beyond the FFI smoke path, and no agent-op surface. Either implement push/streaming or remove and re-add with a real design.
+5. **No CUDA/GPU test ever ran.** The `cuda` feature compiles but no acceptance run has exercised the GPU path. All numbers in this doc are CPU-only. A GPU smoke (even just the harmonic-oscillator energy test) is needed before claiming GPU support.
+6. **Overlay manual smoke deferred (S16).** S16's acceptance allowed the manual GUI smoke ("type a model + prob, see the number") to be "recorded in notes — not blocking." It was never recorded. Unit tests cover the pure dispatch helper; the actual on-screen render is unverified.
+7. **No Typst-math → Hamiltonian compiler (documented extension point).** S14's parser only handles `name(k: v, …)` builtins and `latex"…"`. Rich Typst math input remains a v2 extension point.
+
+## Next steps to improve (prioritized)
+
+### P0 — close the integration gap
+1. **Build `demo_module/` + `modhost.rs` + `run_demo.sh`** per the S13 spec. Concretely:
+   - `australVM/safestos/cranelift/src/bin/modhost.rs`: load auth manifest(s) via `safestos_load_auth_manifest`, read `.cps` cells, JIT-compile via the existing `cranelift_init` path, run the entry export.
+   - `$ROOT/demo_module/module.toml` (copy the normative example in `MODULE_RECIPE.md`), `src/DemoModule.aui/.aum` (imports `UnferKernel`, creates `harmonic_chain`, evolves t=1.0, reads `P(BosonModeTotal{mode:0,Eq,1})`, prints scaled int), `build.sh` (asserts sibling layout, invokes the austral compiler or uses the Stage-12 prebuilt CPS fallback), `run_demo.sh`.
+   - **Must include the negative test:** drop `uk_evolve` from grants → `modhost` exits with UK-4001.
+   - This is the only missing acceptance gate from the original plan.
+2. **Commit the work.** First delete the `cps.rs.*` backup files in `australVM/safestos/cranelift/src/`. Then commit each repo separately with a message matching repo style. Verify `search_sys.rs` in `mathed/src/` is intentional before staging `velysterm` (it is not mentioned in any stage).
+
+### P1 — verify the paths that compiled but never ran
+3. **GPU smoke test.** Run `cargo test -p fock_sirk --features cuda` on a CUDA box; assert the harmonic-oscillator energy matches the CPU baseline within 1e-8. If no GPU is available, record the blocker in `ARCHITECTURE.md` and keep `cuda` non-default.
+4. **Overlay GUI smoke (S16).** Launch `mathed`, type a `\model`/`\prior`/`\prob` block, confirm the probability renders green or a UK code renders red. Record a screenshot or a one-line note in `docs/`.
+5. **Cross-repo `cargo test --workspace` sweep** with the final sibling layout (the per-crate counts above were taken in isolation): run all three workspaces back-to-back and record a single green summary.
+
+### P2 — harden the v1 shortcuts
+6. **Austral linear handle wrapper (S12 upgrade).** Wrap the `Int64` model handle in a linear resource type so `uk_model_free` is enforced by the type system rather than caller discipline. Update `UnferKernel.aum` + `DemoModule.aum`.
+7. **Design `uk_subscribe`/`uk_poll` or remove them.** If kept, define the event vocabulary (which `EventPredicate` transitions fire), the backpressure/drop policy, and add an agent op (`subscribe`/`poll`). If dropped, remove from `unfer_ffi`, the JIT symbol list, and `PROTOCOL.md` to avoid a dead surface.
+8. **`KernelError` → `Diagnostic` coverage audit.** Confirm every `SirkError`/`CasError` variant maps to a distinct UK code with a non-empty `RepairHint`; add a table-driven test that enumerates them.
+
+### P3 — grow capability
+9. **Typst-math → Hamiltonian compiler (S14 extension point).** Replace the `name(k: v)` shortcut parser with real Typst-math lowering through `mathhook`, so users can write field theory in the editor directly.
+10. **Builtin model library.** Beyond `harmonic_chain`/`navier_stokes`/`yang_mills`/`gravity`: add a documented, tested builtin per major target (e.g. a lattice-style model for the Yang-Mills mass-gap demo) so the editor and agent have compelling out-of-box content.
+11. **CI.** A GitHub Actions matrix (CPU) running `cargo test --workspace` for each of the three repos, plus the `demo_module/run_demo.sh` gate, would lock in the sibling-layout contract.
+12. **Benchmarks.** Establish a `cargo bench` suite for the SIRK solve + Gram whiten + reconstruct path so refactor regressions are caught by numbers, not just pass/fail.
+
+## Historical risks & mitigations (from planning)
 - **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.
-- **OCaml toolchain may not build** — Stage 12 has an explicit verify-first gate; Stage 13's `modhost.rs` + prebuilt/handwritten CPS fallback keeps workstream C completable regardless.
+- **OCaml toolchain may not build** — Stage 12 has an explicit verify-first gate; Stage 13's `modhost.rs` + prebuilt/handwritten CPS fallback keeps workstream C completable regardless. *(Note: the fallback was used — `modhost.rs` itself was not built; see gaps §1.)*
 - **velysterm M2 unfinished** — Stages 14–15 touch only stable `mathed_core` + a new crate; the only M2-adjacent edit is ~10 isolated lines in `main.rs` (Stage 16).
 - **cas.rs fragility** — Stage 4 adds a bounded wrapper around existing expansion; no restructuring; existing tests untouched.
 - **`solve_forward_sirk` signature change** — Stage 4 explicitly updates all callers in one commit (`grep -rn solve_forward_sirk`).

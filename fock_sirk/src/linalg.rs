@@ -59,7 +59,9 @@ pub fn whiten_gram(g: &DMatrix<Complex64>, rel_tol: f64) -> Result<Whitening, Si
     let eigvecs = &eig.eigenvectors; // complex columns
 
     let max_eig = eigvals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    if !(max_eig > 0.0) {
+    // Reject a non-positive *or* NaN largest eigenvalue (a NaN spectrum means the
+    // Gram matrix is numerically unusable, so treat it as degenerate too).
+    if max_eig.is_nan() || max_eig <= 0.0 {
         return Err(SirkError::GramDegenerate { max_eig });
     }
 

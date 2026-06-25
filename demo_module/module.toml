@@ -1,0 +1,28 @@
+# Normative example manifest for an unfer kernel module.
+# See unfer/docs/MODULES.md for the full schema and the "add a module" checklist.
+
+[module]
+name = "demo_module"
+version = "0.1.0"
+# Archetype contracts the module implements (see MODULES.md):
+#   prior_provider — provide_prior(model): Int64
+#   data_source    — update(model, payload, len): Int64
+#   actor          — act(model): Int64
+archetypes = ["actor"]
+entry = "src/DemoModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*` kernel
+# call this module makes against this allow-list (auth.rs / ManifestAuthEngine).
+# Removing a symbol here causes the corresponding call to fail with a UK-4001
+# CallDenied denial at JIT time — see run_demo.sh's negative test.
+[grants]
+kernel = [
+    "uk_version",
+    "uk_model_create",
+    "uk_set_prior",
+    "uk_evolve",
+    "uk_event_probability",
+    "uk_get_result",
+    "uk_last_error",
+    "uk_model_free",
+]

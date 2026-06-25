@@ -21,4 +21,4 @@ serde_json = { workspace = true }
 rustc-hash = { workspace = true }
 
 candle-core = { workspace = true }
-quantrs2-symengine-pure = "0.1.2"
+quantrs2-symengine-pure = "0.1.3"

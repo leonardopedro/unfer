@@ -3,7 +3,6 @@ use nested_fock_algebra::{
     compile_expression, inner_boson_annihilate, inner_boson_create, Expression, InnerBosonicState,
     Operator, QuantumState,
 };
-use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {

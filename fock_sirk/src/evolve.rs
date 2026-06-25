@@ -19,6 +19,10 @@ use crate::linalg::SirkError;
 /// Each restart: build SIRK → `time_evolve(dt)` → `reconstruct` → `prune` →
 /// feed the result back as the next `psi0`. The optional `brst` charge is
 /// projected out at every Krylov step inside [`solve_forward_sirk_with_opts`].
+// The full SIRK evolution context (Hamiltonian, state, schedule, device, optional
+// BRST charge, options) is genuinely distinct data; bundling it would only hide the
+// inputs behind an indirection without simplifying the call sites.
+#[allow(clippy::too_many_arguments)]
 pub fn evolve_restarted(
     h: &Hamiltonian,
     psi0: &QuantumState,

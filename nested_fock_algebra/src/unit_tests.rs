@@ -175,4 +175,71 @@ mod algebra_tests {
         // |3⟩ in vacuum direction: norm² = 9
         assert!((ip.re - 9.0).abs() < 1e-10);
     }
+
+    // ── Stage 4: bounded CAS + state-explosion bounds ───────────────
+
+    #[test]
+    fn test_bounded_cas_within_limit_succeeds() {
+        use crate::{compile_to_fock_bounded, ExpansionLimits};
+        // A small sum distributes to a handful of terms — well under the limit.
+        let h = compile_to_fock_bounded("c_0 * a_0 + c_1 * a_1", &ExpansionLimits::default())
+            .expect("small expression should compile within the default limit");
+        assert_eq!(h.terms.len(), 2);
+    }
+
+    #[test]
+    fn test_bounded_cas_explosion_returns_error() {
+        use crate::{compile_to_fock_bounded, CasError, ExpansionLimits};
+        // A product of several sums distributes combinatorially (a+b)(c+d)(e+f)...
+        // With a tiny limit, the compiler must abort with TermExplosion rather
+        // than exhausting memory.
+        let expr = "(c_0 * a_0 + c_1 * a_1) * (c_0 * a_0 + c_1 * a_1) \
+                    * (c_0 * a_0 + c_1 * a_1) * (c_0 * a_0 + c_1 * a_1)";
+        let limits = ExpansionLimits { max_terms: 4 };
+        let err = compile_to_fock_bounded(expr, &limits)
+            .expect_err("high-order product should exceed the term limit");
+        match err {
+            CasError::TermExplosion { terms, limit } => {
+                assert!(terms > limit, "reported terms {terms} should exceed limit {limit}");
+                assert_eq!(limit, 4);
+            }
+            other => panic!("expected TermExplosion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_unbounded_matches_legacy_compile() {
+        use crate::{compile_to_fock, compile_to_fock_bounded, ExpansionLimits};
+        // The unbounded bounded-path must reproduce the historical result exactly.
+        let legacy = compile_to_fock("c_0 * a_0 + c_1 * a_1");
+        let bounded = compile_to_fock_bounded(
+            "c_0 * a_0 + c_1 * a_1",
+            &ExpansionLimits::unbounded(),
+        )
+        .expect("unbounded compilation cannot exceed the limit");
+        assert_eq!(legacy.terms.len(), bounded.terms.len());
+    }
+
+    #[test]
+    fn test_prune_drops_small_components() {
+        // prune(eps) drops components with |amp| <= eps, preserving the rest.
+        let mut s = QuantumState::vacuum();
+        s.scale_and_add(&QuantumState::vacuum(), Complex64::new(1.0, 0.0)); // vac amp = 2
+        let big = s.norm();
+        s.prune(1e-6);
+        assert!(!s.is_empty(), "large component must survive pruning");
+        assert!((s.norm() - big).abs() < 1e-12, "pruning must not perturb surviving mass");
+    }
+
+    #[test]
+    fn test_truncate_top_k_keeps_largest() {
+        // Build a 2-component state; truncate_top_k(1) keeps the larger one.
+        let mut a = QuantumState::vacuum(); // vac, amp 1
+        let mut other = QuantumState::vacuum();
+        other = other.apply(&Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        a.scale_and_add(&other, Complex64::new(0.1, 0.0)); // small second component
+        assert_eq!(a.len(), 2);
+        a.truncate_top_k(1);
+        assert_eq!(a.len(), 1, "only the largest component should remain");
+    }
 }

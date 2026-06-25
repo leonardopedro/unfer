@@ -21,8 +21,15 @@ static HANDLES: Mutex<Option<HashMap<i64, SessionEntry>>> = Mutex::new(None);
 static SUBSCRIPTIONS: Mutex<Option<HashMap<i64, SubscriptionEntry>>> = Mutex::new(None);
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 static NEXT_SUB: AtomicI64 = AtomicI64::new(1);
-static LAST_ERROR: Mutex<String> = Mutex::new(String::new());
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    // Per-thread last-error slot, mirroring C `errno` semantics: a caller reads
+    // back the error raised on its own thread without racing other threads
+    // (a shared global slot would let one thread's failure clobber another's
+    // between the size-probe and copy calls of the buffer protocol).
+    static LAST_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
 
 pub fn ensure_init() {
     INITIALIZED.store(true, Ordering::SeqCst);
@@ -51,11 +58,10 @@ pub fn with_session_mut<R>(handle: i64, f: impl FnOnce(&mut Session) -> R) -> Op
 
 pub fn set_last_result(handle: i64, json: String) {
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = guard.as_mut() {
-        if let Some(entry) = map.get_mut(&handle) {
+    if let Some(map) = guard.as_mut()
+        && let Some(entry) = map.get_mut(&handle) {
             entry.last_result = json;
         }
-    }
 }
 
 pub fn get_last_result(handle: i64) -> Option<String> {
@@ -71,14 +77,11 @@ pub fn free_session(handle: i64) -> bool {
 
 pub fn set_last_error(diag: &Diagnostic) {
     let json = serde_json::to_string(diag).unwrap_or_else(|_| "{}".to_string());
-    *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = json;
+    LAST_ERROR.with(|e| *e.borrow_mut() = json);
 }
 
 pub fn get_last_error() -> String {
-    LAST_ERROR
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    LAST_ERROR.with(|e| e.borrow().clone())
 }
 
 pub fn store_subscription(model_handle: i64, query: EventPredicate) -> i64 {

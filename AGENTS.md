@@ -38,6 +38,30 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - [ ] **GPU Execution**: Run examples with `RUST_LOG=candle_core=debug` to confirm active CUDA kernel dispatch.
 - [ ] **Vacuum Initialization**: Ensure `QuantumState::vacuum()` is properly initialized with at least one empty inner universe (`OuterBosonCreate(InnerBosonicState::vacuum())`) before applying inner operators.
 
+## Crate Layout (Stages 1–18 complete)
+
+- `nested_fock_algebra` — symbolic CAS + Fock-space algebra (improved: `adjoint()`, `prune`, `truncate_top_k`, bounded expansion).
+- `fock_sirk` — SIRK solver (improved: GPU-optional, Gram whitening, BRST projection, restarted Krylov, state reconstruction).
+- `unfer_protocol` — serde types, UK-#### codes, repair hints (the shared contract).
+- `prob_kernel` — Born-rule layer: `Session` with `evolve`/`probability`/`condition`/`snapshot`.
+- `unfer_ffi` — handle-based C ABI: 14 `uk_*` functions for in-process module calls.
+- `docs/` — `MODULES.md`, `PROTOCOL.md`, `ARCHITECTURE.md`, `BUILD_PIPELINE.md`.
+
+Sibling repos:
+- `australVM/safestos/cranelift` — JIT with `AuthorizationEngine` trait, `uk_*` symbol registration (feature `unfer-kernel`), `modhost` binary.
+- `velysterm/crates/kernel_client` — async worker-thread client + `unfer_agent` NDJSON binary + parser.
+- `velysterm/crates/mathed_core` — `PropKind::{Model, Prior, Event, Prob}` + `KernelStatement` in `SemanticIndex`.
+- `velysterm/crates/mathed` — Bevy bridge (`kernel_sys.rs`), overlay rendering of prob results.
+
+## Resolved Limitations
+
+- **CUDA optional** (S1): all tests run CPU-only; `cuda` is additive.
+- **Gram robustness** (S2): eigendecomposition whitening replaces bare Cholesky.
+- **BRST projection** (S3): proper `project_physical` via CG, not subtraction hack.
+- **Explosion bounds** (S4): `SirkOpts` + `compile_expression_bounded`.
+- **Navier-Stokes test** (S5): re-enabled, runs the actual solver.
+- **Restarted Krylov** (S6): `evolve_restarted` + `reconstruct` for long evolution.
+
 ## Core Dependencies
 - `candle-core`: GPU tensor management (with `cuda` feature).
 - `mathhook`: High-performance LaTeX and math parsing engine.

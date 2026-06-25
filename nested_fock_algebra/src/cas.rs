@@ -42,6 +42,16 @@ pub fn compile_to_fock(input: &str) -> Hamiltonian {
     compile_expression(expr)
 }
 
+/// Compile a symbolic operator expression string into a Hamiltonian, aborting
+/// with [`CasError::TermExplosion`] if expansion exceeds `limits.max_terms`.
+pub fn compile_to_fock_bounded(
+    input: &str,
+    limits: &ExpansionLimits,
+) -> Result<Hamiltonian, CasError> {
+    let expr = parse(input).map_err(|e| CasError::Parse(format!("failed to parse {input}: {e}")))?;
+    compile_expression_bounded(expr, limits)
+}
+
 /// Compile a pre-constructed symbolic Expression into a Hamiltonian.
 ///
 /// This is the historical unchecked entry point; it delegates to
@@ -161,6 +171,8 @@ impl SExpr {
 
     /// Distribute Mul/Div/Neg over Add recursively with memoization.
     /// Phase 9.2 Optimization for large Hamiltonians.
+    /// Superseded by `distribute_bounded`; kept for reference.
+    #[allow(dead_code)]
     fn distribute(&self) -> Vec<SExpr> {
         let mut memo = HashMap::new();
         self.distribute_memo(&mut memo)

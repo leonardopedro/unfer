@@ -179,6 +179,9 @@ impl EventPredicate {
         Self::Or { parts }
     }
 
+    // `and`/`or`/`not` form a deliberate constructor trio mirroring the predicate
+    // combinators; this is not an implementation of `std::ops::Not`.
+    #[allow(clippy::should_implement_trait)]
     pub fn not(inner: EventPredicate) -> Self {
         Self::Not {
             inner: Box::new(inner),
@@ -188,18 +191,15 @@ impl EventPredicate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DeviceSpec {
+    #[default]
     Cpu,
     Cuda {
         device_id: u32,
     },
 }
 
-impl Default for DeviceSpec {
-    fn default() -> Self {
-        Self::Cpu
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SolverSpec {

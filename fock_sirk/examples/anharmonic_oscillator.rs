@@ -3,7 +3,6 @@ use nested_fock_algebra::{
     compile_expression, Expression, InnerBosonicState, Operator, QuantumState,
     symengine::quantum::operators::{position_operator, momentum_operator},
 };
-use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {

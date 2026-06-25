@@ -1,0 +1,11 @@
+pragma Unsafe_Module;
+
+import UnferKernel (
+    kernelVersion
+);
+
+module body DemoModule is
+    function run(): Int64 is
+        return kernelVersion();
+    end;
+end module body.

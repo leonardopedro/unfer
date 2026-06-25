@@ -2,7 +2,6 @@ use fock_sirk::solve_forward_sirk;
 use nested_fock_algebra::{
     compile_expression, inner_fermion_annihilate, inner_fermion_create, QuantumState,
 };
-use candle_core::Device;
 use num_complex::Complex64;
 
 fn main() -> anyhow::Result<()> {

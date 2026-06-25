@@ -191,8 +191,8 @@ impl Operator {
                         += amplitude * multiplier;
                 }
                 Operator::OuterBosonAnnihilate(target_inner) => {
-                    if let Some(&n) = outer_basis.bosonic.get(target_inner) {
-                        if n > 0 {
+                    if let Some(&n) = outer_basis.bosonic.get(target_inner)
+                        && n > 0 {
                             let mut new_outer = outer_basis.clone();
                             if n == 1 {
                                 new_outer.bosonic.remove(target_inner);
@@ -203,7 +203,6 @@ impl Operator {
                             *next_components.entry(new_outer).or_insert(Complex64::new(0.0, 0.0)) 
                                 += amplitude * multiplier;
                         }
-                    }
                 }
                 Operator::OuterFermionCreate(target_inner) => {
                     if !outer_basis.fermionic.contains(target_inner) {
@@ -236,14 +235,13 @@ impl Operator {
                 }
                 Operator::InnerBosonAnnihilate(mode) => {
                     self.apply_inner_one_body_bosonic(outer_basis, amplitude, &mut next_components, |inner| {
-                        if let Some(&n) = inner.modes.get(mode) {
-                            if n > 0 {
+                        if let Some(&n) = inner.modes.get(mode)
+                            && n > 0 {
                                 let mut next_inner = inner.clone();
                                 if n == 1 { next_inner.modes.remove(mode); }
                                 else { next_inner.modes.insert(*mode, n - 1); }
                                 return Some((next_inner, (n as f64).sqrt()));
                             }
-                        }
                         None
                     });
                 }
@@ -415,7 +413,10 @@ impl Hamiltonian {
 }
 
 pub mod cas;
-pub use cas::{compile_expression, compile_to_fock};
+pub use cas::{
+    compile_expression, compile_expression_bounded, compile_to_fock, compile_to_fock_bounded,
+    CasError, ExpansionLimits,
+};
 
 #[cfg(feature = "latex")]
 pub mod latex;

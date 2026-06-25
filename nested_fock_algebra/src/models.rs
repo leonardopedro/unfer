@@ -1,6 +1,4 @@
-use quantrs2_symengine_pure::Expression;
 use num_complex::Complex64;
-use crate::field_theory::*;
 use crate::{Hamiltonian, Operator};
 
 // ─────────────────────────────────────────────
@@ -164,7 +162,7 @@ fn su3_f(a: usize, b: usize, c: usize) -> f64 {
                     }
                 }
             }
-            return if swaps % 2 == 0 { val } else { -val };
+            return if swaps.is_multiple_of(2) { val } else { -val };
         }
     }
     0.0
