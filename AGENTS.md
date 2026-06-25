@@ -22,7 +22,7 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 
 ### 4. Numerical Stability
 - **Inverse-Free SIRK**: We avoid $O(N^3)$ linear solves $(H-z)^{-1}$ by utilizing the forward sequence. 
-- **Cholesky Orthonormalization**: The projection $H_{proj} = L^{-1} H_{raw} L^{-*}$ requires a positive-definite Gram matrix. If singularity occurs, reduce $m$ or adjust shifts $z_k$.
+- **Gram Whitening**: The projection $H_{proj} = W^\dagger H_{raw} W$ uses Hermitian eigendecomposition (Stage 2 replaced the bare Cholesky that panicked on degenerate Gram matrices). If singularity occurs, reduce $m$ or adjust shifts $z_k$.
 - **Unitary Time Evolution**: **Always** use `nalgebra`'s Padé approximant `exp()` for the reduced system to preserve unitarity and Hermiticity.
 
 ### 5. GPU Optimization & Environment
@@ -45,13 +45,15 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - `unfer_protocol` — serde types, UK-#### codes, repair hints (the shared contract).
 - `prob_kernel` — Born-rule layer: `Session` with `evolve`/`probability`/`condition`/`snapshot`.
 - `unfer_ffi` — handle-based C ABI: 14 `uk_*` functions for in-process module calls.
-- `docs/` — `MODULES.md`, `PROTOCOL.md`, `ARCHITECTURE.md`, `BUILD_PIPELINE.md`.
+- `demo_module/` — first module: `module.toml` + Austral cell + `run_demo.sh` (positive + UK-4001 negative test).
+- `docs/` — `MODULE_RECIPE.md`, `PROTOCOL.md`, `ARCHITECTURE.md`, `BUILD_PIPELINE.md`.
 
 Sibling repos:
 - `australVM/safestos/cranelift` — JIT with `AuthorizationEngine` trait, `uk_*` symbol registration (feature `unfer-kernel`), `modhost` binary.
 - `velysterm/crates/kernel_client` — async worker-thread client + `unfer_agent` NDJSON binary + parser.
-- `velysterm/crates/mathed_core` — `PropKind::{Model, Prior, Event, Prob}` + `KernelStatement` in `SemanticIndex`.
+- `velysterm/crates/mathed_core` — `PropKind::{Model, Prior, Event, Prob}` + `KernelStatement` in `SemanticIndex`; `glyphs` (Bevy-free glyph index); `accessibility` (toolkit-neutral a11y nodes).
 - `velysterm/crates/mathed` — Bevy bridge (`kernel_sys.rs`), overlay rendering of prob results.
+- `velysterm/crates/mathed_mini` — optional Bevy-free CPU frontend (winit + softbuffer, caret navigation, foot-style layout caching).
 
 ## Resolved Limitations
 

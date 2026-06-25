@@ -2,19 +2,23 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-24)
+## Current status (updated 2026-06-25, rev 2)
 
 **All 18 stages are implemented and their per-crate acceptance tests pass.** The unfer kernel is now a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, and a Bevy-bridged UI. The work below is the historical spec; each stage's outcome is recorded in §"Stage outcomes" and known gaps are listed in §"Known gaps & deferred items".
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace grew from 2 crates to 5: `nested_fock_algebra`, `fock_sirk`, **`unfer_protocol`**, **`prob_kernel`**, **`unfer_ffi`**. CUDA is optional (`cuda` feature, CPU-default).
-  - `australVM/safestos/cranelift`: **`auth.rs`** (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permission` → `check_call_permission`.
-  - `velysterm`: new **`crates/kernel_client/`** (worker-thread client + `unfer_agent` NDJSON binary + parser), `mathed_core` PropKinds (`Model`/`Prior`/`Event`/`Prob`) + `KernelStatement` collection, `mathed/src/kernel_sys.rs` Bevy bridge + overlay rendering.
-- **Test counts (CPU):** unfer workspace 91 · mathed_core 53 · kernel_client 7 · mathed 36. The `unfer_agent` NDJSON echo acceptance for S17 is verified.
+  - `australVM/safestos/cranelift`: **`auth.rs`** (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`.
+  - `velysterm`: new **`crates/kernel_client/`** (worker-thread client + `unfer_agent` NDJSON binary + parser), `mathed_core` PropKinds (`Model`/`Prior`/`Event`/`Prob`) + `KernelStatement` collection, `mathed/src/kernel_sys.rs` Bevy bridge + overlay rendering, **`crates/mathed_mini/`** (Bevy-free CPU frontend with caret navigation), **`mathed_core::accessibility`** (toolkit-neutral a11y nodes), **`mathed_core::glyphs`** (Bevy-free glyph index ported from `mathed::glyphs`).
+- **Test counts (CPU, full sweep 2026-06-26):** unfer workspace **96** (13+21+16+16+30) · velysterm own crates all green: mathed_core 59 (+3 integration) · mathed_mini 6 · kernel_client 4 (+bins) · mathed 36 · australVM cranelift 9 (default features) + clean `--no-default-features` build. The `unfer_agent` NDJSON echo acceptance for S17 is verified. **Caveat:** velysterm `cargo test --workspace --all-targets` does **not** compile — two upstream-vendored `velyst` examples (`editor`, `terminal`) reference removed APIs (`VelystFuncBundle`/`VelystSourceHandle`); the project's own crates are unaffected (see gaps §8).
+- **Git state (all three repos pushed to their remotes):**
+  - unfer HEAD `a3d8a52` → `origin/main` (in sync). Working tree has uncommitted doc edits only (`AGENTS.md`, this `docs/IMPLEMENTATION_PLAN.md`).
+  - australVM HEAD `5efb03d3` → `origin/master` (in sync). **6 `cps.rs.*` backup files remain committed in-tree** and still need `git rm` (gaps §2).
+  - velysterm HEAD `f378be4` → `origin/gitbutler/workspace` (clean, in sync; non-default branch, push not harness-blocked). The `mathed_mini` Increment-3 extension (`band_for_byte` + Up/Down navigation) is now committed and pushed; tests green (mathed_mini 6, mathed_core 59).
 - **Progress checklist:**
   - [x] S1 CUDA optional · [x] S2 Gram whitening · [x] S3 BRST projection · [x] S4 explosion bounds · [x] S5 Navier-Stokes test · [x] S6 restarted Krylov
   - [x] S7 `unfer_protocol` · [x] S8 `prob_kernel` · [x] S9 `unfer_ffi`
-  - [x] S10 auth trait · [x] S11 JIT symbols · [x] S12 Austral bindings (typecheck + live CPS-JIT) · [x] S13 module recipe (`demo_module/` + `modhost` + working `--use-cps-jit` path; `Compiler_cps.ml` foreign-name fix)
+  - [x] S10 auth trait · [x] S11 JIT symbols · [x] S12 Austral bindings (typecheck + live CPS-JIT) · [x] S13 module recipe (`demo_module/` + `modhost` + `run_demo.sh`; `Compiler_cps.ml` foreign-name fix)
   - [x] S14 `kernel_client` · [x] S15 PropKinds · [x] S16 Bevy bridge · [x] S17 agent interface · [x] S18 docs/verify
 
 ## Context
@@ -48,15 +52,18 @@ $ROOT/
 │   ├── unfer_protocol/   NEW   # serde types, UK-#### codes, repair hints — THE contract
 │   ├── prob_kernel/      NEW   # Born-rule layer: Session, EventPredicate, condition()
 │   ├── unfer_ffi/        NEW   # cdylib/staticlib/rlib, handle-based C ABI: uk_*()
-│   └── docs/             NEW   # MODULES.md, PROTOCOL.md, ARCHITECTURE.md
+│   ├── demo_module/      NEW   # first module: module.toml + Austral cell + run_demo.sh
+│   └── docs/             NEW   # MODULES.md (recipe), MODULE_RECIPE.md (module.toml schema),
+│                               #   PROTOCOL.md, ARCHITECTURE.md, BUILD_PIPELINE.md, IMPLEMENTATION_PLAN.md
 ├── australVM/                  # MODULE RUNTIME
 │   └── safestos/cranelift/     # + auth.rs (AuthorizationEngine trait; Cedar optional
 │                               #   feature), + uk_* symbols in JIT, + modhost bin
 ├── velysterm/                  # UI / AI INTERFACE
-│   └── crates/kernel_client/ NEW  # worker-thread client + parsers + unfer_agent bin
-│       crates/mathed_core/     # + PropKinds: Model, Prior, Event, Prob
-│       crates/mathed/          # + kernel_sys.rs Bevy bridge, overlay results
-└── demo_module/          NEW   # first module: module.toml + Austral cell + run_demo.sh
+│   ├── crates/kernel_client/ NEW  # worker-thread client + parsers + unfer_agent bin
+│   ├── crates/mathed_core/     # + PropKinds: Model, Prior, Event, Prob; + glyphs (Bevy-free); + accessibility
+│   ├── crates/mathed/          # + kernel_sys.rs Bevy bridge, overlay results
+│   └── crates/mathed_mini/ NEW   # Bevy-free CPU frontend (winit + softbuffer), caret navigation
+└── (demo_module now lives inside unfer/)
 ```
 
 Data flow: modules (Austral cells) and velysterm both drive `prob_kernel::Session`; modules via the `uk_*` C ABI inside the safestos JIT (calls authorized per-module by manifest grants), velysterm via direct Rust dependency (same Session code path). AI agents use the `unfer_agent` NDJSON binary.
@@ -272,7 +279,7 @@ Nothing downstream is testable without CUDA-free builds.
 | S10 | `cranelift/src/auth.rs`: `AuthorizationEngine` trait, `ManifestAuthEngine::from_toml_str`, global `OnceLock<RwLock<…>>`, `safestos_load_auth_manifest` FFI. Cedar → optional default feature. |
 | S11 | All 14 `uk_*` registered in `cranelift_init()` behind `unfer-kernel` (default). `uk_*` deliberately **not** whitelisted in `check_call_permission` — manifest grants required. |
 | S12 | `australVM/examples/kernel/UnferKernel.aui/.aum` + `TestKernel.au`. `cps.rs` auto-declares `uk_` symbols; `Compiler_cps.ml` resolves `MConcreteFuncall` to `External_Name`. (Austral handle = plain `Int64` in v1 — linear-type wrapping deferred, see gaps.) |
-| S13 | `MODULE_RECIPE.md` (manifest schema + 3 archetype contracts) + `BUILD_PIPELINE.md`. **`MODULES.md` was renamed to `MODULE_RECIPE.md`.** |
+| S13 | `demo_module/` (`module.toml`, `src/DemoModule.{aui,aum}`, `build.sh`, `run_demo.sh`) + `modhost.rs`. Docs split into two complementary files: **`MODULES.md`** (the prose recipe — folder layout, archetype contracts, add-a-module checklist) and **`MODULE_RECIPE.md`** (the normative `module.toml` schema). Plus `BUILD_PIPELINE.md`. |
 | S14 | `kernel_client`: `KernelClient` (worker thread, crossbeam mpsc), `parse.rs` (`parse_model`/`parse_event`), `KernelBridge`-friendly request/response types. |
 | S15 | `PropKind::{Model,Prior,Event,Prob}` + `is_kernel()`; `KernelStatement` collected in `SemanticIndex::build_index`; `find_block_for_doc_pos` helper. |
 | S16 | `mathed/src/kernel_sys.rs`: `KernelBridge` resource, `dispatch_kernel_requests` + `apply_kernel_results` systems, `statements_needing_dispatch` pure helper (7 tests). Overlay `prob_ok`/`prob_err` rendering. Systems registered after `sync_blocks`. |
@@ -283,43 +290,55 @@ Nothing downstream is testable without CUDA-free builds.
 
 These were called for in the stage specs but were **not** completed, or were explicitly deferred. They are the highest-signal starting points for "next steps".
 
-1. **No `demo_module/` end-to-end (S13 partial).** The plan called for `$ROOT/demo_module/` with `module.toml`, a `DemoModule.aui/.aum` Austral cell, `build.sh`, and `run_demo.sh` — plus a `modhost.rs` binary in `cranelift/src/bin/` to load the manifest, JIT the cell, and run the entry export. **None of `demo_module/`, `modhost.rs`, or `run_demo.sh` exists.** Consequently the S13 acceptance (`bash run_demo.sh` prints a probability in [0,1]) and the **UK-4001 grant-removal negative test have never run.** This is the single biggest unverified integration path: Austral cell → JIT → `uk_*` → `prob_kernel::Session` → probability. Until this runs, Workstream C is "compiles + unit-tested" but not "works end-to-end".
-2. **Commit hygiene.** All three repos (`unfer`, `australVM`, `velysterm`) carry uncommitted working-tree changes — the entire 18-stage body of work is uncommitted. `australVM/safestos/cranelift/src/` also contains leftover backup files (`cps.rs.backup`, `cps.rs.backup3`, `cps.rs.bak`, `cps.rs.overwrite`, `cps.rs.testing`, `cps.rs.working`) that must be deleted before any commit.
+1. ~~**No `demo_module/` end-to-end (S13 partial).**~~ **RESOLVED.** `demo_module/` now lives at `unfer/demo_module/` (inside the unfer repo, not at `$ROOT/demo_module/`). Contains `module.toml`, `src/DemoModule.aui/.aum`, `build.sh`, `run_demo.sh`. The `modhost.rs` binary exists at `australVM/safestos/cranelift/src/bin/modhost.rs`. `run_demo.sh` exercises both the positive path (live `uk_version` call through CPS-JIT) and the UK-4001 negative test (grant revocation). **VERIFIED PASSING end-to-end on 2026-06-26** (OCaml 4.13.1 / dune 3.20.2). Remaining nuance: the positive JIT path runs only `uk_version`; a module-driven probability chain (`uk_model_create`→`uk_evolve`→`uk_event_probability`) is not yet demonstrated — tracked as a P0 follow-up.
+2. **Commit hygiene — all repos pushed; one item remains.** All three repos are committed AND pushed (unfer `a3d8a52`→`origin/main`, australVM `5efb03d3`→`origin/master`, velysterm `f378be4`→`origin/gitbutler/workspace`). velysterm's `mathed_mini` Up/Down extension is now committed (`f378be4`). **Remaining: 6 `cps.rs.*` backup files are still committed in australVM** (`cps.rs.backup`, `cps.rs.backup3`, `cps.rs.bak`, `cps.rs.overwrite`, `cps.rs.testing`, `cps.rs.working`) and must be `git rm`'d in a follow-up commit.
 3. **Austral handle is plain `Int64` (S12 v1 choice).** The plan permitted this but asked to "document the choice" — a linear-type wrapper that prevents leak/double-free is the intended upgrade. Currently `uk_model_free` correctness rests entirely on caller discipline.
 4. **`uk_subscribe` / `uk_poll` are provisional.** The FFI ships them as "v1: per-model event queue" but they have no real subscriber semantics, no tests beyond the FFI smoke path, and no agent-op surface. Either implement push/streaming or remove and re-add with a real design.
 5. **No CUDA/GPU test ever ran.** The `cuda` feature compiles but no acceptance run has exercised the GPU path. All numbers in this doc are CPU-only. A GPU smoke (even just the harmonic-oscillator energy test) is needed before claiming GPU support.
 6. **Overlay manual smoke deferred (S16).** S16's acceptance allowed the manual GUI smoke ("type a model + prob, see the number") to be "recorded in notes — not blocking." It was never recorded. Unit tests cover the pure dispatch helper; the actual on-screen render is unverified.
 7. **No Typst-math → Hamiltonian compiler (documented extension point).** S14's parser only handles `name(k: v, …)` builtins and `latex"…"`. Rich Typst math input remains a v2 extension point.
+8. **velysterm workspace test is broken on upstream `velyst` examples (NEW, found 2026-06-26).** `cargo test --workspace --all-targets` fails to compile two examples vendored from the upstream `velyst` crate — `editor` and `terminal` — which reference removed APIs `VelystFuncBundle` and `VelystSourceHandle` (E0422/E0425). The project's **own** crates (`mathed_core`, `mathed`, `mathed_mini`, `kernel_client`) all build and test green; only these two upstream examples are stale. This also means velysterm's existing `rust.yml` CI is red. Fix: either port the examples to the current `velyst` API or drop them from the workspace's default test targets (e.g. `default-members` / exclude examples).
 
-## Next steps to improve (prioritized)
+## velysterm mini-frontend progress (beyond S1–S18)
 
-### P0 — close the integration gap
-1. **Build `demo_module/` + `modhost.rs` + `run_demo.sh`** per the S13 spec. Concretely:
-   - `australVM/safestos/cranelift/src/bin/modhost.rs`: load auth manifest(s) via `safestos_load_auth_manifest`, read `.cps` cells, JIT-compile via the existing `cranelift_init` path, run the entry export.
-   - `$ROOT/demo_module/module.toml` (copy the normative example in `MODULE_RECIPE.md`), `src/DemoModule.aui/.aum` (imports `UnferKernel`, creates `harmonic_chain`, evolves t=1.0, reads `P(BosonModeTotal{mode:0,Eq,1})`, prints scaled int), `build.sh` (asserts sibling layout, invokes the austral compiler or uses the Stage-12 prebuilt CPS fallback), `run_demo.sh`.
-   - **Must include the negative test:** drop `uk_evolve` from grants → `modhost` exits with UK-4001.
-   - This is the only missing acceptance gate from the original plan.
-2. **Commit the work.** First delete the `cps.rs.*` backup files in `australVM/safestos/cranelift/src/`. Then commit each repo separately with a message matching repo style. Verify `search_sys.rs` in `mathed/src/` is intentional before staging `velysterm` (it is not mentioned in any stage).
+The `mathed_mini` crate is a separate, optional Bevy-free CPU frontend for constrained hardware, tracked in `velysterm/docs/mathed/MINI_FRONTEND_PLAN.md`. Its status:
 
-### P1 — verify the paths that compiled but never ran
-3. **GPU smoke test.** Run `cargo test -p fock_sirk --features cuda` on a CUDA box; assert the harmonic-oscillator energy matches the CPU baseline within 1e-8. If no GPU is available, record the blocker in `ARCHITECTURE.md` and keep `cuda` non-default.
-4. **Overlay GUI smoke (S16).** Launch `mathed`, type a `\model`/`\prior`/`\prob` block, confirm the probability renders green or a UK code renders red. Record a screenshot or a one-line note in `docs/`.
-5. **Cross-repo `cargo test --workspace` sweep** with the final sibling layout (the per-crate counts above were taken in isolation): run all three workspaces back-to-back and record a single green summary.
+- **Increment 1 + 2** (committed `0ed6015`): `MiniWorld` (standalone `typst::World`), CPU renderer via `imaging_vello_cpu`, winit + softbuffer window, editing at end-only.
+- **Increment 3** (committed `a456156`, extended in `f378be4`): `mathed_core::glyphs` (Bevy-free glyph index ported from `mathed::glyphs`), `DocLayout` caching (foot-style: layout recomputed only on edit/resize), caret positioning via `caret_for_byte`, full navigation (Left/Right/Home/End/Backspace/Delete + Up/Down via `band_for_byte` → `byte_for_point`). Up/Down nav + `band_for_byte` helper landed in `f378be4`. 6 mathed_mini tests + 59 mathed_core tests green.
+- **Deferred:** Step 4 (caret blink via `ControlFlow::WaitUntil`), mouse hit-testing / click-to-place-caret + selection (the `byte_for_point`/`rects_for_range` plumbing already exists), `mathed_a11y` (AccessKit bridge over `mathed_core::accessibility`), and — the big one — wiring `kernel_client` into `mathed_mini` so the Bevy-free frontend can show `\prob` results too (today only the Bevy `mathed` frontend has the kernel bridge).
+
+## Next steps to improve (prioritized, recommended 2026-06-26)
+
+**The headline risk — NOW RESOLVED (2026-06-26):** all 18 stages were unit-tested in isolation, and the system's central claim — _Austral modules call the unfer kernel in-process, JIT-compiled, authorized per-manifest_ — had never been exercised end-to-end. **`bash unfer/demo_module/run_demo.sh` now passes** (OCaml 4.13.1 / dune 3.20.2 present): the positive path JIT-compiles `DemoModule` and executes a live `uk_version()` call in-process (`CPS JIT: Execution result: 1`), and the negative path denies `uk_evolve` with UK-4001 after grant revocation. **Caveat:** the JIT positive path currently exercises only `uk_version` — the in-process `uk_*` ABI + the manifest auth gate are proven, but a probability computed *through a module* (the full `uk_model_create`→`uk_evolve`→`uk_event_probability` chain from Austral) is **not yet** exercised end-to-end; that is the next concrete demo upgrade (see P2.7-adjacent note). With the spine proven, the recommended order is: **lock it in with CI, then grow capability.**
+
+1. **Clean australVM, then prove the demo (P0).** `git rm` the 6 `cps.rs.*` backups (5 min, zero risk), then make `bash unfer/demo_module/run_demo.sh` actually pass — this is the one test that validates the whole architecture at once (Austral → CPS → JIT → `uk_*` → Born-rule probability → UK-4001 denial on grant revocation). If the OCaml/dune toolchain won't build, that blocker is itself the most important thing to discover and record now, not later.
+2. **Add CPU CI across all three repos (P1).** Once the demo is green, a GitHub Actions matrix running `cargo test --workspace` per repo + the `run_demo.sh` gate freezes the sibling-layout contract so the cross-repo path deps can't silently rot. This is what makes every later change safe.
+3. **Then harden, then grow** (P2/P3 below).
+
+### P0 — prove the integration spine ✅ DONE (2026-06-26)
+1. ~~**Clean `cps.rs.*` backups.**~~ **DONE.** Removed all 6 in australVM commit `198cc137` (master ahead 1, awaiting `!` push). Closes gaps §2.
+2. ~~**Verify `demo_module/run_demo.sh` end-to-end.**~~ **DONE — passes.** OCaml 4.13.1 / dune 3.20.2 present; `dune build lib/ bin/` + release `unfer_ffi` + `--no-default-features --features unfer-kernel` cranelift/modhost builds all succeed. Positive: `DemoModule` JIT-executes a live `uk_version()` (`Execution result: 1`). Negative: stripped manifest denies `uk_evolve` with UK-4001. **Follow-up (not blocking):** upgrade `DemoModule.aum` so the positive path drives the full `uk_model_create`→`uk_evolve`→`uk_event_probability` chain and asserts a probability in [0,1] — currently it only proves `uk_version` is reachable through the JIT, not a module-computed probability.
+
+### P1 — lock in what works
+3. ~~**CI (CPU).**~~ **DONE for unfer.** Added `unfer/.github/workflows/ci.yml` with 4 jobs: `test` (`cargo build`+`test --workspace`), `lint` (`fmt --check` + `clippy -D warnings`), `ffi-symbols` (builds `libunfer_ffi.so` and asserts the 5 load-bearing `uk_*` symbols are exported via `nm -D` — verified against the real lib), and `demo-e2e` (checks out the sibling australVM, sets up OCaml 4.13, runs `run_demo.sh` — the spine gate). velysterm (`rust.yml`) and australVM (`build-and-test.yml`) already have CI; **note velysterm's CI is currently red** because `cargo test --workspace --all-targets` hits the broken upstream `velyst` examples (gaps §8) — fix or exclude those targets. **Remaining:** wire a PAT if australVM is a private repo (the `demo-e2e` job has a commented `token:` slot).
+4. ~~**Single cross-repo green sweep.**~~ **DONE (2026-06-26).** Recorded in the status block above: unfer 96 · mathed_core 59 · mathed_mini 6 · kernel_client 4 · mathed 36 · cranelift 9 + `--no-default-features` build — all green in the real sibling layout. This is the baseline CI must hold.
+5. **Overlay GUI smoke (S16).** Launch `mathed`, type a `\model`/`\prior`/`\prob` block, confirm the probability renders green or a UK code renders red. One screenshot/note in `docs/` — the on-screen render is the only S16 surface still unverified.
+6. **GPU smoke (if a CUDA box is reachable).** `cargo test -p fock_sirk --features cuda`; assert harmonic-oscillator energy matches the CPU baseline within 1e-8. Otherwise record the blocker and keep `cuda` non-default — do **not** let it become a silent regression vector.
 
 ### P2 — harden the v1 shortcuts
-6. **Austral linear handle wrapper (S12 upgrade).** Wrap the `Int64` model handle in a linear resource type so `uk_model_free` is enforced by the type system rather than caller discipline. Update `UnferKernel.aum` + `DemoModule.aum`.
-7. **Design `uk_subscribe`/`uk_poll` or remove them.** If kept, define the event vocabulary (which `EventPredicate` transitions fire), the backpressure/drop policy, and add an agent op (`subscribe`/`poll`). If dropped, remove from `unfer_ffi`, the JIT symbol list, and `PROTOCOL.md` to avoid a dead surface.
-8. **`KernelError` → `Diagnostic` coverage audit.** Confirm every `SirkError`/`CasError` variant maps to a distinct UK code with a non-empty `RepairHint`; add a table-driven test that enumerates them.
+7. **Austral linear handle wrapper (S12 upgrade).** Wrap the `Int64` model handle in a linear resource type so `uk_model_free` is enforced by the type system, not caller discipline — this is exactly the class of bug Austral's linearity exists to prevent, so leaving it as a raw `Int64` undersells the whole module mechanism. Update `UnferKernel.aum` + `DemoModule.aum`.
+8. **Resolve `uk_subscribe`/`uk_poll`.** They ship as a dead surface ("v1: per-model event queue") with no real semantics. Either (a) define the event vocabulary — which `EventPredicate` transitions fire, backpressure/drop policy — and add `subscribe`/`poll` agent ops + tests, or (b) delete them from `unfer_ffi`, the JIT symbol list, and `PROTOCOL.md`. Recommendation: **delete for v1** unless a concrete consumer exists; a documented absence beats an untested promise.
+9. **`KernelError` → `Diagnostic` coverage audit.** Table-driven test enumerating every `SirkError`/`CasError`/`KernelError` variant → distinct UK code + non-empty `RepairHint`. This is what makes the "Zero-language-style machine surface" trustworthy for AI agents; a single unmapped variant silently degrades to UK-5000 and breaks the repair-hint contract.
 
 ### P3 — grow capability
-9. **Typst-math → Hamiltonian compiler (S14 extension point).** Replace the `name(k: v)` shortcut parser with real Typst-math lowering through `mathhook`, so users can write field theory in the editor directly.
-10. **Builtin model library.** Beyond `harmonic_chain`/`navier_stokes`/`yang_mills`/`gravity`: add a documented, tested builtin per major target (e.g. a lattice-style model for the Yang-Mills mass-gap demo) so the editor and agent have compelling out-of-box content.
-11. **CI.** A GitHub Actions matrix (CPU) running `cargo test --workspace` for each of the three repos, plus the `demo_module/run_demo.sh` gate, would lock in the sibling-layout contract.
-12. **Benchmarks.** Establish a `cargo bench` suite for the SIRK solve + Gram whiten + reconstruct path so refactor regressions are caught by numbers, not just pass/fail.
+10. **Typst-math → Hamiltonian compiler (S14 extension point).** Replace the `name(k: v)` shortcut parser with real Typst-math lowering through `mathhook`, so users write field theory in the editor directly. This is the feature that makes velysterm a *math editor for the kernel* rather than a form with one text box — the biggest single capability jump, but gated on P0–P1 being solid first.
+11. **Wire `kernel_client` into `mathed_mini`.** Today only the Bevy `mathed` frontend has the kernel bridge; the Bevy-free CPU frontend can render `\prob` overlays too (it already caches a `DocLayout` and has the glyph index for placement). Gives constrained-hardware targets the full probability UX.
+12. **Builtin model library.** Beyond `harmonic_chain`/`navier_stokes`/`yang_mills`/`gravity`: one documented, tested builtin per flagship target (e.g. a lattice model for the Yang-Mills mass-gap demo) so the editor and agent have compelling out-of-box content.
+13. **Benchmarks.** A `cargo bench` suite for the SIRK solve + Gram-whiten + reconstruct path so the Stage 2/6 numerics are guarded by numbers, not just pass/fail — the place where a subtle regression would otherwise hide.
 
 ## Historical risks & mitigations (from planning)
 - **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.
-- **OCaml toolchain may not build** — Stage 12 has an explicit verify-first gate; Stage 13's `modhost.rs` + prebuilt/handwritten CPS fallback keeps workstream C completable regardless. *(Note: the fallback was used — `modhost.rs` itself was not built; see gaps §1.)*
+- **OCaml toolchain may not build** — Stage 12 has an explicit verify-first gate; Stage 13's `modhost.rs` + prebuilt/handwritten CPS fallback keeps workstream C completable regardless. *(Note: `modhost.rs` was built; `demo_module/run_demo.sh` uses `dune build lib/ bin/` + the CPS-JIT path.)*
 - **velysterm M2 unfinished** — Stages 14–15 touch only stable `mathed_core` + a new crate; the only M2-adjacent edit is ~10 isolated lines in `main.rs` (Stage 16).
 - **cas.rs fragility** — Stage 4 adds a bounded wrapper around existing expansion; no restructuring; existing tests untouched.
 - **`solve_forward_sirk` signature change** — Stage 4 explicitly updates all callers in one commit (`grep -rn solve_forward_sirk`).

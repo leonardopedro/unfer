@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # CPU-only: the `cuda` feature is never enabled in CI. All acceptance
+  # criteria in docs/IMPLEMENTATION_PLAN.md run on CPU.
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Core: the unfer kernel workspace must build, lint and test on CPU.
+  # This locks in the per-crate baselines recorded in IMPLEMENTATION_PLAN.md.
+  # ---------------------------------------------------------------------------
+  test:
+    name: workspace test (CPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build
+        run: cargo build --workspace --verbose
+      - name: cargo test
+        run: cargo test --workspace --verbose
+
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ---------------------------------------------------------------------------
+  # Integration spine: build the FFI as a shared lib and assert the uk_* C ABI
+  # symbols are exported (the contract the australVM JIT links against).
+  # ---------------------------------------------------------------------------
+  ffi-symbols:
+    name: unfer_ffi C ABI symbols
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p unfer_ffi
+      - name: assert uk_* symbols present
+        run: |
+          for sym in uk_version uk_model_create uk_evolve uk_event_probability uk_last_error; do
+            nm -D target/release/libunfer_ffi.so | grep -q " T $sym" \
+              || { echo "MISSING exported symbol: $sym" >&2; exit 1; }
+          done
+          echo "All required uk_* symbols are exported."
+
+  # ---------------------------------------------------------------------------
+  # End-to-end demo gate (the architecture's central claim): an Austral module
+  # JIT-compiled by australVM/safestos calls the unfer kernel in-process, and
+  # the manifest auth gate denies a revoked grant (UK-4001).
+  #
+  # Requires the sibling australVM checkout + the OCaml/dune toolchain. If the
+  # australVM repo is private, add a PAT secret and set `token:` on its checkout.
+  # Layout matters: run_demo.sh expects $ROOT/{unfer,australVM}.
+  # ---------------------------------------------------------------------------
+  demo-e2e:
+    name: demo_module end-to-end (Austral JIT + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      - name: run end-to-end demo
+        working-directory: unfer
+        run: bash demo_module/run_demo.sh
