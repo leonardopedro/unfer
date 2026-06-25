@@ -94,6 +94,12 @@ impl KernelError {
 
             KernelError::Sirk(SirkError::Numeric(msg)) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::ReduceScope,
+                        "solver.krylov_dim",
+                        "a numerical failure occurred during the solve; reduce the Krylov \
+                         dimension or adjust the shifts and retry",
+                    ))
             }
 
             KernelError::Cas(CasError::TermExplosion { terms, limit }) => {
@@ -189,10 +195,115 @@ impl KernelError {
                     e.to_string(),
                     Severity::Error,
                 )
+                .with_hint(RepairHint::new(
+                    HintKind::ReplaceValue,
+                    "request",
+                    "ensure the request body is valid JSON matching the documented schema",
+                ))
             }
 
             KernelError::Internal(msg) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Fatal)
+                    .with_hint(RepairHint::new(
+                        HintKind::UseAlternativeOp,
+                        "request",
+                        "internal kernel error — retry the operation; if it persists, report it \
+                         with the attached diagnostic data",
+                    ))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One representative instance of **every** `KernelError` variant — including
+    /// every inner `SirkError`/`CasError` variant routed through `Sirk(..)`/`Cas(..)`.
+    ///
+    /// If a new error variant is added, the exhaustive `match` in `to_diagnostic`
+    /// forces a new arm at compile time; adding the variant here forces it through
+    /// the coverage contract below. Keep this list complete.
+    fn every_variant() -> Vec<KernelError> {
+        vec![
+            // Sirk(..) — all four SirkError variants.
+            KernelError::Sirk(SirkError::GramDegenerate { max_eig: 1e-18 }),
+            KernelError::Sirk(SirkError::StateExplosion { components: 9000, limit: 4096 }),
+            KernelError::Sirk(SirkError::BrstNotConverged { residual: 1e-2 }),
+            KernelError::Sirk(SirkError::Numeric("singular matrix".into())),
+            // Cas(..) — both CasError variants.
+            KernelError::Cas(CasError::TermExplosion { terms: 1_000_000, limit: 65_536 }),
+            KernelError::Cas(CasError::Parse("unexpected token".into())),
+            // Native KernelError variants.
+            KernelError::UnknownBuiltinModel { name: "lattice_qcd".into() },
+            KernelError::BadEventPredicate { reason: "mode out of range".into() },
+            KernelError::ZeroProbabilityCondition { mass: 1e-30 },
+            KernelError::BadTerms { reason: "empty op string".into() },
+            KernelError::BadBuiltinParams { reason: "g must be > 0".into() },
+            KernelError::BadPrior { reason: "negative occupation".into() },
+            KernelError::BadJson(
+                serde_json::from_str::<i32>("not json").unwrap_err(),
+            ),
+            KernelError::Internal("unreachable state reached".into()),
+        ]
+    }
+
+    /// P2.9 — `KernelError` → `Diagnostic` coverage audit.
+    ///
+    /// The "Zero-language-style" machine surface promises AI agents that every
+    /// failure carries (a) a registered `UK-####` code and (b) at least one
+    /// actionable `RepairHint`. A single unmapped variant silently degrading to
+    /// a hint-less UK-5000 breaks that contract. This test enforces it.
+    #[test]
+    fn every_variant_maps_to_registered_code_with_hint() {
+        let registry = unfer_protocol::codes::all();
+        for err in every_variant() {
+            let diag = err.to_diagnostic();
+
+            // (a) the code must exist in the canonical registry — never an
+            // ad-hoc number an agent can't look up.
+            assert!(
+                registry.iter().any(|(c, _, _)| *c == diag.code.0),
+                "variant {err:?} produced unregistered code UK-{:04}",
+                diag.code.0,
+            );
+
+            // (b) the repair-hint contract: at least one actionable hint.
+            assert!(
+                !diag.hints.is_empty(),
+                "variant {err:?} (UK-{:04}) produced no RepairHint — breaks the \
+                 agent repair contract",
+                diag.code.0,
+            );
+
+            // every hint must actually name a target an agent can act on.
+            for hint in &diag.hints {
+                assert!(
+                    !hint.target.is_empty() && !hint.suggestion.is_empty(),
+                    "variant {err:?} produced an empty RepairHint",
+                );
+            }
+        }
+    }
+
+    /// Variants that represent *user-actionable* failures (everything except the
+    /// genuinely-internal UK-5000 bucket) must map to a **specific** code, not the
+    /// internal catch-all. This is the "silent degradation to UK-5000" guard.
+    #[test]
+    fn user_actionable_variants_avoid_internal_catchall() {
+        for err in every_variant() {
+            let diag = err.to_diagnostic();
+            let is_internal_variant = matches!(
+                err,
+                KernelError::Internal(_) | KernelError::Sirk(SirkError::Numeric(_)),
+            );
+            if !is_internal_variant {
+                assert_ne!(
+                    diag.code.0,
+                    Code::INTERNAL.0,
+                    "user-actionable variant {err:?} degraded to the UK-5000 catch-all",
+                );
             }
         }
     }
