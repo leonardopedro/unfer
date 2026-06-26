@@ -1,21 +1,30 @@
 pragma Unsafe_Module;
 
 import UnferKernel (
-    kernelVersion
+    Model,
+    kernelVersion,
+    wrapModel,
+    freeModel
 );
 
 module body DemoModule is
     function run(): Int64 is
-        -- Queries the kernel ABI version through the JIT (returns 1).
+        let v: Int64 := kernelVersion();
+        -- Exercise the P2.7 linear `Model` wrapper end-to-end through the CPS-JIT.
+        -- `wrapModel`/`freeModel` are non-foreign Austral functions in another
+        -- module (UnferKernel), and `freeModel` destructures the linear record to
+        -- recover the raw handle -- both cross-module linking and record
+        -- destructuring are now supported by the JIT backend. The linear type
+        -- forces `freeModel` to be called exactly once (the LeakDemo gate proves a
+        -- leak fails to compile).
         --
-        -- NB: the P2.7 linear `Model` wrapper in UnferKernel is the type-enforced
-        -- way to hold a model handle (leak / double-free become compile errors --
-        -- see the LeakDemo negative gate in run_demo.sh). It is intentionally NOT
-        -- exercised here: the experimental CPS-JIT backend does not yet lower
-        -- record-destructuring bindings or cross-module non-foreign calls, both of
-        -- which `freeModel` needs. The linearity guarantee is enforced by the
-        -- Austral typechecker regardless of backend; running the wrapper end-to-end
-        -- waits on the JIT gaining those features (tracked in the plan).
-        return kernelVersion();
+        -- `v` (the kernel version) stands in as the handle here: a real session
+        -- handle comes from kernelModelCreate, which needs a JSON spec buffer, and
+        -- byte-buffer constants are still not lowered by the JIT (the remaining
+        -- gap-§9 item). freeModel therefore frees a non-existent session (a no-op
+        -- returning an error code); we return the version so the demo asserts 1.
+        let m: Model := wrapModel(v);
+        let rc: Int64 := freeModel(m);
+        return v;
     end;
 end module body.
