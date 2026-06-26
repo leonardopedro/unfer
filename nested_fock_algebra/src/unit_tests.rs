@@ -4,6 +4,7 @@ mod algebra_tests {
     use crate::cas::compile_to_fock;
     use crate::models::{
         bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian,
+        yang_mills_lattice,
     };
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
@@ -190,6 +191,38 @@ mod algebra_tests {
             free.terms.iter().all(|(_, ops)| ops.len() == 2),
             "u=0 leaves only quadratic hopping terms"
         );
+    }
+
+    #[test]
+    fn test_yang_mills_lattice_structure() {
+        // 2×2 periodic lattice, 1 color (area = 4).
+        //   Electric: 2 dirs × 4 sites × 1 color = 8 quadratic (arity-2) terms.
+        //   Magnetic: 4 plaquettes × 1 color × 2⁴ = 64 quartic (arity-4) terms —
+        //   the four plaquette links are distinct modes, so no sub-term collapses.
+        let h = yang_mills_lattice(2, 1.0, 1);
+        let electric = h.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
+        let magnetic = h.terms.iter().filter(|(_, ops)| ops.len() == 4).count();
+        assert_eq!(electric, 8, "2×2 lattice, 1 color → 8 electric terms");
+        assert_eq!(magnetic, 64, "4 plaquettes × 16 quartic sub-terms each");
+        assert!(
+            h.terms
+                .iter()
+                .all(|(_, ops)| ops.len() == 2 || ops.len() == 4),
+            "only electric (arity 2) and magnetic (arity 4) terms"
+        );
+        // Hermitian construction → every coefficient is real.
+        assert!(
+            h.terms.iter().all(|(c, _)| c.im.abs() < 1e-15),
+            "lattice gauge coefficients are real"
+        );
+
+        // Each extra color is an independent copy → the term count doubles.
+        let h2 = yang_mills_lattice(2, 1.0, 2);
+        assert_eq!(h2.terms.len(), 2 * h.terms.len());
+
+        // `l` is clamped to ≥ 2 (a plaquette needs four distinct links).
+        let clamped = yang_mills_lattice(1, 1.0, 1);
+        assert_eq!(clamped.terms.len(), h.terms.len());
     }
 
     #[test]

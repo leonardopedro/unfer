@@ -450,3 +450,96 @@ pub fn bose_hubbard_chain(n_modes: usize, t: f64, u: f64, periodic: bool) -> Ham
 
     Hamiltonian { terms }
 }
+
+// ─────────────────────────────────────────────
+// 6. Yang–Mills mass-gap lattice (flagship — Hamiltonian lattice gauge toy)
+//    H = (g²/2) Σ_{ℓ,a} n_{ℓ,a}
+//        − (1/2g²) Σ_{plaquettes p, colors a} Φ_a(ℓ1) Φ_a(ℓ2) Φ_a(ℓ3) Φ_a(ℓ4)
+//
+//    A Kogut–Susskind-inspired Hamiltonian lattice gauge theory on a periodic
+//    `l × l` 2D lattice with `n_colors` bosonic gauge fields per link. Two
+//    competing terms set up the mass gap:
+//      • Electric energy `(g²/2) Σ n_{ℓ,a}` (n = a†a) — each excited link costs
+//        g²/2, the lattice origin of the Yang–Mills mass gap.
+//      • Magnetic plaquette term — the *quartic* magnetic interaction over the
+//        four links ℓ1..ℓ4 bounding each plaquette, with Φ = a† + a the
+//        hermitian link field. Each link field expands to a† + a, so one
+//        plaquette per color emits 2⁴ = 16 four-operator sub-terms: this is the
+//        combinatorial quartic path the bounded direct construction
+//        (`HamiltonianSpec::Terms`, Stage 4) is built to survive.
+//
+//    Mode layout: link `(dir ∈ {0:+x, 1:+y}, site (x,y), color a)` →
+//    `(dir·l² + y·l + x)·n_colors + a` (contiguous, color-minor). The four
+//    plaquette links are distinct modes for `l ≥ 2`, so their commuting
+//    hermitian field operators give a hermitian product; with real coefficients
+//    every operator string's conjugate appears, so H is hermitian. Number is
+//    NOT conserved (Φ creates and annihilates), so keep `l` small for Born-rule
+//    demos. `l` is clamped to ≥ 2 (a plaquette needs four distinct links) and
+//    `n_colors` to ≥ 1.
+// ─────────────────────────────────────────────
+pub fn yang_mills_lattice(l: usize, g: f64, n_colors: usize) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    let n_colors = n_colors.max(1);
+    let l = l.max(2); // a plaquette needs four distinct links → l ≥ 2
+    let area = (l * l) as u32;
+    let nc = n_colors as u32;
+
+    // Link mode index for direction `dir` at site (x, y), color `a`.
+    let link_mode = |dir: usize, x: usize, y: usize, a: usize| -> u32 {
+        ((dir as u32) * area + (y as u32) * (l as u32) + (x as u32)) * nc + (a as u32)
+    };
+
+    let g2 = g * g;
+
+    // ── Electric energy: (g²/2) Σ_{ℓ,a} a†_ℓ a_ℓ.
+    for dir in 0..2 {
+        for y in 0..l {
+            for x in 0..l {
+                for a in 0..n_colors {
+                    let m = link_mode(dir, x, y, a);
+                    terms.push((
+                        Complex64::new(g2 / 2.0, 0.0),
+                        vec![
+                            Operator::InnerBosonCreate(m),
+                            Operator::InnerBosonAnnihilate(m),
+                        ],
+                    ));
+                }
+            }
+        }
+    }
+
+    // ── Magnetic plaquette term: -(1/2g²) Σ_p Φ(ℓ1)Φ(ℓ2)Φ(ℓ3)Φ(ℓ4) per color.
+    let b_coeff = -1.0 / (2.0 * g2);
+    for y in 0..l {
+        for x in 0..l {
+            let xp = (x + 1) % l;
+            let yp = (y + 1) % l;
+            for a in 0..n_colors {
+                // The four links bounding the plaquette anchored at (x, y).
+                let l1 = link_mode(0, x, y, a); // bottom: +x at (x, y)
+                let l2 = link_mode(1, xp, y, a); // right:  +y at (x+1, y)
+                let l3 = link_mode(0, x, yp, a); // top:    +x at (x, y+1)
+                let l4 = link_mode(1, x, y, a); // left:   +y at (x, y)
+                for (c1, o1) in field_ops(l1) {
+                    for (c2, o2) in field_ops(l2) {
+                        for (c3, o3) in field_ops(l3) {
+                            for (c4, o4) in field_ops(l4) {
+                                let c = Complex64::new(b_coeff, 0.0) * c1 * c2 * c3 * c4;
+                                if c.norm_sqr() < 1e-30 {
+                                    continue;
+                                }
+                                terms.push((
+                                    c,
+                                    vec![o1.clone(), o2.clone(), o3.clone(), o4.clone()],
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Hamiltonian { terms }
+}

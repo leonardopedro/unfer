@@ -342,6 +342,57 @@ fn bose_hubbard_builds_and_normalizes() {
     );
 }
 
+fn yang_mills_lattice_spec(prior: PriorSpec) -> ModelSpec {
+    ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "yang_mills_lattice",
+            serde_json::json!({"l": 2, "g": 1.0, "n_colors": 1}),
+        ),
+        prior,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(100_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    }
+}
+
+#[test]
+fn yang_mills_lattice_builds_and_evolves() {
+    // Vacuum prior on the 2×2 single-color lattice. The magnetic plaquette term
+    // is a quartic Φ⁴ interaction; evolving off the vacuum drives it (the
+    // electric term annihilates the vacuum, but Φ⁴ creates excitations), so the
+    // solver must handle a quartic-heavy Hamiltonian and stay normalized.
+    let spec = yang_mills_lattice_spec(PriorSpec::Vacuum);
+    let mut session = Session::new(&spec).expect("yang-mills-lattice session");
+
+    // Starts in the vacuum.
+    let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
+
+    // Evolve under the gauge Hamiltonian (exercises the quartic plaquette term).
+    let report = session.evolve(0.1).expect("evolve");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-6,
+        "post-evolve norm must be ~1, got {}",
+        report.norm
+    );
+
+    // The complete cover {vacuum, ¬vacuum} stays normalized after the quartic
+    // dynamics, and the vacuum probability stays a valid probability.
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    let p_not = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_vac + p_not - 1.0).abs() < 1e-6,
+        "probabilities must sum to 1 (got {p_vac} + {p_not})"
+    );
+    assert!((0.0..=1.0).contains(&p_vac), "P(vacuum) in [0,1]: {p_vac}");
+}
+
 #[test]
 fn bose_hubbard_hopping_conserves_norm() {
     // Under -t (a†_0 a_1 + h.c.) the boson can hop between the two sites; after

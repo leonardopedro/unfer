@@ -4,7 +4,7 @@ use nested_fock_algebra::compile_latex;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
     bose_hubbard_chain, gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
-    yang_mills_hamiltonian,
+    yang_mills_hamiltonian, yang_mills_lattice,
 };
 use num_complex::Complex64;
 use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
@@ -39,6 +39,12 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
                 let u = get_f64(params, "u")?;
                 let periodic = get_bool_or(params, "periodic", false);
                 Ok(bose_hubbard_chain(n_modes, t, u, periodic))
+            }
+            "yang_mills_lattice" => {
+                let l = get_u64(params, "l")? as usize;
+                let g = get_f64(params, "g")?;
+                let n_colors = get_u64_or(params, "n_colors", 1) as usize;
+                Ok(yang_mills_lattice(l, g, n_colors))
             }
             other => Err(KernelError::UnknownBuiltinModel {
                 name: other.to_string(),
@@ -207,4 +213,9 @@ fn get_u64(params: &serde_json::Value, key: &str) -> Result<u64, KernelError> {
 /// Read an optional boolean parameter, falling back to `default` when absent.
 fn get_bool_or(params: &serde_json::Value, key: &str, default: bool) -> bool {
     params.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+/// Read an optional unsigned-integer parameter, falling back to `default`.
+fn get_u64_or(params: &serde_json::Value, key: &str, default: u64) -> u64 {
+    params.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }

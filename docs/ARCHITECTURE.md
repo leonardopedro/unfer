@@ -97,9 +97,19 @@ See `MODULES.md` for the full checklist. Summary:
 ### 4. Add a builtin model
 
 1. Implement in `nested_fock_algebra/src/models.rs`.
-2. Add dispatch in `prob_kernel/src/build.rs` `build_hamiltonian()`.
-3. Add parser support in `kernel_client/src/parse.rs` `parse_model()`.
-4. Add the name to the `VALID_OPS`/error hints.
+2. Add dispatch in `prob_kernel/src/build.rs` `build_hamiltonian()`
+   (`HamiltonianSpec::Builtin { name, params }` arm), reading params via
+   `get_f64`/`get_u64`/`get_bool_or`/`get_u64_or`.
+3. Add the name to the UK-1002 (`UnknownBuiltinModel`) valid-names hint in
+   `prob_kernel/src/error.rs`.
+4. Add a unit test in `nested_fock_algebra/src/unit_tests.rs` (term structure)
+   and an integration test in `prob_kernel/tests/session.rs` (build + evolve +
+   normalization). Document it in the "Builtin model set" list below.
+
+   Note: velysterm no longer parses builtin names (the v1 `kernel_client/src/
+   parse.rs` shortcut was deleted in P3.11); a builtin is reached either through
+   the `unfer_agent` / `uk_model_create` API with a `ModelSpec` JSON, or from
+   the editor via a user-defined translator that emits the builtin spec.
 
 ## Resolved limitations (Stages 1–6)
 
@@ -131,4 +141,9 @@ See `MODULES.md` for the full checklist. Summary:
 - **Builtin model set**: `yang_mills`, `navier_stokes`, `gravity`,
   `harmonic_chain`, `bose_hubbard` (`bose_hubbard_chain(n_modes, t, u,
   periodic)`: nearest-neighbour hopping `-t(a_i† a_j + h.c.)` plus on-site
-  `U/2 · n_i(n_i-1)`, optional periodic boundary).
+  `U/2 · n_i(n_i-1)`, optional periodic boundary), `yang_mills_lattice`
+  (`yang_mills_lattice(l, g, n_colors)`: a Kogut–Susskind-inspired Hamiltonian
+  lattice gauge theory on a periodic `l × l` 2D lattice — electric energy
+  `(g²/2) Σ n_ℓ` gaps the spectrum, and the *quartic* magnetic plaquette term
+  `-(1/2g²) Σ_p Φ(ℓ1)Φ(ℓ2)Φ(ℓ3)Φ(ℓ4)` (Φ = a† + a) stress-tests the bounded
+  direct-construction path; `l` clamped to ≥ 2, `n_colors` to ≥ 1).
