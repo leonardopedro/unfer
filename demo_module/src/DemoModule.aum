@@ -6,6 +6,16 @@ import UnferKernel (
 
 module body DemoModule is
     function run(): Int64 is
+        -- Queries the kernel ABI version through the JIT (returns 1).
+        --
+        -- NB: the P2.7 linear `Model` wrapper in UnferKernel is the type-enforced
+        -- way to hold a model handle (leak / double-free become compile errors --
+        -- see the LeakDemo negative gate in run_demo.sh). It is intentionally NOT
+        -- exercised here: the experimental CPS-JIT backend does not yet lower
+        -- record-destructuring bindings or cross-module non-foreign calls, both of
+        -- which `freeModel` needs. The linearity guarantee is enforced by the
+        -- Austral typechecker regardless of backend; running the wrapper end-to-end
+        -- waits on the JIT gaining those features (tracked in the plan).
         return kernelVersion();
     end;
 end module body.

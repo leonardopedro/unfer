@@ -81,5 +81,26 @@ else
 fi
 
 echo "============================================================"
-echo " DEMO COMPLETE: kernel call executed; authorization gate enforced."
+echo " 6. P2.7 LINEARITY GATE: a leaked model handle must NOT compile"
+echo "============================================================"
+# The linear `Model` wrapper (UnferKernel) makes `uk_model_free` a type-enforced
+# obligation: a module that wraps a handle but never frees it must be rejected by
+# the Austral typechecker. LeakDemo does exactly that; we assert the compile fails
+# with a Linearity Error. (This is a compile-time guarantee independent of the
+# CPS-JIT backend.)
+LEAK_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
+  "$AUSTRAL_DIR/examples/kernel/UnferKernel.aui,$AUSTRAL_DIR/examples/kernel/UnferKernel.aum" \
+  "$HERE/src/LeakDemo.aui,$HERE/src/LeakDemo.aum" \
+  --use-cps-jit --target-type=tc 2>&1 || true)"
+if echo "$LEAK_OUT" | grep -q "Linearity Error"; then
+  echo "PASS: leaking a linear Model is rejected at compile time (Linearity Error)."
+else
+  echo "FAIL: a leaked linear Model must fail to compile with a Linearity Error." >&2
+  echo "$LEAK_OUT" >&2
+  exit 1
+fi
+
+echo "============================================================"
+echo " DEMO COMPLETE: kernel call executed; authorization gate enforced;"
+echo "               linear model-handle discipline type-checked."
 echo "============================================================"

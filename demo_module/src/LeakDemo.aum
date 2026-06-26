@@ -1,0 +1,22 @@
+pragma Unsafe_Module;
+
+import UnferKernel (
+    Model,
+    kernelVersion,
+    wrapModel,
+    freeModel
+);
+
+module body LeakDemo is
+    function run(): Int64 is
+        let v: Int64 := kernelVersion();
+        -- LEAK: wrap a handle in a linear `Model` but never consume it with
+        -- `freeModel`. The Austral typechecker must reject this with a Linearity
+        -- Error ("variable `model` is not consumed by the time of the return
+        -- statement"). If this module ever compiles, the linear handle wrapper has
+        -- stopped enforcing the free obligation -- which is exactly the P2.7 bug
+        -- this negative test guards against.
+        let model: Model := wrapModel(v);
+        return v;
+    end;
+end module body.

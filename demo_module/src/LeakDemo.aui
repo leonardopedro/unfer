@@ -1,0 +1,9 @@
+module LeakDemo is
+    """
+    P2.7 negative test. This module deliberately leaks a linear `Model` (wraps a
+    handle but never calls `freeModel`). It MUST fail to compile with a Linearity
+    Error -- that compile-time rejection is the whole point of wrapping the raw
+    Int64 handle in a linear type. run_demo.sh asserts the failure.
+    """
+    function run(): Int64;
+end module.

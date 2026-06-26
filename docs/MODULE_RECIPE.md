@@ -48,3 +48,24 @@ optimization_level = 3
 3. **Packaging**: The `.cell` and `module.toml` are bundled into a module package.
 4. **Loading**: SafeSTOS reads the `module.toml`, checks the manifest grants against the `AuthorizationEngine`, and loads the bytecode into the JIT.
 5. **Symbol Binding**: The JIT bridge resolves `uk_*` calls to the shared `unfer_ffi` library.
+
+## Model handles: prefer the linear `Model` wrapper
+
+`uk_model_create` returns a raw `Int64` handle that `uk_model_free` consumes —
+correct freeing is caller discipline. `UnferKernel` (the Austral bindings) also
+exposes a **linear** wrapper, `Model`, which makes freeing a type-enforced
+obligation:
+
+```austral
+let m: Model := wrapModel(kernelModelCreate(spec, len));  -- own the handle
+let h: Int64 := modelHandle(&m);                          -- borrow without consuming
+...                                                       -- drive uk_* calls
+let rc: Int64 := freeModel(m);                            -- consume exactly once
+```
+
+A `Model` that is dropped without `freeModel` is a compile-time **Linearity
+Error** (session leak); freeing it twice is a use-after-consume error. New
+modules should hold handles as `Model`. _(Backend note: the current CPS-JIT does
+not yet lower record-destructure bindings or cross-module non-foreign calls, so
+the wrapper is enforced at typecheck time but executed via the raw `Int64`
+functions for now — see IMPLEMENTATION_PLAN gap §9.)_
