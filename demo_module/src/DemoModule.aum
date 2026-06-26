@@ -2,29 +2,34 @@ pragma Unsafe_Module;
 
 import UnferKernel (
     Model,
-    kernelVersion,
     wrapModel,
-    freeModel
+    freeModel,
+    kernelModelCreateStr,
+    kernelEventProbabilityStr
 );
 
 module body DemoModule is
     function run(): Int64 is
-        let v: Int64 := kernelVersion();
-        -- Exercise the P2.7 linear `Model` wrapper end-to-end through the CPS-JIT.
-        -- `wrapModel`/`freeModel` are non-foreign Austral functions in another
-        -- module (UnferKernel), and `freeModel` destructures the linear record to
-        -- recover the raw handle -- both cross-module linking and record
-        -- destructuring are now supported by the JIT backend. The linear type
-        -- forces `freeModel` to be called exactly once (the LeakDemo gate proves a
-        -- leak fails to compile).
-        --
-        -- `v` (the kernel version) stands in as the handle here: a real session
-        -- handle comes from kernelModelCreate, which needs a JSON spec buffer, and
-        -- byte-buffer constants are still not lowered by the JIT (the remaining
-        -- gap-§9 item). freeModel therefore frees a non-existent session (a no-op
-        -- returning an error code); we return the version so the demo asserts 1.
-        let m: Model := wrapModel(v);
-        let rc: Int64 := freeModel(m);
-        return v;
+        -- Build a model spec as a JSON string literal and create a real kernel
+        -- model through the CPS-JIT. The spec is a Span[Nat8, Static]; the kernel
+        -- binding decomposes it into (pointer, length) for the C ABI. This is the
+        -- gap-§9 byte-buffer path: a module now drives a genuine
+        -- uk_model_create -> uk_event_probability computation, not just uk_version.
+        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"builtin\",\"name\":\"harmonic_chain\",\"params\":{\"n_modes\":2,\"omega\":1.0}},\"prior\":{\"kind\":\"superposition\",\"terms\":[{\"re\":0.5,\"im\":0.0,\"spec\":{\"kind\":\"vacuum\"}},{\"re\":0.5,\"im\":0.0,\"spec\":{\"kind\":\"bosons\",\"modes\":[[0,1]]}}]},\"solver\":{\"krylov_dim\":4,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
+        let handle: Int64 := kernelModelCreateStr(spec);
+        if handle > 0 then
+            -- Compute P(boson count in mode 0 >= 1) for the superposition prior
+            -- (= 0.5). The kernel computes and stores the probability; prc is its
+            -- status code (0 = ok).
+            let evt: Span[Nat8, Static] := "{\"kind\":\"boson_mode_total\",\"mode\":0,\"cmp\":\"ge\",\"value\":1}";
+            let prc: Int64 := kernelEventProbabilityStr(handle, evt);
+            -- Hold the real handle in the linear Model and free it: the type
+            -- system forces exactly one freeModel (see the LeakDemo gate).
+            let m: Model := wrapModel(handle);
+            let rc: Int64 := freeModel(m);
+            return 1;
+        else
+            return handle;
+        end if;
     end;
 end module body.

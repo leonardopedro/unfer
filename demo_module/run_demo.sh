@@ -44,7 +44,13 @@ echo "============================================================"
 AUSTRAL="$AUSTRAL_DIR/_build/default/bin/austral.exe"
 
 echo "============================================================"
-echo " 4. POSITIVE: run demo_module through the CPS-JIT (live uk_version call)"
+echo " 4. POSITIVE: run demo_module through the CPS-JIT"
+echo "    The module builds a JSON ModelSpec string, JIT-creates a real kernel"
+echo "    model in-process (uk_model_create), computes an event probability"
+echo "    (uk_event_probability), and holds the handle in a linear Model that the"
+echo "    type system forces it to free. run() returns 1 only if the model was"
+echo "    actually created (handle > 0); a parse/create failure returns a negative"
+echo "    UK code instead."
 echo "============================================================"
 JIT_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
   "$AUSTRAL_DIR/examples/kernel/UnferKernel.aui,$AUSTRAL_DIR/examples/kernel/UnferKernel.aum" \
@@ -52,9 +58,9 @@ JIT_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
   --use-cps-jit --target-type=tc 2>&1 || true)"
 echo "$JIT_OUT"
 if echo "$JIT_OUT" | grep -q "CPS JIT: Execution result: 1"; then
-  echo "PASS: demo module executed and the kernel reported version 1."
+  echo "PASS: module JIT-created a real model from a JSON spec and computed a probability."
 else
-  echo "FAIL: expected the JIT to execute the demo and read kernel version 1." >&2
+  echo "FAIL: expected the JIT to create a model from JSON (Execution result: 1)." >&2
   exit 1
 fi
 
