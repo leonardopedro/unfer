@@ -31,9 +31,7 @@ kernel = [
     "uk_event_probability",
     "uk_observe",
     "uk_get_result",
-    "uk_last_error",
-    "uk_subscribe",
-    "uk_poll"
+    "uk_last_error"
 ]
 
 [build]

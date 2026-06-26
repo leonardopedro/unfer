@@ -246,37 +246,3 @@ pub extern "C" fn uk_last_error(buf: *mut u8, cap: i64) -> i64 {
     }
     write_buf(buf, cap, &error)
 }
-
-/// Subscribe to a live event query.  `query_json` is an `EventPredicate`.
-/// Returns a positive subscription handle on success, <0 (-code) on error.
-#[unsafe(no_mangle)]
-pub extern "C" fn uk_subscribe(model: i64, query_json: *const u8, len: i64) -> i64 {
-    ffi_entry("uk_subscribe", || {
-        if handles::get_last_result(model).is_none() {
-            return Err(bad_handle(model));
-        }
-        let query: EventPredicate = parse_json(query_json, len)?;
-        Ok(handles::store_subscription(model, query))
-    })
-}
-
-/// Poll a subscription.  Returns the current event probability as JSON
-/// `{"probability": <f64>}` via the buffer protocol.  Returns <0 (-code) on
-/// error.
-#[unsafe(no_mangle)]
-pub extern "C" fn uk_poll(sub: i64, buf: *mut u8, cap: i64) -> i64 {
-    ffi_entry("uk_poll", || {
-        let (model_handle, query) = handles::get_subscription(sub).ok_or_else(|| {
-            Diagnostic::new(
-                Code::BAD_HANDLE,
-                format!("invalid subscription handle: {sub}"),
-                Severity::Error,
-            )
-        })?;
-        let prob = handles::with_session_mut(model_handle, |s| s.probability(&query))
-            .ok_or_else(|| bad_handle(model_handle))?
-            .map_err(|e| e.to_diagnostic())?;
-        let json = serde_json::json!({"probability": prob}).to_string();
-        Ok(write_buf(buf, cap, &json))
-    })
-}

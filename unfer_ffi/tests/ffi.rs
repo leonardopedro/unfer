@@ -217,28 +217,6 @@ fn buffer_protocol_returns_needed_size() {
 }
 
 #[test]
-fn subscribe_and_poll() {
-    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
-    let model = uk_model_create(ptr, len);
-    assert!(model > 0);
-
-    let (ptr, len) = json_ptr(EVENT_VACUUM.as_bytes());
-    let sub = uk_subscribe(model, ptr, len);
-    assert!(sub > 0, "uk_subscribe should return positive sub handle");
-
-    let mut buf = vec![0u8; 256];
-    let needed = uk_poll(sub, buf.as_mut_ptr(), buf.len() as i64);
-    assert!(needed > 0);
-
-    buf.truncate(needed as usize);
-    let val: serde_json::Value = serde_json::from_slice(&buf).expect("poll result is JSON");
-    let p = val["probability"].as_f64().unwrap();
-    assert!((0.0..=1.0).contains(&p));
-
-    uk_model_free(model);
-}
-
-#[test]
 fn set_prior_resets_state() {
     let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
     let model = uk_model_create(ptr, len);

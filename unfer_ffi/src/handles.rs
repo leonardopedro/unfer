@@ -5,22 +5,15 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
-use unfer_protocol::{Diagnostic, EventPredicate};
+use unfer_protocol::Diagnostic;
 
 struct SessionEntry {
     session: Session,
     last_result: String,
 }
 
-struct SubscriptionEntry {
-    model_handle: i64,
-    query: EventPredicate,
-}
-
 static HANDLES: Mutex<Option<HashMap<i64, SessionEntry>>> = Mutex::new(None);
-static SUBSCRIPTIONS: Mutex<Option<HashMap<i64, SubscriptionEntry>>> = Mutex::new(None);
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
-static NEXT_SUB: AtomicI64 = AtomicI64::new(1);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
@@ -85,25 +78,4 @@ pub fn set_last_error(diag: &Diagnostic) {
 
 pub fn get_last_error() -> String {
     LAST_ERROR.with(|e| e.borrow().clone())
-}
-
-pub fn store_subscription(model_handle: i64, query: EventPredicate) -> i64 {
-    let sub = NEXT_SUB.fetch_add(1, Ordering::SeqCst);
-    let mut guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
-    let map = guard.get_or_insert_with(HashMap::new);
-    map.insert(
-        sub,
-        SubscriptionEntry {
-            model_handle,
-            query,
-        },
-    );
-    sub
-}
-
-pub fn get_subscription(sub: i64) -> Option<(i64, EventPredicate)> {
-    let guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
-    let map = guard.as_ref()?;
-    let entry = map.get(&sub)?;
-    Some((entry.model_handle, entry.query.clone()))
 }

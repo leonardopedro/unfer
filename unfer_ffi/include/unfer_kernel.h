@@ -8,7 +8,7 @@
  *   >= 0 : success (handle, byte count, or 0)
  *   <  0 : error (-code); call uk_last_error() for a Diagnostic JSON.
  *
- * Buffer protocol (uk_get_result, uk_last_error, uk_poll):
+ * Buffer protocol (uk_get_result, uk_last_error):
  *   Returns total bytes needed.  Copies min(needed, cap) into buf.
  *   If buf is NULL or cap <= 0, returns needed without copying.
  *   Caller re-calls with a buffer of at least `needed` bytes.
@@ -60,12 +60,6 @@ int64_t uk_get_result(int64_t model, uint8_t* buf, int64_t cap);
 
 /* Retrieve last error as Diagnostic JSON (buffer protocol). */
 int64_t uk_last_error(uint8_t* buf, int64_t cap);
-
-/* Subscribe to a live event query. Returns positive sub handle. */
-int64_t uk_subscribe(int64_t model, const uint8_t* query_json, int64_t len);
-
-/* Poll a subscription (buffer protocol). Returns {"probability": <f64>}. */
-int64_t uk_poll(int64_t sub, uint8_t* buf, int64_t cap);
 
 #ifdef __cplusplus
 }
