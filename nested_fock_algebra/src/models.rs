@@ -390,3 +390,63 @@ pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
     }
     Hamiltonian { terms }
 }
+
+// ─────────────────────────────────────────────
+// 5. Bose–Hubbard chain (builtin — flagship interacting lattice model)
+//    H = -t Σ_⟨i,j⟩ (a†_i a_j + a†_j a_i) + (U/2) Σ_i a†_i a†_i a_i a_i
+//
+//    The canonical model of interacting lattice bosons (the superfluid–Mott
+//    insulator transition): nearest-neighbour hopping with amplitude `t` and
+//    on-site repulsion `u`, where (U/2) a†a†aa = (U/2) n(n-1). Both terms
+//    conserve total particle number, so the dynamics stay in a bounded sector —
+//    hermitian (hopping is added as explicit conjugate pairs) and explosion-safe
+//    for Born-rule demos. `periodic` closes the chain into a ring (adds the
+//    (n-1, 0) bond) for n_modes ≥ 3.
+// ─────────────────────────────────────────────
+pub fn bose_hubbard_chain(n_modes: usize, t: f64, u: f64, periodic: bool) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+
+    // Nearest-neighbour bonds of the open chain, plus the wrap bond when periodic
+    // (only for n_modes ≥ 3, so a 2-site ring isn't double-counted).
+    let mut bonds: Vec<(u32, u32)> = (0..n_modes.saturating_sub(1))
+        .map(|i| (i as u32, (i + 1) as u32))
+        .collect();
+    if periodic && n_modes >= 3 {
+        bonds.push(((n_modes - 1) as u32, 0));
+    }
+
+    for (i, j) in bonds {
+        // -t a†_i a_j  and its Hermitian conjugate -t a†_j a_i.
+        terms.push((
+            Complex64::new(-t, 0.0),
+            vec![
+                Operator::InnerBosonCreate(i),
+                Operator::InnerBosonAnnihilate(j),
+            ],
+        ));
+        terms.push((
+            Complex64::new(-t, 0.0),
+            vec![
+                Operator::InnerBosonCreate(j),
+                Operator::InnerBosonAnnihilate(i),
+            ],
+        ));
+    }
+
+    // On-site repulsion (U/2) a†_i a†_i a_i a_i.
+    if u != 0.0 {
+        for i in 0..n_modes as u32 {
+            terms.push((
+                Complex64::new(u / 2.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(i),
+                    Operator::InnerBosonCreate(i),
+                    Operator::InnerBosonAnnihilate(i),
+                    Operator::InnerBosonAnnihilate(i),
+                ],
+            ));
+        }
+    }
+
+    Hamiltonian { terms }
+}

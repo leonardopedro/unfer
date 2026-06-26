@@ -128,3 +128,7 @@ See `MODULES.md` for the full checklist. Summary:
 - **High-order models**: `yang_mills_hamiltonian` builds `Hamiltonian`
   directly (bypassing `Expression::expand()`) to avoid combinatorial
   explosion.
+- **Builtin model set**: `yang_mills`, `navier_stokes`, `gravity`,
+  `harmonic_chain`, `bose_hubbard` (`bose_hubbard_chain(n_modes, t, u,
+  periodic)`: nearest-neighbour hopping `-t(a_i† a_j + h.c.)` plus on-site
+  `U/2 · n_i(n_i-1)`, optional periodic boundary).

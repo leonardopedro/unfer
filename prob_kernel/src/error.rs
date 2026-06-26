@@ -125,7 +125,7 @@ impl KernelError {
             .with_hint(RepairHint::new(
                 HintKind::ReplaceValue,
                 "hamiltonian.name",
-                "use one of: yang_mills, navier_stokes, gravity, harmonic_chain",
+                "use one of: yang_mills, navier_stokes, gravity, harmonic_chain, bose_hubbard",
             ))
             .with_data(serde_json::json!({"requested": name})),
 

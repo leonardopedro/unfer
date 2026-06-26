@@ -36,6 +36,23 @@ fn event_mode0_ge1() -> EventPredicate {
     }
 }
 
+fn bose_hubbard_spec(prior: PriorSpec) -> ModelSpec {
+    ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "bose_hubbard",
+            serde_json::json!({"n_modes": 2, "t": 1.0, "u": 1.0, "periodic": false}),
+        ),
+        prior,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    }
+}
+
 #[test]
 fn probabilities_sum_to_one() {
     let spec = harmonic_chain_spec(superposition_prior());
@@ -301,4 +318,48 @@ fn cas_error_maps_to_diagnostic() {
             .iter()
             .any(|h| h.kind == HintKind::UseAlternativeOp)
     );
+}
+
+#[test]
+fn bose_hubbard_builds_and_normalizes() {
+    // One boson localized on site 0 of a 2-site Bose–Hubbard chain.
+    let spec = bose_hubbard_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let session = Session::new(&spec).expect("bose-hubbard session");
+
+    // {mode0≥1, ¬(mode0≥1)} is a complete, mutually-exclusive cover.
+    let p_on0 = session.probability(&event_mode0_ge1()).expect("prob");
+    let p_off0 = session
+        .probability(&EventPredicate::not(event_mode0_ge1()))
+        .expect("prob");
+
+    assert!(
+        (p_on0 - 1.0).abs() < 1e-10,
+        "the boson starts on site 0: P(mode0≥1) = {p_on0}"
+    );
+    assert!(
+        (p_on0 + p_off0 - 1.0).abs() < 1e-10,
+        "probabilities must sum to 1"
+    );
+}
+
+#[test]
+fn bose_hubbard_hopping_conserves_norm() {
+    // Under -t (a†_0 a_1 + h.c.) the boson can hop between the two sites; after
+    // evolving, the total probability over the cover must still be 1 (norm
+    // conservation) and each probability must stay in [0, 1].
+    let spec = bose_hubbard_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("bose-hubbard session");
+
+    session.evolve(0.5).expect("evolve");
+
+    let p_on0 = session.probability(&event_mode0_ge1()).expect("prob");
+    let p_off0 = session
+        .probability(&EventPredicate::not(event_mode0_ge1()))
+        .expect("prob");
+
+    assert!(
+        (p_on0 + p_off0 - 1.0).abs() < 1e-6,
+        "post-evolution probabilities must sum to 1 (got {p_on0} + {p_off0})"
+    );
+    assert!((0.0..=1.0).contains(&p_on0), "P(mode0≥1) in [0,1]: {p_on0}");
 }

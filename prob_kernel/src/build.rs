@@ -3,7 +3,8 @@ use candle_core::Device;
 use nested_fock_algebra::compile_latex;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
-    gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian, yang_mills_hamiltonian,
+    bose_hubbard_chain, gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
+    yang_mills_hamiltonian,
 };
 use num_complex::Complex64;
 use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
@@ -31,6 +32,13 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
                 let n_modes = get_u64(params, "n_modes")? as usize;
                 let omega = get_f64(params, "omega")?;
                 Ok(harmonic_chain(n_modes, omega))
+            }
+            "bose_hubbard" => {
+                let n_modes = get_u64(params, "n_modes")? as usize;
+                let t = get_f64(params, "t")?;
+                let u = get_f64(params, "u")?;
+                let periodic = get_bool_or(params, "periodic", false);
+                Ok(bose_hubbard_chain(n_modes, t, u, periodic))
             }
             other => Err(KernelError::UnknownBuiltinModel {
                 name: other.to_string(),
@@ -194,4 +202,9 @@ fn get_u64(params: &serde_json::Value, key: &str) -> Result<u64, KernelError> {
         .ok_or_else(|| KernelError::BadBuiltinParams {
             reason: format!("missing or non-integer parameter: {key}"),
         })
+}
+
+/// Read an optional boolean parameter, falling back to `default` when absent.
+fn get_bool_or(params: &serde_json::Value, key: &str, default: bool) -> bool {
+    params.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }

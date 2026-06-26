@@ -2,7 +2,9 @@
 #[cfg(test)]
 mod algebra_tests {
     use crate::cas::compile_to_fock;
-    use crate::models::{gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian};
+    use crate::models::{
+        bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian,
+    };
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
 
@@ -160,6 +162,33 @@ mod algebra_tests {
         assert!(
             !result.components.is_empty(),
             "H_YM|vac⟩ should be non-zero"
+        );
+    }
+
+    #[test]
+    fn test_bose_hubbard_structure() {
+        // Open 3-site chain with hopping and on-site repulsion.
+        // Bonds (open): (0,1),(1,2) -> 2 bonds * 2 (h.c.) = 4 hopping terms (arity 2).
+        // Interaction: u != 0 -> one term per site = 3 terms (arity 4: a†a†aa).
+        let h = bose_hubbard_chain(3, 1.0, 2.0, false);
+        let hopping = h.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
+        let interaction = h.terms.iter().filter(|(_, ops)| ops.len() == 4).count();
+        assert_eq!(hopping, 4, "open 3-site chain has 4 hopping terms");
+        assert_eq!(
+            interaction, 3,
+            "on-site repulsion adds one quartic term per site"
+        );
+
+        // Periodic adds the wrap bond (n>=3): +2 hopping terms.
+        let ring = bose_hubbard_chain(3, 1.0, 2.0, true);
+        let ring_hopping = ring.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
+        assert_eq!(ring_hopping, 6, "periodic 3-site ring has 6 hopping terms");
+
+        // u = 0 -> no interaction terms (pure tight-binding hopping).
+        let free = bose_hubbard_chain(3, 1.0, 0.0, false);
+        assert!(
+            free.terms.iter().all(|(_, ops)| ops.len() == 2),
+            "u=0 leaves only quadratic hopping terms"
         );
     }
 
