@@ -107,6 +107,25 @@ else
 fi
 
 echo "============================================================"
-echo " DEMO COMPLETE: kernel call executed; authorization gate enforced;"
-echo "               linear model-handle discipline type-checked."
+echo " 7. CPS-JIT BACKEND GATE: multi-field record slot offsets"
+echo "============================================================"
+# Records are load-bearing for the kernel module surface (the linear Model is a
+# record; freeModel destructures it). RecordCheck builds a 3-field record and
+# returns the field at slot offset 16; a regression in slot-offset lowering would
+# return offset 0 instead. Asserts Execution result: 30.
+REC_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
+  "$HERE/src/RecordCheck.aui,$HERE/src/RecordCheck.aum" \
+  --use-cps-jit --target-type=tc 2>&1 || true)"
+if echo "$REC_OUT" | grep -q "CPS JIT: Execution result: 30"; then
+  echo "PASS: multi-field record slot offsets are correct (read offset-16 field = 30)."
+else
+  echo "FAIL: expected the JIT to read the offset-16 record field (Execution result: 30)." >&2
+  echo "$REC_OUT" >&2
+  exit 1
+fi
+
+echo "============================================================"
+echo " DEMO COMPLETE: module-computed probability ran; authorization gate"
+echo "               enforced; linear model-handle discipline type-checked;"
+echo "               record slot-offset codegen verified."
 echo "============================================================"

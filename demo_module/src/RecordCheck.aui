@@ -1,0 +1,10 @@
+module RecordCheck is
+    """
+    CPS-JIT backend regression gate. Constructs a multi-field record and reads a
+    field at a non-zero slot offset. The kernel's linear `Model` wrapper is a
+    record whose `freeModel` destructures it, so correct record slot offsets are
+    load-bearing. `run` returns the last field (30); a regression in slot-offset
+    lowering (e.g. offsets defaulting to 0) would return the first field instead.
+    """
+    function run(): Int64;
+end module.

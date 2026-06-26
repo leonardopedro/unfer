@@ -1,0 +1,18 @@
+pragma Unsafe_Module;
+
+module body RecordCheck is
+    record Triple: Free is
+        x: Int64;
+        y: Int64;
+        z: Int64;
+    end;
+
+    function run(): Int64 is
+        -- Construct (slots at offsets 0/8/16) and destructure (slot loads).
+        let t: Triple := Triple(x => 10, y => 20, z => 30);
+        let { x: Int64, y: Int64, z: Int64 } := t;
+        -- Return the field at offset 16. If slot offsets regressed to 0 this
+        -- would read offset 0 (= 10) instead of 30.
+        return z;
+    end;
+end module body.
