@@ -126,7 +126,7 @@ impl KernelError {
                 HintKind::ReplaceValue,
                 "hamiltonian.name",
                 "use one of: yang_mills, yang_mills_lattice, navier_stokes, gravity, \
-                 harmonic_chain, bose_hubbard",
+                 harmonic_chain, bose_hubbard, qfm_mehler",
             ))
             .with_data(serde_json::json!({"requested": name})),
 

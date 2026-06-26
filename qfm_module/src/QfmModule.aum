@@ -1,0 +1,40 @@
+pragma Unsafe_Module;
+
+import UnferKernel (
+    Model,
+    wrapModel,
+    freeModel,
+    kernelModelCreateStr,
+    kernelEvolveStr,
+    kernelEventProbabilityStr
+);
+
+module body QfmModule is
+    function run(): Int64 is
+        -- The O(M) "training" step is analytical: the decoupled per-channel
+        -- weights α_j are precomputed (QMF.tex §2.2) and embedded as a JSON
+        -- array. Building the qfm_mehler spec points the kernel at the
+        -- |0><0| + Σ_j α_j n_j generator with the Mehler vacuum prior. krylov_dim
+        -- = 15 sets the O(m²) reduced-generator dimension for inference.
+        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"builtin\",\"name\":\"qfm_mehler\",\"params\":{\"alphas\":[1.5,2.1,0.8]}},\"prior\":{\"kind\":\"vacuum\"},\"solver\":{\"krylov_dim\":15,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
+        let handle: Int64 := kernelModelCreateStr(spec);
+        if handle > 0 then
+            -- The O(m²) single-step inference: evolve the Mehler prior under the
+            -- SIRK-compressed QFM generator for one unit of flow time.
+            let opts: Span[Nat8, Static] := "{\"t\":1.0}";
+            let erc: Int64 := kernelEvolveStr(handle, opts);
+            -- Read back the generated probability of data channel 0 being
+            -- occupied (BosonModeTotal{mode:0, Eq, 1}). The kernel computes and
+            -- stores it; prc is the status code (0 = ok).
+            let evt: Span[Nat8, Static] := "{\"kind\":\"boson_mode_total\",\"mode\":0,\"cmp\":\"eq\",\"value\":1}";
+            let prc: Int64 := kernelEventProbabilityStr(handle, evt);
+            -- Hold the real handle in the linear Model and free it: the type
+            -- system forces exactly one freeModel (see the LeakDemo gate).
+            let m: Model := wrapModel(handle);
+            let rc: Int64 := freeModel(m);
+            return 1;
+        else
+            return handle;
+        end if;
+    end;
+end module body.

@@ -1,0 +1,12 @@
+module QfmModule is
+    """
+    Quantum Flow Matching kernel module (see unfer/QMF.tex). `run` builds a
+    `qfm_mehler` model spec — the Mehler vacuum-projector prior plus the
+    decoupled per-channel data weights α_j — JIT-creates it in-process via the
+    UnferKernel bindings, runs the single-step O(m²) SIRK inference
+    (`uk_evolve`), and reads back a generated data-channel probability
+    (`uk_event_probability`). Every `uk_*` symbol is gated by this module's
+    `module.toml` grants (see the UK-4001 negative test in run_demo.sh).
+    """
+    function run(): Int64;
+end module.

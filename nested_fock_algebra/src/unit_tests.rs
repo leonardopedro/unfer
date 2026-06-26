@@ -3,8 +3,8 @@
 mod algebra_tests {
     use crate::cas::compile_to_fock;
     use crate::models::{
-        bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, yang_mills_hamiltonian,
-        yang_mills_lattice,
+        bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, qfm_hamiltonian,
+        yang_mills_hamiltonian, yang_mills_lattice,
     };
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
@@ -223,6 +223,50 @@ mod algebra_tests {
         // `l` is clamped to ≥ 2 (a plaquette needs four distinct links).
         let clamped = yang_mills_lattice(1, 1.0, 1);
         assert_eq!(clamped.terms.len(), h.terms.len());
+    }
+
+    #[test]
+    fn test_qfm_hamiltonian() {
+        // QFM generator: H = |0><0| + Σ_j α_j n_j   (see QMF.tex).
+        let alphas = [1.5, 2.1, 0.8];
+        let h = qfm_hamiltonian(&alphas);
+
+        // One projector term + one number operator per data point.
+        assert_eq!(h.terms.len(), alphas.len() + 1);
+        assert!(matches!(h.terms[0].1[..], [Operator::ProjectVacuum]));
+        assert!(h.terms.iter().all(|(c, _)| c.im.abs() < 1e-15));
+
+        // |x_j> — one outer universe holding a single boson in inner mode j.
+        let single_boson = |j: u32| {
+            let mut inner = crate::InnerBosonicState::vacuum();
+            inner.modes.insert(j, 1);
+            Operator::OuterBosonCreate(inner).apply_to_state(&QuantumState::vacuum())
+        };
+
+        // H|0> = |0>: the projector contributes eigenvalue 1, all n_j kill vacuum.
+        let vac = QuantumState::vacuum();
+        let h_vac = h.apply(&vac);
+        let eig0 =
+            QuantumState::inner_product(&vac, &h_vac) / QuantumState::inner_product(&vac, &vac);
+        assert!(
+            (eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12,
+            "H|0> = |0>"
+        );
+
+        // H|x_j> = α_j |x_j>: the projector drops it, only n_j survives.
+        for (j, &alpha) in alphas.iter().enumerate() {
+            let xj = single_boson(j as u32);
+            let h_xj = h.apply(&xj);
+            let eig =
+                QuantumState::inner_product(&xj, &h_xj) / QuantumState::inner_product(&xj, &xj);
+            assert!(
+                (eig.re - alpha).abs() < 1e-12 && eig.im.abs() < 1e-12,
+                "H|x_{j}> = α_{j}|x_{j}> (got {eig})"
+            );
+            // And no leakage back into the vacuum: <0|H|x_j> = 0.
+            let leak = QuantumState::inner_product(&vac, &h_xj);
+            assert!(leak.norm() < 1e-12, "no vacuum leakage from |x_{j}>");
+        }
     }
 
     #[test]

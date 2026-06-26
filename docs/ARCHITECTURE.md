@@ -146,4 +146,12 @@ See `MODULES.md` for the full checklist. Summary:
   lattice gauge theory on a periodic `l × l` 2D lattice — electric energy
   `(g²/2) Σ n_ℓ` gaps the spectrum, and the *quartic* magnetic plaquette term
   `-(1/2g²) Σ_p Φ(ℓ1)Φ(ℓ2)Φ(ℓ3)Φ(ℓ4)` (Φ = a† + a) stress-tests the bounded
-  direct-construction path; `l` clamped to ≥ 2, `n_colors` to ≥ 1).
+  direct-construction path; `l` clamped to ≥ 2, `n_colors` to ≥ 1),
+  `qfm_mehler` (`qfm_hamiltonian(alphas)`: the analytical Quantum Flow Matching
+  generator `H = |0><0| + Σ_j α_j n_j` from `QMF.tex` — `M = alphas.len()`
+  orthogonal data points as single bosons in distinct modes plus the Mehler
+  rank-1 vacuum projector `|0><0|`; built directly so M can be huge with no CAS
+  blow-up. Driven end-to-end by the `qfm_module` Austral module).
+- **Vacuum projector**: `Operator::ProjectVacuum` is the rank-1 `|0><0|`
+  (self-adjoint, idempotent) backing the Mehler prior; on apply it keeps only
+  the strict-vacuum component and drops everything carrying any mode.

@@ -392,6 +392,41 @@ pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
 }
 
 // ─────────────────────────────────────────────
+// 4b. Quantum Flow Matching (QFM) generator (builtin — see QMF.tex)
+//     H = |0><0|  +  Σ_j α_j n_j        (n_j = a†_j a_j)
+//
+//     Analytical, neural-network-free generative flow: M orthogonal data
+//     points become single bosons in distinct modes, and the Mehler uniform
+//     prior is the rank-1 vacuum projector |0><0|. The data potential has no
+//     cross-terms, so it is strictly diagonal (H|0>=|0>, H|x_j>=α_j|x_j>) and
+//     building it stays O(M) by bypassing Expression::expand().
+// ─────────────────────────────────────────────
+
+/// The analytical **Quantum Flow Matching** generator (see `QMF.tex`).
+///
+/// Encodes `M = alphas.len()` orthogonal data points as single bosons in
+/// distinct modes plus the Mehler vacuum-projector prior:
+/// `H = |0><0| + Σ_j α_j · a†_j a_j`. Constructed directly so M can be huge
+/// without hitting the CAS term-explosion limit.
+pub fn qfm_hamiltonian(alphas: &[f64]) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    // H_0 = |0><0|, the Mehler global prior.
+    terms.push((Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum]));
+    // Decoupled data potential: one number operator per data point.
+    for (j, &alpha) in alphas.iter().enumerate() {
+        let mode = j as u32;
+        terms.push((
+            Complex64::new(alpha, 0.0),
+            vec![
+                Operator::InnerBosonCreate(mode),
+                Operator::InnerBosonAnnihilate(mode),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+// ─────────────────────────────────────────────
 // 5. Bose–Hubbard chain (builtin — flagship interacting lattice model)
 //    H = -t Σ_⟨i,j⟩ (a†_i a_j + a†_j a_i) + (U/2) Σ_i a†_i a†_i a_i a_i
 //

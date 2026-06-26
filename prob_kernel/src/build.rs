@@ -4,7 +4,7 @@ use nested_fock_algebra::compile_latex;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
     bose_hubbard_chain, gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
-    yang_mills_hamiltonian, yang_mills_lattice,
+    qfm_hamiltonian, yang_mills_hamiltonian, yang_mills_lattice,
 };
 use num_complex::Complex64;
 use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
@@ -45,6 +45,10 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
                 let g = get_f64(params, "g")?;
                 let n_colors = get_u64_or(params, "n_colors", 1) as usize;
                 Ok(yang_mills_lattice(l, g, n_colors))
+            }
+            "qfm_mehler" => {
+                let alphas = get_f64_array(params, "alphas")?;
+                Ok(qfm_hamiltonian(&alphas))
             }
             other => Err(KernelError::UnknownBuiltinModel {
                 name: other.to_string(),
@@ -218,4 +222,20 @@ fn get_bool_or(params: &serde_json::Value, key: &str, default: bool) -> bool {
 /// Read an optional unsigned-integer parameter, falling back to `default`.
 fn get_u64_or(params: &serde_json::Value, key: &str, default: u64) -> u64 {
     params.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+
+/// Read a required array-of-numbers parameter (e.g. the QFM `alphas` weights).
+fn get_f64_array(params: &serde_json::Value, key: &str) -> Result<Vec<f64>, KernelError> {
+    let arr = params.get(key).and_then(|v| v.as_array()).ok_or_else(|| {
+        KernelError::BadBuiltinParams {
+            reason: format!("missing or non-array parameter: {key}"),
+        }
+    })?;
+    arr.iter()
+        .map(|v| {
+            v.as_f64().ok_or_else(|| KernelError::BadBuiltinParams {
+                reason: format!("non-numeric element in array parameter: {key}"),
+            })
+        })
+        .collect()
 }

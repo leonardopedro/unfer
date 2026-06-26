@@ -1,0 +1,28 @@
+# Quantum Flow Matching (QFM) kernel module — see unfer/QMF.tex and QMFplan.md.
+# An analytical, neural-network-free generative flow: M orthogonal data points
+# become single bosons in distinct modes, the Mehler uniform prior is the rank-1
+# vacuum projector |0><0|, and inference is a single SIRK-compressed evolution.
+# See unfer/docs/MODULES.md for the manifest schema and "add a module" checklist.
+
+[module]
+name = "qfm_module"
+version = "0.1.0"
+# Archetype contracts the module implements (see MODULES.md):
+#   data_source — supplies the decoupled per-channel weights α_j (the O(M)
+#                 "training" step, precomputed and embedded as a JSON array).
+#   actor       — act(model): runs the single-step QFM inference and reads a
+#                 generated data-channel probability.
+archetypes = ["data_source", "actor"]
+entry = "src/QfmModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*` kernel
+# call this module makes against this allow-list (auth.rs / ManifestAuthEngine).
+# Removing a symbol here causes the corresponding call to fail with a UK-4001
+# CallDenied denial at JIT time — see run_demo.sh's negative test on uk_evolve.
+[grants]
+kernel = [
+    "uk_model_create",
+    "uk_evolve",
+    "uk_event_probability",
+    "uk_model_free",
+]

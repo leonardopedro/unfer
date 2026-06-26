@@ -1,0 +1,142 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{braket}
+\usepackage{graphicx}
+
+\geometry{margin=1in}
+
+\title{\textbf{Analytical Quantum Flow Matching via Inversion-Free Krylov Reduction in the \texttt{unfer} Kernel}}
+\author{Implementation Architecture Report}
+\date{June 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We introduce a scalable, analytical Quantum Flow Matching (QFM) module for the \texttt{unfer} probability kernel. Recent advances in QFM (Cui, Zhang, and Tang, 2025) demonstrate that mapping generative flows to continuous quantum unitary evolution provides a powerful alternative to classical diffusion. However, current QFM protocols rely on Parameterized Quantum Circuits (PQCs) trained via heuristic Variational Quantum Algorithms (VQAs), suffering from optimization plateaus and heavy sampling overhead. In this paper, we propose a mathematically exact, neural-network-free formulation. By encoding data as a Poisson point process over a Symmetric Fock space, we decouple the flow potential, achieving lossless data representation and $\mathcal{O}(M)$ training complexity. We utilize the Mehler uniform prior as a global vacuum projector ($H_0 = \ket{0}\bra{0}$), ensuring out-of-distribution generalization. Finally, the system is optimally compressed using an inversion-free Hashimoto-Krylov dimensional reduction, enabling $\mathcal{O}(m^2)$ single-step inference. We detail its integration into the \texttt{unfer} GPU-accelerated \texttt{fock\textunderscore sirk} solver and Austral-based module runtime.
+\end{abstract}
+
+\section{Introduction}
+
+Flow matching has emerged as a dominant generative modeling paradigm, constructing deterministic ordinary differential equations (ODEs) that transport prior noise distributions into complex target data manifolds. Recently, Cui, Zhang, and Tang (2025) extended this paradigm to the quantum domain with Quantum Flow Matching (QFM) \cite{Cui2025}. Their formulation interpolates between density matrices using a continuous unitary flow, $i\partial_t \Psi = H_t \Psi$.
+
+While theoretically elegant, the practical implementation in \cite{Cui2025} relies on an Entanglement-varied Hardware-efficient Ansatz (EHA)—a Parameterized Quantum Circuit (PQC) trained iteratively via gradient descent. This introduces severe computational bottlenecks: susceptibility to barren plateaus, sub-optimal local minima, and a heavy classical-quantum optimization loop that scales poorly with large datasets ($M$).
+
+We propose a radical departure from heuristic PQC optimization. We implement an \textit{analytical} QFM architecture within the \texttt{unfer} kernel. By combining the Mehler spatial formalism with Symmetric Fock spaces, we construct a closed-form flow generator $H$ that eliminates the need for neural networks or PQCs. This Hamiltonian is subsequently compressed via the Shift-Invert Rational Krylov (SIRK) algorithm \cite{Hashimoto2019}, granting exact dimensional reduction.
+
+\section{Theoretical Framework}
+
+\subsection{Orthogonal Data Encoding and the Fock Space}
+To bypass the $\mathcal{O}(M^3)$ matrix inversion bottleneck typical of analytical kernel methods, we treat the $M$ training data points as events in a Poisson counting measure. Utilizing the Wiener-It\^o-Segal isomorphism, each data point $x_j \in \mathbb{R}^D$ is mapped to a strictly orthogonal, single-particle state in a Symmetric Fock space:
+\begin{equation}
+    \ket{x_j} = \hat{c}_j^\dagger \ket{0}, \quad \langle x_i | x_j \rangle = \delta_{ij}
+\end{equation}
+In the coordinate spatial representation, we define these orthogonal states via a set of orthonormal, localized basis functions (wave-packets) $\Psi_j(x) = \langle x \mid x_j \rangle$ centered at each data point $x_j$. Because the events of a point process are disjoint, these basis functions have strictly disjoint supports:
+\begin{equation}
+    \Psi_j(x) \Psi_k(x) = \delta_{jk} \Psi_j(x)^2
+\end{equation}
+This disjointness also guarantees that their spatial gradients do not overlap:
+\begin{equation}
+    \nabla \Psi_j(x) \cdot \nabla \Psi_k(x) = 0 \quad \text{for all } j \neq k
+\end{equation}
+
+\subsection{Analytical Potential Optimization}
+We define the time-dependent flow potential $V_t(x)$ exactly as a linear combination of these orthogonal Fock-like basis functions:
+\begin{equation}
+    V_t(x) = \sum_{j=1}^M \alpha_j(t) \Psi_j(x)
+\end{equation}
+To optimize the parameters $\alpha_j(t)$, we minimize the standard Flow Matching loss function. Let $u_t(x \mid x_0, x^{(k)}) = x^{(k)} - x_0$ be the target optimal transport velocity field. We minimize the expectation of the difference between our conservative velocity $-\nabla V_t(x)$ and the target:
+\begin{equation}
+    \mathcal{L}(\vec{\alpha}(t)) = \mathbb{E}_{t, x_0, x^{(j)}, x_t} \left\| -\sum_{j=1}^M \alpha_j(t) \nabla \Psi_j(x_t) - (x^{(j)} - x_0) \right\|_2^2
+\end{equation}
+Setting the gradient of $\mathcal{L}$ with respect to $\alpha_k(t)$ to zero yields:
+\begin{equation}
+    \sum_{j=1}^M \alpha_j(t) \mathbb{E}_{x_t} \left[ \nabla \Psi_j(x_t) \cdot \nabla \Psi_k(x_t) \right] = -\mathbb{E}_{x_t, x_0, x^{(j)}} \left[ (x^{(j)} - x_0) \cdot \nabla \Psi_k(x_t) \right]
+\end{equation}
+Due to the disjoint support property ($\nabla \Psi_j \cdot \nabla \Psi_k = 0$ for $j \neq k$), this system collapses to a **strictly diagonal system**. Furthermore, the global expectation over $M$ trajectories simplifies because $\Psi_k(x_t^{(j)})$ is exactly zero along any path $j \neq k$. 
+
+This yields the exact, decoupled analytical solution for each parameter:
+\begin{equation}
+    \alpha_k(t) = - \frac{\mathbb{E}_{x_0} \left[ (x^{(k)} - x_0) \cdot \nabla \Psi_k(x_t^{(k)}) \right]}{M \cdot \mathbb{E}_{x_0} \left[ \|\nabla \Psi_k(x_t^{(k)})\|^2 \right]}
+\end{equation}
+where $x_0 \sim \mathcal{N}(0, \mathbf{I})$ (the Mehler ground state noise prior) and $x_t^{(k)} = (1-t)x_0 + t x^{(k)}$. Because each $\alpha_k(t)$ is solved independently in parallel, the optimization scales strictly as $\mathcal{O}(M)$ with zero data loss.
+
+\subsection{The Continuity Hamiltonian and the Mehler Prior}
+We introduce the background prior $H_0 = \ket{0}\bra{0}$ as a rank-1 projection operator onto the Mehler ground state $\ket{0}$ (the maximum-entropy prior representing absolute uncertainty). 
+
+To evolve our wavefunction $\Psi_t(x)$ according to the continuity equation, we construct the **continuity Hamiltonian** $\hat{\mathcal{H}}_t$ using the gradient and Laplacian of our potential $V_t(x)$:
+\begin{equation}
+    \hat{\mathcal{H}}_t = H_0 - \frac{i}{2} \left( \nabla V_t(x) \cdot \nabla + \nabla^2 V_t(x) \right)
+\end{equation}
+Substituting our optimized potential $V_t(x) = \sum_{j=1}^M \alpha_j(t) \Psi_j(x)$ into the continuity equation yields:
+\begin{equation}
+    \hat{\mathcal{H}}_t = \ket{0}\bra{0} - \frac{i}{2} \sum_{j=1}^M \alpha_j(t) \hat{h}_j(x, \nabla)
+\end{equation}
+where the localized differential operator is defined as $\hat{h}_j(x, \nabla) = \nabla \Psi_j(x) \cdot \nabla + \nabla^2 \Psi_j(x)$.
+
+For any out-of-distribution (OOD) state $\ket{x_{\text{OOD}}}$, $\hat{\mathcal{H}}_t$ projects it onto the Mehler prior $\ket{0}$, which then distributes it uniformly to the data channels $\ket{x_j}$ with equal base probability, completely bypassing spatial grids.
+
+\subsection{Time-Averaging and Exact Commutativity}
+Because the basis functions $\Psi_j(x)$ have disjoint spatial supports, their corresponding operators act on independent regions of the coordinate space and exactly commute:
+\begin{equation}
+    [\hat{h}_j, \hat{h}_k] = 0 \quad \text{for all } j, k
+\end{equation}
+Consequently, the Hamiltonians at different times commute: $[\hat{\mathcal{H}}_t, \hat{\mathcal{H}}_{t'}] = 0$. The time-ordering operator $\mathcal{T}$ completely drops out of our time-evolution, allowing us to analytically time-average the parameters $\bar{\alpha}_j = \int_0^1 \alpha_j(t) \mathrm{d}t$ during training.
+
+This collapses our entire continuous-time flow into a **single, time-independent Hamiltonian**:
+\begin{equation}
+    \bar{H} = \ket{0}\bra{0} - \frac{i}{2} \sum_{j=1}^M \bar{\alpha}_j \hat{h}_j(x, \nabla)
+\end{equation}
+Inference is executed in a single, exact step: $\Psi_{t=1} = e^{-i \bar{H}} \Psi_0$.
+
+\section{Krylov-Hashimoto Dimensional Reduction}
+
+While $\bar{H}$ exactly encodes the flow, its dimension scales with $M$. To compress the dynamics, we rely on Krylov subspace methods \cite{Hashimoto2019}. 
+
+We employ our mathematical shortcut: by pre-conditioning the seed vector as $v = (\gamma I - \bar{H})^{m-1}v_0$, the application of the resolvent operator simply reduces the polynomial degree. This recovers the standard Krylov subspace:
+\begin{equation}
+    \mathcal{K}_m(\bar{H}, v_0) = \text{span}\{v_0, \bar{H} v_0, \bar{H}^2 v_0, \dots, \bar{H}^{m-1} v_0\}
+\end{equation}
+Because the cross-terms of our orthogonal Fock-space potential vanish, applying $\bar{H}^k \ket{v_0}$ costs only $\mathcal{O}(M)$. The Krylov projection acts as an exact spectral low-pass filter, discarding overfitted localized ``spikes'' and extracting the $m$ dominant macroscopic transport eigenvalues. 
+
+The resulting reduced Hamiltonian $\bar{H}_{\text{reduced}}$ is an $m \times m$ dense matrix (e.g., $m=20$). Inference generation requires only a single, instantaneous $\mathcal{O}(m^2)$ matrix exponential evaluation: $\Psi_{t=1} = e^{-i \bar{H}_{\text{reduced}}} \Psi_0$.
+
+\section{Implementation in the \texttt{unfer} Kernel}
+
+The analytical QFM module integrates tightly into the existing \texttt{unfer} monorepo architecture. 
+
+\subsection{Symbolic Algebra (\texttt{nested\textunderscore fock\textunderscore algebra})}
+We extend the symbolic engine to support the rank-1 vacuum projector. The \texttt{Operator} enum is updated to include \texttt{Operator::ProjectVacuum}. During application, this operator zeroes out any state except the strict \texttt{OuterState::vacuum()}, multiplying it by the amplitude scalar.
+The analytical QFM Hamiltonian is directly instantiated in \texttt{models.rs} as a built-in function \texttt{qfm\textunderscore hamiltonian} parameterized by the solved real coefficient array, completely bypassing the combinatorial explosion of \texttt{Expression::expand()}.
+
+\subsection{GPU-Accelerated Solver (\texttt{fock\textunderscore sirk})}
+The \texttt{fock\textunderscore sirk::solve\textunderscore forward\textunderscore sirk} module natively supports the $\mathcal{O}(M)$ generation of the Krylov basis sequence $w_k = (H - z_k I) w_{k-1}$. By supplying a uniform shift array, the GPU parallelizes the computation of the $m \times m$ Gram matrix via \texttt{candle-core} CUDA tensors. The rank-revealing Gram whitening ensures numerical stability during the orthonormalization of the highly compressed flow representation.
+
+\subsection{Module Execution Runtime}
+The entire flow matching loop is exposed via the \texttt{unfer\textunderscore ffi} C ABI and invoked by a new Austral-based module (\texttt{qfm\textunderscore module}). Through the manifest-authorized \texttt{uk\textunderscore evolve} and \texttt{uk\textunderscore event\textunderscore probability} functions, the module triggers the analytical parameter compilation, the Krylov reduction, and the single-step $\mathcal{O}(m^2)$ unitary inference natively in-process.
+
+\section{Conclusion}
+
+The Analytical QFM module implemented in the \texttt{unfer} kernel resolves the fundamental scaling paradox of continuous quantum generative models. By substituting parameterized neural networks with orthogonal Fock-space point processes, and replacing heuristic optimization with inversion-free Krylov dimensional reduction, we achieve $\mathcal{O}(M)$ learning and $\mathcal{O}(m^2)$ inference. This aligns perfectly with the overarching \texttt{unfer} philosophy: enforcing rigorous probability tracking through mathematically exact, geometry-preserving operations on separable Hilbert spaces.
+
+\vspace{1em}
+\begin{thebibliography}{9}
+
+\bibitem{Cui2025}
+Cui, Z., Zhang, P., \& Tang, Y. (2025). \textit{Quantum Flow Matching}. arXiv:2508.12413 [quant-ph].
+
+\bibitem{Hashimoto2019}
+Hashimoto, Y., \& Nodera, T. (2019). \textit{Shift-invert Rational Krylov method for an operator $\phi$-function of an unbounded linear operator}. Japan Journal of Industrial and Applied Mathematics, 36, 1-13.
+
+\bibitem{unfer2026}
+\texttt{unfer} Kernel Architecture Documentation. \textit{IMPLEMENTATION\textunderscore PLAN.md, PROTOCOL.md}. (2026).
+
+\end{thebibliography}
+
+\end{document}

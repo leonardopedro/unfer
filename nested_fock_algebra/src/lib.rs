@@ -165,6 +165,10 @@ pub enum Operator {
     OuterBosonAnnihilate(InnerBosonicState),     // A_phi
     OuterFermionCreate(InnerFermionicState),     // C_dag_phi
     OuterFermionAnnihilate(InnerFermionicState), // C_phi
+    /// The rank-1 vacuum projector `|0><0|` (the Mehler global prior). Applied
+    /// to a state it keeps only the vacuum component's amplitude, collapsing
+    /// everything else to zero. It is self-adjoint and idempotent.
+    ProjectVacuum,
 }
 
 impl Operator {
@@ -180,6 +184,8 @@ impl Operator {
             Operator::OuterBosonAnnihilate(s) => Operator::OuterBosonCreate(s.clone()),
             Operator::OuterFermionCreate(s) => Operator::OuterFermionAnnihilate(s.clone()),
             Operator::OuterFermionAnnihilate(s) => Operator::OuterFermionCreate(s.clone()),
+            // |0><0| is Hermitian, so it is its own adjoint.
+            Operator::ProjectVacuum => Operator::ProjectVacuum,
         }
     }
 
@@ -303,6 +309,17 @@ impl Operator {
                             None
                         },
                     );
+                }
+
+                // --- GLOBAL PROJECTOR: |0><0| (the Mehler prior) ---
+                Operator::ProjectVacuum => {
+                    // Keep only the strict vacuum component: both inner/outer
+                    // universes empty. Everything carrying any mode is dropped.
+                    if outer_basis.bosonic.is_empty() && outer_basis.fermionic.is_empty() {
+                        *next_components
+                            .entry(OuterState::vacuum())
+                            .or_insert(Complex64::new(0.0, 0.0)) += amplitude;
+                    }
                 }
             }
         }

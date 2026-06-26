@@ -414,3 +414,81 @@ fn bose_hubbard_hopping_conserves_norm() {
     );
     assert!((0.0..=1.0).contains(&p_on0), "P(mode0≥1) in [0,1]: {p_on0}");
 }
+
+fn qfm_mehler_spec(prior: PriorSpec) -> ModelSpec {
+    ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler",
+            serde_json::json!({"alphas": [1.5, 2.1, 0.8]}),
+        ),
+        prior,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    }
+}
+
+#[test]
+fn qfm_mehler_builds_and_evolves() {
+    // The analytical Quantum Flow Matching generator (QMF.tex):
+    //   H = |0><0| + Σ_j α_j n_j.
+    // It is diagonal in the Fock basis: the Mehler projector makes the vacuum an
+    // eigenstate (eigenvalue 1) and each data mode an eigenstate (eigenvalue α_j).
+    // So evolution adds only phases — Born populations are conserved exactly.
+    let spec = qfm_mehler_spec(PriorSpec::Vacuum);
+    let mut session = Session::new(&spec).expect("qfm session");
+
+    // Starts in the Mehler vacuum prior.
+    let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
+
+    // Evolve under the QFM generator — exercises the rank-1 ProjectVacuum term.
+    let report = session.evolve(1.0).expect("evolve");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-6,
+        "post-evolve norm must be ~1, got {}",
+        report.norm
+    );
+
+    // |0> is an eigenstate of H, so the vacuum population is stationary and the
+    // {vacuum, ¬vacuum} cover stays normalized.
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    let p_not = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_vac - 1.0).abs() < 1e-6,
+        "vacuum is a QFM eigenstate, stays occupied: {p_vac}"
+    );
+    assert!(
+        (p_vac + p_not - 1.0).abs() < 1e-6,
+        "probabilities must sum to 1 (got {p_vac} + {p_not})"
+    );
+}
+
+#[test]
+fn qfm_mehler_conserves_data_channel_population() {
+    // A boson seeded in data channel 0 is an eigenstate (eigenvalue α_0) of the
+    // diagonal QFM generator, so its occupation probability is conserved exactly
+    // under evolution — the O(M) decoupled potential never mixes channels.
+    let spec = qfm_mehler_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("qfm session");
+
+    let p_before = session.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_before - 1.0).abs() < 1e-10,
+        "channel 0 occupied: {p_before}"
+    );
+
+    session.evolve(1.0).expect("evolve");
+
+    let p_after = session.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_after - 1.0).abs() < 1e-6,
+        "diagonal generator conserves channel-0 population: {p_after}"
+    );
+}
