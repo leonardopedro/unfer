@@ -97,3 +97,38 @@ jobs:
       - name: run end-to-end demo
         working-directory: unfer
         run: bash demo_module/run_demo.sh
+
+  # ---------------------------------------------------------------------------
+  # QFM module gate: the Quantum Flow Matching Austral module JIT-creates a
+  # `qfm_mehler` model, evolves it, and reads a data-channel probability in-
+  # process (the physics claim). Auth gate mirrors demo-e2e (UK-4001).
+  # ---------------------------------------------------------------------------
+  qfm-e2e:
+    name: qfm_module end-to-end (QFM Austral JIT + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      - name: run QFM module demo
+        working-directory: unfer
+        run: bash qfm_module/run_demo.sh
