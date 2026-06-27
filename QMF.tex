@@ -20,9 +20,11 @@
 \newcommand{\Rset}{\mathbb{R}}
 \newcommand{\Cset}{\mathbb{C}}
 \newcommand{\Eblr}{\mathbb{E}}
+\newcommand{\Kop}{\hat{K}}
 
-\title{\textbf{Analytical Quantum Flow Matching via Inversion-Free
-Krylov Reduction in the \texttt{unfer} Kernel}\\[4pt]
+\title{\textbf{Wavefunction Flows in the \texttt{unfer} Kernel:\\
+An Analytical, Grid-Free Realization of the Continuity Hamiltonian
+via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
 \date{June 2026}
@@ -32,26 +34,34 @@ Krylov Reduction in the \texttt{unfer} Kernel}\\[4pt]
 \maketitle
 
 \begin{abstract}
-We give a self-contained account of a scalable, \emph{analytical} Quantum
-Flow Matching (QFM) module for the \texttt{unfer} probability kernel. Recent
-work on QFM (Cui, Zhang, and Tang, 2025) shows that mapping generative flows
-onto continuous quantum evolution is a powerful alternative to classical
-diffusion. That construction, however, relies on Parameterized Quantum
-Circuits (PQCs) trained by heuristic variational algorithms, which suffer
-from barren plateaus and heavy sampling overhead. We replace the trained
-circuit with a closed-form generator. The two ingredients are classical: (i)
-data points are encoded as mutually orthogonal single-particle states of a
-symmetric Fock space, so that the flow potential \emph{decouples} and the
-training reduces to a diagonal system solvable in $\mathcal{O}(M)$ for $M$
-data points; and (ii) the resulting bounded generator is compressed by the
-Shift-Invert Rational Krylov (SIRK) method of Hashimoto and Nodera, which
-gives exponential approximation-error decay and reduces single-step inference
-to an $\mathcal{O}(m^2)$ matrix exponential of dimension $m\ll M$. We also
-make explicit the measure-theoretic foundation of the construction: in the
+Layden, Sweke, Havl\'i\v{c}ek, Chowdhury, and Neklyudov~\cite{Layden2025}
+recently showed that classical \emph{flow models} map exactly onto the
+Schr\"odinger equation: the qsample $\Psi_t(x)=\sqrt{p_t(x)}$ of a flow's
+marginal density obeys $i\,\partial_t\Psi_t=\Hgen_t\Psi_t$ for an unusual
+\emph{continuity Hamiltonian} $\Hgen_t=\tfrac12[\hat p\cdot v_t(\hat x)+
+v_t(\hat x)\cdot\hat p]$, which for a conservative field $v_t=\nabla V_t$
+takes the elegant commutator form $\Hgen_t^c=i[\Kop,V_t(\hat x)]$. Crucially,
+this generator is \emph{fully specified by the already-learned classical
+velocity field} --- no further training, parameterization, or variational
+optimization. Their algorithm prepares qsamples on a \emph{digital quantum
+computer} by simulating $\Hgen_t^c$ with Fourier collocation and product
+formulas, enabling, e.g., quadratically faster mean estimation. This report
+gives a self-contained, pedagogical account of how the \texttt{unfer}
+probability kernel realizes the \emph{same} wavefunction flow
+\emph{classically}, with no spatial grid. We replace the $N^d$ collocation
+grid by an \emph{analytical orthogonal-Fock encoding}: each data point becomes
+a mutually orthogonal single-particle mode, so the conservative potential
+\emph{decouples} and its flow-matching parameters reduce to a diagonal,
+closed-form $\mathcal{O}(M)$ fit for $M$ data points. The resulting bounded
+generator is compressed by the Shift-Invert Rational Krylov (SIRK) method of
+Hashimoto and Nodera~\cite{Hashimoto2019} --- replacing the paper's product
+formulas --- giving exponential approximation-error decay and reducing
+single-step inference to an $\mathcal{O}(m^2)$ matrix exponential with
+$m\ll M$. We also make explicit the measure-theoretic foundation: in the
 infinite-dimensional limit the uniform measure on a hypersphere becomes the
 Gaussian measure, and the Gegenbauer polynomials that diagonalize it become
-the Hermite polynomials (López and Temme, 1999; Mehler, 1866). This
-identifies the ``no-information'' prior with the Fock vacuum and any orthogonal
+the Hermite polynomials (L\'opez and Temme, 1999; Mehler, 1866), which
+identifies the Gaussian source $p_0$ with the Fock vacuum and any orthogonal
 excitation with acquired information. We close by detailing the integration
 into \texttt{unfer}'s GPU-accelerated \texttt{fock\textunderscore sirk}
 solver, its \texttt{nested\textunderscore fock\textunderscore algebra} CAS,
@@ -62,92 +72,191 @@ and the Austral module runtime.
 
 \section{Introduction}
 
-\subsection{Flow matching, classical and quantum}
+\subsection{Flow models and the qsample bridge}
 
-\emph{Flow matching} has become a dominant paradigm in classical generative
-modeling. The idea is geometric: rather than learning to denoise, one learns
-a deterministic velocity field $u_t(x)$ whose ordinary differential equation
-(ODE) $\dot{x}=u_t(x)$ transports a simple prior distribution $p_0$ (typically
-Gaussian noise) into a complex target distribution $p_1$ (the data) along a
-prescribed interpolation. The training objective is a regression: match the
-network's velocity to a known \emph{conditional} target velocity, whose
-expectation is the true marginal velocity. Because the target is available in
-closed form along each interpolation path, training avoids simulating the ODE
-and is highly efficient.
-
-Cui, Zhang, and Tang (2025) extend this paradigm to the quantum domain as
-\emph{Quantum Flow Matching} (QFM)~\cite{Cui2025}. There the objects
-transported are not probability densities but density matrices $\rho$, and the
-flow is realized by a quantum circuit that learns a density-matrix propagator
-interpolating between an initial ensemble $S_0=\{\ket{\psi_0^m}\}_{m=1}^M$ and
-a target ensemble $S_{\mathcal{T}}$. The circuit alternates unitary layers
-with measured ancilla qubits, so that a \emph{single} fixed circuit can emulate
-the entire density-matrix dynamics --- a decisive advantage on quantum
-hardware, where redesigning circuits per state is the dominant cost. QFM
-contains the quantum denoising diffusion model (QuDDPM) as the special case in
-which the initial ensemble is Haar-random.
-
-\subsection{The variational bottleneck}
-
-The practical QFM circuit of~\cite{Cui2025} is an Entanglement-varied
-Hardware-efficient Ansatz (EHA): each layer applies single-qubit rotations
-$U^{(1)}=\prod_{j\in\{x,y,z\}}\exp(-i\theta_j\sigma_j/2)$ and entangling gates
-$U^{(2)}=\prod_{j}\exp(-i\theta_j\,\sigma_j\otimes\sigma_j/2)$, with the
-parameters $\vec{\theta}_\tau$ fit by gradient descent against a fidelity loss.
-This inherits the well-known pathologies of variational quantum algorithms:
-susceptibility to \emph{barren plateaus} (exponentially vanishing gradients),
-convergence to poor local minima, and a sampling-heavy classical--quantum
-optimization loop whose cost grows with the ensemble size $M$. The authors
-themselves bound the generalization error of a trained layer with
-$\mathcal{N}$ gates by
+\emph{Flow models} are a cornerstone of modern generative machine learning.
+They learn a continuous-time Markov process --- realized on an ordinary
+(classical) computer --- that transports a simple source distribution $p_0$
+(typically isotropic Gaussian noise) into a complex target $p_{\mathrm{targ}}$
+from which we are given samples. The process is specified by a time-dependent
+\emph{velocity field} $v_t(x)$ through the ordinary differential equation (ODE)
 \begin{equation}
-  R_P(\vec\theta^{\,\mathrm{op}}_\tau)\;\le\;
-  2D_\tau(\vec\theta^{\,\mathrm{op}}_\tau)
-  +\mathcal{O}\!\left(\sqrt{\tfrac{\mathcal{N}\log\mathcal{N}}{M}}\right),
-  \label{eq:genbound}
+  \frac{\mathrm{d}}{\mathrm{d}t}\,x_t=v_t(x_t),\qquad x_0\sim p_0,
+  \label{eq:flowode}
 \end{equation}
-which is reassuring asymptotically but says nothing about reaching a small
-training loss $D_\tau$ in the first place --- precisely where the plateaus bite.
+whose random initial condition makes $x_t\sim p_t$ a random variable. The
+family of marginals $(p_t)_{t\in[0,T]}$ is the \emph{probability path}, and by
+the change-of-variables formula it satisfies the \emph{continuity equation}
+\begin{equation}
+  \partial_t\,p_t(x)=-\nabla\!\cdot\bigl[v_t(x)\,p_t(x)\bigr].
+  \label{eq:continuityeq}
+\end{equation}
+Flow models learn $v_t^\theta\approx v_t$ (e.g.\ by flow matching,
+Section~\ref{sec:flowprimer}) so that integrating~\eqref{eq:flowode} from
+$x_0\sim p_0$ yields $x_T\sim p_T\approx p_{\mathrm{targ}}$.
 
-\subsection{This work: an analytical alternative}
+In quantum computing, the corresponding object of interest is the
+\emph{qsample}: the coherent encoding
+\begin{equation}
+  \ket{\Psi_p}=\sum_x\sqrt{p(x)}\,\ket{x}
+  \quad\text{(discrete)},\qquad
+  \ket{\Psi_p}=\int\sqrt{p(x)}\,\ket{x}\,\mathrm{d}x
+  \quad\text{(continuous)}.
+\end{equation}
+Measuring $\ket{\Psi_p}$ in the $\{\ket{x}\}$ basis returns a sample
+$x\sim p$, but \emph{preparing} a qsample is strictly more powerful than
+sampling: with qsample access one can build quantum algorithms for mean
+estimation and property testing with provable sample-complexity advantages
+(Section~\ref{sec:qsample}). Preparing qsamples for arbitrary $p$ is hard in
+general, so the central question is: \emph{for which $p$ can we prepare
+qsamples efficiently?}
 
-We propose a deliberate departure from heuristic PQC optimization: an
-\emph{analytical} QFM whose generator is written in closed form, with no
-neural network and no variational loop. The construction rests on two
-classical pillars, developed pedagogically in
-Sections~\ref{sec:flowprimer}--\ref{sec:krylov}:
+\subsection{Wavefunction flows (Layden et al.)}
+
+Layden, Sweke, Havl\'i\v{c}ek, Chowdhury, and Neklyudov~\cite{Layden2025}
+answer this for the vast family of distributions expressible by flow models.
+Their key observation is a striking identity: if $p_t$ obeys the continuity
+equation~\eqref{eq:continuityeq}, then its qsample wavefunction
+$\Psi_t(x)=\sqrt{p_t(x)}$ obeys the Schr\"odinger equation
+$i\,\partial_t\Psi_t=\Hgen_t\Psi_t$ for the \emph{continuity Hamiltonian}
+\begin{equation}
+  \Hgen_t=\tfrac12\bigl[\hat p\cdot v_t(\hat x)+v_t(\hat x)\cdot\hat p\bigr],
+  \label{eq:continuityH}
+\end{equation}
+derived in Section~\ref{sec:continuity}. The dynamics it generates they call a
+\emph{wavefunction flow}. Two features make this remarkable:
+\begin{enumerate}
+\item \textbf{No further learning.} $\Hgen_t$ is \emph{completely determined by
+the already-learned classical velocity field} $v_t^\theta$. There is no
+parameterized quantum circuit, no variational loop, no barren-plateau
+pathology --- the entire ``training'' has been done classically, and the
+quantum side is pure Hamiltonian simulation.
+\item \textbf{Provable qsample preparation.} Evolving the easily prepared
+initial qsample $\Psi_0=\sqrt{p_0}$ (a tensor product of standard-normal
+qsamples for Gaussian $p_0$) under $\Hgen_t$ for time $T$ produces exactly
+$\Psi_T=\sqrt{p_T}$; the distance to the ideal target $\sqrt{p_{\mathrm{targ}}}$
+is controlled \emph{entirely classically} by $\|p_T-p_{\mathrm{targ}}\|$.
+\end{enumerate}
+The paper's main technical work is then turning this into a digital quantum
+algorithm: discretizing space (Fourier collocation on an $N^d$ grid) and time
+(product formulas), with error bounds (their Theorems~1 and~2).
+
+\subsection{This work: a classical, grid-free realization in \texttt{unfer}}
+
+The Layden et al.\ route targets a \emph{digital quantum computer} and pays for
+it with an $N^d$ spatial collocation grid and a product-formula time
+discretization whose cost grows with the operator norm $\|H_t^c\|=
+\mathcal{O}(N^2 d/L^2)$. The \texttt{unfer} probability kernel already carries
+all the machinery to realize the \emph{same} continuity-Hamiltonian
+wavefunction flow \emph{classically}, on a separable Fock space, with Born-rule
+semantics. This report shows how, and in doing so removes the spatial grid
+altogether. The construction rests on three pillars, developed pedagogically
+in Sections~\ref{sec:continuity}--\ref{sec:krylov}:
 
 \begin{enumerate}
-\item \textbf{Orthogonal Fock encoding (Section~\ref{sec:framework}).} Encoding
-each data point as a distinct single-boson mode makes the data potential
-\emph{diagonal}. The flow-matching normal equations then decouple into $M$
-independent scalar equations, so ``training'' is an $\mathcal{O}(M)$
-closed-form average with zero data loss.
+\item \textbf{Orthogonal Fock encoding (Section~\ref{sec:framework}).} Instead
+of an $N^d$ collocation grid, encode each of the $M$ data points as a distinct,
+mutually orthogonal single-boson mode. For a conservative field the potential
+$V_t$ then becomes \emph{diagonal}, the flow-matching normal equations decouple
+into $M$ independent scalar equations, and ``training'' is an $\mathcal{O}(M)$
+closed-form average with zero data loss --- grid-free and inversion-free.
 
-\item \textbf{Inversion-free Krylov reduction
-(Section~\ref{sec:krylov}).} The resulting time-independent generator
-$\bar H$ is compressed by the Shift-Invert Rational Krylov (SIRK) method of
-Hashimoto and Nodera~\cite{Hashimoto2019}, which enjoys exponential
-error decay in the subspace dimension $m$. Because the potential has no
-cross-terms, each Krylov step costs $\mathcal{O}(M)$, and inference is a
+\item \textbf{Inversion-free Krylov reduction (Section~\ref{sec:krylov}).} In
+place of the paper's product-formula time stepping, compress the resulting
+time-independent generator $\bar H$ with the Shift-Invert Rational Krylov
+(SIRK) method of Hashimoto and Nodera~\cite{Hashimoto2019}, whose error decays
+\emph{exponentially} in the subspace dimension $m$. Because the potential has
+no cross-terms, each Krylov step costs $\mathcal{O}(M)$ and inference is a
 single $\mathcal{O}(m^2)$ matrix exponential.
+
+\item \textbf{The Gaussian-source $=$ Fock-vacuum identification
+(Section~\ref{sec:mehler}).} The Mehler/L\'opez--Temme limit of Gegenbauer to
+Hermite polynomials makes precise why the Gaussian source $p_0$ of a flow model
+is exactly the Fock vacuum, and why orthogonal excitations carry information.
 \end{enumerate}
 
-Section~\ref{sec:mehler} supplies the measure-theoretic bridge that makes the
-``Gaussian prior $=$ Fock vacuum'' identification precise, via the
-Mehler/López--Temme limit of Gegenbauer polynomials to Hermite polynomials.
 Section~\ref{sec:impl} maps every piece onto the existing \texttt{unfer}
 modules. Throughout we keep prerequisites minimal: a reader comfortable with
-ladder operators, Gaussian integrals, and the matrix exponential should be
-able to follow without external references.
+ladder operators, Gaussian integrals, and the matrix exponential should be able
+to follow without external references. We are explicit about scope: the shipped
+\texttt{unfer} builtin implements a spectrally-stable diagonal surrogate of the
+full off-diagonal continuity generator, and we flag the difference precisely
+(Sections~\ref{sec:framework} and~\ref{sec:impl}).
 
-\section{Background I: Operator functions and the SIRK method}
+\section{Background I: flow matching and the qsample}
 \label{sec:flowprimer}
 
-QFM ultimately asks us to apply $e^{-iHt}$ (or, more generally, an operator
-$\varphi$-function) to a state. We summarize the numerical machinery that
-makes this tractable for the large, ``unbounded-like'' generators that arise
-from field theories, following Hashimoto and Nodera~\cite{Hashimoto2019}.
+\subsection{Learning the velocity field by flow matching}
+
+A flow model needs a velocity field $v_t$ transporting $p_0$ to
+$p_{\mathrm{targ}}$. The ground-truth $v_t$ that generates a chosen probability
+path is unknown, so the naive flow-matching loss is intractable. The decisive
+trick~\cite{Layden2025} is the \emph{conditional flow matching} (CFM) loss,
+which has the same gradient but is a tractable regression. For the
+straight-line (optimal-transport) interpolation
+$x_t=(1-t)x_0+t\,x_{\mathrm{targ}}$ with constant conditional velocity
+$x_{\mathrm{targ}}-x_0$,
+\begin{equation}
+  \mathcal{L}_{\mathrm{CFM}}(\theta)=
+  \Eblr_{t\sim\mathrm{unif}[0,1]}\,
+  \Eblr_{x_0\sim p_0}\,
+  \Eblr_{x_{\mathrm{targ}}\sim p_{\mathrm{targ}}}
+  \Bigl\|v_t^\theta\bigl[(1-t)x_0+t\,x_{\mathrm{targ}}\bigr]
+  -\bigl(x_{\mathrm{targ}}-x_0\bigr)\Bigr\|^2 .
+  \label{eq:cfm}
+\end{equation}
+This estimates the gradient of the true flow-matching loss by an unbiased Monte
+Carlo average over training samples and \emph{never} solves a differential
+equation. The wavefunction-flow construction is agnostic to \emph{how} $v_t$ is
+learned; it only requires that some $v_t^\theta\approx v_t$ exists. In
+Section~\ref{sec:framework} we exploit~\eqref{eq:cfm} directly: under the
+orthogonal-Fock encoding its minimizer is available in closed form.
+
+\subsection{Diffusion models are flow models}
+
+Diffusion models~\cite{Layden2025} provide another route to $v_t^\theta$. A
+forward stochastic differential equation $\mathrm{d}x_t=f_t(x_t)\,\mathrm{d}t+
+g_t\,\mathrm{d}w_t$ drives $p_{\mathrm{targ}}$ to a Gaussian; the associated
+\emph{probability-flow ODE} replaces the reverse SDE by a deterministic field
+\begin{equation}
+  v_t(x)=f_t(x)-\tfrac12 g_t^2\,\nabla\ln p_t(x),
+\end{equation}
+which is an instance of~\eqref{eq:flowode}. When $f_t$ is conservative so is
+$v_t$, so diffusion models fall under the same conservative-field analysis we
+use below. This is why the single construction covers both of the dominant
+continuous-variable generative paradigms.
+
+\subsection{Qsamples and their statistical payoff}
+\label{sec:qsample}
+
+The reason to lift $p$ to its qsample $\Psi=\sqrt p$ is statistical leverage.
+For mean estimation of $f(x)$ under $x\sim p$, the best classical estimators
+(sub-Gaussian, e.g.\ median-of-means) achieve, with $m$ samples and failure
+probability $\Delta$,
+\begin{equation}
+  \Pr\Bigl[|\tilde\mu-\mu|>C\sigma\sqrt{\tfrac{\log(1/\Delta)}{m}}\Bigr]\le\Delta,
+  \qquad \sigma=\sqrt{\mathrm{Var}_{x\sim p}f(x)} .
+\end{equation}
+Given qsample-preparation access, the quantum sub-Gaussian
+estimator~\cite{Layden2025} instead achieves
+\begin{equation}
+  \Pr\Bigl[|\tilde\mu-\mu|>\sigma\,\tfrac{\log(1/\Delta)}{m}\Bigr]\le\Delta,
+\end{equation}
+a \emph{quadratic} speed-up in the dependence on $m$, with no promise on the
+variance beyond finiteness. Wavefunction flows make exactly this access
+available for any distribution expressible by a (conservative) flow model. The
+\texttt{unfer} kernel exposes the analogous probabilities through its Born-rule
+layer, so the same statistical quantities are computable on the classical
+substrate.
+
+\section{Background II: operator functions and the SIRK method}
+
+Realizing a wavefunction flow --- on a quantum computer or on \texttt{unfer} ---
+ultimately asks us to apply $e^{-i\Hgen t}$ (or, more generally, an operator
+$\varphi$-function) to a state. The paper~\cite{Layden2025} does this with
+product formulas; \texttt{unfer} does it with the Shift-Invert Rational Krylov
+(SIRK) method of Hashimoto and Nodera~\cite{Hashimoto2019}, which we summarize
+here because it is the engine of Section~\ref{sec:krylov}.
 
 \subsection{Exponential integrators and \texorpdfstring{$\varphi$}{phi}-functions}
 
@@ -165,7 +274,7 @@ $\varphi$-functions
 e.g.\ the one-step scheme $u_i=e^{\delta A}u_{i-1}+\delta\,\varphi_1(\delta
 A)\,g_{i-1}$. The computational kernel is therefore the product
 $\varphi_k(A)\,v$ of an operator function with a vector --- exactly the
-primitive QFM inference needs (with $k=0$, $A=-iH$).
+primitive that wavefunction-flow inference needs (with $k=0$, $A=-i\Hgen$).
 
 \subsection{Why naive (Arnoldi) Krylov fails for stiff generators}
 
@@ -177,10 +286,12 @@ and approximates $\varphi_k(A)v\approx V_m\,\varphi_k(\mathbf{H}_m)\,V_m^*v$,
 where $V_m$ holds an orthonormal basis and
 $\mathbf{H}_m=V_m^*AV_m$ is the compression of $A$. For a \emph{bounded} $A$
 the error decays geometrically, governed by polynomial approximation of
-$\varphi_k$ on the numerical range $W(A)$. But generators from differential
-operators are effectively \emph{unbounded}: $W(A)$ is unbounded, the relevant
-conformal map ceases to exist, and the error is no longer guaranteed to decay
-in $m$. This is the stiffness obstruction.
+$\varphi_k$ on the numerical range $W(A)$. But the continuity Hamiltonian
+contains the kinetic operator $\Kop=-\tfrac12\nabla^2$, which is
+\emph{unbounded}: $W(A)$ is unbounded, the relevant conformal map ceases to
+exist, and the error is no longer guaranteed to decay in $m$. This is the
+stiffness obstruction --- the same one the paper~\cite{Layden2025} confronts
+when it notes $\|K\|=\mathcal{O}(N^2 d/L^2)$ blows up with grid resolution.
 
 \subsection{Resolvents, rational Krylov, and SIRK}
 
@@ -217,36 +328,90 @@ unbounded $A$) and even plain rational Krylov decay only polynomially, SIRK
 decays geometrically, so a small subspace dimension $m$ (e.g.\ $m=15$--$20$)
 suffices. This is the engine \texttt{unfer} already ships as
 \texttt{fock\textunderscore sirk}; Section~\ref{sec:krylov} explains why our
-decoupled QFM generator makes it run especially fast.
+decoupled generator makes it run especially fast.
 
-\section{Background II: from flow matching to a continuity Hamiltonian}
+\section{The continuity Hamiltonian}
+\label{sec:continuity}
 
-We now set up the analytical flow. A flow-matching model transports a prior
-$p_0$ to data $p_1$ along the straight-line interpolation
-$x_t=(1-t)x_0+t\,x^{(k)}$, whose conditional optimal-transport velocity is the
-constant $u_t(x\mid x_0,x^{(k)})=x^{(k)}-x_0$. We will represent the evolving
-distribution by a wavefunction $\Psi_t(x)$ on configuration space and derive a
-\emph{generator} whose evolution reproduces the flow. The remainder of the
-paper makes each object concrete; the rest of this section fixes notation.
+We now derive, following Layden et al.~\cite{Layden2025}, the generator at the
+heart of a wavefunction flow, and record the conservative special case that
+\texttt{unfer} implements.
 
-A conservative velocity field is the gradient of a scalar potential,
-$u_t(x)=-\nabla V_t(x)$. The continuity equation
-$\partial_t p_t+\nabla\!\cdot(p_t u_t)=0$ for the probability current then
-translates, at the level of the wavefunction amplitude, into a first-order
+\subsection{General case}
+
+Let $\Psi_t(x)=\sqrt{p_t(x)}$ be the qsample wavefunction of a probability path
+satisfying the continuity equation~\eqref{eq:continuityeq}. Differentiating and
+substituting,
+\begin{align}
+  i\,\partial_t\Psi_t(x)
+  &=\frac{i}{2\sqrt{p_t(x)}}\,\partial_t p_t(x)
+  =-\frac{i}{2\Psi_t(x)}\,\nabla\!\cdot\bigl[v_t(x)\,\Psi_t(x)^2\bigr]\notag\\
+  &=\tfrac12\Bigl\{(-i\nabla)\cdot\bigl[v_t(x)\Psi_t(x)\bigr]
+  +v_t(x)\cdot(-i\nabla)\Psi_t(x)\Bigr\}
+  =\bigl(\Hgen_t\Psi_t\bigr)(x).
+  \label{eq:Hderiv}
+\end{align}
+Thus $\Psi_t=\sqrt{p_t}$ obeys $i\,\partial_t\Psi_t=\Hgen_t\Psi_t$ with the
 \emph{continuity Hamiltonian}
 \begin{equation}
-  \Hgen_t=H_0-\tfrac{i}{2}\bigl(\nabla V_t(x)\cdot\nabla+\nabla^2 V_t(x)\bigr),
-  \label{eq:continuity}
+  \Hgen_t=\tfrac12\bigl[\hat p\cdot v_t(\hat x)+v_t(\hat x)\cdot\hat p\bigr],
+  \qquad
+  (\hat x_j\Psi)(x)=x_j\Psi(x),\quad
+  (\hat p_j\Psi)(x)=-i\,\partial_{x_j}\Psi(x).
+  \label{eq:Hgeneral}
 \end{equation}
-where $H_0$ encodes the prior (Section~\ref{sec:framework}). The two
-derivative terms are the drift ($\nabla V\cdot\nabla$) and the
-compressibility/source ($\nabla^2 V$) of the flow. Everything hinges on
-choosing the potential $V_t$ so that (a) the optimization for its parameters
-is analytic and (b) the operators commute in time. The orthogonal Fock
-encoding achieves both.
+The symmetrization $\tfrac12[\hat p\cdot v+v\cdot\hat p]$ is what makes
+$\Hgen_t$ Hermitian even though $\hat p$ and $v_t(\hat x)$ do not commute; it is
+the operator-ordering that exactly reproduces the divergence form of the
+continuity equation.
 
-\section{Theoretical Framework: orthogonal Fock encoding}
+\subsection{Conservative special case}
+
+By a theorem on absolutely continuous curves in 2-Wasserstein space, every
+probability path admits a \emph{conservative} velocity field
+$v_t(x)=\nabla V_t(x)$ for a scalar potential $V_t$, without loss of
+generality. Substituting $v_t=\nabla V_t$ into~\eqref{eq:Hderiv} and using
+$\nabla^2(V_t\Psi_t)=\Psi_t\nabla^2 V_t+2\nabla V_t\cdot\nabla\Psi_t
++V_t\nabla^2\Psi_t$ gives the compact \emph{commutator form}
+\begin{equation}
+  \Hgen_t^c=i\,[\Kop,\,V_t(\hat x)],\qquad
+  \Kop=\tfrac12\,\hat p\cdot\hat p,\quad
+  (\Kop\Psi)(x)=-\tfrac12\nabla^2\Psi(x),
+  \label{eq:Hconservative}
+\end{equation}
+which acts as
+\begin{equation}
+  \bigl(\Hgen_t^c\Psi_t\bigr)(x)
+  =-\frac{i}{2}\Bigl[\Psi_t(x)\,\nabla^2 V_t(x)
+  +2\,\nabla V_t(x)\cdot\nabla\Psi_t(x)\Bigr].
+  \label{eq:Hcaction}
+\end{equation}
+The two terms are the source/compressibility ($\nabla^2 V_t$) and the drift
+($\nabla V_t\cdot\nabla$) of the flow. Equation~\eqref{eq:Hconservative} is the
+operator \texttt{unfer} targets; note the drift carries coefficient $2$
+relative to the source, exactly as in~\eqref{eq:Hcaction}.
+
+\subsection{Context: the Madelung decoupling}
+
+It is worth contrasting $\Hgen_t$ with the standard Hamiltonian
+$\Kop+V_t(\hat x)$. The Madelung equations re-express the dynamics of the
+latter as a continuity equation for $|\Phi_t|^2$ \emph{coupled} to a separate
+equation for the phase $\arg\Phi_t$: density and phase feed back on each other.
+The continuity Hamiltonian is engineered to \emph{decouple} them --- the phase
+stays fixed while the velocity field is specified directly. The price is that
+$\Hgen_t$ is not of canonical kinetic-plus-potential form and so ``may not occur
+in nature''~\cite{Layden2025}; the reward is that it can nonetheless be
+simulated efficiently, and that $\Psi_t$ stays a bona fide qsample
+($\Psi_t=\sqrt{p_t}\ge 0$, no spurious phase) at every time.
+
+\section{Theoretical framework: orthogonal Fock encoding}
 \label{sec:framework}
+
+We now diverge from the digital-quantum route of~\cite{Layden2025} --- which
+discretizes $V_t(\hat x)$ and $\Kop$ on an $N^d$ Fourier grid --- and instead
+encode the data so that the conservative continuity Hamiltonian becomes
+\emph{diagonal and grid-free}. This is the analytical core of the
+\texttt{unfer} realization.
 
 \subsection{Zero-loss data encoding and the symmetric Fock space}
 
@@ -271,61 +436,75 @@ supports}, which gives the two identities the whole construction exploits:
 \end{align}
 The orthogonality~\eqref{eq:disjoint} is ``zero data loss'': no two data points
 share amplitude. The gradient identity~\eqref{eq:graddisjoint} is what
-decouples the optimization.
+decouples the optimization. This is the grid-free counterpart of the paper's
+Fourier collocation: the $N^d$ grid points are replaced by $M$ orthogonal
+modes, one per datum.
 
 \subsection{Analytical potential optimization}
 
-Write the flow potential as a linear combination of the orthogonal packets,
+Write the conservative flow potential of~\eqref{eq:Hconservative} as a linear
+combination of the orthogonal packets,
 \begin{equation}
   V_t(x)=\sum_{j=1}^M\alpha_j(t)\,\Psi_j(x).
 \end{equation}
-Fitting the conservative velocity $-\nabla V_t$ to the target
-$u_t=x^{(k)}-x_0$ is the least-squares problem
+Fitting the conservative velocity $\nabla V_t$ to the straight-line target
+$v_t=x_{\mathrm{targ}}-x_0$ is the conditional-flow-matching least-squares
+problem~\eqref{eq:cfm}, which here reads
 \begin{equation}
   \mathcal{L}(\vec\alpha(t))=
   \Eblr_{t,x_0,x^{(j)},x_t}\Bigl\|
-  -\sum_{j=1}^M\alpha_j(t)\,\nabla\Psi_j(x_t)-(x^{(j)}-x_0)\Bigr\|_2^2 .
+  \sum_{j=1}^M\alpha_j(t)\,\nabla\Psi_j(x_t)-(x^{(j)}-x_0)\Bigr\|_2^2 .
 \end{equation}
 Setting $\partial\mathcal{L}/\partial\alpha_k=0$ gives the normal equations
 \begin{equation}
   \sum_{j=1}^M\alpha_j(t)\,
   \Eblr_{x_t}\!\bigl[\nabla\Psi_j(x_t)\cdot\nabla\Psi_k(x_t)\bigr]
-  =-\,\Eblr_{x_t,x_0,x^{(j)}}\!\bigl[(x^{(j)}-x_0)\cdot\nabla\Psi_k(x_t)\bigr].
+  =\Eblr_{x_t,x_0,x^{(j)}}\!\bigl[(x^{(j)}-x_0)\cdot\nabla\Psi_k(x_t)\bigr].
 \end{equation}
 By the gradient-disjointness~\eqref{eq:graddisjoint} the left-hand matrix is
 \emph{strictly diagonal}, and along any path $j\neq k$ the packet
 $\Psi_k(x_t^{(j)})$ vanishes. The system collapses to a closed-form, per-mode
 solution:
 \begin{equation}
-  \alpha_k(t)=-\,\frac{\Eblr_{x_0}\!\bigl[(x^{(k)}-x_0)\cdot
+  \alpha_k(t)=\frac{\Eblr_{x_0}\!\bigl[(x^{(k)}-x_0)\cdot
   \nabla\Psi_k(x_t^{(k)})\bigr]}
   {M\,\Eblr_{x_0}\!\bigl[\|\nabla\Psi_k(x_t^{(k)})\|^2\bigr]},
   \label{eq:alpha}
 \end{equation}
-with $x_0\sim\mathcal{N}(0,\mathbf{I})$ the Gaussian (Mehler) noise prior and
+with $x_0\sim\mathcal{N}(0,\mathbf{I})$ the Gaussian source $p_0$ and
 $x_t^{(k)}=(1-t)x_0+t\,x^{(k)}$. Each $\alpha_k$ is an independent scalar
 average, so the whole ``training'' is $\mathcal{O}(M)$ with zero data loss ---
-no plateaus, no inner optimization loop.
+no inner optimization loop, and no $N^d$ grid to sweep. This is the concrete
+payoff of the orthogonal encoding: it turns the CFM regression~\eqref{eq:cfm}
+into $M$ decoupled one-dimensional integrals.
 
-\subsection{The continuity Hamiltonian and the Mehler prior}
+\subsection{The continuity generator and a vacuum-projector prior}
 
-We take the prior to be the rank-1 projector onto the Mehler ground state,
+Substituting $V_t=\sum_j\alpha_j(t)\Psi_j$ into the conservative continuity
+Hamiltonian~\eqref{eq:Hconservative} yields the off-diagonal generator
+\begin{equation}
+  \Hgen_t^c=-\frac{i}{2}\sum_{j=1}^M\alpha_j(t)\,\hat h_j(x,\nabla),\qquad
+  \hat h_j=2\,\nabla\Psi_j\cdot\nabla+\nabla^2\Psi_j ,
+  \label{eq:Hgen_full}
+\end{equation}
+in which $\hat h_j$ transports amplitude into the data channel $\ket{x_j}$.
+
+\paragraph{The source prior, and an \texttt{unfer} modeling extension.}
+In Layden et al.~\cite{Layden2025} the source $p_0$ enters \emph{only} through
+the initial qsample $\Psi_0=\sqrt{p_0}$; it is not part of the Hamiltonian. In
+the \texttt{unfer} realization we find it convenient to also encode a
+``no-information'' prior \emph{inside} the generator, as the rank-1 projector
+onto the Mehler ground state,
 \begin{equation}
   H_0=\ket{0}\bra{0},
 \end{equation}
-the maximum-entropy state representing total prior uncertainty (made precise in
-Section~\ref{sec:mehler}). Substituting $V_t=\sum_j\alpha_j(t)\Psi_j$ into the
-continuity Hamiltonian~\eqref{eq:continuity} yields
-\begin{equation}
-  \Hgen_t=\ket{0}\bra{0}-\frac{i}{2}\sum_{j=1}^M\alpha_j(t)\,
-  \hat h_j(x,\nabla),\qquad
-  \hat h_j=\nabla\Psi_j\cdot\nabla+\nabla^2\Psi_j .
-  \label{eq:Hgen_full}
-\end{equation}
-For any out-of-distribution state $\ket{x_{\mathrm{OOD}}}$, $\Hgen_t$ first
-projects onto the Mehler prior $\ket{0}$, which then distributes amplitude
-\emph{uniformly} to the data channels $\ket{x_j}$ --- generalization is built
-in, and the construction never touches a spatial grid.
+which represents total prior uncertainty (made precise in
+Section~\ref{sec:mehler}) and lets an out-of-distribution query first relax onto
+the source before the data channels distribute amplitude. We are explicit that
+this projector term is an \texttt{unfer} modeling choice, \emph{not} part of the
+paper's continuity Hamiltonian; it is mathematically harmless (self-adjoint,
+idempotent) and can be set to zero to recover the pure
+generator~\eqref{eq:Hgen_full}.
 
 \subsection{Time-averaging and exact commutativity}
 
@@ -343,12 +522,16 @@ analytically time-average the parameters, $\bar\alpha_j=\int_0^1\alpha_j(t)\,
   \bar H=\ket{0}\bra{0}-\frac{i}{2}\sum_{j=1}^M\bar\alpha_j\,\hat h_j ,
   \label{eq:Hbar}
 \end{equation}
-and inference is one exact step, $\Psi_{t=1}=e^{-i\bar H}\Psi_0$.
+and inference is one exact step, $\Psi_{t=1}=e^{-i\bar H}\Psi_0$. (Setting the
+projector term to zero recovers the paper's generator exactly; we keep it for
+the generalization behavior described above.) This commutativity is the
+analytic analogue of the paper's observation that a conveniently smooth
+probability path can be chosen to tame the simulation error.
 
 \paragraph{The implemented (diagonal) generator.}
 The differential operators $\hat h_j$ of~\eqref{eq:Hbar} mix the vacuum with
-the data channels; that off-diagonal generator is the full QFM flow. The
-\texttt{unfer} builtin (Section~\ref{sec:impl}) currently implements the
+the data channels; that off-diagonal generator is the full wavefunction flow.
+The \texttt{unfer} builtin (Section~\ref{sec:impl}) currently implements the
 \emph{diagonal} number-operator surrogate
 \begin{equation}
   \bar H_{\text{impl}}=\ket{0}\bra{0}+\sum_{j=1}^M\bar\alpha_j\,\hat n_j,
@@ -360,21 +543,25 @@ for which the vacuum and each data channel are eigenstates
 $\bar H_{\text{impl}}\ket{x_j}=\bar\alpha_j\ket{x_j}$). This is the
 spectrally-stable skeleton of~\eqref{eq:Hbar}: it shares the prior, the
 $\mathcal{O}(M)$ construction, and the SIRK compressibility, while the
-off-diagonal mixing $\hat h_j$ is a documented future extension.
+off-diagonal mixing $\hat h_j$ --- the part that actually performs the
+wavefunction flow --- is a documented future extension.
 
 \section{Relating the Fock space with a uniform measure in an
 infinite-dimensional sphere}
 \label{sec:mehler}
 
 This section justifies, from first principles, the central modeling choice:
-\emph{the Gaussian (Mehler) prior is the uniform ``no-information'' measure,
-the Fock vacuum is its ground state, and orthogonal excitations encode
-information.} The bridge is a classical limit, due in spirit to
-Mehler~(1866) and made quantitative by López and Temme~\cite{LopezTemme1999}:
-in the infinite-dimensional limit the uniform measure on a hypersphere
-becomes the Gaussian measure, and the Gegenbauer polynomials --- which are
-orthogonal with respect to the uniform (hyperspherical) measure and define
-the hyperspherical harmonics --- become the Hermite polynomials.
+\emph{the Gaussian source $p_0$ of a flow model is the uniform
+``no-information'' measure, the Fock vacuum is its ground state, and orthogonal
+excitations encode information.} The bridge is a classical limit, due in spirit
+to Mehler~(1866) and made quantitative by L\'opez and
+Temme~\cite{LopezTemme1999}: in the infinite-dimensional limit the uniform
+measure on a hypersphere becomes the Gaussian measure, and the Gegenbauer
+polynomials --- which are orthogonal with respect to the uniform
+(hyperspherical) measure and define the hyperspherical harmonics --- become
+the Hermite polynomials. This is what makes the easily-prepared Gaussian
+initial qsample $\Psi_0=\sqrt{p_0}$ of Layden et al.\ coincide with the Fock
+vacuum that \texttt{unfer} manipulates natively.
 
 \subsection{Uniform information is the hyperspherical measure}
 
@@ -411,14 +598,15 @@ Gaussian weight:
 \end{equation}
 Thus the uniform measure on an infinite-dimensional sphere is the Gaussian
 measure --- the precise sense in which the Mehler ground state is the
-``maximum-entropy / total-uncertainty'' prior used in
+``maximum-entropy / total-uncertainty'' prior, and in which the Gaussian source
+$p_0=\mathcal{N}(0,\mathbf I)$ of a flow model is the Fock vacuum used in
 Section~\ref{sec:framework}.
 
 \subsection{Gegenbauer \texorpdfstring{$\to$}{to} Hermite and the normalization}
 
 The orthogonal polynomials track the same limit. With the Gegenbauer
 polynomials $C_n^{(\gamma)}$ defined by the generating function
-$(1-2xw+w^2)^{-\gamma}=\sum_n C_n^{(\gamma)}(x)\,w^n$, López and
+$(1-2xw+w^2)^{-\gamma}=\sum_n C_n^{(\gamma)}(x)\,w^n$, L\'opez and
 Temme~\cite{LopezTemme1999} give the Hermite limit (their Eq.~(1.4), with
 $\gamma=\alpha/2$):
 \begin{equation}
@@ -461,8 +649,8 @@ uniform prior \emph{is} the vacuum $\ket{0}$; and the act of measuring a
 component is the projection onto a definite excitation. This is exactly the
 structure the \texttt{unfer} kernel manipulates natively in
 \texttt{nested\textunderscore fock\textunderscore algebra}: the vacuum
-projector $\ket{0}\bra{0}$ is the uniform prior, and creating a boson in mode
-$j$ records one unit of information about data channel $j$.
+projector $\ket{0}\bra{0}$ is the Gaussian source qsample $\Psi_0$, and creating
+a boson in mode $j$ records one unit of information about data channel $j$.
 
 \begin{table}[h]
 \centering
@@ -475,19 +663,22 @@ Gegenbauer weight $(1-x^2)^{(\alpha-1)/2}$ & Gaussian weight $e^{-x^2}$
 Gegenbauer polynomials $C_n^{(\alpha/2)}$ & Hermite polynomials $H_n/n!$
   \;[Eq.~\eqref{eq:gegtoherm}] \\
 hyperspherical harmonics & number states $\ket{n}$ \\
-uniform ``no-information'' prior & vacuum projector $\ket{0}\bra{0}$ \\
+uniform ``no-information'' prior & Gaussian source qsample $\Psi_0=\ket{0}$ \\
 a definite point / harmonic & an orthogonal excitation (information) \\
 \end{tabular}
-\caption{The hypersphere-to-Fock dictionary underlying the Mehler prior.}
+\caption{The hypersphere-to-Fock dictionary underlying the Gaussian source and
+the vacuum prior.}
 \label{tab:dictionary}
 \end{table}
 
-\section{Krylov--Hashimoto Dimensional Reduction}
+\section{Krylov--Hashimoto dimensional reduction}
 \label{sec:krylov}
 
 The generator $\bar H$ of~\eqref{eq:Hbar} (and its diagonal
 surrogate~\eqref{eq:Hdiag}) exactly encodes the flow, but its nominal dimension
-scales with $M$. We compress it with the SIRK machinery of
+scales with $M$. Where Layden et al.~\cite{Layden2025} discretize time with
+product formulas (incurring $\|H_t^c\|$-dependent cost), \texttt{unfer}
+compresses the generator with the SIRK machinery of
 Section~\ref{sec:flowprimer}.
 
 \subsection{The inversion-free shortcut}
@@ -506,7 +697,8 @@ sirk} realizes this by generating the sequence $w_k=(\bar H-z_kI)w_{k-1}$ with
 uniform shifts $z_k=\gamma$; this is mathematically valid because $\bar H$ is
 \emph{bounded} (the Mehler projector is rank one and the number operators are
 diagonal). Each application of $\bar H^k$ costs only $\mathcal{O}(M)$ precisely
-because the orthogonal Fock potential has \emph{no cross-terms}.
+because the orthogonal Fock potential has \emph{no cross-terms} --- the same
+decoupling that made the training~\eqref{eq:alpha} diagonal.
 
 \subsection{Spectral low-pass filtering}
 
@@ -527,24 +719,25 @@ numerically stable even when several packets nearly coincide.
 \section{Implementation in the \texttt{unfer} Kernel}
 \label{sec:impl}
 
-The analytical QFM module integrates into the existing \texttt{unfer} monorepo
-with no new numerical primitives --- it reuses the CAS, the solver, and the
-module runtime.
+The wavefunction-flow module integrates into the existing \texttt{unfer}
+monorepo with no new numerical primitives --- it reuses the CAS, the solver, and
+the module runtime.
 
 \subsection{Symbolic algebra (\texttt{nested\textunderscore fock\textunderscore algebra})}
 
 The symbolic engine gains one operator, \texttt{Operator::ProjectVacuum}, the
-rank-1 vacuum projector $\ket{0}\bra{0}$ implementing the Mehler prior $H_0$.
+rank-1 vacuum projector $\ket{0}\bra{0}$ implementing the source/prior $H_0$.
 On application it keeps only the strict-vacuum component and annihilates any
 state carrying a mode; it is self-adjoint and idempotent, so it slots into the
-existing adjoint and Hermiticity machinery. The diagonal QFM
-generator~\eqref{eq:Hdiag} is instantiated directly by the builtin
+existing adjoint and Hermiticity machinery. The diagonal generator~\eqref{eq:Hdiag}
+is instantiated directly by the builtin
 \texttt{qfm\textunderscore hamiltonian(alphas)}, which assembles
 $\ket{0}\bra{0}+\sum_j\bar\alpha_j\,\hat c_j^\dagger\hat c_j$ as one projector
 term plus one number operator per data point. Building the Hamiltonian
 directly (rather than through \texttt{Expression::expand()}) sidesteps the
 combinatorial explosion of the CAS, so $M=10^6$ data points yield $10^6$ terms
-with no blow-up.
+with no blow-up --- the grid-free analogue of the paper avoiding an explicit
+$N^d$ amplitude vector.
 
 \subsection{GPU-accelerated solver (\texttt{fock\textunderscore sirk})}
 
@@ -554,13 +747,16 @@ Section~\ref{sec:krylov}; the $m\times m$ Gram matrix $\braket{w_j|w_k}$ is
 assembled on the GPU via \texttt{candle-core} CUDA tensors. Because
 $\hat V=\sum_j\bar\alpha_j\hat n_j$ has no cross-terms, basis generation is
 embarrassingly parallel and fast, and the rank-revealing Gram whitening keeps
-the highly compressed flow representation stable.
+the highly compressed flow representation stable. This is \texttt{unfer}'s
+classical counterpart to the paper's quantum Hamiltonian simulation: exact
+operator evolution, but on a CPU/GPU Fock substrate rather than qubits.
 
 \subsection{Module execution runtime}
 
-The whole flow-matching loop is exposed through the \texttt{unfer\textunderscore
-ffi} C ABI and driven by a new Austral module (\texttt{qfm\textunderscore
-module}). Through the manifest-authorized \texttt{uk\textunderscore evolve} and
+The whole wavefunction-flow loop is exposed through the
+\texttt{unfer\textunderscore ffi} C ABI and driven by a new Austral module
+(\texttt{qfm\textunderscore module}). Through the manifest-authorized
+\texttt{uk\textunderscore evolve} and
 \texttt{uk\textunderscore event\textunderscore probability} symbols, the module
 triggers the analytical parameter assembly, the Krylov reduction, and the
 single-step $\mathcal{O}(m^2)$ inference natively in-process, with the kernel
@@ -573,33 +769,45 @@ $\bar H_{\text{impl}}$ is diagonal, the vacuum and the data channels are
 eigenstates, so $e^{-i\bar H_{\text{impl}}t}$ contributes only phases and the
 Born populations are stationary --- the module's integration tests assert
 exactly this conservation, not a spurious ``spread.'' The off-diagonal
-differential operators $\hat h_j$ of the full generator~\eqref{eq:Hbar}, which
-genuinely transport amplitude between the vacuum prior and the data channels,
-are the natural next extension and fit the same SIRK pipeline unchanged.
+differential operators $\hat h_j$ of the full continuity
+generator~\eqref{eq:Hbar} --- which genuinely transport amplitude between the
+source $\ket{0}$ and the data channels, and which are the actual wavefunction
+flow of Layden et al.~\cite{Layden2025} --- are the natural next extension and
+fit the same SIRK pipeline unchanged.
 
 \section{Conclusion}
 
-We have given a self-contained derivation of an analytical Quantum Flow
-Matching module for the \texttt{unfer} kernel. By encoding data as orthogonal
-Fock states we turn the flow-matching normal equations into a diagonal,
-$\mathcal{O}(M)$ closed-form fit, eliminating the variational PQC training of
-the original QFM and its barren-plateau pathology. By compressing the
-resulting bounded generator with the Shift-Invert Rational Krylov method we
+We have given a self-contained derivation of a classical, grid-free realization
+of the \emph{wavefunction flow} of Layden, Sweke, Havl\'i\v{c}ek, Chowdhury, and
+Neklyudov~\cite{Layden2025} inside the \texttt{unfer} kernel. The paper's
+central object --- the continuity Hamiltonian
+$\Hgen_t=\tfrac12[\hat p\cdot v_t(\hat x)+v_t(\hat x)\cdot\hat p]$, with the
+conservative form $\Hgen_t^c=i[\Kop,V_t(\hat x)]$, fully specified by an
+already-learned classical velocity field and generating a qsample
+$\Psi_t=\sqrt{p_t}$ --- maps directly onto \texttt{unfer}'s Born-rule Fock
+machinery. By encoding data as orthogonal Fock states we replace the paper's
+$N^d$ Fourier-collocation grid with an analytical, diagonal,
+$\mathcal{O}(M)$ closed-form fit of the conservative potential, with zero data
+loss. By compressing the resulting bounded generator with the Shift-Invert
+Rational Krylov method --- in place of the paper's product formulas --- we
 obtain exponentially convergent, $\mathcal{O}(m^2)$ single-step inference. The
-measure-theoretic core --- the Mehler/López--Temme limit identifying the
+measure-theoretic core --- the Mehler/L\'opez--Temme limit identifying the
 uniform hyperspherical measure with the Gaussian measure and Gegenbauer with
-Hermite polynomials --- explains \emph{why} the Fock vacuum is the correct
-``no-information'' prior and why orthogonal excitations carry information. The
-result aligns with the \texttt{unfer} philosophy: rigorous probability
-tracking through mathematically exact, geometry-preserving operations on
-separable Hilbert spaces.
+Hermite polynomials --- explains \emph{why} the Gaussian source $p_0$ of a flow
+model is exactly the Fock vacuum, and why orthogonal excitations carry
+information. The shipped builtin realizes the spectrally-stable diagonal
+skeleton of this generator; the off-diagonal mixing that performs the full
+wavefunction flow is the documented next step. The result aligns with the
+\texttt{unfer} philosophy: rigorous probability tracking through mathematically
+exact, geometry-preserving operations on separable Hilbert spaces.
 
 \vspace{1em}
 \begin{thebibliography}{9}
 
-\bibitem{Cui2025}
-Cui, Z., Zhang, P., \& Tang, Y. (2025). \textit{Quantum Flow Matching}.
-arXiv:2508.12413 [quant-ph].
+\bibitem{Layden2025}
+Layden, D., Sweke, R., Havl\'i\v{c}ek, V., Chowdhury, A., \& Neklyudov, K.
+(2025). \textit{Wavefunction Flows: Efficient Quantum Simulation of Continuous
+Flow Models}. arXiv:2510.08462 [quant-ph].
 
 \bibitem{Hashimoto2019}
 Hashimoto, Y., \& Nodera, T. (2019). \textit{Shift-invert Rational Krylov
@@ -607,14 +815,14 @@ method for an operator $\phi$-function of an unbounded linear operator}.
 Japan Journal of Industrial and Applied Mathematics, 36, 1--13.
 
 \bibitem{LopezTemme1999}
-López, J. L., \& Temme, N. M. (1999). \textit{Approximations of orthogonal
+L\'opez, J. L., \& Temme, N. M. (1999). \textit{Approximations of orthogonal
 polynomials in terms of Hermite polynomials}. Methods and Applications of
 Analysis, 6(2), 131--146.
 
 \bibitem{Mehler1866}
 Mehler, F. G. (1866). \textit{Ueber die Entwicklung einer Function von
-beliebig vielen Variablen nach Laplaceschen Functionen höherer Ordnung}.
-Journal für die reine und angewandte Mathematik, 66, 161--176.
+beliebig vielen Variablen nach Laplaceschen Functionen h\"oherer Ordnung}.
+Journal f\"ur die reine und angewandte Mathematik, 66, 161--176.
 
 \bibitem{Kopperman2026}
 \textit{Beyond Real Numbers: A Hilbert-Space Exchange Format for the UniFormal
