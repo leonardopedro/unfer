@@ -4,7 +4,7 @@ use nested_fock_algebra::compile_latex;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
     bose_hubbard_chain, gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
-    qfm_hamiltonian, yang_mills_hamiltonian, yang_mills_lattice,
+    qfm_hamiltonian, qfm_hamiltonian_offdiag, yang_mills_hamiltonian, yang_mills_lattice,
 };
 use num_complex::Complex64;
 use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
@@ -49,6 +49,13 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
             "qfm_mehler" => {
                 let alphas = get_f64_array(params, "alphas")?;
                 Ok(qfm_hamiltonian(&alphas))
+            }
+            // Off-diagonal QFM (P5 #26): Hermitian vacuum↔data coupling that
+            // actually transports amplitude (Rabi oscillation), unlike the
+            // diagonal `qfm_mehler` surrogate where populations are stationary.
+            "qfm_mehler_offdiag" => {
+                let alphas = get_f64_array(params, "alphas")?;
+                Ok(qfm_hamiltonian_offdiag(&alphas))
             }
             other => Err(KernelError::UnknownBuiltinModel {
                 name: other.to_string(),

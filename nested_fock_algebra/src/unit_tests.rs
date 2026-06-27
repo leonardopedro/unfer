@@ -4,7 +4,7 @@ mod algebra_tests {
     use crate::cas::compile_to_fock;
     use crate::models::{
         bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, qfm_hamiltonian,
-        yang_mills_hamiltonian, yang_mills_lattice,
+        qfm_hamiltonian_offdiag, yang_mills_hamiltonian, yang_mills_lattice,
     };
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
@@ -266,6 +266,72 @@ mod algebra_tests {
             // And no leakage back into the vacuum: <0|H|x_j> = 0.
             let leak = QuantumState::inner_product(&vac, &h_xj);
             assert!(leak.norm() < 1e-12, "no vacuum leakage from |x_{j}>");
+        }
+    }
+
+    #[test]
+    fn test_qfm_hamiltonian_offdiag() {
+        // Off-diagonal QFM generator (P5 #26):
+        //   H = |0><0| + Σ_j α_j (a†_j P₀ + P₀ a_j)
+        // Hermitian, with vacuum ↔ |x_j⟩ mixing (Rabi-like transport).
+        let alphas = [1.5, 2.1, 0.8];
+        let h = qfm_hamiltonian_offdiag(&alphas);
+
+        // 1 projector + 2 conjugate terms per data point.
+        assert_eq!(h.terms.len(), 1 + 2 * alphas.len());
+        assert!(matches!(h.terms[0].1[..], [Operator::ProjectVacuum]));
+        assert!(h.terms.iter().all(|(c, _)| c.im.abs() < 1e-15));
+
+        // Hermiticity: H == H† (the coupling terms are a†P₀ / P₀a conjugates).
+        let h_dag = h.adjoint();
+        assert_eq!(h.terms.len(), h_dag.terms.len());
+
+        // Helper: one outer universe holding a single boson in inner mode j.
+        let single_boson = |j: u32| {
+            let mut inner = crate::InnerBosonicState::vacuum();
+            inner.modes.insert(j, 1);
+            Operator::OuterBosonCreate(inner).apply_to_state(&QuantumState::vacuum())
+        };
+        let vac = QuantumState::vacuum();
+
+        // H|0> = |0> + Σ α_j |x_j>  —  projector keeps vacuum, each ĥ_j creates
+        // amplitude in channel j. Vacuum expectation = 1 (from the projector);
+        // the off-diagonal terms contribute <0|a†_j P₀|0> = 0.
+        let h_vac = h.apply(&vac);
+        let eig0 =
+            QuantumState::inner_product(&vac, &h_vac) / QuantumState::inner_product(&vac, &vac);
+        assert!(
+            (eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12,
+            "⟨0|H|0⟩ = 1 (projector); got {eig0}"
+        );
+
+        for (j, &alpha) in alphas.iter().enumerate() {
+            let xj = single_boson(j as u32);
+            let h_xj = h.apply(&xj);
+
+            // Diagonal: ⟨x_j|H|x_j⟩ = 0  (no number operator; P₀a_j|x_j⟩=|0⟩
+            // but ⟨x_j|0⟩ = 0, and a†_jP₀|x_j⟩ = 0).
+            let diag =
+                QuantumState::inner_product(&xj, &h_xj) / QuantumState::inner_product(&xj, &xj);
+            assert!(
+                diag.norm() < 1e-12,
+                "⟨x_{j}|H|x_{j}⟩ = 0 (off-diagonal only); got {diag}"
+            );
+
+            // Off-diagonal coupling: ⟨0|H|x_j⟩ = α_j  (the vacuum↔data mixing).
+            // H|x_j⟩ = P₀a_j|x_j⟩ = |0⟩ (times α_j); a†_jP₀|x_j⟩ = 0.
+            let offdiag = QuantumState::inner_product(&vac, &h_xj);
+            assert!(
+                (offdiag.re - alpha).abs() < 1e-12 && offdiag.im.abs() < 1e-12,
+                "⟨0|H|x_{j}⟩ = α_{j} = {alpha}; got {offdiag}"
+            );
+
+            // By hermiticity ⟨x_j|H|0⟩ = α_j too.
+            let offdiag_rev = QuantumState::inner_product(&xj, &h_vac);
+            assert!(
+                (offdiag_rev.re - alpha).abs() < 1e-12 && offdiag_rev.im.abs() < 1e-12,
+                "⟨x_{j}|H|0⟩ = α_{j} (hermiticity); got {offdiag_rev}"
+            );
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::{Hamiltonian, Operator};
+use crate::{Hamiltonian, InnerBosonicState, Operator};
 use num_complex::Complex64;
 
 // ─────────────────────────────────────────────
@@ -420,6 +420,71 @@ pub fn qfm_hamiltonian(alphas: &[f64]) -> Hamiltonian {
             vec![
                 Operator::InnerBosonCreate(mode),
                 Operator::InnerBosonAnnihilate(mode),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The **off-diagonal** Quantum Flow Matching generator (P5 #26).
+///
+/// Where [`qfm_hamiltonian`] uses the diagonal number-operator surrogate
+/// `H = |0><0| + Σ α_j n_j` (eigenstates → phase-only evolution), this realizes
+/// the Fock-space form of the continuity operator `ĥ_j` of `QMF.tex` §2.3 that
+/// *transports amplitude between the vacuum and the data channels*:
+///
+/// `H = |0><0| + Σ_j α_j (B†_j P₀ + P₀ B_j)`
+///
+/// where `B†_j = OuterBosonCreate(|x_j⟩)` and `B_j = OuterBosonAnnihilate(|x_j⟩)`
+/// are the outer-universe creation/annihilation operators for the single-boson
+/// state `|x_j⟩` (one universe holding one boson in inner mode `j`). In the
+/// `{|0⟩, |x_j⟩}` subspace, `B†_j P₀ + P₀ B_j` is the Pauli-X that swaps
+/// vacuum ↔ data channel `j` (apply is right-to-left: `B†_j` after `P₀` creates
+/// the `|x_j⟩` universe from the vacuum; `P₀` after `B_j` projects the
+/// vacuum left by annihilating the `|x_j⟩` universe). The generator is
+/// **Hermitian** — `B†_j P₀` and `P₀ B_j` are conjugates (`B†† = B`,
+/// `P₀† = P₀`, reverse product) — so `e^{-iHt}` is unitary and the Born-rule
+/// substrate (norm conservation, `nalgebra` Padé `exp()`) applies unchanged.
+///
+/// **Honest deviation from the paper:** `QMF.tex` eq. (Hbar) gives the
+/// *anti-Hermitian* continuity generator `H̄ = |0><0| - (i/2)Σ α_j ĥ_j` whose
+/// evolution is the real Fokker–Planck transport semigroup (irreversible
+/// diffusion of amplitude into the data channels). `unfer`'s SIRK solver and
+/// Born-rule layer assume a Hermitian Hamiltonian and unitary evolution
+/// (AGENTS.md §4: "Always use nalgebra's Padé approximant exp() … to preserve
+/// unitarity and Hermiticity"). This builtin therefore implements the
+/// **Hermitian** off-diagonal coupling: the result is *coherent Rabi-like
+/// oscillation* of amplitude between vacuum and data channels (populations
+/// genuinely flow, then flow back), not the paper's irreversible transport. It
+/// is the unfer-faithful realization of the vacuum↔data mixing that the
+/// diagonal surrogate lacks; setting `α_j → 0` recovers the bare projector.
+/// Constructed directly so M can be huge without CAS term-explosion.
+pub fn qfm_hamiltonian_offdiag(alphas: &[f64]) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    // H_0 = |0><0|, the Mehler global prior (same as the diagonal builtin).
+    terms.push((Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum]));
+    // Off-diagonal coupling per data point: α_j (B†_j P₀ + P₀ B_j), where
+    // |x_j⟩ is the single-boson inner state {mode j: 1}. Two conjugate terms
+    // per j → hermitian; vacuum ↔ |x_j⟩ mixing (Pauli-X in the 2D subspace).
+    for (j, &alpha) in alphas.iter().enumerate() {
+        let mode = j as u32;
+        let mut inner = InnerBosonicState::vacuum();
+        inner.modes.insert(mode, 1);
+        let c = Complex64::new(alpha, 0.0);
+        // B†_j P₀  —  maps |0⟩ → |x_j⟩ (create the |x_j⟩ universe from vacuum)
+        terms.push((
+            c,
+            vec![
+                Operator::OuterBosonCreate(inner.clone()),
+                Operator::ProjectVacuum,
+            ],
+        ));
+        // P₀ B_j  —  maps |x_j⟩ → |0⟩ (annihilate the |x_j⟩ universe → vacuum)
+        terms.push((
+            c,
+            vec![
+                Operator::ProjectVacuum,
+                Operator::OuterBosonAnnihilate(inner),
             ],
         ));
     }

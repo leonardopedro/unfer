@@ -492,3 +492,118 @@ fn qfm_mehler_conserves_data_channel_population() {
         "diagonal generator conserves channel-0 population: {p_after}"
     );
 }
+
+// ── Off-diagonal QFM (P5 #26) ─────────────────────────────────────────────
+// H = |0><0| + Σ_j α_j (B†_j P₀ + P₀ B_j) — Hermitian vacuum↔data coupling
+// that actually transports amplitude (Rabi oscillation), unlike the diagonal
+// surrogate above where populations are stationary. The integration tests
+// below verify the defining behaviour: starting from the Mehler vacuum prior,
+// evolution moves probability mass INTO the data channels.
+
+#[test]
+fn qfm_mehler_offdiag_transfers_population_from_vacuum() {
+    // The off-diagonal QFM generator mixes vacuum ↔ data channels. Starting
+    // from the vacuum prior, evolution must MOVE probability out of the vacuum
+    // and INTO the data channels — the defining behaviour the diagonal
+    // surrogate lacks (there, P(vacuum) stays 1).
+    //
+    // Single channel (M=1) so the 2×2 block H=[[1,α],[α,0]] applies exactly:
+    //   P_{vac}(t) = 1 − 4α²/(1+4α²)·sin²(√(1+4α²)·t/2).
+    // With α=1.5, ω=√10≈3.162; at t=1.0, sin²(ωt/2)≈1 → P(vac)≈0.10.
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler_offdiag",
+            serde_json::json!({"alphas": [1.5]}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 6,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    };
+    let mut session = Session::new(&spec).expect("qfm offdiag session");
+
+    let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
+
+    let report = session.evolve(1.0).expect("evolve");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-6,
+        "post-evolve norm must be ~1 (unitary), got {}",
+        report.norm
+    );
+
+    // Population must have left the vacuum (the whole point of the off-diagonal
+    // coupling). The diagonal surrogate keeps P(vacuum)=1; here it must drop.
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!(
+        p_vac < 0.5,
+        "off-diagonal generator depopulates the vacuum: P(vac)={p_vac} (must be < 0.5)"
+    );
+
+    // And arrived in the data channel.
+    let p_data0 = session.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        p_data0 > 0.1,
+        "population arrives in data channel 0: P(x_0)={p_data0} (must be > 0.1)"
+    );
+
+    // The vacuum + ¬vacuum cover still sums to 1 (Born rule, normalization).
+    let p_not = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_vac + p_not - 1.0).abs() < 1e-6,
+        "cover sums to 1: {p_vac} + {p_not}"
+    );
+}
+
+#[test]
+fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
+    // The Hermitian off-diagonal coupling gives COHERENT (unitary) Rabi
+    // oscillation: amplitude flows vacuum → data, then back. At the full
+    // oscillation period T = 2π/ω (ω=√(1+4α²) for one channel) the state
+    // returns to the vacuum. Verify a half-period (max transfer) then another
+    // half-period (full return) recovers P(vacuum) ≈ 1 — the signature of
+    // coherent (not diffusive) transport that distinguishes the Hermitian unfer
+    // realization from the paper's anti-Hermitian Fokker–Planck semigroup.
+    let alpha = 1.5_f64;
+    let omega = (1.0 + 4.0 * alpha * alpha).sqrt();
+    let half_period = std::f64::consts::PI / omega;
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler_offdiag",
+            serde_json::json!({"alphas": [alpha]}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 8,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    };
+    let mut session = Session::new(&spec).expect("qfm offdiag session");
+
+    // Half period: vacuum → maximum data-channel population.
+    session.evolve(half_period).expect("evolve");
+    let p_data_half = session.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        p_data_half > 0.3,
+        "half-period: maximum data transfer, P(x_0)={p_data_half} (must be > 0.3)"
+    );
+
+    // Another half period (full round trip): coherent return to the vacuum.
+    // The SIRK approximation + krylov_dim=8 should recover P(vacuum) within a
+    // few % — the signature of unitary (reversible) evolution.
+    session.evolve(half_period).expect("evolve");
+    let p_vac_full = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!(
+        p_vac_full > 0.8,
+        "full-period: coherent return to vacuum, P(vac)={p_vac_full} (must be > 0.8)"
+    );
+}
