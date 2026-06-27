@@ -607,3 +607,107 @@ fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
         "full-period: coherent return to vacuum, P(vac)={p_vac_full} (must be > 0.8)"
     );
 }
+
+// ── P5 #30: physics depth ────────────────────────────────────────────────────
+
+#[test]
+fn yang_mills_lattice_l4_bounded_evolve() {
+    // Scale to the 4×4 lattice (32 link modes, 256 quartic magnetic terms).
+    // Starting from vacuum at tiny t=0.01, the magnetic plaquette terms create
+    // at most a handful of Fock components — the state must stay normalised.
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "yang_mills_lattice",
+            serde_json::json!({"l": 4, "g": 1.0, "n_colors": 1}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(100_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    };
+    let mut session = Session::new(&spec).expect("l=4 yang-mills session");
+
+    let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
+
+    let report = session.evolve(0.01).expect("evolve t=0.01");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-5,
+        "post-evolve norm must be ~1, got {}",
+        report.norm
+    );
+
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    let p_not = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_vac + p_not - 1.0).abs() < 1e-5,
+        "cover sums to 1 (got {p_vac} + {p_not})"
+    );
+}
+
+#[test]
+fn sirk_stability_krylov_dim_16() {
+    // High Krylov dimension (m=16) on a 4-mode harmonic chain: the SIRK basis
+    // is over-complete relative to the reachable subspace, so Gram whitening
+    // must tolerate near-singular directions without blowing up the norm.
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "harmonic_chain",
+            serde_json::json!({"n_modes": 4, "omega": 1.0}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 16,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    };
+    let mut session = Session::new(&spec).expect("krylov-16 session");
+    let report = session.evolve(0.5).expect("evolve t=0.5");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-5,
+        "krylov_dim=16: norm must be ~1, got {}",
+        report.norm
+    );
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((0.0..=1.0).contains(&p_vac), "P(vacuum) in [0,1]: {p_vac}");
+}
+
+#[test]
+fn sirk_stability_krylov_dim_32() {
+    // At m=32 the Krylov space vastly exceeds the 2-state reachable subspace
+    // of the harmonic chain from vacuum.  All but ~2 eigenvalues of the Gram
+    // matrix will be near zero — the whitening must discard them (rank
+    // reduction) and still reconstruct a normalised output state.
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "harmonic_chain",
+            serde_json::json!({"n_modes": 4, "omega": 1.0}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 32,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+        },
+    };
+    let mut session = Session::new(&spec).expect("krylov-32 session");
+    let report = session.evolve(0.5).expect("evolve t=0.5");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-5,
+        "krylov_dim=32: norm must be ~1, got {}",
+        report.norm
+    );
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((0.0..=1.0).contains(&p_vac), "P(vacuum) in [0,1]: {p_vac}");
+}

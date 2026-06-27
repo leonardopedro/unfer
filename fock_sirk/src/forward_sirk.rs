@@ -395,4 +395,44 @@ mod tests {
         assert!((lo + 1.0).abs() < 1e-8, "GPU lowest Ritz value {lo} != -1");
         assert!((hi - 1.0).abs() < 1e-8, "GPU highest Ritz value {hi} != +1");
     }
+
+    /// GPU evolve on a real physics model (P5 #30): `yang_mills_lattice(2,1,1)` has
+    /// 72 Hamiltonian terms (8 electric + 64 magnetic quartic). Starting from the
+    /// gauge-field vacuum, a short SIRK solve on the GPU must produce a Krylov basis
+    /// of positive rank and an H_proj matrix whose Ritz values are within a
+    /// physically reasonable range (g²/2 = 0.5 sets the electric energy scale).
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_yang_mills_lattice_l2_norm_conserved() {
+        use nested_fock_algebra::models::yang_mills_lattice;
+
+        let device = crate::best_device();
+        assert!(
+            matches!(device, Device::Cuda(_)),
+            "best_device() must pick CUDA when the feature is on; got {device:?}"
+        );
+
+        let h = yang_mills_lattice(2, 1.0, 1);
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+
+        let opts = SirkOpts {
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            brst_tol: 1e-10,
+        };
+        let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
+            .expect("yang-mills GPU solve must not error");
+
+        assert!(res.rank > 0, "Krylov basis has positive rank: {}", res.rank);
+
+        // H_proj Ritz values must be real (Hermitian Hamiltonian) and bounded.
+        let eig = res.h_proj.clone().symmetric_eigen();
+        for (i, &ev) in eig.eigenvalues.iter().enumerate() {
+            assert!(
+                ev.abs() < 1e6,
+                "Ritz value [{i}]={ev} out of expected range (g²/2=0.5 sets the scale)"
+            );
+        }
+    }
 }

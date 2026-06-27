@@ -7,6 +7,9 @@
 //! parameter that drives its complexity (Krylov dim / matrix size) so a
 //! slowdown shows up as a curve, not a single number.
 //!
+//! P5 #30 extensions: Krylov dim up to 16 in the solve + reconstruct groups;
+//! new `yang_mills_build_vs_l` group timing Hamiltonian construction at l=2..4.
+//!
 //! Run with: `cargo bench -p fock_sirk`.
 
 use std::hint::black_box;
@@ -49,12 +52,13 @@ fn hermitian_psd(n: usize) -> DMatrix<Complex64> {
 }
 
 /// Forward SIRK solve on a 4-mode harmonic chain vs Krylov dimension.
+/// Extended to m=16 (P5 #30) to reveal the Gram-whitening cost at high dim.
 fn bench_sirk_solve(c: &mut Criterion) {
     let device = Device::Cpu;
     let h = models::harmonic_chain(4, 1.0);
     let v0 = one_boson_mode0();
     let mut group = c.benchmark_group("sirk_solve_vs_krylov_dim");
-    for &m in &[2usize, 4, 8] {
+    for &m in &[2usize, 4, 8, 16] {
         let sh = shifts(m);
         group.bench_with_input(BenchmarkId::from_parameter(m), &m, |b, _| {
             b.iter(|| {
@@ -69,7 +73,7 @@ fn bench_sirk_solve(c: &mut Criterion) {
 /// Gram whitening (Hermitian eigendecomposition) vs matrix size.
 fn bench_whiten(c: &mut Criterion) {
     let mut group = c.benchmark_group("whiten_gram_vs_size");
-    for &n in &[4usize, 8, 16, 32] {
+    for &n in &[4usize, 8, 16, 32, 64] {
         let g = hermitian_psd(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| whiten_gram(black_box(&g), GRAM_REL_TOL).expect("whiten"));
@@ -79,13 +83,13 @@ fn bench_whiten(c: &mut Criterion) {
 }
 
 /// Whitened-coefficient → `QuantumState` reconstruction vs Krylov dimension
-/// (i.e. `w_sequence` length).
+/// (i.e. `w_sequence` length). Extended to m=16 (P5 #30).
 fn bench_reconstruct(c: &mut Criterion) {
     let device = Device::Cpu;
     let h = models::harmonic_chain(4, 1.0);
     let v0 = one_boson_mode0();
     let mut group = c.benchmark_group("reconstruct_vs_krylov_dim");
-    for &m in &[2usize, 4, 8] {
+    for &m in &[2usize, 4, 8, 16] {
         let res = solve_forward_sirk(&h, &v0, &shifts(m), &device, None).expect("solve");
         let coeffs = res.time_evolve(0.5);
         group.bench_with_input(BenchmarkId::from_parameter(m), &m, |b, _| {
@@ -95,5 +99,24 @@ fn bench_reconstruct(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_sirk_solve, bench_whiten, bench_reconstruct);
+/// Yang-Mills lattice Hamiltonian construction cost vs lattice size (P5 #30).
+/// Construction is pure symbolic algebra (no SIRK): l=2 → 72 terms,
+/// l=3 → 162 terms, l=4 → 288 terms. Reveals O(l²) scaling.
+fn bench_yang_mills_build_vs_l(c: &mut Criterion) {
+    let mut group = c.benchmark_group("yang_mills_build_vs_l");
+    for &l in &[2usize, 3, 4] {
+        group.bench_with_input(BenchmarkId::from_parameter(l), &l, |b, _| {
+            b.iter(|| models::yang_mills_lattice(black_box(l), 1.0, 1));
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_sirk_solve,
+    bench_whiten,
+    bench_reconstruct,
+    bench_yang_mills_build_vs_l
+);
 criterion_main!(benches);

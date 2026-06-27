@@ -226,6 +226,28 @@ mod algebra_tests {
     }
 
     #[test]
+    fn test_yang_mills_lattice_l4_term_count() {
+        // 4×4 periodic lattice, 1 color.
+        //   Modes (link variables): 2 dirs × 16 sites × 1 color = 32 links.
+        //   Electric: 32 quadratic (arity-2) terms — one number operator per link.
+        //   Magnetic: 16 plaquettes × 2⁴ = 256 quartic (arity-4) sub-terms.
+        //   Total: 288 terms; all coefficients must be real (no imaginary drift).
+        let h = yang_mills_lattice(4, 1.0, 1);
+        let electric = h.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
+        let magnetic = h.terms.iter().filter(|(_, ops)| ops.len() == 4).count();
+        assert_eq!(electric, 32, "4×4 lattice, 1 color → 32 electric terms");
+        assert_eq!(magnetic, 256, "16 plaquettes × 16 quartic sub-terms each");
+        assert_eq!(h.terms.len(), 288, "total 288 terms");
+        assert!(
+            h.terms.iter().all(|(c, _)| c.im.abs() < 1e-15),
+            "lattice gauge coefficients are real"
+        );
+        // Scaling: two colors doubles everything uniformly.
+        let h2c = yang_mills_lattice(4, 1.0, 2);
+        assert_eq!(h2c.terms.len(), 2 * h.terms.len());
+    }
+
+    #[test]
     fn test_qfm_hamiltonian() {
         // QFM generator: H = |0><0| + Σ_j α_j n_j   (see QMF.tex).
         let alphas = [1.5, 2.1, 0.8];
