@@ -339,4 +339,60 @@ mod tests {
         assert!(res.rank > 0, "Krylov basis must have positive rank");
         assert_eq!(res.h_proj.nrows(), res.rank);
     }
+
+    /// GPU smoke (P1 #6): the two-state hopping Hamiltonian H = |B><A| + |A><B|
+    /// has eigenvalues ±1 regardless of device. When the `cuda` feature is on
+    /// and a CUDA device is reachable, `best_device()` picks it; the Ritz
+    /// values must match the CPU baseline within 1e-8. This is the one test
+    /// that exercises the GPU tensor path (inner products + Gram matrix +
+    /// H_proj on the CUDA device).
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn gpu_smoke_hopping_energy_matches_cpu() {
+        let device = crate::best_device();
+        let is_cuda = matches!(device, Device::Cuda(_));
+        assert!(
+            is_cuda,
+            "best_device() must pick CUDA when the feature is on and a GPU is reachable; got {device:?}"
+        );
+
+        let a = InnerBosonicState::vacuum();
+        let mut b = InnerBosonicState::vacuum();
+        b.modes.insert(0, 1);
+
+        let h = Hamiltonian {
+            terms: vec![
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::OuterBosonCreate(b.clone()),
+                        Operator::OuterBosonAnnihilate(a.clone()),
+                    ],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::OuterBosonCreate(a.clone()),
+                        Operator::OuterBosonAnnihilate(b.clone()),
+                    ],
+                ),
+            ],
+        };
+        let v0 = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(a));
+
+        let res = solve_forward_sirk(&h, &v0, &shifts(4), &device, None).unwrap();
+        assert!(
+            res.rank >= 2,
+            "hopping spans a 2D Krylov space, got {}",
+            res.rank
+        );
+
+        let eig = res.h_proj.clone().symmetric_eigen();
+        let mut vals: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
+        vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let lo = *vals.first().unwrap();
+        let hi = *vals.last().unwrap();
+        assert!((lo + 1.0).abs() < 1e-8, "GPU lowest Ritz value {lo} != -1");
+        assert!((hi - 1.0).abs() < 1e-8, "GPU highest Ritz value {hi} != +1");
+    }
 }
