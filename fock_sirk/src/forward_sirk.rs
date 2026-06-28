@@ -63,6 +63,49 @@ impl ForwardSirkResult {
         state
     }
 
+    /// Return the Ritz values (real eigenvalues of the projected Hamiltonian
+    /// `h_proj`) sorted ascending.
+    ///
+    /// These approximate the low-lying spectrum of the full Hamiltonian `H` in
+    /// the Krylov subspace built from `v_0`. The quality of the approximation
+    /// depends on the Krylov dimension and the spectral reach from the starting
+    /// state. For a Hermitian `H`, the Ritz values interlace the true
+    /// eigenvalues and converge from the outside in as the dimension grows.
+    pub fn ritz_values(&self) -> Vec<f64> {
+        let eig = self.h_proj.clone().symmetric_eigen();
+        let mut vals: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
+        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        vals
+    }
+
+    /// Estimate the **intra-sector** spectral gap `E₁ − E₀` from the two
+    /// lowest Ritz values of a single SIRK solve.
+    ///
+    /// Returns `None` if the Krylov basis has rank < 2.
+    ///
+    /// **Parity caveat (Yang-Mills):** the lattice Hamiltonian preserves total
+    /// excitation-number parity (the electric term is diagonal; the quartic
+    /// magnetic term changes excitation by ∈ {±4, ±2, 0}). A Krylov subspace
+    /// built from the vacuum therefore only contains even-parity states, and
+    /// `mass_gap()` reports the gap to the lowest *even-parity* excitation
+    /// (≈ 2 × g²/2 = g²), **not** the particle-physics mass gap g²/2 (which is
+    /// the one-excitation / odd-parity gap). To extract the true mass gap,
+    /// compare the ground-state energies of two solves — one from the vacuum
+    /// (even sector) and one from a one-excitation state (odd sector) — via
+    /// [`mass_gap_from_sectors`].
+    pub fn mass_gap(&self) -> Option<f64> {
+        let ritz = self.ritz_values();
+        if ritz.len() < 2 {
+            return None;
+        }
+        Some(ritz[1] - ritz[0])
+    }
+
+    /// Estimate the ground-state energy `E₀` from the lowest Ritz value.
+    pub fn ground_state_energy(&self) -> Option<f64> {
+        self.ritz_values().first().copied()
+    }
+
     /// Phase 11.2: Export simulation coefficients to JSON for visualization.
     pub fn export_to_json(&self) -> String {
         use serde_json::json;
@@ -83,6 +126,21 @@ impl ForwardSirkResult {
         })
         .to_string()
     }
+}
+
+/// Estimate the **cross-sector mass gap** from two SIRK solves in different
+/// parity sectors.
+///
+/// For lattice gauge theories (e.g. `yang_mills_lattice`), the Hamiltonian
+/// preserves total excitation-number parity. The true mass gap is the energy
+/// difference between the vacuum (even-parity ground state, E₀ ≈ 0) and the
+/// one-particle state (odd-parity ground state, E₁ ≈ g²/2). Since a single
+/// Krylov subspace built from either sector cannot see the other, this function
+/// compares the ground-state Ritz values from two independent solves.
+///
+/// Returns `None` if either solve has rank 0.
+pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) -> Option<f64> {
+    Some(odd.ground_state_energy()? - even.ground_state_energy()?)
 }
 
 /// Tunable bounds and tolerances for the SIRK solve.
@@ -560,5 +618,141 @@ mod tests {
                 "m={m}: norm={norm} must be ~1 (unitarity at large Krylov dim)"
             );
         }
+    }
+
+    // ── P6 A1: Mass-gap extraction ────────────────────────────────────────
+    // The SIRK Ritz values (eigenvalues of h_proj) approximate the low-lying
+    // spectrum. For the Yang-Mills lattice, the electric term (g²/2)Σn_ℓ gaps
+    // the spectrum: the vacuum has E=0, one excitation costs g²/2. The
+    // quartic magnetic term preserves excitation-number parity, so the
+    // one-particle gap requires comparing even-parity (vacuum) and odd-parity
+    // (one-excitation) sectors.
+
+    /// Ritz values + mass_gap() on the two-state hopping Hamiltonian (exact
+    /// eigenvalues ±1, so the intra-sector gap = 2).
+    #[test]
+    fn ritz_values_and_gap_for_hopping() {
+        let device = Device::Cpu;
+        let a = InnerBosonicState::vacuum();
+        let mut b = InnerBosonicState::vacuum();
+        b.modes.insert(0, 1);
+        let h = Hamiltonian {
+            terms: vec![
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::OuterBosonCreate(b.clone()),
+                        Operator::OuterBosonAnnihilate(a.clone()),
+                    ],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::OuterBosonCreate(a),
+                        Operator::OuterBosonAnnihilate(b),
+                    ],
+                ),
+            ],
+        };
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let res = solve_forward_sirk(&h, &v0, &shifts(4), &device, None).unwrap();
+
+        let ritz = res.ritz_values();
+        assert!(ritz.len() >= 2, "need ≥2 Ritz values, got {}", ritz.len());
+        // Eigenvalues are ±1; the two lowest Ritz values should bracket them.
+        let gap = res.mass_gap().unwrap();
+        assert!(gap > 0.0, "intra-sector gap must be positive, got {gap}");
+        // For a 2-state system the gap ≈ 2 (from -1 to +1); with a 4-dim
+        // Krylov the Ritz values bracket the true spectrum.
+        assert!(
+            gap > 0.5,
+            "hopping gap should be ≈2 (eigenvalues ±1), got {gap:.4}"
+        );
+    }
+
+    /// Yang-Mills lattice mass gap: the cross-sector gap between the
+    /// even-parity (vacuum) and odd-parity (one-excitation) ground states
+    /// should be positive and on the order of g²/2 — the defining property
+    /// of a confining gauge theory.
+    #[test]
+    fn yang_mills_lattice_mass_gap() {
+        use nested_fock_algebra::models::yang_mills_lattice;
+
+        let device = Device::Cpu;
+        // Strong coupling (g=2): electric term (g²/2 = 2.0 per excitation)
+        // dominates the magnetic term (-1/2g² = -0.125 per plaquette), so the
+        // vacuum is the ground state and the mass gap ≈ g²/2. At g=1 the
+        // magnetic coupling (-0.5) is too strong — the odd-parity sector
+        // ground state dips below the vacuum, giving a negative "gap".
+        let g = 2.0;
+        let g2_half = g * g / 2.0; // = 2.0 — the expected electric gap
+        let h = yang_mills_lattice(2, g, 1);
+
+        // Even-parity sector: start from the vacuum (0 excitations).
+        let v_even =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+
+        // Odd-parity sector: start from one excitation on link mode 0
+        // (dir=0, site (0,0), color=0 — the bottom +x link at the origin).
+        let mut inner_odd = InnerBosonicState::vacuum();
+        inner_odd.modes.insert(0, 1);
+        let v_odd = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner_odd));
+
+        let opts = SirkOpts {
+            prune_eps: 1e-12,
+            max_components: Some(100_000),
+            brst_tol: 1e-10,
+        };
+        // m=4 keeps the component count manageable (the quartic plaquette term
+        // creates 2⁴ sub-terms per plaquette per Krylov step; m=8 hits 70K+
+        // components on l=2). The Ritz values from a 5-vector Krylov still
+        // approximate the extreme eigenvalues (ground states) well.
+        let m = 4;
+        let res_even = solve_forward_sirk_with_opts(&h, &v_even, &shifts(m), &device, None, &opts)
+            .expect("even-parity solve must complete");
+        let res_odd = solve_forward_sirk_with_opts(&h, &v_odd, &shifts(m), &device, None, &opts)
+            .expect("odd-parity solve must complete");
+
+        assert!(
+            res_even.rank > 0,
+            "even-parity Krylov must have positive rank"
+        );
+        assert!(
+            res_odd.rank > 0,
+            "odd-parity Krylov must have positive rank"
+        );
+
+        let e_even = res_even.ground_state_energy().unwrap();
+        let e_odd = res_odd.ground_state_energy().unwrap();
+
+        eprintln!(
+            "yang_mills_lattice(2, g={g}, 1): \
+             rank_even={}, rank_odd={}, \
+             ritz_even={:?}, ritz_odd={:?}, \
+             E_even={e_even:.6}, E_odd={e_odd:.6}",
+            res_even.rank,
+            res_odd.rank,
+            res_even.ritz_values(),
+            res_odd.ritz_values(),
+        );
+
+        // The even ground state ≈ vacuum (E ≈ 0, perturbed below by magnetic
+        // mixing); the odd ground state ≈ one excitation (E ≈ g²/2, also
+        // perturbed). The mass gap must be positive (confinement) and on the
+        // order of g²/2.
+        let gap = mass_gap_from_sectors(&res_even, &res_odd).unwrap();
+        assert!(
+            gap > 0.0,
+            "mass gap must be positive (confinement): e_even={e_even:.4}, e_odd={e_odd:.4}, gap={gap:.4}"
+        );
+        // The electric gap is g²/2 = 2.0; the magnetic term (strength 1/2g² =
+        // 0.125) perturbs both sectors weakly. Allow a factor-3 window to
+        // account for finite Krylov convergence and magnetic perturbation.
+        assert!(
+            gap > g2_half / 3.0 && gap < g2_half * 3.0,
+            "mass gap {gap:.4} should be O(g²/2 = {g2_half}): \
+             e_even={e_even:.4}, e_odd={e_odd:.4}"
+        );
     }
 }

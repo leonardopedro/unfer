@@ -2,15 +2,15 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-28, rev 6 final)
+## Current status (updated 2026-06-28, rev 8)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and all P5 items #23–#32 are complete.** The system has no open work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items".
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1 (mass-gap extraction) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: 5 crates (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`) + 2 module demos (`demo_module/`, `qfm_module/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
   - `australVM/safestos/cranelift`: `auth.rs` (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`. CPS-JIT backend fixed (let-init, record destructure, cross-module linking, byte buffers, multi-field records).
   - `velysterm`: `crates/kernel_client/` (worker-thread client + `unfer_agent` NDJSON binary), `mathed_core` (PropKinds + `KernelStatement` + `accessibility` + `glyphs`), `crates/mathed/` (Bevy bridge + overlay), `crates/mathed_mini/` (Bevy-free CPU frontend with caret blink, mouse hit-testing, AccessKit bridge, translator pipeline, kernel bridge).
-- **Test counts (CPU, full sweep 2026-06-28):** unfer workspace **114** (15 fock_sirk + 26 nested_fock_algebra + 28 prob_kernel + 15 unfer_ffi + 30 unfer_protocol) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
+- **Test counts (CPU, full sweep 2026-06-28):** unfer workspace **116** (17 fock_sirk + 26 nested_fock_algebra + 28 prob_kernel + 15 unfer_ffi + 30 unfer_protocol) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
 - **Git state (2026-06-28, rev 6 final):**
   - unfer HEAD `ef3e9fb` (P5 #30: larger-scale physics) on `main` → `origin/main`. **Clean, pushed.**
   - australVM HEAD `6e24b1f4` (P5 #32: hot-swap compatibility gate tests) on `master` → `origin/master`. **Clean, pushed.**
@@ -319,9 +319,9 @@ The `mathed_mini` crate is a separate, optional Bevy-free CPU frontend for const
 - **Increment 3** (committed `a456156`, extended in `f378be4`): `mathed_core::glyphs` (Bevy-free glyph index ported from `mathed::glyphs`), `DocLayout` caching (foot-style: layout recomputed only on edit/resize), caret positioning via `caret_for_byte`, full navigation (Left/Right/Home/End/Backspace/Delete + Up/Down via `band_for_byte` → `byte_for_point`). Up/Down nav + `band_for_byte` helper landed in `f378be4`. 6 mathed_mini tests + 59 mathed_core tests green.
 - **Deferred:** Step 4 (caret blink via `ControlFlow::WaitUntil`), mouse hit-testing / click-to-place-caret + selection (the `byte_for_point`/`rects_for_range` plumbing already exists), `mathed_a11y` (AccessKit bridge over `mathed_core::accessibility`), and — the big one — wiring `kernel_client` into `mathed_mini` so the Bevy-free frontend can show `\prob` results too (today only the Bevy `mathed` frontend has the kernel bridge).
 
-## Next steps to improve (prioritized, recommended 2026-06-27)
+## Completed hardening & growth rounds (P0–P5, historical record)
 
-**The system is feature-complete.** All 18 original stages, all P0–P5 hardening/growth items, and Workstream E (QFM) are done and verified. All three repos are committed and pushed. The P5 items below (#23–#32) were the final round: they closed commit debt (#23), frontend parity (#24–#29), physics depth (#30), CI verification (#31), and hot-swap testing (#32). There are no open work items.
+**The v1 system is feature-complete.** All 18 original stages, all P0–P5 hardening/growth items, and Workstream E (QFM) are done and verified. All three repos are committed and pushed. The P5 items below (#23–#32) were the final round: they closed commit debt (#23), frontend parity (#24–#29), physics depth (#30), CI verification (#31), and hot-swap testing (#32). There are no open v1 work items — the P0–P5 blocks below are the completed record. **The genuine next steps — where v1 made an honest simplification, stubbed a hard path, or left a documented extension point — are collected in §"P6 — Future roadmap" near the end of this file.**
 
 ### P0 — prove the integration spine ✅ DONE (2026-06-26)
 1. ~~**Clean `cps.rs.*` backups.**~~ **DONE.** Removed all 6 in australVM commit `198cc137` (pushed to `origin/master`). Closes gaps §2.
@@ -402,6 +402,43 @@ E20. ~~**Protocol + Born-rule integration.**~~ **DONE (2026-06-27, unfer).** `pr
 E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** New `unfer/qfm_module/` (mirrors `demo_module/`): `module.toml` (archetypes `data_source` + `actor`; grants `uk_model_create`/`uk_evolve`/`uk_event_probability`/`uk_model_free`), `src/QfmModule.{aui,aum}`, `build.sh`, `run_demo.sh`. The module embeds the analytically-precomputed α_j weights, builds a `qfm_mehler` ModelSpec JSON with the Mehler vacuum prior + `krylov_dim:15`, JIT-creates it in-process (`uk_model_create`), runs the single-step O(m²) inference (`uk_evolve`), reads back P(channel 0 occupied) (`uk_event_probability`), and frees via the linear `Model`. Added a `kernelEvolveStr` convenience binding (span→pointer+length, mirroring `kernelModelCreateStr`) to `australVM/examples/kernel/UnferKernel.{aui,aum}`. `bash unfer/qfm_module/run_demo.sh` passes: CPS-JIT `Execution result: 1` (model created+evolved+queried in-process) and the UK-4001 negative test (revoking `uk_evolve` denies QFM inference). Pushed in P5 #23 (unfer main + australVM master).
 
 **Verification:** unfer `cargo test --workspace` green (+3: 1 unit `test_qfm_hamiltonian`, 2 integration `qfm_mehler_*`), clippy `--all-targets` clean, rustfmt clean, QFM module demo green end-to-end.
+
+## P6 — Future roadmap (v2: beyond feature-complete)
+
+> Everything through P5 + Workstream E is done, verified, and pushed (rev 8).
+> P6 A1 (mass-gap extraction) is also done. The remaining items below are
+> **not** open bugs — the v1 system works as specified. They are the genuine
+> frontiers for a v2: each is a place where v1 made an honest simplification,
+> stubbed a hard path, or left a documented extension point. Sourced from the
+> deviations recorded in §"Known gaps", P5 #26/#30/#32, and Workstream E.
+> Ordered within each bucket by leverage.
+>
+> **Out of scope (decided):** a non-Hermitian / open-system evolution path is
+> *not* pursued. SIRK + the Born rule assume a Hermitian generator (AGENTS.md
+> §4); the QFM Fokker–Planck transport of QMF.tex §2.3 therefore stays a
+> coherent Rabi oscillation (gaps §26, E20) and that is accepted. Because the
+> off-diagonal QFM `ĥ_j` operators would only produce genuine population
+> *spread* under non-unitary dynamics — and the Hermitian off-diagonal coupling
+> already exists (`qfm_hamiltonian_offdiag`, gap §26) — they are out of scope
+> too. The QFM model is treated as feature-complete in its Hermitian form.
+
+### A — Physics & numerics (the scientific frontier)
+1. ~~**Mass-gap extraction.**~~ **DONE (2026-06-28, unfer).** Added `ForwardSirkResult::ritz_values()` (sorted real eigenvalues of `h_proj`), `mass_gap()` (intra-sector E₁−E₀), `ground_state_energy()`, and `mass_gap_from_sectors(even, odd)` (cross-sector gap for parity-preserving Hamiltonians). **Key physics finding:** the quartic magnetic plaquette term preserves total excitation-number parity (each Φ=a†+a changes excitation by ±1, and 4 Φ's give Δn ∈ {±4,±2,0}), so a single vacuum-started Krylov only captures the even-parity sector. The true one-particle mass gap (g²/2) requires comparing ground-state Ritz values from two solves: vacuum-start (even sector, E₀≈0) and one-excitation-start (odd sector, E₀≈g²/2). Test `yang_mills_lattice_mass_gap` verifies the gap at g=2 on l=2: E_even≈−0.008, E_odd≈1.979, gap≈1.987 ≈ g²/2=2.0 (positive = confinement). Sanity test `ritz_values_and_gap_for_hopping` checks the known ±1 spectrum. +2 tests, workspace now 116 green. Clippy/fmt clean.
+2. **Scaling wall beyond l=4.** l=4 (288 terms) is the documented ceiling (P5 #30); l≥5 hits `StateExplosion` on `max_components`. Options: adaptive `prune_eps`/`truncate_top_k` tuning, a memory-budget-aware restart schedule, or tensor-network-style compression of `QuantumState`. Goal: a tested l=5/l=6 evolve that stays under a fixed component budget.
+
+### B — Module runtime (finish the hard paths)
+3. **Full end-to-end hot-swap.** Only the *decision gate* (`cell_can_replace`) is tested (#32). The actual pause/serialize/migrate/restore in `cell_loader.c` is **stubbed**. A real swap — compile a `.so` V1 exporting `get_cell_descriptor` → run via scheduler → `cell_swap` → V2 → run again, preserving live state — needs the C scheduler orchestration plus a shell-level integration test. Largest unfinished runtime path.
+4. **Streaming/subscription surface.** `uk_subscribe`/`uk_poll` were deleted in v1 (gap §4) for lack of a consumer. Re-add with a real design — event vocabulary + backpressure + a concrete subscriber (live overlay or an agent watch loop) — rather than the untested promise that was removed.
+5. **A third, non-demo module.** `demo_module` + `qfm_module` exist to prove the spine. A module doing real work — a `data_source` ingesting external observations through `uk_observe` and conditioning the session — would exercise the archetype contracts (MODULES.md) beyond the happy path.
+
+### C — UI / frontend
+6. **Typst-math → Hamiltonian compiler (gap §7).** The v1 translator pipeline (P3.10) has the user author a Typst translator function that maps rendered math → `TermSpec[]`. A general compiler from rendered math *directly* to a Hamiltonian — no hand-authored translator — remains the documented v2 extension point.
+7. **Port the stale `velyst` examples (gap §8).** `editor`/`terminal` are gated behind the non-default `upstream-stale-examples` feature; port them to the current `velyst` API (removed `VelystFuncBundle`/`VelystSourceHandle`) so the feature gate can be retired.
+
+### D — Infra, protocol, agent surface
+8. **CUDA toolkit pinning.** The GPU path needs `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` to survive CUDA 12.2/13 coexistence (gap §5, AGENTS.md §5). Pin the toolkit or ship a clean container so the workaround disappears and CI can run the `cuda` feature unattended.
+9. **CI: private-repo PAT.** The `demo-e2e`/`qfm-e2e` jobs carry a commented `token:` slot for the sibling australVM checkout (#31); wire a PAT if australVM ever becomes private.
+10. **Session persistence + observability.** No save/load of `Session` state and no solve-cost metrics on the agent surface. A `uk_snapshot`/`uk_restore` pair plus structured timing in `AgentResponse` would make long runs resumable and the Zero-language agent surface measurable.
 
 ## Historical risks & mitigations (from planning)
 - **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.
