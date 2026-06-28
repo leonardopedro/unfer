@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 // --- LEVEL 1: The Inner Fock Space ---
 
 /// A configuration of an inner Bosonic universe.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct InnerBosonicState {
     pub modes: BTreeMap<u32, u32>,
 }
@@ -20,7 +22,9 @@ impl InnerBosonicState {
 
 /// A configuration of an inner Fermionic universe.
 /// Deriving Ord and PartialOrd guarantees Canonical Ordering for Fermion signs.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct InnerFermionicState {
     pub modes: BTreeSet<u32>,
 }
@@ -35,8 +39,37 @@ impl InnerFermionicState {
 
 // --- LEVEL 2: The Outer Fock Space ---
 
+// Serde helper: BTreeMap<InnerBosonicState, u32> has non-string keys so we
+// round-trip through Vec<(InnerBosonicState, u32)>.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OuterStateRepr {
+    bosonic: Vec<(InnerBosonicState, u32)>,
+    fermionic: BTreeSet<InnerFermionicState>,
+}
+
+impl From<OuterState> for OuterStateRepr {
+    fn from(s: OuterState) -> Self {
+        Self {
+            bosonic: s.bosonic.into_iter().collect(),
+            fermionic: s.fermionic,
+        }
+    }
+}
+
+impl From<OuterStateRepr> for OuterState {
+    fn from(r: OuterStateRepr) -> Self {
+        Self {
+            bosonic: r.bosonic.into_iter().collect(),
+            fermionic: r.fermionic,
+        }
+    }
+}
+
 /// The state of the "Multiverse" / Outer Space, split into disjoint bosonic/fermionic universes
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(from = "OuterStateRepr", into = "OuterStateRepr")]
 pub struct OuterState {
     pub bosonic: BTreeMap<InnerBosonicState, u32>,
     pub fermionic: BTreeSet<InnerFermionicState>,
@@ -51,8 +84,40 @@ impl OuterState {
     }
 }
 
+// Serde helper: FxHashMap<OuterState, Complex64> has non-string keys and Complex64
+// has no default serde impl, so we round-trip through Vec<(OuterState, [f64; 2])>.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QuantumStateRepr {
+    components: Vec<(OuterState, [f64; 2])>,
+}
+
+impl From<QuantumState> for QuantumStateRepr {
+    fn from(q: QuantumState) -> Self {
+        Self {
+            components: q
+                .components
+                .into_iter()
+                .map(|(s, a)| (s, [a.re, a.im]))
+                .collect(),
+        }
+    }
+}
+
+impl From<QuantumStateRepr> for QuantumState {
+    fn from(r: QuantumStateRepr) -> Self {
+        Self {
+            components: r
+                .components
+                .into_iter()
+                .map(|(s, [re, im])| (s, Complex64::new(re, im)))
+                .collect(),
+        }
+    }
+}
+
 /// A superposition of Outer States with complex amplitudes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(from = "QuantumStateRepr", into = "QuantumStateRepr")]
 pub struct QuantumState {
     pub components: FxHashMap<OuterState, Complex64>,
 }

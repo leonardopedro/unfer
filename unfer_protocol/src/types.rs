@@ -227,6 +227,9 @@ pub struct AgentResponse {
     pub ok: bool,
     pub result: Option<serde_json::Value>,
     pub error: Option<Diagnostic>,
+    /// Wall-clock time for the op in milliseconds (absent on very fast ops).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing_ms: Option<u64>,
 }
 
 impl AgentResponse {
@@ -236,6 +239,7 @@ impl AgentResponse {
             ok: true,
             result: Some(result),
             error: None,
+            timing_ms: None,
         }
     }
 
@@ -245,6 +249,12 @@ impl AgentResponse {
             ok: false,
             result: None,
             error: Some(diagnostic),
+            timing_ms: None,
         }
+    }
+
+    pub fn with_timing(mut self, ms: u64) -> Self {
+        self.timing_ms = Some(ms);
+        self
     }
 }

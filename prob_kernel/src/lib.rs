@@ -4,6 +4,6 @@ pub mod event;
 pub mod session;
 
 pub use error::KernelError;
-pub use session::{EvolveReport, Session, StateEntry, StateSummary};
+pub use session::{EvolveReport, Session, SessionBlob, StateEntry, StateSummary};
 
 pub use unfer_protocol;

@@ -1,7 +1,7 @@
 use candle_core::Device;
 use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{Hamiltonian, QuantumState};
-use unfer_protocol::{EventPredicate, HamiltonianSpec, ModelSpec, PriorSpec};
+use unfer_protocol::{EventPredicate, HamiltonianSpec, ModelSpec, PriorSpec, SolverSpec};
 
 use crate::build;
 use crate::error::KernelError;
@@ -21,6 +21,18 @@ pub struct Session {
     restarts: usize,
     device: Device,
     t_now: f64,
+    // Stored specs for snapshot/restore — updated by set_hamiltonian.
+    hamiltonian_spec: HamiltonianSpec,
+    solver_spec: SolverSpec,
+}
+
+/// Serializable snapshot of a Session for save/restore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionBlob {
+    pub hamiltonian_spec: HamiltonianSpec,
+    pub solver_spec: SolverSpec,
+    pub state: QuantumState,
+    pub t_now: f64,
 }
 
 /// Result of an `evolve` call.
@@ -29,6 +41,8 @@ pub struct EvolveReport {
     pub t: f64,
     pub norm: f64,
     pub components: usize,
+    /// Wall-clock time for the SIRK solve in milliseconds.
+    pub solve_ms: u64,
 }
 
 /// A snapshot of the current state's top-k components.
@@ -65,7 +79,42 @@ impl Session {
             restarts: spec.solver.restarts.max(1),
             device,
             t_now: 0.0,
+            hamiltonian_spec: spec.hamiltonian.clone(),
+            solver_spec: spec.solver.clone(),
         })
+    }
+
+    /// Restore a session from a previously saved `SessionBlob`.
+    pub fn restore(blob: SessionBlob) -> Result<Self, KernelError> {
+        let hamiltonian = build::build_hamiltonian(&blob.hamiltonian_spec)?;
+        let device = build::build_device(&blob.solver_spec.device)?;
+        let sirk_opts = SirkOpts {
+            prune_eps: blob.solver_spec.prune_eps,
+            max_components: blob.solver_spec.max_components,
+            brst_tol: 1e-10,
+            adaptive: blob.solver_spec.adaptive,
+        };
+        Ok(Self {
+            state: blob.state,
+            hamiltonian,
+            sirk_opts,
+            krylov_dim: blob.solver_spec.krylov_dim,
+            restarts: blob.solver_spec.restarts.max(1),
+            device,
+            t_now: blob.t_now,
+            hamiltonian_spec: blob.hamiltonian_spec,
+            solver_spec: blob.solver_spec,
+        })
+    }
+
+    /// Serialize the current session state to a `SessionBlob` for persistence.
+    pub fn save(&self) -> SessionBlob {
+        SessionBlob {
+            hamiltonian_spec: self.hamiltonian_spec.clone(),
+            solver_spec: self.solver_spec.clone(),
+            state: self.state.clone(),
+            t_now: self.t_now,
+        }
     }
 
     /// Replace the current prior state. Resets evolution time to 0.
@@ -78,11 +127,13 @@ impl Session {
     /// Replace the current Hamiltonian. The state is preserved.
     pub fn set_hamiltonian(&mut self, h: &HamiltonianSpec) -> Result<(), KernelError> {
         self.hamiltonian = build::build_hamiltonian(h)?;
+        self.hamiltonian_spec = h.clone();
         Ok(())
     }
 
     /// Evolve the state forward by time `t` using restarted SIRK.
     pub fn evolve(&mut self, t: f64) -> Result<EvolveReport, KernelError> {
+        let t0 = std::time::Instant::now();
         let psi = evolve_restarted(
             &self.hamiltonian,
             &self.state,
@@ -93,6 +144,7 @@ impl Session {
             None,
             &self.sirk_opts,
         )?;
+        let solve_ms = t0.elapsed().as_millis() as u64;
         self.state = psi;
         self.t_now += t;
         let norm = self.state.norm();
@@ -100,6 +152,7 @@ impl Session {
             t: self.t_now,
             norm,
             components: self.state.len(),
+            solve_ms,
         })
     }
 

@@ -1,4 +1,4 @@
-use prob_kernel::{KernelError, Session};
+use prob_kernel::{KernelError, Session, SessionBlob};
 use unfer_protocol::{
     Cmp, Code, DeviceSpec, EventPredicate, HamiltonianSpec, HintKind, ModelSpec, PriorSpec,
     SolverSpec,
@@ -612,6 +612,67 @@ fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
         p_vac_full > 0.8,
         "full-period: coherent return to vacuum, P(vac)={p_vac_full} (must be > 0.8)"
     );
+}
+
+// ── D10: session persistence ──────────────────────────────────────────────────
+
+#[test]
+fn session_save_restore_roundtrip() {
+    // Evolve a session, save it, restore it, and verify the restored session
+    // has the same t_now, norm, and event probabilities.
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+
+    session.evolve(0.5).expect("evolve");
+
+    let p_before = session.probability(&event_mode0_ge1()).expect("prob");
+    let t_before = session.t();
+    let n_before = session.n_components();
+
+    // Save → JSON round-trip → restore.
+    let blob: SessionBlob = session.save();
+    let json = serde_json::to_string(&blob).expect("serialize blob");
+    let blob2: SessionBlob = serde_json::from_str(&json).expect("deserialize blob");
+    let restored = Session::restore(blob2).expect("restore session");
+
+    // Time and component count must be preserved exactly.
+    assert!(
+        (restored.t() - t_before).abs() < 1e-15,
+        "t_now mismatch: {} vs {}",
+        restored.t(),
+        t_before
+    );
+    assert_eq!(
+        restored.n_components(),
+        n_before,
+        "component count mismatch"
+    );
+
+    // Born-rule probabilities must be identical after restore.
+    let p_after = restored.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_before - p_after).abs() < 1e-12,
+        "probability changed after restore: {p_before} → {p_after}"
+    );
+
+    // Vacuum + ¬vacuum still covers everything.
+    let p_vac = restored.probability(&EventPredicate::Vacuum).expect("prob");
+    let p_not = restored
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_vac + p_not - 1.0).abs() < 1e-10,
+        "cover must sum to 1 after restore"
+    );
+}
+
+#[test]
+fn evolve_report_includes_solve_ms() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    let report = session.evolve(0.1).expect("evolve");
+    // solve_ms is always set (may be 0 on very fast CPU, but the field exists).
+    let _ = report.solve_ms; // compile-check that the field is present
 }
 
 // ── P5 #30: physics depth ────────────────────────────────────────────────────

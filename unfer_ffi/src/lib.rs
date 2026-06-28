@@ -2,7 +2,7 @@ mod handles;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use prob_kernel::Session;
+use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
     Code, Diagnostic, EventPredicate, HamiltonianSpec, ModelSpec, PriorSpec, Severity,
 };
@@ -245,4 +245,29 @@ pub extern "C" fn uk_last_error(buf: *mut u8, cap: i64) -> i64 {
         return 0;
     }
     write_buf(buf, cap, &error)
+}
+
+/// Serialize the session to a `SessionBlob` JSON string.
+/// Buffer protocol: returns total bytes needed; copies min(needed, cap) into buf.
+/// Returns <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_snapshot(model: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_snapshot", || {
+        let blob =
+            handles::with_session_mut(model, |s| s.save()).ok_or_else(|| bad_handle(model))?;
+        let json = serde_json::to_string(&blob)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Create a new session from a `SessionBlob` JSON string (produced by `uk_snapshot`).
+/// Returns a positive handle on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_restore(blob_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_restore", || {
+        let blob: SessionBlob = parse_json(blob_json, len)?;
+        let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
+        Ok(handles::store_session(session))
+    })
 }

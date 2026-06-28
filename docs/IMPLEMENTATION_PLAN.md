@@ -2,9 +2,9 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-28, rev 9)
+## Current status (updated 2026-06-28, rev 10)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1–A2 (mass-gap extraction + adaptive scaling) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1–A2 + B3 + D10 (mass-gap extraction, adaptive scaling, hot-swap, session persistence + observability) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: 5 crates (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`) + 2 module demos (`demo_module/`, `qfm_module/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
@@ -406,8 +406,9 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 ## P6 — Future roadmap (v2: beyond feature-complete)
 
 > Everything through P5 + Workstream E is done, verified, and pushed (rev 9).
-> P6 A1 (mass-gap extraction) and A2 (adaptive scaling) are also done. The
-> remaining items below are **not** open bugs — the v1 system works as
+> P6 A1 (mass-gap extraction), A2 (adaptive scaling), B3 (hot-swap), and D10
+> (session persistence + observability) are also done. The remaining items below
+> are **not** open bugs — the v1 system works as
 > specified. They are the genuine frontiers for a v2: each is a place where v1
 > made an honest simplification, stubbed a hard path, or left a documented
 > extension point. Sourced from the deviations recorded in §"Known gaps",
@@ -438,7 +439,7 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 ### D — Infra, protocol, agent surface
 8. **CUDA toolkit pinning.** The GPU path needs `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` to survive CUDA 12.2/13 coexistence (gap §5, AGENTS.md §5). Pin the toolkit or ship a clean container so the workaround disappears and CI can run the `cuda` feature unattended.
 9. **CI: private-repo PAT.** The `demo-e2e`/`qfm-e2e` jobs carry a commented `token:` slot for the sibling australVM checkout (#31); wire a PAT if australVM ever becomes private.
-10. **Session persistence + observability.** No save/load of `Session` state and no solve-cost metrics on the agent surface. A `uk_snapshot`/`uk_restore` pair plus structured timing in `AgentResponse` would make long runs resumable and the Zero-language agent surface measurable.
+10. ~~**Session persistence + observability.**~~ **DONE (2026-06-28, unfer).** Added `Session::save() -> SessionBlob` and `Session::restore(blob) -> Result<Session, _>` in `prob_kernel`. `SessionBlob` (serde: `hamiltonian_spec`, `solver_spec`, `state`, `t_now`) survives a JSON round-trip with exact amplitude and time preservation (test `session_save_restore_roundtrip`). `QuantumState` and its nested types (`OuterState`, `InnerBosonicState`, `InnerFermionicState`) now derive or implement `Serialize`/`Deserialize`. `EvolveReport` gains `solve_ms: u64` (wall-clock SIRK time). `AgentResponse` gains `timing_ms: Option<u64>` (total op time, `skip_serializing_if = "Option::is_none"`). `unfer_ffi` exports `uk_snapshot` (buffer protocol) and `uk_restore` (returns new handle). `unfer_agent` adds `save_session` and `restore_session` ops with `with_timing()` on every response. +2 tests in `prob_kernel` (integration test file); 2 more in `kernel_client` agent tests (velysterm). unfer workspace now 120 green. Clippy/fmt clean.
 
 ## Historical risks & mitigations (from planning)
 - **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.
