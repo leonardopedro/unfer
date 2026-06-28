@@ -148,11 +148,21 @@ pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) 
 pub struct SirkOpts {
     /// Drop Krylov-vector components with `|amplitude| <= prune_eps` each step.
     pub prune_eps: f64,
-    /// Hard ceiling on the number of components in any Krylov vector; exceeding
-    /// it aborts with [`SirkError::StateExplosion`] instead of running out of RAM.
+    /// Hard ceiling on the number of components in any Krylov vector. When
+    /// [`SirkOpts::adaptive`] is false (default), exceeding this aborts with
+    /// [`SirkError::StateExplosion`]. When `adaptive` is true, the solver
+    /// instead keeps only the `max_components` largest-amplitude components
+    /// (via [`QuantumState::truncate_top_k`]), allowing larger lattices to
+    /// run under a fixed memory budget at the cost of approximation error.
     pub max_components: Option<usize>,
     /// Convergence tolerance for the per-step BRST projection.
     pub brst_tol: f64,
+    /// When true, fall back to `truncate_top_k(max_components)` instead of
+    /// erroring with `StateExplosion`. This lets quartic-heavy models (e.g.
+    /// `yang_mills_lattice` at l≥4) run under a fixed budget. The truncation
+    /// error is bounded by the total probability mass of the dropped
+    /// components; the Gram whitening absorbs the resulting non-orthonormality.
+    pub adaptive: bool,
 }
 
 impl Default for SirkOpts {
@@ -161,6 +171,7 @@ impl Default for SirkOpts {
             prune_eps: 1e-12,
             max_components: None,
             brst_tol: BRST_TOL,
+            adaptive: false,
         }
     }
 }
@@ -214,10 +225,17 @@ pub fn solve_forward_sirk_with_opts(
         if let Some(limit) = opts.max_components
             && next_w.len() > limit
         {
-            return Err(SirkError::StateExplosion {
-                components: next_w.len(),
-                limit,
-            });
+            if opts.adaptive {
+                // Keep only the `limit` largest-amplitude components. This
+                // trades approximation error for a guaranteed memory bound,
+                // enabling quartic-heavy models (l≥4 Yang-Mills) to run.
+                next_w.truncate_top_k(limit);
+            } else {
+                return Err(SirkError::StateExplosion {
+                    components: next_w.len(),
+                    limit,
+                });
+            }
         }
 
         w_sequence.push(next_w);
@@ -389,8 +407,8 @@ mod tests {
             prune_eps: 1e-12,
             max_components: Some(50_000),
             brst_tol: 1e-10,
+            adaptive: false,
         };
-
         let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
             .expect("Navier-Stokes SIRK solve must not panic or error");
 
@@ -478,6 +496,7 @@ mod tests {
             prune_eps: 1e-12,
             max_components: Some(50_000),
             brst_tol: 1e-10,
+            adaptive: false,
         };
         let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
             .expect("yang-mills GPU solve must not error");
@@ -547,6 +566,7 @@ mod tests {
             prune_eps: 1e-12,
             max_components: Some(10_000),
             brst_tol: 1e-10,
+            adaptive: false,
         };
 
         let result = solve_forward_sirk_with_opts(&h, &v0, &shifts(8), &device, None, &opts);
@@ -574,6 +594,79 @@ mod tests {
         }
     }
 
+    // ── P6 A2: Adaptive scaling beyond l=4 ───────────────────────────────
+    // The `adaptive` SirkOpts flag falls back to `truncate_top_k` instead of
+    // erroring with `StateExplosion`, keeping the component count under budget.
+
+    /// l=4 with adaptive mode: the quartic plaquette term previously caused
+    /// `StateExplosion` at 627K components (max=10K, m=8). With adaptive
+    /// truncation at max=50K, the solver completes and produces a Hermitian
+    /// H_proj with positive rank.
+    #[test]
+    fn adaptive_l4_completes_under_budget() {
+        use nested_fock_algebra::models::yang_mills_lattice;
+
+        let device = Device::Cpu;
+        let h = yang_mills_lattice(4, 1.0, 1);
+        assert!(h.terms.len() > 250, "l=4 lattice should have >250 terms");
+
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+
+        let opts = SirkOpts {
+            prune_eps: 1e-10,
+            max_components: Some(50_000),
+            brst_tol: 1e-10,
+            adaptive: true,
+        };
+        let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
+            .expect("adaptive l=4 solve must complete under budget");
+
+        assert!(res.rank > 0, "adaptive l=4 must produce positive rank");
+        assert_hermitian(&res.h_proj, "adaptive l=4");
+
+        // Time-evolve and verify the norm is reasonable (truncation introduces
+        // some error, but the Gram whitening absorbs non-orthonormality).
+        let coeffs = res.time_evolve(0.01);
+        let psi_t = res.reconstruct(&coeffs);
+        let norm = QuantumState::norm(&psi_t);
+        assert!(
+            norm > 0.5 && norm < 2.0,
+            "adaptive l=4 norm={norm:.4} should be O(1) (truncation may shift it)"
+        );
+    }
+
+    /// l=5 with adaptive mode: 450 terms, 25 plaquettes. Without adaptive
+    /// mode this would explode immediately. With adaptive truncation, the
+    /// solver completes under a fixed 50K-component budget.
+    #[test]
+    fn adaptive_l5_completes_under_budget() {
+        use nested_fock_algebra::models::yang_mills_lattice;
+
+        let device = Device::Cpu;
+        let h = yang_mills_lattice(5, 1.0, 1);
+        assert!(
+            h.terms.len() > 400,
+            "l=5 lattice should have >400 terms, got {}",
+            h.terms.len()
+        );
+
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+
+        let opts = SirkOpts {
+            prune_eps: 1e-8,
+            max_components: Some(50_000),
+            brst_tol: 1e-10,
+            adaptive: true,
+        };
+        let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
+            .expect("adaptive l=5 solve must complete under budget");
+
+        assert!(res.rank > 0, "adaptive l=5 must produce positive rank");
+        assert_hermitian(&res.h_proj, "adaptive l=5");
+    }
+
     #[test]
     fn sirk_stability_at_large_krylov_dim() {
         // Verify numerical stability at m=16 and m=32 Krylov dimensions.
@@ -593,6 +686,7 @@ mod tests {
                 prune_eps: 1e-12,
                 max_components: Some(50_000),
                 brst_tol: 1e-10,
+                adaptive: false,
             };
             let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(m), &device, None, &opts)
                 .unwrap_or_else(|e| panic!("m={m} solve must complete: {e}"));
@@ -703,6 +797,7 @@ mod tests {
             prune_eps: 1e-12,
             max_components: Some(100_000),
             brst_tol: 1e-10,
+            adaptive: false,
         };
         // m=4 keeps the component count manageable (the quartic plaquette term
         // creates 2⁴ sub-terms per plaquette per Krylov step; m=8 hits 70K+

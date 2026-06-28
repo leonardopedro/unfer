@@ -55,6 +55,7 @@ impl Session {
             prune_eps: spec.solver.prune_eps,
             max_components: spec.solver.max_components,
             brst_tol: 1e-10,
+            adaptive: spec.solver.adaptive,
         };
         Ok(Self {
             state,

@@ -183,6 +183,12 @@ pub struct SolverSpec {
     pub max_components: Option<usize>,
     pub restarts: usize,
     pub device: DeviceSpec,
+    /// When true, the SIRK solver truncates to the top-k components instead of
+    /// erroring with `StateExplosion` when `max_components` is exceeded. This
+    /// enables quartic-heavy models (e.g. `yang_mills_lattice` at l≥4) to run
+    /// under a fixed memory budget, at the cost of approximation error.
+    #[serde(default)]
+    pub adaptive: bool,
 }
 
 impl Default for SolverSpec {
@@ -193,6 +199,7 @@ impl Default for SolverSpec {
             max_components: None,
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         }
     }
 }

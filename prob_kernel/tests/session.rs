@@ -17,6 +17,7 @@ fn harmonic_chain_spec(prior: PriorSpec) -> ModelSpec {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     }
 }
@@ -49,6 +50,7 @@ fn bose_hubbard_spec(prior: PriorSpec) -> ModelSpec {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     }
 }
@@ -355,6 +357,7 @@ fn yang_mills_lattice_spec(prior: PriorSpec) -> ModelSpec {
             max_components: Some(100_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     }
 }
@@ -428,6 +431,7 @@ fn qfm_mehler_spec(prior: PriorSpec) -> ModelSpec {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     }
 }
@@ -522,6 +526,7 @@ fn qfm_mehler_offdiag_transfers_population_from_vacuum() {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     };
     let mut session = Session::new(&spec).expect("qfm offdiag session");
@@ -585,6 +590,7 @@ fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     };
     let mut session = Session::new(&spec).expect("qfm offdiag session");
@@ -627,6 +633,7 @@ fn yang_mills_lattice_l4_bounded_evolve() {
             max_components: Some(100_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     };
     let mut session = Session::new(&spec).expect("l=4 yang-mills session");
@@ -668,6 +675,7 @@ fn sirk_stability_krylov_dim_16() {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     };
     let mut session = Session::new(&spec).expect("krylov-16 session");
@@ -699,6 +707,7 @@ fn sirk_stability_krylov_dim_32() {
             max_components: Some(50_000),
             restarts: 1,
             device: DeviceSpec::Cpu,
+            adaptive: false,
         },
     };
     let mut session = Session::new(&spec).expect("krylov-32 session");

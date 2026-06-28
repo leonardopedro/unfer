@@ -56,6 +56,7 @@ fn sample_model_spec() -> ModelSpec {
             max_components: Some(10_000),
             restarts: 3,
             device: DeviceSpec::Cuda { device_id: 0 },
+            adaptive: false,
         },
     }
 }
@@ -156,6 +157,7 @@ fn round_trip_solver_spec() {
         max_components: Some(50_000),
         restarts: 5,
         device: DeviceSpec::Cpu,
+        adaptive: true,
     });
 }
 

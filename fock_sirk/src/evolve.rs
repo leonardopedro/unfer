@@ -49,6 +49,13 @@ pub fn evolve_restarted(
         let coeffs = result.time_evolve(dt);
         psi = result.reconstruct(&coeffs);
         psi.prune(opts.prune_eps);
+        // In adaptive mode, keep the reconstructed state under the budget too.
+        if opts.adaptive
+            && let Some(limit) = opts.max_components
+            && psi.len() > limit
+        {
+            psi.truncate_top_k(limit);
+        }
     }
     Ok(psi)
 }
