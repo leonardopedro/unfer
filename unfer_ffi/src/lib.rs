@@ -133,6 +133,7 @@ pub extern "C" fn uk_set_prior(model: i64, json: *const u8, len: i64) -> i64 {
         result
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
+        handles::push_event(model, r#"{"type":"prior_set"}"#.to_string());
         Ok(0)
     })
 }
@@ -147,12 +148,14 @@ pub extern "C" fn uk_set_hamiltonian(model: i64, json: *const u8, len: i64) -> i
         result
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
+        handles::push_event(model, r#"{"type":"hamiltonian_set"}"#.to_string());
         Ok(0)
     })
 }
 
 /// Evolve the state forward. `opts_json` is `{"t": <seconds>}`.
 /// Result JSON (an `EvolveReport`) is retrievable via `uk_get_result`.
+/// Also enqueues an `evolved` event for `uk_poll` subscribers.
 /// Returns 0 on success, <0 (-code) on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
@@ -168,8 +171,17 @@ pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
         let report = handles::with_session_mut(model, |s| s.evolve(t))
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
-        let json = serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string());
-        handles::set_last_result(model, json);
+        let result_json = serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string());
+        let event_json = serde_json::json!({
+            "type": "evolved",
+            "t": report.t,
+            "norm": report.norm,
+            "components": report.components,
+            "solve_ms": report.solve_ms,
+        })
+        .to_string();
+        handles::set_last_result(model, result_json);
+        handles::push_event(model, event_json);
         Ok(0)
     })
 }
@@ -177,6 +189,7 @@ pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
 /// Condition the state on an event (Bayesian update).
 /// `event_json` is an `EventPredicate` JSON.
 /// Result JSON `{"prior_probability": <f64>}` is retrievable via `uk_get_result`.
+/// Also enqueues a `conditioned` event for `uk_poll` subscribers.
 /// Returns 0 on success, <0 (-code) on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i64 {
@@ -185,8 +198,11 @@ pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
-        let json = serde_json::json!({"prior_probability": prior_p}).to_string();
-        handles::set_last_result(model, json);
+        let result_json = serde_json::json!({"prior_probability": prior_p}).to_string();
+        let evt_json =
+            serde_json::json!({"type": "conditioned", "prior_probability": prior_p}).to_string();
+        handles::set_last_result(model, result_json);
+        handles::push_event(model, evt_json);
         Ok(0)
     })
 }
@@ -210,6 +226,7 @@ pub extern "C" fn uk_event_probability(model: i64, event_json: *const u8, len: i
 
 /// Observe an event (v1: alias for `uk_condition`).
 /// `obs_json` is an `EventPredicate` JSON.
+/// Also enqueues an `observed` event for `uk_poll` subscribers.
 /// Returns 0 on success, <0 (-code) on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
@@ -218,8 +235,11 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
             .ok_or_else(|| bad_handle(model))?
             .map_err(|e| e.to_diagnostic())?;
-        let json = serde_json::json!({"prior_probability": prior_p}).to_string();
-        handles::set_last_result(model, json);
+        let result_json = serde_json::json!({"prior_probability": prior_p}).to_string();
+        let evt_json =
+            serde_json::json!({"type": "observed", "prior_probability": prior_p}).to_string();
+        handles::set_last_result(model, result_json);
+        handles::push_event(model, evt_json);
         Ok(0)
     })
 }
@@ -270,4 +290,207 @@ pub extern "C" fn uk_restore(blob_json: *const u8, len: i64) -> i64 {
         let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
         Ok(handles::store_session(session))
     })
+}
+
+/// Register interest in a model's event stream.
+/// v1: returns the model handle as the subscription handle (one queue per model).
+/// `query_json` is reserved for future event-type filtering; pass `{}`.
+/// Returns the subscription handle (positive) on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_subscribe(model: i64, _query_json: *const u8, _len: i64) -> i64 {
+    // Verify the handle is valid; the subscription IS the model handle in v1.
+    if handles::poll_event(model).is_none() {
+        return fail(bad_handle(model));
+    }
+    model
+}
+
+/// Poll the next pending event from a subscription (returned by `uk_subscribe`).
+///
+/// Buffer protocol: peek at the event and return its byte length; if `buf` is
+/// non-null and `cap` > 0, also pop the event and copy `min(needed, cap)` bytes.
+/// Callers should first probe with `buf=NULL, cap=0` to learn the size, allocate,
+/// then call again with a real buffer — the event stays in the queue until the
+/// second call. Returns 0 if no events are pending, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_poll(sub: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_poll", || match handles::peek_event(sub) {
+        None => Err(bad_handle(sub)),
+        Some(None) => Ok(0),
+        Some(Some(event_json)) => {
+            let needed = event_json.len() as i64;
+            if cap > 0 && !buf.is_null() {
+                handles::poll_event(sub); // consume
+                let copy_len = std::cmp::min(needed, cap) as usize;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(event_json.as_ptr(), buf, copy_len);
+                }
+            }
+            Ok(needed)
+        }
+    })
+}
+
+// ── tests ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn json_ptr(s: &str) -> (*const u8, i64) {
+        (s.as_ptr(), s.len() as i64)
+    }
+
+    fn read_buf(f: impl Fn(*mut u8, i64) -> i64) -> String {
+        let needed = f(std::ptr::null_mut(), 0);
+        assert!(needed >= 0, "unexpected error probing buffer size");
+        let mut buf = vec![0u8; needed as usize];
+        f(buf.as_mut_ptr(), needed);
+        String::from_utf8(buf).unwrap()
+    }
+
+    fn create_harmonic_model() -> i64 {
+        let spec = r#"{"hamiltonian":{"kind":"builtin","name":"harmonic_chain","params":{"n_modes":2,"omega":1.0}},"prior":{"kind":"vacuum"},"solver":{"krylov_dim":4,"prune_eps":1e-12,"max_components":null,"restarts":1,"device":{"kind":"cpu"},"adaptive":false}}"#;
+        let (ptr, len) = json_ptr(spec);
+        uk_model_create(ptr, len)
+    }
+
+    #[test]
+    fn version_returns_one() {
+        assert_eq!(uk_version(), 1);
+    }
+
+    #[test]
+    fn create_free_happy_path() {
+        let h = create_harmonic_model();
+        assert!(h > 0, "expected positive handle, got {h}");
+        assert_eq!(uk_model_free(h), 0);
+        assert!(uk_model_free(h) < 0, "double-free must fail");
+    }
+
+    #[test]
+    fn bad_handle_returns_neg1004() {
+        assert_eq!(uk_model_free(99999), -1004);
+    }
+
+    #[test]
+    fn bad_json_returns_neg1001() {
+        let (ptr, len) = json_ptr("not json");
+        assert_eq!(uk_model_create(ptr, len), -1001);
+    }
+
+    #[test]
+    fn evolve_enqueues_event() {
+        let h = create_harmonic_model();
+        assert!(h > 0);
+
+        // Subscribe (v1: same as model handle).
+        let sub = uk_subscribe(h, std::ptr::null(), 0);
+        assert_eq!(sub, h, "v1 sub handle must equal model handle");
+
+        // No events yet.
+        let mut buf = [0u8; 256];
+        assert_eq!(
+            uk_poll(sub, buf.as_mut_ptr(), 256),
+            0,
+            "queue must be empty before any op"
+        );
+
+        // Evolve.
+        let opts = r#"{"t":0.01}"#;
+        let (ptr, len) = json_ptr(opts);
+        assert_eq!(uk_evolve(h, ptr, len), 0);
+
+        // Poll the event.
+        let event_json = read_buf(|b, c| uk_poll(sub, b, c));
+        let event: serde_json::Value = serde_json::from_str(&event_json).unwrap();
+        assert_eq!(event["type"], "evolved");
+        assert!(event["t"].as_f64().unwrap() > 0.0);
+        assert!(event["norm"].as_f64().unwrap() > 0.99);
+        assert!(event["solve_ms"].as_u64().is_some());
+
+        // Queue empty again.
+        assert_eq!(uk_poll(sub, buf.as_mut_ptr(), 256), 0);
+
+        uk_model_free(h);
+    }
+
+    #[test]
+    fn condition_enqueues_event() {
+        let h = create_harmonic_model();
+        // Condition on the vacuum (should succeed — vacuum prior has mass 1).
+        let event = r#"{"kind":"vacuum"}"#;
+        let (ptr, len) = json_ptr(event);
+        assert_eq!(uk_condition(h, ptr, len), 0);
+
+        let evt_json = read_buf(|b, c| uk_poll(h, b, c));
+        let evt: serde_json::Value = serde_json::from_str(&evt_json).unwrap();
+        assert_eq!(evt["type"], "conditioned");
+        assert!((evt["prior_probability"].as_f64().unwrap() - 1.0).abs() < 1e-6);
+
+        uk_model_free(h);
+    }
+
+    #[test]
+    fn set_prior_enqueues_event() {
+        let h = create_harmonic_model();
+        let prior = r#"{"kind":"vacuum"}"#;
+        let (ptr, len) = json_ptr(prior);
+        assert_eq!(uk_set_prior(h, ptr, len), 0);
+
+        let evt_json = read_buf(|b, c| uk_poll(h, b, c));
+        let evt: serde_json::Value = serde_json::from_str(&evt_json).unwrap();
+        assert_eq!(evt["type"], "prior_set");
+
+        uk_model_free(h);
+    }
+
+    #[test]
+    fn queue_drops_oldest_when_full() {
+        let h = create_harmonic_model();
+        // Push exactly CAPACITY+1 set_prior events; the first must be dropped.
+        let prior = r#"{"kind":"vacuum"}"#;
+        let (ptr, len) = json_ptr(prior);
+        for _ in 0..=handles::EVENT_QUEUE_CAPACITY {
+            uk_set_prior(h, ptr, len);
+        }
+        // Drain queue.
+        let mut count = 0usize;
+        let mut buf = vec![0u8; 64];
+        while uk_poll(h, buf.as_mut_ptr(), buf.len() as i64) > 0 {
+            count += 1;
+        }
+        assert_eq!(
+            count,
+            handles::EVENT_QUEUE_CAPACITY,
+            "queue must hold exactly CAPACITY events (oldest dropped)"
+        );
+
+        uk_model_free(h);
+    }
+
+    #[test]
+    fn poll_bad_handle_returns_neg1004() {
+        let mut buf = [0u8; 64];
+        assert_eq!(uk_poll(99999, buf.as_mut_ptr(), 64), -1004);
+    }
+
+    #[test]
+    fn subscribe_bad_handle_returns_neg1004() {
+        assert_eq!(uk_subscribe(99999, std::ptr::null(), 0), -1004);
+    }
+
+    #[test]
+    fn snapshot_restore_roundtrip() {
+        let h = create_harmonic_model();
+        let blob_json = read_buf(|b, c| uk_snapshot(h, b, c));
+        assert!(!blob_json.is_empty());
+
+        let (ptr, len) = json_ptr(&blob_json);
+        let h2 = uk_restore(ptr, len);
+        assert!(h2 > 0 && h2 != h);
+
+        uk_model_free(h);
+        uk_model_free(h2);
+    }
 }

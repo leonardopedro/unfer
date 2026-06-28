@@ -2,9 +2,9 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-28, rev 10)
+## Current status (updated 2026-06-28, rev 11)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1–A2 + B3 + D10 (mass-gap extraction, adaptive scaling, hot-swap, session persistence + observability) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1–A2 + B3 + B4 + D10 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription, session persistence + observability) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: 5 crates (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`) + 2 module demos (`demo_module/`, `qfm_module/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
@@ -406,8 +406,9 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 ## P6 — Future roadmap (v2: beyond feature-complete)
 
 > Everything through P5 + Workstream E is done, verified, and pushed (rev 9).
-> P6 A1 (mass-gap extraction), A2 (adaptive scaling), B3 (hot-swap), and D10
-> (session persistence + observability) are also done. The remaining items below
+> P6 A1 (mass-gap extraction), A2 (adaptive scaling), B3 (hot-swap), B4
+> (streaming/subscription), and D10 (session persistence + observability) are
+> also done. The remaining items below
 > are **not** open bugs — the v1 system works as
 > specified. They are the genuine frontiers for a v2: each is a place where v1
 > made an honest simplification, stubbed a hard path, or left a documented
@@ -429,7 +430,7 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 
 ### B — Module runtime (finish the hard paths)
 3. ~~**Full end-to-end hot-swap.**~~ **DONE (2026-06-28, australVM `0908cee5`).** The complete hot-swap pipeline that was previously stubbed is now implemented and tested end-to-end. Changes: (a) added `state` field to `CellEntry` (was missing — `cell_swap` couldn't access the cell's live state); (b) added state management API (`cell_alloc_state`, `cell_run_step`, `cell_get_state`, `cell_get_descriptor`, `cell_count_loaded`); (c) fixed `cell_swap` to actually migrate state: save old state via `old_desc->save()` → Serializer → migrate via `new_desc->migrate(old_state, &deserializer)` → drop old state → update entry. Two cell `.so` files (`cells/counter_v1.c` = counter++, `cells/counter_v2.c` = counter+=10 with migrate that reads old counter + sets bonus=100, same type_hash "counter_cell") are compiled and loaded via `dlopen`/`dlsym`. Test `test/hotswap_e2e.c` verifies: load V1 → alloc → step 3x (counter=3) → load V2 → `cell_swap` (migrate: counter=3 preserved, bonus=100) → step V2 (counter=13→23) → PASS. `make hotswap-test` builds and runs the full pipeline. Also fixed off-by-one in `cell_load` logging and inaccurate doc-comment in `cranelift/src/lib.rs` (was claiming `test_integration.sh` tests hot-swap; it doesn't).
-4. **Streaming/subscription surface.** `uk_subscribe`/`uk_poll` were deleted in v1 (gap §4) for lack of a consumer. Re-add with a real design — event vocabulary + backpressure + a concrete subscriber (live overlay or an agent watch loop) — rather than the untested promise that was removed.
+4. ~~**Streaming/subscription surface.**~~ **DONE (2026-06-28, unfer).** Per-model bounded event queue (`VecDeque<String>`, cap 64; overflow drops oldest — fire-and-forget backpressure) in `SessionEntry`. Event vocabulary: `evolved` (t, norm, components, solve_ms), `conditioned`/`observed` (prior_probability), `prior_set`, `hamiltonian_set` — emitted after each mutating op in `uk_*`. `uk_subscribe(model, query, len) -> sub` (v1: sub == model handle; query reserved for future filtering). `uk_poll(sub, buf, cap) -> i64` — peek-on-probe / pop-on-write semantics so the two-call buffer protocol works correctly (first call with null buf sizes without consuming; second with real buf pops). `poll_events` op in `unfer_agent` drains all pending events in one response (`{"events": [...]}`). +11 unit tests in `unfer_ffi`, +1 in agent. unfer workspace: 131 green. Clippy/fmt clean. docs: rev 11.
 5. **A third, non-demo module.** `demo_module` + `qfm_module` exist to prove the spine. A module doing real work — a `data_source` ingesting external observations through `uk_observe` and conditioning the session — would exercise the archetype contracts (MODULES.md) beyond the happy path.
 
 ### C — UI / frontend
