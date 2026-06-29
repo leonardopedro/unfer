@@ -1,0 +1,89 @@
+pragma Unsafe_Module;
+
+import UnferKernel (
+    Model,
+    wrapModel,
+    freeModel,
+    kernelModelCreateStr,
+    kernelEvolveStr
+);
+
+module body QfmTomoModule is
+    -- Foreign import for the cranelift bridge's `au_alloc` runtime
+    -- allocator. This is the JIT-side equivalent of libc's `malloc`
+    -- and is the supported way for a module to obtain a heap buffer.
+    -- Returns a raw `Int64` pointer (the C ABI on x86_64).
+    pragma Foreign_Import(External_Name => "au_alloc");
+    function auAlloc(size: Int64): Int64 is end;
+
+    -- Foreign import for the cranelift bridge's `au_free` runtime
+    -- deallocator. Pairs with `auAlloc` above.
+    pragma Foreign_Import(External_Name => "au_free");
+    function auFree(ptr: Int64): Int32 is end;
+
+    -- `uk_get_result` is also re-declared here as a module-local
+    -- foreign import that takes the output buffer as a raw `Int64`
+    -- pointer (the C ABI representation on x86_64). The
+    -- UnferKernel's `kernelGetResult` foreign import is hardcoded to
+    -- the Austral `Address[Nat8]` type, which we cannot construct
+    -- without a runtime call to `Austral.Memory.allocate()` (and the
+    -- cranelift JIT does not link the standard library's `au_calloc`
+    -- symbol, so that path is unavailable in JIT mode).
+    pragma Foreign_Import(External_Name => "uk_get_result");
+    function kernelGetResultRaw(model: Int64, buf: Int64, cap: Int64): Int64 is end;
+
+    function run(): Int64 is
+        -- The "training set" is the 4-point tetrahedron in d=4 used in the
+        -- qfm-tomography FFI integration test (rev 14). k=2 / K_2=4 /
+        -- krylov_dim=2 is the standard config for this dataset; the kernel's
+        -- `QfmPipeline::compile` runs a real SIRK solve on the resulting
+        -- Hermitian flow Hamiltonian (the F4 architecture).
+        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"qfm_tomography\",\"spec\":{\"training_data\":[[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],\"k\":2,\"k2\":4,\"krylov_dim\":2,\"seed\":42}},\"prior\":{\"kind\":\"vacuum\"},\"solver\":{\"krylov_dim\":2,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
+        let handle: Int64 := kernelModelCreateStr(spec);
+        if handle > 0 then
+            -- The 4-phase QFM-TSR generate: encode(query) -> evolve(t=1)
+            -- -> tomographic reconstruct -> lossless decode. The kernel's
+            -- `evolve_with_query` dispatches to the compiled `QfmPipeline`.
+            let opts: Span[Nat8, Static] := "{\"t\":1.0,\"query\":[1.0,0.0,0.0,0.0]}";
+            let erc: Int64 := kernelEvolveStr(handle, opts);
+            if erc /= 0 then
+                -- The compile succeeded but the generate failed. The linear
+                -- discipline still requires us to free the handle before
+                -- returning the error code.
+                let m: Model := wrapModel(handle);
+                let frc: Int64 := freeModel(m);
+                return erc;
+            end if;
+            -- Drain the `EvolveReport` JSON (which contains the `qfm_output`
+            -- generated image) via the standard two-call pattern: first ask
+            -- the kernel for the required buffer size, then read. The demo
+            -- uses a 4 KiB fixed buffer which is far larger than the
+            -- d=4-element output JSON (~80 bytes) and lets us skip the
+            -- "size first" call to keep the demo linear.
+            let cap: Int64 := 4096;
+            -- Allocate a 4 KiB output buffer via the cranelift bridge's
+            -- `au_alloc` runtime (the JIT-side equivalent of libc's
+            -- `malloc`). The QFM-TSR generated JSON for the d=4
+            -- tetrahedron dataset is ~80 bytes, so 4 KiB is plenty. A
+            -- production module would use the standard two-call
+            -- size-prefixed pattern (size-only first call, then a
+            -- sized fill).
+            let raw: Int64 := auAlloc(cap);
+            let n: Int64 := kernelGetResultRaw(handle, raw, cap);
+            let frcv: Int32 := auFree(raw);
+            -- Linear discipline: free the model exactly once.
+            let m: Model := wrapModel(handle);
+            let frc: Int64 := freeModel(m);
+            if n > 0 then
+                return 1;
+            else
+                -- Negative n is a UK code; surface it.
+                return n;
+            end if;
+        else
+            -- `handle <= 0` is a UK code from `uk_model_create`. The
+            -- compile failed; no Model to free.
+            return handle;
+        end if;
+    end;
+end module body.

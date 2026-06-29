@@ -1,0 +1,40 @@
+# Quantum Flow Matching — Tomographic Subspace Recovery (QFM TSR) kernel
+# module. This module exercises the `qfm_tomography` builtin: the kernel
+# compiles a `QfmPipeline` from a training-data spec (the 4-point
+# tetrahedron used in the FFI integration test), JIT-creates the model,
+# evolves it under a `query` raw input, and reads back the generated
+# image via `uk_get_result`. Every `uk_*` symbol is gated by this
+# module's grants (the UK-4001 negative test in run_demo.sh).
+#
+# See:
+#   unfer/QMF.tex Section 7 (sec:tomographic) — algorithm spec
+#   unfer/docs/PROTOCOL.md — model spec schema
+#   unfer/docs/MODULES.md — manifest schema and the "add a module" checklist
+#   unfer/qfm/src/pipeline.rs — the F4 online inference pipeline this
+#     module exercises end-to-end.
+
+[module]
+name = "qfm_tomo_module"
+version = "0.1.0"
+# Archetype contracts the module implements (see MODULES.md):
+#   data_source — supplies the 4 training vectors (the tetrahedron in
+#                 d=4) as an embedded JSON array. The training set is
+#                 small enough to ship in the manifest; in production
+#                 this would be a channel from a real data layer.
+#   actor       — act(model): drives the 4-phase QFM-TSR generate on
+#                 the compiled pipeline and reads the generated image.
+archetypes = ["data_source", "actor"]
+entry = "src/QfmTomoModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*`
+# kernel call this module makes against this allow-list
+# (auth.rs / ManifestAuthEngine). Removing a symbol here causes the
+# corresponding call to fail with a UK-4001 CallDenied denial at JIT
+# time — see run_demo.sh's negative test on uk_get_result.
+[grants]
+kernel = [
+    "uk_model_create",
+    "uk_evolve",
+    "uk_get_result",
+    "uk_model_free",
+]

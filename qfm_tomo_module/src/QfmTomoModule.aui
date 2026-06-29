@@ -1,0 +1,20 @@
+module QfmTomoModule is
+    """
+    Quantum Flow Matching — Tomographic Subspace Recovery (QFM-TSR) kernel
+    module (see unfer/QMF.tex §7 `sec:tomographic`). `run` builds a
+    `qfm_tomography` `ModelSpec` — the training set (a 4-point tetrahedron
+    in d=4), the Level 1/2 sketch dimensions, and the Krylov rank — and
+    JIT-creates the model in-process via the UnferKernel bindings
+    (`uk_model_create`). The 4-phase QFM-TSR `generate` is then driven by
+    a single `uk_evolve` call with an explicit `query` raw input
+    (the F4 fix in P6 E: the kernel compiles a `QfmPipeline` from the
+    spec and dispatches to its `evolve_with_query` instead of the SIRK
+    solver). The generated image is read back via `uk_get_result` and
+    held in a CPS-side buffer. The linear `Model` discipline forces
+    exactly one `freeModel` (`uk_model_free`).
+
+    Every `uk_*` symbol used below is gated by this module's `module.toml`
+    grants (see the UK-4001 negative test in run_demo.sh).
+    """
+    function run(): Int64;
+end module.

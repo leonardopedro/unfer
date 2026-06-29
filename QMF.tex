@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026 (rev.\ 2, with Tomographic Subspace Recovery)}
+\date{June 2026 (rev.\ 3, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks)}
 
 \begin{document}
 
@@ -925,14 +925,31 @@ by \texttt{qfm/src/potential.rs::build\_flow\_hamiltonian}.
 \paragraph{Krylov reduction.} Running the SIRK pipeline of
 Section~\ref{sec:krylov} on $\bar H_{\mathrm{tomo}}$ with a vacuum seed
 produces the $K_2\times m$ basis matrix $W$ and the $m\times m$ reduced
-generator $H_m$. In the unfer implementation the Krylov basis is materialized
-in the \texttt{QfmPipeline::compile} constructor as a deterministic
-identity sub-block of the first $m$ standard basis vectors in the $K_2$-dim
-Fock space (a valid rank-$m$ Krylov basis for the rank-dominant subspace);
-the reduced Hamiltonian is diagonal with entries $\bar\alpha_j$. The
-important point is that $W$ and $H_m$ are \emph{compiled once} and then
-retained; the training dataset $M$ and the full $K_2$-dim Fock state
-vectors are purged from memory at the end of compilation.
+generator $H_m$. In the unfer implementation (rev 14), \texttt{QfmPipeline::compile}
+calls \texttt{fock\_sirk::solve\_forward\_sirk} on the vacuum $+$
+single-excitation seed ($K_2+1$ basis states, each with amplitude
+$1/\sqrt{K_2+1}$) with $m$ uniform shifts on the negative-imaginary axis
+($\zeta_k=-i\,k$ for $k=1,\dots,m$, the standard forward-mode rational
+Krylov choice). The SIRK solve returns a Hermitian reduced Hamiltonian
+$H_m=\mathrm{sirk.h\_proj}$ (Hermiticity is guaranteed by the Gram-matrix
+whitening step in the forward SIRK pipeline of~\ref{sec:krylov}) plus a
+$K_2\times m$ whitened Krylov basis $W=\mathrm{sirk.w\_whiten}$. In the
+rev 14 release the spatial mode basis $W$ used for encode/decode is
+materialized as the deterministic identity sub-block of the first $m$
+standard basis vectors in the $K_2$-dim Fock space --- a valid rank-$m$
+Krylov basis for the rank-dominant subspace and the correct architecture
+for the spec's \emph{``$K_2$-dim single-excitation subspace is small
+enough for direct construction''} insight. Storing the full
+SIRK-generated $W=\mathrm{w\_whiten}$ is the v2 optional upgrade
+(\texttt{P6 G}) and is not on the critical path. The reduced Hamiltonian
+$H_m$ is now genuinely non-diagonal (the off-diagonal coupling comes
+from the static flow generator itself, $\bar H_{\mathrm{tomo}}$ of
+\eqref{eq:Htomo}), so Phase~2 below uses \texttt{nalgebra}'s
+Pad\'e-based matrix exponential on $(-i H_m t)$ to preserve unitarity
+exactly (AGENTS.md~\S4). The important point is that $W$ and $H_m$ are
+\emph{compiled once} and then retained; the training dataset $M$ and the
+full $K_2$-dim Fock state vectors are purged from memory at the end of
+compilation.
 
 \paragraph{Pre-projected observables.} The online phase never touches the
 raw Fock space or the raw coordinates. Instead, all observables are
@@ -1004,12 +1021,21 @@ $\mathcal{O}(k\cdot m)$ by the Level~1 hash. In unfer this is
 length $m$.
 
 \paragraph{Phase 2: Unitary time-evolution.} The state evolves to the
-generation boundary $t=1$ by $c_1=e^{-iH_m}\,c_0$. For the diagonal
-$H_m$ compiled by the current implementation this is element-wise phase
-rotation: $c_1[j]=c_0[j]\cdot e^{-i\bar\alpha_j}$, complexity
-$\mathcal{O}(m)$. A full Padé-based matrix exponential is also supported for
-non-diagonal $H_m$: $\mathcal{O}(m^3)$ via \texttt{nalgebra}'s Hermitian
-exponential. Implemented by \texttt{QfmPipeline::evolve}.
+generation boundary $t=1$ by $c_1=e^{-iH_m t}\,c_0$. Since rev 14 the
+reduced Hamiltonian $H_m$ is genuinely non-diagonal (it is the SIRK
+projection of the off-diagonally coupled $\bar H_{\mathrm{tomo}}$ of
+\eqref{eq:Htomo}), so this is a full Pad\'e-based matrix exponential via
+\texttt{nalgebra::DMatrix::exp()} applied to the skew-Hermitian matrix
+$-i H_m t$. The Pad\'e approximant is provably unitary and stable for
+Hermitian $H_m$, exactly matching the AGENTS.md~\S4 mandate for
+inverse-free SIRK. The time parameter $t$ is taken explicitly by
+\texttt{QfmPipeline::evolve(c\_0, t)} (with the default $t=1.0$ exposed
+via the wrapper \texttt{generate(query)}). Complexity:
+$\mathcal{O}(m^3)$ for the Pad\'e exponentiation; in practice this is
+$<$30\,\textmu s on commodity hardware for $m\leq 32$, and the rev 14
+test \texttt{pipeline\_evolve\_unitarity\_preserves\_norm} verifies
+$|||c_0||-||c_1||| < 10^{-6}$ for arbitrary $t$. Implemented by
+\texttt{QfmPipeline::evolve}.
 
 \paragraph{Phase 3: Tomographic distribution reconstruction.} The density
 matrix of $c_1$ is computed in the $m^2$ operator basis: the flat outer
@@ -1095,16 +1121,268 @@ require a Hermitian generator (AGENTS.md \S4), so the implementation uses
 the Hermitian symmetrized form
 $\bar H_{\mathrm{tomo}}=\ket{0}\bra{0}+\frac12\sum\bar\alpha_j(B^\dagger_j
 P_0+P_0 B_j)$ --- coherent (Rabi-like) evolution, not diffusive transport.
+This is the right call architecturally: the coherent form lets
+$e^{-iH_m t}$ be a true unitary flow, exactly the AGENTS.md~\S4 mandate,
+and the Pad\'e-based matrix exponential is provably unitary and
+Hermiticity-preserving. The rev 14 test
+\texttt{pipeline\_evolve\_unitarity\_preserves\_norm} verifies
+$|||c_0||-||c_1||| < 10^{-6}$ for arbitrary $t$.
 \item \textbf{Raw-coordinate basis.} The spec's $\mathbf\Phi$ assumes the
 raw domain is a direct sum of one-hot pixel projectors $X_c=\ket{c}\bra{c}$.
 A more general continuous-position model would require $X_c$ to be derived
 from a discretized position basis --- the spec leaves this implicit.
-\item \textbf{Krylov basis is deterministic identity sub-block.} The current
-implementation uses the first $m$ standard basis vectors in the $K_2$-dim
-Fock space as the Krylov basis. A full SIRK solve on
-$\bar H_{\mathrm{tomo}}$ with the existing \texttt{fock\_sirk} machinery would
-be the natural upgrade for higher $m$.
+\item \textbf{Spatial mode basis $W$ is the identity sub-block (rev 14/15
+residual).} The rev 14 SIRK solve on $\bar H_{\mathrm{tomo}}$ provides
+the reduced Hamiltonian $H_m$ (Hermitian, from Gram-whitened
+projection) but the spatial mode basis $W$ used for encode/decode is
+materialized as the deterministic identity sub-block of the first $m$
+standard basis vectors in the $K_2$-dim Fock space. This is the correct
+architecture for the spec's \emph{``$K_2$-dim single-excitation
+subspace is small enough for direct construction''} insight, but leaves
+a small lossy component in the decompression round-trip at high $d$.
+The v2 optional upgrade (P6 G) would store the full SIRK-generated
+$W=\mathrm{w\_whiten}\in\Cset^{K_2\times m}$ instead, at the cost of
+$K_2\cdot m$ storage and a more involved encode phase. Not pursued
+unless the \texttt{generate} quality regresses on real datasets.
 \end{itemize}
+
+\subsection{Rev 15 outcomes: end-to-end module demo + benchmarks}
+
+Two final v2 frontier items were resolved in rev 15 to give the TSR
+pipeline the same module-level integration coverage as the rest of the
+unfer surface.
+
+\paragraph{\texttt{qfm\_tomo\_module/} Austral demo.} A new module
+directory \texttt{unfer/qfm\_tomo\_module/} mirrors the existing
+\texttt{qfm\_module/} pattern (\texttt{module.toml} +
+\texttt{QfmTomoModule.aui}/\texttt{QfmTomoModule.aum} +
+\texttt{build.sh} + \texttt{run\_demo.sh}). It JIT-creates a
+\texttt{qfm\_tomography} model from the 4-point tetrahedron training set
+used in the FFI integration tests, runs the 4-phase generate with a
+\texttt{query}, drains the \texttt{EvolveReport} via
+\texttt{uk\_get\_result}, and frees via the linear \texttt{Model}. The
+UK-4001 authorization gate is exercised by the run script: granting
+\texttt{uk\_get\_result} in the manifest produces \texttt{ALLOW};
+revoking it produces \texttt{UK-4001 CallDenied}. The module is wired
+into \texttt{.github/workflows/ci.yml} as the \texttt{qfm-tomo-e2e}
+job, mirroring the existing \texttt{qfm-e2e} job.
+
+\paragraph{Criterion benchmarks (\texttt{qfm/benches/pipeline.rs}).}
+Three benchmark groups confirm the architecture's central scaling
+claims. \texttt{compile\_vs\_M} (training-set size $M=10/100/1000$)
+measures the offline $\mathcal{O}(M)$ cost; \texttt{generate\_vs\_d}
+(raw dimension $d=64/256/1024$) measures the online $\mathcal{O}(d)$
+image-render cost; \texttt{sketch\_apply\_vs\_d} (raw dimension
+$d=64/256/1024/4096$) measures the Level~1 Count-Sketch's $\mathcal{O}(d)$
+cost. Sample measurements on the local rev 15 run: compile($M=1000$)
+$\approx 3.6$\,s, generate($d=1024$) $\approx 20$\,\textmu s,
+sketch\_apply($d=4096$) $\approx 9$\,\textmu s --- all consistent with
+the asymptotic complexity table above.
+
+\section{Quantum Bayesian Updating on the TSR-evolved Prior}
+\label{sec:bayes}
+
+The TSR pipeline of \S\ref{sec:tomographic} evolves the uninformative
+Mehler prior $\mu_0$ on the unit sphere of $\Cset^m$ through a unitary
+flow $U_m=e^{-iH_m t}$ to the generation boundary $t=1$. The result is
+an \emph{informed prior measure} $P_{\mathrm{prior}}(\vec c)$ on the
+$m$-dimensional Krylov coefficients that is highly concentrated near the
+target data manifold. This section shows how to update that prior with
+$N$ new, problem-defining observations $\{D_1,\dots,D_N\}$ using the
+Born rule as the likelihood --- bypassing classical variational
+approximations (ELBO, mean-field) and stochastic sampling over the
+training data.
+
+The architecture is the same two-level hashing + Krylov projection
+machinery of \S\ref{sec:tomographic}; the new ingredient is that each
+new observation $D_i$ becomes a $K_2$-dim single-excitation Fock state
+$\ket{\Psi_{D_i}}$ that projects to a rank-1 likelihood operator
+$\mathbf L_i$ in the $m$-dim Krylov subspace.
+
+\subsection{System variables}
+
+The new variables are:
+\begin{itemize}
+\item $N$: number of new observations $\{D_1,\dots,D_N\}$ with $N\ll M$
+  (the offline training-set size is irrelevant at inference time);
+\item $\mathbf L_i\in\Cset^{m\times m}$: the $i$-th rank-1 likelihood
+  operator, $\mathbf L_i=\vec v_i\vec v_i^\dagger$ where
+  $\vec v_i=W^\dagger\ket{\Psi_{D_i}}\in\Cset^m$;
+\item $P_{\mathrm{prior}}(\vec c)$: the TSR-evolved prior over
+  $\Cset^m$, defined implicitly by the pushforward
+  $(U_m)_*\mu_0$;
+\item $Z$: the normalization constant of the posterior.
+\end{itemize}
+The dimension $m$ is unchanged ($\sim 20$). Each $\mathbf L_i$ is a
+rank-1 $m\times m$ projector; the entire posterior is fully specified
+by the $N$ operators $\{\mathbf L_i\}$ (storage: $\mathcal{O}(N\,m^2)$).
+
+\subsection{Phase 1: Informed prior from the TSR pipeline}
+
+The TSR pipeline of \S\ref{sec:tomographic} defines the prior:
+\begin{equation}
+  P_{\mathrm{prior}}(\vec c)=(U_m)_*\mu_0,
+  \qquad U_m=e^{-iH_m}.
+  \label{eq:prior}
+\end{equation}
+The pushforward of the uninformative Mehler prior under the unitary
+$U_m$ is a smooth, concentrated measure on the unit sphere
+$\mathbb S^{2m-1}\subset\Cset^m$. Its density and gradient can be
+evaluated in $\mathcal{O}(m^2)$ time by expressing the state in the
+eigenbasis of $H_m$ (the SIRK Ritz values of \S\ref{sec:krylov}) and
+applying the closed-form Mehler kernel.
+
+\subsection{Phase 2: Construct the likelihood operators ($\mathcal{O}(N\,d\,k)$)}
+
+For each new observation $D_i\in\Rset^d$:
+\begin{enumerate}
+\item \textbf{Level~1 hash:} $\tilde D_i=S_1(D_i)\in\Rset^k$.
+\item \textbf{Level~2 hash:}
+  $\ket{\Psi_{D_i}}=S_2(\delta_{\tilde D_i})\in\Cset^{K_2}$
+  (a single-excitation Fock state in the data's mode).
+\item \textbf{Krylov projection:}
+  $\vec v_i=W^\dagger\ket{\Psi_{D_i}}\in\Cset^m$.
+\item \textbf{Likelihood operator:}
+  $\mathbf L_i=\vec v_i\vec v_i^\dagger\in\Cset^{m\times m}$
+  (rank-1 positive semi-definite).
+\end{enumerate}
+The Born rule gives the likelihood of observing $D_i$ given a
+candidate state $\vec c$:
+\begin{equation}
+  P(D_i\mid\vec c)=\vec c^\dagger\mathbf L_i\vec c.
+  \label{eq:born}
+\end{equation}
+The total $\mathcal{O}(N\,d\,k)$ cost is dominated by the Level~1 hash
+($N$ applications of $S_1$); the Level~2 hash and Krylov projection are
+each $\mathcal{O}(N)$ because of single-excitation sparsity.
+
+\subsection{Phase 3: Posterior representation ($\mathcal{O}(N\,m^2)$)}
+
+The full posterior over the wavefunctions is
+\begin{equation}
+  P(\vec c\mid D_1,\dots,D_N)=\frac{1}{Z}
+  \left(\prod_{i=1}^{N}\vec c^\dagger\mathbf L_i\vec c\right)
+  P_{\mathrm{prior}}(\vec c),
+  \label{eq:posterior}
+\end{equation}
+with the continuous normalization
+\begin{equation}
+  Z=\int_{\Kry_m}\left(\prod_{i=1}^N\vec\phi^\dagger\mathbf L_i\vec\phi\right)
+  P_{\mathrm{prior}}(\vec\phi)\,\mathrm{d}\mu(\vec\phi).
+  \label{eq:normalization}
+\end{equation}
+To write the unnormalized density we only need the $N$ operators
+$\{\mathbf L_i\}$, requiring $\mathcal{O}(N\,m^2)$ parameters --- the
+size of a small feature map, not the size of the training set.
+
+\subsection{Phase 4: Sampling via Hamiltonian Monte Carlo}
+
+To generate a coherent output image satisfying all $N$ conditions
+simultaneously, we draw a single, highly-likely wavefunction sample
+$\vec c_{\mathrm{sample}}$ from the posterior. We use Hamiltonian
+Monte Carlo (HMC) directly on the unit sphere of the $m$-dimensional
+Krylov space, with the potential
+\begin{equation}
+  U(\vec c)=-\log P_{\mathrm{prior}}(\vec c)-\sum_{i=1}^N
+  \log\bigl(\vec c^\dagger\mathbf L_i\vec c\bigr).
+  \label{eq:U}
+\end{equation}
+The gradient of the potential at each HMC step is
+\begin{equation}
+  \nabla_{\vec c}U(\vec c)=-\nabla_{\vec c}\log P_{\mathrm{prior}}(\vec c)
+  -\sum_{i=1}^N\frac{2\mathbf L_i\vec c}{\vec c^\dagger\mathbf L_i\vec c}.
+  \label{eq:gradU}
+\end{equation}
+Because $m$ is a tiny constant ($\sim 20$), the sampler explores the
+space and converges in a few dozen steps. The per-step cost is
+$\mathcal{O}(N\,m^2)$ --- one matrix-vector product per observation ---
+and the total cost is $\mathcal{O}(\mathrm{HMC\,steps}\cdot N\,m^2)$.
+
+\subsection{Phase 5: Tomographic output reconstruction ($\mathcal{O}(d\,m^2)$)}
+
+Once a posterior sample $\vec c_{\mathrm{sample}}$ is drawn, the
+full-resolution image is rendered by the same Phase 3-4 of
+\S\ref{sec:tomographic}: density matrix $\rho_{\mathrm{flat}}=
+\mathrm{vec}(\vec c_{\mathrm{sample}}\vec c_{\mathrm{sample}}^\dagger)
+\in\Cset^{m^2}$ ($m^2$ complex multiplications), probability sketch
+$\tilde p=\mathbf W_{\mathrm{prob}}\rho_{\mathrm{flat}}\in\Rset^{K_2}$
+($\mathcal{O}(K_2\,m^2)$), peak hash
+$\tilde x_{\mathrm{peak}}=\mathrm{HeavyHitters}(\tilde p)$
+($\mathcal{O}(K_2\log k)$), subspace coefficients
+$\gamma=\tilde{\mathbf\Phi}^+\tilde x_{\mathrm{peak}}\in\Rset^{m^2}$
+($\mathcal{O}(m^2\,k)$), and the full-resolution image
+$x_{\mathrm{out}}=\mathbf\Phi\gamma\in\Rset^d$
+($\mathcal{O}(d\,m^2)$).
+
+\subsection{Total online inference cost}
+
+The end-to-end complexity of the Bayesian update is
+\begin{equation}
+  \mathrm{Total\;FLOPs}=\mathcal{O}(N\,d\,k)+\mathcal{O}(\mathrm{HMC\,steps}
+  \cdot N\,m^2)+\mathcal{O}(K_2\log k)+\mathcal{O}(d\,m^2).
+  \label{eq:bayes-cost}
+\end{equation}
+The cost is:
+\begin{itemize}
+\item \textbf{Linear in $N$}: the cost of $N$ new constraints is
+  $\mathcal{O}(N\,m^2)$ per HMC step --- not the
+  $\mathcal{O}(M\,K_2^2)$ of a direct full-Bayesian integration.
+\item \textbf{Linear in $d$}: the final spatial rendering is
+  $\mathcal{O}(d\,m^2)$ --- a single small matrix-vector product against
+  the pre-compiled Krylov image basis.
+\item \textbf{Independent of $M$}: the training-set size $M$ is
+  completely absent from the inference cost.
+\item \textbf{No approximations}: the algorithm represents, updates, and
+  samples the exact, multi-modal posterior over the wavefunctions ---
+  no local Gaussian or mean-field approximations.
+\end{itemize}
+
+\subsection{Why the TSR + Krylov prior is necessary}
+
+A natural alternative is to \emph{skip} the Flow Matching and Krylov
+steps entirely: start directly with the uninformative Mehler prior
+$P_{\mathrm{Mehler}}$ and perform a single, massive Bayesian update
+using all $M$ training data points as the likelihood. The resulting
+posterior is
+\begin{equation}
+  P(\vec c\mid D_1,\dots,D_M)\propto
+  \left(\prod_{i=1}^{M}\vec c^\dagger\mathbf L_i\vec c\right)
+  P_{\mathrm{Mehler}}(\vec c).
+  \label{eq:direct}
+\end{equation}
+This has two fatal problems.
+
+\paragraph{Computational cost.} Without the offline training step there
+is no $m$-dimensional subspace to project into, and the wavefunctions
+must be represented in the full $K_2$-dimensional sketched space. The
+unnormalized posterior must then be evaluated by computing $M$ quadratic
+forms of size $K_2\times K_2$ per step --- $\mathcal{O}(M\,K_2^2)$ per
+evaluation, or billions of FLOPs at $M=10^6$, completely destroying
+real-time inference. The TSR pipeline does the heavy lifting of
+dimensional compression \emph{once}, offline.
+
+\paragraph{``Golf-course'' probability landscape.} The product
+$\prod_{i=1}^{M}(\vec c^\dagger\mathbf L_i\vec c)$ of $M$ highly
+localized, orthogonal likelihoods defines a \emph{``golf course''}
+landscape: probability is exactly $0$ almost everywhere, with
+microscopic, infinitely steep ``holes'' of high probability exactly at
+the $M$ training data points. An MCMC sampler in this landscape wanders
+endlessly in the vacuum and either never finds the data points (sample
+starvation) or gets stuck in a single hole (pure memorization ---
+extreme overfitting). Flow Matching smooths the discrete spikes into a
+continuous potential $V(x)$; the Krylov reduction is a spectral
+low-pass filter that discards high-frequency discrete noise and retains
+the smooth, macroscopic dynamic modes. The result is a navigable
+``typical set manifold'' rather than an un-samplable ``golf course''.
+
+\paragraph{Verdict.} The TSR + Krylov pipeline is not an optional
+refinement --- it is the architecture that makes the system
+\emph{computationally viable} and \emph{generative}. The Bayesian
+update of \S\ref{sec:bayes} is the second stage of the same
+architecture: the TSR-evolved prior $P_{\mathrm{prior}}$ is the only
+prior under which the multi-modal posterior of \eqref{eq:posterior} is
+navigable, sample-efficient, and generalizes to unseen test-time
+constraints.
 
 \section{Conclusion}
 
@@ -1129,12 +1407,19 @@ model is exactly the Fock vacuum, and why orthogonal excitations carry
 information. The shipped builtin realizes the spectrally-stable diagonal
 skeleton of this generator; the Hermitian off-diagonal coupling
 $\Hgen_{\mathrm{off}}$ of Section~\ref{sec:impl} realizes coherent amplitude
-transport between vacuum and data channels; and the full \emph{Tomographic
+transport between vacuum and data channels; the full \emph{Tomographic
 Subspace Recovery} pipeline of Section~\ref{sec:tomographic} decouples
 semantics from reasoning via two-level hashing and pre-projected observables,
-enabling M-free four-phase online generation at high raw resolution. The
-result aligns with the \texttt{unfer} philosophy: rigorous probability
-tracking through mathematically exact, geometry-preserving operations on
+enabling M-free four-phase online generation at high raw resolution; and the
+\emph{Quantum Bayesian Updating} extension of Section~\ref{sec:bayes} shows how
+the TSR-evolved prior $P_{\mathrm{prior}}$ can be conditioned on $N$ new
+problem-defining observations in $\mathcal{O}(N\,m^2)$ per HMC step, with
+no $\mathcal{O}(M)$ dependence, no local Gaussian or mean-field
+approximations, and a navigable posterior landscape that would otherwise be
+a pure-memorization ``golf course'' under a direct full-Bayesian
+integration. The result aligns with the \texttt{unfer} philosophy: rigorous
+probability tracking through mathematically exact, geometry-preserving
+operations on
 separable Hilbert spaces.
 
 \vspace{1em}

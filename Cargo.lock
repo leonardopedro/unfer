@@ -2049,6 +2049,7 @@ name = "qfm"
 version = "0.1.0"
 dependencies = [
  "candle-core",
+ "criterion",
  "fock_sirk",
  "nalgebra",
  "nested_fock_algebra",
