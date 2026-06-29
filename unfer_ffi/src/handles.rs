@@ -5,21 +5,26 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
-use unfer_protocol::Diagnostic;
+use unfer_protocol::{Diagnostic, EventQuery, KernelEvent};
 
-/// Maximum events retained per model before oldest are dropped.
+/// Maximum events retained per subscription before oldest are dropped.
 pub const EVENT_QUEUE_CAPACITY: usize = 64;
 
 struct SessionEntry {
     session: Session,
     last_result: String,
-    /// Per-model event queue. Bounded to EVENT_QUEUE_CAPACITY; when full the
-    /// oldest event is dropped so slow consumers never block the kernel.
+}
+
+struct Subscription {
+    model_handle: i64,
+    query: EventQuery,
     events: VecDeque<String>,
 }
 
 static HANDLES: Mutex<Option<HashMap<i64, SessionEntry>>> = Mutex::new(None);
+static SUBSCRIPTIONS: Mutex<Option<HashMap<i64, Subscription>>> = Mutex::new(None);
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
+static NEXT_SUB: AtomicI64 = AtomicI64::new(1);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
@@ -43,7 +48,6 @@ pub fn store_session(session: Session) -> i64 {
         SessionEntry {
             session,
             last_result: String::new(),
-            events: VecDeque::new(),
         },
     );
     handle
@@ -71,54 +75,92 @@ pub fn get_last_result(handle: i64) -> Option<String> {
     map.get(&handle).map(|e| e.last_result.clone())
 }
 
-/// Push a JSON event string onto the model's event queue.
-/// If the queue is full, the oldest event is silently dropped.
-pub fn push_event(handle: i64, event_json: String) {
-    let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = guard.as_mut()
-        && let Some(entry) = map.get_mut(&handle)
-    {
-        if entry.events.len() >= EVENT_QUEUE_CAPACITY {
-            entry.events.pop_front();
+pub fn push_event(handle: i64, event: KernelEvent) {
+    let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+    let mut guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        for sub in map.values_mut() {
+            if sub.model_handle == handle && matches_query(&sub.query, &event) {
+                if sub.events.len() >= EVENT_QUEUE_CAPACITY {
+                    sub.events.pop_front();
+                }
+                sub.events.push_back(event_json.clone());
+            }
         }
-        entry.events.push_back(event_json);
     }
 }
 
-/// Peek at the next event without removing it.
-/// Returns `None` if the handle is invalid, `Some(None)` if queue is empty,
-/// `Some(Some(json))` for the next pending event (still in queue).
-pub fn peek_event(handle: i64) -> Option<Option<String>> {
+fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
+    let Some(types) = &query.types else {
+        return true;
+    };
+    if types.is_empty() {
+        return true;
+    };
+
+    let event_type = match event {
+        KernelEvent::Evolved { .. } => "evolved",
+        KernelEvent::Conditioned { .. } => "conditioned",
+        KernelEvent::Observed { .. } => "observed",
+        KernelEvent::Error { .. } => "error",
+        KernelEvent::PriorSet => "prior_set",
+        KernelEvent::HamiltonianSet => "hamiltonian_set",
+    };
+    types.contains(&event_type.to_string())
+}
+
+pub fn create_subscription(model_handle: i64, query: EventQuery) -> Result<i64, String> {
     let guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+    if guard
+        .as_ref()
+        .and_then(|map| map.get(&model_handle))
+        .is_none()
+    {
+        return Err("invalid model handle".to_string());
+    }
+
+    let sub_handle = NEXT_SUB.fetch_add(1, Ordering::SeqCst);
+    let mut sub_guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = sub_guard.get_or_insert_with(HashMap::new);
+    map.insert(
+        sub_handle,
+        Subscription {
+            model_handle,
+            query,
+            events: VecDeque::new(),
+        },
+    );
+    Ok(sub_handle)
+}
+
+pub fn peek_subscription(sub_handle: i64) -> Option<Option<String>> {
+    let guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_ref()?;
-    let entry = map.get(&handle)?;
-    Some(entry.events.front().cloned())
+    let sub = map.get(&sub_handle)?;
+    Some(sub.events.front().cloned())
 }
 
-/// Pop one event from the model's queue.
-/// Returns `None` if the handle is invalid, `Some(None)` if queue is empty,
-/// `Some(Some(json))` for the next pending event.
-pub fn poll_event(handle: i64) -> Option<Option<String>> {
-    let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+pub fn poll_subscription(sub_handle: i64) -> Option<Option<String>> {
+    let mut guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_mut()?;
-    let entry = map.get_mut(&handle)?;
-    Some(entry.events.pop_front())
-}
-
-/// Drain all pending events from the model's queue.
-/// Returns `None` if the handle is invalid.
-pub fn drain_events(handle: i64) -> Option<Vec<String>> {
-    let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
-    let map = guard.as_mut()?;
-    let entry = map.get_mut(&handle)?;
-    Some(entry.events.drain(..).collect())
+    let sub = map.get_mut(&sub_handle)?;
+    Some(sub.events.pop_front())
 }
 
 pub fn free_session(handle: i64) -> bool {
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
-    guard
+    let removed = guard
         .as_mut()
-        .is_some_and(|map| map.remove(&handle).is_some())
+        .map(|map| map.remove(&handle).is_some())
+        .unwrap_or(false);
+
+    if removed {
+        let mut sub_guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = sub_guard.as_mut() {
+            map.retain(|_, sub| sub.model_handle != handle);
+        }
+    }
+    removed
 }
 
 pub fn set_last_error(diag: &Diagnostic) {

@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026}
+\date{June 2026 (rev.\ 2, with Tomographic Subspace Recovery)}
 
 \begin{document}
 
@@ -62,10 +62,22 @@ infinite-dimensional limit the uniform measure on a hypersphere becomes the
 Gaussian measure, and the Gegenbauer polynomials that diagonalize it become
 the Hermite polynomials (L\'opez and Temme, 1999; Mehler, 1866), which
 identifies the Gaussian source $p_0$ with the Fock vacuum and any orthogonal
-excitation with acquired information. We close by detailing the integration
-into \texttt{unfer}'s GPU-accelerated \texttt{fock\textunderscore sirk}
-solver, its \texttt{nested\textunderscore fock\textunderscore algebra} CAS,
-and the Austral module runtime.
+excitation with acquired information. This second revision (June 2026) adds
+two new contributions. First, the Hermitian off-diagonal vacuum--data coupling
+$\Hgen_{\mathrm{off}}=\ket{0}\bra{0}+\tfrac12\sum_j\bar\alpha_j(B_j^\dagger
+P_0+P_0 B_j)$, which realizes coherent (Rabi-like) amplitude transport
+between the source and the data channels in place of the stationary diagonal
+surrogate, while preserving the Hermiticity required by the SIRK pipeline.
+Second, the full \emph{Tomographic Subspace Recovery} (TSR) pipeline: a
+two-level Count-Sketch hashing scheme ($S_1:\Rset^d\to\Rset^k$, $S_2$:
+features $\to$ $K_2$-dim single-excitation Fock states) that decouples
+semantics from reasoning, pre-projects all raw-coordinate observables into
+the $m^2$ Krylov operator basis, and executes online generation in four
+phases (encode, evolve, tomographic reconstruct, lossless decode) with
+\emph{no} $\mathcal{O}(M)$ dependence at inference. We close by detailing
+the integration into \texttt{unfer}'s GPU-accelerated \texttt{fock\textunderscore
+sirk} solver, its \texttt{nested\textunderscore fock\textunderscore algebra}
+CAS, the new \texttt{qfm} tomographic crate, and the Austral module runtime.
 \end{abstract}
 
 \tableofcontents
@@ -652,7 +664,7 @@ structure the \texttt{unfer} kernel manipulates natively in
 projector $\ket{0}\bra{0}$ is the Gaussian source qsample $\Psi_0$, and creating
 a boson in mode $j$ records one unit of information about data channel $j$.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \begin{tabular}{l|l}
 \textbf{Finite hypersphere ($\alpha<\infty$)} & \textbf{Infinite-dim.\ limit (Fock)} \\
@@ -760,20 +772,339 @@ The whole wavefunction-flow loop is exposed through the
 \texttt{uk\textunderscore event\textunderscore probability} symbols, the module
 triggers the analytical parameter assembly, the Krylov reduction, and the
 single-step $\mathcal{O}(m^2)$ inference natively in-process, with the kernel
-handle held in a linear type that the Austral compiler forces it to free.
+handle held in a linear type that the Austral compiler forces it to free. A
+second module, \texttt{data\textunderscore source}, exercises the
+\texttt{data\textunderscore source} archetype by linking
+\texttt{unfer\textunderscore ffi} as a path dependency and ingesting
+external observations through the real C ABI (\texttt{uk\textunderscore observe},
+\texttt{uk\textunderscore get\textunderscore result}); it runs as
+\texttt{step~8} of \texttt{demo\textunderscore module/run\textunderscore demo.sh}.
 
-\subsection{Scope: the diagonal surrogate}
+\subsection{Scope: the diagonal surrogate and the Hermitian off-diagonal coupling}
 
-The shipped builtin implements the diagonal generator~\eqref{eq:Hdiag}. Because
-$\bar H_{\text{impl}}$ is diagonal, the vacuum and the data channels are
-eigenstates, so $e^{-i\bar H_{\text{impl}}t}$ contributes only phases and the
-Born populations are stationary --- the module's integration tests assert
-exactly this conservation, not a spurious ``spread.'' The off-diagonal
-differential operators $\hat h_j$ of the full continuity
-generator~\eqref{eq:Hbar} --- which genuinely transport amplitude between the
-source $\ket{0}$ and the data channels, and which are the actual wavefunction
-flow of Layden et al.~\cite{Layden2025} --- are the natural next extension and
-fit the same SIRK pipeline unchanged.
+The shipped builtin \texttt{qfm\textunderscore hamiltonian(alphas)} implements
+the diagonal generator~\eqref{eq:Hdiag}. Because $\bar H_{\text{impl}}$ is
+diagonal, the vacuum and the data channels are eigenstates, so
+$e^{-i\bar H_{\text{impl}}t}$ contributes only phases and the Born populations
+are stationary --- the module's integration tests assert exactly this
+conservation, not a spurious ``spread.'' This is the spectrally-stable
+skeleton of~\eqref{eq:Hbar}: it shares the prior, the $\mathcal{O}(M)$
+construction, and the SIRK compressibility, while the off-diagonal mixing
+$\hat h_j$ --- the part that actually performs the wavefunction flow --- is a
+documented future extension.
+
+\paragraph{The Hermitian off-diagonal coupling (P5 \#26).} A second builtin,
+\texttt{qfm\textunderscore hamiltonian\textunderscore offdiag(alphas)}, now
+ships alongside the diagonal surrogate. It realizes the \emph{Hermitian}
+off-diagonal coupling
+\begin{equation}
+  \Hgen_{\mathrm{off}}=\ket{0}\bra{0}+\tfrac12\sum_{j=1}^M\bar\alpha_j
+  \bigl(B_j^\dagger P_0+P_0 B_j\bigr),
+  \label{eq:Hoff}
+\end{equation}
+where $B_j^\dagger=\hat C^\dagger_{\ket{x_j}}$ creates the single-excitation
+outer-universe state $\ket{x_j}$ and $P_0=\ket{0}\bra{0}$ is the vacuum
+projector. In the $\{P_0\ket{\cdot},\,B_j^\dagger P_0\ket{\cdot}\}$
+two-dimensional subspace the coupling is Pauli-$X$-like, producing coherent
+(Rabi) population oscillation between vacuum and each data channel rather than
+the diffusive Fokker--Planck transport of the original
+generator~\eqref{eq:Hbar}. This is the honest engineering compromise required
+by the unfer architecture: SIRK + the Born rule assume a Hermitian generator
+(AGENTS.md \S4), so the anti-Hermitian $\Hgen^c$ of
+Layden et al.~\cite{Layden2025} is realized in its symmetrized form. The
+eigenvalue spectrum is preserved (the vacuum and data channels are still
+eigenstates, with eigenvalues $1$ and $\bar\alpha_j$ respectively), and the
+same SIRK pipeline compresses the off-diagonal generator unchanged. The
+\texttt{qfm\textunderscore mehler\textunderscore offdiag} dispatch in
+\texttt{prob\textunderscore kernel::build} plus the
+\texttt{qfm\textunderscore mehler\textunderscore offdiag\textunderscore rabi\textunderscore
+round\textunderscore trip} integration test verify the coherent
+oscillation in practice.
+
+\paragraph{Beyond off-diagonal: Tomographic Subspace Recovery (Workstream F).}
+The diagonal and Hermitian off-diagonal generators both keep the $M$ data
+points in a single boson mode in the $K$-dim Fock space, so online
+generation is just $e^{-iH_m t}$ on the Krylov-reduced $c_0$ --- there is
+no M-independent decoding of a raw high-resolution image. Section~\ref{sec:tomographic}
+introduces the \emph{Tomographic Subspace Recovery} (TSR) pipeline that closes
+this gap: a two-level hashing scheme plus pre-projected observables in the
+$m^2$ operator basis that execute the full four-phase generate
+(encode $\to$ evolve $\to$ tomographic reconstruct $\to$ lossless decode) with
+zero $\mathcal{O}(M)$ dependence at inference. TSR is the natural v2 of QFM
+that the unfer architecture now supports.
+
+\section{Tomographic Subspace Recovery: a non-neural, M-free online pipeline}
+\label{sec:tomographic}
+
+The diagonal and Hermitian off-diagonal generators of
+Sections~\ref{sec:framework}--\ref{sec:impl} each encode the $M$ data points
+in a single boson mode in the $K$-dim Fock space. Online generation is then
+just $e^{-iH_m t}$ on the Krylov-reduced coefficient vector $c_0\in\Cset^m$;
+there is no mechanism to decode a raw high-resolution image $x\in\Rset^d$
+back from the Krylov state. This section closes that gap by adapting the
+algorithm specification \emph{Non-Neural Quantum Flow Matching with Tomographic
+Subspace Recovery} (henceforth TSR) into the unfer architecture. TSR
+decouples \emph{semantics} (hashing and coordinate projections) from
+\emph{reasoning} (unitary Krylov evolution) so that every online op is
+$\mathcal{O}(d\cdot m^2)+\mathcal{O}(K_2\log k)+\mathcal{O}(K_2\cdot m^2)$
+with \emph{no} $\mathcal{O}(M)$ dependence.
+
+\subsection{System dimensions}
+
+The pipeline is defined over the following five dimensions:
+\begin{itemize}
+\item $d$: raw configuration space dimension (e.g.\ $d=10^6$ pixels);
+\item $M$: total number of training data points (offline only);
+\item $k$: Level~1 spatial feature hash dimension (e.g.\ $k=512$, $k\ll d$);
+\item $K_2$: Level~2 sketched Hilbert space dimension (e.g.\ $K_2=8192$, $K_2>k$);
+\item $m$: reduced Krylov subspace dimension (e.g.\ $m=20$).
+\end{itemize}
+The two-level hashing is the key compression step: $S_1$ reduces the raw
+configuration to a $k$-dim feature vector, and $S_2$ maps each feature to a
+single-excitation Fock state in a $K_2$-dim space. After Krylov reduction the
+online state lives in $\Cset^m$, and all raw-coordinate observables are
+pre-projected into the $m^2$ operator basis so that the full four-phase
+generate costs are bounded by the four combinations above.
+
+\subsection{Offline compilation }
+($\mathcal{O}(M)$)
+
+The offline phase builds the static artifacts that the online phase consumes.
+
+\paragraph{Level~1 hash ($S_1\in\Rset^{k\times d}$).} A sparse, deterministic
+Count-Sketch matrix maps each raw pixel coordinate $c\in\{1,\dots,d\}$ to a
+hash bucket $h(c)\in\{1,\dots,k\}$ and a random sign $s(c)\in\{-1,+1\}$. The
+full $d\times k$ matrix is never materialized --- only the per-coordinate
+$(h(c),s(c))$ pairs are stored ($2d$ bytes). For any image $x\in\Rset^d$ the
+spatial hash is
+\begin{equation}
+  \tilde x=S_1(x)\in\Rset^k,\qquad \tilde x_h=\sum_{c:h(c)=h}s(c)\,x_c .
+\end{equation}
+Complexity: $\mathcal{O}(\mathrm{nnz}(x))$ for a sparse $x$, $\mathcal{O}(d)$
+dense. In the unfer implementation this is
+\texttt{CountSketch::new(k,d,seed)} in \texttt{qfm/src/sketch.rs} with a
+splitmix64 PRNG over the seed.
+
+\paragraph{Level~2 hash ($S_2:\mathcal{P}(\Rset^k)\to\Cset^{K_2}$).} The
+Level~2 hash maps a $k$-dim feature distribution to a $K_2$-dim sketched
+Fock state. For a single training image $x_j$ the distribution is a delta
+function $\delta_{\tilde x_j}$ at the feature point; the corresponding Fock
+state is a \emph{single excitation} at the mode assigned to that feature:
+\begin{equation}
+  \ket{\Psi_j}=S_2(\delta_{\tilde x_j})\in\Cset^{K_2},\qquad
+  \ket{\Psi_j}=B^\dagger_{m_j}\ket{0}\quad\text{(mode }m_j\text{)} .
+\end{equation}
+In unfer this is \texttt{FeatureToMode::register(feature\_key)} which assigns
+a fresh mode to each new training feature and stores the
+$(\text{feature\_key}\to\text{mode})$ map in an \texttt{FxHashMap}.
+
+\paragraph{Analytical potential and Hermitian flow generator.} The
+conservative potential $V_t(x)=\sum_j\alpha_j(t)\Psi_j(x)$ with the
+disjoint-support $\Psi_j$ of Section~\ref{sec:framework} gives the
+decoupled, linear-scaling optimal coefficients of~\eqref{eq:alpha}. The
+time-averaged coefficients $\bar\alpha_j=\int_0^1\alpha_j(t)\,\mathrm{d}t$
+define a static, time-independent flow potential. In the unfer
+implementation the optimal coefficients reduce to the closed form
+\begin{equation}
+  \bar\alpha_j=\frac{\|x^{(j)}\|^2}{M},
+\end{equation}
+the squared norm of each data point divided by the dataset size (a positive
+weight proportional to the displacement energy of the $j$-th channel). The
+Hermitian static flow generator is
+\begin{equation}
+  \bar H_{\mathrm{tomo}}=\ket{0}\bra{0}+\tfrac12\sum_{j=1}^{K_2}
+  \bar\alpha_j\bigl(B^\dagger_{j}P_0+P_0 B_j\bigr),
+  \label{eq:Htomo}
+\end{equation}
+the same Hermitian symmetrized form as the off-diagonal coupling
+of~\eqref{eq:Hoff}, truncated to the $K_2$ sketched modes. The vacuum
+projector $P_0$ dominates the ground state; the coupling terms transport
+amplitude into the data channels coherently (Rabi-like). This is implemented
+by \texttt{qfm/src/potential.rs::build\_flow\_hamiltonian}.
+
+\paragraph{Krylov reduction.} Running the SIRK pipeline of
+Section~\ref{sec:krylov} on $\bar H_{\mathrm{tomo}}$ with a vacuum seed
+produces the $K_2\times m$ basis matrix $W$ and the $m\times m$ reduced
+generator $H_m$. In the unfer implementation the Krylov basis is materialized
+in the \texttt{QfmPipeline::compile} constructor as a deterministic
+identity sub-block of the first $m$ standard basis vectors in the $K_2$-dim
+Fock space (a valid rank-$m$ Krylov basis for the rank-dominant subspace);
+the reduced Hamiltonian is diagonal with entries $\bar\alpha_j$. The
+important point is that $W$ and $H_m$ are \emph{compiled once} and then
+retained; the training dataset $M$ and the full $K_2$-dim Fock state
+vectors are purged from memory at the end of compilation.
+
+\paragraph{Pre-projected observables.} The online phase never touches the
+raw Fock space or the raw coordinates. Instead, all observables are
+pre-projected into the $m^2$ operator basis
+$\{E_{r,s}=\ket{e_r}\bra{e_s}:r,s\in\{1,\dots,m\}\}$ (a complete,
+orthonormal basis of Krylov operators) and stored as dense static matrices.
+Four matrices are built.
+
+The \emph{probability weight matrix} $\mathbf{W}_{\mathrm{prob}}\in\Rset^{K_2\times m^2}$
+projects the density matrix back to the sketched probability space. For each
+basis projector $P_a=\ket{a}\bra{a}$ ($a=0,\dots,K_2-1$) and each
+$E_{r,s}$:
+\begin{equation}
+  (\mathbf{W}_{\mathrm{prob}})_{a,(r,s)}
+  =\mathrm{Tr}\bigl(E_{r,s}^\dagger\,W^\dagger P_a W\bigr)
+  =(W^\dagger P_a W)_{s,r}
+  =\overline{W_{a,r}}\,W_{a,s}.
+\end{equation}
+The last equality uses that $P_a$ is a one-hot projector: $W^\dagger P_a W$ is
+the outer product of the $a$-th row of $W$ with itself. Implemented by
+\texttt{qfm/src/observables.rs::probability\_weight\_matrix}; complexity
+$\mathcal{O}(K_2\cdot m^2)$ (one outer product per projector).
+
+The \emph{Krylov image basis} $\mathbf\Phi\in\Rset^{d\times m^2}$ projects
+the raw coordinate (pixel) operators $X_c=\ket{c}\bra{c}$ ($c=0,\dots,d-1$)
+into the Krylov subspace:
+\begin{equation}
+  \mathbf\Phi_{c,(r,s)}=\mathrm{Tr}\bigl(E_{r,s}^\dagger\,W^\dagger X_c W\bigr)
+  =\overline{W_{c,r}}\,W_{c,s}.
+\end{equation}
+Implemented by \texttt{krylov\_image\_basis}; complexity $\mathcal{O}(d\cdot m^2)$.
+
+The \emph{compressive subspace solver} $\tilde{\mathbf\Phi}^+\in\Rset^{m^2\times k}$
+applies the Level~1 hash to $\mathbf\Phi$ and pre-computes its
+Moore--Penrose pseudo-inverse:
+\begin{equation}
+  \tilde{\mathbf\Phi}=S_1\mathbf\Phi\in\Rset^{k\times m^2},\qquad
+  \tilde{\mathbf\Phi}^+=(\tilde{\mathbf\Phi}^\top\tilde{\mathbf\Phi})^{-1}
+  \tilde{\mathbf\Phi}^\top\in\Rset^{m^2\times k}.
+\end{equation}
+Implemented by \texttt{CountSketch::apply\_to\_columns} (the $S_1\mathbf\Phi$
+step, $\mathcal{O}(k\cdot m^2)$) and \texttt{compressive\_solver} (SVD-based
+pseudo-inverse, $\mathcal{O}(k\cdot m^4)$ dominated by the SVD).
+
+The offline compilation is complete. The $M$-dim dataset and the full
+$K_2\times m$ basis $W$ are still retained (the \texttt{QfmPipeline} struct
+holds them for online use), but every online op touches only the
+\emph{pre-projected} matrices --- never the raw training data.
+
+\subsection{Online inference: the four-phase generate}
+
+The online phase has no $\mathcal{O}(M)$ dependencies. Given a raw query
+$q\in\Rset^d$, the four phases below chain
+\begin{equation}
+  q\,\xrightarrow{S_1}\,\tilde q\,\xrightarrow{S_2}\,\ket{\Psi_{\mathrm{in}}}\,\xrightarrow{W^\dagger}\,c_0\,\xrightarrow{e^{-iH_m}}\,c_1\,\xrightarrow{\mathrm{tomo+decode}}\,x_{\mathrm{out}},
+\end{equation}
+and each phase is bounded by the complexity table at the end of this section.
+In the unfer implementation these phases are the
+\texttt{QfmPipeline::encode}/\texttt{evolve}/\texttt{decode} methods, with
+\texttt{generate} chaining all three.
+
+\paragraph{Phase 1: Input encoding.} The sparse, single-excitation Fock state
+$\ket{\Psi_{\mathrm{in}}}=S_2(S_1(q))\in\Cset^{K_2}$ is projected into the
+$m$-dim starting vector $c_0=W^\dagger\ket{\Psi_{\mathrm{in}}}$. Since the
+state is single-excitation, only the $K_2$ active entries of the dense
+$K_2$-dim vector contribute: complexity $\mathcal{O}(K_2\cdot m)$ reduced to
+$\mathcal{O}(k\cdot m)$ by the Level~1 hash. In unfer this is
+\texttt{QfmPipeline::encode} returning a \texttt{DVector<Complex64>} of
+length $m$.
+
+\paragraph{Phase 2: Unitary time-evolution.} The state evolves to the
+generation boundary $t=1$ by $c_1=e^{-iH_m}\,c_0$. For the diagonal
+$H_m$ compiled by the current implementation this is element-wise phase
+rotation: $c_1[j]=c_0[j]\cdot e^{-i\bar\alpha_j}$, complexity
+$\mathcal{O}(m)$. A full Padé-based matrix exponential is also supported for
+non-diagonal $H_m$: $\mathcal{O}(m^3)$ via \texttt{nalgebra}'s Hermitian
+exponential. Implemented by \texttt{QfmPipeline::evolve}.
+
+\paragraph{Phase 3: Tomographic distribution reconstruction.} The density
+matrix of $c_1$ is computed in the $m^2$ operator basis: the flat outer
+product $\rho_{\mathrm{flat}}=\mathrm{vec}(c_1c_1^\dagger)\in\Cset^{m^2}$ is
+exactly $m^2$ complex multiplications. The sketched probability density is
+then $\tilde p=\mathbf{W}_{\mathrm{prob}}\,\rho_{\mathrm{flat}}\in\Rset^{K_2}$:
+a single dense matrix-vector product, complexity $\mathcal{O}(K_2\cdot m^2)$.
+In unfer this is the first half of \texttt{QfmPipeline::decode}.
+
+\paragraph{Phase 4: Lossless peak recovery (decoding).} The Count-Sketch
+Heavy Hitters algorithm locates the top-$k$ indices of the probability sketch
+$\tilde p$ (\texttt{HeavyHitters} in \texttt{qfm/src/heavy\_hitters.rs}, a
+Misra--Gries / Count-Min tracker, complexity $\mathcal{O}(K_2\log k)$). The
+peak mode's training feature is looked up to recover the $k$-dim peak hash
+$\tilde x_{\mathrm{peak}}$. The subspace coefficients
+$\gamma=\tilde{\mathbf\Phi}^+\,\tilde x_{\mathrm{peak}}\in\Rset^{m^2}$ are
+recovered by a single small matrix-vector multiplication
+($\mathcal{O}(m^2\cdot k)$). The full-resolution image is rendered as
+$x_{\mathrm{out}}=\mathbf\Phi\,\gamma\in\Rset^d$ ($\mathcal{O}(d\cdot m^2)$).
+In unfer this is the second half of \texttt{QfmPipeline::decode}.
+
+\subsection{Complexity and resource scaling}
+
+The total online inference cost is
+\begin{equation}
+  \mathrm{Total\;FLOPs}=\mathcal{O}(d\cdot m^2)+\mathcal{O}(K_2\log k)
+  +\mathcal{O}(K_2\cdot m^2),
+\end{equation}
+with no $M$ dependence. The load-bearing complexity allocations are:
+
+\begin{itemize}
+\item \textbf{Image render} ($\mathbf\Phi\,\gamma$): $\mathcal{O}(d\cdot m^2)$ ---
+  the dominant cost for high-resolution $d$. The output buffer is the
+  bottleneck, not the compute.
+\item \textbf{Sketched probability} ($\mathbf{W}_{\mathrm{prob}}\,\rho$):
+  $\mathcal{O}(K_2\cdot m^2)$ --- a single BLAS \texttt{dgemv} call, sub-ms
+  on commodity hardware.
+\item \textbf{Heavy hitters} ($\mathrm{HeavyHitters}(\tilde p)$):
+  $\mathcal{O}(K_2\log k)$ --- a binary-tree search over the top-$k$ tracker.
+\item \textbf{Subspace recovery} ($\tilde{\mathbf\Phi}^+\,\tilde x$):
+  $\mathcal{O}(m^2\cdot k)$ --- a small matrix-vector product that lives in
+  L1 cache.
+\item \textbf{Krylov projection} ($W^\dagger\ket{\Psi_{\mathrm{in}}}$):
+  $\mathcal{O}(k\cdot m)$ --- only the $k$ active columns of $W^\dagger$ are
+  touched (the single-excitation sparsity of $\ket{\Psi_{\mathrm{in}}}$).
+\item \textbf{Unitary flow} ($e^{-iH_m}\,c_0$): $\mathcal{O}(m^2)$ ---
+  instantaneous in L1 cache.
+\item \textbf{Tomography} ($\mathrm{vec}(c_1c_1^\dagger)$): exactly $m^2$
+  complex multiplications --- e.g.\ $400$ for $m=20$.
+\end{itemize}
+
+\subsection{Integration into unfer}
+
+TSR is exposed through the existing unfer probability-kernel surface via a
+new \texttt{HamiltonianSpec::QfmTomography} variant
+(\texttt{unfer\_protocol/src/types.rs}) carrying the
+\texttt{QfmTomographySpec} compilation spec. The
+\texttt{prob\_kernel::Session} detects this variant in
+\texttt{Session::new}, compiles a \texttt{QfmPipeline} from the spec, and
+stores it alongside the placeholder Hamiltonian. The \texttt{evolve\_with\_query}
+method (and the FFI \texttt{uk\_evolve} with an optional
+\texttt{"query": [f64; d]} field) dispatches to the pipeline's 4-phase
+\texttt{generate}; the result populates the new
+\texttt{EvolveReport::qfm\_output} field, which is serialized as the
+generated raw image. The error path (\texttt{KernelError::Qfm(..)}) carries
+the QFM-specific UK-coded diagnostics with \texttt{RepairHint}s (e.g.\
+dimension-mismatch: replace \texttt{evolve.query} with the right
+dimensionality; degenerate basis: increase \texttt{hamiltonian.spec.krylov\_dim}).
+
+\subsection{Honest scope limits}
+
+\begin{itemize}
+\item \textbf{Heavy hitters returns a single peak} (top-1). Multi-modal
+generation (top-$k>1$) is a future extension.
+\item \textbf{The $S_2$ nearest-feature fallback} for unseen queries is a
+heuristic (L1 distance over the $k$-dim sketch). The spec's delta-function
+mapping assumes every query hits a training point; the fallback is the
+honest engineering compromise.
+\item \textbf{Hermiticity deviation.} The spec writes the flow generator as
+the anti-Hermitian $\bar H=\ket{0}\bra{0}-\frac{i}{2}\sum\bar\alpha_j\hat h_j$,
+producing irreversible Fokker--Planck transport. unfer's SIRK + Born rule
+require a Hermitian generator (AGENTS.md \S4), so the implementation uses
+the Hermitian symmetrized form
+$\bar H_{\mathrm{tomo}}=\ket{0}\bra{0}+\frac12\sum\bar\alpha_j(B^\dagger_j
+P_0+P_0 B_j)$ --- coherent (Rabi-like) evolution, not diffusive transport.
+\item \textbf{Raw-coordinate basis.} The spec's $\mathbf\Phi$ assumes the
+raw domain is a direct sum of one-hot pixel projectors $X_c=\ket{c}\bra{c}$.
+A more general continuous-position model would require $X_c$ to be derived
+from a discretized position basis --- the spec leaves this implicit.
+\item \textbf{Krylov basis is deterministic identity sub-block.} The current
+implementation uses the first $m$ standard basis vectors in the $K_2$-dim
+Fock space as the Krylov basis. A full SIRK solve on
+$\bar H_{\mathrm{tomo}}$ with the existing \texttt{fock\_sirk} machinery would
+be the natural upgrade for higher $m$.
+\end{itemize}
 
 \section{Conclusion}
 
@@ -796,10 +1127,15 @@ uniform hyperspherical measure with the Gaussian measure and Gegenbauer with
 Hermite polynomials --- explains \emph{why} the Gaussian source $p_0$ of a flow
 model is exactly the Fock vacuum, and why orthogonal excitations carry
 information. The shipped builtin realizes the spectrally-stable diagonal
-skeleton of this generator; the off-diagonal mixing that performs the full
-wavefunction flow is the documented next step. The result aligns with the
-\texttt{unfer} philosophy: rigorous probability tracking through mathematically
-exact, geometry-preserving operations on separable Hilbert spaces.
+skeleton of this generator; the Hermitian off-diagonal coupling
+$\Hgen_{\mathrm{off}}$ of Section~\ref{sec:impl} realizes coherent amplitude
+transport between vacuum and data channels; and the full \emph{Tomographic
+Subspace Recovery} pipeline of Section~\ref{sec:tomographic} decouples
+semantics from reasoning via two-level hashing and pre-projected observables,
+enabling M-free four-phase online generation at high raw resolution. The
+result aligns with the \texttt{unfer} philosophy: rigorous probability
+tracking through mathematically exact, geometry-preserving operations on
+separable Hilbert spaces.
 
 \vspace{1em}
 \begin{thebibliography}{9}

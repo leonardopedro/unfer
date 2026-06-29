@@ -296,3 +296,133 @@ fn evolve_missing_t_returns_1001() {
 
     uk_model_free(model);
 }
+
+#[test]
+fn qfm_tomo_via_ffi() {
+    // P6 E #14: FFI integration test for the QFM tomographic pipeline.
+    // Build a 4-point training set in d=4, k=2, K_2=4, krylov_dim=2,
+    // evolve with a query, and assert qfm_output is present in the
+    // returned EvolveReport JSON.
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
+          "k": 2,
+          "k2": 4,
+          "krylov_dim": 2,
+          "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 2,
+        "prune_eps": 1e-12,
+        "max_components": 50000,
+        "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(
+        model > 0,
+        "uk_model_create should succeed for qfm_tomography"
+    );
+
+    // Evolve with a query (the first training point).
+    let evolve_opts = r#"{"t": 1.0, "query": [1.0, 0.0, 0.0, 0.0]}"#;
+    let (ptr, len) = json_ptr(evolve_opts.as_bytes());
+    let r = uk_evolve(model, ptr, len);
+    assert_eq!(
+        r, 0,
+        "uk_evolve should succeed for qfm_tomography with query"
+    );
+
+    // Drain the result and check for qfm_output.
+    let report_json = read_result(model);
+    let report: serde_json::Value =
+        serde_json::from_str(&report_json).expect("report is valid JSON");
+    let qfm_output = report
+        .get("qfm_output")
+        .and_then(|v| v.as_array())
+        .expect("qfm_output should be a JSON array");
+    assert_eq!(qfm_output.len(), 4, "qfm_output should have d=4 elements");
+    for v in qfm_output {
+        let f = v.as_f64().expect("qfm_output elements are f64");
+        assert!(
+            f.is_finite(),
+            "qfm_output elements should be finite, got {f}"
+        );
+    }
+
+    // Evolving WITHOUT a query on a QFM model must fail: the pipeline
+    // requires a raw input to drive the 4-phase generate. The error is
+    // mapped to UK-5000 (INTERNAL) — see `evolve_with_query`'s QFM branch.
+    let evolve_opts_no_query = r#"{"t": 1.0}"#;
+    let (ptr, len) = json_ptr(evolve_opts_no_query.as_bytes());
+    let r = uk_evolve(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::INTERNAL.raw() as i64),
+        "evolve on QFM model without query should return UK-5000"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn qfm_tomo_via_ffi_bad_query_dim_returns_1001() {
+    // A qfm_tomography model expects the query to have d elements; a
+    // query of the wrong dimension must surface as BAD_JSON with a
+    // DimensionMismatch-derived message.
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+          "k": 2, "k2": 4, "krylov_dim": 2, "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 2, "prune_eps": 1e-12,
+        "max_components": 50000, "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // Query of dimension 2 (should be 4).
+    let evolve_opts = r#"{"t": 1.0, "query": [1.0, 0.0]}"#;
+    let (ptr, len) = json_ptr(evolve_opts.as_bytes());
+    let r = uk_evolve(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::BAD_JSON.raw() as i64),
+        "expected -1001 for dim mismatch"
+    );
+
+    let err_json = read_error();
+    let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
+    assert_eq!(diag["code"].as_u64(), Some(Code::BAD_JSON.raw() as u64));
+    // The message should mention the expected and got dimensions.
+    let msg = diag["message"].as_str().unwrap();
+    assert!(
+        msg.contains("4"),
+        "message should mention expected d=4, got: {msg}"
+    );
+    assert!(
+        msg.contains("2"),
+        "message should mention got d=2, got: {msg}"
+    );
+
+    uk_model_free(model);
+}

@@ -1,0 +1,10 @@
+[package]
+name = "data_source"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+unfer_ffi = { path = "../../unfer_ffi" }
+serde_json = "1.0"
+
+[workspace]

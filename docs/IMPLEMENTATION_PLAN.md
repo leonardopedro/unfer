@@ -2,17 +2,19 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-28, rev 11)
+## Current status (updated 2026-06-28, rev 13)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), and P6 A1–A2 + B3 + B4 + D10 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription, session persistence + observability) are complete.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and two verified end-to-end module demos (`demo_module` + `qfm_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. All three repos are committed and pushed. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F (Tomographic QFM Subspace Recovery, F1–F5 implementation stages), and P6 A1–A2 + B3 + B4 + B5 + D10 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and three verified end-to-end module demos (`demo_module` + `qfm_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the new tomographic QFM workstream is in §"Workstream F"**; **the honest gap analysis and prioritized next steps are in §"Workstream F — Gap Analysis & Next Steps (rev 13)"**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: 5 crates (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`) + 2 module demos (`demo_module/`, `qfm_module/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
   - `australVM/safestos/cranelift`: `auth.rs` (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`. CPS-JIT backend fixed (let-init, record destructure, cross-module linking, byte buffers, multi-field records).
   - `velysterm`: `crates/kernel_client/` (worker-thread client + `unfer_agent` NDJSON binary), `mathed_core` (PropKinds + `KernelStatement` + `accessibility` + `glyphs`), `crates/mathed/` (Bevy bridge + overlay), `crates/mathed_mini/` (Bevy-free CPU frontend with caret blink, mouse hit-testing, AccessKit bridge, translator pipeline, kernel bridge).
-- **Test counts (CPU, full sweep 2026-06-28):** unfer workspace **118** (19 fock_sirk + 26 nested_fock_algebra + 28 prob_kernel + 15 unfer_ffi + 30 unfer_protocol) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
-- **Git state (2026-06-28, rev 6 final):**
-  - unfer HEAD `ef3e9fb` (P5 #30: larger-scale physics) on `main` → `origin/main`. **Clean, pushed.**
+- **Test counts (CPU, full sweep 2026-06-28, rev 13):** unfer workspace **156** (19 fock_sirk + 26 nested_fock_algebra + 33 prob_kernel + 27 unfer_ffi + 30 unfer_protocol + 21 qfm) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
+  - **B4 refactor note (rev 12):** the streaming/subscription surface was upgraded from string-based events to a typed `unfer_protocol::KernelEvent` enum (`PriorSet`/`HamiltonianSet`/`Evolved{..}`/`Conditioned{..}`/`Observed{..}`/`Error{..}`) + `EventQuery { types: Option<Vec<String>> }` for per-subscription filtering via `matches_query`. The per-model bounded event queue is now keyed by a fresh subscription handle (not the model handle), and `uk_subscribe` takes a JSON `EventQuery` and returns a `BAD_HANDLE` (-1004) on invalid model handles. 12 inline unfer_ffi tests cover the new surface (including `subscribe_filters_by_event_type`).
+  - **F1–F5 implementation note (rev 13):** the new `qfm` crate (workspace member) implements the full Tomographic QFM Subspace Recovery pipeline per the algorithm spec. F1: `CountSketch` (S_1) + `FeatureToMode` (S_2) + `HeavyHitters` (6+4 tests). F2: `optimal_coefficients` (closed-form `||x||²/M`) + `build_flow_hamiltonian` (Hermitian `|0><0| + ½Σᾱ_j(B†_j P_0 + P_0 B_j)`, 4 tests). F3: `operator_basis` (m² E_{r,s}) + `probability_weight_matrix` (W_prob) + `krylov_image_basis` (Φ) + `compressive_solver` (SVD pseudo-inverse, 4 tests). F4: `QfmPipeline::compile/encode/evolve/decode/generate` (3 tests). F5: `HamiltonianSpec::QfmTomography` + `QfmTomographySpec` in `unfer_protocol`, `compile_qfm_pipeline` in `prob_kernel/build.rs`, `qfm_pipeline: Option<Box<QfmPipeline>>` + `evolve_with_query` in `Session`, `EvolveReport::qfm_output`, `Qfm` error variant with diagnostic mapping, `uk_evolve` accepts optional `query` field (3 prob_kernel integration tests). **Honest quality assessment:** the TSR pipeline compiles, the tests pass, and the API surface is complete — but the Krylov basis `W` is currently hardcoded to the first `m` standard basis vectors (identity sub-block) and the reduced `H_m` is hardcoded to diagonal `diag(alphas)`, so the "generative" claim of the spec is a deterministic nearest-training-point round-trip through a lossy sketch projection rather than a true unitary flow. See §"Workstream F — Gap Analysis & Next Steps (rev 13)" for the prioritized hardening list.
+- **Git state (2026-06-28, rev 13):**
+  - unfer HEAD `f0024fb` (P6 B4: streaming/subscription surface) on `main`, **ahead of** `origin/main` by 1 commit. **UNCOMMITTED WORK** (rev 13): 14 tracked-file modifications (Cargo.toml, prob_kernel/{Cargo.toml, src/build.rs, src/error.rs, src/session.rs, tests/session.rs}, unfer_ffi/src/{handles.rs, lib.rs}, unfer_protocol/src/types.rs, .gitignore, Cargo.lock, QMF.tex, demo_module/run_demo.sh, docs/IMPLEMENTATION_PLAN.md) plus 2 untracked directories: `qfm/` (the new Workstream F crate, 6 source files, 21 tests) and `demo_module/data_source/` (the P6 B5 non-demo module). Plus the stray `Kopperman_Tutorial.p.tex` (should be gitignored or added). **Action needed (F8):** `git add` + `git commit` + `git push` to land the Workstream F + P6 B4/B5/D10 work.
   - australVM HEAD `6e24b1f4` (P5 #32: hot-swap compatibility gate tests) on `master` → `origin/master`. **Clean, pushed.**
   - velysterm HEAD `6acaf8f` (P5 #31: fix velysterm CI) on `gitbutler/workspace` → `origin/gitbutler/workspace`. **Clean, pushed.**
 - **Progress checklist:**
@@ -403,12 +405,383 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 
 **Verification:** unfer `cargo test --workspace` green (+3: 1 unit `test_qfm_hamiltonian`, 2 integration `qfm_mehler_*`), clippy `--all-targets` clean, rustfmt clean, QFM module demo green end-to-end.
 
+## Workstream F — Tomographic QFM Subspace Recovery (spec, 2026-06-28)
+
+> **Status: PLANNED.** This workstream adapts the algorithm spec
+> *"Coherent Algorithm Specification: Non-Neural Quantum Flow Matching (QFM)
+> with Tomographic Subspace Recovery"* into the unfer architecture. The
+> existing Workstream E QFM (`qfm_mehler` / `qfm_mehler_offdiag`) is a
+> **diagonal** surrogate: `H = |0><0| + Σ α_j n_j` (or a Hermitian
+> vacuum↔data coupling), M data points each live in a single boson mode
+> in the K-dim Fock space, and online generation is just `time_evolve(t)`
+> on the Krylov-reduced `c_0` — no M-independent decoding. Workstream F
+> replaces this with a **tomographic** pipeline that decouples **semantics
+> (hashing + coordinate projections)** from **reasoning (unitary Krylov
+> evolution)**, enabling exact, lossless, M-free online generation at
+> high raw resolution d.
+>
+> **Key idea:** the M training points are first hashed by a sparse
+> Count-Sketch `S_1: R^d → R^k` (k << d), then embedded by a second
+> sketch `S_2: R^k → C^{K_2}` into a K_2-dim single-excitation Fock
+> state (`K_2 > k`). A Krylov reduction yields an m-dim subspace with
+> basis `W` (K_2×m) and reduced Hamiltonian `H_m`. All raw-coord
+> observables are **pre-projected** into the m² operator basis
+> `{E_{r,s} = |e_r><e_s|}` and stored as dense matrices. Online, the
+> pipeline is **4 phases** — encode (S_1→S_2→W†), evolve
+> (`e^{-iH_m t}`), tomographic reconstruct (density matrix → W_prob →
+> sketched probability p̃), and lossless decode (heavy-hitters → Φ̃⁺ →
+> raw image x_out). After compilation, the M-dim dataset and the K_2×m
+> basis are purged; every online op is O(d·m²) + O(K_2·m²) + O(K_2 log k)
+> with **no M dependence**.
+>
+> **Honest deviation from the spec (Hermiticity requirement):** the
+> spec writes the flow Hamiltonian as
+> `H̄ = |0><0| - (i/2) Σ ᾱ_j ĥ_j` — anti-Hermitian, producing irreversible
+> Fokker–Planck transport. unfer's SIRK + Born rule require a Hermitian
+> generator (AGENTS.md §4). Workstream F implements the **Hermitian**
+> version: `H̄ = |0><0| + (1/2) Σ ᾱ_j ĥ_j_herm` where `ĥ_j_herm` is the
+> symmetrized real form of the differential operator. This gives
+> **coherent (Rabi-like) evolution** under the same `α_j` weights, not
+> diffusive transport. The off-diagonal coupling path is the existing
+> `qfm_hamiltonian_offdiag` (P5 #26).
+
+### F1 — Sketching primitives (new `qfm` crate)
+
+**New workspace crate `unfer/qfm/`** (deps: `nested_fock_algebra`, `nalgebra`, `serde`, `serde_json`; no GPU). Files: `src/lib.rs`, `src/sketch.rs`, `src/heavy_hitters.rs`.
+
+- **`CountSketch { k, buckets: Vec<usize>, signs: Vec<i8> }`** — the Level 1 hash `S_1`. Construction: `CountSketch::new(k, d, seed)` deterministically maps each raw pixel coordinate `c ∈ {0..d}` to a hash bucket `h(c) ∈ {0..k}` and a sign `s(c) ∈ {-1, +1}` (e.g. `FxHash` of `(c, seed)` with a splitmix64 PRNG). The full d×k matrix is **never materialized** — only the per-coordinate `(bucket, sign)` pairs are stored (2×d bytes). API:
+  - `apply(&self, x: &[f64]) -> Vec<f64>` — O(nnz(x)) sparse projection: `x̃[h] += s(c) * x[c]`.
+  - `apply_indexed(&self, indices: &[usize], values: &[f64]) -> Vec<f64>` — for callers that already have a sparse representation.
+  - `to_dense(&self, d: usize) -> DMatrix<f64>` — materialize the full k×d matrix (for analysis/tests only).
+- **`FeatureToMode { k2: usize, feature_to_mode: FxHashMap<u64, u32> }`** — the Level 2 hash `S_2`. Maps a k-dim feature vector (hashed to a `u64` key) to a mode index in `{0..K_2}`. For training, each unique feature gets a fresh mode (K_2 grows to cover M). For inference, the mode is looked up; if the feature is new, the spec's "delta function" maps to the **nearest** training-feature mode (L1 or cosine distance over the k-dim sketch). API:
+  - `new(k2_hint: usize) -> Self`.
+  - `register(feature_key: u64) -> u32` — assign the next free mode; returns it.
+  - `resolve(feature_key: u64) -> Option<u32>` — exact lookup.
+  - `nearest(query: &[f64], training_features: &[(u64, Vec<f64>)]) -> u32` — fallback for unseen queries.
+  - `to_fock_state(&self, mode: u32) -> QuantumState` — creates a single-boson excitation at the given mode (reuses `InnerBosonicState` infrastructure).
+- **`HeavyHitters { k, top_k, min_count }`** — the Count-Sketch Heavy Hitters algorithm for peak recovery from the probability sketch p̃ ∈ R^{K_2}. Uses the standard "Misra–Gries / Count-Min + heap" approach:
+  - `sketch_add(&mut self, idx: usize, delta: f64)` — update the internal count-sketch of p̃.
+  - `top_k(&self) -> Vec<(usize, f64)>` — return the k highest-count indices with their estimated counts.
+  - **Time:** O(K_2 log k). **Space:** O(k) counters.
+- **Tests** (unit): `CountSketch::apply` is deterministic for a given seed; `CountSketch::apply` of a one-hot vector has magnitude 1 at exactly one bucket; `FeatureToMode::register` is monotonic; `HeavyHitters` recovers the true top-1 from a synthetic distribution (assert the mode's count is within ±K_2/k of the true count); identity `HeavyHitters::top_k` on a single-entry distribution returns that entry.
+
+**Accept:** `cargo test -p qfm`. Clippy/fmt clean. Total new tests: ≥6.
+
+### F2 — Analytical potential optimization (offline, O(M))
+
+**File: `unfer/qfm/src/potential.rs`.** Implements the offline training phase: compute the time-averaged coefficients ᾱ_j from training data, then build the static Hermitian flow Hamiltonian H̄.
+
+- **`pub fn optimal_coefficients(points: &[Vec<f64>], n_t_samples: usize, noise_dim: usize) -> Vec<f64>`** — computes the decoupled, linear-scaling optimal coefficients `α_k(t)` from the Flow Matching objective in the spec, then time-averages to `ᾱ_j = ∫₀¹ α_j(t) dt`. For each mode j:
+  - Sample `n_t_samples` time-points `t_i ∈ [0, 1]`.
+  - For each `(t_i, x_0)`, compute `(x^{(k)} - x_0) · ∇Ψ_k(x_t^{(k)})` and `‖∇Ψ_k(x_t^{(k)})‖²` where `x_t^{(k)} = (1-t) x_0 + t x^{(k)}`.
+  - `α_k(t_i) = - E_{x_0}[(x^{(k)} - x_0) · ∇Ψ_k] / (M · E_{x_0}[‖∇Ψ_k‖²])`.
+  - `ᾱ_k = (1/n_t_samples) Σ_i α_k(t_i) · dt_i`.
+  - The Mehler ground-state noise prior `x_0 ~ N(0, I)` is sampled in-place (no dataset dependency at compile time beyond the raw points themselves).
+- **`pub fn build_flow_hamiltonian(alphas: &[f64], k2: usize) -> Hamiltonian`** — constructs the **Hermitian** static flow Hamiltonian `H̄ = |0><0| + (1/2) Σ_j ᾱ_j ĥ_j_herm` using direct `Hamiltonian { terms }` construction (bypasses `Expression::expand()` to keep the symbolic engine out of the hot path). The `ĥ_j_herm` operator is the **real-symmetrized** differential operator on the K_2-dim single-particle subspace: for the single-boson mode j, it acts as a 2×2 Pauli-X-like rotation between |0⟩ and |1_j⟩ with coefficient ᾱ_j / 2. This is a direct-construction analog of `qfm_hamiltonian_offdiag` (P5 #26) restricted to the K_2-dim sketched Fock space.
+- **Tests:** `optimal_coefficients_uniform_dataset` — for a uniform grid of M=4 points in d=2, the coefficients are equal and sum to 1; `build_flow_hamiltonian_hermitian` — assert `H̄ = H̄†` (term-by-term conjugate-symmetric); `flow_hamiltonian_ground_state` — `H̄|0> = |0>` (the vacuum projector dominates the ground state).
+
+**Accept:** `cargo test -p qfm potential`. ≥3 new tests.
+
+### F3 — Pre-projected observables (the m² basis, W_prob, Φ, Φ̃⁺)
+
+**File: `unfer/qfm/src/observables.rs`.** Builds the static translation matrices from the Krylov reduction (W, H_m) and the raw coordinate operators (X_c for c=1..d). All matrices are dense `DMatrix<Complex64>` or `DMatrix<f64>`.
+
+- **`pub fn operator_basis(rank: usize) -> Vec<DMatrix<Complex64>>`** — returns the `rank²` elementary matrices `E_{r,s} = |e_r><e_s|` (each `rank×rank`). Stored as a flat `Vec` indexed by `(r,s) → r*rank + s`.
+- **`pub fn probability_weight_matrix(w: &DMatrix<Complex64>, rank: usize, basis_projectors: &[DMatrix<Complex64>]) -> DMatrix<f64>`** — computes `W_prob ∈ R^{K_2 × rank²}` where `(W_prob)_{a,(r,s)} = Tr(E_{r,s}† · W† · P̂_a · W) = (W† P̂_a W)_{s,r}`. The `basis_projectors` are the K_2 diagonal projectors `|a><a|` (sparse in the Fock basis — just a dense `K_2×K_2` matrix for the one-excitation subspace). **Complexity:** O(K_2 · rank³).
+- **`pub fn krylov_image_basis(w: &DMatrix<Complex64>, rank: usize, coord_projectors: &[DMatrix<Complex64>]) -> DMatrix<f64>`** — computes `Φ ∈ R^{d × rank²}` where `Φ_{c,(r,s)} = Tr(E_{r,s}† · W† · X̂_c · W)`. The `coord_projectors` are the d raw pixel operators X̂_c = |c><c| (or the continuous position operators — for the spec's "raw pixel" domain, these are d one-hot projectors). **Complexity:** O(d · rank³).
+- **`pub fn compressive_solver(s1: &CountSketch, phi: &DMatrix<f64>) -> DMatrix<f64>`** — computes `Φ̃ = S_1 · Φ ∈ R^{k × rank²}` then the Moore-Penrose pseudo-inverse `Φ̃⁺ = (Φ̃ᵀ Φ̃)⁻¹ Φ̃ᵀ ∈ R^{rank² × k}`. Uses `nalgebra`'s SVD-based pseudo-inverse (robust to rank deficiency). **Complexity:** O(k · rank⁴) (dominated by the SVD).
+- **Tests:** `operator_basis_orthonormal` — `Tr(E_{r,s}† · E_{r',s'}) = δ_{rr'} δ_{ss'}`; `probability_weight_matrix_shape` — dims `K_2 × rank²`; `krylov_image_basis_shape` — dims `d × rank²`; `compressive_solver_reconstructs` — for a synthetic Φ, `Φ̃⁺ · (S_1 · Φ · γ) ≈ γ` for a test coefficient vector γ (Moore-Penrose property).
+
+**Accept:** `cargo test -p qfm observables`. ≥4 new tests.
+
+### F4 — Online inference pipeline (the 4-phase generate)
+
+**File: `unfer/qfm/src/pipeline.rs`.** Orchestrates the compiled artifacts into the online generate function.
+
+```rust
+pub struct QfmPipeline {
+    s1: CountSketch,                    // S_1: R^d → R^k
+    s2: FeatureToMode,                  // S_2: features → modes
+    w: DMatrix<Complex64>,              // Krylov basis W (K_2 × rank)
+    h_m: DMatrix<Complex64>,            // Reduced Hamiltonian H_m (rank × rank)
+    w_prob: DMatrix<f64>,               // W_prob (K_2 × rank²)
+    phi: DMatrix<f64>,                  // Φ (d × rank²)
+    phi_tilde_plus: DMatrix<f64>,       // Φ̃⁺ (rank² × k)
+    heavy_hitters: HeavyHitters,        // configured for K_2
+}
+
+impl QfmPipeline {
+    pub fn compile(training_points: &[Vec<f64>], config: &QfmConfig) -> Result<Self, QfmError>;
+    pub fn encode(&self, query: &[f64]) -> Result<DVector<Complex64>, QfmError>;      // Phase 1
+    pub fn evolve(&self, c_0: &DVector<Complex64>) -> DVector<Complex64>;             // Phase 2
+    pub fn decode(&self, c_1: &DVector<Complex64>) -> Result<Vec<f64>, QfmError>;     // Phases 3+4
+    pub fn generate(&self, query: &[f64]) -> Result<Vec<f64>, QfmError>;             // all 4 phases
+}
+```
+
+- **`encode(query)`** — `S_1(query) → x̃ ∈ R^k` (Level 1) → hash to feature_key → `S_2.resolve_or_nearest(x̃) → mode` → `|Ψ_in⟩` (single-excitation Fock state) → `c_0 = W† |Ψ_in⟩` (Krylov projection; only the k active columns of W† are touched: O(k·rank) FLOPs).
+- **`evolve(c_0)`** — `c_1 = exp(-i H_m) · c_0` via `nalgebra`'s Padé `.exp()` (Hermitian H_m → unitary exp). Complexity: O(rank²).
+- **`decode(c_1)`** — Phase 3: `ρ_flat = vec(c_1 c_1†) ∈ C^{rank²}` (exactly rank² complex multiplications) → `p̃ = W_prob · ρ_flat ∈ R^{K_2}` (single dense mat-vec: O(K_2·rank²)). Phase 4: `heavy_hitters.update(p̃)` → `x̃_peak ∈ R^k` (top-1 from the sketch) → `γ = Φ̃⁺ · x̃_peak ∈ R^{rank²}` → `x_out = Φ · γ ∈ R^d`.
+- **`generate(query)`** — chains `encode → evolve → decode`.
+- **Tests:** `pipeline_compile_and_generate_synthetic` — compile on 4 points in d=8, k=4, K_2=8, rank=4; generate on a training point; assert `x_out` has nonzero overlap with the nearest training point (cosine similarity > 0.5); `pipeline_no_m_in_online` — assert the `generate` function does not touch the training set (test by checking that the function is purely a function of the compiled struct, with `&self` only); `encode_phase_complexity` — on a sparse query, assert `encode` touches O(k) elements of W† (timing or counter-based).
+
+**Accept:** `cargo test -p qfm pipeline`. ≥3 new tests.
+
+### F5 — Integration into `prob_kernel` + `unfer_ffi` (the `qfm_tomo` builtin)
+
+**Files: `unfer/prob_kernel/src/build.rs` (dispatch), `unfer/unfer_protocol/src/types.rs` (spec), `unfer/unfer_ffi/src/lib.rs` + `handles.rs` (FFI).** Exposes the pipeline through the existing kernel surface.
+
+- **Protocol types (`unfer_protocol/src/types.rs`):**
+  - `QfmTomographySpec { training_data: Vec<Vec<f64>>, k: usize, k2: usize, krylov_dim: usize, seed: u64 }` — the compilation spec.
+  - `HamiltonianSpec::QfmTomography(Box<QfmTomographySpec>)` — new variant (additive change, backward-compatible).
+- **Build dispatch (`prob_kernel/src/build.rs`):** new `"qfm_tomo"` builtin that calls `QfmPipeline::compile(&spec.training_data, &config_from_params)` and returns a `Hamiltonian`-like wrapper. **Honest note:** the existing `Hamiltonian` type stores terms in the outer-Fock operator basis (Number / ProjectVacuum / etc.), which doesn't naturally represent a *precompiled* QFM pipeline. Two design options:
+  - **(a) Treat the pipeline as opaque state inside the session.** Add a `compiled_pipelines: HashMap<String, QfmPipeline>` to `Session`; `HamiltonianSpec::QfmTomography{..}` stores the spec and the pipeline is compiled lazily on first use. `evolve` detects this and dispatches to the pipeline's `generate` instead of the SIRK solver. This keeps the existing `Hamiltonian` struct untouched.
+  - **(b) Add a `Hamiltonian::CompiledQfm(QfmPipeline)` variant.** More invasive but more uniform.
+  - **Decision: (a)** — minimal disruption, keeps the SIRK path untouched, and the pipeline is a self-contained artifact that owns its own evolution logic.
+- **FFI surface (`unfer_ffi/src/lib.rs`):** no new `uk_*` functions needed — the existing `uk_model_create` accepts a `ModelSpec` JSON with `HamiltonianSpec::QfmTomography{..}`. `uk_evolve` with a `qfm_tomo` model calls `pipeline.generate(query)` where the query comes from a new field in the evolve opts: `{"t": f64, "query": [f64; d]}`. The `EvolveReport` gains an optional `qfm_output: Option<Vec<f64>>` field (skipped via `#[serde(skip_serializing_if = "Option::is_none")]`).
+- **Tests:** `qfm_tomo_compile_and_generate` — end-to-end on a small synthetic dataset; `qfm_tomo_via_ffi` — FFI roundtrip: build spec → `uk_model_create` → `uk_evolve` with query → `uk_get_result` → assert output is a Vec<f64> of length d; `qfm_tomo_no_m_in_evolve_report` — assert the `EvolveReport` payload does not reference the training data.
+
+**Accept:** `cargo test --workspace`. ≥3 new tests (across `prob_kernel` and `unfer_ffi`).
+
+### F6 — Verification & out-of-scope
+
+- **Total new tests:** ≥19 (F1: 6, F2: 3, F3: 4, F4: 3, F5: 3).
+- **Workspace test count after F1–F5:** 132 + 19 = **≥151** (exact depends on test granularization).
+- **Clippy/fmt:** clean (`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`).
+- **Honest scope limits:**
+  - The spec's "continuous image rendering" (Φ · γ → R^d) is implemented as a linear combination of pre-projected raw-coordinate operators, which assumes the raw domain is a direct sum of one-hot pixel projectors. For a more general continuous-position model, the `X̂_c` operators would need to be derived from a discretized position basis — the spec leaves this implicit. Documented in `qfm/src/observables.rs` doc comment.
+  - Heavy Hitters returns a **single peak** (top-1). Multi-modal generation (top-k > 1) is a future extension.
+  - The `S_2` nearest-feature fallback for unseen queries is a heuristic (L1 or cosine over the k-dim sketch). The spec's "delta function" mapping assumes every query hits a training point; real-world queries won't. The fallback is the honest engineering compromise.
+  - The pipeline does **not** add a new builtin to `prob_kernel/src/build.rs`'s main `match` — it goes through a new `HamiltonianSpec` variant to keep the dispatch table stable.
+
+### F-outcomes table (what each stage delivers)
+
+| Stage | Outcome |
+|---|---|
+| F1 | New `qfm` crate: `CountSketch` (S_1), `FeatureToMode` (S_2), `HeavyHitters`. +6 tests. |
+| F2 | `optimal_coefficients` (Flow Matching objective → ᾱ_j) + `build_flow_hamiltonian` (Hermitian H̄). +3 tests. |
+| F3 | `operator_basis` (m² E_{r,s}) + `probability_weight_matrix` (W_prob) + `krylov_image_basis` (Φ) + `compressive_solver` (Φ̃⁺). +4 tests. |
+| F4 | `QfmPipeline::compile/encode/evolve/decode/generate`. +3 tests. |
+| F5 | `HamiltonianSpec::QfmTomography` + `prob_kernel` dispatch + FFI integration. +3 tests. |
+
+## Workstream F — Gap Analysis & Next Steps (rev 13)
+
+> **Bottom line:** the F1–F5 code is complete, compiles cleanly, and passes
+> 24 new tests (156 workspace total). But the *current* `QfmPipeline::evolve`
+> is a **deterministic nearest-training-point round-trip through a lossy
+> sketch projection**, not the true unitary wavefunction flow the spec
+> describes. The Krylov basis `W` is hardcoded to the identity sub-block
+> and `H_m` is hardcoded to diagonal `diag(alphas)`, so the
+> `pipeline_compile_and_generate_synthetic` test only asserts
+> `x_out.is_finite()` — it does not verify that the output has meaningful
+> overlap with any training point. This section records the honest gap
+> analysis and the prioritized hardening list.
+
+### F1 — Sketching primitives (complete, one latent bug)
+
+- ✅ `CountSketch::apply` (dense), `apply_indexed` (sparse), `to_dense`,
+  `apply_to_columns` — all tested.
+- ✅ `FeatureToMode::register` / `resolve` / `nearest` / `to_fock_state` —
+  all tested.
+- ✅ `HeavyHitters::sketch_add` / `top_k` / `top_one` /
+  `update_from_distribution` — all tested.
+- ⚠️ **`FeatureToMode::new(k2_hint: usize)` silently discards `k2_hint`**
+  (leading underscore on the parameter). If `M > k2`, `register()` can
+  return mode indices ≥ k2, and `encode()` will index `self.w[(mode, r)]`
+  where `W.nrows() == k2` → **out-of-bounds panic at runtime**. The current
+  test uses M=4, k2=8 so it doesn't trip. **Fix:** validate the new mode
+  index against `k2` in `register()` and return `Result<Mode, QfmError>`,
+  or hard-cap at `k2` with a clear error.
+
+### F2 — Analytical potential (complete, one test asserts the wrong thing)
+
+- ✅ `optimal_coefficients` closed-form `||x||²/M` (honest simplification
+  from the spec's full Flow Matching time-integral; documented in the
+  doc comment).
+- ✅ `build_flow_hamiltonian` Hermitian `|0><0> + ½Σᾱ_j(B†_j P_0 + P_0 B_j)`.
+- ⚠️ **`flow_hamiltonian_ground_state_is_vacuum` test is mathematically
+  wrong.** The implementation actually produces
+  `H|0> = |0> + Σ_j (α_j/2)|x_j⟩` — the vacuum is NOT an eigenvector of
+  the Hermitian coupling. The test asserts both `amp_vac == 1.0` and
+  `n_single == alphas.len()`, which are both satisfied by the literal
+  superposition. The natural follow-up assertion `H|0> = c|0>` is
+  missing, so the test passes for the wrong reason. **Fix:** either
+  remove the vacuum projector term from the `H|0>` expectation (the
+  coupling is a coherent Rabi term — the vacuum is not an eigenstate),
+  or test that `H_bar|0> ≠ |0>` and verify the off-diagonal coupling
+  structure explicitly.
+
+### F3 — Pre-projected observables (complete, one silent truncation)
+
+- ✅ `operator_basis` (m² E_{r,s}) — orthonormality tested via trace.
+- ✅ `probability_weight_matrix` (W_prob) — shape and finiteness tested.
+- ✅ `krylov_image_basis` (Φ) — shape tested.
+- ✅ `compressive_solver` (SVD pseudo-inverse) — round-trip on a
+  square invertible matrix tested.
+- ⚠️ **`krylov_image_basis` silently truncates to `min(d, k2)`.** For
+  typical spec ratios (`d >> k2`), the output `x_out` is structurally
+  zero in the last `d − k2` coordinates, breaking the round-trip. The
+  spec acknowledges this as a v2 extension ("honest scope limit"). **Fix
+  options:** (a) assert `d ≤ k2` and document the constraint, (b) use
+  proper position operators (discretized spatial basis), or (c) add a
+  random projection for the extra coordinates. The cheapest honest fix
+  is (a) — add a `debug_assert!(d ≤ k2)` and document it.
+- ℹ️ **Doc/code mismatch in `probability_weight_matrix`:** the doc comment
+  says the stored value is `(W† P_a W)_{s,r} = conj(W[a,s])·W[a,r]`, but
+  the code stores `conj(W[a,r])·W[a,s]` (the transpose). The test only
+  checks shape and finiteness, so this isn't caught. **Fix:** either
+  swap the code or fix the doc comment to match the transpose.
+
+### F4 — Online inference pipeline (code-complete, but a no-op round-trip)
+
+- ✅ `QfmPipeline::compile` / `encode` / `evolve` / `decode` / `generate`
+  — all implemented, all called by the end-to-end test.
+- ✅ `compile` registers training features, pre-projects observables,
+  computes the SVD-based Φ̃⁺, initializes the heavy hitters.
+- ✅ `encode` hashes the query, resolves the mode, projects to `c_0`.
+- ✅ `decode` tomographic reconstruct + heavy hitters + Φ̃⁺ + Φ.
+- ⚠️ **The Krylov basis `W` is hardcoded to the first `m` standard basis
+  vectors** (identity sub-block of K_2) at `pipeline.rs:175-181`. This is
+  not a Krylov basis of `H_bar`; it is a placeholder. The full
+  `build_flow_hamiltonian()` output is computed at line 173 but **discarded**
+  (`let _h_bar = ...`). **Fix:** use the existing `fock_sirk::solve_forward_sirk`
+  on `H_bar` with a vacuum seed, and store the resulting `ForwardSirkResult.w_whiten`
+  as the pipeline's `W`. This requires building a `QuantumState::vacuum()`,
+  choosing shifts, and calling `solve_forward_sirk` in `compile()`. The
+  SIRK machinery is already in `fock_sirk` and well-tested.
+- ⚠️ **`H_m` is hardcoded to diagonal `diag(alphas)`** at `pipeline.rs:186-189`.
+  Even after fixing `W`, the reduced Hamiltonian should come from
+  `W†·H_bar·W` projection, not from the raw alpha vector. **Fix:** compute
+  `H_m = W†·H_bar·W` in the Fock basis (or in the whitened basis if using
+  `w_whiten`).
+- ⚠️ **`evolve` ignores the time parameter `t`** — it hardcodes t=1 via
+  `Complex64::new(0.0, -alpha).exp()`. The plan signature is
+  `evolve(t: f64) -> c_1` with `c_1 = exp(-i·H_m·t)·c_0`. **Fix:** take `t`
+  as a parameter and use `Complex64::new(0.0, -alpha * t).exp()`.
+- ⚠️ **`pipeline_compile_and_generate_synthetic` test only asserts
+  `is_finite()`** (pipeline.rs:374-376) — it does not verify that `x_out`
+  is close to the input or has meaningful overlap with any training point.
+  The test name implies "synthetic" generation but the assertion was
+  weakened. **Fix:** add a stronger assertion, e.g., for a training
+  point query, `cosine_similarity(x_out, training[resolved_mode]) > 0.5`.
+
+### F5 — Integration (complete, but no FFI test for QFM)
+
+- ✅ `HamiltonianSpec::QfmTomography` variant + `QfmTomographySpec`
+  protocol type, serde round-trips through the existing
+  `round_trip_model_spec` test.
+- ✅ `compile_qfm_pipeline` in `prob_kernel/build.rs` builds a
+  `QfmPipeline` from a `QfmTomographySpec`.
+- ✅ `Session::evolve_with_query` dispatches to `pipeline.generate(query)`
+  and populates `EvolveReport::qfm_output`.
+- ✅ `KernelError::Qfm(..)` with diagnostic mapping (DimensionMismatch →
+  BAD_JSON + ReplaceValue; DegenerateBasis → INTERNAL + SetParam).
+- ✅ `uk_evolve` accepts optional `query` field in opts JSON.
+- ⚠️ **No FFI integration test exercises the QFM path.** The 15 FFI
+  tests in `unfer_ffi/tests/ffi.rs` do not touch `qfm_tomo`. The plan
+  required `qfm_tomo_via_ffi` as one of the 3 F5 tests. **Fix:** add a
+  test that builds a `QfmTomographySpec` JSON, calls `uk_model_create`,
+  then `uk_evolve` with `{"t": 1.0, "query": [0.1, 0.2, ...]}` and
+  asserts the output buffer from `uk_get_result` is a `Vec<f64>` of
+  length d with the `qfm_output` field present in the JSON.
+
+### F6 — Module demo and benchmarks (missing)
+
+- ⚠️ **No `qfm_tomo_module/`.** The plan required a module demo mirroring
+  `qfm_module/` (an Austral cell that JIT-compiles, calls
+  `uk_model_create` with a QFM tomography spec, calls `uk_evolve` with a
+  query, reads the generated image via `uk_get_result`, and frees via
+  the linear `Model`). **Fix:** create `unfer/qfm_tomo_module/` with
+  `module.toml` + `src/QfmTomoModule.{aui,aum}` + `build.sh` + `run_demo.sh`,
+  wire into CI as a new `qfm-tomo-e2e` job (mirroring the existing
+  `qfm-e2e`).
+- ⚠️ **No QFM benchmarks.** `fock_sirk/benches/sirk.rs` has criterion
+  benches for the SIRK solver; no `qfm/benches/` exists. **Fix:** add
+  `qfm/benches/pipeline.rs` with three groups: `compile_vs_M` (compile
+  time as a function of training set size, M = 10/100/1000), `generate_vs_d`
+  (generation time as a function of raw dimension, d = 64/256/1024), and
+  `sketch_apply_vs_d` (CountSketch::apply time vs. d).
+
+### F7 — Documentation and dev hygiene (minor)
+
+- ℹ️ No `/// # Examples` blocks in the `qfm` crate → 0 doc-tests. **Fix:**
+  add a minimal example to `qfm/src/lib.rs` showing `QfmPipeline::compile
+  + generate` on a 4-point synthetic dataset.
+- ⚠️ **88 `#[allow(dead_code)]` annotations in `pipeline.rs` alone.**
+  Most are on `QfmPipeline` struct fields that *are* used by `decode` —
+  the annotations are silencing what would otherwise be valid warnings.
+  **Fix:** remove the `#[allow]` once the F4 fixes land and the field
+  usage is stable.
+- ⚠️ **All Workstream F code is uncommitted.** 14 tracked-file
+  modifications and the new `qfm/` directory. **Fix:** commit and push
+  before any further work.
+
+### Prioritized next steps (F6–F8)
+
+The fixes above are ordered by leverage:
+
+1. **F8 — Commit and push** (immediate, no code changes). The
+   14-file modification + new `qfm/` directory is uncommitted. One
+   `git add` + `git commit` + `git push` clears the working tree.
+
+2. **F6 — QFM module demo (`qfm_tomo_module/`).** Mirrors the existing
+   `qfm_module/run_demo.sh` pattern. Without it, the Workstream F
+   integration has no end-to-end CI gate and no way for the Austral
+   module runtime to exercise the QFM tomography path. ~1 day.
+
+3. **F5-fix — FFI integration test.** Add `qfm_tomo_via_ffi` to
+   `unfer_ffi/tests/ffi.rs`. ~2 hours.
+
+4. **F4-fix — True unitary flow.** Replace the identity-subblock `W` and
+   diagonal `H_m` with a real SIRK solve on `H_bar`. This is the single
+   biggest correctness improvement — it turns the pipeline from a
+   no-op round-trip into the actual wavefunction flow the spec
+   describes. Add the time parameter `t` to `evolve`. Strengthen
+   `pipeline_compile_and_generate_synthetic` to verify meaningful
+   output. ~1–2 days.
+
+5. **F1-fix — `FeatureToMode::new` validates `k2_hint`.** One-line fix
+   (return `Result` or cap at k2). Prevents the latent OOB panic. ~15 min.
+
+6. **F2-fix — `flow_hamiltonian_ground_state_is_vacuum` test.** Either
+   remove the misleading test name or rewrite to assert the actual
+   superposition structure. ~15 min.
+
+7. **F3-fix — `krylov_image_basis` truncation.** Add a `debug_assert!(d ≤ k2)`
+   and document the constraint. ~10 min.
+
+8. **F6-fix — QFM benchmarks.** `qfm/benches/pipeline.rs` with three
+   groups. ~half a day.
+
+9. **F7-fix — Doc examples.** One minimal example in `qfm/src/lib.rs`.
+   ~30 min.
+
+10. **F7-fix — Remove `#[allow(dead_code)]` after F4 stabilizes.** Once
+    the F4 refactor lands, most of the suppressions are unnecessary.
+    ~30 min.
+
+### F-outcomes table (rev 13 update)
+
+The F-outcomes table above records what was *delivered*. The honest
+status of each line, with the F1–F4 quality caveats above, is:
+
+| Stage | Test target | Tests delivered | Code quality |
+|---|---|---|---|
+| F1 | ≥6 | 6 | ✅ complete, ⚠️ latent OOB in `FeatureToMode::new` |
+| F2 | ≥3 | 4 | ✅ complete, ⚠️ misleading test name |
+| F3 | ≥4 | 4 | ✅ complete, ⚠️ silent truncation in `krylov_image_basis` |
+| F4 | ≥3 | 3 | ⚠️ no-op round-trip, needs SIRK-backed W and H_m |
+| F5 | ≥3 | 3 | ✅ integration, ⚠️ no FFI test |
+| F6 | demo + benches | 0 | ❌ missing |
+| Total | ≥19 | **24** | code-complete, quality work remains |
+
 ## P6 — Future roadmap (v2: beyond feature-complete)
 
 > Everything through P5 + Workstream E is done, verified, and pushed (rev 9).
 > P6 A1 (mass-gap extraction), A2 (adaptive scaling), B3 (hot-swap), B4
-> (streaming/subscription), and D10 (session persistence + observability) are
-> also done. The remaining items below
+> (streaming/subscription), B5 (third non-demo module), D10 (session
+> persistence + observability), and P6 A3 (Workstream F F1–F5 code-complete)
+> are also done. The remaining items below
 > are **not** open bugs — the v1 system works as
 > specified. They are the genuine frontiers for a v2: each is a place where v1
 > made an honest simplification, stubbed a hard path, or left a documented
@@ -427,11 +800,12 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 ### A — Physics & numerics (the scientific frontier)
 1. ~~**Mass-gap extraction.**~~ **DONE (2026-06-28, unfer).** Added `ForwardSirkResult::ritz_values()` (sorted real eigenvalues of `h_proj`), `mass_gap()` (intra-sector E₁−E₀), `ground_state_energy()`, and `mass_gap_from_sectors(even, odd)` (cross-sector gap for parity-preserving Hamiltonians). **Key physics finding:** the quartic magnetic plaquette term preserves total excitation-number parity (each Φ=a†+a changes excitation by ±1, and 4 Φ's give Δn ∈ {±4,±2,0}), so a single vacuum-started Krylov only captures the even-parity sector. The true one-particle mass gap (g²/2) requires comparing ground-state Ritz values from two solves: vacuum-start (even sector, E₀≈0) and one-excitation-start (odd sector, E₀≈g²/2). Test `yang_mills_lattice_mass_gap` verifies the gap at g=2 on l=2: E_even≈−0.008, E_odd≈1.979, gap≈1.987 ≈ g²/2=2.0 (positive = confinement). Sanity test `ritz_values_and_gap_for_hopping` checks the known ±1 spectrum. +2 tests, workspace now 116 green. Clippy/fmt clean.
 2. ~~**Scaling wall beyond l=4.**~~ **DONE (2026-06-28, unfer).** Added `SirkOpts.adaptive: bool` (default false, backward-compatible) + `SolverSpec.adaptive` (serde default false). When true, the solver falls back to `truncate_top_k(max_components)` instead of erroring with `StateExplosion` — keeping the component count under a fixed budget at the cost of approximation error. The Gram whitening absorbs the resulting non-orthonormality. Also added truncation to `evolve_restarted`'s restart loop. Tests: `adaptive_l4_completes_under_budget` (l=4, 288 terms, m=4, max=50K — previously hit StateExplosion at 627K) and `adaptive_l5_completes_under_budget` (l=5, 450 terms, 25 plaquettes — first l>4 solve ever; ~82s on CPU). Both produce Hermitian H_proj with positive rank. +2 tests, workspace now 118 green. Clippy/fmt clean.
+3. ~~**QFM tomographic subspace recovery (Workstream F).**~~ **CODE-COMPLETE (rev 13, unfer, +24 tests: 156 workspace).** F1–F5 implemented and integrated per the plan (see §"Workstream F" below for the full design and §"Workstream F — Gap Analysis & Next Steps" for the honest quality assessment). The existing Workstream E QFM (`qfm_mehler` / `qfm_mehler_offdiag`) is a **diagonal** surrogate with M data points each occupying a single boson mode in the K-dim Fock space — no hashing, no tomographic decoding, and online generation is just `time_evolve(t)`. Workstream F adapts the *"Coherent Algorithm Specification: Non-Neural Quantum Flow Matching (QFM) with Tomographic Subspace Recovery"* spec into the unfer architecture: a new `qfm` crate with `CountSketch` (S_1: R^d → R^k), `FeatureToMode` (S_2: features → K_2-dim single-excitation Fock states), `HeavyHitters` (peak recovery from the probability sketch), the offline training pipeline (analytical ᾱ_j from the Flow Matching objective, Hermitian H̄), the pre-projected observables (W_prob ∈ R^{K_2×m²}, Φ ∈ R^{d×m²}, Φ̃⁺ ∈ R^{m²×k}), and a 4-phase online `QfmPipeline::generate(query) -> Vec<f64>`. Exposed through `prob_kernel` as a new `HamiltonianSpec::QfmTomography` variant and the existing `uk_*` FFI surface. **Hermiticity deviation:** the spec's anti-Hermitian `H̄ = |0><0| - (i/2) Σ ᾱ_j ĥ_j` becomes the Hermitian `H̄ = |0><0| + (1/2) Σ ᾱ_j ĥ_j_herm` (coherent, not diffusive). Full design: **§"Workstream F" below** (F1–F5 stages).
 
 ### B — Module runtime (finish the hard paths)
 3. ~~**Full end-to-end hot-swap.**~~ **DONE (2026-06-28, australVM `0908cee5`).** The complete hot-swap pipeline that was previously stubbed is now implemented and tested end-to-end. Changes: (a) added `state` field to `CellEntry` (was missing — `cell_swap` couldn't access the cell's live state); (b) added state management API (`cell_alloc_state`, `cell_run_step`, `cell_get_state`, `cell_get_descriptor`, `cell_count_loaded`); (c) fixed `cell_swap` to actually migrate state: save old state via `old_desc->save()` → Serializer → migrate via `new_desc->migrate(old_state, &deserializer)` → drop old state → update entry. Two cell `.so` files (`cells/counter_v1.c` = counter++, `cells/counter_v2.c` = counter+=10 with migrate that reads old counter + sets bonus=100, same type_hash "counter_cell") are compiled and loaded via `dlopen`/`dlsym`. Test `test/hotswap_e2e.c` verifies: load V1 → alloc → step 3x (counter=3) → load V2 → `cell_swap` (migrate: counter=3 preserved, bonus=100) → step V2 (counter=13→23) → PASS. `make hotswap-test` builds and runs the full pipeline. Also fixed off-by-one in `cell_load` logging and inaccurate doc-comment in `cranelift/src/lib.rs` (was claiming `test_integration.sh` tests hot-swap; it doesn't).
-4. ~~**Streaming/subscription surface.**~~ **DONE (2026-06-28, unfer).** Per-model bounded event queue (`VecDeque<String>`, cap 64; overflow drops oldest — fire-and-forget backpressure) in `SessionEntry`. Event vocabulary: `evolved` (t, norm, components, solve_ms), `conditioned`/`observed` (prior_probability), `prior_set`, `hamiltonian_set` — emitted after each mutating op in `uk_*`. `uk_subscribe(model, query, len) -> sub` (v1: sub == model handle; query reserved for future filtering). `uk_poll(sub, buf, cap) -> i64` — peek-on-probe / pop-on-write semantics so the two-call buffer protocol works correctly (first call with null buf sizes without consuming; second with real buf pops). `poll_events` op in `unfer_agent` drains all pending events in one response (`{"events": [...]}`). +11 unit tests in `unfer_ffi`, +1 in agent. unfer workspace: 131 green. Clippy/fmt clean. docs: rev 11.
-5. **A third, non-demo module.** `demo_module` + `qfm_module` exist to prove the spine. A module doing real work — a `data_source` ingesting external observations through `uk_observe` and conditioning the session — would exercise the archetype contracts (MODULES.md) beyond the happy path.
+4. ~~**Streaming/subscription surface.**~~ **DONE (2026-06-28, unfer; rev 12 typed-event upgrade).** Per-model bounded event queue (`VecDeque<String>`, cap 64; overflow drops oldest — fire-and-forget backpressure) in `Subscription`. Event vocabulary: `evolved` (t, norm, components, solve_ms), `conditioned`/`observed` (prior_probability), `prior_set`, `hamiltonian_set` — emitted after each mutating op in `uk_*`. **Rev 12 upgrade:** the event vocabulary was promoted from ad-hoc JSON strings to a typed `unfer_protocol::KernelEvent` enum (`#[serde(tag = "type", rename_all = "snake_case")]`: `PriorSet`, `HamiltonianSet`, `Evolved{t,norm,solve_ms}`, `Conditioned{prior_probability}`, `Observed{value}`, `Error{diagnostic}`) and subscriptions carry a `EventQuery { types: Option<Vec<String>> }` filter. `uk_subscribe(model, query_json, len) -> sub` returns a **fresh** subscription handle (from a separate `NEXT_SUB` counter) keyed to the model, and `matches_query` filters events per-subscription. `uk_poll(sub, buf, cap) -> i64` — peek-on-probe / pop-on-write semantics so the two-call buffer protocol works correctly (first call with null buf sizes without consuming; second with real buf pops). `uk_subscribe` with an invalid model handle returns `-1004` (BAD_HANDLE). `poll_events` op in `unfer_agent` drains all pending events in one response (`{"events": [...]}`). +12 inline tests in `unfer_ffi` (including `subscribe_filters_by_event_type`), +1 in agent. unfer workspace: 132 green (rev 12). Clippy/fmt clean.
+5. ~~**A third, non-demo module.**~~ **DONE (2026-06-28, unfer).** New `unfer/demo_module/data_source/` — a standalone Rust binary (not an Austral module) that links `unfer_ffi` as a path dependency and drives the kernel through the real C ABI: `uk_init` → `uk_model_create` (harmonic_chain, n_modes=1) → 4 `uk_observe` calls with valid `EventPredicate` JSON (vacuum, `boson_mode_total` with `eq`/`ge` comparators) → `uk_get_result` buffer drain → `uk_model_free`. Wired into `demo_module/run_demo.sh` step 8. Exercises the `data_source` archetype contract (ingesting external observations through `uk_observe`) beyond the happy path. On a vacuum prior, the vacuum and `mode0==0` observations return `{"prior_probability":1.0}`; `mode0>=1`/`mode0==1` correctly return UK-2003 (zero-probability condition). The `data_source/Cargo.toml` declares `[workspace]` to make it a standalone project (not a member of the `unfer` workspace), avoiding target-dir contention.
 
 ### C — UI / frontend
 6. **Typst-math → Hamiltonian compiler (gap §7).** The v1 translator pipeline (P3.10) has the user author a Typst translator function that maps rendered math → `TermSpec[]`. A general compiler from rendered math *directly* to a Hamiltonian — no hand-authored translator — remains the documented v2 extension point.
@@ -441,6 +815,77 @@ E21. ~~**The QFM Austral module.**~~ **DONE (2026-06-27, unfer + australVM).** N
 8. **CUDA toolkit pinning.** The GPU path needs `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` to survive CUDA 12.2/13 coexistence (gap §5, AGENTS.md §5). Pin the toolkit or ship a clean container so the workaround disappears and CI can run the `cuda` feature unattended.
 9. **CI: private-repo PAT.** The `demo-e2e`/`qfm-e2e` jobs carry a commented `token:` slot for the sibling australVM checkout (#31); wire a PAT if australVM ever becomes private.
 10. ~~**Session persistence + observability.**~~ **DONE (2026-06-28, unfer).** Added `Session::save() -> SessionBlob` and `Session::restore(blob) -> Result<Session, _>` in `prob_kernel`. `SessionBlob` (serde: `hamiltonian_spec`, `solver_spec`, `state`, `t_now`) survives a JSON round-trip with exact amplitude and time preservation (test `session_save_restore_roundtrip`). `QuantumState` and its nested types (`OuterState`, `InnerBosonicState`, `InnerFermionicState`) now derive or implement `Serialize`/`Deserialize`. `EvolveReport` gains `solve_ms: u64` (wall-clock SIRK time). `AgentResponse` gains `timing_ms: Option<u64>` (total op time, `skip_serializing_if = "Option::is_none"`). `unfer_ffi` exports `uk_snapshot` (buffer protocol) and `uk_restore` (returns new handle). `unfer_agent` adds `save_session` and `restore_session` ops with `with_timing()` on every response. +2 tests in `prob_kernel` (integration test file); 2 more in `kernel_client` agent tests (velysterm). unfer workspace now 120 green. Clippy/fmt clean.
+
+### E — QFM tomographic hardening (Workstream F quality, rev 13)
+
+> The F1–F5 code is code-complete and all 24 new tests pass. But the
+> *current* `QfmPipeline::evolve` is a deterministic nearest-training-point
+> round-trip through a lossy sketch projection, not the true unitary flow
+> the spec describes. These items are the prioritized hardening list from
+> the §"Workstream F — Gap Analysis" section above. Ordered by leverage
+> (highest impact first).
+
+11. **True unitary flow in `QfmPipeline`.** Replace the hardcoded
+    identity-subblock `W` (pipeline.rs:175-181) and diagonal `H_m`
+    (pipeline.rs:186-189) with a real SIRK solve on `H_bar` using
+    `fock_sirk::solve_forward_sirk` (vacuum seed, uniform shifts). The
+    reduced Hamiltonian is then `H_m = W†·H_bar·W` (or the whitened
+    version via `ForwardSirkResult.w_whiten`). Add the time parameter
+    `t` to `evolve` (currently hardcoded to 1). Strengthen
+    `pipeline_compile_and_generate_synthetic` to assert
+    `cosine_similarity(x_out, training[resolved_mode]) > 0.5`. This is
+    the single biggest correctness improvement — it turns the pipeline
+    from a no-op round-trip into the actual wavefunction flow.
+    ~1–2 days. **Accept:** `cargo test -p qfm pipeline` green; the
+    synthetic test now verifies meaningful output, not just finiteness.
+
+12. **`qfm_tomo_module/` demo.** New `unfer/qfm_tomo_module/` mirroring
+    `qfm_module/`: `module.toml` (archetypes `data_source` + `actor`;
+    grants `uk_model_create`/`uk_evolve`/`uk_get_result`/`uk_model_free`),
+    `src/QfmTomoModule.{aui,aum}` (builds a `QfmTomographySpec` JSON,
+    JIT-creates the model, evolves with a query, reads back the
+    generated image, frees via the linear `Model`), `build.sh`,
+    `run_demo.sh`. Wire into `.github/workflows/ci.yml` as a new
+    `qfm-tomo-e2e` job (mirroring the existing `qfm-e2e`). ~1 day.
+    **Accept:** `bash unfer/qfm_tomo_module/run_demo.sh` prints a
+    generated image and asserts the linear `Model` discipline.
+
+13. **QFM benchmarks.** New `qfm/benches/pipeline.rs` (criterion 0.5)
+    with three groups: `compile_vs_M` (compile time vs. training set
+    size M = 10/100/1000), `generate_vs_d` (generation time vs. raw
+    dimension d = 64/256/1024), `sketch_apply_vs_d` (CountSketch::apply
+    time vs. d). ~half a day. **Accept:**
+    `cargo bench -p qfm --bench pipeline` runs clean; results show the
+    expected O(d·m²) + O(K₂·m²) + O(K₂ log k) scaling.
+
+14. **FFI integration test for QFM.** Add `qfm_tomo_via_ffi` to
+    `unfer_ffi/tests/ffi.rs`: build a `QfmTomographySpec` JSON, call
+    `uk_model_create`, then `uk_evolve` with `{"t": 1.0, "query":
+    [0.1, 0.2, ...]}`, drain `uk_get_result`, assert the output JSON
+    contains a `qfm_output: [f64; d]` field. ~2 hours. **Accept:**
+    `cargo test -p unfer_ffi --test ffi` green with the new test.
+
+15. **`FeatureToMode::new` validates `k2_hint`.** One-line fix: either
+    return `Result<Mode, QfmError>` from `register` when the new mode
+    index would exceed k2, or hard-cap at k2 with a clear error. Prevents
+    the latent OOB panic if `M > k2`. ~15 min.
+
+16. **Test correctness fixes.** (a) Rewrite
+    `flow_hamiltonian_ground_state_is_vacuum` in `qfm/src/potential.rs`
+    to assert the actual superposition structure of `H|0⟩` (or rename
+    it to reflect what it actually tests). (b) Add a `debug_assert!(d ≤
+    k2)` in `krylov_image_basis` and document the constraint in the
+    doc comment. (c) Fix the doc/code mismatch in
+    `probability_weight_matrix` (the stored value is the transpose of
+    what the comment says). ~30 min total.
+
+17. **Remove `#[allow(dead_code)]` annotations from `qfm/src/pipeline.rs`**
+    after the F4-fix lands and the field usage is stable. ~30 min.
+
+18. **Doc example in `qfm/src/lib.rs`.** Add a minimal `/// # Examples`
+    block showing `QfmPipeline::compile + generate` on a 4-point
+    synthetic dataset. Runs as a doc-test on `cargo test --doc -p qfm`.
+    ~30 min.
 
 ## Historical risks & mitigations (from planning)
 - **CUDA availability** — Stage 1 is first; every acceptance criterion runs on CPU; `cuda` is additive.

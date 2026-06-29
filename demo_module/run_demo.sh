@@ -124,8 +124,8 @@ else
   exit 1
 fi
 
+
 echo "============================================================"
-echo " DEMO COMPLETE: module-computed probability ran; authorization gate"
-echo "               enforced; linear model-handle discipline type-checked;"
-echo "               record slot-offset codegen verified."
+echo " 8. DATA SOURCE: ingestion loop via uk_observe"
 echo "============================================================"
+( cd "$HERE/data_source" && cargo run )

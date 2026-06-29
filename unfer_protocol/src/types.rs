@@ -22,6 +22,14 @@ pub enum HamiltonianSpec {
     Terms {
         terms: Vec<TermSpec>,
     },
+    /// Non-Neural QFM with Tomographic Subspace Recovery (Workstream F).
+    /// The compilation spec carries the training data and the sketch/Krylov
+    /// dimensions. The `prob_kernel` compiles a `QfmPipeline` from this spec
+    /// and stores it in the session; `evolve` dispatches to the pipeline's
+    /// 4-phase `generate` instead of the SIRK solver.
+    QfmTomography {
+        spec: Box<QfmTomographySpec>,
+    },
 }
 
 impl HamiltonianSpec {
@@ -39,6 +47,27 @@ impl HamiltonianSpec {
     pub fn terms(terms: Vec<TermSpec>) -> Self {
         Self::Terms { terms }
     }
+
+    pub fn qfm_tomography(spec: QfmTomographySpec) -> Self {
+        Self::QfmTomography {
+            spec: Box::new(spec),
+        }
+    }
+}
+
+/// Compilation spec for the QFM tomographic pipeline (Workstream F).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QfmTomographySpec {
+    /// Training data: a list of d-dimensional points.
+    pub training_data: Vec<Vec<f64>>,
+    /// Level 1 sketch dimension (k, where k << d).
+    pub k: usize,
+    /// Level 2 sketched Hilbert space dimension (K_2 > k).
+    pub k2: usize,
+    /// Krylov subspace dimension (m, the reduced rank).
+    pub krylov_dim: usize,
+    /// PRNG seed for the Level 1 sketch.
+    pub seed: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,6 +259,22 @@ pub struct AgentResponse {
     /// Wall-clock time for the op in milliseconds (absent on very fast ops).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum KernelEvent {
+    PriorSet,
+    HamiltonianSet,
+    Evolved { t: f64, norm: f64, solve_ms: u64 },
+    Conditioned { prior_probability: f64 },
+    Observed { value: f64 },
+    Error { diagnostic: Diagnostic },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventQuery {
+    pub types: Option<Vec<String>>,
 }
 
 impl AgentResponse {

@@ -7,7 +7,10 @@ use nested_fock_algebra::{
     qfm_hamiltonian, qfm_hamiltonian_offdiag, yang_mills_hamiltonian, yang_mills_lattice,
 };
 use num_complex::Complex64;
-use unfer_protocol::{DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec};
+use qfm::{QfmConfig, QfmPipeline};
+use unfer_protocol::{
+    DeviceSpec, HamiltonianSpec, Level, OpKind, OpSpec, PriorSpec, QfmTomographySpec,
+};
 
 use crate::error::KernelError;
 
@@ -93,7 +96,37 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
                 .collect::<Result<_, _>>()?;
             Ok(Hamiltonian { terms: h_terms })
         }
+
+        HamiltonianSpec::QfmTomography { spec } => {
+            // The QFM pipeline is compiled separately (via `compile_qfm_pipeline`)
+            // and stored in the Session. For the SIRK-path Hamiltonian, return
+            // a minimal placeholder (the vacuum projector) so the Session has
+            // *some* Hamiltonian. The QFM pipeline overrides `evolve` entirely.
+            let _ = spec;
+            Ok(Hamiltonian {
+                terms: vec![(Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum])],
+            })
+        }
     }
+}
+
+/// Compile a [`QfmPipeline`] from a [`QfmTomographySpec`].
+pub fn compile_qfm_pipeline(spec: &QfmTomographySpec) -> Result<QfmPipeline, KernelError> {
+    if spec.training_data.is_empty() {
+        return Err(KernelError::BadBuiltinParams {
+            reason: "QfmTomographySpec requires non-empty training_data".into(),
+        });
+    }
+    let config = QfmConfig {
+        k: spec.k,
+        k2: spec.k2,
+        krylov_dim: spec.krylov_dim,
+        seed: spec.seed,
+        n_t_samples: 10,
+        noise_dim: spec.training_data[0].len(),
+    };
+    let pipeline = QfmPipeline::compile(&spec.training_data, &config)?;
+    Ok(pipeline)
 }
 
 /// Convert a protocol [`OpSpec`] to a kernel [`Operator`].

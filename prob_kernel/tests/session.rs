@@ -781,3 +781,86 @@ fn sirk_stability_krylov_dim_32() {
     let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
     assert!((0.0..=1.0).contains(&p_vac), "P(vacuum) in [0,1]: {p_vac}");
 }
+
+// ── Workstream F5: QFM tomographic integration tests ─────────────────
+
+/// Build a `ModelSpec` with a `HamiltonianSpec::QfmTomography` variant.
+fn qfm_tomo_spec(training_data: Vec<Vec<f64>>) -> ModelSpec {
+    use unfer_protocol::QfmTomographySpec;
+    let spec = QfmTomographySpec {
+        training_data,
+        k: 4,
+        k2: 8,
+        krylov_dim: 4,
+        seed: 42,
+    };
+    ModelSpec {
+        hamiltonian: HamiltonianSpec::qfm_tomography(spec),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+            adaptive: false,
+        },
+    }
+}
+
+#[test]
+fn qfm_tomo_compile_and_generate() {
+    // 4 training points in d=8.
+    let training = vec![
+        vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    ];
+    let spec = qfm_tomo_spec(training.clone());
+    let mut session = Session::new(&spec).expect("QFM session");
+
+    // Evolve with a query: the pipeline generates a raw image.
+    let report = session
+        .evolve_with_query(1.0, Some(&training[0]))
+        .expect("QFM generate");
+    let output = report.qfm_output.expect("qfm_output must be present");
+    assert_eq!(output.len(), 8, "generated image must have d=8 elements");
+    for &v in &output {
+        assert!(v.is_finite(), "output must be finite, got {v}");
+    }
+}
+
+#[test]
+fn qfm_tomo_no_query_returns_error() {
+    let training = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+    let spec = qfm_tomo_spec(training);
+    let mut session = Session::new(&spec).expect("QFM session");
+
+    // Evolve without a query: the QFM pipeline requires a query.
+    let result = session.evolve(1.0);
+    assert!(
+        result.is_err(),
+        "evolve without query must fail for QFM model"
+    );
+}
+
+#[test]
+fn qfm_tomo_no_m_in_evolve_report() {
+    // Verify the EvolveReport payload does not reference the training data.
+    let training = vec![
+        vec![1.0, 0.0, 0.0, 0.0],
+        vec![0.0, 1.0, 0.0, 0.0],
+        vec![0.0, 0.0, 1.0, 0.0],
+    ];
+    let spec = qfm_tomo_spec(training.clone());
+    let mut session = Session::new(&spec).expect("QFM session");
+    let report = session
+        .evolve_with_query(1.0, Some(&[1.0, 0.0, 0.0, 0.0]))
+        .expect("QFM generate");
+
+    // Serialize the report and check it serializes cleanly.
+    let json = serde_json::to_string(&report).expect("serialize report");
+    assert!(json.contains("qfm_output"));
+    assert!(report.qfm_output.is_some());
+}

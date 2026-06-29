@@ -10,6 +10,9 @@ pub enum KernelError {
     #[error(transparent)]
     Cas(#[from] CasError),
 
+    #[error("QFM pipeline error: {0}")]
+    Qfm(#[from] qfm::pipeline::QfmError),
+
     #[error("unknown builtin model: {name}")]
     UnknownBuiltinModel { name: String },
 
@@ -169,6 +172,40 @@ impl KernelError {
                 )
             }
 
+            KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
+                Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
+                    RepairHint::new(
+                        HintKind::ReplaceValue,
+                        "evolve.query",
+                        format!("query must have {expected} elements (got {got})"),
+                    ),
+                )
+            }
+
+            KernelError::Qfm(qfm::pipeline::QfmError::DegenerateBasis) => Diagnostic::new(
+                Code::INTERNAL,
+                self.to_string(),
+                Severity::Fatal,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::SetParam,
+                "hamiltonian.spec.krylov_dim",
+                "the Krylov basis is degenerate; increase krylov_dim or check training data",
+            )),
+
+            KernelError::Qfm(qfm::pipeline::QfmError::SirkFailed(msg)) => {
+                Diagnostic::new(Code::INTERNAL, self.to_string(), Severity::Fatal).with_hint(
+                    RepairHint::new(
+                        HintKind::SetParam,
+                        "hamiltonian.spec",
+                        format!(
+                            "SIRK solve failed during QFM compile ({msg}); adjust the Krylov \
+                             shifts or the Hamiltonian structure"
+                        ),
+                    ),
+                )
+            }
+
             KernelError::Internal(msg) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Fatal).with_hint(
                     RepairHint::new(
@@ -209,6 +246,15 @@ mod tests {
                 limit: 65_536,
             }),
             KernelError::Cas(CasError::Parse("unexpected token".into())),
+            // Qfm(..) — all three QfmError variants.
+            KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch {
+                expected: 8,
+                got: 4,
+            }),
+            KernelError::Qfm(qfm::pipeline::QfmError::DegenerateBasis),
+            KernelError::Qfm(qfm::pipeline::QfmError::SirkFailed(
+                "singular matrix".into(),
+            )),
             // Native KernelError variants.
             KernelError::UnknownBuiltinModel {
                 name: "lattice_qcd".into(),
@@ -278,7 +324,10 @@ mod tests {
             let diag = err.to_diagnostic();
             let is_internal_variant = matches!(
                 err,
-                KernelError::Internal(_) | KernelError::Sirk(SirkError::Numeric(_)),
+                KernelError::Internal(_)
+                    | KernelError::Sirk(SirkError::Numeric(_))
+                    | KernelError::Qfm(qfm::pipeline::QfmError::DegenerateBasis)
+                    | KernelError::Qfm(qfm::pipeline::QfmError::SirkFailed(_)),
             );
             if !is_internal_variant {
                 assert_ne!(
