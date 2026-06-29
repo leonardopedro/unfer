@@ -369,6 +369,27 @@ impl QfmPipeline {
     pub fn rank(&self) -> usize {
         self.rank
     }
+
+    /// The Level 1 sketch (read-only).
+    pub fn s1(&self) -> &CountSketch {
+        &self.s1
+    }
+
+    /// The Level 2 hash (read-only).
+    pub fn s2(&self) -> &FeatureToMode {
+        &self.s2
+    }
+
+    /// The Krylov basis W (K_2 x rank).
+    pub fn w(&self) -> &DMatrix<Complex64> {
+        &self.w
+    }
+
+    /// The training features retained for the nearest-neighbor fallback
+    /// in S_2 (a (key, feature) pair list).
+    pub fn training_features(&self) -> &[(u64, Vec<f64>)] {
+        &self.training_features
+    }
 }
 
 /// Build a starting state for the SIRK solve: the vacuum `|0>` plus

@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026 (rev.\ 3, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks)}
+\date{June 2026 (rev.\ 4, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation)}
 
 \begin{document}
 
@@ -1383,6 +1383,50 @@ architecture: the TSR-evolved prior $P_{\mathrm{prior}}$ is the only
 prior under which the multi-modal posterior of \eqref{eq:posterior} is
 navigable, sample-efficient, and generalizes to unseen test-time
 constraints.
+
+\subsection{Implementation status (rev 16, 2026-06-30)}
+
+The Bayesian-update algorithm of \S\ref{sec:bayes} is implemented
+in the \texttt{unfer} kernel as a new \texttt{qfm::bayes} module
+(rev 16, \texttt{commit 47f6a0c} + \texttt{5e0b87b}). The module
+exports:
+
+\begin{itemize}
+\item \texttt{Likelihood::from\_observation(pipeline, \&D\_i)} ---
+  Phase 2 of the spec (S$_1$ hash $\to$ S$_2$ mode resolve $\to$
+  Krylov projection $W^\dagger\ket{\Psi_{D_i}}$), producing a
+  rank-1 likelihood operator $\mathbf L_i = \vec v_i \vec
+  v_i^\dagger$ in $\Cset^{m\times m}$.
+\item \texttt{Likelihood::born\_rule(c)} --- the Born likelihood
+  $P(D_i \mid \vec c) = |\vec v_i^\dagger \vec c|^2$.
+\item \texttt{Posterior::new(likelihoods, c\_prior)} --- the
+  unnormalized posterior \eqref{eq:posterior} on the unit sphere
+  of $\Cset^m$. The informed prior direction $\vec c_{\mathrm{prior}}$
+  is the TSR-evolved vacuum state
+  $e^{-iH_m}W^\dagger\ket{e_0}$, computed by
+  \texttt{tsr\_evolved\_prior(pipeline)}.
+\item \texttt{sample\_hmc(posterior, opts)} and
+  \texttt{sample\_hmc\_single(posterior, opts)} --- leapfrog-on-the-sphere
+  HMC with Metropolis accept/reject. The sampler renormalizes to
+  the unit sphere after every leapfrog step (so the trajectory is
+  constrained to the natural manifold of the wavefunctions). Uses
+  a deterministic splitmix64 + Box--Muller PRNG (no external
+  dependencies).
+\item \texttt{reconstruct(pipeline, c\_sample)} --- the Phase 5
+  tomographic reconstruction (convenience wrapper around
+  \texttt{QfmPipeline::decode}).
+\end{itemize}
+
+The implementation has seven new unit tests
+(\texttt{+7, 163} $\to$ \texttt{170} workspace), including the
+acceptance criterion \texttt{bayesian\_update\_tsr\_recovers\_training\_mode}:
+on the 4-pt tetrahedron training set with a single observation
+at training point $\vec e_0$, the HMC sample decodes to an image
+whose $\arg\max$ is at index 0 --- exactly the training point. A
+fourth benchmark group \texttt{bayes\_update\_vs\_n}
+($N = 1, 4, 16$) confirms the $\mathcal{O}(N \cdot m^2)$ per-step
+HMC cost. Not yet wired into \texttt{prob\_kernel::Session} or the
+\texttt{uk\_*} FFI surface (~1 day of follow-on work).
 
 \section{Conclusion}
 

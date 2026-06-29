@@ -21,6 +21,9 @@
 //!   Phi, and the compressive subspace solver Phi_tilde^+.
 //! - [`pipeline`]: The 4-phase online inference pipeline (encode -> evolve
 //!   -> tomographic reconstruct -> lossless decode).
+//! - [`bayes`]: Quantum Bayesian updating on the TSR-evolved prior
+//!   (QMF.tex §8). Likelihood operators, HMC on the unit sphere of C^m,
+//!   and tomographic reconstruction of the posterior sample.
 //!
 //! # Quick start
 //!
@@ -56,12 +59,16 @@
 //! }
 //! ```
 
+pub mod bayes;
 pub mod heavy_hitters;
 pub mod observables;
 pub mod pipeline;
 pub mod potential;
 pub mod sketch;
 
+pub use bayes::{
+    HmcOpts, Likelihood, Posterior, reconstruct, sample_hmc, sample_hmc_single, tsr_evolved_prior,
+};
 pub use heavy_hitters::HeavyHitters;
 pub use pipeline::{QfmConfig, QfmError, QfmPipeline};
 pub use sketch::{CountSketch, FeatureToMode};

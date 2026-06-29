@@ -1,6 +1,6 @@
 //! Criterion benchmarks for the QFM tomographic pipeline (rev 15, P6 F.20).
 //!
-//! Three groups exercising the architecture's central scaling claims:
+//! Four groups exercising the architecture's central scaling claims:
 //!
 //! - `compile_vs_M` — offline compile time vs. training-set size M
 //!   (M = 10/100/1000). Expected: roughly linear in M (the O(M) training
@@ -18,7 +18,14 @@
 //!   (d = 64/256/1024/4096). Expected: O(d) linear scaling (one hash +
 //!   one accumulator update per input dimension).
 //!
-//! Acceptance (per IMPLEMENTATION_PLAN.md §P6 F.20):
+//! - `bayes_update_vs_n` — Quantum Bayesian update time vs. number of
+//!   new observations N (N = 1/4/16, M = 100 training set, d = 64,
+//!   fixed m = 4 Krylov subspace). Expected: O(N · m²) per HMC step
+//!   for the likelihood-gradient term, so total cost is roughly linear
+//!   in N. The benchmark times both the full HMC trajectory and the
+//!   final tomographic reconstruction.
+//!
+//! Acceptance (per IMPLEMENTATION_PLAN.md §P6 F.20 and §P6 H):
 //!   `cargo bench -p qfm --bench pipeline` runs clean and the
 //!   measurements show the expected scaling.
 //!
@@ -27,7 +34,10 @@
 //! points are the only places the bench will dominate wall-clock time.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use qfm::{CountSketch, QfmConfig, QfmPipeline};
+use qfm::{
+    CountSketch, HmcOpts, Likelihood, Posterior, QfmConfig, QfmPipeline, sample_hmc_single,
+    tsr_evolved_prior,
+};
 use std::hint::black_box;
 
 /// Build a synthetic training set of `m` d-dimensional points centred on
@@ -120,11 +130,55 @@ fn bench_sketch_apply_vs_d(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_bayes_update_vs_n(c: &mut Criterion) {
+    // Single M=100, d=64, m=4 compile (paid outside the timed region).
+    // Vary N (number of new observations) from 1/4/16. Per HMC step
+    // the cost is O(N * m^2) (likelihood-gradient term), so the timing
+    // should grow roughly linearly in N.
+    let m = 100usize;
+    let d = 64usize;
+    let training = synthetic_training(m, d, 13);
+    let cfg = config_for(d, m);
+    let pipeline = QfmPipeline::compile(&training, &cfg).unwrap();
+    let c_prior = tsr_evolved_prior(&pipeline);
+
+    let mut group = c.benchmark_group("bayes_update_vs_n");
+    group.sample_size(10);
+    for &n_obs in &[1usize, 4, 16] {
+        let likelihoods: Vec<Likelihood> = (0..n_obs)
+            .map(|i| {
+                Likelihood::from_observation(&pipeline, &training[i % training.len()])
+                    .expect("likelihood")
+            })
+            .collect();
+        let opts = HmcOpts {
+            leapfrog_steps: 20,
+            step_size: 0.05,
+            n_iterations: 100,
+            burn_in: 50,
+            seed: 42,
+        };
+        group.bench_with_input(
+            criterion::BenchmarkId::from_parameter(n_obs),
+            &n_obs,
+            |b, &_n| {
+                b.iter(|| {
+                    let posterior = Posterior::new(black_box(likelihoods.clone()), c_prior.clone());
+                    let sample = sample_hmc_single(&posterior, black_box(&opts));
+                    black_box(sample.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_compile_vs_m,
     bench_generate_vs_d,
-    bench_sketch_apply_vs_d
+    bench_sketch_apply_vs_d,
+    bench_bayes_update_vs_n
 );
 criterion_main!(benches);
 

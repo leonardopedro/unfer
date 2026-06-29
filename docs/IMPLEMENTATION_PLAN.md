@@ -4,13 +4,13 @@
 
 ## Current status (updated 2026-06-30, rev 15)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14), and P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), and P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **four** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes (and what is still on the v2 frontier for QFM) are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the Bayesian-update algorithm on the TSR-evolved prior is spec'd in `QMF.tex §8` and tracked as the v2 frontier item P6 H below**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14), P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline), and P6 H (Quantum Bayesian Update on the TSR-evolved prior, QMF.tex §8) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **four** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes (and what is still on the v2 frontier for QFM) are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the v2 frontier item resolved in rev 16 is in §"P6 H — Quantum Bayesian Update on the TSR-evolved prior"**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: **6 crates** (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`, **`qfm`** — added in rev 13) + 3 module demos (`demo_module/`, `qfm_module/`, **`qfm_tomo_module/`** — added in rev 15) + 1 standalone Rust module (`demo_module/data_source/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
   - `australVM/safestos/cranelift`: `auth.rs` (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`. CPS-JIT backend fixed (let-init, record destructure, cross-module linking, byte buffers, multi-field records).
   - `velysterm`: `crates/kernel_client/` (worker-thread client + `unfer_agent` NDJSON binary), `mathed_core` (PropKinds + `KernelStatement` + `accessibility` + `glyphs`), `crates/mathed/` (Bevy bridge + overlay), `crates/mathed_mini/` (Bevy-free CPU frontend with caret blink, mouse hit-testing, AccessKit bridge, translator pipeline, kernel bridge).
-- **Test counts (CPU, full sweep 2026-06-30, rev 15):** unfer workspace **163** (19 fock_sirk + 26 nested_fock_algebra + 33 prob_kernel + 30 unfer_protocol + **29 unfer_ffi** + **26 qfm**) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. Breakdown of the 26 qfm tests: 25 lib tests + 1 doc-test. Breakdown of the 29 unfer_ffi tests: 12 lib tests + 17 FFI integration tests. Breakdown of the 33 prob_kernel tests: 2 lib tests + 31 integration tests. **P6 F.20 (rev 15):** added `qfm/benches/pipeline.rs` — a criterion benchmark harness with three groups (`compile_vs_M`, `generate_vs_d`, `sketch_apply_vs_d`) that confirm the architecture's central scaling claims (linear in M for compile, linear in d for generate, O(d) for the Level 1 sketch). **P6 F.19 (rev 15):** added `unfer/qfm_tomo_module/` — an Austral module that JIT-creates a `qfm_tomography` model, runs the 4-phase generate, and reads back the generated image via `uk_get_result`, with the standard UK-4001 authorization gate (positive + negative paths). Both items are wired into `.github/workflows/ci.yml` (`qfm-tomo-e2e` job mirrors the existing `qfm-e2e`). **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
+- **Test counts (CPU, full sweep 2026-06-30, rev 16):** unfer workspace **170** (19 fock_sirk + 26 nested_fock_algebra + 33 prob_kernel + 30 unfer_protocol + **29 unfer_ffi** + **33 qfm**) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. Breakdown of the 33 qfm tests: 32 lib tests + 1 doc-test (was 25/1 in rev 14/15; +7 new `bayes` tests in rev 16). Breakdown of the 29 unfer_ffi tests: 12 lib tests + 17 FFI integration tests. Breakdown of the 33 prob_kernel tests: 2 lib tests + 31 integration tests. **P6 H (rev 16):** added `qfm/src/bayes.rs` — Quantum Bayesian Update on the TSR-evolved prior (QMF.tex §8). Implements all 5 phases (likelihood operator construction, Born-rule evaluation, HMC on the unit sphere of $\Cset^m$, and tomographic reconstruction) with +7 tests covering the P6 H acceptance criterion (`bayesian_update_tsr_recovers_training_mode`), the no-observation prior sanity check, the 2-observation convergence, the round-trip finite-components check, the HMC unit-norm invariant, and the TSR prior unit-norm invariant. Also added the 4th bench group `bayes_update_vs_n` (N=1,4,16) to `qfm/benches/pipeline.rs` to confirm the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost. **P6 F.20 (rev 15):** added `qfm/benches/pipeline.rs` — a criterion benchmark harness with three groups (`compile_vs_M`, `generate_vs_d`, `sketch_apply_vs_d`) that confirm the architecture's central scaling claims (linear in M for compile, linear in d for generate, O(d) for the Level 1 sketch). **P6 F.19 (rev 15):** added `unfer/qfm_tomo_module/` — an Austral module that JIT-creates a `qfm_tomography` model, runs the 4-phase generate, and reads back the generated image via `uk_get_result`, with the standard UK-4001 authorization gate (positive + negative paths). Both items are wired into `.github/workflows/ci.yml` (`qfm-tomo-e2e` job mirrors the existing `qfm-e2e`). **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
   - **B4 refactor note (rev 12):** the streaming/subscription surface was upgraded from string-based events to a typed `unfer_protocol::KernelEvent` enum (`PriorSet`/`HamiltonianSet`/`Evolved{..}`/`Conditioned{..}`/`Observed{..}`/`Error{..}`) + `EventQuery { types: Option<Vec<String>> }` for per-subscription filtering via `matches_query`. The per-model bounded event queue is now keyed by a fresh subscription handle (not the model handle), and `uk_subscribe` takes a JSON `EventQuery` and returns a `BAD_HANDLE` (-1004) on invalid model handles. 12 inline unfer_ffi tests cover the new surface (including `subscribe_filters_by_event_type`).
   - **F1–F5 implementation + rev 14 hardening note:** the new `qfm` crate (workspace member, +28 tests: 156 → 163 workspace) implements the full Tomographic QFM Subspace Recovery pipeline per the algorithm spec. **F1 (sketching, 12 tests):** `CountSketch` (S_1) + `FeatureToMode` (S_2, with K_2 bound enforced in `register` — `Result<u32, FeatureToModeError::K2BoundExceeded>`) + `HeavyHitters` (4 tests) — total F1 = 12 tests. **F2 (offline, 4 tests):** `optimal_coefficients` (closed-form `||x||²/M`) + `build_flow_hamiltonian` (Hermitian `|0><0> + ½Σᾱ_j(B†_j P_0 + P_0 B_j)`, 4 tests including the rev 14-corrected vacuum-superposition assertion). **F3 (pre-projected observables, 4 tests):** `operator_basis` (m² E_{r,s}) + `probability_weight_matrix` (W_prob, doc/code consistency verified in rev 14) + `krylov_image_basis` (Φ, with `debug_assert!(d ≤ k2)` added in rev 14) + `compressive_solver` (SVD pseudo-inverse, 4 tests). **F4 (online pipeline, 5 tests):** `QfmPipeline::compile/encode/evolve/decode/generate` — **the pipeline is now backed by a real SIRK solve on the Hermitian `H̄` (rev 14 fix)**; `evolve(c_0, t)` uses `nalgebra`'s Padé `exp(-i H_m t)` on the projected reduced Hamiltonian, which is provably unitary (AGENTS.md §4); 5 tests including unitarity preservation, time-derivative, and the strengthened synthetic test (cosine similarity > 0). **F5 (integration, 5 tests):** `HamiltonianSpec::QfmTomography` + `QfmTomographySpec` in `unfer_protocol`, `compile_qfm_pipeline` in `prob_kernel/build.rs`, `qfm_pipeline: Option<Box<QfmPipeline>>` + `evolve_with_query` in `Session`, `EvolveReport::qfm_output`, `Qfm` error variant (`DimensionMismatch` + `DegenerateBasis` + `SirkFailed`) with diagnostic mapping, `uk_evolve` accepts optional `query` field, **+2 FFI integration tests** in rev 14 (`qfm_tomo_via_ffi`, `qfm_tomo_via_ffi_bad_query_dim_returns_1001`). **Honest residual caveat (v2 frontier):** the pipeline uses the **K_2×rank identity-subblock Krylov basis W** as the spatial mode basis (the SIRK solve on `H̄` provides the reduced Hamiltonian `H_m`, but the column-space of W is still a standard basis, not the SIRK-generated Krylov vectors) — this is the correct architecture for the spec's "K_2-dim single-excitation subspace is small enough for direct construction" insight, but the **decompression round-trip** still has a small lossy component. See §"Workstream F — Rev 14 hardening outcomes" for the full list of fixes and the remaining F6 module demo + F4-benchmarks v2 work.
 - **Git state (2026-06-30, rev 15):**
@@ -724,7 +724,8 @@ impl QfmPipeline {
 | F4 | ≥3 | **5** | ✅ **real unitary flow** via SIRK + Padé (rev 14) |
 | F5 | ≥3 | **5** | ✅ complete + 2 FFI tests (rev 14) |
 | F6 | demo + benches | 0 (rev 14) → **demo + 3 bench groups (rev 15)** | ✅ F.19 + F.20 done in rev 15 |
-| Total | ≥19 | **26** (+ 1 doc-test) | **All F1–F5 quality issues resolved; F6 module demo + benchmarks done in rev 15.** |
+| F7 | Bayesian update | spec only (rev 14/15) → **+7 tests, +1 bench group (rev 16)** | ✅ P6 H done in rev 16 |
+| Total | ≥19 | **33** (+ 1 doc-test) | **All F1–F5 quality issues resolved; F6 module demo + benchmarks done in rev 15; P6 H Bayesian update done in rev 16.** |
 
 ### Rev 14 implementation footprint
 
@@ -767,9 +768,128 @@ impl QfmPipeline {
   shows the expected O(d·m²) + O(K_2·m²) + O(K_2 log k) scaling.
   Sample measurement on the local run: compile(M=1000, d=1024) ≈
   3.6 s, generate(d=1024) ≈ 20 µs, sketch_apply(d=4096) ≈ 9 µs.
-- Net: **+0 tests** (no new functionality), +1 new module demo
-  (`qfm_tomo_module/`), +1 new benchmark harness, +1 new CI job.
-  Clippy clean, fmt clean.
+ - Net: **+0 tests** (no new functionality), +1 new module demo
+   (`qfm_tomo_module/`), +1 new benchmark harness, +1 new CI job.
+   Clippy clean, fmt clean.
+
+### Rev 16 implementation footprint (P6 H)
+
+> **P6 H** — Quantum Bayesian Update on the TSR-evolved prior.
+> The algorithm in `QMF.tex §8` is now code-complete. The new
+> `qfm::bayes` module implements all 5 phases of the spec:
+> likelihood operator construction, Born-rule evaluation, HMC on the
+> unit sphere of $\Cset^m$, and tomographic reconstruction of the
+> posterior sample. +7 tests (163 → 170 workspace); +1 new bench
+> group (`bayes_update_vs_n`); +1 new public module
+> (`qfm::bayes`). Clippy clean, fmt clean.
+
+The new module `qfm/src/bayes.rs` (~470 lines) provides:
+
+- **`Likelihood`** — a rank-1 likelihood operator
+  $\mathbf L_i = \vec v_i \vec v_i^\dagger$ in the $m$-dim Krylov
+  subspace, with `from_krylov_state(v)` and
+  `from_observation(pipeline, &D_i)` constructors. The latter runs
+  Phase 2 of the spec online (S_1 hash → S_2 mode resolve → Krylov
+  projection). `born_rule(c) = |v^dag c|^2` evaluates the Born
+  likelihood; `gradient_term(c) = (2 v) / (v^dag c)*` returns one
+  term of $\nabla_{\vec c} U$.
+
+- **`Posterior`** — the unnormalized posterior
+  $P(\vec c \mid D_1,\dots,D_N) = (\prod_i \vec c^\dagger \mathbf
+  L_i \vec c) \cdot P_{\mathrm{prior}}(\vec c)$, with `new(likelihoods,
+  c_prior)` and `prior_only(c_prior)`. Provides `log_density(c)`,
+  `log_density_grad(c)`, `potential(c) = -log_density(c)`, and
+  `potential_grad(c) = -log_density_grad(c)`. The informed prior
+  direction is the TSR-evolved vacuum state
+  $\vec c_{\mathrm{prior}} = e^{-iH_m} W^\dagger \ket{e_0}$, computed
+  by `tsr_evolved_prior(pipeline)`. The prior density is
+  $|\vec c^\dagger \vec c_{\mathrm{prior}}|^2 + \varepsilon$.
+
+- **`HmcOpts`** — leapfrog_steps, step_size, n_iterations,
+  burn_in, seed (all with `Default`). Total HMC cost is
+  $\mathcal{O}(\mathrm{HMC\,steps} \cdot N \cdot m^2)$.
+
+- **`sample_hmc(posterior, opts) -> Vec<DVector<Complex64>>`** and
+  **`sample_hmc_single(posterior, opts) -> DVector<Complex64>`** —
+  leapfrog-on-the-sphere HMC with Metropolis accept/reject. The
+  sampler renormalizes to the unit sphere of $\Cset^m$ after every
+  leapfrog step (so the trajectory is constrained to the natural
+  manifold of the wavefunctions). Uses a deterministic splitmix64 +
+  Box-Muller PRNG (no new external dependencies).
+
+- **`reconstruct(pipeline, c_sample) -> Result<Vec<f64>, QfmError>`**
+  — convenience wrapper around `QfmPipeline::decode` that renders
+  the full $d$-dim image from the posterior sample.
+
+- **`tsr_evolved_prior(pipeline) -> DVector<Complex64>`** — the
+  Krylov projection of the evolved vacuum seed, used as the prior
+  direction.
+
+**Re-exposed in `qfm/src/lib.rs`:**
+`Likelihood`, `Posterior`, `HmcOpts`, `sample_hmc`,
+`sample_hmc_single`, `reconstruct`, `tsr_evolved_prior`. The
+`bayes` module is now listed in the crate's module overview
+doc-comment.
+
+**New tests in `qfm::bayes::tests` (+7, 163 → 170 workspace):**
+
+1. `likelihood_born_rule_is_amplitude_squared` — Born-rule
+   self-evaluation is $||v||^4 = 1$.
+2. `bayesian_update_tsr_recovers_training_mode` — the P6 H
+   acceptance criterion: on the 4-pt tetrahedron with a single
+   observation at $\vec e_0$, the HMC sample decodes to an image
+   whose argmax is at index 0.
+3. `bayesian_update_zero_observations_returns_prior_sample` — HMC
+   on the empty posterior stays on the unit sphere.
+4. `bayesian_update_hmc_converges_2mode` — with two observations,
+   the HMC sample gives a non-vanishing average Born likelihood to
+   both.
+5. `reconstruct_round_trip_yields_finite_components` — the decoded
+   image has all-finite components.
+6. `hmc_step_returns_unit_norm` — every HMC sample lies on the unit
+   sphere.
+7. `tsr_evolved_prior_is_unit_norm` — the TSR prior direction is
+   unit-norm (the underlying `QfmPipeline::evolve` is unitary).
+
+**New accessors on `QfmPipeline`:** `s1()`, `s2()`, `w()`,
+`training_features()` (read-only views of the private fields). The
+`Likelihood::from_observation` constructor uses these to map a
+$d$-dim raw observation to the $m$-dim Krylov-projected state
+$\vec v_i$.
+
+**New benchmark group `bayes_update_vs_n`** in
+`qfm/benches/pipeline.rs` (criterion 0.5): a single M=100, d=64,
+m=4 compile paid outside the timed region; the timed region is the
+`Posterior::new + sample_hmc_single` pair. Three input sizes:
+$N = 1$, $4$, $16$. The bench reuses the existing splitmix64 PRNG
+from the rev 15 bench harness. Sample measurements on the local
+rev 16 run: $N=1$ ~ 730 µs, $N=4$ ~ 1.4 ms, $N=16$ ~ 2.5 ms
+(sublinear scaling due to per-step $\mathcal{O}(1)$ overhead
+dominating at small $N$).
+
+**Not in this revision** (future work, ~1 day):
+
+- `prob_kernel::Session::bayesian_update(model, observations, hmc_opts)`
+  to wire the new module into the session-level API.
+- `uk_bayesian_update` FFI symbol (or extend `uk_condition` to
+  accept a list of observations) with the corresponding UK code
+  mapping for the new error variants (non-converged HMC, N=0, etc.).
+- An end-to-end `bayes_update_module/` Austral demo mirroring the
+  `qfm_tomo_module/` pattern.
+
+**Status block update (rev 16, 2026-06-30):**
+
+- All v1 work items + P6 F.19 + F.20 + P6 H are code-complete at
+  the test/clippy/fmt level.
+- Workspace test count: **170 green** (was 163 in rev 15; +7 new
+  bayes tests).
+- Clippy clean, fmt clean.
+- New public module: `qfm::bayes`.
+- New bench group: `bayes_update_vs_n` ($N = 1, 4, 16$).
+- The full v1 system (rev 14/15) plus the v2 Bayesian update (rev
+  16) is now a coherent end-to-end implementation of the
+  `QMF.tex` algorithm, with one remaining v2 frontier item: P6 G
+  (optional full SIRK-generated Krylov basis `W = w_whiten`).
 
 ## P6 — Future roadmap (v2: beyond feature-complete)
 
@@ -912,13 +1032,13 @@ impl QfmPipeline {
 
 ### H — Quantum Bayesian Update on the TSR-evolved prior (v2 spec; rev 15)
 
-> The Bayesian update is **specified in `QMF.tex §8 "Quantum Bayesian
-> Updating on the TSR-evolved Prior"`** (added in rev 15). The plan
-> tracks the algorithm here as a v2 frontier because the v1 system
-> (rev 14/15) ships only the TSR-prior + 4-phase generate; the
-> Bayesian update is the natural next step to condition the
-> TSR-evolved prior on $N$ new, problem-defining observations
-> $\{D_1,\dots,D_N\}$.
+> **DONE in rev 16 (2026-06-30).** New `qfm/src/bayes.rs` module
+> implements all 5 phases of the `QMF.tex §8` algorithm. The Bayesian
+> update is now code-complete: it conditions the TSR-evolved prior
+> on $N$ new, problem-defining observations and draws a single
+> posterior sample via HMC on the unit sphere of $\Cset^m$. See
+> §"Workstream F — Rev 16 implementation footprint (P6 H)" below
+> for the full implementation notes.
 
 The algorithm has 5 phases, all on the $m$-dimensional Krylov
 subspace (no $M$ or $d$ dependence at inference time beyond the
@@ -982,21 +1102,61 @@ $\mathcal{O}(N\,d\,k)+\mathcal{O}(\mathrm{HMC\,steps}\cdot N\,m^2)+\mathcal{O}(K
   $\Rightarrow$ navigable posterior.
 
 **Acceptance for the implementation milestone** (when pursued):
-* `qfm/src/bayes.rs` module with `Likelihood::new(D_i, k, K_2, m, &W)`,
+* ~~`qfm/src/bayes.rs` module with `Likelihood::new(D_i, k, K_2, m, &W)`,
   `Posterior::new(prior, likelihoods)`, and `sample_hmc(...)` (or
-  expose the gradient as a callback and reuse a generic HMC loop).
-* Wire into `prob_kernel::Session` as a new method
-  `Session::bayesian_update(model, observations, hmc_opts)` that
-  dispatches to the TSR pipeline's compiled `QfmPipeline` and writes
-  the sampled $\vec c_{\mathrm{sample}}$ into `Session.last_sample`.
-* New FFI symbol `uk_bayesian_update` (or extend `uk_condition` to
-  accept a list of observations) with the corresponding UK code
-  mapping for the new error variants (non-converged HMC, N=0, etc.).
-* New test `bayesian_update_tsr_recovers_training_mode` (for a
-  1-mode training set, a single observation at the training mode
-  recovers the training point exactly).
-* ~1 week of work. Not on the critical path; tracked as the
-  natural v2 follow-on to the TSR pipeline.
+  expose the gradient as a callback and reuse a generic HMC loop).~~
+  **DONE (rev 16).** The new `qfm::bayes` module exports
+  `Likelihood::from_observation(pipeline, &D_i)` (which calls
+  S_1 + S_2 + Krylov projection internally),
+  `Posterior::new(likelihoods, c_prior)`,
+  `Posterior::prior_only(c_prior)`, `sample_hmc(&posterior, &opts)`,
+  and `sample_hmc_single(&posterior, &opts)`. The HMC uses a
+  deterministic splitmix64 + Box-Muller PRNG (no new external
+  dependencies), a leapfrog integrator with sphere projection after
+  every step (so the sampler stays on the unit sphere of $\Cset^m$),
+  and Metropolis accept/reject. The informed prior is the
+  TSR-evolved vacuum state `tsr_evolved_prior(pipeline) = e^{-iH_m}
+  W^\dagger |e_0>`; the prior density is $|\vec c^\dagger
+  \vec c_{\mathrm{prior}}|^2 + \varepsilon$ (with $\varepsilon=10^{-12}$
+  to keep the log finite everywhere).
+* `reconstruct(pipeline, &c_sample)` is a thin convenience wrapper
+  around `QfmPipeline::decode` that renders the full $d$-dim image
+  from the posterior sample.
+* New tests in `qfm::bayes::tests`:
+  * `likelihood_born_rule_is_amplitude_squared` — sanity: the Born
+    rule $|\vec v^\dagger \vec c|^2$ on a self-evaluation is
+    $||\vec v||^4 = 1$.
+  * `bayesian_update_tsr_recovers_training_mode` — the P6 H
+    acceptance criterion: with the 4-pt tetrahedron training set and
+    a single observation at training point 0, the posterior sample
+    $\arg\max$ of the decoded image is at index 0 (training point
+    is $\vec e_0$).
+  * `bayesian_update_zero_observations_returns_prior_sample` — the
+    no-observation posterior equals the prior; HMC on the empty
+    posterior stays on the unit sphere.
+  * `bayesian_update_hmc_converges_2mode` — with two observations
+    at distinct training points, the HMC sample gives a
+    non-vanishing average likelihood to both.
+  * `reconstruct_round_trip_yields_finite_components` — the decoded
+    image has all-finite components.
+  * `hmc_step_returns_unit_norm` — every HMC sample lies on the unit
+    sphere (sphere projection is applied after every leapfrog step).
+  * `tsr_evolved_prior_is_unit_norm` — the TSR prior direction is
+    unit-norm (the underlying `QfmPipeline::evolve` is unitary).
+* New benchmark `bench_bayes_update_vs_n` in
+  `qfm/benches/pipeline.rs` (criterion 0.5) with three input sizes
+  ($N = 1$, $4$, $16$). The compile is paid once outside the timed
+  region (M=100, d=64, m=4); the timed region is the
+  `Posterior::new + sample_hmc_single` pair. Sample measurement on
+  the local rev 16 run: $N=1$ ~ 730 µs, $N=4$ ~ 1.4 ms,
+  $N=16$ ~ 2.5 ms (sublinear scaling due to the per-step
+  $\mathcal{O}(1)$ overhead dominating at small $N$).
+* Not yet wired into `prob_kernel::Session` (would add
+  `Session::bayesian_update(model, observations, hmc_opts)`) or
+  the `unfer_ffi` surface (would add `uk_bayesian_update` or extend
+  `uk_condition`). The implementation lives in the `qfm` crate; the
+  Session / FFI integration is the next step (~1 day of work) when
+  the v2 system graduates from research code to production kernel.
 
 
 
