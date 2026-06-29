@@ -4,7 +4,7 @@
 
 ## Current status (updated 2026-06-30, rev 15)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14), and P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), and P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **four** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes (and what is still on the v2 frontier for QFM) are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14), and P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), and P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **four** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes (and what is still on the v2 frontier for QFM) are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the Bayesian-update algorithm on the TSR-evolved prior is spec'd in `QMF.tex §8` and tracked as the v2 frontier item P6 H below**.
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: **6 crates** (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`, **`qfm`** — added in rev 13) + 3 module demos (`demo_module/`, `qfm_module/`, **`qfm_tomo_module/`** — added in rev 15) + 1 standalone Rust module (`demo_module/data_source/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
@@ -909,6 +909,94 @@ impl QfmPipeline {
 > extension would store the full SIRK-generated W = `w_whiten` instead,
 > at the cost of K_2·rank storage and a more involved encode phase.
 > Not pursued unless the `generate` quality regresses on real datasets.
+
+### H — Quantum Bayesian Update on the TSR-evolved prior (v2 spec; rev 15)
+
+> The Bayesian update is **specified in `QMF.tex §8 "Quantum Bayesian
+> Updating on the TSR-evolved Prior"`** (added in rev 15). The plan
+> tracks the algorithm here as a v2 frontier because the v1 system
+> (rev 14/15) ships only the TSR-prior + 4-phase generate; the
+> Bayesian update is the natural next step to condition the
+> TSR-evolved prior on $N$ new, problem-defining observations
+> $\{D_1,\dots,D_N\}$.
+
+The algorithm has 5 phases, all on the $m$-dimensional Krylov
+subspace (no $M$ or $d$ dependence at inference time beyond the
+final image render $\mathcal{O}(d\cdot m^2)$):
+
+1. **Informed prior from TSR.** The TSR pipeline of Workstream F
+   pushes the uninformative Mehler prior $\mu_0$ on the unit sphere
+   of $\Cset^m$ through the unitary $U_m=e^{-iH_m t}$ to give
+   $P_{\mathrm{prior}}(\vec c)=(U_m)_*\mu_0$. Cost: $\mathcal{O}(m^2)$
+   per evaluation (eigenbasis of $H_m$ + closed-form Mehler kernel).
+
+2. **Construct likelihood operators.** For each new observation
+   $D_i\in\Rset^d$: Level 1 hash $\tilde D_i=S_1(D_i)\in\Rset^k$,
+   Level 2 hash $\ket{\Psi_{D_i}}=S_2(\delta_{\tilde D_i})\in\Cset^{K_2}$
+   (single-excitation Fock state), Krylov projection
+   $\vec v_i=W^\dagger\ket{\Psi_{D_i}}\in\Cset^m$, rank-1 likelihood
+   operator $\mathbf L_i=\vec v_i\vec v_i^\dagger\in\Cset^{m\times m}$.
+   Born rule: $P(D_i\mid\vec c)=\vec c^\dagger\mathbf L_i\vec c$.
+   Cost: $\mathcal{O}(N\,d\,k)$.
+
+3. **Posterior representation.**
+   $P(\vec c\mid D_1,\dots,D_N)=\frac{1}{Z}\left(\prod_{i=1}^N\vec c^\dagger\mathbf L_i\vec c\right)P_{\mathrm{prior}}(\vec c)$.
+   Storage: $\mathcal{O}(N\,m^2)$ for the $N$ operators $\{\mathbf L_i\}$.
+
+4. **Sample via HMC on the unit sphere of $\Cset^m$.**
+   Potential $U(\vec c)=-\log P_{\mathrm{prior}}(\vec c)-\sum_{i=1}^N\log(\vec c^\dagger\mathbf L_i\vec c)$.
+   Gradient: $\nabla_{\vec c}U(\vec c)=-\nabla_{\vec c}\log P_{\mathrm{prior}}(\vec c)-\sum_{i=1}^N\frac{2\mathbf L_i\vec c}{\vec c^\dagger\mathbf L_i\vec c}$.
+   Per-step cost: $\mathcal{O}(N\,m^2)$ (one $m\times m$ matrix-vector
+   product per observation). Total cost: $\mathcal{O}(\mathrm{HMC\,steps}\cdot N\,m^2)$.
+
+5. **Tomographic output reconstruction** (re-uses §7 Phases 3-4):
+   density matrix $\rho_{\mathrm{flat}}=\mathrm{vec}(\vec c_{\mathrm{sample}}\vec c_{\mathrm{sample}}^\dagger)\in\Cset^{m^2}$
+   ($m^2$ complex multiplications), probability sketch
+   $\tilde p=\mathbf W_{\mathrm{prob}}\rho_{\mathrm{flat}}\in\Rset^{K_2}$
+   ($\mathcal{O}(K_2\,m^2)$), peak hash
+   $\tilde x_{\mathrm{peak}}=\mathrm{HeavyHitters}(\tilde p)$
+   ($\mathcal{O}(K_2\log k)$), subspace coefficients
+   $\gamma=\tilde{\mathbf\Phi}^+\tilde x_{\mathrm{peak}}\in\Rset^{m^2}$
+   ($\mathcal{O}(m^2\,k)$), full-resolution image
+   $x_{\mathrm{out}}=\mathbf\Phi\gamma\in\Rset^d$ ($\mathcal{O}(d\,m^2)$).
+
+**Total online cost:**
+$\mathcal{O}(N\,d\,k)+\mathcal{O}(\mathrm{HMC\,steps}\cdot N\,m^2)+\mathcal{O}(K_2\log k)+\mathcal{O}(d\,m^2)$.
+
+**Why the TSR + Krylov prior is necessary** (full discussion in
+`QMF.tex §8.7`):
+* **Computational cost.** A direct Bayesian update on all $M$
+  training points without the TSR+Krylov reduction would be
+  $\mathcal{O}(M\,K_2^2)$ per evaluation --- billions of FLOPs at
+  $M=10^6$. The TSR pipeline does the dimensional compression once,
+  offline.
+* **Landscape geometry.** The product
+  $\prod_{i=1}^M(\vec c^\dagger\mathbf L_i\vec c)$ of $M$ highly
+  localized, orthogonal likelihoods defines a ``golf course''
+  posterior: probability is exactly $0$ almost everywhere, with
+  microscopic spikes at the $M$ training points. An MCMC sampler
+  starves (never finds the data) or memorizes (gets stuck in one
+  spike). Flow Matching smooths the spikes into a continuous
+  potential; the Krylov reduction is a spectral low-pass filter that
+  retains the smooth, macroscopic modes. The TSR-evolved prior
+  $\Rightarrow$ navigable posterior.
+
+**Acceptance for the implementation milestone** (when pursued):
+* `qfm/src/bayes.rs` module with `Likelihood::new(D_i, k, K_2, m, &W)`,
+  `Posterior::new(prior, likelihoods)`, and `sample_hmc(...)` (or
+  expose the gradient as a callback and reuse a generic HMC loop).
+* Wire into `prob_kernel::Session` as a new method
+  `Session::bayesian_update(model, observations, hmc_opts)` that
+  dispatches to the TSR pipeline's compiled `QfmPipeline` and writes
+  the sampled $\vec c_{\mathrm{sample}}$ into `Session.last_sample`.
+* New FFI symbol `uk_bayesian_update` (or extend `uk_condition` to
+  accept a list of observations) with the corresponding UK code
+  mapping for the new error variants (non-converged HMC, N=0, etc.).
+* New test `bayesian_update_tsr_recovers_training_mode` (for a
+  1-mode training set, a single observation at the training mode
+  recovers the training point exactly).
+* ~1 week of work. Not on the critical path; tracked as the
+  natural v2 follow-on to the TSR pipeline.
 
 
 
