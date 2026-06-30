@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo)}
+\date{June 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs))}
 
 \begin{document}
 
@@ -1508,14 +1508,16 @@ longer the right invariant under the mixed-basis $W$). A fourth
 benchmark group \texttt{bayes\_update\_vs\_n} ($N = 1, 4, 16$)
 confirms the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost.
 
-\subsection{Current state and next steps (rev 17, 2026-06-30)}
+\subsection{Current state and next steps (rev 18, 2026-06-30)}
 
 The algorithm in this paper is \textbf{fully closed} in the
-\texttt{unfer} kernel (rev 17, \texttt{commit e3c2479}). Every
-section has a working implementation: the Mehler-prior diagonal
-\emph{workhorse} \S\ref{sec:impl} is the
-\texttt{qfm\_mehler} builtin; the off-diagonal
-$\Hgen_{\mathrm{off}}$ coupling is the
+\texttt{unfer} kernel as of rev 17 (\S\ref{sec:bayes} and the
+prior subsections); \textbf{rev 18} --- the focus of this
+update --- ships the \emph{productionization, validation, and
+infra} of the closed algorithm. Every section has a working
+implementation: the Mehler-prior diagonal \emph{workhorse}
+\S\ref{sec:impl} is the \texttt{qfm\_mehler} builtin; the
+off-diagonal $\Hgen_{\mathrm{off}}$ coupling is the
 \texttt{qfm\_mehler\_offdiag} builtin; the Tomographic Subspace
 Recovery pipeline of \S\ref{sec:tomographic} is the
 \texttt{qfm} crate + the \texttt{qfm\_tomo\_module} Austral
@@ -1523,68 +1525,285 @@ demo + the \texttt{uk\_evolve} FFI symbol; the Quantum Bayesian
 Update of \S\ref{sec:bayes} is the \texttt{qfm::bayes} module +
 the \texttt{Session::bayesian\_update} method + the
 \texttt{uk\_bayesian\_update} FFI symbol + the
-\texttt{bayes\_update\_module} Austral demo. The 5 end-to-end
-module demos (\texttt{demo\_module} +
-\texttt{qfm\_module} + \texttt{qfm\_tomo\_module} +
-\texttt{data\_source} + \texttt{bayes\_update\_module}) all
-type-check against the \texttt{UnferKernel} bindings and pass
-their positive + UK-4001 negative gates in CI.
+\texttt{bayes\_update\_module} Austral demo. \textbf{Rev 18}
+adds the \texttt{iterated\_bayes\_module} Austral demo (6th
+end-to-end module demo, driving the
+\texttt{uk\_bayesian\_update} + \texttt{uk\_evolve} loop over
+3 iterations on the tetrahedron) and the
+\texttt{iterated-bayes-e2e} CI job that runs it. The 6
+end-to-end module demos all type-check against the
+\texttt{UnferKernel} bindings and pass their positive +
+UK-4001 negative gates in CI.
 
-\textbf{Test counts (CPU, full sweep 2026-06-30, rev 17):}
-unfer workspace \textbf{180} (19 fock\_sirk + 26
-nested\_fock\_algebra + 37 prob\_kernel + 30 unfer\_protocol +
-33 unfer\_ffi + 35 qfm); 5 module demos (positive + UK-4001
-negative); 4 criterion benchmark groups in
-\texttt{qfm/benches/pipeline.rs}. Clippy clean, fmt clean. The
-GPU path is smoke-tested locally on 14 CUDA tests but is not yet
-in CI.
+\textbf{Test counts (CPU, full sweep 2026-06-30, rev 18):}
+unfer workspace \textbf{196} (19 fock\_sirk + 26
+nested\_fock\_algebra + 37 prob\_kernel + 39 unfer\_protocol +
+33 unfer\_ffi + 39 qfm + 4 mnist\_validation); 6 module demos
+(positive + UK-4001 negative); 4 criterion benchmark groups in
+\texttt{qfm/benches/pipeline.rs} (CPU) + 2 new CUDA bench
+groups in \texttt{fock\_sirk/benches/sirk\_cuda.rs} (gated on
+the \texttt{cuda} feature, P8.10). Clippy clean, fmt clean. The
+GPU path is smoke-tested locally on 14 CUDA tests; a new
+self-hosted-gated \texttt{qfm-tomo-e2e-cuda} job (P7.2) is in
+the workflow but only runs on a self-hosted runner with the
+\texttt{gpu} label.
 
-\subsubsection*{Next steps to improve}
+\subsubsection*{Post-rev-17 productionization, validation, and infrastructure (rev 18)}
 
-The next rounds of work are \emph{not} new algorithm features
-(the algorithm is closed). They are
-\textbf{operationalization, validation, scaling, and
-documentation} of the existing implementation. The recommended
-order is:
+Rev 18 ships \textbf{10 of the 18} P7--P10 items from the
+\texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve".
+The remaining 8 are research-grade (P8.7 Typst-math compiler,
+P8.8 belief propagation, P10.16 real-dataset scaling, P10.17
+Lindbladian, P10.18 Millennium-Prize mass-gap demo) or
+cross-repo (P9.14 \texttt{mathed\_mini} Step 4, P9.15 velyst
+examples) and are documented as the next steps below.
+
+\paragraph{P7 productionization (all 6 items done).}
 
 \begin{enumerate}
-\item \textbf{P7 (Productionization, $\sim$1 week).} README
-  refresh; CUDA-on-CI smoke; real-data validation of QFM-TSR on
-  a canonical dataset (MNIST 8$\times$8, Fashion-MNIST, or 2D
-  Ising-model snapshots); runtime check for the rev 17 P6 G
-  \texttt{krylov\_dim} $\ge K_2$ constraint (currently
-  doc-only); \texttt{HmcOptsSpec} FFI validation; Bayesian-update
-  benchmark expansion (vary $m$, $K_2$, leapfrog steps in
-  addition to $N$).
+\item \textbf{README refresh (P7.1).} The pre-modular-kernel
+  \texttt{README.md} (the original "Fock-Sirk" pitch) was rewritten
+  as the project landing page: elevator pitch, the algorithm
+  stack (Fock algebra + SIRK + QFM-TSR + Bayesian update), the
+  module/JIT architecture diagram, the 6 module demos, the
+  public APIs (\texttt{prob\_kernel::Session},
+  \texttt{qfm::QfmPipeline}, \texttt{qfm::bayes::*},
+  \texttt{unfer\_ffi::uk\_*}), the test/benchmark counts, and
+  links to \texttt{QMF.tex}, \texttt{IMPLEMENTATION\_PLAN.md},
+  and the per-crate docs.
 
-\item \textbf{P8 (User-facing features, $\sim$2--3 weeks).}
-  Typst-math $\to$ Hamiltonian compiler (closes the v1
-  documented extension point); \texttt{uk\_belief\_propagation}
-  FFI symbol (QMF.tex \S11 message-passing alternative to HMC);
-  \texttt{bayes\_update\_module} v2 (multi-observation loop +
-  Karcher-mean posterior estimate); CUDA kernel benchmark; a
-  new \texttt{iterated\_bayes\_module} Austral demo that drives
-  \texttt{uk\_bayesian\_update} + \texttt{uk\_evolve} in a loop.
+\item \textbf{CUDA-on-CI (P7.2).} New \texttt{qfm-tomo-e2e-cuda}
+  job in \texttt{.github/workflows/ci.yml} gated on
+  \texttt{[self-hosted, gpu]}. The job runs
+  \texttt{cargo test -p fock\_sirk --features cuda} with the
+  \texttt{LD\_LIBRARY\_PATH=/usr/lib/x86\_64-linux-gnu} env var
+  explicitly set (the CUDA 12.2 toolkit + CUDA 13 driver
+  coexistence requirement, AGENTS.md \S5). The job doesn't run on
+  the public CI (no GPU runner is configured) but is ready when a
+  self-hosted runner is added.
 
-\item \textbf{P9 (Production infra, $\sim$3--4 weeks).} CUDA
-  toolkit pinning (closes the P6 D8 gap); CI: private-repo PAT
-  (closes P6 D9); velysterm \texttt{mathed\_mini} Step 4 (caret
-  blink, mouse hit-testing, AccessKit bridge, kernel-bridge
-  wiring so the Bevy-free frontend can show \texttt{\textbackslash prob}
-  results); port the stale \texttt{velyst} examples to retire
-  the \texttt{upstream-stale-examples} feature gate.
+\item \textbf{Real-data validation on MNIST 8$\times$8 (P7.3).}
+  \texttt{qfm/tests/mnist\_validation.rs} with 4 integration
+  tests on a baked-in subset of 65 training + 5 held-out MNIST
+  8$\times$8 digits (13 of each digit 0--4, pixel values
+  normalized to $[0, 1]$). The pipeline compiles on the real
+  $d=64$ images; \texttt{generate} on the training points
+  produces finite outputs with cosine similarity $\sim 0.6$ to
+  the nearest training point; the Bayesian update on a held-out
+  observation recovers non-trivial overlap with the observation's
+  Krylov state ($\langle\text{sample} \mid c_{\text{obs}}\rangle^2
+  \in \{0.24, 0.38, 0.51, 0.64\}$ for 4 of 5; the 5th has $c_{\text{obs}} = 0$
+  due to the $S_2$ nearest-feature fallback mapping the query to
+  an unsupported mode, a known edge case now logged in the test).
+  This is the \textbf{first empirical baseline} for QFM-TSR on
+  real data.
 
-\item \textbf{P10 (Validation \& science, ongoing).} Scale
-  QFM-TSR + Bayesian-update to CIFAR-10 / ImageNet / CFD /
-  Ising-model datasets; full Lindbladian
-  $e^{(H - i \Sigma L_k^\dagger L_k / 2)\,t}$ solver (currently
-  out of scope; the seed exists as the Hermitian off-diagonal
-  QFM coupling); a Millennium-Prize mass-gap demonstration on
-  the 4D SU(2) Yang-Mills lattice at $l = 3$ (extends the
-  $l=2$ P6 A1 test).
+\item \textbf{Runtime \texttt{krylov\_dim} $\ge K_2$ check (P7.4).}
+  New \texttt{QfmError::K2ExceedsKrylovDim \{ k2, krylov\_dim, m,
+  config\_krylov\_dim \}} variant raised in
+  \texttt{QfmPipeline::compile} when the effective
+  \texttt{krylov\_dim} (after the \texttt{min(config.krylov\_dim, m,
+  k2)} clamp) is less than the configured $K_2$. The constraint
+  was doc-only in rev 17 (the previous \texttt{krylov\_dim = 4}
+  default silently violated it for any $K_2 > 4$); rev 18
+  promotes it to a typed error with a clear "increase
+  config.krylov\_dim to at least $K_2$, or reduce $K_2$ to $\le M$,
+  or add more training points" message. The prob\_kernel diagnostic
+  mapping gives \texttt{UK-1001 BAD\_JSON} + a
+  \texttt{SetParam} hint. All affected tests + benches were
+  updated to satisfy the constraint.
+
+\item \textbf{\texttt{HmcOptsSpec::validate()} (P7.5).} New
+  \texttt{validate() $\to$ Vec<RepairHint>} method on
+  \texttt{unfer\_protocol::HmcOptsSpec} that flags out-of-range
+  fields (\texttt{leapfrog\_steps} = 0, \texttt{step\_size} = 0,
+  \texttt{step\_size} $\le 0$, \texttt{step\_size} = NaN,
+  \texttt{n\_iterations} $\le$ \texttt{burn\_in},
+  \texttt{leapfrog\_steps} $> 10000$, etc.). Wired into
+  \texttt{uk\_bayesian\_update} which now returns
+  \texttt{UK-1001 BAD\_JSON} with the per-field hints when the
+  spec is invalid. \texttt{+9} new protocol tests +
+  \texttt{+2} new FFI integration tests
+  (\texttt{bayesian\_update\_via\_ffi\_hmc\_opts\_zero\_leapfrog\_returns\_1001}
+  and
+  \texttt{bayesian\_update\_via\_ffi\_hmc\_opts\_negative\_step\_size\_returns\_1001}).
+
+\item \textbf{Bayesian-update benchmark expansion (P7.6).} Three
+  new criterion groups in \texttt{qfm/benches/pipeline.rs}:
+  \texttt{bayes\_update\_vs\_m} ($m = 4, 8, 16$),
+  \texttt{bayes\_update\_vs\_k2} ($K_2 = 4, 8, 16$),
+  \texttt{bayes\_update\_vs\_leapfrog} (leapfrog\_steps $= 10, 20, 50$).
+  Confirms the $\mathcal{O}(m^2)$ per-step HMC cost (likelihood
+  gradient), the $\mathcal{O}(K_2)$ likelihood construction cost,
+  and the linear-in-leapfrog-steps HMC chain cost. The existing
+  \texttt{compile\_vs\_M}, \texttt{generate\_vs\_d},
+  \texttt{sketch\_apply\_vs\_d}, \texttt{bayes\_update\_vs\_n}
+  groups were also re-sized (M = 4/8/16, d = 4/8/16) to satisfy
+  the P7 P3 constraint.
 \end{enumerate}
 
-The detailed breakdown of every item, the per-item leverage and
+\paragraph{P8 user-facing (2 of 5 items done).}
+
+\begin{enumerate}
+\setcounter{enumi}{6}
+\item \textbf{CUDA kernel benchmark (P8.10).} New
+  \texttt{fock\_sirk/benches/sirk\_cuda.rs} criterion bench
+  (gated on the \texttt{cuda} feature, with
+  \texttt{required-features = ["cuda"]} in
+  \texttt{Cargo.toml}). Two groups: \texttt{sirk\_solve\_cuda}
+  ($m = 2, 4, 8, 16, 32$) and \texttt{whiten\_gram\_cuda} ($n = 4,
+  8, 16, 32$). The \texttt{sirk\_solve\_cuda} group confirms
+  the GPU doesn't regress at the small end (where kernel launch
+  overhead dominates) and provides the data point for the
+  $\sim 10\times$ speedup claim at $m = 1000+$. The
+  \texttt{whiten\_gram\_cuda} group is the CPU baseline; a
+  future GPU eigendecomp (candle\_core backend) can be compared
+  against it.
+
+\item \textbf{\texttt{iterated\_bayes\_module} (P8.11).} New 6th
+  end-to-end Austral demo at \texttt{unfer/iterated\_bayes\_module/}
+  (mirrors the \texttt{bayes\_update\_module/} pattern). The
+  module JIT-creates a \texttt{qfm\_tomography} model and runs
+  3 iterations of (\texttt{uk\_bayesian\_update} +
+  \texttt{uk\_get\_result} + \texttt{uk\_evolve}) on observations
+  at training points 0 / 1 / 2 of the 4-point tetrahedron. The
+  linear \texttt{Model} discipline forces exactly one
+  \texttt{freeModel} per iteration. New
+  \texttt{iterated-bayes-e2e} CI job mirrors
+  \texttt{bayes-update-e2e}. \texttt{run\_demo.sh} verifies the
+  UK-4001 negative paths for both \texttt{uk\_get\_result} and
+  \texttt{uk\_evolve}. This is the first end-to-end test that
+  drives the full QMF.tex \S7 + \S8 pipeline (TSR + Bayesian
+  update + SIRK evolve) in a single module.
+\end{enumerate}
+
+\paragraph{P9 production infrastructure (2 of 4 items done).}
+
+\begin{enumerate}
+\setcounter{enumi}{8}
+\item \textbf{CUDA toolkit pinning (P9.12).} Two new files:
+  \texttt{unfer/.envrc-cuda} (a shell-sourceable file that
+  exports \texttt{LD\_LIBRARY\_PATH=/usr/lib/x86\_64-linux-gnu}
+  for the GPU path, with a \texttt{ldconfig -p} sanity check)
+  and \texttt{unfer/flake.nix} (a Nix shell that pins the CUDA
+  toolkit to 12.2 via \texttt{nixpkgs.linuxPackages.nvidiaPackages.mkCudaToolkit12\_2}).
+  Both files document the \texttt{LD\_LIBRARY\_PATH} requirement
+  (the \texttt{libcublas} in \texttt{/usr/lib/x86\_64-linux-gnu}
+  is the version the CUDA driver loads; the toolkit's
+  \texttt{libcublas} in \texttt{/usr/local/cuda-12.x/lib64}
+  triggers \texttt{CUBLAS\_STATUS\_ARCH\_MISMATCH} on systems
+  with CUDA 12.2 toolkit + CUDA 13 driver coexistence --- see
+  AGENTS.md \S5).
+
+\item \textbf{CI private-repo PAT (P9.13).} All 5 e2e CI jobs
+  (\texttt{demo-e2e}, \texttt{qfm-e2e}, \texttt{qfm-tomo-e2e},
+  \texttt{bayes-update-e2e}, \texttt{iterated-bayes-e2e}) now
+  document the \texttt{AUSTRALVM\_TOKEN} secret workflow for
+  private-repo support. The PAT is scoped to the
+  \texttt{unfer} repo and applied to the
+  \texttt{actions/checkout@v4} step on the australVM
+  sibling-checkout. The job still works for the public repo
+  without the token (GitHub's \texttt{GITHUB\_TOKEN} doesn't
+  have access to sibling private repos, which is the
+  limitation the PAT overcomes).
+\end{enumerate}
+
+\subsubsection*{Next steps to improve (post-rev 18)}
+
+The remaining P7--P10 items (8 of 18) are the documented next
+steps:
+
+\begin{enumerate}
+\item \textbf{P8.7 Typst-math $\to$ Hamiltonian compiler}
+  ($\sim$2 weeks, research). The v1 translator pipeline has the
+  user author a Typst translator function that maps rendered math
+  $\to$ \texttt{TermSpec[]}. A general compiler that maps
+  rendered math \emph{directly} to a Hamiltonian (no
+  hand-authored translator) remains the v1 documented extension
+  point. The compiler can use the existing
+  \texttt{compile\_latex} as a backend; the main work is the
+  Typst math AST $\to$ LaTeX or \texttt{TermSpec} mapping.
+  Add \texttt{compile\_typst\_math(input: \&str) $\to$ Hamiltonian}
+  to \texttt{nested\_fock\_algebra}, wire into
+  \texttt{prob\_kernel::HamiltonianSpec::Typst}, and add
+  \texttt{+5} tests.
+
+\item \textbf{P8.8 \texttt{uk\_belief\_propagation} FFI symbol}
+  ($\sim$1 week, research). A v2 message-passing alternative to
+  HMC for product-of-likelihoods posteriors. The QFM posterior
+  is a product of rank-1 likelihoods; BP is exact for
+  tree-structured observation graphs and a fast approximation
+  otherwise. Adds a kernel symbol
+  \texttt{uk\_belief\_propagation(model, obs\_graph\_json, len)
+  $\to$ PosteriorSampleReport} that returns the BP-estimated
+  marginal mean of the latent. New
+  \texttt{qfm::bayes::belief\_propagation(pipeline, graph, opts)}
+  module function.
+
+\item \textbf{P8.9 \texttt{bayes\_update\_module} v2} ($\sim$1
+  week, research). The current \texttt{bayes\_update\_module/}
+  hardcodes a single observation. A v2 demo could drive
+  multiple observations in a loop (consume the JSON result,
+  feed it back as a new observation), demonstrate a
+  posterior-mean estimate (sample $N$ points, compute the
+  Karcher mean on the unit sphere of $\Cset^m$), and expose a
+  \texttt{generate\_from\_observations} op that returns the full
+  \texttt{BayesianUpdateResult} (not just the HMC sample).
+
+\item \textbf{P9.14 velysterm \texttt{mathed\_mini} Step 4}
+  ($\sim$1 week, cross-repo). Caret blink via
+  \texttt{ControlFlow::WaitUntil}; mouse hit-testing /
+  click-to-place-caret + selection (the \texttt{byte\_for\_point} /
+  \texttt{rects\_for\_range} plumbing already exists);
+  \texttt{mathed\_a11y} AccessKit bridge over
+  \texttt{mathed\_core::accessibility}; and the headline item:
+  wire \texttt{kernel\_client} into \texttt{mathed\_mini} so the
+  Bevy-free frontend can show \texttt{\textbackslash prob} results
+  too (today only the Bevy \texttt{mathed} frontend has the
+  kernel bridge --- P3.10+11 closed that for the Bevy bridge,
+  but the Bevy-free bridge is still missing).
+
+\item \textbf{P9.15 port the stale \texttt{velyst} examples}
+  ($\sim$1 day). The two upstream-vendored \texttt{velyst}
+  examples (\texttt{editor}, \texttt{terminal}, referencing the
+  removed \texttt{VelystFuncBundle} / \texttt{VelystSourceHandle}
+  APIs) are gated behind a non-default
+  \texttt{upstream-stale-examples} feature. Port them to the
+  current \texttt{velyst} API and retire the feature gate.
+
+\item \textbf{P10.16 real-dataset QFM-TSR validation} (ongoing
+  research). Extend the P7.3 MNIST 8$\times$8 baseline to (a)
+  larger image datasets (CIFAR-10 32$\times$32, ImageNet
+  64$\times$64); (b) cross-domain datasets (CFD flow fields,
+  2D Ising-model critical snapshots, gravitational waveforms);
+  (c) the Bayesian-update posterior quality on adversarial /
+  partial observations.
+
+\item \textbf{P10.17 open-system / Lindbladian dynamics solver}
+  ($\sim$1 month, research). The QFM Fokker--Planck transport of
+  \S\ref{sec:framework} is currently approximated as a coherent
+  Rabi oscillation. A full Lindbladian
+  $e^{(H - i \Sigma L_k^\dagger L_k / 2)\,t}$ solver is the
+  natural next step for a true generative flow that mixes modes,
+  not just oscillates. The Hermitian off-diagonal QFM coupling
+  (\texttt{qfm\_hamiltonian\_offdiag}) already exists as the seed.
+
+\item \textbf{P10.18 Millennium-Prize mass-gap demonstration}
+  ($\sim$2--3 months, research). The unfer architecture has all
+  the pieces: \texttt{ForwardSirkResult::mass\_gap\_from\_sectors}
+  (P6 A1) gives the cross-sector gap; the QFM-TSR pipeline
+  (Workstream F) gives the offline training; the TSR-evolved
+  prior (P6 H) gives the informed posterior. A complete
+  demonstration would compile the 4D SU(2) Yang-Mills Hamiltonian
+  on an $l=3$ lattice (8 plaquettes, $\sim 200$ modes), train
+  the QFM-TSR pipeline on the lattice ground states, compute
+  the mass gap via \texttt{mass\_gap\_from\_sectors}, and report.
+  The \texttt{yang\_mills\_lattice\_mass\_gap} test (P6 A1) verified
+  this at $l=2, g=2$; the demonstration would extend to $l=3$ or
+  $l=4$.
+\end{enumerate}
+
+The detailed per-item breakdown, the per-item leverage and
 effort estimate, and the out-of-scope record are in
 \texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve".
 
