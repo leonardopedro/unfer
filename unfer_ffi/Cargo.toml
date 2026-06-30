@@ -12,9 +12,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 default = []
 latex = ["prob_kernel/latex"]
 cuda = ["prob_kernel/cuda"]
+zenodo = ["dep:ureq"]
 
 [dependencies]
 prob_kernel = { path = "../prob_kernel" }
 unfer_protocol = { path = "../unfer_protocol" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ureq = { version = "2", features = ["json"], optional = true }

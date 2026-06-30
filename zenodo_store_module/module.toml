@@ -1,0 +1,31 @@
+# Module manifest for zenodo_store_module.
+# Implements the "Alternative-to-Git" Loro-CRDT incremental-delta
+# persistence architecture (P11.24) — stores and retrieves a Loro
+# document on Zenodo using snapshots + deltas.
+#
+# See unfer/docs/altgit.md for the full architecture description and
+# australVM/examples/zenodo/ZenodoStore.aui for the Austral bindings.
+
+[module]
+name = "zenodo_store_module"
+version = "0.1.0"
+archetypes = ["actor"]
+entry = "src/ZenodoStoreDemo"
+
+# Capability grants.
+# The safestos cranelift JIT authorizes every `uz_*` Zenodo-store call
+# against this allow-list (auth.rs / ManifestAuthEngine).
+# Removing "uz_push" here causes the push call to fail with UK-4001 at
+# JIT time — exercised as the negative test in run_demo.sh.
+[grants]
+kernel = [
+    "uk_version",
+    "uk_last_error",
+]
+zenodo = [
+    "uz_init",
+    "uz_push",
+    "uz_pull",
+    "uz_manifest_json",
+    "uz_last_error",
+]

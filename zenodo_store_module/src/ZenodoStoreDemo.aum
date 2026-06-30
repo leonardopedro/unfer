@@ -1,0 +1,46 @@
+pragma Unsafe_Module;
+
+import Austral.Memory (
+    Address,
+    nullPointer
+);
+
+import ZenodoStore (
+    storeInitStr,
+    storeManifestJson,
+    storeLastError
+);
+
+import UnferKernel (
+    kernelVersion
+);
+
+module body ZenodoStoreDemo is
+    function run(cfg: Span[Nat8, Static]): Int64 is
+        -- Step 1: Initialize the Zenodo client.
+        let init_rc: Int64 := storeInitStr(cfg);
+        if init_rc /= 0 then
+            -- Return the negative error code so run_demo.sh can detect failure.
+            return init_rc;
+        end if;
+
+        -- Step 2: Inspect the in-memory manifest (no network call).
+        -- Probe: how many bytes does the manifest JSON need?
+        let null_buf: Address[Nat8] := nullPointer();
+        let manifest_size: Int64 := storeManifestJson(null_buf, 0);
+        if manifest_size <= 0 then
+            return -5000;
+        end if;
+
+        -- Step 3: Verify the kernel is still reachable (regression guard:
+        -- the zenodo-store feature must not break the uk_* kernel symbols).
+        let ver: Int64 := kernelVersion();
+        if ver /= 1 then
+            return -5000;
+        end if;
+
+        -- Return manifest size as positive proof that init succeeded.
+        -- run_demo.sh verifies "Execution result: <positive number>".
+        return manifest_size;
+    end;
+end module body.

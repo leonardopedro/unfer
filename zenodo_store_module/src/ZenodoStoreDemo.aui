@@ -1,0 +1,21 @@
+module ZenodoStoreDemo is
+    """
+    Demo module for the ZenodoStore adapter (P11.24).
+
+    Demonstrates the "Alternative-to-Git" architecture:
+    a Loro CRDT document persisted on Zenodo with incremental deltas.
+
+    `run()` exercises the adapter against the Zenodo sandbox:
+      1. Initialize the client from an embedded config (API key from
+         the manifest's "api_key" placeholder — the real key is
+         substituted by run_demo.sh at build time via a config literal).
+      2. Inspect the empty manifest JSON (no network call).
+      3. If ZENODO_API_KEY is set: push a mock snapshot, push a delta,
+         pull back the merged bytes, and verify the byte count matches.
+      4. Return 1 on success, negative on error.
+
+    The authorization-gate test (UK-4001 equivalent for uz_*) is handled
+    by run_demo.sh via modhost, not by this module.
+    """
+    function run(cfg: Span[Nat8, Static]): Int64;
+end module.

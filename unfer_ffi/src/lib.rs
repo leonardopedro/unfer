@@ -1,4 +1,6 @@
 mod handles;
+#[cfg(feature = "zenodo")]
+pub mod zenodo;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
