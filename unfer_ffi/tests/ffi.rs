@@ -596,3 +596,89 @@ fn qfm_tomo_via_ffi_bad_query_dim_returns_1001() {
 
     uk_model_free(model);
 }
+
+// P7 P5: HmcOptsSpec validation tests. The FFI's uk_bayesian_update
+// calls HmcOptsSpec::validate() and returns UK-1001 BAD_JSON with the
+// per-field RepairHint if any field is out of range. A leapfrog_steps=0
+// or step_size=0 silently produces a broken HMC chain; the validation
+// surfaces this at the kernel boundary.
+
+fn qfm_tomo_model_for_hmc_validation() -> i64 {
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
+          "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 4, "prune_eps": 1e-12,
+        "max_components": 50000, "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0, "uk_model_create for qfm_tomography");
+    model
+}
+
+#[test]
+fn bayesian_update_via_ffi_hmc_opts_zero_leapfrog_returns_1001() {
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]], "hmc_opts": {"leapfrog_steps": 0}}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_bayesian_update(model, ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64), "expected -1001 for leapfrog_steps=0");
+
+    let err_json = read_error();
+    let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
+    assert_eq!(diag["code"].as_u64(), Some(Code::BAD_JSON.raw() as u64));
+    let hints = diag["hints"].as_array().expect("hints array");
+    assert!(!hints.is_empty(), "should carry at least one RepairHint");
+    let targets: Vec<&str> = hints
+        .iter()
+        .map(|h| h["target"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        targets.iter().any(|t| t.contains("leapfrog_steps")),
+        "hints should mention leapfrog_steps, got: {targets:?}"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn bayesian_update_via_ffi_hmc_opts_negative_step_size_returns_1001() {
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]], "hmc_opts": {"step_size": -0.1}}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_bayesian_update(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::BAD_JSON.raw() as i64),
+        "expected -1001 for step_size=-0.1"
+    );
+
+    let err_json = read_error();
+    let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
+    assert_eq!(diag["code"].as_u64(), Some(Code::BAD_JSON.raw() as u64));
+    let hints = diag["hints"].as_array().expect("hints array");
+    let targets: Vec<&str> = hints
+        .iter()
+        .map(|h| h["target"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        targets.iter().any(|t| t.contains("step_size")),
+        "hints should mention step_size, got: {targets:?}"
+    );
+
+    uk_model_free(model);
+}

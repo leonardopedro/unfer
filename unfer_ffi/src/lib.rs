@@ -268,6 +268,21 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
 pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_bayesian_update", || {
         let req: BayesianUpdateRequest = parse_json(req_json, len)?;
+        // P7 P5: validate the HMC options. A leapfrog_steps=0 or
+        // step_size=0 would silently produce a broken HMC chain. Surface
+        // as UK-1001 with a per-field RepairHint.
+        let hints = req.hmc_opts.validate();
+        if !hints.is_empty() {
+            let mut diag = Diagnostic::new(
+                Code::BAD_JSON,
+                format!("invalid HmcOptsSpec: {} field(s) out of range", hints.len()),
+                Severity::Error,
+            );
+            for hint in hints {
+                diag = diag.with_hint(hint);
+            }
+            return Err(diag);
+        }
         let report = handles::with_session_mut(model, |s| {
             s.bayesian_update(&req.observations, &req.hmc_opts)
         })

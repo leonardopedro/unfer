@@ -364,3 +364,112 @@ fn json_shape_diagnostic() {
     assert_eq!(v["hints"][0]["kind"], "increase_limit");
     assert_eq!(v["hints"][0]["target"], "solver.max_components");
 }
+
+// P7 P5: HmcOptsSpec::validate() — the FFI's uk_bayesian_update calls
+// this before the HMC and returns UK-1001 BAD_JSON with the per-field
+// RepairHint if any field is out of range. A leapfrog_steps=0 or
+// step_size=0 silently produces a broken HMC chain; the validation
+// surfaces this at the kernel boundary.
+
+#[test]
+fn hmc_opts_default_is_valid() {
+    let opts = HmcOptsSpec::default();
+    let hints = opts.validate();
+    assert!(hints.is_empty(), "default HmcOptsSpec should be valid, got: {hints:#?}");
+}
+
+#[test]
+fn hmc_opts_validate_zero_leapfrog_steps() {
+    let mut opts = HmcOptsSpec::default();
+    opts.leapfrog_steps = 0;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "hmc_opts.leapfrog_steps");
+    assert!(matches!(hints[0].kind, HintKind::IncreaseLimit));
+}
+
+#[test]
+fn hmc_opts_validate_zero_step_size() {
+    let mut opts = HmcOptsSpec::default();
+    opts.step_size = 0.0;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "hmc_opts.step_size");
+    assert!(matches!(hints[0].kind, HintKind::ReplaceValue));
+}
+
+#[test]
+fn hmc_opts_validate_negative_step_size() {
+    let mut opts = HmcOptsSpec::default();
+    opts.step_size = -0.1;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert!(matches!(hints[0].kind, HintKind::ReplaceValue));
+}
+
+#[test]
+fn hmc_opts_validate_nan_step_size() {
+    let mut opts = HmcOptsSpec::default();
+    opts.step_size = f64::NAN;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert!(matches!(hints[0].kind, HintKind::ReplaceValue));
+}
+
+#[test]
+fn hmc_opts_validate_n_iterations_lt_burn_in() {
+    let mut opts = HmcOptsSpec::default();
+    opts.n_iterations = 50;
+    opts.burn_in = 100;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "hmc_opts");
+    assert!(matches!(hints[0].kind, HintKind::SetParam));
+    assert!(hints[0].suggestion.contains("n_iterations >= burn_in"));
+}
+
+#[test]
+fn hmc_opts_validate_multiple_errors_all_reported() {
+    let opts = HmcOptsSpec {
+        leapfrog_steps: 0,
+        step_size: -0.5,
+        n_iterations: 0,
+        burn_in: 0,
+        seed: 0,
+    };
+    let hints = opts.validate();
+    // At least 3 distinct errors: leapfrog_steps=0, step_size<0, n_iterations=0
+    assert!(
+        hints.len() >= 3,
+        "expected at least 3 validation hints, got {}",
+        hints.len()
+    );
+    let targets: Vec<&str> = hints.iter().map(|h| h.target.as_str()).collect();
+    assert!(targets.contains(&"hmc_opts.leapfrog_steps"));
+    assert!(targets.contains(&"hmc_opts.step_size"));
+    assert!(targets.contains(&"hmc_opts.n_iterations"));
+}
+
+#[test]
+fn hmc_opts_validate_unreasonably_large_leapfrog_warns() {
+    let mut opts = HmcOptsSpec::default();
+    opts.leapfrog_steps = 50_000;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert!(matches!(hints[0].kind, HintKind::ReduceScope));
+    assert!(hints[0].suggestion.contains("leapfrog_steps = 50000"));
+}
+
+#[test]
+fn hmc_opts_validate_at_boundary_is_ok() {
+    // n_iterations == burn_in is OK (no samples to keep but no error).
+    let opts = HmcOptsSpec {
+        leapfrog_steps: 1,
+        step_size: 0.01,
+        n_iterations: 100,
+        burn_in: 100,
+        seed: 0,
+    };
+    let hints = opts.validate();
+    assert!(hints.is_empty(), "boundary case should be valid, got: {hints:#?}");
+}

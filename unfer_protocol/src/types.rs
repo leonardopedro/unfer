@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::codes::Diagnostic;
+use crate::codes::{Diagnostic, HintKind, RepairHint};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelSpec {
@@ -359,6 +359,65 @@ impl Default for HmcOptsSpec {
             burn_in: default_burn_in(),
             seed: default_seed(),
         }
+    }
+}
+
+impl HmcOptsSpec {
+    /// Validate the HMC options. Returns a list of `RepairHint`s, one
+    /// per invalid field, in priority order. An empty list means the
+    /// spec is valid and `uk_bayesian_update` can proceed.
+    ///
+    /// (P7 P5, rev 18: was missing; a `leapfrog_steps = 0` or
+    /// `step_size = 0.0` would silently produce a broken HMC chain.
+    /// The FFI now calls this and returns `UK-1001 BAD_JSON` with the
+    /// hints attached when the spec is invalid.)
+    pub fn validate(&self) -> Vec<RepairHint> {
+        let mut hints = Vec::new();
+        if self.leapfrog_steps == 0 {
+            hints.push(RepairHint::new(
+                HintKind::IncreaseLimit,
+                "hmc_opts.leapfrog_steps",
+                "leapfrog_steps must be > 0; the HMC chain has no inner-loop steps to advance the integrator",
+            ));
+        }
+        if self.leapfrog_steps > 10_000 {
+            hints.push(RepairHint::new(
+                HintKind::ReduceScope,
+                "hmc_opts.leapfrog_steps",
+                format!(
+                    "leapfrog_steps = {} is unusually large; consider <= 1000 (per-step cost is O(N * m^2))",
+                    self.leapfrog_steps
+                ),
+            ));
+        }
+        if self.step_size <= 0.0 || !self.step_size.is_finite() {
+            hints.push(RepairHint::new(
+                HintKind::ReplaceValue,
+                "hmc_opts.step_size",
+                format!(
+                    "step_size = {} is invalid; must be a positive finite f64 (typical: 0.01..0.1)",
+                    self.step_size
+                ),
+            ));
+        }
+        if self.n_iterations == 0 {
+            hints.push(RepairHint::new(
+                HintKind::IncreaseLimit,
+                "hmc_opts.n_iterations",
+                "n_iterations must be > 0; the HMC sampler has no proposals to draw",
+            ));
+        }
+        if self.n_iterations < self.burn_in {
+            hints.push(RepairHint::new(
+                HintKind::SetParam,
+                "hmc_opts",
+                format!(
+                    "n_iterations = {} is less than burn_in = {}; after burn-in there are no samples to keep. Set n_iterations >= burn_in",
+                    self.n_iterations, self.burn_in
+                ),
+            ));
+        }
+        hints
     }
 }
 

@@ -206,3 +206,39 @@ jobs:
       - name: run Bayesian Update module demo
         working-directory: unfer
         run: bash bayes_update_module/run_demo.sh
+
+  # ---------------------------------------------------------------------------
+  # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
+  # fock_sirk/src/forward_sirk.rs are smoke-tested locally but not in CI.
+  # This job is gated on a self-hosted runner with the `gpu` label
+  # (no public GPU runner is configured; will only run when a self-hosted
+  # runner with the right label is online). The job mirrors qfm-tomo-e2e
+  # but enables the `cuda` feature for fock_sirk, exercising the GPU
+  # path of the SIRK solver. Closes the P6 D8 gap item ("CUDA toolkit
+  # pinning") at the runnable-path level; P9 P12 (toolkit pinning) and
+  # P8 P10 (CUDA kernel benchmark) are the next follow-ons.
+  # ---------------------------------------------------------------------------
+  qfm-tomo-e2e-cuda:
+    name: fock_sirk CUDA smoke (self-hosted GPU)
+    runs-on: [self-hosted, gpu]
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+      - name: print GPU info
+        run: |
+          nvidia-smi
+      - name: cargo test (cuda)
+        working-directory: unfer
+        # On systems with CUDA 12.2 toolkit + CUDA 13 driver coexistence
+        # the runtime resolves to /lib/x86_64-linux-gnu; AGENTS.md §5
+        # records the LD_LIBRARY_PATH requirement.
+        env:
+          LD_LIBRARY_PATH: /lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
+        run: cargo test -p fock_sirk --features cuda -- --nocapture
