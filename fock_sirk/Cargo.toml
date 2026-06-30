@@ -29,3 +29,11 @@ criterion = "0.5"
 [[bench]]
 name = "sirk"
 harness = false
+
+# CUDA bench (P8 P10). Gated on the `cuda` feature; the bench file
+# itself is `#[cfg(feature = "cuda")]` so the CPU build doesn't try
+# to compile it.
+[[bench]]
+name = "sirk_cuda"
+harness = false
+required-features = ["cuda"]
