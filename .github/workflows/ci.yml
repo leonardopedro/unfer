@@ -81,7 +81,13 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
-          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
+          # P9 P13: PAT support for private repos. If australVM is
+          # private, set the AUSTRALVM_TOKEN secret (Settings →
+          # Secrets → New repository secret, scope: this repo) and
+          # uncomment the next line. The job still works for the
+          # public repo without the token (GitHub's GITHUB_TOKEN
+          # doesn't have access to sibling private repos).
+          # token: ${{ secrets.AUSTRALVM_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

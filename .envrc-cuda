@@ -1,0 +1,68 @@
+# P9 P12: CUDA toolkit pinning for the unfer workspace.
+#
+# The GPU path needs LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu to
+# survive CUDA 12.2 toolkit + CUDA 13 driver coexistence (the
+# libcublas in /lib/x86_64-linux-gnu is the version the driver
+# loads; the toolkit in /usr/local/cuda-12.x has a different
+# libcublas that triggers CUBLAS_STATUS_ARCH_MISMATCH — see
+# AGENTS.md §5).
+#
+# Three ways to apply this on a host:
+#
+# 1. Source this file before any cargo invocation that needs CUDA:
+#      . .envrc-cuda
+#      cargo test -p fock_sirk --features cuda
+#
+# 2. Nix shell (if you have Nix): the `shellHook` exports the right
+#    LD_LIBRARY_PATH automatically. Tested with CUDA 12.2 toolkit
+#    + driver 525.60.13 + nixpkgs/nixos-23.05.
+#
+# 3. CI: the qfm-tomo-e2e-cuda GitHub Actions job exports the same
+#    LD_LIBRARY_PATH env var explicitly.
+#
+# Pinned versions:
+#   CUDA toolkit: 12.2 (CUBLAS 12.2, CUFFT 11.0, etc.)
+#   CUDA driver:  >= 525 (the first version with full
+#                   cuLaunchKernelEx + graph capture support)
+#   libcublas:    12.2.x (in /usr/lib/x86_64-linux-gnu/libcublas.so.12)
+#   libcudart:    12.2.x
+#   candle-core:  0.8.2 (pinned in unfer/Cargo.toml; the
+#                   workspace requires this exact version)
+#   rustc:        stable (no nightly features used)
+#
+# This file does not pin the CUDA toolkit at the OS level; it
+# records the LD_LIBRARY_PATH requirement and provides a single
+# source of truth for the GPU test environment. The actual
+# toolkit installation is the host's responsibility (apt, nix,
+# runfile, or container).
+
+# Resolve the directory containing this file (for relative paths).
+_UNFER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$(realpath "$0")}")" 2>/dev/null && pwd)"
+
+# The CUDA runtime libraries (libcublas, libcudart, etc.) live in
+# /usr/lib/x86_64-linux-gnu on Debian/Ubuntu + the system CUDA
+# driver package. Prepend this to LD_LIBRARY_PATH so the linker
+# picks them up first (ahead of any toolkit installation in
+# /usr/local/cuda-12.x/lib64).
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+
+# Optional: if the user has a toolkit installation in a non-default
+# path (e.g. /opt/cuda-12.2), they can set CUDA_TOOLKIT_PATH before
+# sourcing this file to extend the search path.
+if [ -n "${CUDA_TOOLKIT_PATH:-}" ]; then
+    export PATH="${CUDA_TOOLKIT_PATH}/bin:${PATH}"
+    export LD_LIBRARY_PATH="${CUDA_TOOLKIT_PATH}/lib64:${LD_LIBRARY_PATH}"
+fi
+
+# Sanity check: confirm libcublas 12.x is reachable.
+if command -v ldconfig >/dev/null 2>&1; then
+    if ldconfig -p 2>/dev/null | grep -q "libcublas\.so\.12"; then
+        echo "[envrc-cuda] libcublas.so.12 found on LD_LIBRARY_PATH; CUDA environment OK."
+    else
+        echo "[envrc-cuda] WARNING: libcublas.so.12 not on LD_LIBRARY_PATH;" \
+            "the \`cuda\` feature may fail to link. See .envrc-cuda for the expected setup." >&2
+    fi
+fi
+
+# Clean up the helper variable.
+unset _UNFER_DIR
