@@ -375,7 +375,10 @@ fn json_shape_diagnostic() {
 fn hmc_opts_default_is_valid() {
     let opts = HmcOptsSpec::default();
     let hints = opts.validate();
-    assert!(hints.is_empty(), "default HmcOptsSpec should be valid, got: {hints:#?}");
+    assert!(
+        hints.is_empty(),
+        "default HmcOptsSpec should be valid, got: {hints:#?}"
+    );
 }
 
 #[test]
@@ -471,5 +474,8 @@ fn hmc_opts_validate_at_boundary_is_ok() {
         seed: 0,
     };
     let hints = opts.validate();
-    assert!(hints.is_empty(), "boundary case should be valid, got: {hints:#?}");
+    assert!(
+        hints.is_empty(),
+        "boundary case should be valid, got: {hints:#?}"
+    );
 }

@@ -636,7 +636,11 @@ fn bayesian_update_via_ffi_hmc_opts_zero_leapfrog_returns_1001() {
     let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]], "hmc_opts": {"leapfrog_steps": 0}}"#;
     let (ptr, len) = json_ptr(req.as_bytes());
     let r = uk_bayesian_update(model, ptr, len);
-    assert_eq!(r, -(Code::BAD_JSON.raw() as i64), "expected -1001 for leapfrog_steps=0");
+    assert_eq!(
+        r,
+        -(Code::BAD_JSON.raw() as i64),
+        "expected -1001 for leapfrog_steps=0"
+    );
 
     let err_json = read_error();
     let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
