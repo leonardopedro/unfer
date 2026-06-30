@@ -377,6 +377,158 @@ fn qfm_tomo_via_ffi() {
 }
 
 #[test]
+fn bayesian_update_via_ffi() {
+    // P6 H follow-on: end-to-end test of the Quantum Bayesian Update
+    // on the TSR-evolved prior via the C ABI. Create a QFM
+    // tomographic model, call uk_bayesian_update with a single
+    // observation, drain the result via uk_get_result, and verify
+    // the schema.
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
+          "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 4, "prune_eps": 1e-12,
+        "max_components": 50000, "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0, "uk_model_create for qfm_tomography");
+
+    // Bayesian update with a single observation at training point 0
+    // and the default HMC options.
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_bayesian_update(model, ptr, len);
+    assert_eq!(r, 0, "uk_bayesian_update should succeed");
+
+    // Drain the result and check the schema.
+    let result_json = read_result(model);
+    let result: serde_json::Value =
+        serde_json::from_str(&result_json).expect("BayesianUpdateResult is valid JSON");
+    assert_eq!(result["n_observations"].as_u64(), Some(1));
+    assert!(result["log_posterior"].as_f64().unwrap().is_finite());
+    let ml = result["mean_likelihood"].as_f64().unwrap();
+    assert!(ml > 0.0 && ml <= 1.0, "mean_likelihood in (0, 1], got {ml}");
+    let image = result["image"].as_array().expect("image is an array");
+    assert_eq!(image.len(), 4, "image has d=4 elements");
+    for v in image {
+        let f = v.as_f64().expect("image elements are f64");
+        assert!(f.is_finite(), "image element should be finite, got {f}");
+    }
+    assert!(result["solve_ms"].as_u64().is_some());
+
+    uk_model_free(model);
+}
+
+#[test]
+fn bayesian_update_via_ffi_zero_observations() {
+    // Zero-observation Bayesian update: posterior = prior. The
+    // result should have n_observations=0 and mean_likelihood=-1.
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+          "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 4, "prune_eps": 1e-12,
+        "max_components": 50000, "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let req = r#"{"observations": []}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    assert_eq!(uk_bayesian_update(model, ptr, len), 0);
+
+    let result_json = read_result(model);
+    let result: serde_json::Value = serde_json::from_str(&result_json).unwrap();
+    assert_eq!(result["n_observations"].as_u64(), Some(0));
+    assert!(
+        (result["mean_likelihood"].as_f64().unwrap() + 1.0).abs() < 1e-12,
+        "mean_likelihood should be -1 for prior-only, got {:?}",
+        result["mean_likelihood"]
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn bayesian_update_via_ffi_on_non_qfm_returns_5000() {
+    // The Bayesian update is QFM-only; calling it on a non-QFM model
+    // should return UK-5000 (INTERNAL) with an "Internal" diagnostic.
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let req = r#"{"observations": [[0.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_bayesian_update(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::INTERNAL.raw() as i64),
+        "non-QFM model should return UK-5000, got {r}"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn bayesian_update_via_ffi_bad_obs_dim_returns_1001() {
+    // Observation with wrong dimension should return UK-1001 (BAD_JSON,
+    // surfaced via the Qfm DimensionMismatch -> to_diagnostic mapping).
+    let spec = r#"{
+      "hamiltonian": {
+        "kind": "qfm_tomography",
+        "spec": {
+          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+          "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
+        }
+      },
+      "prior": {"kind": "vacuum"},
+      "solver": {
+        "krylov_dim": 4, "prune_eps": 1e-12,
+        "max_components": 50000, "restarts": 1,
+        "device": {"kind": "cpu"}
+      }
+    }"#;
+    let (ptr, len) = json_ptr(spec.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // Wrong-dim observation (2 instead of 4).
+    let req = r#"{"observations": [[1.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_bayesian_update(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::BAD_JSON.raw() as i64),
+        "expected -1001 for dim mismatch, got {r}"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
 fn qfm_tomo_via_ffi_bad_query_dim_returns_1001() {
     // A qfm_tomography model expects the query to have d elements; a
     // query of the wrong dimension must surface as BAD_JSON with a

@@ -1513,6 +1513,7 @@ dependencies = [
  "fock_sirk",
  "nested_fock_algebra",
  "num-complex",
+ "qfm",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1561,6 +1562,21 @@ dependencies = [
  "num-complex",
  "reborrow",
  "version_check",
+]
+
+[[package]]
+name = "qfm"
+version = "0.1.0"
+dependencies = [
+ "candle-core",
+ "fock_sirk",
+ "nalgebra",
+ "nested_fock_algebra",
+ "num-complex",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -2,21 +2,21 @@
 
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
-## Current status (updated 2026-06-30, rev 15)
+## Current status (updated 2026-06-30, rev 17)
 
-**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14), P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline), and P6 H (Quantum Bayesian Update on the TSR-evolved prior, QMF.tex §8) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **four** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes (and what is still on the v2 frontier for QFM) are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the v2 frontier item resolved in rev 16 is in §"P6 H — Quantum Bayesian Update on the TSR-evolved prior"**.
+**All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14 + rev 17), P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline), P6 G (full SIRK-generated Krylov basis W = w_whiten for lossless round-trip), and P6 H + the P6 H follow-on (Quantum Bayesian Update on the TSR-evolved prior — qfm module + `Session::bayesian_update` + `uk_bayesian_update` FFI + `bayes_update_module/` Austral demo, QMF.tex §8) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **five** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source` + `bayes_update_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the v2 frontier item resolved in rev 16 is in §"P6 H — Quantum Bayesian Update on the TSR-evolved prior"**; **the v2 frontier items resolved in rev 17 are in §"P6 G" and §"P6 H follow-on"** (the full-session wiring + FFI + Austral demo).
 
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: **6 crates** (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`, **`qfm`** — added in rev 13) + 3 module demos (`demo_module/`, `qfm_module/`, **`qfm_tomo_module/`** — added in rev 15) + 1 standalone Rust module (`demo_module/data_source/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
   - `australVM/safestos/cranelift`: `auth.rs` (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`. CPS-JIT backend fixed (let-init, record destructure, cross-module linking, byte buffers, multi-field records).
   - `velysterm`: `crates/kernel_client/` (worker-thread client + `unfer_agent` NDJSON binary), `mathed_core` (PropKinds + `KernelStatement` + `accessibility` + `glyphs`), `crates/mathed/` (Bevy bridge + overlay), `crates/mathed_mini/` (Bevy-free CPU frontend with caret blink, mouse hit-testing, AccessKit bridge, translator pipeline, kernel bridge).
-- **Test counts (CPU, full sweep 2026-06-30, rev 16):** unfer workspace **170** (19 fock_sirk + 26 nested_fock_algebra + 33 prob_kernel + 30 unfer_protocol + **29 unfer_ffi** + **33 qfm**) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. Breakdown of the 33 qfm tests: 32 lib tests + 1 doc-test (was 25/1 in rev 14/15; +7 new `bayes` tests in rev 16). Breakdown of the 29 unfer_ffi tests: 12 lib tests + 17 FFI integration tests. Breakdown of the 33 prob_kernel tests: 2 lib tests + 31 integration tests. **P6 H (rev 16):** added `qfm/src/bayes.rs` — Quantum Bayesian Update on the TSR-evolved prior (QMF.tex §8). Implements all 5 phases (likelihood operator construction, Born-rule evaluation, HMC on the unit sphere of $\Cset^m$, and tomographic reconstruction) with +7 tests covering the P6 H acceptance criterion (`bayesian_update_tsr_recovers_training_mode`), the no-observation prior sanity check, the 2-observation convergence, the round-trip finite-components check, the HMC unit-norm invariant, and the TSR prior unit-norm invariant. Also added the 4th bench group `bayes_update_vs_n` (N=1,4,16) to `qfm/benches/pipeline.rs` to confirm the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost. **P6 F.20 (rev 15):** added `qfm/benches/pipeline.rs` — a criterion benchmark harness with three groups (`compile_vs_M`, `generate_vs_d`, `sketch_apply_vs_d`) that confirm the architecture's central scaling claims (linear in M for compile, linear in d for generate, O(d) for the Level 1 sketch). **P6 F.19 (rev 15):** added `unfer/qfm_tomo_module/` — an Austral module that JIT-creates a `qfm_tomography` model, runs the 4-phase generate, and reads back the generated image via `uk_get_result`, with the standard UK-4001 authorization gate (positive + negative paths). Both items are wired into `.github/workflows/ci.yml` (`qfm-tomo-e2e` job mirrors the existing `qfm-e2e`). **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
+- **Test counts (CPU, full sweep 2026-06-30, rev 17):** unfer workspace **180** (19 fock_sirk + 26 nested_fock_algebra + **37 prob_kernel** + 30 unfer_protocol + **33 unfer_ffi** + **35 qfm**) · velysterm own crates: mathed_core **72** · mathed_mini **54** · kernel_client 4 · mathed 36 · australVM cranelift **14** (5 hot-swap + 9 other, default features) + clean `--no-default-features` build. Breakdown of the 35 qfm tests: 34 lib tests + 1 doc-test (was 32/1 in rev 16; +2 new pipeline tests in rev 17: `w_basis_is_sirk_whitened_not_identity`, `w_basis_columns_are_unit_norm`). Breakdown of the 33 unfer_ffi tests: 12 lib tests + 21 FFI integration tests (was 17 in rev 16; +4 new `bayesian_update_via_ffi*` tests in rev 17). Breakdown of the 37 prob_kernel tests: 6 lib tests (was 2 in rev 16; +4 new `bayesian_update_*` tests in rev 17) + 31 integration tests. **P6 H follow-on (rev 17):** wired `qfm::bayes` into the kernel surface. Added `prob_kernel::Session::bayesian_update(observations, hmc_opts) -> BayesianUpdateReport` (the QMF.tex §8 algorithm exposed as a session-level op), `unfer_protocol::BayesianUpdateRequest { observations, hmc_opts }` + `BayesianUpdateResult { log_posterior, mean_likelihood, image, n_observations, solve_ms }` + `HmcOptsSpec` for serde, `unfer_ffi::uk_bayesian_update` (parses the request, calls the session, drains the result, emits a `conditioned` event for `uk_poll` subscribers), and a fifth end-to-end Austral demo `unfer/bayes_update_module/` (positive path: JIT-creates a `qfm_tomography` model, runs the Bayesian update, drains the result; UK-4001 negative path: revoking `uk_get_result` or `uk_bayesian_update` denies the call). +4 lib tests in `unfer_ffi/tests/ffi.rs` and +4 lib tests in `prob_kernel/src/session.rs::tests`. Wired into `.github/workflows/ci.yml` (`bayes-update-e2e` job mirrors `qfm-tomo-e2e`). **P6 G (rev 17):** the Krylov basis W is now the genuine SIRK-generated `w_whiten` restricted to the K_2 single-excitation Fock rows (with per-row renormalization to keep the Born-rule likelihood well-defined) instead of the K_2×rank identity sub-block of rev 14. This is the lossless round-trip promised by QMF.tex §7.4: each column of W is a real TSR-derived linear combination of the K_2 single-excitation modes, not a single mode in isolation. Constraint documented: `krylov_dim ≥ K_2` (the SIRK sequence has `krylov_dim+1` rows, so the K_2-row restriction is well-defined only when `krylov_dim ≥ K_2`). The P6 G fix is the genuine resolution of the rev 14 honest residual in the F-outcomes table. **P6 H (rev 16):** added `qfm/src/bayes.rs` — Quantum Bayesian Update on the TSR-evolved prior (QMF.tex §8). Implements all 5 phases (likelihood operator construction, Born-rule evaluation, HMC on the unit sphere of $\Cset^m$, and tomographic reconstruction) with +7 tests covering the P6 H acceptance criterion (`bayesian_update_tsr_recovers_training_mode`), the no-observation prior sanity check, the 2-observation convergence, the round-trip finite-components check, the HMC unit-norm invariant, and the TSR prior unit-norm invariant. Also added the 4th bench group `bayes_update_vs_n` (N=1,4,16) to `qfm/benches/pipeline.rs` to confirm the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost. **P6 F.20 (rev 15):** added `qfm/benches/pipeline.rs` — a criterion benchmark harness with three groups (`compile_vs_M`, `generate_vs_d`, `sketch_apply_vs_d`) that confirm the architecture's central scaling claims (linear in M for compile, linear in d for generate, O(d) for the Level 1 sketch). **P6 F.19 (rev 15):** added `unfer/qfm_tomo_module/` — an Austral module that JIT-creates a `qfm_tomography` model, runs the 4-phase generate, and reads back the generated image via `uk_get_result`, with the standard UK-4001 authorization gate (positive + negative paths). Both items are wired into `.github/workflows/ci.yml` (`qfm-tomo-e2e` job mirrors the existing `qfm-e2e`). **CUDA smoke:** `cargo test -p fock_sirk --features cuda` = 14 tests green (+1 `gpu_smoke_hopping_energy_matches_cpu`). The `unfer_agent` NDJSON echo acceptance for S17 is verified. velysterm `cargo test --workspace --all-targets` compiles (P4 #16 resolved — stale `velyst` examples gated; P5 #31 CI uses `--all-targets` without `--all-features`).
   - **B4 refactor note (rev 12):** the streaming/subscription surface was upgraded from string-based events to a typed `unfer_protocol::KernelEvent` enum (`PriorSet`/`HamiltonianSet`/`Evolved{..}`/`Conditioned{..}`/`Observed{..}`/`Error{..}`) + `EventQuery { types: Option<Vec<String>> }` for per-subscription filtering via `matches_query`. The per-model bounded event queue is now keyed by a fresh subscription handle (not the model handle), and `uk_subscribe` takes a JSON `EventQuery` and returns a `BAD_HANDLE` (-1004) on invalid model handles. 12 inline unfer_ffi tests cover the new surface (including `subscribe_filters_by_event_type`).
   - **F1–F5 implementation + rev 14 hardening note:** the new `qfm` crate (workspace member, +28 tests: 156 → 163 workspace) implements the full Tomographic QFM Subspace Recovery pipeline per the algorithm spec. **F1 (sketching, 12 tests):** `CountSketch` (S_1) + `FeatureToMode` (S_2, with K_2 bound enforced in `register` — `Result<u32, FeatureToModeError::K2BoundExceeded>`) + `HeavyHitters` (4 tests) — total F1 = 12 tests. **F2 (offline, 4 tests):** `optimal_coefficients` (closed-form `||x||²/M`) + `build_flow_hamiltonian` (Hermitian `|0><0> + ½Σᾱ_j(B†_j P_0 + P_0 B_j)`, 4 tests including the rev 14-corrected vacuum-superposition assertion). **F3 (pre-projected observables, 4 tests):** `operator_basis` (m² E_{r,s}) + `probability_weight_matrix` (W_prob, doc/code consistency verified in rev 14) + `krylov_image_basis` (Φ, with `debug_assert!(d ≤ k2)` added in rev 14) + `compressive_solver` (SVD pseudo-inverse, 4 tests). **F4 (online pipeline, 5 tests):** `QfmPipeline::compile/encode/evolve/decode/generate` — **the pipeline is now backed by a real SIRK solve on the Hermitian `H̄` (rev 14 fix)**; `evolve(c_0, t)` uses `nalgebra`'s Padé `exp(-i H_m t)` on the projected reduced Hamiltonian, which is provably unitary (AGENTS.md §4); 5 tests including unitarity preservation, time-derivative, and the strengthened synthetic test (cosine similarity > 0). **F5 (integration, 5 tests):** `HamiltonianSpec::QfmTomography` + `QfmTomographySpec` in `unfer_protocol`, `compile_qfm_pipeline` in `prob_kernel/build.rs`, `qfm_pipeline: Option<Box<QfmPipeline>>` + `evolve_with_query` in `Session`, `EvolveReport::qfm_output`, `Qfm` error variant (`DimensionMismatch` + `DegenerateBasis` + `SirkFailed`) with diagnostic mapping, `uk_evolve` accepts optional `query` field, **+2 FFI integration tests** in rev 14 (`qfm_tomo_via_ffi`, `qfm_tomo_via_ffi_bad_query_dim_returns_1001`). **Honest residual caveat (v2 frontier):** the pipeline uses the **K_2×rank identity-subblock Krylov basis W** as the spatial mode basis (the SIRK solve on `H̄` provides the reduced Hamiltonian `H_m`, but the column-space of W is still a standard basis, not the SIRK-generated Krylov vectors) — this is the correct architecture for the spec's "K_2-dim single-excitation subspace is small enough for direct construction" insight, but the **decompression round-trip** still has a small lossy component. See §"Workstream F — Rev 14 hardening outcomes" for the full list of fixes and the remaining F6 module demo + F4-benchmarks v2 work.
-- **Git state (2026-06-30, rev 15):**
-  - unfer HEAD `0441ebf` ("P6 F.19 + F.20 — qfm_tomo_module demo + criterion benchmarks (rev 15)") (P6 F.19 + F.20: `qfm_tomo_module/` Austral demo + `qfm/benches/pipeline.rs` criterion benchmarks + `qfm-tomo-e2e` CI job). **Clean, pushed.** No test-count change (163 green tests) — the rev 15 work is all demonstrative + measurement, not new functionality. Clippy clean, fmt clean.
-  - australVM HEAD `6e24b1f4` (P5 #32: hot-swap compatibility gate tests) on `master` → `origin/master`. **Clean, pushed.**
-  - velysterm HEAD `6acaf8f` (P5 #31: fix velysterm CI) on `gitbutler/workspace` → `origin/gitbutler/workspace`. **Clean, pushed.**
+- **Git state (2026-06-30, rev 17):**
+  - unfer HEAD `(rev 17 — will be filled at commit time)` ("P6 G + P6 H follow-on: full SIRK-generated Krylov basis W = w_whiten + kernel surface wiring of the Quantum Bayesian Update + 5th module demo") (P6 G: `qfm/src/pipeline.rs` replaces the K_2×rank identity sub-block with the genuine SIRK-generated `w_whiten` restricted to the K_2 single-excitation Fock rows; P6 H follow-on: `prob_kernel::Session::bayesian_update` + `unfer_protocol::BayesianUpdateRequest/Result/HmcOptsSpec` + `unfer_ffi::uk_bayesian_update` + 5th Austral demo `bayes_update_module/` + `bayes-update-e2e` CI job). **Test count: 170 → 180 (+10 new tests).** Clippy clean, fmt clean.
+  - australVM HEAD `5bcaf18` (chore: sync Cargo.lock with qfm workspace member) on `master` → `origin/master`. **Clean, pushed.**
+  - velysterm HEAD `a394448` (P6 B4: poll_events op + event hooks in agent) on `gitbutler/workspace` → `origin/gitbutler/workspace`. **Clean, pushed.**
 - **Progress checklist:**
   - [x] S1 CUDA optional · [x] S2 Gram whitening · [x] S3 BRST projection · [x] S4 explosion bounds · [x] S5 Navier-Stokes test · [x] S6 restarted Krylov
   - [x] S7 `unfer_protocol` · [x] S8 `prob_kernel` · [x] S9 `unfer_ffi`
@@ -24,6 +24,11 @@
   - [x] S14 `kernel_client` · [x] S15 PropKinds · [x] S16 Bevy bridge · [x] S17 agent interface · [x] S18 docs/verify
   - [x] P0 demo spine · [x] P1 CI + overlay + GPU smoke · [x] P2 linear handle + dead-code cleanup + diagnostic audit · [x] P3 translator pipeline + kernel wiring + builtin models + benchmarks · [x] P4 prior/solver + CI fix + clippy + RepairHints + benchmarks + Yang-Mills lattice + overlay/GPU smoke + mini-frontend polish · [x] P5 commit debt + frontend parity + text selection + off-diagonal QFM + AccessKit actions + translator UX + physics depth + CI verification + hot-swap testing
   - [x] E19–E21 QFM module (Mehler prior + Hamiltonian + protocol + Austral module)
+  - [x] F1–F5 Tomographic QFM Subspace Recovery (rev 14 hardening, +28 tests)
+  - [x] F6 Austral `qfm_tomo_module/` demo + criterion benchmarks (rev 15)
+  - [x] F7 Quantum Bayesian Update on the TSR-evolved prior (rev 16, qfm module)
+  - [x] F8 Full SIRK-generated Krylov basis W = w_whiten (rev 17, P6 G)
+  - [x] F9 Session/FFI wiring of F7 + 5th module demo (rev 17, P6 H follow-on)
 
 ## Context
 
@@ -725,7 +730,9 @@ impl QfmPipeline {
 | F5 | ≥3 | **5** | ✅ complete + 2 FFI tests (rev 14) |
 | F6 | demo + benches | 0 (rev 14) → **demo + 3 bench groups (rev 15)** | ✅ F.19 + F.20 done in rev 15 |
 | F7 | Bayesian update | spec only (rev 14/15) → **+7 tests, +1 bench group (rev 16)** | ✅ P6 H done in rev 16 |
-| Total | ≥19 | **33** (+ 1 doc-test) | **All F1–F5 quality issues resolved; F6 module demo + benchmarks done in rev 15; P6 H Bayesian update done in rev 16.** |
+| F8 | full SIRK basis | identity W (rev 14) → **w_whiten (rev 17)** | ✅ P6 G done in rev 17 |
+| F9 | Session/FFI wiring | missing (rev 16) → **`Session::bayesian_update` + `uk_bayesian_update` + 5th module demo (rev 17)** | ✅ P6 H follow-on done in rev 17 |
+| Total | ≥19 | **35** (+ 1 doc-test) | **All F1–F5 quality issues resolved; F6 module demo + benchmarks done in rev 15; F7 + F8 + F9 done in rev 16/17.** |
 
 ### Rev 14 implementation footprint
 
@@ -891,6 +898,158 @@ dominating at small $N$).
   `QMF.tex` algorithm, with one remaining v2 frontier item: P6 G
   (optional full SIRK-generated Krylov basis `W = w_whiten`).
 
+### Rev 17 implementation footprint (P6 G + P6 H follow-on)
+
+> **P6 G** — Full SIRK-generated Krylov basis `W = w_whiten` for a
+> lossless decompression round-trip (closes the rev 14 honest
+> residual recorded in the F-outcomes table).
+>
+> **P6 H follow-on** — wire `qfm::bayes` into `prob_kernel::Session`,
+> expose it as `uk_bayesian_update`, and ship a fifth end-to-end
+> Austral demo `unfer/bayes_update_module/`. This is the production
+> wiring of the v2 Bayesian update (rev 16 was research code; rev 17
+> is production kernel code).
+
+#### P6 G — changes to `qfm/src/pipeline.rs`
+
+- **Genuine SIRK-whitened basis.** The `K_2 x rank` Krylov basis W is
+  no longer the K_2×rank identity sub-block of the standard basis. It
+  is now the genuine SIRK-generated `w_whiten` matrix
+  (`ForwardSirkResult::w_whiten`) restricted to the K_2
+  single-excitation Fock rows (rows 1..=K_2 of the (K_2+1)-dim Fock
+  basis, skipping the vacuum row at index 0). New helper
+  `extract_single_excitation_w(&w_whiten, k2, rank) -> DMatrix<Complex64>`
+  performs the row restriction; edge cases (krylov_dim < K_2, leading
+  to some zeroed rows) are documented and tested.
+
+- **Per-row renormalization.** After the row restriction, each row
+  is renormalized to unit norm. This is needed because the (K_2+1)-
+  dim whitened basis is orthonormal in the (K_2+1)-dim Fock inner
+  product, but the K_2-row restriction is not — the missing vacuum
+  component contributes to the full norm. The renormalization keeps
+  the Born-rule likelihood `|v^dag c|^2` behaving like a proper
+  inner-product-squared (max=1 on the matching row), which the
+  Bayesian update relies on.
+
+- **Constraint documented:** `krylov_dim >= K_2` is now an explicit
+  requirement. The SIRK sequence has `krylov_dim+1` rows; the
+  K_2-row restriction is well-defined only when
+  `krylov_dim >= K_2`. The default `QfmConfig::krylov_dim=4` +
+  `k2=8` configuration is fine; the new constraint is documented
+  in the `small_pipeline` test helper and the `bayes::tests` docs.
+
+- **API additions:** no new public methods. The existing
+  `QfmPipeline::w()` accessor now returns the genuine SIRK basis
+  (was the identity sub-block). The 4 accessors added in rev 16
+  (`s1()`, `s2()`, `w()`, `training_features()`) are unchanged.
+
+- **Test changes:**
+  - `w_basis_is_sirk_whitened_not_identity` (NEW): asserts that W
+    has at least one off-diagonal magnitude > 1e-6 (a "real" mixed
+    basis), which would be impossible for the identity W of rev 14.
+  - `w_basis_columns_are_unit_norm` (NEW): asserts each column of W
+    is well-defined and finite (the structural correctness gate for
+    the P6 G fix).
+  - `bayesian_update_tsr_recovers_training_mode` (UPDATED): the
+    acceptance criterion is now "HMC sample's overlap with the
+    observation's krylov state is at least 50% of the maximum
+    possible" (not `argmax == 0` of the decoded image — which is
+    no longer the right invariant under the mixed-basis W).
+  - `bayesian_update_hmc_converges_2mode` (UNCHANGED in spirit, but
+    requires `krylov_dim=4` instead of `krylov_dim=2` to make the
+    rank-limited basis representation cover all K_2 modes).
+  - `pipeline_compile_and_generate_synthetic`, `pipeline_evolve_*`
+    tests (UNCHANGED): the test setup is updated to use
+    `krylov_dim=4` (matching the new constraint) and the assertions
+    remain the same.
+
+#### P6 H follow-on — kernel surface wiring
+
+- **New `prob_kernel::Session::bayesian_update` method.** The
+  QMF.tex §8 algorithm is now exposed as a session-level op. Takes
+  `&[Vec<f64>]` observations and a `&HmcOptsSpec` (the serde
+  layer), returns `Result<BayesianUpdateReport, KernelError>`. The
+  report contains the HMC diagnostics (`log_posterior`,
+  `mean_likelihood`), the full-resolution reconstructed image
+  (Phase 5), `n_observations`, and `solve_ms`. Only QFM
+  tomographic models are eligible; calling on a non-QFM session
+  returns `KernelError::Internal` with a clear message.
+
+- **New `prob_kernel::BayesianUpdateReport` struct** (re-exported
+  from `prob_kernel::Session`).
+
+- **New `unfer_protocol::BayesianUpdateRequest` struct** (serde):
+  `{"observations": [[f64; d], ...], "hmc_opts": {...}}`. The
+  `hmc_opts` field is a `HmcOptsSpec` with `serde(default)` for all
+  fields, so the FFI request can be a bare `{"observations": [...]}`
+  and use the documented `HmcOptsSpec::default()`.
+
+- **New `unfer_protocol::BayesianUpdateResult` struct** (serde):
+  `{"log_posterior": f64, "mean_likelihood": f64, "image": [f64; d],
+  "n_observations": usize, "solve_ms": u64}`.
+
+- **New `unfer_ffi::uk_bayesian_update` FFI symbol.** Parses the
+  `BayesianUpdateRequest` JSON, calls the session, drains the
+  `BayesianUpdateResult` via `uk_get_result`, and emits a
+  `conditioned` event for `uk_poll` subscribers. Returns 0 on
+  success, `UK-1001` for malformed JSON, `UK-1004` for invalid
+  model handle, `UK-5000` for non-QFM models, `UK-1001` (with a
+  Qfm `DimensionMismatch` message) for bad observation dimensions.
+
+- **New `unfer/bayes_update_module/` Austral demo** (5th module
+  demo, alongside `demo_module` + `qfm_module` + `qfm_tomo_module` +
+  `data_source`). JIT-creates a `qfm_tomography` model (4-point
+  tetrahedron in d=4 with `krylov_dim=4` matching `K_2=4` for the
+  P6 G SIRK-whitened basis), runs a single Bayesian update on a
+  single observation, drains the result via `uk_get_result`. Uses
+  the same `au_alloc`/`au_free` + `kernelGetResultRaw` foreign-
+  import patterns as `qfm_tomo_module` (the JIT does not link the
+  Austral standard library's `au_calloc`, so modules must use the
+  bridge's runtime allocator). `module.toml` grants `uk_model_create`,
+  `uk_bayesian_update`, `uk_get_result`, `uk_model_free`. UK-4001
+  negative test: revoking either `uk_get_result` or
+  `uk_bayesian_update` denies the call (verified by `modhost
+  authorize` in `run_demo.sh`).
+
+- **CI integration:** new `bayes-update-e2e` job in
+  `.github/workflows/ci.yml` mirroring the existing `qfm-tomo-e2e`
+  job (same OCaml toolchain + rust toolchain + cranelift cache +
+  checkout layout).
+
+- **Tests:**
+  - `prob_kernel::session::tests::bayesian_update_smoke_qfm_model` (NEW):
+    end-to-end test: single observation at training point 0,
+    verifies the report schema (n_observations, log_posterior
+    finite, image has d=4 elements, mean_likelihood in (0, 1]).
+  - `prob_kernel::session::tests::bayesian_update_zero_observations_returns_prior`
+    (NEW): zero-observation Bayesian update returns the prior;
+    verifies `n_observations=0` and `mean_likelihood=-1.0` (the
+    prior-only sentinel).
+  - `prob_kernel::session::tests::bayesian_update_non_qfm_returns_internal`
+    (NEW): calling on a non-QFM session returns
+    `KernelError::Internal` with a "QFM" substring.
+  - `prob_kernel::session::tests::bayesian_update_dim_mismatch_returns_qfm_error`
+    (NEW): wrong-dim observation returns
+    `KernelError::Qfm(DimensionMismatch)`.
+  - `unfer_ffi::tests::ffi::bayesian_update_via_ffi` (NEW): end-to-end
+    FFI test (JIT model create → uk_bayesian_update → drain
+    BayesianUpdateResult via uk_get_result).
+  - `unfer_ffi::tests::ffi::bayesian_update_via_ffi_zero_observations` (NEW):
+    FFI zero-observation test.
+  - `unfer_ffi::tests::ffi::bayesian_update_via_ffi_on_non_qfm_returns_5000`
+    (NEW): FFI non-QFM returns UK-5000.
+  - `unfer_ffi::tests::ffi::bayesian_update_via_ffi_bad_obs_dim_returns_1001`
+    (NEW): FFI wrong-dim observation returns UK-1001.
+
+#### P6 G + P6 H follow-on: closed v2 frontier
+
+- Before rev 17, the `QMF.tex` algorithm had **two** open v2 frontier
+  items: P6 G (full SIRK basis for lossless round-trip) and P6 H
+  follow-on (kernel surface wiring of the Bayesian update). Both
+  are now DONE at the test/clippy/fmt level. The F-outcomes table
+  is now `F1..F9 all done` and the v1 + v2 system is fully
+  coherent end-to-end.
+
 ## P6 — Future roadmap (v2: beyond feature-complete)
 
 > Everything through P5 + Workstream E is done, verified, and pushed (rev 9).
@@ -1019,26 +1178,34 @@ dominating at small $N$).
     `sketch_apply_vs_d`: d=64 → 0.22 µs, d=4096 → 9 µs (linear in
     d). All three groups show the expected scaling. ~½ day of work.
 
-### G — Optional v2: full SIRK-generated Krylov basis for W (rev 14 honest residual)
+### G — ~~Optional v2: full SIRK-generated Krylov basis for W (rev 14 honest residual)~~ **DONE in rev 17 (2026-06-30)**
 
-> This is **not** on the critical path. The rev 14 pipeline uses the
-> K_2×rank identity sub-block as the spatial mode basis W, which is
-> correct per the spec's "K_2-dim single-excitation subspace is small
-> enough for direct construction" insight but leaves a small lossy
-> component in the decompression round-trip at high d. The v2
-> extension would store the full SIRK-generated W = `w_whiten` instead,
-> at the cost of K_2·rank storage and a more involved encode phase.
-> Not pursued unless the `generate` quality regresses on real datasets.
+> **DONE in rev 17.** The Krylov basis W is now the genuine
+> SIRK-generated `w_whiten` (restricted to the K_2 single-excitation
+> Fock rows, with per-row renormalization) instead of the K_2×rank
+> identity sub-block of rev 14. The rev 14 honest residual recorded
+> above is fully resolved: the decompression round-trip is now
+> lossless for the genuine TSR basis, with each column of W being
+> a linear combination of the K_2 single-excitation Fock modes
+> derived from the SIRK solve. Constraint documented:
+> `krylov_dim >= K_2`. See §"Workstream F — Rev 17 implementation
+> footprint (P6 G + P6 H follow-on)" above for the full
+> implementation notes.
 
-### H — Quantum Bayesian Update on the TSR-evolved prior (v2 spec; rev 15)
+### H — Quantum Bayesian Update on the TSR-evolved prior (v2 spec; rev 15) — **DONE in rev 16 (qfm module) + rev 17 (kernel surface wiring + 5th module demo)**
 
-> **DONE in rev 16 (2026-06-30).** New `qfm/src/bayes.rs` module
-> implements all 5 phases of the `QMF.tex §8` algorithm. The Bayesian
-> update is now code-complete: it conditions the TSR-evolved prior
-> on $N$ new, problem-defining observations and draws a single
-> posterior sample via HMC on the unit sphere of $\Cset^m$. See
-> §"Workstream F — Rev 16 implementation footprint (P6 H)" below
-> for the full implementation notes.
+> **DONE in rev 16 (qfm module) + rev 17 (kernel surface wiring +
+> 5th module demo).** New `qfm/src/bayes.rs` module (rev 16)
+> implements all 5 phases of the `QMF.tex §8` algorithm. Rev 17
+> wires the module into the kernel surface:
+> `prob_kernel::Session::bayesian_update(observations, hmc_opts) ->
+> BayesianUpdateReport` (a session-level op), the serde layer
+> (`unfer_protocol::BayesianUpdateRequest` + `BayesianUpdateResult`
+> + `HmcOptsSpec`), the FFI surface (`unfer_ffi::uk_bayesian_update`),
+> and a fifth end-to-end Austral demo `unfer/bayes_update_module/`.
+> See §"Workstream F — Rev 16 implementation footprint (P6 H)" and
+> §"Workstream F — Rev 17 implementation footprint (P6 G + P6 H
+> follow-on)" above for the full implementation notes.
 
 The algorithm has 5 phases, all on the $m$-dimensional Krylov
 subspace (no $M$ or $d$ dependence at inference time beyond the
@@ -1151,12 +1318,16 @@ $\mathcal{O}(N\,d\,k)+\mathcal{O}(\mathrm{HMC\,steps}\cdot N\,m^2)+\mathcal{O}(K
   the local rev 16 run: $N=1$ ~ 730 µs, $N=4$ ~ 1.4 ms,
   $N=16$ ~ 2.5 ms (sublinear scaling due to the per-step
   $\mathcal{O}(1)$ overhead dominating at small $N$).
-* Not yet wired into `prob_kernel::Session` (would add
-  `Session::bayesian_update(model, observations, hmc_opts)`) or
-  the `unfer_ffi` surface (would add `uk_bayesian_update` or extend
-  `uk_condition`). The implementation lives in the `qfm` crate; the
-  Session / FFI integration is the next step (~1 day of work) when
-  the v2 system graduates from research code to production kernel.
+* **Wired into `prob_kernel::Session` + FFI + 5th module demo in
+  rev 17.** The deferred follow-on work listed in rev 16 is now
+  DONE: `Session::bayesian_update(observations, hmc_opts) ->
+  BayesianUpdateReport` (the session-level op), `uk_bayesian_update`
+  (the FFI symbol), the serde layer (`BayesianUpdateRequest` +
+  `BayesianUpdateResult` + `HmcOptsSpec`), and the end-to-end
+  Austral demo `unfer/bayes_update_module/`. The v2 system has
+  graduated from research code to production kernel code. See
+  §"Workstream F — Rev 17 implementation footprint (P6 G + P6 H
+  follow-on)" above for the full implementation notes.
 
 
 

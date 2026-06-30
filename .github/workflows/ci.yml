@@ -168,3 +168,41 @@ jobs:
       - name: run QFM-TSR module demo
         working-directory: unfer
         run: bash qfm_tomo_module/run_demo.sh
+
+  # ---------------------------------------------------------------------------
+  # Bayesian Update module gate: the Quantum Bayesian Update on the
+  # TSR-evolved prior Austral module JIT-creates a `qfm_tomography` model
+  # (P6 G SIRK-whitened basis, krylov_dim=K_2=4), runs a single Bayesian
+  # update (uk_bayesian_update) on a single observation, and reads back
+  # the HMC-decoded image (uk_get_result). Exercises the P6 H follow-on
+  # end-to-end. Auth gate mirrors demo-e2e (UK-4001).
+  # ---------------------------------------------------------------------------
+  bayes-update-e2e:
+    name: bayes_update_module end-to-end (Quantum Bayesian Update Austral JIT + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      - name: run Bayesian Update module demo
+        working-directory: unfer
+        run: bash bayes_update_module/run_demo.sh

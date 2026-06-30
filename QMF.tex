@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026 (rev.\ 4, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation)}
+\date{June 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo)}
 
 \begin{document}
 
@@ -1384,12 +1384,17 @@ prior under which the multi-modal posterior of \eqref{eq:posterior} is
 navigable, sample-efficient, and generalizes to unseen test-time
 constraints.
 
-\subsection{Implementation status (rev 16, 2026-06-30)}
+\subsection{Implementation status (rev 17, 2026-06-30)}
 
 The Bayesian-update algorithm of \S\ref{sec:bayes} is implemented
-in the \texttt{unfer} kernel as a new \texttt{qfm::bayes} module
-(rev 16, \texttt{commit 47f6a0c} + \texttt{5e0b87b}). The module
-exports:
+in the \texttt{unfer} kernel as a \texttt{qfm::bayes} module
+(rev 16 research code, \texttt{commit c5ab975}) and is fully wired
+into the kernel surface in rev 17. The implementation covers both
+the qfm module (rev 16) and the production wiring (rev 17).
+
+\subsubsection*{qfm::bayes module (rev 16)}
+
+The \texttt{qfm::bayes} module exports:
 
 \begin{itemize}
 \item \texttt{Likelihood::from\_observation(pipeline, \&D\_i)} ---
@@ -1409,24 +1414,98 @@ exports:
   \texttt{sample\_hmc\_single(posterior, opts)} --- leapfrog-on-the-sphere
   HMC with Metropolis accept/reject. The sampler renormalizes to
   the unit sphere after every leapfrog step (so the trajectory is
-  constrained to the natural manifold of the wavefunctions). Uses
-  a deterministic splitmix64 + Box--Muller PRNG (no external
+  constrained to the natural manifold of the wavefunctions), and
+  is initialized at the prior direction (with a small random
+  orthogonal perturbation) to ensure fast burn-in. Uses a
+  deterministic splitmix64 + Box--Muller PRNG (no external
   dependencies).
 \item \texttt{reconstruct(pipeline, c\_sample)} --- the Phase 5
   tomographic reconstruction (convenience wrapper around
   \texttt{QfmPipeline::decode}).
 \end{itemize}
 
-The implementation has seven new unit tests
-(\texttt{+7, 163} $\to$ \texttt{170} workspace), including the
-acceptance criterion \texttt{bayesian\_update\_tsr\_recovers\_training\_mode}:
-on the 4-pt tetrahedron training set with a single observation
-at training point $\vec e_0$, the HMC sample decodes to an image
-whose $\arg\max$ is at index 0 --- exactly the training point. A
-fourth benchmark group \texttt{bayes\_update\_vs\_n}
-($N = 1, 4, 16$) confirms the $\mathcal{O}(N \cdot m^2)$ per-step
-HMC cost. Not yet wired into \texttt{prob\_kernel::Session} or the
-\texttt{uk\_*} FFI surface (~1 day of follow-on work).
+\subsubsection*{Kernel surface wiring (rev 17)}
+
+The rev 16 module was research code; rev 17 wires it into the
+production kernel surface:
+
+\begin{itemize}
+\item \texttt{prob\_kernel::Session::bayesian\_update(observations, hmc\_opts)
+  $\to$ BayesianUpdateReport} --- a session-level op that runs the
+  full QMF.tex \S8 algorithm end-to-end (likelihood construction
+  + HMC + reconstruction) and returns the HMC diagnostics
+  (\texttt{log\_posterior}, \texttt{mean\_likelihood}) plus the
+  Phase 5 reconstructed full-resolution image.
+\item \texttt{unfer\_protocol::BayesianUpdateRequest /
+  BayesianUpdateResult / HmcOptsSpec} --- the serde layer for
+  the FFI request and result.
+\item \texttt{unfer\_ffi::uk\_bayesian\_update} --- the FFI
+  symbol: parses the request JSON, calls the session, drains the
+  \texttt{BayesianUpdateResult} via \texttt{uk\_get\_result},
+  emits a \texttt{conditioned} event for \texttt{uk\_poll}
+  subscribers. Returns 0 on success; \texttt{UK-1001} for
+  malformed JSON, \texttt{UK-1004} for an invalid model handle,
+  \texttt{UK-5000} for non-QFM models.
+\item \texttt{unfer/bayes\_update\_module/} --- a fifth end-to-end
+  Austral demo (alongside \texttt{demo\_module} +
+  \texttt{qfm\_module} + \texttt{qfm\_tomo\_module} +
+  \texttt{data\_source}). JIT-creates a \texttt{qfm\_tomography}
+  model (4-pt tetrahedron in $d=4$ with $\texttt{krylov\_dim}=4$
+  matching $K_2=4$ for the rev 17 SIRK-whitened basis), runs a
+  single Bayesian update on a single observation, drains the
+  result. The standard \texttt{UK-4001} negative test verifies
+  that revoking either \texttt{uk\_get\_result} or
+  \texttt{uk\_bayesian\_update} denies the call.
+\item \texttt{bayes-update-e2e} job in
+  \texttt{.github/workflows/ci.yml} (mirrors the existing
+  \texttt{qfm-tomo-e2e} job).
+\end{itemize}
+
+\subsubsection*{SIRK-whitened Krylov basis (rev 17, P6 G)}
+
+The Krylov basis $W$ used by the encode and the Bayesian-update
+likelihood operators is now the genuine SIRK-generated
+$\texttt{w\_whiten}$ matrix (restricted to the $K_2$
+single-excitation Fock rows, with per-row renormalization to keep
+the Born-rule likelihood well-defined), instead of the
+$K_2 \times \mathrm{rank}$ identity sub-block of rev 14. This is
+the lossless round-trip promised by \S\ref{sec:tomographic}: each
+column of $W$ is a real TSR-derived linear combination of the
+$K_2$ single-excitation modes, not a single mode in isolation.
+Constraint documented: $\texttt{krylov\_dim} \ge K_2$ (the SIRK
+sequence has $\texttt{krylov\_dim}+1$ rows, so the $K_2$-row
+restriction is well-defined only when
+$\texttt{krylov\_dim} \ge K_2$).
+
+\subsubsection*{Tests + benchmarks (rev 17)}
+
+The implementation now has \textbf{+10 new tests} (170 $\to$ 180
+workspace):
+
+\begin{itemize}
+\item \texttt{+2} new pipeline tests for the P6 G SIRK-whitened
+  basis: \texttt{w\_basis\_is\_sirk\_whitened\_not\_identity} and
+  \texttt{w\_basis\_columns\_are\_unit\_norm}.
+\item \texttt{+4} new \texttt{prob\_kernel::session::tests}:
+  \texttt{bayesian\_update\_smoke\_qfm\_model},
+  \texttt{bayesian\_update\_zero\_observations\_returns\_prior},
+  \texttt{bayesian\_update\_non\_qfm\_returns\_internal},
+  \texttt{bayesian\_update\_dim\_mismatch\_returns\_qfm\_error}.
+\item \texttt{+4} new \texttt{unfer\_ffi/tests/ffi.rs} FFI
+  integration tests:
+  \texttt{bayesian\_update\_via\_ffi},
+  \texttt{bayesian\_update\_via\_ffi\_zero\_observations},
+  \texttt{bayesian\_update\_via\_ffi\_on\_non\_qfm\_returns\_5000},
+  \texttt{bayesian\_update\_via\_ffi\_bad\_obs\_dim\_returns\_1001}.
+\end{itemize}
+
+The \texttt{rev 16 bayesian\_update\_tsr\_recovers\_training\_mode}
+test was updated in rev 17 to use the new P6 G acceptance
+criterion (HMC sample's overlap with the observation's krylov
+state, not $\arg\max = 0$ of the decoded image --- which is no
+longer the right invariant under the mixed-basis $W$). A fourth
+benchmark group \texttt{bayes\_update\_vs\_n} ($N = 1, 4, 16$)
+confirms the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost.
 
 \section{Conclusion}
 

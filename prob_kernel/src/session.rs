@@ -2,7 +2,9 @@ use candle_core::Device;
 use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use qfm::QfmPipeline;
-use unfer_protocol::{EventPredicate, HamiltonianSpec, ModelSpec, PriorSpec, SolverSpec};
+use unfer_protocol::{
+    EventPredicate, HamiltonianSpec, HmcOptsSpec, ModelSpec, PriorSpec, SolverSpec,
+};
 
 use crate::build;
 use crate::error::KernelError;
@@ -68,6 +70,26 @@ pub struct StateSummary {
 pub struct StateEntry {
     pub state: String,
     pub probability: f64,
+}
+
+/// Result of a Quantum Bayesian Update on the TSR-evolved prior
+/// (QMF.tex §8, P6 H follow-on). Only QFM tomographic models are
+/// eligible. The kernel returns the HMC diagnostics + the full
+/// reconstructed image from Phase 5.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BayesianUpdateReport {
+    /// HMC log-posterior at the final sample.
+    pub log_posterior: f64,
+    /// HMC geometric-mean of the per-observation likelihoods at the
+    /// final sample. `-1.0` if there were no observations (posterior
+    /// = prior).
+    pub mean_likelihood: f64,
+    /// The Phase 5 reconstructed full-resolution image.
+    pub image: Vec<f64>,
+    /// The number of observations $N$ (cached for the agent surface).
+    pub n_observations: usize,
+    /// Wall-clock time for HMC + decode in milliseconds.
+    pub solve_ms: u64,
 }
 
 impl Session {
@@ -299,5 +321,205 @@ impl Session {
     /// Current number of state components.
     pub fn n_components(&self) -> usize {
         self.state.len()
+    }
+
+    /// Quantum Bayesian Update on the TSR-evolved prior
+    /// (QMF.tex §8, P6 H follow-on). Conditions the TSR-evolved prior
+    /// on $N$ new raw observations $\{D_1, \dots, D_N\}$ and draws a
+    /// single posterior sample via HMC on the unit sphere of
+    /// $\Cset^m$. Returns the HMC diagnostics + the Phase 5
+    /// reconstructed image.
+    ///
+    /// **Eligibility:** only QFM tomographic models
+    /// (`HamiltonianSpec::QfmTomography`) have a TSR pipeline and
+    /// therefore a meaningful TSR-evolved prior. Calling this method
+    /// on a non-QFM session returns `KernelError::Internal`. The
+    /// observation dimension must match the pipeline's raw dimension
+    /// `d`; mismatches return `KernelError::Qfm(QfmError::DimensionMismatch)`.
+    ///
+    /// **No state side-effect:** the SIRK state `self.state` is not
+    /// modified by this op — the posterior sample lives entirely in
+    /// the Krylov subspace, and the report's `image` is the rendered
+    /// output. Use `evolve_with_query` (or `evolve`) to feed a
+    /// posterior-decoded image back into the kernel for further SIRK
+    /// evolution if needed.
+    pub fn bayesian_update(
+        &self,
+        observations: &[Vec<f64>],
+        hmc_opts: &HmcOptsSpec,
+    ) -> Result<BayesianUpdateReport, KernelError> {
+        // Only QFM tomographic models are eligible.
+        let pipeline = self.qfm_pipeline.as_ref().ok_or_else(|| {
+            KernelError::Internal(
+                "bayesian_update requires a QFM tomographic model (HamiltonianSpec::QfmTomography)"
+                    .into(),
+            )
+        })?;
+
+        // Build the N likelihood operators (S_1 -> S_2 -> Krylov
+        // projection; errors are forwarded as Qfm errors).
+        let mut likelihoods = Vec::with_capacity(observations.len());
+        for obs in observations {
+            let like = qfm::bayes::Likelihood::from_observation(pipeline, obs)?;
+            likelihoods.push(like);
+        }
+
+        // The TSR-evolved prior direction.
+        let c_prior = qfm::bayes::tsr_evolved_prior(pipeline);
+        let posterior = qfm::bayes::Posterior::new(likelihoods.clone(), c_prior);
+
+        // HMC.
+        let qfm_opts = qfm::bayes::HmcOpts {
+            leapfrog_steps: hmc_opts.leapfrog_steps,
+            step_size: hmc_opts.step_size,
+            n_iterations: hmc_opts.n_iterations,
+            burn_in: hmc_opts.burn_in,
+            seed: hmc_opts.seed,
+        };
+        let t0 = std::time::Instant::now();
+        let sample = qfm::bayes::sample_hmc_single(&posterior, &qfm_opts);
+
+        // Diagnostics.
+        let log_posterior = posterior.log_density(&sample);
+        let mean_likelihood = if likelihoods.is_empty() {
+            -1.0
+        } else {
+            let mut prod = 0.0_f64;
+            for like in &likelihoods {
+                prod += like.born_rule(&sample).ln();
+            }
+            (prod / likelihoods.len() as f64).exp()
+        };
+
+        // Phase 5 tomographic reconstruction.
+        let image = qfm::bayes::reconstruct(pipeline, &sample)?;
+        let solve_ms = t0.elapsed().as_millis() as u64;
+
+        Ok(BayesianUpdateReport {
+            log_posterior,
+            mean_likelihood,
+            image,
+            n_observations: observations.len(),
+            solve_ms,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unfer_protocol::QfmTomographySpec;
+
+    fn qfm_session() -> Session {
+        let training = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+        ];
+        let qfm_spec = QfmTomographySpec {
+            training_data: training,
+            k: 2,
+            k2: 4,
+            krylov_dim: 4,
+            seed: 42,
+        };
+        let spec = ModelSpec {
+            hamiltonian: HamiltonianSpec::qfm_tomography(qfm_spec),
+            prior: PriorSpec::Vacuum,
+            solver: SolverSpec::default(),
+        };
+        Session::new(&spec).expect("compile QFM session")
+    }
+
+    fn non_qfm_session() -> Session {
+        let spec = ModelSpec {
+            hamiltonian: HamiltonianSpec::builtin(
+                "harmonic_chain",
+                serde_json::json!({"n_modes": 2, "omega": 1.0}),
+            ),
+            prior: PriorSpec::Vacuum,
+            solver: SolverSpec::default(),
+        };
+        Session::new(&spec).expect("compile harmonic session")
+    }
+
+    #[test]
+    fn bayesian_update_smoke_qfm_model() {
+        // Single observation at training point 0: the HMC sample's
+        // log_posterior should be finite, the image should have d=4
+        // elements, and solve_ms should be non-zero.
+        let session = qfm_session();
+        let obs = vec![1.0, 0.0, 0.0, 0.0];
+        let report = session
+            .bayesian_update(&[obs], &HmcOptsSpec::default())
+            .expect("bayesian_update should succeed on QFM model");
+        assert_eq!(report.n_observations, 1);
+        assert!(
+            report.log_posterior.is_finite(),
+            "log_posterior should be finite"
+        );
+        assert_eq!(report.image.len(), 4, "image should have d=4 elements");
+        for v in &report.image {
+            assert!(v.is_finite(), "image component should be finite: {v}");
+        }
+        // mean_likelihood should be a positive likelihood value (Born rule
+        // is always positive).
+        assert!(report.mean_likelihood > 0.0 && report.mean_likelihood <= 1.0);
+    }
+
+    #[test]
+    fn bayesian_update_zero_observations_returns_prior() {
+        // With no observations, the posterior equals the prior;
+        // the report should have n_observations=0, mean_likelihood=-1,
+        // and a finite log_posterior.
+        let session = qfm_session();
+        let report = session
+            .bayesian_update(&[], &HmcOptsSpec::default())
+            .expect("zero-observation bayesian_update should succeed");
+        assert_eq!(report.n_observations, 0);
+        assert!(
+            (report.mean_likelihood + 1.0).abs() < 1e-12,
+            "mean_likelihood should be -1 for prior-only, got {}",
+            report.mean_likelihood
+        );
+        assert!(report.log_posterior.is_finite());
+        assert_eq!(report.image.len(), 4);
+    }
+
+    #[test]
+    fn bayesian_update_non_qfm_returns_internal() {
+        // The Bayesian update requires a QFM tomographic model; calling
+        // it on a non-QFM session should return an Internal error.
+        let session = non_qfm_session();
+        let obs = vec![1.0, 0.0];
+        let result = session.bayesian_update(&[obs], &HmcOptsSpec::default());
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            KernelError::Internal(msg) => {
+                assert!(
+                    msg.contains("QFM"),
+                    "internal error should mention QFM: {msg}"
+                );
+            }
+            e => panic!("expected KernelError::Internal, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn bayesian_update_dim_mismatch_returns_qfm_error() {
+        // Observation with wrong dimension should return a Qfm
+        // DimensionMismatch error.
+        let session = qfm_session();
+        let obs = vec![1.0, 0.0]; // d=2, expected d=4
+        let result = session.bayesian_update(&[obs], &HmcOptsSpec::default());
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
+                assert_eq!(expected, 4);
+                assert_eq!(got, 2);
+            }
+            e => panic!("expected KernelError::Qfm(DimensionMismatch), got {e:?}"),
+        }
     }
 }

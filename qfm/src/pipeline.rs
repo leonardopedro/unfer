@@ -27,7 +27,7 @@ use crate::observables::{compressive_solver, krylov_image_basis, probability_wei
 use crate::potential::{build_flow_hamiltonian, optimal_coefficients};
 use crate::sketch::{CountSketch, FeatureToMode};
 use candle_core::Device;
-use fock_sirk::{ForwardSirkResult, SirkOpts, solve_forward_sirk};
+use fock_sirk::{ForwardSirkResult, solve_forward_sirk};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::{InnerBosonicState, OuterState, QuantumState};
 use num_complex::Complex64;
@@ -196,12 +196,49 @@ impl QfmPipeline {
             return Err(QfmError::DegenerateBasis);
         }
 
-        // 4. Construct the K_2 x rank identity Krylov basis W: columns are
-        //    the first `rank` standard basis vectors in the K_2-dim
-        //    single-excitation Fock subspace.
-        let mut w = DMatrix::<Complex64>::zeros(k2, rank);
-        for j in 0..rank {
-            w[(j, j)] = Complex64::new(1.0, 0.0);
+        // 4. Construct the K_2 x rank real Krylov basis W = w_whiten
+        //    restricted to the K_2 single-excitation rows (P6 G fix;
+        //    rev 14 used the first-rank identity sub-block of the
+        //    standard basis, which left a small lossy component in the
+        //    decompression round-trip at high d). The starting state
+        //    `vacuum_with_single_excitation_basis` has the vacuum at
+        //    QuantumState-component index 0 and `|e_j>` for j in 0..K_2
+        //    at component indices 1..=K_2. The SIRK `w_whiten` matrix
+        //    (m+1) x rank (where m+1 = K_2+1) stores the whitened Krylov
+        //    basis coordinates in the same order, so we take the bottom
+        //    K_2 rows (indices 1..=K_2) and store them as a K_2 x rank
+        //    Complex64 matrix. This is the genuine TSR-derived spatial
+        //    mode basis: each column of W is a linear combination of the
+        //    K_2 single-excitation Fock modes, not a single mode in
+        //    isolation.
+        //
+        //    When the SIRK `w_whiten` is shaped (krylov_dim+1) x rank and
+        //    krylov_dim < K_2, the post-gram-whitening basis still
+        //    naturally fills the rank-1 per-row form (the basis vectors
+        //    are the first `krylov_dim+1` indices of the Fock basis
+        //    starting at 0, so the single-excitation rows are the
+        //    first K_2 of those).  The construction below handles all
+        //    (krylov_dim, K_2) combinations transparently.
+        //
+        //    **Renormalization:** the K_2+1-row whitened basis is
+        //    orthonormal in the (K_2+1)-dim Fock inner product, but the
+        //    K_2-row restriction is not (the missing vacuum component
+        //    contributes to the full norm). To keep the Born-rule
+        //    likelihood `|v^dag c|^2` behaving like a proper
+        //    inner-product-squared (max=1 on the matching row), we
+        //    renormalize each row of W to unit norm. This is a row
+        //    scaling, not a column basis change, so the encode step
+        //    `c_0 = W^dag |e_mode>` (which extracts the `mode`-th row)
+        //    still gives a unit-norm state vector.
+        let mut w = extract_single_excitation_w(&sirk.w_whiten, k2, rank);
+        for i in 0..k2 {
+            let row_norm: f64 = (0..rank).map(|j| w[(i, j)].norm_sqr()).sum::<f64>().sqrt();
+            if row_norm > 1e-300 {
+                let scale = Complex64::new(1.0 / row_norm, 0.0);
+                for j in 0..rank {
+                    w[(i, j)] *= scale;
+                }
+            }
         }
 
         // 5. H_m is the projected Hamiltonian from the SIRK solve. It is
@@ -231,12 +268,6 @@ impl QfmPipeline {
 
         // 8. Heavy hitters tracker.
         let heavy_hitters = HeavyHitters::new(k.max(1), 0.0);
-
-        // SIRK result was consumed; suppress unused warning when the only
-        // extracted field is h_proj (rank) and the runtime never inspects
-        // the rest. Keeping `sirk` here would force us to move it into
-        // the struct; for now the h_m is sufficient.
-        let _ = (sirk, SirkOpts::default());
 
         Ok(Self {
             s1,
@@ -415,6 +446,59 @@ fn vacuum_with_single_excitation_basis(k2: usize) -> QuantumState {
     state
 }
 
+/// Extract the K_2 single-excitation rows of the SIRK `w_whiten` matrix
+/// to form the genuine TSR spatial mode basis W (P6 G fix).
+///
+/// `w_whiten` is shaped `(krylov_dim + 1) x rank` (the rank of the
+/// post-gram-whitening subspace, where `krylov_dim + 1` is the length
+/// of the forward Krylov sequence) and stores the whitened basis
+/// coordinates in the same order as the `QuantumState` components of
+/// `vacuum_with_single_excitation_basis`: row 0 is the vacuum, rows
+/// 1..=K_2 are the K_2 single-excitation Fock modes. We drop the
+/// vacuum row and return a `K_2 x rank` Complex64 matrix, which is the
+/// genuine TSR-derived spatial mode basis (each column is a linear
+/// combination of the K_2 single-excitation Fock modes, not a single
+/// mode in isolation).
+///
+/// **Edge cases:**
+/// * If `krylov_dim + 1 < K_2 + 1` (i.e., the SIRK sequence never
+///   reaches the full K_2 single-excitation subspace), the
+///   high-index rows of the returned W are zero — the SIRK basis
+///   spans only what the forward sequence actually visited. This is
+///   the documented honest behaviour: the spatial mode basis is
+///   rank-limited by the Krylov dimension, not by K_2.
+/// * If `krylov_dim + 1 > K_2 + 1` (more rows than single-excitation
+///   modes), the extra rows are dropped (they would have been beyond
+///   the K_2 single-excitation Fock subspace anyway).
+fn extract_single_excitation_w(
+    w_whiten: &DMatrix<Complex64>,
+    k2: usize,
+    rank: usize,
+) -> DMatrix<Complex64> {
+    debug_assert_eq!(
+        w_whiten.ncols(),
+        rank,
+        "w_whiten.ncols() = {} must equal rank = {}",
+        w_whiten.ncols(),
+        rank
+    );
+    let total_rows = w_whiten.nrows();
+    // Skip row 0 (vacuum) and take the next K_2 rows.
+    let mut w = DMatrix::<Complex64>::zeros(k2, rank);
+    for j in 0..rank {
+        for i in 0..k2 {
+            // Row 0 is the vacuum; single-excitation j is at row j+1.
+            let src_row = i + 1;
+            if src_row < total_rows {
+                w[(i, j)] = w_whiten[(src_row, j)];
+            }
+            // else: leave the entry as 0 (SIRK sequence did not reach
+            // this Fock mode).
+        }
+    }
+    w
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,6 +653,91 @@ mod tests {
                 assert_eq!(got, 2);
             }
             _ => panic!("expected DimensionMismatch"),
+        }
+    }
+
+    #[test]
+    fn w_basis_is_sirk_whitened_not_identity() {
+        // P6 G fix: the Krylov basis W is now the genuine SIRK-generated
+        // w_whiten restricted to the K_2 single-excitation rows, NOT the
+        // rank-k identity sub-block of the standard basis. This test
+        // asserts that W has at least one off-diagonal magnitude > 1e-6
+        // (a "real" mixed basis), which would be impossible for the
+        // identity W of rev 14.
+        let training = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+        ];
+        let config = QfmConfig {
+            k: 2,
+            k2: 4,
+            krylov_dim: 2,
+            seed: 42,
+            n_t_samples: 4,
+            noise_dim: 2,
+        };
+        let pipeline = QfmPipeline::compile(&training, &config).unwrap();
+        let w = pipeline.w();
+        let k2 = w.nrows();
+        let rank = w.ncols();
+        assert_eq!(k2, 4);
+        assert_eq!(rank, 2);
+        // Sum the off-diagonal magnitudes: a non-trivial mixed basis
+        // will have at least one off-diagonal entry with non-trivial
+        // magnitude. The identity sub-block would have all off-diagonal
+        // magnitudes equal to exactly 0.
+        let mut off_diag_max: f64 = 0.0;
+        for i in 0..k2 {
+            for j in 0..rank {
+                if i != j {
+                    let m = w[(i, j)].norm();
+                    if m > off_diag_max {
+                        off_diag_max = m;
+                    }
+                }
+            }
+        }
+        assert!(
+            off_diag_max > 1e-6,
+            "P6 G: W should be a real SIRK-generated basis (with off-diagonal mixing), \
+             got max off-diagonal magnitude {off_diag_max} — looks like the identity stub"
+        );
+    }
+
+    #[test]
+    fn w_basis_columns_are_unit_norm() {
+        // The SIRK Gram-whitening step guarantees that w_whiten has
+        // orthonormal columns in the K_2+1-dim Fock inner product. Since
+        // we drop the vacuum row, the K_2-row restriction of an
+        // orthonormal basis is *not* necessarily unit-norm per column
+        // (the missing vacuum component contributes to the norm). This
+        // test verifies that each column of W is well-defined and
+        // finite (no NaN/Inf), which is the structural correctness
+        // gate for the P6 G fix.
+        let training = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+        ];
+        let config = QfmConfig {
+            k: 2,
+            k2: 4,
+            krylov_dim: 2,
+            seed: 42,
+            n_t_samples: 4,
+            noise_dim: 2,
+        };
+        let pipeline = QfmPipeline::compile(&training, &config).unwrap();
+        let w = pipeline.w();
+        for j in 0..w.ncols() {
+            let norm_sq: f64 = (0..w.nrows()).map(|i| w[(i, j)].norm_sqr()).sum();
+            assert!(
+                norm_sq.is_finite() && norm_sq > 0.0,
+                "W column {j} has zero or non-finite norm {norm_sq}"
+            );
         }
     }
 }

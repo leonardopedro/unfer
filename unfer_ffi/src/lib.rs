@@ -4,7 +4,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
-    Code, Diagnostic, EventPredicate, EventQuery, HamiltonianSpec, ModelSpec, PriorSpec, Severity,
+    BayesianUpdateRequest, BayesianUpdateResult, Code, Diagnostic, EventPredicate, EventQuery,
+    HamiltonianSpec, ModelSpec, PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -246,6 +247,50 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
         let result_json = serde_json::json!({"prior_probability": prior_p}).to_string();
         let event = unfer_protocol::KernelEvent::Observed { value: prior_p };
         handles::set_last_result(model, result_json);
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
+/// Quantum Bayesian Update on the TSR-evolved prior
+/// (QMF.tex §8, P6 H follow-on).
+///
+/// `req_json` is a `BayesianUpdateRequest` JSON:
+///   `{"observations": [[f64; d], ...], "hmc_opts": {...}}`
+///
+/// Returns 0 on success (the result is retrievable via `uk_get_result`).
+/// Also enqueues a `conditioned` event for `uk_poll` subscribers
+/// (the Bayesian update is morally a conditioning op, just on a
+/// TSR-prior posterior rather than the SIRK state). Returns
+/// `UK-1001` for malformed JSON, `UK-1004` for an invalid model
+/// handle, `UK-5000` for non-QFM models.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_bayesian_update", || {
+        let req: BayesianUpdateRequest = parse_json(req_json, len)?;
+        let report = handles::with_session_mut(model, |s| {
+            s.bayesian_update(&req.observations, &req.hmc_opts)
+        })
+        .ok_or_else(|| bad_handle(model))?
+        .map_err(|e| e.to_diagnostic())?;
+        let result = BayesianUpdateResult {
+            log_posterior: report.log_posterior,
+            mean_likelihood: report.mean_likelihood,
+            image: report.image,
+            n_observations: report.n_observations,
+            solve_ms: report.solve_ms,
+        };
+        let result_json = serde_json::to_string(&result)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, result_json);
+        // Use the existing 'conditioned' event vocabulary: a Bayesian
+        // update is morally a conditioning op (just on a TSR-prior
+        // posterior rather than the SIRK state). The mean_likelihood
+        // is reported as a probability-like value (clamped to [0, 1]).
+        let prior_p = report.mean_likelihood.clamp(0.0, 1.0);
+        let event = unfer_protocol::KernelEvent::Conditioned {
+            prior_probability: prior_p,
+        };
         handles::push_event(model, event);
         Ok(0)
     })

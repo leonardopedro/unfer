@@ -1,0 +1,20 @@
+module BayesUpdateModule is
+    """
+    Quantum Flow Matching — Bayesian Update on the TSR-evolved prior
+    (QMF.tex §8, P6 H follow-on) kernel module. `run` builds a
+    `qfm_tomography` `ModelSpec` (the 4-point tetrahedron training set
+    in d=4, with krylov_dim=4 matching K_2=4 for the P6 G
+    SIRK-whitened basis), JIT-creates the model in-process via the
+    UnferKernel bindings (`uk_model_create`), and runs a single
+    Quantum Bayesian Update on the TSR-evolved prior
+    (`uk_bayesian_update`) with a single observation at training
+    point 0. The HMC-decoded image is read back via `uk_get_result`
+    and held in a CPS-side buffer. The linear `Model` discipline
+    forces exactly one `freeModel` (`uk_model_free`).
+
+    Every `uk_*` symbol used below is gated by this module's
+    `module.toml` grants (see the UK-4001 negative test in
+    run_demo.sh).
+    """
+    function run(): Int64;
+end module.

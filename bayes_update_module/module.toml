@@ -1,0 +1,40 @@
+# Quantum Flow Matching — Bayesian Update on the TSR-evolved prior
+# (P6 H follow-on) kernel module. This module exercises the
+# `uk_bayesian_update` FFI symbol: it JIT-creates a `qfm_tomography`
+# model (the 4-point tetrahedron used in the rev 14 demo, with
+# krylov_dim=4 for the P6 G SIRK-whitened basis), runs the
+# Quantum Bayesian Update on the TSR-evolved prior with a single
+# observation, and reads back the HMC-decoded image via
+# `uk_get_result`. Every `uk_*` symbol is gated by this module's
+# grants (the UK-4001 negative test in run_demo.sh).
+#
+# See:
+#   unfer/QMF.tex Section 8 (sec:bayes) — algorithm spec
+#   unfer/docs/PROTOCOL.md — model spec schema
+#   unfer/docs/MODULES.md — manifest schema and the "add a module" checklist
+#   unfer/qfm/src/bayes.rs — the qfm::bayes module this module
+#     exercises end-to-end via the FFI.
+
+[module]
+name = "bayes_update_module"
+version = "0.1.0"
+# Archetype contracts the module implements (see MODULES.md):
+#   data_source — supplies the 4 training vectors (the tetrahedron in
+#                 d=4) as an embedded JSON array.
+#   actor       — act(model): runs the Bayesian update on the
+#                 TSR-evolved prior and reads the HMC-decoded image.
+archetypes = ["data_source", "actor"]
+entry = "src/BayesUpdateModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*`
+# kernel call this module makes against this allow-list
+# (auth.rs / ManifestAuthEngine). Removing a symbol here causes the
+# corresponding call to fail with a UK-4001 CallDenied denial at JIT
+# time — see run_demo.sh's negative test on uk_get_result.
+[grants]
+kernel = [
+    "uk_model_create",
+    "uk_bayesian_update",
+    "uk_get_result",
+    "uk_model_free",
+]

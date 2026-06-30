@@ -303,3 +303,100 @@ impl AgentResponse {
         self
     }
 }
+
+// ── Bayesian update (QMF.tex §8 + P6 H follow-on) ──────────────────────
+//
+// The Quantum Bayesian Update on the TSR-evolved prior
+// (`qfm::bayes::Likelihood` + `Posterior` + `sample_hmc_single` +
+// `reconstruct`) is exposed over the kernel ABI as `uk_bayesian_update`.
+// The protocol types below are the JSON schema for the request and
+// the result; they are translated to/from the qfm crate types in
+// `prob_kernel/src/session.rs` (Bayesian update on a QFM model) and
+// `unfer_ffi/src/lib.rs` (`uk_bayesian_update` FFI dispatch).
+
+/// HMC sampler configuration. Mirrors `qfm::bayes::HmcOpts`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HmcOptsSpec {
+    /// Number of leapfrog steps per HMC proposal.
+    #[serde(default = "default_leapfrog_steps")]
+    pub leapfrog_steps: usize,
+    /// Step size $\epsilon$ in the leapfrog integrator.
+    #[serde(default = "default_step_size")]
+    pub step_size: f64,
+    /// Number of HMC proposals (burn-in + sample).
+    #[serde(default = "default_n_iterations")]
+    pub n_iterations: usize,
+    /// Number of initial proposals to discard as burn-in.
+    #[serde(default = "default_burn_in")]
+    pub burn_in: usize,
+    /// PRNG seed (deterministic HMC).
+    #[serde(default = "default_seed")]
+    pub seed: u64,
+}
+
+fn default_leapfrog_steps() -> usize {
+    20
+}
+fn default_step_size() -> f64 {
+    0.05
+}
+fn default_n_iterations() -> usize {
+    200
+}
+fn default_burn_in() -> usize {
+    100
+}
+fn default_seed() -> u64 {
+    42
+}
+
+impl Default for HmcOptsSpec {
+    fn default() -> Self {
+        Self {
+            leapfrog_steps: default_leapfrog_steps(),
+            step_size: default_step_size(),
+            n_iterations: default_n_iterations(),
+            burn_in: default_burn_in(),
+            seed: default_seed(),
+        }
+    }
+}
+
+/// Request body for `uk_bayesian_update`. A list of $N$ raw
+/// observations $\{D_1, \dots, D_N\}$ (each a d-dim vector) and the
+/// HMC sampler configuration.
+///
+/// Only QFM tomographic models (`HamiltonianSpec::QfmTomography`) are
+/// eligible for Bayesian updates — the prior is the TSR-evolved vacuum
+/// state. Calling `uk_bayesian_update` on a non-QFM model returns
+/// UK-5000 (INTERNAL).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BayesianUpdateRequest {
+    /// The list of new observations. Each observation is a d-dim
+    /// vector matching the pipeline's training-data dimension.
+    pub observations: Vec<Vec<f64>>,
+    /// HMC sampler configuration.
+    #[serde(default)]
+    pub hmc_opts: HmcOptsSpec,
+}
+
+/// Result body for `uk_bayesian_update`. The single posterior sample
+/// (Krylov coefficient vector, complex-magnitude per Krylov mode) and
+/// the decoded full-resolution image (Phase 5 tomographic
+/// reconstruction).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BayesianUpdateResult {
+    /// HMC diagnostics: log-posterior at the sample.
+    pub log_posterior: f64,
+    /// HMC diagnostics: geometric-mean of the likelihoods (one per
+    /// observation; `-1` if there were no observations, i.e. posterior
+    /// == prior).
+    pub mean_likelihood: f64,
+    /// The full-resolution image $\vec x_{\mathrm{out}} \in \Rset^d$
+    /// produced by Phase 5 tomographic reconstruction.
+    pub image: Vec<f64>,
+    /// The number of observations $N$ (cached for the agent surface).
+    pub n_observations: usize,
+    /// Wall-clock time for the HMC + decode in milliseconds.
+    pub solve_ms: u64,
+}
