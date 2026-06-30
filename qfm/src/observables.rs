@@ -121,6 +121,62 @@ pub fn compressive_solver(phi_tilde: &DMatrix<f64>) -> DMatrix<f64> {
     })
 }
 
+/// Rank-truncate the Krylov basis W and project the reduced Hamiltonian H_m.
+///
+/// When `krylov_dim << K_2` (the rank-truncation path of P10.16.3), the
+/// extracted W (K_2 × rank) has many zero rows — only the first `krylov_dim`
+/// rows are non-zero because the SIRK sequence never visits modes beyond
+/// the Krylov reach. A truncated SVD on the real part of W (H_bar is real
+/// symmetric, so w_whiten is real) identifies the `r` dominant column
+/// directions and simultaneously projects H_m to the same r-dimensional
+/// subspace via the right singular vectors V_r.
+///
+/// Returns `(W_trunc, H_m_trunc)` where:
+/// * `W_trunc` = W · V_r            (K_2 × r, Complex64)
+/// * `H_m_trunc` = V_r^H · H_m · V_r  (r × r, Complex64)
+///
+/// Row normalisation of W_trunc must be re-applied by the caller after this
+/// call (the same way the caller normalises W before calling this function).
+///
+/// Returns `None` if `r >= rank` (nothing to truncate).
+pub fn rank_truncate_w_h(
+    w: &DMatrix<Complex64>,
+    h_m: &DMatrix<Complex64>,
+    r: usize,
+) -> Option<(DMatrix<Complex64>, DMatrix<Complex64>)> {
+    let rank = w.ncols();
+    if r >= rank {
+        return None;
+    }
+    let r = r.max(1);
+
+    // Real part of W (K_2 × rank). H_bar is real symmetric, so w_whiten
+    // and W are real (stored as Complex64 with zero imaginary parts).
+    let k2 = w.nrows();
+    let w_real = DMatrix::<f64>::from_fn(k2, rank, |i, j| w[(i, j)].re);
+
+    // Thin SVD: W_real = U Σ V^T (U: K_2×rank, Σ: rank, V^T: rank×rank).
+    // nalgebra returns singular values in descending order.
+    let svd = w_real.svd(true, true);
+    let v_t = svd.v_t.expect("svd v_t always present with compute_v=true");
+
+    // V_r: rank × r (the first r rows of V^T, transposed → columns of V).
+    // Row i of V^T = right singular vector i; we want columns 0..r of V
+    // = rows 0..r of V^T transposed.
+    let v_r_real = v_t.rows(0, r).transpose().into_owned(); // rank × r
+
+    // W_trunc = W · V_r  (K_2 × r, Complex64).
+    let v_r_c =
+        DMatrix::<Complex64>::from_fn(rank, r, |i, j| Complex64::new(v_r_real[(i, j)], 0.0));
+    let w_trunc = w * &v_r_c;
+
+    // H_m_trunc = V_r^H · H_m · V_r  (r × r, Complex64).
+    // V_r is real so V_r^H = V_r^T.
+    let h_m_trunc = v_r_c.adjoint() * h_m * &v_r_c;
+
+    Some((w_trunc, h_m_trunc))
+}
+
 /// Apply a CountSketch to the column-space of a matrix.
 /// (Moved to `CountSketch::apply_to_columns` to avoid exposing private fields.)
 ///

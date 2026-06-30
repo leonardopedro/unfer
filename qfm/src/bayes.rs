@@ -787,6 +787,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         QfmPipeline::compile(&training, &config).expect("compile")
     }

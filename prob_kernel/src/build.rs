@@ -142,6 +142,7 @@ pub fn compile_qfm_pipeline(spec: &QfmTomographySpec) -> Result<QfmPipeline, Ker
         seed: spec.seed,
         n_t_samples: 10,
         noise_dim: spec.training_data[0].len(),
+        max_rank: None,
     };
     let pipeline = QfmPipeline::compile(&spec.training_data, &config)?;
     Ok(pipeline)

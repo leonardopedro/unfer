@@ -84,6 +84,7 @@ fn pipeline_for(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
         seed,
         n_t_samples: 4,
         noise_dim: d,
+        max_rank: None,
     };
     QfmPipeline::compile(training, &config).expect("QFM compile on MNIST")
 }

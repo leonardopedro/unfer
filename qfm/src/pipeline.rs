@@ -23,7 +23,9 @@
 //! replaced.
 
 use crate::heavy_hitters::HeavyHitters;
-use crate::observables::{compressive_solver, krylov_image_basis, probability_weight_matrix};
+use crate::observables::{
+    compressive_solver, krylov_image_basis, probability_weight_matrix, rank_truncate_w_h,
+};
 use crate::potential::{build_flow_hamiltonian, optimal_coefficients};
 use crate::sketch::{CountSketch, FeatureToMode};
 use candle_core::Device;
@@ -47,6 +49,14 @@ pub struct QfmConfig {
     pub n_t_samples: usize,
     /// Noise prior dimension (for Mehler ground state).
     pub noise_dim: usize,
+    /// Optional rank truncation via SVD on the W basis (P10.16.3).
+    ///
+    /// When `Some(r)`, after the SIRK solve the K_2×rank basis W is projected
+    /// onto its top-r right singular vectors (W → W·V_r, H_m → V_r^H·H_m·V_r).
+    /// This allows `krylov_dim << K_2` — the `K2ExceedsKrylovDim` check is
+    /// bypassed — enabling d=1024 (CIFAR-10 32×32) without the O(K_2³) wall.
+    /// When `None` (the default), the existing lossless path is used.
+    pub max_rank: Option<usize>,
 }
 
 impl Default for QfmConfig {
@@ -62,6 +72,7 @@ impl Default for QfmConfig {
             seed: 42,
             n_t_samples: 10,
             noise_dim: 4,
+            max_rank: None,
         }
     }
 }
@@ -211,14 +222,14 @@ impl QfmPipeline {
             return Err(QfmError::DegenerateBasis);
         }
         // P7 P3: the rev 17 P6 G fix requires `krylov_dim >= K_2` for the
-        // K_2-row restriction of `w_whiten` to be well-defined. The
-        // SIRK sequence has `krylov_dim + 1` rows; the K_2-row restriction
-        // is well-defined only when `krylov_dim >= K_2`. A smaller
-        // `krylov_dim` would silently zero out `k2 - krylov_dim` rows of
-        // the W basis, producing a lossy decompression round-trip. Surface
-        // this as a typed error at compile time so the user fixes the
-        // config rather than discovering the loss at inference time.
-        if krylov_dim < k2 {
+        // K_2-row restriction of `w_whiten` to be lossless. The SIRK
+        // sequence has `krylov_dim + 1` rows; a smaller `krylov_dim` leaves
+        // rows krylov_dim..K_2 of W as zero (those Fock modes were never
+        // visited). When `max_rank` is set (P10.16.3 rank-truncation path),
+        // the user has opted into an explicit low-rank approximation and the
+        // lossy case is intentional — bypass the error. Without `max_rank`
+        // the lossless invariant is enforced as before.
+        if krylov_dim < k2 && config.max_rank.is_none() {
             return Err(QfmError::K2ExceedsKrylovDim {
                 k2,
                 krylov_dim,
@@ -303,7 +314,40 @@ impl QfmPipeline {
         //    Hermitian by construction (the SIRK Gram-whitening step
         //    guarantees the projected H is self-adjoint in the whitened
         //    basis — see ForwardSirkResult).
-        let h_m = sirk.h_proj.clone();
+        let mut h_m = sirk.h_proj.clone();
+
+        // 5b. P10.16.3 rank-truncation: project W and H_m onto the top-r
+        //     right singular vectors of W. This allows krylov_dim << K_2
+        //     (the K2ExceedsKrylovDim check is bypassed above when
+        //     max_rank is set). After truncation, re-normalize W rows so
+        //     the encode step c_0 = W[mode, :] still yields a unit-norm
+        //     starting vector.
+        let rank = if let Some(r) = config.max_rank {
+            if let Some((w_trunc, h_trunc)) = rank_truncate_w_h(&w, &h_m, r) {
+                w = w_trunc;
+                h_m = h_trunc;
+                let new_rank = w.ncols();
+                // Re-normalize rows of the truncated W.
+                for i in 0..k2 {
+                    let row_norm: f64 =
+                        (0..new_rank).map(|j| w[(i, j)].norm_sqr()).sum::<f64>().sqrt();
+                    if row_norm > 1e-300 {
+                        let scale = Complex64::new(1.0 / row_norm, 0.0);
+                        for j in 0..new_rank {
+                            w[(i, j)] *= scale;
+                        }
+                    }
+                }
+                new_rank
+            } else {
+                rank
+            }
+        } else {
+            rank
+        };
+        if rank == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
 
         // 6. Pre-projected observables.
         let w_prob = probability_weight_matrix(&w, rank, k2);
@@ -592,6 +636,7 @@ mod tests {
             seed: 42,
             n_t_samples: 10,
             noise_dim: 4,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         assert_eq!(pipeline.raw_dim(), 4);
@@ -634,6 +679,7 @@ mod tests {
             seed: 7,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         let c_0 = pipeline.encode(&training[0]).unwrap();
@@ -664,6 +710,7 @@ mod tests {
             seed: 7,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         let c_0 = pipeline.encode(&training[0]).unwrap();
@@ -702,6 +749,7 @@ mod tests {
             seed: 42,
             n_t_samples: 10,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         // The pipeline struct holds the pre-projected observables,
@@ -720,6 +768,7 @@ mod tests {
             seed: 42,
             n_t_samples: 10,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         // Query with wrong dimension.
@@ -755,6 +804,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         let w = pipeline.w();
@@ -813,6 +863,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         let w = pipeline.w();
@@ -846,6 +897,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         let err = QfmPipeline::compile(&training, &bad_config).unwrap_err();
         match err {
@@ -871,6 +923,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         QfmPipeline::compile(&training, &good_config).unwrap();
 
@@ -882,6 +935,7 @@ mod tests {
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
+            max_rank: None,
         };
         QfmPipeline::compile(&training, &edge_config).unwrap();
 
