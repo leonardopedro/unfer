@@ -1508,6 +1508,86 @@ longer the right invariant under the mixed-basis $W$). A fourth
 benchmark group \texttt{bayes\_update\_vs\_n} ($N = 1, 4, 16$)
 confirms the $\mathcal{O}(N \cdot m^2)$ per-step HMC cost.
 
+\subsection{Current state and next steps (rev 17, 2026-06-30)}
+
+The algorithm in this paper is \textbf{fully closed} in the
+\texttt{unfer} kernel (rev 17, \texttt{commit e3c2479}). Every
+section has a working implementation: the Mehler-prior diagonal
+\emph{workhorse} \S\ref{sec:impl} is the
+\texttt{qfm\_mehler} builtin; the off-diagonal
+$\Hgen_{\mathrm{off}}$ coupling is the
+\texttt{qfm\_mehler\_offdiag} builtin; the Tomographic Subspace
+Recovery pipeline of \S\ref{sec:tomographic} is the
+\texttt{qfm} crate + the \texttt{qfm\_tomo\_module} Austral
+demo + the \texttt{uk\_evolve} FFI symbol; the Quantum Bayesian
+Update of \S\ref{sec:bayes} is the \texttt{qfm::bayes} module +
+the \texttt{Session::bayesian\_update} method + the
+\texttt{uk\_bayesian\_update} FFI symbol + the
+\texttt{bayes\_update\_module} Austral demo. The 5 end-to-end
+module demos (\texttt{demo\_module} +
+\texttt{qfm\_module} + \texttt{qfm\_tomo\_module} +
+\texttt{data\_source} + \texttt{bayes\_update\_module}) all
+type-check against the \texttt{UnferKernel} bindings and pass
+their positive + UK-4001 negative gates in CI.
+
+\textbf{Test counts (CPU, full sweep 2026-06-30, rev 17):}
+unfer workspace \textbf{180} (19 fock\_sirk + 26
+nested\_fock\_algebra + 37 prob\_kernel + 30 unfer\_protocol +
+33 unfer\_ffi + 35 qfm); 5 module demos (positive + UK-4001
+negative); 4 criterion benchmark groups in
+\texttt{qfm/benches/pipeline.rs}. Clippy clean, fmt clean. The
+GPU path is smoke-tested locally on 14 CUDA tests but is not yet
+in CI.
+
+\subsubsection*{Next steps to improve}
+
+The next rounds of work are \emph{not} new algorithm features
+(the algorithm is closed). They are
+\textbf{operationalization, validation, scaling, and
+documentation} of the existing implementation. The recommended
+order is:
+
+\begin{enumerate}
+\item \textbf{P7 (Productionization, $\sim$1 week).} README
+  refresh; CUDA-on-CI smoke; real-data validation of QFM-TSR on
+  a canonical dataset (MNIST 8$\times$8, Fashion-MNIST, or 2D
+  Ising-model snapshots); runtime check for the rev 17 P6 G
+  \texttt{krylov\_dim} $\ge K_2$ constraint (currently
+  doc-only); \texttt{HmcOptsSpec} FFI validation; Bayesian-update
+  benchmark expansion (vary $m$, $K_2$, leapfrog steps in
+  addition to $N$).
+
+\item \textbf{P8 (User-facing features, $\sim$2--3 weeks).}
+  Typst-math $\to$ Hamiltonian compiler (closes the v1
+  documented extension point); \texttt{uk\_belief\_propagation}
+  FFI symbol (QMF.tex \S11 message-passing alternative to HMC);
+  \texttt{bayes\_update\_module} v2 (multi-observation loop +
+  Karcher-mean posterior estimate); CUDA kernel benchmark; a
+  new \texttt{iterated\_bayes\_module} Austral demo that drives
+  \texttt{uk\_bayesian\_update} + \texttt{uk\_evolve} in a loop.
+
+\item \textbf{P9 (Production infra, $\sim$3--4 weeks).} CUDA
+  toolkit pinning (closes the P6 D8 gap); CI: private-repo PAT
+  (closes P6 D9); velysterm \texttt{mathed\_mini} Step 4 (caret
+  blink, mouse hit-testing, AccessKit bridge, kernel-bridge
+  wiring so the Bevy-free frontend can show \texttt{\textbackslash prob}
+  results); port the stale \texttt{velyst} examples to retire
+  the \texttt{upstream-stale-examples} feature gate.
+
+\item \textbf{P10 (Validation \& science, ongoing).} Scale
+  QFM-TSR + Bayesian-update to CIFAR-10 / ImageNet / CFD /
+  Ising-model datasets; full Lindbladian
+  $e^{(H - i \Sigma L_k^\dagger L_k / 2)\,t}$ solver (currently
+  out of scope; the seed exists as the Hermitian off-diagonal
+  QFM coupling); a Millennium-Prize mass-gap demonstration on
+  the 4D SU(2) Yang-Mills lattice at $l = 3$ (extends the
+  $l=2$ P6 A1 test).
+\end{enumerate}
+
+The detailed breakdown of every item, the per-item leverage and
+effort estimate, and the out-of-scope record are in
+\texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve".
+
 \section{Conclusion}
 
 We have given a self-contained derivation of a classical, grid-free realization

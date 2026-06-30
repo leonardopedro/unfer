@@ -6,6 +6,73 @@
 
 **All 18 stages (S1–S18), all hardening items (P0–P5), Workstream E (QFM), Workstream F F1–F5 (Tomographic QFM Subspace Recovery, fully hardened in rev 14 + rev 17), P6 A1–A2 + B3 + B4 + B5 + D10 + A3 (mass-gap extraction, adaptive scaling, hot-swap, streaming/subscription with typed events, third non-demo module, session persistence + observability, QFM tomographic hardening), P6 F.19 + F.20 (Austral `qfm_tomo_module/` demo + criterion benchmarks for the QFM pipeline), P6 G (full SIRK-generated Krylov basis W = w_whiten for lossless round-trip), and P6 H + the P6 H follow-on (Quantum Bayesian Update on the TSR-evolved prior — qfm module + `Session::bayesian_update` + `uk_bayesian_update` FFI + `bayes_update_module/` Austral demo, QMF.tex §8) are code-complete at the test/clippy/fmt level.** The system has no open *v1* work items. The unfer kernel is a modular probability kernel with an NDJSON agent interface, a C ABI for in-process module calls, an authorization-aware JIT hook, a Bevy-bridged UI, a Bevy-free mini frontend with text selection + AccessKit action wiring, and **five** verified end-to-end module demos (`demo_module` + `qfm_module` + `qfm_tomo_module` + `data_source` + `bayes_update_module`). Every per-crate acceptance test passes on CPU; the GPU path is smoke-tested. The work below is the historical spec + outcomes record; known gaps are in §"Known gaps & deferred items"; **forward-looking v2 improvements are in §"P6 — Future roadmap"**; **the tomographic QFM workstream is in §"Workstream F"**; **the rev 14 hardening outcomes are in §"Workstream F — Rev 14 hardening outcomes"**; **the v2 frontier items resolved in rev 15 are in §"P6 F.19 + F.20 — QFM tomographic module demo + benchmarks"**; **the v2 frontier item resolved in rev 16 is in §"P6 H — Quantum Bayesian Update on the TSR-evolved prior"**; **the v2 frontier items resolved in rev 17 are in §"P6 G" and §"P6 H follow-on"** (the full-session wiring + FFI + Austral demo).
 
+**The project is in a "v1 feature-complete + v2 algorithm-complete" state.** Every algorithm and module described in `QMF.tex` is implemented, tested, and pushed. The next rounds of work are no longer "implement the algorithm" but "**operationalize, validate, scale, and document**" the implementation. The prioritized next steps are in §"Next steps to improve" immediately below (P7 productionization, P8 user-facing features, P9 production infra, P10 validation & science — the first item of each bucket is the recommended starting point).
+
+## Next steps to improve (post-rev 17)
+
+> The v1 + v2 algorithm is **closed**: every item in §"P6 — Future roadmap" is DONE (F1..F9 in the Workstream F-outcomes table, P6 A1–A2 + B3–B5 + D10 + G + H, and the P6 H follow-on). The next rounds of work are *not* new algorithm features — they are **operational hardening, validation against real data, performance scaling, user-facing documentation, and CI/infra improvements** that the closed algorithm makes possible.
+>
+> Ordered by leverage. **P7** is the recommended next revision (closely-scoped, follows the v1 + v2 plan-and-execute pattern). **P8 / P9** are larger commitments requiring their own planning rounds.
+
+### P7 — Productionization (recommended next revision, ~1 week)
+
+The most valuable immediate work. Convert the closed v1 + v2 algorithm into a system that can be **deployed, monitored, and extended** by an outside user.
+
+1. **README.md refresh** (P0, ~1 hr, **doc-only**). The current `README.md` is the original "Fock-Sirk" pitch from before the modular-kernel era. It does not mention the QFM pipeline, the Austral/JIT module system, the agent interface, the FFI surface, or the velysterm UI. Rewrite it as the project landing page: one-paragraph elevator pitch, the algorithm stack (Fock algebra + SIRK + QFM-TSR + Bayesian update), the module/JIT architecture diagram, the 5 module demos, the public APIs (`prob_kernel::Session`, `qfm::QfmPipeline`, `qfm::bayes::*`, `unfer_ffi::uk_*`), the test/benchmark counts, and links to `QMF.tex`, `IMPLEMENTATION_PLAN.md`, `ARCHITECTURE.md`, `PROTOCOL.md`, `MODULE_RECIPE.md`. The README should land in **rev 18** with the F.19/F.20 rev-15-style status line at the top.
+2. **QFM end-to-end CI on CUDA** (P1, ~½ day, **infra**). The current `bayes-update-e2e` / `qfm-tomo-e2e` jobs are CPU-only. The 14 CUDA tests in `australVM/safestos/cranelift/src/forward_sirk.rs` are smoke-tested locally but not in CI. Add a `qfm-tomo-e2e-cuda` job (gated on `[self-hosted, gpu]`) that runs the 4-phase QFM-TSR pipeline on the GPU. Closes the D8 gap item in the P6 Future roadmap ("CUDA toolkit pinning" — at least the runnable path).
+3. **Real-data validation** (P2, ~1–2 days, **research**). The QFM-TSR pipeline has been tested only on synthetic 4-point tetrahedra. The rev 17 `w_whiten` basis is a real Krylov reduction; its quality on real datasets is the central scientific claim. Pick a small canonical dataset (MNIST 8×8, Fashion-MNIST, or a 2D Ising-model snapshot) and run the QFM-TSR `generate` + the P6 H `bayesian_update` on it, reporting (a) generated-image cosine similarity to held-out training points, (b) Bayesian-update recovery of held-out observations. This is the first step toward the QMF.tex §10 "empirical validation" plan.
+4. **Runtime `krylov_dim >= K_2` check** (P3, ~1 hr, **hardening**). The rev 17 P6 G fix requires `krylov_dim >= K_2` for the K_2-row restriction of `w_whiten` to be well-defined. This is currently a **doc-only** constraint (`pipeline.rs:464-477` documents it; `bayes::tests::small_pipeline` uses `krylov_dim=4`); the public `QfmPipeline::compile` does not enforce it. A `QfmConfig` with `krylov_dim < K_2` silently produces a W with `K_2 - krylov_dim` zeroed rows. Promote this to a `QfmError::K2ExceedsKrylovDim { k2, krylov_dim }` runtime check in `compile()`. +1 test in `qfm::pipeline::tests`. Closes the silent-failure path.
+5. **`HmcOptsSpec` validation in FFI** (P4, ~½ day, **hardening**). The new `unfer_protocol::HmcOptsSpec` accepts any `leapfrog_steps`, `step_size`, `n_iterations`, `burn_in`, `seed`. There is no validation: `leapfrog_steps = 0` or `step_size = 0.0` would silently produce a broken HMC chain. Add a `validate()` method on `HmcOptsSpec` (called from `uk_bayesian_update`) that returns `UK-1001 BAD_JSON` with a clear `RepairHint` for any out-of-range field. +2 tests in `unfer_ffi::tests::ffi`.
+6. **Bayesian-update benchmark expansion** (P5, ~½ day, **perf**). The current `bayes_update_vs_n` group only varies N (number of observations) with a fixed M=100, d=64, m=4 pipeline. Add three more groups: `bayes_update_vs_m` (m = 2, 4, 8 — varies the Krylov subspace dimension), `bayes_update_vs_k2` (K_2 = 4, 8, 16 — varies the Fock space), and `bayes_update_vs_leapfrog` (leapfrog_steps = 10, 20, 50 — varies the HMC chain length). This builds out the benchmark matrix to confirm the algorithm's central scaling claims.
+
+### P8 — User-facing features (~2–3 weeks)
+
+Bigger commitments that require their own design rounds. P7 is the prerequisite.
+
+7. **Typst-math → Hamiltonian compiler** (P6 C6 in the Future roadmap, ~2 weeks, **research**). The v1 translator pipeline (P3.10) requires a hand-authored Typst translator function. A general compiler that maps rendered math (Typst math AST) directly to `TermSpec[]` would close the v1 documentation's "documented extension point". The compiler can use the existing `compile_latex` parser as a backend (it already handles the inner-symbol expansion + BRST + mass-gap terms). The main work is the Typst math AST → LaTeX or TermSpec mapping; for the ~95% of physics input that is `a^\dagger a + h.c.`-style operator products, this should be straightforward. Add a `compile_typst_math(input: &str) -> Hamiltonian` to `nested_fock_algebra`, wire into `prob_kernel::HamiltonianSpec::Latex` (extend to `Typst`), and add +5 tests.
+8. **`uk_belief_propagation` FFI symbol** (~1 week, **research**). The QMF.tex §8 algorithm does a full Bayesian update; a v2 system could add **iterated belief propagation** (message passing between observation nodes) as a faster alternative to HMC for product-of-likelihoods posteriors. This is a documented QMF.tex §11 extension point. Out of scope for P7, but a natural follow-on.
+9. **`bayes_update_module/` v2** (~1 week, **research**). The current `bayes_update_module/` Austral demo hardcodes a single observation at training point 0 with the default HMC options. A v2 demo could (a) drive multiple observations in a loop (consume the JSON result, feed it back as a new observation), (b) demonstrate a posterior-mean estimate (sample N points, compute the Karcher mean), and (c) expose a `generate_from_observations` op that returns the full `BayesianUpdateResult` (not just the HMC sample).
+10. **CUDA kernel benchmark** (~½ day, **perf**). The 14 CUDA tests in `australVM/safestos/cranelift/src/forward_sirk.rs` smoke-test the GPU path but do not measure throughput. Add a `criterion`-based benchmark group `forward_sirk_vs_M_cuda` (M = 10, 100, 1000, 10000 on a CUDA device) to confirm the central scaling claim: the GPU path should be ~10× faster than CPU at M = 1000+ and should not regress at M = 10 (where kernel launch overhead dominates).
+11. **Module demo for iterated Bayesian updating** (~1 day, **research**). Build `iterated_bayes_module/` Austral demo that uses `uk_bayesian_update` + `uk_evolve` in a loop: condition on observation 1, evolve, condition on observation 2, evolve, etc. Exercises the full QMF.tex §8 + §7 pipeline together, not just the standalone HMC. Add `iterated-bayes-e2e` CI job.
+
+### P9 — Production infra (~3–4 weeks)
+
+Lower-priority operational work that becomes important when shipping.
+
+12. **CUDA toolkit pinning** (P6 D8 in the Future roadmap, ~½ day, **infra**). The GPU path needs `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` to survive CUDA 12.2/13 coexistence. Add a `rust-toolchain.toml`-style pinned toolchain file (or a `flake.nix` / `nix-shell` manifest) that exports the right `LD_LIBRARY_PATH` for the system's CUDA. Closes the P6 D8 gap item.
+13. **CI: private-repo PAT** (P6 D9, ~1 hr, **infra**). Wire a `secrets.AUSTRALVM_TOKEN` PAT into the `demo-e2e` / `qfm-e2e` / `bayes-update-e2e` / `qfm-tomo-e2e` jobs so the sibling australVM checkout works whether the repo is public or private. Closes the P6 D9 gap item.
+14. **velysterm `mathed_mini` Step 4** (gap from the mini-frontend progress section, ~1 week, **frontend**). Caret blink via `ControlFlow::WaitUntil`; mouse hit-testing / click-to-place-caret + selection using the existing `byte_for_point` / `rects_for_range` plumbing; `mathed_a11y` AccessKit bridge over `mathed_core::accessibility`; and the headline item: **wire `kernel_client` into `mathed_mini`** so the Bevy-free frontend can show `\prob` results too (today only the Bevy `mathed` frontend has the kernel bridge).
+15. **Port the stale `velyst` examples** (P6 C7, ~1 day, **frontend**). Port `editor`/`terminal` to the current `velyst` API (removed `VelystFuncBundle`/`VelystSourceHandle`); retire the `upstream-stale-examples` feature gate.
+
+### P10 — Validation & science (~ongoing)
+
+Items that are valuable but require sustained research effort; suitable for a long-running thread.
+
+16. **Real-dataset validation of QFM-TSR** (P7 P2, ongoing). Once the P7 P2 canonical-dataset run is in, the natural next step is to scale to (a) larger image datasets (CIFAR-10 32×32, ImageNet 64×64), (b) cross-domain datasets (CFD flow fields, 2D Ising-model critical snapshots, gravitational waveforms), and (c) the Bayesian-update posterior quality on adversarial / partial observations.
+17. **Open-system / Lindbladian dynamics** (documented as out of scope in the P6 Future roadmap header). The QFM Fokker-Planck transport of QMF.tex §2.3 is currently approximated as a coherent Rabi oscillation. A full Lindbladian `e^{(H - i Σ L_k^dag L_k / 2) t}` solver is the natural next step for a true generative flow that mixes modes, not just oscillates. The Hermitian off-diagonal QFM coupling (`qfm_hamiltonian_offdiag`, gap §26) already exists as the seed for this work. ~1 month.
+18. **Millennium-Prize mass-gap demonstration** (long-running). The unfer architecture has all the pieces: the `ForwardSirkResult::mass_gap_from_sectors` (P6 A1) gives the cross-sector gap; the QFM-TSR pipeline (Workstream F) gives the offline training; the TSR-evolved prior (P6 H) gives the informed posterior. A complete demonstration would compile the 4D SU(2) Yang-Mills Hamiltonian on an l=3 lattice (8 plaquettes, ~200 modes), train the QFM-TSR pipeline on the lattice ground states, compute the mass gap via `mass_gap_from_sectors`, and report. The `yang_mills_lattice_mass_gap` test (P6 A1) verified this at l=2, g=2; the demonstration would extend to l=3 or l=4. ~2–3 months.
+
+### Out of scope (decided, recorded)
+
+These are explicitly **not** pursued (the v1 + v2 plan records them as out of scope):
+
+- **Non-Hermitian / open-system evolution path** (P6 Future roadmap header). SIRK + the Born rule assume a Hermitian generator. The QFM Fokker-Planck transport stays a coherent Rabi oscillation by design. A full Lindbladian solver is the natural follow-on (P10 P17) but is not part of the closed v1 + v2 algorithm.
+- **Off-diagonal QFM producing genuine population spread** (P6 Future roadmap header). The off-diagonal QFM `ĥ_j` operators only produce spread under non-unitary dynamics. The Hermitian off-diagonal coupling already exists (`qfm_hamiltonian_offdiag`, gap §26) as the seed for the open-system work.
+
+### Reading order
+
+If you are a new contributor, the recommended reading order is:
+1. `AGENTS.md` — the architecture-level constraints and the "what to read first" pointer.
+2. `QMF.tex` — the algorithm specification (Sections 1–4 for the core flow, Section 7 for the QFM-TSR pipeline, Section 8 for the Bayesian update).
+3. `README.md` (the P7 P1 refresh) — the project landing page.
+4. `IMPLEMENTATION_PLAN.md` (this file) — the per-crate implementation record, the test/benchmark counts, the future roadmap.
+5. `docs/ARCHITECTURE.md` — the diagram and the per-crate extension-point checklists.
+6. `docs/PROTOCOL.md` — the JSON request/response schemas (the `AgentRequest` / `AgentResponse` / `HamiltonianSpec` / `EventPredicate` definitions).
+7. `docs/MODULE_RECIPE.md` — the manifest + Austral + foreign-import + JIT recipe for adding a new module.
+8. The 5 module demos (`demo_module/`, `qfm_module/`, `qfm_tomo_module/`, `demo_module/data_source/`, `bayes_update_module/`) — each is a self-contained "executable documentation" of one slice of the architecture. Start with `qfm_tomo_module/`: it is the smallest end-to-end demo that exercises the F4 + F5 (online inference) + UK-4001 (authorization) + buffer protocol (drain result).
+
+
+
 - **What now exists (was the greenfield baseline at commit `b1e5581 "working"` 2026-05-09):**
   - `unfer/` workspace: **6 crates** (`nested_fock_algebra`, `fock_sirk`, `unfer_protocol`, `prob_kernel`, `unfer_ffi`, **`qfm`** — added in rev 13) + 3 module demos (`demo_module/`, `qfm_module/`, **`qfm_tomo_module/`** — added in rev 15) + 1 standalone Rust module (`demo_module/data_source/`). CUDA is optional (`cuda` feature, CPU-default, GPU-smoke-tested).
   - `australVM/safestos/cranelift`: `auth.rs` (`AuthorizationEngine` trait + `ManifestAuthEngine`; Cedar demoted to optional default feature), `uk_*` symbols registered in the JIT behind `unfer-kernel` feature, `check_cedar_permissions` → `check_call_permission`. CPS-JIT backend fixed (let-init, record destructure, cross-module linking, byte buffers, multi-field records).
@@ -29,6 +96,10 @@
   - [x] F7 Quantum Bayesian Update on the TSR-evolved prior (rev 16, qfm module)
   - [x] F8 Full SIRK-generated Krylov basis W = w_whiten (rev 17, P6 G)
   - [x] F9 Session/FFI wiring of F7 + 5th module demo (rev 17, P6 H follow-on)
+  - [ ] **P7** — Productionization (next revision; see §"Next steps to improve"): README refresh, CUDA-on-CI, real-data validation, runtime `krylov_dim >= K_2` check, `HmcOptsSpec` validation, Bayesian-update benchmark expansion
+  - [ ] **P8** — User-facing features: Typst-math compiler, `uk_belief_propagation`, `bayes_update_module` v2, CUDA kernel benchmark, iterated-Bayes module
+  - [ ] **P9** — Production infra: CUDA toolkit pinning, CI PAT, velysterm `mathed_mini` Step 4, port stale `velyst` examples
+  - [ ] **P10** — Validation & science: real-dataset QFM-TSR validation, Lindbladian dynamics, Millennium-Prize mass-gap demonstration
 
 ## Context
 
