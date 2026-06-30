@@ -300,9 +300,9 @@ fn evolve_missing_t_returns_1001() {
 #[test]
 fn qfm_tomo_via_ffi() {
     // P6 E #14: FFI integration test for the QFM tomographic pipeline.
-    // Build a 4-point training set in d=4, k=2, K_2=4, krylov_dim=2,
+    // Build a 4-point training set in d=4, k=2, K_2=4, krylov_dim=4,
     // evolve with a query, and assert qfm_output is present in the
-    // returned EvolveReport JSON.
+    // returned EvolveReport JSON. (P7 P3: krylov_dim must be >= K_2.)
     let spec = r#"{
       "hamiltonian": {
         "kind": "qfm_tomography",
@@ -315,13 +315,13 @@ fn qfm_tomo_via_ffi() {
           ],
           "k": 2,
           "k2": 4,
-          "krylov_dim": 2,
+          "krylov_dim": 4,
           "seed": 42
         }
       },
       "prior": {"kind": "vacuum"},
       "solver": {
-        "krylov_dim": 2,
+        "krylov_dim": 4,
         "prune_eps": 1e-12,
         "max_components": 50000,
         "restarts": 1,
@@ -437,11 +437,17 @@ fn bayesian_update_via_ffi() {
 fn bayesian_update_via_ffi_zero_observations() {
     // Zero-observation Bayesian update: posterior = prior. The
     // result should have n_observations=0 and mean_likelihood=-1.
+    // (P7 P3: 4 training points in d=4 with k2=4, krylov_dim=4.)
     let spec = r#"{
       "hamiltonian": {
         "kind": "qfm_tomography",
         "spec": {
-          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
           "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
         }
       },
@@ -496,11 +502,17 @@ fn bayesian_update_via_ffi_on_non_qfm_returns_5000() {
 fn bayesian_update_via_ffi_bad_obs_dim_returns_1001() {
     // Observation with wrong dimension should return UK-1001 (BAD_JSON,
     // surfaced via the Qfm DimensionMismatch -> to_diagnostic mapping).
+    // (P7 P3: 4 training points in d=4 with k2=4, krylov_dim=4.)
     let spec = r#"{
       "hamiltonian": {
         "kind": "qfm_tomography",
         "spec": {
-          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
           "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
         }
       },
@@ -532,18 +544,24 @@ fn bayesian_update_via_ffi_bad_obs_dim_returns_1001() {
 fn qfm_tomo_via_ffi_bad_query_dim_returns_1001() {
     // A qfm_tomography model expects the query to have d elements; a
     // query of the wrong dimension must surface as BAD_JSON with a
-    // DimensionMismatch-derived message.
+    // DimensionMismatch-derived message. (P7 P3: 4 training points in
+    // d=4 with k2=4, krylov_dim=4 satisfies all constraints.)
     let spec = r#"{
       "hamiltonian": {
         "kind": "qfm_tomography",
         "spec": {
-          "training_data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
-          "k": 2, "k2": 4, "krylov_dim": 2, "seed": 42
+          "training_data": [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+          ],
+          "k": 2, "k2": 4, "krylov_dim": 4, "seed": 42
         }
       },
       "prior": {"kind": "vacuum"},
       "solver": {
-        "krylov_dim": 2, "prune_eps": 1e-12,
+        "krylov_dim": 4, "prune_eps": 1e-12,
         "max_components": 50000, "restarts": 1,
         "device": {"kind": "cpu"}
       }

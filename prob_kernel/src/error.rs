@@ -206,6 +206,24 @@ impl KernelError {
                 )
             }
 
+            KernelError::Qfm(qfm::pipeline::QfmError::K2ExceedsKrylovDim {
+                k2,
+                krylov_dim,
+                m,
+                config_krylov_dim,
+            }) => Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
+                RepairHint::new(
+                    HintKind::SetParam,
+                    "hamiltonian.spec",
+                    format!(
+                        "QFM compile: K_2 = {k2} > effective krylov_dim = {krylov_dim} \
+                     (config.krylov_dim = {config_krylov_dim}, m = {m}). Either increase \
+                     config.krylov_dim to at least K_2, or reduce K_2 to <= M, or add more \
+                     training points so M >= K_2."
+                    ),
+                ),
+            ),
+
             KernelError::Internal(msg) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Fatal).with_hint(
                     RepairHint::new(
@@ -246,7 +264,7 @@ mod tests {
                 limit: 65_536,
             }),
             KernelError::Cas(CasError::Parse("unexpected token".into())),
-            // Qfm(..) — all three QfmError variants.
+            // Qfm(..) — all four QfmError variants.
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch {
                 expected: 8,
                 got: 4,
@@ -255,6 +273,12 @@ mod tests {
             KernelError::Qfm(qfm::pipeline::QfmError::SirkFailed(
                 "singular matrix".into(),
             )),
+            KernelError::Qfm(qfm::pipeline::QfmError::K2ExceedsKrylovDim {
+                k2: 8,
+                krylov_dim: 4,
+                m: 4,
+                config_krylov_dim: 8,
+            }),
             // Native KernelError variants.
             KernelError::UnknownBuiltinModel {
                 name: "lattice_qcd".into(),

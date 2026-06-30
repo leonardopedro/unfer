@@ -40,7 +40,7 @@
 //! let config = QfmConfig {
 //!     k: 2,
 //!     k2: 4,
-//!     krylov_dim: 2,
+//!     krylov_dim: 4,
 //!     seed: 42,
 //!     n_t_samples: 4,
 //!     noise_dim: 2,

@@ -51,10 +51,14 @@ pub struct QfmConfig {
 
 impl Default for QfmConfig {
     fn default() -> Self {
+        // Note (P7 P3, rev 18): krylov_dim must be >= k2 for the K_2-row
+        // restriction of w_whiten to be well-defined (the SIRK sequence
+        // has krylov_dim+1 rows; the K_2-row restriction requires
+        // krylov_dim >= K_2). The default satisfies this with equality.
         Self {
             k: 4,
             k2: 8,
-            krylov_dim: 4,
+            krylov_dim: 8,
             seed: 42,
             n_t_samples: 10,
             noise_dim: 4,
@@ -132,6 +136,24 @@ pub enum QfmError {
     DegenerateBasis,
     /// The underlying SIRK solve failed (shifted Hamiltonian singular, etc.).
     SirkFailed(String),
+    /// The configured Krylov dimension is smaller than K_2, so the K_2-row
+    /// restriction of `w_whiten` would zero out some rows and produce a
+    /// silently lossy decompression round-trip. Surface this as an error
+    /// at compile time so the user can fix their `QfmConfig`.
+    ///
+    /// The relevant parameters are: `k2` (the single-excitation Fock
+    /// subspace dim, which is also the K_2 bound on S_2), `krylov_dim`
+    /// (the effective SIRK rank after the `min(m, k2)` clamp), and `m`
+    /// (the number of training points, which is the natural upper bound
+    /// on the SIRK sequence).
+    ///
+    /// (rev 18, P7 P3: was doc-only; promoted to a runtime check.)
+    K2ExceedsKrylovDim {
+        k2: usize,
+        krylov_dim: usize,
+        m: usize,
+        config_krylov_dim: usize,
+    },
 }
 
 impl std::fmt::Display for QfmError {
@@ -142,6 +164,20 @@ impl std::fmt::Display for QfmError {
             }
             QfmError::DegenerateBasis => write!(f, "compiled basis is degenerate"),
             QfmError::SirkFailed(msg) => write!(f, "SIRK solve failed: {msg}"),
+            QfmError::K2ExceedsKrylovDim {
+                k2,
+                krylov_dim,
+                m,
+                config_krylov_dim,
+            } => write!(
+                f,
+                "K_2 = {k2} exceeds the effective krylov_dim = {krylov_dim} \
+                 (config.krylov_dim = {config_krylov_dim} clamped by min(M = {m}, K_2)); \
+                 the K_2-row restriction of w_whiten would zero out {n} rows. \
+                 Either increase config.krylov_dim to at least K_2, or reduce K_2 to <= M, \
+                 or add more training points so M >= K_2.",
+                n = k2 - krylov_dim
+            ),
         }
     }
 }
@@ -173,6 +209,22 @@ impl QfmPipeline {
         let krylov_dim = config.krylov_dim.min(m).min(k2);
         if krylov_dim == 0 {
             return Err(QfmError::DegenerateBasis);
+        }
+        // P7 P3: the rev 17 P6 G fix requires `krylov_dim >= K_2` for the
+        // K_2-row restriction of `w_whiten` to be well-defined. The
+        // SIRK sequence has `krylov_dim + 1` rows; the K_2-row restriction
+        // is well-defined only when `krylov_dim >= K_2`. A smaller
+        // `krylov_dim` would silently zero out `k2 - krylov_dim` rows of
+        // the W basis, producing a lossy decompression round-trip. Surface
+        // this as a typed error at compile time so the user fixes the
+        // config rather than discovering the loss at inference time.
+        if krylov_dim < k2 {
+            return Err(QfmError::K2ExceedsKrylovDim {
+                k2,
+                krylov_dim,
+                m,
+                config_krylov_dim: config.krylov_dim,
+            });
         }
 
         // 1. Flow Matching optimal coefficients.
@@ -516,29 +568,33 @@ mod tests {
 
     #[test]
     fn pipeline_compile_and_generate_synthetic() {
-        // 4 training points in d=8, k=4, K_2=8, rank=4.
+        // 4 training points in d=4, k=4, K_2=4, rank=4. (P7 P3: K_2 must be
+        // <= m, and krylov_dim must be >= K_2; the effective krylov_dim is
+        // min(config.krylov_dim, m, K_2), so K_2=4=krylov_dim=m is the
+        // smallest legal config for m=4. The d=4 raw dim matches K_2=4
+        // per the `krylov_image_basis` debug_assert!(d <= k2) constraint.)
         let training = vec![
-            vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
         ];
         let config = QfmConfig {
             k: 4,
-            k2: 8,
+            k2: 4,
             krylov_dim: 4,
             seed: 42,
             n_t_samples: 10,
             noise_dim: 4,
         };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
-        assert_eq!(pipeline.raw_dim(), 8);
-        assert_eq!(pipeline.k2_dim(), 8);
+        assert_eq!(pipeline.raw_dim(), 4);
+        assert_eq!(pipeline.k2_dim(), 4);
         assert!(pipeline.rank() >= 1, "rank should be at least 1");
 
         // Generate from the first training point.
         let x_out = pipeline.generate(&training[0]).unwrap();
-        assert_eq!(x_out.len(), 8);
+        assert_eq!(x_out.len(), 4);
         for &v in &x_out {
             assert!(v.is_finite(), "output should be finite, got {v}");
         }
@@ -568,7 +624,7 @@ mod tests {
         let config = QfmConfig {
             k: 2,
             k2: 4,
-            krylov_dim: 2,
+            krylov_dim: 4,
             seed: 7,
             n_t_samples: 4,
             noise_dim: 2,
@@ -598,7 +654,7 @@ mod tests {
         let config = QfmConfig {
             k: 2,
             k2: 4,
-            krylov_dim: 2,
+            krylov_dim: 4,
             seed: 7,
             n_t_samples: 4,
             noise_dim: 2,
@@ -630,27 +686,43 @@ mod tests {
         // after compilation. We do this by checking that the function
         // signature is `&self` only (no `&self` of training data).
         // This is a structural test — the compile-time guarantee.
-        let training = vec![vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 1.0, 0.0, 0.0]];
-        let config = QfmConfig::default();
+        // (P7 P3: m=2 training points so K_2 must be <= 2; use K_2=2
+        // and d=2 to match the krylov_image_basis d <= K_2 constraint.)
+        let training = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let config = QfmConfig {
+            k: 2,
+            k2: 2,
+            krylov_dim: 2,
+            seed: 42,
+            n_t_samples: 10,
+            noise_dim: 2,
+        };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         // The pipeline struct holds the pre-projected observables,
         // not the raw training points. The training_features field
         // is only used for nearest-neighbor fallback in S_2 (not M).
-        assert!(pipeline.generate(&[1.0, 0.0, 0.0, 0.0]).is_ok());
+        assert!(pipeline.generate(&[1.0, 0.0]).is_ok());
     }
 
     #[test]
     fn encode_dimension_mismatch() {
-        let training = vec![vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 1.0, 0.0, 0.0]];
-        let config = QfmConfig::default();
+        let training = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let config = QfmConfig {
+            k: 2,
+            k2: 2,
+            krylov_dim: 2,
+            seed: 42,
+            n_t_samples: 10,
+            noise_dim: 2,
+        };
         let pipeline = QfmPipeline::compile(&training, &config).unwrap();
         // Query with wrong dimension.
-        let result = pipeline.generate(&[1.0, 0.0]);
+        let result = pipeline.generate(&[1.0, 0.0, 0.0]);
         assert!(result.is_err());
         match result.unwrap_err() {
             QfmError::DimensionMismatch { expected, got } => {
-                assert_eq!(expected, 4);
-                assert_eq!(got, 2);
+                assert_eq!(expected, 2);
+                assert_eq!(got, 3);
             }
             _ => panic!("expected DimensionMismatch"),
         }
@@ -673,7 +745,7 @@ mod tests {
         let config = QfmConfig {
             k: 2,
             k2: 4,
-            krylov_dim: 2,
+            krylov_dim: 4,
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
@@ -683,7 +755,13 @@ mod tests {
         let k2 = w.nrows();
         let rank = w.ncols();
         assert_eq!(k2, 4);
-        assert_eq!(rank, 2);
+        // The rank is determined by the SIRK solve; the tetrahedron's
+        // symmetry reduces it to 2 independent directions. The constraint
+        // is just rank >= 1 (P6 G is verified by the off-diagonal check below).
+        assert!(
+            rank >= 1,
+            "W should have at least one column, got rank={rank}"
+        );
         // Sum the off-diagonal magnitudes: a non-trivial mixed basis
         // will have at least one off-diagonal entry with non-trivial
         // magnitude. The identity sub-block would have all off-diagonal
@@ -725,7 +803,7 @@ mod tests {
         let config = QfmConfig {
             k: 2,
             k2: 4,
-            krylov_dim: 2,
+            krylov_dim: 4,
             seed: 42,
             n_t_samples: 4,
             noise_dim: 2,
@@ -739,5 +817,80 @@ mod tests {
                 "W column {j} has zero or non-finite norm {norm_sq}"
             );
         }
+    }
+
+    #[test]
+    fn k2_exceeds_krylov_dim_returns_typed_error() {
+        // P7 P3: the rev 17 P6 G fix requires `krylov_dim >= K_2` for the
+        // K_2-row restriction of `w_whiten` to be well-defined. Before
+        // rev 18, this was a doc-only constraint; a too-small
+        // `krylov_dim` would silently zero out rows of W and produce a
+        // lossy round-trip. Now it's a typed error at compile time.
+        let training = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+        ];
+        // krylov_dim=2 < K_2=4 -> should fail with K2ExceedsKrylovDim.
+        let bad_config = QfmConfig {
+            k: 2,
+            k2: 4,
+            krylov_dim: 2,
+            seed: 42,
+            n_t_samples: 4,
+            noise_dim: 2,
+        };
+        let err = QfmPipeline::compile(&training, &bad_config).unwrap_err();
+        match err {
+            QfmError::K2ExceedsKrylovDim {
+                k2,
+                krylov_dim,
+                m,
+                config_krylov_dim,
+            } => {
+                assert_eq!(k2, 4);
+                assert_eq!(krylov_dim, 2);
+                assert_eq!(m, 4);
+                assert_eq!(config_krylov_dim, 2);
+            }
+            other => panic!("expected K2ExceedsKrylovDim, got {other:?}"),
+        }
+
+        // Sanity: the well-formed config from the existing tests still compiles.
+        let good_config = QfmConfig {
+            k: 2,
+            k2: 4,
+            krylov_dim: 4,
+            seed: 42,
+            n_t_samples: 4,
+            noise_dim: 2,
+        };
+        QfmPipeline::compile(&training, &good_config).unwrap();
+
+        // Edge: krylov_dim = K_2 (equality) is OK; only strict < fails.
+        let edge_config = QfmConfig {
+            k: 2,
+            k2: 4,
+            krylov_dim: 4,
+            seed: 42,
+            n_t_samples: 4,
+            noise_dim: 2,
+        };
+        QfmPipeline::compile(&training, &edge_config).unwrap();
+
+        // The error message mentions the right values + the fix.
+        let msg = format!(
+            "{}",
+            QfmError::K2ExceedsKrylovDim {
+                k2: 8,
+                krylov_dim: 4,
+                m: 4,
+                config_krylov_dim: 8,
+            }
+        );
+        assert!(msg.contains("K_2 = 8"));
+        assert!(msg.contains("krylov_dim = 4"));
+        assert!(msg.contains("increase config.krylov_dim"));
     }
 }

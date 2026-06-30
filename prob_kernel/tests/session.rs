@@ -787,11 +787,20 @@ fn sirk_stability_krylov_dim_32() {
 /// Build a `ModelSpec` with a `HamiltonianSpec::QfmTomography` variant.
 fn qfm_tomo_spec(training_data: Vec<Vec<f64>>) -> ModelSpec {
     use unfer_protocol::QfmTomographySpec;
+    // P7 P3: the QFM compile requires `krylov_dim >= k2` (the SIRK
+    // sequence has `krylov_dim + 1` rows; the K_2-row restriction of
+    // w_whiten needs `krylov_dim >= K_2`), and `k2 >= d` (the
+    // krylov_image_basis debug_assert!). The SIRK clamp reduces
+    // krylov_dim to min(config.krylov_dim, m, k2), so `k2 <= m` is
+    // also required. So pick k2 = max(m, d) and krylov_dim = k2.
+    let m = training_data.len();
+    let d = training_data.first().map(|p| p.len()).unwrap_or(8);
+    let k2 = m.max(d);
     let spec = QfmTomographySpec {
         training_data,
         k: 4,
-        k2: 8,
-        krylov_dim: 4,
+        k2,
+        krylov_dim: k2,
         seed: 42,
     };
     ModelSpec {
@@ -810,13 +819,16 @@ fn qfm_tomo_spec(training_data: Vec<Vec<f64>>) -> ModelSpec {
 
 #[test]
 fn qfm_tomo_compile_and_generate() {
-    // 4 training points in d=8.
-    let training = vec![
-        vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-    ];
+    // 8 training points in d=8 (the canonical F5 tetrahedron+ cube
+    // setup; P7 P3 requires m >= k2 >= d, so 8 training points in d=8
+    // with k2=8 satisfies all constraints).
+    let training: Vec<Vec<f64>> = (0..8)
+        .map(|i| {
+            let mut v = vec![0.0; 8];
+            v[i] = 1.0;
+            v
+        })
+        .collect();
     let spec = qfm_tomo_spec(training.clone());
     let mut session = Session::new(&spec).expect("QFM session");
 
@@ -848,11 +860,14 @@ fn qfm_tomo_no_query_returns_error() {
 #[test]
 fn qfm_tomo_no_m_in_evolve_report() {
     // Verify the EvolveReport payload does not reference the training data.
-    let training = vec![
-        vec![1.0, 0.0, 0.0, 0.0],
-        vec![0.0, 1.0, 0.0, 0.0],
-        vec![0.0, 0.0, 1.0, 0.0],
-    ];
+    // P7 P3: m=4, d=4, k2=4 satisfies k2 <= m and k2 >= d.
+    let training: Vec<Vec<f64>> = (0..4)
+        .map(|i| {
+            let mut v = vec![0.0; 4];
+            v[i] = 1.0;
+            v
+        })
+        .collect();
     let spec = qfm_tomo_spec(training.clone());
     let mut session = Session::new(&spec).expect("QFM session");
     let report = session

@@ -60,14 +60,17 @@ fn synthetic_training(m: usize, d: usize, seed: u64) -> Vec<Vec<f64>> {
 
 fn config_for(d: usize, m: usize) -> QfmConfig {
     // K_2 must be >= M so every training feature can be registered in S_2
-    // (the FeatureToMode map is bounded by K_2). krylov_dim = 4 keeps the
-    // SIRK solve cheap; k = min(4, d) is the standard Level 1 sketch size.
-    // If d < m (caller is using a small d for a large M), the K_2 = M
-    // choice naturally forces the user to grow d.
+    // (the FeatureToMode map is bounded by K_2). krylov_dim = K_2 (per the
+    // P6 G constraint enforced in QfmPipeline::compile since rev 18; P7 P3
+    // promoted the doc-only krylov_dim >= K_2 check to a runtime error).
+    // k = min(4, d) is the standard Level 1 sketch size. If d < m (caller
+    // is using a small d for a large M), the K_2 = M choice naturally
+    // forces the user to grow d.
+    let k2 = m.max(8);
     QfmConfig {
         k: 4.min(d).max(1),
-        k2: m.max(8),
-        krylov_dim: 4.min(m).min(m.max(8)),
+        k2,
+        krylov_dim: k2,
         seed: 42,
         n_t_samples: 4,
         noise_dim: d,
