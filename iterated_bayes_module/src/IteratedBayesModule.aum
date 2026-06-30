@@ -1,0 +1,118 @@
+pragma Unsafe_Module;
+
+import Austral.Memory (Address);
+import UnferKernel (
+    Model,
+    wrapModel,
+    freeModel,
+    kernelModelCreateStr,
+    kernelEvolveStr
+);
+
+module body IteratedBayesModule is
+    -- Foreign import for the cranelift bridge's `au_alloc` runtime
+    -- allocator. The JIT-side equivalent of libc's `malloc`.
+    pragma Foreign_Import(External_Name => "au_alloc");
+    function auAlloc(size: Int64): Int64 is end;
+
+    -- Foreign import for the cranelift bridge's `au_free` runtime
+    -- deallocator. Pairs with `auAlloc` above.
+    pragma Foreign_Import(External_Name => "au_free");
+    function auFree(ptr: Int64): Int32 is end;
+
+    -- `uk_bayesian_update` is not yet in UnferKernel.aum, so we
+    -- re-declare it here as a module-local foreign import. The
+    -- request body is a `BayesianUpdateRequest` JSON.
+    pragma Foreign_Import(External_Name => "uk_bayesian_update");
+    function kernelBayesianUpdate(model: Int64, req: Address[Nat8], len: Int64): Int64 is end;
+
+    -- `uk_get_result` is also re-declared here as a module-local
+    -- foreign import that takes the output buffer as a raw `Int64`
+    -- pointer.
+    pragma Foreign_Import(External_Name => "uk_get_result");
+    function kernelGetResultRaw(model: Int64, buf: Int64, cap: Int64): Int64 is end;
+
+    -- Span[Nat8, Static] wrapper around kernelBayesianUpdateRaw.
+    -- Mirrors the kernelModelCreateStr / kernelEvolveStr pattern
+    -- in UnferKernel.aum.
+    function kernelBayesianUpdateStr(model: Int64, req: Span[Nat8, Static]): Int64 is
+        let addr: Address[Nat8] := @embed(Address[Nat8], "$1.data", req);
+        let len: Int64 := @embed(Int64, "$1.size", req);
+        return kernelBayesianUpdate(model, addr, len);
+    end;
+
+    -- Run a single bayes-update + drain iteration on the model.
+    -- Returns 0 on success; a UK code on failure.
+    function run_one_iteration(model: Int64, observation: Span[Nat8, Static], query: Span[Nat8, Static]): Int64 is
+        let burc: Int64 := kernelBayesianUpdateStr(model, observation);
+        if burc /= 0 then
+            return burc;
+        end if;
+        -- Drain the BayesianUpdateResult JSON. 4 KiB fixed buffer is
+        -- far larger than the d=4-element output JSON (~120 bytes).
+        let cap: Int64 := 4096;
+        let raw: Int64 := auAlloc(cap);
+        let n: Int64 := kernelGetResultRaw(model, raw, cap);
+        let frcv: Int32 := auFree(raw);
+        if n <= 0 then
+            -- Negative n is a UK code; surface it.
+            return n;
+        end if;
+        -- Evolve forward in time (QMF.tex §7 Phase 2; the QFM 4-phase
+        -- generate). For a QFM tomographic model, the kernel needs
+        -- a query in the evolve opts to drive the 4-phase generate.
+        let erc: Int64 := kernelEvolveStr(model, query);
+        if erc /= 0 then
+            return erc;
+        end if;
+        return 0;
+    end;
+
+    function run(): Int64 is
+        -- The "training set" is the 4-point tetrahedron in d=4 used
+        -- in the QFM-TSR demo (rev 14). k=2, K_2=4, krylov_dim=4
+        -- (K_2 must equal krylov_dim so the P6 G SIRK-whitened
+        -- basis can represent all K_2 single-excitation modes).
+        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"qfm_tomography\",\"spec\":{\"training_data\":[[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],\"k\":2,\"k2\":4,\"krylov_dim\":4,\"seed\":42}},\"prior\":{\"kind\":\"vacuum\"},\"solver\":{\"krylov_dim\":4,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
+        let handle: Int64 := kernelModelCreateStr(spec);
+        if handle <= 0 then
+            -- `handle <= 0` is a UK code from `uk_model_create`.
+            return handle;
+        end if;
+
+        -- Run the iterated loop: 3 iterations, conditioning on
+        -- training point 0 / 1 / 2 (the tetrahedron has 4 points;
+        -- we use 3 of them). For each iteration, the evolve step
+        -- also takes a query that drives the QFM 4-phase generate.
+        let obs0: Span[Nat8, Static] := "{\"observations\":[[1.0,0.0,0.0,0.0]]}";
+        let obs1: Span[Nat8, Static] := "{\"observations\":[[0.0,1.0,0.0,0.0]]}";
+        let obs2: Span[Nat8, Static] := "{\"observations\":[[0.0,0.0,1.0,0.0]]}";
+        let query0: Span[Nat8, Static] := "{\"t\":0.5,\"query\":[1.0,0.0,0.0,0.0]}";
+        let query1: Span[Nat8, Static] := "{\"t\":0.5,\"query\":[0.0,1.0,0.0,0.0]}";
+        let query2: Span[Nat8, Static] := "{\"t\":0.5,\"query\":[0.0,0.0,1.0,0.0]}";
+
+        let r0: Int64 := run_one_iteration(handle, obs0, query0);
+        if r0 /= 0 then
+            let m: Model := wrapModel(handle);
+            let frc: Int64 := freeModel(m);
+            return r0;
+        end if;
+
+        let r1: Int64 := run_one_iteration(handle, obs1, query1);
+        if r1 /= 0 then
+            let m: Model := wrapModel(handle);
+            let frc: Int64 := freeModel(m);
+            return r1;
+        end if;
+
+        let r2: Int64 := run_one_iteration(handle, obs2, query2);
+        let m: Model := wrapModel(handle);
+        let frc: Int64 := freeModel(m);
+        if r2 /= 0 then
+            return r2;
+        end if;
+
+        -- If we got here, all 3 iterations succeeded.
+        return 1;
+    end;
+end module body.

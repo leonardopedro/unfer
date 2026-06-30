@@ -208,6 +208,43 @@ jobs:
         run: bash bayes_update_module/run_demo.sh
 
   # ---------------------------------------------------------------------------
+  # Iterated Bayes module gate: the iterated (bayes + SIRK evolve) loop
+  # Austral module JIT-creates a `qfm_tomography` model and runs 3
+  # iterations of (uk_bayesian_update + uk_get_result + uk_evolve) — the
+  # full QMF.tex §7 + §8 pipeline end-to-end. Exercises the iterated
+  # posterior flow on real d-dim data. Auth gate mirrors demo-e2e (UK-4001).
+  # ---------------------------------------------------------------------------
+  iterated-bayes-e2e:
+    name: iterated_bayes_module end-to-end (Iterated Quantum Bayesian Update + SIRK JIT + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      - name: run iterated bayes module demo
+        working-directory: unfer
+        run: bash iterated_bayes_module/run_demo.sh
+
+  # ---------------------------------------------------------------------------
   # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
   # fock_sirk/src/forward_sirk.rs are smoke-tested locally but not in CI.
   # This job is gated on a self-hosted runner with the `gpu` label

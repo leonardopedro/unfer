@@ -1,0 +1,23 @@
+module IteratedBayesModule is
+    """
+    Iterated Quantum Bayesian Update + SIRK Evolution module.
+    (P8 P11) — `run` builds a `qfm_tomography` `ModelSpec` (the
+    4-point tetrahedron training set in d=4, with krylov_dim=4
+    matching K_2=4 for the P6 G SIRK-whitened basis), JIT-creates
+    the model in-process via the UnferKernel bindings
+    (`uk_model_create`), and runs an iterated loop that exercises
+    the full QMF.tex §7 + §8 pipeline:
+
+    for i in 0..N:
+        1. condition on observation i (uk_bayesian_update)
+        2. drain the BayesianUpdateResult (uk_get_result)
+        3. evolve the model forward in time (uk_evolve)
+        4. free the linear Model wrapper and re-wrap for next iter
+
+    The linear `Model` discipline forces exactly one `freeModel`
+    (`uk_model_free`) per iteration. Every `uk_*` symbol used
+    below is gated by this module's `module.toml` grants (see
+    the UK-4001 negative test in run_demo.sh).
+    """
+    function run(): Int64;
+end module.

@@ -35,10 +35,14 @@ module body QfmTomoModule is
     function run(): Int64 is
         -- The "training set" is the 4-point tetrahedron in d=4 used in the
         -- qfm-tomography FFI integration test (rev 14). k=2 / K_2=4 /
-        -- krylov_dim=2 is the standard config for this dataset; the kernel's
-        -- `QfmPipeline::compile` runs a real SIRK solve on the resulting
-        -- Hermitian flow Hamiltonian (the F4 architecture).
-        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"qfm_tomography\",\"spec\":{\"training_data\":[[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],\"k\":2,\"k2\":4,\"krylov_dim\":2,\"seed\":42}},\"prior\":{\"kind\":\"vacuum\"},\"solver\":{\"krylov_dim\":2,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
+        -- krylov_dim=4 is the standard config for this dataset; the
+        -- rev 18 P7 P3 check requires krylov_dim >= K_2, so the SIRK
+        -- solve runs on a 5-dim Fock space (vacuum + 4 modes) and
+        -- the K_2-row restriction of w_whiten is well-defined.
+        -- (Previous: krylov_dim=2 violated the krylov_dim >= K_2
+        -- constraint after the P6 G + P7 P3 fix; the kernel now
+        -- returns UK-1001 BAD_JSON for that config.)
+        let spec: Span[Nat8, Static] := "{\"hamiltonian\":{\"kind\":\"qfm_tomography\",\"spec\":{\"training_data\":[[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]],\"k\":2,\"k2\":4,\"krylov_dim\":4,\"seed\":42}},\"prior\":{\"kind\":\"vacuum\"},\"solver\":{\"krylov_dim\":4,\"prune_eps\":1e-12,\"max_components\":50000,\"restarts\":1,\"device\":{\"kind\":\"cpu\"}}}";
         let handle: Int64 := kernelModelCreateStr(spec);
         if handle > 0 then
             -- The 4-phase QFM-TSR generate: encode(query) -> evolve(t=1)

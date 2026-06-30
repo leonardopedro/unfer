@@ -1,0 +1,48 @@
+# Iterated Quantum Bayesian Update + SIRK Evolution module.
+# (P8 P11) — This module exercises the full QMF.tex §7 + §8 pipeline
+# in a loop: create a `qfm_tomography` model, then for each of N
+# iterations (a) condition on a new observation via
+# `uk_bayesian_update` (the QMF.tex §8 algorithm), (b) drain the
+# `BayesianUpdateResult` (which includes the HMC-decoded image), (c)
+# evolve the model forward in time via `uk_evolve`, and (d) free
+# the linear `Model` wrapper and re-wrap for the next iteration.
+#
+# Exercises:
+#   * `uk_model_create` (model handle)
+#   * `uk_bayesian_update` (QMF.tex §8)
+#   * `uk_get_result` (BayesianUpdateResult drain)
+#   * `uk_evolve` (the SIRK time-evolution; the QMF.tex §7 Phase 2)
+#   * `uk_model_free` (linear discipline)
+#
+# See:
+#   unfer/QMF.tex Section 7 (sec:tomo) — TSR pipeline
+#   unfer/QMF.tex Section 8 (sec:bayes) — Quantum Bayesian Update
+#   unfer/docs/PROTOCOL.md — model spec schema
+#   unfer/docs/MODULES.md — manifest schema and the "add a module" checklist
+#   unfer/qfm/src/bayes.rs — the qfm::bayes module this module
+#     exercises end-to-end via the FFI.
+
+[module]
+name = "iterated_bayes_module"
+version = "0.1.0"
+# Archetype contracts the module implements (see MODULES.md):
+#   data_source — supplies the 4 training vectors (the tetrahedron in
+#                 d=4) as an embedded JSON array.
+#   actor       — act(model): runs the iterated (Bayesian + SIRK)
+#                 loop and reads the HMC-decoded images.
+archetypes = ["data_source", "actor"]
+entry = "src/IteratedBayesModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*`
+# kernel call this module makes against this allow-list. Removing a
+# symbol here causes the corresponding call to fail with a UK-4001
+# CallDenied denial at JIT time — see run_demo.sh's negative test on
+# uk_get_result.
+[grants]
+kernel = [
+    "uk_model_create",
+    "uk_bayesian_update",
+    "uk_evolve",
+    "uk_get_result",
+    "uk_model_free",
+]
