@@ -486,3 +486,67 @@ fn hmc_opts_validate_at_boundary_is_ok() {
         "boundary case should be valid, got: {hints:#?}"
     );
 }
+
+// ── P8.8: BeliefPropagationOptsSpec tests ────────────────────────────
+
+#[test]
+fn round_trip_belief_propagation_request() {
+    let req = BeliefPropagationRequest {
+        observations: vec![vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 1.0, 0.0, 0.0]],
+        opts: BeliefPropagationOptsSpec {
+            max_iter: 500,
+            step_size: 0.01,
+            tol: 1e-8,
+        },
+    };
+    rt(&req);
+}
+
+#[test]
+fn round_trip_belief_propagation_result() {
+    let res = BeliefPropagationResult {
+        image: vec![0.1, 0.2, 0.3, 0.4],
+        log_posterior: -2.5,
+        n_observations: 2,
+        n_sweeps: 1,
+        solve_ms: 12,
+    };
+    rt(&res);
+}
+
+#[test]
+fn bp_opts_default_is_valid() {
+    let opts = BeliefPropagationOptsSpec::default();
+    let hints = opts.validate();
+    assert!(
+        hints.is_empty(),
+        "default BP opts should be valid, got: {hints:#?}"
+    );
+}
+
+#[test]
+fn bp_opts_max_iter_zero_returns_hint() {
+    let mut opts = BeliefPropagationOptsSpec::default();
+    opts.max_iter = 0;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "opts.max_iter");
+}
+
+#[test]
+fn bp_opts_step_size_zero_returns_hint() {
+    let mut opts = BeliefPropagationOptsSpec::default();
+    opts.step_size = 0.0;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "opts.step_size");
+}
+
+#[test]
+fn bp_opts_step_size_nan_returns_hint() {
+    let mut opts = BeliefPropagationOptsSpec::default();
+    opts.step_size = f64::NAN;
+    let hints = opts.validate();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].target, "opts.step_size");
+}

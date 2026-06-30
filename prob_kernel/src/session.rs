@@ -102,6 +102,28 @@ pub struct BayesianUpdateReport {
     pub solve_ms: u64,
 }
 
+/// Result of a chain belief-propagation run (P8.8, qfm::bayes::
+/// `belief_propagation_chain`). The MAP (marginal mode) point estimate
+/// on the Krylov coefficients, plus the full-resolution image decoded
+/// via Phase 5 tomographic reconstruction.
+///
+/// **Use case:** fast alternative to HMC when the user wants a
+/// posterior point estimate without paying the sampling cost.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BeliefPropagationReport {
+    /// The Phase 5 reconstructed full-resolution image of the MAP.
+    pub image: Vec<f64>,
+    /// The log-posterior at the MAP (up to a constant).
+    pub log_posterior: f64,
+    /// The number of observations $N$ (cached for the agent surface).
+    pub n_observations: usize,
+    /// The number of cumulative-product sweeps used (always 1 for the
+    /// exact chain case).
+    pub n_sweeps: usize,
+    /// Wall-clock time for BP + decode in milliseconds.
+    pub solve_ms: u64,
+}
+
 impl Session {
     /// Create a new session from a `ModelSpec`.
     pub fn new(spec: &ModelSpec) -> Result<Self, KernelError> {
@@ -437,6 +459,55 @@ impl Session {
             solve_ms,
         })
     }
+
+    /// Run chain belief propagation (P8.8) on the TSR-evolved prior.
+    /// Returns the MAP (marginal mode) point estimate + the decoded
+    /// full-resolution image.
+    ///
+    /// **Only QFM tomographic models are eligible** — the prior is the
+    /// TSR-evolved vacuum state. Calling this on a non-QFM model returns
+    /// `KernelError::Internal` (the FFI layer maps this to UK-5000).
+    ///
+    /// **No state side-effect:** the SIRK state is not modified.
+    pub fn belief_propagation(
+        &self,
+        observations: &[Vec<f64>],
+        opts: &unfer_protocol::BeliefPropagationOptsSpec,
+    ) -> Result<BeliefPropagationReport, KernelError> {
+        let pipeline = self.qfm_pipeline.as_ref().ok_or_else(|| {
+            KernelError::Internal(
+                "belief_propagation requires a QFM tomographic model (HamiltonianSpec::QfmTomography)"
+                    .into(),
+            )
+        })?;
+
+        let mut likelihoods = Vec::with_capacity(observations.len());
+        for obs in observations {
+            let like = qfm::bayes::Likelihood::from_observation(pipeline, obs)?;
+            likelihoods.push(like);
+        }
+
+        let c_prior = qfm::bayes::tsr_evolved_prior(pipeline);
+        let posterior = qfm::bayes::Posterior::new(likelihoods, c_prior);
+
+        let t0 = std::time::Instant::now();
+        let bp_result = qfm::bayes::belief_propagation_chain(
+            &posterior,
+            opts.max_iter,
+            opts.step_size,
+            opts.tol,
+        );
+        let image = qfm::bayes::reconstruct(pipeline, &bp_result.map_estimate)?;
+        let solve_ms = t0.elapsed().as_millis() as u64;
+
+        Ok(BeliefPropagationReport {
+            image,
+            log_posterior: bp_result.log_posterior_at_map,
+            n_observations: bp_result.n_observations,
+            n_sweeps: bp_result.n_sweeps,
+            solve_ms,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -590,6 +661,73 @@ mod tests {
         let session = qfm_session();
         let obs = vec![1.0, 0.0]; // d=2, expected d=4
         let result = session.bayesian_update(&[obs], &HmcOptsSpec::default());
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
+                assert_eq!(expected, 4);
+                assert_eq!(got, 2);
+            }
+            e => panic!("expected KernelError::Qfm(DimensionMismatch), got {e:?}"),
+        }
+    }
+
+    // ── P8.8: chain belief propagation tests ─────────────────────────
+
+    #[test]
+    fn belief_propagation_smoke_qfm_model() {
+        // BP on a QFM tomographic model returns a finite MAP image
+        // and a finite log-posterior.
+        let session = qfm_session();
+        let obs = vec![1.0, 0.0, 0.0, 0.0];
+        let opts = unfer_protocol::BeliefPropagationOptsSpec::default();
+        let report = session
+            .belief_propagation(&[obs], &opts)
+            .expect("BP should succeed on QFM model");
+        assert_eq!(report.image.len(), 4);
+        for v in &report.image {
+            assert!(v.is_finite(), "image element should be finite, got {v}");
+        }
+        assert!(report.log_posterior.is_finite());
+        assert_eq!(report.n_observations, 1);
+        assert!(report.n_sweeps >= 1);
+    }
+
+    #[test]
+    fn belief_propagation_zero_observations_returns_prior() {
+        // Zero-observation BP: no likelihoods, MAP = prior direction.
+        let session = qfm_session();
+        let opts = unfer_protocol::BeliefPropagationOptsSpec::default();
+        let report = session
+            .belief_propagation(&[], &opts)
+            .expect("zero-obs BP should succeed");
+        assert_eq!(report.n_observations, 0);
+        assert_eq!(report.image.len(), 4);
+    }
+
+    #[test]
+    fn belief_propagation_non_qfm_returns_internal() {
+        // BP is QFM-only; calling on a non-QFM session returns Internal.
+        let session = non_qfm_session();
+        let obs = vec![1.0, 0.0];
+        let opts = unfer_protocol::BeliefPropagationOptsSpec::default();
+        let result = session.belief_propagation(&[obs], &opts);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            KernelError::Internal(msg) => {
+                assert!(msg.contains("QFM"), "should mention QFM: {msg}");
+            }
+            e => panic!("expected KernelError::Internal, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn belief_propagation_dim_mismatch_returns_qfm_error() {
+        // Observation with wrong dimension returns a Qfm
+        // DimensionMismatch error.
+        let session = qfm_session();
+        let obs = vec![1.0, 0.0]; // d=2, expected d=4
+        let opts = unfer_protocol::BeliefPropagationOptsSpec::default();
+        let result = session.belief_propagation(&[obs], &opts);
         assert!(result.is_err());
         match result.unwrap_err() {
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {

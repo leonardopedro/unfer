@@ -484,3 +484,114 @@ pub struct BayesianUpdateResult {
     /// Wall-clock time for the HMC + decode in milliseconds.
     pub solve_ms: u64,
 }
+
+// ---------------------------------------------------------------------------
+// P8.8: belief propagation (chain exact BP on the Krylov coefficients)
+// ---------------------------------------------------------------------------
+
+/// Configuration for chain belief propagation (P8.8, qfm::bayes::
+/// `belief_propagation_chain`). This is a fast alternative to HMC for
+/// product-of-likelihoods posteriors; complexity is $O(\mathrm{max\_iter}
+/// \cdot N \cdot m)$ instead of HMC's $O(\mathrm{leapfrog\_steps} \cdot
+/// N \cdot m)$.
+///
+/// **Use case:** when the user wants a **point estimate** (the marginal
+/// mode of the chain-posterior) without paying the HMC sampling cost.
+/// The returned MAP is a gradient-ascent solution on the log posterior
+/// from the prior-initialization; it is not a sample from the posterior
+/// and does not estimate the typical set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BeliefPropagationOptsSpec {
+    /// Maximum number of gradient-ascent iterations. Default 200.
+    #[serde(default = "default_bp_max_iter")]
+    pub max_iter: usize,
+    /// Step size for gradient ascent. Default 0.05.
+    #[serde(default = "default_bp_step_size")]
+    pub step_size: f64,
+    /// Convergence tolerance on $|\log P^{(t+1)} - \log P^{(t)}|$.
+    /// Default 1e-6.
+    #[serde(default = "default_bp_tol")]
+    pub tol: f64,
+}
+
+fn default_bp_max_iter() -> usize {
+    200
+}
+fn default_bp_step_size() -> f64 {
+    0.05
+}
+fn default_bp_tol() -> f64 {
+    1e-6
+}
+
+impl Default for BeliefPropagationOptsSpec {
+    fn default() -> Self {
+        Self {
+            max_iter: default_bp_max_iter(),
+            step_size: default_bp_step_size(),
+            tol: default_bp_tol(),
+        }
+    }
+}
+
+impl BeliefPropagationOptsSpec {
+    /// Validate the BP options. Mirrors `HmcOptsSpec::validate` (P7.5).
+    /// Returns a list of per-field `RepairHint`s suitable for surfacing
+    /// via `uk_belief_propagation`'s `UK-1001` diagnostic.
+    pub fn validate(&self) -> Vec<crate::codes::RepairHint> {
+        use crate::codes::{HintKind, RepairHint};
+        let mut hints = Vec::new();
+        if self.max_iter == 0 {
+            hints.push(RepairHint::new(
+                HintKind::SetParam,
+                "opts.max_iter",
+                "max_iter must be > 0 (set to 200 for a typical chain BP run)",
+            ));
+        }
+        if self.step_size <= 0.0 || self.step_size.is_nan() {
+            hints.push(RepairHint::new(
+                HintKind::SetParam,
+                "opts.step_size",
+                "step_size must be a positive finite number (e.g. 0.05)",
+            ));
+        }
+        if self.tol <= 0.0 || self.tol.is_nan() {
+            hints.push(RepairHint::new(
+                HintKind::SetParam,
+                "opts.tol",
+                "tol must be a positive finite number (e.g. 1e-6)",
+            ));
+        }
+        hints
+    }
+}
+
+/// Request body for `uk_belief_propagation`. Same observation format
+/// as `BayesianUpdateRequest` (d-dim vectors matching the pipeline's
+/// training-data dimension).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BeliefPropagationRequest {
+    /// The list of new observations.
+    pub observations: Vec<Vec<f64>>,
+    /// BP configuration.
+    #[serde(default)]
+    pub opts: BeliefPropagationOptsSpec,
+}
+
+/// Result body for `uk_belief_propagation`. The MAP (maximum a
+/// posteriori) point estimate and the log-posterior at the MAP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BeliefPropagationResult {
+    /// The full-resolution image decoded from the MAP Krylov coefficient
+    /// vector $\vec c^* \in \Cset^m$ (Phase 5 tomographic reconstruction).
+    pub image: Vec<f64>,
+    /// The log-posterior at the MAP (up to a constant).
+    pub log_posterior: f64,
+    /// The number of observations $N$ (cached for the agent surface).
+    pub n_observations: usize,
+    /// The number of cumulative-product sweeps used (always 1 for the
+    /// exact chain case; reserved for the future loopy-BP generalization).
+    pub n_sweeps: usize,
+    /// Wall-clock time for the BP + decode in milliseconds.
+    pub solve_ms: u64,
+}

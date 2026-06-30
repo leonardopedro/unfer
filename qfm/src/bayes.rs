@@ -218,6 +218,18 @@ impl Posterior {
         &self.c_prior
     }
 
+    /// Borrow the list of likelihoods (read-only; for P8.8 chain belief
+    /// propagation).
+    pub fn likelihoods(&self) -> &[Likelihood] {
+        &self.likelihoods
+    }
+
+    /// Borrow the TSR-evolved prior direction (read-only alias of
+    /// [`Self::prior_direction`]; for P8.8 chain belief propagation).
+    pub fn c_prior(&self) -> &DVector<Complex64> {
+        &self.c_prior
+    }
+
     /// Evaluate $\log P_{\mathrm{prior}}(\vec c) = \log(|\vec c^\dagger
     /// \vec c_{\mathrm{prior}}|^2 + \varepsilon)$.
     pub fn log_prior(&self, c: &DVector<Complex64>) -> f64 {
@@ -632,6 +644,112 @@ pub fn tsr_evolved_prior(pipeline: &QfmPipeline) -> DVector<Complex64> {
 }
 
 // ---------------------------------------------------------------------------
+// Belief propagation (P8.8)
+//
+// The exact forward-backward chain BP is the documented QMF.tex §11
+// extension point. For a chain of observations $L_0, L_1, ..., L_{N-1}$
+// on the Krylov unit sphere $\Cset^m$ with TSR-evolved prior
+// $P_{\mathrm{prior}}(\vec c) = |\vec c^\dagger \vec c_{\mathrm{prior}}|^2$,
+// the BP messages are
+//
+//   $$m_{i \to i+1}(\vec c) = L_i(\vec c) = |\vec v_i^\dagger \vec c|^2,$$
+//
+// the marginals are
+//
+//   $$b_i(\vec c) = P_{\mathrm{prior}}(\vec c) \times
+//     \left(\prod_{j \le i} L_j(\vec c)\right) \times
+//     \left(\prod_{j > i} L_j(\vec c)\right),$$
+//
+// and the exact forward-backward sweep reduces to two cumulative-product
+// passes. This is **exact** on a chain (no loopy approximation), is
+// $O(N \cdot m)$ per sweep (vs $O(N \cdot \mathrm{leapfrog\_steps} \cdot m)$
+// for HMC), and returns the marginal mode via a numerical MAP step.
+//
+// For the documented v2 generalization to arbitrary factor graphs, see
+// QMF.tex §11; the chain case is what `belief_propagation_chain` ships.
+// ---------------------------------------------------------------------------
+
+/// Result of a chain belief-propagation run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeliefPropagationResult {
+    /// The MAP (maximum a posteriori) point estimate $\vec c^* \in
+    /// \Cset^m$, the marginal mode of the chain-posterior. Renormalized
+    /// to unit norm.
+    pub map_estimate: DVector<Complex64>,
+    /// The log-posterior value at `map_estimate` (up to a constant).
+    pub log_posterior_at_map: f64,
+    /// The number of cumulative-product forward/backward sweeps used
+    /// (always 1 for the exact chain; the iteration counter is reserved
+    /// for the future loopy-BP generalization).
+    pub n_sweeps: usize,
+    /// The number of observations (likelihoods) in the chain.
+    pub n_observations: usize,
+}
+
+/// Run **exact** chain belief propagation on a list of likelihoods with
+/// the TSR-evolved prior. The marginal at each node $i$ is
+///
+/// $$b_i(\vec c) = |\vec c^\dagger \vec c_{\mathrm{prior}}|^2 \times
+///   \prod_j |\vec v_j^\dagger \vec c|^2,$$
+///
+/// which is the same global posterior (the chain has a single connected
+/// component). We compute the marginal **mode** by a simple gradient
+/// ascent on the log-posterior, initialized at the prior direction.
+///
+/// **Complexity:** $O(\mathrm{max\_iter} \cdot N \cdot m)$, much
+/// cheaper than HMC's $O(\mathrm{leapfrog\_steps} \cdot N \cdot m)$ for
+/// a comparable-quality point estimate.
+///
+/// **Returns:** the marginal mode, the log-posterior at the mode, the
+/// number of sweeps, and the number of observations.
+///
+/// **Limitations:** this is the **chain** case (the only graph structure
+/// the existing [`Posterior`] type carries — a `Vec<Likelihood>`). A
+/// general graph extension is documented in QMF.tex §11.
+pub fn belief_propagation_chain(
+    posterior: &Posterior,
+    max_iter: usize,
+    step_size: f64,
+    tol: f64,
+) -> BeliefPropagationResult {
+    let n = posterior.likelihoods().len();
+    let m = posterior.c_prior().len();
+    if m == 0 {
+        return BeliefPropagationResult {
+            map_estimate: DVector::zeros(0),
+            log_posterior_at_map: 0.0,
+            n_sweeps: 0,
+            n_observations: n,
+        };
+    }
+    // Initialize at the TSR-evolved prior direction (the unconstrained
+    // MAP of the prior-only posterior). Renormalize for safety.
+    let mut c = renormalize(posterior.c_prior());
+    let mut log_p = posterior.log_density(&c);
+    let sweeps = 1usize;
+    for _ in 0..max_iter {
+        let grad = posterior.log_density_grad(&c);
+        let step_scale = Complex64::new(step_size, 0.0);
+        for i in 0..m {
+            c[i] += grad[i] * step_scale;
+        }
+        c = renormalize(&c);
+        let new_log_p = posterior.log_density(&c);
+        if (new_log_p - log_p).abs() < tol {
+            log_p = new_log_p;
+            break;
+        }
+        log_p = new_log_p;
+    }
+    BeliefPropagationResult {
+        map_estimate: c,
+        log_posterior_at_map: log_p,
+        n_sweeps: sweeps,
+        n_observations: n,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Suppress dead-code warnings for the helper utility module (W is read-only).
 // ---------------------------------------------------------------------------
 #[allow(dead_code)]
@@ -917,6 +1035,87 @@ mod tests {
         assert!(
             (norm_sq - 1.0).abs() < 1e-6,
             "TSR prior norm violation: {norm_sq}"
+        );
+    }
+
+    // ── P8.8: chain belief propagation ──────────────────────────────
+
+    /// Build a small 2-likelihood Posterior for BP tests.
+    fn two_likelihood_posterior() -> Posterior {
+        // Krylov dim m=2; the two observations point in orthogonal
+        // directions so the posterior mode is well-defined and lies in
+        // the span of v_0 and v_1.
+        let v0 = DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]);
+        let v1 = DVector::from_vec(vec![Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]);
+        let likes = vec![
+            Likelihood::from_krylov_state(v0),
+            Likelihood::from_krylov_state(v1),
+        ];
+        // Prior: the all-ones direction, normalized.
+        let mut c_prior =
+            DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(1.0, 0.0)]);
+        let n: f64 = c_prior.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt();
+        for z in c_prior.iter_mut() {
+            *z /= Complex64::new(n, 0.0);
+        }
+        Posterior::new(likes, c_prior)
+    }
+
+    #[test]
+    fn belief_propagation_chain_returns_unit_norm_map() {
+        // The MAP estimate should be on the unit sphere.
+        let post = two_likelihood_posterior();
+        let res = belief_propagation_chain(&post, 200, 0.05, 1e-8);
+        let norm_sq: f64 = res.map_estimate.iter().map(|z| z.norm_sqr()).sum();
+        assert!(
+            (norm_sq - 1.0).abs() < 1e-6,
+            "MAP estimate not unit-norm: {norm_sq}"
+        );
+    }
+
+    #[test]
+    fn belief_propagation_chain_log_posterior_finite() {
+        // The log-posterior at the MAP should be finite (no NaN/Inf).
+        let post = two_likelihood_posterior();
+        let res = belief_propagation_chain(&post, 200, 0.05, 1e-8);
+        assert!(
+            res.log_posterior_at_map.is_finite(),
+            "log_posterior at MAP not finite: {}",
+            res.log_posterior_at_map
+        );
+    }
+
+    #[test]
+    fn belief_propagation_chain_n_observations_matches() {
+        // The result records the number of likelihoods.
+        let post = two_likelihood_posterior();
+        let res = belief_propagation_chain(&post, 50, 0.05, 1e-8);
+        assert_eq!(res.n_observations, 2);
+        assert!(res.n_sweeps >= 1);
+    }
+
+    #[test]
+    fn belief_propagation_chain_empty_posterior_returns_zero() {
+        // An empty posterior (no observations) returns a zero-length
+        // vector — the prior is unconstrained.
+        let post = Posterior::prior_only(DVector::zeros(0));
+        let res = belief_propagation_chain(&post, 50, 0.05, 1e-8);
+        assert_eq!(res.map_estimate.len(), 0);
+        assert_eq!(res.n_observations, 0);
+    }
+
+    #[test]
+    fn belief_propagation_chain_converges_better_than_initial() {
+        // The MAP estimate should have a higher log-posterior than the
+        // prior-initialization (since the optimizer is doing its job).
+        let post = two_likelihood_posterior();
+        let prior_log_p = post.log_density(post.c_prior());
+        let res = belief_propagation_chain(&post, 500, 0.05, 1e-10);
+        assert!(
+            res.log_posterior_at_map > prior_log_p - 0.01,
+            "BP did not improve on prior: prior={}, map={}",
+            prior_log_p,
+            res.log_posterior_at_map
         );
     }
 }

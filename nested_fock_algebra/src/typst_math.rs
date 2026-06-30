@@ -85,7 +85,9 @@ fn parse_token(s: &str) -> Option<(usize, String)> {
     }
 
     // Numeric literal: `[0-9]+(\.[0-9]+)?`
-    if bytes[0].is_ascii_digit() || (bytes[0] == b'.' && bytes.get(1).is_some_and(u8::is_ascii_digit)) {
+    if bytes[0].is_ascii_digit()
+        || (bytes[0] == b'.' && bytes.get(1).is_some_and(u8::is_ascii_digit))
+    {
         let mut i = 1;
         while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
             i += 1;
@@ -104,7 +106,10 @@ fn parse_token(s: &str) -> Option<(usize, String)> {
     }
 
     // Single/double-char operators: + - * / ^ _ ( ) , ;
-    if matches!(bytes[0], b'+' | b'-' | b'*' | b'/' | b'^' | b'_' | b'(' | b')' | b',' | b';') {
+    if matches!(
+        bytes[0],
+        b'+' | b'-' | b'*' | b'/' | b'^' | b'_' | b'(' | b')' | b',' | b';'
+    ) {
         return Some((1, (bytes[0] as char).to_string()));
     }
 
@@ -183,7 +188,12 @@ fn parse_identifier(s: &str) -> Option<(usize, String)> {
                 }
             }
             if i > sub_start {
-                subscript = Some(s[sub_start..i].trim_matches('{').trim_matches('}').to_string());
+                subscript = Some(
+                    s[sub_start..i]
+                        .trim_matches('{')
+                        .trim_matches('}')
+                        .to_string(),
+                );
             }
             continue;
         }
@@ -201,7 +211,12 @@ fn parse_identifier(s: &str) -> Option<(usize, String)> {
                 if i < bytes.len() {
                     i += 1; // consume `}`
                 }
-                superscript = Some(s[sup_start..i].trim_matches('{').trim_matches('}').to_string());
+                superscript = Some(
+                    s[sup_start..i]
+                        .trim_matches('{')
+                        .trim_matches('}')
+                        .to_string(),
+                );
             } else {
                 // Stop at `_` (which signals a following subscript) and at any
                 // non-identifier char (so `^dagger_0` reads `dagger`, not

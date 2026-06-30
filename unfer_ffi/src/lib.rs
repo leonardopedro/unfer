@@ -4,8 +4,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
-    BayesianUpdateRequest, BayesianUpdateResult, Code, Diagnostic, EventPredicate, EventQuery,
-    HamiltonianSpec, ModelSpec, PriorSpec, Severity,
+    BayesianUpdateRequest, BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult,
+    Code, Diagnostic, EventPredicate, EventQuery, HamiltonianSpec, ModelSpec, PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -307,6 +307,73 @@ pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) 
         let prior_p = report.mean_likelihood.clamp(0.0, 1.0);
         let event = unfer_protocol::KernelEvent::Conditioned {
             prior_probability: prior_p,
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
+/// Run chain belief propagation on the TSR-evolved prior (P8.8).
+///
+/// Like `uk_bayesian_update`, this is morally a conditioning op, but
+/// uses **chain exact BP** (`qfm::bayes::belief_propagation_chain`) —
+/// the marginal mode via gradient ascent on the log posterior — instead
+/// of HMC sampling. Complexity is $O(\mathrm{max\_iter} \cdot N \cdot
+/// m)$ instead of HMC's $O(\mathrm{leapfrog\_steps} \cdot N \cdot m)$,
+/// so it is the documented fast path when the user only needs a posterior
+/// **point estimate** (not a sample from the typical set).
+///
+/// **Only QFM tomographic models are eligible.** The request body is
+/// `{"observations": [[...], ...], "opts": {"max_iter": ..., "step_size":
+/// ..., "tol": ...}}`. All `opts` fields are optional with sensible
+/// defaults.
+///
+/// Returns 0 on success (the result is retrievable via `uk_get_result`).
+/// Also enqueues a `conditioned` event for `uk_poll` subscribers. Returns
+/// `UK-1001` for malformed JSON or invalid `opts` (with per-field
+/// `RepairHint`s), `UK-1004` for an invalid model handle, `UK-5000` for
+/// non-QFM models.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_belief_propagation(model: i64, req_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_belief_propagation", || {
+        let req: BeliefPropagationRequest = parse_json(req_json, len)?;
+        // P8.8 (mirroring the P7.5 HMC validation): validate the BP
+        // options. A `max_iter=0` or non-positive `step_size` would
+        // silently produce a no-op BP. Surface as UK-1001 with
+        // per-field RepairHint.
+        let hints = req.opts.validate();
+        if !hints.is_empty() {
+            let mut diag = Diagnostic::new(
+                Code::BAD_JSON,
+                format!(
+                    "invalid BeliefPropagationOptsSpec: {} field(s) out of range",
+                    hints.len()
+                ),
+                Severity::Error,
+            );
+            for hint in hints {
+                diag = diag.with_hint(hint);
+            }
+            return Err(diag);
+        }
+        let report = handles::with_session_mut(model, |s| {
+            s.belief_propagation(&req.observations, &req.opts)
+        })
+        .ok_or_else(|| bad_handle(model))?
+        .map_err(|e| e.to_diagnostic())?;
+        let result = BeliefPropagationResult {
+            image: report.image,
+            log_posterior: report.log_posterior,
+            n_observations: report.n_observations,
+            n_sweeps: report.n_sweeps,
+            solve_ms: report.solve_ms,
+        };
+        let result_json = serde_json::to_string(&result)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, result_json);
+        // Use the 'conditioned' event vocabulary (same as uk_bayesian_update).
+        let event = unfer_protocol::KernelEvent::Conditioned {
+            prior_probability: 1.0,
         };
         handles::push_event(model, event);
         Ok(0)

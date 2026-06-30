@@ -704,3 +704,133 @@ fn bayesian_update_via_ffi_hmc_opts_negative_step_size_returns_1001() {
 
     uk_model_free(model);
 }
+
+// ── P8.8: uk_belief_propagation tests ─────────────────────────────────
+//
+// Chain exact BP on the Krylov coefficients: a fast alternative to HMC
+// for product-of-likelihoods posteriors. Returns the MAP (marginal mode)
+// point estimate, not a sample.
+
+#[test]
+fn belief_propagation_via_ffi_returns_finite_image() {
+    // Happy path: BP on a single observation returns a finite image
+    // and a finite log_posterior.
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    assert_eq!(uk_belief_propagation(model, ptr, len), 0);
+
+    let result_json = read_result(model);
+    let result: serde_json::Value = serde_json::from_str(&result_json).expect("result is JSON");
+    let image = result["image"].as_array().expect("image is an array");
+    assert_eq!(image.len(), 4, "image has d=4 elements");
+    for v in image {
+        let f = v.as_f64().expect("image elements are f64");
+        assert!(f.is_finite(), "image element should be finite, got {f}");
+    }
+    assert_eq!(result["n_observations"].as_u64(), Some(1));
+    assert!(result["n_sweeps"].as_u64().is_some());
+    assert!(result["solve_ms"].as_u64().is_some());
+    let lp = result["log_posterior"]
+        .as_f64()
+        .expect("log_posterior is f64");
+    assert!(lp.is_finite(), "log_posterior should be finite, got {lp}");
+
+    uk_model_free(model);
+}
+
+#[test]
+fn belief_propagation_via_ffi_zero_observations() {
+    // Zero-observation BP returns the prior's MAP (degenerate).
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": []}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    assert_eq!(uk_belief_propagation(model, ptr, len), 0);
+
+    let result_json = read_result(model);
+    let result: serde_json::Value = serde_json::from_str(&result_json).expect("result is JSON");
+    assert_eq!(result["n_observations"].as_u64(), Some(0));
+
+    uk_model_free(model);
+}
+
+#[test]
+fn belief_propagation_via_ffi_on_non_qfm_returns_5000() {
+    // BP is QFM-only; calling it on a non-QFM model returns UK-5000.
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let req = r#"{"observations": [[0.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_belief_propagation(model, ptr, len);
+    assert_eq!(
+        r,
+        -(Code::INTERNAL.raw() as i64),
+        "non-QFM model should return UK-5000, got {r}"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn belief_propagation_via_ffi_bad_obs_dim_returns_1001() {
+    // Observation with wrong dimension returns UK-1001 (BAD_JSON via
+    // the Qfm DimensionMismatch → to_diagnostic mapping).
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[0.0, 0.0]]}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_belief_propagation(model, ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64));
+    uk_model_free(model);
+}
+
+#[test]
+fn belief_propagation_via_ffi_opts_max_iter_zero_returns_1001() {
+    // P8.8: validate the BP options; max_iter=0 returns UK-1001 with a
+    // per-field RepairHint.
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]], "opts": {"max_iter": 0}}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_belief_propagation(model, ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64));
+
+    let err_json = read_error();
+    let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
+    let hints = diag["hints"].as_array().expect("hints array");
+    let targets: Vec<&str> = hints
+        .iter()
+        .map(|h| h["target"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        targets.iter().any(|t| t.contains("max_iter")),
+        "hints should mention max_iter, got: {targets:?}"
+    );
+
+    uk_model_free(model);
+}
+
+#[test]
+fn belief_propagation_via_ffi_opts_negative_step_size_returns_1001() {
+    // P8.8: step_size=0 / negative / NaN returns UK-1001 with a
+    // per-field RepairHint mentioning step_size.
+    let model = qfm_tomo_model_for_hmc_validation();
+    let req = r#"{"observations": [[1.0, 0.0, 0.0, 0.0]], "opts": {"step_size": -0.1}}"#;
+    let (ptr, len) = json_ptr(req.as_bytes());
+    let r = uk_belief_propagation(model, ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64));
+
+    let err_json = read_error();
+    let diag: serde_json::Value = serde_json::from_str(&err_json).expect("error is JSON");
+    let hints = diag["hints"].as_array().expect("hints array");
+    let targets: Vec<&str> = hints
+        .iter()
+        .map(|h| h["target"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        targets.iter().any(|t| t.contains("step_size")),
+        "hints should mention step_size, got: {targets:?}"
+    );
+
+    uk_model_free(model);
+}

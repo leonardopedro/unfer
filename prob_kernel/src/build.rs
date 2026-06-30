@@ -320,10 +320,8 @@ mod tests {
     fn build_hamiltonian_typst_with_greek_coefficient() {
         // Greek coefficient (`\omega`) is passed through to the CAS layer
         // as `omega` (the compiler strips the leading backslash).
-        let h = build_hamiltonian(&HamiltonianSpec::typst(
-            "0.5 * \\omega * a^dagger_0 * a_0",
-        ))
-        .expect("Typst compile with coefficient should succeed");
+        let h = build_hamiltonian(&HamiltonianSpec::typst("0.5 * \\omega * a^dagger_0 * a_0"))
+            .expect("Typst compile with coefficient should succeed");
         assert_eq!(h.terms.len(), 1);
     }
 
@@ -338,8 +336,7 @@ mod tests {
     #[test]
     fn build_hamiltonian_typst_empty_for_zero() {
         // `0` produces an empty Hamiltonian (no terms).
-        let h = build_hamiltonian(&HamiltonianSpec::typst("0"))
-            .expect("Typst `0` should compile");
+        let h = build_hamiltonian(&HamiltonianSpec::typst("0")).expect("Typst `0` should compile");
         assert!(h.terms.is_empty());
     }
 
