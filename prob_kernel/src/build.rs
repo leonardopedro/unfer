@@ -1,6 +1,8 @@
 use candle_core::Device;
 #[cfg(feature = "latex")]
 use nested_fock_algebra::compile_latex;
+#[cfg(feature = "latex")]
+use nested_fock_algebra::compile_typst_math;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
     bose_hubbard_chain, gravity_hamiltonian, harmonic_chain, navier_stokes_hamiltonian,
@@ -18,6 +20,8 @@ use crate::error::KernelError;
 ///
 /// - `Builtin` dispatches to the corresponding model function.
 /// - `Latex` parses via `compile_latex` (requires the `latex` feature).
+/// - `Typst` parses via `compile_typst_math` (P8.7, requires the `latex`
+///   feature for the underlying CAS layer).
 /// - `Terms` constructs directly (explosion-safe path).
 pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelError> {
     match spec {
@@ -73,6 +77,20 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
             #[cfg(not(feature = "latex"))]
             {
                 let _ = latex;
+                Err(KernelError::Internal(
+                    "latex feature not enabled; rebuild prob_kernel with --features latex".into(),
+                ))
+            }
+        }
+
+        HamiltonianSpec::Typst { typst } => {
+            #[cfg(feature = "latex")]
+            {
+                Ok(compile_typst_math(typst))
+            }
+            #[cfg(not(feature = "latex"))]
+            {
+                let _ = typst;
                 Err(KernelError::Internal(
                     "latex feature not enabled; rebuild prob_kernel with --features latex".into(),
                 ))
@@ -278,4 +296,59 @@ fn get_f64_array(params: &serde_json::Value, key: &str) -> Result<Vec<f64>, Kern
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+#[cfg(feature = "latex")]
+mod tests {
+    use super::*;
+    use unfer_protocol::HamiltonianSpec;
+
+    #[test]
+    fn build_hamiltonian_typst_oscillator() {
+        // P8.7: `HamiltonianSpec::Typst` dispatches through
+        // `compile_typst_math` and produces a non-empty Hamiltonian for
+        // a two-mode oscillator.
+        let h = build_hamiltonian(&HamiltonianSpec::typst(
+            "a^dagger_0 * a_0 + a^dagger_1 * a_1",
+        ))
+        .expect("Typst compile should succeed");
+        assert_eq!(h.terms.len(), 2);
+    }
+
+    #[test]
+    fn build_hamiltonian_typst_with_greek_coefficient() {
+        // Greek coefficient (`\omega`) is passed through to the CAS layer
+        // as `omega` (the compiler strips the leading backslash).
+        let h = build_hamiltonian(&HamiltonianSpec::typst(
+            "0.5 * \\omega * a^dagger_0 * a_0",
+        ))
+        .expect("Typst compile with coefficient should succeed");
+        assert_eq!(h.terms.len(), 1);
+    }
+
+    #[test]
+    fn build_hamiltonian_typst_outer_op() {
+        // `A^dagger_0 * A_0` → outer create + outer annihilate.
+        let h = build_hamiltonian(&HamiltonianSpec::typst("A^dagger_0 * A_0"))
+            .expect("Typst outer op should compile");
+        assert_eq!(h.terms.len(), 1);
+    }
+
+    #[test]
+    fn build_hamiltonian_typst_empty_for_zero() {
+        // `0` produces an empty Hamiltonian (no terms).
+        let h = build_hamiltonian(&HamiltonianSpec::typst("0"))
+            .expect("Typst `0` should compile");
+        assert!(h.terms.is_empty());
+    }
+
+    #[test]
+    fn build_hamiltonian_latex_dispatch_still_works() {
+        // Sanity: the existing `Latex` variant is unaffected by the P8.7
+        // addition.
+        let h = build_hamiltonian(&HamiltonianSpec::latex(r"\frac{1}{2} * c_0 * a_0"))
+            .expect("Latex dispatch should still work");
+        assert!(!h.terms.is_empty());
+    }
 }

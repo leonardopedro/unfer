@@ -556,6 +556,11 @@ pub mod latex;
 #[cfg(feature = "latex")]
 pub use latex::compile_latex;
 
+#[cfg(feature = "latex")]
+pub mod typst_math;
+#[cfg(feature = "latex")]
+pub use typst_math::compile_typst_math;
+
 pub mod field_theory;
 pub use field_theory::*;
 

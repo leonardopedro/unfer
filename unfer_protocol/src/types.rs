@@ -19,6 +19,14 @@ pub enum HamiltonianSpec {
     Latex {
         latex: String,
     },
+    /// Typst math input (P8.7). The compiler maps the operator-product
+    /// dialect (`a^dagger a`, `\omega * c^dagger c + h.c.`) directly to
+    /// the project's internal CAS string and bypasses mathhook.
+    /// Requires the `latex` feature on `prob_kernel` (compile-time gate
+    /// matches the existing `Latex` variant).
+    Typst {
+        typst: String,
+    },
     Terms {
         terms: Vec<TermSpec>,
     },
@@ -42,6 +50,10 @@ impl HamiltonianSpec {
 
     pub fn latex(src: impl Into<String>) -> Self {
         Self::Latex { latex: src.into() }
+    }
+
+    pub fn typst(src: impl Into<String>) -> Self {
+        Self::Typst { typst: src.into() }
     }
 
     pub fn terms(terms: Vec<TermSpec>) -> Self {
@@ -452,8 +464,21 @@ pub struct BayesianUpdateResult {
     /// == prior).
     pub mean_likelihood: f64,
     /// The full-resolution image $\vec x_{\mathrm{out}} \in \Rset^d$
-    /// produced by Phase 5 tomographic reconstruction.
+    /// produced by Phase 5 tomographic reconstruction of the
+    /// representative (final) HMC draw.
     pub image: Vec<f64>,
+    /// The full-resolution image decoded from the **posterior-mean**
+    /// point estimate — the Karcher (Fréchet) mean of the post-burn-in
+    /// HMC chain on the projective unit sphere of $\Cset^m$. This is the
+    /// denoised estimate that integrates over the whole typical set,
+    /// rather than a single stochastic draw (`image`). Empty if there
+    /// were no post-burn-in samples.
+    #[serde(default)]
+    pub posterior_mean: Vec<f64>,
+    /// The number of post-burn-in HMC samples averaged into
+    /// `posterior_mean`.
+    #[serde(default)]
+    pub n_samples: usize,
     /// The number of observations $N$ (cached for the agent surface).
     pub n_observations: usize,
     /// Wall-clock time for the HMC + decode in milliseconds.

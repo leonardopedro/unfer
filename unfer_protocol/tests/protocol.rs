@@ -80,6 +80,13 @@ fn round_trip_hamiltonian_latex() {
 }
 
 #[test]
+fn round_trip_hamiltonian_typst() {
+    // P8.7: the Typst variant round-trips through serde with the
+    // snake_case tag and the `typst` field.
+    rt(&HamiltonianSpec::typst("a^dagger_0 * a_0"));
+}
+
+#[test]
 fn round_trip_hamiltonian_terms() {
     rt(&HamiltonianSpec::terms(vec![sample_term()]));
 }
