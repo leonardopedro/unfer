@@ -238,8 +238,14 @@ impl QfmPipeline {
         //    choice for forward-mode rational Krylov — see AGENTS.md §4).
         let device = Device::Cpu;
         let v0 = vacuum_with_single_excitation_basis(k2);
+        // Normalize shifts to the range [-i/krylov_dim, -i] on the imaginary axis.
+        // Growing shifts z_k = -ik cause f64 overflow for krylov_dim > ~90 because
+        // the Krylov-vector norms scale as krylov_dim!, which exceeds the f64 maximum
+        // (~10^308) for krylov_dim > 88. Normalizing by krylov_dim caps each shift
+        // at magnitude 1, bounding the per-step growth to (‖H‖+1) regardless of
+        // krylov_dim and keeping the Gram matrix entries well within f64.
         let shifts: Vec<Complex64> = (1..=krylov_dim)
-            .map(|i| Complex64::new(0.0, -(i as f64)))
+            .map(|i| Complex64::new(0.0, -(i as f64) / (krylov_dim as f64)))
             .collect();
         let sirk: ForwardSirkResult = solve_forward_sirk(&h_bar, &v0, &shifts, &device, None)
             .map_err(|e| QfmError::SirkFailed(e.to_string()))?;

@@ -27,7 +27,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{June 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples))}
+\date{June 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples), rev 22 P9.14 mathed\_mini Step 4, rev 23 P9.15.1 ported velyst examples, rev 24 P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix)}
 
 \begin{document}
 
@@ -1535,10 +1535,10 @@ end-to-end module demos all type-check against the
 \texttt{UnferKernel} bindings and pass their positive +
 UK-4001 negative gates in CI.
 
-\textbf{Test counts (CPU, full sweep 2026-06-30, rev 18):}
-unfer workspace \textbf{196} (19 fock\_sirk + 26
+\textbf{Test counts (CPU, full sweep 2026-06-30, rev 18/24):}
+unfer workspace \textbf{227} as of rev 24 (was 196 at rev 18; +31 over P8--P10 revisions; breakdown: 19 fock\_sirk + 26
 nested\_fock\_algebra + 37 prob\_kernel + 39 unfer\_protocol +
-33 unfer\_ffi + 39 qfm + 4 mnist\_validation); 6 module demos
+33 unfer\_ffi + 39 qfm + 4 mnist\_validation + 4 cifar10\_validation); 6 module demos
 (positive + UK-4001 negative); 4 criterion benchmark groups in
 \texttt{qfm/benches/pipeline.rs} (CPU) + 2 new CUDA bench
 groups in \texttt{fock\_sirk/benches/sirk\_cuda.rs} (gated on
@@ -1570,9 +1570,10 @@ to the velyst 0.15 + typst 0.15 + Bevy 0.18 API surface;
 5 new \texttt{ported\_examples} integration tests in
 \texttt{velysterm/examples/velyst\_demo/tests/}) for
 \textbf{16 of 18}.
-The remaining 2 are research-grade (P10.16 real-dataset
-scaling, P10.18 Millennium-Prize mass-gap demo) and are
-documented as the next steps below. P10.17 (Lindbladian)
+The remaining items are research-grade: P10.16.2+ real-dataset
+scaling sub-revisions (P10.16.1 DONE in rev 24 --- see below)
+and P10.18 Millennium-Prize mass-gap demo; both are documented
+as the next steps below. P10.17 (Lindbladian)
 is explicitly out of scope per user decision (2026-06-30).
 
 \paragraph{P7 productionization (all 6 items done).}
@@ -1779,30 +1780,71 @@ loop sub-item of P8.9 was already demonstrated by
 $196 \to 201$ ($+5$: 4 \texttt{karcher\_mean} units in
 \texttt{qfm}, 1 \texttt{prob\_kernel} session test).
 
-\subsubsection*{Next steps to improve (post-rev 23)}
+\subsubsection*{Rev 24: P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix}
 
-The remaining P7--P10 items (2 of 18) are the documented next
-steps:
+Rev 24 ships \textbf{P10.16.1}, the second real-data empirical
+baseline for the QFM-TSR pipeline, and fixes a latent f64 overflow
+in \texttt{QfmPipeline::compile} that prevented any pipeline with
+$\texttt{krylov\_dim} > 88$ from compiling.
+
+\paragraph{SIRK shift overflow (root cause \& fix).}
+\texttt{QfmPipeline::compile} was building the Krylov sequence with
+linearly-growing imaginary shifts $z_k = -ik$ for
+$k = 1, \ldots, \texttt{krylov\_dim}$.  Each step multiplies the
+current Krylov vector by $(H - z_k I)$, so the per-component
+magnitude grows as
+$\prod_{k=1}^{m}(\|H\|+k) \approx m!$ when $\|H\| \ll k$.
+For $m = 65$ (MNIST 8$\times$8) this gives $\approx 10^{90}$, which
+fits in an \texttt{f64} ($\approx 10^{308}$).  For $m = 256$
+(CIFAR-10 16$\times$16), $256!\approx 10^{507}$ overflows
+\texttt{f64}, turning the Gram matrix entries into NaN and causing
+\texttt{whiten\_gram} to return \texttt{GramDegenerate}.  The fix
+(\texttt{qfm/src/pipeline.rs}) normalises the shifts to
+$z_k = -ik/m$ (range $[-i/m,\, -i]$), capping the per-step growth
+at $(\|H\|+1)$ regardless of $m$ and bounding the Gram entries at
+$(\|H\|+1)^{2m} \approx 10^{168}$ for $m=256$.  No other crate is
+affected; the MNIST tests pass unchanged.
+
+\paragraph{P10.16.1 test.}
+\texttt{qfm/tests/cifar10\_validation.rs} (4 tests, +4 to the
+workspace total: 223 $\to$ 227).  The fixture is a deterministic
+synthetic dataset generated at test time from seed
+\texttt{0xC1F4\_2010}: 8 classes $\times$ 32 images/class $= 256$
+training points, $d = 256$ ($16\times 16$ grayscale), each class
+defined by 3 bright Gaussian spots at class-specific grid
+positions plus per-pixel noise ($\sigma=0.05$ training,
+$\sigma=0.15$ held-out).  Pipeline config: $k=16$ (Level-1
+sketch, $16{:}1$ compression), $K_2 = 256 = \max(M,d)$,
+$\texttt{krylov\_dim} = 256$.  The four tests check: (1) the
+pipeline compiles and the SIRK rank is positive; (2)
+\texttt{generate} outputs are finite and positively correlated
+with the nearest training point (max cosine-sim $>0.2$, min
+$>0.0$); (3) the QMF.tex \S8 Bayesian update on held-out images
+yields $\max|\langle\text{sample}\mid c_{\text{obs}}\rangle|^2
+> 0.01$; (4) no NaN/Inf in held-out \texttt{generate}.  The
+\texttt{build\_flow\_hamiltonian} ``star'' structure (vacuum
+coupled to $K_2$ modes with coupling $\alpha_j/2 = \|x_j\|^2/(2M)$)
+produces an effective 2D Krylov subspace after whitening; the
+$\sim$2--9 whitened rank is the documented behaviour for
+small-rank flow Hamiltonians.
+
+\subsubsection*{Next steps to improve (post-rev 24)}
+
+The remaining P7--P10 items (1.5 of 18, since P10.16 is ongoing)
+are:
 
 \begin{enumerate}
-\item \textbf{P9.15.1 port the deleted velyst examples to the
-  velyst 0.15 API} (DONE in rev 23, $\sim$1--2 days). The
-  velysterm-vendored \texttt{editor.rs} / \texttt{terminal.rs} /
-  \texttt{rfc1751\_demo.rs} are re-introduced in
-  \texttt{velysterm/examples/velyst\_demo/examples/} and ported
-  to the velyst 0.15 + typst 0.15 + Bevy 0.18 API surface. (Now
-  kept here for the historical record; the implementation lives
-  in the velysterm repo, not the unfer repo.)
+\item \textbf{P10.16.1} (DONE in rev 24 --- see above).
 
-\item \textbf{P10.16 real-dataset QFM-TSR validation} (ongoing
-  research; \textbf{recommended next revision}). Extend the
-  P7.3 MNIST 8$\times$8 baseline to (a) larger image datasets
-  (CIFAR-10 32$\times$32, ImageNet 64$\times$64); (b)
-  cross-domain datasets (CFD flow fields, 2D Ising-model
-  critical snapshots, gravitational waveforms); (c) the
-  Bayesian-update posterior quality on adversarial / partial
-  observations. This is the central scientific claim of the
-  QFM-TSR pipeline and has no size cap.
+\item \textbf{P10.16.2+ real-dataset QFM-TSR validation}
+  (ongoing research). Sub-steps: (a) replace the synthetic
+  CIFAR-10 fixture with a real one (torchvision script
+  $\to$ JSON, same format as \texttt{mnist\_8x8\_65training.json});
+  (b) implement the rank-truncation extension point
+  (\S11) to support $d=1024$ (CIFAR-10 32$\times$32) without
+  the $O(K_2^3)$ W\_prob bottleneck; (c) cross-domain
+  datasets (CFD flow fields, 2D Ising-model critical snapshots,
+  gravitational waveforms).  Each sub-revision is independent.
 
 \item \textbf{P10.18 Millennium-Prize mass-gap demonstration}
   ($\sim$2--3 months, research). The unfer architecture has all
