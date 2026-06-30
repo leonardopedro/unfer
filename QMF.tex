@@ -1551,8 +1551,10 @@ the workflow but only runs on a self-hosted runner with the
 \subsubsection*{Post-rev-17 productionization, validation, and infrastructure (rev 18)}
 
 Rev 18 ships \textbf{10 of the 18} P7--P10 items from the
-\texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve".
-The remaining 8 are research-grade (P8.7 Typst-math compiler,
+\texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve",
+and rev 19 adds P8.9 (the Karcher-mean posterior estimate; see the
+rev-19 subsection below) for \textbf{11 of 18}.
+The remaining 7 are research-grade (P8.7 Typst-math compiler,
 P8.8 belief propagation, P10.16 real-dataset scaling, P10.17
 Lindbladian, P10.18 Millennium-Prize mass-gap demo) or
 cross-repo (P9.14 \texttt{mathed\_mini} Step 4, P9.15 velyst
@@ -1642,7 +1644,7 @@ examples) and are documented as the next steps below.
   the P7 P3 constraint.
 \end{enumerate}
 
-\paragraph{P8 user-facing (2 of 5 items done).}
+\paragraph{P8 user-facing (3 of 5 items done).}
 
 \begin{enumerate}
 \setcounter{enumi}{6}
@@ -1708,9 +1710,63 @@ examples) and are documented as the next steps below.
   limitation the PAT overcomes).
 \end{enumerate}
 
-\subsubsection*{Next steps to improve (post-rev 18)}
+\subsubsection*{The Karcher-mean posterior point estimate (rev 19, P8.9)}
 
-The remaining P7--P10 items (8 of 18) are the documented next
+The Bayesian update of \S8 draws a single posterior sample
+$\vec c_{\mathrm{sample}}$ via HMC. A single draw is one point of
+the typical set; the natural \emph{point estimate} is the
+posterior mean. On the unit sphere of $\Cset^m$ the Euclidean
+average is meaningless (it leaves the manifold), so rev 19 adds
+the intrinsic \textbf{Karcher (Fr\'echet) mean}
+\[
+  \mu \;=\; \arg\min_{\mu \in S} \;\frac1N \sum_{i=1}^N
+  d\bigl([\mu],[\vec c_i]\bigr)^2 ,
+\]
+where the $\vec c_i$ are the post-burn-in HMC samples and the
+distance is the \emph{projective} geodesic
+$d([\mu],[\vec c]) = \arccos|\langle \mu \,|\, \vec c\rangle|$ on
+$\Cset P^{m-1}$. The projective quotient is essential: the
+Born-rule likelihood $|\langle \vec v\,|\,\vec c\rangle|^2$ is
+invariant under the global-phase gauge
+$\vec c \mapsto e^{i\phi}\vec c$, so two samples differing only by
+a phase are physically identical yet maximally distant on the raw
+sphere $S^{2m-1}$. We therefore phase-align each sample to the
+running mean, $\vec c_i' = e^{-i\arg\langle\mu|\vec c_i\rangle}
+\vec c_i$, so $\langle\mu|\vec c_i'\rangle = |\langle\mu|\vec c_i
+\rangle| \ge 0$, before taking the logarithmic map. The mean is
+found by Riemannian gradient descent: iterate the tangent-space
+average $\xi = \frac1N \sum_i \mathrm{Log}_\mu(\vec c_i')$ with
+$\mathrm{Log}_\mu(p) = \theta\,u/\|u\|$, $\theta = \arccos\langle
+\mu,p\rangle_\Rset$, $u = p - \langle\mu,p\rangle_\Rset\,\mu$,
+then update $\mu \leftarrow \mathrm{Exp}_\mu(\xi) = \cos\|\xi\|
+\,\mu + \sin\|\xi\|\,\xi/\|\xi\|$ until $\|\xi\| < \texttt{tol}$.
+
+This is implemented as \texttt{qfm::bayes::karcher\_mean} and
+wired through the whole kernel surface:
+\texttt{prob\_kernel::Session::bayesian\_update} now runs the
+\emph{full} HMC chain (\texttt{sample\_hmc}), decodes the Karcher
+mean of the post-burn-in tail through the Phase-5 tomographic
+decoder, and reports it as
+\texttt{BayesianUpdateReport::\{posterior\_mean\_image,
+n\_samples\}}; \texttt{unfer\_protocol::BayesianUpdateResult}
+gains the backward-compatible (\texttt{\#[serde(default)]})
+fields \texttt{\{posterior\_mean, n\_samples\}}; and
+\texttt{unfer\_ffi::uk\_bayesian\_update} now returns the
+\emph{full} result including the posterior-mean image (the P8.9
+\texttt{generate\_from\_observations} goal). Correctness is pinned
+by two unit tests: the Fr\'echet mean of two orthogonal rays is
+the equidistant geodesic midpoint, $|\langle e_i \,|\, \mu\rangle|
+= \cos\frac\pi4 = \tfrac1{\sqrt2}$; and feeding phase-rotated
+copies of one state returns that state's ray,
+$|\langle \mathrm{base} \,|\, \mu\rangle| = 1$. The multi-observation
+loop sub-item of P8.9 was already demonstrated by
+\texttt{iterated\_bayes\_module} (P8.11). Workspace tests:
+$196 \to 201$ ($+5$: 4 \texttt{karcher\_mean} units in
+\texttt{qfm}, 1 \texttt{prob\_kernel} session test).
+
+\subsubsection*{Next steps to improve (post-rev 19)}
+
+The remaining P7--P10 items (7 of 18) are the documented next
 steps:
 
 \begin{enumerate}
@@ -1739,16 +1795,6 @@ steps:
   marginal mean of the latent. New
   \texttt{qfm::bayes::belief\_propagation(pipeline, graph, opts)}
   module function.
-
-\item \textbf{P8.9 \texttt{bayes\_update\_module} v2} ($\sim$1
-  week, research). The current \texttt{bayes\_update\_module/}
-  hardcodes a single observation. A v2 demo could drive
-  multiple observations in a loop (consume the JSON result,
-  feed it back as a new observation), demonstrate a
-  posterior-mean estimate (sample $N$ points, compute the
-  Karcher mean on the unit sphere of $\Cset^m$), and expose a
-  \texttt{generate\_from\_observations} op that returns the full
-  \texttt{BayesianUpdateResult} (not just the HMC sample).
 
 \item \textbf{P9.14 velysterm \texttt{mathed\_mini} Step 4}
   ($\sim$1 week, cross-repo). Caret blink via

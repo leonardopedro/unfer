@@ -507,6 +507,100 @@ pub fn sample_hmc_single(posterior: &Posterior, opts: &HmcOpts) -> DVector<Compl
     q
 }
 
+/// Posterior-mean point estimate: the **Karcher (Fréchet) mean** of a
+/// set of unit-norm posterior samples, taken on the unit sphere of
+/// $\Cset^m$ modulo the Born-rule global-phase gauge — i.e. the
+/// intrinsic (Fréchet) mean on complex projective space $\Cset P^{m-1}$.
+///
+/// A single HMC draw ([`sample_hmc_single`]) is one point of the typical
+/// set; the Karcher mean of the whole post-burn-in chain is the
+/// Riemannian analogue of the Euclidean sample mean for data constrained
+/// to a curved manifold, and is the natural posterior **point estimate**.
+/// Because the Born-rule likelihood $|\langle v\,|\,c\rangle|^2$ is
+/// invariant under $c \mapsto e^{i\phi} c$, two samples that differ only
+/// by a global phase are physically identical yet maximally distant on
+/// the raw sphere; each sample is therefore phase-aligned to the running
+/// mean before the logarithmic map, realizing the projective geodesic
+/// distance $d([\mu],[s]) = \arccos|\langle\mu\,|\,s\rangle|$.
+///
+/// Algorithm (Riemannian gradient descent):
+/// 1. Initialize $\mu \leftarrow s_0$.
+/// 2. Phase-align each sample $s_i' = e^{-i\arg\langle\mu|s_i\rangle}
+///    s_i$ so $\langle\mu|s_i'\rangle = |\langle\mu|s_i\rangle| \ge 0$.
+/// 3. Tangent-space average $\xi = \tfrac1N \sum_i \mathrm{Log}_\mu
+///    (s_i')$ with $\mathrm{Log}_\mu(p) = \theta\,u/\lVert u\rVert$,
+///    $\theta = \arccos\langle\mu,p\rangle_{\Rset}$, $u = p -
+///    \langle\mu,p\rangle_{\Rset}\,\mu$.
+/// 4. Update $\mu \leftarrow \mathrm{Exp}_\mu(\xi) = \cos\lVert\xi\rVert
+///    \,\mu + \sin\lVert\xi\rVert\,\xi/\lVert\xi\rVert$; renormalize.
+/// 5. Repeat until $\lVert\xi\rVert < \texttt{tol}$ or `max_iter`.
+///
+/// Degenerate inputs: empty slice → zero-length vector; single sample →
+/// that sample (renormalized).
+pub fn karcher_mean(
+    samples: &[DVector<Complex64>],
+    max_iter: usize,
+    tol: f64,
+) -> DVector<Complex64> {
+    if samples.is_empty() {
+        return DVector::zeros(0);
+    }
+    if samples.len() == 1 {
+        return renormalize(&samples[0]);
+    }
+    let m = samples[0].len();
+    let mut mu = renormalize(&samples[0]);
+    let inv_n = 1.0 / samples.len() as f64;
+    for _ in 0..max_iter {
+        // Tangent-space mean of the per-sample logarithmic maps.
+        let mut xi = DVector::<Complex64>::zeros(m);
+        for s in samples {
+            // Hermitian overlap <mu, s>; phase-align s so the overlap
+            // becomes real and non-negative (projective-distance gauge).
+            let overlap: Complex64 = (0..m).map(|i| mu[i].conj() * s[i]).sum();
+            let modulus = overlap.norm();
+            let phase = if modulus > 1e-300 {
+                overlap / modulus
+            } else {
+                Complex64::new(1.0, 0.0)
+            };
+            // Aligned sample p = s * conj(phase) gives <mu, p> = modulus.
+            // c = Re<mu, p> = modulus, clamped to a valid cosine.
+            let c = modulus.clamp(-1.0, 1.0);
+            // Tangent component u = p - c*mu, and its norm.
+            let mut u = DVector::<Complex64>::zeros(m);
+            let phase_conj = phase.conj();
+            for i in 0..m {
+                u[i] = s[i] * phase_conj - mu[i] * c;
+            }
+            let u_norm: f64 = u.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt();
+            if u_norm < 1e-12 {
+                continue; // p ~ mu: zero logarithm.
+            }
+            let scale = c.acos() / u_norm;
+            for i in 0..m {
+                xi[i] += u[i] * scale;
+            }
+        }
+        for i in 0..m {
+            xi[i] *= inv_n;
+        }
+        let xi_norm: f64 = xi.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt();
+        if xi_norm < tol {
+            break;
+        }
+        // Exponential map: mu' = cos|xi| mu + sin|xi| xi/|xi|.
+        let cos = xi_norm.cos();
+        let sin_over = xi_norm.sin() / xi_norm;
+        let mut next = DVector::<Complex64>::zeros(m);
+        for i in 0..m {
+            next[i] = mu[i] * cos + xi[i] * sin_over;
+        }
+        mu = renormalize(&next);
+    }
+    mu
+}
+
 /// Reconstruct a full-resolution image from a posterior sample
 /// $\vec c_{\mathrm{sample}}$ by re-running the TSR Phase 3-4
 /// tomographic decoder. Convenience wrapper around
@@ -713,6 +807,100 @@ mod tests {
                 "sample norm violation: {norm_sq}"
             );
         }
+    }
+
+    fn overlap_modulus(a: &DVector<Complex64>, b: &DVector<Complex64>) -> f64 {
+        let o: Complex64 = (0..a.len()).map(|i| a[i].conj() * b[i]).sum();
+        o.norm()
+    }
+
+    #[test]
+    fn karcher_mean_single_sample_is_that_sample() {
+        // One sample (un-normalized) → its renormalization, up to phase.
+        let s = DVector::from_vec(vec![Complex64::new(3.0, 0.0), Complex64::new(0.0, 4.0)]);
+        let mu = karcher_mean(std::slice::from_ref(&s), 50, 1e-10);
+        let norm_sq: f64 = mu.iter().map(|z| z.norm_sqr()).sum();
+        assert!((norm_sq - 1.0).abs() < 1e-12, "not unit-norm: {norm_sq}");
+        assert!(
+            (overlap_modulus(&mu, &s) / s.norm() - 1.0).abs() < 1e-12,
+            "single-sample mean must be collinear with the sample"
+        );
+    }
+
+    #[test]
+    fn karcher_mean_is_phase_gauge_invariant() {
+        // The same physical state under several global phases must
+        // collapse back to that state (the projective mean ignores the
+        // U(1) gauge): |<base, mean>| ≈ 1.
+        let base = renormalize(&DVector::from_vec(vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.5, -0.5),
+            Complex64::new(0.0, 1.0),
+        ]));
+        let phases = [0.0_f64, 1.1, 2.7, -0.4, 3.0];
+        let samples: Vec<_> = phases
+            .iter()
+            .map(|&phi| {
+                let g = Complex64::new(phi.cos(), phi.sin());
+                base.map(|z| z * g)
+            })
+            .collect();
+        let mu = karcher_mean(&samples, 100, 1e-12);
+        assert!(
+            (overlap_modulus(&mu, &base) - 1.0).abs() < 1e-8,
+            "phase-only copies must average to the base ray: |<base,mu>|={}",
+            overlap_modulus(&mu, &base)
+        );
+    }
+
+    #[test]
+    fn karcher_mean_of_two_orthogonal_is_equidistant_midpoint() {
+        // The Fréchet mean of two orthogonal unit rays is the geodesic
+        // midpoint, equidistant from both: |<e0,mu>| = |<e1,mu>| =
+        // cos(pi/4) = 1/sqrt(2).
+        let e0 = DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]);
+        let e1 = DVector::from_vec(vec![Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]);
+        let mu = karcher_mean(&[e0.clone(), e1.clone()], 200, 1e-13);
+        let o0 = overlap_modulus(&mu, &e0);
+        let o1 = overlap_modulus(&mu, &e1);
+        let target = std::f64::consts::FRAC_1_SQRT_2;
+        assert!((o0 - target).abs() < 1e-6, "|<e0,mu>|={o0}, want {target}");
+        assert!((o1 - target).abs() < 1e-6, "|<e1,mu>|={o1}, want {target}");
+        let norm_sq: f64 = mu.iter().map(|z| z.norm_sqr()).sum();
+        assert!((norm_sq - 1.0).abs() < 1e-12, "midpoint not unit-norm");
+    }
+
+    #[test]
+    fn karcher_mean_of_hmc_chain_is_unit_norm_and_high_likelihood() {
+        // End-to-end: the Karcher mean of a real post-burn-in HMC chain
+        // is on the unit sphere and assigns the observation a likelihood
+        // comparable to a single draw (it is a denoised point estimate).
+        let pipe = small_pipeline();
+        let obs = [1.0, 0.0, 0.0, 0.0];
+        let like = Likelihood::from_observation(&pipe, &obs).expect("like");
+        let c_prior = tsr_evolved_prior(&pipe);
+        let posterior = Posterior::new(vec![like.clone()], c_prior);
+        let opts = HmcOpts {
+            leapfrog_steps: 20,
+            step_size: 0.05,
+            n_iterations: 300,
+            burn_in: 200,
+            seed: 42,
+        };
+        let chain = sample_hmc(&posterior, &opts);
+        let tail = &chain[opts.burn_in..];
+        let mu = karcher_mean(tail, 100, 1e-10);
+        let norm_sq: f64 = mu.iter().map(|z| z.norm_sqr()).sum();
+        assert!(
+            (norm_sq - 1.0).abs() < 1e-8,
+            "mean not unit-norm: {norm_sq}"
+        );
+        let p_mean = like.born_rule(&mu);
+        let p_max = like.born_rule(like.krylov_state());
+        assert!(
+            p_mean > 0.25 * p_max,
+            "posterior-mean likelihood too low: p_mean={p_mean}, p_max={p_max}"
+        );
     }
 
     #[test]

@@ -429,6 +429,24 @@ fn bayesian_update_via_ffi() {
         assert!(f.is_finite(), "image element should be finite, got {f}");
     }
     assert!(result["solve_ms"].as_u64().is_some());
+    // P8.9: the result carries the Karcher-mean posterior point estimate
+    // (decoded image of the post-burn-in chain) and its sample count.
+    assert_eq!(
+        result["n_samples"].as_u64(),
+        Some(100),
+        "default opts (n_iterations=200, burn_in=100) give 100 post-burn-in samples"
+    );
+    let pmean = result["posterior_mean"]
+        .as_array()
+        .expect("posterior_mean is an array");
+    assert_eq!(pmean.len(), 4, "posterior_mean has d=4 elements");
+    for v in pmean {
+        let f = v.as_f64().expect("posterior_mean elements are f64");
+        assert!(
+            f.is_finite(),
+            "posterior_mean element should be finite, got {f}"
+        );
+    }
 
     uk_model_free(model);
 }

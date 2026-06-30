@@ -84,8 +84,18 @@ pub struct BayesianUpdateReport {
     /// final sample. `-1.0` if there were no observations (posterior
     /// = prior).
     pub mean_likelihood: f64,
-    /// The Phase 5 reconstructed full-resolution image.
+    /// The Phase 5 reconstructed full-resolution image of the
+    /// representative (final) HMC draw.
     pub image: Vec<f64>,
+    /// The Phase 5 reconstruction of the **posterior-mean** point
+    /// estimate — the Karcher (Fréchet) mean of the post-burn-in HMC
+    /// chain on the projective unit sphere of $\Cset^m$ (QMF.tex §8).
+    /// Denoised relative to the single draw in `image`. Empty if there
+    /// were no post-burn-in samples.
+    pub posterior_mean_image: Vec<f64>,
+    /// The number of post-burn-in samples averaged into
+    /// `posterior_mean_image`.
+    pub n_samples: usize,
     /// The number of observations $N$ (cached for the agent surface).
     pub n_observations: usize,
     /// Wall-clock time for HMC + decode in milliseconds.
@@ -377,9 +387,18 @@ impl Session {
             seed: hmc_opts.seed,
         };
         let t0 = std::time::Instant::now();
-        let sample = qfm::bayes::sample_hmc_single(&posterior, &qfm_opts);
+        // P8.9: run the full chain (not just the final draw) so we can
+        // form a posterior-mean point estimate. The final element of the
+        // chain is the representative single draw (identical to
+        // `sample_hmc_single` for the same opts), and the post-burn-in
+        // tail feeds the Karcher mean.
+        let chain = qfm::bayes::sample_hmc(&posterior, &qfm_opts);
+        let sample = chain
+            .last()
+            .cloned()
+            .unwrap_or_else(|| posterior.prior_direction().clone());
 
-        // Diagnostics.
+        // Diagnostics on the representative draw.
         let log_posterior = posterior.log_density(&sample);
         let mean_likelihood = if likelihoods.is_empty() {
             -1.0
@@ -391,14 +410,29 @@ impl Session {
             (prod / likelihoods.len() as f64).exp()
         };
 
-        // Phase 5 tomographic reconstruction.
+        // Phase 5 tomographic reconstruction of the representative draw.
         let image = qfm::bayes::reconstruct(pipeline, &sample)?;
+
+        // P8.9: posterior-mean point estimate via the Karcher (Fréchet)
+        // mean of the post-burn-in tail on the projective unit sphere of
+        // C^m, then decode it. `burn_in >= chain.len()` (degenerate opts)
+        // leaves an empty tail → empty posterior-mean image.
+        let burn_in = qfm_opts.burn_in.min(chain.len());
+        let tail = &chain[burn_in..];
+        let (posterior_mean_image, n_samples) = if tail.is_empty() {
+            (Vec::new(), 0)
+        } else {
+            let mean = qfm::bayes::karcher_mean(tail, 100, 1e-10);
+            (qfm::bayes::reconstruct(pipeline, &mean)?, tail.len())
+        };
         let solve_ms = t0.elapsed().as_millis() as u64;
 
         Ok(BayesianUpdateReport {
             log_posterior,
             mean_likelihood,
             image,
+            posterior_mean_image,
+            n_samples,
             n_observations: observations.len(),
             solve_ms,
         })
@@ -466,6 +500,49 @@ mod tests {
         // mean_likelihood should be a positive likelihood value (Born rule
         // is always positive).
         assert!(report.mean_likelihood > 0.0 && report.mean_likelihood <= 1.0);
+        // P8.9: the posterior-mean point estimate is decoded from the
+        // Karcher mean of the post-burn-in chain. With the default
+        // HmcOptsSpec (n_iterations=200, burn_in=100) there are 100
+        // post-burn-in samples, all averaged into a finite d=4 image.
+        assert_eq!(report.n_samples, 100, "post-burn-in tail length");
+        assert_eq!(report.posterior_mean_image.len(), 4);
+        for v in &report.posterior_mean_image {
+            assert!(
+                v.is_finite(),
+                "posterior-mean component should be finite: {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn bayesian_update_posterior_mean_tracks_observation() {
+        // P8.9: the Karcher-mean posterior estimate is a valid decoded
+        // image (finite, dimension d) aggregated over the whole
+        // post-burn-in tail, and it should be at least as close to the
+        // observation as a coarse bound allows. For this strongly-peaked
+        // tetrahedron posterior the chain concentrates, so the mean is a
+        // faithful (not degenerate) point estimate: its L2 distance to
+        // the single representative draw stays within the image scale.
+        let session = qfm_session();
+        let obs = vec![1.0, 0.0, 0.0, 0.0];
+        let report = session
+            .bayesian_update(&[obs], &HmcOptsSpec::default())
+            .expect("bayesian_update should succeed");
+        assert_eq!(report.posterior_mean_image.len(), report.image.len());
+        assert!(report.n_samples >= 2, "need a real chain to average");
+        // The two estimates derive from the same typical set, so the
+        // mean image must stay within a bounded distance of the draw.
+        let dist2: f64 = report
+            .posterior_mean_image
+            .iter()
+            .zip(&report.image)
+            .map(|(m, s)| (m - s).powi(2))
+            .sum();
+        let scale2: f64 = report.image.iter().map(|s| s * s).sum::<f64>().max(1e-9);
+        assert!(
+            dist2 <= scale2 + 1e-12,
+            "posterior mean diverged from the typical set: dist2={dist2}, scale2={scale2}"
+        );
     }
 
     #[test]

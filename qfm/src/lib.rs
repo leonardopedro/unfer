@@ -67,7 +67,8 @@ pub mod potential;
 pub mod sketch;
 
 pub use bayes::{
-    HmcOpts, Likelihood, Posterior, reconstruct, sample_hmc, sample_hmc_single, tsr_evolved_prior,
+    HmcOpts, Likelihood, Posterior, karcher_mean, reconstruct, sample_hmc, sample_hmc_single,
+    tsr_evolved_prior,
 };
 pub use heavy_hitters::HeavyHitters;
 pub use pipeline::{QfmConfig, QfmError, QfmPipeline};

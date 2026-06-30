@@ -292,6 +292,8 @@ pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) 
             log_posterior: report.log_posterior,
             mean_likelihood: report.mean_likelihood,
             image: report.image,
+            posterior_mean: report.posterior_mean_image,
+            n_samples: report.n_samples,
             n_observations: report.n_observations,
             solve_ms: report.solve_ms,
         };
