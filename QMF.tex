@@ -1552,19 +1552,24 @@ the workflow but only runs on a self-hosted runner with the
 
 Rev 18 ships \textbf{10 of the 18} P7--P10 items from the
 \texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve",
- and rev 19 adds P8.9 (the Karcher-mean posterior estimate; see the
+  and rev 19 adds P8.9 (the Karcher-mean posterior estimate; see the
 rev-19 subsection below) for \textbf{11 of 18}.
 Rev 20--21 add P8.7 (Typst-math compiler), P8.8
 (\texttt{uk\_belief\_propagation} FFI symbol), the velysterm
 merge (upstream typst 0.14 $\to$ 0.15 + KanvaSink + kanva\_typst
 + mathed API port), and the P9.15 partial (deletion of the
 triply-stale vendored velyst examples) for \textbf{14 of 18}.
-The remaining 4 are research-grade (P10.16 real-dataset
-scaling, P10.18 Millennium-Prize mass-gap demo) or cross-repo
-(P9.14 \texttt{mathed\_mini} Step 4, P9.15.1 port the deleted
-velyst examples to velyst 0.15) and are documented as the
-next steps below. P10.17 (Lindbladian) is explicitly
-out of scope per user decision (2026-06-30).
+Rev 22 closes P9.14 (mathed\_mini Step 4: caret blink,
+mouse hit-testing / click-to-place-caret, mathed\_a11y
+AccessKit bridge, kernel\_client $\to$ mathed\_mini wiring;
+5 a11y + 2 rects\_for\_range tests; velysterm commit
+\texttt{8d1cbf6}) for \textbf{15 of 18}.
+The remaining 3 are research-grade (P10.16 real-dataset
+scaling, P10.18 Millennium-Prize mass-gap demo) or the
+P9.15.1 follow-on (port the deleted velyst examples to
+velyst 0.15) and are documented as the next steps below.
+P10.17 (Lindbladian) is explicitly out of scope per user
+decision (2026-06-30).
 
 \paragraph{P7 productionization (all 6 items done).}
 
@@ -1770,25 +1775,12 @@ loop sub-item of P8.9 was already demonstrated by
 $196 \to 201$ ($+5$: 4 \texttt{karcher\_mean} units in
 \texttt{qfm}, 1 \texttt{prob\_kernel} session test).
 
-\subsubsection*{Next steps to improve (post-rev 21)}
+\subsubsection*{Next steps to improve (post-rev 22)}
 
-The remaining P7--P10 items (4 of 18) are the documented next
+The remaining P7--P10 items (3 of 18) are the documented next
 steps:
 
 \begin{enumerate}
-\item \textbf{P9.14 velysterm \texttt{mathed\_mini} Step 4}
-  ($\sim$1 week, cross-repo). Caret blink via
-  \texttt{ControlFlow::WaitUntil}; mouse hit-testing /
-  click-to-place-caret + selection (the \texttt{byte\_for\_point} /
-  \texttt{rects\_for\_range} plumbing already exists);
-  \texttt{mathed\_a11y} AccessKit bridge over
-  \texttt{mathed\_core::accessibility}; and the headline item:
-  wire \texttt{kernel\_client} into \texttt{mathed\_mini} so the
-  Bevy-free frontend can show \texttt{\textbackslash prob} results
-  too (today only the Bevy \texttt{mathed} frontend has the
-  kernel bridge --- P3.10+11 closed that for the Bevy bridge,
-  but the Bevy-free bridge is still missing).
-
 \item \textbf{P9.15.1 port the deleted velyst examples to the
   velyst 0.15 API} (deferred follow-on, $\sim$1--2 days). The
   velysterm-vendored \texttt{editor.rs} / \texttt{terminal.rs} /
@@ -1881,6 +1873,40 @@ steps:
   velyst 0.15) are deleted; the \texttt{upstream-stale-examples}
   feature gate in \texttt{crates/velyst/Cargo.toml} is removed.
   The follow-on port is tracked as P9.15.1 above.
+
+\item \textbf{[DONE rev 22, P9.14] \texttt{mathed\_mini} Step 4
+  closure.} All four deferred sub-items are now implemented and
+  tested (velysterm commit \texttt{8d1cbf6}). (1) \textbf{Caret blink}
+  via \texttt{ControlFlow::WaitUntil(self.next\_blink)} in
+  \texttt{app.rs:750}; \texttt{caret\_visible} toggles on the
+  \texttt{BLINK\_INTERVAL} deadline; \texttt{reset\_blink()} is called
+  on every caret move / edit. (2) \textbf{Mouse hit-testing /
+  click-to-place-caret + selection} via
+  \texttt{App::place\_caret\_from\_cursor(extend)} in \texttt{app.rs:212}
+  using \texttt{layout.glyphs.byte\_for\_point};
+  \texttt{MouseInput::Pressed} calls it with \texttt{shift\_key()} for
+  extend, \texttt{CursorMoved} + held button calls with
+  \texttt{extend=true} for drag-select; 4 \texttt{selection\_range} tests
+  cover the anchor logic; 2 new \texttt{rects\_for\_range} tests in
+  \texttt{render.rs} cover the selection highlight geometry.
+  (3) \textbf{\texttt{mathed\_a11y} AccessKit bridge} in
+  \texttt{mathed\_mini/src/a11y.rs} (gated on the \texttt{gui} feature):
+  \texttt{build\_tree\_update(\&[AccessNode])} maps
+  \texttt{AccessRole} $\to$ \texttt{accesskit::Role}; declares
+  \texttt{Action::Focus} + \texttt{Action::Click} on segment nodes
+  (P5 \#27 caret placement); \texttt{byte\_offset\_for\_node} round-trips
+  the segment ID back to a doc byte offset. 5 a11y tests
+  (\texttt{translator\_role\_maps\_to\_group},
+  \texttt{reference\_role\_maps\_to\_link},
+  \texttt{end\_to\_end\_pipeline\_builds\_tree\_from\_document\_text},
+  plus the 2 pre-existing structural tests). (4) \textbf{\texttt{kernel\_client}
+  $\to$ \texttt{mathed\_mini} wiring} in
+  \texttt{crates/mathed\_mini/src/kernel\_bridge.rs} (1171 lines,
+  10+ tests in \texttt{kernel\_bridge::tests}). The Bevy-free frontend
+  can now show \texttt{\textbackslash prob} results inline (green value
+  / red error code), matching the Bevy \texttt{mathed} frontend.
+  \textbf{mathed\_mini: 45 $\to$ 47 headless tests / 54 $\to$ 59 gui
+  tests (rev 22).} mathed\_core 72 (unchanged).
 \end{enumerate}
 
 The detailed per-item breakdown, the per-item leverage and
