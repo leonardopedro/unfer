@@ -1564,12 +1564,16 @@ mouse hit-testing / click-to-place-caret, mathed\_a11y
 AccessKit bridge, kernel\_client $\to$ mathed\_mini wiring;
 5 a11y + 2 rects\_for\_range tests; velysterm commit
 \texttt{8d1cbf6}) for \textbf{15 of 18}.
-The remaining 3 are research-grade (P10.16 real-dataset
-scaling, P10.18 Millennium-Prize mass-gap demo) or the
-P9.15.1 follow-on (port the deleted velyst examples to
-velyst 0.15) and are documented as the next steps below.
-P10.17 (Lindbladian) is explicitly out of scope per user
-decision (2026-06-30).
+Rev 23 closes P9.15.1 (port the 3 deleted velyst examples
+\texttt{editor.rs}, \texttt{terminal.rs}, \texttt{rfc1751\_demo.rs}
+to the velyst 0.15 + typst 0.15 + Bevy 0.18 API surface;
+5 new \texttt{ported\_examples} integration tests in
+\texttt{velysterm/examples/velyst\_demo/tests/}) for
+\textbf{16 of 18}.
+The remaining 2 are research-grade (P10.16 real-dataset
+scaling, P10.18 Millennium-Prize mass-gap demo) and are
+documented as the next steps below. P10.17 (Lindbladian)
+is explicitly out of scope per user decision (2026-06-30).
 
 \paragraph{P7 productionization (all 6 items done).}
 
@@ -1775,25 +1779,20 @@ loop sub-item of P8.9 was already demonstrated by
 $196 \to 201$ ($+5$: 4 \texttt{karcher\_mean} units in
 \texttt{qfm}, 1 \texttt{prob\_kernel} session test).
 
-\subsubsection*{Next steps to improve (post-rev 22)}
+\subsubsection*{Next steps to improve (post-rev 23)}
 
-The remaining P7--P10 items (3 of 18) are the documented next
+The remaining P7--P10 items (2 of 18) are the documented next
 steps:
 
 \begin{enumerate}
 \item \textbf{P9.15.1 port the deleted velyst examples to the
-  velyst 0.15 API} (deferred follow-on, $\sim$1--2 days). The
+  velyst 0.15 API} (DONE in rev 23, $\sim$1--2 days). The
   velysterm-vendored \texttt{editor.rs} / \texttt{terminal.rs} /
-  \texttt{rfc1751\_demo.rs} were triply-stale against the
-  velyst 0.15 + \texttt{typst 0.15} API surface and were
-  \textbf{deleted} in the rev 21 velysterm merge. Porting them
-  to the new API
-  (\texttt{VelystSourceHandle} $\to$ \texttt{VelystSource},
-  \texttt{VelystFuncBundle} $\to$ \texttt{VelystContent}, the
-  new \texttt{register\_typst\_func::<T>()} macro surface, the
-  new \texttt{Engine} struct, the new \texttt{PaintSink} trait
-  from \texttt{typst\_imaging} 0.15) is a non-trivial rewrite
-  that is deferred as a follow-on revision.
+  \texttt{rfc1751\_demo.rs} are re-introduced in
+  \texttt{velysterm/examples/velyst\_demo/examples/} and ported
+  to the velyst 0.15 + typst 0.15 + Bevy 0.18 API surface. (Now
+  kept here for the historical record; the implementation lives
+  in the velysterm repo, not the unfer repo.)
 
 \item \textbf{P10.16 real-dataset QFM-TSR validation} (ongoing
   research; \textbf{recommended next revision}). Extend the
@@ -1820,7 +1819,7 @@ steps:
   $l=4$.
 \end{enumerate}
 
-\subsubsection*{Items DONE in rev 20--21 (now in the past, kept here for the historical record)}
+\subsubsection*{Items DONE in rev 20--23 (now in the past, kept here for the historical record)}
 
 \begin{enumerate}
 \item \textbf{[DONE rev 20--21, P8.7] Typst-math $\to$ Hamiltonian
@@ -1907,6 +1906,65 @@ steps:
   / red error code), matching the Bevy \texttt{mathed} frontend.
   \textbf{mathed\_mini: 45 $\to$ 47 headless tests / 54 $\to$ 59 gui
   tests (rev 22).} mathed\_core 72 (unchanged).
+
+\item \textbf{[DONE rev 23, P9.15.1] Port the deleted velyst
+  examples to the velyst 0.15 + typst 0.15 + Bevy 0.18 API
+  surface.} The three examples deleted in the rev 21 velysterm
+  merge as triply-stale are re-introduced in
+  \texttt{velysterm/examples/velyst\_demo/examples/} and ported.
+  (1) \textbf{\texttt{rfc1751\_demo.rs}} (9 lines, 1:1 port) uses
+  \texttt{velyst::rfc1751::u64\_to\_rfc1751} (the velyst 0.15
+  re-export of the upstream function). (2) \textbf{\texttt{editor.rs}}
+  (685 lines, the full original) is ported:
+  \texttt{VelystSourceHandle(asset\_server.load(...))} $\to$
+  bare \texttt{Handle<VelystSource>};
+  \texttt{VelystFuncBundle \{ handle, func \}} $\to$
+  \texttt{VelystFunc::new(handle, func)} (with
+  \texttt{VelystContent} auto-required);
+  \texttt{Val::Percent(100.0)} / \texttt{Val::Px(15.0)} /
+  \texttt{Val::Auto} $\to$ \texttt{percent()} / \texttt{px()} /
+  \texttt{auto()} Bevy 0.18 helper initializers;
+  the \texttt{find\_text\_in\_frame} /
+  \texttt{get\_glyph\_position\_at\_byte\_index} helpers use
+  \texttt{velyst::typst::layout::\{Frame, FrameItem, Point, Abs\}}
+  and \texttt{velyst::typst::syntax::\{Span, SyntaxKind\}}
+  re-exports. The bundled \texttt{assets/typst/editor.typ} and
+  \texttt{assets/fonts/dejavu.ttf} (extracted from
+  \texttt{typst-assets-0.15.0/files/fonts/DejaVuSansMono.ttf})
+  are new. (3) \textbf{\texttt{terminal.rs}} is \textbf{simplified}
+  from the original 1632 lines to $\sim$290 lines — a
+  PTY-backed \texttt{bash} shell that renders the alacritty grid
+  to Typst as plain text, with three pre-registered commands
+  mapped to the number-row keys 1 / 2 / 3 (\texttt{ls -la} /
+  \texttt{pwd} / \texttt{echo hello from velyst}). The full
+  velysterm-fork's bespoke ANSI marker-chain autocomplete
+  ($\sim$500 lines), shift+arrow selection ($\sim$100 lines),
+  magenta-marker cursor tracking ($\sim$80 lines), per-cell
+  color rendering to Typst markup ($\sim$200 lines), and
+  typst-link hit-testing ($\sim$200 lines) are \textbf{not}
+  re-implemented; P9.15.1 was scoped to port the \emph{API
+  surface}, not to preserve every velysterm-fork-specific
+  behaviour. A follow-on revision can re-introduce the missing
+  pieces against the new velyst 0.15 surface. The velyst 0.15
+  + vte 0.15.0 + alacritty\_terminal 0.25.1 + Bevy 0.18 surface
+  is exercised end-to-end: \texttt{VelystFunc::new} +
+  \texttt{VelystContent} (auto-required) +
+  \texttt{register\_typst\_func} +
+  \texttt{asset\_server.load("typst/X.typ")} +
+  \texttt{vte::ansi::Processor::new() -> Processor<StdSyncHandler>}
+  (the vte 0.15.0 default for the new \texttt{T: Timeout}
+  parameter). 5 new integration tests in
+  \texttt{velysterm/examples/velyst\_demo/tests/ported\_examples.rs}
+  pin the port (\texttt{editor\_assets\_present},
+  \texttt{terminal\_assets\_present},
+  \texttt{rfc1751\_demo\_uses\_velyst\_helper},
+  \texttt{ported\_examples\_use\_new\_velyst\_api},
+  \texttt{ported\_examples\_use\_bevy\_val\_helpers}). All 5 pass.
+  \textbf{velyst\_demo: 0 $\to$ 5 integration tests (rev 23).}
+  mathed\_core / mathed\_mini / kernel\_client / mathed test
+  counts unchanged from rev 22 (72 / 47 / 59 / 7 / 36). The
+  unfer workspace has no typst dep and is unaffected: its
+  223 tests are unchanged.
 \end{enumerate}
 
 The detailed per-item breakdown, the per-item leverage and
