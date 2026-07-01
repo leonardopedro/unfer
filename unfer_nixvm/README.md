@@ -17,8 +17,10 @@ projects rather than vendoring either into the other.
   host's `/nix` into the guest over virtiofs+DAX, and
   `full-stack-vm-launch.sh` which wires a crosvm `vhost-user-gpu` backend plus
   virtiofsd sharing. The small, hand-authored recipe behind this directory (the
-  Nix/shell files + the two SpectrumOS patches, without the ~930MB of vendored
-  upstream checkouts and build output) is committed at
+  Nix/shell files, ~150KB — the two SpectrumOS GPU-sharing patches are a third
+  party's licensed work, so they're downloaded fresh and checksum-verified by
+  `setup.sh` at run time instead of being vendored — without the ~930MB of
+  vendored upstream checkouts and build output) is committed at
   `../../australVM/cloud_hypervisor_vm/` — see that directory's `setup.sh` to
   regenerate an equivalent working tree from source.
 - **`../../claurst`** (`GPL-3.0`) — **inspiration only, never vendored**: its

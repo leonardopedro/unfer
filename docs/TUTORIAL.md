@@ -371,7 +371,9 @@ per-item license analysis).
 - **The recipe, committed:** `../cloud-hypervisor-build` itself (~930MB — full vendored
   `crosvm`/`cloud-hypervisor` upstream checkouts plus a built `.deb`) stays external and
   ungitted, same as `../dynamic-arctic`. But the small, hand-authored recipe behind it (the
-  Nix/shell files + the two SpectrumOS GPU-sharing patches, ~200KB) is committed at
+  Nix/shell files, ~150KB — the two SpectrumOS GPU-sharing patches are downloaded
+  fresh by `setup.sh` at run time, not vendored, per the third-party-license caution
+  applied here) is committed at
   `australVM/cloud_hypervisor_vm/` (grouped with `arctic_authority` in `australVM` as
   runtime/module infrastructure, not kernel code) — its `setup.sh` clones
   cloud-hypervisor/crosvm/vhost at pinned commits, applies the patches, and builds both
