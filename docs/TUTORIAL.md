@@ -253,7 +253,7 @@ per-item license analysis).
 
 ### 7.2 `arctic_authority` — threshold-signed collective authority (P11.20, DONE rev 28)
 
-- **Status:** implemented as `$ROOT/arctic_authority/`, a new sibling crate (MIT). Depends on
+- **Status:** implemented as `australVM/arctic_authority/`, a new sibling crate (MIT). Depends on
   `../dynamic-arctic` for `arctic_core::{PubKey, Signature, verify}` and the
   `DelegationCertificate`/`DelegationRequest` wire types already defined there.
   `ArcticAuthEngine::register_certificate` verifies a certificate's threshold Schnorr
@@ -353,8 +353,10 @@ per-item license analysis).
   `packages.x86_64-linux.unfer-ffi` — a real, **actually-built** `rustPlatform.buildRustPackage`
   derivation of the CPU-only `unfer_ffi` cdylib+rlib, using a new `nixpkgs-unstable` flake
   input (the workspace's `edition = "2024"` needs a newer rustc than the CUDA devShell's
-  deliberately-pinned `nixos-23.05` ships; that devShell is untouched). (2) new sibling
-  `$ROOT/unfer_nixvm/flake.nix` takes `../cloud-hypervisor-build`'s `configuration.nix` as a
+  deliberately-pinned `nixos-23.05` ships; that devShell is untouched). (2) new subdirectory
+  `unfer/unfer_nixvm/flake.nix` (it lives inside the unfer repo, not as a separate sibling
+  checkout, since its `packages.*` output is entirely about the unfer kernel) takes
+  `../cloud-hypervisor-build`'s `configuration.nix` as a
   raw (`flake = false`) path input — not edited, upstream stays the single source of truth —
   and layers a NixOS module installing `unfer-ffi` on top, producing `vm-perf-with-unfer` /
   `vm-sec-with-unfer` image outputs. `nix eval` confirmed the whole composition is
@@ -366,6 +368,14 @@ per-item license analysis).
   `$SCRIPT_DIR` — silently pointing at a nonexistent directory unless invoked from one
   specific working directory, which would have quietly broken the "host store IS guest
   store" mechanism below. Fixed in place to the absolute `/nix`.
+- **The recipe, committed:** `../cloud-hypervisor-build` itself (~930MB — full vendored
+  `crosvm`/`cloud-hypervisor` upstream checkouts plus a built `.deb`) stays external and
+  ungitted, same as `../dynamic-arctic`. But the small, hand-authored recipe behind it (the
+  Nix/shell files + the two SpectrumOS GPU-sharing patches, ~200KB) is committed at
+  `australVM/cloud_hypervisor_vm/` (grouped with `arctic_authority` in `australVM` as
+  runtime/module infrastructure, not kernel code) — its `setup.sh` clones
+  cloud-hypervisor/crosvm/vhost at pinned commits, applies the patches, and builds both
+  binaries, regenerating an equivalent working tree from source.
 - **A decision left to the user, not made unilaterally:** `configuration.nix` mounts the
   shared `/nix` **read-only** in the guest — the safe default (a compromised/buggy guest
   process can't corrupt the host's store), but it also means the "packages installed in the
