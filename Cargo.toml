@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["fock_sirk", "nested_fock_algebra", "unfer_protocol", "prob_kernel", "unfer_ffi", "qfm"]
+members = ["fock_sirk", "nested_fock_algebra", "unfer_protocol", "prob_kernel", "unfer_ffi", "qfm", "unfer_edge"]
 
 [workspace.package]
 version = "0.1.0"

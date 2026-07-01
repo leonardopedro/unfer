@@ -105,6 +105,7 @@ fn config_for(d: usize, m: usize) -> QfmConfig {
         seed: 42,
         n_t_samples: 4,
         noise_dim: d,
+        max_rank: None,
     }
 }
 
@@ -239,6 +240,7 @@ fn bench_bayes_update_vs_m(c: &mut Criterion) {
             seed: 42,
             n_t_samples: 4,
             noise_dim: d,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &cfg).expect("compile");
         let c_prior = tsr_evolved_prior(&pipeline);
@@ -286,6 +288,7 @@ fn bench_bayes_update_vs_k2(c: &mut Criterion) {
             seed: 42,
             n_t_samples: 4,
             noise_dim: d,
+            max_rank: None,
         };
         let pipeline = QfmPipeline::compile(&training, &cfg).expect("compile");
         let c_prior = tsr_evolved_prior(&pipeline);

@@ -1,0 +1,25 @@
+[package]
+name = "unfer_edge"
+version.workspace = true
+edition = "2021"
+description = "Security-first Pingora proxy fronting the unfer_agent NDJSON loop."
+
+[[bin]]
+name = "unfer_edge"
+path = "src/main.rs"
+
+[dependencies]
+unfer_protocol = { path = "../unfer_protocol" }
+pingora = { version = "0.8.1", features = ["proxy"] }
+pingora-core = "0.8.1"
+pingora-proxy = "0.8.1"
+pingora-http = "0.8.1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+bytes = "1"
+
+[dev-dependencies]

@@ -206,11 +206,12 @@ self-document). Every failure carries a `Diagnostic` with repair hints; an unkno
 
 ---
 
-## 7. External modules (planned — P11)
+## 7. External modules (P11, all five DONE as of rev 28)
 
 unfer is designed to grow by **reusing sibling projects across an arms-length interface**,
-not by absorbing their code. Five integrations are planned (see `IMPLEMENTATION_PLAN.md` §P11
-for the full design and the per-item license analysis).
+not by absorbing their code. All five integrations are now built (see
+`IMPLEMENTATION_PLAN.md` §P11 for the full design, the rev 28 status paragraph, and the
+per-item license analysis).
 
 > **The license boundary is the protocol boundary.** The unfer kernel is `MIT OR
 > Apache-2.0`. Where a sibling is *not* permissively compatible, **no code is copied into
@@ -218,59 +219,113 @@ for the full design and the per-item license analysis).
 > only via `unfer_protocol` JSON (the `uk_*` ABI or the `unfer_agent` NDJSON loop). Crossing
 > only that interface keeps every side's licensing intact.
 
-### 7.1 `pattern_unfer` — persistent CRDT session memory (P11.19)
+### 7.1 `pattern_unfer` — persistent CRDT session memory (P11.19, DONE rev 28)
 
-- **From:** `../pattern` (**MPL-2.0**) — a dedicated `pattern_memory` crate with a full
-  **Loro-CRDT** memory subsystem (`MemoryCache`, `SharedBlockManager`, `StructuredDocument`,
-  `loro_sync` subscribers, filesystem `mount`, `jj`/VCS adapter, `backup`/`sharing`) —
-  **combined with** `../pattern-main` (**AGPL-3.0**), the more recent branch that has the
-  newer agent-platform features (`pattern_auth`/`pattern_mcp`/`pattern_api`, coordination
-  patterns) but **lacks** that dedicated memory crate.
-- **License rule:** because `../pattern` is MPL (file-level copyleft) and `../pattern-main`
-  is AGPL, **the adapted module code stays inside `../pattern`** and reaches unfer only over
-  the protocol boundary. It is *not* vendored into the permissive kernel.
+- **Status:** implemented as `../pattern/crates/pattern_unfer/` — a new crate inside
+  `../pattern` (workspace-declared `AGPL-3.0`; per-file MPL-2.0 notices matching the rest of
+  that repo). `src/kernel_client.rs`'s `UnferKernelClient` spawns the `unfer_agent` binary as
+  a child process and speaks its NDJSON wire protocol directly (no Cargo dependency on any
+  unfer crate — genuinely arms-length, not just license-arms-length). `src/session.rs`'s
+  `PatternUnferSession` wraps a `prob_kernel::SessionBlob` in a
+  `pattern_core::memory::document::StructuredDocument`: `checkpoint` calls the real
+  `save_session` op and writes the returned blob into a `StructuredDocument` field (bumping a
+  Loro-committed revision counter); `restore` calls `restore_session` to rehydrate a model
+  from the document's last checkpoint. 10 unit tests, plus 1 `#[ignore]`d integration test
+  that spawns the *real* `unfer_agent` binary and round-trips create → evolve → save →
+  restore → evolve-again — run and passing in this session (`UNFER_AGENT_BIN=<path> cargo
+  test -p pattern-unfer -- --ignored`).
+- **From:** `../pattern` (**MPL-2.0** per-file) — a dedicated `pattern_memory` crate with a
+  full **Loro-CRDT** memory subsystem (`MemoryCache`, `SharedBlockManager`,
+  `StructuredDocument`, `loro_sync` subscribers, filesystem `mount`, `jj`/VCS adapter,
+  `backup`/`sharing`); `pattern_unfer` depends only on `pattern-core` (for
+  `StructuredDocument`), not the rest of that subsystem yet (see IMPLEMENTATION_PLAN.md's
+  "Next steps" for wiring into `MemoryCache`/`SharedBlockManager`).
+- **License rule (honored):** the adapted module code stays inside `../pattern`; nothing was
+  vendored into unfer, and unfer's own crates gained no new dependency at all.
 - **What it gives unfer:** a probability-kernel session becomes a **persistent, versioned,
-  CRDT document** — wrap `prob_kernel::SessionBlob` and the Bayesian-update history
-  (including the rev-19 `posterior_mean`) in a Loro `StructuredDocument` with undo/redo,
-  filesystem sync, and sharing.
-- **Bridge:** `uk_snapshot` (SessionBlob out) / `uk_restore` (SessionBlob in), or
-  `snapshot`/`create_model` over NDJSON. Natural partner of velysterm, which already speaks
-  Loro for the math editor.
+  CRDT document** — the Loro commit on each `checkpoint()` is exactly the undo/redo,
+  filesystem-sync, sharing substrate `StructuredDocument` already provides for every other
+  Pattern memory block.
+- **Bridge (actual, not the FFI names originally sketched):** `save_session`/
+  `restore_session` over the `unfer_agent` NDJSON loop — these are the real op names in
+  `unfer_agent.rs`; `uk_snapshot`/`uk_restore` are the corresponding FFI-side symbols for
+  modules calling in-process via the JIT, not what an external NDJSON client uses.
 
-### 7.2 `arctic_authority` — threshold-signed collective authority (P11.20)
+### 7.2 `arctic_authority` — threshold-signed collective authority (P11.20, DONE rev 28)
 
+- **Status:** implemented as `$ROOT/arctic_authority/`, a new sibling crate (MIT). Depends on
+  `../dynamic-arctic` for `arctic_core::{PubKey, Signature, verify}` and the
+  `DelegationCertificate`/`DelegationRequest` wire types already defined there.
+  `ArcticAuthEngine::register_certificate` verifies a certificate's threshold Schnorr
+  signature once (against the group public key) and registers it; `check(principal, action,
+  resource)` then authorizes purely by capability-list membership + expiry, so the
+  authorization hot path never re-verifies a signature. 9 unit tests. Bridged into
+  `australVM/safestos/cranelift` as a new optional `arctic-auth` feature: `src/arctic_auth.rs`
+  defines `ArcticVmEngine: AuthorizationEngine` (delegates to `ArcticAuthEngine::check`) and
+  `install()` (wires it into `auth::set_auth_engine`, the same mechanism
+  `safestos_load_auth_manifest` uses for `ManifestAuthEngine`); 1 more test. Builds and tests
+  clean alone, with `default` features, and combined with `default` — no interference with
+  Cedar or `ManifestAuthEngine`.
 - **From:** `../dynamic-arctic` (**MIT**) — the Arctic threshold-signature scheme
   (`arctic_core`, `shine_core`, Lagrange interpolation): a stateless, robust collective
-  authority for the AT Protocol (did:web identities + delegation certificates).
-- **Two integration points:**
-  1. **Authorization** — implement australVM's `AuthorizationEngine` trait
-     (`safestos/cranelift/src/auth.rs`) with an Arctic threshold check, so a sensitive call
-     (`uk_bayesian_update`, `uk_observe`, `uk_set_hamiltonian`) is allowed only against a
-     valid **n-of-t** threshold-signed delegation certificate — generalizing the
-     single-policy Cedar / `ManifestAuthEngine` + `UK-4001` path to a collective one.
-  2. **Signed observations** — a `data_source` module whose `uk_observe` payloads carry an
-     Arctic threshold signature + did:web identity, so the data conditioning the Born-rule
-     update is cryptographically attested.
-- **License:** MIT — can live as a sibling `arctic_authority/` crate / australVM auth backend.
+  authority. (Its own `src/main.rs` — not vendored, only its wire types are reused —
+  demonstrates the did:web / AT-Protocol delegation-certificate issuance flow this crate
+  consumes.)
+- **Integration point (a), authorization — done:** a sensitive `uk_*` call can now be
+  authorized against a valid **n-of-t** threshold-signed `DelegationCertificate` instead of
+  (or alongside) the single-policy Cedar / `ManifestAuthEngine` + `UK-4001` path.
+- **Integration point (b), signed observations — not yet:** a `data_source` module whose
+  `uk_observe` payloads themselves carry an Arctic threshold signature is follow-on work (see
+  IMPLEMENTATION_PLAN.md's "Next steps").
+- **License (honored):** MIT ↔ MIT throughout — `arctic_authority` and the `arctic-auth`
+  cranelift feature; no copyleft code crossed anywhere in this integration.
 
-### 7.3 `hayagriva` — bibliography & citation in the math editor (P11.21)
+### 7.3 `hayagriva` — bibliography & citation in the math editor (P11.21, DONE rev 28)
 
+- **Status:** implemented as `velysterm/crates/mathed_biblio/` — a direct Cargo dependency on
+  `../hayagriva` (both MIT/Apache). `load_yaml`/`load_bibtex` parse a `hayagriva::Library`;
+  `CitationStyle::by_name` resolves one of hayagriva's ~2600 bundled CSL styles (rejecting
+  dependent styles, which only override locale/terms); `Bibliography::cite` renders a
+  grouped in-text citation via `hayagriva::standalone_citation`, `Bibliography::reference_list`
+  renders the full bibliography via `BibliographyDriver`. 11 unit tests. `mathed_core` gained,
+  additively: `PropKind::{Bibliography, Cite}` (+ `is_biblio()`, mirroring `is_kernel()`), a
+  new `SemanticIndex.biblio_statements: Vec<BiblioStatement>` collected in `build_index`
+  alongside (not mixed into) `kernel_statements`, and two new `AccessRole` variants
+  (`Bibliography → Group`, `Citation → Link`) wired through `mathed_mini`'s AccessKit bridge.
+  `mathed_biblio::resolve_citations` bridges `biblio_statements` → rendered strings, keyed by
+  each `\cite`'s document span. 3 new `mathed_core` tests (75 total, was 72); the full
+  velysterm workspace (`cargo test --workspace`) stays green.
 - **From:** `../hayagriva` (**MIT OR Apache-2.0**) — the Typst project's bibliography
   manager (`Library`, the `io` reader/writer for Hayagriva-YAML + BibTeX, CSL `lang`/style
   formatting, in-text citations + reference lists).
 - **License:** permissive and same-family as velysterm — so unlike P11.19/.20 it is a
-  **direct Cargo dependency**, not an arms-length bridge.
-- **Where it lives — module vs. core:** add a focused velysterm crate (e.g.
-  `crates/mathed_biblio`) wrapping `hayagriva::Library` + CSL formatting, consumed by
-  `mathed_core`/`mathed`.
-- **What it gives velysterm:** attach a bibliography (YAML/BibTeX), insert in-text citations
-  via the `#mark1…#mark2` marker convention (the P3.10 translator pivot — users add
-  meta-info through markers + a translator, **not** hand-written Typst-math), and render a
-  formatted reference list. The natural way to cite the physics literature (e.g. the
-  `Layden2025` wavefunction-flow paper QMF.tex builds on) inside the editor.
+  **direct Cargo dependency**, not an arms-length bridge, exactly as planned.
+- **What it gives velysterm:** attach a bibliography (YAML/BibTeX) via `\bibliography(#1,#2,
+  name, format: "yaml", style: "apa")`, insert in-text citations via `\cite(#1,#2, "key-a",
+  "key-b", bib: "name")` — the `#mark1…#mark2` marker convention (the P3.10 translator pivot
+  — users add meta-info through markers + a translator, **not** hand-written Typst-math) —
+  and render a formatted reference list. The natural way to cite the physics literature (e.g.
+  the `Layden2025` wavefunction-flow paper QMF.tex builds on) inside the editor.
+- **Not yet done:** wiring `resolve_citations`'s output into `mathed`'s Bevy overlay / the
+  `mathed_mini` translator panel (rendering next to the `\cite` span, mirroring how
+  `\prob` results already render as `= 0.4231`/`UK-####` annotations) — see
+  IMPLEMENTATION_PLAN.md's "Next steps."
 
-### 7.4 `unfer_edge` — Pingora proxy module *inspired by* zentinel (P11.22)
+### 7.4 `unfer_edge` — Pingora proxy module *inspired by* zentinel (P11.22, DONE rev 27)
 
+- **Status:** implemented as `unfer_edge/` (8th workspace crate — a binary, not
+  an Austral module, since it fronts the network edge rather than calling
+  `uk_*` from inside the JIT). `src/filter.rs` implements the
+  `ai-gateway`-style op allowlist (`validate_request`, UK-1001 on bad JSON,
+  UK-4001 on a denied `op`); `src/mask.rs` implements the
+  `data-masking`/`secret-inject`-style redaction of `AgentRequest`/
+  `AgentResponse` envelopes (recursive JSON walk, redacts any key containing
+  `api_key`/`secret`/`token`/`password`/`authorization`/`credential`);
+  `src/main.rs` wires both into a `pingora_proxy::ProxyHttp` impl —
+  `request_filter` rejects disallowed ops before the backend is reached,
+  `upstream_response_body_filter` + `response_body_filter` buffer and mask the
+  full upstream response body (dropping `content-length` since masking can
+  change the byte length). 11 unit tests, clippy-clean.
 - **Not** an integration of `../zentinel`. zentinel is itself a full security-first reverse
   proxy, and as a whole project it is **redundant with unfer** — so it is **not** depended
   on or deployed. Instead, build a **new, focused proxy-edge module directly on Cloudflare
@@ -292,30 +347,57 @@ for the full design and the per-item license analysis).
 
 ---
 
-### 7.5 `unfer_nixvm` — GPU-shared Nix execution sandbox (P11.23)
+### 7.5 `unfer_nixvm` — GPU-shared Nix execution sandbox (P11.23, DONE rev 28)
 
+- **Status:** two pieces, composed rather than merged. (1) `../unfer/flake.nix` gained
+  `packages.x86_64-linux.unfer-ffi` — a real, **actually-built** `rustPlatform.buildRustPackage`
+  derivation of the CPU-only `unfer_ffi` cdylib+rlib, using a new `nixpkgs-unstable` flake
+  input (the workspace's `edition = "2024"` needs a newer rustc than the CUDA devShell's
+  deliberately-pinned `nixos-23.05` ships; that devShell is untouched). (2) new sibling
+  `$ROOT/unfer_nixvm/flake.nix` takes `../cloud-hypervisor-build`'s `configuration.nix` as a
+  raw (`flake = false`) path input — not edited, upstream stays the single source of truth —
+  and layers a NixOS module installing `unfer-ffi` on top, producing `vm-perf-with-unfer` /
+  `vm-sec-with-unfer` image outputs. `nix eval` confirmed the whole composition is
+  well-formed, reaching real NixOS `system.build.toplevel` evaluation, before this sandboxed
+  session's disk (~17G free) ran out attempting to realize the full image via `nix build` —
+  an environment resource limit hit while verifying, not a flake defect.
+- **A real bug found and fixed:** `../cloud-hypervisor-build/full-stack-vm-launch.sh` invoked
+  virtiofsd with `--shared-dir ../nix`, resolved against the *caller's* cwd rather than
+  `$SCRIPT_DIR` — silently pointing at a nonexistent directory unless invoked from one
+  specific working directory, which would have quietly broken the "host store IS guest
+  store" mechanism below. Fixed in place to the absolute `/nix`.
+- **A decision left to the user, not made unilaterally:** `configuration.nix` mounts the
+  shared `/nix` **read-only** in the guest — the safe default (a compromised/buggy guest
+  process can't corrupt the host's store), but it also means the "packages installed in the
+  VM transfer to the host" direction doesn't work yet as configured (a read-only mount can't
+  receive the guest's `nix-daemon` writes). Flipping `ro`→`rw` is a real security-boundary
+  decision; see `unfer_nixvm/README.md` for the two safer alternatives instead of an
+  unreviewed flip.
 - **From:** `../cloud-hypervisor-build` (**Apache-2.0 / BSD-3-Clause**) — a Nix +
   **cloud-hypervisor 50.0** stack patched with the **spectrum0** GPU-sharing patches
-  (SpectrumOS). A `flake.nix` builds two NixOS images (`vm-perf` = Nix-store sharing + git
-  from `/nix`; `vm-sec` = same + SSH-agent socket forwarding), and `full-stack-vm-launch.sh`
-  wires a crosvm **vhost-user-gpu** backend plus **virtiofsd** sharing of the host's `/nix`.
-- **The mechanism:** `configuration.nix` mounts the host Nix store into the guest at `/nix`
-  over **virtiofs + DAX**. Because Nix store paths are content-addressed and immutable, **the
-  host store *is* the guest store** — a package built on either side (`nix build` →
-  `/nix/store/…`) is instantly usable on the other, no copy. That is the project's goal:
-  *packages installed in the VM transfer to the host, and host packages are accessed from the
-  VM directly.*
-- **What it gives unfer:** (a) a **reproducible, GPU-accelerated execution sandbox** for the
-  kernel — package `unfer_ffi`, the `australVM` runtime, `qfm`, and CUDA deps as Nix
-  derivations and run the `fock_sirk` `cuda` solves inside `vm-perf`/`vm-sec` against the
-  spectrum0-shared GPU; (b) a clean, reproducible fix for the **CUDA toolkit pinning** pain
-  (P9.12 / AGENTS.md §5) — pinned by the flake, not `LD_LIBRARY_PATH` hacks; (c) a sandboxed
-  compute backend that `unfer_agent` / `unfer_edge` (§7.4) can front, gated by
-  `arctic_authority` (§7.2).
+  (SpectrumOS). Its own `flake.nix` builds two NixOS images (`vm-perf` = Nix-store sharing +
+  git from `/nix`; `vm-sec` = same + SSH-agent socket forwarding), and
+  `full-stack-vm-launch.sh` wires a crosvm **vhost-user-gpu** backend plus **virtiofsd**
+  sharing of the host's `/nix`. `unfer_nixvm` composes with these rather than modifying them
+  (except the one-line path-bug fix above).
+- **The mechanism:** because Nix store paths are content-addressed and immutable, **the host
+  store *is* the guest store** once `configuration.nix`'s virtiofs `/nix` mount is backed by
+  the host's real store — a package built on the host (`nix build` → `/nix/store/…`) is
+  instantly usable in the guest, no copy, no rebuild.
+- **What it gives unfer (done vs. not yet):** (a) **done** — a reproducible Nix package for
+  `unfer_ffi` that the VM's shared store already contains once built on the host; (b) **not
+  yet** — `australVM`/`qfm` as sibling packages, a `cuda`-feature package variant (CUDA is
+  unfree and heavier to build through `nixpkgs-unstable`'s `rustPlatform` than the CPU
+  default), and actually booting `vm-perf`/`vm-sec` to confirm `unfer_ffi` runs against the
+  shared GPU — all deliberately left for the user to do by hand (`sudo`, real GPU/network
+  device access; see `unfer_nixvm/README.md`'s "Launching" section). (c) still valid as
+  designed: a sandboxed compute backend that `unfer_agent` / `unfer_edge` (§7.4) can front,
+  gated by `arctic_authority` (§7.2).
 - **`../claurst`** (a Rust terminal coding agent, GPL-3.0, related to `../pattern`'s
   persistent-agent work) inspires the **agent-drives-the-VM** UX — but being **copyleft** it
   is **inspiration only / arms-length**, never vendored into the permissive kernel, exactly
-  like `../pattern`/`../pattern-main` in §7.1.
+  like `../pattern`/`../pattern-main` in §7.1. No claurst code exists anywhere in
+  `unfer_nixvm/`.
 
 ## 8. Add your own module
 
@@ -346,7 +428,7 @@ extension-point #2 for the exact file list.
 - `docs/ARCHITECTURE.md` — system diagram + per-crate extension-point checklists.
 - `docs/PROTOCOL.md` — every JSON request/response schema and the full `UK-####` table.
 - `docs/MODULE_RECIPE.md` / `docs/MODULES.md` — the module recipe.
-- `docs/IMPLEMENTATION_PLAN.md` — the per-revision implementation record (currently rev 19)
+- `docs/IMPLEMENTATION_PLAN.md` — the per-revision implementation record (currently rev 28)
   and the future roadmap (P8–P11), including the P11 external-module designs above.
 - `QMF.tex` — the algorithm specification (the QFM-TSR pipeline §7, the Bayesian update §8,
   the rev-19 Karcher-mean subsection).
