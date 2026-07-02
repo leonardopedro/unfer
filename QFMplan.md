@@ -6,7 +6,7 @@
 > in-process through the CPS-JIT. **Honest deviation:** the builtin uses the
 > diagonal number-operator potential `Σ α_j n_j` (Stage 19 as written), so the
 > vacuum/data states are eigenstates and evolution is phase-only; the
-> off-diagonal differential operators `ĥ_j` of QMF.tex §2.3 that actually mix
+> off-diagonal differential operators `ĥ_j` of QFM.tex §2.3 that actually mix
 > vacuum↔data remain a future extension.
 
 Here is the exact, stage-by-stage implementation plan to integrate the **Quantum Flow Matching (QFM)** architecture into the `unfer` probability kernel. 
