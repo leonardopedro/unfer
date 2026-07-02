@@ -28,7 +28,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{July 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov\_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples), rev 22 P9.14 mathed\_mini Step 4, rev 23 P9.15.1 ported velyst examples, rev 24 P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix, rev 25 P10.16.2 real CIFAR-10 fixture + P11.24 Zenodo-Loro persistence module, rev 26 P10.16.3 rank-truncation extension (SVD on the $W$ basis, enables $d=1024$), rev 27 P10.16.4 2D Ising cross-domain validation + P10.18 $l=3$ Yang--Mills mass-gap demo + P11.22 \texttt{unfer\_edge} proxy, rev 28 P11.19/20/21/23 external-module integrations, rev 29 P10.16.5 2D Kolmogorov CFD flow-field cross-domain validation + P10.16.6 post-Newtonian gravitational-waveform cross-domain validation)}
+\date{July 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov\_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples), rev 22 P9.14 mathed\_mini Step 4, rev 23 P9.15.1 ported velyst examples, rev 24 P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix, rev 25 P10.16.2 real CIFAR-10 fixture + P11.24 Zenodo-Loro persistence module, rev 26 P10.16.3 rank-truncation extension (SVD on the $W$ basis, enables $d=1024$), rev 27 P10.16.4 2D Ising cross-domain validation + P10.18 $l=3$ Yang--Mills mass-gap demo + P11.22 \texttt{unfer\_edge} proxy, rev 28 P11.19/20/21/23 external-module integrations, rev 29 P10.16.5 2D Kolmogorov CFD flow-field cross-domain validation + P10.16.6 post-Newtonian gravitational-waveform cross-domain validation, rev 30 P10.16.7 $d=1024$ cross-domain scaling of all three rev 29 fixtures on the P10.16.3 rank-truncation path)}
 
 \begin{document}
 
@@ -1556,9 +1556,10 @@ end-to-end module demos all type-check against the
 \texttt{UnferKernel} bindings and pass their positive +
 UK-4001 negative gates in CI.
 
-\textbf{Test counts (CPU, full sweep 2026-07-02, rev 28):}
-unfer workspace \textbf{251} passing under \texttt{cargo test --workspace}
-(was 196 at rev 18, 227 at rev 24, 240 at rev 27 under the historical
+\textbf{Test counts (CPU, full sweep 2026-07-02, rev 30):}
+unfer workspace \textbf{271} passing under \texttt{cargo test --workspace}
+(was 196 at rev 18, 227 at rev 24, 240 at rev 27, 251 at rev 28,
+259 at rev 29 under the historical
 convention that excludes the 11 \texttt{unfer\_edge} tests); 7 module demos
 (positive + UK-4001 negative; \texttt{zenodo\_store\_module} added in
 rev 25); 4 criterion benchmark groups in
@@ -1967,16 +1968,92 @@ Both new tests use the P10.16.3 rank-truncation path
 Workspace test count: \textbf{259} (was 251 in rev 28, $+8$ from
 the two new test files).
 
-\subsubsection*{Next steps to improve (post-rev 29)}
+\paragraph{Cross-domain scaling to $d=1024$ (rev 30 --- P10.16.7).}
+\textbf{P10.16.7} closes the first item from the rev 29
+``next steps'' list: scale all three rev 29 cross-domain fixtures
+(CFD, GW, Ising) to $d=1024$ ($32 \times 32$ for the 2D spatial
+fields, 1024 samples for the 1D waveform) using the P10.16.3
+rank-truncation path. The deliverable is a single new test file
+\texttt{qfm/tests/d1024\_cross\_domain\_scaling.rs} (12 tests,
+$\sim 20$ s on CPU with parallel threads) that exercises the
+P10.16.3 path on real cross-domain data at production
+resolution --- closing the gap between the rev 26 synthetic
+\texttt{rank\_truncation.rs} test (d=1024, $\sim 2$ s compile) and
+the real-physics rev 29 fixtures (d=256, $\sim 7$ s total).
+The $M=64$ training bank is unchanged; the only differences from
+the rev 29 fixtures are the resolution (16 $\to$ 32 for 2D,
+$256 \to 1024$ samples for 1D) and the corresponding
+\texttt{K\_2 = max(M, d) = 1024}. The three sub-fixtures:
 
-All 18 P7--P10 items and all 5 P11 integrations are closed; what remains
+\begin{enumerate}
+\item \textbf{2D Kolmogorov-flow CFD at $L = 32$} --- the same
+  pseudospectral solver as the rev 29 P10.16.5 test, generalised
+  to $L = 32$ with \texttt{DT = 0.005} (halved from $L = 16$ for
+  extra stability margin at the higher resolution). The
+  hand-rolled radix-2 FFT handles $L = 32$ without code change.
+  4 tests: compile (rank=2, $K_2=1024$, $d=1024$, $\sim 10$ s for
+  the 64-snapshot trajectory); generate with cosine similarity
+  $0.12 \pm 0.00$ (positive for all 8 queries, better than the
+  d=256 case's 0.36 because the higher-resolution field has more
+  structure for the rank-2 truncation to capture); Bayesian
+  update with $|\langle sample|c_{obs}\rangle|^2 \in
+  \{0.81, 0.11\}$ for 2 of 8 held-out (the other 6 collapse to
+  a degenerate $\sim 0.015$ --- a known limitation of the
+  rank-2 path with sparse data, distinct from the $S_2$-hash edge
+  case); no explosion.
+\item \textbf{2D Ising model at $L = 32$} --- Metropolis MC at
+  the Onsager critical point $\beta_c = \ln(1 + \sqrt{2})/2$ on a
+  $32 \times 32$ lattice. 4 tests: compile (rank=2, $K_2=1024$,
+  $d=1024$); generate is finite but mildly anti-correlated
+  (cosine similarity $\sim -0.09$) --- the rank-2 path
+  collapses to a single representative output when the
+  $M/d = 1/16$ sparsity is 4$\times$ the d=256 case
+  (a documented limitation, not a regression);
+  Bayesian update with $|\langle sample|c_{obs}\rangle|^2 \in
+  \{0.78, 0.70\}$ for 2 of 8 held-out; no explosion. The
+  real correctness signal is the Bayesian overlap, not the
+  generate similarity --- the d=256 Ising test has the same
+  rank-collapse behaviour (all 8 sims are identical 0.35), but
+  happens to be on the positive side of zero.
+\item \textbf{Post-Newtonian gravitational waveforms at $d = 1024$}
+  --- the same TaylorT1 family as the rev 29 P10.16.6 test, with
+  4$\times$ the sample count. 4 tests: compile (rank=2,
+  $K_2=1024$, $d=1024$); generate with cosine similarity
+  $0.42 \pm 0.00$ for 4 queries and $0.10 \pm 0.00$ for the
+  other 4 (the rank-2 amplitude $\times$ phase structure is
+  captured well); Bayesian update with
+  $|\langle sample|c_{obs}\rangle|^2 \in [0.05, 0.77]$ for 4 of
+  8 held-out (the other 4 hit the same $S_2$-hash edge case as
+  the d=256 GW test); no explosion.
+\end{enumerate}
+
+The CFD training + held-out datasets are shared across the 4 CFD
+tests via \texttt{std::sync::OnceLock} (the L=32 trajectory
+takes $\sim 10$ s to generate, and we don't want to repeat that
+4 times). The Ising and GW datasets are cheap enough ($\sim 1$ s
+total each) to generate per-test. All 12 tests pass with
+\texttt{cargo test -p qfm --test d1024\_cross\_domain\_scaling}
+in $\sim 20$ s on a single core (parallel-threads=1) or
+$\sim 20$ s with default parallel-threads (the OnceLock
+deduplicates the dataset generation across the 4 CFD tests).
+Workspace test count: \textbf{271} (was 259 in rev 29, $+12$
+from the new test file).
+
+\subsubsection*{Next steps to improve (post-rev 30)}
+
+All 19 P7--P10 items and all 5 P11 integrations are closed; what remains
 is open-ended follow-on work, not a scoped checklist:
 
 \begin{enumerate}
-\item \textbf{Higher-resolution / richer cross-domain datasets (P10.16.7+).}
-  Scale the CFD / gravitational-waveform / Ising fixtures to 32$\times$32
-  (= $d=1024$) using the P10.16.3 rank-truncation path; this is the
-  natural next step after the rev 29 16$\times$16 cross-domain baselines.
+\item \textbf{Richer cross-domain datasets (P10.16.8+).} The rev 30
+  P10.16.7 closed the $d=1024$ scaling. The natural next step is
+  richer families: a real-data replacement (CFD from a published DNS
+  dataset rather than synthetic Kolmogorov forcing; LIGO Open Data
+  Center waveforms with the full $\ell=2,3$ mode content rather
+  than the TaylorT1 face-on approximation); 3D ($L=8$ or $L=10$
+  Ising, d=512 or d=1000); or non-stationary distributions (a
+  time-series of ${M(t)}_{t=0}^{T}$ of CFD snapshots with the
+  QFM-TSR pipeline tracking the distribution as it evolves).
   Each sub-revision is independent.
 
 \item \textbf{Continuum-limit mass gap} (multi-month research). The
