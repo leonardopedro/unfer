@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end demo for the Quantum Flow Matching — Tomographic Subspace
-# Recovery (QFM-TSR) kernel module (QMF.tex §7):
+# Recovery (QFM-TSR) kernel module (QFM.tex §7):
 #   1. Builds the unfer kernel FFI (uk_* symbols) and the safestos
 #      cranelift bridge.
 #   2. Runs QfmTomoModule through the CPS-JIT: it builds a

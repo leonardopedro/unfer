@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end demo for the Quantum Flow Matching — Bayesian Update on
-# the TSR-evolved prior kernel module (QMF.tex §8, P6 H follow-on):
+# the TSR-evolved prior kernel module (QFM.tex §8, P6 H follow-on):
 #   1. Builds the unfer kernel FFI (uk_* symbols) and the safestos
 #      cranelift bridge.
 #   2. Runs BayesUpdateModule through the CPS-JIT: it builds a

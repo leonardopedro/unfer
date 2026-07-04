@@ -73,7 +73,7 @@ pub struct StateEntry {
 }
 
 /// Result of a Quantum Bayesian Update on the TSR-evolved prior
-/// (QMF.tex §8, P6 H follow-on). Only QFM tomographic models are
+/// (QFM.tex §8, P6 H follow-on). Only QFM tomographic models are
 /// eligible. The kernel returns the HMC diagnostics + the full
 /// reconstructed image from Phase 5.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -89,7 +89,7 @@ pub struct BayesianUpdateReport {
     pub image: Vec<f64>,
     /// The Phase 5 reconstruction of the **posterior-mean** point
     /// estimate — the Karcher (Fréchet) mean of the post-burn-in HMC
-    /// chain on the projective unit sphere of $\Cset^m$ (QMF.tex §8).
+    /// chain on the projective unit sphere of $\Cset^m$ (QFM.tex §8).
     /// Denoised relative to the single draw in `image`. Empty if there
     /// were no post-burn-in samples.
     pub posterior_mean_image: Vec<f64>,
@@ -356,7 +356,7 @@ impl Session {
     }
 
     /// Quantum Bayesian Update on the TSR-evolved prior
-    /// (QMF.tex §8, P6 H follow-on). Conditions the TSR-evolved prior
+    /// (QFM.tex §8, P6 H follow-on). Conditions the TSR-evolved prior
     /// on $N$ new raw observations $\{D_1, \dots, D_N\}$ and draws a
     /// single posterior sample via HMC on the unit sphere of
     /// $\Cset^m$. Returns the HMC diagnostics + the Phase 5

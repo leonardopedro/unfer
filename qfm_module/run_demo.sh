@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end demo for the Quantum Flow Matching (QFM) kernel module (QMF.tex):
+# End-to-end demo for the Quantum Flow Matching (QFM) kernel module (QFM.tex):
 #   1. Builds the unfer kernel FFI (uk_* symbols) and the safestos cranelift bridge.
 #   2. Runs QfmModule through the CPS-JIT: it builds a `qfm_mehler` ModelSpec
 #      (Mehler vacuum prior + decoupled α_j weights), JIT-creates the model

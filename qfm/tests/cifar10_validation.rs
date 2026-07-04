@@ -19,7 +19,7 @@
 //! shape within a few-second test budget. A future P10.16.2 can extend
 //! the pipeline to handle larger d by truncating the rank via SVD on
 //! the W basis (the documented "rank truncation" extension point — see
-//! `QMF.tex §11`).
+//! `QFM.tex §11`).
 //!
 //! ## What the test verifies
 //!
@@ -112,9 +112,15 @@ fn make_class_center(class: u32, rng: &mut Lcg) -> Vec<f64> {
     let mut center = vec![0.0_f64; CIFAR_D];
     // 4x4 grid of candidate positions; pick 3 for each class cyclically.
     let grid_positions: [(f64, f64); 9] = [
-        (3.0, 3.0), (3.0, 7.0), (3.0, 11.0),
-        (7.0, 3.0), (7.0, 7.0), (7.0, 11.0),
-        (11.0, 3.0), (11.0, 7.0), (11.0, 11.0),
+        (3.0, 3.0),
+        (3.0, 7.0),
+        (3.0, 11.0),
+        (7.0, 3.0),
+        (7.0, 7.0),
+        (7.0, 11.0),
+        (11.0, 3.0),
+        (11.0, 7.0),
+        (11.0, 11.0),
     ];
     // Each class picks 3 consecutive grid positions (cyclically).
     let base = (class as usize * 3) % grid_positions.len();
@@ -263,10 +269,18 @@ fn pipeline_for(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
 #[test]
 fn cifar10_qfm_pipeline_compiles() {
     let (training, labels) = make_training_set(CIFAR_SEED);
-    assert_eq!(training.len(), CIFAR_M, "expected {} training images", CIFAR_M);
+    assert_eq!(
+        training.len(),
+        CIFAR_M,
+        "expected {} training images",
+        CIFAR_M
+    );
     assert_eq!(training[0].len(), CIFAR_D, "expected d={}", CIFAR_D);
     assert_eq!(
-        labels.iter().collect::<std::collections::HashSet<_>>().len(),
+        labels
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
         CIFAR_CLASSES,
         "expected {} distinct classes",
         CIFAR_CLASSES
@@ -334,7 +348,11 @@ fn cifar10_qfm_generate_finite_and_correlated() {
 fn cifar10_qfm_bayes_update_recovers_held_out_observation() {
     let (training, _training_labels) = make_training_set(CIFAR_SEED);
     let (held_out, held_out_labels) = make_held_out(CIFAR_SEED);
-    assert_eq!(held_out.len(), CIFAR_HELD_OUT, "expected 10 held-out images");
+    assert_eq!(
+        held_out.len(),
+        CIFAR_HELD_OUT,
+        "expected 10 held-out images"
+    );
 
     let pipeline = pipeline_for(&training, CIFAR_SEED);
     let c_prior = tsr_evolved_prior(&pipeline);

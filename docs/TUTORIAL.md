@@ -177,7 +177,7 @@ full QFM-TSR + Bayesian pipeline driven in a loop).
 
 ### The Bayesian update + the rev-19 posterior mean
 
-`uk_bayesian_update` conditions a TSR-evolved prior on new observations (the QMF.tex §8
+`uk_bayesian_update` conditions a TSR-evolved prior on new observations (the QFM.tex §8
 algorithm) and runs HMC on the unit sphere of ℂᵐ. As of **rev 19** it returns, alongside the
 single representative draw, a **posterior-mean point estimate** — the **Karcher (Fréchet)
 mean** of the post-burn-in chain on the projective sphere ℂP^{m-1} (each sample phase-aligned
@@ -305,7 +305,7 @@ per-item license analysis).
   "key-b", bib: "name")` — the `#mark1…#mark2` marker convention (the P3.10 translator pivot
   — users add meta-info through markers + a translator, **not** hand-written Typst-math) —
   and render a formatted reference list. The natural way to cite the physics literature (e.g.
-  the `Layden2025` wavefunction-flow paper QMF.tex builds on) inside the editor.
+  the `Layden2025` wavefunction-flow paper QFM.tex builds on) inside the editor.
 - **Not yet done:** wiring `resolve_citations`'s output into `mathed`'s Bevy overlay / the
   `mathed_mini` translator panel (rendering next to the `\cite` span, mirroring how
   `\prob` results already render as `= 0.4231`/`UK-####` annotations) — see
@@ -442,5 +442,5 @@ extension-point #2 for the exact file list.
 - `docs/MODULE_RECIPE.md` / `docs/MODULES.md` — the module recipe.
 - `docs/IMPLEMENTATION_PLAN.md` — the per-revision implementation record (currently rev 28)
   and the future roadmap (P8–P11), including the P11 external-module designs above.
-- `QMF.tex` — the algorithm specification (the QFM-TSR pipeline §7, the Bayesian update §8,
+- `QFM.tex` — the algorithm specification (the QFM-TSR pipeline §7, the Bayesian update §8,
   the rev-19 Karcher-mean subsection).

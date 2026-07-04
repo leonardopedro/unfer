@@ -249,7 +249,7 @@ mod algebra_tests {
 
     #[test]
     fn test_qfm_hamiltonian() {
-        // QFM generator: H = |0><0| + Σ_j α_j n_j   (see QMF.tex).
+        // QFM generator: H = |0><0| + Σ_j α_j n_j   (see QFM.tex).
         let alphas = [1.5, 2.1, 0.8];
         let h = qfm_hamiltonian(&alphas);
 

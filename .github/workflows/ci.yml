@@ -217,7 +217,7 @@ jobs:
   # Iterated Bayes module gate: the iterated (bayes + SIRK evolve) loop
   # Austral module JIT-creates a `qfm_tomography` model and runs 3
   # iterations of (uk_bayesian_update + uk_get_result + uk_evolve) — the
-  # full QMF.tex §7 + §8 pipeline end-to-end. Exercises the iterated
+  # full QFM.tex §7 + §8 pipeline end-to-end. Exercises the iterated
   # posterior flow on real d-dim data. Auth gate mirrors demo-e2e (UK-4001).
   # ---------------------------------------------------------------------------
   iterated-bayes-e2e:

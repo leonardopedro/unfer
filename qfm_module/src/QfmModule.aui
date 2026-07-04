@@ -1,6 +1,6 @@
 module QfmModule is
     """
-    Quantum Flow Matching kernel module (see unfer/QMF.tex). `run` builds a
+    Quantum Flow Matching kernel module (see unfer/QFM.tex). `run` builds a
     `qfm_mehler` model spec — the Mehler vacuum-projector prior plus the
     decoupled per-channel data weights α_j — JIT-creates it in-process via the
     UnferKernel bindings, runs the single-step O(m²) SIRK inference

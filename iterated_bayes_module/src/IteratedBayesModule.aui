@@ -6,7 +6,7 @@ module IteratedBayesModule is
     matching K_2=4 for the P6 G SIRK-whitened basis), JIT-creates
     the model in-process via the UnferKernel bindings
     (`uk_model_create`), and runs an iterated loop that exercises
-    the full QMF.tex §7 + §8 pipeline:
+    the full QFM.tex §7 + §8 pipeline:
 
     for i in 0..N:
         1. condition on observation i (uk_bayesian_update)

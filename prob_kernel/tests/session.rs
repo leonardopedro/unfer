@@ -438,7 +438,7 @@ fn qfm_mehler_spec(prior: PriorSpec) -> ModelSpec {
 
 #[test]
 fn qfm_mehler_builds_and_evolves() {
-    // The analytical Quantum Flow Matching generator (QMF.tex):
+    // The analytical Quantum Flow Matching generator (QFM.tex):
     //   H = |0><0| + Σ_j α_j n_j.
     // It is diagonal in the Fock basis: the Mehler projector makes the vacuum an
     // eigenstate (eigenvalue 1) and each data mode an eigenstate (eigenvalue α_j).

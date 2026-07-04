@@ -142,9 +142,7 @@ impl ZenodoClient {
                 .into_json()
                 .map_err(|e| format!("get draft JSON: {e}"))?;
 
-            let draft_id = draft["id"]
-                .as_u64()
-                .ok_or("no id in draft response")?;
+            let draft_id = draft["id"].as_u64().ok_or("no id in draft response")?;
             self.deposition_id = Some(draft_id);
             self.bucket_url = draft["links"]["bucket"].as_str().map(String::from);
 
@@ -178,10 +176,7 @@ impl ZenodoClient {
     }
 
     fn delete_file_if_exists(&self, dep_id: u64, filename: &str) -> Result<(), String> {
-        let url = format!(
-            "{}/deposit/depositions/{}/files",
-            self.base_url, dep_id
-        );
+        let url = format!("{}/deposit/depositions/{}/files", self.base_url, dep_id);
         let files: Vec<serde_json::Value> = ureq::get(&url)
             .set("Authorization", &self.auth())
             .call()
@@ -244,9 +239,7 @@ impl ZenodoClient {
             .into_json()
             .map_err(|e| format!("publish JSON: {e}"))?;
 
-        let record_id = resp["id"]
-            .as_u64()
-            .ok_or("no id in publish response")?;
+        let record_id = resp["id"].as_u64().ok_or("no id in publish response")?;
 
         self.deposition_id = None;
         self.bucket_url = None;
@@ -298,8 +291,8 @@ impl ZenodoClient {
         }
 
         // Upload updated manifest.json.
-        let manifest_json = serde_json::to_vec(&self.manifest)
-            .map_err(|e| format!("manifest serialise: {e}"))?;
+        let manifest_json =
+            serde_json::to_vec(&self.manifest).map_err(|e| format!("manifest serialise: {e}"))?;
         self.upload_bytes("manifest.json", &manifest_json)?;
 
         // Publish draft → new Zenodo version.
@@ -331,9 +324,7 @@ impl ZenodoClient {
         // Build a name → download-URL map.
         let mut url_map = std::collections::HashMap::new();
         for f in files {
-            if let (Some(key), Some(link)) =
-                (f["key"].as_str(), f["links"]["self"].as_str())
-            {
+            if let (Some(key), Some(link)) = (f["key"].as_str(), f["links"]["self"].as_str()) {
                 url_map.insert(key.to_string(), link.to_string());
             }
         }
@@ -388,8 +379,16 @@ fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let b1 = if chunk.len() > 1 {
+            chunk[1] as usize
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            chunk[2] as usize
+        } else {
+            0
+        };
         out.push(CHARS[b0 >> 2] as char);
         out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
         out.push(if chunk.len() > 1 {
@@ -607,10 +606,20 @@ mod tests {
         let is_first = c.manifest.file_sequence.is_empty();
         let squash = !is_first && c.delta_count >= c.squash_after;
         let filename = if is_first || squash {
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("snapshot_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("snapshot_"))
+                .count();
             format!("snapshot_{idx}.bin")
         } else {
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("delta_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("delta_"))
+                .count();
             format!("delta_{idx}.bin")
         };
         assert_eq!(filename, "snapshot_0.bin");
@@ -624,10 +633,20 @@ mod tests {
         let is_first = c.manifest.file_sequence.is_empty();
         let squash = !is_first && c.delta_count >= c.squash_after;
         let filename = if is_first || squash {
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("snapshot_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("snapshot_"))
+                .count();
             format!("snapshot_{idx}.bin")
         } else {
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("delta_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("delta_"))
+                .count();
             format!("delta_{idx}.bin")
         };
         assert_eq!(filename, "delta_0.bin");
@@ -644,16 +663,29 @@ mod tests {
         c.delta_count = 3;
         let is_first = c.manifest.file_sequence.is_empty();
         let squash = !is_first && c.delta_count >= c.squash_after;
-        assert!(squash, "should trigger squash at delta_count=3=squash_after");
+        assert!(
+            squash,
+            "should trigger squash at delta_count=3=squash_after"
+        );
         let filename = if is_first || squash {
             if squash {
                 c.manifest.file_sequence.clear();
                 c.delta_count = 0;
             }
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("snapshot_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("snapshot_"))
+                .count();
             format!("snapshot_{idx}.bin")
         } else {
-            let idx = c.manifest.file_sequence.iter().filter(|f| f.starts_with("delta_")).count();
+            let idx = c
+                .manifest
+                .file_sequence
+                .iter()
+                .filter(|f| f.starts_with("delta_"))
+                .count();
             format!("delta_{idx}.bin")
         };
         // After squash the file_sequence was cleared, so count=0 → snapshot_0.
@@ -704,14 +736,20 @@ mod tests {
         let mut buf = vec![0u8; needed as usize];
         let written = uz_manifest_json(buf.as_mut_ptr(), needed);
         assert_eq!(written, needed);
-        let json: serde_json::Value = serde_json::from_slice(&buf).expect("manifest not valid JSON");
+        let json: serde_json::Value =
+            serde_json::from_slice(&buf).expect("manifest not valid JSON");
         assert_eq!(
-            json["file_sequence"].as_array().expect("file_sequence missing").len(),
+            json["file_sequence"]
+                .as_array()
+                .expect("file_sequence missing")
+                .len(),
             0,
             "fresh manifest must have empty file_sequence"
         );
         assert_eq!(
-            json["last_frontier"].as_str().expect("last_frontier missing"),
+            json["last_frontier"]
+                .as_str()
+                .expect("last_frontier missing"),
             "",
             "fresh manifest must have empty last_frontier"
         );

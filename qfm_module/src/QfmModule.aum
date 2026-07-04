@@ -12,7 +12,7 @@ import UnferKernel (
 module body QfmModule is
     function run(): Int64 is
         -- The O(M) "training" step is analytical: the decoupled per-channel
-        -- weights α_j are precomputed (QMF.tex §2.2) and embedded as a JSON
+        -- weights α_j are precomputed (QFM.tex §2.2) and embedded as a JSON
         -- array. Building the qfm_mehler spec points the kernel at the
         -- |0><0| + Σ_j α_j n_j generator with the Mehler vacuum prior. krylov_dim
         -- = 15 sets the O(m²) reduced-generator dimension for inference.

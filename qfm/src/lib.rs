@@ -22,7 +22,7 @@
 //! - [`pipeline`]: The 4-phase online inference pipeline (encode -> evolve
 //!   -> tomographic reconstruct -> lossless decode).
 //! - [`bayes`]: Quantum Bayesian updating on the TSR-evolved prior
-//!   (QMF.tex §8). Likelihood operators, HMC on the unit sphere of C^m,
+//!   (QFM.tex §8). Likelihood operators, HMC on the unit sphere of C^m,
 //!   and tomographic reconstruction of the posterior sample.
 //!
 //! # Quick start

@@ -22,7 +22,9 @@
 //!
 //! The test is fully synthetic (no external data) and deterministic.
 
-use qfm::{HmcOpts, Likelihood, Posterior, QfmConfig, QfmPipeline, sample_hmc_single, tsr_evolved_prior};
+use qfm::{
+    HmcOpts, Likelihood, Posterior, QfmConfig, QfmPipeline, sample_hmc_single, tsr_evolved_prior,
+};
 
 // ── 2D Ising Monte Carlo ──────────────────────────────────────────────────
 
@@ -91,12 +93,16 @@ fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
     let nb: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
 }
 
 fn ising_pipeline(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
     let d = training[0].len(); // 256
-    let m = training.len();    // 64 training configs
+    let m = training.len(); // 64 training configs
     // With M=64 training points but d=256 pixels, K_2 = max(M,d) = 256.
     // The lossless path requires krylov_dim >= K_2 = 256, but m=64 clamps
     // krylov_dim to 64 < K_2, triggering K2ExceedsKrylovDim. Use the
@@ -113,8 +119,7 @@ fn ising_pipeline(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
         noise_dim: d,
         max_rank: Some(16),
     };
-    QfmPipeline::compile(training, &config)
-        .expect("QFM compile on 2D Ising critical snapshots")
+    QfmPipeline::compile(training, &config).expect("QFM compile on 2D Ising critical snapshots")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

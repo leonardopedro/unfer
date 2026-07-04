@@ -16,12 +16,20 @@ const REDACTED: &str = "***REDACTED***";
 /// sensitive. Substring match catches variants like `zenodo_api_key` or
 /// `bearer_token`.
 const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
-    "api_key", "apikey", "secret", "token", "password", "authorization", "credential",
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "authorization",
+    "credential",
 ];
 
 fn is_sensitive_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    SENSITIVE_KEY_FRAGMENTS.iter().any(|frag| lower.contains(frag))
+    SENSITIVE_KEY_FRAGMENTS
+        .iter()
+        .any(|frag| lower.contains(frag))
 }
 
 /// Recursively walk a JSON value, redacting the string value of any object

@@ -1,7 +1,7 @@
 module BayesUpdateModule is
     """
     Quantum Flow Matching — Bayesian Update on the TSR-evolved prior
-    (QMF.tex §8, P6 H follow-on) kernel module. `run` builds a
+    (QFM.tex §8, P6 H follow-on) kernel module. `run` builds a
     `qfm_tomography` `ModelSpec` (the 4-point tetrahedron training set
     in d=4, with krylov_dim=4 matching K_2=4 for the P6 G
     SIRK-whitened basis), JIT-creates the model in-process via the

@@ -148,7 +148,7 @@ See `MODULES.md` for the full checklist. Summary:
   `-(1/2g²) Σ_p Φ(ℓ1)Φ(ℓ2)Φ(ℓ3)Φ(ℓ4)` (Φ = a† + a) stress-tests the bounded
   direct-construction path; `l` clamped to ≥ 2, `n_colors` to ≥ 1),
   `qfm_mehler` (`qfm_hamiltonian(alphas)`: the analytical Quantum Flow Matching
-  generator `H = |0><0| + Σ_j α_j n_j` from `QMF.tex` — `M = alphas.len()`
+  generator `H = |0><0| + Σ_j α_j n_j` from `QFM.tex` — `M = alphas.len()`
   orthogonal data points as single bosons in distinct modes plus the Mehler
   rank-1 vacuum projector `|0><0|`; built directly so M can be huge with no CAS
   blow-up. Driven end-to-end by the `qfm_module` Austral module).

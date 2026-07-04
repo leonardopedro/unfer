@@ -36,7 +36,7 @@ coordinates → 1-boson Fock modes) + a Krylov reduction + a 4-phase
 generate (encode → evolve → tomographic reconstruct → lossless decode).
 The Bayesian update conditions the TSR-evolved prior on N new observations
 in `O(N · m²)` per HMC step, with **no M dependence**. Full spec in
-[`QMF.tex`](QMF.tex).
+[`QFM.tex`](QFM.tex).
 
 ## Architecture
 
@@ -154,7 +154,7 @@ int64_t n = uk_get_result(model, buf, cap);
 
 ## Documentation
 
-- [`QMF.tex`](QMF.tex) — the full algorithm spec (Sections 1–4 for the
+- [`QFM.tex`](QFM.tex) — the full algorithm spec (Sections 1–4 for the
   core flow, Section 7 for the QFM-TSR pipeline, Section 8 for the
   Bayesian update).
 - [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — the
@@ -191,7 +191,7 @@ The `prob_kernel::build` layer dispatches by name. Each is a
 ## Status
 
 The system is in a **"v1 feature-complete + v2 algorithm-complete"**
-state. Every algorithm in `QMF.tex` is implemented, tested, and
+state. Every algorithm in `QFM.tex` is implemented, tested, and
 pushed. The next rounds of work are *not* new algorithm features but
 **operationalization, validation, scaling, and documentation** — see
 the "Next steps to improve" section in

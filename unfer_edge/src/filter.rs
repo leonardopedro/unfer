@@ -65,8 +65,8 @@ impl Rejection {
 /// Validate a raw request body. Returns the parsed `AgentRequest` on success
 /// or a typed `Rejection` on failure.
 pub fn validate_request(body: &[u8]) -> Result<AgentRequest, Rejection> {
-    let req: AgentRequest = serde_json::from_slice(body)
-        .map_err(|e| Rejection::BadJson(e.to_string()))?;
+    let req: AgentRequest =
+        serde_json::from_slice(body).map_err(|e| Rejection::BadJson(e.to_string()))?;
 
     if !ALLOWED_OPS.contains(&req.op.as_str()) {
         return Err(Rejection::OpDenied { op: req.op.clone() });
@@ -129,6 +129,10 @@ mod tests {
     #[test]
     fn allowlist_has_no_duplicates() {
         let set: HashSet<_> = ALLOWED_OPS.iter().copied().collect();
-        assert_eq!(set.len(), ALLOWED_OPS.len(), "ALLOWED_OPS must not have duplicates");
+        assert_eq!(
+            set.len(),
+            ALLOWED_OPS.len(),
+            "ALLOWED_OPS must not have duplicates"
+        );
     }
 }

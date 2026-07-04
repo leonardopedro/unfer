@@ -1,7 +1,7 @@
 //! Quantum Bayesian Updating on the TSR-evolved prior.
 //!
 //! This module implements the second stage of the algorithm in
-//! `QMF.tex §8` (the "Quantum Bayesian Updating on the TSR-evolved
+//! `QFM.tex §8` (the "Quantum Bayesian Updating on the TSR-evolved
 //! Prior" section). It conditions the TSR-evolved prior on $N$ new,
 //! problem-defining observations $\{D_1,\dots,D_N\}$ using the Born
 //! rule as the likelihood, and draws a single posterior sample via
@@ -646,7 +646,7 @@ pub fn tsr_evolved_prior(pipeline: &QfmPipeline) -> DVector<Complex64> {
 // ---------------------------------------------------------------------------
 // Belief propagation (P8.8)
 //
-// The exact forward-backward chain BP is the documented QMF.tex §11
+// The exact forward-backward chain BP is the documented QFM.tex §11
 // extension point. For a chain of observations $L_0, L_1, ..., L_{N-1}$
 // on the Krylov unit sphere $\Cset^m$ with TSR-evolved prior
 // $P_{\mathrm{prior}}(\vec c) = |\vec c^\dagger \vec c_{\mathrm{prior}}|^2$,
@@ -666,7 +666,7 @@ pub fn tsr_evolved_prior(pipeline: &QfmPipeline) -> DVector<Complex64> {
 // for HMC), and returns the marginal mode via a numerical MAP step.
 //
 // For the documented v2 generalization to arbitrary factor graphs, see
-// QMF.tex §11; the chain case is what `belief_propagation_chain` ships.
+// QFM.tex §11; the chain case is what `belief_propagation_chain` ships.
 // ---------------------------------------------------------------------------
 
 /// Result of a chain belief-propagation run.
@@ -705,7 +705,7 @@ pub struct BeliefPropagationResult {
 ///
 /// **Limitations:** this is the **chain** case (the only graph structure
 /// the existing [`Posterior`] type carries — a `Vec<Likelihood>`). A
-/// general graph extension is documented in QMF.tex §11.
+/// general graph extension is documented in QFM.tex §11.
 pub fn belief_propagation_chain(
     posterior: &Posterior,
     max_iter: usize,

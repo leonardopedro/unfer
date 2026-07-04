@@ -82,8 +82,8 @@ impl Default for QfmConfig {
 pub struct QfmPipeline {
     s1: CountSketch,
     s2: FeatureToMode,
-    /// Krylov basis W (K_2 x rank) — columns are the first `rank` standard
-    /// basis vectors in the K_2-dim single-excitation Fock subspace.
+    /// Krylov basis W (K_2 x rank) — the SIRK-whitened `w_whiten` restricted
+    /// to the K_2 single-excitation Fock rows, per-row renormalized (P6 G).
     w: DMatrix<Complex64>,
     /// Reduced Hamiltonian H_m (rank x rank, Hermitian) — obtained from a
     /// real SIRK solve of `H_bar` on the vacuum seed.
@@ -329,8 +329,10 @@ impl QfmPipeline {
                 let new_rank = w.ncols();
                 // Re-normalize rows of the truncated W.
                 for i in 0..k2 {
-                    let row_norm: f64 =
-                        (0..new_rank).map(|j| w[(i, j)].norm_sqr()).sum::<f64>().sqrt();
+                    let row_norm: f64 = (0..new_rank)
+                        .map(|j| w[(i, j)].norm_sqr())
+                        .sum::<f64>()
+                        .sqrt();
                     if row_norm > 1e-300 {
                         let scale = Complex64::new(1.0 / row_norm, 0.0);
                         for j in 0..new_rank {

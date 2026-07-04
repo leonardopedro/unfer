@@ -59,7 +59,7 @@ module body BayesUpdateModule is
         if handle > 0 then
             -- Bayesian update: a single observation at training
             -- point 0. The kernel's `uk_bayesian_update` runs the
-            -- full QMF.tex §8 pipeline: S_1 -> S_2 -> Krylov
+            -- full QFM.tex §8 pipeline: S_1 -> S_2 -> Krylov
             -- projection -> HMC on the TSR-evolved prior -> Phase 5
             -- tomographic reconstruction.
             let req: Span[Nat8, Static] := "{\"observations\":[[1.0,0.0,0.0,0.0]]}";

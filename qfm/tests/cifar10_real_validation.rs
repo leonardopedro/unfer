@@ -56,8 +56,8 @@ fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 
 fn pipeline_for(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
     let d = training[0].len(); // 256 (16×16 CIFAR-10 grayscale)
-    let m = training.len();    // 256 (8 classes × 32)
-    let k2 = m.max(d);         // 256 = max(256, 256)
+    let m = training.len(); // 256 (8 classes × 32)
+    let k2 = m.max(d); // 256 = max(256, 256)
     let config = QfmConfig {
         k: 16,
         k2,
@@ -77,10 +77,7 @@ fn cifar10_real_qfm_pipeline_compiles() {
     assert_eq!(training[0].len(), 256, "expected d=256 (16×16 grayscale)");
     // All pixels must be in [0, 1] (the fixture normalises them).
     for &px in &training[0] {
-        assert!(
-            (0.0..=1.0).contains(&px),
-            "pixel value {px} out of [0, 1]"
-        );
+        assert!((0.0..=1.0).contains(&px), "pixel value {px} out of [0, 1]");
     }
 
     let pipeline = pipeline_for(&training, 42);
@@ -113,9 +110,7 @@ fn cifar10_real_qfm_generate_finite_and_correlated() {
             .map(|t| cosine_similarity(&x_out, t))
             .fold(f64::NEG_INFINITY, f64::max);
         sims.push(nearest_sim);
-        println!(
-            "cifar10_real_generate[class {i}]: nearest cosine sim = {nearest_sim:.4}"
-        );
+        println!("cifar10_real_generate[class {i}]: nearest cosine sim = {nearest_sim:.4}");
     }
     let max_sim = sims.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     assert!(
@@ -132,9 +127,12 @@ fn cifar10_real_qfm_generate_finite_and_correlated() {
 #[test]
 fn cifar10_real_qfm_bayes_update_recovers_held_out_observation() {
     let training: Vec<Vec<f64>> = load("testdata/cifar10_16x16_256training.json");
-    let held_out: Vec<(u32, Vec<f64>)> =
-        load_with_labels("testdata/cifar10_16x16_8heldout.json");
-    assert_eq!(held_out.len(), 8, "expected 8 held-out images (1 per class)");
+    let held_out: Vec<(u32, Vec<f64>)> = load_with_labels("testdata/cifar10_16x16_8heldout.json");
+    assert_eq!(
+        held_out.len(),
+        8,
+        "expected 8 held-out images (1 per class)"
+    );
 
     let pipeline = pipeline_for(&training, 42);
     let c_prior = tsr_evolved_prior(&pipeline);
@@ -187,8 +185,7 @@ fn cifar10_real_qfm_bayes_update_recovers_held_out_observation() {
 #[test]
 fn cifar10_real_qfm_no_explosion_on_held_out() {
     let training: Vec<Vec<f64>> = load("testdata/cifar10_16x16_256training.json");
-    let held_out: Vec<(u32, Vec<f64>)> =
-        load_with_labels("testdata/cifar10_16x16_8heldout.json");
+    let held_out: Vec<(u32, Vec<f64>)> = load_with_labels("testdata/cifar10_16x16_8heldout.json");
 
     let pipeline = pipeline_for(&training, 42);
 

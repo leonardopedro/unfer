@@ -316,7 +316,7 @@ impl AgentResponse {
     }
 }
 
-// ── Bayesian update (QMF.tex §8 + P6 H follow-on) ──────────────────────
+// ── Bayesian update (QFM.tex §8 + P6 H follow-on) ──────────────────────
 //
 // The Quantum Bayesian Update on the TSR-evolved prior
 // (`qfm::bayes::Likelihood` + `Posterior` + `sample_hmc_single` +

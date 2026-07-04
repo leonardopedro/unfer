@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end demo for the Iterated Quantum Bayesian Update + SIRK
-# Evolution module (QMF.tex §7 + §8, P8 P11):
+# Evolution module (QFM.tex §7 + §8, P8 P11):
 #   1. Builds the unfer kernel FFI (uk_* symbols) and the safestos
 #      cranelift bridge.
 #   2. Runs IteratedBayesModule through the CPS-JIT: it builds a
 #      `qfm_tomography` ModelSpec (the 4-point tetrahedron training
 #      set with krylov_dim=4 for the P6 G SIRK-whitened basis), JIT-
 #      creates the model (uk_model_create), then runs a 3-iteration
-#      loop that exercises the full QMF.tex §7 + §8 pipeline
+#      loop that exercises the full QFM.tex §7 + §8 pipeline
 #      end-to-end: condition (uk_bayesian_update), drain
 #      (uk_get_result), evolve (uk_evolve), and re-wrap — all in-
 #      process (positive path).
@@ -56,7 +56,7 @@ echo " 4. POSITIVE: run iterated_bayes_module through the CPS-JIT"
 echo "    The module builds a qfm_tomography JSON ModelSpec, JIT-creates"
 echo "    a real kernel model in-process (uk_model_create), then runs"
 echo "    3 iterations of (uk_bayesian_update + uk_get_result +"
-echo "    uk_evolve + linear free/rewrap) — the full QMF.tex §7 + §8"
+echo "    uk_evolve + linear free/rewrap) — the full QFM.tex §7 + §8"
 echo "    pipeline. run() returns 1 only if all 3 iterations succeed."
 echo "============================================================"
 JIT_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \

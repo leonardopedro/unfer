@@ -894,7 +894,9 @@ mod tests {
         };
         let m = 4;
         let res_even = solve_forward_sirk_with_opts(&h, &v_even, &shifts(m), &device, None, &opts)
-            .expect("l=3 even-parity SIRK must complete (StateExplosion would indicate scaling wall)");
+            .expect(
+                "l=3 even-parity SIRK must complete (StateExplosion would indicate scaling wall)",
+            );
         let res_odd = solve_forward_sirk_with_opts(&h, &v_odd, &shifts(m), &device, None, &opts)
             .expect("l=3 odd-parity SIRK must complete");
 

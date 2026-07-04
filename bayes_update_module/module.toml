@@ -9,7 +9,7 @@
 # grants (the UK-4001 negative test in run_demo.sh).
 #
 # See:
-#   unfer/QMF.tex Section 8 (sec:bayes) — algorithm spec
+#   unfer/QFM.tex Section 8 (sec:bayes) — algorithm spec
 #   unfer/docs/PROTOCOL.md — model spec schema
 #   unfer/docs/MODULES.md — manifest schema and the "add a module" checklist
 #   unfer/qfm/src/bayes.rs — the qfm::bayes module this module

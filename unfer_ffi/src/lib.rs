@@ -255,7 +255,7 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
 }
 
 /// Quantum Bayesian Update on the TSR-evolved prior
-/// (QMF.tex §8, P6 H follow-on).
+/// (QFM.tex §8, P6 H follow-on).
 ///
 /// `req_json` is a `BayesianUpdateRequest` JSON:
 ///   `{"observations": [[f64; d], ...], "hmc_opts": {...}}`

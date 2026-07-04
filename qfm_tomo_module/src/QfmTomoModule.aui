@@ -1,7 +1,7 @@
 module QfmTomoModule is
     """
     Quantum Flow Matching — Tomographic Subspace Recovery (QFM-TSR) kernel
-    module (see unfer/QMF.tex §7 `sec:tomographic`). `run` builds a
+    module (see unfer/QFM.tex §7 `sec:tomographic`). `run` builds a
     `qfm_tomography` `ModelSpec` — the training set (a 4-point tetrahedron
     in d=4), the Level 1/2 sketch dimensions, and the Krylov rank — and
     JIT-creates the model in-process via the UnferKernel bindings

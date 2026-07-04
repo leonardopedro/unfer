@@ -1,4 +1,4 @@
-# Quantum Flow Matching (QFM) kernel module — see unfer/QMF.tex and QMFplan.md.
+# Quantum Flow Matching (QFM) kernel module — see unfer/QFM.tex and QFMplan.md.
 # An analytical, neural-network-free generative flow: M orthogonal data points
 # become single bosons in distinct modes, the Mehler uniform prior is the rank-1
 # vacuum projector |0><0|, and inference is a single SIRK-compressed evolution.

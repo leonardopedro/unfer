@@ -392,7 +392,7 @@ pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
 }
 
 // ─────────────────────────────────────────────
-// 4b. Quantum Flow Matching (QFM) generator (builtin — see QMF.tex)
+// 4b. Quantum Flow Matching (QFM) generator (builtin — see QFM.tex)
 //     H = |0><0|  +  Σ_j α_j n_j        (n_j = a†_j a_j)
 //
 //     Analytical, neural-network-free generative flow: M orthogonal data
@@ -402,7 +402,7 @@ pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
 //     building it stays O(M) by bypassing Expression::expand().
 // ─────────────────────────────────────────────
 
-/// The analytical **Quantum Flow Matching** generator (see `QMF.tex`).
+/// The analytical **Quantum Flow Matching** generator (see `QFM.tex`).
 ///
 /// Encodes `M = alphas.len()` orthogonal data points as single bosons in
 /// distinct modes plus the Mehler vacuum-projector prior:
@@ -430,7 +430,7 @@ pub fn qfm_hamiltonian(alphas: &[f64]) -> Hamiltonian {
 ///
 /// Where [`qfm_hamiltonian`] uses the diagonal number-operator surrogate
 /// `H = |0><0| + Σ α_j n_j` (eigenstates → phase-only evolution), this realizes
-/// the Fock-space form of the continuity operator `ĥ_j` of `QMF.tex` §2.3 that
+/// the Fock-space form of the continuity operator `ĥ_j` of `QFM.tex` §2.3 that
 /// *transports amplitude between the vacuum and the data channels*:
 ///
 /// `H = |0><0| + Σ_j α_j (B†_j P₀ + P₀ B_j)`
@@ -446,7 +446,7 @@ pub fn qfm_hamiltonian(alphas: &[f64]) -> Hamiltonian {
 /// `P₀† = P₀`, reverse product) — so `e^{-iHt}` is unitary and the Born-rule
 /// substrate (norm conservation, `nalgebra` Padé `exp()`) applies unchanged.
 ///
-/// **Honest deviation from the paper:** `QMF.tex` eq. (Hbar) gives the
+/// **Honest deviation from the paper:** `QFM.tex` eq. (Hbar) gives the
 /// *anti-Hermitian* continuity generator `H̄ = |0><0| - (i/2)Σ α_j ĥ_j` whose
 /// evolution is the real Fokker–Planck transport semigroup (irreversible
 /// diffusion of amplitude into the data channels). `unfer`'s SIRK solver and

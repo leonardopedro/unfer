@@ -30,7 +30,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pingora_core::prelude::*;
 use pingora_http::ResponseHeader;
-use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
+use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
 use tracing::info;
 
 /// Gateway configuration — set by CLI arguments.
@@ -185,7 +185,9 @@ async fn send_rejection(
     let mut header = ResponseHeader::build(400u16, None)?;
     header.insert_header("content-type", "application/json")?;
     header.insert_header("content-length", body.len().to_string())?;
-    session.write_response_header(Box::new(header), false).await?;
+    session
+        .write_response_header(Box::new(header), false)
+        .await?;
     session
         .write_response_body(Some(bytes::Bytes::from(body)), true)
         .await?;

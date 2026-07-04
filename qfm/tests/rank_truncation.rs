@@ -82,11 +82,13 @@ fn rank_truncation_d1024_generate_finite() {
         noise_dim: k2,
         max_rank: Some(8),
     };
-    let pipeline = QfmPipeline::compile(&training, &config)
-        .expect("compile d=1024 rank-8 truncation");
+    let pipeline =
+        QfmPipeline::compile(&training, &config).expect("compile d=1024 rank-8 truncation");
 
     // Generate from the first training point; result must be finite.
-    let x_out = pipeline.generate(&training[0]).expect("generate must succeed");
+    let x_out = pipeline
+        .generate(&training[0])
+        .expect("generate must succeed");
     assert_eq!(x_out.len(), 1024, "output must be d=1024 pixels");
     for &v in &x_out {
         assert!(
@@ -119,10 +121,7 @@ fn rank_truncation_without_max_rank_errors_on_small_krylov() {
         "expected K2ExceedsKrylovDim error without max_rank"
     );
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("K_2"),
-        "error must mention K_2, got: {msg}"
-    );
+    assert!(msg.contains("K_2"), "error must mention K_2, got: {msg}");
 }
 
 #[test]

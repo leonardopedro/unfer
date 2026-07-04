@@ -58,7 +58,7 @@ module body IteratedBayesModule is
             -- Negative n is a UK code; surface it.
             return n;
         end if;
-        -- Evolve forward in time (QMF.tex §7 Phase 2; the QFM 4-phase
+        -- Evolve forward in time (QFM.tex §7 Phase 2; the QFM 4-phase
         -- generate). For a QFM tomographic model, the kernel needs
         -- a query in the evolve opts to drive the 4-phase generate.
         let erc: Int64 := kernelEvolveStr(model, query);
