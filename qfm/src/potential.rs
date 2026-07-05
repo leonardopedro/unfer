@@ -9,15 +9,17 @@
 //! The time-averaged coefficient `bar_alpha_j = integral_0^1 alpha_j(t) dt`
 //! defines the static, time-independent flow potential weight.
 //!
-//! Then `build_flow_hamiltonian` constructs the **Hermitian** static flow
-//! Hamiltonian `H_bar = |0><0| + (1/2) * sum_j bar_alpha_j hat_h_j_herm`.
-//! The `hat_h_j_herm` operator acts as a 2x2 rotation between the vacuum |0>
-//! and the single-excitation state |x_j> = OuterBosonCreate(|1_j>)|0> in
-//! the sketched K_2-dim Fock space — a direct-construction analog of
-//! `qfm_hamiltonian_offdiag` restricted to the one-excitation sector.
+//! Then `build_flow_hamiltonian` constructs the **exact off-diagonal
+//! generator** `H = |0~><0~|`: the rank-1 projector onto the dressed Mehler
+//! vacuum `|0~> = (|vac> + sum_j bar_alpha_j |x_j>) / norm`, where
+//! `|x_j> = OuterBosonCreate(|1_j>)|0>` is the single-excitation channel in
+//! the sketched K_2-dim Fock space and the weights `bar_alpha_j` set the
+//! channel components of the dressed vacuum. No O(epsilon) truncation: the
+//! vacuum-channel coupling comes entirely from the projector's
+//! non-orthogonality to the channels (QFM.tex, "the exact off-diagonal
+//! generator is just the vacuum projector").
 
-use nested_fock_algebra::{Hamiltonian, InnerBosonicState, Operator};
-use num_complex::Complex64;
+use nested_fock_algebra::{Hamiltonian, qfm_hamiltonian_mehler_projector};
 
 /// Compute the time-averaged optimal coefficients `bar_alpha_j` for the
 /// Flow Matching objective.
@@ -57,58 +59,32 @@ pub fn optimal_coefficients(
         .collect()
 }
 
-/// Build the **Hermitian** static flow Hamiltonian
-/// `H_bar = |0><0| + (1/2) * sum_j bar_alpha_j * hat_h_j_herm`.
+/// Build the **exact** static flow generator `H = |0~><0~|`: the rank-1
+/// projector onto the dressed Mehler vacuum whose channel components are
+/// set by the flow-matching weights,
 ///
-/// Each `hat_h_j_herm` is a 2x2 rotation between the vacuum and the
-/// single-excitation state `|x_j> = OuterBosonCreate(|1_j>)|0>`. In the
-/// {|0>, |x_j>} subspace the rotation is Pauli-X-like, so the combined
-/// term is:
-///   `(bar_alpha_j / 2) * (|0><x_j| + |x_j><0|)`
+///   `|0~> = c_0 |vac> + sum_j eps_j |x_j>`,
+///   `eps_j = bar_alpha_j / sqrt(1 + sum alpha^2)`,
+///   `c_0   = 1 / sqrt(1 + sum alpha^2)`,
 ///
-/// which is the symmetric (Hermitian) combination of `B_j^dagger P_0`
-/// and `P_0 B_j` from the off-diagonal QFM Hamiltonian (P5 #26).
+/// i.e. the normalization of the unnormalized dressed vector
+/// `|vac> + sum_j bar_alpha_j |x_j>`. The vacuum-channel transport comes
+/// entirely from the projector's non-orthogonality to the channels — no
+/// explicit coupling terms and no O(epsilon) truncation. `H` is exactly
+/// idempotent (`H^2 = H`), so the evolution is closed-form:
+/// `e^{-iHt} = 1 + (e^{-it} - 1)|0~><0~|`.
 ///
-/// The Hamiltonian lives in the K_2-dim sketched Fock space, but the
-/// construction is direct (no symbolic expansion) so M can be very large.
+/// Only channels `j < k2` (the K_2-dim sketched Fock space) enter the
+/// dressed vacuum. The single `ProjectOnto` term applies via the rank-1
+/// shortcut `H|s> = <0~|s> |0~>`, so M can be very large.
 pub fn build_flow_hamiltonian(alphas: &[f64], k2: usize) -> Hamiltonian {
-    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::with_capacity(1 + 2 * alphas.len());
-
-    // H_0 = |0><0| — the Mehler vacuum projector.
-    terms.push((Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum]));
-
-    // For each data channel j, the Hermitian coupling is:
-    //   (bar_alpha_j / 2) * (B_j^dagger P_0 + P_0 B_j)
-    // where B_j^dagger = OuterBosonCreate(|1_j>) and B_j = OuterBosonAnnihilate(|1_j>).
-    // We only include channels j < k2 (the K_2-dim sketched Fock space).
-    for (j, &alpha) in alphas.iter().enumerate() {
-        if j >= k2 {
-            break;
-        }
-        let mode = j as u32;
-        let mut inner = InnerBosonicState::vacuum();
-        inner.modes.insert(mode, 1);
-        let half = alpha / 2.0;
-        let c = Complex64::new(half, 0.0);
-        // B_j^dagger P_0
-        terms.push((
-            c,
-            vec![
-                Operator::OuterBosonCreate(inner.clone()),
-                Operator::ProjectVacuum,
-            ],
-        ));
-        // P_0 B_j
-        terms.push((
-            c,
-            vec![
-                Operator::ProjectVacuum,
-                Operator::OuterBosonAnnihilate(inner),
-            ],
-        ));
-    }
-
-    Hamiltonian { terms }
+    let take = alphas.len().min(k2);
+    let norm = (1.0 + alphas[..take].iter().map(|a| a * a).sum::<f64>()).sqrt();
+    let epsilons: Vec<f64> = alphas[..take].iter().map(|a| a / norm).collect();
+    // sum eps^2 = sum alpha^2 / (1 + sum alpha^2) < 1, and the projector
+    // builder's c_0 = sqrt(1 - sum eps^2) = 1/norm — exactly the normalized
+    // dressed vector above.
+    qfm_hamiltonian_mehler_projector(&epsilons)
 }
 
 #[cfg(test)]
@@ -140,74 +116,46 @@ mod tests {
     }
 
     #[test]
-    fn build_flow_hamiltonian_hermitian() {
+    fn build_flow_hamiltonian_is_exact_rank1_projector() {
+        // H = |0~><0~| is a single self-adjoint rank-1 term, and exactly
+        // idempotent: H(H|s>) = H|s> for any probe |s>. Idempotence is the
+        // signature of the exact generator — any truncation would fail it.
         let alphas = vec![1.0, 2.0, 0.5];
         let h = build_flow_hamiltonian(&alphas, 8);
-        let h_adj = h.adjoint();
+        assert_eq!(h.terms.len(), 1);
+        assert_eq!(h.adjoint().terms.len(), 1);
 
-        // H = H^dagger iff each term is self-adjoint (or paired with its adjoint).
-        // The |0><0| term is self-adjoint. Each coupling pair
-        // (B^dagger P_0, P_0 B) is the adjoint of the other.
-        // So we check term counts: 1 projector + 2*alphas.len() coupling terms.
-        assert_eq!(h.terms.len(), 1 + 2 * alphas.len());
-
-        // H and H^dagger have the same number of terms.
-        assert_eq!(h.terms.len(), h_adj.terms.len());
-
-        // Spot-check: the first coupling pair should be adjoints of each other.
-        let (c1, ops1) = &h.terms[1];
-        let (c2, ops2) = &h.terms[2];
-        // ops1 = [OuterBosonCreate(inner), ProjectVacuum]
-        // ops2 should be [ProjectVacuum, OuterBosonAnnihilate(inner)]
-        // which is the reversed-adjoint of ops1.
-        assert!(matches!(ops1[0], Operator::OuterBosonCreate(_)));
-        assert!(matches!(ops1[1], Operator::ProjectVacuum));
-        assert!(matches!(ops2[0], Operator::ProjectVacuum));
-        assert!(matches!(ops2[1], Operator::OuterBosonAnnihilate(_)));
-        // Same coefficient (both are real alpha/2).
-        assert!((c1.re - c2.re).abs() < 1e-12);
-        assert!(c1.im.abs() < 1e-12);
-        assert!(c2.im.abs() < 1e-12);
+        let vacuum = QuantumState::vacuum();
+        let h_vac = h.apply(&vacuum);
+        let h_h_vac = h.apply(&h_vac);
+        let mut diff = h_h_vac.clone();
+        diff.scale_and_add(&h_vac, num_complex::Complex64::new(-1.0, 0.0));
+        assert!(diff.norm() < 1e-12, "H^2 = H must hold exactly");
     }
 
     #[test]
-    fn flow_hamiltonian_vacuum_projects_plus_single_excitation_leakage() {
-        // The Hermitian flow Hamiltonian is
-        //   H_bar = |0><0| + (1/2) * sum_j alpha_j * (B_j^dagger P_0 + P_0 B_j).
-        //
-        // Applied to the vacuum:
-        //   |0><0| |0>      = |0>                              (amplitude 1)
-        //   B_j^dagger P_0 |0> = B_j^dagger |0> = |x_j>        (amplitude alpha_j/2)
-        //   P_0 B_j |0>      = 0                               (B_j annihilates vacuum)
-        //
-        // So H_bar |0> = |0> + sum_j (alpha_j/2) |x_j>.
-        //
-        // The vacuum is NOT an eigenstate of H_bar (the coupling terms leak
-        // into the single-excitation sector). The previous test name
-        // `flow_hamiltonian_ground_state_is_vacuum` was misleading: it
-        // suggested the vacuum was an eigenstate, but the test body
-        // correctly verified the *structure* of H|0>. Renamed and
-        // annotated for honesty.
+    fn flow_hamiltonian_vacuum_maps_to_scaled_dressed_vacuum() {
+        // H|vac> = <0~|vac> |0~> = c_0 |0~>, with
+        //   c_0 = 1/sqrt(1 + sum alpha^2), eps_j = alpha_j * c_0.
+        // So the vacuum component of H|vac> is c_0^2 and each channel
+        // component is c_0 * eps_j = c_0^2 * alpha_j — every channel is
+        // coupled through the projector alone, no explicit coupling terms.
         let alphas = vec![1.0, 2.0, 0.5];
         let h = build_flow_hamiltonian(&alphas, 8);
+        let norm_sq: f64 = 1.0 + alphas.iter().map(|a| a * a).sum::<f64>();
+        let c0_sq = 1.0 / norm_sq;
+
         let vacuum = QuantumState::vacuum();
         let h_vac = h.apply(&vacuum);
 
-        // Vacuum component: amplitude 1 from the |0><0| projector.
-        assert!(
-            h_vac
-                .components
-                .contains_key(&nested_fock_algebra::OuterState::vacuum())
-        );
         let amp_vac = h_vac
             .components
             .get(&nested_fock_algebra::OuterState::vacuum())
-            .unwrap();
-        assert!((amp_vac.re - 1.0).abs() < 1e-12);
+            .expect("H|vac> must retain a vacuum component");
+        assert!((amp_vac.re - c0_sq).abs() < 1e-12);
         assert!(amp_vac.im.abs() < 1e-12);
 
-        // Single-excitation components: one |x_j> per coupling term,
-        // each with amplitude alpha_j/2.
+        // Channel components: amplitude c_0^2 * alpha_j each.
         let mut single_amplitudes: Vec<f64> = Vec::new();
         for (outer, amp) in h_vac.components.iter() {
             if outer.bosonic.values().sum::<u32>() == 1 && outer.fermionic.is_empty() {
@@ -215,7 +163,7 @@ mod tests {
             }
         }
         assert_eq!(single_amplitudes.len(), alphas.len());
-        let mut expected: Vec<f64> = alphas.iter().map(|a| a / 2.0).collect();
+        let mut expected: Vec<f64> = alphas.iter().map(|a| a * c0_sq).collect();
         single_amplitudes.sort_by(|a, b| a.partial_cmp(b).unwrap());
         expected.sort_by(|a, b| a.partial_cmp(b).unwrap());
         for (got, want) in single_amplitudes.iter().zip(expected.iter()) {

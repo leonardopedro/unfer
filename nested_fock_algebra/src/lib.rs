@@ -234,6 +234,14 @@ pub enum Operator {
     /// to a state it keeps only the vacuum component's amplitude, collapsing
     /// everything else to zero. It is self-adjoint and idempotent.
     ProjectVacuum,
+    /// The exact rank-1 projector `|psi><psi|` onto an arbitrary state `psi`
+    /// (e.g. the dressed Mehler vacuum of `QFM.tex`, eq. (dressedvac)). The
+    /// application uses the rank-1 shortcut `H|s> = <psi|s>·|psi>` — one inner
+    /// product plus one scaled copy, `O(components + |psi|)` — instead of the
+    /// `O(M²)` symbolic cross-term expansion `Σ ε_i ε_j B†_i P₀ B_j`. The
+    /// caller must supply a **normalized** `psi` for `H² = H` to hold exactly.
+    /// Self-adjoint by construction.
+    ProjectOnto(std::sync::Arc<QuantumState>),
 }
 
 impl Operator {
@@ -251,10 +259,41 @@ impl Operator {
             Operator::OuterFermionAnnihilate(s) => Operator::OuterFermionCreate(s.clone()),
             // |0><0| is Hermitian, so it is its own adjoint.
             Operator::ProjectVacuum => Operator::ProjectVacuum,
+            // |psi><psi| is Hermitian, so it is its own adjoint.
+            Operator::ProjectOnto(psi) => Operator::ProjectOnto(psi.clone()),
         }
     }
 
     pub fn apply_to_state(&self, state: &QuantumState) -> QuantumState {
+        // Rank-1 fast path: |psi><psi| |s> = <psi|s> · |psi>. One inner product
+        // over the (sparse) overlap of the two component maps, then one scaled
+        // copy of psi — never the O(M²) expansion.
+        if let Operator::ProjectOnto(psi) = self {
+            // Iterate over the smaller map for the inner product <psi|s>.
+            let overlap: Complex64 = if state.components.len() <= psi.components.len() {
+                state
+                    .components
+                    .iter()
+                    .filter_map(|(b, a)| psi.components.get(b).map(|p| p.conj() * a))
+                    .sum()
+            } else {
+                psi.components
+                    .iter()
+                    .filter_map(|(b, p)| state.components.get(b).map(|a| p.conj() * a))
+                    .sum()
+            };
+            let mut next_components = FxHashMap::default();
+            if overlap != Complex64::new(0.0, 0.0) {
+                next_components.reserve(psi.components.len());
+                for (s, a) in &psi.components {
+                    next_components.insert(s.clone(), overlap * a);
+                }
+            }
+            return QuantumState {
+                components: next_components,
+            };
+        }
+
         let mut next_components = FxHashMap::default();
 
         for (outer_basis, &amplitude) in &state.components {
@@ -386,6 +425,9 @@ impl Operator {
                             .or_insert(Complex64::new(0.0, 0.0)) += amplitude;
                     }
                 }
+
+                // Handled by the rank-1 fast path before this loop.
+                Operator::ProjectOnto(_) => unreachable!("ProjectOnto handled above"),
             }
         }
         QuantumState {

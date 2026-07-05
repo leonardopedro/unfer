@@ -183,10 +183,16 @@ The `prob_kernel::build` layer dispatches by name. Each is a
 - `yang_mills_lattice(l, g, n_colors)` — Kogut–Susskind 2D lattice gauge
   theory. **Flagship model for the mass-gap demonstration** (per the
   Yang-Mills Millennium Prize path).
-- `qfm_mehler(alphas)` — Mehler-prior QFM generator.
-- `qfm_mehler_offdiag(alphas)` — Hermitian vacuum↔data coupling.
+- `qfm_mehler(alphas)` — Mehler-prior diagonal QFM surrogate.
+- `qfm_mehler_localized(points, alphas, scale)` — diagonal surrogate with
+  the literal data-channel encoding (D inner modes per point).
+- `qfm_mehler_projector(epsilons)` — the **exact off-diagonal generator**:
+  the rank-1 projector `|0><0|` onto the dressed Mehler vacuum, applied
+  via the O(M) rank-1 shortcut (no O(ε) truncation).
+- `qfm_mehler_projector_localized(points, epsilons, scale)` — the exact
+  generator with the literal data-channel encoding.
 - `qfm_tomography(spec)` — the full QFM-TSR pipeline (training data, k,
-  k2, krylov_dim, seed).
+  k2, krylov_dim, seed); its flow generator is the exact projector.
 
 ## Status
 

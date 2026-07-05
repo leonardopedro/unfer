@@ -497,27 +497,133 @@ fn qfm_mehler_conserves_data_channel_population() {
     );
 }
 
-// ── Off-diagonal QFM (P5 #26) ─────────────────────────────────────────────
-// H = |0><0| + Σ_j α_j (B†_j P₀ + P₀ B_j) — Hermitian vacuum↔data coupling
-// that actually transports amplitude (Rabi oscillation), unlike the diagonal
-// surrogate above where populations are stationary. The integration tests
-// below verify the defining behaviour: starting from the Mehler vacuum prior,
-// evolution moves probability mass INTO the data channels.
+// ── Localized QFM encoding ─────────────────────────────────────────────────
+// `QFM.tex`, "The data-channel wave-function on the hypersphere": each data
+// point x ∈ R^D localizes exactly D of the (infinitely many) hyperspherical
+// coordinates, the rest staying at the uniform circle measure.
+// `qfm_mehler_localized`/`qfm_mehler_projector_localized` are the direct
+// computational realization — each data point occupies its own D inner
+// modes (one per real coordinate) instead of being identified only by
+// array index. The single-channel physics (projector oscillation,
+// eigenstate structure) must be identical to the index-based encoding
+// above, since it depends only on the outer Fock-space grading, not on
+// which `InnerBosonicState` label the one-particle sector uses.
+
+// Quantization scale used only by these tests (not `QFM_DEFAULT_QUANTIZATION_SCALE`).
+// `localized_point_prior` below builds its comparison state via
+// `PriorSpec::Bosons`, which constructs a universe by *repeatedly applying*
+// `InnerBosonCreate` (a genuine ladder operation, picking up a `sqrt(count!)`
+// amplitude factor) — unlike `qfm_hamiltonian_localized` itself, which uses
+// `OuterBosonCreate` directly (amplitude 1, no factorial, regardless of how
+// large the occupation numbers inside the label are). At the library
+// default scale (1024.0) realistic test coordinates quantize to
+// occupation counts in the thousands, and `sqrt(2047!)` overflows `f64` to
+// `Infinity` — a fragility of `PriorSpec::Bosons`'s repeated-ladder
+// construction, not of the Hamiltonian builder. A small scale keeps this
+// test's occupation counts in the single digits, avoiding that overflow.
+const TEST_LOCALIZATION_SCALE: f64 = 1.0;
+
+fn qfm_mehler_localized_spec(prior: PriorSpec) -> ModelSpec {
+    ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler_localized",
+            serde_json::json!({
+                "points": [[1.0, 0.0], [0.0, 1.0], [-1.0, 2.0]],
+                "alphas": [1.5, 2.1, 0.8],
+                "scale": TEST_LOCALIZATION_SCALE
+            }),
+        ),
+        prior,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+            adaptive: false,
+        },
+    }
+}
+
+/// A prior seeded in the single outer universe that
+/// `qfm_hamiltonian_localized`/`_mehler_projector_localized` would create for `point`
+/// at [`TEST_LOCALIZATION_SCALE`] — built via `PriorSpec::Bosons`, which
+/// (like `point_to_inner_state`) gives one outer universe carrying the
+/// listed inner-mode occupations.
+fn localized_point_prior(point: &[f64]) -> PriorSpec {
+    let inner = nested_fock_algebra::point_to_inner_state(point, TEST_LOCALIZATION_SCALE);
+    PriorSpec::bosons(inner.modes.into_iter().collect())
+}
 
 #[test]
-fn qfm_mehler_offdiag_transfers_population_from_vacuum() {
-    // The off-diagonal QFM generator mixes vacuum ↔ data channels. Starting
-    // from the vacuum prior, evolution must MOVE probability out of the vacuum
-    // and INTO the data channels — the defining behaviour the diagonal
-    // surrogate lacks (there, P(vacuum) stays 1).
-    //
-    // Single channel (M=1) so the 2×2 block H=[[1,α],[α,0]] applies exactly:
-    //   P_{vac}(t) = 1 − 4α²/(1+4α²)·sin²(√(1+4α²)·t/2).
-    // With α=1.5, ω=√10≈3.162; at t=1.0, sin²(ωt/2)≈1 → P(vac)≈0.10.
+fn qfm_mehler_localized_builds_and_evolves() {
+    // Diagonal generator: H = |0><0| + Σ_j α_j B†_j B_j, so the vacuum and
+    // each data channel are eigenstates; evolution adds only phases.
+    let spec = qfm_mehler_localized_spec(PriorSpec::Vacuum);
+    let mut session = Session::new(&spec).expect("qfm localized session");
+
+    let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
+
+    let report = session.evolve(1.0).expect("evolve");
+    assert!(
+        (report.norm - 1.0).abs() < 1e-6,
+        "post-evolve norm must be ~1, got {}",
+        report.norm
+    );
+
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!(
+        (p_vac - 1.0).abs() < 1e-6,
+        "vacuum is a QFM eigenstate, stays occupied: {p_vac}"
+    );
+}
+
+#[test]
+fn qfm_mehler_localized_conserves_data_channel_population() {
+    // A prior seeded in one localized data channel (point (-1.0, 2.0), whose
+    // D=2 real coordinates each occupy their own inner mode) is an
+    // eigenstate of the diagonal localized generator, so its occupation
+    // stays 1 under evolution — the localized encoding must not introduce
+    // any cross-channel mixing that the index-based encoding didn't have.
+    let points: Vec<Vec<f64>> = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![-1.0, 2.0]];
+    let prior = localized_point_prior(&points[2]);
+    let spec = qfm_mehler_localized_spec(prior);
+    let mut session = Session::new(&spec).expect("qfm localized session");
+
+    let p_before = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!((p_before - 1.0).abs() < 1e-10, "starts in data channel: {p_before}");
+
+    session.evolve(1.0).expect("evolve");
+
+    let p_after = session
+        .probability(&EventPredicate::not(EventPredicate::Vacuum))
+        .expect("prob");
+    assert!(
+        (p_after - 1.0).abs() < 1e-6,
+        "diagonal localized generator conserves channel population: {p_after}"
+    );
+}
+
+#[test]
+fn qfm_mehler_projector_localized_matches_closed_form_oscillation() {
+    // Exact off-diagonal generator with a localized channel: H = |0̃><0̃|
+    // where the one data channel is a D=2 localized point (1.0, -2.0)
+    // instead of a bare index. The closed-form projector oscillation
+    // applies regardless of the inner-mode labeling: with ε = 0.3
+    // (c₀² = 0.91), at t = π the channel population is
+    //   P(¬vac)(π) = 4 sin²(π/2) c₀² ε² = 4·0.91·0.09 = 0.3276,
+    //   P(vac)(π)  = (1 − 2c₀²)² = 0.6724,
+    // and at t = 2π the state returns coherently to the frame vacuum.
+    let point = vec![1.0, -2.0];
+    let eps = 0.3_f64;
+    let c0_sq = 1.0 - eps * eps;
     let spec = ModelSpec {
         hamiltonian: HamiltonianSpec::builtin(
-            "qfm_mehler_offdiag",
-            serde_json::json!({"alphas": [1.5]}),
+            "qfm_mehler_projector_localized",
+            serde_json::json!({"points": [point], "epsilons": [eps]}),
         ),
         prior: PriorSpec::Vacuum,
         solver: SolverSpec {
@@ -529,63 +635,74 @@ fn qfm_mehler_offdiag_transfers_population_from_vacuum() {
             adaptive: false,
         },
     };
-    let mut session = Session::new(&spec).expect("qfm offdiag session");
+    let mut session = Session::new(&spec).expect("qfm projector localized session");
 
     let p_vac0 = session.probability(&EventPredicate::Vacuum).expect("prob");
     assert!((p_vac0 - 1.0).abs() < 1e-10, "starts in vacuum: {p_vac0}");
 
-    let report = session.evolve(1.0).expect("evolve");
+    let pi = std::f64::consts::PI;
+    let report = session.evolve(pi).expect("evolve to t=π");
     assert!(
         (report.norm - 1.0).abs() < 1e-6,
         "post-evolve norm must be ~1 (unitary), got {}",
         report.norm
     );
 
-    // Population must have left the vacuum (the whole point of the off-diagonal
-    // coupling). The diagonal surrogate keeps P(vacuum)=1; here it must drop.
-    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
-    assert!(
-        p_vac < 0.5,
-        "off-diagonal generator depopulates the vacuum: P(vac)={p_vac} (must be < 0.5)"
-    );
-
-    // And arrived in the data channel.
-    let p_data0 = session.probability(&event_mode0_ge1()).expect("prob");
-    assert!(
-        p_data0 > 0.1,
-        "population arrives in data channel 0: P(x_0)={p_data0} (must be > 0.1)"
-    );
-
-    // The vacuum + ¬vacuum cover still sums to 1 (Born rule, normalization).
-    let p_not = session
+    let p_data = session
         .probability(&EventPredicate::not(EventPredicate::Vacuum))
         .expect("prob");
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    let want_data = 4.0 * c0_sq * eps * eps;
+    let want_vac = (1.0 - 2.0 * c0_sq) * (1.0 - 2.0 * c0_sq);
     assert!(
-        (p_vac + p_not - 1.0).abs() < 1e-6,
-        "cover sums to 1: {p_vac} + {p_not}"
+        (p_data - want_data).abs() < 0.02,
+        "P(¬vac)(π) = {p_data}, want {want_data}"
+    );
+    assert!(
+        (p_vac - want_vac).abs() < 0.02,
+        "P(vac)(π) = {p_vac}, want {want_vac}"
+    );
+    assert!(
+        (p_vac + p_data - 1.0).abs() < 1e-6,
+        "cover sums to 1: {p_vac} + {p_data}"
+    );
+
+    // Second half of the period: exact coherent return to the frame vacuum.
+    session.evolve(pi).expect("evolve to t=2π");
+    let p_vac_full = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!(
+        p_vac_full > 0.95,
+        "coherent return at t=2π: P(vac) = {p_vac_full}, want ≈ 1"
     );
 }
 
+// ── Exact Mehler-projector QFM ─────────────────────────────────────────────
+// `QFM.tex`, "The exact off-diagonal generator is just the vacuum
+// projector": H = |0><0| where |0> is the uniform Mehler vacuum, which is
+// NOT orthogonal to the data channels (<0|x_j> = ε_j > 0, from the finite
+// localization of each channel's inner wave-function). Because H is a
+// rank-1 projector, e^{-iHt} = 1 + (e^{-it} − 1)|0><0| exactly: starting
+// from the frame vacuum |vac>_F (overlap c₀ = sqrt(1 − Σε²) with |0>),
+// every channel is pumped coherently and simultaneously with population
+//   P_j(t) = 4 sin²(t/2) c₀² ε_j²,
+// and the state returns exactly at t = 2π. These tests pin the SIRK-path
+// evolution against that closed form.
+
 #[test]
-fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
-    // The Hermitian off-diagonal coupling gives COHERENT (unitary) Rabi
-    // oscillation: amplitude flows vacuum → data, then back. At the full
-    // oscillation period T = 2π/ω (ω=√(1+4α²) for one channel) the state
-    // returns to the vacuum. Verify a half-period (max transfer) then another
-    // half-period (full return) recovers P(vacuum) ≈ 1 — the signature of
-    // coherent (not diffusive) transport that distinguishes the Hermitian unfer
-    // realization from the paper's anti-Hermitian Fokker–Planck semigroup.
-    let alpha = 1.5_f64;
-    let omega = (1.0 + 4.0 * alpha * alpha).sqrt();
-    let half_period = std::f64::consts::PI / omega;
+fn qfm_mehler_projector_matches_closed_form_oscillation() {
+    // eps = [0.3, 0.4]: Σε² = 0.25, c₀² = 0.75. At t = π:
+    //   P(mode0 ≥ 1) = 4·0.75·0.09 = 0.27
+    //   P(mode1 ≥ 1) = 4·0.75·0.16 = 0.48
+    //   P(vacuum)    = |1 − 2c₀²|² = 0.25
+    // At t = 2π: P(vacuum) = 1 (exact coherent return).
     let spec = ModelSpec {
         hamiltonian: HamiltonianSpec::builtin(
-            "qfm_mehler_offdiag",
-            serde_json::json!({"alphas": [alpha]}),
+            "qfm_mehler_projector",
+            serde_json::json!({"epsilons": [0.3, 0.4]}),
         ),
         prior: PriorSpec::Vacuum,
         solver: SolverSpec {
-            krylov_dim: 8,
+            krylov_dim: 6,
             prune_eps: 1e-12,
             max_components: Some(50_000),
             restarts: 1,
@@ -593,24 +710,105 @@ fn qfm_mehler_offdiag_rabi_oscillation_round_trip() {
             adaptive: false,
         },
     };
-    let mut session = Session::new(&spec).expect("qfm offdiag session");
+    let mut session = Session::new(&spec).expect("mehler projector session");
 
-    // Half period: vacuum → maximum data-channel population.
-    session.evolve(half_period).expect("evolve");
-    let p_data_half = session.probability(&event_mode0_ge1()).expect("prob");
-    assert!(
-        p_data_half > 0.3,
-        "half-period: maximum data transfer, P(x_0)={p_data_half} (must be > 0.3)"
-    );
+    let pi = std::f64::consts::PI;
+    session.evolve(pi).expect("evolve to t=π");
 
-    // Another half period (full round trip): coherent return to the vacuum.
-    // The SIRK approximation + krylov_dim=8 should recover P(vacuum) within a
-    // few % — the signature of unitary (reversible) evolution.
-    session.evolve(half_period).expect("evolve");
+    let p0 = session.probability(&event_mode0_ge1()).expect("prob");
+    let p1 = session
+        .probability(&EventPredicate::BosonModeTotal {
+            mode: 1,
+            cmp: Cmp::Ge,
+            value: 1,
+        })
+        .expect("prob");
+    let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p0 - 0.27).abs() < 0.02, "P(x_0)(π) = {p0}, want 0.27");
+    assert!((p1 - 0.48).abs() < 0.02, "P(x_1)(π) = {p1}, want 0.48");
+    assert!((p_vac - 0.25).abs() < 0.02, "P(vac)(π) = {p_vac}, want 0.25");
+
+    // Second half of the period: exact coherent return to the frame vacuum.
+    session.evolve(pi).expect("evolve to t=2π");
     let p_vac_full = session.probability(&EventPredicate::Vacuum).expect("prob");
     assert!(
-        p_vac_full > 0.8,
-        "full-period: coherent return to vacuum, P(vac)={p_vac_full} (must be > 0.8)"
+        p_vac_full > 0.95,
+        "coherent return at t=2π: P(vac) = {p_vac_full}, want ≈ 1"
+    );
+}
+
+#[test]
+fn qfm_mehler_projector_dressed_vacuum_is_stationary() {
+    // The dressed Mehler vacuum |0> = c₀|vac>_F + Σ ε_j|x_j> is the
+    // eigenvalue-1 eigenvector of its own projector, so as a prior it is
+    // stationary: evolution adds only a global phase and every Born
+    // population is conserved exactly.
+    let eps = [0.3_f64, 0.4];
+    let c0 = (1.0 - eps.iter().map(|e| e * e).sum::<f64>()).sqrt(); // sqrt(0.75)
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler_projector",
+            serde_json::json!({"epsilons": eps}),
+        ),
+        prior: PriorSpec::superposition(vec![
+            unfer_protocol::SuperpositionTerm::new(c0, 0.0, PriorSpec::Vacuum),
+            unfer_protocol::SuperpositionTerm::new(eps[0], 0.0, PriorSpec::bosons(vec![(0, 1)])),
+            unfer_protocol::SuperpositionTerm::new(eps[1], 0.0, PriorSpec::bosons(vec![(1, 1)])),
+        ]),
+        solver: SolverSpec {
+            krylov_dim: 6,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+            adaptive: false,
+        },
+    };
+    let mut session = Session::new(&spec).expect("dressed vacuum session");
+
+    let p0_before = session.probability(&event_mode0_ge1()).expect("prob");
+    let p_vac_before = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!((p0_before - 0.09).abs() < 1e-9, "prior P(x_0) = ε_0² = 0.09");
+    assert!((p_vac_before - 0.75).abs() < 1e-9, "prior P(vac) = c₀² = 0.75");
+
+    session.evolve(1.3).expect("evolve");
+
+    let p0_after = session.probability(&event_mode0_ge1()).expect("prob");
+    let p_vac_after = session.probability(&EventPredicate::Vacuum).expect("prob");
+    assert!(
+        (p0_after - p0_before).abs() < 0.01,
+        "eigenstate populations must be stationary: P(x_0) {p0_before} -> {p0_after}"
+    );
+    assert!(
+        (p_vac_after - p_vac_before).abs() < 0.01,
+        "eigenstate populations must be stationary: P(vac) {p_vac_before} -> {p_vac_after}"
+    );
+}
+
+#[test]
+fn qfm_mehler_projector_rejects_overweight_epsilons() {
+    // Σ ε² > 1 is physically impossible (the ε² are uniform-measure masses
+    // of disjoint packet supports) and must be rejected at build time with
+    // a diagnostic, not a panic.
+    let spec = ModelSpec {
+        hamiltonian: HamiltonianSpec::builtin(
+            "qfm_mehler_projector",
+            serde_json::json!({"epsilons": [0.9, 0.9]}),
+        ),
+        prior: PriorSpec::Vacuum,
+        solver: SolverSpec {
+            krylov_dim: 4,
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            restarts: 1,
+            device: DeviceSpec::Cpu,
+            adaptive: false,
+        },
+    };
+    let err = Session::new(&spec).expect_err("Σ ε² > 1 must fail");
+    assert!(
+        matches!(err, KernelError::BadBuiltinParams { .. }),
+        "want BadBuiltinParams, got {err:?}"
     );
 }
 

@@ -14,8 +14,9 @@
 //! ## F4-fix: real unitary flow
 //!
 //! The reduced Hamiltonian `H_m` is now obtained from a real SIRK solve
-//! of the Hermitian flow Hamiltonian `H_bar` (built by
-//! `build_flow_hamiltonian`) on the vacuum seed `|0>`, with `m` uniform
+//! of the exact flow generator `H_bar = |0~><0~|` — the rank-1 projector
+//! onto the dressed Mehler vacuum built by `build_flow_hamiltonian` (no
+//! O(epsilon) truncation) — on the vacuum seed `|0>`, with `m` uniform
 //! shifts on the negative-imaginary axis. The reduced system preserves
 //! unitarity because the time-evolution is `U(t) = exp(-i H_m t)` via
 //! `nalgebra`'s Padé approximant (AGENTS.md §4). The previous stub

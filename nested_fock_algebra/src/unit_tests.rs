@@ -3,8 +3,10 @@
 mod algebra_tests {
     use crate::cas::compile_to_fock;
     use crate::models::{
-        bose_hubbard_chain, gravity_hamiltonian, navier_stokes_hamiltonian, qfm_hamiltonian,
-        qfm_hamiltonian_offdiag, yang_mills_hamiltonian, yang_mills_lattice,
+        QFM_DEFAULT_QUANTIZATION_SCALE, bose_hubbard_chain, gravity_hamiltonian,
+        mehler_channel_overlap, navier_stokes_hamiltonian, point_to_inner_state, qfm_hamiltonian,
+        qfm_hamiltonian_localized, qfm_hamiltonian_mehler_projector,
+        qfm_hamiltonian_mehler_projector_localized, yang_mills_hamiltonian, yang_mills_lattice,
     };
     use crate::{Operator, QuantumState};
     use num_complex::Complex64;
@@ -292,69 +294,341 @@ mod algebra_tests {
     }
 
     #[test]
-    fn test_qfm_hamiltonian_offdiag() {
-        // Off-diagonal QFM generator (P5 #26):
-        //   H = |0><0| + Σ_j α_j (a†_j P₀ + P₀ a_j)
-        // Hermitian, with vacuum ↔ |x_j⟩ mixing (Rabi-like transport).
+    fn test_qfm_hamiltonian_no_cross_channel_leakage_with_two_channels_excited() {
+        // Regression test for a real bug: `qfm_hamiltonian`'s number-operator
+        // term used to be built from `InnerBosonCreate`/`InnerBosonAnnihilate`
+        // (operators that act on an *already-existing* universe's own inner
+        // mode occupation), instead of the *outer* ladder operators that
+        // actually define `|x_j> = B_j^dagger|0>` (QFM.tex §framework). On a
+        // state with a single active data channel the two choices happen to
+        // agree (confirmed by `test_qfm_hamiltonian` above), which is why the
+        // bug went unnoticed — but on a state with *two or more* channels
+        // simultaneously excited, the inner-operator version de-excites one
+        // universe down to the inner vacuum and re-excites *another* universe
+        // into a spurious basis state carrying both channels' inner modes at
+        // once, leaking amplitude into a state that encodes no real data
+        // point and breaking the zero-data-loss disjointness
+        // (`QFM.tex` eq. (disjoint)) the whole encoding relies on.
+        let alphas = [1.5, 2.1];
+        let h = qfm_hamiltonian(&alphas);
+
+        // |x_0, x_1>: two outer universes, one in inner mode 0, one in mode 1.
+        let mut inner0 = crate::InnerBosonicState::vacuum();
+        inner0.modes.insert(0, 1);
+        let mut inner1 = crate::InnerBosonicState::vacuum();
+        inner1.modes.insert(1, 1);
+        let state = QuantumState::vacuum()
+            .apply(&Operator::OuterBosonCreate(inner0))
+            .apply(&Operator::OuterBosonCreate(inner1));
+
+        let h_state = h.apply(&state);
+
+        // H|x_0,x_1> = (α_0+α_1)|x_0,x_1>, an eigenstate with no leakage into
+        // any other basis state.
+        assert_eq!(
+            h_state.len(),
+            1,
+            "H|x_0,x_1> must have exactly one component, not leak into a \
+             spurious cross-channel basis state; got {:?}",
+            h_state.components.keys().collect::<Vec<_>>()
+        );
+        let amp = h_state.components.get(&state.components.keys().next().unwrap().clone())
+            .copied()
+            .unwrap_or(Complex64::new(0.0, 0.0));
+        let expected = alphas[0] + alphas[1];
+        assert!(
+            (amp.re - expected).abs() < 1e-12 && amp.im.abs() < 1e-12,
+            "H|x_0,x_1> = (α_0+α_1)|x_0,x_1>; got amplitude {amp}"
+        );
+    }
+
+    // ── Localized (D-coordinate) QFM encoding ───────────────────────
+    // `QFM.tex`, "The data-channel wave-function on the hypersphere:
+    // finitely many localized coordinates, the rest uniform": a data point
+    // x ∈ R^D localizes exactly D of the (infinitely many) hyperspherical
+    // coordinates, the rest staying at the uniform circle measure.
+    // `point_to_inner_state`/`qfm_hamiltonian_localized` are the direct
+    // computational realization: D occupied inner modes per point (one per
+    // real coordinate), everything else left at zero occupation.
+
+    #[test]
+    fn point_to_inner_state_distinguishes_different_points() {
+        let a = point_to_inner_state(&[1.0, 2.0, 3.0], QFM_DEFAULT_QUANTIZATION_SCALE);
+        let b = point_to_inner_state(&[1.0, 2.0, 3.5], QFM_DEFAULT_QUANTIZATION_SCALE);
+        assert_ne!(a, b, "points differing in one coordinate must differ");
+        assert_eq!(a.modes.len(), 3, "three nonzero coordinates -> three occupied modes");
+    }
+
+    #[test]
+    fn point_to_inner_state_distinguishes_sign() {
+        // A naive `abs()`-based quantization would collide +v and -v onto
+        // the same occupation number, silently merging two distinct points
+        // into one non-orthogonal Fock state. The zigzag encoding must not
+        // do that.
+        let pos = point_to_inner_state(&[1.5], QFM_DEFAULT_QUANTIZATION_SCALE);
+        let neg = point_to_inner_state(&[-1.5], QFM_DEFAULT_QUANTIZATION_SCALE);
+        assert_ne!(pos, neg, "+1.5 and -1.5 must map to different inner states");
+    }
+
+    #[test]
+    fn point_to_inner_state_zero_coordinate_leaves_mode_unoccupied() {
+        // A coordinate that quantizes to exactly zero carries no
+        // information (matches the vacuum in that mode) and so must not be
+        // inserted into the mode map at all.
+        let state = point_to_inner_state(&[0.0, 2.0], QFM_DEFAULT_QUANTIZATION_SCALE);
+        assert!(!state.modes.contains_key(&0), "zero coordinate must stay unoccupied");
+        assert!(state.modes.contains_key(&1));
+    }
+
+    #[test]
+    fn test_qfm_hamiltonian_localized_eigenstates() {
+        let points = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![-1.0, 2.0]];
         let alphas = [1.5, 2.1, 0.8];
-        let h = qfm_hamiltonian_offdiag(&alphas);
+        let h = qfm_hamiltonian_localized(&points, &alphas, QFM_DEFAULT_QUANTIZATION_SCALE);
 
-        // 1 projector + 2 conjugate terms per data point.
-        assert_eq!(h.terms.len(), 1 + 2 * alphas.len());
-        assert!(matches!(h.terms[0].1[..], [Operator::ProjectVacuum]));
-        assert!(h.terms.iter().all(|(c, _)| c.im.abs() < 1e-15));
-
-        // Hermiticity: H == H† (the coupling terms are a†P₀ / P₀a conjugates).
-        let h_dag = h.adjoint();
-        assert_eq!(h.terms.len(), h_dag.terms.len());
-
-        // Helper: one outer universe holding a single boson in inner mode j.
-        let single_boson = |j: u32| {
-            let mut inner = crate::InnerBosonicState::vacuum();
-            inner.modes.insert(j, 1);
-            Operator::OuterBosonCreate(inner).apply_to_state(&QuantumState::vacuum())
-        };
         let vac = QuantumState::vacuum();
-
-        // H|0> = |0> + Σ α_j |x_j>  —  projector keeps vacuum, each ĥ_j creates
-        // amplitude in channel j. Vacuum expectation = 1 (from the projector);
-        // the off-diagonal terms contribute <0|a†_j P₀|0> = 0.
         let h_vac = h.apply(&vac);
         let eig0 =
             QuantumState::inner_product(&vac, &h_vac) / QuantumState::inner_product(&vac, &vac);
-        assert!(
-            (eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12,
-            "⟨0|H|0⟩ = 1 (projector); got {eig0}"
-        );
+        assert!((eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12, "H|0> = |0>");
 
-        for (j, &alpha) in alphas.iter().enumerate() {
-            let xj = single_boson(j as u32);
+        for (point, &alpha) in points.iter().zip(alphas.iter()) {
+            let inner = point_to_inner_state(point, QFM_DEFAULT_QUANTIZATION_SCALE);
+            let xj = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
             let h_xj = h.apply(&xj);
-
-            // Diagonal: ⟨x_j|H|x_j⟩ = 0  (no number operator; P₀a_j|x_j⟩=|0⟩
-            // but ⟨x_j|0⟩ = 0, and a†_jP₀|x_j⟩ = 0).
-            let diag =
+            let eig =
                 QuantumState::inner_product(&xj, &h_xj) / QuantumState::inner_product(&xj, &xj);
             assert!(
-                diag.norm() < 1e-12,
-                "⟨x_{j}|H|x_{j}⟩ = 0 (off-diagonal only); got {diag}"
-            );
-
-            // Off-diagonal coupling: ⟨0|H|x_j⟩ = α_j  (the vacuum↔data mixing).
-            // H|x_j⟩ = P₀a_j|x_j⟩ = |0⟩ (times α_j); a†_jP₀|x_j⟩ = 0.
-            let offdiag = QuantumState::inner_product(&vac, &h_xj);
-            assert!(
-                (offdiag.re - alpha).abs() < 1e-12 && offdiag.im.abs() < 1e-12,
-                "⟨0|H|x_{j}⟩ = α_{j} = {alpha}; got {offdiag}"
-            );
-
-            // By hermiticity ⟨x_j|H|0⟩ = α_j too.
-            let offdiag_rev = QuantumState::inner_product(&xj, &h_vac);
-            assert!(
-                (offdiag_rev.re - alpha).abs() < 1e-12 && offdiag_rev.im.abs() < 1e-12,
-                "⟨x_{j}|H|0⟩ = α_{j} (hermiticity); got {offdiag_rev}"
+                (eig.re - alpha).abs() < 1e-12 && eig.im.abs() < 1e-12,
+                "H|x_j> = α_j|x_j> for point {point:?}; got {eig}"
             );
         }
+    }
+
+    #[test]
+    fn test_qfm_hamiltonian_localized_no_cross_channel_leakage() {
+        // Same regression as the index-based encoding above, but for the
+        // localized (D-mode-per-point) encoding: two simultaneously-excited
+        // data channels must not leak into a spurious basis state.
+        let points = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let alphas = [1.5, 2.1];
+        let h = qfm_hamiltonian_localized(&points, &alphas, QFM_DEFAULT_QUANTIZATION_SCALE);
+
+        let inner0 = point_to_inner_state(&points[0], QFM_DEFAULT_QUANTIZATION_SCALE);
+        let inner1 = point_to_inner_state(&points[1], QFM_DEFAULT_QUANTIZATION_SCALE);
+        let state = QuantumState::vacuum()
+            .apply(&Operator::OuterBosonCreate(inner0))
+            .apply(&Operator::OuterBosonCreate(inner1));
+
+        let h_state = h.apply(&state);
+        assert_eq!(
+            h_state.len(),
+            1,
+            "must have exactly one component, no leakage; got {:?}",
+            h_state.components.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_qfm_hamiltonian_mehler_projector_localized_couples_vacuum_to_data_channels() {
+        // Exact off-diagonal generator with the literal data-channel encoding:
+        // H = |0̃><0̃| with |0̃> = c₀|vac> + Σ ε_j|x_j>, |x_j> the localized
+        // channel. ⟨x_j|H|vac⟩ = c₀ε_j and ⟨x_i|H|x_j⟩ = ε_iε_j — coupling
+        // with NO explicit coupling terms and no truncation.
+        let points = vec![vec![1.0, 0.5], vec![-2.0, 3.0]];
+        let eps = [0.3, 0.4];
+        let c0 = (1.0f64 - 0.09 - 0.16).sqrt();
+        let h =
+            qfm_hamiltonian_mehler_projector_localized(&points, &eps, QFM_DEFAULT_QUANTIZATION_SCALE);
+
+        // Single rank-1 term, self-adjoint.
+        assert_eq!(h.terms.len(), 1);
+        assert_eq!(h.adjoint().terms.len(), 1);
+
+        let vac = QuantumState::vacuum();
+        let h_vac = h.apply(&vac);
+        let x: Vec<QuantumState> = points
+            .iter()
+            .map(|p| {
+                let inner = point_to_inner_state(p, QFM_DEFAULT_QUANTIZATION_SCALE);
+                QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner))
+            })
+            .collect();
+        for (i, xi) in x.iter().enumerate() {
+            let amp = QuantumState::inner_product(xi, &h_vac);
+            let want = c0 * eps[i];
+            assert!(
+                (amp.re - want).abs() < 1e-12 && amp.im.abs() < 1e-12,
+                "⟨x_{i}|H|vac⟩ = c₀ε_{i} = {want}; got {amp}"
+            );
+            for (j, xj) in x.iter().enumerate() {
+                let elem = QuantumState::inner_product(xi, &h.apply(xj));
+                let want = eps[i] * eps[j];
+                assert!(
+                    (elem.re - want).abs() < 1e-12 && elem.im.abs() < 1e-12,
+                    "⟨x_{i}|H|x_{j}⟩ = ε_iε_j = {want}; got {elem}"
+                );
+            }
+        }
+
+        // Exactly a projector on arbitrary probes: H² = H.
+        let mut probe = QuantumState::zero();
+        probe.scale_and_add(&vac, Complex64::new(0.5, 0.1));
+        probe.scale_and_add(&x[0], Complex64::new(-0.3, 0.2));
+        probe.scale_and_add(&x[1], Complex64::new(0.7, 0.0));
+        let hp = h.apply(&probe);
+        let hhp = h.apply(&hp);
+        assert!(
+            state_diff_norm(&hhp, &hp) < 1e-12,
+            "localized exact generator must satisfy H² = H"
+        );
+    }
+
+    // ── Exact Mehler-projector QFM generator ────────────────────────
+    // `QFM.tex`, "The exact off-diagonal generator is just the vacuum
+    // projector": the uniform Mehler vacuum is NOT orthogonal to the data
+    // channels (<0|x_j> = ε_j > 0, since a channel localizes only finitely
+    // many hyperspherical coordinates), so H = |0><0| is by itself the
+    // off-diagonal generator. In the orthonormal OuterState frame the
+    // Mehler vacuum is the dressed superposition
+    //   |0> = c₀|vac>_F + Σ_j ε_j B†_j|vac>_F,  c₀ = sqrt(1 − Σ ε²).
+
+    /// Diff-norm helper: ‖a − b‖.
+    fn state_diff_norm(a: &QuantumState, b: &QuantumState) -> f64 {
+        let mut d = a.clone();
+        d.scale_and_add(b, Complex64::new(-1.0, 0.0));
+        d.norm()
+    }
+
+    /// The single-boson channel state |x_j> = B†_j|vac>_F.
+    fn channel_state(j: u32) -> QuantumState {
+        let mut inner = crate::InnerBosonicState::vacuum();
+        inner.modes.insert(j, 1);
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner))
+    }
+
+    /// The dressed Mehler vacuum c₀|vac>_F + Σ ε_j|x_j>.
+    fn dressed_vacuum(epsilons: &[f64]) -> QuantumState {
+        let sum_sq: f64 = epsilons.iter().map(|e| e * e).sum();
+        let c0 = (1.0 - sum_sq).sqrt();
+        let mut psi = QuantumState::zero();
+        psi.scale_and_add(&QuantumState::vacuum(), Complex64::new(c0, 0.0));
+        for (j, &e) in epsilons.iter().enumerate() {
+            psi.scale_and_add(&channel_state(j as u32), Complex64::new(e, 0.0));
+        }
+        psi
+    }
+
+    #[test]
+    fn test_mehler_channel_overlap_formula() {
+        let two_pi = 2.0 * std::f64::consts::PI;
+        // A full-circle "arc" is no localization: factor 1.
+        assert!((mehler_channel_overlap(&[two_pi]) - 1.0).abs() < 1e-12);
+        // Per-coordinate factor sqrt(w/2π): two arcs of width π/2 give
+        // sqrt(1/4)·sqrt(1/4) = 1/4.
+        let e = mehler_channel_overlap(&[two_pi / 4.0, two_pi / 4.0]);
+        assert!((e - 0.25).abs() < 1e-12, "got {e}");
+        // No localized coordinates at all: the channel IS the vacuum.
+        assert!((mehler_channel_overlap(&[]) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_mehler_projector_matrix_elements() {
+        // <vac|H|vac> = c₀², <x_i|H|x_j> = ε_iε_j, <vac|H|x_j> = c₀ε_j —
+        // the off-diagonal channel↔channel coupling exists with NO explicit
+        // coupling terms beyond the projector itself.
+        let eps = [0.3, 0.4];
+        let c0 = (1.0f64 - 0.09 - 0.16).sqrt(); // sqrt(0.75)
+        let h = qfm_hamiltonian_mehler_projector(&eps);
+
+        let vac = QuantumState::vacuum();
+        let x: Vec<QuantumState> = (0..2).map(|j| channel_state(j)).collect();
+
+        let vv = QuantumState::inner_product(&vac, &h.apply(&vac));
+        assert!((vv.re - c0 * c0).abs() < 1e-12 && vv.im.abs() < 1e-12);
+
+        for i in 0..2 {
+            for j in 0..2 {
+                let elem = QuantumState::inner_product(&x[i], &h.apply(&x[j]));
+                let want = eps[i] * eps[j];
+                assert!(
+                    (elem.re - want).abs() < 1e-12 && elem.im.abs() < 1e-12,
+                    "<x_{i}|H|x_{j}> = {elem}, want {want}"
+                );
+            }
+            let cross = QuantumState::inner_product(&vac, &h.apply(&x[i]));
+            assert!(
+                (cross.re - c0 * eps[i]).abs() < 1e-12,
+                "<vac|H|x_{i}> = {cross}, want {}",
+                c0 * eps[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_mehler_projector_is_exactly_a_projector() {
+        // H = |0><0| is rank-1 and idempotent: H(H|s>) = H|s> for any |s>.
+        // Idempotence is the signature of the exact generator — any
+        // truncation of the projector would fail this.
+        let eps = [0.3, 0.4];
+        let h = qfm_hamiltonian_mehler_projector(&eps);
+
+        // Probe with several states: frame vacuum, each channel, a mixed
+        // superposition, and a two-particle state (annihilated by H).
+        let mut probe = QuantumState::zero();
+        probe.scale_and_add(&QuantumState::vacuum(), Complex64::new(0.5, 0.1));
+        probe.scale_and_add(&channel_state(0), Complex64::new(-0.3, 0.2));
+        probe.scale_and_add(&channel_state(1), Complex64::new(0.7, 0.0));
+        let two_particle = {
+            let mut i0 = crate::InnerBosonicState::vacuum();
+            i0.modes.insert(0, 1);
+            let mut i1 = crate::InnerBosonicState::vacuum();
+            i1.modes.insert(1, 1);
+            QuantumState::vacuum()
+                .apply(&Operator::OuterBosonCreate(i0))
+                .apply(&Operator::OuterBosonCreate(i1))
+        };
+        for s in [
+            QuantumState::vacuum(),
+            channel_state(0),
+            channel_state(1),
+            probe,
+            two_particle.clone(),
+        ] {
+            let hs = h.apply(&s);
+            let hhs = h.apply(&hs);
+            assert!(
+                state_diff_norm(&hhs, &hs) < 1e-12,
+                "H must be idempotent (H² = H) on every state"
+            );
+        }
+        // The two-particle state lies outside span{|0>}: H annihilates it.
+        assert!(
+            h.apply(&two_particle).norm() < 1e-12,
+            "H = |0><0| must annihilate states orthogonal to the dressed vacuum"
+        );
+    }
+
+    #[test]
+    fn test_mehler_projector_dressed_vacuum_is_the_unit_eigenvector() {
+        // H|0> = |0>: the dressed Mehler vacuum is the (only) eigenvalue-1
+        // eigenvector of its own projector.
+        let eps = [0.3, 0.4];
+        let h = qfm_hamiltonian_mehler_projector(&eps);
+        let psi0 = dressed_vacuum(&eps);
+        let h_psi0 = h.apply(&psi0);
+        assert!(
+            state_diff_norm(&h_psi0, &psi0) < 1e-12,
+            "H|0> must equal |0> exactly"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Σ ε_j² ≤ 1")]
+    fn test_mehler_projector_rejects_overweight_overlaps() {
+        // Σ ε² > 1 is physically impossible (the ε² are uniform-measure
+        // masses of disjoint packet supports) and must be rejected.
+        let _ = qfm_hamiltonian_mehler_projector(&[0.9, 0.9]);
     }
 
     #[test]

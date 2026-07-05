@@ -1,5 +1,6 @@
-use crate::{Hamiltonian, InnerBosonicState, Operator};
+use crate::{Hamiltonian, InnerBosonicState, Operator, OuterState, QuantumState};
 use num_complex::Complex64;
+use std::sync::Arc;
 
 // ─────────────────────────────────────────────
 // Direct Hamiltonian term builder helpers
@@ -393,102 +394,323 @@ pub fn harmonic_chain(n_modes: usize, omega: f64) -> Hamiltonian {
 
 // ─────────────────────────────────────────────
 // 4b. Quantum Flow Matching (QFM) generator (builtin — see QFM.tex)
-//     H = |0><0|  +  Σ_j α_j n_j        (n_j = a†_j a_j)
+//     H = |0><0|  +  Σ_j α_j n_j        (n_j = B†_j B_j)
 //
 //     Analytical, neural-network-free generative flow: M orthogonal data
-//     points become single bosons in distinct modes, and the Mehler uniform
-//     prior is the rank-1 vacuum projector |0><0|. The data potential has no
-//     cross-terms, so it is strictly diagonal (H|0>=|0>, H|x_j>=α_j|x_j>) and
-//     building it stays O(M) by bypassing Expression::expand().
+//     points become single *outer* bosons (one universe per data point, each
+//     carrying inner mode j), and the Mehler uniform prior is the rank-1
+//     vacuum projector |0><0| (QFM.tex §"Which vacuum?"). The data potential
+//     has no cross-terms, so it is strictly diagonal (H|0>=|0>,
+//     H|x_j>=α_j|x_j>) and building it stays O(M) by bypassing
+//     Expression::expand().
 // ─────────────────────────────────────────────
 
 /// The analytical **Quantum Flow Matching** generator (see `QFM.tex`).
 ///
-/// Encodes `M = alphas.len()` orthogonal data points as single bosons in
-/// distinct modes plus the Mehler vacuum-projector prior:
-/// `H = |0><0| + Σ_j α_j · a†_j a_j`. Constructed directly so M can be huge
-/// without hitting the CAS term-explosion limit.
+/// Encodes `M = alphas.len()` orthogonal data points as single-excitation
+/// *outer* universes `|x_j> = B†_j|0>` (one universe holding one boson in
+/// inner mode `j`, `B†_j = OuterBosonCreate(|1_j>)`) plus the Mehler
+/// vacuum-projector prior: `H = |0><0| + Σ_j α_j · B†_j B_j`. The number
+/// operator `n_j = B†_j B_j` must be built from the *outer* ladder operators
+/// (not `InnerBosonCreate`/`InnerBosonAnnihilate`, which act on an already-
+/// existing universe's own inner mode occupation): with inner operators, a
+/// state carrying two or more simultaneously-excited data channels leaks
+/// amplitude into an unphysical basis state where one universe is emptied
+/// and another carries two channels' excitations at once, breaking the
+/// zero-data-loss disjointness (`QFM.tex` eq. (disjoint)) the encoding
+/// relies on. Constructed directly so M can be huge without hitting the CAS
+/// term-explosion limit.
 pub fn qfm_hamiltonian(alphas: &[f64]) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     // H_0 = |0><0|, the Mehler global prior.
     terms.push((Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum]));
-    // Decoupled data potential: one number operator per data point.
+    // Decoupled data potential: one outer number operator B†_j B_j per data
+    // point, where |x_j> = B†_j|0> is a single outer universe holding one
+    // boson in inner mode j.
     for (j, &alpha) in alphas.iter().enumerate() {
         let mode = j as u32;
+        let mut inner = InnerBosonicState::vacuum();
+        inner.modes.insert(mode, 1);
         terms.push((
             Complex64::new(alpha, 0.0),
             vec![
-                Operator::InnerBosonCreate(mode),
-                Operator::InnerBosonAnnihilate(mode),
+                Operator::OuterBosonCreate(inner.clone()),
+                Operator::OuterBosonAnnihilate(inner),
             ],
         ));
     }
     Hamiltonian { terms }
 }
 
-/// The **off-diagonal** Quantum Flow Matching generator (P5 #26).
+/// Build the exact rank-1 projector `H = |0̃><0̃|` onto a dressed Mehler
+/// vacuum from its frame components: `|0̃> = c₀|vac>_F + Σ_j ε_j B†_j|vac>_F`,
+/// with the channel `B†_j|vac>_F` given by an outer universe holding
+/// `channels[j].0` and weight `ε_j = channels[j].1`.
 ///
-/// Where [`qfm_hamiltonian`] uses the diagonal number-operator surrogate
-/// `H = |0><0| + Σ α_j n_j` (eigenstates → phase-only evolution), this realizes
-/// the Fock-space form of the continuity operator `ĥ_j` of `QFM.tex` §2.3 that
-/// *transports amplitude between the vacuum and the data channels*:
+/// The dressed vector is renormalized to unit norm before wrapping in
+/// [`Operator::ProjectOnto`], so `H² = H` holds exactly even when distinct
+/// data points quantize onto the same Fock basis state (their weights add).
+/// Application cost is the rank-1 shortcut `H|s> = <0̃|s>·|0̃>` —
+/// `O(components)` per matvec, never the `O(M²)` cross-term expansion.
+fn dressed_vacuum_projector(channels: Vec<(InnerBosonicState, f64)>, c0: f64) -> Hamiltonian {
+    let mut dressed = QuantumState {
+        components: Default::default(),
+    };
+    if c0 != 0.0 {
+        dressed
+            .components
+            .insert(OuterState::vacuum(), Complex64::new(c0, 0.0));
+    }
+    for (inner, eps) in channels {
+        let mut outer = OuterState::vacuum();
+        outer.bosonic.insert(inner, 1);
+        *dressed
+            .components
+            .entry(outer)
+            .or_insert(Complex64::new(0.0, 0.0)) += Complex64::new(eps, 0.0);
+    }
+    let norm: f64 = dressed
+        .components
+        .values()
+        .map(|a| a.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    assert!(norm > 0.0, "dressed Mehler vacuum must be a nonzero vector");
+    for a in dressed.components.values_mut() {
+        *a /= norm;
+    }
+    Hamiltonian {
+        terms: vec![(
+            Complex64::new(1.0, 0.0),
+            vec![Operator::ProjectOnto(Arc::new(dressed))],
+        )],
+    }
+}
+
+// ─────────────────────────────────────────────
+// 4c. Localized data-point encoding for QFM (see `QFM.tex`, "The data-channel
+//     wave-function on the hypersphere: finitely many localized coordinates,
+//     the rest uniform").
+//
+//     `qfm_hamiltonian`/`qfm_hamiltonian_mehler_projector` above identify each data
+//     point purely by its *array index* j: `|x_j> = OuterBosonCreate({j: 1})
+//     |0>`. That is a legitimate single-excitation encoding (the enumeration
+//     index alone already guarantees `<x_i|x_j> = delta_ij`), but it carries
+//     none of the point's actual D real coordinates in the Fock-space state
+//     itself — only in the scalar coefficient alpha_j.
+//
+//     `QFM.tex` describes a more literal picture: a data point x ∈ R^D
+//     corresponds to an inner wave-function that localizes exactly D of the
+//     (infinitely many) hyperspherical coordinates around x's own D real
+//     components, leaving every other coordinate at the uniform circle
+//     measure. `point_to_inner_state` is the direct computational
+//     realization of that: it occupies exactly D inner modes (0..D-1, one
+//     per real coordinate), each mode's occupation number a fixed-point
+//     quantization of that coordinate, and leaves every other mode (of the
+//     inner Fock space's infinitely many) at zero occupation — i.e. at the
+//     vacuum/uniform state, exactly like the picture in the paper.
+// ─────────────────────────────────────────────
+
+/// Default fixed-point quantization scale for [`point_to_inner_state`]:
+/// a real coordinate `x` is quantized to the nearest multiple of `1/SCALE`
+/// before being encoded as an inner-mode occupation number. Coarser than
+/// this and distinct nearby points collide onto the same Fock basis state
+/// (become non-orthogonal); finer than this risks overflowing the `u32`
+/// occupation-number range for large-magnitude coordinates.
+pub const QFM_DEFAULT_QUANTIZATION_SCALE: f64 = 1024.0;
+
+/// Zigzag-encode a signed integer into an unsigned one (`0,-1,1,-2,2,...` ->
+/// `0,1,2,3,4,...`), the standard bijection `Z -> N` used by e.g. protobuf
+/// varints. Needed because a real coordinate can be negative but a boson
+/// occupation number (`u32`) cannot; a naive `abs()` would collide `+v` and
+/// `-v` onto the same mode occupation, silently merging two distinct data
+/// points into one non-orthogonal Fock state.
+fn zigzag_encode(n: i64) -> u32 {
+    (if n >= 0 {
+        (n as u64) * 2
+    } else {
+        n.unsigned_abs() * 2 - 1
+    }) as u32
+}
+
+/// Encode a real-valued point `x ∈ R^D` as an inner-Fock-space
+/// configuration that occupies one mode per coordinate (`D` modes total,
+/// indexed `0..D-1`), each mode's occupation number a fixed-point
+/// quantization of that coordinate (see [`QFM_DEFAULT_QUANTIZATION_SCALE`]).
+/// A coordinate that quantizes to exactly zero leaves its mode unoccupied
+/// (equivalent to never touching it — the "uniform, no information" state
+/// for that coordinate). Every mode beyond `D-1` is left unoccupied
+/// regardless of `x`, matching `QFM.tex`'s "the rest uniform."
 ///
-/// `H = |0><0| + Σ_j α_j (B†_j P₀ + P₀ B_j)`
+/// Two points that quantize to the same `D`-tuple of occupation numbers
+/// produce the same `InnerBosonicState` and are therefore *not* orthogonal
+/// (they become the same Fock basis state) — this is the encoding's finite
+/// resolution, the discrete analogue of two wave-packets whose localized
+/// supports overlap, not a bug.
+pub fn point_to_inner_state(point: &[f64], scale: f64) -> InnerBosonicState {
+    let mut modes = std::collections::BTreeMap::new();
+    for (i, &xi) in point.iter().enumerate() {
+        let q = (xi * scale).round() as i64;
+        let occ = zigzag_encode(q);
+        if occ > 0 {
+            modes.insert(i as u32, occ);
+        }
+    }
+    InnerBosonicState { modes }
+}
+
+/// The analytical **Quantum Flow Matching** generator, with each data point
+/// localized on its own `D` inner modes (see the module-level note above),
+/// rather than identified only by array index. `H = |0><0| + Σ_j α_j · B†_j
+/// B_j`, where `|x_j> = B†_j|0>` and `B†_j` creates one outer universe
+/// carrying [`point_to_inner_state`]`(points[j], scale)`.
 ///
-/// where `B†_j = OuterBosonCreate(|x_j⟩)` and `B_j = OuterBosonAnnihilate(|x_j⟩)`
-/// are the outer-universe creation/annihilation operators for the single-boson
-/// state `|x_j⟩` (one universe holding one boson in inner mode `j`). In the
-/// `{|0⟩, |x_j⟩}` subspace, `B†_j P₀ + P₀ B_j` is the Pauli-X that swaps
-/// vacuum ↔ data channel `j` (apply is right-to-left: `B†_j` after `P₀` creates
-/// the `|x_j⟩` universe from the vacuum; `P₀` after `B_j` projects the
-/// vacuum left by annihilating the `|x_j⟩` universe). The generator is
-/// **Hermitian** — `B†_j P₀` and `P₀ B_j` are conjugates (`B†† = B`,
-/// `P₀† = P₀`, reverse product) — so `e^{-iHt}` is unitary and the Born-rule
-/// substrate (norm conservation, `nalgebra` Padé `exp()`) applies unchanged.
-///
-/// **Honest deviation from the paper:** `QFM.tex` eq. (Hbar) gives the
-/// *anti-Hermitian* continuity generator `H̄ = |0><0| - (i/2)Σ α_j ĥ_j` whose
-/// evolution is the real Fokker–Planck transport semigroup (irreversible
-/// diffusion of amplitude into the data channels). `unfer`'s SIRK solver and
-/// Born-rule layer assume a Hermitian Hamiltonian and unitary evolution
-/// (AGENTS.md §4: "Always use nalgebra's Padé approximant exp() … to preserve
-/// unitarity and Hermiticity"). This builtin therefore implements the
-/// **Hermitian** off-diagonal coupling: the result is *coherent Rabi-like
-/// oscillation* of amplitude between vacuum and data channels (populations
-/// genuinely flow, then flow back), not the paper's irreversible transport. It
-/// is the unfer-faithful realization of the vacuum↔data mixing that the
-/// diagonal surrogate lacks; setting `α_j → 0` recovers the bare projector.
-/// Constructed directly so M can be huge without CAS term-explosion.
-pub fn qfm_hamiltonian_offdiag(alphas: &[f64]) -> Hamiltonian {
+/// `points` and `alphas` are zipped pairwise (extra elements in the longer
+/// slice are ignored); use [`potential::optimal_coefficients`] (in the
+/// `qfm` crate) to derive `alphas` from `points` directly.
+pub fn qfm_hamiltonian_localized(points: &[Vec<f64>], alphas: &[f64], scale: f64) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
-    // H_0 = |0><0|, the Mehler global prior (same as the diagonal builtin).
     terms.push((Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum]));
-    // Off-diagonal coupling per data point: α_j (B†_j P₀ + P₀ B_j), where
-    // |x_j⟩ is the single-boson inner state {mode j: 1}. Two conjugate terms
-    // per j → hermitian; vacuum ↔ |x_j⟩ mixing (Pauli-X in the 2D subspace).
-    for (j, &alpha) in alphas.iter().enumerate() {
-        let mode = j as u32;
-        let mut inner = InnerBosonicState::vacuum();
-        inner.modes.insert(mode, 1);
-        let c = Complex64::new(alpha, 0.0);
-        // B†_j P₀  —  maps |0⟩ → |x_j⟩ (create the |x_j⟩ universe from vacuum)
+    for (point, &alpha) in points.iter().zip(alphas.iter()) {
+        let inner = point_to_inner_state(point, scale);
         terms.push((
-            c,
+            Complex64::new(alpha, 0.0),
             vec![
                 Operator::OuterBosonCreate(inner.clone()),
-                Operator::ProjectVacuum,
-            ],
-        ));
-        // P₀ B_j  —  maps |x_j⟩ → |0⟩ (annihilate the |x_j⟩ universe → vacuum)
-        terms.push((
-            c,
-            vec![
-                Operator::ProjectVacuum,
                 Operator::OuterBosonAnnihilate(inner),
             ],
         ));
     }
     Hamiltonian { terms }
+}
+
+/// The **exact off-diagonal generator** with each data point localized on
+/// its own `D` inner modes via [`point_to_inner_state`] instead of
+/// identified only by array index: `H = |0̃><0̃|`, the rank-1 projector
+/// onto the dressed Mehler vacuum
+/// `|0̃> = c₀|vac>_F + Σ_j ε_j B†_j|vac>_F`, `c₀ = sqrt(1 − Σ ε²)`,
+/// where `B†_j` creates one outer universe carrying
+/// [`point_to_inner_state`]`(points[j], scale)`. This is the localized
+/// counterpart of [`qfm_hamiltonian_mehler_projector`] — same exact
+/// generator, literal data-channel encoding.
+///
+/// `points` and `epsilons` are zipped pairwise (extra elements in the
+/// longer slice are ignored); derive `epsilons` from the packet arc widths
+/// via [`mehler_channel_overlap`]. Points that quantize onto the same Fock
+/// basis state have their overlaps added (finite encoding resolution).
+///
+/// Panics if `Σ ε_j² > 1` (physically impossible: the ε² are the
+/// uniform-measure masses of disjoint support boxes).
+pub fn qfm_hamiltonian_mehler_projector_localized(
+    points: &[Vec<f64>],
+    epsilons: &[f64],
+    scale: f64,
+) -> Hamiltonian {
+    let sum_sq: f64 = epsilons.iter().map(|e| e * e).sum();
+    assert!(
+        sum_sq <= 1.0 + 1e-12,
+        "channel overlaps must satisfy Σ ε_j² ≤ 1 (the ε² are uniform-measure \
+         masses of disjoint packet supports); got Σ ε² = {sum_sq}"
+    );
+    let c0 = (1.0 - sum_sq).max(0.0).sqrt();
+    let channels = points
+        .iter()
+        .zip(epsilons.iter())
+        .map(|(point, &eps)| (point_to_inner_state(point, scale), eps))
+        .collect();
+    dressed_vacuum_projector(channels, c0)
+}
+
+// ─────────────────────────────────────────────
+// 4d. Exact Mehler-projector QFM generator (see `QFM.tex`, "The exact
+//     off-diagonal generator is just the vacuum projector").
+//
+//     The Mehler uniform prior |0> is NOT orthogonal to the localized data
+//     channels: a channel localizes only finitely many hyperspherical
+//     coordinates (an arc of width w_i on each of its D circles, uniform on
+//     every other circle), so its overlap with the uniform vacuum is the
+//     finite product
+//         ε_j = <0|x_j> = Π_i sqrt(w_{j,i} / 2π) > 0
+//     — strictly positive precisely because the localization is finite
+//     (Kakutani's dichotomy: infinitely many disturbed coordinates would
+//     make the infinite product vanish). Distinct channels remain exactly
+//     orthogonal (disjoint arcs on shared circles). In the orthonormal
+//     OuterState frame {|vac>_F, B†_j|vac>_F} the uniform vacuum is
+//     therefore the *dressed* superposition
+//         |0> = c_0 |vac>_F + Σ_j ε_j B†_j |vac>_F,
+//         c_0 = sqrt(1 − Σ_j ε_j²),
+//     (Σ ε_j² ≤ 1 automatically: ε_j² is the uniform-measure mass of
+//     packet j's support box, and the boxes are disjoint). The exact
+//     off-diagonal generator is then *just the rank-1 projector*
+//     H = |0><0| — no explicit coupling terms; the vacuum↔channel
+//     transport comes entirely from the non-orthogonality.
+// ─────────────────────────────────────────────
+
+/// The vacuum–channel overlap `ε = Π_i sqrt(w_i / 2π)` of a data channel
+/// whose inner wave-function is localized on arcs of widths `widths`
+/// (one entry per localized hyperspherical coordinate; every coordinate
+/// not listed is uniform on its circle and contributes factor 1).
+///
+/// Per coordinate this is the Hellinger overlap between the uniform
+/// qsample `sqrt(1/2π)` and the localized arc qsample `sqrt(1/w)`:
+/// `∫_arc sqrt(1/w)·sqrt(1/2π) dφ = sqrt(w/2π)`. A full-circle "arc"
+/// (`w = 2π`) is no localization at all and contributes factor 1.
+pub fn mehler_channel_overlap(widths: &[f64]) -> f64 {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    widths
+        .iter()
+        .map(|&w| {
+            assert!(
+                w > 0.0 && w <= two_pi,
+                "arc width must be in (0, 2π], got {w}"
+            );
+            (w / two_pi).sqrt()
+        })
+        .product()
+}
+
+/// The **exact off-diagonal generator** Quantum Flow Matching:
+/// `H = |0><0|`, the rank-1 projector onto the uniform Mehler vacuum.
+/// This is the exact (untruncated) form. Because the vacuum is non-orthogonal
+/// to every data channel (`<0|x_j> = ε_j`, see [`mehler_channel_overlap`]),
+/// this projector alone is the off-diagonal generator: `<x_i|H|x_j> = ε_i ε_j`
+/// with no explicit coupling terms needed.
+///
+/// In the orthonormal `OuterState` frame the Mehler vacuum is the dressed
+/// superposition `|0> = c₀|vac>_F + Σ_j ε_j B†_j|vac>_F` with
+/// `c₀ = sqrt(1 − Σ ε²)` (`B†_j` the outer creation for the single-boson
+/// inner state `{j: 1}`), and the generator is the single rank-1 term
+/// [`Operator::ProjectOnto`]`(|0>)`. Application uses the rank-1 shortcut
+/// `H|s> = <0|s>·|0>` — one sparse inner product plus one scaled copy —
+/// so the cost is `O(M)` per matvec, never the `O(M²)` frame expansion
+/// `c₀²P₀ + Σ c₀ε_j(B†_jP₀ + P₀B_j) + Σ ε_iε_j B†_iP₀B_j`.
+///
+/// `H` is exactly a projector: `H² = H`, eigenvalues 1 (on the dressed
+/// `|0>`) and 0, so `e^{-iHt} = 1 + (e^{-it} − 1)|0><0|` in closed form —
+/// from the frame vacuum, every channel is pumped coherently and
+/// simultaneously with population `P_j(t) = 4 sin²(t/2) c₀² ε_j²`,
+/// returning exactly at `t = 2π`.
+///
+/// Panics if `Σ ε_j² > 1` (physically impossible: the ε² are the
+/// uniform-measure masses of disjoint support boxes).
+pub fn qfm_hamiltonian_mehler_projector(epsilons: &[f64]) -> Hamiltonian {
+    let sum_sq: f64 = epsilons.iter().map(|e| e * e).sum();
+    assert!(
+        sum_sq <= 1.0 + 1e-12,
+        "channel overlaps must satisfy Σ ε_j² ≤ 1 (the ε² are uniform-measure \
+         masses of disjoint packet supports); got Σ ε² = {sum_sq}"
+    );
+    let c0 = (1.0 - sum_sq).max(0.0).sqrt();
+    let channels = epsilons
+        .iter()
+        .enumerate()
+        .map(|(j, &eps)| {
+            let mut inner = InnerBosonicState::vacuum();
+            inner.modes.insert(j as u32, 1);
+            (inner, eps)
+        })
+        .collect();
+    dressed_vacuum_projector(channels, c0)
 }
 
 // ─────────────────────────────────────────────
