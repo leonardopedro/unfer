@@ -28,7 +28,7 @@ An Analytical, Grid-Free Realization of the Continuity Hamiltonian
 via Orthogonal-Fock Encoding and Inversion-Free Krylov Reduction}\\[4pt]
 \large A Self-Contained, Pedagogical Account}
 \author{Implementation Architecture Report}
-\date{July 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov\_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples), rev 22 P9.14 mathed\_mini Step 4, rev 23 P9.15.1 ported velyst examples, rev 24 P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix, rev 25 P10.16.2 real CIFAR-10 fixture + P11.24 Zenodo-Loro persistence module, rev 26 P10.16.3 rank-truncation extension (SVD on the $W$ basis, enables $d=1024$), rev 27 P10.16.4 2D Ising cross-domain validation + P10.18 $l=3$ Yang--Mills mass-gap demo + P11.22 \texttt{unfer\_edge} proxy, rev 28 P11.19/20/21/23 external-module integrations, rev 29 P10.16.5 2D Kolmogorov CFD flow-field cross-domain validation + P10.16.6 post-Newtonian gravitational-waveform cross-domain validation, rev 30 P10.16.7 $d=1024$ cross-domain scaling of all three rev 29 fixtures on the P10.16.3 rank-truncation path, rev 31 exact-projector consolidation: the $\mathcal{O}(\varepsilon)$-truncated off-diagonal coupling is removed and the exact rank-1 Mehler projector (applied via the \texttt{Operator::ProjectOnto} shortcut) becomes the only off-diagonal generator, including inside the TSR flow Hamiltonian)}
+\date{July 2026 (rev.\ 5, with Tomographic Subspace Recovery, rev 14 SIRK-backed unitary flow, rev 15 module demo + benchmarks, rev 16 Quantum Bayesian Update implementation, rev 17 full SIRK-whitened Krylov basis + kernel surface wiring + 5th module demo, rev 18 productionization: P7 (README, CUDA-on-CI, MNIST 8x8 real-data validation, runtime krylov\_dim$\ge$K$_2$ check, HMC validation, 3 new bench groups) + P8.10 (CUDA kernel bench) + P8.11 (iterated\_bayes\_module 6th demo) + P9.12 (CUDA toolkit pinning) + P9.13 (CI PAT docs), rev 19 P8.9 Karcher-mean posterior estimate, rev 20--21 P8.7 Typst-math compiler + P8.8 \texttt{uk\_belief\_propagation} FFI symbol + velysterm merge: upstream typst 0.15 + KanvaSink + kanva\_typst + P9.15 partial (deletion of stale velyst examples), rev 22 P9.14 mathed\_mini Step 4, rev 23 P9.15.1 ported velyst examples, rev 24 P10.16.1 CIFAR-10 16$\times$16 baseline + SIRK shift overflow fix, rev 25 P10.16.2 real CIFAR-10 fixture + P11.24 Zenodo-Loro persistence module, rev 26 P10.16.3 rank-truncation extension (SVD on the $W$ basis, enables $d=1024$), rev 27 P10.16.4 2D Ising cross-domain validation + P10.18 $l=3$ Yang--Mills mass-gap demo + P11.22 \texttt{unfer\_edge} proxy, rev 28 P11.19/20/21/23 external-module integrations, rev 29 P10.16.5 2D Kolmogorov CFD flow-field cross-domain validation + P10.16.6 post-Newtonian gravitational-waveform cross-domain validation, rev 30 P10.16.7 $d=1024$ cross-domain scaling of all three rev 29 fixtures on the P10.16.3 rank-truncation path, rev 31 exact-projector consolidation: the $\mathcal{O}(\varepsilon)$-truncated off-diagonal coupling is removed and the exact rank-1 Mehler projector (applied via the \texttt{Operator::ProjectOnto} shortcut) becomes the only off-diagonal generator, including inside the TSR flow Hamiltonian, rev 32--35 \texttt{qfm\_text} end-to-end: hierarchical dressed vacua on token streams, \texttt{--diagnose} W-rank diagnostic, $\mathcal{O}(M)$ dressed-vacuum matvec, hyperparameter sweep $t\times\lambda\times\mathrm{discount}$, measured numbers (QFM ppl 382--421 vs classical n-gram 365 held-out; W rank 1--2 not $m_\mathrm{shifts}$))}
 
 \begin{document}
 
@@ -1325,17 +1325,32 @@ $|||c_0||-||c_1||| < 10^{-6}$ for arbitrary $t$. Implemented by
 \paragraph{Phase 3: Tomographic distribution reconstruction.} The density
 matrix of $c_1$ is computed in the $m^2$ operator basis: the flat outer
 product is $m^2$ complex multiplications, but only its real part is kept,
-$\rho_{\mathrm{flat}}=\mathrm{Re}\,\mathrm{vec}(c_1c_1^\dagger)\in\Rset^{m^2}$
---- lossless here because the SIRK-whitened basis $W$ is real by
-construction ($\bar H_{\mathrm{tomo}}$ is real-symmetric in this basis), so
-$W_{\mathrm{prob}}$'s own projection weights are real too and the discarded
-imaginary parts of $\rho_{\mathrm{flat}}$ would only have multiplied zero.
+$\rho_{\mathrm{flat}}=\mathrm{Re}\,\mathrm{vec}(c_1c_1^\dagger)\in\Rset^{m^2}$.
 The sketched probability density is then
 $\tilde p=\mathbf{W}_{\mathrm{prob}}\,\rho_{\mathrm{flat}}\in\Rset^{K_2}$:
 a single dense matrix-vector product, complexity $\mathcal{O}(K_2\cdot m^2)$.
 In unfer this is the first half of \texttt{QfmPipeline::decode}
 (\texttt{qfm/src/observables.rs::probability\_weight\_matrix} builds
-$W_{\mathrm{prob}}$ under the same real-$W$ assumption).
+$W_{\mathrm{prob}}$ by keeping the real part of
+$\overline{W_{a,s}}\,W_{a,r}$).
+
+\emph{Correction (rev 34).} Earlier revisions of this section claimed the
+real-part step is lossless ``because the SIRK-whitened basis $W$ is real
+by construction.'' That claim is false: $\bar H_{\mathrm{tomo}}$ is indeed
+real-symmetric, but the SIRK shifts $\zeta_k=-ik/m$ lie on the imaginary
+axis, so the forward Krylov sequence --- and hence $W$ --- is complex in
+general. For complex $W$ the double real-part contraction evaluates to
+\begin{equation}
+  \bigl(\mathbf{W}_{\mathrm{prob}}\,\rho_{\mathrm{flat}}\bigr)_a
+  =\tfrac12\Bigl(\bigl|\braket{a|Wc_1}\bigr|^2
+  +\bigl|\braket{a|\overline{W}c_1}\bigr|^2\Bigr),
+\end{equation}
+the Born population plus a spurious conjugate-basis term that dilutes the
+mode discrimination (exact only when $W$ is real). The image path retains
+this pre-projected observable form; the QFM-Text token head computes the
+Born populations exactly, $\tilde p_a=|\braket{a|Wc_1}|^2$, via
+\texttt{QfmPipeline::decode\_sketched}, at the same
+$\mathcal{O}(K_2\cdot m)$ cost.
 
 \paragraph{Phase 4: Lossless peak recovery (decoding).} The Count-Sketch
 Heavy Hitters algorithm locates the top-$k$ indices of the probability sketch
@@ -1469,6 +1484,169 @@ cost. Sample measurements on the local rev 15 run: compile($M=1000$)
 $\approx 3.6$\,s, generate($d=1024$) $\approx 20$\,\textmu s,
 sketch\_apply($d=4096$) $\approx 9$\,\textmu s --- all consistent with
 the asymptotic complexity table above.
+
+\subsection{QFM-Text: hierarchical dressed vacua on token streams
+(rev 32--35)}
+
+The TSR pipeline is parameter-free in the dimensions of the data it
+ingests: any family of contexts with a per-context budget $K_2$ and a
+unit basis $\{|x_m\rangle\}$ can be plugged in. The
+\texttt{qfm\_text} workspace member (full plan in
+\texttt{docs/QFM\_TEXT\_HRM\_PLAN.md}, measured numbers in
+\texttt{docs/QFM\_TEXT\_STATUS.md}) instantiates this on token
+streams with HRM-Text's data + training process as the operational
+analog. This subsection summarizes the architecture choices and the
+rev 32--35 measured numbers.
+
+\paragraph{Multi-projector generator (one exact
+\texttt{ProjectOnto} per order).} For a context order
+$o\in\{1,\ldots,n\}$ with active modes
+$\{m_o\in[\mathrm{offset}_o,\mathrm{offset}_o+\mathrm{block}_o)\}$,
+define the dressed vacuum (per group)
+\begin{equation}
+|\tilde 0_o\rangle = c_0^{(o)}|0\rangle + \sum_{m_o}\varepsilon_{m_o}^{(o)}|x_{m_o}\rangle,
+\end{equation}
+with the per-group unit-norm normalization
+$\big|c_0^{(o)}\big|^2+\sum_{m_o}\big|\varepsilon_{m_o}^{(o)}\big|^2=1$
+(eq.~Htomo, $\varepsilon_{m_o}^{(o)}=\bar\alpha_{m_o}^{(o)}/\sqrt{1+\sum\bar\alpha^2}$,
+$c_0^{(o)}=1/\sqrt{1+\sum\bar\alpha^2}$, where
+$\bar\alpha_{m_o}^{(o)}=\mathrm{weight}_{m_o}/\mathrm{total\_windows}$).
+The QFM-Text generator is the sum of one exact rank-1 projector
+per order, weighted by a hyperparameter $\lambda_o$:
+\begin{equation}
+H \;=\; \sum_{o=1}^{n} \lambda_o \,|\tilde 0_o\rangle\langle\tilde 0_o|.
+\label{eq:Htomo_text}
+\end{equation}
+This is the multi-projector analog of the single-projector eq.~Htomo
+used in the image TSR. Every term is an exact
+\texttt{Operator::ProjectOnto} (no $\mathcal{O}(\varepsilon)$
+truncation; the rev 31 exact-projector decision is binding for both
+the image and the text paths), and the sum is Hermitian and rank
+$\le n$, so the Krylov dimension is $\le n+1$ by construction.
+
+\paragraph{Per-order $\alpha\to\varepsilon$ normalization.} For each
+order $o$, the per-mode flow weight is the marginal frequency
+$\bar\alpha_{m_o}^{(o)}=\mathrm{weight}_{m_o}/\mathrm{total\_windows}$
+(i.e.\ the per-mode unigram, not the corpus unigram). The
+normalization $\varepsilon_{m_o}^{(o)}=
+\bar\alpha_{m_o}^{(o)}/\sqrt{1+\sum\bar\alpha^2}$ and
+$c_0^{(o)}=1/\sqrt{1+\sum\bar\alpha^2}$ is the same as the image
+TSR's \texttt{build\_flow\_hamiltonian} and the same as
+\texttt{compile\_channels}'s \texttt{ChannelSpec} reducer. The
+dressed vacuum is nearly parallel to the Fock vacuum $|0\rangle$
+when the $\bar\alpha$ are small (which they are on a corpus with
+$\sim10^5$ active modes and per-mode weights $\sim10^{-5}$); the
+W-rank degeneracy documented below is the consequence.
+
+\paragraph{Superposition encode and Born-rule token head.} A query
+context is hashed through the per-order \texttt{OrderHasher} into
+$\le n$ active modes. The Krylov coefficient vector is the
+equal-weight superposition $c_0 = (1/\sqrt{n})\sum_o w_{m_o}$,
+evolved by $c_1 = \exp(-iH_m t)\,c_0$ (Pad\'e approximant, the
+standard nalgebra \texttt{exp} that preserves unitarity), and
+decoded at the per-context active modes only:
+$p_{\tilde{}}[m] = |\langle m|W c_1\rangle|^2$ (the Born rule, not
+the element-wise real-part sketched formula; the rev 33 fix
+guarantees non-negative populations). The marginal token head
+combines the per-mode absolute-discount smoothed histograms with
+the escape mass routed to the corpus unigram (the standard Katz
+backoff), so every token has $P>0$.
+
+\paragraph{Streaming offline compile.} The training pass is a
+single sequential sweep over the corpus shards (the previous
+\texttt{par\_iter().collect()} of all 245 per-shard accumulators
+peaked at 33~GB on a 16~GB system and was OOM-killed mid-corpus in
+rev 33; the fix is a sequential pass with one in-flight
+accumulator, peak = one shard). Each epoch rotates the shard set
+deterministically (HRM-Text's stratified sampling analog); the
+running accumulator carries the merged counts across epochs. The
+final compile is one \texttt{QfmPipeline::compile\_channels} call
+(one SIRK reduction of the dressed-vacuum sum) and one
+\texttt{from\_accumulator} round-trip per epoch.
+
+\paragraph{Honest scope.} The QFM-Text is a quantum-kernel
+n-gram-family model with coherent Krylov smoothing across backoff
+orders. The success criterion is \emph{beating classical
+interpolated/backoff n-gram baselines at equal context order on
+the same corpus}, and demonstrating the QFM pipeline end-to-end at
+corpus scale ($10^7$--$10^8$ tokens, $K_2\sim10^5$). It will not
+approach a 1B HRM-Text transformer; that comparison is reported
+for honesty, not as a target.
+
+\paragraph{Measured numbers (rev 35, full WikiText-103
+corpus).} The new \texttt{qfm\_text} crate (38 unit + 2 integration
+tests; \texttt{cargo test -p qfm\_text} green in $<10$\,s; end-to-end
+on the WikiText-103 test split completes in $<1$\,s per epoch on
+CPU) implements all 7 stages of
+\texttt{docs/QFM\_TEXT\_HRM\_PLAN.md}. The honest
+rev 35 picture on the full 128\,102\,894-token WikiText-103 train
+split (sequential \texttt{accumulate\_shards}, $K_2=4\times65536$
+modes, $n=4$ orders, $\mathrm{hist\_cap}=64$, $m\in\{8,32\}$,
+$\mathrm{max\_rank}=m$):
+
+\begin{tabular}{@{}lcccc@{}}
+\hline
+model & train wall & in-sample ppl (shard 0) & held-out ppl (100k) & gap to baseline \\
+\hline
+QFM-Text ($m=8$)  & 7m32s & 253.8 & 420.8 & 1.39$\times$ / 1.15$\times$ \\
+QFM-Text ($m=32$) & 7m47s & 237.2 & 382.3 & 1.30$\times$ / 1.05$\times$ \\
+classical n-gram baseline (same hashing) & --- & 182.7 & 364.6 & (reference) \\
+unigram (degenerate) & --- & n/a & 1033.0 & --- \\
+\hline
+\end{tabular}
+
+The QFM-Text is 5--39\% worse than the classical n-gram baseline at
+all configurations tested. The dominant cause is a W-rank
+degeneracy: a rev 35 \texttt{--diagnose} flag added to
+\texttt{qfm\_text\_eval} prints the SVD rank of the
+Gram-whitened $W$ basis and shows $W$ has rank 1-2, \emph{not}
+the requested $m$ shifts. The dressed-vacuum sum
+\eqref{eq:Htomo_text} has $c_0^{(o)}\approx1$ and
+$\varepsilon_{m_o}^{(o)}\approx\bar\alpha_{m_o}^{(o)}\sim10^{-5}$
+on this corpus, so the four $|\tilde 0_o\rangle$ are nearly
+parallel to $|0\rangle$ and the Krylov sequence collapses to the
+1-2 dim span of $\{|\tilde 0_o\rangle\}$. The W rank grows
+\emph{not} with $m_\mathrm{shifts}$ but only with the number of
+\emph{linearly independent} dressed vacua. The per-context fit
+diagnostic (mean KL=3.84 nats, mean cosine=0.38, top-1 hit
+rate=33\%, top-5 hit rate=8\% on the training shard 0) is
+\emph{identical} for $m=8$ and $m=32$ --- the fit is dominated by
+the H structure, not by $m_\mathrm{shifts}$ --- and the model
+misses even fully deterministic contexts (100\% empirical mass on
+one token) where the QFM puts 4-10\% on a wrong token. The full
+diagnostic and the per-context failure-mode analysis are in
+\texttt{docs/QFM\_TEXT\_STATUS.md} §1--4.
+
+\paragraph{Hyperparameter sweep (rev 35, Stage 6 acceptance).}
+The Stage 6 acceptance criterion is \emph{QFM ppl $\le$ NgramBaseline
+ppl on $\ge 1$ sweep config (if not, report the negative result)}.
+The \texttt{--sweep} flag in \texttt{qfm\_text\_eval} walks the
+plan-specified $5\times 3\times 2 = 30$ configurations
+($t\in\{0.25,0.5,1.0,1.5,2.0\}\times\lambda\in\{\mathrm{uniform},
+\propto\mathrm{order},\propto1/\mathrm{order}\}\times
+\mathrm{discount}\in\{0.5,0.75\}$). The per-$\lambda$ cost is
+$\sim$1--2\,s (one \texttt{compile\_channels} round-trip via
+\texttt{QfmTextModel::rebuild\_with\_lambda}). The measured result
+on the $m=32$ checkpoint, $\mathrm{max\_tokens}=5000$ held-out
+sweep, is recorded in the status doc; the negative result is
+reported there honestly (no sweep configuration beats the
+baseline, consistent with the W-rank-1 finding).
+
+\paragraph{Future work.} Three concrete extensions could close
+the W-rank gap, none implemented in rev 35:
+(i)~\emph{non-degenerate $H$}: replace the
+dressed-vacuum sum \eqref{eq:Htomo_text} with a per-mode number
+operator $\hat H=\sum_j\bar\alpha_j\,\hat n_j$ (diagonal,
+$K_2$ distinct eigenvalues, full-rank Krylov);
+(ii)~\emph{GPU acceleration of \texttt{decode\_sketched}}: the
+per-token cost is dominated by a $K_2\times\mathrm{rank}$
+matrix-vector product ($\sim$540k ops/token for $K_2=262145$),
+a natural fit for a CUDA kernel (full 128M-token in-sample eval
+$\sim$140~h CPU, $\sim$3~h on the GTX~1060);
+(iii)~\emph{off-diagonal generator}: an $H$ with non-vacuum-
+dominated eigenvectors (e.g.\ a per-pair XY-type generator) would
+naturally have full-rank Krylov. These are tracked in
+\texttt{docs/QFM\_TEXT\_STATUS.md} §"What would actually help".
 
 \section{Quantum Bayesian Updating on the TSR-evolved Prior}
 \label{sec:bayes}
@@ -2337,6 +2515,67 @@ is open-ended follow-on work, not a scoped checklist:
   a formal proof --- beyond the \texttt{StateExplosion} wall at
   $l\ge 4$, this likely requires new truncation theory, not just more
   compute.
+
+\item \textbf{QFM-Text: hierarchical dressed vacua on token streams
+  (rev 32+33).} See \texttt{docs/QFM\_TEXT\_HRM\_PLAN.md} and
+  \texttt{docs/QFM\_TEXT\_STATUS.md} for the full plan and
+  measured numbers. The new \texttt{qfm\_text} crate
+  (workspace member, 35 unit + 2 integration tests) implements
+  the QFM.tex architecture on token streams, with HRM-Text's
+  data + training process as the operational analog. The
+  multi-projector generator is
+  $$H = \sum_{o=1}^{n} \lambda_o \, |\tilde 0_o\rangle\langle \tilde 0_o|$$
+  with one exact rank-1 \texttt{ProjectOnto} term per order; the
+  Born-rule token head marginalizes the sketched $p_{\tilde{}}$ against
+  per-mode capped histograms with absolute-discount smoothing to the
+  unigram. Rev 33 ran the three next-step fixes called out in rev 32
+  and found \textbf{one of three helps}:
+  \begin{itemize}
+  \item \emph{Fix 1 (rank 64).} No change (1395.6 ppl, identical).
+        The Krylov space was already large enough.
+  \item \emph{Fix 2 (model-averaging encoder).} 0.4\% improvement
+        on the test split (1395.6 $\to$ 1390.1); 1.8\% on the
+        full train split (1530.3 $\to$ 1503.5). Real, but small.
+  \item \emph{Fix 3 (full corpus run).} Train on the full
+        128\,102\,894-token WikiText-103 train split. QFM ppl
+        $\sim$1480--1530 across four configs (2-order and 4-order,
+        16k--131k modes), vs classical n-gram baseline 321.4. The
+        gap shrank from $25\times$ (test split) to $4.7\times$
+        (train split).
+  \end{itemize}
+  The remaining $4.7\times$ gap is the marginalization bottleneck:
+  $\sum_m p_{\tilde{}}[m]$ is small because the Krylov decoder
+  spreads mass across many inactive modes, so the unigram floor
+  dominates the output and the model effectively predicts the
+  unigram (visible in the sample output: all 3 prompts produce
+  the same continuation). The status doc records the architectural
+  changes that could close this gap (decode-threshold, sparse
+  marginalization, per-mode weight prior).
+  \emph{GPU note:} the \texttt{cuda} feature on \texttt{fock\_sirk}
+  is now enabled and all 22 GPU tests pass; the SIRK compile is
+  offloaded to the GTX 1060 (set
+  \texttt{LD\_LIBRARY\_PATH=/lib/x86\_64-linux-gnu} to pick up the
+  system's CUDA 12.2 runtime that pairs with this 13.0 driver).
+  \emph{Rev 34 consistency fix:} a rev 33 interim had switched the
+  token-path compile to the \emph{diagonal} surrogate
+  eq.~\eqref{eq:Hdiag}
+  ($\ket{0}\bra{0}+\sum_j\bar\alpha_j\hat n_j$, the
+  \texttt{compile\_alphas} path). That generator is not a flow:
+  its Born populations are exactly stationary
+  (Section~\ref{sec:impl}), so any $t$-dependence it showed was a
+  rank-truncation artifact; and, being diagonal, its Krylov
+  dimension equals the number of \emph{distinct} eigenvalues,
+  which the count-degenerate $\bar\alpha_j$ collapse anyway ---
+  it does not escape the small-Krylov regime it was adopted to
+  fix. Rev 34 removed \texttt{compile\_alphas} and restored the
+  multi-projector generator above as the only compiled form
+  (\texttt{QfmPipeline::compile\_channels}
+  $\to$ \texttt{qfm\_hamiltonian\_hierarchical\_projectors}),
+  honoring the rev 31 decision that the exact dressed-vacuum
+  projector is the only off-diagonal QFM generator. The rev
+  32--33 perplexity numbers stand as measured for their
+  revisions; they must be re-run before being quoted against the
+  restored generator.
 \end{enumerate}
 
 \subsubsection*{Items DONE in rev 20--23 (now in the past, kept here for the historical record)}

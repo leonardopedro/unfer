@@ -80,6 +80,7 @@ impl Default for QfmConfig {
 
 /// The compiled QFM pipeline. Holds all pre-projected observables and
 /// the Level 1/2 sketches needed for online encoding/decoding.
+#[derive(Clone)]
 pub struct QfmPipeline {
     s1: CountSketch,
     s2: FeatureToMode,
@@ -506,6 +507,40 @@ impl QfmPipeline {
         self.rank
     }
 
+    /// Build a QfmPipeline from the pre-computed components (W, H_m,
+    /// W_prob). Used by the deserializer to reconstruct a pipeline
+    /// from the on-disk format without re-running the (expensive,
+    /// rank-data-dependent) SIRK compile. The s1, s2, phi, and
+    /// phi_tilde_plus fields are stubbed — they're only used by the
+    /// image decode path, not by the text path's `decode_sketched`.
+    pub fn from_components(
+        w: DMatrix<Complex64>,
+        h_m: DMatrix<Complex64>,
+        w_prob: DMatrix<f64>,
+    ) -> Self {
+        let k2 = w.nrows();
+        let rank = w.ncols();
+        // Use a small but non-zero k for the s1 stub (k must be > 0
+        // for CountSketch's modulo). The text path doesn't use s1,
+        // so the value doesn't matter.
+        let s1 = CountSketch::new(4, k2.max(1), 0);
+        let s2 = FeatureToMode::new(0);
+        Self {
+            s1,
+            s2,
+            w,
+            h_m,
+            w_prob,
+            phi: DMatrix::<f64>::zeros(0, 0),
+            phi_tilde_plus: DMatrix::<f64>::zeros(0, 0),
+            heavy_hitters: HeavyHitters::new(1, 0.0),
+            training_features: Vec::new(),
+            d: 0,
+            k2,
+            rank,
+        }
+    }
+
     /// The Level 1 sketch (read-only).
     pub fn s1(&self) -> &CountSketch {
         &self.s1
@@ -521,10 +556,395 @@ impl QfmPipeline {
         &self.w
     }
 
+    /// The reduced Hamiltonian H_m (rank x rank, Hermitian).
+    /// Public accessor for downstream consumers that need to
+    /// re-evolve the system (e.g. qfm_text's per-mode Born-rule
+    /// marginalization, which calls `c_1 = exp(-i H_m t) c_0`
+    /// itself). Returns the same matrix `evolve` uses internally.
+    pub fn h_m(&self) -> &DMatrix<Complex64> {
+        &self.h_m
+    }
+
+    /// The probability weight matrix W_prob (K_2 x rank^2) — the
+    /// pre-projected observable form of Phase 3 (QFM.tex), used by
+    /// the image decode path and by checkpoint serialization. The
+    /// text head does NOT use it: its real-part contraction is only
+    /// exact for real W (see `decode_sketched`), so the token path
+    /// computes the Born populations directly.
+    pub fn w_prob(&self) -> &DMatrix<f64> {
+        &self.w_prob
+    }
+
+    /// Encode a list of pre-hashed **mode indices** into a Krylov
+    /// coefficient vector. The encoding is the equal-weighted
+    /// superposition `(1/√n) Σ |mode⟩` projected onto the row
+    /// basis `W`. This is the encoder used by the QFM-Text
+    /// pipeline, which hashes the trailing `n_orders` tokens of a
+    /// context into ≤ n mode indices via `OrderHasher` and then
+    /// calls this function to lift them into a Krylov state.
+    ///
+    /// Empty `modes` returns the zero vector. Out-of-range modes
+    /// (mode ≥ K₂) are silently dropped.
+    pub fn encode_modes(&self, modes: &[u32]) -> Result<DVector<Complex64>, QfmError> {
+        if modes.is_empty() {
+            return Ok(DVector::<Complex64>::zeros(self.rank));
+        }
+        let scale = 1.0 / (modes.len() as f64).sqrt();
+        let mut c = DVector::<Complex64>::zeros(self.rank);
+        let w = &self.w;
+        for &m in modes {
+            let row = m as usize;
+            if row < w.nrows() {
+                for r in 0..self.rank {
+                    c[r] += w[(row, r)] * scale;
+                }
+            }
+        }
+        Ok(c)
+    }
+
+    /// Per-mode encoding for the model-averaging decoder. For each
+    /// input mode `m` in `modes`, return a **unit-norm** Krylov
+    /// coefficient vector `c_0_m = w[m] / ||w[m]||`. Out-of-range
+    /// modes contribute the zero vector.
+    ///
+    /// This is the encoder used by `QfmTextModel::next_token_dist_model_avg`,
+    /// which evolves each mode's unit vector **independently** through
+    /// `H_m t` and averages the resulting decoded distributions
+    /// (Bayesian model averaging). This avoids the destructive
+    /// interference in the equal-weight superposition of
+    /// `encode_modes`, at the cost of n forward solves per token
+    /// instead of one.
+    pub fn encode_modes_per_order(
+        &self,
+        modes: &[u32],
+    ) -> Result<Vec<DVector<Complex64>>, QfmError> {
+        let w = &self.w;
+        let mut out = Vec::with_capacity(modes.len());
+        for &m in modes {
+            let row = m as usize;
+            if row < w.nrows() {
+                let mut c = DVector::<Complex64>::zeros(self.rank);
+                for r in 0..self.rank {
+                    c[r] = w[(row, r)];
+                }
+                let norm = c.norm();
+                if norm > 0.0 {
+                    c /= Complex64::new(norm, 0.0);
+                }
+                out.push(c);
+            } else {
+                out.push(DVector::<Complex64>::zeros(self.rank));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Phase 3: compute the exact Born probability
+    /// `p̃[m] = |⟨m|W c⟩|²` for every K_2 single-excitation Fock
+    /// mode, then renormalize to sum 1. The vector length is
+    /// `k2_dim()`. This is the per-mode Born probability that
+    /// downstream token-decode heads marginalize against their
+    /// per-mode histograms.
+    ///
+    /// Why not the pre-projected `W_prob` contraction
+    /// (`p̃ = W_prob · Re vec(c c†)`, QFM.tex §"Phase 3")? That
+    /// real-part contraction equals the Born population only when
+    /// W is real. The SIRK shifts lie on the negative-imaginary
+    /// axis, so the whitened Krylov basis — and hence W — is
+    /// complex in general, and the contraction then evaluates to
+    /// `½(|⟨m|W c⟩|² + |⟨m|W̄ c⟩|²)`: the Born population plus a
+    /// spurious conjugate-basis term that washes out the mode
+    /// discrimination. The direct Born rule below is exact for
+    /// any W, always non-negative, and costs O(K_2 · rank) — the
+    /// same as the contraction.
+    pub fn decode_sketched(&self, c: &DVector<Complex64>) -> Vec<f64> {
+        let rank = self.rank;
+        let w = &self.w;
+        // p[m] = |Σ_r W[m, r] c[r]|² (the actual Born rule).
+        let mut p = vec![0.0_f64; w.nrows()];
+        for m in 0..w.nrows() {
+            let mut amp = Complex64::new(0.0, 0.0);
+            for r in 0..rank {
+                amp += w[(m, r)] * c[r];
+            }
+            p[m] = amp.norm_sqr();
+        }
+        // Clamp + renormalize.
+        let total: f64 = p.iter().sum();
+        if total > 0.0 {
+            for x in p.iter_mut() {
+                *x /= total;
+            }
+        }
+        p
+    }
+
+    /// Precompute the `rank x rank` Gram matrix `G = W^H W`. Pass the
+    /// result to [`decode_sketched_at`](Self::decode_sketched_at) so
+    /// its normalization total costs `O(rank^2)` instead of
+    /// `O(K_2)`. Callers that decode many queries against the same
+    /// compiled pipeline (e.g. `qfm_text`'s per-token marginalization,
+    /// which only ever reads a handful of active-mode entries out of
+    /// the full `K_2`-length `decode_sketched` output) should compute
+    /// this once and reuse it, not recompute it per query.
+    pub fn gram(&self) -> DMatrix<Complex64> {
+        self.w.adjoint() * &self.w
+    }
+
+    /// Sparse Born-rule decode: compute `p̃[m] = |⟨m|W c⟩|² / total`
+    /// only for the given `indices`, where
+    /// `total = Σ_m |⟨m|W c⟩|² = ⟨c|G|c⟩` (`G` from
+    /// [`gram`](Self::gram)) is the same total-probability-mass
+    /// normalizer [`decode_sketched`](Self::decode_sketched) computes
+    /// by summing over all `K_2` modes — but here it costs
+    /// `O(rank^2)`, not `O(K_2)`. Numerically identical to reading
+    /// `decode_sketched(c)[i]` for each `i` in `indices`; this only
+    /// exists so a caller that never looks at the other `K_2 -
+    /// indices.len()` entries doesn't pay `O(K_2 * rank)` to produce
+    /// them. Out-of-range indices are silently skipped (return no
+    /// entry for that index).
+    pub fn decode_sketched_at(
+        &self,
+        c: &DVector<Complex64>,
+        gram: &DMatrix<Complex64>,
+        indices: &[u32],
+    ) -> Vec<(u32, f64)> {
+        let total: f64 = (c.adjoint() * gram * c)[(0, 0)].re.max(0.0);
+        if total <= 0.0 {
+            return Vec::new();
+        }
+        let rank = self.rank;
+        let w = &self.w;
+        let mut out = Vec::with_capacity(indices.len());
+        for &idx in indices {
+            let row = idx as usize;
+            if row < w.nrows() {
+                let mut amp = Complex64::new(0.0, 0.0);
+                for r in 0..rank {
+                    amp += w[(row, r)] * c[r];
+                }
+                out.push((idx, amp.norm_sqr() / total));
+            }
+        }
+        out
+    }
+
     /// The training features retained for the nearest-neighbor fallback
     /// in S_2 (a (key, feature) pair list).
     pub fn training_features(&self) -> &[(u64, Vec<f64>)] {
         &self.training_features
+    }
+}
+
+/// A single per-order channel group, for [`QfmPipeline::compile_channels`].
+///
+/// `lambda` is the projector coefficient `λ_o`. `channels` is the list
+/// of `(mode, alpha_j)` pairs: the order-`o` modes that have non-zero
+/// weight, with `alpha_j` the unnormalized channel weight (typically
+/// `weight_j / total_windows` for a streaming pass; the exact value
+/// depends on the caller).
+pub type ChannelGroup = (f64, Vec<(u32, f64)>);
+
+impl QfmPipeline {
+    /// Compile a QFM pipeline from **channel weights** instead of
+    /// training points. Used by `qfm_text` (QFM-Text plan Stage 4):
+    /// the streaming accumulator's per-mode statistics become the
+    /// channel weights of the hierarchical multi-projector generator
+    ///
+    ///   `H = Σ_o λ_o |0̃_o⟩⟨0̃_o|`,
+    ///   `|0̃_o⟩ = c₀^(o)|vac⟩_F + Σ_{j∈o} ε_j^(o)|x_j⟩`,
+    ///   `ε_j = ᾱ_j/√(1+Σ_k ᾱ_k²)`, `c₀ = 1/√(1+Σ_k ᾱ_k²)`
+    ///
+    /// (the QFM.tex eq. Htomo normalization, applied per group) — one
+    /// exact rank-1 `ProjectOnto` term per context order, built by
+    /// `nested_fock_algebra::qfm_hamiltonian_hierarchical_projectors`.
+    ///
+    /// This is the paper-mandated form: since rev 31 the exact
+    /// dressed-vacuum projector is the **only** off-diagonal QFM
+    /// generator. The diagonal number-operator surrogate (QFM.tex
+    /// eq. Hdiag) is explicitly *not* a flow — its Born populations
+    /// are stationary (e^{-iHt} contributes only per-mode phases),
+    /// and, being diagonal, its Krylov dimension is the number of
+    /// *distinct* eigenvalues, which count-degenerate ᾱ_j collapse.
+    /// (A rev 33 interim used eq. Hdiag here; rev 34 removed it.)
+    ///
+    /// The generator has rank ≤ n_groups, so the Krylov space from
+    /// the uniform seed has dimension ≤ n_groups + 1 and the reduced
+    /// `H_m` is small by construction. `config.krylov_dim` sets the
+    /// number of SIRK shifts; `config.max_rank` (optional here — the
+    /// rank is already bounded) further truncates the whitened basis.
+    ///
+    /// `groups[o] = (λ_o, channels_o)` where `channels_o` is the list
+    /// of `(mode, ᾱ)` pairs for that order, with `mode` a global index
+    /// in `[0, k2_total)`. The image-decode observables (Φ, Φ̃⁺) are
+    /// not built (this is the text path; the decode head uses
+    /// `decode_sketched` instead).
+    pub fn compile_channels(
+        groups: &[ChannelGroup],
+        k2_total: usize,
+        config: &QfmConfig,
+    ) -> Result<Self, QfmError> {
+        if k2_total == 0 || config.krylov_dim == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
+        for (o, (lambda, channels)) in groups.iter().enumerate() {
+            if !lambda.is_finite() || *lambda < 0.0 {
+                return Err(QfmError::SirkFailed(format!(
+                    "group {o}: lambda = {lambda} is non-finite or negative"
+                )));
+            }
+            for &(m, a) in channels {
+                if !a.is_finite() || a < 0.0 {
+                    return Err(QfmError::SirkFailed(format!(
+                        "group {o}: alpha for mode {m} is non-finite or negative ({a})"
+                    )));
+                }
+                if (m as usize) >= k2_total {
+                    return Err(QfmError::SirkFailed(format!(
+                        "group {o}: mode {m} out of range (k2_total = {k2_total})"
+                    )));
+                }
+            }
+        }
+        // Flattened list of every active (observed) channel across
+        // all order groups, in `[0, k2_total)`, **plus mode 0**.
+        // `compact_forward_sirk` and `project_compact_modes_onto_krylov_basis`
+        // build per-mode state only for these modes rather than for
+        // all `k2_total` indices. A mode absent from every order group
+        // has no accumulator histogram either (`qfm_text::model::marginalize`
+        // always skips a mode missing from `mode_hists`), so its W row
+        // could never be read by the text decode head regardless of
+        // what value it held.
+        //
+        // Mode 0 is the one deliberate exception: `qfm_text`'s
+        // `TextConfig::offset` reserves index 0 as a sentinel never
+        // assigned to any real channel (`offset(0) == 1`), precisely
+        // so generic code has an always-present, non-channel row to
+        // use as a "no observation yet" reference — which is exactly
+        // what `qfm::bayes::tsr_evolved_prior` does (it reads row 0 of
+        // `pipeline.w()` as the static prior for the in-context
+        // Bayesian update). Excluding it here would silently zero
+        // that row and break that feature.
+        let active_modes: Vec<u32> = std::iter::once(0u32)
+            .chain(
+                groups
+                    .iter()
+                    .flat_map(|(_, channels)| channels.iter().map(|&(m, _)| m)),
+            )
+            .collect();
+        // Degenerate-basis check without building the full
+        // `nested_fock_algebra` Hamiltonian: a group contributes a
+        // term iff it has channels or a nonzero lambda (mirrors
+        // `qfm_hamiltonian_hierarchical_projectors`'s own skip rule).
+        // Building `h_bar` here would cost another O(M) `BTreeMap`-
+        // backed `OuterState`/`InnerBosonicState` allocation (one
+        // `dressed_vacuum_projector` per group) for a value that
+        // `compact_forward_sirk` below doesn't use at all — it works
+        // directly from `groups`.
+        let has_any_term = groups
+            .iter()
+            .any(|(lambda, channels)| !channels.is_empty() || *lambda != 0.0);
+        if !has_any_term {
+            return Err(QfmError::DegenerateBasis);
+        }
+        // Run SIRK on the dressed-vacuum generator with the uniform
+        // vacuum + active-channels seed and `krylov_dim` shifts
+        // normalized to the negative-imaginary axis (same choice as
+        // `compile`), using the compact (plain-`u32`-keyed) state
+        // representation throughout (see `CompactState`) — this is
+        // what makes a `block_sizes` large enough to meaningfully cut
+        // hash collisions memory-feasible (`QFM_TEXT_STATUS.md`
+        // rev 35): the general `nested_fock_algebra::QuantumState`
+        // path costs ~500+ bytes per active channel per Krylov step
+        // (`BTreeMap`-backed `OuterState`), which OOMs once active
+        // channel counts reach the hundreds of thousands to millions
+        // that come from suppressing collisions on real text (order-3
+        // /4 contexts are overwhelmingly unique, so avoiding collision
+        // there forces active-channel count to scale with corpus
+        // size).
+        let shifts: Vec<Complex64> = (1..=config.krylov_dim)
+            .map(|i| Complex64::new(0.0, -(i as f64) / (config.krylov_dim as f64)))
+            .collect();
+        let (w_whiten, h_proj, rank, w_sequence) =
+            compact_forward_sirk(groups, &active_modes, &shifts)?;
+        if rank == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
+        // Build the W matrix by projecting each single-excitation Fock
+        // mode |j⟩ onto the rank-dim Gram-whitened Krylov basis.
+        let mut w = project_compact_modes_onto_krylov_basis(
+            &w_sequence,
+            &w_whiten,
+            k2_total,
+            rank,
+            &active_modes,
+        );
+        normalize_rows(&mut w);
+        // H_m from the SIRK solve.
+        let mut h_m = h_proj;
+        let mut rank = rank;
+        // Optional further rank truncation (usually a no-op here:
+        // the projector-sum generator already bounds the rank).
+        if let Some(r) = config.max_rank {
+            if let Some((w_trunc, h_trunc)) = rank_truncate_w_h(&w, &h_m, r) {
+                w = w_trunc;
+                h_m = h_trunc;
+                rank = w.ncols();
+                normalize_rows(&mut w);
+            }
+        }
+        if rank == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
+        // W_prob (Phase 3 projector) is **not built** for the text
+        // path: `decode_sketched`/`decode_sketched_at` compute the
+        // exact Born rule directly (rev 33 fix — the old real-part
+        // `W_prob` contraction had destructive cancellation), so
+        // nothing in `qfm_text` ever reads `w_prob`. Building it here
+        // was an O(k2_total * rank^2) dense-matrix allocation (e.g.
+        // ~2.85 GB at `k2_total ~ 5.5M`, `rank = 8`) purely for a
+        // field that then gets serialized into every checkpoint and
+        // never read back — this was the second O(k2_total) memory
+        // sink (after the `OuterState` construction fixed above)
+        // behind the OOM at large `block_sizes` (see
+        // `QFM_TEXT_STATUS.md` rev 35). Phi/Phi_tilde are skipped for
+        // the same reason.
+        let w_prob = DMatrix::<f64>::zeros(0, 0);
+        // Stub a CountSketch + FeatureToMode for the (text-irrelevant)
+        // S_1 / S_2 fields, so the struct is well-formed.
+        let s1 = CountSketch::new(config.k, k2_total.max(1), config.seed);
+        let s2 = FeatureToMode::new(0); // unbounded; unused in the text path
+        Ok(Self {
+            s1,
+            s2,
+            w,
+            h_m,
+            w_prob,
+            phi: DMatrix::<f64>::zeros(0, 0), // unused in text path
+            phi_tilde_plus: DMatrix::<f64>::zeros(0, 0),
+            heavy_hitters: HeavyHitters::new(1, 0.0),
+            training_features: Vec::new(),
+            d: 0,
+            k2: k2_total,
+            rank,
+        })
+    }
+}
+
+/// Renormalize each row of W to unit norm (rows with ~zero norm are
+/// left untouched). A row scaling, not a column basis change, so the
+/// encode step `c_0 = W[mode, :]` still yields a unit-norm vector.
+fn normalize_rows(w: &mut DMatrix<Complex64>) {
+    let (nrows, ncols) = (w.nrows(), w.ncols());
+    for i in 0..nrows {
+        let row_norm: f64 = (0..ncols).map(|j| w[(i, j)].norm_sqr()).sum::<f64>().sqrt();
+        if row_norm > 1e-300 {
+            let scale = Complex64::new(1.0 / row_norm, 0.0);
+            for j in 0..ncols {
+                w[(i, j)] *= scale;
+            }
+        }
     }
 }
 
@@ -552,7 +972,8 @@ fn vacuum_with_single_excitation_basis(k2: usize) -> QuantumState {
 }
 
 /// Extract the K_2 single-excitation rows of the SIRK `w_whiten` matrix
-/// to form the genuine TSR spatial mode basis W (P6 G fix).
+/// to form the genuine TSR spatial mode basis W (P6 G fix). Used by
+/// the general (non-text) `compile()` path.
 ///
 /// `w_whiten` is shaped `(krylov_dim + 1) x rank` (the rank of the
 /// post-gram-whitening subspace, where `krylov_dim + 1` is the length
@@ -599,6 +1020,219 @@ fn extract_single_excitation_w(
             }
             // else: leave the entry as 0 (SIRK sequence did not reach
             // this Fock mode).
+        }
+    }
+    w
+}
+
+/// A compact state for the dressed-vacuum SIRK sequence: a vacuum
+/// amplitude plus a plain `u32`-keyed map of single-excitation
+/// amplitudes. The dressed-vacuum matvec (see [`compact_dressed_vacuum_matvec`])
+/// only ever reads/writes `{vacuum} ∪ active_modes`, so every state in
+/// the forward Krylov sequence is exactly this shape — there is never
+/// a need for `nested_fock_algebra::QuantumState`'s general
+/// multi-mode, multi-particle `OuterState`/`InnerBosonicState`
+/// representation here. Those types are `BTreeMap`-backed (~500+
+/// bytes/entry, even for a single-entry map, from B-tree node
+/// over-allocation); this plain hash map costs ~40-50 bytes/entry —
+/// roughly a 10x reduction. That matters because active-channel
+/// counts scale with corpus size once `block_sizes` is large enough
+/// to meaningfully suppress hash collisions (real text's order-3/4
+/// contexts are overwhelmingly unique, so avoiding collisions there
+/// forces active-channel counts into the hundreds of thousands to
+/// millions) — see `QFM_TEXT_STATUS.md` rev 35.
+#[derive(Clone)]
+struct CompactState {
+    vacuum: Complex64,
+    modes: rustc_hash::FxHashMap<u32, Complex64>,
+}
+
+impl CompactState {
+    fn zero() -> Self {
+        Self {
+            vacuum: Complex64::new(0.0, 0.0),
+            modes: rustc_hash::FxHashMap::default(),
+        }
+    }
+
+    /// `<self|other>`, iterating whichever map is smaller.
+    fn inner_product(&self, other: &Self) -> Complex64 {
+        let mut sum = self.vacuum.conj() * other.vacuum;
+        if self.modes.len() <= other.modes.len() {
+            for (k, v) in &self.modes {
+                if let Some(bv) = other.modes.get(k) {
+                    sum += v.conj() * bv;
+                }
+            }
+        } else {
+            for (k, v) in &other.modes {
+                if let Some(av) = self.modes.get(k) {
+                    sum += av.conj() * v;
+                }
+            }
+        }
+        sum
+    }
+
+    /// `self += scale * other` (in place).
+    fn scale_and_add(&mut self, other: &Self, scale: Complex64) {
+        self.vacuum += scale * other.vacuum;
+        for (&k, &v) in &other.modes {
+            *self.modes.entry(k).or_insert(Complex64::new(0.0, 0.0)) += scale * v;
+        }
+    }
+}
+
+/// Compact-state analog of the dressed-vacuum matvec
+/// `H|c⟩ = Σ_o λ_o ⟨0̃_o|c⟩|0̃_o⟩` (QFM.tex §"Implementation in the
+/// unfer Kernel" line 906-908), operating on [`CompactState`] instead
+/// of `nested_fock_algebra::QuantumState`. Pre-processes each order's
+/// eq.-Htomo-normalized dressed vacuum (c_0, ε_m) once (O(M) total,
+/// M = Σ|channels_o|); each matvec application is then O(M) plain
+/// hash-map lookups + arithmetic, with no per-component `BTreeMap`
+/// key construction at all.
+///
+/// `⟨0̃_o|c⟩ = c_0^(o)⟨0|c⟩ + Σ_m ε_m^(o)⟨m|c⟩` must be the **full
+/// complex** inner product, not its real part: the dressed vacuum's
+/// own components (c0, ε) are real, so conjugating them is a no-op,
+/// but `c`'s amplitudes are genuinely complex — the SIRK shifts
+/// ζ_k = -ik/m are pure-imaginary, so the Krylov sequence has a
+/// nonzero imaginary part from the very first step. (An earlier
+/// version of the original `QuantumState`-based matvec took `.re` of
+/// each `c` component before accumulating, silently discarding that
+/// imaginary part and returning a purely-real `H|c⟩` — breaking the
+/// complex evolution the SIRK solve depends on and collapsing the
+/// resulting Krylov/W rank far below what `m_shifts` requests. This
+/// rewrite preserves that fix.)
+fn compact_dressed_vacuum_matvec(groups: &[ChannelGroup]) -> impl Fn(&CompactState) -> CompactState {
+    struct PreprocessedOrder {
+        lambda: f64,
+        c0: f64,
+        channels: Vec<(u32, f64)>,
+    }
+    let preprocessed: Vec<PreprocessedOrder> = groups
+        .iter()
+        .map(|(lambda, channels)| {
+            let sum_sq: f64 = channels.iter().map(|(_, a)| a * a).sum();
+            let norm = (1.0 + sum_sq).sqrt();
+            let c0 = 1.0 / norm;
+            let normalized: Vec<(u32, f64)> =
+                channels.iter().map(|(m, a)| (*m, a / norm)).collect();
+            PreprocessedOrder {
+                lambda: *lambda,
+                c0,
+                channels: normalized,
+            }
+        })
+        .collect();
+    let zero = Complex64::new(0.0, 0.0);
+    move |c: &CompactState| -> CompactState {
+        let mut out = CompactState::zero();
+        for order in &preprocessed {
+            let mut inner = c.vacuum * order.c0;
+            for &(mode, eps) in &order.channels {
+                let c_mode = c.modes.get(&mode).copied().unwrap_or(zero);
+                inner += c_mode * eps;
+            }
+            let scale = inner * order.lambda;
+            out.vacuum += scale * order.c0;
+            for &(mode, eps) in &order.channels {
+                *out.modes.entry(mode).or_insert(zero) += scale * eps;
+            }
+        }
+        out
+    }
+}
+
+/// Compact-state forward SIRK solve for the dressed-vacuum
+/// Hamiltonian: builds the `m+1`-element Krylov sequence
+/// `w_k = (H - z_k I) w_{k-1}` (`m = shifts.len()`), its Gram matrix,
+/// the Gram-whitened basis (reusing `fock_sirk::whiten_gram` — a pure
+/// matrix operation with no dependency on `QuantumState`), and the
+/// projected Hamiltonian `H_m`. Same algorithm as
+/// `fock_sirk::solve_forward_sirk_with_matvec` (see its module docs
+/// for the derivation of `h_proj_raw[(j,k)] = G[j,k+1] + z_k*G[j,k]`),
+/// but built directly on [`CompactState`] so memory scales with
+/// `active_modes.len() * m` at ~40-50 bytes/entry instead of the
+/// ~500+ bytes/entry `nested_fock_algebra::QuantumState` path.
+///
+/// Returns `(w_whiten, h_proj, rank, w_sequence)`.
+fn compact_forward_sirk(
+    groups: &[ChannelGroup],
+    active_modes: &[u32],
+    shifts: &[Complex64],
+) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>), QfmError> {
+    let m = shifts.len();
+    let matvec = compact_dressed_vacuum_matvec(groups);
+    let amp0 = 1.0 / ((active_modes.len() + 1) as f64).sqrt();
+    let mut v0 = CompactState::zero();
+    v0.vacuum = Complex64::new(amp0, 0.0);
+    for &j in active_modes {
+        v0.modes.insert(j, Complex64::new(amp0, 0.0));
+    }
+    let mut w_sequence = Vec::with_capacity(m + 1);
+    w_sequence.push(v0);
+    for k in 0..m {
+        let prev = &w_sequence[k];
+        let mut next = matvec(prev);
+        next.scale_and_add(prev, -shifts[k]);
+        w_sequence.push(next);
+    }
+    let mut g_matrix = DMatrix::<Complex64>::zeros(m + 1, m + 1);
+    for j in 0..=m {
+        for k in j..=m {
+            let val = w_sequence[j].inner_product(&w_sequence[k]);
+            g_matrix[(j, k)] = val;
+            if j != k {
+                g_matrix[(k, j)] = val.conj();
+            }
+        }
+    }
+    let mut h_proj_raw = DMatrix::<Complex64>::zeros(m, m);
+    for j in 0..m {
+        for k in 0..m {
+            h_proj_raw[(j, k)] = g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+        }
+    }
+    let g_sub = g_matrix.view((0, 0), (m, m)).into_owned();
+    let whitening = fock_sirk::whiten_gram(&g_sub, fock_sirk::GRAM_REL_TOL)
+        .map_err(|e| QfmError::SirkFailed(e.to_string()))?;
+    let w_whiten = whitening.w;
+    let h_proj = w_whiten.adjoint() * h_proj_raw * &w_whiten;
+    Ok((w_whiten, h_proj, whitening.rank, w_sequence))
+}
+
+/// Compact-state analog of the (now-removed) `project_modes_onto_krylov_basis`:
+/// builds the `K_2 x rank` W matrix by projecting each active
+/// single-excitation Fock mode onto the rank-dim Gram-whitened Krylov
+/// basis,
+///   `W[j, k] = Σ_{l=0..m-1} w_whiten[l, k] * ⟨w_sequence[l+1] | j⟩`,
+/// reading `w_sequence[l+1].modes.get(&j)` directly (a plain hash-map
+/// lookup) instead of constructing a `BTreeMap`-backed `OuterState`
+/// key per mode. Only `active_modes` get a nonzero row; the rest of
+/// the `K_2` rows stay at `DMatrix::zeros`'s default — exact, not an
+/// approximation, since `w_sequence` never has a nonzero component
+/// outside `{vacuum} ∪ active_modes` in the first place.
+fn project_compact_modes_onto_krylov_basis(
+    w_sequence: &[CompactState],
+    w_whiten: &DMatrix<Complex64>,
+    k2: usize,
+    rank: usize,
+    active_modes: &[u32],
+) -> DMatrix<Complex64> {
+    let m = w_whiten.nrows();
+    let zero = Complex64::new(0.0, 0.0);
+    let mut w = DMatrix::<Complex64>::zeros(k2, rank);
+    for &j in active_modes {
+        let row = j as usize;
+        if row >= k2 {
+            continue;
+        }
+        for l in 0..m {
+            let coeff = w_sequence[l + 1].modes.get(&j).copied().unwrap_or(zero);
+            for k in 0..rank {
+                w[(row, k)] += w_whiten[(l, k)] * coeff;
+            }
         }
     }
     w

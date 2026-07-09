@@ -26,8 +26,11 @@ use nested_fock_algebra::{Hamiltonian, qfm_hamiltonian_mehler_projector};
 ///
 /// For each training point `x^(k)` (a d-dim vector), the decoupled
 /// linear-scaling formula gives a per-mode coefficient. The time integral
-/// is approximated by a Riemann sum over `n_t_samples` evenly-spaced time
-/// points in [0, 1].
+/// `∫_0^1 alpha_j(t) dt` evaluates in closed form (QFM.tex §"Analytical
+/// potential and exact flow generator"), so no numerical quadrature is
+/// performed; the `_n_t_samples` / `_noise_dim` parameters are retained
+/// only for API stability with earlier revisions that sampled the
+/// integral.
 ///
 /// For the Hermitian flow potential, the differential operator `hat_h_j`
 /// acts on the single-excitation subspace. Its gradient (w.r.t. the

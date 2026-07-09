@@ -1,0 +1,25 @@
+[package]
+name = "qfm_text"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "QFM-Text: train the QFM.tex architecture on token streams using HRM-Text's data + training process."
+readme = "README.md"
+
+[dependencies]
+qfm = { path = "../qfm" }
+nested_fock_algebra = { path = "../nested_fock_algebra" }
+fock_sirk = { path = "../fock_sirk" }
+nalgebra = { workspace = true }
+num-complex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+memmap2 = "0.9"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

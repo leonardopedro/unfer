@@ -865,3 +865,76 @@ pub fn yang_mills_lattice(l: usize, g: f64, n_colors: usize) -> Hamiltonian {
 
     Hamiltonian { terms }
 }
+
+// ─────────────────────────────────────────────
+// 5b. Hierarchical multi-projector QFM generator
+//     (QFM-Text plan, Stage 3 of `docs/QFM_TEXT_HRM_PLAN.md`).
+//
+//     H = Σ_o λ_o |0̃_o⟩⟨0̃_o|,
+//     where |0̃_o⟩ = c₀^(o) |vac⟩_F + Σ_{j ∈ group o} ε_j^(o) B†_j |vac⟩_F,
+//     with the α→ε normalization:
+//        ε_j = α_j / √(1 + Σ α²)
+//        c₀   = 1 / √(1 + Σ α²)
+//
+//     Each order o contributes one exact rank-1 `ProjectOnto` term,
+//     and the sum is a Hermitian, rank-≤n generator (n = n_groups).
+//     Cross-order coupling happens via the shared vacuum component:
+//     every dressed vacuum starts in the same Fock vacuum, so the
+//     projectors overlap on |vac⟩_F. This is the quantum analog of
+//     hierarchical reasoning / Katz backoff.
+//
+//     `groups` is `(λ_o, channels_o)` where `channels_o` is the
+//     list of `(mode_index, alpha_j)` pairs for order o. `mode_index`
+//     is the global Fock single-excitation mode (0..K₂). Two groups
+//     may share a mode (no constraint is enforced); the α→ε
+//     normalization is per-group, not global.
+//
+//     Panics on non-finite or negative α or λ. There is NO upper
+//     bound on Σ α²: the α here are the *unnormalized* flow-matching
+//     weights ᾱ_j of QFM.tex eq. (Htomo), and the normalization is
+//     that of the dressed vector |vac⟩_F + Σ ᾱ_j|x_j⟩ — exactly
+//     idempotent per term for any weights. (This differs from the
+//     ε-form builders above, whose ε are Mehler overlaps bounded by
+//     Σ ε² ≤ 1 with c₀ = √(1−Σε²).)
+// ─────────────────────────────────────────────
+pub fn qfm_hamiltonian_hierarchical_projectors(
+    groups: &[(f64, Vec<(u32, f64)>)],
+) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for (o, (lambda, channels)) in groups.iter().enumerate() {
+        assert!(
+            lambda.is_finite() && *lambda >= 0.0,
+            "group {o}: lambda must be finite and non-negative, got {lambda}"
+        );
+        for (m, a) in channels {
+            assert!(
+                a.is_finite() && *a >= 0.0,
+                "group {o}: alpha for mode {m} must be finite and non-negative, got {a}"
+            );
+        }
+        if channels.is_empty() && *lambda == 0.0 {
+            continue;
+        }
+        // Per-group α → ε normalization.
+        let sum_sq: f64 = channels.iter().map(|(_, a)| a * a).sum();
+        let norm = (1.0 + sum_sq).sqrt();
+        let c0 = 1.0 / norm;
+        let mut inner_channels: Vec<(InnerBosonicState, f64)> =
+            Vec::with_capacity(channels.len());
+        for (m, a) in channels {
+            let mut inner = InnerBosonicState::vacuum();
+            inner.modes.insert(*m, 1);
+            inner_channels.push((inner, a / norm));
+        }
+        // Build the single exact rank-1 ProjectOnto term for this
+        // order, with coefficient λ_o.
+        let h_o = dressed_vacuum_projector(inner_channels, c0);
+        for (c, ops) in h_o.terms {
+            let scaled = Complex64::new(*lambda, 0.0) * c;
+            if scaled.norm_sqr() > 1e-30 {
+                terms.push((scaled, ops));
+            }
+        }
+    }
+    Hamiltonian { terms }
+}

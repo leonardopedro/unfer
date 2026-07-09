@@ -39,3 +39,7 @@ zk.md
 
 WavefunctionFlows_files/
 WavefunctionFlows.html
+
+# QFM-Text training checkpoints (regenerable; too large for git, >100 MB
+# each, would exceed GitHub's 100 MB per-file limit)
+qfm_text_runs/**/*.qfm

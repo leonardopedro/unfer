@@ -10,7 +10,7 @@ pub use device::best_device;
 pub use evolve::evolve_restarted;
 pub use forward_sirk::{
     ForwardSirkResult, SirkOpts, mass_gap_from_sectors, solve_forward_sirk,
-    solve_forward_sirk_with_opts,
+    solve_forward_sirk_with_matvec, solve_forward_sirk_with_opts,
 };
 pub use linalg::{GRAM_REL_TOL, SirkError, Whitening, whiten_gram};
 pub use registry::StateDictionary;

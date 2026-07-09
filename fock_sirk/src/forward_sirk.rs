@@ -202,6 +202,37 @@ pub fn solve_forward_sirk_with_opts(
     brst_charge: Option<&Hamiltonian>,
     opts: &SirkOpts,
 ) -> Result<ForwardSirkResult, SirkError> {
+    solve_forward_sirk_with_matvec(
+        |state| hamiltonian.apply(state),
+        v_0,
+        shifts,
+        device,
+        brst_charge,
+        opts,
+    )
+}
+
+/// Like [`solve_forward_sirk_with_opts`] but takes a custom matvec
+/// closure `F: Fn(&QuantumState) -> QuantumState` that computes
+/// `H |state⟩` (the Hamiltonian application, not the shifted one).
+/// The shift `(H - z_k I) |state⟩` is then computed as
+/// `matvec(state) - z_k * state` by the SIRK loop. This lets callers
+/// use a fast-path matvec (e.g. O(M) for the QFM.tex
+/// `|0⟩⟨0| + Σ_j α_j n̂_j` Hamiltonian, where the general
+/// `Hamiltonian::apply` is O(K_2²) per matvec because it iterates
+/// over all components × all terms) without modifying the SIRK
+/// core.
+pub fn solve_forward_sirk_with_matvec<F>(
+    matvec: F,
+    v_0: &QuantumState,
+    shifts: &[Complex64],
+    device: &Device,
+    brst_charge: Option<&Hamiltonian>,
+    opts: &SirkOpts,
+) -> Result<ForwardSirkResult, SirkError>
+where
+    F: Fn(&QuantumState) -> QuantumState,
+{
     let m = shifts.len();
     let mut w_sequence = Vec::with_capacity(m + 1);
     w_sequence.push(v_0.clone());
@@ -209,7 +240,7 @@ pub fn solve_forward_sirk_with_opts(
     // 1. Generate the forward sequence: w_k = (H - z_k I) w_{k-1}
     for k in 0..m {
         let prev_w = &w_sequence[k];
-        let mut next_w = hamiltonian.apply(prev_w);
+        let mut next_w = matvec(prev_w);
         // next_w = H * prev_w - shifts[k] * prev_w
         next_w.scale_and_add(prev_w, -shifts[k]);
 

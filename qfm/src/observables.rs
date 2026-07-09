@@ -126,10 +126,14 @@ pub fn compressive_solver(phi_tilde: &DMatrix<f64>) -> DMatrix<f64> {
 /// When `krylov_dim << K_2` (the rank-truncation path of P10.16.3), the
 /// extracted W (K_2 × rank) has many zero rows — only the first `krylov_dim`
 /// rows are non-zero because the SIRK sequence never visits modes beyond
-/// the Krylov reach. A truncated SVD on the real part of W (H_bar is real
-/// symmetric, so w_whiten is real) identifies the `r` dominant column
-/// directions and simultaneously projects H_m to the same r-dimensional
-/// subspace via the right singular vectors V_r.
+/// the Krylov reach. A truncated SVD on the **real part** of W identifies
+/// the `r` dominant column directions and simultaneously projects H_m to
+/// the same r-dimensional subspace via the right singular vectors V_r.
+/// (H_bar is real symmetric, but the SIRK shifts lie on the imaginary
+/// axis, so w_whiten — and hence W — is complex in general; the real part
+/// carries the dominant column structure and the truncation only needs
+/// approximate directions. This is a documented heuristic, not an exact
+/// complex SVD.)
 ///
 /// Returns `(W_trunc, H_m_trunc)` where:
 /// * `W_trunc` = W · V_r            (K_2 × r, Complex64)
@@ -150,8 +154,9 @@ pub fn rank_truncate_w_h(
     }
     let r = r.max(1);
 
-    // Real part of W (K_2 × rank). H_bar is real symmetric, so w_whiten
-    // and W are real (stored as Complex64 with zero imaginary parts).
+    // Real part of W (K_2 × rank). W is complex in general (the SIRK
+    // shifts are imaginary); the real part is used as the truncation
+    // heuristic — see the doc comment above.
     let k2 = w.nrows();
     let w_real = DMatrix::<f64>::from_fn(k2, rank, |i, j| w[(i, j)].re);
 
