@@ -7,8 +7,7 @@
 //! NDJSON line per epoch (the W&B analog).
 //!
 //! Usage:
-//!   qfm_text_train --config train.toml --manifest manifest.json
-//!                   --out ./out [--epochs 4]
+//!   qfm_text_train --config train.toml
 //!
 //! The `train.toml` is the TextConfig (see `cargo run
 //! --bin qfm_text_train -- --help` for the keys; defaults match
@@ -19,7 +18,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use qfm_text::{QfmTextModel, TextConfig, accumulate_shards};
+use qfm_text::{
+    ContextRegistry, Encoder, OrderHasher, QfmTextModel, TextConfig, accumulate_shards,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -31,7 +32,11 @@ struct TrainConfig {
     manifest_path: PathBuf,
     /// Output directory (created if missing).
     out_dir: PathBuf,
-    /// Number of epochs to run (default: 4, mirroring HRM-Text).
+    /// Number of epochs to run (default: 1, mirroring the rev-36
+    /// single-pass design: the registry is the side product of
+    /// training and a per-epoch fresh registry is the simplest way
+    /// to keep the registry consistent with the per-epoch
+    /// accumulator's stats).
     #[serde(default = "default_epochs")]
     epochs: usize,
     /// Number of threads (default: 0 = num_cpus). Reserved for
@@ -43,7 +48,7 @@ struct TrainConfig {
 }
 
 fn default_epochs() -> usize {
-    4
+    1
 }
 
 fn main() -> anyhow::Result<()> {
@@ -80,10 +85,7 @@ fn main() -> anyhow::Result<()> {
         // content per epoch. Our shard manifest is the same per
         // epoch (the underlying corpus is one file); we rotate the
         // shard set deterministically per epoch to give the
-        // "different data per epoch" property. This is the simplest
-        // honest simulation: the counts keep accumulating across
-        // epochs (the "training curve"), but each epoch sees a
-        // different subset of the data.
+        // "different data per epoch" property.
         let n = manifest.shards.len();
         let shift = epoch % n;
         let rotated: Vec<PathBuf> = (0..n)
@@ -95,31 +97,39 @@ fn main() -> anyhow::Result<()> {
     let metrics_path = out.join("metrics.ndjson");
     let mut metrics = File::create(&metrics_path)
         .with_context(|| format!("create {}", metrics_path.display()))?;
-    // Running accumulator across epochs. We take ownership of the
-    // accumulator each epoch and move it into the model; the next
-    // epoch rebuilds a fresh running_acc from the model's data
-    // (this is the round-trip cost of having the model own the
-    // stats). The dominant memory cost per epoch is the per-mode
-    // `ModeStats` map (≈ 200 MB at 250K active modes × 64 hist
-    // entries); the previous `par_iter().collect()` of all
-    // per-shard accumulators at once (≈ 25 GB) has been replaced
-    // by a sequential pass in `accumulate_shards`.
-    let mut running_acc: Option<qfm_text::ChannelAccumulator> = None;
+    // Per-epoch fresh registry: the registry is a side product of
+    // training, and the per-epoch accumulator's stats are keyed by
+    // the registry's mode indices. A single shared registry across
+    // epochs would mean epoch-N's stats are keyed by mode indices
+    // assigned at epoch-0's first pass — the freshest registry per
+    // epoch is the simplest invariant. The model is then built from
+    // the (per-epoch) accumulator + (per-epoch) registry.
+    let mut registry_per_epoch: Option<ContextRegistry> = None;
     for (epoch, shards) in per_epoch_shards.iter().enumerate() {
         let wall_s = std::time::Instant::now();
-        let epoch_acc = accumulate_shards(shards, &text, manifest.vocab_size)?;
-        let epoch_windows = epoch_acc.total_windows;
-        // Merge epoch_acc into the running accumulator.
-        let mut running = match running_acc.take() {
-            Some(r) => r,
-            None => qfm_text::ChannelAccumulator::new(manifest.vocab_size, text.clone()),
+        let mut registry = registry_per_epoch
+            .take()
+            .unwrap_or_else(|| ContextRegistry::new(text.n_orders));
+        let mut encoder = if text.use_registry_encoder {
+            Encoder::Registry(registry.clone())
+        } else {
+            Encoder::Hasher(OrderHasher::new(text.clone()))
         };
-        running.merge(epoch_acc);
-        let n_active = running.n_active_modes();
-        let total_windows = running.total_windows;
-        // Build the model by consuming the running accumulator.
-        // The model now owns `running.stats` and `running.unigram`.
-        let model = QfmTextModel::from_accumulator(running, &text)?;
+        let epoch_acc = accumulate_shards(shards, &mut encoder, &text, manifest.vocab_size)?;
+        // Sync the (possibly grown) registry back from the encoder
+        // if we used the `Registry` variant. (The `Hasher` variant
+        // is read-only and needs no sync.)
+        if let Some(r) = encoder.as_registry() {
+            registry.clone_from(r);
+        }
+        let epoch_windows = epoch_acc.total_windows;
+        let n_active = epoch_acc.n_active_modes();
+        let total_windows = epoch_acc.total_windows;
+        // Build the model by consuming the per-epoch accumulator
+        // and the matching registry. The model now owns
+        // `epoch_acc.stats` and `epoch_acc.unigram` and the
+        // registry's mode-to-context map.
+        let model = QfmTextModel::from_accumulator(epoch_acc, registry, &text)?;
         let ckpt_path = out.join(format!("checkpoint_epoch{epoch}.qfm"));
         model.save(&ckpt_path)?;
         let wall_s = wall_s.elapsed().as_secs_f64();
@@ -134,7 +144,7 @@ fn main() -> anyhow::Result<()> {
         writeln!(metrics, "{line}")?;
         eprintln!("[epoch {epoch}] wall_s = {wall_s:.2}, n_windows = {epoch_windows}, n_active = {n_active}, total = {total_windows}");
         // The model is dropped at end of scope. The next epoch
-        // starts with a fresh running_acc.
+        // starts with a fresh registry.
     }
     eprintln!("done. metrics -> {}", metrics_path.display());
     Ok(())
@@ -146,11 +156,15 @@ fn print_help() {
          The TOML config is:\n  \
            manifest_path = \"...\"\n  \
            out_dir = \"...\"\n  \
-           epochs = 4  # optional\n  \
+           epochs = 1  # optional (rev 36 default; one pass, fresh registry per epoch)\n  \
            threads = 0 # optional, 0 = num_cpus\n  \
            # All TextConfig fields are also valid at the top level:\n  \
            n_orders = 4\n  \
-           block_sizes = [65536, 65536, 65536, 65536]\n  \
-           # ... etc."
+           # ... etc.\n\n\
+         Rev 37: encoder is selected by `use_registry_encoder` in\n  \
+         the TextConfig (default `false` = rev 35 `OrderHasher` with\n  \
+         `block_sizes` and `salts`; `true` = rev 36 `ContextRegistry`).\n  \
+         Decoder is the rev 35 dense W matrix; the optional oxieml\n  \
+         SymRegEngine decoder is being added in rev 37."
     );
 }

@@ -65,14 +65,6 @@ pub struct TextConfig {
     /// Number of context orders (1..=n). Order `o` uses the *last* `o`
     /// tokens. Default: 4.
     pub n_orders: usize,
-    /// Per-order mode-block sizes. `block_sizes[o]` is the number of
-    /// modes in the order-`o` block. Default: `[65536; n_orders]`.
-    pub block_sizes: Vec<u32>,
-    /// Per-order splitmix salts. Each salt decorrelates the hash for
-    /// that order, so two contexts with the same last-`o` tokens
-    /// hash to different modes in different orders. Default: derived
-    /// from a base seed.
-    pub salts: Vec<u64>,
     /// Maximum number of distinct (token, count) entries per mode
     /// histogram. On overflow, the smallest-count entry is evicted
     /// and its count is added to `escape`. Default: 64.
@@ -101,10 +93,50 @@ pub struct TextConfig {
     /// Top-k sparsity for [`DecodeStrategy::TopK`]. Default: 4.
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    /// Per-order hash block size for the [`crate::features::OrderHasher`]
+    /// encoder (rev 35). `block_sizes[o]` is the number of distinct
+    /// modes that contexts of order `o+1` are hashed to. Default:
+    /// `vec![1 << 20; n_orders]` (≈ 1M per order, 4M total). Each
+    /// mode is 32-bit; a 4M-mode table is 32 MB of mode indices in
+    /// the accumulator's `stats` map, plus per-mode histogram memory.
+    /// For the full WikiText-103 corpus (128M windows, 5M+ unique
+    /// tokens), the 4M-mode table is sufficient: hash collisions
+    /// blend unrelated contexts but the model generalizes to
+    /// unseen contexts at test time.
+    #[serde(default = "default_block_sizes")]
+    pub block_sizes: Vec<usize>,
+    /// Per-order salt for the hash mixer (decorrelates hashes
+    /// across orders). Default: `vec![1, 2, ..., n_orders]`.
+    #[serde(default = "default_salts")]
+    pub salts: Vec<u64>,
+    /// Encoder selector (rev 37). When `true`, use the per-context
+    /// `ContextRegistry` (rev 36) instead of the `OrderHasher`
+    /// (rev 35) for the accumulator's mode assignment. Default:
+    /// `true` (rev 36 nohash, the empirically better encoder on
+    /// shard 0). Set to `false` to reproduce the rev 35
+    /// `OrderHasher` behavior (degenerate Krylov basis, but
+    /// bounded memory).
+    #[serde(default = "default_true")]
+    pub use_registry_encoder: bool,
 }
 
 fn default_top_k() -> usize {
     4
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_block_sizes() -> Vec<usize> {
+    // 4M modes total by default. The accumulator grows the stats
+    // map only on observed modes, so the actual peak memory is
+    // dominated by the per-mode histograms (hist_cap × observed).
+    vec![1 << 20; 4]
+}
+
+fn default_salts() -> Vec<u64> {
+    vec![1, 2, 3, 4]
 }
 
 impl Default for TextConfig {
@@ -112,10 +144,6 @@ impl Default for TextConfig {
         const N_ORDERS: usize = 4;
         Self {
             n_orders: N_ORDERS,
-            block_sizes: vec![65_536; N_ORDERS],
-            salts: (0..N_ORDERS as u64)
-                .map(|o| o.wrapping_mul(0x9e3779b97f4a7c15))
-                .collect(),
             hist_cap: 64,
             max_rank: 8,
             m_shifts: 8,
@@ -125,6 +153,9 @@ impl Default for TextConfig {
             seed: 0,
             decode_strategy: DecodeStrategy::default(),
             top_k: default_top_k(),
+            block_sizes: default_block_sizes(),
+            salts: default_salts(),
+            use_registry_encoder: default_true(),
         }
     }
 }
@@ -143,7 +174,7 @@ impl TextConfig {
     pub fn offset(&self, order: usize) -> u32 {
         let mut off = 1u32;
         for o in 0..order {
-            off += self.block_sizes[o];
+            off += self.block_sizes[o] as u32;
         }
         off
     }
@@ -158,7 +189,7 @@ impl TextConfig {
         }
         let mut off = 1u32;
         for o in 0..self.n_orders {
-            let block = self.block_sizes[o];
+            let block = self.block_sizes[o] as u32;
             if mode < off + block {
                 return o;
             }

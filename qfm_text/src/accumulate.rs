@@ -1,4 +1,4 @@
-//! Streaming pass over the corpus (Stage 2).
+//! Streaming pass over the corpus (Stage 2, rev 36: hashing removed).
 //!
 //! The accumulator is the **FSDP analog**: one `ChannelAccumulator` per
 //! shard, merged at the end of the epoch. It is purely a counter
@@ -6,7 +6,7 @@
 //! through the pipeline is:
 //!
 //! ```text
-//!  shard ─[WindowIter]─▶ (ctx, next) ─[hasher]─▶ active modes
+//!  shard ─[WindowIter]─▶ (ctx, next) ─[registry.assign(ctx)]─▶ active modes
 //!       ─▶ for each mode: ModeStats::observe(next) and unigram[next] += 1
 //!       ─▶ merge(accumulator_per_shard) into the running accumulator
 //! ```
@@ -16,6 +16,19 @@
 //! Multiple epochs differ only because HRM-Text's stratified sampling
 //! feeds different shards per epoch; the counts keep accumulating
 //! across epochs (more data ⇒ better histograms, the "training curve").
+//!
+//! # Rev 36 change: hashing removed
+//!
+//! Where the prior `OrderHasher` mapped every context of order `o`
+//! to a hash slot in `[offset_o, offset_o + block_size_o)` (a fixed
+//! bounded table; unrelated contexts collided on the same slot and
+//! blended their histograms), rev 36 uses a [`ContextRegistry`]:
+//! every distinct context gets a **fresh, unique** mode index. No
+//! hash collisions, no histogram blending, no bounded table. The
+//! Krylov pipeline's W matrix is now `(K_2_total, rank)` where
+//! `K_2_total = 1 + Σ_o n_active_modes_o` is the actual vocabulary
+//! of unique contexts the corpus produced — typically ~10⁵–10⁷ for
+//! WikiText-103, not the fixed ~10⁵ the hashed table was clamped to.
 
 use std::fs::File;
 use std::io::Read;
@@ -27,6 +40,83 @@ use crate::config::TextConfig;
 use crate::corpus::Shard;
 use crate::error::QfmTextError;
 use crate::features::OrderHasher;
+use crate::registry::{ContextRegistry, VACUUM_MODE};
+
+/// Encoder selector for the streaming accumulator (rev 37).
+///
+/// The accumulator's `observe_shard` takes one of these and uses it
+/// to map each `(context, next)` window to a list of active mode
+/// indices. The default is `Hasher` (rev 35), the fallback for
+/// `--encoder registry` comparison experiments is `Registry`
+/// (rev 36, hashing-free, per-context).
+#[derive(Debug, Clone)]
+pub enum Encoder {
+    /// Rev 35 `OrderHasher` — a fixed-size hash table with
+    /// `block_sizes[o]` slots per order `o`. Hash collisions blend
+    /// unrelated contexts. Memory-bounded; generalizes to unseen
+    /// contexts at test time.
+    Hasher(OrderHasher),
+    /// Rev 36 `ContextRegistry` — one mode per unique context,
+    /// no collisions, no bounded table. Memory grows with the
+    /// corpus's unique-context count (~5.5M for WikiText-103).
+    Registry(ContextRegistry),
+}
+
+impl Encoder {
+    /// Encode a context into a list of active mode indices. For
+    /// `Hasher`, this is the rev 35 hash; for `Registry`, this is
+    /// the rev 36 per-context assignment (with the vacuum sentinel
+    /// for unseen contexts).
+    pub fn encode(&mut self, context: &[u32]) -> Vec<u32> {
+        match self {
+            Encoder::Hasher(h) => h.encode_modes(context),
+            Encoder::Registry(r) => {
+                let n = r.n_orders().min(context.len());
+                if n == 0 {
+                    // Empty context → no active order, vacuum sentinel.
+                    vec![VACUUM_MODE; 1]
+                } else {
+                    (1..=n).map(|o| r.assign(o, context)).collect()
+                }
+            }
+        }
+    }
+
+    /// The `n_orders` of the underlying encoder (for the `WindowIter`
+    /// in `observe_shard`).
+    pub fn n_orders(&self) -> usize {
+        match self {
+            Encoder::Hasher(h) => h.config().n_orders,
+            Encoder::Registry(r) => r.n_orders(),
+        }
+    }
+
+    /// The vocabulary-size cap used by `Shard::open` for the
+    /// manifest's vocab-size check. `u32::MAX` disables the check
+    /// (used by dev fixtures where the manifest is implicit).
+    pub fn n_orders_for_check(&self) -> u32 {
+        match self {
+            Encoder::Hasher(h) => h.config().vocab_size_for_check(),
+            Encoder::Registry(_) => u32::MAX,
+        }
+    }
+
+    /// Borrow the inner `ContextRegistry` (only for `Encoder::Registry`).
+    pub fn as_registry(&self) -> Option<&ContextRegistry> {
+        match self {
+            Encoder::Registry(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Mutably borrow the inner `ContextRegistry` (only for `Encoder::Registry`).
+    pub fn as_registry_mut(&mut self) -> Option<&mut ContextRegistry> {
+        match self {
+            Encoder::Registry(r) => Some(r),
+            _ => None,
+        }
+    }
+}
 
 /// One mode's accumulated statistics. `weight` is the total number of
 /// windows that activated this mode; `hist` is a top-T-by-count list
@@ -107,6 +197,14 @@ impl ModeStats {
 /// because the underlying operations are `count + count` (commutative,
 /// associative) and the histogram merge is well-defined for top-T-by-
 /// count (deterministic tie-break by token id).
+///
+/// **Rev 36:** the accumulator no longer holds a hasher. The
+/// [`ContextRegistry`] is passed in by the caller (it must persist
+/// across shards — accumulating shards sequentially with the same
+/// `&mut ContextRegistry` is the streaming-pass equivalent of
+/// `for shard in shards: registry.observe(shard)`). The mode 0
+/// (vacuum) histogram is initialized at model-build time by
+/// [`super::model::QfmTextModel::from_accumulator`], not here.
 #[derive(Debug, Clone)]
 pub struct ChannelAccumulator {
     /// Per-mode statistics, keyed by global mode index.
@@ -139,7 +237,17 @@ impl ChannelAccumulator {
 
     /// Observe one `(ctx, next)` window. The accumulator grows the
     /// unigram vec to the size of `next` if it was previously shorter.
-    pub fn observe(&mut self, modes: &[u32], next: u32) {
+    /// The provided `encoder` (rev 37) maps the context to a list of
+    /// active mode indices: an `OrderHasher` (rev 35) for the
+    /// default hashed encoder, or a `ContextRegistry` (rev 36) for
+    /// the comparison-knob per-context encoder.
+    ///
+    /// Edge case: an **empty** context (`context.len() == 0`) has
+    /// no active order to assign. The encoder routes this to the
+    /// vacuum mode (index 0) for `Registry`; for `Hasher` with an
+    /// empty context, the resulting empty mode list also routes to
+    /// the vacuum sentinel as a defensive fallback.
+    pub fn observe(&mut self, encoder: &mut Encoder, context: &[u32], next: u32) {
         self.total_windows += 1;
         // Unigram update. Grow lazily so a 16k-vocab allocation only
         // happens on first use.
@@ -147,33 +255,39 @@ impl ChannelAccumulator {
             self.unigram.resize(next as usize + 1, 0);
         }
         self.unigram[next as usize] += 1;
-        for &m in modes {
+        // Encode the context into a list of active mode indices.
+        let modes = encoder.encode(context);
+        if modes.is_empty() {
+            // No active mode (e.g. empty context under OrderHasher).
+            // Route to the vacuum sentinel so the observation is
+            // never lost.
             self.stats
-                .entry(m)
+                .entry(VACUUM_MODE)
                 .or_default()
                 .observe(next, self.cfg.hist_cap);
+        } else {
+            for m in modes {
+                self.stats
+                    .entry(m)
+                    .or_default()
+                    .observe(next, self.cfg.hist_cap);
+            }
         }
     }
 
-    /// Walk one shard with the given hasher and update the accumulator.
-    pub fn observe_shard(&mut self, shard_path: &Path, hasher: &OrderHasher) -> Result<(), QfmTextError> {
-        // Open the shard as a borrowed file to learn vocab_size. We
-        // can't pull vocab_size from the manifest here because the
-        // accumulator doesn't have a reference to it; instead, the
-        // accumulator's `unigram` vec is its own vocabulary, and the
-        // caller is responsible for choosing a vocab_size >= max
-        // observed token id. We read the unigram cap as a side
-        // channel: the maximum observed token id will be reflected
-        // in `unigram.len()` after the first observation.
-        //
-        // For the vocab-bound check the caller's `accumulate_shards`
-        // wraps this in a typed error if the shard declares a higher
-        // vocab_size than the config allows.
-        let shard = Shard::open(shard_path, hasher.config().vocab_size_for_check())?;
+    /// Walk one shard with the given encoder and update the
+    /// accumulator. The encoder is mutated: every distinct context
+    /// the shard produces is hashed (or assigned a fresh mode index)
+    /// and the observation is recorded against the active modes.
+    pub fn observe_shard(
+        &mut self,
+        shard_path: &Path,
+        encoder: &mut Encoder,
+    ) -> Result<(), QfmTextError> {
+        let shard = Shard::open(shard_path, encoder.n_orders_for_check())?;
         shard.check_vocab()?;
-        for (ctx, next) in shard.windows(hasher.config().n_orders) {
-            let modes = hasher.encode_modes(&ctx);
-            self.observe(&modes, next);
+        for (ctx, next) in shard.windows(encoder.n_orders()) {
+            self.observe(encoder, &ctx, next);
         }
         Ok(())
     }
@@ -216,7 +330,11 @@ impl ChannelAccumulator {
 }
 
 /// Streaming pass over a list of shards. Returns a single merged
-/// accumulator.
+/// accumulator and the (now-grown) registry. The registry must be
+/// passed in by the caller; it persists across shards and across
+/// epochs. This is the rev-36 contract: the registry is a side
+/// product of training that the compiled model needs at inference
+/// time to map test contexts back to their assigned mode indices.
 ///
 /// **Memory model:** this function processes shards **sequentially**
 /// to keep peak memory bounded. The previous implementation used
@@ -228,33 +346,60 @@ impl ChannelAccumulator {
 /// ~100 MB (one shard's accumulator at a time), bounded by the
 /// final ~200 MB merged accumulator.
 ///
-/// **Why no parallelism:** the per-shard accumulator's size is
-/// dominated by the per-mode histograms (`ModeStats.hist`, capped at
-/// `hist_cap` entries). With `hist_cap = 64` and 250K active modes,
-/// the per-shard accumulator is 250K × ~528 bytes ≈ 130 MB. Even a
-/// `reduce`-based parallel fold (one accumulator per rayon worker
-/// thread) would still hold `n_threads × 130 MB` ≈ 2 GB at once.
-/// For the WikiText-103 245-shard corpus, sequential is the only
-/// memory-safe option. The bottleneck is the inner sort in
-/// `ModeStats::observe` (O(hist_cap log hist_cap) per observation =
-/// ~400 ops × 128M observations = 50 Gops), which is CPU-bound
-/// and would dominate the wall time regardless of shard-level
-/// parallelism.
+/// With the rev-36 registry the per-shard accumulator's per-mode
+/// histogram footprint is unchanged (~528 bytes per active mode
+/// entry), but the registry itself grows to ~5.5 M entries on
+/// 128 M tokens of WikiText-103 (~250 MB). The registry is shared
+/// across shards and is not duplicated per shard, so the sequential
+/// memory model still holds.
 pub fn accumulate_shards(
     shard_paths: &[PathBuf],
+    encoder: &mut Encoder,
     cfg: &TextConfig,
     vocab_size: u32,
 ) -> Result<ChannelAccumulator, QfmTextError> {
-    let hasher = OrderHasher::new(cfg.clone());
     let mut acc = ChannelAccumulator::new(vocab_size, cfg.clone());
     for path in shard_paths {
-        acc.observe_shard(path, &hasher)?;
+        acc.observe_shard(path, encoder)?;
     }
     Ok(acc)
 }
 
+/// Observe one `(ctx, next)` window using a `ContextRegistry` for
+/// the encoder (rev 36 fallback API; the rev 37 path is the
+/// `Encoder` enum directly via [`ChannelAccumulator::observe`]).
+/// This is a convenience wrapper that hides the `Encoder::Registry`
+/// plumbing from callers that only ever need the registry path.
+pub fn observe_with_registry(
+    acc: &mut ChannelAccumulator,
+    registry: &mut ContextRegistry,
+    context: &[u32],
+    next: u32,
+) {
+    let mut enc = Encoder::Registry(registry.clone());
+    acc.observe(&mut enc, context, next);
+    if let Some(r) = enc.as_registry() {
+        registry.clone_from(r);
+    }
+}
+
+/// Walk one shard with a `ContextRegistry` for the encoder (rev 36
+/// fallback API; the rev 37 path is `Encoder` directly).
+pub fn observe_shard_with_registry(
+    acc: &mut ChannelAccumulator,
+    registry: &mut ContextRegistry,
+    shard_path: &Path,
+) -> Result<(), QfmTextError> {
+    let mut enc = Encoder::Registry(registry.clone());
+    let res = acc.observe_shard(shard_path, &mut enc);
+    if let Some(r) = enc.as_registry() {
+        registry.clone_from(r);
+    }
+    res
+}
+
 /// Read the entire file (small files only) into a byte vec. Used for
-/// `vocab_size_for_check` in dev fixtures where the manifest is
+/// `n_orders_for_check` in dev fixtures where the manifest is
 /// implicit.
 pub fn read_small_file(path: &Path) -> Result<Vec<u8>, QfmTextError> {
     let mut f = File::open(path)?;
@@ -273,6 +418,26 @@ impl TextConfig {
     }
 }
 
+impl ContextRegistry {
+    /// Sentinel for the shard-level vocab check: the manifest
+    /// provides the real vocab_size; for dev fixtures (where the
+    /// caller is the test code itself), this is `u32::MAX`, which
+    /// disables the bound check. (Mirrors the prior
+    /// `TextConfig::vocab_size_for_check`; the registry owns it now
+    /// because the registry is what `observe_shard` takes.)
+    pub fn n_orders_for_check(&self) -> u32 {
+        u32::MAX
+    }
+}
+
+/// Re-export the vacuum sentinel (already `pub` in `registry`).
+/// `accumulate_shards` and downstream callers can use
+/// `accumulate::VACUUM_MODE` without importing the registry module
+/// directly. The duplicate `use` is intentional — we re-export the
+/// public symbol under a stable path.
+#[allow(unused_imports)]
+use crate::registry::VACUUM_MODE as _VACUUM_REEXPORT;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,8 +447,6 @@ mod tests {
     fn cfg() -> TextConfig {
         TextConfig {
             n_orders: 2,
-            block_sizes: vec![16, 16],
-            salts: vec![1, 2],
             hist_cap: 3,
             max_rank: 4,
             m_shifts: 4,
@@ -304,10 +467,40 @@ mod tests {
         f.write_all(&buf).unwrap();
     }
 
+    /// Helper: route an observe call through the `Encoder` enum
+    /// (rev 37), syncing the registry's mutations back. Used by
+    /// the test cases below to keep the call sites readable.
+    fn observe_via_registry(
+        acc: &mut ChannelAccumulator,
+        reg: &mut ContextRegistry,
+        ctx: &[u32],
+        next: u32,
+    ) {
+        let mut enc = Encoder::Registry(reg.clone());
+        acc.observe(&mut enc, ctx, next);
+        if let Some(r) = enc.as_registry() {
+            reg.clone_from(r);
+        }
+    }
+
+    fn observe_shard_via_registry(
+        acc: &mut ChannelAccumulator,
+        reg: &mut ContextRegistry,
+        shard_path: &Path,
+    ) -> Result<(), QfmTextError> {
+        let mut enc = Encoder::Registry(reg.clone());
+        let res = acc.observe_shard(shard_path, &mut enc);
+        if let Some(r) = enc.as_registry() {
+            reg.clone_from(r);
+        }
+        res
+    }
+
     #[test]
     fn observe_grows_unigram_lazily() {
         let mut acc = ChannelAccumulator::new(0, cfg());
-        acc.observe(&[1], 5);
+        let mut reg = ContextRegistry::new(2);
+        observe_via_registry(&mut acc, &mut reg, &[1], 5);
         assert_eq!(acc.unigram.len(), 6);
         assert_eq!(acc.unigram[5], 1);
         assert_eq!(acc.total_windows, 1);
@@ -316,15 +509,23 @@ mod tests {
     #[test]
     fn observe_records_per_mode_weight_and_hist() {
         let mut acc = ChannelAccumulator::new(0, cfg());
-        acc.observe(&[0, 1], 7);
-        acc.observe(&[0, 1], 7);
-        acc.observe(&[0, 1], 9);
-        // Mode 0 saw 3 windows; mode 1 saw 3 windows.
-        for m in 0..2 {
-            let st = &acc.stats[&m];
-            assert_eq!(st.weight, 3);
-        }
-        let s0 = &acc.stats[&0];
+        let mut reg = ContextRegistry::new(2);
+        // Manually assign two order-1 modes so we can use them by
+        // context. The registry will assign mode 1 to ctx=[0],
+        // mode 2 to ctx=[1]. Observe next=7, 7, 9 against both
+        // modes (use the same context each time so both orders'
+        // modes get the observation).
+        reg.assign(1, &[0]);
+        reg.assign(1, &[1]);
+        // Now encode the contexts: for [0, 0] (length 2) the
+        // active modes are (order-1: token 0) and (order-2:
+        // (0, 0) which we haven't assigned → vacuum).
+        observe_via_registry(&mut acc, &mut reg, &[0, 0], 7);
+        observe_via_registry(&mut acc, &mut reg, &[0, 0], 7);
+        observe_via_registry(&mut acc, &mut reg, &[0, 0], 9);
+        // Mode 1 (token 0, order-1) saw 3 windows.
+        let s0 = acc.stats.get(&1).expect("order-1 mode for token 0");
+        assert_eq!(s0.weight, 3);
         let s0_hist: FxHashMap<u32, u32> = s0.hist.iter().copied().collect();
         assert_eq!(s0_hist[&7], 2);
         assert_eq!(s0_hist[&9], 1);
@@ -333,11 +534,19 @@ mod tests {
     #[test]
     fn hist_cap_evicts_to_escape() {
         let mut acc = ChannelAccumulator::new(0, cfg());
-        // hist_cap = 3. Observe 4 distinct tokens, each once.
+        let mut reg = ContextRegistry::new(1);
+        // hist_cap = 3. The empty context is the only way to
+        // route observations to mode 0 (the vacuum sentinel) under
+        // the rev 36 observe contract: every non-empty context
+        // gets a fresh mode assigned. The vacuum histogram is
+        // initialized at model-build time (see
+        // `QfmTextModel::init_vacuum_histogram`), so this test
+        // exercises the escape eviction logic via the empty-context
+        // path.
         for t in 0..4 {
-            acc.observe(&[0], t);
+            observe_via_registry(&mut acc, &mut reg, &[], t);
         }
-        let s = &acc.stats[&0];
+        let s = acc.stats.get(&0).expect("vacuum mode");
         assert_eq!(s.hist.len(), 3);
         assert_eq!(s.escape, 1, "the 4th distinct token got evicted to escape");
         // Total count is conserved.
@@ -358,11 +567,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let sp = dir.path().join("shard.bin");
         write_shard(&sp, &tokens);
-        let h = OrderHasher::new(c.clone());
+        let mut reg_a = ContextRegistry::new(2);
         let mut a = ChannelAccumulator::new(0, c.clone());
-        a.observe_shard(&sp, &h).unwrap();
+        observe_shard_via_registry(&mut a, &mut reg_a, &sp).unwrap();
+        let mut reg_b = ContextRegistry::new(2);
         let mut b = ChannelAccumulator::new(0, c.clone());
-        b.observe_shard(&sp, &h).unwrap();
+        observe_shard_via_registry(&mut b, &mut reg_b, &sp).unwrap();
         let snap_a = a.clone();
         let snap_b = b.clone();
         a.merge(b);
@@ -408,13 +618,44 @@ mod tests {
     #[test]
     fn empty_accumulator_is_zero_of_merge() {
         let mut a = ChannelAccumulator::new(0, cfg());
-        a.observe(&[0, 1], 5);
-        a.observe(&[2], 9);
+        let mut reg = ContextRegistry::new(2);
+        observe_via_registry(&mut a, &mut reg, &[0], 5);
+        observe_via_registry(&mut a, &mut reg, &[1], 9);
         let b = ChannelAccumulator::new(0, cfg());
         let snap = a.clone();
         a.merge(b);
         assert_eq!(a.total_windows, snap.total_windows);
         assert_eq!(a.unigram, snap.unigram);
         assert_eq!(a.stats, snap.stats);
+    }
+
+    #[test]
+    fn unseen_context_grows_registry_with_fresh_modes() {
+        // Rev 36: `observe` calls `registry.assign` for every
+        // active order, so the registry grows as the corpus is
+        // observed. An "unseen" context is impossible after the
+        // first observation (the registry already has the mode).
+        // The vacuum mode (0) is only used for empty contexts.
+        let mut acc = ChannelAccumulator::new(0, cfg());
+        let mut reg = ContextRegistry::new(2);
+        // First observation: both orders are unseen → both get
+        // fresh modes assigned (modes 1 and 2).
+        observe_via_registry(&mut acc, &mut reg, &[42, 99], 7);
+        assert_eq!(reg.n_active_for_order(0), 1, "order-1 should have 1 mode");
+        assert_eq!(reg.n_active_for_order(1), 1, "order-2 should have 1 mode");
+        // Mode 1 (order-1 trailing [99]) and mode 2 (order-2
+        // trailing [42, 99]) each have weight 1 and the entry
+        // (7, 1) — the observation was recorded against the
+        // fresh mode, not the vacuum.
+        let s1 = acc.stats.get(&1).expect("order-1 mode for [99]");
+        assert_eq!(s1.weight, 1);
+        let s2 = acc.stats.get(&2).expect("order-2 mode for [42, 99]");
+        assert_eq!(s2.weight, 1);
+        // No observations hit mode 0 (the vacuum) — the corpus
+        // observation went to the freshly assigned registry modes.
+        assert!(!acc.stats.contains_key(&0));
+        // The unigram (separate from the per-mode histograms) was
+        // still updated.
+        assert_eq!(acc.unigram[7], 1);
     }
 }

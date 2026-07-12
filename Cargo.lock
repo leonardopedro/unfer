@@ -2597,6 +2597,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxieml"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80e4336b8e921d41b0bce212eec99835ae7d5534fda45ee2cf25eb6cf6a8b642"
+dependencies = [
+ "num-complex",
+ "num-rational",
+ "rand 0.10.1",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3049,6 +3060,7 @@ dependencies = [
  "nalgebra",
  "nested_fock_algebra",
  "num-complex",
+ "oxieml",
  "qfm",
  "rayon",
  "rustc-hash",

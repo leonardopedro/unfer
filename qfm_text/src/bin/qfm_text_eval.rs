@@ -177,6 +177,11 @@ fn main() -> anyhow::Result<()> {
     // the baseline see the same training data, and both are scored
     // on the same held-out data.
     let cfg = model.cfg.clone();
+    // (The model's own registry is used at inference time and is
+    // also the one handed to the baseline when the user passes
+    // `--baseline-from-checkpoint`. The `else` branch below
+    // re-derives both the accumulator and the registry from the
+    // train shards.)
     // Two paths to the baseline:
     //   - default: re-derive from the train shards (slow: ~7 min
     //     for the full WikiText-103 train corpus, but the user has
@@ -189,13 +194,19 @@ fn main() -> anyhow::Result<()> {
     let baseline = if baseline_from_checkpoint {
         eprintln!("[qfm_text_eval] building baseline from checkpoint (clone mode_hists)...");
         let baseline_acc = model.as_accumulator();
+        let baseline_reg = model.registry_clone();
         eprintln!("[qfm_text_eval] baseline from checkpoint built");
-        NgramBaseline::from_accumulator(baseline_acc)
+        NgramBaseline::from_accumulator(baseline_acc, baseline_reg)
     } else {
         eprintln!("[qfm_text_eval] accumulating baseline from train shards ({} shards)...", train_shard_paths.len());
-        let baseline_acc = accumulate_shards(&train_shard_paths, &cfg, manifest.vocab_size)?;
+        let mut baseline_reg = qfm_text::ContextRegistry::new(cfg.n_orders);
+        let mut baseline_enc = qfm_text::Encoder::Registry(baseline_reg.clone());
+        let baseline_acc = accumulate_shards(&train_shard_paths, &mut baseline_enc, &cfg, manifest.vocab_size)?;
+        if let Some(r) = baseline_enc.as_registry() {
+            baseline_reg.clone_from(r);
+        }
         eprintln!("[qfm_text_eval] baseline accumulated");
-        NgramBaseline::from_accumulator(baseline_acc)
+        NgramBaseline::from_accumulator(baseline_acc, baseline_reg)
     };
     // Diagnostic: SVD ranks of W and H_m, and how well the QFM
     // predicted distribution matches the empirical next-token
@@ -205,6 +216,11 @@ fn main() -> anyhow::Result<()> {
     if diagnose {
         diagnose_pipeline(&model, &baseline, &train_shard_paths[0], manifest.vocab_size)?;
     }
+    // `cfg` is no longer needed (we used it to build the baseline
+    // and to override decode_strategy on the model above); drop it
+    // explicitly so the borrow checker is happy with the model
+    // clone in the sweep below.
+    drop(cfg);
     // Score the model + baseline + unigram on each eval shard.
     let mut qfm_total = PerplexityReport {
         n_tokens: 0,
@@ -428,7 +444,7 @@ fn diagnose_pipeline(
     // it reads the same histograms), not a QFM-specific defect. If
     // it's present but QFM still didn't pick it, that's a genuine
     // weighting/smoothing miss.
-    let hasher = qfm_text::OrderHasher::new(model.cfg.clone());
+    let hasher = model.registry.clone();
     let mut miss_absent = 0u32;
     let mut miss_present = 0u32;
     let mut miss_detail_logged = 0u32;
@@ -479,8 +495,17 @@ fn diagnose_pipeline(
         if argmax_q == emp_argmax {
             top1_qfm += 1;
         } else {
-            // Miss: check whether the true token survives hashing
-            // into any active mode's histogram at all.
+            // Miss: check whether the true token survives in any
+            // active mode's histogram at all. For rev 36
+            // (registry-based), an "unseen" context returns
+            // [VACUUM_MODE] = [0], whose histogram is the unigram —
+            // so the true token is always present in the vacuum's
+            // histogram if it's anywhere in the vocabulary. This
+            // is a structural change from the rev-35 hashed design
+            // (where a context could map to a mode whose histogram
+            // was already capped out). The miss is now always
+            // "present but not chosen" (a genuine weighting/smoothing
+            // miss).
             let active_modes = hasher.encode_modes(ctx);
             let present = active_modes.iter().any(|m| {
                 model
@@ -551,7 +576,7 @@ fn diagnose_pipeline(
     );
     let n_miss = miss_absent + miss_present;
     eprintln!(
-        "[diagnose]   QFM miss attribution ({n_miss} misses): true token absent from every active mode's histogram (shared hashing/hist_cap capacity limit, not QFM-specific) = {miss_absent}/{n_miss} = {:.3}; present but not chosen (genuine weighting/smoothing miss) = {miss_present}/{n_miss} = {:.3}",
+        "[diagnose]   QFM miss attribution ({n_miss} misses): true token absent from every active mode's histogram (registry/vacuum capacity limit, not QFM-specific) = {miss_absent}/{n_miss} = {:.3}; present but not chosen (genuine weighting/smoothing miss) = {miss_present}/{n_miss} = {:.3}",
         miss_absent as f64 / n_miss.max(1) as f64,
         miss_present as f64 / n_miss.max(1) as f64,
     );

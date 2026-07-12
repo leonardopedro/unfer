@@ -10,15 +10,13 @@
 use std::path::Path;
 
 use qfm_text::{
-    NgramBaseline, QfmTextModel, Shard, TextConfig, accumulate_shards, perplexity,
-    perplexity_baseline_capped,
+    ContextRegistry, Encoder, NgramBaseline, QfmTextModel, Shard, TextConfig, accumulate_shards,
+    perplexity, perplexity_baseline_capped,
 };
 
 fn small_cfg() -> TextConfig {
     TextConfig {
         n_orders: 2,
-        block_sizes: vec![128, 128],
-        salts: vec![1, 2],
         hist_cap: 16,
         max_rank: 4,
         m_shifts: 4,
@@ -32,17 +30,28 @@ fn small_cfg() -> TextConfig {
 
 fn run_with_shard(shard_path: &Path, vocab_size: u32) {
     let cfg = small_cfg();
-    // 1. Accumulate.
-    let acc = accumulate_shards(&[shard_path.to_path_buf()], &cfg, vocab_size)
-        .expect("accumulate");
+    // 1. Accumulate (registry is grown by `accumulate_shards`).
+    let mut registry = ContextRegistry::new(cfg.n_orders);
+    let mut encoder = Encoder::Registry(registry.clone());
+    let acc = accumulate_shards(
+        &[shard_path.to_path_buf()],
+        &mut encoder,
+        &cfg,
+        vocab_size,
+    )
+    .expect("accumulate");
+    if let Some(r) = encoder.as_registry() {
+        registry.clone_from(r);
+    }
     assert!(acc.total_windows > 0);
-    // 2. Compile.
-    let model = QfmTextModel::from_accumulator(acc.clone(), &cfg).expect("compile");
+    // 2. Compile (the model now owns the registry).
+    let model =
+        QfmTextModel::from_accumulator(acc.clone(), registry.clone(), &cfg).expect("compile");
     // 3. Score (capped to 1000 windows for test speed).
     let shard = Shard::open(shard_path, vocab_size).expect("open");
     let qp = perplexity(&model, &shard).expect("qfm ppl");
     assert!(qp.ppl.is_finite() && qp.ppl > 0.0);
-    let baseline = NgramBaseline::from_accumulator(acc);
+    let baseline = NgramBaseline::from_accumulator(acc, registry);
     let bp = perplexity_baseline_capped(&baseline, &shard, 1000).expect("baseline ppl");
     assert!(bp.ppl.is_finite() && bp.ppl > 0.0);
     eprintln!(

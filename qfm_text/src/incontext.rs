@@ -25,6 +25,8 @@ use crate::error::QfmTextError;
 use crate::model::QfmTextModel;
 #[allow(unused_imports)]
 use crate::config::TextConfig; // used in tests
+#[allow(unused_imports)]
+use crate::registry::ContextRegistry; // re-exported by lib; not used directly here
 
 /// Options for the in-context update.
 #[derive(Debug, Clone)]
@@ -106,21 +108,23 @@ pub fn next_token_dist_adapted(
     prefix: &[u32],
 ) -> Result<Vec<f64>, QfmTextError> {
     let opts = HmcIncontextOpts::default();
-    let active_modes = super::model::public_encode_modes(prefix, &model.cfg);
-    let c_static = {
-        let active = model.pipeline.encode_modes(&active_modes)?;
-        model.pipeline.evolve(&active, model.cfg.t)
-    };
-    let p_static = model
-        .pipeline
-        .decode_sketched_at(&c_static, &model.gram, &active_modes);
+    // Build the static Krylov input via the rev-36 encoder
+    // (registry modes for seen orders, dressed vacua |0̃_o⟩ for
+    // unseen orders). The model has no public `encode_context`, so
+    // we go through `next_token_dist` and re-use its full pipeline.
+    let d_static = model.next_token_dist(prefix)?;
+    // The HMC posterior is built from the in-context windows —
+    // each window is encoded through the model's `encode_modes`
+    // (the pipeline's superposition encoder, which takes mode
+    // indices — used here for the multi-observation likelihood,
+    // not for the dressed-vacuum-aware path).
+    let active_modes = model.registry.encode_modes(prefix);
     let c_post = adapt_prior(model, prefix, &opts)?;
     let p_post = model
         .pipeline
         .decode_sketched_at(&c_post, &model.gram, &active_modes);
-    // Marginalize both against the per-mode histograms.
-    let d_static = model.marginalize(&p_static);
     let d_post = model.marginalize(&p_post);
+    // Mix the two distributions.
     let mix = opts.bayes_mix;
     let mut out = vec![0.0_f64; d_static.len()];
     for i in 0..out.len() {
@@ -139,14 +143,11 @@ pub fn next_token_dist_adapted(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accumulate::ChannelAccumulator;
-    use crate::features::OrderHasher;
+    use crate::accumulate::{ChannelAccumulator, observe_with_registry};
 
     fn cfg() -> TextConfig {
         TextConfig {
             n_orders: 2,
-            block_sizes: vec![32, 32],
-            salts: vec![1, 2],
             hist_cap: 4,
             max_rank: 4,
             m_shifts: 4,
@@ -163,17 +164,16 @@ mod tests {
         // Build a small toy accumulator.
         let tokens: Vec<u32> = (0..300).map(|i| (i / 30) % 4).collect();
         let mut acc = ChannelAccumulator::new(0, cfg());
-        let h = OrderHasher::new(cfg());
+        let mut reg = ContextRegistry::new(cfg().n_orders);
         for i in 1..tokens.len() {
             let ctx: Vec<u32> = if i >= 2 {
                 vec![tokens[i - 2], tokens[i - 1]]
             } else {
                 vec![tokens[i - 1]]
             };
-            let modes = h.encode_modes(&ctx);
-            acc.observe(&modes, tokens[i]);
+            observe_with_registry(&mut acc, &mut reg, &ctx, tokens[i]);
         }
-        let model = QfmTextModel::from_accumulator(acc, &cfg()).unwrap();
+        let model = QfmTextModel::from_accumulator(acc, reg, &cfg()).unwrap();
         let c_post = adapt_prior(&model, &tokens[..30], &HmcIncontextOpts::default()).unwrap();
         for x in c_post.iter() {
             assert!(x.norm().is_finite());
@@ -184,17 +184,16 @@ mod tests {
     fn next_token_dist_adapted_sums_to_one() {
         let tokens: Vec<u32> = (0..300).map(|i| (i / 30) % 4).collect();
         let mut acc = ChannelAccumulator::new(0, cfg());
-        let h = OrderHasher::new(cfg());
+        let mut reg = ContextRegistry::new(cfg().n_orders);
         for i in 1..tokens.len() {
             let ctx: Vec<u32> = if i >= 2 {
                 vec![tokens[i - 2], tokens[i - 1]]
             } else {
                 vec![tokens[i - 1]]
             };
-            let modes = h.encode_modes(&ctx);
-            acc.observe(&modes, tokens[i]);
+            observe_with_registry(&mut acc, &mut reg, &ctx, tokens[i]);
         }
-        let model = QfmTextModel::from_accumulator(acc, &cfg()).unwrap();
+        let model = QfmTextModel::from_accumulator(acc, reg, &cfg()).unwrap();
         let dist = next_token_dist_adapted(&model, &tokens[..30]).unwrap();
         let sum: f64 = dist.iter().sum();
         assert!((sum - 1.0).abs() < 1e-9, "sum = {sum}");

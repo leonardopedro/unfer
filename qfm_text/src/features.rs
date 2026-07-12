@@ -207,7 +207,7 @@ mod tests {
                 let ctx: Vec<u32> = (0..o as u32 + trial).collect();
                 let m = h.mode_for(o, &ctx).unwrap();
                 assert!(
-                    m >= off && m < off + block,
+                    m >= off && (m as u64) < (off as u64) + (block as u64),
                     "order {o}: mode {m} not in [{off}, {off}+{block})",
                 );
             }

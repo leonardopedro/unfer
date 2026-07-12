@@ -15,12 +15,15 @@ use std::path::Path;
 
 use rustc_hash::FxHashMap;
 
-use crate::accumulate::{ChannelAccumulator, ModeStats};
+use crate::accumulate::{
+    ChannelAccumulator, Encoder, ModeStats, observe_shard_with_registry, observe_with_registry,
+};
 use crate::config::TextConfig;
 use crate::corpus::Shard;
 use crate::error::QfmTextError;
-use crate::features::OrderHasher;
 use crate::model::QfmTextModel;
+use crate::registry::VACUUM_MODE;
+use crate::registry::ContextRegistry;
 
 /// The perplexity report: token count, nats-per-token, and ppl.
 #[derive(Debug, Clone, PartialEq)]
@@ -233,38 +236,68 @@ fn splitmix64(mut x: u64) -> u64 {
 }
 
 /// The classical interpolated absolute-discount n-gram model.
-/// Mirrors the QFM-Text encoding exactly: same per-order hashing,
-/// same histogram cap, same unigram floor. The only thing missing
-/// is the quantum smoothing — so the perplexity delta isolates the
-/// *quantum* contribution, not the architecture.
+/// Mirrors the QFM-Text encoding exactly: same per-context
+/// [`ContextRegistry`], same histogram cap, same unigram floor.
+/// The only thing missing is the quantum smoothing — so the
+/// perplexity delta isolates the *quantum* contribution, not the
+/// architecture.
 pub struct NgramBaseline {
     cfg: TextConfig,
     mode_hists: FxHashMap<u32, ModeStats>,
     unigram: Vec<f64>,
     #[allow(dead_code)]
     unigram_total: f64,
-    hasher: OrderHasher,
+    registry: ContextRegistry,
 }
 
 impl NgramBaseline {
     /// Build from a streaming accumulator (same one the QFM-Text
-    /// model uses). The baseline sees the *exact same* data and
-    /// encoding.
-    pub fn from_accumulator(acc: ChannelAccumulator) -> Self {
+    /// model uses) and the matching [`ContextRegistry`]. The
+    /// baseline sees the *exact same* data and encoding.
+    pub fn from_accumulator(acc: ChannelAccumulator, registry: ContextRegistry) -> Self {
         let cfg = acc.cfg.clone();
-        let hasher = OrderHasher::new(cfg.clone());
         let unigram_total: f64 = acc.unigram.iter().map(|&c| c as f64).sum();
         let unigram: Vec<f64> = if unigram_total > 0.0 {
             acc.unigram.iter().map(|&c| c as f64 / unigram_total).collect()
         } else {
             vec![0.0; acc.unigram.len()]
         };
+        // The baseline also needs the vacuum mode's histogram
+        // (initialized to the unigram counts) so unseen-context
+        // queries go through the same per-mode histogram the model
+        // would use. This mirrors `QfmTextModel::init_vacuum_histogram`.
+        let mut mode_hists = acc.stats;
+        // If the vacuum is missing (the accumulator never observed
+        // an unseen context), add it now.
+        if !mode_hists.contains_key(&0) {
+            let mut vacuum = ModeStats::default();
+            vacuum.weight = unigram_total as u64;
+            for (tok, &cnt) in acc.unigram.iter().enumerate() {
+                if cnt > 0 {
+                    vacuum.hist.push((tok as u32, cnt as u32));
+                }
+            }
+            vacuum
+                .hist
+                .sort_by(|(a_t, a_c), (b_t, b_c)| b_c.cmp(a_c).then(a_t.cmp(b_t)));
+            let hist_cap = mode_hists
+                .values()
+                .map(|s| s.hist.len())
+                .max()
+                .unwrap_or(64)
+                .max(vacuum.hist.len());
+            while vacuum.hist.len() > hist_cap {
+                let evicted = vacuum.hist.pop().expect("non-empty");
+                vacuum.escape += evicted.1 as u64;
+            }
+            mode_hists.insert(0, vacuum);
+        }
         Self {
             cfg,
-            mode_hists: acc.stats,
+            mode_hists,
             unigram,
             unigram_total,
-            hasher,
+            registry,
         }
     }
 
@@ -273,13 +306,24 @@ impl NgramBaseline {
     /// is weighted uniformly. This is the classical interpolation
     /// `P(y | ctx) = (1/n_active) Σ_{active} smoothed(hist_mode)(y)`.
     pub fn next_token_dist(&self, context: &[u32]) -> Vec<f64> {
-        let modes = self.hasher.encode_modes(context);
+        // **rev 37:** the baseline ALWAYS includes mode 0 (the
+        // Fock vacuum / outer vacuum / unigram) in the per-mode
+        // averaging. The unigram backoff is the "outer vacuum
+        // projector" for the baseline — it takes care of the
+        // unseen data the same way the Krylov weight for mode 0
+        // does in the QFM. Without this, the raw per-mode
+        // histograms give 0 to unseen continuations and the
+        // baseline ppl explodes (e.g. 30 930 on wikitext-103-test
+        // vs 269 for the unigram).
+        let mut modes = self.registry.encode_modes(context);
+        if !modes.contains(&VACUUM_MODE) {
+            modes.push(VACUUM_MODE);
+        }
         if modes.is_empty() {
             return self.unigram.clone();
         }
         let v = self.unigram.len();
         let mut p = vec![0.0_f64; v];
-        let d = self.cfg.discount;
         let n_active = modes.len() as f64;
         for &mode in &modes {
             if let Some(stats) = self.mode_hists.get(&mode) {
@@ -287,27 +331,21 @@ impl NgramBaseline {
                 if denom <= 0.0 {
                     continue;
                 }
-                let n_seen = stats.hist.len() as f64;
-                let escape_mass = (n_seen * d + stats.escape as f64) / denom;
-                // Each active mode contributes its own smoothed
-                // distribution weighted by 1/n_active (the uniform
-                // average this baseline is documented to compute).
-                // An earlier version applied 1/n_active only to the
-                // escape term and left the seen-token term
-                // unweighted, so this baseline was *not* the same
-                // smoothing the QFM head uses (whose per-mode
-                // weights `w` sum to ~1 across active modes) —
-                // breaking the "the perplexity delta isolates the
-                // quantum contribution" comparison this struct's
-                // doc comment promises.
+                // **rev 37 design (matches QFM marginalize):** no
+                // Jelinek-Mercer-style smoothing per mode. The
+                // per-mode distribution is the raw histogram:
+                //   p[tok] = (cnt / K) / n_active     for seen tokens
+                //   p[tok] = 0                         for unseen
+                // The unigram backoff is provided by including
+                // mode 0 (the outer vacuum / unigram) in the
+                // active modes — its per-mode distribution IS the
+                // unigram, so unseen continuations get the
+                // unigram's probability mass via the uniform
+                // 1/n_active averaging.
                 for &(tok, cnt) in &stats.hist {
                     if (tok as usize) < v {
-                        p[tok as usize] += ((cnt as f64 - d).max(0.0) / denom) / n_active;
+                        p[tok as usize] += (cnt as f64 / denom) / n_active;
                     }
-                }
-                // Distribute escape mass to the unigram.
-                for (i, &u) in self.unigram.iter().enumerate() {
-                    p[i] += escape_mass * u / n_active;
                 }
             }
         }
@@ -449,10 +487,14 @@ pub fn baseline_from_shard(
     shard_path: &Path,
     cfg: &TextConfig,
 ) -> Result<NgramBaseline, QfmTextError> {
-    let hasher = OrderHasher::new(cfg.clone());
+    let mut registry = ContextRegistry::new(cfg.n_orders);
     let mut acc = ChannelAccumulator::new(0, cfg.clone());
-    acc.observe_shard(shard_path, &hasher)?;
-    Ok(NgramBaseline::from_accumulator(acc))
+    let mut enc = Encoder::Registry(registry.clone());
+    acc.observe_shard(shard_path, &mut enc)?;
+    if let Some(r) = enc.as_registry() {
+        registry.clone_from(r);
+    }
+    Ok(NgramBaseline::from_accumulator(acc, registry))
 }
 
 #[cfg(test)]
@@ -465,8 +507,6 @@ mod tests {
     fn cfg() -> TextConfig {
         TextConfig {
             n_orders: 2,
-            block_sizes: vec![16, 16],
-            salts: vec![1, 2],
             hist_cap: 4,
             max_rank: 4,
             m_shifts: 4,
@@ -491,17 +531,16 @@ mod tests {
     fn sample_text_is_deterministic() {
         let tokens: Vec<u32> = (0..200).map(|i| i % 7).collect();
         let mut acc = ChannelAccumulator::new(0, cfg());
-        let hasher = OrderHasher::new(cfg());
+        let mut reg = ContextRegistry::new(cfg().n_orders);
         for i in 1..tokens.len() {
             let ctx: Vec<u32> = if i >= 2 {
                 vec![tokens[i - 2], tokens[i - 1]]
             } else {
                 vec![tokens[i - 1]]
             };
-            let modes = hasher.encode_modes(&ctx);
-            acc.observe(&modes, tokens[i]);
+            observe_with_registry(&mut acc, &mut reg, &ctx, tokens[i]);
         }
-        let model = QfmTextModel::from_accumulator(acc, &cfg()).unwrap();
+        let model = QfmTextModel::from_accumulator(acc, reg, &cfg()).unwrap();
         let prompt = vec![0, 1, 2];
         let s1 = sample_text(&model, &prompt, 10, 1.0, 42);
         let s2 = sample_text(&model, &prompt, 10, 1.0, 42);
@@ -515,9 +554,9 @@ mod tests {
         let sp = dir.path().join("shard.bin");
         write_shard(&sp, &tokens);
         let mut acc = ChannelAccumulator::new(0, cfg());
-        let hasher = OrderHasher::new(cfg());
-        acc.observe_shard(&sp, &hasher).unwrap();
-        let baseline = NgramBaseline::from_accumulator(acc);
+        let mut reg = ContextRegistry::new(cfg().n_orders);
+        observe_shard_with_registry(&mut acc, &mut reg, &sp).unwrap();
+        let baseline = NgramBaseline::from_accumulator(acc, reg);
         let shard = Shard::open(&sp, 100).unwrap();
         let bppl = perplexity_baseline(&baseline, &shard).unwrap();
         let uppl = NgramBaseline::unigram_ppl(&shard).unwrap();
@@ -554,9 +593,9 @@ mod tests {
         let sp = dir.path().join("shard.bin");
         write_shard(&sp, &tokens);
         let mut acc = ChannelAccumulator::new(0, c.clone());
-        let hasher = OrderHasher::new(c.clone());
-        acc.observe_shard(&sp, &hasher).unwrap();
-        let model = QfmTextModel::from_accumulator(acc, &c).unwrap();
+        let mut reg = ContextRegistry::new(c.n_orders);
+        observe_shard_with_registry(&mut acc, &mut reg, &sp).unwrap();
+        let model = QfmTextModel::from_accumulator(acc, reg, &c).unwrap();
         let shard = Shard::open(&sp, 100).unwrap();
         let mppl = perplexity(&model, &shard).unwrap();
         let uppl = NgramBaseline::unigram_ppl(&shard).unwrap();
