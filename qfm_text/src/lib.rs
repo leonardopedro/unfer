@@ -81,4 +81,11 @@ pub use registry::{ContextRegistry, VACUUM_MODE};
 ///   SymRegEngine decoder (see `qfm_text/src/oxieml_decoder.rs`).
 ///   The W matrix may be replaced by `Vec<EmlTree>` when
 ///   `--oxieml-fit` is used during training.
-pub const SCHEMA_VERSION: u32 = 3;
+/// - `4` = rev 37 v3: the Krylov initial vector c_0 is the
+///   **L^1 outer vacuum** |Ψ_0⟩ = (M^T M)^-1 M^T 1 (M = |W|),
+///   precomputed at model-build time and stored in the payload
+///   as `outer_vacuum: Vec<Complex64>`. The previous per-context
+///   superposition `(1/√(n+1))(W[0, :] + Σ_o W[m_o, :])` is
+///   removed (it was a superposition of seen modes, which the
+///   user's design constraint forbids).
+pub const SCHEMA_VERSION: u32 = 4;
