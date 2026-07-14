@@ -121,38 +121,19 @@ pub struct QfmTextModel {
     pub vacuum_states: Vec<DVector<Complex64>>,
     /// Pre-computed **outer vacuum** |Ψ_0⟩ (rev 37 v3). This is
     /// the Krylov initial vector c_0 used by `encode_context`. It
-    /// is defined as the unique vector in the Krylov subspace
-    /// (span of the W rows) that has *equal L^1 inner product
-    /// with every inner wave-function*:
+    /// is defined as the uniform state in the Fock-space input
+    /// basis with R partitions of the infinite-dimensional
+    /// hypersphere of inner wave-functions.
     ///
-    ///   `(1/R) Σ_r |W[m, r]| |c_0(r)| = 1/R` for all `m`
+    /// In the Fock basis: c_0[fock] has R non-zero components
+    /// each equal to `√R` (R = number of partitions). Only the
+    /// first M of these have known Krylov projections (the rows
+    /// of the W matrix). The Krylov-projected c_0 is:
+    ///   `c_0[krylov][k] = √R · Σ_{m=0}^{M-1} W[m, k]`
     ///
-    /// where `R = rank` is the resolution (the number of Krylov
-    /// basis vectors) and the inner product is the L^1 integral
-    /// of the amplitudes over the support. With discrete data
-    /// this gives `1/R` for a uniform amplitude, per the user's
-    /// design.
-    ///
-    /// In matrix form: `M |c_0| = 1` where `M[m, r] = |W[m, r]|`
-    /// and `1` is the all-ones vector. The least-squares
-    /// solution is `|c_0| = (M^T M)^-1 M^T 1` (a `rank`-vector
-    /// of non-negative amplitudes). We set the phases to zero
-    /// (real non-negative `c_0`); the Krylov evolution
-    /// `exp(-i H_m t)` then propagates this L^1-uniform state.
-    ///
-    /// **Why this is the right "outer vacuum"**: the per-order
-    /// Krylov inputs `(1/√(n+1)) (W[0, :] + Σ_o W[m_o, :])` that
-    /// the per-context superposition used previously is a
-    /// *superposition of seen modes* (the n per-order modes for
-    /// the current context). By the user's "outer vacuum cannot
-    /// be a superposition of seen modes" design constraint, that
-    /// choice excludes the unseen modes (every mode not in the
-    /// per-context lookup) and biases the Krylov input toward
-    /// what the context already tells us. The L^1-uniform
-    /// vector in the Krylov subspace is the natural
-    /// "most-symmetric" state — it has the same L^1 inner
-    /// product with every inner wave-function, so no inner
-    /// wave-function is privileged.
+    /// R is a hyperparameter, unrelated to the Krylov rank.
+    /// R must be > M to distinguish the training data. Default
+    /// when `fock_resolution` is not set: R = 10 * M.
     ///
     /// **Context-independent**: `c_0` does NOT depend on the
     /// input context. The Krylov evolution `c_1 = U c_0` is
@@ -351,8 +332,25 @@ impl QfmTextModel {
         // and was removed again in rev 34. The generator's rank is
         // ≤ n_orders, so the Krylov dim is ≤ n_orders + 1 by
         // construction.
-        let groups = build_channel_groups(&acc, &registry, cfg);
-        // Compile the QFM pipeline.
+        // Compute the Fock-space resolution R (number of partitions
+        // of the infinite-dimensional hypersphere). R is unrelated
+        // to the Krylov rank; it must be > M (total training windows)
+        // to distinguish the training data.
+        let total_windows = acc.total_windows.max(1);
+        let fock_r: u64 = cfg.fock_resolution.unwrap_or(10 * total_windows);
+        // Build the list of active modes (mode 0 plus every observed mode).
+        let mut active_modes: Vec<u32> = acc.stats.keys().copied().collect();
+        active_modes.sort_unstable();
+        if !active_modes.contains(&0u32) {
+            active_modes.insert(0, 0u32);
+        }
+        // λ₀ for the outer vacuum projector, λ₁ for the transition sum.
+        // λ₀ defaults to 0 (pure transition Hamiltonian); the vacuum
+        // projector |c₀⟩⟨c₀| has operator norm O(R·N) and dwarfs the
+        // transition sum unless λ₀ is set to O(1/(R·N)).
+        let lambda0 = cfg.lambda.first().copied().unwrap_or(0.0);
+        let lambda1 = cfg.lambda.get(1).copied().unwrap_or(1.0);
+        // Compile the QFM pipeline with the diffusion Hamiltonian.
         let qfm_cfg = QfmConfig {
             k: cfg.n_orders,
             k2: k2_total as usize,
@@ -362,7 +360,15 @@ impl QfmTextModel {
             noise_dim: cfg.n_orders,
             max_rank: Some(cfg.max_rank),
         };
-        let pipeline = QfmPipeline::compile_channels(&groups, k2_total as usize, &qfm_cfg)?;
+        let pipeline = QfmPipeline::compile_channels(
+            &active_modes,
+            &acc.transitions,
+            lambda0,
+            lambda1,
+            k2_total as usize,
+            &qfm_cfg,
+            Some(fock_r),
+        )?;
         let gram = pipeline.gram();
         // Unigram normalize.
         let unigram_total: f64 = acc.unigram.iter().map(|&c| c as f64).sum();
@@ -405,14 +411,13 @@ impl QfmTextModel {
         let vacuum_states = Self::compute_mehler_vacua(
             &pipeline, &registry, cfg, &mode_hists, total,
         );
-        // Compute the L^1 outer vacuum |Ψ_0⟩ (rev 37 v3). This is
-        // the Krylov initial vector c_0 that has equal L^1 inner
-        // product with every inner wave-function W[m, :]. See
-        // `compute_l1_outer_vacuum` for the formula and the
-        // user's design rationale. The W matrix lives in the
-        // pipeline; the outer vacuum is precomputed once at
-        // model-build time and reused for every context.
-        let outer_vacuum = Self::compute_l1_outer_vacuum(pipeline.w());
+        // Compute the outer vacuum |Ψ_0⟩ (rev 37 v3). Precomputed
+        // during SIRK via projection of the starting vector v0
+        // (uniform over all modes, normalized) onto the Gram-whitened
+        // Krylov basis. The pipeline stores the result; it is
+        // context-independent and reused for every encode step.
+        // See `compact_forward_sirk` for the computation.
+        let outer_vacuum = pipeline.outer_vacuum().clone();
         Ok(Self {
             pipeline,
             mode_hists,
@@ -531,84 +536,46 @@ impl QfmTextModel {
         out
     }
 
-    /// Compute the **L^1 outer vacuum** |Ψ_0⟩ for the Krylov
-    /// subspace spanned by the W rows. The L^1 outer vacuum is
-    /// the unique vector in the Krylov subspace that has *equal
-    /// L^1 inner product with every inner wave-function*:
+    /// Compute the **outer vacuum** |Ψ_0⟩ for the Krylov subspace.
+    /// The outer vacuum is the **uniform state on the infinite-
+    /// dimensional Fock-space hypersphere at resolution R**,
+    /// projected onto the Krylov subspace.
     ///
-    ///   `(1/R) Σ_r |W[m, r]| |c_0(r)| = 1/R` for all `m`
+    /// R is the number of partitions of the infinite-dimensional
+    /// hypersphere. It is a hyperparameter, unrelated to the Krylov
+    /// rank (which also starts with 'r'). R must be > M (the number
+    /// of training data points) to allow distinguishing the
+    /// training data. Default: R = 10 * M.
     ///
-    /// where `R = rank` is the resolution (the number of Krylov
-    /// basis vectors) and the inner product is the L^1 integral
-    /// of the amplitudes over the support. With discrete data
-    /// this gives `1/R` for a uniform amplitude, per the user's
-    /// design.
+    /// In the Fock basis: c_0[fock] has R non-zero components equal
+    /// to `√R` (the first R Fock basis elements, R = number of
+    /// partitions). The remaining infinite components are zero.
     ///
-    /// In matrix form: `M |c_0| = 1` where `M[m, r] = |W[m, r]|`
-    /// and `1` is the all-ones vector. The least-squares
-    /// solution is `|c_0| = (M^T M)^-1 M^T 1` (a `rank`-vector
-    /// of non-negative amplitudes). We set the phases to zero
-    /// (real non-negative `c_0`); the Krylov evolution
-    /// `exp(-i H_m t)` then propagates this L^1-uniform state.
-    ///
-    /// **Cost:** `O(M × rank²)` for the matrix products, plus
-    /// `O(rank³)` for the LU solve. For shard 0 with M ≈ 1.05M
-    /// and rank = 2, this is a few million FLOPs — sub-second.
-    ///
-    /// **Why this is the right "outer vacuum"**: the per-order
-    /// Krylov inputs `(1/√(n+1)) (W[0, :] + Σ_o W[m_o, :])` that
-    /// the per-context superposition used previously is a
-    /// *superposition of seen modes* (the n per-order modes for
-    /// the current context). By the user's "outer vacuum cannot
-    /// be a superposition of seen modes" design constraint, that
-    /// choice excludes the unseen modes and biases the Krylov
-    /// input toward what the context already tells us. The
-    /// L^1-uniform vector in the Krylov subspace is the natural
-    /// "most-symmetric" state — it has the same L^1 inner
-    /// product with every inner wave-function, so no inner
-    /// wave-function is privileged.
-    pub fn compute_l1_outer_vacuum(w: &DMatrix<Complex64>) -> DVector<Complex64> {
+    /// The Krylov representation is the projection of this Fock-
+    /// uniform state onto the Krylov subspace. Only the first M
+    /// of the R Fock-basis directions have known Krylov projections
+    /// (the rows of the W matrix). The remaining R-M directions
+    /// are orthogonal to the Krylov subspace:
+    ///   `c_0[krylov][k] = √R · Σ_{m=0}^{M-1} W[m, k]`
+    /// i.e. the sum of ALL M rows of W, multiplied by √R.
+    pub fn compute_outer_vacuum(
+        w: &DMatrix<Complex64>,
+        fock_resolution: Option<u64>,
+    ) -> DVector<Complex64> {
         let (m, rank) = (w.nrows(), w.ncols());
         if rank == 0 || m == 0 {
             return DVector::<Complex64>::zeros(rank);
         }
-        // M = |W|, an m × rank matrix with non-negative entries.
-        // We want |c_0| such that M |c_0| = 1 (vector of ones).
-        // Least-squares: |c_0| = (M^T M)^-1 M^T 1.
-        // M^T M is rank × rank (small). M^T 1 is rank × 1.
-        let mut mtm = DMatrix::<f64>::zeros(rank, rank);
-        let mut mt1 = DVector::<f64>::zeros(rank);
-        for i in 0..m {
-            // Cache |W[i, r]| for all r in this row.
-            let mut row_abs = DVector::<f64>::zeros(rank);
-            for r in 0..rank {
-                row_abs[r] = w[(i, r)].norm();
-            }
-            for r1 in 0..rank {
-                mt1[r1] += row_abs[r1];
-                for r2 in 0..rank {
-                    mtm[(r1, r2)] += row_abs[r1] * row_abs[r2];
-                }
-            }
-        }
-        // Solve (M^T M) |c_0| = M^T 1 via LU decomposition.
-        // If M^T M is singular (degenerate W), fall back to the
-        // zero vector — the model has no meaningful outer vacuum
-        // in that case.
-        let decomp = mtm.lu();
-        let c0_abs = match decomp.solve(&mt1) {
-            Some(v) => v,
-            None => return DVector::<Complex64>::zeros(rank),
-        };
-        // Convert to complex: c_0 = |c_0| (real, non-negative).
-        // Clamp negative entries to 0 (the LSQ solution can have
-        // small negatives from numerical noise; the L^1-uniform
-        // definition is non-negative).
+        let r = fock_resolution.unwrap_or(10 * m as u64) as usize;
+        let r = r.max(m);
+        let norm = (r as f64).sqrt();
         let mut c0 = DVector::<Complex64>::zeros(rank);
-        for r in 0..rank {
-            let v = c0_abs[r].max(0.0);
-            c0[r] = Complex64::new(v, 0.0);
+        for i in 0..m {
+            for j in 0..rank {
+                c0[j] += w[(i, j)];
+            }
         }
+        c0 *= Complex64::new(norm, 0.0);
         c0
     }
 
@@ -803,16 +770,21 @@ impl QfmTextModel {
 
     fn encode_context(&self, context: &[u32]) -> DVector<Complex64> {
         // **rev 37 v3 design:** the Krylov initial vector c_0 is
-        // the **L^1 outer vacuum** |Ψ_0⟩, precomputed at
-        // model-build time (see `outer_vacuum` and
-        // `compute_l1_outer_vacuum`). It is the unique vector
-        // in the Krylov subspace that has *equal L^1 inner
-        // product with every inner wave-function*:
-        //   `(1/R) Σ_r |W[m, r]| |c_0(r)| = 1/R` for all `m`
-        // (R = rank, the resolution). With discrete data, the
-        // L^1 inner product of a uniform amplitude wave-function
-        // with itself is `1/R`; the outer vacuum extends this
-        // uniformity to *all* inner wave-functions.
+        // the **outer vacuum** |Ψ_0⟩, precomputed at model-build
+        // time (see `outer_vacuum` and the pipeline accessor).
+        // It is the (real, non-negative) vector in the Krylov
+        // subspace such that the **standard L² inner product**
+        // with any inner wave-function ψ is **proportional to the
+        // L¹ norm of ψ** (the L¹ integral of |ψ| over its support
+        // in the original infinite-dim Hilbert space, projected
+        // onto the Krylov basis):
+        //   `Σ_r c_0(r) · W[m, r] = k · Σ_r |W[m, r]|`  for all m
+        //
+        // For real non-negative c_0 and complex W, this is a
+        // coupled system: `Re(W) c_0 = k · l1_norms` and
+        // `Im(W) c_0 = 0`. There is no "L¹ inner product" — the
+        // L¹ norm is a property of ψ, and the L² inner product
+        // (Born rule) measures it.
         //
         // **The outer vacuum is context-independent** — it does
         // not depend on the input context. The Krylov evolution
@@ -837,9 +809,9 @@ impl QfmTextModel {
         // never observed at all). By the user's "outer vacuum
         // cannot be a superposition of seen modes" design
         // constraint, that choice biases the Krylov input
-        // toward what the context already tells us. The
-        // L^1-uniform c_0 is the natural "most-symmetric"
-        // state — no inner wave-function is privileged.
+        // toward what the context already tells us. The outer
+        // vacuum is a single global vector determined only by
+        // the W matrix structure — no per-context dependence.
         let _ = context; // context is not used; the outer vacuum is global.
         self.outer_vacuum.clone()
     }
@@ -971,18 +943,19 @@ impl QfmTextModel {
     /// distribution, and the unigram is renormalized to sum to 1
     /// in `NgramBaseline::from_accumulator` anyway.
     pub fn as_accumulator(&self) -> crate::accumulate::ChannelAccumulator {
-        use crate::accumulate::ChannelAccumulator;
         let unigram: Vec<u64> = self
             .unigram
             .iter()
             .map(|&p| (p * self.unigram_total).round() as u64)
             .collect();
-        ChannelAccumulator {
-            stats: self.mode_hists.clone(),
-            unigram,
-            total_windows: self.unigram_total as u64,
-            cfg: self.cfg.clone(),
-        }
+        let mut acc = crate::accumulate::ChannelAccumulator::new(
+            self.unigram.len() as u32,
+            self.cfg.clone(),
+        );
+        acc.stats = self.mode_hists.clone();
+        acc.unigram = unigram;
+        acc.total_windows = self.unigram_total as u64;
+        acc
     }
 
     /// Build a clone of the [`ContextRegistry`]. The baseline uses
@@ -1503,7 +1476,7 @@ fn build_channel_groups(
 ///     are the assigned mode indices)
 ///   `vacuum_states_n:u32`, then per vacuum state:
 ///     `len:u64, [re:f64,im:f64] * len` (rev 36: per-order |0̃_o⟩)
-///   `outer_vacuum_len:u64, [re:f64,im:f64] * len` (rev 37 v3: L^1 outer vacuum)
+///   `outer_vacuum_len:u64, [re:f64,im:f64] * len` (rev 37 v3: outer vacuum)
 fn encode_payload(m: &QfmTextModel) -> Result<Vec<u8>, QfmTextError> {
     let w = m.pipeline.w();
     let h_m = m.pipeline.h_m();

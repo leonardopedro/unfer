@@ -34,6 +34,7 @@ fn tiny_config(block_sizes: Vec<usize>) -> TextConfig {
         block_sizes,
         salts,
         use_registry_encoder: false,
+        fock_resolution: None,
     }
 }
 

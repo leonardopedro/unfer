@@ -1,5 +1,15 @@
 # Plan: QFM-Text — train the QFM.tex architecture on the HRM-Text data + process
 
+> **Supersession note (rev 37 v3, 2026-07-14):** This plan documents the original
+> Stages 0–7 architecture (hierarchical multi-projector generator `H = Σ λ_o |0̃_o⟩⟨0̃_o|`,
+> uniform superposition SIRK seed `|Ψ_in⟩ = (1/√n) Σ |mode_o⟩`, no R parameter). Stages
+> 0–3 (data pipeline, shard reading, accumulator, CAS Hamiltonian) are unchanged. **Stage
+> 4 onward was rewritten in rev 37 v3** to use the diffusion Hamiltonian
+> `H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|)` with geometric mode-overlap metric
+> `γ = 1/R` and Fock-hypersphere partition parameter R. The current architecture is
+> described in `docs/QFM_TEXT_STATUS.md` §"Rev 37 v3 architecture changes"; the plan
+> below is kept as a historical record of Stages 0–7 as originally designed.
+
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM.
 > Each stage has a goal, exact files, key signatures, and acceptance commands. Do stages in
 > order. `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`; the unfer repo is
@@ -12,8 +22,8 @@
 
 Train and evaluate a language model whose *model* is the QFM.tex architecture
 (Tomographic Subspace Recovery pipeline, §"Tomographic Subspace Recovery" of `QFM.tex`:
-CountSketch S₁ → feature-to-mode S₂ → exact rank-1 Mehler dressed-vacuum projector
-generator (rev 31, `Operator::ProjectOnto`) → SIRK Krylov reduction → Born-rule decode →
+CountSketch S₁ → feature-to-mode S₂ → diffusion Hamiltonian generator (rev 37 v3:
+`H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|)`) → SIRK Krylov reduction → Born-rule decode →
 optional Quantum Bayesian Update), and whose *data and training process* are those of
 [sapientinc/HRM-Text](https://github.com/sapientinc/HRM-Text): its `data_io` corpus
 cleaning/tokenization, its `sample_tokenized.py` stratified epoch sampling, its
@@ -51,11 +61,16 @@ of flow-matching channel weights), not gradient descent. The adaptation is:
 **Architecture adaptations to QFM (all exact projectors — the rev 31 "no O(ε) truncation"
 directive is binding):**
 
-1. **Hierarchical multi-projector generator.** H = Σ_o λ_o |0̃_o⟩⟨0̃_o|, one dressed vacuum
-   per context order o over that order's mode block. Each term is an exact rank-1
-   `Operator::ProjectOnto`; the sum is Hermitian, rank ≤ n, Krylov dim ≤ n+1. The
-   projectors share the Fock vacuum component, so evolution coherently mixes orders —
-   the quantum analog of hierarchical reasoning / Katz backoff.
+1. **Diffusion Hamiltonian generator.** H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|),
+   where |c₀⟩ is the outer vacuum (uniform in the Fock-space input basis with R partitions
+   of the infinite-dimensional hypersphere, each partition carrying amplitude √R) and the
+   sum runs over consecutive training-window primary-mode transitions. The geometric
+   mode-overlap metric G_{mn} = δ_{mn} + γ·(1-δ_{mn}) with γ = 1/R determines inner
+   products between different modes. This replaces the old hierarchical multi-projector
+   `H = Σ_o λ_o |0̃_o⟩⟨0̃_o|` (rev 31–36), whose rank was bounded by n_orders and
+   degenerated to rank 1-2 in practice (W-rank degeneracy, rev 35). The new generator has
+   O(M) distinct off-diagonal terms (M = total training windows), giving the Krylov basis
+   rich structure independent of n_orders.
 2. **Hashed (collision-accepting) S₂.** `FeatureToMode::register` assigns a fresh mode per
    unique feature → unbounded at corpus scale. New `HashedFeatureToMode`: mode =
    offset_o + (splitmix64(key, salt_o) mod K2_o). Fixed memory, no `K2Exhausted`.
@@ -68,9 +83,11 @@ directive is binding):**
    (Phase 3 of QFM.tex); Phase 4's heavy-hitters/pixel render is replaced by histogram
    marginalization: P(y | context) = Σ_j p̃_j · hist_j(y), with absolute-discount escape
    to the unigram distribution (never zero probability).
-5. **Superposition encode.** A query context enters as |Ψ_in⟩ = (1/√n) Σ_o |mode_o(ctx)⟩
-   (one single-excitation component per order), replacing the image S₁→S₂ single-mode
-   encode + nearest-feature fallback (a hashed mode always exists — no fallback needed).
+5. **Outer vacuum as SIRK starting vector.** The SIRK starting vector is the outer vacuum
+   |c₀⟩: uniform in the Fock-space input basis with R partitions, each partition carrying
+   amplitude √R. At inference, encoding a context produces a mode superposition via
+   |Ψ_in⟩ = (1/√n) Σ_o |mode_o(ctx)⟩ (one single-excitation component per order),
+   replacing the image S₁→S₂ single-mode encode + nearest-feature fallback.
 
 **Honest scope (write this into the docs, keep it in the README of the crate):** this is a
 quantum-kernel n-gram-family model with coherent Krylov smoothing across backoff orders.
@@ -86,8 +103,10 @@ that comparison is reported for honesty, not as a target.
 - Context orders n = 4 (features: last 1, 2, 3, 4 tokens → 5-gram-class model).
 - Mode blocks K2_o = 65536 per order → K₂ = 262144 total modes (+1 vacuum).
 - Histogram cap T = 64 entries/mode (u32 token, u32 count) + escape count.
-- Krylov: `max_rank = 8` (generator rank ≤ n=4 ⇒ Krylov dim ≤ 5; 8 gives headroom),
-  shifts m = 8. λ_o defaults: uniform; evolution time t = 1.0; both swept in Stage 6.
+- Krylov: `max_rank = 8` (rev 37 v3 uses the diffusion Hamiltonian with O(M)
+  off-diagonal transition terms, so the Krylov dim is no longer bounded by n_orders;
+  8 gives headroom as a cap), shifts m = 8. λ₀ (vacuum projector) and λ₁ (transition
+  sum) default to 1.0; evolution time t = 1.0.
 - Corpus: WikiText-103 (~103M train tokens, standard public LM benchmark with published
   n-gram baselines) run through HRM-Text's `data_io`. A 10M-token slice is the CI-scale
   fixture. (WikiText-103 is CC-BY-SA: it is *data* fetched by script, never committed.)
@@ -355,11 +374,12 @@ Born-rule token head.
 
 - **HRM-Text `data_io` may not run locally** — Stage 0 fallback gate keeps the shard
   format as the interface; everything downstream is unaffected.
-- **Rank collapse** (rev 31 finding: a single exact projector gives a 2D Krylov space) —
-  by design the generator here is rank-n (n=4 orders) ⇒ Krylov dim ≤ 5; capacity lives
-  in the histograms, and the model at t=0 degrades exactly to the classical mixture, so
-  the quantum layer can only be compared, never blamed silently. The t/λ sweep is the
-  control.
+- **Rank collapse** (rev 31–36 finding: the old per-order projector sum degenerated to
+  rank 1-2 regardless of n_orders, because all |0̃_o⟩ were nearly parallel to |0⟩). The
+  new diffusion Hamiltonian replaces that with O(M) off-diagonal transition terms — the
+  Krylov rank is no longer bounded by n_orders. If rank collapse persists (e.g. too few
+  transitions in a small corpus), reduce to a single-projector `H = λ₀·|c₀⟩⟨c₀|` fallback
+  and ensure Krylov dim ≥ 1. The t/λ sweep is the control.
 - **Hash collisions at K₂=65536/order** — collisions blend histograms of unrelated
   contexts (standard hashed-LM trade-off); block sizes are config, Stage 7 can double
   them; the baseline uses the *same* hashing so comparisons stay fair.

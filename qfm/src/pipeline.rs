@@ -106,6 +106,9 @@ pub struct QfmPipeline {
     k2: usize,
     /// Reduced rank m.
     rank: usize,
+    /// Outer vacuum |c₀⟩ in the whitened Krylov basis (length = rank).
+    /// Precomputed during SIRK from the Gram matrix and whitening.
+    outer_vacuum: DVector<Complex64>,
 }
 
 impl std::fmt::Debug for QfmPipeline {
@@ -388,6 +391,7 @@ impl QfmPipeline {
             d,
             k2,
             rank,
+            outer_vacuum: DVector::<Complex64>::zeros(0),
         })
     }
 
@@ -538,6 +542,7 @@ impl QfmPipeline {
             d: 0,
             k2,
             rank,
+            outer_vacuum: DVector::<Complex64>::zeros(0),
         }
     }
 
@@ -554,6 +559,14 @@ impl QfmPipeline {
     /// The Krylov basis W (K_2 x rank).
     pub fn w(&self) -> &DMatrix<Complex64> {
         &self.w
+    }
+
+    /// The outer vacuum |c₀⟩ in the whitened Krylov basis (length = rank).
+    /// Precomputed during SIRK — the exact projection of the starting
+    /// vector v0 (uniform over all modes) onto the orthonormal Krylov
+    /// basis. Used by qfm_text as the context-independent encode input.
+    pub fn outer_vacuum(&self) -> &DVector<Complex64> {
+        &self.outer_vacuum
     }
 
     /// The reduced Hamiltonian H_m (rank x rank, Hermitian).
@@ -780,76 +793,31 @@ impl QfmPipeline {
     /// in `[0, k2_total)`. The image-decode observables (Φ, Φ̃⁺) are
     /// not built (this is the text path; the decode head uses
     /// `decode_sketched` instead).
+    ///
+    /// The Hamiltonian is the diffusion-like generator:
+    /// `H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|)`
+    /// where |c₀⟩ is the outer vacuum and the sum runs over
+    /// consecutive training-window mode transitions.
+    ///
+    /// When `fock_resolution` is `Some(R)`, the SIRK starting vector
+    /// uses amplitude `√R` (the outer vacuum — uniform in the
+    /// Fock-space input basis with R partitions). When `None`, it
+    /// uses the old amplitude `1/√(N+1)` (uniform over active modes).
     pub fn compile_channels(
-        groups: &[ChannelGroup],
+        active_modes: &[u32],
+        transitions: &[(u32, u32)],
+        lambda0: f64,
+        lambda1: f64,
         k2_total: usize,
         config: &QfmConfig,
+        fock_resolution: Option<u64>,
     ) -> Result<Self, QfmError> {
         if k2_total == 0 || config.krylov_dim == 0 {
             return Err(QfmError::DegenerateBasis);
         }
-        for (o, (lambda, channels)) in groups.iter().enumerate() {
-            if !lambda.is_finite() || *lambda < 0.0 {
-                return Err(QfmError::SirkFailed(format!(
-                    "group {o}: lambda = {lambda} is non-finite or negative"
-                )));
-            }
-            for &(m, a) in channels {
-                if !a.is_finite() || a < 0.0 {
-                    return Err(QfmError::SirkFailed(format!(
-                        "group {o}: alpha for mode {m} is non-finite or negative ({a})"
-                    )));
-                }
-                if (m as usize) >= k2_total {
-                    return Err(QfmError::SirkFailed(format!(
-                        "group {o}: mode {m} out of range (k2_total = {k2_total})"
-                    )));
-                }
-            }
-        }
-        // Flattened list of every active (observed) channel across
-        // all order groups, in `[0, k2_total)`, **plus mode 0**.
-        // `compact_forward_sirk` and `project_compact_modes_onto_krylov_basis`
-        // build per-mode state only for these modes rather than for
-        // all `k2_total` indices. A mode absent from every order group
-        // has no accumulator histogram either (`qfm_text::model::marginalize`
-        // always skips a mode missing from `mode_hists`), so its W row
-        // could never be read by the text decode head regardless of
-        // what value it held.
-        //
-        // Mode 0 is the one deliberate exception: `qfm_text`'s
-        // `TextConfig::offset` reserves index 0 as a sentinel never
-        // assigned to any real channel (`offset(0) == 1`), precisely
-        // so generic code has an always-present, non-channel row to
-        // use as a "no observation yet" reference — which is exactly
-        // what `qfm::bayes::tsr_evolved_prior` does (it reads row 0 of
-        // `pipeline.w()` as the static prior for the in-context
-        // Bayesian update). Excluding it here would silently zero
-        // that row and break that feature.
-        let active_modes: Vec<u32> = std::iter::once(0u32)
-            .chain(
-                groups
-                    .iter()
-                    .flat_map(|(_, channels)| channels.iter().map(|&(m, _)| m)),
-            )
-            .collect();
-        // Degenerate-basis check without building the full
-        // `nested_fock_algebra` Hamiltonian: a group contributes a
-        // term iff it has channels or a nonzero lambda (mirrors
-        // `qfm_hamiltonian_hierarchical_projectors`'s own skip rule).
-        // Building `h_bar` here would cost another O(M) `BTreeMap`-
-        // backed `OuterState`/`InnerBosonicState` allocation (one
-        // `dressed_vacuum_projector` per group) for a value that
-        // `compact_forward_sirk` below doesn't use at all — it works
-        // directly from `groups`.
-        let has_any_term = groups
-            .iter()
-            .any(|(lambda, channels)| !channels.is_empty() || *lambda != 0.0);
-        if !has_any_term {
-            return Err(QfmError::DegenerateBasis);
-        }
-        // Run SIRK on the dressed-vacuum generator with the uniform
-        // vacuum + active-channels seed and `krylov_dim` shifts
+        // Run SIRK on the diffusion Hamiltonian with the Fock-
+        // uniform outer vacuum as the starting vector, with
+        // `krylov_dim` shifts
         // normalized to the negative-imaginary axis (same choice as
         // `compile`), using the compact (plain-`u32`-keyed) state
         // representation throughout (see `CompactState`) — this is
@@ -866,8 +834,8 @@ impl QfmPipeline {
         let shifts: Vec<Complex64> = (1..=config.krylov_dim)
             .map(|i| Complex64::new(0.0, -(i as f64) / (config.krylov_dim as f64)))
             .collect();
-        let (w_whiten, h_proj, rank, w_sequence) =
-            compact_forward_sirk(groups, &active_modes, &shifts)?;
+        let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
+            compact_forward_sirk(active_modes, transitions, lambda0, lambda1, &shifts, fock_resolution)?;
         if rank == 0 {
             return Err(QfmError::DegenerateBasis);
         }
@@ -886,11 +854,14 @@ impl QfmPipeline {
         let mut rank = rank;
         // Optional further rank truncation (usually a no-op here:
         // the projector-sum generator already bounds the rank).
+        let mut outer_vacuum = outer_vacuum;
         if let Some(r) = config.max_rank {
             if let Some((w_trunc, h_trunc)) = rank_truncate_w_h(&w, &h_m, r) {
+                let new_rank = w_trunc.ncols();
+                outer_vacuum = outer_vacuum.rows(0, new_rank).into_owned();
                 w = w_trunc;
                 h_m = h_trunc;
-                rank = w.ncols();
+                rank = new_rank;
                 normalize_rows(&mut w);
             }
         }
@@ -928,6 +899,7 @@ impl QfmPipeline {
             d: 0,
             k2: k2_total,
             rank,
+            outer_vacuum,
         })
     }
 }
@@ -1055,23 +1027,25 @@ impl CompactState {
         }
     }
 
-    /// `<self|other>`, iterating whichever map is smaller.
+    /// `<self|other>` — standard L² inner product (outer wavefunctions
+    /// are orthogonal, so no geometric metric).
     fn inner_product(&self, other: &Self) -> Complex64 {
-        let mut sum = self.vacuum.conj() * other.vacuum;
+        let vac = self.vacuum.conj() * other.vacuum;
+        let mut diag = Complex64::new(0.0, 0.0);
         if self.modes.len() <= other.modes.len() {
             for (k, v) in &self.modes {
                 if let Some(bv) = other.modes.get(k) {
-                    sum += v.conj() * bv;
+                    diag += v.conj() * bv;
                 }
             }
         } else {
             for (k, v) in &other.modes {
                 if let Some(av) = self.modes.get(k) {
-                    sum += av.conj() * v;
+                    diag += av.conj() * v;
                 }
             }
         }
-        sum
+        vac + diag
     }
 
     /// `self += scale * other` (in place).
@@ -1104,67 +1078,77 @@ impl CompactState {
 /// complex evolution the SIRK solve depends on and collapsing the
 /// resulting Krylov/W rank far below what `m_shifts` requests. This
 /// rewrite preserves that fix.)
-fn compact_dressed_vacuum_matvec(groups: &[ChannelGroup]) -> impl Fn(&CompactState) -> CompactState {
-    struct PreprocessedOrder {
-        lambda: f64,
-        c0: f64,
-        channels: Vec<(u32, f64)>,
-    }
-    let preprocessed: Vec<PreprocessedOrder> = groups
-        .iter()
-        .map(|(lambda, channels)| {
-            let sum_sq: f64 = channels.iter().map(|(_, a)| a * a).sum();
-            let norm = (1.0 + sum_sq).sqrt();
-            let c0 = 1.0 / norm;
-            let normalized: Vec<(u32, f64)> =
-                channels.iter().map(|(m, a)| (*m, a / norm)).collect();
-            PreprocessedOrder {
-                lambda: *lambda,
-                c0,
-                channels: normalized,
-            }
-        })
-        .collect();
+/// Diffusion-like Hamiltonian matvec:
+/// Diffusion Hamiltonian on outer wavefunctions:
+/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{(i→f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`
+fn compact_diffusion_matvec<'a>(
+    active_modes: &'a [u32],
+    transitions: &'a [(u32, u32)],
+    amp0_vac: f64,
+    amp0_mode: f64,
+    lambda0: f64,
+    lambda1: f64,
+) -> impl Fn(&CompactState) -> CompactState + 'a {
     let zero = Complex64::new(0.0, 0.0);
     move |c: &CompactState| -> CompactState {
         let mut out = CompactState::zero();
-        for order in &preprocessed {
-            let mut inner = c.vacuum * order.c0;
-            for &(mode, eps) in &order.channels {
-                let c_mode = c.modes.get(&mode).copied().unwrap_or(zero);
-                inner += c_mode * eps;
-            }
-            let scale = inner * order.lambda;
-            out.vacuum += scale * order.c0;
-            for &(mode, eps) in &order.channels {
-                *out.modes.entry(mode).or_insert(zero) += scale * eps;
+
+        // 1. Outer vacuum projector: λ₀·⟨c₀|c⟩·|c₀⟩
+        let mut ip = amp0_vac * c.vacuum;
+        for &m in active_modes {
+            ip += amp0_mode * c.modes.get(&m).copied().unwrap_or(zero);
+        }
+        let scale0 = ip * lambda0;
+        out.vacuum += scale0 * amp0_vac;
+        for &m in active_modes {
+            *out.modes.entry(m).or_insert(zero) += scale0 * amp0_mode;
+        }
+
+        // 2. Transition term: λ₁·Σ_{(i,f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)
+        if lambda1 != 0.0 && !transitions.is_empty() {
+            for &(from_mode, to_mode) in transitions {
+                let c_from = c.modes.get(&from_mode).copied().unwrap_or(zero);
+                let c_to = c.modes.get(&to_mode).copied().unwrap_or(zero);
+                *out.modes.entry(from_mode).or_insert(zero) += lambda1 * c_to;
+                *out.modes.entry(to_mode).or_insert(zero) += lambda1 * c_from;
             }
         }
+
         out
     }
 }
 
-/// Compact-state forward SIRK solve for the dressed-vacuum
-/// Hamiltonian: builds the `m+1`-element Krylov sequence
+/// Compact-state forward SIRK solve for the diffusion Hamiltonian
+/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{(i→f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`.
+/// Builds the `m+1`-element Krylov sequence
 /// `w_k = (H - z_k I) w_{k-1}` (`m = shifts.len()`), its Gram matrix,
 /// the Gram-whitened basis (reusing `fock_sirk::whiten_gram` — a pure
 /// matrix operation with no dependency on `QuantumState`), and the
-/// projected Hamiltonian `H_m`. Same algorithm as
-/// `fock_sirk::solve_forward_sirk_with_matvec` (see its module docs
-/// for the derivation of `h_proj_raw[(j,k)] = G[j,k+1] + z_k*G[j,k]`),
-/// but built directly on [`CompactState`] so memory scales with
-/// `active_modes.len() * m` at ~40-50 bytes/entry instead of the
-/// ~500+ bytes/entry `nested_fock_algebra::QuantumState` path.
+/// projected Hamiltonian `H_m`.
 ///
 /// Returns `(w_whiten, h_proj, rank, w_sequence)`.
+///
+/// When `fock_resolution` is `Some(R)`, the starting vector is
+/// the outer vacuum: uniform in the Fock-space input basis with
+/// R partitions of the hypersphere, each with amplitude `√R`,
+/// and the geometric mode-overlap metric `γ = 1/R` is used for
+/// all inner products. When `None`, the old uniform amplitude
+/// `1/√(N+1)` (N = active_mode count) and identity metric are used.
 fn compact_forward_sirk(
-    groups: &[ChannelGroup],
     active_modes: &[u32],
+    transitions: &[(u32, u32)],
+    lambda0: f64,
+    lambda1: f64,
     shifts: &[Complex64],
-) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>), QfmError> {
+    fock_resolution: Option<u64>,
+) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>, DVector<Complex64>), QfmError> {
     let m = shifts.len();
-    let matvec = compact_dressed_vacuum_matvec(groups);
-    let amp0 = 1.0 / ((active_modes.len() + 1) as f64).sqrt();
+    // The outer vacuum |c₀⟩ has ⟨c₀|ψ⟩ = 1/√R for ANY data point ψ.
+    // Outer wavefunctions are orthogonal, so modes use the standard
+    // L² inner product and amp0 is the same for all outer states.
+    let r = fock_resolution.map_or(0.0, |r| r as f64);
+    let amp0 = 1.0 / r.sqrt();
+    let matvec = compact_diffusion_matvec(active_modes, transitions, amp0, amp0, lambda0, lambda1);
     let mut v0 = CompactState::zero();
     v0.vacuum = Complex64::new(amp0, 0.0);
     for &j in active_modes {
@@ -1199,7 +1183,18 @@ fn compact_forward_sirk(
         .map_err(|e| QfmError::SirkFailed(e.to_string()))?;
     let w_whiten = whitening.w;
     let h_proj = w_whiten.adjoint() * h_proj_raw * &w_whiten;
-    Ok((w_whiten, h_proj, whitening.rank, w_sequence))
+    let rank = whitening.rank;
+    // Compute the outer vacuum's Krylov representation:
+    // c_0_krylov[k] = Σ_{l=0}^{m-1} w_whiten[l,k] · ⟨w_l | w₀⟩
+    // where w₀ = v0 is the uniform outer vacuum starting vector.
+    let mut outer_vacuum = DVector::<Complex64>::zeros(rank);
+    for l in 0..m {
+        let inner = g_sub[(l, 0)];
+        for k in 0..rank {
+            outer_vacuum[k] += w_whiten[(l, k)] * inner;
+        }
+    }
+    Ok((w_whiten, h_proj, rank, w_sequence, outer_vacuum))
 }
 
 /// Compact-state analog of the (now-removed) `project_modes_onto_krylov_basis`:

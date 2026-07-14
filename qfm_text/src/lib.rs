@@ -82,10 +82,12 @@ pub use registry::{ContextRegistry, VACUUM_MODE};
 ///   The W matrix may be replaced by `Vec<EmlTree>` when
 ///   `--oxieml-fit` is used during training.
 /// - `4` = rev 37 v3: the Krylov initial vector c_0 is the
-///   **L^1 outer vacuum** |Ψ_0⟩ = (M^T M)^-1 M^T 1 (M = |W|),
-///   precomputed at model-build time and stored in the payload
-///   as `outer_vacuum: Vec<Complex64>`. The previous per-context
-///   superposition `(1/√(n+1))(W[0, :] + Σ_o W[m_o, :])` is
-///   removed (it was a superposition of seen modes, which the
-///   user's design constraint forbids).
+///   **outer vacuum** |Ψ_0⟩ = uniform state in the Fock-space
+///   input basis with R partitions (hyperparameter, default 10*M)
+///   of the hypersphere, projected onto the Krylov subspace:
+///   `c_0[krylov] = √R · Σ_{m=0}^{M-1} W[m, :]`.
+///   Precomputed at model-build time and stored in the payload
+///   as `outer_vacuum: Vec<Complex64>`. The previous "L^1 outer
+///   vacuum" (M|c_0|=1) and "per-context superposition" designs
+///   are removed.
 pub const SCHEMA_VERSION: u32 = 4;

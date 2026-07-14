@@ -215,6 +215,13 @@ pub struct ChannelAccumulator {
     pub total_windows: u64,
     /// Configuration snapshot.
     pub cfg: TextConfig,
+    /// Consecutive training-window mode transitions: `(prev_mode, curr_mode)`
+    /// pairs for each adjacent pair of training windows. The primary mode
+    /// is the highest-order mode (last in the encoder's mode list).
+    pub transitions: Vec<(u32, u32)>,
+    /// The previous window's primary mode (for tracking transitions across
+    /// consecutive `observe` calls within a shard).
+    last_window_mode: Option<u32>,
 }
 
 impl ChannelAccumulator {
@@ -227,6 +234,8 @@ impl ChannelAccumulator {
             unigram: Vec::with_capacity(vocab_size as usize),
             total_windows: 0,
             cfg,
+            transitions: Vec::new(),
+            last_window_mode: None,
         }
     }
 
@@ -247,7 +256,9 @@ impl ChannelAccumulator {
     /// vacuum mode (index 0) for `Registry`; for `Hasher` with an
     /// empty context, the resulting empty mode list also routes to
     /// the vacuum sentinel as a defensive fallback.
-    pub fn observe(&mut self, encoder: &mut Encoder, context: &[u32], next: u32) {
+    /// Returns the primary mode (highest-order mode, or VACUUM_MODE
+    /// for empty contexts).
+    pub fn observe(&mut self, encoder: &mut Encoder, context: &[u32], next: u32) -> u32 {
         self.total_windows += 1;
         // Unigram update. Grow lazily so a 16k-vocab allocation only
         // happens on first use.
@@ -257,6 +268,7 @@ impl ChannelAccumulator {
         self.unigram[next as usize] += 1;
         // Encode the context into a list of active mode indices.
         let modes = encoder.encode(context);
+        let primary_mode = modes.last().copied().unwrap_or(VACUUM_MODE);
         if modes.is_empty() {
             // No active mode (e.g. empty context under OrderHasher).
             // Route to the vacuum sentinel so the observation is
@@ -273,6 +285,14 @@ impl ChannelAccumulator {
                     .observe(next, self.cfg.hist_cap);
             }
         }
+        // Record consecutive training-window transition.
+        if let Some(prev) = self.last_window_mode {
+            if prev != primary_mode {
+                self.transitions.push((prev, primary_mode));
+            }
+        }
+        self.last_window_mode = Some(primary_mode);
+        primary_mode
     }
 
     /// Walk one shard with the given encoder and update the

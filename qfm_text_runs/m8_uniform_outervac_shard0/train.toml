@@ -1,0 +1,16 @@
+manifest_path = "/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/hrm_data/wikitext-103-train/manifest_shard0only.json"
+out_dir = "/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/unfer/qfm_text_runs/m8_uniform_outervac_shard0"
+epochs = 1
+
+n_orders = 4
+hist_cap = 64
+max_rank = 8
+m_shifts = 8
+lambda = [1.0, 1.0, 1.0, 1.0]
+t = 1.0
+discount = 0.75
+seed = 0
+top_k = 4
+use_registry_encoder = true
+block_sizes = [1048576, 1048576, 1048576, 1048576]
+salts = [1, 2, 3, 4]

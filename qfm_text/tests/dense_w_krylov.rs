@@ -46,6 +46,7 @@ fn small_config(n_orders: usize) -> TextConfig {
         block_sizes: vec![256; n_orders],
         salts: (1..=n_orders as u64).collect(),
         use_registry_encoder: false,
+        fock_resolution: None,
     }
 }
 

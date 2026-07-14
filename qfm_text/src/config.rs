@@ -118,6 +118,27 @@ pub struct TextConfig {
     /// bounded memory).
     #[serde(default = "default_true")]
     pub use_registry_encoder: bool,
+    /// Resolution of the Fock-space hypersphere partition — the
+    /// number of equally-spaced directions (inner wave-functions)
+    /// used to define the outer vacuum |Ψ_0⟩ (rev 37 v3).
+    ///
+    /// The outer vacuum c_0 is uniform in the Fock basis at this
+    /// resolution R:
+    ///   `c_0[fock] = (1/√R) · (1, 1, ..., 1, 0, ...)`
+    /// with non-zero amplitude on the first R basis directions.
+    /// The Krylov projection sums the first M ≤ R rows of W
+    /// (the training modes) and divides by √R. The remaining
+    /// R-M directions have no training data (zero Krylov
+    /// projection).
+    ///
+    /// Must be larger than M (the number of training sequences)
+    /// to allow distinguishing the training data. A reasonable
+    /// default is `10 * M`.
+    ///
+    /// When `None`, the model builder computes
+    /// `R = 10 * w.nrows()` at build time.
+    #[serde(default)]
+    pub fock_resolution: Option<u64>,
 }
 
 fn default_top_k() -> usize {
@@ -156,6 +177,7 @@ impl Default for TextConfig {
             block_sizes: default_block_sizes(),
             salts: default_salts(),
             use_registry_encoder: default_true(),
+            fock_resolution: None,
         }
     }
 }

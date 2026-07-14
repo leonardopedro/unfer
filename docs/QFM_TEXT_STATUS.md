@@ -8,6 +8,20 @@
 > model — if no sweep configuration beats the classical baseline,
 > that is the model's result.
 
+> **Rev 37 v3 (2026-07-14) — diffusion Hamiltonian replaces per-order
+> dressed-vacuum sum.** The per-order dressed-vacuum projector
+> `H = Σ_o λ_o |0̃_o⟩⟨0̃_o|` is removed. The new generator is the
+> diffusion Hamiltonian
+>   `H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|)`
+> where |c₀⟩ is the outer vacuum (uniform in the Fock-space input
+> basis with R partitions of the infinite-dimensional hypersphere)
+> and the sum runs over consecutive training-window mode transitions.
+> Inner products use the geometric mode-overlap metric
+> `G_{mn} = δ_{mn} + γ·(1-δ_{mn})` with `γ = 1/R`. The Krylov
+> starting vector has amplitude `√R` on each partition. See
+> `AGENTS.md` §"Key Decisions" for design rationale. Train + eval
+> results with the new Hamiltonian are pending.
+
 > **Rev 35 (2026-07-09) — full-corpus training, OOM cause found,
 > W-rank degeneracy characterised, per-context fit measured.**
 > Rev 34 re-enabled the QFM.tex dressed-vacuum generator
@@ -31,7 +45,7 @@
 
 ## TL;DR
 
-**Honest picture (rev 35, after full-corpus training + SVD diagnostic):**
+**Rev 35 results (old per-order dressed-vacuum H):**
 
 | Config | Train wall | In-sample ppl (shard 0) | Held-out ppl (test, 100k) | Gap to baseline |
 |---|---:|---:|---:|---:|
@@ -40,15 +54,78 @@
 | Classical n-gram baseline (same hashing) | — | 182.7 | 364.6 | (reference) |
 | Unigram (degenerate) | — | n/a | 1033.0 | — |
 
-The QFM-Text is **5-39% worse than the classical n-gram
-baseline** at all configurations tested. Increasing `m_shifts`
-from 8 to 32 gives a small (6-9%) ppl reduction, but it does
-**not** close the gap to baseline, because the W basis has rank
-1-2 regardless of how many shifts are tried (see §"W-rank
-degeneracy" below). The QFM is functionally a classical
-n-gram with a degenerate Krylov perturbation.
+The old QFM-Text was **5-39% worse than the classical n-gram
+baseline** at all configurations tested. The W basis had rank
+1-2 regardless of `m_shifts` (see §"W-rank degeneracy" below).
+The new rev 37 v3 diffusion Hamiltonian targets this degeneracy
+by introducing off-diagonal transition structure. Results TBD.
 
-## The four critical findings (this session)
+## Rev 37 v3 architecture changes
+
+### The W-rank-1-2 root cause
+
+The old dressed-vacuum Hamiltonian `H = Σ_o λ_o |0̃_o⟩⟨0̃_o|` had
+`n_orders ≤ 4` projectors, all dominated by the vacuum component
+(c₀ ≈ 1). The Krylov sequence could at most resolve `n_orders + 1`
+independent directions, and in practice collapsed to rank 1-2.
+
+### The diffusion Hamiltonian fix
+
+The new generator:
+```
+H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{(i→f)} (|f⟩⟨i| + |i⟩⟨f|)
+```
+- `|c₀⟩` is the outer vacuum: uniform in Fock-space input basis
+  with R partitions, each carrying amplitude `√R`.
+- The transition sum runs over every consecutive pair of primary
+  modes from the training-window sequence. In a corpus with M
+  training windows, there are M-1 transitions, so the sum has
+  O(M) distinct terms — not bounded by n_orders.
+- Each pair `(i→f)` contributes a rank-2 off-diagonal
+  `|f⟩⟨i| + |i⟩⟨f|`, giving the Krylov basis a much richer
+  structure than the old rank-1 projectors.
+
+### Geometric mode-overlap metric
+
+Inner products between different modes use
+`G_{mn} = δ_{mn} + γ·(1-δ_{mn})` with `γ = 1/R`, where R is
+the number of Fock-hypersphere partitions (default 10×M, with M =
+total training windows). The outer vacuum is orthogonal to all
+modes (`G_{0m} = G_{m0} = 0`).
+
+### R = partition count, not width
+
+R is the number of partitions of the infinite-dimensional Fock
+hypersphere. The amplitude on each partition is `√R`, and the
+geometric overlap between different modes is `γ = 1/R` (linear
+in partition width). The Krylov starting vector uses the outer
+vacuum with amplitude `√R` on every active mode and the Fock
+vacuum.
+
+### New/changed files
+
+- `qfm/src/pipeline.rs`: `compact_diffusion_matvec` replaces
+  `compact_dressed_vacuum_matvec`; `compile_channels` now takes
+  `active_modes, transitions, lambda0, lambda1` instead of
+  `groups`; `CompactState::inner_product` takes `gamma`.
+- `qfm_text/src/accumulate.rs`: `ChannelAccumulator` tracks
+  `transitions: Vec<(u32, u32)>` and `last_window_mode: Option<u32>`.
+- `qfm_text/src/model.rs`: `from_accumulator` builds active_modes
+  from `acc.stats.keys()`, uses `acc.transitions`, reads λ₀/λ₁
+  from `cfg.lambda[0..2]`.
+- `qfm_text/src/config.rs`: `TextConfig` has `fock_resolution: Option<u64>`.
+- `qfm_text/src/lib.rs`: `SCHEMA_VERSION = 4`.
+- `AGENTS.md`: full design rationale and key decisions.
+
+### Next steps (after this document)
+
+1. **Train + eval** with the new diffusion Hamiltonian.
+2. **Check degenerate case**: zero transitions → H = λ₀·|c₀⟩⟨c₀|
+   (single projector; ensure Krylov rank ≥ 1).
+3. **Update IMPLEMENTATION_PLAN.md** and related planning docs.
+4. **Phase 4:** full-corpus train + eval.
+
+## The four critical findings (rev 35 session, historical)
 
 ### 1. OOM cause: `accumulate_shards` was allocating 33 GB
 
