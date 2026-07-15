@@ -63,6 +63,12 @@ Sibling repos:
 - **Explosion bounds** (S4): `SirkOpts` + `compile_expression_bounded`.
 - **Navier-Stokes test** (S5): re-enabled, runs the actual solver.
 - **Restarted Krylov** (S6): `evolve_restarted` + `reconstruct` for long evolution.
+- **Star topology degeneracy**: Single-mode-per-word star topology produces within-class degenerate W-rows because modes sharing the same label have identical Hamiltonian columns. **Distributed multi-mode encoding** (each word is a superposition of 2+ unique dedicated feature modes) breaks this degeneracy and enables 7/7 training accuracy.
+- **Gram whitening vs full-rank orthogonalization**: Gram eigendecomposition whitening (with `rel_tol=1e-12` rank truncation) and full-rank orthogonalization (keep all positive eigenvalues) give identical results when no near-null eigenvalues exist. Raw non-orthogonal bases violate unitarity and give random 8/16 classification.
+- **Asymmetric label distribution**: Balanced label counts (6e/6o) cause permutation-symmetric Krylov subspace → random 8/16. Asymmetric (5e/7o) breaks symmetry → 12/12 training at m≥3.
+- **`compile_channels` API now has `per_mode_weights` parameter**: optional `Option<&HashMap<(u32,u32),f64>>` for per-transition amplitude weights. Pass `None` for uniform λ₁.
+- **Krylov dimension m=2 insufficient**: regardless of λ₀ value, m=2 cannot distinguish 12 training inputs in the star topology parity test. Minimum m=3 required.
+- **Lambda0 sweet spot**: λ₀=1.0 at m=3 gives 12/12 training; λ₀>1.5 degrades (projector dominates transitions).
 
 ## Core Dependencies
 - `candle-core`: GPU tensor management (with `cuda` feature).

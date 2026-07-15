@@ -350,7 +350,7 @@ impl QfmTextModel {
         // transition sum unless λ₀ is set to O(1/(R·N)).
         let lambda0 = cfg.lambda.first().copied().unwrap_or(0.0);
         let lambda1 = cfg.lambda.get(1).copied().unwrap_or(1.0);
-        // Compile the QFM pipeline with the diffusion Hamiltonian.
+        // Compile the QFM pipeline with the Hermitian Hamiltonian.
         let qfm_cfg = QfmConfig {
             k: cfg.n_orders,
             k2: k2_total as usize,
@@ -362,12 +362,16 @@ impl QfmTextModel {
         };
         let pipeline = QfmPipeline::compile_channels(
             &active_modes,
+            &[], // no output modes — text model has no explicit labels
             &acc.transitions,
             lambda0,
             lambda1,
             k2_total as usize,
             &qfm_cfg,
-            Some(fock_r),
+            fock_r as f64, // r_in
+            0.0,            // r_out (unused for text)
+            true,
+            None,
         )?;
         let gram = pipeline.gram();
         // Unigram normalize.

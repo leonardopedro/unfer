@@ -32,6 +32,7 @@ use crate::sketch::{CountSketch, FeatureToMode};
 use candle_core::Device;
 use fock_sirk::{ForwardSirkResult, solve_forward_sirk};
 use nalgebra::{DMatrix, DVector};
+use std::collections::HashMap;
 use nested_fock_algebra::{InnerBosonicState, OuterState, QuantumState};
 use num_complex::Complex64;
 
@@ -803,50 +804,53 @@ impl QfmPipeline {
     /// uses amplitude `√R` (the outer vacuum — uniform in the
     /// Fock-space input basis with R partitions). When `None`, it
     /// uses the old amplitude `1/√(N+1)` (uniform over active modes).
+    ///
+    /// `per_mode_weights` — optional per-transition weights that override
+    /// the uniform `lambda1`. When `Some`, each transition `(from, to)`
+    /// is weighted by the value in the map; transitions without an entry
+    /// fall back to `lambda1`.
     pub fn compile_channels(
-        active_modes: &[u32],
+        input_modes: &[u32],
+        output_modes: &[u32],
         transitions: &[(u32, u32)],
         lambda0: f64,
         lambda1: f64,
         k2_total: usize,
         config: &QfmConfig,
-        fock_resolution: Option<u64>,
+        r_in: f64,
+        r_out: f64,
+        do_whiten: bool,
+        per_mode_weights: Option<&HashMap<(u32, u32), f64>>,
     ) -> Result<Self, QfmError> {
         if k2_total == 0 || config.krylov_dim == 0 {
             return Err(QfmError::DegenerateBasis);
         }
-        // Run SIRK on the diffusion Hamiltonian with the Fock-
-        // uniform outer vacuum as the starting vector, with
-        // `krylov_dim` shifts
-        // normalized to the negative-imaginary axis (same choice as
-        // `compile`), using the compact (plain-`u32`-keyed) state
-        // representation throughout (see `CompactState`) — this is
-        // what makes a `block_sizes` large enough to meaningfully cut
-        // hash collisions memory-feasible (`QFM_TEXT_STATUS.md`
-        // rev 35): the general `nested_fock_algebra::QuantumState`
-        // path costs ~500+ bytes per active channel per Krylov step
-        // (`BTreeMap`-backed `OuterState`), which OOMs once active
-        // channel counts reach the hundreds of thousands to millions
-        // that come from suppressing collisions on real text (order-3
-        // /4 contexts are overwhelmingly unique, so avoiding collision
-        // there forces active-channel count to scale with corpus
-        // size).
         let shifts: Vec<Complex64> = (1..=config.krylov_dim)
             .map(|i| Complex64::new(0.0, -(i as f64) / (config.krylov_dim as f64)))
             .collect();
         let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
-            compact_forward_sirk(active_modes, transitions, lambda0, lambda1, &shifts, fock_resolution)?;
+            compact_forward_sirk(input_modes, output_modes, transitions, lambda0, lambda1, &shifts, r_in, r_out, do_whiten, per_mode_weights)?;
         if rank == 0 {
             return Err(QfmError::DegenerateBasis);
         }
         // Build the W matrix by projecting each single-excitation Fock
         // mode |j⟩ onto the rank-dim Gram-whitened Krylov basis.
+        // Include BOTH input and output modes in the W basis.
+        let all_modes_for_w: Vec<u32> = if output_modes.is_empty() {
+            input_modes.to_vec()
+        } else {
+            let mut all = input_modes.to_vec();
+            for &m in output_modes {
+                if !all.contains(&m) { all.push(m); }
+            }
+            all
+        };
         let mut w = project_compact_modes_onto_krylov_basis(
             &w_sequence,
             &w_whiten,
             k2_total,
             rank,
-            &active_modes,
+            &all_modes_for_w,
         );
         normalize_rows(&mut w);
         // H_m from the SIRK solve.
@@ -1055,6 +1059,24 @@ impl CompactState {
             *self.modes.entry(k).or_insert(Complex64::new(0.0, 0.0)) += scale * v;
         }
     }
+
+    /// Scale all amplitudes by `factor` (in place).
+    fn scale(&mut self, factor: f64) {
+        self.vacuum *= factor;
+        for v in self.modes.values_mut() {
+            *v *= factor;
+        }
+    }
+
+    /// Return `<self|self>`.
+    fn norm_sqr(&self) -> f64 {
+        self.inner_product(self).re
+    }
+
+    /// Return `√<self|self>`.
+    fn norm(&self) -> f64 {
+        self.norm_sqr().sqrt()
+    }
 }
 
 /// Compact-state analog of the dressed-vacuum matvec
@@ -1075,42 +1097,72 @@ impl CompactState {
 /// version of the original `QuantumState`-based matvec took `.re` of
 /// each `c` component before accumulating, silently discarding that
 /// imaginary part and returning a purely-real `H|c⟩` — breaking the
-/// complex evolution the SIRK solve depends on and collapsing the
+/// Complex evolution the SIRK solve depends on and collapsing the
 /// resulting Krylov/W rank far below what `m_shifts` requests. This
 /// rewrite preserves that fix.)
-/// Diffusion-like Hamiltonian matvec:
-/// Diffusion Hamiltonian on outer wavefunctions:
-/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{(i→f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`
+///
+/// Hermitian Hamiltonian:
+/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩  +  λ₁·Σ_{i→f} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`
+///
+/// 1. Mehler vacuum projector |c₀⟩⟨c₀| — the prior.  The outer vacuum |c₀⟩
+///    has SEPARATE input/output components (`amp0_in = 1/√R_in`,
+///    `amp0_out = 1/√R_out`) that share the Fock vacuum |0⟩_Fock.
+/// 2. Hermitian supervised transitions |f⟩⟨i| + |i⟩⟨f| — label-specific
+///    pair coupling (provides the off-diagonal mixing the projector alone
+///    cannot, since both labels have the same ε = 1/√R_out).
+///
+/// When `output_modes` is empty the old single-resolution uniform path
+/// applies (no label structure).
 fn compact_diffusion_matvec<'a>(
-    active_modes: &'a [u32],
+    input_modes: &'a [u32],
+    output_modes: &'a [u32],
     transitions: &'a [(u32, u32)],
     amp0_vac: f64,
-    amp0_mode: f64,
+    amp0_in: f64,
+    amp0_out: f64,
     lambda0: f64,
     lambda1: f64,
+    per_mode_weights: Option<&'a HashMap<(u32, u32), f64>>,
 ) -> impl Fn(&CompactState) -> CompactState + 'a {
     let zero = Complex64::new(0.0, 0.0);
     move |c: &CompactState| -> CompactState {
         let mut out = CompactState::zero();
 
-        // 1. Outer vacuum projector: λ₀·⟨c₀|c⟩·|c₀⟩
+        // 1. Outer vacuum projector (the |0⟩⟨0| prior term from QFM.tex eq. Hdiag):
+        //    H_prior|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩
         let mut ip = amp0_vac * c.vacuum;
-        for &m in active_modes {
-            ip += amp0_mode * c.modes.get(&m).copied().unwrap_or(zero);
+        for &m in input_modes {
+            ip += amp0_in * c.modes.get(&m).copied().unwrap_or(zero);
+        }
+        for &m in output_modes {
+            ip += amp0_out * c.modes.get(&m).copied().unwrap_or(zero);
         }
         let scale0 = ip * lambda0;
         out.vacuum += scale0 * amp0_vac;
-        for &m in active_modes {
-            *out.modes.entry(m).or_insert(zero) += scale0 * amp0_mode;
+        for &m in input_modes {
+            *out.modes.entry(m).or_insert(zero) += scale0 * amp0_in;
+        }
+        for &m in output_modes {
+            *out.modes.entry(m).or_insert(zero) += scale0 * amp0_out;
         }
 
-        // 2. Transition term: λ₁·Σ_{(i,f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)
-        if lambda1 != 0.0 && !transitions.is_empty() {
-            for &(from_mode, to_mode) in transitions {
-                let c_from = c.modes.get(&from_mode).copied().unwrap_or(zero);
-                let c_to = c.modes.get(&to_mode).copied().unwrap_or(zero);
-                *out.modes.entry(from_mode).or_insert(zero) += lambda1 * c_to;
-                *out.modes.entry(to_mode).or_insert(zero) += lambda1 * c_from;
+        // 2. Hermitian supervised transition couplings:
+        //    H_trans|c⟩ = Σ_{i→f} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)
+        //    Each transition may have a per-mode weight; fall back to
+        //    uniform lambda1 when no per-mode weight is provided.
+        if lambda1 != 0.0 || per_mode_weights.is_some() {
+            for &(from, to) in transitions {
+                let w = per_mode_weights
+                    .and_then(|pmw| pmw.get(&(from, to)))
+                    .copied()
+                    .unwrap_or(lambda1);
+                if w == 0.0 {
+                    continue;
+                }
+                let c_from = c.modes.get(&from).copied().unwrap_or(zero);
+                let c_to = c.modes.get(&to).copied().unwrap_or(zero);
+                *out.modes.entry(to).or_insert(zero) += w * c_from;
+                *out.modes.entry(from).or_insert(zero) += w * c_to;
             }
         }
 
@@ -1118,8 +1170,14 @@ fn compact_diffusion_matvec<'a>(
     }
 }
 
-/// Compact-state forward SIRK solve for the diffusion Hamiltonian
-/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{(i→f)} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`.
+/// Compact-state forward SIRK solve for the Hermitian Hamiltonian.
+///
+/// When `do_whiten` is true (default), the Krylov Gram matrix is whitened
+/// via eigendecomposition — the normal path. When false, the raw normalized
+/// (but non-orthogonal) Krylov basis is used directly: w_whiten = I_m,
+/// h_proj = h_proj_raw, rank = m.
+/// 
+/// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{i→f} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`
 /// Builds the `m+1`-element Krylov sequence
 /// `w_k = (H - z_k I) w_{k-1}` (`m = shifts.len()`), its Gram matrix,
 /// the Gram-whitened basis (reusing `fock_sirk::whiten_gram` — a pure
@@ -1134,34 +1192,69 @@ fn compact_diffusion_matvec<'a>(
 /// and the geometric mode-overlap metric `γ = 1/R` is used for
 /// all inner products. When `None`, the old uniform amplitude
 /// `1/√(N+1)` (N = active_mode count) and identity metric are used.
+///
+/// `input_modes` and `output_modes` separate the mode space: the Krylov
+/// starting vector is uniform over INPUT modes only (not outputs), and the
+/// projector uses class-specific amp0 values (`amp0_in = 1/√R_in`,
+/// `amp0_out = 1/√R_out`). When `output_modes` is empty the old
+/// single-resolution uniform path applies.
 fn compact_forward_sirk(
-    active_modes: &[u32],
+    input_modes: &[u32],
+    output_modes: &[u32],
     transitions: &[(u32, u32)],
     lambda0: f64,
     lambda1: f64,
     shifts: &[Complex64],
-    fock_resolution: Option<u64>,
+    r_in: f64,
+    r_out: f64,
+    do_whiten: bool,
+    per_mode_weights: Option<&HashMap<(u32, u32), f64>>,
 ) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>, DVector<Complex64>), QfmError> {
     let m = shifts.len();
-    // The outer vacuum |c₀⟩ has ⟨c₀|ψ⟩ = 1/√R for ANY data point ψ.
-    // Outer wavefunctions are orthogonal, so modes use the standard
-    // L² inner product and amp0 is the same for all outer states.
-    let r = fock_resolution.map_or(0.0, |r| r as f64);
-    let amp0 = 1.0 / r.sqrt();
-    let matvec = compact_diffusion_matvec(active_modes, transitions, amp0, amp0, lambda0, lambda1);
+    let has_outputs = !output_modes.is_empty();
+    let amp0_in = if r_in > 0.0 { 1.0 / r_in.sqrt() } else { 0.0 };
+    let amp0_out = if has_outputs && r_out > 0.0 { 1.0 / r_out.sqrt() } else { 0.0 };
+    let amp0_vac = if has_outputs { amp0_in + amp0_out } else { amp0_in };
+    let matvec = compact_diffusion_matvec(
+        input_modes, output_modes, transitions,
+        amp0_vac, amp0_in, amp0_out, lambda0, lambda1,
+        per_mode_weights,
+    );
+    // Starting vector: |c₀⟩ = |c₀_in⟩ — uniform over INPUT MODES ONLY.
+    // Output modes start with ZERO amplitude (their vacuum acts only
+    // through the Hamiltonian projector).
     let mut v0 = CompactState::zero();
-    v0.vacuum = Complex64::new(amp0, 0.0);
-    for &j in active_modes {
-        v0.modes.insert(j, Complex64::new(amp0, 0.0));
+    v0.vacuum = Complex64::new(amp0_in, 0.0);
+    for &j in input_modes {
+        v0.modes.insert(j, Complex64::new(amp0_in, 0.0));
     }
+    // Krylov sequence: w_k = (H - z_k) w_{k-1}
+    // NORMALISE each vector to unit norm to prevent exponential norm
+    // growth (the Gram-matrix eigenvalue ratio can exceed 10^20 for
+    // m=16 with shifts z_k = -ik/m, causing whiten_gram's 1e-12
+    // relative tolerance to discard numerically-valid dimensions).
     let mut w_sequence = Vec::with_capacity(m + 1);
-    w_sequence.push(v0);
+    let mut w_norms = Vec::with_capacity(m + 1); // raw norm before normalisation
+    // Normalise v0
+    {
+        let nrm = v0.norm();
+        let s = if nrm > 0.0 { 1.0 / nrm } else { 1.0 };
+        let mut v0n = v0;
+        v0n.scale(s);
+        w_norms.push(nrm);
+        w_sequence.push(v0n);
+    }
     for k in 0..m {
         let prev = &w_sequence[k];
         let mut next = matvec(prev);
         next.scale_and_add(prev, -shifts[k]);
+        let nrm = next.norm();
+        let s = if nrm > 0.0 { 1.0 / nrm } else { 1.0 };
+        next.scale(s);
+        w_norms.push(nrm);
         w_sequence.push(next);
     }
+    // Gram matrix of the NORMALISED Krylov vectors.
     let mut g_matrix = DMatrix::<Complex64>::zeros(m + 1, m + 1);
     for j in 0..=m {
         for k in j..=m {
@@ -1172,21 +1265,62 @@ fn compact_forward_sirk(
             }
         }
     }
+    // Raw projected Hamiltonian with norm-factor correction.
+    // For normalised vectors: H|ń_k⟩ = s_{k+1}·|ń_{k+1}⟩ + z_k·|ń_k⟩
+    //   where s_{k+1} = ||(H - z_{k+1})|ń_k⟩|| = w_norms[k+1] (the raw
+    //   norm BEFORE normalisation at step k+1).
+    // So: ⟨ń_j|H|ń_k⟩ = s_{k+1}·G[j, k+1] + z_k·G[j, k].
     let mut h_proj_raw = DMatrix::<Complex64>::zeros(m, m);
     for j in 0..m {
         for k in 0..m {
-            h_proj_raw[(j, k)] = g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+            let s_next = w_norms[k + 1];
+            h_proj_raw[(j, k)] =
+                s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
         }
     }
     let g_sub = g_matrix.view((0, 0), (m, m)).into_owned();
-    let whitening = fock_sirk::whiten_gram(&g_sub, fock_sirk::GRAM_REL_TOL)
-        .map_err(|e| QfmError::SirkFailed(e.to_string()))?;
-    let w_whiten = whitening.w;
-    let h_proj = w_whiten.adjoint() * h_proj_raw * &w_whiten;
-    let rank = whitening.rank;
+    // TEMP DEBUG: print Gram matrix info
+    {
+        let eig = g_sub.clone().symmetric_eigen();
+        let evals: Vec<f64> = eig.eigenvalues.iter().copied().collect();
+        let max_e = evals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let n_above: usize = evals.iter().filter(|&&v| v > 1e-12 * max_e).count();
+        eprintln!("[DEBUG] Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
+                  g_sub.nrows(), g_sub.ncols(), max_e, n_above, m);
+    }
+    let (w_whiten, h_proj, rank) = if do_whiten {
+        let wh = fock_sirk::whiten_gram(&g_sub, fock_sirk::GRAM_REL_TOL)
+            .map_err(|e| QfmError::SirkFailed(e.to_string()))?;
+        let wmat = wh.w.clone();
+        let rank = wh.rank;
+        let hproj = wmat.adjoint() * h_proj_raw * &wmat;
+        (wmat, hproj, rank)
+    } else {
+        // Orthogonalise the Krylov basis WITHOUT dropping any dimensions:
+        // use Gram eigendecomposition G = U Λ U^H, then W = U Λ^{-1/2} (keep ALL
+        // eigenvectors, even near-null ones, as long as λ > 0).
+        let eig = g_sub.clone().symmetric_eigen();
+        let _max_eig = eig.eigenvalues.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let mut w = DMatrix::<Complex64>::zeros(m, m);
+        let mut n_kept = 0usize;
+        for i in 0..m {
+            let ev = eig.eigenvalues[i].max(0.0);
+            if ev <= 0.0 { continue; }
+            let inv_sqrt = Complex64::new(1.0 / ev.sqrt(), 0.0);
+            for r in 0..m {
+                w[(r, n_kept)] = eig.eigenvectors[(r, i)] * inv_sqrt;
+            }
+            n_kept += 1;
+        }
+        if n_kept == 0 { return Err(QfmError::DegenerateBasis); }
+        let w = w.view((0, 0), (m, n_kept)).into_owned();
+        let hproj = w.adjoint() * h_proj_raw * &w;
+        (w, hproj, n_kept)
+    };
     // Compute the outer vacuum's Krylov representation:
-    // c_0_krylov[k] = Σ_{l=0}^{m-1} w_whiten[l,k] · ⟨w_l | w₀⟩
-    // where w₀ = v0 is the uniform outer vacuum starting vector.
+    // c_0_krylov[k] = Σ_{l=0}^{m-1} w_whiten[l,k] · ⟨ń_l | ń₀⟩
+    // where ń₀ = v0 / ||v0|| is the normalised starting vector.
+    // (Same formula, just using normalised-vector Gram entries.)
     let mut outer_vacuum = DVector::<Complex64>::zeros(rank);
     for l in 0..m {
         let inner = g_sub[(l, 0)];
@@ -1200,14 +1334,17 @@ fn compact_forward_sirk(
 /// Compact-state analog of the (now-removed) `project_modes_onto_krylov_basis`:
 /// builds the `K_2 x rank` W matrix by projecting each active
 /// single-excitation Fock mode onto the rank-dim Gram-whitened Krylov
-/// basis,
-///   `W[j, k] = Σ_{l=0..m-1} w_whiten[l, k] * ⟨w_sequence[l+1] | j⟩`,
-/// reading `w_sequence[l+1].modes.get(&j)` directly (a plain hash-map
-/// lookup) instead of constructing a `BTreeMap`-backed `OuterState`
-/// key per mode. Only `active_modes` get a nonzero row; the rest of
-/// the `K_2` rows stay at `DMatrix::zeros`'s default — exact, not an
-/// approximation, since `w_sequence` never has a nonzero component
-/// outside `{vacuum} ∪ active_modes` in the first place.
+/// basis:
+///   `W[j, k] = ⟨b_k | j⟩ = Σ_{l=0..m-1} w̄_whiten[l, k] · ⟨w_l | j⟩`
+/// where `|b_k⟩ = Σ_l w_whiten[l,k] |w_l⟩` are the whitened basis vectors,
+///   `|w_l⟩` are the Krylov sequence vectors, and `⟨w_l | j⟩` is the
+/// conjugate of the amplitude of `|w_l⟩` on mode j.
+/// Uses `w_sequence[l]` (not `l+1`) — the whitening matrix rows
+/// correspond to Krylov vectors |w_0⟩..|w_{m-1}⟩, so the projection
+/// must use the SAME indexing.  Only `active_modes` get a nonzero row;
+/// the rest of the `K_2` rows stay at `DMatrix::zeros`'s default —
+/// exact, not an approximation, since `w_sequence` never has a nonzero
+/// component outside `{vacuum} ∪ active_modes` in the first place.
 fn project_compact_modes_onto_krylov_basis(
     w_sequence: &[CompactState],
     w_whiten: &DMatrix<Complex64>,
@@ -1224,9 +1361,10 @@ fn project_compact_modes_onto_krylov_basis(
             continue;
         }
         for l in 0..m {
-            let coeff = w_sequence[l + 1].modes.get(&j).copied().unwrap_or(zero);
+            if l >= w_sequence.len() { continue; }
+            let amp = w_sequence[l].modes.get(&j).copied().unwrap_or(zero);
             for k in 0..rank {
-                w[(row, k)] += w_whiten[(l, k)] * coeff;
+                w[(row, k)] += w_whiten[(l, k)].conj() * amp.conj();
             }
         }
     }
