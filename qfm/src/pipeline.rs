@@ -1158,7 +1158,6 @@ fn dense_diffusion_matvec<'a>(
     n_in: usize,
     n_out: usize,
     tp_transitions: &'a [(usize, usize)],  // pre-mapped (i_tp, o_tp) pairs
-    amp0: f64,
     lambda0: f64,
     lambda1: f64,
     per_mode_weights: Option<&'a HashMap<(u32, u32), f64>>,
@@ -1167,15 +1166,22 @@ fn dense_diffusion_matvec<'a>(
     move |c: &DenseState| -> DenseState {
         let mut y = DenseState::new(n_in, n_out);
 
-        // 1. Uniform projector H₀ = λ₀·⟨c₀|c⟩·|c₀⟩
-        //    |c₀⟩ is uniform over all N_in × N_out product states
-        let mut ip = Complex64::new(0.0, 0.0);
-        for a in c.amplitudes.iter() {
-            ip += amp0 * a;
-        }
-        let scale0 = ip * lambda0;
-        for ya in y.amplitudes.iter_mut() {
-            *ya += scale0 * amp0;
+        // 1. Per-input vacuum projector:
+        //    H₀ = λ₀·Σ_i |i,vac⟩⟨i,vac|
+        //    where |vac⟩_out = (1/√N_out)·Σ_f |f⟩_out
+        if lambda0 != 0.0 {
+            let norm0 = lambda0 / (n_out as f64);
+            for i in 0..n_in {
+                let i0 = i * o_stride;
+                let mut sum_i = c.amplitudes[i0];
+                for g in 1..n_out {
+                    sum_i += c.amplitudes[i0 + g];
+                }
+                let scale = norm0 * sum_i;
+                for f in 0..n_out {
+                    y.amplitudes[i0 + f] += scale;
+                }
+            }
         }
 
         // 2. Tensor-product transitions:
@@ -1331,7 +1337,7 @@ fn dense_forward_sirk(
 
     let matvec = dense_diffusion_matvec(
         n_in, n_out, &tp_transitions,
-        amp0, lambda0, lambda1,
+        lambda0, lambda1,
         per_mode_weights,
     );
 
