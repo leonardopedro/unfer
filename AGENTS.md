@@ -69,6 +69,9 @@ Sibling repos:
 - **`compile_channels` API now has `per_mode_weights` parameter**: optional `Option<&HashMap<(u32,u32),f64>>` for per-transition amplitude weights. Pass `None` for uniform λ₁.
 - **Krylov dimension m=2 insufficient**: regardless of λ₀ value, m=2 cannot distinguish 12 training inputs in the star topology parity test. Minimum m=3 required.
 - **Lambda0 sweet spot**: λ₀=1.0 at m=3 gives 12/12 training; λ₀>1.5 degrades (projector dominates transitions).
+- **Anti-learning at m=3**: The 3-dimensional Krylov subspace inverts the label structure at moderate λ₀ (0 < λ₀ ≤ ~5), giving 0% training accuracy. This disappears at λ₀=0 (random) and λ₀≥10 (projector dominates, 100% training even at m=3). The sweet spot m≥5 always works regardless of λ₀.
+- **Rank saturation**: For single-mode-per-input parity at any scale (4-bit, 7-bit, 8-bit), the effective gram rank of the Krylov subspace caps at 6. The Krylov dimension m saturates in useful spectral directions at ~6, regardless of mode count (18 to 258) or training set size (12 to 200).
+- **No generalization in single-mode star topology**: The Hermitian Hamiltonian with single-mode-per-input encoding achieves 100% training at m≥5 but gives 50% on held-out modes (extrapolation) and only ~54% on within-range held-out (interpolation). Each input is an independent mode with no shared structure — the uniform projector provides no mode-specific generalization.
 
 ## Core Dependencies
 - `candle-core`: GPU tensor management (with `cuda` feature).

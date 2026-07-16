@@ -1,13 +1,11 @@
-//! Binary parity classification using the Hermitian Hamiltonian.
-//! 4-bit inputs (0..15), 2 classes: even / odd.
-//! Hamiltonian: H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{i→f}(|f⟩⟨i|+|i⟩⟨f|)
+//! Binary parity classification using the tensor-product Hamiltonian.
+//! 4-bit inputs (0..15), 2 output labels (even/odd).
+//! Hilbert space: ℋ_in ⊗ ℋ_out with basis |i,f⟩ (no separate vacuum index).
+//! Uniform vacuum: |i, vac⟩ = (1/√N_out)·Σ_f |i,f⟩.
+//! Hamiltonian:
+//!   H = λ₀·|c₀⟩⟨c₀| + λ₁·Σ_{i→f} (|i⟩⟨i|)_in ⊗ (|f⟩⟨vac| + |vac⟩⟨f|)_out
 //!
-//! * λ₀: Mehler vacuum projector (prior, uniform over input modes)
-//! * λ₁: Supervised transition couplings (label-specific pair coupling)
-//!
-//! With separate input/output outer vacua:
-//! - R_in = 256 (Fock partitions for input modes)
-//! - R_out = 2 (binary classification)
+//! Decoding: for test input x, P(label) = |⟨x, label|ψ⟩|² / (sum over labels)
 
 use nalgebra::DVector;
 use num_complex::Complex64;
@@ -19,14 +17,12 @@ fn parity(x: u32) -> bool {
 
 fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
             input_modes: &[u32], output_modes: &[u32],
-            n_modes: usize, label: &str, do_whiten: bool) -> (u32, u32, u32, u32) {
+            n_modes: usize, label: &str, do_whiten: bool,
+            kernel_sigma: Option<f64>) -> (u32, u32, u32, u32) {
     let test_inputs: Vec<u32> = (0..16u32).filter(|&x| !train_inputs.contains(&x)).collect();
-    let has_labels = !output_modes.is_empty();
 
     let lambda0 = 1.0;
     let lambda1 = 1.0;
-    let r_in = 256.0;
-    let r_out = if has_labels { 2.0 } else { 0.0 };
     let t = 0.5;
 
     let config = QfmConfig {
@@ -36,83 +32,50 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
 
     let pipeline = QfmPipeline::compile_channels(
         input_modes, output_modes, transitions, lambda0, lambda1,
-        n_modes, &config, r_in, r_out, do_whiten, None,
+        n_modes, &config, 0.0, 0.0, do_whiten, None, kernel_sigma,
     ).expect("pipeline compile");
 
     let rank = pipeline.rank();
     let w = pipeline.w();
+    let n_in = input_modes.len();
+    let n_out = output_modes.len();
+    let o_stride = n_out;
 
-    // Label mask: which modes vote for even/odd
-    let mut even_mask = vec![0.0f64; n_modes];
-    let mut odd_mask = vec![0.0f64; n_modes];
-    for x in 0..16u32 {
-        let xi = x as usize;
-        if xi >= n_modes { continue; }
-        if !train_inputs.contains(&x) { continue; }
-        if parity(x) { even_mask[xi] = 1.0; }
-        else { odd_mask[xi] = 1.0; }
-    }
-    // Label modes (16=even, 17=odd) vote directly
-    if has_labels {
-        if 16 < n_modes { even_mask[16] = 1.0; }
-        if 17 < n_modes { odd_mask[17] = 1.0; }
-    }
-
-    eprintln!("\n=== {} (rank={}, n_modes={}) ===", label, rank, n_modes);
-
-    // DEBUG: print per-mode probabilities for a training input (x=1)
-    if rank <= 10 {
-        let xi = 1usize;
-        let c0 = DVector::from_iterator(rank, (0..rank).map(|k| w[(xi, k)]));
-        let c1 = pipeline.evolve(&c0, t);
-        let mut norm_dbg = 0.0f64;
-        let mut per_mode = Vec::new();
-        for m in 0..n_modes {
-            let amp: Complex64 = (0..rank).map(|k| c1[k] * w[(m, k)].conj()).sum();
-            norm_dbg += amp.norm_sqr();
-            per_mode.push((m, amp.norm_sqr()));
-        }
-        norm_dbg = norm_dbg.max(1e-300);
-        eprintln!("[DEBUG] mode probabilities for input 1 (even):");
-        per_mode.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        for (m, p) in per_mode.iter().take(6) {
-            eprintln!("  mode {m:>2}: |amp|²={p:.6e}  frac={:.4e}", p / norm_dbg);
-        }
-        // Also print W row norms
-        eprintln!("[DEBUG] W row norms:");
-        for m in [1usize, 16, 17, 0, 4] {
-            if m < n_modes {
-                let row_norm: f64 = (0..rank).map(|k| w[(m, k)].norm_sqr()).sum();
-                eprintln!("  mode {m:>2}: ||W row||²={row_norm:.6e}");
-            }
-        }
-    }
+    eprintln!("\n=== {} (rank={}, n_in={}, n_out={}) ===", label, rank, n_in, n_out);
 
     let mut correct = 0u32;
     let mut n_total = 0u32;
     let mut train_correct = 0u32;
     let mut n_train_total = 0u32;
+    let even_o = 0usize;
+    let odd_o = 1usize;
     let all_inputs: Vec<u32> = [train_inputs, &test_inputs].concat();
-    for &x in &all_inputs {
-        let xi = x as usize;
-        if xi >= n_modes { continue; }
 
-        let c0 = DVector::from_iterator(rank, (0..rank).map(|k| w[(xi, k)]));
+    for &x in &all_inputs {
+        let input_pos = input_modes.iter().position(|&m| m == x).unwrap();
+        let tp_even = input_pos * o_stride + even_o;
+        let tp_odd  = input_pos * o_stride + odd_o;
+
+        // Encode |x, vac⟩ = (1/√N_out)·Σ_f |x, f⟩
+        let mut c0 = DVector::zeros(rank);
+        for f in 0..n_out {
+            let tp = input_pos * o_stride + f;
+            for k in 0..rank {
+                c0[k] += w[(tp, k)];
+            }
+        }
+        let inv_sqrt_no = 1.0 / (n_out as f64).sqrt();
+        c0.scale_mut(inv_sqrt_no);
+
         let c1 = pipeline.evolve(&c0, t);
-        let mut norm = 0.0f64;
-        for m in 0..n_modes {
-            let amp: Complex64 = (0..rank).map(|k| c1[k] * w[(m, k)].conj()).sum();
-            norm += amp.norm_sqr();
-        }
-        norm = norm.max(1e-300);
-        let mut p_even = 0.0;
-        let mut p_odd = 0.0;
-        for m in 0..n_modes {
-            let amp: Complex64 = (0..rank).map(|k| c1[k] * w[(m, k)].conj()).sum();
-            let p = amp.norm_sqr() / norm;
-            p_even += p * even_mask[m];
-            p_odd += p * odd_mask[m];
-        }
+
+        let amp_even: Complex64 = (0..rank).map(|k| c1[k] * w[(tp_even, k)].conj()).sum();
+        let amp_odd: Complex64 = (0..rank).map(|k| c1[k] * w[(tp_odd, k)].conj()).sum();
+        let p_even = amp_even.norm_sqr();
+        let p_odd = amp_odd.norm_sqr();
+        let total = (p_even + p_odd).max(1e-300);
+        let p_even_norm = p_even / total;
+        let p_odd_norm = p_odd / total;
 
         let predicted = p_even > p_odd;
         let correct_flag = predicted == parity(x);
@@ -125,7 +88,7 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
         }
 
         eprintln!("  x={:04b}({})  P(even)={:.4e} P(odd)={:.4e}  {}",
-            x, x, p_even, p_odd,
+            x, x, p_even_norm, p_odd_norm,
             if correct_flag { "✓" } else { "✗" });
     }
     eprintln!("  accuracy: {correct}/{n_total}  (train: {train_correct}/{n_train_total})");
@@ -134,28 +97,35 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
 
 #[test]
 fn parity_classification_tests() {
-    // Same 16 data points (0..15). Asymmetric label distribution:
-    // training = 5 even + 7 odd = 12, test = 4 (0, 8, 12, 15).
-    // Training: 3,5,6,9,10 (even) + 1,2,4,7,11,13,14 (odd) = 12
     let train_inputs: Vec<u32> = vec![
         1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14,
     ];
     let input_modes: Vec<u32> = (0..16u32).collect();
     let label_modes: Vec<u32> = vec![16, 17];
 
-    // Star topology: each training input → its parity label.
     let mut star_trans = Vec::new();
     for &x in &train_inputs {
         let y = if parity(x) { 16u32 } else { 17u32 };
         star_trans.push((x, y));
     }
     let (c1, n1, train_correct, n_train) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-                           "star WITH whitening", true);
-    assert!(train_correct == n_train, "star WITH whitening failed: {train_correct}/{n_train}");
+                           "tensor-product TP", true, None);
+    assert!(train_correct == n_train, "TP whitening failed: {train_correct}/{n_train}");
     eprintln!("\n  → with whitening: {c1}/{n1}");
 
     let (c1b, n1b, train_correct_b, n_train_b) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-                           "star full-rank orthogonalization (no truncation)", false);
-    assert!(train_correct_b == n_train_b, "full-rank orthogonalization should match whitening when no null directions exist");
+                           "tensor-product full-rank", false, None);
+    assert!(train_correct_b == n_train_b, "full-rank orthogonalization should match whitening: {train_correct_b}/{n_train_b}");
     eprintln!("\n  → full-rank orthogonalization: {c1b}/{n1b}  (train: {train_correct_b}/{n_train_b})");
+
+    // Kernel-based inner product tests
+    for (sigma, label) in &[(0.5, "kernel σ=0.5")] {
+        let (c_k, n_k, train_k, n_train_k) = run_test(
+            &train_inputs, &star_trans, &input_modes, &label_modes, 18,
+            label, true, Some(*sigma),
+        );
+        eprintln!("  → {label}: test {c_k}/{n_k}  train {train_k}/{n_train_k}");
+        assert!(train_k == n_train, "kernel training failed: {train_k}/{n_train}");
+        assert!(c_k == n_k, "kernel test should be perfect at m=3 σ=0.5: {c_k}/{n_k}");
+    }
 }

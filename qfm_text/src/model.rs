@@ -372,6 +372,7 @@ impl QfmTextModel {
             0.0,            // r_out (unused for text)
             true,
             None,
+            None,
         )?;
         let gram = pipeline.gram();
         // Unigram normalize.

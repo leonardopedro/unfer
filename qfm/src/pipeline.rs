@@ -821,6 +821,7 @@ impl QfmPipeline {
         r_out: f64,
         do_whiten: bool,
         per_mode_weights: Option<&HashMap<(u32, u32), f64>>,
+        kernel_sigma: Option<f64>,
     ) -> Result<Self, QfmError> {
         if k2_total == 0 || config.krylov_dim == 0 {
             return Err(QfmError::DegenerateBasis);
@@ -828,31 +829,52 @@ impl QfmPipeline {
         let shifts: Vec<Complex64> = (1..=config.krylov_dim)
             .map(|i| Complex64::new(0.0, -(i as f64) / (config.krylov_dim as f64)))
             .collect();
-        let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
-            compact_forward_sirk(input_modes, output_modes, transitions, lambda0, lambda1, &shifts, r_in, r_out, do_whiten, per_mode_weights)?;
-        if rank == 0 {
-            return Err(QfmError::DegenerateBasis);
-        }
-        // Build the W matrix by projecting each single-excitation Fock
-        // mode |j⟩ onto the rank-dim Gram-whitened Krylov basis.
-        // Include BOTH input and output modes in the W basis.
-        let all_modes_for_w: Vec<u32> = if output_modes.is_empty() {
-            input_modes.to_vec()
-        } else {
-            let mut all = input_modes.to_vec();
-            for &m in output_modes {
-                if !all.contains(&m) { all.push(m); }
+
+        let has_outputs = !output_modes.is_empty();
+        let (mut w, h_proj, rank, outer_vacuum) = if has_outputs {
+            // Tensor-product (dense) path.
+            let n_in = input_modes.len();
+            let n_out = output_modes.len();
+            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
+                dense_forward_sirk(n_in, n_out, input_modes, output_modes, transitions,
+                                   lambda0, lambda1, &shifts, do_whiten, per_mode_weights,
+                                   kernel_sigma)?;
+            if rank == 0 {
+                return Err(QfmError::DegenerateBasis);
             }
-            all
+            let o_stride = n_out;
+            let n_bits = input_modes.iter().max()
+                .map(|&m| (8 * std::mem::size_of::<u32>() - m.leading_zeros() as usize).max(1))
+                .unwrap_or(1);
+            let kernel = kernel_sigma
+                .map(|s| build_sparse_kernel(input_modes, n_bits, s, 1e-4));
+            let mut w = project_dense_basis(&w_sequence, &w_whiten, n_in, n_out, o_stride, rank,
+                                             kernel.as_ref());
+            normalize_rows(&mut w);
+            (w, h_proj, rank, outer_vacuum)
+        } else {
+            // Compact (sparse) path — no output modes.
+            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
+                compact_forward_sirk(input_modes, output_modes, transitions, lambda0, lambda1,
+                                     &shifts, r_in, r_out, do_whiten, per_mode_weights)?;
+            if rank == 0 {
+                return Err(QfmError::DegenerateBasis);
+            }
+            let all_modes_for_w: Vec<u32> = input_modes.to_vec();
+            let mut w = project_compact_modes_onto_krylov_basis(
+                &w_sequence, &w_whiten, k2_total, rank, &all_modes_for_w,
+            );
+            normalize_rows(&mut w);
+            (w, h_proj, rank, outer_vacuum)
         };
-        let mut w = project_compact_modes_onto_krylov_basis(
-            &w_sequence,
-            &w_whiten,
-            k2_total,
-            rank,
-            &all_modes_for_w,
-        );
-        normalize_rows(&mut w);
+
+        // Determine k2: for the dense path use the tensor-product dimension,
+        // for the compact path use k2_total.
+        let k2_effective = if has_outputs {
+            (input_modes.len() + 1) * (output_modes.len() + 1)
+        } else {
+            k2_total
+        };
         // H_m from the SIRK solve.
         let mut h_m = h_proj;
         let mut rank = rank;
@@ -901,7 +923,7 @@ impl QfmPipeline {
             heavy_hitters: HeavyHitters::new(1, 0.0),
             training_features: Vec::new(),
             d: 0,
-            k2: k2_total,
+            k2: k2_effective,
             rank,
             outer_vacuum,
         })
@@ -1079,6 +1101,406 @@ impl CompactState {
     }
 }
 
+/// Dense state for the tensor-product Hilbert space ℋ_in ⊗ ℋ_out.
+/// Basis states: |i, o⟩ for i ∈ {0..N_in}, o ∈ {0..N_out}
+/// where i=0 means input vacuum and o=0 means output vacuum.
+/// Index: idx = i * (N_out + 1) + o.
+///
+/// Total dimension = (N_in + 1) × (N_out + 1).
+/// This replaces CompactState when output_modes are present.
+struct DenseState {
+    amplitudes: Vec<Complex64>,
+}
+
+impl DenseState {
+    fn new(n_in: usize, n_out: usize) -> Self {
+        let dim = n_in * n_out;
+        Self { amplitudes: vec![Complex64::new(0.0, 0.0); dim] }
+    }
+
+    fn inner_product(&self, other: &Self) -> Complex64 {
+        let mut dot = Complex64::new(0.0, 0.0);
+        for (a, b) in self.amplitudes.iter().zip(other.amplitudes.iter()) {
+            dot += a.conj() * b;
+        }
+        dot
+    }
+
+    fn scale_and_add(&mut self, other: &Self, scale: Complex64) {
+        for (s, o) in self.amplitudes.iter_mut().zip(other.amplitudes.iter()) {
+            *s += scale * o;
+        }
+    }
+
+    fn scale(&mut self, factor: f64) {
+        for a in self.amplitudes.iter_mut() {
+            *a *= factor;
+        }
+    }
+
+    fn norm_sqr(&self) -> f64 {
+        self.amplitudes.iter().map(|a| a.norm_sqr()).sum()
+    }
+
+    fn norm(&self) -> f64 {
+        self.norm_sqr().sqrt()
+    }
+}
+
+/// Dense matvec for the tensor-product Hamiltonian on ℋ_in ⊗ ℋ_out:
+///
+///   H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{i→f} (|i⟩⟨i|)_in ⊗ (|f⟩⟨0| + |0⟩⟨f|)_out
+///
+/// The first term is the outer vacuum projector; the second is the
+/// supervised transition that preserves the input excitation and
+/// oscillates the output between vacuum and |f⟩.
+fn dense_diffusion_matvec<'a>(
+    n_in: usize,
+    n_out: usize,
+    tp_transitions: &'a [(usize, usize)],  // pre-mapped (i_tp, o_tp) pairs
+    amp0: f64,
+    lambda0: f64,
+    lambda1: f64,
+    per_mode_weights: Option<&'a HashMap<(u32, u32), f64>>,
+) -> impl Fn(&DenseState) -> DenseState + 'a {
+    let o_stride = n_out;
+    move |c: &DenseState| -> DenseState {
+        let mut y = DenseState::new(n_in, n_out);
+
+        // 1. Uniform projector H₀ = λ₀·⟨c₀|c⟩·|c₀⟩
+        //    |c₀⟩ is uniform over all N_in × N_out product states
+        let mut ip = Complex64::new(0.0, 0.0);
+        for a in c.amplitudes.iter() {
+            ip += amp0 * a;
+        }
+        let scale0 = ip * lambda0;
+        for ya in y.amplitudes.iter_mut() {
+            *ya += scale0 * amp0;
+        }
+
+        // 2. Tensor-product transitions:
+        //    H₁ = Σ λ₁·(|i⟩⟨i|)_in ⊗ (|f⟩⟨vac| + |vac⟩⟨f|)_out
+        //    where |vac⟩_out = (1/√N_out)·Σ_f |f⟩_out (uniform superposition)
+        if lambda1 != 0.0 || per_mode_weights.is_some() {
+            let inv_sqrt_no = 1.0 / (n_out as f64).sqrt();
+            for &(i_tp, o_tp) in tp_transitions {
+                let i0 = i_tp * o_stride;
+                let io = i0 + o_tp;
+                // Forward: ⟨i, vac| projects → sum over output modes for this input
+                let mut sum_i = c.amplitudes[i0];
+                for g in 1..n_out {
+                    sum_i += c.amplitudes[i0 + g];
+                }
+                y.amplitudes[io] += lambda1 * sum_i * inv_sqrt_no;
+                // Backward: |vac⟩ spreads to all output modes for this input
+                let amp_f = c.amplitudes[io];
+                for g in 0..n_out {
+                    y.amplitudes[i0 + g] += lambda1 * amp_f * inv_sqrt_no;
+                }
+            }
+        }
+
+        y
+    }
+}
+
+/// Sparse kernel: stores only non-zero entries K(i,j) > threshold.
+/// Each row lists (j, K_ij) pairs.  For the Hamming hypersphere kernel
+/// with tuned σ, only nearest neighbors have significant overlap, so
+/// the average row degree is O(n_bits) — linear in M, not O(M²).
+struct SparseKernel {
+    n: usize,
+    rows: Vec<Vec<(usize, f64)>>,
+}
+
+/// Build a sparse Hamming hypersphere kernel, pruning entries ≤ threshold.
+/// Uses O(M·n_bits) neighbor enumeration via bit flips instead of O(M²)
+/// pairwise distance computation.
+///
+/// Maps binary mode value `m` to `n_bits`-dimensional (±1) vector
+/// `φ(m)_k = 1 - 2·bit_k(m)`, then uses geodesic distance on the sphere:
+/// `θ(m,m') = arccos(1 - 2·d_H(m,m')/n_bits)` where d_H is Hamming distance.
+/// Kernel: K(m,m') = exp(-θ²/2σ²).
+fn build_sparse_kernel(modes: &[u32], n_bits: usize, sigma: f64, threshold: f64) -> SparseKernel {
+    let n = modes.len();
+    let mut rows = vec![Vec::new(); n];
+    let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
+    // Precompute kernel value for each possible Hamming distance (0..=n_bits)
+    let mut d_vals = vec![0.0_f64; n_bits + 1];
+    for d in 0..=n_bits {
+        let cos_theta = 1.0 - 2.0 * d as f64 / n_bits as f64;
+        let theta = cos_theta.clamp(-1.0, 1.0).acos();
+        d_vals[d] = (-theta * theta * inv_2s2).exp();
+    }
+    // Build position index: mode_value → position
+    let pos: rustc_hash::FxHashMap<u32, usize> = modes.iter()
+        .enumerate().map(|(i, &m)| (m, i)).collect();
+    for i in 0..n {
+        rows[i].push((i, 1.0));
+        let mode_i = modes[i];
+        // Enumerate d_H = d by flipping d bits
+        // d=1: single bit flips
+        for b in 0..n_bits {
+            let neighbor = mode_i ^ (1 << b);
+            if let Some(&j) = pos.get(&neighbor) {
+                if j > i && d_vals[1] > threshold {
+                    rows[i].push((j, d_vals[1]));
+                    rows[j].push((i, d_vals[1]));
+                }
+            }
+        }
+        // d=2: two bit flips (only if K(d=2) > threshold)
+        if d_vals[2] > threshold {
+            for b1 in 0..n_bits {
+                let tmp = mode_i ^ (1 << b1);
+                for b2 in (b1 + 1)..n_bits {
+                    let neighbor = tmp ^ (1 << b2);
+                    if let Some(&j) = pos.get(&neighbor) {
+                        if j > i {
+                            rows[i].push((j, d_vals[2]));
+                            rows[j].push((i, d_vals[2]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    SparseKernel { n, rows }
+}
+
+/// Inner product with kernel: ⟨ψ|φ⟩ = Σ_f Σ_{i,i'} conj(ψ[i,f])·K_in(i,i')·φ[i',f]
+/// Iterates over sparse (non-zero) kernel entries — O(M·k) per call.
+fn kernel_inner_product(
+    a: &DenseState, b: &DenseState,
+    _n_in: usize, n_out: usize, o_stride: usize,
+    kernel: &SparseKernel,
+) -> Complex64 {
+    let mut dot = Complex64::new(0.0, 0.0);
+    for f in 0..n_out {
+        for (i, row) in kernel.rows.iter().enumerate() {
+            let a_i = a.amplitudes[i * o_stride + f].conj();
+            let mut row_sum = Complex64::new(0.0, 0.0);
+            for &(j, k_val) in row.iter() {
+                row_sum += k_val * b.amplitudes[j * o_stride + f];
+            }
+            dot += a_i * row_sum;
+        }
+    }
+    dot
+}
+
+/// SIRK solve using DenseState (tensor-product Hilbert space).
+fn dense_forward_sirk(
+    n_in: usize,
+    n_out: usize,
+    input_modes: &[u32],
+    output_modes: &[u32],
+    transitions: &[(u32, u32)],
+    lambda0: f64,
+    lambda1: f64,
+    shifts: &[Complex64],
+    do_whiten: bool,
+    per_mode_weights: Option<&HashMap<(u32, u32), f64>>,
+    kernel_sigma: Option<f64>,
+) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<DenseState>, DVector<Complex64>), QfmError> {
+    let m = shifts.len();
+    let o_stride = n_out;
+
+    // Build sparse kernel if sigma provided
+    let n_bits = input_modes.iter().max()
+        .map(|&m| (8 * std::mem::size_of::<u32>() - m.leading_zeros() as usize).max(1))
+        .unwrap_or(1);
+    let kernel: Option<SparseKernel> = kernel_sigma
+        .map(|s| build_sparse_kernel(input_modes, n_bits, s, 1e-4));
+
+    // Uniform vacuum amplitude over all N_in × N_out product states
+    let n_states = n_in * n_out;
+    let amp0 = 1.0 / (n_states as f64).sqrt();
+
+    // Pre-map transitions from global mode indices to tensor-product indices.
+    let in_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = input_modes.iter()
+        .enumerate().map(|(i, &m)| (m, i)).collect();
+    let out_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = output_modes.iter()
+        .enumerate().map(|(i, &m)| (m, i)).collect();
+    let mut tp_transitions: Vec<(usize, usize)> = Vec::with_capacity(transitions.len());
+    for &(from, to) in transitions {
+        if let (Some(&i_tp), Some(&o_tp)) = (in_mode_to_tp.get(&from), out_mode_to_tp.get(&to)) {
+            tp_transitions.push((i_tp, o_tp));
+        }
+    }
+
+    let matvec = dense_diffusion_matvec(
+        n_in, n_out, &tp_transitions,
+        amp0, lambda0, lambda1,
+        per_mode_weights,
+    );
+
+    // Starting vector: uniform over all N_in × N_out product states
+    let mut v0 = DenseState::new(n_in, n_out);
+    for i in 0..n_in {
+        for f in 0..n_out {
+            v0.amplitudes[i * o_stride + f] = Complex64::new(amp0, 0.0);
+        }
+    }
+
+    // Krylov sequence
+    let mut w_sequence = Vec::with_capacity(m + 1);
+    let mut w_norms = Vec::with_capacity(m + 1);
+    {
+        let nrm = v0.norm();
+        let s = if nrm > 0.0 { 1.0 / nrm } else { 1.0 };
+        let mut v0n = DenseState::new(n_in, n_out);
+        v0n.amplitudes.clone_from(&v0.amplitudes);
+        v0n.scale(s);
+        w_norms.push(nrm);
+        w_sequence.push(v0n);
+    }
+    for k in 0..m {
+        let prev = &w_sequence[k];
+        let mut next = matvec(prev);
+        next.scale_and_add(prev, -shifts[k]);
+        let nrm = next.norm();
+        let s = if nrm > 0.0 { 1.0 / nrm } else { 1.0 };
+        next.scale(s);
+        w_norms.push(nrm);
+        w_sequence.push(next);
+    }
+
+    // Gram matrix (with kernel if provided)
+    let mut g_matrix = DMatrix::<Complex64>::zeros(m + 1, m + 1);
+    for j in 0..=m {
+        for k in j..=m {
+            let val = if let Some(ref kern) = kernel {
+                kernel_inner_product(&w_sequence[j], &w_sequence[k], n_in, n_out, o_stride, kern)
+            } else {
+                w_sequence[j].inner_product(&w_sequence[k])
+            };
+            g_matrix[(j, k)] = val;
+            if j != k {
+                g_matrix[(k, j)] = val.conj();
+            }
+        }
+    }
+
+    // Raw projected Hamiltonian
+    let mut h_proj_raw = DMatrix::<Complex64>::zeros(m, m);
+    for j in 0..m {
+        for k in 0..m {
+            let s_next = w_norms[k + 1];
+            h_proj_raw[(j, k)] =
+                s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+        }
+    }
+
+    let g_sub = g_matrix.view((0, 0), (m, m)).into_owned();
+
+    {
+        let eig = g_sub.clone().symmetric_eigen();
+        let evals: Vec<f64> = eig.eigenvalues.iter().copied().collect();
+        let max_e = evals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let n_above: usize = evals.iter().filter(|&&v| v > 1e-12 * max_e).count();
+        eprintln!("[DEBUG] Dense Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
+                  g_sub.nrows(), g_sub.ncols(), max_e, n_above, m);
+    }
+
+    let (w_whiten, h_proj, rank) = if do_whiten {
+        let wh = fock_sirk::whiten_gram(&g_sub, fock_sirk::GRAM_REL_TOL)
+            .map_err(|e| QfmError::SirkFailed(e.to_string()))?;
+        let wmat = wh.w.clone();
+        let rank = wh.rank;
+        let hproj = wmat.adjoint() * h_proj_raw * &wmat;
+        (wmat, hproj, rank)
+    } else {
+        let eig = g_sub.clone().symmetric_eigen();
+        let mut w = DMatrix::<Complex64>::zeros(m, m);
+        let mut n_kept = 0usize;
+        for i in 0..m {
+            let ev = eig.eigenvalues[i].max(0.0);
+            if ev <= 0.0 { continue; }
+            let inv_sqrt = Complex64::new(1.0 / ev.sqrt(), 0.0);
+            for r in 0..m {
+                w[(r, n_kept)] = eig.eigenvectors[(r, i)] * inv_sqrt;
+            }
+            n_kept += 1;
+        }
+        if n_kept == 0 { return Err(QfmError::DegenerateBasis); }
+        let w = w.view((0, 0), (m, n_kept)).into_owned();
+        let hproj = w.adjoint() * h_proj_raw * &w;
+        (w, hproj, n_kept)
+    };
+
+    // Compute the outer vacuum's Krylov representation
+    let mut outer_vacuum = DVector::<Complex64>::zeros(rank);
+    for l in 0..m {
+        let inner = g_sub[(l, 0)];
+        for k in 0..rank {
+            outer_vacuum[k] += w_whiten[(l, k)] * inner;
+        }
+    }
+
+    Ok((w_whiten, h_proj, rank, w_sequence, outer_vacuum))
+}
+
+/// Project every tensor-product basis state onto the whitened Krylov basis.
+/// Returns a matrix of shape `N_in*N_out × rank`.
+/// If `kernel` is provided, uses the non-orthogonal inner product
+/// `⟨i,f|j,g⟩ = K_in(i,j)·δ_{fg}` so that
+/// `W[tp(i,f), k] = Σ_l conj(w_whiten[l,k]) · Σ_j K_in(i,j)·conj(w_l[j,f])`.
+fn project_dense_basis(
+    w_sequence: &[DenseState],
+    w_whiten: &DMatrix<Complex64>,
+    n_in: usize,
+    n_out: usize,
+    o_stride: usize,
+    rank: usize,
+    kernel: Option<&SparseKernel>,
+) -> DMatrix<Complex64> {
+    let m = w_whiten.nrows();
+    let dim = n_in * n_out;
+    let mut w = DMatrix::<Complex64>::zeros(dim, rank);
+
+    if let Some(kern) = kernel {
+        // Precompute Σ_j K(i,j)·conj(w_l[j,f]) for every (i,f,l) using sparse rows
+        let mut kconj: Vec<Vec<Vec<Complex64>>> = vec![vec![vec![Complex64::default(); n_in]; n_out]; m];
+        for l in 0..m {
+            if l >= w_sequence.len() { continue; }
+            for f in 0..n_out {
+                for (i, row) in kern.rows.iter().enumerate() {
+                    let mut sum = Complex64::new(0.0, 0.0);
+                    for &(j, k_val) in row.iter() {
+                        let amp = w_sequence[l].amplitudes[j * o_stride + f];
+                        sum += k_val * amp.conj();
+                    }
+                    kconj[l][f][i] = sum;
+                }
+            }
+        }
+        for i in 0..n_in {
+            for f in 0..n_out {
+                let row = i * o_stride + f;
+                for l in 0..m {
+                    let kernel_bra = &kconj[l][f][i];
+                    for k in 0..rank {
+                        w[(row, k)] += w_whiten[(l, k)].conj() * kernel_bra;
+                    }
+                }
+            }
+        }
+    } else {
+        for tp_idx in 0..dim {
+            let row = tp_idx;
+            for l in 0..m {
+                if l >= w_sequence.len() { continue; }
+                let amp = w_sequence[l].amplitudes[tp_idx];
+                for k in 0..rank {
+                    w[(row, k)] += w_whiten[(l, k)].conj() * amp.conj();
+                }
+            }
+        }
+    }
+    w
+}
+
 /// Compact-state analog of the dressed-vacuum matvec
 /// `H|c⟩ = Σ_o λ_o ⟨0̃_o|c⟩|0̃_o⟩` (QFM.tex §"Implementation in the
 /// unfer Kernel" line 906-908), operating on [`CompactState`] instead
@@ -1212,21 +1634,31 @@ fn compact_forward_sirk(
 ) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>, DVector<Complex64>), QfmError> {
     let m = shifts.len();
     let has_outputs = !output_modes.is_empty();
-    let amp0_in = if r_in > 0.0 { 1.0 / r_in.sqrt() } else { 0.0 };
-    let amp0_out = if has_outputs && r_out > 0.0 { 1.0 / r_out.sqrt() } else { 0.0 };
-    let amp0_vac = if has_outputs { amp0_in + amp0_out } else { amp0_in };
+    let amp0_in_raw = if r_in > 0.0 { 1.0 / r_in.sqrt() } else { 0.0 };
+    let amp0_out_raw = if has_outputs && r_out > 0.0 { 1.0 / r_out.sqrt() } else { 0.0 };
+    // Properly normalize the dressed vacuum |c₀⟩ = c₀|vac⟩ + Σ ε_m|m⟩:
+    // QFM convention: c₀_raw = 1, ε_m_raw = 1/√R, with
+    //   ||c₀||² = c₀² + N_in·ε_in² + N_out·ε_out² = 1
+    let norm_sq = 1.0
+        + input_modes.len() as f64 * amp0_in_raw * amp0_in_raw
+        + output_modes.len() as f64 * amp0_out_raw * amp0_out_raw;
+    let norm = norm_sq.sqrt();
+    let amp0_vac = 1.0 / norm;
+    let amp0_in = amp0_in_raw / norm;
+    let amp0_out = amp0_out_raw / norm;
     let matvec = compact_diffusion_matvec(
         input_modes, output_modes, transitions,
         amp0_vac, amp0_in, amp0_out, lambda0, lambda1,
         per_mode_weights,
     );
-    // Starting vector: |c₀⟩ = |c₀_in⟩ — uniform over INPUT MODES ONLY.
-    // Output modes start with ZERO amplitude (their vacuum acts only
-    // through the Hamiltonian projector).
+    // Starting vector: uniform over INPUT MODES ONLY, with vacuum at same
+    // amplitude as each input (equal-ratio pattern). Output modes start at
+    // zero — they are populated dynamically by the Hamiltonian projector
+    // and transition terms.
     let mut v0 = CompactState::zero();
-    v0.vacuum = Complex64::new(amp0_in, 0.0);
+    v0.vacuum = Complex64::new(amp0_in_raw, 0.0);
     for &j in input_modes {
-        v0.modes.insert(j, Complex64::new(amp0_in, 0.0));
+        v0.modes.insert(j, Complex64::new(amp0_in_raw, 0.0));
     }
     // Krylov sequence: w_k = (H - z_k) w_{k-1}
     // NORMALISE each vector to unit norm to prevent exponential norm
