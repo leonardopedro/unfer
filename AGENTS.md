@@ -35,6 +35,7 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - [ ] **Quadratic Ordering Check**: Verify that `compile_expression` continues to strip zero-point energy constants.
 - [ ] **LaTeX Mapping Check**: Ensure `compile_latex` correctly interprets $a_i^\dagger$ as a creation operator and $a_i$ as annihilation. Note that the `mathhook` LALRPOP parser strictly requires explicit multiplication symbols (`*` or `\cdot`) instead of implicit spacing.
 - [ ] **Commutator Validation**: Ensure non-commuting operators are never reordered by the symbolic engine (avoid `.simplify()` where order matters).
+- [ ] **PG/Random Start**: Adding a new `HamiltonianType` variant or changing `pauli_grover_a`/`random_start` defaults must be reflected in `QfmConfig`'s `..Default::default()` call sites (`prob_kernel/src/build.rs`, `qfm_text/src/model.rs`).
 - [ ] **GPU Execution**: Run examples with `RUST_LOG=candle_core=debug` to confirm active CUDA kernel dispatch.
 - [ ] **Vacuum Initialization**: Ensure `QuantumState::vacuum()` is properly initialized with at least one empty inner universe (`OuterBosonCreate(InnerBosonicState::vacuum())`) before applying inner operators.
 
@@ -44,8 +45,13 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - `fock_sirk` — SIRK solver (improved: GPU-optional, Gram whitening, BRST projection, restarted Krylov, state reconstruction).
 - `unfer_protocol` — serde types, UK-#### codes, repair hints (the shared contract).
 - `prob_kernel` — Born-rule layer: `Session` with `evolve`/`probability`/`condition`/`snapshot`.
-- `unfer_ffi` — handle-based C ABI: 14 `uk_*` functions for in-process module calls.
+- `unfer_ffi` — handle-based C ABI: 18 `uk_*` + 5 `uz_*` symbols (`uz_*` under `--features zenodo`).
+- `qfm` — Pauli–Grover + diffusion Hamiltonians, `dense_pauli_grover_matvec`, parity/MNIST sweeps.
+- `qfm_text` — text-domain QFM: corpus, features, LM, in-context adaptation, Oxieml decoder, GPU decode sketch.
+- `unfer_edge` — Pingora-based edge server for the `unfer_agent` protocol over HTTP.
 - `demo_module/` — first module: `module.toml` + Austral cell + `run_demo.sh` (positive + UK-4001 negative test).
+- `bayes_update_module/`, `iterated_bayes_module/`, `qfm_module/`, `qfm_tomo_module/`, `zenodo_store_module/` — 5 more Austral modules.
+- `unfer_nixvm/` — Nix flake packaging `unfer_ffi` inside the cloud-hypervisor VM guest (see `../../australVM/cloud_hypervisor_vm/`).
 - `docs/` — `MODULE_RECIPE.md`, `PROTOCOL.md`, `ARCHITECTURE.md`, `BUILD_PIPELINE.md`.
 
 Sibling repos:

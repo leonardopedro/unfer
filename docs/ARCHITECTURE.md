@@ -12,15 +12,25 @@ $ROOT/
 │   ├── fock_sirk/              # SIRK time-evolution solver (CPU/CUDA)
 │   ├── unfer_protocol/         # serde types, UK-#### codes, repair hints
 │   ├── prob_kernel/            # Born-rule layer: Session, condition()
-│   ├── unfer_ffi/              # handle-based C ABI: uk_*()
-│   └── docs/                   # MODULES.md, PROTOCOL.md, ARCHITECTURE.md
+│   ├── qfm/                    # QFM engine: PG/diffusion Hamiltonians, observables
+│   ├── qfm_text/               # text-domain QFM: corpus, LM, Oxieml decoder
+│   ├── unfer_ffi/              # handle-based C ABI: 18 uk_* + 5 uz_* symbols
+│   ├── unfer_edge/             # Pingora-based HTTP edge server (unfer_agent protocol)
+│   ├── demo_module/            # example Austral module (Stage 13)
+│   ├── bayes_update_module/    # Bayesian-update Austral module
+│   ├── iterated_bayes_module/  # Iterated Bayesian update module
+│   ├── qfm_module/             # QFM evolution Austral module
+│   ├── qfm_tomo_module/        # QFM tomography Austral module
+│   ├── zenodo_store_module/    # Zenodo-backed store Austral module
+│   ├── unfer_nixvm/            # Nix flake: unfer_ffi in cloud-hypervisor guest
+│   └── docs/                   # MODULE_RECIPE.md, PROTOCOL.md, ARCHITECTURE.md
 ├── australVM/                  # MODULE RUNTIME
 │   └── safestos/cranelift/     # JIT + auth.rs + uk_* symbols + modhost
 ├── velysterm/                  # UI / AI INTERFACE
-│   ├── crates/kernel_client/  # worker-thread client + unfer_agent bin
+│   ├── crates/kernel_client/  # worker-thread client + unfer_agent bin (11 ops)
 │   ├── crates/mathed_core/     # Loro doc model + PropKinds + SemanticIndex
-│   └── crates/mathed/          # Bevy + Typst + vello editor + kernel_sys bridge
-└── demo_module/                # example Austral module (Stage 13)
+│   ├── crates/mathed/          # Bevy + Typst + vello editor + kernel_sys bridge
+│   └── crates/mathed_mini/     # Bevy-free CPU frontend (winit + softbuffer)
 ```
 
 ## Sibling-folder convention
@@ -40,20 +50,26 @@ Build scripts assert this layout.
 
 ```
 nested_fock_algebra ←── fock_sirk ←── prob_kernel ←── unfer_ffi
-                                                    ↑
-                          unfer_protocol ←──┬───────┘
-                                           │
-                          kernel_client ────┘
-                               ↑
-                    mathed_core ←── mathed
+                                      ↕           ↕
+                                     qfm  ──  qfm_text
+                                                     ↑
+                           unfer_protocol ←──┬───────┘
+                                             │
+                         kernel_client ──────┤
+                                ↑            │
+                     mathed_core ←── mathed   │
+                                              ↓
+                                        unfer_edge
 ```
 
 - `unfer_protocol` is the single shared contract (serde types, codes).
 - `prob_kernel` wraps the QFT engine with Born-rule semantics.
-- `unfer_ffi` exposes a C ABI for in-process module calls.
+- `qfm`/`qfm_text` build on `prob_kernel` for domain-specific pipeline stages.
+- `unfer_ffi` exposes a C ABI for in-process module calls (18 `uk_*` symbols).
 - `cranelift` (australVM) registers `uk_*` symbols in the JIT.
-- `kernel_client` (velysterm) provides async worker + parser.
+- `kernel_client` (velysterm) provides async worker + parser (11 NDJSON ops).
 - `mathed` bridges to Bevy via `kernel_sys.rs`.
+- `unfer_edge` serves the agent protocol over HTTP via Pingora.
 
 ## Data flow
 
@@ -64,17 +80,21 @@ nested_fock_algebra ←── fock_sirk ←── prob_kernel ←── unfer_ff
 3. **AI agents** use the `unfer_agent` NDJSON binary.
 
 All three paths converge on the same `Session` API:
-`new → set_prior → evolve → probability → condition → snapshot`.
+`new → set_prior → evolve → probability → condition → snapshot → save/restore`.
+
+A fourth path — **edge HTTP** — wraps the agent protocol behind
+`unfer_edge` (Pingora), adding op-allowlisting, secret masking, and
+rate limiting for remote clients.
 
 ## Extension points
 
 ### 1. Add a module
 
-See `MODULES.md` for the full checklist. Summary:
-1. Create `$ROOT/<name>/` with `module.toml`.
+See `MODULE_RECIPE.md` for the full checklist. Summary:
+1. Create `$ROOT/<name>/` with `module.toml` (18 `uk_*` grantable symbols).
 2. Write `.aui`/`.aum` Austral cells importing `UnferKernel`.
 3. List granted `uk_*` symbols in `module.toml [grants]`.
-4. Build with `build.sh`; load via `modhost`.
+4. Build with `unfer_module_builder` (Stage A4); load via `modhost`.
 
 ### 2. Add a kernel op
 

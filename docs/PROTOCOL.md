@@ -110,6 +110,49 @@ Return the top-k state components by probability mass.
 
 **Response result:** `StateSummary { norm, components, top: [StateEntry] }`
 
+### `save_session`
+
+Serialize the full model state (prior, hamiltonian, solver config, current
+time-evolved state) to a portable JSON blob. Restorable via `restore_session`.
+
+**Request params:** `{"model_id": <u64>}`
+
+**Response result:** `{"blob": <SessionBlob JSON>}`
+
+**Error codes:** UK-1004 (bad handle).
+
+### `restore_session`
+
+Reconstruct a model from a previously saved blob. Returns a new `model_id`
+(the old handle is not reused).
+
+**Request params:** `{"blob": <SessionBlob JSON>}`
+
+**Response result:** `{"model_id": <u64>}`
+
+**Error codes:** UK-1001 (malformed blob).
+
+### `poll_events`
+
+Read pending kernel events (status changes, error notifications) from the
+model's bounded event queue (64 entries max). Non-destructively returns all
+currently queued events; oldest events are dropped when the queue overflows.
+
+**Request params:** `{"model_id": <u64>}`
+
+**Response result:** `{"events": [<KernelEvent>, ...]}`
+
+`KernelEvent` shape:
+```json
+{
+  "event_id": <u64>,
+  "event_type": "evolve_done" | "condition_applied" | "error" | "subscribe_match",
+  "payload": { ... }
+}
+```
+
+**Error codes:** UK-1004 (bad handle).
+
 ### `list_codes`
 
 Dump all UK-#### error codes for self-documentation.
