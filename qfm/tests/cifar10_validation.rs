@@ -262,6 +262,7 @@ fn pipeline_for(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
         n_t_samples: 4,
         noise_dim: d,
         max_rank: None,
+        ..Default::default()
     };
     QfmPipeline::compile(training, &config).expect("QFM compile on CIFAR-10 16x16")
 }

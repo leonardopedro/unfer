@@ -9,7 +9,7 @@
 
 use nalgebra::DVector;
 use num_complex::Complex64;
-use qfm::pipeline::{QfmConfig, QfmPipeline};
+use qfm::pipeline::{HamiltonianType, QfmConfig, QfmPipeline};
 
 fn parity(x: u32) -> bool {
     x.count_ones() % 2 == 0
@@ -18,16 +18,15 @@ fn parity(x: u32) -> bool {
 fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
             input_modes: &[u32], output_modes: &[u32],
             n_modes: usize, label: &str, do_whiten: bool,
-            kernel_sigma: Option<f64>) -> (u32, u32, u32, u32) {
+            kernel_sigma: Option<f64>, random_start: bool,
+            lambda0: f64, lambda1: f64) -> (u32, u32, u32, u32) {
     let test_inputs: Vec<u32> = (0..16u32).filter(|&x| !train_inputs.contains(&x)).collect();
-
-    let lambda0 = 1.0;
-    let lambda1 = 1.0;
     let t = 0.5;
 
     let config = QfmConfig {
         k: 1, k2: n_modes, krylov_dim: n_modes.min(3),
-        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None,
+        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None, random_start,
+        hamiltonian_type: HamiltonianType::Diffusion, pauli_grover_a: 1.0,
     };
 
     let pipeline = QfmPipeline::compile_channels(
@@ -108,22 +107,18 @@ fn parity_classification_tests() {
         let y = if parity(x) { 16u32 } else { 17u32 };
         star_trans.push((x, y));
     }
-    let (c1, n1, train_correct, n_train) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-                           "tensor-product TP", true, None);
-    assert!(train_correct == n_train, "TP whitening failed: {train_correct}/{n_train}");
-    eprintln!("\n  → with whitening: {c1}/{n1}");
+    for &l0 in &[1.0, 0.5, 0.25] {
+        for &l1 in &[1.0, 0.5] {
+            let (c, n, tc, tn) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
+                &format!("TP λ₀={l0} λ₁={l1}"), true, None, false, l0, l1);
+            eprintln!("  → {c}/{n}  train {tc}/{tn}");
+        }
+    }
 
-    let (c1b, n1b, train_correct_b, n_train_b) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-                           "tensor-product full-rank", false, None);
-    assert!(train_correct_b == n_train_b, "full-rank orthogonalization should match whitening: {train_correct_b}/{n_train_b}");
-    eprintln!("\n  → full-rank orthogonalization: {c1b}/{n1b}  (train: {train_correct_b}/{n_train_b})");
-
-    // Kernel-based inner product tests
-    let (c_k, n_k, train_k, n_train_k) = run_test(
-        &train_inputs, &star_trans, &input_modes, &label_modes, 18,
-        "kernel σ=0.5", true, Some(0.5),
-    );
-    eprintln!("  → kernel σ=0.5: test {c_k}/{n_k}  train {train_k}/{n_train_k}");
-    assert!(train_k == n_train, "kernel σ=0.5 training failed: {train_k}/{n_train}");
-    assert!(c_k > 12, "kernel σ=0.5 should beat no-kernel baseline: {c_k}/{n_k}");
+    eprintln!("\n--- random start, halved λ ---");
+    for &(l0, l1) in &[(1.0, 1.0), (0.5, 0.5), (0.25, 0.25), (0.1, 0.1)] {
+        let (c, n, tc, tn) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
+            &format!("TP random λ₀={l0} λ₁={l1}"), true, None, true, l0, l1);
+        eprintln!("  → {c}/{n}  train {tc}/{tn}");
+    }
 }

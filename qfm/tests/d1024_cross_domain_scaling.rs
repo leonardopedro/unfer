@@ -97,6 +97,7 @@ fn d1024_pipeline(training: &[Vec<f64>], seed: u64) -> QfmPipeline {
         n_t_samples: 4,
         noise_dim: d,
         max_rank: Some(16),
+        ..Default::default()
     };
     QfmPipeline::compile(training, &config).expect("QFM compile on d=1024 cross-domain fixture")
 }

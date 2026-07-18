@@ -2730,6 +2730,131 @@ The detailed per-item breakdown, the per-item leverage and
 effort estimate, and the out-of-scope record are in
 \texttt{docs/IMPLEMENTATION\_PLAN.md} \S"Next steps to improve".
 
+\section{Alternate Hamiltonian: the Pauli--Grover construction}
+
+\label{sec:pauli-grover}
+
+The default diffusion Hamiltonian (Eq.~\ref{eq:hamiltonian}) couples input
+modes via a vacuum projector and supervised transition terms.  As an
+alternative we introduce the \emph{Pauli--Grover Hamiltonian}
+$H_{\mathrm{PG}}$, selectable via the
+\texttt{HamiltonianType::PauliGrover} config flag.  The design is inspired
+by Grover's search: for each training pair $(i,f_i)$ the generator acts as a
+Pauli-$X$ rotation in the two-dimensional subspace
+$\{\ket{i,0},\ket{i,f_i}\}$ of input $i$'s output space.
+
+\subsection{Definition}
+
+Let $N\equiv N_{\mathrm{out}}$ be the number of output modes per input.
+Define the auxiliary orthogonal state
+\[
+\ket{f_0} = \frac{\sqrt{N}\ket{f} - \ket{0}}{\sqrt{N-1}},
+\qquad \braket{0}{f_0}=0,
+\]
+and the Pauli operators on $\operatorname{span}\{\ket{0},\ket{f_0}\}$
+\[
+X = \ket{0}\bra{f_0} + \ket{f_0}\bra{0},\qquad
+Z = \ket{0}\bra{0} - \ket{f_0}\bra{f_0}.
+\]
+The parameterised combination is
+\[
+H_{\mathrm{PG}}(a)
+= \frac{\sqrt{(N-1)a}\;X + Z}{\sqrt{(N-1)a+1}},
+\qquad a\in[0.5,1].
+\]
+For $a=1$ this simplifies to the Pauli-$X$ matrix in the
+$\{\ket{0},\ket{f}\}$ basis:
+\[
+H_{\mathrm{PG}}(1)\ket{0} = \ket{f},\qquad
+H_{\mathrm{PG}}(1)\ket{f} = \ket{0},
+\]
+so that evolving $\ket{0}$ for time $\tau=\pi/2$ yields $\ket{f}$ up to an
+unobservable global phase.  When $a<1$ the rotation is imperfect —
+$H_{\mathrm{PG}}(a)\ket{0}$ retains a small $\ket{0}$ component — which may
+be tuned empirically.  The config field \texttt{pauli\_grover\_a} controls
+this parameter (default $1.0$).
+
+\subsection{Full Hamiltonian}
+
+The total Hamiltonian is the sum over all inputs:
+\[
+H_{\mathrm{PG}} = \sum_{i\in\mathrm{train}} H_i
+               + \sum_{i\notin\mathrm{train}} \sqrt{N}\,\ket{i,0}\bra{i,0},
+\]
+where each training term $H_i$ acts with $H_{\mathrm{PG}}(a)$ in the
+subspace $\{\ket{i,0},\ket{i,f_i}\}$ and trivially on all other basis
+states.  Unseen (test) inputs contribute only a $\sqrt{N}$-weighted vacuum
+projector; the $\sqrt{N}$ factor absorbs the normalisation of the
+$\ket{i,0}$ mode so that the energy scale remains consistent with the
+training terms.
+
+\subsection{Krylov starting vector}
+
+The SIRK forward sequence (Algorithm~\ref{alg:sirk}) requires an initial
+vector $v_0$.  Two strategies are supported, controlled by the
+\texttt{random\_start} boolean in \texttt{QfmConfig}:
+
+\begin{enumerate}
+  \item \textbf{Uniform vacuum} (\texttt{random\_start: false}, the
+    default).  The starting vector is the equal-amplitude superposition over
+    all tensor-product basis states:
+    \[
+    v_0[i,f] = \frac{1}{\sqrt{N_{\mathrm{in}}N_{\mathrm{out}}}}.
+    \]
+    This choice is symmetric across all modes and works well when the
+    Hamiltonian provides sufficient off-diagonal coupling to break
+    degeneracies (e.g.\ the diffusion Hamiltonian with a kernel).
+
+  \item \textbf{Random start} (\texttt{random\_start: true}).  The starting
+    vector is the tensor product of a random input vector and the output
+    vacuum mode:
+    \[
+    v_0 = v_{\mathrm{in}} \otimes \ket{0},\qquad
+    v_{\mathrm{in}}[i] = U_i,\quad
+    U_i\sim\mathrm{Uniform}\bigl([-1,1]\bigr),
+    \]
+    so that only the $f=0$ (vacuum) slice is non-zero:
+    $v_0[i,0]=v_{\mathrm{in}}[i]$, $v_0[i,f]=0$ for $f\neq0$.
+    The vector is then normalised to unit norm.  The PRNG seed is the
+    \texttt{seed} field, split per input index so each $i$ receives a
+    unique stream.  By restricting the initial support to the vacuum output
+    subspace, this construction eliminates spurious off-diagonal Gram
+    contributions from non-vacuum output modes while still breaking the
+    exact permutation symmetry of the uniform vacuum (since input
+    amplitudes are randomised).  It is especially beneficial for the
+    Pauli--Grover Hamiltonian, where the random start reliably achieves
+    perfect training accuracy at lower $m$ than the uniform vacuum start
+    (see \S\ref{sec:experimental}).
+\end{enumerate}
+
+\subsection{Classification protocol}
+
+Because $H_{\mathrm{PG}}$ is designed to rotate $\ket{0}\to\ket{f}$,
+classification must begin from $\ket{i,0}$ (the vacuum output mode for
+input $i$) rather than from the equal superposition $\sum_f\ket{i,f}$ used
+by the diffusion Hamiltonian.  Concretely, for each test input $i$ we
+construct the Krylov-basis initial condition
+\[
+c_0[k] = W_{i0,\,k},\qquad k=1,\dots,\mathrm{rank},
+\]
+evolve $c_1 = \exp(-i H_m\,\pi/2)\,c_0$, and read out the probability of
+output mode $f$ as $|\sum_k c_1[k]\,\overline{W_{if,\,k}}|^2$.  In the
+ideal $a=1$ case the training accuracy is $100\%$ for every training input.
+
+\subsection{Remarks on generalisation}
+
+The Pauli--Grover Hamiltonian contains \emph{no cross-input coupling} —
+each term $H_i$ acts only on input $i$'s own output modes.  Consequently
+the Krylov rank saturates at $N_{\mathrm{out}}$ (plus one if
+$\sqrt{N}\,\ket{0}\bra{0}$ introduces an extra direction) and the dynamics
+of unseen inputs are trivial (a phase on $\ket{i,0}$).  Generalisation to
+held-out or extrapolation inputs therefore requires the addition of a
+kernel that couples different input modes; without it the test-set
+performance is at chance level.  This behaviour is consistent with the
+no-free-lunch principle: the Hamiltonian encodes training labels but
+provides no inductive bias that would transfer those labels to unseen data
+points without an explicit similarity measure.
+
 \section{Conclusion}
 
 We have given a self-contained derivation of a classical, grid-free realization

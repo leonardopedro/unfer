@@ -72,5 +72,5 @@ pub use bayes::{
     karcher_mean, reconstruct, sample_hmc, sample_hmc_single, tsr_evolved_prior,
 };
 pub use heavy_hitters::HeavyHitters;
-pub use pipeline::{QfmConfig, QfmError, QfmPipeline};
+pub use pipeline::{HamiltonianType, QfmConfig, QfmError, QfmPipeline};
 pub use sketch::{CountSketch, FeatureToMode};

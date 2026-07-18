@@ -359,6 +359,7 @@ impl QfmTextModel {
             n_t_samples: 4,
             noise_dim: cfg.n_orders,
             max_rank: Some(cfg.max_rank),
+            ..Default::default()
         };
         let pipeline = QfmPipeline::compile_channels(
             &active_modes,

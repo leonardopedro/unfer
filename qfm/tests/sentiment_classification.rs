@@ -86,6 +86,7 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
     let config = QfmConfig {
         k: 1, k2: N_FEATURES + N_OUTPUTS, krylov_dim: 14,
         seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None,
+        ..Default::default()
     };
 
     let pipeline = QfmPipeline::compile_channels(

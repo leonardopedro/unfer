@@ -788,6 +788,7 @@ mod tests {
             n_t_samples: 4,
             noise_dim: 2,
             max_rank: None,
+            ..Default::default()
         };
         QfmPipeline::compile(&training, &config).expect("compile")
     }

@@ -5,7 +5,7 @@
 
 use nalgebra::DVector;
 use num_complex::Complex64;
-use qfm::pipeline::{QfmConfig, QfmPipeline};
+use qfm::pipeline::{HamiltonianType, QfmConfig, QfmPipeline};
 
 fn parity(x: u32) -> bool {
     x.count_ones() % 2 == 0
@@ -17,14 +17,14 @@ const LABEL_ODD: u32 = N_INPUTS + 1;
 
 fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
             interp_inputs: &[u32], extrap_inputs: &[u32],
-            m: usize, lambda0: f64, label: &str,
-            kernel_sigma: Option<f64>) {
-    let lambda1 = 1.0;
+            m: usize, lambda0: f64, lambda1: f64, label: &str,
+            kernel_sigma: Option<f64>, random_start: bool) {
     let t = 0.5;
 
     let config = QfmConfig {
         k: 1, k2: (N_INPUTS + 2) as usize, krylov_dim: m,
-        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None,
+        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None, random_start,
+        ..Default::default()
     };
 
     let input_modes: Vec<u32> = (0..N_INPUTS).collect();
@@ -78,7 +78,7 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
     let pct_t = tc as f64 / tn as f64 * 100.0;
     let pct_i = ic as f64 / it as f64 * 100.0;
     let pct_e = ec as f64 / et as f64 * 100.0;
-    eprintln!("  {label:>24}  m={m} rank={:2} λ₀={lambda0:>7}  train {tc:>3}/{tn} ({pct_t:>5.1}%)  interp {ic:>2}/{it} ({pct_i:>5.1}%)  extrap {ec:>2}/{et} ({pct_e:>5.1}%)",
+    eprintln!("  {label:>24}  m={m} rank={:2} λ₀={lambda0:>7} λ₁={lambda1:>5}  train {tc:>3}/{tn} ({pct_t:>5.1}%)  interp {ic:>2}/{it} ({pct_i:>5.1}%)  extrap {ec:>2}/{et} ({pct_e:>5.1}%)",
         pipeline.rank());
 }
 
@@ -114,16 +114,88 @@ fn large_parity_classification_tests() {
     }
 
     for &lambda0 in &[0.0, 1.0, 2.0, 10.0] {
-        eprintln!("\n  --- λ₀={lambda0} ---");
+        eprintln!("\n  --- λ₀={lambda0} (vacuum start) ---");
         for &m in &[3, 5, 7] {
             run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
-                m, lambda0, "8-bit tensor-product", None);
+                m, lambda0, 1.0, "vacuum", None, false);
         }
     }
 
     // Kernel tests with λ₀=1.0, m=4 (rank saturates at 3 regardless of m)
     eprintln!("\n  --- kernel tests (λ₀=1.0, m=4) ---");
     run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
-        4, 1.0, "kernel σ=1.0", Some(1.0));
+        4, 1.0, 1.0, "kernel σ=1.0 vacuum", Some(1.0), false);
+
+    eprintln!("\n  --- random start variants ---");
+    for &lambda0 in &[0.0, 1.0, 2.0, 10.0] {
+        eprintln!("\n  --- λ₀={lambda0} (random start) ---");
+        for &m in &[3, 5, 7, 10, 20] {
+            run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+                m, lambda0, 1.0, "random", None, true);
+        }
+    }
+    run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+        4, 1.0, 1.0, "kernel σ=1.0 random", Some(1.0), true);
+
+    eprintln!("\n\n--- halved λ (λ₀=0.5, λ₁=0.5) with random start ---");
+    for &m in &[3, 5, 7, 10, 20] {
+        run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+            m, 0.5, 0.5, "random λ/2", None, true);
+    }
+
+    eprintln!("\n--- kernel with λ/2 (λ₀=0.5, λ₁=0.5, σ=1.0, random start) ---");
+    for &m in &[4, 6, 8, 10] {
+        run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+            m, 0.5, 0.5, "kernel λ/2 random", Some(1.0), true);
+    }
+
+    eprintln!("\n--- kernel with λ/2 (λ₀=0.5, λ₁=0.5, σ=1.0, vacuum start) ---");
+    for &m in &[4, 6, 8, 10] {
+        run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+            m, 0.5, 0.5, "kernel λ/2 vacuum", Some(1.0), false);
+    }
+
+    eprintln!("\n--- λ₀ sweep on kernel (m=6, σ=1.0, vacuum start, λ₁=1.0) ---");
+    for &l0 in &[0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0] {
+        run_test(&train_inputs, &star_trans, &interp_inputs, &extrap_inputs,
+            6, l0, 1.0, &format!("kernel λ₀={l0} vacuum"), Some(1.0), false);
+    }
+
     // σ≥0.8 gives 100% train + 100% interp + 100% extrap; assert the sweet spot
+
+    let input_modes: Vec<u32> = (0..N_INPUTS).collect();
+    let output_modes = &[LABEL_EVEN, LABEL_ODD];
+    let n_out = output_modes.len();
+
+    for &rst in &[false, true] {
+        let rtag = if rst { "random" } else { "vacuum" };
+        eprintln!("\n\n--- Pauli-Grover (a=0.9, t=π/2, start=|0⟩, {rtag}) ---");
+        for &m in &[1, 2, 3, 4, 6, 8, 10] {
+            let config = QfmConfig {
+                k: 1, k2: (N_INPUTS + 2) as usize, krylov_dim: m,
+                seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None, random_start: rst,
+                hamiltonian_type: HamiltonianType::PauliGrover, pauli_grover_a: 0.9,
+            };
+            let pipeline = QfmPipeline::compile_channels(
+                &input_modes, output_modes, &star_trans, 0.0, 0.0,
+                (N_INPUTS + 2) as usize, &config, 0.0, 0.0, true, None, None,
+            ).expect("pipeline compile");
+            let rank = pipeline.rank(); let w = pipeline.w(); let h_m = pipeline.h_m();
+            let t = std::f64::consts::PI / 2.0;
+            let u = (h_m.clone() * (-Complex64::new(0.0, 1.0) * t)).exp();
+            let eval = |x: u32| -> bool {
+                let mut c0 = DVector::zeros(rank);
+                let tp0 = (x as usize) * n_out;
+                for k in 0..rank { c0[k] = w[(tp0, k)]; }
+                let c1 = &u * c0;
+                let a_even: Complex64 = (0..rank).map(|k| c1[k] * w[(x as usize * n_out, k)].conj()).sum();
+                let a_odd: Complex64 = (0..rank).map(|k| c1[k] * w[(x as usize * n_out + 1, k)].conj()).sum();
+                a_even.norm_sqr() > a_odd.norm_sqr()
+            };
+            let count = |xs: &[u32]| -> (u32, u32) { let mut c=0; for &x in xs { if eval(x)==parity(x) { c+=1; } } (c,xs.len() as u32) };
+            let (tc,tn)=count(&train_inputs); let (ic,it)=count(&interp_inputs); let (ec,et)=count(&extrap_inputs);
+            eprintln!("  PG a=0.9 {rtag:>7}  m={m} rank={rank}  train {tc:>3}/{tn} ({:.1}%)  interp {ic:>2}/{it} ({:.1}%)  extrap {ec:>2}/{et} ({:.1}%)",
+                tc as f64/tn as f64*100.0, ic as f64/it as f64*100.0, ec as f64/et as f64*100.0);
+        }
+    }
 }

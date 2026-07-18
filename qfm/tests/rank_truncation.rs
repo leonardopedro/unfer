@@ -42,6 +42,7 @@ fn pipeline_d1024(n_train: usize, krylov_dim: usize, max_rank: usize, seed: u64)
         n_t_samples: 4,
         noise_dim: k2,
         max_rank: Some(max_rank),
+        ..Default::default()
     };
     QfmPipeline::compile(&training, &config)
         .expect("rank-truncation pipeline must compile for d=1024")
@@ -81,6 +82,7 @@ fn rank_truncation_d1024_generate_finite() {
         n_t_samples: 4,
         noise_dim: k2,
         max_rank: Some(8),
+        ..Default::default()
     };
     let pipeline =
         QfmPipeline::compile(&training, &config).expect("compile d=1024 rank-8 truncation");
@@ -114,6 +116,7 @@ fn rank_truncation_without_max_rank_errors_on_small_krylov() {
         n_t_samples: 2,
         noise_dim: 1024,
         max_rank: None, // no truncation → must error
+        ..Default::default()
     };
     let result = QfmPipeline::compile(&training, &config);
     assert!(
