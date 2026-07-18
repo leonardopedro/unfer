@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# Unified build+test runner for unfer kernel modules.
+#
+# Usage:
+#   tools/module_builder tc   <module_dir>            # type-check only
+#   tools/module_builder run  <module_dir> [--deny <sym>]
+#
+# Recognises the `zenodo_store_module` by its module.toml and
+# automatically enables the zenodo feature and includes the ZenodoStore
+# Austral bindings from the sibling australVM repo.
+#
+# Expects the sibling layout:
+#   $ROOT/unfer/        (this repo)
+#   $ROOT/australVM/    (compiler + CPS-JIT bridge)
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UNFER_DIR="$(cd "$HERE/.." && pwd)"
+ROOT="$(cd "$UNFER_DIR/.." && pwd)"
+AUSTRAL_DIR="$ROOT/australVM"
+CL_DIR="$AUSTRAL_DIR/safestos/cranelift"
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") <command> <module_dir> [options]
+
+Commands:
+  tc          Type-check only (compile with --target-type=tc)
+  run         Full build + positive JIT test + UK-4001 negative test
+
+Options:
+  --deny <sym>  Symbol to revoke for the UK-4001 test
+                (default: first non-uk_version/uk_last_error grant)
+EOF
+    exit 1
+}
+
+CMD="${1:?Missing command: tc or run}"
+shift
+MODULE_DIR="${1:?Missing module directory}"
+shift
+
+DENY_SYM=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --deny) DENY_SYM="$2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+
+# ── Validate layout ──────────────────────────────────────────────
+[ -d "$AUSTRAL_DIR" ] || { echo "ERROR: expected sibling australVM at $AUSTRAL_DIR" >&2; exit 1; }
+[ -d "$MODULE_DIR" ]  || { echo "ERROR: module directory not found: $MODULE_DIR" >&2; exit 1; }
+
+MODULE_TOML="$MODULE_DIR/module.toml"
+[ -f "$MODULE_TOML" ] || { echo "ERROR: $MODULE_TOML not found" >&2; exit 1; }
+
+# ── Parse module.toml ────────────────────────────────────────────
+MODULE_NAME="$(grep -m1 '^name\s*=' "$MODULE_TOML" | sed 's/.*=\s*"\(.*\)"/\1/')"
+ENTRY="$(grep -m1 '^entry\s*=' "$MODULE_TOML" | sed 's/.*=\s*"\(.*\)"/\1/')"
+[ -n "$MODULE_NAME" ] || { echo "ERROR: could not parse module name from $MODULE_TOML" >&2; exit 1; }
+[ -n "$ENTRY" ]       || { echo "ERROR: could not parse entry from $MODULE_TOML" >&2; exit 1; }
+
+# Detect zenodo module: it has a "zenodo = [...]" key under [grants]
+IS_ZENODO=0
+if grep -A20 '^\[grants\]' "$MODULE_TOML" | grep -q '^zenodo\s*='; then
+    IS_ZENODO=1
+fi
+
+# Extract the entry basename (e.g. "src/DemoModule" -> "DemoModule")
+ENTRY_BASENAME="$(basename "$ENTRY")"
+
+# Gather grant symbols (kernel and zenodo) for the UK-4001 test
+GRANTS=()
+while IFS= read -r line; do
+    sym="$(echo "$line" | sed 's/.*"\(.*\)".*/\1/')"
+    [ -n "$sym" ] && GRANTS+=("$sym")
+done < <(grep -A99 '^\[grants\]' "$MODULE_TOML" | grep -E '^\s*"' | sed 's/.*"\(.*\)".*/\1/')
+
+# Choose a deny target: prefer the explicit --deny, then the first grant
+# that isn't a trivial probe (uk_version, uk_last_error) or model_create.
+if [ -z "$DENY_SYM" ]; then
+    for sym in "${GRANTS[@]}"; do
+        case "$sym" in
+            uk_version|uk_last_error|uk_model_create) continue ;;
+            *) DENY_SYM="$sym"; break ;;
+        esac
+    done
+fi
+[ -n "$DENY_SYM" ] || { echo "ERROR: could not pick a deny symbol (no grants?)" >&2; exit 1; }
+
+# ── Feature flags ────────────────────────────────────────────────
+FFI_FEATURES=""
+CL_FEATURES="unfer-kernel"
+if [ "$IS_ZENODO" -eq 1 ]; then
+    FFI_FEATURES="--features zenodo"
+    CL_FEATURES="unfer-kernel,zenodo-store"
+fi
+
+# ── Common build steps ───────────────────────────────────────────
+build_all() {
+    echo ">> Building unfer kernel FFI${FFI_FEATURES:+ ($FFI_FEATURES)}"
+    ( cd "$UNFER_DIR" && cargo build --release -p unfer_ffi $FFI_FEATURES )
+
+    echo ">> Building cranelift bridge + modhost ($CL_FEATURES)"
+    ( cd "$CL_DIR" && cargo build --release --no-default-features --features "$CL_FEATURES" )
+    ( cd "$CL_DIR" && cargo build --release --no-default-features --features "$CL_FEATURES" --bin modhost )
+
+    echo ">> Building the Austral compiler"
+    ( cd "$AUSTRAL_DIR" && dune build lib/ bin/ )
+}
+
+MODHOST="$CL_DIR/target/release/modhost"
+LIBDIR="$CL_DIR/target/release"
+AUSTRAL="$AUSTRAL_DIR/_build/default/bin/austral.exe"
+
+# Source file arguments for austral compile.
+# Each pair "interface.aui,body.aum" is a single argument.
+AUSRC=(
+    "$AUSTRAL_DIR/examples/kernel/UnferKernel.aui,$AUSTRAL_DIR/examples/kernel/UnferKernel.aum"
+)
+if [ "$IS_ZENODO" -eq 1 ]; then
+    AUSRC+=("$AUSTRAL_DIR/examples/zenodo/ZenodoStore.aui,$AUSTRAL_DIR/examples/zenodo/ZenodoStore.aum")
+fi
+AUSRC+=("$MODULE_DIR/src/${ENTRY_BASENAME}.aui,$MODULE_DIR/src/${ENTRY_BASENAME}.aum")
+
+# ── Type-check ───────────────────────────────────────────────────
+tc() {
+    build_all
+    echo ">> Type-checking $MODULE_NAME"
+    LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
+        "${AUSRC[@]}" --target-type=tc
+    echo "OK: $MODULE_NAME type-checks."
+}
+
+# ── Full run (positive + negative) ───────────────────────────────
+run() {
+    build_all
+
+    echo ">> POSITIVE: running $MODULE_NAME through the CPS-JIT"
+    JIT_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
+        "${AUSRC[@]}" --use-cps-jit --target-type=tc 2>&1 || true)"
+    echo "$JIT_OUT"
+
+    # zenodo returns the manifest byte count (positive number); others return 1.
+    PASS_PATTERN="CPS JIT: Execution result: [1-9][0-9]*"
+    if echo "$JIT_OUT" | grep -qE "$PASS_PATTERN"; then
+        echo "PASS: $MODULE_NAME JIT execution succeeded."
+    else
+        echo "FAIL: expected JIT execution (Execution result: positive)." >&2
+        exit 1
+    fi
+
+    echo ">> AUTHORIZATION: manifest grant vs. revocation (UK-4001) for $DENY_SYM"
+    # Positive: full manifest allows the symbol.
+    if "$MODHOST" authorize "$MODULE_TOML" "$MODULE_NAME" "$DENY_SYM"; then
+        echo "PASS: granted manifest authorizes $DENY_SYM."
+    else
+        echo "FAIL: full manifest should authorize $DENY_SYM." >&2
+        exit 1
+    fi
+
+    # Negative: strip the deny symbol -> DENY (UK-4001).
+    STRIPPED="$(mktemp)"
+    trap 'rm -f "$STRIPPED"' EXIT
+    grep -v "$DENY_SYM" "$MODULE_TOML" > "$STRIPPED"
+    if "$MODHOST" authorize "$STRIPPED" "$MODULE_NAME" "$DENY_SYM" 2>/dev/null; then
+        echo "FAIL: stripped manifest must DENY $DENY_SYM." >&2
+        exit 1
+    else
+        echo "PASS: revoking $DENY_SYM denies with UK-4001."
+    fi
+
+    echo "============================================================"
+    echo " $MODULE_NAME: ALL TESTS PASSED (positive + UK-4001 gate)"
+    echo "============================================================"
+}
+
+case "$CMD" in
+    tc)  tc  ;;
+    run) run ;;
+    *)   usage ;;
+esac

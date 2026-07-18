@@ -114,14 +114,13 @@ jobs:
       - name: install australVM OCaml deps
         working-directory: australVM
         run: opam install . --deps-only --yes || true
-      - name: run end-to-end demo
+      - name: run end-to-end demo (via module_builder)
         working-directory: unfer
-        run: bash demo_module/run_demo.sh
+        run: bash tools/module_builder run demo_module
 
   # ---------------------------------------------------------------------------
-  # QFM module gate: the Quantum Flow Matching Austral module JIT-creates a
-  # `qfm_mehler` model, evolves it, and reads a data-channel probability in-
-  # process (the physics claim). Auth gate mirrors demo-e2e (UK-4001).
+  # All remaining e2e module tests use the module_builder, sharing the same
+  # repeated setup steps (checkout, cache, deps) as demo-e2e.
   # ---------------------------------------------------------------------------
   qfm-e2e:
     name: qfm_module end-to-end (QFM Austral JIT + UK-4001)
@@ -136,7 +135,6 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
-          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -149,16 +147,10 @@ jobs:
       - name: install australVM OCaml deps
         working-directory: australVM
         run: opam install . --deps-only --yes || true
-      - name: run QFM module demo
+      - name: run qfm_module (via module_builder)
         working-directory: unfer
-        run: bash qfm_module/run_demo.sh
+        run: bash tools/module_builder run qfm_module
 
-  # ---------------------------------------------------------------------------
-  # QFM-TSR module gate: the QFM Tomographic Subspace Recovery Austral module
-  # JIT-creates a `qfm_tomography` model, runs the 4-phase generate on a
-  # query, and reads back the generated image (uk_get_result). Exercises the
-  # F4 architecture end-to-end (rev 15). Auth gate mirrors demo-e2e (UK-4001).
-  # ---------------------------------------------------------------------------
   qfm-tomo-e2e:
     name: qfm_tomo_module end-to-end (QFM-TSR Austral JIT + UK-4001)
     runs-on: ubuntu-latest
@@ -172,7 +164,6 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
-          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -185,20 +176,12 @@ jobs:
       - name: install australVM OCaml deps
         working-directory: australVM
         run: opam install . --deps-only --yes || true
-      - name: run QFM-TSR module demo
+      - name: run qfm_tomo_module (via module_builder)
         working-directory: unfer
-        run: bash qfm_tomo_module/run_demo.sh
+        run: bash tools/module_builder run qfm_tomo_module
 
-  # ---------------------------------------------------------------------------
-  # Bayesian Update module gate: the Quantum Bayesian Update on the
-  # TSR-evolved prior Austral module JIT-creates a `qfm_tomography` model
-  # (P6 G SIRK-whitened basis, krylov_dim=K_2=4), runs a single Bayesian
-  # update (uk_bayesian_update) on a single observation, and reads back
-  # the HMC-decoded image (uk_get_result). Exercises the P6 H follow-on
-  # end-to-end. Auth gate mirrors demo-e2e (UK-4001).
-  # ---------------------------------------------------------------------------
   bayes-update-e2e:
-    name: bayes_update_module end-to-end (Quantum Bayesian Update Austral JIT + UK-4001)
+    name: bayes_update_module end-to-end (Quantum Bayesian Update + UK-4001)
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
@@ -210,7 +193,6 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
-          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -223,19 +205,12 @@ jobs:
       - name: install australVM OCaml deps
         working-directory: australVM
         run: opam install . --deps-only --yes || true
-      - name: run Bayesian Update module demo
+      - name: run bayes_update_module (via module_builder)
         working-directory: unfer
-        run: bash bayes_update_module/run_demo.sh
+        run: bash tools/module_builder run bayes_update_module
 
-  # ---------------------------------------------------------------------------
-  # Iterated Bayes module gate: the iterated (bayes + SIRK evolve) loop
-  # Austral module JIT-creates a `qfm_tomography` model and runs 3
-  # iterations of (uk_bayesian_update + uk_get_result + uk_evolve) — the
-  # full QFM.tex §7 + §8 pipeline end-to-end. Exercises the iterated
-  # posterior flow on real d-dim data. Auth gate mirrors demo-e2e (UK-4001).
-  # ---------------------------------------------------------------------------
   iterated-bayes-e2e:
-    name: iterated_bayes_module end-to-end (Iterated Quantum Bayesian Update + SIRK JIT + UK-4001)
+    name: iterated_bayes_module end-to-end (Iterated Bayes + SIRK + UK-4001)
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
@@ -247,7 +222,6 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
-          # token: ${{ secrets.AUSTRALVM_TOKEN }}   # uncomment if private
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -260,9 +234,9 @@ jobs:
       - name: install australVM OCaml deps
         working-directory: australVM
         run: opam install . --deps-only --yes || true
-      - name: run iterated bayes module demo
+      - name: run iterated_bayes_module (via module_builder)
         working-directory: unfer
-        run: bash iterated_bayes_module/run_demo.sh
+        run: bash tools/module_builder run iterated_bayes_module
 
   # ---------------------------------------------------------------------------
   # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
