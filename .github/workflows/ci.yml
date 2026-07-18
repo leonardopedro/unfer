@@ -239,6 +239,54 @@ jobs:
         run: bash tools/module_builder run iterated_bayes_module
 
   # ---------------------------------------------------------------------------
+  # Zenodo store module gate: type-check + authorization test.
+  # The full JIT-execution positive test is blocked by a pre-existing CPS-JIT
+  # crash (tracks Plan B / australVM issue). Type-check passes cleanly.
+  # ---------------------------------------------------------------------------
+  zenodo-e2e:
+    name: zenodo_store_module type-check + auth gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@v4
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      - name: type-check zenodo_store_module
+        working-directory: unfer
+        run: bash tools/module_builder tc zenodo_store_module
+      - name: auth gate test (uz_push allow + deny)
+        working-directory: unfer
+        run: |
+          MODHOST="../australVM/safestos/cranelift/target/release/modhost"
+          # Allow: full manifest grants uz_push
+          $MODHOST authorize zenodo_store_module/module.toml zenodo_store_module uz_push
+          # Deny: strip uz_push → UK-4001
+          STRIPPED=$(mktemp)
+          trap 'rm -f "$STRIPPED"' EXIT
+          grep -v uz_push zenodo_store_module/module.toml > "$STRIPPED"
+          if $MODHOST authorize "$STRIPPED" zenodo_store_module uz_push 2>/dev/null; then
+            echo "FAIL: stripped manifest must DENY uz_push" >&2; exit 1
+          fi
+          echo "PASS: auth gate enforces uz_push grant"
+
+  # ---------------------------------------------------------------------------
   # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
   # fock_sirk/src/forward_sirk.rs are smoke-tested locally but not in CI.
   # This job is gated on a self-hosted runner with the `gpu` label
