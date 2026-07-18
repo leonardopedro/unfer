@@ -1,4 +1,5 @@
 use unfer_protocol::*;
+use proptest::prelude::*;
 
 fn rt<T>(v: &T) -> T
 where
@@ -549,4 +550,35 @@ fn bp_opts_step_size_nan_returns_hint() {
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "opts.step_size");
+}
+
+// ── Fuzz-style proptests: never panic on bad input ─────────────────
+
+proptest! {
+    #[test]
+    fn fuzz_agent_request_never_panics(bytes: Vec<u8>) {
+        // Any byte string, when parsed as AgentRequest, must either
+        // succeed or return a serde error — never panic.
+        let _ = serde_json::from_slice::<AgentRequest>(&bytes);
+    }
+
+    #[test]
+    fn fuzz_agent_response_never_panics(bytes: Vec<u8>) {
+        let _ = serde_json::from_slice::<AgentResponse>(&bytes);
+    }
+
+    #[test]
+    fn fuzz_model_spec_never_panics(bytes: Vec<u8>) {
+        let _ = serde_json::from_slice::<ModelSpec>(&bytes);
+    }
+
+    #[test]
+    fn fuzz_event_predicate_never_panics(bytes: Vec<u8>) {
+        let _ = serde_json::from_slice::<EventPredicate>(&bytes);
+    }
+
+    #[test]
+    fn fuzz_belief_propagation_request_never_panics(bytes: Vec<u8>) {
+        let _ = serde_json::from_slice::<BeliefPropagationRequest>(&bytes);
+    }
 }

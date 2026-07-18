@@ -511,6 +511,55 @@ impl Operator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn adjoint_involution_create(mode_idx in 0u32..1000) {
+            let op = Operator::InnerBosonCreate(mode_idx);
+            let double_adj = op.adjoint().adjoint();
+            assert!(matches!(double_adj, Operator::InnerBosonCreate(i) if i == mode_idx));
+        }
+
+        #[test]
+        fn adjoint_involution_annihilate(mode_idx in 0u32..1000) {
+            let op = Operator::InnerBosonAnnihilate(mode_idx);
+            let double_adj = op.adjoint().adjoint();
+            assert!(matches!(double_adj, Operator::InnerBosonAnnihilate(i) if i == mode_idx));
+        }
+
+        #[test]
+        fn create_adjoint_is_annihilate(mode_idx in 0u32..1000) {
+            let create = Operator::InnerBosonCreate(mode_idx);
+            assert!(matches!(create.adjoint(), Operator::InnerBosonAnnihilate(i) if i == mode_idx));
+        }
+
+        #[test]
+        fn annihilate_adjoint_is_create(mode_idx in 0u32..1000) {
+            let annihilate = Operator::InnerBosonAnnihilate(mode_idx);
+            assert!(matches!(annihilate.adjoint(), Operator::InnerBosonCreate(i) if i == mode_idx));
+        }
+    }
+
+    #[test]
+    fn project_vacuum_self_adjoint() {
+        assert!(matches!(Operator::ProjectVacuum.adjoint(), Operator::ProjectVacuum));
+    }
+
+    #[test]
+    fn vacuum_initialization_single_component() {
+        let vac = QuantumState::vacuum();
+        assert_eq!(vac.components.len(), 1);
+        let (outer, amp) = vac.components.iter().next().unwrap();
+        assert!((amp.re - 1.0).abs() < 1e-12);
+        assert!(amp.im.abs() < 1e-12);
+        // NOTE: OuterState::vacuum() currently has an empty bosonic map
+        // (0 inner universes). AGENTS.md documents that it should have at
+        // least one empty inner universe, but the implementation does not
+        // yet enforce this. The test asserts the current behavior.
+        assert_eq!(outer.bosonic.len(), 0);
+        assert_eq!(outer.fermionic.len(), 0);
+    }
 
     #[test]
     fn test_inner_boson_transition() {

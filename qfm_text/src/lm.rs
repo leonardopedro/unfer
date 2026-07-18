@@ -16,8 +16,10 @@ use std::path::Path;
 use rustc_hash::FxHashMap;
 
 use crate::accumulate::{
-    ChannelAccumulator, Encoder, ModeStats, observe_shard_with_registry, observe_with_registry,
+    ChannelAccumulator, Encoder, ModeStats,
 };
+#[cfg(test)]
+use crate::accumulate::{observe_shard_with_registry, observe_with_registry};
 use crate::config::TextConfig;
 use crate::corpus::Shard;
 use crate::error::QfmTextError;

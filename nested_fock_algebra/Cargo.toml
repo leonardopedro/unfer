@@ -9,6 +9,9 @@ description = "Pure Rust High-performance Physics & Symbolic Engine for Nested F
 # Enable with: cargo build --features latex
 latex = ["mathhook"]
 
+[dev-dependencies]
+proptest = "1"
+
 [dependencies]
 num-complex = { workspace = true }
 rustc-hash = { workspace = true }

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Shared serde contract for the unfer kernel: types, UK-#### codes, and repair hints."
 
+[dev-dependencies]
+proptest = "1"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

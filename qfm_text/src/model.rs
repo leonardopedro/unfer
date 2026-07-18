@@ -53,8 +53,10 @@ use qfm::{QfmConfig, QfmPipeline};
 use rustc_hash::FxHashMap;
 
 use crate::accumulate::{
-    ChannelAccumulator, ModeStats, observe_shard_with_registry, observe_with_registry,
+    ChannelAccumulator, ModeStats,
 };
+#[cfg(test)]
+use crate::accumulate::{observe_shard_with_registry, observe_with_registry};
 use crate::oxieml_decoder;
 use oxieml::tree::EmlTree;
 use crate::config::{DecodeStrategy, TextConfig};
@@ -258,7 +260,7 @@ fn decode_with_trees(
                 // evaluating at the *same* normalization
                 // the fit used, which is `x = mode_index /
                 // m_total`.)
-                let x = idx as f64 / m as f64;
+                let _x = idx as f64 / m as f64;
                 let val = oxieml_decoder::evaluate_column(&trees[j], idx, m);
                 // val is in [-1, 1] (per-column-normalized).
                 // The amplitude needs to be in the same
@@ -1411,6 +1413,7 @@ pub fn public_encode_modes(context: &[u32], registry: &ContextRegistry) -> Vec<u
     registry.encode_modes(context)
 }
 
+#[allow(dead_code)]
 /// Convert the accumulator's mode weights into the per-order
 /// `(lambda, channels)` list consumed by
 /// `QfmPipeline::compile_channels`. For each order, the channels are
