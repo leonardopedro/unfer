@@ -51,13 +51,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p unfer_ffi
-      - name: assert uk_* symbols present
+      - name: assert 18 uk_* symbols match EXPECTED_SYMBOLS.txt
         run: |
-          for sym in uk_version uk_model_create uk_evolve uk_event_probability uk_last_error; do
-            nm -D target/release/libunfer_ffi.so | grep -q " T $sym" \
-              || { echo "MISSING exported symbol: $sym" >&2; exit 1; }
-          done
-          echo "All required uk_* symbols are exported."
+          nm -D --defined-only target/release/libunfer_ffi.so \
+            | awk '/ T uk_/ {print $3}' | sort > /tmp/got_uk.txt
+          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS.txt /tmp/got_uk.txt; then
+            echo "FAIL: uk_* symbols mismatch (see diff above)." >&2
+            echo "If you added/removed a uk_* symbol, update unfer_ffi/EXPECTED_SYMBOLS.txt." >&2
+            exit 1
+          fi
+          echo "All 18 uk_* symbols match EXPECTED_SYMBOLS.txt."
+      - run: cargo build --release -p unfer_ffi --features zenodo
+      - name: assert 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt (zenodo feature)
+        run: |
+          nm -D --defined-only target/release/libunfer_ffi.so \
+            | awk '/ T uz_/ {print $3}' | sort > /tmp/got_uz.txt
+          if ! diff -u unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt /tmp/got_uz.txt; then
+            echo "FAIL: uz_* symbols mismatch (see diff above)." >&2
+            echo "If you added/removed a uz_* symbol, update unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt." >&2
+            exit 1
+          fi
+          echo "All 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt."
 
   # ---------------------------------------------------------------------------
   # End-to-end demo gate (the architecture's central claim): an Austral module
