@@ -156,6 +156,30 @@ pub fn build_hamiltonian(spec: &HamiltonianSpec) -> Result<Hamiltonian, KernelEr
                 terms: vec![(Complex64::new(1.0, 0.0), vec![Operator::ProjectVacuum])],
             })
         }
+
+        HamiltonianSpec::OdeSystem {
+            vars,
+            rhs,
+            change_of_variables,
+        } => {
+            // Run the full ODE → Weyl → ESA pipeline from ode_sirk.
+            // For the SIRK-path Hamiltonian, we use the (possibly CoV-transformed)
+            // system.  The ESA report is available via `analyze_ode_system` if the
+            // caller needs it; here we only extract the Hamiltonian.
+            let rhs_refs: Vec<&str> = rhs.iter().map(|s| s.as_str()).collect();
+            // Minimal sample points (origin) for flow analysis — the caller should
+            // use `analyze_ode_system` directly for a proper ESA check.
+            let samples: Vec<Vec<f64>> = vec![vec![0.1; vars.len()]];
+            let (_report, hamiltonian) = ode_sirk::analyze_ode_system(
+                vars.clone(),
+                &rhs_refs,
+                change_of_variables.as_deref(),
+                100.0,
+                &samples,
+            )
+            .map_err(|e| KernelError::Internal(format!("ode_sirk: {}", e)))?;
+            Ok(hamiltonian)
+        }
     }
 }
 

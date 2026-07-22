@@ -60,6 +60,13 @@ pub fn with_session_mut<R>(handle: i64, f: impl FnOnce(&mut Session) -> R) -> Op
     Some(f(&mut entry.session))
 }
 
+pub fn with_session<R>(handle: i64, f: impl FnOnce(&Session) -> R) -> Option<R> {
+    let guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_ref()?;
+    let entry = map.get(&handle)?;
+    Some(f(&entry.session))
+}
+
 pub fn set_last_result(handle: i64, json: String) {
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_mut()
@@ -170,4 +177,48 @@ pub fn set_last_error(diag: &Diagnostic) {
 
 pub fn get_last_error() -> String {
     LAST_ERROR.with(|e| e.borrow().clone())
+}
+
+// ── buffer storage for uk_ode_analyze ──────────────────────────────────
+
+/// Wrapper around a raw pointer to make it Send+Sync for static storage.
+/// Safety: the pointer is only accessed from the thread that created it
+/// via the handles API, which uses a Mutex for synchronization.
+struct BufPtr(*mut u8, i64);
+unsafe impl Send for BufPtr {}
+unsafe impl Sync for BufPtr {}
+
+static BUFFERS: Mutex<Option<HashMap<i64, BufPtr>>> = Mutex::new(None);
+static NEXT_BUF: AtomicI64 = AtomicI64::new(100_000);
+
+pub fn store_buffer(ptr: *mut u8, len: i64) -> i64 {
+    let handle = NEXT_BUF.fetch_add(1, Ordering::SeqCst);
+    let mut guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(handle, BufPtr(ptr, len));
+    handle
+}
+
+pub fn free_buffer(handle: i64) -> bool {
+    let mut guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        if let Some(BufPtr(ptr, len)) = map.remove(&handle) {
+            unsafe {
+                let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len as usize));
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Read buffer contents as a string. Returns None if handle is invalid.
+pub fn read_buffer(handle: i64) -> Option<String> {
+    let guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_ref()?;
+    let BufPtr(ptr, len) = map.get(&handle)?;
+    unsafe {
+        let slice = std::slice::from_raw_parts(*ptr, *len as usize);
+        Some(std::str::from_utf8(slice).unwrap_or("").to_string())
+    }
 }

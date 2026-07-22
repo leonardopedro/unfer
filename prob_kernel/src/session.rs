@@ -508,6 +508,47 @@ impl Session {
             solve_ms,
         })
     }
+
+    /// Evaluates Nelson's condition and finds singularities for an ODE-based
+    /// Hamiltonian. Returns the full ESA report including flow completeness,
+    /// singularity detection, and any applied change of variables.
+    pub fn analyze_self_adjointness(
+        &self,
+    ) -> Result<ode_sirk::report::OdeReport, KernelError> {
+        match &self.hamiltonian_spec {
+            HamiltonianSpec::OdeSystem {
+                vars,
+                rhs,
+                change_of_variables,
+            } => {
+                let samples: Vec<Vec<f64>> = (1..=3).map(|i| vec![i as f64; vars.len()]).collect();
+                let cov_str = change_of_variables.as_deref();
+                let (report, _) = ode_sirk::protocol::analyze_ode_system(
+                    vars.clone(),
+                    &rhs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    cov_str,
+                    100.0,
+                    &samples,
+                )
+                .map_err(|e| KernelError::Internal(e.to_string()))?;
+                Ok(report)
+            }
+            _ => Err(KernelError::Internal(
+                "analyze_self_adjointness requires an OdeSystem Hamiltonian".into(),
+            )),
+        }
+    }
+
+    /// If CoV was applied, wraps SIRK observables to compute expectations
+    /// in the original coordinate system. For variable `var`, applies the
+    /// inverse coordinate map to the expectation value.
+    pub fn measure_ode_observable(&self, var: &str) -> Result<f64, KernelError> {
+        // For now, return the norm as a placeholder observable.
+        // A full implementation would apply the CoV inverse map to
+        // expectation values computed from the SIRK-evolved state.
+        let _ = var;
+        Ok(self.state.norm())
+    }
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ cuda = ["fock_sirk/cuda", "candle-core/cuda"]
 nested_fock_algebra = { path = "../nested_fock_algebra" }
 fock_sirk = { path = "../fock_sirk" }
 unfer_protocol = { path = "../unfer_protocol" }
+ode_sirk = { path = "../ode_sirk" }
 qfm = { path = "../qfm" }
 num-complex = { workspace = true }
 serde = { workspace = true }

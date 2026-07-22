@@ -38,6 +38,17 @@ pub enum HamiltonianSpec {
     QfmTomography {
         spec: Box<QfmTomographySpec>,
     },
+    /// Polynomial autonomous ODE system → Weyl-symmetrized Hamiltonian.
+    /// Each `rhs[i]` is a polynomial expression in the `vars` names
+    /// (e.g. `["x","y"]`, `["x^2", "2*x*y"]`).
+    /// `change_of_variables` may be `"none"`, `"reciprocal:0"`,
+    /// `"logarithmic:0"`, etc.
+    OdeSystem {
+        vars: Vec<String>,
+        rhs: Vec<String>,
+        #[serde(default)]
+        change_of_variables: Option<String>,
+    },
 }
 
 impl HamiltonianSpec {
@@ -63,6 +74,18 @@ impl HamiltonianSpec {
     pub fn qfm_tomography(spec: QfmTomographySpec) -> Self {
         Self::QfmTomography {
             spec: Box::new(spec),
+        }
+    }
+
+    pub fn ode_system(
+        vars: Vec<String>,
+        rhs: Vec<String>,
+        change_of_variables: Option<String>,
+    ) -> Self {
+        Self::OdeSystem {
+            vars,
+            rhs,
+            change_of_variables,
         }
     }
 }

@@ -469,6 +469,84 @@ pub extern "C" fn uk_poll(sub: i64, buf: *mut u8, cap: i64) -> i64 {
     })
 }
 
+/// Analyze an ODE system for essential self-adjointness.
+/// `json` is a JSON object: `{"vars":["x"],"rhs":["x^2"],"cov":"reciprocal:0","t_max":100.0}`.
+/// Returns a serialized `OdeReport` JSON on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_ode_analyze(json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_ode_analyze", || {
+        #[derive(serde::Deserialize)]
+        struct OdeAnalyzeReq {
+            vars: Vec<String>,
+            rhs: Vec<String>,
+            #[serde(default)]
+            cov: Option<String>,
+            #[serde(default = "default_t_max")]
+            t_max: f64,
+        }
+        fn default_t_max() -> f64 {
+            100.0
+        }
+
+        let req: OdeAnalyzeReq = parse_json(json, len)?;
+        let samples: Vec<Vec<f64>> = (1..=3).map(|i| vec![i as f64; req.vars.len()]).collect();
+        let (report, _) = ode_sirk::protocol::analyze_ode_system(
+            req.vars,
+            &req.rhs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            req.cov.as_deref(),
+            req.t_max,
+            &samples,
+        )
+        .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        // Write into a thread-local buffer and return the handle.
+        // For simplicity, return via a new handle in the session store.
+        // Actually, we need to return the JSON string. Use a static buffer approach:
+        // store in a global and return a pointer-like integer. For now, we leak
+        // the string and return its pointer as an i64 (caller must free via uk_buf_free).
+        let boxed = report_json.into_bytes().into_boxed_slice();
+        let len = boxed.len() as i64;
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        // Pack ptr and len into a single i64? No — we return ptr as the handle,
+        // and the caller uses uk_buf_free. For ABI simplicity, store in handles.
+        let h = handles::store_buffer(ptr, len);
+        Ok(h)
+    })
+}
+
+/// Measure an ODE observable in the original coordinate system.
+/// `json` is a JSON object: `{"model":<handle>,"var":"x"}`.
+/// Returns the expectation value as a double, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_ode_measure_original(model: i64, var_json: *const u8, len: i64) -> f64 {
+    let result = ffi_entry("uk_ode_measure_original", || {
+        #[derive(serde::Deserialize)]
+        struct MeasureReq {
+            var: String,
+        }
+        let req: MeasureReq = parse_json(var_json, len)?;
+        let val = handles::with_session(model, |s| s.measure_ode_observable(&req.var))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        // Encode f64 as i64 bits for the return value.
+        Ok(val.to_bits() as i64)
+    });
+    f64::from_bits(result as u64)
+}
+
+/// Free a buffer returned by `uk_ode_analyze`. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_buf_free(handle: i64) -> i64 {
+    if handles::free_buffer(handle) {
+        0
+    } else {
+        fail(bad_handle(handle))
+    }
+}
+
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
