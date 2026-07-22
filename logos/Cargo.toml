@@ -1,0 +1,16 @@
+[package]
+name = "logos"
+version = "0.1.0"
+edition = "2024"
+description = "Controlled Natural Language compiler to verified execution graphs"
+
+[dependencies]
+sha2 = "0.10"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-segmentation = "1.10"
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile = "3"

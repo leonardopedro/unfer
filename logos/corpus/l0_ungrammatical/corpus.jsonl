@@ -1,0 +1,50 @@
+{"id": 1, "sentence": "loves Mary.", "reason": "Missing subject"}
+{"id": 2, "sentence": "sees Mary.", "reason": "Missing subject"}
+{"id": 3, "sentence": "likes Mary.", "reason": "Missing subject"}
+{"id": 4, "sentence": "eats Mary.", "reason": "Missing subject"}
+{"id": 5, "sentence": "sleeps Mary.", "reason": "Missing subject"}
+{"id": 6, "sentence": "John Mary.", "reason": "Missing verb"}
+{"id": 7, "sentence": "Bob Alice.", "reason": "Missing verb"}
+{"id": 8, "sentence": "Mary John.", "reason": "Missing verb"}
+{"id": 9, "sentence": "Alice Bob.", "reason": "Missing verb"}
+{"id": 10, "sentence": "John Bob.", "reason": "Missing verb"}
+{"id": 11, "sentence": "John loves big.", "reason": "Adjective used where NP required"}
+{"id": 12, "sentence": "Mary sees small.", "reason": "Adjective used where NP required"}
+{"id": 13, "sentence": "Bob likes red.", "reason": "Adjective used where NP required"}
+{"id": 14, "sentence": "Alice eats blue.", "reason": "Adjective used where NP required"}
+{"id": 15, "sentence": "John sees big.", "reason": "Adjective used where NP required"}
+{"id": 16, "sentence": "John loves sees Mary.", "reason": "Double verb without conjunction"}
+{"id": 17, "sentence": "Mary sees likes Bob.", "reason": "Double verb without conjunction"}
+{"id": 18, "sentence": "Bob eats sleeps.", "reason": "Double verb without conjunction"}
+{"id": 19, "sentence": "Alice runs loves John.", "reason": "Double verb without conjunction"}
+{"id": 20, "sentence": "John likes sees Alice.", "reason": "Double verb without conjunction"}
+{"id": 21, "sentence": "John sleeps Mary.", "reason": "Intransitive verb used with object"}
+{"id": 22, "sentence": "Bob runs Alice.", "reason": "Intransitive verb used with object"}
+{"id": 23, "sentence": "Mary sleeps John.", "reason": "Intransitive verb used with object"}
+{"id": 24, "sentence": "Alice runs Bob.", "reason": "Intransitive verb used with object"}
+{"id": 25, "sentence": "John sleeps the cat.", "reason": "Intransitive verb used with object"}
+{"id": 26, "sentence": "John adds two.", "reason": "Ditransitive verb missing required argument"}
+{"id": 27, "sentence": "Mary multiplies three.", "reason": "Ditransitive verb missing required argument"}
+{"id": 28, "sentence": "Bob subtracts five.", "reason": "Ditransitive verb missing required argument"}
+{"id": 29, "sentence": "Alice adds one.", "reason": "Ditransitive verb missing required argument"}
+{"id": 30, "sentence": "John multiplies two.", "reason": "Ditransitive verb missing required argument"}
+{"id": 31, "sentence": "the big.", "reason": "Determiner without noun"}
+{"id": 32, "sentence": "a small.", "reason": "Determiner without noun"}
+{"id": 33, "sentence": "the red.", "reason": "Determiner without noun"}
+{"id": 34, "sentence": "a blue.", "reason": "Determiner without noun"}
+{"id": 35, "sentence": "the big.", "reason": "Determiner without noun"}
+{"id": 36, "sentence": "cat dog.", "reason": "Noun phrase without verb (noun stacking)"}
+{"id": 37, "sentence": "dog cat.", "reason": "Noun phrase without verb (noun stacking)"}
+{"id": 38, "sentence": "number cat.", "reason": "Noun phrase without verb (noun stacking)"}
+{"id": 39, "sentence": "cat number.", "reason": "Noun phrase without verb (noun stacking)"}
+{"id": 40, "sentence": "dog number.", "reason": "Noun phrase without verb (noun stacking)"}
+{"id": 41, "sentence": "John is.", "reason": "Copula/comparative missing required NP complement"}
+{"id": 42, "sentence": "Mary is.", "reason": "Copula/comparative missing required NP complement"}
+{"id": 43, "sentence": "Bob is.", "reason": "Copula/comparative missing required NP complement"}
+{"id": 44, "sentence": "Alice is.", "reason": "Copula/comparative missing required NP complement"}
+{"id": 45, "sentence": "John is.", "reason": "Copula/comparative missing required NP complement"}
+{"id": 46, "sentence": "Mary John loves.", "reason": "Ungrammatical word order"}
+{"id": 47, "sentence": "Alice Bob sees.", "reason": "Ungrammatical word order"}
+{"id": 48, "sentence": "cat the sleeps.", "reason": "Ungrammatical word order"}
+{"id": 49, "sentence": "dog a runs.", "reason": "Ungrammatical word order"}
+{"id": 50, "sentence": "John Alice likes.", "reason": "Ungrammatical word order"}
