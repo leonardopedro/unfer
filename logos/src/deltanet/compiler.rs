@@ -10,7 +10,14 @@ pub fn compile_to_net(term: &CoreIR) -> Net {
 
 fn emit(term: &CoreIR, net: &mut Net) -> Port {
     match term {
-        CoreIR::Var(id) => net.lookup_var_port(id),
+        CoreIR::Var(id) => {
+            if let Some(port) = net.var_bindings.get(id) {
+                port.clone()
+            } else {
+                let node = net.alloc_node(AgentKind::Entity(id.clone()));
+                Port::principal(node)
+            }
+        }
         CoreIR::Lit(lit) => {
             let node = net.alloc_node(AgentKind::Lit(lit.clone()));
             Port::principal(node)
@@ -36,9 +43,9 @@ fn emit(term: &CoreIR, net: &mut Net) -> Port {
             let node = net.alloc_node(AgentKind::App);
             let f_port = emit(f, net);
             let arg_port = emit(arg, net);
-            net.wire(Port::new(node, 1), f_port);
-            net.wire(Port::new(node, 2), arg_port);
-            Port::principal(node)
+            net.wire(Port::principal(node), f_port);
+            net.wire(Port::new(node, 1), arg_port);
+            Port::new(node, 2)
         }
         CoreIR::Fold(f, init, list) => {
             let node = net.alloc_node(AgentKind::Fold);

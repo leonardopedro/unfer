@@ -17,7 +17,7 @@ pub fn insert_linearity(term: CoreIR) -> CoreIR {
             let body = insert_linearity(*body);
             let count = count_uses(&id, &body);
             match count {
-                0 => CoreIR::Drop(id, Box::new(body)),
+                0 => CoreIR::Lam(id.clone(), Box::new(CoreIR::Drop(id, Box::new(body)))),
                 1 => CoreIR::Lam(id, Box::new(body)),
                 _ => {
                     let id1 = format!("{}_1", id);
@@ -228,12 +228,10 @@ fn check_linearity_inner(term: &CoreIR, ctx: &mut HashMap<String, usize>) -> Res
             Ok(())
         }
         CoreIR::Drop(id, body) => {
-            if !ctx.contains_key(id) {
-                return Err(LinearityError::Unused(id.clone()));
+            if let Some(count) = ctx.get_mut(id) {
+                *count = 1;
             }
-            let mut body_ctx = ctx.clone();
-            body_ctx.remove(id);
-            check_linearity_inner(body, &mut body_ctx)?;
+            check_linearity_inner(body, ctx)?;
             Ok(())
         }
     }
@@ -260,7 +258,10 @@ mod tests {
             Box::new(CoreIR::Lit(Literal::Int64(42))),
         );
         let result = insert_linearity(term);
-        assert!(matches!(result, CoreIR::Drop(_, _)));
+        assert!(matches!(result, CoreIR::Lam(_, _)));
+        if let CoreIR::Lam(_, body) = &result {
+            assert!(matches!(**body, CoreIR::Drop(_, _)));
+        }
     }
 
     #[test]

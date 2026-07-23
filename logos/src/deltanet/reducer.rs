@@ -32,12 +32,21 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
     match (&kind_a, &kind_b) {
         // Beta reduction: App >< Abs
         (AgentKind::App, AgentKind::Abs) => {
-            let app_arg = net.get_aux(a, 2);
+            let app_arg = net.get_aux(a, 1);
             let abs_var = net.get_aux(b, 1);
-            let app_func = net.get_aux(a, 1);
-            let abs_body = net.get_aux(b, 2);
             net.wire(app_arg, abs_var);
-            net.wire(app_func, abs_body);
+            let abs_body = net.get_aux(b, 2);
+            let app_result = net.nodes[a as usize].as_ref().and_then(|n| n.ports[2].clone());
+            if let Some(outer) = app_result {
+                net.wire(outer, abs_body);
+            } else {
+                if let Some(node) = net.nodes[a as usize].as_mut() {
+                    node.ports[2] = Some(abs_body.clone());
+                }
+                if let Some(node) = net.nodes[abs_body.node as usize].as_mut() {
+                    node.ports[abs_body.slot as usize] = Some(Port::new(a, 2));
+                }
+            }
             net.free_node(a);
             net.free_node(b);
         }
@@ -45,11 +54,20 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
         // Abs >< App (commutative)
         (AgentKind::Abs, AgentKind::App) => {
             let abs_var = net.get_aux(a, 1);
-            let abs_body = net.get_aux(a, 2);
-            let app_arg = net.get_aux(b, 2);
-            let app_func = net.get_aux(b, 1);
+            let app_arg = net.get_aux(b, 1);
             net.wire(abs_var, app_arg);
-            net.wire(abs_body, app_func);
+            let abs_body = net.get_aux(a, 2);
+            let app_result = net.nodes[b as usize].as_ref().and_then(|n| n.ports[2].clone());
+            if let Some(outer) = app_result {
+                net.wire(outer, abs_body);
+            } else {
+                if let Some(node) = net.nodes[b as usize].as_mut() {
+                    node.ports[2] = Some(abs_body.clone());
+                }
+                if let Some(node) = net.nodes[abs_body.node as usize].as_mut() {
+                    node.ports[abs_body.slot as usize] = Some(Port::new(b, 2));
+                }
+            }
             net.free_node(a);
             net.free_node(b);
         }
@@ -138,7 +156,6 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             let inner_app = net.alloc_node(AgentKind::App);
             let outer_app = net.alloc_node(AgentKind::App);
 
-            // Clone f and init
             let dup_f = net.alloc_node(AgentKind::Dup(0));
             let dup_init = net.alloc_node(AgentKind::Dup(0));
 
@@ -150,21 +167,17 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             let _init1 = Port::new(dup_init, 1);
             let init2 = Port::new(dup_init, 2);
 
-            // inner_fold: Fold(f2, init2, tail)
             net.wire(Port::new(inner_fold, 1), f2);
             net.wire(Port::new(inner_fold, 2), init2);
             net.wire(Port::new(inner_fold, 3), tail_port);
 
-            // inner_app: App(f1, inner_fold)
-            net.wire(Port::new(inner_app, 1), f1);
-            net.wire(Port::new(inner_app, 2), Port::principal(inner_fold));
+            net.wire(Port::principal(inner_app), f1);
+            net.wire(Port::new(inner_app, 1), Port::principal(inner_fold));
 
-            // outer_app: App(inner_app, head)
-            net.wire(Port::new(outer_app, 1), Port::principal(inner_app));
-            net.wire(Port::new(outer_app, 2), head_port);
+            net.wire(Port::principal(outer_app), Port::new(inner_app, 2));
+            net.wire(Port::new(outer_app, 1), head_port);
 
-            // Wire the original Fold's principal to outer_app's principal
-            net.wire(Port::principal(a), Port::principal(outer_app));
+            net.wire(Port::principal(a), Port::new(outer_app, 2));
 
             net.free_node(a);
             net.free_node(b);
@@ -260,10 +273,10 @@ mod tests {
 
         net.wire(Port::new(abs, 1), Port::new(lit, 0));
         net.wire(Port::new(abs, 2), Port::new(lit, 0));
-        net.wire(Port::new(app, 1), Port::principal(abs));
-        net.wire(Port::new(app, 2), Port::principal(lit));
+        net.wire(Port::principal(app), Port::principal(abs));
+        net.wire(Port::new(app, 1), Port::principal(lit));
 
-        net.root = Port::principal(app);
+        net.root = Port::new(app, 2);
         net.collect_active_pairs();
         reduce(&mut net);
     }

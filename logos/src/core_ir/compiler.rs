@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::ccg::DerivationTree;
+use crate::ccg::{DerivationTree, Direction};
 use crate::lexicon::{Lexicon, SemExpr, Literal as LexLiteral};
 
 pub fn compile_to_core_ir(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
@@ -13,10 +13,19 @@ fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
                 .unwrap_or_else(|| panic!("no semantic template for '{}'", word));
             instantiate_template(template)
         }
-        DerivationTree::Application { left, right, .. } => {
-            let f = compile_derivation(left, lexicon);
-            let arg = compile_derivation(right, lexicon);
-            CoreIR::App(Box::new(f), Box::new(arg))
+        DerivationTree::Application { direction, left, right, .. } => {
+            match direction {
+                Direction::Forward => {
+                    let f = compile_derivation(left, lexicon);
+                    let arg = compile_derivation(right, lexicon);
+                    CoreIR::App(Box::new(f), Box::new(arg))
+                }
+                Direction::Backward => {
+                    let f = compile_derivation(right, lexicon);
+                    let arg = compile_derivation(left, lexicon);
+                    CoreIR::App(Box::new(f), Box::new(arg))
+                }
+            }
         }
         DerivationTree::Composition { left, right, .. } => {
             let f = compile_derivation(left, lexicon);
@@ -82,6 +91,10 @@ fn tag_id(tag: &str) -> TagId {
         "Red" => 19,
         "Blue" => 20,
         "Very" => 21,
+        "Cat" => 22,
+        "Dog" => 23,
+        "Number" => 24,
+        "And" => 25,
         _ => 0,
     }
 }

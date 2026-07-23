@@ -29,6 +29,7 @@ pub enum AgentKind {
     Era,
     Prim(PrimOp),
     Lit(Literal),
+    Entity(String),
 }
 
 impl AgentKind {
@@ -42,6 +43,7 @@ impl AgentKind {
             AgentKind::Era => 0,
             AgentKind::Prim(_) => 2,
             AgentKind::Lit(_) => 0,
+            AgentKind::Entity(_) => 0,
         }
     }
 }
@@ -57,6 +59,7 @@ impl fmt::Display for AgentKind {
             AgentKind::Era => write!(f, "Era"),
             AgentKind::Prim(op) => write!(f, "{:?}", op),
             AgentKind::Lit(lit) => write!(f, "{}", lit),
+            AgentKind::Entity(name) => write!(f, "Entity({})", name),
         }
     }
 }
@@ -163,19 +166,45 @@ impl Net {
             }
             if let Some(node) = &self.nodes[i as usize] {
                 if let Some(principal) = &node.ports[0] {
-                    if let Some(other_node) = &self.nodes[principal.node as usize] {
-                        if !other_node.freed && other_node.ports[0].is_some() {
-                            let other_principal = other_node.ports[0].as_ref().unwrap();
-                            if other_principal.node == i as NodeId {
-                                let a = i as NodeId;
-                                let b = principal.node;
-                                if a <= b {
-                                    self.active_pairs.push((a, b));
+                    let resolved = self.resolve_port(principal);
+                    if resolved.node != i as NodeId {
+                        if let Some(other_node) = &self.nodes[resolved.node as usize] {
+                            if !other_node.freed {
+                                if let Some(other_principal) = &other_node.ports[0] {
+                                    let other_resolved = self.resolve_port(other_principal);
+                                    if other_resolved.node == i as NodeId {
+                                        let a = i as NodeId;
+                                        let b = resolved.node;
+                                        if a <= b {
+                                            self.active_pairs.push((a, b));
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    pub fn resolve_port(&self, port: &Port) -> Port {
+        let mut current = port.clone();
+        let mut depth = 0;
+        loop {
+            if depth > 1000 {
+                return current;
+            }
+            match self.nodes.get(current.node as usize) {
+                Some(Some(node)) if node.freed => {
+                    if let Some(target) = &node.ports[current.slot as usize] {
+                        current = target.clone();
+                        depth += 1;
+                    } else {
+                        return current;
+                    }
+                }
+                _ => return current,
             }
         }
     }

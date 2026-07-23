@@ -18,6 +18,10 @@ fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) {
     };
 
     if node.freed {
+        if let Some(target) = &node.ports[port.slot as usize] {
+            serialize_port(net, target, out);
+            return;
+        }
         out.push(0xFF);
         return;
     }
@@ -38,6 +42,12 @@ fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) {
             for s in 1..=*arity {
                 serialize_port(net, &net.get_aux(port.node, s), out);
             }
+        }
+        AgentKind::Entity(name) => {
+            out.push(0x04);
+            let bytes = name.as_bytes();
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
         }
         _ => {
             out.push(0xFF);

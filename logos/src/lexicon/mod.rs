@@ -62,7 +62,7 @@ impl Lexicon {
 
         for (i, line) in content.lines().enumerate() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            if line.is_empty() || line.starts_with('#') || line.starts_with("word\t") {
                 continue;
             }
             let parts: Vec<&str> = line.split('\t').collect();
@@ -131,6 +131,11 @@ fn parse_sem_template(s: &str) -> Result<SemExpr, String> {
         let (var, body_str) = rest.split_once("\", ").ok_or("Lam missing body")?;
         let body = parse_sem_template(body_str)?;
         return Ok(SemExpr::Lam(var.to_string(), Box::new(body)));
+    }
+    if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+        && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        return Ok(SemExpr::Con(s.to_string(), vec![]));
     }
     Err(format!("unrecognized template: {}", s))
 }
