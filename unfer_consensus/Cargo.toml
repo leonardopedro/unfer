@@ -1,0 +1,25 @@
+[package]
+name = "unfer_consensus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "QuePaxa-backed consensus layer for the unfer federation protocol."
+
+[features]
+default = []
+network = ["dep:tokio", "dep:rust-quepaxa"]
+
+[dependencies]
+unfer_protocol = { path = "../unfer_protocol" }
+prob_kernel = { path = "../prob_kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+hex = "0.4"
+tokio = { version = "1", features = ["full"], optional = true }
+rust-quepaxa = { version = "0.1", optional = true }
+
+[dev-dependencies]

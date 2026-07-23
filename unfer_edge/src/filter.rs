@@ -18,6 +18,14 @@ static ALLOWED_OPS: &[&str] = &[
     "observe",
     "snapshot",
     "list_codes",
+    "did_create",
+    "did_resolve",
+    "did_update",
+    "did_revoke",
+    "content_publish",
+    "content_resolve",
+    "consensus_sync",
+    "consensus_status",
 ];
 
 /// Rejection reasons returned to callers.

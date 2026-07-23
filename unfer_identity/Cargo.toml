@@ -1,0 +1,13 @@
+[package]
+name = "unfer_identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "did:unfer identity method backed by the QuePaxa consensus log."
+
+[dependencies]
+unfer_protocol = { path = "../unfer_protocol" }
+unfer_consensus = { path = "../unfer_consensus" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = "0.4"

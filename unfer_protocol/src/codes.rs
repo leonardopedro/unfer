@@ -21,6 +21,12 @@ impl Code {
 
     pub const CALL_DENIED: Code = Code(4001);
 
+    pub const CONSENSUS_NOT_READY: Code = Code(6001);
+    pub const DUPLICATE_TRANSACTION: Code = Code(6002);
+    pub const INVALID_SIGNATURE: Code = Code(6003);
+    pub const UNKNOWN_DID: Code = Code(6004);
+    pub const RELAY_NOT_CONNECTED: Code = Code(6005);
+
     pub const INTERNAL: Code = Code(5000);
 
     pub fn raw(self) -> u32 {
@@ -100,6 +106,31 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4001,
             "CallDenied",
             "The authorization engine denied the caller permission to invoke this kernel symbol.",
+        ),
+        (
+            6001,
+            "ConsensusNotReady",
+            "The consensus node has not yet synced to the latest committed sequence.",
+        ),
+        (
+            6002,
+            "DuplicateTransaction",
+            "The transaction is already in the consensus log.",
+        ),
+        (
+            6003,
+            "InvalidSignature",
+            "Ed25519 signature verification failed for the transaction.",
+        ),
+        (
+            6004,
+            "UnknownDid",
+            "The DID is not in the identity registry.",
+        ),
+        (
+            6005,
+            "RelayNotConnected",
+            "No upstream relay is available for firehose subscription.",
         ),
         (
             5000,

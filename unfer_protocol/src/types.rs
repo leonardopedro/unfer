@@ -618,3 +618,199 @@ pub struct BeliefPropagationResult {
     /// Wall-clock time for the BP + decode in milliseconds.
     pub solve_ms: u64,
 }
+
+// ── Federation types (QuePaxa plan, 6xxx codes) ──────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityOpKind {
+    Create,
+    Update,
+    Revoke,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IdentityOp {
+    pub did: String,
+    pub op_kind: IdentityOpKind,
+    #[serde(with = "hex_bytes_32")]
+    pub signing_key: [u8; 32],
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionOp {
+    pub did: String,
+    pub model_id: u64,
+    pub op: AgentRequest,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChunkRef {
+    pub index: u32,
+    pub cid: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContentRef {
+    pub cid: String,
+    pub magnet_uri: String,
+    pub encryption_key: String,
+    pub filesize: u64,
+    pub mime_type: String,
+    #[serde(default)]
+    pub chunks: Vec<ChunkRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContentOp {
+    pub did: String,
+    pub content_ref: ContentRef,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConsensusTransaction {
+    IdentityOp(IdentityOp),
+    SessionOp(SessionOp),
+    ContentOp(ContentOp),
+}
+
+impl ConsensusTransaction {
+    pub fn did(&self) -> &str {
+        match self {
+            Self::IdentityOp(op) => &op.did,
+            Self::SessionOp(op) => &op.did,
+            Self::ContentOp(op) => &op.did,
+        }
+    }
+
+    pub fn signature(&self) -> &[u8; 64] {
+        match self {
+            Self::IdentityOp(op) => &op.signature,
+            Self::SessionOp(op) => &op.signature,
+            Self::ContentOp(op) => &op.signature,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DidEntry {
+    pub did: String,
+    #[serde(with = "hex_bytes_32")]
+    pub pubkey: [u8; 32],
+    pub seq: u64,
+    pub created_at: u64,
+    pub revoked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DidDocument {
+    #[serde(rename = "@context")]
+    pub context: String,
+    pub id: String,
+    #[serde(rename = "verificationMethod")]
+    pub verification_method: Vec<VerificationMethod>,
+    pub authentication: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service: Vec<DidService>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerificationMethod {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub method_type: String,
+    #[serde(rename = "publicKeyMultibase")]
+    pub public_key_multibase: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DidService {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    #[serde(rename = "serviceEndpoint")]
+    pub service_endpoint: String,
+}
+
+impl DidEntry {
+    pub fn to_document(&self) -> DidDocument {
+        let key_id = format!("{}#key-1", self.did);
+        let pk_hex = hex::encode(self.pubkey);
+        let mut doc = DidDocument {
+            context: "https://www.w3.org/ns/did/v1".to_string(),
+            id: self.did.clone(),
+            verification_method: vec![VerificationMethod {
+                id: key_id.clone(),
+                method_type: "Ed25519VerificationKey2020".to_string(),
+                public_key_multibase: format!("z{pk_hex}"),
+            }],
+            authentication: vec![key_id],
+            service: Vec::new(),
+        };
+        if let Some(ref ep) = self.service_endpoint {
+            doc.service.push(DidService {
+                id: format!("{}#unfer", self.did),
+                service_type: "UnferKernelEndpoint".to_string(),
+                service_endpoint: ep.clone(),
+            });
+        }
+        doc
+    }
+}
+
+mod hex_bytes_32 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("expected 32 bytes"))
+    }
+}
+
+mod hex_bytes_64 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("expected 64 bytes"))
+    }
+}
