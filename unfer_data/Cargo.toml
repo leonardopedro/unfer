@@ -1,0 +1,17 @@
+[package]
+name = "unfer_data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Data plane for the unfer federation: chunking, encryption, magnet URIs, content publishing."
+
+[dependencies]
+unfer_protocol = { path = "../unfer_protocol" }
+unfer_consensus = { path = "../unfer_consensus" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+rand = "0.8"
