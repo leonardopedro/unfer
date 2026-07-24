@@ -7,7 +7,7 @@ Parallel workstream 1 of 3. Companion plans: `australVM/PLAN_parallel_australvm.
 
 Three repos form one system:
 - **unfer** (this repo) — the kernel: `prob_kernel::Session` (Born-rule API), `unfer_ffi`
-  (18 `uk_*` + 5 `uz_*` C symbols), `unfer_protocol` (serde + UK-#### codes), `qfm`/`qfm_text`,
+  (21 `uk_*` + 5 `uz_*` C symbols), `unfer_protocol` (serde + UK-#### codes), `qfm`/`qfm_text`,
   6 Austral modules, plus new crates: `logos` (CNL→verified execution compiler),
   `ode_sirk` (ODE→Hamiltonian singularity detection), `unfer_consensus` (QuePaxa federation),
   `unfer_data` (encrypted chunked data plane), `unfer_identity` (DID/keypair).
@@ -26,7 +26,7 @@ here propagates to both. Keep this repo green at all times.
 1. **Ownership**: modify only files inside this repo. Cross-repo *reads* are fine.
    Cross-repo *writes* are forbidden, except steps explicitly marked `[SYNC]`.
 2. **Frozen contract** (additive-only changes allowed; no renames/removals/signature changes):
-   - the 18 `uk_*` and 5 `uz_*` symbols and their C signatures;
+   - the 21 `uk_*` and 5 `uz_*` symbols and their C signatures;
    - `prob_kernel::Session` public API;
    - `unfer_protocol` serde types and UK-#### code assignments;
    - the NDJSON agent ops (20+); `module.toml` grant vocabulary.
@@ -37,8 +37,7 @@ here propagates to both. Keep this repo green at all times.
 
 - `cargo test --workspace` green (~348 tests across 20+ crates).
 - A1–A5 complete and committed. A2 `[SYNC]` done (PROTOCOL.md has all 20+ ops + 6xxx codes).
-- A6 partially done: Pauli–Grover tests exist (parity, MNIST sweeps); QFM.tex is 157 KB.
-  `QFM_TEXT_STATUS.md` does not exist; GPU decode not started.
+- A6 is **hypothetical** (research backlog, not to be executed).
 - A7 partially done: `unfer_edge` edition still 2021; `qfm_text_runs/` is 3.9 GB undocumented.
 - New crates since the original plan: `logos/` (CNL compiler, 10+ submodules),
   `ode_sirk/` (ODE→Hamiltonian), `unfer_consensus/` (QuePaxa), `unfer_data/` (encrypted
@@ -53,13 +52,17 @@ here propagates to both. Keep this repo green at all times.
 |-------|---------|
 | A1 | Committed Pauli–Grover in-flight work |
 | A2 | Doc-drift sweep (AGENTS.md, MODULE_RECIPE, PROTOCOL.md, ARCHITECTURE) — DONE |
-| A3 | FFI symbol CI gate (`EXPECTED_SYMBOLS.txt`, 18 uk_* + 5 uz_*) — DONE |
+| A3 | FFI symbol CI gate (`EXPECTED_SYMBOLS.txt`, 21 uk_* + 5 uz_*) — DONE |
 | A4 | `tools/module_builder` — unified build+test for all 6 modules — DONE |
 | A5 | Property & fuzz tests (nested_fock_algebra proptest, unfer_protocol fuzz) — DONE |
 
 ---
 
-## Stage A6 — Pauli–Grover research completion (M–L, research)
+## Stage A6 — Pauli–Grover research completion (HYPOTHETICAL — DO NOT EXECUTE)
+
+> **This stage is hypothetical and must not be executed.** It records open
+> research questions for future reference only. No agent or contributor
+> should implement any item below without an explicit new directive.
 
 Context: PG without kernel gives 100% training but chance generalization; diffusion +
 distributed multi-mode encoding generalizes. Open questions, in priority order:
@@ -74,8 +77,7 @@ distributed multi-mode encoding generalizes. Open questions, in priority order:
    `fock_sirk` — the ~140 h CPU wall blocks the rev-37 v3 diffusion-Hamiltonian evaluation.
 5. Create `QFM_TEXT_STATUS.md` documenting the current state of qfm_text evaluations.
 
-**Acceptance**: each item lands as a committed test + a short results paragraph in
-`QFM.tex` / `QFM_TEXT_STATUS.md` (negative results count — record them honestly).
+**Acceptance**: N/A (hypothetical).
 
 ## Stage A7 — Consistency cleanup (S)
 

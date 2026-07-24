@@ -202,3 +202,101 @@ fn test_corpus_seed_parses() {
         total
     );
 }
+
+#[test]
+fn property_confluence_reduce_twice_same_result() {
+    let lex = test_lexicon();
+    let sentences = [
+        "John loves Mary",
+        "the cat sleeps",
+        "John adds two three",
+        "one is one",
+        "Mary sees John",
+    ];
+    for sentence in &sentences {
+        let tokens: Vec<String> = sentence.split_whitespace().map(String::from).collect();
+        let trees = ccg::parse_sentence(&tokens, &lex);
+        assert!(!trees.is_empty(), "no parse for: {sentence}");
+        let ir = core_ir::compile_to_core_ir(&trees[0], &lex);
+
+        let mut net1 = deltanet::compile_to_net(&ir);
+        deltanet::reduce(&mut net1);
+        let r1 = deltanet::readback(&net1);
+        let h1 = deltanet::unf_hash_string(&net1);
+
+        let mut net2 = deltanet::compile_to_net(&ir);
+        deltanet::reduce(&mut net2);
+        let r2 = deltanet::readback(&net2);
+        let h2 = deltanet::unf_hash_string(&net2);
+
+        assert_eq!(r1, r2, "confluence violated for readback: {sentence}");
+        assert_eq!(h1, h2, "confluence violated for hash: {sentence}");
+    }
+}
+
+#[test]
+fn property_hash_discrimination_all_distinct() {
+    let lex = test_lexicon();
+    let sentences = [
+        "John loves Mary",
+        "Mary sees John",
+        "the cat sleeps",
+        "the dog runs",
+        "John adds two three",
+        "one is one",
+    ];
+    let mut hashes = std::collections::HashSet::new();
+    for sentence in &sentences {
+        let (_result, hash) = pipeline(sentence, &lex);
+        assert!(
+            hashes.insert(hash.clone()),
+            "hash collision between distinct sentences: {sentence}"
+        );
+    }
+    assert_eq!(hashes.len(), sentences.len());
+}
+
+#[test]
+fn property_linearity_always_holds_after_insert() {
+    let terms = vec![
+        core_ir::CoreIR::Lam(
+            "x".to_string(),
+            Box::new(core_ir::CoreIR::Var("x".to_string())),
+        ),
+        core_ir::CoreIR::Lam(
+            "x".to_string(),
+            Box::new(core_ir::CoreIR::Lit(core_ir::Literal::Int64(42))),
+        ),
+        core_ir::CoreIR::Lit(core_ir::Literal::Int64(7)),
+        core_ir::CoreIR::Lit(core_ir::Literal::Bool(false)),
+        core_ir::CoreIR::Var("free".to_string()),
+    ];
+    for term in terms {
+        let checked = core_ir::insert_linearity(term);
+        assert!(
+            core_ir::check_linearity(&checked).is_ok(),
+            "linearity check failed after insert_linearity"
+        );
+    }
+}
+
+#[test]
+fn property_readback_is_stable_across_recompilation() {
+    let lex = test_lexicon();
+    let sentence = "John adds two three";
+    let tokens: Vec<String> = sentence.split_whitespace().map(String::from).collect();
+
+    let mut results = Vec::new();
+    for _ in 0..5 {
+        let trees = ccg::parse_sentence(&tokens, &lex);
+        let ir = core_ir::compile_to_core_ir(&trees[0], &lex);
+        let mut net = deltanet::compile_to_net(&ir);
+        deltanet::reduce(&mut net);
+        results.push(deltanet::readback(&net));
+    }
+
+    let first = &results[0];
+    for (i, r) in results.iter().enumerate() {
+        assert_eq!(r, first, "readback unstable at iteration {i}");
+    }
+}

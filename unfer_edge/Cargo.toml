@@ -1,7 +1,7 @@
 [package]
 name = "unfer_edge"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 description = "Security-first Pingora proxy fronting the unfer_agent NDJSON loop."
 
 [features]

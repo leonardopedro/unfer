@@ -1,5 +1,6 @@
 uk_bayesian_update
 uk_belief_propagation
+uk_buf_free
 uk_condition
 uk_event_probability
 uk_evolve
@@ -9,6 +10,8 @@ uk_last_error
 uk_model_create
 uk_model_free
 uk_observe
+uk_ode_analyze
+uk_ode_measure_original
 uk_poll
 uk_restore
 uk_set_hamiltonian

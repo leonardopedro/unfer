@@ -14,8 +14,13 @@ $ROOT/
 │   ├── prob_kernel/            # Born-rule layer: Session, condition()
 │   ├── qfm/                    # QFM engine: PG/diffusion Hamiltonians, observables
 │   ├── qfm_text/               # text-domain QFM: corpus, LM, Oxieml decoder
-│   ├── unfer_ffi/              # handle-based C ABI: 18 uk_* + 5 uz_* symbols
+│   ├── unfer_ffi/              # handle-based C ABI: 21 uk_* + 5 uz_* symbols
 │   ├── unfer_edge/             # Pingora-based HTTP edge server (unfer_agent protocol)
+│   ├── logos/                  # CNL→verified execution graph compiler (CCG+deltanet)
+│   ├── ode_sirk/               # ODE→Hamiltonian singularity detection (Nelson ESA)
+│   ├── unfer_consensus/        # QuePaxa consensus engine (LocalConsensus, ConsensusNode)
+│   ├── unfer_identity/         # DID lifecycle manager (Ed25519, W3C DID Documents)
+│   ├── unfer_data/             # encrypted chunked data plane (X25519+AES-GCM, magnet URIs)
 │   ├── demo_module/            # example Austral module (Stage 13)
 │   ├── bayes_update_module/    # Bayesian-update Austral module
 │   ├── iterated_bayes_module/  # Iterated Bayesian update module
@@ -23,11 +28,12 @@ $ROOT/
 │   ├── qfm_tomo_module/        # QFM tomography Austral module
 │   ├── zenodo_store_module/    # Zenodo-backed store Austral module
 │   ├── unfer_nixvm/            # Nix flake: unfer_ffi in cloud-hypervisor guest
-│   └── docs/                   # MODULE_RECIPE.md, PROTOCOL.md, ARCHITECTURE.md
+│   └── docs/                   # MODULE_RECIPE, PROTOCOL, ARCHITECTURE, LOGOS,
+│                               # ODE_SIRK, FEDERATION, DATA_PLANE, BUILD_PIPELINE
 ├── australVM/                  # MODULE RUNTIME
 │   └── safestos/cranelift/     # JIT + auth.rs + uk_* symbols + modhost
 ├── velysterm/                  # UI / AI INTERFACE
-│   ├── crates/kernel_client/  # worker-thread client + unfer_agent bin (11 ops)
+│   ├── crates/kernel_client/  # worker-thread client + unfer_agent bin (20+ ops)
 │   ├── crates/mathed_core/     # Loro doc model + PropKinds + SemanticIndex
 │   ├── crates/mathed/          # Bevy + Typst + vello editor + kernel_sys bridge
 │   └── crates/mathed_mini/     # Bevy-free CPU frontend (winit + softbuffer)
@@ -60,16 +66,29 @@ nested_fock_algebra ←── fock_sirk ←── prob_kernel ←── unfer_ff
                      mathed_core ←── mathed   │
                                               ↓
                                         unfer_edge
+
+nested_fock_algebra ←── ode_sirk ──→ unfer_protocol
+                        (Hamiltonian)   (HamiltonianSpec::OdeSystem)
+
+unfer_protocol ←── unfer_consensus ←──┬── unfer_identity
+                                      └── unfer_data
+
+logos (standalone: CCG + deltanet + UNF hash; austral_codegen → australVM)
 ```
 
 - `unfer_protocol` is the single shared contract (serde types, codes).
 - `prob_kernel` wraps the QFT engine with Born-rule semantics.
 - `qfm`/`qfm_text` build on `prob_kernel` for domain-specific pipeline stages.
-- `unfer_ffi` exposes a C ABI for in-process module calls (18 `uk_*` symbols).
+- `unfer_ffi` exposes a C ABI for in-process module calls (21 `uk_*` symbols).
 - `cranelift` (australVM) registers `uk_*` symbols in the JIT.
-- `kernel_client` (velysterm) provides async worker + parser (11 NDJSON ops).
+- `kernel_client` (velysterm) provides async worker + parser (20+ NDJSON ops).
 - `mathed` bridges to Bevy via `kernel_sys.rs`.
 - `unfer_edge` serves the agent protocol over HTTP via Pingora.
+- `logos` compiles CNL sentences to verified execution graphs (CCG + deltanet).
+- `ode_sirk` detects ODE singularities and constructs Weyl Hamiltonians.
+- `unfer_consensus` provides the QuePaxa consensus engine and DID identity registry.
+- `unfer_identity` manages the DID lifecycle (create/update/revoke/resolve).
+- `unfer_data` handles encrypted chunked content publishing (X25519 + AES-GCM).
 
 ## Data flow
 
@@ -91,7 +110,7 @@ rate limiting for remote clients.
 ### 1. Add a module
 
 See `MODULE_RECIPE.md` for the full checklist. Summary:
-1. Create `$ROOT/<name>/` with `module.toml` (18 `uk_*` grantable symbols).
+1. Create `$ROOT/<name>/` with `module.toml` (21 `uk_*` grantable symbols).
 2. Write `.aui`/`.aum` Austral cells importing `UnferKernel`.
 3. List granted `uk_*` symbols in `module.toml [grants]`.
 4. Build with `unfer_module_builder` (Stage A4); load via `modhost`.

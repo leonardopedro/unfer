@@ -2,6 +2,9 @@
 
 The build pipeline automates the translation of Austral source code into a deployable SafeSTOS cell, incorporating the `module.toml` manifest.
 
+See also: [`tools/module_builder`](../tools/module_builder) (unified build+test runner),
+[`tools/clean_qfm_text_runs.sh`](../tools/clean_qfm_text_runs.sh) (checkpoint cleanup).
+
 ## Components
 
 ### 1. `tools/module_builder` (bash script)
