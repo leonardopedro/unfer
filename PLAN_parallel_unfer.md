@@ -8,11 +8,15 @@ Parallel workstream 1 of 3. Companion plans: `australVM/PLAN_parallel_australvm.
 Three repos form one system:
 - **unfer** (this repo) — the kernel: `prob_kernel::Session` (Born-rule API), `unfer_ffi`
   (18 `uk_*` + 5 `uz_*` C symbols), `unfer_protocol` (serde + UK-#### codes), `qfm`/`qfm_text`,
-  6 Austral modules.
+  6 Austral modules, plus new crates: `logos` (CNL→verified execution compiler),
+  `ode_sirk` (ODE→Hamiltonian singularity detection), `unfer_consensus` (QuePaxa federation),
+  `unfer_data` (encrypted chunked data plane), `unfer_identity` (DID/keypair).
 - **australVM** — Austral JIT (`safestos/cranelift`) that statically links `unfer_ffi` via a
   **path dependency** and registers the `uk_*` symbols; hosts the Austral modules (modhost).
+  B1–B7 complete; B8–B10 (genuine hosting, Tidepool, cap-std) pending.
 - **velysterm** — editor/agent frontend; `kernel_client` path-depends on `prob_kernel` +
-  `unfer_protocol`; ships the `unfer_agent` NDJSON binary (11 ops).
+  `unfer_protocol`; ships the `unfer_agent` NDJSON binary (20+ ops incl. federation).
+  Plan C (C1–C10) complete.
 
 Because both dependents read unfer's **working tree** (path deps), any uncommitted breakage
 here propagates to both. Keep this repo green at all times.
@@ -25,137 +29,120 @@ here propagates to both. Keep this repo green at all times.
    - the 18 `uk_*` and 5 `uz_*` symbols and their C signatures;
    - `prob_kernel::Session` public API;
    - `unfer_protocol` serde types and UK-#### code assignments;
-   - the 11 NDJSON agent ops; `module.toml` grant vocabulary.
-3. **Commit discipline**: meaningful messages (the last 10 commits are all `"a"` — stop that).
-   Commit after every completed stage so dependents can pin.
-4. Stages are ordered small → large; each ends in a verifiable acceptance command. Partial
-   completion is fine — do not start a later stage until the earlier ones pass.
+   - the NDJSON agent ops (20+); `module.toml` grant vocabulary.
+3. **Commit discipline**: meaningful messages; commit after every completed stage.
+4. Stages are ordered small → large; each ends in a verifiable acceptance command.
 
-## Current state (2026-07-18)
+## Current state (2026-07-24)
 
-- Working tree was broken mid-Pauli–Grover refactor; `prob_kernel/src/build.rs` and
-  `qfm_text/src/model.rs` have just been fixed (`..Default::default()` + stale 13-arg
-  `compile_channels` call). `cargo check --workspace` now passes.
-- **16 modified + 2 untracked files are uncommitted** (the Pauli–Grover Hamiltonian,
-  `random_start`, `HamiltonianType`, parity/MNIST test sweeps, QFM.tex §Pauli–Grover).
-- australVM and velysterm build again against this tree.
+- `cargo test --workspace` green (~348 tests across 20+ crates).
+- A1–A5 complete and committed. A2 `[SYNC]` done (PROTOCOL.md has all 20+ ops + 6xxx codes).
+- A6 partially done: Pauli–Grover tests exist (parity, MNIST sweeps); QFM.tex is 157 KB.
+  `QFM_TEXT_STATUS.md` does not exist; GPU decode not started.
+- A7 partially done: `unfer_edge` edition still 2021; `qfm_text_runs/` is 3.9 GB undocumented.
+- New crates since the original plan: `logos/` (CNL compiler, 10+ submodules),
+  `ode_sirk/` (ODE→Hamiltonian), `unfer_consensus/` (QuePaxa), `unfer_data/` (encrypted
+  chunks + magnet URIs), `unfer_identity/` (DID). These have tests but no dedicated docs.
+- velysterm Plan C complete; australVM B1–B7 complete.
 
 ---
 
-## Stage A1 — Commit the in-flight work (S)
+## Completed stages (Phase 1)
 
-1. `git status`, `git diff --stat`. Review all hunks belong to the Pauli–Grover feature.
-2. Run `cargo test --workspace` (CPU). Fix any failure before committing.
-3. Commit in logical units with real messages, e.g.:
-   - `qfm: add HamiltonianType::{Diffusion,PauliGrover} + pauli_grover_a + random_start`
-   - `qfm/tests: PG parity + MNIST m-sweeps (vacuum vs random start)`
-   - `QFM.tex: Pauli–Grover section`
-   - `prob_kernel,qfm_text: fix QfmConfig initializers for new fields`
-4. Do **not** squash or rewrite the existing `"a"` history (others may have pulled).
+| Stage | Summary |
+|-------|---------|
+| A1 | Committed Pauli–Grover in-flight work |
+| A2 | Doc-drift sweep (AGENTS.md, MODULE_RECIPE, PROTOCOL.md, ARCHITECTURE) — DONE |
+| A3 | FFI symbol CI gate (`EXPECTED_SYMBOLS.txt`, 18 uk_* + 5 uz_*) — DONE |
+| A4 | `tools/module_builder` — unified build+test for all 6 modules — DONE |
+| A5 | Property & fuzz tests (nested_fock_algebra proptest, unfer_protocol fuzz) — DONE |
 
-**Acceptance**: `git status --short` empty; `cargo test --workspace` green.
+---
 
-## Stage A2 — Doc-drift sweep (S)
-
-The contract grew; the docs didn't. Fix in one pass:
-
-1. `AGENTS.md`: "14 `uk_*` functions" → 18 `uk_*` + 5 `uz_*` (zenodo, feature-gated).
-   Add `qfm_text`, `unfer_edge`, `unfer_nixvm` to the crate layout. Add a bullet on
-   `HamiltonianType`/`pauli_grover_a`/`random_start` (defaults preserve old behavior).
-2. `docs/MODULE_RECIPE.md`: the `[grants] kernel = [...]` example lists 12 symbols — update
-   to all 18 (`uk_snapshot, uk_restore, uk_subscribe, uk_poll, uk_bayesian_update,
-   uk_belief_propagation` are missing).
-3. `docs/PROTOCOL.md`: documents 8 agent ops; `unfer_agent` (velysterm) implements 11.
-   Document `save_session`, `restore_session`, `poll_events` (request/response shapes,
-   UK codes, bounded 64-event queue semantics), noting the implementation lives in
-   `velysterm/crates/kernel_client/src/bin/unfer_agent.rs`. Do **not** document
-   `bayesian_update`/`belief_propagation` agent ops yet — velysterm Plan C2 adds them;
-   a `[SYNC]` step there will hand you the spec fragment.
-4. `docs/ARCHITECTURE.md`: crate diagram predates `qfm`, `qfm_text`, `unfer_edge`,
-   `unfer_nixvm`, and the 6 modules — redraw.
-
-**Acceptance**: `grep -n "14 uk" AGENTS.md docs/*.md` empty; `grep -c uk_ docs/MODULE_RECIPE.md`
-≥ 18; every op in velysterm's `VALID_OPS` (minus the two Plan C2 adds) appears in PROTOCOL.md.
-
-## Stage A3 — FFI symbol CI gate (S)
-
-Today CI asserts only 5 of 18 `uk_*` exports.
-
-1. Extend the `ffi-symbols` CI job (or add `unfer_ffi/tests/symbols.rs` invoked from CI) to
-   assert the full set: build the cdylib, `nm -D --defined-only` (or `objdump -T`), compare
-   against a checked-in `unfer_ffi/EXPECTED_SYMBOLS.txt` (18 `uk_*`; plus 5 `uz_*` under
-   `--features zenodo`).
-2. Make the test fail with a diff message that says exactly what to update.
-
-**Acceptance**: deleting one `pub extern "C" fn uk_*` makes the gate fail; CI green on main.
-
-## Stage A4 — Extract `module_builder` tool (M)
-
-`docs/BUILD_PIPELINE.md` marks this TBD; 6 near-identical `build.sh`/`run_demo.sh` exist.
-
-1. Create `unfer_module_builder` (small Rust bin or a single portable bash script in `tools/`):
-   inputs = module dir; steps = parse `module.toml` → copy Austral cell → invoke australVM
-   modhost build → run positive + UK-4001 negative smoke test.
-2. Port all 6 modules (`demo_module`, `qfm_module`, `bayes_update_module`,
-   `iterated_bayes_module`, `qfm_tomo_module`, `zenodo_store_module`) onto it; delete the
-   per-module scripts. Add the missing `zenodo_store_module/build.sh` equivalent.
-3. Add `zenodo_store_module` to CI behind a mock HTTP server (no network/credentials).
-
-**Acceptance**: `tools/module_builder run demo_module` passes positive + negative tests;
-`grep -r run_demo.sh --include='*.yml' .github/` shows only the builder; CI covers 6/6 modules.
-
-## Stage A5 — Property & fuzz tests (S–M)
-
-Zero property/fuzz coverage today on the most bug-prone surfaces.
-
-1. `nested_fock_algebra`: proptest round-trips — `adjoint(adjoint(op)) == op`;
-   `apply` distributes over addition; bounded expansion respects `SirkOpts` caps; vacuum
-   initialization invariant from AGENTS.md.
-2. `unfer_protocol`/`unfer_edge`: fuzz (cargo-fuzz or proptest byte-shredding) the NDJSON/JSON
-   envelope parsing and the edge op-allowlist + secret-masking filter; UK-1001 must be the
-   only parse-failure path, never a panic.
-3. Fix the warnings left in `qfm_text` (dead `build_channel_groups`, unused vars) — either
-   wire them up or remove them.
-
-**Acceptance**: new tests run in `cargo test --workspace`; a deliberately swapped adjoint
-rule fails the property test; no panics under 10k fuzz iterations.
-
-## Stage A6 — Pauli–Grover research follow-through (M–L, research)
+## Stage A6 — Pauli–Grover research completion (M–L, research)
 
 Context: PG without kernel gives 100% training but chance generalization; diffusion +
 distributed multi-mode encoding generalizes. Open questions, in priority order:
 
-1. **Kernel coupling for PG**: the Gram inner product already supports the SparseKernel;
-   extend `dense_pauli_grover_matvec` with the off-diagonal kernel terms and re-run the
-   parity held-out sweep (`qfm/tests/large_parity_classification.rs`). Hypothesis: kernel
-   lifts PG generalization above chance.
+1. **Kernel coupling for PG**: extend `dense_pauli_grover_matvec` with the off-diagonal
+   kernel terms and re-run the parity held-out sweep. Hypothesis: kernel lifts PG
+   generalization above chance.
 2. **`a` sweep**: 0.5–1.0 grid on parity + MNIST; document whether the residual |0⟩
    component helps held-out accuracy (update QFM.tex §Pauli–Grover with results).
 3. **CIFAR PG test**: port the existing CIFAR-10 fixture path to PG.
 4. **qfm_text GPU decode** (L): port `decode_sketched` to the candle CUDA path already in
-   `fock_sirk` — the ~140 h CPU wall blocks the rev-37 v3 diffusion-Hamiltonian evaluation,
-   the project's central open question (see `QFM_TEXT_STATUS.md`).
+   `fock_sirk` — the ~140 h CPU wall blocks the rev-37 v3 diffusion-Hamiltonian evaluation.
+5. Create `QFM_TEXT_STATUS.md` documenting the current state of qfm_text evaluations.
 
 **Acceptance**: each item lands as a committed test + a short results paragraph in
-`QFM.tex` / `QFM_TEXT_STATUS.md` (negative results count — record them honestly as before).
+`QFM.tex` / `QFM_TEXT_STATUS.md` (negative results count — record them honestly).
 
 ## Stage A7 — Consistency cleanup (S)
 
-1. `unfer_edge`: align `edition = "2024"` with the workspace; consider gating the heavy
-   Pingora deps out of the default workspace build.
-2. Document (or script) cleanup of `qfm_text_runs/` checkpoints (multi-hundred-MB dirs).
-3. `docs/BUILD_PIPELINE.md`: remove the TBD now that A4 exists; cross-link the builder.
+1. `unfer_edge`: align `edition = "2024"` with the workspace.
+2. Document (or script) cleanup of `qfm_text_runs/` checkpoints (3.9 GB).
+3. `docs/BUILD_PIPELINE.md`: cross-link the module_builder (TBD already removed).
 
 **Acceptance**: `cargo check --workspace` warning-free except upstream deps; CI green.
+
+## Stage A8 — New-crate documentation + test hardening (M)
+
+The five new crates (`logos`, `ode_sirk`, `unfer_consensus`, `unfer_data`, `unfer_identity`)
+have tests but no dedicated documentation or integration coverage.
+
+1. Write `docs/LOGOS.md`: architecture (parse→compile→reduce→readback→hash), the CNL
+   subset supported, deltanet/harper_gate roles, and the verified-execution guarantee.
+2. Write `docs/ODE_SIRK.md`: the ODE→Hamiltonian singularity detection pipeline, ESA
+   (exponential stability analysis), change-of-variables, and flow integration.
+3. Write `docs/FEDERATION.md`: QuePaxa consensus engine, DID identity lifecycle
+   (create/resolve/update/revoke), content publishing (CID + signatures), relay transport.
+   Document the 6xxx UK codes and the agent ops (`did_*`, `content_*`, `consensus_*`).
+4. Write `docs/DATA_PLANE.md`: chunking strategy, X25519+AES-GCM encryption, magnet URI
+   format, publisher flow.
+5. Add integration tests: consensus → identity → content_publish → content_resolve
+   round-trip; data plane encrypt → chunk → reassemble → decrypt round-trip.
+6. Add `logos`, `ode_sirk`, `unfer_consensus`, `unfer_data`, `unfer_identity` to
+   `docs/ARCHITECTURE.md` crate diagram.
+
+**Acceptance**: each new crate has a dedicated doc; integration tests pass;
+`docs/ARCHITECTURE.md` lists all crates.
+
+## Stage A9 — Cross-repo integration test (M)
+
+The three repos share a contract but have no automated cross-repo verification.
+
+1. Add `tests/integration/` with a script that:
+   a. Builds `unfer_ffi` cdylib.
+   b. Runs `tools/module_builder run demo_module` (exercises the FFI + module path).
+   c. Pipes an NDJSON session through velysterm's `unfer_agent` (create_model → evolve →
+      probability → bayesian_update → close_model) and asserts correct results.
+   d. Verifies `EXPECTED_SYMBOLS.txt` matches the built cdylib.
+2. Document the integration test in `docs/ARCHITECTURE.md` as the "system smoke test".
+3. Add a CI job (or document the manual command) that runs the full integration suite.
+
+**Acceptance**: `tests/integration/run.sh` passes on a clean checkout of all three repos
+as siblings; fails if any contract violation is introduced.
+
+## Stage A10 — Logos research follow-through (M–L, research)
+
+`logos` compiles a CNL (controlled natural language) subset to verified execution graphs.
+Current state: working end-to-end pipeline (parse→compile→reduce→readback→hash).
+
+1. Document the CNL grammar subset and the compilation semantics in `docs/LOGOS.md`.
+2. Add property tests: compilation preserves semantics (readback ∘ compile ≈ identity on
+   the CNL subset); reduction is confluent on well-formed graphs.
+3. Explore connecting logos output to `prob_kernel` model specs — a CNL description of a
+   quantum system should produce a valid `ModelSpec` that `create_model` accepts.
+4. If (3) succeeds, add a `logos_compile` agent op (additive, next free UK codes).
+
+**Acceptance**: property tests pass; if (3) lands, a CNL sentence produces a working
+kernel session end-to-end.
 
 ---
 
 ## Out of scope for this plan (owned by the other workstreams)
 
-- australVM: live UK-4001 enforcement, cps.rs tests, bridge build robustness, symbol
-  auto-sync test (it reads this repo but writes only there).
-- velysterm: `unfer_agent` new ops (`bayesian_update`, `belief_propagation`), worker
-  lifecycle, frontends.
+- australVM: B8 genuine hosting, B9 Tidepool modules, B9b Egison, B10 cap-std modules.
+- velysterm: editor UX for federation ops, multi-model documents, collaborative editing.
 
-`[SYNC]` at the end: after velysterm Plan C2 lands, paste its op-spec fragment into
-`docs/PROTOCOL.md` (one section, additive).
+`[SYNC]` steps: none remaining (A2 sync complete).
