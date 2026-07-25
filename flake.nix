@@ -18,7 +18,7 @@
 # toolkit pre-installed.
 
 {
-  description = "unfer kernel + CUDA toolkit pinned environment (P9 P12) + reproducible-build packages (P11.23)";
+  description = "unfer kernel + CUDA toolkit pinned environment (P9 P12) + reproducible-build packages (P11.23) + Haskell Egison workspace";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
   # Separate, newer channel for `packages.*` (P11.23, unfer_nixvm): the workspace's
@@ -31,10 +31,18 @@
   outputs = { self, nixpkgs, nixpkgs-unstable }:
     let
       pkgs = import nixpkgs {
+        system = "x86_64-linux";
         config.allowUnfree = true;  # CUDA toolkit is unfree
       };
-      cudaToolkit = pkgs.linuxPackages.nvidiaPackages.mkCudaToolkit12_2;
+      cudaToolkit = pkgs.cudaPackages_12_1.cudatoolkit;
       pkgsUnstable = import nixpkgs-unstable { system = "x86_64-linux"; };
+
+      # Configure Haskell package set with targeted Egison modules from the unstable channel
+      haskellEnv = pkgsUnstable.haskellPackages.ghcWithPackages (ps: [
+        ps.egison-pattern-src          # Core Egison pattern AST
+        ps.egison-pattern-src-th-mode # Template Haskell bindings
+        ps.template-haskell           # Built-in Template Haskell library
+      ]);
     in
     {
       # P11.23: `unfer_ffi` (the handle-based C ABI, cdylib+rlib) built as a
@@ -58,13 +66,18 @@
       devShells.x86_64-linux.default = pkgs.mkShell {
         name = "unfer-cuda-12.2";
 
-        # The CUDA toolkit: nvcc, libcublas, libcudart, etc.
+        # The CUDA toolkit, system utilities, and Haskell tools
         packages = with pkgs; [
           cudaToolkit
           gcc
           gnumake
           pkg-config
           rustup
+          
+          # Haskell Integration
+          haskellEnv
+          pkgsUnstable.cabal-install
+          pkgsUnstable.haskell-language-server
         ];
 
         # Prepend the CUDA toolkit libraries to LD_LIBRARY_PATH so
@@ -76,6 +89,7 @@
           export CUDA_HOME="${cudaToolkit}"
           export PATH="${cudaToolkit}/bin:$PATH"
           echo "[unfer-cuda-shell] CUDA ${cudaToolkit.version or "12.2"} on LD_LIBRARY_PATH"
+          echo "[unfer-cuda-shell] Haskell environment with Egison loaded"
         '';
 
         # Rustup default toolchain.
