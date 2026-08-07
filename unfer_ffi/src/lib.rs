@@ -6,8 +6,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
-    BayesianUpdateRequest, BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult,
-    Code, Diagnostic, EventPredicate, EventQuery, HamiltonianSpec, ModelSpec, PriorSpec, Severity,
+    ActionRecord, ActionState, BayesianUpdateRequest, BayesianUpdateResult,
+    BeliefPropagationRequest, BeliefPropagationResult, Code, Diagnostic, EventPredicate,
+    EventQuery, HamiltonianSpec, KernelEvent, ModelSpec, PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -547,6 +548,214 @@ pub extern "C" fn uk_buf_free(handle: i64) -> i64 {
     }
 }
 
+// ── deferred approval + local simulation (S4) ─────────────────────────────
+//
+// Side-effecting ops are never executed inline. `uk_action_submit` queues a
+// Pending `ActionRecord` and returns a provisional (simulated) result immediately
+// (the agent keeps working); an operator/gatekeeper resolves it later with
+// `uk_action_apply` / `uk_action_reject` / `uk_action_revert`. Reads merge the
+// provisional item back: pending → provisional result, approved → applied result.
+// The `effects` grant namespace (host-side `auth::check(principal, "Effect", name)`,
+// enforced by the cranelift loopback) is the gate on `uk_action_submit`.
+
+/// Submit a side-effecting action for approval.
+/// `req_json` is `{"principal":"<module>","effect":"<name>","params":{...},
+/// "provisional":{...optional simulated result...}}`.
+/// Creates a Pending `ActionRecord`, returns the action handle (positive), queues an
+/// `action_pending` event on every subscription (kernel-global approval lane). The
+/// caller reads the provisional result via `uk_action_get`. Returns <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_action_submit", || {
+        #[derive(serde::Deserialize)]
+        struct ActionSubmitReq {
+            #[serde(default)]
+            principal: String,
+            effect: String,
+            #[serde(default)]
+            params: serde_json::Value,
+            #[serde(default)]
+            provisional: Option<serde_json::Value>,
+        }
+        let req: ActionSubmitReq = parse_json(req_json, len)?;
+        let seq = next_action_seq();
+        let record = ActionRecord::new(
+            format!("action-{seq}"),
+            req.principal,
+            req.effect.clone(),
+            req.params,
+            seq,
+            Some(req.provisional.unwrap_or_else(|| {
+                serde_json::json!({ "simulated": true, "effect": req.effect })
+            })),
+        );
+        let handle = handles::store_action(record.clone());
+        handles::push_action_event(KernelEvent::ActionPending { action: record });
+        Ok(handle)
+    })
+}
+
+/// Approve (and execute) a pending action. Returns 0 on success; UK-4005 if already
+/// resolved; UK-4004 if the handle is unknown. Queues an `action_resolved` event.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
+    ffi_entry("uk_action_apply", || {
+        let approved = handles::with_action_mut(action_handle, |record| {
+            if record.state != ActionState::Pending {
+                return false;
+            }
+            record.state = ActionState::Approved;
+            record.applied = Some(serde_json::json!({
+                "applied": true,
+                "action_id": record.id,
+                "effect": record.effect,
+            }));
+            true
+        });
+        match approved {
+            None => Err(fail_action_not_found(action_handle)),
+            Some(true) => {
+                push_resolved(action_handle)?;
+                Ok(0)
+            }
+            Some(false) => Err(action_not_pending(action_handle)),
+        }
+    })
+}
+
+/// Reject a pending action. Returns 0 on success; UK-4005 if already resolved;
+/// UK-4004 if the handle is unknown. Queues an `action_resolved` event.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_action_reject(action_handle: i64) -> i64 {
+    ffi_entry("uk_action_reject", || {
+        let rejected = handles::with_action_mut(action_handle, |record| {
+            if record.state != ActionState::Pending {
+                return false;
+            }
+            record.state = ActionState::Rejected;
+            record.applied = None;
+            true
+        });
+        match rejected {
+            None => Err(fail_action_not_found(action_handle)),
+            Some(true) => {
+                push_resolved(action_handle)?;
+                Ok(0)
+            }
+            Some(false) => Err(action_not_pending(action_handle)),
+        }
+    })
+}
+
+/// Revert an approved action (rollback). Returns 0 on success; UK-4005 unless the
+/// action is currently `Approved`; UK-4004 if the handle is unknown. Queues an
+/// `action_resolved` event.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_action_revert(action_handle: i64) -> i64 {
+    ffi_entry("uk_action_revert", || {
+        let reverted = handles::with_action_mut(action_handle, |record| {
+            if record.state != ActionState::Approved {
+                return false;
+            }
+            record.state = ActionState::Reverted;
+            record.applied = None;
+            true
+        });
+        match reverted {
+            None => Err(fail_action_not_found(action_handle)),
+            Some(true) => {
+                push_resolved(action_handle)?;
+                Ok(0)
+            }
+            Some(false) => Err(action_not_pending(action_handle)),
+        }
+    })
+}
+
+/// Read an action with the merged (provisional→applied) result.
+/// Buffer-out protocol: probe with `buf=NULL,cap=0` for the length, then copy.
+/// Returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_action_get(action_handle: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_action_get", || {
+        let record = handles::with_action(action_handle, |r| r.clone())
+            .ok_or_else(|| fail_action_not_found(action_handle))?;
+        let value = action_record_json(&record, Some(action_handle))?;
+        let json = serde_json::to_string(&value)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// List all actions in the queue (gatekeeper scan surface), oldest first.
+/// `out_json` is a JSON array of `ActionRecord`s (with merged results and the
+/// numeric `handle` a gatekeeper needs to call `uk_action_apply`/`reject`/`revert`).
+/// Buffer-out protocol; returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_action_list(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_action_list", || {
+        let items = handles::list_actions();
+        let mut records = Vec::with_capacity(items.len());
+        for (handle, record) in items {
+            records.push(action_record_json(&record, Some(handle))?);
+        }
+        let json = serde_json::to_string(&records)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+fn fail_action_not_found(handle: i64) -> Diagnostic {
+    Diagnostic::new(
+        Code::ACTION_NOT_FOUND,
+        format!("no action with handle {handle}"),
+        Severity::Error,
+    )
+}
+
+fn action_not_pending(handle: i64) -> Diagnostic {
+    Diagnostic::new(
+        Code::ACTION_ALREADY_RESOLVED,
+        format!("action {handle} is not pending"),
+        Severity::Error,
+    )
+}
+
+fn next_action_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
+    NEXT_SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
+fn action_record_json(
+    record: &ActionRecord,
+    handle: Option<i64>,
+) -> Result<serde_json::Value, Diagnostic> {
+    let mut value = serde_json::to_value(record)
+        .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "result".to_string(),
+            record.merged_result().unwrap_or(serde_json::Value::Null),
+        );
+        if let Some(h) = handle {
+            obj.insert("handle".to_string(), serde_json::json!(h));
+        }
+    }
+    Ok(value)
+}
+
+/// Emit the `action_resolved` event for a resolved action (approval lane).
+fn push_resolved(action_handle: i64) -> Result<(), Diagnostic> {
+    let record = handles::with_action(action_handle, |r| r.clone())
+        .ok_or_else(|| fail_action_not_found(action_handle))?;
+    handles::push_action_event(KernelEvent::ActionResolved { action: record });
+    Ok(())
+}
+
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -746,5 +955,169 @@ mod tests {
 
         uk_model_free(h);
         uk_model_free(h2);
+    }
+
+    // ── S4: deferred approval + local simulation ─────────────────────────
+    //
+    // The action store is kernel-global (shared FFI statics), so the action tests
+    // serialize on ACTION_TESTS_LOCK: they must not run concurrently or they would
+    // interfere through the shared queue (counts and buffer sizes).
+
+    static ACTION_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn submit_action(effect: &str, params: &str) -> i64 {
+        let req = format!(
+            r#"{{"principal":"test_module","effect":"{effect}","params":{params}}}"#
+        );
+        let (ptr, len) = json_ptr(&req);
+        uk_action_submit(ptr, len)
+    }
+
+    fn action_get(handle: i64) -> serde_json::Value {
+        let json = read_buf(|b, c| uk_action_get(handle, b, c));
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn action_submit_queues_pending_record_with_provisional_result() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert!(handle > 0, "expected positive action handle, got {handle}");
+
+        let record = action_get(handle);
+        assert_eq!(record["effect"], "send_notification");
+        assert_eq!(record["state"], "pending");
+        assert_eq!(record["principal"], "test_module");
+        // Local simulation: the merged result while pending is the provisional one.
+        assert_eq!(record["result"]["simulated"], true);
+        assert_eq!(record["result"]["effect"], "send_notification");
+    }
+
+    #[test]
+    fn action_apply_resolves_and_merges_applied_result() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert_eq!(uk_action_apply(handle), 0);
+
+        let record = action_get(handle);
+        assert_eq!(record["state"], "approved");
+        assert_eq!(record["result"]["applied"], true);
+        assert_eq!(record["result"]["action_id"], record["id"]);
+    }
+
+    #[test]
+    fn action_reject_marks_rejected_and_blocks_reapply() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = submit_action("send_notification", r#"{"to":"bob"}"#);
+        assert_eq!(uk_action_reject(handle), 0);
+        assert_eq!(action_get(handle)["state"], "rejected");
+        // Re-resolving a resolved action is UK-4005.
+        assert_eq!(uk_action_apply(handle), -4005);
+        assert_eq!(uk_action_reject(handle), -4005);
+    }
+
+    #[test]
+    fn action_revert_requires_approved() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = submit_action("send_notification", r#"{"to":"carol"}"#);
+        // Reverting a pending action is UK-4005 (only approved actions can roll back).
+        assert_eq!(uk_action_revert(handle), -4005);
+        assert_eq!(uk_action_apply(handle), 0);
+        assert_eq!(uk_action_revert(handle), 0);
+        assert_eq!(action_get(handle)["state"], "reverted");
+    }
+
+    #[test]
+    fn action_unknown_handle_returns_neg4004() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(uk_action_apply(99999), -4004);
+        assert_eq!(uk_action_reject(99999), -4004);
+        assert_eq!(uk_action_revert(99999), -4004);
+    }
+
+    #[test]
+    fn action_list_returns_all_records() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let a = submit_action("op_a", r#"{"n":1}"#);
+        let b = submit_action("op_b", r#"{"n":2}"#);
+        assert_eq!(uk_action_reject(b), 0);
+
+        let json = read_buf(|buf, cap| uk_action_list(buf, cap));
+        let records: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = records.as_array().expect("action list must be an array");
+        // The action store is kernel-global and persists across tests; filter to this
+        // test's own records (the lock serializes action tests, but earlier tests' records
+        // remain in the shared queue).
+        let mine: Vec<&serde_json::Value> = arr
+            .iter()
+            .filter(|r| {
+                matches!(r["effect"].as_str(), Some("op_a") | Some("op_b"))
+            })
+            .collect();
+        assert_eq!(mine.len(), 2, "expected op_a + op_b in list: {json}");
+        assert_eq!(mine[0]["effect"], "op_a");
+        assert_eq!(mine[0]["state"], "pending");
+        assert_eq!(mine[0]["result"]["simulated"], true);
+        assert_eq!(mine[1]["effect"], "op_b");
+        assert_eq!(mine[1]["state"], "rejected");
+
+        let _ = a;
+    }
+
+    #[test]
+    fn action_submit_bad_json_returns_neg1001() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (ptr, len) = json_ptr("not json");
+        assert_eq!(uk_action_submit(ptr, len), -1001);
+        // Missing required `effect` field.
+        let (ptr, len) = json_ptr(r#"{"principal":"x","params":{}}"#);
+        assert_eq!(uk_action_submit(ptr, len), -1001);
+    }
+
+    #[test]
+    fn action_pending_event_broadcasts_to_subscriptions() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = create_harmonic_model();
+        let (qptr, qlen) = json_ptr(r#"{"types":["action_pending","action_resolved"]}"#);
+        let sub = uk_subscribe(h, qptr, qlen);
+        assert!(sub > 0);
+
+        let handle = submit_action("op_x", r#"{"k":"v"}"#);
+        let evt_json = read_buf(|b, c| uk_poll(sub, b, c));
+        let evt: serde_json::Value = serde_json::from_str(&evt_json).unwrap();
+        assert_eq!(evt["type"], "action_pending");
+        assert_eq!(evt["action"]["effect"], "op_x");
+        assert_eq!(evt["action"]["id"], record_id_of(handle));
+
+        assert_eq!(uk_action_apply(handle), 0);
+        let evt_json = read_buf(|b, c| uk_poll(sub, b, c));
+        let evt: serde_json::Value = serde_json::from_str(&evt_json).unwrap();
+        assert_eq!(evt["type"], "action_resolved");
+        assert_eq!(evt["action"]["state"], "approved");
+
+        uk_model_free(h);
+    }
+
+    #[test]
+    fn action_pending_event_respects_type_filter() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let h = create_harmonic_model();
+        // Subscribe to only "evolved" — action events must NOT arrive.
+        let (qptr, qlen) = json_ptr(r#"{"types":["evolved"]}"#);
+        let sub = uk_subscribe(h, qptr, qlen);
+
+        let _handle = submit_action("op_y", r#"{}"#);
+        let mut buf = [0u8; 256];
+        assert_eq!(
+            uk_poll(sub, buf.as_mut_ptr(), 256),
+            0,
+            "action_pending must be filtered out by evolved-only query"
+        );
+
+        uk_model_free(h);
+    }
+
+    fn record_id_of(handle: i64) -> String {
+        action_get(handle)["id"].as_str().unwrap().to_string()
     }
 }

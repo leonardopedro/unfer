@@ -1,0 +1,25 @@
+# S4 demo: the "gatekeeper" half of the gatekeeper/client pair (deferred approval +
+# local simulation, PLAN_cloudflare_os_adaptation.md §F2).
+#
+# The gatekeeper mediates side-effecting ops: it scans the kernel's approval queue
+# (uk_action_list), then approves or rejects pending ActionRecords on behalf of a
+# human operator (uk_action_apply / uk_action_reject / uk_action_revert). It needs
+# no `effects` grant — the ability to RESOLVE actions is a kernel capability.
+#
+# Run against the `client_module` in the same ModuleHost (they share the kernel
+# action store): client submits → gatekeeper approves → client re-reads the merged
+# applied result.
+
+[module]
+name = "gatekeeper_module"
+version = "0.1.0"
+archetypes = ["ecmascript"]
+archetype = "ecmascript"
+entry = "src/main.js"
+
+[grants]
+kernel = [
+    "uk_action_list",
+    "uk_action_apply",
+    "uk_action_reject",
+]

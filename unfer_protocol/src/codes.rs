@@ -20,6 +20,16 @@ impl Code {
     pub const OUT_OF_MEMORY_BUDGET: Code = Code(3002);
 
     pub const CALL_DENIED: Code = Code(4001);
+    /// The submitted side-effecting action requires operator/gatekeeper approval;
+    /// a provisional (simulated) result was returned so the caller can keep working.
+    pub const ACTION_REQUIRES_APPROVAL: Code = Code(4002);
+    /// The action was rejected by the operator/gatekeeper.
+    pub const ACTION_REJECTED: Code = Code(4003);
+    /// No action exists for the referenced handle/id.
+    pub const ACTION_NOT_FOUND: Code = Code(4004);
+    /// The action was already resolved (approved/rejected/reverted) and cannot be
+    /// resolved again.
+    pub const ACTION_ALREADY_RESOLVED: Code = Code(4005);
 
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
@@ -106,6 +116,26 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4001,
             "CallDenied",
             "The authorization engine denied the caller permission to invoke this kernel symbol.",
+        ),
+        (
+            4002,
+            "ActionRequiresApproval",
+            "The side-effecting action requires operator/gatekeeper approval; a provisional (simulated) result was returned.",
+        ),
+        (
+            4003,
+            "ActionRejected",
+            "The action was rejected by the operator/gatekeeper.",
+        ),
+        (
+            4004,
+            "ActionNotFound",
+            "No action exists for the referenced handle/id.",
+        ),
+        (
+            4005,
+            "ActionAlreadyResolved",
+            "The action was already resolved (approved/rejected/reverted) and cannot be resolved again.",
         ),
         (
             6001,

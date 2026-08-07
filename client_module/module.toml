@@ -1,0 +1,29 @@
+# S4 demo: the "client" half of the gatekeeper/client pair (deferred approval +
+# local simulation, PLAN_cloudflare_os_adaptation.md §F2).
+#
+# The client proposes a side-effecting op. `uk_action_submit` never executes it
+# inline: the kernel queues a Pending ActionRecord and returns a provisional
+# (simulated) result so the agent keeps working. A human/gatekeeper later resolves
+# the record via uk_action_apply / uk_action_reject / uk_action_revert.
+#
+# Two grant namespaces gate the call (F5, capability-mining at a single choke point):
+#   [grants] kernel  — the harness exposes only these symbols as workerd bindings.
+#   [grants] effects — the loopback authorizes the EFFECT NAME submitted through
+#                      uk_action_submit. Holding `send_notification` here means the
+#                      loopback permits submitting a `send_notification` action.
+
+[module]
+name = "client_module"
+version = "0.1.0"
+archetypes = ["ecmascript"]
+archetype = "ecmascript"
+entry = "src/main.js"
+
+[grants]
+kernel = [
+    "uk_action_submit",
+    "uk_action_get",
+]
+effects = [
+    "send_notification",
+]

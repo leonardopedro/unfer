@@ -5,7 +5,7 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
-use unfer_protocol::{Diagnostic, EventQuery, KernelEvent};
+use unfer_protocol::{ActionRecord, Diagnostic, EventQuery, KernelEvent};
 
 /// Maximum events retained per subscription before oldest are dropped.
 pub const EVENT_QUEUE_CAPACITY: usize = 64;
@@ -97,6 +97,26 @@ pub fn push_event(handle: i64, event: KernelEvent) {
     }
 }
 
+/// Broadcast a kernel-global action event (S4 approval lane) to subscriptions that
+/// **explicitly opted into the approval lane** — a query whose `types` list names
+/// `action_pending` / `action_resolved`. An all-types subscription (`{}` / `null`) is
+/// the *session* lane and does not receive action events: the two lanes are disjoint,
+/// so a module watching its model's event stream never sees foreign approval traffic.
+pub fn push_action_event(event: KernelEvent) {
+    let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+    let mut guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        for sub in map.values_mut() {
+            if matches_action_query(&sub.query, &event) {
+                if sub.events.len() >= EVENT_QUEUE_CAPACITY {
+                    sub.events.pop_front();
+                }
+                sub.events.push_back(event_json.clone());
+            }
+        }
+    }
+}
+
 fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
     let Some(types) = &query.types else {
         return true;
@@ -112,6 +132,21 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",
+        KernelEvent::ActionPending { .. } | KernelEvent::ActionResolved { .. } => unreachable!(),
+    };
+    types.contains(&event_type.to_string())
+}
+
+/// Approval-lane matcher: only explicit action types opt a subscription into the
+/// kernel-global action lane. Session events never match here.
+fn matches_action_query(query: &EventQuery, event: &KernelEvent) -> bool {
+    let Some(types) = &query.types else {
+        return false;
+    };
+    let event_type = match event {
+        KernelEvent::ActionPending { .. } => "action_pending",
+        KernelEvent::ActionResolved { .. } => "action_resolved",
+        _ => return false,
     };
     types.contains(&event_type.to_string())
 }
@@ -221,4 +256,54 @@ pub fn read_buffer(handle: i64) -> Option<String> {
         let slice = std::slice::from_raw_parts(*ptr, *len as usize);
         Some(std::str::from_utf8(slice).unwrap_or("").to_string())
     }
+}
+
+// ── action queue (S4: deferred approval + local simulation) ──────────────
+//
+// A single kernel-wide store of side-effecting `ActionRecord`s shared by every
+// module/session in the process. `uk_action_submit` inserts a Pending record and
+// returns its handle; `uk_action_apply/reject/revert` resolve it; `uk_action_get`
+// returns the record with the merged (provisional→applied) result; `uk_action_list`
+// returns the whole queue for a gatekeeper module to scan.
+
+static ACTIONS: Mutex<Option<HashMap<i64, ActionRecord>>> = Mutex::new(None);
+static NEXT_ACTION: AtomicI64 = AtomicI64::new(1);
+
+pub fn store_action(record: ActionRecord) -> i64 {
+    let handle = NEXT_ACTION.fetch_add(1, Ordering::SeqCst);
+    let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(handle, record);
+    handle
+}
+
+pub fn with_action<R>(handle: i64, f: impl FnOnce(&ActionRecord) -> R) -> Option<R> {
+    let guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_ref()?;
+    map.get(&handle).map(f)
+}
+
+pub fn with_action_mut<R>(
+    handle: i64,
+    f: impl FnOnce(&mut ActionRecord) -> R,
+) -> Option<R> {
+    let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_mut()?;
+    map.get_mut(&handle).map(f)
+}
+
+/// Snapshot of the full action queue (gatekeeper scan surface). Returns
+/// `(handle, record)` pairs ordered by handle (== creation order).
+pub fn list_actions() -> Vec<(i64, ActionRecord)> {
+    let guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut items: Vec<(i64, ActionRecord)> = guard
+        .as_ref()
+        .map(|map| {
+            map.iter()
+                .map(|(h, r)| (*h, r.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    items.sort_by_key(|(h, _)| *h);
+    items
 }

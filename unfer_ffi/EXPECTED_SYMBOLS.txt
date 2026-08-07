@@ -1,4 +1,10 @@
-uk_bayesian_update
+ uk_action_apply
+ uk_action_get
+ uk_action_list
+ uk_action_reject
+ uk_action_revert
+ uk_action_submit
+ uk_bayesian_update
 uk_belief_propagation
 uk_buf_free
 uk_condition

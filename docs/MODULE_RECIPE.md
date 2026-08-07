@@ -75,3 +75,169 @@ modules should hold handles as `Model`. _(Backend note: the current CPS-JIT does
 not yet lower record-destructure bindings or cross-module non-foreign calls, so
 the wrapper is enforced at typecheck time but executed via the raw `Int64`
 functions for now — see IMPLEMENTATION_PLAN gap §9.)_
+
+## ECMAScript modules (`archetype = "ecmascript"`)
+
+An ECMAScript module runs as a **workerd sidecar** (V8), served by the
+`austral_cranelift_bridge` `ecma.rs` supervisor (S1). It is the JS equivalent of
+the Austral CPS path: the same `uk_*` capability surface, the same `[grants]`
+authorization, and the same positive/UK-4001 test gates.
+
+### `module.toml`
+
+```toml
+[module]
+name = "my_js_module"
+version = "0.1.0"
+description = "Example ECMAScript module"
+archetypes = ["ecmascript"]      # select the workerd backend
+archetype = "ecmascript"
+entry = "src/main.js"            # the module's entry JS file (ES module)
+
+[grants]
+# Only these uk_* symbols become visible to the worker's `kernel` object.
+# Anything else in the uk_*/uz_* namespace throws UK-4001 (CALL_DENIED).
+kernel = [
+    "uk_version",
+    "uk_model_create",
+    "uk_model_free",
+    "uk_set_prior",
+    "uk_evolve",
+    "uk_event_probability",
+    "uk_get_result",
+    "uk_last_error",
+]
+```
+
+### Worker contract (`src/main.js`)
+
+The entry file is an **ES module**. The host calls a named export (defaulting to
+`default[name]`) as `async (kernel, args) => result`; the default entrypoint is
+`run`:
+
+```js
+export async function run(kernel, args) {
+  const version = await kernel.uk_version();
+  const model = await kernel.uk_model_create(args.spec);
+  await kernel.uk_set_prior(model, { kind: "vacuum" });
+  await kernel.uk_evolve(model, { t: 0.01 });
+  await kernel.uk_event_probability(model, { kind: "vacuum" });
+  const result = await kernel.uk_get_result(model);   // auto-parsed JSON object
+  await kernel.uk_model_free(model);
+  return { version, probability: result.probability };
+}
+```
+
+- `kernel` is a **capability object** (F5): a Proxy containing only the granted
+  symbols, each an `async (...args) => result` RPC to the host loopback. It never
+  exposes the full `uk_*` table.
+- Every `kernel.uk_*` call round-trips through `auth::check` host-side
+  (defense in depth) and returns `data.result` — a parsed JSON value. Most
+  `uk_*` return a JSON **string**; `uk_get_result`/`uk_last_error`/`uk_snapshot`
+  auto-parse their buffered output into objects. Errors throw with `err.ukCode`
+  set (`UK-4001` for un-granted symbols).
+- `args` is the JSON object passed to the entrypoint (e.g. from
+  `modhost host --args-json`). JSON embedded as a value arrives as an object —
+  use it directly; do **not** re-`JSON.parse` objects.
+- The return value is serialized and becomes the module-call result.
+
+### Runtime discovery & installation
+
+The workerd binary is auto-discovered at load time
+(`WorkerdPaths::from_env`, mirroring the test skip logic):
+
+1. `UNFER_WORKERD` — explicit binary path (error if set but missing).
+2. `workerd` on `$PATH` (global npm install, fnm shim, Nix profile).
+3. fnm-managed Node installations
+   (`~/.local/share/fnm/node-versions/*/installation/lib/node_modules/workerd`).
+
+The Cap'n Proto import dir is `UNFER_WORKERD_IMPORT` when set, else derived
+from the npm package layout next to the resolved binary. For a quick local
+setup: `npm install -g workerd`.
+
+### Hosting & tests
+
+- **Staging**: `load` writes `config.capnp`, `harness.mjs`, and a copy of the
+  entry JS under `<module_dir>/.unfer-ecma/`, starts one `workerd serve` sidecar
+  per module, and waits for the socket.
+- **Invocation**: `ModuleHost::call_json(handle, entrypoint, args_json)` or
+  `modhost host --args-json '<json>'`.
+- **Tests**: `cranelift/tests/ecmascript_module.rs` — positive lifecycle,
+  UK-4001 un-granted symbol, loopback deny, and (with `--features sandbox`) an
+  OS-sandbox confinement test asserting the sidecar runs in its own user
+  namespace with `no_new_privs` + seccomp. Skipped when no workerd runtime is
+  discoverable (mirrors the "CUDA optional" convention).
+
+### OS sandbox layer (`--features sandbox`, S3)
+
+With the `sandbox` feature, each workerd sidecar is wrapped by a dedicated
+launcher (`cranelift/src/sandbox.rs`) that composes Chromium-renderer-equivalent
+OS containment:
+
+- **User namespace** (`CLONE_NEWUSER`): the sidecar runs as an unprivileged,
+  uid/gid-mapped root with no host capabilities.
+- **Empty network namespace** (`CLONE_NEWNET`): the only reachable endpoints are
+  the unix sockets the sidecar materializes in its staging dir (the kernel
+  loopback and the main socket) — hence the unix-socket design.
+- **IPC namespace** (`CLONE_NEWIPC`) + **`no_new_privs`**.
+- **seccomp-bpf deny-list**: ptrace, mount, umount2, pivot_root, reboot,
+  kexec_load, module load/unload, open_by_handle_at, setns, perf, bpf,
+  userfaultfd, quotactl, swapon/off, ioperm/iopl, kcmp — all return `EPERM`.
+- **Landlock**: read/exec on the engine binary, its dynamic deps, and the system
+  dirs; writes confined to the staging dir + the module's granted `[grants] fs`
+  paths. Nonexistent readable dirs (e.g. `/lib` on NixOS) are skipped rather
+  than aborting the sandbox.
+
+Confinement is verified at spawn: the sidecar's `/proc/<pid>` shows a distinct
+user namespace, `NoNewPrivs: 1`, and `Seccomp: 1/2`. If the kernel lacks
+unprivileged user namespaces (`sandbox::supported()` false), the sidecar falls
+back to a plain spawn — browser-equivalent containment is best-effort.
+
+### Deferred approval + local simulation (`effects` grants, S4)
+
+Side-effecting ops are never executed inline. A module that wants to request an
+effect holds the grant in a **separate namespace**, `[grants] effects`, distinct
+from `[grants] kernel`:
+
+```toml
+[grants]
+kernel = ["uk_action_submit", "uk_action_get"]  # harness exposes these symbols
+effects = ["send_notification"]                  # loopback authorizes THIS effect
+```
+
+Two layers gate the call (F5, capability-minting at a single choke point):
+
+1. **Harness (layer 1)** — only symbols in `[grants] kernel` become workerd
+   bindings; un-granted `uk_*` throw UK-4001 in the capability object.
+2. **Loopback effects gate (layer 2, authoritative)** — `dispatch_loopback`
+   checks `uk_action_submit` against the module's `effects` snapshot instead of
+   the kernel grants: the submitted *effect name* must be in `[grants] effects`.
+   The record's `principal` is injected from the module identity (an audit tag —
+   a worker cannot claim another module's identity).
+
+The kernel surface (`unfer_ffi`, `unfer_protocol`):
+
+- `uk_action_submit(req_json)` — queues a Pending `ActionRecord` and returns its
+  handle immediately; the caller sees only the **provisional (simulated)**
+  result until resolution (local simulation — the agent keeps working).
+- `uk_action_apply / uk_action_reject / uk_action_revert(handle)` — the operator
+  resolves the record (`pending → approved | rejected | reverted`); only an
+  `Approved` record can be reverted.
+- `uk_action_get(handle)` — reads a record with the **merged** result: the
+  provisional result while pending, the applied result once approved.
+- `uk_action_list()` — the whole queue, each record carrying its numeric
+  `handle` so a gatekeeper can resolve it.
+- Events: `action_pending` / `action_resolved` broadcast to subscriptions that
+  **explicitly** opt into the approval lane (`{"types":["action_pending",...]}`);
+  an all-types subscription stays on the session lane.
+
+Lifecycle: `staged → pending → approved | rejected`, plus `approved → reverted`.
+Codes: `UK-4002 ACTION_REQUIRES_APPROVAL`, `UK-4003 ACTION_REJECTED`,
+`UK-4004 ACTION_NOT_FOUND`, `UK-4005 ACTION_ALREADY_RESOLVED`.
+
+Demo pair (committed under `unfer/`): `client_module/` submits a
+`send_notification` action; `gatekeeper_module/` lists pending actions and
+approves/rejects them. The positive flow + deny-when-ungranted are integration
+tests in `cranelift/tests/ecmascript_module.rs`
+(`ecmascript_effects_deferred_approval_flow`,
+`ecmascript_effects_deny_when_not_granted`).

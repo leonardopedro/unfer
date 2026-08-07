@@ -305,6 +305,98 @@ pub enum KernelEvent {
     Conditioned { prior_probability: f64 },
     Observed { value: f64 },
     Error { diagnostic: Diagnostic },
+    /// A side-effecting action was submitted for approval (S4). Broadcast to all
+    /// subscriptions (kernel-global approval lane), not scoped to one model handle.
+    ActionPending { action: ActionRecord },
+    /// An action was resolved by the operator/gatekeeper (approved / rejected /
+    /// reverted). Broadcast like [`KernelEvent::ActionPending`].
+    ActionResolved { action: ActionRecord },
+}
+
+// ── Deferred approval + local simulation (S4) ────────────────────────────
+//
+// Cloudflare "Gatekeeper" adaptation (PLAN_cloudflare_os_adaptation.md §F2):
+// side-effecting ops are not executed inline. `uk_action_submit` queues an
+// `ActionRecord` in the `{staged, pending, approved, rejected, reverted}`
+// lifecycle and returns a *provisional* (simulated) result immediately so the
+// agent keeps working; an operator/gatekeeper later resolves the record via
+// `uk_action_apply` / `uk_action_reject` / `uk_action_revert`. Reads merge the
+// provisional item back: a pending action reports its provisional result, an
+// approved one reports the real applied result.
+
+/// Lifecycle of a deferred-approval action (mirrors gatekeeper `state ∈
+/// {staged, pending, approved, rejected}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionState {
+    /// Record created but not yet submitted for approval.
+    Staged,
+    /// Submitted; awaiting operator/gatekeeper resolution. The submitter sees
+    /// only the provisional (simulated) result until this resolves.
+    Pending,
+    /// Approved by the operator/gatekeeper; the real (applied) result is set.
+    Approved,
+    /// Rejected by the operator/gatekeeper; the effect will not be executed.
+    Rejected,
+    /// An approved action was later reverted (rollback).
+    Reverted,
+}
+
+/// A side-effecting action awaiting (or having received) operator approval (S4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionRecord {
+    /// Stable identifier (`action-<seq>`).
+    pub id: String,
+    /// The module/agent that submitted the action (audit tag, F6).
+    pub principal: String,
+    /// The effect name, e.g. `"send_notification"`. The submitting module must
+    /// hold the matching grant in the `effects` namespace.
+    pub effect: String,
+    /// Effect-specific parameters (the payload the operator reviews).
+    pub params: serde_json::Value,
+    /// Current lifecycle state.
+    pub state: ActionState,
+    /// Monotonic creation sequence (wall-clock free, stable ordering).
+    pub created_at: u64,
+    /// The simulated result returned immediately on submission (local simulation).
+    /// Read back while the action is still pending.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisional: Option<serde_json::Value>,
+    /// The real result once `uk_action_apply` executed the effect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applied: Option<serde_json::Value>,
+}
+
+impl ActionRecord {
+    pub fn new(
+        id: impl Into<String>,
+        principal: impl Into<String>,
+        effect: impl Into<String>,
+        params: serde_json::Value,
+        created_at: u64,
+        provisional: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            principal: principal.into(),
+            effect: effect.into(),
+            params,
+            state: ActionState::Pending,
+            created_at,
+            provisional,
+            applied: None,
+        }
+    }
+
+    /// The merged result a reader sees: the applied result once approved, else the
+    /// provisional (simulated) result. This is the "reads merge the provisional
+    /// items back" behavior (mirror `github.ts:839`).
+    pub fn merged_result(&self) -> Option<serde_json::Value> {
+        match self.state {
+            ActionState::Approved => self.applied.clone(),
+            _ => self.provisional.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
