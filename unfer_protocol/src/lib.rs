@@ -1,6 +1,8 @@
+pub mod archive;
 pub mod codes;
 pub mod types;
 
+pub use archive::*;
 pub use codes::*;
 pub use types::*;
 

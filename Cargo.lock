@@ -4647,6 +4647,7 @@ dependencies = [
 name = "unfer_protocol"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "hex",
  "proptest",
  "serde",

@@ -232,6 +232,13 @@ the auth engine and an event stream.
 - **Deliverables:** a `gadget`/`facets` concept in `ModuleHost` — one workerd sidecar + one
   `Session` handle per module *instance*, with `uk_snapshot`/`uk_restore` for durable
   suspension/resume (already implemented at `unfer_ffi/src/lib.rs:412,425`).
+- **Status: S5 implemented** (2026-08). `ModuleHost::instantiate(dir, instance_id)` spawns a
+  dedicated `workerd` sidecar per instance key `"{name}@{id}"` — private staging dir
+  (`.unfer-ecma-<id>`) + unix sockets + separate process; `call_json_instance` routes calls to
+  that instance; `drop_instance` kills it. `snapshot_session`/`restore_instance` bind the
+  durable `SessionBlob` round-trip (F3 suspension/resume). Gate test
+  `modulehost_instantiate_isolates_instances` proves distinct staging dirs + distinct PIDs for
+  two instances of the same module.
 
 ### F4. Blueprints (shareable, instantiable app templates)  ★
 - **Map:** Cloudflare blueprints = gzip Yjs snapshot of gadget files + metadata in
@@ -240,6 +247,25 @@ the auth engine and an event stream.
   snapshot, mirroring `blueprint-archive.ts:2-5`), `module.toml`-driven instantiation, and a
   `uk_restore`-based `initialize_from_blueprint` path. Store in the existing `unfer_data`
   content plane (X25519+AES-GCM, magnet URIs) rather than KV/R2.
+- **Status: S5 implemented** (2026-08).
+  - `.cell` archive format lives in `unfer_protocol::archive` (the shared contract every layer
+    needs): magic `"UNFERCL1"` + version + JSON `CellMetadata` header + gzip body of
+    `{files:[[relpath, hex], ...], session: hex|null}`. `CellBuilder`/`Cell` round-trip
+    losslessly; parse rejects bad magic / unsupported version / truncation / corrupt gzip /
+    absolute paths.
+  - `uk_blueprint_export` packages a session snapshot into a `.cell`; `uk_blueprint_instantiate`
+    restores it (UK-4100 invalid archive, UK-4101 no session). `ModuleHost::instantiate_from_blueprint`
+    materializes the archived files (rejecting `..` traversal, requiring `module.toml`),
+    spawns a fresh per-instance sidecar, and restores the packaged session — the
+    `initialize_from_blueprint` path.
+  - Storage: `unfer_data::blueprint` stores a cell through the existing content plane — chunked
+    (SHA-256 per chunk), content-addressed, magnet URI, AES-GCM at rest — via
+    `store_cell`/`verify_cell` + encrypt/decrypt helpers mirroring `DataPublisher`.
+  - Gate tests: `modulehost_blueprint_roundtrip_restores_session` (E2E through workerd: evolve →
+    snapshot → package → instantiate → restored session reproduces the probability and the
+    `SessionBlob` JSON byte-identically), `modulehost_blueprint_rejects_path_traversal`,
+    `modulehost_blueprint_requires_module_toml`, plus FFI `uk_blueprint_export/instantiate`
+    round-trip + negative tests and protocol/data-plane unit tests.
 
 ### F5. Capability-minting chokepoint (default-deny)  ★
 - **Map:** Cloudflare mints capabilities once at `user.ts:getGatekeeperClassFor()` and never
@@ -297,6 +323,7 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
 - **S5 — Instance isolation + blueprints.** One `config.capnp`/sidecar per module instance +
   one `Session` handle; `.cell` archive format; `initialize_from_blueprint`; store in
   `unfer_data`. *Gate: snapshot/restore round-trip + blueprint instantiate test.*
+  **Status: implemented** (2026-08) — see §F3/F4.
 - **S6 — Agent accountability + audit.** `GatekeeperCaller` tags on `uk_*`/`ActionRecord`;
   `AgentSpawner` capability; expose audit via `unfer_edge`. *Gate: audit-listing test.*
 - **S7 — Packaging + optional VM.** Package `workerd` + the OS sandbox + the blueprint store

@@ -5,8 +5,10 @@
  uk_action_revert
  uk_action_submit
  uk_bayesian_update
-uk_belief_propagation
-uk_buf_free
+ uk_belief_propagation
+ uk_blueprint_export
+ uk_blueprint_instantiate
+ uk_buf_free
 uk_condition
 uk_event_probability
 uk_evolve

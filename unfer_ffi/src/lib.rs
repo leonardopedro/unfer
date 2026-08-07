@@ -77,6 +77,10 @@ fn parse_json<T: serde::de::DeserializeOwned>(ptr: *const u8, len: i64) -> Resul
 }
 
 fn write_buf(buf: *mut u8, cap: i64, data: &str) -> i64 {
+    write_bytes(buf, cap, data.as_bytes())
+}
+
+fn write_bytes(buf: *mut u8, cap: i64, data: &[u8]) -> i64 {
     let needed = data.len() as i64;
     if cap <= 0 || buf.is_null() {
         return needed;
@@ -86,6 +90,27 @@ fn write_buf(buf: *mut u8, cap: i64, data: &str) -> i64 {
         std::ptr::copy_nonoverlapping(data.as_ptr(), buf, copy_len);
     }
     needed
+}
+
+fn read_bytes(ptr: *const u8, len: i64) -> Result<Vec<u8>, Diagnostic> {
+    if len < 0 {
+        return Err(Diagnostic::new(
+            Code::BAD_JSON,
+            "negative length",
+            Severity::Error,
+        ));
+    }
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    if ptr.is_null() {
+        return Err(Diagnostic::new(
+            Code::BAD_JSON,
+            "null pointer with non-zero length",
+            Severity::Error,
+        ));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len as usize) }.to_vec())
 }
 
 // ── ABI functions ─────────────────────────────────────────────────────
@@ -426,6 +451,55 @@ pub extern "C" fn uk_snapshot(model: i64, buf: *mut u8, cap: i64) -> i64 {
 pub extern "C" fn uk_restore(blob_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_restore", || {
         let blob: SessionBlob = parse_json(blob_json, len)?;
+        let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
+        Ok(handles::store_session(session))
+    })
+}
+
+/// Package a session snapshot into a `.cell` blueprint archive (S5, F4). The archive body
+/// carries the `SessionBlob` JSON produced by `uk_snapshot`; module files are added by the
+/// host (`ModuleHost::instantiate_from_blueprint`), which owns the module directory.
+/// Buffer protocol: returns total bytes needed; copies `min(needed, cap)` into `buf`.
+/// Returns <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_export(model: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_blueprint_export", || {
+        let blob = handles::with_session_mut(model, |s| s.save()).ok_or_else(|| bad_handle(model))?;
+        let session_json = serde_json::to_string(&blob)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+
+        let mut builder = unfer_protocol::CellBuilder::new("unfer-session");
+        builder.set_archetype("kernel");
+        builder.set_session(session_json.as_bytes());
+
+        let cell = builder.build().map_err(|e| {
+            Diagnostic::new(Code::BLUEPRINT_INVALID, e.to_string(), Severity::Error)
+        })?;
+        Ok(write_bytes(buf, cap, &cell))
+    })
+}
+
+/// Instantiate a session from a `.cell` blueprint archive (S5, F4). The archive must carry a
+/// session snapshot (a `SessionBlob` JSON string) — the `initialize_from_blueprint` path.
+/// Returns a positive session handle on success, <0 (-code) on error
+/// (UK-4100 invalid archive, UK-4101 no session in archive).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_instantiate(cell: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_blueprint_instantiate", || {
+        let bytes = read_bytes(cell, len)?;
+        let parsed = unfer_protocol::Cell::parse(&bytes).map_err(|e| {
+            Diagnostic::new(Code::BLUEPRINT_INVALID, e.to_string(), Severity::Error)
+        })?;
+        let session = parsed.session().ok_or_else(|| {
+            Diagnostic::new(
+                Code::BLUEPRINT_NO_SESSION,
+                "blueprint archive carries no session snapshot",
+                Severity::Error,
+            )
+        })?;
+        let blob: SessionBlob = serde_json::from_slice(session).map_err(|e| {
+            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
+        })?;
         let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
         Ok(handles::store_session(session))
     })
@@ -955,6 +1029,65 @@ mod tests {
 
         uk_model_free(h);
         uk_model_free(h2);
+    }
+
+    // ── S5: .cell blueprint archives (instance isolation + blueprints) ──────
+
+    fn read_raw(f: impl Fn(*mut u8, i64) -> i64) -> Vec<u8> {
+        let needed = f(std::ptr::null_mut(), 0);
+        assert!(needed >= 0, "unexpected error probing buffer size");
+        let mut buf = vec![0u8; needed as usize];
+        f(buf.as_mut_ptr(), needed);
+        buf
+    }
+
+    #[test]
+    fn blueprint_export_instantiate_roundtrip() {
+        let h = create_harmonic_model();
+        assert!(h > 0);
+
+        // Evolve so the state differs from the vacuum prior.
+        let (eptr, elen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, eptr, elen), 0);
+
+        // Package the session into a .cell and instantiate a fresh handle from it.
+        let cell = read_raw(|b, c| uk_blueprint_export(h, b, c));
+        assert!(!cell.is_empty());
+        let h2 = uk_blueprint_instantiate(cell.as_ptr(), cell.len() as i64);
+        assert!(h2 > 0 && h2 != h, "expected fresh handle, got {h2}");
+
+        // The restored session must reproduce the same probability as the original.
+        let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
+        assert_eq!(uk_event_probability(h, pptr, plen), 0);
+        let p1 = read_buf(|b, c| uk_get_result(h, b, c));
+        assert_eq!(uk_event_probability(h2, pptr, plen), 0);
+        let p2 = read_buf(|b, c| uk_get_result(h2, b, c));
+        assert_eq!(p1, p2, "restored session must reproduce the original state");
+
+        uk_model_free(h);
+        uk_model_free(h2);
+    }
+
+    #[test]
+    fn blueprint_instantiate_rejects_bad_magic() {
+        let garbage = b"NOTACEL1-not-a-cell-archive";
+        let ret = uk_blueprint_instantiate(garbage.as_ptr(), garbage.len() as i64);
+        assert_eq!(ret, -4100, "bad magic must yield UK-4100, got {ret}");
+    }
+
+    #[test]
+    fn blueprint_instantiate_rejects_cell_without_session() {
+        let mut builder = unfer_protocol::CellBuilder::new("dry");
+        builder.add_file("module.toml", b"[module]\nname = \"dry\"\n").unwrap();
+        let cell = builder.build().unwrap();
+        let ret = uk_blueprint_instantiate(cell.as_ptr(), cell.len() as i64);
+        assert_eq!(ret, -4101, "session-less cell must yield UK-4101, got {ret}");
+    }
+
+    #[test]
+    fn blueprint_export_bad_handle() {
+        let ret = uk_blueprint_export(99999, std::ptr::null_mut(), 0);
+        assert_eq!(ret, -1004);
     }
 
     // ── S4: deferred approval + local simulation ─────────────────────────

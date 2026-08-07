@@ -31,6 +31,12 @@ impl Code {
     /// resolved again.
     pub const ACTION_ALREADY_RESOLVED: Code = Code(4005);
 
+    /// The `.cell` blueprint archive could not be parsed (bad magic, unsupported version,
+    /// corrupt gzip, malformed metadata).
+    pub const BLUEPRINT_INVALID: Code = Code(4100);
+    /// The `.cell` blueprint archive parsed but carries no session snapshot to restore.
+    pub const BLUEPRINT_NO_SESSION: Code = Code(4101);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -136,6 +142,16 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4005,
             "ActionAlreadyResolved",
             "The action was already resolved (approved/rejected/reverted) and cannot be resolved again.",
+        ),
+        (
+            4100,
+            "BlueprintInvalid",
+            "The .cell blueprint archive could not be parsed (bad magic, unsupported version, corrupt gzip, malformed metadata).",
+        ),
+        (
+            4101,
+            "BlueprintNoSession",
+            "The .cell blueprint archive parsed but carries no session snapshot to restore.",
         ),
         (
             6001,

@@ -241,3 +241,39 @@ approves/rejects them. The positive flow + deny-when-ungranted are integration
 tests in `cranelift/tests/ecmascript_module.rs`
 (`ecmascript_effects_deferred_approval_flow`,
 `ecmascript_effects_deny_when_not_granted`).
+
+### Instance isolation + blueprints (`.cell` archives, S5)
+
+**Per-instance sidecars (F3).** `ModuleHost::instantiate(dir, instance_id)`
+gives every instance of a module its own `workerd` sidecar — private staging
+dir (`.unfer-ecma-<id>`), private unix sockets, separate OS process — keyed by
+`"{module_name}@{instance_id}"`. Calls go through `call_json_instance(key, entry, args)`;
+`snapshot_session(handle)` / `restore_instance(key, session_json)` give durable
+suspension/resume for the instance's kernel `Session`.
+
+**`.cell` blueprint archives (F4).** A shareable, instantiable snapshot of a
+module = metadata + gzip of its files + an optional session snapshot:
+
+```
+UNFERCL1 │ version=1 │ CellMetadata (JSON) │ gzip{ files:[[relpath,hex],...],
+                                                   session: hex|null }
+```
+
+- Format + parser: `unfer_protocol::archive` (`CellBuilder`/`Cell`,
+  `ArchiveError`). Rejects bad magic, unsupported version, truncation, corrupt
+  gzip, and absolute paths.
+- Kernel: `uk_blueprint_export(model)` packages a session; `uk_blueprint_instantiate(cell)`
+  restores it. Codes `UK-4100 BLUEPRINT_INVALID`, `UK-4101 BLUEPRINT_NO_SESSION`.
+- Host: `ModuleHost::instantiate_from_blueprint(cell, parent_dir, id)`
+  materializes the archived files into `parent_dir/{name}-{id}` (rejecting `..`
+  traversal, requiring `module.toml`), spawns a fresh per-instance sidecar, and
+  restores the packaged session. The `worker`'s loopback transport hex-encodes
+  the binary cell (`uk_blueprint_export` returns `{cell_hex}`).
+- Storage: `unfer_data::blueprint` stores a cell through the existing content
+  plane (`store_cell`/`verify_cell`: chunked, content-addressed, magnet URI,
+  AES-GCM at rest) — the blueprint registry.
+
+The gate is an end-to-end round-trip
+(`modulehost_blueprint_roundtrip_restores_session`): evolve → snapshot → package
+`.cell` → instantiate → the restored session reproduces the original's
+probability and its `SessionBlob` JSON byte-identically.
