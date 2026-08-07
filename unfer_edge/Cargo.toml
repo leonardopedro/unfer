@@ -7,6 +7,8 @@ description = "Security-first Pingora proxy fronting the unfer_agent NDJSON loop
 [features]
 default = ["pingora"]
 pingora = ["dep:pingora", "dep:pingora-core", "dep:pingora-proxy", "dep:pingora-http", "dep:async-trait"]
+# Audit console: link the kernel FFI in-process and serve GET/DELETE /audit (S6).
+audit = ["dep:unfer_ffi"]
 
 [[bin]]
 name = "unfer_edge"
@@ -15,6 +17,7 @@ required-features = ["pingora"]
 
 [dependencies]
 unfer_protocol = { path = "../unfer_protocol" }
+unfer_ffi = { path = "../unfer_ffi", optional = true }
 pingora = { version = "0.8.1", features = ["proxy"], optional = true }
 pingora-core = { version = "0.8.1", optional = true }
 pingora-proxy = { version = "0.8.1", optional = true }

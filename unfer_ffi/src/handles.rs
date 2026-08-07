@@ -5,7 +5,9 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
-use unfer_protocol::{ActionRecord, Diagnostic, EventQuery, KernelEvent};
+use unfer_protocol::{
+    ActionRecord, AgentInfo, AuditEntry, CallerTag, Diagnostic, EventQuery, GrantSet, KernelEvent,
+};
 
 /// Maximum events retained per subscription before oldest are dropped.
 pub const EVENT_QUEUE_CAPACITY: usize = 64;
@@ -303,6 +305,155 @@ pub fn list_actions() -> Vec<(i64, ActionRecord)> {
                 .map(|(h, r)| (*h, r.clone()))
                 .collect()
         })
+        .unwrap_or_default();
+    items.sort_by_key(|(h, _)| *h);
+    items
+}
+
+// ── caller context (S6: GatekeeperCaller tags) ─────────────────────────
+//
+// A per-thread "who is calling right now" slot. The host loopback sets it at the
+// start of each dispatch (a module cannot forge another identity's tag — the
+// loopback owns the value), and the kernel reads it when appending audit entries
+// or tagging `ActionRecord`s. Direct (trusted) callers default to
+// `{from: hook, principal: "kernel"}` with no grant bounds.
+
+thread_local! {
+    static CALLER: std::cell::RefCell<CallerContext> =
+        std::cell::RefCell::new(CallerContext::default());
+}
+
+/// The active caller identity + optional bounded grants, per thread.
+#[derive(Debug, Clone)]
+pub struct CallerContext {
+    /// The audit tag (identity) of the current caller.
+    pub tag: CallerTag,
+    /// The caller's bounded grant set. `None` = unrestricted (kernel-level
+    /// trust — e.g. a direct harness driving the ABI).
+    pub grants: Option<GrantSet>,
+}
+
+impl Default for CallerContext {
+    fn default() -> Self {
+        Self {
+            tag: CallerTag::default(),
+            grants: None,
+        }
+    }
+}
+
+impl CallerContext {
+    /// True once `set_caller` has been called on this thread (distinguishes an
+    /// explicitly-tagged module/agent call from the default trusted harness).
+    pub fn is_explicit(&self) -> bool {
+        self.tag != CallerTag::default() || self.grants.is_some()
+    }
+}
+
+/// Set the current thread's caller context. Returns the previous context.
+pub fn set_caller(tag: CallerTag, grants: Option<GrantSet>) -> CallerContext {
+    let prev = CALLER.with(|c| std::mem::replace(
+        &mut *c.borrow_mut(),
+        CallerContext { tag, grants },
+    ));
+    prev
+}
+
+/// Reset the current thread's caller context to the default (trusted harness).
+pub fn clear_caller() {
+    CALLER.with(|c| *c.borrow_mut() = CallerContext::default());
+}
+
+/// Read the current thread's caller context.
+pub fn current_caller() -> CallerContext {
+    CALLER.with(|c| c.borrow().clone())
+}
+
+// ── audit trail (S6: human accountability) ─────────────────────────────
+//
+// An immutable kernel-global audit trail of `uk_*` calls, each tagged with the
+// caller that invoked it. The host loopback appends one entry per dispatch;
+// `uk_audit_list` exposes it to a gatekeeper/operator; `uk_audit_clear` resets
+// it (an operator action, never granted to untrusted modules).
+
+/// Maximum audit entries retained before the oldest are dropped.
+pub const AUDIT_CAPACITY: usize = 4096;
+
+static AUDIT: Mutex<Option<VecDeque<AuditEntry>>> = Mutex::new(None);
+static NEXT_AUDIT_SEQ: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Append an audit entry. `seq` is assigned here (monotonic, race-free). Returns
+/// the assigned sequence number.
+pub fn store_audit(mut entry: AuditEntry) -> u64 {
+    let seq = NEXT_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    entry.seq = seq;
+    let mut guard = AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    let queue = guard.get_or_insert_with(VecDeque::new);
+    if queue.len() >= AUDIT_CAPACITY {
+        queue.pop_front();
+    }
+    queue.push_back(entry);
+    seq
+}
+
+/// Snapshot of the audit trail, newest first (the operator review order).
+pub fn list_audit() -> Vec<AuditEntry> {
+    let guard = AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .map(|q| q.iter().rev().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Empty the audit trail. Returns the number of entries removed.
+pub fn clear_audit() -> usize {
+    let mut guard = AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    let len = guard.as_ref().map(VecDeque::len).unwrap_or(0);
+    *guard = None;
+    len
+}
+
+// ── agent registry (S6: AgentSpawner) ──────────────────────────────────
+//
+// A kernel-global registry of spawned sub-agents. `uk_agent_spawn` is the
+// capability-minting chokepoint: it records the agent and its **fixed** grant
+// set, refusing escalation (a sub-agent can only receive a subset of the
+// caller's own grants). The host loopback enforces the bounded set on every
+// call attributed to that agent (default-deny).
+
+static AGENTS: Mutex<Option<HashMap<i64, AgentInfo>>> = Mutex::new(None);
+static NEXT_AGENT: AtomicI64 = AtomicI64::new(1);
+
+pub fn store_agent(agent: AgentInfo) -> i64 {
+    let handle = NEXT_AGENT.fetch_add(1, Ordering::SeqCst);
+    let mut guard = AGENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(handle, agent);
+    handle
+}
+
+pub fn with_agent<R>(handle: i64, f: impl FnOnce(&AgentInfo) -> R) -> Option<R> {
+    let guard = AGENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_ref()?;
+    map.get(&handle).map(f)
+}
+
+pub fn with_agent_mut<R>(
+    handle: i64,
+    f: impl FnOnce(&mut AgentInfo) -> R,
+) -> Option<R> {
+    let mut guard = AGENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.as_mut()?;
+    map.get_mut(&handle).map(f)
+}
+
+/// Snapshot of the whole agent registry, ordered by handle (== spawn order).
+pub fn list_agents() -> Vec<(i64, AgentInfo)> {
+    let guard = AGENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut items: Vec<(i64, AgentInfo)> = guard
+        .as_ref()
+        .map(|map| map.iter().map(|(h, a)| (*h, a.clone())).collect())
         .unwrap_or_default();
     items.sort_by_key(|(h, _)| *h);
     items

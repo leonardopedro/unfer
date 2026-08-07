@@ -281,6 +281,31 @@ the auth engine and an event stream.
 - **Deliverables:** a `GatekeeperCaller`-style audit tag (`{from: agent|gadget|hook, chatId}`)
   on every `uk_*` call and every `ActionRecord`, so the human remains accountable. Add an
   `AgentSpawner` analogous capability that spawns sub-agents bounded to a fixed grant set.
+- **Status: S6 implemented** (2026-08).
+  - **Audit tags** (`unfer_protocol::CallerTag` `{from, principal, chat_id}`): minted once at
+    the loopback chokepoint (`dispatch_loopback_as` sets the thread-local caller before every
+    dispatch — a worker cannot forge another identity). Every dispatched `uk_*` call appends an
+    immutable `AuditEntry {seq, caller, symbol, ok, detail, args}` to the kernel trail
+    (`uk_audit_append` is host-internal), and `uk_action_submit` tags its `ActionRecord` with
+    the same caller — so `uk_action_get`/`uk_action_list` read the full
+    `GatekeeperCaller` tag, not just the principal.
+  - **Audit listing** (`uk_audit_list` newest-first / `uk_audit_clear`, both grant-gated C
+    symbols with loopback arms): a gatekeeper module holding `uk_audit_list` can review the
+    trail; `uk_audit_clear` is operator-only. `unfer_edge` exposes `GET/DELETE /audit`
+    (opt-in `--features audit`, embedded-kernel console).
+  - **AgentSpawner** (`uk_agent_spawn`/`uk_agent_list`/`uk_agent_kill`/`uk_agent_grants`):
+    spawns sub-agents **bounded to a fixed grant set** minted once at the chokepoint.
+    `uk_agent_spawn` refuses escalation (UK-4202 `AGENT_GRANT_ESCALATION` — the requested
+    grants must be a subset of the caller's own bounded set), and the loopback enforces the
+    recorded set on every call attributed to that agent (default-deny): `dispatch_loopback_as`
+    fetches the agent's bounds via `uk_agent_grants` and gates the symbol/effect against them.
+    A stopped/unknown agent is denied outright. Action submissions by an agent carry the
+    agent id as both the record principal and the `caller` tag.
+  - Gate tests: `uk_audit_*` FFI round-trip, `uk_agent_*` spawn/bound/kill/escalation,
+    `ActionRecord.caller`, and the loopback E2E (`loopback_audits_module_calls_with_caller_tag`,
+    `loopback_audits_action_submit_with_agent_caller`,
+    `loopback_agent_grant_enforcement_bounded_set`, `loopback_agent_unknown_handle_denies`),
+    plus the `unfer_edge` `/audit` payload test.
 
 ### F7. Cap'n Web RPC (promise pipelining, capability returns)  ◐ (optional)
 - **Map:** unfer's agent protocol is NDJSON over stdio (sequential). Cap'n Web adds
@@ -326,6 +351,7 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
   **Status: implemented** (2026-08) — see §F3/F4.
 - **S6 — Agent accountability + audit.** `GatekeeperCaller` tags on `uk_*`/`ActionRecord`;
   `AgentSpawner` capability; expose audit via `unfer_edge`. *Gate: audit-listing test.*
+  **Status: implemented** (2026-08) — see §F6.
 - **S7 — Packaging + optional VM.** Package `workerd` + the OS sandbox + the blueprint store
   into the content-addressed Nix flake (`unfer_nixvm`) so the ECMAScript path is reproducible.
   The default path stays **sidecar + OS sandbox, without a full VM** per §2.1; the

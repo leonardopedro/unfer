@@ -277,3 +277,46 @@ The gate is an end-to-end round-trip
 (`modulehost_blueprint_roundtrip_restores_session`): evolve → snapshot → package
 `.cell` → instantiate → the restored session reproduces the original's
 probability and its `SessionBlob` JSON byte-identically.
+
+### Agent accountability + audit (GatekeeperCaller tags, S6)
+
+**Every `uk_*` call is audited.** The loopback chokepoint tags the current
+thread's caller identity before dispatching, and the kernel appends one
+`AuditEntry` (`{seq, caller, symbol, ok, detail, args}`) per call — granted or
+denied. The `caller` is a `CallerTag` `{from: agent|gadget|hook, principal,
+chat_id}` minted by the host, so a worker cannot forge another identity's tag.
+`ActionRecord`s carry the same tag (`record.caller`), so a gatekeeper reviewing
+`uk_action_get`/`uk_action_list` sees exactly who submitted each side effect.
+
+```toml
+[grants]
+kernel = ["uk_audit_list"]   # a gatekeeper module may review the trail
+# uk_audit_clear is operator-only: never grant it to untrusted modules
+```
+
+- `uk_audit_list()` → `AuditEntry[]`, newest first; `uk_audit_clear()` →
+  `{removed: N}`. Both are grant-gated kernel symbols with loopback arms.
+- `unfer_edge --features audit` serves `GET /audit` (list) and `DELETE /audit`
+  (clear) from the embedded kernel — the operator console.
+
+**`AgentSpawner` (bounded sub-agents).** `uk_agent_spawn` mints a sub-agent with
+a **fixed grant set** at a single chokepoint:
+
+```json
+{"name":"analyst","grants":{"kernel":["uk_evolve"],"effects":["send_notification"]}}
+```
+
+- Escalation is impossible: the requested grants must be a subset of the
+  caller's own bounded set, else `UK-4202 AGENT_GRANT_ESCALATION`.
+- The host loopback enforces the recorded set on every call attributed to the
+  agent (default-deny); a stopped or unknown agent is denied outright. Action
+  submissions carry the agent id as both `principal` and `caller.principal`.
+- `uk_agent_list()` / `uk_agent_kill(handle)` / `uk_agent_grants(handle)`
+  complete the lifecycle. Codes: `UK-4200 AUDIT_INVALID`, `UK-4201
+  AGENT_NOT_FOUND`, `UK-4202 AGENT_GRANT_ESCALATION`, `UK-4203
+  AGENT_STATE_INVALID`.
+
+The gate is the audit-listing test: `uk_audit_*` FFI round-trip + the loopback
+E2E (`loopback_audits_module_calls_with_caller_tag`,
+`loopback_agent_grant_enforcement_bounded_set`, …) — denied attempts are audited
+too, because they are the most important entries in the human's review trail.

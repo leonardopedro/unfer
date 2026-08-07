@@ -37,6 +37,17 @@ impl Code {
     /// The `.cell` blueprint archive parsed but carries no session snapshot to restore.
     pub const BLUEPRINT_NO_SESSION: Code = Code(4101);
 
+    /// The audit/caller JSON was malformed (bad `CallerTag` / `AuditEntry`).
+    pub const AUDIT_INVALID: Code = Code(4200);
+    /// No agent exists for the referenced handle/id.
+    pub const AGENT_NOT_FOUND: Code = Code(4201);
+    /// `uk_agent_spawn` refused: the requested grant set is not a subset of the
+    /// caller's (capability escalation is impossible — the chokepoint).
+    pub const AGENT_GRANT_ESCALATION: Code = Code(4202);
+    /// The operation is invalid for the agent's current state (e.g. killing a
+    /// stopped agent).
+    pub const AGENT_STATE_INVALID: Code = Code(4203);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -152,6 +163,26 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4101,
             "BlueprintNoSession",
             "The .cell blueprint archive parsed but carries no session snapshot to restore.",
+        ),
+        (
+            4200,
+            "AuditInvalid",
+            "The audit/caller JSON was malformed (bad CallerTag / AuditEntry).",
+        ),
+        (
+            4201,
+            "AgentNotFound",
+            "No agent exists for the referenced handle/id.",
+        ),
+        (
+            4202,
+            "AgentGrantEscalation",
+            "uk_agent_spawn refused: the requested grant set is not a subset of the caller's (capability escalation is impossible — the chokepoint).",
+        ),
+        (
+            4203,
+            "AgentStateInvalid",
+            "The operation is invalid for the agent's current state (e.g. killing a stopped agent).",
         ),
         (
             6001,

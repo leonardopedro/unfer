@@ -4,6 +4,12 @@
  uk_action_reject
  uk_action_revert
  uk_action_submit
+ uk_agent_grants
+ uk_agent_kill
+ uk_agent_list
+ uk_agent_spawn
+ uk_audit_clear
+ uk_audit_list
  uk_bayesian_update
  uk_belief_propagation
  uk_blueprint_export

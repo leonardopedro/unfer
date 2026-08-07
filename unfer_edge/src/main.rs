@@ -24,6 +24,8 @@
 
 mod filter;
 mod mask;
+#[cfg(feature = "audit")]
+mod audit;
 
 use std::sync::Arc;
 
@@ -80,6 +82,37 @@ impl ProxyHttp for UnferGateway {
         session: &mut Session,
         _ctx: &mut GatewayCtx,
     ) -> pingora_core::Result<bool> {
+        // S6 (F6): the audit console short-circuits before proxying — GET /audit lists the
+        // kernel audit trail, DELETE /audit clears it (an operator action).
+        #[cfg(feature = "audit")]
+        {
+            let path = session.req_header().uri.path().to_string();
+            let method = session.req_header().method.to_string();
+            if audit::is_audit_path(&path) {
+                let (status, body) = match method.as_str() {
+                    "GET" => match audit::audit_list_body() {
+                        Ok(b) => (200u16, b),
+                        Err(e) => (500u16, e.into_bytes()),
+                    },
+                    "DELETE" => match audit::audit_clear_count() {
+                        Ok(b) => (200u16, b),
+                        Err(e) => (500u16, e.into_bytes()),
+                    },
+                    _ => (405u16, b"{\"error\":\"method not allowed\"}".to_vec()),
+                };
+                let mut header = ResponseHeader::build(status, None)?;
+                header.insert_header("content-type", "application/json")?;
+                header.insert_header("content-length", body.len().to_string())?;
+                session
+                    .write_response_header(Box::new(header), false)
+                    .await?;
+                session
+                    .write_response_body(Some(bytes::Bytes::from(body)), true)
+                    .await?;
+                return Ok(true);
+            }
+        }
+
         // Read the request body (bounded to 1 MiB).
         let body = match read_body(session).await {
             Ok(b) => b,

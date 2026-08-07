@@ -6,9 +6,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
-    ActionRecord, ActionState, BayesianUpdateRequest, BayesianUpdateResult,
-    BeliefPropagationRequest, BeliefPropagationResult, Code, Diagnostic, EventPredicate,
-    EventQuery, HamiltonianSpec, KernelEvent, ModelSpec, PriorSpec, Severity,
+    ActionRecord, ActionState, AgentInfo, AgentState, AuditEntry, BayesianUpdateRequest,
+    BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
+    Code, Diagnostic, EventPredicate, EventQuery, GrantSet, HamiltonianSpec, KernelEvent, ModelSpec,
+    PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -654,9 +655,9 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
         }
         let req: ActionSubmitReq = parse_json(req_json, len)?;
         let seq = next_action_seq();
-        let record = ActionRecord::new(
+        let mut record = ActionRecord::new(
             format!("action-{seq}"),
-            req.principal,
+            req.principal.clone(),
             req.effect.clone(),
             req.params,
             seq,
@@ -664,6 +665,19 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
                 serde_json::json!({ "simulated": true, "effect": req.effect })
             })),
         );
+        // S6 (F6): tag the record with the current caller. When the host loopback
+        // dispatched this call it set the thread-local caller to the module's
+        // identity, so `principal` (injected by the loopback) and the caller tag
+        // agree. A direct (untagged) caller falls back to a gadget tag built from
+        // the request's `principal`, if any.
+        let ctx = handles::current_caller();
+        record.caller = Some(if ctx.is_explicit() {
+            ctx.tag.clone()
+        } else if req.principal.is_empty() {
+            CallerTag::default()
+        } else {
+            CallerTag::gadget(&req.principal)
+        });
         let handle = handles::store_action(record.clone());
         handles::push_action_event(KernelEvent::ActionPending { action: record });
         Ok(handle)
@@ -804,6 +818,12 @@ fn next_action_seq() -> u64 {
     NEXT_SEQ.fetch_add(1, Ordering::SeqCst)
 }
 
+fn next_agent_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_AGENT_SEQ: AtomicU64 = AtomicU64::new(1);
+    NEXT_AGENT_SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
 fn action_record_json(
     record: &ActionRecord,
     handle: Option<i64>,
@@ -828,6 +848,247 @@ fn push_resolved(action_handle: i64) -> Result<(), Diagnostic> {
         .ok_or_else(|| fail_action_not_found(action_handle))?;
     handles::push_action_event(KernelEvent::ActionResolved { action: record });
     Ok(())
+}
+
+// ── agent accountability + audit (S6) ────────────────────────────────────
+//
+// Cloudflare "GatekeeperCaller" adaptation (F6). Three pieces:
+//
+// 1. **Caller context** (`uk_set_caller`/`uk_clear_caller`, Rust-ABI host-internal):
+//    the loopback chokepoint tags the current thread's identity before dispatching
+//    any `uk_*` call. These are NOT part of the C ABI surface (a worker cannot call
+//    them — the host owns the identity), so they are plain `pub fn`, not `extern "C"`.
+// 2. **Audit trail** (`uk_audit_append` host-internal; `uk_audit_list`/`uk_audit_clear`
+//    C-ABI): every dispatched call appends an immutable `AuditEntry` tagged with the
+//    caller. An operator/gatekeeper lists it; only an operator clears it.
+// 3. **AgentSpawner** (`uk_agent_spawn`/`uk_agent_list`/`uk_agent_kill`/
+//    `uk_agent_grants`, C-ABI): spawns sub-agents **bounded to a fixed grant set**,
+//    minted once at the chokepoint. Escalation is refused (UK-4202); the host loopback
+//    enforces the bounded set on every call attributed to the agent (default-deny).
+
+/// Set the current thread's caller context. `caller_json` is
+/// `{"from":"agent|gadget|hook","principal":"...","chat_id":?,"grants":?}` where
+/// `grants` is `{"kernel":[...],"effects":[...]}` (absent = unrestricted).
+/// Host-internal (Rust-ABI): not callable over the loopback. Returns 0 on success.
+pub fn uk_set_caller(caller_json: &str) -> Result<(), Diagnostic> {
+    #[derive(serde::Deserialize)]
+    struct CallerReq {
+        #[serde(default)]
+        from: Option<CallerKind>,
+        #[serde(default)]
+        principal: Option<String>,
+        #[serde(default)]
+        chat_id: Option<String>,
+        #[serde(default)]
+        grants: Option<GrantSet>,
+    }
+    let req: CallerReq = serde_json::from_str(caller_json).map_err(|e| {
+        Diagnostic::new(Code::AUDIT_INVALID, e.to_string(), Severity::Error)
+    })?;
+    let tag = CallerTag::new(
+        req.from.unwrap_or(CallerKind::Hook),
+        req.principal.unwrap_or_else(|| "kernel".to_string()),
+        req.chat_id,
+    );
+    handles::set_caller(tag, req.grants);
+    Ok(())
+}
+
+/// Reset the current thread's caller context to the default (trusted harness).
+/// Host-internal (Rust-ABI). Returns 0.
+pub fn uk_clear_caller() {
+    handles::clear_caller();
+}
+
+/// Append an audit entry for the current thread's caller. `entry_json` is
+/// `{"symbol":"...","args":?,"ok":bool,"detail":?}` — the caller tag is read from
+/// the thread-local caller context (the loopback set it at dispatch start).
+/// Host-internal (Rust-ABI): only the host loopback appends. Returns the assigned
+/// sequence number (0 on malformed input).
+pub fn uk_audit_append(entry_json: &str) -> i64 {
+    #[derive(serde::Deserialize)]
+    struct AuditAppendReq {
+        symbol: String,
+        #[serde(default)]
+        args: serde_json::Value,
+        #[serde(default)]
+        ok: bool,
+        #[serde(default)]
+        detail: Option<String>,
+    }
+    let req: AuditAppendReq = match serde_json::from_str(entry_json) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    let ctx = handles::current_caller();
+    let entry = AuditEntry {
+        seq: 0, // assigned by the store
+        caller: ctx.tag,
+        symbol: req.symbol,
+        ok: req.ok,
+        detail: req.detail,
+        args: if req.args.is_null() {
+            serde_json::json!([])
+        } else {
+            req.args
+        },
+    };
+    handles::store_audit(entry) as i64
+}
+
+/// List the audit trail, newest first. Buffer-out protocol (probe, then copy).
+/// Returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_audit_list(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_audit_list", || {
+        let entries = handles::list_audit();
+        let json = serde_json::to_string(&entries)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Clear the audit trail (an operator action). Returns the number of entries
+/// removed, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_audit_clear() -> i64 {
+    ffi_entry("uk_audit_clear", || Ok(handles::clear_audit() as i64))
+}
+
+/// Spawn a sub-agent bounded to a fixed grant set (S6 `AgentSpawner`).
+/// `spec_json` is `{"name":"...","grants":{"kernel":[...],"effects":[...]},
+/// "parent":?,"chat_id":?}`.
+///
+/// **Capability non-escalation:** when the caller holds a bounded grant set
+/// (thread-local caller context), the requested grants must be a subset of it
+/// (UK-4202 `AGENT_GRANT_ESCALATION` otherwise). A caller with no bound (the
+/// trusted harness) may mint any set. Returns the positive agent handle on
+/// success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_agent_spawn(spec_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_agent_spawn", || {
+        #[derive(serde::Deserialize)]
+        struct AgentSpawnReq {
+            name: String,
+            grants: GrantSet,
+            #[serde(default)]
+            parent: Option<String>,
+            #[serde(default)]
+            chat_id: Option<String>,
+        }
+        let req: AgentSpawnReq = parse_json(spec_json, len)?;
+        let ctx = handles::current_caller();
+        if let Some(caller_grants) = ctx.grants.as_ref()
+            && !req.grants.is_subset_of(caller_grants)
+        {
+            return Err(Diagnostic::new(
+                Code::AGENT_GRANT_ESCALATION,
+                format!(
+                    "grant escalation refused: requested {:?} is not a subset of caller grants",
+                    req.grants
+                ),
+                Severity::Error,
+            ));
+        }
+        let seq = next_agent_seq();
+        let agent = AgentInfo {
+            id: format!("agent-{seq}"),
+            name: req.name,
+            grants: req.grants,
+            parent: req.parent,
+            state: AgentState::Running,
+            created_at: seq,
+            chat_id: req.chat_id,
+        };
+        Ok(handles::store_agent(agent))
+    })
+}
+
+/// List all spawned sub-agents (registry scan surface), oldest first.
+/// Buffer-out protocol; returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_agent_list(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_agent_list", || {
+        let agents = handles::list_agents();
+        let mut values = Vec::with_capacity(agents.len());
+        for (handle, agent) in agents {
+            let mut value = serde_json::to_value(&agent).map_err(|e| {
+                Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
+            })?;
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("handle".to_string(), serde_json::json!(handle));
+            }
+            values.push(value);
+        }
+        let json = serde_json::to_string(&values)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Stop a sub-agent. Running/Paused → Stopped. Returns 0 on success;
+/// UK-4203 if already stopped; UK-4201 if the handle is unknown.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_agent_kill(handle: i64) -> i64 {
+    ffi_entry("uk_agent_kill", || {
+        let killed = handles::with_agent_mut(handle, |agent| {
+            if agent.state == AgentState::Stopped {
+                return false;
+            }
+            agent.state = AgentState::Stopped;
+            true
+        });
+        match killed {
+            None => Err(Diagnostic::new(
+                Code::AGENT_NOT_FOUND,
+                format!("no agent with handle {handle}"),
+                Severity::Error,
+            )),
+            Some(true) => Ok(0),
+            Some(false) => Err(Diagnostic::new(
+                Code::AGENT_STATE_INVALID,
+                format!("agent {handle} is already stopped"),
+                Severity::Error,
+            )),
+        }
+    })
+}
+
+/// Read a sub-agent's **fixed** grant set (the enforcement surface the host
+/// loopback checks every attributed call against). Buffer-out protocol; returns
+/// the byte length on success, UK-4201 if the handle is unknown.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_agent_grants(handle: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_agent_grants", || {
+        let grants = handles::with_agent(handle, |a| a.grants.clone()).ok_or_else(|| {
+            Diagnostic::new(
+                Code::AGENT_NOT_FOUND,
+                format!("no agent with handle {handle}"),
+                Severity::Error,
+            )
+        })?;
+        let json = serde_json::to_string(&grants)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Read a sub-agent's stable id (`agent-<seq>`). Host-internal (Rust-ABI): the
+/// loopback uses it as the agent's caller principal. Returns `None` if the
+/// handle is unknown or the agent is stopped.
+pub fn uk_agent_id(handle: i64) -> Option<String> {
+    handles::with_agent(handle, |a| {
+        if a.state == AgentState::Stopped {
+            None
+        } else {
+            Some(a.id.clone())
+        }
+    })
+    .flatten()
 }
 
 // ── tests ─────────────────────────────────────────────────────────────
@@ -1252,5 +1513,169 @@ mod tests {
 
     fn record_id_of(handle: i64) -> String {
         action_get(handle)["id"].as_str().unwrap().to_string()
+    }
+
+    // ── S6: agent accountability + audit ──────────────────────────────────
+    //
+    // The audit trail and agent registry are kernel-global (shared FFI statics),
+    // so these tests serialize on AUDIT_AGENT_TESTS_LOCK (like the action store)
+    // and clear the stores first.
+
+    static AUDIT_AGENT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn audit_list() -> serde_json::Value {
+        let json = read_buf(|b, c| uk_audit_list(b, c));
+        serde_json::from_str(&json).unwrap()
+    }
+
+    fn set_caller_gadget(principal: &str) {
+        let caller = format!(r#"{{"from":"gadget","principal":"{principal}","chat_id":"c-42"}}"#);
+        uk_set_caller(&caller).expect("caller json must parse");
+    }
+
+    #[test]
+    fn audit_append_list_clear_roundtrip() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        set_caller_gadget("mod_a");
+        let seq1 = uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
+        let seq2 = uk_audit_append(
+            r#"{"symbol":"uk_action_submit","args":[{"effect":"x"}],"ok":true}"#,
+        );
+        assert!(seq1 > 0 && seq2 > seq1);
+
+        let entries = audit_list();
+        let arr = entries.as_array().unwrap();
+        // Newest first; clear() removed prior entries so these two are all we see.
+        assert_eq!(arr.len(), 2, "expected 2 audit entries, got {entries}");
+        assert_eq!(arr[0]["symbol"], "uk_action_submit");
+        assert_eq!(arr[0]["caller"]["from"], "gadget");
+        assert_eq!(arr[0]["caller"]["principal"], "mod_a");
+        assert_eq!(arr[0]["caller"]["chat_id"], "c-42");
+        assert_eq!(arr[0]["ok"], true);
+        assert_eq!(arr[0]["args"][0]["effect"], "x");
+        assert_eq!(arr[1]["symbol"], "uk_evolve");
+        assert_eq!(arr[1]["caller"]["principal"], "mod_a");
+
+        assert!(uk_audit_clear() >= 2);
+        assert_eq!(audit_list().as_array().unwrap().len(), 0);
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn audit_default_caller_is_hook() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        // No explicit caller: the default hook/kernel tag applies.
+        let seq = uk_audit_append(r#"{"symbol":"uk_version","ok":true}"#);
+        assert!(seq > 0);
+        let entries = audit_list();
+        let arr = entries.as_array().unwrap();
+        assert_eq!(arr[0]["caller"]["from"], "hook");
+        assert_eq!(arr[0]["caller"]["principal"], "kernel");
+        uk_audit_clear();
+    }
+
+    #[test]
+    fn audit_append_rejects_malformed_entry() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Missing required `symbol` → seq 0 (no entry appended).
+        assert_eq!(uk_audit_append(r#"{"ok":true}"#), 0);
+    }
+
+    #[test]
+    fn agent_spawn_bounded_and_list() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_caller();
+        // A gadget holding {uk_evolve, uk_action_submit} may spawn an agent bounded
+        // to a subset, but not one with a superset (escalation is refused).
+        let caller = r#"{"from":"gadget","principal":"parent_mod","grants":{"kernel":["uk_evolve","uk_action_submit"],"effects":["send_notification"]}}"#;
+        uk_set_caller(caller).unwrap();
+
+        let spec =
+            r#"{"name":"analyst","grants":{"kernel":["uk_evolve"],"effects":["send_notification"]}}"#;
+        let (ptr, len) = json_ptr(spec);
+        let handle = uk_agent_spawn(ptr, len);
+        assert!(handle > 0, "subset spawn must succeed, got {handle}");
+
+        // Escalation: requesting a symbol the parent does not hold → UK-4202.
+        let bad =
+            r#"{"name":"sneaky","grants":{"kernel":["uk_evolve","uk_model_create"]}}"#;
+        let (ptr, len) = json_ptr(bad);
+        assert_eq!(uk_agent_spawn(ptr, len), -4202);
+        // Escalation via the effects namespace too.
+        let bad_effect = r#"{"name":"sneaky","grants":{"effects":["delete_all"]}}"#;
+        let (ptr, len) = json_ptr(bad_effect);
+        assert_eq!(uk_agent_spawn(ptr, len), -4202);
+
+        // The registry records the fixed (bounded) set.
+        let agents = read_buf(|b, c| uk_agent_list(b, c));
+        let arr: serde_json::Value = serde_json::from_str(&agents).unwrap();
+        let mine = arr
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "analyst")
+            .expect("analyst agent must be listed");
+        assert_eq!(mine["state"], "running");
+        assert_eq!(mine["grants"]["kernel"][0], "uk_evolve");
+        assert_eq!(mine["grants"]["effects"][0], "send_notification");
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn agent_kill_lifecycle() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_caller();
+        let spec = r#"{"name":"worker","grants":{"kernel":["uk_version"]}}"#;
+        let (ptr, len) = json_ptr(spec);
+        let handle = uk_agent_spawn(ptr, len);
+        assert!(handle > 0);
+        assert_eq!(uk_agent_kill(handle), 0);
+        // Killing an already-stopped agent → UK-4203.
+        assert_eq!(uk_agent_kill(handle), -4203);
+        // Unknown handle → UK-4201.
+        assert_eq!(uk_agent_kill(99999), -4201);
+    }
+
+    #[test]
+    fn agent_grants_returns_bounded_set() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_caller();
+        let spec = r#"{"name":"bounded","grants":{"kernel":["uk_evolve"],"effects":["notify"]}}"#;
+        let (ptr, len) = json_ptr(spec);
+        let handle = uk_agent_spawn(ptr, len);
+        assert!(handle > 0);
+        let grants_json = read_buf(|b, c| uk_agent_grants(handle, b, c));
+        let grants: serde_json::Value = serde_json::from_str(&grants_json).unwrap();
+        assert_eq!(grants["kernel"][0], "uk_evolve");
+        assert_eq!(grants["effects"][0], "notify");
+        // Unknown handle → UK-4201.
+        assert_eq!(uk_agent_grants(99999, std::ptr::null_mut(), 0), -4201);
+    }
+
+    #[test]
+    fn action_record_carries_caller_tag() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_caller();
+        set_caller_gadget("mod_tagged");
+        // The loopback injects the request principal to match the caller identity.
+        let req = r#"{"principal":"mod_tagged","effect":"send_notification","params":{"to":"dave"}}"#;
+        let (ptr, len) = json_ptr(req);
+        let handle = uk_action_submit(ptr, len);
+        assert!(handle > 0);
+        let record = action_get(handle);
+        assert_eq!(record["principal"], "mod_tagged");
+        assert_eq!(record["caller"]["from"], "gadget");
+        assert_eq!(record["caller"]["principal"], "mod_tagged");
+        assert_eq!(record["caller"]["chat_id"], "c-42");
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn set_caller_rejects_malformed_json() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let err = uk_set_caller("not json");
+        assert!(err.is_err(), "malformed caller json must fail");
     }
 }

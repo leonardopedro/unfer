@@ -349,6 +349,11 @@ pub struct ActionRecord {
     pub id: String,
     /// The module/agent that submitted the action (audit tag, F6).
     pub principal: String,
+    /// The full `GatekeeperCaller`-style tag (`{from, principal, chat_id}`) that
+    /// submitted the action (S6, F6). Injected at the loopback chokepoint from the
+    /// module's caller context; a worker cannot forge another identity's tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<CallerTag>,
     /// The effect name, e.g. `"send_notification"`. The submitting module must
     /// hold the matching grant in the `effects` namespace.
     pub effect: String,
@@ -379,6 +384,7 @@ impl ActionRecord {
         Self {
             id: id.into(),
             principal: principal.into(),
+            caller: None,
             effect: effect.into(),
             params,
             state: ActionState::Pending,
@@ -397,6 +403,144 @@ impl ActionRecord {
             _ => self.provisional.clone(),
         }
     }
+}
+
+// ── Agent accountability + audit (S6) ──────────────────────────────────
+//
+// Cloudflare "GatekeeperCaller" adaptation (PLAN_cloudflare_os_adaptation.md
+// §F6): every `uk_*` call and every `ActionRecord` carries a caller tag so the
+// initiating human stays accountable. The tag is minted once at the loopback
+// chokepoint (a module cannot claim another identity), the kernel appends the
+// audit trail, and the `AgentSpawner` capability spawns sub-agents bounded to a
+// fixed grant set.
+
+/// Where a kernel caller came from — the `{from: agent|gadget|hook}` audit axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallerKind {
+    /// A sub-agent spawned via `uk_agent_spawn` (F6 `AgentSpawner`).
+    Agent,
+    /// A module instance (the workerd-sidecar gadget path).
+    Gadget,
+    /// The operator/harness driving the kernel directly (trusted).
+    Hook,
+}
+
+/// The `GatekeeperCaller`-style audit tag on a `uk_*` call or `ActionRecord`
+/// (S6, F6). `{from, principal, chat_id}` — the human remains accountable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallerTag {
+    pub from: CallerKind,
+    /// Module name / agent id / hook label.
+    pub principal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
+}
+
+impl CallerTag {
+    pub fn new(
+        from: CallerKind,
+        principal: impl Into<String>,
+        chat_id: Option<String>,
+    ) -> Self {
+        Self {
+            from,
+            principal: principal.into(),
+            chat_id,
+        }
+    }
+
+    pub fn gadget(principal: impl Into<String>) -> Self {
+        Self::new(CallerKind::Gadget, principal, None)
+    }
+
+    pub fn agent(principal: impl Into<String>) -> Self {
+        Self::new(CallerKind::Agent, principal, None)
+    }
+
+    pub fn hook(principal: impl Into<String>) -> Self {
+        Self::new(CallerKind::Hook, principal, None)
+    }
+}
+
+impl Default for CallerTag {
+    fn default() -> Self {
+        Self::hook("kernel")
+    }
+}
+
+/// A bounded set of capability grants. `kernel` names `uk_*` symbols; `effects`
+/// names side-effecting effect names (the S4 `[grants] effects` namespace).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GrantSet {
+    #[serde(default)]
+    pub kernel: Vec<String>,
+    #[serde(default)]
+    pub effects: Vec<String>,
+}
+
+impl GrantSet {
+    pub fn kernel(symbols: &[&str]) -> Self {
+        Self {
+            kernel: symbols.iter().map(|s| s.to_string()).collect(),
+            effects: Vec::new(),
+        }
+    }
+
+    /// True when `self` is a subset of `other` (capability non-escalation).
+    pub fn is_subset_of(&self, other: &GrantSet) -> bool {
+        let in_other = |s: &String| other.kernel.contains(s);
+        self.kernel.iter().all(in_other) && self.effects.iter().all(|e| other.effects.contains(e))
+    }
+}
+
+/// One immutable audit-trail entry (S6). Created at the loopback chokepoint per
+/// `uk_*` call and by the kernel for action submissions/resolutions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuditEntry {
+    /// Monotonic sequence number (stable ordering, wall-clock free).
+    pub seq: u64,
+    /// The calling entity's tag — cannot be forged by the callee.
+    pub caller: CallerTag,
+    /// The kernel symbol invoked (e.g. `"uk_evolve"`, `"uk_action_submit"`).
+    pub symbol: String,
+    /// Whether the call succeeded (no diagnostic raised).
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// The JSON arguments (a JSON array for dispatched calls).
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+/// Lifecycle of a spawned sub-agent (S6 `AgentSpawner`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentState {
+    Running,
+    Paused,
+    Stopped,
+}
+
+/// A spawned sub-agent (S6). The `grants` set is fixed at spawn time — a
+/// capability-minting chokepoint (`uk_agent_spawn` refuses escalation), and the
+/// host loopback enforces it (default-deny).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentInfo {
+    /// Stable identifier (`agent-<seq>`).
+    pub id: String,
+    /// Human/operator label.
+    pub name: String,
+    /// The fixed, bounded grant set the sub-agent may exercise.
+    pub grants: GrantSet,
+    /// Parent agent id, if this is a sub-agent of another agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub state: AgentState,
+    /// Monotonic creation sequence (== spawn order).
+    pub created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
