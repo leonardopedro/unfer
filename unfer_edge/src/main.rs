@@ -25,10 +25,12 @@
 mod cells;
 mod filter;
 mod mask;
+mod metrics;
 #[cfg(feature = "audit")]
 mod audit;
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use pingora_core::prelude::*;
@@ -42,6 +44,12 @@ use unfer_data::CellStore;
 fn cell_store() -> &'static Mutex<CellStore> {
     static STORE: OnceLock<Mutex<CellStore>> = OnceLock::new();
     STORE.get_or_init(|| Mutex::new(CellStore::new()))
+}
+
+/// Process-local op counters (S13): `/metrics` serves the snapshot.
+fn edge_metrics() -> &'static metrics::Metrics {
+    static METRICS: OnceLock<metrics::Metrics> = OnceLock::new();
+    METRICS.get_or_init(metrics::Metrics::new)
 }
 
 /// Gateway configuration — set by CLI arguments.
@@ -91,6 +99,40 @@ impl ProxyHttp for UnferGateway {
         session: &mut Session,
         _ctx: &mut GatewayCtx,
     ) -> pingora_core::Result<bool> {
+        // S13 (F12): per-op metrics before any forwarding. GET /metrics → JSON;
+        // GET /metrics?format=prometheus → text exposition. Final.
+        if session.req_header().uri.path() == "/metrics" {
+            if session.req_header().method.to_string() != "GET" {
+                let mut header = ResponseHeader::build(405u16, None)?;
+                session
+                    .write_response_header(Box::new(header), false)
+                    .await?;
+                session.write_response_body(None, true).await?;
+                return Ok(true);
+            }
+            let body = match session.req_header().uri.query() {
+                Some(q) if q.contains("format=prometheus") => edge_metrics()
+                    .to_prometheus(&filter::allowed_ops_vec())
+                    .into_bytes(),
+                _ => serde_json::to_vec(&edge_metrics().to_json(&filter::allowed_ops_vec()))
+                    .unwrap_or_else(|_| b"".to_vec()),
+            };
+            let body = bytes::Bytes::from(body);
+            let mut header = ResponseHeader::build(200u16, None)?;
+            header.insert_header("content-type", "application/json")?;
+            header.insert_header(
+                "content-length",
+                body.len().to_string(),
+            )?;
+            session
+                .write_response_header(Box::new(header), false)
+                .await?;
+            session
+                .write_response_body(Some(body), true)
+                .await?;
+            return Ok(true);
+        }
+
         // S6 (F6): the audit console short-circuits before proxying — GET /audit lists the
         // kernel audit trail, DELETE /audit clears it (an operator action).
         #[cfg(feature = "audit")]
@@ -144,18 +186,29 @@ impl ProxyHttp for UnferGateway {
             return Ok(true);
         }
 
-        // Read the request body (bounded to 1 MiB).
+// Read the request body (bounded to 1 MiB).
         let body = match read_body(session).await {
             Ok(b) => b,
-            Err(e) => {
-                send_rejection(session, "unknown", &filter::Rejection::BadJson(e)).await?;
+            Err(_) => {
+                edge_metrics().record("??", false, 0);
+                let rejection = filter::Rejection::BadJson("request body too large".to_string());
+                send_rejection(session, "unknown", &rejection).await?;
                 return Ok(true);
             }
         };
 
+        let start = Instant::now();
         match filter::validate_request(&body) {
-            Ok(_req) => Ok(false), // pass through to backend
+            Ok(req) => {
+                edge_metrics().record(&req.op, true, start.elapsed().as_micros() as u64);
+                Ok(false) // pass through to backend
+            }
             Err(rejection) => {
+                let op = match &rejection {
+                    filter::Rejection::BadJson(_) => "??",
+                    filter::Rejection::OpDenied { op } => op.as_str(),
+                };
+                edge_metrics().record(op, false, start.elapsed().as_micros() as u64);
                 send_rejection(session, "unknown", &rejection).await?;
                 Ok(true)
             }

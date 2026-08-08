@@ -88,6 +88,11 @@ pub fn allowed_ops() -> HashSet<&'static str> {
     ALLOWED_OPS.iter().copied().collect()
 }
 
+/// Ordered allowlist slice (metrics/exposition use a stable order).
+pub fn allowed_ops_vec() -> Vec<&'static str> {
+    ALLOWED_OPS.to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

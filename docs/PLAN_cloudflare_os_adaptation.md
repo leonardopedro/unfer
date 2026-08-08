@@ -541,7 +541,13 @@ module permanently dead (no restart path).
 
 ---
 
-### F12. Observability: call tracing + metrics  ◐ (planned) → **S13**
+### F12. Observability: call tracing + metrics  ✅ (implemented 2026-08) → **S13**
+
+**Status: S13 implemented** (2026-08). `unfer_edge/src/metrics.rs` adds a thread-safe
+`Metrics` registry (per-op calls/errors/`total_us`); `request_filter` records every request
+(pass or reject) and the edge short-circuits `GET /metrics` (JSON) and
+`GET /metrics?format=prometheus` (text) before any forwarding. Remaining from the F12 part:
+`tracing` spans with `trace_id`/`CallerTag` and the console-trail observer (Part III F22).
 
 **Gap (verified).** The only sinks are `AuditEntry` (audit.rs is the only typed log) and
 plain log lines; no tracing, no metrics endpoint (`unfer_edge` only short-circuits `/audit`).
