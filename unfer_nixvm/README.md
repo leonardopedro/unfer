@@ -68,6 +68,34 @@ nix build .#vm-perf-with-unfer
 nix build .#vm-sec-with-unfer
 ```
 
+## Sandboxed sidecar (S7) — the default (non-VM) ECMAScript path
+
+The default hosting tier per PLAN §2.1 is **workerd sidecar + OS sandbox, no full VM**; the VM
+outputs above remain the opt-in extra isolation layer. S7 makes the sidecar path reproducible:
+
+- `packages.x86_64-linux.unfer-workerd` (parent `flake.nix`) — the statically-linked workerd
+  runtime + `workerd.capnp`, assembled from pinned npm tarballs (the meta tarball's node shim is
+  overwritten by the real platform binary at the same path, reproducing the npm layout `ecma.rs`
+  expects: `<pkg>/bin/workerd` + `<pkg>/workerd.capnp`).
+- `packages.x86_64-linux.unfer-data` (parent `flake.nix`) — the blueprint store (`unfer_data`)
+  built reproducibly like `unfer-ffi`.
+- `packages.sandboxed-sidecar` (this flake) — bundles workerd + unfer-data + unfer-ffi + the
+  smoke script. All store paths are content-addressed, so the exact builds are usable inside the
+  VM guest over virtiofs with no copy (same mechanism as `unfer-ffi`).
+- `apps.sandboxed-sidecar-smoke` / `run_sandboxed_sidecar.sh` — the gate: builds the packaged
+  workerd via Nix, then runs the `ecmascript_module` integration tests against it, asserting the
+  sidecar is confined in its own user namespace (`no_new_privs` + seccomp) and that the kernel
+  lifecycle round-trips.
+
+```sh
+# From the parent unfer/ directory:
+nix build .#unfer-workerd .#unfer-data
+
+# From here: build the sidecar bundle + run the smoke gate:
+nix build .#sandboxed-sidecar
+nix run .#sandboxed-sidecar-smoke
+```
+
 **Verification status (this session, 2026-07-01):**
 - `..#unfer-ffi` was actually built (not just evaluated) end-to-end via
   `nixpkgs-unstable`'s `rustPlatform.buildRustPackage` — a real

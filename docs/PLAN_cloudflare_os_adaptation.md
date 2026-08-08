@@ -357,6 +357,19 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
   The default path stays **sidecar + OS sandbox, without a full VM** per §2.1; the
   cloud-hypervisor VM remains an opt-in extra isolation layer for deployments that want it.
   *Gate: `nix build` + smoke test inside the sandboxed sidecar.*
+  **Status: implemented** (2026-08):
+  - `flake.nix` gains `packages.x86_64-linux.unfer-workerd` (statically-linked workerd +
+    `workerd.capnp` from pinned npm tarballs — the meta tarball's node shim is overwritten by
+    the real binary at the same path, reproducing the npm layout `ecma.rs` expects),
+    `unfer-data` (blueprint store rlib) and the existing `unfer-ffi`.
+  - `unfer_nixvm/flake.nix` gains `packages.sandboxed-sidecar` (bundles workerd + unfer-data +
+    unfer-ffi + the smoke script; store paths content-addressed and virtiofs-shareable with the
+    VM guest) and `apps.sandboxed-sidecar-smoke`.
+  - `unfer_nixvm/run_sandboxed_sidecar.sh` is the smoke gate: it builds the packaged workerd
+    via Nix, then runs the `ecmascript_module` integration tests (S3 sandbox confinement +
+    S1 lifecycle round-trip) against it. All 10 integration tests pass with no skips.
+  - `nix build .#unfer-workerd .#unfer-data` verified green; smoke passes (workerd
+    `1.20260808.1`, sandboxed sidecar in its own user namespace + no_new_privs + seccomp).
 
 ---
 

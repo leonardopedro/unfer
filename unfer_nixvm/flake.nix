@@ -48,6 +48,7 @@
   outputs = { self, nixpkgs, nixos-generators, unfer, cloud-hypervisor-build }:
     let
       system = "x86_64-linux";
+      pkgs = import nixpkgs { inherit system; };
 
       # ../../cloud-hypervisor-build's own guest module: virtiofs /nix +
       # optional ssh-agent share, GPU passthrough (hardware.opengl.enable),
@@ -82,6 +83,37 @@
           format = "raw";
           modules = [ baseModule unferGuestModule ];
         };
+
+        # S7: the sandboxed ECMAScript sidecar stack, packaged reproducibly.
+        # The default path stays sidecar + OS sandbox WITHOUT a full VM (§2.1);
+        # the VM outputs above remain the opt-in extra isolation tier. The store
+        # paths are content-addressed, so the same exact workerd / unfer-ffi /
+        # unfer-data builds are usable inside the guest over virtiofs with no
+        # copy. `run_sandboxed_sidecar.sh` is the smoke gate: it drives the
+        # packaged workerd through the S3 OS sandbox against the kernel.
+        sandboxed-sidecar = pkgs.stdenv.mkDerivation {
+          pname = "unfer-sandboxed-sidecar";
+          version = "0.1.0";
+          src = ./.;
+          buildPhase = "true";
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            ln -s ${unfer.packages.${system}.unfer-workerd} $out/workerd
+            ln -s ${unfer.packages.${system}.unfer-data} $out/unfer-data
+            ln -s ${unfer.packages.${system}.unfer-ffi} $out/unfer-ffi
+            install -m 0755 run_sandboxed_sidecar.sh $out/run_sandboxed_sidecar.sh
+            runHook postInstall
+          '';
+        };
+      };
+
+      # S7: `nix run .#sandboxed-sidecar-smoke` = the packaging gate (builds
+      # workerd + the blueprint store + the kernel ABI, then runs the sandboxed
+      # sidecar smoke against the packaged runtime).
+      apps.${system}.sandboxed-sidecar-smoke = {
+        type = "app";
+        program = "${self.packages.${system}.sandboxed-sidecar}/run_sandboxed_sidecar.sh";
       };
     };
 }

@@ -43,6 +43,9 @@
         ps.egison-pattern-src-th-mode # Template Haskell bindings
         ps.template-haskell           # Built-in Template Haskell library
       ]);
+
+      # S7: pinned workerd npm version (Cloudflare ships daily builds).
+      workerdVersion = "1.20260808.1";
     in
     {
       # P11.23: `unfer_ffi` (the handle-based C ABI, cdylib+rlib) built as a
@@ -61,6 +64,65 @@
         # The full workspace test suite (fock_sirk, qfm, etc.) is exercised by CI;
         # this derivation only needs to produce the unfer_ffi artifacts.
         doCheck = false;
+      };
+
+      # P11.23/S7: the data plane crate exposing the content-addressed blueprint store
+      # (`store_cell`/`verify_cell`, AES-GCM envelope, magnet URIs, content publishing).
+      # Built reproducibly like unfer-ffi.
+      packages.x86_64-linux.unfer-data = pkgsUnstable.rustPlatform.buildRustPackage {
+        pname = "unfer_data";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock.lockFile = ./Cargo.lock;
+        buildAndTestSubdir = "unfer_data";
+        # unfer_data is a plain rlib (no cdylib, no bins), so the default
+        # cargo-install leaves $out empty; ship the rlib explicitly so the
+        # store path carries the content-plane crate itself.
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out/lib
+          rlib=$(find target -name 'libunfer_data*.rlib' -print -quit)
+          if [ -n "$rlib" ]; then cp -v "$rlib" $out/lib/; fi
+          runHook postInstall
+        '';
+        doCheck = false;
+      };
+
+      # S7: the workerd runtime, packaged from Cloudflare's npm tarballs (no Bazel/clang build,
+      # no node shim). The meta tarball's `bin/workerd` is a node wrapper; we overwrite it with
+      # the statically-linked platform binary from `@cloudflare/workerd-linux-64` and keep the
+      # `workerd.capnp` schema beside it, exactly the npm layout `ecma.rs` expects
+      # (`<pkg>/bin/workerd` + `<pkg>/workerd.capnp`). Reproducible: both URLs are pinned with
+      # sha256, so the store path is content-addressed and shared with the guest over virtiofs
+      # just like unfer-ffi (see `unfer_nixvm/`).
+      packages.x86_64-linux.unfer-workerd = pkgsUnstable.stdenv.mkDerivation {
+        pname = "unfer-workerd";
+        version = workerdVersion;
+        src = pkgsUnstable.fetchurl {
+          url = "https://registry.npmjs.org/@cloudflare/workerd-linux-64/-/workerd-linux-64-${workerdVersion}.tgz";
+          sha256 = "02235d1d5e56a655b587bedc803c75d64e6b5f97cbb13e6cf289d73b1082c17d";
+        };
+        srcCapnp = pkgsUnstable.fetchurl {
+          url = "https://registry.npmjs.org/workerd/-/workerd-${workerdVersion}.tgz";
+          sha256 = "78bf07ea96b4b5d4b1f515859fa725712d05f21ab16fc0c7cb1b7b0300b78135";
+        };
+        dontUnpack = true;
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          # Capnp first (meta tarball: bin/workerd shim + workerd.capnp)...
+          tar xzf $srcCapnp -C $out --strip-components=1
+          # ...so the platform's real binary overwrites the shim at the same path.
+          tar xzf $src -C $out --strip-components=1
+          chmod +x $out/bin/workerd
+          runHook postInstall
+        '';
+        meta = {
+          description = "Cloudflare workerd runtime (npm tarball, S7 sidecar)";
+          homepage = "https://github.com/cloudflare/workerd";
+          license = pkgsUnstable.lib.licenses.asl20;
+          mainProgram = "workerd";
+        };
       };
 
       devShells.x86_64-linux.default = pkgs.mkShell {
