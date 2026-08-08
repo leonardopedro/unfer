@@ -470,13 +470,18 @@ impl Default for CallerTag {
 }
 
 /// A bounded set of capability grants. `kernel` names `uk_*` symbols; `effects`
-/// names side-effecting effect names (the S4 `[grants] effects` namespace).
+/// names side-effecting effect names (the S4 `[grants] effects` namespace);
+/// `observers` names *other principals* whose records/audit entries this caller
+/// may read (the F8 `[grants] observers` namespace). A caller always observes
+/// its own principal; the trusted harness (`grants: None`) observes everything.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct GrantSet {
     #[serde(default)]
     pub kernel: Vec<String>,
     #[serde(default)]
     pub effects: Vec<String>,
+    #[serde(default)]
+    pub observers: Vec<String>,
 }
 
 impl GrantSet {
@@ -484,13 +489,57 @@ impl GrantSet {
         Self {
             kernel: symbols.iter().map(|s| s.to_string()).collect(),
             effects: Vec::new(),
+            observers: Vec::new(),
         }
     }
 
     /// True when `self` is a subset of `other` (capability non-escalation).
+    /// Observation rights count too: a caller cannot mint observer visibility it
+    /// does not already hold (F8 no-read-up).
     pub fn is_subset_of(&self, other: &GrantSet) -> bool {
         let in_other = |s: &String| other.kernel.contains(s);
-        self.kernel.iter().all(in_other) && self.effects.iter().all(|e| other.effects.contains(e))
+        self.kernel.iter().all(in_other)
+            && self.effects.iter().all(|e| other.effects.contains(e))
+            && self.observers.iter().all(|o| other.observers.contains(o))
+    }
+}
+
+#[cfg(test)]
+mod grantset_tests {
+    use super::GrantSet;
+
+    #[test]
+    fn observers_are_serde_default() {
+        // A spec with no observers deserializes to an empty observer list (back-compat).
+        let g: GrantSet = serde_json::from_str(r#"{"kernel":["uk_version"]}"#).unwrap();
+        assert_eq!(g.observers, Vec::<String>::new());
+        assert_eq!(
+            serde_json::to_string(&GrantSet::kernel(&["uk_version"])).unwrap(),
+            r#"{"kernel":["uk_version"],"effects":[],"observers":[]}"#
+        );
+    }
+
+    #[test]
+    fn is_subset_of_includes_observers() {
+        let base = GrantSet {
+            kernel: vec!["uk_version".into(), "uk_evolve".into()],
+            effects: vec!["notify".into()],
+            observers: vec!["peer_a".into()],
+        };
+        // Subset of kernel+effects+observers → allowed.
+        let ok = GrantSet {
+            kernel: vec!["uk_version".into()],
+            effects: vec![],
+            observers: vec!["peer_a".into()],
+        };
+        assert!(ok.is_subset_of(&base));
+        // Observing a peer the caller does not observe → escalation.
+        let escalate = GrantSet {
+            kernel: vec![],
+            effects: vec![],
+            observers: vec!["peer_secret".into()],
+        };
+        assert!(!escalate.is_subset_of(&base), "observer escalation must be refused");
     }
 }
 

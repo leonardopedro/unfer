@@ -312,10 +312,20 @@ the auth engine and an event stream.
   pipelining + passing capability stubs as values — useful for `unfer_edge` HTTP clients.
 - **Deliverable (optional):** a `capnweb`-style RPC layer behind `unfer_edge`; low priority.
 
-### F8. Observers / information-flow leak prevention  ◐ (optional)
+### F8. Observers / information-flow leak prevention  ✅ (implemented 2026-08)
 - **Map:** Cloudflare re-verifies every collaborator against every observation to prevent
   gadget→collaborator leaks. This is defense-in-depth; map to the `ActionRecord` audit log.
-- **Deliverable (optional):** per-collaborator re-check on shared module reads.
+- **Deliverable:** per-collaborator re-check on shared module reads. **Status: implemented**
+  (2026-08) — see §S8.
+- **Mechanism:** every loopback dispatch now installs the caller's *full* grant set
+  (`kernel` + `effects` + `observers`) on the thread-local caller context
+  (`set_loopback_caller`). `uk_action_list`/`uk_action_get`/`uk_audit_list` re-check the
+  active caller against each record/entry: the trusted harness (no bounded grant) sees all;
+  a bounded caller sees only its own principal and any principal listed in its
+  `[grants] observers`. An un-observable `uk_action_get` is indistinguishable from a missing
+  record (UK-4004, no existence oracle). The loopback also now enforces capability
+  non-escalation on `uk_agent_spawn` (UK-4202), including observer rights
+  (`GrantSet::is_subset_of` covers `observers`).
 
 ---
 
@@ -370,6 +380,15 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
     S1 lifecycle round-trip) against it. All 10 integration tests pass with no skips.
   - `nix build .#unfer-workerd .#unfer-data` verified green; smoke passes (workerd
     `1.20260808.1`, sandboxed sidecar in its own user namespace + no_new_privs + seccomp).
+- **S8 — Observers / information-flow leak prevention.** New `[grants] observers` namespace in
+  `GrantSet`; every loopback dispatch installs the caller's full grant set on the thread-local
+  caller context; `uk_action_list`/`uk_action_get`/`uk_audit_list` re-check the caller against
+  each record/entry (trusted harness sees all; a bounded caller sees only its own principal +
+  declared observers; un-observable reads look like missing records, UK-4004). Loopback
+  `uk_agent_spawn` now enforces capability non-escalation incl. observer rights (UK-4202).
+  *Gate: loopback observer/escalation unit tests + the `ecmascript_observers_filter_action_reads`
+  E2E test (12/12 integration tests, 0 skips) + FFI observer tests.*
+  **Status: implemented** (2026-08) — see §F8.
 
 ---
 

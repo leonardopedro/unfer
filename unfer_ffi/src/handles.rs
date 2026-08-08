@@ -348,6 +348,20 @@ impl CallerContext {
     pub fn is_explicit(&self) -> bool {
         self.tag != CallerTag::default() || self.grants.is_some()
     }
+
+    /// F8 observer re-check: may this caller read a record/audit entry whose
+    /// principal is `principal`? The trusted harness (no bounded grant set) sees
+    /// everything; a bounded caller sees its own principal and any principal
+    /// declared in its `observers` grant (no read-up).
+    pub fn may_observe(&self, principal: &str) -> bool {
+        match self.grants.as_ref() {
+            None => true,
+            Some(grants) => {
+                self.tag.principal == principal
+                    || grants.observers.iter().any(|o| o == principal)
+            }
+        }
+    }
 }
 
 /// Set the current thread's caller context. Returns the previous context.

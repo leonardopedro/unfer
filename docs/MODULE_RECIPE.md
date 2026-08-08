@@ -299,6 +299,26 @@ kernel = ["uk_audit_list"]   # a gatekeeper module may review the trail
 - `unfer_edge --features audit` serves `GET /audit` (list) and `DELETE /audit`
   (clear) from the embedded kernel — the operator console.
 
+**Observers (information-flow, F8).** A bounded caller may only *read* records
+and audit entries for **its own principal** plus any principal declared in the
+`[grants] observers` namespace — the trusted harness (operator/`unfer_edge`)
+sees all. Without this, *any* module holding `uk_action_list`/`uk_audit_list`
+could enumerate every other module's actions, params, and audit args — a
+gadget→collaborator leak.
+
+```toml
+[grants]
+kernel = ["uk_action_list", "uk_action_apply"]  # gatekeeper symbols
+observers = ["ecma_client"]                      # whose records this module may read
+```
+
+- `uk_action_list`/`uk_audit_list` silently omit un-observable records; a
+  `uk_action_get` on an un-observable handle is indistinguishable from a missing
+  record (`UK-4004` — no existence oracle).
+- A module always observes itself; sub-agents inherit the observer set recorded
+  at spawn, and `uk_agent_spawn` refuses to mint observer rights the caller does
+  not hold (`UK-4202`).
+
 **`AgentSpawner` (bounded sub-agents).** `uk_agent_spawn` mints a sub-agent with
 a **fixed grant set** at a single chokepoint:
 

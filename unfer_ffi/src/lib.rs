@@ -770,6 +770,12 @@ pub extern "C" fn uk_action_get(action_handle: i64, buf: *mut u8, cap: i64) -> i
     ffi_entry("uk_action_get", || {
         let record = handles::with_action(action_handle, |r| r.clone())
             .ok_or_else(|| fail_action_not_found(action_handle))?;
+        // F8 observer re-check: a bounded caller may only read its own records
+        // and those of its declared `observers`. An un-observable record is
+        // indistinguishable from a missing one (no existence oracle).
+        if !handles::current_caller().may_observe(&record.principal) {
+            return Err(fail_action_not_found(action_handle));
+        }
         let value = action_record_json(&record, Some(action_handle))?;
         let json = serde_json::to_string(&value)
             .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
@@ -780,14 +786,20 @@ pub extern "C" fn uk_action_get(action_handle: i64, buf: *mut u8, cap: i64) -> i
 /// List all actions in the queue (gatekeeper scan surface), oldest first.
 /// `out_json` is a JSON array of `ActionRecord`s (with merged results and the
 /// numeric `handle` a gatekeeper needs to call `uk_action_apply`/`reject`/`revert`).
-/// Buffer-out protocol; returns the byte length on success, <0 (-code) on error.
+/// F8: a bounded caller only sees records it may observe (its own principal plus
+/// its `observers`); the trusted harness sees all. Buffer-out protocol; returns
+/// the byte length on success, <0 (-code) on error.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_action_list(buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_action_list", || {
+        let ctx = handles::current_caller();
         let items = handles::list_actions();
         let mut records = Vec::with_capacity(items.len());
         for (handle, record) in items {
+            if !ctx.may_observe(&record.principal) {
+                continue;
+            }
             records.push(action_record_json(&record, Some(handle))?);
         }
         let json = serde_json::to_string(&records)
@@ -937,12 +949,18 @@ pub fn uk_audit_append(entry_json: &str) -> i64 {
 }
 
 /// List the audit trail, newest first. Buffer-out protocol (probe, then copy).
-/// Returns the byte length on success, <0 (-code) on error.
+/// F8: a bounded caller only sees entries it may observe (its own principal plus
+/// its `observers`); the trusted harness sees the full trail. Returns the byte
+/// length on success, <0 (-code) on error.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_audit_list(buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_audit_list", || {
-        let entries = handles::list_audit();
+        let ctx = handles::current_caller();
+        let entries: Vec<AuditEntry> = handles::list_audit()
+            .into_iter()
+            .filter(|e| ctx.may_observe(&e.caller.principal))
+            .collect();
         let json = serde_json::to_string(&entries)
             .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
         Ok(write_buf(buf, cap, &json))
@@ -1677,5 +1695,91 @@ mod tests {
         let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let err = uk_set_caller("not json");
         assert!(err.is_err(), "malformed caller json must fail");
+    }
+
+    // ── F8: observer re-check on shared reads ─────────────────────────────
+    //
+    // A bounded caller may read only records/audit entries for its own principal
+    // and any principal in its `observers` grant. The trusted harness sees all.
+
+    fn set_caller_bounded(principal: &str, observers: &[&str]) {
+        let obs: Vec<String> = observers.iter().map(|s| format!("\"{s}\"")).collect();
+        let caller = format!(
+            r#"{{"from":"gadget","principal":"{principal}","grants":{{"kernel":["uk_action_list","uk_action_get","uk_audit_list"],"effects":[],"observers":[{}]}}}}"#,
+            obs.join(",")
+        );
+        uk_set_caller(&caller).expect("caller json must parse");
+    }
+
+    #[test]
+    fn action_list_get_filtered_by_observer_grants() {
+        // Serializes on ACTION_TESTS_LOCK: uk_action_submit broadcasts a kernel-global
+        // action_pending event that concurrent subscription/poll tests would receive.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_caller();
+        set_caller_gadget("f8_owner");
+        let req = r#"{"principal":"f8_owner","effect":"send_notification","params":{"to":"eve"}}"#;
+        let (ptr, len) = json_ptr(req);
+        let handle = uk_action_submit(ptr, len);
+        assert!(handle > 0, "submit must succeed");
+
+        // Reader with NO observer grant: f8_owner's record is invisible, and reading
+        // its handle is indistinguishable from a missing record (UK-4004).
+        set_caller_bounded("f8_reader", &[]);
+        let json = read_buf(|b, c| uk_action_list(b, c));
+        let records: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = records.as_array().expect("action list must be an array");
+        assert!(
+            arr.iter().all(|r| r["principal"] != "f8_owner"),
+            "reader without observer grant must not see f8_owner: {json}"
+        );
+        assert_eq!(
+            uk_action_get(handle, std::ptr::null_mut(), 0),
+            -4004,
+            "reading an un-observable record is UK-4004 (no existence oracle)"
+        );
+
+        // Reader WITH the observer grant CAN see it.
+        set_caller_bounded("f8_peer", &["f8_owner"]);
+        let json = read_buf(|b, c| uk_action_list(b, c));
+        let records: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = records.as_array().expect("action list must be an array");
+        assert!(
+            arr.iter().any(|r| r["principal"] == "f8_owner"),
+            "peer with observer grant must see f8_owner: {json}"
+        );
+        let record = action_get(handle);
+        assert_eq!(record["principal"], "f8_owner");
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn audit_list_filtered_by_observer_grants() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_clear_caller();
+        set_caller_gadget("f8_audit_owner");
+        uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
+
+        // Reader without the observer grant sees no f8_audit_owner entries.
+        set_caller_bounded("f8_audit_reader", &[]);
+        let json = read_buf(|b, c| uk_audit_list(b, c));
+        let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = entries.as_array().expect("audit list must be an array");
+        assert!(
+            arr.iter().all(|e| e["caller"]["principal"] != "f8_audit_owner"),
+            "reader without observer grant must not see f8_audit_owner: {json}"
+        );
+
+        // Reader WITH the observer grant sees it.
+        set_caller_bounded("f8_audit_peer", &["f8_audit_owner"]);
+        let json = read_buf(|b, c| uk_audit_list(b, c));
+        let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = entries.as_array().expect("audit list must be an array");
+        assert!(
+            arr.iter().any(|e| e["caller"]["principal"] == "f8_audit_owner"),
+            "peer with observer grant must see f8_audit_owner: {json}"
+        );
+        uk_clear_caller();
     }
 }
