@@ -464,8 +464,330 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
 ## 7. Recommended first task
 
 Implement **S1** (ECMAScript skeleton): add `--features ecmascript`, the workerd sidecar
-supervisor (spawn `workerd serve` from a generated `config.capnp`), the `archetype` dispatch
-in `ModuleHost`, a grant-checked capability binding for `uk_*`, and a positive + UK-4001
+supervisor (spawn `workerd serve` from a generated `config.capnp`), the `archetype`
+dispatch in `ModuleHost`, a grant-checked capability binding for `uk_*`, and a positive + UK-4001
 `ecmascript_module` test. Then add **S3** (the OS sandbox layer) early, since the
 browser-equivalent threat model depends on it. This delivers the requested capability with
-minimal risk and gives a concrete runway for S2–S7.
+minimal risk and gives a meaningful runway for S2–S7.
+
+---
+
+# Part II — Improvement roadmap (S10–S17)
+
+All features in Part II are **planned, not implemented** (status `◐`). They extend the
+completed F1–F6/F8 secure-kernel work toward production-grade operation and math-core
+scale-out, grounded in a code audit done 2026-08.
+
+**Priority order** (pick next in this order):
+1. **Security**: S11 loopback peer lockdown (F10), S10 egress boundary (F9).
+2. **Reliability**: S12 sidecar supervision (F11), S14 resource caps (F13).
+3. **Observability**: S13 call tracing + metrics (F12).
+4. **Proofs**: S16 fuzz + property tests (F16).
+5. **Content plane**: S15 key-lifecycle + GC + cell GET (F14).
+Optional (unchanged): **F7** Cap'n Web RPC — re-evaluate only after S10/S11 land.
+
+---
+
+### F9. Egress boundary — enforce `[grants] net`  ◐ (planned) → **S10**
+
+**Gap (verified).** `net_grants`/`fs_grants` are parsed in `cranelift/src/module.rs` and
+checked only for `swap` escalation. `SandboxProfile.writable_dirs` maps fs grants into
+Landlock targets, but the **net grants have no runtime surface**: the sidecar runs in an
+empty netns — safe by default, yet a module with `net = ["api.x"]` can neither fetch nor be
+audited against an egress policy.
+
+**S10 steps:**
+- Add a `"fetch"` arm to `kernel_dispatch` that validates the target host against
+  `GrantSet.net` (exact-host allowlist; default deny — no egress without a granted host).
+- Emit an `AuditEntry { symbol: "fetch", action: allow|deny, host }` on every egress.
+- Mirror the fs-grant wiring in `config_source`: generate workerd `external-service`
+  bindings for the allowlisted hosts (prior art: how fs grants reach `SandboxProfile`);
+  keep the loopback host check as defense-in-depth even if workerd is bypassed.
+- **Gate (offline)**: a module with `net = ["127.0.0.1:PORT"]` fetches a local fixture via
+  the loopback and succeeds; any other host is denied (UK-style egress code) and audited.
+- Verify: `unfer` workspace + cranelift lib / full suites stay green.
+
+---
+
+### F10. Loopback peer lockdown  ◐ (planned) → **S11**
+
+**Problem.** The sidecar ↔ host kernel-loopback Unix socket carries no `SO_PEERCRED`
+validation; any process that can open the socket path can impersonate the sidecar (or the
+host). This is the primary lateral-movement vector.
+
+**S11 steps:**
+- On the accept side of both the module loopback and the gateway call loop, verify
+  `SO_PEERCRED` pid→tgid equals the spawned child (`EcmaSidecar.child`); reject otherwise
+  with a `uk_security` audit event.
+- Keep randomized socket names + `chmod 0700` in the staging dir (partly present).
+- Gate: unit test opening the loopback from a synthetic fd (not the true child pid) asserts
+  the connection is refused and an audit/seclog event is emitted.
+
+---
+
+### F11. Sidecar supervision & auto-restart  ◐ (planned) → **S12**
+
+**Gap (verified).** `EcmaSidecar` spawns once + `wait_ready`; a workerd crash leaves the
+module permanently dead (no restart path).
+
+**S12 steps:**
+- Supervisor thread: on `Child::try_wait`, respawn the workerd with the same generated
+  `config.capnp` after a short backoff (1s→8s), reusing the staging dir so socket addresses
+  stay stable.
+- Do not surface the crash to the JS module: mark the module *degraded* (`KERNEL_DOWN`
+  audit event) and serve the next call only after auto-heal.
+- Gate: integration test kills the workerd mid-call and asserts the next wrapped call
+  succeeds after auto-restart.
+
+---
+
+### F12. Observability: call tracing + metrics  ◐ (planned) → **S13**
+
+**Gap (verified).** The only sinks are `AuditEntry` (audit.rs is the only typed log) and
+plain log lines; no tracing, no metrics endpoint (`unfer_edge` only short-circuits `/audit`).
+
+**S13 steps:**
+- Per-symbol call/cpu-µs/error counters exposed as JSON and Prometheus text at the edge
+  `GET /metrics` (alongside the `/audit` short-circuit in `unfer_edge/src/main.rs`).
+- Optional `tracing` spans carrying `trace_id` + `CallerTag` so hangs in
+  `evolve`/`reconstruct` are attributable to one caller.
+- Gate: `GET /metrics` returns counters; a fuzzed request through `/audit` does not leak
+  trace ids across callers.
+
+---
+
+### F13. Resource caps — cgroup + per-call deadline  ◐ (planned) → **S14**
+
+**Gap (verified).** `SandboxProfile.memory_max_bytes` exists but the `ecma.rs` call site sets
+`None`; no memory/swap cap and no per-call time limit on the FFI loop.
+
+**S14 steps:**
+- Wire a new `[limits] memory_bytes` (optional swap) field from the module manifest into
+  `SandboxProfile`, applying the cgroup when a writable v2 cgroup is available; degrade
+  gracefully (no cap) otherwise.
+- Add a per-`uk_*` call deadline (default 5 s); on timeout record an audit event and
+  terminate the sidecar.
+- Gate: unit test wires the memory cap into a generated profile; a runaway busy-loop in the
+  FFI hits the deadline and the audit shows the kill.
+
+---
+
+### F14. Content key-lifecycle + GC + cell GET  ✅ (implemented 2026-08) → **S15**
+
+**Status: S15 implemented** (2026-08). `unfer_data/src/store.rs` adds `CellStore`
+(ref-counted registry: store=own, `pin`/`unpin`, `prune` drops zero-pin cells with
+`CellEvent::Pruned`) and `KeyRing` (deterministic epoch-chained keys; `rotate` moves the
+writing epoch, old ciphertexts stay readable within `retain_depth` and are refused past it)
+with `CellEnvelope`; `unfer_edge/src/cells.rs` adds the `GET /cell/<cid>` read route backed
+by the process `CellStore` (present→metadata, well-formed absent→404, malformed→400) using
+the new `unfer_data::blueprint::is_content_cid` shape gate. Remaining: an S20 seed point for
+blueprint publication to flow into the edge store.
+
+**Gap (verified).** `unfer_data` is content-addressed (`store_cell`/`verify_cell`/`CellRef`,
+encrypt/decrypt, magnet) but has **no GC, no refcount, no key rotation** and no read path
+exported over the edge.
+
+**S15 steps:**
+- Add `uk_cell_pin`/`uk_cell_unpin` refcounts and a prune pass that deletes unpinned cells
+  with content-addressed delete + `cell_pruned` audit events.
+- Add key rotation for cell encryption (new epoch key; reads of older epochs fall through)
+  with a `key_rotated` event.
+- Edge `/cell/<cid>` read route through de/encrypt + `verify_cell`, granting `unfer-edge`
+  a scoped read.
+- Gate: store → pin → unpin → prune → rotate — exactly the pinned cells survive; a
+  corrupted CID fails verification on the GET path.
+
+---
+
+### F15. Math-core scale-out (auto-`m`/batch SIRK)  ◐ (planned) → **S16**
+
+**Gap (verified).** SIRK is GPU-dense (candle), `m` is user-fixed, and shift/restart choices
+are manual. AGENTS.md rank-saturation data for single-mode (~6) implies `m` has a knowable
+ceiling.
+
+**S16 steps:**
+- Auto-`m` estimate from the Gram spectrum plus a budgeted batch of shifts per restart.
+- Add a `fock_sirk/benches` weak-scaling harness sweeping `m ∈ {3,6,9}`; optional `f16`
+  paths where the Gram stays Hermitian.
+- Deliverable: bench numbers + a rule for when auto-`m` beats the hand-set value; no
+  numerical-stability regression in the Gram-whitening tests.
+
+---
+
+### F16. Verification: fuzz + property tests  ◐ (planned) → **S17**
+
+Add `proptest` invariants the audit and the `unfer_ffi` boundary rely on:
+1. Anti-escalation: `GrantSet::is_subset_of` is transitive and covers `net`/`fs`/effects/
+   observers across the `swap` path.
+2. Monotonic audit: each `AuditEntry` seq strictly increments even across a session; force
+   an explicit `audit_seq` counter if absent.
+3. `uk_ffi` buffer protocol: arbitrary `Vec<u8>` request lengths → never panic, always a
+   JSON decode error, no dangling probe.
+4. `Cell` store→verify round-trip (`data → CID → data`).
+Gate: ~10k arbitrary cases, zero panics, all invariants hold.
+
+---
+
+## 8. Change-tracking for Part II
+
+Each planned feature is marked `. Status: S#x implemented (2026-08)` when it lands, in the
+style of Part I, and the `AGENTS.md` capability/bound-maintenance section is kept in sync.
+
+**Recommended execution order:** S10 → S11 → S12 → S13 → S14 → S15 → S16 → S17 (F7 remains
+optional; re-evaluate only after F9/S10 lands).
+
+---
+
+# Part III — Cloudflare OS adaptation study (F17–F23 / S18–S24)
+
+## What was studied
+
+[`cloudflare/cloudflare-os`](https://github.com/cloudflare/cloudflare-os) (announced and
+open-sourced 2026-08, Apache-2.0) is Cloudflare's internal "AI productivity OS" rewritten as
+v2. Its kernel analogy maps directly onto unfer's existing architecture, so its *designs* are
+adaptable as clean-room concepts (re-implemented in Rust / TOML / our protocol; no code is
+ported — if any vendor artifact is ever copied it must carry an Apache-2.0 NOTICE).
+
+| Cloudflare OS concept | cloudflare meaning | unfer analog today | Adopt? |
+|---|---|---|---|
+| **kernel** | `packages/workshop-backend`: connects users→programs/devices, sandboxes, ACLs | `unfer_ffi` + `ModuleHost` + GrantSet | already constructed |
+| **gadgets** | private per-user sandboxed app instances | `prob_kernel::Session` (per-caller snapshot) | already analogous |
+| **Gatekeepers** | per-service capability modules: narrow scope, logs every action, async human approval with **simulated outcomes** | none — external access isn't modelled | **ADD** as new module archetype (F18) |
+| **intro/request access** | capability-based introductions (nothing ambient; agent may request) | static `[grants]`; nobody may *request* a grant | **ADD** `uk_request_resource` (F17) |
+| **Blueprints** | sharing code (not data) → every user runs own copy, immutable blueprintId | `unfer_data` `store_cell`/`blueprint.rs` is a content store, no module-level reuse | **ADD** blueprint export/import/instantiate (F19) |
+| **trust boundary / readOnlyHint** | a tool declared `readOnlyHint` runs as observation; everything else is queued; `vetted` endpoints auto-apply only when console-minted | our `[grants] effects` and audit catch all mutations ✓ | **ADD** observation/mutation annotation (F20) |
+| **admin config vs env auth** | soft product config in `/admin`; auth & grants only from env so a compromised console can't escalate | only `DELETE /audit` exists on the edge | **ADD** admin console + hard-grant separation (F21) |
+| **observability** | owner logger; `createObservabilityContext`; no-op `reportIssue`; never log secrets | audit + log lines only (S13 metrics planned) | **extend S13** (F22) |
+| **release protocol** | byte-identical build → content-addressed upload → `candidate/` → single all-or-nothing `promote`; golden-file manifest test | `unfer_data/publisher.rs` resolves CIDs; no release manifold | **ADD** release manifest + promote (F23) |
+| **Gatekeepers as Drivers** | drivers ~ services; kernel connects programs to devices | modules grant→service mapping | natural fit for F18 |
+
+Two more adopted *principles* (not code):
+1. **A resource becomes ambient only by user/admin config — never self-asserted.** Respect
+   `GrantSet.auto-ness`: no effect path may treat a grant as ambient unless the harness placed
+   it. This already matches our single-mint chokepoint in F5/S9.
+2. **The account/capability is the authority, not an asserted identity** — matches
+   `CallerContext`/`principals`: grants carry authority; assertions never confer it.
+
+## Non-goals (recorded, deliberately skipped)
+
+OAuth identity providers, real-time multiplayer/Yjs, gadget office apps, Durable-Objects
+facets, MCP-as-protocol (we borrow the *trust* model, not the transport; an optional
+`gatekeeper-mcp` adapter is deferred), and the React Workshop UI.
+
+---
+
+### F17. Resource grants + introductions  ◐ (planned) → **S18**
+
+**What is adapted.** cloudflare-os grants nothing ambiently: you *introduce* a resource to a
+session, an agent may *request* an introduction, and minting happens at a single kernel
+chokepoint. Extends Part I F4/F5 greatly since it adds a third grant axis inside tests.
+
+**S18 steps:**
+- Add `GrantSet.resources: Vec<String>` (the `[grants] resources` namespace; ids such as
+  `github.repo#denoission`), included in `is_subset_of` + swap-checks + observers read rules.
+- Add `uk_resource_introduce(principal, resource_id)` and `uk_resource_forfeit(principal,
+  resource_id)`; an unbounded agent may call `uk_request_resource(resource_id)` which lands a
+  queued `AuditEntry(action="approval_pending")` for the human to grant/deny at the console.
+- Single-mint chokepoint: a new `ResourceCtx` is minted in the same place where `CallerContext`
+  is built (loopback listener), never re-created by module code.
+- Gate: unit tests `introduce_grants_resource`, `request_queues_for_approval`, and an FFI-level
+  test that a non-introduced resource call yields `UK-4401 RESOURCE_UNINTRODUCED`.
+
+### F18. Gatekeeper module archetype   ◐ (planned) → **S19**
+
+**Gap and adapt.** Our modules have no way to represent a mediated external service at all
+(netless). Adopt the gatekeeper as an *archetype*: a module that (a) narrow access only to an
+introduced resource, (b) faces the human approval queue for side-effecting calls, and (c) —
+uniquely for us — returns a **forecast outcome** computed by `uk_condition` on a session
+snapshot, so the agent can keep working while the human approves later. "Simulate locally then
+approve async": in a probability kernel, the simulation *is* the conditional prediction.
+
+**S19 steps:**
+- Add **archetype `gatekeeper`** to the `archetype` dispatch table: side-effecting exports
+  return "pending approval + simulated outcome" instead of erroring (`uk_gate_*`).
+- Add `uk_gate_list_pending` / `uk_gate_approve` / `uk_gate_reject` (console-side), each
+  written to the audit trail with the human `principal`.
+- Provision modes replica of cloudflare's `disabled|optional|enabled` (per `[gatekeepers]`):
+  `enabled` auto-mints for all, `optional` requires introduction, `disabled` denies all.
+- Gate: unit test a demo **"scan" gatekeeper module** whose pending action is approved through
+  `uk_gate_approve` and only then lands in the audit/side-effect stream.
+
+### F19. Blueprint templates & per-user instantiation  ◐ (planned) → **S20**
+
+**Gap and adapt.** `unfer_data` stores content-addressed cells; cloudflare's *blueprint* is
+an immutable executable + sidecar. We add module-grade reuse on the same store.
+
+**S20 steps:**
+- Add `BlueprintRecord { blueprint_id, name, cell_cid, manifest_json, immutable_blueprint_id
+  (never re-editable), created_by }` to `unfer_data`; export/import via `uk_blueprint_export`
+  and `uk_blueprint_import` wrapping `store_cell`/`verify_cell`.
+- `uk_blueprint_export_gadget` is just `instantiate(imported)`: every consumer runs its own
+  copy (a fresh `Session`). `blueprint_id` equal to the content CID (immutable).
+- **Open the store to the edge**: `GET /cell/<cid>` resolves through `verify_cell` + decrypt +
+  `magnet` (S15), normalizing the content gateway.
+- Gate: `blueprint->export->import->instantiate` identical behavior for two sessions; an
+  altered cell fails `verify_cell` on import.
+
+### F20. Trust annotations: observation vs mutation + vetted  ◐ (planned) → **S21**
+
+**Gap and adapt.** In cloudflare-os a server-side `readOnlyHint` makes a tool run as
+*observation* (no approval), everything else queues for approval, and any auto-apply must be
+a **vetted** endpoint minted by the *console* — a module can never self-declare vetted status.
+
+**S21 steps:**
+- Extend `[effects grants]` metadata with `effect_kind: "observe" | "mutate"` (parsed from
+  module.toml). Observe-Kind effects do not queue; mutate-Kind always do (F8 couples to
+  `uk_gate_*`).
+- A `vetted` flag derives only from the console/harness invitation (not from module.toml
+  claims); add `uk_registry_vetted` (console-only).
+- Gate: a mutate-kind effect without a pending approval is **refused**; an un-vetted console
+  clearing the flag leaves the approval queue intact.
+
+### F21. Admin console + soft/hard separation  ◐ (planned) → **S22**
+
+**Gap and adapt.** `unfer_edge` short-circuits only `/audit`. Adopt the AdminConfig split:
+soft product settings (site name, announcements, offered connectors/resources, blueprint
+catalog) are console-editable; **auth, grants, and storage config are never user-editable**
+(host-global env / Rust config only).
+
+**S22 steps:**
+- Edge `GET /admin/status` + `PATCH /admin/config` return/patch a `soft_config.json`
+  (banner, announcements, resource availability modes) mirrored in one KV-style key.
+- Admin capability is minted once (`is_admin`) at session start like `AdminApi`; the console
+  never grants new pairs.
+- Gate: `PATCH /admin/config` returns `401/403` for a non-admin principal; `soft_config.json`
+  cannot change grants/auth.
+
+### F22. Observability follows through  ◐ (planned) → **S23**
+
+Converges S13 (metrics) with cloudflare's logging norms:
+- dot-separated owner logger (`component = "kernel.audit"`), per-call `observability-context`
+  (AsyncLocal analog: fields threaded per FFI call), and a `report_issue` that is a no-op if
+  the `ERROR_REPORT_BINDING` is unset.
+- **Discipline**: never log secrets/prompts/headers/keys — enforced by a test that scans audit
+  and logs for a known secret token fed through a fixture.
+
+### F23. Content-addressed release protocol  ◐ (planned) → **S24**
+
+**Gap and adapt.** Cloudflare pins one, byte-identical, content-addressed release manifest and
+promotes `candidate → release` in a single all-or-nothing copy.
+
+**S24 steps:**
+- Add `release_manifest.json` generation in `unfer_data` (publisher): map every deployable
+  crate/module byte-to-CID; `promote(candidate, release)` is a single store op (content-
+  addressed table) — one manifest copy; and a golden-file test for the expected manifest.
+- `unfer/` CI check: `cargo fmt --check` + the release golden test; the CVS matrix (S7)
+  unpinned from `workerd` 1.20260808.1 hashes against the manifest.
+- Gate: golden-file regeneration honored via `UPDATE_GOLDEN=1`; a wrong byte in a module
+  changes the manifest and fails the CI gate.
+
+---
+
+## 9. Change-tracking for Part III
+
+Same convention as Part II: mark each section `. Status: S#x implemented (2026-08)` when it
+lands. Notify the AGENTS.md "capability/bound-maintenance" checklist (`QfmConfig` default-
+call-sites, compile_channels per-mode weights inline) to stay in sync.
+
+**Recommended order:** S18 → S19 → S20 → S21 → S22 → S23 → S24 (F7 optional; egress/host work
+in Part II guards ordered first: S10/11/15/17).

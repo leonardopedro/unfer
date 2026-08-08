@@ -17,6 +17,7 @@ required-features = ["pingora"]
 
 [dependencies]
 unfer_protocol = { path = "../unfer_protocol" }
+unfer_data = { path = "../unfer_data" }
 unfer_ffi = { path = "../unfer_ffi", optional = true }
 pingora = { version = "0.8.1", features = ["proxy"], optional = true }
 pingora-core = { version = "0.8.1", optional = true }

@@ -4617,6 +4617,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "unfer_data",
  "unfer_ffi",
  "unfer_protocol",
 ]

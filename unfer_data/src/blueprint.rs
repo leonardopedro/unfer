@@ -48,6 +48,14 @@ pub fn verify_cell(cell: &[u8], cid: &str) -> bool {
     }
 }
 
+/// Whether `cid` has the content-plane shape (64 lowercase hex chars).
+///
+/// This is a *structural* gate for address-like inputs (e.g. an edge `/cell/<cid>` path);
+/// it does not prove the content exists anywhere.
+pub fn is_content_cid(cid: &str) -> bool {
+    cid.len() == 64 && cid.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Encrypt a stored cell for transport, mirroring `DataPublisher`: each chunk is AES-256-GCM
 /// encrypted under a key derived from the content keypair's X25519 handshake (self-DH, the
 /// crate's per-content symmetric-key convention). Returns the per-chunk ciphertexts; the
@@ -117,6 +125,15 @@ mod tests {
         let stored = store_cell(&cell);
         assert!(verify_cell(&cell, &stored.cid));
         assert!(!verify_cell(&cell, &format!("{}x", &stored.cid[..63])));
+    }
+
+    #[test]
+    fn content_cid_shape_gate() {
+        let stored = store_cell(&sample_cell());
+        assert!(is_content_cid(&stored.cid));
+        assert!(!is_content_cid("not-a-cid"));
+        assert!(!is_content_cid(&stored.cid[..63])); // 63 chars
+        assert!(!is_content_cid(&format!("{}G", &stored.cid[..63]))); // non-hex char
     }
 
     #[test]

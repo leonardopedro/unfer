@@ -22,18 +22,27 @@
 //! unfer_edge --listen 127.0.0.1:3000 --backend 127.0.0.1:3001
 //! ```
 
+mod cells;
 mod filter;
 mod mask;
 #[cfg(feature = "audit")]
 mod audit;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use pingora_core::prelude::*;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
 use tracing::info;
+use unfer_data::CellStore;
+
+/// Process-local content store backing the `/cell/<cid>` read route. Seed points
+/// arrive via blueprint publication (S20); absent that, the route is a shape-checked 404.
+fn cell_store() -> &'static Mutex<CellStore> {
+    static STORE: OnceLock<Mutex<CellStore>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(CellStore::new()))
+}
 
 /// Gateway configuration — set by CLI arguments.
 #[derive(Clone)]
@@ -111,6 +120,28 @@ impl ProxyHttp for UnferGateway {
                     .await?;
                 return Ok(true);
             }
+        }
+
+        // S15 (F14): actively shape-checked content reads — GET /cell/<cid> returns the
+        // stored cell metadata or a resolved 404; malformed CIDs get 400 (never guess).
+        if session.req_header().method.to_string() == "GET"
+            && session.req_header().uri.path().starts_with("/cell/")
+        {
+            let path = session.req_header().uri.path().to_string();
+            let (status, body) = {
+                let store = cell_store().lock().unwrap_or_else(|e| e.into_inner());
+                cells::resolve_cell(&store, &path)
+            };
+            let mut header = ResponseHeader::build(status, None)?;
+            header.insert_header("content-type", "application/json")?;
+            header.insert_header("content-length", body.len().to_string())?;
+            session
+                .write_response_header(Box::new(header), false)
+                .await?;
+            session
+                .write_response_body(Some(bytes::Bytes::from(body)), true)
+                .await?;
+            return Ok(true);
         }
 
         // Read the request body (bounded to 1 MiB).

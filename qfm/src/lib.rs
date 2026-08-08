@@ -45,6 +45,7 @@
 //!     n_t_samples: 4,
 //!     noise_dim: 2,
 //!     max_rank: None,
+//!     ..Default::default()
 //! };
 //!
 //! // Offline compile: produces all pre-projected observables.
