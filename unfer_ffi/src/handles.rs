@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, AtomicI64, Ordering},
+    atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
 };
 
 use prob_kernel::Session;
@@ -286,10 +286,7 @@ pub fn with_action<R>(handle: i64, f: impl FnOnce(&ActionRecord) -> R) -> Option
     map.get(&handle).map(f)
 }
 
-pub fn with_action_mut<R>(
-    handle: i64,
-    f: impl FnOnce(&mut ActionRecord) -> R,
-) -> Option<R> {
+pub fn with_action_mut<R>(handle: i64, f: impl FnOnce(&mut ActionRecord) -> R) -> Option<R> {
     let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_mut()?;
     map.get_mut(&handle).map(f)
@@ -301,11 +298,7 @@ pub fn list_actions() -> Vec<(i64, ActionRecord)> {
     let guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let mut items: Vec<(i64, ActionRecord)> = guard
         .as_ref()
-        .map(|map| {
-            map.iter()
-                .map(|(h, r)| (*h, r.clone()))
-                .collect()
-        })
+        .map(|map| map.iter().map(|(h, r)| (*h, r.clone())).collect())
         .unwrap_or_default();
     items.sort_by_key(|(h, _)| *h);
     items
@@ -367,8 +360,7 @@ impl CallerContext {
         match self.grants.as_ref() {
             None => true,
             Some(grants) => {
-                self.tag.principal == principal
-                    || grants.observers.iter().any(|o| o == principal)
+                self.tag.principal == principal || grants.observers.iter().any(|o| o == principal)
             }
         }
     }
@@ -387,10 +379,8 @@ impl CallerContext {
 
 /// Set the current thread's caller context. Returns the previous context.
 pub fn set_caller(tag: CallerTag, grants: Option<GrantSet>) -> CallerContext {
-    let prev = CALLER.with(|c| std::mem::replace(
-        &mut *c.borrow_mut(),
-        CallerContext { tag, grants },
-    ));
+    let prev =
+        CALLER.with(|c| std::mem::replace(&mut *c.borrow_mut(), CallerContext { tag, grants }));
     prev
 }
 
@@ -444,6 +434,281 @@ pub fn clear_vetted() {
     }
 }
 
+// ── windowed meter (S25/F24: budgets + rate limits) ────────────────────
+//
+// A per-principal, per-UTC-day windowed counter that the loopback chokepoint
+// consults before dispatching a *metered* `uk_*` symbol. It mirrors Cloudflare's
+// `consumeDailyLlmCall`/`DailyQuotaResult`: a DO-local atomic read-modify-write
+// with a UTC-day window that resets at the midnight boundary. Unlike the S13
+// `Metrics` (which only *counts*), this is a *denial* point — over-budget /
+// over-rate calls are refused with UK-46xx and an audit entry, never a
+// post-hoc report. Lightweight symbols (reads, version) are unmetered so agents
+// stay responsive.
+
+/// A single principal's windowed usage for the current UTC day.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct MeterStatus {
+    /// The UTC-day window key this status is reported for.
+    pub day: String,
+    /// Whether the caller is still within its budget for the window.
+    pub within_limits: bool,
+    /// Budget units remaining this window (saturating at 0).
+    pub remaining: u64,
+    /// The configured budget ceiling for the window.
+    pub limit: u64,
+    /// Calls counted against the window so far (post-consume when consuming).
+    pub used: u64,
+    /// ISO-8601 instant of the next UTC-midnight reset.
+    pub reset_at: String,
+}
+
+/// UTC-day window key (`%Y-%m-%d`), matching the reset boundary of the meter.
+fn utc_day_key() -> String {
+    // Use a fixed epoch-day from SystemTime so the value is deterministic and
+    // testable without wall-clock parsing; the reset boundary is the same
+    // "since epoch" day counter Cloudflare keys on.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("d{}", secs / 86_400)
+}
+
+/// ISO instant of the next UTC-midnight reset (approximate, for the status blob).
+fn next_utc_midnight() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let next = (secs / 86_400 + 1) * 86_400;
+    format!("t{}", next)
+}
+
+#[derive(Debug, Clone, Default)]
+struct MeterWindow {
+    day: String,
+    used: u64,
+}
+
+static METER: Mutex<Option<HashMap<String, MeterWindow>>> = Mutex::new(None);
+
+/// Read the current window usage for `principal` without consuming, mirroring
+/// Cloudflare's `checkDailyLlmCount`. `limit` is only used to compute
+/// `remaining`/`within_limits` — it never mutates the store.
+pub fn meter_status(principal: &str, limit: u64) -> MeterStatus {
+    let day = utc_day_key();
+    let guard = METER.lock().unwrap_or_else(|e| e.into_inner());
+    let used = guard
+        .as_ref()
+        .and_then(|m| m.get(principal))
+        .filter(|w| w.day == day)
+        .map(|w| w.used)
+        .unwrap_or(0);
+    let remaining = limit.saturating_sub(used);
+    MeterStatus {
+        day,
+        within_limits: used < limit,
+        remaining,
+        limit,
+        used,
+        reset_at: next_utc_midnight(),
+    }
+}
+
+/// Per-window outcome of a metered symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeterDecision {
+    /// The call is within budget and rate limit; proceed.
+    Allowed,
+    /// The caller exceeded its windowed call-rate limit (UK-4601).
+    RateLimited,
+    /// The caller exhausted its windowed budget (UK-4602).
+    BudgetExceeded,
+}
+
+/// Atomically check the windowed budget and, if within it, count one call. This
+/// is the single denial point the loopback calls for metered symbols. A blocked
+/// request never counts (no-op once exhausted).
+pub fn meter_consume(principal: &str, budget: u64, rate_limit: u64) -> MeterDecision {
+    let day = utc_day_key();
+    // Rate gate first: a fixed per-window cap independent of the budget.
+    if rate_limit > 0 {
+        let used = {
+            let guard = METER.lock().unwrap_or_else(|e| e.into_inner());
+            guard
+                .as_ref()
+                .and_then(|m| m.get(principal))
+                .filter(|w| w.day == day)
+                .map(|w| w.used)
+                .unwrap_or(0)
+        };
+        if used >= rate_limit {
+            return MeterDecision::RateLimited;
+        }
+    }
+    let mut guard = METER.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    let window = map
+        .entry(principal.to_string())
+        .or_insert_with(|| MeterWindow {
+            day: day.clone(),
+            used: 0,
+        });
+    if window.day != day {
+        // New UTC window: reset the counter.
+        window.day.clone_from(&day);
+        window.used = 0;
+    }
+    if window.used >= budget.max(1) {
+        return MeterDecision::BudgetExceeded;
+    }
+    window.used += 1;
+    MeterDecision::Allowed
+}
+
+/// Reset the meter (QA/console reset). Does not touch the approval queue.
+pub fn clear_meter() {
+    let mut guard = METER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        map.clear();
+    }
+}
+
+// ── sensitive-forward latch (S26/F25) ──────────────────────────────────
+//
+// Once a caller observes `<*sensitive*>` data, the *fact of having observed it*
+// constrains everything it does next (egress, hand-off, blueprints, writes) until
+// an operator clears the latch — mirroring Cloudflare's `prohibitAllSharing`
+// workspace latch. The latch is sticky per-principal and sticks to the caller
+// set, so a spawned agent inherits its parent's sticky set via `GrantSet`
+// ordering. Clearing is console-only (the S22 admin operator).
+
+static SENSITIVE_LATCH: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Whether `principal` is latched (has observed sensitive data and is refused
+/// forward-mutating ops until an operator clears it).
+pub fn is_sensitive_latched(principal: &str) -> bool {
+    let guard = SENSITIVE_LATCH.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .map(|s| s.contains(principal))
+        .unwrap_or(false)
+}
+
+/// Set or clear the sensitive latch for `principal` (operator console only).
+pub fn set_sensitive_latch(principal: &str, latched: bool) -> bool {
+    let mut guard = SENSITIVE_LATCH.lock().unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(HashSet::new);
+    if latched {
+        set.insert(principal.to_string());
+    } else {
+        set.remove(principal);
+    }
+    set.contains(principal)
+}
+
+/// Clear every sensitive latch (QA/console reset). Approval queue untouched.
+pub fn clear_sensitive_latches() {
+    let mut guard = SENSITIVE_LATCH.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(set) = guard.as_mut() {
+        set.clear();
+    }
+}
+
+// ── credential vault (S27/F26) ─────────────────────────────────────────
+//
+// A first-class secret vault so a gatekeeper owns a credential and grants a
+// *handle*, never the raw value. Secrets are encrypted at rest with the S15
+// KeyRing and are opaque to callers: `uk_secret_get` returns a handle the host
+// dereferences at call time (grant-checked), so a secret never reaches gadget
+// code. A live secret must never serialize into a `SessionBlob` snapshot or a
+// `.cell` blueprint — `uk_snapshot`/`uk_blueprint_export` refuse to package a
+// live secret.
+
+/// An opaque secret handle minted by the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SecretHandle(pub u64);
+
+/// A stored secret: ciphertext at rest, plus the owner that may dereference it.
+#[derive(Clone)]
+struct StoredSecret {
+    /// Encrypted-at-rest bytes (KeyRing envelope).
+    envelope: unfer_data::CellEnvelope,
+    /// The principal granted the opaque dereference handle.
+    owner: String,
+}
+
+static SECRETS: Mutex<Option<std::collections::HashMap<u64, StoredSecret>>> = Mutex::new(None);
+static NEXT_SECRET: AtomicU64 = AtomicU64::new(1);
+
+/// Store a secret under the calling `owner`; returns an opaque handle. Encrypted
+/// at rest under a process-global KeyRing. The raw value is never returned from
+/// the vault — only the handle is.
+pub fn vault_put_secret(owner: &str, value: &[u8]) -> Result<u64, String> {
+    let handle = NEXT_SECRET.fetch_add(1, Ordering::SeqCst);
+    let envelope = {
+        let mut ring = vault_ring();
+        ring.encrypt_envelope(value)?
+    };
+    let mut guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(std::collections::HashMap::new);
+    map.insert(
+        handle,
+        StoredSecret {
+            envelope,
+            owner: owner.to_string(),
+        },
+    );
+    Ok(handle)
+}
+
+/// Dereference a secret handle. Only `owner` may read it; the host dereferences
+/// at call time (grant-checked) so the raw value never reaches gadget code.
+pub fn vault_get_secret(handle: u64, owner: &str) -> Result<Vec<u8>, String> {
+    let envelope = {
+        let guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+        let stored = guard
+            .as_ref()
+            .and_then(|m| m.get(&handle))
+            .ok_or_else(|| "secret handle not found".to_string())?;
+        if stored.owner != owner {
+            return Err("secret is not owned by this caller".to_string());
+        }
+        stored.envelope.clone()
+    };
+    let mut ring = vault_ring();
+    ring.decrypt_envelope(&envelope)
+}
+
+/// Revoke a secret handle, invalidating it. The at-rest ciphertext is dropped.
+pub fn vault_revoke_secret(handle: u64) -> bool {
+    let mut guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_mut().and_then(|m| m.remove(&handle)).is_some()
+}
+
+/// Whether any live secret exists in the vault. `uk_snapshot`/`uk_blueprint_export`
+/// refuse to package a live secret (it must never serialize into a snapshot or a
+/// `.cell` blueprint).
+pub fn vault_has_live_secrets() -> bool {
+    let guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().map(|m| !m.is_empty()).unwrap_or(false)
+}
+
+/// Drop every secret (QA/console reset).
+pub fn vault_clear() {
+    let mut guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        map.clear();
+    }
+}
+
+/// The process-global key ring for at-rest secret encryption (S15 KeyRing).
+fn vault_ring() -> std::sync::MutexGuard<'static, unfer_data::KeyRing> {
+    static RING: std::sync::OnceLock<Mutex<unfer_data::KeyRing>> = std::sync::OnceLock::new();
+    let ring = RING.get_or_init(|| Mutex::new(unfer_data::KeyRing::from_random()));
+    ring.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // ── audit trail (S6: human accountability) ─────────────────────────────
 //
 // An immutable kernel-global audit trail of `uk_*` calls, each tagged with the
@@ -455,8 +720,7 @@ pub fn clear_vetted() {
 pub const AUDIT_CAPACITY: usize = 4096;
 
 static AUDIT: Mutex<Option<VecDeque<AuditEntry>>> = Mutex::new(None);
-static NEXT_AUDIT_SEQ: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static NEXT_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Append an audit entry. `seq` is assigned here (monotonic, race-free). Returns
 /// the assigned sequence number.
@@ -513,11 +777,7 @@ pub fn set_observability(value: serde_json::Value) {
 pub fn current_observability() -> Option<serde_json::Value> {
     OBSERVABILITY.with(|c| {
         let v = c.borrow().clone();
-        if v.is_null() {
-            None
-        } else {
-            Some(v)
-        }
+        if v.is_null() { None } else { Some(v) }
     })
 }
 
@@ -650,10 +910,7 @@ pub fn with_agent<R>(handle: i64, f: impl FnOnce(&AgentInfo) -> R) -> Option<R> 
     map.get(&handle).map(f)
 }
 
-pub fn with_agent_mut<R>(
-    handle: i64,
-    f: impl FnOnce(&mut AgentInfo) -> R,
-) -> Option<R> {
+pub fn with_agent_mut<R>(handle: i64, f: impl FnOnce(&mut AgentInfo) -> R) -> Option<R> {
     let mut guard = AGENTS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_mut()?;
     map.get_mut(&handle).map(f)
@@ -714,9 +971,7 @@ pub fn resource_forfeit(resource_id: &str) -> Result<(), unfer_protocol::Code> {
 /// Has this id ever been minted at the chokepoint?
 pub fn resource_is_introduced(resource_id: &str) -> bool {
     let guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
-    guard
-        .as_ref()
-        .is_some_and(|m| m.contains_key(resource_id))
+    guard.as_ref().is_some_and(|m| m.contains_key(resource_id))
 }
 
 /// The resource-facing gate (F17). The trusted harness (no bounded grant set) may use any
@@ -748,7 +1003,9 @@ pub fn resource_authorized(
 /// session. Returns the positive request handle (resolved later by `uk_gate_*`).
 pub fn queue_resource_request(resource_id: &str, requested_by: CallerTag) -> i64 {
     let handle = NEXT_RESOURCE_REQUEST.fetch_add(1, Ordering::SeqCst);
-    let mut guard = PENDING_RESOURCE_REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = PENDING_RESOURCE_REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(HashMap::new);
     map.insert(
         handle,
@@ -762,7 +1019,9 @@ pub fn queue_resource_request(resource_id: &str, requested_by: CallerTag) -> i64
 
 /// Snapshot of the approval-pending resource requests, ordered by handle (request order).
 pub fn list_pending_resource_requests() -> Vec<(i64, PendingResourceRequest)> {
-    let guard = PENDING_RESOURCE_REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = PENDING_RESOURCE_REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut items: Vec<(i64, PendingResourceRequest)> = guard
         .as_ref()
         .map(|map| map.iter().map(|(h, r)| (*h, r.clone())).collect())
@@ -803,5 +1062,164 @@ mod buffer_proptests {
         // handle can never be in use, so reads/frees must miss cleanly.
         assert_eq!(read_buffer(-1_000_000), None);
         assert!(!free_buffer(-1_000_000));
+    }
+}
+
+#[cfg(test)]
+mod meter_tests {
+    // S25 (F24): the windowed meter is the single denial point for cost governance.
+    use super::{MeterDecision, clear_meter, meter_consume, meter_status};
+    use std::sync::Mutex;
+
+    // The meter is a process-global shared store; serialize the tests so one test's
+    // `clear_meter()` never wipes another's mid-run window (repo convention).
+    static METER_TESTS_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn consumes_within_budget_then_denies() {
+        let _g = METER_TESTS_LOCK.lock().unwrap();
+        clear_meter();
+        // Budget 3, no rate gate: three calls pass, the fourth is denied.
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::Allowed);
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::Allowed);
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::Allowed);
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::BudgetExceeded);
+        // Budget is never mutated by a blocked request.
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::BudgetExceeded);
+        assert_eq!(meter_consume("alice", 3, 0), MeterDecision::BudgetExceeded);
+        clear_meter();
+    }
+
+    #[test]
+    fn rate_limit_denies_independently_of_budget() {
+        let _g = METER_TESTS_LOCK.lock().unwrap();
+        clear_meter();
+        // Rate limit 2; budget is large so only the rate gate trips.
+        assert_eq!(meter_consume("bob", 100, 2), MeterDecision::Allowed);
+        assert_eq!(meter_consume("bob", 100, 2), MeterDecision::Allowed);
+        assert_eq!(meter_consume("bob", 100, 2), MeterDecision::RateLimited);
+        clear_meter();
+    }
+
+    #[test]
+    fn principals_are_isolated() {
+        let _g = METER_TESTS_LOCK.lock().unwrap();
+        clear_meter();
+        assert_eq!(meter_consume("alice", 1, 0), MeterDecision::Allowed);
+        assert_eq!(meter_consume("alice", 1, 0), MeterDecision::BudgetExceeded);
+        // Bob starts fresh regardless of Alice's exhaustion.
+        assert_eq!(meter_consume("bob", 1, 0), MeterDecision::Allowed);
+        clear_meter();
+    }
+
+    #[test]
+    fn status_is_read_only() {
+        let _g = METER_TESTS_LOCK.lock().unwrap();
+        clear_meter();
+        meter_consume("carol", 5, 0);
+        let status = meter_status("carol", 5);
+        assert!(status.within_limits);
+        assert_eq!(status.used, 1);
+        assert_eq!(status.remaining, 4);
+        assert_eq!(status.limit, 5);
+        // Reading status never consumes.
+        let again = meter_status("carol", 5);
+        assert_eq!(status.used, again.used);
+        clear_meter();
+    }
+
+    #[test]
+    fn budget_below_rate_limit_is_the_gate() {
+        let _g = METER_TESTS_LOCK.lock().unwrap();
+        clear_meter();
+        // Budget 1 beats a large rate limit: the budget is the binding constraint.
+        assert_eq!(meter_consume("dave", 1, 100), MeterDecision::Allowed);
+        assert_eq!(meter_consume("dave", 1, 100), MeterDecision::BudgetExceeded);
+        clear_meter();
+    }
+}
+
+#[cfg(test)]
+mod sensitive_latch_tests {
+    // S26 (F25): the sensitive-forward latch is sticky per-principal and only an
+    // operator clears it. It never touches the approval queue.
+    use super::{clear_sensitive_latches, is_sensitive_latched, set_sensitive_latch};
+
+    #[test]
+    fn latch_is_sticky_until_cleared() {
+        clear_sensitive_latches();
+        assert!(!is_sensitive_latched("alice"));
+        assert!(set_sensitive_latch("alice", true));
+        assert!(is_sensitive_latched("alice"));
+        // Clearing restores; the return reflects the new state.
+        assert!(!set_sensitive_latch("alice", false));
+        assert!(!is_sensitive_latched("alice"));
+        clear_sensitive_latches();
+    }
+
+    #[test]
+    fn principals_are_independent() {
+        clear_sensitive_latches();
+        assert!(set_sensitive_latch("alice", true));
+        // Bob is untouched by Alice's latch.
+        assert!(!is_sensitive_latched("bob"));
+        clear_sensitive_latches();
+    }
+}
+
+#[cfg(test)]
+mod secret_vault_tests {
+    // S27 (F26): the credential vault stores secrets encrypted at rest and grants
+    // an opaque handle; only the owner dereferences; a live secret refuses to
+    // serialize (snapshot/blueprint guard). The vault is a process-global store.
+    use super::{
+        vault_clear, vault_get_secret, vault_has_live_secrets, vault_put_secret,
+        vault_revoke_secret,
+    };
+    use std::sync::Mutex;
+
+    static VAULT_TESTS_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn put_get_roundtrip_under_owner() {
+        let _g = VAULT_TESTS_LOCK.lock().unwrap();
+        vault_clear();
+        let handle = vault_put_secret("alice", b"sup3r-s3cret").expect("put");
+        let got = vault_get_secret(handle, "alice").expect("get");
+        assert_eq!(got, b"sup3r-s3cret");
+        vault_clear();
+    }
+
+    #[test]
+    fn non_owner_is_denied() {
+        let _g = VAULT_TESTS_LOCK.lock().unwrap();
+        vault_clear();
+        let handle = vault_put_secret("alice", b"x").expect("put");
+        // Bob cannot dereference Alice's secret.
+        assert!(vault_get_secret(handle, "bob").is_err());
+        vault_clear();
+    }
+
+    #[test]
+    fn revoke_invalidates_handle() {
+        let _g = VAULT_TESTS_LOCK.lock().unwrap();
+        vault_clear();
+        let handle = vault_put_secret("alice", b"y").expect("put");
+        assert!(vault_revoke_secret(handle));
+        assert!(vault_get_secret(handle, "alice").is_err());
+        // Revoking an already-revoked handle is a miss.
+        assert!(!vault_revoke_secret(handle));
+        vault_clear();
+    }
+
+    #[test]
+    fn live_secret_blocks_snapshot_export() {
+        let _g = VAULT_TESTS_LOCK.lock().unwrap();
+        vault_clear();
+        assert!(!vault_has_live_secrets());
+        vault_put_secret("alice", b"z").expect("put");
+        assert!(vault_has_live_secrets());
+        vault_clear();
+        assert!(!vault_has_live_secrets());
     }
 }

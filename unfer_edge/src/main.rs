@@ -22,6 +22,7 @@
 //! unfer_edge --listen 127.0.0.1:3000 --backend 127.0.0.1:3001
 //! ```
 
+mod caprpc;
 mod cells;
 mod filter;
 mod mask;
@@ -118,9 +119,9 @@ impl ProxyHttp for UnferGateway {
             }
             let body = match session.req_header().uri.query() {
                 Some(q) if q.contains("format=prometheus") => edge_metrics()
-                    .to_prometheus(&filter::allowed_ops_vec())
+                    .to_prometheus(&filter::allowed_ops_vec(), &[])
                     .into_bytes(),
-                _ => serde_json::to_vec(&edge_metrics().to_json(&filter::allowed_ops_vec()))
+                _ => serde_json::to_vec(&edge_metrics().to_json(&filter::allowed_ops_vec(), &[]))
                     .unwrap_or_else(|_| b"".to_vec()),
             };
             let body = bytes::Bytes::from(body);
@@ -137,6 +138,40 @@ impl ProxyHttp for UnferGateway {
                 .write_response_body(Some(body), true)
                 .await?;
             return Ok(true);
+        }
+
+        // S28 (F27): object-capability RPC — POST /api/cap/invoke executes a
+        // capability-bound method (minted only at the loopback chokepoint).
+        // A method may return a nested capability stub.
+        #[cfg(feature = "audit")]
+        if session.req_header().uri.path() == "/api/cap/invoke" && session.req_header().method.to_string() == "POST" {
+            let raw = match read_body(session).await {
+                Ok(b) => b,
+                Err(_) => {
+                    return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
+                        .await
+                        .map(|_| true);
+                }
+            };
+            let call: caprpc::CapCall = match serde_json::from_slice(&raw) {
+                Ok(c) => c,
+                Err(e) => {
+                    return write_json(session, 400u16, &format!("{{\"error\":\"bad CapCall: {e}\"}}").into_bytes())
+                        .await
+                        .map(|_| true);
+                }
+            };
+            // The caller is the request's principle-less identity for now; minted
+            // capabilities are owned by the operator seam. (In a full deployment the
+            // caller comes from the authenticated session.)
+            let caller = "operator";
+            let result = caprpc::invoke(caller, &call);
+            let body = match serde_json::to_vec(&result) {
+                Ok(b) => b,
+                Err(_) => b"{\"error\":\"serialize\"}".to_vec(),
+            };
+            let status = if result.ok { 200u16 } else { 403u16 };
+            return write_json(session, status, &body).await.map(|_| true);
         }
 
         // S6 (F6): the audit console short-circuits before proxying — GET /audit lists the

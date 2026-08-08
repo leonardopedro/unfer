@@ -42,8 +42,12 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - [ ] **Admin console (S22)**: `unfer_edge/src/admin.rs` mints the admin exactly once from `UNFER_ADMIN_PRINCIPAL` (default `operator`); hard keys (`grants`, `auth`, `storage`, `backend`) are never patchable — any new hard-config key must be added to the refuse list, and the soft config must stay byte-identical on refusal.
 - [ ] **Observability hygiene (S23)**: `uk_audit_append` and `uk_report_issue` MUST run `sanitize_sensitive` (api_key/token/secret/…) before storing; `uk_report_issue` stays a no-op unless `ERROR_REPORT_BINDING` is provisioned; dot-separated owner-log lines carry `component = "kernel.audit"` and the ring is capped (`OWNER_LOG_CAPACITY` 512, drop-oldest). Any new secret-plausible field must be added to the sanitizer, or the secret-scan gate test fails.
 - [ ] **Release golden gate (S23/S24)**: `unfer_data::release` manifest CIDs map every deployable artifact byte→sha256; the golden test regenerates only via `UPDATE_GOLDEN=1` — a wrong byte in a module changes the manifest and fails CI.
+- [ ] **Budgets / rate limits (S25)**: metered `uk_*` symbols are denied at the loopback chokepoint with `UK-4601 RATE_LIMITED` / `UK-4602 BUDGET_EXCEEDED` + an audit entry — never a post-hoc report; a `GrantSet`/code change must keep the windowed meter (UTC-day key) as the single denial point and `uk_meter_status` read-only.
+- [ ] **Sensitive forward latch (S26)**: a `sensitive: true` observation sticks to the caller set; once set, `fetch`/`agent_spawn`/`blueprint_export`/`action_submit`/`gate_approve` are refused `UK-4701 SENSITIVE_LATCHED` until an operator clears it (S22 admin seam). Any new forward-mutating symbol must be added to the latch's refuse list.
+- [ ] **Credential vault (S27)**: secrets go through `uk_secret_put/get/revoke` (opaque, grant-gated, encrypted at rest via the S15 `KeyRing`); they must never serialize into a `SessionBlob` snapshot or a `.cell` blueprint — `uk_snapshot`/`uk_blueprint_export` refuse to package a live secret.
+- [ ] **Capability RPC (S28)**: capabilities are minted only at the loopback chokepoint carrying the caller's grant set; a returned capability stub is re-checked against the original caller and revoked ids are refused. Keep NDJSON/std.io as a degenerate single-capability mode and the C ABI stable.
 
-## Crate Layout (Stages 1–24 complete)
+## Crate Layout (Stages 1–28 complete)
 
 - `nested_fock_algebra` — symbolic CAS + Fock-space algebra (improved: `adjoint()`, `prune`, `truncate_top_k`, bounded expansion).
 - `fock_sirk` — SIRK solver (improved: GPU-optional, Gram whitening, BRST projection, restarted Krylov, state reconstruction).

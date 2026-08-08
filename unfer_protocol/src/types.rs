@@ -301,16 +301,30 @@ pub struct AgentResponse {
 pub enum KernelEvent {
     PriorSet,
     HamiltonianSet,
-    Evolved { t: f64, norm: f64, solve_ms: u64 },
-    Conditioned { prior_probability: f64 },
-    Observed { value: f64 },
-    Error { diagnostic: Diagnostic },
+    Evolved {
+        t: f64,
+        norm: f64,
+        solve_ms: u64,
+    },
+    Conditioned {
+        prior_probability: f64,
+    },
+    Observed {
+        value: f64,
+    },
+    Error {
+        diagnostic: Diagnostic,
+    },
     /// A side-effecting action was submitted for approval (S4). Broadcast to all
     /// subscriptions (kernel-global approval lane), not scoped to one model handle.
-    ActionPending { action: ActionRecord },
+    ActionPending {
+        action: ActionRecord,
+    },
     /// An action was resolved by the operator/gatekeeper (approved / rejected /
     /// reverted). Broadcast like [`KernelEvent::ActionPending`].
-    ActionResolved { action: ActionRecord },
+    ActionResolved {
+        action: ActionRecord,
+    },
 }
 
 // ── Deferred approval + local simulation (S4) ────────────────────────────
@@ -438,11 +452,7 @@ pub struct CallerTag {
 }
 
 impl CallerTag {
-    pub fn new(
-        from: CallerKind,
-        principal: impl Into<String>,
-        chat_id: Option<String>,
-    ) -> Self {
+    pub fn new(from: CallerKind, principal: impl Into<String>, chat_id: Option<String>) -> Self {
         Self {
             from,
             principal: principal.into(),
@@ -553,9 +563,10 @@ impl GrantSet {
             && self.effects.iter().all(|e| other.effects.contains(e))
             && self.observers.iter().all(|o| other.observers.contains(o))
             && self.resources.iter().all(|r| other.resources.contains(r))
-            && self.effect_kinds.iter().all(|g| {
-                other.effect_kind_of(&g.name) == Some(g.effect_kind)
-            })
+            && self
+                .effect_kinds
+                .iter()
+                .all(|g| other.effect_kind_of(&g.name) == Some(g.effect_kind))
     }
 }
 
@@ -578,15 +589,19 @@ mod grantset_proptests {
             kernel: k.into_iter().map(|i| format!("kernel{i:02}")).collect(),
             effects: e.into_iter().map(|i| format!("effect{i:02}")).collect(),
             observers: o.into_iter().map(|i| format!("peer{i:02}")).collect(),
-            resources: r
-                .into_iter()
-                .map(|i| format!("res{i:02}"))
-                .collect(),
+            resources: r.into_iter().map(|i| format!("res{i:02}")).collect(),
             effect_kinds: Vec::new(),
         })
     }
 
-    fn sorted(g: &GrantSet) -> (BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>) {
+    fn sorted(
+        g: &GrantSet,
+    ) -> (
+        BTreeSet<&str>,
+        BTreeSet<&str>,
+        BTreeSet<&str>,
+        BTreeSet<&str>,
+    ) {
         (
             g.kernel.iter().map(String::as_str).collect(),
             g.effects.iter().map(String::as_str).collect(),
@@ -680,7 +695,10 @@ mod grantset_tests {
             resources: vec![],
             effect_kinds: vec![],
         };
-        assert!(!escalate.is_subset_of(&base), "observer escalation must be refused");
+        assert!(
+            !escalate.is_subset_of(&base),
+            "observer escalation must be refused"
+        );
         // Minting a resource introduction the caller does not hold → escalation.
         let mint_resource = GrantSet {
             kernel: vec![],
@@ -739,7 +757,10 @@ mod grantset_tests {
         );
         // An un-annotated granted effect reads back as None (caller decides Mutate).
         assert_eq!(base.effect_kind_of("delete_row"), None);
-        assert_eq!(base.effect_kind_of("read_metric"), Some(EffectKind::Observe));
+        assert_eq!(
+            base.effect_kind_of("read_metric"),
+            Some(EffectKind::Observe)
+        );
         assert_eq!(base.effect_kind_of("never_granted"), None);
     }
 }
@@ -768,6 +789,13 @@ pub struct AuditEntry {
     /// threaded from the host into the call that produced this entry).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<serde_json::Value>,
+    /// F25 forward policy: this entry represents a `<*sensitive*>` observation.
+    /// When set, the caller's sticky observation set latches and the loopback
+    /// refuses forward-mutating ops (egress, hand-off, blueprints, writes) with
+    /// [`Code::SENSITIVE_LATCHED`] until an operator clears it. Set by the
+    /// gatekeeper/`uk_*` that minted the read — never by the reader.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sensitive: bool,
 }
 
 /// Lifecycle of a spawned sub-agent (S6 `AgentSpawner`).

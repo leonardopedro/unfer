@@ -35,6 +35,16 @@ fn bad_handle(handle: i64) -> Diagnostic {
     )
 }
 
+/// S27: a live credential in the vault cannot be packaged into a snapshot or a
+/// `.cell` blueprint — the secret must never serialize out of the host.
+fn snapshot_refuses_live_secret() -> Diagnostic {
+    Diagnostic::new(
+        Code::INTERNAL,
+        "refusing to package: a live credential is held in the vault and must not serialize",
+        Severity::Error,
+    )
+}
+
 fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i64 {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(val)) => val,
@@ -46,8 +56,13 @@ fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i6
 /// Read a NUL-free UTF-8 string from the C ABI (`ptr` + `len`).
 fn read_utf8(ptr: *const u8, len: i64) -> Result<String, Diagnostic> {
     let bytes = read_bytes(ptr, len)?;
-    String::from_utf8(bytes)
-        .map_err(|e| Diagnostic::new(Code::BAD_JSON, format!("invalid UTF-8: {e}"), Severity::Error))
+    String::from_utf8(bytes).map_err(|e| {
+        Diagnostic::new(
+            Code::BAD_JSON,
+            format!("invalid UTF-8: {e}"),
+            Severity::Error,
+        )
+    })
 }
 
 fn parse_json<T: serde::de::DeserializeOwned>(ptr: *const u8, len: i64) -> Result<T, Diagnostic> {
@@ -445,6 +460,10 @@ pub extern "C" fn uk_last_error(buf: *mut u8, cap: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_snapshot(model: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_snapshot", || {
+        // S27: a live secret must never serialize into a SessionBlob snapshot.
+        if handles::vault_has_live_secrets() {
+            return Err(snapshot_refuses_live_secret());
+        }
         let blob =
             handles::with_session_mut(model, |s| s.save()).ok_or_else(|| bad_handle(model))?;
         let json = serde_json::to_string(&blob)
@@ -472,7 +491,12 @@ pub extern "C" fn uk_restore(blob_json: *const u8, len: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_blueprint_export(model: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_blueprint_export", || {
-        let blob = handles::with_session_mut(model, |s| s.save()).ok_or_else(|| bad_handle(model))?;
+        // S27: a live secret must never serialize into a `.cell` blueprint.
+        if handles::vault_has_live_secrets() {
+            return Err(snapshot_refuses_live_secret());
+        }
+        let blob =
+            handles::with_session_mut(model, |s| s.save()).ok_or_else(|| bad_handle(model))?;
         let session_json = serde_json::to_string(&blob)
             .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
 
@@ -505,9 +529,8 @@ pub extern "C" fn uk_blueprint_instantiate(cell: *const u8, len: i64) -> i64 {
                 Severity::Error,
             )
         })?;
-        let blob: SessionBlob = serde_json::from_slice(session).map_err(|e| {
-            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
-        })?;
+        let blob: SessionBlob = serde_json::from_slice(session)
+            .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
         let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
         Ok(handles::store_session(session))
     })
@@ -540,7 +563,7 @@ pub extern "C" fn uk_blueprint_import(cell: *const u8, len: i64, buf: *mut u8, c
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_blueprint_list(buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_blueprint_list", || {
-        // Always serve the list (blueprints are the operator's content plane); empty is []. 
+        // Always serve the list (blueprints are the operator's content plane); empty is [].
         let records = unfer_data::blueprint::global_registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -581,12 +604,7 @@ pub extern "C" fn uk_blueprint_get_by_id(
 /// `/cell/<cid>` seed so a registered blueprint can be surfaced through the content
 /// gateway. Buffer protocol; the content is address-public.
 #[unsafe(no_mangle)]
-pub extern "C" fn uk_blueprint_cell(
-    id: *const u8,
-    id_len: i64,
-    buf: *mut u8,
-    cap: i64,
-) -> i64 {
+pub extern "C" fn uk_blueprint_cell(id: *const u8, id_len: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_blueprint_cell", || {
         let id_str = read_utf8(id, id_len)?;
         let registry = unfer_data::blueprint::global_registry()
@@ -641,9 +659,8 @@ pub extern "C" fn uk_blueprint_export_gadget(
                 Severity::Error,
             )
         })?;
-        let blob: SessionBlob = serde_json::from_slice(session).map_err(|e| {
-            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
-        })?;
+        let blob: SessionBlob = serde_json::from_slice(session)
+            .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
         let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
         let handle = handles::store_session(session);
         let json = serde_json::to_string(&serde_json::json!({ "handle": handle }))
@@ -807,16 +824,17 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
         }
         let req: ActionSubmitReq = parse_json(req_json, len)?;
         let seq = next_action_seq();
-        let mut record = ActionRecord::new(
-            format!("action-{seq}"),
-            req.principal.clone(),
-            req.effect.clone(),
-            req.params,
-            seq,
-            Some(req.provisional.unwrap_or_else(|| {
-                serde_json::json!({ "simulated": true, "effect": req.effect })
-            })),
-        );
+        let mut record =
+            ActionRecord::new(
+                format!("action-{seq}"),
+                req.principal.clone(),
+                req.effect.clone(),
+                req.params,
+                seq,
+                Some(req.provisional.unwrap_or_else(
+                    || serde_json::json!({ "simulated": true, "effect": req.effect }),
+                )),
+            );
         // S6 (F6): tag the record with the current caller. When the host loopback
         // dispatched this call it set the thread-local caller to the module's
         // identity, so `principal` (injected by the loopback) and the caller tag
@@ -1056,6 +1074,7 @@ pub extern "C" fn uk_gate_approve(action_handle: i64) -> i64 {
                     args: serde_json::json!([action_handle]),
                     component: handles::current_component(),
                     context: handles::current_observability(),
+                    sensitive: false,
                 };
                 handles::store_audit(entry);
                 push_resolved(action_handle)?;
@@ -1095,6 +1114,7 @@ pub extern "C" fn uk_gate_reject(action_handle: i64) -> i64 {
                     args: serde_json::json!([action_handle]),
                     component: handles::current_component(),
                     context: handles::current_observability(),
+                    sensitive: false,
                 };
                 handles::store_audit(entry);
                 push_resolved(action_handle)?;
@@ -1183,9 +1203,8 @@ pub fn uk_set_caller(caller_json: &str) -> Result<(), Diagnostic> {
         #[serde(default)]
         grants: Option<GrantSet>,
     }
-    let req: CallerReq = serde_json::from_str(caller_json).map_err(|e| {
-        Diagnostic::new(Code::AUDIT_INVALID, e.to_string(), Severity::Error)
-    })?;
+    let req: CallerReq = serde_json::from_str(caller_json)
+        .map_err(|e| Diagnostic::new(Code::AUDIT_INVALID, e.to_string(), Severity::Error))?;
     let tag = CallerTag::new(
         req.from.unwrap_or(CallerKind::Hook),
         req.principal.unwrap_or_else(|| "kernel".to_string()),
@@ -1230,6 +1249,150 @@ pub fn uk_clear_vetted() {
     handles::clear_vetted();
 }
 
+/// Read the current windowed meter status for `principal` without consuming a
+/// metered call (mirrors Cloudflare's `checkDailyLlmCount`). `budget_json` is
+/// `{"budget":N,"rate_limit":M}`; the returned handle encodes a JSON
+/// `MeterStatus` blob via the buffer protocol. Read-only — never consumes.
+pub extern "C" fn uk_meter_status(
+    principal: *const u8,
+    len: i64,
+    budget_json: *const u8,
+    blade: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_meter_status", || {
+        let principal = read_utf8(principal, len)?;
+        #[derive(serde::Deserialize)]
+        #[serde(default)]
+        struct Limits {
+            budget: u64,
+            rate_limit: u64,
+        }
+        impl Default for Limits {
+            fn default() -> Self {
+                Self {
+                    budget: 0,
+                    rate_limit: 0,
+                }
+            }
+        }
+        let limits: Limits = if blade != 0 {
+            let json = read_utf8(budget_json, blade)?;
+            serde_json::from_str(&json).map_err(|e| {
+                Diagnostic::new(Code::BAD_JSON, format!("bad limits: {e}"), Severity::Error)
+            })?
+        } else {
+            Limits::default()
+        };
+        let status = handles::meter_status(&principal, limits.budget.max(1));
+        let json = serde_json::to_string(&status).map_err(|e| {
+            Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
+        })?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// C-ABI QA/console reset of the windowed meter.
+pub fn uk_clear_meter() {
+    handles::clear_meter();
+}
+
+/// Whether `principal` is sensitive-latched (S26/F25). Host-loopback gate: the
+/// chokepoint consults this before dispatching a forward-mutating symbol.
+pub fn uk_is_sensitive_latched(principal: &str) -> bool {
+    handles::is_sensitive_latched(principal)
+}
+
+/// Set or clear the sensitive latch for `principal`. Console-only (the S22
+/// operator); returns the new latched state.
+pub fn uk_set_sensitive_latch(principal: &str, latched: bool) -> bool {
+    handles::set_sensitive_latch(principal, latched)
+}
+
+/// Clear every sensitive latch (QA/console reset). Approval queue untouched.
+pub fn uk_clear_sensitive_latches() {
+    handles::clear_sensitive_latches();
+}
+
+/// Store a secret under the current caller (S27/F26). `value_bytes` is the raw
+/// secret; the host encrypts it at rest (S15 KeyRing) and returns an opaque
+/// handle. The raw value is never returned from the vault — only the handle.
+/// Returns the secret handle (>0) on success, <0 (-code) on error.
+pub extern "C" fn uk_secret_put(
+    owner: *const u8,
+    owner_len: i64,
+    value: *const u8,
+    value_len: i64,
+) -> i64 {
+    ffi_entry("uk_secret_put", || {
+        let owner = read_utf8(owner, owner_len)?;
+        let value = read_bytes(value, value_len)?;
+        handles::vault_put_secret(&owner, &value)
+            .map(|h| h as i64)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e, Severity::Error))
+    })
+}
+
+/// Dereference a secret handle for the current caller (S27/F26). Only the owner
+/// may read it; the host dereferences at call time (grant-checked) so the raw
+/// value reaches the dereferencing call, never gadget code. Buffer protocol.
+/// <0 (-code) on error (unknown handle / not owner).
+pub extern "C" fn uk_secret_get(
+    handle: i64,
+    owner: *const u8,
+    owner_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_secret_get", || {
+        let owner = read_utf8(owner, owner_len)?;
+        let value = handles::vault_get_secret(handle as u64, &owner)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e, Severity::Error))?;
+        Ok(write_bytes(buf, cap, &value))
+    })
+}
+
+/// Revoke a secret handle (S27/F26), invalidating it. Returns 0 on success
+/// (or -code if the handle was already unknown).
+pub extern "C" fn uk_secret_revoke(handle: i64) -> i64 {
+    ffi_entry("uk_secret_revoke", || {
+        if handles::vault_revoke_secret(handle as u64) {
+            Ok(0)
+        } else {
+            Err(Diagnostic::new(
+                Code::BAD_HANDLE,
+                format!("secret handle {handle} is unknown or already revoked"),
+                Severity::Error,
+            ))
+        }
+    })
+}
+
+/// Whether any live secret exists in the vault (S27). `uk_snapshot`/`uk_blueprint_export`
+/// consult this to refuse packaging a live secret into a snapshot or `.cell` blueprint.
+pub fn uk_vault_has_live_secrets() -> bool {
+    handles::vault_has_live_secrets()
+}
+
+/// Drop every secret (QA/console reset).
+pub fn uk_vault_clear() {
+    handles::vault_clear();
+}
+
+/// Host-loopback gate: consume one unit of the caller's windowed budget for a
+/// *metered* symbol. Returns the [`handles::MeterDecision`] tag (`0` = allowed,
+/// `1` = rate-limited, `2` = budget-exceeded). This is the single denial point
+/// for cost governance — the loopback calls it before dispatching a metered
+/// `uk_*`, never after the fact.
+pub fn uk_meter_consume(principal: &str, budget: u64, rate_limit: u64) -> i64 {
+    match handles::meter_consume(principal, budget, rate_limit) {
+        handles::MeterDecision::Allowed => 0,
+        handles::MeterDecision::RateLimited => 1,
+        handles::MeterDecision::BudgetExceeded => 2,
+    }
+}
+
 /// Append an audit entry for the current thread's caller. `entry_json` is
 /// `{"symbol":"...","args":?,"ok":bool,"detail":?}` — the caller tag is read from
 /// the thread-local caller context (the loopback set it at dispatch start).
@@ -1245,6 +1408,8 @@ pub fn uk_audit_append(entry_json: &str) -> i64 {
         ok: bool,
         #[serde(default)]
         detail: Option<String>,
+        #[serde(default)]
+        sensitive: bool,
     }
     let req: AuditAppendReq = match serde_json::from_str(entry_json) {
         Ok(r) => r,
@@ -1268,6 +1433,7 @@ pub fn uk_audit_append(entry_json: &str) -> i64 {
         args,
         component: handles::current_component().or_else(|| Some("kernel.audit".to_string())),
         context: handles::current_observability(),
+        sensitive: req.sensitive,
     };
     handles::store_audit(entry) as i64
 }
@@ -1325,9 +1491,8 @@ pub fn uk_observability_clear() {
 pub extern "C" fn uk_observability(ptr: *const u8, len: i64) -> i64 {
     ffi_entry("uk_observability", || {
         let json = read_utf8(ptr, len)?;
-        let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
-            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
-        })?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
         handles::set_observability(value);
         Ok(0)
     })
@@ -1448,9 +1613,8 @@ pub extern "C" fn uk_agent_list(buf: *mut u8, cap: i64) -> i64 {
         let agents = handles::list_agents();
         let mut values = Vec::with_capacity(agents.len());
         for (handle, agent) in agents {
-            let mut value = serde_json::to_value(&agent).map_err(|e| {
-                Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
-            })?;
+            let mut value = serde_json::to_value(&agent)
+                .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("handle".to_string(), serde_json::json!(handle));
             }
@@ -1606,6 +1770,7 @@ pub extern "C" fn uk_request_resource(resource_json: *const u8, len: i64) -> i64
             args: serde_json::json!([resource_id]),
             component: handles::current_component(),
             context: handles::current_observability(),
+            sensitive: false,
         };
         handles::store_audit(entry);
         Ok(handle)
@@ -1621,9 +1786,8 @@ pub extern "C" fn uk_resource_pending(buf: *mut u8, cap: i64) -> i64 {
         let pending = handles::list_pending_resource_requests();
         let mut values = Vec::with_capacity(pending.len());
         for (handle, req) in pending {
-            let mut value = serde_json::to_value(&req).map_err(|e| {
-                Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
-            })?;
+            let mut value = serde_json::to_value(&req)
+                .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("handle".to_string(), serde_json::json!(handle));
             }
@@ -1900,10 +2064,15 @@ mod tests {
     #[test]
     fn blueprint_instantiate_rejects_cell_without_session() {
         let mut builder = unfer_protocol::CellBuilder::new("dry");
-        builder.add_file("module.toml", b"[module]\nname = \"dry\"\n").unwrap();
+        builder
+            .add_file("module.toml", b"[module]\nname = \"dry\"\n")
+            .unwrap();
         let cell = builder.build().unwrap();
         let ret = uk_blueprint_instantiate(cell.as_ptr(), cell.len() as i64);
-        assert_eq!(ret, -4101, "session-less cell must yield UK-4101, got {ret}");
+        assert_eq!(
+            ret, -4101,
+            "session-less cell must yield UK-4101, got {ret}"
+        );
     }
 
     #[test]
@@ -1929,7 +2098,9 @@ mod tests {
 
     #[test]
     fn blueprint_import_register_list_export_gadget_two_sessions() {
-        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = BLUEPRINT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unfer_data::blueprint::clear_global_registry();
         uk_clear_caller();
 
@@ -1946,7 +2117,11 @@ mod tests {
         // The registry carries the immutable record addressed by the content CID.
         let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
         let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
-        assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 1, "one import: {list}");
+        assert_eq!(
+            list.as_array().map(|a| a.len()).unwrap_or(0),
+            1,
+            "one import: {list}"
+        );
         let record = &list[0];
         let cid = record["blueprint_id"].as_str().unwrap().to_string();
         assert_eq!(record["created_by"], "blueprint_publisher");
@@ -1957,15 +2132,29 @@ mod tests {
         // handles whose restored sessions behave identically to the source.
         let g1 = export_gadget(&cid);
         let g2 = export_gadget(&cid);
-        assert!(g1 > 0 && g2 > 0 && g1 != g2, "per-user copies must be distinct sessions");
+        assert!(
+            g1 > 0 && g2 > 0 && g1 != g2,
+            "per-user copies must be distinct sessions"
+        );
 
         // The per-user copies must reproduce identical Born-rule behavior.
         let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
-        assert_eq!(uk_event_probability(g1, pptr, plen), 0, "gadget 1 must answer");
+        assert_eq!(
+            uk_event_probability(g1, pptr, plen),
+            0,
+            "gadget 1 must answer"
+        );
         let p1 = read_buf(|b, c| uk_get_result(g1, b, c));
-        assert_eq!(uk_event_probability(g2, pptr, plen), 0, "gadget 2 must answer");
+        assert_eq!(
+            uk_event_probability(g2, pptr, plen),
+            0,
+            "gadget 2 must answer"
+        );
         let p2 = read_buf(|b, c| uk_get_result(g2, b, c));
-        assert_eq!(p1, p2, "two per-user copies must reproduce identical behavior");
+        assert_eq!(
+            p1, p2,
+            "two per-user copies must reproduce identical behavior"
+        );
 
         // Idempotent import: same bytes → same immutable id, original minter kept.
         set_caller_gadget("second_publisher");
@@ -1974,7 +2163,10 @@ mod tests {
         let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
         let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
         assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 1);
-        assert_eq!(list[0]["created_by"], "blueprint_publisher", "immutable: no re-mint");
+        assert_eq!(
+            list[0]["created_by"], "blueprint_publisher",
+            "immutable: no re-mint"
+        );
 
         uk_model_free(h);
         uk_model_free(g1);
@@ -1984,18 +2176,27 @@ mod tests {
     fn export_gadget(cid: &str) -> i64 {
         let out = read_raw(|b, c| uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, b, c));
         let v: serde_json::Value = serde_json::from_slice(&out).expect("gadget json");
-        v["handle"].as_i64().expect("gadget returns a session handle")
+        v["handle"]
+            .as_i64()
+            .expect("gadget returns a session handle")
     }
 
     #[test]
     fn blueprint_import_rejects_tampered_cell() {
-        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = BLUEPRINT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut builder = unfer_protocol::CellBuilder::new("dry");
-        builder.add_file("module.toml", b"[module]\nname=\"dry\"\n").unwrap();
+        builder
+            .add_file("module.toml", b"[module]\nname=\"dry\"\n")
+            .unwrap();
         let mut cell = builder.build().unwrap();
         cell[10] ^= 0xff; // flip a body byte — content address no longer matches
         let ret = uk_blueprint_import(cell.as_ptr(), cell.len() as i64, std::ptr::null_mut(), 0);
-        assert_eq!(ret, -4100, "tampered archive must fail verification (UK-4100), got {ret}");
+        assert_eq!(
+            ret, -4100,
+            "tampered archive must fail verification (UK-4100), got {ret}"
+        );
 
         // Bad magic entirely.
         let ret = uk_blueprint_import(b"NOTACEL1".as_ptr(), 8, std::ptr::null_mut(), 0);
@@ -2004,7 +2205,9 @@ mod tests {
 
     #[test]
     fn blueprint_get_and_cell_and_unknown_id() {
-        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = BLUEPRINT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unfer_data::blueprint::clear_global_registry();
         uk_clear_caller();
         let h = create_harmonic_model();
@@ -2027,15 +2230,33 @@ mod tests {
         assert_eq!(rec["blueprint_id"], cid);
 
         let bytes = read_raw(|b, c| uk_blueprint_cell(cid.as_ptr(), cid.len() as i64, b, c));
-        assert_eq!(bytes, cell, "uk_blueprint_cell must return the exact registered bytes");
+        assert_eq!(
+            bytes, cell,
+            "uk_blueprint_cell must return the exact registered bytes"
+        );
 
         // Unknown ids read UK-4102 on both.
         let unknown = "0".repeat(64);
-        let r1 = uk_blueprint_get_by_id(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        let r1 = uk_blueprint_get_by_id(
+            unknown.as_ptr(),
+            unknown.len() as i64,
+            std::ptr::null_mut(),
+            0,
+        );
         assert_eq!(r1, -4102);
-        let r2 = uk_blueprint_cell(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        let r2 = uk_blueprint_cell(
+            unknown.as_ptr(),
+            unknown.len() as i64,
+            std::ptr::null_mut(),
+            0,
+        );
         assert_eq!(r2, -4102);
-        let r3 = uk_blueprint_export_gadget(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        let r3 = uk_blueprint_export_gadget(
+            unknown.as_ptr(),
+            unknown.len() as i64,
+            std::ptr::null_mut(),
+            0,
+        );
         assert_eq!(r3, -4102);
 
         uk_model_free(h);
@@ -2052,9 +2273,7 @@ mod tests {
     static ACTION_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn submit_action(effect: &str, params: &str) -> i64 {
-        let req = format!(
-            r#"{{"principal":"test_module","effect":"{effect}","params":{params}}}"#
-        );
+        let req = format!(r#"{{"principal":"test_module","effect":"{effect}","params":{params}}}"#);
         let (ptr, len) = json_ptr(&req);
         uk_action_submit(ptr, len)
     }
@@ -2136,9 +2355,7 @@ mod tests {
         // remain in the shared queue).
         let mine: Vec<&serde_json::Value> = arr
             .iter()
-            .filter(|r| {
-                matches!(r["effect"].as_str(), Some("op_a") | Some("op_b"))
-            })
+            .filter(|r| matches!(r["effect"].as_str(), Some("op_a") | Some("op_b")))
             .collect();
         assert_eq!(mine.len(), 2, "expected op_a + op_b in list: {json}");
         assert_eq!(mine[0]["effect"], "op_a");
@@ -2227,13 +2444,14 @@ mod tests {
 
     #[test]
     fn audit_append_list_clear_roundtrip() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         set_caller_gadget("mod_a");
         let seq1 = uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
-        let seq2 = uk_audit_append(
-            r#"{"symbol":"uk_action_submit","args":[{"effect":"x"}],"ok":true}"#,
-        );
+        let seq2 =
+            uk_audit_append(r#"{"symbol":"uk_action_submit","args":[{"effect":"x"}],"ok":true}"#);
         assert!(seq1 > 0 && seq2 > seq1);
 
         let entries = audit_list();
@@ -2256,7 +2474,9 @@ mod tests {
 
     #[test]
     fn audit_default_caller_is_hook() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         // No explicit caller: the default hook/kernel tag applies.
         let seq = uk_audit_append(r#"{"symbol":"uk_version","ok":true}"#);
@@ -2270,29 +2490,31 @@ mod tests {
 
     #[test]
     fn audit_append_rejects_malformed_entry() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Missing required `symbol` → seq 0 (no entry appended).
         assert_eq!(uk_audit_append(r#"{"ok":true}"#), 0);
     }
 
     #[test]
     fn agent_spawn_bounded_and_list() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_clear_caller();
         // A gadget holding {uk_evolve, uk_action_submit} may spawn an agent bounded
         // to a subset, but not one with a superset (escalation is refused).
         let caller = r#"{"from":"gadget","principal":"parent_mod","grants":{"kernel":["uk_evolve","uk_action_submit"],"effects":["send_notification"]}}"#;
         uk_set_caller(caller).unwrap();
 
-        let spec =
-            r#"{"name":"analyst","grants":{"kernel":["uk_evolve"],"effects":["send_notification"]}}"#;
+        let spec = r#"{"name":"analyst","grants":{"kernel":["uk_evolve"],"effects":["send_notification"]}}"#;
         let (ptr, len) = json_ptr(spec);
         let handle = uk_agent_spawn(ptr, len);
         assert!(handle > 0, "subset spawn must succeed, got {handle}");
 
         // Escalation: requesting a symbol the parent does not hold → UK-4202.
-        let bad =
-            r#"{"name":"sneaky","grants":{"kernel":["uk_evolve","uk_model_create"]}}"#;
+        let bad = r#"{"name":"sneaky","grants":{"kernel":["uk_evolve","uk_model_create"]}}"#;
         let (ptr, len) = json_ptr(bad);
         assert_eq!(uk_agent_spawn(ptr, len), -4202);
         // Escalation via the effects namespace too.
@@ -2317,7 +2539,9 @@ mod tests {
 
     #[test]
     fn agent_kill_lifecycle() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_clear_caller();
         let spec = r#"{"name":"worker","grants":{"kernel":["uk_version"]}}"#;
         let (ptr, len) = json_ptr(spec);
@@ -2332,7 +2556,9 @@ mod tests {
 
     #[test]
     fn agent_grants_returns_bounded_set() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_clear_caller();
         let spec = r#"{"name":"bounded","grants":{"kernel":["uk_evolve"],"effects":["notify"]}}"#;
         let (ptr, len) = json_ptr(spec);
@@ -2348,11 +2574,14 @@ mod tests {
 
     #[test]
     fn action_record_carries_caller_tag() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_clear_caller();
         set_caller_gadget("mod_tagged");
         // The loopback injects the request principal to match the caller identity.
-        let req = r#"{"principal":"mod_tagged","effect":"send_notification","params":{"to":"dave"}}"#;
+        let req =
+            r#"{"principal":"mod_tagged","effect":"send_notification","params":{"to":"dave"}}"#;
         let (ptr, len) = json_ptr(req);
         let handle = uk_action_submit(ptr, len);
         assert!(handle > 0);
@@ -2366,7 +2595,9 @@ mod tests {
 
     #[test]
     fn set_caller_rejects_malformed_json() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let err = uk_set_caller("not json");
         assert!(err.is_err(), "malformed caller json must fail");
     }
@@ -2429,7 +2660,9 @@ mod tests {
 
     #[test]
     fn audit_list_filtered_by_observer_grants() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_clear_caller();
         set_caller_gadget("f8_audit_owner");
@@ -2441,7 +2674,8 @@ mod tests {
         let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
         let arr = entries.as_array().expect("audit list must be an array");
         assert!(
-            arr.iter().all(|e| e["caller"]["principal"] != "f8_audit_owner"),
+            arr.iter()
+                .all(|e| e["caller"]["principal"] != "f8_audit_owner"),
             "reader without observer grant must not see f8_audit_owner: {json}"
         );
 
@@ -2451,7 +2685,8 @@ mod tests {
         let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
         let arr = entries.as_array().expect("audit list must be an array");
         assert!(
-            arr.iter().any(|e| e["caller"]["principal"] == "f8_audit_owner"),
+            arr.iter()
+                .any(|e| e["caller"]["principal"] == "f8_audit_owner"),
             "peer with observer grant must see f8_audit_owner: {json}"
         );
         uk_clear_caller();
@@ -2473,10 +2708,7 @@ mod tests {
         // The trusted harness (no bounded grants) may exercise a minted resource.
         assert_eq!(ffi_str(uk_resource_use, r#""s3.bucket#demo""#), 0);
         // Re-introduction at the single-mint chokepoint is refused (UK-4402).
-        assert_eq!(
-            ffi_str(uk_resource_introduce, r#""s3.bucket#demo""#),
-            -4402
-        );
+        assert_eq!(ffi_str(uk_resource_introduce, r#""s3.bucket#demo""#), -4402);
         // Forfeit revokes; afterwards the id is no longer minted (UK-4403).
         assert_eq!(ffi_str(uk_resource_forfeit, r#""s3.bucket#demo""#), 0);
         assert_eq!(ffi_str(uk_resource_use, r#""s3.bucket#demo""#), -4403);
@@ -2496,7 +2728,9 @@ mod tests {
 
     #[test]
     fn request_queues_for_approval_and_audits() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_clear_caller();
         set_caller_gadget("f17_requester");
@@ -2535,7 +2769,9 @@ mod tests {
 
     #[test]
     fn gatekeeper_approve_resolves_pending_and_lands_in_stream() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_clear_caller();
 
@@ -2552,7 +2788,10 @@ mod tests {
         let found = pending
             .iter()
             .any(|v| v[0] == serde_json::json!(handle) && v[1]["effect"] == "notify_admins");
-        assert!(found, "pending console must list the scan action: {pending:?}");
+        assert!(
+            found,
+            "pending console must list the scan action: {pending:?}"
+        );
 
         // The human operator approves through uk_gate_approve (audited with their principal).
         set_caller_gadget("scan_operator");
@@ -2582,7 +2821,10 @@ mod tests {
             arr.iter().any(|e| {
                 e["symbol"] == "uk_gate_approve"
                     && e["caller"]["principal"] == "scan_operator"
-                    && e["detail"].as_str().unwrap_or("").contains("by='scan_operator'")
+                    && e["detail"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("by='scan_operator'")
             }),
             "human approval must be audited: {entries}"
         );
@@ -2591,7 +2833,9 @@ mod tests {
 
     #[test]
     fn gatekeeper_reject_keeps_pending_out_of_applied() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_clear_caller();
         let req = r#"{"principal":"scan-agent","effect":"notify_admins","params":{"msg":"x"},"provisional":{"forecast":true}}"#;
@@ -2605,7 +2849,10 @@ mod tests {
         let rec_json = read_buf(|b, c| uk_action_get(handle, b, c));
         let record: serde_json::Value = serde_json::from_str(&rec_json).unwrap();
         assert_eq!(record["state"], "rejected");
-        assert!(record["applied"].is_null(), "rejected action has no applied result");
+        assert!(
+            record["applied"].is_null(),
+            "rejected action has no applied result"
+        );
 
         // A gate approve over a resolved action is refused (UK-4005).
         assert_eq!(uk_gate_approve(handle), -4005);
@@ -2649,7 +2896,10 @@ mod tests {
 
         let record: serde_json::Value =
             serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
-        assert_eq!(record["state"], "approved", "observe-kind applies immediately: {record}");
+        assert_eq!(
+            record["state"], "approved",
+            "observe-kind applies immediately: {record}"
+        );
         assert_eq!(record["applied"]["applied"], true);
 
         assert!(
@@ -2680,8 +2930,14 @@ mod tests {
         let record: serde_json::Value =
             serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
         assert_eq!(record["state"], "pending", "mutate-kind queues: {record}");
-        assert!(record["applied"].is_null(), "no applied result without approval");
-        assert_eq!(record["result"]["rows"], 1, "provisional is served meanwhile");
+        assert!(
+            record["applied"].is_null(),
+            "no applied result without approval"
+        );
+        assert_eq!(
+            record["result"]["rows"], 1,
+            "provisional is served meanwhile"
+        );
 
         // The pending lane carries exactly this action; approving it promotes applied.
         let pending = pending_list();
@@ -2715,7 +2971,10 @@ mod tests {
         assert!(handle > 0);
         let record: serde_json::Value =
             serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
-        assert_eq!(record["state"], "approved", "vetted mutate auto-applies: {record}");
+        assert_eq!(
+            record["state"], "approved",
+            "vetted mutate auto-applies: {record}"
+        );
         assert!(
             !pending_list()
                 .as_array()
@@ -2775,7 +3034,11 @@ mod tests {
 
         set_caller_gadget("wannabe");
         let (p, l) = json_ptr("wannabe");
-        assert_eq!(uk_registry_vetted(p, l, 1), -4501, "gadget cannot self-mint vetted");
+        assert_eq!(
+            uk_registry_vetted(p, l, 1),
+            -4501,
+            "gadget cannot self-mint vetted"
+        );
 
         // The operator harness can.
         uk_clear_caller();
@@ -2789,7 +3052,7 @@ mod tests {
     // The owner sink and observability thread-local are kernel-global per process,
     // so these serialize on ACTION_TESTS_LOCK and reset their stores first.
 
-fn owner_lines() -> Vec<String> {
+    fn owner_lines() -> Vec<String> {
         let json = read_buf(|b, c| uk_owner_list(b, c));
         serde_json::from_str(&json).unwrap_or_default()
     }
@@ -2801,16 +3064,26 @@ fn owner_lines() -> Vec<String> {
         owner_log("kernel.audit", "entry persisted");
         owner_log("kernel.action", "approval promoted");
         let lines = owner_lines();
-        assert!(lines.iter().any(|l| l == "(kernel.audit) entry persisted"), "{lines:?}");
-        assert!(lines.iter().any(|l| l == "(kernel.action) approval promoted"), "{lines:?}");
-assert!(uk_owner_clear() >= 2, "clear removes the lines");
+        assert!(
+            lines.iter().any(|l| l == "(kernel.audit) entry persisted"),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "(kernel.action) approval promoted"),
+            "{lines:?}"
+        );
+        assert!(uk_owner_clear() >= 2, "clear removes the lines");
         assert!(owner_lines().is_empty());
     }
 
     #[test]
     fn observability_context_threads_into_audit_entries() {
         // The audit trail is shared; serialize with the other audit-appending tests.
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_clear_caller();
 
@@ -2830,7 +3103,10 @@ assert!(uk_owner_clear() >= 2, "clear removes the lines");
             .iter()
             .find(|e| e["symbol"] == "uk_evolve" && e["caller"]["principal"] == "obs_probe")
             .expect("seeded call must be audited: {json}");
-        assert_eq!(mine["context"]["trace_id"], "f22-42", "trace id threads per call");
+        assert_eq!(
+            mine["context"]["trace_id"], "f22-42",
+            "trace id threads per call"
+        );
         assert_eq!(mine["component"], "kernel.audit");
 
         // A call *after* clear carries no context.
@@ -2860,7 +3136,10 @@ assert!(uk_owner_clear() >= 2, "clear removes the lines");
         // No binding → the report is a no-op and nothing lands in any log.
         assert_eq!(uk_report_issue(p, l), 0);
         let lines = owner_lines();
-        assert!(lines.is_empty(), "no binding must mean no report: {lines:?}");
+        assert!(
+            lines.is_empty(),
+            "no binding must mean no report: {lines:?}"
+        );
     }
 
     #[test]
@@ -2873,7 +3152,10 @@ assert!(uk_owner_clear() >= 2, "clear removes the lines");
         let (p, l) = json_ptr(r#"{"message":"encode failure","api_key":"sec-F22-SECRET-xyz"}"#);
         assert_eq!(uk_report_issue(p, l), 1, "bound report is recorded");
         let lines = owner_lines();
-        assert!(!lines.is_empty(), "bound report must land in the owner sink");
+        assert!(
+            !lines.is_empty(),
+            "bound report must land in the owner sink"
+        );
         let joined = lines.join("\n");
         assert!(
             !joined.contains("sec-F22-SECRET-xyz"),
@@ -2893,7 +3175,9 @@ assert!(uk_owner_clear() >= 2, "clear removes the lines");
         // F22 discipline gate: feed a known token through the logging surface (the
         // host loopback's `uk_audit_append` — where a leaked credential-keyed param
         // would land) and scan audit + owner logs for it.
-        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_owner_clear();
         uk_clear_caller();
@@ -2906,7 +3190,10 @@ assert!(uk_owner_clear() >= 2, "clear removes the lines");
         let entry = format!(
             r#"{{"symbol":"uk_action_submit","args":[{{"principal":"fixture_leaker","effect":"send_notification","params":{{"api_key":"{token}"}}}}],"ok":true}}"#
         );
-        assert!(uk_audit_append(&entry) > 0, "audit append must assign a seq");
+        assert!(
+            uk_audit_append(&entry) > 0,
+            "audit append must assign a seq"
+        );
         uk_clear_caller();
 
         // The audit trail (its serialized JSON) + owner sink never contain the token.

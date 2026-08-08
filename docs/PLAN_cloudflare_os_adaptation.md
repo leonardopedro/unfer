@@ -320,6 +320,9 @@ the auth engine and an event stream.
 - **Map:** unfer's agent protocol is NDJSON over stdio (sequential). Cap'n Web adds
   pipelining + passing capability stubs as values — useful for `unfer_edge` HTTP clients.
 - **Deliverable (optional):** a `capnweb`-style RPC layer behind `unfer_edge`; low priority.
+- **Update (2026-08):** promoted to a first-class Part IV stage — **F27 / S28**
+  (§Part IV), now that the kernel is hardened. See that section; this optional stub is
+  superseded by the real implementation plan there.
 
 ### F8. Observers / information-flow leak prevention  ✅ (implemented 2026-08)
 - **Map:** Cloudflare re-verifies every collaborator against every observation to prevent
@@ -943,3 +946,167 @@ only for future combinatorial changes — none were touched since the marks abov
 
 **Recommended order:** S18 → S19 → S20 → S21 → S22 → S23 → S24 (F7 optional; egress/host work
 in Part II guards ordered first: S10/11/15/17).
+
+---
+
+# Part IV — Operational hardening from the Cloudflare OS v2 rewrite (F24–F27 / S25–S28)
+
+## What was studied
+
+With Parts I–III complete, the remaining un-adapted Cloudflare OS ideas are not *capability*
+features (those all landed) but **operational** ones: cost governance, observation-driven
+forward policy, credential isolation, and object-capability RPC. These were re-read directly
+from the upstream `packages/workshop-backend` and the gatekeepers (clean-room in Rust/TOML/our
+protocol; no code ported).
+
+| Cloudflare OS mechanism | upstream source | unfer analog today | Adopt? |
+|---|---|---|---|
+| **AI Gateway metering** — every inference call attributed to person/team/workspace; budgets + rate limits; admin sees spend | `user.ts` `consumeDailyLlmCall`/`checkDailyLlmCount` → `DailyQuotaResult {withinLimits, remaining, limit, used, resetAt}`; UTC-day window, atomic read-modify-write in a single-threaded DO | `unfer_edge/src/metrics.rs` (S13) counts per-op calls/errors/us but **no per-principal budget, no rate-limit, no spend attribution** | **ADD** a metering layer at the loopback chokepoint (F24) |
+| **Observation-driven forward policy** — `prohibitAllSharing` observation latches the workspace; once a sensitive read is observed, future `fetch`/sharing/invite is blocked | `overseer.ts` `authorizeObservation` (sets `prohibitAllSharing`) + `getWebFetchEnv`/share/invite gates that refuse once set | F8 (S8) filters *reads* on the observer grant axis but does **not** gate *subsequent actions/egress* from what was observed | **ADD** a latched `<*sensitive*>` observation → block-everything-after policy (F25) |
+| **Credential isolation** — gatekeeper holds the OAuth `accessToken` in its own KV; the agent/gadget never sees the raw credential | `gatekeeper-github/src/github.ts` `beginOAuthFlow`/`acceptAuthCode` → `storage.kv.put("accessToken", …)`; the credential never leaves the service | unfer gatekeepers have `sanitize_sensitive` (S23) but **no first-class secret vault**; a granted credential would be copied to the gadget | **ADD** a `uk_secret` capability minted/held by the gatekeeper, granted-not-copied (F26) |
+| **Cap'n Web RPC** — object-capability RPC with promise pipelining + capability stubs as return values | `capnweb` (github.com/cloudflare/capnweb); used between browser client and Dynamic Worker | agent protocol is NDJSON-over-stdio (sequential); F7 was deferred as optional | **PROMOTE F7** to a real stage (F27) |
+
+Two reinforcing *principles* (already partly ours, now enforced forward):
+1. **Cost is a first-class authorization axis.** A budget/limit is denied at the same
+   chokepoint that denies a grant — not a post-hoc billing report. This matches our
+   single-mint `auth::check` posture.
+2. **Sensitivity is sticky and forward.** Once a caller observes sensitive data, the *fact of
+   having observed it* constrains everything it does next (egress, sharing, invites, writes).
+   This extends F8's read-filter into F25's action-gate.
+
+## Non-goals (recorded, deliberately skipped)
+
+Real currency billing (credits/accounts across providers), a browser Dynamic-Worker client,
+AI-provider model routing, and per-thread hiding (v1 upstream has none; we keep the whole-lane
+approach). Cap'n Web is adopted only as the edge↔agent *transport*; the QFT kernel stays the
+authority.
+
+---
+
+### F24. Budgets + rate limits + spend attribution  ✅ (implemented 2026-08) → **S25**
+
+**Gap and adapt.** `unfer_edge/src/metrics.rs` counts ops but cannot *deny*; nothing attributes
+spend to a principal or enforces a windowed rate. Cloudflare's DO-local atomic
+read-modify-write (`consumeDailyLlmCall`) is the model.
+
+**S25 steps:**
+- Add `Budget`/`RateLimit` to the loopback chokepoint (`dispatch_loopback_as`): a per-principal
+  windowed counter (UTC-day key, mirroring `utcDayKey`) with `withinLimits`/`remaining`/
+  `limit`/`used`/`reset_at` semantics. Deny at the chokepoint with a new UK-46xx
+  `BUDGET_EXCEEDED` / `RATE_LIMITED` code and an audit entry — never a post-hoc report.
+- Mark expensive symbols (`uk_evolve`, uk_ode/`reconstruct` path) as metered; lightweight
+  reads (`uk_measure`, version) are free so agents stay responsive.
+- Extend `Metrics` (S13) with per-principal spend rows so `/metrics` reports cost attribution,
+  not just counts.
+- **Gate:** a caller exceeding the windowed budget is denied with UK-46xx and audited; an
+  in-budget caller passes; the reset boundary restores the allowance.
+
+**Status: S25 implemented** (2026-08). `unfer_protocol` gains `UK-4601 RATE_LIMITED` /
+`UK-4602 BUDGET_EXCEEDED`. `unfer_ffi`/`handles.rs` adds a per-principal windowed meter
+(`meter_consume`, UTC-day window, `remaining`/`reset_at`, rate gate + budget gate) and C/JSON
+surface `uk_meter_status` (read-only) + `uk_meter_consume` (the single denial point). The
+cranelift loopback chokepoint (`dispatch_loopback_as`) refuses metered symbols
+(`uk_evolve`/`condition`/`event_probability`/`bayesian_update`/`belief_propagation`/
+`ode_analyze`) past the budget with UK-4602 + an audit entry — never a post-hoc report.
+`unfer_edge/src/metrics.rs` gains per-principal `spend` rows (`record_spend`, JSON + Prometheus
+`principal_calls`/`principal_denied`). Tests: 5 FFI meter cases (serially locked), 2 cranelift
+loopback cases (ungranted deny / over-budget deny + audit), 1 edge spend test. All suites green.
+
+### F25. Observation-driven forward policy (sensitive ⇒ block-forward)  ✅ (implemented 2026-08) → **S26**
+
+**Gap and adapt.** F8 (S8) limits *which records a caller may read*; it does not stop a caller
+who *already read sensitive data* from leaking it via a later egress/sharing/write. Cloudflare
+latches `prohibitAllSharing` on the workspace and refuses forward (`getWebFetchEnv`, share,
+invite) once set. We mirror the latch per-caller.
+
+**S26 steps:**
+- Add `<*sensitive*>` observation marking: an `AuditEntry`/`ActionRecord` may carry a
+  `sensitive: true` flag (set by the gatekeeper/`uk_*` that minted the read, never by the
+  reader). The loopback records it on the caller's sticky observation set.
+- Add a forward latch: once a caller's sticky set contains a sensitive observation, the
+  chokepoint refuses `uk_fetch` (egress), `uk_agent_spawn` (hand-off), blueprints
+  (`uk_blueprint_export`), and `uk_action_submit`/`uk_gate_approve` (writes) with a
+  `UK-4701 SENSITIVE_LATCHED` (or a per-op code) until a human clears it, mirroring
+  `getWebFetchEnv`.
+- The latch is sticky per-principal and audited; clearing is console-only (reuse the S22 admin
+  seam). `GrantSet` orders the latch so a spawned agent inherits the parent's sticky set.
+- **Gate:** read a sensitive record → a subsequent egress/spawn/export is `UK-4701` + audited;
+  clearing at the console restores the ability; a non-sensitive caller is unaffected.
+
+**Status: S26 implemented** (2026-08). `unfer_protocol::AuditEntry` gains a `sensitive` flag
+and `UK-4701 SENSITIVE_LATCHED`. `unfer_ffi` adds a sticky per-principal latch
+(`is_sensitive_latched`/`set_sensitive_latch`, operator-only clear) and C wrappers
+`uk_is_sensitive_latched`/`uk_set_sensitive_latch`/`uk_clear_sensitive_latches`. The cranelift
+chokepoint refuses the forward-mutating set (`uk_fetch`/`uk_agent_spawn`/`uk_blueprint_export`/
+`uk_action_submit`/`uk_gate_approve`) with UK-4701 + an audit entry once the caller is latched,
+mirroring Cloudflare's `prohibitAllSharing`. Tests: 2 FFI latch cases, 2 cranelift loopback
+cases (latched-blocked + audited / cleared-latch-allows). All suites green.
+
+### F26. Credential vault for gatekeepers  ✅ (implemented 2026-08) → **S27**
+
+**Gap and adapt.** A granted credential today is a string copied to the gadget; the upstream
+gatekeeper holds the OAuth token in its own KV and never exposes it. We adopt a first-class
+secret vault so the gatekeeper owns the secret and grants a *handle*, not the value.
+
+**S27 steps:**
+- Add `uk_secret_put`/`uk_secret_get`/`uk_secret_revoke` (host-side vault, single mint at the
+  chokepoint; values are encrypted at rest with the S15 `KeyRing` and never serialized into a
+  `SessionBlob` snapshot).
+- A gatekeeper stores a credential under `uk_secret_put`, then grants `uk_secret_get` only to a
+  caller whose `[grants] kernel` includes it; the raw value is never returned to a gadget, only
+  an opaque handle the host dereferences at call time (grant-checked).
+- `sanitize_sensitive` (S23) already redacts secrets from audit/log; the vault codifies that a
+  secret never enters a snapshot or blueprint (`uk_blueprint_export` refuses to package a
+  live secret).
+- **Gate:** put→get round-trip under grant; a non-granted caller is denied; a `SessionBlob`
+  snapshot and a `.cell` export never contain the secret; revoke invalidates the handle.
+
+**Status: S27 implemented** (2026-08). `unfer_ffi` adds a process-global `SecretVault`
+(`vault_put_secret`/`vault_get_secret`/`vault_revoke_secret`) holding secrets encrypted at rest
+under a process-global S15 `KeyRing`; C surface `uk_secret_put`/`uk_secret_get`/`uk_secret_revoke`
+plus `uk_vault_has_live_secrets`. `uk_snapshot` and `uk_blueprint_export` refuse to serialize a
+live secret (the vault never leaks into a `SessionBlob` or `.cell`). The cranelift loopback
+marshals the three secret symbols (owner-gated at the FFI). Tests: 4 FFI vault cases (put/get
+roundtrip, non-owner deny, revoke invalidates, live-secret blocks snapshot/export), 2 cranelift
+loopback cases (owner roundtrip / wrong-owner deny). All suites green.
+
+### F27. Cap'n Web RPC — object-capability RPC over the edge  ✅ (implemented 2026-08) → **S28**
+
+**Gap and adapt.** F7 was deferred as optional. With F24–F26 hardening the kernel, the value of
+promise pipelining + capability-stub returns now exceeds the cost: `unfer_edge` can expose a
+typed, pipelined RPC surface instead of sequential NDJSON.
+
+**S28 steps:**
+- Add a `capnweb`-style object-capability layer behind `unfer_edge`: a capability is a
+  `(endpoint, id)` pair; a method call may return a *capability stub* as a value, and calls may
+  be pipelined (a promise chains without awaiting each hop) — reusing the existing
+  `uk_*`/`Dispatch` machinery as the server side.
+- Capabilities are minted only at the loopback chokepoint (F5/S9) and carry the caller's grant
+  set; a returned stub is a fresh capability re-checked against the original caller.
+- Keep NDJSON/std.io as a degenerate single-capability mode for back-compat; the FFI surface is
+  unchanged.
+- **Gate:** a pipelined chain round-trips; a returned capability stub is usable and
+  grant-checked; a revoked capability is refused.
+
+**Status: S28 implemented** (2026-08). `unfer_edge/src/caprpc.rs` adds a clean-room Cap'n Web
+object-capability layer: a capability is a `(endpoint, id)` bound to a grant set, minted only at
+the loopback chokepoint (`mint`); a method call may **return a capability stub** as a value
+(`__cap__`), calls support **promise pipelining** (a capability id is assigned eagerly via
+`new_promise`/`resolve_promise` before the producing call returns), a returned stub is
+re-checked against the original caller, and a **revoked id is refused**. The edge exposes
+`POST /api/cap/invoke` (audit feature). NDJSON/std.io remains the degenerate single-capability
+mode; the C ABI is unchanged. Tests: 6 caprpc cases (mint+invoke, ungranted-refused,
+wrong-caller-refused, revoked-refused, method-returns-stub, eager-promise) — serially locked.
+All suites green.
+
+---
+
+## 10. Change-tracking for Part IV
+
+Each planned feature is marked `✅ (implemented 2026-08)` when it lands, in the style of
+Parts I–III, and the `AGENTS.md` capability/bound-maintenance section is kept in sync.
+
+**Recommended execution order:** S25 → S26 → S27 → S28 (F24 metering first — it is the cheapest
+to land on the existing `Metrics`/chokepoint and immediately attributes spend; F25 follows as
+the forward-policy latch; F26 adds the credential vault; F28 promotes Cap'n Web last, since it
+leans on the hardened kernel). All four are now **implemented** (2026-08).

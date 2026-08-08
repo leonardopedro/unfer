@@ -64,6 +64,18 @@ impl Code {
     /// (`uk_registry_vetted` is hook-only) nor mint any other console-only capability.
     pub const CONSOLE_ONLY: Code = Code(4501);
 
+    /// F24 metering: the caller's windowed call rate exceeded its limit at the
+    /// loopback chokepoint (denied there, never a post-hoc report).
+    pub const RATE_LIMITED: Code = Code(4601);
+    /// F24 metering: the caller exhausted its per-principal budget for the window
+    /// (denied at the loopback chokepoint with an audit entry).
+    pub const BUDGET_EXCEEDED: Code = Code(4602);
+
+    /// F25 forward policy: the caller has observed `<*sensitive*>` data, so the
+    /// chokepoint latches it and refuses forward-mutating ops (egress, hand-off,
+    /// blueprints, writes) until an operator clears the latch.
+    pub const SENSITIVE_LATCHED: Code = Code(4701);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -224,6 +236,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4501,
             "ConsoleOnly",
             "This operation is reserved for the operator console; a module or agent cannot perform it.",
+        ),
+        (
+            4601,
+            "RateLimited",
+            "The caller exceeded its windowed call-rate limit at the loopback chokepoint.",
+        ),
+        (
+            4602,
+            "BudgetExceeded",
+            "The caller exhausted its per-principal budget for the current window.",
+        ),
+        (
+            4701,
+            "SensitiveLatched",
+            "The caller observed sensitive data and is latched from forward-mutating operations until an operator clears it.",
         ),
         (
             6001,
