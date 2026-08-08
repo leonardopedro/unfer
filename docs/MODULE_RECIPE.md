@@ -95,8 +95,11 @@ archetype = "ecmascript"
 entry = "src/main.js"            # the module's entry JS file (ES module)
 
 [grants]
-# Only these uk_* symbols become visible to the worker's `kernel` object.
-# Anything else in the uk_*/uz_* namespace throws UK-4001 (CALL_DENIED).
+# Only these uk_* symbols become visible to the worker's `kernel` object —
+# the capability object IS this set (F5). Anything else in the uk_*/uz_*
+# namespace is simply absent (`undefined`), never stubbed or enumerable.
+# The kernel loopback is the only layer that answers un-granted calls with
+# UK-4001 (CALL_DENIED), as defense in depth.
 kernel = [
     "uk_version",
     "uk_model_create",
@@ -207,8 +210,10 @@ effects = ["send_notification"]                  # loopback authorizes THIS effe
 
 Two layers gate the call (F5, capability-minting at a single choke point):
 
-1. **Harness (layer 1)** — only symbols in `[grants] kernel` become workerd
-   bindings; un-granted `uk_*` throw UK-4001 in the capability object.
+1. **Harness (layer 1, capability object)** — `makeKernel(env)` builds the
+   `kernel` object strictly from the granted workerd bindings, so the module
+   sees exactly `[grants] kernel`; un-granted `uk_*` are absent (`undefined`),
+   not stubbed, and not enumerable.
 2. **Loopback effects gate (layer 2, authoritative)** — `dispatch_loopback`
    checks `uk_action_submit` against the module's `effects` snapshot instead of
    the kernel grants: the submitted *effect name* must be in `[grants] effects`.

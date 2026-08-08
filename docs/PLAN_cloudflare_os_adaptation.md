@@ -160,13 +160,15 @@ Each row: **Cloudflare feature → unfer adaptation**, with the primary integrat
     `uk_*` symbols, probe-then-copy marshaling). Config materialized as text
     `config.capnp`; `external` loopback address is bare `host:port`; socket port
     pre-picked via `--socket-addr main=<port>`.
-  - Capability binding with grant-checked `uk_*` — generated `harness.mjs` builds a
-    `makeKernel(env)` Proxy; only granted symbols get workerd `service` bindings to
-    `kernel-loopback`; un-granted `uk_*`/`uz_*` throw UK-4001 (layer-1 stub) and the
-    loopback re-checks `auth::check` host-side (defense in depth).
-  - Positive/UK-4001 test module — `cranelift/tests/ecmascript_module.rs` (3 tests:
-    positive lifecycle, UK-4001 un-granted symbol, loopback deny). Skips when no
-    workerd runtime is discoverable.
+  - Capability binding with grant-checked `uk_*` — generated `harness.mjs` builds
+    `makeKernel(env)` strictly from the granted `service` bindings to
+    `kernel-loopback` (F5, S9): the capability object IS the module's
+    `[grants] kernel` set, so an un-granted `uk_*`/`uz_*` name is merely absent
+    (not enumerable, not stubbed). The loopback re-checks `auth::check`
+    host-side and is the only layer that emits UK-4001 (defense in depth).
+  - Positive/F5 test module — `cranelift/tests/ecmascript_module.rs`
+    (`ecmascript_capability_exposes_only_granted_symbols`, loopback deny).
+    Skips when no workerd runtime is discoverable.
   - `modhost host --args-json <json>` for ecma entrypoint calls.
 - **Remaining (future):** packaging workerd as a pinned Nix derivation behind
   `--features ecmascript` (docs section added to `MODULE_RECIPE.md`, 2026-08).
@@ -267,13 +269,20 @@ the auth engine and an event stream.
     `modulehost_blueprint_requires_module_toml`, plus FFI `uk_blueprint_export/instantiate`
     round-trip + negative tests and protocol/data-plane unit tests.
 
-### F5. Capability-minting chokepoint (default-deny)  ★
+### F5. Capability-minting chokepoint (default-deny)  ✅ (implemented 2026-08)
 - **Map:** Cloudflare mints capabilities once at `user.ts:getGatekeeperClassFor()` and never
   from gadget/agent code. unfer already has this in `auth::check` + `ManifestAuthEngine`.
 - **Deliverable:** harden the JS/Austral host bindings so a module can only ever *see/import*
   the symbols in its own `[grants]` — the capability object, not the full table. (This is the
   Cloudflare "loopback" pattern; the Australian `UnferKernel.aui` already exposes only the
   granted subset in spirit.)
+- **Status: implemented** (2026-08) — see §S9. The generated `harness.mjs` `makeKernel(env)`
+  no longer back each un-granted `uk_*`/`uz_*` name with a UK-4001 throw-stub (which made the
+  full symbol table enumerable from module code). It now builds a plain object whose own
+  properties are exactly the granted service bindings in `env` (i.e. `[grants] kernel`), so
+  un-granted names are simply `undefined`. UK-4001 remains the loopback's answer (defense in
+  depth), verified by `ecmascript_loopback_denies_ungranted`; the F5 property is gated by
+  `ecmascript_capability_exposes_only_granted_symbols`.
 
 ### F6. Agents as managed, human-accountable entities  ★
 - **Map:** Cloudflare agents are capability-restricted and billing/authority fall to the
@@ -389,6 +398,13 @@ layer, S6–S7 audit & packaging). Each stage is independently shippable and tes
   *Gate: loopback observer/escalation unit tests + the `ecmascript_observers_filter_action_reads`
   E2E test (12/12 integration tests, 0 skips) + FFI observer tests.*
   **Status: implemented** (2026-08) — see §F8.
+- **S9 — Capability-minting chokepoint (F5).** Generate the ECMAScript capability object
+  strictly from the granted service bindings (`makeKernel(env)` in `harness.mjs`), so a module
+  sees exactly its `[grants] kernel` — un-granted `uk_*`/`uz_*` names are absent, not stubbed,
+  and not enumerable; UK-4001 is loopback-only (defense in depth). *Gate:
+  `ecmascript_capability_exposes_only_granted_symbols` (Object.keys(kernel) == grants) + the
+  existing `ecmascript_loopback_denies_ungranted` layer-2 test.*
+  **Status: implemented** (2026-08) — see §F5.
 
 ---
 
