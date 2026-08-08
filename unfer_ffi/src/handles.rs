@@ -473,6 +473,107 @@ pub fn list_agents() -> Vec<(i64, AgentInfo)> {
     items
 }
 
+// ── resource registry (S18/F17: introductions) ─────────────────────────
+//
+// A kernel-global registry of introduced resources — the single-mint chokepoint.
+// Nothing is ambient: an id only becomes usable once `resource_introduce` mints it
+// at this chokepoint, and then only for a session whose caller `GrantSet` includes
+// the id in `resources`. `uk_request_resource` queues a `PendingResourceRequest`
+// here for the human approval queue (resolved by the F18 `uk_gate_*` symbols).
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PendingResourceRequest {
+    pub resource_id: String,
+    pub requested_by: CallerTag,
+}
+
+static RESOURCES: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static PENDING_RESOURCE_REQUESTS: Mutex<Option<HashMap<i64, PendingResourceRequest>>> =
+    Mutex::new(None);
+static NEXT_RESOURCE_REQUEST: AtomicI64 = AtomicI64::new(1);
+
+/// Mint a resource at the kernel chokepoint. `owner` is the introducing principal.
+/// Already introduced → `RESOURCE_ALREADY_INTRODUCED`.
+pub fn resource_introduce(resource_id: &str, owner: &str) -> Result<(), unfer_protocol::Code> {
+    let mut guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    if map.contains_key(resource_id) {
+        return Err(unfer_protocol::Code::RESOURCE_ALREADY_INTRODUCED);
+    }
+    map.insert(resource_id.to_string(), owner.to_string());
+    Ok(())
+}
+
+/// Revoke a minted resource. Unknown id → `RESOURCE_NOT_FOUND`.
+pub fn resource_forfeit(resource_id: &str) -> Result<(), unfer_protocol::Code> {
+    let mut guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    if map.remove(resource_id).is_none() {
+        return Err(unfer_protocol::Code::RESOURCE_NOT_FOUND);
+    }
+    Ok(())
+}
+
+/// Has this id ever been minted at the chokepoint?
+pub fn resource_is_introduced(resource_id: &str) -> bool {
+    let guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .is_some_and(|m| m.contains_key(resource_id))
+}
+
+/// The resource-facing gate (F17). The trusted harness (no bounded grant set) may use any
+/// minted resource; a bounded caller additionally needs the id in its `resources` grant —
+/// the *introduction to this session*. Otherwise UK-4401 `RESOURCE_UNINTRODUCED`.
+pub fn resource_authorized(
+    resource_id: &str,
+    ctx: &CallerContext,
+) -> Result<(), unfer_protocol::Code> {
+    match ctx.grants.as_ref() {
+        None => {
+            if resource_is_introduced(resource_id) {
+                Ok(())
+            } else {
+                Err(unfer_protocol::Code::RESOURCE_NOT_FOUND)
+            }
+        }
+        Some(grants)
+            if grants.resources.iter().any(|r| r == resource_id)
+                && resource_is_introduced(resource_id) =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(unfer_protocol::Code::RESOURCE_UNINTRODUCED),
+    }
+}
+
+/// Queue an approval-pending request for a resource the caller wants introduced to a
+/// session. Returns the positive request handle (resolved later by `uk_gate_*`).
+pub fn queue_resource_request(resource_id: &str, requested_by: CallerTag) -> i64 {
+    let handle = NEXT_RESOURCE_REQUEST.fetch_add(1, Ordering::SeqCst);
+    let mut guard = PENDING_RESOURCE_REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(
+        handle,
+        PendingResourceRequest {
+            resource_id: resource_id.to_string(),
+            requested_by,
+        },
+    );
+    handle
+}
+
+/// Snapshot of the approval-pending resource requests, ordered by handle (request order).
+pub fn list_pending_resource_requests() -> Vec<(i64, PendingResourceRequest)> {
+    let guard = PENDING_RESOURCE_REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut items: Vec<(i64, PendingResourceRequest)> = guard
+        .as_ref()
+        .map(|map| map.iter().map(|(h, r)| (*h, r.clone())).collect())
+        .unwrap_or_default();
+    items.sort_by_key(|(h, _)| *h);
+    items
+}
+
 #[cfg(test)]
 mod buffer_proptests {
     // S17 (F16): the probe-then-copy buffer protocol must never panic and must

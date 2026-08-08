@@ -482,6 +482,12 @@ pub struct GrantSet {
     pub effects: Vec<String>,
     #[serde(default)]
     pub observers: Vec<String>,
+    /// S18 (F17): the `[grants] resources` namespace — resource ids introduced to *this*
+    /// session (`"github.repo#denoission"`). Nothing is ambient: a caller can only exercise a
+    /// resource that is granted here (and was minted at the kernel chokepoint). Participates
+    /// in `is_subset_of` so no path can mint an introduction it does not hold.
+    #[serde(default)]
+    pub resources: Vec<String>,
 }
 
 impl GrantSet {
@@ -490,17 +496,20 @@ impl GrantSet {
             kernel: symbols.iter().map(|s| s.to_string()).collect(),
             effects: Vec::new(),
             observers: Vec::new(),
+            resources: Vec::new(),
         }
     }
 
     /// True when `self` is a subset of `other` (capability non-escalation).
     /// Observation rights count too: a caller cannot mint observer visibility it
-    /// does not already hold (F8 no-read-up).
+    /// does not already hold (F8 no-read-up). Introduced resources likewise: minting an
+    /// introduction the caller does not already hold is escalation (S18/F17).
     pub fn is_subset_of(&self, other: &GrantSet) -> bool {
         let in_other = |s: &String| other.kernel.contains(s);
         self.kernel.iter().all(in_other)
             && self.effects.iter().all(|e| other.effects.contains(e))
             && self.observers.iter().all(|o| other.observers.contains(o))
+            && self.resources.iter().all(|r| other.resources.contains(r))
     }
 }
 
@@ -518,18 +527,24 @@ mod grantset_proptests {
         let ks = proptest::collection::hash_set(0u8..4, 0..6);
         let es = proptest::collection::hash_set(0u8..3, 0..6);
         let os = proptest::collection::hash_set(0u8..3, 0..6);
-        (ks, es, os).prop_map(|(k, e, o)| GrantSet {
+        let rs = proptest::collection::hash_set(0u8..4, 0..5);
+        (ks, es, os, rs).prop_map(|(k, e, o, r)| GrantSet {
             kernel: k.into_iter().map(|i| format!("kernel{i:02}")).collect(),
             effects: e.into_iter().map(|i| format!("effect{i:02}")).collect(),
             observers: o.into_iter().map(|i| format!("peer{i:02}")).collect(),
+            resources: r
+                .into_iter()
+                .map(|i| format!("res{i:02}"))
+                .collect(),
         })
     }
 
-    fn sorted(g: &GrantSet) -> (BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>) {
+    fn sorted(g: &GrantSet) -> (BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>) {
         (
             g.kernel.iter().map(String::as_str).collect(),
             g.effects.iter().map(String::as_str).collect(),
             g.observers.iter().map(String::as_str).collect(),
+            g.resources.iter().map(String::as_str).collect(),
         )
     }
 
@@ -560,6 +575,15 @@ mod grantset_proptests {
                 prop_assert!(!a.is_subset_of(&b));
             }
         }
+
+        #[test]
+        fn resource_grant_cannot_be_minted(a in grant_any(), b in grant_any()) {
+            // An introduced resource in `a` that `b` lacks must disqualify the subset:
+            // a caller cannot mint an introduction it does not already hold (F17).
+            if a.resources.iter().any(|r| !b.resources.contains(r)) {
+                prop_assert!(!a.is_subset_of(&b));
+            }
+        }
     }
 }
 
@@ -569,12 +593,13 @@ mod grantset_tests {
 
     #[test]
     fn observers_are_serde_default() {
-        // A spec with no observers deserializes to an empty observer list (back-compat).
+        // A spec with no observers/resouces deserializes to empty lists (back-compat).
         let g: GrantSet = serde_json::from_str(r#"{"kernel":["uk_version"]}"#).unwrap();
         assert_eq!(g.observers, Vec::<String>::new());
+        assert_eq!(g.resources, Vec::<String>::new());
         assert_eq!(
             serde_json::to_string(&GrantSet::kernel(&["uk_version"])).unwrap(),
-            r#"{"kernel":["uk_version"],"effects":[],"observers":[]}"#
+            r#"{"kernel":["uk_version"],"effects":[],"observers":[],"resources":[]}"#
         );
     }
 
@@ -584,12 +609,14 @@ mod grantset_tests {
             kernel: vec!["uk_version".into(), "uk_evolve".into()],
             effects: vec!["notify".into()],
             observers: vec!["peer_a".into()],
+            resources: vec!["github.repo#denoission".into()],
         };
         // Subset of kernel+effects+observers → allowed.
         let ok = GrantSet {
             kernel: vec!["uk_version".into()],
             effects: vec![],
             observers: vec!["peer_a".into()],
+            resources: vec![],
         };
         assert!(ok.is_subset_of(&base));
         // Observing a peer the caller does not observe → escalation.
@@ -597,8 +624,20 @@ mod grantset_tests {
             kernel: vec![],
             effects: vec![],
             observers: vec!["peer_secret".into()],
+            resources: vec![],
         };
         assert!(!escalate.is_subset_of(&base), "observer escalation must be refused");
+        // Minting a resource introduction the caller does not hold → escalation.
+        let mint_resource = GrantSet {
+            kernel: vec![],
+            effects: vec![],
+            observers: vec![],
+            resources: vec!["s3.bucket#confidential".into()],
+        };
+        assert!(
+            !mint_resource.is_subset_of(&base),
+            "resource-introduction escalation must be refused"
+        );
     }
 }
 

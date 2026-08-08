@@ -1109,6 +1109,115 @@ pub fn uk_agent_id(handle: i64) -> Option<String> {
     .flatten()
 }
 
+// ── resource introductions (S18/F17) ───────────────────────────────────
+//
+// Adapted from cloudflare-os "nothing is ambient": a resource id is introduced at a single
+// kernel chokepoint (`uk_resource_introduce`), revoked with `uk_resource_forfeit`, and can
+// only be *used* by a session whose caller `GrantSet.resources` includes the id
+// (`uk_resource_use` → UK-4401 `RESOURCE_UNINTRODUCED` otherwise). Agents may request an
+// introduction (`uk_request_resource`) which lands an approval-pending audit entry and a
+// queued `PendingResourceRequest` for the human console (resolved by the F18 `uk_gate_*`).
+
+/// Mint a resource at the kernel chokepoint. `resource_json` is a JSON string id
+/// (e.g. `"github.repo#denoission"`). Returns 0 on success; <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_resource_introduce(resource_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_resource_introduce", || {
+        let resource_id: String = parse_json(resource_json, len)?;
+        let ctx = handles::current_caller();
+        handles::resource_introduce(&resource_id, &ctx.tag.principal).map_err(|code| {
+            Diagnostic::new(
+                code,
+                format!("resource '{resource_id}' is already introduced"),
+                Severity::Error,
+            )
+        })?;
+        Ok(0)
+    })
+}
+
+/// Revoke a minted resource. Returns 0 on success; UK-4403 if unknown.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_resource_forfeit(resource_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_resource_forfeit", || {
+        let resource_id: String = parse_json(resource_json, len)?;
+        handles::resource_forfeit(&resource_id).map_err(|code| {
+            Diagnostic::new(
+                code,
+                format!("resource '{resource_id}' was never introduced"),
+                Severity::Error,
+            )
+        })?;
+        Ok(0)
+    })
+}
+
+/// Exercise a resource (the F17 gate surface). Returns 0 when the current caller holds
+/// the introduction; UK-4401 `RESOURCE_UNINTRODUCED` for a bounded caller without it in
+/// `grants.resources`; UK-4003 for a never-minted id observed by the trusted harness.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_resource_use(resource_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_resource_use", || {
+        let resource_id: String = parse_json(resource_json, len)?;
+        let ctx = handles::current_caller();
+        handles::resource_authorized(&resource_id, &ctx).map_err(|code| {
+            Diagnostic::new(
+                code,
+                format!("resource '{resource_id}' is not available to this caller"),
+                Severity::Error,
+            )
+        })?;
+        Ok(0)
+    })
+}
+
+/// Request an introduction for a resource (nothing ambient). Lands an
+/// `approval_pending` audit entry and queues a `PendingResourceRequest`. Returns the
+/// positive request handle; <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_request_resource(resource_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_request_resource", || {
+        let resource_id: String = parse_json(resource_json, len)?;
+        let ctx = handles::current_caller();
+        let handle = handles::queue_resource_request(&resource_id, ctx.tag.clone());
+        let entry = AuditEntry {
+            seq: 0, // assigned by the store
+            caller: ctx.tag,
+            symbol: "uk_request_resource".to_string(),
+            ok: true,
+            detail: Some(format!(
+                "approval_pending request={handle} resource='{resource_id}'"
+            )),
+            args: serde_json::json!([resource_id]),
+        };
+        handles::store_audit(entry);
+        Ok(handle)
+    })
+}
+
+/// List approval-pending resource requests, oldest first (the human review order).
+/// Buffer-out protocol; returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_resource_pending(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_resource_pending", || {
+        let pending = handles::list_pending_resource_requests();
+        let mut values = Vec::with_capacity(pending.len());
+        for (handle, req) in pending {
+            let mut value = serde_json::to_value(&req).map_err(|e| {
+                Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
+            })?;
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("handle".to_string(), serde_json::json!(handle));
+            }
+            values.push(value);
+        }
+        let json = serde_json::to_string(&values)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1779,6 +1888,80 @@ mod tests {
         assert!(
             arr.iter().any(|e| e["caller"]["principal"] == "f8_audit_owner"),
             "peer with observer grant must see f8_audit_owner: {json}"
+        );
+        uk_clear_caller();
+    }
+
+    // ── S18 (F17): resource introductions ────────────────────────────────
+
+    /// The FFI surface: `uk_resource_introduce` / `uk_request_resource` / `uk_resource_use`
+    /// / `uk_resource_forfeit` operate on a JSON-string resource id.
+    fn ffi_str(f: extern "C" fn(*const u8, i64) -> i64, s: &str) -> i64 {
+        let (ptr, len) = json_ptr(s);
+        f(ptr, len)
+    }
+
+    #[test]
+    fn introduce_grants_resource_and_use_is_direct() {
+        uk_clear_caller();
+        assert_eq!(ffi_str(uk_resource_introduce, r#""s3.bucket#demo""#), 0);
+        // The trusted harness (no bounded grants) may exercise a minted resource.
+        assert_eq!(ffi_str(uk_resource_use, r#""s3.bucket#demo""#), 0);
+        // Re-introduction at the single-mint chokepoint is refused (UK-4402).
+        assert_eq!(
+            ffi_str(uk_resource_introduce, r#""s3.bucket#demo""#),
+            -4402
+        );
+        // Forfeit revokes; afterwards the id is no longer minted (UK-4403).
+        assert_eq!(ffi_str(uk_resource_forfeit, r#""s3.bucket#demo""#), 0);
+        assert_eq!(ffi_str(uk_resource_use, r#""s3.bucket#demo""#), -4403);
+    }
+
+    #[test]
+    fn un_introduced_resource_call_is_4401() {
+        uk_clear_caller();
+        assert_eq!(ffi_str(uk_resource_introduce, r#""github.repo#secret""#), 0);
+        // A bounded caller with an empty `resources` grant has NOT been introduced to the
+        // session: the call is denied with UK-4401 RESOURCE_UNINTRODUCED.
+        set_caller_bounded("f17_agent_bnd", &[]);
+        assert_eq!(ffi_str(uk_resource_use, r#""github.repo#secret""#), -4401);
+        uk_clear_caller();
+        assert_eq!(ffi_str(uk_resource_forfeit, r#""github.repo#secret""#), 0);
+    }
+
+    #[test]
+    fn request_queues_for_approval_and_audits() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_clear_caller();
+        set_caller_gadget("f17_requester");
+        let h = ffi_str(uk_request_resource, r#""github.repo#demo""#);
+        assert!(h > 0, "resource request must queue, got {h}");
+
+        // The approval queue is visible to the human console.
+        let pending = read_buf(|b, c| uk_resource_pending(b, c));
+        let pending: serde_json::Value = serde_json::from_str(&pending).unwrap();
+        let arr = pending.as_array().expect("pending must be an array");
+        assert!(
+            arr.iter().any(|e| {
+                e["resource_id"] == "github.repo#demo"
+                    && e["requested_by"]["principal"] == "f17_requester"
+            }),
+            "queue must carry the requested id + requester: {pending}"
+        );
+
+        // An approval_pending audit row was written for the human.
+        let entries = audit_list();
+        let arr = entries.as_array().expect("audit must be an array");
+        assert!(
+            arr.iter().any(|e| {
+                e["symbol"] == "uk_request_resource"
+                    && e["detail"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("approval_pending")
+            }),
+            "approval_pending must be audited: {entries}"
         );
         uk_clear_caller();
     }

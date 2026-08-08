@@ -48,6 +48,15 @@ impl Code {
     /// stopped agent).
     pub const AGENT_STATE_INVALID: Code = Code(4203);
 
+    /// The caller attempted an operation on a resource it has not been introduced to:
+    /// the resource is not in the caller's `[grants] resources` set (and was not minted at
+    /// the kernel chokepoint for this session). Nothing is ambient (F17).
+    pub const RESOURCE_UNINTRODUCED: Code = Code(4401);
+    /// The resource was already introduced/minted at the kernel chokepoint.
+    pub const RESOURCE_ALREADY_INTRODUCED: Code = Code(4402);
+    /// Referencing a resource id that has never been minted (unknown at the chokepoint).
+    pub const RESOURCE_NOT_FOUND: Code = Code(4403);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -183,6 +192,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4203,
             "AgentStateInvalid",
             "The operation is invalid for the agent's current state (e.g. killing a stopped agent).",
+        ),
+        (
+            4401,
+            "ResourceUnintroduced",
+            "The caller has not been introduced to the resource: it is absent from its `[grants] resources` set (nothing is ambient).",
+        ),
+        (
+            4402,
+            "ResourceAlreadyIntroduced",
+            "The resource is already minted at the kernel chokepoint.",
+        ),
+        (
+            4403,
+            "ResourceNotFound",
+            "No such resource id exists at the kernel chokepoint.",
         ),
         (
             6001,
