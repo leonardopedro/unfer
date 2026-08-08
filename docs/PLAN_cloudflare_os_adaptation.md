@@ -474,11 +474,15 @@ minimal risk and gives a meaningful runway for S2–S7.
 
 # Part II — Improvement roadmap (S10–S17)
 
-All features in Part II are **planned, not implemented** (status `◐`). They extend the
-completed F1–F6/F8 secure-kernel work toward production-grade operation and math-core
-scale-out, grounded in a code audit done 2026-08.
+Part II features F9–F16 are **implemented** (status ✅, landed 2026-08); each section's
+`Status:` line records the commit. They extend the completed F1–F6/F8 secure-kernel work
+toward production-grade operation and math-core scale-out, grounded in a code audit done
+2026-08.
 
-**Priority order** (pick next in this order):
+**Execution order used:** S11 → S10 → S12 → S13 → S15 → S16 → S17 → S14 — any Part II security
+stages landed before the Part III S18–S24 work; S14 was frontier-ordered after S13.
+
+**Priority order** (as executed, all now landed):
 1. **Security**: S11 loopback peer lockdown (F10), S10 egress boundary (F9).
 2. **Reliability**: S12 sidecar supervision (F11), S14 resource caps (F13).
 3. **Observability**: S13 call tracing + metrics (F12).
@@ -488,7 +492,16 @@ Optional (unchanged): **F7** Cap'n Web RPC — re-evaluate only after S10/S11 la
 
 ---
 
-### F9. Egress boundary — enforce `[grants] net`  ◐ (planned) → **S10**
+### F9. Egress boundary — enforce `[grants] net`  ✅ (implemented 2026-08) → **S10**
+
+**Status: S10 implemented** (2026-08, `australVM e0ffeb66`). `cranelift/src/ecma.rs` threads
+`net_grants` through `EcmaSidecar` → `KernelLoopback::start` → `handle_loopback_conn`; a
+`"fetch"` arm in `kernel_dispatch` validates the target against the exact-host allowlist
+(`egress_allowed`, portless grant covers any port, default-deny) and `dispatch_loopback_as`
+returns UK-4001 for un-granted/unknown hosts. `config_source` mirrors `net_grants` into
+workerd `net-egress-N` external-service bindings (defense-in-depth). Every egress records
+`AuditEntry { action: allow|deny, host }`. Tests: helper predicates + config mirror + fixture
+HTTP server + offline-refuse for non-loopback hosts.
 
 **Gap (verified).** `net_grants`/`fs_grants` are parsed in `cranelift/src/module.rs` and
 checked only for `swap` escalation. `SandboxProfile.writable_dirs` maps fs grants into
@@ -509,7 +522,13 @@ audited against an egress policy.
 
 ---
 
-### F10. Loopback peer lockdown  ◐ (planned) → **S11**
+### F10. Loopback peer lockdown  ✅ (implemented 2026-08) → **S11**
+
+**Status: S11 implemented** (2026-08, `australVM dcaa26b6`). `KernelLoopback` gains
+`expected_pid: Arc<AtomicU32>`; after the sidecar spawns, `set_expected_pid` arms the check
+and the accept path rejects any non-matching `SO_PEERCRED` pid (`libc::getsockopt` — the std
+`peer_cred` API is unstable) with 403 + a `uk_security` audit event. Tests cover the foreign
+child-rejection, the pre-arm accept, and the armed predicate.
 
 **Problem.** The sidecar ↔ host kernel-loopback Unix socket carries no `SO_PEERCRED`
 validation; any process that can open the socket path can impersonate the sidecar (or the
@@ -525,7 +544,14 @@ host). This is the primary lateral-movement vector.
 
 ---
 
-### F11. Sidecar supervision & auto-restart  ◐ (planned) → **S12**
+### F11. Sidecar supervision & auto-restart  ✅ (implemented 2026-08) → **S12**
+
+**Status: S12 implemented** (2026-08, `australVM 995f09c2`). `spawn_with_supervisor` hands the
+child to a `supervise_loop` thread that polls `try_wait` and, on exit, emits a `uk_kernel`
+`KERNEL_DOWN` audit, respawns with the same staging dir (stable socket addresses) at 1s→8s
+backoff, and emits `KERNEL_HEALED` on success. `wait_ready`/`child_pid`/`Drop` read the
+shared `Arc<Mutex<Option<Child>>>` slot; the whole `make_child` closure is `'static` + `Arc`d
+so the loop outlives `EcmaSidecar`.
 
 **Gap (verified).** `EcmaSidecar` spawns once + `wait_ready`; a workerd crash leaves the
 module permanently dead (no restart path).
@@ -562,7 +588,16 @@ plain log lines; no tracing, no metrics endpoint (`unfer_edge` only short-circui
 
 ---
 
-### F13. Resource caps — cgroup + per-call deadline  ◐ (planned) → **S14**
+### F13. Resource caps — cgroup + per-call deadline  ✅ (implemented 2026-08) → **S14**
+
+**Status: S14 implemented** (2026-08, `australVM dc523339`). `[limits] memory_bytes` parses in
+`ModuleManifest` and flows into `SandboxProfile.memory_max_bytes` (sandboxed spawn) plus a
+cgroup v2 write (`/sys/fs/cgroup/unfer-<pid>/memory.max` + `cgroup.procs`) applied right after
+spawn and after every supervisor respawn; a non-writable cgroup fs degrades silently (no
+root). `EcmaSidecar.call` honors `[limits] max_ms` (default 5 s) as a socket read timeout on
+the host↔sidecar RPC; a hit records a `uk_kernel` `CALL_DEADLINE` audit and kills the child so
+the supervisor respawns a healthy sidecar. Tests: limits parsing (present/absent) +
+`deadlined_call_kills_silent_child` (silent unix listener → Err, child signalled, audit).
 
 **Gap (verified).** `SandboxProfile.memory_max_bytes` exists but the `ecma.rs` call site sets
 `None`; no memory/swap cap and no per-call time limit on the FFI loop.
@@ -664,8 +699,9 @@ Gate: ~10k arbitrary cases, zero panics, all invariants hold.
 Each planned feature is marked `. Status: S#x implemented (2026-08)` when it lands, in the
 style of Part I, and the `AGENTS.md` capability/bound-maintenance section is kept in sync.
 
-**Recommended execution order:** S10 → S11 → S12 → S13 → S14 → S15 → S16 → S17 (F7 remains
-optional; re-evaluate only after F9/S10 lands).
+**Recommended execution order (used):** S10 → S11 → S12 → S13 → S14 → S15 → S16 → S17, all
+landed 2026-08 (F10/S11 and F9/S10 first as the security foundation; S14 after S13). (**F7**
+remains optional; re-evaluate only after F9/S10 lands.)
 
 ---
 
