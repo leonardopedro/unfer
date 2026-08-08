@@ -505,6 +505,65 @@ impl GrantSet {
 }
 
 #[cfg(test)]
+mod grantset_proptests {
+    // Property invariants for the capability lattice (S17, F16):
+    //   * reflexivity — every set is its own subset;
+    //   * transitivity — A ⊆ B ∧ B ⊆ C ⇒ A ⊆ C (no escalation path);
+    //   * antisymmetry — A ⊆ B ∧ B ⊆ A ⇒ equal as sets (no phantom grants incl. observers).
+    use super::GrantSet;
+    use proptest::prelude::*;
+    use std::collections::BTreeSet;
+
+    fn grant_any() -> impl Strategy<Value = GrantSet> {
+        let ks = proptest::collection::hash_set(0u8..4, 0..6);
+        let es = proptest::collection::hash_set(0u8..3, 0..6);
+        let os = proptest::collection::hash_set(0u8..3, 0..6);
+        (ks, es, os).prop_map(|(k, e, o)| GrantSet {
+            kernel: k.into_iter().map(|i| format!("kernel{i:02}")).collect(),
+            effects: e.into_iter().map(|i| format!("effect{i:02}")).collect(),
+            observers: o.into_iter().map(|i| format!("peer{i:02}")).collect(),
+        })
+    }
+
+    fn sorted(g: &GrantSet) -> (BTreeSet<&str>, BTreeSet<&str>, BTreeSet<&str>) {
+        (
+            g.kernel.iter().map(String::as_str).collect(),
+            g.effects.iter().map(String::as_str).collect(),
+            g.observers.iter().map(String::as_str).collect(),
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn subset_is_reflexive(g in grant_any()) {
+            prop_assert!(g.is_subset_of(&g));
+        }
+
+        #[test]
+        fn subset_is_transitive(a in grant_any(), b in grant_any(), c in grant_any()) {
+            if a.is_subset_of(&b) && b.is_subset_of(&c) {
+                prop_assert!(a.is_subset_of(&c));
+            }
+        }
+
+        #[test]
+        fn subset_antisymmetry_means_equal_sets(a in grant_any(), b in grant_any()) {
+            if a.is_subset_of(&b) && b.is_subset_of(&a) {
+                prop_assert_eq!(sorted(&a), sorted(&b));
+            }
+        }
+
+        #[test]
+        fn observer_grant_cannot_read_up(a in grant_any(), b in grant_any()) {
+            // An observer entry in `a` that `b` lacks must disqualify the subset.
+            if a.observers.iter().any(|o| !b.observers.contains(o)) {
+                prop_assert!(!a.is_subset_of(&b));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod grantset_tests {
     use super::GrantSet;
 

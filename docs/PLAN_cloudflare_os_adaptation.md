@@ -614,7 +614,17 @@ ceiling.
 
 ---
 
-### F16. Verification: fuzz + property tests  ◐ (planned) → **S17**
+### F16. Verification: fuzz + property tests  ✅ (implemented 2026-08) → **S17**
+
+**Status: S17 implemented** (2026-08). Added `proptest` (workspace dev-dependency) and
+property suites asserting the audit/kernel invariants:
+1. `unfer_protocol/types.rs` `grantset_proptests` — subset-of lattice is reflexive,
+   transitive, antisymmetric-as-equal-sets, and an observer entry missing from the target
+   set disqualifies the subset (no-read-up).
+2. `unfer_data/src/blueprint.rs` `content_proptests` — arbitrary cell bytes round-trip
+   through `store_cell` → `verify_cell`, deterministically addressed, CID is 64-hex.
+3. `unfer_ffi/src/handles.rs` `buffer_proptests` — the probe-then-copy buffer protocol
+   round-trips arbitrary lengths without panicking and a second `free` is a clean miss.
 
 Add `proptest` invariants the audit and the `unfer_ffi` boundary rely on:
 1. Anti-escalation: `GrantSet::is_subset_of` is transitive and covers `net`/`fs`/effects/

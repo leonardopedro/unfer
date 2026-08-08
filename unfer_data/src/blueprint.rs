@@ -158,3 +158,23 @@ mod tests {
         assert_eq!(restored.cid, store_cell(&cell).cid);
     }
 }
+
+#[cfg(test)]
+mod content_proptests {
+    // S17 (F16): arbitrary cell contents must round-trip through the content plane.
+    use super::{is_content_cid, store_cell, verify_cell};
+    use proptest::prelude::*;
+
+    proptest! {
+        fn store_and_verify_roundtrip(cell in proptest::collection::vec(any::<u8>(), 0..4000)) {
+            let stored = store_cell(&cell);
+            let cid = stored.cid.clone();
+            // Data → CID → verify holds for arbitrary payloads.
+            prop_assert!(verify_cell(&cell, &cid));
+            prop_assert!(is_content_cid(&cid));
+            // Deterministic content addressing.
+            prop_assert_eq!(store_cell(&cell).cid, cid);
+            prop_assert_eq!(stored.filesize, cell.len() as u64);
+        }
+    }
+}

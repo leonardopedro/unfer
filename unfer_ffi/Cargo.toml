@@ -21,3 +21,6 @@ ode_sirk = { path = "../ode_sirk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ureq = { version = "2", features = ["json"], optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

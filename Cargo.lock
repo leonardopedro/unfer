@@ -4592,6 +4592,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "hex",
+ "proptest",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -4628,6 +4629,7 @@ version = "0.1.0"
 dependencies = [
  "ode_sirk",
  "prob_kernel",
+ "proptest",
  "serde",
  "serde_json",
  "unfer_protocol",

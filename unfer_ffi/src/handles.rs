@@ -472,3 +472,38 @@ pub fn list_agents() -> Vec<(i64, AgentInfo)> {
     items.sort_by_key(|(h, _)| *h);
     items
 }
+
+#[cfg(test)]
+mod buffer_proptests {
+    // S17 (F16): the probe-then-copy buffer protocol must never panic and must
+    // round-trip arbitrary payload lengths through store → read → free.
+    use super::{free_buffer, read_buffer, store_buffer};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn buffer_roundtrip_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..4096usize)) {
+            let boxed = bytes.clone().into_boxed_slice();
+            let ptr = Box::into_raw(boxed) as *mut u8;
+            let handle = store_buffer(ptr, bytes.len() as i64);
+
+            // The documented read semantics: valid UTF-8 returns exactly those bytes,
+            // invalid bytes degrade to "" — never a probe past the registered length.
+            let expected = std::str::from_utf8(&bytes).unwrap_or("").to_string();
+            let got = read_buffer(handle);
+            prop_assert_eq!(got.as_deref(), Some(expected.as_str()));
+
+            // Free reclaims exactly once; a second free is a clean miss.
+            prop_assert!(free_buffer(handle));
+            prop_assert!(!free_buffer(handle));
+        }
+    }
+
+    #[test]
+    fn unknown_handles_never_mispelled() {
+        // Handles are allocated from a monotone counter starting at 0; a negative
+        // handle can never be in use, so reads/frees must miss cleanly.
+        assert_eq!(read_buffer(-1_000_000), None);
+        assert!(!free_buffer(-1_000_000));
+    }
+}

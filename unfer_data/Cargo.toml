@@ -17,4 +17,5 @@ aes-gcm = "0.10"
 rand = "0.8"
 
 [dev-dependencies]
+proptest = { workspace = true }
 unfer_identity = { path = "../unfer_identity" }
