@@ -7,6 +7,11 @@
 //! over the existing content plane; the archive format itself lives in
 //! `unfer_protocol::archive` (the shared contract).
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+use serde::{Deserialize, Serialize};
+
 use unfer_protocol::ChunkRef;
 
 use crate::chunk::{Chunker, verify_chunk};
@@ -85,6 +90,114 @@ pub fn decrypt_stored_cell(
     Ok(out)
 }
 
+// ── Blueprint registry (S20, F19) ─────────────────────────────────────
+//
+// cloudflare-os blueprints are immutable, shareable app templates: every consumer runs
+// *its own* copy. The registry records immutable, content-addressed cells (blueprint_id
+// == the content CID, so re-editing produces a different blueprint rather than mutating
+// one) and retains the raw cell bytes so a fresh per-user session can be instantiated
+// from them later.
+
+/// An immutable, registered blueprint template (S20, F19).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlueprintRecord {
+    /// Content CID of the `.cell` bytes — the blueprint's immutable identity.
+    pub blueprint_id: String,
+    /// Human-readable name from the archive metadata.
+    pub name: String,
+    /// Content CID of the stored cell body (`== blueprint_id`; explicit so the
+    /// content plane has a single addressable artifact).
+    pub cell_cid: String,
+    /// The archive metadata (`name`/`version`/`archetype`/`entry`) as JSON.
+    pub manifest_json: String,
+    /// The first blueprint of this content lineage; never re-editable. A fresh import
+    /// sets it equal to `blueprint_id`; a record can never change it (no in-place edits).
+    pub immutable_blueprint_id: String,
+    /// The principal that minted the record at the kernel chokepoint (audit tag, F6).
+    pub created_by: String,
+}
+
+/// Registry of immutable blueprint templates.
+#[derive(Debug, Default)]
+pub struct BlueprintRegistry {
+    records: HashMap<String, BlueprintRecord>,
+    cells: HashMap<String, Vec<u8>>,
+}
+
+/// The process-global registry (one kernel per process), the same placement the
+/// action/audit/resource registries use in `unfer_ffi::handles`.
+pub fn global_registry() -> &'static Mutex<BlueprintRegistry> {
+    static REGISTRY: OnceLock<Mutex<BlueprintRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(BlueprintRegistry::default()))
+}
+
+impl BlueprintRegistry {
+    /// Register a verified `.cell` archive. `created_by` is the minting principal.
+    ///
+    /// Re-importing the same bytes (same CID) is idempotent and returns the *existing*
+    /// record unchanged (blueprints are immutable — nothing is re-editable). Any other
+    /// cell yields a new immutable record. Returns the record + whether it was new.
+    pub fn register(
+        &mut self,
+        cell: &[u8],
+        created_by: &str,
+    ) -> Result<BlueprintRecord, String> {
+        let stored = store_cell(cell);
+        let cid = stored.cid.clone();
+        if let Some(existing) = self.records.get(&cid) {
+            // Content-addressed idempotency: identical bytes are the same immutable
+            // blueprint; keep the first mint (created_by is preserved).
+            return Ok(existing.clone());
+        }
+        let parsed = unfer_protocol::Cell::parse(cell).map_err(|e| e.to_string())?;
+        let metadata = parsed.metadata();
+        let record = BlueprintRecord {
+            blueprint_id: cid.clone(),
+            name: metadata.name.clone(),
+            cell_cid: cid.clone(),
+            manifest_json: serde_json::to_string(metadata).map_err(|e| e.to_string())?,
+            immutable_blueprint_id: cid.clone(),
+            created_by: created_by.to_string(),
+        };
+        self.records.insert(cid.clone(), record.clone());
+        self.cells.insert(cid, cell.to_vec());
+        Ok(record)
+    }
+
+    pub fn get(&self, blueprint_id: &str) -> Option<&BlueprintRecord> {
+        self.records.get(blueprint_id)
+    }
+
+    pub fn cell_bytes(&self, blueprint_id: &str) -> Option<&[u8]> {
+        self.cells.get(blueprint_id).map(|b| b.as_slice())
+    }
+
+    /// `None` when the caller lacks the id; the content itself is address-public.
+    pub fn is_registered(&self, blueprint_id: &str) -> bool {
+        self.records.contains_key(blueprint_id)
+    }
+
+    pub fn list(&self) -> Vec<BlueprintRecord> {
+        let mut records: Vec<_> = self.records.values().cloned().collect();
+        records.sort_by(|a, b| a.blueprint_id.cmp(&b.blueprint_id));
+        records
+    }
+
+    /// Drop every registered blueprint (console/QA use; re-imports re-mint).
+    pub fn clear(&mut self) {
+        self.records.clear();
+        self.cells.clear();
+    }
+}
+
+/// Process-global registry maintenance (QA/console): empty the registry.
+pub fn clear_global_registry() {
+    global_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +253,60 @@ mod tests {
     fn cell_content_id_is_deterministic() {
         let cell = sample_cell();
         assert_eq!(store_cell(&cell).cid, store_cell(&cell).cid);
+    }
+
+    #[test]
+    fn blueprint_record_register_get_list_idempotent_import() {
+        // S20 (F19): a verified cell registers an immutable record addressed by its
+        // content CID; re-importing identical bytes is idempotent (never re-edited).
+        let mut registry = BlueprintRegistry::default();
+        let cell = sample_cell();
+        let stored = store_cell(&cell);
+        let cid = stored.cid.clone();
+
+        let rec = registry.register(&cell, "publisher").expect("register");
+        assert_eq!(rec.blueprint_id, cid);
+        assert_eq!(rec.cell_cid, cid);
+        assert_eq!(rec.immutable_blueprint_id, cid, "fresh blueprint is its own lineage root");
+        assert_eq!(rec.name, "demo");
+        assert_eq!(rec.created_by, "publisher");
+        assert!(rec.manifest_json.contains("\"archetype\":\"ecmascript\""));
+
+        // Idempotent re-import of identical bytes returns the same record and keeps the
+        // original minter — the immutable_blueprint_id never moves.
+        let rec2 = registry.register(&cell, "intruder").expect("register");
+        assert_eq!(rec2.blueprint_id, cid);
+        assert_eq!(rec2.created_by, "publisher", "an idempotent import cannot re-mint");
+
+        assert_eq!(registry.list().len(), 1);
+        assert!(registry.is_registered(&cid));
+        assert_eq!(registry.cell_bytes(&cid).map(|b| b.to_vec()).as_deref(), Some(&cell[..]));
+        assert_eq!(registry.get(&cid).map(|r| r.name.as_str()), Some("demo"));
+        assert!(!registry.is_registered(&"0".repeat(64)));
+    }
+
+    #[test]
+    fn blueprint_immutable_itness_content_addressed() {
+        // Saving a *different* body yields a different blueprint id (no in-place edit).
+        let cell = sample_cell();
+        let mut registry = BlueprintRegistry::default();
+        let id1 = registry.register(&cell, "alice").expect("register");
+        let id2 = registry.register(&cell1(b"edited"), "alice").expect("register");
+        assert_ne!(id1.blueprint_id, id2.blueprint_id);
+        assert_eq!(id1.immutable_blueprint_id, id1.blueprint_id);
+        assert_eq!(id2.immutable_blueprint_id, id2.blueprint_id);
+    }
+
+    fn cell1(bytes: &[u8]) -> Vec<u8> {
+        let mut b = CellBuilder::new("demo");
+        b.add_file("module.toml", bytes).unwrap();
+        b.build().unwrap()
+    }
+
+    #[test]
+    fn register_rejects_corrupt_cell() {
+        let mut registry = BlueprintRegistry::default();
+        assert!(registry.register(b"not-a-cell", "alice").is_err());
     }
 
     #[test]

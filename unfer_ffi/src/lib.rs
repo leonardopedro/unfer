@@ -8,8 +8,8 @@ use prob_kernel::{Session, SessionBlob};
 use unfer_protocol::{
     ActionRecord, ActionState, AgentInfo, AgentState, AuditEntry, BayesianUpdateRequest,
     BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
-    Code, Diagnostic, EventPredicate, EventQuery, GrantSet, HamiltonianSpec, KernelEvent, ModelSpec,
-    PriorSpec, Severity,
+    Code, Diagnostic, EffectKind, EventPredicate, EventQuery, GrantSet, HamiltonianSpec,
+    KernelEvent, ModelSpec, PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -41,6 +41,13 @@ fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i6
         Ok(Err(diag)) => fail(diag),
         Err(_) => fail_code(Code::INTERNAL, format!("panic in {func_name}")),
     }
+}
+
+/// Read a NUL-free UTF-8 string from the C ABI (`ptr` + `len`).
+fn read_utf8(ptr: *const u8, len: i64) -> Result<String, Diagnostic> {
+    let bytes = read_bytes(ptr, len)?;
+    String::from_utf8(bytes)
+        .map_err(|e| Diagnostic::new(Code::BAD_JSON, format!("invalid UTF-8: {e}"), Severity::Error))
 }
 
 fn parse_json<T: serde::de::DeserializeOwned>(ptr: *const u8, len: i64) -> Result<T, Diagnostic> {
@@ -506,6 +513,145 @@ pub extern "C" fn uk_blueprint_instantiate(cell: *const u8, len: i64) -> i64 {
     })
 }
 
+/// Import a verified `.cell` blueprint archive into the blueprint registry (S20, F19).
+///
+/// The archive is content-addressed (its `blueprint_id` == the content CID, so the record
+/// is immutable — an edit would be a *different* blueprint) and registered with the current
+/// caller's principal as `created_by`. Re-importing identical bytes is idempotent and
+/// preserves the original minter. Buffer protocol: writes the `BlueprintRecord` JSON;
+/// returns total bytes needed, or <0 (-code) on error (UK-4100 invalid archive).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_import(cell: *const u8, len: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_blueprint_import", || {
+        let bytes = read_bytes(cell, len)?;
+        let principal = handles::current_caller().tag.principal.clone();
+        let record = unfer_data::blueprint::global_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .register(&bytes, &principal)
+            .map_err(|e| Diagnostic::new(Code::BLUEPRINT_INVALID, e, Severity::Error))?;
+        let json = serde_json::to_string(&record)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// List every registered blueprint (S20, F19), address-sorted.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_list(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_blueprint_list", || {
+        // Always serve the list (blueprints are the operator's content plane); empty is []. 
+        let records = unfer_data::blueprint::global_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .list();
+        let json = serde_json::to_string(&records)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Fetch one `BlueprintRecord` by its content CID (S20, F19). Buffer protocol; UK-4102.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_get_by_id(
+    id: *const u8,
+    id_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_blueprint_get_by_id", || {
+        let id_str = read_utf8(id, id_len)?;
+        let registry = unfer_data::blueprint::global_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(record) = registry.get(&id_str) else {
+            return Err(Diagnostic::new(
+                Code::BLUEPRINT_NOT_FOUND,
+                format!("no blueprint '{id_str}'"),
+                Severity::Error,
+            ));
+        };
+        let json = serde_json::to_string(record)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// The raw `.cell` bytes registered under `blueprint_id` (S20, F19). Serves the edge
+/// `/cell/<cid>` seed so a registered blueprint can be surfaced through the content
+/// gateway. Buffer protocol; the content is address-public.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_cell(
+    id: *const u8,
+    id_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_blueprint_cell", || {
+        let id_str = read_utf8(id, id_len)?;
+        let registry = unfer_data::blueprint::global_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(bytes) = registry.cell_bytes(&id_str).map(|b| b.to_vec()) else {
+            return Err(Diagnostic::new(
+                Code::BLUEPRINT_NOT_FOUND,
+                format!("no blueprint '{id_str}'"),
+                Severity::Error,
+            ));
+        };
+        Ok(write_bytes(buf, cap, &bytes))
+    })
+}
+
+/// Spawn a **fresh per-user copy** of a registered blueprint (S20, F19): every consumer
+/// instantiates its own session from the immutable template (never sharing a mutable
+/// instance). The archive must carry a session snapshot. Returns the new session handle
+/// as a JSON int. UK-4100 invalid, UK-4101 no session, UK-4102 unknown blueprint.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_blueprint_export_gadget(
+    id: *const u8,
+    id_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_blueprint_export_gadget", || {
+        let id_str = read_utf8(id, id_len)?;
+        let bytes = {
+            let registry = unfer_data::blueprint::global_registry()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match registry.cell_bytes(&id_str) {
+                Some(b) => b.to_vec(),
+                None => {
+                    return Err(Diagnostic::new(
+                        Code::BLUEPRINT_NOT_FOUND,
+                        format!("no blueprint '{id_str}'"),
+                        Severity::Error,
+                    ));
+                }
+            }
+        };
+        let parsed = unfer_protocol::Cell::parse(&bytes).map_err(|e| {
+            Diagnostic::new(Code::BLUEPRINT_INVALID, e.to_string(), Severity::Error)
+        })?;
+        let session = parsed.session().ok_or_else(|| {
+            Diagnostic::new(
+                Code::BLUEPRINT_NO_SESSION,
+                "blueprint archive carries no session snapshot",
+                Severity::Error,
+            )
+        })?;
+        let blob: SessionBlob = serde_json::from_slice(session).map_err(|e| {
+            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
+        })?;
+        let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
+        let handle = handles::store_session(session);
+        let json = serde_json::to_string(&serde_json::json!({ "handle": handle }))
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
 /// Register interest in a model's event stream.
 /// `query_json` is an `EventQuery` JSON (`{}` accepts all event types).
 /// Returns a positive subscription handle on success, <0 (-code) on error.
@@ -639,6 +785,12 @@ pub extern "C" fn uk_buf_free(handle: i64) -> i64 {
 /// Creates a Pending `ActionRecord`, returns the action handle (positive), queues an
 /// `action_pending` event on every subscription (kernel-global approval lane). The
 /// caller reads the provisional result via `uk_action_get`. Returns <0 (-code) on error.
+///
+/// F20 trust annotations gate the lane: an `observe`-kind effect (readOnlyHint) never
+/// queues — the action is applied immediately (state `Approved`). A `mutate`-kind
+/// effect queues unless the operator console has *vetted* the caller's principal
+/// (`uk_registry_vetted`), in which case it also applies immediately. A `mutate`-kind
+/// effect by an un-vetted caller is therefore never applied without a pending approval.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
@@ -679,7 +831,24 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
             CallerTag::gadget(&req.principal)
         });
         let handle = handles::store_action(record.clone());
-        handles::push_action_event(KernelEvent::ActionPending { action: record });
+        // F20: an observation (or a console-vetted mutation) applies immediately —
+        // it never occupies the approval lane. Everything else lands Pending and
+        // requires `uk_gate_approve` before it can apply.
+        let kind = ctx.effect_kind_of(&req.effect);
+        let vetted = handles::is_vetted(&ctx.tag.principal);
+        if kind == EffectKind::Observe || vetted {
+            handles::with_action_mut(handle, |r| {
+                r.state = ActionState::Approved;
+                r.applied = Some(serde_json::json!({
+                    "applied": true,
+                    "action_id": r.id,
+                    "effect": r.effect,
+                }));
+            });
+            push_resolved(handle)?;
+        } else {
+            handles::push_action_event(KernelEvent::ActionPending { action: record });
+        }
         Ok(handle)
     })
 }
@@ -816,6 +985,126 @@ fn fail_action_not_found(handle: i64) -> Diagnostic {
     )
 }
 
+// ── gatekeeper console (S19/F18: human-mediated resolution) ─────────────
+//
+// Adapted from cloudflare-os gatekeepers: a side-effecting export queued for human approval
+// returns "pending approval + simulated outcome" (UK-4002 with the provisional forecast)
+// instead of erroring; a human operator then resolves the queue with `uk_gate_approve` /
+// `uk_gate_reject`, each resolution written to the audit trail with the human's principal.
+// These are the console-facing counterparts of the gadget-facing `uk_action_apply`/reject
+// — both mutate the same `ActionRecord`, but the resolve path spells its intent in the audit
+// stream.
+
+/// List the gatekeeper's approval-queue (Pending actions only), oldest first. A gatekeeper
+/// console scans this and resolves entries with `uk_gate_approve`/`uk_gate_reject`.
+/// Buffer-out protocol; returns the byte length on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_gate_list_pending(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_gate_list_pending", || {
+        let items: Vec<(i64, serde_json::Value)> = handles::list_actions()
+            .into_iter()
+            .filter(|(_, r)| r.state == ActionState::Pending)
+            .map(|(h, r)| Ok((h, action_record_json(&r, Some(h))?)))
+            .collect::<Result<_, Diagnostic>>()?;
+        let json = serde_json::to_string(&items)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Approve a pending action (the human console resolution). The gatekeeper's simulated
+/// outcome (provisional forecast) becomes the applied result and the resolution is audited
+/// with the resolving principal. Returns 0 on success; UK-4004/UK-4005 otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_gate_approve(action_handle: i64) -> i64 {
+    ffi_entry("uk_gate_approve", || {
+        let approved = handles::with_action_mut(action_handle, |record| {
+            if record.state != ActionState::Pending {
+                return false;
+            }
+            record.state = ActionState::Approved;
+            record.applied = Some(match record.provisional.clone() {
+                Some(sim) => serde_json::json!({
+                    "applied": true,
+                    "action_id": record.id,
+                    "effect": record.effect,
+                    "forecast": sim,
+                }),
+                None => serde_json::json!({
+                    "applied": true,
+                    "action_id": record.id,
+                    "effect": record.effect,
+                }),
+            });
+            true
+        });
+        match approved {
+            None => Err(fail_action_not_found(action_handle)),
+            Some(true) => {
+                let ctx = handles::current_caller();
+                let detail = format!(
+                    "gatekeeper approve handle={action_handle} by='{}'",
+                    ctx.tag.principal
+                );
+                let entry = AuditEntry {
+                    seq: 0, // store assigns
+                    caller: ctx.tag,
+                    symbol: "uk_gate_approve".to_string(),
+                    ok: true,
+                    detail: Some(detail),
+                    args: serde_json::json!([action_handle]),
+                    component: handles::current_component(),
+                    context: handles::current_observability(),
+                };
+                handles::store_audit(entry);
+                push_resolved(action_handle)?;
+                Ok(0)
+            }
+            Some(false) => Err(action_not_pending(action_handle)),
+        }
+    })
+}
+
+/// Reject a pending action (the human console resolution). The simulated outcome never applies;
+/// the rejection is audited with the resolving principal. Returns 0 on success; UK-4004/4005.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_gate_reject(action_handle: i64) -> i64 {
+    ffi_entry("uk_gate_reject", || {
+        let rejected = handles::with_action_mut(action_handle, |record| {
+            if record.state != ActionState::Pending {
+                return false;
+            }
+            record.state = ActionState::Rejected;
+            true
+        });
+        match rejected {
+            None => Err(fail_action_not_found(action_handle)),
+            Some(true) => {
+                let ctx = handles::current_caller();
+                let action = format!(
+                    "gatekeeper reject handle={action_handle} by='{}'",
+                    ctx.tag.principal
+                );
+                let entry = AuditEntry {
+                    seq: 0, // store assigns
+                    caller: ctx.tag,
+                    symbol: "uk_gate_reject".to_string(),
+                    ok: true,
+                    detail: Some(action),
+                    args: serde_json::json!([action_handle]),
+                    component: handles::current_component(),
+                    context: handles::current_observability(),
+                };
+                handles::store_audit(entry);
+                push_resolved(action_handle)?;
+                Ok(0)
+            }
+            Some(false) => Err(action_not_pending(action_handle)),
+        }
+    })
+}
+
 fn action_not_pending(handle: i64) -> Diagnostic {
     Diagnostic::new(
         Code::ACTION_ALREADY_RESOLVED,
@@ -912,6 +1201,35 @@ pub fn uk_clear_caller() {
     handles::clear_caller();
 }
 
+/// Mint (or clear) the operator console's **vetted** marker on `principal`
+/// (S21/F20). Vetted principals may auto-apply `mutate`-kind effects without a
+/// pending approval. A module can never self-declare vetted status: only the
+/// trusted operator harness (`{from:"hook", grants:null}`) may call this;
+/// anything else is refused with UK-4501. Never touches the approval queue —
+/// clearing the flag for a principal leaves every pending action intact.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_registry_vetted(principal: *const u8, len: i64, vetted: i64) -> i64 {
+    ffi_entry("uk_registry_vetted", || {
+        let caller = handles::current_caller();
+        let console_principal = caller.tag.from == CallerKind::Hook && caller.grants.is_none();
+        if !console_principal {
+            return Err(Diagnostic::new(
+                Code::CONSOLE_ONLY,
+                "vetted status is minted by the operator console only (UK-4501)",
+                Severity::Error,
+            ));
+        }
+        let principal = read_utf8(principal, len)?;
+        handles::mark_vetted(&principal, vetted != 0);
+        Ok(0)
+    })
+}
+
+/// C-ABI host-internal marker maintenance used by QA/console reset paths.
+pub fn uk_clear_vetted() {
+    handles::clear_vetted();
+}
+
 /// Append an audit entry for the current thread's caller. `entry_json` is
 /// `{"symbol":"...","args":?,"ok":bool,"detail":?}` — the caller tag is read from
 /// the thread-local caller context (the loopback set it at dispatch start).
@@ -933,17 +1251,23 @@ pub fn uk_audit_append(entry_json: &str) -> i64 {
         Err(_) => return 0,
     };
     let ctx = handles::current_caller();
+    // Sanitize the args before they are stored: the audit trail never persists a
+    // secret/prompt/key even if a module's args carried one (F22 discipline).
+    let mut args = if req.args.is_null() {
+        serde_json::json!([])
+    } else {
+        req.args
+    };
+    handles::sanitize_sensitive(&mut args);
     let entry = AuditEntry {
         seq: 0, // assigned by the store
         caller: ctx.tag,
         symbol: req.symbol,
         ok: req.ok,
         detail: req.detail,
-        args: if req.args.is_null() {
-            serde_json::json!([])
-        } else {
-            req.args
-        },
+        args,
+        component: handles::current_component().or_else(|| Some("kernel.audit".to_string())),
+        context: handles::current_observability(),
     };
     handles::store_audit(entry) as i64
 }
@@ -972,6 +1296,97 @@ pub extern "C" fn uk_audit_list(buf: *mut u8, cap: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_audit_clear() -> i64 {
     ffi_entry("uk_audit_clear", || Ok(handles::clear_audit() as i64))
+}
+
+// ── S23 (F22): observability context + dot-separated owner logger ─────
+//
+// The `unfer_agent` host seeds a per-call observability context (AsyncLocal
+// analog) before dispatch and clears it after; the kernel threads its fields
+// into every audit entry (`context.trace_id`, `component`). The owner logger
+// writes dot-separated `(component)` lines into a ring sink the operator drains.
+
+/// Host-internal (Rust-ABI): seed the current thread's per-call observability
+/// context. `value_json` is `{"trace_id": "...", "component": "kernel.audit", ...}`.
+/// Used by the kernel loopback at dispatch start; cleared after the call.
+pub fn uk_observability_set(value_json: &str) -> Result<(), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(value_json).map_err(|e| format!("observability json: {e}"))?;
+    handles::set_observability(value);
+    Ok(())
+}
+
+/// Host-internal (Rust-ABI): drop the current thread's per-call context.
+pub fn uk_observability_clear() {
+    handles::clear_observability();
+}
+
+/// C-ABI entry for the observability context (parity with the Rust host helper).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_observability(ptr: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_observability", || {
+        let json = read_utf8(ptr, len)?;
+        let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
+            Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
+        })?;
+        handles::set_observability(value);
+        Ok(0)
+    })
+}
+
+/// C-internal observer for `uk_report_issue`: no-op (0) unless an
+/// `ERROR_REPORT_BINDING` is provisioned. When bound, the sanitized payload is
+/// written as a dot-separated owner line (so a fixture's secret never lands).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_report_issue(ptr: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_report_issue", || {
+        if std::env::var_os("ERROR_REPORT_BINDING").is_none() {
+            return Ok(0);
+        }
+        let json = read_utf8(ptr, len)?;
+        let mut value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(v) => v,
+            Err(_) => serde_json::Value::String(json),
+        };
+        handles::sanitize_sensitive(&mut value);
+        handles::owner_log("kernel.report_issue", &value.to_string());
+        Ok(1)
+    })
+}
+
+/// Write a dot-separated owner component line into the owner sink.
+/// Host-internal (Rust-ABI): only host components call the sink; a gadget cannot
+/// log on a foreign owner line.
+pub fn owner_log(component: &str, message: &str) {
+    handles::owner_log(component, message);
+}
+
+/// C-ABI entry of the owner logger (edge → kernel link).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_owner_log(ptr: *const u8, len: i64, msg_ptr: *const u8, msg_len: i64) -> i64 {
+    ffi_entry("uk_owner_log", || {
+        let component = read_utf8(ptr, len)?;
+        let message = read_utf8(msg_ptr, msg_len)?;
+        handles::owner_log(&component, &message);
+        Ok(0)
+    })
+}
+
+/// List the dot-separated owner log, newest first. Buffer-out protocol.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_owner_list(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_owner_list", || {
+        let lines = handles::list_owner_log();
+        let json = serde_json::to_string(&lines)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Clear the owner sink (operator action). Returns lines removed.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_owner_clear() -> i64 {
+    ffi_entry("uk_owner_clear", || Ok(handles::clear_owner_log() as i64))
 }
 
 /// Spawn a sub-agent bounded to a fixed grant set (S6 `AgentSpawner`).
@@ -1189,6 +1604,8 @@ pub extern "C" fn uk_request_resource(resource_json: *const u8, len: i64) -> i64
                 "approval_pending request={handle} resource='{resource_id}'"
             )),
             args: serde_json::json!([resource_id]),
+            component: handles::current_component(),
+            context: handles::current_observability(),
         };
         handles::store_audit(entry);
         Ok(handle)
@@ -1229,11 +1646,36 @@ mod tests {
     }
 
     fn read_buf(f: impl Fn(*mut u8, i64) -> i64) -> String {
-        let needed = f(std::ptr::null_mut(), 0);
-        assert!(needed >= 0, "unexpected error probing buffer size");
-        let mut buf = vec![0u8; needed as usize];
-        f(buf.as_mut_ptr(), needed);
-        String::from_utf8(buf).unwrap()
+        // Two-call buffer protocol, retry-safe: the kernel-global stores can grow
+        // between the size probe and the copy, so re-probe when the copy reports a
+        // larger needed size (otherwise a concurrent append would truncate the JSON).
+        let mut cap = f(std::ptr::null_mut(), 0);
+        assert!(cap >= 0, "unexpected error probing buffer size");
+        loop {
+            let mut buf = vec![0u8; cap as usize];
+            let n = f(buf.as_mut_ptr(), cap);
+            assert!(n >= 0, "unexpected error receiving buffer");
+            if n <= cap {
+                buf.truncate(n as usize);
+                return String::from_utf8(buf).unwrap();
+            }
+            cap = n;
+        }
+    }
+
+    fn read_raw(f: impl Fn(*mut u8, i64) -> i64) -> Vec<u8> {
+        let mut cap = f(std::ptr::null_mut(), 0);
+        assert!(cap >= 0, "unexpected error probing buffer size");
+        loop {
+            let mut buf = vec![0u8; cap as usize];
+            let n = f(buf.as_mut_ptr(), cap);
+            assert!(n >= 0, "unexpected error receiving buffer");
+            if n <= cap {
+                buf.truncate(n as usize);
+                return buf;
+            }
+            cap = n;
+        }
     }
 
     fn create_harmonic_model() -> i64 {
@@ -1421,14 +1863,6 @@ mod tests {
 
     // ── S5: .cell blueprint archives (instance isolation + blueprints) ──────
 
-    fn read_raw(f: impl Fn(*mut u8, i64) -> i64) -> Vec<u8> {
-        let needed = f(std::ptr::null_mut(), 0);
-        assert!(needed >= 0, "unexpected error probing buffer size");
-        let mut buf = vec![0u8; needed as usize];
-        f(buf.as_mut_ptr(), needed);
-        buf
-    }
-
     #[test]
     fn blueprint_export_instantiate_roundtrip() {
         let h = create_harmonic_model();
@@ -1477,6 +1911,137 @@ mod tests {
         let ret = uk_blueprint_export(99999, std::ptr::null_mut(), 0);
         assert_eq!(ret, -1004);
     }
+
+    // ── S20 (F19): blueprint templates + per-user instantiation ──────────
+    //
+    // The blueprint registry is process-global; serialize like the action tests.
+
+    fn blueprint_cell_from_session(h: i64) -> Vec<u8> {
+        read_raw(|b, c| uk_blueprint_export(h, b, c))
+    }
+
+    fn blueprint_import(cell: &[u8]) -> i64 {
+        let mut buf = [0u8; 4096];
+        let n = uk_blueprint_import(cell.as_ptr(), cell.len() as i64, buf.as_mut_ptr(), 4096);
+        assert!(n >= 0, "import must succeed, got {n}");
+        n
+    }
+
+    #[test]
+    fn blueprint_import_register_list_export_gadget_two_sessions() {
+        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unfer_data::blueprint::clear_global_registry();
+        uk_clear_caller();
+
+        let h = create_harmonic_model();
+        let (vptr, vlen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, vptr, vlen), 0);
+        let cell = blueprint_cell_from_session(h);
+        assert!(!cell.is_empty());
+
+        set_caller_gadget("blueprint_publisher");
+        let needed = blueprint_import(&cell);
+        assert!(needed > 0);
+
+        // The registry carries the immutable record addressed by the content CID.
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 1, "one import: {list}");
+        let record = &list[0];
+        let cid = record["blueprint_id"].as_str().unwrap().to_string();
+        assert_eq!(record["created_by"], "blueprint_publisher");
+        assert_eq!(record["immutable_blueprint_id"], cid);
+        assert_eq!(cid.len(), 64);
+
+        // Every consumer runs its own copy: two export_gadget calls give two distinct
+        // handles whose restored sessions behave identically to the source.
+        let g1 = export_gadget(&cid);
+        let g2 = export_gadget(&cid);
+        assert!(g1 > 0 && g2 > 0 && g1 != g2, "per-user copies must be distinct sessions");
+
+        // The per-user copies must reproduce identical Born-rule behavior.
+        let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
+        assert_eq!(uk_event_probability(g1, pptr, plen), 0, "gadget 1 must answer");
+        let p1 = read_buf(|b, c| uk_get_result(g1, b, c));
+        assert_eq!(uk_event_probability(g2, pptr, plen), 0, "gadget 2 must answer");
+        let p2 = read_buf(|b, c| uk_get_result(g2, b, c));
+        assert_eq!(p1, p2, "two per-user copies must reproduce identical behavior");
+
+        // Idempotent import: same bytes → same immutable id, original minter kept.
+        set_caller_gadget("second_publisher");
+        let needed2 = blueprint_import(&cell);
+        assert!(needed2 > 0);
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 1);
+        assert_eq!(list[0]["created_by"], "blueprint_publisher", "immutable: no re-mint");
+
+        uk_model_free(h);
+        uk_model_free(g1);
+        uk_model_free(g2);
+    }
+
+    fn export_gadget(cid: &str) -> i64 {
+        let out = read_raw(|b, c| uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, b, c));
+        let v: serde_json::Value = serde_json::from_slice(&out).expect("gadget json");
+        v["handle"].as_i64().expect("gadget returns a session handle")
+    }
+
+    #[test]
+    fn blueprint_import_rejects_tampered_cell() {
+        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = unfer_protocol::CellBuilder::new("dry");
+        builder.add_file("module.toml", b"[module]\nname=\"dry\"\n").unwrap();
+        let mut cell = builder.build().unwrap();
+        cell[10] ^= 0xff; // flip a body byte — content address no longer matches
+        let ret = uk_blueprint_import(cell.as_ptr(), cell.len() as i64, std::ptr::null_mut(), 0);
+        assert_eq!(ret, -4100, "tampered archive must fail verification (UK-4100), got {ret}");
+
+        // Bad magic entirely.
+        let ret = uk_blueprint_import(b"NOTACEL1".as_ptr(), 8, std::ptr::null_mut(), 0);
+        assert_eq!(ret, -4100, "bad magic must yield UK-4100, got {ret}");
+    }
+
+    #[test]
+    fn blueprint_get_and_cell_and_unknown_id() {
+        let _lock = BLUEPRINT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unfer_data::blueprint::clear_global_registry();
+        uk_clear_caller();
+        let h = create_harmonic_model();
+        let (pptr, plen) = json_ptr(r#"{"t":0.02}"#);
+        assert_eq!(uk_evolve(h, pptr, plen), 0);
+        let cell = blueprint_cell_from_session(h);
+        blueprint_import(&cell);
+        let cid: String = {
+            let list = read_buf(|b, c| uk_blueprint_list(b, c));
+            serde_json::from_str::<serde_json::Value>(&list).unwrap()[0]["blueprint_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        // uk_blueprint_get_by_id round-trips the record; uk_blueprint_cell returns the raw
+        // archive bytes the edge `/cell/<cid>` route seeds from.
+        let rec = read_buf(|b, c| uk_blueprint_get_by_id(cid.as_ptr(), cid.len() as i64, b, c));
+        let rec: serde_json::Value = serde_json::from_str(&rec).unwrap();
+        assert_eq!(rec["blueprint_id"], cid);
+
+        let bytes = read_raw(|b, c| uk_blueprint_cell(cid.as_ptr(), cid.len() as i64, b, c));
+        assert_eq!(bytes, cell, "uk_blueprint_cell must return the exact registered bytes");
+
+        // Unknown ids read UK-4102 on both.
+        let unknown = "0".repeat(64);
+        let r1 = uk_blueprint_get_by_id(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        assert_eq!(r1, -4102);
+        let r2 = uk_blueprint_cell(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        assert_eq!(r2, -4102);
+        let r3 = uk_blueprint_export_gadget(unknown.as_ptr(), unknown.len() as i64, std::ptr::null_mut(), 0);
+        assert_eq!(r3, -4102);
+
+        uk_model_free(h);
+    }
+
+    static BLUEPRINT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // ── S4: deferred approval + local simulation ─────────────────────────
     //
@@ -1964,5 +2529,400 @@ mod tests {
             "approval_pending must be audited: {entries}"
         );
         uk_clear_caller();
+    }
+
+    // ── S19 (F18): gatekeeper approval console ────────────────────────────
+
+    #[test]
+    fn gatekeeper_approve_resolves_pending_and_lands_in_stream() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_clear_caller();
+
+        // A side-effecting export submits a Pending action with a simulated outcome.
+        let req = r#"{"principal":"scan-agent","effect":"notify_admins","params":{"msg":"new scan"},"provisional":{"forecast":true,"threat":"none"}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0, "sidecar submit must succeed, got {handle}");
+
+        // While pending, the action sits in the gatekeeper console queue carrying the forecast.
+        let pending_json = read_buf(|b, c| uk_gate_list_pending(b, c));
+        let pending: serde_json::Value = serde_json::from_str(&pending_json).unwrap();
+        let pending = pending.as_array().expect("pending must be an array");
+        let found = pending
+            .iter()
+            .any(|v| v[0] == serde_json::json!(handle) && v[1]["effect"] == "notify_admins");
+        assert!(found, "pending console must list the scan action: {pending:?}");
+
+        // The human operator approves through uk_gate_approve (audited with their principal).
+        set_caller_gadget("scan_operator");
+        assert_eq!(uk_gate_approve(handle), 0);
+
+        // It is no longer pending...
+        let pending_json = read_buf(|b, c| uk_gate_list_pending(b, c));
+        let pending: serde_json::Value = serde_json::from_str(&pending_json).unwrap();
+        assert!(
+            !pending
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v[0] == serde_json::json!(handle)),
+            "approved action leaves the approval queue: {pending}"
+        );
+        // ...and the simulated forecast became the applied result.
+        let rec_json = read_buf(|b, c| uk_action_get(handle, b, c));
+        let record: serde_json::Value = serde_json::from_str(&rec_json).unwrap();
+        assert_eq!(record["state"], "approved");
+        assert_eq!(record["applied"]["forecast"]["threat"], "none");
+
+        // The approval is in the audit trail with the human principal.
+        let entries = audit_list();
+        let arr = entries.as_array().unwrap();
+        assert!(
+            arr.iter().any(|e| {
+                e["symbol"] == "uk_gate_approve"
+                    && e["caller"]["principal"] == "scan_operator"
+                    && e["detail"].as_str().unwrap_or("").contains("by='scan_operator'")
+            }),
+            "human approval must be audited: {entries}"
+        );
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn gatekeeper_reject_keeps_pending_out_of_applied() {
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_clear_caller();
+        let req = r#"{"principal":"scan-agent","effect":"notify_admins","params":{"msg":"x"},"provisional":{"forecast":true}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0);
+
+        set_caller_gadget("scan_operator");
+        assert_eq!(uk_gate_reject(handle), 0);
+
+        let rec_json = read_buf(|b, c| uk_action_get(handle, b, c));
+        let record: serde_json::Value = serde_json::from_str(&rec_json).unwrap();
+        assert_eq!(record["state"], "rejected");
+        assert!(record["applied"].is_null(), "rejected action has no applied result");
+
+        // A gate approve over a resolved action is refused (UK-4005).
+        assert_eq!(uk_gate_approve(handle), -4005);
+        uk_clear_caller();
+    }
+
+    // ── S21 (F20): trust annotations (observe vs mutate) + console-vetted ──
+    //
+    // The vetted registry and the action lane are both kernel-global, so these
+    // serialize on ACTION_TESTS_LOCK and reset both stores first.
+
+    fn pending_list() -> serde_json::Value {
+        let json = read_buf(|b, c| uk_gate_list_pending(b, c));
+        serde_json::from_str(&json).unwrap()
+    }
+
+    /// A gadget whose grant carries a F20 trust annotation for one effect.
+    fn set_caller_annotated(principal: &str, effect_kinds: &str) {
+        let caller = format!(
+            r#"{{"from":"gadget","principal":"{principal}","grants":{{"kernel":[],"effects":["{principal}_eff"],"observers":[],"resources":[],"effect_kinds":{effect_kinds}}}}}"#
+        );
+        uk_set_caller(&caller).expect("annotated caller json must parse");
+    }
+
+    #[test]
+    fn observe_kind_effect_never_queues() {
+        // F20 readOnlyHint: an observe-annotated effect applies immediately — it never
+        // occupies the approval lane, so no pending approval is needed.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_vetted();
+        uk_clear_caller();
+        set_caller_annotated(
+            "obs_probe",
+            r#"[{"name":"obs_probe_eff","effect_kind":"observe"}]"#,
+        );
+
+        let req = r#"{"principal":"obs_probe","effect":"obs_probe_eff","params":{"metric":"qps"}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0);
+
+        let record: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
+        assert_eq!(record["state"], "approved", "observe-kind applies immediately: {record}");
+        assert_eq!(record["applied"]["applied"], true);
+
+        assert!(
+            !pending_list()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v[0] == serde_json::json!(handle)),
+            "observe-kind never enters the approval queue"
+        );
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn mutate_kind_effect_requires_pending_approval() {
+        // A mutate-kind effect by an un-vetted caller can never apply without a pending
+        // approval: the submission queues, stays provisional, and only a gate approval
+        // promotes it to applied.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_vetted();
+        uk_clear_caller();
+        set_caller_gadget("mut_mod");
+        let req = r#"{"principal":"mut_mod","effect":"delete_row","params":{"row":7},"provisional":{"rows":1}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0);
+
+        let record: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
+        assert_eq!(record["state"], "pending", "mutate-kind queues: {record}");
+        assert!(record["applied"].is_null(), "no applied result without approval");
+        assert_eq!(record["result"]["rows"], 1, "provisional is served meanwhile");
+
+        // The pending lane carries exactly this action; approving it promotes applied.
+        let pending = pending_list();
+        let arr = pending.as_array().unwrap();
+        assert!(arr.iter().any(|v| v[0] == serde_json::json!(handle)));
+        uk_clear_caller();
+        assert_eq!(uk_gate_approve(handle), 0);
+        let record: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
+        assert_eq!(record["state"], "approved");
+        assert_eq!(record["applied"]["forecast"]["rows"], 1);
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn vetted_mutate_effect_auto_applies() {
+        // A console-vetted principal may auto-apply a mutate-kind effect without a
+        // pending approval (the vetted marker is the console's invitation).
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_vetted();
+        uk_clear_caller();
+
+        // The operator console mints the vetted marker for the principal.
+        let (p, l) = json_ptr("vet_ops");
+        assert_eq!(uk_registry_vetted(p, l, 1), 0, "console mints vetted");
+
+        set_caller_gadget("vet_ops");
+        let req = r#"{"principal":"vet_ops","effect":"rotate_keys","params":{"scope":"prod"}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0);
+        let record: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
+        assert_eq!(record["state"], "approved", "vetted mutate auto-applies: {record}");
+        assert!(
+            !pending_list()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v[0] == serde_json::json!(handle)),
+            "vetted action skips the approval lane"
+        );
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn unvetted_console_clearing_flag_leaves_queue_intact() {
+        // Clearing the vetted flag never touches the approval queue: a mutation that
+        // already queued stays pending for the human to resolve.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_vetted();
+        uk_clear_caller();
+
+        set_caller_gadget("later_unvetted");
+        let req = r#"{"principal":"later_unvetted","effect":"remove_user","params":{"uid":9}}"#;
+        let (p, l) = json_ptr(req);
+        let handle = uk_action_submit(p, l);
+        assert!(handle > 0);
+
+        // Mint, then clear, the vetted flag from the console.
+        uk_clear_caller();
+        let (p, l) = json_ptr("later_unvetted");
+        assert_eq!(uk_registry_vetted(p, l, 1), 0);
+        assert_eq!(uk_registry_vetted(p, l, 0), 0);
+
+        // The queue still carries the same pending action: un-vetting did not resolve
+        // or drop anything. (Assert the handle persists rather than whole-queue
+        // equality — the lane is a shared store, other tests may append concurrently.)
+        let after = pending_list();
+        assert!(
+            after
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v[0] == serde_json::json!(handle)),
+            "approval queue survives flag clearing: {after:?}"
+        );
+        let record: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_action_get(handle, b, c))).unwrap();
+        assert_eq!(record["state"], "pending");
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn registry_vetted_is_console_only() {
+        // A module can never self-declare vetted status (UK-4501); the marker comes
+        // only from the operator console (hook, untrusted-bounds absent).
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_vetted();
+        uk_clear_caller();
+
+        set_caller_gadget("wannabe");
+        let (p, l) = json_ptr("wannabe");
+        assert_eq!(uk_registry_vetted(p, l, 1), -4501, "gadget cannot self-mint vetted");
+
+        // The operator harness can.
+        uk_clear_caller();
+        assert_eq!(uk_registry_vetted(p, l, 1), 0);
+        assert_eq!(uk_registry_vetted(p, l, 0), 0);
+        uk_clear_caller();
+    }
+
+    // ── S23 (F22): observability context + owner logger + secret discipline ──
+    //
+    // The owner sink and observability thread-local are kernel-global per process,
+    // so these serialize on ACTION_TESTS_LOCK and reset their stores first.
+
+fn owner_lines() -> Vec<String> {
+        let json = read_buf(|b, c| uk_owner_list(b, c));
+        serde_json::from_str(&json).unwrap_or_default()
+    }
+
+    #[test]
+    fn owner_logger_writes_dot_component_lines() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(uk_owner_clear() >= 0);
+        owner_log("kernel.audit", "entry persisted");
+        owner_log("kernel.action", "approval promoted");
+        let lines = owner_lines();
+        assert!(lines.iter().any(|l| l == "(kernel.audit) entry persisted"), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "(kernel.action) approval promoted"), "{lines:?}");
+assert!(uk_owner_clear() >= 2, "clear removes the lines");
+        assert!(owner_lines().is_empty());
+    }
+
+    #[test]
+    fn observability_context_threads_into_audit_entries() {
+        // The audit trail is shared; serialize with the other audit-appending tests.
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_clear_caller();
+
+        // Host seeds a per-call context (AsyncLocal analog) before the call.
+        uk_observability_set(r#"{"trace_id":"f22-42","component":"kernel.audit"}"#)
+            .expect("context json parses");
+        let caller = r#"{"from":"gadget","principal":"obs_probe"}"#;
+        uk_set_caller(caller).expect("caller json parses");
+        let _ = uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
+        uk_clear_caller();
+        uk_observability_clear();
+
+        let json = read_buf(|b, c| uk_audit_list(b, c));
+        let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = entries.as_array().unwrap();
+        let mine = arr
+            .iter()
+            .find(|e| e["symbol"] == "uk_evolve" && e["caller"]["principal"] == "obs_probe")
+            .expect("seeded call must be audited: {json}");
+        assert_eq!(mine["context"]["trace_id"], "f22-42", "trace id threads per call");
+        assert_eq!(mine["component"], "kernel.audit");
+
+        // A call *after* clear carries no context.
+        let caller = r#"{"from":"gadget","principal":"obs_clear"}"#;
+        uk_set_caller(caller).expect("caller json parses");
+        let _ = uk_audit_append(r#"{"symbol":"uk_version","args":[],"ok":true}"#);
+        uk_clear_caller();
+        let json = read_buf(|b, c| uk_audit_list(b, c));
+        let entries: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let mine = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["symbol"] == "uk_version" && e["caller"]["principal"] == "obs_clear")
+            .expect("clear call must be audited");
+        assert_eq!(mine["context"], serde_json::Value::Null, "context cleared");
+    }
+
+    #[test]
+    fn report_issue_is_noop_without_error_report_binding() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("ERROR_REPORT_BINDING");
+        }
+        uk_owner_clear();
+        let (p, l) = json_ptr(r#"{"message":"transient encode failure"}"#);
+        // No binding → the report is a no-op and nothing lands in any log.
+        assert_eq!(uk_report_issue(p, l), 0);
+        let lines = owner_lines();
+        assert!(lines.is_empty(), "no binding must mean no report: {lines:?}");
+    }
+
+    #[test]
+    fn report_issue_bound_appends_sanitized_line() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("ERROR_REPORT_BINDING", "test://error-queue");
+        }
+        uk_owner_clear();
+        let (p, l) = json_ptr(r#"{"message":"encode failure","api_key":"sec-F22-SECRET-xyz"}"#);
+        assert_eq!(uk_report_issue(p, l), 1, "bound report is recorded");
+        let lines = owner_lines();
+        assert!(!lines.is_empty(), "bound report must land in the owner sink");
+        let joined = lines.join("\n");
+        assert!(
+            !joined.contains("sec-F22-SECRET-xyz"),
+            "reported secret must never be logged raw: {joined}"
+        );
+        assert!(
+            joined.contains("***REDACTED***"),
+            "the sensitive field is redacted: {joined}"
+        );
+        unsafe {
+            std::env::remove_var("ERROR_REPORT_BINDING");
+        }
+    }
+
+    #[test]
+    fn audit_trail_never_persists_fixture_secret() {
+        // F22 discipline gate: feed a known token through the logging surface (the
+        // host loopback's `uk_audit_append` — where a leaked credential-keyed param
+        // would land) and scan audit + owner logs for it.
+        let _lock = AUDIT_AGENT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_audit_clear();
+        uk_owner_clear();
+        uk_clear_caller();
+        let token = "SEC-UNFER-9f2b-4e6c";
+
+        // The loopback tags the caller, then appends one audit entry with the full
+        // args it received — including a credential-keyed param that must be scrubbed.
+        let caller = r#"{"from":"gadget","principal":"fixture_leaker"}"#;
+        uk_set_caller(caller).expect("caller json parses");
+        let entry = format!(
+            r#"{{"symbol":"uk_action_submit","args":[{{"principal":"fixture_leaker","effect":"send_notification","params":{{"api_key":"{token}"}}}}],"ok":true}}"#
+        );
+        assert!(uk_audit_append(&entry) > 0, "audit append must assign a seq");
+        uk_clear_caller();
+
+        // The audit trail (its serialized JSON) + owner sink never contain the token.
+        let audit_json = read_buf(|b, c| uk_audit_list(b, c));
+        assert!(
+            !audit_json.contains(token),
+            "audit trail must never contain the secret token: {audit_json}"
+        );
+        assert!(
+            audit_json.contains("***REDACTED***"),
+            "the sensitive key's value must be redacted in the trail"
+        );
+        let lines = owner_lines();
+        assert!(
+            lines.iter().all(|l| !l.contains(token)),
+            "owner logs must never contain the token"
+        );
     }
 }

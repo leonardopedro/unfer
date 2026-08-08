@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, AtomicI64, Ordering},
@@ -6,7 +6,8 @@ use std::sync::{
 
 use prob_kernel::Session;
 use unfer_protocol::{
-    ActionRecord, AgentInfo, AuditEntry, CallerTag, Diagnostic, EventQuery, GrantSet, KernelEvent,
+    ActionRecord, AgentInfo, AuditEntry, CallerTag, Diagnostic, EffectKind, EventQuery, GrantSet,
+    KernelEvent,
 };
 
 /// Maximum events retained per subscription before oldest are dropped.
@@ -310,6 +311,15 @@ pub fn list_actions() -> Vec<(i64, ActionRecord)> {
     items
 }
 
+/// Drop every action record (QA/console reset). The approval lane and vetted
+/// markers are separate stores; this never touches either's semantics.
+pub fn clear_actions() {
+    let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        map.clear();
+    }
+}
+
 // ── caller context (S6: GatekeeperCaller tags) ─────────────────────────
 //
 // A per-thread "who is calling right now" slot. The host loopback sets it at the
@@ -362,6 +372,17 @@ impl CallerContext {
             }
         }
     }
+
+    /// F20 trust annotation for a granted effect: whether the caller's grant marks
+    /// `effect` an observation (applies immediately, never queued) or a mutation
+    /// (queued for approval unless the console vetted it). Un-annotated → [`EffectKind::Mutate`]
+    /// (conservative — an annotation can only *downgrade* a side-effect, never grant one).
+    pub fn effect_kind_of(&self, effect: &str) -> EffectKind {
+        self.grants
+            .as_ref()
+            .and_then(|g| g.effect_kind_of(effect))
+            .unwrap_or(EffectKind::Mutate)
+    }
 }
 
 /// Set the current thread's caller context. Returns the previous context.
@@ -381,6 +402,46 @@ pub fn clear_caller() {
 /// Read the current thread's caller context.
 pub fn current_caller() -> CallerContext {
     CALLER.with(|c| c.borrow().clone())
+}
+
+// ── vetted markers (S21/F20) ────────────────────────────────────────────
+//
+// A principal marked *vetted* may auto-apply a `mutate`-kind effect without a
+// pending approval. Vetted status is minted ONLY by the operator console
+// (`uk_registry_vetted`, hook-only); a module can never self-declare it
+// (module.toml carries `effect_kind` annotations, never vetted claims). The
+// marker is entirely separate from the approval queue: un-vetting a principal
+// leaves every pending action untouched.
+
+static VETTED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Set or clear the console's vetted marker for `principal`. Returns the new value.
+pub fn mark_vetted(principal: &str, vetted: bool) -> bool {
+    let mut guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(HashSet::new);
+    if vetted {
+        set.insert(principal.to_string());
+    } else {
+        set.remove(principal);
+    }
+    set.contains(principal)
+}
+
+/// Whether the console has vetted `principal` (auto-apply for mutate effects).
+pub fn is_vetted(principal: &str) -> bool {
+    let guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .map(|set| set.contains(principal))
+        .unwrap_or(false)
+}
+
+/// Drop every vetted marker (QA/console reset). Approval queue untouched.
+pub fn clear_vetted() {
+    let mut guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(set) = guard.as_mut() {
+        set.clear();
+    }
 }
 
 // ── audit trail (S6: human accountability) ─────────────────────────────
@@ -424,6 +485,142 @@ pub fn list_audit() -> Vec<AuditEntry> {
 pub fn clear_audit() -> usize {
     let mut guard = AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     let len = guard.as_ref().map(VecDeque::len).unwrap_or(0);
+    *guard = None;
+    len
+}
+
+// ── observability context (S23/F22: AsyncLocal analog) ────────────────
+//
+// A per-call observability context seeded by the host loopback *before* dispatch
+// and cleared *after*: `{trace_id, component, ...}`. The kernel threads those
+// fields into every audit entry produced during the call (`context`), so a trace
+// id never needs a global frontier — it lives on the same thread as the call.
+// Binding: `component` is the dot-separated owner logger component (the F22
+// `component = "kernel.audit"` norm); absent an explicit one, entries default to
+// `"kernel.audit"`.
+
+thread_local! {
+    static OBSERVABILITY: std::cell::RefCell<serde_json::Value> =
+        std::cell::RefCell::new(serde_json::Value::Null);
+}
+
+/// Seed the current thread's per-call observability context.
+pub fn set_observability(value: serde_json::Value) {
+    OBSERVABILITY.with(|c| *c.borrow_mut() = value);
+}
+
+/// The current per-call observability context, if the host seeded one.
+pub fn current_observability() -> Option<serde_json::Value> {
+    OBSERVABILITY.with(|c| {
+        let v = c.borrow().clone();
+        if v.is_null() {
+            None
+        } else {
+            Some(v)
+        }
+    })
+}
+
+/// The `component` member of the observability context (an owner, e.g.
+/// `"kernel.audit"`); defaults to `"kernel.audit"` when unset ("Explicit; owner
+/// is kernel.audit" — never foreign modules).
+pub fn current_component() -> Option<String> {
+    OBSERVABILITY.with(|c| {
+        c.borrow()
+            .get("component")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    })
+}
+
+/// Reset the current thread's per-call observability context.
+pub fn clear_observability() {
+    OBSERVABILITY.with(|c| *c.borrow_mut() = serde_json::Value::Null);
+}
+
+// ── dot-separated owner logger (S23/F2) + secret discipline ───────────
+//
+// The owner logger writes dot-separated owner component lines (`(component) message`)
+// into a bounded ring sink drained by the operator console (`uk_owner_list`/`..._clear`).
+// Discipline: the kernel *never logs secrets/prompts/keys*. `sanitize_sensitive`
+// rewrites any value under a sensitive key (api_key, token, secret, password,
+// authorization, ...) before a payload is stored in the audit trail or owner sink,
+// so a leaked credential never lands in either store.
+
+/// Redaction marker for sensitive values.
+pub const REDACTED: &str = "***REDACTED***";
+
+/// Sensitive key fragments (lower-cased substring match) — mirrors the edge
+/// data-masking filter (`unfer_edge::mask`) so the kernel and the gateway share
+/// the discipline.
+const SENSITIVE_FRAGMENTS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "authorization",
+    "credential",
+    "session_id",
+];
+
+fn is_sensitive_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    SENSITIVE_FRAGMENTS.iter().any(|f| lower.contains(f))
+}
+
+/// Rewrite the string value of every sensitive-keyed field to [`REDACTED`],
+/// recursively. Arrays/nested objects are walked in place.
+pub fn sanitize_sensitive(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, v) in map.iter_mut() {
+                if is_sensitive_key(key) && v.is_string() {
+                    *v = serde_json::Value::String(REDACTED.to_string());
+                } else {
+                    sanitize_sensitive(v);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                sanitize_sensitive(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Maximum owner-log lines retained before the oldest are dropped.
+pub const OWNER_LOG_CAPACITY: usize = 512;
+
+static OWNER_LOG: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+/// Append a dot-separated owner component line to the owner sink.
+pub fn owner_log(component: &str, message: &str) {
+    let line = format!("({component}) {message}");
+    let mut guard = OWNER_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    let vec = guard.get_or_insert_with(Vec::new);
+    if vec.len() >= OWNER_LOG_CAPACITY {
+        vec.remove(0);
+    }
+    vec.push(line);
+}
+
+/// Snapshot of the owner sink, newest first (operator review order).
+pub fn list_owner_log() -> Vec<String> {
+    let guard = OWNER_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .map(|vec| vec.iter().rev().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Empty the owner sink. Returns the number of lines removed.
+pub fn clear_owner_log() -> usize {
+    let mut guard = OWNER_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    let len = guard.as_ref().map(Vec::len).unwrap_or(0);
     *guard = None;
     len
 }

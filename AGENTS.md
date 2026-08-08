@@ -38,8 +38,12 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - [ ] **PG/Random Start**: Adding a new `HamiltonianType` variant or changing `pauli_grover_a`/`random_start` defaults must be reflected in `QfmConfig`'s `..Default::default()` call sites (`prob_kernel/src/build.rs`, `qfm_text/src/model.rs`).
 - [ ] **GPU Execution**: Run examples with `RUST_LOG=candle_core=debug` to confirm active CUDA kernel dispatch.
 - [ ] **Vacuum Initialization**: Ensure `QuantumState::vacuum()` is properly initialized with at least one empty inner universe (`OuterBosonCreate(InnerBosonicState::vacuum())`) before applying inner operators.
+- [ ] **Trust annotations (S21)**: `EffectKind::{Observe, Mutate}` — `observe`-kind effects auto-apply, `mutate`-kind (and un-annotated) always queue for human approval; `uk_registry_vetted` is console-only (UK-4501 to non-hook callers) and never touches the approval lane. Adding an `effect_kinds` entry must keep `GrantSet::is_subset_of` denying Mutate→Observe relabeling.
+- [ ] **Admin console (S22)**: `unfer_edge/src/admin.rs` mints the admin exactly once from `UNFER_ADMIN_PRINCIPAL` (default `operator`); hard keys (`grants`, `auth`, `storage`, `backend`) are never patchable — any new hard-config key must be added to the refuse list, and the soft config must stay byte-identical on refusal.
+- [ ] **Observability hygiene (S23)**: `uk_audit_append` and `uk_report_issue` MUST run `sanitize_sensitive` (api_key/token/secret/…) before storing; `uk_report_issue` stays a no-op unless `ERROR_REPORT_BINDING` is provisioned; dot-separated owner-log lines carry `component = "kernel.audit"` and the ring is capped (`OWNER_LOG_CAPACITY` 512, drop-oldest). Any new secret-plausible field must be added to the sanitizer, or the secret-scan gate test fails.
+- [ ] **Release golden gate (S23/S24)**: `unfer_data::release` manifest CIDs map every deployable artifact byte→sha256; the golden test regenerates only via `UPDATE_GOLDEN=1` — a wrong byte in a module changes the manifest and fails CI.
 
-## Crate Layout (Stages 1–18 complete)
+## Crate Layout (Stages 1–24 complete)
 
 - `nested_fock_algebra` — symbolic CAS + Fock-space algebra (improved: `adjoint()`, `prune`, `truncate_top_k`, bounded expansion).
 - `fock_sirk` — SIRK solver (improved: GPU-optional, Gram whitening, BRST projection, restarted Krylov, state reconstruction).
@@ -48,7 +52,7 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - `unfer_ffi` — handle-based C ABI: 21 `uk_*` + 5 `uz_*` symbols (`uz_*` under `--features zenodo`).
 - `qfm` — Pauli–Grover + diffusion Hamiltonians, `dense_pauli_grover_matvec`, parity/MNIST sweeps.
 - `qfm_text` — text-domain QFM: corpus, features, LM, in-context adaptation, Oxieml decoder, GPU decode sketch.
-- `unfer_edge` — Pingora-based edge server for the `unfer_agent` protocol over HTTP.
+- `unfer_edge` — Pingora-based edge server for the `unfer_agent` protocol over HTTP (`admin.rs` S22 soft/hard config console under `--features audit`; `gate.rs`/`blueprint.rs`/`cells.rs` edge routes).
 - `demo_module/` — first module: `module.toml` + Austral cell + `run_demo.sh` (positive + UK-4001 negative test).
 - `bayes_update_module/`, `iterated_bayes_module/`, `qfm_module/`, `qfm_tomo_module/`, `zenodo_store_module/` — 5 more Austral modules.
 - `unfer_nixvm/` — Nix flake packaging `unfer_ffi` inside the cloud-hypervisor VM guest (see `../../australVM/cloud_hypervisor_vm/`).

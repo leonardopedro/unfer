@@ -4632,6 +4632,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "unfer_data",
  "unfer_protocol",
  "ureq",
 ]

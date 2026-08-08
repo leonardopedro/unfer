@@ -27,7 +27,13 @@ mod filter;
 mod mask;
 mod metrics;
 #[cfg(feature = "audit")]
+mod admin;
+#[cfg(feature = "audit")]
 mod audit;
+#[cfg(feature = "audit")]
+mod blueprint;
+#[cfg(feature = "audit")]
+mod gate;
 
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -164,6 +170,148 @@ impl ProxyHttp for UnferGateway {
             }
         }
 
+        // S6 (F6): the gatekeeper console short-circuits before proxying. The operator
+        // reviews pending mediated side effects and resolves them (approve applies the
+        // simulated outcome; reject discards it). These routes are operator-only: they
+        // reach the embedded kernel directly, never the (untrusted) module backend.
+        #[cfg(feature = "audit")]
+        {
+            let path = session.req_header().uri.path().to_string();
+            let method = session.req_header().method.to_string();
+            if gate::is_gate_path(&path) {
+                #[derive(serde::Deserialize)]
+                struct HandleRequest {
+                    handle: i64,
+                }
+                let (status, body_bytes): (u16, Vec<u8>) = match method.as_str() {
+                    "GET" if path == "/api/gate/pending" => match gate::pending_list_body() {
+                        Ok(b) => (200u16, b),
+                        Err(e) => (500u16, e.into_bytes()),
+                    },
+                    "POST" if path == "/api/gate/approve" || path == "/api/gate/reject" => {
+                        let raw = match read_body(session).await {
+                            Ok(b) => b,
+                            Err(_) => {
+                                return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
+                                    .await
+                                    .map(|_| true);
+                            }
+                        };
+                        let req = match serde_json::from_slice::<HandleRequest>(&raw) {
+                            Ok(r) => r,
+                            Err(_) => {
+                                return write_json(
+                                    session,
+                                    400u16,
+                                    b"{\"error\":\"expects {\\\"handle\\\": N}\"}",
+                                )
+                                .await
+                                .map(|_| true);
+                            }
+                        };
+                        let dispatched = if path == "/api/gate/approve" {
+                            gate::approve_body(req.handle)
+                        } else {
+                            gate::reject_body(req.handle)
+                        };
+                        match dispatched {
+                            Ok(b) => (200u16, b),
+                            Err(e) => (500u16, e.into_bytes()),
+                        }
+                    }
+                    _ => (405u16, b"{\"error\":\"method not allowed\"}".to_vec()),
+                };
+                write_json(session, status, &body_bytes).await?;
+                return Ok(true);
+            }
+        }
+
+        // S22 (F21): the admin console — soft/hard config separation. Admin capability
+        // is minted once at session start (env `UNFER_ADMIN_PRINCIPAL`); PATCH of the
+        // soft config is refused for non-admin principals (403) and for hard keys
+        // (grants/auth/storage/backend, 400). Never proxies to the module backend.
+        #[cfg(feature = "audit")]
+        {
+            let path = session.req_header().uri.path().to_string();
+            let method = session.req_header().method.to_string();
+            if admin::is_admin_path(&path) {
+                let principal = session
+                    .req_header()
+                    .headers
+                    .get("x-principal")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                let (status, body): (u16, Vec<u8>) = match method.as_str() {
+                    "GET" if path == "/admin/status" => admin::status_body(&principal),
+                    "PATCH" if path == "/admin/config" => {
+                        match read_body(session).await {
+                            Ok(b) => admin::patch_body(&principal, &b),
+                            Err(_) => (
+                                400u16,
+                                b"{\"error\":\"body too large\"}".to_vec(),
+                            ),
+                        }
+                    }
+                    _ => (
+                        405u16,
+                        b"{\"error\":\"method not allowed\"}".to_vec(),
+                    ),
+                };
+                write_json(session, status, &body).await?;
+                return Ok(true);
+            }
+        }
+
+        // S20 (F19): the blueprint content plane — POST /api/blueprint/import seals a
+        // verified `.cell` archive into the kernel registry and seeds the /cell/<cid>
+        // content store (so a published blueprint is immediately content-resolvable).
+        #[cfg(feature = "audit")]
+        {
+            let path = session.req_header().uri.path().to_string();
+            let method = session.req_header().method.to_string();
+            if blueprint::is_blueprint_path(&path) {
+                #[derive(serde::Deserialize)]
+                struct ImportRequest {
+                    #[serde(default)]
+                    cell_hex: String,
+                }
+                let (status, body_bytes): (u16, Vec<u8>) = match method.as_str() {
+                    "POST" if path == "/api/blueprint/import" => {
+                        let raw = match read_body(session).await {
+                            Ok(b) => b,
+                            Err(_) => {
+                                return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
+                                    .await
+                                    .map(|_| true);
+                            }
+                        };
+                        let req = match serde_json::from_slice::<ImportRequest>(&raw) {
+                            Ok(r) => r,
+                            Err(_) => {
+                                return write_json(
+                                    session,
+                                    400u16,
+                                    b"{\"error\":\"expects {\\\"cell_hex\\\": \\\"...\\\"}\"}",
+                                )
+                                .await
+                                .map(|_| true);
+                            }
+                        };
+                        match blueprint::from_hex(&req.cell_hex)
+                            .and_then(|cell| blueprint::import_record(&cell))
+                        {
+                            Ok(b) => (200u16, b),
+                            Err(e) => (400u16, e.into_bytes()),
+                        }
+                    }
+                    _ => (405u16, b"{\"error\":\"method not allowed\"}".to_vec()),
+                };
+                write_json(session, status, &body_bytes).await?;
+                return Ok(true);
+            }
+        }
+
         // S15 (F14): actively shape-checked content reads — GET /cell/<cid> returns the
         // stored cell metadata or a resolved 404; malformed CIDs get 400 (never guess).
         if session.req_header().method.to_string() == "GET"
@@ -289,6 +437,25 @@ async fn read_body(session: &mut Session) -> Result<Vec<u8>, String> {
         }
     }
     Ok(buf)
+}
+
+/// Write a JSON maybe-short-circuit response (used by the audit/gate consoles).
+#[cfg(feature = "audit")]
+async fn write_json(
+    session: &mut Session,
+    status: u16,
+    body: &[u8],
+) -> pingora_core::Result<()> {
+    let mut header = ResponseHeader::build(status, None)?;
+    header.insert_header("content-type", "application/json")?;
+    header.insert_header("content-length", body.len().to_string())?;
+    session
+        .write_response_header(Box::new(header), false)
+        .await?;
+    session
+        .write_response_body(Some(bytes::Bytes::from(body.to_vec())), true)
+        .await?;
+    Ok(())
 }
 
 /// Write a JSON rejection response and signal Pingora to stop forwarding.

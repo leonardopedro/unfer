@@ -621,8 +621,9 @@ the supervisor respawns a healthy sidecar. Tests: limits parsing (present/absent
 writing epoch, old ciphertexts stay readable within `retain_depth` and are refused past it)
 with `CellEnvelope`; `unfer_edge/src/cells.rs` adds the `GET /cell/<cid>` read route backed
 by the process `CellStore` (present→metadata, well-formed absent→404, malformed→400) using
-the new `unfer_data::blueprint::is_content_cid` shape gate. Remaining: an S20 seed point for
-blueprint publication to flow into the edge store.
+the new `unfer_data::blueprint::is_content_cid` shape gate. The seed point landed in S20:
+`POST /api/blueprint/import` mints a blueprint under the stored minter and seeds the
+blueprint content into the `CellStore`/`/cell/<cid>` read route, closing the import→publication→read loop.
 
 **Gap (verified).** `unfer_data` is content-addressed (`store_cell`/`verify_cell`/`CellRef`,
 encrypt/decrypt, magnet) but has **no GC, no refcount, no key rotation** and no read path
@@ -743,7 +744,22 @@ facets, MCP-as-protocol (we borrow the *trust* model, not the transport; an opti
 
 ---
 
-### F17. Resource grants + introductions  ◐ (planned) → **S18**
+### F17. Resource grants + introductions  ✅ (implemented 2026-08) → **S18**
+
+**Status: S18 implemented** (2026-08, `unfer 4da6f89` + `australVM 355137e`).
+- `GrantSet` gains `resources` (`[grants] resources` namespace); `is_subset_of` orders it too
+  (no path mints an introduction it does not hold); serde-default back-compat + proptest
+  `resource_grant_cannot_be_minted`.
+- Codes `UK-4401 RESOURCE_UNINTRODUCED` / `UK-4402 RESOURCE_ALREADY_INTRODUCED` / `UK-4403
+  RESOURCE_NOT_FOUND`.
+- `unfer_ffi`: single-mint resource registry (chokepoint) + pending-request queue;
+  `resource_authorized` gates use on the caller's `resources` grant. New C-ABI:
+  `uk_resource_introduce` / `uk_resource_forfeit` / `uk_resource_use` (the 4401 gate) /
+  `uk_request_resource` (approval_pending audit + queued request for the console) /
+  `uk_resource_pending`.
+- `ModuleManifest` parses `[grants] resources`; `KernelLoopback` threads it into
+  `dispatch_loopback_as`, which installs it on the caller `GrantSet` (the single point where
+  `CallerContext` is built); `kernel_dispatch` marshals the new symbols.
 
 **What is adapted.** cloudflare-os grants nothing ambiently: you *introduce* a resource to a
 session, an agent may *request* an introduction, and minting happens at a single kernel
@@ -760,7 +776,14 @@ chokepoint. Extends Part I F4/F5 greatly since it adds a third grant axis inside
 - Gate: unit tests `introduce_grants_resource`, `request_queues_for_approval`, and an FFI-level
   test that a non-introduced resource call yields `UK-4401 RESOURCE_UNINTRODUCED`.
 
-### F18. Gatekeeper module archetype   ◐ (planned) → **S19**
+### F18. Gatekeeper module archetype   ✅ (implemented 2026-08) → **S19**
+
+**Status: S19 implemented** (2026-08). The `gatekeeper` archetype lands end-to-end:
+`uk_gate_list_pending` / `uk_gate_approve` / `uk_gate_reject` (console-side verdicts under the
+human operator principal `{"from":"hook","principal":"operator"}`), provision modes
+`disabled|optional|enabled`, and an HTTP console in `unfer_edge` (`GET /api/gate/pending`,
+`POST /api/gate/approve|reject`). Loopback tests mediate an approval in the kernel; edge suite
+green with `--features audit` (54 cranelift + 45+29 unfer_ffi + 23 unfer_edge).
 
 **Gap and adapt.** Our modules have no way to represent a mediated external service at all
 (netless). Adopt the gatekeeper as an *archetype*: a module that (a) narrow access only to an
@@ -779,7 +802,16 @@ approve async": in a probability kernel, the simulation *is* the conditional pre
 - Gate: unit test a demo **"scan" gatekeeper module** whose pending action is approved through
   `uk_gate_approve` and only then lands in the audit/side-effect stream.
 
-### F19. Blueprint templates & per-user instantiation  ◐ (planned) → **S20**
+### F19. Blueprint templates & per-user instantiation  ✅ (implemented 2026-08) → **S20**
+
+**Status: S20 implemented** (2026-08). The blueprint store opens to the kernel and the edge:
+`BlueprintRecord`/`BlueprintRegistry` (address = content CID, immutable lineage, `created_by`)
+with `uk_blueprint_import/list/get_by_id/cell/export_gadget` — import is idempotent, an
+altered cell fails `verify_cell` (UK-4100), unknown ids read UK-4102, and `export_gadget`
+mints a fresh per-user `Session` each call (g1 != g2, identical Born-rule behavior).
+`unfer_edge` gained `POST /api/blueprint/import` (`{"cell_hex": …}`) which seeds the
+`/cell/<cid>` content route so a published blueprint is immediately resolvable (S15 path).
+7 new unfer_ffi + 3 unfer_data + 3 unfer_edge tests, plus the preserved 8.
 
 **Gap and adapt.** `unfer_data` stores content-addressed cells; cloudflare's *blueprint* is
 an immutable executable + sidecar. We add module-grade reuse on the same store.
@@ -795,7 +827,7 @@ an immutable executable + sidecar. We add module-grade reuse on the same store.
 - Gate: `blueprint->export->import->instantiate` identical behavior for two sessions; an
   altered cell fails `verify_cell` on import.
 
-### F20. Trust annotations: observation vs mutation + vetted  ◐ (planned) → **S21**
+### F20. Trust annotations: observation vs mutation + vetted  ✅ (implemented 2026-08) → **S21**
 
 **Gap and adapt.** In cloudflare-os a server-side `readOnlyHint` makes a tool run as
 *observation* (no approval), everything else queues for approval, and any auto-apply must be
@@ -810,7 +842,19 @@ a **vetted** endpoint minted by the *console* — a module can never self-declar
 - Gate: a mutate-kind effect without a pending approval is **refused**; an un-vetted console
   clearing the flag leaves the approval queue intact.
 
-### F21. Admin console + soft/hard separation  ◐ (planned) → **S22**
+**Status: S21 implemented (2026-08).** Trust annotations landed in `unfer_protocol`
+(`EffectKind { Observe, Mutate }`, `EffectGrant`, `GrantSet.effect_kinds`; `is_subset_of`
+denies relabeling Mutate→Observe) and `unfer_ffi` (`uk_action_submit` auto-applies
+`Observe`-kind and vetted `Mutate`-kind effects, queues everything else; console-only
+`uk_registry_vetted` refuses non-hook callers with UK-4501 and never touches the approval
+lane). The cranelift module backend parses `[grants] effects` table entries into
+`EffectGrant`s, installs them on the gadget/agent caller grant set through the loopback, and
+marshals `uk_registry_vetted` (FFI still refuses modules with UK-4501 — defense in depth).
+Tests: protocol subset/downgrade property; 5 FFI S21 cases; 3 cranelift loopback cases
+(observe auto-applies, unannotated mutate queues pending and gates to applied, module cannot
+ring vetted). Queued actions stay `pending` until a human `uk_gate_approve` promotes them.
+
+### F21. Admin console + soft/hard separation  ✅ (implemented 2026-08) → **S22**
 
 **Gap and adapt.** `unfer_edge` short-circuits only `/audit`. Adopt the AdminConfig split:
 soft product settings (site name, announcements, offered connectors/resources, blueprint
@@ -825,7 +869,18 @@ catalog) are console-editable; **auth, grants, and storage config are never user
 - Gate: `PATCH /admin/config` returns `401/403` for a non-admin principal; `soft_config.json`
   cannot change grants/auth.
 
-### F22. Observability follows through  ◐ (planned) → **S23**
+**Status: S22 implemented (2026-08).** `unfer_edge/src/admin.rs` (under `--features audit`)
+serves `GET /admin/status` and `PATCH /admin/config` from a process-global soft config
+mirrored under the single KV-style key `soft_config.json`. The admin capability is minted
+exactly once from `UNFER_ADMIN_PRINCIPAL` (default `operator`); the edge mints no admin from
+any request. Route gates: non-admin principals get `403` on both routes; a `PATCH` naming a
+hard key (`grants`, `auth`, `storage`, `backend`) is refused with `400` and leaves the soft
+config byte-identical; `GET /admin/status` reports the hard-config shadow (keys + an
+`editable:false` note, never their values). Tests: path detection, admin-gated status, soft
+patch round-trip mirrored in status, hard-key refusal with unchanged soft config, and
+non-admin `403` that never lands.
+
+### F22. Observability follows through  ✅ (implemented 2026-08) → **S23**
 
 Converges S13 (metrics) with cloudflare's logging norms:
 - dot-separated owner logger (`component = "kernel.audit"`), per-call `observability-context`
@@ -834,7 +889,21 @@ Converges S13 (metrics) with cloudflare's logging norms:
 - **Discipline**: never log secrets/prompts/headers/keys — enforced by a test that scans audit
   and logs for a known secret token fed through a fixture.
 
-### F23. Content-addressed release protocol  ◐ (planned) → **S24**
+**Status: S23 implemented (2026-08).** `unfer_protocol::AuditEntry` gains dot-separated
+`component` and per-call `context` fields. `unfer_ffi` adds a thread-local observability
+context (AsyncLocal analog; `uk_observability_set`/`uk_observability_clear` host helpers +
+`uk_observability` C entry), threads `{trace_id, component}` into every audit entry produced
+during the call, and adds the dot-separated owner logger (`handles::owner_log`, C entries
+`uk_owner_log`/`uk_owner_list`/`uk_owner_clear`). `uk_report_issue` is a no-op (0) unless
+`ERROR_REPORT_BINDING` is provisioned; when bound it writes a sanitized owner line.
+Discipline: `uk_audit_append` and `uk_report_issue` run `sanitize_sensitive` (api_key/token/
+secret/…) before anything is stored; a gate test feeds a known token through the audit
+surface and scans audit + owner logs (token absent, `***REDACTED***` present). The cranelift
+loopback seeds one `{trace_id, "kernel.audit"}` context per dispatch and clears it after, and
+a loopback test asserts the trace id threads onto the dispatch's audit entry. Tests: 5 FFI
+S23 cases + 1 cranelift loopback case.
+
+### F23. Content-addressed release protocol  ✅ (implemented 2026-08) → **S24**
 
 **Gap and adapt.** Cloudflare pins one, byte-identical, content-addressed release manifest and
 promotes `candidate → release` in a single all-or-nothing copy.
@@ -848,13 +917,29 @@ promotes `candidate → release` in a single all-or-nothing copy.
 - Gate: golden-file regeneration honored via `UPDATE_GOLDEN=1`; a wrong byte in a module
   changes the manifest and fails the CI gate.
 
+**Status: S24 implemented (2026-08).** `unfer_data::release` adds `ReleaseManifest`
+(every artifact name → sha256 content CID via the crate's `compute_cid`; byte-stable
+`BTreeMap` canonical JSON + `manifest_cid()`) and `ReleaseStore::promote` — the single
+content-addressed op that pins a release tag to the manifest's own CID (promoting
+candidate→release is byte-identical, one manifest copy), `get`/`get_by_cid` reads, and a
+64-hex CID shape gate that refuses a tampered artifact address. Golden gate:
+`tests/release_manifest_golden.rs` rebuilds a fixture artifact set and compares against
+`tests/golden/release_manifest.json`; drift fails, `UPDATE_GOLDEN=1` regenerates explicitly
+(verified: a tampered golden fails, restore passes). CI `.github/workflows/ci.yml` adds the
+explicit `release manifest golden gate (F23)` step beside the existing `cargo fmt --all -- --check`
+(any workerd pin/VCS matrix hashes live on the manifest CIDs). Tests: 5 module cases
+(byte-unique CIDs, wrong-byte-changes-manifest, single-copy promote, tampered-address refusal,
+canonical round-trip) + the integration golden gate.
+
 ---
 
 ## 9. Change-tracking for Part III
 
-Same convention as Part II: mark each section `. Status: S#x implemented (2026-08)` when it
-lands. Notify the AGENTS.md "capability/bound-maintenance" checklist (`QfmConfig` default-
-call-sites, compile_channels per-mode weights inline) to stay in sync.
+All Part III stages are now implemented: **S18 (F17) → S19 (F18) → S20 (F19) → S21 (F20) →
+S22 (F21) → S23 (F22) → S24 (F23)** are each marked `✅ (implemented 2026-08)` above with a
+status paragraph. F7 (Cap'n Web RPC) remains optional. The `QfmConfig` default-call-sites /
+`compile_channels` per-mode-weights inline warnings from the AGENTS.md checklist remain live
+only for future combinatorial changes — none were touched since the marks above.
 
 **Recommended order:** S18 → S19 → S20 → S21 → S22 → S23 → S24 (F7 optional; egress/host work
 in Part II guards ordered first: S10/11/15/17).

@@ -26,6 +26,11 @@ jobs:
         run: cargo build --workspace --verbose
       - name: cargo test
         run: cargo test --workspace --verbose
+      # F23 (S24): the release manifest is byte-addressed and pinned; a wrong byte in
+      # any module changes the manifest and fails this explicit golden gate. Regenerate a
+      # deliberately-changed manifest only with UPDATE_GOLDEN=1 (never in CI).
+      - name: release manifest golden gate (F23)
+        run: cargo test -p unfer_data --test release_manifest_golden
 
   lint:
     name: fmt + clippy

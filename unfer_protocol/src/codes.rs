@@ -36,6 +36,8 @@ impl Code {
     pub const BLUEPRINT_INVALID: Code = Code(4100);
     /// The `.cell` blueprint archive parsed but carries no session snapshot to restore.
     pub const BLUEPRINT_NO_SESSION: Code = Code(4101);
+    /// Referencing a blueprint id never imported at the registry (F19).
+    pub const BLUEPRINT_NOT_FOUND: Code = Code(4102);
 
     /// The audit/caller JSON was malformed (bad `CallerTag` / `AuditEntry`).
     pub const AUDIT_INVALID: Code = Code(4200);
@@ -56,6 +58,11 @@ impl Code {
     pub const RESOURCE_ALREADY_INTRODUCED: Code = Code(4402);
     /// Referencing a resource id that has never been minted (unknown at the chokepoint).
     pub const RESOURCE_NOT_FOUND: Code = Code(4403);
+
+    /// F20 trust annotations: an operation reserved for the operator console was
+    /// attempted by a module/agent. A module can never self-declare **vetted** status
+    /// (`uk_registry_vetted` is hook-only) nor mint any other console-only capability.
+    pub const CONSOLE_ONLY: Code = Code(4501);
 
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
@@ -174,6 +181,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             "The .cell blueprint archive parsed but carries no session snapshot to restore.",
         ),
         (
+            4102,
+            "BlueprintNotFound",
+            "No blueprint with that id exists at the blueprint registry.",
+        ),
+        (
             4200,
             "AuditInvalid",
             "The audit/caller JSON was malformed (bad CallerTag / AuditEntry).",
@@ -207,6 +219,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4403,
             "ResourceNotFound",
             "No such resource id exists at the kernel chokepoint.",
+        ),
+        (
+            4501,
+            "ConsoleOnly",
+            "This operation is reserved for the operator console; a module or agent cannot perform it.",
         ),
         (
             6001,

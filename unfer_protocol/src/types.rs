@@ -469,6 +469,30 @@ impl Default for CallerTag {
     }
 }
 
+/// Trust annotation for a granted effect (S21, F20). Cloudflare's `readOnlyHint`
+/// makes a tool run as *observation* (no approval needed); everything else is a
+/// mutation queued for the gatekeeper console. A mutation can still auto-apply
+/// only through the console's *vetted* marker — never by module self-declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EffectKind {
+    /// Read-only: never queues, applied immediately.
+    Observe,
+    /// Side-effecting (default): queues for approval unless vetted.
+    #[default]
+    Mutate,
+}
+
+/// A granted effect with its trust annotation (S21, F20).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectGrant {
+    pub name: String,
+    /// The annotation carried on the console invitation or in `[grants] effects`.
+    /// Absent = [`EffectKind::Mutate`] (conservative).
+    #[serde(default)]
+    pub effect_kind: EffectKind,
+}
+
 /// A bounded set of capability grants. `kernel` names `uk_*` symbols; `effects`
 /// names side-effecting effect names (the S4 `[grants] effects` namespace);
 /// `observers` names *other principals* whose records/audit entries this caller
@@ -488,6 +512,11 @@ pub struct GrantSet {
     /// in `is_subset_of` so no path can mint an introduction it does not hold.
     #[serde(default)]
     pub resources: Vec<String>,
+    /// S21 (F20): trust annotations for granted effects. Names here must already
+    /// appear in `effects`; an observe-annotated effect never queues, a plain one is
+    /// a mutation (queued unless vetted). Older grants deserialize without this.
+    #[serde(default)]
+    pub effect_kinds: Vec<EffectGrant>,
 }
 
 impl GrantSet {
@@ -497,19 +526,36 @@ impl GrantSet {
             effects: Vec::new(),
             observers: Vec::new(),
             resources: Vec::new(),
+            effect_kinds: Vec::new(),
         }
+    }
+
+    /// The trust annotation for a granted effect, if one exists. An effect name
+    /// granted but never annotated defaults to [`EffectKind::Mutate`] (conservative:
+    /// an annotation cannot turn a side-effect into an observation).
+    pub fn effect_kind_of(&self, effect: &str) -> Option<EffectKind> {
+        self.effect_kinds
+            .iter()
+            .find(|g| g.name == effect)
+            .map(|g| g.effect_kind)
     }
 
     /// True when `self` is a subset of `other` (capability non-escalation).
     /// Observation rights count too: a caller cannot mint observer visibility it
     /// does not already hold (F8 no-read-up). Introduced resources likewise: minting an
-    /// introduction the caller does not already hold is escalation (S18/F17).
+    /// introduction the caller does not already hold is escalation (S18/F17). The
+    /// trust annotations close one more escalation path: a mutation cannot be
+    /// relabeled `observe` (which bypasses approval) unless the parent already
+    /// holds that annotation for the same effect (F20).
     pub fn is_subset_of(&self, other: &GrantSet) -> bool {
         let in_other = |s: &String| other.kernel.contains(s);
         self.kernel.iter().all(in_other)
             && self.effects.iter().all(|e| other.effects.contains(e))
             && self.observers.iter().all(|o| other.observers.contains(o))
             && self.resources.iter().all(|r| other.resources.contains(r))
+            && self.effect_kinds.iter().all(|g| {
+                other.effect_kind_of(&g.name) == Some(g.effect_kind)
+            })
     }
 }
 
@@ -536,6 +582,7 @@ mod grantset_proptests {
                 .into_iter()
                 .map(|i| format!("res{i:02}"))
                 .collect(),
+            effect_kinds: Vec::new(),
         })
     }
 
@@ -589,7 +636,7 @@ mod grantset_proptests {
 
 #[cfg(test)]
 mod grantset_tests {
-    use super::GrantSet;
+    use super::{EffectGrant, EffectKind, GrantSet};
 
     #[test]
     fn observers_are_serde_default() {
@@ -597,9 +644,10 @@ mod grantset_tests {
         let g: GrantSet = serde_json::from_str(r#"{"kernel":["uk_version"]}"#).unwrap();
         assert_eq!(g.observers, Vec::<String>::new());
         assert_eq!(g.resources, Vec::<String>::new());
+        assert_eq!(g.effect_kinds, Vec::<EffectGrant>::new());
         assert_eq!(
             serde_json::to_string(&GrantSet::kernel(&["uk_version"])).unwrap(),
-            r#"{"kernel":["uk_version"],"effects":[],"observers":[],"resources":[]}"#
+            r#"{"kernel":["uk_version"],"effects":[],"observers":[],"resources":[],"effect_kinds":[]}"#
         );
     }
 
@@ -610,6 +658,10 @@ mod grantset_tests {
             effects: vec!["notify".into()],
             observers: vec!["peer_a".into()],
             resources: vec!["github.repo#denoission".into()],
+            effect_kinds: vec![EffectGrant {
+                name: "notify".into(),
+                effect_kind: EffectKind::Observe,
+            }],
         };
         // Subset of kernel+effects+observers → allowed.
         let ok = GrantSet {
@@ -617,6 +669,7 @@ mod grantset_tests {
             effects: vec![],
             observers: vec!["peer_a".into()],
             resources: vec![],
+            effect_kinds: vec![],
         };
         assert!(ok.is_subset_of(&base));
         // Observing a peer the caller does not observe → escalation.
@@ -625,6 +678,7 @@ mod grantset_tests {
             effects: vec![],
             observers: vec!["peer_secret".into()],
             resources: vec![],
+            effect_kinds: vec![],
         };
         assert!(!escalate.is_subset_of(&base), "observer escalation must be refused");
         // Minting a resource introduction the caller does not hold → escalation.
@@ -633,11 +687,60 @@ mod grantset_tests {
             effects: vec![],
             observers: vec![],
             resources: vec!["s3.bucket#confidential".into()],
+            effect_kinds: vec![],
         };
         assert!(
             !mint_resource.is_subset_of(&base),
             "resource-introduction escalation must be refused"
         );
+    }
+
+    #[test]
+    fn effect_kind_annotation_cannot_escape() {
+        // F20 trust annotations: a caller may carry an observe annotation only if the
+        // parent already holds it. Downgrading an un-annotated (mutate) effect to
+        // `observe` would bypass approval — that is escalation.
+        let base = GrantSet {
+            kernel: vec![],
+            effects: vec!["read_metric".into(), "delete_row".into()],
+            observers: vec![],
+            resources: vec![],
+            effect_kinds: vec![EffectGrant {
+                name: "read_metric".into(),
+                effect_kind: EffectKind::Observe,
+            }],
+        };
+        // Carrying the observe annotation the parent holds → allowed.
+        let ok = GrantSet {
+            kernel: vec![],
+            effects: vec!["read_metric".into()],
+            observers: vec![],
+            resources: vec![],
+            effect_kinds: vec![EffectGrant {
+                name: "read_metric".into(),
+                effect_kind: EffectKind::Observe,
+            }],
+        };
+        assert!(ok.is_subset_of(&base));
+        // Relabeling `delete_row` (a mutation) as observe → refused.
+        let escalate = GrantSet {
+            kernel: vec![],
+            effects: vec!["delete_row".into()],
+            observers: vec![],
+            resources: vec![],
+            effect_kinds: vec![EffectGrant {
+                name: "delete_row".into(),
+                effect_kind: EffectKind::Observe,
+            }],
+        };
+        assert!(
+            !escalate.is_subset_of(&base),
+            "a mutation cannot be relabeled observe (bypasses approval)"
+        );
+        // An un-annotated granted effect reads back as None (caller decides Mutate).
+        assert_eq!(base.effect_kind_of("delete_row"), None);
+        assert_eq!(base.effect_kind_of("read_metric"), Some(EffectKind::Observe));
+        assert_eq!(base.effect_kind_of("never_granted"), None);
     }
 }
 
@@ -658,6 +761,13 @@ pub struct AuditEntry {
     /// The JSON arguments (a JSON array for dispatched calls).
     #[serde(default)]
     pub args: serde_json::Value,
+    /// Dot-separated owner component reporting the entry (S23/F22, e.g. `"kernel.audit"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    /// Per-call observability context (AsyncLocal analog: `{trace_id, ...}` fields
+    /// threaded from the host into the call that produced this entry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
 }
 
 /// Lifecycle of a spawned sub-agent (S6 `AgentSpawner`).
