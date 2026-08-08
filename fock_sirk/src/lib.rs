@@ -1,3 +1,4 @@
+pub mod auto;
 pub mod brst;
 pub mod device;
 pub mod evolve;

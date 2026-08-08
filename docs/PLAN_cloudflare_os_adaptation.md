@@ -605,7 +605,22 @@ exported over the edge.
 
 ---
 
-### F15. Math-core scale-out (auto-`m`/batch SIRK)  ◐ (planned) → **S16**
+### F15. Math-core scale-out (auto-`m`/batch SIRK)  ✅ (implemented 2026-08) → **S16**
+
+**Status: S16 implemented** (2026-08). `fock_sirk/src/auto.rs` adds three pure, tested
+helpers: `effective_rank` (mirrors the `whiten_gram` rank rule exactly), `auto_krylov_dim`
+(saturate just past the measured Gram rank, clamped), and `budgeted_shift_batches` (the
+"budgeted batch of shifts per restart" split). `examples/weak_scaling.rs` sweeps
+`m ∈ {3,6,9}` on the two-site hopping model and reports solve/evolve wall-times, the
+whitened Gram rank, the auto-`m` suggestion, and the batch count.
+
+**Bench numbers (CPU, two-site hopping):** measured Gram rank saturates at 2 for every `m`,
+so `auto-m = rank+1 = 3`; evolve time grows with the wasted Krylov width
+(3→1.3 ms, 6→2.1 ms, 9→2.6 ms) while the whitened rank stays 2. Rule: **auto-`m` beats the
+hand-set value whenever the whitened rank saturates well below `m`** — the Gram spectrum
+gives a knowable ceiling (AGENTS.md single-mode cap ~6), so a rank probe on restart #1 fixes
+`m` for the remaining restarts. No numerical-stability regression: the full Gram-whitening
+test suite (`28` lib tests) stays green.
 
 **Gap (verified).** SIRK is GPU-dense (candle), `m` is user-fixed, and shift/restart choices
 are manual. AGENTS.md rank-saturation data for single-mode (~6) implies `m` has a knowable
