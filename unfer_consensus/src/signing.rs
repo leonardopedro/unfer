@@ -55,6 +55,11 @@ pub fn canonical_bytes(tx: &ConsensusTransaction) -> Vec<u8> {
             o.signature = [0u8; 64];
             serde_json::to_vec(&ConsensusTransaction::ContentOp(o)).unwrap()
         }
+        ConsensusTransaction::CertificateOp(op) => {
+            let mut o = op.clone();
+            o.signature = [0u8; 64];
+            serde_json::to_vec(&ConsensusTransaction::CertificateOp(o)).unwrap()
+        }
     };
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(&unsigned);
@@ -69,6 +74,7 @@ pub fn sign_transaction(tx: &mut ConsensusTransaction, keypair: &Keypair) {
         ConsensusTransaction::IdentityOp(op) => op.signature = sig,
         ConsensusTransaction::SessionOp(op) => op.signature = sig,
         ConsensusTransaction::ContentOp(op) => op.signature = sig,
+        ConsensusTransaction::CertificateOp(op) => op.signature = sig,
     }
 }
 

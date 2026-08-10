@@ -5,6 +5,7 @@ use unfer_protocol::{
     AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, ModelSpec, Severity,
 };
 
+use crate::certs::{CertificateLedger, MintAuthority};
 use crate::engine::ConsensusEngine;
 use crate::identity::IdentityRegistry;
 
@@ -13,6 +14,7 @@ pub struct ConsensusNode {
     sessions: HashMap<u64, Session>,
     identity: IdentityRegistry,
     content: HashMap<String, ContentRef>,
+    certs: CertificateLedger,
     next_model_id: u64,
     applied_seq: u64,
 }
@@ -24,9 +26,24 @@ impl ConsensusNode {
             sessions: HashMap::new(),
             identity: IdentityRegistry::new(),
             content: HashMap::new(),
+            certs: CertificateLedger::new(MintAuthority::None),
             next_model_id: 1,
             applied_seq: 0,
         }
+    }
+
+    /// Constructor with a configured certificate mint authority (ReFi exchange).
+    pub fn with_mint_authority(engine: Box<dyn ConsensusEngine>, authority: MintAuthority) -> Self {
+        let mut node = Self::new(engine);
+        node.certs = CertificateLedger::new(authority);
+        node
+    }
+
+    /// Reconfigure the certificate mint authority (ReFi exchange). Minting is
+    /// disabled by default; call with `MintAuthority::Only(did)` to permit a
+    /// specific authority to mint, or `MintAuthority::None` to disable it.
+    pub fn set_mint_authority(&mut self, authority: MintAuthority) {
+        self.certs = CertificateLedger::new(authority);
     }
 
     pub fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
@@ -61,6 +78,11 @@ impl ConsensusNode {
                 self.content
                     .insert(op.content_ref.cid.clone(), op.content_ref.clone());
             }
+            ConsensusTransaction::CertificateOp(op) => {
+                let actor = op.did.clone();
+                let kind = op.kind.clone();
+                self.certs.apply_op(&actor, &kind, op.seq)?;
+            }
         }
         Ok(())
     }
@@ -93,6 +115,10 @@ impl ConsensusNode {
 
     pub fn content(&self, cid: &str) -> Option<&ContentRef> {
         self.content.get(cid)
+    }
+
+    pub fn certs(&self) -> &CertificateLedger {
+        &self.certs
     }
 
     pub fn session(&self, id: u64) -> Option<&Session> {
@@ -247,5 +273,122 @@ mod tests {
         assert_eq!(applied, 1);
         assert_eq!(node.applied_seq(), 2);
         assert!(node.identity().resolve(&kp2.did()).is_some());
+    }
+
+    #[test]
+    fn certificate_ledger_roundtrip_via_consensus() {
+        use crate::certs::{MintAuthority, commit_coin};
+        use unfer_protocol::{CertificateOp, CertificateOpKind, CoinRef};
+
+        let engine = LocalConsensus::new();
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
+
+        let mut node =
+            ConsensusNode::with_mint_authority(Box::new(engine.clone()), MintAuthority::Only(authority.did()));
+        let empty_root = node.certs().root();
+        assert_ne!(empty_root, [0u8; 32]);
+
+        // Mint 1000 to alice (signed by the authority).
+        let mut mint = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: CertificateOpKind::Mint {
+                amount: 1000,
+                owner: alice.did(),
+                blinding: [1u8; 32],
+                source: Some("unfccc:cert:TEST-0001".to_string()),
+            },
+            seq: 1,
+            signature: [0u8; 64],
+        });
+        crate::signing::sign_transaction(&mut mint, &authority);
+        node.submit(mint).unwrap();
+        node.sync().unwrap();
+
+        let alice_coin = commit_coin(1000, &alice.did(), &[1u8; 32]);
+        assert!(node.certs().utxo(&alice_coin).is_some());
+        assert_eq!(node.certs().total_supply(), 1000);
+
+        // Transfer the whole 1000 to bob (signed by alice).
+        let input = CoinRef {
+            coin_id: alice_coin,
+            amount: 1000,
+            owner: alice.did(),
+        };
+        let output = CoinRef {
+            coin_id: alice_coin, // recomputed below; amount/owner drive the id
+            amount: 1000,
+            owner: bob.did(),
+        };
+        let mut transfer = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: alice.did(),
+            kind: CertificateOpKind::Transfer {
+                inputs: vec![input],
+                outputs: vec![output],
+            },
+            seq: 2,
+            signature: [0u8; 64],
+        });
+        crate::signing::sign_transaction(&mut transfer, &alice);
+        node.submit(transfer).unwrap();
+        node.sync().unwrap();
+
+        let bob_coin = commit_coin(1000, &bob.did(), &[0u8; 32]);
+        assert!(node.certs().utxo(&bob_coin).is_some());
+        assert!(node.certs().utxo(&alice_coin).is_none());
+        assert!(node.certs().is_spent(&alice_coin));
+        assert_eq!(node.certs().total_supply(), 1000);
+
+        // Burn bob's certificate.
+        let burn_input = CoinRef {
+            coin_id: bob_coin,
+            amount: 1000,
+            owner: bob.did(),
+        };
+        let mut burn = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: bob.did(),
+            kind: CertificateOpKind::Burn {
+                inputs: vec![burn_input],
+            },
+            seq: 3,
+            signature: [0u8; 64],
+        });
+        crate::signing::sign_transaction(&mut burn, &bob);
+        node.submit(burn).unwrap();
+        node.sync().unwrap();
+
+        assert!(node.certs().utxo(&bob_coin).is_none());
+        assert_eq!(node.certs().total_supply(), 0);
+        // Retiring the only UTXO restores the empty root.
+        assert_eq!(node.certs().root(), empty_root);
+    }
+
+    #[test]
+    fn invalid_certificate_op_rejected_before_log() {
+        use unfer_protocol::{CertificateOp, CertificateOpKind};
+
+        let engine = LocalConsensus::new();
+        let alice = Keypair::generate();
+        let mut node = ConsensusNode::new(Box::new(engine));
+        // Minting is disabled by default (MintAuthority::None).
+        let mut mint = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: alice.did(),
+            kind: CertificateOpKind::Mint {
+                amount: 100,
+                owner: alice.did(),
+                blinding: [9u8; 32],
+                source: None,
+            },
+            seq: 1,
+            signature: [0u8; 64],
+        });
+        crate::signing::sign_transaction(&mut mint, &alice);
+        // Signature is valid, so it reaches the log; application fails on sync
+        // with UK-7001 (mint not authorized).
+        let seq = node.submit(mint).unwrap();
+        assert_eq!(seq, 1);
+        let err = node.sync().unwrap_err();
+        assert_eq!(err.code, Code::CERT_MINT_NOT_AUTHORIZED);
     }
 }

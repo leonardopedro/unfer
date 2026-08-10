@@ -19,6 +19,7 @@ $ROOT/
 │   ├── logos/                  # CNL→verified execution graph compiler (CCG+deltanet)
 │   ├── ode_sirk/               # ODE→Hamiltonian singularity detection (Nelson ESA)
 │   ├── unfer_consensus/        # QuePaxa consensus engine (LocalConsensus, ConsensusNode)
+│   │                           #   + CertificateLedger (UTXO/carbon-certs, sparse-Merkle) — Plan R
 │   ├── unfer_identity/         # DID lifecycle manager (Ed25519, W3C DID Documents)
 │   ├── unfer_data/             # encrypted chunked data plane (X25519+AES-GCM, magnet URIs)
 │   ├── demo_module/            # example Austral module (Stage 13)
@@ -86,7 +87,9 @@ logos (standalone: CCG + deltanet + UNF hash; austral_codegen → australVM)
 - `unfer_edge` serves the agent protocol over HTTP via Pingora.
 - `logos` compiles CNL sentences to verified execution graphs (CCG + deltanet).
 - `ode_sirk` detects ODE singularities and constructs Weyl Hamiltonians.
-- `unfer_consensus` provides the QuePaxa consensus engine and DID identity registry.
+- `unfer_consensus` provides the QuePaxa consensus engine and DID identity registry,
+  plus the Plan R carbon-certificate / UTXO ledger (`CertificateLedger`:
+  mint/transfer/burn with sparse-Merkle root, nullifier double-spend prevention).
 - `unfer_identity` manages the DID lifecycle (create/update/revoke/resolve).
 - `unfer_data` handles encrypted chunked content publishing (X25519 + AES-GCM).
 

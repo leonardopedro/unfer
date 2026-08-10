@@ -1,32 +1,57 @@
- uk_action_apply
- uk_action_get
- uk_action_list
- uk_action_reject
- uk_action_revert
- uk_action_submit
- uk_agent_grants
- uk_agent_kill
- uk_agent_list
- uk_agent_spawn
- uk_audit_clear
- uk_audit_list
- uk_bayesian_update
- uk_belief_propagation
- uk_blueprint_export
- uk_blueprint_instantiate
- uk_buf_free
+uk_action_apply
+uk_action_get
+uk_action_list
+uk_action_reject
+uk_action_revert
+uk_action_submit
+uk_agent_grants
+uk_agent_kill
+uk_agent_list
+uk_agent_spawn
+uk_audit_clear
+uk_audit_list
+uk_bayesian_update
+uk_belief_propagation
+uk_blueprint_cell
+uk_blueprint_export
+uk_blueprint_export_gadget
+uk_blueprint_get_by_id
+uk_blueprint_import
+uk_blueprint_instantiate
+uk_blueprint_list
+uk_buf_free
+uk_cert_burn
+uk_cert_mint
+uk_cert_root
+uk_cert_set_authority
+uk_cert_status
+uk_cert_transfer
 uk_condition
 uk_event_probability
 uk_evolve
+uk_gate_approve
+uk_gate_list_pending
+uk_gate_reject
 uk_get_result
 uk_init
 uk_last_error
 uk_model_create
 uk_model_free
+uk_observability
 uk_observe
 uk_ode_analyze
 uk_ode_measure_original
+uk_owner_clear
+uk_owner_list
+uk_owner_log
 uk_poll
+uk_registry_vetted
+uk_report_issue
+uk_request_resource
+uk_resource_forfeit
+uk_resource_introduce
+uk_resource_pending
+uk_resource_use
 uk_restore
 uk_set_hamiltonian
 uk_set_prior

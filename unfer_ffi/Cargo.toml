@@ -18,9 +18,11 @@ zenodo = ["dep:ureq"]
 prob_kernel = { path = "../prob_kernel" }
 unfer_protocol = { path = "../unfer_protocol" }
 unfer_data = { path = "../unfer_data" }
+unfer_consensus = { path = "../unfer_consensus" }
 ode_sirk = { path = "../ode_sirk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+hex = "0.4"
 ureq = { version = "2", features = ["json"], optional = true }
 
 [dev-dependencies]

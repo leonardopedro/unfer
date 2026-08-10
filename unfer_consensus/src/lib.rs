@@ -1,8 +1,10 @@
+pub mod certs;
 pub mod engine;
 pub mod identity;
 pub mod node;
 pub mod signing;
 
+pub use certs::{CertificateLedger, Coin, MintAuthority, SparseMerkle};
 pub use engine::{ConsensusEngine, LocalConsensus};
 pub use identity::IdentityRegistry;
 pub use node::ConsensusNode;

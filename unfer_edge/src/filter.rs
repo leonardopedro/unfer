@@ -26,6 +26,12 @@ static ALLOWED_OPS: &[&str] = &[
     "content_resolve",
     "consensus_sync",
     "consensus_status",
+    "cert_set_authority",
+    "cert_mint",
+    "cert_transfer",
+    "cert_burn",
+    "cert_status",
+    "cert_root",
 ];
 
 /// Rejection reasons returned to callers.

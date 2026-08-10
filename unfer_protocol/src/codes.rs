@@ -82,6 +82,22 @@ impl Code {
     pub const UNKNOWN_DID: Code = Code(6004);
     pub const RELAY_NOT_CONNECTED: Code = Code(6005);
 
+    /// Certificate/UTXO ledger (ReFi exchange, 7xxx). The state-transition
+    /// engine on each QuePaxa node rejects invalid certificate ops before they
+    /// enter the consensus log — the same "rapid validation rule" the exchange
+    /// plan runs for RISC-Zero receipts.
+    pub const CERT_MINT_NOT_AUTHORIZED: Code = Code(7001);
+    /// Conservation violation: `Sum(inputs) != Sum(outputs)` on a transfer.
+    pub const CERT_AMOUNT_MISMATCH: Code = Code(7002);
+    /// An input coin_id does not exist (or already spent) in the ledger.
+    pub const CERT_NONEXISTENT_INPUT: Code = Code(7003);
+    /// A nullifier was already consumed — attempted double spend.
+    pub const CERT_DOUBLE_SPEND: Code = Code(7004);
+    /// The transaction signer is not the owner of every input certificate.
+    pub const CERT_OWNER_MISMATCH: Code = Code(7005);
+    /// The certificate op's seq is stale or a duplicate for its kind.
+    pub const CERT_LEDGER_SEQ: Code = Code(7006);
+
     pub const INTERNAL: Code = Code(5000);
 
     pub fn raw(self) -> u32 {
@@ -276,6 +292,36 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             6005,
             "RelayNotConnected",
             "No upstream relay is available for firehose subscription.",
+        ),
+        (
+            7001,
+            "CertMintNotAuthorized",
+            "The certificate mint was signed by a DID that is not the configured mint authority.",
+        ),
+        (
+            7002,
+            "CertAmountMismatch",
+            "Conservation violation: the sum of transfer inputs does not equal the sum of outputs.",
+        ),
+        (
+            7003,
+            "CertNonexistentInput",
+            "A certificate input coin_id does not exist (or was already spent) in the ledger.",
+        ),
+        (
+            7004,
+            "CertDoubleSpend",
+            "A certificate nullifier was already consumed: attempted double spend.",
+        ),
+        (
+            7005,
+            "CertOwnerMismatch",
+            "The transaction signer is not the owner of every input certificate.",
+        ),
+        (
+            7006,
+            "CertLedgerSeq",
+            "The certificate op's sequence is stale or duplicated for its kind.",
         ),
         (
             5000,

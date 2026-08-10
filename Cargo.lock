@@ -4627,11 +4627,13 @@ dependencies = [
 name = "unfer_ffi"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "ode_sirk",
  "prob_kernel",
  "proptest",
  "serde",
  "serde_json",
+ "unfer_consensus",
  "unfer_data",
  "unfer_protocol",
  "ureq",

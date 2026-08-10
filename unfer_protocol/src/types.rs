@@ -1198,12 +1198,86 @@ pub struct ContentOp {
     pub signature: [u8; 64],
 }
 
+// ── Carbon-certificate / UTXO ledger (ReFi exchange, Plan R) ──────────
+//
+// A carbon certificate is held as an unspent transaction output (UTXO). The
+// transparent consensus core keeps `amount`/`owner`/`blinding` explicit so the
+// QuePaxa state-transition engine can run the "rapid validation rule" offline;
+// a RISC-Zero layer (Plan R Phase 1) replaces the transparent fields with a
+// commitment `Hash(amount, owner, blinding)` and proves conservation inside the
+// zkVM, leaving only coin_ids + nullifiers on the wire.
+
+/// A 32-byte payment/certificate identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CertId(pub [u8; 32]);
+
+/// A spent-input marker. Double-spend protection: a nullifier may appear in at
+/// most one committed transaction. In the transparent core it is derived
+/// deterministically from the coin_id; a confidential layer would use
+/// `Hash(spend_key, coin_commitment)` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Nullifier(pub [u8; 32]);
+
+/// A reference to (or declaration of) a certificate input/output. The node
+/// cross-checks `amount`/`owner` against the ledger's stored coin for inputs,
+/// so a spender cannot lie about value or ownership.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoinRef {
+    pub coin_id: CertId,
+    pub amount: u64,
+    pub owner: String,
+}
+
+/// The kind of certificate state transition carried by a [`CertificateOp`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CertificateOpKind {
+    /// Issuance of a fresh certificate out of "thin air" (backed by an oracle
+    /// proof — e.g. the UNFCCC zk-TLS bridge). Only the mint authority may mint.
+    Mint {
+        amount: u64,
+        owner: String,
+        #[serde(with = "hex_bytes_32")]
+        blinding: [u8; 32],
+        /// Optional provenance/backing reference (e.g. `unfccc:cert:<id>`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
+    /// A transfer: spends `inputs`, creates `outputs`, conserving total value.
+    Transfer {
+        inputs: Vec<CoinRef>,
+        outputs: Vec<CoinRef>,
+    },
+    /// Retirement/destruction: spends `inputs` and removes their value from the
+    /// circulating supply (conservation is intentionally *not* required here).
+    Burn {
+        inputs: Vec<CoinRef>,
+    },
+}
+
+/// A signed certificate state transition. Mirrors the other consensus ops: the
+/// `did` is the acting principal (mint authority for a Mint, the spender for a
+/// Transfer/Burn) and `signature` covers the op bytes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CertificateOp {
+    pub did: String,
+    pub kind: CertificateOpKind,
+    pub seq: u64,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsensusTransaction {
     IdentityOp(IdentityOp),
     SessionOp(SessionOp),
     ContentOp(ContentOp),
+    /// A carbon-certificate / UTXO state transition (ReFi exchange, Plan R).
+    /// The state-transition engine on each QuePaxa node validates the op
+    /// (mint authority, existence, conservation, double-spend, owner) before
+    /// it is sequenced into the consensus log.
+    CertificateOp(CertificateOp),
 }
 
 impl ConsensusTransaction {
@@ -1212,6 +1286,7 @@ impl ConsensusTransaction {
             Self::IdentityOp(op) => &op.did,
             Self::SessionOp(op) => &op.did,
             Self::ContentOp(op) => &op.did,
+            Self::CertificateOp(op) => &op.did,
         }
     }
 
@@ -1220,6 +1295,7 @@ impl ConsensusTransaction {
             Self::IdentityOp(op) => &op.signature,
             Self::SessionOp(op) => &op.signature,
             Self::ContentOp(op) => &op.signature,
+            Self::CertificateOp(op) => &op.signature,
         }
     }
 }

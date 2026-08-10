@@ -1799,6 +1799,182 @@ pub extern "C" fn uk_resource_pending(buf: *mut u8, cap: i64) -> i64 {
     })
 }
 
+// ── certificate ledger (Plan R: carbon-certificate / UTXO state machine) ──
+//
+// `uk_cert_*` exposes the process-global `CertificateLedger` (the same
+// state-transition engine a QuePaxa node applies a `CertificateOp` with) over
+// the C ABI. Op JSON schemas:
+//
+//   uk_cert_mint     {"actor":DID,"amount":u64,"owner":DID,"blinding":"hex32","source?":"str"}
+//   uk_cert_transfer {"actor":DID,
+//                     "inputs":[{"coin_id":"hex32","amount":u64,"owner":DID}],
+//                     "outputs":[{"amount":u64,"owner":DID}]}
+//   uk_cert_burn     {"actor":DID,"inputs":[{"coin_id":"hex32","amount":u64,"owner":DID}]}
+//
+// `coin_id`/`blinding` are 32-byte hex. Buffer-protocol reads: `uk_cert_root`
+// returns raw 32 bytes; `uk_cert_status` returns a JSON blob.
+
+/// Configure the certificate mint authority. `did_utf8` empty (len 0) disables
+/// minting (the safe default). Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_set_authority(did_utf8: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_cert_set_authority", || {
+        let did = if len > 0 {
+            Some(read_utf8(did_utf8, len)?)
+        } else {
+            None
+        };
+        handles::cert_set_authority(did);
+        Ok(0)
+    })
+}
+
+/// Read the current committed sparse-Merkle root (32 raw bytes via the buffer
+/// protocol). Returns needed size on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_root(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_cert_root", || {
+        let root = handles::cert_root();
+        Ok(write_bytes(buf, cap, &root))
+    })
+}
+
+/// Read a JSON snapshot of the ledger state: `{root, unspent_count, total_supply}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_status(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_cert_status", || {
+        let json = serde_json::to_string(&handles::cert_status()).map_err(|e| {
+            Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
+        })?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+fn parse_hex32(s: &str, field: &str) -> Result<[u8; 32], Diagnostic> {
+    let bytes = hex::decode(s).map_err(|e| {
+        Diagnostic::new(
+            Code::BAD_JSON,
+            format!("{field}: invalid hex: {e}"),
+            Severity::Error,
+        )
+    })?;
+    bytes.try_into().map_err(|_| {
+        Diagnostic::new(
+            Code::BAD_JSON,
+            format!("{field}: expected 32 bytes"),
+            Severity::Error,
+        )
+    })
+}
+
+fn parse_coinrefs(v: &serde_json::Value, field: &str) -> Result<Vec<unfer_protocol::CoinRef>, Diagnostic> {
+    let arr = v.as_array().ok_or_else(|| {
+        Diagnostic::new(Code::BAD_JSON, format!("{field}: expected an array"), Severity::Error)
+    })?;
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        #[derive(serde::Deserialize)]
+        struct CRefJson {
+            #[serde(default)]
+            coin_id: String,
+            amount: u64,
+            owner: String,
+        }
+        let c: CRefJson = serde_json::from_value(item.clone()).map_err(|e| {
+            Diagnostic::new(
+                Code::BAD_JSON,
+                format!("{field}: bad coin ref: {e}"),
+                Severity::Error,
+            )
+        })?;
+        let coin_id = if c.coin_id.is_empty() {
+            unfer_protocol::CertId([0u8; 32])
+        } else {
+            unfer_protocol::CertId(parse_hex32(&c.coin_id, "coin_id")?)
+        };
+        out.push(unfer_protocol::CoinRef {
+            coin_id,
+            amount: c.amount,
+            owner: c.owner,
+        });
+    }
+    Ok(out)
+}
+
+/// Mint `amount` carbon certificates to `owner` as `actor` (must be the
+/// configured mint authority). `blinding` is hex32. Returns 0 on success,
+/// <0 (-code) on error. The new coin_id is `commit_coin(amount, owner,
+/// blinding)` — the caller can derive it to chain a transfer.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_mint(op_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_cert_mint", || {
+        #[derive(serde::Deserialize)]
+        struct MintJson {
+            actor: String,
+            amount: u64,
+            owner: String,
+            #[serde(default)]
+            blinding: String,
+            #[serde(default)]
+            source: Option<String>,
+        }
+        let m: MintJson = parse_json(op_json, len)?;
+        let blinding = parse_hex32(&m.blinding, "blinding")?;
+        let kind = unfer_protocol::CertificateOpKind::Mint {
+            amount: m.amount,
+            owner: m.owner,
+            blinding,
+            source: m.source,
+        };
+        handles::cert_apply(&m.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Transfer certificates as `actor` (spender). Returns 0 on success,
+/// <0 (-code) on error. New output coin_ids are `commit_coin(amount, owner,
+/// [0;32])`; the caller can derive them to spend later.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_transfer(op_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_cert_transfer", || {
+        #[derive(serde::Deserialize)]
+        struct TransferJson {
+            actor: String,
+            inputs: serde_json::Value,
+            outputs: serde_json::Value,
+        }
+        let t: TransferJson = parse_json(op_json, len)?;
+        let inputs = parse_coinrefs(&t.inputs, "inputs")?;
+        let outputs = parse_coinrefs(&t.outputs, "outputs")?;
+        let kind = unfer_protocol::CertificateOpKind::Transfer { inputs, outputs };
+        let _ = handles::cert_apply(&t.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Burn (retire) certificates as `actor` (owner). Returns 0 on success,
+/// <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_burn(op_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_cert_burn", || {
+        #[derive(serde::Deserialize)]
+        struct BurnJson {
+            actor: String,
+            inputs: serde_json::Value,
+        }
+        let b: BurnJson = parse_json(op_json, len)?;
+        let inputs = parse_coinrefs(&b.inputs, "inputs")?;
+        let kind = unfer_protocol::CertificateOpKind::Burn { inputs };
+        let _ = handles::cert_apply(&b.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Reset the certificate ledger (QA/console reset). Minting returns to None.
+pub fn uk_cert_clear() {
+    handles::cert_clear();
+}
+
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1840,6 +2016,95 @@ mod tests {
             }
             cap = n;
         }
+    }
+
+// ── certificate ledger FFI (Plan R) ────────────────────────────────
+    // The ledger is a process-global store shared with `handles::cert_ledger_tests`,
+    // so these serialize on the single crate-wide `CERT_TESTS_LOCK` and reset it.
+
+    fn cert_root_hex() -> String {
+        let raw = read_raw(|b, c| uk_cert_root(b, c));
+        assert_eq!(raw.len(), 32);
+        hex::encode(&raw)
+    }
+
+    fn cert_status_json() -> serde_json::Value {
+        serde_json::from_str(&read_buf(|b, c| uk_cert_status(b, c))).unwrap()
+    }
+
+    #[test]
+    fn cert_ffi_mint_transfer_burn_roundtrip() {
+        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_cert_clear();
+        assert_ne!(cert_root_hex(), "00".repeat(32));
+        let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
+        assert_eq!(uk_cert_set_authority(auth_ptr, auth_len), 0);
+
+        // Mint 1000 to alice (single mutating call — never probe/receive).
+        let mint = r#"{"actor":"did:unfer:authority","amount":1000,"owner":"did:unfer:alice","blinding":"0101010101010101010101010101010101010101010101010101010101010101","source":"unfccc:cert:TEST"}"#;
+        let (p, l) = json_ptr(mint);
+        assert_eq!(uk_cert_mint(p, l), 0);
+        assert_eq!(cert_status_json()["total_supply"], 1000);
+        let alice_coin =
+            unfer_consensus::certs::commit_coin(1000, "did:unfer:alice", &[1u8; 32]);
+
+        // Transfer the whole thing to bob.
+        let input = format!(
+            r#"{{"coin_id":"{}","amount":1000,"owner":"did:unfer:alice"}}"#,
+            hex::encode(alice_coin.0)
+        );
+        let transfer = format!(
+            r#"{{"actor":"did:unfer:alice","inputs":[{input}],"outputs":[{{"amount":1000,"owner":"did:unfer:bob"}}]}}"#
+        );
+        let (p, l) = json_ptr(&transfer);
+        assert_eq!(uk_cert_transfer(p, l), 0);
+        assert_eq!(cert_status_json()["total_supply"], 1000);
+        let bob_coin = unfer_consensus::certs::commit_coin(1000, "did:unfer:bob", &[0u8; 32]);
+
+        // Burn bob's certificate.
+        let burn = format!(
+            r#"{{"actor":"did:unfer:bob","inputs":[{{"coin_id":"{}","amount":1000,"owner":"did:unfer:bob"}}]}}"#,
+            hex::encode(bob_coin.0)
+        );
+        let (p, l) = json_ptr(&burn);
+        assert_eq!(uk_cert_burn(p, l), 0);
+        assert_eq!(cert_status_json()["total_supply"], 0);
+        uk_cert_clear();
+    }
+
+    #[test]
+    fn cert_ffi_mint_refuses_non_authority() {
+        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_cert_clear();
+        let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
+        uk_cert_set_authority(auth_ptr, auth_len);
+        let mint = r#"{"actor":"did:unfer:nobody","amount":100,"owner":"did:unfer:alice","blinding":"0202020202020202020202020202020202020202020202020202020202020202"}"#;
+        let (p, l) = json_ptr(mint);
+        let rc = uk_cert_mint(p, l);
+        assert_eq!(rc, -7001); // -UK-7001 CertMintNotAuthorized
+        uk_cert_clear();
+    }
+
+    #[test]
+    fn cert_ffi_double_spend_rejected() {
+        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_cert_clear();
+        let (a, al) = json_ptr("did:unfer:authority");
+        uk_cert_set_authority(a, al);
+        let mint = r#"{"actor":"did:unfer:authority","amount":500,"owner":"did:unfer:alice","blinding":"0303030303030303030303030303030303030303030303030303030303030303"}"#;
+        let (p, l) = json_ptr(mint);
+        assert_eq!(uk_cert_mint(p, l), 0);
+        let alice_coin = unfer_consensus::certs::commit_coin(500, "did:unfer:alice", &[3u8; 32]);
+        let input = format!(r#"{{"coin_id":"{}","amount":500,"owner":"did:unfer:alice"}}"#, hex::encode(alice_coin.0));
+        let out = r#"{"amount":500,"owner":"did:unfer:alice"}"#;
+        let once = format!(r#"{{"actor":"did:unfer:alice","inputs":[{input}],"outputs":[{out}]}}"#);
+        let (p, l) = json_ptr(&once);
+        assert_eq!(uk_cert_transfer(p, l), 0);
+        // Re-spending the now-spent input → -UK-7004.
+        let (p, l) = json_ptr(&once);
+        let rc = uk_cert_transfer(p, l);
+        assert_eq!(rc, -7004); // -UK-7004 CertDoubleSpend
+        uk_cert_clear();
     }
 
     fn create_harmonic_model() -> i64 {

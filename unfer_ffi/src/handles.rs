@@ -5,9 +5,10 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
+use unfer_consensus::certs::{CertificateLedger, MintAuthority};
 use unfer_protocol::{
-    ActionRecord, AgentInfo, AuditEntry, CallerTag, Diagnostic, EffectKind, EventQuery, GrantSet,
-    KernelEvent,
+    ActionRecord, AgentInfo, AuditEntry, CallerTag, CertId, Diagnostic, EffectKind, EventQuery,
+    GrantSet, KernelEvent,
 };
 
 /// Maximum events retained per subscription before oldest are dropped.
@@ -709,7 +710,179 @@ fn vault_ring() -> std::sync::MutexGuard<'static, unfer_data::KeyRing> {
     ring.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-// ── audit trail (S6: human accountability) ─────────────────────────────
+// ── certificate ledger (Plan R: carbon-certificate / UTXO state machine) ──
+//
+// A single process-global `CertificateLedger` — the same state-transition engine
+// every QuePaxa node runs when it applies a `CertificateOp` from the consensus
+// log. The FFI exposes it so modules/agents can drive mint/transfer/burn and
+// read the committed sparse-Merkle root. The actor DID is passed in the op and
+// checked by the ledger (mint authority, ownership, conservation, double-spend).
+// At the FFI boundary the caller is trusted (the consensus layer is where a
+// signature is verified); the ledger invariants still hold.
+
+static NEXT_CERT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn cert_ledger() -> std::sync::MutexGuard<'static, CertificateLedger> {
+    static LEDGER: std::sync::OnceLock<Mutex<CertificateLedger>> = std::sync::OnceLock::new();
+    let ledger = LEDGER.get_or_init(|| Mutex::new(CertificateLedger::new(MintAuthority::None)));
+    ledger.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Configure the mint authority. `None` disables minting (the safe default).
+pub fn cert_set_authority(did: Option<String>) {
+    let mut ledger = cert_ledger();
+    *ledger = CertificateLedger::new(match did {
+        Some(d) => MintAuthority::Only(d),
+        None => MintAuthority::None,
+    });
+}
+
+/// The current committed sparse-Merkle root.
+pub fn cert_root() -> [u8; 32] {
+    cert_ledger().root()
+}
+
+/// A JSON snapshot of the ledger state.
+pub fn cert_status() -> serde_json::Value {
+    let ledger = cert_ledger();
+    serde_json::json!({
+        "root": hex::encode(ledger.root()),
+        "unspent_count": ledger.unspent_count(),
+        "total_supply": ledger.total_supply(),
+    })
+}
+
+/// Apply a certificate state transition (mint/transfer/burn) as `actor`.
+/// Returns the resulting coin_ids (mint/transfer) on success.
+pub fn cert_apply(actor: &str, kind: &unfer_protocol::CertificateOpKind) -> Result<Vec<CertId>, Diagnostic> {
+    let seq = NEXT_CERT_SEQ.fetch_add(1, Ordering::SeqCst);
+    let mut ledger = cert_ledger();
+    ledger.apply_op(actor, kind, seq)
+}
+
+/// Reset the ledger (QA/console reset). Minting returns to None.
+pub fn cert_clear() {
+    let mut ledger = cert_ledger();
+    *ledger = CertificateLedger::new(MintAuthority::None);
+}
+
+/// Single serialization point for every certificate-ledger test in the crate.
+/// The ledger is process-global and shared by both `handles::cert_ledger_tests`
+/// and `tests::cert_ffi_*`, so all of them must hold this one lock (a
+/// per-module lock would let the two modules clobber each other's state).
+#[cfg(test)]
+pub static CERT_TESTS_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+mod cert_ledger_tests {
+    // Plan R: the FFI ledger is process-global, so these serialize on the shared
+    // crate-wide lock and reset it first (repo convention for shared stores).
+    use super::*;
+    use unfer_protocol::{CertificateOpKind, CoinRef};
+
+    #[test]
+    fn mint_transfer_burn_roundtrip() {
+        let _g = CERT_TESTS_LOCK.lock().unwrap();
+        cert_clear();
+        cert_set_authority(Some("did:unfer:authority".to_string()));
+
+        let mint = CertificateOpKind::Mint {
+            amount: 1000,
+            owner: "did:unfer:alice".to_string(),
+            blinding: [1u8; 32],
+            source: Some("unfccc:cert:TEST".to_string()),
+        };
+        let ids = cert_apply("did:unfer:authority", &mint).unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(cert_status()["total_supply"], 1000);
+
+        let input = CoinRef {
+            coin_id: ids[0],
+            amount: 1000,
+            owner: "did:unfer:alice".to_string(),
+        };
+        let transfer = CertificateOpKind::Transfer {
+            inputs: vec![input],
+            outputs: vec![CoinRef {
+                coin_id: CertId([0u8; 32]),
+                amount: 1000,
+                owner: "did:unfer:bob".to_string(),
+            }],
+        };
+        let ids = cert_apply("did:unfer:alice", &transfer).unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(cert_status()["total_supply"], 1000);
+
+        let burn = CertificateOpKind::Burn {
+            inputs: vec![CoinRef {
+                coin_id: ids[0],
+                amount: 1000,
+                owner: "did:unfer:bob".to_string(),
+            }],
+        };
+        cert_apply("did:unfer:bob", &burn).unwrap();
+        assert_eq!(cert_status()["total_supply"], 0);
+        cert_clear();
+    }
+
+    #[test]
+    fn mint_requires_authority() {
+        let _g = CERT_TESTS_LOCK.lock().unwrap();
+        cert_clear();
+        cert_set_authority(Some("did:unfer:authority".to_string()));
+        let mint = CertificateOpKind::Mint {
+            amount: 100,
+            owner: "did:unfer:alice".to_string(),
+            blinding: [2u8; 32],
+            source: None,
+        };
+        let err = cert_apply("did:unfer:nobody", &mint).unwrap_err();
+        assert_eq!(err.code, unfer_protocol::Code::CERT_MINT_NOT_AUTHORIZED);
+        cert_clear();
+    }
+
+    #[test]
+    fn double_spend_rejected() {
+        let _g = CERT_TESTS_LOCK.lock().unwrap();
+        cert_clear();
+        cert_set_authority(Some("did:unfer:authority".to_string()));
+        let mint = CertificateOpKind::Mint {
+            amount: 500,
+            owner: "did:unfer:alice".to_string(),
+            blinding: [3u8; 32],
+            source: None,
+        };
+        let ids = cert_apply("did:unfer:authority", &mint).unwrap();
+        let input = CoinRef {
+            coin_id: ids[0],
+            amount: 500,
+            owner: "did:unfer:alice".to_string(),
+        };
+        let out = CoinRef {
+            coin_id: CertId([0u8; 32]),
+            amount: 500,
+            owner: "did:unfer:alice".to_string(),
+        };
+        cert_apply(
+            "did:unfer:alice",
+            &CertificateOpKind::Transfer {
+                inputs: vec![input.clone()],
+                outputs: vec![out.clone()],
+            },
+        )
+        .unwrap();
+        let err = cert_apply(
+            "did:unfer:alice",
+            &CertificateOpKind::Transfer {
+                inputs: vec![input],
+                outputs: vec![out],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, unfer_protocol::Code::CERT_DOUBLE_SPEND);
+        cert_clear();
+    }
+}
 //
 // An immutable kernel-global audit trail of `uk_*` calls, each tagged with the
 // caller that invoked it. The host loopback appends one entry per dispatch;

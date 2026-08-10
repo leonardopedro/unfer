@@ -342,6 +342,74 @@ Query the current consensus state without advancing it.
 {"applied_seq": <u64>, "current_seq": <u64>, "synced": <bool>}
 ```
 
+### `cert_set_authority`
+
+Configure the carbon-certificate mint authority (Plan R). Empty `did` disables
+minting (the safe default).
+
+**Request params:** `{"did": "<did:unfer:...>"}`
+
+**Response result:** `{"ok": true}`
+
+### `cert_mint`
+
+Issue `amount` carbon certificates to `owner` as `actor` (must be the
+configured mint authority). `blinding` is 32-byte hex.
+
+**Request params:**
+```json
+{"actor": "<did>", "amount": <u64>, "owner": "<did>", "blinding": "<hex32>", "source": "<provenance>"}
+```
+
+**Response result:** `{"ok": true, "root": "<hex>", "total_supply": <u64>}`
+The new coin_id is `commit_coin(amount, owner, blinding)`.
+
+### `cert_transfer`
+
+Spend `inputs` and create `outputs`, conserving total value. `actor` must own
+every input.
+
+**Request params:**
+```json
+{
+  "actor": "<did>",
+  "inputs": [{"coin_id": "<hex32>", "amount": <u64>, "owner": "<did>"}],
+  "outputs": [{"amount": <u64>, "owner": "<did>"}]
+}
+```
+
+**Response result:** `{"ok": true, "root": "<hex>", "total_supply": <u64>}`
+
+### `cert_burn`
+
+Retire `inputs` (owner-only), removing their value from circulation.
+
+**Request params:**
+```json
+{"actor": "<did>", "inputs": [{"coin_id": "<hex32>", "amount": <u64>, "owner": "<did>"}]}
+```
+
+**Response result:** `{"ok": true, "root": "<hex>", "total_supply": <u64>}`
+
+### `cert_status`
+
+Query the certificate ledger state without mutating it.
+
+**Request params:** `{}`
+
+**Response result:**
+```json
+{"root": "<hex>", "unspent_count": <usize>, "total_supply": <u64>}
+```
+
+### `cert_root`
+
+Return just the committed sparse-Merkle root.
+
+**Request params:** `{}`
+
+**Response result:** `{"root": "<hex32>"}`
+
 ## Error codes
 
 | Code  | Name                      | Severity | Description                                                          |
@@ -365,6 +433,12 @@ Query the current consensus state without advancing it.
 | UK-6003 | InvalidSignature         | Error    | The Ed25519 signature on a transaction failed verification.          |
 | UK-6004 | UnknownDid               | Error    | The referenced DID does not exist or has been revoked.               |
 | UK-6005 | RelayNotConnected        | Error    | The consensus relay transport is not connected.                      |
+| UK-7001 | CertMintNotAuthorized    | Error    | The certificate mint was signed by a non-authority DID.             |
+| UK-7002 | CertAmountMismatch       | Error    | Conservation violation: transfer inputs ≠ outputs.                  |
+| UK-7003 | CertNonexistentInput     | Error    | A certificate input is not an unspent certificate.                  |
+| UK-7004 | CertDoubleSpend          | Error    | A certificate nullifier was already consumed.                       |
+| UK-7005 | CertOwnerMismatch        | Error    | The signer is not the owner of every input certificate.             |
+| UK-7006 | CertLedgerSeq            | Error    | The certificate op sequence is stale or duplicated.                 |
 
 ## Diagnostic structure
 
