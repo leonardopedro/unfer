@@ -285,14 +285,21 @@ impl CertificateLedger {
                 "transfer requires at least one input",
             ));
         }
-        // 1. Validate all inputs exist, are unspent, owned by spender.
+        // 1. Validate all inputs exist, are unspent, distinct, owned by spender.
         let mut in_sum: u64 = 0;
+        let mut seen_inputs: HashSet<Nullifier> = HashSet::with_capacity(inputs.len());
         for input in inputs {
             let null = nullifier_for(&input.coin_id);
             if self.spent.contains(&null) {
                 return Err(self.diag(
                     Code::CERT_DOUBLE_SPEND,
                     format!("nullifier {:?} already spent", null),
+                ));
+            }
+            if !seen_inputs.insert(null) {
+                return Err(self.diag(
+                    Code::CERT_DOUBLE_SPEND,
+                    format!("input nullifier {:?} listed twice", null),
                 ));
             }
             let coin = self.spend_input(input, spender)?;
@@ -303,6 +310,7 @@ impl CertificateLedger {
         // 2. Validate outputs: positive amounts, unique ids, no collision.
         let mut out_sum: u64 = 0;
         let mut new_ids = Vec::with_capacity(outputs.len());
+        let mut seen_outputs: HashSet<CertId> = HashSet::with_capacity(outputs.len());
         for out in outputs {
             if out.amount == 0 {
                 return Err(self.diag(Code::CERT_AMOUNT_MISMATCH, "output amount must be positive"));
@@ -311,7 +319,7 @@ impl CertificateLedger {
             out_sum = out_sum.checked_add(out.amount).ok_or_else(|| {
                 self.diag(Code::CERT_AMOUNT_MISMATCH, "output sum overflow")
             })?;
-            if self.utxos.contains_key(&id.0) {
+            if self.utxos.contains_key(&id.0) || !seen_outputs.insert(id) {
                 return Err(self.diag(
                     Code::CERT_DOUBLE_SPEND,
                     format!("output {:?} collides with an unspent certificate", id),
@@ -515,6 +523,46 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_input_rejected() {
+        let mut l = ledger();
+        let alice = "did:unfer:alice";
+        let bob = "did:unfer:bob";
+        let id = l.apply_mint(&auth(), 500, alice, &[1u8; 32], 1).unwrap();
+        // Listing the same coin twice must not let 500 turn into 1000.
+        let err = l
+            .apply_transfer(
+                alice,
+                &[coinref(id, 500, alice), coinref(id, 500, alice)],
+                &[coinref(id, 1000, bob)],
+                2,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_DOUBLE_SPEND);
+        assert!(l.utxo(&id).is_some(), "inputs untouched on reject");
+        assert_eq!(l.total_supply(), 500);
+    }
+
+    #[test]
+    fn duplicate_output_rejected() {
+        let mut l = ledger();
+        let alice = "did:unfer:alice";
+        let bob = "did:unfer:bob";
+        let id = l.apply_mint(&auth(), 1000, alice, &[1u8; 32], 1).unwrap();
+        // Two outputs with the same (amount, owner, blinding) collide.
+        let err = l
+            .apply_transfer(
+                alice,
+                &[coinref(id, 1000, alice)],
+                &[coinref(id, 500, bob), coinref(id, 500, bob)],
+                2,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_DOUBLE_SPEND);
+        assert!(l.utxo(&id).is_some(), "inputs untouched on reject");
+        assert_eq!(l.unspent_count(), 1);
+    }
+
+    #[test]
     fn burn_retires_value() {
         let mut l = ledger();
         let alice = "did:unfer:alice";
@@ -554,10 +602,13 @@ mod tests {
 
 // ── property tests (Plan R audit surface) ─────────────────────────────
 //
-// The certificate ledger is the audit surface of the ReFi exchange, so the two
-// load-bearing invariants — conservation and no-double-spend — are fuzzed as
-// properties rather than pinned to a handful of hand-written cases:
-//   * a transfer is accepted iff Sum(inputs) == Sum(outputs);
+// The certificate ledger is the audit surface of the ReFi exchange, so the
+// load-bearing invariants — conservation, no-double-spend, and exact supply —
+// are fuzzed as properties rather than pinned to a handful of hand-written
+// cases. Each attempt is a *multi-input / multi-output* transfer so that the
+// duplicate-input and duplicate-output guards are exercised too:
+//   * a transfer is accepted iff inputs are fresh & distinct AND outputs are
+//     fresh & distinct AND Sum(inputs) == Sum(outputs);
 //   * an input whose nullifier was already consumed is always refused;
 //   * `total_supply` always equals the sum of the currently-unspent coins.
 #[cfg(test)]
@@ -572,14 +623,26 @@ mod proptests {
         "did:unfer_pt:authority".to_string()
     }
 
+    /// The commitment id an output would get (zero blinding, like the ledger).
+    fn out_id(amount: u64, owner: &str) -> CertId {
+        commit_coin(amount, owner, &[0u8; 32])
+    }
+
     proptest! {
         #[test]
         fn fuzz_transfers_never_break_conservation_or_double_spend(
             mint_amounts in prop::collection::vec(1u64..1_000, 1..8),
-            // A sequence of (in_idx, out_amount) transfer attempts. `out_amount`
-            // is deliberately independent of the input amount so the fuzzer
+            // A sequence of multi-input/multi-output transfer attempts. Input
+            // indices may repeat (duplicate-input guard) and output amounts are
+            // deliberately independent of the input amounts so the fuzzer
             // produces both conserving and non-conserving transfers.
-            attempts in prop::collection::vec((0usize..8, 0u64..2_000), 0..40),
+            attempts in prop::collection::vec(
+                (
+                    prop::collection::vec(0usize..8, 1..4),
+                    prop::collection::vec(0u64..2_000, 1..4),
+                ),
+                0..40,
+            ),
         ) {
             let alice = ALICE.to_string();
             let bob = BOB.to_string();
@@ -597,44 +660,78 @@ mod proptests {
             }
             let expected_supply: u64 = mint_amounts.iter().sum();
 
-            for (_i, (idx, out_amount)) in attempts.into_iter().enumerate() {
+            for (_i, (in_idxs, out_amounts)) in attempts.into_iter().enumerate() {
                 if live.is_empty() {
                     break;
                 }
-                let (coin_id, coin_amount) = live[idx % live.len()];
-                let input = CoinRef {
-                    coin_id,
-                    amount: coin_amount,
-                    owner: alice.clone(),
+
+                let inputs: Vec<CoinRef> = in_idxs
+                    .iter()
+                    .map(|&i| {
+                        let (coin_id, coin_amount) = live[i % live.len()];
+                        CoinRef {
+                            coin_id,
+                            amount: coin_amount,
+                            owner: alice.clone(),
+                        }
+                    })
+                    .collect();
+                let outputs: Vec<CoinRef> = out_amounts
+                    .iter()
+                    .map(|&a| CoinRef {
+                        coin_id: CertId([0u8; 32]),
+                        amount: a,
+                        owner: bob.clone(),
+                    })
+                    .collect();
+
+                let in_sum: u64 = inputs.iter().map(|i| i.amount).sum();
+                let out_sum: u64 = outputs.iter().map(|o| o.amount).sum();
+
+                // What the ledger *should* do:
+                //  * every listed input is fresh (nullifier unconsumed);
+                //  * no input coin listed twice;
+                //  * every output amount is positive;
+                //  * every output commitment is fresh and not repeated.
+                let all_inputs_fresh = inputs.iter().all(|i| !ledger.is_spent(&i.coin_id));
+                let inputs_distinct = {
+                    let mut seen = std::collections::HashSet::new();
+                    inputs.iter().all(|i| seen.insert(i.coin_id))
                 };
-                let output = CoinRef {
-                    coin_id: CertId([0u8; 32]),
-                    amount: out_amount,
-                    owner: bob.clone(),
+                let outputs_positive = outputs.iter().all(|o| o.amount > 0);
+                let outputs_distinct_fresh = {
+                    let mut seen = std::collections::HashSet::new();
+                    outputs.iter().all(|o| {
+                        let id = out_id(o.amount, &o.owner);
+                        !ledger.utxo(&id).is_some() && seen.insert(id)
+                    })
                 };
+                let should_accept = all_inputs_fresh
+                    && inputs_distinct
+                    && outputs_positive
+                    && outputs_distinct_fresh
+                    && in_sum == out_sum;
 
                 let before_supply = ledger.total_supply();
                 let before_unspent = ledger.unspent_count();
-                let before_spent = ledger.is_spent(&coin_id);
 
-                let res = ledger.apply_transfer(&alice, &[input], &[output], 1);
+                let res = ledger.apply_transfer(&alice, &inputs, &outputs, 1);
 
                 match res {
-                    Ok(_) => {
-                        // An accepted transfer must conserve value exactly.
-                        prop_assert_eq!(out_amount, coin_amount, "accepted transfer must conserve");
-                        prop_assert!(!before_spent, "a spent input must never be accepted again");
+                    Ok(new_ids) => {
+                        prop_assert!(should_accept, "accepted an invalid transfer");
+                        prop_assert_eq!(new_ids.len(), outputs.len());
                         // Exact conservation => supply unchanged.
                         prop_assert_eq!(ledger.total_supply(), before_supply);
+                        // All inputs must now be spent.
+                        for i in &inputs {
+                            prop_assert!(ledger.is_spent(&i.coin_id));
+                        }
                     }
                     Err(diag) => {
-                        // A refused transfer must be for a real reason: either a
-                        // conservation violation (out != in) or a double spend.
-                        let conserving = out_amount == coin_amount;
-                        let doublespend = before_spent;
                         prop_assert!(
-                            !conserving || doublespend,
-                            "refused a conserving, fresh transfer: {diag}"
+                            !should_accept,
+                            "refused a conserving, fresh, distinct transfer: {diag}"
                         );
                         prop_assert!(
                             diag.code == Code::CERT_AMOUNT_MISMATCH

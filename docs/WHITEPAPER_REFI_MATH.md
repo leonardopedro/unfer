@@ -58,9 +58,17 @@ $$
 \qquad \Sigma' = \Sigma.
 $$
 
-The zk-TLS prover (Phase 3) verifies the UNFCCC receipt page embeds the user's
-`did:unfer` public key and the tonnage $m$; the prover's output becomes the
-`source` provenance record. Mint authority check: `apply_mint` refuses unless
+The zk-TLS prover (Phase 3) verifies the UNFCCC cancellation-record page
+(`https://offset.climateneutralnow.org/vchistory/details?orderId=N`) embeds the
+user's `did:unfer` public key inside the **"Reason for cancellation"** field
+(the UN platform lets the cancellor write arbitrary text there, and states the
+reason is "provided by the cancellor") and that the page's serial-number range
+$[\mathrm{SN}_{\mathrm{start}}, \mathrm{SN}_{\mathrm{end}}]$ binds exactly $m$
+tonnes. The prover's output becomes the `source` provenance record
+(`unfccc:vc:<orderId>`). Because the platform is protected by Incapsula bot
+blocking, a bare HTTP fetch from a node is refused; only a human-driven browser
+session (TLSNotary / zk-TLS) can produce the proof — which is exactly what the
+oracle bridge does. Mint authority check: `apply_mint` refuses unless
 the actor is the configured `MintAuthority::Only(authority)` (UK-7001) and
 `m > 0` (UK-7002). Minting is idempotent per commitment: re-submitting the same
 $C$ is a no-op, so replaying the log never double-issues.
@@ -159,6 +167,7 @@ are the guest's specification.
 
 - Fee structure for pegs (current `apply_transfer` requires exact conservation;
   fees need a `Fees` output or an authorized burn-before-transfer).
-- Multi-input ordering requirements (currently single-input transfers in tests;
-  proptest fuzzes 1-input only).
+- ~~Multi-input ordering~~ — **resolved**: `apply_transfer` accepts any number of
+  inputs/outputs; the proptest now fuzzes 1..3 inputs × 1..3 outputs, and the
+  ledger refuses duplicate inputs and duplicate (colliding) outputs within one op.
 - Taler denomination mapping vs. $m$ granularity (tonne → euro-coin rounding).

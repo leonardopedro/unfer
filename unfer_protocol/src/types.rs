@@ -1239,7 +1239,10 @@ pub enum CertificateOpKind {
         owner: String,
         #[serde(with = "hex_bytes_32")]
         blinding: [u8; 32],
-        /// Optional provenance/backing reference (e.g. `unfccc:cert:<id>`).
+        /// Optional provenance/backing reference (e.g. `unfccc:vc:<orderId>`
+        /// pointing at `offset.climateneutralnow.org/vchistory/details?orderId=N`,
+        /// where the "Reason for cancellation" field carries the user's
+        /// `did:unfer` public key).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
     },

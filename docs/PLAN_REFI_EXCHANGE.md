@@ -62,6 +62,8 @@
 - **Double-spend**: a nullifier is consumed exactly once. UK-7004.
 - **Ownership**: the signer must own every input (cross-checked against stored
   amount). UK-7005.
+- **Uniqueness**: an input nullifier and an output commitment may each appear at
+  most once within a single op (duplicate-input / duplicate-output guards).
 - **Seq hygiene**: reserved UK-7006 for stale/duplicate seq.
 
 ### Determinism
@@ -73,12 +75,14 @@ returns the root to the empty-tree hash.
 `mint_requires_authority`, `mint_is_idempotent_per_commitment`,
 `transfer_conserves_value`, `transfer_split_outputs`,
 `conservation_violation_rejected`, `double_spend_rejected`,
+`duplicate_input_rejected`, `duplicate_output_rejected`,
 `owner_mismatch_rejected`, `burn_retires_value`, `root_changes_on_apply`,
 `smt_insert_remove_roundtrip`, plus the node-level
 `certificate_ledger_roundtrip_via_consensus` and
 `invalid_certificate_op_rejected_before_log`, and the fuzzed property
-`fuzz_transfers_never_break_conservation_or_double_spend` (conservation,
-no-double-spend, and supply invariants over random op sequences).
+`fuzz_transfers_never_break_conservation_or_double_spend` (multi-input /
+multi-output transfer fuzzing: conservation, no-double-spend, uniqueness, and
+supply invariants over random op sequences).
 
 ## Implemented surface
 
@@ -149,15 +153,30 @@ tests.
 
 Original: TLSNotary proof of the UNFCCC receipt page → mint circuit.
 
+The **public anchor is real**: the UN platform
+`https://offset.climateneutralnow.org/vchistory` publishes every voluntary
+cancellation as a page `/vchistory/details?orderId=N` carrying a free-form
+**"Reason for cancellation"** field (UN states the reason is "provided by the
+cancellor"), plus `Reference VC#/YEAR`, `Presented to`, and a
+`Start/End serial number` range that pins the exact tonnage. That reason field
+is the carrier for the `did:unfer` public key — a user buys and cancels CERs
+with their key written into the reason text, giving a public, UN-hosted
+key↔certificate binding. The platform is behind Incapsula bot protection, so
+server-side scrapers are refused; only a browser-driven TLS session can fetch
+it, which is precisely the zk-TLS scenario.
+
 Adaptation: the mint path already exists — `CertificateOpKind::Mint` carries a
-`source` provenance string (e.g. `unfccc:cert:<id>`). The zk-TLS prover is a
+`source` provenance string (e.g. `unfccc:vc:<orderId>`). The zk-TLS prover is a
 client-side tool that:
-1. Connects to `https://unfccc.int`, captures the receipt page over TLSNotary.
-2. Verifies the "Custom Message" field embeds the user's `did:unfer` public key
-   and the tonnage.
+1. Connects to `https://unfccc.int` / `offset.climateneutralnow.org`,
+   captures the cancellation-record page over TLSNotary.
+2. Verifies the "Reason for cancellation" field embeds the user's `did:unfer`
+   public key and that the serial-number range `[SN_start, SN_end]` matches the
+   cancelled tonnage $m$.
 3. Produces a `MintRequest` (additive FFI op) that the mint authority signs and
-   submits as a `CertificateOp::Mint`.
-The `source` field records the backing proof reference for auditability.
+   submits as a `CertificateOp::Mint` with `source = "unfccc:vc:<orderId>"`.
+The `source` field records the backing proof reference for auditability; a
+verifier can re-derive the same proof from the public page.
 
 ### Phase 4 — Secondary fiat marketplace — DOCUMENTED
 

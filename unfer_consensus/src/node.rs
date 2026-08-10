@@ -297,7 +297,7 @@ mod tests {
                 amount: 1000,
                 owner: alice.did(),
                 blinding: [1u8; 32],
-                source: Some("unfccc:cert:TEST-0001".to_string()),
+                source: Some("unfccc:vc:TEST-0001".to_string()),
             },
             seq: 1,
             signature: [0u8; 64],

@@ -790,7 +790,7 @@ mod cert_ledger_tests {
             amount: 1000,
             owner: "did:unfer:alice".to_string(),
             blinding: [1u8; 32],
-            source: Some("unfccc:cert:TEST".to_string()),
+            source: Some("unfccc:vc:TEST".to_string()),
         };
         let ids = cert_apply("did:unfer:authority", &mint).unwrap();
         assert_eq!(ids.len(), 1);
