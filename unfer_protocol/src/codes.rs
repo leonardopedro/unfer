@@ -97,6 +97,9 @@ impl Code {
     pub const CERT_OWNER_MISMATCH: Code = Code(7005);
     /// The certificate op's seq is stale or a duplicate for its kind.
     pub const CERT_LEDGER_SEQ: Code = Code(7006);
+    /// The mint's `source` provenance does not reference a valid UNFCCC
+    /// oracle record (`unfccc:vc:<orderId>`) — the mint request is rejected.
+    pub const CERT_ORACLE_REJECTED: Code = Code(7007);
 
     pub const INTERNAL: Code = Code(5000);
 
@@ -322,6 +325,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             7006,
             "CertLedgerSeq",
             "The certificate op's sequence is stale or duplicated for its kind.",
+        ),
+        (
+            7007,
+            "CertOracleRejected",
+            "The mint's source does not reference a valid UNFCCC oracle record (`unfccc:vc:<orderId>`).",
         ),
         (
             5000,

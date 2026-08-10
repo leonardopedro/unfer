@@ -22,6 +22,7 @@ uk_blueprint_list
 uk_buf_free
 uk_cert_burn
 uk_cert_mint
+uk_cert_mint_request
 uk_cert_root
 uk_cert_set_authority
 uk_cert_status

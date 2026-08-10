@@ -19,8 +19,10 @@
 - **FFI + agent + edge surface: DONE.** `uk_cert_*` C symbols, the `cert_*`
   NDJSON agent ops, the australVM loopback marshaling, and the edge allowlist
   are all wired and tested. See [Implemented surface](#implemented-surface).
-- Phases 3–6 are documented external integrations (zk-TLS, fiat Rails, Taler,
-  audit) with concrete mapping but no code yet.
+- Phases 3–6 are external integrations (zk-TLS, fiat Rails, Taler, audit).
+  Phase 3's shared contract (`MintRequest` + `uk_cert_mint_request`, UK-7007)
+  is implemented; the TLSNotary prover itself is client-side and out of scope.
+  Phases 4–6 remain documented mappings.
 
 ---
 
@@ -92,10 +94,10 @@ supply invariants over random op sequences).
 The ledger is reachable end-to-end through every consumer:
 
 - **FFI** (`unfer_ffi`): `uk_cert_set_authority`, `uk_cert_root`,
-  `uk_cert_status`, `uk_cert_mint`, `uk_cert_transfer`, `uk_cert_burn`
-  (registered in `EXPECTED_SYMBOLS.txt`). Mutating ops take a single JSON op
-  arg and return `0`/`-UK-####`; reads use the buffer protocol. Tested in
-  `tests::cert_ffi_*`.
+  `uk_cert_status`, `uk_cert_mint`, `uk_cert_mint_request`, `uk_cert_transfer`,
+  `uk_cert_burn` (registered in `EXPECTED_SYMBOLS.txt`). Mutating ops take a
+  single JSON op arg and return `0`/`-UK-####`; reads use the buffer protocol.
+  Tested in `tests::cert_ffi_*`.
 - **australVM JIT** (`safestos/cranelift/src/ecma.rs`): the six `uk_cert_*`
   symbols are marshaled onto the in-process FFI; the mutating four are added to
   `SENSITIVE_BLOCKED_SYMBOLS` so a sensitive-latched caller cannot mint/transfer.
@@ -119,6 +121,7 @@ The ledger is reachable end-to-end through every consumer:
 | UK-7004 | CertDoubleSpend | nullifier already consumed |
 | UK-7005 | CertOwnerMismatch | signer is not the owner of every input |
 | UK-7006 | CertLedgerSeq | stale/duplicate op sequence |
+| UK-7007 | CertOracleRejected | mint `source` is not a valid `unfccc:vc:<orderId>` reference |
 
 ---
 
@@ -152,7 +155,7 @@ as they agree on identity/content state. The `network` feature (`rust-quepaxa`,
 tokio) is the path to real 5–7 node operation; the in-process engine drives all
 tests.
 
-### Phase 3 — UNFCCC oracle bridge (zk-TLS) — DOCUMENTED
+### Phase 3 — UNFCCC oracle bridge (zk-TLS) — PARTIAL (contract done)
 
 Original: TLSNotary proof of the UNFCCC receipt page → mint circuit.
 
@@ -168,16 +171,21 @@ key↔certificate binding. The platform is behind Incapsula bot protection, so
 server-side scrapers are refused; only a browser-driven TLS session can fetch
 it, which is precisely the zk-TLS scenario.
 
-Adaptation: the mint path already exists — `CertificateOpKind::Mint` carries a
-`source` provenance string (e.g. `unfccc:vc:<orderId>`). The zk-TLS prover is a
-client-side tool that:
+Adaptation: the **shared contract is implemented** —
+`unfer_protocol::MintRequest` (owner, amount, `source = "unfccc:vc:<orderId>"`,
+optional blinding with a deterministic source-derived default) plus
+`validate_source` (UK-7007 `CERT_ORACLE_REJECTED`) and `to_mint_kind()`, and the
+additive FFI op `uk_cert_mint_request` (actor = current caller principal; a
+non-authority caller is refused UK-7001 even with a valid oracle source).
+Registered in `EXPECTED_SYMBOLS.txt` (61 symbols). The zk-TLS **prover** remains
+client-side:
 1. Connects to `https://unfccc.int` / `offset.climateneutralnow.org`,
    captures the cancellation-record page over TLSNotary.
 2. Verifies the "Reason for cancellation" field embeds the user's `did:unfer`
    public key and that the serial-number range `[SN_start, SN_end]` matches the
    cancelled tonnage $m$.
-3. Produces a `MintRequest` (additive FFI op) that the mint authority signs and
-   submits as a `CertificateOp::Mint` with `source = "unfccc:vc:<orderId>"`.
+3. Submits a `MintRequest` (via `uk_cert_mint_request`) that the mint authority
+   signs as a `CertificateOp::Mint`.
 The `source` field records the backing proof reference for auditability; a
 verifier can re-derive the same proof from the public page.
 

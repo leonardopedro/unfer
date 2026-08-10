@@ -1806,6 +1806,9 @@ pub extern "C" fn uk_resource_pending(buf: *mut u8, cap: i64) -> i64 {
 // the C ABI. Op JSON schemas:
 //
 //   uk_cert_mint     {"actor":DID,"amount":u64,"owner":DID,"blinding":"hex32","source?":"str"}
+//   uk_cert_mint_request
+//                    {"owner":DID,"amount":u64,"source":"unfccc:vc:<orderId>","blinding?":"hex32"}
+//                    — oracle-backed mint; source validated (UK-7007)
 //   uk_cert_transfer {"actor":DID,
 //                     "inputs":[{"coin_id":"hex32","amount":u64,"owner":DID}],
 //                     "outputs":[{"amount":u64,"owner":DID}]}
@@ -1927,6 +1930,38 @@ pub extern "C" fn uk_cert_mint(op_json: *const u8, len: i64) -> i64 {
             source: m.source,
         };
         handles::cert_apply(&m.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Submit an oracle-backed mint (Plan R Phase 3). Takes a `MintRequest` JSON:
+///
+///   {"owner":DID,"amount":u64,"source":"unfccc:vc:<orderId>","blinding?":"hex32"}
+///
+/// The `source` MUST reference a public UN cancellation record
+/// (`unfccc:vc:<orderId>`) — UK-7007 `CERT_ORACLE_REJECTED` otherwise. The
+/// `actor` field is not part of the request; the caller's current principal
+/// (the configured mint authority) signs the mint. Returns 0 on success,
+/// <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_cert_mint_request(req_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_cert_mint_request", || {
+        let req: unfer_protocol::MintRequest = parse_json(req_json, len)?;
+        req.validate_source().map_err(|code| {
+            Diagnostic::new(
+                code,
+                format!(
+                    "source '{}' must reference a UN oracle record (unfccc:vc:<orderId>)",
+                    req.source
+                ),
+                Severity::Error,
+            )
+        })?;
+        let kind = req.to_mint_kind();
+        // The request must be submitted by the configured mint authority; the
+        // actor is the current caller's principal (set by the loopback).
+        let actor = handles::current_caller().tag.principal;
+        handles::cert_apply(&actor, &kind)?;
         Ok(0)
     })
 }
@@ -2082,6 +2117,37 @@ mod tests {
         let (p, l) = json_ptr(mint);
         let rc = uk_cert_mint(p, l);
         assert_eq!(rc, -7001); // -UK-7001 CertMintNotAuthorized
+        uk_cert_clear();
+    }
+
+    #[test]
+    fn cert_ffi_mint_request_oracle_anchor() {
+        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_cert_clear();
+        let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
+        uk_cert_set_authority(auth_ptr, auth_len);
+        let req = r#"{"owner":"did:unfer:alice","amount":15,"source":"unfccc:vc:34791"}"#;
+
+        // The actor of a mint request is the current caller's principal, so
+        // tag the thread as the mint authority (matching the consensus flow).
+        uk_set_caller(r#"{"from":"hook","principal":"did:unfer:authority"}"#).unwrap();
+        let (p, l) = json_ptr(req);
+        assert_eq!(uk_cert_mint_request(p, l), 0);
+        assert_eq!(cert_status_json()["total_supply"], 15);
+        assert_eq!(cert_status_json()["unspent_count"], 1);
+
+        // A source that does not reference a UN oracle record → -UK-7007.
+        let bad = r#"{"owner":"did:unfer:alice","amount":15,"source":"unfccc:cert:999"}"#;
+        let (p, l) = json_ptr(bad);
+        assert_eq!(uk_cert_mint_request(p, l), -7007); // CertOracleRejected
+        assert_eq!(cert_status_json()["total_supply"], 15, "rejected mint is a no-op");
+
+        // Without the caller being the authority, a valid oracle source is still
+        // refused (UK-7001) — the caller context, not the request, decides.
+        uk_set_caller(r#"{"from":"hook","principal":"did:unfer:nobody"}"#).unwrap();
+        let (p, l) = json_ptr(req);
+        assert_eq!(uk_cert_mint_request(p, l), -7001);
+        uk_clear_caller();
         uk_cert_clear();
     }
 

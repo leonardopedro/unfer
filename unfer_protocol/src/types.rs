@@ -1270,6 +1270,74 @@ pub struct CertificateOp {
     pub signature: [u8; 64],
 }
 
+/// An oracle-backed mint request (Plan R Phase 3). This is the **shared
+/// contract** between the zk-TLS client (which proves the UNFCCC cancellation
+/// record) and the mint authority (which signs the resulting
+/// `CertificateOp::Mint`). The `source` MUST reference a public UN oracle
+/// record `unfccc:vc:<orderId>` —
+/// `https://offset.climateneutralnow.org/vchistory/details?orderId=<orderId>` —
+/// where the "Reason for cancellation" field carries the owner's `did:unfer`
+/// public key and the serial-number range pins the tonnage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MintRequest {
+    /// DID that will own the minted certificate.
+    pub owner: String,
+    /// Tonnage (Mg CO₂e) cancelled on the UN platform.
+    pub amount: u64,
+    /// UN oracle provenance: `unfccc:vc:<orderId>`.
+    pub source: String,
+    /// Optional blinding. When omitted, a deterministic per-request value is
+    /// derived from `source` so the coin_id is reproducible by the client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blinding: Option<[u8; 32]>,
+}
+
+impl MintRequest {
+    /// Validate that `source` references a well-formed UN oracle record
+    /// (`unfccc:vc:<orderId>`). An empty or malformed source fails
+    /// UK-7007 `CERT_ORACLE_REJECTED`.
+    pub fn validate_source(&self) -> Result<(), crate::codes::Code> {
+        let prefix = "unfccc:vc:";
+        if !self.source.starts_with(prefix) || self.source.len() == prefix.len() {
+            return Err(crate::codes::Code::CERT_ORACLE_REJECTED);
+        }
+        let order_id = &self.source[prefix.len()..];
+        if order_id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+            return Err(crate::codes::Code::CERT_ORACLE_REJECTED);
+        }
+        Ok(())
+    }
+
+    /// The blinding for this request: the explicit value if given, else a
+    /// deterministic hash of the source so both client and authority derive
+    /// the same coin_id.
+    pub fn effective_blinding(&self) -> [u8; 32] {
+        match self.blinding {
+            Some(b) => b,
+            None => {
+                use sha2::{Digest, Sha256};
+                let mut ctx = Sha256::new();
+                ctx.update(b"unfer:mint_request");
+                ctx.update(self.source.as_bytes());
+                ctx.update(self.owner.as_bytes());
+                ctx.update(self.amount.to_le_bytes());
+                ctx.finalize().into()
+            }
+        }
+    }
+
+    /// Build the mint `CertificateOpKind` for this request (still needs to be
+    /// wrapped in a `CertificateOp` and signed by the authority).
+    pub fn to_mint_kind(&self) -> CertificateOpKind {
+        CertificateOpKind::Mint {
+            amount: self.amount,
+            owner: self.owner.clone(),
+            blinding: self.effective_blinding(),
+            source: Some(self.source.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsensusTransaction {
@@ -1412,5 +1480,86 @@ mod hex_bytes_64 {
         bytes
             .try_into()
             .map_err(|_| serde::de::Error::custom("expected 64 bytes"))
+    }
+}
+
+#[cfg(test)]
+mod mint_request_tests {
+    // Plan R Phase 3: the oracle-backed mint contract shared by the zk-TLS
+    // client and the mint authority.
+    use super::*;
+    use crate::codes::Code;
+
+    fn req(source: &str) -> MintRequest {
+        MintRequest {
+            owner: "did:unfer:alice".to_string(),
+            amount: 15,
+            source: source.to_string(),
+            blinding: None,
+        }
+    }
+
+    #[test]
+    fn valid_unfccc_source_accepted() {
+        assert_eq!(req("unfccc:vc:34791").validate_source(), Ok(()));
+        assert_eq!(req("unfccc:vc:MLT-0001").validate_source(), Ok(()));
+    }
+
+    #[test]
+    fn malformed_source_rejected() {
+        let bad = [
+            "",                 // empty
+            "unfccc:vc:",       // no order id
+            "unfccc:cert:123",  // old format
+            "https://unfccc.int", // not a vc reference
+            "unfccc:vc:12 3",   // space
+            "unfccc:vc:abc/def",// slash
+        ];
+        for s in bad {
+            assert_eq!(
+                req(s).validate_source(),
+                Err(Code::CERT_ORACLE_REJECTED),
+                "source {:?} must be rejected",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn effective_blinding_reproducible_without_field() {
+        let a = req("unfccc:vc:34791");
+        let b = req("unfccc:vc:34791");
+        assert_eq!(a.effective_blinding(), b.effective_blinding());
+        // Different sources → different blinding (no cross-request collision).
+        assert_ne!(a.effective_blinding(), req("unfccc:vc:34792").effective_blinding());
+        // An explicit blinding wins over the derived one.
+        let explicit = MintRequest {
+            blinding: Some([7u8; 32]),
+            ..a
+        };
+        assert_eq!(explicit.effective_blinding(), [7u8; 32]);
+    }
+
+    #[test]
+    fn to_mint_kind_roundtrip_serde() {
+        let r = req("unfccc:vc:34791");
+        let kind = r.to_mint_kind();
+        match kind {
+            CertificateOpKind::Mint {
+                amount,
+                owner,
+                source,
+                ..
+            } => {
+                assert_eq!(amount, 15);
+                assert_eq!(owner, "did:unfer:alice");
+                assert_eq!(source.as_deref(), Some("unfccc:vc:34791"));
+            }
+            other => panic!("expected Mint, got {other:?}"),
+        }
+        // The request itself is JSON-serializable (the wire contract).
+        let json = serde_json::to_string(&r).unwrap();
+        let back: MintRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, r);
     }
 }
