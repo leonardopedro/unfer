@@ -208,4 +208,8 @@ root to audit against.
    `uk_cert_root` FFI symbols + `cranelift_init` registration + `EXPECTED_SYMBOLS`~~ — **DONE** (see [Implemented surface](#implemented-surface)).
 3. ~~Add `cert_*` NDJSON ops to `kernel_client/src/bin/unfer_agent.rs`~~ — **DONE**.
 4. ~~Add proptest invariants for conservation/double-spend on `CertificateLedger`~~ — **DONE** (`certs::proptests::fuzz_transfers_never_break_conservation_or_double_spend`).
-5. Draft the white-paper math flow UN → QuePaxa → Taler (documented above).
+5. ~~Draft the white-paper math flow UN → QuePaxa → Taler.~~ — **DONE**
+   ([`docs/WHITEPAPER_REFI_MATH.md`](WHITEPAPER_REFI_MATH.md)). The UN→QuePaxa→
+   Taler flow is written as a precise state-transition sequence, every primitive
+   (`commit_coin`, `nullifier_for`, sparse-Merkle root, `apply_mint`/`apply_transfer`)
+   tied to the implementation, with a proof outline matching the proptested invariants.
