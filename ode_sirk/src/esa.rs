@@ -45,11 +45,11 @@ pub fn build_esa_report(
     // Flow incomplete → not ESA (UK-2101)
     diagnostics.push(2101);
 
-    if let Some(ref s) = singularity {
-        if s.singular {
-            // UK-2102: singularity detected
-            diagnostics.push(2102);
-        }
+    if let Some(ref s) = singularity
+        && s.singular
+    {
+        // UK-2102: singularity detected
+        diagnostics.push(2102);
     }
 
     if cov_applied.is_some() {

@@ -69,7 +69,7 @@ fn integrate_trajectory(
         // Adaptive step: reduce dt if any |f_i| is huge
         let max_f = f.iter().map(|fi| fi.abs()).fold(0.0f64, f64::max);
         if max_f > 0.0 {
-            let suggested_dt = (R_MAX / max_f).min(1e-2).max(DT_MIN);
+            let suggested_dt = (R_MAX / max_f).clamp(DT_MIN, 1e-2);
             dt = dt.min(suggested_dt);
         }
         if dt < DT_MIN {

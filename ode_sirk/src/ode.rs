@@ -77,11 +77,11 @@ impl Polynomial {
         self.terms.sort_by(|a, b| a.exponents.cmp(&b.exponents));
         let mut merged: Vec<Monomial> = Vec::new();
         for term in self.terms.drain(..) {
-            if let Some(last) = merged.last_mut() {
-                if last.exponents == term.exponents {
-                    last.coeff += term.coeff;
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && last.exponents == term.exponents
+            {
+                last.coeff += term.coeff;
+                continue;
             }
             merged.push(term);
         }
@@ -293,13 +293,15 @@ fn sexpr_to_polynomial(
                 let base = sexpr_to_polynomial(&args[0], vars, var_set)?;
                 match &args[1] {
                     SExpr::Num(n) => {
-                        let exp = *n as u32;
-                        if *n as f64 - *n as f64 != 0.0 || *n < 0.0 {
-                            return Err(format!("non-integer or negative exponent: {}", n));
+                        // The exponent must be a non-negative integer. `fract()`
+                        // rejects fractional values (2.5) that `as u32` would
+                        // silently truncate.
+                        if *n < 0.0 || n.fract() != 0.0 {
+                            return Err(format!("non-integer or negative exponent: {n}"));
                         }
-                        Ok(poly_pow(base, exp))
+                        Ok(poly_pow(base, *n as u32))
                     }
-                    _ => Err(format!("non-numeric exponent in ODE RHS")),
+                    _ => Err("non-numeric exponent in ODE RHS".to_string()),
                 }
             }
             "neg" => {
