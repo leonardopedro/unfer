@@ -73,8 +73,7 @@ fn main() -> anyhow::Result<()> {
     let text = cfg.text;
     let out = cfg.out_dir;
     std::fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
-    let manifest =
-        qfm_text::Manifest::read(&cfg.manifest_path).context("read shard manifest")?;
+    let manifest = qfm_text::Manifest::read(&cfg.manifest_path).context("read shard manifest")?;
     let shard_dir = cfg
         .manifest_path
         .parent()
@@ -142,7 +141,9 @@ fn main() -> anyhow::Result<()> {
             "out_dir": out.display().to_string(),
         });
         writeln!(metrics, "{line}")?;
-        eprintln!("[epoch {epoch}] wall_s = {wall_s:.2}, n_windows = {epoch_windows}, n_active = {n_active}, total = {total_windows}");
+        eprintln!(
+            "[epoch {epoch}] wall_s = {wall_s:.2}, n_windows = {epoch_windows}, n_active = {n_active}, total = {total_windows}"
+        );
         // The model is dropped at end of scope. The next epoch
         // starts with a fresh registry.
     }

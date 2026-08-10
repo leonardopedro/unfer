@@ -6,8 +6,8 @@
 //! Run with:
 //!   cargo test --release -p qfm_text --test oxieml_fit_real_w -- --nocapture --ignored
 
-use qfm_text::oxieml_decoder::{OxiemlFitOpts, fit_column, fit_decoder};
 use qfm_text::QfmTextModel;
+use qfm_text::oxieml_decoder::{OxiemlFitOpts, fit_column, fit_decoder};
 use std::time::Instant;
 
 #[test]
@@ -22,7 +22,9 @@ fn fits_real_qfm_text_w_matrix() {
     let model = QfmTextModel::load(std::path::Path::new(ckpt)).expect("load checkpoint");
     eprintln!(
         "model loaded. cfg: n_orders={}, k2_total={}, krylov_rank={}",
-        model.cfg.n_orders, model.cfg.k2_total(), model.krylov_rank()
+        model.cfg.n_orders,
+        model.cfg.k2_total(),
+        model.krylov_rank()
     );
 
     // Extract W. Shape: (k2_total, rank) = (4_194_305, 3).
@@ -60,7 +62,10 @@ fn fits_real_qfm_text_w_matrix() {
         ..Default::default()
     };
 
-    eprintln!("fitting {} columns (m={}, bins={})...", rank, m, opts.weight_bins);
+    eprintln!(
+        "fitting {} columns (m={}, bins={})...",
+        rank, m, opts.weight_bins
+    );
     let t0 = Instant::now();
     let fits = fit_decoder(&columns, m, &opts);
     eprintln!("fit_decoder total time: {:.2}s", t0.elapsed().as_secs_f64());
@@ -97,7 +102,9 @@ fn fits_real_qfm_text_w_matrix() {
         summary.total_fit_seconds
     );
     // Query a few contexts and verify finite output.
-    let shard = std::path::Path::new("/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/hrm_data/wikitext-103-train/shard_00000.bin");
+    let shard = std::path::Path::new(
+        "/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/hrm_data/wikitext-103-train/shard_00000.bin",
+    );
     if shard.exists() {
         let s = qfm_text::Shard::open(shard, 20000).expect("open shard");
         let mut queried = 0;
@@ -105,10 +112,14 @@ fn fits_real_qfm_text_w_matrix() {
             let dist = model_mut.next_token_dist(&ctx).expect("dist");
             let sum: f64 = dist.iter().sum();
             let ok = dist.iter().all(|&x| x.is_finite() && x >= 0.0) && (sum - 1.0).abs() < 0.01;
-            eprintln!("  ctx={:?} sum={:.4} ok={}", &ctx[..ctx.len().min(4)], sum, ok);
+            eprintln!(
+                "  ctx={:?} sum={:.4} ok={}",
+                &ctx[..ctx.len().min(4)],
+                sum,
+                ok
+            );
             queried += 1;
         }
         assert!(queried > 0, "should have queried at least one context");
     }
 }
-

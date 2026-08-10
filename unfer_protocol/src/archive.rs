@@ -124,7 +124,11 @@ impl CellBuilder {
 
     /// Add a module file. `path` is relative to the module directory (e.g. `src/main.js`);
     /// absolute paths are rejected.
-    pub fn add_file(&mut self, path: impl AsRef<std::path::Path>, bytes: &[u8]) -> Result<&mut Self, ArchiveError> {
+    pub fn add_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        bytes: &[u8],
+    ) -> Result<&mut Self, ArchiveError> {
         let p = path.as_ref();
         if p.is_absolute() {
             return Err(ArchiveError::BadBody(format!(
@@ -172,19 +176,15 @@ impl CellBuilder {
             "files": files,
             "session": self.session.as_ref().map(|s| hex::encode(s)),
         });
-        let body_bytes = serde_json::to_vec(&body)
-            .map_err(|e| ArchiveError::BadBody(e.to_string()))?;
+        let body_bytes =
+            serde_json::to_vec(&body).map_err(|e| ArchiveError::BadBody(e.to_string()))?;
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(&body_bytes)
             .map_err(|e| ArchiveError::Io(e.to_string()))?;
-        let compressed = gz
-            .finish()
-            .map_err(|e| ArchiveError::Io(e.to_string()))?;
+        let compressed = gz.finish().map_err(|e| ArchiveError::Io(e.to_string()))?;
 
-        let mut out = Vec::with_capacity(
-            8 + 4 + 8 + metadata_json.len() + 8 + compressed.len(),
-        );
+        let mut out = Vec::with_capacity(8 + 4 + 8 + metadata_json.len() + 8 + compressed.len());
         out.extend_from_slice(&CELL_MAGIC);
         out.extend_from_slice(&CELL_VERSION.to_le_bytes());
         out.extend_from_slice(&(metadata_json.len() as u64).to_le_bytes());
@@ -226,7 +226,8 @@ impl Cell {
         let metadata_json = &bytes[meta_start..body_len_at];
         let metadata: CellMetadata = serde_json::from_slice(metadata_json)
             .map_err(|e| ArchiveError::BadMetadata(e.to_string()))?;
-        let body_len = u64::from_le_bytes(bytes[body_len_at..body_len_at + 8].try_into().unwrap()) as usize;
+        let body_len =
+            u64::from_le_bytes(bytes[body_len_at..body_len_at + 8].try_into().unwrap()) as usize;
         let body_start = body_len_at + 8;
         if bytes.len() < body_start + body_len {
             return Err(ArchiveError::TruncatedHeader);
@@ -273,8 +274,8 @@ fn parse_body(compressed: &[u8]) -> Result<Body, ArchiveError> {
     let mut buf = Vec::new();
     gz.read_to_end(&mut buf)
         .map_err(|e| ArchiveError::BadBody(format!("gzip: {e}")))?;
-    let v: serde_json::Value = serde_json::from_slice(&buf)
-        .map_err(|e| ArchiveError::BadBody(format!("json: {e}")))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&buf).map_err(|e| ArchiveError::BadBody(format!("json: {e}")))?;
 
     let files_val = v
         .get("files")
@@ -306,7 +307,7 @@ fn parse_body(compressed: &[u8]) -> Result<Body, ArchiveError> {
         Some(_) => {
             return Err(ArchiveError::BadBody(
                 "session must be a hex string or null".into(),
-            ))
+            ));
         }
     };
 
@@ -330,8 +331,13 @@ mod tests {
         b.set_version("0.3.1");
         b.set_archetype("ecmascript");
         b.set_entry("src/main.js");
-        b.add_file("module.toml", b"[module]\nname = \"demo\"\n").unwrap();
-        b.add_file("src/main.js", b"export async function run(k, a) { return a; }").unwrap();
+        b.add_file("module.toml", b"[module]\nname = \"demo\"\n")
+            .unwrap();
+        b.add_file(
+            "src/main.js",
+            b"export async function run(k, a) { return a; }",
+        )
+        .unwrap();
         b.add_file("data/blob.bin", &[0u8, 1, 2, 3, 255]).unwrap();
         b.set_session(b"{\"t_now\": 0.5}");
 
@@ -344,7 +350,10 @@ mod tests {
         assert_eq!(cell.metadata().entry, "src/main.js");
         assert!(cell.metadata().session_present);
         assert_eq!(cell.files().len(), 3);
-        assert_eq!(cell.file("src/main.js").unwrap(), b"export async function run(k, a) { return a; }");
+        assert_eq!(
+            cell.file("src/main.js").unwrap(),
+            b"export async function run(k, a) { return a; }"
+        );
         assert_eq!(cell.file("data/blob.bin").unwrap(), &[0u8, 1, 2, 3, 255]);
         assert_eq!(cell.session().unwrap(), b"{\"t_now\": 0.5}");
     }
@@ -352,7 +361,8 @@ mod tests {
     #[test]
     fn cell_without_session_reports_none() {
         let mut b = CellBuilder::new("dry");
-        b.add_file("module.toml", b"[module]\nname = \"dry\"\n").unwrap();
+        b.add_file("module.toml", b"[module]\nname = \"dry\"\n")
+            .unwrap();
         let bytes = b.build().unwrap();
         let cell = Cell::parse(&bytes).unwrap();
         assert!(!cell.has_session());

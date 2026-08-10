@@ -1,7 +1,5 @@
 use unfer_consensus::{ConsensusNode, Keypair};
-use unfer_protocol::{
-    ConsensusTransaction, DidDocument, IdentityOp, IdentityOpKind,
-};
+use unfer_protocol::{ConsensusTransaction, DidDocument, IdentityOp, IdentityOpKind};
 
 pub struct DidManager<'a> {
     node: &'a mut ConsensusNode,
@@ -60,10 +58,7 @@ impl<'a> DidManager<'a> {
         Ok(())
     }
 
-    pub fn revoke_did(
-        &mut self,
-        keypair: &Keypair,
-    ) -> Result<(), unfer_protocol::Diagnostic> {
+    pub fn revoke_did(&mut self, keypair: &Keypair) -> Result<(), unfer_protocol::Diagnostic> {
         let did = keypair.did();
         let entry = self.node.identity().resolve(&did).ok_or_else(|| {
             unfer_protocol::Diagnostic::new(
@@ -131,10 +126,7 @@ mod tests {
         let doc = mgr.resolve(&did).unwrap();
         assert_eq!(doc.id, did);
         assert_eq!(doc.service.len(), 1);
-        assert_eq!(
-            doc.service[0].service_endpoint,
-            "https://node.example.com"
-        );
+        assert_eq!(doc.service[0].service_endpoint, "https://node.example.com");
     }
 
     #[test]
@@ -153,10 +145,7 @@ mod tests {
         let mgr = DidManager::new(&mut node);
         let doc = mgr.resolve(&kp.did()).unwrap();
         assert_eq!(doc.service.len(), 1);
-        assert_eq!(
-            doc.service[0].service_endpoint,
-            "https://new.example.com"
-        );
+        assert_eq!(doc.service[0].service_endpoint, "https://new.example.com");
     }
 
     #[test]

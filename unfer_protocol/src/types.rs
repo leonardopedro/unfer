@@ -1253,9 +1253,7 @@ pub enum CertificateOpKind {
     },
     /// Retirement/destruction: spends `inputs` and removes their value from the
     /// circulating supply (conservation is intentionally *not* required here).
-    Burn {
-        inputs: Vec<CoinRef>,
-    },
+    Burn { inputs: Vec<CoinRef> },
 }
 
 /// A signed certificate state transition. Mirrors the other consensus ops: the
@@ -1302,7 +1300,10 @@ impl MintRequest {
             return Err(crate::codes::Code::CERT_ORACLE_REJECTED);
         }
         let order_id = &self.source[prefix.len()..];
-        if order_id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        if order_id
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-')
+        {
             return Err(crate::codes::Code::CERT_ORACLE_REJECTED);
         }
         Ok(())
@@ -1508,12 +1509,12 @@ mod mint_request_tests {
     #[test]
     fn malformed_source_rejected() {
         let bad = [
-            "",                 // empty
-            "unfccc:vc:",       // no order id
-            "unfccc:cert:123",  // old format
+            "",                   // empty
+            "unfccc:vc:",         // no order id
+            "unfccc:cert:123",    // old format
             "https://unfccc.int", // not a vc reference
-            "unfccc:vc:12 3",   // space
-            "unfccc:vc:abc/def",// slash
+            "unfccc:vc:12 3",     // space
+            "unfccc:vc:abc/def",  // slash
         ];
         for s in bad {
             assert_eq!(
@@ -1531,7 +1532,10 @@ mod mint_request_tests {
         let b = req("unfccc:vc:34791");
         assert_eq!(a.effective_blinding(), b.effective_blinding());
         // Different sources → different blinding (no cross-request collision).
-        assert_ne!(a.effective_blinding(), req("unfccc:vc:34792").effective_blinding());
+        assert_ne!(
+            a.effective_blinding(),
+            req("unfccc:vc:34792").effective_blinding()
+        );
         // An explicit blinding wins over the derived one.
         let explicit = MintRequest {
             blinding: Some([7u8; 32]),

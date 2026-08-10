@@ -90,9 +90,8 @@ impl ConsensusNode {
     fn apply_session_op(&mut self, req: &AgentRequest) -> Result<(), Diagnostic> {
         match req.op.as_str() {
             "create_model" => {
-                let spec: ModelSpec = serde_json::from_value(req.params.clone()).map_err(|e| {
-                    Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
-                })?;
+                let spec: ModelSpec = serde_json::from_value(req.params.clone())
+                    .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
                 let session = Session::new(&spec).map_err(|e| e.to_diagnostic())?;
                 let id = self.next_model_id;
                 self.next_model_id += 1;
@@ -285,8 +284,10 @@ mod tests {
         let alice = Keypair::generate();
         let bob = Keypair::generate();
 
-        let mut node =
-            ConsensusNode::with_mint_authority(Box::new(engine.clone()), MintAuthority::Only(authority.did()));
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(engine.clone()),
+            MintAuthority::Only(authority.did()),
+        );
         let empty_root = node.certs().root();
         assert_ne!(empty_root, [0u8; 32]);
 
@@ -520,7 +521,11 @@ mod tests {
         // All five converge to the identical state.
         let r0 = nodes[0].certs().root();
         for node in &nodes[1..] {
-            assert_eq!(node.certs().root(), r0, "all nodes share one certificate root");
+            assert_eq!(
+                node.certs().root(),
+                r0,
+                "all nodes share one certificate root"
+            );
             assert_eq!(node.certs().total_supply(), 700, "supply: 1600 - 900 = 700");
             assert_eq!(node.applied_seq(), 5);
         }

@@ -52,11 +52,7 @@ pub fn analyze_classical_flow(
     })
 }
 
-fn integrate_trajectory(
-    sys: &ODESystem,
-    x0: &[f64],
-    t_max: f64,
-) -> Result<(), EscapeEvent> {
+fn integrate_trajectory(sys: &ODESystem, x0: &[f64], t_max: f64) -> Result<(), EscapeEvent> {
     let n = sys.n_vars();
     let mut x: Vec<f64> = x0.to_vec();
     let mut t = 0.0;

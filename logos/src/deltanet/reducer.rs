@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::core_ir::{PrimOp, Literal, NIL_TAG, CONS_TAG};
+use crate::core_ir::{CONS_TAG, Literal, NIL_TAG, PrimOp};
 
 pub fn reduce(net: &mut Net) {
     net.collect_active_pairs();
@@ -14,7 +14,10 @@ pub fn reduce(net: &mut Net) {
         net.collect_new_active_pairs();
         iterations += 1;
         if iterations >= max_iterations {
-            eprintln!("warning: reduction exceeded {} iterations, possible non-termination", max_iterations);
+            eprintln!(
+                "warning: reduction exceeded {} iterations, possible non-termination",
+                max_iterations
+            );
             break;
         }
     }
@@ -36,7 +39,9 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             let abs_var = net.get_aux(b, 1);
             net.wire(app_arg, abs_var);
             let abs_body = net.get_aux(b, 2);
-            let app_result = net.nodes[a as usize].as_ref().and_then(|n| n.ports[2].clone());
+            let app_result = net.nodes[a as usize]
+                .as_ref()
+                .and_then(|n| n.ports[2].clone());
             if let Some(outer) = app_result {
                 net.wire(outer, abs_body);
             } else {
@@ -57,7 +62,9 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             let app_arg = net.get_aux(b, 1);
             net.wire(abs_var, app_arg);
             let abs_body = net.get_aux(a, 2);
-            let app_result = net.nodes[b as usize].as_ref().and_then(|n| n.ports[2].clone());
+            let app_result = net.nodes[b as usize]
+                .as_ref()
+                .and_then(|n| n.ports[2].clone());
             if let Some(outer) = app_result {
                 net.wire(outer, abs_body);
             } else {
@@ -185,7 +192,9 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
 
         // Prim >< Lit, Lit: native evaluation
         (AgentKind::Prim(op), AgentKind::Lit(_)) => {
-            if let (Some(lit1), Some(lit2)) = (net.get_connected_lit(a, 1), net.get_connected_lit(a, 2)) {
+            if let (Some(lit1), Some(lit2)) =
+                (net.get_connected_lit(a, 1), net.get_connected_lit(a, 2))
+            {
                 if let Some(result) = eval_prim(*op, &lit1, &lit2) {
                     let result_node = net.alloc_node(AgentKind::Lit(result));
                     net.wire(Port::principal(a), Port::principal(result_node));
@@ -204,7 +213,13 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
     }
 }
 
-fn commute_dup_through(net: &mut Net, dup_id: NodeId, other_id: NodeId, level: u16, dup_is_left: bool) {
+fn commute_dup_through(
+    net: &mut Net,
+    dup_id: NodeId,
+    other_id: NodeId,
+    level: u16,
+    dup_is_left: bool,
+) {
     let dup_port = net.get_aux(dup_id, if dup_is_left { 1 } else { 2 });
     let _dup_port2 = net.get_aux(dup_id, if dup_is_left { 2 } else { 1 });
 
@@ -246,9 +261,15 @@ fn erase_agent(net: &mut Net, agent_id: NodeId) {
 
 fn eval_prim(op: PrimOp, a: &Literal, b: &Literal) -> Option<Literal> {
     match (op, a, b) {
-        (PrimOp::Add64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Int64(x.wrapping_add(*y))),
-        (PrimOp::Sub64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Int64(x.wrapping_sub(*y))),
-        (PrimOp::Mul64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Int64(x.wrapping_mul(*y))),
+        (PrimOp::Add64, Literal::Int64(x), Literal::Int64(y)) => {
+            Some(Literal::Int64(x.wrapping_add(*y)))
+        }
+        (PrimOp::Sub64, Literal::Int64(x), Literal::Int64(y)) => {
+            Some(Literal::Int64(x.wrapping_sub(*y)))
+        }
+        (PrimOp::Mul64, Literal::Int64(x), Literal::Int64(y)) => {
+            Some(Literal::Int64(x.wrapping_mul(*y)))
+        }
         (PrimOp::Eq64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Bool(x == y)),
         (PrimOp::Gt64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Bool(x > y)),
         (PrimOp::Lt64, Literal::Int64(x), Literal::Int64(y)) => Some(Literal::Bool(x < y)),

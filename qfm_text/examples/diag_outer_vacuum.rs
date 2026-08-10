@@ -19,8 +19,8 @@
 //!    uniform (the asymmetry of W breaks the post-evolution
 //!    symmetry).
 
-use qfm_text::QfmTextModel;
 use num_complex::Complex64;
+use qfm_text::QfmTextModel;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
@@ -57,7 +57,12 @@ fn main() -> anyhow::Result<()> {
         }
         println!(
             "{} | {:+.4e} | {:+.4e} | {:.4e} | {:.4e} | {:.4e}",
-            i, inner.re, inner.im, inner.norm(), l1, inner.norm() / l1
+            i,
+            inner.re,
+            inner.im,
+            inner.norm(),
+            l1,
+            inner.norm() / l1
         );
     }
     // Aggregate
@@ -74,11 +79,20 @@ fn main() -> anyhow::Result<()> {
         sum_l1 += l1;
     }
     let k_eff = sum_l2_inner_abs / sum_l1;
-    println!("\n  mean |⟨c_0 | W⟩_L2| = {:.4e}", sum_l2_inner_abs / m as f64);
+    println!(
+        "\n  mean |⟨c_0 | W⟩_L2| = {:.4e}",
+        sum_l2_inner_abs / m as f64
+    );
     println!("  mean ||W[m,:]||_L1  = {:.4e}", sum_l1 / m as f64);
-    println!("  effective k = mean |⟨c_0 | W⟩_L2| / mean L¹ norm = {:.4e}", k_eff);
-    println!("  (design: k = 1/√R for real non-negative W; for rank {}: k = {:.4e})",
-        rank, 1.0 / (rank as f64).sqrt());
+    println!(
+        "  effective k = mean |⟨c_0 | W⟩_L2| / mean L¹ norm = {:.4e}",
+        k_eff
+    );
+    println!(
+        "  (design: k = 1/√R for real non-negative W; for rank {}: k = {:.4e})",
+        rank,
+        1.0 / (rank as f64).sqrt()
+    );
 
     // 2. Per-mode weights on a test context
     println!("\n=== Per-mode Born weights on a test context ===");
@@ -91,14 +105,21 @@ fn main() -> anyhow::Result<()> {
     if !active.contains(&0) {
         active.push(0);
     }
-    let weights = model.pipeline.decode_sketched_at(&c_1, &model.gram, &active);
+    let weights = model
+        .pipeline
+        .decode_sketched_at(&c_1, &model.gram, &active);
     let total: f64 = weights.iter().map(|(_, w)| w).sum();
     let mut sorted: Vec<_> = weights.clone();
     sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     println!("active_modes = {:?}", active);
     println!("per-mode weights (raw Born):");
     for (m, w) in sorted.iter().take(20) {
-        println!("  mode {}: weight = {:.6e}, fraction = {:.4}", m, w, w / total);
+        println!(
+            "  mode {}: weight = {:.6e}, fraction = {:.4}",
+            m,
+            w,
+            w / total
+        );
     }
     println!("total weight = {}", total);
     println!("n_active = {}", active.len());
@@ -106,15 +127,30 @@ fn main() -> anyhow::Result<()> {
     let l1_dev: f64 = weights
         .iter()
         .map(|(_, w)| (w / total - uniform).abs())
-        .sum::<f64>() / 2.0;
-    println!("L1 deviation from uniform = {:.4} (lower = closer to uniform)", l1_dev);
+        .sum::<f64>()
+        / 2.0;
+    println!(
+        "L1 deviation from uniform = {:.4} (lower = closer to uniform)",
+        l1_dev
+    );
 
     // 3. Outer vacuum norms (sanity check)
     let l2_norm_sq: f64 = model.outer_vacuum.iter().map(|c| c.norm_sqr()).sum();
-    let l1_norm: f64 = model.outer_vacuum.iter().map(|c| c.re.abs() + c.im.abs()).sum();
+    let l1_norm: f64 = model
+        .outer_vacuum
+        .iter()
+        .map(|c| c.re.abs() + c.im.abs())
+        .sum();
     println!("\n=== Outer vacuum norms ===");
-    println!("  L² norm = {:.6e} (1.0 for unit vector)", l2_norm_sq.sqrt());
-    println!("  L¹ norm = {:.6e} (uniform c_0 has L¹ norm = √R = {})", l1_norm, (rank as f64).sqrt());
+    println!(
+        "  L² norm = {:.6e} (1.0 for unit vector)",
+        l2_norm_sq.sqrt()
+    );
+    println!(
+        "  L¹ norm = {:.6e} (uniform c_0 has L¹ norm = √R = {})",
+        l1_norm,
+        (rank as f64).sqrt()
+    );
     println!("  Per-row L² inner product = (1/√R) · ||W[m,:]||_L1 (for real non-negative W)");
 
     Ok(())

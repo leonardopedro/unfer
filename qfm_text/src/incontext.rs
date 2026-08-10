@@ -21,10 +21,10 @@ use nalgebra::DVector;
 use num_complex::Complex64;
 use qfm::{HmcOpts, Likelihood, Posterior, sample_hmc_single, tsr_evolved_prior};
 
-use crate::error::QfmTextError;
-use crate::model::QfmTextModel;
 #[allow(unused_imports)]
 use crate::config::TextConfig; // used in tests
+use crate::error::QfmTextError;
+use crate::model::QfmTextModel;
 #[allow(unused_imports)]
 use crate::registry::ContextRegistry; // re-exported by lib; not used directly here
 

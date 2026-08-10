@@ -12,11 +12,11 @@
 //! - `hamiltonian_is_outer_product_of_dressed_vacuum` (1.3)
 //! - `decode_at_active_modes_matches_full_decode` (1.4)
 
+use nalgebra::DVector;
 use nested_fock_algebra::models::qfm_hamiltonian_hierarchical_projectors;
 use qfm_text::accumulate::{ChannelAccumulator, Encoder};
 use qfm_text::config::{DecodeStrategy, TextConfig};
 use qfm_text::features::OrderHasher;
-use nalgebra::DVector;
 
 fn tiny_config(block_sizes: Vec<usize>) -> TextConfig {
     let salts: Vec<u64> = (1..=block_sizes.len() as u64).collect();
@@ -118,7 +118,8 @@ fn channel_weights_sum_to_total_windows() {
     let n_orders = cfg.n_orders as u64;
     let total_weight: u64 = acc.stats.values().map(|s| s.weight).sum();
     assert_eq!(
-        total_weight, n_orders * acc.total_windows,
+        total_weight,
+        n_orders * acc.total_windows,
         "sum of per-mode weights {total_weight} != n_orders * total_windows = {}",
         n_orders * acc.total_windows
     );
@@ -150,8 +151,8 @@ fn hamiltonian_is_outer_product_of_dressed_vacuum() {
     // On the 2-mode Fock space, H is a 3x3 matrix
     // (basis: |0⟩, |0,m_0⟩, |0,m_1⟩). It has rank 2.
     let groups: Vec<(f64, Vec<(u32, f64)>)> = vec![
-        (1.0, vec![(0, 1.0)]),  // order 0: mode 0 (vacuum)
-        (1.0, vec![(1, 1.0)]),  // order 1: mode 1
+        (1.0, vec![(0, 1.0)]), // order 0: mode 0 (vacuum)
+        (1.0, vec![(1, 1.0)]), // order 1: mode 1
     ];
     let h = qfm_hamiltonian_hierarchical_projectors(&groups);
 
@@ -197,7 +198,7 @@ fn hamiltonian_rank_is_at_most_n_orders() {
     // gives us exactly n_orders projectors.
     use num_complex::Complex64;
     let groups: Vec<(f64, Vec<(u32, f64)>)> = vec![
-        (1.0, vec![(0, 1.0), (1, 0.5)]),  // order 0: 2 modes
+        (1.0, vec![(0, 1.0), (1, 0.5)]), // order 0: 2 modes
         (1.0, vec![(2, 1.0)]),           // order 1: 1 mode
     ];
     let h = qfm_hamiltonian_hierarchical_projectors(&groups);
@@ -207,7 +208,10 @@ fn hamiltonian_rank_is_at_most_n_orders() {
     // space: c0² |0⟩⟨0| + 2·c0·ε_j |m_j⟩⟨0| + ε_i·ε_j |m_i⟩⟨m_j|.
     // For 2 modes: 1 + 2·2 + 2·2 + 1 = 9. Plus 1 for order 1.
     // = 10.
-    eprintln!("hamiltonian_rank_is_at_most_n_orders: {} terms", h.terms.len());
+    eprintln!(
+        "hamiltonian_rank_is_at_most_n_orders: {} terms",
+        h.terms.len()
+    );
     // Hermitian check: all coefficients are real.
     for (i, (c, _)) in h.terms.iter().enumerate() {
         assert!(
@@ -224,8 +228,10 @@ fn hamiltonian_rank_is_at_most_n_orders() {
         for j in (i + 1)..n {
             // Just log; full symmetry check would require
             // matching the operator strings.
-            eprintln!("  terms[{i}] = {:.4e}, terms[{j}] = {:.4e}",
-                coeffs[i].re, coeffs[j].re);
+            eprintln!(
+                "  terms[{i}] = {:.4e}, terms[{j}] = {:.4e}",
+                coeffs[i].re, coeffs[j].re
+            );
         }
     }
 }
@@ -263,7 +269,9 @@ fn decode_at_active_modes_matches_full_decode() {
     // Gram-Schmidt orthogonalize columns.
     for j in 0..rank {
         for k in 0..j {
-            let dot = (0..m).map(|i| w[(i, j)].conj() * w[(i, k)]).sum::<Complex64>();
+            let dot = (0..m)
+                .map(|i| w[(i, j)].conj() * w[(i, k)])
+                .sum::<Complex64>();
             for i in 0..m {
                 w[(i, j)] = w[(i, j)] - dot * w[(i, k)];
             }
@@ -277,8 +285,8 @@ fn decode_at_active_modes_matches_full_decode() {
 
     // Pick a unit-norm h in C^rank.
     let h = DV::<Complex64>::from_vec(vec![
-        Complex64::new(0.6, 0.8),  // |h| = 1
-        Complex64::new(0.0, 0.0),  // zero out rank 2
+        Complex64::new(0.6, 0.8), // |h| = 1
+        Complex64::new(0.0, 0.0), // zero out rank 2
     ]);
     let h_unit = h.normalize();
 
@@ -294,7 +302,7 @@ fn decode_at_active_modes_matches_full_decode() {
         .collect();
 
     // Sparse decode: only the active modes.
-    let active_modes: Vec<u32> = (0..m as u32).step_by(3).collect();  // ~21 modes
+    let active_modes: Vec<u32> = (0..m as u32).step_by(3).collect(); // ~21 modes
     let sparse: Vec<f64> = active_modes
         .iter()
         .map(|&m_o| {
@@ -313,7 +321,8 @@ fn decode_at_active_modes_matches_full_decode() {
         assert!(
             (sparse[k] - full[i]).abs() < 1e-12,
             "active mode {m_o}: sparse={:.6e} full={:.6e}",
-            sparse[k], full[i]
+            sparse[k],
+            full[i]
         );
     }
     // Sum check (Born rule): W has orthonormal columns, so
@@ -322,10 +331,8 @@ fn decode_at_active_modes_matches_full_decode() {
     eprintln!(
         "decode_at_active_modes_matches_full_decode: sum={:.6} (expected 1.0), \
          {} active modes match full decode",
-        sum, active_modes.len()
+        sum,
+        active_modes.len()
     );
-    assert!(
-        (sum - 1.0).abs() < 1e-9,
-        "Born rule violated: sum = {sum}"
-    );
+    assert!((sum - 1.0).abs() < 1e-9, "Born rule violated: sum = {sum}");
 }

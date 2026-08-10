@@ -22,19 +22,19 @@
 //! unfer_edge --listen 127.0.0.1:3000 --backend 127.0.0.1:3001
 //! ```
 
-mod caprpc;
-mod cells;
-mod filter;
-mod mask;
-mod metrics;
 #[cfg(feature = "audit")]
 mod admin;
 #[cfg(feature = "audit")]
 mod audit;
 #[cfg(feature = "audit")]
 mod blueprint;
+mod caprpc;
+mod cells;
+mod filter;
 #[cfg(feature = "audit")]
 mod gate;
+mod mask;
+mod metrics;
 
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -42,7 +42,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use pingora_core::prelude::*;
 use pingora_http::ResponseHeader;
-use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
+use pingora_proxy::{ProxyHttp, Session, http_proxy_service};
 use tracing::info;
 use unfer_data::CellStore;
 
@@ -127,16 +127,11 @@ impl ProxyHttp for UnferGateway {
             let body = bytes::Bytes::from(body);
             let mut header = ResponseHeader::build(200u16, None)?;
             header.insert_header("content-type", "application/json")?;
-            header.insert_header(
-                "content-length",
-                body.len().to_string(),
-            )?;
+            header.insert_header("content-length", body.len().to_string())?;
             session
                 .write_response_header(Box::new(header), false)
                 .await?;
-            session
-                .write_response_body(Some(body), true)
-                .await?;
+            session.write_response_body(Some(body), true).await?;
             return Ok(true);
         }
 
@@ -144,7 +139,9 @@ impl ProxyHttp for UnferGateway {
         // capability-bound method (minted only at the loopback chokepoint).
         // A method may return a nested capability stub.
         #[cfg(feature = "audit")]
-        if session.req_header().uri.path() == "/api/cap/invoke" && session.req_header().method.to_string() == "POST" {
+        if session.req_header().uri.path() == "/api/cap/invoke"
+            && session.req_header().method.to_string() == "POST"
+        {
             let raw = match read_body(session).await {
                 Ok(b) => b,
                 Err(_) => {
@@ -156,9 +153,13 @@ impl ProxyHttp for UnferGateway {
             let call: caprpc::CapCall = match serde_json::from_slice(&raw) {
                 Ok(c) => c,
                 Err(e) => {
-                    return write_json(session, 400u16, &format!("{{\"error\":\"bad CapCall: {e}\"}}").into_bytes())
-                        .await
-                        .map(|_| true);
+                    return write_json(
+                        session,
+                        400u16,
+                        &format!("{{\"error\":\"bad CapCall: {e}\"}}").into_bytes(),
+                    )
+                    .await
+                    .map(|_| true);
                 }
             };
             // The caller is the request's principle-less identity for now; minted
@@ -227,9 +228,13 @@ impl ProxyHttp for UnferGateway {
                         let raw = match read_body(session).await {
                             Ok(b) => b,
                             Err(_) => {
-                                return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
-                                    .await
-                                    .map(|_| true);
+                                return write_json(
+                                    session,
+                                    400u16,
+                                    b"{\"error\":\"body too large\"}",
+                                )
+                                .await
+                                .map(|_| true);
                             }
                         };
                         let req = match serde_json::from_slice::<HandleRequest>(&raw) {
@@ -279,19 +284,11 @@ impl ProxyHttp for UnferGateway {
                     .to_string();
                 let (status, body): (u16, Vec<u8>) = match method.as_str() {
                     "GET" if path == "/admin/status" => admin::status_body(&principal),
-                    "PATCH" if path == "/admin/config" => {
-                        match read_body(session).await {
-                            Ok(b) => admin::patch_body(&principal, &b),
-                            Err(_) => (
-                                400u16,
-                                b"{\"error\":\"body too large\"}".to_vec(),
-                            ),
-                        }
-                    }
-                    _ => (
-                        405u16,
-                        b"{\"error\":\"method not allowed\"}".to_vec(),
-                    ),
+                    "PATCH" if path == "/admin/config" => match read_body(session).await {
+                        Ok(b) => admin::patch_body(&principal, &b),
+                        Err(_) => (400u16, b"{\"error\":\"body too large\"}".to_vec()),
+                    },
+                    _ => (405u16, b"{\"error\":\"method not allowed\"}".to_vec()),
                 };
                 write_json(session, status, &body).await?;
                 return Ok(true);
@@ -316,9 +313,13 @@ impl ProxyHttp for UnferGateway {
                         let raw = match read_body(session).await {
                             Ok(b) => b,
                             Err(_) => {
-                                return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
-                                    .await
-                                    .map(|_| true);
+                                return write_json(
+                                    session,
+                                    400u16,
+                                    b"{\"error\":\"body too large\"}",
+                                )
+                                .await
+                                .map(|_| true);
                             }
                         };
                         let req = match serde_json::from_slice::<ImportRequest>(&raw) {
@@ -369,7 +370,7 @@ impl ProxyHttp for UnferGateway {
             return Ok(true);
         }
 
-// Read the request body (bounded to 1 MiB).
+        // Read the request body (bounded to 1 MiB).
         let body = match read_body(session).await {
             Ok(b) => b,
             Err(_) => {
@@ -476,11 +477,7 @@ async fn read_body(session: &mut Session) -> Result<Vec<u8>, String> {
 
 /// Write a JSON maybe-short-circuit response (used by the audit/gate consoles).
 #[cfg(feature = "audit")]
-async fn write_json(
-    session: &mut Session,
-    status: u16,
-    body: &[u8],
-) -> pingora_core::Result<()> {
+async fn write_json(session: &mut Session, status: u16, body: &[u8]) -> pingora_core::Result<()> {
     let mut header = ResponseHeader::build(status, None)?;
     header.insert_header("content-type", "application/json")?;
     header.insert_header("content-length", body.len().to_string())?;

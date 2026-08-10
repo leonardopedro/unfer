@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::core_ir::Literal;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 pub fn canonical_serialize(net: &Net) -> Vec<u8> {
     let mut output = Vec::new();

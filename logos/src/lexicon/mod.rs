@@ -74,12 +74,18 @@ impl Lexicon {
             }
             let word = parts[0].to_string();
             let category = parts[1].to_string();
-            let template = parse_sem_template(parts[2])
-                .map_err(|e| LexiconError::Format { line: i + 1, reason: e })?;
+            let template = parse_sem_template(parts[2]).map_err(|e| LexiconError::Format {
+                line: i + 1,
+                reason: e,
+            })?;
 
             let idx = entries.len();
             by_word.entry(word.clone()).or_default().push(idx);
-            entries.push(LexEntry { word, category, template });
+            entries.push(LexEntry {
+                word,
+                category,
+                template,
+            });
         }
 
         Ok(Lexicon { entries, by_word })
@@ -110,11 +116,17 @@ fn parse_sem_template(s: &str) -> Result<SemExpr, String> {
     if let Some(var) = s.strip_prefix("Var(\"").and_then(|r| r.strip_suffix("\")")) {
         return Ok(SemExpr::Var(var.to_string()));
     }
-    if let Some(n) = s.strip_prefix("Lit(Int64(").and_then(|r| r.strip_suffix("))")) {
+    if let Some(n) = s
+        .strip_prefix("Lit(Int64(")
+        .and_then(|r| r.strip_suffix("))"))
+    {
         let val: i64 = n.parse().map_err(|e| format!("invalid int: {}", e))?;
         return Ok(SemExpr::Lit(Literal::Int64(val)));
     }
-    if let Some(b) = s.strip_prefix("Lit(Bool(").and_then(|r| r.strip_suffix("))")) {
+    if let Some(b) = s
+        .strip_prefix("Lit(Bool(")
+        .and_then(|r| r.strip_suffix("))"))
+    {
         let val: bool = b.parse().map_err(|e| format!("invalid bool: {}", e))?;
         return Ok(SemExpr::Lit(Literal::Bool(val)));
     }

@@ -25,7 +25,7 @@
 //! active modes, so the actual memory is O(corpus_size ×
 //! n_orders). This keeps the test below 1 MB of allocations.
 
-use qfm_text::accumulate::{accumulate_shards, Encoder};
+use qfm_text::accumulate::{Encoder, accumulate_shards};
 use qfm_text::config::{DecodeStrategy, TextConfig};
 use qfm_text::features::OrderHasher;
 use qfm_text::model::QfmTextModel;
@@ -157,11 +157,7 @@ fn dense_w_is_used_during_inference() {
     assert!(!dist.is_empty(), "next_token_dist is empty");
     let sum: f64 = dist.iter().sum();
     assert!(sum.is_finite(), "next_token_dist contains non-finite");
-    eprintln!(
-        "  next_token_dist: len = {}, sum = {:.6}",
-        dist.len(),
-        sum
-    );
+    eprintln!("  next_token_dist: len = {}, sum = {:.6}", dist.len(), sum);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -172,7 +168,9 @@ fn qfm_learns_deterministic_alternation() {
     let cfg = small_config(2);
     let n = 200u32;
     let train: Vec<u32> = (0..n).map(|i| if i % 2 == 0 { 7 } else { 11 }).collect();
-    let held_out: Vec<u32> = (n..n + 50).map(|i| if i % 2 == 0 { 7 } else { 11 }).collect();
+    let held_out: Vec<u32> = (n..n + 50)
+        .map(|i| if i % 2 == 0 { 7 } else { 11 })
+        .collect();
     let dir = tempdir();
     let (shard, _manifest) = write_shard_and_manifest(&dir, &train);
     let model = train_qfm(&cfg, &shard);
@@ -229,7 +227,11 @@ fn krylov_subspace_is_used_during_inference() {
     );
     // The Krylov subspace dim = rank ≤ max_rank = 2. Verify
     // it's at most 2 and the W has rank columns.
-    assert!(k <= cfg.max_rank, "krylov_rank {k} > max_rank {}", cfg.max_rank);
+    assert!(
+        k <= cfg.max_rank,
+        "krylov_rank {k} > max_rank {}",
+        cfg.max_rank
+    );
     assert!(w.ncols() == k, "W cols {} != krylov_rank {}", w.ncols(), k);
     let _ = std::fs::remove_dir_all(&dir);
 }

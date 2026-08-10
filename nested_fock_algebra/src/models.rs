@@ -897,9 +897,7 @@ pub fn yang_mills_lattice(l: usize, g: f64, n_colors: usize) -> Hamiltonian {
 //     ε-form builders above, whose ε are Mehler overlaps bounded by
 //     Σ ε² ≤ 1 with c₀ = √(1−Σε²).)
 // ─────────────────────────────────────────────
-pub fn qfm_hamiltonian_hierarchical_projectors(
-    groups: &[(f64, Vec<(u32, f64)>)],
-) -> Hamiltonian {
+pub fn qfm_hamiltonian_hierarchical_projectors(groups: &[(f64, Vec<(u32, f64)>)]) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for (o, (lambda, channels)) in groups.iter().enumerate() {
         assert!(
@@ -919,8 +917,7 @@ pub fn qfm_hamiltonian_hierarchical_projectors(
         let sum_sq: f64 = channels.iter().map(|(_, a)| a * a).sum();
         let norm = (1.0 + sum_sq).sqrt();
         let c0 = 1.0 / norm;
-        let mut inner_channels: Vec<(InnerBosonicState, f64)> =
-            Vec::with_capacity(channels.len());
+        let mut inner_channels: Vec<(InnerBosonicState, f64)> = Vec::with_capacity(channels.len());
         for (m, a) in channels {
             let mut inner = InnerBosonicState::vacuum();
             inner.modes.insert(*m, 1);

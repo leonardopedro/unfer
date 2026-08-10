@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::ccg::{DerivationTree, Direction};
-use crate::lexicon::{Lexicon, SemExpr, Literal as LexLiteral};
+use crate::lexicon::{Lexicon, Literal as LexLiteral, SemExpr};
 
 pub fn compile_to_core_ir(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
     compile_derivation(tree, lexicon)
@@ -9,24 +9,28 @@ pub fn compile_to_core_ir(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
 fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
     match tree {
         DerivationTree::Leaf { word, .. } => {
-            let template = lexicon.semantic_template(word)
+            let template = lexicon
+                .semantic_template(word)
                 .unwrap_or_else(|| panic!("no semantic template for '{}'", word));
             instantiate_template(template)
         }
-        DerivationTree::Application { direction, left, right, .. } => {
-            match direction {
-                Direction::Forward => {
-                    let f = compile_derivation(left, lexicon);
-                    let arg = compile_derivation(right, lexicon);
-                    CoreIR::App(Box::new(f), Box::new(arg))
-                }
-                Direction::Backward => {
-                    let f = compile_derivation(right, lexicon);
-                    let arg = compile_derivation(left, lexicon);
-                    CoreIR::App(Box::new(f), Box::new(arg))
-                }
+        DerivationTree::Application {
+            direction,
+            left,
+            right,
+            ..
+        } => match direction {
+            Direction::Forward => {
+                let f = compile_derivation(left, lexicon);
+                let arg = compile_derivation(right, lexicon);
+                CoreIR::App(Box::new(f), Box::new(arg))
             }
-        }
+            Direction::Backward => {
+                let f = compile_derivation(right, lexicon);
+                let arg = compile_derivation(left, lexicon);
+                CoreIR::App(Box::new(f), Box::new(arg))
+            }
+        },
         DerivationTree::Composition { left, right, .. } => {
             let f = compile_derivation(left, lexicon);
             let g = compile_derivation(right, lexicon);
@@ -35,10 +39,7 @@ fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
                 z.clone(),
                 Box::new(CoreIR::App(
                     Box::new(f),
-                    Box::new(CoreIR::App(
-                        Box::new(g),
-                        Box::new(CoreIR::Var(z)),
-                    )),
+                    Box::new(CoreIR::App(Box::new(g), Box::new(CoreIR::Var(z)))),
                 )),
             )
         }
@@ -56,15 +57,11 @@ fn instantiate_template(template: &SemExpr) -> CoreIR {
             let compiled_args = args.iter().map(instantiate_template).collect();
             CoreIR::Con(tag_id(tag), compiled_args)
         }
-        SemExpr::Lam(var, body) => {
-            CoreIR::Lam(var.clone(), Box::new(instantiate_template(body)))
-        }
-        SemExpr::App(f, arg) => {
-            CoreIR::App(
-                Box::new(instantiate_template(f)),
-                Box::new(instantiate_template(arg)),
-            )
-        }
+        SemExpr::Lam(var, body) => CoreIR::Lam(var.clone(), Box::new(instantiate_template(body))),
+        SemExpr::App(f, arg) => CoreIR::App(
+            Box::new(instantiate_template(f)),
+            Box::new(instantiate_template(arg)),
+        ),
     }
 }
 

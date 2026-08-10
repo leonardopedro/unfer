@@ -15,17 +15,15 @@ use std::path::Path;
 
 use rustc_hash::FxHashMap;
 
-use crate::accumulate::{
-    ChannelAccumulator, Encoder, ModeStats,
-};
+use crate::accumulate::{ChannelAccumulator, Encoder, ModeStats};
 #[cfg(test)]
 use crate::accumulate::{observe_shard_with_registry, observe_with_registry};
 use crate::config::TextConfig;
 use crate::corpus::Shard;
 use crate::error::QfmTextError;
 use crate::model::QfmTextModel;
-use crate::registry::VACUUM_MODE;
 use crate::registry::ContextRegistry;
+use crate::registry::VACUUM_MODE;
 
 /// The perplexity report: token count, nats-per-token, and ppl.
 #[derive(Debug, Clone, PartialEq)]
@@ -92,9 +90,7 @@ fn log_progress(n: u64, start: std::time::Instant) {
     if n % PROGRESS_EVERY == 0 {
         let elapsed = start.elapsed().as_secs_f64();
         let rate = n as f64 / elapsed.max(1e-9);
-        eprintln!(
-            "[perplexity] {n} tokens scored, elapsed = {elapsed:.1}s, {rate:.1} tok/s"
-        );
+        eprintln!("[perplexity] {n} tokens scored, elapsed = {elapsed:.1}s, {rate:.1} tok/s");
     }
 }
 
@@ -260,7 +256,10 @@ impl NgramBaseline {
         let cfg = acc.cfg.clone();
         let unigram_total: f64 = acc.unigram.iter().map(|&c| c as f64).sum();
         let unigram: Vec<f64> = if unigram_total > 0.0 {
-            acc.unigram.iter().map(|&c| c as f64 / unigram_total).collect()
+            acc.unigram
+                .iter()
+                .map(|&c| c as f64 / unigram_total)
+                .collect()
         } else {
             vec![0.0; acc.unigram.len()]
         };

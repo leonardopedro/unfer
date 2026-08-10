@@ -14,15 +14,15 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rust_quepaxa::network::TlsIdentity;
 use tokio::time::timeout;
 
-use unfer_consensus::certs::{commit_coin, MintAuthority};
+use unfer_consensus::certs::{MintAuthority, commit_coin};
 use unfer_consensus::engine::ConsensusEngine;
 use unfer_consensus::net::NetworkCluster;
 use unfer_consensus::node::ConsensusNode;
-use unfer_consensus::signing::{sign_transaction, Keypair};
+use unfer_consensus::signing::{Keypair, sign_transaction};
 use unfer_protocol::{
     CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction, IdentityOp,
     IdentityOpKind, MintRequest,
@@ -42,15 +42,19 @@ fn temp_state_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "unfer-{name}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("unfer-{name}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
-fn mint_op(authority: &Keypair, amount: u64, owner: &Keypair, blinding: [u8; 32], seq: u64, source: &str) -> ConsensusTransaction {
+fn mint_op(
+    authority: &Keypair,
+    amount: u64,
+    owner: &Keypair,
+    blinding: [u8; 32],
+    seq: u64,
+    source: &str,
+) -> ConsensusTransaction {
     let mut tx = ConsensusTransaction::CertificateOp(CertificateOp {
         did: authority.did(),
         kind: CertificateOpKind::Mint {
@@ -79,7 +83,12 @@ fn identity_op(bob: &Keypair, seq: u64) -> ConsensusTransaction {
     tx
 }
 
-fn transfer_op(alice: &Keypair, bob: &Keypair, blinding: [u8; 32], seq: u64) -> ConsensusTransaction {
+fn transfer_op(
+    alice: &Keypair,
+    bob: &Keypair,
+    blinding: [u8; 32],
+    seq: u64,
+) -> ConsensusTransaction {
     let alice_coin = commit_coin(1000, &alice.did(), &blinding);
     let mut tx = ConsensusTransaction::CertificateOp(CertificateOp {
         did: alice.did(),
@@ -123,14 +132,23 @@ async fn phase6_testnet_backs_consensus_node_with_certificate_ops() {
     assert_eq!(nodes.len(), 2);
 
     // Op 1: the mint authority plates one carbon certificate to alice.
-    let mint = mint_op(&authority, 1000, &alice, [1u8; 32], 1, "unfccc:vc:TESTNET-0001");
+    let mint = mint_op(
+        &authority,
+        1000,
+        &alice,
+        [1u8; 32],
+        1,
+        "unfccc:vc:TESTNET-0001",
+    );
     nodes[0].submit(mint).unwrap();
 
     // Op 2: an identity registration, interleaved on the second live node.
     nodes[1].submit(identity_op(&bob, 1)).unwrap();
 
     // Op 3: alice spends her whole certificate to bob.
-    nodes[1].submit(transfer_op(&alice, &bob, [1u8; 32], 2)).unwrap();
+    nodes[1]
+        .submit(transfer_op(&alice, &bob, [1u8; 32], 2))
+        .unwrap();
 
     // Let QuePaxa commit all three slots.
     timeout(Duration::from_secs(90), cluster.wait_committed(3))
@@ -180,7 +198,9 @@ async fn phase6_nodes_survive_full_cluster_restart() {
 
     // ---- Phase A: commit a mint + identity + transfer, then stop everything.
     let (root0, addresses) = {
-        let cluster = NetworkCluster::begin(identities.clone(), &state_dir).await.unwrap();
+        let cluster = NetworkCluster::begin(identities.clone(), &state_dir)
+            .await
+            .unwrap();
         let addresses = cluster.addresses.clone();
         let mut nodes: Vec<ConsensusNode> = (0..cluster.nodes.len())
             .map(|_| {
@@ -191,9 +211,20 @@ async fn phase6_nodes_survive_full_cluster_restart() {
             })
             .collect();
 
-        nodes[0].submit(mint_op(&authority, 1000, &alice, [1u8; 32], 1, "unfccc:vc:TESTNET-0001")).unwrap();
+        nodes[0]
+            .submit(mint_op(
+                &authority,
+                1000,
+                &alice,
+                [1u8; 32],
+                1,
+                "unfccc:vc:TESTNET-0001",
+            ))
+            .unwrap();
         nodes[1].submit(identity_op(&bob, 1)).unwrap();
-        nodes[1].submit(transfer_op(&alice, &bob, [1u8; 32], 2)).unwrap();
+        nodes[1]
+            .submit(transfer_op(&alice, &bob, [1u8; 32], 2))
+            .unwrap();
 
         timeout(Duration::from_secs(90), cluster.wait_committed(3))
             .await
@@ -239,7 +270,14 @@ async fn phase6_nodes_survive_full_cluster_restart() {
 
     // ---- Phase C: fresh slots keep committing on top of the restarted log.
     nodes[0]
-        .submit(mint_op(&authority, 500, &alice, [2u8; 32], 2, "unfccc:vc:TESTNET-0002"))
+        .submit(mint_op(
+            &authority,
+            500,
+            &alice,
+            [2u8; 32],
+            2,
+            "unfccc:vc:TESTNET-0002",
+        ))
         .unwrap();
     timeout(Duration::from_secs(90), cluster.wait_committed(4))
         .await
@@ -283,13 +321,17 @@ async fn phase6_secondary_market_escrow_lands_on_the_consensus_log() {
 
     use unfer_consensus::escrow::EscrowService;
 
-    let mut market = EscrowService::new(
-        operator,
-        MintAuthority::Only(authority.did()),
-    );
+    let mut market = EscrowService::new(operator, MintAuthority::Only(authority.did()));
 
     // The mint that plates the certificate — goes through the network log.
-    let mint = mint_op(&authority, 1000, &alice, [1u8; 32], 1, "unfccc:vc:TESTNET-ESCROW");
+    let mint = mint_op(
+        &authority,
+        1000,
+        &alice,
+        [1u8; 32],
+        1,
+        "unfccc:vc:TESTNET-ESCROW",
+    );
     let mut nodes: Vec<ConsensusNode> = (0..cluster.nodes.len())
         .map(|_| {
             ConsensusNode::with_mint_authority(
@@ -401,7 +443,10 @@ async fn phase6_oracle_client_audits_provenance_from_the_cluster() {
             source: source.clone(),
             blinding: None,
         };
-        assert!(request.validate_source().is_ok(), "well-formed oracle record");
+        assert!(
+            request.validate_source().is_ok(),
+            "well-formed oracle record"
+        );
         let mut tx = ConsensusTransaction::CertificateOp(CertificateOp {
             did: authority.did(),
             kind: request.to_mint_kind(),
@@ -442,7 +487,8 @@ async fn phase6_oracle_client_audits_provenance_from_the_cluster() {
         .filter_map(|(_, tx)| match tx {
             ConsensusTransaction::CertificateOp(op) => match &op.kind {
                 CertificateOpKind::Mint {
-                    source: Some(source), ..
+                    source: Some(source),
+                    ..
                 } => Some(source.clone()),
                 _ => None,
             },

@@ -1,8 +1,8 @@
 use logos::ccg;
 use logos::core_ir;
 use logos::deltanet;
-use logos::lexicon::Lexicon;
 use logos::l1::{self, TriggerTable};
+use logos::lexicon::Lexicon;
 
 fn test_lexicon() -> Lexicon {
     let tsv = concat!(
@@ -95,7 +95,10 @@ fn test_unf_hash_different_sentences() {
     let lex = test_lexicon();
     let (_r1, h1) = pipeline("John loves Mary", &lex);
     let (_r2, h2) = pipeline("Mary sees John", &lex);
-    assert_ne!(h1, h2, "different sentences should produce different UNF hashes");
+    assert_ne!(
+        h1, h2,
+        "different sentences should produce different UNF hashes"
+    );
 }
 
 #[test]
@@ -110,7 +113,10 @@ fn test_unf_hash_intensional_equivalence() {
 #[test]
 fn test_l1_no_triggers_single_world() {
     let lex = test_lexicon();
-    let tokens: Vec<String> = "John loves Mary".split_whitespace().map(String::from).collect();
+    let tokens: Vec<String> = "John loves Mary"
+        .split_whitespace()
+        .map(String::from)
+        .collect();
     let trees = ccg::parse_sentence(&tokens, &lex);
     assert!(!trees.is_empty());
     let triggers = TriggerTable::new();

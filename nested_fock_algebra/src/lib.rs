@@ -543,7 +543,10 @@ mod tests {
 
     #[test]
     fn project_vacuum_self_adjoint() {
-        assert!(matches!(Operator::ProjectVacuum.adjoint(), Operator::ProjectVacuum));
+        assert!(matches!(
+            Operator::ProjectVacuum.adjoint(),
+            Operator::ProjectVacuum
+        ));
     }
 
     #[test]

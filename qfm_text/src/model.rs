@@ -52,16 +52,14 @@ use num_complex::Complex64;
 use qfm::{QfmConfig, QfmPipeline};
 use rustc_hash::FxHashMap;
 
-use crate::accumulate::{
-    ChannelAccumulator, ModeStats,
-};
+use crate::accumulate::{ChannelAccumulator, ModeStats};
 #[cfg(test)]
 use crate::accumulate::{observe_shard_with_registry, observe_with_registry};
-use crate::oxieml_decoder;
-use oxieml::tree::EmlTree;
 use crate::config::{DecodeStrategy, TextConfig};
 use crate::error::QfmTextError;
+use crate::oxieml_decoder;
 use crate::registry::{ContextRegistry, VACUUM_MODE};
+use oxieml::tree::EmlTree;
 
 /// Metadata baked into the serialized model so a future reader can
 /// refuse incompatible files. Mirrors `QfmTextError::BadManifest`'s
@@ -271,12 +269,12 @@ fn decode_with_trees(
                 // column max-abs at this row as a scale
                 // factor; this is approximate but preserves
                 // the relative magnitudes.
-                let scale = fallback.column(j).iter().map(|c| c.norm()).fold(0.0_f64, f64::max);
-                if scale > 0.0 {
-                    val / scale
-                } else {
-                    0.0
-                }
+                let scale = fallback
+                    .column(j)
+                    .iter()
+                    .map(|c| c.norm())
+                    .fold(0.0_f64, f64::max);
+                if scale > 0.0 { val / scale } else { 0.0 }
             } else {
                 fallback[(row, j)].re
             };
@@ -372,7 +370,7 @@ impl QfmTextModel {
             k2_total as usize,
             &qfm_cfg,
             fock_r as f64, // r_in
-            0.0,            // r_out (unused for text)
+            0.0,           // r_out (unused for text)
             true,
             None,
             None,
@@ -381,7 +379,10 @@ impl QfmTextModel {
         // Unigram normalize.
         let unigram_total: f64 = acc.unigram.iter().map(|&c| c as f64).sum();
         let unigram: Vec<f64> = if unigram_total > 0.0 {
-            acc.unigram.iter().map(|&c| c as f64 / unigram_total).collect()
+            acc.unigram
+                .iter()
+                .map(|&c| c as f64 / unigram_total)
+                .collect()
         } else {
             vec![0.0; acc.unigram.len()]
         };
@@ -416,9 +417,8 @@ impl QfmTextModel {
         // formula was a special case that only held under
         // bounded-hash equal-weight assumptions.
         let total = unigram_total.max(1.0);
-        let vacuum_states = Self::compute_mehler_vacua(
-            &pipeline, &registry, cfg, &mode_hists, total,
-        );
+        let vacuum_states =
+            Self::compute_mehler_vacua(&pipeline, &registry, cfg, &mode_hists, total);
         // Compute the outer vacuum |Ψ_0⟩ (rev 37 v3). Precomputed
         // during SIRK via projection of the starting vector v0
         // (uniform over all modes, normalized) onto the Gram-whitened
@@ -594,10 +594,7 @@ impl QfmTextModel {
     /// unigram is the marginal distribution, so this is a
     /// semantically clean fallback: every token gets its
     /// marginal-frequency count in the vacuum mode.
-    fn init_vacuum_histogram(
-        mode_hists: &mut FxHashMap<u32, ModeStats>,
-        unigram_counts: &[u64],
-    ) {
+    fn init_vacuum_histogram(mode_hists: &mut FxHashMap<u32, ModeStats>, unigram_counts: &[u64]) {
         let mut vacuum = ModeStats::default();
         let total: u64 = unigram_counts.iter().sum();
         vacuum.weight = total;
@@ -843,10 +840,7 @@ impl QfmTextModel {
     /// Cost: `n` forward solves per token instead of 1. For the
     /// production 4-order model with `n_orders=4`, this is a 4×
     /// cost (still dominated by the per-mode histogram lookups).
-    pub fn next_token_dist_model_avg(
-        &self,
-        context: &[u32],
-    ) -> Result<Vec<f64>, QfmTextError> {
+    pub fn next_token_dist_model_avg(&self, context: &[u32]) -> Result<Vec<f64>, QfmTextError> {
         // 1. Build the per-order Krylov inputs (registry W-rows
         //    for seen orders, dressed vacua |0̃_o⟩ for unseen).
         let c_0_list = self.encode_context_per_order(context);
@@ -868,7 +862,10 @@ impl QfmTextModel {
         let mut acc: FxHashMap<u32, f64> = FxHashMap::default();
         for c_0 in &c_0_list {
             let c_1 = self.pipeline.evolve(c_0, self.cfg.t);
-            for (m, p) in self.pipeline.decode_sketched_at(&c_1, &self.gram, &active_modes) {
+            for (m, p) in self
+                .pipeline
+                .decode_sketched_at(&c_1, &self.gram, &active_modes)
+            {
                 *acc.entry(m).or_insert(0.0) += p;
             }
         }
@@ -893,8 +890,7 @@ impl QfmTextModel {
         for o in 1..=n {
             let m_opt = self.registry.lookup(o, context).or_else(|| {
                 if use_hasher {
-                    crate::features::OrderHasher::new(self.cfg.clone())
-                        .mode_for(o, context)
+                    crate::features::OrderHasher::new(self.cfg.clone()).mode_for(o, context)
                 } else {
                     None
                 }
@@ -956,10 +952,8 @@ impl QfmTextModel {
             .iter()
             .map(|&p| (p * self.unigram_total).round() as u64)
             .collect();
-        let mut acc = crate::accumulate::ChannelAccumulator::new(
-            self.unigram.len() as u32,
-            self.cfg.clone(),
-        );
+        let mut acc =
+            crate::accumulate::ChannelAccumulator::new(self.unigram.len() as u32, self.cfg.clone());
         acc.stats = self.mode_hists.clone();
         acc.unigram = unigram;
         acc.total_windows = self.unigram_total as u64;
@@ -1090,26 +1084,20 @@ impl QfmTextModel {
     /// Both paths produce the same `(mode, weight)` list — a
     /// sparse vector over the per-context active modes that
     /// `marginalize` consumes.
-    fn decode_at(
-        &self,
-        c_1: &DVector<Complex64>,
-        active_modes: &[u32],
-    ) -> Vec<(u32, f64)> {
+    fn decode_at(&self, c_1: &DVector<Complex64>, active_modes: &[u32]) -> Vec<(u32, f64)> {
         // Dispatch on the model's decoder. The default
         // (Dense) keeps the rev 36 behavior. The Analytical
         // path is only active after `fit_oxieml_decoder` is
         // called and `decoder` is replaced.
         match &self.decoder {
-            DecoderKind::Dense => {
-                self.pipeline.decode_sketched_at(c_1, &self.gram, active_modes)
-            }
+            DecoderKind::Dense => self
+                .pipeline
+                .decode_sketched_at(c_1, &self.gram, active_modes),
             DecoderKind::Analytical {
                 trees,
                 fallback,
                 column_ok,
-            } => {
-                decode_with_trees(c_1, &self.gram, active_modes, trees, fallback, column_ok)
-            }
+            } => decode_with_trees(c_1, &self.gram, active_modes, trees, fallback, column_ok),
         }
     }
 
@@ -1126,10 +1114,7 @@ impl QfmTextModel {
     /// (dense W complex128) to `O(rank * tree_size)` bytes
     /// for the trees plus `O(M * rank_failed * 16)` for
     /// any fallback columns.
-    pub fn fit_oxieml_decoder(
-        &mut self,
-        opts: oxieml_decoder::OxiemlFitOpts,
-    ) -> OxiemlFitSummary {
+    pub fn fit_oxieml_decoder(&mut self, opts: oxieml_decoder::OxiemlFitOpts) -> OxiemlFitSummary {
         let w = self.pipeline.w();
         let (m, rank) = (w.nrows(), w.ncols());
         // Build per-column real vectors (we fit on the real
@@ -1178,8 +1163,7 @@ impl QfmTextModel {
             }
         }
         // Replace the decoder.
-        let trees: Vec<oxieml::tree::EmlTree> =
-            fits.iter().map(|f| f.tree.clone()).collect();
+        let trees: Vec<oxieml::tree::EmlTree> = fits.iter().map(|f| f.tree.clone()).collect();
         let n_fallback = column_ok.iter().filter(|ok| !**ok).count();
         self.decoder = DecoderKind::Analytical {
             trees,
@@ -1238,7 +1222,11 @@ impl QfmTextModel {
                 // and treated as a proper distribution over it. If
                 // the Krylov put zero mass on every per-context
                 // active mode, fall back to uniform over them.
-                let sum: f64 = weights.iter().filter(|&&(_, w)| w > 0.0).map(|&(_, w)| w).sum();
+                let sum: f64 = weights
+                    .iter()
+                    .filter(|&&(_, w)| w > 0.0)
+                    .map(|&(_, w)| w)
+                    .sum();
                 if sum > 0.0 {
                     weights
                         .iter()
@@ -1263,9 +1251,7 @@ impl QfmTextModel {
                 let k = self.cfg.top_k.max(1);
                 let mut entries: Vec<(u32, f64)> =
                     weights.iter().copied().filter(|&(_, w)| w > 0.0).collect();
-                entries.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 let mut truncated: Vec<(u32, f64)> = entries.iter().take(k).copied().collect();
                 if !truncated.iter().any(|&(m, _)| m == 0) {
                     if let Some(&(m, w)) = entries.iter().find(|&&(m, _)| m == 0) {
@@ -1393,8 +1379,7 @@ impl QfmTextModel {
         // directly to reconstruct the model.
         let _meta: serde_json::Value = serde_json::from_slice(&buf[offset..offset + meta_len])?;
         offset += meta_len;
-        let payload_len =
-            u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap()) as usize;
+        let payload_len = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap()) as usize;
         offset += 8;
         if offset + payload_len != buf.len() {
             return Err(QfmTextError::BadManifest {
@@ -1698,9 +1683,7 @@ fn decode_payload(buf: &[u8]) -> Result<QfmTextModel, QfmTextError> {
             let n_toks = key_bytes_len / 4;
             let mut key: Vec<u32> = Vec::with_capacity(n_toks);
             for i in 0..n_toks {
-                let t = u32::from_le_bytes(
-                    key_bytes[i * 4..i * 4 + 4].try_into().unwrap(),
-                );
+                let t = u32::from_le_bytes(key_bytes[i * 4..i * 4 + 4].try_into().unwrap());
                 key.push(t);
             }
             let mode = read_u32(&mut o);
@@ -1940,7 +1923,10 @@ mod tests {
         // about them and shouldn't fabricate probability mass.
         for (i, &p) in dist.iter().enumerate() {
             if model.unigram[i] > 0.0 {
-                assert!(p > 0.0, "P[{i}] = {p} must be > 0 for tokens with non-zero unigram");
+                assert!(
+                    p > 0.0,
+                    "P[{i}] = {p} must be > 0 for tokens with non-zero unigram"
+                );
             }
         }
         // The context-conditioned peak (token 2) must carry
@@ -1993,8 +1979,7 @@ mod tests {
         let tokens: Vec<u32> = (0..500).map(|i| i % 11).collect();
         let (acc_dense, reg_dense, mut c_dense) = build_toy_corpus(&tokens);
         c_dense.decode_strategy = DecodeStrategy::Dense;
-        let model_dense =
-            QfmTextModel::from_accumulator(acc_dense, reg_dense, &c_dense).unwrap();
+        let model_dense = QfmTextModel::from_accumulator(acc_dense, reg_dense, &c_dense).unwrap();
         let (acc_renorm, reg_renorm, mut c_renorm) = build_toy_corpus(&tokens);
         c_renorm.decode_strategy = DecodeStrategy::Renormalize;
         let model_renorm =

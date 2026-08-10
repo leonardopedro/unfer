@@ -50,7 +50,10 @@ impl HarperGate {
         let mut idx = 0;
 
         for word in input.split_whitespace() {
-            let clean: String = word.chars().filter(|c| c.is_alphabetic() || *c == '\'').collect();
+            let clean: String = word
+                .chars()
+                .filter(|c| c.is_alphabetic() || *c == '\'')
+                .collect();
             if clean.is_empty() {
                 continue;
             }
@@ -76,8 +79,8 @@ impl HarperGate {
             "sleeps" | "runs" => "VBZ".to_string(),
             "is" | "equals" | "greater" | "less" => "VBZ".to_string(),
             "adds" | "multiplies" | "subtracts" => "VBZ".to_string(),
-            "zero" | "one" | "two" | "three" | "four" | "five"
-            | "six" | "seven" | "eight" | "nine" | "ten" => "CD".to_string(),
+            "zero" | "one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight"
+            | "nine" | "ten" => "CD".to_string(),
             "big" | "small" | "red" | "blue" => "JJ".to_string(),
             "and" => "CC".to_string(),
             "that" | "which" => "WDT".to_string(),

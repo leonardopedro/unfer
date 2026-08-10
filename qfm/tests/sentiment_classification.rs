@@ -22,18 +22,18 @@ const T: f64 = 0.5;
 
 fn word_features(word: &str) -> Vec<u32> {
     match word {
-        "good"      => vec![0, 1],
-        "great"     => vec![2, 3],
-        "nice"      => vec![4, 5],
-        "love"      => vec![6, 7],
-        "bad"       => vec![8, 9],
-        "terrible"  => vec![10, 11],
-        "awful"     => vec![12, 13],
-        "the"       => vec![0, 12],
-        "a"         => vec![1, 13],
-        "is"        => vec![2, 10],
+        "good" => vec![0, 1],
+        "great" => vec![2, 3],
+        "nice" => vec![4, 5],
+        "love" => vec![6, 7],
+        "bad" => vec![8, 9],
+        "terrible" => vec![10, 11],
+        "awful" => vec![12, 13],
+        "the" => vec![0, 12],
+        "a" => vec![1, 13],
+        "is" => vec![2, 10],
         "excellent" => vec![0, 6],
-        "dreadful"  => vec![8, 13],
+        "dreadful" => vec![8, 13],
         _ => panic!("unknown word: {word}"),
     }
 }
@@ -47,15 +47,18 @@ fn word_label(word: &str) -> Option<&'static str> {
     }
 }
 
-const TRAINING_WORDS: &[&str] = &[
-    "good", "great", "nice", "love",
-    "bad", "terrible", "awful",
-];
+const TRAINING_WORDS: &[&str] = &["good", "great", "nice", "love", "bad", "terrible", "awful"];
 
 const HELD_OUT_WORDS: &[&str] = &["excellent", "dreadful"];
 const NEUTRAL_WORDS: &[&str] = &["the", "a", "is"];
 
-fn encode_vacuum(features: &[u32], n_out: usize, o_stride: usize, w: &DMatrix<Complex64>, rank: usize) -> DVector<Complex64> {
+fn encode_vacuum(
+    features: &[u32],
+    n_out: usize,
+    o_stride: usize,
+    w: &DMatrix<Complex64>,
+    rank: usize,
+) -> DVector<Complex64> {
     let mut c0 = DVector::zeros(rank);
     let inv_sqrt_total = 1.0 / ((features.len() * n_out) as f64).sqrt();
     for &f in features {
@@ -77,23 +80,42 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
 
     let mut transitions = Vec::new();
     for &word in TRAINING_WORDS {
-        let label = if word_label(word) == Some("pos") { POS } else { NEG };
+        let label = if word_label(word) == Some("pos") {
+            POS
+        } else {
+            NEG
+        };
         for &f in &word_features(word) {
             transitions.push((f, label));
         }
     }
 
     let config = QfmConfig {
-        k: 1, k2: N_FEATURES + N_OUTPUTS, krylov_dim: 14,
-        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None,
+        k: 1,
+        k2: N_FEATURES + N_OUTPUTS,
+        krylov_dim: 14,
+        seed: 42,
+        n_t_samples: 4,
+        noise_dim: 1,
+        max_rank: None,
         ..Default::default()
     };
 
     let pipeline = QfmPipeline::compile_channels(
-        &input_modes, output_modes, &transitions,
-        LAMBDA0, LAMBDA1, N_FEATURES + N_OUTPUTS, &config, 0.0, 0.0, true,
-        None, None,
-    ).expect("pipeline compile");
+        &input_modes,
+        output_modes,
+        &transitions,
+        LAMBDA0,
+        LAMBDA1,
+        N_FEATURES + N_OUTPUTS,
+        &config,
+        0.0,
+        0.0,
+        true,
+        None,
+        None,
+    )
+    .expect("pipeline compile");
 
     let rank = pipeline.rank();
     let w = pipeline.w();
@@ -132,17 +154,27 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
             let correct_flag = predicted == expected;
 
             if is_train {
-                if correct_flag { train_correct += 1; }
+                if correct_flag {
+                    train_correct += 1;
+                }
                 train_total += 1;
-                if correct_flag { correct += 1; }
+                if correct_flag {
+                    correct += 1;
+                }
                 total += 1;
-                eprintln!("  [train] {word:>10}: → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
-                    if correct_flag { "✓" } else { "✗" });
+                eprintln!(
+                    "  [train] {word:>10}: → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
+                    if correct_flag { "✓" } else { "✗" }
+                );
             } else if is_held_out {
-                if correct_flag { correct += 1; }
+                if correct_flag {
+                    correct += 1;
+                }
                 total += 1;
-                eprintln!("  [test]  {word:>10}: → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
-                    if correct_flag { "✓" } else { "✗" });
+                eprintln!(
+                    "  [test]  {word:>10}: → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
+                    if correct_flag { "✓" } else { "✗" }
+                );
             }
         } else {
             eprintln!("  [neut]  {word:>10}: → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})");
@@ -184,11 +216,15 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
 
         let predicted = if p_pos > p_neg { "pos" } else { "neg" };
         let correct_flag = predicted == *expected;
-        if correct_flag { correct += 1; }
+        if correct_flag {
+            correct += 1;
+        }
         total += 1;
-        eprintln!("  [sent]  \"{}\": → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
+        eprintln!(
+            "  [sent]  \"{}\": → {predicted}(pos={p_pos:.4e},neg={p_neg:.4e})  {}",
             words.join(" "),
-            if correct_flag { "✓" } else { "✗" });
+            if correct_flag { "✓" } else { "✗" }
+        );
     }
 
     eprintln!("  accuracy: {correct}/{total}  (train: {train_correct}/{train_total})");

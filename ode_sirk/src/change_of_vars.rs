@@ -35,7 +35,12 @@ pub fn apply_cov(sys: &ODESystem, cov: &CoV) -> OdeSirkResult<TransformedSystem>
     match cov {
         CoV::None => {
             let maps = (0..sys.n_vars())
-                .map(|i| (i, Box::new(move |w: f64| w) as Box<dyn Fn(f64) -> f64 + Send + Sync>))
+                .map(|i| {
+                    (
+                        i,
+                        Box::new(move |w: f64| w) as Box<dyn Fn(f64) -> f64 + Send + Sync>,
+                    )
+                })
                 .collect();
             Ok(TransformedSystem {
                 new_ode: sys.clone(),
@@ -76,9 +81,16 @@ fn apply_reciprocal(sys: &ODESystem, k: usize) -> OdeSirkResult<TransformedSyste
     let mut observable_maps = HashMap::new();
     for j in 0..n {
         if j == k {
-            observable_maps.insert(j, Box::new(|w: f64| {
-                if w.abs() > 1e-15 { 1.0 / w } else { f64::INFINITY }
-            }) as Box<dyn Fn(f64) -> f64 + Send + Sync>);
+            observable_maps.insert(
+                j,
+                Box::new(|w: f64| {
+                    if w.abs() > 1e-15 {
+                        1.0 / w
+                    } else {
+                        f64::INFINITY
+                    }
+                }) as Box<dyn Fn(f64) -> f64 + Send + Sync>,
+            );
         } else {
             observable_maps.insert(j, Box::new(move |w: f64| w));
         }
@@ -121,7 +133,10 @@ fn apply_logarithmic(sys: &ODESystem, k: usize) -> OdeSirkResult<TransformedSyst
     let mut observable_maps = HashMap::new();
     for j in 0..n {
         if j == k {
-            observable_maps.insert(j, Box::new(|w: f64| w.exp()) as Box<dyn Fn(f64) -> f64 + Send + Sync>);
+            observable_maps.insert(
+                j,
+                Box::new(|w: f64| w.exp()) as Box<dyn Fn(f64) -> f64 + Send + Sync>,
+            );
         } else {
             observable_maps.insert(j, Box::new(move |w: f64| w.exp()));
         }
@@ -161,7 +176,10 @@ fn monomial_poly(coeff: f64, exponents: &[i32]) -> Polynomial {
     // and handle the reciprocal case in the flow evaluator.
     let unsigned: Vec<u32> = exponents.iter().map(|&e| e.max(0) as u32).collect();
     Polynomial {
-        terms: vec![crate::ode::Monomial { coeff, exponents: unsigned }],
+        terms: vec![crate::ode::Monomial {
+            coeff,
+            exponents: unsigned,
+        }],
         n_vars,
     }
 }

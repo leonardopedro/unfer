@@ -45,8 +45,7 @@ fn hopping_hamiltonian() -> Hamiltonian {
 fn main() {
     let device = best_device();
     let h = hopping_hamiltonian();
-    let v0 =
-        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let v0 = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     let opts = SirkOpts::default();
 
     println!("device: {device:?}");
@@ -77,7 +76,11 @@ fn main() {
 
         println!(
             "{m:<4} {:>6} {:>6} {:>12} {:>12} {:>10}",
-            rank, auto_m, solve_us, evolve_us, batches.len()
+            rank,
+            auto_m,
+            solve_us,
+            evolve_us,
+            batches.len()
         );
 
         assert!(

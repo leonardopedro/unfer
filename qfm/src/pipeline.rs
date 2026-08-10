@@ -32,9 +32,9 @@ use crate::sketch::{CountSketch, FeatureToMode};
 use candle_core::Device;
 use fock_sirk::{ForwardSirkResult, solve_forward_sirk};
 use nalgebra::{DMatrix, DVector};
-use std::collections::HashMap;
 use nested_fock_algebra::{InnerBosonicState, OuterState, QuantumState};
 use num_complex::Complex64;
+use std::collections::HashMap;
 
 /// Select which Hamiltonian to use for the tensor-product dense path.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -852,9 +852,20 @@ impl QfmPipeline {
         kernel_sigma: Option<f64>,
     ) -> Result<Self, QfmError> {
         Self::compile_channels_with_kernel(
-            input_modes, output_modes, transitions,
-            lambda0, lambda1, k2_total, config,
-            r_in, r_out, do_whiten, per_mode_weights, kernel_sigma, None, 0.0,
+            input_modes,
+            output_modes,
+            transitions,
+            lambda0,
+            lambda1,
+            k2_total,
+            config,
+            r_in,
+            r_out,
+            do_whiten,
+            per_mode_weights,
+            kernel_sigma,
+            None,
+            0.0,
         )
     }
 
@@ -889,38 +900,73 @@ impl QfmPipeline {
             // Tensor-product (dense) path.
             let n_in = input_modes.len();
             let n_out = output_modes.len();
-            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
-                dense_forward_sirk(n_in, n_out, input_modes, output_modes, transitions,
-                                   lambda0, lambda1, &shifts, do_whiten, per_mode_weights,
-                                   kernel_sigma, prebuilt_kernel.as_ref(), gamma,
-                                   config.random_start, config.seed,
-                                   config.hamiltonian_type, config.pauli_grover_a)?;
+            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) = dense_forward_sirk(
+                n_in,
+                n_out,
+                input_modes,
+                output_modes,
+                transitions,
+                lambda0,
+                lambda1,
+                &shifts,
+                do_whiten,
+                per_mode_weights,
+                kernel_sigma,
+                prebuilt_kernel.as_ref(),
+                gamma,
+                config.random_start,
+                config.seed,
+                config.hamiltonian_type,
+                config.pauli_grover_a,
+            )?;
             if rank == 0 {
                 return Err(QfmError::DegenerateBasis);
             }
             let o_stride = n_out;
             // Use prebuilt kernel for projection if provided, otherwise build from modes
             let kernel: Option<SparseKernel> = prebuilt_kernel.or_else(|| {
-                let n_bits = input_modes.iter().max()
+                let n_bits = input_modes
+                    .iter()
+                    .max()
                     .map(|&m| (8 * std::mem::size_of::<u32>() - m.leading_zeros() as usize).max(1))
                     .unwrap_or(1);
                 kernel_sigma.map(|s| build_sparse_kernel(input_modes, n_bits, s, 1e-4))
             });
-            let mut w = project_dense_basis(&w_sequence, &w_whiten, n_in, n_out, o_stride, rank,
-                                             kernel.as_ref());
+            let mut w = project_dense_basis(
+                &w_sequence,
+                &w_whiten,
+                n_in,
+                n_out,
+                o_stride,
+                rank,
+                kernel.as_ref(),
+            );
             normalize_rows(&mut w);
             (w, h_proj, rank, outer_vacuum)
         } else {
             // Compact (sparse) path — no output modes.
-            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) =
-                compact_forward_sirk(input_modes, output_modes, transitions, lambda0, lambda1,
-                                     &shifts, r_in, r_out, do_whiten, per_mode_weights)?;
+            let (w_whiten, h_proj, rank, w_sequence, outer_vacuum) = compact_forward_sirk(
+                input_modes,
+                output_modes,
+                transitions,
+                lambda0,
+                lambda1,
+                &shifts,
+                r_in,
+                r_out,
+                do_whiten,
+                per_mode_weights,
+            )?;
             if rank == 0 {
                 return Err(QfmError::DegenerateBasis);
             }
             let all_modes_for_w: Vec<u32> = input_modes.to_vec();
             let mut w = project_compact_modes_onto_krylov_basis(
-                &w_sequence, &w_whiten, k2_total, rank, &all_modes_for_w,
+                &w_sequence,
+                &w_whiten,
+                k2_total,
+                rank,
+                &all_modes_for_w,
             );
             normalize_rows(&mut w);
             (w, h_proj, rank, outer_vacuum)
@@ -1173,7 +1219,9 @@ struct DenseState {
 impl DenseState {
     fn new(n_in: usize, n_out: usize) -> Self {
         let dim = n_in * n_out;
-        Self { amplitudes: vec![Complex64::new(0.0, 0.0); dim] }
+        Self {
+            amplitudes: vec![Complex64::new(0.0, 0.0); dim],
+        }
     }
 
     fn inner_product(&self, other: &Self) -> Complex64 {
@@ -1215,7 +1263,7 @@ impl DenseState {
 fn dense_diffusion_matvec<'a>(
     n_in: usize,
     n_out: usize,
-    tp_transitions: &'a [(usize, usize)],  // pre-mapped (i_tp, o_tp) pairs
+    tp_transitions: &'a [(usize, usize)], // pre-mapped (i_tp, o_tp) pairs
     lambda0: f64,
     lambda1: f64,
     per_mode_weights: Option<&'a HashMap<(u32, u32), f64>>,
@@ -1273,17 +1321,24 @@ fn dense_diffusion_matvec<'a>(
                         // Forward: gather vacuum from j ≠ i
                         let mut vac_off = Complex64::new(0.0, 0.0);
                         for &(j, k_val) in &kern.rows[i_tp] {
-                            if j == i_tp { continue; }
+                            if j == i_tp {
+                                continue;
+                            }
                             let j0 = j * o_stride;
                             let mut s = c.amplitudes[j0];
-                            for g in 1..n_out { s += c.amplitudes[j0 + g]; }
+                            for g in 1..n_out {
+                                s += c.amplitudes[j0 + g];
+                            }
                             vac_off += k_val * s;
                         }
-                        y.amplitudes[i_tp * o_stride + o_tp] += gamma * lambda1 * vac_off * inv_sqrt_no;
+                        y.amplitudes[i_tp * o_stride + o_tp] +=
+                            gamma * lambda1 * vac_off * inv_sqrt_no;
                         // Backward: scatter to j ≠ i
                         let amp_f = c.amplitudes[i_tp * o_stride + o_tp];
                         for &(j, k_val) in &kern.rows[i_tp] {
-                            if j == i_tp { continue; }
+                            if j == i_tp {
+                                continue;
+                            }
                             let j0 = j * o_stride;
                             let contrib = gamma * lambda1 * k_val * amp_f * inv_sqrt_no;
                             for g in 0..n_out {
@@ -1326,8 +1381,7 @@ fn dense_pauli_grover_matvec<'a>(
     let sqrt_a = a.sqrt();
     let h_00 = (1.0 - sqrt_a) / denom;
     let h_f0 = ((n_out as f64) * a).sqrt() / denom;
-    let h_0f = (((n_out - 2) as f64) * sqrt_a + 2.0)
-        / (((n_out as f64).sqrt()) * denom);
+    let h_0f = (((n_out - 2) as f64) * sqrt_a + 2.0) / (((n_out as f64).sqrt()) * denom);
     // h_ff = -h_00  (by construction)
     // Build set of input indices that are in training transitions
     let train_inputs: std::collections::HashSet<usize> =
@@ -1374,7 +1428,12 @@ pub struct SparseKernel {
 /// `φ(m)_k = 1 - 2·bit_k(m)`, then uses geodesic distance on the sphere:
 /// `θ(m,m') = arccos(1 - 2·d_H(m,m')/n_bits)` where d_H is Hamming distance.
 /// Kernel: K(m,m') = exp(-θ²/2σ²).
-pub fn build_sparse_kernel(modes: &[u32], n_bits: usize, sigma: f64, threshold: f64) -> SparseKernel {
+pub fn build_sparse_kernel(
+    modes: &[u32],
+    n_bits: usize,
+    sigma: f64,
+    threshold: f64,
+) -> SparseKernel {
     let n = modes.len();
     let mut rows = vec![Vec::new(); n];
     let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
@@ -1386,8 +1445,8 @@ pub fn build_sparse_kernel(modes: &[u32], n_bits: usize, sigma: f64, threshold: 
         d_vals[d] = (-theta * theta * inv_2s2).exp();
     }
     // Build position index: mode_value → position
-    let pos: rustc_hash::FxHashMap<u32, usize> = modes.iter()
-        .enumerate().map(|(i, &m)| (m, i)).collect();
+    let pos: rustc_hash::FxHashMap<u32, usize> =
+        modes.iter().enumerate().map(|(i, &m)| (m, i)).collect();
     for i in 0..n {
         rows[i].push((i, 1.0));
         let mode_i = modes[i];
@@ -1424,7 +1483,12 @@ pub fn build_sparse_kernel(modes: &[u32], n_bits: usize, sigma: f64, threshold: 
 /// Build a sparse kernel from u64 bit vectors using direct pairwise Hamming distance.
 /// O(M²·1) per pair (popcount), with threshold pruning. Suitable for image data
 /// where bit-flip enumeration (d_H ≤ 2) would miss all pairs.
-pub fn build_sparse_kernel_u64(bitvecs: &[u64], n_bits: usize, sigma: f64, threshold: f64) -> SparseKernel {
+pub fn build_sparse_kernel_u64(
+    bitvecs: &[u64],
+    n_bits: usize,
+    sigma: f64,
+    threshold: f64,
+) -> SparseKernel {
     let n = bitvecs.len();
     let mut rows = vec![Vec::new(); n];
     let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
@@ -1452,8 +1516,11 @@ pub fn build_sparse_kernel_u64(bitvecs: &[u64], n_bits: usize, sigma: f64, thres
 /// Inner product with kernel: ⟨ψ|φ⟩ = Σ_f Σ_{i,i'} conj(ψ[i,f])·K_in(i,i')·φ[i',f]
 /// Iterates over sparse (non-zero) kernel entries — O(M·k) per call.
 fn kernel_inner_product(
-    a: &DenseState, b: &DenseState,
-    _n_in: usize, n_out: usize, o_stride: usize,
+    a: &DenseState,
+    b: &DenseState,
+    _n_in: usize,
+    n_out: usize,
+    o_stride: usize,
     kernel: &SparseKernel,
 ) -> Complex64 {
     let mut dot = Complex64::new(0.0, 0.0);
@@ -1489,15 +1556,30 @@ fn dense_forward_sirk(
     seed: u64,
     hamiltonian_type: HamiltonianType,
     pauli_grover_a: f64,
-) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<DenseState>, DVector<Complex64>), QfmError> {
+) -> Result<
+    (
+        DMatrix<Complex64>,
+        DMatrix<Complex64>,
+        usize,
+        Vec<DenseState>,
+        DVector<Complex64>,
+    ),
+    QfmError,
+> {
     let m = shifts.len();
     let o_stride = n_out;
 
     // Pre-map transitions from global mode indices to tensor-product indices.
-    let in_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = input_modes.iter()
-        .enumerate().map(|(i, &m)| (m, i)).collect();
-    let out_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = output_modes.iter()
-        .enumerate().map(|(i, &m)| (m, i)).collect();
+    let in_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = input_modes
+        .iter()
+        .enumerate()
+        .map(|(i, &m)| (m, i))
+        .collect();
+    let out_mode_to_tp: rustc_hash::FxHashMap<u32, usize> = output_modes
+        .iter()
+        .enumerate()
+        .map(|(i, &m)| (m, i))
+        .collect();
     let mut tp_transitions: Vec<(usize, usize)> = Vec::with_capacity(transitions.len());
     for &(from, to) in transitions {
         if let (Some(&i_tp), Some(&o_tp)) = (in_mode_to_tp.get(&from), out_mode_to_tp.get(&to)) {
@@ -1511,25 +1593,32 @@ fn dense_forward_sirk(
 
     // Build sparse Gaussian kernel if sigma provided (prebuilt overrides).
     // Used for Gram matrix inner product (all types) and for the Diffusion matvec.
-    let n_bits = input_modes.iter().max()
+    let n_bits = input_modes
+        .iter()
+        .max()
         .map(|&m| (8 * std::mem::size_of::<u32>() - m.leading_zeros() as usize).max(1))
         .unwrap_or(1);
-    let built_kernel: Option<SparseKernel> = kernel_sigma.map(|s| build_sparse_kernel(input_modes, n_bits, s, 1e-4));
+    let built_kernel: Option<SparseKernel> =
+        kernel_sigma.map(|s| build_sparse_kernel(input_modes, n_bits, s, 1e-4));
     let used_kernel: Option<&SparseKernel> = prebuilt_kernel.or(built_kernel.as_ref());
 
     let matvec: Box<dyn Fn(&DenseState) -> DenseState + '_> = match hamiltonian_type {
-        HamiltonianType::Diffusion => {
-            Box::new(dense_diffusion_matvec(
-                n_in, n_out, &tp_transitions,
-                lambda0, lambda1,
-                per_mode_weights,
-                used_kernel,
-                gamma,
-            ))
-        }
-        HamiltonianType::PauliGrover => {
-            Box::new(dense_pauli_grover_matvec(n_in, n_out, &tp_transitions, pauli_grover_a))
-        }
+        HamiltonianType::Diffusion => Box::new(dense_diffusion_matvec(
+            n_in,
+            n_out,
+            &tp_transitions,
+            lambda0,
+            lambda1,
+            per_mode_weights,
+            used_kernel,
+            gamma,
+        )),
+        HamiltonianType::PauliGrover => Box::new(dense_pauli_grover_matvec(
+            n_in,
+            n_out,
+            &tp_transitions,
+            pauli_grover_a,
+        )),
     };
 
     // Starting vector
@@ -1543,14 +1632,25 @@ fn dense_forward_sirk(
             v0.amplitudes[i * o_stride] = Complex64::new(u, 0.0);
         }
         let nrm = v0.norm();
-        if nrm > 0.0 { v0.scale(1.0 / nrm); }
+        if nrm > 0.0 {
+            v0.scale(1.0 / nrm);
+        }
         let show = n_in.min(32);
-        eprintln!("[DEBUG] random start v_in ⊗ |0⟩ (dim={}, showing first {})", n_states, show);
+        eprintln!(
+            "[DEBUG] random start v_in ⊗ |0⟩ (dim={}, showing first {})",
+            n_states, show
+        );
         for i in 0..show {
-            eprintln!("  v0[i={i:>3}, f=0] = {:.6e}", v0.amplitudes[i * o_stride].re);
+            eprintln!(
+                "  v0[i={i:>3}, f=0] = {:.6e}",
+                v0.amplitudes[i * o_stride].re
+            );
         }
         let full_norm = v0.norm();
-        eprintln!("  ... full ||v0||² = {:.10e} (should be 1)", full_norm * full_norm);
+        eprintln!(
+            "  ... full ||v0||² = {:.10e} (should be 1)",
+            full_norm * full_norm
+        );
     } else {
         // Uniform over all N_in × N_out product states
         for i in 0..n_in {
@@ -1604,8 +1704,7 @@ fn dense_forward_sirk(
     for j in 0..m {
         for k in 0..m {
             let s_next = w_norms[k + 1];
-            h_proj_raw[(j, k)] =
-                s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+            h_proj_raw[(j, k)] = s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
         }
     }
 
@@ -1616,8 +1715,14 @@ fn dense_forward_sirk(
         let evals: Vec<f64> = eig.eigenvalues.iter().copied().collect();
         let max_e = evals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let n_above: usize = evals.iter().filter(|&&v| v > 1e-12 * max_e).count();
-        eprintln!("[DEBUG] Dense Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
-                  g_sub.nrows(), g_sub.ncols(), max_e, n_above, m);
+        eprintln!(
+            "[DEBUG] Dense Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
+            g_sub.nrows(),
+            g_sub.ncols(),
+            max_e,
+            n_above,
+            m
+        );
         if m <= 8 {
             eprintln!("[DEBUG]   evals: {:?}", &evals[..m.min(8)]);
         }
@@ -1636,14 +1741,18 @@ fn dense_forward_sirk(
         let mut n_kept = 0usize;
         for i in 0..m {
             let ev = eig.eigenvalues[i].max(0.0);
-            if ev <= 0.0 { continue; }
+            if ev <= 0.0 {
+                continue;
+            }
             let inv_sqrt = Complex64::new(1.0 / ev.sqrt(), 0.0);
             for r in 0..m {
                 w[(r, n_kept)] = eig.eigenvectors[(r, i)] * inv_sqrt;
             }
             n_kept += 1;
         }
-        if n_kept == 0 { return Err(QfmError::DegenerateBasis); }
+        if n_kept == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
         let w = w.view((0, 0), (m, n_kept)).into_owned();
         let hproj = w.adjoint() * h_proj_raw * &w;
         (w, hproj, n_kept)
@@ -1681,9 +1790,12 @@ fn project_dense_basis(
 
     if let Some(kern) = kernel {
         // Precompute Σ_j K(i,j)·conj(w_l[j,f]) for every (i,f,l) using sparse rows
-        let mut kconj: Vec<Vec<Vec<Complex64>>> = vec![vec![vec![Complex64::default(); n_in]; n_out]; m];
+        let mut kconj: Vec<Vec<Vec<Complex64>>> =
+            vec![vec![vec![Complex64::default(); n_in]; n_out]; m];
         for l in 0..m {
-            if l >= w_sequence.len() { continue; }
+            if l >= w_sequence.len() {
+                continue;
+            }
             for f in 0..n_out {
                 for (i, row) in kern.rows.iter().enumerate() {
                     let mut sum = Complex64::new(0.0, 0.0);
@@ -1710,7 +1822,9 @@ fn project_dense_basis(
         for tp_idx in 0..dim {
             let row = tp_idx;
             for l in 0..m {
-                if l >= w_sequence.len() { continue; }
+                if l >= w_sequence.len() {
+                    continue;
+                }
                 let amp = w_sequence[l].amplitudes[tp_idx];
                 for k in 0..rank {
                     w[(row, k)] += w_whiten[(l, k)].conj() * amp.conj();
@@ -1818,7 +1932,7 @@ fn compact_diffusion_matvec<'a>(
 /// via eigendecomposition — the normal path. When false, the raw normalized
 /// (but non-orthogonal) Krylov basis is used directly: w_whiten = I_m,
 /// h_proj = h_proj_raw, rank = m.
-/// 
+///
 /// `H|c⟩ = λ₀·⟨c₀|c⟩·|c₀⟩ + λ₁·Σ_{i→f} (⟨i|c⟩·|f⟩ + ⟨f|c⟩·|i⟩)`
 /// Builds the `m+1`-element Krylov sequence
 /// `w_k = (H - z_k I) w_{k-1}` (`m = shifts.len()`), its Gram matrix,
@@ -1851,11 +1965,24 @@ fn compact_forward_sirk(
     r_out: f64,
     do_whiten: bool,
     per_mode_weights: Option<&HashMap<(u32, u32), f64>>,
-) -> Result<(DMatrix<Complex64>, DMatrix<Complex64>, usize, Vec<CompactState>, DVector<Complex64>), QfmError> {
+) -> Result<
+    (
+        DMatrix<Complex64>,
+        DMatrix<Complex64>,
+        usize,
+        Vec<CompactState>,
+        DVector<Complex64>,
+    ),
+    QfmError,
+> {
     let m = shifts.len();
     let has_outputs = !output_modes.is_empty();
     let amp0_in_raw = if r_in > 0.0 { 1.0 / r_in.sqrt() } else { 0.0 };
-    let amp0_out_raw = if has_outputs && r_out > 0.0 { 1.0 / r_out.sqrt() } else { 0.0 };
+    let amp0_out_raw = if has_outputs && r_out > 0.0 {
+        1.0 / r_out.sqrt()
+    } else {
+        0.0
+    };
     // Properly normalize the dressed vacuum |c₀⟩ = c₀|vac⟩ + Σ ε_m|m⟩:
     // QFM convention: c₀_raw = 1, ε_m_raw = 1/√R, with
     //   ||c₀||² = c₀² + N_in·ε_in² + N_out·ε_out² = 1
@@ -1867,8 +1994,14 @@ fn compact_forward_sirk(
     let amp0_in = amp0_in_raw / norm;
     let amp0_out = amp0_out_raw / norm;
     let matvec = compact_diffusion_matvec(
-        input_modes, output_modes, transitions,
-        amp0_vac, amp0_in, amp0_out, lambda0, lambda1,
+        input_modes,
+        output_modes,
+        transitions,
+        amp0_vac,
+        amp0_in,
+        amp0_out,
+        lambda0,
+        lambda1,
         per_mode_weights,
     );
     // Starting vector: uniform over INPUT MODES ONLY, with vacuum at same
@@ -1926,8 +2059,7 @@ fn compact_forward_sirk(
     for j in 0..m {
         for k in 0..m {
             let s_next = w_norms[k + 1];
-            h_proj_raw[(j, k)] =
-                s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+            h_proj_raw[(j, k)] = s_next * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
         }
     }
     let g_sub = g_matrix.view((0, 0), (m, m)).into_owned();
@@ -1937,8 +2069,14 @@ fn compact_forward_sirk(
         let evals: Vec<f64> = eig.eigenvalues.iter().copied().collect();
         let max_e = evals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let n_above: usize = evals.iter().filter(|&&v| v > 1e-12 * max_e).count();
-        eprintln!("[DEBUG] Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
-                  g_sub.nrows(), g_sub.ncols(), max_e, n_above, m);
+        eprintln!(
+            "[DEBUG] Gram sub {}x{} max_eig={:.6e} n_above_tol={}/{}",
+            g_sub.nrows(),
+            g_sub.ncols(),
+            max_e,
+            n_above,
+            m
+        );
     }
     let (w_whiten, h_proj, rank) = if do_whiten {
         let wh = fock_sirk::whiten_gram(&g_sub, fock_sirk::GRAM_REL_TOL)
@@ -1952,19 +2090,27 @@ fn compact_forward_sirk(
         // use Gram eigendecomposition G = U Λ U^H, then W = U Λ^{-1/2} (keep ALL
         // eigenvectors, even near-null ones, as long as λ > 0).
         let eig = g_sub.clone().symmetric_eigen();
-        let _max_eig = eig.eigenvalues.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let _max_eig = eig
+            .eigenvalues
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         let mut w = DMatrix::<Complex64>::zeros(m, m);
         let mut n_kept = 0usize;
         for i in 0..m {
             let ev = eig.eigenvalues[i].max(0.0);
-            if ev <= 0.0 { continue; }
+            if ev <= 0.0 {
+                continue;
+            }
             let inv_sqrt = Complex64::new(1.0 / ev.sqrt(), 0.0);
             for r in 0..m {
                 w[(r, n_kept)] = eig.eigenvectors[(r, i)] * inv_sqrt;
             }
             n_kept += 1;
         }
-        if n_kept == 0 { return Err(QfmError::DegenerateBasis); }
+        if n_kept == 0 {
+            return Err(QfmError::DegenerateBasis);
+        }
         let w = w.view((0, 0), (m, n_kept)).into_owned();
         let hproj = w.adjoint() * h_proj_raw * &w;
         (w, hproj, n_kept)
@@ -2013,7 +2159,9 @@ fn project_compact_modes_onto_krylov_basis(
             continue;
         }
         for l in 0..m {
-            if l >= w_sequence.len() { continue; }
+            if l >= w_sequence.len() {
+                continue;
+            }
             let amp = w_sequence[l].modes.get(&j).copied().unwrap_or(zero);
             for k in 0..rank {
                 w[(row, k)] += w_whiten[(l, k)].conj() * amp.conj();

@@ -754,7 +754,10 @@ pub fn cert_status() -> serde_json::Value {
 
 /// Apply a certificate state transition (mint/transfer/burn) as `actor`.
 /// Returns the resulting coin_ids (mint/transfer) on success.
-pub fn cert_apply(actor: &str, kind: &unfer_protocol::CertificateOpKind) -> Result<Vec<CertId>, Diagnostic> {
+pub fn cert_apply(
+    actor: &str,
+    kind: &unfer_protocol::CertificateOpKind,
+) -> Result<Vec<CertId>, Diagnostic> {
     let seq = NEXT_CERT_SEQ.fetch_add(1, Ordering::SeqCst);
     let mut ledger = cert_ledger();
     ledger.apply_op(actor, kind, seq)

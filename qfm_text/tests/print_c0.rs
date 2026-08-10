@@ -1,9 +1,9 @@
 //! Diagnostic: print the per-mode Krylov weights for sample contexts
 //! to see how much mass the outer vacuum (mode 0) gets vs the
 //! per-order modes.
-use qfm_text::model::QfmTextModel;
 use nalgebra::DVector;
 use num_complex::Complex64;
+use qfm_text::model::QfmTextModel;
 
 fn inner(a: &DVector<Complex64>, b: &DVector<Complex64>) -> Complex64 {
     a.dotc(b)
@@ -21,17 +21,17 @@ fn print_krylov_weights() {
     let rank = w.ncols();
     // Build the W[0, :] row as a DVector.
     let w0 = DVector::from_vec((0..rank).map(|j| w[(0, j)]).collect::<Vec<_>>());
-    println!("W[0, :] = {:?}", w0.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>());
-    let test_contexts: &[&[u32]] = &[
-        &[0, 1],
-        &[100, 200],
-        &[1000, 2000],
-        &[5000, 10000],
-    ];
+    println!(
+        "W[0, :] = {:?}",
+        w0.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>()
+    );
+    let test_contexts: &[&[u32]] = &[&[0, 1], &[100, 200], &[1000, 2000], &[5000, 10000]];
     for ctx in test_contexts {
         // Reproduce encode_context: c_0 = (1/√(n+1))(W[0, :] + Σ_o W[m_o, :])
         let n = model.cfg.n_orders.min(ctx.len());
-        if n == 0 { continue; }
+        if n == 0 {
+            continue;
+        }
         let scale = 1.0 / ((n + 1) as f64).sqrt();
         let mut c0 = w0.scale(scale);
         for o in 1..=n {
@@ -61,7 +61,8 @@ fn print_krylov_weights() {
             if let Some(m) = model.registry.lookup(o, ctx) {
                 let row = m as usize;
                 if row < w.nrows() {
-                    let wrow = DVector::from_vec((0..rank).map(|j| w[(row, j)]).collect::<Vec<_>>());
+                    let wrow =
+                        DVector::from_vec((0..rank).map(|j| w[(row, j)]).collect::<Vec<_>>());
                     let amp = inner(&c1, &wrow);
                     let pw = amp.norm_sqr();
                     weights.push((m, pw));
@@ -70,12 +71,22 @@ fn print_krylov_weights() {
             }
         }
         println!("\nContext {:?} (n_orders = {}):", ctx, n);
-        println!("  c_0 = {:?}", c0.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>());
-        println!("  c_1 = {:?}", c1.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>());
+        println!(
+            "  c_0 = {:?}",
+            c0.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>()
+        );
+        println!(
+            "  c_1 = {:?}",
+            c1.iter().map(|c| (c.re, c.im)).collect::<Vec<_>>()
+        );
         println!("  per-mode weights (sum = {total:.6e}):");
         for (m, pw) in &weights {
             let frac = if total > 0.0 { pw / total } else { 0.0 };
-            let o = if *m == 0 { "outer vacuum".to_string() } else { format!("order {}", model.registry.order_of(*m)) };
+            let o = if *m == 0 {
+                "outer vacuum".to_string()
+            } else {
+                format!("order {}", model.registry.order_of(*m))
+            };
             println!("    mode {m} ({o}): weight = {pw:.6e}, fraction = {frac:.6}");
         }
     }

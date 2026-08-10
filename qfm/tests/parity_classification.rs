@@ -15,24 +15,50 @@ fn parity(x: u32) -> bool {
     x.count_ones() % 2 == 0
 }
 
-fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
-            input_modes: &[u32], output_modes: &[u32],
-            n_modes: usize, label: &str, do_whiten: bool,
-            kernel_sigma: Option<f64>, random_start: bool,
-            lambda0: f64, lambda1: f64) -> (u32, u32, u32, u32) {
+fn run_test(
+    train_inputs: &[u32],
+    transitions: &[(u32, u32)],
+    input_modes: &[u32],
+    output_modes: &[u32],
+    n_modes: usize,
+    label: &str,
+    do_whiten: bool,
+    kernel_sigma: Option<f64>,
+    random_start: bool,
+    lambda0: f64,
+    lambda1: f64,
+) -> (u32, u32, u32, u32) {
     let test_inputs: Vec<u32> = (0..16u32).filter(|&x| !train_inputs.contains(&x)).collect();
     let t = 0.5;
 
     let config = QfmConfig {
-        k: 1, k2: n_modes, krylov_dim: n_modes.min(3),
-        seed: 42, n_t_samples: 4, noise_dim: 1, max_rank: None, random_start,
-        hamiltonian_type: HamiltonianType::Diffusion, pauli_grover_a: 1.0,
+        k: 1,
+        k2: n_modes,
+        krylov_dim: n_modes.min(3),
+        seed: 42,
+        n_t_samples: 4,
+        noise_dim: 1,
+        max_rank: None,
+        random_start,
+        hamiltonian_type: HamiltonianType::Diffusion,
+        pauli_grover_a: 1.0,
     };
 
     let pipeline = QfmPipeline::compile_channels(
-        input_modes, output_modes, transitions, lambda0, lambda1,
-        n_modes, &config, 0.0, 0.0, do_whiten, None, kernel_sigma,
-    ).expect("pipeline compile");
+        input_modes,
+        output_modes,
+        transitions,
+        lambda0,
+        lambda1,
+        n_modes,
+        &config,
+        0.0,
+        0.0,
+        do_whiten,
+        None,
+        kernel_sigma,
+    )
+    .expect("pipeline compile");
 
     let rank = pipeline.rank();
     let w = pipeline.w();
@@ -40,7 +66,10 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
     let n_out = output_modes.len();
     let o_stride = n_out;
 
-    eprintln!("\n=== {} (rank={}, n_in={}, n_out={}) ===", label, rank, n_in, n_out);
+    eprintln!(
+        "\n=== {} (rank={}, n_in={}, n_out={}) ===",
+        label, rank, n_in, n_out
+    );
 
     let mut correct = 0u32;
     let mut n_total = 0u32;
@@ -53,7 +82,7 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
     for &x in &all_inputs {
         let input_pos = input_modes.iter().position(|&m| m == x).unwrap();
         let tp_even = input_pos * o_stride + even_o;
-        let tp_odd  = input_pos * o_stride + odd_o;
+        let tp_odd = input_pos * o_stride + odd_o;
 
         // Encode |x, vac⟩ = (1/√N_out)·Σ_f |x, f⟩
         let mut c0 = DVector::zeros(rank);
@@ -78,17 +107,26 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
 
         let predicted = p_even > p_odd;
         let correct_flag = predicted == parity(x);
-        if correct_flag { correct += 1; }
+        if correct_flag {
+            correct += 1;
+        }
         n_total += 1;
 
         if train_inputs.contains(&x) {
-            if correct_flag { train_correct += 1; }
+            if correct_flag {
+                train_correct += 1;
+            }
             n_train_total += 1;
         }
 
-        eprintln!("  x={:04b}({})  P(even)={:.4e} P(odd)={:.4e}  {}",
-            x, x, p_even_norm, p_odd_norm,
-            if correct_flag { "✓" } else { "✗" });
+        eprintln!(
+            "  x={:04b}({})  P(even)={:.4e} P(odd)={:.4e}  {}",
+            x,
+            x,
+            p_even_norm,
+            p_odd_norm,
+            if correct_flag { "✓" } else { "✗" }
+        );
     }
     eprintln!("  accuracy: {correct}/{n_total}  (train: {train_correct}/{n_train_total})");
     (correct, n_total, train_correct, n_train_total)
@@ -96,9 +134,7 @@ fn run_test(train_inputs: &[u32], transitions: &[(u32, u32)],
 
 #[test]
 fn parity_classification_tests() {
-    let train_inputs: Vec<u32> = vec![
-        1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14,
-    ];
+    let train_inputs: Vec<u32> = vec![1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14];
     let input_modes: Vec<u32> = (0..16u32).collect();
     let label_modes: Vec<u32> = vec![16, 17];
 
@@ -109,16 +145,38 @@ fn parity_classification_tests() {
     }
     for &l0 in &[1.0, 0.5, 0.25] {
         for &l1 in &[1.0, 0.5] {
-            let (c, n, tc, tn) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-                &format!("TP λ₀={l0} λ₁={l1}"), true, None, false, l0, l1);
+            let (c, n, tc, tn) = run_test(
+                &train_inputs,
+                &star_trans,
+                &input_modes,
+                &label_modes,
+                18,
+                &format!("TP λ₀={l0} λ₁={l1}"),
+                true,
+                None,
+                false,
+                l0,
+                l1,
+            );
             eprintln!("  → {c}/{n}  train {tc}/{tn}");
         }
     }
 
     eprintln!("\n--- random start, halved λ ---");
     for &(l0, l1) in &[(1.0, 1.0), (0.5, 0.5), (0.25, 0.25), (0.1, 0.1)] {
-        let (c, n, tc, tn) = run_test(&train_inputs, &star_trans, &input_modes, &label_modes, 18,
-            &format!("TP random λ₀={l0} λ₁={l1}"), true, None, true, l0, l1);
+        let (c, n, tc, tn) = run_test(
+            &train_inputs,
+            &star_trans,
+            &input_modes,
+            &label_modes,
+            18,
+            &format!("TP random λ₀={l0} λ₁={l1}"),
+            true,
+            None,
+            true,
+            l0,
+            l1,
+        );
         eprintln!("  → {c}/{n}  train {tc}/{tn}");
     }
 }

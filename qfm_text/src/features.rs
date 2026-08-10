@@ -56,7 +56,11 @@ impl OrderHasher {
     /// `n_orders`.
     pub fn new(cfg: TextConfig) -> Self {
         let n = cfg.n_orders;
-        assert_eq!(cfg.block_sizes.len(), n, "block_sizes must have n_orders entries");
+        assert_eq!(
+            cfg.block_sizes.len(),
+            n,
+            "block_sizes must have n_orders entries"
+        );
         assert_eq!(cfg.salts.len(), n, "salts must have n_orders entries");
         assert_eq!(cfg.lambda.len(), n, "lambda must have n_orders entries");
         for (o, &b) in cfg.block_sizes.iter().enumerate() {
@@ -194,7 +198,10 @@ mod tests {
         let h = OrderHasher::new(cfg());
         assert!(h.mode_for(1, &[]).is_none());
         assert!(h.mode_for(3, &[1, 2]).is_none());
-        assert_eq!(h.mode_for(1, &[42]).unwrap(), h.cfg.offset(0) + (splitmix64_seq(&[42], 1) % 16) as u32);
+        assert_eq!(
+            h.mode_for(1, &[42]).unwrap(),
+            h.cfg.offset(0) + (splitmix64_seq(&[42], 1) % 16) as u32
+        );
     }
 
     #[test]
@@ -244,6 +251,9 @@ mod tests {
     fn context_orders_helper() {
         let c = cfg();
         let orders: Vec<_> = context_orders(&c, &[10, 20, 30]).collect();
-        assert_eq!(orders, vec![(1, &[30][..]), (2, &[20, 30][..]), (3, &[10, 20, 30][..])]);
+        assert_eq!(
+            orders,
+            vec![(1, &[30][..]), (2, &[20, 30][..]), (3, &[10, 20, 30][..])]
+        );
     }
 }

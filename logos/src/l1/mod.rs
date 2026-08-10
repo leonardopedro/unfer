@@ -54,7 +54,11 @@ impl TriggerTable {
     pub fn count_triggers(&self, tree: &DerivationTree) -> usize {
         match tree {
             DerivationTree::Leaf { word, .. } => {
-                if self.is_trigger(word) { 1 } else { 0 }
+                if self.is_trigger(word) {
+                    1
+                } else {
+                    0
+                }
             }
             DerivationTree::Application { left, right, .. }
             | DerivationTree::Composition { left, right, .. } => {
@@ -69,7 +73,10 @@ pub const MAX_TRIGGERS: usize = 4;
 pub fn split_l1(tree: &DerivationTree, triggers: &TriggerTable) -> Vec<(f64, DerivationTree)> {
     let trigger_count = triggers.count_triggers(tree);
     if trigger_count > MAX_TRIGGERS {
-        eprintln!("warning: sentence has {} L1 triggers, exceeding cap of {}", trigger_count, MAX_TRIGGERS);
+        eprintln!(
+            "warning: sentence has {} L1 triggers, exceeding cap of {}",
+            trigger_count, MAX_TRIGGERS
+        );
         return vec![(1.0, tree.clone())];
     }
 
@@ -84,21 +91,19 @@ fn split_tree(tree: &DerivationTree, triggers: &TriggerTable) -> Vec<(f64, Deriv
     match tree {
         DerivationTree::Leaf { word, category } => {
             if let Some(trigger) = triggers.lookup(word) {
-                trigger.splits.iter()
+                trigger
+                    .splits
+                    .iter()
                     .map(|(prob, action)| {
                         let new_tree = match action.as_str() {
-                            "negate" => {
-                                DerivationTree::Leaf {
-                                    word: format!("NOT_{}", word),
-                                    category: category.clone(),
-                                }
-                            }
-                            "null" => {
-                                DerivationTree::Leaf {
-                                    word: "NULL".to_string(),
-                                    category: category.clone(),
-                                }
-                            }
+                            "negate" => DerivationTree::Leaf {
+                                word: format!("NOT_{}", word),
+                                category: category.clone(),
+                            },
+                            "null" => DerivationTree::Leaf {
+                                word: "NULL".to_string(),
+                                category: category.clone(),
+                            },
                             _ => tree.clone(),
                         };
                         (*prob, new_tree)
@@ -108,7 +113,12 @@ fn split_tree(tree: &DerivationTree, triggers: &TriggerTable) -> Vec<(f64, Deriv
                 vec![(1.0, tree.clone())]
             }
         }
-        DerivationTree::Application { direction, result_category, left, right } => {
+        DerivationTree::Application {
+            direction,
+            result_category,
+            left,
+            right,
+        } => {
             let left_worlds = split_tree(left, triggers);
             let right_worlds = split_tree(right, triggers);
 
@@ -128,7 +138,12 @@ fn split_tree(tree: &DerivationTree, triggers: &TriggerTable) -> Vec<(f64, Deriv
             }
             results
         }
-        DerivationTree::Composition { direction, result_category, left, right } => {
+        DerivationTree::Composition {
+            direction,
+            result_category,
+            left,
+            right,
+        } => {
             let left_worlds = split_tree(left, triggers);
             let right_worlds = split_tree(right, triggers);
 

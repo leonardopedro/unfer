@@ -48,11 +48,14 @@ fn main() -> anyhow::Result<()> {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--checkpoint" => {
-                ckpt = Some(PathBuf::from(args.next().context("--checkpoint needs value")?));
+                ckpt = Some(PathBuf::from(
+                    args.next().context("--checkpoint needs value")?,
+                ));
             }
             "--manifest" => {
-                manifest_path =
-                    Some(PathBuf::from(args.next().context("--manifest needs value")?));
+                manifest_path = Some(PathBuf::from(
+                    args.next().context("--manifest needs value")?,
+                ));
             }
             "--eval-manifest" => {
                 eval_manifest_path = Some(PathBuf::from(
@@ -132,7 +135,9 @@ fn main() -> anyhow::Result<()> {
     let ckpt = ckpt.context("--checkpoint is required")?;
     let manifest_path = manifest_path.context("--manifest is required")?;
     let manifest = qfm_text::Manifest::read(&manifest_path)?;
-    let shard_dir = manifest_path.parent().context("manifest_path needs parent")?;
+    let shard_dir = manifest_path
+        .parent()
+        .context("manifest_path needs parent")?;
     // If --eval-manifest is provided, score on those shards; otherwise
     // score on the --manifest shards (training-data fit).
     let (eval_manifest, eval_label) = if let Some(ep) = &eval_manifest_path {
@@ -198,10 +203,18 @@ fn main() -> anyhow::Result<()> {
         eprintln!("[qfm_text_eval] baseline from checkpoint built");
         NgramBaseline::from_accumulator(baseline_acc, baseline_reg)
     } else {
-        eprintln!("[qfm_text_eval] accumulating baseline from train shards ({} shards)...", train_shard_paths.len());
+        eprintln!(
+            "[qfm_text_eval] accumulating baseline from train shards ({} shards)...",
+            train_shard_paths.len()
+        );
         let mut baseline_reg = qfm_text::ContextRegistry::new(cfg.n_orders);
         let mut baseline_enc = qfm_text::Encoder::Registry(baseline_reg.clone());
-        let baseline_acc = accumulate_shards(&train_shard_paths, &mut baseline_enc, &cfg, manifest.vocab_size)?;
+        let baseline_acc = accumulate_shards(
+            &train_shard_paths,
+            &mut baseline_enc,
+            &cfg,
+            manifest.vocab_size,
+        )?;
         if let Some(r) = baseline_enc.as_registry() {
             baseline_reg.clone_from(r);
         }
@@ -214,7 +227,12 @@ fn main() -> anyhow::Result<()> {
     // model is underfit (rank saturated by H) or simply has a
     // good/bad match on individual contexts.
     if diagnose {
-        diagnose_pipeline(&model, &baseline, &train_shard_paths[0], manifest.vocab_size)?;
+        diagnose_pipeline(
+            &model,
+            &baseline,
+            &train_shard_paths[0],
+            manifest.vocab_size,
+        )?;
     }
     // `cfg` is no longer needed (we used it to build the baseline
     // and to override decode_strategy on the model above); drop it
@@ -230,7 +248,8 @@ fn main() -> anyhow::Result<()> {
     let mut base_total = qfm_total.clone();
     let mut uni_total = qfm_total.clone();
     for sp in &eval_shard_paths {
-        let shard = Shard::open(sp, eval_manifest.vocab_size).with_context(|| format!("open {sp:?}"))?;
+        let shard =
+            Shard::open(sp, eval_manifest.vocab_size).with_context(|| format!("open {sp:?}"))?;
         let qp = match (encode_kind, max_tokens) {
             (EncodeKind::Superposition, 0) => perplexity(&model, &shard)?,
             (EncodeKind::Superposition, n) => perplexity_capped(&model, &shard, n)?,
@@ -312,9 +331,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
         if let Some((t, d, nll, ppl)) = best {
-            eprintln!(
-                "[sweep] best t = {t}, discount = {d}, ppl = {ppl:.3} (nll = {nll:.4})"
-            );
+            eprintln!("[sweep] best t = {t}, discount = {d}, ppl = {ppl:.3} (nll = {nll:.4})");
         }
     }
     // Sample a few continuations.
@@ -344,11 +361,7 @@ fn svd_rank(matrix: &nalgebra::DMatrix<num_complex::Complex64>, label: &str) -> 
     let mt: nalgebra::DMatrix<num_complex::Complex64> = matrix.adjoint();
     let mtm = &mt * matrix;
     let svd = nalgebra::linalg::SymmetricEigen::new(mtm);
-    let mut sv: Vec<f64> = svd
-        .eigenvalues
-        .iter()
-        .map(|&c: &f64| c.max(0.0))
-        .collect();
+    let mut sv: Vec<f64> = svd.eigenvalues.iter().map(|&c: &f64| c.max(0.0)).collect();
     sv.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     let max_sv = sv.first().copied().unwrap_or(0.0);
     let dim = (nrows.max(ncols)) as f64;
@@ -385,9 +398,7 @@ fn diagnose_pipeline(
         w.nrows(),
         model.pipeline.k2_dim()
     );
-    eprintln!(
-        "[diagnose] SVD ranks: W = {w_svd}, H_m = {h_svd} (vs nominal rank = {w_rank})"
-    );
+    eprintln!("[diagnose] SVD ranks: W = {w_svd}, H_m = {h_svd} (vs nominal rank = {w_rank})");
     // Diagonalise H_m to see how many distinct eigenvalues it has.
     {
         let m = h_m.clone();
@@ -457,8 +468,15 @@ fn diagnose_pipeline(
         }
         let dot: f64 = (0..vocab_size).map(|j| emp[j] * dist[j]).sum();
         let ne: f64 = (0..vocab_size).map(|j| emp[j] * emp[j]).sum::<f64>().sqrt();
-        let nd: f64 = (0..vocab_size).map(|j| dist[j] * dist[j]).sum::<f64>().sqrt();
-        let cos = if ne > 0.0 && nd > 0.0 { dot / (ne * nd) } else { 0.0 };
+        let nd: f64 = (0..vocab_size)
+            .map(|j| dist[j] * dist[j])
+            .sum::<f64>()
+            .sqrt();
+        let cos = if ne > 0.0 && nd > 0.0 {
+            dot / (ne * nd)
+        } else {
+            0.0
+        };
         let mut argmax = 0usize;
         for (j, &p) in dist.iter().enumerate() {
             if p > dist[argmax] {
@@ -541,9 +559,12 @@ fn diagnose_pipeline(
             eprintln!(
                 "[diagnose] ctx = {:?} (n={total}): emp top-1 = {} ({:.4}) | qfm: KL={kl_q:.4} cos={cos_q:.4} top1={} ({:.4}) | base: KL={kl_b:.4} cos={cos_b:.4} top1={} ({:.4})",
                 &ctx[..ctx.len().min(4)],
-                emp_argmax, emp[emp_argmax],
-                argmax_q, qfm_dist[argmax_q],
-                argmax_b, base_dist[argmax_b],
+                emp_argmax,
+                emp[emp_argmax],
+                argmax_q,
+                qfm_dist[argmax_q],
+                argmax_b,
+                base_dist[argmax_b],
             );
         }
         if n_ctx - last_log >= 1000 {
@@ -553,8 +574,12 @@ fn diagnose_pipeline(
             let mc_b: f64 = coss_base.iter().sum::<f64>() / coss_base.len() as f64;
             eprintln!(
                 "[diagnose]   {n_ctx} contexts: qfm mean KL={mk_q:.4} cos={mc_q:.4} top1={}/{}={:.3} | base mean KL={mk_b:.4} cos={mc_b:.4} top1={}/{}={:.3}",
-                top1_qfm, n_ctx, top1_qfm as f64 / n_ctx as f64,
-                top1_base, n_ctx, top1_base as f64 / n_ctx as f64,
+                top1_qfm,
+                n_ctx,
+                top1_qfm as f64 / n_ctx as f64,
+                top1_base,
+                n_ctx,
+                top1_base as f64 / n_ctx as f64,
             );
             last_log = n_ctx;
         }
@@ -563,9 +588,7 @@ fn diagnose_pipeline(
     let mc_q: f64 = coss_qfm.iter().sum::<f64>() / coss_qfm.len().max(1) as f64;
     let mk_b: f64 = kls_base.iter().sum::<f64>() / kls_base.len().max(1) as f64;
     let mc_b: f64 = coss_base.iter().sum::<f64>() / coss_base.len().max(1) as f64;
-    eprintln!(
-        "[diagnose] FINAL ({n_ctx} distinct contexts with >= 3 occurrences):"
-    );
+    eprintln!("[diagnose] FINAL ({n_ctx} distinct contexts with >= 3 occurrences):");
     eprintln!(
         "[diagnose]   QFM:      mean KL = {mk_q:.4}, mean cos = {mc_q:.4}, top-1 hit = {top1_qfm}/{n_ctx} = {:.3}",
         top1_qfm as f64 / n_ctx.max(1) as f64,

@@ -512,9 +512,7 @@ impl Session {
     /// Evaluates Nelson's condition and finds singularities for an ODE-based
     /// Hamiltonian. Returns the full ESA report including flow completeness,
     /// singularity detection, and any applied change of variables.
-    pub fn analyze_self_adjointness(
-        &self,
-    ) -> Result<ode_sirk::report::OdeReport, KernelError> {
+    pub fn analyze_self_adjointness(&self) -> Result<ode_sirk::report::OdeReport, KernelError> {
         match &self.hamiltonian_spec {
             HamiltonianSpec::OdeSystem {
                 vars,

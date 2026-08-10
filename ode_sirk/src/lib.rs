@@ -20,10 +20,10 @@ pub mod ode;
 pub use ode::ODESystem;
 
 pub mod hamiltonian;
-pub use hamiltonian::{ode_to_hamiltonian, Hamiltonian};
+pub use hamiltonian::{Hamiltonian, ode_to_hamiltonian};
 
 pub mod flow;
-pub use flow::{FlowAnalysis, EscapeEvent};
+pub use flow::{EscapeEvent, FlowAnalysis};
 
 pub mod singularity;
 pub use singularity::{SingularityReport, SingularityType};
@@ -35,7 +35,7 @@ pub mod esa;
 pub use esa::{EsaReport, EsaStatus};
 
 pub mod protocol;
-pub use protocol::{analyze_ode_system, analyze_esa};
+pub use protocol::{analyze_esa, analyze_ode_system};
 
 pub mod report;
 pub use report::OdeReport;

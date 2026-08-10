@@ -1,4 +1,4 @@
-use crate::core_ir::{CoreIR, Literal, PrimOp, Pattern};
+use crate::core_ir::{CoreIR, Literal, Pattern, PrimOp};
 
 pub struct AustralEmitter {
     output: String,
@@ -40,7 +40,9 @@ impl AustralEmitter {
         let mut func = String::new();
         func.push_str(&format!("function {}(", name));
         for (i, (pname, ptype)) in params.iter().enumerate() {
-            if i > 0 { func.push_str(", "); }
+            if i > 0 {
+                func.push_str(", ");
+            }
             func.push_str(&format!("{}: {}", pname, ptype));
         }
         func.push_str("): Int64 is\n");
@@ -76,7 +78,8 @@ impl AustralEmitter {
                 if args.is_empty() {
                     format!("Tag{}", tag)
                 } else {
-                    let arg_strs: Vec<String> = args.iter().map(|a| self.emit_expr(a, output)).collect();
+                    let arg_strs: Vec<String> =
+                        args.iter().map(|a| self.emit_expr(a, output)).collect();
                     format!("Tag{}({})", tag, arg_strs.join(", "))
                 }
             }
@@ -88,7 +91,10 @@ impl AustralEmitter {
             CoreIR::Lam(id, body) => {
                 let lambda_name = format!("lambda_{}", self.functions.len());
                 let body_str = self.emit_expr(body, output);
-                let func_str = format!("function {}({}: Int64): Int64 is\n    return {};\nend;\n", lambda_name, id, body_str);
+                let func_str = format!(
+                    "function {}({}: Int64): Int64 is\n    return {};\nend;\n",
+                    lambda_name, id, body_str
+                );
                 self.functions.push(func_str);
                 lambda_name
             }

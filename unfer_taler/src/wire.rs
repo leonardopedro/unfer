@@ -94,7 +94,9 @@ mod tests {
     #[test]
     fn two_phase_lifecycle() {
         let mut gw = SimulatedWireGateway::new();
-        let w = gw.prepare_transfer("DE99 0000 0000 1234 5678 90", 1000).unwrap();
+        let w = gw
+            .prepare_transfer("DE99 0000 0000 1234 5678 90", 1000)
+            .unwrap();
         assert_eq!(w.status, WireStatus::Preparing);
         assert_eq!(w.amount, 1000);
         assert_eq!(gw.confirm(&w.wire_id).unwrap(), WireStatus::Confirmed);

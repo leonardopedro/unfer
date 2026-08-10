@@ -31,7 +31,8 @@ impl DenominationBook {
 
     /// Register (or replace) the denomination for `value`.
     pub fn issue(&mut self, value: u64, expires_seq: u64) {
-        self.entries.insert(value, Denomination { value, expires_seq });
+        self.entries
+            .insert(value, Denomination { value, expires_seq });
     }
 
     /// Return the live denomination for `value` at `current_seq`.

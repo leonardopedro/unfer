@@ -73,13 +73,18 @@ mod tests {
         unfer_ffi::uk_audit_clear();
         let caller = r#"{"from":"agent","principal":"edge_probe"}"#;
         unfer_ffi::uk_set_caller(caller).expect("caller json must parse");
-        let _ = unfer_ffi::uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
+        let _ =
+            unfer_ffi::uk_audit_append(r#"{"symbol":"uk_evolve","args":[{"t":0.1}],"ok":true}"#);
         unfer_ffi::uk_clear_caller();
 
         let body = audit_list_body().expect("audit listing must succeed");
         let entries: Value = serde_json::from_slice(&body).expect("body must be valid JSON");
         let arr = entries.as_array().expect("audit payload must be an array");
-        assert_eq!(arr.len(), 1, "expected exactly 1 entry after clear, got {entries}");
+        assert_eq!(
+            arr.len(),
+            1,
+            "expected exactly 1 entry after clear, got {entries}"
+        );
         assert_eq!(arr[0]["symbol"], "uk_evolve");
         assert_eq!(arr[0]["caller"]["from"], "agent");
         assert_eq!(arr[0]["caller"]["principal"], "edge_probe");
@@ -88,6 +93,13 @@ mod tests {
         let cleared: Value = serde_json::from_slice(&cleared).expect("valid JSON");
         assert!(cleared["removed"].as_i64().unwrap() >= 1);
         let body = audit_list_body().expect("listing must succeed after clear");
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap().as_array().unwrap().len(), 0);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

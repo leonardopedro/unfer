@@ -3,8 +3,8 @@ use crate::flow;
 use crate::hamiltonian::ode_to_hamiltonian;
 use crate::ode::ODESystem;
 use crate::report::{self, OdeReport};
-use crate::singularity;
 use crate::result::OdeSirkResult;
+use crate::singularity;
 
 /// The public analysis entry point.
 ///
@@ -29,7 +29,10 @@ pub fn analyze_ode_system(
     // 3. Singularity sweep (1D only)
     let singularity = if sys.n_vars() == 1 && !flow.is_complete {
         let poly = sys.rhs[0].clone();
-        let x0s: Vec<f64> = sample_points.iter().filter_map(|p| p.first().copied()).collect();
+        let x0s: Vec<f64> = sample_points
+            .iter()
+            .filter_map(|p| p.first().copied())
+            .collect();
         Some(singularity::sweep_singularity_1d(&poly, &x0s, t_max)?)
     } else {
         None
@@ -88,14 +91,8 @@ mod tests {
     #[test]
     fn analyze_stable_linear() {
         let samples: Vec<Vec<f64>> = (1..=3).map(|i| vec![i as f64]).collect();
-        let (report, h) = analyze_ode_system(
-            vec!["x".into()],
-            &["-x"],
-            None,
-            10.0,
-            &samples,
-        )
-        .unwrap();
+        let (report, h) =
+            analyze_ode_system(vec!["x".into()], &["-x"], None, 10.0, &samples).unwrap();
         assert!(report.is_esa());
         assert!(!h.terms.is_empty());
     }
@@ -103,14 +100,8 @@ mod tests {
     #[test]
     fn analyze_x_squared_no_cov() {
         let samples = vec![vec![0.5], vec![1.0]];
-        let (report, _) = analyze_ode_system(
-            vec!["x".into()],
-            &["x^2"],
-            None,
-            100.0,
-            &samples,
-        )
-        .unwrap();
+        let (report, _) =
+            analyze_ode_system(vec!["x".into()], &["x^2"], None, 100.0, &samples).unwrap();
         assert!(!report.is_esa());
         assert!(report.diagnostics.contains(&2101));
     }
@@ -126,7 +117,10 @@ mod tests {
             &samples,
         )
         .unwrap();
-        assert_eq!(report.esa.status, crate::esa::EsaStatus::SingularityResolved);
+        assert_eq!(
+            report.esa.status,
+            crate::esa::EsaStatus::SingularityResolved
+        );
         assert!(!h.terms.is_empty());
     }
 }

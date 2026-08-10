@@ -64,7 +64,11 @@ impl Polynomial {
 
     /// Partial derivative ∂p/∂x_k.
     pub fn partial_derivative(&self, k: usize) -> Polynomial {
-        let terms: Vec<Monomial> = self.terms.iter().filter_map(|m| m.partial_derivative(k)).collect();
+        let terms: Vec<Monomial> = self
+            .terms
+            .iter()
+            .filter_map(|m| m.partial_derivative(k))
+            .collect();
         Polynomial {
             terms,
             n_vars: self.n_vars,
@@ -151,7 +155,8 @@ fn parse_rhs_via_cas(
     let s_expr = expanded.to_string();
 
     // Parse the S-expression into monomials
-    let sexpr = SExpr::parse(&s_expr).ok_or_else(|| format!("failed to parse S-expr: {}", s_expr))?;
+    let sexpr =
+        SExpr::parse(&s_expr).ok_or_else(|| format!("failed to parse S-expr: {}", s_expr))?;
     let poly = sexpr_to_polynomial(&sexpr, vars, var_set)?;
     Ok(poly)
 }

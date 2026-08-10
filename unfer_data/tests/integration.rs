@@ -1,9 +1,8 @@
 use unfer_consensus::{ConsensusNode, Keypair, LocalConsensus};
-use unfer_data::{
-    Chunker, DataKeypair, DataPublisher, compute_cid, decrypt_chunk, encrypt_chunk,
-    verify_chunk,
-};
 use unfer_data::crypto::derive_aes_key;
+use unfer_data::{
+    Chunker, DataKeypair, DataPublisher, compute_cid, decrypt_chunk, encrypt_chunk, verify_chunk,
+};
 use unfer_identity::DidManager;
 
 fn make_node() -> ConsensusNode {
@@ -32,8 +31,7 @@ fn consensus_identity_content_roundtrip() {
     let data = b"consensus-backed content payload";
     let content_ref = {
         let mut pub_ = DataPublisher::new(&mut node);
-        pub_
-            .publish(&kp, data, "application/octet-stream", Some("payload.bin"))
+        pub_.publish(&kp, data, "application/octet-stream", Some("payload.bin"))
             .unwrap()
     };
 
@@ -141,7 +139,10 @@ fn did_lifecycle_blocks_content_after_revoke() {
     }
 
     let mgr = DidManager::new(&mut node);
-    assert!(mgr.resolve(&kp.did()).is_none(), "revoked DID must not resolve");
+    assert!(
+        mgr.resolve(&kp.did()).is_none(),
+        "revoked DID must not resolve"
+    );
 
     assert!(
         node.content(&content_ref.cid).is_some(),

@@ -1,7 +1,7 @@
 use crate::deltanet;
 use crate::deltanet::unf_hash_string;
-use crate::lexicon::Lexicon;
 use crate::l1::{self, TriggerTable};
+use crate::lexicon::Lexicon;
 use std::process;
 
 pub fn run_cli(args: Vec<String>) {
@@ -184,11 +184,31 @@ fn tree_to_string(tree: &crate::ccg::DerivationTree) -> String {
         crate::ccg::DerivationTree::Leaf { word, category } => {
             format!("{}:{}", word, category)
         }
-        crate::ccg::DerivationTree::Application { left, right, result_category, .. } => {
-            format!("({} {}):{}", tree_to_string(left), tree_to_string(right), result_category)
+        crate::ccg::DerivationTree::Application {
+            left,
+            right,
+            result_category,
+            ..
+        } => {
+            format!(
+                "({} {}):{}",
+                tree_to_string(left),
+                tree_to_string(right),
+                result_category
+            )
         }
-        crate::ccg::DerivationTree::Composition { left, right, result_category, .. } => {
-            format!("({} >B {}):{}", tree_to_string(left), tree_to_string(right), result_category)
+        crate::ccg::DerivationTree::Composition {
+            left,
+            right,
+            result_category,
+            ..
+        } => {
+            format!(
+                "({} >B {}):{}",
+                tree_to_string(left),
+                tree_to_string(right),
+                result_category
+            )
         }
     }
 }

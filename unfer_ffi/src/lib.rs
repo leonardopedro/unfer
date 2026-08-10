@@ -1870,9 +1870,16 @@ fn parse_hex32(s: &str, field: &str) -> Result<[u8; 32], Diagnostic> {
     })
 }
 
-fn parse_coinrefs(v: &serde_json::Value, field: &str) -> Result<Vec<unfer_protocol::CoinRef>, Diagnostic> {
+fn parse_coinrefs(
+    v: &serde_json::Value,
+    field: &str,
+) -> Result<Vec<unfer_protocol::CoinRef>, Diagnostic> {
     let arr = v.as_array().ok_or_else(|| {
-        Diagnostic::new(Code::BAD_JSON, format!("{field}: expected an array"), Severity::Error)
+        Diagnostic::new(
+            Code::BAD_JSON,
+            format!("{field}: expected an array"),
+            Severity::Error,
+        )
     })?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
@@ -2053,7 +2060,7 @@ mod tests {
         }
     }
 
-// ── certificate ledger FFI (Plan R) ────────────────────────────────
+    // ── certificate ledger FFI (Plan R) ────────────────────────────────
     // The ledger is a process-global store shared with `handles::cert_ledger_tests`,
     // so these serialize on the single crate-wide `CERT_TESTS_LOCK` and reset it.
 
@@ -2069,7 +2076,9 @@ mod tests {
 
     #[test]
     fn cert_ffi_mint_transfer_burn_roundtrip() {
-        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = handles::CERT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_cert_clear();
         assert_ne!(cert_root_hex(), "00".repeat(32));
         let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
@@ -2080,8 +2089,7 @@ mod tests {
         let (p, l) = json_ptr(mint);
         assert_eq!(uk_cert_mint(p, l), 0);
         assert_eq!(cert_status_json()["total_supply"], 1000);
-        let alice_coin =
-            unfer_consensus::certs::commit_coin(1000, "did:unfer:alice", &[1u8; 32]);
+        let alice_coin = unfer_consensus::certs::commit_coin(1000, "did:unfer:alice", &[1u8; 32]);
 
         // Transfer the whole thing to bob.
         let input = format!(
@@ -2109,7 +2117,9 @@ mod tests {
 
     #[test]
     fn cert_ffi_mint_refuses_non_authority() {
-        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = handles::CERT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_cert_clear();
         let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
         uk_cert_set_authority(auth_ptr, auth_len);
@@ -2122,7 +2132,9 @@ mod tests {
 
     #[test]
     fn cert_ffi_mint_request_oracle_anchor() {
-        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = handles::CERT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_cert_clear();
         let (auth_ptr, auth_len) = json_ptr("did:unfer:authority");
         uk_cert_set_authority(auth_ptr, auth_len);
@@ -2140,7 +2152,11 @@ mod tests {
         let bad = r#"{"owner":"did:unfer:alice","amount":15,"source":"unfccc:cert:999"}"#;
         let (p, l) = json_ptr(bad);
         assert_eq!(uk_cert_mint_request(p, l), -7007); // CertOracleRejected
-        assert_eq!(cert_status_json()["total_supply"], 15, "rejected mint is a no-op");
+        assert_eq!(
+            cert_status_json()["total_supply"],
+            15,
+            "rejected mint is a no-op"
+        );
 
         // Without the caller being the authority, a valid oracle source is still
         // refused (UK-7001) — the caller context, not the request, decides.
@@ -2153,7 +2169,9 @@ mod tests {
 
     #[test]
     fn cert_ffi_double_spend_rejected() {
-        let _lock = handles::CERT_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = handles::CERT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         uk_cert_clear();
         let (a, al) = json_ptr("did:unfer:authority");
         uk_cert_set_authority(a, al);
@@ -2161,7 +2179,10 @@ mod tests {
         let (p, l) = json_ptr(mint);
         assert_eq!(uk_cert_mint(p, l), 0);
         let alice_coin = unfer_consensus::certs::commit_coin(500, "did:unfer:alice", &[3u8; 32]);
-        let input = format!(r#"{{"coin_id":"{}","amount":500,"owner":"did:unfer:alice"}}"#, hex::encode(alice_coin.0));
+        let input = format!(
+            r#"{{"coin_id":"{}","amount":500,"owner":"did:unfer:alice"}}"#,
+            hex::encode(alice_coin.0)
+        );
         let out = r#"{"amount":500,"owner":"did:unfer:alice"}"#;
         let once = format!(r#"{{"actor":"did:unfer:alice","inputs":[{input}],"outputs":[{out}]}}"#);
         let (p, l) = json_ptr(&once);

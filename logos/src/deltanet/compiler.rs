@@ -95,7 +95,10 @@ fn emit(term: &CoreIR, net: &mut Net) -> Port {
                 match pat {
                     Pattern::Tag(tag, binders) => {
                         let con_node = net.alloc_node(AgentKind::Con(*tag, binders.len() as u8));
-                        net.wire(Port::new(match_node, (i + 1) as u8), Port::principal(con_node));
+                        net.wire(
+                            Port::new(match_node, (i + 1) as u8),
+                            Port::principal(con_node),
+                        );
                         for (j, binder) in binders.iter().enumerate() {
                             net.bind_var(binder, Port::new(con_node, (j + 1) as u8));
                         }
@@ -119,7 +122,10 @@ mod tests {
         let ir = CoreIR::Lit(Literal::Int64(42));
         let net = compile_to_net(&ir);
         assert_eq!(net.nodes.len(), 1);
-        assert!(matches!(net.nodes[0].as_ref().unwrap().kind, AgentKind::Lit(Literal::Int64(42))));
+        assert!(matches!(
+            net.nodes[0].as_ref().unwrap().kind,
+            AgentKind::Lit(Literal::Int64(42))
+        ));
     }
 
     #[test]
@@ -132,6 +138,9 @@ mod tests {
         let f_node = net.alloc_node(AgentKind::Lit(Literal::Int64(99)));
         net.bind_var("f", Port::principal(f_node));
         let root = emit(&ir, &mut net);
-        assert!(matches!(net.nodes[root.node as usize].as_ref().unwrap().kind, AgentKind::App));
+        assert!(matches!(
+            net.nodes[root.node as usize].as_ref().unwrap().kind,
+            AgentKind::App
+        ));
     }
 }

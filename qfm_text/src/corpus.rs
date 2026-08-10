@@ -51,11 +51,9 @@ impl Manifest {
     /// Read a manifest from `path` (a JSON file).
     pub fn read(path: impl AsRef<Path>) -> Result<Self, QfmTextError> {
         let path_ref = path.as_ref();
-        let text = std::fs::read_to_string(path_ref).map_err(|e| {
-            QfmTextError::BadManifest {
-                path: path_ref.display().to_string(),
-                reason: format!("read failed: {e}"),
-            }
+        let text = std::fs::read_to_string(path_ref).map_err(|e| QfmTextError::BadManifest {
+            path: path_ref.display().to_string(),
+            reason: format!("read failed: {e}"),
         })?;
         let manifest: Manifest = serde_json::from_str(&text)?;
         if manifest.schema != "qfm_text.shard_manifest/v1" {

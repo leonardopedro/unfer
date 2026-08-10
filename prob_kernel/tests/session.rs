@@ -594,7 +594,10 @@ fn qfm_mehler_localized_conserves_data_channel_population() {
     let p_before = session
         .probability(&EventPredicate::not(EventPredicate::Vacuum))
         .expect("prob");
-    assert!((p_before - 1.0).abs() < 1e-10, "starts in data channel: {p_before}");
+    assert!(
+        (p_before - 1.0).abs() < 1e-10,
+        "starts in data channel: {p_before}"
+    );
 
     session.evolve(1.0).expect("evolve");
 
@@ -726,7 +729,10 @@ fn qfm_mehler_projector_matches_closed_form_oscillation() {
     let p_vac = session.probability(&EventPredicate::Vacuum).expect("prob");
     assert!((p0 - 0.27).abs() < 0.02, "P(x_0)(π) = {p0}, want 0.27");
     assert!((p1 - 0.48).abs() < 0.02, "P(x_1)(π) = {p1}, want 0.48");
-    assert!((p_vac - 0.25).abs() < 0.02, "P(vac)(π) = {p_vac}, want 0.25");
+    assert!(
+        (p_vac - 0.25).abs() < 0.02,
+        "P(vac)(π) = {p_vac}, want 0.25"
+    );
 
     // Second half of the period: exact coherent return to the frame vacuum.
     session.evolve(pi).expect("evolve to t=2π");
@@ -768,8 +774,14 @@ fn qfm_mehler_projector_dressed_vacuum_is_stationary() {
 
     let p0_before = session.probability(&event_mode0_ge1()).expect("prob");
     let p_vac_before = session.probability(&EventPredicate::Vacuum).expect("prob");
-    assert!((p0_before - 0.09).abs() < 1e-9, "prior P(x_0) = ε_0² = 0.09");
-    assert!((p_vac_before - 0.75).abs() < 1e-9, "prior P(vac) = c₀² = 0.75");
+    assert!(
+        (p0_before - 0.09).abs() < 1e-9,
+        "prior P(x_0) = ε_0² = 0.09"
+    );
+    assert!(
+        (p_vac_before - 0.75).abs() < 1e-9,
+        "prior P(vac) = c₀² = 0.75"
+    );
 
     session.evolve(1.3).expect("evolve");
 

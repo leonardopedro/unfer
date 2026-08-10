@@ -133,10 +133,7 @@ mod tests {
     use crate::ode::ODESystem;
 
     fn parse_poly(expr: &str) -> Polynomial {
-        ODESystem::parse(vec!["x".into()], &[expr])
-            .unwrap()
-            .rhs[0]
-            .clone()
+        ODESystem::parse(vec!["x".into()], &[expr]).unwrap().rhs[0].clone()
     }
 
     #[test]

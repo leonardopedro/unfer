@@ -30,7 +30,10 @@ fn hist_cap_eviction_preserves_total_count() {
     assert!(s.escape > 0);
     eprintln!(
         "hist_cap_eviction_preserves_total_count: K={}, hist.len()={}, hist_sum={}, escape={}",
-        s.weight, s.hist.len(), hist_sum, s.escape
+        s.weight,
+        s.hist.len(),
+        hist_sum,
+        s.escape
     );
 }
 
@@ -46,12 +49,17 @@ fn hist_reobserve_after_eviction_loses_history() {
     // First, fill with 3 observations, then re-observe the first.
     s.observe(100, cap);
     s.observe(200, cap);
-    s.observe(300, cap);  // evicts 100 (count 1), adds 300 (count 1)
+    s.observe(300, cap); // evicts 100 (count 1), adds 300 (count 1)
     // Now re-observe 100. It's not in the histogram, so the
     // algorithm evicts some entry and adds 100 with count 1.
     s.observe(100, cap);
     // Find 100 in the histogram.
-    let cnt_100 = s.hist.iter().find(|(t, _)| *t == 100).map(|(_, c)| *c).unwrap_or(0);
+    let cnt_100 = s
+        .hist
+        .iter()
+        .find(|(t, _)| *t == 100)
+        .map(|(_, c)| *c)
+        .unwrap_or(0);
     // 100 was observed twice (once initially, once after eviction).
     // But the histogram only has count 1 (the second observation).
     // The first count is in escape.
@@ -75,7 +83,10 @@ fn smoothing_per_mode_total_is_one() {
     let d = 0.75_f64;
     let unigram: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4];
     let unigram_sum: f64 = unigram.iter().sum();
-    assert!((unigram_sum - 1.0).abs() < 1e-9, "test bug: unigram must sum to 1");
+    assert!(
+        (unigram_sum - 1.0).abs() < 1e-9,
+        "test bug: unigram must sum to 1"
+    );
     // A mode observed K=10 times with 4 unique tokens (cnt = 3, 3, 2, 2).
     let hist: Vec<(usize, f64)> = vec![(0, 3.0), (1, 3.0), (2, 2.0), (3, 2.0)];
     let escape = 0.0_f64;
@@ -94,7 +105,11 @@ fn smoothing_per_mode_total_is_one() {
         "smoothing_per_mode_total_is_one: per-mode total = {:.6} (expected 1.0)",
         total
     );
-    assert!((total - 1.0).abs() < 1e-9, "per-mode total != 1: got {}", total);
+    assert!(
+        (total - 1.0).abs() < 1e-9,
+        "per-mode total != 1: got {}",
+        total
+    );
 }
 
 #[test]
@@ -105,10 +120,10 @@ fn unseen_tokens_get_less_mass_than_unigram() {
     // is the "no context" baseline; the per-mode distribution
     // should not give unseen tokens LESS mass than the unigram.
     let d = 0.75_f64;
-    let unigram = 0.001_f64;  // a rare token
+    let unigram = 0.001_f64; // a rare token
     let k = 10.0_f64;
-    let n = 1.0_f64;  // 1 unique token seen
-    let escape_mass = (n * d + 0.0) / k;  // no escape
+    let n = 1.0_f64; // 1 unique token seen
+    let escape_mass = (n * d + 0.0) / k; // no escape
     let p_unseen = escape_mass * unigram;
     eprintln!(
         "unseen_tokens_get_less_mass_than_unigram: \

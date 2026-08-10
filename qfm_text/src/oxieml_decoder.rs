@@ -121,9 +121,7 @@ pub fn fit_column(values: &[f64], m: usize, opts: &OxiemlFitOpts) -> ColumnFit {
     //    `[0, 1)`) and the weighted mean of the values in the
     //    bin. If `m <= weight_bins`, skip subsampling.
     let (xs, ys) = if m <= opts.weight_bins {
-        let xs: Vec<Vec<f64>> = (0..m)
-            .map(|i| vec![i as f64 / m as f64])
-            .collect();
+        let xs: Vec<Vec<f64>> = (0..m).map(|i| vec![i as f64 / m as f64]).collect();
         let ys: Vec<f64> = values.to_vec();
         (xs, ys)
     } else {
@@ -161,7 +159,11 @@ pub fn fit_column(values: &[f64], m: usize, opts: &OxiemlFitOpts) -> ColumnFit {
     // 3. Pick the best (lowest mse) formula.
     let best = formulas
         .into_iter()
-        .min_by(|a, b| a.mse.partial_cmp(&b.mse).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| {
+            a.mse
+                .partial_cmp(&b.mse)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .expect("oxieml returned no formulas");
     ColumnFit {
         tree: best.eml_tree,
@@ -188,11 +190,7 @@ pub fn evaluate_column(tree: &EmlTree, mode_index: u32, m: usize) -> f64 {
 /// fall back to dense-W lookup per column if a fit's residual
 /// exceeds `opts.residual_tol`. The dense W is `Vec<f64>` of
 /// length `m * rank` (column-major).
-pub fn fit_decoder(
-    w_columns: &[Vec<f64>],
-    m: usize,
-    opts: &OxiemlFitOpts,
-) -> Vec<ColumnFit> {
+pub fn fit_decoder(w_columns: &[Vec<f64>], m: usize, opts: &OxiemlFitOpts) -> Vec<ColumnFit> {
     w_columns
         .iter()
         .map(|col| fit_column(col, m, opts))
@@ -251,7 +249,10 @@ mod tests {
             fit.mse, fit.complexity, fit.fit_seconds, fit.pretty
         );
         let (max_err, mean_err) = evaluate_fit(&fit.tree, &values, m);
-        eprintln!("  max_abs_err={:.4e}  mean_abs_err={:.4e}", max_err, mean_err);
+        eprintln!(
+            "  max_abs_err={:.4e}  mean_abs_err={:.4e}",
+            max_err, mean_err
+        );
         // Sinusoid is in [-1, 1]; a 5% absolute error is
         // generous given the EML tree's lack of native sin.
         // We don't assert on this in CI (oxieml fit is slow
@@ -286,7 +287,10 @@ mod tests {
             fit.mse, fit.complexity, fit.fit_seconds, fit.pretty
         );
         let (max_err, mean_err) = evaluate_fit(&fit.tree, &values, m);
-        eprintln!("  max_abs_err={:.4e}  mean_abs_err={:.4e}", max_err, mean_err);
+        eprintln!(
+            "  max_abs_err={:.4e}  mean_abs_err={:.4e}",
+            max_err, mean_err
+        );
         assert!(max_err.is_finite());
     }
 

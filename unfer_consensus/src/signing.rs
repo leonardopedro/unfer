@@ -85,15 +85,13 @@ pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
         ConsensusTransaction::IdentityOp(op) => op.signing_key,
         _ => {
             let did = tx.did();
-            let hex_key = did
-                .strip_prefix("did:unfer:")
-                .ok_or_else(|| {
-                    Diagnostic::new(
-                        Code::UNKNOWN_DID,
-                        format!("malformed DID: {did}"),
-                        Severity::Error,
-                    )
-                })?;
+            let hex_key = did.strip_prefix("did:unfer:").ok_or_else(|| {
+                Diagnostic::new(
+                    Code::UNKNOWN_DID,
+                    format!("malformed DID: {did}"),
+                    Severity::Error,
+                )
+            })?;
             let bytes = hex::decode(hex_key).map_err(|_| {
                 Diagnostic::new(
                     Code::UNKNOWN_DID,
@@ -215,6 +213,9 @@ mod tests {
         let before = canonical_bytes(&tx);
         sign_transaction(&mut tx, &kp);
         let after = canonical_bytes(&tx);
-        assert_eq!(before, after, "canonical bytes must not depend on signature");
+        assert_eq!(
+            before, after,
+            "canonical bytes must not depend on signature"
+        );
     }
 }

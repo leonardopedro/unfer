@@ -28,7 +28,10 @@ impl OdeReport {
         };
         let sing = match &self.esa.singularity {
             Some(s) if s.singular => {
-                let bt = s.blowup_time.map(|t| format!("{:.4}", t)).unwrap_or("?".into());
+                let bt = s
+                    .blowup_time
+                    .map(|t| format!("{:.4}", t))
+                    .unwrap_or("?".into());
                 format!(", blow-up T={}", bt)
             }
             _ => String::new(),
@@ -44,11 +47,7 @@ impl OdeReport {
 }
 
 /// Build a full report from the analysis components.
-pub fn build_report(
-    vars: Vec<String>,
-    esa: EsaReport,
-    cov: Option<CoV>,
-) -> OdeReport {
+pub fn build_report(vars: Vec<String>, esa: EsaReport, cov: Option<CoV>) -> OdeReport {
     let diagnostics = esa.diagnostics.clone();
     OdeReport {
         vars,

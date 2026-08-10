@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use unfer_protocol::{
-    Code, Diagnostic, DidEntry, DidDocument, IdentityOp, IdentityOpKind, Severity,
+    Code, Diagnostic, DidDocument, DidEntry, IdentityOp, IdentityOpKind, Severity,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -57,10 +57,7 @@ impl IdentityRegistry {
                 if op.seq <= entry.seq {
                     return Err(Diagnostic::new(
                         Code::DUPLICATE_TRANSACTION,
-                        format!(
-                            "stale seq: op.seq={} <= entry.seq={}",
-                            op.seq, entry.seq
-                        ),
+                        format!("stale seq: op.seq={} <= entry.seq={}", op.seq, entry.seq),
                         Severity::Error,
                     ));
                 }

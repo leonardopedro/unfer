@@ -23,12 +23,12 @@ use std::collections::{HashMap, HashSet};
 use sha2::{Digest, Sha256};
 
 use unfer_protocol::{
-    CertificateOp, CertificateOpKind, CertId, Code, CoinRef, ConsensusTransaction, Diagnostic,
+    CertId, CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction, Diagnostic,
     Severity,
 };
 
-use crate::certs::{commit_coin, CertificateLedger, MintAuthority};
-use crate::signing::{sign_transaction, Keypair};
+use crate::certs::{CertificateLedger, MintAuthority, commit_coin};
+use crate::signing::{Keypair, sign_transaction};
 
 const ESCROW_BLINDING: [u8; 32] = [0u8; 32];
 
@@ -230,11 +230,7 @@ impl EscrowService {
         })
     }
 
-    fn emit(
-        &mut self,
-        mut tx: ConsensusTransaction,
-        signer: &Keypair,
-    ) -> Result<(), Diagnostic> {
+    fn emit(&mut self, mut tx: ConsensusTransaction, signer: &Keypair) -> Result<(), Diagnostic> {
         sign_transaction(&mut tx, signer);
         self.apply_transaction(&tx)?;
         self.ops.push(tx);
@@ -272,7 +268,13 @@ mod tests {
         Keypair::generate()
     }
 
-    fn mint_to(service: &mut EscrowService, authority: &Keypair, owner: &str, amount: u64, blinding: [u8; 32]) -> CertId {
+    fn mint_to(
+        service: &mut EscrowService,
+        authority: &Keypair,
+        owner: &str,
+        amount: u64,
+        blinding: [u8; 32],
+    ) -> CertId {
         let mut tx = ConsensusTransaction::CertificateOp(CertificateOp {
             did: authority.did(),
             kind: CertificateOpKind::Mint {
@@ -289,7 +291,12 @@ mod tests {
         commit_coin(amount, owner, &blinding)
     }
 
-    fn settles(auth: &Keypair, buyer: &Keypair, seller: &str, amount: u64) -> (EscrowService, CertId) {
+    fn settles(
+        auth: &Keypair,
+        buyer: &Keypair,
+        seller: &str,
+        amount: u64,
+    ) -> (EscrowService, CertId) {
         let mut service = EscrowService::new(Keypair::generate(), MintAuthority::Only(auth.did()));
         let raw = mint_to(&mut service, auth, &buyer.did(), amount, [7u8; 32]);
         let held = service.hold(buyer, seller, raw, amount).unwrap();
@@ -309,7 +316,11 @@ mod tests {
         assert!(service.ledger().utxo(&held).is_some());
         assert_ne!(service.ledger().utxo(&held).unwrap().owner, buyer.did());
         assert_ne!(service.ledger().utxo(&held).unwrap().owner, seller.did());
-        assert_eq!(service.ledger().total_supply(), 1000, "no value created or destroyed");
+        assert_eq!(
+            service.ledger().total_supply(),
+            1000,
+            "no value created or destroyed"
+        );
     }
 
     #[test]
@@ -321,7 +332,10 @@ mod tests {
 
         let delivered = service.release(held, &seller.did()).unwrap();
         assert_eq!(service.escrow(&held).unwrap().state, EscrowState::Released);
-        assert_eq!(service.ledger().utxo(&delivered).unwrap().owner, seller.did());
+        assert_eq!(
+            service.ledger().utxo(&delivered).unwrap().owner,
+            seller.did()
+        );
         assert!(service.ledger().utxo(&held).is_none());
         assert_eq!(service.ledger().total_supply(), 1000);
 
@@ -354,8 +368,10 @@ mod tests {
         service.release(held, &seller.did()).unwrap();
 
         let engine = LocalConsensus::new();
-        let mut node =
-            ConsensusNode::with_mint_authority(Box::new(engine.clone()), MintAuthority::Only(auth.did()));
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(engine.clone()),
+            MintAuthority::Only(auth.did()),
+        );
         for tx in service.ops() {
             node.submit(tx.clone()).unwrap();
             node.sync().unwrap();

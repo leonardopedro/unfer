@@ -65,10 +65,7 @@ pub fn is_content_cid(cid: &str) -> bool {
 /// encrypted under a key derived from the content keypair's X25519 handshake (self-DH, the
 /// crate's per-content symmetric-key convention). Returns the per-chunk ciphertexts; the
 /// recipient uses the same keypair convention via [`decrypt_stored_cell`].
-pub fn encrypt_stored_cell(
-    keypair: &DataKeypair,
-    cell: &[u8],
-) -> Result<Vec<Vec<u8>>, String> {
+pub fn encrypt_stored_cell(keypair: &DataKeypair, cell: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     let aes_key = derive_aes_key(&keypair.shared_secret(keypair.public_key()));
     let mut ciphertexts = Vec::new();
     for (idx, plain) in Chunker::default().chunk(cell) {
@@ -137,11 +134,7 @@ impl BlueprintRegistry {
     /// Re-importing the same bytes (same CID) is idempotent and returns the *existing*
     /// record unchanged (blueprints are immutable — nothing is re-editable). Any other
     /// cell yields a new immutable record. Returns the record + whether it was new.
-    pub fn register(
-        &mut self,
-        cell: &[u8],
-        created_by: &str,
-    ) -> Result<BlueprintRecord, String> {
+    pub fn register(&mut self, cell: &[u8], created_by: &str) -> Result<BlueprintRecord, String> {
         let stored = store_cell(cell);
         let cid = stored.cid.clone();
         if let Some(existing) = self.records.get(&cid) {
@@ -208,8 +201,10 @@ mod tests {
         let mut b = CellBuilder::new("demo");
         b.set_archetype("ecmascript");
         b.set_entry("src/main.js");
-        b.add_file("module.toml", b"[module]\nname = \"demo\"\n").unwrap();
-        b.add_file("src/main.js", b"export async function run(k,a){return a;}").unwrap();
+        b.add_file("module.toml", b"[module]\nname = \"demo\"\n")
+            .unwrap();
+        b.add_file("src/main.js", b"export async function run(k,a){return a;}")
+            .unwrap();
         b.set_session(br#"{"t_now":0.25}"#);
         b.build().unwrap()
     }
@@ -267,7 +262,10 @@ mod tests {
         let rec = registry.register(&cell, "publisher").expect("register");
         assert_eq!(rec.blueprint_id, cid);
         assert_eq!(rec.cell_cid, cid);
-        assert_eq!(rec.immutable_blueprint_id, cid, "fresh blueprint is its own lineage root");
+        assert_eq!(
+            rec.immutable_blueprint_id, cid,
+            "fresh blueprint is its own lineage root"
+        );
         assert_eq!(rec.name, "demo");
         assert_eq!(rec.created_by, "publisher");
         assert!(rec.manifest_json.contains("\"archetype\":\"ecmascript\""));
@@ -276,11 +274,17 @@ mod tests {
         // original minter — the immutable_blueprint_id never moves.
         let rec2 = registry.register(&cell, "intruder").expect("register");
         assert_eq!(rec2.blueprint_id, cid);
-        assert_eq!(rec2.created_by, "publisher", "an idempotent import cannot re-mint");
+        assert_eq!(
+            rec2.created_by, "publisher",
+            "an idempotent import cannot re-mint"
+        );
 
         assert_eq!(registry.list().len(), 1);
         assert!(registry.is_registered(&cid));
-        assert_eq!(registry.cell_bytes(&cid).map(|b| b.to_vec()).as_deref(), Some(&cell[..]));
+        assert_eq!(
+            registry.cell_bytes(&cid).map(|b| b.to_vec()).as_deref(),
+            Some(&cell[..])
+        );
         assert_eq!(registry.get(&cid).map(|r| r.name.as_str()), Some("demo"));
         assert!(!registry.is_registered(&"0".repeat(64)));
     }
@@ -291,7 +295,9 @@ mod tests {
         let cell = sample_cell();
         let mut registry = BlueprintRegistry::default();
         let id1 = registry.register(&cell, "alice").expect("register");
-        let id2 = registry.register(&cell1(b"edited"), "alice").expect("register");
+        let id2 = registry
+            .register(&cell1(b"edited"), "alice")
+            .expect("register");
         assert_ne!(id1.blueprint_id, id2.blueprint_id);
         assert_eq!(id1.immutable_blueprint_id, id1.blueprint_id);
         assert_eq!(id2.immutable_blueprint_id, id2.blueprint_id);
@@ -315,7 +321,10 @@ mod tests {
         let recipient = DataKeypair::generate();
 
         let ciphertexts = encrypt_stored_cell(&recipient, &cell).unwrap();
-        assert_ne!(ciphertexts.iter().flatten().cloned().collect::<Vec<u8>>(), cell);
+        assert_ne!(
+            ciphertexts.iter().flatten().cloned().collect::<Vec<u8>>(),
+            cell
+        );
 
         let plain = decrypt_stored_cell(&recipient, &ciphertexts).unwrap();
         assert_eq!(plain, cell);

@@ -1,5 +1,5 @@
-use unfer_protocol::*;
 use proptest::prelude::*;
+use unfer_protocol::*;
 
 fn rt<T>(v: &T) -> T
 where

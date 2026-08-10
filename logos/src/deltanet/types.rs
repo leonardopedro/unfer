@@ -1,4 +1,4 @@
-use crate::core_ir::{TagId, Literal, PrimOp};
+use crate::core_ir::{Literal, PrimOp, TagId};
 use std::fmt;
 
 pub type NodeId = u32;
@@ -79,7 +79,11 @@ impl Node {
         for _ in 0..aux_count {
             ports.push(None);
         }
-        Self { kind, ports, freed: false }
+        Self {
+            kind,
+            ports,
+            freed: false,
+        }
     }
 }
 

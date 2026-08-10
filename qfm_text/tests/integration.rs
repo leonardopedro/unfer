@@ -33,13 +33,8 @@ fn run_with_shard(shard_path: &Path, vocab_size: u32) {
     // 1. Accumulate (registry is grown by `accumulate_shards`).
     let mut registry = ContextRegistry::new(cfg.n_orders);
     let mut encoder = Encoder::Registry(registry.clone());
-    let acc = accumulate_shards(
-        &[shard_path.to_path_buf()],
-        &mut encoder,
-        &cfg,
-        vocab_size,
-    )
-    .expect("accumulate");
+    let acc = accumulate_shards(&[shard_path.to_path_buf()], &mut encoder, &cfg, vocab_size)
+        .expect("accumulate");
     if let Some(r) = encoder.as_registry() {
         registry.clone_from(r);
     }

@@ -20,7 +20,10 @@ pub fn parse_sentence(tokens: &[String], lexicon: &Lexicon) -> Vec<DerivationTre
     for (i, tok) in tokens.iter().enumerate() {
         for entry in lexicon.lookup(tok) {
             let category = CCGCategory::parse(&entry.category).unwrap_or_else(|_| {
-                eprintln!("warning: skipping unrecognized category '{}' for '{}'", entry.category, tok);
+                eprintln!(
+                    "warning: skipping unrecognized category '{}' for '{}'",
+                    entry.category, tok
+                );
                 CCGCategory::S
             });
             chart[i][i + 1].entries.push(ChartEntry {
@@ -61,7 +64,12 @@ pub fn parse_sentence(tokens: &[String], lexicon: &Lexicon) -> Vec<DerivationTre
 
 fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<ChartEntry>) {
     // Forward Application: X/Y + Y → X
-    if let CCGCategory::Slash { forward: true, result, argument } = &left.category {
+    if let CCGCategory::Slash {
+        forward: true,
+        result,
+        argument,
+    } = &left.category
+    {
         if **argument == right.category {
             results.push(ChartEntry {
                 category: (**result).clone(),
@@ -77,7 +85,12 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
     }
 
     // Backward Application: Y + X\Y → X
-    if let CCGCategory::Slash { forward: false, result, argument } = &right.category {
+    if let CCGCategory::Slash {
+        forward: false,
+        result,
+        argument,
+    } = &right.category
+    {
         if **argument == left.category {
             results.push(ChartEntry {
                 category: (**result).clone(),
@@ -93,8 +106,18 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
     }
 
     // Forward Composition: X/Y + Y/Z → X/Z
-    if let CCGCategory::Slash { forward: true, result: x, argument: y1 } = &left.category {
-        if let CCGCategory::Slash { forward: true, result: y2, argument: z } = &right.category {
+    if let CCGCategory::Slash {
+        forward: true,
+        result: x,
+        argument: y1,
+    } = &left.category
+    {
+        if let CCGCategory::Slash {
+            forward: true,
+            result: y2,
+            argument: z,
+        } = &right.category
+        {
             if **y1 == **y2 {
                 let new_result = CCGCategory::forward((**x).clone(), (**z).clone());
                 results.push(ChartEntry {
@@ -112,8 +135,18 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
     }
 
     // Backward Composition: Y\Z + X\Y → X\Z
-    if let CCGCategory::Slash { forward: false, result: y1, argument: z } = &left.category {
-        if let CCGCategory::Slash { forward: false, result: x, argument: y2 } = &right.category {
+    if let CCGCategory::Slash {
+        forward: false,
+        result: y1,
+        argument: z,
+    } = &left.category
+    {
+        if let CCGCategory::Slash {
+            forward: false,
+            result: x,
+            argument: y2,
+        } = &right.category
+        {
             if **y1 == **y2 {
                 let new_result = CCGCategory::backward((**x).clone(), (**z).clone());
                 results.push(ChartEntry {
@@ -144,7 +177,10 @@ mod tests {
     #[test]
     fn test_parse_john_loves_mary() {
         let lex = test_lexicon();
-        let tokens: Vec<String> = "John loves Mary".split_whitespace().map(String::from).collect();
+        let tokens: Vec<String> = "John loves Mary"
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         let trees = parse_sentence(&tokens, &lex);
         assert!(!trees.is_empty(), "should parse 'John loves Mary'");
         assert!(trees.iter().all(|t| t.is_sentence()));
@@ -153,7 +189,10 @@ mod tests {
     #[test]
     fn test_parse_the_cat_sleeps() {
         let lex = test_lexicon();
-        let tokens: Vec<String> = "the cat sleeps".split_whitespace().map(String::from).collect();
+        let tokens: Vec<String> = "the cat sleeps"
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         let trees = parse_sentence(&tokens, &lex);
         assert!(!trees.is_empty(), "should parse 'the cat sleeps'");
     }

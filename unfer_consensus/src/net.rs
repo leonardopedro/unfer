@@ -26,12 +26,12 @@ use std::time::Duration;
 
 use rust_quepaxa::network::{
     DeduplicatingSubmissionHandler, DeploymentId, FileSubmissionJournal, MutualTlsConfigs,
-    NetworkConsensusHandler, NetworkMetrics, NetworkNodeServer, PeerIdentity, PostcardRecorderCodec,
-    PostcardRuntimeCodec, TlsIdentity, TlsRecorderClient, TlsSubmitClient,
+    NetworkConsensusHandler, NetworkMetrics, NetworkNodeServer, PeerIdentity,
+    PostcardRecorderCodec, PostcardRuntimeCodec, TlsIdentity, TlsRecorderClient, TlsSubmitClient,
 };
 use rust_quepaxa::{
     AllowAllAvailability, Decision, DurableRecorderCore, FileRecorderStore, FileRuntimeStore,
-    LaneId, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, RecorderConfig, StateMachine,
+    LaneId, RecorderConfig, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, StateMachine,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -127,7 +127,13 @@ impl SharedLedger {
         };
         // Re-enqueue anything still queued so the pump re-proposes it after a
         // restart, then persist the reconciled view.
-        let outstanding = ledger.pending.lock().unwrap().keys().copied().collect::<Vec<_>>();
+        let outstanding = ledger
+            .pending
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
         for id in outstanding {
             let _ = ledger.submitted.send(id);
         }
@@ -364,11 +370,12 @@ impl NetworkCluster {
         let mut nodes = Vec::new();
         for index in 0..LIVE_NODES {
             let node_dir = state_dir.join(format!("node-{}", members[index].get()));
-            fs::create_dir_all(&node_dir)
-                .map_err(|error| rust_quepaxa::QuePaxaError::StorageError(format!(
+            fs::create_dir_all(&node_dir).map_err(|error| {
+                rust_quepaxa::QuePaxaError::StorageError(format!(
                     "could not create node state dir {}: {error}",
                     node_dir.display()
-                )))?;
+                ))
+            })?;
 
             let recorder_clients = members
                 .iter()
@@ -402,7 +409,10 @@ impl NetworkCluster {
             let consensus = NetworkConsensusHandler::new(
                 runtime_config,
                 recorder_clients,
-                FileRuntimeStore::new(node_dir.join("runtime.snapshot"), PostcardRuntimeCodec::default()),
+                FileRuntimeStore::new(
+                    node_dir.join("runtime.snapshot"),
+                    PostcardRuntimeCodec::default(),
+                ),
                 LedgerStateMachine {
                     ledger: ledger.clone(),
                 },
@@ -412,12 +422,18 @@ impl NetworkCluster {
             .with_noop_value(NOOP_VALUE);
             let submissions = DeduplicatingSubmissionHandler::new(
                 consensus,
-                FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)?,
+                FileSubmissionJournal::open(
+                    node_dir.join("submission-journal.bin"),
+                    MAX_JOURNAL_BYTES,
+                )?,
             );
             let recorder = DurableRecorderCore::new(
                 RecorderConfig::new(members[index], members.clone(), 1)?,
                 Arc::new(AllowAllAvailability),
-                FileRecorderStore::new(node_dir.join("recorder.snapshot"), PostcardRecorderCodec::default()),
+                FileRecorderStore::new(
+                    node_dir.join("recorder.snapshot"),
+                    PostcardRecorderCodec::default(),
+                ),
             )?;
             let server = NetworkNodeServer::bind(
                 addresses[index],
@@ -507,7 +523,8 @@ impl NetworkCluster {
     /// Convention marker: queued-but-uncommitted submissions carry a provisional
     /// seq reserved at submit time.
     pub fn pending_seq(&self) -> u64 {
-        self.ledger.bank.read().unwrap().len() as u64 + self.ledger.pending.lock().unwrap().len() as u64
+        self.ledger.bank.read().unwrap().len() as u64
+            + self.ledger.pending.lock().unwrap().len() as u64
     }
 
     /// Gracefully stop every node and the pump. Ports are released once each
@@ -590,10 +607,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "unfer-ledger-file-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("unfer-ledger-file-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = Some(LedgerFile::new(&dir));
 

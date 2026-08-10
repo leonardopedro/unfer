@@ -5,8 +5,8 @@
 //! otherwise a well-formed CID returns a 404 and a malformed one returns 400, so the
 //! gateway never guesses at content by address shape alone.
 
-use unfer_data::blueprint::is_content_cid;
 use unfer_data::CellStore;
+use unfer_data::blueprint::is_content_cid;
 
 /// Extract the CID segment from a `/cell/<cid>` path (`""` when not a cell path).
 pub fn cid_from_path(path: &str) -> Option<String> {
@@ -22,10 +22,16 @@ pub fn cid_from_path(path: &str) -> Option<String> {
 /// Returns `(status, json_body)`.
 pub fn resolve_cell(store: &CellStore, path: &str) -> (u16, Vec<u8>) {
     let Some(cid) = cid_from_path(path) else {
-        return (400, body_json(&serde_json::json!({ "error": "not a /cell/<cid> path" })));
+        return (
+            400,
+            body_json(&serde_json::json!({ "error": "not a /cell/<cid> path" })),
+        );
     };
     if !is_content_cid(&cid) {
-        return (400, body_json(&serde_json::json!({ "error": "malformed content CID", "cid": cid })));
+        return (
+            400,
+            body_json(&serde_json::json!({ "error": "malformed content CID", "cid": cid })),
+        );
     }
     match store.get(&cid) {
         Some(rec) => {

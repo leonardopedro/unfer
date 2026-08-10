@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rust_quepaxa::network::TlsIdentity;
 use tokio::time::timeout;
 
@@ -21,8 +21,8 @@ use unfer_consensus::net::NetworkCluster;
 use unfer_consensus::node::ConsensusNode;
 use unfer_consensus::signing::Keypair;
 use unfer_protocol::CoinRef;
-use unfer_taler::wire::{SimulatedWireGateway, WireGateway};
 use unfer_taler::TalerExchange;
+use unfer_taler::wire::{SimulatedWireGateway, WireGateway};
 
 fn identity() -> TlsIdentity {
     let CertifiedKey { cert, key_pair } =
@@ -38,10 +38,7 @@ fn temp_state_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "unfer-{name}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("unfer-{name}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -110,7 +107,11 @@ async fn taler_exchange_lifecycle_replicates_through_the_cluster() {
     ex.confirm_peg_out(&peg.wire.wire_id).unwrap();
     assert_eq!(ex.merchant_balance(&bob.did()), 600);
     assert!(ex.audit().is_ok());
-    assert_eq!(ex.fiat_in() - ex.fiat_out(), 600, "600 still backed inside the seam");
+    assert_eq!(
+        ex.fiat_in() - ex.fiat_out(),
+        600,
+        "600 still backed inside the seam"
+    );
 
     // -- replicate through the cluster ---------------------------------------
     let ops = ex.ops().to_vec();
@@ -119,9 +120,12 @@ async fn taler_exchange_lifecycle_replicates_through_the_cluster() {
         nodes[i % nodes.len()].submit(op.clone()).unwrap();
     }
 
-    timeout(Duration::from_secs(90), cluster.wait_committed(ops.len() as u64))
-        .await
-        .expect("cluster commits every exchange op in time");
+    timeout(
+        Duration::from_secs(90),
+        cluster.wait_committed(ops.len() as u64),
+    )
+    .await
+    .expect("cluster commits every exchange op in time");
 
     for node in nodes.iter_mut() {
         node.sync().unwrap();

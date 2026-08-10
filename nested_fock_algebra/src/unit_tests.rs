@@ -332,7 +332,9 @@ mod algebra_tests {
              spurious cross-channel basis state; got {:?}",
             h_state.components.keys().collect::<Vec<_>>()
         );
-        let amp = h_state.components.get(&state.components.keys().next().unwrap().clone())
+        let amp = h_state
+            .components
+            .get(&state.components.keys().next().unwrap().clone())
             .copied()
             .unwrap_or(Complex64::new(0.0, 0.0));
         let expected = alphas[0] + alphas[1];
@@ -356,7 +358,11 @@ mod algebra_tests {
         let a = point_to_inner_state(&[1.0, 2.0, 3.0], QFM_DEFAULT_QUANTIZATION_SCALE);
         let b = point_to_inner_state(&[1.0, 2.0, 3.5], QFM_DEFAULT_QUANTIZATION_SCALE);
         assert_ne!(a, b, "points differing in one coordinate must differ");
-        assert_eq!(a.modes.len(), 3, "three nonzero coordinates -> three occupied modes");
+        assert_eq!(
+            a.modes.len(),
+            3,
+            "three nonzero coordinates -> three occupied modes"
+        );
     }
 
     #[test]
@@ -376,7 +382,10 @@ mod algebra_tests {
         // information (matches the vacuum in that mode) and so must not be
         // inserted into the mode map at all.
         let state = point_to_inner_state(&[0.0, 2.0], QFM_DEFAULT_QUANTIZATION_SCALE);
-        assert!(!state.modes.contains_key(&0), "zero coordinate must stay unoccupied");
+        assert!(
+            !state.modes.contains_key(&0),
+            "zero coordinate must stay unoccupied"
+        );
         assert!(state.modes.contains_key(&1));
     }
 
@@ -390,7 +399,10 @@ mod algebra_tests {
         let h_vac = h.apply(&vac);
         let eig0 =
             QuantumState::inner_product(&vac, &h_vac) / QuantumState::inner_product(&vac, &vac);
-        assert!((eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12, "H|0> = |0>");
+        assert!(
+            (eig0.re - 1.0).abs() < 1e-12 && eig0.im.abs() < 1e-12,
+            "H|0> = |0>"
+        );
 
         for (point, &alpha) in points.iter().zip(alphas.iter()) {
             let inner = point_to_inner_state(point, QFM_DEFAULT_QUANTIZATION_SCALE);
@@ -438,8 +450,11 @@ mod algebra_tests {
         let points = vec![vec![1.0, 0.5], vec![-2.0, 3.0]];
         let eps = [0.3, 0.4];
         let c0 = (1.0f64 - 0.09 - 0.16).sqrt();
-        let h =
-            qfm_hamiltonian_mehler_projector_localized(&points, &eps, QFM_DEFAULT_QUANTIZATION_SCALE);
+        let h = qfm_hamiltonian_mehler_projector_localized(
+            &points,
+            &eps,
+            QFM_DEFAULT_QUANTIZATION_SCALE,
+        );
 
         // Single rank-1 term, self-adjoint.
         assert_eq!(h.terms.len(), 1);

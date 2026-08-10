@@ -40,14 +40,13 @@ impl<'a> DataPublisher<'a> {
         let mut chunk_cids = Vec::with_capacity(chunks.len());
 
         for (index, plaintext) in &chunks {
-            let ciphertext = encrypt_chunk(&aes_key, *index, plaintext)
-                .map_err(|e| {
-                    Diagnostic::new(
-                        unfer_protocol::Code::INTERNAL,
-                        format!("chunk encryption failed: {e}"),
-                        unfer_protocol::Severity::Error,
-                    )
-                })?;
+            let ciphertext = encrypt_chunk(&aes_key, *index, plaintext).map_err(|e| {
+                Diagnostic::new(
+                    unfer_protocol::Code::INTERNAL,
+                    format!("chunk encryption failed: {e}"),
+                    unfer_protocol::Severity::Error,
+                )
+            })?;
             let cid = compute_cid(&ciphertext);
             chunk_cids.push(cid.clone());
             chunk_refs.push(ChunkRef {
@@ -116,8 +115,7 @@ mod tests {
         let data = b"hello, data plane!";
         let content_ref = {
             let mut pub_ = DataPublisher::new(&mut node);
-            pub_
-                .publish(&kp, data, "text/plain", Some("greeting.txt"))
+            pub_.publish(&kp, data, "text/plain", Some("greeting.txt"))
                 .unwrap()
         };
 
@@ -153,8 +151,7 @@ mod tests {
         let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
         let content_ref = {
             let mut pub_ = DataPublisher::with_chunk_size(&mut node, 100);
-            pub_
-                .publish(&kp, &data, "application/octet-stream", None)
+            pub_.publish(&kp, &data, "application/octet-stream", None)
                 .unwrap()
         };
 

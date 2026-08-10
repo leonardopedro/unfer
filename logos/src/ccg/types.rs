@@ -45,7 +45,11 @@ impl fmt::Display for CCGCategory {
             CCGCategory::N => write!(f, "N"),
             CCGCategory::Adj => write!(f, "AP"),
             CCGCategory::Conj => write!(f, "conj"),
-            CCGCategory::Slash { forward, result, argument } => {
+            CCGCategory::Slash {
+                forward,
+                result,
+                argument,
+            } => {
                 let slash = if *forward { '/' } else { '\\' };
                 write!(f, "({}{}{})", result, slash, argument)
             }
@@ -156,8 +160,12 @@ impl DerivationTree {
     pub fn result_category(&self) -> &CCGCategory {
         match self {
             DerivationTree::Leaf { category, .. } => category,
-            DerivationTree::Application { result_category, .. } => result_category,
-            DerivationTree::Composition { result_category, .. } => result_category,
+            DerivationTree::Application {
+                result_category, ..
+            } => result_category,
+            DerivationTree::Composition {
+                result_category, ..
+            } => result_category,
         }
     }
 

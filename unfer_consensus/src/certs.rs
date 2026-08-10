@@ -16,9 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
-use unfer_protocol::{
-    Code, CertId, CertificateOpKind, CoinRef, Diagnostic, Nullifier, Severity,
-};
+use unfer_protocol::{CertId, CertificateOpKind, Code, CoinRef, Diagnostic, Nullifier, Severity};
 
 const SMT_DEPTH: usize = 256;
 const ZERO: [u8; 32] = [0u8; 32];
@@ -80,8 +78,16 @@ impl SparseMerkle {
             left.push(false);
             let mut right = full[..d].to_vec();
             right.push(true);
-            let lh = self.nodes.get(&left).copied().unwrap_or(self.defaults[d + 1]);
-            let rh = self.nodes.get(&right).copied().unwrap_or(self.defaults[d + 1]);
+            let lh = self
+                .nodes
+                .get(&left)
+                .copied()
+                .unwrap_or(self.defaults[d + 1]);
+            let rh = self
+                .nodes
+                .get(&right)
+                .copied()
+                .unwrap_or(self.defaults[d + 1]);
             self.nodes.insert(full[..d].to_vec(), h2(lh, rh));
         }
     }
@@ -96,8 +102,16 @@ impl SparseMerkle {
             left.push(false);
             let mut right = full[..d].to_vec();
             right.push(true);
-            let lh = self.nodes.get(&left).copied().unwrap_or(self.defaults[d + 1]);
-            let rh = self.nodes.get(&right).copied().unwrap_or(self.defaults[d + 1]);
+            let lh = self
+                .nodes
+                .get(&left)
+                .copied()
+                .unwrap_or(self.defaults[d + 1]);
+            let rh = self
+                .nodes
+                .get(&right)
+                .copied()
+                .unwrap_or(self.defaults[d + 1]);
             self.nodes.insert(full[..d].to_vec(), h2(lh, rh));
         }
     }
@@ -215,10 +229,7 @@ impl CertificateLedger {
         seq: u64,
     ) -> Result<CertId, Diagnostic> {
         if amount == 0 {
-            return Err(self.diag(
-                Code::CERT_AMOUNT_MISMATCH,
-                "mint amount must be positive",
-            ));
+            return Err(self.diag(Code::CERT_AMOUNT_MISMATCH, "mint amount must be positive"));
         }
         if !self.mint_authorized(actor) {
             return Err(self.diag(
@@ -303,9 +314,9 @@ impl CertificateLedger {
                 ));
             }
             let coin = self.spend_input(input, spender)?;
-            in_sum = in_sum.checked_add(coin.amount).ok_or_else(|| {
-                self.diag(Code::CERT_AMOUNT_MISMATCH, "input sum overflow")
-            })?;
+            in_sum = in_sum
+                .checked_add(coin.amount)
+                .ok_or_else(|| self.diag(Code::CERT_AMOUNT_MISMATCH, "input sum overflow"))?;
         }
         // 2. Validate outputs: positive amounts, unique ids, no collision.
         let mut out_sum: u64 = 0;
@@ -316,9 +327,9 @@ impl CertificateLedger {
                 return Err(self.diag(Code::CERT_AMOUNT_MISMATCH, "output amount must be positive"));
             }
             let id = commit_coin(out.amount, &out.owner, &[0u8; 32]);
-            out_sum = out_sum.checked_add(out.amount).ok_or_else(|| {
-                self.diag(Code::CERT_AMOUNT_MISMATCH, "output sum overflow")
-            })?;
+            out_sum = out_sum
+                .checked_add(out.amount)
+                .ok_or_else(|| self.diag(Code::CERT_AMOUNT_MISMATCH, "output sum overflow"))?;
             if self.utxos.contains_key(&id.0) || !seen_outputs.insert(id) {
                 return Err(self.diag(
                     Code::CERT_DOUBLE_SPEND,
@@ -372,9 +383,9 @@ impl CertificateLedger {
                 return Err(self.diag(Code::CERT_DOUBLE_SPEND, "nullifier already spent"));
             }
             let coin = self.spend_input(input, spender)?;
-            burned = burned.checked_add(coin.amount).ok_or_else(|| {
-                self.diag(Code::CERT_AMOUNT_MISMATCH, "burn sum overflow")
-            })?;
+            burned = burned
+                .checked_add(coin.amount)
+                .ok_or_else(|| self.diag(Code::CERT_AMOUNT_MISMATCH, "burn sum overflow"))?;
             self.spent.insert(null);
             self.utxos.remove(&input.coin_id.0);
             self.smt.remove(&input.coin_id.0);
@@ -445,7 +456,9 @@ mod tests {
     #[test]
     fn mint_is_idempotent_per_commitment() {
         let mut l = ledger();
-        let id1 = l.apply_mint(&auth(), 100, "did:unfer:alice", &[1u8; 32], 1).unwrap();
+        let id1 = l
+            .apply_mint(&auth(), 100, "did:unfer:alice", &[1u8; 32], 1)
+            .unwrap();
         let dup = l.apply_mint(&auth(), 100, "did:unfer:alice", &[1u8; 32], 2);
         assert_eq!(dup.unwrap_err().code, Code::CERT_DOUBLE_SPEND);
         assert_eq!(l.unspent_count(), 1);
@@ -476,7 +489,9 @@ mod tests {
         let bob = "did:unfer:bob";
         let id = l.apply_mint(&auth(), 1000, alice, &[1u8; 32], 1).unwrap();
         let outs = vec![coinref(id, 400, bob), coinref(id, 600, alice)];
-        let ids = l.apply_transfer(alice, &[coinref(id, 1000, alice)], &outs, 2).unwrap();
+        let ids = l
+            .apply_transfer(alice, &[coinref(id, 1000, alice)], &outs, 2)
+            .unwrap();
         assert_eq!(ids.len(), 2);
         assert_eq!(l.total_supply(), 1000);
     }
@@ -489,7 +504,12 @@ mod tests {
         let id = l.apply_mint(&auth(), 1000, alice, &[1u8; 32], 1).unwrap();
         // Creating 1100 out of 1000 → UK-7002.
         let err = l
-            .apply_transfer(alice, &[coinref(id, 1000, alice)], &[coinref(id, 1100, bob)], 2)
+            .apply_transfer(
+                alice,
+                &[coinref(id, 1000, alice)],
+                &[coinref(id, 1100, bob)],
+                2,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::CERT_AMOUNT_MISMATCH);
         assert!(l.utxo(&id).is_some(), "inputs untouched on reject");
@@ -502,10 +522,16 @@ mod tests {
         let alice = "did:unfer:alice";
         let id = l.apply_mint(&auth(), 500, alice, &[1u8; 32], 1).unwrap();
         let out1 = coinref(id, 500, alice);
-        l.apply_transfer(alice, &[coinref(id, 500, alice)], &[out1], 2).unwrap();
+        l.apply_transfer(alice, &[coinref(id, 500, alice)], &[out1], 2)
+            .unwrap();
         // Re-spending the (now spent) input → UK-7004.
         let err = l
-            .apply_transfer(alice, &[coinref(id, 500, alice)], &[coinref(id, 500, alice)], 3)
+            .apply_transfer(
+                alice,
+                &[coinref(id, 500, alice)],
+                &[coinref(id, 500, alice)],
+                3,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::CERT_DOUBLE_SPEND);
     }
@@ -517,7 +543,12 @@ mod tests {
         let mallory = "did:unfer:mallory";
         let id = l.apply_mint(&auth(), 500, alice, &[1u8; 32], 1).unwrap();
         let err = l
-            .apply_transfer(mallory, &[coinref(id, 500, alice)], &[coinref(id, 500, mallory)], 2)
+            .apply_transfer(
+                mallory,
+                &[coinref(id, 500, alice)],
+                &[coinref(id, 500, mallory)],
+                2,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::CERT_OWNER_MISMATCH);
     }

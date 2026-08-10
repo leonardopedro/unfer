@@ -175,7 +175,8 @@ impl ModeStats {
                 self.hist.push((next, 1));
             }
         }
-        self.hist.sort_by(|(a_t, a_c), (b_t, b_c)| b_c.cmp(a_c).then(a_t.cmp(b_t)));
+        self.hist
+            .sort_by(|(a_t, a_c), (b_t, b_c)| b_c.cmp(a_c).then(a_t.cmp(b_t)));
     }
 
     /// Total count of observations this mode has accumulated. Should
@@ -598,7 +599,10 @@ mod tests {
         a.merge(b);
         // Total: 2x the single-pass total.
         assert_eq!(a.total_windows, 2 * snap_a.total_windows);
-        assert_eq!(a.unigram, snap_a.unigram.iter().map(|&x| 2 * x).collect::<Vec<_>>());
+        assert_eq!(
+            a.unigram,
+            snap_a.unigram.iter().map(|&x| 2 * x).collect::<Vec<_>>()
+        );
         for (mode, ms) in &a.stats {
             let sa = snap_a.stats.get(mode).expect("a has mode");
             let sb = snap_b.stats.get(mode).expect("b has mode");

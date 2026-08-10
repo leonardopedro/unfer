@@ -140,12 +140,10 @@ impl TalerExchange {
 
     /// Open a new reserve for `customer_did`. Idempotent for the same id+owner.
     pub fn open_reserve(&mut self, reserve_id: ReserveId, customer_did: &str) {
-        self.reserves
-            .entry(reserve_id)
-            .or_insert_with(|| Reserve {
-                owner: customer_did.to_string(),
-                balance: 0,
-            });
+        self.reserves.entry(reserve_id).or_insert_with(|| Reserve {
+            owner: customer_did.to_string(),
+            balance: 0,
+        });
     }
 
     /// Credit `reserve_id` from a *confirmed* bank wire. Refuses unconfirmed
@@ -233,12 +231,12 @@ impl TalerExchange {
 
     // -- deposit -------------------------------------------------------------
 
-/// Pay a merchant: retire e-coins owned by `customer` on the ledger (a `Burn`)
-/// and credit the merchant's fiat balance. The e-coins leave circulation exactly
-/// like a Taler exchange honors e-coins it has been given; the merchant's
-/// balance is redeemable as fiat via `peg_out`.
-/// Refuses coins the exchange never minted (UK-7107) and double deposits
-/// (UK-7105).
+    /// Pay a merchant: retire e-coins owned by `customer` on the ledger (a `Burn`)
+    /// and credit the merchant's fiat balance. The e-coins leave circulation exactly
+    /// like a Taler exchange honors e-coins it has been given; the merchant's
+    /// balance is redeemable as fiat via `peg_out`.
+    /// Refuses coins the exchange never minted (UK-7107) and double deposits
+    /// (UK-7105).
     pub fn deposit(
         &mut self,
         customer: &Keypair,
@@ -288,14 +286,20 @@ impl TalerExchange {
             self.funded.remove(&c.coin_id.0);
         }
         self.funded_outstanding -= total;
-        *self.merchant_balances.entry(merchant_did.to_string()).or_insert(0) += total;
+        *self
+            .merchant_balances
+            .entry(merchant_did.to_string())
+            .or_insert(0) += total;
 
         debug_assert!(self.audit().is_ok());
         Ok(total)
     }
 
     pub fn merchant_balance(&self, merchant_did: &str) -> u64 {
-        self.merchant_balances.get(merchant_did).copied().unwrap_or(0)
+        self.merchant_balances
+            .get(merchant_did)
+            .copied()
+            .unwrap_or(0)
     }
 
     // -- peg-out -------------------------------------------------------------
@@ -309,7 +313,11 @@ impl TalerExchange {
         amount: u64,
         bank_account: &str,
     ) -> Result<PegOut, Diagnostic> {
-        let balance = self.merchant_balances.get(merchant_did).copied().unwrap_or(0);
+        let balance = self
+            .merchant_balances
+            .get(merchant_did)
+            .copied()
+            .unwrap_or(0);
         if balance < amount {
             return Err(diag(
                 Code::TALER_INSUFFICIENT_BALANCE,
@@ -361,7 +369,10 @@ impl TalerExchange {
                 "settled wire cannot be cancelled",
             ));
         }
-        *self.merchant_balances.entry(peg.merchant_did.clone()).or_insert(0) += peg.wire.amount;
+        *self
+            .merchant_balances
+            .entry(peg.merchant_did.clone())
+            .or_insert(0) += peg.wire.amount;
         self.fiat_out = self.fiat_out.saturating_sub(peg.wire.amount);
         debug_assert!(self.audit().is_ok());
         Ok(())
@@ -391,11 +402,7 @@ impl TalerExchange {
         Ok(())
     }
 
-    fn push_op(
-        &mut self,
-        op: CertificateOp,
-        signer: &Keypair,
-    ) -> Result<Vec<CertId>, Diagnostic> {
+    fn push_op(&mut self, op: CertificateOp, signer: &Keypair) -> Result<Vec<CertId>, Diagnostic> {
         let mut tx = ConsensusTransaction::CertificateOp(op.clone());
         unfer_consensus::signing::sign_transaction(&mut tx, signer);
         self.ops.push(tx);
@@ -439,7 +446,12 @@ mod tests {
         (ex, treasury, alice, bob)
     }
 
-    fn fund(ex: &mut TalerExchange, gw: &mut SimulatedWireGateway, reserve: ReserveId, did: &str) -> WireRef {
+    fn fund(
+        ex: &mut TalerExchange,
+        gw: &mut SimulatedWireGateway,
+        reserve: ReserveId,
+        did: &str,
+    ) -> WireRef {
         ex.open_reserve(reserve, did);
         let w = gw.prepare_transfer("unfer-bank", 1000).unwrap();
         gw.confirm(&w.wire_id).unwrap();
@@ -480,7 +492,11 @@ mod tests {
         let credited = ex.deposit(&alice, &[coinref], &bob.did()).unwrap();
         assert_eq!(credited, 500);
         assert_eq!(ex.merchant_balance(&bob.did()), 500);
-        assert_eq!(ex.ledger().total_supply(), 0, "deposit retires the e-coin from circulation");
+        assert_eq!(
+            ex.ledger().total_supply(),
+            0,
+            "deposit retires the e-coin from circulation"
+        );
         assert!(ex.audit().is_ok());
 
         // Peg out to bob's bank.
@@ -506,7 +522,10 @@ mod tests {
         let w = gw.prepare_transfer("unfer-bank", 1000).unwrap(); // still Preparing
         let err = ex.peg_in(reserve, &w).unwrap_err();
         assert_eq!(err.code, Code::TALER_UNCONFIRMED_WIRE);
-        assert!(ex.audit().is_ok(), "no credit happened, so nothing to conserve");
+        assert!(
+            ex.audit().is_ok(),
+            "no credit happened, so nothing to conserve"
+        );
     }
 
     #[test]
@@ -613,15 +632,21 @@ mod tests {
         // A fresh node configured with the same mint authority replays the
         // exchange's signed ops and must land on the same certificate root.
         let engine = LocalConsensus::new();
-        let mut node =
-            ConsensusNode::with_mint_authority(Box::new(engine.clone()), MintAuthority::Only(treasury.did()));
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(engine.clone()),
+            MintAuthority::Only(treasury.did()),
+        );
         for tx in ex.ops() {
             node.submit(tx.clone()).unwrap();
             node.sync().unwrap();
         }
         assert_eq!(ex.ledger().root(), node.certs().root());
         assert_eq!(ex.ledger().total_supply(), node.certs().total_supply());
-        assert_eq!(node.certs().total_supply(), 0, "deposit retires the e-coin from circulation");
+        assert_eq!(
+            node.certs().total_supply(),
+            0,
+            "deposit retires the e-coin from circulation"
+        );
         assert!(node.is_synced());
     }
 

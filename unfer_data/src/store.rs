@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::blueprint::{store_cell, CellRef};
+use crate::blueprint::{CellRef, store_cell};
 use crate::chunk::Chunker;
 use crate::crypto::{decrypt_chunk, encrypt_chunk};
 
@@ -104,22 +104,10 @@ impl KeyRing {
 /// Lifecycle event for the audit stream.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CellEvent {
-    Stored {
-        cid: String,
-        seq: u64,
-    },
-    Pinned {
-        cid: String,
-        pins: u64,
-    },
-    Unpinned {
-        cid: String,
-        pins: u64,
-    },
-    Pruned {
-        cid: String,
-        seq: u64,
-    },
+    Stored { cid: String, seq: u64 },
+    Pinned { cid: String, pins: u64 },
+    Unpinned { cid: String, pins: u64 },
+    Pruned { cid: String, seq: u64 },
 }
 
 #[derive(Debug)]
@@ -154,8 +142,10 @@ impl CellStore {
                 seq: self.next_seq,
             },
         );
-        self.events
-            .push(CellEvent::Stored { cid: cell_ref.cid.clone(), seq: self.next_seq });
+        self.events.push(CellEvent::Stored {
+            cid: cell_ref.cid.clone(),
+            seq: self.next_seq,
+        });
         cell_ref
     }
 
@@ -274,11 +264,17 @@ mod tests {
         store.unpin(&a.cid).unwrap();
         store.prune();
         let events = store.events().to_vec();
-        assert!(events.iter().any(|e| matches!(e, CellEvent::Stored { cid, .. } if cid == &a.cid)));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, CellEvent::Unpinned { cid, pins, .. } if cid == &a.cid && *pins == 0)));
-        assert!(matches!(&events[events.len() - 1], CellEvent::Pruned { cid, .. } if cid == &a.cid));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, CellEvent::Stored { cid, .. } if cid == &a.cid))
+        );
+        assert!(events.iter().any(
+            |e| matches!(e, CellEvent::Unpinned { cid, pins, .. } if cid == &a.cid && *pins == 0)
+        ));
+        assert!(
+            matches!(&events[events.len() - 1], CellEvent::Pruned { cid, .. } if cid == &a.cid)
+        );
     }
 
     #[test]
