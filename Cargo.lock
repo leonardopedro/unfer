@@ -4576,6 +4576,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "prob_kernel",
+ "proptest",
  "rand 0.8.6",
  "rust-quepaxa",
  "serde",

@@ -551,3 +551,105 @@ mod tests {
         assert_eq!(smt.root(), empty);
     }
 }
+
+// ── property tests (Plan R audit surface) ─────────────────────────────
+//
+// The certificate ledger is the audit surface of the ReFi exchange, so the two
+// load-bearing invariants — conservation and no-double-spend — are fuzzed as
+// properties rather than pinned to a handful of hand-written cases:
+//   * a transfer is accepted iff Sum(inputs) == Sum(outputs);
+//   * an input whose nullifier was already consumed is always refused;
+//   * `total_supply` always equals the sum of the currently-unspent coins.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const ALICE: &str = "did:unfer_pt:alice";
+    const BOB: &str = "did:unfer_pt:bob";
+
+    fn auth() -> String {
+        "did:unfer_pt:authority".to_string()
+    }
+
+    proptest! {
+        #[test]
+        fn fuzz_transfers_never_break_conservation_or_double_spend(
+            mint_amounts in prop::collection::vec(1u64..1_000, 1..8),
+            // A sequence of (in_idx, out_amount) transfer attempts. `out_amount`
+            // is deliberately independent of the input amount so the fuzzer
+            // produces both conserving and non-conserving transfers.
+            attempts in prop::collection::vec((0usize..8, 0u64..2_000), 0..40),
+        ) {
+            let alice = ALICE.to_string();
+            let bob = BOB.to_string();
+            let mut ledger = CertificateLedger::new(MintAuthority::Only(auth()));
+
+            // Mint one coin per amount, all owned by ALICE. Track each coin's
+            // original amount so a spent coin can still be re-attempted (the
+            // ledger no longer holds it).
+            let mut live: Vec<(CertId, u64)> = Vec::new();
+            for (i, a) in mint_amounts.iter().enumerate() {
+                let id = ledger
+                    .apply_mint(&auth(), *a, &alice, &[i as u8; 32], i as u64)
+                    .unwrap();
+                live.push((id, *a));
+            }
+            let expected_supply: u64 = mint_amounts.iter().sum();
+
+            for (_i, (idx, out_amount)) in attempts.into_iter().enumerate() {
+                if live.is_empty() {
+                    break;
+                }
+                let (coin_id, coin_amount) = live[idx % live.len()];
+                let input = CoinRef {
+                    coin_id,
+                    amount: coin_amount,
+                    owner: alice.clone(),
+                };
+                let output = CoinRef {
+                    coin_id: CertId([0u8; 32]),
+                    amount: out_amount,
+                    owner: bob.clone(),
+                };
+
+                let before_supply = ledger.total_supply();
+                let before_unspent = ledger.unspent_count();
+                let before_spent = ledger.is_spent(&coin_id);
+
+                let res = ledger.apply_transfer(&alice, &[input], &[output], 1);
+
+                match res {
+                    Ok(_) => {
+                        // An accepted transfer must conserve value exactly.
+                        prop_assert_eq!(out_amount, coin_amount, "accepted transfer must conserve");
+                        prop_assert!(!before_spent, "a spent input must never be accepted again");
+                        // Exact conservation => supply unchanged.
+                        prop_assert_eq!(ledger.total_supply(), before_supply);
+                    }
+                    Err(diag) => {
+                        // A refused transfer must be for a real reason: either a
+                        // conservation violation (out != in) or a double spend.
+                        let conserving = out_amount == coin_amount;
+                        let doublespend = before_spent;
+                        prop_assert!(
+                            !conserving || doublespend,
+                            "refused a conserving, fresh transfer: {diag}"
+                        );
+                        prop_assert!(
+                            diag.code == Code::CERT_AMOUNT_MISMATCH
+                                || diag.code == Code::CERT_DOUBLE_SPEND,
+                            "unexpected refusal code: {diag}"
+                        );
+                        // State is untouched on refusal.
+                        prop_assert_eq!(ledger.total_supply(), before_supply);
+                        prop_assert_eq!(ledger.unspent_count(), before_unspent);
+                    }
+                }
+
+                // Invariant: total supply always equals the sum of live coins.
+                prop_assert_eq!(ledger.total_supply(), expected_supply);
+            }
+        }
+    }
+}

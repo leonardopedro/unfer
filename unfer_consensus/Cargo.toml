@@ -23,3 +23,4 @@ tokio = { version = "1", features = ["full"], optional = true }
 rust-quepaxa = { version = "0.1", optional = true }
 
 [dev-dependencies]
+proptest = { workspace = true }

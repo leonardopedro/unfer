@@ -76,7 +76,9 @@ returns the root to the empty-tree hash.
 `owner_mismatch_rejected`, `burn_retires_value`, `root_changes_on_apply`,
 `smt_insert_remove_roundtrip`, plus the node-level
 `certificate_ledger_roundtrip_via_consensus` and
-`invalid_certificate_op_rejected_before_log`.
+`invalid_certificate_op_rejected_before_log`, and the fuzzed property
+`fuzz_transfers_never_break_conservation_or_double_spend` (conservation,
+no-double-spend, and supply invariants over random op sequences).
 
 ## Implemented surface
 
@@ -205,5 +207,5 @@ root to audit against.
 2. ~~Add additive `uk_cert_mint` / `uk_cert_transfer` / `uk_cert_burn` /
    `uk_cert_root` FFI symbols + `cranelift_init` registration + `EXPECTED_SYMBOLS`~~ — **DONE** (see [Implemented surface](#implemented-surface)).
 3. ~~Add `cert_*` NDJSON ops to `kernel_client/src/bin/unfer_agent.rs`~~ — **DONE**.
-4. Add proptest invariants for conservation/double-spend on `CertificateLedger`.
+4. ~~Add proptest invariants for conservation/double-spend on `CertificateLedger`~~ — **DONE** (`certs::proptests::fuzz_transfers_never_break_conservation_or_double_spend`).
 5. Draft the white-paper math flow UN → QuePaxa → Taler (documented above).
