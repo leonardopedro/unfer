@@ -108,6 +108,16 @@ impl TalerExchange {
         self.treasury.did()
     }
 
+    /// Fiat that arrived across the seam (confirmed peg-ins).
+    pub fn fiat_in(&self) -> u64 {
+        self.fiat_in
+    }
+
+    /// Fiat that left across the seam (confirmed peg-outs).
+    pub fn fiat_out(&self) -> u64 {
+        self.fiat_out
+    }
+
     pub fn ledger(&self) -> &CertificateLedger {
         &self.ledger
     }

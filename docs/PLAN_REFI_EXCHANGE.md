@@ -261,8 +261,12 @@ scope (the transparent-core decision), so e-coins are keyed by the customer's
   `decided_but_unapplied_value_survives_until_one_replica_applies` and
   `ledger_file_round_trips_committed_and_pending_state`). Demonstrated by
   `tests/phase6_testnet.rs` (run `cargo test -p unfer_consensus --features network`).
-  Remaining testnet work: connect a Taler exchange node and a UNFCCC client as
-  members of the same cluster.
+  The GNU Taler exchange is now a member of the same cluster: a full
+  peg-in/withdraw/deposit/peg-out lifecycle emits signed ops that the cluster
+  commits and every node replays onto the exchange's mirror certificate root,
+  with the conservation audit holding throughout
+  (`unfer_taler/tests/taler_testnet.rs`). Remaining testnet work: connect a
+  UNFCCC/oracle client as a member of the same cluster.
 - **Legal**: unchanged from the original plan (VASP, commodity-backed e-coins).
 - **Mainnet**: genesis == configuring the real mint authority DID.
 

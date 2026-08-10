@@ -15,5 +15,17 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 hex = "0.4"
 
+[features]
+# Forward the QuePaxa cluster engine so an exchange can back its ledger with a
+# replicated log instead of a local one.
+network = ["unfer_consensus/network"]
+
 [dev-dependencies]
 proptest = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+rcgen = { version = "0.13", features = ["crypto", "ring"], default-features = false }
+rust-quepaxa = { version = "0.1", features = ["network"] }
+
+[[test]]
+name = "taler_testnet"
+required-features = ["network"]

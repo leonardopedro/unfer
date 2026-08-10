@@ -4778,9 +4778,12 @@ dependencies = [
  "hex",
  "proptest",
  "rand 0.8.6",
+ "rcgen",
+ "rust-quepaxa",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "unfer_consensus",
  "unfer_protocol",
 ]
