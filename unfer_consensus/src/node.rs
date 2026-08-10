@@ -391,4 +391,156 @@ mod tests {
         let err = node.sync().unwrap_err();
         assert_eq!(err.code, Code::CERT_MINT_NOT_AUTHORIZED);
     }
+
+    #[test]
+    fn five_nodes_converge_on_certificate_root() {
+        use crate::certs::commit_coin;
+        use unfer_protocol::{CertificateOp, CertificateOpKind, CoinRef};
+
+        // QuePaxa target is 5-7 validator nodes; all share one ordered log.
+        let engine = LocalConsensus::new();
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
+        let carol = Keypair::generate();
+
+        let mut nodes: Vec<ConsensusNode> = (0..5)
+            .map(|_| {
+                ConsensusNode::with_mint_authority(
+                    Box::new(engine.clone()),
+                    MintAuthority::Only(authority.did()),
+                )
+            })
+            .collect();
+
+        let sign_and_submit =
+            |node: &ConsensusNode, tx: &mut ConsensusTransaction, kp: &Keypair| {
+                crate::signing::sign_transaction(tx, kp);
+                node.submit(tx.clone()).unwrap();
+            };
+
+        // Interleaved certificate + identity ops on the shared log.
+        // Both coins are minted to bob so he can spend them together (a
+        // multi-input transfer requires one signer to own every input).
+        let mut mint1 = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: CertificateOpKind::Mint {
+                amount: 1000,
+                owner: bob.did(),
+                blinding: [1u8; 32],
+                source: Some("unfccc:vc:MLT-0001".to_string()),
+            },
+            seq: 1,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&nodes[0], &mut mint1, &authority);
+
+        let mut mint2 = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: CertificateOpKind::Mint {
+                amount: 600,
+                owner: bob.did(),
+                blinding: [2u8; 32],
+                source: Some("unfccc:vc:MLT-0002".to_string()),
+            },
+            seq: 2,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&nodes[1], &mut mint2, &authority);
+
+        // Two-input transfer: bob's 1000 + bob's 600 -> split to carol + alice.
+        let bob_coin_a = commit_coin(1000, &bob.did(), &[1u8; 32]);
+        let bob_coin_b = commit_coin(600, &bob.did(), &[2u8; 32]);
+        let mut transfer = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: bob.did(),
+            kind: CertificateOpKind::Transfer {
+                inputs: vec![
+                    CoinRef {
+                        coin_id: bob_coin_a,
+                        amount: 1000,
+                        owner: bob.did(),
+                    },
+                    CoinRef {
+                        coin_id: bob_coin_b,
+                        amount: 600,
+                        owner: bob.did(),
+                    },
+                ],
+                outputs: vec![
+                    CoinRef {
+                        coin_id: bob_coin_b,
+                        amount: 900,
+                        owner: carol.did(),
+                    },
+                    CoinRef {
+                        coin_id: bob_coin_b,
+                        amount: 700,
+                        owner: alice.did(),
+                    },
+                ],
+            },
+            seq: 3,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&nodes[2], &mut transfer, &bob);
+
+        // Identity op mixed in.
+        let mut id_op = ConsensusTransaction::IdentityOp(IdentityOp {
+            did: carol.did(),
+            op_kind: IdentityOpKind::Create,
+            signing_key: carol.public_key(),
+            signature: [0u8; 64],
+            seq: 1,
+            service_endpoint: None,
+        });
+        sign_and_submit(&nodes[3], &mut id_op, &carol);
+
+        // Burn carol's 900.
+        let carol_coin = commit_coin(900, &carol.did(), &[0u8; 32]);
+        let mut burn = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: carol.did(),
+            kind: CertificateOpKind::Burn {
+                inputs: vec![CoinRef {
+                    coin_id: carol_coin,
+                    amount: 900,
+                    owner: carol.did(),
+                }],
+            },
+            seq: 4,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&nodes[4], &mut burn, &carol);
+
+        // Every node replays the same log.
+        for node in nodes.iter_mut() {
+            node.sync().unwrap();
+            assert!(node.is_synced());
+        }
+
+        // All five converge to the identical state.
+        let r0 = nodes[0].certs().root();
+        for node in &nodes[1..] {
+            assert_eq!(node.certs().root(), r0, "all nodes share one certificate root");
+            assert_eq!(node.certs().total_supply(), 700, "supply: 1600 - 900 = 700");
+            assert_eq!(node.applied_seq(), 5);
+        }
+        assert!(nodes[0].certs().utxo(&carol_coin).is_none(), "burned");
+        assert!(nodes[0].certs().utxo(&bob_coin_a).is_none(), "spent");
+        assert!(nodes[0].certs().utxo(&bob_coin_b).is_none(), "spent");
+        // Alice's 700 change coin is live on every node.
+        let change = commit_coin(700, &alice.did(), &[0u8; 32]);
+        for node in &nodes {
+            assert!(node.certs().utxo(&change).is_some(), "change coin live");
+        }
+
+        // A late-joining node syncs from the full log and agrees too.
+        let mut late = ConsensusNode::with_mint_authority(
+            Box::new(engine.clone()),
+            MintAuthority::Only(authority.did()),
+        );
+        late.sync().unwrap();
+        assert_eq!(late.applied_seq(), 5);
+        assert_eq!(late.certs().root(), r0);
+        assert!(late.certs().utxo(&change).is_some());
+    }
 }

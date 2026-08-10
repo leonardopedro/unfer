@@ -78,7 +78,10 @@ returns the root to the empty-tree hash.
 `duplicate_input_rejected`, `duplicate_output_rejected`,
 `owner_mismatch_rejected`, `burn_retires_value`, `root_changes_on_apply`,
 `smt_insert_remove_roundtrip`, plus the node-level
-`certificate_ledger_roundtrip_via_consensus` and
+`certificate_ledger_roundtrip_via_consensus`,
+`five_nodes_converge_on_certificate_root` (5 shared-log validator nodes replay
+interleaved mint/transfer/burn/identity ops and converge on one root; a
+late-joining node catches up to the same root) and
 `invalid_certificate_op_rejected_before_log`, and the fuzzed property
 `fuzz_transfers_never_break_conservation_or_double_spend` (multi-input /
 multi-output transfer fuzzing: conservation, no-double-spend, uniqueness, and
@@ -202,9 +205,12 @@ root to audit against.
 
 - **Circuit audit**: the invariants in `certs.rs` are the audit surface; a
   property test (proptest) that "no sequence of applied ops can violate
-  conservation or double-spend" is the natural first audit deliverable.
-- **Testnet**: run a multi-node `LocalConsensus`/quePaxa network with
-  `MintAuthority::Only(test)` and test-fiat/carbon.
+  conservation or double-spend" is the natural first audit deliverable (done:
+  `fuzz_transfers_never_break_conservation_or_double_spend`).
+- **Testnet**: in-process multi-node convergence is demonstrated by
+  `five_nodes_converge_on_certificate_root`; the real-network step is running
+  the same `ConsensusNode` on the `network` feature (`rust-quepaxa`, tokio)
+  with `MintAuthority::Only(test)` and test-fiat/carbon.
 - **Legal**: unchanged from the original plan (VASP, commodity-backed e-coins).
 - **Mainnet**: genesis == configuring the real mint authority DID.
 

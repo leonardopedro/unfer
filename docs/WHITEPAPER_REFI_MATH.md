@@ -85,7 +85,9 @@ $$ where $F$ is `CertificateLedger::apply_op` — a pure function with no
 timing, randomness, or machine dependence. Two nodes that observe the same
 signed prefix therefore hold identical $(\mathcal{U}_i, \Sigma_i, r_i)$; this is
 the "deterministic root" convergence property asserted by
-`certificate_ledger_roundtrip_via_consensus`.
+`certificate_ledger_roundtrip_via_consensus` and, at QuePaxa's target scale, by
+`five_nodes_converge_on_certificate_root` (5 validator nodes on one shared log,
+including a late-joining node that catches up to the identical root).
 
 The rapid-validation rule rejects an op **before** it is sequenced
 (`apply_op` returns a `Diagnostic` with a UK-7xxx code), so invalid
