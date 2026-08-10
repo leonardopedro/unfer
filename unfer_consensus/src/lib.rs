@@ -1,6 +1,8 @@
 pub mod certs;
 pub mod engine;
 pub mod identity;
+#[cfg(feature = "network")]
+pub mod net;
 pub mod node;
 pub mod signing;
 

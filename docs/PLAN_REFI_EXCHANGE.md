@@ -23,7 +23,9 @@
   Phase 3's shared contract (`MintRequest` + `uk_cert_mint_request`, UK-7007)
   is implemented; the TLSNotary prover itself is client-side and out of scope.
   Phase 5's exchange adapter (`unfer_taler`, UK-7101..7107) is implemented and
-  proptested. Phases 4 and 6 remain documented mappings.
+  proptested. Phase 6's testnet is implemented (`unfer_consensus::net`, a
+  2-live-of-3 mTLS rust-quepaxa cluster replaying into `ConsensusNode`). Phase 4
+  remains a documented mapping.
 
 ---
 
@@ -235,16 +237,23 @@ refresh of expired denominations is rejected (UK-7106). Anonymity is out of
 scope (the transparent-core decision), so e-coins are keyed by the customer's
 `did:unfer`. Codes UK-7101..7107.
 
-### Phase 6 — Security, audit, mainnet — DOCUMENTED
+### Phase 6 — Security, audit, mainnet — PARTIAL (testnet lite)
 
 - **Circuit audit**: the invariants in `certs.rs` are the audit surface; a
   property test (proptest) that "no sequence of applied ops can violate
   conservation or double-spend" is the natural first audit deliverable (done:
-  `fuzz_transfers_never_break_conservation_or_double_spend`).
-- **Testnet**: in-process multi-node convergence is demonstrated by
-  `five_nodes_converge_on_certificate_root`; the real-network step is running
-  the same `ConsensusNode` on the `network` feature (`rust-quepaxa`, tokio)
-  with `MintAuthority::Only(test)` and test-fiat/carbon.
+  `fuzz_transfers_never_break_conservation_or_double_spend`). The Taler seam
+  has its own conservation proptest on top (`fiat_conservation_never_breaks`).
+- **Testnet**: the `network` feature (rust-quepaxa, tokio) now backs
+  `ConsensusNode` for real: `unfer_consensus::net` brings up a 2-live-of-3
+  mutually-authenticated (mTLS) loopback cluster. Value IDs are agreed by
+  QuePaxa and applied by `LedgerStateMachine` into a shared committed log; each
+  live node replays that log through its own `ConsensusNode` and converges on
+  the identical certificate root. Demonstrated by
+  `tests/phase6_testnet.rs` (run `cargo test -p unfer_consensus --features network`).
+  Remaining testnet work: connect a Taler exchange node and a UNFCCC client as
+  members of the same cluster, and persist node state (`FileRuntimeStore` /
+  durable recorder store) so members survive restarts.
 - **Legal**: unchanged from the original plan (VASP, commodity-backed e-coins).
 - **Mainnet**: genesis == configuring the real mint authority DID.
 
