@@ -60,6 +60,8 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - `unfer_edge` — Pingora-based edge server for the `unfer_agent` protocol over HTTP (`admin.rs` S22 soft/hard config console under `--features audit`; `gate.rs`/`blueprint.rs`/`cells.rs` edge routes).
 - `demo_module/` — first module: `module.toml` + Austral cell + `run_demo.sh` (positive + UK-4001 negative test).
 - `bayes_update_module/`, `iterated_bayes_module/`, `qfm_module/`, `qfm_tomo_module/`, `zenodo_store_module/` — 5 more Austral modules.
+- `unfer_consensus` — certificate/UTXO ledger (`certs`), QuePaxa-style consensus engine, signing, multi-node convergence (Plan R).
+- `unfer_taler` — GNU Taler exchange adapter over the cert ledger: reserves, two-phase wire gateway, denominations, e-coin withdraw/deposit/peg-out with the `fiat_in - fiat_out = reserves + merchants + outstanding` audit (UK-7101..7107, Plan R Phase 5).
 - `unfer_nixvm/` — Nix flake packaging `unfer_ffi` inside the cloud-hypervisor VM guest (see `../../australVM/cloud_hypervisor_vm/`).
 - `docs/` — `MODULE_RECIPE.md`, `PROTOCOL.md`, `ARCHITECTURE.md`, `BUILD_PIPELINE.md`.
 

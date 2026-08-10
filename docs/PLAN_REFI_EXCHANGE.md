@@ -22,7 +22,8 @@
 - Phases 3–6 are external integrations (zk-TLS, fiat Rails, Taler, audit).
   Phase 3's shared contract (`MintRequest` + `uk_cert_mint_request`, UK-7007)
   is implemented; the TLSNotary prover itself is client-side and out of scope.
-  Phases 4–6 remain documented mappings.
+  Phase 5's exchange adapter (`unfer_taler`, UK-7101..7107) is implemented and
+  proptested. Phases 4 and 6 remain documented mappings.
 
 ---
 
@@ -38,7 +39,7 @@
 | "Rapid validation rule" | `CertificateLedger::apply_op` — rejects before an op is sequenced |
 | zk-TLS oracle | `CertificateOpKind::Mint { source: Option<String> }` provenance field; TLSNotary prover is a client-side integration |
 | Payment/escrow web app | `unfer_edge` (Pingora) + `unfer_agent` NDJSON ops |
-| GNU Taler Wire-Gateway | New `unfer_taler` adapter crate (out of scope here) |
+| GNU Taler Wire-Gateway | `unfer_taler` adapter crate: reserves, two-phase wire gateway, denominations, fiat↔e-coin conservation audit (UK-7101..7107) |
 | FFI surface | New additive `uk_cert_*` symbols (frozen contract permits additive-only) |
 
 ---
@@ -122,6 +123,13 @@ The ledger is reachable end-to-end through every consumer:
 | UK-7005 | CertOwnerMismatch | signer is not the owner of every input |
 | UK-7006 | CertLedgerSeq | stale/duplicate op sequence |
 | UK-7007 | CertOracleRejected | mint `source` is not a valid `unfccc:vc:<orderId>` reference |
+| UK-7101 | TalerUnknownReserve | reserve id is not known to the exchange |
+| UK-7102 | TalerInsufficientBalance | reserve/merchant balance shortfall on withdraw/peg-out |
+| UK-7103 | TalerUnconfirmedWire | peg-in/peg-out references an unconfirmed wire transfer |
+| UK-7104 | TalerDenomUnsupported | no live denomination matches the requested e-coin value |
+| UK-7105 | TalerCoinAlreadyDeposited | double deposit of the same e-coin refused |
+| UK-7106 | TalerRefreshNotEligible | refresh only after the denomination has expired |
+| UK-7107 | TalerUnknownECoin | deposit of an e-coin this exchange never minted |
 
 ---
 
@@ -199,15 +207,33 @@ loop. The buyer/seller transfer is a `CertificateOp::Transfer` on the consensus
 log; the edge listens for the transfer receipt and releases escrow. Wallets live
 in `velysterm/mathed` (keys never leave the client). No code in this crate.
 
-### Phase 5 — GNU Taler mint — DOCUMENTED
+### Phase 5 — GNU Taler mint — DONE (adapter)
 
 Original: peg UTXOs to Taler e-coins for retail.
 
-Adaptation: a new `unfer_taler` adapter crate (C/Python/PostgreSQL exchange)
-talks to the `unfer_agent` `cert_*` ops. Peg-in = `CertificateOp::Transfer` to
-the exchange treasury DID; peg-out = the exchange treasury signs a transfer to
-the merchant. The `CertificateLedger` gives the exchange a single deterministic
-root to audit against.
+Adaptation: the `unfer_taler` adapter crate implements the exchange side of
+the Taler flow over the certificate ledger. The exchange owns two views of the
+same value flows:
+
+- **On-ledger** — e-coins are ordinary certificates. `withdraw` has the
+  treasury (the ledger's configured mint authority) mint a certificate owned by
+  the reserve's customer; `deposit` *burns* e-coins (Taler honors e-coins it is
+  given) and credits the merchant's fiat balance.
+- **Private exchange state** — customer reserves, merchant balances, the
+  two-phase wire gateway, and coin provenance, exactly like a real exchange's
+  database.
+
+The money-conservation identity across the seam is
+`fiat_in - fiat_out = reserves + merchant_balances + funded_e_coins_outstanding`,
+checked by `TalerExchange::audit()` after every op and proptested. Every op the
+exchange emits is recorded so a `ConsensusNode` (configured with the same mint
+authority) can replay the log and converge to the identical certificate root.
+Peg-in requires a *confirmed* wire via the two-phase `WireGateway` (UK-7103);
+withdraw refuses shortfalls (UK-7102) and non-live denominations (UK-7104);
+deposit refuses foreign e-coins (UK-7107) and double deposits (UK-7105);
+refresh of expired denominations is rejected (UK-7106). Anonymity is out of
+scope (the transparent-core decision), so e-coins are keyed by the customer's
+`did:unfer`. Codes UK-7101..7107.
 
 ### Phase 6 — Security, audit, mainnet — DOCUMENTED
 

@@ -101,6 +101,30 @@ impl Code {
     /// oracle record (`unfccc:vc:<orderId>`) — the mint request is rejected.
     pub const CERT_ORACLE_REJECTED: Code = Code(7007);
 
+    // ------------------------------------------------------------------
+    // GNU Taler exchange adapter (ReFi exchange, 71xx). The exchange owns the
+    // fiat-side bookkeeping (customer reserves, merchant balances, wire
+    // transfers) that is invisible to the consensus log; these codes report
+    // that private-sided state machine (see `unfer_taler`).
+    pub const TALER_UNKNOWN_RESERVE: Code = Code(7101);
+    /// Reserve / merchant-balance shortfall: withdraw or peg-out is refused.
+    pub const TALER_INSUFFICIENT_BALANCE: Code = Code(7102);
+    /// A peg-in references a wire transfer that has not been confirmed by the
+    /// wire gateway (Taler's two-phase reserve funding).
+    pub const TALER_UNCONFIRMED_WIRE: Code = Code(7103);
+    /// No denomination in the book matches the requested value (or it has
+    /// expired).
+    pub const TALER_DENOM_UNSUPPORTED: Code = Code(7104);
+    /// An e-coin was already deposited to a merchant — double deposit at the
+    /// exchange's private ledger.
+    pub const TALER_COIN_ALREADY_DEPOSITED: Code = Code(7105);
+    /// E-coin denomination refresh requested for a coin that is still fresh
+    /// (refresh is only legal once a denomination has expired).
+    pub const TALER_REFRESH_NOT_ELIGIBLE: Code = Code(7106);
+    /// A deposit references an e-coin this exchange never minted (it is not
+    /// backed by a customer reserve, so it must not fund fiat redemption).
+    pub const TALER_UNKNOWN_E_COIN: Code = Code(7107);
+
     pub const INTERNAL: Code = Code(5000);
 
     pub fn raw(self) -> u32 {
@@ -330,6 +354,41 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             7007,
             "CertOracleRejected",
             "The mint's source does not reference a valid UNFCCC oracle record (`unfccc:vc:<orderId>`).",
+        ),
+        (
+            7101,
+            "TalerUnknownReserve",
+            "The reserve id is not known to the GNU Taler exchange.",
+        ),
+        (
+            7102,
+            "TalerInsufficientBalance",
+            "Reserve or merchant balance is too low for the requested withdraw / peg-out.",
+        ),
+        (
+            7103,
+            "TalerUnconfirmedWire",
+            "A peg-in references a wire transfer that the wire gateway has not confirmed.",
+        ),
+        (
+            7104,
+            "TalerDenomUnsupported",
+            "No (unexpired) denomination matches the requested e-coin value.",
+        ),
+        (
+            7105,
+            "TalerCoinAlreadyDeposited",
+            "The e-coin was already deposited — double deposit refused.",
+        ),
+        (
+            7106,
+            "TalerRefreshNotEligible",
+            "Refresh is only legal once the issued denomination has expired.",
+        ),
+        (
+            7107,
+            "TalerUnknownECoin",
+            "The deposit references an e-coin this exchange never minted.",
         ),
         (
             5000,

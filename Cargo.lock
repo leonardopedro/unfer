@@ -4665,6 +4665,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "unfer_taler"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "proptest",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2",
+ "unfer_consensus",
+ "unfer_protocol",
+]
+
+[[package]]
 name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
