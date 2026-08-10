@@ -36,6 +36,7 @@ uk_gate_reject
 uk_get_result
 uk_init
 uk_last_error
+uk_meter_status
 uk_model_create
 uk_model_free
 uk_observability
@@ -54,6 +55,9 @@ uk_resource_introduce
 uk_resource_pending
 uk_resource_use
 uk_restore
+uk_secret_get
+uk_secret_put
+uk_secret_revoke
 uk_set_hamiltonian
 uk_set_prior
 uk_snapshot
