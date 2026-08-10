@@ -265,8 +265,13 @@ scope (the transparent-core decision), so e-coins are keyed by the customer's
   peg-in/withdraw/deposit/peg-out lifecycle emits signed ops that the cluster
   commits and every node replays onto the exchange's mirror certificate root,
   with the conservation audit holding throughout
-  (`unfer_taler/tests/taler_testnet.rs`). Remaining testnet work: connect a
-  UNFCCC/oracle client as a member of the same cluster.
+  (`unfer_taler/tests/taler_testnet.rs`). A UNFCCC oracle client joins as a
+  member too: it mints one certificate per verified VC through the cluster
+  (Phase 3 `MintRequest` contract) and then audits the replicated log,
+  flagging any mint whose backing VC it never verified
+  (`phase6_oracle_client_audits_provenance_from_the_cluster`). All testnet
+  members — live nodes, the Taler exchange, and the oracle client — now read the
+  same replicated ledger.
 - **Legal**: unchanged from the original plan (VASP, commodity-backed e-coins).
 - **Mainnet**: genesis == configuring the real mint authority DID.
 

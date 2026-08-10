@@ -10,6 +10,7 @@
 //! identities, state directory, and socket addresses, and verifies committed
 //! work survives plus fresh ops keep committing.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,11 +19,13 @@ use rust_quepaxa::network::TlsIdentity;
 use tokio::time::timeout;
 
 use unfer_consensus::certs::{commit_coin, MintAuthority};
+use unfer_consensus::engine::ConsensusEngine;
 use unfer_consensus::net::NetworkCluster;
 use unfer_consensus::node::ConsensusNode;
 use unfer_consensus::signing::{sign_transaction, Keypair};
 use unfer_protocol::{
     CertificateOp, CertificateOpKind, CoinRef, ConsensusTransaction, IdentityOp, IdentityOpKind,
+    MintRequest,
 };
 
 fn identity() -> TlsIdentity {
@@ -257,5 +260,106 @@ async fn phase6_nodes_survive_full_cluster_restart() {
     );
 
     cluster.shutdown().await;
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
+/// A UNFCCC oracle client member: it holds the registry of verified
+/// cancellation VCs it has zk-TLS proven, mints a certificate per verified VC
+/// through the cluster (the Phase 3 `MintRequest` contract), and then audits
+/// the replicated log for provenance — flagging any mint whose backing VC it
+/// never verified.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn phase6_oracle_client_audits_provenance_from_the_cluster() {
+    let identities = (0..4).map(|_| identity()).collect::<Vec<_>>();
+    let state_dir = temp_state_dir("phase6-oracle");
+    let cluster = NetworkCluster::begin(identities, &state_dir).await.unwrap();
+
+    let authority = Keypair::generate();
+    let alice = Keypair::generate();
+
+    let mut nodes: Vec<ConsensusNode> = (0..cluster.nodes.len())
+        .map(|_| {
+            ConsensusNode::with_mint_authority(
+                Box::new(cluster.engine()),
+                MintAuthority::Only(authority.did()),
+            )
+        })
+        .collect();
+
+    // The VCs the oracle has proven on the UN platform.
+    let verified = BTreeSet::from([
+        "unfccc:vc:VC-0001".to_string(),
+        "unfccc:vc:VC-0002".to_string(),
+    ]);
+
+    // Mint one certificate per verified VC (Phase 3 contract), plus a foreign
+    // mint whose source the oracle never verified (VC-9999).
+    let mut pending = Vec::new();
+    for (i, source) in verified
+        .iter()
+        .chain(std::iter::once(&"unfccc:vc:VC-9999".to_string()))
+        .enumerate()
+    {
+        let request = MintRequest {
+            owner: alice.did(),
+            amount: 1000,
+            source: source.clone(),
+            blinding: None,
+        };
+        assert!(request.validate_source().is_ok(), "well-formed oracle record");
+        let mut tx = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: request.to_mint_kind(),
+            seq: i as u64 + 1,
+            signature: [0u8; 64],
+        });
+        sign_transaction(&mut tx, &authority);
+        pending.push(tx);
+    }
+
+    for (i, tx) in pending.iter().enumerate() {
+        nodes[i % nodes.len()].submit(tx.clone()).unwrap();
+    }
+
+    timeout(Duration::from_secs(90), cluster.wait_committed(3))
+        .await
+        .expect("cluster commits all three mints in time");
+    for node in nodes.iter_mut() {
+        node.sync().unwrap();
+    }
+    for node in &nodes[1..] {
+        assert_eq!(node.certs().root(), nodes[0].certs().root());
+    }
+    assert_eq!(nodes[0].certs().total_supply(), 3000);
+
+    // The oracle member replays the replicated log and audits provenance.
+    let engine = cluster.engine();
+    let mut oracle_member = ConsensusNode::with_mint_authority(
+        Box::new(engine.clone()),
+        MintAuthority::Only(authority.did()),
+    );
+    oracle_member.sync().unwrap();
+    assert_eq!(oracle_member.applied_seq(), 3);
+
+    let unverified = engine
+        .get_log(0)
+        .iter()
+        .filter_map(|(_, tx)| match tx {
+            ConsensusTransaction::CertificateOp(op) => match &op.kind {
+                CertificateOpKind::Mint {
+                    source: Some(source), ..
+                } => Some(source.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|source| !verified.contains(source))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unverified,
+        vec!["unfccc:vc:VC-9999".to_string()],
+        "oracle flags the foreign mint, verifies the genuine ones"
+    );
+
     let _ = std::fs::remove_dir_all(&state_dir);
 }
