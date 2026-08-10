@@ -145,18 +145,31 @@ impl SharedLedger {
         id
     }
 
-    /// Retrieve and consume a proposed payload once its id is committed.
-    fn take(&self, id: u64) -> Option<ConsensusTransaction> {
-        self.pending.lock().unwrap().remove(&id)
-    }
-
-    /// Append a batch of committed transactions, in decision order.
-    fn append(&self, txs: Vec<ConsensusTransaction>) {
+    /// Apply a batch of committed value ids in decision order. Fetching from
+    /// the pending store, extending the bank, and persisting happen under one
+    /// lock hold, so exactly one replica moves each payload into the bank and a
+    /// node that dies after reading a decision but before applying it loses
+    /// nothing: the payload is still pending, and a restart (or the surviving
+    /// peer) re-applies it exactly once.
+    fn append(&self, ids: Vec<u64>) {
+        let mut appended = Vec::new();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            for id in ids {
+                if let Some(tx) = pending.remove(&id) {
+                    appended.push(tx);
+                }
+            }
+        }
+        if appended.is_empty() {
+            return;
+        }
         let mut bank = self.bank.write().unwrap();
-        bank.extend(txs);
+        bank.extend(appended);
+        let committed = bank.len() as u64;
         drop(bank);
         self.persist();
-        let _ = self.committed_tx.send(self.bank.read().unwrap().len() as u64);
+        let _ = self.committed_tx.send(committed);
     }
 
     fn persist(&self) {
@@ -236,12 +249,13 @@ impl StateMachine<u64> for LedgerStateMachine {
         if decision.value_ids == [NOOP_VALUE] {
             return Ok(());
         }
-        let txs = decision
+        let ids = decision
             .value_ids
             .iter()
-            .filter_map(|id| self.ledger.take(*id))
+            .copied()
+            .filter(|id| *id != NOOP_VALUE)
             .collect::<Vec<_>>();
-        self.ledger.append(txs);
+        self.ledger.append(ids);
         Ok(())
     }
 }
@@ -513,5 +527,100 @@ impl Drop for NetworkCluster {
             node.shutdown.cancel();
         }
         self.pump.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::signing::Keypair;
+    use unfer_protocol::{IdentityOp, IdentityOpKind};
+
+    fn tx(label: u64) -> ConsensusTransaction {
+        let did = Keypair::generate();
+        ConsensusTransaction::IdentityOp(IdentityOp {
+            did: did.did(),
+            op_kind: IdentityOpKind::Create,
+            signing_key: did.public_key(),
+            signature: [0u8; 64],
+            seq: label,
+            service_endpoint: None,
+        })
+    }
+
+    fn mem_ledger() -> SharedLedger {
+        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        SharedLedger::new(submitted, None)
+    }
+
+    #[test]
+    fn append_is_idempotent_across_replicas_sharing_one_ledger() {
+        let ledger = mem_ledger();
+        let id = ledger.allocate(tx(1));
+
+        // Both live nodes see the same decision and both apply it.
+        ledger.append(vec![id]);
+        ledger.append(vec![id]);
+
+        assert_eq!(ledger.committed(), 1, "no double-apply");
+        assert!(ledger.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn decided_but_unapplied_value_survives_until_one_replica_applies() {
+        let ledger = mem_ledger();
+        let id = ledger.allocate(tx(1));
+
+        // A node reads the decision but dies before applying it; the payload
+        // must still be pending so the surviving peer (or a restart) can move
+        // it into the bank exactly once.
+        assert!(
+            ledger.pending.lock().unwrap().contains_key(&id),
+            "decided-but-unapplied value stays pending"
+        );
+        ledger.append(vec![id]);
+        assert_eq!(ledger.committed(), 1);
+        ledger.append(vec![id]);
+        assert_eq!(ledger.committed(), 1, "re-applying the same id is a no-op");
+    }
+
+    #[test]
+    fn ledger_file_round_trips_committed_and_pending_state() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-file-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = Some(LedgerFile::new(&dir));
+
+        // Phase 1: one committed, one decided-but-unapplied.
+        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let ledger = SharedLedger::new(submitted, file.clone());
+        let applied = ledger.allocate(tx(1));
+        let in_flight = ledger.allocate(tx(2));
+        ledger.append(vec![applied]);
+        drop(ledger);
+
+        // Phase 2: "crash" and reload. Committed work is in the bank; the
+        // in-flight value is still pending and gets re-proposed.
+        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let ledger = SharedLedger::new(submitted, file);
+        assert_eq!(ledger.committed(), 1, "committed log reloaded");
+        assert!(ledger.pending.lock().unwrap().contains_key(&in_flight));
+        ledger.append(vec![in_flight]);
+        assert_eq!(ledger.committed(), 2);
+        drop(ledger);
+
+        // Phase 3: reload once more; everything is in the bank now.
+        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir)));
+        assert_eq!(ledger.committed(), 2);
+        assert!(ledger.pending.lock().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
