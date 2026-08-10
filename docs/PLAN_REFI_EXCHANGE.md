@@ -23,10 +23,13 @@
   Phase 3's shared contract (`MintRequest` + `uk_cert_mint_request`, UK-7007)
   is implemented; the TLSNotary prover itself is client-side and out of scope.
   Phase 5's exchange adapter (`unfer_taler`, UK-7101..7107) is implemented and
-  proptested. Phase 6's testnet is implemented (`unfer_consensus::net`, a
+  proptested.   Phase 6's testnet is implemented (`unfer_consensus::net`, a
   2-live-of-3 mTLS rust-quepaxa cluster replaying into `ConsensusNode`, with
   durable node state and full-cluster restart via `NetworkCluster::resume`).
-  Phase 4 remains a documented mapping.
+  Phase 4's escrow state machine is implemented and on-chain-tested
+  (`unfer_consensus::escrow`, UK-7201..7203, including a live-testnet escrow
+  that replays onto every node's certificate root); the PayPal/Stripe web-app
+  coating over it remains a documented mapping.
 
 ---
 
@@ -200,15 +203,25 @@ client-side:
 The `source` field records the backing proof reference for auditability; a
 verifier can re-derive the same proof from the public page.
 
-### Phase 4 — Secondary fiat marketplace — DOCUMENTED
+### Phase 4 — Secondary fiat marketplace — DONE (escrow state machine)
 
 Original: PayPal/Stripe escrow web app.
 
-Adaptation: the escrow backend maps to `unfer_edge` (operator-only routes like
-`/api/gate/*`, `/api/cap/invoke` already exist) plus the `unfer_agent` NDJSON
-loop. The buyer/seller transfer is a `CertificateOp::Transfer` on the consensus
-log; the edge listens for the transfer receipt and releases escrow. Wallets live
-in `velysterm/mathed` (keys never leave the client). No code in this crate.
+Adaptation: `unfer_consensus::escrow` is the on-chain escrow state machine. A
+marketplace operator (the escrow agent) rows a certificate into a deterministic
+intermediate DID between buyer and seller (`EscrowService::hold`), then
+delivers (`release`) or returns (`refund`) it — each transition a
+`CertificateOp::Transfer` on the consensus log, so any peer replays the market
+onto the identical certificate root. Escrow keys are derived deterministically
+from the operator's master key plus the (buyer, seller, origin-coin) triple;
+an escrow settles exactly once (UK-7201 unknown coin, UK-7202 not holding,
+UK-7203 already settled). The live testnet proves a full buy/sell lifecycle:
+`phase6_secondary_market_escrow_lands_on_the_consensus_log` submits the market
+ops through the rust-quepaxa ring and asserts every node's ledger root equals
+the marketplace mirror's root. The PayPal/Stripe web-app coating maps to
+`unfer_edge` (operator-only routes like `/api/gate/*`, `/api/cap/invoke`) plus
+the `unfer_agent` NDJSON loop; wallets live in `velysterm/mathed` (keys never
+leave the client).
 
 ### Phase 5 — GNU Taler mint — DONE (adapter)
 

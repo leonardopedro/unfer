@@ -125,6 +125,19 @@ impl Code {
     /// backed by a customer reserve, so it must not fund fiat redemption).
     pub const TALER_UNKNOWN_E_COIN: Code = Code(7107);
 
+    // ------------------------------------------------------------------
+    // Secondary-market escrow (ReFi exchange, Phase 4, 72xx). The marketplace
+    // operator rows a certificate into a deterministic intermediate DID between
+    // buyer and seller; these codes report the escrow state machine (see
+    // `unfer_consensus::escrow`).
+    /// The referenced coin_id was never placed in this marketplace's escrow.
+    pub const ESCROW_UNKNOWN: Code = Code(7201);
+    /// Release/refund attempted on an escrow that is not in the Holding state.
+    pub const ESCROW_NOT_HOLDING: Code = Code(7202);
+    /// The escrow was already settled (released or refunded); it cannot settle
+    /// again — a single outcome per escrow.
+    pub const ESCROW_ALREADY_SETTLED: Code = Code(7203);
+
     pub const INTERNAL: Code = Code(5000);
 
     pub fn raw(self) -> u32 {
@@ -389,6 +402,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             7107,
             "TalerUnknownECoin",
             "The deposit references an e-coin this exchange never minted.",
+        ),
+        (
+            7201,
+            "EscrowUnknown",
+            "The coin_id was never placed in this marketplace's escrow.",
+        ),
+        (
+            7202,
+            "EscrowNotHolding",
+            "Release/refund requires the escrow to be in the Holding state.",
+        ),
+        (
+            7203,
+            "EscrowAlreadySettled",
+            "The escrow was already released or refunded and cannot settle twice.",
         ),
         (
             5000,

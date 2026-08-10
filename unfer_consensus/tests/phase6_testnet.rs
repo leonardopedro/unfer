@@ -24,8 +24,8 @@ use unfer_consensus::net::NetworkCluster;
 use unfer_consensus::node::ConsensusNode;
 use unfer_consensus::signing::{sign_transaction, Keypair};
 use unfer_protocol::{
-    CertificateOp, CertificateOpKind, CoinRef, ConsensusTransaction, IdentityOp, IdentityOpKind,
-    MintRequest,
+    CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction, IdentityOp,
+    IdentityOpKind, MintRequest,
 };
 
 fn identity() -> TlsIdentity {
@@ -263,8 +263,103 @@ async fn phase6_nodes_survive_full_cluster_restart() {
     let _ = std::fs::remove_dir_all(&state_dir);
 }
 
+/// A secondary-market escrow (ReFi exchange, Phase 4) on the live testnet: the
+/// marketplace operator owns the `EscrowService` mirror, rows alice's coin into
+/// the escrow DID (`hold`), delivers it to the seller (`release`), and every
+/// produced op is sequenced through the consensus ring — so a third party can
+/// replay the market from the replicated log and land on the identical root.
+/// An escrow settles exactly once; the second settlement is refused at the
+/// service before it ever reaches the network.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn phase6_secondary_market_escrow_lands_on_the_consensus_log() {
+    let identities = (0..4).map(|_| identity()).collect::<Vec<_>>();
+    let state_dir = temp_state_dir("phase6-escrow");
+    let cluster = NetworkCluster::begin(identities, &state_dir).await.unwrap();
+
+    let authority = Keypair::generate();
+    let alice = Keypair::generate();
+    let carol = Keypair::generate();
+    let operator = Keypair::generate();
+
+    use unfer_consensus::escrow::EscrowService;
+
+    let mut market = EscrowService::new(
+        operator,
+        MintAuthority::Only(authority.did()),
+    );
+
+    // The mint that plates the certificate — goes through the network log.
+    let mint = mint_op(&authority, 1000, &alice, [1u8; 32], 1, "unfccc:vc:TESTNET-ESCROW");
+    let mut nodes: Vec<ConsensusNode> = (0..cluster.nodes.len())
+        .map(|_| {
+            ConsensusNode::with_mint_authority(
+                Box::new(cluster.engine()),
+                MintAuthority::Only(authority.did()),
+            )
+        })
+        .collect();
+    nodes[0].submit(mint.clone()).unwrap();
+    timeout(Duration::from_secs(90), cluster.wait_committed(1))
+        .await
+        .expect("cluster commits the mint");
+    market.observe(mint).unwrap();
+
+    // Market op 1: alice rows her certificate into the escrow DID between
+    // herself and the seller carol.
+    let raw = commit_coin(1000, &alice.did(), &[1u8; 32]);
+    let held = market.hold(&alice, &carol.did(), raw, 1000).unwrap();
+    let escrow_did = market.escrow_did(&alice.did(), &carol.did(), raw);
+    assert!(
+        market.ledger().utxo(&held).is_some(),
+        "coin parked in escrow during the deal"
+    );
+    assert_eq!(
+        market.ledger().utxo(&held).unwrap().owner,
+        escrow_did,
+        "only the operator-recoverable escrow key can spend the held coin"
+    );
+
+    // Market op 2: on the delivery receipt, the operator releases to carol.
+    let delivered = market.release(held, &carol.did()).unwrap();
+    assert_eq!(market.ledger().utxo(&delivered).unwrap().owner, carol.did());
+
+    // A second settlement is a phase-4 refusal — never reaches consensus.
+    let dup = market.refund(held, &alice.did()).unwrap_err();
+    assert_eq!(dup.code, Code::ESCROW_ALREADY_SETTLED);
+
+    // Every market op replays through the ring onto every node's application
+    // state; the marketplace mirror and the network must agree to the byte.
+    for tx in market.ops().iter().skip(1) {
+        nodes[0].submit(tx.clone()).unwrap();
+    }
+    let total = 1 + market.ops().len() as u64 - 1;
+    timeout(Duration::from_secs(90), cluster.wait_committed(total))
+        .await
+        .expect("cluster commits the escrow ops");
+    for node in nodes.iter_mut() {
+        node.sync().unwrap();
+    }
+    for node in &nodes[1..] {
+        assert_eq!(node.certs().root(), nodes[0].certs().root());
+    }
+    assert_eq!(
+        nodes[0].certs().root(),
+        market.ledger().root(),
+        "the on-chain market reproduced by consensus replay"
+    );
+    assert_eq!(market.ledger().total_supply(), 1000, "conservation held");
+    assert!(
+        nodes[0].certs().utxo(&delivered).is_some(),
+        "carol owns the certificate, on-chain"
+    );
+    assert!(nodes[0].certs().utxo(&held).is_none(), "escrow coin spent");
+    assert_eq!(nodes[0].applied_seq(), total);
+
+    cluster.shutdown().await;
+    let _ = std::fs::remove_dir_all(&state_dir);
+}
+
 /// A UNFCCC oracle client member: it holds the registry of verified
-/// cancellation VCs it has zk-TLS proven, mints a certificate per verified VC
 /// through the cluster (the Phase 3 `MintRequest` contract), and then audits
 /// the replicated log for provenance — flagging any mint whose backing VC it
 /// never verified.
