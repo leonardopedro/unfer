@@ -24,8 +24,9 @@
   is implemented; the TLSNotary prover itself is client-side and out of scope.
   Phase 5's exchange adapter (`unfer_taler`, UK-7101..7107) is implemented and
   proptested. Phase 6's testnet is implemented (`unfer_consensus::net`, a
-  2-live-of-3 mTLS rust-quepaxa cluster replaying into `ConsensusNode`). Phase 4
-  remains a documented mapping.
+  2-live-of-3 mTLS rust-quepaxa cluster replaying into `ConsensusNode`, with
+  durable node state and full-cluster restart via `NetworkCluster::resume`).
+  Phase 4 remains a documented mapping.
 
 ---
 
@@ -249,11 +250,16 @@ scope (the transparent-core decision), so e-coins are keyed by the customer's
   mutually-authenticated (mTLS) loopback cluster. Value IDs are agreed by
   QuePaxa and applied by `LedgerStateMachine` into a shared committed log; each
   live node replays that log through its own `ConsensusNode` and converges on
-  the identical certificate root. Demonstrated by
+  the identical certificate root. Node state is durable: recorder snapshots,
+  runtime snapshots, the submission journal, and the replicated ledger live
+  under a `<state_dir>`. `NetworkCluster::resume` restarts the whole cluster on
+  the same TLS identities and socket addresses, reloads the committed log, and
+  keeps proposing fresh slots. Demonstrated by
   `tests/phase6_testnet.rs` (run `cargo test -p unfer_consensus --features network`).
   Remaining testnet work: connect a Taler exchange node and a UNFCCC client as
-  members of the same cluster, and persist node state (`FileRuntimeStore` /
-  durable recorder store) so members survive restarts.
+  members of the same cluster, and close the narrow in-flight crash window (a
+  value id decided-but-not-yet-applied at the moment a node dies without a
+  graceful shutdown).
 - **Legal**: unchanged from the original plan (VASP, commodity-backed e-coins).
 - **Mainnet**: genesis == configuring the real mint authority DID.
 
