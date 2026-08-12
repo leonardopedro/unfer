@@ -238,13 +238,16 @@ Status: drafted after a full audit of all three workspaces (668 + 319 tests,
       `mathed_core::transform::to_render_text` over
       `mathed_mini::KernelBridge`) that mathed_mini's
       `overlay_renders_green_for_success_and_red_for_error` exercises, which
-      PASSES on this box (CPU-only, no ALSA/wayland runtime dep). The only
-      blocker to running `cargo test -p mathed kernel_smoke` locally is the
-      bevy *link* step needing `libwayland-dev` (NixOS box has no channels/apt,
-      and no prebuilt mathed binary exists in target/); CI provides that lib, so
-      clean-runner green holds. Note: `x11-dl` records libdir via pkg-config but
-      only links `dl`/`c`, so `libx11-dev` is NOT required even with the `x11`
-      bevy feature.
+      PASSES on this box (CPU-only, no ALSA/wayland runtime dep). Resolved
+      locally: velysterm's `flake.nix` now adds `udev` and generates a minimal
+      `libudev.pc` in the shell (modern nixpkgs/systemd >= 25x dropped the pc
+      file that `libudev-sys`'s build.rs requires via `pkg-config`), so the
+      bevy link step succeeds on NixOS. `cargo build -p mathed`, all 39 mathed
+      tests (incl. `kernel_smoke`), clippy (0 warnings after collapsing three
+      nested `if`s in `cite_refs.rs`/`keymap.rs`), and fmt are all green
+      locally under `nix develop`. Note: `x11-dl` records libdir via
+      pkg-config but only links `dl`/`c`, so `libx11-dev` is NOT required even
+      with the `x11` bevy feature.
 
 ## Execution order
 
