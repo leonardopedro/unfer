@@ -147,6 +147,9 @@
           gnumake
           pkg-config
           rustup
+
+          # S30: Cadabra2 symbolic CAS (external subprocess engine).
+          pkgsUnstable.cadabra2
           
           # Haskell Integration
           haskellEnv

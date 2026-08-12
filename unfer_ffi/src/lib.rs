@@ -20,7 +20,7 @@ use unfer_protocol::{
     ActionRecord, ActionState, AgentInfo, AgentState, AuditEntry, BayesianUpdateRequest,
     BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
     Code, Diagnostic, EffectKind, EventPredicate, EventQuery, GrantSet, HamiltonianSpec,
-    KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity,
+    KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity, SymbolicSpec,
 };
 
 pub use unfer_protocol;
@@ -355,6 +355,37 @@ pub extern "C" fn uk_proof_verify(
         let event = KernelEvent::Verified {
             verified: report.verified,
             declarations_checked: report.declarations_checked,
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
+/// Run a symbolic operation in the external Cadabra2 CAS (S30).
+///
+/// `spec_json` is a `SymbolicSpec` JSON: `{"expression": "...", "op":
+/// "canonicalize|simplify|verify_hermitian", "timeout_ms": ...}`. The
+/// expression is TeX-subset or the CAS-string dialect (`c_0 * a_0`). The
+/// report (canonical normal form + `verified` zero-detection verdict +
+/// SHA-256 hash) is stored in `uk_get_result` and broadcast as a
+/// `simplified` event.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-4901 engine unavailable,
+/// UK-4902 malformed expression, UK-1004 bad handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_symbolic_simplify(model: i64, spec_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_symbolic_simplify", || {
+        let spec: SymbolicSpec = parse_json(spec_json, len)?;
+        let report = handles::with_session_mut(model, |s| s.symbolic_analyze(&spec))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::Simplified {
+            op: serde_json::to_string(&spec.op).unwrap_or_default(),
+            verified: report.verified,
         };
         handles::push_event(model, event);
         Ok(0)

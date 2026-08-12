@@ -13,6 +13,7 @@ pub mod build;
 pub mod error;
 pub mod event;
 pub mod session;
+pub mod symbolic;
 pub mod verify;
 
 pub use error::KernelError;

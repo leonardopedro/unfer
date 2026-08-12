@@ -63,4 +63,5 @@ uk_set_hamiltonian
 uk_set_prior
 uk_snapshot
 uk_subscribe
+uk_symbolic_simplify
 uk_version

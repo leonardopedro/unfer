@@ -1062,3 +1062,74 @@ fn proof_verify_malformed_export_is_4802() {
 
     uk_model_free(model);
 }
+
+/// S30: `uk_symbolic_simplify` canonicalizes an expression in Cadabra2 and
+/// surfaces the report via `uk_get_result`. Skipped when `cadabra2-cli` is
+/// not on PATH (the engine is an external subprocess).
+#[test]
+fn symbolic_simplify_canonicalizes() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let spec = r#"{"expression":"c_0 * a_0 + c_0 * a_0","op":"canonicalize"}"#;
+    let (sp, sl) = json_ptr(spec.as_bytes());
+    let r = uk_symbolic_simplify(model, sp, sl);
+    if r == -(Code::SYMBOLIC_ENGINE_UNAVAILABLE.raw() as i64) {
+        eprintln!("SKIP: cadabra2-cli not on PATH");
+        uk_model_free(model);
+        return;
+    }
+    assert_eq!(r, 0, "canonicalize should succeed: {} {r}", read_error());
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert!(
+        !result["normal_form"].as_str().unwrap().is_empty(),
+        "{result}"
+    );
+    assert!(
+        result["normal_form_hash"].as_str().unwrap().len() == 64,
+        "{result}"
+    );
+    assert_eq!(result["verified"], false, "2 terms are not zero: {result}");
+
+    uk_model_free(model);
+}
+
+/// S30: a zero expression reduces to `verified: true` (the symbolic
+/// zero-detection verdict).
+#[test]
+fn symbolic_simplify_zero_detection() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let spec = r#"{"expression":"a_0 * c_0 - a_0 * c_0","op":"canonicalize"}"#;
+    let (sp, sl) = json_ptr(spec.as_bytes());
+    let r = uk_symbolic_simplify(model, sp, sl);
+    if r == -(Code::SYMBOLIC_ENGINE_UNAVAILABLE.raw() as i64) {
+        eprintln!("SKIP: cadabra2-cli not on PATH");
+        uk_model_free(model);
+        return;
+    }
+    assert_eq!(r, 0, "zero check should succeed: {r}");
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["verified"], true, "{result}");
+
+    uk_model_free(model);
+}
+
+/// S30: a malformed expression is a hard UK-4902 error even with the engine
+/// present.
+#[test]
+fn symbolic_simplify_empty_expression_is_4902() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let spec = r#"{"expression":"   ","op":"canonicalize"}"#;
+    let (sp, sl) = json_ptr(spec.as_bytes());
+    let r = uk_symbolic_simplify(model, sp, sl);
+    assert_eq!(r, -(Code::SYMBOLIC_EXPRESSION_INVALID.raw() as i64));
+
+    uk_model_free(model);
+}

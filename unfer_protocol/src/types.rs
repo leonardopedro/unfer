@@ -319,6 +319,13 @@ pub enum KernelEvent {
         verified: bool,
         declarations_checked: usize,
     },
+    /// A symbolic expression was processed by the external Cadabra2 engine;
+    /// `verified` is the zero-detection verdict. Broadcast to subscribers of
+    /// the model handle.
+    Simplified {
+        op: String,
+        verified: bool,
+    },
     Error {
         diagnostic: Diagnostic,
     },
@@ -1242,6 +1249,79 @@ pub struct ProofReport {
     /// `unf_hash` analogue: a canonical digest of the checked term).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export_hash: Option<String>,
+}
+
+// ── Cadabra2 symbolic coupling (S30) ──────────────────────────────────
+//
+// The kernel couples the existing LaTeX symbolic engine
+// (`nested_fock_algebra::compile_latex` → CAS-string dialect) with the
+// external field-theory CAS Cadabra2 (GPL-3.0, invoked as a **subprocess**
+// `cadabra2-cli` so the Rust binary stays an independent work). Cadabra2
+// consumes the same TeX-subset input the mathhook parser handles and
+// returns a canonicalized expression plus a zero-detection verdict — the
+// symbolic analogue of `logos::deltanet`'s unique-normal-form reduction.
+
+/// A symbolic operation to run in Cadabra2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolicOp {
+    /// Canonicalize: reduce the expression to a unique canonical form
+    /// (Cadabra2 `@canonicalise`), preserving operator order (no
+    /// commutativity assumptions).
+    Canonicalize,
+    /// Expand then canonicalize (full algebraic simplification).
+    Simplify,
+    /// Verify a Hermiticity identity: the expression is interpreted as
+    /// `H - H†` and `verified` reports whether it canonicalizes to zero.
+    VerifyHermitian,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolicSpec {
+    /// The expression, in TeX-subset (Cadabra2 `Ex(...)` input) or the
+    /// CAS-string dialect (`c_0 * a_0`).
+    pub expression: String,
+    /// The operation to run.
+    pub op: SymbolicOp,
+    /// Subprocess timeout in milliseconds (default 30 s).
+    #[serde(default = "default_symbolic_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_symbolic_timeout_ms() -> u64 {
+    30_000
+}
+
+impl Default for SymbolicSpec {
+    fn default() -> Self {
+        Self {
+            expression: String::new(),
+            op: SymbolicOp::Canonicalize,
+            timeout_ms: default_symbolic_timeout_ms(),
+        }
+    }
+}
+
+/// Result of a Cadabra2 symbolic run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolicReport {
+    /// The canonicalized expression, in Cadabra2's output notation. For
+    /// [`SymbolicOp::VerifyHermitian`] this is the normal form of `H - H†`.
+    pub normal_form: String,
+    /// Boolean verdict: for [`SymbolicOp::VerifyHermitian`], whether the
+    /// expression canonicalizes to zero (the identity holds). For
+    /// [`SymbolicOp::Canonicalize`]/[`SymbolicOp::Simplify`], whether the
+    /// expression is identically zero.
+    pub verified: bool,
+    /// SHA-256 of the canonical normal form — the `unf_hash` analogue: a
+    /// canonical digest of the reduced expression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_form_hash: Option<String>,
+    /// Human-readable kernel/engine error (empty on success).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Wall-clock engine time in milliseconds.
+    pub engine_ms: u64,
 }
 
 // ── Federation types (QuePaxa plan, 6xxx codes) ──────────────────────

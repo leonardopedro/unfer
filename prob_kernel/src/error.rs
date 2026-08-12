@@ -37,6 +37,12 @@ pub enum KernelError {
     #[error("Lean4 export file invalid: {reason}")]
     ProofExportInvalid { reason: String },
 
+    #[error("Cadabra2 symbolic engine unavailable: {reason}")]
+    SymbolicUnavailable { reason: String },
+
+    #[error("Cadabra2 symbolic expression invalid: {reason}")]
+    SymbolicInvalid { reason: String },
+
     #[error("JSON error: {0}")]
     BadJson(#[from] serde_json::Error),
 
@@ -199,6 +205,28 @@ impl KernelError {
                 reason,
             )),
 
+            KernelError::SymbolicUnavailable { reason } => Diagnostic::new(
+                Code::SYMBOLIC_ENGINE_UNAVAILABLE,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::UseAlternativeOp,
+                "symbolic.engine",
+                reason,
+            )),
+
+            KernelError::SymbolicInvalid { reason } => Diagnostic::new(
+                Code::SYMBOLIC_EXPRESSION_INVALID,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "symbolic.expression",
+                reason,
+            )),
+
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
                 Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
                     RepairHint::new(
@@ -328,6 +356,12 @@ mod tests {
             },
             KernelError::ProofExportInvalid {
                 reason: "unparseable NDJSON".into(),
+            },
+            KernelError::SymbolicUnavailable {
+                reason: "cadabra2-cli not found".into(),
+            },
+            KernelError::SymbolicInvalid {
+                reason: "expression reduced to empty".into(),
             },
             KernelError::BadJson(serde_json::from_str::<i32>("not json").unwrap_err()),
             KernelError::Internal("unreachable state reached".into()),

@@ -560,6 +560,17 @@ impl Session {
     ) -> Result<unfer_protocol::ProofReport, KernelError> {
         crate::verify::verify_export(export_bytes, spec)
     }
+
+    /// Run a symbolic operation in Cadabra2 (S30). Couples the external
+    /// field-theory CAS (subprocess `cadabra2-cli`) with the existing LaTeX
+    /// engine: the expression is canonicalized and reduced to a normal form
+    /// plus a zero-detection verdict. The numerical state is untouched.
+    pub fn symbolic_analyze(
+        &self,
+        spec: &unfer_protocol::SymbolicSpec,
+    ) -> Result<unfer_protocol::SymbolicReport, KernelError> {
+        crate::symbolic::symbolic_analyze(spec)
+    }
 }
 
 #[cfg(test)]

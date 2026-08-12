@@ -84,6 +84,14 @@ impl Code {
     /// declarations, oversize payload, or a bad `LeanVerifySpec`.
     pub const PROOF_EXPORT_INVALID: Code = Code(4802);
 
+    /// S30: the Cadabra2 subprocess is not available (binary not on `PATH`,
+    /// no `CADABRA_CLI` override) or failed to launch.
+    pub const SYMBOLIC_ENGINE_UNAVAILABLE: Code = Code(4901);
+    /// S30: the symbolic expression was malformed, the requested operation is
+    /// not supported, or the engine rejected the input (no canonical form
+    /// produced).
+    pub const SYMBOLIC_EXPRESSION_INVALID: Code = Code(4902);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -325,6 +333,16 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4802,
             "ProofExportInvalid",
             "The Lean4 export file was malformed or the LeanVerifySpec was invalid (unparseable NDJSON, missing declaration, oversize payload).",
+        ),
+        (
+            4901,
+            "SymbolicEngineUnavailable",
+            "The Cadabra2 subprocess is not available: the binary is not on PATH and no CADABRA_CLI override is set, or it failed to launch.",
+        ),
+        (
+            4902,
+            "SymbolicExpressionInvalid",
+            "The symbolic expression was malformed, the requested operation is unsupported, or Cadabra2 rejected the input (no canonical form produced).",
         ),
         (
             6001,
