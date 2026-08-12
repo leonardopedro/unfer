@@ -133,6 +133,7 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Evolved { .. } => "evolved",
         KernelEvent::Conditioned { .. } => "conditioned",
         KernelEvent::Observed { .. } => "observed",
+        KernelEvent::Verified { .. } => "verified",
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",

@@ -31,6 +31,12 @@ pub enum KernelError {
     #[error("bad prior: {reason}")]
     BadPrior { reason: String },
 
+    #[error("Lean4 proof verification failed: {reason}")]
+    ProofVerify { reason: String },
+
+    #[error("Lean4 export file invalid: {reason}")]
+    ProofExportInvalid { reason: String },
+
     #[error("JSON error: {0}")]
     BadJson(#[from] serde_json::Error),
 
@@ -173,6 +179,26 @@ impl KernelError {
                 )
             }
 
+            KernelError::ProofVerify { reason } => {
+                Diagnostic::new(Code::PROOF_VERIFY_FAILED, self.to_string(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::ReplaceValue,
+                        "proof.export",
+                        reason,
+                    ))
+            }
+
+            KernelError::ProofExportInvalid { reason } => Diagnostic::new(
+                Code::PROOF_EXPORT_INVALID,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "proof.export",
+                reason,
+            )),
+
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
                 Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
                     RepairHint::new(
@@ -296,6 +322,12 @@ mod tests {
             },
             KernelError::BadPrior {
                 reason: "negative occupation".into(),
+            },
+            KernelError::ProofVerify {
+                reason: "theorem pf has type Sort 1, expected P".into(),
+            },
+            KernelError::ProofExportInvalid {
+                reason: "unparseable NDJSON".into(),
             },
             KernelError::BadJson(serde_json::from_str::<i32>("not json").unwrap_err()),
             KernelError::Internal("unreachable state reached".into()),

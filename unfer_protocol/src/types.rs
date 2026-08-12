@@ -312,6 +312,13 @@ pub enum KernelEvent {
     Observed {
         value: f64,
     },
+    /// A Lean4 export file was type-checked by the external kernel; `verified`
+    /// is the boolean reduction of the proof(s). Broadcast to subscribers of
+    /// the model handle.
+    Verified {
+        verified: bool,
+        declarations_checked: usize,
+    },
     Error {
         diagnostic: Diagnostic,
     },
@@ -1138,6 +1145,103 @@ pub struct BeliefPropagationResult {
     pub n_sweeps: usize,
     /// Wall-clock time for the BP + decode in milliseconds.
     pub solve_ms: u64,
+}
+
+// ── Lean4 proof verification (S29, nanoda_lib) ────────────────────────
+//
+// The kernel mixes numerical calculation with machine-checked proof
+// verification. A `LeanVerifySpec` describes how a Lean4 export file (the
+// `lean4export` NDJSON format) is type-checked by the external kernel
+// `nanoda_lib`; the result is reduced to a boolean verdict
+// (`ProofReport.verified`) — the proof-irrelevance analogue of the
+// interaction-net unique-normal-form reduction (`logos::deltanet`).
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeanVerifySpec {
+    /// Axioms the export file is permitted to use. Typical Lean exports
+    /// need `Quot.sound`, `Classical.choice`, `propext`, `Lean.trustCompiler`.
+    #[serde(default)]
+    pub permitted_axioms: Vec<String>,
+    /// If true, an exported axiom outside `permitted_axioms` aborts checking.
+    /// If false, unpermitted axioms are skipped (not added to the
+    /// environment) and only error if actually used.
+    #[serde(default = "default_true")]
+    pub unpermitted_axiom_hard_error: bool,
+    /// Enable nanoda's Nat kernel extension (numeric literal reduction).
+    #[serde(default)]
+    pub nat_extension: bool,
+    /// Enable nanoda's String kernel extension.
+    #[serde(default)]
+    pub string_extension: bool,
+    /// Maximum export size in bytes (default 16 MiB). Larger exports are
+    /// rejected before any parsing work.
+    #[serde(default = "default_max_export_bytes")]
+    pub max_export_bytes: usize,
+    /// If true, a proof that fails to type-check is a hard UK-4801 error
+    /// instead of the default `verified: false` verdict. Strict mode is for
+    /// callers that must *fail closed* on a rejected proof rather than
+    /// inspect a boolean report.
+    #[serde(default)]
+    pub strict: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_max_export_bytes() -> usize {
+    16 * 1024 * 1024
+}
+
+impl Default for LeanVerifySpec {
+    fn default() -> Self {
+        Self {
+            permitted_axioms: Vec::new(),
+            unpermitted_axiom_hard_error: true,
+            nat_extension: false,
+            string_extension: false,
+            max_export_bytes: default_max_export_bytes(),
+            strict: false,
+        }
+    }
+}
+
+impl LeanVerifySpec {
+    /// The three semi-official Lean axioms plus the compiler trust axiom,
+    /// matching nanoda's documented default profile.
+    pub fn standard_axioms() -> Self {
+        Self {
+            permitted_axioms: vec![
+                "Quot.sound".to_string(),
+                "Classical.choice".to_string(),
+                "propext".to_string(),
+                "Lean.trustCompiler".to_string(),
+            ],
+            ..Self::default()
+        }
+    }
+}
+
+/// Result of type-checking a Lean4 export file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProofReport {
+    /// Boolean verdict: true iff every declaration type-checked. This is the
+    /// "reduce a proof to `true`/`false`" step — by proof irrelevance all
+    /// proofs of a proposition are definitionally equal, so a successful
+    /// kernel run collapses the export to `true`.
+    pub verified: bool,
+    /// Number of declarations checked by the kernel.
+    pub declarations_checked: usize,
+    /// Name of the theorem that failed (if a specific declaration failed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failing_theorem: Option<String>,
+    /// Human-readable kernel error (empty on success).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// SHA-256 of the export payload, for content-addressed audit (the
+    /// `unf_hash` analogue: a canonical digest of the checked term).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_hash: Option<String>,
 }
 
 // ── Federation types (QuePaxa plan, 6xxx codes) ──────────────────────

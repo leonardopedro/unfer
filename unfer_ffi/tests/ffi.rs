@@ -889,3 +889,176 @@ fn abi_header_declares_zenodo_symbols() {
         );
     }
 }
+
+const VALID_LEAN_EXPORT: &str = concat!(
+    r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"},"lean":{"githash":"2fcce7258eeb6e324366bc25f9058293b04b7547","version":"4.27.0-rc1"}}}"#,
+    "\n",
+    r#"{"in":1,"str":{"pre":0,"str":"P"}}"#,
+    "\n",
+    r#"{"ie":0,"sort":0}"#,
+    "\n",
+    r#"{"in":2,"str":{"pre":1,"str":"mk"}}"#,
+    "\n",
+    r#"{"const":{"name":1,"us":[]},"ie":1}"#,
+    "\n",
+    r#"{"in":3,"str":{"pre":1,"str":"rec"}}"#,
+    "\n",
+    r#"{"in":4,"str":{"pre":0,"str":"u_1"}}"#,
+    "\n",
+    r#"{"il":1,"param":4}"#,
+    "\n",
+    r#"{"in":5,"str":{"pre":0,"str":"motive"}}"#,
+    "\n",
+    r#"{"in":6,"str":{"pre":0,"str":"t"}}"#,
+    "\n",
+    r#"{"ie":2,"sort":1}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":2,"name":6,"type":1},"ie":3}"#,
+    "\n",
+    r#"{"in":7,"str":{"pre":0,"str":"mk"}}"#,
+    "\n",
+    r#"{"bvar":0,"ie":4}"#,
+    "\n",
+    r#"{"const":{"name":2,"us":[]},"ie":5}"#,
+    "\n",
+    r#"{"app":{"arg":5,"fn":4},"ie":6}"#,
+    "\n",
+    r#"{"bvar":2,"ie":7}"#,
+    "\n",
+    r#"{"app":{"arg":4,"fn":7},"ie":8}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":8,"name":6,"type":1},"ie":9}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":9,"name":7,"type":6},"ie":10}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"implicit","body":10,"name":5,"type":3},"ie":11}"#,
+    "\n",
+    r#"{"ie":12,"lam":{"binderInfo":"default","body":4,"name":7,"type":6}}"#,
+    "\n",
+    r#"{"ie":13,"lam":{"binderInfo":"default","body":12,"name":5,"type":3}}"#,
+    "\n",
+    r#"{"inductive":{"types":[{"all":[1],"ctors":[2],"isRec":false,"isReflexive":false,"isUnsafe":false,"levelParams":[],"name":1,"numIndices":0,"numNested":0,"numParams":0,"type":0}],"ctors":[{"cidx":0,"induct":1,"isUnsafe":false,"levelParams":[],"name":2,"numFields":0,"numParams":0,"type":1}],"recs":[{"all":[1],"isUnsafe":false,"k":true,"levelParams":[4],"name":3,"numIndices":0,"numMinors":1,"numMotives":1,"numParams":0,"rules":[{"ctor":2,"nfields":0,"rhs":13}],"type":11}]}}"#,
+    "\n",
+    r#"{"in":8,"str":{"pre":0,"str":"pf"}}"#,
+    "\n",
+    r#"{"thm":{"name":8,"levelParams":[],"type":1,"value":5}}"#,
+    "\n",
+);
+
+const INVALID_LEAN_EXPORT: &str = concat!(
+    r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"},"lean":{"githash":"2fcce7258eeb6e324366bc25f9058293b04b7547","version":"4.27.0-rc1"}}}"#,
+    "\n",
+    r#"{"in":1,"str":{"pre":0,"str":"P"}}"#,
+    "\n",
+    r#"{"ie":0,"sort":0}"#,
+    "\n",
+    r#"{"in":2,"str":{"pre":1,"str":"mk"}}"#,
+    "\n",
+    r#"{"const":{"name":1,"us":[]},"ie":1}"#,
+    "\n",
+    r#"{"in":3,"str":{"pre":1,"str":"rec"}}"#,
+    "\n",
+    r#"{"in":4,"str":{"pre":0,"str":"u_1"}}"#,
+    "\n",
+    r#"{"il":1,"param":4}"#,
+    "\n",
+    r#"{"in":5,"str":{"pre":0,"str":"motive"}}"#,
+    "\n",
+    r#"{"in":6,"str":{"pre":0,"str":"t"}}"#,
+    "\n",
+    r#"{"ie":2,"sort":1}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":2,"name":6,"type":1},"ie":3}"#,
+    "\n",
+    r#"{"in":7,"str":{"pre":0,"str":"mk"}}"#,
+    "\n",
+    r#"{"bvar":0,"ie":4}"#,
+    "\n",
+    r#"{"const":{"name":2,"us":[]},"ie":5}"#,
+    "\n",
+    r#"{"app":{"arg":5,"fn":4},"ie":6}"#,
+    "\n",
+    r#"{"bvar":2,"ie":7}"#,
+    "\n",
+    r#"{"app":{"arg":4,"fn":7},"ie":8}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":8,"name":6,"type":1},"ie":9}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"default","body":9,"name":7,"type":6},"ie":10}"#,
+    "\n",
+    r#"{"forallE":{"binderInfo":"implicit","body":10,"name":5,"type":3},"ie":11}"#,
+    "\n",
+    r#"{"ie":12,"lam":{"binderInfo":"default","body":4,"name":7,"type":6}}"#,
+    "\n",
+    r#"{"ie":13,"lam":{"binderInfo":"default","body":12,"name":5,"type":3}}"#,
+    "\n",
+    r#"{"inductive":{"types":[{"all":[1],"ctors":[2],"isRec":false,"isReflexive":false,"isUnsafe":false,"levelParams":[],"name":1,"numIndices":0,"numNested":0,"numParams":0,"type":0}],"ctors":[{"cidx":0,"induct":1,"isUnsafe":false,"levelParams":[],"name":2,"numFields":0,"numParams":0,"type":1}],"recs":[{"all":[1],"isUnsafe":false,"k":true,"levelParams":[4],"name":3,"numIndices":0,"numMinors":1,"numMotives":1,"numParams":0,"rules":[{"ctor":2,"nfields":0,"rhs":13}],"type":11}]}}"#,
+    "\n",
+    r#"{"in":8,"str":{"pre":0,"str":"pf"}}"#,
+    "\n",
+    r#"{"thm":{"name":8,"levelParams":[],"type":1,"value":0}}"#,
+    "\n",
+);
+
+/// S29: `uk_proof_verify` reduces a valid Lean4 export to `verified: true` and
+/// surfaces the report via `uk_get_result`.
+#[test]
+fn proof_verify_valid_reduces_to_true() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0, "model handle should be positive");
+
+    let (ep, el) = json_ptr(VALID_LEAN_EXPORT.as_bytes());
+    let (sp, sl) = json_ptr(b"{}");
+    assert_eq!(
+        uk_proof_verify(model, ep, el, sp, sl),
+        0,
+        "valid proof should verify: {}",
+        read_error()
+    );
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["verified"], true, "{result}");
+    assert_eq!(result["declarations_checked"], 4, "{result}");
+    assert!(result["export_hash"].as_str().unwrap().len() == 64);
+
+    uk_model_free(model);
+}
+
+/// S29: a mistyped proof (value `Sort 0` for a `Prop`) reduces to
+/// `verified: false` — an acceptance verdict, not a hard error.
+#[test]
+fn proof_verify_invalid_reduces_to_false() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let (ep, el) = json_ptr(INVALID_LEAN_EXPORT.as_bytes());
+    let (sp, sl) = json_ptr(b"{}");
+    assert_eq!(
+        uk_proof_verify(model, ep, el, sp, sl),
+        0,
+        "a rejected proof is still a successful verification call"
+    );
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["verified"], false, "{result}");
+    assert!(result["error"].as_str().unwrap().contains("proof rejected"));
+
+    uk_model_free(model);
+}
+
+/// S29: a malformed export (unparseable NDJSON) is a hard UK-4802 error.
+#[test]
+fn proof_verify_malformed_export_is_4802() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let (ep, el) = json_ptr(b"{\"not\": \"json-lines");
+    let (sp, sl) = json_ptr(b"{}");
+    let r = uk_proof_verify(model, ep, el, sp, sl);
+    assert!(r < 0, "malformed export should fail: {r}");
+    assert_eq!(r, -(Code::PROOF_EXPORT_INVALID.raw() as i64));
+    assert_eq!(uk_proof_verify(model, ep, el, sp, sl), r);
+
+    uk_model_free(model);
+}

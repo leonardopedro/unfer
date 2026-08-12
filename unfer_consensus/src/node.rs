@@ -92,9 +92,8 @@ impl ConsensusNode {
         // `unfer_protocol::ops` registry) so the consensus seam can never
         // drift from the agent/edge allowlists.
         if unfer_protocol::ops::CONSENSUS_OPS.contains(&req.op.as_str()) {
-            let spec: ModelSpec = serde_json::from_value(req.params.clone()).map_err(|e| {
-                Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
-            })?;
+            let spec: ModelSpec = serde_json::from_value(req.params.clone())
+                .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
             let session = Session::new(&spec).map_err(|e| e.to_diagnostic())?;
             let id = self.next_model_id;
             self.next_model_id += 1;

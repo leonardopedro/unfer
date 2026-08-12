@@ -47,6 +47,7 @@ uk_owner_clear
 uk_owner_list
 uk_owner_log
 uk_poll
+uk_proof_verify
 uk_registry_vetted
 uk_report_issue
 uk_request_resource

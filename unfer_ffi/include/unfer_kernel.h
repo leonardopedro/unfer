@@ -136,6 +136,11 @@ int64_t uk_owner_log(const uint8_t* ptr,
 int64_t uk_poll(int64_t sub,
         uint8_t* buf,
         int64_t cap);
+int64_t uk_proof_verify(int64_t model,
+                const uint8_t* export_ptr,
+                int64_t export_len,
+                const uint8_t* spec_json,
+                int64_t spec_json_len);
 int64_t uk_registry_vetted(const uint8_t* principal,
                    int64_t len,
                    int64_t vetted);

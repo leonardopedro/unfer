@@ -547,6 +547,19 @@ impl Session {
         let _ = var;
         Ok(self.state.norm())
     }
+
+    /// Verify a Lean4 export file (S29). Runs the external type checker
+    /// [`nanoda_lib`] over the `lean4export` payload and reduces the proofs to
+    /// a boolean verdict. The numerical state is untouched — verification is a
+    /// read-only gate that mixes machine-checked theorem results into the
+    /// kernel session.
+    pub fn verify_proof(
+        &self,
+        export_bytes: &[u8],
+        spec: &unfer_protocol::LeanVerifySpec,
+    ) -> Result<unfer_protocol::ProofReport, KernelError> {
+        crate::verify::verify_export(export_bytes, spec)
+    }
 }
 
 #[cfg(test)]

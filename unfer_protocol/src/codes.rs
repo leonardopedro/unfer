@@ -76,6 +76,14 @@ impl Code {
     /// blueprints, writes) until an operator clears the latch.
     pub const SENSITIVE_LATCHED: Code = Code(4701);
 
+    /// S29: the Lean4 export file could not be type-checked — a theorem or
+    /// definition's proof term did not check (type mismatch, missing
+    /// declaration, or a kernel panic inside nanoda_lib).
+    pub const PROOF_VERIFY_FAILED: Code = Code(4801);
+    /// S29: the Lean4 export file was malformed — unparseable NDJSON, missing
+    /// declarations, oversize payload, or a bad `LeanVerifySpec`.
+    pub const PROOF_EXPORT_INVALID: Code = Code(4802);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -307,6 +315,16 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4701,
             "SensitiveLatched",
             "The caller observed sensitive data and is latched from forward-mutating operations until an operator clears it.",
+        ),
+        (
+            4801,
+            "ProofVerifyFailed",
+            "The Lean4 export file did not type-check: a theorem or definition's proof term was rejected by the external kernel.",
+        ),
+        (
+            4802,
+            "ProofExportInvalid",
+            "The Lean4 export file was malformed or the LeanVerifySpec was invalid (unparseable NDJSON, missing declaration, oversize payload).",
         ),
         (
             6001,

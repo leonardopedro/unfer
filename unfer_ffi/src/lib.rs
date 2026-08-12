@@ -20,7 +20,7 @@ use unfer_protocol::{
     ActionRecord, ActionState, AgentInfo, AgentState, AuditEntry, BayesianUpdateRequest,
     BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
     Code, Diagnostic, EffectKind, EventPredicate, EventQuery, GrantSet, HamiltonianSpec,
-    KernelEvent, ModelSpec, PriorSpec, Severity,
+    KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity,
 };
 
 pub use unfer_protocol;
@@ -313,6 +313,49 @@ pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
         let result_json = serde_json::json!({"prior_probability": prior_p}).to_string();
         let event = unfer_protocol::KernelEvent::Observed { value: prior_p };
         handles::set_last_result(model, result_json);
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
+/// Verify a Lean4 export file against the external type checker (S29).
+///
+/// `export_ptr`/`export_len` carry the raw `lean4export` NDJSON payload;
+/// `spec_json`/`spec_json_len` carry an optional `LeanVerifySpec` JSON
+/// (permitted axioms, nat/string extensions). The proofs are reduced to a
+/// boolean verdict (`ProofReport.verified`), stored as JSON in
+/// `uk_get_result`, and broadcast as a `verified` event.
+///
+/// Returns 0 on success (verification completed; the *verdict* is in the
+/// report — an unverified proof returns `verified: false`, not an error),
+/// <0 (-code) on a *processing* failure (UK-4802 malformed export, UK-4801
+/// type-check rejection, UK-1004 bad handle).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_proof_verify(
+    model: i64,
+    export_ptr: *const u8,
+    export_len: i64,
+    spec_json: *const u8,
+    spec_json_len: i64,
+) -> i64 {
+    ffi_entry("uk_proof_verify", || {
+        let export_bytes = read_bytes(export_ptr, export_len)?;
+        let spec: LeanVerifySpec = if spec_json.is_null() || spec_json_len <= 0 {
+            LeanVerifySpec::default()
+        } else {
+            parse_json(spec_json, spec_json_len)?
+        };
+        let report = handles::with_session_mut(model, |s| s.verify_proof(&export_bytes, &spec))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::Verified {
+            verified: report.verified,
+            declarations_checked: report.declarations_checked,
+        };
         handles::push_event(model, event);
         Ok(0)
     })
