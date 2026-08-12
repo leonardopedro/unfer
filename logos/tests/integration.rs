@@ -32,11 +32,11 @@ fn pipeline(sentence: &str, lexicon: &Lexicon) -> (String, String) {
     let trees = ccg::parse_sentence(&tokens, lexicon);
     assert!(!trees.is_empty(), "no parse for: {}", sentence);
     let tree = &trees[0];
-    let ir = core_ir::compile_to_core_ir(tree, lexicon);
-    let mut net = deltanet::compile_to_net(&ir);
-    deltanet::reduce(&mut net);
-    let result = deltanet::readback(&net);
-    let hash = deltanet::unf_hash_string(&net);
+    let ir = core_ir::compile_to_core_ir(tree, lexicon).unwrap();
+    let mut net = deltanet::compile_to_net(&ir).unwrap();
+    deltanet::reduce(&mut net).unwrap();
+    let result = deltanet::readback(&net).unwrap();
+    let hash = deltanet::unf_hash_string(&net).unwrap();
     (result, hash)
 }
 
@@ -223,15 +223,15 @@ fn property_confluence_reduce_twice_same_result() {
         let tokens: Vec<String> = sentence.split_whitespace().map(String::from).collect();
         let trees = ccg::parse_sentence(&tokens, &lex);
         assert!(!trees.is_empty(), "no parse for: {sentence}");
-        let ir = core_ir::compile_to_core_ir(&trees[0], &lex);
+        let ir = core_ir::compile_to_core_ir(&trees[0], &lex).unwrap();
 
-        let mut net1 = deltanet::compile_to_net(&ir);
-        deltanet::reduce(&mut net1);
+        let mut net1 = deltanet::compile_to_net(&ir).unwrap();
+        let _ = deltanet::reduce(&mut net1);
         let r1 = deltanet::readback(&net1);
         let h1 = deltanet::unf_hash_string(&net1);
 
-        let mut net2 = deltanet::compile_to_net(&ir);
-        deltanet::reduce(&mut net2);
+        let mut net2 = deltanet::compile_to_net(&ir).unwrap();
+        let _ = deltanet::reduce(&mut net2);
         let r2 = deltanet::readback(&net2);
         let h2 = deltanet::unf_hash_string(&net2);
 
@@ -295,9 +295,9 @@ fn property_readback_is_stable_across_recompilation() {
     let mut results = Vec::new();
     for _ in 0..5 {
         let trees = ccg::parse_sentence(&tokens, &lex);
-        let ir = core_ir::compile_to_core_ir(&trees[0], &lex);
-        let mut net = deltanet::compile_to_net(&ir);
-        deltanet::reduce(&mut net);
+        let ir = core_ir::compile_to_core_ir(&trees[0], &lex).unwrap();
+        let mut net = deltanet::compile_to_net(&ir).unwrap();
+        deltanet::reduce(&mut net).unwrap();
         results.push(deltanet::readback(&net));
     }
 

@@ -1,7 +1,7 @@
 use super::types::*;
 use crate::core_ir::{CONS_TAG, Literal, NIL_TAG, PrimOp};
 
-pub fn reduce(net: &mut Net) {
+pub fn reduce(net: &mut Net) -> Result<(), String> {
     net.collect_active_pairs();
     let mut iterations = 0;
     let max_iterations = 1_000_000;
@@ -10,7 +10,7 @@ pub fn reduce(net: &mut Net) {
         if net.is_freed(a) || net.is_freed(b) {
             continue;
         }
-        interact(net, a, b);
+        interact(net, a, b)?;
         net.collect_new_active_pairs();
         iterations += 1;
         if iterations >= max_iterations {
@@ -21,24 +21,25 @@ pub fn reduce(net: &mut Net) {
             break;
         }
     }
+    Ok(())
 }
 
-fn interact(net: &mut Net, a: NodeId, b: NodeId) {
+fn interact(net: &mut Net, a: NodeId, b: NodeId) -> Result<(), String> {
     let kind_a = net.nodes[a as usize].as_ref().map(|n| n.kind.clone());
     let kind_b = net.nodes[b as usize].as_ref().map(|n| n.kind.clone());
 
     let (kind_a, kind_b) = match (kind_a, kind_b) {
         (Some(a), Some(b)) => (a, b),
-        _ => return,
+        _ => return Ok(()),
     };
 
     match (&kind_a, &kind_b) {
         // Beta reduction: App >< Abs
         (AgentKind::App, AgentKind::Abs) => {
-            let app_arg = net.get_aux(a, 1);
-            let abs_var = net.get_aux(b, 1);
+            let app_arg = net.get_aux(a, 1)?;
+            let abs_var = net.get_aux(b, 1)?;
             net.wire(app_arg, abs_var);
-            let abs_body = net.get_aux(b, 2);
+            let abs_body = net.get_aux(b, 2)?;
             let app_result = net.nodes[a as usize]
                 .as_ref()
                 .and_then(|n| n.ports[2].clone());
@@ -54,14 +55,15 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             }
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Abs >< App (commutative)
         (AgentKind::Abs, AgentKind::App) => {
-            let abs_var = net.get_aux(a, 1);
-            let app_arg = net.get_aux(b, 1);
+            let abs_var = net.get_aux(a, 1)?;
+            let app_arg = net.get_aux(b, 1)?;
             net.wire(abs_var, app_arg);
-            let abs_body = net.get_aux(a, 2);
+            let abs_body = net.get_aux(a, 2)?;
             let app_result = net.nodes[b as usize]
                 .as_ref()
                 .and_then(|n| n.ports[2].clone());
@@ -77,26 +79,28 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
             }
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Dup >< Dup (same level): annihilate
         (AgentKind::Dup(l1), AgentKind::Dup(l2)) if l1 == l2 => {
-            let a1 = net.get_aux(a, 1);
-            let a2 = net.get_aux(a, 2);
-            let b1 = net.get_aux(b, 1);
-            let b2 = net.get_aux(b, 2);
+            let a1 = net.get_aux(a, 1)?;
+            let a2 = net.get_aux(a, 2)?;
+            let b1 = net.get_aux(b, 1)?;
+            let b2 = net.get_aux(b, 2)?;
             net.wire(a1, b1);
             net.wire(a2, b2);
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Dup >< Dup (different level): commute
         (AgentKind::Dup(l1), AgentKind::Dup(l2)) if l1 != l2 => {
-            let dup_a = net.get_aux(a, 1);
-            let dup_a2 = net.get_aux(a, 2);
-            let _dup_b = net.get_aux(b, 1);
-            let _dup_b2 = net.get_aux(b, 2);
+            let dup_a = net.get_aux(a, 1)?;
+            let dup_a2 = net.get_aux(a, 2)?;
+            let _dup_b = net.get_aux(b, 1)?;
+            let _dup_b2 = net.get_aux(b, 2)?;
 
             let new_a1 = net.alloc_node(AgentKind::Dup(*l1));
             let new_a2 = net.alloc_node(AgentKind::Dup(*l1));
@@ -113,6 +117,7 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
 
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Dup >< Con/Abs/App/Fold/Prim: commute
@@ -121,43 +126,46 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
                 AgentKind::Dup(l) => *l,
                 _ => unreachable!(),
             };
-            commute_dup_through(net, a, b, dup_level, true);
+            commute_dup_through(net, a, b, dup_level, true)
         }
         (_, AgentKind::Dup(_)) => {
             let dup_level = match &kind_b {
                 AgentKind::Dup(l) => *l,
                 _ => unreachable!(),
             };
-            commute_dup_through(net, b, a, dup_level, false);
+            commute_dup_through(net, b, a, dup_level, false)
         }
 
         // Era >< anything: erase
         (AgentKind::Era, _) => {
-            erase_agent(net, b);
+            erase_agent(net, b)?;
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
         (_, AgentKind::Era) => {
-            erase_agent(net, a);
+            erase_agent(net, a)?;
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Fold >< Con(Nil, 0): reduce to init
         (AgentKind::Fold, AgentKind::Con(tag, 0)) if *tag == NIL_TAG => {
-            let init_port = net.get_aux(a, 2);
+            let init_port = net.get_aux(a, 2)?;
             let result_port = Port::principal(a);
             net.wire(result_port, init_port);
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Fold >< Con(Cons, 2): reduce to f(head, Fold(f, init, tail))
         (AgentKind::Fold, AgentKind::Con(tag, 2)) if *tag == CONS_TAG => {
-            let f_port = net.get_aux(a, 1);
-            let init_port = net.get_aux(a, 2);
-            let head_port = net.get_aux(b, 1);
-            let tail_port = net.get_aux(b, 2);
+            let f_port = net.get_aux(a, 1)?;
+            let init_port = net.get_aux(a, 2)?;
+            let head_port = net.get_aux(b, 1)?;
+            let tail_port = net.get_aux(b, 2)?;
 
             let inner_fold = net.alloc_node(AgentKind::Fold);
             let inner_app = net.alloc_node(AgentKind::App);
@@ -188,28 +196,30 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) {
 
             net.free_node(a);
             net.free_node(b);
+            Ok(())
         }
 
         // Prim >< Lit, Lit: native evaluation
         (AgentKind::Prim(op), AgentKind::Lit(_)) => {
             if let (Some(lit1), Some(lit2)) =
                 (net.get_connected_lit(a, 1), net.get_connected_lit(a, 2))
+                && let Some(result) = eval_prim(*op, &lit1, &lit2)
             {
-                if let Some(result) = eval_prim(*op, &lit1, &lit2) {
-                    let result_node = net.alloc_node(AgentKind::Lit(result));
-                    net.wire(Port::principal(a), Port::principal(result_node));
-                    net.free_node(a);
-                }
+                let result_node = net.alloc_node(AgentKind::Lit(result));
+                net.wire(Port::principal(a), Port::principal(result_node));
+                net.free_node(a);
             }
+            Ok(())
         }
 
         // Con >< Con: STUCK TERM
         (AgentKind::Con(_, _), AgentKind::Con(_, _)) => {
             // Two constructors meeting principal-to-principal indicates a type error
             // For v1, we just leave them stuck
+            Ok(())
         }
 
-        _ => {}
+        _ => Ok(()),
     }
 }
 
@@ -219,9 +229,9 @@ fn commute_dup_through(
     other_id: NodeId,
     level: u16,
     dup_is_left: bool,
-) {
-    let dup_port = net.get_aux(dup_id, if dup_is_left { 1 } else { 2 });
-    let _dup_port2 = net.get_aux(dup_id, if dup_is_left { 2 } else { 1 });
+) -> Result<(), String> {
+    let dup_port = net.get_aux(dup_id, if dup_is_left { 1 } else { 2 })?;
+    let _dup_port2 = net.get_aux(dup_id, if dup_is_left { 2 } else { 1 })?;
 
     let other_kind = net.nodes[other_id as usize].as_ref().unwrap().kind.clone();
     let other_aux_count = other_kind.aux_count();
@@ -230,7 +240,7 @@ fn commute_dup_through(
     let new_other2 = net.alloc_node(other_kind);
 
     for slot in 1..=other_aux_count {
-        let orig = net.get_aux(other_id, slot);
+        let orig = net.get_aux(other_id, slot)?;
         let new1_port = Port::new(new_other1, slot);
         let new2_port = Port::new(new_other2, slot);
         let dup1 = net.alloc_node(AgentKind::Dup(level));
@@ -247,16 +257,18 @@ fn commute_dup_through(
 
     net.wire(Port::principal(dup_id), dup_port);
     net.free_node(other_id);
+    Ok(())
 }
 
-fn erase_agent(net: &mut Net, agent_id: NodeId) {
+fn erase_agent(net: &mut Net, agent_id: NodeId) -> Result<(), String> {
     let kind = net.nodes[agent_id as usize].as_ref().unwrap().kind.clone();
     let aux_count = kind.aux_count();
     for slot in 1..=aux_count {
-        let port = net.get_aux(agent_id, slot);
+        let port = net.get_aux(agent_id, slot)?;
         let era = net.alloc_node(AgentKind::Era);
         net.wire(port, Port::principal(era));
     }
+    Ok(())
 }
 
 fn eval_prim(op: PrimOp, a: &Literal, b: &Literal) -> Option<Literal> {
@@ -299,6 +311,6 @@ mod tests {
 
         net.root = Port::new(app, 2);
         net.collect_active_pairs();
-        reduce(&mut net);
+        reduce(&mut net).unwrap();
     }
 }

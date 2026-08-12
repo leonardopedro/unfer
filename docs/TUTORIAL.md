@@ -55,7 +55,7 @@ The one-sentence mental model:
 | `unfer_ffi` | handle-based C ABI: the `uk_*()` symbols modules call |
 | `qfm` | Tomographic QFM Subspace Recovery pipeline + Quantum Bayesian Updating |
 
-As of **rev 19** the workspace is **201 tests** green on CPU.
+As of **rev 23** the workspace is **676 tests** green on CPU.
 
 ---
 

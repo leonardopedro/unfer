@@ -195,6 +195,7 @@ impl ModeStats {
 ///   - `merge(a, b) == merge(b, a)`
 ///   - `merge(merge(a, b), c) == merge(a, merge(b, c))`
 ///   - `merge(a, zero) == a`
+///
 /// because the underlying operations are `count + count` (commutative,
 /// associative) and the histogram merge is well-defined for top-T-by-
 /// count (deterministic tie-break by token id).
@@ -287,10 +288,10 @@ impl ChannelAccumulator {
             }
         }
         // Record consecutive training-window transition.
-        if let Some(prev) = self.last_window_mode {
-            if prev != primary_mode {
-                self.transitions.push((prev, primary_mode));
-            }
+        if let Some(prev) = self.last_window_mode
+            && prev != primary_mode
+        {
+            self.transitions.push((prev, primary_mode));
         }
         self.last_window_mode = Some(primary_mode);
         primary_mode

@@ -325,7 +325,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 let ppl = (nll / nt.max(1) as f64).exp();
-                if best.map_or(true, |(_, _, _, bpp)| ppl < bpp) {
+                if best.is_none_or(|(_, _, _, bpp)| ppl < bpp) {
                     best = Some((t, d, nll / nt.max(1) as f64, ppl));
                 }
             }

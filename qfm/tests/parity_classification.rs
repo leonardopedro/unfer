@@ -12,9 +12,10 @@ use num_complex::Complex64;
 use qfm::pipeline::{HamiltonianType, QfmConfig, QfmPipeline};
 
 fn parity(x: u32) -> bool {
-    x.count_ones() % 2 == 0
+    x.count_ones().is_multiple_of(2)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_test(
     train_inputs: &[u32],
     transitions: &[(u32, u32)],

@@ -2,18 +2,20 @@ use crate::core_ir::{CoreIR, Literal, Pattern, PrimOp};
 
 pub struct AustralEmitter {
     output: String,
-    indent: usize,
     functions: Vec<String>,
-    env_types: Vec<String>,
+}
+
+impl Default for AustralEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AustralEmitter {
     pub fn new() -> Self {
         Self {
             output: String::new(),
-            indent: 0,
             functions: Vec::new(),
-            env_types: Vec::new(),
         }
     }
 

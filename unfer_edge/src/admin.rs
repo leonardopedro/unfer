@@ -147,7 +147,9 @@ pub fn patch_body(principal: &str, patch: &[u8]) -> (u16, Vec<u8>) {
     (200u16, serde_json::to_vec(&body).expect("serializes"))
 }
 
-/// Reset the soft config (host/QA path). Returns the old value.
+/// Reset the soft config (host/QA path). Returns the old value. QA-only: the
+/// live admin surface never resets the config.
+#[cfg(test)]
 pub fn reset_soft_config() -> Value {
     let mut config = soft_store().lock().unwrap_or_else(|e| e.into_inner());
     let old = config.clone();

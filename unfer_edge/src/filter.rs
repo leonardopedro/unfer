@@ -5,34 +5,12 @@
 use std::collections::HashSet;
 
 use unfer_protocol::codes::{Code, Diagnostic, HintKind, RepairHint, Severity};
+use unfer_protocol::ops::EDGE_ALLOWED_OPS;
 use unfer_protocol::types::{AgentRequest, AgentResponse};
 
 /// Ops the gateway accepts. Anything else receives UK-4001 CallDenied.
-static ALLOWED_OPS: &[&str] = &[
-    "version",
-    "create_model",
-    "set_prior",
-    "evolve",
-    "condition",
-    "probability",
-    "observe",
-    "snapshot",
-    "list_codes",
-    "did_create",
-    "did_resolve",
-    "did_update",
-    "did_revoke",
-    "content_publish",
-    "content_resolve",
-    "consensus_sync",
-    "consensus_status",
-    "cert_set_authority",
-    "cert_mint",
-    "cert_transfer",
-    "cert_burn",
-    "cert_status",
-    "cert_root",
-];
+/// Single source of truth: `unfer_protocol::ops::EDGE_ALLOWED_OPS`.
+static ALLOWED_OPS: &[&str] = EDGE_ALLOWED_OPS;
 
 /// Rejection reasons returned to callers.
 #[derive(Debug)]
@@ -152,6 +130,15 @@ mod tests {
             set.len(),
             ALLOWED_OPS.len(),
             "ALLOWED_OPS must not have duplicates"
+        );
+    }
+
+    #[test]
+    fn allowlist_matches_shared_registry() {
+        assert_eq!(
+            ALLOWED_OPS,
+            unfer_protocol::ops::EDGE_ALLOWED_OPS,
+            "edge allowlist must be the shared unfer_protocol::ops table"
         );
     }
 }

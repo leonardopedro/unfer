@@ -391,8 +391,10 @@ fn hmc_opts_default_is_valid() {
 
 #[test]
 fn hmc_opts_validate_zero_leapfrog_steps() {
-    let mut opts = HmcOptsSpec::default();
-    opts.leapfrog_steps = 0;
+    let opts = HmcOptsSpec {
+        leapfrog_steps: 0,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "hmc_opts.leapfrog_steps");
@@ -401,8 +403,10 @@ fn hmc_opts_validate_zero_leapfrog_steps() {
 
 #[test]
 fn hmc_opts_validate_zero_step_size() {
-    let mut opts = HmcOptsSpec::default();
-    opts.step_size = 0.0;
+    let opts = HmcOptsSpec {
+        step_size: 0.0,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "hmc_opts.step_size");
@@ -411,8 +415,10 @@ fn hmc_opts_validate_zero_step_size() {
 
 #[test]
 fn hmc_opts_validate_negative_step_size() {
-    let mut opts = HmcOptsSpec::default();
-    opts.step_size = -0.1;
+    let opts = HmcOptsSpec {
+        step_size: -0.1,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert!(matches!(hints[0].kind, HintKind::ReplaceValue));
@@ -420,8 +426,10 @@ fn hmc_opts_validate_negative_step_size() {
 
 #[test]
 fn hmc_opts_validate_nan_step_size() {
-    let mut opts = HmcOptsSpec::default();
-    opts.step_size = f64::NAN;
+    let opts = HmcOptsSpec {
+        step_size: f64::NAN,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert!(matches!(hints[0].kind, HintKind::ReplaceValue));
@@ -429,9 +437,11 @@ fn hmc_opts_validate_nan_step_size() {
 
 #[test]
 fn hmc_opts_validate_n_iterations_lt_burn_in() {
-    let mut opts = HmcOptsSpec::default();
-    opts.n_iterations = 50;
-    opts.burn_in = 100;
+    let opts = HmcOptsSpec {
+        n_iterations: 50,
+        burn_in: 100,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "hmc_opts");
@@ -463,8 +473,10 @@ fn hmc_opts_validate_multiple_errors_all_reported() {
 
 #[test]
 fn hmc_opts_validate_unreasonably_large_leapfrog_warns() {
-    let mut opts = HmcOptsSpec::default();
-    opts.leapfrog_steps = 50_000;
+    let opts = HmcOptsSpec {
+        leapfrog_steps: 50_000,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert!(matches!(hints[0].kind, HintKind::ReduceScope));
@@ -527,8 +539,10 @@ fn bp_opts_default_is_valid() {
 
 #[test]
 fn bp_opts_max_iter_zero_returns_hint() {
-    let mut opts = BeliefPropagationOptsSpec::default();
-    opts.max_iter = 0;
+    let opts = BeliefPropagationOptsSpec {
+        max_iter: 0,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "opts.max_iter");
@@ -536,8 +550,10 @@ fn bp_opts_max_iter_zero_returns_hint() {
 
 #[test]
 fn bp_opts_step_size_zero_returns_hint() {
-    let mut opts = BeliefPropagationOptsSpec::default();
-    opts.step_size = 0.0;
+    let opts = BeliefPropagationOptsSpec {
+        step_size: 0.0,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "opts.step_size");
@@ -545,8 +561,10 @@ fn bp_opts_step_size_zero_returns_hint() {
 
 #[test]
 fn bp_opts_step_size_nan_returns_hint() {
-    let mut opts = BeliefPropagationOptsSpec::default();
-    opts.step_size = f64::NAN;
+    let opts = BeliefPropagationOptsSpec {
+        step_size: f64::NAN,
+        ..Default::default()
+    };
     let hints = opts.validate();
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].target, "opts.step_size");

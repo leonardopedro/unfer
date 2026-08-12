@@ -31,10 +31,18 @@ entry = "src/BayesUpdateModule"
 # (auth.rs / ManifestAuthEngine). Removing a symbol here causes the
 # corresponding call to fail with a UK-4001 CallDenied denial at JIT
 # time — see run_demo.sh's negative test on uk_get_result.
+#
+# Note: `uk_event_probability` and `uk_evolve` are granted in addition to
+# the calls the module itself makes, because the JIT compiles *all* of
+# UnferKernel's wrapper functions (kernelEventProbabilityStr /
+# kernelEvolveStr call those symbols in their bodies) even when the module
+# never reaches them at runtime.
 [grants]
 kernel = [
     "uk_model_create",
     "uk_bayesian_update",
+    "uk_event_probability",
+    "uk_evolve",
     "uk_get_result",
     "uk_model_free",
 ]

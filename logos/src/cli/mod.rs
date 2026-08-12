@@ -4,6 +4,41 @@ use crate::l1::{self, TriggerTable};
 use crate::lexicon::Lexicon;
 use std::process;
 
+fn compile_or_die(tree: &crate::ccg::DerivationTree, lexicon: &Lexicon) -> crate::core_ir::CoreIR {
+    match crate::core_ir::compile_to_core_ir(tree, lexicon) {
+        Ok(ir) => ir,
+        Err(msg) => {
+            eprintln!("Compile error: {}", msg);
+            process::exit(1);
+        }
+    }
+}
+
+fn compile_to_reduced_net(ir: &crate::core_ir::CoreIR) -> deltanet::Net {
+    let mut net = match deltanet::compile_to_net(ir) {
+        Ok(net) => net,
+        Err(msg) => {
+            eprintln!("Compile error: {}", msg);
+            process::exit(1);
+        }
+    };
+    deltanet::reduce(&mut net).unwrap_or_else(|msg| {
+        eprintln!("Reduction error: {}", msg);
+        process::exit(1);
+    });
+    net
+}
+
+fn readback_or_die(net: &deltanet::Net) -> String {
+    match deltanet::readback(net) {
+        Ok(result) => result,
+        Err(msg) => {
+            eprintln!("Readback error: {}", msg);
+            process::exit(1);
+        }
+    }
+}
+
 pub fn run_cli(args: Vec<String>) {
     if args.len() < 2 {
         eprintln!("Usage: logos <subcommand> [args]");
@@ -44,8 +79,13 @@ fn cmd_parse(args: &[String]) {
     println!("Found {} parse(s):", trees.len());
     for (i, tree) in trees.iter().enumerate() {
         println!("  Parse {}: {}", i + 1, tree_to_string(tree));
-        let ir = crate::core_ir::compile_to_core_ir(tree, &lexicon);
-        println!("    Core IR: {}", ir);
+        match crate::core_ir::compile_to_core_ir(tree, &lexicon) {
+            Ok(ir) => println!("    Core IR: {}", ir),
+            Err(msg) => {
+                eprintln!("    Compile error: {}", msg);
+                process::exit(1);
+            }
+        }
     }
 }
 
@@ -67,10 +107,8 @@ fn cmd_run(args: &[String]) {
     }
 
     let tree = &trees[0];
-    let ir = crate::core_ir::compile_to_core_ir(tree, &lexicon);
-    let mut net = deltanet::compile_to_net(&ir);
-    deltanet::reduce(&mut net);
-    let result = deltanet::readback(&net);
+    let ir = compile_or_die(tree, &lexicon);
+    let result = readback_or_die(&compile_to_reduced_net(&ir));
     println!("{}", result);
 }
 
@@ -93,10 +131,9 @@ fn cmd_verify(args: &[String]) {
     }
 
     let tree = &trees[0];
-    let ir = crate::core_ir::compile_to_core_ir(tree, &lexicon);
-    let mut net = deltanet::compile_to_net(&ir);
-    deltanet::reduce(&mut net);
-    let result = deltanet::readback(&net);
+    let ir = compile_or_die(tree, &lexicon);
+    let net = compile_to_reduced_net(&ir);
+    let result = readback_or_die(&net);
 
     if result == expected {
         println!("PASS: {} → {}", sentence, result);
@@ -124,10 +161,12 @@ fn cmd_hash(args: &[String]) {
     }
 
     let tree = &trees[0];
-    let ir = crate::core_ir::compile_to_core_ir(tree, &lexicon);
-    let mut net = deltanet::compile_to_net(&ir);
-    deltanet::reduce(&mut net);
-    let hash = unf_hash_string(&net);
+    let ir = compile_or_die(tree, &lexicon);
+    let net = compile_to_reduced_net(&ir);
+    let hash = unf_hash_string(&net).unwrap_or_else(|msg| {
+        eprintln!("Hash error: {}", msg);
+        process::exit(1);
+    });
     println!("{}", hash);
 }
 
@@ -154,11 +193,13 @@ fn cmd_l1(args: &[String]) {
 
     println!("{} worlds:", worlds.len());
     for (prob, world_tree) in &worlds {
-        let ir = crate::core_ir::compile_to_core_ir(world_tree, &lexicon);
-        let mut net = deltanet::compile_to_net(&ir);
-        deltanet::reduce(&mut net);
-        let result = deltanet::readback(&net);
-        let hash = unf_hash_string(&net);
+        let ir = compile_or_die(world_tree, &lexicon);
+        let net = compile_to_reduced_net(&ir);
+        let result = readback_or_die(&net);
+        let hash = unf_hash_string(&net).unwrap_or_else(|msg| {
+            eprintln!("Hash error: {}", msg);
+            process::exit(1);
+        });
         println!("  p={:.4} result={} hash={}", prob, result, hash);
     }
 }

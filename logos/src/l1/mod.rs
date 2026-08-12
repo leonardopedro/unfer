@@ -21,6 +21,12 @@ pub struct TriggerTable {
     entries: Vec<TriggerEntry>,
 }
 
+impl Default for TriggerTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TriggerTable {
     pub fn new() -> Self {
         let entries = vec![

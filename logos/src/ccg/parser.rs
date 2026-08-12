@@ -13,6 +13,7 @@ pub struct ChartCell {
     pub entries: Vec<ChartEntry>,
 }
 
+#[allow(clippy::needless_range_loop)]
 pub fn parse_sentence(tokens: &[String], lexicon: &Lexicon) -> Vec<DerivationTree> {
     let n = tokens.len();
     let mut chart: Vec<Vec<ChartCell>> = vec![vec![ChartCell::default(); n + 1]; n + 1];
@@ -69,19 +70,18 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
         result,
         argument,
     } = &left.category
+        && **argument == right.category
     {
-        if **argument == right.category {
-            results.push(ChartEntry {
-                category: (**result).clone(),
-                derivation: DerivationTree::Application {
-                    direction: Direction::Forward,
-                    result_category: (**result).clone(),
-                    left: Box::new(left.derivation.clone()),
-                    right: Box::new(right.derivation.clone()),
-                },
-                span: (left.span.0, right.span.1),
-            });
-        }
+        results.push(ChartEntry {
+            category: (**result).clone(),
+            derivation: DerivationTree::Application {
+                direction: Direction::Forward,
+                result_category: (**result).clone(),
+                left: Box::new(left.derivation.clone()),
+                right: Box::new(right.derivation.clone()),
+            },
+            span: (left.span.0, right.span.1),
+        });
     }
 
     // Backward Application: Y + X\Y → X
@@ -90,19 +90,18 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
         result,
         argument,
     } = &right.category
+        && **argument == left.category
     {
-        if **argument == left.category {
-            results.push(ChartEntry {
-                category: (**result).clone(),
-                derivation: DerivationTree::Application {
-                    direction: Direction::Backward,
-                    result_category: (**result).clone(),
-                    left: Box::new(left.derivation.clone()),
-                    right: Box::new(right.derivation.clone()),
-                },
-                span: (left.span.0, right.span.1),
-            });
-        }
+        results.push(ChartEntry {
+            category: (**result).clone(),
+            derivation: DerivationTree::Application {
+                direction: Direction::Backward,
+                result_category: (**result).clone(),
+                left: Box::new(left.derivation.clone()),
+                right: Box::new(right.derivation.clone()),
+            },
+            span: (left.span.0, right.span.1),
+        });
     }
 
     // Forward Composition: X/Y + Y/Z → X/Z
@@ -111,27 +110,24 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
         result: x,
         argument: y1,
     } = &left.category
-    {
-        if let CCGCategory::Slash {
+        && let CCGCategory::Slash {
             forward: true,
             result: y2,
             argument: z,
         } = &right.category
-        {
-            if **y1 == **y2 {
-                let new_result = CCGCategory::forward((**x).clone(), (**z).clone());
-                results.push(ChartEntry {
-                    category: new_result.clone(),
-                    derivation: DerivationTree::Composition {
-                        direction: Direction::Forward,
-                        result_category: new_result,
-                        left: Box::new(left.derivation.clone()),
-                        right: Box::new(right.derivation.clone()),
-                    },
-                    span: (left.span.0, right.span.1),
-                });
-            }
-        }
+        && **y1 == **y2
+    {
+        let new_result = CCGCategory::forward((**x).clone(), (**z).clone());
+        results.push(ChartEntry {
+            category: new_result.clone(),
+            derivation: DerivationTree::Composition {
+                direction: Direction::Forward,
+                result_category: new_result,
+                left: Box::new(left.derivation.clone()),
+                right: Box::new(right.derivation.clone()),
+            },
+            span: (left.span.0, right.span.1),
+        });
     }
 
     // Backward Composition: Y\Z + X\Y → X\Z
@@ -140,27 +136,24 @@ fn apply_combinators(left: &ChartEntry, right: &ChartEntry, results: &mut Vec<Ch
         result: y1,
         argument: z,
     } = &left.category
-    {
-        if let CCGCategory::Slash {
+        && let CCGCategory::Slash {
             forward: false,
             result: x,
             argument: y2,
         } = &right.category
-        {
-            if **y1 == **y2 {
-                let new_result = CCGCategory::backward((**x).clone(), (**z).clone());
-                results.push(ChartEntry {
-                    category: new_result.clone(),
-                    derivation: DerivationTree::Composition {
-                        direction: Direction::Backward,
-                        result_category: new_result,
-                        left: Box::new(left.derivation.clone()),
-                        right: Box::new(right.derivation.clone()),
-                    },
-                    span: (left.span.0, right.span.1),
-                });
-            }
-        }
+        && **y1 == **y2
+    {
+        let new_result = CCGCategory::backward((**x).clone(), (**z).clone());
+        results.push(ChartEntry {
+            category: new_result.clone(),
+            derivation: DerivationTree::Composition {
+                direction: Direction::Backward,
+                result_category: new_result,
+                left: Box::new(left.derivation.clone()),
+                right: Box::new(right.derivation.clone()),
+            },
+            span: (left.span.0, right.span.1),
+        });
     }
 }
 

@@ -1,3 +1,17 @@
+//! Pure-Rust symbolic CAS + algebra for nested Fock spaces.
+//!
+//! Implements the level-1 inner Fock space (bosonic modes with creation and
+//! annihilation operators), the outer bosonic layer for multi-universe
+//! superpositions, and a symbolic [`cas`] compiler that maps field-theoretic
+//! Hamiltonians (`qphi + pipi`, Yang–Mills, Navier–Stokes) onto sparse
+//! operator structures. The `latex` / `typst_math` modules parse
+//! LaTeX/Typst math into those operators. Quadratic ordering strips pure
+//! scalar (zero-point) terms so that `⟨0|H|0⟩ = 0`.
+//!
+//! State trajectories are represented with sparse `FxHashMap` structures to
+//! absorb the exponential branching of high-order terms without expanding
+//! `O(10⁴)` polynomials.
+
 use num_complex::Complex64;
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet};

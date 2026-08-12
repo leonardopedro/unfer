@@ -164,11 +164,7 @@ fn make_training_set(seed: u64) -> (Vec<Vec<f64>>, Vec<u32>) {
             let mut img = center.clone();
             for v in &mut img {
                 *v += 0.05 * rng.next_normal();
-                if *v < 0.0 {
-                    *v = 0.0;
-                } else if *v > 1.0 {
-                    *v = 1.0;
-                }
+                *v = (*v).clamp(0.0, 1.0);
             }
             training.push(img);
             labels.push(class);
@@ -210,11 +206,7 @@ fn make_held_out(seed: u64) -> (Vec<Vec<f64>>, Vec<u32>) {
         // Add larger noise.
         for v in &mut center {
             *v += 0.15 * rng.next_normal();
-            if *v < 0.0 {
-                *v = 0.0;
-            } else if *v > 1.0 {
-                *v = 1.0;
-            }
+            *v = (*v).clamp(0.0, 1.0);
         }
         held_out.push(center);
         labels.push(class);

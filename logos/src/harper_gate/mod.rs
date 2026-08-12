@@ -24,6 +24,12 @@ pub struct GateResult {
 
 pub struct HarperGate;
 
+impl Default for HarperGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HarperGate {
     pub fn new() -> Self {
         Self
@@ -105,6 +111,6 @@ mod tests {
     fn test_gate_rejects_double_verb() {
         let gate = HarperGate::new();
         let result = gate.lint("John loves sees Mary");
-        assert!(!result.accepted || result.errors.len() > 0 || result.tokens.len() > 3);
+        assert!(!result.accepted || !result.errors.is_empty() || result.tokens.len() > 3);
     }
 }

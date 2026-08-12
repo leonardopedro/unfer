@@ -12,7 +12,6 @@
 //! - `hamiltonian_is_outer_product_of_dressed_vacuum` (1.3)
 //! - `decode_at_active_modes_matches_full_decode` (1.4)
 
-use nalgebra::DVector;
 use nested_fock_algebra::models::qfm_hamiltonian_hierarchical_projectors;
 use qfm_text::accumulate::{ChannelAccumulator, Encoder};
 use qfm_text::config::{DecodeStrategy, TextConfig};
@@ -279,7 +278,7 @@ fn decode_at_active_modes_matches_full_decode() {
         let norm = (0..m).map(|i| w[(i, j)].norm_sqr()).sum::<f64>().sqrt();
         assert!(norm > 0.0, "column {j} has zero norm after GS");
         for i in 0..m {
-            w[(i, j)] = w[(i, j)] / norm;
+            w[(i, j)] /= norm;
         }
     }
 

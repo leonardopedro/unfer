@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// structural fix for the unigram-floor collapse. The other
 /// variants are research alternatives; [`DecodeStrategy::Dense`]
 /// reproduces the original (pre-fix) behavior for comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum DecodeStrategy {
     /// Original behavior: take `p̃` at face value, accumulate
     /// `total_w = Σ p̃[m]` over active modes (those with a
@@ -39,6 +39,7 @@ pub enum DecodeStrategy {
     /// default and was the diagnostic in
     /// `QFM_TEXT_STATUS.md` §"What this means for the architecture"
     /// (item 1: "Decode threshold").
+    #[default]
     Renormalize,
     /// Sparse top-k selection: keep only the `k` highest-`p̃`
     /// active modes, zero the rest, then renormalize. The
@@ -52,12 +53,6 @@ pub enum DecodeStrategy {
     /// ones, shifting mass away from the unigram floor. QFM_TEXT_STATUS.md
     /// item 3: "Per-mode weight prior".
     OrderPrior,
-}
-
-impl Default for DecodeStrategy {
-    fn default() -> Self {
-        DecodeStrategy::Renormalize
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

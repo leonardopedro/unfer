@@ -45,6 +45,36 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   # ---------------------------------------------------------------------------
+  # Feature-gated jobs: the default-features matrix never compiles the
+  # `network`/`audit`/`zenodo`/`latex` surfaces, so their gated tests (9 zenodo,
+  # 14 audit console, latex CAS, QuePaxa network) never ran in CI. This job
+  # exercises each feature's test suite. The `cuda` surface is covered by the
+  # self-hosted `qfm-tomo-e2e-cuda` job (needs a CUDA toolkit + GPU, unavailable
+  # on public runners).
+  # ---------------------------------------------------------------------------
+  gated-features:
+    name: feature-gated tests (network/audit/zenodo/latex)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: unfer_edge audit console tests
+        run: cargo test -p unfer_edge --features audit
+      - name: unfer_ffi zenodo store tests
+        run: cargo test -p unfer_ffi --features zenodo
+      - name: nested_fock_algebra latex CAS tests
+        run: cargo test -p nested_fock_algebra --features latex
+      - name: prob_kernel latex tests
+        run: cargo test -p prob_kernel --features latex
+      - name: unfer_ffi latex tests
+        run: cargo test -p unfer_ffi --features latex
+      - name: unfer_consensus QuePaxa network tests
+        run: cargo test -p unfer_consensus --features network
+      - name: unfer_taler network testnet tests
+        run: cargo test -p unfer_taler --features network
+
+  # ---------------------------------------------------------------------------
   # Integration spine: build the FFI as a shared lib and assert the uk_* C ABI
   # symbols are exported (the contract the australVM JIT links against).
   # ---------------------------------------------------------------------------

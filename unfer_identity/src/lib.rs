@@ -1,3 +1,21 @@
+//! `did:unfer` identity method backed by the QuePaxa consensus log.
+//!
+//! [`DidManager`] implements the create / resolve / update / revoke
+//! lifecycle over a `ConsensusNode`, emitting signed `IdentityOp`
+//! transactions. [`did_from_pubkey`] and [`pubkey_from_did`] convert
+//! between the 32-byte Ed25519 public key and the `did:unfer:<hex>` form.
+//!
+//! [`DidManager`]: struct@DidManager
+//! [`did_from_pubkey`]: fn@did_from_pubkey
+//! [`pubkey_from_did`]: fn@pubkey_from_did
+//!
+//! ```
+//! let did = unfer_identity::did_from_pubkey(&[7u8; 32]);
+//! assert!(did.starts_with("did:unfer:"));
+//! let pubkey = unfer_identity::pubkey_from_did(&did).unwrap();
+//! assert_eq!(&pubkey[..4], &[7u8; 4]);
+//! ```
+
 use unfer_consensus::{ConsensusNode, Keypair};
 use unfer_protocol::{ConsensusTransaction, DidDocument, IdentityOp, IdentityOpKind};
 

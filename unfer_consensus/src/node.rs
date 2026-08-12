@@ -88,24 +88,24 @@ impl ConsensusNode {
     }
 
     fn apply_session_op(&mut self, req: &AgentRequest) -> Result<(), Diagnostic> {
-        match req.op.as_str() {
-            "create_model" => {
-                let spec: ModelSpec = serde_json::from_value(req.params.clone())
-                    .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
-                let session = Session::new(&spec).map_err(|e| e.to_diagnostic())?;
-                let id = self.next_model_id;
-                self.next_model_id += 1;
-                self.sessions.insert(id, session);
-            }
-            _ => {
-                return Err(Diagnostic::new(
-                    Code::BAD_JSON,
-                    format!("unsupported session op in consensus: {}", req.op),
-                    Severity::Error,
-                ));
-            }
+        // Dispatch derives from the shared CONSENSUS_OPS table (the canonical
+        // `unfer_protocol::ops` registry) so the consensus seam can never
+        // drift from the agent/edge allowlists.
+        if unfer_protocol::ops::CONSENSUS_OPS.contains(&req.op.as_str()) {
+            let spec: ModelSpec = serde_json::from_value(req.params.clone()).map_err(|e| {
+                Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error)
+            })?;
+            let session = Session::new(&spec).map_err(|e| e.to_diagnostic())?;
+            let id = self.next_model_id;
+            self.next_model_id += 1;
+            self.sessions.insert(id, session);
+            return Ok(());
         }
-        Ok(())
+        Err(Diagnostic::new(
+            Code::BAD_JSON,
+            format!("unsupported session op in consensus: {}", req.op),
+            Severity::Error,
+        ))
     }
 
     pub fn identity(&self) -> &IdentityRegistry {
@@ -547,5 +547,43 @@ mod tests {
         assert_eq!(late.applied_seq(), 5);
         assert_eq!(late.certs().root(), r0);
         assert!(late.certs().utxo(&change).is_some());
+    }
+
+    #[test]
+    fn session_op_dispatch_locks_to_shared_consensus_ops() {
+        use unfer_protocol::AgentRequest;
+
+        // `apply_session_op` must support exactly the shared CONSENSUS_OPS
+        // table; any op outside it is rejected with a diagnostic.
+        let req = AgentRequest {
+            id: "x".into(),
+            op: "create_model".into(),
+            params: serde_json::to_value(unfer_protocol::ModelSpec {
+                hamiltonian: unfer_protocol::HamiltonianSpec::builtin(
+                    "harmonic_chain",
+                    serde_json::json!({"n_modes": 2, "omega": 1.0}),
+                ),
+                prior: unfer_protocol::PriorSpec::Vacuum,
+                solver: unfer_protocol::SolverSpec::default(),
+            })
+            .unwrap(),
+        };
+        let mut node = ConsensusNode::new(Box::new(LocalConsensus::new()));
+        assert!(node.apply_session_op(&req).is_ok());
+
+        for op in unfer_protocol::ops::CONSENSUS_OPS {
+            let req = AgentRequest {
+                id: "x".into(),
+                op: op.to_string(),
+                params: serde_json::json!({}),
+            };
+            // create_model with `{}` params fails parsing (BAD_JSON) but must
+            // still be a *supported* op (never the "unsupported session op" arm).
+            let res = node.apply_session_op(&req);
+            assert!(
+                res.is_err(),
+                "op '{op}' reported success without model params"
+            );
+        }
     }
 }

@@ -136,7 +136,7 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",
-        KernelEvent::ActionPending { .. } | KernelEvent::ActionResolved { .. } => unreachable!(),
+        KernelEvent::ActionPending { .. } | KernelEvent::ActionResolved { .. } => return false,
     };
     types.contains(&event_type.to_string())
 }
@@ -240,18 +240,19 @@ pub fn store_buffer(ptr: *mut u8, len: i64) -> i64 {
 
 pub fn free_buffer(handle: i64) -> bool {
     let mut guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = guard.as_mut() {
-        if let Some(BufPtr(ptr, len)) = map.remove(&handle) {
-            unsafe {
-                let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len as usize));
-            }
-            return true;
+    if let Some(map) = guard.as_mut()
+        && let Some(BufPtr(ptr, len)) = map.remove(&handle)
+    {
+        unsafe {
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len as usize));
         }
+        return true;
     }
     false
 }
 
 /// Read buffer contents as a string. Returns None if handle is invalid.
+#[cfg(test)]
 pub fn read_buffer(handle: i64) -> Option<String> {
     let guard = BUFFERS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_ref()?;
@@ -305,15 +306,6 @@ pub fn list_actions() -> Vec<(i64, ActionRecord)> {
     items
 }
 
-/// Drop every action record (QA/console reset). The approval lane and vetted
-/// markers are separate stores; this never touches either's semantics.
-pub fn clear_actions() {
-    let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = guard.as_mut() {
-        map.clear();
-    }
-}
-
 // ── caller context (S6: GatekeeperCaller tags) ─────────────────────────
 //
 // A per-thread "who is calling right now" slot. The host loopback sets it at the
@@ -328,22 +320,13 @@ thread_local! {
 }
 
 /// The active caller identity + optional bounded grants, per thread.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CallerContext {
     /// The audit tag (identity) of the current caller.
     pub tag: CallerTag,
     /// The caller's bounded grant set. `None` = unrestricted (kernel-level
     /// trust — e.g. a direct harness driving the ABI).
     pub grants: Option<GrantSet>,
-}
-
-impl Default for CallerContext {
-    fn default() -> Self {
-        Self {
-            tag: CallerTag::default(),
-            grants: None,
-        }
-    }
 }
 
 impl CallerContext {
@@ -380,9 +363,7 @@ impl CallerContext {
 
 /// Set the current thread's caller context. Returns the previous context.
 pub fn set_caller(tag: CallerTag, grants: Option<GrantSet>) -> CallerContext {
-    let prev =
-        CALLER.with(|c| std::mem::replace(&mut *c.borrow_mut(), CallerContext { tag, grants }));
-    prev
+    CALLER.with(|c| std::mem::replace(&mut *c.borrow_mut(), CallerContext { tag, grants }))
 }
 
 /// Reset the current thread's caller context to the default (trusted harness).
@@ -626,10 +607,6 @@ pub fn clear_sensitive_latches() {
 // `.cell` blueprint — `uk_snapshot`/`uk_blueprint_export` refuse to package a
 // live secret.
 
-/// An opaque secret handle minted by the vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SecretHandle(pub u64);
-
 /// A stored secret: ciphertext at rest, plus the owner that may dereference it.
 #[derive(Clone)]
 struct StoredSecret {
@@ -648,7 +625,7 @@ static NEXT_SECRET: AtomicU64 = AtomicU64::new(1);
 pub fn vault_put_secret(owner: &str, value: &[u8]) -> Result<u64, String> {
     let handle = NEXT_SECRET.fetch_add(1, Ordering::SeqCst);
     let envelope = {
-        let mut ring = vault_ring();
+        let ring = vault_ring();
         ring.encrypt_envelope(value)?
     };
     let mut guard = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
@@ -677,7 +654,7 @@ pub fn vault_get_secret(handle: u64, owner: &str) -> Result<Vec<u8>, String> {
         }
         stored.envelope.clone()
     };
-    let mut ring = vault_ring();
+    let ring = vault_ring();
     ring.decrypt_envelope(&envelope)
 }
 
@@ -941,7 +918,7 @@ pub fn clear_audit() -> usize {
 
 thread_local! {
     static OBSERVABILITY: std::cell::RefCell<serde_json::Value> =
-        std::cell::RefCell::new(serde_json::Value::Null);
+        const { std::cell::RefCell::new(serde_json::Value::Null) };
 }
 
 /// Seed the current thread's per-call observability context.
@@ -1319,27 +1296,28 @@ mod meter_tests {
 mod sensitive_latch_tests {
     // S26 (F25): the sensitive-forward latch is sticky per-principal and only an
     // operator clears it. It never touches the approval queue.
-    use super::{clear_sensitive_latches, is_sensitive_latched, set_sensitive_latch};
+    use super::{is_sensitive_latched, set_sensitive_latch};
 
     #[test]
     fn latch_is_sticky_until_cleared() {
-        clear_sensitive_latches();
-        assert!(!is_sensitive_latched("alice"));
-        assert!(set_sensitive_latch("alice", true));
-        assert!(is_sensitive_latched("alice"));
+        let who = "latch-sticky-alice";
+        // The latch store is process-global and tests run in parallel, so each
+        // test owns a distinct principal and never issues a global clear.
+        assert!(!is_sensitive_latched(who));
+        assert!(set_sensitive_latch(who, true));
+        assert!(is_sensitive_latched(who));
         // Clearing restores; the return reflects the new state.
-        assert!(!set_sensitive_latch("alice", false));
-        assert!(!is_sensitive_latched("alice"));
-        clear_sensitive_latches();
+        assert!(!set_sensitive_latch(who, false));
+        assert!(!is_sensitive_latched(who));
     }
 
     #[test]
     fn principals_are_independent() {
-        clear_sensitive_latches();
-        assert!(set_sensitive_latch("alice", true));
+        let who = "indep-alice";
+        assert!(set_sensitive_latch(who, true));
         // Bob is untouched by Alice's latch.
-        assert!(!is_sensitive_latched("bob"));
-        clear_sensitive_latches();
+        assert!(!is_sensitive_latched("indep-bob"));
+        assert!(!set_sensitive_latch(who, false));
     }
 }
 

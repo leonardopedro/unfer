@@ -87,7 +87,7 @@ pub fn perplexity(model: &QfmTextModel, shard: &Shard) -> Result<PerplexityRepor
 const PROGRESS_EVERY: u64 = 20_000;
 
 fn log_progress(n: u64, start: std::time::Instant) {
-    if n % PROGRESS_EVERY == 0 {
+    if n.is_multiple_of(PROGRESS_EVERY) {
         let elapsed = start.elapsed().as_secs_f64();
         let rate = n as f64 / elapsed.max(1e-9);
         eprintln!("[perplexity] {n} tokens scored, elapsed = {elapsed:.1}s, {rate:.1} tok/s");
@@ -271,8 +271,10 @@ impl NgramBaseline {
         // If the vacuum is missing (the accumulator never observed
         // an unseen context), add it now.
         if !mode_hists.contains_key(&0) {
-            let mut vacuum = ModeStats::default();
-            vacuum.weight = unigram_total as u64;
+            let mut vacuum = ModeStats {
+                weight: unigram_total as u64,
+                ..Default::default()
+            };
             for (tok, &cnt) in acc.unigram.iter().enumerate() {
                 if cnt > 0 {
                     vacuum.hist.push((tok as u32, cnt as u32));

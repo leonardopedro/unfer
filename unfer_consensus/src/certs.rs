@@ -8,17 +8,23 @@
 //! replays the same log converges to the identical sparse-Merkle root — the
 //! same determinism guarantee the rest of `unfer_consensus` relies on.
 //!
-//! The transparent core keeps amount/owner/blinding explicit. A RISC-Zero layer
-//! (Plan R Phase 1, not yet wired) would replace the explicit fields with a
-//! commitment and prove conservation inside the zkVM; the ledger interface
-//! below is the confidence surface that layer plugs into.
+//! The transparent core keeps amount/owner/blinding explicit. The RISC-Zero zkVM
+//! layer is a **documented future additive layer** (see `docs/PLAN_REFI_EXCHANGE.md`,
+//! "RISC Zero zkVM guest circuit", originally scoped as Plan R Phase 1): it would
+//! replace the explicit fields with commitments and prove conservation inside the
+//! zkVM. It is deliberately not wired into the shipped ledger; the deterministic
+//! transparent core below is the confidence surface that layer would plug into.
 
 use std::collections::{HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
 use unfer_protocol::{CertId, CertificateOpKind, Code, CoinRef, Diagnostic, Nullifier, Severity};
 
-const SMT_DEPTH: usize = 256;
+/// Sparse-Merkle depth = the 256-bit key space (`[u8; 32]`), so every key bit
+/// selects its own tree level and the full commitment is irreducible. Derived
+/// from the hash width instead of a magic constant; changing it would change
+/// every ledger root, so it must stay pinned to `8 * 32`.
+const SMT_DEPTH: usize = 8 * std::mem::size_of::<[u8; 32]>();
 const ZERO: [u8; 32] = [0u8; 32];
 
 fn h2(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
@@ -691,7 +697,7 @@ mod proptests {
             }
             let expected_supply: u64 = mint_amounts.iter().sum();
 
-            for (_i, (in_idxs, out_amounts)) in attempts.into_iter().enumerate() {
+            for (in_idxs, out_amounts) in attempts.into_iter() {
                 if live.is_empty() {
                     break;
                 }

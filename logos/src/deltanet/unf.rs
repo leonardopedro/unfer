@@ -2,28 +2,28 @@ use super::types::*;
 use crate::core_ir::Literal;
 use sha2::{Digest, Sha256};
 
-pub fn canonical_serialize(net: &Net) -> Vec<u8> {
+pub fn canonical_serialize(net: &Net) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
-    serialize_port(net, &net.root, &mut output);
-    output
+    serialize_port(net, &net.root, &mut output)?;
+    Ok(output)
 }
 
-fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) {
+fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) -> Result<(), String> {
     let node = match net.nodes.get(port.node as usize) {
         Some(Some(n)) => n,
         _ => {
             out.push(0xFF);
-            return;
+            return Ok(());
         }
     };
 
     if node.freed {
         if let Some(target) = &node.ports[port.slot as usize] {
-            serialize_port(net, target, out);
-            return;
+            serialize_port(net, target, out)?;
+            return Ok(());
         }
         out.push(0xFF);
-        return;
+        return Ok(());
     }
 
     match &node.kind {
@@ -40,7 +40,7 @@ fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) {
             out.extend_from_slice(&tag.to_le_bytes());
             out.push(*arity);
             for s in 1..=*arity {
-                serialize_port(net, &net.get_aux(port.node, s), out);
+                serialize_port(net, &net.get_aux(port.node, s)?, out)?;
             }
         }
         AgentKind::Entity(name) => {
@@ -53,18 +53,19 @@ fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) {
             out.push(0xFF);
         }
     }
+    Ok(())
 }
 
-pub fn unf_hash(net: &Net) -> [u8; 32] {
-    let bytes = canonical_serialize(net);
+pub fn unf_hash(net: &Net) -> Result<[u8; 32], String> {
+    let bytes = canonical_serialize(net)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    hasher.finalize().into()
+    Ok(hasher.finalize().into())
 }
 
-pub fn unf_hash_string(net: &Net) -> String {
-    let hash = unf_hash(net);
-    hex::encode(&hash)
+pub fn unf_hash_string(net: &Net) -> Result<String, String> {
+    let hash = unf_hash(net)?;
+    Ok(hex::encode(&hash))
 }
 
 // Minimal hex encode (avoid adding dependency)
@@ -83,7 +84,7 @@ mod tests {
         let mut net = Net::new();
         let node = net.alloc_node(AgentKind::Lit(Literal::Int64(42)));
         net.root = Port::principal(node);
-        let bytes = canonical_serialize(&net);
+        let bytes = canonical_serialize(&net).unwrap();
         assert_eq!(bytes[0], 0x01);
         assert_eq!(i64::from_le_bytes(bytes[1..9].try_into().unwrap()), 42);
     }
@@ -93,8 +94,8 @@ mod tests {
         let mut net = Net::new();
         let node = net.alloc_node(AgentKind::Lit(Literal::Int64(42)));
         net.root = Port::principal(node);
-        let h1 = unf_hash(&net);
-        let h2 = unf_hash(&net);
+        let h1 = unf_hash(&net).unwrap();
+        let h2 = unf_hash(&net).unwrap();
         assert_eq!(h1, h2);
     }
 }

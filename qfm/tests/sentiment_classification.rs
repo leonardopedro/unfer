@@ -131,14 +131,14 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
 
     for &word in &all_words {
         let features = word_features(word);
-        let c0 = encode_vacuum(&features, n_out, o_stride, &w, rank);
+        let c0 = encode_vacuum(&features, n_out, o_stride, w, rank);
         let c1 = pipeline.evolve(&c0, T);
 
         let mut p_pos = 0.0;
         let mut p_neg = 0.0;
         for &f in &features {
             let tp = (f as usize) * o_stride;
-            let amp_pos: Complex64 = (0..rank).map(|k| c1[k] * w[(tp + 0, k)].conj()).sum();
+            let amp_pos: Complex64 = (0..rank).map(|k| c1[k] * w[(tp, k)].conj()).sum();
             let amp_neg: Complex64 = (0..rank).map(|k| c1[k] * w[(tp + 1, k)].conj()).sum();
             p_pos += amp_pos.norm_sqr();
             p_neg += amp_neg.norm_sqr();
@@ -201,14 +201,14 @@ fn run_test(label: &str) -> (u32, u32, u32, u32) {
             }
         }
         let modes: Vec<u32> = all_features.into_iter().collect();
-        let c0 = encode_vacuum(&modes, n_out, o_stride, &w, rank);
+        let c0 = encode_vacuum(&modes, n_out, o_stride, w, rank);
         let c1 = pipeline.evolve(&c0, T);
 
         let mut p_pos = 0.0;
         let mut p_neg = 0.0;
         for &m in &modes {
             let tp = (m as usize) * o_stride;
-            let amp_pos: Complex64 = (0..rank).map(|k| c1[k] * w[(tp + 0, k)].conj()).sum();
+            let amp_pos: Complex64 = (0..rank).map(|k| c1[k] * w[(tp, k)].conj()).sum();
             let amp_neg: Complex64 = (0..rank).map(|k| c1[k] * w[(tp + 1, k)].conj()).sum();
             p_pos += amp_pos.norm_sqr();
             p_neg += amp_neg.norm_sqr();

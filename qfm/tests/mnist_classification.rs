@@ -1,3 +1,7 @@
+// The sweep loops below index parallel arrays (`train[ti]`, `test[ti]`,
+// `pr[f]`); iterator rewrites would obscure the index algebra.
+#![allow(clippy::needless_range_loop)]
+
 use nalgebra::{Complex, DVector};
 use qfm::pipeline::{HamiltonianType, QfmConfig, QfmPipeline, SparseKernel};
 
@@ -55,6 +59,7 @@ fn nearest_kernel(bv: &[u64], sigma: f64) -> SparseKernel {
 
 /// Run a single (σ, m, λ₀, time) configuration.
 /// Each image is one mode (k=1). The kernel-weighted Hamiltonian uses γ=1.
+#[allow(clippy::too_many_arguments)]
 fn run(
     train: &[(u32, Vec<f64>)],
     test: &[(u32, Vec<f64>)],

@@ -1,7 +1,7 @@
 //! The compiled QFM-Text language model (Stage 4, rev 36: hashing removed).
 //!
 //! `QfmTextModel` wraps a `qfm::QfmPipeline` (the TSR reduced basis
-//! + reduced Hamiltonian), the per-mode statistics from the
+//! plus the reduced Hamiltonian), the per-mode statistics from the
 //! accumulator, the unigram floor, the [`ContextRegistry`] that
 //! maps test-time contexts back to their assigned mode indices,
 //! the pre-computed dressed-vacuum states |0̃_o⟩ used as the
@@ -52,9 +52,9 @@ use num_complex::Complex64;
 use qfm::{QfmConfig, QfmPipeline};
 use rustc_hash::FxHashMap;
 
-use crate::accumulate::{ChannelAccumulator, ModeStats};
 #[cfg(test)]
-use crate::accumulate::{observe_shard_with_registry, observe_with_registry};
+use crate::accumulate::observe_with_registry;
+use crate::accumulate::{ChannelAccumulator, ModeStats};
 use crate::config::{DecodeStrategy, TextConfig};
 use crate::error::QfmTextError;
 use crate::oxieml_decoder;
@@ -530,10 +530,10 @@ impl QfmTextModel {
             for r in 0..rank {
                 v[r] += w[(0, r)] * c_0;
             }
-            for k in 0..m_o {
+            for (k, &eps) in alphas.iter().take(m_o).enumerate() {
                 let mode_idx = (off + k as u32) as usize;
                 if mode_idx < w.nrows() {
-                    let eps = alphas[k] / norm;
+                    let eps = eps / norm;
                     for r in 0..rank {
                         v[r] += w[(mode_idx, r)] * eps;
                     }
@@ -674,6 +674,7 @@ impl QfmTextModel {
     ///     `|0̃_o⟩` (Mehler formalism, QFM.tex eq. Htomo) — the
     ///     per-order "uniform measure on the inner wave-function
     ///     space", the H-matrix-mandated fallback.
+    ///
     /// All terms are added with equal weight `1/√n` (the standard
     /// equal-weight-superposition encoder), then the result is
     /// evolved through the reduced Hamiltonian and decoded via the
@@ -742,6 +743,7 @@ impl QfmTextModel {
     ///   - If unseen: add the precomputed dressed-vacuum state
     ///     `|0̃_o⟩` for order `o` (the uniform measure on the
     ///     order-`o` inner wave-function space).
+    ///
     /// All terms contribute with weight `1/√n` (equal-weight
     /// superposition across the `n = min(context.len(),
     /// n_orders)` active orders). The dressed-vacuum substitution
@@ -1253,10 +1255,10 @@ impl QfmTextModel {
                     weights.iter().copied().filter(|&(_, w)| w > 0.0).collect();
                 entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 let mut truncated: Vec<(u32, f64)> = entries.iter().take(k).copied().collect();
-                if !truncated.iter().any(|&(m, _)| m == 0) {
-                    if let Some(&(m, w)) = entries.iter().find(|&&(m, _)| m == 0) {
-                        truncated.push((m, w));
-                    }
+                if !truncated.iter().any(|&(m, _)| m == 0)
+                    && let Some(&(m, w)) = entries.iter().find(|&&(m, _)| m == 0)
+                {
+                    truncated.push((m, w));
                 }
                 let sum: f64 = truncated.iter().map(|&(_, w)| w).sum();
                 if sum > 0.0 {
@@ -1436,11 +1438,11 @@ fn build_channel_groups(
         let mut channels = Vec::new();
         for k in 0..block_size {
             let mode = off + k as u32;
-            if let Some(stats) = acc.stats.get(&mode) {
-                if stats.weight > 0 {
-                    let alpha = stats.weight as f64 / total;
-                    channels.push((mode, alpha));
-                }
+            if let Some(stats) = acc.stats.get(&mode)
+                && stats.weight > 0
+            {
+                let alpha = stats.weight as f64 / total;
+                channels.push((mode, alpha));
             }
         }
         groups.push((lambda, channels));
@@ -1494,7 +1496,7 @@ fn encode_payload(m: &QfmTextModel) -> Result<Vec<u8>, QfmTextError> {
         + 4 + cfg_bytes.len()
         + 4 // registry_n_orders
         + m.registry.maps().len() * 8 // per-order map_len
-        + registry_entries * (4 + 4 * m.cfg.n_orders as usize + 4)
+        + registry_entries * (4 + 4 * m.cfg.n_orders + 4)
         + 4 // vacuum_states_n
         + m.vacuum_states.len() * 8 // per-vacuum len
         + vacuum_total * 16 // [re,im] per entry

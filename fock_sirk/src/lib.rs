@@ -1,3 +1,19 @@
+//! Inverse-free Shift-Invert Rational Krylov (SIRK) solver for Fock spaces.
+//!
+//! Generates the forward sequence `w_k = (H - z_k I) w_{k-1}` on the CPU,
+//! then projects onto a reduced Hamiltonian and time-evolves the dense
+//! subspace with a unitary Padé `exp`. Key pieces:
+//!
+//! - [`forward_sirk`] — the Krylov basis builder with bounded expansion
+//!   (`SirkOpts`) to survive combinatorial explosions.
+//! - [`brst`] — BRST projection onto the physical (gauge-invariant) sector.
+//! - [`linalg`] — Gram whitening via Hermitian eigendecomposition (replaces
+//!   the Cholesky that panicked on degenerate Gram matrices).
+//! - [`evolve`] — restarted Krylov (`evolve_restarted`) with state
+//!   reconstruction for long evolutions.
+//! - [`tensor_state`] / [`registry`] / [`device`] — GPU offload via
+//!   candle-core CUDA tensors and device selection (`cuda_if_available`).
+
 pub mod auto;
 pub mod brst;
 pub mod device;

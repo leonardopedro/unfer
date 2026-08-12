@@ -28,6 +28,7 @@ mod admin;
 mod audit;
 #[cfg(feature = "audit")]
 mod blueprint;
+#[cfg(feature = "audit")]
 mod caprpc;
 mod cells;
 mod filter;
@@ -109,8 +110,8 @@ impl ProxyHttp for UnferGateway {
         // S13 (F12): per-op metrics before any forwarding. GET /metrics → JSON;
         // GET /metrics?format=prometheus → text exposition. Final.
         if session.req_header().uri.path() == "/metrics" {
-            if session.req_header().method.to_string() != "GET" {
-                let mut header = ResponseHeader::build(405u16, None)?;
+            if session.req_header().method != "GET" {
+                let header = ResponseHeader::build(405u16, None)?;
                 session
                     .write_response_header(Box::new(header), false)
                     .await?;
@@ -139,9 +140,8 @@ impl ProxyHttp for UnferGateway {
         // capability-bound method (minted only at the loopback chokepoint).
         // A method may return a nested capability stub.
         #[cfg(feature = "audit")]
-        if session.req_header().uri.path() == "/api/cap/invoke"
-            && session.req_header().method.to_string() == "POST"
-        {
+        if session.req_header().uri.path().starts_with("/api/cap/") {
+            let path = session.req_header().uri.path().to_string();
             let raw = match read_body(session).await {
                 Ok(b) => b,
                 Err(_) => {
@@ -150,28 +150,96 @@ impl ProxyHttp for UnferGateway {
                         .map(|_| true);
                 }
             };
-            let call: caprpc::CapCall = match serde_json::from_slice(&raw) {
-                Ok(c) => c,
-                Err(e) => {
-                    return write_json(
-                        session,
+            // Mint/promise/revoke routes carry the operation's payload; invoke
+            // carries a CapCall. The caller is the request's principal-less
+            // identity for now; minted capabilities are owned by the admin
+            // principal (S22 seam, `UNFER_ADMIN_PRINCIPAL`). In a full
+            // deployment the caller comes from the authenticated session.
+            let caller = admin::admin_principal();
+            let (status, body): (u16, Vec<u8>) = match path.as_str() {
+                "/api/cap/mint" => match serde_json::from_slice::<caprpc::MintReq>(&raw) {
+                    Ok(req) => {
+                        let grants: Vec<&str> = req.grants.iter().map(|s| s.as_str()).collect();
+                        let cap = caprpc::mint(&caller, &req.endpoint, &grants);
+                        (
+                            200u16,
+                            serde_json::to_vec(&caprpc::cap_stub(&cap)).unwrap_or_default(),
+                        )
+                    }
+                    Err(e) => (
                         400u16,
-                        &format!("{{\"error\":\"bad CapCall: {e}\"}}").into_bytes(),
-                    )
-                    .await
-                    .map(|_| true);
+                        format!("{{\"error\":\"bad mint request: {e}\"}}").into_bytes(),
+                    ),
+                },
+                "/api/cap/promise" => match serde_json::from_slice::<caprpc::PromiseReq>(&raw) {
+                    Ok(req) => {
+                        let p = caprpc::new_promise(&req.endpoint);
+                        (
+                            200u16,
+                            serde_json::json!({
+                                "cap_id": p.id,
+                                "endpoint": p.endpoint,
+                            })
+                            .to_string()
+                            .into_bytes(),
+                        )
+                    }
+                    Err(e) => (
+                        400u16,
+                        format!("{{\"error\":\"bad promise request: {e}\"}}").into_bytes(),
+                    ),
+                },
+                "/api/cap/resolve" => match serde_json::from_slice::<caprpc::ResolveReq>(&raw) {
+                    Ok(req) => {
+                        let grants: Vec<&str> = req.grants.iter().map(|s| s.as_str()).collect();
+                        let ok =
+                            caprpc::resolve_promise(&caller, req.cap_id, &req.endpoint, &grants);
+                        (
+                            200u16,
+                            serde_json::json!({ "ok": ok }).to_string().into_bytes(),
+                        )
+                    }
+                    Err(e) => (
+                        400u16,
+                        format!("{{\"error\":\"bad resolve request: {e}\"}}").into_bytes(),
+                    ),
+                },
+                "/api/cap/revoke" => match serde_json::from_slice::<caprpc::RevokeReq>(&raw) {
+                    Ok(req) => {
+                        let ok = caprpc::revoke(req.cap_id);
+                        (
+                            200u16,
+                            serde_json::json!({ "ok": ok }).to_string().into_bytes(),
+                        )
+                    }
+                    Err(e) => (
+                        400u16,
+                        format!("{{\"error\":\"bad revoke request: {e}\"}}").into_bytes(),
+                    ),
+                },
+                "/api/cap/invoke" => {
+                    let call: caprpc::CapCall = match serde_json::from_slice(&raw) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return write_json(
+                                session,
+                                400u16,
+                                &format!("{{\"error\":\"bad CapCall: {e}\"}}").into_bytes(),
+                            )
+                            .await
+                            .map(|_| true);
+                        }
+                    };
+                    let result = caprpc::invoke(&caller, &call);
+                    let body = match serde_json::to_vec(&result) {
+                        Ok(b) => b,
+                        Err(_) => b"{\"error\":\"serialize\"}".to_vec(),
+                    };
+                    let status = if result.ok { 200u16 } else { 403u16 };
+                    return write_json(session, status, &body).await.map(|_| true);
                 }
+                _ => (404u16, b"{\"error\":\"unknown cap route\"}".to_vec()),
             };
-            // The caller is the request's principle-less identity for now; minted
-            // capabilities are owned by the operator seam. (In a full deployment the
-            // caller comes from the authenticated session.)
-            let caller = "operator";
-            let result = caprpc::invoke(caller, &call);
-            let body = match serde_json::to_vec(&result) {
-                Ok(b) => b,
-                Err(_) => b"{\"error\":\"serialize\"}".to_vec(),
-            };
-            let status = if result.ok { 200u16 } else { 403u16 };
             return write_json(session, status, &body).await.map(|_| true);
         }
 
@@ -350,7 +418,7 @@ impl ProxyHttp for UnferGateway {
 
         // S15 (F14): actively shape-checked content reads — GET /cell/<cid> returns the
         // stored cell metadata or a resolved 404; malformed CIDs get 400 (never guess).
-        if session.req_header().method.to_string() == "GET"
+        if session.req_header().method == "GET"
             && session.req_header().uri.path().starts_with("/cell/")
         {
             let path = session.req_header().uri.path().to_string();
@@ -524,6 +592,7 @@ fn main() {
         .windows(2)
         .find(|w| w[0] == "--backend")
         .map(|w| w[1].clone())
+        .or_else(|| std::env::var("UNFER_BACKEND").ok())
         .unwrap_or_else(|| "127.0.0.1:3001".to_string());
 
     let conf = Arc::new(GatewayConf {

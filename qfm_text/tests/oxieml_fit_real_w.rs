@@ -7,7 +7,7 @@
 //!   cargo test --release -p qfm_text --test oxieml_fit_real_w -- --nocapture --ignored
 
 use qfm_text::QfmTextModel;
-use qfm_text::oxieml_decoder::{OxiemlFitOpts, fit_column, fit_decoder};
+use qfm_text::oxieml_decoder::{OxiemlFitOpts, fit_decoder};
 use std::time::Instant;
 
 #[test]

@@ -55,6 +55,37 @@ pub struct CapCall {
     pub args: serde_json::Value,
 }
 
+/// HTTP body for `POST /api/cap/mint`: mint a capability for the caller on
+/// `endpoint` with the given `grants`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MintReq {
+    pub endpoint: String,
+    #[serde(default)]
+    pub grants: Vec<String>,
+}
+
+/// HTTP body for `POST /api/cap/promise`: allocate an eager pipeline-promise id.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PromiseReq {
+    pub endpoint: String,
+}
+
+/// HTTP body for `POST /api/cap/resolve`: turn a pending promise id into a real
+/// capability.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResolveReq {
+    pub cap_id: u64,
+    pub endpoint: String,
+    #[serde(default)]
+    pub grants: Vec<String>,
+}
+
+/// HTTP body for `POST /api/cap/revoke`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RevokeReq {
+    pub cap_id: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CapResult {
     #[serde(default)]
@@ -86,7 +117,6 @@ struct RegistryInner {
 
 static CAP_ID: AtomicU64 = AtomicU64::new(1);
 static CALL_SEQ: AtomicU64 = AtomicU64::new(1);
-static REGISTRY: Mutex<Option<RegistryInner>> = Mutex::new(None);
 
 fn registry() -> std::sync::MutexGuard<'static, RegistryInner> {
     static REG: std::sync::OnceLock<Mutex<RegistryInner>> = std::sync::OnceLock::new();
@@ -260,12 +290,14 @@ pub fn cap_stub(cap: &Capability) -> serde_json::Value {
 }
 
 /// Parse a capability stub out of a method's return value, if present.
+#[cfg(test)]
 pub fn stub_cap(value: &serde_json::Value) -> Option<Capability> {
     let obj = value.get("__cap__")?;
     serde_json::from_value(obj.clone()).ok()
 }
 
 /// Reset the registry (QA/console reset).
+#[cfg(test)]
 pub fn reset() {
     let mut g = registry();
     g.caps.clear();
@@ -401,6 +433,59 @@ mod tests {
         );
         assert!(r.ok, "resolved promise must be invokable: {r:?}");
         assert_eq!(r.value, serde_json::json!("pipe"));
+        reset();
+    }
+
+    /// The HTTP seam mint → invoke → revoke lifecycle (F27/S28): a capability
+    /// minted for the caller, invoked with a granted method, refused on an
+    /// ungranted method, then refused after revoke.
+    #[test]
+    fn mint_invoke_revoke_lifecycle() {
+        let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
+        reset();
+        let cap = mint("operator", "svc", &["echo", "seq"]);
+        let stub = cap_stub(&cap);
+        let parsed = stub_cap(&stub).expect("stub parses back");
+        assert_eq!(parsed.id, cap.id);
+        // Granted method succeeds.
+        let ok = invoke(
+            "operator",
+            &CapCall {
+                cap_id: cap.id,
+                method: "echo".into(),
+                args: serde_json::json!("mint-seam"),
+            },
+        );
+        assert!(ok.ok, "granted mint call: {ok:?}");
+        assert_eq!(ok.value, serde_json::json!("mint-seam"));
+        // Ungranted method is refused.
+        let denied = invoke(
+            "operator",
+            &CapCall {
+                cap_id: cap.id,
+                method: "subcap".into(),
+                args: serde_json::json!({}),
+            },
+        );
+        assert!(!denied.ok, "ungranted method must be refused");
+        // Revoked id is refused.
+        assert!(revoke(cap.id));
+        let revoked = invoke(
+            "operator",
+            &CapCall {
+                cap_id: cap.id,
+                method: "echo".into(),
+                args: serde_json::json!("after-revoke"),
+            },
+        );
+        assert!(
+            !revoked.ok,
+            "revoked capability must be refused: {revoked:?}"
+        );
+        assert!(
+            revoked.error.unwrap_or_default().contains("revoked"),
+            "revoke should surface in the reason"
+        );
         reset();
     }
 }

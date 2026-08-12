@@ -174,7 +174,7 @@ impl CellBuilder {
             .collect();
         let body = serde_json::json!({
             "files": files,
-            "session": self.session.as_ref().map(|s| hex::encode(s)),
+            "session": self.session.as_ref().map(hex::encode),
         });
         let body_bytes =
             serde_json::to_vec(&body).map_err(|e| ArchiveError::BadBody(e.to_string()))?;
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn cell_parse_rejects_unsupported_version() {
-        let mut b = CellBuilder::new("x");
+        let b = CellBuilder::new("x");
         let mut bytes = b.build().unwrap();
         bytes[8..12].copy_from_slice(&99u32.to_le_bytes());
         let err = Cell::parse(&bytes).unwrap_err();

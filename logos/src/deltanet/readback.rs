@@ -1,64 +1,61 @@
 use super::types::*;
 use std::collections::HashSet;
 
-pub fn readback(net: &Net) -> String {
+pub fn readback(net: &Net) -> Result<String, String> {
     let mut visited = HashSet::new();
     readback_port(net, &net.root, &mut visited)
 }
 
-fn readback_port(net: &Net, port: &Port, visited: &mut HashSet<(NodeId, u8)>) -> String {
+fn readback_port(
+    net: &Net,
+    port: &Port,
+    visited: &mut HashSet<(NodeId, u8)>,
+) -> Result<String, String> {
     let key = (port.node, port.slot);
     if !visited.insert(key) {
-        return "<cycle>".to_string();
+        return Ok("<cycle>".to_string());
     }
 
     let node = match net.nodes.get(port.node as usize) {
         Some(Some(n)) => n,
-        _ => return "<freed>".to_string(),
+        _ => return Ok("<freed>".to_string()),
     };
 
     if node.freed {
         if let Some(target) = &node.ports[port.slot as usize] {
             return readback_port(net, target, visited);
         }
-        return "<freed>".to_string();
+        return Ok("<freed>".to_string());
     }
 
     match &node.kind {
-        AgentKind::Lit(lit) => lit.to_string(),
-        AgentKind::Entity(name) => name.clone(),
+        AgentKind::Lit(lit) => Ok(lit.to_string()),
+        AgentKind::Entity(name) => Ok(name.clone()),
         AgentKind::Con(tag, arity) => {
             let tag_name = tag_to_name(*tag);
             if *arity == 0 {
-                tag_name.to_string()
+                Ok(tag_name.to_string())
             } else {
-                let args: Vec<String> = (1..=*arity)
-                    .map(|s| readback_port(net, &net.get_aux(port.node, s), visited))
-                    .collect();
-                format!("{}({})", tag_name, args.join(", "))
+                let mut args = Vec::with_capacity(*arity as usize);
+                for s in 1..=*arity {
+                    args.push(readback_port(net, &net.get_aux(port.node, s)?, visited)?);
+                }
+                Ok(format!("{}({})", tag_name, args.join(", ")))
             }
         }
         AgentKind::App => {
-            let func = readback_port(net, &net.get_aux(port.node, 0), visited);
-            let arg = readback_port(net, &net.get_aux(port.node, 1), visited);
-            format!("({} {})", func, arg)
+            let func = readback_port(net, &net.get_aux(port.node, 0)?, visited)?;
+            let arg = readback_port(net, &net.get_aux(port.node, 1)?, visited)?;
+            Ok(format!("({} {})", func, arg))
         }
-        AgentKind::Abs => {
-            format!("<abs>")
-        }
-        AgentKind::Fold => {
-            format!("<fold>")
-        }
-        AgentKind::Dup(_) => {
-            format!("<dup>")
-        }
-        AgentKind::Era => {
-            format!("<era>")
-        }
+        AgentKind::Abs => Ok("<abs>".to_string()),
+        AgentKind::Fold => Ok("<fold>".to_string()),
+        AgentKind::Dup(_) => Ok("<dup>".to_string()),
+        AgentKind::Era => Ok("<era>".to_string()),
         AgentKind::Prim(op) => {
-            let left = readback_port(net, &net.get_aux(port.node, 1), visited);
-            let right = readback_port(net, &net.get_aux(port.node, 2), visited);
-            format!("({:?} {} {})", op, left, right)
+            let left = readback_port(net, &net.get_aux(port.node, 1)?, visited)?;
+            let right = readback_port(net, &net.get_aux(port.node, 2)?, visited)?;
+            Ok(format!("({:?} {} {})", op, left, right))
         }
     }
 }
@@ -106,6 +103,6 @@ mod tests {
         let mut net = Net::new();
         let node = net.alloc_node(AgentKind::Lit(Literal::Int64(42)));
         net.root = Port::principal(node);
-        assert_eq!(readback(&net), "42");
+        assert_eq!(readback(&net), Ok("42".to_string()));
     }
 }

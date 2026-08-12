@@ -215,7 +215,15 @@ impl TalerExchange {
         let mut ids = self.push_op(op, &self.treasury.clone())?;
         let coin_id = ids.swap_remove(0);
 
-        self.reserves.get_mut(&reserve_id).unwrap().balance -= amount;
+        self.reserves
+            .get_mut(&reserve_id)
+            .ok_or_else(|| {
+                diag(
+                    Code::TALER_UNKNOWN_RESERVE,
+                    "reserve vanished during withdraw",
+                )
+            })?
+            .balance -= amount;
         self.funded.insert(coin_id.0);
         self.coin_blinding.insert(coin_id.0, blinding);
         self.funded_outstanding += amount;
@@ -328,7 +336,15 @@ impl TalerExchange {
             .gateway
             .prepare_transfer(bank_account, amount)
             .map_err(|e| diag(Code::TALER_UNCONFIRMED_WIRE, e))?;
-        *self.merchant_balances.get_mut(merchant_did).unwrap() -= amount;
+        *self
+            .merchant_balances
+            .get_mut(merchant_did)
+            .ok_or_else(|| {
+                diag(
+                    Code::TALER_INSUFFICIENT_BALANCE,
+                    "merchant balance entry missing during peg-out",
+                )
+            })? -= amount;
         self.fiat_out = self
             .fiat_out
             .checked_add(amount)
@@ -567,7 +583,7 @@ mod tests {
             amount: 100,
             owner: alice.did(),
         };
-        let stray = ex.deposit(&alice, &[foreign_ref], &"did:unfer:mallory".to_string());
+        let stray = ex.deposit(&alice, &[foreign_ref], "did:unfer:mallory");
         assert_eq!(stray.unwrap_err().code, Code::TALER_UNKNOWN_E_COIN);
         let _ = coin;
         assert!(ex.audit().is_ok());
@@ -585,7 +601,8 @@ mod tests {
             amount: 500,
             owner: alice.did(),
         };
-        ex.deposit(&alice, &[c.clone()], &bob.did()).unwrap();
+        ex.deposit(&alice, std::slice::from_ref(&c), &bob.did())
+            .unwrap();
         let again = ex.deposit(&alice, &[c], &bob.did()).unwrap_err();
         assert_eq!(again.code, Code::TALER_COIN_ALREADY_DEPOSITED);
     }
@@ -699,7 +716,7 @@ mod tests {
                 ex.peg_in(reserve, &w).unwrap();
 
                 // Spend some of it as an e-coin and deposit to the merchant.
-                let with_amount = (*a as u64) * 100;
+                let with_amount = *a * 100;
                 if let Ok(coin) = ex.withdraw(reserve, with_amount) {
                     let c = CoinRef {
                         coin_id: coin,

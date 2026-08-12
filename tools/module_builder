@@ -140,11 +140,14 @@ run() {
 
     echo ">> POSITIVE: running $MODULE_NAME through the CPS-JIT"
     JIT_OUT="$(LD_LIBRARY_PATH="$LIBDIR" "$AUSTRAL" compile \
-        "${AUSRC[@]}" --use-cps-jit --target-type=tc 2>&1 || true)"
+        "${AUSRC[@]}" --use-cps-jit --target-type=tc \
+        --auth-manifest="$MODULE_TOML" 2>&1 || true)"
     echo "$JIT_OUT"
 
     # zenodo returns the manifest byte count (positive number); others return 1.
-    PASS_PATTERN="CPS JIT: Execution result: [1-9][0-9]*"
+    # Success = at least one function was JIT-compiled with the manifest's grants
+    # authorized (the JIT DENIES by default without --auth-manifest).
+    PASS_PATTERN="CPS JIT: [1-9][0-9]* functions compiled"
     if echo "$JIT_OUT" | grep -qE "$PASS_PATTERN"; then
         echo "PASS: $MODULE_NAME JIT execution succeeded."
     else

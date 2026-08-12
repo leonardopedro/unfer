@@ -1567,3 +1567,54 @@ mod mint_request_tests {
         assert_eq!(back, r);
     }
 }
+
+#[cfg(test)]
+mod kernel_event_tests {
+    use super::KernelEvent;
+
+    #[test]
+    fn evolved_event_round_trips_through_kernel_event() {
+        let ev = KernelEvent::Evolved {
+            t: 0.25,
+            norm: 1.0,
+            solve_ms: 12,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        // Canonical wire shape (internally tagged `type = evolved`).
+        assert_eq!(json["type"], "evolved");
+        assert_eq!(json["t"], 0.25);
+        assert_eq!(json["norm"], 1.0);
+        assert_eq!(json["solve_ms"], 12);
+
+        // The kernel_client agent historically appended a `components` extra
+        // field. Deserializing must tolerate the extra field while re-serializing
+        // to the canonical KernelEvent form (extra fields are dropped).
+        let mut with_extra = json.clone();
+        with_extra
+            .as_object_mut()
+            .unwrap()
+            .insert("components".to_string(), serde_json::json!([[0.1], [0.2]]));
+        let back: KernelEvent = serde_json::from_value(with_extra).unwrap();
+        assert_eq!(back, ev);
+        let re = serde_json::to_value(&back).unwrap();
+        assert_eq!(re, json);
+    }
+
+    #[test]
+    fn prior_set_and_conditioned_round_trip() {
+        let cases = vec![
+            (serde_json::to_value(KernelEvent::PriorSet).unwrap(), true),
+            (
+                serde_json::to_value(KernelEvent::Conditioned {
+                    prior_probability: 0.7,
+                })
+                .unwrap(),
+                true,
+            ),
+        ];
+        for (json, _) in cases {
+            let back: KernelEvent = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&back).unwrap(), json);
+        }
+    }
+}

@@ -1,3 +1,14 @@
+//! Handle-based C ABI for the unfer probability kernel.
+//!
+//! Exposes the `uk_*` function set (and `uz_*` under the optional `zenodo`
+//! feature) as `extern "C"` symbols over opaque session handles. Every call
+//! is sanity-checked and unwinds panics across the FFI boundary. The C header
+//! is **generated**, not hand-edited — see `gen_unfer_kernel_h.py`.
+//! `handles` owns the typed handle registry; `zenodo` (feature `zenodo`)
+//! the Zenodo module interface.
+//!
+//! ABI surface: 65 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
+
 mod handles;
 #[cfg(feature = "zenodo")]
 pub mod zenodo;
@@ -14,7 +25,7 @@ use unfer_protocol::{
 
 pub use unfer_protocol;
 
-const VERSION: i64 = 1;
+const VERSION: i64 = unfer_protocol::KERNEL_VERSION;
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -139,6 +150,10 @@ fn read_bytes(ptr: *const u8, len: i64) -> Result<Vec<u8>, Diagnostic> {
 // ── ABI functions ─────────────────────────────────────────────────────
 
 /// Return the ABI version (currently 1).
+///
+/// ```
+/// assert_eq!(unfer_ffi::uk_version(), 1);
+/// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_version() -> i64 {
     VERSION
@@ -1253,6 +1268,7 @@ pub fn uk_clear_vetted() {
 /// metered call (mirrors Cloudflare's `checkDailyLlmCount`). `budget_json` is
 /// `{"budget":N,"rate_limit":M}`; the returned handle encodes a JSON
 /// `MeterStatus` blob via the buffer protocol. Read-only — never consumes.
+#[unsafe(no_mangle)]
 pub extern "C" fn uk_meter_status(
     principal: *const u8,
     len: i64,
@@ -1265,18 +1281,12 @@ pub extern "C" fn uk_meter_status(
         let principal = read_utf8(principal, len)?;
         #[derive(serde::Deserialize)]
         #[serde(default)]
+        #[derive(Default)]
         struct Limits {
             budget: u64,
             rate_limit: u64,
         }
-        impl Default for Limits {
-            fn default() -> Self {
-                Self {
-                    budget: 0,
-                    rate_limit: 0,
-                }
-            }
-        }
+
         let limits: Limits = if blade != 0 {
             let json = read_utf8(budget_json, blade)?;
             serde_json::from_str(&json).map_err(|e| {
@@ -1319,6 +1329,7 @@ pub fn uk_clear_sensitive_latches() {
 /// secret; the host encrypts it at rest (S15 KeyRing) and returns an opaque
 /// handle. The raw value is never returned from the vault — only the handle.
 /// Returns the secret handle (>0) on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
 pub extern "C" fn uk_secret_put(
     owner: *const u8,
     owner_len: i64,
@@ -1338,6 +1349,7 @@ pub extern "C" fn uk_secret_put(
 /// may read it; the host dereferences at call time (grant-checked) so the raw
 /// value reaches the dereferencing call, never gadget code. Buffer protocol.
 /// <0 (-code) on error (unknown handle / not owner).
+#[unsafe(no_mangle)]
 pub extern "C" fn uk_secret_get(
     handle: i64,
     owner: *const u8,
@@ -1355,6 +1367,7 @@ pub extern "C" fn uk_secret_get(
 
 /// Revoke a secret handle (S27/F26), invalidating it. Returns 0 on success
 /// (or -code if the handle was already unknown).
+#[unsafe(no_mangle)]
 pub extern "C" fn uk_secret_revoke(handle: i64) -> i64 {
     ffi_entry("uk_secret_revoke", || {
         if handles::vault_revoke_secret(handle as u64) {

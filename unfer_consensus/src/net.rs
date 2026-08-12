@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use unfer_protocol::{ConsensusTransaction, Diagnostic};
+use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
 
@@ -74,28 +74,49 @@ impl LedgerFile {
         }
     }
 
-    fn load(&self) -> LedgerSnapshot {
+    /// Read the durable snapshot. A missing file means a fresh ledger (the
+    /// `Ok(default)` case); an unreadable or corrupt file is surfaced as an
+    /// error so the caller can fail loudly instead of silently losing the
+    /// committed log.
+    fn load(&self) -> Result<LedgerSnapshot, String> {
         match fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => LedgerSnapshot::default(),
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                format!(
+                    "ledger snapshot {} is corrupt: {error}",
+                    self.path.display()
+                )
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(LedgerSnapshot::default())
+            }
+            Err(error) => Err(format!(
+                "could not read ledger snapshot {}: {error}",
+                self.path.display()
+            )),
         }
     }
 
-    fn save(&self, snapshot: &LedgerSnapshot) {
-        let bytes = match serde_json::to_vec(snapshot) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                eprintln!("unfer_consensus: ledger snapshot encode failed: {error}");
-                return;
-            }
-        };
+    /// Atomic (`write` + `rename`) persistence. Errors are propagated to the
+    /// caller instead of being swallowed: a failed snapshot write means the
+    /// committed log is not durable, which `NetConsensus::submit` must report.
+    fn save(&self, snapshot: &LedgerSnapshot) -> Result<(), String> {
+        let bytes = serde_json::to_vec(snapshot)
+            .map_err(|error| format!("ledger snapshot encode failed: {error}"))?;
         let temporary = self.path.with_extension("ledger.tmp");
-        let outcome = fs::create_dir_all(self.path.parent().unwrap_or(Path::new(".")))
-            .and_then(|()| fs::write(&temporary, &bytes))
-            .and_then(|()| fs::rename(&temporary, &self.path));
-        if let Err(error) = outcome {
-            eprintln!("unfer_consensus: ledger snapshot write failed: {error}");
-        }
+        fs::create_dir_all(self.path.parent().unwrap_or(Path::new("."))).map_err(|error| {
+            format!(
+                "could not create ledger dir {}: {error}",
+                self.path.parent().unwrap_or(Path::new(".")).display()
+            )
+        })?;
+        fs::write(&temporary, &bytes)
+            .and_then(|()| fs::rename(&temporary, &self.path))
+            .map_err(|error| {
+                format!(
+                    "ledger snapshot write failed for {}: {error}",
+                    self.path.display()
+                )
+            })
     }
 }
 
@@ -112,9 +133,30 @@ pub struct SharedLedger {
     file: Option<LedgerFile>,
 }
 
+impl std::fmt::Debug for SharedLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedLedger")
+            .field("committed", &self.committed())
+            .field("pending", &self.pending.lock().unwrap().len())
+            .field("next_id", &self.next_id.load(Ordering::Relaxed))
+            .field("with_file", &self.file.is_some())
+            .finish()
+    }
+}
+
 impl SharedLedger {
-    fn new(submitted: mpsc::UnboundedSender<u64>, file: Option<LedgerFile>) -> Self {
-        let loaded = file.as_ref().map(LedgerFile::load).unwrap_or_default();
+    fn new(
+        submitted: mpsc::UnboundedSender<u64>,
+        file: Option<LedgerFile>,
+    ) -> Result<Self, String> {
+        // A missing ledger file is a fresh cluster (`Ok(default)`); a corrupt
+        // file fails loudly at the call site rather than silently resetting the
+        // committed log to empty.
+        let loaded = match file.as_ref().map(LedgerFile::load) {
+            Some(Ok(snapshot)) => snapshot,
+            Some(Err(error)) => return Err(error),
+            None => LedgerSnapshot::default(),
+        };
         let (committed_tx, _) = watch::channel(loaded.bank.len() as u64);
         let ledger = Self {
             bank: Arc::new(RwLock::new(loaded.bank)),
@@ -137,18 +179,19 @@ impl SharedLedger {
         for id in outstanding {
             let _ = ledger.submitted.send(id);
         }
-        ledger.persist();
-        ledger
+        ledger.persist()?;
+        Ok(ledger)
     }
 
     /// Reserve a unique id for a submitted transaction and enqueue it for the
-    /// pump task to propose to the cluster.
-    fn allocate(&self, tx: ConsensusTransaction) -> u64 {
+    /// pump task to propose to the cluster. The reserved payload is persisted
+    /// before it is acknowledged, so a durable submission survives a crash.
+    fn allocate(&self, tx: ConsensusTransaction) -> Result<u64, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.pending.lock().unwrap().insert(id, tx);
-        self.persist();
+        self.persist()?;
         let _ = self.submitted.send(id);
-        id
+        Ok(id)
     }
 
     /// Apply a batch of committed value ids in decision order. Fetching from
@@ -157,7 +200,7 @@ impl SharedLedger {
     /// node that dies after reading a decision but before applying it loses
     /// nothing: the payload is still pending, and a restart (or the surviving
     /// peer) re-applies it exactly once.
-    fn append(&self, ids: Vec<u64>) {
+    fn append(&self, ids: Vec<u64>) -> Result<(), String> {
         let mut appended = Vec::new();
         {
             let mut pending = self.pending.lock().unwrap();
@@ -168,17 +211,18 @@ impl SharedLedger {
             }
         }
         if appended.is_empty() {
-            return;
+            return Ok(());
         }
         let mut bank = self.bank.write().unwrap();
         bank.extend(appended);
         let committed = bank.len() as u64;
         drop(bank);
-        self.persist();
+        self.persist()?;
         let _ = self.committed_tx.send(committed);
+        Ok(())
     }
 
-    fn persist(&self) {
+    fn persist(&self) -> Result<(), String> {
         if let Some(file) = &self.file {
             let snapshot = LedgerSnapshot {
                 bank: self.bank.read().unwrap().clone(),
@@ -186,7 +230,9 @@ impl SharedLedger {
                 next_id: self.next_id.load(Ordering::Relaxed),
                 next_request_id: self.request_seq.load(Ordering::Relaxed),
             };
-            file.save(&snapshot);
+            file.save(&snapshot)
+        } else {
+            Ok(())
         }
     }
 
@@ -232,7 +278,13 @@ impl NetConsensus {
 
 impl ConsensusEngine for NetConsensus {
     fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
-        Ok(self.ledger.allocate(tx))
+        self.ledger.allocate(tx).map_err(|error| {
+            Diagnostic::new(
+                Code::INTERNAL,
+                format!("could not durably reserve the submission: {error}"),
+                Severity::Error,
+            )
+        })
     }
 
     fn get_log(&self, from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
@@ -261,8 +313,11 @@ impl StateMachine<u64> for LedgerStateMachine {
             .copied()
             .filter(|id| *id != NOOP_VALUE)
             .collect::<Vec<_>>();
-        self.ledger.append(ids);
-        Ok(())
+        self.ledger.append(ids).map_err(|error| {
+            rust_quepaxa::QuePaxaError::StorageError(format!(
+                "could not persist committed decision: {error}"
+            ))
+        })
     }
 }
 
@@ -365,7 +420,12 @@ impl NetworkCluster {
 
         let metrics = Arc::new(NetworkMetrics::default());
         let (submitted_tx, submitted_rx) = mpsc::unbounded_channel::<u64>();
-        let ledger = SharedLedger::new(submitted_tx, Some(LedgerFile::new(state_dir)));
+        let ledger =
+            SharedLedger::new(submitted_tx, Some(LedgerFile::new(state_dir))).map_err(|error| {
+                rust_quepaxa::QuePaxaError::StorageError(format!(
+                    "could not load the durable ledger: {error}"
+                ))
+            })?;
 
         let mut nodes = Vec::new();
         for index in 0..LIVE_NODES {
@@ -567,17 +627,17 @@ mod tests {
 
     fn mem_ledger() -> SharedLedger {
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
-        SharedLedger::new(submitted, None)
+        SharedLedger::new(submitted, None).expect("in-memory ledger cannot fail")
     }
 
     #[test]
     fn append_is_idempotent_across_replicas_sharing_one_ledger() {
         let ledger = mem_ledger();
-        let id = ledger.allocate(tx(1));
+        let id = ledger.allocate(tx(1)).expect("durable reserve");
 
         // Both live nodes see the same decision and both apply it.
-        ledger.append(vec![id]);
-        ledger.append(vec![id]);
+        ledger.append(vec![id]).expect("persist");
+        ledger.append(vec![id]).expect("persist");
 
         assert_eq!(ledger.committed(), 1, "no double-apply");
         assert!(ledger.pending.lock().unwrap().is_empty());
@@ -586,7 +646,7 @@ mod tests {
     #[test]
     fn decided_but_unapplied_value_survives_until_one_replica_applies() {
         let ledger = mem_ledger();
-        let id = ledger.allocate(tx(1));
+        let id = ledger.allocate(tx(1)).expect("durable reserve");
 
         // A node reads the decision but dies before applying it; the payload
         // must still be pending so the surviving peer (or a restart) can move
@@ -595,9 +655,9 @@ mod tests {
             ledger.pending.lock().unwrap().contains_key(&id),
             "decided-but-unapplied value stays pending"
         );
-        ledger.append(vec![id]);
+        ledger.append(vec![id]).expect("persist");
         assert_eq!(ledger.committed(), 1);
-        ledger.append(vec![id]);
+        ledger.append(vec![id]).expect("persist");
         assert_eq!(ledger.committed(), 1, "re-applying the same id is a no-op");
     }
 
@@ -614,28 +674,59 @@ mod tests {
 
         // Phase 1: one committed, one decided-but-unapplied.
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
-        let ledger = SharedLedger::new(submitted, file.clone());
-        let applied = ledger.allocate(tx(1));
-        let in_flight = ledger.allocate(tx(2));
-        ledger.append(vec![applied]);
+        let ledger = SharedLedger::new(submitted, file.clone()).expect("fresh ledger");
+        let applied = ledger.allocate(tx(1)).expect("durable reserve");
+        let in_flight = ledger.allocate(tx(2)).expect("durable reserve");
+        ledger.append(vec![applied]).expect("persist");
         drop(ledger);
 
         // Phase 2: "crash" and reload. Committed work is in the bank; the
         // in-flight value is still pending and gets re-proposed.
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
-        let ledger = SharedLedger::new(submitted, file);
+        let ledger = SharedLedger::new(submitted, file).expect("reload");
         assert_eq!(ledger.committed(), 1, "committed log reloaded");
         assert!(ledger.pending.lock().unwrap().contains_key(&in_flight));
-        ledger.append(vec![in_flight]);
+        ledger.append(vec![in_flight]).expect("persist");
         assert_eq!(ledger.committed(), 2);
         drop(ledger);
 
         // Phase 3: reload once more; everything is in the bank now.
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
-        let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir)));
+        let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir))).expect("reload");
         assert_eq!(ledger.committed(), 2);
         assert!(ledger.pending.lock().unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_ledger_file_fails_loudly_at_load() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-corrupt-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger_file = LedgerFile::new(&dir);
+        assert!(
+            ledger_file.load().is_ok(),
+            "a missing ledger file is a fresh ledger, not an error"
+        );
+        std::fs::write(ledger_file.path, b"{ not valid ledger json").unwrap();
+
+        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        // A corrupt durable ledger must propagate as an error, never silently
+        // reset the committed log to empty (the old `unwrap_or_default` path).
+        let error = SharedLedger::new(submitted, Some(LedgerFile::new(&dir)))
+            .expect_err("corrupt ledger must not load");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            error.contains("corrupt"),
+            "the propagated error should name the corruption, got: {error}"
+        );
     }
 }

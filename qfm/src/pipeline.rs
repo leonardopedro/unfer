@@ -837,6 +837,7 @@ impl QfmPipeline {
     /// the uniform `lambda1`. When `Some`, each transition `(from, to)`
     /// is weighted by the value in the map; transitions without an entry
     /// fall back to `lambda1`.
+    #[allow(clippy::too_many_arguments)]
     pub fn compile_channels(
         input_modes: &[u32],
         output_modes: &[u32],
@@ -872,6 +873,7 @@ impl QfmPipeline {
     /// Like `compile_channels` but accepts a pre-built SparseKernel
     /// (for image data where the kernel is built from binarized pixel
     /// bit-vectors rather than from u32 mode bit-patterns).
+    #[allow(clippy::too_many_arguments)]
     pub fn compile_channels_with_kernel(
         input_modes: &[u32],
         output_modes: &[u32],
@@ -985,15 +987,15 @@ impl QfmPipeline {
         // Optional further rank truncation (usually a no-op here:
         // the projector-sum generator already bounds the rank).
         let mut outer_vacuum = outer_vacuum;
-        if let Some(r) = config.max_rank {
-            if let Some((w_trunc, h_trunc)) = rank_truncate_w_h(&w, &h_m, r) {
-                let new_rank = w_trunc.ncols();
-                outer_vacuum = outer_vacuum.rows(0, new_rank).into_owned();
-                w = w_trunc;
-                h_m = h_trunc;
-                rank = new_rank;
-                normalize_rows(&mut w);
-            }
+        if let Some(r) = config.max_rank
+            && let Some((w_trunc, h_trunc)) = rank_truncate_w_h(&w, &h_m, r)
+        {
+            let new_rank = w_trunc.ncols();
+            outer_vacuum = outer_vacuum.rows(0, new_rank).into_owned();
+            w = w_trunc;
+            h_m = h_trunc;
+            rank = new_rank;
+            normalize_rows(&mut w);
         }
         if rank == 0 {
             return Err(QfmError::DegenerateBasis);
@@ -1260,6 +1262,7 @@ impl DenseState {
 /// The first term is the outer vacuum projector; the second is the
 /// supervised transition that preserves the input excitation and
 /// oscillates the output between vacuum and |f⟩.
+#[allow(clippy::too_many_arguments)]
 fn dense_diffusion_matvec<'a>(
     n_in: usize,
     n_out: usize,
@@ -1315,8 +1318,8 @@ fn dense_diffusion_matvec<'a>(
             }
 
             // Off-diagonal kernel term
-            if gamma != 0.0 {
-                if let Some(kern) = kernel {
+            match kernel {
+                Some(kern) if gamma != 0.0 => {
                     for &(i_tp, o_tp) in tp_transitions {
                         // Forward: gather vacuum from j ≠ i
                         let mut vac_off = Complex64::new(0.0, 0.0);
@@ -1347,29 +1350,13 @@ fn dense_diffusion_matvec<'a>(
                         }
                     }
                 }
+                _ => {}
             }
         }
 
         y
     }
 }
-
-/// Dense matvec for the Pauli–Grover Hamiltonian with `a`-parameterised
-/// rotation:
-///
-///   H = (√((N-1)·a)·X + Z) / √((N-1)·a+1)
-///
-/// where X = |0⟩⟨f_0|+|f_0⟩⟨0|, Z = |0⟩⟨0|-|f_0⟩⟨f_0|, and
-/// |f_0⟩ = (√N|f⟩ - |0⟩)/√(N-1).
-///
-/// In the {|0⟩,|f⟩} basis this gives a 2×2 block per training pair:
-///   ┌                 ┐
-///   │ H_00   H_0f     │
-///   │ H_f0   -H_00    │   (H_ff = -H_00)
-///   └                 ┘
-/// with off-diagonal close to 1 when a≈1.
-///
-/// Unseen inputs receive only a vacuum-energy shift |i,0⟩⟨i,0|.
 fn dense_pauli_grover_matvec<'a>(
     n_in: usize,
     n_out: usize,
@@ -1439,10 +1426,10 @@ pub fn build_sparse_kernel(
     let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
     // Precompute kernel value for each possible Hamming distance (0..=n_bits)
     let mut d_vals = vec![0.0_f64; n_bits + 1];
-    for d in 0..=n_bits {
+    for (d, slot) in d_vals.iter_mut().enumerate() {
         let cos_theta = 1.0 - 2.0 * d as f64 / n_bits as f64;
         let theta = cos_theta.clamp(-1.0, 1.0).acos();
-        d_vals[d] = (-theta * theta * inv_2s2).exp();
+        *slot = (-theta * theta * inv_2s2).exp();
     }
     // Build position index: mode_value → position
     let pos: rustc_hash::FxHashMap<u32, usize> =
@@ -1454,11 +1441,12 @@ pub fn build_sparse_kernel(
         // d=1: single bit flips
         for b in 0..n_bits {
             let neighbor = mode_i ^ (1 << b);
-            if let Some(&j) = pos.get(&neighbor) {
-                if j > i && d_vals[1] > threshold {
-                    rows[i].push((j, d_vals[1]));
-                    rows[j].push((i, d_vals[1]));
-                }
+            if let Some(&j) = pos.get(&neighbor)
+                && j > i
+                && d_vals[1] > threshold
+            {
+                rows[i].push((j, d_vals[1]));
+                rows[j].push((i, d_vals[1]));
             }
         }
         // d=2: two bit flips (only if K(d=2) > threshold)
@@ -1467,11 +1455,11 @@ pub fn build_sparse_kernel(
                 let tmp = mode_i ^ (1 << b1);
                 for b2 in (b1 + 1)..n_bits {
                     let neighbor = tmp ^ (1 << b2);
-                    if let Some(&j) = pos.get(&neighbor) {
-                        if j > i {
-                            rows[i].push((j, d_vals[2]));
-                            rows[j].push((i, d_vals[2]));
-                        }
+                    if let Some(&j) = pos.get(&neighbor)
+                        && j > i
+                    {
+                        rows[i].push((j, d_vals[2]));
+                        rows[j].push((i, d_vals[2]));
                     }
                 }
             }
@@ -1493,10 +1481,10 @@ pub fn build_sparse_kernel_u64(
     let mut rows = vec![Vec::new(); n];
     let inv_2s2 = 1.0 / (2.0 * sigma * sigma);
     let mut d_vals = vec![0.0_f64; n_bits + 1];
-    for d in 0..=n_bits {
+    for (d, slot) in d_vals.iter_mut().enumerate() {
         let cos_theta = 1.0 - 2.0 * d as f64 / n_bits as f64;
         let theta = cos_theta.clamp(-1.0, 1.0).acos();
-        d_vals[d] = (-theta * theta * inv_2s2).exp();
+        *slot = (-theta * theta * inv_2s2).exp();
     }
     for i in 0..n {
         rows[i].push((i, 1.0));
@@ -1538,6 +1526,7 @@ fn kernel_inner_product(
 }
 
 /// SIRK solve using DenseState (tensor-product Hilbert space).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn dense_forward_sirk(
     n_in: usize,
     n_out: usize,
@@ -1775,6 +1764,7 @@ fn dense_forward_sirk(
 /// If `kernel` is provided, uses the non-orthogonal inner product
 /// `⟨i,f|j,g⟩ = K_in(i,j)·δ_{fg}` so that
 /// `W[tp(i,f), k] = Σ_l conj(w_whiten[l,k]) · Σ_j K_in(i,j)·conj(w_l[j,f])`.
+#[allow(clippy::needless_range_loop)]
 fn project_dense_basis(
     w_sequence: &[DenseState],
     w_whiten: &DMatrix<Complex64>,
@@ -1869,6 +1859,7 @@ fn project_dense_basis(
 ///
 /// When `output_modes` is empty the old single-resolution uniform path
 /// applies (no label structure).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn compact_diffusion_matvec<'a>(
     input_modes: &'a [u32],
     output_modes: &'a [u32],
@@ -1954,6 +1945,7 @@ fn compact_diffusion_matvec<'a>(
 /// projector uses class-specific amp0 values (`amp0_in = 1/√R_in`,
 /// `amp0_out = 1/√R_out`). When `output_modes` is empty the old
 /// single-resolution uniform path applies.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn compact_forward_sirk(
     input_modes: &[u32],
     output_modes: &[u32],

@@ -1,11 +1,15 @@
 # P9 P12: CUDA toolkit pinning for the unfer workspace (Nix shell).
 #
-# Pinned CUDA: 12.2 (the toolkit version that the unfer GPU
-# tests were developed against; libcublas 12.2, libcudart 12.2,
-# CUFFT 11.0, CUSOLVER 11.4). The toolkit installation in
-# /usr/lib/x86_64-linux-gnu is the one used by the unfer GPU
-# tests; on systems with the toolkit in /usr/local/cuda-12.x
-# the CUBLAS_STATUS_ARCH_MISMATCH error (AGENTS.md §5) occurs.
+# Pinned CUDA: 12.6 (from nixpkgs-unstable). Older toolkits are no longer
+# usable: nixos-23.05's monolithic `cudaPackages_12_1.cudatoolkit` fails to
+# build (auto-patchelf cannot satisfy its Qt6/gstreamer deps), and CUDA
+# 12.1–12.5 have been removed from nixpkgs-unstable as unmaintained upstream.
+# The unfer GPU tests were originally developed against 12.2
+# (libcublas 12.2, libcudart 12.2, CUFFT 11.0, CUSOLVER 11.4), but candle-core's
+# cudarc backend (cudarc 0.13.9) supports 12.6, which is what this shell
+# provides. On systems with a system-installed toolkit elsewhere, the
+# CUBLAS_STATUS_ARCH_MISMATCH error (AGENTS.md §5) can still occur when the
+# driver and toolkit versions disagree.
 #
 # Use with:  nix-shell
 # or:        nix develop
@@ -21,11 +25,12 @@
   description = "unfer kernel + CUDA toolkit pinned environment (P9 P12) + reproducible-build packages (P11.23) + Haskell Egison workspace";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
-  # Separate, newer channel for `packages.*` (P11.23, unfer_nixvm): the workspace's
-  # Cargo.toml pins `edition = "2024"`, which needs a rustc newer than nixos-23.05
-  # ships. The CUDA devShell above is untouched and keeps its deliberate 23.05 pin
-  # (P9.12's toolkit-pinning rationale); only the reproducible-build packages below
-  # use the unstable channel's rustc/cargo.
+  # Separate, newer channel for the CUDA toolkit AND for `packages.*` (P11.23,
+  # unfer_nixvm): the workspace's Cargo.toml pins `edition = "2024"`, which needs
+  # a rustc newer than nixos-23.05 ships, and the 23.05 CUDA 12.1.1 cudatoolkit
+  # derivation is broken (auto-patchelf fails). The devShell keeps the 23.05 pin
+  # only for the non-CUDA tooling (gcc/make/rustup/Haskell); the CUDA toolkit now
+  # comes from the unstable channel, whose `cudaPackages` build cleanly.
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs, nixpkgs-unstable }:
@@ -34,8 +39,15 @@
         system = "x86_64-linux";
         config.allowUnfree = true;  # CUDA toolkit is unfree
       };
-      cudaToolkit = pkgs.cudaPackages_12_1.cudatoolkit;
-      pkgsUnstable = import nixpkgs-unstable { system = "x86_64-linux"; };
+      pkgsUnstable = import nixpkgs-unstable {
+        system = "x86_64-linux";
+        config.allowUnfree = true;  # CUDA toolkit is unfree
+      };
+      # The merged CUDA 12.6 toolkit from nixpkgs-unstable (cudarc 0.13.9
+      # supports 12.6). `cudatoolkit` on the unstable channel already points at
+      # the merged output, which contains bin/nvcc, include/cuda.h and the
+      # libcudart/libcublas/cusolver shared libs in `lib/`.
+      cudaToolkit = pkgsUnstable.cudaPackages_12_6.cudatoolkit;
 
       # Configure Haskell package set with targeted Egison modules from the unstable channel
       haskellEnv = pkgsUnstable.haskellPackages.ghcWithPackages (ps: [
@@ -126,7 +138,7 @@
       };
 
       devShells.x86_64-linux.default = pkgs.mkShell {
-        name = "unfer-cuda-12.2";
+        name = "unfer-cuda-12.6";
 
         # The CUDA toolkit, system utilities, and Haskell tools
         packages = with pkgs; [
@@ -149,8 +161,22 @@
         shellHook = ''
           export LD_LIBRARY_PATH="${cudaToolkit}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
           export CUDA_HOME="${cudaToolkit}"
+          # cudarc's build.rs (candle-core's CUDA backend) locates the toolkit
+          # via CUDA_ROOT/CUDA_PATH/CUDA_TOOLKIT_ROOT_DIR — NOT CUDA_HOME — plus
+          # nvcc on PATH. Without these, `--all-features` fails at compile time
+          # with "Unable to find `include/cuda.h` under any of: [...]".
+          export CUDA_ROOT="${cudaToolkit}"
+          export CUDA_PATH="${cudaToolkit}"
+          export CUDA_TOOLKIT_ROOT_DIR="${cudaToolkit}"
+          # bindgen_cuda (candle's CUDA-kernel codegen) queries `nvidia-smi` for
+          # the compute capability unless CUDA_COMPUTE_CAP is set. Machines
+          # without an NVIDIA GPU (e.g. AMD-only hosts) have no nvidia-smi, so
+          # pin a capability to keep `--features cuda` builds working; 75
+          # (Turing) is safe because nvcc 12.6 supports sm_75..sm_120.
+          export CUDA_COMPUTE_CAP="75"
           export PATH="${cudaToolkit}/bin:$PATH"
-          echo "[unfer-cuda-shell] CUDA ${cudaToolkit.version or "12.2"} on LD_LIBRARY_PATH"
+          echo "[unfer-cuda-shell] CUDA ${cudaToolkit.version or "12.6"} on LD_LIBRARY_PATH"
+          echo "[unfer-cuda-shell] CUDA_ROOT/CUDA_PATH set for cudarc/candle-core build-time detection"
           echo "[unfer-cuda-shell] Haskell environment with Egison loaded"
         '';
 

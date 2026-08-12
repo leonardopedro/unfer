@@ -140,11 +140,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 17, 2026-06-30)
+## Test & benchmark counts (rev 23, 2026-08-11)
 
-- Workspace tests: **180** green (19 fock_sirk + 26 nested_fock_algebra +
-  37 prob_kernel + 30 unfer_protocol + 33 unfer_ffi + 35 qfm).
-- 5 end-to-end Austral module demos, each with a positive + UK-4001
+- Workspace tests: **676 green** on CPU (default features, `cargo test
+  --workspace`): fock_sirk 29 (26 unit + 3 heavy Krylov integration), logos 26,
+  nested_fock_algebra 43, ode_sirk 36,
+  prob_kernel 11 (+ 35 `session` integration), qfm 44 (+ 30 integration
+  validations: CFd/Ising/GW/CIFAR/MNIST/parity/sentiment/rank_truncation),
+  qfm_text 50 (+ 16 integration incl. `dense_w_krylov`, `smoothing_invariants`),
+  unfer_consensus 43, unfer_data 51 (+ 5 integration incl.
+  `release_manifest_golden`), unfer_edge 19, unfer_ffi 73 (+ 30 `ffi` ABI
+  tests incl. the header-drift gate), unfer_identity 6, unfer_protocol 27
+  (+ 51 `protocol` integration), unfer_taler 16.
+- 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
   (`compile_vs_M`, `generate_vs_d`, `sketch_apply_vs_d`,

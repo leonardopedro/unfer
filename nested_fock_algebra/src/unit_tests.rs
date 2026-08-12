@@ -557,7 +557,7 @@ mod algebra_tests {
         let h = qfm_hamiltonian_mehler_projector(&eps);
 
         let vac = QuantumState::vacuum();
-        let x: Vec<QuantumState> = (0..2).map(|j| channel_state(j)).collect();
+        let x: Vec<QuantumState> = (0..2).map(channel_state).collect();
 
         let vv = QuantumState::inner_product(&vac, &h.apply(&vac));
         assert!((vv.re - c0 * c0).abs() < 1e-12 && vv.im.abs() < 1e-12);

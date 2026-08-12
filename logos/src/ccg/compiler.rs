@@ -2,13 +2,13 @@ use super::types::*;
 use crate::core_ir::{CoreIR, Literal, TagId};
 use crate::lexicon::{Lexicon, SemExpr};
 
-pub fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
+pub fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> Result<CoreIR, String> {
     match tree {
         DerivationTree::Leaf { word, .. } => {
             let template = lexicon
                 .semantic_template(word)
-                .unwrap_or_else(|| panic!("no semantic template for '{}'", word));
-            instantiate_template(template)
+                .ok_or_else(|| format!("no semantic template for '{}' (unknown word)", word))?;
+            Ok(instantiate_template(template))
         }
         DerivationTree::Application {
             direction,
@@ -17,27 +17,27 @@ pub fn compile_derivation(tree: &DerivationTree, lexicon: &Lexicon) -> CoreIR {
             ..
         } => match direction {
             Direction::Forward => {
-                let f = compile_derivation(left, lexicon);
-                let arg = compile_derivation(right, lexicon);
-                CoreIR::App(Box::new(f), Box::new(arg))
+                let f = compile_derivation(left, lexicon)?;
+                let arg = compile_derivation(right, lexicon)?;
+                Ok(CoreIR::App(Box::new(f), Box::new(arg)))
             }
             Direction::Backward => {
-                let f = compile_derivation(right, lexicon);
-                let arg = compile_derivation(left, lexicon);
-                CoreIR::App(Box::new(f), Box::new(arg))
+                let f = compile_derivation(right, lexicon)?;
+                let arg = compile_derivation(left, lexicon)?;
+                Ok(CoreIR::App(Box::new(f), Box::new(arg)))
             }
         },
         DerivationTree::Composition { left, right, .. } => {
-            let f = compile_derivation(left, lexicon);
-            let g = compile_derivation(right, lexicon);
+            let f = compile_derivation(left, lexicon)?;
+            let g = compile_derivation(right, lexicon)?;
             let z = fresh_id();
-            CoreIR::Lam(
+            Ok(CoreIR::Lam(
                 z.clone(),
                 Box::new(CoreIR::App(
                     Box::new(f),
                     Box::new(CoreIR::App(Box::new(g), Box::new(CoreIR::Var(z)))),
                 )),
-            )
+            ))
         }
     }
 }

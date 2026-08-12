@@ -8,13 +8,14 @@ use num_complex::Complex64;
 use qfm::pipeline::{HamiltonianType, QfmConfig, QfmPipeline};
 
 fn parity(x: u32) -> bool {
-    x.count_ones() % 2 == 0
+    x.count_ones().is_multiple_of(2)
 }
 
 const N_INPUTS: u32 = 256;
 const LABEL_EVEN: u32 = N_INPUTS;
 const LABEL_ODD: u32 = N_INPUTS + 1;
 
+#[allow(clippy::too_many_arguments)]
 fn run_test(
     train_inputs: &[u32],
     transitions: &[(u32, u32)],
@@ -70,7 +71,7 @@ fn run_test(
     let u = (h_m.clone() * (-i * t)).exp();
 
     let eval = |x: u32| -> bool {
-        let tp_even = (x as usize) * o_stride + 0;
+        let tp_even = (x as usize) * o_stride;
         let tp_odd = (x as usize) * o_stride + 1;
         // Encode |x, vac⟩ = (1/√N_out)·Σ_f |x, f⟩
         let mut c0 = DVector::zeros(rank);

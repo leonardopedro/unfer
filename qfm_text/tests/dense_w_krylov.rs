@@ -135,14 +135,14 @@ fn dense_w_is_used_during_inference() {
     assert!(k > 0, "krylov_rank is 0");
     assert!(k2 > 0, "k2_total is 0");
     assert!(w.nrows() as u32 <= k2, "W has more rows than k2_total");
-    assert!(w.ncols() as usize == k, "W cols != krylov_rank");
+    assert!(w.ncols() == k, "W cols != krylov_rank");
 
     // Verify the decoder is Dense (NOT Analytical — oxieml
     // was rejected by the user).
     let decoder = model.decoder();
     eprintln!("  decoder kind: {:?}", std::mem::discriminant(decoder));
     match decoder {
-        qfm_text::model::DecoderKind::Dense { .. } => {}
+        qfm_text::model::DecoderKind::Dense => {}
         qfm_text::model::DecoderKind::Analytical { .. } => {
             panic!("decoder should be Dense, not Analytical (oxieml was rejected)")
         }

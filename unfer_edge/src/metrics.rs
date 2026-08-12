@@ -50,6 +50,9 @@ impl Metrics {
 
     /// Attribute one metered call to `principal` (S25). `denied` marks a call
     /// refused by the budget/rate gate so operators see cost *and* rejections.
+    /// Test-only: the live S25 denial point is `uk_meter_status` on the kernel
+    /// handles module; this is the CLI-facing accounting mirror.
+    #[cfg(test)]
     pub fn record_spend(&self, principal: &str, denied: bool) {
         let mut guard = self.spend.lock().unwrap_or_else(|e| e.into_inner());
         let row = guard.entry(principal.to_string()).or_default();

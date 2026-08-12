@@ -55,8 +55,8 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use qfm::{
-    CountSketch, HmcOpts, Likelihood, Posterior, QfmConfig, QfmPipeline, sample_hmc_single,
-    tsr_evolved_prior,
+    CountSketch, HamiltonianType, HmcOpts, Likelihood, Posterior, QfmConfig, QfmPipeline,
+    sample_hmc_single, tsr_evolved_prior,
 };
 use std::hint::black_box;
 
@@ -106,6 +106,9 @@ fn config_for(d: usize, m: usize) -> QfmConfig {
         n_t_samples: 4,
         noise_dim: d,
         max_rank: None,
+        random_start: false,
+        hamiltonian_type: HamiltonianType::Diffusion,
+        pauli_grover_a: 1.0,
     }
 }
 
@@ -241,6 +244,9 @@ fn bench_bayes_update_vs_m(c: &mut Criterion) {
             n_t_samples: 4,
             noise_dim: d,
             max_rank: None,
+            random_start: false,
+            hamiltonian_type: HamiltonianType::Diffusion,
+            pauli_grover_a: 1.0,
         };
         let pipeline = QfmPipeline::compile(&training, &cfg).expect("compile");
         let c_prior = tsr_evolved_prior(&pipeline);
@@ -289,6 +295,9 @@ fn bench_bayes_update_vs_k2(c: &mut Criterion) {
             n_t_samples: 4,
             noise_dim: d,
             max_rank: None,
+            random_start: false,
+            hamiltonian_type: HamiltonianType::Diffusion,
+            pauli_grover_a: 1.0,
         };
         let pipeline = QfmPipeline::compile(&training, &cfg).expect("compile");
         let c_prior = tsr_evolved_prior(&pipeline);

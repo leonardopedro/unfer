@@ -202,7 +202,11 @@ impl EscrowService {
         let key = self.escrow_key(&escrow.buyer, &escrow.seller, escrow.origin);
         let tx = self.build_op(&escrow_did, kind);
         self.emit(tx, &key)?;
-        self.escrows.get_mut(&escrowed.0).unwrap().state = outcome;
+        let missing_escrow = self.diag(Code::ESCROW_UNKNOWN, "escrow vanished during settlement");
+        match self.escrows.get_mut(&escrowed.0) {
+            Some(e) => e.state = outcome,
+            None => return Err(missing_escrow),
+        }
         self.settled.insert(escrowed.0);
         Ok(recipient_coin)
     }

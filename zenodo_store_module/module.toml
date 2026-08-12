@@ -21,6 +21,10 @@ entry = "src/ZenodoStoreDemo"
 kernel = [
     "uk_version",
     "uk_last_error",
+    "uk_model_create",
+    "uk_evolve",
+    "uk_event_probability",
+    "uk_model_free",
 ]
 zenodo = [
     "uz_init",

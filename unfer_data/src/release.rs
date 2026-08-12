@@ -15,7 +15,7 @@
 //! gate; regeneration is honored only via `UPDATE_GOLDEN=1`.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 

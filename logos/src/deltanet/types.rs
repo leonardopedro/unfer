@@ -96,6 +96,12 @@ pub struct Net {
     pub var_bindings: std::collections::HashMap<String, Port>,
 }
 
+impl Default for Net {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Net {
     pub fn new() -> Self {
         Self {
@@ -141,24 +147,24 @@ impl Net {
         }
     }
 
-    pub fn get_aux(&self, node: NodeId, slot: u8) -> Port {
+    pub fn get_aux(&self, node: NodeId, slot: u8) -> Result<Port, String> {
         self.nodes[node as usize]
             .as_ref()
             .and_then(|n| n.ports[slot as usize].clone())
-            .unwrap_or_else(|| panic!("no port at node {} slot {}", node, slot))
+            .ok_or_else(|| format!("no port at node {} slot {}", node, slot))
     }
 
-    pub fn get_principal(&self, node: NodeId) -> Port {
+    pub fn get_principal(&self, node: NodeId) -> Result<Port, String> {
         self.get_aux(node, 0)
     }
 
     pub fn get_connected_lit(&self, node: NodeId, slot: u8) -> Option<Literal> {
-        let port = self.get_aux(node, slot);
+        let port = self.get_aux(node, slot).ok()?;
         let other = &self.nodes[port.node as usize];
-        if let Some(other_node) = other {
-            if let AgentKind::Lit(lit) = &other_node.kind {
-                return Some(lit.clone());
-            }
+        if let Some(other_node) = other
+            && let AgentKind::Lit(lit) = &other_node.kind
+        {
+            return Some(lit.clone());
         }
         None
     }
@@ -168,23 +174,21 @@ impl Net {
             if self.is_freed(i as NodeId) {
                 continue;
             }
-            if let Some(node) = &self.nodes[i as usize] {
-                if let Some(principal) = &node.ports[0] {
-                    let resolved = self.resolve_port(principal);
-                    if resolved.node != i as NodeId {
-                        if let Some(other_node) = &self.nodes[resolved.node as usize] {
-                            if !other_node.freed {
-                                if let Some(other_principal) = &other_node.ports[0] {
-                                    let other_resolved = self.resolve_port(other_principal);
-                                    if other_resolved.node == i as NodeId {
-                                        let a = i as NodeId;
-                                        let b = resolved.node;
-                                        if a <= b {
-                                            self.active_pairs.push((a, b));
-                                        }
-                                    }
-                                }
-                            }
+            if let Some(node) = &self.nodes[i]
+                && let Some(principal) = &node.ports[0]
+            {
+                let resolved = self.resolve_port(principal);
+                if resolved.node != i as NodeId
+                    && let Some(other_node) = &self.nodes[resolved.node as usize]
+                    && !other_node.freed
+                    && let Some(other_principal) = &other_node.ports[0]
+                {
+                    let other_resolved = self.resolve_port(other_principal);
+                    if other_resolved.node == i as NodeId {
+                        let a = i as NodeId;
+                        let b = resolved.node;
+                        if a <= b {
+                            self.active_pairs.push((a, b));
                         }
                     }
                 }
@@ -221,10 +225,10 @@ impl Net {
         self.var_bindings.insert(name.to_string(), port);
     }
 
-    pub fn lookup_var_port(&self, name: &str) -> Port {
+    pub fn lookup_var_port(&self, name: &str) -> Result<Port, String> {
         self.var_bindings
             .get(name)
             .cloned()
-            .unwrap_or_else(|| panic!("unbound variable: {}", name))
+            .ok_or_else(|| format!("unbound variable: {}", name))
     }
 }

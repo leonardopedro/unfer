@@ -834,3 +834,58 @@ fn belief_propagation_via_ffi_opts_negative_step_size_returns_1001() {
 
     uk_model_free(model);
 }
+
+/// The C header (include/unfer_kernel.h) must declare every `pub extern "C"`
+/// symbol exported from the Rust ABI. This is a drift guard: regenerating via
+/// `python3 unfer_ffi/gen_unfer_kernel_h.py` must be a no-op.
+#[test]
+fn abi_header_declares_every_extern_symbol() {
+    fn extern_fns(src: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = src;
+        while let Some(pos) = rest.find("extern \"C\" fn ") {
+            rest = &rest[pos + "extern \"C\" fn ".len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.push(name);
+            }
+        }
+        out
+    }
+    let lib: &str = include_str!("../src/lib.rs");
+    let header: &str = include_str!("../include/unfer_kernel.h");
+    let missing: Vec<String> = extern_fns(lib)
+        .into_iter()
+        .filter(|n| !header.contains(&format!("{n}(")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "C header missing declarations for: {missing:?} \
+         — run `python3 unfer_ffi/gen_unfer_kernel_h.py`"
+    );
+    assert_eq!(missing.len(), 0);
+}
+
+/// The `uz_*` zenodo symbols must also be declared (they live in zenodo.rs).
+#[cfg(feature = "zenodo")]
+#[test]
+fn abi_header_declares_zenodo_symbols() {
+    let zenodo: &str = include_str!("../src/zenodo.rs");
+    let header: &str = include_str!("../include/unfer_kernel.h");
+    assert!(zenodo.contains("pub extern \"C\" fn uz_init"));
+    for name in [
+        "uz_init",
+        "uz_push",
+        "uz_pull",
+        "uz_manifest_json",
+        "uz_last_error",
+    ] {
+        assert!(
+            header.contains(&format!("{name}(")),
+            "C header missing {name}()"
+        );
+    }
+}
