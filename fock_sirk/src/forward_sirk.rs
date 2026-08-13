@@ -452,11 +452,15 @@ mod tests {
     ///
     /// The book.tex Navier-Stokes chapter claims the polynomial Hamiltonian
     /// `H = ∫a†(πⁱ(u_j u_{i,j} − ν u_{i,jj}) + h.c.)a` is essentially
-    /// self-adjoint on a dense domain (book.tex §4199-4208). On a *truncated*
-    /// Krylov/Fock space the corresponding finite operator `h_proj` is a finite
-    /// Hermitian matrix, so `e^{−iHt}` is a **unitary** group: probability is
-    /// conserved and the flow cannot blow up in finite time — the numerical
-    /// shadow of the "complete flow ⟹ no singularities" claim. This test checks
+    /// self-adjoint on a dense domain (book.tex §4199-4208). Essential
+    /// self-adjointness is a flow-completeness question (Nelson); low degree
+    /// only makes H a well-defined polynomial/symmetric operator, so this test
+    /// checks the *truncated* statement that is actually provable. On a
+    /// *truncated* Krylov/Fock space the corresponding finite operator
+    /// `h_proj` is a finite Hermitian matrix, so `e^{−iHt}` is a **unitary**
+    /// group: probability is conserved and the flow cannot blow up in finite
+    /// time — the numerical shadow of the "complete flow ⟹ no singularities"
+    /// claim on the truncation. This test checks
     /// (1) `h_proj = h_proj†` (the unitarity hypothesis), (2) `‖ψ(t)‖ = ‖ψ(0)‖`
     /// under `time_evolve` for several times, and (3) that the coefficients stay
     /// finite (no blow-up) for all sampled `t`.

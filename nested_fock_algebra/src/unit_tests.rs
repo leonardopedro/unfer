@@ -667,9 +667,13 @@ mod algebra_tests {
     // invariants below are the numerical shadow of the book.tex claims
     // (H = ∫a†(πⁱ(u_j u_{i,j} − ν u_{i,jj}) + h.c.)a, Ω = ∫a†[u_{j,j}ψ†]a):
     //   (1) H is Hermitian — the flow e^{−iHt} is unitary;
-    //   (2) H has LOW DEGREE in the fields (≤ 3 ladder operators per term) —
-    //       the "polynomial of low degree" hypothesis of the self-adjointness
-    //       argument (book.tex §4199-4208);
+    //   (2) H is a polynomial of LOW DEGREE in the fields (≤ 3 ladder
+    //       operators per term) — this makes H a well-defined symmetric
+    //       operator on the dense finite-particle domain; it does NOT by
+    //       itself give self-adjointness (essential self-adjointness requires
+    //       flow completeness, Nelson; the project's ẋ=x² ODE chapter is the
+    //       counterexample). The Weyl symmetrization (h.c. / anti-commutator)
+    //       in (1) is what supplies formal Hermiticity;
     //   (3) the BRST charge is nilpotent, Ω² = 0 — the divergence constraint
     //       is a first-class constraint.
 
@@ -734,7 +738,11 @@ mod algebra_tests {
         // The formalization plan's core hypothesis: H is a polynomial of LOW
         // DEGREE in the field operators (book.tex §4199-4208, "time-independent
         // polynomial quantum Hamiltonians"). Each monomial π·u·u or π·u carries
-        // at most 3 ladder operators.
+        // at most 3 ladder operators. Low degree makes H a well-defined
+        // polynomial operator on the dense finite-particle domain (symmetry,
+        // no renormalization needed) — it is NOT by itself the self-adjointness
+        // criterion, which is flow completeness (Nelson); that distinction is
+        // what the finite-truncation flow test in fock_sirk actually checks.
         let h = navier_stokes_hamiltonian(1e-3);
         assert!(!h.terms.is_empty());
         for (_, ops) in &h.terms {
