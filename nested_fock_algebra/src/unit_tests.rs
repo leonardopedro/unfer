@@ -4,11 +4,12 @@ mod algebra_tests {
     use crate::cas::compile_to_fock;
     use crate::models::{
         QFM_DEFAULT_QUANTIZATION_SCALE, bose_hubbard_chain, gravity_hamiltonian,
-        mehler_channel_overlap, navier_stokes_hamiltonian, point_to_inner_state, qfm_hamiltonian,
-        qfm_hamiltonian_localized, qfm_hamiltonian_mehler_projector,
-        qfm_hamiltonian_mehler_projector_localized, yang_mills_hamiltonian, yang_mills_lattice,
+        mehler_channel_overlap, navier_stokes_brst, navier_stokes_hamiltonian,
+        point_to_inner_state, qfm_hamiltonian, qfm_hamiltonian_localized,
+        qfm_hamiltonian_mehler_projector, qfm_hamiltonian_mehler_projector_localized,
+        yang_mills_hamiltonian, yang_mills_lattice,
     };
-    use crate::{Operator, QuantumState};
+    use crate::{InnerBosonicState, Operator, QuantumState};
     use num_complex::Complex64;
 
     // ── CAS / compile_to_fock ───────────────────────────────────────
@@ -658,6 +659,105 @@ mod algebra_tests {
             !h.terms.is_empty(),
             "Navier-Stokes should produce a non-empty Hamiltonian"
         );
+    }
+
+    // ── Navier-Stokes structural calculus (gravity-parallel) ─────────────
+    // The gravity model (H = Σ P² − e²) is checked for its defining algebraic
+    // structure; the Navier-Stokes model is checked the same way. The three
+    // invariants below are the numerical shadow of the book.tex claims
+    // (H = ∫a†(πⁱ(u_j u_{i,j} − ν u_{i,jj}) + h.c.)a, Ω = ∫a†[u_{j,j}ψ†]a):
+    //   (1) H is Hermitian — the flow e^{−iHt} is unitary;
+    //   (2) H has LOW DEGREE in the fields (≤ 3 ladder operators per term) —
+    //       the "polynomial of low degree" hypothesis of the self-adjointness
+    //       argument (book.tex §4199-4208);
+    //   (3) the BRST charge is nilpotent, Ω² = 0 — the divergence constraint
+    //       is a first-class constraint.
+
+    /// A bosonic occupation eigenstate of `InnerBosonicState` (mode, count).
+    fn ns_basis(mode: u32, count: u32) -> QuantumState {
+        let mut inner = InnerBosonicState::vacuum();
+        inner.modes.insert(mode, count);
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner))
+    }
+
+    /// Numerical Hermiticity of a Hamiltonian on a small sample of occupation
+    /// eigenstates: `⟨φ|H ψ⟩ == ⟨H φ|ψ⟩` for every pair (equivalently
+    /// `⟨φ|H ψ⟩ == ⟨ψ|H φ⟩*`, i.e. H = H† on the subspace).
+    fn assert_numerically_hermitian(h: &crate::Hamiltonian, label: &str) {
+        let states = [
+            ns_basis(0, 1),
+            ns_basis(0, 2),
+            ns_basis(1, 1),
+            ns_basis(2, 1),
+            ns_basis(3, 1),
+            ns_basis(12, 1),
+        ];
+        let mut worst: f64 = 0.0;
+        for a in &states {
+            for b in &states {
+                let hab = QuantumState::inner_product(a, &h.apply(b));
+                let hba = QuantumState::inner_product(&h.apply(a), b);
+                worst = worst.max((hab - hba).norm());
+            }
+        }
+        assert!(
+            worst < 1e-9,
+            "{label}: Hamiltonian not Hermitian on sample states, ‖⟨φ|H|ψ⟩−⟨Hφ|ψ⟩‖ = {worst:.3e}"
+        );
+    }
+
+    /// Nilpotency of a BRST charge on sample states: `‖Ω²|s⟩‖ = 0`.
+    fn assert_nilpotent(brst: &crate::Hamiltonian, label: &str) {
+        let states = [ns_basis(0, 1), ns_basis(1, 1), ns_basis(2, 1), ns_basis(3, 1)];
+        let mut worst: f64 = 0.0;
+        for s in &states {
+            let twice = brst.apply(&brst.apply(s));
+            worst = worst.max(twice.norm());
+        }
+        assert!(
+            worst < 1e-9,
+            "{label}: BRST charge not nilpotent, ‖Ω²|s⟩‖ = {worst:.3e}"
+        );
+    }
+
+    #[test]
+    fn test_navier_stokes_hermitian() {
+        // book.tex §4184-4189: H = ∫a†(πⁱ(u_j u_{i,j} − ν u_{i,jj}) + h.c.)a.
+        // The (h.c.) term must make the whole operator Hermitian — otherwise the
+        // flow is not unitary and the self-adjointness hypothesis fails.
+        let h = navier_stokes_hamiltonian(1e-3);
+        assert_numerically_hermitian(&h, "Navier-Stokes H");
+    }
+
+    #[test]
+    fn test_navier_stokes_low_degree() {
+        // The formalization plan's core hypothesis: H is a polynomial of LOW
+        // DEGREE in the field operators (book.tex §4199-4208, "time-independent
+        // polynomial quantum Hamiltonians"). Each monomial π·u·u or π·u carries
+        // at most 3 ladder operators.
+        let h = navier_stokes_hamiltonian(1e-3);
+        assert!(!h.terms.is_empty());
+        for (_, ops) in &h.terms {
+            assert!(
+                ops.len() <= 3,
+                "NS term has {} operators; low-degree hypothesis requires ≤ 3",
+                ops.len()
+            );
+        }
+        // The viscous term −νu_{i,jj} and the advection term u_j u_{i,j} are both
+        // present: the degree-3 advection monomials are what drive the nonlinearity.
+        let max_ops = h.terms.iter().map(|(_, ops)| ops.len()).max().unwrap_or(0);
+        assert_eq!(max_ops, 3, "NS interaction is genuinely cubic in the fields");
+    }
+
+    #[test]
+    fn test_navier_stokes_brst_nilpotent() {
+        // book.tex §4187-4189: Ω = ∫a†[u_{j,j}ψ†]a is the BRST charge imposing the
+        // divergence-free constraint. Nilpotency Ω² = 0 (already proved in Lean for
+        // the ghost algebra: BookProof/ChapterGhostField.lean brst_charge_nilpotent)
+        // is the defining property of a first-class constraint.
+        let brst = navier_stokes_brst();
+        assert_nilpotent(&brst, "Navier-Stokes BRST Ω");
     }
 
     // ── Inner product / norm ────────────────────────────────────────

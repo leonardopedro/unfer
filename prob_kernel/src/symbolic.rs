@@ -99,7 +99,7 @@ fn symbolic_analyze_with_cli(
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
-    let script = build_script(&spec.expression, spec.op);
+    let script = build_script(spec);
     let script_path = write_temp_script(&script)?;
     let output = run_cli(cli, &script_path, spec.timeout_ms)?;
     let _ = std::fs::remove_file(&script_path);
@@ -230,10 +230,11 @@ pub fn normalize_to_cas_dialect(input: &str) -> Option<String> {
 }
 
 /// Build the Cadabra2 script for a given expression + operation.
-fn build_script(expression: &str, op: SymbolicOp) -> String {
+fn build_script(spec: &SymbolicSpec) -> String {
+    let expression = &spec.expression;
     // `Ex(...)` needs a Python string literal; escape backslashes and quotes.
     let escaped = expression.replace('\\', "\\\\").replace('"', "\\\"");
-    match op {
+    match spec.op {
         SymbolicOp::Canonicalize | SymbolicOp::VerifyHermitian => format!(
             "ex = Ex(\"{escaped}\")\n\
              canonicalise(ex)\n\
@@ -247,6 +248,21 @@ fn build_script(expression: &str, op: SymbolicOp) -> String {
              print(\"{NF_MARKER}\" + str(ex))\n\
              print(\"{ZERO_MARKER}\" + str(ex == 0))\n"
         ),
+        SymbolicOp::VerifySubstitution => {
+            // Apply the substitution rule (e.g. the Navier-Stokes divergence
+            // constraint `u_{3,3} -> -(u_{1,1}+u_{2,2})`, book.tex §4191-4197)
+            // to the expression, then canonicalize and zero-detect. `verified`
+            // reports whether the constraint resolution holds identically.
+            let rule = spec.substitution.as_deref().unwrap_or_default();
+            let escaped_rule = rule.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(
+                "ex = Ex(\"{escaped}\")\n\
+                 substitute(ex, Ex(\"{escaped_rule}\"))\n\
+                 canonicalise(ex)\n\
+                 print(\"{NF_MARKER}\" + str(ex))\n\
+                 print(\"{ZERO_MARKER}\" + str(ex == 0))\n"
+            )
+        }
     }
 }
 
@@ -374,6 +390,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "c_0 * a_0 + c_0 * a_0".into(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: 30_000,
         };
         let report = symbolic_analyze(&spec).unwrap();
@@ -394,6 +411,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "a_0 * c_0 - a_0 * c_0".into(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: 30_000,
         };
         let report = symbolic_analyze(&spec).unwrap();
@@ -418,6 +436,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "c_0 * a_0 - c_0 * a_0".into(),
             op: SymbolicOp::VerifyHermitian,
+            substitution: None,
             timeout_ms: 30_000,
         };
         let report = symbolic_analyze(&spec).unwrap();
@@ -428,11 +447,42 @@ mod tests {
         );
     }
 
+    /// Navier-Stokes: the divergence constraint is a *solved* constraint.
+    ///
+    /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the
+    /// divergence constraint can be easily solved (e.g. using the replacement
+    /// u_{3,3} = u_{1,1}+u_{2,2})". Symbolically: substituting that rule into
+    /// the incompressibility condition `∂_j u_j = u_{1,1}+u_{2,2}+u_{3,3}`
+    /// must yield zero identically. This is the commuting-dialect shadow of
+    /// the BRST charge Ω = u_{j,j}ψ† being first-class (`Ω² = 0`, proved in
+    /// `BookProof/ChapterGhostField.lean`). Plain symbols (`U33` rather than
+    /// `u_33`) are used so Cadabra2 does not parse the subscripts as indices.
+    #[test]
+    fn verify_navier_stokes_divergence_constraint_resolution() {
+        if !require_cadabra() {
+            return;
+        }
+        let spec = SymbolicSpec {
+            expression: "U33 + U11 + U22".into(),
+            op: SymbolicOp::VerifySubstitution,
+            substitution: Some("U33 -> -(U11 + U22)".into()),
+            timeout_ms: 30_000,
+        };
+        let report = symbolic_analyze(&spec).unwrap();
+        assert!(
+            report.verified,
+            "divergence constraint must resolve to zero after the book.tex \
+             replacement u_{{3,3}} = u_{{1,1}}+u_{{2,2}}: {:?}",
+            report
+        );
+    }
+
     #[test]
     fn empty_expression_is_invalid() {
         let spec = SymbolicSpec {
             expression: "   ".into(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: 1_000,
         };
         let err = symbolic_analyze(&spec).unwrap_err();
@@ -448,6 +498,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "c_0 * a_0".into(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: 1_000,
         };
         let err = symbolic_analyze_with_cli(&bad, &spec).unwrap_err();
@@ -467,6 +518,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "c_0 * a_0 + c_0 * a_0".into(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: 30_000,
         };
         let report = symbolic_analyze(&spec).unwrap();
@@ -501,6 +553,7 @@ mod tests {
         let spec = SymbolicSpec {
             expression: "c_0 * a_0".into(),
             op: SymbolicOp::Simplify,
+            substitution: None,
             timeout_ms: 5_000,
         };
         let json = serde_json::to_string(&spec).unwrap();

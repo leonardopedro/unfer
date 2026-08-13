@@ -1274,6 +1274,10 @@ pub enum SymbolicOp {
     /// Verify a Hermiticity identity: the expression is interpreted as
     /// `H - H†` and `verified` reports whether it canonicalizes to zero.
     VerifyHermitian,
+    /// Verify a substitution identity (e.g. a constraint resolution): apply
+    /// the `substitution` rule to the expression, canonicalize, and report
+    /// whether the result is identically zero.
+    VerifySubstitution,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1283,6 +1287,10 @@ pub struct SymbolicSpec {
     pub expression: String,
     /// The operation to run.
     pub op: SymbolicOp,
+    /// A Cadabra2 substitution rule for [`SymbolicOp::VerifySubstitution`]
+    /// (e.g. `u_33 -> -(u_11 + u_22)`), applied before canonicalization.
+    #[serde(default)]
+    pub substitution: Option<String>,
     /// Subprocess timeout in milliseconds (default 30 s).
     #[serde(default = "default_symbolic_timeout_ms")]
     pub timeout_ms: u64,
@@ -1297,6 +1305,7 @@ impl Default for SymbolicSpec {
         Self {
             expression: String::new(),
             op: SymbolicOp::Canonicalize,
+            substitution: None,
             timeout_ms: default_symbolic_timeout_ms(),
         }
     }

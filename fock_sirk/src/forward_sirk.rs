@@ -447,6 +447,60 @@ mod tests {
         assert_eq!(res.h_proj.nrows(), res.rank);
     }
 
+    /// Stage NS: numerical flow completeness of the truncated Navier-Stokes
+    /// Hamiltonian.
+    ///
+    /// The book.tex Navier-Stokes chapter claims the polynomial Hamiltonian
+    /// `H = ∫a†(πⁱ(u_j u_{i,j} − ν u_{i,jj}) + h.c.)a` is essentially
+    /// self-adjoint on a dense domain (book.tex §4199-4208). On a *truncated*
+    /// Krylov/Fock space the corresponding finite operator `h_proj` is a finite
+    /// Hermitian matrix, so `e^{−iHt}` is a **unitary** group: probability is
+    /// conserved and the flow cannot blow up in finite time — the numerical
+    /// shadow of the "complete flow ⟹ no singularities" claim. This test checks
+    /// (1) `h_proj = h_proj†` (the unitarity hypothesis), (2) `‖ψ(t)‖ = ‖ψ(0)‖`
+    /// under `time_evolve` for several times, and (3) that the coefficients stay
+    /// finite (no blow-up) for all sampled `t`.
+    #[test]
+    fn navier_stokes_flow_complete_and_unitary() {
+        let device = Device::Cpu;
+        let h = nested_fock_algebra::models::navier_stokes_hamiltonian(1e-3);
+
+        let v0 =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+
+        let opts = SirkOpts {
+            prune_eps: 1e-12,
+            max_components: Some(50_000),
+            brst_tol: 1e-10,
+            adaptive: false,
+        };
+        let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
+            .expect("Navier-Stokes SIRK solve must not error");
+
+        // (1) Hermiticity of the projected Hamiltonian => e^{-iHt} is unitary.
+        assert_hermitian(&res.h_proj, "Navier-Stokes h_proj");
+
+        // (2) Norm preservation: ||ψ(t)|| == ||ψ(0)|| for a sweep of times.
+        let t0 = res.time_evolve(0.0);
+        let n0 = t0.norm();
+        assert!(
+            (n0 - 1.0).abs() < 1e-6,
+            "initial whitened state must be normalised, got {n0}"
+        );
+        for t in [0.1, 0.5, 1.0, 2.0, 5.0, 10.0] {
+            let psi = res.time_evolve(t);
+            let nt = psi.norm();
+            assert!(
+                (nt - n0).abs() < 1e-6,
+                "flow at t={t} not norm-preserving: ‖ψ(t)‖ = {nt} vs ‖ψ(0)‖ = {n0}"
+            );
+            assert!(
+                psi.iter().all(|c| c.norm().is_finite()),
+                "blow-up at t={t}: non-finite coefficients in the evolved state"
+            );
+        }
+    }
+
     /// GPU smoke (P1 #6): the two-state hopping Hamiltonian H = |B><A| + |A><B|
     /// has eigenvalues ±1 regardless of device. When the `cuda` feature is on
     /// and a CUDA device is reachable, `best_device()` picks it; the Ritz
