@@ -20,6 +20,6 @@ pub use error::KernelError;
 pub use session::{
     BayesianUpdateReport, EvolveReport, Session, SessionBlob, StateEntry, StateSummary,
 };
-pub use verify::verify_export;
-
+pub use symbolic::symbolic_derive;
 pub use unfer_protocol;
+pub use verify::verify_export;

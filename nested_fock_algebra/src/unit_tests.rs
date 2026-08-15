@@ -712,7 +712,12 @@ mod algebra_tests {
 
     /// Nilpotency of a BRST charge on sample states: `‖Ω²|s⟩‖ = 0`.
     fn assert_nilpotent(brst: &crate::Hamiltonian, label: &str) {
-        let states = [ns_basis(0, 1), ns_basis(1, 1), ns_basis(2, 1), ns_basis(3, 1)];
+        let states = [
+            ns_basis(0, 1),
+            ns_basis(1, 1),
+            ns_basis(2, 1),
+            ns_basis(3, 1),
+        ];
         let mut worst: f64 = 0.0;
         for s in &states {
             let twice = brst.apply(&brst.apply(s));
@@ -755,7 +760,10 @@ mod algebra_tests {
         // The viscous term −νu_{i,jj} and the advection term u_j u_{i,j} are both
         // present: the degree-3 advection monomials are what drive the nonlinearity.
         let max_ops = h.terms.iter().map(|(_, ops)| ops.len()).max().unwrap_or(0);
-        assert_eq!(max_ops, 3, "NS interaction is genuinely cubic in the fields");
+        assert_eq!(
+            max_ops, 3,
+            "NS interaction is genuinely cubic in the fields"
+        );
     }
 
     #[test]

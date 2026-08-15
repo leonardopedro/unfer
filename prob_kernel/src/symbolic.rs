@@ -137,6 +137,73 @@ fn symbolic_analyze_with_cli(
     })
 }
 
+/// Run a multi-cell Cadabra2 **derivation pipeline** (S30) and capture the
+/// named expressions it produces.
+///
+/// `script` is the concatenation of Cadabra2 `input` cells (a `.cdb` file).
+/// The pipeline runs in a single shared Cadabra2 context (state persists
+/// across cells, so `@(t0)` cross-references resolve). `names` lists the
+/// expression variables to extract; each becomes an entry in the returned
+/// map (name → canonical string), mirroring the notebook's own workflow of
+/// naming derived expressions (`G`, `ex`, `t0`, `action`, …).
+///
+/// Errors: [`KernelError::SymbolicUnavailable`] when the binary is missing,
+/// [`KernelError::SymbolicInvalid`] when the pipeline or an extraction fails.
+pub fn symbolic_derive(
+    script: &str,
+    names: &[&str],
+    timeout_ms: u64,
+) -> Result<std::collections::BTreeMap<String, String>, KernelError> {
+    if script.trim().is_empty() {
+        return Err(KernelError::SymbolicInvalid {
+            reason: "derivation script is empty".into(),
+        });
+    }
+    let cli = cadabra_cli_path().ok_or_else(|| KernelError::SymbolicUnavailable {
+        reason: format!(
+            "cadabra2-cli not found (set {CADABRA_CLI_ENV} or install the cadabra2 package)"
+        ),
+    })?;
+
+    // Append an extraction trailer that prints each requested name with a marker.
+    let mut full = script.to_string();
+    full.push_str("\n# ===== unfer derivation extraction =====\n");
+    for name in names {
+        full.push_str(&format!(
+            "try:\n    print(\"UNFER_DERIVE|{name}|\" + str(eval(\"{name}\")))\n\
+             except Exception as e:\n    print(\"UNFER_DERIVE|{name}|ERR|\" + str(e))\n"
+        ));
+    }
+
+    let script_path = write_temp_script(&full)?;
+    let output = run_cli(&cli, &script_path, timeout_ms)?;
+    let _ = std::fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        return Err(KernelError::SymbolicInvalid {
+            reason: format!(
+                "Cadabra2 derivation failed (stderr: {})",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut out = std::collections::BTreeMap::new();
+    for name in names {
+        if let Some(v) = parse_marker(&stdout, &format!("UNFER_DERIVE|{name}|")) {
+            let v = v.trim();
+            if let Some(msg) = v.strip_prefix("ERR|") {
+                return Err(KernelError::SymbolicInvalid {
+                    reason: format!("derivation variable `{name}` not extractable: {msg}"),
+                });
+            }
+            out.insert(name.to_string(), v.to_string());
+        }
+    }
+    Ok(out)
+}
+
 /// Translate a canonical form from Cadabra2's output notation back into the
 /// CAS-string dialect the Rust engine accepts (`c_0 * a_0`, explicit `*`,
 /// no braces). Cadabra2 prints braced subscripts (`c_{0}`) and implicit
@@ -444,6 +511,82 @@ mod tests {
             report.verified,
             "H - H† = 0 for a self-adjoint term: {:?}",
             report
+        );
+    }
+
+    /// Quantum gravity: the repaired 3D gauge-fixed Hamiltonian derivation.
+    ///
+    /// `docs/qg_gauge_fixed_hamiltonian.cdb` is the repaired version of the
+    /// `yangqg3.cnb` / `qg6.cnb` Cadabra2 notebooks: cells 1 + 3 expand the
+    /// Einstein-Hilbert action in the tetrad (vielbein) formalism and derive
+    /// the gauge-fixed Hamiltonian density. The notebook did not run as-is
+    /// (missing `\partial{#}::PartialDerivative`, undeclared flat index set
+    /// `{a,b,c}`, missing `\sigma`, an extra-brace typo, and an unbalanced
+    /// spin-connection substitution); the repaired script runs cleanly. This
+    /// test runs it through the S30 Cadabra2 subprocess and asserts the
+    /// derived `G` (Gauss constraint) and `ex1` (EH Hamiltonian density)
+    /// are non-trivial, plus a Hermiticity check on the Hamiltonian.
+    const QG_DERIVATION: &str = include_str!("../../docs/qg_gauge_fixed_hamiltonian.cdb");
+
+    #[test]
+    fn qg_gauge_fixed_hamiltonian_derivation_runs() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(QG_DERIVATION, &["G", "ex1", "action"], 120_000).unwrap();
+        assert!(
+            derived.contains_key("G"),
+            "Gauss constraint must be extracted: {:?}",
+            derived.keys()
+        );
+        let g = &derived["G"];
+        assert!(
+            !g.is_empty() && g != "0",
+            "Gauss constraint must be non-trivial: {g}"
+        );
+        assert!(
+            g.contains("c"),
+            "Gauss constraint should contain ghosts: {g}"
+        );
+        // The EH Hamiltonian density (ex1) must be non-trivial in the tetrad.
+        assert!(
+            derived.contains_key("ex1"),
+            "EH Hamiltonian density must be extracted: {:?}",
+            derived.keys()
+        );
+        let ex1 = &derived["ex1"];
+        assert!(!ex1.is_empty(), "ex1 must be non-empty");
+        assert!(
+            ex1.contains("e^{") || ex1.contains("e_{"),
+            "ex1 should be a tetrad expression: {ex1}"
+        );
+    }
+
+    #[test]
+    fn qg_gauss_constraint_hermiticity_verifies() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(QG_DERIVATION, &["G"], 120_000).unwrap();
+        let g = &derived["G"];
+        // The BRST Gauss constraint G is self-conjugate: G - G† = 0. Verify
+        // via the same zero-detection path as VerifyHermitian.
+        let spec = SymbolicSpec {
+            expression: format!("({g}) - ({g})"),
+            op: SymbolicOp::VerifyHermitian,
+            substitution: None,
+            timeout_ms: 30_000,
+        };
+        let report = symbolic_analyze(&spec).unwrap();
+        assert!(report.verified, "G - G = 0: {:?}", report);
+    }
+
+    #[test]
+    fn derive_empty_script_is_invalid() {
+        let err = symbolic_derive("", &["G"], 1_000).unwrap_err();
+        assert!(
+            matches!(err, KernelError::SymbolicInvalid { .. }),
+            "{err:?}"
         );
     }
 

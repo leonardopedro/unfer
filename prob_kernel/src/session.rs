@@ -571,6 +571,19 @@ impl Session {
     ) -> Result<unfer_protocol::SymbolicReport, KernelError> {
         crate::symbolic::symbolic_analyze(spec)
     }
+
+    /// Run a multi-cell Cadabra2 derivation pipeline (S30) and capture the
+    /// named expressions it produces (e.g. the QG gauge-fixed Hamiltonian
+    /// derivation in `docs/qg_gauge_fixed_hamiltonian.cdb`). Read-only: the
+    /// numerical state is untouched.
+    pub fn derive_symbolic(
+        &self,
+        script: &str,
+        names: &[&str],
+        timeout_ms: u64,
+    ) -> Result<std::collections::BTreeMap<String, String>, KernelError> {
+        crate::symbolic::symbolic_derive(script, names, timeout_ms)
+    }
 }
 
 #[cfg(test)]

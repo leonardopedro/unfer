@@ -1,0 +1,179 @@
+# Repaired 3D gauge-fixed QG Hamiltonian derivation (source: yangqg3.cnb / qg6.cnb).
+# Repairs vs the notebook:
+#   (1) added \\partial{#}::PartialDerivative (needed by the Riemann substitution)
+#   (2) added flat index set {a,b,c,a#,b#} (tetrad indices were undeclared)
+#   (3) added \\sigma to the curved index set (used by the spin connection)
+#   (4) fixed R^{\\alpha}_{\\mu \\alpha \\nu} extra-brace typo
+#   (5) rewrote the spin-connection substitution as an index-balanced sum
+#         (Cadabra rejects factored sums in replacement RHS)
+# Cells: 1 (Gauss constraint + field content), 3 (Einstein-Hilbert action ->
+# tetrad Hamiltonian). Run with: cadabra2-cli -q -n <this file>
+def post_process(ex):
+	#unwrap(ex)
+	eliminate_kronecker(ex)
+	#canonicalise(ex)
+	#sort_product(ex)
+	collect_terms(ex)
+#rrr:= { b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}, b_{k} \partial_{\mu?}{c_{j}} -> \partial_{\mu?}{\delta_{j k}}-\partial_{\mu?}{c_{j}} b_{k},
+#        A_{\mu j}\pi^{\nu}_{k} -> i\delta^{\nu}_{\mu} \delta_{j k}+\pi^{\nu}_{k} A_{\mu j},
+#        A_{0 j}\pi^{\nu}_{k} -> i\delta^{\nu}_{0} \delta_{j k}+\pi^{\nu}_{k} A_{0 j}};
+d{#}::Accent.
+{\alpha,\beta,\gamma,\mu,\nu,\rho,\sigma,\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).
+{m1,m#}::Indices(name=holo,parent=holonomic,position=independent,values={1,2,3}).
+\partial{#}::PartialDerivative.
+{j,k,l,j#}::Indices(name=frame,position=independent).
+{a,b,c,a#,b#}::Indices(flat, position=independent).
+{y1,y#}::Indices(name=pos,position=independent).
+
+f_{j k}^{l}::TableauSymmetry(shape={1,1}, indices={0,1}).
+D_{j l \mu?}::TableauSymmetry(shape={1,1}, indices={0,1});
+\delta^{\mu?}_{\nu?}::KroneckerDelta;
+\delta_{\mu?}^{\nu?}::KroneckerDelta;
+\delta^{j? l?}::KroneckerDelta;
+\delta_{j? l?}::KroneckerDelta;
+\delta_{j?}^{l}::KroneckerDelta;
+\delta^{j?}_{l?}::KroneckerDelta;
+\delta_{y1? y2?}::KroneckerDelta;
+
+\eta_{\mu \nu}::Metric(signature=+2);
+\eta^{\mu \nu}::InverseMetric;
+{c^{j}, b_{j}}::SelfAntiCommuting.
+{c^{j}, b_{j}}::NonCommuting.
+#{c_{j}, b_{j}}::Depends(\partial{#}).
+{A_{\mu?}^{j}, \pi^{\mu?}_{j}}::NonCommuting.
+#{A_{\mu? j y1}, \pi^{\mu?}_{j y1}}::Depends(\partial{#}).
+i::ImaginaryI.
+
+G:= c^{j} D_{j l \mu} \pi^{\mu l} +c^{j} f_{j k}^{l} A_{\mu}^{k} \pi^{\mu l}+ i f_{j k}^{l} c^{j} c^{k} b_{l}/2;
+#G2:=@(G);
+#split_index(G2,$\alpha, 0, m1 $, repeat=True)
+ex:= @(G) i b_{j} A_{0}^{j}+i b_{j} A_{0}^{j} @(G);
+#ex:=\pi^{\mu}_{k} A_{0 j}-A_{0 j}\pi^{\mu}_{k};
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+substitute(ex,$A_{\mu j} A_{0 k} -> A_{0 k} A_{\mu j}$);
+distribute(ex);
+substitute(ex,$\pi^{\nu?}_{k} -> \Pi^{\nu?}_{k}$);
+substitute(ex,$A_{\nu? k} -> B_{\nu? k}$);
+split_index(ex,$\alpha, 0, m1 $, repeat=True)
+distribute(ex)
+canonicalise(ex)
+sort_product(ex)
+rename_dummies(ex);
+canonicalise(ex)
+sort_product(ex)
+rename_dummies(ex);
+ss:=-\Pi^{m1}_{j}D_{j l 0} B_{m1 l}+\Pi^{m1}_{j} D_{j l m1} B_{0 l}+\Pi^{m1}_{l}B_{m1 k}B_{0 j}f_{j k l}+i @(ex);
+distribute(ss)
+canonicalise(ss)
+sort_product(ss)
+rename_dummies(ss)
+canonicalise(ss)
+sort_product(ss)
+rename_dummies(ss);
+s2:= @(G) @(G).
+distribute(s2);
+#rename_dummies(s2);
+substitute(s2,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(s2,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s2)
+#rename_dummies(s2)
+substitute(s2,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(s2,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+#substitute(s2,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);
+distribute(s2)
+canonicalise(s2)
+sort_product(s2)
+rename_dummies(s2);
+canonicalise(s2)
+sort_product(s2)
+rename_dummies(s2);
+
+
+{G_{j}}::SelfNonCommuting.
+s3:=G_{j}G_{l}-G_{l}G_{j};
+substitute(s3,$G_{j} -> D_{j l \mu} \pi^{\mu}_{l}-f_{j k l} \pi^{\mu}_{l} A_{\mu k}$);
+distribute(s3);
+substitute(s3,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s3)
+substitute(s3,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s3)
+sort_product(s3)
+rename_dummies(s3);
+sort_product(s3);
+substitute(s3,$D_{j l \mu}\pi^{\mu}_{l} -> \Pi_{j}, \pi^{\mu}_{l} D_{j l \mu} -> \Pi_{j}$);
+substitute(s3,$D_{j k \mu}\pi^{\mu}_{l} f_{j1 k l} -> \Pi_{l} f_{j1 j l}$);
+#substitute(s3,$D_{j l \mu}\pi^{\mu}_{l} -> \Pi_{j}, \pi^{\mu}_{l}D_{j l \mu} -> \Pi_{j}$);
+canonicalise(s3);
+sort_product(s3);
+substitute(s3,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);
+#substitute(s3,$D_{l j \mu} -> -D_{j l \mu}$);
+#substitute(s3,$\Pi^{\mu}_{l}\partial_{l j \mu} -> -\Pi_{j}$);
+# ===== cell 3 (Einstein-Hilbert action) =====
+#\epsilon_{\alpha \beta \mu \nu}::EpsilonTensor(delta=\delta^{\mu}_{\nu}, metric=g_{\mu \nu});
+#\epsilon^{a b c j}::EpsilonTensor(delta=\delta^{a}_{b}, metric=\eta_{a b});
+ex:= \int{e R}{x};
+test1:= 1111.
+test2:= 2222.
+test3:= 3333.
+test4:= 4444.
+test5:= 5555.
+#ex:=e_{\nu}^{a}e^{\alpha4}_{c} \eta_{a a1} \eta_{b a2} e^{\mu}_{j} e^{\alpha}_{l} \eta^{a1 c}  e_{\mu}^{k};
+#ex:=\partial_{\mu}{ 1/(e) };
+substitute(ex,$R -> g^{\mu \nu} R_{\mu \nu} $,repeat=True)
+substitute(ex,$R_{\mu \nu} -> R^{\alpha}_{\mu \alpha \nu}$,repeat=True)
+substitute(ex,$R^{\alpha}_{\beta \mu \nu} -> e^{\alpha}_{a} e_{\beta}^{b}\partial_{\mu}{\omega^{a}_{\nu b}}-e^{\alpha}_{a} e_{\beta}^{b}\partial_{\nu}{\omega^{a}_{\mu b}}+e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\mu c}\omega^{c}_{\nu b}-e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\nu c}\omega^{c}_{\mu b}$,repeat=True)
+distribute(ex)
+rename_dummies(ex)
+substitute(ex,$\omega^{a}_{\mu b} -> 1/2 e^{a\nu}\partial_{\mu}{e_{\nu b}} - 1/2 e^{a\nu}\partial_{\nu}{e_{\mu b}} - 1/2 e^{a\nu} e^{\sigma}_{\mu} e^{\rho}_{b}\partial_{\sigma}{e_{\nu \rho}} + 1/2 e^{a\nu} e^{\sigma}_{\mu} e^{\rho}_{b}\partial_{\nu}{e_{\sigma \rho}}$,repeat=True)
+substitute(ex,$g^{\mu \nu} -> e^{\mu}_{a} e^{\nu}_{b} \eta^{a b}$,repeat=True)
+distribute(ex)
+rename_dummies(ex)
+product_rule(ex)
+unwrap(ex)
+distribute(ex)
+rename_dummies(ex);
+#substitute(ex, $\partial_{\mu \nu}{e_{\alpha}^{a}} -> \partial_{\mu}{\partial_{\nu}{e_{\alpha}^{a}}}$)
+integrate_by_parts(ex, $\partial_{\nu}{e_{\alpha}^{a}}$)
+ex1 = ex[0];
+ex:= @(ex1).
+distribute(ex)
+rename_dummies(ex)
+product_rule(ex)
+unwrap(ex)
+substitute(ex,$\partial_{\alpha}{e} ->  e e^{\mu}_{a}\partial_{\alpha}{e_{\mu}^{a}}$,repeat=True)
+substitute(ex,$\partial_{\alpha}{e^{\mu}_{a}} -> -e^{\nu}_{a}\partial_{\alpha}{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
+distribute(ex)
+rename_dummies(ex)
+display(test1)
+action:= @(ex).
+#factor_out(ex, $ e , e^{\mu}_{a}, \eta^{a b}, \eta_{a b}$);
+vary(ex, $e^{\mu}_{a} -> d{e^{\mu}_{a}}, e_{\mu}^{a} -> d{e_{\mu}^{a}}, e -> d{e} $)
+substitute(ex,$d{e} ->  e e^{\mu}_{a}d{e_{\mu}^{a}}$,repeat=True)
+substitute(ex,$d{e^{\mu}_{a}} -> -e^{\nu}_{a} d{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
+display(test5)
+distribute(ex);
+substitute(ex, $\partial_{\alpha}{d{e_{\mu}^{a}}} ->\epsilon_{\alpha \mu}^{a}$,repeat=True)
+substitute(ex, $d{e_{\mu}^{a}} -> 0$)
+#substitute(ex,$\partial_{\beta}{e^{\mu}_{a}} -> -e^{\nu}_{a}\partial_{\beta}{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
+{h_{a b}, h^{a b}}::Symmetric;
+substitute(ex, $ \eta_{a b} -> h_{a b}, \eta^{a b} -> h^{a b} $, repeat=True)
+substitute(action, $ \eta_{a b} -> h_{a b}, \eta^{a b} -> h^{a b} $, repeat=True)
+distribute(ex)
+rename_dummies(ex)
+distribute(action)
+rename_dummies(action)
+factor_out(ex, $ \epsilon_{\alpha \beta}^{a}, e $)
+substitute(ex, $ h_{a b} -> \eta_{a b}, h^{a b} -> \eta^{a b} $, repeat=True);
+substitute(action, $ h_{a b} -> \eta_{a b}, h^{a b} -> \eta^{a b} $, repeat=True)
+rename_dummies(action);

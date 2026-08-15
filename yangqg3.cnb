@@ -1,0 +1,1177 @@
+{
+	"cell_id" : 7816130359985391675,
+	"cells" : 
+	[
+		{
+			"cell_id" : 3485110362217762439,
+			"cell_origin" : "client",
+			"cell_type" : "latex",
+			"cells" : 
+			[
+				{
+					"cell_id" : 18364272495528862980,
+					"cell_origin" : "client",
+					"cell_type" : "latex_view",
+					"source" : "\\section*{Introduction to Cadabra for beginners}\n\nThis notebook introduces Cadabra to people who have never used it before, or who have\nused one of the old 1.x versions. It will show you how to enter expressions, attach\nproperties to patterns, perform simple substitutions and so on. \n\nIf you need help, do not hesitate to email \\href{mailto:help@cadabra.science}{help@cadabra.science} or visit\nthe web site at \\url{http://cadabra.science/}.\n\n\\section*{Equations of motion}\n\nA good example to illustrate a number of Cadabra manipulations is to derive the equations of\nmotion of a field theory from an action. Below we discuss the Maxwell equations, just for\nsimplicity.\n\nIn Cadabra, the default setting is to do very little automatic simplification (essentially, only\nequal terms are collected). You can change this, however, by writing a \\verb|post_process|\nfunction which contains all the algorithms which you want to run at every step of your notebook.\nBelow is an example:"
+				}
+			],
+			"hidden" : true,
+			"source" : "\\section*{Introduction to Cadabra for beginners}\n\nThis notebook introduces Cadabra to people who have never used it before, or who have\nused one of the old 1.x versions. It will show you how to enter expressions, attach\nproperties to patterns, perform simple substitutions and so on. \n\nIf you need help, do not hesitate to email \\href{mailto:help@cadabra.science}{help@cadabra.science} or visit\nthe web site at \\url{http://cadabra.science/}.\n\n\\section*{Equations of motion}\n\nA good example to illustrate a number of Cadabra manipulations is to derive the equations of\nmotion of a field theory from an action. Below we discuss the Maxwell equations, just for\nsimplicity.\n\nIn Cadabra, the default setting is to do very little automatic simplification (essentially, only\nequal terms are collected). You can change this, however, by writing a \\verb|post_process|\nfunction which contains all the algorithms which you want to run at every step of your notebook.\nBelow is an example:"
+		},
+		{
+			"cell_id" : 6016712640869069116,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"cells" : 
+			[
+				{
+					"cell_id" : 11187590310861483221,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property TableauSymmetry to~}D_{j l \\mu?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 16275440978027918384,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta^{\\mu?}\\,_{\\nu?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 10449212123798291193,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta_{\\mu?}\\,^{\\nu?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 1748038136021334815,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta^{j? l?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15646600613964877772,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta_{j? l?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 1747971191861337879,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta_{j?}\\,^{l}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15154200087765934259,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta^{j?}\\,_{l?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 1557886992711224694,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property KroneckerDelta to~}\\delta_{y1? y2?}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 18245926196820895549,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property Metric to~}\\eta_{\\mu \\nu}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 14264151301617391465,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property TableauSymmetry to~}\\eta^{\\mu \\nu}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 10282937000802552221,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 13826117045241939521,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j} D_{j l \\mu} \\pi^{\\mu l} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{j} D_{j l \\mu} \\pi^{\\mu l}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 207559872416570530,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 1154385341187541511,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "(c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} +  1/2 i f_{j1 k}^{l} c^{j1} c^{k} b_{l}) i b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} (c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} +  1/2 i f_{j1 k}^{l} c^{j1} c^{k} b_{l})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\left(c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l}+\\frac{1}{2}i f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\right) i b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} \\left(c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l}+\\frac{1}{2}i f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\right)\\end{dmath*}"
+				},
+				{
+					"cell_id" : 4636046919432300105,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 4210867182746817587,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 14005939743593091662,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 2101417797162234314,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 11349347356446357171,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 741622613966401772,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15116687270594216984,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 15090735387077185943,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 13779704388909995950,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 13931895902860296989,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 6230383105132918266,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 1802370109266123983,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 3747110940363628114,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 14048601273147439269,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15809988350249434222,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 4497787144338352615,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 7868253653692272994,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 10910647747878059811,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 14689096110231420046,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 1577087224911161527,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9075077449366544506,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 3623060250825933805,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 2233461718766170345,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 17211585753961706214,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} i b_{j} A_{0}^{j} + c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i b_{j} A_{0}^{j} -  1/2 f_{j1 k}^{l} c^{j1} c^{k} b_{l} b_{j} A_{0}^{j} + i b_{j} A_{0}^{j} c^{j1} D_{j1 l \\mu} \\pi^{\\mu l} + i b_{j} A_{0}^{j} c^{j1} f_{j1 k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} -  1/2 b_{j} A_{0}^{j} f_{j1 k}^{l} c^{j1} c^{k} b_{l}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j}+c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i b_{j} A_{0}\\,^{j} - \\frac{1}{2}f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l} b_{j} A_{0}\\,^{j}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} D_{{j_{1}} l \\mu} \\pi^{\\mu l}+i b_{j} A_{0}\\,^{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} - \\frac{1}{2}b_{j} A_{0}\\,^{j} f_{{j_{1}} k}\\,^{l} c^{{j_{1}}} c^{k} b_{l}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 775242428629970291,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 10353518095979722484,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "A_{0}^{j} D_{k l 0} \\pi^{0 l} c^{k} b_{j} i + A_{0}^{j} D_{k l m1} \\pi^{m1 l} c^{k} b_{j} i + A_{0}^{j} \\pi^{0}_{l} A_{0}^{k} b^{k} c^{j1} f_{j1 j}^{l} i + A_{m1}^{j} \\pi^{m1}_{l} A_{0}^{k} b^{k} c^{j1} f_{j1 j}^{l} i -  1/2 A_{0}^{j} c^{l} c^{j1} b_{k} b_{j} f_{l j1}^{k} + A_{0}^{j} D_{k l 0} \\pi^{0 l} b_{j} c^{k} i + A_{0}^{j} D_{k l m1} \\pi^{m1 l} b_{j} c^{k} i + A_{0}^{j} A_{0}^{k} \\pi^{0 l} b_{j} c^{j1} f_{j1 k}^{l} i + A_{m1}^{j} A_{0}^{k} \\pi^{m1 l} b_{k} c^{j1} f_{j1 j}^{l} i -  1/2 A_{0}^{j} b_{j} c^{l} c^{j1} b_{k} f_{l j1}^{k}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}A_{0}\\,^{j} D_{k l 0} \\pi^{0 l} c^{k} b_{j} i+A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} l} c^{k} b_{j} i+A_{0}\\,^{j} \\pi^{0}\\,_{l} A_{0}\\,^{k} b^{k} c^{{j_{1}}} f_{{j_{1}} j}\\,^{l} i+A_{{m_{1}}}\\,^{j} \\pi^{{m_{1}}}\\,_{l} A_{0}\\,^{k} b^{k} c^{{j_{1}}} f_{{j_{1}} j}\\,^{l} i - \\frac{1}{2}A_{0}\\,^{j} c^{l} c^{{j_{1}}} b_{k} b_{j} f_{l {j_{1}}}\\,^{k}+A_{0}\\,^{j} D_{k l 0} \\pi^{0 l} b_{j} c^{k} i+A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} l} b_{j} c^{k} i+A_{0}\\,^{j} A_{0}\\,^{k} \\pi^{0 l} b_{j} c^{{j_{1}}} f_{{j_{1}} k}\\,^{l} i+A_{{m_{1}}}\\,^{j} A_{0}\\,^{k} \\pi^{{m_{1}} l} b_{k} c^{{j_{1}}} f_{{j_{1}} j}\\,^{l} i - \\frac{1}{2}A_{0}\\,^{j} b_{j} c^{l} c^{{j_{1}}} b_{k} f_{l {j_{1}}}\\,^{k}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 4650281465432861184,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 12237064942369217826,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-A_{0}^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j} i-A_{0}^{j} D_{k l m1} \\pi^{m1 k} c^{l} b_{j} i-A_{0}^{j} \\pi^{0}_{l} A_{0}^{k} b_{j} c^{j1} f^{k}_{j1}^{l} i-A_{m1}^{j} \\pi^{m1}_{l} A_{0}^{k} b^{k} c^{j1} f_{j j1}^{l} i +  1/2 A_{0}^{j} c^{l} c^{j1} b_{j} b_{k} f_{l j1}^{k}-A_{0}^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l} i-A_{0}^{j} D_{k l m1} \\pi^{m1 k} b_{j} c^{l} i-A_{0}^{j} A_{0}^{k} \\pi^{0 l} b_{j} c^{j1} f_{k}^{j1}_{l} i-A_{m1}^{j} A_{0}^{k} \\pi^{m1 l} b_{k} c^{j1} f_{j}^{j1}_{l} i -  1/2 A_{0}^{j} b_{j} c^{l} c^{j1} b_{k} f_{l j1}^{k}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j} i-A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} c^{l} b_{j} i-A_{0}\\,^{j} \\pi^{0}\\,_{l} A_{0}\\,^{k} b_{j} c^{{j_{1}}} f^{k}\\,_{{j_{1}}}\\,^{l} i-A_{{m_{1}}}\\,^{j} \\pi^{{m_{1}}}\\,_{l} A_{0}\\,^{k} b^{k} c^{{j_{1}}} f_{j {j_{1}}}\\,^{l} i+\\frac{1}{2}A_{0}\\,^{j} c^{l} c^{{j_{1}}} b_{j} b_{k} f_{l {j_{1}}}\\,^{k}-A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l} i-A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} b_{j} c^{l} i-A_{0}\\,^{j} A_{0}\\,^{k} \\pi^{0 l} b_{j} c^{{j_{1}}} f_{k}\\,^{{j_{1}}}\\,_{l} i-A_{{m_{1}}}\\,^{j} A_{0}\\,^{k} \\pi^{{m_{1}} l} b_{k} c^{{j_{1}}} f_{j}\\,^{{j_{1}}}\\,_{l} i - \\frac{1}{2}A_{0}\\,^{j} b_{j} c^{l} c^{{j_{1}}} b_{k} f_{l {j_{1}}}\\,^{k}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 17894533603254713793,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 7380897736145487091,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-\\Pi^{m1}_{j} D_{j l 0} B_{m1 l} + \\Pi^{m1}_{j} D_{j l m1} B_{0 l} + \\Pi^{m1}_{l} B_{m1 k} B_{0 j} f_{j k l} + i (-A_{0}^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j} i-A_{0}^{j} D_{k l m1} \\pi^{m1 k} c^{l} b_{j} i-A_{0}^{j} \\pi^{0}_{l} A_{0}^{k} b_{j} c^{j1} f^{k}_{j1}^{l} i-A_{m1}^{j} \\pi^{m1}_{l} A_{0}^{k} b^{k} c^{j1} f_{j j1}^{l} i +  1/2 A_{0}^{j} c^{l} c^{j1} b_{j} b_{k} f_{l j1}^{k}-A_{0}^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l} i-A_{0}^{j} D_{k l m1} \\pi^{m1 k} b_{j} c^{l} i-A_{0}^{j} A_{0}^{k} \\pi^{0 l} b_{j} c^{j1} f_{k}^{j1}_{l} i-A_{m1}^{j} A_{0}^{k} \\pi^{m1 l} b_{k} c^{j1} f_{j}^{j1}_{l} i -  1/2 A_{0}^{j} b_{j} c^{l} c^{j1} b_{k} f_{l j1}^{k})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-\\Pi^{{m_{1}}}\\,_{j} D_{j l 0} B_{{m_{1}} l}+\\Pi^{{m_{1}}}\\,_{j} D_{j l {m_{1}}} B_{0 l}+\\Pi^{{m_{1}}}\\,_{l} B_{{m_{1}} k} B_{0 j} f_{j k l}+i \\left(-A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j} i-A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} c^{l} b_{j} i-A_{0}\\,^{j} \\pi^{0}\\,_{l} A_{0}\\,^{k} b_{j} c^{{j_{1}}} f^{k}\\,_{{j_{1}}}\\,^{l} i-A_{{m_{1}}}\\,^{j} \\pi^{{m_{1}}}\\,_{l} A_{0}\\,^{k} b^{k} c^{{j_{1}}} f_{j {j_{1}}}\\,^{l} i+\\frac{1}{2}A_{0}\\,^{j} c^{l} c^{{j_{1}}} b_{j} b_{k} f_{l {j_{1}}}\\,^{k}-A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l} i-A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} b_{j} c^{l} i-A_{0}\\,^{j} A_{0}\\,^{k} \\pi^{0 l} b_{j} c^{{j_{1}}} f_{k}\\,^{{j_{1}}}\\,_{l} i-A_{{m_{1}}}\\,^{j} A_{0}\\,^{k} \\pi^{{m_{1}} l} b_{k} c^{{j_{1}}} f_{j}\\,^{{j_{1}}}\\,_{l} i - \\frac{1}{2}A_{0}\\,^{j} b_{j} c^{l} c^{{j_{1}}} b_{k} f_{l {j_{1}}}\\,^{k}\\right)\\end{dmath*}"
+				},
+				{
+					"cell_id" : 11623603222429959874,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 2803507645579864433,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "B_{m1 j} D_{j k 0} \\Pi^{m1}_{k}-B_{0 j} D_{j k m1} \\Pi^{m1}_{k} + B_{m1 j} B_{0 k} \\Pi^{m1}_{l} f_{k j l} + A_{0}^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j} + A_{0}^{j} D_{k l m1} \\pi^{m1 k} c^{l} b_{j} + A_{0}^{j} \\pi^{0}_{l} A_{0}^{k} b_{j} c^{j1} f^{k}_{j1}^{l} + A_{m1}^{j} \\pi^{m1}_{l} A_{0}^{k} b^{k} c^{j1} f_{j j1}^{l} +  1/2 A_{0}^{j} c^{l} c^{j1} b_{j} b_{k} f_{l j1}^{k} i + A_{0}^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l} + A_{0}^{j} D_{k l m1} \\pi^{m1 k} b_{j} c^{l} + A_{0}^{j} A_{0}^{k} \\pi^{0 l} b_{j} c^{j1} f_{k j1}^{l} + A_{m1}^{j} A_{0}^{k} \\pi^{m1 l} b_{k} c^{j1} f_{j j1}^{l} -  1/2 A_{0}^{j} b_{j} c^{l} c^{j1} b_{k} f_{l j1}^{k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}B_{{m_{1}} j} D_{j k 0} \\Pi^{{m_{1}}}\\,_{k}-B_{0 j} D_{j k {m_{1}}} \\Pi^{{m_{1}}}\\,_{k}+B_{{m_{1}} j} B_{0 k} \\Pi^{{m_{1}}}\\,_{l} f_{k j l}+A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} c^{l} b_{j}+A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} c^{l} b_{j}+A_{0}\\,^{j} \\pi^{0}\\,_{l} A_{0}\\,^{k} b_{j} c^{{j_{1}}} f^{k}\\,_{{j_{1}}}\\,^{l}+A_{{m_{1}}}\\,^{j} \\pi^{{m_{1}}}\\,_{l} A_{0}\\,^{k} b^{k} c^{{j_{1}}} f_{j {j_{1}}}\\,^{l}+\\frac{1}{2}A_{0}\\,^{j} c^{l} c^{{j_{1}}} b_{j} b_{k} f_{l {j_{1}}}\\,^{k} i+A_{0}\\,^{j} D_{k l 0} \\pi^{0 k} b_{j} c^{l}+A_{0}\\,^{j} D_{k l {m_{1}}} \\pi^{{m_{1}} k} b_{j} c^{l}+A_{0}\\,^{j} A_{0}\\,^{k} \\pi^{0 l} b_{j} c^{{j_{1}}} f_{k {j_{1}}}\\,^{l}+A_{{m_{1}}}\\,^{j} A_{0}\\,^{k} \\pi^{{m_{1}} l} b_{k} c^{{j_{1}}} f_{j {j_{1}}}\\,^{l} - \\frac{1}{2}A_{0}\\,^{j} b_{j} c^{l} c^{{j_{1}}} b_{k} f_{l {j_{1}}}\\,^{k} i\\end{dmath*}"
+				},
+				{
+					"cell_id" : 3612057895566539127,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9209868005630982667,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} -  1/4 f_{j k}^{l} c^{j} c^{k} b_{l} f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}} - \\frac{1}{4}f_{j k}\\,^{l} c^{j} c^{k} b_{l} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15123436076083384250,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 11397647320090670581,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} -  1/4 f_{j k}^{l} c^{j} c^{k} b_{l} f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}} - \\frac{1}{4}f_{j k}\\,^{l} c^{j} c^{k} b_{l} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 15715231792864517624,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 3890760965250598293,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} + c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} +  1/2 c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l} i f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} D_{j1 j3 \\alpha} \\pi^{\\alpha j3} +  1/2 i f_{j k}^{l} c^{j} c^{k} b_{l} c^{j1} f_{j1 j2}^{j3} A_{\\alpha}^{j2} \\pi^{\\alpha j3} -  1/4 f_{j k}^{l} c^{j} c^{k} b_{l} f_{j1 j2}^{j3} c^{j1} c^{j2} b_{j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} D_{j l \\mu} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} D_{j l \\mu} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}c^{j} f_{j k}\\,^{l} A_{\\mu}\\,^{k} \\pi^{\\mu l} i f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} D_{{j_{1}} {j_{3}} \\alpha} \\pi^{\\alpha {j_{3}}}+\\frac{1}{2}i f_{j k}\\,^{l} c^{j} c^{k} b_{l} c^{{j_{1}}} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} A_{\\alpha}\\,^{{j_{2}}} \\pi^{\\alpha {j_{3}}} - \\frac{1}{4}f_{j k}\\,^{l} c^{j} c^{k} b_{l} f_{{j_{1}} {j_{2}}}\\,^{{j_{3}}} c^{{j_{1}}} c^{{j_{2}}} b_{{j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9039456623696589925,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 8959033914076452814,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "A_{\\alpha}^{j} D_{k l \\beta} \\pi^{\\beta l} \\pi^{\\alpha}_{j1} c^{k} c^{j2} f_{j2}^{j j1} +  1/2 D_{j k \\alpha} \\pi^{\\alpha k} c^{j} c^{j1} c^{j2} b_{l} f_{j1 j2}^{l} i + A_{\\alpha}^{j} D_{k}^{l}_{\\beta} \\pi^{\\alpha}_{j1} \\pi^{\\beta l} c^{j2} c^{k} f_{j2 j}^{j1} +  1/2 A_{\\alpha}^{j} \\pi^{\\alpha}_{k} b^{l} c^{j1} c^{j2} c^{j3} f_{j1 j}^{k} f_{j2 j3}^{l} i +  1/2 D_{j k \\alpha} \\pi^{\\alpha k} c^{j1} c^{j2} b_{l} c^{j} f_{j1 j2}^{l} i +  1/2 A_{\\alpha}^{j} \\pi^{\\alpha}_{k} c^{j1} c^{j2} b_{l} c^{j3} f_{j1 j2}^{l} f^{j3}_{j}^{k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}A_{\\alpha}\\,^{j} D_{k l \\beta} \\pi^{\\beta l} \\pi^{\\alpha}\\,_{{j_{1}}} c^{k} c^{{j_{2}}} f_{{j_{2}}}\\,^{j {j_{1}}}+\\frac{1}{2}D_{j k \\alpha} \\pi^{\\alpha k} c^{j} c^{{j_{1}}} c^{{j_{2}}} b_{l} f_{{j_{1}} {j_{2}}}\\,^{l} i+A_{\\alpha}\\,^{j} D_{k}\\,^{l}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} \\pi^{\\beta l} c^{{j_{2}}} c^{k} f_{{j_{2}} j}\\,^{{j_{1}}}+\\frac{1}{2}A_{\\alpha}\\,^{j} \\pi^{\\alpha}\\,_{k} b^{l} c^{{j_{1}}} c^{{j_{2}}} c^{{j_{3}}} f_{{j_{1}} j}\\,^{k} f_{{j_{2}} {j_{3}}}\\,^{l} i+\\frac{1}{2}D_{j k \\alpha} \\pi^{\\alpha k} c^{{j_{1}}} c^{{j_{2}}} b_{l} c^{j} f_{{j_{1}} {j_{2}}}\\,^{l} i+\\frac{1}{2}A_{\\alpha}\\,^{j} \\pi^{\\alpha}\\,_{k} c^{{j_{1}}} c^{{j_{2}}} b_{l} c^{{j_{3}}} f_{{j_{1}} {j_{2}}}\\,^{l} f^{{j_{3}}}\\,_{j}\\,^{k} i\\end{dmath*}"
+				},
+				{
+					"cell_id" : 11102834957288363064,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 7572625318614054138,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-A_{\\alpha}^{j} D_{k l \\beta} \\pi^{\\beta k} \\pi^{\\alpha}_{j1} c^{l} c^{j2} f_{j2}^{j j1} -  1/2 D_{j k \\alpha} \\pi^{\\alpha j} c^{k} c^{j1} c^{j2} b_{l} f_{j1 j2}^{l} i + A_{\\alpha}^{j} D_{k}^{l}_{\\beta} \\pi^{\\alpha}_{j1} \\pi^{\\beta}_{l} c^{k} c^{j2} f_{j}^{j2 j1} -  1/2 A_{\\alpha}^{j} \\pi^{\\alpha}_{k} b^{l} c^{j1} c^{j2} c^{j3} f_{j j1}^{k} f_{j2}^{j3}_{l} i -  1/2 D_{j k \\alpha} \\pi^{\\alpha j} c^{k} c^{j1} b_{l} c^{j2} f_{j1 j2}^{l} i +  1/2 A_{\\alpha}^{j} \\pi^{\\alpha}_{k} c^{j1} c^{j2} b_{l} c^{j3} f_{j1}^{j2 l} f_{j3 j}^{k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-A_{\\alpha}\\,^{j} D_{k l \\beta} \\pi^{\\beta k} \\pi^{\\alpha}\\,_{{j_{1}}} c^{l} c^{{j_{2}}} f_{{j_{2}}}\\,^{j {j_{1}}} - \\frac{1}{2}D_{j k \\alpha} \\pi^{\\alpha j} c^{k} c^{{j_{1}}} c^{{j_{2}}} b_{l} f_{{j_{1}} {j_{2}}}\\,^{l} i+A_{\\alpha}\\,^{j} D_{k}\\,^{l}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} \\pi^{\\beta}\\,_{l} c^{k} c^{{j_{2}}} f_{j}\\,^{{j_{2}} {j_{1}}} - \\frac{1}{2}A_{\\alpha}\\,^{j} \\pi^{\\alpha}\\,_{k} b^{l} c^{{j_{1}}} c^{{j_{2}}} c^{{j_{3}}} f_{j {j_{1}}}\\,^{k} f_{{j_{2}}}\\,^{{j_{3}}}\\,_{l} i - \\frac{1}{2}D_{j k \\alpha} \\pi^{\\alpha j} c^{k} c^{{j_{1}}} b_{l} c^{{j_{2}}} f_{{j_{1}} {j_{2}}}\\,^{l} i+\\frac{1}{2}A_{\\alpha}\\,^{j} \\pi^{\\alpha}\\,_{k} c^{{j_{1}}} c^{{j_{2}}} b_{l} c^{{j_{3}}} f_{{j_{1}}}\\,^{{j_{2}} l} f_{{j_{3}} j}\\,^{k} i\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9305699028128878167,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 4419195223102958534,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "G_{j} G_{l}-G_{l} G_{j}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}G_{j} G_{l}-G_{l} G_{j}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 7970271603820274801,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 5351306013012012366,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "(D_{j j1 \\mu} \\pi^{\\mu}_{j1}-f_{j k j1} \\pi^{\\mu}_{j1} A_{\\mu k}) (D_{l j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{l j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2})-(D_{l j1 \\mu} \\pi^{\\mu}_{j1}-f_{l k j1} \\pi^{\\mu}_{j1} A_{\\mu k}) (D_{j j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{j j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\left(D_{j {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}}-f_{j k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) \\left(D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)-\\left(D_{l {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}}-f_{l k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) \\left(D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)\\end{dmath*}"
+				},
+				{
+					"cell_id" : 4884857677124042680,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 17275955335549396460,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "D_{j j1 \\mu} \\pi^{\\mu}_{j1} D_{l j3 \\alpha} \\pi^{\\alpha}_{j3}-D_{j j1 \\mu} \\pi^{\\mu}_{j1} f_{l j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}-f_{j k j1} \\pi^{\\mu}_{j1} A_{\\mu k} D_{l j3 \\alpha} \\pi^{\\alpha}_{j3} + f_{j k j1} \\pi^{\\mu}_{j1} A_{\\mu k} f_{l j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}-D_{l j1 \\mu} \\pi^{\\mu}_{j1} D_{j j3 \\alpha} \\pi^{\\alpha}_{j3} + D_{l j1 \\mu} \\pi^{\\mu}_{j1} f_{j j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2} + f_{l k j1} \\pi^{\\mu}_{j1} A_{\\mu k} D_{j j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{l k j1} \\pi^{\\mu}_{j1} A_{\\mu k} f_{j j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}D_{j {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-D_{j {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}-f_{j k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k} D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+f_{j k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k} f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}-D_{l {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+D_{l {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}+f_{l k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k} D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{l k {j_{1}}} \\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k} f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 10904095407853557763,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 634598302634726690,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "D_{j j1 \\mu} \\pi^{\\mu}_{j1} D_{l j3 \\alpha} \\pi^{\\alpha}_{j3}-D_{j j1 \\mu} f_{l j2 j3} \\pi^{\\alpha}_{j3} (i \\delta^{\\mu}_{\\alpha} \\delta_{j2 j1} + \\pi^{\\mu}_{j1} A_{\\alpha j2})-f_{j k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) D_{l j3 \\alpha} \\pi^{\\alpha}_{j3} + f_{j k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) f_{l j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}-D_{l j1 \\mu} \\pi^{\\mu}_{j1} D_{j j3 \\alpha} \\pi^{\\alpha}_{j3} + D_{l j1 \\mu} f_{j j2 j3} \\pi^{\\alpha}_{j3} (i \\delta^{\\mu}_{\\alpha} \\delta_{j2 j1} + \\pi^{\\mu}_{j1} A_{\\alpha j2}) + f_{l k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) D_{j j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{l k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) f_{j j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}D_{j {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-D_{j {j_{1}} \\mu} f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} \\left(i \\delta^{\\mu}\\,_{\\alpha} \\delta_{{j_{2}} {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\alpha {j_{2}}}\\right)-f_{j k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+f_{j k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}-D_{l {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+D_{l {j_{1}} \\mu} f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} \\left(i \\delta^{\\mu}\\,_{\\alpha} \\delta_{{j_{2}} {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\alpha {j_{2}}}\\right)+f_{l k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{l k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 10405322274490610894,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 4349840021110709026,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "D_{j j1 \\mu} \\pi^{\\mu}_{j1} D_{l j3 \\alpha} \\pi^{\\alpha}_{j3}-D_{j j2 \\alpha} f_{l j2 j3} \\pi^{\\alpha}_{j3} i-D_{j j1 \\mu} f_{l j2 j3} \\pi^{\\mu}_{j1} (i \\delta^{\\alpha}_{\\alpha} \\delta_{j2 j3} + \\pi^{\\alpha}_{j3} A_{\\alpha j2})-f_{j j1 j1} i \\delta^{\\mu}_{\\mu} D_{l j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{j k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) D_{l j3 \\alpha} \\pi^{\\alpha}_{j3} + f_{j j1 j1} i \\delta^{\\mu}_{\\mu} f_{l j2 j3} (i \\delta^{\\alpha}_{\\alpha} \\delta_{j2 j3} + \\pi^{\\alpha}_{j3} A_{\\alpha j2}) + f_{j k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) f_{l j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}-D_{l j1 \\mu} \\pi^{\\mu}_{j1} D_{j j3 \\alpha} \\pi^{\\alpha}_{j3} + D_{l j2 \\alpha} f_{j j2 j3} \\pi^{\\alpha}_{j3} i + D_{l j1 \\mu} f_{j j2 j3} \\pi^{\\mu}_{j1} (i \\delta^{\\alpha}_{\\alpha} \\delta_{j2 j3} + \\pi^{\\alpha}_{j3} A_{\\alpha j2}) + f_{l j1 j1} i \\delta^{\\mu}_{\\mu} D_{j j3 \\alpha} \\pi^{\\alpha}_{j3} + f_{l k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) D_{j j3 \\alpha} \\pi^{\\alpha}_{j3}-f_{l j1 j1} i \\delta^{\\mu}_{\\mu} f_{j j2 j3} (i \\delta^{\\alpha}_{\\alpha} \\delta_{j2 j3} + \\pi^{\\alpha}_{j3} A_{\\alpha j2})-f_{l k j1} (i \\delta^{\\mu}_{\\mu} \\delta_{k j1} + \\pi^{\\mu}_{j1} A_{\\mu k}) f_{j j2 j3} \\pi^{\\alpha}_{j3} A_{\\alpha j2}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}D_{j {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-D_{j {j_{2}} \\alpha} f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} i-D_{j {j_{1}} \\mu} f_{l {j_{2}} {j_{3}}} \\pi^{\\mu}\\,_{{j_{1}}} \\left(i \\delta^{\\alpha}\\,_{\\alpha} \\delta_{{j_{2}} {j_{3}}}+\\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)-f_{j {j_{1}} {j_{1}}} i \\delta^{\\mu}\\,_{\\mu} D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{j k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) D_{l {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+f_{j {j_{1}} {j_{1}}} i \\delta^{\\mu}\\,_{\\mu} f_{l {j_{2}} {j_{3}}} \\left(i \\delta^{\\alpha}\\,_{\\alpha} \\delta_{{j_{2}} {j_{3}}}+\\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)+f_{j k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) f_{l {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}-D_{l {j_{1}} \\mu} \\pi^{\\mu}\\,_{{j_{1}}} D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+D_{l {j_{2}} \\alpha} f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} i+D_{l {j_{1}} \\mu} f_{j {j_{2}} {j_{3}}} \\pi^{\\mu}\\,_{{j_{1}}} \\left(i \\delta^{\\alpha}\\,_{\\alpha} \\delta_{{j_{2}} {j_{3}}}+\\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)+f_{l {j_{1}} {j_{1}}} i \\delta^{\\mu}\\,_{\\mu} D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}+f_{l k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) D_{j {j_{3}} \\alpha} \\pi^{\\alpha}\\,_{{j_{3}}}-f_{l {j_{1}} {j_{1}}} i \\delta^{\\mu}\\,_{\\mu} f_{j {j_{2}} {j_{3}}} \\left(i \\delta^{\\alpha}\\,_{\\alpha} \\delta_{{j_{2}} {j_{3}}}+\\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\right)-f_{l k {j_{1}}} \\left(i \\delta^{\\mu}\\,_{\\mu} \\delta_{k {j_{1}}}+\\pi^{\\mu}\\,_{{j_{1}}} A_{\\mu k}\\right) f_{j {j_{2}} {j_{3}}} \\pi^{\\alpha}\\,_{{j_{3}}} A_{\\alpha {j_{2}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 7825583025711560325,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 4467295819429352988,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "D_{j k \\alpha} D_{l j1 \\beta} \\pi^{\\beta}_{j1} \\pi^{\\alpha}_{k}-D_{j k \\alpha} \\pi^{\\alpha}_{j1} f_{l k j1} i + D_{j k \\alpha} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{k} f_{l j1 j1} i-A_{\\alpha k} D_{j j1 \\beta} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j1} f_{l k j2}-D_{l k \\alpha} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{k} f_{j j1 j1} i-A_{\\alpha k} D_{l j1 \\beta} \\pi^{\\beta}_{j1} \\pi^{\\alpha}_{j2} f_{j k j2} + 2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{j j2 j2} f_{l k j1} i + A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j j1 j3} f_{l k j2}-D_{j k \\alpha} D_{l j1 \\beta} \\pi^{\\alpha}_{k} \\pi^{\\beta}_{j1} + D_{l k \\alpha} \\pi^{\\alpha}_{j1} f_{j k j1} i + A_{\\alpha k} D_{l j1 \\beta} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j1} f_{j k j2} + A_{\\alpha k} D_{j j1 \\beta} \\pi^{\\beta}_{j1} \\pi^{\\alpha}_{j2} f_{l k j2}-2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{l j2 j2} f_{j k j1} i-A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j k j2} f_{l j1 j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}D_{j k \\alpha} D_{l {j_{1}} \\beta} \\pi^{\\beta}\\,_{{j_{1}}} \\pi^{\\alpha}\\,_{k}-D_{j k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} i+D_{j k \\alpha} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{k} f_{l {j_{1}} {j_{1}}} i-A_{\\alpha k} D_{j {j_{1}} \\beta} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{1}}} f_{l k {j_{2}}}-D_{l k \\alpha} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{k} f_{j {j_{1}} {j_{1}}} i-A_{\\alpha k} D_{l {j_{1}} \\beta} \\pi^{\\beta}\\,_{{j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j k {j_{2}}}+2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j {j_{2}} {j_{2}}} f_{l k {j_{1}}} i+A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j {j_{1}} {j_{3}}} f_{l k {j_{2}}}-D_{j k \\alpha} D_{l {j_{1}} \\beta} \\pi^{\\alpha}\\,_{k} \\pi^{\\beta}\\,_{{j_{1}}}+D_{l k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} i+A_{\\alpha k} D_{l {j_{1}} \\beta} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{1}}} f_{j k {j_{2}}}+A_{\\alpha k} D_{j {j_{1}} \\beta} \\pi^{\\beta}\\,_{{j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} f_{l k {j_{2}}}-2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l {j_{2}} {j_{2}}} f_{j k {j_{1}}} i-A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j k {j_{2}}} f_{l {j_{1}} {j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 368505808595084774,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 5209178809116800259,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-D_{j k \\alpha} \\pi^{\\alpha}_{j1} f_{l k j1} i + D_{j k \\alpha} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{k} f_{l j1 j1} i-D_{l k \\alpha} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{k} f_{j j1 j1} i + 2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{l k j1} f_{j j2 j2} i + A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j j1 j3} f_{l k j2} + D_{l k \\alpha} \\pi^{\\alpha}_{j1} f_{j k j1} i-2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{j k j1} f_{l j2 j2} i-A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j k j2} f_{l j1 j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-D_{j k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} i+D_{j k \\alpha} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{k} f_{l {j_{1}} {j_{1}}} i-D_{l k \\alpha} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{k} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} f_{j {j_{2}} {j_{2}}} i+A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j {j_{1}} {j_{3}}} f_{l k {j_{2}}}+D_{l k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} i-2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} f_{l {j_{2}} {j_{2}}} i-A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j k {j_{2}}} f_{l {j_{1}} {j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 1831059393660661751,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 7567375095201798516,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-D_{j k \\alpha} \\pi^{\\alpha}_{j1} f_{l k j1} i + \\Pi_{j} \\delta^{\\beta}_{\\beta} f_{l j1 j1} i-\\Pi_{l} \\delta^{\\beta}_{\\beta} f_{j j1 j1} i + 2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{l k j1} f_{j j2 j2} i + A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j j1 j3} f_{l k j2} + D_{l k \\alpha} \\pi^{\\alpha}_{j1} f_{j k j1} i-2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{j k j1} f_{l j2 j2} i-A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j k j2} f_{l j1 j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-D_{j k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} i+\\Pi_{j} \\delta^{\\beta}\\,_{\\beta} f_{l {j_{1}} {j_{1}}} i-\\Pi_{l} \\delta^{\\beta}\\,_{\\beta} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} f_{j {j_{2}} {j_{2}}} i+A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j {j_{1}} {j_{3}}} f_{l k {j_{2}}}+D_{l k \\alpha} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} i-2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} f_{l {j_{2}} {j_{2}}} i-A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j k {j_{2}}} f_{l {j_{1}} {j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 7045654914993964828,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 13365045020272907795,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-\\Pi_{j1} f_{l j j1} i + \\Pi_{j} \\delta^{\\beta}_{\\beta} f_{l j1 j1} i-\\Pi_{l} \\delta^{\\beta}_{\\beta} f_{j j1 j1} i + 2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{l k j1} f_{j j2 j2} i + A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j j1 j3} f_{l k j2} + \\Pi_{j1} f_{j l j1} i-2A_{\\alpha k} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j1} f_{j k j1} f_{l j2 j2} i-A_{\\alpha k} A_{\\beta j1} \\pi^{\\alpha}_{j2} \\pi^{\\beta}_{j3} f_{j k j2} f_{l j1 j3}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-\\Pi_{{j_{1}}} f_{l j {j_{1}}} i+\\Pi_{j} \\delta^{\\beta}\\,_{\\beta} f_{l {j_{1}} {j_{1}}} i-\\Pi_{l} \\delta^{\\beta}\\,_{\\beta} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{l k {j_{1}}} f_{j {j_{2}} {j_{2}}} i+A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j {j_{1}} {j_{3}}} f_{l k {j_{2}}}+\\Pi_{{j_{1}}} f_{j l {j_{1}}} i-2A_{\\alpha k} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{1}}} f_{j k {j_{1}}} f_{l {j_{2}} {j_{2}}} i-A_{\\alpha k} A_{\\beta {j_{1}}} \\pi^{\\alpha}\\,_{{j_{2}}} \\pi^{\\beta}\\,_{{j_{3}}} f_{j k {j_{2}}} f_{l {j_{1}} {j_{3}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 17964017358213821920,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9644415834905408719,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-\\Pi_{j1} f_{l j j1} i + \\Pi_{j} \\delta^{\\beta}_{\\beta} f_{l j1 j1} i-\\Pi_{l} \\delta^{\\beta}_{\\beta} f_{j j1 j1} i + 2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j k k} f_{l j1 j2} i + \\Pi_{j1} f_{j l j1} i-2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j j1 j2} f_{l k k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-\\Pi_{{j_{1}}} f_{l j {j_{1}}} i+\\Pi_{j} \\delta^{\\beta}\\,_{\\beta} f_{l {j_{1}} {j_{1}}} i-\\Pi_{l} \\delta^{\\beta}\\,_{\\beta} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j k k} f_{l {j_{1}} {j_{2}}} i+\\Pi_{{j_{1}}} f_{j l {j_{1}}} i-2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j {j_{1}} {j_{2}}} f_{l k k} i\\end{dmath*}"
+				},
+				{
+					"cell_id" : 17320249086577805212,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 14877154245472911380,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-\\Pi_{j1} f_{l j j1} i + \\Pi_{j} \\delta^{\\beta}_{\\beta} f_{l j1 j1} i-\\Pi_{l} \\delta^{\\beta}_{\\beta} f_{j j1 j1} i + 2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j k k} f_{l j1 j2} i + \\Pi_{j1} f_{j l j1} i-2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j j1 j2} f_{l k k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-\\Pi_{{j_{1}}} f_{l j {j_{1}}} i+\\Pi_{j} \\delta^{\\beta}\\,_{\\beta} f_{l {j_{1}} {j_{1}}} i-\\Pi_{l} \\delta^{\\beta}\\,_{\\beta} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j k k} f_{l {j_{1}} {j_{2}}} i+\\Pi_{{j_{1}}} f_{j l {j_{1}}} i-2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j {j_{1}} {j_{2}}} f_{l k k} i\\end{dmath*}"
+				},
+				{
+					"cell_id" : 4301924616878998706,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 11671780821954970037,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-\\Pi_{j1} f_{l j j1} i + \\Pi_{j} \\delta^{\\beta}_{\\beta} f_{l j1 j1} i-\\Pi_{l} \\delta^{\\beta}_{\\beta} f_{j j1 j1} i + 2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j k k} f_{l j1 j2} i + \\Pi_{j1} f_{j l j1} i-2A_{\\alpha j1} \\delta^{\\beta}_{\\beta} \\pi^{\\alpha}_{j2} f_{j j1 j2} f_{l k k} i"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-\\Pi_{{j_{1}}} f_{l j {j_{1}}} i+\\Pi_{j} \\delta^{\\beta}\\,_{\\beta} f_{l {j_{1}} {j_{1}}} i-\\Pi_{l} \\delta^{\\beta}\\,_{\\beta} f_{j {j_{1}} {j_{1}}} i+2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j k k} f_{l {j_{1}} {j_{2}}} i+\\Pi_{{j_{1}}} f_{j l {j_{1}}} i-2A_{\\alpha {j_{1}}} \\delta^{\\beta}\\,_{\\beta} \\pi^{\\alpha}\\,_{{j_{2}}} f_{j {j_{1}} {j_{2}}} f_{l k k} i\\end{dmath*}"
+				}
+			],
+			"source" : "def post_process(ex):\n\t#unwrap(ex)\n\teliminate_kronecker(ex)\n\t#canonicalise(ex)\n\t#sort_product(ex)\n\tcollect_terms(ex)\n#rrr:= { b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}, b_{k} \\partial_{\\mu?}{c_{j}} -> \\partial_{\\mu?}{\\delta_{j k}}-\\partial_{\\mu?}{c_{j}} b_{k},\n#        A_{\\mu j}\\pi^{\\nu}_{k} -> i\\delta^{\\nu}_{\\mu} \\delta_{j k}+\\pi^{\\nu}_{k} A_{\\mu j},\n#        A_{0 j}\\pi^{\\nu}_{k} -> i\\delta^{\\nu}_{0} \\delta_{j k}+\\pi^{\\nu}_{k} A_{0 j}};\nd{#}::Accent.\n{\\alpha,\\beta,\\gamma,\\mu,\\nu,\\rho,\\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).\n{m1,m#}::Indices(name=holo,parent=holonomic,position=independent,values={1,2,3}).\n{j,k,l,j#}::Indices(name=frame,position=independent).\n{y1,y#}::Indices(name=pos,position=independent).\n\nf_{j k}^{l}::TableauSymmetry(shape={1,1}, indices={0,1}).\nD_{j l \\mu?}::TableauSymmetry(shape={1,1}, indices={0,1});\n\\delta^{\\mu?}_{\\nu?}::KroneckerDelta;\n\\delta_{\\mu?}^{\\nu?}::KroneckerDelta;\n\\delta^{j? l?}::KroneckerDelta;\n\\delta_{j? l?}::KroneckerDelta;\n\\delta_{j?}^{l}::KroneckerDelta;\n\\delta^{j?}_{l?}::KroneckerDelta;\n\\delta_{y1? y2?}::KroneckerDelta;\n\n\\eta_{\\mu \\nu}::Metric(signature=+2);\n\\eta^{\\mu \\nu}::InverseMetric;\n{c^{j}, b_{j}}::SelfAntiCommuting.\n{c^{j}, b_{j}}::NonCommuting.\n#{c_{j}, b_{j}}::Depends(\\partial{#}).\n{A_{\\mu?}^{j}, \\pi^{\\mu?}_{j}}::NonCommuting.\n#{A_{\\mu? j y1}, \\pi^{\\mu?}_{j y1}}::Depends(\\partial{#}).\ni::ImaginaryI.\n\nG:= c^{j} D_{j l \\mu} \\pi^{\\mu l} +c^{j} f_{j k}^{l} A_{\\mu}^{k} \\pi^{\\mu l}+ i f_{j k}^{l} c^{j} c^{k} b_{l}/2;\n#G2:=@(G);\n#split_index(G2,$\\alpha, 0, m1 $, repeat=True)\nex:= @(G) i b_{j} A_{0}^{j}+i b_{j} A_{0}^{j} @(G);\n#ex:=\\pi^{\\mu}_{k} A_{0 j}-A_{0 j}\\pi^{\\mu}_{k};\ndistribute(ex);\nsubstitute(ex,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(ex,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(ex);\nsubstitute(ex,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(ex,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(ex);\nsubstitute(ex,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(ex,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(ex);\nsubstitute(ex,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(ex,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\nsubstitute(ex,$A_{\\mu j} A_{0 k} -> A_{0 k} A_{\\mu j}$);\ndistribute(ex);\nsubstitute(ex,$\\pi^{\\nu?}_{k} -> \\Pi^{\\nu?}_{k}$);\nsubstitute(ex,$A_{\\nu? k} -> B_{\\nu? k}$);\nsplit_index(ex,$\\alpha, 0, m1 $, repeat=True)\ndistribute(ex)\ncanonicalise(ex)\nsort_product(ex)\nrename_dummies(ex);\ncanonicalise(ex)\nsort_product(ex)\nrename_dummies(ex);\nss:=-\\Pi^{m1}_{j}D_{j l 0} B_{m1 l}+\\Pi^{m1}_{j} D_{j l m1} B_{0 l}+\\Pi^{m1}_{l}B_{m1 k}B_{0 j}f_{j k l}+i @(ex);\ndistribute(ss)\ncanonicalise(ss)\nsort_product(ss)\nrename_dummies(ss)\ncanonicalise(ss)\nsort_product(ss)\nrename_dummies(ss);\ns2:= @(G) @(G).\ndistribute(s2);\n#rename_dummies(s2);\nsubstitute(s2,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(s2,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(s2)\n#rename_dummies(s2)\nsubstitute(s2,$b_{k} c_{j} -> \\delta_{j k}-c_{j} b_{k}$)\nsubstitute(s2,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\n#substitute(s2,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);\ndistribute(s2)\ncanonicalise(s2)\nsort_product(s2)\nrename_dummies(s2);\ncanonicalise(s2)\nsort_product(s2)\nrename_dummies(s2);\n\n\n{G_{j}}::SelfNonCommuting.\ns3:=G_{j}G_{l}-G_{l}G_{j};\nsubstitute(s3,$G_{j} -> D_{j l \\mu} \\pi^{\\mu}_{l}-f_{j k l} \\pi^{\\mu}_{l} A_{\\mu k}$);\ndistribute(s3);\nsubstitute(s3,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(s3)\nsubstitute(s3,$A_{\\mu? j}\\pi^{\\nu?}_{k} -> i\\delta^{\\nu?}_{\\mu?} \\delta_{j k}+\\pi^{\\nu?}_{k} A_{\\mu? j}$);\ndistribute(s3)\nsort_product(s3)\nrename_dummies(s3);\nsort_product(s3);\nsubstitute(s3,$D_{j l \\mu}\\pi^{\\mu}_{l} -> \\Pi_{j}, \\pi^{\\mu}_{l} D_{j l \\mu} -> \\Pi_{j}$);\nsubstitute(s3,$D_{j k \\mu}\\pi^{\\mu}_{l} f_{j1 k l} -> \\Pi_{l} f_{j1 j l}$);\n#substitute(s3,$D_{j l \\mu}\\pi^{\\mu}_{l} -> \\Pi_{j}, \\pi^{\\mu}_{l}D_{j l \\mu} -> \\Pi_{j}$);\ncanonicalise(s3);\nsort_product(s3);\nsubstitute(s3,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);\n#substitute(s3,$D_{l j \\mu} -> -D_{j l \\mu}$);\n#substitute(s3,$\\Pi^{\\mu}_{l}\\partial_{l j \\mu} -> -\\Pi_{j}$);"
+		},
+		{
+			"cell_id" : 7969463417797676934,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"source" : ""
+		},
+		{
+			"cell_id" : 12570205818509507200,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"source" : "#\\epsilon_{\\alpha \\beta \\mu \\nu}::EpsilonTensor(delta=\\delta^{\\mu}_{\\nu}, metric=g_{\\mu \\nu});\n#\\epsilon^{a b c j}::EpsilonTensor(delta=\\delta^{a}_{b}, metric=\\eta_{a b});\nex:= \\int{e R}{x};\ntest1:= 1111.\ntest2:= 2222.\ntest3:= 3333.\ntest4:= 4444.\ntest5:= 5555.\n#ex:=e_{\\nu}^{a}e^{\\alpha4}_{c} \\eta_{a a1} \\eta_{b a2} e^{\\mu}_{j} e^{\\alpha}_{l} \\eta^{a1 c}  e_{\\mu}^{k};\n#ex:=\\partial_{\\mu}{ 1/(e) };\nsubstitute(ex,$R -> g^{\\mu \\nu} R_{\\mu \\nu} $,repeat=True)\nsubstitute(ex,$R_{\\mu \\nu} -> R^{\\alpha}_{\\mu \\alpha \\nu}}$,repeat=True)\nsubstitute(ex,$R^{\\alpha}_{\\beta \\mu \\nu} -> e^{\\alpha}_{a} e_{\\beta}^{b}\\partial_{\\mu}{\\omega^{a}_{\\nu b}}-e^{\\alpha}_{a} e_{\\beta}^{b}\\partial_{\\nu}{\\omega^{a}_{\\mu b}}+e^{\\alpha}_{a} e_{\\beta}^{b}\\omega^{a}_{\\mu c}\\omega^{c}_{\\nu b}-e^{\\alpha}_{a} e_{\\beta}^{b}\\omega^{a}_{\\nu c}\\omega^{c}_{\\mu b}$,repeat=True)\ndistribute(ex)\nrename_dummies(ex)\nsubstitute(ex,$\\omega^{a}_{\\mu b} -> 1/2 (\\eta^{a c} e^{\\nu}_{c} \\eta_{b k}\\delta_{\\mu}^{\\alpha}\\delta_{\\nu}^{\\beta}-e^{\\nu}_{b}\\delta_{\\mu}^{\\alpha}\\delta_{\\nu}^{\\beta}\\delta^{a}_{k}-\\eta^{a c} e^{\\alpha}_{c}e_{\\mu}^{j}\\eta_{j k} e^{\\beta}_{b})(\\partial_{\\alpha}{e_{\\beta}^{k}}-\\partial_{\\beta}{e_{\\alpha}^{k}})$,repeat=True)\nsubstitute(ex,$g^{\\mu \\nu} -> e^{\\mu}_{a} e^{\\nu}_{b} \\eta^{a b}$,repeat=True)\ndistribute(ex)\nrename_dummies(ex)\nproduct_rule(ex)\nunwrap(ex)\ndistribute(ex)\nrename_dummies(ex);\n#substitute(ex, $\\partial_{\\mu \\nu}{e_{\\alpha}^{a}} -> \\partial_{\\mu}{\\partial_{\\nu}{e_{\\alpha}^{a}}}$)\nintegrate_by_parts(ex, $\\partial_{\\nu}{e_{\\alpha}^{a}}$)\nex1 = ex[0];\nex:= @(ex1).\ndistribute(ex)\nrename_dummies(ex)\nproduct_rule(ex)\nunwrap(ex)\nsubstitute(ex,$\\partial_{\\alpha}{e} ->  e e^{\\mu}_{a}\\partial_{\\alpha}{e_{\\mu}^{a}}$,repeat=True)\nsubstitute(ex,$\\partial_{\\alpha}{e^{\\mu}_{a}} -> -e^{\\nu}_{a}\\partial_{\\alpha}{e_{\\nu}^{b}} e^{\\mu}_{b}$,repeat=True)\ndistribute(ex)\nrename_dummies(ex)\ndisplay(test1)\naction:= @(ex).\n#factor_out(ex, $ e , e^{\\mu}_{a}, \\eta^{a b}, \\eta_{a b}$);\nvary(ex, $e^{\\mu}_{a} -> d{e^{\\mu}_{a}}, e_{\\mu}^{a} -> d{e_{\\mu}^{a}}, e -> d{e} $)\nsubstitute(ex,$d{e} ->  e e^{\\mu}_{a}d{e_{\\mu}^{a}}$,repeat=True)\nsubstitute(ex,$d{e^{\\mu}_{a}} -> -e^{\\nu}_{a} d{e_{\\nu}^{b}} e^{\\mu}_{b}$,repeat=True)\ndisplay(test5)\ndistribute(ex);\nsubstitute(ex, $\\partial_{\\alpha}{d{e_{\\mu}^{a}}} ->\\epsilon_{\\alpha \\mu}^{a}$,repeat=True)\nsubstitute(ex, $d{e_{\\mu}^{a}} -> 0$)\n#substitute(ex,$\\partial_{\\beta}{e^{\\mu}_{a}} -> -e^{\\nu}_{a}\\partial_{\\beta}{e_{\\nu}^{b}} e^{\\mu}_{b}$,repeat=True)\n{h_{a b}, h^{a b}}::Symmetric;\nsubstitute(ex, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\nsubstitute(action, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\ndistribute(ex)\nrename_dummies(ex)\ndistribute(action)\nrename_dummies(action)\nfactor_out(ex, $ \\epsilon_{\\alpha \\beta}^{a}, e $)\nsubstitute(ex, $ h_{a b} -> \\eta_{a b}, h^{a b} -> \\eta^{a b} $, repeat=True);\nsubstitute(action, $ h_{a b} -> \\eta_{a b}, h^{a b} -> \\eta^{a b} $, repeat=True)\nrename_dummies(action);"
+		},
+		{
+			"cell_id" : 12266216116199937619,
+			"cell_origin" : "client",
+			"cell_type" : "latex",
+			"cells" : 
+			[
+				{
+					"cell_id" : 16341407056407642639,
+					"cell_origin" : "client",
+					"cell_type" : "latex_view",
+					"source" : "Note how lines ending in a semi-colon get their output printed, while those ending in a period do not.\n\nWe are now ready to write down our action, very similar to what you would write down in \\LaTeX{}. We also \nwrite down a rule which says how the field strength is related to the gauge potential. Note how this rule\ndoes not automatically get inserted into the action; you need to tell Cadabra to do that."
+				}
+			],
+			"hidden" : true,
+			"source" : "Note how lines ending in a semi-colon get their output printed, while those ending in a period do not.\n\nWe are now ready to write down our action, very similar to what you would write down in \\LaTeX{}. We also \nwrite down a rule which says how the field strength is related to the gauge potential. Note how this rule\ndoes not automatically get inserted into the action; you need to tell Cadabra to do that."
+		},
+		{
+			"cell_id" : 969383539572700510,
+			"cell_origin" : "client",
+			"cell_type" : "latex",
+			"cells" : 
+			[
+				{
+					"cell_id" : 12490283000908979238,
+					"cell_origin" : "client",
+					"cell_type" : "latex_view",
+					"source" : "Note how this has automatically replaced the field strength with upper as well as\nlower indices, by virtue of the fact that the index position was declared with \\verb|position=free|.\n\nWe can now compute a variational derivative of this object with respect to $A_\\mu$.\nNote the use of inline formulas using the standard \\TeX{} \\$\\ldots\\$ construction."
+				}
+			],
+			"hidden" : true,
+			"source" : "Note how this has automatically replaced the field strength with upper as well as\nlower indices, by virtue of the fact that the index position was declared with \\verb|position=free|.\n\nWe can now compute a variational derivative of this object with respect to $A_\\mu$.\nNote the use of inline formulas using the standard \\TeX{} \\$\\ldots\\$ construction."
+		},
+		{
+			"cell_id" : 18125123786365653382,
+			"cell_origin" : "client",
+			"cell_type" : "latex",
+			"cells" : 
+			[
+				{
+					"cell_id" : 7987906114809474753,
+					"cell_origin" : "client",
+					"cell_type" : "latex_view",
+					"source" : "Finally, in order to write this back in terms of the field strength, we use the following rewriting trick,"
+				}
+			],
+			"hidden" : true,
+			"source" : "Finally, in order to write this back in terms of the field strength, we use the following rewriting trick,"
+		},
+		{
+			"cell_id" : 8079922661512479288,
+			"cell_origin" : "client",
+			"cell_type" : "latex",
+			"cells" : 
+			[
+				{
+					"cell_id" : 15531863210899068109,
+					"cell_origin" : "client",
+					"cell_type" : "latex_view",
+					"source" : "This isolates the equations of motion $\\partial^\\nu F_{\\mu\\nu}=0$ in the integrand."
+				}
+			],
+			"hidden" : true,
+			"source" : "This isolates the equations of motion $\\partial^\\nu F_{\\mu\\nu}=0$ in the integrand."
+		},
+		{
+			"cell_id" : 1645214317725520109,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"cells" : 
+			[
+				{
+					"cell_id" : 9223372036854776265,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property Diagonal to~}\\left[h_{i1? i2?},~\\discretionary{}{}{} h^{i1? i2?},~\\discretionary{}{}{} h_{i1}\\,^{i2?}\\right].\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776266,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776267,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "2\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{a} e^{\\beta}_{c} e^{\\gamma}_{b} e^{\\mu}_{k}-2\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{a} e^{\\beta}_{c} e^{\\gamma}_{k} e^{\\mu}_{b}-2\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{b} e^{\\beta}_{c} e^{\\gamma}_{k} e^{\\mu}_{a}-\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{a} e^{\\beta}_{k} e^{\\gamma}_{b} e^{\\mu}_{c} -  1/2 \\eta^{a b} \\eta^{c j} \\eta_{k l} \\partial_{\\alpha}(e_{\\beta}^{k}) \\partial_{\\gamma}(e_{\\mu}^{l}) e e^{\\alpha}_{a} e^{\\beta}_{c} e^{\\gamma}_{b} e^{\\mu}_{j} + 2\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{c} e^{\\beta}_{a} e^{\\gamma}_{k} e^{\\mu}_{b} + \\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{a} e^{\\beta}_{k} e^{\\gamma}_{c} e^{\\mu}_{b} + \\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{b} e^{\\beta}_{k} e^{\\gamma}_{c} e^{\\mu}_{a}-\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{k}) e e^{\\alpha}_{k} e^{\\beta}_{a} e^{\\gamma}_{c} e^{\\mu}_{b} +  1/2 \\eta^{a b} \\eta^{c j} \\eta_{k l} \\partial_{\\alpha}(e_{\\beta}^{k}) \\partial_{\\gamma}(e_{\\mu}^{l}) e e^{\\alpha}_{a} e^{\\beta}_{c} e^{\\gamma}_{j} e^{\\mu}_{b}-\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{a} e^{\\beta}_{c} e^{\\gamma}_{b} e^{\\mu}_{j} + 2\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{c} e^{\\gamma}_{j} e^{\\mu}_{a} +  1/2 \\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{a} e^{\\beta}_{j} e^{\\gamma}_{b} e^{\\mu}_{c}-\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{c} e^{\\beta}_{a} e^{\\gamma}_{j} e^{\\mu}_{b}-\\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{j} e^{\\gamma}_{c} e^{\\mu}_{a} +  1/2 \\eta^{a b} \\partial_{\\alpha}(e_{\\beta}^{c}) \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{j} e^{\\beta}_{a} e^{\\gamma}_{c} e^{\\mu}_{b}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}2\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{b} e^{\\mu}\\,_{k}-2\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{k} e^{\\mu}\\,_{b}-2\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{k} e^{\\mu}\\,_{a}-\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{k} e^{\\gamma}\\,_{b} e^{\\mu}\\,_{c} - \\frac{1}{2}\\eta^{a b} \\eta^{c j} \\eta_{k l} \\partial_{\\alpha}{e_{\\beta}\\,^{k}} \\partial_{\\gamma}{e_{\\mu}\\,^{l}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{b} e^{\\mu}\\,_{j}+2\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{c} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{k} e^{\\mu}\\,_{b}+\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{k} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{b}+\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{k} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{a}-\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{k}} e e^{\\alpha}\\,_{k} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{b}+\\frac{1}{2}\\eta^{a b} \\eta^{c j} \\eta_{k l} \\partial_{\\alpha}{e_{\\beta}\\,^{k}} \\partial_{\\gamma}{e_{\\mu}\\,^{l}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{j} e^{\\mu}\\,_{b}-\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{b} e^{\\mu}\\,_{j}+2\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{c} e^{\\gamma}\\,_{j} e^{\\mu}\\,_{a}+\\frac{1}{2}\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{b} e^{\\mu}\\,_{c}-\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{c} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j} e^{\\mu}\\,_{b}-\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{a}+\\frac{1}{2}\\eta^{a b} \\partial_{\\alpha}{e_{\\beta}\\,^{c}} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{j} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{b}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776268,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776269,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "2\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{a} e^{\\gamma}_{c} e^{\\mu}_{j}-2\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{a} e^{\\gamma}_{j} e^{\\mu}_{c}-2\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{a} e^{\\beta}_{b} e^{\\gamma}_{c} e^{\\mu}_{j}-\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{j} e^{\\gamma}_{c} e^{\\mu}_{a}-\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\eta^{j k} \\eta_{a l} \\partial_{\\gamma}(e_{\\mu}^{l}) e e^{\\alpha}_{b} e^{\\beta}_{j} e^{\\gamma}_{c} e^{\\mu}_{k} + 2\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{a} e^{\\beta}_{b} e^{\\gamma}_{j} e^{\\mu}_{c} + \\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{b} e^{\\beta}_{j} e^{\\gamma}_{a} e^{\\mu}_{c} + \\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{j} e^{\\beta}_{b} e^{\\gamma}_{c} e^{\\mu}_{a}-\\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\partial_{\\gamma}(e_{\\mu}^{j}) e e^{\\alpha}_{j} e^{\\beta}_{b} e^{\\gamma}_{a} e^{\\mu}_{c} + \\epsilon_{\\alpha \\beta}^{a} \\eta^{b c} \\eta^{j k} \\eta_{a l} \\partial_{\\gamma}(e_{\\mu}^{l}) e e^{\\alpha}_{b} e^{\\beta}_{j} e^{\\gamma}_{k} e^{\\mu}_{c}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}2\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{j}-2\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j} e^{\\mu}\\,_{c}-2\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{j}-\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{a}-\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\eta^{j k} \\eta_{a l} \\partial_{\\gamma}{e_{\\mu}\\,^{l}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{k}+2\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{j} e^{\\mu}\\,_{c}+\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{a} e^{\\mu}\\,_{c}+\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{j} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{c} e^{\\mu}\\,_{a}-\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\partial_{\\gamma}{e_{\\mu}\\,^{j}} e e^{\\alpha}\\,_{j} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{a} e^{\\mu}\\,_{c}+\\epsilon_{\\alpha \\beta}\\,^{a} \\eta^{b c} \\eta^{j k} \\eta_{a l} \\partial_{\\gamma}{e_{\\mu}\\,^{l}} e e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{k} e^{\\mu}\\,_{c}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776270,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776271,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{j a} \\eta^{l k} e-2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{j b} \\eta^{l k} e-2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{k a} \\eta^{l j} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j a} \\eta^{l b} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j a} \\eta^{k b} \\eta^{l c} e + 2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{k b} \\eta^{l j} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j b} \\eta^{l a} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k a} \\eta^{l b} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k b} \\eta^{l a} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j b} \\eta^{k a} \\eta^{l c} e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{j a} \\eta^{l k} e-2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{j b} \\eta^{l k} e-2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{k a} \\eta^{l j} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j a} \\eta^{l b} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j a} \\eta^{k b} \\eta^{l c} e+2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{k b} \\eta^{l j} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j b} \\eta^{l a} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k a} \\eta^{l b} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k b} \\eta^{l a} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j b} \\eta^{k a} \\eta^{l c} e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776272,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776273,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{j a} \\eta^{l k} e-2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{j b} \\eta^{l k} e-2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{k a} \\eta^{l j} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j a} \\eta^{l b} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j a} \\eta^{k b} \\eta^{l c} e + 2K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{k b} \\eta^{l j} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j b} \\eta^{l a} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k a} \\eta^{l b} e-K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k b} \\eta^{l a} e + K^{i1}_{a} K^{i2}_{b} K^{i3}_{c} K^{i4}_{j} K^{i5}_{k} K^{i6}_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j b} \\eta^{k a} \\eta^{l c} e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{j a} \\eta^{l k} e-2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{j b} \\eta^{l k} e-2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c b} \\eta^{k a} \\eta^{l j} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j a} \\eta^{l b} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j a} \\eta^{k b} \\eta^{l c} e+2K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c a} \\eta^{k b} \\eta^{l j} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c k} \\eta^{j b} \\eta^{l a} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k a} \\eta^{l b} e-K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{c j} \\eta^{k b} \\eta^{l a} e+K^{i1}\\,_{a} K^{i2}\\,_{b} K^{i3}\\,_{c} K^{i4}\\,_{j} K^{i5}\\,_{k} K^{i6}\\,_{l} X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\eta^{j b} \\eta^{k a} \\eta^{l c} e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776274,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776275,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i3} h^{i5 i6}-2X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i3} h^{i2 i4} h^{i5 i6} -  1/2 X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i6} h^{i3 i5} -  1/2 X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i5} h^{i3 i6} + X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i3} h^{i2 i5} h^{i4 i6} + X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i5} h^{i2 i6} h^{i3 i4} -  1/2 X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i6} h^{i2 i5} h^{i3 i4} +  1/2 X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i5} h^{i2 i4} h^{i3 i6}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i3} h^{i5 i6}-2X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i3} h^{i2 i4} h^{i5 i6} - \\frac{1}{2}X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i6} h^{i3 i5} - \\frac{1}{2}X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i4} h^{i2 i5} h^{i3 i6}+X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i3} h^{i2 i5} h^{i4 i6}+X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i5} h^{i2 i6} h^{i3 i4} - \\frac{1}{2}X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i6} h^{i2 i5} h^{i3 i4}+\\frac{1}{2}X_{i1 i2 i3} X_{i4 i5 i6} e h^{i1 i5} h^{i2 i4} h^{i3 i6}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776276,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776277,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{i1 i2 i3} X_{i4 i5 i6} (h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6} -  1/2 h^{i1 i4} h^{i2 i6} h^{i3 i5} -  1/2 h^{i1 i4} h^{i2 i5} h^{i3 i6} + h^{i1 i3} h^{i2 i5} h^{i4 i6} + h^{i1 i5} h^{i2 i6} h^{i3 i4} -  1/2 h^{i1 i6} h^{i2 i5} h^{i3 i4} +  1/2 h^{i1 i5} h^{i2 i4} h^{i3 i6}) e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{i1 i2 i3} X_{i4 i5 i6} \\left(h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6} - \\frac{1}{2}h^{i1 i4} h^{i2 i6} h^{i3 i5} - \\frac{1}{2}h^{i1 i4} h^{i2 i5} h^{i3 i6}+h^{i1 i3} h^{i2 i5} h^{i4 i6}+h^{i1 i5} h^{i2 i6} h^{i3 i4} - \\frac{1}{2}h^{i1 i6} h^{i2 i5} h^{i3 i4}+\\frac{1}{2}h^{i1 i5} h^{i2 i4} h^{i3 i6}\\right) e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776278,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776279,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{i1 i2 i3} \\epsilon_{i4 i5 i6} (2h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6}-2h^{i1 i5} h^{i2 i3} h^{i4 i6}-h^{i1 i4} h^{i2 i6} h^{i3 i5}-h^{i1 i4} h^{i2 i5} h^{i3 i6} + 2h^{i1 i3} h^{i2 i5} h^{i4 i6} + h^{i1 i6} h^{i2 i4} h^{i3 i5} + h^{i1 i5} h^{i2 i6} h^{i3 i4}-h^{i1 i6} h^{i2 i5} h^{i3 i4} + h^{i1 i5} h^{i2 i4} h^{i3 i6}) e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\left(2h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6}-2h^{i1 i5} h^{i2 i3} h^{i4 i6}-h^{i1 i4} h^{i2 i6} h^{i3 i5}-h^{i1 i4} h^{i2 i5} h^{i3 i6}+2h^{i1 i3} h^{i2 i5} h^{i4 i6}+h^{i1 i6} h^{i2 i4} h^{i3 i5}+h^{i1 i5} h^{i2 i6} h^{i3 i4}-h^{i1 i6} h^{i2 i5} h^{i3 i4}+h^{i1 i5} h^{i2 i4} h^{i3 i6}\\right) e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776280,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776281,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{i1 i2 i3} X_{i4 i5 i6} (\\eta^{i1 i4} \\eta^{i2 i3} \\eta^{i5 i6}-2\\eta^{i1 i3} \\eta^{i2 i4} \\eta^{i5 i6} -  1/2 \\eta^{i1 i4} \\eta^{i2 i6} \\eta^{i3 i5} -  1/2 \\eta^{i1 i4} \\eta^{i2 i5} \\eta^{i3 i6} + \\eta^{i1 i3} \\eta^{i2 i5} \\eta^{i4 i6} + \\eta^{i1 i5} \\eta^{i2 i6} \\eta^{i3 i4} -  1/2 \\eta^{i1 i6} \\eta^{i2 i5} \\eta^{i3 i4} +  1/2 \\eta^{i1 i5} \\eta^{i2 i4} \\eta^{i3 i6}) e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{i1 i2 i3} X_{i4 i5 i6} \\left(\\eta^{i1 i4} \\eta^{i2 i3} \\eta^{i5 i6}-2\\eta^{i1 i3} \\eta^{i2 i4} \\eta^{i5 i6} - \\frac{1}{2}\\eta^{i1 i4} \\eta^{i2 i6} \\eta^{i3 i5} - \\frac{1}{2}\\eta^{i1 i4} \\eta^{i2 i5} \\eta^{i3 i6}+\\eta^{i1 i3} \\eta^{i2 i5} \\eta^{i4 i6}+\\eta^{i1 i5} \\eta^{i2 i6} \\eta^{i3 i4} - \\frac{1}{2}\\eta^{i1 i6} \\eta^{i2 i5} \\eta^{i3 i4}+\\frac{1}{2}\\eta^{i1 i5} \\eta^{i2 i4} \\eta^{i3 i6}\\right) e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776282,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776283,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{i1 i2 i3} \\epsilon_{i4 i5 i6} (2h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6}-2h^{i1 i5} h^{i2 i3} h^{i4 i6}-h^{i1 i4} h^{i2 i6} h^{i3 i5}-h^{i1 i4} h^{i2 i5} h^{i3 i6} + 2h^{i1 i3} h^{i2 i5} h^{i4 i6} + h^{i1 i6} h^{i2 i4} h^{i3 i5} + h^{i1 i5} h^{i2 i6} h^{i3 i4}-h^{i1 i6} h^{i2 i5} h^{i3 i4} + h^{i1 i5} h^{i2 i4} h^{i3 i6}) e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{i1 i2 i3} \\epsilon_{i4 i5 i6} \\left(2h^{i1 i4} h^{i2 i3} h^{i5 i6}-2h^{i1 i3} h^{i2 i4} h^{i5 i6}-2h^{i1 i5} h^{i2 i3} h^{i4 i6}-h^{i1 i4} h^{i2 i6} h^{i3 i5}-h^{i1 i4} h^{i2 i5} h^{i3 i6}+2h^{i1 i3} h^{i2 i5} h^{i4 i6}+h^{i1 i6} h^{i2 i4} h^{i3 i5}+h^{i1 i5} h^{i2 i6} h^{i3 i4}-h^{i1 i6} h^{i2 i5} h^{i3 i4}+h^{i1 i5} h^{i2 i4} h^{i3 i6}\\right) e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776284,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776285,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "1111"
+						}
+					],
+					"source" : "\\begin{dmath*}{}1111\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776286,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776287,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-2h^{i1 i3} h^{i2 i4} h^{i5 i6} + 2h^{i1 i3} h^{i2 i5} h^{i4 i6} + 2h^{i1 i6} h^{i2 i4} h^{i3 i5}-2h^{i1 i6} h^{i2 i5} h^{i3 i4} + 2h^{i1 i2} h^{i3 i4} h^{i5 i6}-2h^{i1 i2} h^{i3 i5} h^{i4 i6}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-2h^{i1 i3} h^{i2 i4} h^{i5 i6}+2h^{i1 i3} h^{i2 i5} h^{i4 i6}+2h^{i1 i6} h^{i2 i4} h^{i3 i5}-2h^{i1 i6} h^{i2 i5} h^{i3 i4}+2h^{i1 i2} h^{i3 i4} h^{i5 i6}-2h^{i1 i2} h^{i3 i5} h^{i4 i6}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776288,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776289,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "X_{m1 m2} \\epsilon_{m3 m4} (-2h^{m1 m2} h^{m3 m4} + h^{m1 m4} h^{m2 m3} + h^{m1 m3} h^{m2 m4}) e"
+						}
+					],
+					"source" : "\\begin{dmath*}{}X_{m1 m2} \\epsilon_{m3 m4} \\left(-2h^{m1 m2} h^{m3 m4}+h^{m1 m4} h^{m2 m3}+h^{m1 m3} h^{m2 m4}\\right) e\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776290,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property Metric to~}Z_{n1 n2}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776291,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property TableauSymmetry to~}Z^{n1 n2}.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776292,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property Determinant to~}Z.\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776293,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776294,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : " 1/2 \\epsilon_{m1 m2} \\epsilon^{m3 m4} (e)**(-1) e h^{m1 m2} h^{m5 m6} h_{m3 m4} h_{m5 m6}-\\epsilon_{m1 m2} \\epsilon^{m3 m4} (e)**(-1) e h^{m1 m2} h^{m5 m6} h_{m3 m5} h_{m4 m6} -  1/2 \\epsilon_{m1 m2} \\epsilon^{m3 m4} (e)**(-1) e h^{m1 m5} h^{m2 m6} h_{m3 m4} h_{m5 m6} +  1/2 \\epsilon_{m1 m2} \\epsilon^{m3 m4} (e)**(-1) e h^{m1 m5} h^{m2 m6} h_{m3 m5} h_{m4 m6} +  1/2 \\epsilon_{m1 m2} \\epsilon^{m3 m4} (e)**(-1) e h^{m1 m5} h^{m2 m6} h_{m3 m6} h_{m4 m5}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m3 m4} {e}^{-1} e h^{m1 m2} h^{m5 m6} h_{m3 m4} h_{m5 m6}-\\epsilon_{m1 m2} \\epsilon^{m3 m4} {e}^{-1} e h^{m1 m2} h^{m5 m6} h_{m3 m5} h_{m4 m6} - \\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m3 m4} {e}^{-1} e h^{m1 m5} h^{m2 m6} h_{m3 m4} h_{m5 m6}+\\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m3 m4} {e}^{-1} e h^{m1 m5} h^{m2 m6} h_{m3 m5} h_{m4 m6}+\\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m3 m4} {e}^{-1} e h^{m1 m5} h^{m2 m6} h_{m3 m6} h_{m4 m5}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776295,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776296,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "2222"
+						}
+					],
+					"source" : "\\begin{dmath*}{}2222\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776297,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776298,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : " 1/2 \\epsilon_{m1 m2} \\epsilon^{m1 m2} +  1/2 \\epsilon_{m1 m2} \\epsilon^{m2 m1}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m1 m2}+\\frac{1}{2}\\epsilon_{m1 m2} \\epsilon^{m2 m1}\\end{dmath*}"
+				}
+			],
+			"source" : "{h_{i1? i2?}, h^{i1? i2?}, h_{i1}^{i2?}}::Diagonal;\ntmp:= @(ex)-@(action).\nt0:= @(ex).\nsubstitute(tmp, $ \\epsilon_{\\alpha \\mu}^{a} -> \\partial_{\\alpha}{ e_{\\mu}^{a} }$, repeat=True)\n#rename_dummies(tmp)\n#distribute(tmp);\n#split_index(tmp, $ \\alpha, 0, m $, repeat=True)\n#split_index(t0, $ \\alpha, 0, m $, repeat=True)\nrename_dummies(tmp)\nrename_dummies(t0)\ndistribute(tmp);\ndistribute(t0);\nsubstitute(t0, $  \\partial_{\\alpha}{ e_{\\mu}^{a} } e^{\\alpha}_{b} e^{\\mu}_{c}-> X_{b c j} \\eta^{j a} $, repeat=True)\nsubstitute(tmp, $  \\partial_{\\alpha}{ e_{\\mu}^{a} } e^{\\alpha}_{b} e^{\\mu}_{c}-> X_{b c j} \\eta^{j a} $, repeat=True)\nsubstitute(t0, $\\epsilon_{\\alpha \\mu}^{a} e^{\\alpha}_{b} e^{\\mu}_{c} -> \\epsilon_{b c j} \\eta^{j a} $, repeat=True)\n#vary(t0, $  f_{m}^{a} -> \\Gamma_{m}^{a} $);\n#substitute(tmp, $  \\partial_{0}{ e_{m}^{a} } -> \\Gamma_{m}^{a} $, repeat=True)\n#substitute(tmp, $  \\Gamma_{m}^{a} \\Gamma_{n}^{b} -> \\Gamma_{m n}^{a b} $, repeat=True)\n\nsubstitute(tmp, $X_{b c a} -> X_{i2 i3 i1} K^{i1}_{a} K^{i2}_{b} K^{i3}_{c}$ , repeat=True)\nsubstitute(tmp,$K_{i1}^{a} K^{i2}_{a} -> \\delta_{i1}^{i2}$,repeat=True)\nsubstitute(t0, $X_{b c a} -> X_{i2 i3 i1} K^{i1}_{a}K^{i2}_{b}K^{i3}_{c}$ , repeat=True)\nsubstitute(t0, $\\epsilon_{b c a} -> \\epsilon_{i2 i3 i1} K^{i1}_{a}K^{i2}_{b}K^{i3}_{c}$ , repeat=True)\n\nsubstitute(t0,$K_{i1}^{a} K^{i2}_{a} -> \\delta_{i1}^{i2}$,repeat=True)\ndistribute(t0);\nrename_dummies(t0);\n#substitute(tmp, $ \\eta_{a b} -> G_{a b}, \\eta^{a b} -> G^{a b} $, repeat=True)\n#rename_dummies(tmp);\n\nsubstitute(tmp, $\\eta_{b c} K_{i2}^{b} K_{i3}^{c} -> h_{i2 i3}$, repeat=True)\nsubstitute(tmp, $\\eta^{b c} K^{i2}_{b} K^{i3}_{c} -> h^{i2 i3}$, repeat=True)\nsubstitute(t0, $\\eta_{b c} K_{i2}^{b} K_{i3}^{c} -> h_{i2 i3}$, repeat=True)\nsubstitute(t0, $\\eta^{b c} K^{i2}_{b} K^{i3}_{c} -> h^{i2 i3}$, repeat=True)\n\n#substitute(tmp, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\ndistribute(tmp)\nrename_dummies(tmp);\n\n#substitute(t0, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\ndistribute(t0)\nrename_dummies(t0)\n#factor_out(t0, $ \\Gamma_{m}^{a}, \\epsilon_{n}^{b}, e $);\n#factor_out(tmp, $ \\Gamma_{m n}^{a b}, e  $)\n#vary(tmp, $  \\Gamma_{m n}^{a b}  -> \\Gamma_{m}^{a} \\Gamma_{n}^{b} $);\n#substitute(tmp, $\\Gamma_{m}^{a} e^{m}_{c} e^{0}_{j} -> \\Gamma_{j c}^{a} $, repeat=True)\n#substitute(t0, $\\Gamma_{m}^{a} e^{m}_{c} e^{0}_{j} -> \\Gamma_{j c}^{a} $, repeat=True)\n#substitute(t0, $\\epsilon_{m}^{a} e^{m}_{c} e^{0}_{j} -> \\epsilon_{j c}^{a} $, repeat=True)\n#rewrite_indices(tmp, $\\Gamma_{i1 i2}^{a}$, $K_{b}^{i3}$)\n#rewrite_indices(tmp, $\\Gamma_{i1 i2}^{i3}$, $K^{b}_{i4}$)\n\t\nfactor_out(t0, $ e, X_{i1 i2 i3}, \\epsilon_{i4 i5 i6} $)\n\nsubstitute(tmp, $  X_{i1 i2 i3} X_{i4 i5 i6} -> X_{i1 i2 i3 i4 i5 i6} $, repeat=True)\ndistribute(tmp)\nrename_dummies(tmp)\nfactor_out(tmp, $  X_{i1 i2 i3 i4 i5 i6} , e $ )\nsubstitute(tmp, $  X_{i1 i2 i3 i4 i5 i6} -> X_{i1 i2 i3} X_{i4 i5 i6} $, repeat=True)\n#split_index(tmp, $ a, 0, i1 $, repeat=True)\n#split_index(t0, $ a, 0, i1 $, repeat=True)\n#distribute(tmp)\nrename_dummies(tmp);\n#distribute(t0)\nrename_dummies(t0);\nsubstitute(tmp, $ h_{i1 i2} -> \\eta_{i1 i2}, h^{i1 i2} -> \\eta^{i1 i2} $, repeat=True)\n#substitute(tmp, $ h_{0 0} -> -1, h^{0 0} -> -1, h_{0 i1} -> 0,  h^{0 i1} -> 0, h^{i1 0} -> 0, h_{i1 i2} -> \\delta_{i1 i2} $, repeat=True)\n#substitute(t0, $ h_{0 0} -> -1, h^{0 0} -> -1, h_{0 i1} -> 0,  h^{0 i1} -> 0, h^{i1 0} -> 0, h_{i1 i2} -> \\delta_{i1 i2} $, repeat=True)\n#substitute(t0, $ \\eta_{0 0} -> -1, \\eta^{0 0} -> -1, \\eta_{0 i1} -> 0,  \\eta^{0 i1} -> 0, \\eta^{i1 0} -> 0, \\eta_{i1 i2} -> \\delta_{i1 i2} $, repeat=True)\nrename_dummies(tmp);\nrename_dummies(t0);\n\n\ndisplay(test1)\t\n\nt2:= Y^{i1 i2 i3 i4 i5 i6}.\nt1:= Y^{i1 i2 i3 i4 i5 i6}+Y^{i3 i1 i2 i4 i5 i6}.\natmp = t0[2]\nsubstitute(t1,$ Y^{i1 i2 i3 i4 i5 i6} -> @( atmp ) $)\nrename_dummies(t1);\n\n#t00:= @(t0).\n#ll1 = Ex(\"\\epsilon_{i1 i2 i3} -> \\delta_{i1}^{0} \\delta_{i2}^{\"+str(x2)+\"} \\delta_{i3}^{\"+str(x3)+\"}\")\nsubstitute(t0, $ h_{i1 i2} -> \\eta_{i1 i2}, h^{i1 i2} -> \\eta^{i1 i2} $, repeat=True)\nsubstitute(t0,$ \\epsilon_{i1 i2 i3} -> \\delta_{i1}^{0}\\epsilon_{i2 i3}, X_{i1 i2 i3} -> \\delta_{i1}^{0} X_{i2 i3}$) \t\t\t\t\t\t\nsplit_index(t0, $ i1, 0, m1 $, repeat=True)\nrename_dummies(t0)\nsubstitute(t0,$ \\eta^{m1 0} -> 0, \\eta^{0 m1} -> 0, \\eta^{0 0} -> -1, \\eta^{m1 m2} -> h^{m1 m2} $); \t\n\t\t\t\n\n#split_index(t0, $ \\alpha, 0, m $, repeat=True)\n\t\t\n\n#type( _{a} );\n\nimport sympy as sp\n#from sympy.parsing.sympy_parser import parse_expr\n\n#ZZ=sp.Matrix([[0] * 9 for x1 in range(9)])\nZZ=sp.zeros(9,9)\nlll=\"\"\nz1=0\nNN=0\ny= Ex(str({x for x in range(0,9)}))\n{n1, n#}::Indices(position=independent,values= @(y)).\nZ_{n1 n2}::Metric;\nZ^{n1 n2}::InverseMetric;\nZ::Determinant(Z_{n1 n2});\n\nt0t = t0[2][0]\nt0X = t0[0]\nt0E = t0[1]\ntt0:= (1/4)@(t0)-(1/8)@(t0X)@(t0E)@(t0t)e.\ntt1:=@(t0).\ndistribute(tt0)\nrewrite_indices(tt0, $\\epsilon^{m1 m2}$, $h_{m1 m2}$)\nrewrite_indices(tt0, $X^{m1 m2}$, $h_{m1 m2}$)\nsubstitute(tt0, $h^{m1 m3} h_{m3 m2} -> \\delta^{m1}_{m2}$, repeat=True)\nrename_dummies(tt0)\nsubstitute(tt0,$ X^{m3 m4} -> \\delta_{m8}^{m3} \\delta_{m9}^{m4}, e-> (1/e) $)\n#substitute(tt0,$ \\epsilon^{m3 m4} -> \\delta_{m6}^{m3} \\delta_{m7}^{m4} $)\nsubstitute(tt1,$ X_{m3 m4} -> \\delta^{m8}_{m3} \\delta^{m9}_{m4} $)\n#substitute(tt1,$ \\epsilon_{m3 m4} -> \\delta^{m10}_{m3} \\delta^{m11}_{m4} $)\ntt0:= @(tt0)@(tt1).\n#substitute(tt0,$ \\epsilon_{m3 m4} -> \\delta^{m10}_{m3} \\delta^{m11}_{m4} $)\ndistribute(tt0)\nrename_dummies(tt0);\ndisplay(test2)\nsubstitute(tt0, $ h_{m1 m2} -> \\eta_{m1 m2}, h^{m1 m2} -> \\eta^{m1 m2},(1/e) e -> 1$, repeat=True)\nsubstitute(tt0,$\\eta_{m1 m5} \\eta^{m3 m5}  -> h_{m1}^{m3}, \\eta_{m5 m1} \\eta^{m5 m3} -> h_{m1}^{m3},\\eta_{m5 m1} \\eta^{m3 m5} -> h_{m1}^{m3}, \\eta_{m1 m5} \\eta^{m5 m3} -> h_{m1}^{m3}$,repeat=True)\nsubstitute(tt0, $ h_{m1 m2} -> \\eta_{m1 m2}, h^{m1 m2} -> \\eta^{m1 m2},(1/e) e -> 1$, repeat=True)\nsubstitute(tt0,$\\eta_{m1 m5} \\eta^{m3 m5}  -> h_{m1}^{m3}, \\eta_{m5 m1} \\eta^{m5 m3} -> h_{m1}^{m3},\\eta_{m5 m1} \\eta^{m3 m5} -> h_{m1}^{m3}, \\eta_{m1 m5} \\eta^{m5 m3} -> h_{m1}^{m3}$,repeat=True)\nsubstitute(tt0,$ h_{m1}^{m1} -> 3 $, repeat=True)\nsubstitute(tt0,$ h_{m1}^{m3} -> \\delta_{m1}^{m3} $, repeat=True)\nrename_dummies(tt0);\n\n\n#factor_out(tt0, $  \\epsilon_{m1 m2}, \\epsilon^{m1 m2} $ );\n\n\n\t\t\n\nfor x2 in range(1,4):\n\tfor x3 in range(1,4):\n\t\tz2=0\n\t\tt00:= @(t0).\n\t\tll1 = Ex(\"\\epsilon_{m1 m2} -> \\delta_{m1}^{\"+str(x2)+\"} \\delta_{m2}^{\"+str(x3)+\"}\")\n\t\tsubstitute(t00,$ @(ll1), e -> 1 $) \t\t\t\t\t\t\n\t\tfor x5 in range(1,4):\n\t\t\tfor x6 in range(1,4):\n\t\t\t\tif z2 >= z1:\n\t\t\t\t\t#ll0 = Ex(\"Z_{\"+str(z1)+\" \"+str(z2)+\"}\") \n\t\t\t\t\tt01:= @(t00).\n\t\t\t\t\t#ll1 = Ex(\"X_{m1 m2} -> \\delta_{m1}^{\"+str(x5)+\"} \\delta_{m2}^{\"+str(x6)+\"}\")\n\t\t\t\t\tll1 = Ex(\"\\epsilon^{m3 m4} -> \\delta^{m3}_{\"+str(x5)+\"} \\delta^{m4}_{\"+str(x6)+\"}\")\n\t\t\t\t\tsubstitute(t01,$ @(ll1) $)\n\t\t\t\t\tsubstitute(t01, $ h^{1 1} -> 1, h^{2 2} -> 1, h^{3 3} -> 1 $)\n\t\t\t\t\tsubstitute(t01, $ h_{1 1} -> 1, h_{2 2} -> 1, h_{3 3} -> 1 $)\n\t\t\t\t\t#canonicalise(t01)\n\t\t\t\t\t#display(t01)\n\t\t\t\t\tss=t01._sympy_()\n\t\t\t\t\t#print(ss)\n\t\t\t\t\tif ss != 0:\n\t\t\t\t\t\tZZ[z1,z2]=ss\n\t\t\t\t\t\t#print(ss)\n\t\t\t\t\t\t#lll=lll+\"Z_{\"+str(z1)+\" \"+str(z2)+\"}=\"+ss+\", \"\n\t\t\t\t\t\tNN+=1\n\t\t\t\t\t\tif z2 != z1:\n\t\t\t\t\t\t\t#lll=lll+\"Z_{\"+str(z2)+\" \"+str(z1)+\"}=\"+ss+\", \"\n\t\t\t\t\t\t\tZZ[z2,z1]=ss\n\t\t\t\t\t\t\tNN+=1\n\t\t\t\tz2+=1\n\t\tz1+=1\n\nprint(ZZ)\nprint(ZZ.eigenvects())\n#t3 = Ex(lll[:-2])\n#t3 = Ex(\"Z_{0 0}=0, Z_{0 1}=2, Z_{1 0}=-2, Z_{1 1}=0\")\n#t3:= Z_{0 0}=0, Z_{0 1}=2, Z_{1 0}=-2, Z_{1 1}=0;\n#complete(t3, $Z$);\n#t4 = t3[NN]\n#display(t4)\n#ttt=Ex(\"Y^{\"+str(x1)+\"}\")\n#tt:= \\delta_{ @(ttt) }^{i1}.\n#ttt:= Y^{ @(tt) i2 i3 i4 i5 i6};\n#display(tt)\n#display(ttt)\n#substitute(t2,$ i1 -> 1 $);\n\n#for x1 in range(4):\n#\tfor x2 in range(x1+1,4):\n#\t\tfor x3 in range(4):\n#\t\t\tz2=0\n#\t\t\tt00:= @(t0).\n#\t\t\tll1 = Ex(\"\\epsilon_{i1 i2 i3} -> \\delta_{i1}^{\"+str(x1)+\"} \\delta_{i2}^{\"+str(x2)+\"} \\delta_{i3}^{\"+str(x3)+\"}\")\n#\t\t\tsubstitute(t00,$ @(ll1), e -> 1/2 $) \t\t\t\t\t\t\n#\t\t\tfor x4 in range(4):\n#\t\t\t\tfor x5 in range(x4+1,4):\n#\t\t\t\t\tfor x6 in range(4):\n#\t\t\t\t\t\t#ll0 = Ex(\"Z_{\"+str(z1)+\" \"+str(z2)+\"}\") \n#\t\t\t\t\t\tt01:= @(t00).\n#\t\t\t\t\t\tll1 = Ex(\"X_{i1 i2 i3} -> \\delta_{i1}^{\"+str(x4)+\"} \\delta_{i2}^{\"+str(x5)+\"} \\delta_{i3}^{\"+str(x6)+\"}\")\n#\t\t\t\t\t\tsubstitute(t01,$ @(ll1) $)\n#\t\t\t\t\t\tsubstitute(t01, $ h^{0 0} -> -1, h^{1 1} -> 1, h^{2 2} -> 1, h^{3 3} -> 1 $)\n#\t\t\t\t\t\tcanonicalise(t01)\n#\t\t\t\t\t\t#display(t01)\n#\t\t\t\t\t\tss=str(t01)\n#\t\t\t\t\t\tif ss != \"0\":\n#\t\t\t\t\t\t\tlll=lll+\"Z_{\"+str(z1)+\" \"+str(z2)+\"}=\"+ss+\", \"\n#\t\t\t\t\t\tz2+=1\n#\t\t\tz1+=1\n\n\n#factor_out(tmp, $ \\partial_{0}{ e_{m}^{a} }  ;$)\n#substitute(taction, $ h_{a b} -> \\eta_{a b}, h^{a b} -> \\eta^{a b} $, repeat=True)\n#rename_dummies(tmp);\n#distribute(tmp);\n#factor_out(tmp, $ \\partial_{0}{e_{m}^{j}} $);\n#rename_dummies(taction);\n#ex4 = tmp[1][0][1]\n#ex5 = tmp[1][1][1]\n#ex6 = tmp[1][2][1]\n#substitute(tmp, $ @(ex4) -> f^{m l}_{n a} $, repeat=True)\n#factor_out(tmp, $ f^{m l}_{n a} $)\n#substitute(tmp, $ f^{m l}_{n a} -> @(ex4)  $, repeat=True)\n#rename_dummies(tmp);\n#factor_in(tmp,  $ \\partial_{0}{e_{n}^{l}},\\partial_{n}{e_{0}^{l}} $);\n#tmp1:= @(ex4)+@(ex5).\n#distribute(tmp1)\n#rename_dummies(tmp1);\n#factor_out(tmp, $ \\eta^{b c} $);\n#substitute(tmp,$\\partial_{\\beta}{e_{\\gamma}^{c}} -> -e_{\\nu}^{c}\\partial_{\\beta}{e^{\\nu}_{j}} e_{\\gamma}^{j}$,repeat=True)\n#substitute(tmp, $ \\epsilon_{\\alpha}^{a} -> \\delta_{\\alpha}^{0} \\epsilon_{0}^{a}+\\delta_{\\alpha}^{m} \\epsilon_{m}^{a} $)\n#substitute(tmp,$\\partial_{\\beta}{A??} -> \\delta_{\\beta}^{0}\\partial_{0}{A??}+\\delta_{\\beta}^{m}\\partial_{m}{A??} $)\n#substitute(tmp,$e_{\\beta}^{c} -> \\delta_{\\beta}^{0} f^{c}+\\delta_{\\beta}^{m} f_{m}^{c} $)\n#substitute(tmp,$e^{\\beta}_{c} -> \\delta^{\\beta}_{0} f_{c}+\\delta^{\\beta}_{m} f^{m}_{c} $);\n#substitute(tmp0,$e^{\\beta}_{c} -> \\delta^{\\beta}_{0} f_{c}+\\delta^{\\beta}_{m} f^{m}_{c} $);\n#distribute(tmp)\n#rename_dummies(tmp)\n#product_rule(tmp)\n#unwrap(tmp);\n#distribute(tmp)\n#rename_dummies(tmp);\n#ex3 = ex\n#tmp:= @(ex3).\n#substitute(tmp, $ \\epsilon_{\\alpha}^{a} -> \\partial_{0}{e_{\\alpha}^{a}} $, repeat=True);\n#substitute(tmp, $ \\partial_{\\beta}{e^{\\gamma}_{j}} -> \\delta_{\\beta}^{0} \\partial_{0}{e^{\\gamma}_{j}}$);\n#rename_dummies(tmp)\n#substitute(tmp, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\n#distribute(tmp)\n#rename_dummies(tmp)\n#factor_out(tmp, $ \\epsilon_{\\alpha}^{a}, e $)\n#substitute(tmp, $ h_{a b} -> \\eta_{a b}, h^{a b} -> \\eta^{a b} $, repeat=True)\n#rename_dummies(tmp);\n#factor_out(tmp, $ \\eta^{b c} $);\n"
+		},
+		{
+			"cell_id" : 12105478973555268166,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"cells" : 
+			[
+				{
+					"cell_id" : 9223372036854776133,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"source" : "\\begin{dmath*}{}\\text{Attached property Symmetric to~}\\left[h_{a b},~\\discretionary{}{}{} h^{a b}\\right].\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776134,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776135,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "p^{\\alpha}_{a}-2\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{j} e^{\\gamma}_{b} h^{c j} + 2\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{a} e^{\\alpha}_{c} e^{\\beta}_{j} e^{\\gamma}_{b} h^{c j} + 2\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{b} e^{\\gamma}_{j} h^{c j} + \\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{b} e^{\\gamma}_{a} e^{\\beta}_{j} h^{c j} + \\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{j} e^{\\beta}_{k} e^{\\gamma}_{l} h^{c k} h^{j l} h_{a b}-2\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{a} e^{\\alpha}_{c} e^{\\beta}_{b} e^{\\gamma}_{j} h^{c j}-\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{b} e^{\\alpha}_{c} e^{\\gamma}_{a} e^{\\beta}_{j} h^{c j}-\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{b} e^{\\beta}_{a} e^{\\gamma}_{j} h^{c j} + \\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{b} e^{\\alpha}_{c} e^{\\beta}_{a} e^{\\gamma}_{j} h^{c j}-\\partial_{\\beta}(e_{\\gamma}^{b}) e e^{0}_{c} e^{\\alpha}_{j} e^{\\beta}_{k} e^{\\gamma}_{l} h^{c l} h^{j k} h_{a b}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}p^{\\alpha}\\,_{a}-2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{b} h^{c j}+2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{b} h^{c j}+2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{j} h^{c j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\gamma}\\,_{a} e^{\\beta}\\,_{j} h^{c j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{j} e^{\\beta}\\,_{k} e^{\\gamma}\\,_{l} h^{c k} h^{j l} h_{a b}-2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{j} h^{c j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\gamma}\\,_{a} e^{\\beta}\\,_{j} h^{c j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j} h^{c j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j} h^{c j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} e e^{0}\\,_{c} e^{\\alpha}\\,_{j} e^{\\beta}\\,_{k} e^{\\gamma}\\,_{l} h^{c l} h^{j k} h_{a b}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776136,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776137,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "p^{\\alpha}_{a}-2\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{j} e^{\\gamma}_{b} + 2\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{a} e^{\\alpha}_{c} e^{\\beta}_{j} e^{\\gamma}_{b} + 2\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{b} e^{\\gamma}_{j} + \\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{b} e^{\\gamma}_{a} e^{\\beta}_{j} + \\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{\\alpha}_{k} e^{\\beta}_{j} e^{\\gamma}_{l}-2\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{a} e^{\\alpha}_{c} e^{\\beta}_{b} e^{\\gamma}_{j}-\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{b} e^{\\alpha}_{c} e^{\\gamma}_{a} e^{\\beta}_{j}-\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{b} e^{\\beta}_{a} e^{\\gamma}_{j} + \\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} e e^{0}_{b} e^{\\alpha}_{c} e^{\\beta}_{a} e^{\\gamma}_{j}-\\partial_{\\beta}(e_{\\gamma}^{b}) \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{\\alpha}_{k} e^{\\beta}_{l} e^{\\gamma}_{j}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}p^{\\alpha}\\,_{a}-2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{b}+2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{b}+2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\gamma}\\,_{a} e^{\\beta}\\,_{j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{j} e^{\\gamma}\\,_{l}-2\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{b} e^{\\gamma}\\,_{j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\gamma}\\,_{a} e^{\\beta}\\,_{j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j}+\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} e e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{a} e^{\\gamma}\\,_{j}-\\partial_{\\beta}{e_{\\gamma}\\,^{b}} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{l} e^{\\gamma}\\,_{j}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776138,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776139,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "p^{\\alpha}_{a}-2\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{a} e^{0}_{j} e^{\\gamma}_{b} + 2\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{a} e^{\\alpha}_{c} e^{0}_{j} e^{\\gamma}_{b} + 2\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{b} e^{\\alpha}_{a} e^{0}_{c} e^{\\gamma}_{j} + \\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{c} e^{\\alpha}_{b} e^{0}_{j} e^{\\gamma}_{a} + \\epsilon_{\\gamma}^{b} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{\\alpha}_{k} e^{0}_{j} e^{\\gamma}_{l}-\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{a} e^{\\alpha}_{c} e^{0}_{b} e^{\\gamma}_{j}-\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{b} e^{\\alpha}_{c} e^{0}_{j} e^{\\gamma}_{a}-\\epsilon_{\\gamma}^{b} \\eta^{c j} e e^{0}_{a} e^{\\alpha}_{b} e^{0}_{c} e^{\\gamma}_{j}-\\epsilon_{\\gamma}^{b} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{\\alpha}_{k} e^{0}_{l} e^{\\gamma}_{j}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}p^{\\alpha}\\,_{a}-2\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{0}\\,_{j} e^{\\gamma}\\,_{b}+2\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{0}\\,_{j} e^{\\gamma}\\,_{b}+2\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{b} e^{\\alpha}\\,_{a} e^{0}\\,_{c} e^{\\gamma}\\,_{j}+\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{0}\\,_{j} e^{\\gamma}\\,_{a}+\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{\\alpha}\\,_{k} e^{0}\\,_{j} e^{\\gamma}\\,_{l}-\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{a} e^{\\alpha}\\,_{c} e^{0}\\,_{b} e^{\\gamma}\\,_{j}-\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{0}\\,_{j} e^{\\gamma}\\,_{a}-\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} e e^{0}\\,_{a} e^{\\alpha}\\,_{b} e^{0}\\,_{c} e^{\\gamma}\\,_{j}-\\epsilon_{\\gamma}\\,^{b} \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{\\alpha}\\,_{k} e^{0}\\,_{l} e^{\\gamma}\\,_{j}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776140,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776141,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "p^{\\alpha}_{a} + \\epsilon_{\\beta}^{b} (-2\\eta^{c j} e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{a} e^{\\beta}_{b} + 2\\eta^{c j} e e^{0}_{a} e^{0}_{j} e^{\\alpha}_{c} e^{\\beta}_{b} + 2\\eta^{c j} e e^{0}_{b} e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{j} + \\eta^{c j} e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{b} e^{\\beta}_{a} + \\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{k} e^{\\beta}_{l}-\\eta^{c j} e e^{0}_{a} e^{0}_{b} e^{\\alpha}_{c} e^{\\beta}_{j}-\\eta^{c j} e e^{0}_{b} e^{0}_{j} e^{\\alpha}_{c} e^{\\beta}_{a}-\\eta^{c j} e e^{0}_{a} e^{0}_{c} e^{\\alpha}_{b} e^{\\beta}_{j}-\\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}_{c} e^{0}_{l} e^{\\alpha}_{k} e^{\\beta}_{j})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}p^{\\alpha}\\,_{a}+\\epsilon_{\\beta}\\,^{b} \\left(-2\\eta^{c j} e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b}+2\\eta^{c j} e e^{0}\\,_{a} e^{0}\\,_{j} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{b}+2\\eta^{c j} e e^{0}\\,_{b} e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{j}+\\eta^{c j} e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a}+\\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{l}-\\eta^{c j} e e^{0}\\,_{a} e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{j}-\\eta^{c j} e e^{0}\\,_{b} e^{0}\\,_{j} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{a}-\\eta^{c j} e e^{0}\\,_{a} e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j}-\\eta^{c j} \\eta^{k l} \\eta_{a b} e e^{0}\\,_{c} e^{0}\\,_{l} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{j}\\right)\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854776142,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854776143,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "-8e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{a} e^{\\beta}_{b} h^{c j} + 8e e^{0}_{a} e^{0}_{c} e^{\\alpha}_{j} e^{\\beta}_{b} h^{c j} + 8e e^{0}_{b} e^{0}_{c} e^{\\alpha}_{a} e^{\\beta}_{j} h^{c j} + 4e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{b} e^{\\beta}_{a} h^{c j} + 4e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{k} e^{\\beta}_{l} h^{c j} h^{k l} h_{a b}-4e e^{0}_{a} e^{0}_{b} e^{\\alpha}_{c} e^{\\beta}_{j} h^{c j}-4e e^{0}_{b} e^{0}_{c} e^{\\alpha}_{j} e^{\\beta}_{a} h^{c j}-4e e^{0}_{a} e^{0}_{c} e^{\\alpha}_{b} e^{\\beta}_{j} h^{c j}-4e e^{0}_{c} e^{0}_{j} e^{\\alpha}_{k} e^{\\beta}_{l} h^{c k} h^{j l} h_{a b}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}-8e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{b} h^{c j}+8e e^{0}\\,_{a} e^{0}\\,_{c} e^{\\alpha}\\,_{j} e^{\\beta}\\,_{b} h^{c j}+8e e^{0}\\,_{b} e^{0}\\,_{c} e^{\\alpha}\\,_{a} e^{\\beta}\\,_{j} h^{c j}+4e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{a} h^{c j}+4e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{l} h^{c j} h^{k l} h_{a b}-4e e^{0}\\,_{a} e^{0}\\,_{b} e^{\\alpha}\\,_{c} e^{\\beta}\\,_{j} h^{c j}-4e e^{0}\\,_{b} e^{0}\\,_{c} e^{\\alpha}\\,_{j} e^{\\beta}\\,_{a} h^{c j}-4e e^{0}\\,_{a} e^{0}\\,_{c} e^{\\alpha}\\,_{b} e^{\\beta}\\,_{j} h^{c j}-4e e^{0}\\,_{c} e^{0}\\,_{j} e^{\\alpha}\\,_{k} e^{\\beta}\\,_{l} h^{c k} h^{j l} h_{a b}\\end{dmath*}"
+				}
+			],
+			"source" : "\n{h_{a b}, h^{a b}}::Symmetric;\nsubstitute(ex, $ \\eta_{a b} -> h_{a b}, \\eta^{a b} -> h^{a b} $, repeat=True)\nrename_dummies(ex);\nsubstitute(ex, $ h_{a b} -> \\eta_{a b}, h^{a b} -> \\eta^{a b} $, repeat=True)\nrename_dummies(ex);\nex3 = ex\ntmp:= @(ex3).\nsubstitute(tmp, $ \\partial_{\\alpha}{e_{\\beta}^{a}} -> \\delta_{\\alpha}^{0} \\epsilon_{\\beta}^{a}$, repeat=True);\nrename_dummies(tmp)\nfactor_out(tmp, $ \\epsilon_{\\beta}^{b} $);\nex4 = tmp[1][1]\ntmp:= 4 @(ex4).\nrename_dummies(tmp)\nsubstitute(tmp, $ \\eta_{c j} -> h_{c j}, \\eta^{c j} -> h^{c j} $, repeat=True)\nrename_dummies(tmp);\n\n\n#substitute(tmp,$\\partial_{\\beta}{e_{\\gamma}^{c}} -> -e_{\\nu}^{c}\\partial_{\\beta}{e^{\\nu}_{j}} e_{\\gamma}^{j}$,repeat=True)\nsubstitute(tmp,$\\partial_{m}{e_{n}^{c}} -> -e_{r}^{c}\\partial_{m}{e^{r}_{j}} e_{n}^{j}-e_{0}^{c}\\partial_{m}{e^{0}_{j}} e_{n}^{j}$,repeat=True)\nsubstitute(tmp,$\\partial_{0}{e_{n}^{c}} -> -e_{r}^{c}\\partial_{0}{e^{r}_{j}} e_{n}^{j}-e_{0}^{c}\\partial_{0}{e^{0}_{j}} e_{n}^{j}$,repeat=True)\nsubstitute(tmp,$\\partial_{m}{e_{0}^{c}} -> -e_{r}^{c}\\partial_{m}{e^{r}_{j}} e_{0}^{j}-e_{0}^{c}\\partial_{m}{e^{0}_{j}} e_{0}^{j}$,repeat=True)\nsubstitute(tmp,$\\partial_{0}{e_{0}^{c}} -> -e_{r}^{c}\\partial_{0}{e^{r}_{j}} e_{0}^{j}-e_{0}^{c}\\partial_{0}{e^{0}_{j}} e_{0}^{j}$,repeat=True)\nsubstitute(t0,$\\partial_{m}{e_{n}^{c}} -> -e_{r}^{c}\\partial_{m}{e^{r}_{j}} e_{n}^{j}-e_{0}^{c}\\partial_{m}{e^{0}_{j}} e_{n}^{j}$,repeat=True)\nsubstitute(t0,$\\partial_{0}{e_{n}^{c}} -> -e_{r}^{c}\\partial_{0}{e^{r}_{j}} e_{n}^{j}-e_{0}^{c}\\partial_{0}{e^{0}_{j}} e_{n}^{j}$,repeat=True)\nsubstitute(t0,$\\partial_{m}{e_{0}^{c}} -> -e_{r}^{c}\\partial_{m}{e^{r}_{j}} e_{0}^{j}-e_{0}^{c}\\partial_{m}{e^{0}_{j}} e_{0}^{j}$,repeat=True)\nsubstitute(t0,$\\partial_{0}{e_{0}^{c}} -> -e_{r}^{c}\\partial_{0}{e^{r}_{j}} e_{0}^{j}-e_{0}^{c}\\partial_{0}{e^{0}_{j}} e_{0}^{j}$,repeat=True)"
+		},
+		{
+			"cell_id" : 1414965176378465087,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"cells" : 
+			[
+				{
+					"cell_id" : 9223372036854775851,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775852,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\int{R e}{x}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\int R e\\,\\,{\\rm d}x\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775853,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775854,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\int{R e}{x}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\int R e\\,\\,{\\rm d}x\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775855,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775856,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\int{R e}{x}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\int R e\\,\\,{\\rm d}x\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775857,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775858,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\int{R e}{x}"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\int R e\\,\\,{\\rm d}x\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775859,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775860,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\partial_{\\mu \\nu}(e^{\\alpha}_{a})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\partial_{\\mu \\nu}{e^{\\alpha}\\,_{a}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775861,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775862,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\partial_{\\mu \\nu}(d{e^{\\alpha}_{a}})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\partial_{\\mu \\nu}{d{e^{\\alpha}\\,_{a}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775863,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775864,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\partial_{\\mu \\nu}(d{e^{\\alpha}_{a}})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\partial_{\\mu \\nu}{d{e^{\\alpha}\\,_{a}}}\\end{dmath*}"
+				},
+				{
+					"cell_id" : 9223372036854775865,
+					"cell_origin" : "server",
+					"cell_type" : "latex_view",
+					"cells" : 
+					[
+						{
+							"cell_id" : 9223372036854775866,
+							"cell_origin" : "server",
+							"cell_type" : "input_form",
+							"source" : "\\partial_{\\mu \\nu}(d{e^{\\alpha}_{a}})"
+						}
+					],
+					"source" : "\\begin{dmath*}{}\\partial_{\\mu \\nu}{d{e^{\\alpha}\\,_{a}}}\\end{dmath*}"
+				}
+			],
+			"source" : "\n\n#substitute(ex,$d{h_{\\mu \\alpha \\beta}^{a}} -> -\\partial_{\\alpha \\beta}{e_{\\nu}^{a}d{e^{\\nu}_{b}} e_{\\mu}^{b}}$,repeat=True);\n#distribute(_)\n#rename_dummies(ex);\n#product_rule(ex)\n#unwrap(ex);\n#substitute(ex,$\\partial_{\\alpha \\beta}{e_{\\mu}^{a}} -> -\\partial_{\\alpha}{e_{\\nu}^{a}\\partial_{\\beta}{e^{\\nu}_{b}} e_{\\mu}^{b}}$,repeat=True)\n#distribute(_)\n#rename_dummies(ex);\n#product_rule(ex)\n#unwrap(ex);\n#substitute(ex,$\\partial_{\\beta}{e_{\\mu}^{a}} -> -e_{\\nu}^{a}\\partial_{\\beta}{e^{\\nu}_{b}} e_{\\mu}^{b}$,repeat=True)\n#product_rule(ex, repeat=True)\n#distribute(_)\n#rename_dummies(ex);\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n{\\mu}_{a}}} -> \\partial_{\\beta}{f^{\\mu}_{a}}\\delta_{\\alpha}^{0}+\\partial_{\\alpha}{f^{\\mu}_{a}}\\delta_{\\beta}^{0}-\\partial_{0}{f^{\\mu}_{a}}\\delta_{\\alpha}^{0}\\delta_{\\beta}^{0}$)\n#substitute(ex, $d{e^{\\mu}_{a}} -> 0$);\n\nproduct_rule(_);\ndistribute(_);\nrename_dummies(_);\nex:=\\partial_{\\mu \\nu}{ e^{\\alpha}_{a} };\nvary(ex, $e^{\\mu}_{a} -> d{e^{\\mu}_{a}}, e_{\\mu}^{a} -> d{e_{\\mu}^{a}}, e -> d{e}$);\n\n\ndistribute(_)\nrename_dummies(_);\n#substitute(ex, $\\partial_{\\alpha}{f^{\\mu}_{a}}} -> h^{\\mu}_{\\alpha a}$,repeat=True)\n#substitute(ex, $f^{\\mu}_{a} -> 0$);\nfactor_out(_, $ f^{\\mu}_{a}$);"
+		},
+		{
+			"cell_id" : 6593801359809516643,
+			"cell_origin" : "client",
+			"cell_type" : "input",
+			"source" : ""
+		}
+	],
+	"description" : "Cadabra JSON notebook format",
+	"version" : 1
+}
