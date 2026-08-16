@@ -523,14 +523,17 @@ mod tests {
     /// **TEGR/teleparallel torsion scalar**
     /// `e(T_{ab}^b T^{ac}_c − ½T_{abc}T^{acb} − ¼T_{abc}T^{abc})` with
     /// `T_{abc} = X_{abc} − X_{bac}` (the standard TEGR identity: this
-    /// equals `eR` up to the total-divergence term book.tex notes). The
-    /// notebook did not run as-is (missing `\partial{#}::PartialDerivative`,
-    /// undeclared flat/subspace index sets, missing `\sigma`, an extra-brace
-    /// typo, and an unbalanced spin-connection substitution); the repaired
-    /// script runs cleanly. This test runs it through the S30 Cadabra2
-    /// subprocess and asserts the derived `G` (Gauss constraint), `ex1`
-    /// (EH Hamiltonian density = eR), and `t0_tegr` (the TEGR torsion
-    /// scalar) are non-trivial.
+    /// equals `eR` up to the total-divergence term book.tex notes), and
+    /// finally book.tex's **3D gauge-fixed Hamiltonian** `H_final`
+    /// (book.tex line 8190, the Legendre transform of the TEGR Lagrangian
+    /// in the `χ`/`v`-decomposed variables). The notebook did not run as-is
+    /// (missing `\partial{#}::PartialDerivative`, undeclared flat/subspace
+    /// index sets, missing `\sigma`, an extra-brace typo, and an unbalanced
+    /// spin-connection substitution); the repaired script runs cleanly. This
+    /// test runs it through the S30 Cadabra2 subprocess and asserts the
+    /// derived `G` (Gauss constraint), `ex1` (EH density = eR), `t0_tegr`
+    /// (TEGR torsion scalar), and `H_final` (book.tex's 3D Hamiltonian) are
+    /// non-trivial.
     const QG_DERIVATION: &str = include_str!("../../docs/qg_gauge_fixed_hamiltonian.cdb");
 
     #[test]
@@ -538,7 +541,8 @@ mod tests {
         if !require_cadabra() {
             return;
         }
-        let derived = symbolic_derive(QG_DERIVATION, &["G", "ex1", "t0_tegr"], 120_000).unwrap();
+        let derived =
+            symbolic_derive(QG_DERIVATION, &["G", "ex1", "t0_tegr", "H_final"], 120_000).unwrap();
         assert!(
             derived.contains_key("G"),
             "Gauss constraint must be extracted: {:?}",
@@ -580,6 +584,23 @@ mod tests {
         assert!(
             t0.contains("X_{") || t0.contains("X^{"),
             "t0_tegr should be a torsion/connection expression: {t0}"
+        );
+        // book.tex's final 3D gauge-fixed Hamiltonian (line 8190), the
+        // Legendre transform of the TEGR Lagrangian, must be non-trivial and
+        // carry the 1/(16e) S^2 and 1/(24e) P^2 kinetic coefficients.
+        assert!(
+            derived.contains_key("H_final"),
+            "final 3D Hamiltonian must be extracted: {:?}",
+            derived.keys()
+        );
+        let h = &derived["H_final"];
+        assert!(
+            !h.is_empty() && h != "0",
+            "H_final must be non-trivial: {h}"
+        );
+        assert!(
+            h.contains("S") && h.contains("E"),
+            "H_final should be in the S/E torsion variables: {h}"
         );
     }
 
