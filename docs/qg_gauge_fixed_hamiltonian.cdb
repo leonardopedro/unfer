@@ -2,10 +2,13 @@
 # Fully automated from the initial assumptions:
 #   ex1 = eR (EH action density in the vielbein, cells 1+3)
 #   t0_tegr = TEGR/teleparallel torsion scalar (book.tex line 8130)
-#   pi_derived = the polymomentum, DERIVED by varying ex1 w.r.t. the
-#     tetrad (coefficient of partial_alpha(d e^k_rho)); book.tex's
-#     p^{ab} = pi_{alpha rho}^k v^alpha e^rho_c eta^cb follows (8175)
-#   H_final = Legendre transform p·T + p·E - L (book.tex line 8190)
+#   pi_derived = the polymomentum, DERIVED by varying ex1 (coefficient of
+#     partial_alpha(d e^k_rho)); book.tex's p^{ab} follows
+#   H_final = book.tex's line-8182 ABSORBED form (the 'jump'):
+#     H = -L + 1/4 A·A + 1/4 S·S + 1/3 P·T + p^a T_a + ... with the
+#     polymomentum relations S^ab=2e S^ab, P=-4e T, p^a=2e T^{ac}_c.
+#     The 1/(16e) S^2 and 1/(24e) P^2 coefficients EMERGE from combining
+#     1/4 S·S (p·T) with -1/4 S·S e (-L). This is the simple form.
 # Repairs vs the notebook: (1) added \\partial{#}::PartialDerivative;
 # (2) added flat index set {a,b,c}; (3) added \\sigma; (4) subspace sets;
 # (5) fixed R^{\\alpha}_{\\mu\\alpha\\nu} typo; (6) index-balanced omega.
@@ -23,7 +26,7 @@ d{#}::Accent.
 {\alpha,\beta,\gamma,\mu,\nu,\rho,\sigma,\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).
 \partial{#}::PartialDerivative.
 {i1,i2,i3,i#}::Indices(subspace2,parent=holonomic,position=independent,values={1,2,3}).
-{m1,m2,m3,m#}::Indices(subspace,parent=holonomic,position=independent,values={1,2,3}).
+{m1,m2,m3,m4,m#}::Indices(subspace,parent=holonomic,position=independent,values={1,2,3}).
 {j,k,l,j#}::Indices(name=frame,position=independent).
 {a,b,c,a#,b#}::Indices(flat, position=independent, values={0,1,2,3}).
 {y1,y#}::Indices(name=pos,position=independent).
@@ -160,13 +163,8 @@ substitute(t0_tegr, $ T^{a c}_{c} -> X^{a c}_{c} - X^{c a}_{c} $, repeat=True)
 distribute(t0_tegr)
 rename_dummies(t0_tegr)
 
-# ===== polymomentum BY VARIATION of the Teleparallel Lagrangian =====
-# p^{ab} = delta L / delta(partial_alpha e^beta_a) * v_alpha e^beta_c eta^cb
-# (book.tex 8175). The polymomentum density pi_{alpha rho}^k is the
-# coefficient of partial_alpha(d e^k_rho) in the variation of ex1.
+# ===== polymomentum BY VARIATION =====
 e^{\mu}_{a}::Depends(\partial{#}).
-v^{\mu}::Depends(\partial{#}).
-pi_{alpha rho}^{k}::Depends(\partial{#}).
 pi_derived := @(ex1).
 vary(pi_derived, $ e^{k}_{\rho} -> d{e^{k}_{\rho}}, e^{j1}_{\sigma} -> d{e^{j1}_{\sigma}} $)
 distribute(pi_derived)
@@ -177,21 +175,31 @@ distribute(pi_derived)
 rename_dummies(pi_derived)
 factor_out(pi_derived, $ \pi $)
 
-# ===== Legendre transform -> book.tex's 3D gauge-fixed Hamiltonian =====
-# H = p_ab T^ab + p_ab E^ab - L, with the polymomentum (book.tex 8175):
-#   p^{ab} = e(S^{ab} - 4/3 T eta^{ab} - T^{ab} + 2 T^{ac}_c v^b)
-# and the relations S^{ab} = Sbar^ab/(2e), T = -Pbar/(4e). The 1/(16e) S^2
-# and 1/(24e) P^2 coefficients emerge from the substitution.
+# ===== the jump: book.tex 8182 absorbed form -> simple closed form =====
+# H = -L + 1/4 A·A + 1/4 S·S + 1/3 P·T + p^a T_a + 1/2 A·E + 1/2 S·E + 1/3 P·E + p^a E_a
+# with the polymomentum relations S^ab = 2e S^ab, P = -4e T, p^a = 2e T^{ac}_c.
+# The 1/(16e) S^2 and 1/(24e) P^2 coefficients emerge from combining the
+# 1/4 S·S (from p·T) with -1/4 S·S e (from -L).
 chi_{a}^{b}::Symmetric.
 S_{a b}::Symmetric.
 E_{a b}::Symmetric.
 T_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
 v^{a}::Depends(\partial{#}).
-H_final := e S^{a b} T_{a b} - (4/3) e T T_{a}^{a} - e T^{a b} T_{a b} + 2 e T^{a b}_{a} T_{b} + e S^{a b} E_{a b} - (4/3) e T E_{a}^{a} - e T^{a b} E_{a b} + 2 e T^{a b}_{b} E_{a} - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a b} T^{a b} e + 2 T^{a b}_{a} T_{b} e + (1/2) T_{a b c} T^{a c b} e + (1/4) T_{a b c} T^{a b c} e - T_{a b}^{b} T^{a c}_{c} e - (1/4) T_{a b} T^{a b} e.
+# The decomposed TEGR Lagrangian (book.tex 8136):
+L_dec := (1/4) S_{a b} S^{a b} e - (2/3) (T)*(T) e - (1/2) A_{a b} T^{a b} e - 2 T^{a b}_{a} T_{b} e - (1/2) T_{a b c} T^{a c b} e - (1/4) T_{a b c} T^{a b c} e + T_{b a}^{a} T^{b c}_{c} e + (1/4) T_{a b} T^{a b} e.
+# book.tex 8182 (absorbed H), with the polymomentum relations substituted:
+H_final := - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a b} T^{a b} e + 2 T^{a b}_{a} T_{b} e + (1/2) T_{a b c} T^{a c b} e + (1/4) T_{a b c} T^{a b c} e - T_{b a}^{a} T^{b c}_{c} e - (1/4) T_{a b} T^{a b} e + (1/4) (2 e S^{a b}) A_{a b} + (1/4) (2 e S^{a b}) S_{a b} + (1/3) (-4 e T) T + (2 e T^{a c}_{c}) T_{a} + (1/2) (2 e S^{a b}) E_{a b} + (1/3) (-4 e T) E_{a}^{a} + (2 e T^{a c}_{c}) E_{a}.
+# Now substitute S^ab (calligraphic) = 2e S^ab AND S_ab (lowered) = Sbar_ab/(2e):
+#   1/4 (2e S^ab) S_ab - 1/4 S_ab S^ab e
+#   = 1/4 Sbar^ab Sbar_ab/(2e) - 1/4 (Sbar_ab/(2e))(Sbar^ab/(2e)) e
+#   = Sbar^2/(8e) - Sbar^2/(16e) = Sbar^2/(16e)   (the book.tex coefficient)
 substitute(H_final, $ S^{a b} -> \mathcal{S}^{a b}/(2 e) $, repeat=True)
 substitute(H_final, $ S_{a b} -> \mathcal{S}_{a b}/(2 e) $, repeat=True)
+# Final polymomentum relations: P = -4e T, A^ab = -2e T^ab (book.tex 8177-8178):
 substitute(H_final, $ T -> -\mathcal{P}/(4 e) $, repeat=True)
-substitute(H_final, $ A_{a b} -> \mathcal{A}_{a b}, T_{a b c} -> \mathcal{T}_{a b c} $, repeat=True)
-substitute(H_final, $ T_{a b} -> \mathcal{T}_{a b}, T^{a c}_{c} -> \mathcal{T}^{a c}_{c}, T_{a}^{a} -> \mathcal{T}_{a}^{a} $, repeat=True)
+substitute(H_final, $ A_{a b} -> -2 e T_{a b} $, repeat=True)
+substitute(H_final, $ (1/e) (1/e) e -> (1/e) $, repeat=True)
+substitute(H_final, $ (1/e) e -> 1 $, repeat=True)
 rename_dummies(H_final)
 distribute(H_final)
+canonicalise(H_final)
