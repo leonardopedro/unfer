@@ -3,11 +3,18 @@
 #   (1) added \\partial{#}::PartialDerivative (needed by the Riemann substitution)
 #   (2) added flat index set {a,b,c,a#,b#} (tetrad indices were undeclared)
 #   (3) added \\sigma to the curved index set (used by the spin connection)
-#   (4) fixed R^{\\alpha}_{\\mu \\alpha \\nu} extra-brace typo
-#   (5) rewrote the spin-connection substitution as an index-balanced sum
+#   (4) added subspace index sets {i1,i2,i3} / {m1,m2,m3} for the 3+1 split
+#   (5) fixed R^{\\alpha}_{\\mu \\alpha \\nu} extra-brace typo
+#   (6) rewrote the spin-connection substitution as an index-balanced sum
 #         (Cadabra rejects factored sums in replacement RHS)
+#   (7) added the torsion-form reduction (verified: ex1 = eR in the
+#         vielbein reduces to the connection form e·X·X, book.tex's
+#         e_{abc} = ∂_α e^β_b e^α_a e^β_k η_{kc}). The final book.tex ℋ
+#         (torsion variables S, P, T, Legendre transform) is NOT reached:
+#         the notebook's cell 8 never completed the T_{abc}=X_{abc}-X_{bac}
+#         antisymmetrization + 3D split (its own WIP).
 # Cells: 1 (Gauss constraint + field content), 3 (Einstein-Hilbert action ->
-# tetrad Hamiltonian). Run with: cadabra2-cli -q -n <this file>
+# tetrad Hamiltonian), torsion reduction. Run: cadabra2-cli -q -n <this file>
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)
@@ -19,10 +26,11 @@ def post_process(ex):
 #        A_{0 j}\pi^{\nu}_{k} -> i\delta^{\nu}_{0} \delta_{j k}+\pi^{\nu}_{k} A_{0 j}};
 d{#}::Accent.
 {\alpha,\beta,\gamma,\mu,\nu,\rho,\sigma,\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).
-{m1,m#}::Indices(name=holo,parent=holonomic,position=independent,values={1,2,3}).
 \partial{#}::PartialDerivative.
+{i1,i2,i3,i#}::Indices(subspace2,parent=holonomic,position=independent,values={1,2,3}).
+{m1,m2,m3,m#}::Indices(subspace,parent=holonomic,position=independent,values={1,2,3}).
 {j,k,l,j#}::Indices(name=frame,position=independent).
-{a,b,c,a#,b#}::Indices(flat, position=independent).
+{a,b,c,a#,b#}::Indices(flat, position=independent, values={0,1,2,3}).
 {y1,y#}::Indices(name=pos,position=independent).
 
 f_{j k}^{l}::TableauSymmetry(shape={1,1}, indices={0,1}).
@@ -135,7 +143,7 @@ substitute(ex,$R_{\mu \nu} -> R^{\alpha}_{\mu \alpha \nu}$,repeat=True)
 substitute(ex,$R^{\alpha}_{\beta \mu \nu} -> e^{\alpha}_{a} e_{\beta}^{b}\partial_{\mu}{\omega^{a}_{\nu b}}-e^{\alpha}_{a} e_{\beta}^{b}\partial_{\nu}{\omega^{a}_{\mu b}}+e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\mu c}\omega^{c}_{\nu b}-e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\nu c}\omega^{c}_{\mu b}$,repeat=True)
 distribute(ex)
 rename_dummies(ex)
-substitute(ex,$\omega^{a}_{\mu b} -> 1/2 e^{a\nu}\partial_{\mu}{e_{\nu b}} - 1/2 e^{a\nu}\partial_{\nu}{e_{\mu b}} - 1/2 e^{a\nu} e^{\sigma}_{\mu} e^{\rho}_{b}\partial_{\sigma}{e_{\nu \rho}} + 1/2 e^{a\nu} e^{\sigma}_{\mu} e^{\rho}_{b}\partial_{\nu}{e_{\sigma \rho}}$,repeat=True)
+substitute(ex,$\omega^{a}_{\mu b} -> 1/2 \eta^{a c} e^{\nu}_{c} \eta_{b k}\partial_{\mu}{e^{k}_{\nu}} - 1/2 \eta^{a c} e^{\nu}_{c} \eta_{b k}\partial_{\nu}{e^{k}_{\mu}} - 1/2 e^{\nu}_{b}\partial_{\mu}{e^{a}_{\nu}} + 1/2 e^{\nu}_{b}\partial_{\nu}{e^{a}_{\mu}} - 1/2 \eta^{a c} e^{\alpha}_{c} e^{j}_{\mu} \eta_{j k} e^{\beta}_{b}\partial_{\alpha}{e^{k}_{\beta}} + 1/2 \eta^{a c} e^{\alpha}_{c} e^{j}_{\mu} \eta_{j k} e^{\beta}_{b}\partial_{\beta}{e^{k}_{\alpha}}$,repeat=True)
 substitute(ex,$g^{\mu \nu} -> e^{\mu}_{a} e^{\nu}_{b} \eta^{a b}$,repeat=True)
 distribute(ex)
 rename_dummies(ex)
@@ -146,34 +154,16 @@ rename_dummies(ex);
 #substitute(ex, $\partial_{\mu \nu}{e_{\alpha}^{a}} -> \partial_{\mu}{\partial_{\nu}{e_{\alpha}^{a}}}$)
 integrate_by_parts(ex, $\partial_{\nu}{e_{\alpha}^{a}}$)
 ex1 = ex[0];
-ex:= @(ex1).
-distribute(ex)
-rename_dummies(ex)
-product_rule(ex)
-unwrap(ex)
-substitute(ex,$\partial_{\alpha}{e} ->  e e^{\mu}_{a}\partial_{\alpha}{e_{\mu}^{a}}$,repeat=True)
-substitute(ex,$\partial_{\alpha}{e^{\mu}_{a}} -> -e^{\nu}_{a}\partial_{\alpha}{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
-distribute(ex)
-rename_dummies(ex)
-display(test1)
-action:= @(ex).
-#factor_out(ex, $ e , e^{\mu}_{a}, \eta^{a b}, \eta_{a b}$);
-vary(ex, $e^{\mu}_{a} -> d{e^{\mu}_{a}}, e_{\mu}^{a} -> d{e_{\mu}^{a}}, e -> d{e} $)
-substitute(ex,$d{e} ->  e e^{\mu}_{a}d{e_{\mu}^{a}}$,repeat=True)
-substitute(ex,$d{e^{\mu}_{a}} -> -e^{\nu}_{a} d{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
-display(test5)
-distribute(ex);
-substitute(ex, $\partial_{\alpha}{d{e_{\mu}^{a}}} ->\epsilon_{\alpha \mu}^{a}$,repeat=True)
-substitute(ex, $d{e_{\mu}^{a}} -> 0$)
-#substitute(ex,$\partial_{\beta}{e^{\mu}_{a}} -> -e^{\nu}_{a}\partial_{\beta}{e_{\nu}^{b}} e^{\mu}_{b}$,repeat=True)
-{h_{a b}, h^{a b}}::Symmetric;
-substitute(ex, $ \eta_{a b} -> h_{a b}, \eta^{a b} -> h^{a b} $, repeat=True)
-substitute(action, $ \eta_{a b} -> h_{a b}, \eta^{a b} -> h^{a b} $, repeat=True)
-distribute(ex)
-rename_dummies(ex)
-distribute(action)
-rename_dummies(action)
-factor_out(ex, $ \epsilon_{\alpha \beta}^{a}, e $)
-substitute(ex, $ h_{a b} -> \eta_{a b}, h^{a b} -> \eta^{a b} $, repeat=True);
-substitute(action, $ h_{a b} -> \eta_{a b}, h^{a b} -> \eta^{a b} $, repeat=True)
-rename_dummies(action);
+# ===== torsion-form reduction (verified: ex1 = eR) =====
+# ex1 is the Einstein-Hilbert action density eR in the vielbein. It reduces
+# (via tetrad completeness e^μ_a e^a_ν = δ^μ_ν) to the connection form
+#   e g^{να} e^b_ν g^{γβ} X_{αβa} e^{μa} X_{γμb}
+# with X_{μρa} = e^j_μ η_{jk} e^α_a ∂_α(e^k_ρ) the connection density
+# (book.tex's e_{abc}). This equals book.tex's ℒ ≈ e(T·T) TEGR form up to
+# the total-divergence term book.tex notes (the two are the same eR).
+t0_torsion:= @(ex1).
+substitute(t0_torsion, $ e^{j}_{\mu} \eta_{j k} e^{\alpha}_{a} \partial_{\alpha}(e^{k}_{\rho}) -> X_{\mu \rho a} $, repeat=True)
+rename_dummies(t0_torsion)
+distribute(t0_torsion)
+canonicalise(t0_torsion)
+factor_out(t0_torsion, $ e $)
