@@ -629,6 +629,15 @@ mod tests {
             "H_final must carry the derived 1/(16e) S^2 and 1/(24e) P^2 \
              coefficients: {h}"
         );
+        // With e declared commuting with the torsion tensors, the cancelling
+        // pair -e·T·T·e + e·T·T·e collapses to 0. The result should be
+        // book.tex's line-8190 form (kinetic + -e(...) torsion block), not
+        // the uncompensated expanded pair.
+        assert!(
+            h.contains("e)**(-1)") && h.contains("T"),
+            "H_final should be in the book.tex (1/16e)S^2 - (1/24e)P^2 + \
+             torsion form: {h}"
+        );
     }
 
     #[test]

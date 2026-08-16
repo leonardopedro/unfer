@@ -206,6 +206,16 @@ substitute(H_final, $ S_{a b} -> \mathcal{S}_{a b}/(2 e) $, repeat=True)
 substitute(H_final, $ T -> -\mathcal{P}/(4 e) $, repeat=True)
 substitute(H_final, $ (1/e) (1/e) e -> (1/e) $, repeat=True)
 substitute(H_final, $ (1/e) e -> 1 $, repeat=True)
+# Fold A -> -2e T (calligraphic 2-index) so the A-terms cancel:
+substitute(H_final, $ A_{a b} -> -2 e T_{a b}, A^{a b} -> -2 e T^{a b} $, repeat=True)
+substitute(H_final, $ (1/e) e -> 1 $, repeat=True)
 rename_dummies(H_final)
 distribute(H_final)
+# The determinant e commutes with the torsion tensors, so sort + canonicalise
+# collapses the cancelling -e·T·T·e + e·T·T·e pairs:
+{e, T_{a b}}::Commuting.
+{e, T_{a b c}}::Commuting.
+{e, S_{a b}}::Commuting.
+{e, E_{a b}}::Commuting.
+sort_product(H_final)
 canonicalise(H_final)
