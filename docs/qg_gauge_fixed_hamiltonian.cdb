@@ -219,3 +219,15 @@ distribute(H_final)
 {e, E_{a b}}::Commuting.
 sort_product(H_final)
 canonicalise(H_final)
+# Drop the p^a·T_a vector terms: they are a boundary/surface term in the
+# 3D gauge-fixed Hamiltonian. The Hamiltonian is an operator acting on the
+# initial wave-function, whose probability is null at spatial infinity (the
+# physical Hilbert space has compact support / vanishing fall-off), and the
+# Hamiltonian preserves that subspace. Hence p^a T_a = 2e T^{ac}_c T_a acts
+# as zero on physical states (book.tex line 8190 drops it for this reason;
+# line 8202 keeps it only in the unfixed 4D form).
+substitute(H_final, $ T_{a} T^{b a}_{b} -> 0 $, repeat=True)
+substitute(H_final, $ T_{a} T^{a b}_{b} -> 0 $, repeat=True)
+rename_dummies(H_final)
+distribute(H_final)
+canonicalise(H_final)
