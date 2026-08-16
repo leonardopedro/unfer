@@ -585,9 +585,11 @@ mod tests {
             t0.contains("X_{") || t0.contains("X^{"),
             "t0_tegr should be a torsion/connection expression: {t0}"
         );
-        // book.tex's final 3D gauge-fixed Hamiltonian (line 8190), the
-        // Legendre transform of the TEGR Lagrangian, must be non-trivial and
-        // carry the 1/(16e) S^2 and 1/(24e) P^2 kinetic coefficients.
+        // book.tex's final 3D gauge-fixed Hamiltonian (line 8190), DERIVED
+        // automatically from the TEGR Lagrangian via the Legendre transform
+        // H = p·T + p·E − L (polymomentum p^{ab} from book.tex 8175, with the
+        // S^{ab} = S̄/(2e), T = −P̄/(4e) relations). Must be non-trivial and
+        // carry the derived 1/(16e) S² and 1/(24e) P² kinetic coefficients.
         assert!(
             derived.contains_key("H_final"),
             "final 3D Hamiltonian must be extracted: {:?}",
@@ -601,6 +603,11 @@ mod tests {
         assert!(
             h.contains("S") && h.contains("E"),
             "H_final should be in the S/E torsion variables: {h}"
+        );
+        assert!(
+            h.contains("1/16") && h.contains("1/24"),
+            "H_final must carry the derived 1/(16e) S^2 and 1/(24e) P^2 \
+             coefficients: {h}"
         );
     }
 
