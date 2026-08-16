@@ -522,18 +522,17 @@ mod tests {
     /// the gauge-fixed Hamiltonian density, then reduce it to book.tex's
     /// **TEGR/teleparallel torsion scalar**
     /// `e(T_{ab}^b T^{ac}_c − ½T_{abc}T^{acb} − ¼T_{abc}T^{abc})` with
-    /// `T_{abc} = X_{abc} − X_{bac}` (the standard TEGR identity: this
-    /// equals `eR` up to the total-divergence term book.tex notes), and
-    /// finally book.tex's **3D gauge-fixed Hamiltonian** `H_final`
-    /// (book.tex line 8190, the Legendre transform of the TEGR Lagrangian
-    /// in the `χ`/`v`-decomposed variables). The notebook did not run as-is
-    /// (missing `\partial{#}::PartialDerivative`, undeclared flat/subspace
-    /// index sets, missing `\sigma`, an extra-brace typo, and an unbalanced
-    /// spin-connection substitution); the repaired script runs cleanly. This
-    /// test runs it through the S30 Cadabra2 subprocess and asserts the
-    /// derived `G` (Gauss constraint), `ex1` (EH density = eR), `t0_tegr`
-    /// (TEGR torsion scalar), and `H_final` (book.tex's 3D Hamiltonian) are
-    /// non-trivial.
+    /// `T_{abc} = X_{abc} − X_{bac}`, derive the **polymomentum by variation**
+    /// of the Lagrangian (`pi_derived`, the coefficient of
+    /// `∂_α(d e^k_ρ)` — book.tex's `p^{ab} = π^α_{kρ} v_α e^ρ_c η^{cb}`),
+    /// and finally book.tex's **3D gauge-fixed Hamiltonian** `H_final`
+    /// (book.tex line 8190, the Legendre transform). The notebook did not run
+    /// as-is (missing `\partial{#}::PartialDerivative`, undeclared
+    /// flat/subspace index sets, missing `\sigma`, an extra-brace typo, and
+    /// an unbalanced spin-connection substitution); the repaired script runs
+    /// cleanly. This test runs it through the S30 Cadabra2 subprocess and
+    /// asserts `G`, `ex1` (=eR), `t0_tegr`, `pi_derived` (the
+    /// variation-derived polymomentum), and `H_final` are non-trivial.
     const QG_DERIVATION: &str = include_str!("../../docs/qg_gauge_fixed_hamiltonian.cdb");
 
     #[test]
@@ -541,8 +540,12 @@ mod tests {
         if !require_cadabra() {
             return;
         }
-        let derived =
-            symbolic_derive(QG_DERIVATION, &["G", "ex1", "t0_tegr", "H_final"], 120_000).unwrap();
+        let derived = symbolic_derive(
+            QG_DERIVATION,
+            &["G", "ex1", "t0_tegr", "pi_derived", "H_final"],
+            120_000,
+        )
+        .unwrap();
         assert!(
             derived.contains_key("G"),
             "Gauss constraint must be extracted: {:?}",
@@ -584,6 +587,23 @@ mod tests {
         assert!(
             t0.contains("X_{") || t0.contains("X^{"),
             "t0_tegr should be a torsion/connection expression: {t0}"
+        );
+        // The polymomentum must be DERIVED by variation of the Teleparallel
+        // Lagrangian: `pi_derived` is the coefficient of ∂_α(d e^k_ρ) in the
+        // varied ex1 (book.tex's p^{ab} = π^α_{kρ} v_α e^ρ_c η^{cb}).
+        assert!(
+            derived.contains_key("pi_derived"),
+            "polymomentum must be extracted: {:?}",
+            derived.keys()
+        );
+        let pi = &derived["pi_derived"];
+        assert!(
+            !pi.is_empty() && pi != "0",
+            "pi_derived must be non-trivial: {pi}"
+        );
+        assert!(
+            pi.contains("π") || pi.contains("\\pi") || pi.contains("pi"),
+            "pi_derived should be the polymomentum density: {pi}"
         );
         // book.tex's final 3D gauge-fixed Hamiltonian (line 8190), DERIVED
         // automatically from the TEGR Lagrangian via the Legendre transform

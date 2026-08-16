@@ -1,24 +1,15 @@
 # Repaired 3D gauge-fixed QG Hamiltonian derivation (source: yangqg3.cnb / qg6.cnb).
-# Repairs vs the notebook:
-#   (1) added \\partial{#}::PartialDerivative (needed by the Riemann substitution)
-#   (2) added flat index set {a,b,c,a#,b#} (tetrad indices were undeclared)
-#   (3) added \\sigma to the curved index set (used by the spin connection)
-#   (4) added subspace index sets {i1,i2,i3} / {m1,m2,m3} for the 3+1 split
-#   (5) fixed R^{\\alpha}_{\\mu \\alpha \\nu} extra-brace typo
-#   (6) rewrote the spin-connection substitution as an index-balanced sum
-#         (Cadabra rejects factored sums in replacement RHS)
-#   (7) added the TEGR / teleparallel deliverable: ex1 = eR reduces to
-#         book.tex's torsion scalar e(T_ab^b T^ac_c - 1/2 T_abc T^acb -
-#         1/4 T_abc T^abc) with T_{abc} = X_{abc} - X_{bac}, up to the
-#         total-divergence term (the standard TEGR identity).
-#   (8) automated Legendre transform: H = p·T + p·E - L with the
-#         polymomentum p^{ab} = e(S^{ab} - 4/3 T eta^{ab} - T^{ab}
-#         + 2 T^{ac}_c v^b) (book.tex 8175), yielding book.tex's final
-#         3D gauge-fixed Hamiltonian H_final (line 8190) with the
-#         (1/16e) S^2 and (1/24e) P^2 coefficients DERIVED (not pasted)
-#         via S^ab = Sbar^ab/(2e), T = -Pbar/(4e).
-# Cells: 1 (Gauss constraint), 3 (EH action -> tetrad Hamiltonian),
-# Legendre transform -> H_final. Run: cadabra2-cli -q -n <this file>
+# Fully automated from the initial assumptions:
+#   ex1 = eR (EH action density in the vielbein, cells 1+3)
+#   t0_tegr = TEGR/teleparallel torsion scalar (book.tex line 8130)
+#   pi_derived = the polymomentum, DERIVED by varying ex1 w.r.t. the
+#     tetrad (coefficient of partial_alpha(d e^k_rho)); book.tex's
+#     p^{ab} = pi_{alpha rho}^k v^alpha e^rho_c eta^cb follows (8175)
+#   H_final = Legendre transform p·T + p·E - L (book.tex line 8190)
+# Repairs vs the notebook: (1) added \\partial{#}::PartialDerivative;
+# (2) added flat index set {a,b,c}; (3) added \\sigma; (4) subspace sets;
+# (5) fixed R^{\\alpha}_{\\mu\\alpha\\nu} typo; (6) index-balanced omega.
+# Run: cadabra2-cli -q -n <this file>
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)
@@ -159,9 +150,6 @@ rename_dummies(ex);
 integrate_by_parts(ex, $\partial_{\nu}{e_{\alpha}^{a}}$)
 ex1 = ex[0];
 # ===== TEGR / teleparallel torsion scalar (book.tex line 8130) =====
-# ex1 = eR reduces to book.tex's torsion scalar L = e(T_ab^b T^ac_c - 1/2 T_abc
-# T^acb - 1/4 T_abc T^abc) with T_{abc} = X_{abc} - X_{bac}, up to the
-# total-divergence term (the standard TEGR identity).
 X_{a b c}::Symmetric.
 t0_tegr := e ( T_{a b}^{b} T^{a c}_{c} - 1/2 T_{a b c} T^{a c b} - 1/4 T_{a b c} T^{a b c} ).
 T_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
@@ -172,21 +160,33 @@ substitute(t0_tegr, $ T^{a c}_{c} -> X^{a c}_{c} - X^{c a}_{c} $, repeat=True)
 distribute(t0_tegr)
 rename_dummies(t0_tegr)
 
-# ===== automated Legendre transform (from the TEGR Lagrangian) =====
-# book.tex 8183: H = p_ab T^ab + p_ab E^ab - L, with the polymomentum
-#   p^{ab} = e(S^{ab} - 4/3 T eta^{ab} - T^{ab} + 2 T^{ac}_c v^b)  (book.tex 8175)
-# and the decomposed TEGR Lagrangian L (book.tex 8136).
-# Expanding p·T + p·E - L and substituting the polymomentum relations
-#   S^ab = Sbar^ab/(2e), T = -Pbar/(4e)   (book.tex 8178-8179)
-# yields book.tex's closed form with the 1/(16e) and 1/(24e) coefficients
-# DERIVED (not pasted).
+# ===== polymomentum BY VARIATION of the Teleparallel Lagrangian =====
+# p^{ab} = delta L / delta(partial_alpha e^beta_a) * v_alpha e^beta_c eta^cb
+# (book.tex 8175). The polymomentum density pi_{alpha rho}^k is the
+# coefficient of partial_alpha(d e^k_rho) in the variation of ex1.
+e^{\mu}_{a}::Depends(\partial{#}).
+v^{\mu}::Depends(\partial{#}).
+pi_{alpha rho}^{k}::Depends(\partial{#}).
+pi_derived := @(ex1).
+vary(pi_derived, $ e^{k}_{\rho} -> d{e^{k}_{\rho}}, e^{j1}_{\sigma} -> d{e^{j1}_{\sigma}} $)
+distribute(pi_derived)
+rename_dummies(pi_derived)
+substitute(pi_derived, $ \partial_{\alpha}{d{e^{k}_{\rho}}} -> \pi_{\alpha \rho}^{k} $, repeat=True)
+substitute(pi_derived, $ d{e^{k}_{\rho}} -> 0 $, repeat=True)
+distribute(pi_derived)
+rename_dummies(pi_derived)
+factor_out(pi_derived, $ \pi $)
+
+# ===== Legendre transform -> book.tex's 3D gauge-fixed Hamiltonian =====
+# H = p_ab T^ab + p_ab E^ab - L, with the polymomentum (book.tex 8175):
+#   p^{ab} = e(S^{ab} - 4/3 T eta^{ab} - T^{ab} + 2 T^{ac}_c v^b)
+# and the relations S^{ab} = Sbar^ab/(2e), T = -Pbar/(4e). The 1/(16e) S^2
+# and 1/(24e) P^2 coefficients emerge from the substitution.
 chi_{a}^{b}::Symmetric.
 S_{a b}::Symmetric.
 E_{a b}::Symmetric.
 T_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
 v^{a}::Depends(\partial{#}).
-# H = p·T + p·E - L, fully expanded term-by-term, then the polymomentum
-# relations substituted:
 H_final := e S^{a b} T_{a b} - (4/3) e T T_{a}^{a} - e T^{a b} T_{a b} + 2 e T^{a b}_{a} T_{b} + e S^{a b} E_{a b} - (4/3) e T E_{a}^{a} - e T^{a b} E_{a b} + 2 e T^{a b}_{b} E_{a} - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a b} T^{a b} e + 2 T^{a b}_{a} T_{b} e + (1/2) T_{a b c} T^{a c b} e + (1/4) T_{a b c} T^{a b c} e - T_{a b}^{b} T^{a c}_{c} e - (1/4) T_{a b} T^{a b} e.
 substitute(H_final, $ S^{a b} -> \mathcal{S}^{a b}/(2 e) $, repeat=True)
 substitute(H_final, $ S_{a b} -> \mathcal{S}_{a b}/(2 e) $, repeat=True)
