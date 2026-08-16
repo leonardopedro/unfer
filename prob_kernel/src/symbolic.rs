@@ -519,14 +519,18 @@ mod tests {
     /// `docs/qg_gauge_fixed_hamiltonian.cdb` is the repaired version of the
     /// `yangqg3.cnb` / `qg6.cnb` Cadabra2 notebooks: cells 1 + 3 expand the
     /// Einstein-Hilbert action in the tetrad (vielbein) formalism and derive
-    /// the gauge-fixed Hamiltonian density, then reduce it to the torsion
-    /// (connection) form `e·X·X`. The notebook did not run as-is (missing
-    /// `\partial{#}::PartialDerivative`, undeclared flat/subspace index sets,
-    /// missing `\sigma`, an extra-brace typo, and an unbalanced spin-connection
-    /// substitution); the repaired script runs cleanly. This test runs it
-    /// through the S30 Cadabra2 subprocess and asserts the derived `G` (Gauss
-    /// constraint), `ex1` (EH Hamiltonian density = eR), and `t0_torsion`
-    /// (the torsion/connection form) are non-trivial.
+    /// the gauge-fixed Hamiltonian density, then reduce it to book.tex's
+    /// **TEGR/teleparallel torsion scalar**
+    /// `e(T_{ab}^b T^{ac}_c − ½T_{abc}T^{acb} − ¼T_{abc}T^{abc})` with
+    /// `T_{abc} = X_{abc} − X_{bac}` (the standard TEGR identity: this
+    /// equals `eR` up to the total-divergence term book.tex notes). The
+    /// notebook did not run as-is (missing `\partial{#}::PartialDerivative`,
+    /// undeclared flat/subspace index sets, missing `\sigma`, an extra-brace
+    /// typo, and an unbalanced spin-connection substitution); the repaired
+    /// script runs cleanly. This test runs it through the S30 Cadabra2
+    /// subprocess and asserts the derived `G` (Gauss constraint), `ex1`
+    /// (EH Hamiltonian density = eR), and `t0_tegr` (the TEGR torsion
+    /// scalar) are non-trivial.
     const QG_DERIVATION: &str = include_str!("../../docs/qg_gauge_fixed_hamiltonian.cdb");
 
     #[test]
@@ -534,7 +538,7 @@ mod tests {
         if !require_cadabra() {
             return;
         }
-        let derived = symbolic_derive(QG_DERIVATION, &["G", "ex1", "t0_torsion"], 120_000).unwrap();
+        let derived = symbolic_derive(QG_DERIVATION, &["G", "ex1", "t0_tegr"], 120_000).unwrap();
         assert!(
             derived.contains_key("G"),
             "Gauss constraint must be extracted: {:?}",
@@ -561,21 +565,21 @@ mod tests {
             ex1.contains("e^{") || ex1.contains("e_{"),
             "ex1 should be a tetrad expression: {ex1}"
         );
-        // The torsion-form reduction (e·X·X, book.tex's connection density)
-        // must be non-trivial.
+        // The TEGR/teleparallel torsion scalar (book.tex's L) must be
+        // non-trivial and expressed in the connection density X.
         assert!(
-            derived.contains_key("t0_torsion"),
-            "torsion-form Hamiltonian must be extracted: {:?}",
+            derived.contains_key("t0_tegr"),
+            "TEGR torsion scalar must be extracted: {:?}",
             derived.keys()
         );
-        let t0 = &derived["t0_torsion"];
+        let t0 = &derived["t0_tegr"];
         assert!(
             !t0.is_empty() && t0 != "0",
-            "t0_torsion must be non-trivial: {t0}"
+            "t0_tegr must be non-trivial: {t0}"
         );
         assert!(
             t0.contains("X_{") || t0.contains("X^{"),
-            "t0_torsion should be a torsion/connection expression: {t0}"
+            "t0_tegr should be a torsion/connection expression: {t0}"
         );
     }
 

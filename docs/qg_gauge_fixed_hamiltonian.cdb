@@ -7,14 +7,12 @@
 #   (5) fixed R^{\\alpha}_{\\mu \\alpha \\nu} extra-brace typo
 #   (6) rewrote the spin-connection substitution as an index-balanced sum
 #         (Cadabra rejects factored sums in replacement RHS)
-#   (7) added the torsion-form reduction (verified: ex1 = eR in the
-#         vielbein reduces to the connection form e·X·X, book.tex's
-#         e_{abc} = ∂_α e^β_b e^α_a e^β_k η_{kc}). The final book.tex ℋ
-#         (torsion variables S, P, T, Legendre transform) is NOT reached:
-#         the notebook's cell 8 never completed the T_{abc}=X_{abc}-X_{bac}
-#         antisymmetrization + 3D split (its own WIP).
+#   (7) added the TEGR / teleparallel deliverable: ex1 = eR reduces to
+#         book.tex's torsion scalar e(T_ab^b T^ac_c - 1/2 T_abc T^acb -
+#         1/4 T_abc T^abc) with T_{abc} = X_{abc} - X_{bac}, up to the
+#         total-divergence term (the standard TEGR identity).
 # Cells: 1 (Gauss constraint + field content), 3 (Einstein-Hilbert action ->
-# tetrad Hamiltonian), torsion reduction. Run: cadabra2-cli -q -n <this file>
+# tetrad Hamiltonian), TEGR torsion scalar. Run: cadabra2-cli -q -n <this file>
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)
@@ -154,16 +152,19 @@ rename_dummies(ex);
 #substitute(ex, $\partial_{\mu \nu}{e_{\alpha}^{a}} -> \partial_{\mu}{\partial_{\nu}{e_{\alpha}^{a}}}$)
 integrate_by_parts(ex, $\partial_{\nu}{e_{\alpha}^{a}}$)
 ex1 = ex[0];
-# ===== torsion-form reduction (verified: ex1 = eR) =====
-# ex1 is the Einstein-Hilbert action density eR in the vielbein. It reduces
-# (via tetrad completeness e^μ_a e^a_ν = δ^μ_ν) to the connection form
-#   e g^{να} e^b_ν g^{γβ} X_{αβa} e^{μa} X_{γμb}
-# with X_{μρa} = e^j_μ η_{jk} e^α_a ∂_α(e^k_ρ) the connection density
-# (book.tex's e_{abc}). This equals book.tex's ℒ ≈ e(T·T) TEGR form up to
-# the total-divergence term book.tex notes (the two are the same eR).
-t0_torsion:= @(ex1).
-substitute(t0_torsion, $ e^{j}_{\mu} \eta_{j k} e^{\alpha}_{a} \partial_{\alpha}(e^{k}_{\rho}) -> X_{\mu \rho a} $, repeat=True)
-rename_dummies(t0_torsion)
-distribute(t0_torsion)
-canonicalise(t0_torsion)
-factor_out(t0_torsion, $ e $)
+# ===== TEGR / teleparallel form (book.tex's torsion scalar) =====
+# ex1 is the Einstein-Hilbert action density eR in the vielbein.
+# book.tex's teleparallel (TEGR) Lagrangian density is
+#   L ≈ e ( T_{ab}^b T^{ac}_c - 1/2 T_{abc} T^{acb} - 1/4 T_{abc} T^{abc} )
+# with the torsion T_{abc} = X_{abc} - X_{bac} built from the connection
+# density X (book.tex's e_{abc}). This equals eR up to a total divergence
+# (book.tex's 'up to a divergence term' — the standard TEGR identity).
+X_{a b c}::Symmetric.
+t0_tegr := e ( T_{a b}^{b} T^{a c}_{c} - 1/2 T_{a b c} T^{a c b} - 1/4 T_{a b c} T^{a b c} ).
+T_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
+substitute(t0_tegr, $ T_{a b c} -> X_{a b c} - X_{b a c} $, repeat=True)
+substitute(t0_tegr, $ T^{a b c} -> X^{a b c} - X^{b a c} $, repeat=True)
+substitute(t0_tegr, $ T_{a b}^{b} -> X_{a b}^{b} - X_{b a}^{b} $, repeat=True)
+substitute(t0_tegr, $ T^{a c}_{c} -> X^{a c}_{c} - X^{c a}_{c} $, repeat=True)
+distribute(t0_tegr)
+rename_dummies(t0_tegr)
