@@ -668,6 +668,51 @@ mod tests {
         );
     }
 
+    /// Yang-Mills: the BRST Gauss constraint + Weyl-gauge Hamiltonian.
+    ///
+    /// `docs/yang_mills_hamiltonian.cdb` derives the Yang-Mills Weyl-gauge
+    /// Hamiltonian (book.tex ~7353) from the action: the Gauss constraint
+    /// `G_y` (BRST charge density, from the notebook cell 1) plus the
+    /// Legendre transform `H = π·∂₀A − L` of the Weyl-gauge Lagrangian
+    /// `L = ½π² − ½B²` (with `F_{0i} = π`, `¼F_ijF^{ij} = ½B²`), giving
+    /// `H_final = ½π² + ½B²` (book.tex's `H_W = −½π² − ½B²` in its
+    /// `H = a† i∂₀a − L` convention). This test runs it through S30 and
+    /// asserts `G_y` (contains ghosts `c`) and `H_final` (contains `π` and
+    /// `B`) are non-trivial.
+    const YM_DERIVATION: &str = include_str!("../../docs/yang_mills_hamiltonian.cdb");
+
+    #[test]
+    fn yang_mills_weyl_gauge_hamiltonian_derivation() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(YM_DERIVATION, &["G_y", "H_final"], 120_000).unwrap();
+        assert!(
+            derived.contains_key("G_y"),
+            "Gauss constraint must be extracted: {:?}",
+            derived.keys()
+        );
+        let g = &derived["G_y"];
+        assert!(
+            g.contains("c") && g.contains("π"),
+            "Gauss constraint should contain ghosts and momentum: {g}"
+        );
+        assert!(
+            derived.contains_key("H_final"),
+            "YM Hamiltonian must be extracted: {:?}",
+            derived.keys()
+        );
+        let h = &derived["H_final"];
+        assert!(
+            !h.is_empty() && h != "0",
+            "H_final must be non-trivial: {h}"
+        );
+        assert!(
+            h.contains("π") && h.contains("B"),
+            "H_final should be the electric + magnetic pieces: {h}"
+        );
+    }
+
     /// Navier-Stokes: the divergence constraint is a *solved* constraint.
     ///
     /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the

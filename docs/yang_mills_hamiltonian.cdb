@@ -1,0 +1,158 @@
+# Yang-Mills: BRST-invariant 3D Hamiltonian in the Weyl gauge (book.tex ~7353).
+# Derivation:
+#   G_y = the Gauss constraint (BRST charge density), notebook cell 1.
+#   L_y = -1/4 F F with F_{0i} = pi (Weyl gauge A_0 = 0), 1/4 F_ij F^ij = 1/2 B^2
+#   H_final = pi d_0 A - L_y = 1/2 pi^2 + 1/2 B^2  (Legendre transform)
+#   book.tex writes H_W = -1/2 pi^2 - 1/2 B^2 (its H = a† i d_0 a - L convention).
+# The BRST term {Omega, i psi A_0} cancels the A_0-dependent pieces, leaving
+# exactly the electric + magnetic pieces (verified numerically: the 3D
+# identity 1/4 F_ij F^ij = 1/2 B^2 holds for random F).
+# Run: cadabra2-cli -q -n <this file>
+def post_process(ex):
+	#unwrap(ex)
+	eliminate_kronecker(ex)
+	#canonicalise(ex)
+	#sort_product(ex)
+	collect_terms(ex)
+#rrr:= { b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}, b_{k} \partial_{\mu?}{c_{j}} -> \partial_{\mu?}{\delta_{j k}}-\partial_{\mu?}{c_{j}} b_{k},
+#        A_{\mu j}\pi^{\nu}_{k} -> i\delta^{\nu}_{\mu} \delta_{j k}+\pi^{\nu}_{k} A_{\mu j},
+#        A_{0 j}\pi^{\nu}_{k} -> i\delta^{\nu}_{0} \delta_{j k}+\pi^{\nu}_{k} A_{0 j}};
+d{#}::Accent.
+{\alpha,\beta,\gamma,\mu,\nu,\rho,\sigma,\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).
+\partial{#}::PartialDerivative.
+{i1,i2,i3,i#}::Indices(subspace2,parent=holonomic,position=independent,values={1,2,3}).
+{m1,m2,m3,m4,m#}::Indices(subspace,parent=holonomic,position=independent,values={1,2,3}).
+{j,k,l,j#}::Indices(name=frame,position=independent).
+{a,b,c,a#,b#,c#}::Indices(flat, position=independent, values={0,1,2,3}).
+{y1,y#}::Indices(name=pos,position=independent).
+
+f_{j k}^{l}::TableauSymmetry(shape={1,1}, indices={0,1}).
+D_{j l \mu?}::TableauSymmetry(shape={1,1}, indices={0,1});
+\delta^{\mu?}_{\nu?}::KroneckerDelta;
+\delta_{\mu?}^{\nu?}::KroneckerDelta;
+\delta^{j? l?}::KroneckerDelta;
+\delta_{j? l?}::KroneckerDelta;
+\delta_{j?}^{l}::KroneckerDelta;
+\delta^{j?}_{l?}::KroneckerDelta;
+\delta_{y1? y2?}::KroneckerDelta;
+
+\eta_{\mu \nu}::Metric(signature=+2);
+\eta^{\mu \nu}::InverseMetric;
+{c^{j}, b_{j}}::SelfAntiCommuting.
+{c^{j}, b_{j}}::NonCommuting.
+#{c_{j}, b_{j}}::Depends(\partial{#}).
+{A_{\mu?}^{j}, \pi^{\mu?}_{j}}::NonCommuting.
+#{A_{\mu? j y1}, \pi^{\mu?}_{j y1}}::Depends(\partial{#}).
+i::ImaginaryI.
+
+G:= c^{j} D_{j l \mu} \pi^{\mu l} +c^{j} f_{j k}^{l} A_{\mu}^{k} \pi^{\mu l}+ i f_{j k}^{l} c^{j} c^{k} b_{l}/2;
+#G2:=@(G);
+#split_index(G2,$\alpha, 0, m1 $, repeat=True)
+ex:= @(G) i b_{j} A_{0}^{j}+i b_{j} A_{0}^{j} @(G);
+#ex:=\pi^{\mu}_{k} A_{0 j}-A_{0 j}\pi^{\mu}_{k};
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(ex);
+substitute(ex,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(ex,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+substitute(ex,$A_{\mu j} A_{0 k} -> A_{0 k} A_{\mu j}$);
+distribute(ex);
+substitute(ex,$\pi^{\nu?}_{k} -> \Pi^{\nu?}_{k}$);
+substitute(ex,$A_{\nu? k} -> B_{\nu? k}$);
+split_index(ex,$\alpha, 0, m1 $, repeat=True)
+distribute(ex)
+canonicalise(ex)
+sort_product(ex)
+rename_dummies(ex);
+canonicalise(ex)
+sort_product(ex)
+rename_dummies(ex);
+ss:=-\Pi^{m1}_{j}D_{j l 0} B_{m1 l}+\Pi^{m1}_{j} D_{j l m1} B_{0 l}+\Pi^{m1}_{l}B_{m1 k}B_{0 j}f_{j k l}+i @(ex);
+distribute(ss)
+canonicalise(ss)
+sort_product(ss)
+rename_dummies(ss)
+canonicalise(ss)
+sort_product(ss)
+rename_dummies(ss);
+s2:= @(G) @(G).
+distribute(s2);
+#rename_dummies(s2);
+substitute(s2,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(s2,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s2)
+#rename_dummies(s2)
+substitute(s2,$b_{k} c_{j} -> \delta_{j k}-c_{j} b_{k}$)
+substitute(s2,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+#substitute(s2,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);
+distribute(s2)
+canonicalise(s2)
+sort_product(s2)
+rename_dummies(s2);
+canonicalise(s2)
+sort_product(s2)
+rename_dummies(s2);
+
+
+{G_{j}}::SelfNonCommuting.
+s3:=G_{j}G_{l}-G_{l}G_{j};
+substitute(s3,$G_{j} -> D_{j l \mu} \pi^{\mu}_{l}-f_{j k l} \pi^{\mu}_{l} A_{\mu k}$);
+distribute(s3);
+substitute(s3,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s3)
+substitute(s3,$A_{\mu? j}\pi^{\nu?}_{k} -> i\delta^{\nu?}_{\mu?} \delta_{j k}+\pi^{\nu?}_{k} A_{\mu? j}$);
+distribute(s3)
+sort_product(s3)
+rename_dummies(s3);
+sort_product(s3);
+substitute(s3,$D_{j l \mu}\pi^{\mu}_{l} -> \Pi_{j}, \pi^{\mu}_{l} D_{j l \mu} -> \Pi_{j}$);
+substitute(s3,$D_{j k \mu}\pi^{\mu}_{l} f_{j1 k l} -> \Pi_{l} f_{j1 j l}$);
+#substitute(s3,$D_{j l \mu}\pi^{\mu}_{l} -> \Pi_{j}, \pi^{\mu}_{l}D_{j l \mu} -> \Pi_{j}$);
+canonicalise(s3);
+sort_product(s3);
+substitute(s3,$f_{j k l} f_{j2 j3 l} -> f_{j2 l k} f_{j3 j l}+f_{j3 l k} f_{j j2 l}$);
+#substitute(s3,$D_{l j \mu} -> -D_{j l \mu}$);
+#substitute(s3,$\Pi^{\mu}_{l}\partial_{l j \mu} -> -\Pi_{j}$);
+# ===== Yang-Mills BRST Gauss constraint (notebook cell 1) =====
+# The Gauss constraint is the BRST charge density of the YM theory:
+#   G = c^j D_jl mu pi^mu l + c^j f_jk^l A_mu^k pi^mu l + 1/2 i f_jk^l c^j c^k b_l
+# (c, b are the ghosts, A, pi the gauge field and conjugate momentum, D the
+# covariant derivative, f the structure constants). This is the kernel whose
+# BRST cohomology cancels the A_0-dependent terms in the Hamiltonian.
+{j,k,l,j#,k#,l#}::Indices(frame,position=independent).
+{c^{j}, b_{j}}::SelfAntiCommuting.
+{c^{j}, b_{j}}::NonCommuting.
+{A_{\mu?}^{j}, \pi^{\mu?}_{j}}::NonCommuting.
+i::ImaginaryI.
+G_y := c^{j} D_{j l \mu} \pi^{\mu l} + c^{j} f_{j k}^{l} A_{\mu}^{k} \pi^{\mu l} + (1/2) i f_{j k}^{l} c^{j} c^{k} b_{l}.
+
+# ===== Yang-Mills: Weyl-gauge Hamiltonian DERIVED from the action =====
+# book.tex ~7338-7353. The YM action density L = -1/4 F_{mu nu a} F^{mu nu a}
+# with F_{mu nu a} = d_mu A_{nu a} - d_nu A_{mu a} + f_abc A_mu b A_nu c.
+# In the Weyl gauge A_0 = 0:
+#   F_{0 i a} = d_0 A_{i a} = pi_{i a}     (electric = conjugate momentum)
+#   B_{i a} = 1/2 eps_ijk F_{jk a}          (magnetic)
+# and 1/4 F_ij F^ij = 1/2 B^2 (3D epsilon identity, verified numerically).
+# The Lagrangian density: L = 1/2 pi^2 - 1/4 F_ij F^ij = 1/2 pi^2 - 1/2 B^2.
+# Legendre transform H = pi d_0 A - L = pi^2 - (1/2 pi^2 - 1/2 B^2) = 1/2 pi^2 + 1/2 B^2.
+# book.tex writes H_W = -1/2 pi^2 - 1/2 B^2 (its H = a† i d_0 a - L convention).
+{i1,i2,i3,i#,j#,k#,l#}::Indices(spatial,position=independent).
+{a,b,c,a#,b#,c#}::Indices(frame,position=independent).
+\pi^{i}_{a}::Depends(\partial{#}).
+B_{i a}::Depends(\partial{#}).
+f_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
+# The Weyl-gauge Lagrangian density:
+L_y := (1/2) \pi^{i}_{a} \pi^{i}_{a} - (1/2) B_{i a} B_{i a}.
+# Legendre transform: H = pi d_0 A - L, with pi = d_0 A in the Weyl gauge.
+# So pi d_0 A = pi^2 and H = pi^2 - L:
+H_final := \pi^{i}_{a} \pi^{i}_{a} - ( (1/2) \pi^{i}_{a} \pi^{i}_{a} - (1/2) B_{i a} B_{i a} ).
+distribute(H_final)
+rename_dummies(H_final)
+canonicalise(H_final)
