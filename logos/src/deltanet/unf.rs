@@ -31,6 +31,10 @@ fn serialize_port(net: &Net, port: &Port, out: &mut Vec<u8>) -> Result<(), Strin
             out.push(0x01);
             out.extend_from_slice(&n.to_le_bytes());
         }
+        AgentKind::Lit(Literal::F64(x)) => {
+            out.push(0x05);
+            out.extend_from_slice(&x.to_bits().to_le_bytes());
+        }
         AgentKind::Lit(Literal::Bool(b)) => {
             out.push(0x02);
             out.push(if *b { 1 } else { 0 });
@@ -87,6 +91,31 @@ mod tests {
         let bytes = canonical_serialize(&net).unwrap();
         assert_eq!(bytes[0], 0x01);
         assert_eq!(i64::from_le_bytes(bytes[1..9].try_into().unwrap()), 42);
+    }
+
+    #[test]
+    fn test_serialize_f64() {
+        let mut net = Net::new();
+        let node = net.alloc_node(AgentKind::Lit(Literal::F64(3.5)));
+        net.root = Port::principal(node);
+        let bytes = canonical_serialize(&net).unwrap();
+        assert_eq!(bytes[0], 0x05);
+        let bits = f64::from_le_bytes(bytes[1..9].try_into().unwrap());
+        assert_eq!(bits, 3.5);
+    }
+
+    #[test]
+    fn test_unf_hash_f64_discriminates_int() {
+        let mut a = Net::new();
+        let na = a.alloc_node(AgentKind::Lit(Literal::F64(3.5)));
+        a.root = Port::principal(na);
+        let mut b = Net::new();
+        let nb = b.alloc_node(AgentKind::Lit(Literal::Int64(3)));
+        b.root = Port::principal(nb);
+        // Same decimal "3.5" vs integer 3 must hash differently.
+        let ha = unf_hash(&a).unwrap();
+        let hb = unf_hash(&b).unwrap();
+        assert_ne!(ha, hb);
     }
 
     #[test]

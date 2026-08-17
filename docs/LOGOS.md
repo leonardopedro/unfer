@@ -63,7 +63,9 @@ enum CoreIR {
     Let(String, Box<CoreIR>, Box<CoreIR>),
     Match(Box<CoreIR>, Vec<(Pattern, CoreIR)>),
     Fold(Box<CoreIR>, Box<CoreIR>, Box<CoreIR>),
-    Prim(PrimOp, Vec<CoreIR>), // Add64, Sub64, Mul64, Eq64, Gt64, Lt64, And, Or, Not
+    Prim(PrimOp, Vec<CoreIR>), // Add64, Sub64, Mul64, Eq64, Gt64, Lt64,
+                               // AddF64, SubF64, MulF64, DivF64, EqF64,
+                               // GtF64, LtF64, And, Or, Not
     Clone(Box<CoreIR>),
     Drop(Box<CoreIR>),
 }
@@ -98,13 +100,25 @@ Reduction fires on active pairs (principal-to-principal connections):
 | Fold ↔ Con(Cons) | Unfold: `f(head, Fold(f, init, tail))` |
 | Prim ↔ Lit, Lit | Native arithmetic/boolean evaluation |
 
+`Prim` nodes evaluate when both auxiliary ports feed literals. The reducer
+additionally scans for "ready" `Prim` nodes (both auxes are `Lit`), so a
+top-level primitive whose principal is the root — which never forms a
+principal-to-principal active pair — still reduces natively. This is the
+**numerical operations** path: `Int64` (`Add64`…`Lt64`) and `F64`
+(`AddF64`, `SubF64`, `MulF64`, `DivF64`, `EqF64`, `GtF64`, `LtF64`)
+arithmetic lowers to a literal normal form. `F64` and `Int64` are never
+silently coerced; a type-mismatched fold yields no result and the term is
+left stuck rather than mis-evaluated.
+
 Bounded at 1,000,000 iterations.
 
 ## UNF Hash
 
 Canonical serialization walks the net from root, emitting type-tagged bytes
-(0x01=Int64, 0x02=Bool, 0x03=Con, 0x04=Entity, 0xFF=other). SHA-256 of the
-byte sequence gives a deterministic, content-addressable fingerprint.
+(0x01=Int64, 0x02=Bool, 0x03=Con, 0x04=Entity, 0x05=F64, 0xFF=other). SHA-256
+of the byte sequence gives a deterministic, content-addressable fingerprint.
+`F64` serializes via its IEEE-754 bit pattern, so `F64(3.0)` hashes
+distinctly from `Int64(3)`.
 
 Properties:
 - Same sentence → same hash (determinism).

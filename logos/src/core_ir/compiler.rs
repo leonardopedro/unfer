@@ -51,6 +51,7 @@ fn instantiate_template(template: &SemExpr) -> CoreIR {
         SemExpr::Var(name) => CoreIR::Var(name.clone()),
         SemExpr::Lit(lit) => CoreIR::Lit(match lit {
             LexLiteral::Int64(n) => Literal::Int64(*n),
+            LexLiteral::F64(x) => Literal::F64(*x),
             LexLiteral::Bool(b) => Literal::Bool(*b),
         }),
         SemExpr::Con(tag, args) => {

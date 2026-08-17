@@ -306,3 +306,79 @@ fn property_readback_is_stable_across_recompilation() {
         assert_eq!(r, first, "readback unstable at iteration {i}");
     }
 }
+
+/// Numerical (F64) reduction end-to-end: build a CoreIR Prim over F64
+/// literals, compile it to an interaction net, reduce it, read back and
+/// hash. This is the "unique normal form via numerical operations" path:
+/// the deltanet reducer must evaluate AddF64/MulF64 natively.
+#[test]
+fn test_numerical_f64_reduction_pipeline() {
+    // ((3.5 + 1.25) * 2.0) = 9.5
+    let sum = core_ir::CoreIR::Prim(
+        core_ir::PrimOp::AddF64,
+        vec![
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(3.5)),
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(1.25)),
+        ],
+    );
+    let prod = core_ir::CoreIR::Prim(
+        core_ir::PrimOp::MulF64,
+        vec![sum, core_ir::CoreIR::Lit(core_ir::Literal::F64(2.0))],
+    );
+
+    let mut net = deltanet::compile_to_net(&prod).unwrap();
+    deltanet::reduce(&mut net).unwrap();
+    let result = deltanet::readback(&net).unwrap();
+    assert_eq!(result, "9.5");
+
+    // Same input must give the same UNF (deterministic unique normal form).
+    let mut net2 = deltanet::compile_to_net(&prod).unwrap();
+    deltanet::reduce(&mut net2).unwrap();
+    let h1 = deltanet::unf_hash(&net).unwrap();
+    let h2 = deltanet::unf_hash(&net2).unwrap();
+    assert_eq!(h1, h2, "numerical UNF must be deterministic");
+}
+
+/// F64 comparison lowers to a Bool normal form; the hash of the reduced net
+/// must discriminate the true/false outcomes.
+#[test]
+fn test_numerical_f64_comparison_normal_form() {
+    let lt = core_ir::CoreIR::Prim(
+        core_ir::PrimOp::LtF64,
+        vec![
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(2.5)),
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(3.0)),
+        ],
+    );
+    let mut net = deltanet::compile_to_net(&lt).unwrap();
+    deltanet::reduce(&mut net).unwrap();
+    let result = deltanet::readback(&net).unwrap();
+    assert_eq!(result, "true");
+
+    let gt = core_ir::CoreIR::Prim(
+        core_ir::PrimOp::GtF64,
+        vec![
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(2.5)),
+            core_ir::CoreIR::Lit(core_ir::Literal::F64(3.0)),
+        ],
+    );
+    let mut net = deltanet::compile_to_net(&gt).unwrap();
+    deltanet::reduce(&mut net).unwrap();
+    let result = deltanet::readback(&net).unwrap();
+    assert_eq!(result, "false");
+}
+
+/// An F64 literal must have a distinct UNF serialization from an Int64 with
+/// the same decimal digits (no silent numeric coercion between domains).
+#[test]
+fn test_unf_discriminates_f64_from_int64() {
+    let f = core_ir::CoreIR::Lit(core_ir::Literal::F64(3.0));
+    let i = core_ir::CoreIR::Lit(core_ir::Literal::Int64(3));
+    let nf = deltanet::compile_to_net(&f).unwrap();
+    let ni = deltanet::compile_to_net(&i).unwrap();
+    assert_ne!(
+        deltanet::unf_hash(&nf).unwrap(),
+        deltanet::unf_hash(&ni).unwrap(),
+        "F64(3.0) and Int64(3) must not share a UNF"
+    );
+}

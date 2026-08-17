@@ -25,6 +25,7 @@ pub enum SemExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int64(i64),
+    F64(f64),
     Bool(bool),
 }
 
@@ -32,6 +33,7 @@ impl Literal {
     pub fn to_string_value(&self) -> String {
         match self {
             Literal::Int64(n) => format!("{}", n),
+            Literal::F64(x) => format!("{}", x),
             Literal::Bool(b) => format!("{}", b),
         }
     }
@@ -129,6 +131,13 @@ fn parse_sem_template(s: &str) -> Result<SemExpr, String> {
     {
         let val: bool = b.parse().map_err(|e| format!("invalid bool: {}", e))?;
         return Ok(SemExpr::Lit(Literal::Bool(val)));
+    }
+    if let Some(x) = s
+        .strip_prefix("Lit(F64(")
+        .and_then(|r| r.strip_suffix("))"))
+    {
+        let val: f64 = x.parse().map_err(|e| format!("invalid float: {}", e))?;
+        return Ok(SemExpr::Lit(Literal::F64(val)));
     }
     if let Some(rest) = s.strip_prefix("Con(\"").and_then(|r| r.strip_suffix(')')) {
         let (tag, args_str) = rest.split_once("\", [").ok_or("Con missing args")?;

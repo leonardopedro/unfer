@@ -32,6 +32,13 @@ pub enum PrimOp {
     Eq64,
     Gt64,
     Lt64,
+    AddF64,
+    SubF64,
+    MulF64,
+    DivF64,
+    EqF64,
+    GtF64,
+    LtF64,
     And,
     Or,
     Not,
@@ -40,6 +47,7 @@ pub enum PrimOp {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
     Int64(i64),
+    F64(f64),
     Bool(bool),
 }
 
@@ -47,6 +55,7 @@ impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Literal::Int64(n) => write!(f, "{}", n),
+            Literal::F64(x) => write!(f, "{}", x),
             Literal::Bool(b) => write!(f, "{}", b),
         }
     }

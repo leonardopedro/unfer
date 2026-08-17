@@ -6,22 +6,80 @@ pub fn reduce(net: &mut Net) -> Result<(), String> {
     let mut iterations = 0;
     let max_iterations = 1_000_000;
 
-    while let Some((a, b)) = net.active_pairs.pop() {
-        if net.is_freed(a) || net.is_freed(b) {
-            continue;
-        }
-        interact(net, a, b)?;
-        net.collect_new_active_pairs();
-        iterations += 1;
-        if iterations >= max_iterations {
-            eprintln!(
-                "warning: reduction exceeded {} iterations, possible non-termination",
-                max_iterations
-            );
+    loop {
+        // Evaluate any Prim whose two auxiliary ports both feed Lits. A
+        // top-level Prim (principal wired to the root, not to another node)
+        // never forms a principal-to-principal active pair, so we detect it
+        // directly. This is the "numerical operations" path of the reducer.
+        eval_ready_prims(net);
+
+        if let Some((a, b)) = net.active_pairs.pop() {
+            if net.is_freed(a) || net.is_freed(b) {
+                continue;
+            }
+            interact(net, a, b)?;
+            net.collect_new_active_pairs();
+            iterations += 1;
+            if iterations >= max_iterations {
+                eprintln!(
+                    "warning: reduction exceeded {} iterations, possible non-termination",
+                    max_iterations
+                );
+                break;
+            }
+        } else {
             break;
         }
     }
     Ok(())
+}
+
+/// Find unfreed `Prim` nodes whose two auxiliary slots both connect directly
+/// to `Lit` nodes and evaluate them in place, rewiring the Prim's principal
+/// to the result literal. Mirrors the `Prim >< Lit` interaction rule, but
+/// does not require a principal-to-principal active pair.
+fn eval_ready_prims(net: &mut Net) {
+    loop {
+        let mut fired = false;
+        let node_count = net.nodes.len();
+        for i in 0..node_count {
+            if net.is_freed(i as NodeId) {
+                continue;
+            }
+            let is_prim = matches!(
+                net.nodes[i].as_ref().map(|n| &n.kind),
+                Some(AgentKind::Prim(_))
+            );
+            if !is_prim {
+                continue;
+            }
+            let op = match &net.nodes[i].as_ref().unwrap().kind {
+                AgentKind::Prim(op) => *op,
+                _ => unreachable!(),
+            };
+            let (lit1, lit2) = match (
+                net.get_connected_lit(i as NodeId, 1),
+                net.get_connected_lit(i as NodeId, 2),
+            ) {
+                (Some(a), Some(b)) => (a, b),
+                _ => continue,
+            };
+            if let Some(result) = eval_prim(op, &lit1, &lit2) {
+                let result_node = net.alloc_node(AgentKind::Lit(result));
+                // Rewire whatever the Prim's principal fed to the result.
+                if let Some(out) = net.nodes[i].as_ref().and_then(|n| n.ports[0].clone()) {
+                    net.wire(out, Port::principal(result_node));
+                } else {
+                    net.root = Port::principal(result_node);
+                }
+                net.free_node(i as NodeId);
+                fired = true;
+            }
+        }
+        if !fired {
+            break;
+        }
+    }
 }
 
 fn interact(net: &mut Net, a: NodeId, b: NodeId) -> Result<(), String> {
@@ -288,6 +346,13 @@ fn eval_prim(op: PrimOp, a: &Literal, b: &Literal) -> Option<Literal> {
         (PrimOp::And, Literal::Bool(x), Literal::Bool(y)) => Some(Literal::Bool(*x && *y)),
         (PrimOp::Or, Literal::Bool(x), Literal::Bool(y)) => Some(Literal::Bool(*x || *y)),
         (PrimOp::Not, Literal::Bool(x), _) => Some(Literal::Bool(!x)),
+        (PrimOp::AddF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::F64(x + y)),
+        (PrimOp::SubF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::F64(x - y)),
+        (PrimOp::MulF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::F64(x * y)),
+        (PrimOp::DivF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::F64(x / y)),
+        (PrimOp::EqF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::Bool(x == y)),
+        (PrimOp::GtF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::Bool(x > y)),
+        (PrimOp::LtF64, Literal::F64(x), Literal::F64(y)) => Some(Literal::Bool(x < y)),
         _ => None,
     }
 }
@@ -312,5 +377,63 @@ mod tests {
         net.root = Port::new(app, 2);
         net.collect_active_pairs();
         reduce(&mut net).unwrap();
+    }
+
+    fn eval_net(op: PrimOp, left: Literal, right: Literal) -> Option<Literal> {
+        eval_prim(op, &left, &right)
+    }
+
+    #[test]
+    fn test_eval_prim_f64_add() {
+        assert_eq!(
+            eval_net(PrimOp::AddF64, Literal::F64(1.5), Literal::F64(2.25)),
+            Some(Literal::F64(3.75))
+        );
+    }
+
+    #[test]
+    fn test_eval_prim_f64_div() {
+        assert_eq!(
+            eval_net(PrimOp::DivF64, Literal::F64(7.0), Literal::F64(2.0)),
+            Some(Literal::F64(3.5))
+        );
+    }
+
+    #[test]
+    fn test_eval_prim_f64_cmp() {
+        assert_eq!(
+            eval_net(PrimOp::GtF64, Literal::F64(3.5), Literal::F64(2.0)),
+            Some(Literal::Bool(true))
+        );
+        assert_eq!(
+            eval_net(PrimOp::LtF64, Literal::F64(3.5), Literal::F64(2.0)),
+            Some(Literal::Bool(false))
+        );
+    }
+
+    #[test]
+    fn test_eval_prim_f64_type_mismatch_is_none() {
+        // An Int64 folded in against an F64 must not silently coerce.
+        assert_eq!(
+            eval_net(PrimOp::AddF64, Literal::F64(1.0), Literal::Int64(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn test_reduce_f64_prim_chain() {
+        // ((3.5 + 1.25) * 2.0) → 9.5 via a small net: Prim >< Lit wires.
+        let mut net = Net::new();
+        let add = net.alloc_node(AgentKind::Prim(PrimOp::AddF64));
+        let l = net.alloc_node(AgentKind::Lit(Literal::F64(3.5)));
+        let r = net.alloc_node(AgentKind::Lit(Literal::F64(1.25)));
+        net.wire(Port::new(add, 1), Port::principal(l));
+        net.wire(Port::new(add, 2), Port::principal(r));
+        net.root = Port::principal(add);
+        net.collect_active_pairs();
+        reduce(&mut net).unwrap();
+        // After reduction the add node is freed; the result literal is wired to root.
+        let result = crate::deltanet::readback(&net).unwrap();
+        assert_eq!(result, "4.75");
     }
 }

@@ -59,6 +59,7 @@ impl AustralEmitter {
     fn emit_expr(&mut self, term: &CoreIR, output: &mut String) -> String {
         match term {
             CoreIR::Lit(Literal::Int64(n)) => format!("{}", n),
+            CoreIR::Lit(Literal::F64(x)) => format!("{}", x),
             CoreIR::Lit(Literal::Bool(b)) => format!("{}", b),
             CoreIR::Var(id) => id.clone(),
             CoreIR::Prim(op, args) => {
@@ -71,6 +72,13 @@ impl AustralEmitter {
                     PrimOp::Eq64 => format!("({} = {})", left, right),
                     PrimOp::Gt64 => format!("({} > {})", left, right),
                     PrimOp::Lt64 => format!("({} < {})", left, right),
+                    PrimOp::AddF64 => format!("({} + {})", left, right),
+                    PrimOp::SubF64 => format!("({} - {})", left, right),
+                    PrimOp::MulF64 => format!("({} * {})", left, right),
+                    PrimOp::DivF64 => format!("({} / {})", left, right),
+                    PrimOp::EqF64 => format!("({} = {})", left, right),
+                    PrimOp::GtF64 => format!("({} > {})", left, right),
+                    PrimOp::LtF64 => format!("({} < {})", left, right),
                     PrimOp::And => format!("({} and {})", left, right),
                     PrimOp::Or => format!("({} or {})", left, right),
                     PrimOp::Not => format!("(not {})", left),
