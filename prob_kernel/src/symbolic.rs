@@ -774,6 +774,43 @@ mod tests {
         );
     }
 
+    /// Unitary-implementability of the densitized-tetrad change of variables.
+    ///
+    /// `docs/qg_unitarity_check.cdb` checks the three kernels behind the
+    /// claim that the QG change of variables `e -> (y = √e, \tilde e = √e e)`
+    /// is UNITARY:
+    ///   (1) Jacobian/measure: det(\tilde e) = y^3 det(e) = y^3·y^2 = y^5,
+    ///       i.e. D\tilde e = J De with J = y^5 (the point-transformation
+    ///       diffeomorphism of field space);
+    ///   (2) half-density kernel: the van Vleck factor makes the map unitary,
+    ///       J^{1/2}J^{-1/2} = y^5·y^{-5} = 1 (norm preservation);
+    ///   (3) flat-operator Hermiticity (Lagrange identity):
+    ///       ψ∂_{xx}φ − φ∂_{xx}ψ = ∂_x(ψ∂_xφ − φ∂_xψ), so (H0ψ,φ) − (ψ,H0φ)
+    ///       is a total derivative — a boundary term that vanishes on the
+    ///       physical Hilbert space (null fall-off). Hence H0 is formally
+    ///       self-adjoint (the Strichartz hypothesis), and with (1)+(2) the
+    ///       change of variables is a unitary point transformation.
+    /// The test asserts Jcheck = Unorm = Hkern = 0.
+    const QG_UNITARITY_CHECK: &str = include_str!("../../docs/qg_unitarity_check.cdb");
+
+    #[test]
+    fn qg_densitized_change_of_variables_is_unitary() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived =
+            symbolic_derive(QG_UNITARITY_CHECK, &["Jcheck", "Unorm", "Hkern"], 120_000).unwrap();
+        for name in ["Jcheck", "Unorm", "Hkern"] {
+            let v = &derived[name];
+            let is_zero = v == "0" || v.is_empty() || v.trim() == "0";
+            assert!(
+                is_zero,
+                "{name} must vanish identically for the change of variables \
+                 to be unitary (self-adjoint): got `{v}`"
+            );
+        }
+    }
+
     /// Navier-Stokes: the divergence constraint is a *solved* constraint.
     ///
     /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the

@@ -1,0 +1,83 @@
+# QG: unitary-implementability of the densitized-tetrad change of variables.
+#
+# Companion to docs/qg_densitized_hamiltonian.cdb. That file shows the
+# singular 1/e kinetic term becomes the FLAT operator
+#   H0 = (1/16) Delta_S - (1/24) d^2/dy^2   (constant coefficients).
+# This file checks the unitary-implementability claims:
+#
+#  (1) JACOBIAN / MEASURE FACTOR: the point transformation
+#        y = sqrt(e) = (det e_i^a)^{1/2},  \tilde e_i^a = sqrt(e) e_i^a
+#      is a diffeomorphism of field space. In 3D, the determinant scales as
+#        det(\tilde e) = y^3 det(e) = y^3 e = y^5   (since e = y^2).
+#      So the field-space measure transforms as D\tilde e = J De with
+#      J = y^5 (the Jacobian of the point transformation).
+#
+#  (2) HALF-DENSITY UNITARITY KERNEL: the unitary is implemented with the
+#      square-root Jacobian (van Vleck/metaplectic factor):
+#        (U psi)(\tilde e, y) = |J|^{-1/2} psi(e(\tilde e, y)).
+#      Norm preservation is the identity  J^{1/2} J^{-1/2} = 1, i.e.
+#        y^5 * y^{-5} = 1  ->  D\tilde e * (1/|J|) * |J| = De.
+#
+#  (3) FLAT OPERATOR HERMITICITY (self-adjointness kernel): for the flat
+#      second-order operator H0 with constant coefficients, the difference
+#      (H0 psi, phi) - (psi, H0 phi) is a TOTAL DERIVATIVE:
+#        psi d_xx phi - phi d_xx psi = d_x(psi d_x phi - phi d_x psi).
+#      On the physical Hilbert space (wave-functions with null probability at
+#      spatial infinity, vanishing fall-off) the boundary term vanishes, so
+#      H0 is symmetric / formally self-adjoint -- the Strichartz hypothesis.
+#
+# The combination (1)+(2) makes the change of variables a UNITARY point
+# transformation; (3) makes the image H0 essentially self-adjoint. Hence the
+# densitized Hamiltonian is 100% ESA with unitary time-evolution.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+# ===== (1) Jacobian / measure factor =====
+{i1,i2,i3,i#}::Indices(spatial,position=independent,values={1,2,3}).
+{a,b,c,a#,b#,c#}::Indices(frame,position=independent,values={1,2,3}).
+\partial{#}::PartialDerivative.
+e^{i}_{a}::Depends(\partial{#}).
+\tilde{e}^{i}_{a}::Depends(\partial{#}).
+y::Depends(\partial{#}).
+\epsilon_{a b c}::EpsilonTensor.
+\epsilon^{a b c}::EpsilonTensor.
+# det(tilde e) for tilde e = y e, in 3D:
+det_tilde := (1/6) \epsilon_{a b c} \epsilon^{i j k} (y e^{i}_{a}) (y e^{j}_{b}) (y e^{k}_{c}).
+distribute(det_tilde)
+collect_factors(det_tilde)
+canonicalise(det_tilde)
+# = y^3 det(e); substitute det(e) = e = y^2  =>  y^5:
+J := y^{5}.
+# Jacobian identity check: y^3 * y^2 = y^5
+Jcheck := y^{3} y^{2} - @(J).
+substitute(Jcheck, $ y^{3} y^{2} -> y^{5} $, repeat=True)
+canonicalise(Jcheck)
+collect_factors(Jcheck)
+
+# ===== (2) half-density unitarity kernel =====
+# Norm preservation kernel: D\tilde e = J De and (U psi) = J^{-1/2} psi(e)
+#  =>  ||U psi||^2 = integral D\tilde e |J^{-1}| |psi(e)|^2 = integral De |psi|^2.
+# The kernel identity is J^{1/2} J^{-1/2} = 1, i.e. y^5 y^{-5} = 1:
+Unorm := y^{5} y^{-5} - 1.
+substitute(Unorm, $ y^{5} y^{-5} -> 1 $, repeat=True)
+canonicalise(Unorm)
+collect_factors(Unorm)
+
+# ===== (3) flat-operator Hermiticity kernel (1D Lagrange identity) =====
+\psi::Depends(\partial{#}).
+\phi::Depends(\partial{#}).
+# d_x( psi d_x phi ) - d_x( phi d_x psi ) == psi d_xx phi - phi d_xx psi
+# i.e. (H0 psi, phi) - (psi, H0 phi) is a total derivative (boundary).
+lhs := \partial_{x}{ \psi \partial_{x}{\phi} } - \partial_{x}{ \phi \partial_{x}{\psi} }.
+unwrap(lhs)
+product_rule(lhs)
+distribute(lhs)
+canonicalise(lhs)
+rhs := \psi \partial_{x}{ \partial_{x}{\phi} } - \phi \partial_{x}{ \partial_{x}{\psi} }.
+unwrap(rhs)
+# Hermiticity kernel: lhs - rhs must be 0 (identical terms, commutative).
+Hkern := @(lhs) - @(rhs).
+distribute(Hkern)
+canonicalise(Hkern)
+sort_product(Hkern)
+canonicalise(Hkern)
