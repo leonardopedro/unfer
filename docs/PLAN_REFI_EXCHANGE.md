@@ -30,6 +30,12 @@
   (`unfer_consensus::escrow`, UK-7201..7203, including a live-testnet escrow
   that replays onto every node's certificate root); the PayPal/Stripe web-app
   coating over it remains a documented mapping.
+- **Unified auction (Prebid-model): DONE.** The deterministic clearing engine
+  (`unfer_consensus::auction`, UK-7301..7308) and the operator-side settlement
+  (`unfer_taler::auction::AuctionService`) serve both markets — carbon-credit
+  lots (escrowed credits delivered to the winner) and publicity inventory
+  (AdSense alternative, payment-only). Wired end-to-end: FFI `uk_auction_*`,
+  australVM loopback dispatch, and velysterm `auction_*` NDJSON ops.
 
 ---
 
@@ -115,6 +121,11 @@ The ledger is reachable end-to-end through every consumer:
   `tests::cert_ledger_roundtrip_via_ops` and `cert_mint_refuses_non_authority`.
 - **edge** (`unfer_edge/src/filter.rs`): the `cert_*` ops are added to the
   `ALLOWED_OPS` allowlist.
+- **Unified auction** (`unfer_consensus::auction` + `unfer_taler::auction`):
+  `uk_auction_open/bid/close/report` FFI; australVM `ecma.rs` dispatch +
+  `SENSITIVE_BLOCKED_SYMBOLS`; velysterm `auction_*` NDJSON ops through the
+  in-process `ConsensusNode`. Tested in `unfer_consensus::auction`,
+  `unfer_taler::auction`, and `unfer_ffi::tests::auction_ffi_*`.
 
 ---
 
@@ -136,6 +147,45 @@ The ledger is reachable end-to-end through every consumer:
 | UK-7105 | TalerCoinAlreadyDeposited | double deposit of the same e-coin refused |
 | UK-7106 | TalerRefreshNotEligible | refresh only after the denomination has expired |
 | UK-7107 | TalerUnknownECoin | deposit of an e-coin this exchange never minted |
+| UK-7301 | AuctionUnknownLot | the auction lot_id was never opened (or is closed) |
+| UK-7302 | AuctionLotClosed | bid/close references an already-closed lot |
+| UK-7303 | AuctionBidBelowFloor | bid is below the lot's floor price |
+| UK-7304 | AuctionSelfBid | the seller bid on their own lot |
+| UK-7305 | AuctionNotSeller | only the lot's seller may open/close |
+| UK-7306 | AuctionLotExists | duplicate lot open |
+| UK-7307 | AuctionQtyMismatch | bid quantity exceeds the carbon lot amount (or payment e-coin face value ≠ bid total) |
+| UK-7308 | AuctionNoBids | a close landed with no eligible bids (no winner) |
+
+---
+
+## Unified auction (Prebid-model)
+
+The deterministic auction engine lives in `unfer_consensus::auction`
+(`AuctionLedger`); settlement lives in `unfer_taler::auction` (`AuctionService`).
+`AuctionOp`s (Open/Bid/Close) are a `ConsensusTransaction` variant applied by
+`ConsensusNode::sync`, exactly like `CertificateOp`s. The clearing rule is a pure
+function of the recorded bids — highest `price_per_unit` wins, ties break to the
+earliest `seq` — so every node replays the same log and converges on the same
+winner.
+
+Two markets, one mechanism (mirroring Prebid.org's unified auction):
+
+- **Carbon credits**: a seller opens a lot and escrows the credit certificate
+  into a deterministic lot DID. Bidders escrow a payment e-coin of exactly the
+  bid total (Taler denomination model). On close the winner's payment releases
+  to the seller, the losers' payments refund, and the escrowed credits transfer
+  to the winner. An unsold lot refunds every payment and returns the credits.
+- **Publicity inventory** (AdSense alternative): a publisher opens a slot; the
+  winner pays the publisher. No ledger asset is delivered.
+
+All escrow DIDs/keys are derived deterministically from `(operator pubkey,
+lot_id, party, coin)` so only the marketplace operator can settle. The auction
+never creates or destroys value — `total_supply` is conserved.
+
+Surface: `uk_auction_open/bid/close/report` (C ABI), registered in
+`EXPECTED_SYMBOLS.txt`, the generated C header, australVM `UNFER_SYMBOLS` +
+`ecma.rs` dispatch + `SENSITIVE_BLOCKED_SYMBOLS`. `uk_auction_close` mutates and
+writes, so its marshaling is a single fixed-buffer call (never probe-then-copy).
 
 ---
 

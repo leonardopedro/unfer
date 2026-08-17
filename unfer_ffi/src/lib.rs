@@ -2136,6 +2136,212 @@ pub fn uk_cert_clear() {
     handles::cert_clear();
 }
 
+// ── unified auction (Prebid-model: carbon credits + publicity inventory) ──
+//
+// `uk_auction_*` exposes the deterministic auction engine over the C ABI. Op
+// JSON schemas (the caller is trusted at this boundary, like `uk_cert_*`):
+//
+//   uk_auction_open   {"actor":DID,"lot":{"lot_id":"hex32","seller_did":DID,
+//                       "asset":{"kind":"carbon_credits"|"publicity_slot","amount"?|"slot"?,"description"?},
+//                       "currency":"taler"|"carbon_credits","floor":u64,
+//                       "opens_seq":u64,"closes_seq":u64}}
+//   uk_auction_bid    {"actor":DID,"lot_id":"hex32","price_per_unit":u64,"quantity":u64}
+//   uk_auction_close  {"actor":DID,"lot_id":"hex32"}
+//   uk_auction_report {"lot_id":"hex32"} → JSON snapshot or {"lot_id":""} for all open lots
+//
+// The winner is deterministic: highest price_per_unit wins, ties break to the
+// earliest sequence. `uk_auction_close` writes the winner JSON to the buffer.
+
+#[derive(serde::Deserialize)]
+struct AuctionLotJson {
+    lot_id: String,
+    seller_did: String,
+    asset: serde_json::Value,
+    currency: String,
+    floor: u64,
+    opens_seq: u64,
+    closes_seq: u64,
+}
+
+fn parse_auction_lot(
+    v: &serde_json::Value,
+    field: &str,
+) -> Result<unfer_protocol::AuctionLot, Diagnostic> {
+    let lot: AuctionLotJson = serde_json::from_value(v.clone()).map_err(|e| {
+        Diagnostic::new(
+            Code::BAD_JSON,
+            format!("{field}: bad lot: {e}"),
+            Severity::Error,
+        )
+    })?;
+    let kind = lot.asset.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+    let asset = match kind {
+        "carbon_credits" => {
+            let amount = lot
+                .asset
+                .get("amount")
+                .and_then(|a| a.as_u64())
+                .ok_or_else(|| {
+                    Diagnostic::new(
+                        Code::BAD_JSON,
+                        format!("{field}: carbon_credits needs amount"),
+                        Severity::Error,
+                    )
+                })?;
+            unfer_protocol::AuctionAsset::CarbonCredits { amount }
+        }
+        "publicity_slot" => {
+            let slot = lot
+                .asset
+                .get("slot")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+            let description = lot
+                .asset
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string());
+            unfer_protocol::AuctionAsset::PublicitySlot { slot, description }
+        }
+        _ => {
+            return Err(Diagnostic::new(
+                Code::BAD_JSON,
+                format!("{field}: unknown asset kind '{kind}'"),
+                Severity::Error,
+            ));
+        }
+    };
+    let currency = match lot.currency.as_str() {
+        "taler" => unfer_protocol::AuctionCurrency::Taler,
+        "carbon_credits" => unfer_protocol::AuctionCurrency::CarbonCredits,
+        other => {
+            return Err(Diagnostic::new(
+                Code::BAD_JSON,
+                format!("{field}: unknown currency '{other}'"),
+                Severity::Error,
+            ));
+        }
+    };
+    Ok(unfer_protocol::AuctionLot {
+        lot_id: unfer_protocol::AuctionId(parse_hex32(&lot.lot_id, "lot_id")?),
+        seller_did: lot.seller_did,
+        asset,
+        currency,
+        floor: lot.floor,
+        opens_seq: lot.opens_seq,
+        closes_seq: lot.closes_seq,
+    })
+}
+
+/// Open a lot. Returns 0 on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_auction_open(op_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_auction_open", || {
+        #[derive(serde::Deserialize)]
+        struct OpenJson {
+            actor: String,
+            lot: serde_json::Value,
+        }
+        let o: OpenJson = parse_json(op_json, len)?;
+        let lot = parse_auction_lot(&o.lot, "lot")?;
+        let kind = unfer_protocol::AuctionOpKind::Open { lot };
+        let _ = handles::auction_apply(&o.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Place a bid. Returns 0 on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_auction_bid(op_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_auction_bid", || {
+        #[derive(serde::Deserialize)]
+        struct BidJson {
+            actor: String,
+            lot_id: String,
+            price_per_unit: u64,
+            quantity: u64,
+        }
+        let b: BidJson = parse_json(op_json, len)?;
+        let kind = unfer_protocol::AuctionOpKind::Bid {
+            lot_id: unfer_protocol::AuctionId(parse_hex32(&b.lot_id, "lot_id")?),
+            price_per_unit: b.price_per_unit,
+            quantity: b.quantity,
+        };
+        let _ = handles::auction_apply(&b.actor, &kind)?;
+        Ok(0)
+    })
+}
+
+/// Close a lot and compute the deterministic winner. Writes the winner JSON to
+/// the buffer (`{"lot_id":..,"bidder_did":..,"price_per_unit":..,"quantity":..,"total":..}`
+/// or `null` when the lot closes with no eligible bids). Returns buffer bytes
+/// on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_auction_close(op_json: *const u8, len: i64, buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_auction_close", || {
+        #[derive(serde::Deserialize)]
+        struct CloseJson {
+            actor: String,
+            lot_id: String,
+        }
+        let c: CloseJson = parse_json(op_json, len)?;
+        let kind = unfer_protocol::AuctionOpKind::Close {
+            lot_id: unfer_protocol::AuctionId(parse_hex32(&c.lot_id, "lot_id")?),
+        };
+        let winner = handles::auction_apply(&c.actor, &kind)?;
+        let json = serde_json::to_string(&winner).map_err(|e| {
+            Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
+        })?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Read a report for one lot, or all open lots when `lot_id` is empty. Writes
+/// JSON (`{lot,bids,closed,winner}` or an array) to the buffer. Returns buffer
+/// bytes on success, <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_auction_report(
+    lot_id_json: *const u8,
+    len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_auction_report", || {
+        #[derive(serde::Deserialize)]
+        struct ReportJson {
+            #[serde(default)]
+            lot_id: String,
+        }
+        let r: ReportJson = parse_json(lot_id_json, len)?;
+        let json = if r.lot_id.is_empty() {
+            serde_json::to_string(&handles::auction_open_lots()).map_err(|e| {
+                Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
+            })?
+        } else {
+            let lot_id = unfer_protocol::AuctionId(parse_hex32(&r.lot_id, "lot_id")?);
+            match handles::auction_report(&lot_id) {
+                Some(report) => serde_json::to_string(&report).map_err(|e| {
+                    Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
+                })?,
+                None => {
+                    return Err(Diagnostic::new(
+                        Code::AUCTION_UNKNOWN_LOT,
+                        "no such lot",
+                        Severity::Error,
+                    ));
+                }
+            }
+        };
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Reset the auction ledger (QA/console reset).
+pub fn uk_auction_clear() {
+    handles::auction_clear();
+}
+
 // ── tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2311,6 +2517,79 @@ mod tests {
         let rc = uk_cert_transfer(p, l);
         assert_eq!(rc, -7004); // -UK-7004 CertDoubleSpend
         uk_cert_clear();
+    }
+
+    // ── unified auction FFI (Prebid-model) ───────────────────────────────
+
+    #[test]
+    fn auction_ffi_open_bid_close_roundtrip() {
+        let _lock = handles::AUCTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        uk_auction_clear();
+
+        // Open a carbon lot at floor 5.
+        let open = r#"{"actor":"did:unfer:seller","lot":{"lot_id":"0101010101010101010101010101010101010101010101010101010101010101","seller_did":"did:unfer:seller","asset":{"kind":"carbon_credits","amount":1000},"currency":"taler","floor":5,"opens_seq":1,"closes_seq":100}}"#;
+        let (p, l) = json_ptr(open);
+        assert_eq!(uk_auction_open(p, l), 0);
+
+        // Alice bids 6/unit × 500.
+        let bid = r#"{"actor":"did:unfer:alice","lot_id":"0101010101010101010101010101010101010101010101010101010101010101","price_per_unit":6,"quantity":500}"#;
+        let (p, l) = json_ptr(bid);
+        assert_eq!(uk_auction_bid(p, l), 0);
+
+        // Below-floor bid → -UK-7303.
+        let low = r#"{"actor":"did:unfer:bob","lot_id":"0101010101010101010101010101010101010101010101010101010101010101","price_per_unit":2,"quantity":100}"#;
+        let (p, l) = json_ptr(low);
+        assert_eq!(uk_auction_bid(p, l), -7303); // AuctionBidBelowFloor
+
+        // Close: deterministic winner is alice (6 × 500 = 3000). The close both
+        // mutates and writes, so use a single fixed-buffer call (the two-call
+        // probe/receive would apply the close twice).
+        let close = r#"{"actor":"did:unfer:seller","lot_id":"0101010101010101010101010101010101010101010101010101010101010101"}"#;
+        let (p, l) = json_ptr(close);
+        let mut winner_buf = [0u8; 256];
+        let n = uk_auction_close(p, l, winner_buf.as_mut_ptr(), 256);
+        assert!(n > 0, "close must return the winner JSON length, got {n}");
+        let winner_json = String::from_utf8(winner_buf[..n as usize].to_vec()).unwrap();
+        let winner: serde_json::Value = serde_json::from_str(&winner_json).unwrap();
+        assert_eq!(winner["bidder_did"], "did:unfer:alice");
+        assert_eq!(winner["total"], 3000);
+
+        // Report the closed lot.
+        let report =
+            r#"{"lot_id":"0101010101010101010101010101010101010101010101010101010101010101"}"#;
+        let (p, l) = json_ptr(report);
+        let rep_json = read_buf(|b, c| uk_auction_report(p, l, b, c));
+        let rep: serde_json::Value = serde_json::from_str(&rep_json).unwrap();
+        assert_eq!(rep["closed"], true);
+        assert_eq!(rep["winner"]["bidder_did"], "did:unfer:alice");
+        assert_eq!(rep["bids"].as_array().unwrap().len(), 1);
+
+        // Bidding on the closed lot → -UK-7302.
+        let (p, l) = json_ptr(bid);
+        assert_eq!(uk_auction_bid(p, l), -7302); // AuctionLotClosed
+        uk_auction_clear();
+    }
+
+    #[test]
+    fn auction_ffi_open_requires_seller_and_unique_lot() {
+        let _lock = handles::AUCTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        uk_auction_clear();
+        let open = r#"{"actor":"did:unfer:intruder","lot":{"lot_id":"0202020202020202020202020202020202020202020202020202020202020202","seller_did":"did:unfer:seller","asset":{"kind":"publicity_slot","slot":"homepage_leaderboard_300x250"},"currency":"carbon_credits","floor":2,"opens_seq":1,"closes_seq":100}}"#;
+        let (p, l) = json_ptr(open);
+        assert_eq!(uk_auction_open(p, l), -7305); // AuctionNotSeller
+
+        let good = r#"{"actor":"did:unfer:seller","lot":{"lot_id":"0202020202020202020202020202020202020202020202020202020202020202","seller_did":"did:unfer:seller","asset":{"kind":"publicity_slot","slot":"homepage_leaderboard_300x250"},"currency":"carbon_credits","floor":2,"opens_seq":1,"closes_seq":100}}"#;
+        let (p, l) = json_ptr(good);
+        assert_eq!(uk_auction_open(p, l), 0);
+
+        // Duplicate lot → -UK-7306.
+        let (p, l) = json_ptr(good);
+        assert_eq!(uk_auction_open(p, l), -7306); // AuctionLotExists
+        uk_auction_clear();
     }
 
     fn create_harmonic_model() -> i64 {

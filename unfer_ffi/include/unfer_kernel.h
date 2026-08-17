@@ -40,6 +40,18 @@ int64_t uk_agent_list(uint8_t* buf,
               int64_t cap);
 int64_t uk_agent_spawn(const uint8_t* spec_json,
                int64_t len);
+int64_t uk_auction_bid(const uint8_t* op_json,
+               int64_t len);
+int64_t uk_auction_close(const uint8_t* op_json,
+                 int64_t len,
+                 uint8_t* buf,
+                 int64_t cap);
+int64_t uk_auction_open(const uint8_t* op_json,
+                int64_t len);
+int64_t uk_auction_report(const uint8_t* lot_id_json,
+                  int64_t len,
+                  uint8_t* buf,
+                  int64_t cap);
 int64_t uk_audit_clear();
 int64_t uk_audit_list(uint8_t* buf,
               int64_t cap);

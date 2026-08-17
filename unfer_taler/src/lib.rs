@@ -27,10 +27,12 @@
 //!
 //! Error codes: UK-7101..UK-7106 (see `unfer_protocol::codes`).
 
+pub mod auction;
 pub mod denom;
 pub mod exchange;
 pub mod wire;
 
+pub use auction::{AuctionEscrowState, AuctionService, CreditHold, PaymentEscrow};
 pub use denom::{Denomination, DenominationBook};
 pub use exchange::{PegOut, ReserveId, TalerExchange};
 pub use wire::{SimulatedWireGateway, WireGateway, WireRef, WireStatus};

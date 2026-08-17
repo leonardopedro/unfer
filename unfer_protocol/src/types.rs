@@ -1569,6 +1569,118 @@ impl MintRequest {
     }
 }
 
+/// A 32-byte auction identifier (deterministic lot commitment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AuctionId(pub [u8; 32]);
+
+/// What is being auctioned in a unified auction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AuctionAsset {
+    /// A carbon-credit lot: `amount` credits (Mg CO₂e) offered for sale. The
+    /// seller's certificate for the lot transfers to the winner on settlement.
+    CarbonCredits { amount: u64 },
+    /// A publicity / ad-inventory slot (the AdSense alternative). `slot` is a
+    /// publisher inventory id (e.g. `homepage_leaderboard_300x250`). There is
+    /// no ledger asset to deliver — settlement is the winner's payment only.
+    PublicitySlot {
+        slot: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+}
+
+/// The payment medium a winning bid is denominated in. Both rails settle as
+/// ordinary certificates on the ledger: Taler e-coins are fiat-backed
+/// certificates the seller can deposit for fiat; carbon credits are certificates
+/// traded directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuctionCurrency {
+    /// GNU Taler e-coins (fiat-backed digital cash).
+    Taler,
+    /// Carbon-credit certificates on the ledger.
+    CarbonCredits,
+}
+
+/// A lot offered at a unified auction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionLot {
+    pub lot_id: AuctionId,
+    pub seller_did: String,
+    pub asset: AuctionAsset,
+    /// The payment medium the winning bid must be denominated in.
+    pub currency: AuctionCurrency,
+    /// Minimum price per unit (Prebid-style price floor). Bids below it are
+    /// rejected at the ledger.
+    pub floor: u64,
+    pub opens_seq: u64,
+    pub closes_seq: u64,
+}
+
+/// A single bid in a unified auction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionBid {
+    pub lot_id: AuctionId,
+    pub bidder_did: String,
+    pub price_per_unit: u64,
+    pub quantity: u64,
+    pub seq: u64,
+}
+
+/// The deterministic winner of a closed auction. Computed from the recorded
+/// bids by the unified-auction clearing rule: the highest `price_per_unit`
+/// wins; ties break to the earliest `seq`. Every node replays the same log and
+/// converges on the same winner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionWinner {
+    pub lot_id: AuctionId,
+    pub bidder_did: String,
+    pub price_per_unit: u64,
+    pub quantity: u64,
+    pub total: u64,
+}
+
+/// The kind of auction state transition carried by an [`AuctionOp`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AuctionOpKind {
+    /// Seller opens a lot for bidding. Rejected if the lot already exists.
+    Open { lot: AuctionLot },
+    /// Bidder places a price-per-unit bid. Rejected below floor, against the
+    /// seller, or after the lot has closed.
+    Bid {
+        lot_id: AuctionId,
+        price_per_unit: u64,
+        quantity: u64,
+    },
+    /// Seller closes the lot; the deterministic winner is computed from the
+    /// recorded bids. Rejected if the lot is unknown or already closed.
+    Close { lot_id: AuctionId },
+}
+
+/// A signed auction state transition. Mirrors the other consensus ops: `did`
+/// is the acting principal (the seller for Open/Close, the bidder for Bid)
+/// and `signature` covers the op bytes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionOp {
+    pub did: String,
+    pub kind: AuctionOpKind,
+    pub seq: u64,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+/// A read-only snapshot of an auction lot for reporting/querying.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionReport {
+    pub lot: AuctionLot,
+    pub bids: Vec<AuctionBid>,
+    pub closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<AuctionWinner>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsensusTransaction {
@@ -1580,6 +1692,10 @@ pub enum ConsensusTransaction {
     /// (mint authority, existence, conservation, double-spend, owner) before
     /// it is sequenced into the consensus log.
     CertificateOp(CertificateOp),
+    /// A unified-auction state transition (Prebid-model unified auction for
+    /// carbon credits and publicity inventory). Deterministic: every node
+    /// replays the same log and converges on the same winner.
+    AuctionOp(AuctionOp),
 }
 
 impl ConsensusTransaction {
@@ -1589,6 +1705,7 @@ impl ConsensusTransaction {
             Self::SessionOp(op) => &op.did,
             Self::ContentOp(op) => &op.did,
             Self::CertificateOp(op) => &op.did,
+            Self::AuctionOp(op) => &op.did,
         }
     }
 
@@ -1598,6 +1715,7 @@ impl ConsensusTransaction {
             Self::SessionOp(op) => &op.signature,
             Self::ContentOp(op) => &op.signature,
             Self::CertificateOp(op) => &op.signature,
+            Self::AuctionOp(op) => &op.signature,
         }
     }
 }

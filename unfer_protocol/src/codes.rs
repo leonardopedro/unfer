@@ -159,6 +159,30 @@ impl Code {
     /// again — a single outcome per escrow.
     pub const ESCROW_ALREADY_SETTLED: Code = Code(7203);
 
+    // ------------------------------------------------------------------
+    // Unified auction (Prebid-model open auction, 73xx). The deterministic
+    // clearing engine on each node replays `AuctionOp`s from the consensus log
+    // and converges on the same winner; these codes report the lot state
+    // machine (see `unfer_consensus::auction`).
+    /// The referenced auction lot_id was never opened (or the lot was already
+    /// closed) on the ledger.
+    pub const AUCTION_UNKNOWN_LOT: Code = Code(7301);
+    /// A bid or close references a lot that is already closed.
+    pub const AUCTION_LOT_CLOSED: Code = Code(7302);
+    /// A bid is below the lot's floor price and is rejected by the clearing
+    /// engine (Prebid-style price floor).
+    pub const AUCTION_BID_BELOW_FLOOR: Code = Code(7303);
+    /// The bidder tried to bid against their own lot.
+    pub const AUCTION_SELF_BID: Code = Code(7304);
+    /// A non-seller attempted to open/close a lot (only the lot's seller may).
+    pub const AUCTION_NOT_SELLER: Code = Code(7305);
+    /// The lot_id already exists on the ledger — duplicate open.
+    pub const AUCTION_LOT_EXISTS: Code = Code(7306);
+    /// The bid quantity exceeds the available lot amount (carbon credits).
+    pub const AUCTION_QTY_MISMATCH: Code = Code(7307);
+    /// A close landed with no bids, or all bids below floor — no winner.
+    pub const AUCTION_NO_BIDS: Code = Code(7308);
+
     pub const INTERNAL: Code = Code(5000);
 
     pub fn raw(self) -> u32 {
@@ -463,6 +487,46 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             7203,
             "EscrowAlreadySettled",
             "The escrow was already released or refunded and cannot settle twice.",
+        ),
+        (
+            7301,
+            "AuctionUnknownLot",
+            "The auction lot_id was never opened (or is already closed) on the ledger.",
+        ),
+        (
+            7302,
+            "AuctionLotClosed",
+            "A bid or close references a lot that is already closed.",
+        ),
+        (
+            7303,
+            "AuctionBidBelowFloor",
+            "A bid is below the lot's floor price and is rejected by the clearing engine.",
+        ),
+        (
+            7304,
+            "AuctionSelfBid",
+            "The bidder tried to bid against their own lot.",
+        ),
+        (
+            7305,
+            "AuctionNotSeller",
+            "Only the lot's seller may open or close the lot.",
+        ),
+        (
+            7306,
+            "AuctionLotExists",
+            "The lot_id already exists on the ledger — duplicate open.",
+        ),
+        (
+            7307,
+            "AuctionQtyMismatch",
+            "The bid quantity exceeds the available lot amount.",
+        ),
+        (
+            7308,
+            "AuctionNoBids",
+            "The auction closed with no winning bid (no bids, or all below floor).",
         ),
         (
             5000,

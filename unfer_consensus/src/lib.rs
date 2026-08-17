@@ -7,6 +7,7 @@
 //! two-phase escrow service, and [`certs`] the UTXO/carbon-certificate
 //! ledger with its `SparseMerkle` (Plan R).
 
+pub mod auction;
 pub mod certs;
 pub mod engine;
 pub mod escrow;
@@ -16,6 +17,7 @@ pub mod net;
 pub mod node;
 pub mod signing;
 
+pub use auction::AuctionLedger;
 pub use certs::{CertificateLedger, Coin, MintAuthority, SparseMerkle};
 pub use engine::{ConsensusEngine, LocalConsensus};
 pub use escrow::{Escrow, EscrowService, EscrowState};

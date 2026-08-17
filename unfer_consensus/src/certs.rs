@@ -218,6 +218,16 @@ impl CertificateLedger {
         self.utxos.values().map(|c| c.amount).sum()
     }
 
+    /// All unspent coins currently owned by `owner_did` — an audit view of a
+    /// party's balance across the consensus certificate state.
+    pub fn coins_of(&self, owner_did: &str) -> Vec<Coin> {
+        self.utxos
+            .values()
+            .filter(|c| c.owner == owner_did)
+            .cloned()
+            .collect()
+    }
+
     fn mint_authorized(&self, did: &str) -> bool {
         match &self.mint_authority {
             MintAuthority::None => false,

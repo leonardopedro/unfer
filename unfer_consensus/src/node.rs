@@ -5,6 +5,7 @@ use unfer_protocol::{
     AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, ModelSpec, Severity,
 };
 
+use crate::auction::AuctionLedger;
 use crate::certs::{CertificateLedger, MintAuthority};
 use crate::engine::ConsensusEngine;
 use crate::identity::IdentityRegistry;
@@ -15,6 +16,7 @@ pub struct ConsensusNode {
     identity: IdentityRegistry,
     content: HashMap<String, ContentRef>,
     certs: CertificateLedger,
+    auction: AuctionLedger,
     next_model_id: u64,
     applied_seq: u64,
 }
@@ -27,6 +29,7 @@ impl ConsensusNode {
             identity: IdentityRegistry::new(),
             content: HashMap::new(),
             certs: CertificateLedger::new(MintAuthority::None),
+            auction: AuctionLedger::new(),
             next_model_id: 1,
             applied_seq: 0,
         }
@@ -83,6 +86,11 @@ impl ConsensusNode {
                 let kind = op.kind.clone();
                 self.certs.apply_op(&actor, &kind, op.seq)?;
             }
+            ConsensusTransaction::AuctionOp(op) => {
+                let actor = op.did.clone();
+                let kind = op.kind.clone();
+                self.auction.apply_op(&actor, &kind, op.seq)?;
+            }
         }
         Ok(())
     }
@@ -117,6 +125,10 @@ impl ConsensusNode {
 
     pub fn certs(&self) -> &CertificateLedger {
         &self.certs
+    }
+
+    pub fn auction(&self) -> &AuctionLedger {
+        &self.auction
     }
 
     pub fn session(&self, id: u64) -> Option<&Session> {

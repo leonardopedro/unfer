@@ -5,6 +5,7 @@ use std::sync::{
 };
 
 use prob_kernel::Session;
+use unfer_consensus::auction::AuctionLedger;
 use unfer_consensus::certs::{CertificateLedger, MintAuthority};
 use unfer_protocol::{
     ActionRecord, AgentInfo, AuditEntry, CallerTag, CertId, Diagnostic, EffectKind, EventQuery,
@@ -747,6 +748,102 @@ pub fn cert_apply(
 pub fn cert_clear() {
     let mut ledger = cert_ledger();
     *ledger = CertificateLedger::new(MintAuthority::None);
+}
+
+// ── unified auction (Prebid-model, carbon credits + publicity inventory) ──
+//
+// At the FFI boundary the caller is trusted, exactly like the certificate
+// ledger above: `auction_apply` runs the deterministic auction engine
+// (open/bid/close), and the winning bid is a pure function of the recorded
+// bids, so a caller replaying the same ops converges on the same winner.
+
+static NEXT_AUCTION_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn auction_ledger() -> std::sync::MutexGuard<'static, AuctionLedger> {
+    static LEDGER: std::sync::OnceLock<Mutex<AuctionLedger>> = std::sync::OnceLock::new();
+    let ledger = LEDGER.get_or_init(|| Mutex::new(AuctionLedger::new()));
+    ledger.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Apply an auction state transition (open/bid/close) as `actor`. Returns the
+/// deterministic winner (Some for a close that selects one, None otherwise).
+pub fn auction_apply(
+    actor: &str,
+    kind: &unfer_protocol::AuctionOpKind,
+) -> Result<Option<unfer_protocol::AuctionWinner>, Diagnostic> {
+    let seq = NEXT_AUCTION_SEQ.fetch_add(1, Ordering::SeqCst);
+    let mut ledger = auction_ledger();
+    ledger.apply_op(actor, kind, seq)
+}
+
+/// A JSON snapshot of one lot (or null).
+pub fn auction_report(lot_id: &unfer_protocol::AuctionId) -> Option<unfer_protocol::AuctionReport> {
+    auction_ledger().report(lot_id)
+}
+
+/// JSON snapshots of every lot currently open for bidding.
+pub fn auction_open_lots() -> Vec<unfer_protocol::AuctionReport> {
+    auction_ledger().open_lots()
+}
+
+/// Reset the auction ledger (QA/console reset).
+pub fn auction_clear() {
+    let mut ledger = auction_ledger();
+    *ledger = AuctionLedger::new();
+}
+
+#[cfg(test)]
+pub static AUCTION_TESTS_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+mod auction_ledger_tests {
+    use super::*;
+    use unfer_protocol::{AuctionAsset, AuctionCurrency, AuctionLot};
+
+    fn lot(seller: &str, floor: u64, id_byte: u8) -> AuctionLot {
+        AuctionLot {
+            lot_id: unfer_protocol::AuctionId([id_byte; 32]),
+            seller_did: seller.to_string(),
+            asset: AuctionAsset::CarbonCredits { amount: 1000 },
+            currency: AuctionCurrency::Taler,
+            floor,
+            opens_seq: 1,
+            closes_seq: 100,
+        }
+    }
+
+    #[test]
+    fn open_bid_close_roundtrip() {
+        let _g = AUCTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        auction_clear();
+        let seller = "did:unfer:seller";
+        auction_apply(
+            seller,
+            &unfer_protocol::AuctionOpKind::Open {
+                lot: lot(seller, 5, 1),
+            },
+        )
+        .unwrap();
+        auction_apply(
+            "did:unfer:alice",
+            &unfer_protocol::AuctionOpKind::Bid {
+                lot_id: unfer_protocol::AuctionId([1; 32]),
+                price_per_unit: 6,
+                quantity: 500,
+            },
+        )
+        .unwrap();
+        let winner = auction_apply(
+            seller,
+            &unfer_protocol::AuctionOpKind::Close {
+                lot_id: unfer_protocol::AuctionId([1; 32]),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(winner.bidder_did, "did:unfer:alice");
+        assert_eq!(winner.total, 3000);
+    }
 }
 
 /// Single serialization point for every certificate-ledger test in the crate.

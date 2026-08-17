@@ -8,6 +8,10 @@ uk_agent_grants
 uk_agent_kill
 uk_agent_list
 uk_agent_spawn
+uk_auction_bid
+uk_auction_close
+uk_auction_open
+uk_auction_report
 uk_audit_clear
 uk_audit_list
 uk_bayesian_update

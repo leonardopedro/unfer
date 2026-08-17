@@ -42,6 +42,11 @@ pub const SESSION_OPS: &[&str] = &[
     "cert_burn",
     "cert_status",
     "cert_root",
+    // unified auction (Prebid-model, carbon credits + publicity inventory)
+    "auction_open",
+    "auction_bid",
+    "auction_close",
+    "auction_report",
     // agent-local ops (dispatched by the client, never forwarded to the edge)
     "save_session",
     "restore_session",
@@ -78,6 +83,10 @@ pub const EDGE_ALLOWED_OPS: &[&str] = &[
     "cert_burn",
     "cert_status",
     "cert_root",
+    "auction_open",
+    "auction_bid",
+    "auction_close",
+    "auction_report",
 ];
 
 /// Ops the kernel_client agent dispatches locally. Deliberately excludes
@@ -111,6 +120,10 @@ pub const AGENT_OPS: &[&str] = &[
     "cert_burn",
     "cert_status",
     "cert_root",
+    "auction_open",
+    "auction_bid",
+    "auction_close",
+    "auction_report",
     // agent-local ops
     "save_session",
     "restore_session",
