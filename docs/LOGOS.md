@@ -200,10 +200,16 @@ and the echoed sentence — is stored in `uk_get_result` and broadcast as a
 `lean/Confluence.lean` (checked by `lean`, the authoritative type-checker)
 machine-verifies the confluence-critical structure of the reduction: the
 diamond property, Church–Rosser confluence, and the uniqueness of normal
-forms are decided by `native_decide` over the explicitly enumerated finite
-state space. This is the formal backbone of the "unique normal form"
+forms are decided by kernel-computed `rfl` over the explicitly enumerated
+finite state space. This is the formal backbone of the "unique normal form"
 guarantee; the runtime confluence self-check in `uk_logos_compile`
-corroborates it empirically. Exporting this proof through the S29
-`lean4export` pipeline requires the matching `lean4export` toolchain (a
+corroborates it empirically. The proof is exported through the S29
+`lean4export` pipeline: the official `leanprover/lean4export` emits the
+NDJSON format 3.1.0 payload (pinned at
+`prob_kernel/tests/fixtures/confluence.ndjson`), which `verify_export`
+re-verifies independently in nanoda. The proof term must stay
+`rfl`/kernel-computed — `native_decide`/`decide` emit `Lean.ofReduceBool` +
+`_nativeDecide_*` terms that nanoda (an independent checker) cannot reduce.
+Regeneration needs the official `lean4export` on the matching toolchain (a
 documented provisioning step).
 

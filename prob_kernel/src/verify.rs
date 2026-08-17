@@ -416,4 +416,35 @@ mod tests {
         let back: LeanVerifySpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back, spec);
     }
+
+    /// The formal Logos confluence proof (`logos/lean/Confluence.lean`), exported
+    /// to the `lean4export` NDJSON format 3.1.0 by the official
+    /// `leanprover/lean4export` tool and pinned as a fixture. The proof uses
+    /// kernel-computed `rfl` terms (not `native_decide`), so the independent
+    /// external checker nanoda can re-verify it without trusting Lean's native
+    /// compiler. Regenerate with:
+    ///   lean -o Confluence.olean logos/lean/Confluence.lean
+    ///   LEAN_PATH=logos/lean lean4export Confluence \
+    ///     -- State.diamond_verified State.confluence_verified \
+    ///        State.unique_normal_form_verified \
+    ///     > prob_kernel/tests/fixtures/confluence.ndjson
+    #[test]
+    fn confluence_proof_verifies_in_nanoda() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/confluence.ndjson"
+        );
+        let bytes = std::fs::read(path).expect("read confluence.ndjson fixture");
+        let spec = LeanVerifySpec {
+            nat_extension: true,
+            string_extension: true,
+            ..LeanVerifySpec::standard_axioms()
+        };
+        let report = verify_export(&bytes, &spec).unwrap();
+        assert!(
+            report.verified,
+            "nanoda rejected the Confluence proof: {:?} (failing: {:?})",
+            report.error, report.failing_theorem
+        );
+    }
 }

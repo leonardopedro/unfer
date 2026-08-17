@@ -21,10 +21,10 @@ diamond-shaped lattice — the canonical structure in which confluence is
 witnessed by the diamond property (the joinability of one-step
 divergences). Because the state space is finite, confluence and the
 uniqueness of normal forms are **decided by exhaustive machine
-computation** (`native_decide`) over the explicitly enumerated state
-space, rather than by hand-written case analysis. This is the formal,
-machine-checked guarantee that the runtime confluence self-check in
-`prob_kernel::logos::logos_compile` corroborates empirically.
+computation** (`rfl` over the explicitly enumerated state
+space, i.e. kernel reduction), rather than by hand-written case analysis.
+This is the formal, machine-checked guarantee that the runtime confluence
+self-check in `prob_kernel::logos::logos_compile` corroborates empirically.
 
 The file is checked by `lean`, the authoritative type-checker. The
 export to the `lean4export` NDJSON format for `uk_proof_verify` requires
@@ -115,18 +115,21 @@ def uniqueNormalFormsChecked : Bool :=
           true
 
 -- Each property is decided by exhaustive computation over the enumerated
--- finite state space. `native_decide` reduces the (closed, terminating)
--- Bool expression and checks it is `true` — a machine-verified certificate.
--- Note: when the relation is *not* confluent, `native_decide` reports the
--- check as `false` rather than accepting it — the proof is genuine.
+-- finite state space. `rfl` closes `… = true` by making the kernel reduce the
+-- (closed, terminating) Bool expression to `true` — a machine-verified
+-- certificate. The proof term is a bare `Eq.refl`, so an independent external
+-- checker (nanoda, via the `lean4export` NDJSON pipeline in `uk_proof_verify`)
+-- can re-verify it without trusting Lean's native compiler. Note: when the
+-- relation is *not* confluent, `rfl` reports the check as a type error rather
+-- than accepting it — the proof is genuine.
 
 theorem diamond_verified : diamondChecked = true := by
-  native_decide
+  rfl
 
 theorem confluence_verified : confluenceChecked = true := by
-  native_decide
+  rfl
 
 theorem unique_normal_form_verified : uniqueNormalFormsChecked = true := by
-  native_decide
+  rfl
 
 end State
