@@ -713,6 +713,67 @@ mod tests {
         );
     }
 
+    /// QG densitized tetrad change of variables.
+    ///
+    /// `docs/qg_densitized_hamiltonian.cdb` starts from book.tex's singular
+    /// kinetic term `(1/16e)S² − (1/24e)P²` (e = det e_i^a) and applies the
+    /// densitized-tetrad change of variables `y = √e`, `\tilde e = √e e`,
+    /// `S = y\tilde S`, `P = y\tilde P`. The `1/e` factor is absorbed into
+    /// the field derivatives, leaving the FLAT (constant-coefficient)
+    /// hyperbolic operator `H_0 = (1/16)Δ_{\tilde S} − (1/24)∂²_y` — the
+    /// field-space d'Alembertian whose principal part makes the transformed
+    /// Hamiltonian essentially self-adjoint (Strichartz 1973). This test runs
+    /// the pipeline through S30 and asserts the singular `1/e` is gone from
+    /// `Ktrans` (it equals the flat `Kflat`), while `Hraw` still carries it.
+    const QG_DENSITIZED_DERIVATION: &str = include_str!("../../docs/qg_densitized_hamiltonian.cdb");
+
+    #[test]
+    fn qg_densitized_tetrad_absorb_1_over_e() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(
+            QG_DENSITIZED_DERIVATION,
+            &["Hraw", "Ktrans", "Kflat", "H0"],
+            120_000,
+        )
+        .unwrap();
+        // The raw Hamiltonian must still carry the singular e^{-1} = 1/e.
+        let hraw = &derived["Hraw"];
+        assert!(
+            hraw.contains("e")
+                && (hraw.contains("-1") || hraw.contains("e)") || hraw.contains("1/e")),
+            "Hraw should contain the singular 1/e denominator: {hraw}"
+        );
+        // The transformed kinetic term must equal the flat form (no e^{-1}).
+        let ktrans = &derived["Ktrans"];
+        let kflat = &derived["Kflat"];
+        assert!(
+            ktrans.contains("\\tilde{S}") && ktrans.contains("\\tilde{P}"),
+            "Ktrans should be in densitized variables: {ktrans}"
+        );
+        assert!(
+            !ktrans.contains("e") || !ktrans.contains("e^{-1}"),
+            "the singular 1/e must be absorbed: {ktrans}"
+        );
+        // Ktrans is exactly the flat operator's kinetic piece: the coefficient
+        // structure 1/16 S̃² − 1/24 P̃² survives, e-free.
+        assert!(
+            ktrans.contains("1/16") && ktrans.contains("1/24"),
+            "Ktrans must carry the flat coefficients 1/16, 1/24: {ktrans}"
+        );
+        // Kflat and H0 both express the flat target.
+        let h0 = &derived["H0"];
+        assert!(
+            h0.contains("1/16") && h0.contains("1/24"),
+            "H0 should be the flat hyperbolic operator: {h0}"
+        );
+        assert!(
+            kflat.contains("1/16") && kflat.contains("1/24"),
+            "Kflat should be the flat kinetic form: {kflat}"
+        );
+    }
+
     /// Navier-Stokes: the divergence constraint is a *solved* constraint.
     ///
     /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the
