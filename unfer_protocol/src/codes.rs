@@ -76,6 +76,11 @@ impl Code {
     /// blueprints, writes) until an operator clears the latch.
     pub const SENSITIVE_LATCHED: Code = Code(4701);
 
+    /// Logos CNL->UNF compile failure: the sentence could not be parsed by the
+    /// CCG grammar (word not in the lexicon, malformed sentence), or the
+    /// compile/reduce/readback pipeline failed.
+    pub const LOGOS_COMPILE_FAILED: Code = Code(4803);
+
     /// S29: the Lean4 export file could not be type-checked — a theorem or
     /// definition's proof term did not check (type mismatch, missing
     /// declaration, or a kernel panic inside nanoda_lib).
@@ -328,6 +333,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4801,
             "ProofVerifyFailed",
             "The Lean4 export file did not type-check: a theorem or definition's proof term was rejected by the external kernel.",
+        ),
+        (
+            4803,
+            "LogosCompileFailed",
+            "The CNL sentence could not be compiled to a unique normal form: no CCG parse, or the Logos compile/reduce/readback pipeline failed.",
         ),
         (
             4802,

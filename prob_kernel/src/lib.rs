@@ -12,11 +12,13 @@
 pub mod build;
 pub mod error;
 pub mod event;
+pub mod logos;
 pub mod session;
 pub mod symbolic;
 pub mod verify;
 
 pub use error::KernelError;
+pub use logos::logos_compile;
 pub use session::{
     BayesianUpdateReport, EvolveReport, Session, SessionBlob, StateEntry, StateSummary,
 };

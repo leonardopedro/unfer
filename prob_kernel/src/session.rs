@@ -572,6 +572,18 @@ impl Session {
         crate::symbolic::symbolic_analyze(spec)
     }
 
+    /// Compile a CNL sentence to a unique normal form (Logos). Parses the
+    /// sentence with the embedded L0 lexicon, compiles to a CoreIR term,
+    /// reduces it to an interaction-net unique normal form, and read-backs
+    /// the result with its content-addressable UNF hash. `verified` is the
+    /// confluence self-check. Read-only: the numerical state is untouched.
+    pub fn logos_compile(
+        &self,
+        sentence: &str,
+    ) -> Result<unfer_protocol::LogosReport, KernelError> {
+        crate::logos::logos_compile(sentence)
+    }
+
     /// Run a multi-cell Cadabra2 derivation pipeline (S30) and capture the
     /// named expressions it produces (e.g. the QG gauge-fixed Hamiltonian
     /// derivation in `docs/qg_gauge_fixed_hamiltonian.cdb`). Read-only: the

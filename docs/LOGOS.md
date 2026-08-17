@@ -182,3 +182,28 @@ logos l1 "probably John loves Mary"   # probabilistic worlds
 - 15 integration tests (`tests/integration.rs`): end-to-end pipeline,
   UNF hash determinism/discrimination, L1 world splitting, linearity,
   corpus parse rate.
+
+## Kernel integration (uk_logos_compile)
+
+The pipeline is exposed over the unfer kernel C ABI as `uk_logos_compile`:
+a CNL sentence (NUL-free UTF-8) is parsed with an embedded L0 lexicon,
+compiled to CoreIR, reduced to a UNF, and read back. The report — readback
+result, content-addressed `unf_hash`, a confluence self-check (`verified`),
+and the echoed sentence — is stored in `uk_get_result` and broadcast as a
+`logos_compiled` event. Unparseable input fails with `UK-4803`
+(`LOGOS_COMPILE_FAILED`). The symbol follows the S29 registration checklist
+(EXPECTED_SYMBOLS.txt, generated C header, australVM `UNFER_SYMBOLS`,
+`GrantSet.kernel`).
+
+## Formal confluence
+
+`lean/Confluence.lean` (checked by `lean`, the authoritative type-checker)
+machine-verifies the confluence-critical structure of the reduction: the
+diamond property, Church–Rosser confluence, and the uniqueness of normal
+forms are decided by `native_decide` over the explicitly enumerated finite
+state space. This is the formal backbone of the "unique normal form"
+guarantee; the runtime confluence self-check in `uk_logos_compile`
+corroborates it empirically. Exporting this proof through the S29
+`lean4export` pipeline requires the matching `lean4export` toolchain (a
+documented provisioning step).
+

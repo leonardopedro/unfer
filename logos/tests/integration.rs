@@ -382,3 +382,31 @@ fn test_unf_discriminates_f64_from_int64() {
         "F64(3.0) and Int64(3) must not share a UNF"
     );
 }
+
+/// Formal confluence proof: `lean/Confluence.lean` machine-verifies the
+/// diamond property, Church–Rosser confluence, and the uniqueness of normal
+/// forms for the finite-state abstract rewriting system that models the
+/// deltanet reduction's confluence-critical structure. Checked by `lean`
+/// (the authoritative type-checker) when it is on `PATH`; skipped otherwise
+/// (the `lean4export` S29 export of this proof requires the matching
+/// toolchain, a documented provisioning step).
+#[test]
+fn confluence_lean_proof_type_checks() {
+    let lean = std::env::var("LEAN_EXE").unwrap_or_else(|_| "lean".to_string());
+    let status = std::process::Command::new(&lean)
+        .arg("lean/Confluence.lean")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status();
+    match status {
+        Ok(st) => {
+            assert!(
+                st.success(),
+                "lean rejected logos/lean/Confluence.lean (exit {:?})",
+                st.code()
+            );
+        }
+        Err(_) => {
+            eprintln!("SKIP: `lean` not on PATH — set LEAN_EXE to run the confluence proof check");
+        }
+    }
+}

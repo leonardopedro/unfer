@@ -107,6 +107,9 @@ int64_t uk_init(const uint8_t* _cfg_json,
         int64_t _len);
 int64_t uk_last_error(uint8_t* buf,
               int64_t cap);
+int64_t uk_logos_compile(int64_t model,
+                 const uint8_t* sentence_ptr,
+                 int64_t sentence_len);
 int64_t uk_meter_status(const uint8_t* principal,
                 int64_t len,
                 const uint8_t* budget_json,

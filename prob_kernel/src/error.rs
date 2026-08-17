@@ -43,6 +43,9 @@ pub enum KernelError {
     #[error("Cadabra2 symbolic expression invalid: {reason}")]
     SymbolicInvalid { reason: String },
 
+    #[error("Logos CNL->UNF compile failed: {reason}")]
+    LogosFailed { reason: String },
+
     #[error("JSON error: {0}")]
     BadJson(#[from] serde_json::Error),
 
@@ -224,6 +227,17 @@ impl KernelError {
             .with_hint(RepairHint::new(
                 HintKind::ReplaceValue,
                 "symbolic.expression",
+                reason,
+            )),
+
+            KernelError::LogosFailed { reason } => Diagnostic::new(
+                Code::LOGOS_COMPILE_FAILED,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "logos.sentence",
                 reason,
             )),
 

@@ -24,3 +24,4 @@ candle-core = { workspace = true }
 sha2 = "0.10"
 hex = "0.4"
 nanoda_lib = { git = "https://github.com/ammkrn/nanoda_lib" }
+logos = { path = "../logos" }

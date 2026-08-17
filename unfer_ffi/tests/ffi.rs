@@ -1133,3 +1133,47 @@ fn symbolic_simplify_empty_expression_is_4902() {
 
     uk_model_free(model);
 }
+
+/// Logos: `uk_logos_compile` compiles a CNL sentence to a unique normal form
+/// and surfaces the report (readback + UNF hash + confluence verdict) via
+/// `uk_get_result`.
+#[test]
+fn logos_compile_transitive_to_unf() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let (sp, sl) = json_ptr(b"John loves Mary");
+    assert_eq!(
+        uk_logos_compile(model, sp, sl),
+        0,
+        "logos compile should succeed: {}",
+        read_error()
+    );
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["result"], "Love(john, mary)", "{result}");
+    assert_eq!(result["verified"], true, "{result}");
+    assert_eq!(result["sentence"], "John loves Mary", "{result}");
+    assert_eq!(result["unf_hash"].as_str().unwrap().len(), 64);
+
+    uk_model_free(model);
+}
+
+/// Logos: an unparseable sentence is a hard UK-4803 error.
+#[test]
+fn logos_compile_unparseable_is_4803() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let (sp, sl) = json_ptr(b"blorpthewogg");
+    let r = uk_logos_compile(model, sp, sl);
+    assert_eq!(
+        r,
+        -(Code::LOGOS_COMPILE_FAILED.raw() as i64),
+        "got {r}: {}",
+        read_error()
+    );
+
+    uk_model_free(model);
+}

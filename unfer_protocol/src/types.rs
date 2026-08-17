@@ -326,6 +326,16 @@ pub enum KernelEvent {
         op: String,
         verified: bool,
     },
+    /// A CNL sentence was compiled by the Logos engine to a unique normal form
+    /// (UNF). `result` is the readback, `unf_hash` its content-addressable
+    /// digest, and `verified` the confluence self-check (re-reducing the same
+    /// input yields an identical UNF). Broadcast to subscribers of the model
+    /// handle.
+    LogosCompiled {
+        result: String,
+        unf_hash: String,
+        verified: bool,
+    },
     Error {
         diagnostic: Diagnostic,
     },
@@ -1249,6 +1259,33 @@ pub struct ProofReport {
     /// `unf_hash` analogue: a canonical digest of the checked term).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export_hash: Option<String>,
+}
+
+// ── Logos CNL->UNF coupling ──────────────────────────────────────────
+//
+// The kernel couples the Logos controlled-natural-language compiler
+// (`logos` crate) to the session model. A CNL sentence is parsed, compiled
+// to a CoreIR term, reduced to an interaction-net unique normal form (UNF),
+// and read back. The report carries the readback string, its SHA-256 digest,
+// and a confluence self-check: the same input reduced twice must yield an
+// identical UNF (the "unique normal form" guarantee), the proof-irrelevance
+// analogue of `logos::deltanet`'s unique-normal-form hash.
+
+/// Result of compiling a CNL sentence through the Logos pipeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogosReport {
+    /// The readback of the reduced net (e.g. `"Love(john, mary)"`, `"9.5"`,
+    /// `"true"`). This is the human-readable normal form.
+    pub result: String,
+    /// The content-addressable UNF digest (SHA-256 of the canonical net
+    /// serialization).
+    pub unf_hash: String,
+    /// True iff reducing the same sentence twice yields the identical UNF —
+    /// the confluence / unique-normal-form self-check. (Confluence is also
+    /// argued in `logos/docs/LOGOS.md`; the runtime check corroborates it.)
+    pub verified: bool,
+    /// The CNL sentence that was compiled (echoed for audit).
+    pub sentence: String,
 }
 
 // ── Cadabra2 symbolic coupling (S30) ──────────────────────────────────

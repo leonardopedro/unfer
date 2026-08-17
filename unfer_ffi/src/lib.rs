@@ -392,6 +392,38 @@ pub extern "C" fn uk_symbolic_simplify(model: i64, spec_json: *const u8, len: i6
     })
 }
 
+/// Compile a CNL sentence to a unique normal form (Logos).
+///
+/// `sentence_ptr`/`sentence_len` is a NUL-free UTF-8 CNL sentence
+/// (e.g. `"John loves Mary"`). It is parsed with the embedded L0 lexicon,
+/// compiled to a CoreIR term, reduced to an interaction-net unique normal
+/// form (UNF), and read back. The report (readback result + content-
+/// addressed UNF hash + confluence self-check + echoed sentence) is stored in
+/// `uk_get_result` and broadcast as a `logos_compiled` event.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-4803 unparseable CNL /
+/// compile failure, UK-1004 bad handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_logos_compile(model: i64, sentence_ptr: *const u8, sentence_len: i64) -> i64 {
+    ffi_entry("uk_logos_compile", || {
+        let sentence = read_utf8(sentence_ptr, sentence_len)?;
+        let report = handles::with_session_mut(model, |s| s.logos_compile(&sentence))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::LogosCompiled {
+            result: report.result,
+            unf_hash: report.unf_hash,
+            verified: report.verified,
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
 /// Quantum Bayesian Update on the TSR-evolved prior
 /// (QFM.tex §8, P6 H follow-on).
 ///

@@ -3236,6 +3236,7 @@ dependencies = [
  "candle-core",
  "fock_sirk",
  "hex",
+ "logos",
  "nanoda_lib",
  "nested_fock_algebra",
  "num-complex",

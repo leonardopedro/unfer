@@ -35,8 +35,9 @@ uk_gate_list_pending
 uk_gate_reject
 uk_get_result
 uk_init
-uk_last_error
-uk_meter_status
+ uk_last_error
+ uk_logos_compile
+ uk_meter_status
 uk_model_create
 uk_model_free
 uk_observability

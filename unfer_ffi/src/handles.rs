@@ -135,6 +135,7 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Observed { .. } => "observed",
         KernelEvent::Verified { .. } => "verified",
         KernelEvent::Simplified { .. } => "simplified",
+        KernelEvent::LogosCompiled { .. } => "logos_compiled",
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",
