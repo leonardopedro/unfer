@@ -500,6 +500,7 @@ Export the current session transcript as LaTeX.
 | UK-1007 | SessionCompactionOrphaned| Error    | A compaction lock bracket was left open (a crash between start and end); the derived history is unusable until resolved. |
 | UK-1008 | SessionCompactionBusy    | Error    | Session compaction refused: the session is not idle (open compaction lock, or a boundary splitting an unanswered action_apply/evolve dependency). |
 | UK-1009 | SessionForkRange         | Error    | Session fork refused: the requested log boundary is out of range or falls inside an open compaction bracket. |
+| UK-1010 | UnknownOutcome           | Error    | A side-effecting call (e.g. `uk_action_apply`) was interrupted at its durable checkpoint: the in-flight marker is durable but no resolved record exists. The external outcome is UNKNOWN — retry only after manual verification (the kernel refuses to re-run the effect automatically). |
 | UK-2001 | GramDegenerate            | Error    | The Krylov Gram matrix is rank-deficient.                            |
 | UK-2002 | StateExplosion            | Error    | The state vector exceeded the configured component limit.            |
 | UK-2003 | ZeroProbabilityCondition  | Error    | Conditioning on an event with zero prior probability.                |

@@ -9,6 +9,7 @@
 //!
 //! ABI surface: 65 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
 
+pub mod durable;
 mod handles;
 #[cfg(feature = "zenodo")]
 pub mod zenodo;
@@ -268,6 +269,7 @@ pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_condition", || {
+        handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(event_json, len)?;
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
             .ok_or_else(|| bad_handle(model))?
@@ -289,6 +291,7 @@ pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_event_probability(model: i64, event_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_event_probability", || {
+        handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(event_json, len)?;
         let prob = handles::with_session_mut(model, |s| s.probability(&event))
             .ok_or_else(|| bad_handle(model))?
@@ -306,6 +309,7 @@ pub extern "C" fn uk_event_probability(model: i64, event_json: *const u8, len: i
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_observe", || {
+        handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(obs_json, len)?;
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
             .ok_or_else(|| bad_handle(model))?
@@ -1032,10 +1036,38 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
 }
 
 /// Approve (and execute) a pending action. Returns 0 on success; UK-4005 if already
-/// resolved; UK-4004 if the handle is unknown. Queues an `action_resolved` event.
+/// resolved; UK-4004 if the handle is unknown; UK-1010 if the action's outcome is
+/// unknown (an earlier apply was interrupted at its durable checkpoint). Queues
+/// an `action_resolved` event.
+///
+/// H4: the side effect is fail-closed — the durable in-flight marker is written
+/// and flushed *before* the effect fires. A crash between the marker and the
+/// resolved record leaves the action in an `unknown_outcome` state (UK-1010).
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
     ffi_entry("uk_action_apply", || {
+        // Unknown-outcome actions are never re-applied blindly: the operator
+        // must verify the interrupted call manually (UK-1010).
+        if handles::is_unknown_outcome(action_handle) {
+            return Err(Diagnostic::new(
+                Code::UNKNOWN_OUTCOME,
+                format!(
+                    "action {action_handle} has an UNKNOWN outcome (its earlier apply was \
+                     interrupted at the durable checkpoint); verify the side effect manually \
+                     before repeating it"
+                ),
+                Severity::Error,
+            ));
+        }
+        handles::checkpoint_diag()?;
+        let record = handles::with_action(action_handle, |r| r.clone())
+            .ok_or_else(|| fail_action_not_found(action_handle))?;
+        if record.state != ActionState::Pending {
+            return Err(action_not_pending(action_handle));
+        }
+        // Durable in-flight marker + checkpoint BEFORE the side effect fires.
+        handles::mark_inflight(&record)
+            .map_err(|e| Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error))?;
         let approved = handles::with_action_mut(action_handle, |record| {
             if record.state != ActionState::Pending {
                 return false;
@@ -1051,6 +1083,11 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
         match approved {
             None => Err(fail_action_not_found(action_handle)),
             Some(true) => {
+                // Durable resolved record (supersedes the in-flight marker).
+                let resolved = handles::with_action(action_handle, |r| r.clone());
+                if let Some(r) = resolved {
+                    handles::durable_append_action_resolved(&r);
+                }
                 push_resolved(action_handle)?;
                 Ok(0)
             }
@@ -1318,6 +1355,9 @@ fn action_record_json(
         );
         if let Some(h) = handle {
             obj.insert("handle".to_string(), serde_json::json!(h));
+            if handles::is_unknown_outcome(h) {
+                obj.insert("unknown_outcome".to_string(), serde_json::json!(true));
+            }
         }
     }
     Ok(value)
@@ -3275,6 +3315,130 @@ mod tests {
 
     fn record_id_of(handle: i64) -> String {
         action_get(handle)["id"].as_str().unwrap().to_string()
+    }
+
+    // ── H4: crash recovery surfaces UNKNOWN_OUTCOME (UK-1010) ─────────────
+    //
+    // The action ring is write-through to a durable store. A crash between the
+    // durable in-flight marker and the resolved record must leave the action
+    // in an `unknown_outcome` state: `uk_action_apply` refuses to re-run the
+    // side effect (UK-1010) and `uk_action_get` surfaces `unknown_outcome: true`.
+
+    #[test]
+    fn interrupted_apply_surfaces_unknown_outcome_uk_1010() {
+        // Both locks: the reset wipes the audit/owner rings too, and those are
+        // shared with the audit suite (AUDIT_AGENT_TESTS_LOCK). Acquire in a
+        // fixed order (ACTION then AUDIT) to match the H4 helpers below.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Cold start: wipe in-memory rings + any prior durable store.
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-crash-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable init must succeed");
+
+        // Submit an action; the pending record is written through to the store.
+        let handle = submit_action("send_notification", r#"{"to":"crash"}"#);
+        assert!(handle > 0);
+        let record = action_get(handle);
+        let id = record["id"].as_str().unwrap().to_string();
+        assert_eq!(record["state"], "pending");
+
+        // Simulate the crash: the in-flight marker is durably written and
+        // flushed, but the process dies BEFORE the resolved record lands.
+        let pending = handles::with_action(handle, |r| r.clone()).expect("pending record");
+        handles::mark_inflight(&pending).expect("inflight marker must flush");
+
+        // "Restart": a brand-new process has empty rings and re-opens the store
+        // from the same directory, then recovers.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable re-init must succeed");
+        handles::recover_durable().expect("recovery must succeed");
+
+        // The recovered handle is marked unknown-outcome (a new handle after
+        // the wipe, reminted from the durable record).
+        let recovered = handles::list_actions();
+        assert_eq!(recovered.len(), 1, "exactly one action recovered");
+        let (recovered_handle, recovered_record) = &recovered[0];
+        assert_eq!(recovered_record.id, id);
+        assert!(handles::is_unknown_outcome(*recovered_handle));
+
+        // uk_action_apply refuses to re-run the side effect: UK-1010.
+        assert_eq!(uk_action_apply(*recovered_handle), -1010);
+
+        // uk_action_get surfaces the flag.
+        let json = read_buf(|b, c| uk_action_get(*recovered_handle, b, c));
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["unknown_outcome"], true);
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn audit_and_owner_log_survive_restart() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-audit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable init must succeed");
+
+        // Write-through: audit + owner-log land in the store.
+        handles::store_audit(unfer_protocol::AuditEntry {
+            seq: 0,
+            caller: unfer_protocol::CallerTag::default(),
+            symbol: "test.op".into(),
+            ok: true,
+            detail: None,
+            args: serde_json::json!([]),
+            component: None,
+            context: None,
+            sensitive: false,
+        });
+        handles::owner_log("kernel.audit", "h4 kill-and-resume");
+        handles::checkpoint().expect("flush must succeed");
+
+        // Kill-and-resume: fresh rings + fresh store handle on the same dir.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable re-init must succeed");
+        handles::recover_durable().expect("recovery must succeed");
+
+        let audit = handles::list_audit();
+        assert!(
+            audit.iter().any(|e| e.symbol == "test.op"),
+            "audit must survive restart: {audit:?}"
+        );
+        let owner = handles::list_owner_log();
+        assert!(
+            owner.iter().any(|l| l.contains("h4 kill-and-resume")),
+            "owner log must survive restart: {owner:?}"
+        );
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── S6: agent accountability + audit ──────────────────────────────────

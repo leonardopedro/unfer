@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
-    Mutex,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
 };
 
 use prob_kernel::Session;
 use unfer_consensus::auction::AuctionLedger;
 use unfer_consensus::certs::{CertificateLedger, MintAuthority};
+use unfer_protocol::durable::{DurableStore, streams};
 use unfer_protocol::{
     ActionRecord, AgentInfo, AuditEntry, CallerTag, CertId, Diagnostic, EffectKind, EventQuery,
     GrantSet, KernelEvent,
@@ -42,12 +43,224 @@ thread_local! {
 
 pub fn ensure_init() {
     INITIALIZED.store(true, Ordering::SeqCst);
+    if durable().is_none() {
+        // Configure from the environment (H4): `UNFER_DURABLE_DIR` (optional;
+        // in-memory when unset) and `UNFER_DURABLE_BACKEND` (default Loro).
+        let dir = std::env::var("UNFER_DURABLE_DIR")
+            .ok()
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from);
+        let backend = DurableBackend::parse(std::env::var("UNFER_DURABLE_BACKEND").ok().as_deref());
+        if let Err(e) = init_durable(dir.as_deref(), backend) {
+            ring_append_owner(format!("(kernel.audit) durable init failed: {e}"));
+        } else if let Err(e) = recover_durable() {
+            ring_append_owner(format!("(kernel.audit) durable recovery failed: {e}"));
+        }
+    }
 }
 
-pub fn store_session(session: Session) -> i64 {
+// ── H4 durable store registry ───────────────────────────────────────────
+//
+// The kernel-global [`DurableStore`] backing every ring in this module. The
+// in-memory rings are a *read-through cache* in front of it: writes go to the
+// store (write-through) and the ring shadows the same records for fast reads.
+// A stream lives in exactly one store, so nothing is mirrored across backends.
+//
+// `recover_durable()` runs at init and replays the persisted streams into the
+// rings, so an operator or agent never reads back RAM-only state. Checkpoints
+// (`checkpoint()`) are the flush barrier called before model-facing
+// probability/condition reads and before `uk_action_apply` may fire a side
+// effect.
+
+/// The kernel's durable store, if configured. `None` until `ensure_init`
+/// initialized it (see [`init_durable`]).
+static DURABLE: Mutex<Option<Arc<dyn DurableStore>>> = Mutex::new(None);
+
+/// Backend selection (H4). Loro is the default/preferred store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableBackend {
+    Loro,
+    Jsonl,
+    #[cfg(feature = "sqlite")]
+    Sqlite,
+}
+
+impl DurableBackend {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("jsonl") => DurableBackend::Jsonl,
+            #[cfg(feature = "sqlite")]
+            Some("sqlite") => DurableBackend::Sqlite,
+            _ => DurableBackend::Loro,
+        }
+    }
+}
+
+/// Configure the global durable store from `UNFER_DURABLE_DIR` /
+/// `UNFER_DURABLE_BACKEND` (or explicit values). Defaults: Loro backend, no
+/// directory (in-memory) when unset. Fail-closed: a misconfigured dir is a
+/// hard error (the kernel must not silently fall back to RAM-only).
+pub fn init_durable(dir: Option<&std::path::Path>, backend: DurableBackend) -> Result<(), String> {
+    let store: Arc<dyn DurableStore> = crate::durable::open_store(
+        dir,
+        match backend {
+            DurableBackend::Loro => crate::durable::Backend::Loro,
+            DurableBackend::Jsonl => crate::durable::Backend::Jsonl,
+            #[cfg(feature = "sqlite")]
+            DurableBackend::Sqlite => crate::durable::Backend::Sqlite,
+        },
+    )
+    .map_err(|e| format!("durable store open ({backend:?}): {e}"))?
+    .into();
+    *DURABLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(store);
+    Ok(())
+}
+
+/// The current durable store (read-through cache backing).
+pub fn durable() -> Option<Arc<dyn DurableStore>> {
+    DURABLE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// The fail-closed checkpoint barrier: make every prior append durable. A
+/// `Err` means the caller must NOT serve a probability/condition or fire a
+/// side effect (fail-closed). `None` store (no durability configured) counts
+/// as Ok — the kernel just runs RAM-only.
+pub fn checkpoint() -> Result<(), String> {
+    match durable() {
+        Some(store) => store.flush().map_err(|e| e.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The FFI fail-closed checkpoint: flush the global durable store. On failure,
+/// map to the `UNKNOWN_OUTCOME` diagnostic (UK-1010) so the call is refused
+/// before it dispatches.
+pub fn checkpoint_diag() -> Result<(), Diagnostic> {
+    checkpoint().map_err(|reason| {
+        Diagnostic::new(
+            unfer_protocol::Code::UNKNOWN_OUTCOME,
+            format!("durable checkpoint failed before dispatch: {reason}"),
+            unfer_protocol::Severity::Error,
+        )
+        .with_hint(unfer_protocol::RepairHint::new(
+            unfer_protocol::HintKind::SetParam,
+            "durable.checkpoint",
+            "check the durable store backend (disk full? bad directory?); read-only work may \
+             retry, side-effecting work must be verified manually",
+        ))
+    })
+}
+
+/// Replay the durable streams into the in-memory rings (startup recovery).
+/// Idempotent: safe to call multiple times. A store failure is surfaced, never
+/// swallowed (the operator must know the kernel could not recover).
+pub fn recover_durable() -> Result<(), String> {
+    let Some(store) = durable() else {
+        return Ok(());
+    };
+    for rec in store.replay(streams::AUDIT).map_err(|e| e.to_string())? {
+        if let Ok(entry) = serde_json::from_slice::<AuditEntry>(&rec) {
+            ring_append_audit(entry);
+        }
+    }
+    for rec in store
+        .replay(streams::OWNER_LOG)
+        .map_err(|e| e.to_string())?
+    {
+        if let Ok(line) = std::str::from_utf8(&rec) {
+            ring_append_owner(line.to_string());
+        }
+    }
+    let mut handle_by_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut inflight_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for rec in store.replay(streams::ACTIONS).map_err(|e| e.to_string())? {
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&rec) else {
+            continue;
+        };
+        let Some(id) = v.get("id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if v.get("inflight").and_then(|x| x.as_bool()).unwrap_or(false) {
+            // An interrupted side-effecting call: a resolved record may or may
+            // not follow this marker.
+            inflight_ids.insert(id.to_string());
+            continue;
+        }
+        if let Some(record) = v
+            .get("record")
+            .and_then(|r| serde_json::from_value::<ActionRecord>(r.clone()).ok())
+        {
+            let handle = ring_put_action(record);
+            handle_by_id.insert(id.to_string(), handle);
+            // A resolved record supersedes any earlier in-flight marker.
+            inflight_ids.remove(id);
+        }
+    }
+    // Ids whose LAST action-stream record is an in-flight marker (no resolved
+    // record after it): the process died between the durable marker and the
+    // resolved marker, so the external outcome is unknown (UK-1010).
+    for id in inflight_ids {
+        if let Some(handle) = handle_by_id.get(&id) {
+            mark_unknown_outcome(*handle);
+        } else {
+            // No record at all: mint a placeholder so the operator can see it.
+            let record = ActionRecord::new(
+                id.clone(),
+                "kernel",
+                "unknown",
+                serde_json::json!({"unknown_outcome": true}),
+                0,
+                None,
+            );
+            let handle = ring_put_action(record);
+            mark_unknown_outcome(handle);
+        }
+    }
+    for rec in store.replay(streams::CONFIG).map_err(|e| e.to_string())? {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&rec)
+            && let Some(principal) = v.get("vetted_principal").and_then(|x| x.as_str())
+        {
+            if v.get("vetted").and_then(|x| x.as_bool()).unwrap_or(true) {
+                ring_mark_vetted(principal.to_string());
+            } else {
+                ring_unmark_vetted(principal);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Append a record to a stream, keeping the in-memory ring in sync.
+fn durable_append(stream: &str, record: &[u8]) {
+    if let Some(store) = durable()
+        && let Err(e) = store.append(stream, record)
+    {
+        ring_append_owner(format!(
+            "(kernel.audit) durable append to {stream} failed: {e}"
+        ));
+    }
+}
+
+/// H4: durably append a resolved action record and checkpoint (supersedes the
+/// in-flight marker). Used by `uk_action_apply` after the effect fires.
+pub fn durable_append_action_resolved(record: &ActionRecord) {
+    if let Ok(json) = serde_json::to_vec(&serde_json::json!({
+        "id": record.id,
+        "record": record,
+    })) {
+        durable_append(streams::ACTIONS, &json);
+    }
+    let _ = checkpoint();
+}
+
+pub fn store_session(mut session: Session) -> i64 {
+    // H4: every live session is backed by the kernel's durable store, so its
+    // committed events land in the `session` stream and probability/condition
+    // reads flush first (fail-closed).
     let handle = NEXT_HANDLE.fetch_add(1, Ordering::SeqCst);
     let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(HashMap::new);
+    session.set_durable(durable());
     map.insert(
         handle,
         SessionEntry {
@@ -278,12 +491,81 @@ pub fn read_buffer(handle: i64) -> Option<String> {
 static ACTIONS: Mutex<Option<HashMap<i64, ActionRecord>>> = Mutex::new(None);
 static NEXT_ACTION: AtomicI64 = AtomicI64::new(1);
 
-pub fn store_action(record: ActionRecord) -> i64 {
+/// H4: action handles whose outcome is UNKNOWN (a crash left an in-flight
+/// marker with no resolved record). `uk_action_apply` on these is refused with
+/// UK-1010; `uk_action_get`/`list` surface `unknown_outcome: true`.
+static UNKNOWN_OUTCOME_ACTIONS: Mutex<Option<HashSet<i64>>> = Mutex::new(None);
+
+/// Whether `handle`'s outcome is unknown (interrupted side-effecting call).
+pub fn is_unknown_outcome(handle: i64) -> bool {
+    UNKNOWN_OUTCOME_ACTIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| s.contains(&handle))
+        .unwrap_or(false)
+}
+
+/// Mark an action handle as having an unknown outcome (recovery path).
+pub fn mark_unknown_outcome(handle: i64) {
+    UNKNOWN_OUTCOME_ACTIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashSet::new)
+        .insert(handle);
+}
+
+/// Test-only: wipe the in-memory rings and durable store so a test can
+/// simulate a cold process restart against a fresh on-disk store.
+#[cfg(test)]
+pub fn reset_durable_for_tests() {
+    *DURABLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *ACTIONS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    NEXT_ACTION.store(1, Ordering::SeqCst);
+    *UNKNOWN_OUTCOME_ACTIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
+    *AUDIT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    NEXT_AUDIT_SEQ.store(1, std::sync::atomic::Ordering::SeqCst);
+    *OWNER_LOG.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// H4: write the durable in-flight marker for an action and checkpoint. Called
+/// by `uk_action_apply` *before* the side effect fires; a failure here means
+/// the outcome is unknown (fail-closed — the apply must not dispatch).
+pub fn mark_inflight(record: &ActionRecord) -> Result<(), String> {
+    let json = serde_json::json!({"id": record.id, "inflight": true})
+        .to_string()
+        .into_bytes();
+    durable_append(streams::ACTIONS, &json);
+    checkpoint().map_err(|e| {
+        format!(
+            "durable in-flight marker for action {} could not be flushed: {e}",
+            record.id
+        )
+    })
+}
+
+/// Insert into the action ring (no durable write). Returns the assigned handle.
+fn ring_put_action(record: ActionRecord) -> i64 {
     let handle = NEXT_ACTION.fetch_add(1, Ordering::SeqCst);
     let mut guard = ACTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.get_or_insert_with(HashMap::new);
     map.insert(handle, record);
     handle
+}
+
+pub fn store_action(record: ActionRecord) -> i64 {
+    // Write-through: persist the record (stable `id`) before shadowing it in
+    // the ring. The `record` is the full `ActionRecord`; recovery remints a
+    // fresh handle per id.
+    if let Ok(json) = serde_json::to_vec(&serde_json::json!({
+        "id": record.id,
+        "record": record,
+    })) {
+        durable_append(streams::ACTIONS, &json);
+    }
+    ring_put_action(record)
 }
 
 pub fn with_action<R>(handle: i64, f: impl FnOnce(&ActionRecord) -> R) -> Option<R> {
@@ -391,8 +673,30 @@ pub fn current_caller() -> CallerContext {
 
 static VETTED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+/// Ring-only vetted marker insert (recovery path).
+fn ring_mark_vetted(principal: String) {
+    let mut guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(HashSet::new);
+    set.insert(principal);
+}
+
+/// Ring-only vetted marker removal (recovery path).
+fn ring_unmark_vetted(principal: &str) {
+    let mut guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(set) = guard.as_mut() {
+        set.remove(principal);
+    }
+}
+
 /// Set or clear the console's vetted marker for `principal`. Returns the new value.
+/// Write-through: the decision is durably recorded in the `config` stream.
 pub fn mark_vetted(principal: &str, vetted: bool) -> bool {
+    durable_append(
+        streams::CONFIG,
+        &serde_json::json!({"vetted_principal": principal, "vetted": vetted})
+            .to_string()
+            .into_bytes(),
+    );
     let mut guard = VETTED.lock().unwrap_or_else(|e| e.into_inner());
     let set = guard.get_or_insert_with(HashSet::new);
     if vetted {
@@ -975,17 +1279,26 @@ pub const AUDIT_CAPACITY: usize = 4096;
 static AUDIT: Mutex<Option<VecDeque<AuditEntry>>> = Mutex::new(None);
 static NEXT_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// Append an audit entry. `seq` is assigned here (monotonic, race-free). Returns
-/// the assigned sequence number.
-pub fn store_audit(mut entry: AuditEntry) -> u64 {
-    let seq = NEXT_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    entry.seq = seq;
+/// Append an audit entry to the ring (no durable write).
+fn ring_append_audit(entry: AuditEntry) {
     let mut guard = AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     let queue = guard.get_or_insert_with(VecDeque::new);
     if queue.len() >= AUDIT_CAPACITY {
         queue.pop_front();
     }
     queue.push_back(entry);
+}
+
+/// Append an audit entry. `seq` is assigned here (monotonic, race-free). Returns
+/// the assigned sequence number. Write-through: the entry is durably appended
+/// (when a store is configured) *and* shadowed in the ring for fast reads.
+pub fn store_audit(mut entry: AuditEntry) -> u64 {
+    let seq = NEXT_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    entry.seq = seq;
+    if let Ok(json) = serde_json::to_vec(&entry) {
+        durable_append(streams::AUDIT, &json);
+    }
+    ring_append_audit(entry);
     seq
 }
 
@@ -1110,15 +1423,23 @@ pub const OWNER_LOG_CAPACITY: usize = 512;
 
 static OWNER_LOG: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
-/// Append a dot-separated owner component line to the owner sink.
-pub fn owner_log(component: &str, message: &str) {
-    let line = format!("({component}) {message}");
+/// Append a dot-separated owner component line to the ring (no durable write).
+fn ring_append_owner(line: String) {
     let mut guard = OWNER_LOG.lock().unwrap_or_else(|e| e.into_inner());
     let vec = guard.get_or_insert_with(Vec::new);
     if vec.len() >= OWNER_LOG_CAPACITY {
         vec.remove(0);
     }
     vec.push(line);
+}
+
+/// Append a dot-separated owner component line to the owner sink. Write-through:
+/// the line is durably appended (when a store is configured) *and* shadowed in
+/// the ring.
+pub fn owner_log(component: &str, message: &str) {
+    let line = format!("({component}) {message}");
+    durable_append(streams::OWNER_LOG, line.as_bytes());
+    ring_append_owner(line);
 }
 
 /// Snapshot of the owner sink, newest first (operator review order).

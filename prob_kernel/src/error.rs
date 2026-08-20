@@ -60,6 +60,9 @@ pub enum KernelError {
     #[error("session fork refused at log boundary: {reason}")]
     SessionForkRange { reason: String },
 
+    #[error("durable checkpoint failed: {reason}")]
+    DurableCheckpointFailed { reason: String },
+
     #[error("JSON error: {0}")]
     BadJson(#[from] serde_json::Error),
 
@@ -307,6 +310,20 @@ impl KernelError {
                     ))
             }
 
+            KernelError::DurableCheckpointFailed { reason } => {
+                Diagnostic::new(Code::UNKNOWN_OUTCOME, self.to_string(), Severity::Error).with_hint(
+                    RepairHint::new(
+                        HintKind::SetParam,
+                        "durable.checkpoint",
+                        format!(
+                            "{reason} — the durable checkpoint could not be flushed; read-only \
+                             work may retry, but a side-effecting call whose outcome is unknown \
+                             must be verified manually before repeating it"
+                        ),
+                    ),
+                )
+            }
+
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
                 Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
                     RepairHint::new(
@@ -455,6 +472,9 @@ mod tests {
             },
             KernelError::SessionForkRange {
                 reason: "seq 12 out of range".into(),
+            },
+            KernelError::DurableCheckpointFailed {
+                reason: "io error flushing snapshot".into(),
             },
             KernelError::BadJson(serde_json::from_str::<i32>("not json").unwrap_err()),
             KernelError::Internal("unreachable state reached".into()),

@@ -14,12 +14,14 @@
 
 pub mod archive;
 pub mod codes;
+pub mod durable;
 pub mod ops;
 pub mod symbols;
 pub mod types;
 
 pub use archive::*;
 pub use codes::*;
+pub use durable::*;
 pub use ops::*;
 pub use types::*;
 

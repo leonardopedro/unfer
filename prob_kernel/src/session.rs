@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use candle_core::Device;
 use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use qfm::QfmPipeline;
+use unfer_protocol::durable::{DurableStore, streams};
 use unfer_protocol::{
     EventPredicate, HamiltonianSpec, HmcOptsSpec, ModelSpec, PriorSpec, SolverSpec,
 };
@@ -180,6 +183,12 @@ pub struct Session {
     /// A crash between start and end leaves this as an orphaned lock that
     /// `restore`/`save` detect (UK-1007).
     compaction_lock: Option<u64>,
+    /// H4: optional durable sink. When attached, every committed event is
+    /// appended to the store's `session` stream and `probability`/`condition`
+    /// flush (checkpoint) before serving, so nothing the model reads back is
+    /// RAM-only. `None` (default) = the session is RAM-only but fully
+    /// functional (save/restore still work via `SessionBlob`).
+    durable: Option<Arc<dyn DurableStore>>,
 }
 
 /// Serializable snapshot of a Session for save/restore.
@@ -227,6 +236,39 @@ impl Session {
     /// H3: whether a compaction lock bracket is currently open (session busy).
     pub fn is_compaction_locked(&self) -> bool {
         self.compaction_lock.is_some()
+    }
+
+    /// H4: attach (or detach with `None`) the session's durable sink. When
+    /// attached, every committed event is appended to the store's `session`
+    /// stream and `probability`/`condition` flush before serving.
+    pub fn set_durable(&mut self, store: Option<Arc<dyn DurableStore>>) {
+        self.durable = store;
+    }
+
+    /// H4: the attached durable sink, if any.
+    pub fn durable(&self) -> Option<&dyn DurableStore> {
+        self.durable.as_deref()
+    }
+
+    /// H4: append a committed event to the durable `session` stream (if a
+    /// store is attached). Best-effort: a store failure is surfaced to the
+    /// owner log by the store layer; the in-memory log remains authoritative
+    /// for the live session.
+    fn durable_append_event(&self, ev: &SessionEvent) {
+        if let Some(store) = &self.durable
+            && let Ok(json) = serde_json::to_vec(ev)
+        {
+            let _ = store.append(streams::SESSION, &json);
+        }
+    }
+
+    /// H4: the checkpoint barrier before a model-facing read. Fail-closed:
+    /// `Err` means the caller must not serve the probability/condition result.
+    fn durable_checkpoint(&self) -> Result<(), String> {
+        match &self.durable {
+            Some(store) => store.flush().map_err(|e| e.to_string()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -346,6 +388,7 @@ impl Session {
             next_seq: 0,
             log_source: "kernel".into(),
             compaction_lock: None,
+            durable: None,
         })
     }
 
@@ -402,12 +445,14 @@ impl Session {
             source: self.log_source.clone(),
             ts: now_ms(),
         };
+        let committed = ev.clone();
         self.event_log.push(ev);
         self.next_seq = self.event_log.len() as u64;
         let result = f(self);
         self.next_seq = self.event_log.len() as u64;
         match result {
             Ok(v) => {
+                self.durable_append_event(&committed);
                 #[cfg(debug_assertions)]
                 self.debug_assert_reconstructable();
                 Ok(v)
@@ -699,6 +744,7 @@ impl Session {
             next_seq: 0,
             log_source: "kernel".into(),
             compaction_lock: None,
+            durable: None,
         })
     }
 
@@ -960,7 +1006,13 @@ impl Session {
     /// Compute the Born-rule probability of event `e` under the current state.
     ///
     /// `P(E) = Σ_{s ⊨ E} |⟨s|ψ⟩|² / ‖ψ‖²`
+    ///
+    /// H4: before serving, the durable checkpoint is flushed (fail-closed — a
+    /// checkpoint failure is surfaced to the caller rather than silently
+    /// serving a possibly-stale result).
     pub fn probability(&self, e: &EventPredicate) -> Result<f64, KernelError> {
+        self.durable_checkpoint()
+            .map_err(|reason| KernelError::DurableCheckpointFailed { reason })?;
         let norm_sq = QuantumState::inner_product(&self.state, &self.state).re;
         if norm_sq < 1e-30 {
             return Ok(0.0);
@@ -981,6 +1033,8 @@ impl Session {
     /// Returns `KernelError::ZeroProbabilityCondition` if the matching mass
     /// is negligible.
     pub fn condition(&mut self, e: &EventPredicate) -> Result<f64, KernelError> {
+        self.durable_checkpoint()
+            .map_err(|reason| KernelError::DurableCheckpointFailed { reason })?;
         let spec = e.clone();
         self.log_then_apply(
             SessionOp::Condition,
@@ -1519,5 +1573,106 @@ mod tests {
             }
             e => panic!("expected KernelError::Qfm(DimensionMismatch), got {e:?}"),
         }
+    }
+
+    // ── H4: the session event log lands in the durable `session` stream ───
+
+    /// A minimal in-memory store for session tests (prob_kernel cannot depend
+    /// on unfer_ffi's Loro/JSONL backends).
+    #[derive(Debug, Default)]
+    struct MemStore {
+        streams: std::sync::Mutex<std::collections::HashMap<String, Vec<Vec<u8>>>>,
+    }
+    impl unfer_protocol::durable::DurableStore for MemStore {
+        fn backend(&self) -> &'static str {
+            "mem"
+        }
+        fn append(
+            &self,
+            stream: &str,
+            record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
+            self.streams
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry(stream.to_string())
+                .or_default()
+                .push(record.to_vec());
+            Ok(())
+        }
+        fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
+            Ok(())
+        }
+        fn replay(
+            &self,
+            stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+            Ok(self
+                .streams
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(stream)
+                .cloned()
+                .unwrap_or_default())
+        }
+        fn frontier(&self) -> Result<Vec<u8>, unfer_protocol::durable::DurableError> {
+            Ok(b"mem".to_vec())
+        }
+        fn fork_at(
+            &self,
+            _frontier: &[u8],
+        ) -> Result<
+            Box<dyn unfer_protocol::durable::DurableStore>,
+            unfer_protocol::durable::DurableError,
+        > {
+            Err(unfer_protocol::durable::DurableError::Unsupported(
+                "mem fork".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn committed_events_land_in_durable_session_stream() {
+        let mut session = non_qfm_session();
+        let store = std::sync::Arc::new(MemStore::default());
+        session.set_durable(Some(store.clone()));
+
+        // Each mutating op appends its committed event to the session stream.
+        session.set_prior(&PriorSpec::Vacuum).expect("set_prior");
+        session
+            .set_hamiltonian(&HamiltonianSpec::builtin(
+                "harmonic_chain",
+                serde_json::json!({"n_modes": 2, "omega": 1.0}),
+            ))
+            .expect("set_hamiltonian");
+        session.evolve(0.1).expect("evolve");
+
+        let records = store
+            .replay(unfer_protocol::durable::streams::SESSION)
+            .expect("replay");
+        // The store is attached after `Session::new`, so the root `Create`
+        // event (seq 0) predates it; the durable stream captures the committed
+        // events from the moment of attachment onward.
+        let ops: Vec<String> = records
+            .iter()
+            .map(|r| {
+                serde_json::from_slice::<SessionEvent>(r)
+                    .expect("stored event must deserialize")
+                    .op
+            })
+            .map(|op| match op {
+                SessionOp::Create => "create".to_string(),
+                SessionOp::SetPrior => "set_prior".to_string(),
+                SessionOp::SetHamiltonian => "set_hamiltonian".to_string(),
+                SessionOp::Evolve => "evolve".to_string(),
+                _ => "other".to_string(),
+            })
+            .collect();
+        assert_eq!(
+            ops,
+            vec!["set_prior", "set_hamiltonian", "evolve"],
+            "committed events from the moment of durable attachment must land in \
+             the session stream, in order"
+        );
     }
 }

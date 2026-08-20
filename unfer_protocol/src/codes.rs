@@ -24,6 +24,11 @@ impl Code {
     /// H3: `uk_session_fork` was refused because the requested log boundary
     /// `{ seq }` is out of range or falls inside an open compaction bracket.
     pub const SESSION_FORK_RANGE: Code = Code(1009);
+    /// H4: a side-effecting call was interrupted at its checkpoint — the process
+    /// died between the durable in-flight marker and the resolved marker, so the
+    /// external outcome is unknown. The kernel never fabricates an outcome;
+    /// read-only work may retry, side-effecting work must be verified manually.
+    pub const UNKNOWN_OUTCOME: Code = Code(1010);
 
     pub const GRAM_DEGENERATE: Code = Code(2001);
     pub const STATE_EXPLOSION: Code = Code(2002);
@@ -257,6 +262,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             1009,
             "SessionForkRange",
             "Session fork refused: the requested log boundary is out of range or falls inside an open compaction bracket.",
+        ),
+        (
+            1010,
+            "UnknownOutcome",
+            "A side-effecting call was interrupted at its checkpoint — the process died between the durable in-flight marker and the resolved marker, so the external outcome is unknown. Read-only work may retry; side-effecting work must be verified manually before repeating it.",
         ),
         (
             2001,

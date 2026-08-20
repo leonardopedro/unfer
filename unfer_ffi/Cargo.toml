@@ -13,6 +13,7 @@ default = []
 latex = ["prob_kernel/latex"]
 cuda = ["prob_kernel/cuda"]
 zenodo = ["dep:ureq"]
+sqlite = ["dep:rusqlite"]
 
 [dependencies]
 prob_kernel = { path = "../prob_kernel" }
@@ -23,6 +24,8 @@ ode_sirk = { path = "../ode_sirk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = "0.4"
+loro = { workspace = true }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 ureq = { version = "2", features = ["json"], optional = true }
 
 [dev-dependencies]
