@@ -312,6 +312,15 @@ fluently, in both Haskell layers:
 asserting the same codes fire in the same order as before the refactor;
 australVM/velysterm path-dep `cargo check` green.
 
+**Status (H5, DONE)**: loopback dispatch is a composable waterfall
+(`emit`/`waterfall`/`parallel`/`serial`) over `symbol/*` events
+(`australVM safestos/cranelift/src/ecma.rs`, commit `797c8775`). Listeners:
+`AuditListener` (wraps) → `GrantGateListener` (UK-4001) → `LatchListener`
+(UK-4701) → `MeterListener` (UK-4601/4602) → `DispatchListener`; registration
+order = enforcement order pinned by `loopback_listener_registration_order_is_enforcement_order`.
+Refactor-of-record: C ABI, `handles.rs`, and emitted UK codes byte-identical;
+audit-lock discipline + `buf_out` probe-retry hardening landed with the stage.
+
 ## H6 — Deadline guard composing with the existing meter (S–M) — *unfer + australVM*
 
 **Improves**: S25 metering — currently a denial point (rate/budget) with no
@@ -339,6 +348,23 @@ than inventing a parallel deadline config.
 **Acceptance**: a deliberately slow op times out with the structured code; an
 undeclared op is untouched; timeout + metering composition test green in both
 `unfer_ffi` and `safestos/cranelift`.
+
+**Status (H6, DONE)**: `timeout_ms` declared per-symbol in the H2 registry
+(`unfer_protocol::symbols::SymbolRecord::timeout_ms`, 5000 ms on the
+signal-forwarding set: `uk_action_submit`, `uk_agent_spawn`, `uk_auction_*`,
+`uk_blueprint_export`, `uk_cert_burn/mint/set_authority/transfer`,
+`uk_gate_approve`). The loopback waterfall gained `GuardListener`
+(`australVM ecma.rs`, commit `2bf2c90d`) between meter and dispatch
+(registration order `audit→grant→latch→meter→guard→dispatch`, pinned by test).
+It arms a cooperative per-call deadline via `run_with_deadline`: the dispatch
+runs on a worker thread (re-seeding the thread-local caller/observability), the
+guard waits up to the deadline, and on expiry returns the structured
+`UK-4603 TOOL_TIMEOUT` result while the backend keeps running (cooperative, not
+a hard kill). `module.toml`'s `[limits] max_ms` overrides the symbol default per
+module (threaded through `KernelLoopback::start`/`handle_loopback_conn`);
+undeclared ops are untouched. Composition tests in `unfer_ffi` and
+`safestos/cranelift` pin meter-before-guard ordering and the disjoint
+metered/declared vocabularies.
 
 ## H7 — Consensus/auction idempotency + leader lease (M) — *unfer*
 
