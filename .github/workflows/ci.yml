@@ -12,6 +12,19 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # H1 (PLAN_HARNESS): maintenance-invariant gate. Turns the AGENTS.md
+  # maintenance checklist into machine-checkable invariants. Passes on a clean
+  # tree, fails on a deliberately introduced violation.
+  # ---------------------------------------------------------------------------
+  verify-invariants:
+    name: maintenance invariants (H1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: run scripts/verify-invariants
+        run: bash scripts/verify-invariants
+
+  # ---------------------------------------------------------------------------
   # Core: the unfer kernel workspace must build, lint and test on CPU.
   # This locks in the per-crate baselines recorded in IMPLEMENTATION_PLAN.md.
   # ---------------------------------------------------------------------------
