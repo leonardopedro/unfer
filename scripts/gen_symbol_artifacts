@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""H2: generate every symbol-census artifact from the one registry.
+
+Single source of truth: `unfer_protocol/src/symbols.rs` (the `SYMBOL_REGISTRY`
+table). From it we regenerate:
+
+  - `unfer_ffi/EXPECTED_SYMBOLS.txt`          (kernel `uk_*` names, sorted)
+  - `unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt`   (zenodo `uz_*` names, sorted)
+  - `unfer_ffi/include/unfer_kernel.h`        (C header, from lib.rs signatures,
+                                               cross-checked against the registry)
+
+The C header is built by `unfer_ffi/gen_unfer_kernel_h.py` (signatures come from
+the Rust ABI sources); this script re-runs it and additionally enforces that
+every header symbol is in the registry and vice versa.
+
+australVM's `UNFER_SYMBOLS` is kept in sync by its `symbol_sync` test, which
+already cross-checks against `EXPECTED_SYMBOLS.txt`.
+
+Modes:
+  gen (default) — regenerate files in place.
+  check          — regenerate in memory, fail with a diff if the on-disk
+                   files drift from the registry. Used by CI / H1 gate.
+
+Exit codes: 0 = clean, 1 = drift found.
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+REGISTRY = ROOT / "unfer_protocol/src/symbols.rs"
+EXPECTED = ROOT / "unfer_ffi/EXPECTED_SYMBOLS.txt"
+EXPECTED_ZENODO = ROOT / "unfer_ffi/EXPECTED_SYMBOLS_ZENODO.txt"
+HEADER_GEN = ROOT / "unfer_ffi/gen_unfer_kernel_h.py"
+HEADER = ROOT / "unfer_ffi/include/unfer_kernel.h"
+
+NAME_RE = re.compile(r'name: "([a-z][a-z0-9_]*)"')
+
+
+def parse_registry() -> tuple[list[str], list[str]]:
+    src = REGISTRY.read_text()
+    # Only the SYMBOL_REGISTRY const body: between its opening `&[` and the
+    # closing `];` of the const statement.
+    body = src.split("pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[", 1)[1]
+    body = body.split("];", 1)[0]
+    names = NAME_RE.findall(body)
+    kernel = sorted(n for n in names if n.startswith("uk_"))
+    zenodo = sorted(n for n in names if n.startswith("uz_"))
+    other = [n for n in names if not (n.startswith("uk_") or n.startswith("uz_"))]
+    if other:
+        print(f"ERROR: registry rows with non-uk_/uz_ prefix: {other}", file=sys.stderr)
+        sys.exit(2)
+    if len(names) != len(set(names)):
+        print("ERROR: duplicate registry rows", file=sys.stderr)
+        sys.exit(2)
+    return kernel, zenodo
+
+
+def render_expected(kernel: list[str], zenodo: list[str]) -> tuple[str, str]:
+    return "\n".join(kernel) + "\n", "\n".join(zenodo) + "\n"
+
+
+def header_symbols() -> list[str]:
+    """Symbols declared in the generated C header."""
+    src = HEADER.read_text()
+    names = re.findall(r"\b(uk_[a-z0-9_]+|uz_[a-z0-9_]+)\s*\(", src)
+    # Exclude the C include-guard macro matches (uppercase) — none match this
+    # pattern, but dedupe defensively.
+    return sorted(set(names))
+
+
+def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "gen"
+    kernel, zenodo = parse_registry()
+    exp_k, exp_z = render_expected(kernel, zenodo)
+
+    if mode == "gen":
+        # Regenerate the C header (it derives from the Rust ABI signatures).
+        subprocess.run([sys.executable, str(HEADER_GEN)], check=True, cwd=HEADER_GEN.parent)
+
+    # Cross-check header vs registry.
+    hdr = header_symbols()
+    reg = set(kernel) | set(zenodo)
+    orphan = sorted(h for h in hdr if h not in reg)
+    missing = sorted(r for r in reg if r not in hdr)
+    if orphan:
+        print(f"ERROR: header declares symbols absent from the registry: {orphan}", file=sys.stderr)
+        return 1
+    if missing:
+        print(f"ERROR: registry symbols missing from the C header: {missing}", file=sys.stderr)
+        return 1
+
+    files = {EXPECTED: exp_k, EXPECTED_ZENODO: exp_z, HEADER: HEADER.read_text()}
+    if mode == "check":
+        bad = []
+        for path, want in files.items():
+            got = path.read_text()
+            if got != want:
+                bad.append(str(path))
+        if bad:
+            print(f"DRIFT: {', '.join(bad)} differ from the registry. Run "
+                  f"`scripts/gen_symbol_artifacts` to regenerate.", file=sys.stderr)
+            return 1
+        print(f"OK: {len(kernel)} uk_ + {len(zenodo)} uz_ census artifacts in sync.")
+        return 0
+
+    EXPECTED.write_text(exp_k)
+    EXPECTED_ZENODO.write_text(exp_z)
+    print(f"wrote {EXPECTED.name}, {EXPECTED_ZENODO.name}, {HEADER.name} "
+          f"({len(kernel)} uk_, {len(zenodo)} uz_)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

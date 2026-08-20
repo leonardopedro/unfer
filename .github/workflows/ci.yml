@@ -99,16 +99,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p unfer_ffi
-      - name: assert 18 uk_* symbols match EXPECTED_SYMBOLS.txt
+      - name: assert generated census matches SYMBOL_REGISTRY (H2)
+        run: |
+          python3 scripts/gen_symbol_artifacts check || { echo "FAIL: run scripts/gen_symbol_artifacts"; exit 1; }
+      - name: assert uk_* symbols match EXPECTED_SYMBOLS.txt (generated census)
         run: |
           nm -D --defined-only target/release/libunfer_ffi.so \
             | awk '/ T uk_/ {print $3}' | sort > /tmp/got_uk.txt
           if ! diff -u unfer_ffi/EXPECTED_SYMBOLS.txt /tmp/got_uk.txt; then
             echo "FAIL: uk_* symbols mismatch (see diff above)." >&2
-            echo "If you added/removed a uk_* symbol, update unfer_ffi/EXPECTED_SYMBOLS.txt." >&2
+            echo "If you added/removed a uk_* symbol, add it to unfer_protocol::symbols and run scripts/gen_symbol_artifacts." >&2
             exit 1
           fi
-          echo "All 18 uk_* symbols match EXPECTED_SYMBOLS.txt."
+          echo "All $(wc -l < unfer_ffi/EXPECTED_SYMBOLS.txt) uk_* symbols match EXPECTED_SYMBOLS.txt."
       - run: cargo build --release -p unfer_ffi --features zenodo
       - name: assert 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt (zenodo feature)
         run: |

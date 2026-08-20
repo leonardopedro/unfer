@@ -410,6 +410,83 @@ Return just the committed sparse-Merkle root.
 
 **Response result:** `{"root": "<hex32>"}`
 
+### `observe`
+
+Record an observation against the current model state (side-effecting:
+normally queued for approval unless the caller holds an observe annotation).
+
+**Request params:** `{"event": <EventSpec>, "sensitive": <bool|optional>}`
+
+**Response result:** `{"observed": <bool>, "latched": <bool|optional>}`
+
+### `auction_open`
+
+Open an auction lot (Prebid-model: carbon credits or publicity inventory).
+
+**Request params:** `{"market": "carbon"|"publicity", "lot_id": <string>,
+"price_per_unit": <u64>, "qty": <u64>}`
+
+**Response result:** `{"lot_id": <string>, "escrow_did": <string>}`
+
+### `auction_bid`
+
+Submit a bid on an open lot (payment escrowed as an e-coin).
+
+**Request params:** `{"lot_id": <string>, "price_per_unit": <u64>,
+"qty": <u64>, "coin": <e-coin spec>}`
+
+**Response result:** `{"accepted": <bool>, "seq": <u64>}`
+
+### `auction_close`
+
+Close a lot and settle it to the winning bid (highest `price_per_unit`, ties
+break to the earliest `seq`).
+
+**Request params:** `{"lot_id": <string>}`
+
+**Response result:** `{"winner": <string>, "price": <u64>, "settled": <bool>}`
+
+### `auction_report`
+
+Read-only report of the auction ledger state.
+
+**Request params:** `{}`
+
+**Response result:** `{"lots": [...], "settled": <u64>}`
+
+### `logos_compile`
+
+Compile a controlled-natural-language (CNL) sentence with an embedded lexicon
+to a CoreIR interaction-net unique normal form (S31).
+
+**Request params:** `{"sentence": <string>}`
+
+**Response result:** `{"unf": <string>, "unf_hash": <hex>, "verified": <bool>}`
+
+### `ode_to_hamiltonian`
+
+Compile an ODE system specification into a Hamiltonian operator.
+
+**Request params:** `{"ode": <spec>}`
+
+**Response result:** `{"hamiltonian": <spec>, "terms": <usize>}`
+
+### `export_html`
+
+Export the current session transcript as standalone HTML.
+
+**Request params:** `{"path": <string|null>}`
+
+**Response result:** `{"bytes": <usize>, "written": <bool>}`
+
+### `export_tex`
+
+Export the current session transcript as LaTeX.
+
+**Request params:** `{"path": <string|null>}`
+
+**Response result:** `{"bytes": <usize>, "written": <bool>}`
+
 ## Error codes
 
 | Code  | Name                      | Severity | Description                                                          |
@@ -427,6 +504,29 @@ Return just the committed sparse-Merkle root.
 | UK-3001 | CudaUnavailable          | Error    | A CUDA device was requested but is not available at runtime.         |
 | UK-3002 | OutOfMemoryBudget        | Error    | The kernel exceeded its configured memory budget.                    |
 | UK-4001 | CallDenied               | Error    | The authorization engine denied the caller permission.               |
+| UK-4002 | ActionRequiresApproval   | Error    | The action is a mutation and must be approved by the gatekeeper.     |
+| UK-4003 | ActionRejected          | Error    | The queued action was rejected by the gatekeeper.                    |
+| UK-4004 | ActionNotFound          | Error    | The referenced action handle does not exist or is not pending.       |
+| UK-4005 | ActionAlreadyResolved   | Error    | The action was already approved or rejected.                         |
+| UK-4100 | BlueprintInvalid        | Error    | The blueprint payload failed validation.                             |
+| UK-4101 | BlueprintNoSession      | Error    | A model session is required but none is open.                        |
+| UK-4102 | BlueprintNotFound       | Error    | The referenced blueprint does not exist.                             |
+| UK-4200 | AuditInvalid            | Error    | The audit query/entry failed validation.                             |
+| UK-4201 | AgentNotFound           | Error    | The referenced agent session does not exist.                         |
+| UK-4202 | AgentGrantEscalation    | Error    | The grant set would escalate the caller's capabilities.             |
+| UK-4203 | AgentStateInvalid       | Error    | The agent session state is inconsistent.                             |
+| UK-4401 | ResourceUnintroduced    | Error    | The resource was not introduced to this session.                     |
+| UK-4402 | ResourceAlreadyIntroduced | Error  | The resource was already introduced.                                |
+| UK-4403 | ResourceNotFound        | Error    | The referenced resource does not exist.                             |
+| UK-4501 | ConsoleOnly             | Error    | The operation is reserved for the operator console.                  |
+| UK-4601 | RateLimited             | Error    | The caller exceeded the windowed rate limit (UTC-day meter).         |
+| UK-4602 | BudgetExceeded          | Error    | The caller exceeded its metered budget.                             |
+| UK-4701 | SensitiveLatched        | Error    | The caller observed sensitive data and is latched until cleared.     |
+| UK-4801 | ProofVerifyFailed       | Error    | The Lean4 proof failed verification (strict mode).                   |
+| UK-4802 | ProofExportInvalid      | Error    | The lean4export payload was malformed or oversize.                   |
+| UK-4803 | LogosCompileFailed      | Error    | The CNL sentence could not be compiled to a UNF.                     |
+| UK-4901 | SymbolicEngineUnavailable | Error  | The Cadabra2 subprocess engine was not available.                    |
+| UK-4902 | SymbolicExpressionInvalid | Error  | The symbolic expression failed validation.                          |
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |
@@ -439,6 +539,25 @@ Return just the committed sparse-Merkle root.
 | UK-7004 | CertDoubleSpend          | Error    | A certificate nullifier was already consumed.                       |
 | UK-7005 | CertOwnerMismatch        | Error    | The signer is not the owner of every input certificate.             |
 | UK-7006 | CertLedgerSeq            | Error    | The certificate op sequence is stale or duplicated.                 |
+| UK-7007 | CertOracleRejected       | Error    | A mint/oracle endorsement was rejected.                             |
+| UK-7101 | TalerUnknownReserve      | Error    | The referenced Taler reserve does not exist.                        |
+| UK-7102 | TalerInsufficientBalance | Error    | The reserve balance is insufficient for the operation.              |
+| UK-7103 | TalerUnconfirmedWire     | Error    | The wire transfer has not confirmed.                                |
+| UK-7104 | TalerDenomUnsupported    | Error    | The requested denomination is not supported.                        |
+| UK-7105 | TalerCoinAlreadyDeposited | Error  | The e-coin was already deposited.                                   |
+| UK-7106 | TalerRefreshNotEligible  | Error    | The refresh request is not eligible.                                |
+| UK-7107 | TalerUnknownECoin        | Error    | The referenced e-coin does not exist.                               |
+| UK-7201 | EscrowUnknown            | Error    | The referenced escrow does not exist.                               |
+| UK-7202 | EscrowNotHolding         | Error    | The escrow is not holding the expected asset.                       |
+| UK-7203 | EscrowAlreadySettled     | Error    | The escrow was already settled.                                     |
+| UK-7301 | AuctionUnknownLot        | Error    | The referenced auction lot does not exist.                          |
+| UK-7302 | AuctionLotClosed         | Error    | The auction lot is already closed.                                  |
+| UK-7303 | AuctionBidBelowFloor     | Error    | The bid price is below the lot floor.                               |
+| UK-7304 | AuctionSelfBid           | Error    | The seller cannot bid on its own lot.                               |
+| UK-7305 | AuctionNotSeller         | Error    | The caller is not the lot seller.                                   |
+| UK-7306 | AuctionLotExists         | Error    | A lot with this id already exists.                                  |
+| UK-7307 | AuctionQtyMismatch       | Error    | The bid quantity does not match the lot units.                      |
+| UK-7308 | AuctionNoBids            | Error    | The lot closed with no qualifying bids.                             |
 
 ## Diagnostic structure
 

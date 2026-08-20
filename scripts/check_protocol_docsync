@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""H2 doc-sync gate: PROTOCOL.md must not drift from the code census.
+
+Checks:
+  - every op in `unfer_protocol/src/ops.rs` (AGENT_OPS) appears in
+    `docs/PROTOCOL.md`;
+  - every UK-#### code in `unfer_protocol/src/codes.rs` appears in
+    `docs/PROTOCOL.md`.
+
+Exit 0 when in sync, 1 when PROTOCOL.md has drifted.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def main() -> int:
+    ops_src = (ROOT / "unfer_protocol/src/ops.rs").read_text()
+    codes_src = (ROOT / "unfer_protocol/src/codes.rs").read_text()
+    proto = (ROOT / "docs/PROTOCOL.md").read_text()
+
+    ops = re.findall(r'"([a-z][a-z0-9_]*)"', ops_src)
+    codes = re.findall(r"Code\((\d{4})\)", codes_src)
+
+    missing_ops = [
+        o for o in ops
+        if f'"{o}"' not in proto and f"### {o}" not in proto and f"`{o}`" not in proto
+    ]
+    missing_codes = [c for c in codes if c not in proto]
+
+    ok = True
+    if missing_ops:
+        print(f"PROTOCOL.md missing ops: {sorted(set(missing_ops))}", file=sys.stderr)
+        ok = False
+    if missing_codes:
+        print(f"PROTOCOL.md missing UK codes: {sorted(set(missing_codes))}", file=sys.stderr)
+        ok = False
+    if ok:
+        print(f"OK: PROTOCOL.md covers {len(set(ops))} ops + {len(set(codes))} UK codes.")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

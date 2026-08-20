@@ -15,6 +15,7 @@
 pub mod archive;
 pub mod codes;
 pub mod ops;
+pub mod symbols;
 pub mod types;
 
 pub use archive::*;

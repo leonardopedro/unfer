@@ -121,11 +121,26 @@ check "S27: snapshot refuses live secrets" \
 check "S27: uk_snapshot enforces the refusal" \
     grep -q "snapshot_refuses_live_secret" "$repo_root/unfer_ffi/src/lib.rs"
 
-# --- H1.12 Symbol census files present (H2 will make them generated) ---
+# --- H1.12 Symbol census files present (H2: generated from the registry) ---
 check "S29: EXPECTED_SYMBOLS.txt present" \
     test -s "$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt"
 check "S29: generated C header present" \
     test -s "$repo_root/unfer_ffi/include/unfer_kernel.h"
+
+# --- H2: census artifacts are generated from the one registry, no drift ---
+# scripts/gen_symbol_artifacts regenerates EXPECTED_SYMBOLS.txt / _ZENODO /
+# unfer_kernel.h from unfer_protocol::symbols::SYMBOL_REGISTRY. The `check`
+# mode fails on any drift (and on the header cross-check).
+check "H2: symbol census generated from SYMBOL_REGISTRY (no drift)" \
+    python3 "$repo_root/scripts/gen_symbol_artifacts" check
+check "H2: registry has no leading-whitespace symbol rows (nm-diff clean)" \
+    bash -c "! grep -E '^ ' '$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt'"
+
+# --- H2: PROTOCOL.md op/UK-code census does not drift from the code ---
+# Every op in AGENT_OPS and every UK-#### code in codes.rs must appear in
+# docs/PROTOCOL.md (the doc-sync gate; dsh analog).
+check "H2: PROTOCOL.md op + UK-code census in sync (doc-sync)" \
+    python3 "$repo_root/scripts/check_protocol_docsync"
 
 echo
 echo "verify-invariants: $PASSED passed, $GAPS explained gap(s), $FAILED failed"
