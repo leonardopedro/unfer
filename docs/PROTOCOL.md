@@ -526,6 +526,7 @@ Export the current session transcript as LaTeX.
 | UK-4501 | ConsoleOnly             | Error    | The operation is reserved for the operator console.                  |
 | UK-4601 | RateLimited             | Error    | The caller exceeded the windowed rate limit (UTC-day meter).         |
 | UK-4602 | BudgetExceeded          | Error    | The caller exceeded its metered budget.                             |
+| UK-4603 | ToolTimeout             | Error    | The dispatch exceeded its declared cooperative deadline at the loopback guard (the backend keeps running; its late result is discarded). |
 | UK-4701 | SensitiveLatched        | Error    | The caller observed sensitive data and is latched until cleared.     |
 | UK-4801 | ProofVerifyFailed       | Error    | The Lean4 proof failed verification (strict mode).                   |
 | UK-4802 | ProofExportInvalid      | Error    | The lean4export payload was malformed or oversize.                   |

@@ -3157,6 +3157,11 @@ mod tests {
 
     static BLUEPRINT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    // The windowed meter is a process-global shared store (handles.rs). The FFI
+    // tests that consume it serialize on this lock so one test's `uk_clear_meter`
+    // never wipes another's window mid-run (repo convention).
+    static METER_FFI_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ── S4: deferred approval + local simulation ─────────────────────────
     //
     // The action store is kernel-global (shared FFI statics), so the action tests
@@ -4228,5 +4233,43 @@ mod tests {
             lines.iter().all(|l| !l.contains(token)),
             "owner logs must never contain the token"
         );
+    }
+
+    // ── H6: deadline guard composes with the meter ──────────────────────
+    //
+    // S25 metering (UK-4601/UK-4602) is the single *denial* point at the loopback;
+    // H6 adds the complement it lacked — a cooperative deadline on declared
+    // signal-forwarding symbols (UK-4603 TOOL_TIMEOUT). This test pins the
+    // composition contract at the FFI layer: the meter still gates budget/rate
+    // independently of any timeout declaration, and the shared registry vocabulary
+    // (`SymbolRecord::timeout_ms`) is what the host loopback's guard listener reads.
+    #[test]
+    fn timeout_declaration_composes_with_meter_denial_point() {
+        use unfer_protocol::symbols::SymbolRecord;
+
+        // The meter remains the single denial point: exhausting a principal's
+        // budget denies the call, and the timeout declaration does not change that.
+        let meter_lock = METER_FFI_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        uk_clear_meter();
+        let who = "h6_composition";
+        assert_eq!(uk_meter_consume(who, 2, 0), 0, "first call allowed");
+        assert_eq!(uk_meter_consume(who, 2, 0), 0, "second call allowed");
+        assert_eq!(
+            uk_meter_consume(who, 2, 0),
+            2,
+            "budget exhausted → meter denies (UK-4602)"
+        );
+        uk_clear_meter();
+        drop(meter_lock);
+
+        // Signal-forwarding symbols declare a cooperative deadline in the shared
+        // registry; plain kernel symbols do not. The host loopback guard listener
+        // reads this exact declaration (see australVM's GuardListener).
+        assert_eq!(SymbolRecord::timeout_ms("uk_action_submit"), Some(5000));
+        assert_eq!(SymbolRecord::timeout_ms("uk_gate_approve"), Some(5000));
+        assert_eq!(SymbolRecord::timeout_ms("uk_version"), None);
+        assert_eq!(SymbolRecord::timeout_ms("uk_evolve"), None);
     }
 }

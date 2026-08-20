@@ -90,6 +90,12 @@ impl Code {
     /// F24 metering: the caller exhausted its per-principal budget for the window
     /// (denied at the loopback chokepoint with an audit entry).
     pub const BUDGET_EXCEEDED: Code = Code(4602);
+    /// H6: the caller's dispatch on a *signal-forwarding* symbol exceeded its
+    /// declared cooperative deadline (`timeout_ms`) — the guard listener at the
+    /// loopback stopped waiting and returned this structured result instead of
+    /// the raw completion. Cooperative, not a hard kill: the backend keeps
+    /// running to completion and its (late) result is discarded.
+    pub const TOOL_TIMEOUT: Code = Code(4603);
 
     /// F25 forward policy: the caller has observed `<*sensitive*>` data, so the
     /// chokepoint latches it and refuses forward-mutating ops (egress, hand-off,
@@ -392,6 +398,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4602,
             "BudgetExceeded",
             "The caller exhausted its per-principal budget for the current window.",
+        ),
+        (
+            4603,
+            "ToolTimeout",
+            "The dispatch exceeded its declared cooperative deadline at the loopback guard (UK-4603); the backend keeps running, its late result discarded.",
         ),
         (
             4701,
