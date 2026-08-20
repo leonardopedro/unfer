@@ -183,6 +183,10 @@ int64_t uk_secret_put(const uint8_t* owner,
               const uint8_t* value,
               int64_t value_len);
 int64_t uk_secret_revoke(int64_t handle);
+int64_t uk_session_compact(int64_t model,
+                   int64_t seq);
+int64_t uk_session_fork(int64_t model,
+                int64_t seq);
 int64_t uk_set_hamiltonian(int64_t model,
                    const uint8_t* json,
                    int64_t len);

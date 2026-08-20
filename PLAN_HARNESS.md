@@ -169,6 +169,26 @@ and bounds editor-session growth.
 compaction round-trips exact; version-marker rejection tested; symbol/op
 census unchanged.
 
+**Status (H3, DONE)**: `prob_kernel/src/session.rs` is event-sourced.
+`SessionEvent { seq, op, spec, source, ts }` + typed `SessionEventSpec`
+(`Create`/`SetPrior`/`SetHamiltonian`/`Evolve{qfm,query}`/`Condition`/
+`CompactStart`/`CompactEnd`), `SESSION_FORMAT_VERSION = 1`; every mutator
+appends before it applies and rolls back on error. `save()` folds the derived
+log into `SessionBlob{format_version, events, …}` (legacy blobs still restore
+via the folded path); `restore()` = replay with bracket-balance + orphaned-lock
+validation. `fork_at(seq)` replays the prefix (refuses open-lock boundaries);
+`compact_start`/`compact_end`/`compact_through` bracket a summarized range that
+`derived_log()` replaces with a single `CompactEnd` summary node. Debug-build
+`debug_assert_reconstructable` pins `fold(events) ≡ live` after every op.
+New UK codes 1006–1009 (`SessionLogVersion`/`SessionCompactionOrphaned`/
+`SessionCompactionBusy`/`SessionForkRange`) wired into `KernelError` +
+`to_diagnostic` + PROTOCOL.md. New FFI symbols `uk_session_fork`/`uk_session_compact`
+registered through the H2 census (EXPECTED_SYMBOLS.txt, generated C header,
+australVM `UNFER_SYMBOLS` + `ecma.rs` dispatch arms). Tests: 9 prob_kernel
+(fold≡live round-trip, legacy-blob fallback, version rejection, fork/divergence,
+derived-log shrink, evolve-boundary refusal, busy-lock rejection, orphaned-lock
+restore) + 2 unfer_ffi fork/compact round-trips. All gates green.
+
 ## H4 — Durable-by-default: audit, config, queue (M) — *unfer*
 
 **Improves**: `uk_audit_append`'s RAM-only ring (`OWNER_LOG_CAPACITY` 512,

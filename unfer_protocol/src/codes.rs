@@ -10,6 +10,21 @@ impl Code {
     pub const BAD_HANDLE: Code = Code(1004);
     pub const BUFFER_TOO_SMALL: Code = Code(1005);
 
+    /// H3: a session blob carried an event-log format version the kernel does
+    /// not support, or the event log was malformed and could not be replayed.
+    pub const SESSION_LOG_VERSION: Code = Code(1006);
+    /// H3: a compaction lock bracket (`compaction/start`…`compaction/end`) was
+    /// left open (a crash between start and end) — the derived history is
+    /// unusable until the operator resolves the orphaned lock.
+    pub const SESSION_COMPACTION_ORPHANED: Code = Code(1007);
+    /// H3: `uk_session_compact` was refused because the session is not idle
+    /// (an open compaction lock, or a boundary that splits an unanswered
+    /// `action_apply`/`evolve` dependency).
+    pub const SESSION_COMPACTION_BUSY: Code = Code(1008);
+    /// H3: `uk_session_fork` was refused because the requested log boundary
+    /// `{ seq }` is out of range or falls inside an open compaction bracket.
+    pub const SESSION_FORK_RANGE: Code = Code(1009);
+
     pub const GRAM_DEGENERATE: Code = Code(2001);
     pub const STATE_EXPLOSION: Code = Code(2002);
     pub const ZERO_PROBABILITY_CONDITION: Code = Code(2003);
@@ -222,6 +237,26 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             1005,
             "BufferTooSmall",
             "The caller-provided buffer was too small; the return value holds the required size.",
+        ),
+        (
+            1006,
+            "SessionLogVersion",
+            "The session event-log format version is unsupported, or the event log is malformed and cannot be replayed.",
+        ),
+        (
+            1007,
+            "SessionCompactionOrphaned",
+            "A compaction lock bracket was left open (a crash between start and end); the derived history is unusable until the orphaned lock is resolved.",
+        ),
+        (
+            1008,
+            "SessionCompactionBusy",
+            "Session compaction refused: the session is not idle (an open compaction lock, or a boundary that splits an unanswered action_apply/evolve dependency).",
+        ),
+        (
+            1009,
+            "SessionForkRange",
+            "Session fork refused: the requested log boundary is out of range or falls inside an open compaction bracket.",
         ),
         (
             2001,

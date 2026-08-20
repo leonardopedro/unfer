@@ -885,7 +885,372 @@ fn evolve_report_includes_solve_ms() {
     let _ = report.solve_ms; // compile-check that the field is present
 }
 
-// ── P5 #30: physics depth ────────────────────────────────────────────────────
+// ── H3: event-sourced session (log / fork / compaction) ─────────────────────
+
+#[test]
+fn session_log_records_ops_in_order() {
+    let spec = harmonic_chain_spec(superposition_prior());
+    let mut session = Session::new(&spec).expect("session creation");
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+    session
+        .set_hamiltonian(&HamiltonianSpec::builtin(
+            "harmonic_chain",
+            serde_json::json!({"n_modes": 2, "omega": 2.0}),
+        ))
+        .expect("set_hamiltonian");
+    session.evolve(0.5).expect("evolve");
+    session.condition(&event_mode0_ge1()).expect("condition");
+
+    let log = session.event_log();
+    // seq 0 = Create, then one record per mutating op, strict monotonic.
+    assert_eq!(log.len(), 5);
+    assert_eq!(log[0].seq, 0);
+    assert_eq!(log[0].op, prob_kernel::SessionOp::Create);
+    assert_eq!(log[1].op, prob_kernel::SessionOp::SetPrior);
+    assert_eq!(log[2].op, prob_kernel::SessionOp::SetHamiltonian);
+    assert_eq!(log[3].op, prob_kernel::SessionOp::Evolve);
+    assert_eq!(log[4].op, prob_kernel::SessionOp::Condition);
+    for w in log.windows(2) {
+        assert!(w[0].seq < w[1].seq, "seq must be strictly monotonic");
+    }
+}
+
+#[test]
+fn session_save_restore_event_sourced_roundtrip() {
+    // A saved blob now carries the event log; restoring replays it and
+    // reproduces the same folded state (fold ≡ live).
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    session.evolve(0.5).expect("evolve");
+
+    let p_before = session.probability(&event_mode0_ge1()).expect("prob");
+    let t_before = session.t();
+    let n_before = session.n_components();
+
+    let blob: SessionBlob = session.save();
+    assert_eq!(
+        blob.format_version,
+        prob_kernel::SESSION_FORMAT_VERSION,
+        "blob must be tagged with the current format version"
+    );
+    assert!(
+        !blob.events.is_empty(),
+        "event-sourced blob must carry the event log"
+    );
+
+    let json = serde_json::to_string(&blob).expect("serialize blob");
+    let blob2: SessionBlob = serde_json::from_str(&json).expect("deserialize blob");
+    let restored = Session::restore(blob2).expect("restore session");
+
+    assert!((restored.t() - t_before).abs() < 1e-15, "t_now mismatch");
+    assert_eq!(
+        restored.n_components(),
+        n_before,
+        "component count mismatch"
+    );
+    let p_after = restored.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_before - p_after).abs() < 1e-12,
+        "probability changed after event-sourced restore: {p_before} → {p_after}"
+    );
+    // The restored session continues the log (Create + Evolve).
+    assert_eq!(restored.event_log().len(), 2);
+    // It can keep accumulating: a further evolve works on the replayed state.
+    let mut restored = restored;
+    restored.evolve(0.1).expect("evolve after restore");
+    assert!(restored.event_log().len() > 2);
+}
+
+#[test]
+fn session_restore_legacy_blob_still_works() {
+    // Pre-H3 blobs carry no `format_version`/`events`; serde defaults fill them
+    // (format_version 0, empty events) and restore takes the legacy folded path.
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    session.evolve(0.5).expect("evolve");
+    let blob = session.save();
+
+    // Simulate a legacy blob: strip the H3 fields and the events.
+    let mut legacy: serde_json::Value = serde_json::to_value(&blob).expect("blob to value");
+    legacy
+        .as_object_mut()
+        .expect("blob is object")
+        .remove("format_version");
+    legacy
+        .as_object_mut()
+        .expect("blob is object")
+        .remove("events");
+    let legacy_json = serde_json::to_string(&legacy).expect("legacy json");
+    let legacy_blob: SessionBlob =
+        serde_json::from_str(&legacy_json).expect("legacy blob deserializes");
+
+    assert_eq!(legacy_blob.format_version, 0, "legacy blob defaults to v0");
+    assert!(
+        legacy_blob.events.is_empty(),
+        "legacy blob defaults to no events"
+    );
+
+    let restored = Session::restore(legacy_blob).expect("legacy restore");
+    assert!(
+        (restored.t() - session.t()).abs() < 1e-15,
+        "legacy restore must preserve t_now"
+    );
+    let p = restored.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p - session.probability(&event_mode0_ge1()).expect("prob")).abs() < 1e-12,
+        "legacy restore must preserve probabilities"
+    );
+}
+
+#[test]
+fn session_restore_rejects_version_mismatch() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let session = Session::new(&spec).expect("session creation");
+    let mut blob = session.save();
+    blob.format_version = 42;
+    let err = Session::restore(blob).expect_err("version mismatch must fail");
+    assert!(
+        matches!(err, KernelError::SessionLogVersion { got: 42, .. }),
+        "want SessionLogVersion got=42, got {err:?}"
+    );
+}
+
+#[test]
+fn session_fork_replays_prefix_and_diverges() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut a = Session::new(&spec).expect("session a");
+    a.evolve(0.3).expect("evolve a");
+
+    // Fork at seq 1 (the Create + first Evolve).
+    let mut fork = a.fork_at(1).expect("fork at seq 1");
+    assert_eq!(fork.event_log().len(), 2, "fork carries the prefix");
+    // The fork's folded state equals `a` at the boundary.
+    let p_fork = fork.probability(&event_mode0_ge1()).expect("prob");
+    let p_a = a.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_fork - p_a).abs() < 1e-12,
+        "fork must reproduce the boundary state"
+    );
+
+    // Diverge: `a` evolves again, `fork` evolves differently.
+    a.evolve(0.5).expect("evolve a again");
+    fork.evolve(0.9).expect("evolve fork");
+    assert_eq!(a.event_log().len(), 3);
+    assert_eq!(fork.event_log().len(), 3);
+    // The two sessions must now hold different states (compared via the
+    // serialized top-k snapshot — a single event probability can coincide).
+    let sa = serde_json::to_string(&a.snapshot(100)).expect("snapshot a");
+    let sf = serde_json::to_string(&fork.snapshot(100)).expect("snapshot fork");
+    assert_ne!(
+        sa, sf,
+        "forked sessions must hold different states after the boundary"
+    );
+}
+
+#[test]
+fn session_fork_refuses_open_lock_boundary() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+    session.compact_start(1).expect("compact_start");
+    // seq 2 is now a CompactStart (open lock) — forking there is refused.
+    let err = session.fork_at(2).expect_err("fork at open lock must fail");
+    assert!(
+        matches!(err, KernelError::SessionForkRange { .. }),
+        "want SessionForkRange, got {err:?}"
+    );
+    session.compact_end().expect("compact_end");
+}
+
+#[test]
+fn session_fork_out_of_range() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let session = Session::new(&spec).expect("session creation");
+    let err = session
+        .fork_at(99)
+        .expect_err("fork past the end must fail");
+    assert!(
+        matches!(err, KernelError::SessionForkRange { .. }),
+        "want SessionForkRange, got {err:?}"
+    );
+}
+
+#[test]
+fn session_compaction_replaces_prefix_in_derived_log() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    // log: Create(0), SetPrior(1), Evolve(2), Evolve(3)
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+    session.evolve(0.3).expect("evolve 1");
+    session.evolve(0.4).expect("evolve 2");
+    let raw_len = session.event_log().len();
+    assert_eq!(raw_len, 4);
+
+    // Compact through seq 1 (Create + SetPrior — a settled boundary).
+    session.compact_through(1).expect("compact_through");
+    assert!(
+        !session.is_compaction_locked(),
+        "lock released after compact_end"
+    );
+
+    let raw = session.event_log();
+    assert_eq!(raw.len(), 6, "raw log keeps the bracket events");
+    let op_names: Vec<prob_kernel::SessionOp> = raw.iter().map(|e| e.op).collect();
+    assert!(
+        op_names.contains(&prob_kernel::SessionOp::CompactStart),
+        "raw log contains CompactStart"
+    );
+    assert!(
+        op_names.contains(&prob_kernel::SessionOp::CompactEnd),
+        "raw log contains CompactEnd"
+    );
+
+    // The derived log replaces the summarized prefix with the CompactEnd node.
+    let blob = session.save();
+    assert_eq!(
+        blob.format_version,
+        prob_kernel::SESSION_FORMAT_VERSION,
+        "derived blob tagged with format version"
+    );
+    assert!(
+        blob.events.len() < raw.len(),
+        "derived log must be smaller than the raw log"
+    );
+    // Derived: [CompactEnd(with summary), Evolve(3)] → replay reproduces.
+    let restored = Session::restore(blob).expect("restore derived");
+    let p_live = session.probability(&event_mode0_ge1()).expect("prob");
+    let p_restored = restored.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_live - p_restored).abs() < 1e-12,
+        "replaying the derived log must reproduce the live state"
+    );
+}
+
+#[test]
+fn session_compaction_keeps_fold_equals_live() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+    session.evolve(0.3).expect("evolve 1");
+    session.evolve(0.4).expect("evolve 2");
+    let p_before = session.probability(&event_mode0_ge1()).expect("prob");
+
+    session.compact_through(1).expect("compact_through");
+
+    // After compaction the live state is unchanged.
+    let p_after = session.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_before - p_after).abs() < 1e-12,
+        "compaction must not disturb the live state"
+    );
+    // And a full raw-log replay reproduces it (debug assertion does this
+    // automatically in debug builds; here we do it explicitly).
+    let replay = Session::replay_for_test(session.event_log());
+    let p_replay = replay.probability(&event_mode0_ge1()).expect("prob");
+    assert!(
+        (p_before - p_replay).abs() < 1e-12,
+        "full raw-log replay must reproduce the live state"
+    );
+}
+
+#[test]
+fn session_compaction_rejects_evolve_boundary() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    session.evolve(0.3).expect("evolve 1");
+    // Boundary seq 1 is an Evolve — never cut a range at an unanswered evolve.
+    let err = session
+        .compact_start(1)
+        .expect_err("evolve boundary must fail");
+    assert!(
+        matches!(err, KernelError::SessionCompactionBusy { .. }),
+        "want SessionCompactionBusy, got {err:?}"
+    );
+    assert!(!session.is_compaction_locked(), "no lock left behind");
+}
+
+#[test]
+fn session_mutations_rejected_while_compacting() {
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    // log: Create(0), SetPrior(1) — boundary seq 1 is settled.
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+    session.compact_start(1).expect("compact_start");
+    assert!(session.is_compaction_locked(), "lock open");
+
+    let err = session
+        .evolve(0.1)
+        .expect_err("evolve while locked must fail");
+    assert!(
+        matches!(err, KernelError::SessionCompactionBusy { .. }),
+        "want SessionCompactionBusy, got {err:?}"
+    );
+    let err2 = session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect_err("set_prior while locked must fail");
+    assert!(
+        matches!(err2, KernelError::SessionCompactionBusy { .. }),
+        "want SessionCompactionBusy, got {err:?}"
+    );
+
+    session.compact_end().expect("compact_end");
+    // After the lock releases, mutations work again.
+    session.evolve(0.1).expect("evolve after lock release");
+}
+
+#[test]
+fn session_restore_detects_orphaned_lock() {
+    // A saved blob whose derived log ends with an unclosed CompactStart
+    // (simulating a crash between compact_start and compact_end) must fail
+    // loud with UK-1007 on restore.
+    let spec = harmonic_chain_spec(PriorSpec::bosons(vec![(0, 1)]));
+    let mut session = Session::new(&spec).expect("session creation");
+    // log: Create(0), SetPrior(1) — boundary seq 1 is settled.
+    session
+        .set_prior(&PriorSpec::bosons(vec![(0, 1)]))
+        .expect("set_prior");
+
+    // Simulate the crash: start a compaction but never end it.
+    session.compact_start(1).expect("compact_start");
+
+    // Manually build the orphaned blob from the derived log.
+    let mut blob = session.save();
+    // save() above is allowed with an open lock; the derived log then contains
+    // an unclosed CompactStart (orphan). Rebuilding events that way and
+    // restoring must fail.
+    let events = blob.events.clone();
+    // Ensure we really have an unclosed bracket in the serialized events.
+    let has_orphan = events
+        .iter()
+        .any(|e| matches!(e.spec, prob_kernel::SessionEventSpec::CompactStart { .. }));
+    assert!(
+        has_orphan,
+        "derived log must contain the orphaned CompactStart"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e.spec, prob_kernel::SessionEventSpec::CompactEnd { .. })),
+        "derived log must NOT contain a CompactEnd"
+    );
+
+    blob.events = events;
+    let err = Session::restore(blob).expect_err("orphaned lock must fail restore");
+    assert!(
+        matches!(err, KernelError::SessionCompactionOrphaned { .. }),
+        "want SessionCompactionOrphaned, got {err:?}"
+    );
+}
 
 #[test]
 fn yang_mills_lattice_l4_bounded_evolve() {

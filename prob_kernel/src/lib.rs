@@ -20,7 +20,8 @@ pub mod verify;
 pub use error::KernelError;
 pub use logos::logos_compile;
 pub use session::{
-    BayesianUpdateReport, EvolveReport, Session, SessionBlob, StateEntry, StateSummary,
+    BayesianUpdateReport, EvolveReport, SESSION_FORMAT_VERSION, Session, SessionBlob, SessionEvent,
+    SessionEventSpec, SessionOp, StateEntry, StateSummary,
 };
 pub use symbolic::symbolic_derive;
 pub use unfer_protocol;

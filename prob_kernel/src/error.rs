@@ -46,6 +46,20 @@ pub enum KernelError {
     #[error("Logos CNL->UNF compile failed: {reason}")]
     LogosFailed { reason: String },
 
+    #[error(
+        "session event-log format version {got} is unsupported, or the log is malformed: {reason}"
+    )]
+    SessionLogVersion { got: u32, reason: String },
+
+    #[error("orphaned session compaction lock: {reason}")]
+    SessionCompactionOrphaned { reason: String },
+
+    #[error("session compaction refused (session not idle): {reason}")]
+    SessionCompactionBusy { reason: String },
+
+    #[error("session fork refused at log boundary: {reason}")]
+    SessionForkRange { reason: String },
+
     #[error("JSON error: {0}")]
     BadJson(#[from] serde_json::Error),
 
@@ -241,6 +255,58 @@ impl KernelError {
                 reason,
             )),
 
+            KernelError::SessionLogVersion { got, reason } => Diagnostic::new(
+                Code::SESSION_LOG_VERSION,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::SetParam,
+                "session.format_version",
+                format!(
+                    "expected format version, got {got}: {reason} — re-serialize the session \
+                     with the current kernel"
+                ),
+            ))
+            .with_data(serde_json::json!({"format_version": got})),
+
+            KernelError::SessionCompactionOrphaned { reason } => Diagnostic::new(
+                Code::SESSION_COMPACTION_ORPHANED,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::UseAlternativeOp,
+                "session.compaction",
+                format!(
+                    "{reason} — compact again (the lock bracket re-closes) or save a fresh \
+                     snapshot without the orphaned bracket"
+                ),
+            )),
+
+            KernelError::SessionCompactionBusy { reason } => Diagnostic::new(
+                Code::SESSION_COMPACTION_BUSY,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::SetParam,
+                "session.compaction.through_seq",
+                format!(
+                    "{reason} — compact only an idle session, to a boundary that does not \
+                     split an unanswered action_apply/evolve dependency"
+                ),
+            )),
+
+            KernelError::SessionForkRange { reason } => {
+                Diagnostic::new(Code::SESSION_FORK_RANGE, self.to_string(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::SetParam,
+                        "session.fork.seq",
+                        format!("{reason} — fork from a valid, closed log boundary"),
+                    ))
+            }
+
             KernelError::Qfm(qfm::pipeline::QfmError::DimensionMismatch { expected, got }) => {
                 Diagnostic::new(Code::BAD_JSON, self.to_string(), Severity::Error).with_hint(
                     RepairHint::new(
@@ -376,6 +442,19 @@ mod tests {
             },
             KernelError::SymbolicInvalid {
                 reason: "expression reduced to empty".into(),
+            },
+            KernelError::SessionLogVersion {
+                got: 99,
+                reason: "expected format version 1".into(),
+            },
+            KernelError::SessionCompactionOrphaned {
+                reason: "compaction/start without compaction/end".into(),
+            },
+            KernelError::SessionCompactionBusy {
+                reason: "an open compaction lock".into(),
+            },
+            KernelError::SessionForkRange {
+                reason: "seq 12 out of range".into(),
             },
             KernelError::BadJson(serde_json::from_str::<i32>("not json").unwrap_err()),
             KernelError::Internal("unreachable state reached".into()),

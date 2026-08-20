@@ -604,6 +604,45 @@ pub extern "C" fn uk_restore(blob_json: *const u8, len: i64) -> i64 {
     })
 }
 
+/// H3: fork a new session handle from session `model` at log boundary `seq`
+/// (inclusive). The fork replays the prefix `events[0..=seq]` and diverges from
+/// there; the original session is untouched. Returns a positive handle on
+/// success, <0 (-code) on error (UK-1009 `SESSION_FORK_RANGE` for a bad or
+/// open-lock boundary).
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_session_fork(model: i64, seq: i64) -> i64 {
+    ffi_entry("uk_session_fork", || {
+        let caller = handles::current_caller();
+        let fork = handles::with_session_mut(model, |s| {
+            s.set_log_source(caller.tag.principal.clone());
+            s.fork_at(seq.max(0) as u64)
+        })
+        .ok_or_else(|| bad_handle(model))?
+        .map_err(|e| e.to_diagnostic())?;
+        Ok(handles::store_session(fork))
+    })
+}
+
+/// H3: compact session `model` through log boundary `seq` (inclusive), opening
+/// and closing a compaction lock bracket atomically. The summarized older
+/// range is folded into a `CompactEnd` summary node; the live state is
+/// unchanged. Refuses Evolve/open-lock boundaries and any mutation while the
+/// bracket is open (UK-1008 `SESSION_COMPACTION_BUSY`). Returns 0 on success,
+/// <0 (-code) on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_session_compact(model: i64, seq: i64) -> i64 {
+    ffi_entry("uk_session_compact", || {
+        let caller = handles::current_caller();
+        handles::with_session_mut(model, |s| {
+            s.set_log_source(caller.tag.principal.clone());
+            s.compact_through(seq.max(0) as u64)
+        })
+        .ok_or_else(|| bad_handle(model))?
+        .map_err(|e| e.to_diagnostic())?;
+        Ok(0)
+    })
+}
+
 /// Package a session snapshot into a `.cell` blueprint archive (S5, F4). The archive body
 /// carries the `SessionBlob` JSON produced by `uk_snapshot`; module files are added by the
 /// host (`ModuleHost::instantiate_from_blueprint`), which owns the module directory.
@@ -2775,7 +2814,71 @@ mod tests {
         uk_model_free(h2);
     }
 
-    // ── S5: .cell blueprint archives (instance isolation + blueprints) ──────
+    #[test]
+    fn session_fork_ffi_roundtrip() {
+        let h = create_harmonic_model();
+        assert!(h > 0);
+
+        // Evolve so the state differs from the vacuum prior (seq 1 = Evolve).
+        let (eptr, elen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, eptr, elen), 0);
+
+        // Fork at seq 1 (Create + Evolve).
+        let fork = uk_session_fork(h, 1);
+        assert!(
+            fork > 0 && fork != h,
+            "expected fresh fork handle, got {fork}"
+        );
+
+        // The fork reproduces the boundary state: same vacuum probability.
+        let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
+        assert_eq!(uk_event_probability(h, pptr, plen), 0);
+        let p1 = read_buf(|b, c| uk_get_result(h, b, c));
+        assert_eq!(uk_event_probability(fork, pptr, plen), 0);
+        let p2 = read_buf(|b, c| uk_get_result(fork, b, c));
+        assert_eq!(p1, p2, "fork must reproduce the boundary state");
+
+        // Out-of-range fork boundary → negative (UK-1009).
+        assert!(uk_session_fork(h, 99999) < 0);
+
+        uk_model_free(h);
+        uk_model_free(fork);
+    }
+
+    #[test]
+    fn session_compact_ffi_roundtrip() {
+        let h = create_harmonic_model();
+        assert!(h > 0);
+
+        // log: Create(0), SetPrior(1), Evolve(2) — settle a boundary at seq 1.
+        let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
+        assert_eq!(uk_set_prior(h, pptr, plen), 0);
+        let (eptr, elen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, eptr, elen), 0);
+
+        // Compact through seq 1 (Create + Evolve) — live state unchanged.
+        assert_eq!(uk_session_compact(h, 1), 0, "compact must succeed");
+        assert_eq!(uk_event_probability(h, pptr, plen), 0);
+        let p_after = read_buf(|b, c| uk_get_result(h, b, c));
+
+        // The derived log still round-trips through snapshot/restore.
+        let blob_json = read_buf(|b, c| uk_snapshot(h, b, c));
+        let (bptr, blen) = json_ptr(&blob_json);
+        let h2 = uk_restore(bptr, blen);
+        assert!(h2 > 0, "restore after compaction must succeed");
+        assert_eq!(uk_event_probability(h2, pptr, plen), 0);
+        let p_restored = read_buf(|b, c| uk_get_result(h2, b, c));
+        assert_eq!(
+            p_after, p_restored,
+            "replaying the derived log must reproduce the live state"
+        );
+
+        // Out-of-range compact boundary → negative (UK-1008).
+        assert!(uk_session_compact(h, 99999) < 0);
+
+        uk_model_free(h);
+        uk_model_free(h2);
+    }
 
     #[test]
     fn blueprint_export_instantiate_roundtrip() {

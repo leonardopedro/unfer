@@ -496,6 +496,10 @@ Export the current session transcript as LaTeX.
 | UK-1003 | BadEventPredicate        | Error    | The event predicate is malformed or references an unknown mode.      |
 | UK-1004 | BadHandle                | Error    | The referenced model handle is invalid or has been freed.             |
 | UK-1005 | BufferTooSmall            | Error    | The caller-provided buffer was too small.                            |
+| UK-1006 | SessionLogVersion        | Error    | The session event-log format version is unsupported, or the log is malformed and cannot be replayed. |
+| UK-1007 | SessionCompactionOrphaned| Error    | A compaction lock bracket was left open (a crash between start and end); the derived history is unusable until resolved. |
+| UK-1008 | SessionCompactionBusy    | Error    | Session compaction refused: the session is not idle (open compaction lock, or a boundary splitting an unanswered action_apply/evolve dependency). |
+| UK-1009 | SessionForkRange         | Error    | Session fork refused: the requested log boundary is out of range or falls inside an open compaction bracket. |
 | UK-2001 | GramDegenerate            | Error    | The Krylov Gram matrix is rank-deficient.                            |
 | UK-2002 | StateExplosion            | Error    | The state vector exceeded the configured component limit.            |
 | UK-2003 | ZeroProbabilityCondition  | Error    | Conditioning on an event with zero prior probability.                |

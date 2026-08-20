@@ -10,6 +10,140 @@ use crate::build;
 use crate::error::KernelError;
 use crate::event;
 
+/// H3: session event-log format marker. Bumps only on a structural change of
+/// the `SessionEvent`/`SessionBlob` shape. `restore` rejects blobs whose
+/// `format_version` does not match (UK-1006) rather than guessing.
+pub const SESSION_FORMAT_VERSION: u32 = 1;
+
+/// H3: a typed session-log record. Each mutating kernel op appends one
+/// `{ seq, op, spec, source, ts }` record **before** it applies, so the log is
+/// the single source of truth: `save()` folds it, `restore()` replays it, and
+/// the model-visible state is reconstructable from the log alone.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionEvent {
+    /// Monotonic, never-reused sequence number (== index into the log).
+    pub seq: u64,
+    /// The operation that produced this record.
+    pub op: SessionOp,
+    /// The op-specific typed payload (what the op needs to re-apply itself).
+    pub spec: SessionEventSpec,
+    /// The caller that issued the op (module/agent/hook principal).
+    pub source: String,
+    /// Wall-clock millisecond timestamp (audit provenance; not part of the fold).
+    pub ts: u64,
+}
+
+/// H3: the operations the kernel records in the session event log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionOp {
+    Create,
+    SetPrior,
+    SetHamiltonian,
+    Evolve,
+    Condition,
+    CompactStart,
+    CompactEnd,
+}
+
+/// H3: the typed payload carried by a `SessionEvent`. Tagged so each record is
+/// self-describing and replayable without external context.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SessionEventSpec {
+    Create {
+        spec: ModelSpec,
+    },
+    SetPrior {
+        spec: PriorSpec,
+    },
+    SetHamiltonian {
+        spec: HamiltonianSpec,
+    },
+    Evolve {
+        t: f64,
+        /// True when the live call dispatched to the QFM pipeline (evolve only
+        /// advances `t_now`; the SIRK state is untouched). Replay mirrors this.
+        qfm: bool,
+        /// The raw query passed to `evolve` (QFM input / provenance).
+        query: Option<Vec<f64>>,
+    },
+    Condition {
+        spec: EventPredicate,
+    },
+    CompactStart {
+        through_seq: u64,
+    },
+    CompactEnd {
+        through_seq: u64,
+        summary: Option<SessionBlob>,
+    },
+}
+
+impl PartialEq for SessionEventSpec {
+    fn eq(&self, other: &Self) -> bool {
+        // `SessionBlob` is compared by JSON so the folded `CompactEnd` summary
+        // participates in event-log equality without requiring `PartialEq` on
+        // `QuantumState`.
+        match (self, other) {
+            (SessionEventSpec::Create { spec: a }, SessionEventSpec::Create { spec: b }) => a == b,
+            (SessionEventSpec::SetPrior { spec: a }, SessionEventSpec::SetPrior { spec: b }) => {
+                a == b
+            }
+            (
+                SessionEventSpec::SetHamiltonian { spec: a },
+                SessionEventSpec::SetHamiltonian { spec: b },
+            ) => a == b,
+            (
+                SessionEventSpec::Evolve {
+                    t: a,
+                    qfm: qa,
+                    query: xa,
+                },
+                SessionEventSpec::Evolve {
+                    t: b,
+                    qfm: qb,
+                    query: xb,
+                },
+            ) => a == b && qa == qb && xa == xb,
+            (SessionEventSpec::Condition { spec: a }, SessionEventSpec::Condition { spec: b }) => {
+                a == b
+            }
+            (
+                SessionEventSpec::CompactStart { through_seq: a },
+                SessionEventSpec::CompactStart { through_seq: b },
+            ) => a == b,
+            (
+                SessionEventSpec::CompactEnd {
+                    through_seq: a,
+                    summary: sa,
+                },
+                SessionEventSpec::CompactEnd {
+                    through_seq: b,
+                    summary: sb,
+                },
+            ) => {
+                a == b
+                    && match (sa, sb) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => {
+                            serde_json::to_string(x).ok() == serde_json::to_string(y).ok()
+                        }
+                        _ => false,
+                    }
+            }
+            _ => false,
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// A long-running probability kernel session.
 ///
 /// Owns the current quantum state, Hamiltonian, and solver configuration.
@@ -32,15 +166,68 @@ pub struct Session {
     /// `evolve` dispatches to the pipeline's 4-phase `generate` instead
     /// of the SIRK solver.
     qfm_pipeline: Option<Box<QfmPipeline>>,
+    /// H3: the session event log — every mutating op, in order. `save()` folds
+    /// it; `restore()` replays it; fork/compaction operate on it. The log is
+    /// the single source of truth for the model-visible state.
+    event_log: Vec<SessionEvent>,
+    /// H3: next monotonic sequence number (== `event_log.len()`).
+    next_seq: u64,
+    /// H3: the caller label stamped on newly appended events. The FFI layer
+    /// updates it from the active `CallerContext` before each mutating op.
+    log_source: String,
+    /// H3: an open compaction lock bracket `(compaction/start … compaction/end)`.
+    /// `Some(through_seq)` while a compaction is in progress; `None` when idle.
+    /// A crash between start and end leaves this as an orphaned lock that
+    /// `restore`/`save` detect (UK-1007).
+    compaction_lock: Option<u64>,
 }
 
 /// Serializable snapshot of a Session for save/restore.
+///
+/// H3: the snapshot is now event-sourced. `save()` folds the event log into
+/// `events` (tagged with `format_version`); `restore()` replays it. The folded
+/// state fields below remain for backward compatibility (legacy blobs carry no
+/// `events` and restore via the direct-state path).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionBlob {
+    /// `SESSION_FORMAT_VERSION` for event-sourced blobs; `0` (legacy) when the
+    /// blob predates H3 and carries only the folded state fields.
+    #[serde(default)]
+    pub format_version: u32,
+    /// The session event log. Empty for legacy blobs (folded fields used).
+    #[serde(default)]
+    pub events: Vec<SessionEvent>,
     pub hamiltonian_spec: HamiltonianSpec,
     pub solver_spec: SolverSpec,
     pub state: QuantumState,
     pub t_now: f64,
+}
+
+impl Session {
+    /// The number of event-log records currently held.
+    pub fn event_log_len(&self) -> usize {
+        self.event_log.len()
+    }
+
+    /// Read access to the raw event log (audit / fork boundaries).
+    pub fn event_log(&self) -> &[SessionEvent] {
+        &self.event_log
+    }
+
+    /// H3: the log source stamped on newly appended events.
+    pub fn set_log_source(&mut self, source: impl Into<String>) {
+        self.log_source = source.into();
+    }
+
+    /// H3: the caller label current at this session.
+    pub fn log_source(&self) -> &str {
+        &self.log_source
+    }
+
+    /// H3: whether a compaction lock bracket is currently open (session busy).
+    pub fn is_compaction_locked(&self) -> bool {
+        self.compaction_lock.is_some()
+    }
 }
 
 /// Result of an `evolve` call.
@@ -125,8 +312,9 @@ pub struct BeliefPropagationReport {
 }
 
 impl Session {
-    /// Create a new session from a `ModelSpec`.
-    pub fn new(spec: &ModelSpec) -> Result<Self, KernelError> {
+    /// Build a session from a `ModelSpec` without logging a `Create` event.
+    /// Used by `new` (which appends the event) and by event-log replay.
+    fn from_spec(spec: &ModelSpec) -> Result<Self, KernelError> {
         let hamiltonian = build::build_hamiltonian(&spec.hamiltonian)?;
         let state = build::build_prior(&spec.prior)?;
         let device = build::build_device(&spec.solver.device)?;
@@ -154,11 +342,335 @@ impl Session {
             hamiltonian_spec: spec.hamiltonian.clone(),
             solver_spec: spec.solver.clone(),
             qfm_pipeline,
+            event_log: Vec::new(),
+            next_seq: 0,
+            log_source: "kernel".into(),
+            compaction_lock: None,
         })
     }
 
-    /// Restore a session from a previously saved `SessionBlob`.
+    /// Create a new session from a `ModelSpec`. Appends the root `Create`
+    /// event (seq 0) to the session log.
+    pub fn new(spec: &ModelSpec) -> Result<Self, KernelError> {
+        let mut s = Self::from_spec(spec)?;
+        s.append_event(
+            SessionOp::Create,
+            SessionEventSpec::Create { spec: spec.clone() },
+        );
+        Ok(s)
+    }
+
+    /// Append a record to the event log. `seq` is the pre-increment log
+    /// length; records are never rewritten in place.
+    fn append_event(&mut self, op: SessionOp, spec: SessionEventSpec) {
+        let ev = SessionEvent {
+            seq: self.next_seq,
+            op,
+            spec,
+            source: self.log_source.clone(),
+            ts: now_ms(),
+        };
+        self.event_log.push(ev);
+        self.next_seq = self.event_log.len() as u64;
+    }
+
+    /// Reject any mutating op while a compaction lock bracket is open
+    /// (UK-1008 `SESSION_COMPACTION_BUSY`).
+    fn check_idle(&self) -> Result<(), KernelError> {
+        if let Some(through) = self.compaction_lock {
+            return Err(KernelError::SessionCompactionBusy {
+                reason: format!("session busy: compaction lock open through seq {through}"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Log a record **before** applying the op, then apply. On error the
+    /// record is rolled back so `fold(events) ≡ live`. In debug builds the
+    /// whole log is replayed and compared against the live session.
+    fn log_then_apply<T>(
+        &mut self,
+        op: SessionOp,
+        spec: SessionEventSpec,
+        f: impl FnOnce(&mut Self) -> Result<T, KernelError>,
+    ) -> Result<T, KernelError> {
+        self.check_idle()?;
+        let ev = SessionEvent {
+            seq: self.next_seq,
+            op,
+            spec,
+            source: self.log_source.clone(),
+            ts: now_ms(),
+        };
+        self.event_log.push(ev);
+        self.next_seq = self.event_log.len() as u64;
+        let result = f(self);
+        self.next_seq = self.event_log.len() as u64;
+        match result {
+            Ok(v) => {
+                #[cfg(debug_assertions)]
+                self.debug_assert_reconstructable();
+                Ok(v)
+            }
+            Err(e) => {
+                self.event_log.pop();
+                self.next_seq = self.event_log.len() as u64;
+                Err(e)
+            }
+        }
+    }
+
+    /// H3: fold a snapshot of the current state into a legacy-form
+    /// `SessionBlob` (empty events; direct state fields). Used as the
+    /// `CompactEnd` summary node and as the folded half of `save`.
+    fn folded_blob(&self) -> SessionBlob {
+        SessionBlob {
+            format_version: SESSION_FORMAT_VERSION,
+            events: Vec::new(),
+            hamiltonian_spec: self.hamiltonian_spec.clone(),
+            solver_spec: self.solver_spec.clone(),
+            state: self.state.clone(),
+            t_now: self.t_now,
+        }
+    }
+
+    /// H3: the compressed, replayable history view. Raw events stay in
+    /// `self.event_log`; the derived view keeps the **last** completed
+    /// `CompactEnd` summary node (whose folded blob captures the full state at
+    /// its boundary, subsuming every earlier event incl. prior brackets) plus
+    /// the tail events after it. Seq is renumbered to be contiguous in the
+    /// derived view. An orphaned `CompactStart` (crash between start/end) is
+    /// kept so `restore` fails loud (UK-1007). Replaying `derived_log()`
+    /// reproduces the same folded state as the full raw log.
+    fn derived_log(&self) -> Vec<SessionEvent> {
+        let last_ce = self.event_log.iter().rposition(|e| {
+            matches!(
+                &e.spec,
+                SessionEventSpec::CompactEnd {
+                    summary: Some(_),
+                    ..
+                }
+            )
+        });
+        let mut out: Vec<SessionEvent> = match last_ce {
+            None => self.event_log.clone(),
+            Some(idx) => {
+                let mut v = Vec::with_capacity(self.event_log.len() - idx);
+                v.push(self.event_log[idx].clone());
+                for ev in &self.event_log[idx + 1..] {
+                    v.push(ev.clone());
+                }
+                v
+            }
+        };
+        for (i, e) in out.iter_mut().enumerate() {
+            e.seq = i as u64;
+        }
+        out
+    }
+
+    /// H3: replay a session event log into a live `Session`. The first record
+    /// must be `Create` (full raw log) or a `CompactStart`/`CompactEnd`
+    /// bracket pair (derived/compacted view). Validates strict monotonic seq,
+    /// bracket balance (no orphaned lock → UK-1007), and seq-contiguity of the
+    /// folded state. The resulting session's `event_log`/`next_seq` are set to
+    /// the replayed log so it can continue accumulating.
+    fn replay(events: &[SessionEvent]) -> Result<Self, KernelError> {
+        if events.is_empty() {
+            return Err(KernelError::SessionLogVersion {
+                got: SESSION_FORMAT_VERSION,
+                reason: "cannot replay an empty session log (missing Create)".into(),
+            });
+        }
+        for w in events.windows(2) {
+            if w[0].seq >= w[1].seq {
+                return Err(KernelError::SessionLogVersion {
+                    got: w[1].seq as u32,
+                    reason: format!(
+                        "non-monotonic session log sequence at seq {} (prev {})",
+                        w[1].seq, w[0].seq
+                    ),
+                });
+            }
+        }
+        let mut session: Option<Session> = None;
+        let mut open: Option<u64> = None;
+        let mut first = true;
+        for ev in events {
+            match &ev.spec {
+                SessionEventSpec::Create { spec } => {
+                    if !first {
+                        return Err(KernelError::SessionCompactionOrphaned {
+                            reason: format!("duplicate Create event at seq {}", ev.seq),
+                        });
+                    }
+                    session = Some(Self::from_spec(spec)?);
+                }
+                SessionEventSpec::CompactStart { through_seq } => {
+                    if let Some(t) = open {
+                        return Err(KernelError::SessionCompactionOrphaned {
+                            reason: format!(
+                                "nested compaction lock at seq {} (open through {})",
+                                ev.seq, t
+                            ),
+                        });
+                    }
+                    open = Some(*through_seq);
+                }
+                SessionEventSpec::CompactEnd {
+                    through_seq,
+                    summary,
+                } => {
+                    let summary =
+                        summary
+                            .as_ref()
+                            .ok_or_else(|| KernelError::SessionCompactionOrphaned {
+                                reason: format!("CompactEnd without summary at seq {}", ev.seq),
+                            })?;
+                    match open.take() {
+                        // Derived-view root: a CompactEnd with a summary is the
+                        // first record (no preceding CompactStart). Seed the
+                        // session from the folded summary.
+                        None => {
+                            if session.is_some() {
+                                return Err(KernelError::SessionCompactionOrphaned {
+                                    reason: format!(
+                                        "CompactEnd without matching CompactStart at seq {}",
+                                        ev.seq
+                                    ),
+                                });
+                            }
+                            session = Some(Self::from_folded(summary)?);
+                        }
+                        Some(expected) => {
+                            if expected != *through_seq {
+                                return Err(KernelError::SessionCompactionOrphaned {
+                                    reason: format!(
+                                        "CompactEnd through_seq {through_seq} != open through_seq \
+                                         {expected} at seq {}",
+                                        ev.seq
+                                    ),
+                                });
+                            }
+                            // Raw-log view: the bracket's summary carries the
+                            // state at the boundary and continues from there.
+                            session = Some(Self::from_folded(summary)?);
+                        }
+                    }
+                }
+                SessionEventSpec::SetPrior { spec } => {
+                    let s = session
+                        .as_mut()
+                        .ok_or_else(|| KernelError::SessionLogVersion {
+                            got: SESSION_FORMAT_VERSION,
+                            reason: format!("SetPrior before Create at seq {}", ev.seq),
+                        })?;
+                    s.apply_prior(spec)?;
+                }
+                SessionEventSpec::SetHamiltonian { spec } => {
+                    let s = session
+                        .as_mut()
+                        .ok_or_else(|| KernelError::SessionLogVersion {
+                            got: SESSION_FORMAT_VERSION,
+                            reason: format!("SetHamiltonian before Create at seq {}", ev.seq),
+                        })?;
+                    s.apply_hamiltonian(spec)?;
+                }
+                SessionEventSpec::Evolve { t, qfm, query } => {
+                    let s = session
+                        .as_mut()
+                        .ok_or_else(|| KernelError::SessionLogVersion {
+                            got: SESSION_FORMAT_VERSION,
+                            reason: format!("Evolve before Create at seq {}", ev.seq),
+                        })?;
+                    s.apply_evolve(*t, query.clone(), *qfm)?;
+                }
+                SessionEventSpec::Condition { spec } => {
+                    let s = session
+                        .as_mut()
+                        .ok_or_else(|| KernelError::SessionLogVersion {
+                            got: SESSION_FORMAT_VERSION,
+                            reason: format!("Condition before Create at seq {}", ev.seq),
+                        })?;
+                    s.apply_condition(spec)?;
+                }
+            }
+            first = false;
+        }
+        if let Some(through) = open {
+            return Err(KernelError::SessionCompactionOrphaned {
+                reason: format!("orphaned compaction lock through seq {through} (no CompactEnd)"),
+            });
+        }
+        let mut session = session.ok_or_else(|| KernelError::SessionLogVersion {
+            got: SESSION_FORMAT_VERSION,
+            reason: "session log has no Create event".into(),
+        })?;
+        session.event_log = events.to_vec();
+        session.next_seq = session.event_log.len() as u64;
+        session.compaction_lock = None;
+        Ok(session)
+    }
+
+    /// H3: in debug builds, replay the full raw log and assert the folded
+    /// state (t_now, serialized state, specs) matches the live session. This
+    /// pins the invariant `fold(events) ≡ live`.
+    #[cfg(debug_assertions)]
+    fn debug_assert_reconstructable(&self) {
+        if self.compaction_lock.is_some() {
+            // An open bracket is a transient mid-compaction state; the fold is
+            // still the live state, but the raw log alone cannot be replayed.
+            return;
+        }
+        let restored = match Session::replay(&self.event_log) {
+            Ok(r) => r,
+            Err(e) => panic!("session event log not reconstructable: {e:?}"),
+        };
+        let live_state = serde_json::to_string(&self.state).unwrap_or_default();
+        let restored_state = serde_json::to_string(&restored.state).unwrap_or_default();
+        assert_eq!(
+            restored.t_now, self.t_now,
+            "session replay diverged on t_now: {} != {}",
+            restored.t_now, self.t_now
+        );
+        assert_eq!(
+            live_state, restored_state,
+            "session replay diverged on state"
+        );
+        assert_eq!(
+            restored.hamiltonian_spec, self.hamiltonian_spec,
+            "session replay diverged on hamiltonian_spec"
+        );
+        assert_eq!(
+            restored.solver_spec, self.solver_spec,
+            "session replay diverged on solver_spec"
+        );
+    }
+
+    /// Restore a session from a previously saved `SessionBlob`. Prefers the
+    /// event log (`events` + `format_version` == `SESSION_FORMAT_VERSION`);
+    /// falls back to the legacy direct-state path for pre-H3 blobs (empty
+    /// events). A version mismatch is rejected (UK-1006); an orphaned
+    /// compaction lock fails loud (UK-1007).
     pub fn restore(blob: SessionBlob) -> Result<Self, KernelError> {
+        if !blob.events.is_empty() {
+            if blob.format_version != SESSION_FORMAT_VERSION {
+                return Err(KernelError::SessionLogVersion {
+                    got: blob.format_version,
+                    reason: format!(
+                        "session log format version {} is not supported (expected {})",
+                        blob.format_version, SESSION_FORMAT_VERSION
+                    ),
+                });
+            }
+            return Self::replay(&blob.events);
+        }
+        Self::from_folded(&blob)
+    }
+
+    /// Build a session directly from the folded (legacy) fields of a blob.
+    /// Used by `restore` for pre-H3 blobs and by compaction summary replay.
+    fn from_folded(blob: &SessionBlob) -> Result<Self, KernelError> {
         let hamiltonian = build::build_hamiltonian(&blob.hamiltonian_spec)?;
         let device = build::build_device(&blob.solver_spec.device)?;
         let sirk_opts = SirkOpts {
@@ -173,22 +685,31 @@ impl Session {
         // caller can re-create the pipeline by calling `set_hamiltonian`.
         let qfm_pipeline = None;
         Ok(Self {
-            state: blob.state,
+            state: blob.state.clone(),
             hamiltonian,
             sirk_opts,
             krylov_dim: blob.solver_spec.krylov_dim,
             restarts: blob.solver_spec.restarts.max(1),
             device,
             t_now: blob.t_now,
-            hamiltonian_spec: blob.hamiltonian_spec,
-            solver_spec: blob.solver_spec,
+            hamiltonian_spec: blob.hamiltonian_spec.clone(),
+            solver_spec: blob.solver_spec.clone(),
             qfm_pipeline,
+            event_log: Vec::new(),
+            next_seq: 0,
+            log_source: "kernel".into(),
+            compaction_lock: None,
         })
     }
 
     /// Serialize the current session state to a `SessionBlob` for persistence.
+    /// The blob carries the **derived** (compacted) event log tagged with
+    /// `SESSION_FORMAT_VERSION`, plus the folded state fields for backward
+    /// compatibility with pre-H3 consumers.
     pub fn save(&self) -> SessionBlob {
         SessionBlob {
+            format_version: SESSION_FORMAT_VERSION,
+            events: self.derived_log(),
             hamiltonian_spec: self.hamiltonian_spec.clone(),
             solver_spec: self.solver_spec.clone(),
             state: self.state.clone(),
@@ -196,8 +717,127 @@ impl Session {
         }
     }
 
+    /// H3: fork a new session from this session at log boundary `seq`
+    /// (inclusive). The fork replays the prefix `events[0..=seq]` and diverges
+    /// from there. Refuses boundaries that are an open compaction lock bracket
+    /// (`CompactStart`, UK-1009).
+    pub fn fork_at(&self, seq: u64) -> Result<Session, KernelError> {
+        let idx = seq as usize;
+        if idx >= self.event_log.len() {
+            return Err(KernelError::SessionForkRange {
+                reason: format!(
+                    "fork boundary seq {seq} out of range [0,{})",
+                    self.event_log.len()
+                ),
+            });
+        }
+        if matches!(
+            self.event_log[idx].spec,
+            SessionEventSpec::CompactStart { .. }
+        ) {
+            return Err(KernelError::SessionForkRange {
+                reason: format!("cannot fork at an open compaction lock boundary (seq {seq})"),
+            });
+        }
+        Session::replay(&self.event_log[..=idx])
+    }
+
+    /// H3: begin a compaction through log boundary `through_seq` (inclusive),
+    /// opening a lock bracket. The session is busy (UK-1008) until
+    /// `compact_end`. The boundary must be a settled record: never an `Evolve`
+    /// (would split an unanswered evolve dependency — tool-pairing safety) and
+    /// never a `CompactStart`. QFM sessions cannot be compacted (the pipeline
+    /// is not serializable, so a folded summary would break replay of
+    /// subsequent qfm evolutions).
+    pub fn compact_start(&mut self, through_seq: u64) -> Result<(), KernelError> {
+        self.check_idle()?;
+        let idx = through_seq as usize;
+        if idx >= self.event_log.len() {
+            return Err(KernelError::SessionCompactionBusy {
+                reason: format!(
+                    "compact boundary seq {through_seq} out of range [0,{})",
+                    self.event_log.len()
+                ),
+            });
+        }
+        let boundary = &self.event_log[idx];
+        match boundary.spec {
+            SessionEventSpec::Evolve { .. } => {
+                return Err(KernelError::SessionCompactionBusy {
+                    reason: format!(
+                        "compact boundary seq {through_seq} is an Evolve — would split an \
+                         unanswered evolve dependency"
+                    ),
+                });
+            }
+            SessionEventSpec::CompactStart { .. } => {
+                return Err(KernelError::SessionCompactionBusy {
+                    reason: format!(
+                        "compact boundary seq {through_seq} is an open compaction lock"
+                    ),
+                });
+            }
+            _ => {}
+        }
+        if self.qfm_pipeline.is_some() {
+            return Err(KernelError::SessionCompactionBusy {
+                reason: "cannot compact a QFM session (pipeline is not serializable)".into(),
+            });
+        }
+        self.append_event(
+            SessionOp::CompactStart,
+            SessionEventSpec::CompactStart { through_seq },
+        );
+        self.compaction_lock = Some(through_seq);
+        Ok(())
+    }
+
+    /// H3: close the open compaction lock bracket, appending a `CompactEnd`
+    /// summary node (the folded state at the boundary) to the log.
+    pub fn compact_end(&mut self) -> Result<(), KernelError> {
+        let through_seq =
+            self.compaction_lock
+                .ok_or_else(|| KernelError::SessionCompactionBusy {
+                    reason: "compact_end without an open compact_start".into(),
+                })?;
+        let summary = self.folded_blob();
+        self.append_event(
+            SessionOp::CompactEnd,
+            SessionEventSpec::CompactEnd {
+                through_seq,
+                summary: Some(summary),
+            },
+        );
+        self.compaction_lock = None;
+        Ok(())
+    }
+
+    /// H3: `compact_start` + `compact_end` atomically.
+    pub fn compact_through(&mut self, through_seq: u64) -> Result<(), KernelError> {
+        self.compact_start(through_seq)?;
+        self.compact_end()
+    }
+
+    /// H3: replay a raw event log into a fresh session. Test-only surface for
+    /// pinning `fold(events) ≡ live` (the in-process debug assertion does the
+    /// same thing implicitly in debug builds).
+    #[doc(hidden)]
+    pub fn replay_for_test(events: &[SessionEvent]) -> Session {
+        Self::replay(events).expect("replay raw log")
+    }
+
     /// Replace the current prior state. Resets evolution time to 0.
     pub fn set_prior(&mut self, p: &PriorSpec) -> Result<(), KernelError> {
+        let spec = p.clone();
+        self.log_then_apply(
+            SessionOp::SetPrior,
+            SessionEventSpec::SetPrior { spec: spec.clone() },
+            |s| s.apply_prior(&spec),
+        )
+    }
+
+    /// Apply a `SetPrior` op without logging (replay path).
+    fn apply_prior(&mut self, p: &PriorSpec) -> Result<(), KernelError> {
         self.state = build::build_prior(p)?;
         self.t_now = 0.0;
         Ok(())
@@ -205,6 +845,16 @@ impl Session {
 
     /// Replace the current Hamiltonian. The state is preserved.
     pub fn set_hamiltonian(&mut self, h: &HamiltonianSpec) -> Result<(), KernelError> {
+        let spec = h.clone();
+        self.log_then_apply(
+            SessionOp::SetHamiltonian,
+            SessionEventSpec::SetHamiltonian { spec: spec.clone() },
+            |s| s.apply_hamiltonian(&spec),
+        )
+    }
+
+    /// Apply a `SetHamiltonian` op without logging (replay path).
+    fn apply_hamiltonian(&mut self, h: &HamiltonianSpec) -> Result<(), KernelError> {
         self.hamiltonian = build::build_hamiltonian(h)?;
         self.hamiltonian_spec = h.clone();
         Ok(())
@@ -229,10 +879,45 @@ impl Session {
         t: f64,
         query: Option<&[f64]>,
     ) -> Result<EvolveReport, KernelError> {
+        // QFM dispatch: a QFM pipeline with a query runs the 4-phase
+        // generate; a pipeline without a query is an error (the pipeline is
+        // unusable without a raw input). The qfm flag is recorded in the
+        // event so replay mirrors the exact live dispatch.
+        if self.qfm_pipeline.is_some() && query.is_none() {
+            return Err(KernelError::Internal(
+                "QFM pipeline requires a query in evolve opts".into(),
+            ));
+        }
+        let qfm = self.qfm_pipeline.is_some() && query.is_some();
+        let query_owned = query.map(|q| q.to_vec());
+        self.log_then_apply(
+            SessionOp::Evolve,
+            SessionEventSpec::Evolve {
+                t,
+                qfm,
+                query: query_owned.clone(),
+            },
+            |s| s.apply_evolve(t, query_owned, qfm),
+        )
+    }
+
+    /// Apply an `Evolve` op without logging (replay path). `qfm` records the
+    /// dispatch taken by the live call so replay reproduces it exactly.
+    fn apply_evolve(
+        &mut self,
+        t: f64,
+        query: Option<Vec<f64>>,
+        qfm: bool,
+    ) -> Result<EvolveReport, KernelError> {
         // QFM dispatch: if a pipeline is present and a query is provided,
         // run the 4-phase generate and return the result.
-        if let Some(pipeline) = &self.qfm_pipeline {
-            let q = query.ok_or_else(|| {
+        if qfm {
+            let pipeline = self.qfm_pipeline.as_ref().ok_or_else(|| {
+                KernelError::Internal(
+                    "QFM evolve event but no pipeline (compacted QFM session?)".into(),
+                )
+            })?;
+            let q = query.as_deref().ok_or_else(|| {
                 KernelError::Internal("QFM pipeline requires a query in evolve opts".into())
             })?;
             let t0 = std::time::Instant::now();
@@ -296,6 +981,16 @@ impl Session {
     /// Returns `KernelError::ZeroProbabilityCondition` if the matching mass
     /// is negligible.
     pub fn condition(&mut self, e: &EventPredicate) -> Result<f64, KernelError> {
+        let spec = e.clone();
+        self.log_then_apply(
+            SessionOp::Condition,
+            SessionEventSpec::Condition { spec: spec.clone() },
+            |s| s.apply_condition(&spec),
+        )
+    }
+
+    /// Apply a `Condition` op without logging (replay path).
+    fn apply_condition(&mut self, e: &EventPredicate) -> Result<f64, KernelError> {
         let norm_sq = QuantumState::inner_product(&self.state, &self.state).re;
         if norm_sq < 1e-30 {
             return Err(KernelError::ZeroProbabilityCondition { mass: 0.0 });

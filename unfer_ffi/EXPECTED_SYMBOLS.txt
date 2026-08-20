@@ -64,6 +64,8 @@ uk_restore
 uk_secret_get
 uk_secret_put
 uk_secret_revoke
+uk_session_compact
+uk_session_fork
 uk_set_hamiltonian
 uk_set_prior
 uk_snapshot

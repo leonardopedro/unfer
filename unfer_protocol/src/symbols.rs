@@ -107,6 +107,8 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
     SymbolRecord { name: "uk_secret_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_secret_put", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_secret_revoke", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
+    SymbolRecord { name: "uk_session_compact", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
+    SymbolRecord { name: "uk_session_fork", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_set_hamiltonian", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_set_prior", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_snapshot", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
