@@ -15,6 +15,7 @@
 pub mod archive;
 pub mod codes;
 pub mod durable;
+pub mod harness;
 pub mod ops;
 pub mod symbols;
 pub mod types;
@@ -22,7 +23,9 @@ pub mod types;
 pub use archive::*;
 pub use codes::*;
 pub use durable::*;
+pub use harness::*;
 pub use ops::*;
+pub use symbols::*;
 pub use types::*;
 
 /// The kernel ABI/protocol version served by `uk_version()`.

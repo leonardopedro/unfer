@@ -345,3 +345,38 @@ The gate is the audit-listing test: `uk_audit_*` FFI round-trip + the loopback
 E2E (`loopback_audits_module_calls_with_caller_tag`,
 `loopback_agent_grant_enforcement_bounded_set`, …) — denied attempts are audited
 too, because they are the most important entries in the human's review trail.
+
+## Module archetypes (H8, harness registry `[SYNC]`)
+
+The module **archetype** (which runtime hosts the module) is resolved through
+the registered harness registry in `unfer_protocol::harness` — the single
+source of truth for `[module] archetype` selection. This section is `[SYNC]`
+with `unfer_protocol::harness::HARNESS_PROFILES` (adding/removing a profile
+there must be reflected here).
+
+Registered profiles:
+
+| `archetype`   | control transport | tool transport       | transcript | capabilities          |
+|---------------|-------------------|----------------------|------------|-----------------------|
+| `austral_cps` | `jit`             | `loopback`           | `ndjson`   | kernel                |
+| `capstd`      | `cranelift`       | `loopback`           | `ndjson`   | kernel                |
+| `ecmascript`  | `workerd`         | `loopback`           | `ndjson`   | kernel                |
+| `tidepool`    | `workerd`         | `effect-handlers`    | `ndjson`   | kernel + effects      |
+| `kernelless`  | `none`            | `none`               | `snapshot` | *(read-only)*         |
+
+Selection is `resolve_runtime_choice(approved, org, scope, fallback, requested)`
+(UK-4001 family on rejection):
+
+- `approved` — the module's `[module] archetypes` allowlist (operator config may
+  add to it). Empty = operator config decides.
+- `org` — the org floor (`UNFER_HARNESS_ORG`); a scope/request may only tighten
+  toward it, never widen below it.
+- `scope` — per-scope override; wins over the module's own request.
+- `requested` — the module's `[module] archetype`.
+- `fallback` — used when nothing above names an approved archetype
+  (default `austral_cps`).
+
+A requested archetype that is not approved is rejected **non-retryably**
+(UK-4001), never silently downgraded to the fallback. The resolved choice is
+recorded on the module handle so a cold restart re-runs the same archetype
+(`ModuleHost::resolve_runtime_choice` + the `load` gate).

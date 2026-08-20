@@ -454,6 +454,20 @@ registered resolver.
 **Acceptance**: `modhost host` selects the archetype per scope and rejects the
 unapproved one; rejection test green; `docs/MODULE_RECIPE.md` `[SYNC]`.
 
+**Status (H8, DONE)**: the module archetype selection is consolidated into one
+registered resolver:
+- `unfer_protocol::harness` defines `HarnessProfile` and the `HARNESS_PROFILES`
+  adapter table (austral_cps / capstd / ecmascript / tidepool + the degenerate
+  kernelless read-only profile), plus the pure `resolve_runtime_choice(approved,
+  org, scope, fallback, requested)` with non-retryable UK-4001-family rejection.
+- `australVM` `ModuleHost::resolve_runtime_choice` calls it (approved =
+  `[module] archetypes`, org = `UNFER_HARNESS_ORG`, fallback `austral_cps`) and
+  `load` gates on the resolved choice; `unfer_protocol` is now a hard
+  (non-optional) dependency of `austral_cranelift_bridge`.
+- Tests: per-scope archetype selection, unapproved-request rejection, fallback
+  when the scope names nothing, and cold-restart reuse of the recorded choice.
+  `docs/MODULE_RECIPE.md` documents the registry as `[SYNC]`.
+
 ## H9 — Security postures + provenance screening over the existing primitives (M) — *unfer*
 
 **Improves**: the S21/S22/S23/S25/S26 security primitives — which exist but are
