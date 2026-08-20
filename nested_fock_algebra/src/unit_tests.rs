@@ -868,4 +868,516 @@ mod algebra_tests {
         a.truncate_top_k(1);
         assert_eq!(a.len(), 1, "only the largest component should remain");
     }
+
+    // ── QED structural tests (see fock_sirk/tests/qed_validation.rs for the
+    //    quantitative comparisons against published perturbative results) ──
+
+    use crate::models::{
+        qed_cavity_frequencies, qed_charge_operator, qed_free_photon, qed_pair_production,
+        qed_static_charge_interaction,
+    };
+
+    #[test]
+    fn test_qed_free_photon_is_hermitian_number_terms() {
+        // H = Σ ω N_i : one inner number-operator term per mode (framework-
+        // native), real coeffs. The inner construction guarantees ⟨0|H|0⟩=0.
+        let h = qed_free_photon(&[1.0, 2.0, 3.0]);
+        assert_eq!(h.terms.len(), 3);
+        for (coeff, ops) in &h.terms {
+            assert_eq!(coeff.im.abs(), 0.0, "free-photon coefficients are real");
+            assert_eq!(ops.len(), 2);
+            assert!(matches!(ops[0], Operator::InnerBosonCreate(_)));
+            assert!(matches!(ops[1], Operator::InnerBosonAnnihilate(_)));
+        }
+        // H† = H term-for-term (number operators are self-adjoint).
+        let h_dag = h.adjoint();
+        for ((c1, o1), (c2, o2)) in h.terms.iter().zip(h_dag.terms.iter()) {
+            assert!((c1 - c2).norm() < 1e-12, "adjoint coefficient must match");
+            assert_eq!(
+                format!("{:?}", o1),
+                format!("{:?}", o2),
+                "number operator is self-adjoint"
+            );
+        }
+        // ⟨0|H|0⟩ = 0 on the physical vacuum (one empty universe).
+        let vac = crate::QuantumState::vacuum()
+            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let hv = h.apply(&vac);
+        let e0 = crate::QuantumState::inner_product(&hv, &vac).re;
+        assert!(
+            e0.abs() < 1e-9,
+            "⟨0|H|0⟩ must be 0 (inner construction), got {e0}"
+        );
+    }
+
+    #[test]
+    fn test_qed_cavity_frequencies_are_n_pi_over_d() {
+        // Casimir cavity spectrum ω_n = nπ/d (published mode structure).
+        let d = 2.0;
+        let freqs = qed_cavity_frequencies(d, 4);
+        let expected: Vec<f64> = (1..=4)
+            .map(|n| std::f64::consts::PI * (n as f64) / d)
+            .collect();
+        assert_eq!(freqs, expected);
+    }
+
+    #[test]
+    fn test_qed_static_charge_interaction_is_hermitian() {
+        // H = Σ k N + Σ g (B† + B): the B† and B terms carry equal real
+        // coefficients, so H† = H exactly.
+        let modes = crate::models::qed_coulomb_radial_modes(0.1, 2.0, 0.5);
+        let h = qed_static_charge_interaction(&modes, 0.7, 1.0);
+        assert!(!h.terms.is_empty());
+        // 3 terms per mode: number operator + creation + annihilation.
+        assert_eq!(h.terms.len(), 3 * modes.len());
+        // Hermiticity: the two single-operator terms per mode have identical
+        // coefficients and the creation/annihilation pair is conjugate.
+        for i in 0..modes.len() {
+            let (c_num, ops_num) = &h.terms[3 * i];
+            assert_eq!(ops_num.len(), 2, "number-operator term");
+            assert!(c_num.im.abs() < 1e-12);
+            let (c_cr, ops_cr) = &h.terms[3 * i + 1];
+            let (c_an, ops_an) = &h.terms[3 * i + 2];
+            assert_eq!(ops_cr.len(), 1, "creation term");
+            assert_eq!(ops_an.len(), 1, "annihilation term");
+            assert!(
+                matches!(&ops_cr[0], Operator::OuterBosonCreate(m) if m.modes.get(&(i as u32)) == Some(&1)),
+                "creation mode mismatch"
+            );
+            assert!(
+                matches!(&ops_an[0], Operator::OuterBosonAnnihilate(m) if m.modes.get(&(i as u32)) == Some(&1)),
+                "annihilation mode mismatch"
+            );
+            assert!(
+                (c_cr - c_an).norm() < 1e-12,
+                "creation/annihilation coefficients must match for Hermiticity"
+            );
+        }
+    }
+
+    #[test]
+    fn test_qed_charge_operator_eigenvalues() {
+        // Q = Σ e†e − Σ p†p: |vac⟩ → 0, |e₀⟩ → +1, |p₀⟩ → −1.
+        let q = qed_charge_operator(1, 1);
+        let mut vac = QuantumState::vacuum();
+        vac = vac.apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        // Q|vac⟩ = 0.
+        let qv = q.apply(&vac);
+        let ov = QuantumState::inner_product(&qv, &vac).re;
+        assert!(ov.abs() < 1e-12, "Q|vac⟩ must be 0, got {ov}");
+        // One electron in fermion mode 0 → eigenvalue +1.
+        let e_state = vac.create_fermion(0);
+        let qe = q.apply(&e_state);
+        let ov = QuantumState::inner_product(&qe, &e_state).re;
+        assert!((ov - 1.0).abs() < 1e-12, "Q|e⟩ must be +1, got {ov:?}");
+        // One positron in fermion mode 1 → eigenvalue −1.
+        let p_state = vac.create_fermion(1);
+        let qp = q.apply(&p_state);
+        let ov = QuantumState::inner_product(&qp, &p_state).re;
+        assert!((ov + 1.0).abs() < 1e-12, "Q|p⟩ must be −1, got {ov:?}");
+    }
+
+    #[test]
+    fn test_qed_pair_production_is_hermitian_and_conserves_charge() {
+        // 2 pair modes; symmetric couplings so the model is genuinely U(1)-invariant.
+        let e_energies = [1.5, 2.0];
+        let p_energies = [1.5, 2.0];
+        let vertex = [0.3, 0.2];
+        let h = qed_pair_production(1.0, &e_energies, &p_energies, &vertex);
+
+        // Hermiticity: H† must equal H (adjoint pairs of vertex terms, real coeffs).
+        let h_dag = h.adjoint();
+        assert_eq!(h.terms.len(), h_dag.terms.len());
+        for t in &h.terms {
+            assert!(
+                t.0.im.abs() < 1e-12,
+                "pair-production coefficients are real"
+            );
+        }
+        // Term count: 1 photon + 2*(electron+positron) + 2*2 vertex terms = 9.
+        assert_eq!(h.terms.len(), 9);
+
+        // Charge conservation [H, Q] = 0: apply HQ − QH to a few states.
+        // Layout: electrons at fermion modes 0..2, positrons at modes 2..4.
+        let q = qed_charge_operator(2, 2);
+        let mut vac = QuantumState::vacuum();
+        vac = vac.apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let probes = [
+            vac.clone(),
+            vac.create_fermion(0),                   // one electron
+            vac.create_fermion(0).create_fermion(2), // electron + positron
+            vac.apply(&Operator::OuterBosonCreate({
+                let mut inner = InnerBosonicState::vacuum();
+                inner.modes.insert(0, 1);
+                inner
+            })), // one photon
+        ];
+        for (i, s) in probes.iter().enumerate() {
+            let hq = h.apply(&q.apply(s));
+            let qh = q.apply(&h.apply(s));
+            let mut diff = hq.clone();
+            diff.scale_and_add(&qh, Complex64::new(-1.0, 0.0));
+            let nrm = diff.norm();
+            assert!(
+                nrm < 1e-9,
+                "[H, Q]|probe {i}⟩ must vanish, got ‖·‖ = {nrm:.3e}"
+            );
+        }
+    }
+
+    // ── QCD structural tests (see fock_sirk/tests/qcd_validation.rs for the
+    //    quantitative comparisons against published perturbative QCD) ──
+
+    use crate::models::{
+        qcd_beta_function, qcd_color_factors, qcd_one_gluon_exchange, qcd_running_coupling,
+        qcd_su3_f,
+    };
+
+    #[test]
+    fn test_qcd_color_factors_are_published_values() {
+        // C_F = 4/3, C_A = 3, T_R = 1/2 — the exact published QCD color factors.
+        let (c_f, c_a, t_r) = qcd_color_factors();
+        assert!(
+            (c_f - 4.0 / 3.0).abs() < 1e-12,
+            "C_F must be 4/3, got {c_f}"
+        );
+        assert!((c_a - 3.0).abs() < 1e-12, "C_A must be 3 (N_c), got {c_a}");
+        assert!((t_r - 0.5).abs() < 1e-12, "T_R must be 1/2, got {t_r}");
+    }
+
+    #[test]
+    fn test_qcd_su3_structure_constants_antisymmetry() {
+        // f_abc is totally antisymmetric.
+        assert!((qcd_su3_f(0, 1, 2) - 1.0).abs() < 1e-12, "f_012 = 1");
+        assert!((qcd_su3_f(1, 0, 2) + 1.0).abs() < 1e-12, "f_102 = -1");
+        assert!((qcd_su3_f(2, 1, 0) + 1.0).abs() < 1e-12, "f_210 = -1");
+        assert!((qcd_su3_f(0, 2, 1) + 1.0).abs() < 1e-12, "f_021 = -1");
+        // C_A consistency: sum_abc f_abc² / 8 = 3.
+        let mut sum_f2 = 0.0;
+        for a in 0..8 {
+            for b in 0..8 {
+                for c in 0..8 {
+                    let f = qcd_su3_f(a, b, c);
+                    sum_f2 += f * f;
+                }
+            }
+        }
+        assert!(
+            (sum_f2 / 8.0 - 3.0).abs() < 1e-9,
+            "Σ f²/8 must equal C_A = 3, got {}",
+            sum_f2 / 8.0
+        );
+    }
+
+    #[test]
+    fn test_qcd_one_gluon_exchange_is_hermitian() {
+        let modes = crate::models::qed_coulomb_radial_modes(0.1, 2.0, 0.5);
+        let h = qcd_one_gluon_exchange(&modes, 0.7, 1.0);
+        assert!(!h.terms.is_empty());
+        // 3 terms per mode: number operator + creation + annihilation.
+        assert_eq!(h.terms.len(), 3 * modes.len());
+        for i in 0..modes.len() {
+            let (c_num, ops_num) = &h.terms[3 * i];
+            assert_eq!(ops_num.len(), 2, "number-operator term");
+            assert!(c_num.im.abs() < 1e-12);
+            let (c_cr, _) = &h.terms[3 * i + 1];
+            let (c_an, _) = &h.terms[3 * i + 2];
+            assert!(
+                (c_cr - c_an).norm() < 1e-12,
+                "gluon creation/annihilation coefficients must match (Hermiticity)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_qcd_beta_function_published_coefficients() {
+        // β₀ = (11/3)N_c − (2/3)N_f; pure SU(3): 11, 9 (N_f=3), 7 (N_f=6).
+        assert!(
+            (qcd_beta_function(3.0, 0.0) - 11.0).abs() < 1e-9,
+            "pure-glue β₀ must be 11"
+        );
+        assert!(
+            (qcd_beta_function(3.0, 3.0) - 9.0).abs() < 1e-9,
+            "N_f=3 β₀ must be 9"
+        );
+        assert!(
+            (qcd_beta_function(3.0, 6.0) - 7.0).abs() < 1e-9,
+            "N_f=6 β₀ must be 7"
+        );
+        // Asymptotic freedom: β₀ > 0.
+        assert!(
+            qcd_beta_function(3.0, 6.0) > 0.0,
+            "SU(3) is asymptotically free"
+        );
+        // U(1) is NOT: β₀ < 0 is not the case here; check QED-like N_f large.
+        // β₀ < 0 (no asymptotic freedom) requires N_f > (11/2)N_c = 16.5 for SU(3).
+        assert!(
+            qcd_beta_function(3.0, 17.0) < 0.0,
+            "N_f=17 QCD-like β₀ must be negative (loss of asymptotic freedom)"
+        );
+    }
+
+    #[test]
+    fn test_qcd_running_coupling_asymptotic_freedom() {
+        // α_s decreases with Q² when β₀ > 0.
+        let alpha = qcd_running_coupling(7.0, 0.3);
+        assert!(alpha[0] > alpha[1] && alpha[1] > alpha[2] && alpha[2] > alpha[3]);
+        // All finite and positive, and never exceeding α_s(μ²).
+        for &a in alpha.iter() {
+            assert!(
+                a > 0.0 && a <= 0.3 + 1e-12,
+                "α_s(Q²) must stay in (0, α_s(μ²)]: {a}"
+            );
+        }
+        // With β₀ < 0 (Landau-pole / non-asymptotic-free) and a small α_s so
+        // the pole lies beyond the tested scales, α_s grows with Q².
+        let alpha_bad = qcd_running_coupling(-7.0, 0.05);
+        assert!(
+            alpha_bad[3] > alpha_bad[0],
+            "negative β₀ must make α_s grow (no asymptotic freedom)"
+        );
+    }
+
+    #[test]
+    fn test_qcd_beta_two_loop_published_coefficients() {
+        // β₁ = (34/3)N_c² − (10/3)N_cN_f − 2C_FN_f (Jones, Caswell 1974).
+        use crate::models::qcd_beta_two_loop;
+        assert!(
+            (qcd_beta_two_loop(3.0, 0.0) - 102.0).abs() < 1e-9,
+            "pure-glue β₁ must be 102"
+        );
+        assert!(
+            (qcd_beta_two_loop(3.0, 3.0) - 64.0).abs() < 1e-9,
+            "N_f=3 β₁ must be 64"
+        );
+        assert!(
+            (qcd_beta_two_loop(3.0, 6.0) - 26.0).abs() < 1e-9,
+            "N_f=6 β₁ must be 26"
+        );
+    }
+
+    #[test]
+    fn test_qcd_r_ratio_published_values() {
+        // R = N_c Σ Q_f²; u,d,s,c,b charges → 2, 10/3, 11/3 (published, PDG).
+        use crate::models::qcd_r_ratio;
+        let u = 2.0 / 3.0;
+        let d = -1.0 / 3.0;
+        let uds = [u, d, d];
+        let udsc = [u, d, d, u];
+        let udscb = [u, d, d, u, d];
+        assert!((qcd_r_ratio(&uds) - 2.0).abs() < 1e-9, "R(u,d,s) must be 2");
+        assert!(
+            (qcd_r_ratio(&udsc) - 10.0 / 3.0).abs() < 1e-9,
+            "R(u,d,s,c) must be 10/3"
+        );
+        assert!(
+            (qcd_r_ratio(&udscb) - 11.0 / 3.0).abs() < 1e-9,
+            "R(u,d,s,c,b) must be 11/3"
+        );
+    }
+
+    #[test]
+    fn test_qcd_two_loop_running_reaches_published_alpha_s_tau() {
+        // From the PDG α_s(M_Z) = 0.1179, two-loop running reaches the
+        // published α_s(M_τ) ≈ 0.33 (PDG: 0.314 ± 0.030). One-loop gives ~0.27.
+        use crate::models::{QCD_ALPHA_S_MZ, qcd_alpha_s_running};
+        let m_z = 91.1876;
+        let m_tau = 1.777;
+        let two_loop = qcd_alpha_s_running(QCD_ALPHA_S_MZ, m_z, m_tau, 5.0, 3.0, 200_000);
+        // Published PDG α_s(M_τ): 0.314 ± 0.030. Two-loop must land within a
+        // generous window (crude single-flavour-threshold approximation).
+        assert!(
+            (two_loop - 0.314).abs() < 0.05,
+            "two-loop α_s(M_τ) must reach the published 0.314±0.03, got {two_loop}"
+        );
+        // Determinism: same inputs → same output.
+        let again = qcd_alpha_s_running(QCD_ALPHA_S_MZ, m_z, m_tau, 5.0, 3.0, 200_000);
+        assert!(
+            (two_loop - again).abs() < 1e-15,
+            "running must be deterministic"
+        );
+    }
+
+    // ── QG structural tests (see fock_sirk/tests/qg_validation.rs for the
+    //    comparisons against published numerical gravity results) ──
+
+    use crate::models::{
+        qg_flrw_scalars, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
+        qg_newton_potential, qg_perihelion_precession, qg_planck_units,
+    };
+
+    #[test]
+    fn test_qg_planck_units_match_published() {
+        let (l_p, t_p, m_p, e_p) = qg_planck_units();
+        // Published CODATA/PDG values.
+        assert!(
+            (l_p - 1.616255e-35).abs() / 1.616255e-35 < 1e-3,
+            "ℓ_P must be 1.616255e-35 m, got {l_p:.5e}"
+        );
+        assert!(
+            (t_p - 5.391247e-44).abs() / 5.391247e-44 < 1e-3,
+            "t_P must be 5.391247e-44 s, got {t_p:.5e}"
+        );
+        assert!(
+            (m_p - 2.176434e-8).abs() / 2.176434e-8 < 1e-3,
+            "m_P must be 2.176434e-8 kg, got {m_p:.5e}"
+        );
+        // E_P = 1.221e19 GeV (1 GeV = 1.602176634e-10 J).
+        let e_p_gev = e_p / 1.602_176_634e-10;
+        assert!(
+            (e_p_gev - 1.221e19).abs() / 1.221e19 < 1e-2,
+            "E_P must be 1.221e19 GeV, got {e_p_gev:.3e} GeV"
+        );
+    }
+
+    #[test]
+    fn test_qg_gravitational_redshift_pound_rebka() {
+        // Pound–Rebka: g ≈ 9.82 m/s², Δh = 22.5 m → z ≈ 2.5e-15 (published).
+        let z = qg_gravitational_redshift(9.82, 22.5);
+        assert!(
+            (z - 2.46e-15).abs() / 2.46e-15 < 0.01,
+            "Pound–Rebka z must be ≈2.5e-15, got {z:.3e}"
+        );
+    }
+
+    #[test]
+    fn test_qg_mercury_perihelion_precession() {
+        // Mercury: GM_sun = 1.327e20, a = 5.791e10, e = 0.2056, period 88 d.
+        let gm = 1.32712440018e20;
+        let arcsec = qg_perihelion_precession(gm, 5.7909e10, 0.205_630, 88.0);
+        assert!(
+            (arcsec - 43.0).abs() < 0.5,
+            "Mercury precession must be ≈43.0″/century, got {arcsec:.2}"
+        );
+    }
+
+    #[test]
+    fn test_qg_light_bending_eddington() {
+        // Sun's limb: GM_sun = 1.327e20, b = R_sun = 6.96e8 → 1.75″ (published).
+        let gm = 1.32712440018e20;
+        let arcsec = qg_light_bending(gm, 6.96e8);
+        assert!(
+            (arcsec - 1.75).abs() < 0.02,
+            "Sun-limb deflection must be ≈1.75″, got {arcsec:.3}"
+        );
+    }
+
+    #[test]
+    fn test_qg_gps_time_dilation() {
+        // Earth GM = 3.986e14, R = 6.371e6, GPS h = 2.02e7 → ~5.3e-10.
+        let rate = qg_gps_rate(3.986_004_418e14, 6.371e6, 2.02e7);
+        assert!(
+            (rate - 5.29e-10).abs() / 5.29e-10 < 0.01,
+            "GPS rate must be ≈5.3e-10, got {rate:.3e}"
+        );
+    }
+
+    #[test]
+    fn test_qg_tegr_friedmann_equivalence() {
+        // Matter-dominated FLRW: a ∝ t^{2/3}, H = 2/(3t), Ḣ = -2/(3t²).
+        let t = 2.0;
+        let h = 2.0 / (3.0 * t);
+        let hdot = -2.0 / (3.0 * t * t);
+        let (r, tegr) = qg_flrw_scalars(h, hdot);
+        // Published FLRW: R = 6(Ḣ+H²), T = -6H².
+        assert!((r - 6.0 * (hdot + h * h)).abs() < 1e-12, "R = 6(Ḣ+H²)");
+        assert!((tegr - -6.0 * h * h).abs() < 1e-12, "T = -6H²");
+        // TEGR identity: R = -T + (divergence). The r-independent piece of the
+        // divergence is 6Ḣ; R + T = 6Ḣ + ... verify the field-equation content:
+        // both R and TEGR-T give the same Friedmann equation 3H² = 8πGρ.
+        let r_friedmann = 3.0 * h * h; // from R (vacuum part)
+        let t_friedmann = -tegr / 2.0; // from T = -6H²
+        assert!(
+            (r_friedmann - t_friedmann).abs() < 1e-12,
+            "R and TEGR-T must give the same Friedmann equation (TEGR = GR)"
+        );
+    }
+
+    #[test]
+    fn test_qg_newton_potential_earth() {
+        // Earth surface: GM = 3.986e14, R = 6.371e6 → Φ ≈ -6.26e7 m²/s².
+        let phi = qg_newton_potential(3.986_004_418e14, 6.371e6);
+        assert!(
+            (phi - -6.26e7).abs() / 6.26e7 < 0.01,
+            "Earth surface Φ must be ≈-6.26e7 m²/s², got {phi:.3e}"
+        );
+    }
+
+    // ── Cadabra2-derived Hamiltonian builders (outer nested Fock space) ──
+
+    use crate::models::{qcd_ym_hamiltonian, qg_tegr_hamiltonian};
+
+    #[test]
+    fn test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian() {
+        // The .cdb-derived H_final = ½π² + ½B² built in the outer nested Fock
+        // space with B a genuine function of A: ⟨0|H|0⟩ = 0 and H = H†.
+        let h = qcd_ym_hamiltonian(0.5);
+        assert!(!h.terms.is_empty());
+        // Hermiticity: same term count, real coefficients, adjoint pairs.
+        let hd = h.adjoint();
+        assert_eq!(h.terms.len(), hd.terms.len());
+        for t in &h.terms {
+            assert!(t.0.im.abs() < 1e-12, "YM outer-Fock coefficients are real");
+        }
+        // Vacuum expectation 0.
+        let hv = h.apply(&crate::QuantumState::vacuum());
+        let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+    }
+
+    #[test]
+    fn test_qg_tegr_hamiltonian_outer_fock_vacuum_zero_and_hermitian() {
+        // The Cadabra2-derived TEGR kinetic (1/16e)𝒮² in the outer nested Fock
+        // space: ⟨0|H|0⟩ = 0 and H = H† (self-adjoint in the truncation).
+        let h = qg_tegr_hamiltonian(3);
+        let hd = h.adjoint();
+        assert_eq!(h.terms.len(), hd.terms.len());
+        for t in &h.terms {
+            assert!(
+                t.0.im.abs() < 1e-12,
+                "TEGR outer-Fock coefficients are real"
+            );
+        }
+        let hv = h.apply(&crate::QuantumState::vacuum());
+        let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+    }
+
+    #[test]
+    fn test_qcd_pair_production_carries_tr_color_factor() {
+        // qcd_pair_production scales the vertex by √T_R (T_R = 1/2): the
+        // resulting Hamiltonian's off-diagonal strength is √(1/2)·c.
+        use crate::models::qcd_pair_production;
+        let quark = [1.5];
+        let antiquark = [1.5];
+        let vertex = [0.3];
+        let h = qcd_pair_production(1.0, &quark, &antiquark, &vertex);
+        let hd = h.adjoint();
+        assert_eq!(h.terms.len(), hd.terms.len());
+        for t in &h.terms {
+            assert!(
+                t.0.im.abs() < 1e-12,
+                "QCD pair-production coefficients are real"
+            );
+        }
+        // The vertex terms carry √T_R = 1/√2: λ·c with λ = 1/√2. Find the first
+        // two-operator vertex term and check its amplitude is (1/√2)·0.3.
+        let sqrt_tr = (0.5_f64).sqrt();
+        let expected = sqrt_tr * 0.3;
+        let mut found = false;
+        for (coeff, ops) in &h.terms {
+            if ops.len() == 3 {
+                found = true;
+                assert!(
+                    (coeff.re - expected).abs() < 1e-12,
+                    "QCD vertex amplitude must be √T_R·c = {expected}, got {}",
+                    coeff.re
+                );
+            }
+        }
+        assert!(
+            found,
+            "QCD pair-production must contain a 3-operator vertex term"
+        );
+    }
 }

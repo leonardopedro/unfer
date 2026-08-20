@@ -162,7 +162,14 @@
         # Gram eigendecomp uses cuSOLVER; the Stage 6 reconstruction
         # uses cuBLAS for the per-row renormalization).
         shellHook = ''
-          export LD_LIBRARY_PATH="${cudaToolkit}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+          # gcc-15 libstdc++ (from the unstable channel) FIRST: cadabra2-2.5.14
+          # is built against a GCC-15 toolchain and needs GLIBCXX_3.4.32 /
+          # CXXABI_1.3.15, which the 23.05 stdenv's gcc-12 libstdc++ lacks
+          # (runtime failure: "GLIBCXX_3.4.32 not found"). Prepend it so the
+          # symbolic-CAS subprocess (prob_kernel::symbolic) loads a compatible
+          # libstdc++ instead of the older one from stdenv.cc.cc. It is ABI-
+          # backward-compatible, so all other tools keep working.
+          export LD_LIBRARY_PATH="${cudaToolkit}/lib:${pkgsUnstable.gcc.cc.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
           export CUDA_HOME="${cudaToolkit}"
           # cudarc's build.rs (candle-core's CUDA backend) locates the toolkit
           # via CUDA_ROOT/CUDA_PATH/CUDA_TOOLKIT_ROOT_DIR — NOT CUDA_HOME — plus

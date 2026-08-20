@@ -361,6 +361,13 @@ impl SExpr {
         let mut ops = Vec::new();
         self.collect_content(&mut coeff, &mut ops);
         if coeff.norm_sqr() > 1e-24 {
+            // QUADRATIC ORDERING: normal-order the string and drop the
+            // [a,a†]=1 / [c,c†]₊=1 zero-point scalar, guaranteeing ⟨0|H|0⟩ = 0
+            // (the documented nested-Fock vacuum rule) for any expression.
+            let _zp = normal_order_inner(&mut ops);
+            if ops.is_empty() {
+                return None; // fully contracted → pure zero-point scalar
+            }
             Some((coeff, ops))
         } else {
             None
@@ -484,4 +491,51 @@ fn map_variable_to_op(name: &str) -> Option<Operator> {
     } else {
         None
     }
+}
+
+/// Normal-order an **inner** ladder-operator string in place (creators moved
+/// before annihilators), returning the `[a,a†]=1` / `[c,c†]₊=1` zero-point
+/// scalar that must be dropped. After this the string annihilates the physical
+/// vacuum (one empty universe), so `⟨0|H|0⟩ = 0` — the Quadratic-Ordering
+/// guarantee the CAS documents but, before this fix, did not implement for
+/// non-scalar terms (it only dropped empty-operator-list scalars, leaving
+/// `a a†` zero-points).
+///
+/// The framework applies `ops` right-to-left, so putting creators before
+/// annihilators makes the rightmost (first-applied) operator an annihilator,
+/// which kills the vacuum → ⟨0|H|0⟩ = 0. Each creator that passes a same-mode
+/// annihilator contributes the commutator `[a_i,a†_i] = 1` (boson) or
+/// anticommutator `[c_i,c†_i]₊ = 1` (fermion) scalar — the zero-point to drop.
+/// (Cross-mode fermion anticommutation signs are handled by the framework's
+/// canonical-ordering apply, which reads the final mode order.)
+fn normal_order_inner(ops: &mut Vec<Operator>) -> f64 {
+    let mut creators: Vec<Operator> = Vec::new();
+    let mut annihilators: Vec<Operator> = Vec::new();
+    let mut zeropoint = 0.0;
+    for op in ops.iter() {
+        match op {
+            Operator::InnerBosonCreate(m) => {
+                let c = annihilators
+                    .iter()
+                    .filter(|o| matches!(o, Operator::InnerBosonAnnihilate(mm) if mm == m))
+                    .count();
+                zeropoint += c as f64;
+                creators.push(op.clone());
+            }
+            Operator::InnerBosonAnnihilate(_) => annihilators.push(op.clone()),
+            Operator::InnerFermionCreate(m) => {
+                let c = annihilators
+                    .iter()
+                    .filter(|o| matches!(o, Operator::InnerFermionAnnihilate(mm) if mm == m))
+                    .count();
+                zeropoint += c as f64;
+                creators.push(op.clone());
+            }
+            Operator::InnerFermionAnnihilate(_) => annihilators.push(op.clone()),
+            other => creators.push(other.clone()),
+        }
+    }
+    creators.extend(annihilators);
+    *ops = creators;
+    zeropoint
 }
