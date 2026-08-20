@@ -8,14 +8,30 @@ PLAN A (unfer), PLAN B (australVM), PLAN C (velysterm).
 
 ## Improvement principle
 
+New features are welcome — but the first move is always to **consider and try
+to improve what this project already does**. This matters more than it looks:
+the system was inspired by **Theseus OS**, whose intralingual-safety module
+lineage (`docs/TUTORIAL.md` §authorization) makes australVM *already a plugin
+engine* — modules, `uk_*` capability symbols, `module.toml` grants, and the
+loopback are exactly the "plugin engine" surface Cordis provides. Cordis is what
+inspired this plan, and unfer already ships its analogue (Austral cells instead
+of JS plugins, linear types instead of a permission sandbox). So a proposed
+"new feature" is checked against that existing surface first: if the idea is a
+plugin-engine idea, the answer is usually *not* a new mechanism but an
+**improvement to the existing module/plugin path** (better discovery, richer
+grants, a missing `uk_*` capability, a faster loopback hop).
+
 The project is mature: the maintenance checklist in `AGENTS.md`, the S21–S35
 security/validation stages, and Plan R are all built. So this plan leads with
 **improvements over enlargement**:
 
-- Every stage names the **existing feature it improves** and the concrete gap it
-  closes. Most stages **consolidate** (one persistence path, one symbol census,
-  one archetype selection, one policy chain) instead of adding a parallel
-  mechanism.
+- Every stage below applies the rule to its own item: it **names the existing
+  feature it improves** and **reviews the related features this project already
+  ships** before proposing anything. Each stage opens with that review — the
+  existing feature, the concrete gap it closes in it, and why the answer is an
+  improvement there rather than a new mechanism. Most stages **consolidate**
+  (one persistence path, one symbol census, one archetype selection, one policy
+  chain) instead of adding a parallel mechanism.
 - Enlargement-only borrows (a skills registry, a deployment directory) are kept
   but marked **(E)**, ordered last, and justified against the existing surface.
 - Ideas that duplicate an existing mechanism are **not adopted even as
@@ -85,6 +101,12 @@ Every item below maps to a stage.
 **Improves**: the entire `AGENTS.md` maintenance checklist — currently manual
 discipline. Turns each item into a machine-checkable invariant that fails CI.
 
+**Existing-feature review**: this stage does not add a new safety mechanism; it
+makes the *existing* checklist (`AGENTS.md` maintenance sections) executable.
+The related feature is the checklist itself and the one-line gates already
+spread through the test suites — H1 consolidates them under one runner instead
+of a parallel tool.
+
 1. Port each checklist item into a `scripts/verify-invariants` gate (dsh
    package-invariants analog). A gate checks an **owned relationship**, never a
    service's presence. Examples:
@@ -118,6 +140,12 @@ drift across three path-dep repos (`EXPECTED_SYMBOLS.txt`, generated C header,
 `UNFER_SYMBOLS`, `GrantSet.kernel`, `handles.rs` matchers), plus
 `docs/PROTOCOL.md`.
 
+**Existing-feature review**: the census already exists (S29 and `scripts/
+verify-invariants`); what is missing is that it is hand-maintained in five
+places. H2 keeps the same artifacts and meanings and only changes their
+*provenance* (one generated table instead of mirrors) — it improves the
+existing census rather than introducing a new registry concept.
+
 1. Introduce one `symbol registry` table in `unfer_protocol` (data, not code):
    `{ symbol, arity, flags, timeout_ms?, effect_kind?, audit_secret_fields?,
    grants_kernel: bool }`. `scripts/gen_symbol_artifacts` generates
@@ -141,6 +169,13 @@ drift; `EXPECTED_SYMBOLS.txt` unchanged in content, changed in provenance.
 **Improves**: `prob_kernel::Session` `save`/`restore` — an opaque `SessionBlob`
 that is not reconstructable and cannot fork. Consolidates one persistence path
 and bounds editor-session growth.
+
+**Existing-feature review**: the persistence path already exists (`save`/
+`restore`/`snapshot` + the `SessionBlob`); it is opaque and unforkable. H3 makes
+the *existing* log explicit and adds fork/compaction on top of it, folding in
+the dsh subagent cold-resume kernel because the module runtime already provides
+delegation under module principals (a separate session-level subagent surface
+would duplicate it). No second persistence mechanism is introduced.
 
 1. Each kernel op appends a typed record `{ seq, op, spec, source, ts }` before
    it applies. `snapshot()` becomes `fold(events)`; `restore()` = replay. The
@@ -195,6 +230,15 @@ restore) + 2 unfer_ffi fork/compact round-trips. All gates green.
 drop-oldest) and any in-memory resolved config / queued work. Matches qm's
 "durable by default — RAM is a cache, never the source of truth."
 
+**Existing-feature review**: the audit ring, owner log, resolved config, and
+queued approval work already exist; only their durability is missing. H4 keeps
+the same ring reads (write-through cache) and same UK codes, and adds a
+`DurableStore` trait behind them — Loro is the default/preferred backend
+because the project already ships Loro (velysterm's `mathed_core` CRDT);
+JSONL/SQLite are alternatives implementing the same trait, used only where they
+fit better, never as mirrors (a stream lives in exactly one store). This
+extends the existing persistence path instead of adding a new one.
+
 1. A `DurableStore` trait behind the event log: JSONL (default) + SQLite
    backends. Audit entries, resolved posture/config, and queued approval work
    persist through the store; the existing ring becomes a read-through cache
@@ -219,6 +263,14 @@ updated for the new UK code.
 are bespoke `if`-chains. Consolidates policy into registered, testable
 listeners **without changing any behavior, code, or order**.
 
+**Existing-feature review**: the loopback chokepoint is the project's own
+plugin-engine capability surface (modules → `uk_*` symbols → policy). The
+effect-kind approval, metering, latch, and audit `if`-chains already exist and
+are correct; H5 only re-shapes *how they are wired* (waterfall listeners over
+the same chokepoint, same order, same codes) so they become composable and
+testable. This is the Cordis dispatch model applied to the existing engine, not
+a new dispatch path.
+
 1. Introduce the Cordis dispatch model at the loopback (`emit` /
    `waterfall` / `parallel` / `serial`) as an internal trait with the dispatch
    mode part of each symbol event's contract.
@@ -239,6 +291,12 @@ australVM/velysterm path-dep `cargo check` green.
 **Improves**: S25 metering — currently a denial point (rate/budget) with no
 deadline. A hung call has no structured timeout at the loopback; only the
 Tidepool path has a watchdog (`max_ms`).
+
+**Existing-feature review**: the meter already exists and stays the single
+denial point; H6 adds the *complement* it lacks (a deadline) without changing
+metering. The timeout vocabulary also already exists in `module.toml`'s
+`[limits] max_ms` — H6 shares that existing vocabulary with the loopback rather
+than inventing a parallel deadline config.
 
 1. Add `timeout_ms` to the H2 symbol registry (declared by the owning plugin,
    never a registry-wide default). A `guard` listener (composed in H5) arms a
@@ -264,6 +322,13 @@ UK-7001 mint authority, deterministic auction clearing). In a distributed
 setting these need protection against replayed/duplicated delivery and
 double-fired schedulers.
 
+**Existing-feature review**: the ledgers and their invariants already exist and
+are deterministic (same log → same root). H7 does not add a new ledger; it adds
+the distributed-delivery protections (idempotency, lease, job queue) *around*
+the existing `ConsensusNode::sync` and settlement, backed by the H3 event log
+that H4 already made durable. The invariants the ledgers already enforce stay
+exactly the same.
+
 1. `IdempotencyStore { once(key, fn), committed(key) }` (qm
    `src/idempotency/idempotency-store.ts`) backed by the H3 event log; apply to
    every `CertificateOp` (Mint/Transfer/Burn) and `AuctionOp` (Open/Bid/Close)
@@ -286,6 +351,16 @@ double-fired schedulers.
 **Improves**: `modhost`'s bespoke branching over three module archetypes
 (Austral cells, Tidepool Haskell effects, cap-std Rust) and the manual
 capability-RPC re-check (S28). Consolidates selection into one resolver.
+
+**Existing-feature review**: this is the plugin engine itself — the Theseus-OS
+lineage (`docs/TUTORIAL.md` §authorization) already makes the project a plugin
+engine, and `modhost`'s three archetypes plus `module.toml` are its plugin
+slots. H8 does not add a fourth plugin mechanism; it consolidates the
+*selection* of the existing three archetypes into one `resolve_runtime_choice`
+resolver (and a degenerate kernelless fourth profile that only reads the
+existing `snapshot`/`probability`). The existing archetype adapters, grants,
+and the S28 re-check stay — only the bespoke branching is replaced by a
+registered resolver.
 
 1. Define `HarnessProfile { id, control_transport, tool_transport,
    transcript_format, capabilities }` in `unfer_protocol`; each archetype
@@ -311,6 +386,14 @@ unapproved one; rejection test green; `docs/MODULE_RECIPE.md` `[SYNC]`.
 not configurable as a deployment posture, and have no provenance-screening seam
 for external data. **No new security primitive**: a configuration layer that
 composes the ones that exist (qm security-posture.ts).
+
+**Existing-feature review**: every primitive H9 composes already exists and is
+shipped (effect-kinds S21, admin seam S22, sanitizer S23, meter S25, latch S26,
+sensitive-forward policy). H9 adds no new check — it adds a *configuration
+layer* (`SecurityPosture`) that reuses the S21 approval lane, the S22 admin
+seam, and the existing provenance labels, and turns the portal-only walls into
+documented seams. The strict posture's approval pauses are exactly the existing
+S21 lane applied to more symbols.
 
 1. `SecurityPosture { dangerous, auto, strict }` (additive) with
    `compose(org_floor, scope)` = stricter wins (a scope can only tighten);
@@ -348,6 +431,13 @@ external-data ops; PROTOCOL `[SYNC]` documents the three walls.
 `GrantSet`s and per-module `module.toml` grants. Consolidates them into named,
 reusable compositions; no new permission vocabulary.
 
+**Existing-feature review**: the grant mechanism already exists (per-session
+`GrantSet`s, per-module `module.toml` grants, the loopback chokepoint). H10
+introduces no new permission — `AgentPreset` is a *named reuse* of the existing
+`GrantSet` and symbol vocabulary, resolved nearest-wins over the existing
+module/session scopes. The switch is a logged event reconstructable from H3's
+log, so it stays on the existing audit/persistence path.
+
 1. `AgentPreset { id, trust, grants: GrantSet, tools: [symbols], sections }`
    (additive) discovered unmemoized from a roster directory; a broken preset is
    listed with its reason, never skipped silently (dsh agent-presets).
@@ -367,6 +457,13 @@ reusable compositions; no new permission vocabulary.
 
 **Improves**: the ~348-test suite and the single golden gate. Adds the dsh
 tiers that catch the "green unit tests, broken product" class.
+
+**Existing-feature review**: the golden-gate pattern already exists (S23/S24
+release gate, `UPDATE_GOLDEN=1` regeneration); H11 extends that *existing*
+pattern to `unfer_agent` transcripts and adds a per-file coverage gate on the
+existing `prob_kernel`/`unfer_ffi` sources. No new test framework is
+introduced — the existing unit-test harness and golden-gate scripts are
+reused.
 
 1. **Keyless snapshot replay** for `unfer_agent`: record NDJSON transcripts
    (create_model → evolve → probability → bayesian_update → close) as committed
@@ -393,6 +490,14 @@ artifact smokes green in all three repos.
 **Improves**: the PLAN files as the shared memory, and hand-maintained docs
 that drift from code.
 
+**Existing-feature review**: the doc-sync gate already exists (H2) and the PLAN
+files already exist as the shared memory; the `AGENTS.md` maintenance sections
+already encode the invariants. H12 adds the *notes* directory and a
+`duplication` script — both over existing files (PLAN/AGENTS/PROTOCOL) — and
+reuses the existing H2 doc-sync gate for CI wiring. The review culture rule
+("fix every instance, solve at the layer all paths flow through") is a process
+habit applied to the existing codebase, not a new tool.
+
 1. Add `.agents/notes/implemented/{architecture,feature,testing,process}/` to
    each repo; a non-trivial change ships with one note in the same PR; archived
    notes are frozen (dsh notes policy).
@@ -413,25 +518,44 @@ actionable hits.
 
 ### H13 (E) — Skills registry (M) — *unfer + velysterm*
 
-Modules are the project's skills; a registry adds **discovery and sharing** that
-`module.toml` + `modhost` do not provide: `uk_skill_list/get/register/
-pack_import` (additive), scope-owned skills shareable by grant, admin-gated
-promotion, git-importable packs (qm skills + dsh-skill registry shape with the
-four-combination invocation policy). `\skill` PropKind + catalog panel in
-`mathed_mini`. **Justification**: reuse of the existing grant vocabulary; fills
-the discovery gap between authoring (MODULE_RECIPE) and loading (modhost).
+**Existing-feature review (first)**: modules *are* the project's skills — this
+is the plugin engine itself (the Theseus/Cordis lineage: australVM is already a
+plugin engine, `module.toml` + `modhost` are its plugin slots, `uk_*` symbols
+its capability surface). Before a registry, the review asks what the existing
+module path already provides and what it actually lacks:
+
+- **Has**: authoring (`docs/MODULE_RECIPE.md`), loading/runtime (`modhost`, H8
+  archetypes), grants (`module.toml` `[grants]`), capability invocation
+  (`uk_*`), an H1 gate, a census (H2).
+- **Lacks**: *discovery and sharing* — a way to find and reuse a module that is
+  already loaded or packed, without re-authoring it.
+
+So H13 is justified only as the **discovery/sharing improvement to the existing
+module path** — it adds `uk_skill_list/get/register/pack_import` (additive),
+scope-owned skills shareable by grant, admin-gated promotion, git-importable
+packs. It does **not** add a second plugin-loading mechanism: packs land as
+`module.toml` cells loaded by the existing modhost, the `\skill` PropKind
+renders the existing skill surface, and the four-combination invocation policy
+reuses the existing grant vocabulary. If discovery is ever served natively by
+modhost, this stage shrinks to that.
 
 **Acceptance**: `uk_skill_*` registered per S29; agent ops round-trip; catalog
 panel renders; PROTOCOL `[SYNC]`.
 
 ### H14 (E) — Deployment directory + onboarding (S–M) — *unfer (docs)*
 
-Plan R (taler/certs/auction/edge) has no deployment guidance. Borrow qm's
-`deploy/layers/<org>/` convention (org material out of byte-identical core,
-private-fork sync skills, `qm init`-style onboarding skill with a final live
-verification). `deploy/layers/<org>/` in unfer stays empty; acceptance is a
-dry-run `tools/onboard_federation.sh --org <slug> --dry-run` that prints steps
-without writing to core.
+**Existing-feature review (first)**: Plan R (taler/certs/auction/edge) and the
+VM/module tier already exist and ship; what they lack is a deployment *guide*
+and an org-material *convention*. Before adopting a parallel deploy structure,
+the review confirms the core stays byte-identical (the S23/S24 golden gate is
+the existing guard) and the onboarding skill reuses the existing module/`uk_*`
+path rather than a new installer.
+
+Borrow qm's `deploy/layers/<org>/` convention (org material out of byte-
+identical core, private-fork sync skills, `qm init`-style onboarding skill with
+a final live verification). `deploy/layers/<org>/` in unfer stays empty;
+acceptance is a dry-run `tools/onboard_federation.sh --org <slug> --dry-run`
+that prints steps without writing to core.
 
 **Acceptance**: `docs/DEPLOYMENTS.md` written; onboarding dry-run passes;
 core `git status` clean.
@@ -439,6 +563,10 @@ core `git status` clean.
 ---
 
 ## Not adopted (even as enlargement)
+
+Each idea below was run through the existing-feature review first: the answer
+"already done, only improved here" sent it to an H-stage; "would duplicate an
+existing mechanism" left it here with its useful kernel folded into a stage.
 
 - **Session-level subagent surface**: the module runtime already delegates under
   module principals with grant sets; a parallel session-level subagent would be
