@@ -398,6 +398,23 @@ exactly the same.
 **Acceptance**: idempotency + lease + job-queue tests green in
 `unfer_consensus`; all UK-7001..7007 invariants still hold.
 
+**Status (H7, DONE)**: `unfer_consensus` gained the distributed-delivery
+protections around the existing deterministic ledgers (commit `087bce2` lands
+with H6; H7 modules landed in the same batch):
+- `IdempotencyStore` (`src/idempotency.rs`): `once(key, f)` / `committed(key)`
+  applied to every `CertificateOp` (Mint/Transfer/Burn) and `AuctionOp`
+  (Open/Bid/Close) inside `ConsensusNode::apply_transaction`, so a duplicated
+  or replayed transaction applies exactly once; `prune_before(seq)` retention on
+  a schedule. Content keys exclude the delivery-scoped `seq`/`signature`.
+- `LeaderLease` (`src/lease.rs`): deterministic single-leader election per tick
+  (`tick % participants`); `tick_held` stops firing the moment the lease is
+  lost, leaving state untouched; zero participants fail closed.
+- `JobQueue` (`src/jobs.rs`): `claimSlot`/`unclaimSlot`/`mark_fired`/`disable`
+  semantics; `mark_fired` only after a successful fire, failed fires are
+  re-queued and retried, authz-fail disables the job, stale claims are refused.
+- Tests: double-submitted transfer applies once with UK-7002 conservation held;
+  two nodes → single leader fires per tick; failed fire re-queued and retried.
+
 ## H8 — Module archetype harness registry (M) — *australVM + unfer*
 
 **Improves**: `modhost`'s bespoke branching over three module archetypes

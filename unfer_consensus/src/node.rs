@@ -8,6 +8,7 @@ use unfer_protocol::{
 use crate::auction::AuctionLedger;
 use crate::certs::{CertificateLedger, MintAuthority};
 use crate::engine::ConsensusEngine;
+use crate::idempotency::{IdempotencyStore, transaction_key};
 use crate::identity::IdentityRegistry;
 
 pub struct ConsensusNode {
@@ -17,6 +18,8 @@ pub struct ConsensusNode {
     content: HashMap<String, ContentRef>,
     certs: CertificateLedger,
     auction: AuctionLedger,
+    /// H7: exactly-once guard for replayed/duplicated certificate + auction ops.
+    idempotency: IdempotencyStore,
     next_model_id: u64,
     applied_seq: u64,
 }
@@ -30,6 +33,7 @@ impl ConsensusNode {
             content: HashMap::new(),
             certs: CertificateLedger::new(MintAuthority::None),
             auction: AuctionLedger::new(),
+            idempotency: IdempotencyStore::new(),
             next_model_id: 1,
             applied_seq: 0,
         }
@@ -67,7 +71,7 @@ impl ConsensusNode {
 
     fn apply_transaction(
         &mut self,
-        _seq: u64,
+        seq: u64,
         tx: &ConsensusTransaction,
     ) -> Result<(), Diagnostic> {
         match tx {
@@ -82,17 +86,37 @@ impl ConsensusNode {
                     .insert(op.content_ref.cid.clone(), op.content_ref.clone());
             }
             ConsensusTransaction::CertificateOp(op) => {
+                // H7: a duplicated or replayed certificate op applies exactly once.
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
-                self.certs.apply_op(&actor, &kind, op.seq)?;
+                let key = crate::idempotency::certificate_key(op);
+                self.idempotency
+                    .once(&key, seq, || self.certs.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
             }
             ConsensusTransaction::AuctionOp(op) => {
+                // H7: a duplicated or replayed auction op applies exactly once.
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
-                self.auction.apply_op(&actor, &kind, op.seq)?;
+                let key = crate::idempotency::auction_key(op);
+                self.idempotency
+                    .once(&key, seq, || self.auction.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
             }
         }
         Ok(())
+    }
+
+    /// H7: retention prune on a schedule — drop idempotency guards committed
+    /// before `seq` (replayed old deliveries no longer need their guard).
+    pub fn prune_idempotency_before(&mut self, seq: u64) {
+        self.idempotency.prune_before(seq);
+    }
+
+    /// H7: whether a transaction key was already applied exactly-once.
+    pub fn idempotency_committed(&self, tx: &ConsensusTransaction) -> bool {
+        match transaction_key(tx) {
+            Some(key) => self.idempotency.committed(&key),
+            None => false,
+        }
     }
 
     fn apply_session_op(&mut self, req: &AgentRequest) -> Result<(), Diagnostic> {
@@ -596,5 +620,120 @@ mod tests {
                 "op '{op}' reported success without model params"
             );
         }
+    }
+
+    // ── H7: distributed-delivery protections ─────────────────────────────
+    // Idempotency (exactly-once replay), leader lease (single firer per tick),
+    // and the job queue (claim/unclaim/markFired) around the existing ledgers.
+
+    #[test]
+    fn double_submitted_transfer_applies_once_and_conservation_holds() {
+        use crate::certs::commit_coin;
+        use unfer_protocol::{CertificateOp, CertificateOpKind, CoinRef};
+
+        // H7 acceptance: a duplicated delivery of the same transfer applies
+        // exactly once; conservation (UK-7002) holds because the input is spent
+        // exactly once.
+        let engine = LocalConsensus::new();
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
+
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(engine.clone()),
+            MintAuthority::Only(authority.did()),
+        );
+
+        let sign_and_submit =
+            |node: &ConsensusNode, tx: &mut ConsensusTransaction, kp: &Keypair| {
+                crate::signing::sign_transaction(tx, kp);
+                node.submit(tx.clone()).unwrap();
+            };
+
+        // Mint 1000 to alice.
+        let mut mint = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: CertificateOpKind::Mint {
+                amount: 1000,
+                owner: alice.did(),
+                blinding: [1u8; 32],
+                source: None,
+            },
+            seq: 1,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut mint, &authority);
+
+        // The exact same transfer submitted twice (duplicated delivery).
+        let coin = commit_coin(1000, &alice.did(), &[1u8; 32]);
+        let mut transfer = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: alice.did(),
+            kind: CertificateOpKind::Transfer {
+                inputs: vec![CoinRef {
+                    coin_id: coin,
+                    amount: 1000,
+                    owner: alice.did(),
+                }],
+                outputs: vec![CoinRef {
+                    coin_id: coin,
+                    amount: 1000,
+                    owner: bob.did(),
+                }],
+            },
+            seq: 2,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut transfer, &alice);
+        // Duplicate delivery of the same signed transfer.
+        sign_and_submit(&node, &mut transfer, &alice);
+
+        node.sync().unwrap();
+
+        // Applied exactly once: the input is spent once, conservation holds.
+        assert_eq!(node.certs().total_supply(), 1000, "UK-7002 conservation");
+        assert!(node.certs().utxo(&coin).is_none(), "input spent exactly once");
+        assert_eq!(node.certs().unspent_count(), 1, "one output, not two");
+        // The second delivery was recognized as committed.
+        assert!(
+            node.idempotency_committed(&transfer),
+            "duplicated delivery must be recorded as committed"
+        );
+    }
+
+    #[test]
+    fn two_nodes_single_leader_fires_per_tick() {
+        // H7 acceptance: exactly one node is the leader per tick; the
+        // non-leader does not fire.
+        let leaders0: Vec<bool> = (0..4)
+            .map(|t| crate::lease::LeaderLease::is_leader(t, 2, 0))
+            .collect();
+        let leaders1: Vec<bool> = (0..4)
+            .map(|t| crate::lease::LeaderLease::is_leader(t, 2, 1))
+            .collect();
+        for tick in 0..4 {
+            assert!(
+                leaders0[tick] ^ leaders1[tick],
+                "exactly one leader fires per tick"
+            );
+        }
+        // A lost lease stops firing without corrupting state: node 0 held tick
+        // 0, but node 1 takes tick 1 — node 0 must stop.
+        assert!(!crate::lease::LeaderLease::tick_held(0, 1, 2, 0));
+    }
+
+    #[test]
+    fn failed_fire_is_unqueued_and_retried() {
+        use crate::jobs::{JobQueue, JobState};
+
+        // H7 acceptance: a job whose fire fails is re-queued (unclaimSlot) and
+        // a later claim retries it; markFired only after a successful fire.
+        let mut q = JobQueue::new();
+        q.enqueue("settle-auction");
+        let claim = q.claim_slot("settle-auction").expect("claim");
+        q.unclaim_slot(&claim); // fire failed → re-queue
+        assert_eq!(q.state("settle-auction"), Some(JobState::Queued));
+        let retry = q.claim_slot("settle-auction").expect("retry");
+        q.mark_fired(&retry).unwrap(); // fire succeeded
+        assert_eq!(q.state("settle-auction"), Some(JobState::Fired));
     }
 }
