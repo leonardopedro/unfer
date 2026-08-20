@@ -15,7 +15,23 @@ lineage (`docs/TUTORIAL.md` §authorization) makes australVM *already a plugin
 engine* — modules, `uk_*` capability symbols, `module.toml` grants, and the
 loopback are exactly the "plugin engine" surface Cordis provides. Cordis is what
 inspired this plan, and unfer already ships its analogue (Austral cells instead
-of JS plugins, linear types instead of a permission sandbox). So a proposed
+of JS plugins, linear types instead of a permission sandbox). The same
+composability already exists in the Haskell layer too, and it composes in two
+ways the engine already speaks:
+- **Tidepool effect-stack modules** (`safestos/cranelift/src/tidepool_mod.rs`,
+  Stage B9): a module's `[effects]` list is resolved by composing
+  `EffectHandler`s into a handler stack — `KernelHandler` (an `EffectHandler`
+  mirroring the `Kernel` GADT's `Evolve`/`Probability`/`Condition`) forwards to
+  the `uk_*` FFI through the `AuthorizationEngine`, and further handlers
+  (`Console`, …) compose beside it. Effects are granted per-name in
+  `module.toml` and gated by the same loopback the plugin engine uses — handler
+  composition *is* plugin composition.
+- **Egison matchers** (template-Haskell quasiquoters `[mc| … |]`, Stage B9b in
+  `examples/modules/fock_match/`): patterns compose
+  (`List (Something, (Something, Eql))`, `Multiset …`, pair matchers) and their
+  `[mc| … |]` expand at GHC compile time, before `tidepool-extract` serializes
+  Core — the JIT never sees TH.
+So a proposed
 "new feature" is checked against that existing surface first: if the idea is a
 plugin-engine idea, the answer is usually *not* a new mechanism but an
 **improvement to the existing module/plugin path** (better discovery, richer
@@ -269,7 +285,17 @@ effect-kind approval, metering, latch, and audit `if`-chains already exist and
 are correct; H5 only re-shapes *how they are wired* (waterfall listeners over
 the same chokepoint, same order, same codes) so they become composable and
 testable. This is the Cordis dispatch model applied to the existing engine, not
-a new dispatch path.
+a new dispatch path. Composition is already a house style the project speaks
+fluently, in both Haskell layers:
+- **Tidepool handler stacks** (`safestos/cranelift/src/tidepool_mod.rs`, B9):
+  `EffectHandler`s compose beside `KernelHandler` and each grants-gated effect
+  is a named slot — the same "register a handler, gate by name, forward through
+  the loopback" pattern the waterfall listeners will follow.
+- **Egison matchers** (`examples/modules/fock_match/`, B9b): patterns compose
+  (`List (Something, (Something, Eql))`, `Multiset …`, pair matchers) — the
+  listeners here follow the same compose-in-order discipline, so an annotation
+  delegates (`next()`) and a decision owns (`return`) exactly as a handler
+  forwards or an Egison matcher composes or binds.
 
 1. Introduce the Cordis dispatch model at the loopback (`emit` /
    `waterfall` / `parallel` / `serial`) as an internal trait with the dispatch
@@ -355,7 +381,12 @@ capability-RPC re-check (S28). Consolidates selection into one resolver.
 **Existing-feature review**: this is the plugin engine itself — the Theseus-OS
 lineage (`docs/TUTORIAL.md` §authorization) already makes the project a plugin
 engine, and `modhost`'s three archetypes plus `module.toml` are its plugin
-slots. H8 does not add a fourth plugin mechanism; it consolidates the
+slots. Each archetype is already a *composable* slot: Austral cells and cap-std
+Rust plug into the loopback like listeners, and the Tidepool Haskell archetype
+composes `EffectHandler`s per-granted-effect (`KernelHandler` → `uk_*` FFI via
+`AuthorizationEngine`; `safestos/cranelift/src/tidepool_mod.rs`) — a module's
+`[effects]` list is exactly a named, gated handler-stack. H8 does not add a
+fourth plugin mechanism; it consolidates the
 *selection* of the existing three archetypes into one `resolve_runtime_choice`
 resolver (and a degenerate kernelless fourth profile that only reads the
 existing `snapshot`/`probability`). The existing archetype adapters, grants,
