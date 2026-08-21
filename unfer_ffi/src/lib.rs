@@ -1521,6 +1521,120 @@ pub fn uk_posture_current() -> unfer_protocol::SecurityPosture {
     handles::posture()
 }
 
+// ── H13: skills registry (discovery/sharing over the existing module path) ──
+
+/// List skills visible to `principal`. Returns a JSON array of `Skill` objects
+/// via the buffer protocol. Read-only.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_skill_list(
+    principal_ptr: *const u8,
+    principal_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_skill_list", || {
+        let principal = read_utf8(principal_ptr, principal_len)?;
+        let skills = handles::skill_list_visible(&principal);
+        let json = serde_json::to_string(&skills)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Fetch a skill by id. Returns a JSON `Skill` object via the buffer protocol,
+/// or UK-4102 BlueprintNoSession-style "not found" when absent.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_skill_get(
+    id_ptr: *const u8,
+    id_len: i64,
+    buf: *mut u8,
+    cap: i64,
+) -> i64 {
+    ffi_entry("uk_skill_get", || {
+        let id = read_utf8(id_ptr, id_len)?;
+        match handles::skill_get(&id) {
+            Some(skill) => {
+                let json = serde_json::to_string(&skill).map_err(|e| {
+                    Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
+                })?;
+                Ok(write_buf(buf, cap, &json))
+            }
+            None => Err(Diagnostic::new(
+                Code::BLUEPRINT_NOT_FOUND,
+                format!("skill '{id}' not found"),
+                Severity::Error,
+            )),
+        }
+    })
+}
+
+/// Register a skill. `skill_json` is a `Skill` object. Admin-gated promotion:
+/// a promoted skill cannot be replaced by a non-promoted one (UK-4501
+/// otherwise). Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_skill_register(skill_ptr: *const u8, skill_len: i64) -> i64 {
+    ffi_entry("uk_skill_register", || {
+        let skill: unfer_protocol::skills::Skill = parse_json(skill_ptr, skill_len)?;
+        if handles::skill_register(skill) {
+            Ok(0)
+        } else {
+            Err(Diagnostic::new(
+                Code::CONSOLE_ONLY,
+                "cannot replace an admin-promoted skill (UK-4501)",
+                Severity::Error,
+            ))
+        }
+    })
+}
+
+/// Import a git pack as a skill: `pack_json` is
+/// `{"id":"org/skill","git":"<ref>","module":"<name>","grants":[...]}`. The
+/// pack lands as a `module.toml` cell loaded by the existing modhost (no second
+/// plugin mechanism). Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_skill_pack_import(pack_ptr: *const u8, pack_len: i64) -> i64 {
+    ffi_entry("uk_skill_pack_import", || {
+        #[derive(serde::Deserialize)]
+        struct PackImportReq {
+            id: String,
+            #[serde(default)]
+            git: String,
+            #[serde(default)]
+            module: String,
+            #[serde(default)]
+            grants: Vec<String>,
+        }
+        let req: PackImportReq = parse_json(pack_ptr, pack_len)?;
+        if req.git.is_empty() && req.module.is_empty() {
+            return Err(Diagnostic::new(
+                Code::BAD_JSON,
+                "skill pack import requires a git ref or module name",
+                Severity::Error,
+            ));
+        }
+        let mut skill = unfer_protocol::skills::Skill::new(req.id);
+        skill.module = req.module;
+        skill.grants = req.grants;
+        skill.pack = req.git;
+        if handles::skill_register(skill) {
+            Ok(0)
+        } else {
+            Err(Diagnostic::new(
+                Code::CONSOLE_ONLY,
+                "cannot replace an admin-promoted skill (UK-4501)",
+                Severity::Error,
+            ))
+        }
+    })
+}
+
+/// QA/console reset of the skills registry.
+pub fn uk_clear_skills() {
+    handles::skill_clear();
+}
+
 /// Read the current windowed meter status for `principal` without consuming a
 /// metered call (mirrors Cloudflare's `checkDailyLlmCount`). `budget_json` is
 /// `{"budget":N,"rate_limit":M}`; the returned handle encodes a JSON
@@ -4205,6 +4319,84 @@ mod tests {
         );
         uk_clear_caller();
         uk_clear_posture();
+    }
+
+    // ── H13: skills registry (discovery/sharing over the module path) ────
+
+    #[test]
+    fn skill_register_list_get_roundtrip() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_skills();
+        uk_clear_caller();
+
+        let skill = r#"{
+            "id":"acme/carbon-audit",
+            "module":"carbon_audit",
+            "scope":"org",
+            "description":"audit a carbon portfolio",
+            "grants":["uk_cert_transfer"]
+        }"#;
+        let (p, l) = json_ptr(skill);
+        assert_eq!(uk_skill_register(p, l), 0, "register");
+
+        // get returns the skill.
+        let got = read_buf(|b, c| uk_skill_get("acme/carbon-audit".as_ptr(), "acme/carbon-audit".len() as i64, b, c));
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        assert_eq!(v["id"], "acme/carbon-audit");
+        assert_eq!(v["grants"][0], "uk_cert_transfer");
+
+        // list visible to a caller holding nothing sees the org skill.
+        let list = read_buf(|b, c| uk_skill_list("alice".as_ptr(), 4, b, c));
+        let arr: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert!(arr.as_array().unwrap().iter().any(|s| s["id"] == "acme/carbon-audit"));
+
+        // get on a missing skill → UK-4102 (BlueprintNotFound family).
+        assert!(
+            uk_skill_get("nope".as_ptr(), 4, std::ptr::null_mut(), 0) < 0,
+            "missing skill must error"
+        );
+        uk_clear_skills();
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn skill_pack_import_registers_git_pack() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_skills();
+        uk_clear_caller();
+
+        let pack = r#"{"id":"acme/fetcher","git":"https://git.example/acme/fetcher.git","module":"fetcher","grants":["uk_fetch"]}"#;
+        let (p, l) = json_ptr(pack);
+        assert_eq!(uk_skill_pack_import(p, l), 0, "pack import");
+
+        let got = read_buf(|b, c| uk_skill_get("acme/fetcher".as_ptr(), "acme/fetcher".len() as i64, b, c));
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        assert!(v["pack"].as_str().unwrap().contains("git.example"));
+        assert_eq!(v["grants"][0], "uk_fetch");
+
+        // A pack with no git ref and no module is rejected (UK-1001).
+        let bad = r#"{"id":"acme/empty"}"#;
+        let (p, l) = json_ptr(bad);
+        assert_eq!(uk_skill_pack_import(p, l), -1001);
+        uk_clear_skills();
+        uk_clear_caller();
+    }
+
+    #[test]
+    fn promoted_skill_resists_non_promoted_replacement() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_skills();
+        uk_clear_caller();
+
+        let skill = r#"{"id":"acme/stable","grants":["uk_version"]}"#;
+        let (p, l) = json_ptr(skill);
+        assert_eq!(uk_skill_register(p, l), 0);
+        // Promote via the admin seam (host-internal helper).
+        assert!(handles::skill_promote("acme/stable"));
+        // A non-promoted replacement is refused (UK-4501).
+        assert_eq!(uk_skill_register(p, l), -4501);
+        uk_clear_skills();
+        uk_clear_caller();
     }
 
     // ── S23 (F22): observability context + owner logger + secret discipline ──

@@ -693,6 +693,19 @@ modhost, this stage shrinks to that.
 **Acceptance**: `uk_skill_*` registered per S29; agent ops round-trip; catalog
 panel renders; PROTOCOL `[SYNC]`.
 
+**Status (H13, DONE)**: discovery/sharing over the existing module path — no
+second plugin mechanism.
+- `unfer_protocol::skills`: `Skill { id, module, scope, description, grants,
+  pack, promoted }` + `SkillRegistry` (register/list_visible/get/promote,
+  `caller_may_invoke` default-deny).
+- `uk_skill_register`/`uk_skill_list`/`uk_skill_get`/`uk_skill_pack_import`
+  registered per S29 (registry rows, EXPECTED_SYMBOLS.txt, generated C header,
+  australVM `UNFER_SYMBOLS` + `kernel_dispatch` arms).
+- Admin-gated promotion (S22 seam): a promoted skill resists non-promoted
+  replacement (UK-4501).
+- velysterm `mathed_core`: `\skill` PropKind (+ `is_skill`, accessibility arm)
+  renders the catalog surface. PROTOCOL `[SYNC]` documents the registry.
+
 ### H14 (E) — Deployment directory + onboarding (S–M) — *unfer (docs)*
 
 **Existing-feature review (first)**: Plan R (taler/certs/auction/edge) and the
@@ -710,6 +723,12 @@ that prints steps without writing to core.
 
 **Acceptance**: `docs/DEPLOYMENTS.md` written; onboarding dry-run passes;
 core `git status` clean.
+
+**Status (H14, DONE)**: `docs/DEPLOYMENTS.md` (byte-identical core via the
+S23/S24 golden gate, org layer `deploy/layers/<org>/`, stack components, H9
+posture), `deploy/layers/README.md` placeholder (empty in core), and
+`tools/onboard_federation.sh --org <slug> --dry-run` (prints steps without
+writing to the core; dry-run exits 0 with the core `git status` clean).
 
 ---
 

@@ -70,6 +70,10 @@ uk_session_compact
 uk_session_fork
 uk_set_hamiltonian
 uk_set_prior
+uk_skill_get
+uk_skill_list
+uk_skill_pack_import
+uk_skill_register
 uk_snapshot
 uk_subscribe
 uk_symbolic_simplify

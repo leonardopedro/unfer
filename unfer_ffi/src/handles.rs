@@ -1022,6 +1022,65 @@ fn vault_ring() -> std::sync::MutexGuard<'static, unfer_data::KeyRing> {
     ring.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+// ── H13: skills registry (discovery/sharing over the existing module path) ──
+//
+// A skill is a discoverable, shareable reference to an existing module (or a
+// packed `module.toml` cell). Registry is process-global; skills are
+// scope-owned, shareable by grant, and admin-promotable (S22 seam).
+
+static SKILLS: std::sync::Mutex<Option<unfer_protocol::skills::SkillRegistry>> =
+    std::sync::Mutex::new(None);
+
+fn skill_registry() -> std::sync::MutexGuard<'static, Option<unfer_protocol::skills::SkillRegistry>> {
+    SKILLS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Register (or replace) a skill. Refused when a promoted skill is replaced by
+/// a non-promoted one (promotion is admin-gated).
+pub fn skill_register(skill: unfer_protocol::skills::Skill) -> bool {
+    let mut guard = skill_registry();
+    guard
+        .get_or_insert_with(unfer_protocol::skills::SkillRegistry::new)
+        .register(skill)
+}
+
+/// Fetch a skill by id.
+pub fn skill_get(id: &str) -> Option<unfer_protocol::skills::Skill> {
+    let guard = skill_registry();
+    guard
+        .as_ref()
+        .and_then(|r| r.get(id))
+        .cloned()
+}
+
+/// List skills visible to `principal` (org-scoped + own + grant-free).
+pub fn skill_list_visible(principal: &str) -> Vec<unfer_protocol::skills::Skill> {
+    let guard = skill_registry();
+    guard
+        .as_ref()
+        .map(|r| r.list_visible(principal).into_iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Admin-gated promotion (S22 seam): move a skill to org scope. Test/QA +
+/// operator-console surface (no loopback arm yet).
+#[allow(dead_code)]
+pub fn skill_promote(id: &str) -> bool {
+    let mut guard = skill_registry();
+    guard
+        .as_mut()
+        .map(|r| r.promote(id))
+        .unwrap_or(false)
+}
+
+/// Drop every skill (QA/console reset).
+pub fn skill_clear() {
+    let mut guard = skill_registry();
+    if let Some(r) = guard.as_mut() {
+        *r = unfer_protocol::skills::SkillRegistry::new();
+    }
+}
+
 // ── certificate ledger (Plan R: carbon-certificate / UTXO state machine) ──
 //
 // A single process-global `CertificateLedger` — the same state-transition engine

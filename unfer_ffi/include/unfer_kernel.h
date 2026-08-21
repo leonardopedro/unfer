@@ -197,6 +197,18 @@ int64_t uk_set_hamiltonian(int64_t model,
 int64_t uk_set_prior(int64_t model,
              const uint8_t* json,
              int64_t len);
+int64_t uk_skill_get(const uint8_t* id_ptr,
+             int64_t id_len,
+             uint8_t* buf,
+             int64_t cap);
+int64_t uk_skill_list(const uint8_t* principal_ptr,
+              int64_t principal_len,
+              uint8_t* buf,
+              int64_t cap);
+int64_t uk_skill_pack_import(const uint8_t* pack_ptr,
+                     int64_t pack_len);
+int64_t uk_skill_register(const uint8_t* skill_ptr,
+                  int64_t skill_len);
 int64_t uk_snapshot(int64_t model,
             uint8_t* buf,
             int64_t cap);

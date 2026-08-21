@@ -19,6 +19,7 @@ pub mod harness;
 pub mod ops;
 pub mod posture;
 pub mod preset;
+pub mod skills;
 pub mod symbols;
 pub mod types;
 
@@ -29,6 +30,7 @@ pub use harness::*;
 pub use ops::*;
 pub use posture::*;
 pub use preset::*;
+pub use skills::*;
 pub use symbols::*;
 pub use types::*;
 

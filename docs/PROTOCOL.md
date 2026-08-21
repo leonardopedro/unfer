@@ -658,3 +658,23 @@ these are *walls*, not gaps — a model/agent op can never reach them:
 3. **Command-approval decisions** — `uk_gate_approve`/`uk_gate_reject` are
    gatekeeper/human decisions; a module/agent can submit (S21 lane) but never
    resolve.
+
+## Skills registry (H13, `[SYNC]`)
+
+Modules *are* the project's skills (australVM is the plugin engine, `module.toml`
++ `modhost` the plugin slots, `uk_*` the capability surface). H13 adds
+discovery/sharing over that existing path — no second plugin mechanism.
+
+- `uk_skill_register` — register/replace a skill (`Skill` JSON: `id`, `module`,
+  `scope`, `description`, `grants`, `pack`). Admin-promoted skills resist
+  non-promoted replacement (UK-4501).
+- `uk_skill_list` — list skills visible to a principal (org-scoped + own +
+  grant-free).
+- `uk_skill_get` — fetch one skill (UK-4102 family when absent).
+- `uk_skill_pack_import` — import a git pack as a skill
+  (`{"id","git","module","grants"}`); the pack lands as a `module.toml` cell
+  loaded by the existing modhost.
+- The `\skill` PropKind (velysterm `mathed_core`) renders the catalog surface.
+
+Skill invocation reuses the grant vocabulary: a caller must hold every grant a
+skill requires (`caller_may_invoke`, default-deny).
