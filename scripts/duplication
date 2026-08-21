@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""H12 duplication scanner: flag copy-pasted FFI/NDJSON/UK-code blocks across
+the three workspaces.
+
+The review-culture rule is "fix every instance, solve at the layer all paths
+flow through." This scanner surfaces *actionable* duplication in the seams that
+historically drifted:
+  - FFI dispatch arms: `"uk_xxx" => {` blocks repeated in more than one
+    `kernel_dispatch`-style table.
+  - NDJSON op handlers: `"op" =>` arms repeated across the agent binaries.
+  - UK-code constants: `Code(####)`/`UK-####` markers duplicated as literals
+    instead of the shared `unfer_protocol::codes` registry.
+
+Exit 0 = no actionable hits (green); 1 = actionable hits found. Low-signal
+noise (boilerplate like `use serde...`, `mod tests`) is excluded by design.
+
+Run from any of the three repos (resolves the sibling workspaces).
+"""
+
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def workspaces():
+    # Called from a repo's scripts/ dir; resolve the three sibling roots.
+    root = HERE.parent
+    return [
+        ("unfer", root),
+        ("australVM", root.parent / "australVM"),
+        ("velysterm", root.parent / "velysterm"),
+    ]
+
+
+def source_files(ws: Path):
+    if not ws.is_dir():
+        return []
+    return [
+        p
+        for p in ws.rglob("*.rs")
+        if "target" not in p.parts
+        and "/.git/" not in str(p)
+        and p.is_file()
+    ]
+
+
+# ── scanners ──────────────────────────────────────────────────────────
+
+# 1. FFI/NDJSON dispatch arms: `"uk_..." =>` or `"op" =>` handlers. A handler
+#    body copied verbatim into a second table is a drift risk (one table gets a
+#    fix, the other doesn't).
+ARM_RE = re.compile(r'^\s*"(uk_[a-z0-9_]+|uz_[a-z0-9_]+|version|create_model|'
+                    r'evolve|probability|condition|snapshot|save_session|'
+                    r'restore_session|close_model|preset_list|preset_set)"\s*=>\s*\{')
+
+# 2. UK-code numeric constructors: a raw `Code(####)` (numeric literal through
+#    the shared `unfer_protocol::Code` constructor) bypasses the named constants
+#    in `unfer_protocol::codes`. JSON wire codes (`"code": 4001`) and message
+#    text (`"UK-4001: …"`) are NOT flagged — those are the wire format / prose,
+#    not duplicated logic.
+CODE_CTOR_RE = re.compile(r'\bCode\((\d{4})\)')
+
+
+def scan():
+    hits = []
+    # arm signature -> (count, [(file, line), ...]) across all workspaces.
+    arms: dict[str, list] = {}
+    # uk-code numeric constructor -> set of files (actionable when it bypasses
+    # the shared named constants; same numeric literal in >1 workspace).
+    code_literals: dict[str, set] = {}
+
+    for name, ws in workspaces():
+        for path in source_files(ws):
+            text = path.read_text(errors="replace")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                m = ARM_RE.match(line)
+                if m:
+                    key = (line.strip(), name)
+                    arms.setdefault(key, []).append((path, lineno))
+                for c in CODE_CTOR_RE.findall(line):
+                    code_literals.setdefault(c, set()).add(str(path))
+
+    # Report duplicated arms: the same arm body in a different file.
+    for (body, name), locs in sorted(arms.items()):
+        files = {str(p) for p, _ in locs}
+        if len(files) > 1:
+            hits.append(
+                f"duplicate dispatch arm in {len(files)} files:\n"
+                f"    {body}\n"
+                + "\n".join(f"      {p}:{l}" for p, l in locs)
+            )
+
+    # Report UK-code numeric constructors spread across >1 repo (bypassing the
+    # shared named constants in unfer_protocol::codes).
+    for literal, files in sorted(code_literals.items()):
+        # Skip the registry itself (which must define the numeric constants).
+        non_registry = [f for f in files if "codes.rs" not in f]
+        repos = {f.split("Projects/")[-1].split("/")[0] for f in non_registry}
+        if len(repos) > 1:
+            hits.append(
+                f"Code({literal}) numeric constructor in {len(repos)} repos "
+                f"({', '.join(sorted(repos))}) — use the named constant in "
+                f"unfer_protocol::codes"
+            )
+
+    return hits
+
+
+def main() -> int:
+    hits = scan()
+    if not hits:
+        print("duplication: zero actionable hits.")
+        return 0
+    print(f"duplication: {len(hits)} actionable hit(s):\n")
+    for h in hits:
+        print(h)
+        print()
+    print("Fix every instance; solve at the layer all paths flow through "
+          "(the shared unfer_protocol registry).")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

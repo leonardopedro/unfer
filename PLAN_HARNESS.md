@@ -650,6 +650,19 @@ habit applied to the existing codebase, not a new tool.
 fails on deliberate drift and passes after fix; duplication report has zero
 actionable hits.
 
+**Status (H12, DONE)**: Agent Notes + doc-sync + duplication across the three
+workspaces.
+- `.agents/notes/implemented/{architecture,feature,testing,process}/` added to
+  all three repos with seed notes (H11 test discipline, waterfall guards, keyless
+  replay, notes policy). Wired into each repo's `verify-invariants`.
+- The H2 doc-sync gate fails on deliberate drift and passes after fix (verified);
+  it is already cross-run from australVM/velysterm gates via the unfer generator.
+  The H10 op additions had drifted the velysterm `unfer_agent` header ("36-op" →
+  38) — the gate caught it, fixed.
+- `scripts/duplication` scans the three workspaces for duplicated FFI/NDJSON
+  dispatch arms and UK-code numeric constructors; zero actionable hits (the only
+  `Code(####)` numeric uses are single-repo tests).
+
 ---
 
 ## Enlargement-only borrows (kept, lower priority)

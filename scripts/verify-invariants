@@ -156,6 +156,20 @@ check "H11: per-file coverage gate green" \
 check "H11: real-entry-path smokes green" \
     bash "$repo_root/scripts/smoke_gate"
 
+# --- H12: agent notes + doc-sync wiring ---
+# The notes directory exists with the four implemented categories; a
+# non-trivial change ships one note (frozen after review — dsh notes policy).
+check "H12: notes implemented dir has the four categories" \
+    test -d "$repo_root/.agents/notes/implemented/architecture" \
+    && test -d "$repo_root/.agents/notes/implemented/feature" \
+    && test -d "$repo_root/.agents/notes/implemented/testing" \
+    && test -d "$repo_root/.agents/notes/implemented/process"
+
+# H12: cross-workspace duplication scan (FFI/NDJSON dispatch arms + UK-code
+# numeric constructors). Zero actionable hits required.
+check "H12: duplication scan has zero actionable hits" \
+    python3 "$repo_root/scripts/duplication"
+
 echo
 echo "verify-invariants: $PASSED passed, $GAPS explained gap(s), $FAILED failed"
 if [ "$FAILED" -gt 0 ]; then
