@@ -45,6 +45,7 @@ use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, Operator, QG_C, QG_G, QG_HBAR, QuantumState, qg_flrw_scalars,
     qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
     qg_newton_potential, qg_perihelion_precession, qg_planck_units, qg_tegr_hamiltonian,
+    qg_starobinsky_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -380,6 +381,136 @@ fn qg_tegr_hamiltonian_outer_fock_sirk() {
         "qg_tegr_hamiltonian_outer_fock_sirk: ⟨0|H|0⟩={e0}, ‖H−H†‖={hermn:.2e}, \
          SIRK ritz={:?} (bounded below — ESA, Hermitian)",
         &ritz[..ritz.len().min(4)]
+    );
+}
+
+// ── 9b. Cadabra2-derived R+αR² (Starobinsky) scalar sector ───────────────────
+
+/// The physical vacuum for the **inner** scalaron operators: one empty inner
+/// universe (AGENTS.md vacuum-initialization rule).
+fn starobinsky_inner_vacuum() -> QuantumState {
+    QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
+}
+
+/// An `n`-scalaron state of mode `mode`, the framework-native way: one universe
+/// whose **inner** occupation of `mode` is `n` (inner ladder operators give the
+/// exact additivity `n|n⟩ = n·m|n⟩` at any occupation).
+fn n_scalaron(mode: u32, n: u32) -> QuantumState {
+    let mut s = starobinsky_inner_vacuum();
+    for _ in 0..n {
+        s = s.apply(&Operator::InnerBosonCreate(mode));
+    }
+    s
+}
+
+#[test]
+fn qg_starobinsky_scalaron_sirk() {
+    // The scalar part of the Cadabra2-derived H_final
+    // (docs/qg_starobinsky_hamiltonian.cdb): H = ½π² + ½(∇φ)² + V(φ) with the
+    // Starobinsky potential truncated at quadratic order — the scalaron mass
+    // term ½m²φ², m² = M²/(12α) (the published Starobinsky scalaron mass).
+    // Quantized as the diagonal number form H = Σ m·N_i (the standard free
+    // massive-scalar realization, cf. qg_free_graviton). Structural facts
+    // verified via SIRK:
+    //   (a) the normal-ordered vacuum energy is 0;
+    //   (b) the one-scalaron energy is m, additively n·m at occupation n — the
+    //       quantized oscillator ladder {0, m, 2m, …};
+    //   (c) the spacing scales with the scalaron mass (doubling m doubles it) —
+    //       the physical content of the quadratic Starobinsky potential;
+    //   (d) H is Hermitian with a bounded-below, positive-gap spectrum — the
+    //       boundedness claim of the αR² stabilization (no conformal-mode −∞).
+    let m = 1.0;
+    let h = qg_starobinsky_hamiltonian(3, m);
+
+    // (a) Vacuum: normal-ordered scalar-sector vacuum energy is 0.
+    let e_vac = sirk_ground(&h, &starobinsky_inner_vacuum(), 4);
+    assert!(
+        e_vac.abs() < 1e-6,
+        "Starobinsky scalar-sector vacuum energy must be 0, got {e_vac}"
+    );
+
+    // (b) One-scalaron energy = m (the scalaron mass), exactly, per mode.
+    for mode in 0..3 {
+        let e1 = sirk_ground(&h, &n_scalaron(mode, 1), 4);
+        assert!(
+            (e1 - m).abs() < 1e-6,
+            "one-scalaron energy must equal the scalaron mass m = {m} for mode \
+             {mode}, got {e1}"
+        );
+    }
+
+    // (b') Additivity at occupation n: E(n) = n·m (one universe, inner {mode:n}).
+    let e2 = sirk_ground(&h, &n_scalaron(1, 2), 4);
+    assert!(
+        (e2 - 2.0 * m).abs() < 1e-6,
+        "two-scalaron energy must be additive 2m = {}, got {e2}",
+        2.0 * m
+    );
+
+    // (c) The scalaron mass scales the spectrum: doubling m doubles the
+    //     excitation spacing (m² = M²/(12α) is the curvature of the quadratic
+    //     Starobinsky potential).
+    let h2 = qg_starobinsky_hamiltonian(3, 2.0);
+    let e1_2 = sirk_ground(&h2, &n_scalaron(0, 1), 4);
+    assert!(
+        (e1_2 - 2.0).abs() < 1e-6,
+        "doubling the scalaron mass must double the one-scalaron energy: \
+         got {e1_2}, expected 2.0"
+    );
+
+    // (d) Hermiticity + bounded-below, positive-gap spectrum (the αR²
+    //     stabilization — the conformal-mode −∞ is regularized). Start the
+    //     Krylov from a superposition of the 0-, 1- and 2-scalaron sectors so
+    //     the ladder {0, m, 2m} is resolved (a pure eigenstate start collapses
+    //     the Krylov to its own 1-dimensional sector).
+    let opts = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(1_000_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+    };
+    let mut psi0 = starobinsky_inner_vacuum();
+    psi0.scale_and_add(&n_scalaron(0, 1), Complex64::new(0.7, 0.0));
+    psi0.scale_and_add(&n_scalaron(0, 2), Complex64::new(0.3, 0.0));
+    let res = solve_forward_sirk_with_opts(
+        &h,
+        &psi0,
+        &shifts(8),
+        &best_device(),
+        None,
+        &opts,
+    )
+    .expect("Starobinsky SIRK solve");
+    let h_proj = res.h_proj.clone();
+    let hermn = (h_proj.clone() - h_proj.adjoint()).norm();
+    assert!(
+        hermn < 1e-6,
+        "Starobinsky H_proj must be Hermitian, ‖H−H†‖={hermn:.2e}"
+    );
+    let ritz = res.ritz_values();
+    assert!(
+        ritz.len() >= 2,
+        "SIRK must resolve ≥2 levels of the scalaron sector, got {}",
+        ritz.len()
+    );
+    assert!(
+        ritz[0] > -10.0,
+        "Starobinsky spectrum must be bounded below (finite ground state), got \
+         ritz0={}",
+        ritz[0]
+    );
+    let gaps: Vec<f64> = ritz.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(
+        gaps.iter().take(2).all(|&g| g > 0.0),
+        "Starobinsky excitation gaps must be positive (real, bounded spectrum): \
+         {:?}",
+        &gaps[..gaps.len().min(2)]
+    );
+
+    eprintln!(
+        "qg_starobinsky_scalaron_sirk: E_vac={e_vac}, E(1-scalaron)=m={m}, \
+         E(2-scalaron)={e2:.4} = 2m, E(m=2)={e1_2:.4} = 2m, ‖H−H†‖={hermn:.2e}, \
+         bounded below with positive gaps"
     );
 }
 

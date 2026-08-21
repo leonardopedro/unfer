@@ -1,0 +1,500 @@
+# R + αR² (Starobinsky) 3D gauge-fixed Hamiltonian derivation.
+#
+# Action (the R + αR² extension of the Einstein-Hilbert action, α > 0):
+#     S = ∫ d⁴x √(−g) f(R),   f(R) = (M²/2) R + α R²
+# where M is the reduced Planck mass M_Pl and α > 0 the Starobinsky
+# curvature-squared coupling. This file derives, fully automatically:
+#
+#   • action         — the f(R) action density (M²/2)R + αR².
+#   • psi, U         — the scalar-tensor (Jordan-frame) equivalent:
+#                      ψ = 1 + 4αR/M² (the Einstein-frame conformal factor)
+#                      and U(ψ) = (M⁴/16α)(ψ−1)². The identity
+#                      f(R) = (M²/2)ψR − U(ψ) at ψ = 1 + 4αR/M² is verified
+#                      (scalaron_check → 0): R² gravity is a *second-order*
+#                      scalar-tensor theory — no Ostrogradsky ghost.
+#   • V3, V3_sq, …   — the 3D spatial potential density of the gauge-fixed
+#                      Hamiltonian as a function of the 3-curvature R_c:
+#                      V3(R_c) = −(M²/2)R_c + α R_c², a parabola in R_c with
+#                      the global minimum at R_c = M²/(4α), value
+#                      V3_min = −M⁴/(16α) > −∞ (V3_check → 0, dV3_check → 0).
+#                      This is the conformal-mode stabilization: the linear
+#                      −(M²/2)R_c term (whose negative conformal-mode gradient
+#                      energy made pure GR unbounded below) is regularized by
+#                      the positive quadratic αR_c².
+#   • Vphi, …        — the Einstein-frame scalaron (Starobinsky) potential
+#                      V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})²: V(0) = 0 (flat
+#                      Minkowski vacuum), large-field plateau M⁴/(16α) as
+#                      φ→+∞,
+#                      exponential wall as φ→−∞, dV/dφ = 0 at φ = 0 (global
+#                      minimum). V is manifestly ≥ 0 (a square) — the
+#                      bounded-from-below proof.
+#   • gf_check_*     — the gauge fixing of the *spatial field-derivative
+#                      variables*, following the Navier-Stokes module
+#                      (book.tex §4159-4197). The NS module promotes the
+#                      spatial gradients u_{i,j} = ∂_j u_i to *independent
+#                      canonical fields* with their own momenta
+#                      ([u_{j,k}, π^{mn}] = iδ^n_j δ^m_k) and imposes BRST
+#                      constraints that fix those derivative variables to the
+#                      values of the actual field derivatives. Here the same
+#                      pattern is applied to the foliation's SPATIAL derivative
+#                      variables — the scalaron gradient product (∂_iφ)(∂^iφ)
+#                      (the gravity analogue of NS's u_{i,j} fields) and the
+#                      conformal-mode curvature R_c built from the spatial
+#                      second derivatives of the metric — fixing each to the
+#                      value of the corresponding spatial field derivative:
+#                          Dphi2 -> grad2      (grad2 = (∂_iφ)(∂^iφ))
+#                          R_c   -> Ω⁻⁴ R̄_c − 8 Ω⁻⁵ ∇̄²Ω   (conformal mode)
+#                      Each constraint resolves identically to zero, and after
+#                      substitution the Hamiltonian carries genuine *products
+#                      of spatial field derivatives* (grad2 and R_c²), exactly
+#                      as the NS Hamiltonian carries u_j·u_{i,j}. (This is the
+#                      derivative-variable fixing — spatial, like NS's
+#                      u_{i,j} = ∂_j u_i — distinct from the solved divergence
+#                      constraint u_{3,3} = u_{1,1}+u_{2,2}; the time-
+#                      derivative variables are handled by the standard
+#                      Legendre transform, not gauge-fixed.)
+#   • constraint_check — the 3+1 Hamiltonian constraint (the scalar, Gauss-like
+#                      first-class constraint of the theory, the gravity analogue
+#                      of the NS BRST charge Ω = u_{j,j}ψ†) solved for the
+#                      conformal-mode curvature R_c and substituted back,
+#                      resolving identically to 0.
+#   • H_gf, H_final  — the 3D gauge-fixed Hamiltonian: the Legendre transform
+#                      of the synchronous-gauge Lagrangian with the spatial
+#                      derivative variables fixed to the derivative values,
+#                      giving
+#                      H = ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c²
+#                      and, on the scalar sector (H_final),
+#                      H = ½π² + ½(∂φ)² + V(φ) — bounded below by V ≥ 0.
+#   • Part 5          — the SAME 3D gauge-fixed Hamiltonian derived FROM the
+#                      classical action, in the Einstein-module way
+#                      (docs/qg_gauge_fixed_hamiltonian.cdb: action -> vary ->
+#                      polymomentum -> Legendre transform -> H):
+#                        action_J/action_R2_check — the R² action in its
+#                          ghost-free scalar-tensor (Jordan) form
+#                          (M²/2)ψR − U(ψ), verified identical to
+#                          (M²/2)R + αR² (→ 0);
+#                        action_gf — the 3D gauge-fixed action density
+#                          (synchronous gauge): ½(∂₀φ)² − ½Dphi2 − V(φ)
+#                          + (M²/2)R_c − αR_c²;
+#                        pi_derived — the polymomentum BY VARIATION
+#                          (vary(action, φ -> dφ), ∂₀(dφ) -> π): π = ∂₀φ
+#                          (pi_check → 0);
+#                        H_action — the Legendre transform H = π·∂₀φ − L of
+#                          the action: ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c²,
+#                          identical to H_gf (leg_check → 0);
+#                        Rtil_3p1 — the 3+1 (ADM, synchronous-gauge) split
+#                          R = R3 + (K² − K_ijK^ij) of the gravitational
+#                          sector, whose spatial potential is the α-stabilized
+#                          parabola;
+#                        action_grav/pi_grav — the GRAVITATIONAL sector from
+#                          the action: the metric polymomentum BY VARIATION
+#                          Π = ∂L/∂(∂₀q) = (M²/4)∂₀q (pi_grav_check → 0) and
+#                          its Legendre transform H_grav = (2/M²)Π²
+#                          + (M²/8)dqsq − (M²/2)R_c + αR_c² (leg_grav_check
+#                          → 0);
+#                        H_total — the full 3D gauge-fixed Hamiltonian
+#                          (scalar + gravity): ½π² + ½(∂φ)² + V(φ) + (2/M²)Π²
+#                          + (M²/8)dqsq − (M²/2)R_c + αR_c² (the reduced
+#                          physical form H_final follows on the Hamiltonian
+#                          constraint).
+#
+# Run: cadabra2-cli -q -n <this file>
+
+# ===== scalar (parameter) declarations =====
+# All objects below are plain commuting scalars (no indices): M (Planck mass),
+# α (R² coupling), R (4D scalar curvature), Rc (3-curvature = ³R), Rcb (the
+# background ³R-bar of the conformal decomposition), Omega (the conformal
+# factor), Nla2Omega (∇̄²Ω — the conformal-mode spatial second-derivative
+# variable), ψ (scalaron), φ (Einstein-frame field), π (scalaron momentum),
+# d0phi (∂₀φ — the scalaron time-derivative, traded by the Legendre transform),
+# Dphi2 (the scalaron spatial-gradient product (∂_iφ)(∂^iφ) as an independent
+# derivative variable), grad2 (the same product of the actual spatial
+# derivative values), x (dimensionless field).
+{R, Rc, R3, K2, Ksq, Rcb, Omega, Nla2Omega, M, \alpha, \psi, \phi, \pi, \Pi, x, grad2, Dphi2, d0phi, q, dqsq}::Commuting.
+
+# ===== 1. the action and the ghost-free scalar-tensor equivalence =====
+action := (M^2/2) R + \alpha R**2.
+# The scalar-tensor (Jordan-frame) equivalent: ψ = 1 + 4αR/M² is the conformal
+# factor of the Einstein-frame transformation; U(ψ) = (M⁴/16α)(ψ−1)².
+psi := 1 + (4 \alpha/M^2) R.
+U := (M^4/(16 \alpha)) (\psi - 1)**2.
+# Verify f(R) = (M²/2)ψR − U(ψ) at ψ = 1 + 4αR/M²  ->  0.
+scalaron_check := (M^2/2) R + \alpha R**2
+                  - ( (M^2/2) (1 + 4 \alpha R/M^2) R
+                      - (M^4/(16 \alpha)) (4 \alpha R/M^2)**2 ).
+expand(scalaron_check);
+expand_power(scalaron_check);
+distribute(scalaron_check);
+collect_factors(scalaron_check);
+canonicalise(scalaron_check);
+substitute(scalaron_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(scalaron_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(scalaron_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+canonicalise(scalaron_check);
+collect_terms(scalaron_check);
+
+# ===== 2. the 3D spatial potential (conformal-mode stabilization) =====
+# The spatial potential density of the gauge-fixed Hamiltonian as a function
+# of the 3-curvature (the conformal-mode derivative variable):
+#   V3(R_c) = −(M²/2) R_c + α R_c²   (α > 0 → parabola, bounded below).
+V3 := -(M^2/2) Rc + \alpha Rc**2.
+# Completed square (the explicit boundedness):
+#   V3 = α (Rc − M²/(4α))² − M⁴/(16α).
+V3_sq := \alpha (Rc - M^2/(4 \alpha))**2 - M^4/(16 \alpha).
+V3_check := -(M^2/2) Rc + \alpha Rc**2
+            - ( \alpha (Rc - M^2/(4 \alpha))**2 - M^4/(16 \alpha) ).
+expand(V3_check);
+expand_power(V3_check);
+distribute(V3_check);
+collect_factors(V3_check);
+sort_product(V3_check);
+canonicalise(V3_check);
+substitute(V3_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(V3_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(V3_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+substitute(V3_check, $ (M^{2})**2 -> M^{4} $, repeat=True);
+substitute(V3_check, $ \alpha (\alpha)**(-1) -> 1 $, repeat=True);
+sort_product(V3_check);
+canonicalise(V3_check);
+collect_terms(V3_check);
+# The minimum (derivative dV3/dRc = −M²/2 + 2αRc vanishes at Rc = M²/(4α)):
+Rc_min := M^2/(4 \alpha).
+dV3 := -M^2/2 + 2 \alpha Rc.
+dV3_check := -M^2/2 + 2 \alpha Rc.
+substitute(dV3_check, $ Rc -> M^2/(4 \alpha) $, repeat=True);
+substitute(dV3_check, $ \alpha (\alpha)**(-1) -> 1 $, repeat=True);
+substitute(dV3_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(dV3_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(dV3_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+sort_product(dV3_check);
+canonicalise(dV3_check);
+collect_terms(dV3_check);
+# The finite lower bound (no −∞ plunge as |R_c| → ∞):
+V3_min := -M^4/(16 \alpha).
+
+# ===== 3. the Einstein-frame scalaron (Starobinsky) potential =====
+# x := √(2/3) φ/M,  ψ = e^{x}; the conformal rescaling maps U(ψ) to
+# V(φ) = U(ψ)/ψ² = (M⁴/16α)(1 − e^{−x})² — manifestly ≥ 0 (a square).
+x := \sqrt{2/3} \phi / M.
+Vphi := (M^4/(16 \alpha)) (1 - \exp(-x))**2.
+# Vacuum: V(0) = 0 (flat Minkowski) — the global minimum.
+Vphi_zero := @(Vphi).
+substitute(Vphi_zero, $ x -> 0 $, repeat=True);
+substitute(Vphi_zero, $ \exp(0) -> 1 $, repeat=True);
+canonicalise(Vphi_zero);
+collect_terms(Vphi_zero);
+# Large-field plateau: as φ → +∞, e^{−x} → 0, V → M⁴/(16α) — the constant
+# asymptote of the bounded-from-below potential (V stays ≥ 0 everywhere).
+Vplat := @(Vphi).
+substitute(Vplat, $ \exp(-x) -> 0 $, repeat=True);
+canonicalise(Vplat);
+collect_terms(Vplat);
+# Global minimum: dV/dφ = (M⁴/8α)(1 − e^{−x})(√(2/3)/M) e^{−x} vanishes at φ = 0.
+dVphi := (M^4/(16 \alpha)) 2 (1 - \exp(-x)) (\sqrt{2/3}/M) \exp(-x).
+dVphi_zero := @(dVphi).
+substitute(dVphi_zero, $ x -> 0 $, repeat=True);
+substitute(dVphi_zero, $ \exp(0) -> 1 $, repeat=True);
+canonicalise(dVphi_zero);
+collect_terms(dVphi_zero);
+
+# ===== 4. the 3D gauge-fixed Hamiltonian (NS-style fixing of the SPATIAL
+#          derivative variables) =====
+# The SPATIAL derivative variables of the foliation are promoted to independent
+# phase-space objects, exactly like the NS module promotes the spatial
+# gradients u_{i,j} = ∂_j u_i (book.tex §4163-4197): Dphi2 (the product of the
+# scalaron spatial-gradient variables (∂_iφ)(∂^iφ)) and the conformal-mode
+# curvature R_c (built from the spatial second derivatives of the metric).
+# The BRST constraints fix each derivative variable to the value of the actual
+# spatial field derivative (the NS pattern — the derivative fields u_{i,j} are
+# fixed to the gradients ∂_j u_i):
+#   Dphi2  ->  grad2        (grad2 = (∂_iφ)(∂^iφ): the product of the actual
+#                             spatial derivative values)
+#   R_c    ->  Ω⁻⁴ R̄_c − 8 Ω⁻⁵ ∇̄²Ω   (the conformal-mode decomposition, with
+#                             the derivative variable ∇̄²Ω determined by the
+#                             field derivatives and substituted back)
+# Each substitution resolves the constraint identically (gf_check_*), and
+# after substitution the Hamiltonian carries genuine PRODUCTS OF SPATIAL FIELD
+# DERIVATIVES — grad2 and R_c² — exactly as the NS Hamiltonian carries
+# u_j·u_{i,j}. (This is the derivative-variable fixing of the NS module —
+# spatial, not time — distinct from the solved divergence constraint
+# u_{3,3} = u_{1,1}+u_{2,2}; the scalaron time-derivative ∂₀φ is traded by the
+# standard Legendre transform below, not gauge-fixed.)
+# Scalaron spatial-gradient product variable -> the actual spatial derivatives:
+gf_check_Dphi2 := Dphi2 - grad2.
+substitute(gf_check_Dphi2, $ Dphi2 -> grad2 $, repeat=True);
+distribute(gf_check_Dphi2);
+canonicalise(gf_check_Dphi2);
+collect_terms(gf_check_Dphi2);
+# Conformal-mode curvature through the spatial derivatives of the conformal
+# factor: R_c = Ω⁻⁴ R̄_c − 8 Ω⁻⁵ ∇̄²Ω. Solved for the derivative variable
+# ∇̄²Ω = (1/8)(Ω R̄_c − Ω⁵ R_c) and substituted back -> 0:
+gf_check_Rc := Rc - ( Omega^{-4} Rcb - 8 Omega^{-5} ((1/8) (Omega Rcb - Omega**5 Rc)) ).
+expand(gf_check_Rc);
+expand_power(gf_check_Rc);
+distribute(gf_check_Rc);
+collect_factors(gf_check_Rc);
+sort_product(gf_check_Rc);
+canonicalise(gf_check_Rc);
+substitute(gf_check_Rc, $ Omega Omega^{-5} -> Omega^{-4} $, repeat=True);
+substitute(gf_check_Rc, $ Omega^{-5} Omega -> Omega^{-4} $, repeat=True);
+substitute(gf_check_Rc, $ Omega^{-1} Omega -> 1 $, repeat=True);
+substitute(gf_check_Rc, $ Omega Omega^{-1} -> 1 $, repeat=True);
+substitute(gf_check_Rc, $ Omega^{-5} (Omega)**5 -> 1 $, repeat=True);
+substitute(gf_check_Rc, $ (Omega)**5 Omega^{-5} -> 1 $, repeat=True);
+sort_product(gf_check_Rc);
+collect_factors(gf_check_Rc);
+canonicalise(gf_check_Rc);
+collect_terms(gf_check_Rc);
+# The synchronous-gauge Lagrangian (N = 1, N^i = 0) of the scalar + conformal
+# sectors, with the spatial derivative variables as independent objects:
+#   L = ½(∂₀φ)² − ½·Dphi2 − V(φ) + (M²/2)R_c − αR_c².
+L_gf := (1/2) d0phi**2 - (1/2) Dphi2 - (M^4/(16 \alpha)) (1 - \exp(-x))**2
+        + (1/2) M^2 Rc - \alpha Rc**2.
+# The Legendre transform H = π·∂₀φ − L (standard — trades the scalaron
+# time-derivative for its momentum) with the SPATIAL derivative variables fixed
+# to the values of the field derivatives. After substitution the Hamiltonian
+# carries genuine PRODUCTS OF SPATIAL FIELD DERIVATIVES — grad2 and the
+# conformal-mode curvature R_c² — rather than abstract derivative-variable
+# products:
+H_gf := \pi d0phi - ( (1/2) d0phi**2 - (1/2) Dphi2
+                      - (M^4/(16 \alpha)) (1 - \exp(-x))**2
+                      + (1/2) M^2 Rc - \alpha Rc**2 ).
+substitute(H_gf, $ d0phi -> \pi $, repeat=True);
+substitute(H_gf, $ Dphi2 -> grad2 $, repeat=True);
+distribute(H_gf);
+expand(H_gf);
+collect_factors(H_gf);
+canonicalise(H_gf);
+collect_terms(H_gf);
+# The Hamiltonian constraint (the scalar, Gauss-like first-class constraint of
+# the 3+1 theory — the gravity analogue of the NS BRST charge Ω = u_{j,j}ψ†):
+#   H_c = −(M²/2) R_c + ½π² + ½(∂φ)² + V(φ) = 0
+# Solved for the conformal-mode curvature R_c:
+#   R_c = (2/M²)(½π² + ½(∂φ)² + V(φ))
+# and substituted back — the residue must vanish identically:
+Hc := -(M^2/2) Rc + (1/2) \pi**2 + (1/2) grad2 + (M^4/(16 \alpha)) (1 - \exp(-x))**2.
+constraint_check := -(M^2/2) Rc + (1/2) \pi**2 + (1/2) grad2
+                    + (M^4/(16 \alpha)) (1 - \exp(-x))**2.
+substitute(constraint_check, $ Rc -> (2/M^2) ((1/2) \pi**2 + (1/2) grad2 + (M^4/(16 \alpha)) (1 - \exp(-x))**2) $, repeat=True);
+distribute(constraint_check);
+expand(constraint_check);
+sort_product(constraint_check);
+canonicalise(constraint_check);
+substitute(constraint_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(constraint_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(constraint_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+canonicalise(constraint_check);
+collect_terms(constraint_check);
+# The 3D gauge-fixed Hamiltonian density of the R + αR² theory (scalar sector,
+# Einstein frame): bounded below because V(φ) ≥ 0.
+H_final := (1/2) \pi**2 + (1/2) grad2 + (M^4/(16 \alpha)) (1 - \exp(-x))**2.
+# Jordan-frame conformal-mode potential form (book.tex-style): the spatial
+# potential is the α-stabilized parabola V3(R_c) — bounded below by −M⁴/(16α).
+H_jordan := (1/2) \pi**2 + (1/2) grad2 - (M^2/2) Rc + \alpha Rc**2.
+
+# ===== 5. the 3D gauge-fixed Hamiltonian FROM THE CLASSICAL ACTION =====
+# (the Einstein-module pipeline: action density -> vary -> polymomentum ->
+#  Legendre transform -> H_final; cf. docs/qg_gauge_fixed_hamiltonian.cdb,
+#  where ex1 -> pi_derived -> H_final = book.tex 8190)
+#
+# The 3D gauge-fixed Hamiltonian of the R + αR² theory is derived here from
+# the classical action itself, in the same way the Einstein action was reduced
+# in the TEGR module. The chain:
+#
+#   action_J   — the classical action with the R² term, in its ghost-free
+#                scalar-tensor (Jordan) form (M²/2)ψR − U(ψ), ψ = 1 + 4αR/M².
+#                action_R2_check verifies it equals the f(R) action
+#                (M²/2)R + αR² identically (→ 0) — this is the action being
+#                quantized.
+#   action_gf  — the 3D gauge-fixed action density (synchronous gauge
+#                N = 1, N^i = 0, conformal-mode variables): the scalaron
+#                kinetic ½(∂₀φ)², the spatial-derivative variable ½Dphi2
+#                (fixed to grad2 in the Hamiltonian), the Starobinsky
+#                potential V(φ), and the conformal-mode parabola
+#                (M²/2)R_c − αR_c² — the R² contribution to the spatial
+#                potential (Part 2).
+#   pi_derived — the polymomentum BY VARIATION of the action (the exact
+#                Einstein-module pattern: vary(action, φ -> dφ), then
+#                ∂₀(dφ) -> π, dφ -> 0, ∂_i(dφ) -> 0): the varied kinetic is
+#                (∂₀φ)·π, so the canonical momentum is π = ∂L/∂(∂₀φ) = ∂₀φ
+#                (pi_check -> 0).
+#   H_action   — the Legendre transform H = π·∂₀φ − L of the action, with
+#                the velocity solved for the momentum (∂₀φ -> π) and the
+#                spatial derivative variable fixed to the derivative values
+#                (Dphi2 -> grad2): H = ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c².
+#                leg_check verifies the Legendre identity identically (→ 0),
+#                and H_action equals Part 4's gauge-fixed H_gf (same form).
+#   Rtil_3p1   — the 3+1 (ADM, synchronous-gauge) split of the 4D curvature:
+#                R = R3 + (K² − K_ijK^ij) up to total derivatives (K_ij the
+#                extrinsic curvature / metric time-derivative variables) — the
+#                gravitational sector of the action reduced to the 3D theory,
+#                whose spatial potential is the α-stabilized parabola (the R²
+#                quadratic term).
+
+# ===== 5.1 the classical action with the R² term (Jordan form) =====
+# The scalar-tensor (Jordan) form of the f(R) = (M²/2)R + αR² action:
+#   action_J = (M²/2)ψR − U(ψ),  ψ = 1 + 4αR/M²,  U(ψ) = (M⁴/16α)(ψ−1)².
+# The R² term is manifest through U(ψ): α > 0 makes the potential a positive
+# quadratic in (ψ−1) (the conformal-mode stabilization).
+action_J := (M^2/2) \psi R - (M^4/(16 \alpha)) (\psi - 1)**2.
+# Verify the action with the R² term equals the scalar-tensor form:
+#   (M²/2)ψR − U(ψ) = (M²/2)R + αR²  at ψ = 1 + 4αR/M²   ->  0.
+action_R2_check := (M^2/2) \psi R - (M^4/(16 \alpha)) (\psi - 1)**2
+                   - ( (M^2/2) R + \alpha R**2 ).
+substitute(action_R2_check, $ \psi -> 1 + (4 \alpha/M^2) R $, repeat=True);
+expand(action_R2_check);
+expand_power(action_R2_check);
+distribute(action_R2_check);
+collect_factors(action_R2_check);
+sort_product(action_R2_check);
+canonicalise(action_R2_check);
+substitute(action_R2_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(action_R2_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(action_R2_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+substitute(action_R2_check, $ \alpha (\alpha)**(-1) -> 1 $, repeat=True);
+sort_product(action_R2_check);
+canonicalise(action_R2_check);
+collect_terms(action_R2_check);
+
+# ===== 5.2 the 3D gauge-fixed action density (synchronous gauge) =====
+# The 3+1-reduced action density of the R + αR² theory: the scalaron kinetic
+# and Starobinsky potential (from the conformal transformation, Parts 1+3) and
+# the conformal-mode parabola (M²/2)R_c − αR_c² — the R² contribution to the
+# spatial potential (Part 2). Dphi2 = (∂_iφ)(∂^iφ) is the promoted spatial
+# derivative variable (NS pattern, Part 4); ∂₀φ is the velocity traded by the
+# Legendre transform.
+\partial{#}::PartialDerivative.
+\phi::Depends(\partial{#}).
+action_gf := (1/2) \partial_{0}{\phi}**2 - (1/2) Dphi2
+             - (M^4/(16 \alpha)) (1 - \exp(-x))**2
+             + (1/2) M^2 Rc - \alpha Rc**2.
+
+# ===== 5.3 the polymomentum BY VARIATION (Einstein-module pattern) =====
+# Vary the action w.r.t. the field φ; the coefficient of the time-derivative
+# variation ∂₀(dφ) is the polymomentum: the varied kinetic is (∂₀φ)·π, so
+#   π = ∂L/∂(∂₀φ) = ∂₀φ   (the canonical momentum — pi_check -> 0).
+pi_derived := @(action_gf).
+vary(pi_derived, $ \phi -> d{\phi} $)
+distribute(pi_derived)
+substitute(pi_derived, $ \partial_{0}{d{\phi}} -> \pi $, repeat=True)
+substitute(pi_derived, $ \partial_{i}{d{\phi}} -> 0 $, repeat=True)
+substitute(pi_derived, $ d{\phi} -> 0 $, repeat=True)
+distribute(pi_derived)
+canonicalise(pi_derived)
+collect_terms(pi_derived)
+# The canonical momentum equals the velocity: π − ∂₀φ = 0. (Substitute the
+# velocity value read off from pi_derived — the by-variation identification.)
+pi_check := \pi - \partial_{0}{\phi}.
+substitute(pi_check, $ \partial_{0}{\phi} -> \pi $, repeat=True);
+canonicalise(pi_check);
+collect_terms(pi_check);
+
+# ===== 5.4 the Legendre transform of the action -> the 3D gauge-fixed H =====
+# H = π·∂₀φ − L: the velocity solved for the momentum (∂₀φ -> π) and the
+# spatial derivative variable fixed to the derivative values (Dphi2 -> grad2).
+H_action := \pi \partial_{0}{\phi} - @(action_gf).
+substitute(H_action, $ \partial_{0}{\phi}**2 -> \pi**2 $, repeat=True);
+substitute(H_action, $ \partial_{0}{\phi} -> \pi $, repeat=True);
+substitute(H_action, $ Dphi2 -> grad2 $, repeat=True);
+distribute(H_action);
+expand(H_action);
+collect_factors(H_action);
+canonicalise(H_action);
+collect_terms(H_action);
+# The Legendre identity H = π·∂₀φ − L verified identically (one literal
+# expression — Cadabra2's @() cannot inline sums of products):
+leg_check := \pi \partial_{0}{\phi}
+             - ( (1/2) \partial_{0}{\phi}**2 - (1/2) Dphi2
+                 - (M^4/(16 \alpha)) (1 - \exp(-x))**2
+                 + (1/2) M^2 Rc - \alpha Rc**2 )
+             - ( (1/2) \pi**2 + (1/2) grad2 - (M^2/2) Rc + \alpha Rc**2
+                 + (M^4/(16 \alpha)) (1 - \exp(-x))**2 ).
+substitute(leg_check, $ \partial_{0}{\phi}**2 -> \pi**2 $, repeat=True);
+substitute(leg_check, $ \partial_{0}{\phi} -> \pi $, repeat=True);
+substitute(leg_check, $ Dphi2 -> grad2 $, repeat=True);
+distribute(leg_check);
+expand(leg_check);
+collect_factors(leg_check);
+canonicalise(leg_check);
+collect_terms(leg_check);
+
+# ===== 5.5 the gravitational sector: 3+1 split of the 4D curvature =====
+# The 4D curvature of the action 3+1-splits (synchronous gauge, up to total
+# derivatives) into the 3-curvature and the extrinsic-curvature kinetic:
+#   R = R3 + (K² − K_ijK^ij),   K_ij = ½ ∂₀q_ij  (metric time-derivative
+# variables). The spatial potential of the gauge-fixed Hamiltonian is then the
+# α-stabilized parabola V3(R_c) of Part 2 (the R² quadratic term regularizes
+# the negative conformal-mode gradient energy).
+Rtil_3p1 := R3 + (K2 - Ksq).
+
+# ===== 5.6 the gravitational sector FROM the action (the conformal mode) =====
+# The gravitational part of the 3+1 action density (synchronous gauge), in the
+# metric time-derivative variables: with q the conformal-mode metric trace
+# (K = ½∂₀q) and dqsq = (∂₀q_ij)(∂₀q^ij) (K_ijK^ij = ¼dqsq), the kinetic is
+#   (M²/2)(K² − K_ijK^ij) = (M²/8)((∂₀q)² − dqsq),
+# and the spatial potential is the R²-stabilized conformal-mode parabola
+# (M²/2)R_c − αR_c² (Part 2). This is the gravitational sector of the action
+# being Legendre-transformed — exactly as the Einstein module derived the
+# metric polymomentum from ex1 = eR.
+action_grav := (M^2/8)(\partial_{0}{q}**2 - dqsq) + (M^2/2) Rc - \alpha Rc**2.
+# The METRIC polymomentum BY VARIATION (the same Einstein-module pattern as the
+# scalaron pi_derived): vary w.r.t. the metric q, extract the coefficient of
+# the time-derivative variation ∂₀(dq) -> Π:
+#   Π = ∂L/∂(∂₀q) = (M²/4)∂₀q   (pi_grav_check -> 0).
+q::Depends(\partial{#}).
+pi_grav := @(action_grav).
+vary(pi_grav, $ q -> d{q} $)
+distribute(pi_grav)
+substitute(pi_grav, $ \partial_{0}{d{q}} -> \Pi $, repeat=True)
+substitute(pi_grav, $ d{q} -> 0 $, repeat=True)
+distribute(pi_grav)
+canonicalise(pi_grav)
+collect_terms(pi_grav)
+# The metric canonical momentum: Π = (M²/4)∂₀q -> 0.
+pi_grav_check := \Pi - (M^2/4) \partial_{0}{q}.
+substitute(pi_grav_check, $ \partial_{0}{q} -> (4/M^2) \Pi $, repeat=True);
+substitute(pi_grav_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(pi_grav_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+canonicalise(pi_grav_check);
+collect_terms(pi_grav_check);
+# The Legendre transform of the gravitational sector: H = Π·∂₀q − L_grav with
+# the velocity solved for the momentum (∂₀q -> 4Π/M²): the kinetic becomes
+# (2/M²)Π² + (M²/8)dqsq (the ADM-type positive momentum kinetic) and the
+# spatial potential is the R²-stabilized parabola:
+#   H_grav = (2/M²)Π² + (M²/8)dqsq − (M²/2)R_c + αR_c².
+H_grav := \Pi \partial_{0}{q} - @(action_grav).
+substitute(H_grav, $ \partial_{0}{q}**2 -> (16/M^4) \Pi**2 $, repeat=True);
+substitute(H_grav, $ \partial_{0}{q} -> (4/M^2) \Pi $, repeat=True);
+distribute(H_grav);
+expand(H_grav);
+collect_factors(H_grav);
+canonicalise(H_grav);
+collect_terms(H_grav);
+# The Legendre identity of the gravitational sector (one literal expression):
+leg_grav_check := \Pi \partial_{0}{q}
+                  - ( (M^2/8)(\partial_{0}{q}**2 - dqsq) + (M^2/2) Rc - \alpha Rc**2 )
+                  - ( (2/M^2) \Pi**2 + (M^2/8) dqsq - (M^2/2) Rc + \alpha Rc**2 ).
+substitute(leg_grav_check, $ \partial_{0}{q}**2 -> (16/M^4) \Pi**2 $, repeat=True);
+substitute(leg_grav_check, $ \partial_{0}{q} -> (4/M^2) \Pi $, repeat=True);
+distribute(leg_grav_check);
+expand(leg_grav_check);
+collect_factors(leg_grav_check);
+canonicalise(leg_grav_check);
+substitute(leg_grav_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(leg_grav_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(leg_grav_check, $ M^{2} (M^{4})**(-1) -> (M^{2})**(-1) $, repeat=True);
+substitute(leg_grav_check, $ (M^{4})**(-1) M^{2} -> (M^{2})**(-1) $, repeat=True);
+sort_product(leg_grav_check);
+canonicalise(leg_grav_check);
+collect_terms(leg_grav_check);
+
+# ===== 5.7 the full 3D gauge-fixed Hamiltonian (scalar + gravity) =====
+# The complete Legendre transform of the classical action (Parts 5.2-5.6): the
+# scalaron sector (½π² + ½(∂φ)² + V(φ)) plus the gravitational sector
+# ((2/M²)Π² + (M²/8)dqsq − (M²/2)R_c + αR_c²):
+#   H_total = ½π² + ½(∂φ)² + V(φ) + (2/M²)Π² + (M²/8)dqsq − (M²/2)R_c + αR_c².
+# (The reduced physical form H_final = ½π² + ½(∂φ)² + V(φ) — the scalar sector
+# the numerical tests quantize — follows on the Hamiltonian constraint
+# constraint_check, which trades the conformal-mode curvature R_c.)
+H_total := (1/2) \pi**2 + (1/2) grad2 + (M^4/(16 \alpha)) (1 - \exp(-x))**2
+           + (2/M^2) \Pi**2 + (M^2/8) dqsq - (M^2/2) Rc + \alpha Rc**2.

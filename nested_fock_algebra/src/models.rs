@@ -1610,6 +1610,166 @@ pub fn qg_tegr_hamiltonian(n_modes: u32) -> Hamiltonian {
     Hamiltonian { terms }
 }
 
+/// The R + αR² (Starobinsky) gauge-fixed scalar-sector Hamiltonian, implementing
+/// the scalar part of the Cadabra2-derived `H_final`
+/// (`docs/qg_starobinsky_hamiltonian.cdb`): `ℋ = ½π² + ½(∇φ)² + V(φ)` with the
+/// Einstein-frame Starobinsky potential `V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})²`
+/// (bounded below — the αR² stabilization of the conformal mode). Truncated at
+/// quadratic order around the flat vacuum (φ = 0) the potential is the scalaron
+/// mass term `V ≈ ½m²φ²` with `m² = M²/(12α)` (the published Starobinsky
+/// scalaron mass). Quantizing the oscillator gives the diagonal number form
+/// `H = Σ_i m·N_i`, the standard free massive-scalar realization (cf.
+/// [`qed_free_photon`], [`qg_free_graviton`]): eigenvalues `n·m`, spacing
+/// exactly `m` (the scalaron mass), vacuum `0`.
+///
+/// Built from the framework-native **inner** ladder operators
+/// (`N_i = InnerBosonCreate(i) ∘ InnerBosonAnnihilate(i)`) so the nested-Fock
+/// vacuum rule `⟨0|H|0⟩ = 0` holds automatically and the additivity `n|n⟩ =
+/// n·m|n⟩` is exact at *any* occupation (a multi-scalaron state is one universe
+/// with inner occupation `{i:n}`). The physical vacuum for the inner operators
+/// is one empty inner universe (`OuterBosonCreate(InnerBosonicState::vacuum())`).
+///
+/// The test verifies Hermiticity, a real bounded-below spectrum with positive
+/// excitation gaps (the boundedness claim of the R² stabilization — no
+/// conformal-mode −∞), and that the excitation spacing equals the scalaron
+/// mass `m` exactly and scales with it.
+pub fn qg_starobinsky_hamiltonian(n_modes: u32, m: f64) -> Hamiltonian {
+    let mut terms = Vec::with_capacity(n_modes as usize);
+    for i in 0..n_modes {
+        // m·N_i — the quantized scalaron (normal-ordered, ⟨0|H|0⟩ = 0).
+        terms.push((
+            Complex64::new(m, 0.0),
+            vec![
+                Operator::InnerBosonCreate(i),
+                Operator::InnerBosonAnnihilate(i),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The scalaron (Starobinsky) mass from the R² coupling: `m² = M²/(12α)` — the
+/// curvature of the Einstein-frame potential `V(φ) = (M⁴/16α)(1−e^{−√(2/3)φ/M})²`
+/// at the flat vacuum (V ≈ ½m²φ², so `V″(0) = m²`). Returns `m` in units of the
+/// reduced Planck mass M (M = 1). For α = O(1) the scalaron is Planck-mass
+/// heavy (Compton wavelength ≲ 10⁻³⁵ m), which is exactly why the R² theory
+/// passes solar-system tests — the Yukawa correction is unobservable at any
+/// macroscopic distance.
+pub fn qg_starobinsky_scalaron_mass(alpha: f64) -> f64 {
+    (12.0 * alpha).sqrt().recip()
+}
+
+/// The weak-field gravitational potential of R + αR² (Starobinsky) gravity —
+/// the classic linearized-f(R) result: the Newtonian potential with the Yukawa
+/// correction from the massive scalaron,
+///
+///   `Φ(r) = −GM/r · (1 + ⅓ e^{−mr})`,
+///
+/// `m` the scalaron mass (the published f(R) fifth-force form; the `⅓` is the
+/// standard coefficient from the trace equation). For `r ≫ 1/m` it reduces to
+/// the Newtonian potential `−GM/r` — R² gravity passes solar-system tests —
+/// and for `r ≪ 1/m` the force is enhanced by the factor `4/3`. This is the
+/// weak-field (classical) content the quantized Hamiltonian must reproduce.
+pub fn qg_starobinsky_weak_field_potential(gm: f64, r: f64, m: f64) -> f64 {
+    -gm / r * (1.0 + (1.0 / 3.0) * (-m * r).exp())
+}
+
+/// The massive scalaron (Starobinsky scalar) field: `H = Σ_i √(k_i² + m²) N_i` —
+/// the quantized massive Klein-Gordon dispersion `ω(k) = √(k² + m²)`, in
+/// contrast to the massless graviton `ω = c|k|` ([`qg_free_graviton`]). Built
+/// from the framework-native **inner** ladder operators (nested Fock space,
+/// Hermite-basis ladder ops), normal-ordered (`⟨0|H|0⟩ = 0`), with exact
+/// n-particle additivity at any occupation. The `m → 0` limit recovers the
+/// massless dispersion `ω = |k|` — the R² theory's graviton sector — and the
+/// group velocity `dω/dk = k/√(k²+m²) < 1` (massive propagation is subluminal).
+pub fn qg_starobinsky_scalaron_field(ks: &[f64], m: f64) -> Hamiltonian {
+    let mut terms = Vec::with_capacity(ks.len());
+    for (i, &k) in ks.iter().enumerate() {
+        let omega = (k * k + m * m).sqrt();
+        terms.push((
+            Complex64::new(omega, 0.0),
+            vec![
+                Operator::InnerBosonCreate(i as u32),
+                Operator::InnerBosonAnnihilate(i as u32),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The BRST gauge constraint for the scalaron's **spatial-derivative
+/// variables** — the Navier-Stokes pattern ([`navier_stokes_brst`]) applied to
+/// the R² scalar sector: the spatial gradients `g_i = ∂_iφ` (modes 1..3) are
+/// promoted to independent canonical fields (Hermite-basis ladder modes, no
+/// lattice), and the charge
+///
+///   `Ω = Σ_i g_i · c_i`   (c_i the ghosts, fermion modes 0..2)
+///
+/// fixes each derivative variable to the value of the field derivative — the
+/// gravity analogue of NS's `Ω = Σ_j u_{j,j}·c_j` (book.tex §4159-4197; the
+/// derivative-variable fixing of `docs/qg_starobinsky_hamiltonian.cdb` Part 4,
+/// `gf_check_Dphi2 → 0`). The charge is nilpotent (`Ω² = 0`, first-class) and
+/// the scalar-sector Hamiltonian is BRST-closed (`[H, Ω] = 0`): the derivative
+/// variables commute with the dynamics and are fixed to the field-derivative
+/// values, so products of field derivatives (`½(∂φ)²`) survive in the
+/// gauge-fixed Hamiltonian — exactly as the NS Hamiltonian carries `u_j·u_{i,j}`.
+pub fn qg_starobinsky_derivative_brst() -> Hamiltonian {
+    let mut terms = Vec::new();
+    for i in 0..3u32 {
+        // g_i = ∂_iφ: the promoted spatial-derivative variable (mode 1+i),
+        // fixed by the ghost c_i (fermion mode i).
+        for (c, op) in field_ops(1 + i) {
+            terms.push((c, vec![op, Operator::InnerFermionAnnihilate(i)]));
+        }
+    }
+    Hamiltonian { terms }
+}
+
+/// The gauge-fixed R² scalar sector with the **spatial field-derivative
+/// variables** — the Navier-Stokes derivatives-as-fields construction
+/// ([`navier_stokes_hamiltonian`], book.tex §4159-4197) applied to the
+/// Starobinsky scalaron. The scalaron field `φ` (mode 0) carries the momentum;
+/// its spatial gradients `g_i = ∂_iφ` (modes 1..3) are promoted to independent
+/// canonical fields that carry **no momenta**, so they commute with the
+/// Hamiltonian and are constants of the motion — the Eulerian block structure.
+/// The gradient energy `½(∂φ)² = ½Σ_i g_i²` enters through the promoted
+/// derivative-variable modes (`g_i = a†_i + a_i`), which the BRST charge
+/// [`qg_starobinsky_derivative_brst`] (`Ω = Σ g_i c_i`) fixes to the values of
+/// the field derivatives — so products of field derivatives (`½Σg_i²`) survive
+/// in the gauge-fixed Hamiltonian, exactly as the NS Hamiltonian carries
+/// `u_j·u_{i,j}`.
+///
+/// Built as `H = m·N_0 + ½Σ_i g_i²` (modes 1..3): `[H, g_i] = 0` exactly for
+/// every derivative variable (no momenta on the gradient modes) and `[H, Ω] = 0`
+/// (BRST-closed). `m = M/√(12α)` is the scalaron mass.
+pub fn qg_starobinsky_gauge_fixed_scalaron(m: f64) -> Hamiltonian {
+    // mode 0: the scalaron φ — the quantized massive mode m·N_0 (the diagonal
+    // normal-ordered realization of ½π² + ½m²φ², cf. qg_starobinsky_hamiltonian).
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    terms.push((
+        Complex64::new(m, 0.0),
+        vec![
+            Operator::InnerBosonCreate(0),
+            Operator::InnerBosonAnnihilate(0),
+        ],
+    ));
+    // modes 1..3: the promoted derivative variables g_i = ∂_iφ; the gradient
+    // energy ½g_i² = ½(a†_i + a_i)² (Hermite-basis field operator squared),
+    // normal-ordered by construction (each field op appears twice).
+    for i in 1..4u32 {
+        let ops = field_ops(i);
+        for (c1, o1) in &ops {
+            for (c2, o2) in &ops {
+                let c = Complex64::new(0.5, 0.0) * c1 * c2;
+                if c.norm_sqr() > 1e-30 {
+                    terms.push((c, vec![o1.clone(), o2.clone()]));
+                }
+            }
+        }
+    }
+    Hamiltonian { terms }
+}
+
 /// QCD gluon ↔ quark-antiquark production Hamiltonian — the **non-perturbative**
 /// structural analogue of the QED [`qed_pair_production`] sector, with the
 /// quark-loop **color factor** `T_R = 1/2` on the vertex:

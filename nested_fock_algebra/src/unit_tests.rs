@@ -1344,6 +1344,146 @@ mod algebra_tests {
     }
 
     #[test]
+    fn test_qg_starobinsky_hamiltonian_vacuum_zero_and_hermitian() {
+        // The Cadabra2-derived R + αR² gauge-fixed scalar sector
+        // ½π² + ½m²φ² (docs/qg_starobinsky_hamiltonian.cdb, H_final truncated
+        // at quadratic order — the Starobinsky scalaron mass), built from the
+        // framework-native inner ladder operators: ⟨0|H|0⟩ = 0 and H = H†.
+        use crate::models::qg_starobinsky_hamiltonian;
+        let h = qg_starobinsky_hamiltonian(3, 1.0);
+        let hd = h.adjoint();
+        assert_eq!(h.terms.len(), hd.terms.len());
+        for t in &h.terms {
+            assert!(
+                t.0.im.abs() < 1e-12,
+                "Starobinsky coefficients are real"
+            );
+        }
+        // The physical vacuum for inner operators is one empty inner universe.
+        let vac = crate::QuantumState::vacuum()
+            .apply(&crate::Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        let hv = h.apply(&vac);
+        let e0 = crate::QuantumState::inner_product(&hv, &vac).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+        // Exact additivity at occupation n: ⟨n|H|n⟩ = n·m (the expectation is
+        // taken on the normalized state — a†|n⟩ = √(n+1)|n+1⟩, so repeated
+        // InnerBosonCreate applications build an unnormalized occupation-n
+        // state with ‖|n⟩‖² = n!).
+        let one = vac.apply(&crate::Operator::InnerBosonCreate(0));
+        let e1 = crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
+        assert!((e1 - 1.0).abs() < 1e-9, "one-scalaron energy must be m, got {e1}");
+        let two = one.apply(&crate::Operator::InnerBosonCreate(0));
+        let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
+        assert!((e2 - 2.0).abs() < 1e-9, "two-scalaron energy must be 2m, got {e2}");
+    }
+
+    #[test]
+    fn test_qg_starobinsky_scalaron_mass_and_weak_field_potential() {
+        // m² = M²/(12α): the Starobinsky scalaron mass from the R² coupling
+        // (the curvature of the Einstein-frame potential at the vacuum).
+        use crate::models::{qg_starobinsky_scalaron_mass, qg_starobinsky_weak_field_potential};
+        let m = qg_starobinsky_scalaron_mass(1.0);
+        assert!(
+            (m - (12.0_f64).sqrt().recip()).abs() < 1e-12,
+            "m = 1/√(12α), got {m}"
+        );
+        // The weak-field R² potential Φ = −GM/r(1 + ⅓e^{−mr}): at r ≫ 1/m it
+        // reduces to the Newtonian potential −GM/r (R² gravity passes
+        // solar-system tests); at r → 0 the force is enhanced by 4/3 (the
+        // classic f(R) fifth-force result).
+        let gm: f64 = 3.986e14; // Earth's GM (m³/s²)
+        let far = 10.0 / m;
+        let phi_far = qg_starobinsky_weak_field_potential(gm, far, m);
+        let newton = -gm / far;
+        assert!(
+            ((phi_far - newton) / newton).abs() < 1e-4,
+            "at r ≫ 1/m the R² potential must be Newtonian: {phi_far} vs {newton}"
+        );
+        let near = 1e-8 / m;
+        let phi_near = qg_starobinsky_weak_field_potential(gm, near, m);
+        let enhanced = -(4.0 / 3.0) * gm / near;
+        assert!(
+            ((phi_near - enhanced) / enhanced).abs() < 1e-6,
+            "at r ≪ 1/m the R² force must be enhanced by 4/3: {phi_near} vs {enhanced}"
+        );
+    }
+
+    #[test]
+    fn test_qg_starobinsky_scalaron_field_massive_dispersion() {
+        // H = Σ √(k²+m²) N_i: the massive Klein-Gordon dispersion ω = √(k²+m²),
+        // vacuum 0, one-scalaron = √(k²+m²), additive at occupation n, and the
+        // m → 0 limit recovers the massless dispersion ω = |k|.
+        use crate::models::qg_starobinsky_scalaron_field;
+        let ks = [0.5, 1.0, 1.5];
+        let m = 1.0;
+        let h = qg_starobinsky_scalaron_field(&ks, m);
+        let vac = crate::QuantumState::vacuum()
+            .apply(&crate::Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        let e0 = crate::QuantumState::inner_product(&h.apply(&vac), &vac).re;
+        assert!(e0.abs() < 1e-9, "scalaron vacuum energy must be 0, got {e0}");
+        let one = vac.apply(&crate::Operator::InnerBosonCreate(1));
+        let e1 = crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
+        let expected1 = (ks[1] * ks[1] + m * m).sqrt();
+        assert!(
+            (e1 - expected1).abs() < 1e-9,
+            "one-scalaron energy must be √(k²+m²) = {expected1}, got {e1}"
+        );
+        let two = one.apply(&crate::Operator::InnerBosonCreate(1));
+        let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
+        assert!(
+            (e2 - 2.0 * expected1).abs() < 1e-9,
+            "two-scalaron energy must be additive 2√(k²+m²) = {}, got {e2}",
+            2.0 * expected1
+        );
+        // m → 0: ω = |k| (massless — the graviton limit).
+        let h0 = qg_starobinsky_scalaron_field(&ks, 0.0);
+        let e0_1 = crate::QuantumState::inner_product(&h0.apply(&one), &one).re / one.norm().powi(2);
+        assert!(
+            (e0_1 - ks[1]).abs() < 1e-9,
+            "the m→0 limit must recover ω = |k| = {}, got {e0_1}",
+            ks[1]
+        );
+    }
+
+    #[test]
+    fn test_qg_starobinsky_derivative_brst_nilpotent() {
+        // The derivative-variable BRST charge Ω = Σ_i g_i·c_i (NS pattern):
+        // Ω² = 0 nilpotent on ghost-carrying probes — the derivative variables
+        // are fixed by a first-class constraint (like NS's u_{j,j}·c_j).
+        use crate::models::qg_starobinsky_derivative_brst;
+        let brst = qg_starobinsky_derivative_brst();
+        // Probe: one bosonic universe with derivative-variable content (g_i on
+        // mode 1+i) plus one fermionic universe with the ghost c_i.
+        let probe = |bosonic: crate::InnerBosonicState, ghost: u32| {
+            crate::QuantumState::vacuum()
+                .apply(&crate::Operator::OuterBosonCreate(bosonic))
+                .apply(&crate::Operator::OuterFermionCreate(crate::InnerFermionicState {
+                    modes: std::collections::BTreeSet::from([ghost]),
+                }))
+        };
+        let bos = |mode: u32, n: u32| {
+            let mut inner = crate::InnerBosonicState::vacuum();
+            if n > 0 {
+                inner.modes.insert(mode, n);
+            }
+            inner
+        };
+        for i in 0..3u32 {
+            let p = probe(bos(1 + i, 1), i);
+            assert!(
+                brst.apply(&p).norm() > 1e-6,
+                "probe with g_{i} content must carry Ω-content"
+            );
+            let twice = brst.apply(&brst.apply(&p));
+            assert!(
+                twice.norm() < 1e-9,
+                "Ω² must be nilpotent on the g_{i} probe, ‖Ω²ψ‖ = {:.3e}",
+                twice.norm()
+            );
+        }
+    }
+
+    #[test]
     fn test_qcd_pair_production_carries_tr_color_factor() {
         // qcd_pair_production scales the vertex by √T_R (T_R = 1/2): the
         // resulting Hamiltonian's off-diagonal strength is √(1/2)·c.

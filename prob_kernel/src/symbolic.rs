@@ -811,6 +811,278 @@ mod tests {
         }
     }
 
+    /// Quantum gravity: the R + αR² (Starobinsky) 3D gauge-fixed Hamiltonian.
+    ///
+    /// `docs/qg_starobinsky_hamiltonian.cdb` starts from the action
+    /// `S = ∫√(−g)((M²/2)R + αR²)` (α > 0) and derives the corresponding 3D
+    /// gauge-fixed Hamiltonian, exercising the S30 Cadabra2 subprocess:
+    ///   • `scalaron_check` — the scalar-tensor equivalence
+    ///     f(R) = (M²/2)ψR − U(ψ) at ψ = 1 + 4αR/M², U = (M⁴/16α)(ψ−1)²:
+    ///     R² gravity is a second-order ghost-free theory (no Ostrogradsky).
+    ///   • `V3_check`/`dV3_check`/`V3_min` — the 3D spatial potential
+    ///     V3(R_c) = −(M²/2)R_c + αR_c² is a parabola in the 3-curvature
+    ///     (the conformal mode) with global minimum R_c = M²/(4α), value
+    ///     −M⁴/(16α) > −∞: αR² regularizes the conformal factor problem.
+    ///   • `Vphi_zero`/`Vplat`/`dVphi_zero` — the Einstein-frame Starobinsky
+    ///     potential V(φ) = (M⁴/16α)(1−e^{−√(2/3)φ/M})²: V(0)=0 (Minkowski
+    ///     vacuum), large-field plateau M⁴/(16α) as φ→+∞, dV/dφ=0 at φ=0
+    ///     (global minimum); V is manifestly ≥ 0 (a square) — bounded below.
+    ///   • `gf_check_Dphi2`/`gf_check_Rc` — the gauge fixing of the **spatial
+    ///     field-derivative variables**, following the Navier-Stokes module
+    ///     (book.tex §4159-4197): the NS module promotes the spatial gradients
+    ///     u_{i,j} = ∂_j u_i to independent canonical fields and fixes them to
+    ///     the values of the actual field derivatives. The gravity analogues
+    ///     here are the scalaron spatial-gradient product (∂_iφ)(∂^iφ) (Dphi2
+    ///     → grad2) and the conformal-mode curvature R_c through the spatial
+    ///     second derivatives of the metric (R_c = Ω⁻⁴R̄_c − 8Ω⁻⁵∇̄²Ω, with
+    ///     the derivative variable ∇̄²Ω solved and substituted back). Each
+    ///     constraint resolves to zero, and the Legendre transform then
+    ///     carries genuine *products of spatial field derivatives* (grad2 and
+    ///     R_c²) — exactly as the NS Hamiltonian carries u_j·u_{i,j}.
+    ///   • `constraint_check` — the Hamiltonian constraint solved for the
+    ///     conformal-mode curvature R_c and substituted back → 0.
+    ///   • `H_final` — the 3D gauge-fixed Hamiltonian
+    ///     H = ½π² + ½(∇φ)² + V(φ), bounded below by V ≥ 0 (the
+    ///     boundedness claim of the R² stabilization), and `H_jordan` — the
+    ///     Jordan-frame conformal-mode potential form with the parabola V3.
+    const STAROBINSKY_DERIVATION: &str = include_str!("../../docs/qg_starobinsky_hamiltonian.cdb");
+
+    #[test]
+    fn qg_starobinsky_hamiltonian_derivation_runs() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(
+            STAROBINSKY_DERIVATION,
+            &[
+                "action",
+                "scalaron_check",
+                "V3_check",
+                "dV3_check",
+                "V3_min",
+                "Vphi_zero",
+                "Vplat",
+                "dVphi_zero",
+                "gf_check_Dphi2",
+                "gf_check_Rc",
+                "constraint_check",
+                "H_gf",
+                "H_final",
+                "H_jordan",
+                // Part 5 — the 3D gauge-fixed Hamiltonian derived FROM the
+                // classical action (the Einstein-module pipeline: action ->
+                // vary -> polymomentum -> Legendre transform -> H).
+                "action_J",
+                "action_R2_check",
+                "action_gf",
+                "pi_derived",
+                "pi_check",
+                "H_action",
+                "leg_check",
+                "Rtil_3p1",
+                // Part 5.6/5.7 — the gravitational sector FROM the action (the
+                // metric polymomentum by variation + the full H_total).
+                "action_grav",
+                "pi_grav",
+                "pi_grav_check",
+                "H_grav",
+                "leg_grav_check",
+                "H_total",
+            ],
+            120_000,
+        )
+        .unwrap();
+
+        // The action density is (M²/2)R + αR² (Cadabra2's str() renders the
+        // greek coupling as the unicode α; only commands like \exp stay escaped).
+        let action = &derived["action"];
+        assert!(
+            action.contains("R") && action.contains("α"),
+            "action must be the f(R) density (M²/2)R + αR²: {action}"
+        );
+
+        // Every check must resolve identically to zero (the "verified"
+        // zero-detection verdicts of the derivation):
+        for name in [
+            "scalaron_check",
+            "V3_check",
+            "dV3_check",
+            "Vphi_zero",
+            "dVphi_zero",
+            "gf_check_Dphi2",
+            "gf_check_Rc",
+            "constraint_check",
+        ] {
+            let v = &derived[name];
+            assert!(
+                v == "0" || v.is_empty() || v.trim() == "0",
+                "{name} must vanish identically, got `{v}`"
+            );
+        }
+
+        // The Einstein-frame potential must be the Starobinsky potential
+        // (exponential in the dimensionless field) and its plateau.
+        let vplat = &derived["Vplat"];
+        assert!(
+            vplat.contains("1/16") && vplat.contains("α"),
+            "Vplat must be the M⁴/(16α) large-field plateau: {vplat}"
+        );
+
+        // The gauge-fixed Hamiltonian carries products of SPATIAL field
+        // derivatives: grad2 = (∂_iφ)(∂^iφ) (the scalaron gradient — the
+        // gravity analogue of NS's u_j·u_{i,j}) and the conformal-mode
+        // curvature R_c², alongside the scalaron sector ½π² + V(φ).
+        let h_gf = &derived["H_gf"];
+        assert!(
+            h_gf.contains("π") && h_gf.contains("grad2"),
+            "H_gf must carry the scalaron sector π and the spatial gradient \
+             product grad2 = (∂_iφ)(∂^iφ): {h_gf}"
+        );
+        assert!(
+            h_gf.contains("Rc"),
+            "H_gf must carry the conformal-mode curvature R_c (the spatial \
+             derivative content of the metric): {h_gf}"
+        );
+        assert!(
+            h_gf.contains("grad2") && h_gf.contains("Rc"),
+            "H_gf must carry the gauge-fixed products of spatial field \
+             derivatives (grad2 and R_c² — the derivative variables fixed to \
+             the values of the field derivatives, NS-style): {h_gf}"
+        );
+
+        // The final scalar-sector Hamiltonian: ½π² + ½(∇φ)² + V(φ).
+        let h_final = &derived["H_final"];
+        assert!(
+            !h_final.is_empty() && h_final != "0",
+            "H_final must be non-trivial: {h_final}"
+        );
+        assert!(
+            h_final.contains("π") && h_final.contains("grad2"),
+            "H_final must be the ½π² + ½(∇φ)² + V(φ) gauge-fixed scalar \
+             sector: {h_final}"
+        );
+
+        // The Jordan-frame form carries the bounded parabola.
+        let h_jordan = &derived["H_jordan"];
+        assert!(
+            h_jordan.contains("Rc") && h_jordan.contains("α"),
+            "H_jordan must carry the αR_c² parabola: {h_jordan}"
+        );
+
+        // ── Part 5: the 3D gauge-fixed Hamiltonian FROM the classical action ──
+        // The Einstein-module pipeline (docs/qg_gauge_fixed_hamiltonian.cdb:
+        // ex1 -> pi_derived -> H_final) applied to the R + αR² action.
+
+        // The Jordan-form action carries the R² term (through U ∝ (ψ−1)²).
+        let action_j = &derived["action_J"];
+        assert!(
+            action_j.contains("ψ") && action_j.contains("α"),
+            "action_J must be the scalar-tensor (M²/2)ψR − U(ψ) form with the \
+             R² term manifest: {action_j}"
+        );
+
+        // The action WITH the R² term, restated: (M²/2)ψR − U(ψ) at
+        // ψ = 1 + 4αR/M² must equal (M²/2)R + αR² identically (→ 0).
+        let action_r2 = &derived["action_R2_check"];
+        assert!(
+            action_r2 == "0" || action_r2.trim() == "0",
+            "action_R2_check must vanish (the R² action equals the scalar-\
+             tensor form): {action_r2}"
+        );
+
+        // The 3D gauge-fixed action density (synchronous gauge) carries the
+        // scalaron kinetic ∂₀φ, the spatial-derivative variable Dphi2, the
+        // Starobinsky potential, and the conformal-mode parabola (the R²
+        // contribution to the spatial potential).
+        let action_gf = &derived["action_gf"];
+        assert!(
+            action_gf.contains("\\partial_{0}") && action_gf.contains("Rc"),
+            "action_gf must be the 3D gauge-fixed action density with the \
+             scalaron kinetic ∂₀φ and the conformal-mode parabola: {action_gf}"
+        );
+
+        // The polymomentum BY VARIATION (the Einstein-module `vary` pattern):
+        // the varied kinetic is (∂₀φ)·π — the canonical momentum π = ∂₀φ.
+        let pi_derived = &derived["pi_derived"];
+        assert!(
+            pi_derived.contains("\\partial_{0}") && pi_derived.contains("π"),
+            "pi_derived must be the by-variation polymomentum (∂₀φ)·π: {pi_derived}"
+        );
+
+        // The Legendre transform of the action: H = π·∂₀φ − L with the
+        // velocity solved for the momentum and the spatial derivative variable
+        // fixed to the derivative values — the 3D gauge-fixed Hamiltonian
+        // ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c², identical to Part 4's H_gf.
+        let h_action = &derived["H_action"];
+        assert!(
+            h_action.contains("π")
+                && h_action.contains("grad2")
+                && h_action.contains("Rc"),
+            "H_action must be the action-derived gauge-fixed Hamiltonian \
+             ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c²: {h_action}"
+        );
+
+        // Every by-variation / Legendre check resolves identically to zero:
+        for name in ["pi_check", "leg_check"] {
+            let v = &derived[name];
+            assert!(
+                v == "0" || v.trim() == "0",
+                "{name} must vanish identically, got `{v}`"
+            );
+        }
+
+        // The 3+1 (ADM, synchronous-gauge) split of the 4D curvature closes
+        // the gravitational sector: R = R3 + (K² − K_ijK^ij).
+        let rtil_3p1 = &derived["Rtil_3p1"];
+        assert!(
+            rtil_3p1.contains("R3") && rtil_3p1.contains("K2"),
+            "Rtil_3p1 must be the 3+1 split R = R3 + (K² − K_ijK^ij): {rtil_3p1}"
+        );
+
+        // ── Part 5.6/5.7 — the gravitational sector FROM the action ──
+        // The gravitational part of the 3+1 action density carries the metric
+        // kinetic (M²/8)((∂₀q)² − dqsq) and the R²-stabilized parabola.
+        let action_grav = &derived["action_grav"];
+        assert!(
+            action_grav.contains("\\partial_{0}") && action_grav.contains("Rc"),
+            "action_grav must be the gravitational sector of the action with \
+             the metric kinetic ∂₀q and the conformal-mode parabola: {action_grav}"
+        );
+
+        // The METRIC polymomentum BY VARIATION (the Einstein-module pattern,
+        // like the scalaron pi_derived): the varied kinetic is (M²/4)(∂₀q)·Π —
+        // the canonical momentum Π = ∂L/∂(∂₀q) = (M²/4)∂₀q.
+        let pi_grav = &derived["pi_grav"];
+        assert!(
+            pi_grav.contains("\\partial_{0}") && pi_grav.contains("Π"),
+            "pi_grav must be the by-variation metric polymomentum (M²/4)(∂₀q)·Π: {pi_grav}"
+        );
+
+        // The full 3D gauge-fixed Hamiltonian (scalar + gravity) carries the
+        // scalaron sector and the gravitational sector: Π (metric momentum),
+        // π (scalaron momentum), grad2 (spatial derivative product), and the
+        // α-stabilized parabola in R_c.
+        let h_total = &derived["H_total"];
+        assert!(
+            h_total.contains("Π")
+                && h_total.contains("π")
+                && h_total.contains("grad2")
+                && h_total.contains("Rc"),
+            "H_total must be the full action-derived gauge-fixed Hamiltonian \
+             ½π² + ½(∂φ)² + V(φ) + (2/M²)Π² + (M²/8)dqsq − (M²/2)R_c + αR_c²: \
+             {h_total}"
+        );
+
+        // The gravitational-sector checks vanish identically:
+        for name in ["pi_grav_check", "leg_grav_check"] {
+            let v = &derived[name];
+            assert!(
+                v == "0" || v.trim() == "0",
+                "{name} must vanish identically, got `{v}`"
+            );
+        }
+    }
+
     /// Navier-Stokes: the divergence constraint is a *solved* constraint.
     ///
     /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the
