@@ -487,6 +487,24 @@ Export the current session transcript as LaTeX.
 
 **Response result:** `{"bytes": <usize>, "written": <bool>}`
 
+### `preset_list`
+
+List the named `GrantSet` presets (H10) available to the agent.
+
+**Request params:** `{}`
+
+**Response result:** `{"presets": [{"id", "trust", "tools", "sections"}], "broken": [{"id", "reason"}]}`
+
+### `preset_set`
+
+Record the named preset a session started under (H10). A switch is valid only
+while the session is blank (no producing op yet); switching mid-session is
+refused with UK-1001.
+
+**Request params:** `{"model_id": <u64>, "preset": <string>}`
+
+**Response result:** `{"ok": true, "preset": <string>}`
+
 ## Error codes
 
 | Code  | Name                      | Severity | Description                                                          |

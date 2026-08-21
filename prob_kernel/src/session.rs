@@ -189,6 +189,11 @@ pub struct Session {
     /// RAM-only. `None` (default) = the session is RAM-only but fully
     /// functional (save/restore still work via `SessionBlob`).
     durable: Option<Arc<dyn DurableStore>>,
+    /// H10: the named `AgentPreset` this session started under (recorded in the
+    /// session header). `None` = no preset (inline grants only). A preset
+    /// switch is valid only while the session has produced nothing (see
+    /// `unfer_protocol::preset::switch_valid_when_blank`).
+    start_preset: Option<String>,
 }
 
 /// Serializable snapshot of a Session for save/restore.
@@ -389,6 +394,7 @@ impl Session {
             log_source: "kernel".into(),
             compaction_lock: None,
             durable: None,
+            start_preset: None,
         })
     }
 
@@ -401,6 +407,29 @@ impl Session {
             SessionEventSpec::Create { spec: spec.clone() },
         );
         Ok(s)
+    }
+
+    /// H10: record the named `AgentPreset` this session started under. Call
+    /// before any producing op; a switch after the session produced anything is
+    /// refused (see `unfer_protocol::preset::switch_valid_when_blank`).
+    pub fn set_start_preset(&mut self, preset: &str) {
+        self.start_preset = Some(preset.to_string());
+    }
+
+    /// H10: the named `AgentPreset` this session started under, if any.
+    pub fn start_preset(&self) -> Option<&str> {
+        self.start_preset.as_deref()
+    }
+
+    /// H10: the number of ops this session has produced (excluding the root
+    /// `Create`). A preset switch is valid only while this is 0 (a blank
+    /// session); once the session produced anything the tool surface must not
+    /// change under a model that already ran.
+    pub fn event_log_len_for_preset_switch(&self) -> usize {
+        self.event_log
+            .iter()
+            .filter(|e| e.op != SessionOp::Create)
+            .count()
     }
 
     /// Append a record to the event log. `seq` is the pre-increment log
@@ -745,6 +774,7 @@ impl Session {
             log_source: "kernel".into(),
             compaction_lock: None,
             durable: None,
+            start_preset: None,
         })
     }
 
@@ -1384,6 +1414,29 @@ mod tests {
             solver: SolverSpec::default(),
         };
         Session::new(&spec).expect("compile harmonic session")
+    }
+
+    // ── H10: named GrantSet presets (session header) ─────────────────────
+
+    #[test]
+    fn session_header_records_start_preset() {
+        let mut s = non_qfm_session();
+        assert_eq!(s.start_preset(), None, "no preset by default");
+        s.set_start_preset("analyst");
+        assert_eq!(s.start_preset(), Some("analyst"));
+    }
+
+    #[test]
+    fn preset_switch_valid_only_while_blank() {
+        // A switch on a blank (no-op) session is valid; once the session has
+        // produced anything it is refused (nearest-wins tool surface must not
+        // change under a model that already ran).
+        assert!(unfer_protocol::preset::switch_valid_when_blank(0));
+        assert!(!unfer_protocol::preset::switch_valid_when_blank(1));
+        let mut s = non_qfm_session();
+        // Blank (just the root Create) → a preset may be recorded.
+        s.set_start_preset("analyst");
+        assert_eq!(s.start_preset(), Some("analyst"));
     }
 
     #[test]

@@ -56,6 +56,9 @@ pub const SESSION_OPS: &[&str] = &[
     "ode_to_hamiltonian",
     "export_html",
     "export_tex",
+    // H10: named GrantSet presets (agent-local — the client resolves the roster)
+    "preset_list",
+    "preset_set",
 ];
 
 /// Ops the edge gateway accepts and forwards to the backend.
@@ -133,6 +136,9 @@ pub const AGENT_OPS: &[&str] = &[
     "ode_to_hamiltonian",
     "export_html",
     "export_tex",
+    // H10: named GrantSet presets
+    "preset_list",
+    "preset_set",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).

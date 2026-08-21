@@ -558,6 +558,20 @@ log, so it stays on the existing audit/persistence path.
 **Acceptance**: `cargo test -p unfer_ffi -p kernel_client` green; `unfer_agent`
 `preset_list` round-trip; PROTOCOL `[SYNC]`.
 
+**Status (H10, DONE)**: named reuse of the existing `GrantSet` vocabulary — no
+new permission.
+- `unfer_protocol::preset`: `AgentPreset { id, trust, grants, tools, sections }`
+  (JSON roster, unmemoized discovery; a broken preset surfaces its reason in a
+  `RosterEntry`, never silently skipped), `resolve_preset_chain` nearest-wins
+  (`agent → preset → global`), and `switch_valid_when_blank`.
+- `prob_kernel::Session`: `start_preset` recorded in the session header
+  (`set_start_preset`/`start_preset`) + `event_log_len_for_preset_switch`
+  (blank-session rule).
+- `unfer_agent` (`kernel_client` bin): `preset_list`/`preset_set` agent ops
+  (`UNFER_PRESETS_DIR` roster; `preset_set` refused on a non-blank session with
+  the rule named).
+- `AGENT_OPS`/`SESSION_OPS` + PROTOCOL.md document both ops `[SYNC]`.
+
 ## H11 — Test discipline: coverage, real entry path, keyless replay (M) — *all three*
 
 **Improves**: the ~348-test suite and the single golden gate. Adds the dsh

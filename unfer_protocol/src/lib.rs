@@ -18,6 +18,7 @@ pub mod durable;
 pub mod harness;
 pub mod ops;
 pub mod posture;
+pub mod preset;
 pub mod symbols;
 pub mod types;
 
@@ -27,6 +28,7 @@ pub use durable::*;
 pub use harness::*;
 pub use ops::*;
 pub use posture::*;
+pub use preset::*;
 pub use symbols::*;
 pub use types::*;
 
