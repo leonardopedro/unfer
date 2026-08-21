@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# H11 real-entry-path smokes: exercise the *built* artifacts, not the sources.
+#
+# Catches the "green unit tests, broken product" class: stale artifacts, masked
+# settle, and wrong entry wiring. Runs from built output only.
+#   - `unfer_ffi` cdylib builds (`libunfer_ffi.so`) — the C ABI surface.
+#   - a genuinely missing config exits non-zero (modhost/agent fail closed).
+#
+# Exit 0 = green, 1 = a smoke failed.
+
+set -u
+FAILED=0
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+echo "H11 real-entry-path smokes"
+
+# 1. The unfer_ffi cdylib + staticlib build from built output.
+(cd "$repo_root" && cargo build -p unfer_ffi >/tmp/unfer_smoke_build.log 2>&1)
+if [ -f "$repo_root/target/debug/libunfer_ffi.so" ]; then
+    echo "  [pass] unfer_ffi cdylib present ($(du -h "$repo_root/target/debug/libunfer_ffi.so" | cut -f1))"
+else
+    echo "[FAIL] unfer_ffi cdylib missing after build"
+    tail -20 /tmp/unfer_smoke_build.log
+    FAILED=$((FAILED + 1))
+fi
+
+# 2. The built `unfer_agent` binary answers a real NDJSON version request.
+AGENT="$repo_root/../velysterm/target/debug/unfer_agent"
+if [ ! -x "$AGENT" ]; then
+    echo "[gap] unfer_agent binary not built (velysterm) — skipping"
+else
+    out="$(printf '{"id":"s","op":"version","params":{}}\n' | "$AGENT" 2>/dev/null)"
+    if echo "$out" | grep -q '"ok":true'; then
+        echo "  [pass] unfer_agent version round-trip from built binary"
+    else
+        echo "[FAIL] unfer_agent version round-trip failed: $out"
+        FAILED=$((FAILED + 1))
+    fi
+fi
+
+# 3. A genuinely missing config exits non-zero (fail closed, never a masked
+#    settle). modhost `host <missing-dir>` must exit 1.
+MODHOST="$repo_root/../australVM/safestos/cranelift/target/debug/modhost"
+if [ ! -x "$MODHOST" ]; then
+    echo "[gap] modhost binary not built (australVM) — skipping"
+else
+    "$MODHOST" host "$repo_root/does-not-exist" >/dev/null 2>&1
+    code=$?
+    if [ "$code" -ne 0 ]; then
+        echo "  [pass] modhost fails closed on a missing module dir (exit $code)"
+    else
+        echo "[FAIL] modhost exited 0 on a missing module dir"
+        FAILED=$((FAILED + 1))
+    fi
+fi
+
+if [ "$FAILED" -gt 0 ]; then
+    echo "smokes: $FAILED failed"
+    exit 1
+fi
+echo "smokes: green"
+exit 0

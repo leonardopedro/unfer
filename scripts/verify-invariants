@@ -142,6 +142,20 @@ check "H2: registry has no leading-whitespace symbol rows (nm-diff clean)" \
 check "H2: PROTOCOL.md op + UK-code census in sync (doc-sync)" \
     python3 "$repo_root/scripts/check_protocol_docsync"
 
+# --- H11: per-file coverage gate on prob_kernel/src + unfer_ffi/src ---
+# An uncovered line is usually dead code, not a missing test. Backend-dependent
+# files (CUDA/cadabra2/GHC) self-skip in the script. Tooling (llvm-tools-preview)
+# absent → [gap], not a failure.
+check "H11: per-file coverage gate green" \
+    bash "$repo_root/scripts/coverage_gate"
+
+# --- H11: real-entry-path smokes (built artifacts, not sources) ---
+# The cdylib builds, the unfer_agent binary answers the NDJSON contract, and a
+# genuinely missing config exits non-zero (fail closed). Unbuilt sibling
+# binaries → [gap].
+check "H11: real-entry-path smokes green" \
+    bash "$repo_root/scripts/smoke_gate"
+
 echo
 echo "verify-invariants: $PASSED passed, $GAPS explained gap(s), $FAILED failed"
 if [ "$FAILED" -gt 0 ]; then

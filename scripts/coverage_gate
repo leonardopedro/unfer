@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# H11 per-file coverage gate on `prob_kernel/src` and `unfer_ffi/src`.
+#
+# Runs the existing unit-test harness under `-C instrument-coverage`, merges the
+# profraw with `llvm-profdata`, and reports per-file line coverage with
+# `llvm-cov`. A file under the two source trees whose line coverage is below
+# the threshold is a signal — usually dead code, not a missing test — and fails
+# the gate. Backend-dependent files self-skip (cadabra2 / CUDA / GHC analog of
+# dsh's `pwsh-local` exemption) via the EXEMPT list below; adding a source file
+# requires real coverage or an explicit, documented exemption.
+#
+# Regeneration / tooling:
+#   - `llvm-profdata`/`llvm-cov` come from `rustup component add
+#     llvm-tools-preview` (bundled LLVM). If absent, the gate prints a [gap]
+#     and exits 0 (tooling absent, like cadabra2-CLI tests).
+#   - Exit 0 = gate green, 1 = coverage drift below threshold.
+
+set -u
+FAILED=0
+PASSED=0
+GAPS=0
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+TOOLBIN="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin"
+
+# Per-file minimum line-coverage threshold (%).
+THRESHOLD=40
+
+# Self-skip exemptions (backend-dependent files). A file added here must be
+# justified: cadabra2/CUDA/GHC/external-service coupling, not merely low
+# coverage. Lines reference `prob_kernel/src` and `unfer_ffi/src` directly.
+EXEMPT=(
+    # prob_kernel/src/build.rs — CUDA/device-dependent model compilation; the
+    # QFM/CUDA path needs a GPU to be meaningfully exercised.
+    "prob_kernel/src/build.rs"
+)
+
+has_tool() { command -v "$1" >/dev/null 2>&1 || [ -x "$TOOLBIN/$1" ]; }
+
+if ! has_tool llvm-profdata || ! has_tool llvm-cov; then
+    echo "[gap] H11 coverage gate: llvm-profdata/llvm-cov not installed. \
+Run 'rustup component add llvm-tools-preview'. Skipping (tooling absent)."
+    exit 0
+fi
+export PATH="$TOOLBIN:$PATH"
+# Force the C locale so llvm-cov/awk emit '.' decimal separators.
+export LC_ALL=C
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+cd "$repo_root"
+
+# 1. Build + run the existing unit-test harness under coverage. The profraw
+#    files land in $work (merged across all test binaries in one run).
+#    `--test-threads=1` avoids the pre-existing shared-store parallel flake
+#    (kernel-global action queue / audit trail) so the coverage gate is a
+#    deterministic CI signal, not a race.
+RUSTFLAGS="-C instrument-coverage" \
+LLVM_PROFILE_FILE="$work/coverage-%p-%m.profraw" \
+    cargo test -p prob_kernel -p unfer_ffi --lib -- --test-threads=1 >"$work/test.log" 2>&1
+test_status=$?
+if [ "$test_status" -ne 0 ]; then
+    echo "[FAIL] H11 coverage gate: unit tests failed under instrumentation"
+    tail -30 "$work/test.log"
+    exit 1
+fi
+
+llvm-profdata merge -sparse "$work"/coverage-*.profraw \
+    -o "$work/coverage.profdata" || {
+    echo "[FAIL] H11 coverage gate: llvm-profdata merge failed"
+    exit 1
+}
+
+# 2. Collect every object (test binary + rlib) carrying coverage for the two
+#    crates, so cross-crate attribution (event.rs → unfer_ffi probability tests)
+#    is accurate.
+objects=()
+for bin in "$repo_root"/target/debug/deps/prob_kernel-* "$repo_root"/target/debug/deps/unfer_ffi-*; do
+    case "$bin" in
+        *.d|*.rlib|*.rmeta) ;;
+        *) objects+=("--object" "$bin") ;;
+    esac
+done
+for rlib in "$repo_root"/target/debug/deps/libprob_kernel-*.rlib \
+    "$repo_root"/target/debug/deps/libunfer_ffi-*.rlib; do
+    [ -e "$rlib" ] && objects+=("--object" "$rlib")
+done
+
+llvm-cov report --instr-profile="$work/coverage.profdata" "${objects[@]}" \
+    >"$work/report.txt" 2>"$work/report.err"
+
+# 3. Parse the report for the two source trees, enforcing the threshold.
+#    llvm-cov aligns columns; use awk to pull the line-coverage % per file.
+awk -v root="$repo_root" -v threshold="$THRESHOLD" '
+    $1 ~ /^Projects\/unfer\/(prob_kernel\/src|unfer_ffi\/src)\// {
+        # Column layout: filename regions region% funcs func% lines line% ...
+        # Line coverage % is the 6th %-field; parse defensively.
+        file = $1
+        sub(/^Projects\/unfer\//, "", file)
+        n = split($0, a, " ")
+        # Find the "lines covered / total  %" triple.
+        line_pct = ""
+        for (i = 1; i <= n; i++) {
+            if (a[i] ~ /^[0-9.]+%$/) {
+                # % fields appear after regions, funcs, lines in that order.
+                # The 6th whitespace token that ends in % is the line %.
+                if (++pct_count == 3) { line_pct = a[i] + 0; break }
+            }
+        }
+        pct_count = 0
+        printf "%s %.1f\n", file, line_pct
+    }
+' "$work/report.txt" >"$work/coverage.txt"
+
+exempt() {
+    local file="$1"
+    for e in "${EXEMPT[@]}"; do
+        [ "$file" = "$e" ] && return 0
+    done
+    return 1
+}
+
+echo "H11 per-file coverage (threshold ${THRESHOLD}%):"
+while IFS=' ' read -r file pct; do
+    printf "  %-45s %6.1f%%\n" "$file" "$pct"
+    if [ "$(echo "$pct < $THRESHOLD" | bc 2>/dev/null || awk -v p="$pct" -v t="$THRESHOLD" 'BEGIN{print (p<t)?"1":"0"}')" = "1" ]; then
+        if exempt "$file"; then
+            echo "    [skip] backend-dependent (exempt)"
+            GAPS=$((GAPS + 1))
+        else
+            echo "[FAIL] $file line coverage ${pct}% is below ${THRESHOLD}%"
+            FAILED=$((FAILED + 1))
+        fi
+    else
+        PASSED=$((PASSED + 1))
+    fi
+done <"$work/coverage.txt"
+
+if [ "$FAILED" -gt 0 ]; then
+    echo "coverage-gate: $PASSED passed, $GAPS skipped, $FAILED failed"
+    exit 1
+fi
+echo "coverage-gate: $PASSED files ≥ ${THRESHOLD}%, $GAPS exempted"
+exit 0

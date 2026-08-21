@@ -604,6 +604,25 @@ reused.
 **Acceptance**: snapshot gate green keyless; coverage gate green; built-
 artifact smokes green in all three repos.
 
+**Status (H11, DONE)**: test discipline over the existing unit harness + the
+existing golden-gate pattern (no new framework):
+- **Keyless snapshot replay** (`kernel_client/tests/snapshot_replay.rs` +
+  `tests/fixtures/session_transcript.ndjson` + `tests/golden/…`): boots the
+  **built** `unfer_agent` binary, replays create_model → evolve → probability →
+  bayesian_update → save_session → close, diffs normalized output (timing_ms and
+  H3 event `ts` stripped) + the re-derived H3 event log against a committed
+  golden. Regeneration only via `UPDATE_GOLDEN=1`.
+- **Per-file coverage gate** (`scripts/coverage_gate`, wired into
+  `verify-invariants`): instrumented unit tests for `prob_kernel`/`unfer_ffi`
+  (`-C instrument-coverage` + `llvm-profdata`/`llvm-cov` from
+  `llvm-tools-preview`), per-file ≥40% line coverage with a self-skip exemption
+  for `build.rs` (CUDA). `event.rs` gained a direct matcher unit suite (was ~0%
+  in the kernel's own suite — the H11 "green unit tests, broken product" gap).
+- **Real-entry-path smokes** (`scripts/smoke_gate`, wired into
+  `verify-invariants`): unfer_ffi cdylib builds, the built `unfer_agent` answers
+  the NDJSON version contract, and `modhost host <missing>` exits non-zero
+  (fail closed, never a masked settle).
+
 ## H12 — Agent Notes + doc-sync + duplication + review culture (S) — *all three*
 
 **Improves**: the PLAN files as the shared memory, and hand-maintained docs
