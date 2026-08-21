@@ -141,4 +141,66 @@ mod tests {
             "edge allowlist must be the shared unfer_protocol::ops table"
         );
     }
+
+    // ── H9: provenance labels survive the request gate ──────────────────
+
+    #[test]
+    fn provenance_label_survives_validation() {
+        use unfer_protocol::ProvenanceSource;
+        // A web external-data op carries its provenance source through the gate.
+        let body =
+            br#"{"id":"1","op":"content_resolve","params":{},"provenance":"web"}"#;
+        let req = validate_request(body).unwrap();
+        assert_eq!(req.provenance, Some(ProvenanceSource::Web));
+        // Absent provenance stays absent (additive contract).
+        let body = br#"{"id":"1","op":"content_resolve","params":{}}"#;
+        let req = validate_request(body).unwrap();
+        assert_eq!(req.provenance, None);
+        // Every label round-trips.
+        for label in ["file", "web", "tool_result", "webhook", "overheard"] {
+            let body = format!(
+                r#"{{"id":"1","op":"content_resolve","params":{{}},"provenance":"{label}"}}"#
+            );
+            let req = validate_request(body.as_bytes()).unwrap();
+            assert_eq!(
+                req.provenance,
+                Some(ProvenanceSource::parse(label).unwrap()),
+                "label '{label}' must parse"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_screener_surfaces_notice_never_silent_pass() {
+        use unfer_protocol::{InboundScreening, SecurityPosture, screen_with, Screener};
+        struct NoScreener;
+        impl Screener for NoScreener {
+            fn screened(&mut self, _s: unfer_protocol::ProvenanceSource, _p: &str) -> bool {
+                false
+            }
+        }
+        let mut s = NoScreener;
+        // Auto posture screens labelled external data; absent screener → notice.
+        let outcome = screen_with(
+            &mut s,
+            SecurityPosture::Auto,
+            unfer_protocol::ProvenanceSource::Webhook,
+            r#"{"token":"…"}"#,
+        );
+        assert_eq!(
+            outcome,
+            unfer_protocol::Screening::Uncertified {
+                notice: unfer_protocol::NOT_SECURITY_SCREENED
+            }
+        );
+        // Strict also screens; dangerous does not.
+        assert!(SecurityPosture::Auto
+            .resolve()
+            .inbound_screening
+            == InboundScreening::External);
+        assert!(SecurityPosture::Strict
+            .resolve()
+            .inbound_screening
+            == InboundScreening::External);
+    }
 }

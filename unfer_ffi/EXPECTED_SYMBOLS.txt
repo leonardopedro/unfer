@@ -52,6 +52,8 @@ uk_owner_clear
 uk_owner_list
 uk_owner_log
 uk_poll
+uk_posture_get
+uk_posture_set
 uk_proof_verify
 uk_registry_vetted
 uk_report_issue

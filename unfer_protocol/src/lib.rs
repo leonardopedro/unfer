@@ -17,6 +17,7 @@ pub mod codes;
 pub mod durable;
 pub mod harness;
 pub mod ops;
+pub mod posture;
 pub mod symbols;
 pub mod types;
 
@@ -25,6 +26,7 @@ pub use codes::*;
 pub use durable::*;
 pub use harness::*;
 pub use ops::*;
+pub use posture::*;
 pub use symbols::*;
 pub use types::*;
 

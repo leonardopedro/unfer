@@ -95,6 +95,8 @@ SymbolRecord { name: "uk_cert_burn", kind: SymbolKind::Kernel, effect_kind: supe
     SymbolRecord { name: "uk_owner_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
     SymbolRecord { name: "uk_owner_log", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
     SymbolRecord { name: "uk_poll", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
+    SymbolRecord { name: "uk_posture_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
+    SymbolRecord { name: "uk_posture_set", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_proof_verify", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_registry_vetted", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_report_issue", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },

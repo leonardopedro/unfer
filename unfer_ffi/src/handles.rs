@@ -724,6 +724,33 @@ pub fn clear_vetted() {
     }
 }
 
+// ── H9: deployment security posture ─────────────────────────────────────
+//
+// A configuration layer over the existing S21/S22/S23/S25/S26 primitives. The
+// posture is set only by the operator console (S22 admin seam, hook + no grant
+// bounds — the same gate as `uk_registry_vetted`) and read by every dispatch.
+
+static POSTURE: std::sync::Mutex<unfer_protocol::SecurityPosture> =
+    std::sync::Mutex::new(unfer_protocol::SecurityPosture::Auto);
+
+/// Read the current deployment posture.
+pub fn posture() -> unfer_protocol::SecurityPosture {
+    *POSTURE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Set the deployment posture (operator console only). Returns the previous
+/// posture.
+pub fn set_posture(p: unfer_protocol::SecurityPosture) -> unfer_protocol::SecurityPosture {
+    durable_append(
+        streams::CONFIG,
+        &serde_json::json!({"posture": format!("{p:?}").to_lowercase()})
+            .to_string()
+            .into_bytes(),
+    );
+    let mut guard = POSTURE.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::replace(&mut *guard, p)
+}
+
 // ── windowed meter (S25/F24: budgets + rate limits) ────────────────────
 //
 // A per-principal, per-UTC-day windowed counter that the loopback chokepoint

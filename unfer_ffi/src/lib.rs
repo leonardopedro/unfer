@@ -1449,6 +1449,78 @@ pub fn uk_clear_vetted() {
     handles::clear_vetted();
 }
 
+// ── H9: deployment security posture (operator-gated via the S22 seam) ──
+
+/// Read the current deployment security posture (H9). Returns a JSON blob
+/// `{"posture":"dangerous|auto|strict","inbound_screening":"off|external",
+/// "tool_approvals":"none|all"}` via the buffer protocol. Read-only; any
+/// caller may consult it.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_posture_get(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_posture_get", || {
+        let posture = handles::posture();
+        let policy = posture.resolve();
+        let json = serde_json::json!({
+            "posture": format!("{posture:?}").to_lowercase(),
+            "inbound_screening": format!("{:?}", policy.inbound_screening).to_lowercase(),
+            "tool_approvals": format!("{:?}", policy.tool_approvals).to_lowercase(),
+        })
+        .to_string();
+        Ok(write_buf(buf, cap, &json))
+    })
+}
+
+/// Set the deployment security posture (H9). `posture_json` is
+/// `{"posture":"dangerous|auto|strict"}`. Operator-console only: a bounded
+/// caller (a module/agent) is refused with UK-4501 — the posture is set via
+/// the S22 admin seam, never from a model/agent op. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_posture_set(posture_ptr: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_posture_set", || {
+        let caller = handles::current_caller();
+        let console_principal = caller.tag.from == CallerKind::Hook && caller.grants.is_none();
+        if !console_principal {
+            return Err(Diagnostic::new(
+                Code::CONSOLE_ONLY,
+                "deployment posture is set by the operator console only (UK-4501)",
+                Severity::Error,
+            ));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        struct PostureReq {
+            posture: String,
+        }
+        let req: PostureReq = parse_json(posture_ptr, len)?;
+        let posture = match req.posture.as_str() {
+            "dangerous" => unfer_protocol::SecurityPosture::Dangerous,
+            "auto" => unfer_protocol::SecurityPosture::Auto,
+            "strict" => unfer_protocol::SecurityPosture::Strict,
+            other => {
+                return Err(Diagnostic::new(
+                    Code::BAD_JSON,
+                    format!("unknown posture '{other}' (expect dangerous|auto|strict)"),
+                    Severity::Error,
+                ))
+            }
+        };
+        handles::set_posture(posture);
+        Ok(0)
+    })
+}
+
+/// QA/console reset of the deployment posture back to the default (`auto`).
+pub fn uk_clear_posture() {
+    handles::set_posture(unfer_protocol::SecurityPosture::Auto);
+}
+
+/// Host-internal (Rust-ABI): the current deployment posture. Read by the
+/// loopback's H9 posture listener (strict-pause consult).
+pub fn uk_posture_current() -> unfer_protocol::SecurityPosture {
+    handles::posture()
+}
+
 /// Read the current windowed meter status for `principal` without consuming a
 /// metered call (mirrors Cloudflare's `checkDailyLlmCount`). `budget_json` is
 /// `{"budget":N,"rate_limit":M}`; the returned handle encodes a JSON
@@ -4067,6 +4139,72 @@ mod tests {
         assert_eq!(uk_registry_vetted(p, l, 1), 0);
         assert_eq!(uk_registry_vetted(p, l, 0), 0);
         uk_clear_caller();
+    }
+
+    // ── H9: security posture (operator-gated via the S22 admin seam) ────
+
+    #[test]
+    fn posture_get_set_roundtrip() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_posture();
+        uk_clear_caller();
+
+        // Operator console sets the posture.
+        let body = r#"{"posture":"strict"}"#;
+        let (p, l) = json_ptr(body);
+        assert_eq!(uk_posture_set(p, l), 0);
+        let got = read_buf(|b, c| uk_posture_get(b, c));
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        assert_eq!(v["posture"], "strict");
+        assert_eq!(v["tool_approvals"], "all", "strict pauses every mutate");
+
+        // Reset to auto.
+        uk_clear_caller();
+        uk_clear_posture();
+        let got = read_buf(|b, c| uk_posture_get(b, c));
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap();
+        assert_eq!(v["posture"], "auto");
+        assert_eq!(v["inbound_screening"], "external");
+    }
+
+    #[test]
+    fn posture_set_is_console_only() {
+        // A module/agent can never change the deployment posture (UK-4501) —
+        // it is an S22 admin-seam operation.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_posture();
+        uk_clear_caller();
+        let body = r#"{"posture":"strict"}"#;
+        let (p, l) = json_ptr(body);
+
+        set_caller_gadget("wannabe");
+        assert_eq!(
+            uk_posture_set(p, l),
+            -4501,
+            "a module cannot change the deployment posture"
+        );
+
+        // The operator harness can.
+        uk_clear_caller();
+        assert_eq!(uk_posture_set(p, l), 0);
+        uk_clear_caller();
+        uk_clear_posture();
+    }
+
+    #[test]
+    fn posture_set_rejects_unknown_posture() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        uk_clear_posture();
+        uk_clear_caller();
+        let body = r#"{"posture":"bogus"}"#;
+        let (p, l) = json_ptr(body);
+        assert_eq!(
+            uk_posture_set(p, l),
+            -1001,
+            "unknown posture must be a BAD_JSON diagnostic"
+        );
+        uk_clear_caller();
+        uk_clear_posture();
     }
 
     // ── S23 (F22): observability context + owner logger + secret discipline ──

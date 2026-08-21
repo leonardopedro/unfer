@@ -273,6 +273,12 @@ pub struct AgentRequest {
     pub id: String,
     pub op: String,
     pub params: serde_json::Value,
+    /// H9: provenance source of external data reaching agent context
+    /// (`file|web|tool_result|webhook|overheard`). Additive — absent on ops
+    /// that carry no external data; the `auto` posture screens labelled
+    /// payloads before they reach agent context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::posture::ProvenanceSource>,
 }
 
 impl AgentRequest {
@@ -281,7 +287,14 @@ impl AgentRequest {
             id: id.into(),
             op: op.into(),
             params,
+            provenance: None,
         }
+    }
+
+    /// Attach a provenance label (H9) to an external-data op.
+    pub fn with_provenance(mut self, source: crate::posture::ProvenanceSource) -> Self {
+        self.provenance = Some(source);
+        self
     }
 }
 

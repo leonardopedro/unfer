@@ -513,6 +513,23 @@ S21 lane applied to more symbols.
 **Acceptance**: posture suite green; `unfer_agent` carries provenance on
 external-data ops; PROTOCOL `[SYNC]` documents the three walls.
 
+**Status (H9, DONE)**: a configuration layer over the existing primitives —
+no new security primitive.
+- `unfer_protocol::posture`: `SecurityPosture { dangerous, auto, strict }`
+  (default auto) with `compose(org_floor, scope)` = stricter wins, resolved
+  policy `{ inbound_screening: off|external, tool_approvals: none|all }`,
+  `ProvenanceSource` (`file|web|tool_result|webhook|overheard`) and the
+  `Screener` seam + `NOT_SECURITY_SCREENED` notice (never a silent pass).
+- `uk_posture_get`/`uk_posture_set` (operator-gated via the S22 admin seam,
+  UK-4501 for bounded callers) + a `PostureListener` in the loopback waterfall
+  (audit→grant→latch→meter→posture→guard→dispatch, pinned by test): strict
+  pauses every Mutate `uk_*` except the two no-effect turn enders.
+- `AgentRequest.provenance` (additive, skip-when-none) carries the external-data
+  source through the `unfer_agent` protocol gate; the edge screens labelled
+  payloads under auto/strict.
+- PROTOCOL.md `[SYNC]` documents the three portal-only walls (admin grant
+  changes, impersonation, command-approval decisions).
+
 ## H10 — Named GrantSet presets (S) — *unfer + velysterm*
 
 **Improves**: ergonomics of the existing grant mechanism — per-session inline
