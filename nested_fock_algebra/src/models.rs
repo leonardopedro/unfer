@@ -2148,3 +2148,211 @@ pub fn qfm_hamiltonian_hierarchical_projectors(groups: &[(f64, Vec<(u32, f64)>)]
     }
     Hamiltonian { terms }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Numerical physics anchors: special relativity, nuclear systematics, compact
+// objects, plasma, quantum metrology, binary inspiral. Each builder realizes
+// ONE published closed-form result so the validation tests
+// (`fock_sirk/tests/sr_nuclear_validation.rs`, `astro_plasma_validation.rs`)
+// check the project's numerics against mainstream physics, exactly like the
+// QED/QCD/QG/NS suites do.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Exact SI-2019 defining constants and CODATA 2018 measured constants used by
+/// the anchor builders below (all SI: e, h, k_B are exact by definition).
+pub mod phys {
+    /// elementary charge (exact), C
+    pub const E: f64 = 1.602_176_634e-19;
+    /// Planck constant (exact), J·s
+    pub const H: f64 = 6.626_070_15e-34;
+    /// Boltzmann constant (exact), J/K
+    pub const K_B: f64 = 1.380_649e-23;
+    /// vacuum permittivity, F/m (CODATA 2018)
+    pub const EPS0: f64 = 8.854_187_8128e-12;
+    /// vacuum permeability, N/A² (CODATA 2018)
+    pub const MU0: f64 = 1.256_637_062_12e-6;
+    /// electron mass, kg (CODATA 2018)
+    pub const M_E: f64 = 9.109_383_7015e-31;
+    /// proton mass, kg (CODATA 2018)
+    pub const M_P: f64 = 1.672_621_923_69e-27;
+    /// atomic mass unit, kg (CODATA 2018)
+    pub const U: f64 = 1.660_539_066_60e-27;
+    /// solar mass, kg (IAU nominal)
+    pub const M_SUN: f64 = 1.988_47e30;
+    /// Riemann zeta(3) (Apéry)
+    pub const ZETA3: f64 = 1.202_056_903_159_594;
+    /// gravitational constant, N·m²/kg² (CODATA 2018)
+    pub const G: f64 = 6.67430e-11;
+}
+
+/// PDG rest masses in MeV/c²: (electron, muon, π⁺, π⁰, proton, neutron).
+pub fn sr_pdg_masses_mev() -> (f64, f64, f64, f64, f64, f64) {
+    (
+        0.510_998_95,
+        105.658_374_5,
+        139.570_39,
+        134.976_8,
+        938.272_088_16,
+        939.565_420_52,
+    )
+}
+
+/// Two-body decay of a parent into daughter A + massless B: the exact
+/// daughter-A momentum `|p|c = (M² − m²)c²/(2M)` (PDG kinematics), MeV.
+pub fn sr_two_body_decay_momentum_mc(m_parent_mev: f64, m_a_mev: f64) -> f64 {
+    (m_parent_mev * m_parent_mev - m_a_mev * m_a_mev) / (2.0 * m_parent_mev)
+}
+
+/// γγ → e⁺e⁻ threshold with a soft CMB-like photon of energy `eps_ev`
+/// head-on on a high-energy photon: `E_hi = (m_e c²)²/ε` (Breit–Wheeler), eV.
+pub fn sr_breit_wheeler_threshold_soft_ev(soft_photon_ev: f64) -> f64 {
+    // m_e c² in eV from CODATA masses:
+    let mec2 = phys::M_E * (299_792_458.0f64).powi(2) / phys::E;
+    mec2 * mec2 / soft_photon_ev
+}
+
+/// GZK cutoff: p + γ_CMB → p + π⁰ threshold energy for a head-on photon of
+/// energy `soft_photon_ev` — `E_p = ((m_p+m_π)² − m_p²)c⁴/(4ε)`
+/// (Greisen–Zatsepin–Kuzmin 1966), eV.
+pub fn sr_gzk_threshold_soft_ev(soft_photon_ev: f64) -> f64 {
+    let mev_to_ev = 1.0e6;
+    let (_, _, _, m_pi0, m_p, _) = sr_pdg_masses_mev();
+    let dm2 = ((m_p + m_pi0).powi(2) - m_p * m_p) * mev_to_ev * mev_to_ev; // eV²
+    dm2 / (4.0 * soft_photon_ev)
+}
+
+/// Relativistic dipole field `Bρ = p/q` for a particle of momentum
+/// `p_gev` (GeV/c) on a ring bending radius `rho_m`: tesla. In SI,
+/// `B = E/(qcρ)` with `p = E/c`, so the charge cancels exactly.
+pub fn sr_dipole_field_t(p_gev: f64, rho_m: f64) -> f64 {
+    let c = 299_792_458.0;
+    p_gev * 1.0e9 / (c * rho_m)
+}
+
+/// Semi-empirical (Weizsäcker) mass formula with textbook coefficients
+/// (a_v=15.75, a_s=17.8, a_c=0.711, a_sym=23.7, pairing 11.18/√A),
+/// binding energy in MeV. Light nuclei (A ≲ 20) are outside its domain —
+/// the known SEMF limitation; mid-mass and heavy nuclei are its regime.
+pub fn nuc_semf_binding_energy_mev(a: u32, z: u32) -> f64 {
+    let af = a as f64;
+    let zf = z as f64;
+    let n = af - zf;
+    let volume = 15.75 * af;
+    let surface = -17.8 * af.powf(2.0 / 3.0);
+    let coulomb = -0.711 * zf * (zf - 1.0) / af.powf(1.0 / 3.0);
+    let symmetry = -23.7 * (n - zf) * (n - zf) / af;
+    let pairing = if a % 2 == 1 {
+        0.0
+    } else if z % 2 == 0 {
+        11.18 / af.sqrt()
+    } else {
+        -11.18 / af.sqrt()
+    };
+    volume + surface + coulomb + symmetry + pairing
+}
+
+/// Hawking temperature `T = ħc³/(8πGMk_B)` for a black hole of mass `m_kg`.
+pub fn astro_hawking_temperature_k(m_kg: f64) -> f64 {
+    let hbar = 1.054_571_817e-34;
+    let c: f64 = 299_792_458.0;
+    hbar * c.powi(3) / (8.0 * std::f64::consts::PI * phys::G * m_kg * phys::K_B)
+}
+
+/// Schwarzschild radius `r_s = 2GM/c²` for a mass `m_kg`.
+pub fn astro_schwarzschild_radius_m(m_kg: f64) -> f64 {
+    let c: f64 = 299_792_458.0;
+    2.0 * phys::G * m_kg / (c * c)
+}
+
+/// GW frequency at the Schwarzschild ISCO of a non-spinning black hole,
+/// `f = c³/(6^{3/2}πGM)` (twice the orbital frequency), Hz.
+pub fn astro_isco_gw_frequency_hz(m_kg: f64) -> f64 {
+    let c: f64 = 299_792_458.0;
+    c.powi(3) / (6.0f64.sqrt().powi(3) * std::f64::consts::PI * phys::G * m_kg)
+}
+
+/// Chandrasekhar mass from fundamental constants (Shapiro–Teukolsky):
+/// `M_Ch = π(ħc/G)^{3/2}/(μ_e m_p)²`, with mean molecular weight `mu_e`.
+pub fn astro_chandrasekhar_mass_kg(mu_e: f64) -> f64 {
+    let hbar = 1.054_571_817e-34;
+    let c: f64 = 299_792_458.0;
+    std::f64::consts::PI * (hbar * c / phys::G).powf(1.5)
+        / ((mu_e * phys::M_P) * (mu_e * phys::M_P))
+}
+
+/// Eddington luminosity `L = 4πGMm_p c/σ_T` (hydrogen, Thomson opacity), W.
+pub fn astro_eddington_luminosity_w(m_kg: f64) -> f64 {
+    let c = 299_792_458.0;
+    // Classical ELECTRON radius (Thomson opacity is electron scattering).
+    let r_e = phys::E * phys::E / (4.0 * std::f64::consts::PI * phys::EPS0 * phys::M_E * c * c);
+    let sigma_t = 8.0 * std::f64::consts::PI / 3.0 * r_e * r_e;
+    4.0 * std::f64::consts::PI * phys::G * m_kg * phys::M_P * c / sigma_t
+}
+
+/// Friedmann critical density `ρ_c = 3H₀²/(8πG)` for `h0_km_s_mpc` in
+/// km/s/Mpc: kg/m³.
+pub fn astro_critical_density(h0_km_s_mpc: f64) -> f64 {
+    let mpc_m = 3.085_677_581_491_367e22;
+    let h0 = h0_km_s_mpc * 1.0e3 / mpc_m;
+    3.0 * h0 * h0 / (8.0 * std::f64::consts::PI * phys::G)
+}
+
+/// CMB blackbody at temperature `t_k`: photon number density n[m⁻³] and
+/// energy density u[J/m³] — `n = (2ζ(3)/π²)(kT/ħc)³`, `u = aT⁴`.
+pub fn astro_blackbody_photon_gas(t_k: f64) -> (f64, f64) {
+    let hbar = 1.054_571_817e-34;
+    let c: f64 = 299_792_458.0;
+    let a_rad = 7.565_733_250_280_007e-16; // a = π²k⁴/(15ħ³c³), J/m³/K⁴
+    let n = (2.0 * phys::ZETA3 / (std::f64::consts::PI * std::f64::consts::PI))
+        * (phys::K_B * t_k / (hbar * c)).powi(3);
+    let u = a_rad * t_k.powi(4);
+    (n, u)
+}
+
+/// Electron plasma frequency `ω_p = √(ne²/(ε₀m_e))` → ordinary frequency, Hz.
+pub fn plasma_frequency_hz(n_m3: f64) -> f64 {
+    (n_m3 * phys::E * phys::E / (phys::EPS0 * phys::M_E)).sqrt()
+        / (2.0 * std::f64::consts::PI)
+}
+
+/// Debye length `λ_D = √(ε₀kT/(ne²))`, m.
+pub fn plasma_debye_length_m(t_k: f64, n_m3: f64) -> f64 {
+    (phys::EPS0 * phys::K_B * t_k / (n_m3 * phys::E * phys::E)).sqrt()
+}
+
+/// Alfvén speed `v_A = B/√(μ₀ρ)`, m/s.
+pub fn plasma_alfven_speed_ms(b_tesla: f64, rho_kg_m3: f64) -> f64 {
+    b_tesla / (phys::MU0 * rho_kg_m3).sqrt()
+}
+
+/// Quantum-metrology triangle (exact SI-2019): returns
+/// `(R_K [Ω], K_J [Hz/V], Φ₀ [Wb])` = `(h/e², 2e/h, h/2e)`.
+pub fn metrology_constants() -> (f64, f64, f64) {
+    (
+        phys::H / (phys::E * phys::E),
+        2.0 * phys::E / phys::H,
+        phys::H / (2.0 * phys::E),
+    )
+}
+
+/// BCS weak-coupling gap ratio `Δ(0)/k_BT_c` (the universal 1.764).
+pub const BCS_GAP_RATIO: f64 = 1.764;
+
+/// Closed-form coalescence time from GW frequency f_start for a binary with
+/// chirp mass `chirp_mass_kg`: `t = 5c⁵/(256(G𝓜)^{5/3}(πf)^{8/3})` s
+/// (leading-order Peters 1964 gravitational-radiation inspiral).
+pub fn inspiral_time_to_coalescence_s(chirp_mass_kg: f64, f_start_hz: f64) -> f64 {
+    let c: f64 = 299_792_458.0;
+    let gm = phys::G * chirp_mass_kg;
+    5.0 * c.powi(5) / (256.0 * gm.powf(5.0 / 3.0) * (std::f64::consts::PI * f_start_hz).powf(8.0 / 3.0))
+}
+
+/// Leading-order chirp rate `df/dt = (96/5)π^{8/3}(G𝓜/c³)^{5/3} f^{11/3}` (s⁻²).
+pub fn inspiral_chirp_rate(chirp_mass_kg: f64, f_hz: f64) -> f64 {
+    let c: f64 = 299_792_458.0;
+    let tcube = (phys::G * chirp_mass_kg) / (c * c * c);
+    (96.0 / 5.0)
+        * std::f64::consts::PI.powf(8.0 / 3.0)
+        * tcube.powf(5.0 / 3.0)
+        * f_hz.powf(11.0 / 3.0)
+}
