@@ -53,6 +53,7 @@ fn adaptive_l4_completes_under_budget() {
         max_components: Some(50_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
         .expect("adaptive l=4 solve must complete under budget");
@@ -93,6 +94,7 @@ fn adaptive_l5_completes_under_budget() {
         max_components: Some(50_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
         .expect("adaptive l=5 solve must complete under budget");
@@ -132,6 +134,7 @@ fn yang_mills_l3_mass_gap_demo() {
         max_components: Some(200_000), // generous limit for l=3
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let m = 4;
     let res_even = solve_forward_sirk_with_opts(&h, &v_even, &shifts(m), &device, None, &opts)

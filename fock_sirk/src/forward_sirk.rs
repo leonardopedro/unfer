@@ -22,8 +22,16 @@ pub struct ForwardSirkResult {
     /// Krylov-vector coordinates. `Wᴴ G_sub W = I_rank`.
     pub w_whiten: DMatrix<Complex64>,
     /// The retained Krylov sequence `w_0, ..., w_m` used by [`reconstruct`] to map
-    /// whitened-basis coefficients back to a [`QuantumState`].
+    /// whitened-basis coefficients back to a [`QuantumState`]. The stored
+    /// vectors are the UNIT-NORM recurrence frame `ŵ_k` (see [`Self::scales`]).
     pub w_sequence: Vec<QuantumState>,
+    /// Per-step norms of the unit-norm recurrence: `H u_k = τ_{k+1} u_{k+1}
+    /// + z_k u_k` with `τ = self.scales` (τ₀ ≡ 1). Needed to assemble `H`
+    /// from the Gram matrix and by [`Self::ritz_residuals`].
+    pub scales: Vec<f64>,
+    /// The shift sequence `z_0..z_{m-1}` used to build the recurrence
+    /// (retained for the Gram-only residual computation).
+    pub shifts: Vec<Complex64>,
 }
 
 impl ForwardSirkResult {
@@ -77,6 +85,96 @@ impl ForwardSirkResult {
         vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         vals
     }
+
+    /// True relative residuals of every Ritz pair, computed **entirely from
+    /// the stored Gram matrix** — no big-space work.
+    ///
+    /// The Galerkin condition makes the residual vanish *inside* the subspace,
+    /// so what matters is the component outside it. For the forward sequence
+    /// that component is exactly one dimension further: `H` maps
+    /// `span{ŵ_0..ŵ_{m-1}}` into `span{ŵ_0..ŵ_m}` (the identity above), so for
+    /// coefficient vector `c` (length m) the big-space image has coordinates
+    ///
+    ///   `d_j = z_j c_j + (σ_j/σ_{j-1}) c_{j-1}`  (d_m = (σ_m/σ_{m-1}) c_{m-1}),
+    ///
+    /// and with everything expressed through the Gram matrix G (size m+1):
+    ///
+    ///   ‖ψ‖² = c†G_sub c,  ‖Hψ‖² = d†G d,  ⟨ψ,Hψ⟩ = c† G[:, :m] d,
+    ///   res(θ) = √(‖Hψ‖² − θ²‖ψ‖²) / ‖Hψ‖ .
+    ///
+    /// Returns `(θ, rel_res)` sorted by ascending θ. This is the type-enforced
+    /// version of the practical rule "filter Ritz values above the resolved
+    /// window": consumers can select pairs by convergence quality instead of
+    /// hand-maintained energy cutoffs. See `fock_sirk/tests/ritz_edge_study.rs`.
+    pub fn ritz_residuals(&self) -> Vec<(f64, f64)> {
+        let m = self.scales.len() - 1;
+        let eig = self.h_proj.clone().symmetric_eigen();
+
+        // Sort eigenpairs ascending.
+        let mut order: Vec<usize> = (0..eig.eigenvalues.len()).collect();
+        order.sort_by(|&a, &b| {
+            eig.eigenvalues[a]
+                .partial_cmp(&eig.eigenvalues[b])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let g = &self.g_matrix;
+        let g_sub = g.view((0, 0), (m, m));
+
+        let mut out = Vec::with_capacity(order.len());
+        for &i in &order {
+            let theta = eig.eigenvalues[i];
+            let c = eig.eigenvectors.column(i); // whitened-frame coeffs
+
+            // Whitened → unit-norm Krylov frame: ĉ = W c (length m).
+            let c_hat = &self.w_whiten * c;
+
+            // Big-space coordinates d (length m+1):
+            //   d_j = z_j ĉ_j + τ_j ĉ_{j-1}   (τ from the recurrence frame),
+            // so that H ψ has coordinates d in span{u_0..u_m}.
+            let mut d = nalgebra::DVector::<Complex64>::zeros(m + 1);
+            for j in 0..m {
+                d[j] += self.shifts[j] * c_hat[j];
+            }
+            for j in 1..=m {
+                d[j] += self.scales[j] * c_hat[j - 1];
+            }
+
+            let psi_norm2 = (c_hat.adjoint() * &g_sub * &c_hat)[(0, 0)]
+                .re
+                .max(1e-300);
+            // Residual VECTOR, formed before any metric contraction:
+            //   e_j = d_j − θ ĉ_j  (j < m; vanishes identically in exact
+            //        arithmetic by the Galerkin condition),
+            //   e_m = τ_m ĉ_{m−1}   (the one component H pushes OUTSIDE the
+        //        projected basis — the entire physical content of the
+            //        residual).
+            // Then ‖Hψ − θψ‖² = e† G e exactly. Computing the norm this way
+            // (instead of ‖Hψ‖² − θ²‖ψ‖²) avoids the catastrophic
+            // cancellation that clamps small residuals to zero.
+            let mut e = nalgebra::DVector::<Complex64>::zeros(m + 1);
+            for j in 0..m {
+                e[j] = d[j] - theta * c_hat[j];
+            }
+            e[m] = self.scales[m] * c_hat[m - 1];
+            let res2 = (e.conjugate().transpose() * g * e)[(0, 0)].re.max(0.0);
+            let hpsi_norm = (theta * theta * psi_norm2).sqrt().max(1e-300);
+            out.push((theta, res2.sqrt() / hpsi_norm));
+        }
+        out
+    }
+
+    /// Ritz values whose true relative residual (see [`Self::ritz_residuals`])
+    /// is at most `rel_tol`, sorted ascending — the converged part of the
+    /// spectrum, enforced by the solver instead of by caller convention.
+    pub fn resolved_ritz_values(&self, rel_tol: f64) -> Vec<f64> {
+        self.ritz_residuals()
+            .into_iter()
+            .filter(|&(_, r)| r <= rel_tol)
+            .map(|(theta, _)| theta)
+            .collect()
+    }
+
 
     /// Estimate the **intra-sector** spectral gap `E₁ − E₀` from the two
     /// lowest Ritz values of a single SIRK solve.
@@ -163,6 +261,20 @@ pub struct SirkOpts {
     /// error is bounded by the total probability mass of the dropped
     /// components; the Gram whitening absorbs the resulting non-orthonormality.
     pub adaptive: bool,
+    /// Store the forward sequence in the unit-norm frame (each Krylov vector
+    /// rescaled to ‖u‖=1 after its step, with the step norms `τ` folded into
+    /// the projection identity `H u_k = τ_{k+1} u_{k+1} + z_k u_k`).
+    ///
+    /// DEFAULT FALSE — the canonical Hashimoto forward products
+    /// `w_k = ∏(H − z_j I) v₀` are stored exactly as the theory defines them,
+    /// and the generalized pencil absorbs non-normality through the Gram
+    /// matrix. This flag is a numerically EXACT basis reparametrization of
+    /// the same Krylov span (Rayleigh–Ritz invariant, no approximation):
+    /// it exists because raw Gram matrices become ill-conditioned for deep
+    /// windows (‖w_k‖ ~ ‖H‖ᵏ), and deep spectral solves measure better in
+    /// the normalized frame. See `tests/ritz_edge_study.rs` for both
+    /// measured profiles.
+    pub unit_norm_steps: bool,
 }
 
 impl Default for SirkOpts {
@@ -172,6 +284,7 @@ impl Default for SirkOpts {
             max_components: None,
             brst_tol: BRST_TOL,
             adaptive: false,
+            unit_norm_steps: false,
         }
     }
 }
@@ -234,7 +347,28 @@ where
     F: Fn(&QuantumState) -> QuantumState,
 {
     let m = shifts.len();
-    let mut w_sequence = Vec::with_capacity(m + 1);
+
+    // Forward-sequence frame selection.
+    //
+    // CANONICAL (default, `unit_norm_steps: false`): store the raw Hashimoto
+    // products w_k = (H − z_k I) w_{k−1} exactly as the theory defines them;
+    // all scale factors are τ ≡ 1 and the generalized pencil absorbs the
+    // non-normality through the Gram matrix.
+    //
+    // UNIT-NORM FRAME (opt-in, `unit_norm_steps: true`): each stored vector
+    // is rescaled to ‖u‖=1 after its step. This is a numerically EXACT basis
+    // reparametrization — same Krylov span, Rayleigh–Ritz invariant, no
+    // approximation — motivated purely by conditioning: raw Gram matrices
+    // grow like ‖H‖^k and defeat whitening for deep windows. In this frame
+    // the projection identity reads H u_k = τ_{k+1} u_{k+1} + z_k u_k with
+    // τ_{k+1} = ‖(H − z_k I) u_k‖ the PRE-normalization step norm.
+    //
+    // In BOTH frames: u₀ is stored EXACTLY AS GIVEN (never rescaled), so the
+    // state amplitude survives `time_evolve`→`reconstruct` for inputs with
+    // ‖ψ₀‖ ≠ 1, and the unified identity above holds with `scales`.
+    let mut scales: Vec<f64> = Vec::with_capacity(m + 1);
+    scales.push(1.0);
+    let mut w_sequence: Vec<QuantumState> = Vec::with_capacity(m + 1);
     w_sequence.push(v_0.clone());
 
     // 1. Generate the forward sequence: w_k = (H - z_k I) w_{k-1}
@@ -269,6 +403,23 @@ where
             }
         }
 
+        // Optional unit-norm frame (see `SirkOpts::unit_norm_steps`): store
+        // u_{k+1} = w_{k+1}/‖w_{k+1}‖ and remember the step norm τ. In the
+        // canonical mode (default) the RAW product is stored and τ ≡ 1 —
+        // both modes satisfy H u_k = τ_{k+1} u_{k+1} + z_k u_k exactly.
+        // On breakdown (‖·‖ ≈ 0, linear dependence) keep the raw vector with
+        // unit scale; whitening will drop the dependent direction.
+        if opts.unit_norm_steps {
+            let nk = next_w.norm();
+            if nk.is_finite() && nk > 1e-30 {
+                let mut scaled = QuantumState::zero();
+                scaled.scale_and_add(&next_w, Complex64::new(1.0 / nk, 0.0));
+                scales.push(nk);
+                w_sequence.push(scaled);
+                continue;
+            }
+        }
+        scales.push(1.0);
         w_sequence.push(next_w);
     }
 
@@ -316,12 +467,13 @@ where
     // 3. Compute the Gram matrix G_jk = <w_j | w_k> on the GPU
 
     // 4. Construct the projected Hamiltonian H_jk = <w_j | H | w_k>
-    // Using the identity: H w_k = w_{k+1} + z_k w_k
-    // <w_j | H | w_k> = <w_j | w_{k+1}> + z_k <w_j | w_k> = G_{j, k+1} + z_k G_{j,k}
+    // Using the identity (normalized frame): H ŵ_k = (σ_{k+1}/σ_k) ŵ_{k+1} + z_k ŵ_k
+    // <ŵ_j|H|ŵ_k> = (σ_{k+1}/σ_k) G_{j,k+1} + z_k G_{j,k}
     let mut h_proj_raw = DMatrix::zeros(m, m);
     for j in 0..m {
         for k in 0..m {
-            h_proj_raw[(j, k)] = g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
+            h_proj_raw[(j, k)] =
+                scales[k + 1] * g_matrix[(j, k + 1)] + shifts[k] * g_matrix[(j, k)];
         }
     }
 
@@ -341,6 +493,8 @@ where
         rank: whitening.rank,
         w_whiten: w,
         w_sequence,
+        scales,
+        shifts: shifts.to_vec(),
     })
 }
 
@@ -439,6 +593,7 @@ mod tests {
             max_components: Some(50_000),
             brst_tol: 1e-10,
             adaptive: false,
+            unit_norm_steps: false,
         };
         let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
             .expect("Navier-Stokes SIRK solve must not panic or error");
@@ -477,6 +632,7 @@ mod tests {
             max_components: Some(50_000),
             brst_tol: 1e-10,
             adaptive: false,
+            unit_norm_steps: false,
         };
         let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
             .expect("Navier-Stokes SIRK solve must not error");
@@ -586,6 +742,7 @@ mod tests {
             max_components: Some(50_000),
             brst_tol: 1e-10,
             adaptive: false,
+            unit_norm_steps: false,
         };
         let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(4), &device, None, &opts)
             .expect("yang-mills GPU solve must not error");
@@ -656,6 +813,7 @@ mod tests {
             max_components: Some(10_000),
             brst_tol: 1e-10,
             adaptive: false,
+            unit_norm_steps: false,
         };
 
         let result = solve_forward_sirk_with_opts(&h, &v0, &shifts(8), &device, None, &opts);
@@ -710,6 +868,7 @@ mod tests {
                 max_components: Some(50_000),
                 brst_tol: 1e-10,
                 adaptive: false,
+                unit_norm_steps: false,
             };
             let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(m), &device, None, &opts)
                 .unwrap_or_else(|e| panic!("m={m} solve must complete: {e}"));
@@ -821,6 +980,7 @@ mod tests {
             max_components: Some(100_000),
             brst_tol: 1e-10,
             adaptive: false,
+            unit_norm_steps: false,
         };
         // m=4 keeps the component count manageable (the quartic plaquette term
         // creates 2⁴ sub-terms per plaquette per Krylov step; m=8 hits 70K+

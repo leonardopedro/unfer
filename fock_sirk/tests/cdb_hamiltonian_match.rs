@@ -81,6 +81,7 @@ fn sirk_opts() -> SirkOpts {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     }
 }
 
@@ -540,6 +541,7 @@ fn qg_densitized_kinetic_hyperbolic_spectrum() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(
         &h,

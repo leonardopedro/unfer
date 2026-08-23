@@ -111,6 +111,58 @@ optimal windows, reconstructing the state between them. Gauge-constrained
 models carry a BRST charge `Ω`; the flow periodically re-projects onto the
 physical subspace `ker Ω` by matrix-free conjugate gradient.
 
+### 3.5 Frames, guards, and model fidelity
+
+The implementation must BE the theoretical model. Two principles are now
+enforced in code and pinned by test:
+
+**Canonical default.** `SirkOpts::unit_norm_steps` defaults to `false`: the
+stored sequence is the raw Hashimoto product `w_k = (H - z_k I) w_{k-1}`
+exactly as theory defines it. No loops exist inside the spectral algorithm
+(the forward pass is single-shot) and no renormalization occurs by default.
+
+**Opt-in exact frame.** For deep spectral windows, `unit_norm_steps: true`
+stores each vector rescaled to unit norm. This is a numerically EXACT basis
+reparametrization of the same Krylov span (Rayleigh-Ritz invariant; the
+projection identity becomes `H u_k = tau_{k+1} u_{k+1} + z_k u_k` with the
+step norms `tau` folded back into `H_raw`). It exists because raw Gram
+matrices grow like the Krylov depth cubed in norm and defeat whitening:
+measured ground-error profiles for the displaced oscillator
+(ritz_edge_study p2/p2b):
+
+| m | canonical err | unit-norm err |
+|---|---------------|---------------|
+| 4 | 6.2e-6 | 6.2e-6 (subspace-limited both) |
+| 6 | 1.5e-9 | 1.5e-9 |
+| 8 | 1.7e-6 | 2.0e-9 |
+| 10 | 1.7e-3 | 1.6e-9 |
+| 12 | 2.5e-1 | 2.6e-8 |
+| 14 | 3.5 (diverged) | 2.2e-8 |
+
+**Guards earn their place by study.** Three engineering deviations from the
+idealized sequence exist, and each is now licensed quantitatively by
+`fock_sirk/tests/guard_justification_study.rs`:
+
+| Guard | Deviation | Justification (pinned by test) |
+|---|---|---|
+| `prune_eps` | drops tiny components every step | Ritz values and swap dynamics INVARIANT across eps = 1e-8..1e-14 (Study A): default sits below the solver noise floor |
+| mid-sequence BRST projection | replaces w <- P(H-z)w | THEOREM: [H,Omega]=0 makes ker(Omega) invariant, so P is the identity on exact physical sequences; verified inert on physical data (identical spectra, <=1e-8 Omega-content). On contaminated data it enforces ker(Omega) down to its documented contract or fails LOUDLY (`BrstNotConverged`) -- silent pass-through is not an outcome (Study B) |
+| adaptive truncation | hard component ceiling | already opt-in (`adaptive:false` default errors instead); at the suites' 50k budgets it NEVER engages -- adaptive-on/off agree exactly and states sit ~500x below budget (Study C) |
+
+**Theory-native dynamics.** The model needs ONE finite time T and a deep
+enough dimension m -- no time slicing. Restarts (`evolve_restarted`) remain
+as an engineering alternative, but with the flat profile above a single
+m=8 window now reproduces the NS Newtonian decay rate to <2% directly
+(`ns_sirk_laminar_decay_rate`, part d).
+
+**Resolvedness is solver-enforced.** `ForwardSirkResult::ritz_residuals()`
+computes TRUE relative residuals ||Hpsi - theta psi||/||Hpsi|| for every pair
+from the stored Gram matrix alone (O(m^2), cancellation-free: the residual
+vector e has exactly one out-of-basis component, `e_m = tau_m c_{m-1}`).
+`resolved_ritz_values(tol)` returns the converged set, replacing hand-maintained
+energy cutoffs. The measured residual ladder at m=8 separates rungs cleanly:
+E0:1.5e-5, E1:2.6e-5, E2:2.0e-4 | E3:1.4e-3, E4:7.3e-3, ...
+
 ---
 
 ## 4. The model zoo
@@ -387,6 +439,13 @@ convergence-related quality, not noise. *(Verified.)*
 level-placement assertions; treat the survivors near the window edge as
 higher-rung estimates whose convergence improves with deeper windows *up to*
 the conditioning wall.
+
+**Follow-up (solver-enforced resolution).** The practical rule is now an API:
+`resolved_ritz_values(tol)` selects pairs by true residual (see 3.5), and the
+unit-norm frame removes the wall entirely for deep windows -- so the edge
+values can also be *converged away* by extending m, which is the theory's own
+convergence knob. The displaced-oscillator suite now runs one m=8 window and
+asserts exactly the first three rungs resolve.
 
 ---
 

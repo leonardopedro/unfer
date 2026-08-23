@@ -205,6 +205,7 @@ fn qg_starobinsky_gauge_fixed_cadabra2_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let mut psi0 = inner_vacuum();
     let mut one = inner_vacuum();

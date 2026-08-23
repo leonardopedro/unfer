@@ -203,6 +203,7 @@ fn ns_derivative_fields_constant_of_motion() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let mut psi0 = ns_state(0, 1);
     psi0.scale_and_add(&ns_state(1, 1), Complex64::new(0.5, 0.0));
@@ -468,6 +469,7 @@ fn ns_sirk_esa_truncation() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &vac, &shifts(4), &best_device(), None, &opts)
         .expect("NS SIRK solve from the vacuum");
@@ -531,6 +533,7 @@ fn ns_hashimoto_shift_invert_selection() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &inner_vac(), &shifts(4), &best_device(), None, &opts)
         .expect("NS SIRK solve");
@@ -649,6 +652,7 @@ fn ns_unitary_evolution_conservation() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let psi_t = evolve_restarted(&h, &psi0, 0.05, 2, 2, &best_device(), None, &opts).unwrap();
     let n_t = psi_t.norm();
@@ -789,6 +793,7 @@ fn ns_brst_projection_physical_subspace() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let mut bosonic = InnerBosonicState::vacuum();
     bosonic.modes.insert(0, 1);

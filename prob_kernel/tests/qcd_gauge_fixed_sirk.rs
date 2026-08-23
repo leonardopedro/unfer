@@ -108,6 +108,7 @@ fn qcd_ym_gauge_fixed_cadabra2_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res =
         solve_forward_sirk_with_opts(&h_fock, &inner_vac, &shifts(8), &best_device(), None, &opts)

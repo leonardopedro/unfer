@@ -51,6 +51,19 @@ fn opts() -> SirkOpts {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        // CANONICAL forward products (project default: implementation = theory).
+        unit_norm_steps: false,
+    }
+}
+
+/// The numerically-exact unit-norm basis reparametrization (opt-in).
+fn opts_unit() -> SirkOpts {
+    SirkOpts {
+        prune_eps: 1e-14,
+        max_components: Some(200_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: true,
     }
 }
 
@@ -96,47 +109,47 @@ fn eigen_pairs(
 fn p1_every_ritz_bracketed_by_the_reachable_ladder() {
     let h = oscillator_displaced(OMEGA, G);
     let m = 8;
-    let res =
-        solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts())
-            .unwrap();
-    // Occupation reachable after m applications: n ≤ m ⇒ θ ∈ [E₀, E_m].
-    for &theta in &res.ritz_values() {
-        assert!(
-            theta >= exact_level(0.0) - 1e-7 && theta <= exact_level(m as f64) + 1e-6,
-            "Ritz {theta} outside [{:.4}, {:.4}]",
-            exact_level(0.0),
-            exact_level(m as f64)
-        );
+    for opts in [opts(), opts_unit()] {
+        let res =
+            solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts)
+                .unwrap();
+        // Occupation reachable after m applications: n ≤ m ⇒ θ ∈ [E₀, E_m].
+        for &theta in &res.ritz_values() {
+            assert!(
+                theta >= exact_level(0.0) - 1e-7 && theta <= exact_level(m as f64) + 1e-6,
+                "Ritz {theta} outside [{:.4}, {:.4}]",
+                exact_level(0.0),
+                exact_level(m as f64)
+            );
+        }
     }
 }
 
 #[test]
 fn p2_low_end_converges_and_sits_on_a_conditioning_floor() {
     let h = oscillator_displaced(OMEGA, G);
-    // FINDING (measured profile): err(m=4)≈2e-7, err(6)≈1e-9 (optimal),
-    // err(8)≈1.7e-6, err(10)≈1.7e-3. Beyond the optimum the Gram matrix of
-    // the polynomial sequence becomes catastrophically ill-conditioned
-    // (‖w_k‖ grows like ‖H‖ᵏ); whitening truncation then injects noise that
-    // degrades even the LOW end. This conditioning wall is WHY the
-    // architecture evolves long times by RESTARTED short windows
-    // (`evolve_restarted`) instead of one deep solve.
-    let profile = [(4_usize, 1e-5_f64), (6, 1e-8), (8, 1e-5), (10, 1e-2)];
+    // FINDING (canonical frame, measured): err(4)≈6e-6, err(6)≈1.5e-9
+    // (optimal), err(8)≈1.7e-6, err(10)≈1.7e-3, err(12)≈2.5e-1, err(14)≈3.5.
+    // Past the optimum the raw Gram matrix (‖w_k‖ ~ ‖H‖ᵏ) defeats whitening:
+    // the wall is real, and this is WHY long evolutions restart short windows.
+    let profile = [
+        (4_usize, 1e-5_f64),
+        (6, 1e-8),
+        (8, 1e-5),
+        (10, 1e-2),
+        (12, 1.0),
+        (14, 10.0),
+    ];
     for (m, tol) in profile {
         let res =
             solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts())
                 .unwrap();
         let theta0 = res.ritz_values()[0];
         let err = (theta0 - exact_level(0.0)).abs();
-        assert!(err < tol, "ground Ritz band violated at m={m}: err={err:.3e} ≥ {tol:.0e}");
-        if m == 6 {
-            assert!(
-                err < 1e-8 * 10.0,
-                "m=6 is the optimal window depth for this model"
-            );
-        }
+        assert!(err < tol, "canonical ground band violated at m={m}: err={err:.3e} ≥ {tol:.0e}");
     }
-    // The wall itself: degradation must be present (this documents reality;
-    // if a future whitening fix removes it, update this test and the guide).
+    // The wall itself: degradation must be present (documents reality; if a
+    // future whitening fix removes it, update this test and the guide).
     let e8 = {
         let r = solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(8), &best_device(), None, &opts()).unwrap();
         (r.ritz_values()[0] - exact_level(0.0)).abs()
@@ -146,6 +159,125 @@ fn p2_low_end_converges_and_sits_on_a_conditioning_floor() {
         (r.ritz_values()[0] - exact_level(0.0)).abs()
     };
     assert!(e10 > 50.0 * e8.max(1e-15), "conditioning wall expected: err(10)≫err(8)");
+}
+
+#[test]
+fn p2b_unit_norm_frame_flattens_the_wall() {
+    let h = oscillator_displaced(OMEGA, G);
+    // FINDING (unit-norm frame, opt-in `SirkOpts::unit_norm_steps`): the SAME
+    // Krylov span in a numerically exact rescaled basis holds the ground
+    // error at ~2e-8 through m=14 — five orders of magnitude below canonical
+    // at m=10–14, where canonical has fully diverged. The wall is a
+    // GRAM-CONDITIONING artifact of the raw frame, not of the subspace.
+    //
+    // Regimes (measured): at m=4 BOTH frames give err≈6.2e-6 — there the
+    // limit is SUBSPACE SIZE (the Krylov space has not yet reached E₀'s
+    // neighbourhood), which no basis choice can fix; only deep windows expose
+    // the conditioning difference.
+    let e4u = {
+        let r = solve_forward_sirk_with_opts(
+            &h,
+            &vacuum(),
+            &shifts(4),
+            &best_device(),
+            None,
+            &opts_unit(),
+        )
+        .unwrap();
+        (r.ritz_values()[0] - exact_level(0.0)).abs()
+    };
+    assert!(e4u < 1e-5, "m=4 subspace-limited band: {e4u:.3e}");
+    for m in [8_usize, 10, 12, 14] {
+        let res = solve_forward_sirk_with_opts(
+            &h,
+            &vacuum(),
+            &shifts(m),
+            &best_device(),
+            None,
+            &opts_unit(),
+        )
+        .unwrap();
+        let theta0 = res.ritz_values()[0];
+        let err = (theta0 - exact_level(0.0)).abs();
+        assert!(err < 5e-7, "unit-norm frame must stay flat: m={m} err={err:.3e}");
+        let ec = solve_forward_sirk_with_opts(
+            &h,
+            &vacuum(),
+            &shifts(m),
+            &best_device(),
+            None,
+            &opts(),
+        )
+        .unwrap();
+        let err_c = (ec.ritz_values()[0] - exact_level(0.0)).abs();
+        assert!(
+            err * 100.0 < err_c,
+            "unit-norm must beat canonical ≥100× at m={m}: {err:.3e} vs {err_c:.3e}"
+        );
+    }
+}
+
+#[test]
+fn p6_gram_only_residuals_match_reconstruction_and_select_resolved() {
+    let h = oscillator_displaced(OMEGA, G);
+    let m = 8;
+    for opts in [opts(), opts_unit()] {
+        let res =
+            solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts)
+                .unwrap();
+        let pairs = res.ritz_residuals();
+
+        // Cross-validate every Gram-only residual against the directly
+        // reconstructed big-space residual ‖Hψ−θψ‖/‖Hψ‖.
+        let eig = res.h_proj.clone().symmetric_eigen();
+        let mut order: Vec<usize> = (0..eig.eigenvalues.len()).collect();
+        order.sort_by(|&a, &b| {
+            eig.eigenvalues[a]
+                .partial_cmp(&eig.eigenvalues[b])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for (k, &(theta, r_api)) in pairs.iter().enumerate() {
+            let c = eig.eigenvectors.column(order[k]).into_owned();
+            let psi = res.reconstruct(&c);
+            let hp = h.apply(&psi);
+            let mut acc = QuantumState::zero();
+            acc.scale_and_add(&hp, Complex64::new(1.0, 0.0));
+            acc.scale_and_add(&psi, Complex64::new(-theta, 0.0));
+            let r_dir = QuantumState::inner_product(&acc, &acc).re.sqrt()
+                / (QuantumState::inner_product(&hp, &hp).re.sqrt().max(1e-300));
+            assert!(
+                (r_api - r_dir).abs() <= 0.2 * r_dir.max(1e-12) + 1e-9,
+                "Gram-only residual {r_api:.3e} vs direct {r_dir:.3e} (frame {:?})",
+                opts.unit_norm_steps
+            );
+        }
+
+        // The type-enforced resolved set matches the manual cutoff rule:
+        // exactly those pairs whose direct residual is ≤ tol.
+        let manual: Vec<f64> = {
+            let mut v: Vec<f64> = Vec::new();
+            for (idx, &(theta, _r)) in pairs.iter().enumerate() {
+                let c = eig.eigenvectors.column(order[idx]).into_owned();
+                let psi = res.reconstruct(&c);
+                let hp = h.apply(&psi);
+                let mut acc = QuantumState::zero();
+                acc.scale_and_add(&hp, Complex64::new(1.0, 0.0));
+                acc.scale_and_add(&psi, Complex64::new(-theta, 0.0));
+                let r_dir = QuantumState::inner_product(&acc, &acc).re.sqrt()
+                    / QuantumState::inner_product(&hp, &hp).re.sqrt().max(1e-300);
+                if r_dir <= 1e-6 {
+                    v.push(theta);
+                }
+            }
+            v
+        };
+        let api: Vec<f64> = res.resolved_ritz_values(1e-6);
+        assert_eq!(
+            api.len(),
+            manual.len(),
+            "resolved sets must match (api {api:?} vs manual {manual:?})"
+        );
+    }
 }
 
 #[test]

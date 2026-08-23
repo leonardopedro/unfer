@@ -280,6 +280,7 @@ fn qg_starobinsky_scalaron_massive_dispersion_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
 
     // (a) Vacuum: the normal-ordered scalaron vacuum energy is 0.
@@ -481,6 +482,7 @@ fn qg_starobinsky_derivative_variable_brst() {
         max_components: Some(2),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let unphysical = ghost_state(
         {

@@ -111,6 +111,7 @@ fn sirk_ground(h: &Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -493,6 +494,7 @@ fn qed_unitary_evolution_energy_conservation() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let psi_t = evolve_restarted(&h, &psi0, 3.0, 4, 6, &best_device(), None, &opts).unwrap();
     let n_t = psi_t.norm();
@@ -564,6 +566,7 @@ fn sirk_ritz(h: &Hamiltonian, v0: &QuantumState, m: usize) -> Vec<f64> {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -685,6 +688,7 @@ fn qed_jaynes_cummings_rabi_oscillation_and_revival() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let n0 = |s: &QuantumState| QuantumState::norm(s);
     let e0 = |s: &QuantumState| measure(&h, s);
@@ -868,6 +872,7 @@ fn qed_static_charge_driven_field_oscillation() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let psi0 = QuantumState::vacuum();
     let e0 = measure(&h, &psi0);

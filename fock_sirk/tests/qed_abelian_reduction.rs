@@ -210,6 +210,7 @@ fn sirk_ground(h: &Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -411,6 +412,7 @@ fn qed_free_photon_coherent_phase_rotation() {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &v0, &shifts(8), &best_device(), None, &opts)
         .expect("SIRK solve must complete");

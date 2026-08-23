@@ -62,6 +62,7 @@ fn sirk_ground(h: &Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -335,6 +336,7 @@ fn qg_tegr_hamiltonian_outer_fock_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(
         &h,
@@ -468,6 +470,7 @@ fn qg_starobinsky_scalaron_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let mut psi0 = starobinsky_inner_vacuum();
     psi0.scale_and_add(&n_scalaron(0, 1), Complex64::new(0.7, 0.0));
@@ -539,6 +542,7 @@ fn qg_unitary_evolution_energy_conservation() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let psi_t = evolve_restarted(&h, &psi0, 3.0, 4, 6, &best_device(), None, &opts).unwrap();
     let n_t = psi_t.norm();
@@ -578,6 +582,7 @@ fn qg_gravitational_wave_phase_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     for &t in &[0.1, 0.25, 0.5] {
         let psi = evolve_restarted(&h, &psi0, t, 1, 6, &best_device(), None, &opts).unwrap();

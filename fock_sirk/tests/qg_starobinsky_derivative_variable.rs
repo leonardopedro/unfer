@@ -399,6 +399,7 @@ fn sirk_opts() -> SirkOpts {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     }
 }
 

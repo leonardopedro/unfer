@@ -460,6 +460,7 @@ fn ns_sirk_laminar_decay_rate() {
         max_components: Some(50_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
     let t: f64 = 0.05;
     let psi_t = evolve_restarted(&h, &psi0, t, 2, 2, &best_device(), None, &opts).unwrap();
@@ -478,4 +479,26 @@ fn ns_sirk_laminar_decay_rate() {
          d⟨u⟩/dt = {measured:.6e} 1/s vs Newtonian −νk² = {rate_expected:.6e} 1/s \
          (rel err {rel_err:.1e})"
     );
-}
+
+
+    // (d) THEORY-NATIVE single-shot evolution: Hashimoto/SIRK needs only ONE
+    //     finite time and a sufficiently deep Krylov dimension -- no time
+    //     slicing. The unit-norm frame (SirkOpts::unit_norm_steps) makes
+    //     m=8 windows well-conditioned, so one window reproduces the same
+    //     Newtonian rate (restarts remain available as an engineering
+    //     alternative, but are not required by the model).
+    let opts_single = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(50_000),
+        brst_tol: 1e-10,
+        adaptive: true,
+        unit_norm_steps: true,
+    };
+    let psi_single =
+        evolve_restarted(&h, &psi0, t, 1, 8, &best_device(), None, &opts_single).unwrap();
+    let u_single = QuantumState::inner_product(&psi_single, &u_op.apply(&psi_single));
+    let measured_single: f64 = ((u_single - u0) / Complex64::new(t, 0.0)).re;
+    assert!(
+        (measured_single - analytic).abs() / analytic.abs() < 2e-2,
+        "single-shot deep window must measure the Newtonian rate -νk²:          measured {measured_single:.4e} vs {analytic:.4e}"
+    );}

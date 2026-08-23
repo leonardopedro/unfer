@@ -28,6 +28,7 @@ fn main() -> anyhow::Result<()> {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: true,
+        unit_norm_steps: false,
     };
 
     let mut psi = ns_two(0, 1, 3, 1);

@@ -86,6 +86,7 @@ fn sirk_ground(h: &Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -478,6 +479,7 @@ fn qcd_mass_gap_sirk() {
         max_components: Some(100_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res_even =
         solve_forward_sirk_with_opts(&h_lat, &v_even, &shifts(4), &best_device(), None, &opts)
@@ -538,6 +540,7 @@ fn qcd_ym_hamiltonian_outer_fock_sirk() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let res = solve_forward_sirk_with_opts(&h, &inner_vac, &shifts(8), &best_device(), None, &opts)
         .expect("gauge-fixed YM SIRK solve");
@@ -599,6 +602,7 @@ fn qcd_unitary_evolution_energy_conservation() {
         max_components: Some(1_000_000),
         brst_tol: 1e-10,
         adaptive: false,
+        unit_norm_steps: false,
     };
     let psi_t = evolve_restarted(&h, &psi0, 3.0, 4, 6, &best_device(), None, &opts).unwrap();
     let n_t = psi_t.norm();
