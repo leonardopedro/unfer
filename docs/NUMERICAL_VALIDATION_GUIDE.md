@@ -139,13 +139,17 @@ measured ground-error profiles for the displaced oscillator
 | 12 | 2.5e-1 | 2.6e-8 |
 | 14 | 3.5 (diverged) | 2.2e-8 |
 
-**Guards earn their place by study.** Three engineering deviations from the
-idealized sequence exist, and each is now licensed quantitatively by
+**No guard is on by default.** After the model-fidelity directive, ALL FOUR
+deviations from the idealized sequence are opt-in: BRST projection
+(`brst_charge: None`), adaptive truncation (`adaptive: false` errors instead),
+the unit-norm frame (`unit_norm_steps: false`), and component pruning
+(`prune_eps: 0.0`). Each remains available where its justification study
+applies, and each is licensed quantitatively by
 `fock_sirk/tests/guard_justification_study.rs`:
 
 | Guard | Deviation | Justification (pinned by test) |
 |---|---|---|
-| `prune_eps` | drops tiny components every step | Ritz values and swap dynamics INVARIANT across eps = 1e-8..1e-14 (Study A): default sits below the solver noise floor |
+| `prune_eps` | drops tiny components every step | NOW DISABLED BY DEFAULT (`prune_eps: 0.0`) per model fidelity -- memory-bounded runs OPT IN explicitly; Study A shows the opted-in value is invariant across eps = 1e-8..1e-14 (below solver noise floor) |
 | mid-sequence BRST projection | replaces w <- P(H-z)w | THEOREM: [H,Omega]=0 makes ker(Omega) invariant, so P is the identity on exact physical sequences; verified inert on physical data (identical spectra, <=1e-8 Omega-content). On contaminated data it enforces ker(Omega) down to its documented contract or fails LOUDLY (`BrstNotConverged`) -- silent pass-through is not an outcome (Study B) |
 | adaptive truncation | hard component ceiling | already opt-in (`adaptive:false` default errors instead); at the suites' 50k budgets it NEVER engages -- adaptive-on/off agree exactly and states sit ~500x below budget (Study C) |
 

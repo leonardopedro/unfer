@@ -244,7 +244,13 @@ pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) 
 /// Tunable bounds and tolerances for the SIRK solve.
 #[derive(Debug, Clone)]
 pub struct SirkOpts {
-    /// Drop Krylov-vector components with `|amplitude| <= prune_eps` each step.
+    /// Drop Krylov-vector components with `|amplitude| <= prune_eps` each
+    /// step. DEFAULT 0.0 = DISABLED: the canonical Hashimoto sequence keeps
+    /// every component the exact recurrence produces (model-fidelity
+    /// directive; justified-inert usage is documented in
+    /// `tests/guard_justification_study.rs` Study A). Memory-bounded runs on
+    /// explosion-prone models opt in explicitly (e.g. 1e-12), which the same
+    /// study shows is invariant below the solver noise floor.
     pub prune_eps: f64,
     /// Hard ceiling on the number of components in any Krylov vector. When
     /// [`SirkOpts::adaptive`] is false (default), exceeding this aborts with
@@ -280,7 +286,7 @@ pub struct SirkOpts {
 impl Default for SirkOpts {
     fn default() -> Self {
         Self {
-            prune_eps: 1e-12,
+            prune_eps: 0.0,
             max_components: None,
             brst_tol: BRST_TOL,
             adaptive: false,
