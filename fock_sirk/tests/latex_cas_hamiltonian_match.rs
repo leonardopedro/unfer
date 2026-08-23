@@ -143,23 +143,61 @@ fn double_creation_latex_dagger() {
 // QYM/QED: the abelian B² via the CAS dialect == qcd_ym_hamiltonian(0)
 // ─────────────────────────────────────────────
 
+/// Mechanical CAS→LaTeX-dagger translation: `c_<i>` → `a_<i>^{dagger}`,
+/// `a_<i>` unchanged. This is the exact inverse of `rewrite_daggers`
+/// (nested_fock_algebra::latex), so a LaTeX fixture produced by this
+/// function compiles back to the same operator string the CAS route sees.
+fn cas_to_latex_dagger(cas: &str) -> String {
+    let b = cas.as_bytes();
+    let mut out = String::with_capacity(cas.len() + 16);
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'c' && i + 1 < b.len() && (b[i + 1] == b'_' || b[i + 1].is_ascii_digit()) {
+            // Creation token: copy the subscript verbatim, then dagger it.
+            out.push_str("a_");
+            i += 1;
+            if i < b.len() && b[i] == b'_' {
+                i += 1;
+            }
+            while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'{') {
+                let open = b[i] == b'{';
+                out.push(b[i] as char);
+                i += 1;
+                if open {
+                    while i < b.len() && b[i] != b'}' {
+                        out.push(b[i] as char);
+                        i += 1;
+                    }
+                    if i < b.len() {
+                        out.push('}');
+                        i += 1;
+                    }
+                    break;
+                }
+            }
+            out.push_str("^{dagger}");
+        } else {
+            out.push(b[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// The full B²+kinetic CAS compile is heavy (the distribution over the
 /// doubled lattice fields takes minutes): keep it for the slow runs —
 /// `cargo test --test latex_cas_hamiltonian_match -- --ignored`.
+///
+/// The fixture is DERIVED, not transcribed: the expression is
+/// [`nested_fock_algebra::qcd_ym_expression`] itself — the single source of
+/// truth for the `.cdb`-derived `H_final = ½π² + ½B²`
+/// (`docs/yang_mills_hamiltonian.cdb`). Compiler-vs-compiler on the same
+/// expression cannot drift.
 #[test]
 #[ignore = "heavy CAS→Fock compile of the full B²+kinetic (minutes); run with --ignored"]
 fn qym_abelian_b2_cas_matches_builder() {
-    // H_final = ½π² + ½B² with B = A₀ − A₁, A_i = a†_i + a_i (the U(1)
-    // lattice difference), in the CAS dialect that
-    // normalize_to_cas_dialect emits from Cadabra2 output. The builder
-    // qcd_ym_hamiltonian(0) is itself a compile_to_fock call, so this is
-    // compiler-vs-compiler on the same expression shape.
-    // The builder's kinetic is ½π² on the two momentum modes 2 and 3:
-    // (c_2 a_2 − ½(c_2² + a_2²)) + (c_3 a_3 − ½(c_3² + a_3²)).
-    let cas = "((c_0 + a_0) - (c_1 + a_1)) * ((c_0 + a_0) - (c_1 + a_1)) * (1/2) \
-               + (c_2 * a_2) - (1/2) * (c_2 * c_2 + a_2 * a_2) \
-               + (c_3 * a_3) - (1/2) * (c_3 * c_3 + a_3 * a_3)";
-    let h_cas = compile_to_fock(cas);
+    let cas = nested_fock_algebra::qcd_ym_expression(0.0);
+    let h_cas = compile_to_fock(&cas);
     let h_builder = nested_fock_algebra::qcd_ym_hamiltonian(0.0);
 
     assert!(!h_cas.terms.is_empty());
@@ -185,11 +223,17 @@ fn qym_abelian_b2_cas_matches_builder() {
 /// The full LaTeX dagger compile of the same B² + kinetic is slow (the
 /// mathhook→expand path with the double dagger product): keep it for the
 /// slow runs — `cargo test --test latex_cas_hamiltonian_match -- --ignored`.
+///
+/// The LaTeX input is GENERATED from the single-source CAS expression via the
+/// mechanical `cas_to_latex_dagger` translation — never hand-maintained.
+/// A hand-transcribed LaTeX fixture once drifted from the derived Hamiltonian
+/// (it lagged the mode-3 kinetic block and failed 19-vs-22 terms); deriving
+/// the fixture makes that failure mode impossible by construction.
 #[test]
 #[ignore = "heavy LaTeX→Fock compile of the full B²+kinetic (>60 s); run with --ignored"]
 fn qym_abelian_b2_latex_dagger_structure() {
-    let latex = r"\frac{1}{2} * (a_0^{dagger} + a_0 - a_1^{dagger} - a_1) * (a_0^{dagger} + a_0 - a_1^{dagger} - a_1) + a_2^{dagger} * a_2 - \frac{1}{2} * (a_2^{dagger} * a_2^{dagger} + a_2 * a_2) + a_3^{dagger} * a_3 - \frac{1}{2} * (a_3^{dagger} * a_3^{dagger} + a_3 * a_3)";
-    let h = compile_latex(latex);
+    let latex = cas_to_latex_dagger(&nested_fock_algebra::qcd_ym_expression(0.0));
+    let h = compile_latex(&latex);
     assert!(!h.terms.is_empty());
     assert_eq!(h.terms.len(), h.adjoint().terms.len(), "H must equal H†");
     assert!(vac_energy(&h).abs() < 1e-9, "⟨0|H|0⟩ = 0 (normal ordered)");

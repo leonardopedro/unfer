@@ -1752,6 +1752,32 @@ pub fn qcd_free_gluon(energies: &[f64]) -> Hamiltonian {
 /// Hermitian, bounded-below spectrum with positive excitation gaps — the
 /// physical (gauge-fixed) Yang–Mills energy is positive, the positivity
 /// statement of the Millennium-Prize problem.
+/// The single source of truth for the abelian-limit Yang–Mills Hamiltonian:
+/// the expression string realizing the `.cdb`-derived
+/// `H_final = ½π² + ½B²` (`docs/yang_mills_hamiltonian.cdb`: the Legendre
+/// transform of the Weyl-gauge Lagrangian, with `F₀ᵢ = π`, `¼F_ijF^ij = ½B²`),
+/// in the framework's CAS dialect (`c_i` = creation, `a_i` = annihilation,
+/// Hermitian field `A_i = c_i + a_i`):
+///   B = (A_0 − A_1) + (g/2) A_0 A_1,   H_mag = (1/2) B * B,
+/// kinetic :½π²: per momentum mode (modes 2, 3), normally ordered
+/// (c_i*a_i − ½(c_i*c_i + a_i*a_i)).
+///
+/// Every route that exercises a compiler frontend against this Hamiltonian
+/// (the [`qcd_ym_hamiltonian`] builder, raw-CAS compiles, LaTeX-dagger
+/// compiles) MUST derive its fixture from THIS string — never from a
+/// hand-maintained transcription, which drifts silently when the derived
+/// H changes (a real failure mode: the LaTeX fixture once lagged the mode-3
+/// kinetic block and failed 19-vs-22 terms).
+pub fn qcd_ym_expression(g: f64) -> String {
+    let b = format!("((c_0 + a_0) - (c_1 + a_1) + ({g}/2)*(c_0 + a_0)*(c_1 + a_1))");
+    let h_mag = format!("(1/2)*({b})*({b})");
+    // Kinetic :½π²: = A†A − ½(A†² + A²) per momentum mode (modes 2, 3),
+    // already normally ordered (c_i*a_i − ½(c_i*c_i + a_i*a_i)).
+    let h_kin = "(c_2 * a_2) - (1/2)*(c_2*c_2 + a_2*a_2) \
+                 + (c_3 * a_3) - (1/2)*(c_3*c_3 + a_3*a_3)";
+    format!("({h_mag}) + ({h_kin})")
+}
+
 pub fn qcd_ym_hamiltonian(g: f64) -> Hamiltonian {
     // The magnetic field is a genuine function of A. In the framework's CAS
     // dialect (c_i = creation, a_i = annihilation, hermitian field A_i = c_i+a_i):
@@ -1761,14 +1787,7 @@ pub fn qcd_ym_hamiltonian(g: f64) -> Hamiltonian {
     // project's own mechanism that guarantees ⟨0|H|0⟩ = 0 by stripping the
     // zero-point ([a,a†]=1) constants, exactly the nested-Fock vacuum rule.
     // No manual normal-ordering helper is required.
-    let b = format!("((c_0 + a_0) - (c_1 + a_1) + ({g}/2)*(c_0 + a_0)*(c_1 + a_1))");
-    let h_mag = format!("(1/2)*({b})*({b})");
-    // Kinetic :½π²: = A†A − ½(A†² + A²) per momentum mode (modes 2, 3),
-    // already normally ordered (c_i*a_i − ½(c_i*c_i + a_i*a_i)).
-    let h_kin = "(c_2 * a_2) - (1/2)*(c_2*c_2 + a_2*a_2) \
-                 + (c_3 * a_3) - (1/2)*(c_3*c_3 + a_3*a_3)";
-    let expr = format!("({h_mag}) + ({h_kin})");
-    compile_to_fock(&expr)
+    compile_to_fock(&qcd_ym_expression(g))
 }
 
 /// The TEGR/teleparallel gauge-fixed Hamiltonian **in the outer nested Fock
