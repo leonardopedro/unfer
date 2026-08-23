@@ -2356,3 +2356,215 @@ pub fn inspiral_chirp_rate(chirp_mass_kg: f64, f_hz: f64) -> f64 {
         * tcube.powf(5.0 / 3.0)
         * f_hz.powf(11.0 / 3.0)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Numerical physics anchors II: EM/optics engineering, statistical mechanics,
+// classical dynamics, weak interactions/neutrinos, and two exactly-solvable
+// Fock-space models for SIRK machinery tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cyclotron frequency `f = qB/(2πm)` for a charge-to-mass ratio `q_over_m`
+/// (C/kg) in field `b_tesla`: Hz.
+pub fn em_cyclotron_frequency_hz(q_over_m: f64, b_tesla: f64) -> f64 {
+    q_over_m * b_tesla / (2.0 * std::f64::consts::PI)
+}
+
+/// Rectangular waveguide TE₁₀ cutoff `f_c = c/(2a)` for broad wall `a_m`: Hz.
+pub fn em_waveguide_cutoff_hz(a_m: f64) -> f64 {
+    299_792_458.0 / (2.0 * a_m)
+}
+
+/// Brewster angle `arctan(n₂/n₁)` (degrees) for incidence n₁ → n₂.
+pub fn em_brewster_angle_deg(n1: f64, n2: f64) -> f64 {
+    n2.atan2(n1) * 180.0 / std::f64::consts::PI
+}
+
+/// Total internal reflection critical angle (degrees), dense n1 → rare n2.
+pub fn em_critical_angle_deg(n1: f64, n2: f64) -> f64 {
+    (n2 / n1).asin() * 180.0 / std::f64::consts::PI
+}
+
+/// AC skin depth `δ = √(2/(ωμ₀σ))`, m.
+pub fn em_skin_depth_m(f_hz: f64, conductivity_s_per_m: f64) -> f64 {
+    let omega = 2.0 * std::f64::consts::PI * f_hz;
+    (2.0 / (omega * phys::MU0 * conductivity_s_per_m)).sqrt()
+}
+
+/// Short-dipole radiation resistance `80π²(l/λ)²`, ohm (the half-wave dipole's
+/// famous 73.129 Ω is [`EM_HALF_WAVE_DIPOLE_R_RAD_OHM`]).
+pub fn em_short_dipole_r_rad_ohm(l_over_lambda: f64) -> f64 {
+    80.0 * std::f64::consts::PI.powi(2) * l_over_lambda * l_over_lambda
+}
+
+/// Thin half-wave dipole radiation resistance (textbook exact 73.129 Ω).
+pub const EM_HALF_WAVE_DIPOLE_R_RAD_OHM: f64 = 73.129;
+
+/// Classical hydrogen collapse time (the Larmor-radiation paradox that forced
+/// quantum mechanics): for a circular orbit of radius `r0_m`,
+/// `τ = r₀³π ε₀ c³ m_e²/e⁶ · (4πε₀)` — the textbook ≈1.6×10⁻¹¹ s for r₀ = a₀.
+pub fn em_larmor_collapse_time_s(r0_m: f64) -> f64 {
+    let c: f64 = 299_792_458.0;
+    let k = 1.0 / (4.0 * std::f64::consts::PI * phys::EPS0);
+    // τ = r₀³ π ε₀ c³ m² / e⁴ · 4π ε₀ ... derived stepwise:
+    // dr/dt = −e⁴k/(3πε₀ c³ m² r²)  ⇒  τ = r₀³ π ε₀ c³ m² / (e⁴ k/3)·(1/π?) —
+    // assembled explicitly below from dr/dt to avoid sign/factor slips:
+    let drdt_coeff = phys::E.powi(4) * k / (3.0 * std::f64::consts::PI * phys::EPS0 * c.powi(3) * phys::M_E * phys::M_E);
+    // τ = ∫ r² dr / drdt_coeff = r₀³/(3·drdt_coeff)
+    r0_m.powi(3) / (3.0 * drdt_coeff)
+}
+
+/// Sackur–Tetrode absolute entropy of a monatomic ideal gas, J/(mol·K):
+/// `S/N_A = k_B[5/2 + ln(V/(Nλ_q³))]`, `λ_q = h/√(2πmk_BT)` (thermal wavelength).
+pub fn sm_sackur_tetrode_j_per_mol_k(mass_kg: f64, t_k: f64, pressure_pa: f64) -> f64 {
+    let kbt = phys::K_B * t_k;
+    let lambda = phys::H / (2.0 * std::f64::consts::PI * mass_kg * kbt).sqrt();
+    let v_per_n = kbt / pressure_pa;
+    8.314_462_618_153_24 * (2.5 + (v_per_n / lambda.powi(3)).ln())
+}
+
+/// Ideal-gas Bose–Einstein condensation temperature
+/// `T_c = (2πħ²/mk_B)(n/ζ(3/2))^{2/3}` for number density `n_m3`: kelvin.
+pub fn sm_bec_temperature_k(rho_kg_m3: f64, mass_kg: f64) -> f64 {
+    let hbar = 1.054_571_817e-34;
+    let zeta32 = 2.612_375_348_685_488;
+    let n = rho_kg_m3 / mass_kg;
+    (2.0 * std::f64::consts::PI * hbar * hbar / (mass_kg * phys::K_B))
+        * (n / zeta32).powf(2.0 / 3.0)
+}
+
+/// van der Waals universal critical ratio `P_c V_c/(R T_c)`: the critical
+/// point satisfies ∂p/∂v = ∂²p/∂v² = 0 simultaneously; dividing the two
+/// conditions eliminates a and T and gives `2/(v−b) = 3/v` exactly — located
+/// NUMERICALLY here (Newton on that 1-D condition), then T_c and p_c follow,
+/// and the ratio must equal the exact 3/8 for ANY a, b.
+pub fn sm_vdw_critical_ratio() -> f64 {
+    let (a, b, r): (f64, f64, f64) = (1.7, 0.0323, 8.314); // arbitrary realistic-ish CO₂-like values
+    // g(v) = 2/(v−b) − 3/v = 0  ⇔ critical v (independent of a, T).
+    let g = |v: f64| 2.0 / (v - b) - 3.0 / v;
+    let mut v = 4.0 * b; // Newton from a safe start above 3b
+    for _ in 0..100 {
+        let dg = (g(v + 1e-10) - g(v - 1e-10)) / 2e-10;
+        v -= g(v) / dg;
+    }
+    let tc = 2.0 * a * (v - b) * (v - b) / (r * v.powi(3)); // from ∂p/∂v = 0
+    let pc = r * tc / (v - b) - a / (v * v);
+    pc * v / (r * tc)
+}
+
+/// Foucault precession rate `Ω = 360°·sin(lat)/T_sidereal` (deg/hour),
+/// `T_sidereal = 23.9344696 h`.
+pub fn dyn_foucault_rate_deg_per_hour(lat_deg: f64) -> f64 {
+    360.0 * lat_deg.to_radians().sin() / 23.934_469_6
+}
+
+/// Kepler's third law from GM_sun and the AU: orbital period in years for
+/// semi-major axis `a_au` (`T = 2π√(a³/GM_sun)` expressed in Julian years).
+pub fn dyn_kepler_period_years(a_au: f64) -> f64 {
+    let au = 1.495_978_707e11;
+    let gm_sun = phys::G * phys::M_SUN;
+    let year_s = 365.256_898_3 * 86_400.0; // Gaussian year (sidereal), seconds
+    (2.0 * std::f64::consts::PI * ((a_au * au).powi(3) / gm_sun).sqrt()) / year_s
+}
+
+/// Escape velocity `√(2GM/R)`, m/s.
+pub fn dyn_escape_velocity_ms(m_kg: f64, r_m: f64) -> f64 {
+    (2.0 * phys::G * m_kg / r_m).sqrt()
+}
+
+/// Rigid-body Roche limit `d = 2.44 R_p (ρ_p/ρ_s)^{1/3}`, m.
+pub fn dyn_roche_limit_m(r_primary_m: f64, rho_primary: f64, rho_satellite: f64) -> f64 {
+    2.44 * r_primary_m * (rho_primary / rho_satellite).powf(1.0 / 3.0)
+}
+
+/// Finite-amplitude pendulum period ratio `T/T₀` from the standard series
+/// `1 + θ₀²/16 + 11θ₀⁴/3072 + 173θ₀⁶/737280` (θ₀ in radians).
+pub fn dyn_pendulum_period_series_ratio(theta0_rad: f64) -> f64 {
+    1.0 + theta0_rad.powi(2) / 16.0 + 11.0 * theta0_rad.powi(4) / 3072.0
+        + 173.0 * theta0_rad.powi(6) / 737_280.0
+}
+
+/// SR Doppler: recession velocity β from redshift z via `(1+z)=√((1+β)/(1−β))`.
+pub fn sr_doppler_beta_from_z(z: f64) -> f64 {
+    let opz2 = (1.0 + z) * (1.0 + z);
+    (opz2 - 1.0) / (opz2 + 1.0)
+}
+
+/// Chirp mass `𝓜 = (m₁m₂)^{3/5}/(m₁+m₂)^{1/5}` (the GW-driven combination).
+pub fn gw_chirp_mass_kg(m1_kg: f64, m2_kg: f64) -> f64 {
+    (m1_kg * m2_kg).powf(0.6) / (m1_kg + m2_kg).powf(0.2)
+}
+
+/// Leading-order muon lifetime from G_F: `τ = 192π³ħ/(G_F²m_μ⁵c⁴)` — s
+/// (the G_F convention absorbs loop corrections into the measured value, so
+/// the tree-level result UNDERestimates the lifetime by ~0.4%).
+pub fn weak_muon_lifetime_lo_s() -> f64 {
+    let gf_gev: f64 = 1.166_378_7e-5; // Fermi constant, GeV⁻²
+    let mmu_gev: f64 = 0.105_658_374_5;
+    let hbar_gev_s = 6.582_119_569e-25;
+    192.0 * std::f64::consts::PI.powi(3) * hbar_gev_s
+        / (gf_gev * gf_gev * mmu_gev.powi(5))
+}
+
+/// Two-flavour vacuum oscillation first maximum `L/E` in km/GeV for a splitting
+/// `dm2_ev2`: `phase = 1.267·Δm²·L/E = π/2`.
+pub fn neutrino_first_max_km_per_gev(dm2_ev2: f64) -> f64 {
+    std::f64::consts::PI / (2.0 * 1.267 * dm2_ev2)
+}
+
+/// Two-flavour survival `P = 1 − sin²(2θ)·sin²(1.267·Δm²·L_km/E_GeV)`.
+pub fn neutrino_survival_two_flavor(dm2_ev2: f64, sin_sq_theta: f64, l_km: f64, e_gev: f64) -> f64 {
+    let phase = 1.267 * dm2_ev2 * l_km / e_gev;
+    1.0 - 4.0 * sin_sq_theta * (1.0 - sin_sq_theta) * phase.sin().powi(2)
+}
+
+/// The beamsplitter Hamiltonian on two inner modes:
+/// `H = ω(N₀+N₁) + J(a†₀a₁ + a†₁a₀)` — photon exchange, exactly solvable
+/// (Rabi model at zero detuning without the two-level atom). Within the
+/// one-quantum manifold the coupling matrix `[[0,J],[J,0]]` has eigenvalues
+/// ±J, so the Ritz spectrum of the {|00⟩,|10⟩,|01⟩} truncation is
+/// `{0, ω−J, ω+J}` and a single photon swaps between the modes as
+/// `P_{0→1}(t) = sin²(Jt)`.
+pub fn oscillator_beamsplitter(omega: f64, j: f64) -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = vec![
+        (
+            Complex64::new(omega, 0.0),
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)],
+        ),
+        (
+            Complex64::new(omega, 0.0),
+            vec![Operator::InnerBosonCreate(1), Operator::InnerBosonAnnihilate(1)],
+        ),
+        (
+            Complex64::new(j, 0.0),
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(1)],
+        ),
+        (
+            Complex64::new(j, 0.0),
+            vec![Operator::InnerBosonCreate(1), Operator::InnerBosonAnnihilate(0)],
+        ),
+    ];
+    terms.retain(|(_, ops)| !ops.is_empty());
+    Hamiltonian { terms }
+}
+
+/// Linearly forced harmonic oscillator `H = ωN + g(a† + a)` — the displaced
+/// oscillator, EXACTLY solvable: `E_n = ωn − g²/ω` in the normal-ordered
+/// convention (the ground state is the coherent displacement by −g/ω).
+pub fn oscillator_displaced(omega: f64, g: f64) -> Hamiltonian {
+    Hamiltonian {
+        terms: vec![
+            (
+                Complex64::new(omega, 0.0),
+                vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)],
+            ),
+            (
+                Complex64::new(g, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(g, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
+        ],
+    }
+}
