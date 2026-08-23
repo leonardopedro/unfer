@@ -210,6 +210,130 @@ pub fn ns_eulerian_fiber(a: &[[f64; 3]; 3], c: &[f64; 3]) -> Hamiltonian {
 }
 
 // ─────────────────────────────────────────────
+// 1c. Hermite-spatial derivative-variable gauge fixing (1D NS slice)
+//
+// The Eulerian derivatives-as-fields picture made *numerically real*: the
+// velocity field is expanded in physicists' Hermite polynomials,
+//
+//     u(x) = Σ_n u_n H_n(x),   u_n = a†_n + a_n,   ∂_x H_n = 2n H_{n-1},
+//
+// so the spatial derivative of the field operator is the well-defined operator
+// on the velocity ladder modes
+//
+//     ∂_x u(x) = Σ_n u_n · 2n H_{n-1}(x) = Σ_m (2(m+1) u_{m+1}) H_m(x),
+//
+// i.e. the mode-m component of the derivative is  D_m = 2(m+1) u_{m+1}.  The
+// promoted derivative variables g_m = a†_{3+m} + a_{3+m} (modes 3,4) are fixed
+// to these *actual* derivative values by the BRST charge
+//
+//     Ω = (g_0 − 2 u_1) c_0 + (g_1 − 4 u_2) c_1,
+//
+// the NS derivative-variable fixing (book.tex §4159-4197): each promoted
+// variable is fixed to the value of the field derivative (products of field
+// derivatives then survive in the Hamiltonian, exactly as the NS Hamiltonian
+// carries u_j·u_{i,j}).  The gauge-fixed fiber
+//
+//     H = {π_0, u_0 g_0 + u_1 g_1}
+//
+// (the Eulerian block structure: the derivative-content modes 1,2 carry NO
+// momenta, so [H, u_1] = [H, u_2] = [H, g_m] = 0 and the constraint
+// C_m = g_m − D_m is an exact constant of the motion, [H, C_m] = 0) while the
+// value mode 0 evolves ([H, u_0] ≠ 0).  Hence for a physical initial
+// wave-function (one where the promoted variables are set to the actual
+// derivative values), the operator identity ⟨g_m⟩ = ⟨D_m⟩ = 2(m+1)⟨u_{m+1}⟩
+// holds at ALL times, under the bare flow and under the BRST-projected flow.
+// ─────────────────────────────────────────────
+
+/// The Hermite-spatial derivative-variable BRST charge (1D NS slice):
+/// `Ω = (g_0 − 2u_1) c_0 + (g_1 − 4u_2) c_1` — fixes each promoted derivative
+/// variable `g_m` (boson modes 3,4) to the actual field derivative
+/// `D_m = 2(m+1)u_{m+1}` (velocity modes 1,2), with ghosts c_0, c_1 (fermion
+/// modes 0,1).  The physical subspace (ker Ω in the ghost-extended space) is
+/// exactly the set of states where the promoted variables equal the spatial
+/// field derivatives.
+pub fn ns_hermite_derivative_brst() -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    // C_0 = g_0 − 2 u_1, fixed by ghost c_0 (fermion mode 0).
+    for (c, op) in field_ops(3) {
+        terms.push((c, vec![op, Operator::InnerFermionAnnihilate(0)]));
+    }
+    for (c, op) in field_ops(1) {
+        terms.push((
+            Complex64::new(-2.0, 0.0) * c,
+            vec![op, Operator::InnerFermionAnnihilate(0)],
+        ));
+    }
+    // C_1 = g_1 − 4 u_2, fixed by ghost c_1 (fermion mode 1).
+    for (c, op) in field_ops(4) {
+        terms.push((c, vec![op, Operator::InnerFermionAnnihilate(1)]));
+    }
+    for (c, op) in field_ops(2) {
+        terms.push((
+            Complex64::new(-4.0, 0.0) * c,
+            vec![op, Operator::InnerFermionAnnihilate(1)],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The gauge-fixed Hermite-spatial fiber Hamiltonian (1D NS slice):
+/// `H = {π_0, u_0 g_0 + u_1 g_1}` — the velocity value mode 0 (with its
+/// momentum) advected by the promoted derivative variables (modes 3,4), the
+/// Eulerian block structure of the derivatives-as-fields picture: the
+/// derivative-content modes 1,2 and the promoted variables carry no momenta, so
+/// they are constants of the motion and the constraint `C_m = g_m − 2(m+1)u_{m+1}`
+/// commutes with H exactly.  The value mode 0 genuinely evolves (`[H, u_0] ≠ 0`),
+/// so the flow is non-trivial while the derivative-variable identity
+/// `⟨g_m⟩ = 2(m+1)⟨u_{m+1}⟩` is preserved at every time.
+pub fn ns_hermite_derivative_fiber() -> Hamiltonian {
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    let pi0 = momentum_ops(0);
+
+    // A = u_0·g_0 + u_1·g_1  (the advection u·∂_x u in promoted form,
+    // keeping products of the field with its derivative variables).
+    let mut a_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for (c1, o1) in field_ops(0) {
+        for (c2, o2) in field_ops(3) {
+            let c = c1 * c2;
+            if c.norm_sqr() > 1e-30 {
+                a_terms.push((c, vec![o1.clone(), o2.clone()]));
+            }
+        }
+    }
+    for (c1, o1) in field_ops(1) {
+        for (c2, o2) in field_ops(4) {
+            let c = c1 * c2;
+            if c.norm_sqr() > 1e-30 {
+                a_terms.push((c, vec![o1.clone(), o2.clone()]));
+            }
+        }
+    }
+
+    // H = {π_0, A} = π_0·A + A·π_0  (Hermitian by construction).
+    for (cp, op_pi) in &pi0 {
+        for (ca, ops_a) in &a_terms {
+            let mut ops = vec![op_pi.clone()];
+            ops.extend(ops_a.iter().cloned());
+            let c = cp * ca;
+            if c.norm_sqr() > 1e-30 {
+                terms.push((c, ops));
+            }
+        }
+    }
+    for (ca, ops_a) in &a_terms {
+        for (cp, op_pi) in &pi0 {
+            let mut ops = ops_a.clone();
+            ops.push(op_pi.clone());
+            let c = ca * cp;
+            if c.norm_sqr() > 1e-30 {
+                terms.push((c, ops));
+            }
+        }
+    }
+    Hamiltonian { terms }
+}
+
+// ─────────────────────────────────────────────
 // SU(3) structure constants f_abc (0-indexed, a,b,c in 0..7)
 // ─────────────────────────────────────────────
 fn su3_f(a: usize, b: usize, c: usize) -> f64 {
@@ -265,7 +389,26 @@ fn epsilon3(i: usize, j: usize, k: usize) -> f64 {
 // combinatorial explosion never occurs.
 // ─────────────────────────────────────────────
 pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
-    let n_colors: usize = 8;
+    yang_mills_hamiltonian_with_colors(g, 8)
+}
+
+/// The full pure Yang–Mills Hamiltonian with an arbitrary number of colors.
+///
+/// For `n_colors = 8` this is the SU(3) gauge theory of [`yang_mills_hamiltonian`].
+/// **`n_colors = 1` is the abelian (U(1), Quantum Electrodynamics)
+/// specialization**: the structure constants `f_{abc}` vanish identically for a
+/// single color, so every non-abelian interaction term (the `A³` and `A⁴` pieces
+/// of `B²`) drops out and the Hamiltonian is purely the quadratic free-Maxwell
+/// operator
+///
+///   `H = −½ Σᵢ πᵢ² − ½ Σᵢ Bᵢ²`,   `Bᵢ = Σ_{jk} ε_{ijk} ∂_j A_k = (∇×A)ᵢ`,
+///
+/// whose normal-ordered quantization on a photon mode of frequency `ω` is
+/// `ω·a†a` — exactly [`qed_free_photon`] (see
+/// `fock_sirk/tests/qed_abelian_reduction.rs`).  The derivative-mode offset is
+/// `3·n_colors` (the `3·n_colors` field modes come first; for 8 colors that is
+/// the `24` of the SU(3) realization).
+pub fn yang_mills_hamiltonian_with_colors(g: f64, n_colors: usize) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
 
     // ── Kinetic term:  -½ π^i_a π^i_a ──────────────────────────────
@@ -279,7 +422,8 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
 
     // ── Magnetic term: -½ B_{ia} B_{ia} ────────────────────────────
     // B_{ia} = Σ_{j,k} ε_{ijk} [ L_{jk,a}  +  NL_{jk,a} ]
-    // L_{jk,a}  = ∂_j A^a_k   → mapped to hermitian field mode (24 + (i*3+j)*n_colors + a)
+    // L_{jk,a}  = ∂_j A^a_k   → mapped to hermitian field mode
+    //              ((3*n_colors) + (i*3+j)*n_colors + a)
     // NL_{jk,a} = ½ g Σ_{b,c} f_{abc} A^b_j A^c_k
     //
     // B_{ia}^2 = (L + NL)^2 = L^2 + 2 L·NL + NL^2
@@ -297,7 +441,7 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
                     }
 
                     // Linear part: ∂_j A^a_k → one hermitian field op pair
-                    let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
+                    let da_mode = (3 * n_colors + (i * 3 + j) * n_colors + a) as u32;
                     for (c, op) in field_ops(da_mode) {
                         b_ia.push((c * eps, op));
                     }
@@ -390,7 +534,7 @@ pub fn yang_mills_hamiltonian(g: f64) -> Hamiltonian {
                     if eps == 0.0 {
                         continue;
                     }
-                    let da_mode = (24 + (i * 3 + j) * n_colors + a) as u32;
+                    let da_mode = (3 * n_colors + (i * 3 + j) * n_colors + a) as u32;
                     for b_idx in 0..n_colors {
                         for c_idx in 0..n_colors {
                             let fabc = su3_f(a, b_idx, c_idx);
@@ -1193,6 +1337,67 @@ pub fn qed_pair_production(
     Hamiltonian { terms }
 }
 
+/// Jaynes–Cummings model (cavity QED): a two-level atom coupled to a single
+/// cavity photon mode:
+///
+///   `H = ω a†a + ω₀ e†e + g (a e† + a† e)`,
+///
+/// where `a` is the cavity photon (inner boson mode 0) and `e†`/`e` create and
+/// annihilate the atomic excitation (inner fermion mode 1 of the fermionic
+/// universe — the same universe layout as [`qed_pair_production`]). The atomic
+/// ground state is the absence of the excitation, i.e. the energy zero sits at
+/// the ground level: the textbook σ_z = −ω₀/2 offset shifts every level equally
+/// and drops out of the spectrum and the dynamics. The vacuum is a zero-energy
+/// eigenstate.
+///
+/// Exact spectrum: the sector `{|n,e⟩, |n+1,g⟩}` of `n+1` total excitations is
+/// a closed 2×2 block with
+///
+///   `E = (n+1)ω ± g√(n+1)`  (on resonance, ω₀ = ω),
+///   `E = (ω₀ + (2n+1)ω)/2 ± √(g²(n+1) + ((ω−ω₀)/2)²)`  (detuned).
+///
+/// The vacuum Rabi splitting `2g`, the `g√(n+1)` scaling of the dressed-state
+/// doublets, and the Rabi oscillation `P_e(t) = cos²(gt)` from `|0,e⟩` are
+/// exact — verified numerically against the SIRK solver in
+/// `fock_sirk/tests/qed_validation.rs`. The total excitation number
+/// `N = a†a + e†e` commutes with `H` (rotating-wave conservation).
+pub fn qed_jaynes_cummings(omega: f64, omega0: f64, g: f64) -> Hamiltonian {
+    let mut terms = Vec::with_capacity(4);
+    // ω a†a — cavity photon energy (inner boson mode 0).
+    terms.push((
+        Complex64::new(omega, 0.0),
+        vec![
+            Operator::InnerBosonCreate(0),
+            Operator::InnerBosonAnnihilate(0),
+        ],
+    ));
+    // ω₀ e†e — atomic excitation energy (inner fermion mode 1).
+    terms.push((
+        Complex64::new(omega0, 0.0),
+        vec![
+            Operator::InnerFermionCreate(1),
+            Operator::InnerFermionAnnihilate(1),
+        ],
+    ));
+    // g·a·e† — photon absorbed, atom excited.
+    terms.push((
+        Complex64::new(g, 0.0),
+        vec![
+            Operator::InnerBosonAnnihilate(0),
+            Operator::InnerFermionCreate(1),
+        ],
+    ));
+    // g·a†·e — atom de-excited, photon emitted (the Hermitian conjugate).
+    terms.push((
+        Complex64::new(g, 0.0),
+        vec![
+            Operator::InnerBosonCreate(0),
+            Operator::InnerFermionAnnihilate(1),
+        ],
+    ));
+    Hamiltonian { terms }
+}
+
 // ─────────────────────────────────────────────
 // 8. Quantum Chromodynamics (QCD) validation models
 //
@@ -1567,17 +1772,19 @@ pub fn qcd_ym_hamiltonian(g: f64) -> Hamiltonian {
 }
 
 /// The TEGR/teleparallel gauge-fixed Hamiltonian **in the outer nested Fock
-/// space**, implementing the kinetic part of the Cadabra2-derived `H_final`
+/// space**, implementing the **𝒮 sector** of the Cadabra2-derived kinetic
 /// (`docs/qg_gauge_fixed_hamiltonian.cdb`, book.tex line 8190):
 /// `ℋ_kin = (1/16e)𝒮² − (1/24e)𝒫²`, in the densitized (flat) variables
-/// `𝒮`, `𝒫` of the project's change-of-variables derivation — a flat
-/// **hyperbolic** (d'Alembertian) operator that is *essentially self-adjoint*
-/// (the ESA property the project derives via Strichartz), not positive.
+/// `𝒮`, `𝒫` of the project's change-of-variables derivation. This builder
+/// realizes the `+1/16` tetrad-momentum part `:(1/16)𝒮²:` only (one mode per
+/// call); the `−1/24` conformal-mode direction `𝒫` — the flat **hyperbolic**
+/// d'Alembertian structure `H0 = (1/16)Δ_𝒮 − (1/24)∂²_y` of
+/// `docs/qg_densitized_hamiltonian.cdb` — is provided by
+/// [`qg_densitized_kinetic`], which carries both sectors.
 ///
 /// Built from **outer** ladder operators and normally ordered so
 /// `⟨0|H|0⟩ = 0`. The test verifies Hermiticity (self-adjointness in the finite
-/// Fock truncation) and a real spectrum, and the `1/16` / `1/24` kinetic
-/// coefficients of the derived `H_final`.
+/// Fock truncation) and a real spectrum.
 pub fn qg_tegr_hamiltonian(n_modes: u32) -> Hamiltonian {
     let mut terms = Vec::new();
     for i in 0..n_modes {
@@ -1601,6 +1808,57 @@ pub fn qg_tegr_hamiltonian(n_modes: u32) -> Hamiltonian {
         ));
         terms.push((
             Complex64::new(-c16 * 0.5, 0.0),
+            vec![
+                Operator::OuterBosonAnnihilate(inner.clone()),
+                Operator::OuterBosonAnnihilate(inner),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The full densitized-tetrad kinetic Hamiltonian of the Cadabra2 derivation
+/// (`docs/qg_densitized_hamiltonian.cdb`; `docs/qg_gauge_fixed_hamiltonian.cdb`
+/// book.tex line 8190), after the change of variables `y = √e`,
+/// `S = y𝒮̃`, `P = y𝒫̃` that absorbs the singular `1/e` denominator:
+///
+///   `H0 = (1/16)Δ_𝒮 − (1/24)∂²_y`   (flat, constant coefficients)
+///
+/// realized as `n_s_modes` tetrad-momentum modes with coefficient `+1/16` and
+/// one conformal-mode (scale `y`) momentum with coefficient `−1/24`.  Unlike
+/// [`qg_tegr_hamiltonian`] (the `+1/16` 𝒮 sector alone), this carries the
+/// `−1/24` conformal-mode direction, so its spectrum is **hyperbolic** (both
+/// signs) — the flat d'Alembertian that is *essentially self-adjoint* by
+/// Strichartz (finite field-space signal speed) but not positive.  The test
+/// verifies the `1/16` / `1/24` coefficients and the two-signed spectrum.
+///
+/// Built from **outer** ladder operators, normal-ordered (`⟨0|H|0⟩ = 0`), each
+/// mode `i` contributing `c_i·(B†B − ½(B†² + B²))` with `c_i = 1/16` for
+/// `i < n_s_modes` and `c_i = −1/24` for the final conformal mode.
+pub fn qg_densitized_kinetic(n_s_modes: u32) -> Hamiltonian {
+    let n_modes = n_s_modes + 1;
+    let mut terms = Vec::new();
+    for i in 0..n_modes {
+        let c = if i == n_s_modes { -1.0 / 24.0 } else { 1.0 / 16.0 };
+        let mut inner = InnerBosonicState::vacuum();
+        inner.modes.insert(i, 1);
+        // c·(B†B − ½(B†² + B²)) — the normal-ordered :𝒮²:/:𝒫²: realization.
+        terms.push((
+            Complex64::new(c, 0.0),
+            vec![
+                Operator::OuterBosonCreate(inner.clone()),
+                Operator::OuterBosonAnnihilate(inner.clone()),
+            ],
+        ));
+        terms.push((
+            Complex64::new(-c * 0.5, 0.0),
+            vec![
+                Operator::OuterBosonCreate(inner.clone()),
+                Operator::OuterBosonCreate(inner.clone()),
+            ],
+        ));
+        terms.push((
+            Complex64::new(-c * 0.5, 0.0),
             vec![
                 Operator::OuterBosonAnnihilate(inner.clone()),
                 Operator::OuterBosonAnnihilate(inner),

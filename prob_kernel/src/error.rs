@@ -43,8 +43,17 @@ pub enum KernelError {
     #[error("Cadabra2 symbolic expression invalid: {reason}")]
     SymbolicInvalid { reason: String },
 
+    #[error("Why3 verification engine unavailable: {reason}")]
+    WhymlUnavailable { reason: String },
+
+    #[error("WhyML spec invalid: {reason}")]
+    WhymlInvalid { reason: String },
+
     #[error("Logos CNL->UNF compile failed: {reason}")]
     LogosFailed { reason: String },
+
+    #[error("Austral->deltanet UNF translation failed: {reason}")]
+    AustralUnfFailed { reason: String },
 
     #[error(
         "session event-log format version {got} is unsupported, or the log is malformed: {reason}"
@@ -247,6 +256,28 @@ impl KernelError {
                 reason,
             )),
 
+            KernelError::WhymlUnavailable { reason } => Diagnostic::new(
+                Code::WHYML_ENGINE_UNAVAILABLE,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::UseAlternativeOp,
+                "whyml.op",
+                reason,
+            )),
+
+            KernelError::WhymlInvalid { reason } => Diagnostic::new(
+                Code::WHYML_SPEC_INVALID,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "whyml.spec",
+                reason,
+            )),
+
             KernelError::LogosFailed { reason } => Diagnostic::new(
                 Code::LOGOS_COMPILE_FAILED,
                 self.to_string(),
@@ -255,6 +286,17 @@ impl KernelError {
             .with_hint(RepairHint::new(
                 HintKind::ReplaceValue,
                 "logos.sentence",
+                reason,
+            )),
+
+            KernelError::AustralUnfFailed { reason } => Diagnostic::new(
+                Code::AUSTRAL_UNF_FAILED,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "austral.source",
                 reason,
             )),
 
@@ -459,6 +501,15 @@ mod tests {
             },
             KernelError::SymbolicInvalid {
                 reason: "expression reduced to empty".into(),
+            },
+            KernelError::WhymlUnavailable {
+                reason: "why3 not found".into(),
+            },
+            KernelError::WhymlInvalid {
+                reason: "unknown symbol uk_foo".into(),
+            },
+            KernelError::AustralUnfFailed {
+                reason: "unparseable Austral source".into(),
             },
             KernelError::SessionLogVersion {
                 got: 99,

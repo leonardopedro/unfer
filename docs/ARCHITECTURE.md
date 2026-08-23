@@ -20,6 +20,8 @@ $ROOT/
 │   ├── ode_sirk/               # ODE→Hamiltonian singularity detection (Nelson ESA)
 │   ├── unfer_consensus/        # QuePaxa consensus engine (LocalConsensus, ConsensusNode)
 │   │                           #   + CertificateLedger (UTXO/carbon-certs, sparse-Merkle) — Plan R
+│   │                           #   + MathBondLedger (SPV with nanoda trigger, UK-7401..7407)
+│   │                           #   + MarketLedger (vAMM + NegRisk probability market, UK-7411..7419)
 │   ├── unfer_identity/         # DID lifecycle manager (Ed25519, W3C DID Documents)
 │   ├── unfer_data/             # encrypted chunked data plane (X25519+AES-GCM, magnet URIs)
 │   ├── demo_module/            # example Austral module (Stage 13)
@@ -152,6 +154,25 @@ See `MODULE_RECIPE.md` for the full checklist. Summary:
    parse.rs` shortcut was deleted in P3.11); a builtin is reached either through
    the `unfer_agent` / `uk_model_create` API with a `ModelSpec` JSON, or from
    the editor via a user-defined translator that emits the builtin spec.
+
+### 5. Add a math bond or market outcome
+
+The math bond and market systems follow the same `ConsensusTransaction` variant
+pattern as certificates and auctions:
+
+1. Add a new `MathBondOpKind` or `MarketOpKind` variant in `unfer_protocol`.
+2. Implement the `apply_op` arm in `unfer_consensus::mathbond` or `mathbond_market`.
+3. Add an idempotency key in `idempotency.rs`.
+4. Add a `ConsensusTransaction` match arm in `signing.rs` (canonical bytes +
+   sign) and `node.rs` (dispatch).
+5. Allocate a UK code (74xx for math bond, 741x for market).
+6. Add a test: lifecycle + deterministic replay + error paths.
+
+The trigger engine is `prob_kernel::verify::verify_export` — to add a new
+mathematical theorem, create a `MathBondTrigger` with the theorem label,
+permitted axioms, and max export size. The vAMM market prices the trigger
+probability; the NegRisk adapter supports mutually-exclusive time-bucketed
+outcomes.
 
 ## Resolved limitations (Stages 1–6)
 

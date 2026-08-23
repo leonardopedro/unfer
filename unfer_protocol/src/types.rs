@@ -349,6 +349,25 @@ pub enum KernelEvent {
         unf_hash: String,
         verified: bool,
     },
+    /// A WhyML program was emitted by the kernel (S36); `verified` is
+    /// `Some(..)` when the external Why3 prover discharged every proof
+    /// obligation (`WhymlOp::Prove`), `None` for pure emission. Broadcast to
+    /// subscribers of the model handle.
+    WhymlCompiled {
+        module_name: String,
+        whyml_len: usize,
+        verified: Option<bool>,
+    },
+    /// An AustralVM-language source fragment was translated to a unique
+    /// normal form through DeltaNets (`uk_austral_unf`); `value` is the
+    /// numerical result when the term is closed (no unknowns), `None` when
+    /// it stays symbolic. Broadcast to subscribers of the model handle.
+    AustralUnf {
+        sym_expr: String,
+        value: Option<String>,
+        unf_hash: String,
+        verified: bool,
+    },
     Error {
         diagnostic: Diagnostic,
     },
@@ -1301,6 +1320,43 @@ pub struct LogosReport {
     pub sentence: String,
 }
 
+/// Result of translating an AustralVM-language source fragment to a unique
+/// normal form through DeltaNets (the `uk_austral_unf` symbol).
+///
+/// The source is lowered to CoreIR, compiled to an interaction net, reduced
+/// to its unique normal form, and read back as a **symbolic expression**
+/// ([`SymExpr`](logos::deltanet::symbolic::SymExpr)). Whenever the term has
+/// **no unknown variables** the expression collapses to the numerical result
+/// of its calculation (`value`), e.g. `ADD` of two 64-bit integers → `5`;
+/// when unknowns remain (`Add64(x, 3)`) `value` is `None` and the symbolic
+/// expression is the answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AustralReport {
+    /// The symbolic readback of the reduced net in canonical prefix form
+    /// (e.g. `"20"`, `"(Add64 x 3)"`).
+    pub sym_expr: String,
+    /// The arithmetic fragment in infix form (e.g. `"(x + 3)"`, `"(2 + 3) * 4"`).
+    pub infix: String,
+    /// The numerical result of the calculation, when the term is closed (no
+    /// unknowns): `Some("5")` for `ADD(2, 3)`, `None` for open terms.
+    pub value: Option<String>,
+    /// The content-addressable UNF digest (SHA-256 of the canonical net
+    /// serialization).
+    pub unf_hash: String,
+    /// The word-level TED (Phase 3): the canonical polynomial normal form of
+    /// the Int64-arithmetic fragment over ℤ/2⁶⁴ (e.g. `"3*x + 6"`, `"20"`),
+    /// when the term lies in that fragment; `None` otherwise.
+    pub ted: Option<String>,
+    /// SHA-256 of the canonical TED serialization — the content-addressable
+    /// *algebraic* UNF, independent of the net encoding.
+    pub ted_hash: Option<String>,
+    /// True iff reducing the same source twice yields the identical UNF —
+    /// the confluence / unique-normal-form self-check.
+    pub verified: bool,
+    /// The Austral source that was translated (echoed for audit).
+    pub source: String,
+}
+
 // ── Cadabra2 symbolic coupling (S30) ──────────────────────────────────
 //
 // The kernel couples the existing LaTeX symbolic engine
@@ -1380,6 +1436,109 @@ pub struct SymbolicReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Wall-clock engine time in milliseconds.
+    pub engine_ms: u64,
+}
+
+// ── WhyML codegen (S36, the Why3 cycle) ──────────────────────────────
+//
+// The kernel produces WhyML programs that the external Why3 toolchain
+// verifies (provers discharge the lemmas/postconditions) and extracts to
+// OCaml modules that extend the australVM compiler (see
+// `docs/WHYML_CYCLE.md`). The default emitted program is the
+// **authorization gate**: the kernel's own grant-subset semantics
+// (`GrantSet::is_subset_of`, S21) written as a WhyML function whose
+// postcondition is the soundness+completeness statement
+// `authorize grants required = true  <->  required ⊆ grants`. Why3 proves
+// the subset lemmas (reflexivity/transitivity — the "no escalation path"
+// property) and the postcondition; extraction is semantics-preserving, so
+// the OCaml module the australVM compiler loads satisfies the property.
+
+/// What the WhyML pipeline should do with the emitted program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhymlOp {
+    /// Emit the `.mlw` program only (pure; no external engine needed).
+    #[default]
+    Emit,
+    /// Emit and run `why3 prove` (the external Why3 toolchain, invoked as a
+    /// subprocess exactly like Cadabra2 in S30) to discharge the lemmas and
+    /// postconditions; `verified` reports whether every goal was proved.
+    Prove,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WhymlSpec {
+    /// WhyML module name (default `"AuthorizeGate"`).
+    #[serde(default = "default_whyml_module_name")]
+    pub module_name: String,
+    /// Name of the entrypoint `let` extracted for the compiler pass
+    /// (default `"gate_verdict"`).
+    #[serde(default = "default_whyml_fn_name")]
+    pub function_name: String,
+    /// The module manifest's granted `uk_*` symbols (the `GrantSet.kernel`
+    /// namespace). Validated against the kernel's own symbol registry.
+    #[serde(default)]
+    pub grants: Vec<String>,
+    /// The `uk_*` symbols the compiled module imports (what the gate checks).
+    #[serde(default)]
+    pub required: Vec<String>,
+    /// Optional `uk_*` symbols the emitted WhyML declares as *external*
+    /// kernel calls (`val` declarations) — the "call the probability kernel
+    /// from WhyML" direction; the extracted OCaml binds them at link time.
+    #[serde(default)]
+    pub kernel_externals: Vec<String>,
+    /// The operation to run.
+    #[serde(default)]
+    pub op: WhymlOp,
+    /// Subprocess timeout for `why3 prove` in milliseconds (default 30 s).
+    #[serde(default = "default_whyml_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_whyml_module_name() -> String {
+    "AuthorizeGate".into()
+}
+fn default_whyml_fn_name() -> String {
+    "gate_verdict".into()
+}
+fn default_whyml_timeout_ms() -> u64 {
+    30_000
+}
+
+impl Default for WhymlSpec {
+    fn default() -> Self {
+        Self {
+            module_name: default_whyml_module_name(),
+            function_name: default_whyml_fn_name(),
+            grants: Vec::new(),
+            required: Vec::new(),
+            kernel_externals: Vec::new(),
+            op: WhymlOp::Emit,
+            timeout_ms: default_whyml_timeout_ms(),
+        }
+    }
+}
+
+/// Result of the WhyML pipeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WhymlReport {
+    /// The emitted WhyML program (a `.mlw` file).
+    pub whyml: String,
+    /// SHA-256 of the emitted program (content-addressed audit; the OCaml
+    /// extraction embeds it so a loaded plugin can be traced to the emitted
+    /// source).
+    pub sha256: String,
+    /// Number of proof obligations the `.mlw` declares (the subset lemmas +
+    /// the postconditions of `authorize` and the gate entrypoint).
+    pub proof_obligations: usize,
+    /// For [`WhymlOp::Prove`]: whether `why3 prove` discharged every goal.
+    /// `None` for [`WhymlOp::Emit`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified: Option<bool>,
+    /// Human-readable engine error (empty on success).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Wall-clock engine time in milliseconds (0 for `Emit`).
     pub engine_ms: u64,
 }
 
@@ -1694,6 +1853,424 @@ pub struct AuctionReport {
     pub winner: Option<AuctionWinner>,
 }
 
+// ── Math catastrophe bond (SPV with nanoda trigger, Plan R) ───────────
+//
+// A math bond is a catastrophe bond whose trigger is a *purely mathematical*
+// proof: the sponsor locks collateral (e-coins/certificates), investors buy
+// the bond for a coupon, and if nanoda verifies a Lean4-export proof of the
+// specified theorem, the collateral is paid out as a bounty to the researcher
+// plus a catastrophe payment to the sponsor. If the proof never arrives before
+// maturity, investors recover their principal plus coupon.
+//
+// The trigger engine is `prob_kernel::verify::verify_export` (nanoda_lib)
+// running deterministically inside the consensus node's `apply_op`.
+//
+// Bond probability trading uses the unified auction mechanism (Prebid-model)
+// for conditional-token-like shares of the trigger probability.
+
+/// A 32-byte math bond identifier (deterministic content commitment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MathBondId(pub [u8; 32]);
+
+/// The mathematical trigger specification for a bond.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MathBondTrigger {
+    /// Short label identifying the theorem (e.g. "P_eq_NP", "RiemannHypothesis").
+    pub theorem: String,
+    /// SHA-256 hash of the expected Lean4 export specification.
+    pub spec_hash: String,
+    /// Maximum size (bytes) of a submitted proof export.
+    pub max_export_bytes: usize,
+    /// Permitted Lean4 axioms for the nanoda verifier.
+    pub permitted_axioms: Vec<String>,
+    /// Whether strict mode is enabled (UK-7401 on rejection).
+    pub strict: bool,
+    /// Enable nanoda's Nat kernel extension (numeric literal reduction).
+    #[serde(default)]
+    pub nat_extension: bool,
+    /// Enable nanoda's String kernel extension.
+    #[serde(default)]
+    pub string_extension: bool,
+}
+
+/// Lifecycle of a math bond.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MathBondState {
+    /// Bond issued but not yet fully funded.
+    Issued,
+    /// Bond fully funded by investors; awaiting proof or maturity.
+    Funded,
+    /// A proof was submitted and nanoda verified it — trigger fired.
+    Triggered,
+    /// Bond reached maturity without a successful trigger.
+    Matured,
+    /// Collateral distributed (trigger payout or maturity refund).
+    Settled,
+}
+
+/// The kind of math bond state transition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MathBondOpKind {
+    /// Sponsor issues a new math bond. The sponsor locks `principal` e-coins
+    /// as collateral and specifies the trigger theorem, coupon, and maturity.
+    Issue {
+        trigger: MathBondTrigger,
+        /// Collateral amount locked by the sponsor (e-coins).
+        principal: u64,
+        /// Coupon rate in basis points (e.g. 500 = 5%).
+        coupon_rate_bps: u64,
+        /// Consensus-log seq at which the bond matures without trigger.
+        maturity_seq: u64,
+        /// DID of the researcher authorized to submit proofs.
+        researcher_did: String,
+    },
+    /// An investor funds the bond by escrowing e-coins.
+    Invest {
+        bond_id: MathBondId,
+        /// Amount of e-coins the investor puts in.
+        amount: u64,
+    },
+    /// Researcher submits a proof attempt. The ledger runs nanoda verification
+    /// deterministically — if the proof checks, the trigger fires.
+    SubmitProof {
+        bond_id: MathBondId,
+        /// The raw lean4export NDJSON payload.
+        export_bytes: Vec<u8>,
+    },
+    /// Record that the bond reached its `maturity_seq` without a successful
+    /// trigger, moving it `Issued`/`Funded` → `Matured`. Anyone may submit it
+    /// (recording the passage of time); the ledger enforces that the consensus
+    /// log is actually at/past `maturity_seq`. A `Matured` bond can then be
+    /// settled as a maturity refund.
+    Mature {
+        bond_id: MathBondId,
+    },
+    /// Finalize the bond: distribute collateral per the trigger/maturity
+    /// outcome. Allowed only for a `Triggered` bond (trigger payout) or a
+    /// `Matured` bond (maturity refund) — never for a live `Issued`/`Funded`
+    /// bond, whose trigger window is still open.
+    Settle {
+        bond_id: MathBondId,
+    },
+}
+
+/// A signed math bond state transition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MathBondOp {
+    pub did: String,
+    pub kind: MathBondOpKind,
+    pub seq: u64,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+/// A read-only snapshot of a math bond for reporting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MathBondReport {
+    pub bond_id: MathBondId,
+    pub trigger: MathBondTrigger,
+    pub state: MathBondState,
+    pub principal: u64,
+    pub invested: u64,
+    pub coupon_rate_bps: u64,
+    pub maturity_seq: u64,
+    pub researcher_did: String,
+    pub sponsor_did: String,
+    /// The proof report if a proof was submitted (None = no submission yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_report: Option<ProofReport>,
+    /// The consensus-log seq at which the trigger fired (None = no trigger yet).
+    /// Market resolution reads this to pick the winning outcome deterministically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_seq: Option<u64>,
+}
+
+// ── Math bond probability market (vAMM + NegRisk, Plan R) ──────────
+//
+// The probability market for math bond triggers uses two complementary
+// designs:
+//
+// 1. **Azuro vAMM** (virtual Automated Market Maker): a singleton
+//    concentrated-liquidity pool where LPs deposit e-coins and the protocol
+//    mathematically prices the odds of the trigger firing without needing
+//    a direct buyer for every seller. The pool acts as counterparty.
+//
+// 2. **NegRisk CTF Adapter**: mutually-exclusive conditional outcomes
+//    (e.g. "triggered by 2025" vs "triggered by 2026" vs "never") share
+//    a single pool, preventing liquidity fragmentation. When one outcome
+//    resolves, the others become worthless — the "negated risk" adapter
+//    ensures the outcome prices sum to 1.
+//
+// The market settles through the certificate ledger (Taler e-coins)
+// exactly like the auction + escrow pattern.
+
+/// A 32-byte pool identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PoolId(pub [u8; 32]);
+
+/// A 32-byte outcome identifier within a pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OutcomeId(pub [u8; 32]);
+
+/// A liquidity pool for a math bond (vAMM style).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiquidityPool {
+    pub pool_id: PoolId,
+    /// The bond this pool prices.
+    pub bond_id: MathBondId,
+    /// Per-outcome reserve (outcome_id → e-coin amount).
+    pub outcome_reserves: Vec<(OutcomeId, u64)>,
+    /// Total e-coins in the pool.
+    pub total_reserve: u64,
+    /// LP share holders (DID → share amount).
+    pub lp_shares: Vec<(String, u64)>,
+    /// Total LP shares outstanding.
+    pub total_shares: u64,
+    /// Trading fee in basis points (e.g. 300 = 3%).
+    pub fee_bps: u64,
+    /// Whether the pool has been resolved (one outcome triggered).
+    pub resolved: bool,
+    /// The winning outcome (if resolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<OutcomeId>,
+}
+
+/// A read-only snapshot of a pool for reporting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolReport {
+    pub pool: LiquidityPool,
+    /// Current prices per outcome (0.0..1.0, summing to 1.0).
+    pub prices: Vec<(OutcomeId, f64)>,
+}
+
+/// A single NegRisk outcome within a pool.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NegRiskOutcome {
+    pub outcome_id: OutcomeId,
+    pub pool_id: PoolId,
+    /// Human-readable label (e.g. "P=NP proved by 2025").
+    pub label: String,
+    /// Consensus-log seq at which this outcome matures.
+    pub maturity_seq: u64,
+}
+
+/// The kind of market state transition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MarketOpKind {
+    /// LP adds liquidity to the pool. Receives LP shares proportional to
+    /// the deposit relative to the pool's total reserve.
+    AddLiquidity {
+        pool_id: PoolId,
+        /// E-coin amount to deposit.
+        amount: u64,
+    },
+    /// LP removes liquidity. Burns LP shares and withdraws proportional
+    /// reserve (minus any unrealized losses from Impermanent Loss).
+    RemoveLiquidity {
+        pool_id: PoolId,
+        /// Number of LP shares to burn.
+        shares: u64,
+    },
+    /// Trader buys outcome tokens at the current vAMM price.
+    /// NegRisk: the pool ensures outcome prices sum to 1.
+    BuyOutcome {
+        pool_id: PoolId,
+        outcome_id: OutcomeId,
+        /// E-coin amount the trader is willing to pay.
+        amount: u64,
+    },
+    /// Trader sells outcome tokens back to the pool.
+    SellOutcome {
+        pool_id: PoolId,
+        outcome_id: OutcomeId,
+        /// Number of outcome tokens to sell.
+        amount: u64,
+    },
+    /// Open a NegRisk pool with multiple mutually-exclusive outcomes.
+    OpenNegRisk {
+        bond_id: MathBondId,
+        outcomes: Vec<NegRiskOutcome>,
+        /// Trading fee in basis points.
+        fee_bps: u64,
+    },
+    /// Resolve the pool: the bond's trigger fired (or the bond matured without
+    /// one). The winning outcome is NOT a caller choice — it is a pure function
+    /// of the bond's trigger signal and the outcome maturity windows: the
+    /// outcome whose window contains `trigger_seq` wins, `None` (the bond
+    /// matured without a trigger) selects the terminal "never" outcome
+    /// (`maturity_seq == u64::MAX`). The consensus node validates `trigger_seq`
+    /// against the deterministic bond ledger before the op is applied.
+    Resolve {
+        pool_id: PoolId,
+        /// The bond's trigger signal: `Some(consensus seq)` when the trigger
+        /// fired, `None` when the bond matured without a trigger.
+        trigger_seq: Option<u64>,
+    },
+    /// Post-resolution withdrawal: an actor redeems their winning outcome
+    /// tokens (pro-rata against the pool reserve) and their LP share (accrued
+    /// fees; plus the whole reserve when nobody held winning tokens). Idempotent
+    /// — a second claim pays nothing.
+    Claim {
+        pool_id: PoolId,
+    },
+}
+
+/// A signed market state transition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarketOp {
+    pub did: String,
+    pub kind: MarketOpKind,
+    pub seq: u64,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+// ── Attribution Carbon Credits (Open Badges + Taler micropayments) ────
+//
+// The Adidas/Yeezy pattern as a tradable certificate: Author A pays Author B
+// for the right to publicly claim that A's item is derived from B's item and
+// that B approves that attribution — the difference between an attribution
+// and a *negotiated, author-approved* attribution. The credit is minted on
+// Author B's on-ledger approval (the fee is escrowed beforehand), lives on
+// the certificate ledger exactly like a carbon credit, and is rendered as a
+// deterministic Open Badges 3.0 assertion (public, or exclusive to an
+// anonymous viewer identified by a hash of a random key their browser
+// generates — the per-visualization badge of a YouTube-style context).
+//
+// This is complementary to copyright licensing: it works for public-domain
+// and private items alike, because it is issued by the author being
+// attributed, not by the law.
+
+/// A 32-byte attribution credit identifier — the deterministic commitment of
+/// the full offer terms (derived item, original item, fee, context,
+/// exclusivity) plus both authors, so identical terms by the same pair of
+/// authors collide (a credit is a unique fact).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AttributionCreditId(pub [u8; 32]);
+
+/// A 32-byte Open Badges assertion identifier — the deterministic commitment
+/// of `(credit_id, recipient)`. The same credit issued to the same recipient
+/// (public, or the same anonymous viewer hash) is the *same* badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AttributionBadgeId(pub [u8; 32]);
+
+/// A registered work item: the derived work (owned by Author A) or the
+/// original work (owned by the attributed Author B). Content-addressed so the
+/// same work registered twice collides on the same `item_hash`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttributionItem {
+    /// Content-addressable hash of the work (or of its canonical descriptor).
+    #[serde(with = "hex_bytes_32")]
+    pub item_hash: [u8; 32],
+    /// Human-readable title (e.g. "Yeezy Boost 350 V2").
+    pub title: String,
+    /// Optional external reference (catalog page, DOI, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Lifecycle of an attribution credit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttributionState {
+    /// Author A offered the fee; awaiting Author B's approval. No badge may be
+    /// issued yet — the attribution is not (yet) approved.
+    Offered,
+    /// Author B approved; the escrowed fee is paid out; badges may be issued.
+    Approved,
+    /// Author B revoked the endorsement. Already-issued badges stay valid as
+    /// historical (content-addressed) records, but no new badge is minted.
+    Revoked,
+}
+
+/// The negotiated terms of one attribution (Author A → Author B).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttributionOffer {
+    /// A's derived work (registered to Author A).
+    pub derived_item: AttributionItem,
+    /// B's original work (registered to Author B).
+    pub original_item: AttributionItem,
+    /// Negotiated fee Author A pays Author B (e-coins), escrowed at offer time.
+    pub fee: u64,
+    /// Free-form context displayed on the badge (e.g. "Yeezy line, 2023
+    /// collection").
+    pub context: String,
+    /// Exclusive: while this credit is live, Author B may not accept a second
+    /// offer against the same original item — the Adidas/Yeezy exclusivity
+    /// deal, not just an endorsement.
+    #[serde(default)]
+    pub exclusive: bool,
+}
+
+/// The kind of attribution state transition carried by an [`AttributionOp`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttributionOpKind {
+    /// Author A registers a work item they own. The item is content-addressed
+    /// (`item_hash`) and its owner recorded, so offers can be validated
+    /// against real ownership.
+    RegisterItem { item: AttributionItem },
+    /// Author A offers Author B a fee for an attribution credit referencing
+    /// B's original item. The fee is escrowed by the settlement service
+    /// before the signed op is emitted; the ledger records the terms.
+    OfferAttribution { offer: AttributionOffer },
+    /// Author B approves an offered credit (`Offered` → `Approved`). This is
+    /// the on-ledger moment the attribution becomes author-approved; the
+    /// settlement service releases the escrowed fee to B at the same time.
+    Approve { credit_id: AttributionCreditId },
+    /// Author B revokes an approved credit (`Approved` → `Revoked`): the
+    /// endorsement is withdrawn and no further badge is issued.
+    Revoke { credit_id: AttributionCreditId },
+    /// Mint a deterministic Open Badges 3.0 assertion for an approved credit.
+    /// `viewer` is the SHA-256 of a random key generated by the end-user's
+    /// browser — `None` for a public badge visible to all users, `Some` for a
+    /// badge exclusive to that anonymous viewer (per-visualization badge; the
+    /// operator never sees the random key itself, only its hash).
+    IssueBadge {
+        credit_id: AttributionCreditId,
+        #[serde(default)]
+        viewer: Option<[u8; 32]>,
+    },
+}
+
+/// A signed attribution state transition. Mirrors the other consensus ops:
+/// `did` is the acting principal (the item's author for RegisterItem, Author
+/// A for OfferAttribution, Author B for Approve/Revoke) and `signature`
+/// covers the op bytes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttributionOp {
+    pub did: String,
+    pub kind: AttributionOpKind,
+    pub seq: u64,
+    #[serde(with = "hex_bytes_64")]
+    pub signature: [u8; 64],
+}
+
+/// A read-only snapshot of an attribution credit for reporting/querying.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttributionReport {
+    pub credit_id: AttributionCreditId,
+    pub offer: AttributionOffer,
+    pub state: AttributionState,
+    /// Author A (the derived item's owner, the payer).
+    pub author_a: String,
+    /// Author B (the original item's owner, the attributed party, the payee).
+    pub author_b: String,
+    /// Consensus-log seq at which B approved (badge issuance date derives from
+    /// it deterministically). Absent while `Offered`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approve_seq: Option<u64>,
+    /// Consensus-log seq at which B revoked. Absent while not revoked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoke_seq: Option<u64>,
+    /// Badges minted for this credit, in issuance order.
+    #[serde(default)]
+    pub badges: Vec<AttributionBadgeId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsensusTransaction {
@@ -1709,6 +2286,16 @@ pub enum ConsensusTransaction {
     /// carbon credits and publicity inventory). Deterministic: every node
     /// replays the same log and converges on the same winner.
     AuctionOp(AuctionOp),
+    /// A math catastrophe bond state transition (SPV with nanoda trigger).
+    /// The trigger engine runs `verify_export` deterministically inside each
+    /// node's apply — no human oracle, no external dependency.
+    MathBondOp(MathBondOp),
+    /// A math bond probability market state transition (vAMM + NegRisk).
+    MarketOp(MarketOp),
+    /// An attribution-credit state transition (Open Badges + Taler
+    /// micropayments). Deterministic: every node replays the same log and
+    /// converges on the same credits, approvals, revocations and badge ids.
+    AttributionOp(AttributionOp),
 }
 
 impl ConsensusTransaction {
@@ -1719,6 +2306,9 @@ impl ConsensusTransaction {
             Self::ContentOp(op) => &op.did,
             Self::CertificateOp(op) => &op.did,
             Self::AuctionOp(op) => &op.did,
+            Self::MathBondOp(op) => &op.did,
+            Self::MarketOp(op) => &op.did,
+            Self::AttributionOp(op) => &op.did,
         }
     }
 
@@ -1729,6 +2319,9 @@ impl ConsensusTransaction {
             Self::ContentOp(op) => &op.signature,
             Self::CertificateOp(op) => &op.signature,
             Self::AuctionOp(op) => &op.signature,
+            Self::MathBondOp(op) => &op.signature,
+            Self::MarketOp(op) => &op.signature,
+            Self::AttributionOp(op) => &op.signature,
         }
     }
 }

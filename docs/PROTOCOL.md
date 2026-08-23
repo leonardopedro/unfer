@@ -454,6 +454,136 @@ Read-only report of the auction ledger state.
 
 **Response result:** `{"lots": [...], "settled": <u64>}`
 
+### `mathbond_issue`
+
+Issue a new math catastrophe bond. The sponsor locks collateral and specifies
+the trigger theorem, coupon rate, maturity, and designated researcher.
+
+**Request params:** `{"theorem": <string>, "principal": <u64>,
+"coupon_rate_bps": <u64>, "maturity_seq": <u64>,
+"researcher_did": <string>}`
+
+**Response result:** `{"bond_id": <string>, "state": "issued"}`
+
+**Error codes:** UK-7401 (unknown bond), UK-7402 (wrong state).
+
+### `mathbond_invest`
+
+Invest in a math bond by escrowing e-coins. Transitions to `Funded` when fully
+funded.
+
+**Request params:** `{"bond_id": <string>, "amount": <u64>}`
+
+**Response result:** `{"invested": <u64>, "state": "issued"|"funded"}`
+
+**Error codes:** UK-7401, UK-7402, UK-7405 (overfunded).
+
+### `mathbond_submit_proof`
+
+Submit a Lean4-export proof attempt. The ledger runs nanoda verification
+deterministically — if the proof checks, the trigger fires.
+
+**Request params:** `{"bond_id": <string>, "export_bytes": <base64>}`
+
+**Response result:** `{"triggered": <bool>, "verified": <bool>}`
+
+**Error codes:** UK-7401, UK-7402, UK-7403 (not researcher), UK-7404 (proof rejected),
+UK-7406 (oversize).
+
+### `mathbond_settle`
+
+Record that a bond reached its `maturity_seq` without a successful trigger
+(`Issued`/`Funded` → `Matured`). Anyone may submit it; the ledger enforces the
+consensus log is at/past `maturity_seq`.
+
+**Request params:** `{"bond_id": <string>}`
+
+**Response result:** `{"state": "matured"}`
+
+**Error codes:** UK-7401, UK-7402 (premature / already matured/triggered).
+
+### `mathbond_settle`
+
+Finalize a bond: distribute collateral per the trigger/maturity outcome. Only
+a `Triggered` bond (trigger payout) or a `Matured` bond (maturity refund) may
+settle — never a live bond with an open trigger window.
+
+**Request params:** `{"bond_id": <string>}`
+
+**Response result:** `{"state": "settled"}`
+
+**Error codes:** UK-7401, UK-7402 (already settled / trigger window open).
+
+### `mathbond_report`
+
+Read-only report of a math bond.
+
+**Request params:** `{"bond_id": <string>}`
+
+**Response result:** `{"bond_id": <string>, "state": <string>, "principal": <u64>,
+"invested": <u64>, "proof_report": <ProofReport|null>}`
+
+### `market_open_neg_risk`
+
+Open a NegRisk pool with multiple mutually-exclusive outcomes for a math bond.
+
+**Request params:** `{"bond_id": <string>, "outcomes": [{"label": <string>,
+"maturity_seq": <u64>}...], "fee_bps": <u64>}`
+
+**Response result:** `{"pool_id": <string>}`
+
+**Error codes:** UK-7418 (pool exists), UK-7417 (duplicate outcome / missing
+the terminal `never` outcome with `maturity_seq == u64::MAX` / `fee_bps` > 10000).
+
+### `market_add_liquidity`
+
+LP adds e-coins to a NegRisk pool. Receives LP shares proportional to the
+deposit relative to the pool's total reserve.
+
+**Request params:** `{"pool_id": <string>, "amount": <u64>}`
+
+**Response result:** `{"shares": <u64>, "prices": {<outcome_label>: <f64>...}}`
+
+**Error codes:** UK-7411 (unknown pool), UK-7412 (resolved).
+
+### `market_buy_outcome`
+
+Buy outcome tokens at the current vAMM price. The pool acts as counterparty.
+
+**Request params:** `{"pool_id": <string>, "outcome_id": <string>,
+"amount": <u64>}`
+
+**Response result:** `{"tokens": <u64>, "prices": {<outcome_label>: <f64>...}}`
+
+**Error codes:** UK-7411, UK-7412, UK-7413 (unknown outcome), UK-7416 (no liquidity).
+
+### `market_resolve`
+
+Resolve the pool. The winner is NOT a caller choice — it is a pure function of
+the bond's trigger signal and the outcome maturity windows: the outcome whose
+window contains `trigger_seq` wins; `None` (the bond matured without a trigger)
+selects the terminal `never` outcome. The consensus node validates the signal
+against the bond ledger before the op applies.
+
+**Request params:** `{"pool_id": <string>, "trigger_seq": <u64|null>}`
+
+**Response result:** `{"resolved": <bool>, "winner": <string>}`
+
+**Error codes:** UK-7411, UK-7412 (already resolved), UK-7413 (signal mismatch),
+UK-7419 (bond neither triggered nor matured).
+
+### `market_claim`
+
+Post-resolution withdrawal: redeem winning outcome tokens (pro-rata against the
+pool reserve) plus the LP's share of accrued fees (and of the whole reserve when
+nobody held winning tokens). Idempotent — a second claim pays nothing.
+
+**Request params:** `{"pool_id": <string>}`
+
+**Response result:** `{"payout": <u64>}`
+
+**Error codes:** UK-7411, UK-7419 (not resolved).
+
 ### `logos_compile`
 
 Compile a controlled-natural-language (CNL) sentence with an embedded lexicon
@@ -462,6 +592,20 @@ to a CoreIR interaction-net unique normal form (S31).
 **Request params:** `{"sentence": <string>}`
 
 **Response result:** `{"unf": <string>, "unf_hash": <hex>, "verified": <bool>}`
+
+### `whyml_emit`
+
+Emit a WhyML program from the kernel's symbol registry (S36). Optionally
+prove it with the external Why3 toolchain and extract to OCaml.
+
+**Request params:** `{"session_id": <u64>, "program_name": <string>,
+"postcondition": <string>, "kernel_call_externals": [<string>...],
+"prove": <bool>}`
+
+**Response result:** `{"whyml_len": <usize>, "verified": <bool|null>,
+"extracted_ml": <string|null>}`
+
+**Error codes:** UK-4903 (Why3 unavailable), UK-4904 (bad spec).
 
 ### `ode_to_hamiltonian`
 
@@ -549,8 +693,11 @@ refused with UK-1001.
 | UK-4801 | ProofVerifyFailed       | Error    | The Lean4 proof failed verification (strict mode).                   |
 | UK-4802 | ProofExportInvalid      | Error    | The lean4export payload was malformed or oversize.                   |
 | UK-4803 | LogosCompileFailed      | Error    | The CNL sentence could not be compiled to a UNF.                     |
+| UK-4804 | AustralUnfFailed        | Error    | AustralVM source could not be translated to a unique normal form through DeltaNets. |
 | UK-4901 | SymbolicEngineUnavailable | Error  | The Cadabra2 subprocess engine was not available.                    |
 | UK-4902 | SymbolicExpressionInvalid | Error  | The symbolic expression failed validation.                          |
+| UK-4903 | WhyMLEngineUnavailable    | Error  | The Why3 subprocess engine was not available (whyml prove).        |
+| UK-4904 | WhyMLSpecInvalid          | Error  | The WhyML spec failed validation (unknown symbol / bad identifier).|
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |
@@ -582,6 +729,34 @@ refused with UK-1001.
 | UK-7306 | AuctionLotExists         | Error    | A lot with this id already exists.                                  |
 | UK-7307 | AuctionQtyMismatch       | Error    | The bid quantity does not match the lot units.                      |
 | UK-7308 | AuctionNoBids            | Error    | The lot closed with no qualifying bids.                             |
+| UK-7401 | MathBondUnknown          | Error    | The referenced math bond id does not exist on the ledger.           |
+| UK-7402 | MathBondWrongState       | Error    | The bond is not in the expected state for the requested operation.  |
+| UK-7403 | MathBondNotResearcher    | Error    | The submitter is not the bond's designated researcher.             |
+| UK-7404 | MathBondProofRejected    | Error    | The proof export was rejected by nanoda (trigger did not fire).    |
+| UK-7405 | MathBondOverfunded       | Error    | The investment amount exceeds the bond's remaining capacity.       |
+| UK-7406 | MathBondProofOversize    | Error    | The proof payload exceeds the bond's maximum export size.          |
+| UK-7407 | MathBondAlreadyTriggered | Error    | The bond has already been triggered.                               |
+| UK-7411 | MarketUnknownPool        | Error    | The referenced pool id does not exist on the ledger.               |
+| UK-7412 | MarketPoolResolved       | Error    | The pool is already resolved; no further trading.                  |
+| UK-7413 | MarketUnknownOutcome     | Error    | The outcome id is not a member of this pool.                       |
+| UK-7414 | MarketInsufficientTokens | Error    | The trader has insufficient outcome tokens to sell.                |
+| UK-7415 | MarketInsufficientShares | Error    | The LP has insufficient shares to withdraw.                        |
+| UK-7416 | MarketNoLiquidity        | Error    | The pool has no liquidity (cannot trade).                          |
+| UK-7417 | MarketPriceUnderflow     | Error    | NegRisk: an outcome's price would go negative.                     |
+| UK-7418 | MarketPoolExists         | Error    | The pool already exists for this bond.                             |
+| UK-7419 | MarketNotResolved        | Error    | The pool is not resolved — nothing to claim, or the bond has neither triggered nor matured. |
+| UK-7501 | AttributionUnknownCredit | Error    | The referenced attribution credit id does not exist on the ledger.  |
+| UK-7502 | AttributionWrongState    | Error    | The credit is not in the expected lifecycle state for the op.       |
+| UK-7503 | AttributionNotAuthor     | Error    | A non-attributed author tried to approve/revoke a credit.           |
+| UK-7504 | AttributionItemExists    | Error    | The work item is already registered (item_hash collision).          |
+| UK-7505 | AttributionItemUnknown   | Error    | The offer references a work item that was never registered.         |
+| UK-7506 | AttributionSelfAttribution | Error  | Author A tried to attribute their own work to themselves (A == B).  |
+| UK-7507 | AttributionFeeZero       | Error    | The negotiated fee must be positive.                                |
+| UK-7508 | AttributionOwnerMismatch | Error    | The actor does not own the item they are registering/offering.      |
+| UK-7509 | AttributionCreditExists  | Error    | A credit with these exact terms by this author pair exists.         |
+| UK-7510 | AttributionBadgeRevoked  | Error    | A badge was requested for a credit that is not Approved.            |
+| UK-7511 | AttributionBadgeExists   | Error    | The exact badge (credit + recipient) was already minted.            |
+| UK-7512 | AttributionFeeMismatch   | Error    | The escrowed fee e-coin face value does not match the negotiated fee.|
 
 ## Diagnostic structure
 

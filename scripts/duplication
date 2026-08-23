@@ -41,6 +41,7 @@ def source_files(ws: Path):
         p
         for p in ws.rglob("*.rs")
         if "target" not in p.parts
+        and "_build" not in p.parts  # dune/ocaml build artifacts mirror sources
         and "/.git/" not in str(p)
         and p.is_file()
     ]

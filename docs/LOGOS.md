@@ -152,6 +152,59 @@ disambiguation.
 CoreIR, providing a path to independently verified native execution via the
 australVM JIT.
 
+## Austral ↔ DeltaNets ↔ UNF ↔ TED (the software translation)
+
+The reverse direction — **AustralVM-language software → DeltaNets** — is the
+`logos::translate` orchestrator (Phase 2–3 of the Total-Austral-Subset plan,
+adapted to the existing net engine). A parsed Austral source fragment
+(statement list, expression, function, or whole `module body …`) is:
+
+1. **Lowered** to CoreIR (`austral_codegen::parser`, `parse_austral_*`);
+2. **Validated** (Phase 1.3, `austral_codegen::validate`): totality — no
+   raw recursion (only `fold`/`match`; direct or mutual call cycles are
+   rejected with a diagnostic, since the inliner would loop) — and
+   linearity — every variable used exactly once unless explicitly
+   `clone x -> y, z;` (replicator) or `destroy x;` (eraser);
+3. **Compiled** to an interaction net and **reduced** to its unique normal
+   form (`deltanet::compile_to_net` + `reducer::reduce`);
+4. **Read back** as a symbolic expression (`deltanet::symbolic`,
+   `sym_readback`): a closed term (no unknowns) collapses to the numerical
+   result of its calculation (e.g. `ADD` of two 64-bit integers → `5`); an
+   open term stays symbolic (`Add64(x, 3)`);
+5. **Canonicalized** to a word-level **TED** (Phase 3,
+   `deltanet::ted`): the Int64-arithmetic fragment becomes a sorted
+   polynomial over ℤ/2⁶⁴ — products distribute, like terms combine
+   (`x + x → 2*x`, `0*y → 0`), monomials order deterministically — and
+   its SHA-256 is the content-addressable *algebraic* UNF hash, on top of
+   the net-level `unf_hash`;
+6. **Verified** by the confluence self-check: a second independent
+   reduction reproduces the identical UNF.
+
+The deltanet reducer is the **hybrid evaluator** (Phase 5): when a `Prim`
+agent's ports are all reduced literals, the reduction engine evaluates it
+natively (the graph-to-native trap), so closed arithmetic blocks are
+replaced by their numerical results during reduction, not after.
+
+## Kernel integration (uk_austral_unf)
+
+`prob_kernel::logos::austral_unf` exposes the translation over the kernel C
+ABI as `uk_austral_unf`. The report (`AustralReport`) carries the symbolic
+readback (`sym_expr`), the infix arithmetic (`infix`), the numerical result
+(`value`, when closed), both UNF digests (`unf_hash` net-level,
+`ted_hash` algebraic), the canonical TED polynomial (`ted`), the confluence
+self-check (`verified`), and the echoed source. Validation rejections
+(recursion, double use) surface as `UK-4804` (`AUSTRAL_UNF_FAILED`) with
+the precise diagnostic. The symbol follows the S29 registration checklist.
+
+The **OCaml/Why3/AustralVM cycle** closes the loop: australVM's
+`Deltanet_plugin` compiler pass (`australVM/lib/deltanet_plugin.ml`,
+registered in `Vm_plugin.boot` alongside the Why3 gate) serializes every
+top-level constant expression of a compiled Austral module to the subset,
+calls the kernel's `uk_austral_unf` through the rust bridge, and rejects
+the module when the kernel's UNF value disagrees with the compiler's own
+evaluation — the same proof-carrying-extension pattern as the Why3 gate,
+with the kernel's unique normal form as the independent arbiter.
+
 ## Verified-Execution Guarantee
 
 1. **Grammar correctness**: only L0-conformant sentences produce derivation
@@ -185,7 +238,8 @@ logos l1 "probably John loves Mary"   # probabilistic worlds
 
 ## Kernel integration (uk_logos_compile)
 
-The pipeline is exposed over the unfer kernel C ABI as `uk_logos_compile`:
+The pipeline is exposed over the unfer kernel C ABI as `uk_logos_compile` (the
+CNL side):
 a CNL sentence (NUL-free UTF-8) is parsed with an embedded L0 lexicon,
 compiled to CoreIR, reduced to a UNF, and read back. The report — readback
 result, content-addressed `unf_hash`, a confluence self-check (`verified`),

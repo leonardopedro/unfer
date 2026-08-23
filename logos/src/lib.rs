@@ -15,3 +15,4 @@ pub mod deltanet;
 pub mod harper_gate;
 pub mod l1;
 pub mod lexicon;
+pub mod translate;

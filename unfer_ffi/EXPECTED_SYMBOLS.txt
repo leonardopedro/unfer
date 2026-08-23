@@ -14,6 +14,7 @@ uk_auction_open
 uk_auction_report
 uk_audit_clear
 uk_audit_list
+uk_austral_unf
 uk_bayesian_update
 uk_belief_propagation
 uk_blueprint_cell
@@ -78,3 +79,4 @@ uk_snapshot
 uk_subscribe
 uk_symbolic_simplify
 uk_version
+uk_whyml_emit

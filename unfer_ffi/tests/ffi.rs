@@ -1134,6 +1134,70 @@ fn symbolic_simplify_empty_expression_is_4902() {
     uk_model_free(model);
 }
 
+/// S36: `uk_whyml_emit` emits the WhyML authorization-gate program (pure
+/// codegen — no external engine needed) and surfaces the report (program +
+/// SHA-256 + proof-obligation count) via `uk_get_result`.
+#[test]
+fn whyml_emit_produces_the_authorization_gate() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let spec = r#"{
+        "module_name": "AuthorizeGate",
+        "function_name": "gate_verdict",
+        "grants": ["uk_version", "uk_evolve"],
+        "required": ["uk_version"]
+    }"#;
+    let (sp, sl) = json_ptr(spec.as_bytes());
+    let r = uk_whyml_emit(model, sp, sl);
+    assert_eq!(r, 0, "emission should succeed: {} {r}", read_error());
+
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    let whyml = result["whyml"].as_str().unwrap();
+    assert!(
+        whyml.contains("module AuthorizeGate"),
+        "{whyml}"
+    );
+    assert!(
+        whyml.contains("let rec authorize"),
+        "{whyml}"
+    );
+    assert!(
+        whyml.contains("result = True <-> is_subset required grants"),
+        "the postcondition must be emitted: {whyml}"
+    );
+    assert!(
+        whyml.contains("let rec mem"),
+        "Why3 1.8 rejects the logical Mem.mem in program code — a program-level \
+         mem must be emitted: {whyml}"
+    );
+    assert!(
+        whyml.contains("use list.Length"),
+        "the length variant needs list.Length: {whyml}"
+    );
+    assert_eq!(result["sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(result["proof_obligations"], 5);
+
+    uk_model_free(model);
+}
+
+/// S36: an unknown `uk_*` symbol in the spec is a hard UK-4904 error (the
+/// kernel refuses to emit a gate for a symbol it does not know).
+#[test]
+fn whyml_emit_unknown_symbol_is_4904() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let spec = r#"{"grants": ["uk_version"], "required": ["uk_no_such_symbol"]}"#;
+    let (sp, sl) = json_ptr(spec.as_bytes());
+    let r = uk_whyml_emit(model, sp, sl);
+    assert_eq!(r, -(Code::WHYML_SPEC_INVALID.raw() as i64));
+
+    uk_model_free(model);
+}
+
 /// Logos: `uk_logos_compile` compiles a CNL sentence to a unique normal form
 /// and surfaces the report (readback + UNF hash + confluence verdict) via
 /// `uk_get_result`.
@@ -1155,6 +1219,79 @@ fn logos_compile_transitive_to_unf() {
     assert_eq!(result["verified"], true, "{result}");
     assert_eq!(result["sentence"], "John loves Mary", "{result}");
     assert_eq!(result["unf_hash"].as_str().unwrap().len(), 64);
+
+    uk_model_free(model);
+}
+
+/// Austral→deltanet: `uk_austral_unf` translates an AustralVM-language
+/// source fragment to a unique normal form; a closed term collapses to the
+/// numerical result, an open term stays symbolic.
+#[test]
+fn austral_unf_closed_and_open() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // Closed: ADD of two 64-bit integers → 5.
+    let (sp, sl) = json_ptr(b"let x: Int64 = 2; return (x + 3);");
+    assert_eq!(
+        uk_austral_unf(model, sp, sl),
+        0,
+        "austral translation should succeed: {}",
+        read_error()
+    );
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["value"], "5", "{result}");
+    assert_eq!(result["sym_expr"], "5", "{result}");
+    assert_eq!(result["verified"], true, "{result}");
+    assert_eq!(result["unf_hash"].as_str().unwrap().len(), 64);
+
+    // Open: an unknown `x` stays symbolic; no value.
+    let (sp2, sl2) = json_ptr(b"(x + 3)");
+    assert_eq!(uk_austral_unf(model, sp2, sl2), 0, "{}: {}", read_error(), read_result(model));
+    let result2: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result2["value"], serde_json::Value::Null, "{result2}");
+    assert_eq!(result2["sym_expr"], "(Add64 x 3)", "{result2}");
+    assert_eq!(result2["infix"], "(x + 3)", "{result2}");
+    assert_eq!(result2["verified"], true, "{result2}");
+
+    uk_model_free(model);
+}
+
+/// Austral→deltanet: a whole module with a function call reduces `main` to
+/// the numerical result (the linked, closed computation).
+#[test]
+fn austral_unf_module_main_reduces() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let src = b"module body Probe is function add(x: Int64): Int64 is return (x + 1); end; \
+                function main(): Int64 is return add(41); end; end module body.";
+    let (sp, sl) = json_ptr(src);
+    assert_eq!(uk_austral_unf(model, sp, sl), 0, "{}: {}", read_error(), read_result(model));
+    let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(result["value"], "42", "{result}");
+    assert_eq!(result["verified"], true, "{result}");
+
+    uk_model_free(model);
+}
+
+/// Austral→deltanet: unparseable Austral is a hard UK-4804 error.
+#[test]
+fn austral_unf_unparseable_is_4804() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    let (sp, sl) = json_ptr(b"this is not austral at all !!!");
+    let r = uk_austral_unf(model, sp, sl);
+    assert_eq!(
+        r,
+        -(Code::AUSTRAL_UNF_FAILED.raw() as i64),
+        "got {r}: {}",
+        read_error()
+    );
 
     uk_model_free(model);
 }

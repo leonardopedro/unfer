@@ -79,9 +79,10 @@ Every item below maps to a stage.
 - **unfer** — the kernel: `prob_kernel::Session`, `unfer_ffi` (65 `uk_*` +
   `uz_*` symbols; loopback with S21/S23/S25/S26/S27/S28), `unfer_protocol`
   (serde + UK-####), QFT engines, `logos`, `ode_sirk`, `unfer_consensus`
-  (QuePaxa + cert/auction ledgers), `unfer_identity`, `unfer_data`,
-  `unfer_edge`, `unfer_taler`, `qfm`/`qfm_text`, 8 Austral modules. A1–A5 done,
-  A7 partial, A8–A10 open; S29–S35 + Plan R complete.
+  (QuePaxa + cert/auction ledgers + math-bond SPV + vAMM/NegRisk market),
+  `unfer_identity`, `unfer_data`, `unfer_edge`, `unfer_taler`,
+  `qfm`/`qfm_text`, 8 Austral modules. A1–A5 done,
+  A7 partial, A8–A10 open; S29–S35 + Plan R + math bond/market complete.
 - **australVM** — module runtime: Austral compiler + `safestos/cranelift` JIT
   registering `uk_*`, `AuthorizationEngine`, `modhost`, three module archetypes
   (Austral cells, Tidepool Haskell effects, cap-std Rust), cloud-hypervisor VM

@@ -55,6 +55,9 @@ int64_t uk_auction_report(const uint8_t* lot_id_json,
 int64_t uk_audit_clear();
 int64_t uk_audit_list(uint8_t* buf,
               int64_t cap);
+int64_t uk_austral_unf(int64_t model,
+               const uint8_t* source_ptr,
+               int64_t source_len);
 int64_t uk_bayesian_update(int64_t model,
                    const uint8_t* req_json,
                    int64_t len);
@@ -218,6 +221,9 @@ int64_t uk_subscribe(int64_t model,
 int64_t uk_symbolic_simplify(int64_t model,
                      const uint8_t* spec_json,
                      int64_t len);
+int64_t uk_whyml_emit(int64_t model,
+              const uint8_t* spec_json,
+              int64_t len);
 
 int64_t uz_init(const uint8_t* cfg_json,
         int64_t cfg_len);

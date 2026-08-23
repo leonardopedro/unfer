@@ -7,7 +7,7 @@
 //! `handles` owns the typed handle registry; `zenodo` (feature `zenodo`)
 //! the Zenodo module interface.
 //!
-//! ABI surface: 65 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
+//! ABI surface: 81 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
 
 pub mod durable;
 mod handles;
@@ -21,7 +21,7 @@ use unfer_protocol::{
     ActionRecord, ActionState, AgentInfo, AgentState, AuditEntry, BayesianUpdateRequest,
     BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
     Code, Diagnostic, EffectKind, EventPredicate, EventQuery, GrantSet, HamiltonianSpec,
-    KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity, SymbolicSpec,
+    KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity, SymbolicSpec, WhymlSpec,
 };
 
 pub use unfer_protocol;
@@ -396,6 +396,45 @@ pub extern "C" fn uk_symbolic_simplify(model: i64, spec_json: *const u8, len: i6
     })
 }
 
+/// Emit (and optionally verify) a WhyML program for the australVM compiler
+/// extension cycle (S36).
+///
+/// `spec_json` is a `WhymlSpec` JSON: `{"module_name": "AuthorizeGate",
+/// "function_name": "gate_verdict", "grants": [...], "required": [...],
+/// "kernel_externals": [...], "op": "emit|prove", "timeout_ms": ...}`.
+/// The default emitted program is the authorization gate — the kernel's S21
+/// `GrantSet::is_subset_of` semantics with the Why3-proved postcondition
+/// `authorize grants required = true <-> required ⊆ grants`, extracted to
+/// the OCaml module the australVM compiler loads. With `op: "prove"` the
+/// external Why3 toolchain (`why3`, subprocess) discharges the lemmas and
+/// postconditions and `verified` reports the outcome. The report (program +
+/// SHA-256 + proof-obligation count) is stored in `uk_get_result` and
+/// broadcast as a `whyml_compiled` event.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-4903 engine unavailable
+/// (prove op), UK-4904 malformed spec (unknown symbol / bad identifier),
+/// UK-1004 bad handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_whyml_emit(model: i64, spec_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_whyml_emit", || {
+        let spec: WhymlSpec = parse_json(spec_json, len)?;
+        let report = handles::with_session(model, |s| s.whyml_emit(&spec))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::WhymlCompiled {
+            module_name: spec.module_name,
+            whyml_len: report.whyml.len(),
+            verified: report.verified,
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
 /// Compile a CNL sentence to a unique normal form (Logos).
 ///
 /// `sentence_ptr`/`sentence_len` is a NUL-free UTF-8 CNL sentence
@@ -420,6 +459,45 @@ pub extern "C" fn uk_logos_compile(model: i64, sentence_ptr: *const u8, sentence
         handles::set_last_result(model, report_json);
         let event = KernelEvent::LogosCompiled {
             result: report.result,
+            unf_hash: report.unf_hash,
+            verified: report.verified,
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
+/// Translate an AustralVM-language source fragment to a unique normal form
+/// through DeltaNets.
+///
+/// `source_ptr`/`source_len` is a NUL-free UTF-8 Austral source fragment: a
+/// statement list (`let … return e;`), a single expression (`(2 + 3)`), a
+/// function declaration, or a whole `module body … end module body.`. The
+/// source is lowered to CoreIR, compiled to an interaction net, reduced to
+/// its unique normal form, and read back as a **symbolic expression**.
+/// Whenever the term has no unknown variables the expression collapses to
+/// the numerical result of its calculation (`value`, e.g. `ADD(2, 3)` →
+/// `5`); when unknowns remain (`Add64(x, 3)`) the symbolic expression is
+/// the answer. The report (sym_expr + infix + value + UNF hash + confluence
+/// self-check + echoed source) is stored in `uk_get_result` and broadcast
+/// as an `austral_unf` event.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-4804 unparseable Austral /
+/// translation failure, UK-1004 bad handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: i64) -> i64 {
+    ffi_entry("uk_austral_unf", || {
+        let source = read_utf8(source_ptr, source_len)?;
+        let report = handles::with_session(model, |s| s.austral_unf(&source))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::AustralUnf {
+            sym_expr: report.sym_expr,
+            value: report.value,
             unf_hash: report.unf_hash,
             verified: report.verified,
         };

@@ -1351,6 +1351,19 @@ impl Session {
         crate::symbolic::symbolic_analyze(spec)
     }
 
+    /// Emit (and optionally verify) a WhyML program for the australVM
+    /// compiler extension cycle (S36). The default program is the
+    /// authorization gate: `authorize grants required = true <-> required
+    /// ⊆ grants`, proved by Why3 and extracted to the OCaml module the
+    /// compiler loads. Read-only consult: the numerical state is untouched
+    /// and no session-log event is appended.
+    pub fn whyml_emit(
+        &self,
+        spec: &unfer_protocol::WhymlSpec,
+    ) -> Result<unfer_protocol::WhymlReport, KernelError> {
+        crate::whyml::whyml_emit(spec)
+    }
+
     /// Compile a CNL sentence to a unique normal form (Logos). Parses the
     /// sentence with the embedded L0 lexicon, compiles to a CoreIR term,
     /// reduces it to an interaction-net unique normal form, and read-backs
@@ -1361,6 +1374,19 @@ impl Session {
         sentence: &str,
     ) -> Result<unfer_protocol::LogosReport, KernelError> {
         crate::logos::logos_compile(sentence)
+    }
+
+    /// Translate an AustralVM-language source fragment to a unique normal
+    /// form through DeltaNets: lower to CoreIR, compile to an interaction
+    /// net, reduce, and read back as a symbolic expression. Closed terms
+    /// (no unknowns) collapse to the numerical result of their calculation;
+    /// open terms stay symbolic (`Add64(x, 3)`). `verified` is the
+    /// confluence self-check. Read-only: the numerical state is untouched.
+    pub fn austral_unf(
+        &self,
+        source: &str,
+    ) -> Result<unfer_protocol::AustralReport, KernelError> {
+        crate::logos::austral_unf(source)
     }
 
     /// Run a multi-cell Cadabra2 derivation pipeline (S30) and capture the

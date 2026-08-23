@@ -36,6 +36,24 @@
   lots (escrowed credits delivered to the winner) and publicity inventory
   (AdSense alternative, payment-only). Wired end-to-end: FFI `uk_auction_*`,
   australVM loopback dispatch, and velysterm `auction_*` NDJSON ops.
+- **Math catastrophe bond (SPV with nanoda trigger): DONE.** The deterministic
+  math-bond ledger (`unfer_consensus::mathbond`, UK-7401..7407) implements a
+  Special Purpose Vehicle whose trigger is a purely mathematical proof verified
+  by nanoda (`prob_kernel::verify::verify_export`) running deterministically
+  inside `apply_op`. The sponsor locks collateral (e-coins), investors buy the
+  bond for a coupon, and if nanoda verifies a Lean4-export proof, the collateral
+  is paid out as a bounty to the researcher plus a catastrophe payment to the
+  sponsor. No human oracle, no external dependency. Bond probability trading
+  uses the vAMM + NegRisk market below.
+- **Math bond probability market (vAMM + NegRisk): DONE.** The deterministic
+  market engine (`unfer_consensus::mathbond_market`, UK-7411..7419) prices
+  trigger probabilities via a constant-product vAMM inspired by Azuro's
+  Liquidity Tree: LPs deposit e-coins into a singleton pool, and the protocol
+  mathematically prices the odds without needing a direct buyer for every seller.
+  The NegRisk CTF Adapter allows mutually-exclusive conditional outcomes (e.g.
+  "triggered by 2025" vs "triggered by 2026" vs "never") to share a single pool,
+  preventing liquidity fragmentation. When one outcome resolves, the others become
+  worthless. Settlement through the certificate ledger (Taler e-coins).
 
 ---
 
@@ -53,6 +71,10 @@
 | Payment/escrow web app | `unfer_edge` (Pingora) + `unfer_agent` NDJSON ops |
 | GNU Taler Wire-Gateway | `unfer_taler` adapter crate: reserves, two-phase wire gateway, denominations, fiat↔e-coin conservation audit (UK-7101..7107) |
 | FFI surface | New additive `uk_cert_*` symbols (frozen contract permits additive-only) |
+| Ethereum SPV smart contract | `unfer_consensus::mathbond` (`MathBondLedger`) — deterministic math-bond state machine with nanoda trigger engine |
+| Gnosis CTF / Polymarket | `unfer_consensus::mathbond_market` (`MarketLedger`) — vAMM + NegRisk probability market for trigger odds |
+| RISC Zero zkVM (trigger) | `prob_kernel::verify::verify_export` (nanoda_lib) — deterministic Lean4-export verification inside the consensus node |
+| Human oracle (Clay Institute) | None — the trigger engine is purely mathematical, no human judgment required |
 
 ---
 
@@ -155,6 +177,22 @@ The ledger is reachable end-to-end through every consumer:
 | UK-7306 | AuctionLotExists | duplicate lot open |
 | UK-7307 | AuctionQtyMismatch | bid quantity exceeds the carbon lot amount (or payment e-coin face value ≠ bid total) |
 | UK-7308 | AuctionNoBids | a close landed with no eligible bids (no winner) |
+| UK-7401 | MathBondUnknown | the referenced math bond id does not exist |
+| UK-7402 | MathBondWrongState | the bond is not in the expected state |
+| UK-7403 | MathBondNotResearcher | the submitter is not the designated researcher |
+| UK-7404 | MathBondProofRejected | nanoda rejected the proof (trigger did not fire) |
+| UK-7405 | MathBondOverfunded | investment exceeds the bond's remaining capacity |
+| UK-7406 | MathBondProofOversize | proof payload exceeds the bond's max export size |
+| UK-7407 | MathBondAlreadyTriggered | the bond has already been triggered |
+| UK-7411 | MarketUnknownPool | the referenced pool id does not exist |
+| UK-7412 | MarketPoolResolved | the pool is already resolved |
+| UK-7413 | MarketUnknownOutcome | the outcome id is not a member of this pool |
+| UK-7414 | MarketInsufficientTokens | insufficient outcome tokens to sell |
+| UK-7415 | MarketInsufficientShares | insufficient LP shares to withdraw |
+| UK-7416 | MarketNoLiquidity | the pool has no liquidity |
+| UK-7417 | MarketPriceUnderflow | NegRisk: an outcome's price would go negative (also: malformed pool params — duplicate outcome ids, missing terminal "never" outcome, `fee_bps` > 10000) |
+| UK-7418 | MarketPoolExists | the pool already exists for this bond |
+| UK-7419 | MarketNotResolved | the pool is not resolved — nothing to claim (or the bond has neither triggered nor matured) |
 
 ---
 
@@ -186,6 +224,101 @@ Surface: `uk_auction_open/bid/close/report` (C ABI), registered in
 `EXPECTED_SYMBOLS.txt`, the generated C header, australVM `UNFER_SYMBOLS` +
 `ecma.rs` dispatch + `SENSITIVE_BLOCKED_SYMBOLS`. `uk_auction_close` mutates and
 writes, so its marshaling is a single fixed-buffer call (never probe-then-copy).
+
+---
+
+## Math catastrophe bond (SPV with nanoda trigger)
+
+The deterministic math-bond ledger lives in `unfer_consensus::mathbond`
+(`MathBondLedger`). `MathBondOp`s (Issue/Invest/SubmitProof/Settle) are a
+`ConsensusTransaction` variant applied by `ConsensusNode::sync`, exactly like
+`CertificateOp`s and `AuctionOp`s.
+
+The trigger engine is `prob_kernel::verify::verify_export` (nanoda_lib) running
+deterministically inside `apply_op` — no human oracle, no external dependency,
+no zkVM. The sponsor locks collateral (e-coins), investors buy the bond for a
+coupon, and if nanoda verifies a Lean4-export proof of the specified theorem,
+the collateral is paid out as a bounty to the researcher plus a catastrophe
+payment to the sponsor. If the proof never arrives before maturity, investors
+recover their principal plus coupon.
+
+Lifecycle: `Issue → Invest → { SubmitProof (nanoda) → Triggered | Mature →
+Matured } → Settle`. A `Mature` op records that the consensus log reached
+`maturity_seq` without a trigger (the seq check is the enforcement); `Settle`
+is refused while the bond is live — only a `Triggered` (payout) or `Matured`
+(refund) bond finalizes. The bond id commits the full issue parameters
+(trigger, sponsor, principal, coupon, maturity, researcher), so two bonds with
+the same theorem but different terms do not collide.
+
+Bond probability trading uses the vAMM + NegRisk market below.
+
+**Settlement** (`unfer_taler::bondmarket::BondMarketService`, the analogue of
+`AuctionService`): the operator rows every e-coin with ordinary, conserving
+`CertificateOp`s into/out of deterministic DIDs derived from its master key
+(bond collateral DID, per-investor investment DIDs, per-pool cash DID). On
+**trigger**, the invested e-coins are paid out as the **researcher bounty** and
+the sponsor keeps its collateral as the **catastrophe payment** (investors are
+wiped out — the point of a cat bond). On **maturity**, every investor recovers
+principal plus a `coupon_rate_bps` coupon (paid from the collateral, which
+keeps the remainder). All produced ops carry a single global seq equal to their
+consensus-log position, so replaying `ops()` into a `ConsensusNode` converges
+on the identical certificate root and bond state.
+
+Surface: `MathBondOp` in `ConsensusTransaction`, idempotency-guarded via
+`mathbond_key`, signed via the standard Ed25519 path. Error codes:
+UK-7401..7407.
+
+---
+
+## Math bond probability market (vAMM + NegRisk)
+
+The deterministic market engine lives in `unfer_consensus::mathbond_market`
+(`MarketLedger`). `MarketOp`s (OpenNegRisk/AddLiquidity/RemoveLiquidity/
+BuyOutcome/SellOutcome/Resolve/Claim) are a `ConsensusTransaction` variant.
+
+The pricing model is a constant-product vAMM inspired by **Azuro's Liquidity
+Tree**: LPs deposit e-coins into a singleton concentrated-liquidity pool, and
+the protocol mathematically prices the odds of the trigger firing without
+needing a direct buyer for every seller. The pool acts as counterparty to all
+trades.
+
+The **NegRisk CTF Adapter** (Gnosis-style) allows mutually-exclusive conditional
+outcomes (e.g. "triggered by 2025" vs "triggered by 2026" vs "never") to share
+a single pool, preventing liquidity fragmentation. When one outcome resolves,
+the others become worthless — the NegRisk adapter ensures outcome prices sum
+to 1.
+
+Pricing: `P(outcome_i) = reserve_i / total_reserve`. When a trader buys
+outcome tokens, they deposit e-coins into the pool's reserve and receive
+tokens at the POST-trade marginal price (`tokens = net / P'`), so a
+buy-then-sell round trip is neutral modulo fees and the pool cannot be drained
+by price-jumping cycles. A fee (`fee_bps`) is deducted from each trade and
+accrues to a separate LP-owned `lp_fees` accumulator; sell redemptions are
+capped by the outcome's own reserve (solvency).
+
+Resolution is **not a caller choice**: the winning outcome is a pure function
+of the bond's trigger signal and the outcome maturity windows — the outcome
+whose window contains `trigger_seq` wins; `None` (the bond matured without a
+trigger) selects the terminal "never" outcome (`maturity_seq == u64::MAX`,
+required at pool open). The consensus node validates the signal against the
+bond ledger before the op applies, so a forged resolution is refused
+identically on every node. When the pool resolves, the winning outcome gets
+the entire pool reserve, all other outcomes go to zero, and a `Claim` op
+redeems winning tokens pro-rata plus the LP's accrued fees.
+
+**Settlement** (same `BondMarketService`): all pool cash lives in the
+deterministic per-pool DID. LP deposits and buy proceeds are rowed in; sell
+redemptions, liquidity withdrawals and post-resolution `Claim`s are rowed out
+by spending the pool's coins (single-owner multi-input transfers, change coins
+re-inserted). The pool is the counterparty: at resolution the winning token
+holders redeem pro-rata against the pool reserve and the LPs collect the
+accrued trading fees. `MarketLedger::apply_op` returns the exact amounts to
+row (`RemoveLiquidity` cash, `SellOutcome` net payout, `Claim` payout), so the
+service never guesses.
+
+Surface: `MarketOp` in `ConsensusTransaction`, idempotency-guarded via
+`market_key`, signed via the standard Ed25519 path. Error codes:
+UK-7411..7419.
 
 ---
 

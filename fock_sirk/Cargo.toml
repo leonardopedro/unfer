@@ -11,7 +11,7 @@ default = []
 cuda = ["candle-core/cuda"]
 
 [dependencies]
-nested_fock_algebra = { path = "../nested_fock_algebra" }
+nested_fock_algebra = { path = "../nested_fock_algebra", features = ["latex"] }
 num-complex = { workspace = true }
 nalgebra = { workspace = true }
 rayon = { workspace = true }

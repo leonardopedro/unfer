@@ -12,6 +12,8 @@ network = ["dep:tokio", "dep:tokio-util", "dep:rust-quepaxa", "rust-quepaxa/netw
 [dependencies]
 unfer_protocol = { path = "../unfer_protocol" }
 prob_kernel = { path = "../prob_kernel" }
+arctic = { path = "../../dynamic-arctic", default-features = false }
+curve25519-dalek = { version = "4.1", features = ["rand_core"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

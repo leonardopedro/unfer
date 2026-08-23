@@ -16,6 +16,7 @@ pub mod logos;
 pub mod session;
 pub mod symbolic;
 pub mod verify;
+pub mod whyml;
 
 pub use error::KernelError;
 pub use logos::logos_compile;
@@ -26,3 +27,4 @@ pub use session::{
 pub use symbolic::symbolic_derive;
 pub use unfer_protocol;
 pub use verify::verify_export;
+pub use whyml::{whyml_emit, why3_available};

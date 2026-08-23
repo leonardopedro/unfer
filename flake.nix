@@ -150,6 +150,17 @@
 
           # S30: Cadabra2 symbolic CAS (external subprocess engine).
           pkgsUnstable.cadabra2
+
+          # WhyML cycle (S36): Why3 proof engine + recommended provers.
+          # The probability kernel emits WhyML (uk_whyml_emit) and calls `why3
+          # prove`/`why3 extract` as an external subprocess, which compiles to an
+          # OCaml module that extends the australVM compiler (cycle closure).
+          # Like Cadabra2 (GPL), Why3 and its provers stay subprocess-only so the
+          # Rust/OCaml binaries never link their code.
+          pkgs.why3
+          pkgs.alt-ergo
+          pkgs.z3
+          pkgs.cvc5
           
           # Haskell Integration
           haskellEnv

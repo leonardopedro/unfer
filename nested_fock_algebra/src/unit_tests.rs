@@ -1484,6 +1484,137 @@ mod algebra_tests {
     }
 
     #[test]
+    fn test_ns_hermite_derivative_fixing_nilpotent_and_closed() {
+        // The Hermite-spatial derivative-variable gauge fixing (1D NS slice):
+        // the promoted derivative variables g_m (modes 3,4) are fixed to the
+        // ACTUAL spatial field derivatives D_m = 2(m+1)u_{m+1} by the BRST
+        // charge Ω = (g_0 − 2u_1)c_0 + (g_1 − 4u_2)c_1.  Assertions:
+        //   (1) Ω² = 0 (first-class constraint);
+        //   (2) [H, Ω] = 0 — the gauge-fixed fiber is BRST-closed;
+        //   (3) [H, C_m] = 0 — the constraint C_m = g_m − D_m is an exact
+        //       constant of the motion ([H, g_m] = [H, u_1] = [H, u_2] = 0,
+        //       the Eulerian block structure), so a physical initial state
+        //       preserves ⟨g_m⟩ = 2(m+1)⟨u_{m+1}⟩ at every time;
+        //   (4) [H, u_0] ≠ 0 — the value mode genuinely evolves.
+        use crate::models::{ns_hermite_derivative_brst, ns_hermite_derivative_fiber};
+        let brst = ns_hermite_derivative_brst();
+        let h = ns_hermite_derivative_fiber();
+
+        let probe = |bosonic: crate::InnerBosonicState, ghost: u32| {
+            crate::QuantumState::vacuum()
+                .apply(&crate::Operator::OuterBosonCreate(bosonic))
+                .apply(&crate::Operator::OuterFermionCreate(crate::InnerFermionicState {
+                    modes: std::collections::BTreeSet::from([ghost]),
+                }))
+        };
+        let bos = |mode: u32, n: u32| {
+            let mut inner = crate::InnerBosonicState::vacuum();
+            if n > 0 {
+                inner.modes.insert(mode, n);
+            }
+            inner
+        };
+
+        // (1) Nilpotency on ghost-carrying probes: ghost 0 on (g_0 − 2u_1)
+        // content, ghost 1 on (g_1 − 4u_2) content.
+        for (p, label) in [
+            (probe(bos(3, 1), 0), "g_0 content"),
+            (probe(bos(1, 1), 0), "u_1 content (the derivative D_0)"),
+            (probe(bos(4, 1), 1), "g_1 content"),
+            (probe(bos(2, 1), 1), "u_2 content (the derivative D_1)"),
+        ] {
+            assert!(
+                brst.apply(&p).norm() > 1e-6,
+                "{label} probe must carry Ω-content"
+            );
+            let twice = brst.apply(&brst.apply(&p));
+            assert!(
+                twice.norm() < 1e-9,
+                "Ω² must be nilpotent on the {label} probe, ‖Ω²ψ‖ = {:.3e}",
+                twice.norm()
+            );
+        }
+
+        // (2) [H, Ω] = 0: the gauge-fixed fiber is BRST-closed (AGENTS.md).
+        let comm_norm = |a: &crate::Hamiltonian, b: &crate::Hamiltonian, s: &crate::QuantumState| {
+            let mut d = a.apply(&b.apply(s));
+            d.scale_and_add(&b.apply(&a.apply(s)), num_complex::Complex64::new(-1.0, 0.0));
+            d.norm()
+        };
+        let probes = [
+            probe(bos(3, 1), 0),
+            probe(bos(1, 1), 0),
+            probe(bos(4, 1), 1),
+        ];
+        for s in &probes {
+            let nrm = comm_norm(&h, &brst, s);
+            assert!(
+                nrm < 1e-8,
+                "[H, Ω] must vanish on ghost probes: ‖[H,Ω]ψ‖ = {nrm:.3e}"
+            );
+        }
+
+        // (3) [H, C_m] = 0 on the bosonic sector: C_0 = g_0 − 2u_1,
+        //     C_1 = g_1 − 4u_2 (as Hamiltonian forms of the constraint).
+        // C_0 = g_0 − 2u_1.
+        let c0: crate::Hamiltonian = crate::Hamiltonian {
+            terms: vec![
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(3)]),
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(3)]),
+                (num_complex::Complex64::new(-2.0, 0.0), vec![crate::Operator::InnerBosonCreate(1)]),
+                (num_complex::Complex64::new(-2.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(1)]),
+            ],
+        };
+        // C_1 = g_1 − 4u_2.
+        let c1: crate::Hamiltonian = crate::Hamiltonian {
+            terms: vec![
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(4)]),
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(4)]),
+                (num_complex::Complex64::new(-4.0, 0.0), vec![crate::Operator::InnerBosonCreate(2)]),
+                (num_complex::Complex64::new(-4.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(2)]),
+            ],
+        };
+        // A bosonic-only occupation eigenstate (no ghosts) for the constraint
+        // commutators.
+        let bos_state = |mode: u32, n: u32| -> crate::QuantumState {
+            crate::QuantumState::vacuum()
+                .apply(&crate::Operator::OuterBosonCreate(bos(mode, n)))
+        };
+        let bos_probes = [
+            bos_state(0, 1),
+            bos_state(1, 1),
+            bos_state(2, 1),
+            bos_state(3, 1),
+            bos_state(4, 1),
+        ];
+        for s in &bos_probes {
+            let nrm = comm_norm(&h, &c0, s);
+            assert!(
+                nrm < 1e-8,
+                "[H, C_0] must vanish: ‖[H,C_0]ψ‖ = {nrm:.3e}"
+            );
+            let nrm1 = comm_norm(&h, &c1, s);
+            assert!(
+                nrm1 < 1e-8,
+                "[H, C_1] must vanish: ‖[H,C_1]ψ‖ = {nrm1:.3e}"
+            );
+        }
+
+        // (4) [H, u_0] ≠ 0: the value mode genuinely evolves under the fiber.
+        let u0: crate::Hamiltonian = crate::Hamiltonian {
+            terms: vec![
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(0)]),
+                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(0)]),
+            ],
+        };
+        let nrm = comm_norm(&h, &u0, &bos_state(0, 1));
+        assert!(
+            nrm > 1e-3,
+            "[H, u_0] must NOT vanish (the value mode evolves), got {nrm:.3e}"
+        );
+    }
+
+    #[test]
     fn test_qcd_pair_production_carries_tr_color_factor() {
         // qcd_pair_production scales the vertex by √T_R (T_R = 1/2): the
         // resulting Hamiltonian's off-diagonal strength is √(1/2)·c.

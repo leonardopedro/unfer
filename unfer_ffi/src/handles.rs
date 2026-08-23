@@ -350,6 +350,8 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Verified { .. } => "verified",
         KernelEvent::Simplified { .. } => "simplified",
         KernelEvent::LogosCompiled { .. } => "logos_compiled",
+        KernelEvent::AustralUnf { .. } => "austral_unf",
+        KernelEvent::WhymlCompiled { .. } => "whyml_compiled",
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",

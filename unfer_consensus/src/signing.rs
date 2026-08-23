@@ -1,3 +1,5 @@
+use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
@@ -65,6 +67,21 @@ pub fn canonical_bytes(tx: &ConsensusTransaction) -> Vec<u8> {
             o.signature = [0u8; 64];
             serde_json::to_vec(&ConsensusTransaction::AuctionOp(o)).unwrap()
         }
+        ConsensusTransaction::MathBondOp(op) => {
+            let mut o = op.clone();
+            o.signature = [0u8; 64];
+            serde_json::to_vec(&ConsensusTransaction::MathBondOp(o)).unwrap()
+        }
+        ConsensusTransaction::MarketOp(op) => {
+            let mut o = op.clone();
+            o.signature = [0u8; 64];
+            serde_json::to_vec(&ConsensusTransaction::MarketOp(o)).unwrap()
+        }
+        ConsensusTransaction::AttributionOp(op) => {
+            let mut o = op.clone();
+            o.signature = [0u8; 64];
+            serde_json::to_vec(&ConsensusTransaction::AttributionOp(o)).unwrap()
+        }
     };
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(&unsigned);
@@ -81,7 +98,56 @@ pub fn sign_transaction(tx: &mut ConsensusTransaction, keypair: &Keypair) {
         ConsensusTransaction::ContentOp(op) => op.signature = sig,
         ConsensusTransaction::CertificateOp(op) => op.signature = sig,
         ConsensusTransaction::AuctionOp(op) => op.signature = sig,
+        ConsensusTransaction::MathBondOp(op) => op.signature = sig,
+        ConsensusTransaction::MarketOp(op) => op.signature = sig,
+        ConsensusTransaction::AttributionOp(op) => op.signature = sig,
     }
+}
+
+/// Verify an Arctic threshold signature over a transaction's canonical bytes.
+///
+/// The 64-byte `signature` is the Arctic aggregate `(RistrettoPoint, Scalar)`
+/// (32 + 32 bytes — exactly the size of every op's `signature` field). The
+/// `pubkey` is the compressed group Ristretto point. Reuses the sibling
+/// `dynamic-arctic` crate's `arctic_core::verify` (the same determinism as
+/// `verify_transaction`: identical log in, identical verdict out).
+///
+/// Returns `false` on any malformed input (bad point, bad scalar, wrong
+/// message) — never panics.
+pub fn verify_arctic_threshold(
+    pubkey: [u8; 32],
+    threshold: u32,
+    total: u32,
+    tx: &ConsensusTransaction,
+    signature: &[u8; 64],
+) -> bool {
+    let group_pk = match CompressedRistretto::from_slice(&pubkey) {
+        Ok(pk) => match pk.decompress() {
+            Some(pk) => pk,
+            None => return false,
+        },
+        Err(_) => return false,
+    };
+    let r_point = match CompressedRistretto::from_slice(&signature[..32]) {
+        Ok(r) => match r.decompress() {
+            Some(r) => r,
+            None => return false,
+        },
+        Err(_) => return false,
+    };
+    // curve25519-dalek 4.x returns a CtOption; `is_some` unwraps the constant-time
+    // choice without branching on secret data.
+    let z_bytes: [u8; 32] = signature[32..].try_into().unwrap();
+    let z = match Scalar::from_canonical_bytes(z_bytes).into() {
+        Some(z) => z,
+        None => return false,
+    };
+    let msg = canonical_bytes(tx);
+    // Threshold/total are informational here (the aggregate signature already
+    // commits to the coalition size); the mathematical check is the Schnorr
+    // verification against the group key.
+    let _ = (threshold, total);
+    arctic::arctic_core::verify(&group_pk, &msg, &(r_point, z))
 }
 
 pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {

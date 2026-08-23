@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use prob_kernel::Session;
 use unfer_protocol::{
-    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, ModelSpec, Severity,
+    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, MarketOpKind,
+    MathBondState, ModelSpec, Severity,
 };
 
 use crate::auction::AuctionLedger;
@@ -18,7 +19,10 @@ pub struct ConsensusNode {
     content: HashMap<String, ContentRef>,
     certs: CertificateLedger,
     auction: AuctionLedger,
-    /// H7: exactly-once guard for replayed/duplicated certificate + auction ops.
+    mathbond: crate::mathbond::MathBondLedger,
+    market: crate::mathbond_market::MarketLedger,
+    attribution: crate::attribution::AttributionLedger,
+    /// H7: exactly-once guard for replayed/duplicated certificate + auction + mathbond + market + attribution ops.
     idempotency: IdempotencyStore,
     next_model_id: u64,
     applied_seq: u64,
@@ -33,6 +37,9 @@ impl ConsensusNode {
             content: HashMap::new(),
             certs: CertificateLedger::new(MintAuthority::None),
             auction: AuctionLedger::new(),
+            mathbond: crate::mathbond::MathBondLedger::new(),
+            market: crate::mathbond_market::MarketLedger::new(),
+            attribution: crate::attribution::AttributionLedger::new(),
             idempotency: IdempotencyStore::new(),
             next_model_id: 1,
             applied_seq: 0,
@@ -54,6 +61,17 @@ impl ConsensusNode {
     }
 
     pub fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
+        // A threshold mint authority signs with an Arctic aggregate signature
+        // (Ristretto point + scalar, 64 bytes), not the single-key Ed25519 the
+        // generic path checks — route those through the ledger's threshold
+        // verification instead.
+        if let ConsensusTransaction::CertificateOp(op) = &tx {
+            if self.certs.is_threshold_authority() {
+                self.certs.verify_threshold_mint(&tx)?;
+                return self.engine.submit(tx);
+            }
+            let _ = op;
+        }
         crate::signing::verify_transaction(&tx)?;
         self.engine.submit(tx)
     }
@@ -87,6 +105,12 @@ impl ConsensusNode {
             }
             ConsensusTransaction::CertificateOp(op) => {
                 // H7: a duplicated or replayed certificate op applies exactly once.
+                // A threshold mint authority re-verifies the Arctic aggregate
+                // signature on replay (deterministic: same log, same verdict),
+                // then applies through the shared idempotency gate.
+                if self.certs.is_threshold_authority() {
+                    self.certs.verify_threshold_mint(tx)?;
+                }
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
                 let key = crate::idempotency::certificate_key(op);
@@ -100,6 +124,83 @@ impl ConsensusNode {
                 let key = crate::idempotency::auction_key(op);
                 self.idempotency
                     .once(&key, seq, || self.auction.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
+            }
+            ConsensusTransaction::MathBondOp(op) => {
+                // H7: a duplicated or replayed math bond op applies exactly once.
+                // The ledger receives the CONSENSUS seq (not the op's own
+                // submitter-set field) so maturity enforcement and trigger_seq
+                // reflect the honest log position.
+                let actor = op.did.clone();
+                let kind = op.kind.clone();
+                let key = crate::idempotency::mathbond_key(op);
+                self.idempotency
+                    .once(&key, seq, || self.mathbond.apply_op(&actor, &kind, seq).map(|_| ()))?;
+            }
+            ConsensusTransaction::MarketOp(op) => {
+                // H7: a duplicated or replayed market op applies exactly once.
+                let actor = op.did.clone();
+                let kind = op.kind.clone();
+                // A pool resolution is not a caller's free choice: the winner
+                // is a pure function of the bond's trigger state. Validate the
+                // op's trigger signal against the deterministic bond ledger
+                // before the op is applied, so every node rejects a forged
+                // resolution identically.
+                if let MarketOpKind::Resolve {
+                    pool_id,
+                    trigger_seq,
+                } = &kind
+                {
+                    let pool = self.market.pool(pool_id).ok_or_else(|| {
+                        Diagnostic::new(
+                            Code::MARKET_UNKNOWN_POOL,
+                            "unknown pool",
+                            Severity::Error,
+                        )
+                    })?;
+                    let bond = self.mathbond.bond(&pool.pool.bond_id).ok_or_else(|| {
+                        Diagnostic::new(
+                            Code::MATHBOND_UNKNOWN,
+                            "the pool's bond does not exist on the ledger",
+                            Severity::Error,
+                        )
+                    })?;
+                    let expected = match (bond.state, bond.trigger_seq) {
+                        (MathBondState::Triggered, Some(t)) => Some(t),
+                        (MathBondState::Settled, t) => t,
+                        (MathBondState::Matured, _) => None,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                Code::MARKET_NOT_RESOLVED,
+                                format!(
+                                    "bond is {:?}; it must be triggered or matured before the pool can resolve",
+                                    bond.state
+                                ),
+                                Severity::Error,
+                            ));
+                        }
+                    };
+                    if *trigger_seq != expected {
+                        return Err(Diagnostic::new(
+                            Code::MARKET_UNKNOWN_OUTCOME,
+                            format!(
+                                "trigger signal {trigger_seq:?} does not match the bond ledger {expected:?}"
+                            ),
+                            Severity::Error,
+                        ));
+                    }
+                }
+                let key = crate::idempotency::market_key(op);
+                self.idempotency
+                    .once(&key, seq, || self.market.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
+            }
+            ConsensusTransaction::AttributionOp(op) => {
+                // H7: a duplicated or replayed attribution op applies exactly once.
+                let actor = op.did.clone();
+                let kind = op.kind.clone();
+                let key = crate::idempotency::attribution_key(op);
+                self.idempotency.once(&key, seq, || {
+                    self.attribution.apply_op(&actor, &kind, seq)
+                })?;
             }
         }
         Ok(())
@@ -155,6 +256,18 @@ impl ConsensusNode {
         &self.auction
     }
 
+    pub fn mathbond(&self) -> &crate::mathbond::MathBondLedger {
+        &self.mathbond
+    }
+
+    pub fn market(&self) -> &crate::mathbond_market::MarketLedger {
+        &self.market
+    }
+
+    pub fn attribution(&self) -> &crate::attribution::AttributionLedger {
+        &self.attribution
+    }
+
     pub fn session(&self, id: u64) -> Option<&Session> {
         self.sessions.get(&id)
     }
@@ -179,12 +292,89 @@ impl ConsensusNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certs::{CertificateLedger, MintAuthority};
     use crate::engine::LocalConsensus;
     use crate::signing::Keypair;
-    use unfer_protocol::{IdentityOp, IdentityOpKind};
+    use unfer_protocol::{CertificateOp, CertificateOpKind, IdentityOp, IdentityOpKind};
 
     fn make_node() -> ConsensusNode {
         ConsensusNode::new(Box::new(LocalConsensus::new()))
+    }
+
+    /// Build a mint op signed with a valid Arctic t-of-n aggregate signature.
+    /// Mirrors `certs::proptests::threshold_mint_op` at the node level.
+    fn threshold_mint_tx(
+        n: u32,
+        t: u32,
+        coalition: &[u32],
+        amount: u64,
+        owner: &str,
+        seq: u64,
+    ) -> (ConsensusTransaction, [u8; 32]) {
+        let (group_pk, _, seckeys) = arctic::arctic_core::keygen(n, t);
+        let mut op = CertificateOp {
+            did: format!("did:unfer:{}", hex::encode(group_pk.compress().to_bytes())),
+            kind: CertificateOpKind::Mint {
+                amount,
+                owner: owner.to_string(),
+                blinding: [1u8; 32],
+                source: None,
+            },
+            seq,
+            signature: [0u8; 64],
+        };
+        let tx = ConsensusTransaction::CertificateOp(op.clone());
+        let msg = crate::signing::canonical_bytes(&tx);
+        let r1: Vec<arctic::arctic_core::R1Output> = coalition
+            .iter()
+            .map(|&k| arctic::arctic_core::sign1(&seckeys[(k - 1) as usize], coalition, &msg))
+            .collect();
+        let shares: Vec<curve25519_dalek::scalar::Scalar> = coalition
+            .iter()
+            .map(|&k| {
+                arctic::arctic_core::sign2(&group_pk, &seckeys[(k - 1) as usize], coalition, &msg, &r1)
+                    .unwrap()
+            })
+            .collect();
+        let sig = arctic::arctic_core::combine(&group_pk, t, coalition, &msg, &r1, &shares).unwrap();
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[..32].copy_from_slice(sig.0.compress().as_bytes());
+        sig_bytes[32..].copy_from_slice(&sig.1.to_bytes());
+        op.signature = sig_bytes;
+        (ConsensusTransaction::CertificateOp(op), group_pk.compress().to_bytes())
+    }
+
+    #[test]
+    fn threshold_mint_submit_syncs_through_the_gate() {
+        let (tx, pubkey) = threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
+        let mut node = make_node();
+        node.set_mint_authority(MintAuthority::Threshold {
+            threshold: 4,
+            total: 7,
+            pubkey,
+        });
+        // The Arctic aggregate signature passes the node's threshold gate.
+        node.submit(tx).unwrap();
+        let applied = node.sync().unwrap();
+        assert_eq!(applied, 1);
+        let supply = node.certs().total_supply();
+        assert_eq!(supply, 100);
+    }
+
+    #[test]
+    fn threshold_mint_rejects_forged_sig_at_submit() {
+        let (mut tx, pubkey) = threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
+        if let ConsensusTransaction::CertificateOp(op) = &mut tx {
+            op.signature[0] ^= 0xff;
+        }
+        let mut node = make_node();
+        node.set_mint_authority(MintAuthority::Threshold {
+            threshold: 4,
+            total: 7,
+            pubkey,
+        });
+        let err = node.submit(tx).unwrap_err();
+        assert_eq!(err.code, Code::CERT_MINT_NOT_AUTHORIZED);
     }
 
     #[test]
@@ -602,6 +792,7 @@ mod tests {
                 solver: unfer_protocol::SolverSpec::default(),
             })
             .unwrap(),
+            provenance: None,
         };
         let mut node = ConsensusNode::new(Box::new(LocalConsensus::new()));
         assert!(node.apply_session_op(&req).is_ok());
@@ -611,6 +802,7 @@ mod tests {
                 id: "x".into(),
                 op: op.to_string(),
                 params: serde_json::json!({}),
+                provenance: None,
             };
             // create_model with `{}` params fails parsing (BAD_JSON) but must
             // still be a *supported* op (never the "unsupported session op" arm).
@@ -735,5 +927,326 @@ mod tests {
         let retry = q.claim_slot("settle-auction").expect("retry");
         q.mark_fired(&retry).unwrap(); // fire succeeded
         assert_eq!(q.state("settle-auction"), Some(JobState::Fired));
+    }
+
+    // ── Math bond + probability market through the consensus node ─────────
+
+    #[test]
+    fn mathbond_market_consensus_roundtrip() {
+        use crate::mathbond::compute_bond_id;
+        use crate::mathbond_market::compute_pool_id;
+        use unfer_protocol::{
+            MarketOp, MarketOpKind, MathBondOp, MathBondOpKind, MathBondTrigger, NegRiskOutcome,
+            OutcomeId,
+        };
+
+        let mut node = make_node();
+        let sponsor = Keypair::generate();
+        let investor = Keypair::generate();
+        let researcher = Keypair::generate();
+        let creator = Keypair::generate();
+        let lp = Keypair::generate();
+
+        let sign_and_submit =
+            |node: &ConsensusNode, tx: &mut ConsensusTransaction, kp: &Keypair| {
+                crate::signing::sign_transaction(tx, kp);
+                node.submit(tx.clone()).unwrap();
+            };
+
+        // Issue the bond; maturity is at consensus seq 5.
+        let trigger = MathBondTrigger {
+            theorem: "P_eq_NP".to_string(),
+            spec_hash: "deadbeef".to_string(),
+            max_export_bytes: 1024,
+            permitted_axioms: vec![],
+            strict: false,
+            nat_extension: false,
+            string_extension: false,
+        };
+        let mut issue = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: sponsor.did(),
+            kind: MathBondOpKind::Issue {
+                trigger: trigger.clone(),
+                principal: 10000,
+                coupon_rate_bps: 500,
+                maturity_seq: 5,
+                researcher_did: researcher.did(),
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut issue, &sponsor);
+        node.sync().unwrap();
+        let bond_id = compute_bond_id(&trigger, &sponsor.did(), 10000, 500, 5, &researcher.did());
+        assert_eq!(
+            node.mathbond().bond(&bond_id).unwrap().state,
+            MathBondState::Issued
+        );
+
+        // Fund it.
+        let mut invest = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: investor.did(),
+            kind: MathBondOpKind::Invest {
+                bond_id,
+                amount: 10000,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut invest, &investor);
+        node.sync().unwrap();
+        assert_eq!(
+            node.mathbond().bond(&bond_id).unwrap().state,
+            MathBondState::Funded
+        );
+
+        // Open the NegRisk market for the bond and seed liquidity.
+        let outcome_a = OutcomeId([1u8; 32]);
+        let outcome_b = OutcomeId([2u8; 32]);
+        let outcome_never = OutcomeId([3u8; 32]);
+        let pool_id = compute_pool_id(&bond_id);
+        let mut open = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator.did(),
+            kind: MarketOpKind::OpenNegRisk {
+                bond_id,
+                outcomes: vec![
+                    NegRiskOutcome {
+                        outcome_id: outcome_a,
+                        pool_id,
+                        label: "by_2025".to_string(),
+                        maturity_seq: 500,
+                    },
+                    NegRiskOutcome {
+                        outcome_id: outcome_b,
+                        pool_id,
+                        label: "by_2026".to_string(),
+                        maturity_seq: 1000,
+                    },
+                    NegRiskOutcome {
+                        outcome_id: outcome_never,
+                        pool_id,
+                        label: "never".to_string(),
+                        maturity_seq: u64::MAX,
+                    },
+                ],
+                fee_bps: 300,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut open, &creator);
+        node.sync().unwrap();
+
+        let mut add = ConsensusTransaction::MarketOp(MarketOp {
+            did: lp.did(),
+            kind: MarketOpKind::AddLiquidity {
+                pool_id,
+                amount: 12000,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut add, &lp);
+        node.sync().unwrap();
+        assert_eq!(
+            node.market().pool(&pool_id).unwrap().pool.total_reserve,
+            12000
+        );
+
+        // Record maturity (consensus seq 5 >= maturity_seq 5).
+        let mut mature = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: investor.did(),
+            kind: MathBondOpKind::Mature { bond_id },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut mature, &investor);
+        node.sync().unwrap();
+        assert_eq!(
+            node.mathbond().bond(&bond_id).unwrap().state,
+            MathBondState::Matured
+        );
+
+        // Resolve with `None` (matured without a trigger): the never outcome
+        // wins deterministically — no caller-chosen outcome.
+        let mut resolve = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator.did(),
+            kind: MarketOpKind::Resolve {
+                pool_id,
+                trigger_seq: None,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut resolve, &creator);
+        node.sync().unwrap();
+        assert_eq!(
+            node.market().pool(&pool_id).unwrap().pool.winner,
+            Some(outcome_never)
+        );
+
+        // The LP claims the whole reserve (nobody held winning tokens).
+        let mut claim = ConsensusTransaction::MarketOp(MarketOp {
+            did: lp.did(),
+            kind: MarketOpKind::Claim { pool_id },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut claim, &lp);
+        node.sync().unwrap();
+        assert_eq!(
+            node.market().pool(&pool_id).unwrap().lp_map.get(&lp.did()),
+            Some(&0)
+        );
+    }
+
+    #[test]
+    fn market_resolve_forgery_rejected() {
+        use crate::mathbond::compute_bond_id;
+        use crate::mathbond_market::compute_pool_id;
+        use unfer_protocol::{
+            MarketOp, MarketOpKind, MathBondOp, MathBondOpKind, MathBondTrigger, NegRiskOutcome,
+            OutcomeId,
+        };
+
+        let sign_and_submit =
+            |node: &ConsensusNode, tx: &mut ConsensusTransaction, kp: &Keypair| {
+                crate::signing::sign_transaction(tx, kp);
+                node.submit(tx.clone()).unwrap();
+            };
+
+        // Scenario 1: the bond is still live — a forged resolve is refused
+        // before it can touch the pool.
+        let mut node = make_node();
+        let sponsor = Keypair::generate();
+        let creator = Keypair::generate();
+        let trigger = MathBondTrigger {
+            theorem: "RiemannHypothesis".to_string(),
+            spec_hash: "cafe".to_string(),
+            max_export_bytes: 1024,
+            permitted_axioms: vec![],
+            strict: false,
+            nat_extension: false,
+            string_extension: false,
+        };
+        let mut issue = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: sponsor.did(),
+            kind: MathBondOpKind::Issue {
+                trigger: trigger.clone(),
+                principal: 1000,
+                coupon_rate_bps: 0,
+                maturity_seq: 1000,
+                researcher_did: sponsor.did(),
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut issue, &sponsor);
+        let bond_id = compute_bond_id(&trigger, &sponsor.did(), 1000, 0, 1000, &sponsor.did());
+        let pool_id = compute_pool_id(&bond_id);
+        let mut open = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator.did(),
+            kind: MarketOpKind::OpenNegRisk {
+                bond_id,
+                outcomes: vec![NegRiskOutcome {
+                    outcome_id: OutcomeId([1u8; 32]),
+                    pool_id,
+                    label: "never".to_string(),
+                    maturity_seq: u64::MAX,
+                }],
+                fee_bps: 0,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut open, &creator);
+        node.sync().unwrap();
+
+        let mut forged = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator.did(),
+            kind: MarketOpKind::Resolve {
+                pool_id,
+                trigger_seq: Some(1),
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node, &mut forged, &creator);
+        let err = node.sync().unwrap_err();
+        assert_eq!(err.code, Code::MARKET_NOT_RESOLVED);
+        assert!(
+            !node.market().pool(&pool_id).unwrap().pool.resolved,
+            "the forged resolution must not touch the pool"
+        );
+
+        // Scenario 2: the bond matured without a trigger (expected signal
+        // None) — claiming a trigger fired is refused as a mismatch.
+        let mut node2 = make_node();
+        let sponsor2 = Keypair::generate();
+        let creator2 = Keypair::generate();
+        let trigger2 = MathBondTrigger {
+            theorem: "Goldbach".to_string(),
+            spec_hash: "beef".to_string(),
+            max_export_bytes: 1024,
+            permitted_axioms: vec![],
+            strict: false,
+            nat_extension: false,
+            string_extension: false,
+        };
+        let mut issue2 = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: sponsor2.did(),
+            kind: MathBondOpKind::Issue {
+                trigger: trigger2.clone(),
+                principal: 1000,
+                coupon_rate_bps: 0,
+                maturity_seq: 3,
+                researcher_did: sponsor2.did(),
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node2, &mut issue2, &sponsor2);
+        let bond_id2 = compute_bond_id(&trigger2, &sponsor2.did(), 1000, 0, 3, &sponsor2.did());
+        let pool_id2 = compute_pool_id(&bond_id2);
+        let mut open2 = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator2.did(),
+            kind: MarketOpKind::OpenNegRisk {
+                bond_id: bond_id2,
+                outcomes: vec![NegRiskOutcome {
+                    outcome_id: OutcomeId([1u8; 32]),
+                    pool_id: pool_id2,
+                    label: "never".to_string(),
+                    maturity_seq: u64::MAX,
+                }],
+                fee_bps: 0,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node2, &mut open2, &creator2);
+        let mut mature2 = ConsensusTransaction::MathBondOp(MathBondOp {
+            did: sponsor2.did(),
+            kind: MathBondOpKind::Mature {
+                bond_id: bond_id2,
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node2, &mut mature2, &sponsor2);
+        node2.sync().unwrap();
+
+        let mut forged2 = ConsensusTransaction::MarketOp(MarketOp {
+            did: creator2.did(),
+            kind: MarketOpKind::Resolve {
+                pool_id: pool_id2,
+                trigger_seq: Some(1),
+            },
+            seq: 0,
+            signature: [0u8; 64],
+        });
+        sign_and_submit(&node2, &mut forged2, &creator2);
+        let err = node2.sync().unwrap_err();
+        assert_eq!(err.code, Code::MARKET_UNKNOWN_OUTCOME);
+        assert!(!node2.market().pool(&pool_id2).unwrap().pool.resolved);
     }
 }

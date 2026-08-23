@@ -86,11 +86,32 @@ pub fn auction_key(op: &unfer_protocol::AuctionOp) -> String {
     format!("auction:{}:{}", op.did, kind)
 }
 
+/// Content key for a math bond op: the acting DID plus the op kind.
+pub fn mathbond_key(op: &unfer_protocol::MathBondOp) -> String {
+    let kind = serde_json::to_string(&op.kind).unwrap_or_default();
+    format!("mathbond:{}:{}", op.did, kind)
+}
+
+/// Content key for a market op: the acting DID plus the op kind.
+pub fn market_key(op: &unfer_protocol::MarketOp) -> String {
+    let kind = serde_json::to_string(&op.kind).unwrap_or_default();
+    format!("market:{}:{}", op.did, kind)
+}
+
+/// Content key for an attribution op: the acting DID plus the op kind.
+pub fn attribution_key(op: &unfer_protocol::AttributionOp) -> String {
+    let kind = serde_json::to_string(&op.kind).unwrap_or_default();
+    format!("attribution:{}:{}", op.did, kind)
+}
+
 /// The idempotency key for a consensus transaction, if it is a guarded op.
 pub fn transaction_key(tx: &ConsensusTransaction) -> Option<String> {
     match tx {
         ConsensusTransaction::CertificateOp(op) => Some(certificate_key(op)),
         ConsensusTransaction::AuctionOp(op) => Some(auction_key(op)),
+        ConsensusTransaction::MathBondOp(op) => Some(mathbond_key(op)),
+        ConsensusTransaction::MarketOp(op) => Some(market_key(op)),
+        ConsensusTransaction::AttributionOp(op) => Some(attribution_key(op)),
         _ => None,
     }
 }
