@@ -244,3 +244,27 @@ impl BandParams {
         }
     }
 }
+
+/// Certified-observable propagation: a state certified to lie within
+/// `band_hi` (Theorem 4.1, C = 11.08 edge) of the exact evolved state
+/// bounds ANY observable shift through Cauchy–Schwarz:
+///
+///   |⟨O⟩_SIRK − ⟨O⟩_exact| ≤ 2 ‖O‖_op · band_hi · ‖v‖ .
+///
+/// Returns the certified interval [value − δ, value + δ]. This turns the
+/// band machinery into ERROR BARS for models without closed-form references
+/// — certified numerics for the interacting gauge-fixed Hamiltonians.
+pub fn certify(
+    value: f64,
+    op_norm_bound: f64,
+    band_hi: f64,
+    v_norm: f64,
+) -> (f64, f64) {
+    let delta = 2.0 * op_norm_bound * band_hi * v_norm;
+    (value - delta, value + delta)
+}
+
+/// Pretty-print one certified row.
+pub fn print_certified(label: &str, value: f64, lo: f64, hi: f64) {
+    println!("  {label:<28} {value:+.6}   certified [{lo:+.6}, {hi:+.6}]");
+}

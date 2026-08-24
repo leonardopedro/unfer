@@ -452,6 +452,7 @@ unit-norm frame certifies at least as many rungs as canonical.
 | Derived constants | 10⁻³ – 10⁻⁶ relative | Chandrasekhar 1.44 M☉, ISCO 4397 Hz, LHC 8.33 T |
 | Experimental bands | quoted windows | Sackur–Tetrode 153 vs 154.8, KamLAND suppression band, Alfvén band |
 | Solver bands | documented profiles | displaced-oscillator levels, chirp RK4 <10⁻⁴, Sackur quadrature 10⁻⁴ |
+| **Theorem 4.1 certified bands** | measurement below a-priori envelope | `hashimoto_error_bands.rs` (§9); propagated certified intervals in the program suites |
 
 A tolerance is never chosen to make an assertion pass; it encodes which of
 these classes the quantity belongs to.
