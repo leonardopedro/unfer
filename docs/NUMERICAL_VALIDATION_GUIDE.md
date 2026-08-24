@@ -442,6 +442,31 @@ reproduce the ritz_edge_study wall tail (E₁~1e-4, E₂~3e-3, E₃~4e-2); the
 unit-norm frame certifies at least as many rungs as canonical.
 
 
+### 5.17 Certified numerics (`bands_program_gauge_fixed.rs`)
+
+Theorem 4.1 bands promoted from validation tool to DELIVERABLE: propagated
+through Cauchy–Schwarz (`|⟨O⟩_SIRK − ⟨O⟩_exact| ≤ 2‖O‖·band·‖v‖`), every
+program-sector observable acquires a rigorous ERROR BAR — no closed-form
+reference needed. Six certifications:
+
+- **QG scalaron k→0 gap**: analytic m(α) inside the certified interval at
+  every depth; intervals nest as m grows.
+- **QYM abelian low spectrum**: residual-restricted certification window
+  (the bare :π²: kinetic reaches an unbounded ladder, so raw diameters are
+  meaningless); successive windows overlap.
+- **QYM ±g symmetry**: pairwise certified-interval OVERLAP certifies the
+  A¹→−A¹ spectral symmetry from numerics alone.
+- **NS laminar amplitude**: one-e-folding value with certified bar containing
+  the analytic e⁻¹u₀.
+- **Graviton vs scalaron speed split**: DISJOINT certified intervals — the
+  massive/massless separation established by bound alone. Sharpness here
+  comes from Rayleigh–Ritz RESIDUAL certificates (|θ−λ| ≤ ‖r‖, Parlett);
+  the Theorem 4.1 envelope is reported alongside as the conservative
+  a-priori ceiling (its constants cannot separate close levels on unitary
+  problems).
+- **QED Casimir cavity**: ω_n = nπ/d levels inside their certified radii,
+  with paper-shift low-rung convergence-from-above documented.
+
 ---
 
 ## 6. The tolerance taxonomy
@@ -593,6 +618,13 @@ QG free graviton:  m=4  err 3.5e-3   hi(C) 1.78e4
 - *JC convention note*: the Jaynes–Cummings reference carries a fixed ~1e-2
   phase-convention offset (builder topology vs textbook two-level signs);
   the band assertions are unaffected.
+
+**Two-tier certification (§5.17).** Theorem 4.1 provides the A-PRIORI tier:
+valid everywhere, conservative constants, no reference state required. The
+SHARP tier is the Rayleigh–Ritz residual certificate |θ−λ| ≤ ‖r‖ computed
+from `ForwardSirkResult::ritz_residuals` — tight enough to certify level
+SEPARATION (disjoint graviton/scalaron intervals). Production rule: report
+both; separate levels with residuals, quote envelopes as ceilings.
 
 ---
 
