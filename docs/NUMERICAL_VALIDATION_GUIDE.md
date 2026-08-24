@@ -524,7 +524,79 @@ asserts exactly the first three rungs resolve.
 
 ---
 
-## 9. Sources
+## 9. Theorem 4.1 error bands (`hashimoto_error_bands.rs`)
+
+The paper this project implements (Hashimoto–Nodera, *Shift-invert Rational
+Krylov method for an operator φ-function of an unbounded linear operator*,
+JJIAM 2019 — mirrored at `../timepiece/Hashimoto.md`) proves the a-priori
+SIRK approximation-error envelope (Theorem 4.1, Eq. 12):
+
+```text
+‖φ_k(A)v − SIRK_m(v)‖  ≤  2C ‖v‖ e^{-hm} · E_m ,      C ∈ [2, 11.08]
+```
+
+with
+
+- shifts γ_j = N − h j > 0 (the paper's ladder, NOT `shifts_for_range`);
+- the SIRK rational family R^SIRK_{m−1} = {p/q : deg p ≤ m,
+  q(z) = Π_{j=1..m} (1 + h j z)};
+- Σ = convex hull of the resolvent numerical ranges W(X_j),
+  X_j = (γ_j I − A)^{-1};
+- f_{k,N}(z) = e^N φ_k(−z^{-1});
+- E_m = min_r ‖f_{k,N} − r‖_{∞,Σ} — the best uniform approximation error of
+  the target function by the whole SIRK family over Σ.
+
+**How the tests realize it.**
+
+1. *Faithful shifts.* With A = −iHt, the paper's resolvent maps as
+   γ_j I − A = i t (H − iγ_j/t), so the solver is fed z_j = iγ_j/t — the
+   Krylov span equals the theorem's Q_m exactly (inverse-free equivalence).
+2. *Σ.* For Hermitian H the numerical range of each X_j is the segment
+   through 1/(γ_j + itλ) for λ over the spectral extent; hulling those
+   segments over j and padding to a rectangle gives a conservative box
+   (sup over box ⊇ sup over Σ ⇒ band stays VALID).
+3. *E_m.* Factoring out the fixed denominator turns the minimax into a
+   weighted polynomial problem min_p ‖(f·q − p)/q‖_Σ, solved by Lawson's
+   iteratively-reweighted least squares (30 iterations) on a 240×40 grid in
+   a Chebyshev tensor basis.
+4. *Band edges.* C ∈ [2, 11.08] gives (lo, hi); the measured relative state
+   error ‖ψ_SIRK − ψ_exact‖/‖v‖ against CLOSED-FORM evolutions must lie
+   below `hi`.
+
+**Models.** QED free-photon field (4 modes), QED Jaynes–Cummings one-
+excitation Rabi manifold, QG Starobinsky scalaron band (two momenta), QG
+free graviton (three modes) — all bounded, all with exact references.
+
+**Representative output** (N=8, h=0.5, t=0.8):
+
+```text
+QG free graviton:  m=4  err 3.5e-3   hi(C) 1.78e4
+                   m=6  err 7.2e-11  hi     6.53e3
+                   m=8  err 8.3e-11  hi     2.08e3
+                   measured decay slope c = 4.39  (theorem h = 0.500)
+```
+
+**Interpretation.**
+
+- *Validity*: every measurement sits below the upper edge — the theorem
+  holds verbatim in the operator setting, including our inverse-free
+  realization and GPU-side whitened projection.
+- *Conservativeness*: for these UNITARY problems (spectrum on the imaginary
+  axis, k=0) the e^N normalization and the box-hulled Σ make the bound far
+  larger than the true error; the theorem's sharp regime is dissipative
+  (Re Λ(A) ≤ 0). The band is therefore a rigorous ceiling, not an estimate.
+- *Decay law*: the paper's central qualitative claim — EXPONENTIAL decay in
+  m (vs polynomial for Arnoldi/SIA/RK, Theorems 3.2/3.3) — is verified
+  directly: measured log-slopes c ≥ h on every model that has not already
+  saturated machine precision (c = 0.70, 0.75, 4.39 here against h = 0.5).
+- *JC convention note*: the Jaynes–Cummings reference carries a fixed ~1e-2
+  phase-convention offset (builder topology vs textbook two-level signs);
+  the band assertions are unaffected.
+
+---
+
+## 10. Sources
+
 
 - CODATA 2018 fundamental constants; SI-2019 exact definitions (h, e, k_B, N_A).
 - PDG 2024 review (masses, lifetimes, α_s world average).
