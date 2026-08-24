@@ -370,6 +370,7 @@ impl Session {
             max_components: spec.solver.max_components,
             brst_tol: 1e-10,
             adaptive: spec.solver.adaptive,
+            unit_norm_steps: false,
         };
         // If the Hamiltonian is a QFM tomography spec, compile the pipeline.
         let qfm_pipeline =
@@ -752,6 +753,7 @@ impl Session {
             max_components: blob.solver_spec.max_components,
             brst_tol: 1e-10,
             adaptive: blob.solver_spec.adaptive,
+            unit_norm_steps: false,
         };
         // QFM pipelines are not serialized — a restored session that was
         // originally a QFM model falls back to the SIRK path with the

@@ -359,6 +359,19 @@ corrections (the direction itself is asserted); atmospheric first-maximum
 L/E; KamLAND-baseline suppression band; Daya-Bay maximum survival
 1 − sin²2θ₁₃ ≈ 0.915.
 
+### 5.12 Gauge-fixed program suite (`gauge_fixed_program_validation.rs`)
+
+Ten tests confined to the research program proper — NS / QYM / QED / QG(R²)
+gauge-fixed Hamiltonians driven through Hashimoto–SIRK: quartic scalaron
+self-interaction vs perturbation theory (with parity superselection and the
+measured O(λ²) shift), the massive scalaron band with its subluminal group
+velocity, hyperbolic densitized evolution, TEGR positivity, abelian Gauss-law
+charge conservation through the flow, g-sign spectral symmetry, multimode QED
+additivity, and full-e-fold NS decay from a SINGLE deep window in
+nondimensional units. The gotchas it encodes (universe merging under
+scale_and_add, Krylov collapse on eigenstate starts, indefinite kinetic on
+truncations) are documented in AGENTS.md S40.
+
 ### 5.11 Coupled oscillators — `coupled_oscillator_sirk.rs`
 
 *Community relevance:* the beamsplitter Hamiltonian is linear-optical quantum

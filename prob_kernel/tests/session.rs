@@ -18,7 +18,6 @@ fn harmonic_chain_spec(prior: PriorSpec) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
@@ -52,7 +51,6 @@ fn bose_hubbard_spec(prior: PriorSpec) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
@@ -360,7 +358,6 @@ fn yang_mills_lattice_spec(prior: PriorSpec) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
@@ -435,7 +432,6 @@ fn qfm_mehler_spec(prior: PriorSpec) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
@@ -545,7 +541,6 @@ fn qfm_mehler_localized_spec(prior: PriorSpec) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
@@ -641,7 +636,6 @@ fn qfm_mehler_projector_localized_matches_closed_form_oscillation() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("qfm projector localized session");
@@ -717,7 +711,6 @@ fn qfm_mehler_projector_matches_closed_form_oscillation() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("mehler projector session");
@@ -775,7 +768,6 @@ fn qfm_mehler_projector_dressed_vacuum_is_stationary() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("dressed vacuum session");
@@ -823,7 +815,6 @@ fn qfm_mehler_projector_rejects_overweight_epsilons() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let err = Session::new(&spec).expect_err("Σ ε² > 1 must fail");
@@ -1279,7 +1270,6 @@ fn yang_mills_lattice_l4_bounded_evolve() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("l=4 yang-mills session");
@@ -1322,7 +1312,6 @@ fn sirk_stability_krylov_dim_16() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("krylov-16 session");
@@ -1355,7 +1344,6 @@ fn sirk_stability_krylov_dim_32() {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     };
     let mut session = Session::new(&spec).expect("krylov-32 session");
@@ -1400,7 +1388,6 @@ fn qfm_tomo_spec(training_data: Vec<Vec<f64>>) -> ModelSpec {
             restarts: 1,
             device: DeviceSpec::Cpu,
             adaptive: false,
-            unit_norm_steps: false,
         },
     }
 }
