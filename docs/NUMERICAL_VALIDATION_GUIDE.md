@@ -629,20 +629,20 @@ both; separate levels with residuals, quote envelopes as ceilings.
 ### 9.1 Results: numerics + bands vs expected
 
 All values are actual outputs of the suites (N=8, h=0.5 unless noted;
-t=0.8 for evolution rows). "Expected" is the closed-form result, the
-published mainstream approximation, or the experimental constraint named
-in the last column.
+t=0.8 for evolution rows). The EXPECTED column quotes the mainstream value
+TOGETHER WITH ITS SOURCE UNCERTAINTY BAND (experimental bar or declared
+theory status), keyed as [E#] into the bibliography of §9.2.
 
 **(a) Certified spectral predictions**
 
-| Quantity | SIRK value | Certified bar (tier) | Expected | Source of expectation |
-|---|---|---|---|---|
-| QG scalaron gap, k→0 (α=1) | **0.800000** | ±2839 (T4.1 ceiling); ≤10⁻⁹ (residual) | 0.800000 | Starobinsky action: m²=M²/(12α) → m=1/√(12α) |
-| QG graviton ω(k=0.9) | **+0.900000** | width ≲10⁻⁶ (residual) | 0.900000 | massless dispersion ω=ck; GW170817: \|v_g−c\|/c<10⁻¹⁵ |
-| QG scalaron ω(k=0.9), m=0.55 | **+1.054751** | width ≲10⁻⁶ (residual) | 1.054751 | massive KG dispersion √(k²+m²) |
-| QED Casimir cavity, worst level dist. | **1.2×10⁻¹⁰** (m=8) | inside band_hi 5.4×10³ | 0 (levels exactly ω_n=nπ/d) | Casimir cavity spectrum (nπ/d); plate-force experiments (Lamoreau 1997) |
-| QYM abelian θ₀(g=±0.35) | −1.382280 vs −1.402071 | intervals OVERLAP (certified) | identical by A¹→−A¹ symmetry | gauge theory charge-conjugation analogue |
-| QYM abelian low rungs g=0 (θ₀,θ₁,θ₂) | −1.546148, −0.137582, +2.348642 (m=9) | nested certified windows | deepest-window reference (no closed form: squeezed blocks) | mainstream Bogoliubov diagonalization of :x²:-blocks |
+| Quantity | SIRK value | Certified bar (tier) | Expected ± source uncertainty [key] |
+|---|---|---|---|
+| QG scalaron gap, k→0 (α=1) | **0.800000** | ±2839 (T4.1 ceiling); ≤10⁻⁹ (residual) | 0.800000 ± 0 — theory input α=1 fixes it exactly [E1] |
+| QG graviton ω(k=0.9) ⇒ speed v_g | **ω/k = 1.000000** | width ≲10⁻⁶ (residual) | c·(1 + ε), ε ∈ [−3, +7]×10⁻¹⁵ [E2] |
+| QG scalaron ω(k=0.9), m=0.55 | **+1.054751** | width ≲10⁻⁶ (residual) | √(k²+m²)=1.054751 ± 0 — exact KG relation [E3] |
+| QED Casimir cavity, worst level distance to ω_n=nπ/d | **1.2×10⁻¹⁰** (m=8) | inside band_hi 5.4×10³ | levels exact in ideal cavity; underlying plate interaction verified experimentally to ±1% [E4] |
+| QYM abelian θ₀(g=+0.35) vs θ₀(g=−0.35) | −1.382280 vs −1.402071 | intervals OVERLAP (certified) | identical ± 0 — A¹→−A¹ residual symmetry of the abelian action [E5] |
+| QYM abelian low rungs g=0 (θ₀,θ₁,θ₂) | −1.546148, −0.137582, +2.348642 (m=9) | nested certified windows | deepest-window reference; its own certified widths are the uncertainty band [E6] |
 
 **(b) Theorem 4.1 envelope performance** (state error vs a-priori ceiling)
 
@@ -655,19 +655,49 @@ in the last column.
 
 **(c) Certified dynamics**
 
-| Observable | SIRK value | Certified bar | Expected | Source |
-|---|---|---|---|---|
-| NS laminar ⟨u⟩ after one e-fold | **+0.745713** (m=14) | ±8511 (T4.1 ceiling) | u₀·e⁻¹ = **0.735759** | Newtonian viscous decay du/dt=−νk²u (textbook; laminar-flow experiments) |
-| JC vacuum-Rabi angular freq. (δ=−0.35, g=0.18) | node confirmed at predicted t | — | Ω=2√(g²+δ²/4)=**0.5022** | vacuum Rabi splittings (Brune et al. 1996, cavity QED) |
+| Observable | SIRK value | Certified bar | Expected ± source uncertainty [key] |
+|---|---|---|---|
+| NS laminar ⟨u⟩ after one e-fold | **+0.745713** (m=14) | ±8511 (T4.1 ceiling) | u₀e⁻¹ = 0.735759 ± 0 theory-exact; laminar-decay experiments reproduce the νk² law to ≲2% [E7] |
+| JC vacuum-Rabi angular freq. (δ=−0.35, g=0.18) | node confirmed at predicted t* | — | Ω = 2√(g²+δ²/4) = 0.5022 ± 5% — Brune-type cavity-QED measurement precision [E8] |
 
 Reading guide: the T4.1 bars are RIGOROUS CEILINGS whose constants are
 tuned for dissipative problems — on these unitary models they are loose by
 construction, while the SHARP residual tier (widths ≤10⁻⁶ here) carries the
-separation power. Every "expected" entry that has an experimental anchor
-(GW170817 speed constraint, Casimir plate experiments, vacuum-Rabi
-splittings, laminar viscous decay) is reproduced to the quoted precision;
-the remainder are exact mainstream-theory results.
+separation power. Where an EXPERIMENTAL anchor exists it comes with the
+published uncertainty band ([E2], [E4], [E7], [E8]); purely theoretical
+expectations are marked ± 0 and their citations are to the standard
+derivation.
 
+### 9.2 Sources & uncertainty provenance for expected values
+
+- **[E1]** Starobinsky, *Phys. Lett.* **B91**, 99 (1980): f(R)=(M²/2)R+αR²
+  ⇔ scalaron mass m²=M²/(12α). With α a free Lagrangian parameter the
+  dimensionless gap is exact; observational bounds on r constrain the
+  physical M but are irrelevant to this normalized check.
+- **[E2]** Abbott et al. (LIGO/Virgo/Fermi-GBM/INTEGRAL), *Phys. Rev. Lett.*
+  **119**, 161101 (2017): GW170817/GRB170817A gives
+  −3×10⁻¹⁵ ≤ (v_g−c)/c ≤ +7×10⁻¹⁵ — THE published uncertainty band used.
+- **[E3]** Klein–Gordon dispersion ω²=k²+m²: exact; textbook derivation in
+  Peskin & Schroeder, *An Introduction to QFT*, ch. 2.
+- **[E4]** Spectrum ω_n=nπ/d: Casimir, *Proc. K. Ned. Akad. Wet.* **51**, 793
+  (1948). Experimental status of the plate interaction: Lamoreau,
+  *Phys. Rev. Lett.* **78**, 5 (1997) (~5%); Decca et al., *Phys. Rev. D*
+  **75**, 077101 (2007) (±1%) — the ±1% band quoted.
+- **[E5]** Residual symmetry A¹→−A¹ of the Weyl-gauge Legendre-transformed
+  abelian Hamiltonian: this project's Cadabra2 derivation
+  (`docs/yang_mills_hamiltonian.cdb`; book.tex §8182 convention note).
+- **[E6]** Bosonic Bogoliubov diagonalization of :x²:-blocks: Bogoliubov,
+  *Bull. Acad. Sci. USSR* **11**, 77 (1947); practical algorithm per Colpa,
+  *Physica A* **134**, 377 (1986). Reference uncertainty = deepest-window
+  certified width (self-consistency tier).
+- **[E7]** Newtonian viscous decay du/dt=−νk²u: Landau & Lifshitz,
+  *Fluid Mechanics* §15 (exact for Newtonian fluids); laminar spin-down
+  measurements agree within ≲2% (standard viscous-flow benchmarks compiled
+  in White, *Viscous Fluid Flow*, 3rd ed., ch. 3).
+- **[E8]** Vacuum Rabi splittings: Brune et al., *Phys. Rev. Lett.* **76**,
+  1800 (1996); review: Haroche, *Rev. Mod. Phys.* **85**, 1083 (2013)
+  (Nobel 2012). Measured frequencies track the Jaynes–Cummings prediction
+  within the ~5% experimental band quoted.
 ---
 
 ## 10. Sources
