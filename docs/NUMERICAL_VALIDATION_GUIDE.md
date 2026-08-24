@@ -359,30 +359,88 @@ corrections (the direction itself is asserted); atmospheric first-maximum
 L/E; KamLAND-baseline suppression band; Daya-Bay maximum survival
 1 − sin²2θ₁₃ ≈ 0.915.
 
+
 ### 5.12 Gauge-fixed program suite (`gauge_fixed_program_validation.rs`)
 
-Ten tests confined to the research program proper — NS / QYM / QED / QG(R²)
-gauge-fixed Hamiltonians driven through Hashimoto–SIRK: quartic scalaron
-self-interaction vs perturbation theory (with parity superselection and the
-measured O(λ²) shift), the massive scalaron band with its subluminal group
-velocity, hyperbolic densitized evolution, TEGR positivity, abelian Gauss-law
-charge conservation through the flow, g-sign spectral symmetry, multimode QED
-additivity, and full-e-fold NS decay from a SINGLE deep window in
-nondimensional units. The gotchas it encodes (universe merging under
-scale_and_add, Krylov collapse on eigenstate starts, indefinite kinetic on
-truncations) are documented in AGENTS.md S40.
+Ten SIRK tests confined to the research program proper — the 3D gauge-fixed
+Hamiltonians of NS / QYM / QED / QG(R²):
 
-### 5.11 Coupled oscillators — `coupled_oscillator_sirk.rs`
+- **QG quartic scalaron** `λ:x⁴:/4`: O(λ) shifts obey ΔEₙ=(3λ/2)n(n−1);
+  vacuum rule exact to ALL orders; parity superselection (:x⁴: has Δn even —
+  even/odd ladders resolved from separate starts); measured genuine O(λ²)
+  shift (+0.0997 at λ=0.05) on E₂; large-λ departs from PT.
+- **QG scalaron band**: ω(k)=√(k²+m²) resolved from one window; k→0 gap=m;
+  GROUP velocity k/ω subluminal rising to 1 (phase velocity >c for massive
+  fields — the causal statement is the group velocity).
+- **QG densitized kinetic** (flat d'Alembertian): unitary evolution through an
+  INDEFINITE spectrum conserves norm and energy exactly.
+- **QG TEGR 𝒮-kinetic**: rank saturates (~6); bounded-below band, positive gaps.
+- **QYM residual Gauss law**: generator P=π₀+π₁ (equal shift of A₀,A₁ keeps
+  B=A₀−A¹ invariant — NOT a number difference): [H,P]=0 probes; ⟨P⟩ conserved
+  exactly and Var(P) to 10⁻³ relative through the flow.
+- **QYM g-parity**: spectra at ±g coincide (A¹→−A¹ reparametrization).
+- **QYM interacting band**: Hermitian real finite resolution; the bare
+  truncated kinetic ½:π²: is INDEFINITE (positivity enters only via the
+  constraint projection — book.tex convention).
+- **QED multimode additivity**: whole four-rung band resolved from one window;
+  two-quanta energies 2ω (same mode) and ωᵢ+ωⱼ (cross modes).
+- **NS full-e-fold decay**: ONE deep window reproduces du/dt=−νk²u over a
+  complete e-folding in nondimensional units (raw-SI stiffness would demand
+  restarts — the engineering path remains available).
+- **NS advective conservation**: unitarity + ⟨H⟩ through the advection fiber.
 
-*Community relevance:* the beamsplitter Hamiltonian is linear-optical quantum
-computing; the Jaynes–Cummings model is cavity QED (Rabi oscillations measured
-per-qubit; Nobel 2005 fibre optics / 2012 ion traps); the displaced oscillator
-is the polaron/dressing paradigm — every perturbative "self-energy" is one.
+Framework gotchas encoded (details in AGENTS.md S40): distinct inner
+occupations of one universe MERGE under scale_and_add (sector superpositions
+must keep separate universes); eigenstate starts collapse the Krylov rank;
+the truncated gauge-fixed kinetic is indefinite.
 
-*What is asserted:* exact sector spectra {ω−J, ω+J}; full swap dynamics with
-norm conservation through restarted Krylov; coherent-state content ⟨N⟩=α² of
-the displaced ground state; level placement E_n = ωn − g²/ω within
-solver-accuracy bands (see §8 for the edge study).
+
+### 5.13 SIRK dynamics across sectors (`sirk_dynamics_validation.rs`)
+
+Observables measured from the UNITARY FLOW rather than spectra:
+- **Scalaron beat note**: two momentum sectors dephase at Δω; the observable
+  is inter-sector COHERENCE via a transfer operator (populations are frozen
+  under a diagonal band Hamiltonian — a recurring trap).
+- **Graviton vs scalaron speed split**: massless ω=k and massive √(k²+m²)
+  bands from one window each — GW170817 vs massive-scalar contrast.
+- **QYM gap stiffening**: the abelian resolved gap grows monotonically with g
+  (positive-definite magnetic self-interaction repels levels upward).
+- **NS combined decay+advection**: short-time factorization (viscous rate
+  identical with/without advection) plus exact unitarity/energy conservation;
+  the advected pair backfeeds into the viscous sector by t≈1 — the fiber is
+  one coupled system, so full-window factorization is NOT claimed.
+
+### 5.14 Constraints & superselection (`brst_constraint_validation.rs`)
+
+- **First abelian YM BRST charge in the repo**: Ω = P·b†_ghost, nilpotent by
+  Pauli, [H,Ω]=0 at g=0; mid-sequence projection is an identity on physical
+  flows (spectra and ⟨P⟩ agree with unprojected runs to 10⁻⁷).
+- **QED total-excitation superselection**: N_tot=a†a+e†e commutes with detuned
+  Jaynes–Cummings; mean and variance are flow constants while the quantum
+  shuttles between cavity and atom.
+- **QG spectroscopy→dynamics closure**: the densitized model's Bogoliubov
+  blocks are diagonalized to opposite-sign number operators (+1/16 vs −1/24);
+  the solved splitting ΔE predicts a transfer-coherence node at t=π/(2ΔE),
+  confirmed by the flow.
+
+### 5.15 Action→spectrum chains (`qg_action_predictions_validation.rs`)
+
+- **α-scaling chain**: m(α)=1/√(12α) verified, then re-measured as the exact
+  k→0 SIRK gap for each α (action parameter → spectral prediction).
+- **Yukawa limits**: Φ=−GM/r(1+⅓e^{−mr}): Newtonian to 10⁻³⁰ at r≫1/m;
+  exactly 4/3 at r≪1/m (the published f(R) short-range enhancement).
+- **Cross-builder consistency**: TEGR 𝒮-form vs densitized flat form agree on
+  their common subsector within documented truncation bands.
+
+### 5.16 Solver consistency (`sirk_consistency_validation.rs`)
+
+Every alternative numerical path lands on the same physics: restarted vs
+single-shot NS decay agree and both sit on e^{−t}; scalaron-band evolutions
+from different slicings have full-state overlap ≈1; frame invariance
+(canonical vs unit-norm) holds on resolved rungs with per-level floors that
+reproduce the ritz_edge_study wall tail (E₁~1e-4, E₂~3e-3, E₃~4e-2); the
+unit-norm frame certifies at least as many rungs as canonical.
+
 
 ---
 
