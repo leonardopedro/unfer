@@ -16,6 +16,7 @@
 
 pub mod auto;
 pub mod brst;
+pub mod certificate;
 pub mod device;
 pub mod evolve;
 pub mod forward_sirk;
@@ -23,6 +24,10 @@ pub mod linalg;
 pub mod registry;
 pub mod tensor_state;
 
+pub use certificate::{
+    Certificate, GapCertificate, certified_ground_state, certified_mass_gap,
+    certified_ritz_values, emit_gap_certificate_ndjson,
+};
 pub use device::best_device;
 pub use evolve::evolve_restarted;
 pub use forward_sirk::{

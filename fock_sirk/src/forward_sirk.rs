@@ -164,6 +164,63 @@ impl ForwardSirkResult {
         out
     }
 
+    /// **Absolute** residuals `‖Hψ − θψ‖` of every Ritz pair, computed
+    /// entirely from the stored Gram matrix (same cancellation-free
+    /// construction as [`Self::ritz_residuals`], without the relative
+    /// normalization).  Returns `(θ, ‖Hψ − θψ‖)` sorted by ascending `θ`.
+    ///
+    /// This is the **sharp-tier certificate**: by the Rayleigh–Ritz residual
+    /// bound (Parlett), `|θ − λ| ≤ ‖Hψ − θψ‖` for the *exact* operator
+    /// applied to the *computed* vector — the a-posteriori width the
+    /// certified mass-gap assembly consumes (`MASS_GAP_CERTIFIED.md` §2,
+    /// §4.3; `fock_sirk/src/certificate.rs`).
+    pub fn ritz_abs_residuals(&self) -> Vec<(f64, f64)> {
+        let m = self.scales.len() - 1;
+        let eig = self.h_proj.clone().symmetric_eigen();
+
+        // Sort eigenpairs ascending.
+        let mut order: Vec<usize> = (0..eig.eigenvalues.len()).collect();
+        order.sort_by(|&a, &b| {
+            eig.eigenvalues[a]
+                .partial_cmp(&eig.eigenvalues[b])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let g = &self.g_matrix;
+
+        let mut out = Vec::with_capacity(order.len());
+        for &i in &order {
+            let theta = eig.eigenvalues[i];
+            let c = eig.eigenvectors.column(i); // whitened-frame coeffs
+            let c_hat = &self.w_whiten * c; // → unit-norm Krylov frame
+
+            // Big-space coordinates d (length m+1): H ψ has coordinates d in
+            // span{u_0..u_m} (see [`Self::ritz_residuals`]).
+            let mut d = nalgebra::DVector::<Complex64>::zeros(m + 1);
+            for j in 0..m {
+                d[j] += self.shifts[j] * c_hat[j];
+            }
+            for j in 1..=m {
+                d[j] += self.scales[j] * c_hat[j - 1];
+            }
+
+            // Residual vector, formed before any metric contraction:
+            //   e_j = d_j − θ ĉ_j  (j < m; vanishes by the Galerkin
+            //        condition in exact arithmetic),
+            //   e_m = τ_m ĉ_{m−1}   (the one component H pushes OUTSIDE the
+            //        projected basis — the entire physical content).
+            // ‖Hψ − θψ‖² = e† G e exactly (no catastrophic cancellation).
+            let mut e = nalgebra::DVector::<Complex64>::zeros(m + 1);
+            for j in 0..m {
+                e[j] = d[j] - theta * c_hat[j];
+            }
+            e[m] = self.scales[m] * c_hat[m - 1];
+            let res2 = (e.conjugate().transpose() * g * e)[(0, 0)].re.max(0.0);
+            out.push((theta, res2.sqrt()));
+        }
+        out
+    }
+
     /// Ritz values whose true relative residual (see [`Self::ritz_residuals`])
     /// is at most `rel_tol`, sorted ascending — the converged part of the
     /// spectrum, enforced by the solver instead of by caller convention.
