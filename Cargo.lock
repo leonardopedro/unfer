@@ -5382,8 +5382,11 @@ dependencies = [
 name = "unfer_ffi"
 version = "0.1.0"
 dependencies = [
+ "fock_sirk",
  "hex",
  "loro",
+ "nalgebra",
+ "nested_fock_algebra",
  "ode_sirk",
  "prob_kernel",
  "proptest",

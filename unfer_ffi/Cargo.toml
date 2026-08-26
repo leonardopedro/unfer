@@ -30,3 +30,9 @@ ureq = { version = "2", features = ["json"], optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# End-to-end T6 test: run the fock_sirk mass-gap solve and record every
+# emitted certificate through uk_certificate_issued (test-only; the lib
+# never depends on fock_sirk).
+fock_sirk = { path = "../fock_sirk" }
+nested_fock_algebra = { path = "../nested_fock_algebra" }
+nalgebra = { workspace = true }

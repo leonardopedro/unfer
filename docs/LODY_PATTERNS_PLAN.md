@@ -1,8 +1,10 @@
 # Lody-Patterns Implementation Plan
 
 **Status: fully executed (2026-08-26).** Items 1–5 landed, tested, and
-synced (commits in both repos); items 6–7 are resolved by analysis as
-deliberate non-actions (see below).
+synced (commits in both repos); the follow-up wave (items 8–10 below:
+real transport, overlay UI, T6 durable wiring) landed the same day;
+items 6–7 are resolved by analysis as deliberate non-actions (see
+below).
 
 Source: analysis of `LodyAI/Lody` (the collaborative coding-agents platform built
 on **Loro**, which this project already uses in `unfer` and `velysterm`).
@@ -125,6 +127,46 @@ provides for agent actions.
 
 No new networking and no new crates: the delta-shaped blob channel that
 would carry `export_delta`/`import_delta` traffic now carries presence too.
+
+---
+
+## Executed in this pass (2026-08-26, follow-up 2)
+
+### 8. `velysterm` — real TCP presence transport
+
+`crates/mathed/src/presence_net.rs` (new module, std-only — no new deps)
+carries presence between two mathed instances over TCP: `--listen
+host:port` accepts the first peer in the background, `--connect
+host:port` dials it. Frames are `[tag: u8][len: u32 BE][payload]` with
+`b'P'` = presence blob (room for a future `b'D'` delta frame). A reader
+thread unframes the wire into an inbox; a writer frames the outbox;
+`Drop` sets a shutdown flag and closes the socket so the peer observes
+EOF (`connected()` flips false). `sync_presence` now broadcasts the
+host's presence on every caret move and drains the wire into
+`PresenceStore::apply`; the offline in-process demo peer remains the
+fallback when no transport is configured. Two unit tests: loopback
+round-trip both directions + EOF on drop, and connect-refused fails
+fast.
+
+### 9. `velysterm` — live-collaborator overlay UI
+
+F3 toggles an overlay (top-right, semi-transparent) listing the
+transport status plus every live peer — name · caret line:col (computed
+from the doc text) · seconds since heartbeat. The node rebuilds only
+when the text changes; a remote caret byte is clamped to a char
+boundary so it never panics slicing the doc.
+
+### 10. `unfer` — T6 certificates durably recorded end-to-end
+
+`fock_sirk::emit_gap_certificate_ndjson_with` (new, additive — the old
+entry point delegates to it with a no-op sink) hands every emitted
+NDJSON line to a recorder. `unfer_ffi` dev-depends on `fock_sirk`
+(test-only) and the new `t6_emitted_certificates_are_durably_recorded
+_end_to_end` lib test runs the real g=2, m=4 mass-gap solve, records
+both sector certificates and the assembly through
+`uk_certificate_issued` (seqs 1,2,3), checks `uk_durable_status`
+(`certificates: 3`), and kill-and-resumes to replay exactly those three
+`certificate-issued` lines from disk.
 
 ---
 

@@ -191,7 +191,16 @@ pub fn certified_mass_gap(
 /// One line per sector plus one assembly line, each self-describing:
 /// `{"kind": ..., "parity": ..., "theta": ..., "delta": ..., "lo": ...,
 /// "hi": ...}`.
-pub fn emit_gap_certificate_ndjson(gap: &GapCertificate) -> String {
+/// Emit with a per-line recorder. The `sink` receives every NDJSON line
+/// (both sector certificates and the assembly) as it is produced, so a
+/// host can durably record each emitted certificate (e.g. the kernel's
+/// `uk_certificate_issued` → `certificates` stream) without re-parsing
+/// the output. The returned string is identical to
+/// [`emit_gap_certificate_ndjson`].
+pub fn emit_gap_certificate_ndjson_with(
+    gap: &GapCertificate,
+    mut sink: impl FnMut(&str),
+) -> String {
     let sector = |parity: &str, c: &Certificate| {
         format!(
             "{{\"kind\":\"ritz_certificate\",\"parity\":\"{parity}\",\"theta\":{:.17e},\
@@ -215,10 +224,23 @@ pub fn emit_gap_certificate_ndjson(gap: &GapCertificate) -> String {
         gap.even.delta() + gap.odd.delta(),
         gap.lo > 0.0
     );
-    format!(
-        "{}\n{}\n{}\n",
-        sector("even", &gap.even),
-        sector("odd", &gap.odd),
-        assembly
-    )
+    let mut out = String::new();
+    for line in [sector("even", &gap.even), sector("odd", &gap.odd), assembly] {
+        out.push_str(&line);
+        out.push('\n');
+        sink(&line);
+    }
+    out
+}
+
+/// Serialize a certified mass gap as NDJSON (see
+/// [`emit_gap_certificate_ndjson_with`]): the data (parity labels, θ, δ)
+/// consumed by the Lean4 T6 instance (`ChapterSirkCertifiedGap`) and
+/// re-verified by `prob_kernel::verify::verify_export` (nanoda).
+///
+/// One line per sector plus one assembly line, each self-describing:
+/// `{"kind": ..., "parity": ..., "theta": ..., "delta": ..., "lo": ...,
+/// "hi": ...}`.
+pub fn emit_gap_certificate_ndjson(gap: &GapCertificate) -> String {
+    emit_gap_certificate_ndjson_with(gap, |_| {})
 }

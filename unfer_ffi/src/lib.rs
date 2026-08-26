@@ -3823,6 +3823,131 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ── T6 end-to-end: every emitted certificate is durably recorded ─────
+    //
+    // The real pipeline: the fock_sirk mass-gap solve emits NDJSON lines
+    // (two sector certificates + the assembly); each line is recorded through
+    // `uk_certificate_issued` into the durable `certificates` stream, so the
+    // kernel's replayable audit trail is exactly the set of emitted
+    // certificates (Lody turn-diff-store: every agent action leaves a
+    // replayable record).
+
+    #[test]
+    fn t6_emitted_certificates_are_durably_recorded_end_to_end() {
+        use fock_sirk::{
+            SirkOpts, certified_mass_gap, emit_gap_certificate_ndjson_with,
+            solve_forward_sirk_with_opts,
+        };
+        use fock_sirk::auto::shifts_for_range;
+        use fock_sirk::device::best_device;
+        use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, yang_mills_lattice};
+
+        fn empty_vacuum() -> QuantumState {
+            QuantumState::vacuum()
+                .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
+        }
+        fn one_flux_on_link0() -> QuantumState {
+            let mut inner = InnerBosonicState::vacuum();
+            inner.modes.insert(0, 1);
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner))
+        }
+        fn solve_sector(
+            h: &nested_fock_algebra::Hamiltonian,
+            v0: &QuantumState,
+            m: usize,
+        ) -> fock_sirk::ForwardSirkResult {
+            let opts = SirkOpts {
+                prune_eps: 1e-12,
+                max_components: Some(100_000),
+                brst_tol: 1e-10,
+                adaptive: false,
+                unit_norm_steps: false,
+            };
+            let res = solve_forward_sirk_with_opts(
+                h,
+                v0,
+                &shifts_for_range((0, m)),
+                &best_device(),
+                None,
+                &opts,
+            )
+            .expect("SIRK solve must complete");
+            let h_proj = &res.h_proj;
+            let diff = (h_proj - &h_proj.adjoint()).norm();
+            assert!(diff < 1e-6, "H_proj must be Hermitian, ‖H−H†‖={diff}");
+            res
+        }
+
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-t6-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable init must succeed");
+
+        // The T6 solve at g=2, m=4 (the qcd_mass_gap_certified instance).
+        let h_lat = yang_mills_lattice(2, 2.0, 1);
+        let res_even = solve_sector(&h_lat, &empty_vacuum(), 4);
+        let res_odd = solve_sector(&h_lat, &one_flux_on_link0(), 4);
+        let gap = certified_mass_gap(&res_even, &res_odd).expect("certified mass gap");
+        assert!(gap.lo > 0.0, "certified lower bound must be positive");
+
+        // Emit with the kernel recorder: every NDJSON line is durably
+        // recorded via uk_certificate_issued as it is produced.
+        let mut seqs = Vec::new();
+        let mut kinds = Vec::new();
+        let _ndjson = emit_gap_certificate_ndjson_with(&gap, |line| {
+            let (ptr, len) = json_ptr(line);
+            let seq = uk_certificate_issued(ptr, len);
+            assert!(seq > 0, "certificate record refused: {seq}");
+            let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+            kinds.push(parsed["kind"].as_str().unwrap().to_string());
+            seqs.push(seq);
+        });
+
+        // Three lines: even sector, odd sector, assembly; seqs 1,2,3.
+        assert_eq!(kinds, vec!["ritz_certificate", "ritz_certificate", "certified_mass_gap"]);
+        assert_eq!(seqs, vec![1, 2, 3], "each certificate gets a fresh sequence number");
+
+        // Live status agrees: certificates stream length 3.
+        let status: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_durable_status(b, c))).unwrap();
+        assert_eq!(status["streams"]["certificates"], 3);
+
+        // Kill-and-resume: replay yields exactly the emitted certificates.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable re-init must succeed");
+        let store = handles::durable().expect("store must be configured");
+        let records = store
+            .replay(unfer_protocol::durable::streams::CERTIFICATES)
+            .expect("replay must succeed");
+        assert_eq!(records.len(), 3, "exactly the emitted certificates on disk");
+        for (i, rec) in records.iter().enumerate() {
+            let line: serde_json::Value = serde_json::from_slice(rec).unwrap();
+            assert_eq!(line["kind"], "certificate-issued");
+            assert_eq!(
+                line["record"]["kind"],
+                kinds[i],
+                "record {i} must be the emitted {}",
+                kinds[i]
+            );
+        }
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // ── S6: agent accountability + audit ──────────────────────────────────
     //
     // The audit trail and agent registry are kernel-global (shared FFI statics),
