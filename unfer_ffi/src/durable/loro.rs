@@ -5,7 +5,8 @@
 //! interrupted flush and fork at a known frontier.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use loro::{ExportMode, Frontiers, LoroDoc, LoroList};
 use unfer_protocol::durable::{DurableError, DurableStore};
@@ -26,6 +27,13 @@ pub struct LoroDurableStore {
     doc: LoroDoc,
     dir: Option<std::path::PathBuf>,
     drain: DrainLock,
+    /// Whether an `append` happened since the last `flush` checkpoint.
+    /// A clean flush (nothing new) skips the snapshot write entirely —
+    /// the coalescer: bursts of appends share one persist.
+    dirty: Mutex<bool>,
+    /// Completed snapshot writes (a live-status metric and the
+    /// coalescer's observable effect).
+    persists: AtomicU64,
 }
 
 impl LoroDurableStore {
@@ -41,12 +49,20 @@ impl LoroDurableStore {
             doc,
             dir: dir.map(|p| p.to_path_buf()),
             drain: DrainLock::default(),
+            dirty: Mutex::new(false),
+            persists: AtomicU64::new(0),
         }
     }
 
     /// The Loro document backing this store (exposed for tests/coordination).
     pub fn doc(&self) -> &LoroDoc {
         &self.doc
+    }
+
+    /// How many snapshot writes have completed since open. A `flush`
+    /// with no new appends does not increment this.
+    pub fn persist_count(&self) -> u64 {
+        self.persists.load(Ordering::Relaxed)
     }
 
     fn list(&self, stream: &str) -> LoroList {
@@ -86,15 +102,32 @@ impl DurableStore for LoroDurableStore {
         self.list(stream)
             .push(text)
             .map_err(|e| DurableError::Io(format!("loro append: {e}")))?;
+        *self.dirty.lock().unwrap_or_else(|e| e.into_inner()) = true;
         // Auto-commit keeps the in-memory frontier current; durability is
         // established by `flush`.
         Ok(())
     }
 
+    fn stream_len(&self, stream: &str) -> Result<u64, DurableError> {
+        // Cheap: the Loro list knows its own length; no replay needed.
+        Ok(self.list(stream).len() as u64)
+    }
+
     fn flush(&self) -> Result<(), DurableError> {
         let _guard = self.drain.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Coalesce: a checkpoint with nothing new since the last persist
+        // skips the snapshot write entirely (still serialized on the
+        // drain, so the on-disk frontier never moves backwards).
+        let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
+        if !*dirty {
+            return Ok(());
+        }
+        *dirty = false;
+        drop(dirty);
         self.doc.commit();
-        self.persist()
+        self.persist()?;
+        self.persists.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, DurableError> {
@@ -128,6 +161,8 @@ impl DurableStore for LoroDurableStore {
             doc: fork,
             dir: None,
             drain: DrainLock::default(),
+            dirty: Mutex::new(false),
+            persists: AtomicU64::new(0),
         }))
     }
 

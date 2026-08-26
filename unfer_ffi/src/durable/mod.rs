@@ -150,6 +150,11 @@ mod tests {
         assert!(store.replay(streams::ACTIONS).unwrap().is_empty());
         assert!(store.replay(streams::CONFIG).unwrap().is_empty());
 
+        // Live per-stream lengths (no replay on the Loro backend).
+        assert_eq!(store.stream_len(streams::AUDIT).unwrap(), 3);
+        assert_eq!(store.stream_len(streams::OWNER_LOG).unwrap(), 1);
+        assert_eq!(store.stream_len(streams::ACTIONS).unwrap(), 0);
+
         // Frontiers are opaque but present after writes.
         let frontier = store.frontier().unwrap();
         assert!(!frontier.is_empty());
@@ -160,6 +165,45 @@ mod tests {
         let store = LoroDurableStore::open(None);
         round_trip_suite(&store);
         assert_eq!(store.backend(), "loro");
+    }
+
+    #[test]
+    fn loro_flush_coalesces_when_clean() {
+        let scratch = Scratch::new("coalesce");
+        let store = LoroDurableStore::open(Some(&scratch.0));
+        assert_eq!(store.persist_count(), 0);
+
+        // A flush with nothing appended is a no-op checkpoint.
+        store.flush().unwrap();
+        assert_eq!(store.persist_count(), 0);
+
+        // Appending dirties the store; the next flush persists once.
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.flush().unwrap();
+        assert_eq!(store.persist_count(), 1);
+
+        // A second flush without appends does not rewrite the snapshot.
+        store.flush().unwrap();
+        assert_eq!(store.persist_count(), 1);
+
+        // A burst of appends coalesces into a single persist.
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.append(streams::AUDIT, b"{\"n\":3}").unwrap();
+        store.flush().unwrap();
+        assert_eq!(store.persist_count(), 2);
+
+        // Kill-and-resume: every appended record survived.
+        let store2 = LoroDurableStore::open(Some(&scratch.0));
+        let audit = store2.replay(streams::AUDIT).unwrap();
+        assert_eq!(
+            audit,
+            vec![
+                b"{\"n\":1}".to_vec(),
+                b"{\"n\":2}".to_vec(),
+                b"{\"n\":3}".to_vec()
+            ]
+        );
+        assert_eq!(store2.stream_len(streams::AUDIT).unwrap(), 3);
     }
 
     #[test]

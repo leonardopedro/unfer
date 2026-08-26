@@ -53,6 +53,14 @@ pub trait DurableStore: fmt::Debug + Send + Sync {
     /// An `Err` is fail-closed: the record was not committed.
     fn append(&self, stream: &str, record: &[u8]) -> Result<(), DurableError>;
 
+    /// Number of records currently in a stream (live-status support).
+    ///
+    /// The default implementation replays the stream and counts; backends
+    /// with a cheap length (e.g. a Loro list) override it.
+    fn stream_len(&self, stream: &str) -> Result<u64, DurableError> {
+        Ok(self.replay(stream)?.len() as u64)
+    }
+
     /// Make every prior `append` durable (the checkpoint barrier). An `Err`
     /// means the checkpoint failed and prior records may or may not be durable;
     /// callers must fail closed (refuse to serve a probability/condition or
