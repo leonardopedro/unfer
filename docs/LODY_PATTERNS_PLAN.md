@@ -1,5 +1,9 @@
 # Lody-Patterns Implementation Plan
 
+**Status: fully executed (2026-08-26).** Items 1–5 landed, tested, and
+synced (commits in both repos); items 6–7 are resolved by analysis as
+deliberate non-actions (see below).
+
 Source: analysis of `LodyAI/Lody` (the collaborative coding-agents platform built
 on **Loro**, which this project already uses in `unfer` and `velysterm`).
 Lody's architecture (from its module tree and sources) centers on a handful of
@@ -122,21 +126,32 @@ provides for agent actions.
 No new networking and no new crates: the delta-shaped blob channel that
 would carry `export_delta`/`import_delta` traffic now carries presence too.
 
-### 6. `dynamic-arctic` / `australVM` — awareness surfaces
+---
 
-- `dynamic-arctic` is pure computation (arctic/lagrange/shine cores) — no
-  collaboration surface; Lody patterns do not apply. Leave as-is.
-- `australVM` has an OCaml editor (`editor/`). Loro has no maintained OCaml
-  binding, so presence would be a green-field port — explicitly **not**
-  worth it under the "improve existing code" rule. Leave as-is.
+## Resolved by analysis (deliberately NOT executed)
+
+These were the remaining candidates from the Lody survey. Each is a
+*decision*, not a TODO: the analysis below is why no code lands for them,
+and the outcome closes the plan.
+
+### 6. `dynamic-arctic` / `australVM` — no awareness surface
+
+- `dynamic-arctic` is pure computation (`arctic_core`/`lagrange`/`shine_core`
+  cores, no collaboration surface — verified: no loro/awareness/presence
+  references in `src/`). Lody's presence patterns do not apply. **Resolved:**
+  leave as-is.
+- `australVM` is an OCaml editor (`austral.opam`, `austral/`). Loro has no
+  maintained OCaml binding (verified: no `loro` in any opam/dune/ml file),
+  so presence would be a green-field port — explicitly **not** worth it
+  under the "improve existing code" rule. **Resolved:** leave as-is.
 
 ### 7. `timepiece` — no new code
 
 The wave/review discipline (`CONSOLIDATED_PLAN.md` §8 gate re-run, §13
 certified-bound plan, BookProof `#check` sections) already implements Lody's
 `review-automation-plan` / `turn-diff-store` ideas in the Lean workflow.
-Nothing to build; the specialist gate re-run after each merge *is* the
-pattern.
+**Resolved:** nothing to build; the specialist gate re-run after each merge
+*is* the pattern.
 
 ---
 
