@@ -213,6 +213,9 @@ impl BondMarketService {
     /// Issue a bond: the sponsor's `funding` coin (face value `principal`) is
     /// rowed into the deterministic collateral DID, then the signed `Issue` is
     /// emitted.
+    // The parameter list mirrors the `MathBondOp::Issue` transaction fields;
+    // grouping them into a struct would churn the op/protocol types.
+    #[allow(clippy::too_many_arguments)]
     pub fn issue_bond(
         &mut self,
         sponsor: &Keypair,

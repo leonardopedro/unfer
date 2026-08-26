@@ -118,14 +118,14 @@ impl Ted {
             if m.coeff == 0 {
                 continue;
             }
-            if let Some(last) = out.last_mut() {
-                if last.vars == m.vars {
-                    last.coeff = last.coeff.wrapping_add(m.coeff);
-                    if last.coeff == 0 {
-                        out.pop();
-                    }
-                    continue;
+            if let Some(last) = out.last_mut()
+                && last.vars == m.vars
+            {
+                last.coeff = last.coeff.wrapping_add(m.coeff);
+                if last.coeff == 0 {
+                    out.pop();
                 }
+                continue;
             }
             out.push(m);
         }

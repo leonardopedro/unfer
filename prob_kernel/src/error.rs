@@ -570,6 +570,54 @@ mod tests {
         }
     }
 
+    /// Every variant's `Display` message (the `#[error(...)]` arms) must be
+    /// non-empty, and the diagnostic the agent sees must carry a non-empty
+    /// primary message — a variant whose message is empty or lost in the
+    /// diagnostic chain breaks the agent-facing error contract (an agent must
+    /// be able to read *why* the call failed). Some arms rebuild the message
+    /// with an added prefix (e.g. `Cas::Parse` → "symbolic parse error: …"),
+    /// so the contract is non-emptiness of both, not exact equality.
+    #[test]
+    fn every_variant_display_message_is_nonempty_and_surfaces() {
+        for err in every_variant() {
+            let msg = err.to_string();
+            assert!(
+                !msg.trim().is_empty(),
+                "variant {err:?} renders an empty Display message"
+            );
+            let diag = err.to_diagnostic();
+            assert!(
+                !diag.message.trim().is_empty(),
+                "variant {err:?} diagnostic has an empty primary message"
+            );
+            // Severity is always one of the four known levels.
+            assert!(
+                matches!(
+                    diag.severity,
+                    Severity::Error | Severity::Warning | Severity::Fatal
+                ),
+                "variant {err:?} has unexpected severity {:?}",
+                diag.severity
+            );
+        }
+    }
+
+    /// Stress the diagnostic path: repeated conversion of every variant must
+    /// be stable (deterministic message/code/hints across calls).
+    #[test]
+    fn diagnostic_conversion_is_stable_under_repetition() {
+        for _ in 0..50 {
+            for err in every_variant() {
+                let a = err.to_diagnostic();
+                let b = err.to_diagnostic();
+                assert_eq!(a.code, b.code);
+                assert_eq!(a.message, b.message);
+                assert_eq!(a.hints.len(), b.hints.len());
+                assert_eq!(a.severity, b.severity);
+            }
+        }
+    }
+
     /// Variants that represent *user-actionable* failures (everything except the
     /// genuinely-internal UK-5000 bucket) must map to a **specific** code, not the
     /// internal catch-all. This is the "silent degradation to UK-5000" guard.

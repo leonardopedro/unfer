@@ -211,12 +211,11 @@ pub fn fold_closed_through_deltanet(term: &CoreIR) -> CoreIR {
     match term {
         CoreIR::Prim(op, args) => {
             let args: Vec<CoreIR> = args.iter().map(fold_closed_through_deltanet).collect();
-            if args.len() == 2 {
-                if let (CoreIR::Lit(a), CoreIR::Lit(b)) = (&args[0], &args[1]) {
-                    if let Some(lit) = deltanet::symbolic::eval_prim(*op, a, b) {
-                        return CoreIR::Lit(lit);
-                    }
-                }
+            if args.len() == 2
+                && let (CoreIR::Lit(a), CoreIR::Lit(b)) = (&args[0], &args[1])
+                && let Some(lit) = deltanet::symbolic::eval_prim(*op, a, b)
+            {
+                return CoreIR::Lit(lit);
             }
             CoreIR::Prim(*op, args)
         }

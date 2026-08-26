@@ -1712,6 +1712,260 @@ mod tests {
         }
     }
 
+    // ── core lifecycle at the unit level (the coverage gate instruments
+    //    only the --lib harness, so the integration-test lifecycle coverage
+    //    does not count toward the per-file threshold) ──────────────────
+
+    #[test]
+    fn lifecycle_evolve_probability_snapshot_save_restore() {
+        let mut s = non_qfm_session();
+        assert_eq!(s.event_log_len(), 1, "root Create event only");
+        assert_eq!(s.t(), 0.0);
+
+        // Vacuum prior: P(vacuum) = 1, everything else 0.
+        let p_vac = s.probability(&EventPredicate::Vacuum).expect("prob");
+        assert!((p_vac - 1.0).abs() < 1e-12);
+
+        // Evolve a small step: norm conserved (unitary), time advances, the
+        // event log gains exactly one Evolve record.
+        let before = s.event_log_len();
+        let report = s.evolve(0.1).expect("evolve");
+        assert!((report.norm - 1.0).abs() < 1e-9, "unitarity: {}", report.norm);
+        assert!((s.t() - 0.1).abs() < 1e-12);
+        assert_eq!(s.event_log_len(), before + 1);
+        assert!(matches!(
+            s.event_log().last().unwrap().spec,
+            SessionEventSpec::Evolve { t, .. } if (t - 0.1).abs() < 1e-12
+        ));
+
+        // Snapshot: the vacuum dominates.
+        let sum = s.snapshot(4);
+        assert!(sum.components >= 1);
+        assert!((sum.norm - 1.0).abs() < 1e-9);
+        assert!(!sum.top.is_empty());
+
+        // Save/restore round-trips the *derived* event log and reproduces
+        // the same state and time.
+        let blob = s.save();
+        assert_eq!(blob.format_version, SESSION_FORMAT_VERSION);
+        let r = Session::restore(blob).expect("restore");
+        assert!((r.t() - 0.1).abs() < 1e-12, "time preserved: {}", r.t());
+        let l = serde_json::to_string(&r.state).unwrap();
+        let live = serde_json::to_string(&s.state).unwrap();
+        assert_eq!(l, live, "restored state equals live state");
+        // The restored session can keep accumulating.
+        let mut r = r;
+        r.evolve(0.05).expect("evolve after restore");
+        assert!((r.t() - 0.15).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fork_compaction_boundaries_and_replay_validation() {
+        let mut s = non_qfm_session();
+        s.evolve(0.1).expect("evolve");
+        let log_len = s.event_log_len();
+
+        // Fork at the root Create (seq 0): replays the prefix and diverges.
+        let fork = s.fork_at(0).expect("fork at root");
+        assert_eq!(fork.event_log_len(), 1);
+        assert!((fork.t() - 0.0).abs() < 1e-12);
+        // Fork at the last settled boundary.
+        let fork2 = s
+            .fork_at((log_len - 1).try_into().unwrap())
+            .expect("fork at tail");
+        assert!((fork2.t() - 0.1).abs() < 1e-12);
+        // Out-of-range fork is refused (UK-1009 family).
+        assert!(matches!(
+            s.fork_at(log_len as u64),
+            Err(KernelError::SessionForkRange { .. })
+        ));
+
+        // Compaction through the settleable boundary (the root Create is
+        // settleable; the Evolve is not — it would split the dependency).
+        assert!(matches!(
+            s.compact_through(1),
+            Err(KernelError::SessionCompactionBusy { .. })
+        ), "Evolve boundary must be refused");
+        s.compact_through(0).expect("compact through root");
+        // Lock closed: the derived log root is now the CompactEnd summary.
+        assert!(!s.is_compaction_locked());
+        assert!(matches!(
+            s.event_log().last().unwrap().spec,
+            SessionEventSpec::CompactEnd {
+                summary: Some(_),
+                ..
+            }
+        ));
+        // The session is still live and replayable (fold ≡ live in debug).
+        s.evolve(0.05).expect("evolve after compaction");
+
+        // compact_end without an open start is refused.
+        assert!(matches!(
+            s.compact_end(),
+            Err(KernelError::SessionCompactionBusy { .. })
+        ));
+
+        // The public replay-for-test surface folds the same raw log into an
+        // equivalent session (the debug-build invariant, exposed).
+        let replayed = Session::replay_for_test(s.event_log());
+        assert_eq!(replayed.event_log_len(), s.event_log_len());
+
+        // Replay validation: a non-monotonic seq is refused (UK-1006).
+        let mut evs = s.event_log().to_vec();
+        if evs.len() >= 2 {
+            evs.swap(0, 1);
+            let r = Session::replay(&evs);
+            assert!(matches!(r, Err(KernelError::SessionLogVersion { .. })));
+        }
+        // An empty log is refused.
+        assert!(matches!(
+            Session::replay(&[]),
+            Err(KernelError::SessionLogVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn ode_consult_methods() {
+        // `analyze_self_adjointness` requires an OdeSystem Hamiltonian.
+        let s = non_qfm_session();
+        assert!(matches!(
+            s.analyze_self_adjointness(),
+            Err(KernelError::Internal(_))
+        ), "non-ODE session must be refused");
+
+        // A harmonic-oscillator ODE system runs the ESA pipeline end to end.
+        let spec = ModelSpec {
+            hamiltonian: HamiltonianSpec::ode_system(
+                vec!["x".into(), "v".into()],
+                vec!["v".into(), "-x".into()],
+                None,
+            ),
+            prior: PriorSpec::Vacuum,
+            solver: SolverSpec::default(),
+        };
+        let ode = Session::new(&spec).expect("compile ODE session");
+        let report = ode.analyze_self_adjointness().expect("ESA report");
+        assert_eq!(report.vars, vec!["x", "v"]);
+        assert!(
+            !report.summary().is_empty(),
+            "the ESA report carries a human-readable summary"
+        );
+        // The observable consult returns the state norm (the placeholder
+        // observable in the original coordinates).
+        let obs = ode.measure_ode_observable("x").expect("observable");
+        assert!(obs.is_finite() && obs >= 0.0);
+    }
+
+    /// A store whose checkpoint barrier always fails — for pinning the H4
+    /// fail-closed contract: a probability/condition served on top of a
+    /// failed checkpoint is refused, never silently stale.
+    #[derive(Debug)]
+    struct FailingFlushStore(MemStore);
+
+    impl unfer_protocol::durable::DurableStore for FailingFlushStore {
+        fn backend(&self) -> &'static str {
+            "mem-failing"
+        }
+        fn append(
+            &self,
+            stream: &str,
+            record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
+            self.0.append(stream, record)
+        }
+        fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
+            Err(unfer_protocol::durable::DurableError::Io(
+                "simulated checkpoint failure".into(),
+            ))
+        }
+        fn replay(
+            &self,
+            stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+            self.0.replay(stream)
+        }
+        fn frontier(&self) -> Result<Vec<u8>, unfer_protocol::durable::DurableError> {
+            self.0.frontier()
+        }
+        fn fork_at(
+            &self,
+            frontier: &[u8],
+        ) -> Result<
+            Box<dyn unfer_protocol::durable::DurableStore>,
+            unfer_protocol::durable::DurableError,
+        > {
+            self.0.fork_at(frontier)
+        }
+    }
+
+    #[test]
+    fn durable_checkpoint_failure_fails_closed() {
+        let mut s = non_qfm_session();
+        let store = std::sync::Arc::new(FailingFlushStore(MemStore::default()));
+        s.set_durable(Some(store));
+        // A probability on top of a failed checkpoint is refused — the H4
+        // fail-closed barrier — never a possibly-stale result.
+        assert!(matches!(
+            s.probability(&EventPredicate::Vacuum),
+            Err(KernelError::DurableCheckpointFailed { .. })
+        ));
+        assert!(matches!(
+            s.condition(&EventPredicate::Vacuum),
+            Err(KernelError::DurableCheckpointFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn durable_store_attach_detach() {
+        let mut s = non_qfm_session();
+        assert!(s.durable().is_none(), "no store by default");
+        let store = std::sync::Arc::new(MemStore::default());
+        s.set_durable(Some(store.clone()));
+        assert!(s.durable().is_some(), "store attached");
+        // A committed op lands in the attached store.
+        s.evolve(0.01).expect("evolve");
+        let records = store
+            .replay(unfer_protocol::durable::streams::SESSION)
+            .expect("replay");
+        assert_eq!(records.len(), 1, "one committed Evolve in the store");
+        // Detach: the session keeps working without the store.
+        s.set_durable(None);
+        assert!(s.durable().is_none());
+        s.evolve(0.01).expect("evolve after detach");
+    }
+
+    #[test]
+    fn log_source_and_preset_switch_bookkeeping() {
+        let mut s = non_qfm_session();
+        assert_eq!(s.log_source(), "kernel");
+        s.set_log_source("agent:analyst");
+        assert_eq!(s.log_source(), "agent:analyst");
+        // A blank session (root Create only) may record a preset switch.
+        assert_eq!(s.event_log_len_for_preset_switch(), 0);
+        s.set_start_preset("analyst");
+        s.evolve(0.05).expect("evolve");
+        // After the first producing op the preset-switch budget is spent.
+        assert_eq!(s.event_log_len_for_preset_switch(), 1);
+        // The recorded source rides on the committed event.
+        assert_eq!(s.event_log().last().unwrap().source, "agent:analyst");
+    }
+
+    #[test]
+    fn qfm_session_refuses_compaction() {
+        let mut s = qfm_session();
+        // QFM pipelines are not serializable — compaction is refused outright.
+        assert!(matches!(
+            s.compact_through(0),
+            Err(KernelError::SessionCompactionBusy { .. })
+        ));
+        // ... and a QFM session without a query is unusable (the pipeline
+        // requires a raw input).
+        assert!(matches!(
+            s.evolve(0.1),
+            Err(KernelError::Internal(_))
+        ));
+    }
+
     #[test]
     fn committed_events_land_in_durable_session_stream() {
         let mut session = non_qfm_session();

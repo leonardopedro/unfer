@@ -145,6 +145,9 @@ impl MathBondLedger {
 
     /// Issue a new math bond. Only the sponsor may issue; the bond_id must be
     /// unique.
+    // The parameter list mirrors the `MathBondOp::Issue` transaction fields;
+    // grouping them into a struct would churn the op/protocol types.
+    #[allow(clippy::too_many_arguments)]
     fn apply_issue(
         &mut self,
         actor: &str,

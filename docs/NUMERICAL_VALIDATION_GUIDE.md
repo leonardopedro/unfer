@@ -612,6 +612,61 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
   identities on $\Omega^2$, $[H,g_i]$, $[H,\Omega]$; the Ω-growth contrast
   under truncation.
 
+### 5.4b Starobinsky derivative-variable observables — `qg_starobinsky_derivative_variable.rs`
+
+While §5.4 covers the *BRST structure* of the promoted spatial-gradient
+variables (nilpotence, commutation, Ω-growth under truncation), this suite
+checks what the **remaining physical observables** do while the gauge
+conditions hold — the gravity analogue of §5.6's NS pattern (book.tex
+§4159-4197): the scalaron's spatial gradients $g_i = \partial_i\phi$ are
+promoted to independent canonical fields, and the Hamiltonian
+$H = m\,N_0 + \tfrac12\sum_i g_i^2$ carries their products exactly as the NS
+Hamiltonian carries $u_j\,u_{i,j}$. All three tests build the gauge condition
+**by construction** (physical initial wave-function with $\langle g_m \rangle
+= 2(m{+}1)\langle\phi_{m+1}\rangle$) and verify the remaining physics is
+consistent and calculable.
+
+- **`qg_starobinsky_derivative_variable_physical_observables_1d`** — computes:
+  with the single derivative variable fixed
+  ($\langle g_0 \rangle = 2\langle\phi_1 \rangle = 2/3$, `[H, C_0] = 0`
+  making it a constant of the motion, $\Omega = g_0 c_0$ nilpotent and
+  BRST-closed), the **consistent, calculable observables**: the composite
+  $\langle\phi_0 g_0\rangle = 2\langle\phi_0\phi_1\rangle$ (promoted variable =
+  actual derivative operator $D_0 = 2\phi_1$), the pointwise profile
+  $\langle g(x)\rangle = \partial_x\langle\phi(x)\rangle$ at every $x$, the
+  gradient content frozen, $\langle H\rangle$ and $\|\psi\|$ conserved by the
+  unitary solver, bare and BRST-projected SIRK flows giving IDENTICAL
+  observables, and the gauge-condition drift a controlled quadratic-in-$dt$
+  solver artifact ($d(0.05) < 10^{-3}$, $d(0.025) < d(0.05)/4$). *Method*:
+  operator commutator norms + restarted-Krylov flows. *Asserts*: exact
+  identities at $t = 0$ (1e-9), flow conservation to solver precision, drift
+  $\propto dt^2$.
+
+- **`qg_starobinsky_derivative_variable_higher_hermite_modes`** — computes:
+  the FULL multi-level fiber $\phi_1, \phi_2, \phi_3$ with promoted
+  $g_0 = 2\phi_1, g_1 = 4\phi_2, g_2 = 6\phi_3$: the derivative profile
+  $\langle g(x)\rangle = \sum\langle g_m\rangle H_m(x) = \partial_x\langle\phi(x)\rangle$
+  is a **genuine polynomial** (a quadratic in $x$ — the curvature
+  $\partial_x^2\langle\phi\rangle = 8\langle\phi_2\rangle +
+  48\langle\phi_3\rangle x$ varies with $x$, not the flat 1D constant
+  $2\phi_1$); promoted composites $\langle\phi_m g_m\rangle =
+  2(m{+}1)\langle\phi_m\phi_{m+1}\rangle$ match field-only values; all three
+  constraints $[H, C_m] = 0$ and $[H, g_i] = 0$ hold; $\Omega^2 = 0$,
+  $[H,\Omega] = 0$; and the SIRK checks (energy/norm conservation, bare =
+  gauge-fixed flow, drift $\propto dt^2$) extend to the full fiber. *Method*:
+  Hermite-basis pointwise evaluation + SIRK flows. *Asserts*: pointwise
+  identity at 1e-9, genuine-polynomial curvature, flow conservation.
+
+- **`qg_starobinsky_derivative_variable_unphysical_data_inconsistent`** —
+  computes: what happens when the gauge condition does NOT hold — unphysical
+  data ($\langle g_0 \rangle \neq 2\langle\phi_1\rangle$) is **detected**, makes
+  the composite observable INCONSISTENT (the promoted $\langle\phi_0 g_0\rangle$
+  no longer equals $2\langle\phi_0\phi_1\rangle$), carries Ω-content, and is
+  **conserved** (not self-fixed) by the bare flow — gauge fixing is genuinely
+  required, exactly the book.tex pattern. *Method*: comparison of composite
+  expectations on physical vs unphysical states. *Asserts*: the inconsistency
+  is detected and stable.
+
 ### 5.5 Navier–Stokes classical fluid mechanics — `ns_numerical_validation.rs`
 
 - **`ns_kolmogorov_scales_and_spectrum`** — computes: the dissipation

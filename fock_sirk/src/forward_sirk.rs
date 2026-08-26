@@ -140,7 +140,7 @@ impl ForwardSirkResult {
                 d[j] += self.scales[j] * c_hat[j - 1];
             }
 
-            let psi_norm2 = (c_hat.adjoint() * &g_sub * &c_hat)[(0, 0)]
+            let psi_norm2 = (c_hat.adjoint() * g_sub * &c_hat)[(0, 0)]
                 .re
                 .max(1e-300);
             // Residual VECTOR, formed before any metric contraction:

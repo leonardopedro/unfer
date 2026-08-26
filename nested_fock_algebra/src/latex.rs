@@ -131,10 +131,10 @@ fn transform_to_cas_string(expr: &Expression) -> String {
             let exp_str = transform_to_cas_string(exp);
 
             // Handle daggers/adjoints
-            if exp_str == "dagger" || exp_str == "dag" || exp_str == "†" || exp_str == "*" {
-                if let Expression::Symbol(s) = base.as_ref() {
-                    return map_to_creation(&s.name);
-                }
+            if (exp_str == "dagger" || exp_str == "dag" || exp_str == "†" || exp_str == "*")
+                && let Expression::Symbol(s) = base.as_ref()
+            {
+                return map_to_creation(&s.name);
             }
             format!("({} ^ {})", transform_to_cas_string(base), exp_str)
         }

@@ -113,10 +113,10 @@ impl Validator<'_> {
                 // A call to a defined function: record the call edge for
                 // cycle detection (a function calling itself, directly or
                 // through other functions, is recursion).
-                if let CoreIR::Var(name) = f.as_ref() {
-                    if self.function_names.contains(name) {
-                        self.calls.push((self.caller.clone(), name.clone()));
-                    }
+                if let CoreIR::Var(name) = f.as_ref()
+                    && self.function_names.contains(name)
+                {
+                    self.calls.push((self.caller.clone(), name.clone()));
                 }
                 self.walk(f)?;
                 self.walk(a)

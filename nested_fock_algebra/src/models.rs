@@ -1362,39 +1362,40 @@ pub fn qed_pair_production(
 /// `fock_sirk/tests/qed_validation.rs`. The total excitation number
 /// `N = a†a + e†e` commutes with `H` (rotating-wave conservation).
 pub fn qed_jaynes_cummings(omega: f64, omega0: f64, g: f64) -> Hamiltonian {
-    let mut terms = Vec::with_capacity(4);
-    // ω a†a — cavity photon energy (inner boson mode 0).
-    terms.push((
-        Complex64::new(omega, 0.0),
-        vec![
-            Operator::InnerBosonCreate(0),
-            Operator::InnerBosonAnnihilate(0),
-        ],
-    ));
-    // ω₀ e†e — atomic excitation energy (inner fermion mode 1).
-    terms.push((
-        Complex64::new(omega0, 0.0),
-        vec![
-            Operator::InnerFermionCreate(1),
-            Operator::InnerFermionAnnihilate(1),
-        ],
-    ));
-    // g·a·e† — photon absorbed, atom excited.
-    terms.push((
-        Complex64::new(g, 0.0),
-        vec![
-            Operator::InnerBosonAnnihilate(0),
-            Operator::InnerFermionCreate(1),
-        ],
-    ));
-    // g·a†·e — atom de-excited, photon emitted (the Hermitian conjugate).
-    terms.push((
-        Complex64::new(g, 0.0),
-        vec![
-            Operator::InnerBosonCreate(0),
-            Operator::InnerFermionAnnihilate(1),
-        ],
-    ));
+    // ω a†a — cavity photon energy (inner boson mode 0); ω₀ e†e — atomic
+    // excitation energy (inner fermion mode 1); g·a·e† — photon absorbed,
+    // atom excited; g·a†·e — the Hermitian conjugate (atom de-excited,
+    // photon emitted).
+    let terms = vec![
+        (
+            Complex64::new(omega, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+        (
+            Complex64::new(omega0, 0.0),
+            vec![
+                Operator::InnerFermionCreate(1),
+                Operator::InnerFermionAnnihilate(1),
+            ],
+        ),
+        (
+            Complex64::new(g, 0.0),
+            vec![
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerFermionCreate(1),
+            ],
+        ),
+        (
+            Complex64::new(g, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerFermionAnnihilate(1),
+            ],
+        ),
+    ];
     Hamiltonian { terms }
 }
 
@@ -2168,11 +2169,11 @@ pub mod phys {
     /// Boltzmann constant (exact), J/K
     pub const K_B: f64 = 1.380_649e-23;
     /// vacuum permittivity, F/m (CODATA 2018)
-    pub const EPS0: f64 = 8.854_187_8128e-12;
+    pub const EPS0: f64 = 8.854_187_812_8e-12;
     /// vacuum permeability, N/A² (CODATA 2018)
     pub const MU0: f64 = 1.256_637_062_12e-6;
     /// electron mass, kg (CODATA 2018)
-    pub const M_E: f64 = 9.109_383_7015e-31;
+    pub const M_E: f64 = 9.109_383_701_5e-31;
     /// proton mass, kg (CODATA 2018)
     pub const M_P: f64 = 1.672_621_923_69e-27;
     /// atomic mass unit, kg (CODATA 2018)
@@ -2241,9 +2242,9 @@ pub fn nuc_semf_binding_energy_mev(a: u32, z: u32) -> f64 {
     let surface = -17.8 * af.powf(2.0 / 3.0);
     let coulomb = -0.711 * zf * (zf - 1.0) / af.powf(1.0 / 3.0);
     let symmetry = -23.7 * (n - zf) * (n - zf) / af;
-    let pairing = if a % 2 == 1 {
+    let pairing = if !a.is_multiple_of(2) {
         0.0
-    } else if z % 2 == 0 {
+    } else if z.is_multiple_of(2) {
         11.18 / af.sqrt()
     } else {
         -11.18 / af.sqrt()
