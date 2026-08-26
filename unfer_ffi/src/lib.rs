@@ -7,7 +7,7 @@
 //! `handles` owns the typed handle registry; `zenodo` (feature `zenodo`)
 //! the Zenodo module interface.
 //!
-//! ABI surface: 81 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
+//! ABI surface: 84 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
 
 pub mod durable;
 mod handles;
@@ -1926,6 +1926,48 @@ pub extern "C" fn uk_audit_clear() -> i64 {
     ffi_entry("uk_audit_clear", || Ok(handles::clear_audit() as i64))
 }
 
+// ── H4: durable live status + certificate audit trail ─────────────────
+//
+// `uk_durable_status` is the host-facing live-status consult: which durable
+// backend is configured, how long every well-known stream is, and how many
+// checkpoint writes completed (the coalescer's observable effect) — all
+// answered without replaying history (Lody `session-live-status`).
+// `uk_certificate_issued` records an emitted verification certificate (the T6
+// mass-gap / Ritz pipeline) as a replayable `certificate-issued` line in the
+// `certificates` stream (Lody `turn-diff-store` audit trail).
+
+/// Durable store live status as JSON. Buffer protocol: returns total bytes
+/// needed; copies `min(needed, cap)` into `buf`. Returns <0 (-code) on error.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_durable_status(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_durable_status", || Ok(write_buf(buf, cap, &handles::durable_status_json())))
+}
+
+/// Durably record an emitted certificate (`{"kind":"certified_mass_gap",...}`
+/// or a `ritz_certificate` line) as a `certificate-issued` audit line in the
+/// `certificates` stream. Returns the stream length after the append (a 1-based
+/// sequence number), <0 (-code) on error — including UK-1011 when no durable
+/// store is configured (RAM-only kernels refuse: the line would not be
+/// replayable).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_certificate_issued(cert_json: *const u8, len: i64) -> i64 {
+    ffi_entry("uk_certificate_issued", || {
+        let json = read_utf8(cert_json, len)?;
+        handles::record_certificate_issued(&json)
+            .map(|seq| seq as i64)
+            .map_err(|e| {
+                let code = if handles::durable().is_none() {
+                    Code::DURABLE_NOT_CONFIGURED
+                } else {
+                    Code::INTERNAL
+                };
+                Diagnostic::new(code, e, Severity::Error)
+            })
+    })
+}
+
 // ── S23 (F22): observability context + dot-separated owner logger ─────
 //
 // The `unfer_agent` host seeds a per-call observability context (AsyncLocal
@@ -3704,6 +3746,77 @@ mod tests {
         assert!(
             owner.iter().any(|l| l.contains("h4 kill-and-resume")),
             "owner log must survive restart: {owner:?}"
+        );
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── H4: certificate-issued audit trail is durable + replayable ──────
+    //
+    // `uk_certificate_issued` records an emitted verification certificate
+    // (T6 mass-gap / Ritz) as a `certificate-issued` line in the `certificates`
+    // stream; `uk_durable_status` reports the live per-stream lengths without
+    // replaying. Both follow the same kill-and-resume discipline as the audit
+    // trail above.
+
+    #[test]
+    fn certificate_issued_is_durable_and_replayable() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-cert-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable init must succeed");
+
+        // Record one emitted certificate (a mass-gap style record).
+        let cert = r#"{"kind":"certified_mass_gap","gap":1.9875e0,"lo":1.932e0,"hi":2.043e0,"delta":5.55e-2,"certified_positive":true}"#;
+        let (ptr, len) = json_ptr(cert);
+        let seq = uk_certificate_issued(ptr, len);
+        assert_eq!(seq, 1, "first certificate-issued line is seq 1");
+
+        // Live status: backend + per-stream lengths + persist counter.
+        let status: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_durable_status(b, c))).unwrap();
+        assert_eq!(status["backend"], "loro");
+        assert_eq!(status["streams"]["certificates"], 1);
+        assert_eq!(status["streams"]["audit"], 0);
+        assert!(
+            status["persist_count"].as_u64().unwrap() >= 1,
+            "the checkpoint after the append must have persisted"
+        );
+
+        // Kill-and-resume: fresh store handle on the same dir replays the line.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("durable re-init must succeed");
+        let store = handles::durable().expect("store must be configured");
+        let records = store
+            .replay(unfer_protocol::durable::streams::CERTIFICATES)
+            .expect("replay must succeed");
+        assert_eq!(records.len(), 1, "exactly one certificate line on disk");
+        let line: serde_json::Value = serde_json::from_slice(&records[0]).unwrap();
+        assert_eq!(line["kind"], "certificate-issued");
+        assert_eq!(line["record"]["kind"], "certified_mass_gap");
+        assert_eq!(line["record"]["lo"], 1.932e0);
+
+        // Fail-closed: a RAM-only kernel refuses to record (UK-1011).
+        handles::reset_durable_for_tests();
+        let refused = uk_certificate_issued(ptr, len);
+        assert_eq!(
+            refused,
+            -(unfer_protocol::Code::DURABLE_NOT_CONFIGURED.raw() as i64),
+            "no store configured must refuse with UK-1011"
         );
 
         handles::reset_durable_for_tests();

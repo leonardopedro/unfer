@@ -253,6 +253,71 @@ pub fn durable_append_action_resolved(record: &ActionRecord) {
     let _ = checkpoint();
 }
 
+/// Durable live status: backend label, per-stream record counts, and the
+/// backend's persist counter — the kernel-side equivalent of Lody's
+/// session-live-status, without replaying any history. `backend` is
+/// `"none"` when no durable store is configured (the kernel runs RAM-only).
+pub fn durable_status_json() -> String {
+    let Some(store) = durable() else {
+        // Stable schema even RAM-only: every well-known stream reports 0 and
+        // the backend is "none", so a host never special-cases the shape.
+        let mut streams = serde_json::Map::new();
+        for name in STREAM_NAMES {
+            streams.insert(name.to_string(), serde_json::json!(0));
+        }
+        return serde_json::json!({ "backend": "none", "streams": streams, "persist_count": 0 })
+            .to_string();
+    };
+    let mut streams = serde_json::Map::new();
+    for name in STREAM_NAMES {
+        streams.insert(
+            name.to_string(),
+            serde_json::json!(store.stream_len(name).unwrap_or(u64::MAX)),
+        );
+    }
+    serde_json::json!({
+        "backend": store.backend(),
+        "streams": streams,
+        "persist_count": store.persist_count(),
+    })
+    .to_string()
+}
+
+/// The well-known stream names in status order (matches `streams` module).
+const STREAM_NAMES: [&str; 6] = [
+    streams::AUDIT,
+    streams::OWNER_LOG,
+    streams::ACTIONS,
+    streams::CONFIG,
+    streams::SESSION,
+    streams::CERTIFICATES,
+];
+
+/// Durably record an emitted verification certificate (mass-gap / Ritz bound
+/// from the T6 pipeline) as a `certificate-issued` line in the `certificates`
+/// stream. Fail-closed: a kernel without a configured durable store refuses
+/// (the line would not be replayable), and a checkpoint failure is surfaced.
+/// Returns the stream length after the append (a 1-based sequence number).
+pub fn record_certificate_issued(cert_json: &str) -> Result<u64, String> {
+    let record: serde_json::Value = serde_json::from_str(cert_json)
+        .map_err(|e| format!("certificate record not valid JSON: {e}"))?;
+    let json = serde_json::to_vec(&serde_json::json!({
+        "kind": "certificate-issued",
+        "record": record,
+    }))
+    .map_err(|e| format!("certificate record encode: {e}"))?;
+    let Some(store) = durable() else {
+        return Err("durable store not configured (kernel runs RAM-only)".to_string());
+    };
+    store
+        .append(streams::CERTIFICATES, &json)
+        .map_err(|e| format!("durable append to certificates: {e}"))?;
+    checkpoint().map_err(|e| e.to_string())?;
+    store
+        .stream_len(streams::CERTIFICATES)
+        .map_err(|e| format!("certificates stream length: {e}"))
+}
+
 pub fn store_session(mut session: Session) -> i64 {
     // H4: every live session is backed by the kernel's durable store, so its
     // committed events land in the `session` stream and probability/condition

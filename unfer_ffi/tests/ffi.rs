@@ -58,6 +58,27 @@ fn version_returns_positive() {
 }
 
 #[test]
+fn durable_status_returns_live_json() {
+    // Pure read: valid JSON with the live-status shape regardless of whether
+    // another test configured a durable store (backend is "none" RAM-only
+    // when none is configured).
+    let needed = uk_durable_status(std::ptr::null_mut(), 0);
+    assert!(needed > 0, "uk_durable_status probe returned {needed}");
+    let mut buf = vec![0u8; needed as usize + 1];
+    let written = uk_durable_status(buf.as_mut_ptr(), buf.len() as i64);
+    assert_eq!(written, needed);
+    buf.truncate(needed as usize);
+    let status: serde_json::Value = serde_json::from_slice(&buf).expect("valid JSON");
+    assert!(status["backend"].is_string(), "backend label present");
+    assert!(status["streams"].is_object(), "per-stream lengths present");
+    assert!(
+        status["streams"]["certificates"].is_u64(),
+        "certificates stream length present"
+    );
+    assert!(status["persist_count"].is_u64(), "persist counter present");
+}
+
+#[test]
 fn init_succeeds() {
     let (ptr, len) = json_ptr(b"{}");
     let r = uk_init(ptr, len);

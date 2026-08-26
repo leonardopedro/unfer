@@ -21,8 +21,9 @@
 //! ```
 //!
 //! Stream names are stable ABI constants: `audit`, `owner_log`, `actions`,
-//! `config`, `session`. Backends (Loro, JSONL, SQLite) keep the same stream
-//! semantics so a store can be swapped under a running kernel.
+//! `config`, `session`, `certificates`. Backends (Loro, JSONL, SQLite) keep
+//! the same stream semantics so a store can be swapped under a running
+//! kernel.
 
 use std::fmt;
 
@@ -38,6 +39,9 @@ pub mod streams {
     pub const CONFIG: &str = "config";
     /// Session event logs (H3 `SessionEvent` records).
     pub const SESSION: &str = "session";
+    /// Emitted verification certificates (mass-gap / Ritz bound records from
+    /// the T6 pipeline, one `certificate-issued` line per certificate).
+    pub const CERTIFICATES: &str = "certificates";
 }
 
 /// Stream-addressed durable log.
@@ -66,6 +70,15 @@ pub trait DurableStore: fmt::Debug + Send + Sync {
     /// callers must fail closed (refuse to serve a probability/condition or
     /// fire a side effect).
     fn flush(&self) -> Result<(), DurableError>;
+
+    /// How many checkpoint writes completed since open (live-status support).
+    ///
+    /// The default reports 0; backends with a coalescing flush (e.g. Loro's
+    /// dirty-tracked snapshot) override it so a host can observe that bursts
+    /// of appends share one persist.
+    fn persist_count(&self) -> u64 {
+        0
+    }
 
     /// Replay every record of a stream, in append order.
     fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, DurableError>;

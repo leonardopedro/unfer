@@ -32,7 +32,9 @@ uk_cert_root
 uk_cert_set_authority
 uk_cert_status
 uk_cert_transfer
+uk_certificate_issued
 uk_condition
+uk_durable_status
 uk_event_probability
 uk_evolve
 uk_gate_approve

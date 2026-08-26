@@ -29,6 +29,10 @@ impl Code {
     /// external outcome is unknown. The kernel never fabricates an outcome;
     /// read-only work may retry, side-effecting work must be verified manually.
     pub const UNKNOWN_OUTCOME: Code = Code(1010);
+    /// H4: a caller asked to durably record something (e.g. a certificate-issued
+    /// audit line) but no durable store is configured — the kernel runs RAM-only
+    /// and the record would not be replayable, so the call is refused.
+    pub const DURABLE_NOT_CONFIGURED: Code = Code(1011);
 
     pub const GRAM_DEGENERATE: Code = Code(2001);
     pub const STATE_EXPLOSION: Code = Code(2002);
@@ -368,6 +372,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             1010,
             "UnknownOutcome",
             "A side-effecting call was interrupted at its checkpoint — the process died between the durable in-flight marker and the resolved marker, so the external outcome is unknown. Read-only work may retry; side-effecting work must be verified manually before repeating it.",
+        ),
+        (
+            1011,
+            "DurableNotConfigured",
+            "A durable record was requested but no durable store is configured — the kernel runs RAM-only and the record would not be replayable. Configure UNFER_DURABLE_DIR (or call uk_init with a durable directory) before asking for replayable records.",
         ),
         (
             2001,

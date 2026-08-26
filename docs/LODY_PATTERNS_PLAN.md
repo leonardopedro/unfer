@@ -60,30 +60,67 @@ The H4 durable store (`unfer_ffi/src/durable/`) already had the
 
 ---
 
-## Recommended next steps (not yet executed)
+## Executed in this pass (2026-08-26, follow-up)
 
 ### 3. `unfer` — FFI exposure of live status
 
-`unfer_ffi` currently exports 81 `uk_*` symbols. Expose the durable live
-status (stream lengths, backend label, persist count) as one new `uk_*`
-symbol, regenerate the C header via `gen_unfer_kernel_h.py`, and extend
-`EXPECTED_SYMBOLS.txt`. This is what lets a host (or the Lody-style UI)
-render "which streams are live and how big" without replaying.
+`unfer_ffi` now exports **84 `uk_*` symbols**. Two new symbols, both
+registered in the single-source-of-truth `SYMBOL_REGISTRY` and regenerated
+through `scripts/gen_symbol_artifacts` (header + `EXPECTED_SYMBOLS.txt` +
+`EXPECTED_SYMBOLS_ZENODO.txt`):
 
-### 4. `unfer` — T6 certificate pipeline already lands on the durable store
+- **`uk_durable_status(buf, cap)`** — buffer-out JSON live status: backend
+  label, per-stream record counts for all six well-known streams (audit,
+  owner_log, actions, config, session, certificates), and the backend's
+  persist counter. Answered without replaying any history (Loro answers
+  `stream_len` from the list length). The schema is stable even RAM-only
+  (`backend: "none"`, every stream `0`). `DurableStore::persist_count` was
+  added to the trait (default `0`; the Loro coalescer overrides it), so the
+  coalescer's effect is observable through the ABI.
+- **`uk_certificate_issued(cert_json, len)`** — records an emitted
+  verification certificate (T6 mass-gap / Ritz) as a
+  `certificate-issued` line in the durable `certificates` stream and
+  checkpoints. Returns the 1-based sequence number; **fail-closed**: a
+  RAM-only kernel refuses with the new **UK-1011 `DurableNotConfigured`**
+  (a record that would not be replayable is never acknowledged as
+  recorded). A `certificate-issued` line for a malformed record is refused
+  with UK-1001.
 
-The `qcd_mass_gap_certified` NDJSON emitter writes certificates; point it at
-the durable store's `certificates` stream (or keep NDJSON on disk and record
-a durable `certificate-issued` audit line) so every emitted certificate is
-replayable — the audit trail Lody's `turn-diff-store` provides for agent
-actions.
+New `Code::DURABLE_NOT_CONFIGURED = 1011` in `unfer_protocol::codes` (next
+after UK-1010), documented in the code table. Tests: a kill-and-resume lib
+test records a mass-gap certificate, checks live status
+(`certificates: 1`, `persist_count >= 1`), re-opens the store from the same
+directory and replays the exact `certificate-issued` line, then confirms the
+RAM-only refusal; an integration test asserts the live-status JSON shape.
+
+### 4. `unfer` — T6 certificate pipeline lands on the durable store
+
+Folded into item 3 (the two are one surface): the durable `certificates`
+stream is the replayable audit trail for every emitted certificate. The
+`qcd_mass_gap_certified` NDJSON emitter stays the on-disk artifact the Lean
+reader consumes (timepiece §13); `uk_certificate_issued` is the kernel-side
+hook that records each emission durably, so "which certificates were
+issued, when" is replayable — the audit trail Lody's `turn-diff-store`
+provides for agent actions.
 
 ### 5. `velysterm` — host wiring of presence
 
-`crates/mathed/src/main.rs` (the editor host) should call `set_cursor` on
-caret moves and `apply` on inbound presence blobs. Requires the delta
-transport to be bidirectional (already the shape of `export_delta` /
-`import_delta`); no new networking needed for a single-host demo.
+`crates/mathed/src/main.rs` (the editor host) now wires the C13
+`PresenceStore` in:
+
+- `HostPresence` resource created in `setup` (peer `"host"`, 30 s timeout)
+  plus a `DemoPeerPresence` in-process peer (`"demo-peer"`) — the
+  single-host demo transport.
+- `sync_presence` system (Update, after `handle_keyboard`): publishes the
+  caret via `set_cursor` on every move (change-detected), drains an
+  `InboundPresenceBlob` transport hook (where a real network pushes remote
+  `encode()` payloads), exchanges blobs with the demo peer every frame so
+  the inbound `apply` path runs end-to-end without a second process, and
+  prunes lapsed peers via `remove_outdated`. One-shot `info!` log reports
+  the live peer list.
+
+No new networking and no new crates: the delta-shaped blob channel that
+would carry `export_delta`/`import_delta` traffic now carries presence too.
 
 ### 6. `dynamic-arctic` / `australVM` — awareness surfaces
 
@@ -105,8 +142,11 @@ pattern.
 
 ## Definition of done for this pass
 
-- Both executed items land as extensions of existing modules (no new crates,
-  no new binaries, no new deps).
-- `cargo test -p mathed_core` green in `velysterm`.
-- `cargo test -p unfer_ffi -p unfer_protocol` green in `unfer`.
-- Both repos committed.
+- All five executed items land as extensions of existing modules (no new
+  crates, no new binaries, no new deps).
+- `cargo test -p mathed_core` green (154) and `cargo build -p mathed` green
+  in `velysterm`; clippy clean.
+- `cargo test -p unfer_ffi -p unfer_protocol` green in `unfer` (94 lib +
+  44 ffi integration + 109 protocol); `scripts/gen_symbol_artifacts check`
+  clean (84 uk_ + 5 uz_ in sync).
+- Both repos committed and synced.

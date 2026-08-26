@@ -113,6 +113,10 @@ impl DurableStore for LoroDurableStore {
         Ok(self.list(stream).len() as u64)
     }
 
+    fn persist_count(&self) -> u64 {
+        self.persists.load(Ordering::Relaxed)
+    }
+
     fn flush(&self) -> Result<(), DurableError> {
         let _guard = self.drain.0.lock().unwrap_or_else(|e| e.into_inner());
         // Coalesce: a checkpoint with nothing new since the last persist
