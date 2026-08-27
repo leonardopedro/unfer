@@ -93,6 +93,15 @@ pub trait DurableStore: fmt::Debug + Send + Sync {
 
     /// Backend label for diagnostics (`"loro" | "jsonl" | "sqlite"`).
     fn backend(&self) -> &'static str;
+
+    /// Why the on-disk snapshot could not be imported at `open`, if the store
+    /// recovered from a corrupt/torn snapshot. `None` = clean open, fresh
+    /// store, or an in-memory store. Default: `None` — backends that cannot
+    /// detect corruption report nothing; fail-visible backends (Loro) override
+    /// this so operators learn the store started empty and why.
+    fn snapshot_load_error(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A durable-store failure. Every variant maps to a UK-#### diagnostic by the

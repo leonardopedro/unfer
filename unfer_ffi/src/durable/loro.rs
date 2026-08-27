@@ -56,22 +56,19 @@ impl LoroDurableStore {
         let mut snapshot_error = None;
         if let Some(d) = dir {
             let path = snapshot_path(d);
-            if let Ok(bytes) = std::fs::read(&path) {
-                if let Err(e) = doc.import(&bytes) {
-                    let corrupt = d.join("snapshot.bin.corrupt");
-                    let moved = std::fs::rename(&path, &corrupt);
-                    snapshot_error = Some(format!(
-                        "snapshot import failed ({}); {}",
-                        e,
-                        match moved {
-                            Ok(()) =>
-                                "preserved as snapshot.bin.corrupt".to_string(),
-                            Err(mv) => format!(
-                                "could not preserve it: {mv}"
-                            ),
-                        }
-                    ));
-                }
+            if let Ok(bytes) = std::fs::read(&path)
+                && let Err(e) = doc.import(&bytes)
+            {
+                let corrupt = d.join("snapshot.bin.corrupt");
+                let moved = std::fs::rename(&path, &corrupt);
+                snapshot_error = Some(format!(
+                    "snapshot import failed ({}); {}",
+                    e,
+                    match moved {
+                        Ok(()) => "preserved as snapshot.bin.corrupt".to_string(),
+                        Err(mv) => format!("could not preserve it: {mv}"),
+                    }
+                ));
             }
         }
         Self {
@@ -82,16 +79,6 @@ impl LoroDurableStore {
             persists: AtomicU64::new(0),
             snapshot_error: Mutex::new(snapshot_error),
         }
-    }
-
-    /// Why the on-disk snapshot could not be imported at `open`, if it
-    /// existed and was corrupt. `None` on a fresh store, a clean import, or
-    /// an in-memory store.
-    pub fn snapshot_load_error(&self) -> Option<String> {
-        self.snapshot_error
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
     }
 
     /// The Loro document backing this store (exposed for tests/coordination).
@@ -155,6 +142,13 @@ impl DurableStore for LoroDurableStore {
 
     fn persist_count(&self) -> u64 {
         self.persists.load(Ordering::Relaxed)
+    }
+
+    fn snapshot_load_error(&self) -> Option<String> {
+        self.snapshot_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn flush(&self) -> Result<(), DurableError> {

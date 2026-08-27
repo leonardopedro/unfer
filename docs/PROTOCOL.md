@@ -663,6 +663,7 @@ refused with UK-1001.
 | UK-1008 | SessionCompactionBusy    | Error    | Session compaction refused: the session is not idle (open compaction lock, or a boundary splitting an unanswered action_apply/evolve dependency). |
 | UK-1009 | SessionForkRange         | Error    | Session fork refused: the requested log boundary is out of range or falls inside an open compaction bracket. |
 | UK-1010 | UnknownOutcome           | Error    | A side-effecting call (e.g. `uk_action_apply`) was interrupted at its durable checkpoint: the in-flight marker is durable but no resolved record exists. The external outcome is UNKNOWN — retry only after manual verification (the kernel refuses to re-run the effect automatically). |
+| UK-1011 | DurableNotConfigured     | Error    | A call asked to durably record something (e.g. a `certificate-issued` audit line) but no durable store is configured — the kernel runs RAM-only and the record would not be replayable, so the call is refused. |
 | UK-2001 | GramDegenerate            | Error    | The Krylov Gram matrix is rank-deficient.                            |
 | UK-2002 | StateExplosion            | Error    | The state vector exceeded the configured component limit.            |
 | UK-2003 | ZeroProbabilityCondition  | Error    | Conditioning on an event with zero prior probability.                |
@@ -698,6 +699,9 @@ refused with UK-1001.
 | UK-4902 | SymbolicExpressionInvalid | Error  | The symbolic expression failed validation.                          |
 | UK-4903 | WhyMLEngineUnavailable    | Error  | The Why3 subprocess engine was not available (whyml prove).        |
 | UK-4904 | WhyMLSpecInvalid          | Error  | The WhyML spec failed validation (unknown symbol / bad identifier).|
+| UK-4905 | LayoutNotBijective        | Error  | GPU layout: the state→index layout map is not bijective — two distinct basis states alias one dense slot (or a slot has no state), so a dense GPU tensor would silently corrupt the Gram matrix. |
+| UK-4906 | BankConflictUnresolved    | Error  | GPU layout: the shared-memory bank assignment of the flattened basis admits an unresolvable conflict — no swizzle separates the colliding addresses modulo the bank count. |
+| UK-4907 | SwizzleImpossible         | Error  | GPU layout: the requested swizzle is impossible — the conflict equation (e.g. `2x + 4y ≡ 0 (mod 32)`) has no solution that is simultaneously bijective and conflict-free. |
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |

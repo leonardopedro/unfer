@@ -107,6 +107,8 @@ int64_t uk_certificate_issued(const uint8_t* cert_json,
 int64_t uk_condition(int64_t model,
              const uint8_t* event_json,
              int64_t len);
+int64_t uk_durable_snapshot_error(uint8_t* buf,
+                          int64_t cap);
 int64_t uk_durable_status(uint8_t* buf,
                   int64_t cap);
 int64_t uk_event_probability(int64_t model,

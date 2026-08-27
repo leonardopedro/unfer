@@ -1932,6 +1932,9 @@ pub extern "C" fn uk_audit_clear() -> i64 {
 // backend is configured, how long every well-known stream is, and how many
 // checkpoint writes completed (the coalescer's observable effect) — all
 // answered without replaying history (Lody `session-live-status`).
+// `uk_durable_snapshot_error` surfaces the corrupt-snapshot recovery report
+// (fail-visible open): the operator consults it (and the status JSON field)
+// to learn that the store started empty and why.
 // `uk_certificate_issued` records an emitted verification certificate (the T6
 // mass-gap / Ritz pipeline) as a replayable `certificate-issued` line in the
 // `certificates` stream (Lody `turn-diff-store` audit trail).
@@ -1942,6 +1945,24 @@ pub extern "C" fn uk_audit_clear() -> i64 {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_durable_status(buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_durable_status", || Ok(write_buf(buf, cap, &handles::durable_status_json())))
+}
+
+/// The corrupt-snapshot recovery report, if the durable store opened over an
+/// on-disk snapshot that could not be imported (a torn write). Returns the
+/// recovery message, or the empty string on a clean open / no durable store.
+/// Buffer protocol: returns total bytes needed; copies `min(needed, cap)`
+/// into `buf`. Never fails (there is no failure mode: the absence of a
+/// recovery IS the answer).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_durable_snapshot_error(buf: *mut u8, cap: i64) -> i64 {
+    ffi_entry("uk_durable_snapshot_error", || {
+        let err = handles::durable()
+            .as_ref()
+            .and_then(|s| s.snapshot_load_error())
+            .unwrap_or_default();
+        Ok(write_buf(buf, cap, &err))
+    })
 }
 
 /// Durably record an emitted certificate (`{"kind":"certified_mass_gap",...}`
@@ -3817,6 +3838,99 @@ mod tests {
             refused,
             -(unfer_protocol::Code::DURABLE_NOT_CONFIGURED.raw() as i64),
             "no store configured must refuse with UK-1011"
+        );
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── H4: corrupt-snapshot recovery is operator-visible ───────────────
+    //
+    // A torn snapshot.bin must never fail silently: the fail-visible open
+    // starts empty and reports why, and that report surfaces in (a) the
+    // startup owner log (durably, so the note survives restarts), (b) the
+    // `uk_durable_status` JSON, and (c) the `uk_durable_snapshot_error`
+    // consult. Kill-and-corrupt discipline as in the crash-recovery test.
+
+    #[test]
+    fn corrupt_snapshot_surfaces_in_startup_log_status_and_consult() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-snaperr-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Simulate the torn write: garbage replaces the snapshot on disk.
+        std::fs::write(dir.join("snapshot.bin"), b"\x00garbage: not a loro snapshot")
+            .unwrap();
+
+        // "Restart" over the corrupt file: init succeeds (fail-visible, not
+        // fail-closed) and the recovery must be reportable.
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("open must not fail on a corrupt snapshot");
+        let reported = handles::report_snapshot_load_error();
+        assert!(
+            reported.as_deref().unwrap_or_default().contains("snapshot import failed"),
+            "the corruption must be reported: {reported:?}"
+        );
+
+        // (a) The startup owner log carries the operator-facing line.
+        let owner = handles::list_owner_log();
+        assert!(
+            owner.iter().any(|l| {
+                l.contains("durable snapshot recovered from corruption")
+                    && l.contains("snapshot import failed")
+            }),
+            "owner log must surface the recovery: {owner:?}"
+        );
+
+        // (b) The status JSON carries the field (stable schema: null when clean).
+        let status: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_durable_status(b, c))).unwrap();
+        assert!(
+            status["snapshot_load_error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("snapshot import failed"),
+            "status must carry the error: {status}"
+        );
+
+        // (c) The consult op returns the message.
+        let err = read_buf(|b, c| uk_durable_snapshot_error(b, c));
+        assert!(err.contains("snapshot import failed"), "consult: {err}");
+        // The report line was written through: it is now durable history
+        // (the note survives the next restart).
+        handles::checkpoint().unwrap();
+
+        // Clean reopen: the corrupt evidence is gone (renamed aside) and every
+        // surface reports a clean open.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Loro)
+            .expect("clean reopen must succeed");
+        assert_eq!(handles::report_snapshot_load_error(), None);
+        assert!(read_buf(|b, c| uk_durable_snapshot_error(b, c)).is_empty());
+        let status: serde_json::Value =
+            serde_json::from_str(&read_buf(|b, c| uk_durable_status(b, c))).unwrap();
+        assert!(status["snapshot_load_error"].is_null(), "status: {status}");
+        // The recovered store replayed the operator note written above.
+        let owner_lines = handles::durable()
+            .expect("store")
+            .replay(unfer_protocol::durable::streams::OWNER_LOG)
+            .unwrap();
+        assert!(
+            owner_lines
+                .iter()
+                .any(|l| String::from_utf8_lossy(l).contains("recovered from corruption")),
+            "the operator note must be replayable history"
         );
 
         handles::reset_durable_for_tests();

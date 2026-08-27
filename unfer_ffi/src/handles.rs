@@ -55,6 +55,11 @@ pub fn ensure_init() {
             ring_append_owner(format!("(kernel.audit) durable init failed: {e}"));
         } else if let Err(e) = recover_durable() {
             ring_append_owner(format!("(kernel.audit) durable recovery failed: {e}"));
+        } else {
+            // Fail-visible recovery: if the on-disk snapshot was corrupt and
+            // the store started empty, the operator learns it at startup —
+            // in the owner log (and durably, so the note survives restarts).
+            report_snapshot_load_error();
         }
     }
 }
@@ -253,6 +258,19 @@ pub fn durable_append_action_resolved(record: &ActionRecord) {
     let _ = checkpoint();
 }
 
+/// Surface a corrupt-snapshot recovery (if any) in the operator-facing owner
+/// log. Write-through: the audit line is durably appended (so the operator
+/// note survives restarts) and shadowed in the ring. Returns the error for
+/// testability; `None` = clean open (or no store configured).
+pub fn report_snapshot_load_error() -> Option<String> {
+    let err = durable().as_ref()?.snapshot_load_error()?;
+    owner_log(
+        "kernel.audit",
+        &format!("durable snapshot recovered from corruption: {err}"),
+    );
+    Some(err)
+}
+
 /// Durable live status: backend label, per-stream record counts, and the
 /// backend's persist counter — the kernel-side equivalent of Lody's
 /// session-live-status, without replaying any history. `backend` is
@@ -265,8 +283,13 @@ pub fn durable_status_json() -> String {
         for name in STREAM_NAMES {
             streams.insert(name.to_string(), serde_json::json!(0));
         }
-        return serde_json::json!({ "backend": "none", "streams": streams, "persist_count": 0 })
-            .to_string();
+        return serde_json::json!({
+            "backend": "none",
+            "streams": streams,
+            "persist_count": 0,
+            "snapshot_load_error": null,
+        })
+        .to_string();
     };
     let mut streams = serde_json::Map::new();
     for name in STREAM_NAMES {
@@ -279,6 +302,9 @@ pub fn durable_status_json() -> String {
         "backend": store.backend(),
         "streams": streams,
         "persist_count": store.persist_count(),
+        // Null on a clean open; the recovery message when the store opened
+        // over a corrupt/torn snapshot (the operator-facing corruption flag).
+        "snapshot_load_error": store.snapshot_load_error(),
     })
     .to_string()
 }

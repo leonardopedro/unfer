@@ -77,6 +77,7 @@ SymbolRecord { name: "uk_cert_burn", kind: SymbolKind::Kernel, effect_kind: supe
     SymbolRecord { name: "uk_cert_transfer", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
     SymbolRecord { name: "uk_certificate_issued", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
     SymbolRecord { name: "uk_condition", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
+    SymbolRecord { name: "uk_durable_snapshot_error", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
     SymbolRecord { name: "uk_durable_status", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
     SymbolRecord { name: "uk_event_probability", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
     SymbolRecord { name: "uk_evolve", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },

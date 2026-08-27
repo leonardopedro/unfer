@@ -82,7 +82,18 @@ through `scripts/gen_symbol_artifacts` (header + `EXPECTED_SYMBOLS.txt` +
   `stream_len` from the list length). The schema is stable even RAM-only
   (`backend: "none"`, every stream `0`). `DurableStore::persist_count` was
   added to the trait (default `0`; the Loro coalescer overrides it), so the
-  coalescer's effect is observable through the ABI.
+  coalescer's effect is observable through the ABI. The status JSON also
+  carries `snapshot_load_error` (null on a clean open, the recovery message
+  when the store opened over a torn/corrupt snapshot).
+- **`uk_durable_snapshot_error(buf, cap)`** — the corrupt-snapshot recovery
+  report: the message recorded by the fail-visible open (`LoroDurableStore`
+  moves the torn `snapshot.bin` aside to `snapshot.bin.corrupt`, starts
+  empty, and reports why), or the empty string on a clean open. The same
+  report is written to the operator-facing owner log at startup
+  (`report_snapshot_load_error`, write-through so the note survives
+  restarts). `DurableStore::snapshot_load_error` was added to the trait
+  (default `None`; the Loro backend overrides it). Never fails — the
+  absence of a recovery is the answer.
 - **`uk_certificate_issued(cert_json, len)`** — records an emitted
   verification certificate (T6 mass-gap / Ritz) as a
   `certificate-issued` line in the durable `certificates` stream and
