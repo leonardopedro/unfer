@@ -34,24 +34,64 @@ pub struct LoroDurableStore {
     /// Completed snapshot writes (a live-status metric and the
     /// coalescer's observable effect).
     persists: AtomicU64,
+    /// Set at `open` when the on-disk snapshot existed but could not be
+    /// imported. The corrupt file is moved aside to `snapshot.bin.corrupt`
+    /// (so the next `flush` cannot overwrite the evidence) and the store
+    /// starts empty; this field records that recovery happened. Fail-visible
+    /// rather than fail-silent: a torn snapshot would otherwise be silently
+    /// replaced by an empty one on the first flush.
+    snapshot_error: Mutex<Option<String>>,
 }
 
 impl LoroDurableStore {
     /// Open (or create) the store at `dir`. `None` = in-memory only.
+    ///
+    /// If `dir` holds an existing `snapshot.bin` that fails to import (a
+    /// torn or corrupt snapshot), the file is preserved as
+    /// `snapshot.bin.corrupt`, the store starts empty, and
+    /// [`Self::snapshot_load_error`] reports why — open never panics and
+    /// never silently discards state.
     pub fn open(dir: Option<&Path>) -> Self {
         let doc = LoroDoc::new();
-        if let Some(d) = dir
-            && let Ok(bytes) = std::fs::read(snapshot_path(d))
-        {
-            let _ = doc.import(&bytes);
+        let mut snapshot_error = None;
+        if let Some(d) = dir {
+            let path = snapshot_path(d);
+            if let Ok(bytes) = std::fs::read(&path) {
+                if let Err(e) = doc.import(&bytes) {
+                    let corrupt = d.join("snapshot.bin.corrupt");
+                    let moved = std::fs::rename(&path, &corrupt);
+                    snapshot_error = Some(format!(
+                        "snapshot import failed ({}); {}",
+                        e,
+                        match moved {
+                            Ok(()) =>
+                                "preserved as snapshot.bin.corrupt".to_string(),
+                            Err(mv) => format!(
+                                "could not preserve it: {mv}"
+                            ),
+                        }
+                    ));
+                }
+            }
         }
         Self {
             doc,
-            dir: dir.map(|p| p.to_path_buf()),
+            dir: dir.map(Path::to_path_buf),
             drain: DrainLock::default(),
             dirty: Mutex::new(false),
             persists: AtomicU64::new(0),
+            snapshot_error: Mutex::new(snapshot_error),
         }
+    }
+
+    /// Why the on-disk snapshot could not be imported at `open`, if it
+    /// existed and was corrupt. `None` on a fresh store, a clean import, or
+    /// an in-memory store.
+    pub fn snapshot_load_error(&self) -> Option<String> {
+        self.snapshot_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The Loro document backing this store (exposed for tests/coordination).
@@ -167,6 +207,7 @@ impl DurableStore for LoroDurableStore {
             drain: DrainLock::default(),
             dirty: Mutex::new(false),
             persists: AtomicU64::new(0),
+            snapshot_error: Mutex::new(None),
         }))
     }
 

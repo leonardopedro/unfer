@@ -201,6 +201,42 @@ heavy log `logs/heavy_tests_*.log`). The review found and fixed:
   suites that `timepiece/MASS_GAP_CERTIFIED.md` cites. Revisit only when a
   non-test consumer (e.g. the kernel emitting a `Certificate`) lands.
 
+## 6c. Cross-repo deep review (2026-08-27) — Loro×atproto division, fail-visible durability
+
+Third full review, focused on how Loro and the atproto (Bluesky) surfaces
+divide concerns across the repos. Outcome:
+
+- **Normative division doc: `docs/LORO_APROTO_DIVISION.md`.** Loro is the
+  CRDT/persistence layer (durable kernel streams in `unfer_ffi::durable`,
+  collaborative document state in velysterm `mathed_core`); atproto is the
+  identity/transport/naming layer (dynamic-arctic) and never stores editable
+  document state. The doc tabulates the decision per concern (durable state,
+  presence, identity, transport, conflict resolution) and names the
+  anti-patterns (mirroring records into atproto blobs, writing presence into
+  doc history, resolving conflicts in two layers at once).
+- **Fail-visible corrupt-snapshot recovery in `LoroDurableStore`.** `open` on
+  a torn/garbage `snapshot.bin` used to start empty silently; now the corrupt
+  file is moved aside to `snapshot.bin.corrupt` (so the next flush cannot
+  overwrite the evidence), the store starts empty, and
+  `snapshot_load_error()` reports why. Test:
+  `durable::tests::loro_corrupt_snapshot_recovers_visibly`.
+- **Presence expiry made view-visible in velysterm `mathed_core::sync`.**
+  Loro's `EphemeralStore::get_all_states` returns expired entries until an
+  explicit `remove_outdated` purge, so `peers()` could list dead
+  collaborators. `peers` now filters on the published heartbeat against the
+  timeout (mirroring Loro's `now - timestamp > timeout` semantics), and the
+  timeout is retained on the store for that purpose. Test:
+  `presence_peers_skip_expired_without_prune` (new; all prior presence tests
+  still green).
+- **Gates**: `cargo test -p unfer_ffi durable::` (7/7), `cargo test -p
+  mathed_core sync::` (10/10), `cargo test` in dynamic-arctic (compile
+  clean), `cargo build -p unfer_ffi` warning-free (fixed the `PathBuf`
+  import my own change orphaned).
+- **Committed and pushed** all five repos at review start (in-flight work:
+  GPU-federation layout claims, NPU DMA gate, arctic robust-combine fix).
+  `timepiece/` itself was left untouched per directive; its plan entries
+  (`CONSOLIDATED_PLAN.md`) are unchanged by this pass.
+
 ## 5. Out of scope (deliberately)
 
 - Lean4 proof work (specialist backlog in `timepiece/CONSOLIDATED_PLAN.md`).

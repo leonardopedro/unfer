@@ -218,3 +218,8 @@ outcomes.
 - **Vacuum projector**: `Operator::ProjectVacuum` is the rank-1 `|0><0|`
   (self-adjoint, idempotent) backing the Mehler prior; on apply it keeps only
   the strict-vacuum component and drops everything carrying any mode.
+- **Loro vs atproto division**: Loro owns all CRDT/durable/presence state
+  (kernel streams here, collaborative docs in velysterm); atproto
+  (dynamic-arctic) owns identity, naming, and transport only, and never
+  stores document state. Per-concern decision table in
+  `docs/LORO_APROTO_DIVISION.md`.

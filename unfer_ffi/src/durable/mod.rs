@@ -239,6 +239,52 @@ mod tests {
     }
 
     #[test]
+    fn loro_corrupt_snapshot_recovers_visibly() {
+        let scratch = Scratch::new("corrupt");
+        let dir = &scratch.0;
+
+        // A healthy store leaves a valid snapshot behind.
+        let store = LoroDurableStore::open(Some(dir));
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.flush().unwrap();
+        assert!(store.snapshot_load_error().is_none());
+        drop(store);
+
+        // Simulate a torn snapshot: garbage replaces the file.
+        let garbage: &[u8] = b"\x00garbage: not a loro snapshot";
+        std::fs::write(snapshot_path(dir), garbage).unwrap();
+
+        // Reopening must not panic, must start empty, and must say why.
+        let store = LoroDurableStore::open(Some(dir));
+        assert!(
+            store.snapshot_load_error().is_some(),
+            "corrupt snapshot must be reported"
+        );
+        assert!(store.replay(streams::AUDIT).unwrap().is_empty());
+
+        // The corrupt file was preserved for forensics, byte for byte
+        // (never overwritten by a later flush).
+        let preserved = std::fs::read(dir.join("snapshot.bin.corrupt")).unwrap();
+        assert_eq!(preserved, garbage);
+        assert!(!snapshot_path(dir).exists());
+
+        // Recovery continues: the recovered store appends and persists a
+        // fresh snapshot on its own (new) frontier.
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+        assert!(snapshot_path(dir).exists());
+        drop(store);
+
+        // A third open is clean again.
+        let store = LoroDurableStore::open(Some(dir));
+        assert!(store.snapshot_load_error().is_none());
+        assert_eq!(
+            store.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":2}".to_vec()]
+        );
+    }
+
+    #[test]
     fn jsonl_round_trip() {
         let scratch = Scratch::new("jsonl");
         let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
