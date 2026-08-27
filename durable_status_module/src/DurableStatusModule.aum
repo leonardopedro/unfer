@@ -36,11 +36,16 @@ module body DurableStatusModule is
     end;
 
     function run(): Int64 is
-        -- Exercise both consults. The return value IS the surfaced flag:
-        --   0  = consult succeeded, the store opened cleanly;
-        --   1  = consult succeeded, the store recovered from a corrupt
-        --        snapshot (the fail-visible report; operator attention);
-        --   <0 = a negative UK code (never happens for these consults).
+        -- Exercise both consults and pack their byte counts into the return
+        -- value (the operator-facing "print": a host or LLM reads the
+        -- result without needing to parse the buffer contents):
+        --   high 16 bits = live-status JSON byte count (> 0 always);
+        --   low 16 bits  = snapshot-recovery report byte count (0 = clean
+        --                  open / no store configured);
+        --   < 0          = a negative UK code (never happens for these
+        --                  consults).
+        -- Both counts are far below 65536 for every realistic store, so the
+        -- pack is lossless.
         let statusNeeded: Int64 := kernelDurableStatus(0, 0);
         if statusNeeded < 0 then
             return statusNeeded;
@@ -51,6 +56,10 @@ module body DurableStatusModule is
         if statusN < 0 then
             return statusN;
         end if;
-        return probeSnapshotError();
+        let snapN: Int64 := probeSnapshotError();
+        if snapN < 0 then
+            return snapN;
+        end if;
+        return (statusN * 65536) + snapN;
     end;
 end module body.

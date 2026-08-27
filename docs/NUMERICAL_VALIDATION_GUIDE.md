@@ -199,7 +199,7 @@ E4:7.3e-3, ...
 | `oscillator_beamsplitter` | $\omega(N_0+N_1)+J(a_0^\dagger a_1 + a_1^\dagger a_0)$ | sector spectrum $\{\omega-J, \omega+J\}$; swap $P=\sin^2(Jt)$ |
 | `oscillator_displaced` | $\omega N + g(a^\dagger+a)$ | coherent displacement, $E_n = \omega n - g^2/\omega$ |
 | `qcd_ym_hamiltonian` / `.cdb` | $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$, $B=(A_0-A_1)+\tfrac12 g A_0 A_1$ | Cadabra-derived Yang–Mills Hamiltonian, bounded-below spectrum |
-| `yang_mills_lattice` | full SU(3) lattice | mass gap $\approx g^2/2$ (Millennium positivity) |
+| `yang_mills_lattice` | Kogut–Susskind-inspired **comparison** lattice (NOT the Cadabra-derived gauge-fixed QYM — see `qcd_ym_hamiltonian`) | lattice strong-coupling gap $\approx g^2/2$ — a benchmark for the SIRK machinery, NOT a Millennium-positivity claim for this project's model |
 | `qg_free_graviton` | $\sum c\|k\| N_k$ | GW speed $= c$ (GW170817 constraint) |
 | `qg_starobinsky_*` | scalaron $\sum m N + \tfrac12\sum g^2$, $m^2=M^2/12\alpha$ | massive dispersion, ESA/boundedness of $R^2$ gravity |
 | `ns_eulerian_fiber` | $H = K_0 + \{\pi_0, u\cdot\partial u\}$ | Euler advection, gauge-fixed derivative variables |
@@ -448,8 +448,11 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
 
 - **`qcd_mass_gap_sirk`** — computes: the contrast between the massless free
   gluon ($E \to 0$ as $k\to 0$) and the confined Yang–Mills lattice whose
-  even→odd gap is $\approx g^2/2$ (strong-coupling lattice result, the
-  Millennium-Prize confinement statement). *Method*: two SIRK solves (even and
+  even→odd gap is $\approx g^2/2$ (strong-coupling lattice result — a
+  benchmark for the SIRK machinery only; the lattice is a comparison model,
+  not the Cadabra-derived gauge-fixed QYM of this project, so no
+  Millennium-Prize implication is drawn for this project's model/algorithm).
+  *Method*: two SIRK solves (even and
   odd parity starts) on `yang_mills_lattice(2, g, 1)`, gap
   $= E_{\rm odd} - E_{\rm even}$. *Setup*: $g=2$ ($g^2/2 = 2$), $m=4$; soft
   free-gluon mode $k=0.01$. *Asserts*: $E_{\rm soft} < 0.02$ (massless);
@@ -463,7 +466,9 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   direct vacuum expectation + SIRK Ritz values ($m=8$) from the inner vacuum.
   *Setup*: $g=0.5$. *Asserts*: $|\langle 0|H|0\rangle| < 10^{-9}$; projected
   Hamiltonian Hermitian; $\ge 3$ resolved levels; $\lambda_0 > -10$;
-  first three gaps $>0$.
+  first three gaps $>0$. (Positivity here is bounded-below positivity of the
+  Cadabra-derived gauge-fixed model in its finite truncation — a model-level
+  statement, not a proof of the Millennium problem.)
 
 - **`qcd_unitary_evolution_energy_conservation`** — same structure as the QED
   photon-field conservation test, on gluon modes $\omega=\{1,2,3\}$,

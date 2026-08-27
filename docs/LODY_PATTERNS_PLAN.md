@@ -208,9 +208,64 @@ certified-bound plan, BookProof `#check` sections) already implements Lody's
 
 ---
 
+## Executed in this pass (2026-08-27, follow-up)
+
+### 11. `unfer` — fail-visible corruption on every durable backend
+
+`DurableStore::snapshot_load_error` (default `None`) is now overridden by all
+three backends, so the operator consult surfaces corruption everywhere:
+
+- **Loro** — a torn `snapshot.bin` is preserved as `snapshot.bin.corrupt`,
+  the store starts empty, and the recovery is reported (the original
+  fail-visible open).
+- **JSONL** — a stream file ending without a trailing newline (interrupted
+  append) is reported at open; the intact records still replay.
+- **SQLite** — `PRAGMA quick_check` at open reports detectable-but-openable
+  corruption (unopenable files stay fail-closed).
+
+### 12. `unfer` — durable-status probe module (`durable_status_module`)
+
+An Austral module that consults `uk_durable_snapshot_error` and
+`uk_durable_status` through the CPS-JIT (grants + UK-4001 gate green via
+`tools/module_builder run`). `run()` packs the consult results into its
+return value — high 16 bits: live-status JSON byte count; low 16 bits:
+snapshot-recovery report byte count (0 = clean) — a script/LLM-readable
+"print" without buffer parsing.
+
+**JIT arithmetic gap closed on the way**: the pack uses `* 65536 +`, and
+Austral lowers `+`/`*` to `Austral.Pervasive::trappingAdd`/
+`trappingMultiply` method calls — symbols the cranelift bridge had never
+registered. Any module doing arithmetic crashed JIT finalization with
+"can't resolve symbol Austral.Pervasive::trappingAdd" (the module_builder
+PASS pattern matched only the UnferKernel wrapper batch, so the failure
+was invisible). `australVM` now registers the four `trapping*` Int64
+intrinsics (checked ops, abort on overflow/div-by-zero, mirroring
+`BuiltInModules.ml`); the module's own functions JIT-compile and the
+pack is real. Verified: `tools/module_builder run durable_status_module`
+(positive JIT: 7 functions incl. the module's own; UK-4001 revocation
+denies).
+
+### 13. `velysterm` — the dashboard is a mathed document (two surfaces)
+
+Everything GUI lives in the mathed stack; the durable status renders as a
+**document**, not a bespoke view:
+
+- **Bevy editor (`mathed`)** — a status chip (top-right) polls the store
+  read-only every 2 s: backend, persist counter, per-stream lengths, and the
+  corrupt-snapshot recovery report in warning red (`durable_sys.rs`).
+- **TUI (`mathed_mini`, no Bevy)** — `mathed_mini --dashboard` opens a Typst
+  dashboard document whose sections are citable segments
+  (`#N body #M \cite(#N, #M)`): typing **Ctrl+<digit>** pops a section open
+  and Esc closes it — the collapsible/reference interaction mathed already
+  had, no new GUI. `mathed_mini --dashboard-typst <file>` exports the same
+  document headless for scripts/LLMs (`durable_dashboard.rs`).
+
+Both surfaces consult the same read-only store (never append/flush), so
+neither can race the kernel's writes.
+
 ## Definition of done for this pass
 
-- All five executed items land as extensions of existing modules (no new
+- All executed items land as extensions of existing modules (no new
   crates, no new binaries, no new deps).
 - `cargo test -p mathed_core` green (154) and `cargo build -p mathed` green
   in `velysterm`; clippy clean.

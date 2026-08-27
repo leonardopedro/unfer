@@ -6,9 +6,11 @@ module DurableStatusModule is
     CPS-JIT. Pure read-only consult — the module never mutates the store,
     so it cannot race the kernel's own writes.
 
-    `run()` returns the surfaced flag: 0 = clean open, 1 = the store
-    recovered from a corrupt snapshot (operator attention), <0 = a UK code
-    (never happens for these consults).
+    `run()` packs the consult results into the return value: the high 16
+    bits are the live-status JSON byte count, the low 16 bits are the
+    snapshot-recovery report byte count (0 = clean open / no store
+    configured), and a negative value is a UK code (never happens for these
+    consults).
     """
     function run(): Int64;
 end module.

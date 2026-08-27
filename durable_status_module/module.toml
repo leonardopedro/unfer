@@ -22,8 +22,9 @@ entry = "src/DurableStatusModule"
 
 # Capability grants. The safestos cranelift JIT authorizes every `uk_*`
 # kernel call this module makes against this allow-list. The module_builder
-# negative test revokes the first non-probe grant (uk_durable_snapshot_error)
-# and verifies the stripped manifest DENIES with UK-4001.
+# negative test revokes a durable-status grant (`--deny
+# uk_durable_snapshot_error`) and verifies the stripped manifest DENIES
+# with UK-4001.
 #
 # The model_* / evolve / event_probability grants are NOT used by this
 # module's code: the CPS-JIT compiles the standard UnferKernel wrapper batch
