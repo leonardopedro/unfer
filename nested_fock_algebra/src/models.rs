@@ -1399,6 +1399,70 @@ pub fn qed_jaynes_cummings(omega: f64, omega0: f64, g: f64) -> Hamiltonian {
     Hamiltonian { terms }
 }
 
+/// Single-mode Kerr-nonlinear cavity (cavity-QED photon blockade model):
+/// `H = ω a†a + χ a†a†aa` — the harmonic ladder plus the χ anharmonicity that
+/// makes the transition energies photon-number dependent:
+///
+///   `E_n = ωn + χ n(n−1)`,   `E_{n+1} − E_n = ω + 2χn`.
+///
+/// The second transition `|1⟩ → |2⟩` is detuned from the first `|0⟩ → |1⟩` by
+/// `2χ`, so a drive resonant with the first transition cannot absorb a second
+/// photon — the **photon blockade**: the cavity acts as a single-photon
+/// source. The χ term preserves photon number `N = a†a` (`[H, N] = 0`), so the
+/// Krylov sectors are exactly the photon-number sectors and the SIRK Ritz
+/// values must land on the closed-form ladder `E_n`.
+///
+/// In the `χ → 0` limit this is the abelian QED sector `ωa†a` — exactly
+/// [`qed_free_photon`], the normal-ordered quantization of the U(1) gauge-
+/// fixed `H_final = ½π² + ½B²` from `docs/yang_mills_hamiltonian.cdb`.
+pub fn qed_kerr_cavity(omega: f64, chi: f64) -> Hamiltonian {
+    let terms = vec![
+        (
+            Complex64::new(omega, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+        (
+            Complex64::new(chi, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+    ];
+    Hamiltonian { terms }
+}
+
+/// The driven Kerr cavity — the QED gauge-fixed sector plus a coherent drive:
+/// `H = ω a†a + χ a†a†aa + g(a† + a)`. For `χ = 0` this is the static-charge
+/// sector of the abelian gauge-fixed QED Hamiltonian from
+/// `docs/yang_mills_hamiltonian.cdb` (`H_final = ½π² + ½B²` with the `A·J`
+/// charge coupling — exactly the single-mode displaced oscillator realized by
+/// [`qed_static_charge_interaction`]): its ground state is the coherent state
+/// `|−g/ω⟩` with **Poissonian** statistics `⟨N⟩ = Var(N) = (g/ω)²` (Fano
+/// factor 1). For `χ > 0` the anharmonic ladder detunes the second photon
+/// (`Δ₂ − Δ₁ = 2χ`), so a drive at the first transition produces
+/// **sub-Poissonian** (antibunched) light — Fano factor < 1 — the photon-
+/// blockade single-photon source. The drive breaks `[H, N] = 0`, so the SIRK
+/// ground state is a genuine superposition over photon numbers and its
+/// statistics are the numerically-resolved prediction.
+pub fn qed_kerr_cavity_driven(omega: f64, chi: f64, g: f64) -> Hamiltonian {
+    let mut terms = qed_kerr_cavity(omega, chi).terms;
+    terms.push((
+        Complex64::new(g, 0.0),
+        vec![Operator::InnerBosonCreate(0)],
+    ));
+    terms.push((
+        Complex64::new(g, 0.0),
+        vec![Operator::InnerBosonAnnihilate(0)],
+    ));
+    Hamiltonian { terms }
+}
+
 // ─────────────────────────────────────────────
 // 8. Quantum Chromodynamics (QCD) validation models
 //

@@ -43,7 +43,7 @@ use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, Operator, QuantumState, qed_free_photon,
+    Hamiltonian, InnerBosonicState, Operator, QuantumState, qcd_ym_hamiltonian, qed_free_photon,
     qed_static_charge_interaction, yang_mills_hamiltonian, yang_mills_hamiltonian_with_colors,
 };
 use num_complex::Complex64;
@@ -210,7 +210,10 @@ fn sirk_ground(h: &Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
         max_components: Some(200_000),
         brst_tol: 1e-10,
         adaptive: false,
-        unit_norm_steps: false,
+        // Unit-norm frame (exact basis reparametrization, see
+        // ritz_edge_study p2/p2b): the raw frame's Gram wall caps usable m
+        // once the Krylov vectors span a wide spectral window (m = 10 here).
+        unit_norm_steps: true,
     };
     let res = solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts)
         .expect("SIRK solve must complete");
@@ -255,8 +258,17 @@ fn qed_free_photon_is_normal_ordered_abelian_qym_free_sector() {
         let m_id = DMatrix::<Complex64>::identity(3, 3);
 
         // (a) The normal-ordered photon ladder {0, ω, 2ω} — what the QED tests
-        //     actually evolve with (vacuum energy exactly 0).
-        let vals_n = m_n.clone().symmetric_eigen().eigenvalues;
+        //     actually evolve with (vacuum energy exactly 0). (`nalgebra`'s
+        //     `symmetric_eigen` does NOT sort its eigenpairs, so the computed
+        //     values are sorted explicitly before comparing to the ladder.)
+        let mut vals_n: Vec<f64> = m_n
+            .clone()
+            .symmetric_eigen()
+            .eigenvalues
+            .iter()
+            .cloned()
+            .collect();
+        vals_n.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let expected_n = [0.0, omega, 2.0 * omega];
         for (v, e) in vals_n.iter().zip(expected_n.iter()) {
             assert!(
@@ -494,4 +506,192 @@ fn qed_static_charge_displaced_oscillator_exact_ground() {
              SIRK gave {e_gs:.12e} (err {err:.2e})"
         );
     }
+}
+
+// ─────────────────────────────────────────────
+// 5. The abelian two-mode gauge-fixed sector: B² pair coupling & squeezing
+// ─────────────────────────────────────────────
+
+/// All 4-mode Fock states with total occupation ≤ `n_max` (one universe).
+fn truncated4(n_max: u32) -> Vec<QuantumState> {
+    let mut basis = Vec::new();
+    for n0 in 0..=n_max {
+        for n1 in 0..=n_max - n0 {
+            for n2 in 0..=n_max - n0 - n1 {
+                for n3 in 0..=n_max - n0 - n1 - n2 {
+                    let mut occ = Vec::new();
+                    if n0 > 0 {
+                        occ.push((0, n0));
+                    }
+                    if n1 > 0 {
+                        occ.push((1, n1));
+                    }
+                    if n2 > 0 {
+                        occ.push((2, n2));
+                    }
+                    if n3 > 0 {
+                        occ.push((3, n3));
+                    }
+                    basis.push(fock_state(&occ));
+                }
+            }
+        }
+    }
+    basis
+}
+
+#[test]
+fn qym_abelian_two_mode_two_photon_sector_exact_quadratic_form() {
+    // The two-mode abelian gauge-fixed Hamiltonian `qcd_ym_hamiltonian(0)`
+    // (from `docs/yang_mills_hamiltonian.cdb`: H_final = ½π² + ½B² with
+    // B = A₀ − A₁ at g = 0) is a quadratic boson form over the four ladder
+    // modes — fields A₀, A₁ (modes 0, 1) and the Weyl-gauge momenta
+    // π₂, π₃ (modes 2, 3):
+    //
+    //   H = :½(A₀−A₁)²: + :½π₂²: + :½π₃²:
+    //     = [N₀+N₁ + ½(a†₀²+a₀²+a†₁²+a₁²) − (a†₀a†₁+a†₀a₁+a†₁a₀+a₀a₁)]
+    //       + [N₂ − ½(a†₂²+a₂²)] + [N₃ − ½(a†₃²+a₃²)] .
+    //
+    // The B² cross-term −:A₀A₁: carries the pair operators a†₀a†₁, a₀a₁
+    // (photon-pair creation/annihilation — the vacuum squeezing of the
+    // gauge-fixed field strength) alongside the number-conserving hopping.
+
+    // (a) The exact quadratic form, built independently term by term.
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    let c = |m: u32| Operator::InnerBosonCreate(m);
+    let a = |m: u32| Operator::InnerBosonAnnihilate(m);
+    // N₀ + N₁.
+    terms.push((Complex64::new(1.0, 0.0), vec![c(0), a(0)]));
+    terms.push((Complex64::new(1.0, 0.0), vec![c(1), a(1)]));
+    // ½(a†² + a²) per field mode.
+    for m in [0u32, 1] {
+        terms.push((Complex64::new(0.5, 0.0), vec![c(m), c(m)]));
+        terms.push((Complex64::new(0.5, 0.0), vec![a(m), a(m)]));
+    }
+    // −:A₀A₁: = −(a†₀a†₁ + a†₀a₁ + a†₁a₀ + a₀a₁).
+    terms.push((Complex64::new(-1.0, 0.0), vec![c(0), c(1)]));
+    terms.push((Complex64::new(-1.0, 0.0), vec![a(0), a(1)]));
+    terms.push((Complex64::new(-1.0, 0.0), vec![c(0), a(1)]));
+    terms.push((Complex64::new(-1.0, 0.0), vec![c(1), a(0)]));
+    // Momentum modes: N₂ − ½(a†₂²+a₂²), N₃ − ½(a†₃²+a₃²).
+    for m in [2u32, 3] {
+        terms.push((Complex64::new(1.0, 0.0), vec![c(m), a(m)]));
+        terms.push((Complex64::new(-0.5, 0.0), vec![c(m), c(m)]));
+        terms.push((Complex64::new(-0.5, 0.0), vec![a(m), a(m)]));
+    }
+    let h_quad = Hamiltonian { terms };
+
+    let basis = truncated4(3); // all 4-mode states with ≤ 3 quanta
+    let m_cdb = matrix_of(&qcd_ym_hamiltonian(0.0), &basis);
+    let m_quad = matrix_of(&h_quad, &basis);
+    let diff = (m_cdb.clone() - m_quad).norm();
+    assert!(
+        diff < 1e-9,
+        "qcd_ym_hamiltonian(0) must equal the exact quadratic form, ‖Δ‖ = {diff}"
+    );
+
+    // (b) The vacuum pair coupling: ⟨(0,0)|H|(1,1)⟩ = −1 exactly — the B²
+    //     field-strength term creates/annihilates photon pairs.
+    let vac = fock_state(&[]);
+    let two_ph = fock_state(&[(0, 1), (1, 1)]);
+    let pair = QuantumState::inner_product(&vac, &qcd_ym_hamiltonian(0.0).apply(&two_ph));
+    assert!(
+        (pair.re + 1.0).abs() < 1e-9 && pair.im.abs() < 1e-9,
+        "⟨vac|H|1,1⟩ must be −1 (pair creation/annihilation from ½B²), got {pair}"
+    );
+
+    // (c) The squeezing is real: the exact Hamiltonian matrix on a 4-quanta
+    //     truncation has a NEGATIVE ground (the pair coupling lowers the
+    //     two-photon sector below the free levels). The analytic continuum
+    //     floor is −2: H = (X₀−X₁)² − 1 (field sector) + P₂² − ½ + P₃² − ½
+    //     (momentum sector), each term ≥ its edge, so the ground never falls
+    //     below −2.
+    let mut exact_vals: Vec<f64> = matrix_of(&qcd_ym_hamiltonian(0.0), &truncated4(4))
+        .symmetric_eigen()
+        .eigenvalues
+        .iter()
+        .cloned()
+        .collect();
+    exact_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let exact_ground = exact_vals[0];
+    assert!(
+        exact_ground < -0.5 && exact_ground > -2.01,
+        "two-photon sector must dip below zero (squeezing) yet stay above the \
+         continuum floor −2: E₀ = {exact_ground}"
+    );
+
+    // (d) SIRK resolves the coupled sector: the lowest Ritz value from |1,1⟩
+    //     (unit-norm frame — the raw frame's Gram wall caps usable m) is
+    //     negative, converges monotonically DOWN toward the continuum floor
+    //     as m grows, never falls below −2, and already dips below the
+    //     4-quanta truncation ground (its Krylov reaches beyond 4 quanta).
+    let opts = SirkOpts {
+        prune_eps: 1e-10,
+        max_components: Some(200_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: true,
+    };
+    let mut prev = f64::NAN;
+    let mut lows = Vec::new();
+    for &m in &[10usize, 12] {
+        let res = solve_forward_sirk_with_opts(
+            &qcd_ym_hamiltonian(0.0),
+            &two_ph,
+            &shifts(m),
+            &best_device(),
+            None,
+            &opts,
+        )
+        .expect("SIRK solve must complete");
+        let low = res.ritz_values()[0];
+        assert!(
+            low < -0.5,
+            "m={m}: lowest Ritz from |1,1⟩ = {low}, must be negative (squeezing)"
+        );
+        assert!(
+            low > -2.01,
+            "m={m}: lowest Ritz {low} must stay above the continuum floor −2"
+        );
+        if !prev.is_nan() {
+            assert!(
+                low < prev + 1e-6,
+                "m={m}: lowest Ritz must converge down as m grows (prev {prev})"
+            );
+        }
+        prev = low;
+        lows.push(low);
+        eprintln!("qym_abelian_two_photon: m={m}, lowest Ritz = {low:.8}");
+    }
+    assert!(
+        lows[1] <= exact_ground + 1e-6,
+        "SIRK (m=12) must resolve at least as low as the 4-quanta truncation: \
+         {} vs {}",
+        lows[1],
+        exact_ground
+    );
+
+    // (e) The coincidence dynamics conserve norm and energy. A single solve
+    //     + `time_evolve`/`reconstruct` stays inside the m=12 Krylov space
+    //     (the restarted flow from the 4-mode |1,1⟩ start explodes the
+    //     component count — the pair terms reach high occupations across all
+    //     four modes — so the unitary check is done within one window).
+    let h = qcd_ym_hamiltonian(0.0);
+    let e0 = QuantumState::inner_product(&two_ph, &h.apply(&two_ph)).re;
+    let res = solve_forward_sirk_with_opts(&h, &two_ph, &shifts(12), &best_device(), None, &opts)
+        .expect("SIRK solve must complete");
+    for &t in &[0.5_f64, 2.0] {
+        let psi_t = res.reconstruct(&res.time_evolve(t));
+        let norm = QuantumState::inner_product(&psi_t, &psi_t).re;
+        let e_t = QuantumState::inner_product(&psi_t, &h.apply(&psi_t)).re;
+        assert!(
+            (norm - 1.0).abs() < 1e-6,
+            "t = {t}: norm = {norm} (pruned Krylov reconstruction)"
+        );
+        assert!(
+            (e_t - e0).abs() < 1e-6,
+            "t = {t}: ⟨H⟩ = {e_t}, must stay {e0}"
+        );
+    }
+    eprintln!("qym_abelian_two_photon: coincidence flow conserves norm + ⟨H⟩ = {e0:.6}");
 }

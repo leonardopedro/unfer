@@ -64,7 +64,9 @@ cargo test --release -p fock_sirk --test qed_validation \
     --test qg_cosmology_validation --test ns_boundary_layer_validation \
     --test qed_further_validation --test qg_general_relativity_validation \
     --test qym_lattice_validation --test ng_newtonian_validation \
-    --test ns_further_validation
+    --test ns_further_validation --test qed_kerr_photon_blockade \
+    --test qed_hong_ou_mandel --test qed_blockade_statistics \
+    --test qg_tegr_helicity
 
 # Heavy compiler-route compiles (minutes unoptimized, seconds in release):
 scripts/run_heavy_tests.sh          # runs the #[ignore]d suites in --release
@@ -972,6 +974,24 @@ second quantization is exactly `qed_free_photon`.
   displaced oscillator with ground state $-g^2/\omega$, reproduced by SIRK.
   *Asserts*: high precision on the ground Ritz value.
 
+- **`qym_abelian_two_mode_two_photon_sector_exact_quadratic_form`** —
+  computes: the two-mode abelian gauge-fixed Hamiltonian
+  `qcd_ym_hamiltonian(0)` (Cadabra-derived $H_{\rm final} = \tfrac12\pi^2 +
+  \tfrac12 B^2$, $B = A_0 - A_1$) is exactly the quadratic boson form
+  $N_0+N_1 + \tfrac12(a^{\dagger 2}+a^2 \text{ per field mode}) -
+  (a_0^\dagger a_1^\dagger + a_0^\dagger a_1 + a_1^\dagger a_0 + a_0 a_1) +
+  (N_2-\tfrac12(a_2^{\dagger 2}+a_2^2)) + (N_3-\tfrac12(a_3^{\dagger
+  2}+a_3^2))$ over the four Weyl-gauge ladder modes — verified as an exact
+  matrix identity against the Cadabra builder. The $B^2$ cross-term carries
+  the photon-**pair** operators: $\langle\mathrm{vac}|H|1,1\rangle = -1$
+  exactly (pair creation/annihilation — vacuum squeezing). SIRK (unit-norm
+  frame) resolves the coupled two-photon sector from $|1,1\rangle$: the
+  lowest Ritz value is negative and converges down toward the analytic
+  continuum floor $-2$ as $m$ grows ($-1.547$, $-1.618$ at $m = 10, 12$),
+  and the coincidence flow conserves norm and energy. *Asserts*: matrix
+  identity and pair matrix element to $10^{-9}$; Ritz negative, above $-2$,
+  monotone in $m$; norm/energy to $10^{-6}$.
+
 ### 5.10 Special relativity & nuclear — `sr_nuclear_validation.rs`
 
 - **`sr_mass_energy_anchors`** — computes: PDG rest energies $m_e c^2 =
@@ -1194,10 +1214,14 @@ The exactly-solvable models that pin the SIRK machinery itself.
   $Jt = \pi/4$ and complete swap at $Jt = \pi/2$ (restarted-Krylov unitary
   evolution, norm conserved). *Asserts*: the swap curve.
 
-- **`sirk_displaced_oscillator_exact_shift`** — computes:
-  $H = \omega N + g(a^\dagger + a)$: the exact displaced-oscillator shift
-  $E_n = \omega n - g^2/\omega$; the SIRK ground energy is $-g^2/\omega$ and
-  every Ritz value sits on an exact level. *Asserts*: solver precision.
+- **`sirk_displaced_oscillator_exact_shift`** — computes: the displaced
+  oscillator realized as the **Cadabra-derived QED gauge-fixed sector**
+  (`docs/yang_mills_hamiltonian.cdb`, abelian $H_{\rm final} = \tfrac12\pi^2
+  + \tfrac12 B^2$ with the static-charge $A\cdot J$ coupling,
+  `qed_static_charge_interaction`): $H = kN + g(B^\dagger+B)$ has the exact
+  spectrum $E_n = kn - g^2/k$; the SIRK ground energy is $-g^2/k$ and every
+  resolved Ritz value sits on an exact level (solver-enforced via
+  `resolved_ritz_values`). *Asserts*: solver precision.
 
 ### 5.17 The gauge-fixed program suites — `gauge_fixed_program_validation.rs`
 
@@ -2025,6 +2049,129 @@ This suite is the definition of done for the engine: if any of these fail,
 the SIRK implementation on that system's Hamiltonian is broken, regardless
 of what the analytics claim.
 
+### 5.24p Kerr photon blockade — `qed_kerr_photon_blockade.rs`
+
+Cavity-QED nonlinear optics on the new builder `qed_kerr_cavity(ω, χ)`
+(`H = ωa†a + χa†a†aa`), the canonical single-photon-source model. Because
+`[H, N] = 0` each photon-number sector is 1-dimensional, so every SIRK
+solve is exact and the assertions are to solver precision:
+
+- **`qed_kerr_anharmonic_ladder_exact`** — the Ritz value in each sector
+  $|n\rangle$ lands on the closed-form anharmonic ladder
+  $E_n = \omega n + \chi n(n-1)$ ($n = 0..4$, three $(\omega, \chi)$
+  settings).  *Asserts*: $|E - E_n| < 10^{-7}$.
+- **`qed_kerr_photon_blockade_detuning`** — the transition energies are
+  $\Delta_1 = E_1 - E_0 = \omega$, $\Delta_2 = E_2 - E_1 = \omega + 2\chi$,
+  $\Delta_3 = E_3 - E_2 = \omega + 4\chi$: the first photon is resonant
+  while the second is detuned by $2\chi$, the **photon blockade**
+  (Imamoğlu–Schmidt–Woods–Deutsch 1997).  *Asserts*: each spacing to
+  $10^{-7}$; the two-photon detuning $\Delta_2 - \Delta_1 = 2\chi$;
+  resolvable ($> 10^{-3}$).
+- **`qed_kerr_photon_number_conservation`** — real-time restarted-SIRK
+  evolution of $|2\rangle$ conserves the norm, $\langle N \rangle = 2$
+  (the $\chi$ term preserves photon number) and the energy
+  $E_2 = 2\omega + 2\chi$ at every time.  *Asserts*: all to $10^{-7}$.
+- **`qed_kerr_chi_zero_is_free_photon_sector`** — at $\chi = 0$ the Kerr
+  cavity is the Cadabra-derived abelian QED sector itself: both builders
+  (`qed_kerr_cavity(ω, 0)` and `qed_free_photon(ω)`, the U(1) reduction of
+  $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$) give the identical photon
+  ladder $\{n\omega\}$.  *Asserts*: $|E_{\rm Kerr} - E_{\rm photon}| < 10^{-9}$.
+
+### 5.24p′ Driven sector & blockade statistics — `qed_blockade_statistics.rs`
+
+The photon *statistics* of the driven QED gauge-fixed sector, extracted from
+**the SIRK ground eigenvector** (the lowest Ritz pair of the projected
+Hamiltonian, reconstructed via `h_proj` + `reconstruct`):
+
+- **`qed_static_charge_ground_is_coherent_poissonian`** — the abelian
+  gauge-fixed QED sector with a static charge
+  (`qed_static_charge_interaction`, `H = ωN + g(B†+B)` from
+  `docs/yang_mills_hamiltonian.cdb`) has the exactly-solvable coherent
+  ground state $|-g/\omega\rangle$: $\langle N \rangle = \mathrm{Var}(N) =
+  (g/\omega)^2$ and the Fano factor is exactly 1 (Poissonian), across three
+  couplings.  *Asserts*: Fano $= 1 \pm 10^{-4}$.
+- **`qed_kerr_blockade_sub_poissonian_antibunched`** — the same sector with
+  the cavity-Kerr nonlinearity (the driven-Kerr builder
+  `qed_kerr_cavity_driven`): at $\chi > 0$ the drive at the first transition
+  cannot absorb a second photon, so the ground state is sub-Poissonian and
+  antibunched — Fano $< 1$, $g^{(2)}(0) = \langle N(N-1)\rangle/\langle N\rangle^2 < 1$
+  — and the Fano factor decreases monotonically as $\chi$ grows (stronger
+  blockade).  *Asserts*: Fano $< 1 - 10^{-3}$, monotone in $\chi$.
+- **`qed_kerr_statistics_return_to_poissonian_as_chi_vanishes`** — as
+  $\chi \to 0$ the driven-Kerr ground returns monotonically to the coherent
+  state (Fano $\to 1$): continuity with the abelian gauge-fixed sector.
+  *Asserts*: $|\mathrm{Fano}(\chi = 10^{-6}) - 1| < 10^{-3}$; monotone.
+
+### 5.24q Hong–Ou–Mandel bunching — `qed_hong_ou_mandel.rs`
+
+Two-photon quantum-optics statistics on the existing `oscillator_beamsplitter`
+with $\omega = 0$: the beamsplitter $H = J(a^\dagger_0 a_1 + a^\dagger_1 a_0)$
+is twice the Schwinger SU(2) generator $J_x$, so evolution by $t$ rotates by
+$\theta = 2Jt$; $\theta = \pi/2$ is the ideal 50:50 beamsplitter. All
+predictions are exact quantum-optics results measured in photonics
+laboratories:
+
+- **`qed_hong_ou_mandel_bunching`** — two indistinguishable photons in the
+  coincidence state $|1,1\rangle$ exit a 50:50 beamsplitter *bunched*:
+  the spin-1 rotation has $d^1_{00}(\pi/2) = 0$, so
+  $|1,1\rangle \to (|2,0\rangle - |0,2\rangle)/\sqrt2$.  *Asserts*:
+  coincidence $P_{11} < 10^{-5}$ (the HOM dip), $P_{20} = P_{02} = \frac12$
+  to $10^{-5}$, norm conserved.
+- **`qed_beamsplitter_balanced_splitting`** — a single photon $|1,0\rangle$
+  splits evenly at $\theta = \pi/2$: $P_{10} = P_{01} = \frac12$
+  (spin-$\frac12$ rotation) and $\langle N_1 \rangle = \frac12$.  *Asserts*:
+  all to $10^{-5}$.
+- **`qed_beamsplitter_unitarity_energy`** — the $|1,1\rangle$ Krylov space is
+  the *symmetric* $N = 2$ subspace $\mathrm{span}\{|1,1\rangle,
+  (|2,0\rangle{+}|0,2\rangle)/\sqrt2\}$ where
+  $H = \begin{smallmatrix}0 & 2J\\ 2J & 0\end{smallmatrix}$: exact spectrum
+  $\{-2J, +2J\}$ reproduced by SIRK, and evolution along the full rotation
+  conserves the norm and the energy $\langle H \rangle = 0$.  *Asserts*:
+  spectrum to $10^{-8}$, norm/energy to $10^{-7}$.
+- **`qed_hom_coincidence_curve_cos2_theta`** — the full coincidence curve of
+  the HOM interferometer: $P_{11}(\theta) = |d^1_{00}(\theta)|^2 =
+  \cos^2(\theta)$ at $\theta \in \{0, \tfrac\pi4, \tfrac\pi3, \tfrac\pi2,
+  \tfrac{2\pi}3, \tfrac{3\pi}4, \pi\}$ — full coincidence at 0 and $\pi$,
+  the dip to zero at the 50:50 point, half-way in between.  *Asserts*:
+  $|P_{11} - \cos^2\theta| < 10^{-5}$ at every angle.
+
+The beamsplitter hopping is the number-conserving cross-coupling of the
+abelian gauge-fixed field strength $\tfrac12 B^2 = \tfrac12(A_0-A_1)^2$
+($-A_0A_1 \supset a^\dagger_0 a_1 + a^\dagger_1 a_0$); the *full* gauge-fixed
+$B^2$ sector — including the pair terms — is verified directly on the
+Cadabra-derived builder in §5.9.
+
+### 5.24r TEGR graviton polarization — `qg_tegr_helicity.rs`
+
+The graviton sector of the TEGR 3D gauge-fixed Hamiltonian
+(`docs/qg_gauge_fixed_hamiltonian.cdb`, book.tex line 8190), realized by
+`qg_tegr_hamiltonian`: each mode carries the normal-ordered 𝒮-sector kinetic
+$c(B^\dagger B - \tfrac12(B^{\dagger 2}+B^2))$ with $c = \tfrac{1}{16}$, which
+is $c(P^2 - \tfrac12)$ in quadratures — a pure momentum-squared operator whose
+spectrum is the half-line $[-\tfrac{1}{32}, \infty)$ (bounded below,
+continuous): the finite shadow of the essential self-adjointness of the
+densitized d'Alembertian (Strichartz 1973). Each mode is one polarization
+direction of the tetrad momentum; the two modes of `qg_tegr_hamiltonian(2)`
+are the two transverse polarizations of the graviton in the linearized
+theory (the helicity-±2 pair):
+
+- **`qg_tegr_polarizations_degenerate`** — the two polarizations carry
+  IDENTICAL 𝒮-kinetics, so the SIRK spectrum from $|1_0\rangle$, from
+  $|1_1\rangle$ and from the symmetric one-quantum superposition coincide to
+  solver precision — the helicity degeneracy of the graviton (one $|k|$, one
+  frequency for both helicities).  *Asserts*: spectra identical to $10^{-6}$.
+- **`qg_tegr_kinetic_continuum_edge_bounded_below`** — the exact sharpening
+  of the loose “bounded below” band of §5.17: the ground from the vacuum
+  never falls below the continuum edge $-c/2 = -\tfrac{1}{32}$ per mode
+  (and $-\tfrac{1}{16}$ for two modes), is genuinely *negative* (the
+  normal-ordered kinetic's ground is $-\tfrac{1}{32}$, not 0), and the
+  resolved window keeps positive gaps.  *Asserts*: edge inequalities to
+  $10^{-6}$, gaps positive.
+- **`qg_tegr_flow_conserves_norm_energy`** — the 𝒮 pair terms populate both
+  polarization ladders (each mode's $:\mathcal S^2:$ creates/annihilates
+  pairs), yet the restarted-SIRK flow is unitary: norm and $\langle H \rangle$
+  are conserved exactly.  *Asserts*: norm/energy to $10^{-7}$.
+
 ### 5.25 The assumption ledger: match / fail / non-claim per system
 
 This is the honesty sheet. For each of the four systems it states: what is
@@ -2039,7 +2186,7 @@ the strong force).
 
 | System | Gauge-fixed Hamiltonian (from the action) | Tested WITHOUT further assumptions | Predictions (with uncertainty) | Matches | Fails / not claimed | Why |
 |---|---|---|---|---|---|---|
-| **QED** | abelian QYM free sector, $\tfrac12\pi^2 + \tfrac12 B^2$; JC; static charge | raw canonical sequence (all guards off) reproduces vacuum 0, dispersion $\omega=\|k\|$, additivity, Rabi doublets exactly (§5.1, §5.24, `assumption_ledger`) | dispersion; Rabi splitting $2g$; collapse–revival $t_R = 2\pi\sqrt{\bar n+1}/g$; Coulomb $\delta E(r_1)-\delta E(r_2)$; UV-linear self-energy | exact theory at machine precision; $g{-}2$, positronium, Lamb shift, Casimir, blackbody via the constants suite (§5.8) | wide-spectrum coherent-state revival under the RESTARTED solver loses ~9%/restart — the exact Poisson sum is the prediction, not the truncated solver; PT fails at strong coupling (SIRK departs — correctly, it is non-perturbative) | Gram-whitening conditioning over a huge eigenvalue range (solver regime, not a model limit); PT is the wrong tool at strong coupling |
+| **QED** | abelian QYM free sector, $\tfrac12\pi^2 + \tfrac12 B^2$; JC; static charge | raw canonical sequence (all guards off) reproduces vacuum 0, dispersion $\omega=\|k\|$, additivity, Rabi doublets exactly (§5.1, §5.24, `assumption_ledger`) | dispersion; Rabi splitting $2g$; collapse–revival $t_R = 2\pi\sqrt{\bar n+1}/g$; Coulomb $\delta E(r_1)-\delta E(r_2)$; UV-linear self-energy; driven-vacuum coherent statistics Fano $= 1$; blockade sub-Poissonian Fano $< 1$ (§5.24p′) | exact theory at machine precision; $g{-}2$, positronium, Lamb shift, Casimir, blackbody via the constants suite (§5.8) | wide-spectrum coherent-state revival under the RESTARTED solver loses ~9%/restart — the exact Poisson sum is the prediction, not the truncated solver; PT fails at strong coupling (SIRK departs — correctly, it is non-perturbative) | Gram-whitening conditioning over a huge eigenvalue range (solver regime, not a model limit); PT is the wrong tool at strong coupling |
 | **QYM** | $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$, $B = (A_0-A_1) + \tfrac12 g A_0 A_1$ (Weyl gauge, Legendre; book.tex $H_W$ is its negative) | vacuum 0; Hermiticity; bounded-below spectrum with positive gaps; $\pm g$ symmetry; Gauss-law superselection; BRST charge $\Omega = P\,b^\dagger$ nilpotent with $[H,\Omega]=0$ at $g=0$ (§5.2, §5.17, §5.19) | mass-gap signal $\approx g^2/2$ on the lattice truncation; abelian limit $=$ free Maxwell exactly (§5.9) | Cadabra-derived operator structure; $U(1)$ reduction to QED | the continuum mass gap is NOT claimed — $g^2/2$ is the strong-coupling lattice/truncation result; the brute-force full SU(3) form (76K terms, indefinite $-\tfrac12\pi^2$ in the $H_W$ convention) is NOT SIRK-tractable — the reduced $B(A)$ form is | confinement is a non-perturbative, truncation-sensitive statement; the abstract/indefinite forms are not a positive-definite Fock-mode basis |
 | **QG(R²)** | $\tfrac12\pi^2 + \tfrac12(\nabla\phi)^2 + V(\phi)$, $m^2 = M^2/12\alpha$; densitized d'Alembertian $\tfrac{1}{16}\Delta_{\mathcal S} - \tfrac{1}{24}\partial_y^2$; TEGR kinetic $\tfrac{1}{16e}\mathcal S^2$ | vacuum 0; massive dispersion $\omega = \sqrt{k^2+m^2}$; group velocity $k/\omega < 1$; bounded-below positive-gap spectra (the ESA finite shadow); derivative-variable BRST fixing (§5.3, §5.4, §5.17, §5.20) | scalaron mass gap $m(\alpha)$ at $k\to0$ with certified intervals; classical content: perihelion 43.0″/cy, GPS 45.9 µs/day, Pound–Rebka 2.46e-15, deflection 1.75″, Yukawa $\tfrac13 e^{-mr}$ correction | CODATA/GR/experiment within published bands (§5.3, §5.4, §5.20) | the full TEGR $H_{\rm final}$ in abstract $\mathcal S/E/T$ variables is NOT SIRK-tractable — only the kinetic/quadratic forms are realized; one-particle ESA on the Hermite dense core is a Lean-formalization claim (`../timepiece`), the numerics see only the finite truncation | the abstract variables are not a Fock-mode ladder; ESA is an operator-domain statement, numerically only its finite shadow is visible |
 | **NS** | quantized Euler generator $\sum_i\{\pi_i, A_i\}$, $A_i = \sum_j u_j u_{ij} - \nu u_{12+i}$; Eulerian affine fiber with promoted derivative variables | Ehrenfest identity $i\langle[H,u]\rangle = 4\kappa\langle u\rangle + 4c$ exact; Newtonian decay $du/dt = -\nu k^2 u$; gauge condition $C_m = g_m - 2(m+1)u_{m+1}$ a constant of motion BY CONSTRUCTION ($[H,C_m]=0$); $\Omega^2=0$, $[H,\Omega]=0$ (§5.5–5.7, §5.17) | decay rate $\nu k^2$ to <2%; advection identity $d\langle u_0\rangle/dt = 8\langle u_0\rangle\langle u_1\rangle$; the classical fluid laws (K41, Poiseuille, Stokes, Blasius, Strouhal, Lamb–Oseen) as the fiber's classical content | experimental fluid-dynamics bands (§5.5) | the truncated flow LEAKS Ω-content (the bare flow from a ghost-carrying state grows $\|\Omega\psi\|$) — the BRST projector is required in the solve; gauge-condition drift $\propto dt^2$ under truncation; raw-SI stiffness demands restarts for full e-folds | Krylov truncation + finite precision — the exact flow conserves $C_m$ identically (verified: drift → 0 as $dt \to 0$) |

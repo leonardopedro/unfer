@@ -8,15 +8,18 @@
 //! 2. `sirk_beamsplitter_swap_dynamics` — a photon injected in mode 0 swaps
 //!    into mode 1 as P(t) = sin²(Jt): ⟨N₁⟩ = ½ at Jt = π/4 and complete
 //!    swap at Jt = π/2 (restarted-Krylov unitary evolution, norm conserved).
-//! 3. `sirk_displaced_oscillator_exact_shift` — H = ωN + g(a†+a): the exact
-//!    displaced-oscillator shift E_n = ωn − g²/ω; the SIRK ground energy is
-//!    −g²/ω and every Ritz value sits on an exact level.
+//! 3. `sirk_displaced_oscillator_exact_shift` — the displaced oscillator
+//!    realized as the **Cadabra-derived QED gauge-fixed sector**
+//!    (`docs/yang_mills_hamiltonian.cdb`, abelian H_final = ½π² + ½B² with
+//!    the static-charge A·J coupling, `qed_static_charge_interaction`):
+//!    H = kN + g(B†+B) has the exact spectrum E_n = kn − g²/k; the SIRK
+//!    ground energy is −g²/k and every Ritz value sits on an exact level.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
 use nested_fock_algebra::{
-    InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter, oscillator_displaced,
+    InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter, qed_static_charge_interaction,
 };
 use num_complex::Complex64;
 
@@ -90,9 +93,17 @@ fn sirk_beamsplitter_swap_dynamics() {
 
 #[test]
 fn sirk_displaced_oscillator_exact_shift() {
-    let (omega, g) = (1.7_f64, 0.45_f64);
-    let h = oscillator_displaced(omega, g);
-    let v0 = empty_universe_vacuum();
+    // The displaced oscillator is the QED gauge-fixed sector itself: the
+    // abelian Yang–Mills H_final = ½π² + ½B² (from
+    // `docs/yang_mills_hamiltonian.cdb`) with the static-charge A·J coupling.
+    // The single-mode model H = kN + g(B†+B) (outer ladder, the framework's
+    // Weyl-gauge realization) has the exact spectrum E_n = kn − g²/k.
+    let (k, dk, r, e) = (1.7_f64, 0.05, 2.0, 0.9);
+    let h = qed_static_charge_interaction(&[(k, dk)], r, e);
+    let two_pi_sq = 2.0 * std::f64::consts::PI * std::f64::consts::PI;
+    let kr = k * r;
+    let g = (e * e * dk * k * (1.0 + kr.sin() / kr) / two_pi_sq).sqrt();
+    let v0 = QuantumState::vacuum();
     // Theory-native usage: ONE finite-time window; convergence comes from
     // the Krylov DIMENSION alone. m=8 resolves E0..E2 to machine precision
     // in the unit-norm frame (the raw frame's Gram wall caps usable m --
@@ -100,8 +111,8 @@ fn sirk_displaced_oscillator_exact_shift() {
     let res =
         solve_forward_sirk_with_opts(&h, &v0, &shifts(8), &best_device(), None, &opts()).unwrap();
     let ritz = res.ritz_values();
-    // Exact levels E_n = ωn − g²/ω (normal-ordered ground at −g²/ω).
-    let shift = g * g / omega;
+    // Exact levels E_n = kn − g²/k (normal-ordered ground at −g²/k).
+    let shift = g * g / k;
     assert!(
         (ritz[0] - (-shift)).abs() < 1e-7,
         "ground {} want {}",
@@ -113,21 +124,22 @@ fn sirk_displaced_oscillator_exact_shift() {
     // (`ritz_residuals`), not by a hand-maintained energy cutoff. The
     // unconverged top-window values (higher-rung estimates, see
     // ritz_edge_study) fail the residual test and are excluded.
-    // Measured residual ladder at m=8 (true Gram-only residuals):
-    //   E0:1.5e-5  E1:2.6e-5  E2:2.0e-4 | E3:1.4e-3  E4:7.3e-3 ...
+    // Measured residual ladder at m=8 for the OUTER-ladder (Weyl-gauge)
+    // realization of the QED sector (true Gram-only residuals):
+    //   E0:1.3e-3  E1:5.8e-5  E2:6.2e-4 | E3:5.9e-3  E4:3.3e-2 ...
     // The tolerance sits inside the gap after the third level, so exactly
     // the resolved rung set passes -- enforced by solver-computed truth.
-    let resolved: Vec<f64> = res.resolved_ritz_values(3e-4);
+    let resolved: Vec<f64> = res.resolved_ritz_values(2e-3);
     assert_eq!(resolved.len(), 3, "exactly the first three rungs must resolve");
     for v in &resolved {
-        let n_float = (v + shift) / omega;
+        let n_float = (v + shift) / k;
         let n_round = n_float.round();
         let tol_e = 1e-4_f64.max(2e-3 * v.abs());
         assert!(
-            (n_float - n_round).abs() * omega < tol_e && n_round >= 0.0 && n_round <= 3.0,
+            (n_float - n_round).abs() * k < tol_e && n_round >= 0.0 && n_round <= 3.0,
             "Ritz {v} not on an exact level (band {tol_e:.2e})"
         );
     }
-    // First excitation gap exactly ω (on the resolved spectrum).
-    assert!((resolved[1] - resolved[0] - omega).abs() < 1e-6);
+    // First excitation gap exactly k (on the resolved spectrum).
+    assert!((resolved[1] - resolved[0] - k).abs() < 1e-6);
 }
