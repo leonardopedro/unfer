@@ -1,0 +1,12 @@
+[package]
+name = "sirk_core_model"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Aeneas-translatable model of the SIRK numeric core (T9 of the mass-gap plan)"
+
+[lib]
+path = "src/lib.rs"
+
+# Charon/Aeneas extraction metadata: the crate is intentionally dependency-free
+# so `charon --preset=aeneas` extracts exactly the model.
+[package.metadata.charon]

@@ -295,6 +295,9 @@ fn every_const_code_is_registered() {
         Code::CUDA_UNAVAILABLE,
         Code::OUT_OF_MEMORY_BUDGET,
         Code::CALL_DENIED,
+        Code::LAYOUT_NOT_BIJECTIVE,
+        Code::BANK_CONFLICT_UNRESOLVED,
+        Code::SWIZZLE_IMPOSSIBLE,
         Code::INTERNAL,
     ] {
         assert!(

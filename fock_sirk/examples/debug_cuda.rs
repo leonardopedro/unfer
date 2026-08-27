@@ -1,25 +1,31 @@
-use candle_core::Device;
+//! CUDA probe with structured triage (GPU_FEDERATION_PLAN T2.2).
+//!
+//! Probes CUDA device 0 and prints the `UK-GPU-<CODE>` triage lines the
+//! agent loop can parse. The triage codes map candle's raw init errors to
+//! the documented failure modes (AGENTS.md §5): `ARCH_MISMATCH` =
+//! libcublas/libcuda version conflict with the active GPU; `LD_LIBRARY_PATH`
+//! must point at the toolkit matching the driver.
+
+use fock_sirk::device::{GpuTriage, probe_cuda};
 
 #[cfg(feature = "cuda")]
 fn main() {
     println!("Checking CUDA availability...");
-    match Device::new_cuda(0) {
-        Ok(device) => {
-            println!("SUCCESS: Found CUDA device: {:?}", device);
+    let probe = probe_cuda(0);
+    match &probe.device {
+        Some(device) => {
+            println!("SUCCESS: Found CUDA device: {device:?}");
         }
-        Err(e) => {
-            println!("FAILURE: Could not initialize CUDA: {:?}", e);
+        None => {
+            let triage = probe.triage.unwrap_or(GpuTriage::Other);
+            println!("FAILURE: {triage:?}");
+            probe.emit_triage();
         }
     }
-
-    println!(
-        "cuda_if_available(0) returns: {:?}",
-        Device::cuda_if_available(0)
-    );
 }
 
 #[cfg(not(feature = "cuda"))]
 fn main() {
-    let _ = Device::Cpu;
+    let _ = GpuTriage::NoDevice;
     println!("Built without the `cuda` feature; rebuild with `--features cuda` to probe a GPU.");
 }

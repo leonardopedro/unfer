@@ -298,6 +298,66 @@ pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) 
     Some(odd.ground_state_energy()? - even.ground_state_energy()?)
 }
 
+/// Proof-facing parity-sector mass gap (`MASS_GAP_CERTIFIED.md` §3.3–§3.4,
+/// T6). This is the **formalization seam**: it runs the two pure-parity SIRK
+/// solves (even = vacuum, odd = one electric-flux quantum), enforces the
+/// theorem's checkable preconditions at runtime (`debug_assert`), and
+/// assembles the certified gap `[lo, hi]` via
+/// [`crate::certified_mass_gap`].
+///
+/// Preconditions enforced here (see [`crate::mass_gap_spec`] for the exact
+/// contracts):
+/// 1. **Sector purity** — lattice parity is an exact symmetry of `H_m`, so
+///    the two Krylov chains must be disjoint; witnessed by the maximal
+///    mutual overlap of the retained chain vectors (`< 1e-8`).
+/// 2. **Even ground = vacuum** — the even sector ground Ritz value must be
+///    `O(1/g⁶)`-small at strong coupling (the magnetic shift of the vacuum
+///    is second order); witnessed by `|θᵉ₀| < 0.1`.
+///
+/// Returns `None` if either solve fails or has rank 0. In release builds the
+/// precondition witnesses degrade to documentation (debug-only asserts).
+pub fn certified_mass_gap_parity(
+    h: &Hamiltonian,
+    v_even: &QuantumState,
+    v_odd: &QuantumState,
+    shifts: &[Complex64],
+    opts: &SirkOpts,
+) -> Option<crate::certificate::GapCertificate> {
+    let device = crate::device::best_device();
+    let res_even =
+        solve_forward_sirk_with_opts(h, v_even, shifts, &device, None, opts).ok()?;
+    let res_odd =
+        solve_forward_sirk_with_opts(h, v_odd, shifts, &device, None, opts).ok()?;
+
+    // Precondition 1: sector purity (ChapterParity) — the chains must be
+    // disjoint. The overlap witness is exact for pure-parity starts (the
+    // occupation parity differs on every basis state).
+    let max_overlap = res_even
+        .w_sequence
+        .iter()
+        .flat_map(|we| {
+            res_odd
+                .w_sequence
+                .iter()
+                .map(move |wo| QuantumState::inner_product(we, wo).norm())
+        })
+        .fold(0.0_f64, f64::max);
+    debug_assert!(
+        crate::mass_gap_spec::parities_disjoint(max_overlap, 1e-8),
+        "even/odd Krylov chains must be disjoint (parity symmetry of H_m); \
+         max overlap = {max_overlap:.2e}"
+    );
+
+    // Precondition 2 witness: the even ground is the normal-ordered vacuum.
+    let e_even = res_even.ground_state_energy()?;
+    debug_assert!(
+        crate::mass_gap_spec::even_sector_is_vacuum(e_even, 0.1),
+        "even sector ground must be the vacuum at strong coupling, got {e_even}"
+    );
+
+    crate::certificate::certified_mass_gap(&res_even, &res_odd)
+}
+
 /// Tunable bounds and tolerances for the SIRK solve.
 #[derive(Debug, Clone)]
 pub struct SirkOpts {

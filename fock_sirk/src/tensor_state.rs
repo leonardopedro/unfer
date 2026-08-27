@@ -30,6 +30,17 @@ impl TensorState {
         }
 
         let dim = real_vec.len();
+        // Layout invariant (GPU.md): the CPU→GPU flattening is only sound if
+        // the state→index map is bijective; a broken layout would silently
+        // alias two basis states in the dense tensor. Zero cost in release.
+        debug_assert!(
+            registry.is_bijective(),
+            "StateDictionary layout is not bijective before GPU upload: {}",
+            registry
+                .bijective_violation()
+                .map(|(_, m)| m)
+                .unwrap_or_default()
+        );
         let real = Tensor::from_vec(real_vec, (dim,), device)?;
         let imag = Tensor::from_vec(imag_vec, (dim,), device)?;
 

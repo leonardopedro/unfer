@@ -1466,6 +1466,24 @@ pub enum WhymlOp {
     Prove,
 }
 
+/// Which WhyML program the kernel emits (S36 + GPU.md). Additive: each
+/// variant is a `.mlw` the same Why3 cycle proves and extracts to an OCaml
+/// module that the australVM compiler loads as a pass plugin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhymlProgram {
+    /// The authorization gate (default): grant-subset semantics (S21) —
+    /// `authorize grants required = true <-> required ⊆ grants`.
+    #[default]
+    AuthorizeGate,
+    /// The NPU DMA gate (GPU.md): a DMA transfer into a linear NPU buffer is
+    /// physically safe iff it stays inside the SRAM —
+    /// `buf.offset + bytes <= MAX_NPU_SRAM`. The extracted OCaml decides
+    /// `(offset, bytes)` pairs; the compiler pass rejects any module whose
+    /// declared DMA transfers exceed the hardware limit.
+    NpuDmaGate,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WhymlSpec {
     /// WhyML module name (default `"AuthorizeGate"`).
@@ -1487,6 +1505,9 @@ pub struct WhymlSpec {
     /// from WhyML" direction; the extracted OCaml binds them at link time.
     #[serde(default)]
     pub kernel_externals: Vec<String>,
+    /// Which program to emit (default [`WhymlProgram::AuthorizeGate`]).
+    #[serde(default)]
+    pub program: WhymlProgram,
     /// The operation to run.
     #[serde(default)]
     pub op: WhymlOp,
@@ -1513,6 +1534,7 @@ impl Default for WhymlSpec {
             grants: Vec::new(),
             required: Vec::new(),
             kernel_externals: Vec::new(),
+            program: WhymlProgram::AuthorizeGate,
             op: WhymlOp::Emit,
             timeout_ms: default_whyml_timeout_ms(),
         }

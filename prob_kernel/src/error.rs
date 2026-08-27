@@ -122,6 +122,21 @@ impl KernelError {
                     .with_data(serde_json::json!({"residual": residual}))
             }
 
+            KernelError::Sirk(SirkError::LayoutNotBijective { index, message }) => {
+                Diagnostic::new(
+                    Code::LAYOUT_NOT_BIJECTIVE,
+                    self.to_string(),
+                    Severity::Error,
+                )
+                .with_hint(RepairHint::new(
+                    HintKind::ReduceScope,
+                    "solver.krylov_dim",
+                    "the state→index layout aliased two basis states; reduce the Krylov \
+                     dimension or report the layout bug (see the violation message)",
+                ))
+                .with_data(serde_json::json!({"index": index, "violation": message}))
+            }
+
             KernelError::Sirk(SirkError::Numeric(msg)) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Error).with_hint(
                     RepairHint::new(
@@ -444,13 +459,17 @@ mod tests {
     /// the coverage contract below. Keep this list complete.
     fn every_variant() -> Vec<KernelError> {
         vec![
-            // Sirk(..) — all four SirkError variants.
+            // Sirk(..) — all five SirkError variants.
             KernelError::Sirk(SirkError::GramDegenerate { max_eig: 1e-18 }),
             KernelError::Sirk(SirkError::StateExplosion {
                 components: 9000,
                 limit: 4096,
             }),
             KernelError::Sirk(SirkError::BrstNotConverged { residual: 1e-2 }),
+            KernelError::Sirk(SirkError::LayoutNotBijective {
+                index: 3,
+                message: "index 3 holds a state that re-inserts to Some(0)".into(),
+            }),
             KernelError::Sirk(SirkError::Numeric("singular matrix".into())),
             // Cas(..) — both CasError variants.
             KernelError::Cas(CasError::TermExplosion {

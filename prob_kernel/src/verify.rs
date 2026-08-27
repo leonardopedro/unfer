@@ -447,4 +447,65 @@ mod tests {
             report.error, report.failing_theorem
         );
     }
+
+    /// The GPU-federation layout proof (`timepiece/Layout/Layout.lean`, T2.1
+    /// of the GPU_FEDERATION_PLAN), exported to lean4export NDJSON 3.1.0 by
+    /// the official tool on the pinned Lean 4.28.0 toolchain and pinned here.
+    /// Eight `rfl` certificates: StateDictionary layout bijectivity (injectivity
+    /// of `state ↦ index`, inverse `index_to_state`, `get_or_insert` stability
+    /// and append) and the GPU.md bank-conflict theorem (the collision pair
+    /// `2x + 4y ≡ 0 (mod 32)` at x = 0,16 — swizzle-invariant since equality
+    /// is preserved by any bank re-labelling — the parity obstruction, and the
+    /// pigeonhole image-size 16 < 32, including the full 32×32 grid).
+    /// Regenerate with the header comment of `Layout/Layout.lean`.
+    #[test]
+    fn layout_proof_verifies_in_nanoda() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/layout_bijective.ndjson"
+        );
+        let bytes = std::fs::read(path).expect("read layout_bijective.ndjson fixture");
+        let spec = LeanVerifySpec {
+            nat_extension: true,
+            string_extension: true,
+            ..LeanVerifySpec::standard_axioms()
+        };
+        let report = verify_export(&bytes, &spec).unwrap();
+        assert!(
+            report.verified,
+            "nanoda rejected the Layout proof: {:?} (failing: {:?})",
+            report.error, report.failing_theorem
+        );
+    }
+
+    /// The instantiated T6 gap certificate (`timepiece/GapCertificate/GapCertificate.lean`,
+    /// T10 of the CONSOLIDATED_PLAN §13.7), exported to lean4export NDJSON 3.1.0 by the
+    /// official tool on the pinned Lean 4.28.0 toolchain and pinned here.  Nine `rfl`
+    /// certificates mirror the T6 instance arithmetic on the recorded `g = 2`, `m = 4`
+    /// `yang_mills_lattice` run: the exact decimal readings (`1.9875`, `0.0555`), the
+    /// sector-gap and width aggregates, the T6 assembly `lo = gap − width = 1.932`,
+    /// `hi = gap + width = 2.043`, the stopping rule `lo > 0`, the non-trivial window,
+    /// and the strong-coupling consistency check `g²/2 = 2 ∈ [1.932, 2.043]`.  Pure core
+    /// Lean, no imports, kernel-computed `rfl` — the independent external checker can
+    /// re-verify it without trusting Lean's native compiler.
+    /// Regenerate with the header comment of `GapCertificate/GapCertificate.lean`.
+    #[test]
+    fn gap_certificate_proof_verifies_in_nanoda() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gap_certificate.ndjson"
+        );
+        let bytes = std::fs::read(path).expect("read gap_certificate.ndjson fixture");
+        let spec = LeanVerifySpec {
+            nat_extension: true,
+            string_extension: true,
+            ..LeanVerifySpec::standard_axioms()
+        };
+        let report = verify_export(&bytes, &spec).unwrap();
+        assert!(
+            report.verified,
+            "nanoda rejected the gap certificate proof: {:?} (failing: {:?})",
+            report.error, report.failing_theorem
+        );
+    }
 }

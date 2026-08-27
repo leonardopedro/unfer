@@ -140,6 +140,19 @@ impl Code {
     /// kernel call that is not a registered symbol.
     pub const WHYML_SPEC_INVALID: Code = Code(4904);
 
+    /// GPU layout: the state→index layout map is not bijective — two distinct
+    /// basis states alias one dense slot (or a slot has no state), so a dense
+    /// GPU tensor would silently corrupt the Gram matrix.
+    pub const LAYOUT_NOT_BIJECTIVE: Code = Code(4905);
+    /// GPU layout: the shared-memory bank assignment of the flattened basis
+    /// admits an unresolvable conflict — no swizzle separates the colliding
+    /// addresses modulo the bank count.
+    pub const BANK_CONFLICT_UNRESOLVED: Code = Code(4906);
+    /// GPU layout: the requested swizzle is impossible — the conflict equation
+    /// (e.g. `2x + 4y ≡ 0 (mod 32)`) has no solution that is simultaneously
+    /// bijective and conflict-free.
+    pub const SWIZZLE_IMPOSSIBLE: Code = Code(4907);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -552,6 +565,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4904,
             "WhyMLSpecInvalid",
             "The WhyML spec was malformed: an unknown uk_* symbol (not in the kernel registry), an invalid WhyML identifier, or a kernel external that is not a registered symbol.",
+        ),
+        (
+            4905,
+            "LayoutNotBijective",
+            "The state-to-index layout map is not bijective: two distinct basis states alias one dense slot, so a dense GPU tensor would silently corrupt the Gram matrix. Fix the flattening before offloading.",
+        ),
+        (
+            4906,
+            "BankConflictUnresolved",
+            "The shared-memory bank assignment of the flattened basis admits an unresolvable conflict: no swizzle separates the colliding addresses modulo the bank count. Change the tile shape or padding.",
+        ),
+        (
+            4907,
+            "SwizzleImpossible",
+            "The requested swizzle is impossible: the conflict equation (e.g. 2x + 4y = 0 mod 32) has no solution that is simultaneously bijective and conflict-free.",
         ),
         (
             6001,

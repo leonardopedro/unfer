@@ -27,6 +27,12 @@ pub enum SirkError {
     /// The matrix-free BRST projection did not converge.
     #[error("BRST projection failed to converge (residual {residual:.3e})")]
     BrstNotConverged { residual: f64 },
+    /// The state→index layout map is not bijective: two distinct basis states
+    /// alias one dense slot (or a slot has no state). The message is the
+    /// machine-readable violation, e.g. `index 3 holds a state that
+    /// re-inserts to Some(0)`.
+    #[error("layout not bijective at index {index}: {message}")]
+    LayoutNotBijective { index: usize, message: String },
     /// Any other numerical failure.
     #[error("numeric error: {0}")]
     Numeric(String),

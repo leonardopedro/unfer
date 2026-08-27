@@ -10,6 +10,7 @@
 #   - qfm_text/tests/{oxieml_fit_real_w,print_c0}.rs  (need the trained checkpoint;
 #                                                      skipped with a note if the
 #                                                      external drive is not mounted)
+#   - All physics validation suites (see run_physics_anchor.sh for the fast subset)
 #
 # The log is written to logs/heavy_tests_<timestamp>.log (created if missing)
 # and echoed to stdout. Exit 0 = all heavy tests green (or skipped for a
@@ -48,11 +49,6 @@ run_suite() {
 FAILED=0
 
 # 1. fock_sirk heavy SIRK solve + compiler-route compiles.
-# Run in RELEASE mode: the CAS/LaTeX expansion is pathologically slow
-# unoptimized (~870 s per LaTeX-dagger compile in debug vs ~0.1 s in release),
-# and the 900 s debug budget killed the suite mid-run (log 20260823_190214).
-# Release is the numerically optimized profile (opt-level 3); the timeout stays
-# at 1800 s only as cold-build headroom.
 run_suite "fock_sirk cdb_hamiltonian_match --release --ignored" \
     bash -c "cd '$repo_root/fock_sirk' && timeout 1800 cargo test --release --test cdb_hamiltonian_match -- --ignored" \
     || FAILED=$((FAILED + 1))
@@ -72,8 +68,16 @@ if [ -f "$CKPT" ]; then
         || FAILED=$((FAILED + 1))
 else
     echo "=== qfm_text heavy tests (skipped) ===" | tee -a "$LOG"
-    echo "  checkpoint not mounted at $CKPT — skipping oxieml_fit_real_w / print_c0" | tee -a "$LOG"
-    echo "  (mount the drive and re-run the script to include them)" | tee -a "$LOG"
+    echo "  checkpoint not mounted at $CKPT — skipping" | tee -a "$LOG"
+fi
+
+# 3. Fast physics anchor (release-mode; all physics validation suites).
+echo "=== physics anchor (release-mode) ===" | tee -a "$LOG"
+if "$repo_root/scripts/run_physics_anchor.sh" > >(summary) 2>&1; then
+    echo "  [pass] run_physics_anchor.sh" | tee -a "$LOG"
+else
+    echo "  [FAIL] run_physics_anchor.sh" | tee -a "$LOG"
+    FAILED=$((FAILED + 1))
 fi
 
 echo
