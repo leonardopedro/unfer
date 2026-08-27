@@ -1,0 +1,56 @@
+pragma Unsafe_Module;
+
+module body DurableStatusModule is
+    -- Runtime allocator/deallocator from the cranelift bridge (au_alloc /
+    -- au_free), the same pair iterated_bayes_module uses for buffer-out
+    -- kernel calls.
+    pragma Foreign_Import(External_Name => "au_alloc");
+    function auAlloc(size: Int64): Int64 is end;
+
+    pragma Foreign_Import(External_Name => "au_free");
+    function auFree(ptr: Int64): Int32 is end;
+
+    -- The H4 durable-store consults: the corrupt-snapshot recovery report
+    -- (empty string on a clean open / no store configured) and the
+    -- live-status JSON (backend, per-stream lengths, persist counter).
+    pragma Foreign_Import(External_Name => "uk_durable_snapshot_error");
+    function kernelDurableSnapshotError(buf: Int64, cap: Int64): Int64 is end;
+
+    pragma Foreign_Import(External_Name => "uk_durable_status");
+    function kernelDurableStatus(buf: Int64, cap: Int64): Int64 is end;
+
+    -- Two-phase buffer consult: size probe (buf = 0, cap = 0), allocate,
+    -- read. Returns the report byte count (0 = no report = clean open) or
+    -- a negative UK code if the consult fails (these consults never fail).
+    function probeSnapshotError(): Int64 is
+        let needed: Int64 := kernelDurableSnapshotError(0, 0);
+        if needed < 0 then
+            return needed;
+        end if;
+        -- The kernel copies min(needed, cap); request the needed size plus
+        -- one so the returned count is the full report length (0 => clean).
+        let buf: Int64 := auAlloc(needed + 1);
+        let n: Int64 := kernelDurableSnapshotError(buf, needed + 1);
+        let frc: Int32 := auFree(buf);
+        return n;
+    end;
+
+    function run(): Int64 is
+        -- Exercise both consults. The return value IS the surfaced flag:
+        --   0  = consult succeeded, the store opened cleanly;
+        --   1  = consult succeeded, the store recovered from a corrupt
+        --        snapshot (the fail-visible report; operator attention);
+        --   <0 = a negative UK code (never happens for these consults).
+        let statusNeeded: Int64 := kernelDurableStatus(0, 0);
+        if statusNeeded < 0 then
+            return statusNeeded;
+        end if;
+        let statusBuf: Int64 := auAlloc(statusNeeded + 1);
+        let statusN: Int64 := kernelDurableStatus(statusBuf, statusNeeded + 1);
+        let sfrc: Int32 := auFree(statusBuf);
+        if statusN < 0 then
+            return statusN;
+        end if;
+        return probeSnapshotError();
+    end;
+end module body.

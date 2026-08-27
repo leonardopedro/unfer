@@ -24,11 +24,23 @@ pub struct JsonlDurableStore {
     /// Open handles per stream (`<stream>` → file).
     files: Mutex<std::collections::HashMap<String, std::fs::File>>,
     drain: DrainLock,
+    /// Set at `open` when a stream file ends with a torn final line (a write
+    /// interrupted mid-record: the last line has no trailing newline). The
+    /// partial record is still served on replay (a final unterminated line is
+    /// a complete line to a line reader) — the flag exists so the operator
+    /// knows the last record of that stream may be truncated. Fail-visible
+    /// rather than fail-silent.
+    snapshot_error: Option<String>,
 }
 
 impl JsonlDurableStore {
     /// Open (or create) the store at `dir`. `None` = in-memory only (writes
     /// are buffered to the file map and dropped on exit; `flush` still drains).
+    ///
+    /// A stream file ending without a trailing newline is reported via
+    /// [`Self::snapshot_load_error`] (the store still opens — every line is
+    /// served, and the flag tells the operator the final record may be
+    /// truncated by an interrupted append).
     pub fn open(dir: Option<&Path>) -> Result<Self, DurableError> {
         if let Some(d) = dir {
             std::fs::create_dir_all(d)
@@ -38,6 +50,7 @@ impl JsonlDurableStore {
             dir: dir.map(|p| p.to_path_buf()),
             files: Mutex::new(std::collections::HashMap::new()),
             drain: DrainLock::default(),
+            snapshot_error: dir.and_then(detect_torn_streams),
         })
     }
 
@@ -78,7 +91,45 @@ fn tempfile_like(stream: &str) -> Result<std::fs::File, DurableError> {
         .map_err(|e| DurableError::Io(e.to_string()))
 }
 
+/// Scan `dir` for `<stream>.jsonl` files whose last byte is not a newline:
+/// a torn final line (an interrupted append). Returns a report of every such
+/// stream, or `None` when all files end cleanly (or the dir is empty).
+fn detect_torn_streams(dir: &Path) -> Option<String> {
+    let mut torn: Vec<String> = Vec::new();
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(stream) = name.strip_suffix(".jsonl") else { continue };
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.len() == 0 {
+            continue;
+        }
+        let Ok(mut f) = std::fs::File::open(entry.path()) else { continue };
+        use std::io::{Read, Seek, SeekFrom};
+        let mut last = [0u8; 1];
+        if f.seek(SeekFrom::End(-1)).is_ok()
+            && f.read_exact(&mut last).is_ok()
+            && last[0] != b'\n'
+        {
+            torn.push(stream.to_string());
+        }
+    }
+    if torn.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "torn final line (interrupted append) in stream(s): {}",
+            torn.join(", ")
+        ))
+    }
+}
+
 impl DurableStore for JsonlDurableStore {
+    fn snapshot_load_error(&self) -> Option<String> {
+        self.snapshot_error.clone()
+    }
+
     fn append(&self, stream: &str, record: &[u8]) -> Result<(), DurableError> {
         let mut file = self.file_for(stream)?;
         file.write_all(record)

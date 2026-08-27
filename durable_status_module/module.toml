@@ -1,0 +1,42 @@
+# Durable-store status probe module.
+# Operator-facing consult surface for the H4 durable store: exercises
+# `uk_durable_snapshot_error` (the fail-visible corrupt-snapshot recovery
+# report; empty on a clean open) and `uk_durable_status` (the live-status
+# JSON) through the CPS-JIT. The module never mutates the store — it is a
+# pure read-only probe, so it cannot race the kernel's own writes.
+#
+# See:
+#   unfer/docs/MODULES.md — manifest schema and the "add a module" checklist
+#   unfer/docs/PROTOCOL.md — UK code table
+#   unfer/docs/LODY_PATTERNS_PLAN.md — the durable consult surface
+
+[module]
+name = "durable_status_module"
+version = "0.1.0"
+# Archetype contract the module implements (see MODULES.md):
+#   data_source — supplies the operator-facing store status (backend,
+#                 persist counter, corrupt-snapshot recovery report) as
+#                 the module's consult result.
+archetypes = ["data_source"]
+entry = "src/DurableStatusModule"
+
+# Capability grants. The safestos cranelift JIT authorizes every `uk_*`
+# kernel call this module makes against this allow-list. The module_builder
+# negative test revokes the first non-probe grant (uk_durable_snapshot_error)
+# and verifies the stripped manifest DENIES with UK-4001.
+#
+# The model_* / evolve / event_probability grants are NOT used by this
+# module's code: the CPS-JIT compiles the standard UnferKernel wrapper batch
+# (kernelModelCreateStr, kernelEvolveStr, kernelEventProbabilityStr, wrapModel,
+# freeModel) for every module in the compilation unit, and each wrapper's
+# foreign symbol must be granted even when the module never reaches it at
+# runtime (same convention as qfm_module / iterated_bayes_module).
+[grants]
+kernel = [
+    "uk_model_create",
+    "uk_evolve",
+    "uk_event_probability",
+    "uk_model_free",
+    "uk_durable_snapshot_error",
+    "uk_durable_status",
+]

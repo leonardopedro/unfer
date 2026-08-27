@@ -27,10 +27,20 @@ pub struct SqliteDurableStore {
     conn: Mutex<Connection>,
     drain: DrainLock,
     _dir: Option<PathBuf>,
+    /// Set at `open` when `PRAGMA quick_check` finds the database damaged
+    /// (torn pages after a crash) yet the file still opens. The store serves
+    /// whatever survives; the operator learns the file is not trustworthy.
+    /// A file that cannot be opened at all stays fail-closed (`open` errors).
+    snapshot_error: Option<String>,
 }
 
 impl SqliteDurableStore {
     /// Open (or create) the store at `dir`. `None` = in-memory SQLite.
+    ///
+    /// Detectable-but-openable corruption (a damaged b-tree page) is
+    /// reported via [`Self::snapshot_load_error`]; an unopenable file is a
+    /// hard error (fail-closed — SQLite cannot start empty over a garbage
+    /// file the way a snapshot store can).
     pub fn open(dir: Option<&Path>) -> Result<Self, DurableError> {
         let path = match dir {
             Some(d) => {
@@ -42,6 +52,16 @@ impl SqliteDurableStore {
         };
         let conn = Connection::open(&path)
             .map_err(|e| DurableError::Io(format!("sqlite open {}: {e}", path.display())))?;
+        // Fail-visible integrity probe BEFORE the init writes: a damaged but
+        // openable database is reported, not silently served. "ok" is the
+        // clean answer; anything else is a corruption report.
+        let snapshot_error = match conn.query_row("PRAGMA quick_check", [], |r| {
+            r.get::<_, String>(0)
+        }) {
+            Ok(report) if report.trim() == "ok" => None,
+            Ok(report) => Some(format!("sqlite quick_check: {report}")),
+            Err(e) => Some(format!("sqlite quick_check failed: {e}")),
+        };
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS records (
@@ -57,6 +77,7 @@ impl SqliteDurableStore {
             conn: Mutex::new(conn),
             drain: DrainLock::default(),
             _dir: dir.map(|p| p.to_path_buf()),
+            snapshot_error,
         })
     }
 
@@ -74,6 +95,10 @@ impl SqliteDurableStore {
 }
 
 impl DurableStore for SqliteDurableStore {
+    fn snapshot_load_error(&self) -> Option<String> {
+        self.snapshot_error.clone()
+    }
+
     fn append(&self, stream: &str, record: &[u8]) -> Result<(), DurableError> {
         let seq = self.next_seq(stream)?;
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());

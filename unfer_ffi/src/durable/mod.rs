@@ -285,6 +285,38 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_torn_final_line_reported() {
+        let scratch = Scratch::new("jsonl-torn");
+        let dir = &scratch.0;
+
+        // An interrupted append: the final line has no trailing newline.
+        std::fs::write(dir.join("audit.jsonl"), b"{\"n\":1}\n{\"n\":2").unwrap();
+        std::fs::write(dir.join("owner_log.jsonl"), b"(kernel.audit) clean\n").unwrap();
+
+        let store = JsonlDurableStore::open(Some(dir)).unwrap();
+        let err = store.snapshot_load_error().expect("torn line must be reported");
+        assert!(
+            err.contains("audit") && err.contains("torn final line"),
+            "report must name the torn stream: {err}"
+        );
+
+        // The intact records still replay; the partial final line is served
+        // as-is (a final unterminated line is a complete line to the reader),
+        // which is exactly why the flag exists: the operator knows the last
+        // record may be truncated.
+        let audit = store.replay(streams::AUDIT).unwrap();
+        assert_eq!(audit.len(), 2, "both lines replay: {audit:?}");
+
+        // A clean reopen (the operator appends a newline-terminated record and
+        // flushes) clears the flag: the backend adds the trailing newline
+        // itself, so appending a plain record repairs the file.
+        store.append(streams::AUDIT, b"{\"n\":3}").unwrap();
+        store.flush().unwrap();
+        let store2 = JsonlDurableStore::open(Some(dir)).unwrap();
+        assert!(store2.snapshot_load_error().is_none());
+    }
+
+    #[test]
     fn jsonl_round_trip() {
         let scratch = Scratch::new("jsonl");
         let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
@@ -297,6 +329,49 @@ mod tests {
         let store2 = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
         let audit = store2.replay(streams::AUDIT).unwrap();
         assert!(audit.iter().any(|r| r == b"{\"n\":7}"));
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_corrupt_db_reported() {
+        let scratch = Scratch::new("sqlite-corrupt");
+        let dir = &scratch.0;
+
+        // Seed a multi-page database so a data page exists beyond page 1.
+        {
+            let store = SqliteDurableStore::open(Some(&dir)).unwrap();
+            assert!(store.snapshot_load_error().is_none(), "fresh db must be clean");
+            for i in 0..40 {
+                store
+                    .append(streams::AUDIT, format!("record {i}").as_bytes())
+                    .unwrap();
+            }
+            store.flush().unwrap();
+        }
+
+        // Corrupt a data page's STRUCTURE (page 2's type byte at offset 4096;
+        // page 1 keeps its valid header so the file still opens and the
+        // schema init succeeds — only the integrity probe trips. quick_check
+        // validates b-tree structure, not payload bytes, so a structural
+        // corruption is what it reliably catches).
+        let path = dir.join("store.db");
+        let mut bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.len() > 4096, "expected a multi-page db, got {}", bytes.len());
+        bytes[4096] = 0x00; // invalid b-tree page type
+        std::fs::write(&path, &bytes).unwrap();
+
+        // Detectable-but-openable corruption: open succeeds (fail-visible,
+        // not fail-closed) and the operator learns the file is damaged.
+        let store = SqliteDurableStore::open(Some(&dir)).unwrap();
+        assert!(
+            store
+                .snapshot_load_error()
+                .as_deref()
+                .unwrap_or_default()
+                .contains("quick_check"),
+            "corruption must be reported: {:?}",
+            store.snapshot_load_error()
+        );
     }
 
     #[cfg(feature = "sqlite")]
