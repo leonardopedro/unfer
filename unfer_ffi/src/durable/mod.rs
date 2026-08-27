@@ -83,6 +83,55 @@ pub fn open_store(
     }
 }
 
+/// The well-known stream names in status order. Single source of truth for
+/// the operator surfaces (`uk_durable_status` JSON, the Bevy chip, the TUI
+/// dashboard) — a new well-known stream must be added here and in
+/// `unfer_protocol::durable::streams` together.
+pub const STREAM_NAMES: [&str; 6] = [
+    unfer_protocol::durable::streams::AUDIT,
+    unfer_protocol::durable::streams::OWNER_LOG,
+    unfer_protocol::durable::streams::ACTIONS,
+    unfer_protocol::durable::streams::CONFIG,
+    unfer_protocol::durable::streams::SESSION,
+    unfer_protocol::durable::streams::CERTIFICATES,
+];
+
+/// A live status consult: backend, persist counter, per-stream lengths, and
+/// the fail-visible corrupt-snapshot recovery report. Stable schema; the
+/// RAM-only shape (no store) is `backend = "none"`, every stream `0`, no
+/// error — the same shape `uk_durable_status` reports.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DurableStatus {
+    pub backend: String,
+    pub persist_count: u64,
+    pub streams: Vec<(String, u64)>,
+    pub snapshot_load_error: Option<String>,
+}
+
+/// Consult a store into a fresh [`DurableStatus`]. `None` store = RAM-only
+/// (the kernel's no-store shape). Pure read-only: never appends or flushes,
+/// so a consulter cannot race the kernel's own writes. Shared by the Bevy
+/// status chip and the `mathed_mini` TUI dashboard (single implementation).
+pub fn consult_status(store: Option<&dyn DurableStore>) -> DurableStatus {
+    match store {
+        Some(store) => DurableStatus {
+            backend: store.backend().to_string(),
+            persist_count: store.persist_count(),
+            streams: STREAM_NAMES
+                .iter()
+                .map(|s| (s.to_string(), store.stream_len(s).unwrap_or(u64::MAX)))
+                .collect(),
+            snapshot_load_error: store.snapshot_load_error(),
+        },
+        None => DurableStatus {
+            backend: "none".to_string(),
+            persist_count: 0,
+            streams: STREAM_NAMES.iter().map(|s| (s.to_string(), 0)).collect(),
+            snapshot_load_error: None,
+        },
+    }
+}
+
 /// Resolve the durable store's backing directory.
 pub(crate) fn snapshot_path(dir: &Path) -> PathBuf {
     dir.join("snapshot.bin")

@@ -309,15 +309,9 @@ pub fn durable_status_json() -> String {
     .to_string()
 }
 
-/// The well-known stream names in status order (matches `streams` module).
-const STREAM_NAMES: [&str; 6] = [
-    streams::AUDIT,
-    streams::OWNER_LOG,
-    streams::ACTIONS,
-    streams::CONFIG,
-    streams::SESSION,
-    streams::CERTIFICATES,
-];
+/// The well-known stream names in status order (single source of truth in
+/// `durable::STREAM_NAMES`).
+use crate::durable::STREAM_NAMES;
 
 /// Durably record an emitted verification certificate (mass-gap / Ritz bound
 /// from the T6 pipeline) as a `certificate-issued` line in the `certificates`
