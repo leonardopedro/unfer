@@ -1817,6 +1817,26 @@ pub fn qcd_free_gluon(energies: &[f64]) -> Hamiltonian {
 /// Hermitian, bounded-below spectrum with positive excitation gaps — the
 /// physical (gauge-fixed) Yang–Mills energy is positive, the positivity
 /// statement of the Millennium-Prize problem.
+///
+/// **Symmetry.** `H_final = ½π² + ½B²` is manifestly symmetric (Hermitian in
+/// the canonical inner product): the Weyl gauge `A₀ = 0` is a *physical* gauge
+/// — the unphysical polarizations are eliminated before quantization, no
+/// ghosts enter the Hamiltonian, and the operator is a sum of squares of
+/// self-adjoint pieces (π = ∂₀A self-adjoint, `B(A)` a real polynomial in the
+/// self-adjoint fields). The Gauss constraint `G_y` (see
+/// `docs/yang_mills_hamiltonian.cdb`) is imposed on physical states; it is not
+/// BRST-quantized. This is exactly why the non-self-adjointness phenomenon of
+/// `Ottinger.md` (arXiv:1803.00383 §III.B) does not occur here: in a
+/// covariant BRST gauge that keeps ghosts in the Hilbert space, the standard
+/// Kugo–Ojima “cross-adjoint” ghosts are not self-adjoint and the BRST
+/// Hamiltonian of a non-Abelian theory is then not self-adjoint in the
+/// canonical inner product (Ottinger's alternative ghost representation only
+/// restores self-adjointness w.r.t. the *signed* inner product on
+/// `Ker Q ∩ Ker Q†`). Further gauge-fixing beyond the Weyl gauge (complex
+/// gauge parameters, non-unitary gauge transformations, velocity-dependent
+/// gauge conditions) is what can destroy symmetry; none of those enter this
+/// builder. `test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian`
+/// verifies `H = H†` term-by-term.
 /// The single source of truth for the abelian-limit Yang–Mills Hamiltonian:
 /// the expression string realizing the `.cdb`-derived
 /// `H_final = ½π² + ½B²` (`docs/yang_mills_hamiltonian.cdb`: the Legendre
@@ -1964,6 +1984,29 @@ pub fn qg_densitized_kinetic(n_s_modes: u32) -> Hamiltonian {
 /// [`qed_free_photon`], [`qg_free_graviton`]): eigenvalues `n·m`, spacing
 /// exactly `m` (the scalaron mass), vacuum `0`.
 ///
+/// **Metric route — no vielbein needed.** The 3D gauge fixing of the Cadabra2
+/// derivation is performed entirely in METRIC variables (synchronous gauge
+/// `N = 1, N^i = 0`; the 3+1 split `R = R3 + (K² − K_ijK^ij)`; the conformal
+/// decomposition of the spatial metric `R_c = Ω⁻⁴R̄_c − 8Ω⁻⁵∇̄²Ω`; the
+/// derivative-variable fixing `Dphi2 → grad2`; the Hamiltonian constraint
+/// solved for `R_c`). The vielbein is only REQUIRED for the teleparallel
+/// (torsion) formulation — the torsion scalar `T` and the Weitzenböck
+/// connection are built from the vielbein and its local Lorentz freedom must
+/// be gauge-fixed (the TEGR module's job). Starobinsky is `f(R)`, a function
+/// of the Ricci scalar — a metric object — so the ADM split and the
+/// conformal-mode stabilization are self-contained in the metric.
+///
+/// **Vielbein / teleparallel alternative (NOT executed here).** Since the
+/// base theory is teleparallel-equivalent (`eR = e·T + div`), this sector
+/// *could* equally be written in vielbein variables with the same
+/// teleparallel restrictions (Weitzenböck connection: metric-compatible,
+/// curvature-free, torsion-carrying). Then `R = T + B` with the boundary term
+/// `B = 2∇_μT^μ` makes the R² action `∫e·f(T+B)` — a functional of the torsion
+/// scalar *and* its boundary term, NOT a pure `f(T)` (teleparallel) action
+/// (`f(T+B) ≠ f(T)` generically; pure `f(T)` gravity is a different theory).
+/// The metric construction below depends only on `R = T + B`, so it is
+/// unchanged by the choice of variables.
+///
 /// Built from the framework-native **inner** ladder operators
 /// (`N_i = InnerBosonCreate(i) ∘ InnerBosonAnnihilate(i)`) so the nested-Fock
 /// vacuum rule `⟨0|H|0⟩ = 0` holds automatically and the additivity `n|n⟩ =
@@ -1986,6 +2029,223 @@ pub fn qg_starobinsky_hamiltonian(n_modes: u32, m: f64) -> Hamiltonian {
                 Operator::InnerBosonAnnihilate(i),
             ],
         ));
+    }
+    Hamiltonian { terms }
+}
+
+/// The **vielbein (tetrad) Starobinsky Hamiltonian** — the reduced physical
+/// (Einstein-frame) form of the Cadabra2-derived `H_final_st`
+/// (`docs/qg_starobinsky_vielbein_hamiltonian.cdb`):
+///
+///   `H_final_st = (M²/2)ψ·(book.tex 8190) + U(ψ)e`
+///
+/// the base TEGR 3D gauge-fixed Hamiltonian (book.tex line 8190, in the
+/// vielbein/torsion variables) scaled by the scalaron field `(M²/2)ψ` plus the
+/// potential density `U(ψ) = (M⁴/16α)(ψ−1)²`. That Jordan-frame form carries
+/// the auxiliary `ψ = 1 + 4αR/M²`; the numerically stable, doctrine-consistent
+/// realization is the reduced physical form obtained on the constraint — the
+/// conformal factor is absorbed into the vielbein (Einstein frame), leaving
+/// the base TEGR kinetic plus a canonical massive scalar (the scalaron,
+/// `m² = M²/(12α)`), exactly as the metric-route module reduces `H_gf` on the
+/// Hamiltonian constraint.
+///
+///   `H = Σᵢ :(1/16)𝒮ᵢ²:  +  m·N_ψ`
+///
+/// - the **graviton sector**: the base TEGR kinetic `:(1/16)𝒮²:` per mode
+///   (outer ladder operators, [`qg_tegr_hamiltonian`]) — the general
+///   space-time (vielbein) content of the new module;
+/// - the **scalaron sector**: `m·N_ψ` on a fresh mode `ψ` — the quantized
+///   scalaron (the R² content; the positive mass gap `m = 1/√(12α)` of the
+///   Starobinsky sector, the αR² stabilization of the conformal mode).
+///
+/// **The final Hamiltonian is the one-particle Hamiltonian enclosed in
+/// creation (on the left) and annihilation (on the right) operators acting on
+/// the nested Fock space**: `H = Σᵢⱼ hᵢⱼ·C†(eᵢ)·A(eⱼ)` with the one-particle
+/// operator `h = h_TEGR ⊕ (m)` — the enclosure of the TEGR one-particle
+/// kinetic `(1/16)𝒮²` and of the scalaron one-particle energy `m`. Every term
+/// is a creation-left/annihilation-right ladder product, so the nested-Fock
+/// vacuum rule `⟨0|H|0⟩ = 0` holds, `H = H†` follows from the Hermiticity of
+/// `h`, and the n-particle energies are exact sums of the one-particle
+/// eigenvalues (Bose additivity: one-scalaron `m`, two-scalaron `2m`,
+/// one-graviton `1/16`, two-graviton `2/16`). The R² content enters `h`
+/// through the scalaron mass `m = √(V″(0)) = 1/√(12α)` — the curvature of
+/// the Einstein-frame exponential potential `V(φ) = (M⁴/16α)(1 −
+/// e^{−√(2/3)φ/M})²` at the vacuum.
+///
+/// **The outer Hamiltonian is free-particle-like for ANY one-particle
+/// operator `h` — the exponential may live inside `h`.** The nested Fock
+/// space has TWO levels: the outer Fock space (whose creation/annihilation
+/// operators are the C†(eᵢ)/A(eⱼ) of the enclosure) and the inner
+/// (one-particle) Hilbert space on which `h` acts. The final Hamiltonian
+/// `dΓ(h) = Σ hᵢⱼ C†(eᵢ)A(eⱼ)` is a QUADRATIC (free-particle-like) form in
+/// the outer ladders **by construction**, whatever `h` is. In particular the
+/// one-particle Hilbert space may carry the FULL Einstein-frame scalaron
+/// potential `V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})²`, exponential included,
+/// as part of the one-particle operator `h = ½π² + V(φ̂)`: the exponential
+/// then lives entirely inside the one-particle matrix elements
+/// `⟨eᵢ, h eⱼ⟩`, and NO 3-/4-particle vertices appear at the outer level
+/// (they would only arise from expanding `V` in the OUTER ladder operators,
+/// which is not the construction). `⟨0|H|0⟩ = 0` and the outer vacuum as the
+/// exact ground hold for the full `h` too.
+///
+/// The realization here takes the QUADRATIC part of the scalaron one-particle
+/// operator — the standard free massive scalaron `h = h_TEGR ⊕ (m)` with
+/// `m = √(V″(0)) = 1/√(12α)`, giving the exact mass gap `m` — which is the
+/// published Starobinsky scalaron mass. The FULL one-particle operator with
+/// the exponential is equally enclosable and realized by
+/// [`qg_starobinsky_vielbein_hamiltonian_full`]; its one-particle spectrum is
+/// the Schrödinger spectrum of `½π² + V(φ̂)` (whose essential
+/// self-adjointness is proved at first quantization in
+/// `BookProof/ChapterScalaronCoreEsa` / `…WallEsa`:
+/// `starobinskyV_essentiallySelfAdjoint`, `starobinskyWall_esa` on the
+/// compactly supported smooth core).
+///
+/// **Compatibility with the densitized-variables formalization.** The R²
+/// content enters only through the scalaron; the kinetic is the base TEGR
+/// one, so the densitized change of variables `y = √e` (`docs/
+/// qg_densitized_hamiltonian.cdb`; `BookProof/ChapterQuantumGravityDensitized`)
+/// absorbs the `1/e` denominators into the same constant coefficients
+/// `(1/16, −1/24)` — the flat d'Alembertian `H0 = (1/16)Δ_S̃ − (1/24)d²/dy²`
+/// — and all its ESA routes (Strichartz finite-speed hypothesis, the proved
+/// mode realization, the half-density transfer) apply unchanged; the
+/// non-negative scalar potential — the `m·N_ψ` enclosure here, or the full
+/// exponential inside the one-particle operator of
+/// [`qg_starobinsky_vielbein_hamiltonian_full`] — is exactly the class
+/// covered by the PROVED compactly-supported-core statements above.
+pub fn qg_starobinsky_vielbein_hamiltonian(n_grav: u32, m: f64) -> Hamiltonian {
+    let mut terms = qg_tegr_hamiltonian(n_grav).terms;
+    // The scalaron mode: a fresh universe beyond the graviton modes.
+    let mut scalaron = InnerBosonicState::vacuum();
+    scalaron.modes.insert(n_grav, 1);
+    // m·N_ψ — the quantized scalaron (normal-ordered, ⟨0|H|0⟩ = 0, diagonal:
+    // the one-scalaron state is an exact eigenstate of energy m).
+    terms.push((
+        Complex64::new(m, 0.0),
+        vec![
+            Operator::OuterBosonCreate(scalaron.clone()),
+            Operator::OuterBosonAnnihilate(scalaron),
+        ],
+    ));
+    Hamiltonian { terms }
+}
+
+/// The **full-exponential scalaron enclosure** — the same R²-vielbein final
+/// Hamiltonian as [`qg_starobinsky_vielbein_hamiltonian`], but with the FULL
+/// Einstein-frame scalaron potential inside the ONE-PARTICLE operator, as the
+/// nested-Fock doctrine allows:
+///
+///   `h = ½π² + V(φ̂)`,  `V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})²`  (M = 1),
+///   `H = Σᵢ :(1/16)𝒮ᵢ²: + Σₙₘ ⟨n|h|m⟩·C†(e_n)·A(e_m)`
+///
+/// on the truncated Hermite (number) basis `e_n = {ψ: n}` (n = 0..n_levels−1)
+/// of the scalaron mode. The outer Hamiltonian is still the free-particle-like
+/// creation-left/annihilation-right enclosure — the exponential lives entirely
+/// in the one-particle matrix elements `⟨n|h|m⟩` — from the closed form
+/// `⟨n|e^{−λ(a+a†)}|m⟩ = e^{λ²/2}√(n!m!)(−λ)^{n+m}Σ_j (−λ)^{−2j}/(j!
+/// (n−j)!(m−j)!)` with `λ = √(2/3)/(M√(2m)) = 1/√(3m)`, and the square
+/// `(1−E)² = 1 − 2E + E²` evaluated with the same closed form at `2λ` (the
+/// exact operator square, keeping the truncated model positive) — and no
+/// 3-/4-particle vertices appear at the outer level. `⟨0|H|0⟩ = 0` and the outer vacuum as
+/// the exact ground hold; the one-particle spectrum is the Schrödinger
+/// spectrum of `½π² + V(φ̂)` (ESA proved at first quantization:
+/// `BookProof.ChapterScalaronWallEsa.starobinskyWall_esa`), whose ground
+/// energy `E₀ > 0` is the gap of the enclosure. In the quadratic limit
+/// (`λ → 0`, i.e. `α → 0⁺` at fixed `m`) the matrix `h` reduces to the
+/// harmonic oscillator `½π² + ½m²φ̂²`, the eigenvalues to `m(n + ½)`, and the
+/// enclosure to the diagonal `Σₙ m(n+½)·N_n` — the full ladder of the
+/// massive scalaron.
+#[allow(clippy::needless_range_loop)] // matrix construction loops use
+// transpose access (kin[j][i], v_mat[j][i]); index loops are not needless.
+pub fn qg_starobinsky_vielbein_hamiltonian_full(
+    n_grav: u32,
+    alpha: f64,
+    n_levels: u32,
+) -> Hamiltonian {
+    let m = qg_starobinsky_scalaron_mass(alpha); // m² = M²/(12α), M = 1
+    let lam = (3.0 * m).sqrt().recip(); // λ = √(2/3)/(M·√(2m)) = 1/√(3m)
+    let n = n_levels as usize;
+    debug_assert!(n >= 2, "need at least two Hermite levels");
+    // Factorials 0!..=(2n)! for the matrix elements.
+    let mut fact = vec![1.0_f64; 2 * n];
+    for i in 1..2 * n {
+        fact[i] = fact[i - 1] * i as f64;
+    }
+    // E[n][m] = ⟨n|e^{−λ(a+a†)}|m⟩ and E2[n][m] = ⟨n|e^{−2λ(a+a†)}|m⟩ by the
+    // closed form, so that V = (1/(16α))(1 − E)² uses the EXACT operator
+    // square (1−E)² = 1 − 2E + E², E² = e^{−2λ(a+a†)}, NOT a truncated matrix
+    // product (which would break positivity). Integer powers of (−λ) are
+    // taken by sign to avoid NaN from powf on a negative base:
+    // (−λ)^p = (−1)^p·λ^p.
+    let exp_mat = |lam2: f64| -> Vec<Vec<f64>> {
+        let e_lam_sq_2 = (lam2 * lam2 / 2.0).exp();
+        let lam_pow = |p: i32| -> f64 {
+            let mag = lam2.powi(p);
+            if p % 2 == 0 { mag } else { -mag }
+        };
+        let mut em = vec![vec![0.0_f64; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                let mut s = 0.0_f64;
+                for k in 0..=i.min(j) {
+                    // (−λ)^{−2k} = λ^{−2k} (even exponent, positive).
+                    let e2k = -(2 * k as i32);
+                    s += lam2.powi(e2k) / (fact[k] * fact[i - k] * fact[j - k]);
+                }
+                em[i][j] = e_lam_sq_2 * (fact[i] * fact[j]).sqrt()
+                    * lam_pow((i + j) as i32) * s;
+            }
+        }
+        em
+    };
+    let e_mat = exp_mat(lam);
+    let e2_mat = exp_mat(2.0 * lam);
+    // V = (1/(16α))(1 − 2E + E²)  (M = 1), the exact restriction of the
+    // square potential to the truncated Hermite space (positive semidefinite:
+    // V = (1/(16α))(1 − e^{−λ(a+a†)})² as an operator, ≥ 0).
+    let v_scale = 1.0 / (16.0 * alpha);
+    let mut v_mat = vec![vec![0.0_f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            let one = if i == j { 1.0 } else { 0.0 };
+            v_mat[i][j] = v_scale * (one - 2.0 * e_mat[i][j] + e2_mat[i][j]);
+        }
+    }
+    // ½π² with π̂ = i√(m/2)(a†−a): ½π² = (m/4)(2N + 1) − (m/4)(a†² + a²).
+    let mut kin = vec![vec![0.0_f64; n]; n];
+    for i in 0..n {
+        kin[i][i] = (m / 4.0) * (2.0 * i as f64 + 1.0);
+        if i + 2 < n {
+            // ⟨i|a²|i+2⟩ = √((i+1)(i+2)) and ⟨i+2|a†²|i⟩ — symmetric.
+            let x = (m / 4.0) * ((i + 1) as f64 * (i + 2) as f64).sqrt();
+            kin[i][i + 2] = -x;
+            kin[i + 2][i] = -x;
+        }
+    }
+    // h = ½π² + V, symmetrized so h[i][j] == h[j][i] bit-exactly (the
+    // term-level H = H† certificate needs exact symmetry).
+    let mut h_mat = vec![vec![0.0_f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            h_mat[i][j] = (kin[i][j] + v_mat[i][j] + kin[j][i] + v_mat[j][i]) / 2.0;
+        }
+    }
+    // The enclosure: graviton TEGR kinetic + Σ h[n][m] C†(e_n)A(e_m), the
+    // scalaron universes e_n = {ψ: n} (creation left, annihilation right).
+    let mut terms = qg_tegr_hamiltonian(n_grav).terms;
+    for i in 0..n {
+        for j in 0..n {
+            let mut inner_i = InnerBosonicState::vacuum();
+            inner_i.modes.insert(n_grav, i as u32);
+            let mut inner_j = InnerBosonicState::vacuum();
+            inner_j.modes.insert(n_grav, j as u32);
+            terms.push((
+                Complex64::new(h_mat[i][j], 0.0),
+                vec![
+                    Operator::OuterBosonCreate(inner_i),
+                    Operator::OuterBosonAnnihilate(inner_j),
+                ],
+            ));
+        }
     }
     Hamiltonian { terms }
 }

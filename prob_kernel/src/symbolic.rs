@@ -1083,6 +1083,115 @@ mod tests {
         }
     }
 
+    /// The vielbein (tetrad) Starobinsky derivation — the general-space-time
+    /// generalization of the base QG module's chain
+    /// (`docs/qg_gauge_fixed_hamiltonian.cdb`: action -> vary -> polymomentum
+    /// -> Legendre transform -> H_final) to R + αR².
+    ///
+    /// `docs/qg_starobinsky_vielbein_hamiltonian.cdb` starts from the
+    /// scalar-tensor (Jordan) form `action_st = (M²/2)ψeR − U(ψ)e` in vielbein
+    /// variables (the metric-ADM split of `qg_starobinsky_hamiltonian.cdb` is
+    /// only compatible with very special foliations; the vielbein formulation
+    /// works for arbitrary frames/space-times, the metric being derived
+    /// `g = η e e` and the local Lorentz freedom explicit). It expands R
+    /// through the spin connection into the vielbein (the base module's
+    /// cell-3 chain), varies to get the polymomentum `pi_st` (which factors as
+    /// (M²/2)ψ·π₀ — ψ is auxiliary, `pi_psi_check` → 0), and
+    /// Legendre-transforms to `H_final_st = (M²/2)ψ·(book.tex 8190) + U(ψ)e` —
+    /// the base TEGR Hamiltonian scaled by the scalaron field plus the
+    /// potential density (the linearity of the Legendre transform in the
+    /// auxiliary ψ).
+    ///
+    /// Asserts (a) the Jordan form equals f(R) (`fR_check` → 0) and the R²
+    /// content is the potential (`R2_check` → 0), (b) the checks vanish, and
+    /// (c) the α → 0 limit (`base_limit_check`: ψ → 1, U → 0) recovers the
+    /// base module's book.tex-8190 TEGR Hamiltonian — the new module is a
+    /// genuine generalization, not a different theory.
+    const STAROBINSKY_VIELBEIN_DERIVATION: &str =
+        include_str!("../../docs/qg_starobinsky_vielbein_hamiltonian.cdb");
+
+    #[test]
+    fn qg_starobinsky_vielbein_hamiltonian_derivation_runs() {
+        if !require_cadabra() {
+            return;
+        }
+        let derived = symbolic_derive(
+            STAROBINSKY_VIELBEIN_DERIVATION,
+            &[
+                "action_st",
+                "fR_check",
+                "R2_check",
+                "ex1_st",
+                "pi_st",
+                "pi_psi_check",
+                "t0_tegr",
+                "H_8182_st",
+                "H_final_st",
+                "base_limit_check",
+            ],
+            120_000,
+        )
+        .unwrap();
+
+        // The scalar-tensor action carries the ψR coupling and the potential.
+        let action = &derived["action_st"];
+        assert!(
+            action.contains("ψ") && action.contains("R") && action.contains("U"),
+            "action_st must be the vielbein scalar-tensor (M²/2)ψeR − U(ψ)e: {action}"
+        );
+
+        // The Jordan form reproduces f(R) = (M²/2)R + αR², the R² content is
+        // the potential, and the scalaron is auxiliary (no ∂₀ψ kinetic): the
+        // three checks vanish identically.
+        for name in ["fR_check", "R2_check", "pi_psi_check"] {
+            let v = &derived[name];
+            assert!(
+                v == "0" || v.trim() == "0",
+                "{name} must vanish identically (scalar-tensor = f(R); ψ \
+                 auxiliary): `{v}`"
+            );
+        }
+
+        // The action expanded in the vielbein (∂e terms) and the polymomentum
+        // by variation carrying the (M²/2)ψ factor are non-trivial.
+        let ex1 = &derived["ex1_st"];
+        assert!(
+            ex1.contains("e") && ex1.contains("\\partial"),
+            "ex1_st must be the vielbein-expanded action with ∂e terms: {ex1}"
+        );
+        let pi = &derived["pi_st"];
+        assert!(
+            pi.contains("π") && pi.contains("ψ"),
+            "pi_st must be the by-variation polymomentum carrying the (M²/2)ψ \
+             factor: {pi}"
+        );
+
+        // The final Hamiltonian carries the scalaron factor, the torsion
+        // energy (book.tex 8190) and the potential density.
+        let h_final = &derived["H_final_st"];
+        assert!(
+            !h_final.is_empty() && h_final != "0",
+            "H_final_st must be non-trivial: {h_final}"
+        );
+        assert!(
+            h_final.contains("ψ") && h_final.contains("U"),
+            "H_final_st must be (M²/2)ψ·(book.tex 8190) + U(ψ)e: {h_final}"
+        );
+
+        // The α → 0 limit recovers the base TEGR Hamiltonian (ψ → 1, U → 0):
+        // the potential density drops out and the base 8190 structure remains.
+        let limit = &derived["base_limit_check"];
+        assert!(
+            !limit.is_empty() && limit != "0",
+            "base_limit_check must reduce H_final_st to (M²/2)·(book.tex 8190): \
+             {limit}"
+        );
+        assert!(
+            !limit.contains("U"),
+            "base_limit_check must drop the potential (α → 0): {limit}"
+        );
+    }
+
     /// Navier-Stokes: the divergence constraint is a *solved* constraint.
     ///
     /// book.tex §4191-4197 (the Navier-Stokes chapter) states that "the

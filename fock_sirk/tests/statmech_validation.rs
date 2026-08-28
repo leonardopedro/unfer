@@ -30,8 +30,9 @@ fn sm_maxwell_speed_identities() {
     let vavg = (8.0 / std::f64::consts::PI).sqrt();
     let vrms = 3.0_f64.sqrt();
     assert!(rel(vrms / vp, (3.0_f64).sqrt() / 2.0f64.sqrt()) < 1e-15);
-    // The textbook triple ratio: v_p : ⟨v⟩ : v_rms = 1 : 1.128 : 1.225.
-    assert!(rel(vavg / vp, 1.128_4) < 1e-3);
+    // The textbook triple ratio: v_p : ⟨v⟩ : v_rms = 1 : 1.128 : 1.225,
+    // i.e. 1 : 2/√π : √(3/2).
+    assert!(rel(vavg / vp, std::f64::consts::FRAC_2_SQRT_PI) < 1e-3);
     assert!(rel(vrms / vp, 1.224_7) < 1e-3);
 }
 

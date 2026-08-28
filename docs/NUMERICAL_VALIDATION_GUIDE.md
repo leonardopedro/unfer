@@ -507,6 +507,36 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
 `QG_C` (CODATA); `GM_SUN = 1.32712440018e20`, `GM_EARTH = 3.986004418e14`
 (m³/s²).
 
+**The QG final Hamiltonian is the one-particle Hamiltonian enclosed in
+creation (on the left) and annihilation (on the right) operators acting on the
+nested Fock space**: $H = \sum h_{ij} C^\dagger(e_i)A(e_j)$. The R² (vielbein
+Starobinsky) version, `qg_starobinsky_vielbein_hamiltonian`, is the enclosure
+of the one-particle operator $h = h_{\rm TEGR}\oplus(m)$ — the TEGR
+one-particle kinetic $(1/16)\mathcal S^2$ plus the scalaron one-particle
+energy $m = \sqrt{V''(0)} = 1/\sqrt{12\alpha}$ — i.e.
+$H = \sum_i :(1/16)\mathcal S_i^2: + m\,N_\psi$. The R² content enters $h$
+through the mass $m = \sqrt{V''(0)}$. The nested Fock space has TWO levels: the
+outer Fock space (whose ladders are the $C^\dagger/A$ of the enclosure) and the
+inner one-particle Hilbert space on which $h$ acts. The outer Hamiltonian is a
+QUADRATIC (free-particle-like) form in the outer ladders for ANY one-particle
+operator $h$ — so the FULL Einstein-frame scalaron potential
+$V(\varphi) = (M^4/16\alpha)(1-e^{-\sqrt{2/3}\varphi/M})^2$, exponential
+included, may live *inside* $h$ (in the one-particle matrix elements
+$\langle e_i, h e_j\rangle$), with NO 3-/4-particle vertices at the outer
+level. That is the realization `qg_starobinsky_vielbein_hamiltonian_full`
+(the truncated-Hermite enclosure of $h = \tfrac12\pi^2 + V(\hat\varphi)$;
+`qg_starobinsky_vielbein_hamiltonian` uses the quadratic part
+$h = h_{\rm TEGR}\oplus(m)$, the free massive scalaron with the exact gap $m$).
+The one-particle spectrum of the full $h$ is the Schr\"odinger spectrum of
+$\tfrac12\pi^2 + V(\hat\varphi)$ (essential self-adjointness proved at first
+quantization in BookProof — `starobinskyWall_esa`,
+`starobinskyV_essentiallySelfAdjoint` on the compactly supported smooth core). Consequences
+verified in the tests below: every term is creation-left/annihilation-right;
+$\langle 0|H|0\rangle = 0$; $H = H^\dagger$; n-particle energies are exact sums
+of one-particle eigenvalues (one-scalaron $m$, two-scalaron $2m$; one-graviton
+$1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
+αR² stabilization).
+
 - **`qg_planck_scale`** — computes: $\ell_P = \sqrt{\hbar G/c^3}$,
   $t_P = \sqrt{\hbar G/c^5}$, $m_P = \sqrt{\hbar c/G}$, $E_P = m_P c^2$ from
   CODATA, plus the dimensional identities $\ell_P m_P = \hbar/c$ and
@@ -580,6 +610,52 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
   rank). *Setup*: $m=1$ and $m=2$, 3 modes, $m_{\rm krylov}=4$ / $8$.
   *Asserts*: $10^{-6}$ on the ladder; $10^{-6}$ Hermiticity; boundedness +
   positive gaps.
+
+- **`qg_starobinsky_vielbein_sirk`** — computes structural facts of the NEW
+  QG module, the vielbein (tetrad) Starobinsky Hamiltonian
+  (`docs/qg_starobinsky_vielbein_hamiltonian.cdb`), the one-particle
+  enclosure $H = \sum h_{ij}C_i^\dagger A_j$ with
+  $h = h_{\rm TEGR}\oplus(m)$: the ENCLOSURE FORM term-by-term (creation
+  left, annihilation right — the defining property of the final Hamiltonian);
+  $\langle 0|H|0\rangle = 0$; the one-scalaron state an EXACT eigenstate of
+  energy $m$ and the two-scalaron expectation additive $2m$ (the mass gap of
+  the Starobinsky sector); the one-graviton TEGR kinetic expectation exactly
+  $1/16$ and the two-graviton expectation additive $2/16$ (Bose additivity of
+  the enclosure); Hermitian bounded-below spectrum with positive gaps (the
+  R²-stabilized, ESA quantized theory). *Method*: term-structure inspection +
+  direct expectations + SIRK $m=8$ from a vacuum+scalaron-ladder
+  superposition. *Setup*: $n_{\rm grav}=2$, $m=1$. *Asserts*: enclosure form
+  on every term; $\langle 0|H|0\rangle$ to $10^{-9}$; ladder $10^{-9}$;
+  graviton kinetic $10^{-9}$; $\|H-H^\dagger\| < 10^{-3}$ (Gram-whitening
+  precision of this model — the operator is exactly Hermitian by
+  construction, term-level $H = H^\dagger$ unit check); $\ge 2$ levels;
+  boundedness + positive gaps.
+
+- **`qg_starobinsky_vielbein_full_sirk`** — the FULL-exponential realization
+  (the answer to "use the full Hamiltonian if possible"):
+  `qg_starobinsky_vielbein_hamiltonian_full` puts the whole Einstein-frame
+  scalaron potential $V(\varphi) = (1/16\alpha)(1-e^{-\sqrt{2/3}\varphi})^2$
+  ($M=1$) INSIDE the one-particle operator $h = \tfrac12\pi^2 + V(\hat\varphi)$
+  on the truncated Hermite basis, enclosed in creation-left/annihilation-right
+  ladders — the outer Hamiltonian is still a quadratic (free-particle-like)
+  form in the outer ladders (the outer-Fock/inner-Fock distinction: the
+  exponential lives in the one-particle matrix elements $\langle n|h|m\rangle$,
+  no 3-/4-particle vertices at the outer level). *Computes*: enclosure form
+  term-by-term; $\langle 0|H|0\rangle = 0$; the one-particle sector of the
+  enclosure is the matrix $h$ (one-scalaron diagonal $\langle 1|h|1\rangle$
+  above the pure-oscillator $m(n+\tfrac12)$, the anharmonic shift from
+  $V\ge 0$); Hermitian bounded-below spectrum with positive gaps (the gap is
+  $E_0>0$, the Schr\"odinger ground of $\tfrac12\pi^2+V$ — ESA proved at first
+  quantization, `starobinskyWall_esa`); norm and energy conservation of
+  restarted-Krylov unitary evolution with the full model. *Method*: term
+  inspection + direct expectations + SIRK $m=8$ + `evolve_restarted`
+  (unit-norm steps) at $t\in\{0.3,0.7,1.5\}$. *Setup*: $n_{\rm grav}=2$,
+  $\alpha=1/12$ ($m=1$, $\lambda=1/\sqrt{3}$), $n_{\rm levels}=4$.
+  *Asserts*: enclosure form; $\langle 0|H|0\rangle$ to $10^{-9}$;
+  $\langle 1|h|1\rangle > m$; $\|H-H^\dagger\| < 10^{-3}$ (Krylov precision;
+  the operator is exactly Hermitian by construction, symmetrized bit-exactly
+  in the builder); $\ge 2$ levels; boundedness + positive gaps; energy to
+  $10^{-6}$ at each $t$.
 
 - **`qg_unitary_evolution_energy_conservation`** — restarted-Krylov
   conservation on graviton modes $\omega = \{1,2,3\}$ (natural units isolate

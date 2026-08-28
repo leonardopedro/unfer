@@ -135,7 +135,7 @@ fn su3_f_mirror(a: usize, b: usize, c: usize) -> f64 {
                     }
                 }
             }
-            return if swaps % 2 == 0 { val } else { -val };
+            return if swaps.is_multiple_of(2) { val } else { -val };
         }
     }
     0.0
@@ -698,7 +698,9 @@ fn ns_hamiltonian_matches_euler_advection() {
     let mut a0_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for j in 0..3u32 {
         for (cj, oj) in field_ops_local(j) {
-            for (cij, oij) in field_ops_local(3 + 0 * 3 + j) {
+            // u_{0j}: component 0's gradient block starts at mode 3
+            // (block layout: 3 + component*3 + direction).
+            for (cij, oij) in field_ops_local(3 + j) {
                 a0_terms.push((cj * cij, vec![oj.clone(), oij.clone()]));
             }
         }

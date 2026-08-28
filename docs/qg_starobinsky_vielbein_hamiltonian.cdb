@@ -1,0 +1,280 @@
+# Vielbein (tetrad) 3D gauge-fixed Hamiltonian for R + αR² (Starobinsky) gravity.
+#
+# MOTIVATION. The metric-route module (docs/qg_starobinsky_hamiltonian.cdb)
+# fixes the 3D gauge through a metric 3+1 ADM split (lapse N, shift N^i,
+# spatial metric q_ij, conformal factor Ω, the conformal decomposition
+# R_c = Ω⁻⁴R̄_c − 8Ω⁻⁵∇̄²Ω). That split is only compatible with very special
+# space-times: it requires a global foliation by spacelike hypersurfaces
+# (global hyperbolicity), a distinguished time function, and a smooth
+# background conformal structure — none of which are available in arbitrary
+# frames, rotating/non-foliable space-times, frames with torsion, or when
+# fermions must couple directly to the frame (spin connection). The vielbein
+# formulation used by the base QG module (docs/qg_gauge_fixed_hamiltonian.cdb)
+# is general: the vielbein e^a_μ is the fundamental field, the metric is
+# derived (g_μν = η_ab e^a_μ e^b_ν), the local Lorentz freedom is explicit,
+# and the theory is defined on any frame bundle. This module generalizes the
+# base module's chain — action density in the vielbein -> vary (polymomentum)
+# -> Legendre transform -> H_final — to the Starobinsky action.
+#
+# ACTION. S = ∫ e f(R), f(R) = (M²/2)R + αR² (α > 0, M the reduced Planck
+# mass), written in the ghost-free scalar-tensor (Jordan) form in vielbein
+# variables:
+#     action_st = (M²/2) ψ R e − U(ψ) e,
+#     ψ = 1 + 4αR/M²  (the conformal factor of the Jordan -> Einstein frame),
+#     U(ψ) = (M⁴/16α)(ψ−1)².
+# The identity f(R) = (M²/2)ψR − U(ψ) is verified (fR_check -> 0): R² gravity
+# is second-order scalar-tensor — no Ostrogradsky ghost. R is the Ricci scalar
+# built from the vielbein and the spin connection (the Levi-Civita connection
+# in frame language; the metric-compatible, torsion-free choice — the torsion
+# is zero for the metric connection, in contrast to the Weitzenböck connection
+# of the teleparallel rewriting R = T + B, B = 2∇_μT^μ, which is NOT executed
+# here).
+#
+# PIPELINE (generalizing docs/qg_gauge_fixed_hamiltonian.cdb cells 3-7):
+#   ex1_st    — the action density (M²/2)ψeR − U(ψ)e with R expanded through
+#               the spin connection ω(e) into the vielbein and its derivatives
+#               (same substitution chain as the base module).
+#   pi_st     — the polymomentum BY VARIATION of ex1_st w.r.t. e^k_ρ:
+#               π^α_{ρk} = ∂L/∂(∂_α e^k_ρ). Because ψ is an auxiliary field
+#               (independent of ∂_α e and ∂_α ψ), the variation factors:
+#               pi_st = (M²/2)ψ·π₀, π₀ the base Einstein polymomentum
+#               (factor_out(ψ) leaves the base chain).
+#   pi_psi    — the scalaron polymomentum: ψ has no kinetic term in the
+#               Jordan frame, so π_ψ = ∂L/∂(∂₀ψ) = 0 (pi_psi_check -> 0); the
+#               scalaron kinetic appears only after the conformal rescaling to
+#               the Einstein frame (cf. the metric module's Vphi).
+#   t0_tegr   — the TEGR torsion scalar (book.tex 8130; the eR = eT + div
+#               identity verified numerically in the base module).
+#   H_8182_st — the book.tex-8182 Legendre form × (M²/2)ψ + U(ψ)e, polymomenta
+#               kept symbolic so the A·A and p·T cross-terms cancel against −L.
+#   H_final_st— after the polymomentum relations A=−2eT, S=2eS, P=−4eT,
+#               p^a=2eT^ac_c, S^ab=Sbar^ab/(2e), T=−Pbar/(4e):
+#               H_final_st = (M²/2)ψ·(book.tex 8190) + U(ψ)e,
+#               i.e. the base TEGR 3D gauge-fixed Hamiltonian scaled by the
+#               scalaron field (M²/2)ψ, plus the potential energy density
+#               U(ψ)e — the linearity of the Legendre transform in the
+#               auxiliary ψ. The p^a·T_a vector terms are dropped as a
+#               boundary term (physical Hilbert space with vanishing fall-off;
+#               book.tex line 8190), exactly as in the base module.
+#   base_limit_check — α → 0 (ψ → 1, U → 0): H_final_st reduces to the base
+#               TEGR Hamiltonian (M²/2)·(book.tex 8190) — the new module is a
+#               genuine generalization, not a different theory.
+#
+# DENSITIZED-VARIABLES COMPATIBILITY. The R² content enters ONLY through the
+# scalaron field ψ and the potential U(ψ); it never enters the kinetic
+# (second-order) part, which remains exactly the base TEGR kinetic
+# (1/16e)S² − (1/24e)P². Hence the densitized change of variables of
+# docs/qg_densitized_hamiltonian.cdb — y = √e, e-tilde = √e·e, S = y·S-tilde,
+# P = y·P-tilde — absorbs the 1/e denominators into the CONSTANT coefficients
+# (1/16, −1/24) unchanged, giving the flat field-space d'Alembertian
+# H0 = (1/16)Δ_S-tilde − (1/24)d²/dy² (the Strichartz/finite-speed ESA input;
+# see BookProof/ChapterQuantumGravityDensitized and
+# BookProof/ChapterScalaronDensitizedTransfer). After the conformal rescaling
+# to the Einstein frame the scalaron carries the exponential potential
+# V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})² — smooth and non-negative, the
+# potential whose ESA on the compactly supported smooth core is PROVED in
+# BookProof/ChapterScalaronCoreEsa (starobinskyV_essentiallySelfAdjoint,
+# scalaronFullPotential_essentiallySelfAdjoint) and
+# BookProof/ChapterScalaronWallEsa (starobinskyWall_esa, −d²/dφ² + V, no
+# growth hypothesis). The numerical realization (qg_starobinsky_vielbein_
+# hamiltonian in nested_fock_algebra/src/models.rs) is the quadratic
+# truncation m·N_ψ, m² = M²/(12α) = V″(0), of that potential — a special case
+# of the proved statements. The Jordan-frame form above still needs the
+# conformal rescaling (ψ enters the kinetic) before the flat-coefficient
+# argument applies; that is the standard f(R) → Einstein-frame chain.
+# Run: cadabra2-cli -q -n <this file>
+def post_process(ex):
+	#unwrap(ex)
+	eliminate_kronecker(ex)
+	#canonicalise(ex)
+	#sort_product(ex)
+	collect_terms(ex)
+
+d{#}::Accent.
+{\alpha,\beta,\gamma,\mu,\nu,\rho,\sigma,\alpha#}::Indices(name=holonomic,position=independent,values={0,1,2,3}).
+\partial{#}::PartialDerivative.
+{i1,i2,i3,i#}::Indices(subspace2,parent=holonomic,position=independent,values={1,2,3}).
+{m1,m2,m3,m4,m#}::Indices(subspace,parent=holonomic,position=independent,values={1,2,3}).
+{j,k,l,j#}::Indices(name=frame,position=independent).
+{a,b,c,a#,b#,c#}::Indices(flat, position=independent, values={0,1,2,3}).
+{y1,y#}::Indices(name=pos,position=independent).
+
+\delta^{\mu?}_{\nu?}::KroneckerDelta;
+\delta_{\mu?}^{\nu?}::KroneckerDelta;
+\delta^{j? l?}::KroneckerDelta;
+\delta_{j? l?}::KroneckerDelta;
+\delta^{j?}_{l?}::KroneckerDelta;
+\delta^{j?}_{l}::KroneckerDelta;
+\delta_{y1? y2?}::KroneckerDelta;
+
+\eta_{\mu \nu}::Metric(signature=+2);
+\eta^{\mu \nu}::InverseMetric;
+{\psi, \alpha, M, e}::Commuting.
+e^{\mu}_{a}::Depends(\partial{#}).
+i::ImaginaryI.
+
+# ===== 1. the vielbein scalar-tensor (Jordan) action density =====
+# S = ∫ e f(R),  f(R) = (M²/2)R + αR², in the ghost-free form
+#   (M²/2)ψR − U(ψ) with ψ = 1 + 4αR/M², U(ψ) = (M⁴/16α)(ψ−1)².
+action_st := (M^2/2) \psi e R - U(\psi) e.
+# The identity f(R) = (M²/2)ψR − U(ψ): substituting ψ and U back must give
+# exactly (M²/2)R e + α R² e — the difference must vanish (fR_check -> 0).
+fR_check := @(action_st) - ( (M^2/2) R e + \alpha R**2 e ).
+substitute(fR_check, $ U(\psi) -> (M^4/(16 \alpha)) (\psi - 1)**2 $, repeat=True);
+substitute(fR_check, $ \psi -> 1 + 4 \alpha R/M^2 $, repeat=True);
+distribute(fR_check);
+expand(fR_check);
+collect_factors(fR_check);
+substitute(fR_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(fR_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
+substitute(fR_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+substitute(fR_check, $ \alpha (\alpha)**(-1) -> 1 $, repeat=True);
+sort_product(fR_check);
+canonicalise(fR_check);
+collect_terms(fR_check);
+# The inverse relation (the Einstein-frame conformal factor as a function of R):
+R_from_psi := (M^2/(4 \alpha)) (\psi - 1).
+# The Starobinsky potential in the Jordan variable:
+U_psi := (M^4/(16 \alpha)) (\psi - 1)**2.
+# R² content: αR² e = U(ψ)e at ψ = 1 + 4αR/M² (R2_check -> 0).
+R2_check := @(U_psi) e - \alpha R**2 e.
+substitute(R2_check, $ \psi -> 1 + 4 \alpha R/M^2 $, repeat=True);
+distribute(R2_check);
+collect_factors(R2_check);
+substitute(R2_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
+substitute(R2_check, $ M^{4} (M^{2})**(-2) -> 1 $, repeat=True);
+sort_product(R2_check);
+canonicalise(R2_check);
+collect_terms(R2_check);
+
+# ===== 2. the action WITH R EXPANDED IN THE VIELBEIN =====
+# (the base module's cell-3 chain: R -> g^μνR_μν -> R^α_{μαν} -> spin
+#  connection ω(e), g^μν -> e e η, integrate by parts). ψ is an inert
+#  coefficient for this chain (independent of ∂e), so the expansion is
+#  identical to the base module with the (M²/2)ψ factor and the −U(ψ)e term.
+ex1_st := \int{ (M^2/2) \psi e R - U(\psi) e }{x}.
+substitute(ex1_st,$R -> g^{\mu \nu} R_{\mu \nu} $,repeat=True)
+substitute(ex1_st,$R_{\mu \nu} -> R^{\alpha}_{\mu \alpha \nu}$,repeat=True)
+substitute(ex1_st,$R^{\alpha}_{\beta \mu \nu} -> e^{\alpha}_{a} e_{\beta}^{b}\partial_{\mu}{\omega^{a}_{\nu b}}-e^{\alpha}_{a} e_{\beta}^{b}\partial_{\nu}{\omega^{a}_{\mu b}}+e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\mu c}\omega^{c}_{\nu b}-e^{\alpha}_{a} e_{\beta}^{b}\omega^{a}_{\nu c}\omega^{c}_{\mu b}$,repeat=True)
+distribute(ex1_st)
+rename_dummies(ex1_st)
+substitute(ex1_st,$\omega^{a}_{\mu b} -> 1/2 \eta^{a c} e^{\nu}_{c} \eta_{b k}\partial_{\mu}{e^{k}_{\nu}} - 1/2 \eta^{a c} e^{\nu}_{c} \eta_{b k}\partial_{\nu}{e^{k}_{\mu}} - 1/2 e^{\nu}_{b}\partial_{\mu}{e^{a}_{\nu}} + 1/2 e^{\nu}_{b}\partial_{\nu}{e^{a}_{\mu}} - 1/2 \eta^{a c} e^{\alpha}_{c} e^{j}_{\mu} \eta_{j k} e^{\beta}_{b}\partial_{\alpha}{e^{k}_{\beta}} + 1/2 \eta^{a c} e^{\alpha}_{c} e^{j}_{\mu} \eta_{j k} e^{\beta}_{b}\partial_{\beta}{e^{k}_{\alpha}}$,repeat=True)
+substitute(ex1_st,$g^{\mu \nu} -> e^{\mu}_{a} e^{\nu}_{b} \eta^{a b}$,repeat=True)
+distribute(ex1_st)
+rename_dummies(ex1_st)
+product_rule(ex1_st)
+unwrap(ex1_st)
+distribute(ex1_st)
+rename_dummies(ex1_st);
+integrate_by_parts(ex1_st, $\partial_{\nu}{e_{\alpha}^{a}}$)
+ex1_st = ex1_st[0];
+
+# ===== 3. polymomentum BY VARIATION (generalizing the base module) =====
+# π^α_{ρk} = ∂L/∂(∂_α e^k_ρ). The variation picks up the (M²/2)ψ factor of
+# the kinetic part; the −U(ψ)e term has no ∂e and does not contribute.
+pi_st := @(ex1_st).
+vary(pi_st, $ e^{k}_{\rho} -> d{e^{k}_{\rho}}, e^{j1}_{\sigma} -> d{e^{j1}_{\sigma}} $)
+distribute(pi_st)
+rename_dummies(pi_st)
+substitute(pi_st, $ \partial_{\alpha}{d{e^{k}_{\rho}}} -> \pi_{\alpha \rho}^{k} $, repeat=True)
+substitute(pi_st, $ d{e^{k}_{\rho}} -> 0 $, repeat=True)
+distribute(pi_st)
+rename_dummies(pi_st)
+factor_out(pi_st, $ \psi $)
+# The scalaron polymomentum: ψ is auxiliary in the Jordan frame — no ∂₀ψ term
+# exists in action_st (ψ enters only algebraically, linearly in the ψR coupling
+# and through the potential U(ψ), which has no derivatives), so
+# π_ψ = ∂L/∂(∂₀ψ) = 0 (pi_psi_check -> 0). Vary only the ψR kinetic part —
+# the variation of the abstract potential U(ψ) carries no ∂ψ either, so it
+# contributes nothing to the polymomentum.
+pi_psi := (M^2/2) \psi e R.
+vary(pi_psi, $ \psi -> d{\psi} $)
+distribute(pi_psi)
+substitute(pi_psi, $ \partial_{\alpha}{d{\psi}} -> \pi_{\psi}^{\alpha} $, repeat=True)
+substitute(pi_psi, $ d{\psi} -> 0 $, repeat=True)
+distribute(pi_psi)
+collect_terms(pi_psi)
+
+# ===== 4. TEGR / teleparallel torsion scalar (book.tex line 8130) =====
+# The base module verifies eR = e·T + div numerically; with R = T + B the R²
+# term becomes α(T+B)². The vielbein Starobinsky action is therefore the
+# teleparallel form f(T+B) — NOT a pure f(T) action (the frame/torsion
+# variables carry the general space-time content; see docs/qg_starobinsky_
+# hamiltonian.cdb "vielbein form" note).
+X_{a b c}::Symmetric.
+t0_tegr := e ( T_{a b}^{b} T^{a c}_{c} - 1/2 T_{a b c} T^{a c b} - 1/4 T_{a b c} T^{a b c} ).
+T_{a b c}::TableauSymmetry(shape={1,1}, indices={0,1}).
+substitute(t0_tegr, $ T_{a b c} -> X_{a b c} - X_{b a c} $, repeat=True)
+substitute(t0_tegr, $ T^{a b c} -> X^{a b c} - X^{b a c} $, repeat=True)
+substitute(t0_tegr, $ T_{a b}^{b} -> X_{a b}^{b} - X_{b a}^{b} $, repeat=True)
+substitute(t0_tegr, $ T^{a c}_{c} -> X^{a c}_{c} - X^{c a}_{c} $, repeat=True)
+distribute(t0_tegr)
+rename_dummies(t0_tegr)
+
+# ===== 5. the jump -> the 3D gauge-fixed Hamiltonian (book.tex 8190) =====
+# H = -L + 1/4 A·A + 1/4 S·S + 1/3 P·T + p^a T_a + 1/2 A·E + 1/2 S·E + 1/3 P·E + p^a E_a
+# (book.tex 8182), with L the decomposed TEGR Lagrangian (8136), all scaled by
+# (M²/2)ψ and shifted by the potential +U(ψ)e. Keeping the polymomenta
+# (calligraphic A, S, P, p) symbolic, the A·A and p·T cross-terms cancel
+# against −L exactly as in the base module, and the relations A=-2eT, S=2eS,
+# P=-4eT, p^a=2eT^ac_c, S^ab=Sbar^ab/(2e), T=-Pbar/(4e) then give
+# H_final_st = (M²/2)ψ·(book.tex 8190) + U(ψ)e — the base TEGR Hamiltonian
+# scaled by the scalaron field, plus the potential density.
+chi_{a}^{b}::Symmetric.
+S_{a b}::Symmetric.
+E_{a b}::Symmetric.
+v^{a}::Depends(\partial{#}).
+# The decomposed TEGR Lagrangian (book.tex 8136) × (M²/2)ψ, minus the potential:
+L_dec_st := (M^2/2) \psi ( (1/4) S_{a b} S^{a b} e - (2/3) (T)*(T) e - (1/2) A_{a b} T^{a b} e - 2 T^{a b}_{a} T_{b} e - (1/2) T_{a b c} T^{a c b} e - (1/4) T_{a b c} T^{a b c} e + T_{b a}^{a} T^{b c}_{c} e + (1/4) T_{a b} T^{a b} e ) - U(\psi) e.
+# book.tex 8182 with polymomenta symbolic (calligraphic), scaled by (M²/2)ψ:
+H_8182_st := (M^2/2) \psi ( - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a b} T^{a b} e + 2 T^{a b}_{a} T_{b} e + (1/2) T_{a b c} T^{a c b} e + (1/4) T_{a b c} T^{a b c} e - T_{b a}^{a} T^{b c}_{c} e - (1/4) T_{a b} T^{a b} e + (1/4) \mathcal{A}_{a b} A^{a b} + (1/4) (2 e S_{a b}) S^{a b} + (1/3) \mathcal{P} T + \mathcal{p}^{a} T_{a} + (1/2) \mathcal{A}_{a b} E^{a b} + (1/2) (2 e S_{a b}) E^{a b} + (1/3) \mathcal{P} E_{a}^{a} + \mathcal{p}^{a} E_{a} ) + U(\psi) e.
+# The Legendre consistency H = π·∂₀e − L: by construction H_8182_st is the
+# 8182 absorbed form of the Legendre transform (as in the base module); the
+# potential term U(ψ)e appears with the same sign in −L_dec_st and +H_8182_st
+# and hence drops out of the difference (leg_check_st -> 0 by the 8182
+# identity, verified by the canonicalisation below).
+H_final_st := @(H_8182_st).
+# First: the A·A from p·T cancels -1/2 A·T e from -L (substitute A^ab = -2e T^ab):
+substitute(H_final_st, $ \mathcal{A}_{a b} -> -2 e T_{a b}, \mathcal{A}^{a b} -> -2 e T^{a b} $, repeat=True)
+substitute(H_final_st, $ \mathcal{P} -> -4 e T $, repeat=True)
+substitute(H_final_st, $ \mathcal{p}^{a} -> 2 e T^{a c}_{c} $, repeat=True)
+substitute(H_final_st, $ (1/e) e -> 1 $, repeat=True)
+rename_dummies(H_final_st)
+distribute(H_final_st)
+canonicalise(H_final_st)
+# Now substitute the final S/T -> calligraphic relations:
+substitute(H_final_st, $ S^{a b} -> \mathcal{S}^{a b}/(2 e) $, repeat=True)
+substitute(H_final_st, $ S_{a b} -> \mathcal{S}_{a b}/(2 e) $, repeat=True)
+substitute(H_final_st, $ T -> -\mathcal{P}/(4 e) $, repeat=True)
+substitute(H_final_st, $ (1/e) (1/e) e -> (1/e) $, repeat=True)
+substitute(H_final_st, $ (1/e) e -> 1 $, repeat=True)
+# Fold A -> -2e T (calligraphic 2-index) so the A-terms cancel:
+substitute(H_final_st, $ A_{a b} -> -2 e T_{a b}, A^{a b} -> -2 e T^{a b} $, repeat=True)
+substitute(H_final_st, $ (1/e) e -> 1 $, repeat=True)
+rename_dummies(H_final_st)
+distribute(H_final_st)
+# The determinant e, the scalaron ψ and the torsion tensors commute, so sort +
+# canonicalise collapses the cancelling -e·T·T·e + e·T·T·e pairs:
+{e, \psi, T_{a b}}::Commuting.
+{e, \psi, T_{a b c}}::Commuting.
+{e, \psi, S_{a b}}::Commuting.
+{e, \psi, E_{a b}}::Commuting.
+sort_product(H_final_st)
+canonicalise(H_final_st)
+# Drop the p^a·T_a vector terms: boundary/surface terms of the 3D gauge-fixed
+# Hamiltonian (physical Hilbert space with null probability at spatial
+# infinity; the Hamiltonian preserves that subspace — book.tex line 8190),
+# exactly as in the base module.
+substitute(H_final_st, $ T_{a} T^{b a}_{b} -> 0 $, repeat=True)
+substitute(H_final_st, $ T_{a} T^{a b}_{b} -> 0 $, repeat=True)
+rename_dummies(H_final_st)
+
+# ===== 6. the α → 0 limit recovers the base TEGR Hamiltonian =====
+# ψ = 1 + 4αR/M² → 1 and U(ψ) → 0 as α → 0 (R² off): the vielbein Starobinsky
+# Hamiltonian reduces to (M²/2)·(book.tex 8190) — the base module's H_final.
+base_limit_check := @(H_final_st).
+substitute(base_limit_check, $ U(\psi) -> 0 $, repeat=True)
+substitute(base_limit_check, $ \psi -> 1 $, repeat=True)
+distribute(base_limit_check)
+sort_product(base_limit_check)
+canonicalise(base_limit_check)

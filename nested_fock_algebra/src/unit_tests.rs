@@ -12,6 +12,103 @@ mod algebra_tests {
     use crate::{InnerBosonicState, Operator, QuantumState};
     use num_complex::Complex64;
 
+    // ── EXACT term-level Hermiticity certificate H = H† ─────────────
+    //
+    // Every term produced by the framework's CAS / normal-ordering pipeline is
+    // in normal-ordered form (creator block before annihilator block, cf.
+    // `cas::normal_order_inner`) with a real coefficient, so a canonical key is
+    // (sorted creator block, sorted annihilator block): the ladder operators
+    // inside each block act on distinct modes and hence commute pairwise, so
+    // sorting is exact. `H = H†` ⟺ the key multiset of `H` equals that of
+    // `H.adjoint()` (creator↔annihilator exchange leaves the multiset
+    // invariant).
+    fn term_key(t: &(Complex64, Vec<Operator>)) -> (String, String, f64) {
+        let (coeff, ops) = t;
+        let (mut creators, mut annihilators) = (Vec::new(), Vec::new());
+        for op in ops {
+            match op {
+                Operator::InnerBosonCreate(_)
+                | Operator::OuterBosonCreate(_)
+                | Operator::InnerFermionCreate(_)
+                | Operator::OuterFermionCreate(_) => creators.push(format!("{op:?}")),
+                Operator::InnerBosonAnnihilate(_)
+                | Operator::OuterBosonAnnihilate(_)
+                | Operator::InnerFermionAnnihilate(_)
+                | Operator::OuterFermionAnnihilate(_) => annihilators.push(format!("{op:?}")),
+                // Non-ladder (projector) ops are self-adjoint; keep the whole
+                // string so the multiset comparison stays exact.
+                _ => creators.push(format!("[{op:?}]")),
+            }
+        }
+        creators.sort();
+        annihilators.sort();
+        (creators.join(","), annihilators.join(","), coeff.re)
+    }
+
+    fn assert_exact_hermitian(h: &crate::Hamiltonian) {
+        let hd = h.adjoint();
+        let mut keys: Vec<_> = h.terms.iter().map(term_key).collect();
+        let mut adj_keys: Vec<_> = hd.terms.iter().map(term_key).collect();
+        let sort_key = |a: &(String, String, f64), b: &(String, String, f64)| {
+            a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2))
+        };
+        keys.sort_by(sort_key);
+        adj_keys.sort_by(sort_key);
+        assert_eq!(
+            keys, adj_keys,
+            "H must equal H† term-by-term (multiset of canonical keys)"
+        );
+    }
+
+    // ── The enclosure-form doctrine: creation left, annihilation right ──
+    //
+    // The FINAL Hamiltonian of every sector (QYM, QED, QG, NS) is the
+    // one-particle Hamiltonian enclosed in creation (on the left) and
+    // annihilation (on the right) operators acting on the nested Fock space:
+    //   H = Σᵢⱼ hᵢⱼ · C†(eᵢ)·A(eⱼ)   (creation-left / annihilation-right).
+    // In the framework a term's operator list is written in PRODUCT order
+    // (the application iterates right-to-left, lib.rs `apply`), so the
+    // doctrine is exactly the assertion below: each term splits as a creator
+    // block followed by an annihilator block, with no annihilator before a
+    // creator. This is the structural fact that makes ⟨0|H|0⟩ = 0 and the
+    // Bose additivity of the one-particle spectrum automatic.
+    fn assert_enclosure_form(h: &crate::Hamiltonian) {
+        assert!(!h.terms.is_empty(), "enclosure-form Hamiltonian has no terms");
+        for (coeff, ops) in &h.terms {
+            let mut seen_annihilator = false;
+            for op in ops {
+                let is_create = matches!(
+                    op,
+                    Operator::InnerBosonCreate(_)
+                        | Operator::OuterBosonCreate(_)
+                        | Operator::InnerFermionCreate(_)
+                        | Operator::OuterFermionCreate(_)
+                );
+                let is_annihilate = matches!(
+                    op,
+                    Operator::InnerBosonAnnihilate(_)
+                        | Operator::OuterBosonAnnihilate(_)
+                        | Operator::InnerFermionAnnihilate(_)
+                        | Operator::OuterFermionAnnihilate(_)
+                );
+                assert!(
+                    is_create || is_annihilate,
+                    "term {ops:?} (coeff {coeff}) is not a ladder product — the final \
+                     Hamiltonian must be an enclosure C†(h)A"
+                );
+                if is_annihilate {
+                    seen_annihilator = true;
+                } else {
+                    assert!(
+                        !seen_annihilator,
+                        "term {ops:?} has a creator AFTER an annihilator — not \
+                         creation-left/annihilation-right"
+                    );
+                }
+            }
+        }
+    }
+
     // ── CAS / compile_to_fock ───────────────────────────────────────
 
     #[test]
@@ -1309,26 +1406,71 @@ mod algebra_tests {
 
     #[test]
     fn test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian() {
-        // The .cdb-derived H_final = ½π² + ½B² built in the outer nested Fock
-        // space with B a genuine function of A: ⟨0|H|0⟩ = 0 and H = H†.
+        // The .cdb-derived H_final = ½π² + ½B² built in the nested Fock space
+        // with B a genuine function of A: ⟨0|H|0⟩ = 0 and H = H† exactly.
+        //
+        // Symmetry of the gauge-fixed QYM Hamiltonian (Weyl gauge, A₀ = 0): the
+        // Weyl gauge is a *physical* gauge — A₀ and the longitudinal modes are
+        // eliminated before quantization, no ghosts enter the Hamiltonian, and
+        // H_final = ½π² + ½B² is a sum of squares of self-adjoint operators
+        // (π = ∂₀A self-adjoint; B(A) a real polynomial in the self-adjoint
+        // fields). The BRST machinery of Ottinger.md (arXiv:1803.00383, §III.B)
+        // — where non-self-adjoint Kugo–Ojima ghosts can leave the Hamiltonian
+        // non-self-adjoint in the canonical inner product — is NOT part of this
+        // construction; the Gauss constraint G_y is imposed on the physical
+        // states instead of being BRST-quantized.
         let h = qcd_ym_hamiltonian(0.5);
         assert!(!h.terms.is_empty());
-        // Hermiticity: same term count, real coefficients, adjoint pairs.
+        // Real coefficients (a necessary condition for H = H† with the
+        // creator↔annihilator pairing produced by normal ordering).
         let hd = h.adjoint();
         assert_eq!(h.terms.len(), hd.terms.len());
         for t in &h.terms {
             assert!(t.0.im.abs() < 1e-12, "YM outer-Fock coefficients are real");
         }
-        // Vacuum expectation 0.
+        // Vacuum expectation 0 (outer-vacuum annihilation by the normal-ordered
+        // Hamiltonian).
         let hv = h.apply(&crate::QuantumState::vacuum());
         let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
         assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+
+        // EXACT term-level Hermiticity H = H† (shared helper, see above).
+        assert_exact_hermitian(&h);
+
+        // Matrix-level spot check on the occupation-≤1 basis over the four
+        // modes {0,1,2,3}: M_ij = ⟨u_i|H|u_j⟩ must satisfy M_ij = conj(M_ji).
+        let mut basis: Vec<crate::QuantumState> = Vec::new();
+        for mask in 0..16u32 {
+            let mut st = crate::QuantumState::vacuum();
+            for mode in 0..4u32 {
+                if mask & (1 << mode) != 0 {
+                    st = st.apply(&Operator::InnerBosonCreate(mode));
+                }
+            }
+            basis.push(st);
+        }
+        for i in 0..basis.len() {
+            for j in 0..basis.len() {
+                let mij = crate::QuantumState::inner_product(&basis[i], &h.apply(&basis[j]));
+                let mji = crate::QuantumState::inner_product(&basis[j], &h.apply(&basis[i]));
+                assert!(
+                    (mij - mji.conj()).norm() < 1e-9,
+                    "M[{i}][{j}] = {mij} but conj(M[{j}][{i}]) = {}",
+                    mji.conj()
+                );
+            }
+        }
     }
 
     #[test]
     fn test_qg_tegr_hamiltonian_outer_fock_vacuum_zero_and_hermitian() {
         // The Cadabra2-derived TEGR kinetic (1/16e)𝒮² in the outer nested Fock
-        // space: ⟨0|H|0⟩ = 0 and H = H† (self-adjoint in the truncation).
+        // space: ⟨0|H|0⟩ = 0 and H = H† exactly (the kinetic is a real
+        // quadratic form :(1/16)𝒮²: = (1/16)(B†B − ½(B†²+B²)) per mode — a sum
+        // of squares of the self-adjoint densitized-tetrad momentum, so
+        // Hermiticity in the canonical inner product is manifest; no ghosts, no
+        // signed inner product, cf. the Weyl-gauge QYM note in
+        // test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian).
         let h = qg_tegr_hamiltonian(3);
         let hd = h.adjoint();
         assert_eq!(h.terms.len(), hd.terms.len());
@@ -1338,6 +1480,8 @@ mod algebra_tests {
                 "TEGR outer-Fock coefficients are real"
             );
         }
+        // EXACT term-level Hermiticity H = H† (shared helper).
+        assert_exact_hermitian(&h);
         let hv = h.apply(&crate::QuantumState::vacuum());
         let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
         assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
@@ -1359,6 +1503,8 @@ mod algebra_tests {
                 "Starobinsky coefficients are real"
             );
         }
+        // EXACT term-level Hermiticity H = H† (shared helper).
+        assert_exact_hermitian(&h);
         // The physical vacuum for inner operators is one empty inner universe.
         let vac = crate::QuantumState::vacuum()
             .apply(&crate::Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
@@ -1375,6 +1521,223 @@ mod algebra_tests {
         let two = one.apply(&crate::Operator::InnerBosonCreate(0));
         let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
         assert!((e2 - 2.0).abs() < 1e-9, "two-scalaron energy must be 2m, got {e2}");
+    }
+
+    #[test]
+    fn test_qg_starobinsky_vielbein_hamiltonian_hermitian_and_structure() {
+        // The NEW QG module: the vielbein (tetrad) Starobinsky Hamiltonian
+        // (docs/qg_starobinsky_vielbein_hamiltonian.cdb) — the reduced
+        // physical (Einstein-frame) form `H = Σ:(1/16)𝒮²: + m·N_ψ` of
+        // `H_final_st = (M²/2)ψ·(book.tex 8190) + U(ψ)e`: the base TEGR
+        // kinetic (general space-time, vielbein variables) plus the massive
+        // scalaron (the R² content, mass m = 1/√(12α)).
+        //
+        // The final Hamiltonian is the ONE-PARTICLE Hamiltonian enclosed in
+        // creation (left) / annihilation (right) operators on the nested Fock
+        // space, H = Σ hᵢⱼ C†(eᵢ)A(eⱼ) with the one-particle operator
+        // h = h_TEGR ⊕ (m): the enclosure of the TEGR one-particle kinetic
+        // (1/16)𝒮² and of the scalaron one-particle energy m. The R² content
+        // enters h through the scalaron mass m = 1/√(12α) = √(V″(0)) — the
+        // quadratic part of the full exponential potential
+        // V(φ) = (M⁴/16α)(1−e^{−√(2/3)φ/M})². The outer Hamiltonian is
+        // free-particle-like (quadratic in the outer ladders) for ANY
+        // one-particle operator h: the exponential may live INSIDE h (on the
+        // one-particle/inner Hilbert space) without producing outer-level
+        // 3-/4-particle vertices — see
+        // test_qg_starobinsky_vielbein_full_exponential_hermitian_and_structure
+        // for the full one-particle operator ½π² + V(φ̂).
+        use crate::models::{qg_starobinsky_vielbein_hamiltonian, qg_tegr_hamiltonian};
+        let m = 1.0_f64;
+        let h = qg_starobinsky_vielbein_hamiltonian(3, m);
+        assert!(!h.terms.is_empty());
+        // Exact term-level Hermiticity H = H† (shared helper).
+        assert_exact_hermitian(&h);
+        // The ENCLOSURE FORM: every term is creation-left / annihilation-right
+        // (the one-particle enclosure doctrine for the QG final Hamiltonian).
+        assert_enclosure_form(&h);
+        // Real coefficients.
+        for t in &h.terms {
+            assert!(t.0.im.abs() < 1e-12, "vielbein Starobinsky coeffs are real");
+        }
+        // The one-particle structure: exactly ONE scalaron term, the enclosure
+        // m·C†(ψ)A(ψ) of the one-particle energy m on the scalaron universe
+        // ψ = {n_grav: 1} (creation left, annihilation right).
+        let scalaron_terms: Vec<_> = h
+            .terms
+            .iter()
+            .filter(|(_, ops)| {
+                matches!(
+                    &ops[..],
+                    [crate::Operator::OuterBosonCreate(s),
+                     crate::Operator::OuterBosonAnnihilate(t)] if s == t && s.modes.get(&3) == Some(&1)
+                )
+            })
+            .collect();
+        assert_eq!(
+            scalaron_terms.len(),
+            1,
+            "exactly one scalaron enclosure term m·C†(ψ)A(ψ), got {}",
+            scalaron_terms.len()
+        );
+        assert!(
+            (scalaron_terms[0].0.re - m).abs() < 1e-12,
+            "scalaron enclosure coefficient must be the mass m, got {}",
+            scalaron_terms[0].0
+        );
+        // ⟨0|H|0⟩ = 0 (nested-Fock vacuum rule, normal-ordered realization).
+        let hv = h.apply(&crate::QuantumState::vacuum());
+        let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+
+        // The scalaron sector: the one-scalaron state |ψ⟩ = universe {n_grav:1}
+        // has the diagonal expectation m (the number operator), and the
+        // two-scalaron expectation is exactly 2m (additivity — the mass gap m
+        // of the Starobinsky sector). The expectation is exact because the
+        // TEGR squeezed terms act on the graviton factor of the tensor-product
+        // Hilbert space and produce components orthogonal to |ψ⟩.
+        let mut s_one = crate::InnerBosonicState::vacuum();
+        s_one.modes.insert(3, 1); // the scalaron mode = beyond the 3 gravitons
+        let one = crate::QuantumState::vacuum()
+            .apply(&crate::Operator::OuterBosonCreate(s_one.clone()));
+        let e1 =
+            crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
+        assert!((e1 - m).abs() < 1e-9, "one-scalaron energy must be m, got {e1}");
+        let two = one.apply(&crate::Operator::OuterBosonCreate(s_one));
+        let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
+        assert!((e2 - 2.0 * m).abs() < 1e-9, "two-scalaron energy must be 2m, got {e2}");
+
+        // The graviton sector: the one-graviton expectation is the TEGR
+        // kinetic 1/16 per excitation (:𝒮²:/16 — the ESA content of the
+        // vielbein module's book.tex-8190 kinetic).
+        let mut g_one = crate::InnerBosonicState::vacuum();
+        g_one.modes.insert(1, 1); // a graviton mode
+        let g = crate::QuantumState::vacuum().apply(&crate::Operator::OuterBosonCreate(g_one));
+        let eg = crate::QuantumState::inner_product(&h.apply(&g), &g).re / g.norm().powi(2);
+        assert!(
+            (eg - 1.0 / 16.0).abs() < 1e-9,
+            "one-graviton kinetic must be 1/16, got {eg}"
+        );
+        // Bose additivity of the enclosure: two gravitons in DISTINCT modes
+        // have the expectation 2·(1/16) = 1/8 (the one-particle eigenvalues
+        // add; the squeezed terms act on a different occupation parity and
+        // stay orthogonal).
+        let mut g_two_a = crate::InnerBosonicState::vacuum();
+        g_two_a.modes.insert(1, 1);
+        let mut g_two_b = crate::InnerBosonicState::vacuum();
+        g_two_b.modes.insert(2, 1);
+        let g2 = crate::QuantumState::vacuum()
+            .apply(&crate::Operator::OuterBosonCreate(g_two_a))
+            .apply(&crate::Operator::OuterBosonCreate(g_two_b));
+        let eg2 = crate::QuantumState::inner_product(&h.apply(&g2), &g2).re / g2.norm().powi(2);
+        assert!(
+            (eg2 - 2.0 / 16.0).abs() < 1e-9,
+            "two-graviton kinetic must be additive 2/16 = 1/8, got {eg2}"
+        );
+
+        // The R²-off structural limit: at m = 0 the scalaron sector vanishes
+        // and the builder reduces to the base TEGR Hamiltonian exactly.
+        let h0 = qg_starobinsky_vielbein_hamiltonian(3, 0.0);
+        let h_tegr = qg_tegr_hamiltonian(3);
+        assert_eq!(h0.terms.len(), h_tegr.terms.len() + 1); // + the zero term
+        // The zero-coefficient scalaron term contributes nothing:
+        let nonzero: Vec<_> = h0
+            .terms
+            .iter()
+            .filter(|(c, _)| c.re.abs() > 1e-15)
+            .collect();
+        assert_eq!(nonzero.len(), h_tegr.terms.len());
+    }
+
+    #[test]
+    fn test_qg_starobinsky_vielbein_full_exponential_hermitian_and_structure() {
+        // The FULL-exponential R²-vielbein enclosure
+        // (qg_starobinsky_vielbein_hamiltonian_full): the same final
+        // Hamiltonian doctrine — the one-particle operator enclosed in
+        // creation (left) / annihilation (right) operators on the nested Fock
+        // space — but with the FULL Einstein-frame scalaron potential
+        // V(φ) = (1/16α)(1 − e^{−√(2/3)φ})² (M = 1) inside the ONE-PARTICLE
+        // operator h = ½π² + V(φ̂) on the truncated Hermite basis
+        // {|0⟩,…,|N−1⟩}. The outer Hamiltonian is still a QUADRATIC
+        // (free-particle-like) form in the outer ladders: the exponential
+        // lives in the one-particle matrix elements ⟨n|h|m⟩, and NO higher
+        // vertices appear at the outer level — the point of the
+        // outer-Fock/inner-Fock distinction.
+        use crate::models::qg_starobinsky_vielbein_hamiltonian_full;
+        let alpha = 1.0 / 12.0; // m = 1/√(12α) = 1, λ = 1/√(3m) ≈ 0.577
+        let n_levels = 6;
+        let h = qg_starobinsky_vielbein_hamiltonian_full(2, alpha, n_levels);
+        // The enclosure form: every term is creation-left/annihilation-right
+        // (the one-particle enclosure doctrine, full exponential included).
+        assert_enclosure_form(&h);
+        // Exact term-level Hermiticity H = H† (the one-particle matrix is
+        // symmetrized bit-exactly in the builder).
+        assert_exact_hermitian(&h);
+        // ⟨0|H|0⟩ = 0 (outer vacuum, annihilation right).
+        let hv = h.apply(&crate::QuantumState::vacuum());
+        let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+
+        // The one-particle sector of the enclosure: H restricted to the
+        // one-universe states C†(e_n)|0⟩ is exactly the matrix h. The
+        // one-particle ground energy E₀ = min eigenvalue of h is the gap of
+        // the enclosure (vacuum at 0, first excitation at E₀ > 0). For the
+        // quadratic part ½π² + ½m²φ̂² the eigenvalues are m(n + ½); the full
+        // V (a square, ≥ 0) shifts them up. With m = 1 we check E₀ > m/2 and
+        // the ground-state energy lies above the pure-oscillator value.
+        let n = n_levels as usize;
+        let mut h_restricted = vec![vec![0.0_f64; n]; n];
+        for t in &h.terms {
+            // Terms with one creator and one annihilator on the scalaron
+            // universes give the one-particle matrix; the graviton TEGR terms
+            // are diagonal numbers we exclude by keeping only terms whose two
+            // operators carry the scalaron mode (occupations of mode 2).
+            if let [crate::Operator::OuterBosonCreate(si),
+                    crate::Operator::OuterBosonAnnihilate(sj)] = &t.1[..]
+            {
+                if let (Some(&ni), Some(&nj)) = (si.modes.get(&2), sj.modes.get(&2)) {
+                    if ni < n as u32 && nj < n as u32 && t.1.len() == 2 {
+                        h_restricted[ni as usize][nj as usize] += t.0.re;
+                    }
+                }
+            }
+        }
+        // The matrix is real-symmetric (Hermitian one-particle operator).
+        for i in 0..n {
+            for j in 0..n {
+                assert!(
+                    (h_restricted[i][j] - h_restricted[j][i]).abs() < 1e-12,
+                    "one-particle matrix must be symmetric: [{i}][{j}] vs [{j}][{i}]"
+                );
+            }
+        }
+        // Diagonal entries are positive and grow with n (bounded below).
+        for i in 0..n {
+            assert!(
+                h_restricted[i][i] > 0.0,
+                "diagonal h[{i}][{i}] must be positive, got {}",
+                h_restricted[i][i]
+            );
+        }
+        // The harmonic limit is inside the model: the diagonal ⟨n|h|n⟩ must
+        // lie above the pure-oscillator ladder m(n + 1/2) — the exponential
+        // V (a square, ≥ 0) only pushes the one-particle energies up. With
+        // α = 1/12 (m = 1) the ground diagonal ⟨0|h|0⟩ = m/4 + V₀₀ must
+        // exceed the oscillator ground m/2 = 0.5, and the ladder must be
+        // strictly increasing:
+        assert!(
+            h_restricted[0][0] > 0.5,
+            "ground diagonal must exceed the pure-oscillator m/2 = 0.5, got {}",
+            h_restricted[0][0]
+        );
+        assert!(
+            h_restricted[1][1] > h_restricted[0][0],
+            "excitation diagonal must be increasing"
+        );
+        // The full model is genuinely different from the m·N_ψ realization:
+        // the one-particle state |1⟩ carries the anharmonic energy
+        // ⟨1|h|1⟩ > m (the quadratic model's exact eigenvalue).
+        let e1_diag = h_restricted[1][1];
+        assert!(e1_diag > 1.0, "E(1) diagonal must exceed m = 1, got {e1_diag}");
     }
 
     #[test]

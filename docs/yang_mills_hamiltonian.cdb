@@ -7,6 +7,26 @@
 # The BRST term {Omega, i psi A_0} cancels the A_0-dependent pieces, leaving
 # exactly the electric + magnetic pieces (verified numerically: the 3D
 # identity 1/4 F_ij F^ij = 1/2 B^2 holds for random F).
+#
+# Symmetry: H_final = 1/2 pi^2 + 1/2 B^2 is MANIFESTLY SYMMETRIC (Hermitian in
+# the canonical inner product). The Weyl gauge A_0 = 0 is a *physical* gauge:
+# the unphysical polarizations are eliminated before quantization, so no ghosts
+# enter the Hamiltonian, and H_final is a sum of squares of self-adjoint
+# operators (pi = d_0 A self-adjoint; B(A) a real polynomial in the
+# self-adjoint fields; in Fock space the normal-ordered realization has real
+# coefficients and creator<->annihilator Hermitian pairs -- verified term-wise
+# in nested_fock_algebra::test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian).
+# The Gauss constraint G_y is imposed on physical states; it is NOT BRST-
+# quantized. Contrast (Ottinger arXiv:1803.00383, Sec. III.B): in a COVARIANT
+# BRST gauge (e.g. the Lorenz gauge) that keeps ghosts in the Hilbert space,
+# the standard Kugo-Ojima "cross-adjoint" ghosts are not self-adjoint, and for
+# non-Abelian theories the BRST Hamiltonian is then NOT self-adjoint in the
+# canonical inner product; Ottinger's alternative ghost representation restores
+# self-adjointness only w.r.t. the *signed* inner product on the physical
+# subspace Ker Q intersect Ker Q^dagger. No such issue arises here: further
+# gauge-fixing beyond the Weyl gauge (complex gauge parameters, non-unitary
+# gauge transformations, velocity-dependent gauge conditions) is what can
+# destroy symmetry -- those constructions are not used by this module.
 # Run: cadabra2-cli -q -n <this file>
 def post_process(ex):
 	#unwrap(ex)

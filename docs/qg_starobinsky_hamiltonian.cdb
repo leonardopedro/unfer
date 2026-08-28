@@ -5,6 +5,33 @@
 # where M is the reduced Planck mass M_Pl and α > 0 the Starobinsky
 # curvature-squared coupling. This file derives, fully automatically:
 #
+#   • metric route  — the 3D gauge fixing below does NOT use the vielbein:
+#                      it is performed entirely in METRIC variables (synchronous
+#                      gauge N = 1, N^i = 0; the 3+1 split R = R3 + (K² −
+#                      K_ijK^ij); the conformal decomposition of the spatial
+#                      metric R_c = Ω⁻⁴R̄_c − 8Ω⁻⁵∇̄²Ω; the derivative-variable
+#                      fixing Dphi2 -> grad2; the Hamiltonian constraint solved
+#                      for R_c). The vielbein is only REQUIRED for the
+#                      teleparallel (torsion) formulation, because the torsion
+#                      scalar T and the Weitzenböck connection are built from
+#                      the vielbein and the frame's local Lorentz freedom must
+#                      be gauge-fixed (that is the TEGR module's job,
+#                      docs/qg_gauge_fixed_hamiltonian.cdb). Starobinsky is
+#                      f(R) — a function of the RICCI scalar, a metric object —
+#                      so the ADM split and the conformal-mode stabilization are
+#                      self-contained in the metric.
+#   • vielbein form (alternative, NOT executed here) — since the base theory
+#                      is teleparallel-equivalent (eR = e·T + div, verified
+#                      numerically in the TEGR module), this construction COULD
+#                      equally be carried out in vielbein variables with the
+#                      same teleparallel restrictions (Weitzenböck connection:
+#                      metric-compatible, curvature-free, torsion-carrying;
+#                      g = η e e). Writing R = T + B with the boundary term
+#                      B = 2∇_μT^μ, the R² action would read ∫e·f(T+B) — a
+#                      functional of the torsion scalar AND its boundary term —
+#                      NOT a pure f(T) action (f(T+B) ≠ f(T) generically; pure
+#                      f(T) gravity is a different theory). The metric route
+#                      below is unchanged because it depends only on R = T + B.
 #   • action         — the f(R) action density (M²/2)R + αR².
 #   • psi, U         — the scalar-tensor (Jordan-frame) equivalent:
 #                      ψ = 1 + 4αR/M² (the Einstein-frame conformal factor)
