@@ -66,7 +66,7 @@ cargo test --release -p fock_sirk --test qed_validation \
     --test qym_lattice_validation --test ng_newtonian_validation \
     --test ns_further_validation --test qed_kerr_photon_blockade \
     --test qed_hong_ou_mandel --test qed_blockade_statistics \
-    --test qg_tegr_helicity
+    --test qg_tegr_helicity --test qed_abelian_reduction
 
 # Heavy compiler-route compiles (minutes unoptimized, seconds in release):
 scripts/run_heavy_tests.sh          # runs the #[ignore]d suites in --release
@@ -459,6 +459,19 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   $= E_{\rm odd} - E_{\rm even}$. *Setup*: $g=2$ ($g^2/2 = 2$), $m=4$; soft
   free-gluon mode $k=0.01$. *Asserts*: $E_{\rm soft} < 0.02$ (massless);
   $g^2/6 < \text{gap} < 3g^2/2$ and positive.
+
+- **`qcd_continuum_gauge_fixed_pair_lowering_no_gap`** — computes: the
+  SIRK–Hashimoto prediction on the **continuum** Cadabra-derived gauge-fixed
+  Hamiltonian `qcd_ym_hamiltonian(g)` ($H_{\rm final} = \tfrac12\pi^2 +
+  \tfrac12 B^2$): its $B^2$ pair/squeezing terms LOWER the normal-ordered
+  vacuum — no positive mass gap opens — while the lattice's electric term
+  gaps the one-quantum sector UP by $\approx g^2/2$. The $g^2/2$ gap is a
+  lattice-electric effect, not present in the continuum gauge-fixed $H$.
+  *Method*: SIRK (unit-norm frame, $m=10$) ground from the vacuum at
+  $g \in \{0, 2, 4\}$; lattice even/odd solves at $g=2$ ($m=4$) for the
+  contrast. *Asserts*: continuum ground negative and deepening with $g$
+  ($-1.64$, $-2.07$, $-6.76$); lattice gap positive and
+  $g^2/6 < \text{gap} < 3g^2/2$.
 
 - **`qcd_ym_hamiltonian_outer_fock_sirk`** — computes: the structural facts
   of the Cadabra2-derived $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$,
@@ -991,6 +1004,24 @@ second quantization is exactly `qed_free_photon`.
   and the coincidence flow conserves norm and energy. *Asserts*: matrix
   identity and pair matrix element to $10^{-9}$; Ritz negative, above $-2$,
   monotone in $m$; norm/energy to $10^{-6}$.
+
+- **`qym_abelian_vacuum_polarization_one_loop_vs_sirk`** — computes: the
+  vacuum-polarization structure of the abelian gauge-fixed Hamiltonian on
+  the Cadabra builder itself. The one-loop shift
+  $\delta E^{(2)} = \sum_n |\langle n|H|\mathrm{vac}\rangle|^2 /
+  (E_{\rm vac} - E_n)$ over the five double-quanta intermediate states is
+  $-\tfrac32$ exactly (the photon-pair analogue of the published
+  $\sum c^2/(\omega - E_p - E'_p)$ benchmark that `qed_pair_production`
+  checks — pair creation from the field strength, here of photon pairs).
+  SIRK–Hashimoto on the full gauge-fixed $H$ reproduces the one-loop value
+  at moderate Krylov depth ($-1.566$ at $m=8$, within $0.1$) and, being
+  exact, converges monotonically DOWN toward the analytic continuum floor
+  $-2$ ($-1.566 \to -1.640 \to -1.692 \to -1.731$ at $m = 8..14$) — the
+  same perturbative-match + non-perturbative-departure structure the
+  $\gamma \leftrightarrow e^+e^-$ test measures. *Asserts*: one-loop sum
+  $= -\tfrac32$ to $10^{-9}$; $|E(m{=}8) - \delta E^{(2)}| < 0.1$;
+  monotone decrease in $m$; $E(m{=}14) < \delta E^{(2)} - 0.1$ and
+  $> -2.01$.
 
 ### 5.10 Special relativity & nuclear — `sr_nuclear_validation.rs`
 
@@ -2134,6 +2165,18 @@ laboratories:
   \tfrac{2\pi}3, \tfrac{3\pi}4, \pi\}$ — full coincidence at 0 and $\pi$,
   the dip to zero at the 50:50 point, half-way in between.  *Asserts*:
   $|P_{11} - \cos^2\theta| < 10^{-5}$ at every angle.
+- **`qed_hom_bunching_from_abelian_gauge_fixed_hopping`** — computes: the
+  same HOM physics predicted from the **Cadabra-derived abelian gauge-fixed
+  Hamiltonian** instead of the separate beamsplitter builder: the
+  beamsplitter generator is identified INSIDE `qcd_ym_hamiltonian(0)` as
+  the number-conserving hopping sector of the $B^2$ cross-term
+  ($-(a^\dagger_0 a_1 + a^\dagger_1 a_0)$, coefficient $-1$ per direction,
+  asserted by filtering the builder's terms), and SIRK–Hashimoto on that
+  sector (one solve + `time_evolve`, $m=10$) reproduces the full
+  $P_{11}(\theta) = \cos^2\theta$ curve, the dip with
+  $P_{20} = P_{02} = \tfrac12$, and norm conservation.  *Asserts*:
+  hopping coefficients $-1$ to $10^{-9}$; $|P_{11} - \cos^2\theta| < 10^{-8}$
+  at every angle; $P_{20}, P_{02} = \tfrac12 \pm 10^{-8}$.
 
 The beamsplitter hopping is the number-conserving cross-coupling of the
 abelian gauge-fixed field strength $\tfrac12 B^2 = \tfrac12(A_0-A_1)^2$

@@ -695,3 +695,77 @@ fn qym_abelian_two_mode_two_photon_sector_exact_quadratic_form() {
     }
     eprintln!("qym_abelian_two_photon: coincidence flow conserves norm + ⟨H⟩ = {e0:.6}");
 }
+
+#[test]
+fn qym_abelian_vacuum_polarization_one_loop_vs_sirk() {
+    // The abelian gauge-fixed Hamiltonian `qcd_ym_hamiltonian(0)` couples the
+    // vacuum to the double-quanta states through the B² pair/squeezing terms
+    // — the photon-PAIR creation ⟨vac|H|1,1⟩ = −1 of the test above, the
+    // field squeezing ½(a†²+a²), and the momentum-mode squeezing −½(a†²+a²).
+    // In second-order perturbation theory the vacuum shift is the
+    // vacuum-polarization sum
+    //
+    //   δE⁽²⁾ = Σₙ |⟨n|H|vac⟩|² / (E_vac − Eₙ) ,
+    //
+    // the exact analogue — on the Cadabra-derived gauge-fixed H — of the
+    // published one-loop sum Σc²/(ω−E_p−E′_p) that `qed_pair_production`
+    // checks (pair creation from the field strength, here of photon pairs
+    // rather than e⁺e⁻). SIRK–Hashimoto on the FULL gauge-fixed H
+    // reproduces the one-loop value at moderate Krylov depth and, being
+    // exact, departs from it as m grows — converging monotonically DOWN
+    // toward the analytic continuum floor −2, the same non-perturbative
+    // departure the γ↔e⁺e⁻ test measures.
+    let h = qcd_ym_hamiltonian(0.0);
+    let vac = fock_state(&[]);
+    // The five double-quanta intermediate states (bare energy Eₙ = 2 each).
+    let intermediates = [
+        fock_state(&[(0, 2)]),
+        fock_state(&[(1, 2)]),
+        fock_state(&[(0, 1), (1, 1)]),
+        fock_state(&[(2, 2)]),
+        fock_state(&[(3, 2)]),
+    ];
+    let e_one_loop: f64 = intermediates
+        .iter()
+        .map(|n| {
+            let amp = QuantumState::inner_product(n, &h.apply(&vac));
+            amp.norm_sqr() / (0.0 - 2.0)
+        })
+        .sum();
+    assert!(
+        (e_one_loop + 1.5).abs() < 1e-9,
+        "one-loop vacuum shift must be −1.5, got {e_one_loop}"
+    );
+
+    // (a) Weak-coupling regime (moderate m): the exact SIRK ground reduces
+    //     to the one-loop sum (m=8 sits within 0.1 of it).
+    let e8 = sirk_ground(&h, &vac, 8);
+    assert!(
+        (e8 - e_one_loop).abs() < 0.1,
+        "m=8: SIRK {e8:.6} must sit within 0.1 of the one-loop sum {e_one_loop:.6}"
+    );
+
+    // (b) Non-perturbative departure: higher orders are always negative for
+    //     the quadratic form, so the exact values converge monotonically DOWN
+    //     from the one-loop value toward the continuum floor −2 (never
+    //     falling below it — the analytic bound of the sector test).
+    let e10 = sirk_ground(&h, &vac, 10);
+    let e12 = sirk_ground(&h, &vac, 12);
+    let e14 = sirk_ground(&h, &vac, 14);
+    assert!(
+        e14 < e12 && e12 < e10 && e10 < e8,
+        "vacuum ground must converge down monotonically: {e8} → {e10} → {e12} → {e14}"
+    );
+    assert!(
+        e14 < e_one_loop - 0.1,
+        "m=14 SIRK {e14:.6} must fall below the one-loop sum (exact vs perturbative)"
+    );
+    assert!(
+        e14 > -2.01,
+        "m=14 SIRK {e14:.6} must stay above the analytic continuum floor −2"
+    );
+    eprintln!(
+        "qym_abelian_vacuum_polarization: one-loop {e_one_loop:.6}, SIRK m=8..14 \
+         {e8:.6} {e10:.6} {e12:.6} {e14:.6}, floor −2"
+    );
+}

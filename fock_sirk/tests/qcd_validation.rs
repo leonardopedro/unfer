@@ -505,6 +505,102 @@ fn qcd_mass_gap_sirk() {
     );
 }
 
+#[test]
+fn qcd_continuum_gauge_fixed_pair_lowering_no_gap() {
+    // Contrast test 8(b) with the CONTINUUM gauge-fixed Hamiltonian
+    // `qcd_ym_hamiltonian(g)` (Cadabra-derived H_final = ½π² + ½B² from
+    // docs/yang_mills_hamiltonian.cdb): its B² pair/squeezing terms LOWER
+    // the normal-ordered vacuum — no positive mass gap opens. SIRK–Hashimoto
+    // from the vacuum resolves the pair-lowered ground: negative at g = 0
+    // (the photon-pair vacuum-polarization floor −2 of the abelian sector)
+    // and decreasing with the coupling (the quartic ¼g²A₀²A₁² dominates at
+    // strong coupling), while the lattice's electric term (g²/2)Σn gaps the
+    // one-quantum sector UP by ≈ g²/2. The g²/2 mass gap is a
+    // lattice-electric effect, not present in the continuum gauge-fixed H.
+    let vac =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let opts = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(100_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        // Unit-norm frame: the wide spectral window of the strong-coupling
+        // quartic makes the raw frame's Gram wall cap usable m.
+        unit_norm_steps: true,
+    };
+    let continuum_ground = |g: f64| -> f64 {
+        let res = solve_forward_sirk_with_opts(
+            &qcd_ym_hamiltonian(g),
+            &vac,
+            &shifts(10),
+            &best_device(),
+            None,
+            &opts,
+        )
+        .expect("continuum gauge-fixed solve");
+        assert_hermitian(&res.h_proj, "continuum gauge-fixed sector");
+        res.ground_state_energy().unwrap()
+    };
+    let e0 = continuum_ground(0.0);
+    let e2 = continuum_ground(2.0);
+    let e4 = continuum_ground(4.0);
+    assert!(
+        e0 < 0.0 && e2 < e0 - 0.2 && e4 < e2 - 1.0,
+        "pair lowering must deepen with g: g=0 {e0}, g=2 {e2}, g=4 {e4}"
+    );
+
+    // The lattice contrast (same g = 2 as test 8b): the even→odd gap is
+    // POSITIVE ≈ g²/2 — confinement — while the continuum vacuum ground is
+    // negative (no positive gap opens in the gauge-fixed H).
+    let g = 2.0;
+    let g2_half = g * g / 2.0;
+    let h_lat = yang_mills_lattice(2, g, 1);
+    let v_even = vac.clone();
+    let mut inner_odd = InnerBosonicState::vacuum();
+    inner_odd.modes.insert(0, 1);
+    let v_odd = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner_odd));
+    let lat_opts = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(100_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: false,
+    };
+    let res_even = solve_forward_sirk_with_opts(
+        &h_lat,
+        &v_even,
+        &shifts(4),
+        &best_device(),
+        None,
+        &lat_opts,
+    )
+    .expect("lattice even solve");
+    let res_odd = solve_forward_sirk_with_opts(
+        &h_lat,
+        &v_odd,
+        &shifts(4),
+        &best_device(),
+        None,
+        &lat_opts,
+    )
+    .expect("lattice odd solve");
+    let gap = res_odd.ground_state_energy().unwrap() - res_even.ground_state_energy().unwrap();
+    assert!(
+        gap > 0.0 && gap > g2_half / 3.0 && gap < g2_half * 3.0,
+        "lattice gap must be positive ≈ g²/2: gap={gap:.4}, g²/2={g2_half}"
+    );
+    assert!(
+        e2 < 0.0 && gap > 0.0,
+        "contrast: lattice gap {gap:.4} > 0 (confinement) vs continuum ground {e2:.4} < 0 \
+         (pair lowering — no positive gap in the gauge-fixed H)"
+    );
+
+    eprintln!(
+        "qcd_continuum_gauge_fixed: continuum ground g=0 {e0:.4} / g=2 {e2:.4} / g=4 {e4:.4} \
+         (pair lowering, no gap); lattice gap at g=2 = {gap:.4} ≈ g²/2 = {g2_half}"
+    );
+}
+
 // ── 9. Cadabra2-derived Weyl-gauge YM Hamiltonian in the outer Fock space ──
 
 #[test]

@@ -24,7 +24,10 @@
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
-use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter};
+use nested_fock_algebra::{
+    Hamiltonian, InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter,
+    qcd_ym_hamiltonian,
+};
 use num_complex::Complex64;
 
 fn shifts(m: usize) -> Vec<Complex64> {
@@ -219,4 +222,93 @@ fn qed_beamsplitter_unitarity_energy() {
         );
         eprintln!("qed_beamsplitter_unitarity: t = {t:.4}, ‖ψ‖ = {norm:.12}, ⟨H⟩ = {e_t:.3e}");
     }
+}
+
+#[test]
+fn qed_hom_bunching_from_abelian_gauge_fixed_hopping() {
+    // The beamsplitter generator is a SECTOR of the Cadabra-derived abelian
+    // gauge-fixed Hamiltonian `qcd_ym_hamiltonian(0)` (`docs/yang_mills_
+    // hamiltonian.cdb`: H_final = ½π² + ½B² with B = A₀ − A₁): the B²
+    // cross-term −:A₀A₁: carries the number-conserving hopping
+    // −(a†₀a₁ + a†₁a₀) alongside the pair and squeezing terms of the full
+    // Hamiltonian. Filtering the builder's terms down to the cross-mode
+    // hopping therefore yields exactly the 50:50 beamsplitter generator at
+    // J = −1, so SIRK–Hashimoto on this sector must reproduce the full HOM
+    // coincidence curve P₁₁(θ) = cos²θ and the bunching dip — the
+    // beamsplitter kinematics predicted from the gauge-fixed Hamiltonian
+    // itself, not from a separate model builder.
+    let h_gf = qcd_ym_hamiltonian(0.0);
+
+    // Identify the hopping terms of the abelian gauge-fixed H: one creation
+    // and one annihilation on the two FIELD modes (cross-mode, so it
+    // conserves photon number). Sum their coefficients per direction.
+    let mut c01 = Complex64::new(0.0, 0.0); // coefficient of a†₀a₁
+    let mut c10 = Complex64::new(0.0, 0.0); // coefficient of a†₁a₀
+    let mut hop_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for (coeff, ops) in &h_gf.terms {
+        if ops.len() != 2 {
+            continue;
+        }
+        match (&ops[0], &ops[1]) {
+            (Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(1)) => {
+                c01 += coeff;
+                hop_terms.push((*coeff, ops.clone()));
+            }
+            (Operator::InnerBosonCreate(1), Operator::InnerBosonAnnihilate(0)) => {
+                c10 += coeff;
+                hop_terms.push((*coeff, ops.clone()));
+            }
+            _ => {}
+        }
+    }
+    // The B² cross term −:A₀A₁: carries exactly one hopping per direction
+    // (coefficient −1 each — the beamsplitter generator at J = −1).
+    assert!(
+        (c01.re + 1.0).abs() < 1e-9 && (c10.re + 1.0).abs() < 1e-9,
+        "gauge-fixed B² must carry −(a†₀a₁ + a†₁a₀), got c01 = {c01}, c10 = {c10}"
+    );
+    let h_hop = Hamiltonian { terms: hop_terms };
+
+    // SIRK–Hashimoto on the hopping sector: P₁₁(θ) = cos²θ for the rotation
+    // θ = 2t (|J| = 1), the HOM dip at θ = π/2 with the bunched outputs
+    // sharing the remaining weight, norm conserved. (One solve + time_evolve
+    // — the exact dynamics of the sector, resolved in a single Krylov
+    // window.)
+    let psi11 = fock(1, 1);
+    let res =
+        solve_forward_sirk_with_opts(&h_hop, &psi11, &shifts(10), &best_device(), None, &opts())
+            .unwrap();
+    for &theta in &[
+        0.0_f64,
+        std::f64::consts::FRAC_PI_4,
+        std::f64::consts::FRAC_PI_3,
+        std::f64::consts::FRAC_PI_2,
+        2.0 * std::f64::consts::FRAC_PI_3,
+        3.0 * std::f64::consts::FRAC_PI_4,
+        std::f64::consts::PI,
+    ] {
+        let psi_t = res.reconstruct(&res.time_evolve(theta / 2.0));
+        let p11 = population(&psi_t, &psi11);
+        let expected = theta.cos().powi(2);
+        assert!(
+            (p11 - expected).abs() < 1e-8,
+            "θ = {theta:.4}: P₁₁ = {p11:.8}, cos²(θ) = {expected:.8}"
+        );
+        let norm = QuantumState::inner_product(&psi_t, &psi_t).re;
+        assert!((norm - 1.0).abs() < 1e-8, "θ = {theta:.4}: norm = {norm}");
+        eprintln!(
+            "qed_hom_gauge_fixed_hopping: θ = {theta:.4}, P₁₁ = {p11:.8} (cos²θ = {expected:.8})"
+        );
+    }
+    // The dip: P₂₀ = P₀₂ = ½ (bunching into the |2,0⟩/|0,2⟩ pair).
+    let psi_dip = res.reconstruct(&res.time_evolve(std::f64::consts::FRAC_PI_4));
+    let p20 = population(&psi_dip, &fock(2, 0));
+    let p02 = population(&psi_dip, &fock(0, 2));
+    assert!(
+        (p20 - 0.5).abs() < 1e-8 && (p02 - 0.5).abs() < 1e-8,
+        "bunched outputs must share the weight: P₂₀ = {p20}, P₀₂ = {p02}"
+    );
+    eprintln!(
+        "qed_hom_gauge_fixed_hopping: dip P₁₁ = 0, P₂₀ = {p20:.8}, P₀₂ = {p02:.8}"
+    );
 }
