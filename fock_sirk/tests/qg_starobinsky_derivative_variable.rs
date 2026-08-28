@@ -22,7 +22,12 @@
 //! THE GAUGE CONDITION IS VERIFIED BY CONSTRUCTION — it is not what these
 //! tests check.  The physical initial wave-function *sets* the promoted
 //! derivative variable `g_m = a†+a` (its own ladder mode) to the actual
-//! derivative value `⟨g_m⟩ = 2(m+1)⟨φ_{m+1}⟩`, and because the derivative-
+//! derivative value `⟨g_m⟩ = 2(m+1)⟨φ_{m+1}⟩`, and beca//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
+//! ground state of the nested theory is always the outer-Fock vacuum — the
+//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
+//! creation (left) / annihilation (right) operators, with at most a
+//! constant added to make its spectrum positive (QYM/QG/NS).
+use the derivative-
 //! content modes carry no momenta, `[H, C_m] = 0` (`C_m = g_m − D_m`) makes
 //! the condition an exact constant of the motion under the Hamiltonian flow
 //! (bare or BRST-projected).  The question these tests answer is whether the

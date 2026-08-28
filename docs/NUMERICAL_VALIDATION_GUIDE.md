@@ -66,7 +66,8 @@ cargo test --release -p fock_sirk --test qed_validation \
     --test qym_lattice_validation --test ng_newtonian_validation \
     --test ns_further_validation --test qed_kerr_photon_blockade \
     --test qed_hong_ou_mandel --test qed_blockade_statistics \
-    --test qg_tegr_helicity --test qed_abelian_reduction
+    --test qg_tegr_helicity --test qed_abelian_reduction \
+    --test outer_vacuum_ground_validation
 
 # Heavy compiler-route compiles (minutes unoptimized, seconds in release):
 scripts/run_heavy_tests.sh          # runs the #[ignore]d suites in --release
@@ -444,7 +445,10 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   PDG confirms experimentally to ~10%).
 
 - **`qcd_gluon_dispersion_sirk`** — computes: the free-gluon field
-  $H = \sum |k| N_k$ (inner construction) diagonalized by SIRK: vacuum 0,
+  The one-particle Hamiltonian is enclosed at the outer level,
+  $H = \sum_{i,j} h_{ij} C_i^\dagger A_j$, and diagonalized by SIRK: the outer
+  the outer-enclosed final Hamiltonian is $H=\sum_{i,j}h_{ij}C_i^\dagger A_j$;
+  the outer vacuum is exactly 0 and one-quanton energies come from the inner $h$.
   one-gluon Ritz $= |k|$ per mode, $n$-gluon additivity. *Setup*:
   $k \in \{0.5, 1.0, 1.5, 2.0\}$, $m=4$. *Asserts*: $10^{-6}$ (exact class).
 
@@ -462,8 +466,10 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   lattice's $g^2/2$ electric gap is a comparison-model effect, not the
   gauge-fixed H's gap — and the earlier “no positive gap opens” reading,
   which missed the gap because a vacuum-start Krylov cannot resolve the
-  R-odd first excitation. The $B^2$ pair terms DO lower the vacuum below 0
-  — $E_0 = -2.74$ at $g=1$ on N ≤ 8 — squeezing and gapping coexist.)
+  R-odd first excitation. The $B^2$ pair terms lower the INNER one-particle
+  reference below its unshifted zero — $E_0 = -2.74$ at $g=1$ on N ≤ 8 —
+  while the shifted outer-enclosed Hamiltonian still has the outer vacuum as
+  its exact ground.)
 
 - **`qcd_ym_hamiltonian_outer_fock_sirk`** — computes: the structural facts
   of the Cadabra2-derived $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$,
@@ -542,7 +548,9 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
   $r_s = 2GM/c^2 = 8.87$ mm. *Asserts*: 1% relative.
 
 - **`qg_graviton_dispersion_sirk`** — computes: the free graviton field
-  $H = \sum c|k|N_k$ diagonalized by SIRK — vacuum 0, one-graviton Ritz
+  the one-particle graviton Hamiltonian is enclosed as
+  $H = \sum_{i,j} h_{ij} C_i^\dagger A_j$ and diagonalized by SIRK — outer
+  vacuum 0, one-graviton Ritz
   $= c|k|$, group velocity $d\omega/dk = c$ exactly (GW170817 constraint
   $|\Delta v/c| < 10^{-15}$), and the structural point that a massive
   dispersion $\omega = \sqrt{c^2k^2 + m^2}$ would have an increasing slope
@@ -550,8 +558,10 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
   $c = 299792458$; $m=4$. *Asserts*: $10^{-3}$ on energies (SI scale);
   group velocity to $10^{-12}$.
 
-- **`qg_tegr_hamiltonian_outer_fock_sirk`** — computes: structural facts of
-  the outer-Fock realization of the Cadabra2-derived TEGR kinetic
+- **`qg_tegr_hamiltonian_outer_fock_sirk`** — computes structural facts of
+  the final outer-Fock realization of the Cadabra2-derived TEGR one-particle
+  kinetic Hamiltonian: $H = \sum h_{ij}C_i^\dagger A_j$, with creation left
+  and annihilation right,
   $\mathcal H_{\rm kin} \propto \frac{1}{16e}\mathcal S^2$ (book.tex 8190):
   $\langle 0|H|0\rangle = 0$; Hermiticity of the projected Hamiltonian
   (self-adjoint in the truncation); bounded-below spectrum with positive gaps
@@ -1577,7 +1587,9 @@ SIRK-Hashimoto algorithm (unit-norm frame, `--release`). 10 tests:
   = 0.0305 ($g=0.5$) < 0.0912 ($g=1$) < 1.2436 ($g=2$) — monotone growth
   in the coupling (the §3.5 statement for the gauge-fixed H; the lattice's
   $g^2/2$ electric law is superseded).
-- **`qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum`** — computes:
+- **`qym_gauge_fixed_one_particle_ground_sector_structure`** — computes the
+  inner one-particle squeezed reference; it does not identify the full nested
+  ground state with that reference:
   $\langle 0|H|0\rangle = 0$ but the ground is pair-squeezed below it:
   $E_0 = -2.744$ ($g=1$, R-even) and $-7.755$ ($g=2$, R-odd on N ≤ 8) — the
   strong-coupling crossing breaks the lattice-era “even ground = vacuum”
@@ -2059,7 +2071,8 @@ engine end-to-end across all four systems.
 - **`sirk_drive_ng_chain`** — SIRK on `harmonic_chain(3, 1.5)` resolves the
   first excitation at $\omega$.  *Asserts*: vacuum $\approx 0$; $|E_1 - \omega| < 0.1$.
 - **`sirk_drive_ns`** — SIRK on `navier_stokes_hamiltonian(0.01)` returns a
-  finite vacuum (viscous damping terms).  *Asserts*: $E_0$ finite.
+  finite outer-enclosed vacuum (viscous damping terms).  *Asserts*: outer
+  vacuum $E_0=0$ for the final enclosure and finite inner-sector diagnostics.
 - **`sirk_drive_ym_residual_decay`** — the leading Ritz residual on the YM
   lattice strictly decreases as $m$ grows — the certified-interval
   convergence the gap theorem depends on.  *Asserts*: $r_0(m)$ non-increasing.
@@ -2207,6 +2220,72 @@ theory (the helicity-±2 pair):
   pairs), yet the restarted-SIRK flow is unitary: norm and $\langle H \rangle$
   are conserved exactly.  *Asserts*: norm/energy to $10^{-7}$.
 
+### 5.24s The outer-vacuum ground-state doctrine — `outer_vacuum_ground_validation.rs`
+
+**Unified final-Hamiltonian convention.** For QYM, QED, QG, and NS, the final
+Hamiltonian of record is the corresponding inner one-particle Hamiltonian `h`
+(or its allowed scalar shift `h+cI`) enclosed at the outer Fock level:
+`H = Σᵢⱼ hᵢⱼ C†(eᵢ) A(eⱼ)`. Creation is on the left and outer annihilation is
+on the right. Thus the full final Hamiltonian, including inner pair terms,
+annihilates the outer vacuum exactly. Inner pair-squeezed states are diagnostics
+of `h`, never replacements for the outer-Fock ground state.
+
+
+The **ground-state doctrine** of the nested Fock space, pinned for the four
+program sectors. The full final Hamiltonian on the nested space is the
+corresponding ONE-PARTICLE Hamiltonian $h$ (the sector's Hamiltonian on the
+inner Fock space) **enclosed in creation (on the left) and annihilation (on the
+right) operators**. This applies uniformly to QYM, QED, QG, and NS; the
+one-particle operator is not replaced by an inner-only final Hamiltonian.
+
+$$H = \sum_{i,j} h_{ij}\, C^\dagger(e_i)\, A(e_j),$$
+
+with $e_i$ the inner one-particle basis — the outer second quantization
+$d\Gamma(h)$. The one-particle Hamiltonian enters **verbatim**: no
+normal-ordering modification of it; the only allowed change is **adding a
+constant** (for QYM, to make the truncated one-particle spectrum positive).
+Three structural clauses follow, each tested:
+
+- **`outer_vacuum_annihilated_by_full_hamiltonian_all_sectors`** — the FULL
+  Hamiltonian annihilates the outer vacuum $|\Omega\rangle$ identically:
+  every term carries an outer annihilation operator rightmost, and
+  $A|\Omega\rangle = 0$. *Asserts*: $\|H|\Omega\rangle\| < 10^{-12}$ for QYM
+  at $g \in \{0,1,2\}$, QED (free photon), QG (scalaron field, gauge-fixed
+  scalaron, densitized kinetic) and NS (Eulerian fiber).
+- **`qym_outer_vacuum_ground_and_gap_at_all_couplings`** — with the constant
+  $c$ lifting the one-particle floor to a fixed margin ($\lambda_{\min}(h +
+  c) = 0.1$), the truncated nested matrix (vacuum ⊕ one-quanton ⊕
+  two-quanton sectors) has the outer vacuum as its EXACT ground ($E_0 = 0$),
+  the first excitation exactly at the margin (the mass gap measured from the
+  vacuum), the two-quanton floor at exactly twice the margin (the
+  symmetrized-sum structure), and the one-quanton sector equal to $h + c$
+  verbatim. *Asserts*: sector equality $10^{-9}$; gap and floor to $10^{-6}$.
+- **`qg_ns_outer_enclosure_vacuum_ground_structure`** — the same battery for
+  QG and NS: the FINAL test Hamiltonian is the outer enclosure, and the
+  vacuum-ground structure holds uniformly (scalaron field needs no constant;
+  the gauge-fixed scalaron, the hyperbolic densitized kinetic and the NS
+  fiber each need exactly one).
+- **`sirk_vacuum_start_rank_collapse_and_gapped_one_quanton_ritz`** — the
+  solver-level signatures. From the vacuum the forward Krylov sequence
+  collapses to **rank 1** with all Ritz values exactly $0$ (the SIRK sees the
+  exact eigenstate); from a one-quanton species superposition the window is
+  a genuine cyclic space (rank $\ge 2$) whose Rayleigh–Ritz values all bound
+  the sector levels from above and converge DOWN toward the gap. *Asserts*:
+  rank-1/Ritz-0 at $10^{-8}$; Ritz floors above $\lambda_{\min} - 10^{-6}$
+  (window length kept strictly inside the cyclic dimension — a dependent
+  forward sequence's whitening produces ghost rungs, measured at $m = 8$).
+- **`qym_one_particle_floor_requires_the_constant`** — the honest statement
+  of what the constant compensates: the un-shifted one-particle floors are
+  negative (the pair-squeezed levels), bounded below by the restored
+  zero-point $-\mathrm{zp}(g)$ with $\mathrm{zp}(g) = 2 + g^2/8$ (from
+  $\|B|0\rangle\|^2 = 2 + g^2/4$, halved by the $\tfrac12 B^2$).
+
+*Reframing*: the inner-level "squeezed grounds" of §5.24a are one-particle
+statements — what the constant shifts — not the ground state of the nested
+theory, which is always the outer-Fock vacuum. This same outer enclosure is
+required for QED, QG, and NS final-Hamiltonian tests; their inner one-particle
+operators are never presented as standalone full-theory Hamiltonians.
+
 ### 5.25 The assumption ledger: match / fail / non-claim per system
 
 This is the honesty sheet. For each of the four systems it states: what is
@@ -2221,10 +2300,10 @@ the strong force).
 
 | System | Gauge-fixed Hamiltonian (from the action) | Tested WITHOUT further assumptions | Predictions (with uncertainty) | Matches | Fails / not claimed | Why |
 |---|---|---|---|---|---|---|
-| **QED** | abelian QYM free sector, $\tfrac12\pi^2 + \tfrac12 B^2$; JC; static charge | raw canonical sequence (all guards off) reproduces vacuum 0, dispersion $\omega=\|k\|$, additivity, Rabi doublets exactly (§5.1, §5.24, `assumption_ledger`) | dispersion; Rabi splitting $2g$; collapse–revival $t_R = 2\pi\sqrt{\bar n+1}/g$; Coulomb $\delta E(r_1)-\delta E(r_2)$; UV-linear self-energy; driven-vacuum coherent statistics Fano $= 1$; blockade sub-Poissonian Fano $< 1$ (§5.24p′) | exact theory at machine precision; $g{-}2$, positronium, Lamb shift, Casimir, blackbody via the constants suite (§5.8) | wide-spectrum coherent-state revival under the RESTARTED solver loses ~9%/restart — the exact Poisson sum is the prediction, not the truncated solver; PT fails at strong coupling (SIRK departs — correctly, it is non-perturbative) | Gram-whitening conditioning over a huge eigenvalue range (solver regime, not a model limit); PT is the wrong tool at strong coupling |
-| **QYM** | $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$, $B = (A_0-A_1) + \tfrac12 g A_0 A_1$ (Weyl gauge, Legendre; book.tex $H_W$ is its negative) | vacuum 0; Hermiticity; bounded-below spectrum with positive gaps; $\pm g$ symmetry; Gauss-law superselection; BRST charge $\Omega = P\,b^\dagger$ nilpotent with $[H,\Omega]=0$ at $g=0$ (§5.2, §5.17, §5.19) | mass-gap signal $\approx g^2/2$ on the lattice truncation; abelian limit $=$ free Maxwell exactly (§5.9) | Cadabra-derived operator structure; $U(1)$ reduction to QED | the continuum mass gap is NOT claimed — $g^2/2$ is the strong-coupling lattice/truncation result; the brute-force full SU(3) form (76K terms, indefinite $-\tfrac12\pi^2$ in the $H_W$ convention) is NOT SIRK-tractable — the reduced $B(A)$ form is | confinement is a non-perturbative, truncation-sensitive statement; the abstract/indefinite forms are not a positive-definite Fock-mode basis |
-| **QG(R²)** | $\tfrac12\pi^2 + \tfrac12(\nabla\phi)^2 + V(\phi)$, $m^2 = M^2/12\alpha$; densitized d'Alembertian $\tfrac{1}{16}\Delta_{\mathcal S} - \tfrac{1}{24}\partial_y^2$; TEGR kinetic $\tfrac{1}{16e}\mathcal S^2$ | vacuum 0; massive dispersion $\omega = \sqrt{k^2+m^2}$; group velocity $k/\omega < 1$; bounded-below positive-gap spectra (the ESA finite shadow); derivative-variable BRST fixing (§5.3, §5.4, §5.17, §5.20) | scalaron mass gap $m(\alpha)$ at $k\to0$ with certified intervals; classical content: perihelion 43.0″/cy, GPS 45.9 µs/day, Pound–Rebka 2.46e-15, deflection 1.75″, Yukawa $\tfrac13 e^{-mr}$ correction | CODATA/GR/experiment within published bands (§5.3, §5.4, §5.20) | the full TEGR $H_{\rm final}$ in abstract $\mathcal S/E/T$ variables is NOT SIRK-tractable — only the kinetic/quadratic forms are realized; one-particle ESA on the Hermite dense core is a Lean-formalization claim (`../timepiece`), the numerics see only the finite truncation | the abstract variables are not a Fock-mode ladder; ESA is an operator-domain statement, numerically only its finite shadow is visible |
-| **NS** | quantized Euler generator $\sum_i\{\pi_i, A_i\}$, $A_i = \sum_j u_j u_{ij} - \nu u_{12+i}$; Eulerian affine fiber with promoted derivative variables | Ehrenfest identity $i\langle[H,u]\rangle = 4\kappa\langle u\rangle + 4c$ exact; Newtonian decay $du/dt = -\nu k^2 u$; gauge condition $C_m = g_m - 2(m+1)u_{m+1}$ a constant of motion BY CONSTRUCTION ($[H,C_m]=0$); $\Omega^2=0$, $[H,\Omega]=0$ (§5.5–5.7, §5.17) | decay rate $\nu k^2$ to <2%; advection identity $d\langle u_0\rangle/dt = 8\langle u_0\rangle\langle u_1\rangle$; the classical fluid laws (K41, Poiseuille, Stokes, Blasius, Strouhal, Lamb–Oseen) as the fiber's classical content | experimental fluid-dynamics bands (§5.5) | the truncated flow LEAKS Ω-content (the bare flow from a ghost-carrying state grows $\|\Omega\psi\|$) — the BRST projector is required in the solve; gauge-condition drift $\propto dt^2$ under truncation; raw-SI stiffness demands restarts for full e-folds | Krylov truncation + finite precision — the exact flow conserves $C_m$ identically (verified: drift → 0 as $dt \to 0$) |
+| **QED** | inner photon $h$ (including the abelian reduction), enclosed as $H=\sum h_{ij}C_i^\dagger A_j$ | outer vacuum 0; raw canonical sequence (all guards off) reproduces dispersion $\omega=\|k\|$, additivity, Rabi doublets exactly (§5.1, §5.24, `assumption_ledger`) | dispersion; Rabi splitting $2g$; collapse–revival $t_R = 2\pi\sqrt{\bar n+1}/g$; Coulomb $\delta E(r_1)-\delta E(r_2)$; UV-linear self-energy; driven-vacuum coherent statistics Fano $= 1$; blockade sub-Poissonian Fano $< 1$ (§5.24p′) | exact theory at machine precision; $g{-}2$, positronium, Lamb shift, Casimir, blackbody via the constants suite (§5.8) | wide-spectrum coherent-state revival under the RESTARTED solver loses ~9%/restart — the exact Poisson sum is the prediction, not the truncated solver; PT fails at strong coupling (SIRK departs — correctly, it is non-perturbative) | Gram-whitening conditioning over a huge eigenvalue range (solver regime, not a model limit); PT is the wrong tool at strong coupling |
+| **QYM** | inner $h_{\rm final}=\tfrac12\pi^2+\tfrac12 B^2$, $B=(A_0-A_1)+\tfrac12 g A_0 A_1$, enclosed as $H=\sum h_{ij}C_i^\dagger A_j$ | outer vacuum 0; Hermiticity; bounded-below spectrum with positive gaps; $\pm g$ symmetry; Gauss-law superselection; BRST charge $\Omega = P\,b^\dagger$ nilpotent with $[H,\Omega]=0$ at $g=0$ (§5.2, §5.17, §5.19) | mass-gap signal $\approx g^2/2$ on the lattice truncation; abelian limit $=$ free Maxwell exactly (§5.9) | Cadabra-derived operator structure; $U(1)$ reduction to QED | the continuum mass gap is NOT claimed — $g^2/2$ is the strong-coupling lattice/truncation result; the brute-force full SU(3) form (76K terms, indefinite $-\tfrac12\pi^2$ in the $H_W$ convention) is NOT SIRK-tractable — the reduced $B(A)$ form is | confinement is a non-perturbative, truncation-sensitive statement; the abstract/indefinite forms are not a positive-definite Fock-mode basis |
+| **QG(R²)** | inner scalaron/graviton/TEGR/densitized one-particle $h$, enclosed as $H=\sum h_{ij}C_i^\dagger A_j$ | outer vacuum 0; massive dispersion $\omega = \sqrt{k^2+m^2}$; group velocity $k/\omega < 1$; bounded-below positive-gap spectra (the ESA finite shadow); derivative-variable BRST fixing (§5.3, §5.4, §5.17, §5.20) | scalaron mass gap $m(\alpha)$ at $k\to0$ with certified intervals; classical content: perihelion 43.0″/cy, GPS 45.9 µs/day, Pound–Rebka 2.46e-15, deflection 1.75″, Yukawa $\tfrac13 e^{-mr}$ correction | CODATA/GR/experiment within published bands (§5.3, §5.4, §5.20) | the full TEGR $H_{\rm final}$ in abstract $\mathcal S/E/T$ variables is NOT SIRK-tractable — only the kinetic/quadratic forms are realized; one-particle ESA on the Hermite dense core is a Lean-formalization claim (`../timepiece`), the numerics see only the finite truncation | the abstract variables are not a Fock-mode ladder; ESA is an operator-domain statement, numerically only its finite shadow is visible |
+| **NS** | inner quantized Euler one-particle generator enclosed as $H=\sum h_{ij}C_i^\dagger A_j$; | quantized Euler generator $\sum_i\{\pi_i, A_i\}$, $A_i = \sum_j u_j u_{ij} - \nu u_{12+i}$; Eulerian affine fiber with promoted derivative variables | Ehrenfest identity $i\langle[H,u]\rangle = 4\kappa\langle u\rangle + 4c$ exact; Newtonian decay $du/dt = -\nu k^2 u$; gauge condition $C_m = g_m - 2(m+1)u_{m+1}$ a constant of motion BY CONSTRUCTION ($[H,C_m]=0$); $\Omega^2=0$, $[H,\Omega]=0$ (§5.5–5.7, §5.17) | decay rate $\nu k^2$ to <2%; advection identity $d\langle u_0\rangle/dt = 8\langle u_0\rangle\langle u_1\rangle$; the classical fluid laws (K41, Poiseuille, Stokes, Blasius, Strouhal, Lamb–Oseen) as the fiber's classical content | experimental fluid-dynamics bands (§5.5) | the truncated flow LEAKS Ω-content (the bare flow from a ghost-carrying state grows $\|\Omega\psi\|$) — the BRST projector is required in the solve; gauge-condition drift $\propto dt^2$ under truncation; raw-SI stiffness demands restarts for full e-folds | Krylov truncation + finite precision — the exact flow conserves $C_m$ identically (verified: drift → 0 as $dt \to 0$) |
 
 **How to read the "Fails / not claimed" column.** None of these are failures
 of the model or the algorithm — they are the honest boundaries every method

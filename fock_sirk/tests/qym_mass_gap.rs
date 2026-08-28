@@ -14,9 +14,12 @@
 //! The sector structure is the **reflection symmetry** of the gauge-fixed H,
 //! `R: (A₀, A₁) → (−A₁, −A₀)` — an exact `Z₂` symmetry for **all** `g`
 //! (`[H, R] = 0`, verified to machine precision here). It plays the role the
-//! occupation parity played for the lattice: pure-`R` Krylov starts stay in
-//! disjoint sectors. (The occupation parity `N mod 2` is *not* a symmetry at
-//! `g > 0`: the non-abelian `g`-term of `B²` is a 3-operator product.)
+//! historical comparison models: pure-`R` Krylov starts stay in disjoint
+//! sectors. (The occupation parity `N mod 2` is *not* a symmetry at `g > 0`:
+//! the non-abelian `g`-term of `B²` is a 3-operator product.) The final
+//! physical Hamiltonian is the complete one-particle `h` enclosed by outer
+//! creation on the left and annihilation on the right; therefore its outer
+//! vacuum is the exact ground after the allowed positivity shift.
 //!
 //! The claims pinned here, each measured on the gauge-fixed H:
 //!
@@ -31,9 +34,23 @@
 //!    `N ≤ 4/6/8` — the `(X₀−X₁)` zero-mode continuum) and the R-even and
 //!    R-odd SIRK sector grounds **coincide at every `m`** — the order
 //!    parameter vanishes.
-//! 4. **Squeezed ground**: the Fock vacuum is *not* the ground — `⟨0|H|0⟩ = 0`
-//!    but `E₀ < 0` (pair-squeezed); at strong coupling (`g = 2`, `N ≤ 8`)
-//!    the ground even flips reflection-odd.
+//! 4. **Squeezed ground (ONE-PARTICLE-level statement)**: at the inner
+//!    (one-particle) level the truncated spectrum dips below the vacuum rule
+//!    value — `⟨0|H|0⟩ = 0` but `E₀ < 0` (pair-squeezed); at strong coupling
+//!    (`g = 2`, `N ≤ 8`) the one-particle ground even flips reflection-odd.
+//!//!    **Ground-state doctrine (outer-vacuum reframing)** — see
+//!    `outer_vacuum_ground_validation.rs`: these inner-level negative levels
+//!    are the truncated spectrum of the ONE-PARTICLE Hamiltonian `h`, not
+//!    the ground state of the nested theory. The physical Hamiltonian is the
+//!    one-particle Hamiltonian *enclosed* in outer creation (left) /
+//!    annihilation (right) operators, `H = Σ h_ij C†(e_i) A(e_j)`, after the
+//!    ONE allowed modification — adding a constant to `h` so its spectrum is
+//!    positive. Every term of `H` carries an outer annihilation operator
+//!    rightmost, so `H|Ω⟩ = 0` identically for the FULL Hamiltonian, and the
+//!    GROUND STATE of the nested theory is always the outer-Fock vacuum at
+//!    energy 0, with the mass gap `λ_min(h + c) > 0` measured above it. The
+//!    inner-level squeezed floors measured here are exactly what the
+//!    constant compensates.
 //! 5. **Certified enclosure**: the T6 assembly on the two SIRK sector solves
 //!    gives a certified interval of the sector-ground difference that
 //!    **contains the exact truncated spectral gap** `E₁ − E₀` (cross-checked
@@ -467,31 +484,83 @@ fn qym_gauge_fixed_gap_grows_with_coupling() {
 }
 
 #[test]
-fn qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum() {
-    // The Fock vacuum is NOT the ground: ⟨0|H|0⟩ = 0 (normal ordering) but
-    // the gauge-fixed ground is pair-squeezed below it (E₀ < 0 — the B² pair
-    // coupling lowers the vacuum), deepening with g. At strong coupling the
-    // N ≤ 8 ground even flips reflection-odd (the "even ground = vacuum"
-    // identification of the lattice formalization breaks completely).
+fn qym_gauge_fixed_one_particle_ground_sector_structure() {
+    // ONE-PARTICLE-level content (see the ground-state doctrine in the module
+    // header and `outer_vacuum_ground_validation.rs`): the truncated spectrum
+    // of the gauge-fixed one-particle Hamiltonian h — what the constant
+    // shift of the doctrine compensates — has a squeezed, sector-alternating
+    // ground. (i) The inner Fock vacuum is not even an eigenstate: the B²
+    // pair term couples |0⟩ to |1,1⟩, so H|0⟩ carries a two-photon
+    // component. (ii) At g = 1 the (R-even) ground eigenvector carries
+    // genuine pair weight |⟨1,1|ψ₀⟩| > 0 — the squeezing; at g = 2 the
+    // ground flips R-ODD, and sector purity then demands ZERO |1,1⟩ overlap
+    // (every two-quantum state of the field modes is R-even) — the pair
+    // content of an R-odd ground lives in odd-occupation channels instead.
+    // (iii) The strong-coupling R-flip itself. Eigenvalues are
+    // convention-dependent: the constant shift H → H + c·I of the doctrine
+    // moves every level, so the E₀ < 0 numbers below are only meaningful in
+    // the framework's normal-ordering convention ⟨0|H|0⟩ = 0 (where they
+    // show the pair terms binding the one-particle ground below the bare
+    // vacuum level); statements (i)–(iii) do not depend on that convention.
+    // The GROUND STATE OF THE NESTED THEORY — the outer-Fock vacuum, with H
+    // = dΓ(h + c) enclosed creation-left/annihilation-right — is unaffected
+    // by all of this: H|Ω⟩ = 0 identically and E₀ = 0 exactly.
     let vac = fock_state(&[]);
     assert!(
         QuantumState::inner_product(&vac, &gauge_fixed(2.0).apply(&vac)).re.abs() < 1e-9,
         "⟨0|H|0⟩ = 0 (normal-ordered vacuum)"
     );
-    let (e0_1, _, _, _) = exact_low_window(&gauge_fixed(1.0), 8);
-    let (e0_2, _, _, _) = exact_low_window(&gauge_fixed(2.0), 8);
-    assert!(
-        e0_1 < -2.0 && e0_2 < -5.0,
-        "the squeezed ground must lie far below the Fock vacuum 0: E₀(1) = {e0_1:.4}, \
-         E₀(2) = {e0_2:.4}"
-    );
-    // Reflection parity of the ground: R-even at g = 1, R-odd at g = 2 (the
-    // strong-coupling crossing — measured on the N ≤ 8 truncation).
-    for (g, want) in [(1.0_f64, 1.0_f64), (2.0, -1.0)] {
+    let two_ph = fock_state(&[(0, 1), (1, 1)]);
+
+    for &g in &[1.0_f64, 2.0] {
         let h = gauge_fixed(g);
         let basis = truncated_basis(8);
         let n = basis.len();
         let (_, _, _, vecs) = exact_low_window(&h, 8);
+
+        // (i) The vacuum is not an eigenstate: H|0⟩ ≠ c|0⟩ for any c — it
+        // reaches the pair sector.
+        let hv = h.apply(&vac);
+        let pair_amp = QuantumState::inner_product(&two_ph, &hv).norm();
+        assert!(
+            pair_amp > 1e-6,
+            "g={g}: H|0⟩ must reach the pair sector, |⟨1,1|H|0⟩| = {pair_amp:.2e}"
+        );
+
+        // (ii) The ground eigenvector is not the vacuum: |⟨vac|ψ₀⟩| < 1 and
+        // |⟨1,1|ψ₀⟩| > 0 (pair weight) — the squeezed ground.
+        let psi0 = vecs.column(0);
+        let mut w_vac = 0.0_f64;
+        let mut w_pair = 0.0_f64;
+        for (j, s) in basis.iter().enumerate() {
+            let c = psi0[j].norm();
+            if QuantumState::inner_product(&vac, s).norm() > 0.99 {
+                w_vac += c * c;
+            }
+            if QuantumState::inner_product(&two_ph, s).norm() > 0.99 {
+                w_pair += c * c;
+            }
+        }
+        assert!(
+            w_vac < 1.0 - 1e-3,
+            "g={g}: the one-particle ground cannot be the vacuum: |⟨vac|ψ₀⟩|² = {w_vac:.4}"
+        );
+        if g < 1.5 {
+            // R-even ground: pair weight in the R-even two-quantum channel.
+            assert!(
+                w_pair > 1e-3,
+                "g={g}: the R-even ground must carry pair weight: |⟨1,1|ψ₀⟩|² = {w_pair:.4}"
+            );
+        } else {
+            // R-odd ground (the strong-coupling flip): sector purity puts
+            // EXACTLY zero weight on the R-even pair state |1,1⟩.
+            assert!(
+                w_pair < 1e-8,
+                "g={g}: the R-odd ground must have zero R-even pair overlap: {w_pair:.4}"
+            );
+        }
+
+        // (iii) R-parity of the ground: R-even at g = 1, R-odd at g = 2.
         let mut rmat = DMatrix::<Complex64>::zeros(n, n);
         for (j, s) in basis.iter().enumerate() {
             let rs = apply_r(s);
@@ -499,16 +568,31 @@ fn qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum() {
                 rmat[(i, j)] = QuantumState::inner_product(t, &rs);
             }
         }
-        let v = vecs.column(0);
-        let ov = v.conjugate().dot(&(&rmat * v)).re;
+        let want = if g < 1.5 { 1.0 } else { -1.0 };
+        let ov = psi0.conjugate().dot(&(&rmat * psi0)).re;
         assert!(
             (ov - want).abs() < 1e-3,
             "g={g}: ground R-parity must be {want}, got {ov:.4}"
         );
+        eprintln!(
+            "qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum: g={g}: \
+             |⟨vac|ψ₀⟩|² = {w_vac:.4}, |⟨1,1|ψ₀⟩|² = {w_pair:.4}, R-parity {ov:+.4}"
+        );
     }
+
+    // Convention-relative (⟨0|H|0⟩ = 0): the pair terms bind the ground
+    // below the bare vacuum level, deepening with g. A constant shift would
+    // move these numbers; the eigenvector statements above do not.
+    let (e0_1, _, _, _) = exact_low_window(&gauge_fixed(1.0), 8);
+    let (e0_2, _, _, _) = exact_low_window(&gauge_fixed(2.0), 8);
+    assert!(
+        e0_1 < -2.0 && e0_2 < -5.0,
+        "⟨0|H|0⟩ = 0 convention: E₀ must lie below the bare vacuum level, \
+         E₀(1) = {e0_1:.4}, E₀(2) = {e0_2:.4}"
+    );
     eprintln!(
-        "qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum: E₀(1) = {e0_1:.4} (R-even), \
-         E₀(2) = {e0_2:.4} (R-odd on N≤8) — the Fock vacuum is not the ground"
+        "qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum: E₀(1) = {e0_1:.4} / \
+         E₀(2) = {e0_2:.4} under ⟨0|H|0⟩ = 0 (convention-relative)"
     );
 }
 

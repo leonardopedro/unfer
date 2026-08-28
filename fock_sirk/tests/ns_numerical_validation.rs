@@ -42,6 +42,11 @@
 //!     Fourier mode `du/dt = −νk²u`, and a SIRK-restarted evolution measures
 //!     the decay rate `νk²` numerically.
 
+//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
+//! ground state of the nested theory is always the outer-Fock vacuum — the
+//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
+//! creation (left) / annihilation (right) operators, with at most a
+//! constant added to make its spectrum positive (QYM/QG/NS).
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{

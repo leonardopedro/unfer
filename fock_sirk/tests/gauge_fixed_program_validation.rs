@@ -42,6 +42,17 @@
 //!      (theory-native: one finite T, convergence in m alone).
 //!  10. `ns_advective_energy_norm_conservation` — 2D advection fiber:
 //!      unitarity and ⟨H⟩ conservation through restarted flow.
+//!
+//! **Ground-state doctrine (outer-vacuum reframing)** — see
+//! `outer_vacuum_ground_validation.rs`: every "bounded below / ground" claim
+//! made in THIS suite (e.g. QYM test 7's "normal-ordered vacuum 0 with
+//! positive gaps") is a statement about the ONE-PARTICLE Hamiltonian's
+//! truncated inner-level spectrum — the object the constant shift acts on —
+//! not about the ground state of the nested theory. The nested theory's
+//! Hamiltonian of record is the one-particle Hamiltonian ENCLOSED in outer
+//! creation (left) / annihilation (right) operators, with at most a constant
+//! added to `h`; it annihilates the outer vacuum identically, and the ground
+//! state is ALWAYS the outer-Fock vacuum at energy 0.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

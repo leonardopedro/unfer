@@ -1,5 +1,13 @@
 # sirk_core_model — the Aeneas seam for the SIRK numeric core (mass-gap plan T9)
 
+## Regeneration status
+
+This model and its generated `.llbc`/Lean artifacts must be regenerated after
+any change affecting the numerical Hamiltonian, outer-enclosure construction,
+solver, or certificate seam. Existing generated outputs do not certify a later
+Rust revision. After regeneration, re-export the Lean certificate and rerun
+nanoda before claiming certification for the corrected model.
+
 Pure, dependency-free Rust model of the SIRK **shift-invert rational Krylov**
 numeric core, written in the Aeneas-supported Rust subset so that Charon +
 Aeneas translate it mechanically into Lean 4.  This is the **T9** deliverable

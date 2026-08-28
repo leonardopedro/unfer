@@ -17,6 +17,12 @@
 #   aeneas/sirk_core_model.llbc   the Charon intermediate representation
 #   aeneas/SirkCoreModel.lean     the generated Lean 4 model
 #
+# Scope: this script verifies the pure SIRK–Hashimoto numerical core only.
+# It does not define a lattice Hamiltonian or establish the QYM mass gap.
+# The physical input is the gauge-fixed nested-Fock one-particle Hamiltonian;
+# its outer creation-left/annihilation-right enclosure is handled by the
+# surrounding formalization.
+#
 # Honesty boundary: the *algorithmic* content (the forward-sequence fold, the
 # Gram-assembly and whitening loops, the index bookkeeping, the shapes of the
 # projection identity and residual formula) is translated verbatim; the `f64`

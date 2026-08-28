@@ -7,6 +7,11 @@
 //! `charon --preset=aeneas` + `aeneas -backend lean` translate it into a
 //! Lean 4 model mechanically.
 //!
+//! Regeneration rule: this model and its generated `.llbc`/Lean artifacts
+//! must be regenerated whenever the Rust numerical core or Hamiltonian
+//! interface changes. Existing generated artifacts do not certify a newer
+//! implementation.
+//!
 //! Honesty boundary (from the plan): the dense eigendecomposition (LAPACK
 //! style) stays a trusted component whose backward error is exactly the T3
 //! bound, and the `f64` arithmetic is the rounding layer enclosed by T1–T5.

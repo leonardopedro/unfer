@@ -46,6 +46,11 @@
 //!     stays in the physical subspace while the bare flow leaks — the reason
 //!     the projector rides along in the solve.
 
+//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
+//! ground state of the nested theory is always the outer-Fock vacuum — the
+//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
+//! creation (left) / annihilation (right) operators, with at most a
+//! constant added to make its spectrum positive (QYM/QG/NS).
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};

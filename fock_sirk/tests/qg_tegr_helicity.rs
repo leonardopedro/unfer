@@ -32,6 +32,15 @@
 //!    one-quantum graviton conserves norm and energy while the 𝒮 pair terms
 //!    populate both polarization ladders (the squeezing dynamics).
 
+//!
+//! **Ground-state doctrine** — the negative "-1/32 floor" above is the
+//! INNER (one-particle) level statement: the normal-ordered one-particle
+//! kinetic's truncated continuum edge, exactly what the one-particle
+//! constant shift compensates. The nested theory's final Hamiltonian (see
+//! `outer_vacuum_ground_validation.rs`) is the one-particle Hamiltonian
+//! enclosed in outer creation (left) / annihilation (right) operators — its
+//! ground state is ALWAYS the outer-Fock vacuum at energy 0.
+
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
