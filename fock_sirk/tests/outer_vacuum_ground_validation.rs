@@ -172,6 +172,126 @@ fn outer_enclose(h_mat: &DMatrix<Complex64>, basis: &[Vec<(u32, u32)>]) -> Hamil
     Hamiltonian { terms }
 }
 
+/// The outer enclosure with the one-particle matrix **Hermitian-symmetrized
+/// bit-exactly**: `h_sym[i][j] = (m[i][j] + conj(m[j][i]))/2`. For a Hermitian
+/// one-particle operator the exact matrix IS conjugate-symmetric, so this
+/// removes only floating-point assembly asymmetry (the QED and NS one-particle
+/// matrices carry imaginary off-diagonals — e.g. the NS fiber's `0.2i` advection
+/// couplings — so the plain average `(m[i][j]+m[j][i])/2` would cancel them)
+/// and makes the term-level `H = H†` certificate below exact — the same
+/// convention as the QG full-exponential builder
+/// (`qg_starobinsky_vielbein_hamiltonian_full`, which symmetrizes before
+/// enclosing). Returns `(H_full, h_sym)`.
+fn enclose_symmetrized(
+    h: &Hamiltonian,
+    basis: &[Vec<(u32, u32)>],
+) -> (Hamiltonian, DMatrix<Complex64>) {
+    let m = inner_matrix(h, basis);
+    let n = m.nrows();
+    let mut sym = m.clone();
+    for i in 0..n {
+        for j in 0..i {
+            let avg = (m[(i, j)] + m[(j, i)].conj()) / 2.0;
+            sym[(i, j)] = avg;
+            sym[(j, i)] = avg.conj();
+        }
+    }
+    (outer_enclose(&sym, basis), sym)
+}
+
+/// EXACT term-level Hermiticity certificate `H = H†` (no tolerance). A term's
+/// canonical key is (sorted creator labels, sorted annihilator labels, the
+/// FULL complex coefficient as an exact string): the ladder operators inside
+/// each block act on distinct modes and commute pairwise, so sorting is exact.
+/// `H = H†` ⟺ the key multiset of `H` equals that of `H.adjoint()`
+/// (creator↔annihilator exchange leaves the multiset invariant; the adjoint
+/// coefficient is the conjugate, which must be matched exactly — the NS
+/// one-particle terms carry imaginary couplings, so comparing only `re` would
+/// be vacuous). `{:?}` of a float is the shortest round-trip representation,
+/// so the string comparison is bit-exact. Mirrors `unit_tests.rs` — the
+/// certificate the QG doctrine asserts on its final Hamiltonian.
+fn assert_exact_hermitian(h: &Hamiltonian) {
+    let hd = h.adjoint();
+    let term_key = |t: &(Complex64, Vec<Operator>)| -> (String, String, String) {
+        let (coeff, ops) = t;
+        let (mut creators, mut annihilators) = (Vec::new(), Vec::new());
+        for op in ops {
+            match op {
+                Operator::InnerBosonCreate(_)
+                | Operator::OuterBosonCreate(_)
+                | Operator::InnerFermionCreate(_)
+                | Operator::OuterFermionCreate(_) => creators.push(format!("{op:?}")),
+                Operator::InnerBosonAnnihilate(_)
+                | Operator::OuterBosonAnnihilate(_)
+                | Operator::InnerFermionAnnihilate(_)
+                | Operator::OuterFermionAnnihilate(_) => annihilators.push(format!("{op:?}")),
+                _ => creators.push(format!("[{op:?}]")),
+            }
+        }
+        creators.sort();
+        annihilators.sort();
+        // Normalize the sign of a zero part (both re and im): products like
+        // `conj` and complex multiplication can produce `-0.0` where another
+        // path produces `0.0` — the same complex number, different bit
+        // pattern (`-0.0 == 0.0`).
+        let coeff_norm = Complex64::new(
+            if coeff.re == 0.0 { 0.0 } else { coeff.re },
+            if coeff.im == 0.0 { 0.0 } else { coeff.im },
+        );
+        (creators.join(","), annihilators.join(","), format!("{coeff_norm:?}"))
+    };
+    let mut keys: Vec<_> = h.terms.iter().map(term_key).collect();
+    let mut adj_keys: Vec<_> = hd.terms.iter().map(term_key).collect();
+    keys.sort();
+    adj_keys.sort();
+    assert_eq!(
+        keys, adj_keys,
+        "H must equal H† term-by-term (multiset of canonical keys)"
+    );
+}
+
+/// The enclosure-form doctrine, term by term: each term splits as a creator
+/// block followed by an annihilator block, with no annihilator before a
+/// creator (in the framework's product order, i.e. creation left, annihilation
+/// right). Mirrors `qg_validation.rs::assert_enclosure_form` — the structural
+/// certificate the QG doctrine asserts on its final Hamiltonian.
+fn assert_enclosure_form(h: &Hamiltonian) {
+    assert!(!h.terms.is_empty(), "enclosure-form Hamiltonian has no terms");
+    for (coeff, ops) in &h.terms {
+        let mut seen_annihilator = false;
+        for op in ops {
+            let is_create = matches!(
+                op,
+                Operator::InnerBosonCreate(_)
+                    | Operator::OuterBosonCreate(_)
+                    | Operator::InnerFermionCreate(_)
+                    | Operator::OuterFermionCreate(_)
+            );
+            let is_annihilate = matches!(
+                op,
+                Operator::InnerBosonAnnihilate(_)
+                    | Operator::OuterBosonAnnihilate(_)
+                    | Operator::InnerFermionAnnihilate(_)
+                    | Operator::OuterFermionAnnihilate(_)
+            );
+            assert!(
+                is_create || is_annihilate,
+                "term {ops:?} (coeff {coeff}) is not a ladder product — the final \
+                 Hamiltonian must be an enclosure C†(h)A"
+            );
+            if is_annihilate {
+                seen_annihilator = true;
+            } else {
+                assert!(
+                    !seen_annihilator,
+                    "term {ops:?} has a creator AFTER an annihilator — not \
+                     creation-left/annihilation-right"
+                );
+            }
+        }
+    }
+}
+
 /// All outer states with 0, 1 and 2 quanta over the species list (the
 /// truncated nested basis: the vacuum, the one-quanton sector, the
 /// two-quanton sector).
@@ -472,6 +592,67 @@ fn qg_ns_outer_enclosure_vacuum_ground_structure() {
             "{name}: two-quanton floor = 2×λ_min(h⁺), got {gap2}"
         );
     }
+}
+
+/// QED and NS: the two structural certificates the QG doctrine asserts on its
+/// final Hamiltonian, asserted here for parity on the QED and NS FINAL
+/// Hamiltonians (the one-particle operator enclosed in creation (left) /
+/// annihilation (right) outer ladders):
+///   (a) EXACT term-level `H = H†` — the canonical-key multiset equality,
+///       bit-exact, no tolerance: the enclosure is exactly self-adjoint
+///       because the one-particle matrix is Hermitian-symmetrized bit-exactly
+///       before enclosing (a pure floating-point assembly fix — for a
+///       Hermitian h the exact matrix IS conjugate-symmetric; the only
+///       allowed PHYSICAL modification, the constant shift, is applied
+///       separately elsewhere);
+///   (b) ENCLOSURE FORM — every term splits creation-left/annihilation-right,
+///       the property that makes `⟨0|H|0⟩ = 0` and Bose additivity automatic.
+/// The symmetrized one-particle matrix is checked to agree with the verbatim
+/// sampled matrix to machine precision (the symmetrization changes nothing
+/// physical), and the enclosure still annihilates the outer vacuum.
+#[test]
+fn qed_ns_enclosure_form_and_exact_hermitian() {
+    let basis4 = inner_basis(4, 2);
+    let basis3 = inner_basis(3, 2);
+
+    // QED final Hamiltonian: the free-photon one-particle operator (positive
+    // spectrum — no constant needed) enclosed in outer ladders.
+    let qed = qed_free_photon(&[1.0, 2.0, 3.0, 5.0]);
+    // The one-particle operator itself is exactly Hermitian (framework
+    // builder property — the enclosure is Hermitian iff h is).
+    assert_exact_hermitian(&qed);
+    let (qed_full, qed_sym) = enclose_symmetrized(&qed, &basis4);
+    assert_exact_hermitian(&qed_full);
+    assert_enclosure_form(&qed_full);
+    assert!(
+        qed_full.apply(&outer_vacuum()).norm() < 1e-12,
+        "QED: the outer-enclosed final Hamiltonian must annihilate the outer vacuum"
+    );
+
+    // NS final Hamiltonian: the Eulerian fiber (kinetic + advection + viscous
+    // offset) enclosed in outer ladders.
+    let a = [[0.0_f64, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
+    let c = [0.15_f64, 0.0, -0.1];
+    let ns = ns_eulerian_fiber(&a, &c);
+    assert_exact_hermitian(&ns);
+    let (ns_full, ns_sym) = enclose_symmetrized(&ns, &basis3);
+    assert_exact_hermitian(&ns_full);
+    assert_enclosure_form(&ns_full);
+    assert!(
+        ns_full.apply(&outer_vacuum()).norm() < 1e-12,
+        "NS: the outer-enclosed final Hamiltonian must annihilate the outer vacuum"
+    );
+
+    // The symmetrization is a precision fix only: the symmetrized one-particle
+    // matrix agrees with the verbatim sampled matrix to machine precision.
+    assert!(
+        (qed_sym - inner_matrix(&qed, &basis4)).norm() < 1e-12,
+        "QED: symmetrization must only remove floating-point assembly noise"
+    );
+    assert!(
+        (ns_sym - inner_matrix(&ns, &basis3)).norm() < 1e-12,
+        "NS: symmetrization must only remove floating-point assembly noise"
+    );
 }
 
 // ───────────────────── solver-level signatures (SIRK–Hashimoto) ─────────────────────
