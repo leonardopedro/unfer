@@ -26,9 +26,12 @@
 //!
 //! Preconditions of the theorem (each documented where it is enforced):
 //!
-//! 1. **Sector purity**: lattice parity is an exact symmetry of `H_m`
-//!    (ChapterParity), the starts are pure-parity, so the two Krylov chains
-//!    are disjoint and the Ritz sets are independent ([`parities_disjoint`]).
+//! 1. **Sector purity**: the sector symmetry is an exact `Z₂` symmetry of
+//!    `H_m` — occupation parity for the lattice, the reflection
+//!    `R: (A₀,A₁) → (−A₁,−A₀)` for the gauge-fixed QYM Hamiltonian
+//!    (exact for all `g`); the starts are pure-sector, so the two Krylov
+//!    chains are disjoint and the Ritz sets are independent
+//!    ([`parities_disjoint`]).
 //! 2. **Ground selection**: `θˢ₀` is the *lowest* Ritz value of sector `s`
 //!    (the solve returns the sorted spectrum).
 //! 3. **Enclosure**: `δˢ` is a genuine upper bound of `|θˢ − λˢ|` — the
@@ -125,10 +128,14 @@ pub fn parities_disjoint(max_chain_overlap: f64, tol: f64) -> bool {
     max_chain_overlap < tol
 }
 
-/// Vacuum-sector sanity: the even ground is the normal-ordered vacuum, so
-/// the even-sector ground Ritz value must be `O(1/g⁶)`-small at strong
-/// coupling (the magnetic shift of the vacuum is second order). This is a
-/// precondition *witness* for identifying `θᵉ₀` with the vacuum energy 0.
+/// Vacuum-sector sanity (the lattice-era witness): the even ground is the
+/// normal-ordered vacuum, so the even-sector ground Ritz value must be
+/// `O(1/g⁶)`-small at strong coupling (the magnetic shift of the vacuum is
+/// second order). This identified `θᵉ₀` with the vacuum energy 0 on the
+/// lattice. For the gauge-fixed QYM Hamiltonian this identification does NOT
+/// hold — `⟨0|H|0⟩ = 0` (normal ordering) but the ground is a pair-squeezed
+/// state below it — so the seam no longer enforces it; the predicate is kept
+/// as a generic contract for lattice-era callers and its unit tests.
 pub fn even_sector_is_vacuum(even_ground: f64, tol: f64) -> bool {
     even_ground.abs() < tol
 }

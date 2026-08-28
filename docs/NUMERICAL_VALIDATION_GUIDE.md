@@ -449,29 +449,21 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   $k \in \{0.5, 1.0, 1.5, 2.0\}$, $m=4$. *Asserts*: $10^{-6}$ (exact class).
 
 - **`qcd_mass_gap_sirk`** — computes: the contrast between the massless free
-  gluon ($E \to 0$ as $k\to 0$) and the confined Yang–Mills lattice whose
-  even→odd gap is $\approx g^2/2$ (strong-coupling lattice result — a
-  benchmark for the SIRK machinery only; the lattice is a comparison model,
-  not the Cadabra-derived gauge-fixed QYM of this project, so no
-  Millennium-Prize implication is drawn for this project's model/algorithm).
-  *Method*: two SIRK solves (even and
-  odd parity starts) on `yang_mills_lattice(2, g, 1)`, gap
-  $= E_{\rm odd} - E_{\rm even}$. *Setup*: $g=2$ ($g^2/2 = 2$), $m=4$; soft
-  free-gluon mode $k=0.01$. *Asserts*: $E_{\rm soft} < 0.02$ (massless);
-  $g^2/6 < \text{gap} < 3g^2/2$ and positive.
-
-- **`qcd_continuum_gauge_fixed_pair_lowering_no_gap`** — computes: the
-  SIRK–Hashimoto prediction on the **continuum** Cadabra-derived gauge-fixed
-  Hamiltonian `qcd_ym_hamiltonian(g)` ($H_{\rm final} = \tfrac12\pi^2 +
-  \tfrac12 B^2$): its $B^2$ pair/squeezing terms LOWER the normal-ordered
-  vacuum — no positive mass gap opens — while the lattice's electric term
-  gaps the one-quantum sector UP by $\approx g^2/2$. The $g^2/2$ gap is a
-  lattice-electric effect, not present in the continuum gauge-fixed $H$.
-  *Method*: SIRK (unit-norm frame, $m=10$) ground from the vacuum at
-  $g \in \{0, 2, 4\}$; lattice even/odd solves at $g=2$ ($m=4$) for the
-  contrast. *Asserts*: continuum ground negative and deepening with $g$
-  ($-1.64$, $-2.07$, $-6.76$); lattice gap positive and
-  $g^2/6 < \text{gap} < 3g^2/2$.
+  gluon ($E \to 0$ as $k\to 0$) and the confined Cadabra-derived 3D
+  gauge-fixed QYM Hamiltonian `qcd_ym_hamiltonian(g)` ($H_{\rm final} =
+  \tfrac12\pi^2 + \tfrac12 B^2$ in the nested Fock space), which is GAPPED:
+  its SIRK R-reflection sector solves (R-even vacuum start, R-odd
+  one-quantum start, unit-norm frame, $m=12$) give Rayleigh–Ritz upper
+  bounds consistent with the exact truncated levels $E_1-E_0 = 0.091$ at
+  $g=1$ (see §5.24a). *Method*: SIRK sector solves vs the exact N ≤ 8
+  window. *Setup*: $g=1$, $m=12$; soft free-gluon mode $k=0.01$. *Asserts*:
+  $E_{\rm soft} < 0.02$ (massless); gauge-fixed gap positive and consistent
+  with the exact $E_1-E_0$. (Supersedes the lattice-based contrast — the
+  lattice's $g^2/2$ electric gap is a comparison-model effect, not the
+  gauge-fixed H's gap — and the earlier “no positive gap opens” reading,
+  which missed the gap because a vacuum-start Krylov cannot resolve the
+  R-odd first excitation. The $B^2$ pair terms DO lower the vacuum below 0
+  — $E_0 = -2.74$ at $g=1$ on N ≤ 8 — squeezing and gapping coexist.)
 
 - **`qcd_ym_hamiltonian_outer_fock_sirk`** — computes: the structural facts
   of the Cadabra2-derived $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$,
@@ -1546,95 +1538,89 @@ direct-construction path that keeps the quartic plaquette under a fixed
 component budget, and `yang_mills_l3_mass_gap_demo` (the central empirical
 mass-gap deliverable).
 
-### 5.24a QYM mass gap — the parity-sector formalization — `qym_mass_gap.rs`
+### 5.24a QYM mass gap — the gauge-fixed formalization — `qym_mass_gap.rs`
 
 Executes the observable of `MASS_GAP_CERTIFIED.md` §3.3–§3.5 (see also
-`docs/MASS_GAP_SPEC.md`): two pure-parity SIRK solves (even = vacuum, odd =
-one electric-flux quantum on the 2×2 `yang_mills_lattice`), with the gap
-$E_{\mathrm{gap}}(m) = \theta^o_0(m) - \theta^e_0(m)$ and the certified
-lower bound $\lambda_1(H_m)-\lambda_0(H_m) \ge \theta^o_0 - \theta^e_0 -
-(\delta^o+\delta^e)$.
+`docs/MASS_GAP_SPEC.md`) on the **Cadabra-derived 3D gauge-fixed QYM
+Hamiltonian `qcd_ym_hamiltonian(g)`** ($H_{\rm final} = \tfrac12\pi^2 +
+\tfrac12 B^2$ in the nested Fock space — the formalization object is the
+gauge-fixed H, NOT the `yang_mills_lattice` builder). The exact Z₂ symmetry
+is the reflection R: $(A_0,A_1)\to(-A_1,-A_0)$ (exact for ALL $g$ — the
+lattice's occupation parity is not a symmetry at $g>0$), and the mass gap
+lives BETWEEN the R-sectors: the gap $= \theta^o_0(m) - \theta^e_0(m)$
+with the certified interval $[\theta^o_0-\theta^e_0-(\delta^o+\delta^e),
+\theta^o_0-\theta^e_0+(\delta^o+\delta^e)]$. All solves run the
+SIRK-Hashimoto algorithm (unit-norm frame, `--release`). 10 tests:
 
-- **`qym_pure_electric_gap_exact_g2_half`** — computes: the strong-coupling
-  electric term $(g^2/2)\sum_\ell N_\ell$ alone gives the *exact* gap
-  $g^2/2$ (even ground = normal-ordered vacuum 0; odd ground = one flux
-  quantum), for $g \in \{1, 2, 3.5\}$. *Asserts*: solver precision.
-- **`qym_mass_gap_scales_as_g2`** / **`qym_mass_gap_g2_scaling_log_slope`** —
-  computes: with the magnetic plaquette term included, the gap stays
-  $\approx g^2/2$ and scales like $g^2$ at strong coupling ($g \ge 2$;
-  at $g = 1$ the vacuum is not the even ground — the observable's
-  strong-coupling domain, §3.3). *Asserts*: ratio window; log-log slope
-  $\approx 2$.
-- **`qym_mass_gap_magnetic_correction_is_strong_coupling`** — computes: the
-  deviation $g^2/2 - E_{\mathrm{gap}}$ decays like $c/g^6$ (log-log slope
-  $\approx -6$ over $g \in \{2,3,4\}$). This **refines the plan's "known
-  O($g^4$)" wording**: the plaquette coefficient $-1/(2g^2)$ moves four
-  quanta, so its first-order contribution to the one-quantum odd ground
-  vanishes and the leading shift is second order, $-|\langle 5|B|1\rangle|^2/
-  (2g^2) = O(1/g^6)$; the gap approaches $g^2/2$ *from below*. *Asserts*:
-  the slope and the sign.
-- **`qym_mass_gap_ritz_stable_in_m`** — computes: the ground Ritz values are
-  stable to solver tolerance across $m = 2..6$ and the gap converges into the
-  $c/g^6$ window of $g^2/2$. Honest form of §3.3 item 3: SIRK subspaces at
-  different $m$ use different shift sets, so they are not nested and the Ritz
-  values wiggle by $O(10^{-3})$ rather than being strictly monotone.
-  *Asserts*: stability, convergence.
-- **`qym_mass_gap_certified_intervals_consistent_across_m`** — computes:
-  the certified gap windows at $m \in \{3,4,5,6\}$ all overlap and each
-  contains $g^2/2$ within the measured $O(1/g^6)$ deviation. Honest form of
-  the §3.5 "intervals nest" claim (nesting needs nested subspaces).
-  *Asserts*: pairwise overlap, positivity, containment.
-- **`qym_mass_gap_certified_separation`** — computes: the stopping rule of
-  §3.3 — at the solved $m$ the certified lower bound $g(m) = \theta^o_0 -
-  \theta^e_0 - (\delta^o+\delta^e) > 0$: a **proof-carrying gap** for the
-  truncated Hamiltonian. *Asserts*: $\mathrm{lo} > 0$, containment.
-- **`qym_mass_gap_sector_purity`** — computes: lattice parity is an exact
-  symmetry of $H$; the retained Krylov chains of the two solves have
-  vanishing mutual overlap ($< 10^{-8}$) and no even Ritz value sits near
-  the odd ground. *Asserts*: the two witnesses of §3.3 item 1.
-- **`qym_free_gluon_massless_contrast`** — computes: the free gluon's
-  one-gluon gap scales with the soft mode $k$ and $\to 0$ as $k \to 0$,
-  while the confined lattice gap stays $O(g^2/2)$ — the confinement order
-  parameter. *Asserts*: $k$-scaling, scale separation.
-- **`qym_mass_gap_proof_facing_entry_agrees_with_manual_assembly`** —
-  computes: the proof-facing seam `certified_mass_gap_parity` (solves +
-  precondition enforcement + T6 assembly) agrees with the manual two-solve
-  path to $10^{-12}$ and fires the spec predicates. *Asserts*: equality,
-  positivity, disjointness.
+- **`qym_gauge_fixed_hamiltonian_nested_fock_structure`** — computes:
+  normal ordering ($\langle 0|H|0\rangle = 0$), Hermiticity
+  ($\|H-H^\dagger\| < 10^{-9}$), the pair coupling $\langle
+  \mathrm{vac}|H|1,1\rangle = -1$ at $g=0$, and the appearance of genuine
+  3-/4-operator non-abelian terms at $g>0$ (B a genuine function of A).
+- **`qym_gauge_fixed_reflection_symmetry_sector_purity`** — computes:
+  $[H,R] = 0$ to $10^{-16}$ for $g \in \{0,1,2\}$ and the R-even/R-odd SIRK
+  chains are disjoint (max mutual overlap $10^{-16} < 10^{-8}$) — §3.3 item
+  1 on the gauge-fixed H.
+- **`qym_gauge_fixed_low_window_reflection_alternation`** — computes: the
+  low spectrum at $g=1$ alternates R-parity exactly (R-parities
+  [+1, −1, +1, −1] of $E_0..E_3$) — the first excitation is the
+  reflection-odd partner of the ground, so the gap is the inter-sector gap.
+- **`qym_gauge_fixed_spectral_gap_positive_stable`** — computes: the gap
+  $E_1-E_0 = 0.0911$ (N ≤ 6) / $0.0912$ (N ≤ 8) at $g=1$ — positive and
+  stable across truncations — with the SIRK Ritz values Rayleigh–Ritz upper
+  bounds on the exact levels at every solved m.
+- **`qym_gauge_fixed_abelian_limit_gapless`** — computes: at $g=0$ the
+  truncated gap shrinks with depth (0.336 → 0.190 → 0.122 at N ≤ 4/6/8
+  toward the $(X_0-X_1)$ continuum floor −2) and the R-sector grounds
+  coincide at every m — the massless order parameter.
+- **`qym_gauge_fixed_gap_grows_with_coupling`** — computes: $E_1-E_0$ (N≤8)
+  = 0.0305 ($g=0.5$) < 0.0912 ($g=1$) < 1.2436 ($g=2$) — monotone growth
+  in the coupling (the §3.5 statement for the gauge-fixed H; the lattice's
+  $g^2/2$ electric law is superseded).
+- **`qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum`** — computes:
+  $\langle 0|H|0\rangle = 0$ but the ground is pair-squeezed below it:
+  $E_0 = -2.744$ ($g=1$, R-even) and $-7.755$ ($g=2$, R-odd on N ≤ 8) — the
+  strong-coupling crossing breaks the lattice-era “even ground = vacuum”
+  identification completely.
+- **`qym_gauge_fixed_sirk_ritz_monotone_stable_in_m`** — computes: the
+  sector-ground Ritz values tighten monotonically with m ($\theta^e_0$:
+  −1.349 → −1.599; $\theta^o_0$: −1.839 → −2.206 at m = 8..14). Honest form
+  of §3.3 item 3: SIRK subspaces at different m use different shift sets, so
+  the honest statement is monotone tightening, not strict nesting.
+- **`qym_gauge_fixed_certified_enclosure_of_exact_gap`** — computes: the
+  certified interval $[\theta^o_0-\theta^e_0 \pm (\delta^o+\delta^e)]$ from
+  the two sector solves encloses the exact truncated gap at $g \in \{1,2\}$
+  ($g=1$: $[-8.009, 6.866] \ni 0.0912$). The lattice's tight $lo > 0$
+  stopping rule is NOT reachable here — the squeezed ground's Krylov
+  residuals ($\delta \approx 4$) honestly widen the interval; what is
+  certified is the enclosure.
+- **`qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly`** —
+  computes: the proof-facing seam `certified_mass_gap_parity` (solves the
+  R-sectors + precondition enforcement + T6 assembly) agrees with the manual
+  two-solve path to $10^{-12}$ and fires the spec predicates. *Asserts*:
+  equality, enclosure, chain disjointness.
 
 ### 5.24b The mass-gap spec seam — `mass_gap_spec.rs` + `docs/MASS_GAP_SPEC.md`
 
-The spec seam itself is unchanged; Cycle 3 adds the regression-level
-statement of §3.5 inside `qym_mass_gap.rs`:
-
-- **`qym_mass_gap_least_squares_fit_g2_half_minus_c_over_g6`** — computes: a
-  five-point ($g \in \{2,3,4,5,6\}$) linear least-squares fit of the
-  measured gap to the two-term strong-coupling model
-  $\mathrm{gap}(g) = a\,g^2 + b\,g^{-6}$ (normal equations on the
-  $(g^2, g^{-6})$ design matrix). *Asserts*: $a = 1/2 \pm 2\%$ (the
-  pure-electric coefficient dominates), $b < 0$ (the plaquette correction
-  lowers the gap), and worst relative residual $< 10^{-3}$ across all five
-  couplings — the mass-gap observable tracks $g^2/2$ with a resolvable
-  $c/g^6$ correction as a fitted law, not a three-point slope.
-- **`qym_mass_gap_finite_size_approaches_g2_half`** — computes: the gap on
-  $l \times l$ lattices for $l \in \{2,3,4\}$ at $g = 4$: the shortfall
-  from $g^2/2$ is $2.2\times10^{-5}$ relative and *decreases monotonically*
-  with $l$ (7.999822 → 7.999824 → 7.999830 vs 8) — the magnetic correction
-  is local and does not grow with the volume, so the measured gap approaches
-  the strong-coupling value in the thermodynamic limit. *Asserts*: shortfall
-  $< 5\%$ and monotone in $l$. (30 s — the $l=4$ solve has 64 link modes.)
+The spec seam itself is unchanged; the regression-level statement of §3.5 is
+now made on the gauge-fixed H (the lattice's $g^2/2$ electric law and the
+strong-coupling $c/g^6$ fit were lattice-electric effects and are
+superseded — see the gap-growth and certified-enclosure tests in §5.24a).
 
 The non-Lean half of the `MASS_GAP_CERTIFIED.md` §4–§5 formalization route:
 `fock_sirk::mass_gap_spec` is the **pure, dependency-free core** (plain
 `f64`; no `nalgebra`, no I/O) that a translation tool (Aeneas/Verus, §5.3)
 or a proof specialist can attach theorems to. Each function carries its exact
 contract (precondition/postcondition/identity); `certified_mass_gap_parity`
-(`forward_sirk.rs`) is the proof-facing seam that *runs* the two sector
-solves, enforces the checkable preconditions at runtime (`debug_assert`:
-sector purity via the chain-overlap witness, even ground = vacuum), and
-assembles the T6 certificate. `docs/MASS_GAP_SPEC.md` is the spec of record:
-code → math mapping, the theorem statement, the three width terms, and the
-numerically-pinned claims (including the O($1/g^6$) refinement).
+(`forward_sirk.rs`) is the proof-facing seam that *runs* the two R-sector
+solves (R-even vacuum start, R-odd one-quantum start) on the gauge-fixed H,
+enforces the checkable preconditions at runtime (`debug_assert`: sector
+purity via the chain-overlap witness — the lattice-era “even ground =
+vacuum” precondition is dropped: the gauge-fixed R-even ground is the
+pair-squeezed vacuum, not the Fock vacuum), and assembles the T6
+certificate. `docs/MASS_GAP_SPEC.md` is the spec of record:
+code → math mapping, the theorem statement, the three width terms, andthe numerically-pinned claims (the measured gap values and certified
+windows).
 
 - **`parlett_bound_holds_on_explicit_matrix`** — computes: the a-posteriori
   bound $|\theta-\lambda| \le \|H\psi-\theta\psi\|/\|\psi\|$ on the explicit
@@ -2019,19 +2005,25 @@ gravity:
 - **`qf_ng_coherent_state_classical_limit`** — the $|10\rangle$ Fock state
   has energy $10\omega$.  *Asserts*: $|E - 10\omega| < 0.1$.
 
-### 5.24n Mass-gap Richardson extrapolation & certified table
+### 5.24n Certified mass-gap suite — `qcd_mass_gap_certified.rs`
 
-Two additional mass-gap tests extending the §5.24a suite:
+The proof-carrying half of the gauge-fixed formalization (replaces the
+lattice-era Richardson/certified-table tests, superseded):
 
-- **`qym_mass_gap_richardson_extrapolation`** (T12) — Richardson
-  extrapolation of the finite-size gaps at $l \in \{2, 3, 4\}$, $g = 4$
-  to the thermodynamic limit.  Estimates the correction exponent $p$ and
-  extrapolates $\Delta(\infty)$.  *Asserts*: extrapolated gap within 5% of
-  $g^2/2$; extrapolation improves over the raw $l = 4$ value.
-- **`qym_mass_gap_certified_table`** (T11) — per-coupling certified gap
-  table for $g \in \{2, 3, 4, 5, 6\}$ using the `certified_mass_gap_parity`
-  seam.  *Asserts*: all T6 lower bounds positive; intervals contain
-  $g^2/2$; monotone in $g$; linear regression $a \approx 0.5$.
+- **`qcd_mass_gap_certified_enclosure`** — computes: the two R-sector SIRK
+  solves (m = 12) at $g=1$ assemble into the certified T6 interval
+  $[\theta^o_0-\theta^e_0 \pm (\delta^o+\delta^e)] = [-8.009, 6.866]$,
+  which encloses the exact truncated gap $E_1-E_0 = 0.0912$; the measured
+  gap lies inside its own certified interval. *Asserts*: enclosure;
+  positivity of the exact gap.
+- **`qcd_mass_gap_certified_window_contains_exact_gap`** — computes: the
+  certified window contains the exact truncated gap across the truncation
+  family (N ≤ 6 and N ≤ 8) for $g \in \{1, 2\}$ (0.0911 / 0.0912 at $g=1$;
+  0.850 / 1.244 at $g=2$). *Asserts*: containment at every (g, N) pair.
+- **`qcd_mass_gap_certificate_ndjson`** — computes:
+  `emit_gap_certificate_ndjson` emits three valid JSON lines (two Ritz
+  certificates carrying $\theta$ and $\delta$, one assembly carrying gap and
+  $\delta$) — the nanoda re-verification seam.
 
 ### 5.24o Direct SIRK drive of the project's Hamiltonians — `sirk_hamiltonian_drive.rs`
 

@@ -298,24 +298,31 @@ pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) 
     Some(odd.ground_state_energy()? - even.ground_state_energy()?)
 }
 
-/// Proof-facing parity-sector mass gap (`MASS_GAP_CERTIFIED.md` §3.3–§3.4,
-/// T6). This is the **formalization seam**: it runs the two pure-parity SIRK
-/// solves (even = vacuum, odd = one electric-flux quantum), enforces the
-/// theorem's checkable preconditions at runtime (`debug_assert`), and
-/// assembles the certified gap `[lo, hi]` via
+/// Proof-facing sector mass gap (`MASS_GAP_CERTIFIED.md` §3.3–§3.4, T6). This
+/// is the **formalization seam**: it runs two pure-sector SIRK solves
+/// (R-even = vacuum, R-odd = the reflection-odd one-quantum start — the
+/// exact `Z₂` symmetry `R: (A₀,A₁) → (−A₁,−A₀)` of the gauge-fixed QYM
+/// Hamiltonian, which plays the role the occupation parity played for the
+/// lattice), enforces the theorem's checkable precondition at runtime
+/// (`debug_assert`), and assembles the certified gap `[lo, hi]` via
 /// [`crate::certified_mass_gap`].
 ///
-/// Preconditions enforced here (see [`crate::mass_gap_spec`] for the exact
+/// Precondition enforced here (see [`crate::mass_gap_spec`] for the exact
 /// contracts):
-/// 1. **Sector purity** — lattice parity is an exact symmetry of `H_m`, so
-///    the two Krylov chains must be disjoint; witnessed by the maximal
-///    mutual overlap of the retained chain vectors (`< 1e-8`).
-/// 2. **Even ground = vacuum** — the even sector ground Ritz value must be
-///    `O(1/g⁶)`-small at strong coupling (the magnetic shift of the vacuum
-///    is second order); witnessed by `|θᵉ₀| < 0.1`.
+/// 1. **Sector purity** — the reflection symmetry is exact for all `g` of
+///    the gauge-fixed H, so the two Krylov chains must be disjoint;
+///    witnessed by the maximal mutual overlap of the retained chain vectors
+///    (`< 1e-8`).
+///
+/// Note the classical "even ground = vacuum" identification does NOT hold for
+/// the gauge-fixed H: `⟨0|H|0⟩ = 0` (normal ordering) but the ground is a
+/// pair-squeezed state below it (`E₀ < 0`, growing deeper with `g`) — so the
+/// certified statement here is the *enclosure* of the exact truncated gap by
+/// the sector-ground-difference interval, not a strict `lo > 0` stopping
+/// rule (see `tests/qym_mass_gap.rs`, `tests/qcd_mass_gap_certified.rs`).
 ///
 /// Returns `None` if either solve fails or has rank 0. In release builds the
-/// precondition witnesses degrade to documentation (debug-only asserts).
+/// precondition witness degrades to documentation (debug-only assert).
 pub fn certified_mass_gap_parity(
     h: &Hamiltonian,
     v_even: &QuantumState,
@@ -329,9 +336,9 @@ pub fn certified_mass_gap_parity(
     let res_odd =
         solve_forward_sirk_with_opts(h, v_odd, shifts, &device, None, opts).ok()?;
 
-    // Precondition 1: sector purity (ChapterParity) — the chains must be
-    // disjoint. The overlap witness is exact for pure-parity starts (the
-    // occupation parity differs on every basis state).
+    // Precondition 1: sector purity (the reflection symmetry R is exact for
+    // all g of the gauge-fixed H) — the chains must be disjoint. The overlap
+    // witness is exact for pure-R starts.
     let max_overlap = res_even
         .w_sequence
         .iter()
@@ -344,15 +351,8 @@ pub fn certified_mass_gap_parity(
         .fold(0.0_f64, f64::max);
     debug_assert!(
         crate::mass_gap_spec::parities_disjoint(max_overlap, 1e-8),
-        "even/odd Krylov chains must be disjoint (parity symmetry of H_m); \
+        "even/odd Krylov chains must be disjoint (reflection symmetry of H_m); \
          max overlap = {max_overlap:.2e}"
-    );
-
-    // Precondition 2 witness: the even ground is the normal-ordered vacuum.
-    let e_even = res_even.ground_state_energy()?;
-    debug_assert!(
-        crate::mass_gap_spec::even_sector_is_vacuum(e_even, 0.1),
-        "even sector ground must be the vacuum at strong coupling, got {e_even}"
     );
 
     crate::certificate::certified_mass_gap(&res_even, &res_odd)
