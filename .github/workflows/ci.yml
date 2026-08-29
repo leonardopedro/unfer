@@ -36,9 +36,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo build
-        run: cargo build --workspace --verbose
-      - name: cargo test
-        run: cargo test --workspace --verbose
+        run: cargo build --workspace --release --verbose
+      # Heavy tests run in release mode (per policy) with the numerically
+      # optimized profile (lto=thin, codegen-units=1). Debug mode is reserved
+      # for the fast unit suites; the physics/SIRK suites are release-only.
+      - name: cargo test (release)
+        run: cargo test --workspace --release --verbose
+      # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
+      # builder) are #[ignore]d so the debug default suite stays fast; they run
+      # here in release via --ignored (0.01s each) — same mode as
+      # scripts/run_heavy_tests.sh.
+      - name: heavy physics unit tests (release, ignored)
+        run: cargo test -p nested_fock_algebra --release --lib -- --ignored
       # F23 (S24): the release manifest is byte-addressed and pinned; a wrong byte in
       # any module changes the manifest and fails this explicit golden gate. Regenerate a
       # deliberately-changed manifest only with UPDATE_GOLDEN=1 (never in CI).
