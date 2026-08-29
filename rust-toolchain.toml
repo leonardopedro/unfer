@@ -1,0 +1,8 @@
+# Pinned Rust toolchain for the unfer kernel workspace.
+#
+# Ends CI drift: the workflow installs a toolchain via dtolnay/rust-toolchain
+# and rustup then honors this file for every cargo invocation in the repo, so
+# local builds and all CI jobs (workspace tests in release, feature-gated
+# suites, lint) use exactly this compiler. Bump deliberately with a commit.
+[toolchain]
+channel = "1.97.1"
