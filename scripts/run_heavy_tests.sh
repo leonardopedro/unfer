@@ -57,6 +57,13 @@ run_suite "fock_sirk latex_cas_hamiltonian_match --release --ignored" \
     bash -c "cd '$repo_root/fock_sirk' && timeout 1800 cargo test --release --test latex_cas_hamiltonian_match -- --ignored" \
     || FAILED=$((FAILED + 1))
 
+# 1b. nested_fock_algebra heavy physics unit tests (quartic YM/Hamiltonian
+# builders are minutes in debug, <1s in release — see the #[ignore] comment on
+# test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian).
+run_suite "nested_fock_algebra heavy unit tests --release --ignored" \
+    bash -c "cd '$repo_root/nested_fock_algebra' && timeout 1800 cargo test --release --lib -- --ignored" \
+    || FAILED=$((FAILED + 1))
+
 # 2. qfm_text heavy tests: need the trained checkpoint on the external drive.
 CKPT="/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/unfer/qfm_text_runs/m8_nohash_shard0_v3/checkpoint_epoch0.qfm"
 if [ -f "$CKPT" ]; then

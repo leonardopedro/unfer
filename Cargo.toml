@@ -21,4 +21,14 @@ mathhook = "0.2.0"
 proptest = "1.5.0"
 loro = "1.13.9"
 
+# Numerically optimized release profile. The heavy physics suites
+# (scripts/run_heavy_tests.sh, scripts/run_physics_anchor.sh) run with
+# `--release`; thin LTO + a single codegen unit give the linear-algebra and
+# Fock/SIRK kernels the maximum in-crate optimization, which matters for the
+# debug-vs-release performance cliff (a quartic YM unit test that takes
+# minutes in debug finishes in <1s here).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 

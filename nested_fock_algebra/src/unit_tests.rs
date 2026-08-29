@@ -1404,7 +1404,13 @@ mod algebra_tests {
 
     use crate::models::{qcd_ym_hamiltonian, qg_tegr_hamiltonian};
 
+    // Heavy physics test: the quartic (non-abelian) B² term of
+    // qcd_ym_hamiltonian(0.5) expands to a large operator, so the 16×16 basis
+    // spot-check takes minutes in an unoptimized debug build (cargo test
+    // --workspace). It is fast (<1s) in release, so it lives with the other
+    // heavy physics tests: run `scripts/run_heavy_tests.sh` (release mode).
     #[test]
+    #[ignore = "heavy: debug-mode quartic YM expansion; run via scripts/run_heavy_tests.sh (release)"]
     fn test_qcd_ym_hamiltonian_outer_fock_vacuum_zero_and_hermitian() {
         // The .cdb-derived H_final = ½π² + ½B² built in the nested Fock space
         // with B a genuine function of A: ⟨0|H|0⟩ = 0 and H = H† exactly.
