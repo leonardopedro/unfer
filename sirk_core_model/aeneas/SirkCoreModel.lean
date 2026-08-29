@@ -24,39 +24,39 @@ namespace sirk_core_model
 @[rust_fun "std::f64::{f64}::sqrt"] axiom std.f64.F64.sqrt : F64 → Result F64
 
 /-- [lib::C64]
-    Source: 'src/lib.rs', lines 29:0-32:1
+    Source: 'src/lib.rs', lines 34:0-37:1
     Visibility: public -/
 structure C64 where
   re : F64
   im : F64
 
 /-- [lib::{lib::C64}::new]:
-    Source: 'src/lib.rs', lines 35:4-37:5
+    Source: 'src/lib.rs', lines 40:4-42:5
     Visibility: public -/
 def C64.new (re : F64) (im : F64) : Result C64 := do
   ok { re, im }
 
 /-- [lib::{lib::C64}::conj]:
-    Source: 'src/lib.rs', lines 42:4-47:5
+    Source: 'src/lib.rs', lines 47:4-52:5
     Visibility: public -/
 def C64.conj (self : C64) : Result C64 := do
   sorry
 
 /-- [lib::{impl core::clone::Clone for lib::C64}::clone]:
-    Source: 'src/lib.rs', lines 51:4-56:5
+    Source: 'src/lib.rs', lines 56:4-61:5
     Visibility: public -/
 def C64.Insts.CoreCloneClone.clone (self : C64) : Result C64 := do
   ok self
 
 /-- Trait implementation: [lib::{impl core::clone::Clone for lib::C64}]
-    Source: 'src/lib.rs', lines 50:0-57:1 -/
+    Source: 'src/lib.rs', lines 55:0-62:1 -/
 @[reducible]
 def C64.Insts.CoreCloneClone : core.clone.Clone C64 := {
   clone := C64.Insts.CoreCloneClone.clone
 }
 
 /-- [lib::forward_step]:
-    Source: 'src/lib.rs', lines 74:0-97:1
+    Source: 'src/lib.rs', lines 79:0-102:1
     Visibility: public -/
 def forward_step
   (h : Slice C64) (w : Slice C64) (z : C64) (dim : Std.Usize) :
@@ -65,7 +65,7 @@ def forward_step
   sorry
 
 /-- [lib::forward_sequence]: loop body 0:
-    Source: 'src/lib.rs', lines 112:4-118:5
+    Source: 'src/lib.rs', lines 117:4-123:5
     Visibility: public -/
 @[rust_loop_body]
 def forward_sequence_loop0.body
@@ -81,7 +81,7 @@ def forward_sequence_loop0.body
   else ok (done v)
 
 /-- [lib::forward_sequence]: loop 0:
-    Source: 'src/lib.rs', lines 112:4-118:5
+    Source: 'src/lib.rs', lines 117:4-123:5
     Visibility: public -/
 @[rust_loop]
 def forward_sequence_loop0
@@ -93,7 +93,7 @@ def forward_sequence_loop0
     (v, i)
 
 /-- [lib::forward_sequence]: loop body 1:
-    Source: 'src/lib.rs', lines 121:4-126:5
+    Source: 'src/lib.rs', lines 126:4-131:5
     Visibility: public -/
 @[rust_loop_body]
 def forward_sequence_loop1.body
@@ -116,7 +116,7 @@ def forward_sequence_loop1.body
   else ok (done ws)
 
 /-- [lib::forward_sequence]: loop 1:
-    Source: 'src/lib.rs', lines 121:4-126:5
+    Source: 'src/lib.rs', lines 126:4-131:5
     Visibility: public -/
 @[rust_loop]
 def forward_sequence_loop1
@@ -129,7 +129,7 @@ def forward_sequence_loop1
     (ws, k)
 
 /-- [lib::forward_sequence]:
-    Source: 'src/lib.rs', lines 108:0-128:1
+    Source: 'src/lib.rs', lines 113:0-133:1
     Visibility: public -/
 def forward_sequence
   (h : Slice C64) (v0 : Slice C64) (z : Slice C64) (m : Std.Usize)
@@ -144,14 +144,14 @@ def forward_sequence
   forward_sequence_loop1 h z m dim ws1 0#usize
 
 /-- [lib::gram_entry]:
-    Source: 'src/lib.rs', lines 135:0-153:1
+    Source: 'src/lib.rs', lines 140:0-158:1
     Visibility: public -/
 def gram_entry
   (wj : Slice C64) (wk : Slice C64) (dim : Std.Usize) : Result C64 := do
   sorry
 
 /-- [lib::gram_assembly]: loop body 0:
-    Source: 'src/lib.rs', lines 165:4-176:5
+    Source: 'src/lib.rs', lines 170:4-181:5
     Visibility: public -/
 @[rust_loop_body]
 def gram_assembly_loop.body
@@ -175,7 +175,7 @@ def gram_assembly_loop.body
   else ok (done g)
 
 /-- [lib::gram_assembly]: loop 0:
-    Source: 'src/lib.rs', lines 165:4-176:5
+    Source: 'src/lib.rs', lines 170:4-181:5
     Visibility: public -/
 @[rust_loop]
 def gram_assembly_loop
@@ -188,7 +188,7 @@ def gram_assembly_loop
     (g, t)
 
 /-- [lib::gram_assembly]:
-    Source: 'src/lib.rs', lines 161:0-178:1
+    Source: 'src/lib.rs', lines 166:0-183:1
     Visibility: public -/
 def gram_assembly
   (ws : Slice (alloc.vec.Vec C64)) (m : Std.Usize) (dim : Std.Usize) :
@@ -200,7 +200,7 @@ def gram_assembly
   gram_assembly_loop ws dim n g 0#usize
 
 /-- [lib::projection_identity]:
-    Source: 'src/lib.rs', lines 192:0-197:1
+    Source: 'src/lib.rs', lines 197:0-202:1
     Visibility: public -/
 def projection_identity
   (g_j_kp1 : C64) (g_j_k : C64) (scale_kp1 : F64) (z_k : C64) :
@@ -209,7 +209,7 @@ def projection_identity
   sorry
 
 /-- [lib::whitening_transform]:
-    Source: 'src/lib.rs', lines 212:0-235:1
+    Source: 'src/lib.rs', lines 217:0-240:1
     Visibility: public -/
 def whitening_transform
   (eigvals : Slice F64) (eigvecs : Slice C64) (n : Std.Usize)
@@ -219,14 +219,14 @@ def whitening_transform
   sorry
 
 /-- [lib::residual_boundary_component]:
-    Source: 'src/lib.rs', lines 251:0-256:1
+    Source: 'src/lib.rs', lines 256:0-261:1
     Visibility: public -/
 def residual_boundary_component
   (c_hat_last : C64) (scale_m : F64) : Result C64 := do
   sorry
 
 /-- [lib::residual_norm2]:
-    Source: 'src/lib.rs', lines 263:0-284:1
+    Source: 'src/lib.rs', lines 268:0-289:1
     Visibility: public -/
 def residual_norm2
   (e : Slice C64) (g : Slice C64) (m : Std.Usize) : Result F64 := do
