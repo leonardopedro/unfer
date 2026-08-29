@@ -55,24 +55,17 @@ echo "== aeneas: aeneas/sirk_core_model.llbc -> aeneas/SirkCoreModel.lean =="
 # Aeneas exits non-zero on the 7 expected f64-arithmetic errors (the honesty
 # boundary: the affected bodies are emitted as `sorry`). Under `set -e` that
 # would abort the script before the rename steps below, so the exit status is
-# captured and only a *unexpected* failure (no Lib.lean produced) is fatal.
-if "$AENEAS_ROOT/aeneas" -backend lean -namespace sirk_core_model \
-    -o aeneas lib.llbc 2>/dev/null; then
-    :
-elif [ -f Lib.lean ] || [ -f aeneas/Lib.lean ]; then
-    : # expected partial output (f64 errors); continue
-else
-    echo "error: aeneas produced no output (expected a partial Lib.lean)" >&2
-    exit 1
+# captured and only a run that produced no output at all is fatal.
+# Note: the output-directory flag is `-dest` (there is no `-o`); the emitted
+# module file is `Lib.lean` (module name from the crate), normalised below.
+rm -f aeneas/Lib.lean
+"$AENEAS_ROOT/aeneas" -backend lean -namespace sirk_core_model \
+    -dest aeneas/ lib.llbc || true
+if [ ! -f aeneas/Lib.lean ]; then
+  echo "error: aeneas produced no output (expected aeneas/Lib.lean)" >&2
+  exit 1
 fi
-
-# Aeneas emits `Lib.lean` (module name from the crate); normalise the name.
-# With `-o aeneas` the file lands in aeneas/; without it, in the cwd.
-if [ -f aeneas/Lib.lean ]; then
-  mv aeneas/Lib.lean aeneas/SirkCoreModel.lean
-elif [ -f Lib.lean ]; then
-  mv Lib.lean aeneas/SirkCoreModel.lean
-fi
+mv aeneas/Lib.lean aeneas/SirkCoreModel.lean
 mv lib.llbc aeneas/sirk_core_model.llbc
 
 echo "== regenerated =="
