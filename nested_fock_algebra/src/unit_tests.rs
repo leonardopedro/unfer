@@ -5,9 +5,10 @@ mod algebra_tests {
     use crate::models::{
         QFM_DEFAULT_QUANTIZATION_SCALE, bose_hubbard_chain, gravity_hamiltonian,
         mehler_channel_overlap, navier_stokes_brst, navier_stokes_hamiltonian,
-        point_to_inner_state, qfm_hamiltonian, qfm_hamiltonian_localized,
-        qfm_hamiltonian_mehler_projector, qfm_hamiltonian_mehler_projector_localized,
-        yang_mills_hamiltonian, yang_mills_lattice,
+        point_to_inner_state, qg3d_full_hamiltonian, qfm_hamiltonian,
+        qfm_hamiltonian_localized, qfm_hamiltonian_mehler_projector,
+        qfm_hamiltonian_mehler_projector_localized, yang_mills_hamiltonian,
+        yang_mills_lattice,
     };
     use crate::{InnerBosonicState, Operator, QuantumState};
     use num_complex::Complex64;
@@ -1491,6 +1492,50 @@ mod algebra_tests {
         let hv = h.apply(&crate::QuantumState::vacuum());
         let e0 = crate::QuantumState::inner_product(&hv, &crate::QuantumState::vacuum()).re;
         assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+    }
+
+    #[test]
+    fn test_qg3d_full_hamiltonian_cross_terms_and_indefinite() {
+        // The FULL 3D gauge-fixed QG operator (book.tex 8190, densitized —
+        // the plan's QG-3.1 object of record): the S·E / P·E / e(…) cross
+        // terms are present (NOT a decoupled model), the one-particle matrix
+        // is exactly Hermitian, and the spectrum is indefinite (wrong-sign
+        // conformal kinetic — no bounded-below claim).
+        let h = qg3d_full_hamiltonian(3);
+        // EXACT term-level Hermiticity H = H†.
+        assert_exact_hermitian(&h);
+        let hv = h.apply(&QuantumState::vacuum());
+        let e0 = QuantumState::inner_product(&hv, &QuantumState::vacuum()).re;
+        assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
+        // Cross terms present: the e-sector one-particle state couples to the
+        // shear (S·E), conformal (P·E) and torsion (T·E) directions —
+        // nonzero off-diagonal components are the couplings, not dropped.
+        let basis = |occ: &[(u32, u32)]| -> QuantumState {
+            let mut s = InnerBosonicState::vacuum();
+            for &(m, n) in occ {
+                s.modes.insert(m, n);
+            }
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(s))
+        };
+        let hp = h.apply(&basis(&[(2, 1)]));
+        let se = QuantumState::inner_product(&hp, &basis(&[(0, 1), (1, 1)]));
+        let pe = QuantumState::inner_product(&hp, &basis(&[(1, 2)]));
+        let te = QuantumState::inner_product(&hp, &basis(&[(3, 1)]));
+        assert!(
+            se.norm() > 1e-4 && pe.norm() > 1e-4 && te.norm() > 1e-4,
+            "cross terms must be present: |S·E|={:.3e} |P·E|={:.3e} |T·E|={:.3e}",
+            se.norm(),
+            pe.norm(),
+            te.norm()
+        );
+        // The wrong-sign conformal kinetic is present in the operator as
+        // written (−1/24, vs +1/16 for the shear); the two-signed SPECTRUM
+        // (indefiniteness) is verified on the solved operator in
+        // `qg_validation::qg3d_full_operator_sirk` (the SIRK band spans both
+        // signs — the honest signature of the full, unregularized operator).
+        // Note the diagonal itself is not the signature: the torsion
+        // zero-point ½ŷ²τ̂² shifts every one-particle diagonal positive, which
+        // is exactly why the band statement (not the diagonal) is the test.
     }
 
     #[test]

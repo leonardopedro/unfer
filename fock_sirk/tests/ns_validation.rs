@@ -67,14 +67,28 @@
 //!    Hamiltonians), and the non-invariance of the physical subspace under the
 //!    bare flow (the Ω-content of an unphysical ghost-carrying state grows),
 //!    the reason the projector rides along in the solve.
+//!
+//! 8. `ns_brst_projection_invariance_physical_flow` — the full-operator-level
+//!    projection-invariance statement (the NS analogue of
+//!    `qym_brst_projection_identity_on_physical_flow` and the QG
+//!    `qg3d_full_operator_brst_projection_invariance`): the SIRK solve of the
+//!    FULL `navier_stokes_hamiltonian` with the orthogonal projector onto
+//!    `ker Ω` riding along (`Some(&brst)`) resolves the SAME spectrum and
+//!    gives the SAME physical observables as the bare solve (a physical start
+//!    stays physical under the BRST-closed flow, so the projector is the
+//!    identity along the whole Krylov sequence — the fixing has zero impact on
+//!    physical expectation values).  Krylov depth m=4 (the tractable depth for
+//!    the 168-term full NS operator, matching tests 4–5); the projector's
+//!    genuine action on unphysical directions is exercised in `brst.rs`'s own
+//!    unit tests (the interacting-charge CG stall is documented in test 7).
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
+use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
-    navier_stokes_brst, navier_stokes_hamiltonian, ns_eulerian_fiber,
+    navier_stokes_brst, navier_stokes_hamiltonian, ns_eulerian_fiber, Hamiltonian,
+    InnerBosonicState, InnerFermionicState, Operator, QuantumState,
 };
 use num_complex::Complex64;
 
@@ -124,8 +138,14 @@ fn ns_multi(occupations: &[(u32, u32)]) -> QuantumState {
 fn field_hamiltonian(mode: u32) -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(mode)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(mode)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(mode)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(mode)],
+            ),
         ],
     }
 }
@@ -270,12 +290,10 @@ fn ns_affine_fiber_hopping_structure() {
 
     // Only mode 0 is touched (modes 1, 2 are inert with this A).
     assert!(
-        h.terms
-            .iter()
-            .all(|(_, ops)| ops.iter().all(|o| matches!(
-                o,
-                Operator::InnerBosonCreate(0) | Operator::InnerBosonAnnihilate(0)
-            ))),
+        h.terms.iter().all(|(_, ops)| ops.iter().all(|o| matches!(
+            o,
+            Operator::InnerBosonCreate(0) | Operator::InnerBosonAnnihilate(0)
+        ))),
         "the single-mode fiber must only touch velocity mode 0"
     );
 
@@ -305,10 +323,7 @@ fn ns_affine_fiber_hopping_structure() {
 
         // Diagonal: ⟨n|H|n⟩ = 0 (the Weyl symmetrization strips the zero-point).
         let me0 = QuantumState::inner_product(&ket_n, &h.apply(&ket_n));
-        assert!(
-            me0.norm() < 1e-9,
-            "n={n}: ⟨n|H|n⟩ must vanish, got {me0:?}"
-        );
+        assert!(me0.norm() < 1e-9, "n={n}: ⟨n|H|n⟩ must vanish, got {me0:?}");
 
         // No other hopping: |Δn| = 3 and |Δn| = 0 are the nearest missed
         // transitions — everything outside {±1, ±2} is zero.
@@ -351,11 +366,7 @@ fn ns_three_component_vorticity_hopping() {
     // of the formalization. `H = Σ_i {π_i, V_i}` with `V_i = Σ_k A_{ik} u_k`
     // (c = 0). For a generic A the fiber carries 24 field-hopping terms per
     // component (12 from π_i·V_i + 12 from V_i·π_i) = 72 total.
-    let a = [
-        [1.0, 2.0, 0.5],
-        [0.25, 1.0, 3.0],
-        [1.5, 0.5, 2.0],
-    ];
+    let a = [[1.0, 2.0, 0.5], [0.25, 1.0, 3.0], [1.5, 0.5, 2.0]];
     let h = ns_eulerian_fiber(&a, &[0.0, 0.0, 0.0]);
 
     assert_eq!(
@@ -376,8 +387,10 @@ fn ns_three_component_vorticity_hopping() {
                     "diagonal ⟨1_{k}|H|1_{i}⟩ must vanish, got {me:?}"
                 );
             } else {
-                let expect = Complex64::new(0.0, 2.0 * (a[k as usize][i as usize]
-                    - a[i as usize][k as usize]));
+                let expect = Complex64::new(
+                    0.0,
+                    2.0 * (a[k as usize][i as usize] - a[i as usize][k as usize]),
+                );
                 assert!(
                     (me - expect).norm() < 1e-9,
                     "⟨1_{k}|H|1_{i}⟩ = {me:?} must equal 2i(A_{k}{i} − A_{i}{k}) = {expect:?}"
@@ -393,7 +406,8 @@ fn ns_three_component_vorticity_hopping() {
     //     2.0 (decreasing) — the exact "amplitude not monotone along its
     //     shift" statement of the ThreeComponent formalization.
     let amp = |i: usize, k: usize| -> f64 {
-        let me = QuantumState::inner_product(&ns_state(k as u32, 1), &h.apply(&ns_state(i as u32, 1)));
+        let me =
+            QuantumState::inner_product(&ns_state(k as u32, 1), &h.apply(&ns_state(i as u32, 1)));
         me.norm()
     };
     assert!(
@@ -419,15 +433,20 @@ fn ns_three_component_vorticity_hopping() {
         for k in 0..3u32 {
             if j == k {
                 let me = QuantumState::inner_product(&ns_state(j, 2), &h.apply(&vac));
-                let expect = Complex64::new(0.0, 2.0 * std::f64::consts::SQRT_2 * a[j as usize][k as usize]);
+                let expect = Complex64::new(
+                    0.0,
+                    2.0 * std::f64::consts::SQRT_2 * a[j as usize][k as usize],
+                );
                 assert!(
                     (me - expect).norm() < 1e-9,
                     "⟨2_{j}|H|vac⟩ = {me:?} must equal 2i√2·A_{j}{j} = {expect:?}"
                 );
             } else {
                 let me = QuantumState::inner_product(&ns_multi(&[(j, 1), (k, 1)]), &h.apply(&vac));
-                let expect = Complex64::new(0.0, 2.0 * (a[j as usize][k as usize]
-                    + a[k as usize][j as usize]));
+                let expect = Complex64::new(
+                    0.0,
+                    2.0 * (a[j as usize][k as usize] + a[k as usize][j as usize]),
+                );
                 assert!(
                     (me - expect).norm() < 1e-9,
                     "⟨1_{j}1_{k}|H|vac⟩ = {me:?} must equal 2i·(A_{j}{k} + A_{k}{j}) = {expect:?}"
@@ -535,8 +554,9 @@ fn ns_hashimoto_shift_invert_selection() {
         adaptive: true,
         unit_norm_steps: false,
     };
-    let res = solve_forward_sirk_with_opts(&h, &inner_vac(), &shifts(4), &best_device(), None, &opts)
-        .expect("NS SIRK solve");
+    let res =
+        solve_forward_sirk_with_opts(&h, &inner_vac(), &shifts(4), &best_device(), None, &opts)
+            .expect("NS SIRK solve");
     let a = res.h_proj.clone();
     let n = a.nrows();
     assert!(n >= 2, "projected NS matrix must be ≥ 2×2, got {n}");
@@ -728,18 +748,24 @@ fn ns_brst_projection_physical_subspace() {
         // (c) ghost 2 on u_{2,2} (mode 11): Ω₂ ≠ 0.
         ghost_state(boson(11, 1), 2),
         // (d) ghost 0 on a velocity + diagonal-derivative state.
-        ghost_state({
-            let mut inner = boson(3, 1);
-            inner.modes.insert(0, 1);
-            inner
-        }, 0),
+        ghost_state(
+            {
+                let mut inner = boson(3, 1);
+                inner.modes.insert(0, 1);
+                inner
+            },
+            0,
+        ),
         // (e) ghost 1 on a multi-mode state with u_{1,1} content.
-        ghost_state({
-            let mut inner = boson(4, 1);
-            inner.modes.insert(0, 1);
-            inner.modes.insert(11, 1);
-            inner
-        }, 1),
+        ghost_state(
+            {
+                let mut inner = boson(4, 1);
+                inner.modes.insert(0, 1);
+                inner.modes.insert(11, 1);
+                inner
+            },
+            1,
+        ),
     ];
 
     // (a) Nilpotency Ω² = 0: the first-class nature of the constraint.
@@ -763,11 +789,7 @@ fn ns_brst_projection_physical_subspace() {
     //     (velocity-only), on every ghost-carrying probe. (The pure-bosonic
     //     subspace is trivially Ω-closed: c_j annihilates a ghost-less state.)
     let h = navier_stokes_hamiltonian(1e-3);
-    let a = [
-        [1.0, 2.0, 0.5],
-        [0.25, 1.0, 3.0],
-        [1.5, 0.5, 2.0],
-    ];
+    let a = [[1.0, 2.0, 0.5], [0.25, 1.0, 3.0], [1.5, 0.5, 2.0]];
     let fiber = ns_eulerian_fiber(&a, &[0.1, -0.2, 0.3]);
     for (i, p) in probes.iter().enumerate() {
         let comm = commutator_norm(&h, &brst, p);
@@ -808,8 +830,7 @@ fn ns_brst_projection_physical_subspace() {
         omega0 > 1e-6,
         "the flow start must be genuinely unphysical: ‖Ωψ₀‖ = {omega0:.3e}"
     );
-    let psi_t = evolve_restarted(&h, &unphysical, 0.05, 2, 2, &best_device(), None, &opts)
-        .unwrap();
+    let psi_t = evolve_restarted(&h, &unphysical, 0.05, 2, 2, &best_device(), None, &opts).unwrap();
     let omega_t = brst.apply(&psi_t).norm();
     assert!(
         omega_t > omega0 + 1e-3,
@@ -824,3 +845,148 @@ fn ns_brst_projection_physical_subspace() {
         n_probes = probes.len()
     );
 }
+
+// ── 8. BRST projection invariance on the FULL NS operator ────────────────────
+
+#[test]
+fn ns_brst_projection_invariance_physical_flow() {
+    // The full-operator-level analogue of `qym_brst_projection_identity_on_
+    // physical_flow` (and of the QG `qg3d_full_operator_brst_projection_
+    // invariance`): the BRST divergence charge Ω = Σ_j u_{j,j} c_j
+    // (`navier_stokes_brst`) rides along in the SIRK solve of the FULL
+    // `navier_stokes_hamiltonian` (velocity + derivative + viscous modes, the
+    // cross couplings present). Three facts:
+    //
+    //   (a) the mechanism — Ω² = 0 (first-class divergence constraint) and
+    //       [H, Ω] = 0 (the full NS operator is BRST-closed, so the fixing is
+    //       dynamical), on ghost-carrying probes;
+    //   (b) projection invariance — a physical (ghost-free) start is invariant
+    //       under the projector: a BRST-closed H keeps every Krylov vector
+    //       physical, so `project_physical` is the identity along the whole
+    //       flow and the solve with `Some(&brst)` resolves the SAME spectrum
+    //       and the SAME derivative-field observable as the bare solve (the
+    //       fixing has zero impact on physical expectation values — the
+    //       `int_L_gf_eq_zero_physical` content of the BRST gauge fixing).
+    //       Krylov depth m=4: the raw Hashimoto frame of the 168-term NS
+    //       operator explodes combinatorially at deeper windows (the bare
+    //       matvec at depth 4 already spans ~2×10⁵ components and ~20 s per
+    //       step), so the solve depth matches tests 4–5.
+    //
+    // (The projector's genuine action on unphysical directions — CG on the
+    // interacting charge ΩΩ† expands the state every iteration, the documented
+    // stall of `ns_brst_projection_physical_subspace` — is exercised in
+    // `brst.rs`'s own unit tests on a tractable charge; the non-vacuity of the
+    // NS constraint itself is the nilpotency/closure checks below plus the
+    // Ω-growth of the bare flow already asserted in test 7.)
+    let h = navier_stokes_hamiltonian(1e-3);
+    let brst = navier_stokes_brst();
+
+    // Ghost-carrying probes: ghost j riding on the diagonal derivative u_{j,j}
+    // (mode 3+3j+j), so Ω|ψ⟩ ≠ 0.
+    let ghost_state = |bosonic: InnerBosonicState, ghost_mode: u32| -> QuantumState {
+        QuantumState::vacuum()
+            .apply(&Operator::OuterBosonCreate(bosonic))
+            .apply(&Operator::OuterFermionCreate(InnerFermionicState {
+                modes: std::collections::BTreeSet::from([ghost_mode]),
+            }))
+    };
+    let boson = |mode: u32, n: u32| -> InnerBosonicState {
+        let mut inner = InnerBosonicState::vacuum();
+        if n > 0 {
+            inner.modes.insert(mode, n);
+        }
+        inner
+    };
+    let probes = [
+        ghost_state(boson(3, 1), 0),
+        ghost_state(boson(7, 1), 1),
+        ghost_state(boson(11, 1), 2),
+        ghost_state(
+            {
+                let mut inner = boson(3, 1);
+                inner.modes.insert(0, 1);
+                inner
+            },
+            0,
+        ),
+    ];
+
+    // (a) Nilpotency Ω² = 0 and BRST closure [H, Ω] = 0 on ghost probes.
+    for (i, p) in probes.iter().enumerate() {
+        assert!(
+            brst.apply(p).norm() > 1e-6,
+            "probe {i} must carry Ω-content"
+        );
+        let twice = brst.apply(&brst.apply(p));
+        assert!(
+            twice.norm() < 1e-9,
+            "Ω² must be nilpotent on probe {i}: ‖Ω²ψ‖ = {:.3e}",
+            twice.norm()
+        );
+        let comm = commutator_norm(&h, &brst, p);
+        assert!(
+            comm < 1e-8,
+            "the full NS Hamiltonian must be BRST-closed on probe {i}: \
+             ‖[H,Ω]ψ‖ = {comm:.3e}"
+        );
+    }
+
+    // (b) Projection invariance: a physical (ghost-free) superposition of
+    //     velocity and derivative-field modes.  Because H is BRST-closed, the
+    //     Krylov sequence stays physical and the projector is the identity
+    //     along the flow — the two solves must resolve the SAME spectrum, and
+    //     the derivative-field constant of the motion ⟨u_{0,0}⟩ must be the
+    //     SAME (and conserved) with and without the projector riding along.
+    let mut psi0 = ns_state(0, 1);
+    psi0.scale_and_add(&ns_state(1, 1), Complex64::new(0.5, 0.0));
+    psi0.scale_and_add(&ns_state(2, 1), Complex64::new(0.25, 0.0));
+    psi0.scale_and_add(&ns_state(3, 1), Complex64::new(0.75, 0.0));
+    let u3 = field_hamiltonian(3);
+    let x0 = QuantumState::inner_product(&psi0, &u3.apply(&psi0)).re;
+
+    let opts = SirkOpts {
+        prune_eps: 1e-10,
+        max_components: Some(200_000),
+        brst_tol: 1e-10,
+        adaptive: true,
+        unit_norm_steps: false,
+    };
+    let plain = solve_forward_sirk_with_opts(&h, &psi0, &shifts(4), &best_device(), None, &opts)
+        .expect("plain NS SIRK solve");
+    let projected_solve =
+        solve_forward_sirk_with_opts(&h, &psi0, &shifts(4), &best_device(), Some(&brst), &opts)
+            .expect("BRST-projected NS SIRK solve");
+    let a = plain.ritz_values();
+    let b = projected_solve.ritz_values();
+    assert_eq!(a.len(), b.len(), "resolved sets {a:?} vs {b:?}");
+    for (x, y) in a.iter().zip(b.iter()) {
+        assert!(
+            (x - y).abs() < 1e-7,
+            "plain vs BRST-projected Ritz must coincide: {x} vs {y}"
+        );
+    }
+
+    // The BRST-projected and the bare unitary flows give the SAME
+    // derivative-field value ⟨u_{0,0}⟩, which is a constant of the motion
+    // ([H, u_{i,j}] = 0 — the Eulerian block structure).
+    let ta = evolve_restarted(&h, &psi0, 0.05, 2, 2, &best_device(), None, &opts).unwrap();
+    let tb = evolve_restarted(&h, &psi0, 0.05, 2, 2, &best_device(), Some(&brst), &opts).unwrap();
+    let xa = QuantumState::inner_product(&ta, &u3.apply(&ta)).re;
+    let xb = QuantumState::inner_product(&tb, &u3.apply(&tb)).re;
+    assert!(
+        (xa - xb).abs() < 1e-7,
+        "⟨u_{{0,0}}⟩ must be unchanged by BRST projection: bare {xa} vs projected {xb}"
+    );
+    assert!(
+        (xa - x0).abs() < 1e-6,
+        "⟨u_{{0,0}}⟩ is a constant of the motion (no momenta on the derivative \
+         fields): {x0} → {xa}"
+    );
+
+    eprintln!(
+        "ns_brst_projection_invariance: Ω² = 0 and [H,Ω] = 0 (nilpotent, \
+         BRST-closed full operator); bare and BRST-projected solves share the \
+         resolved spectrum and ⟨u_{{0,0}}⟩ = {xb} (physical observables unchanged)",
+    );
+}
+

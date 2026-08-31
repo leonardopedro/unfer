@@ -1972,6 +1972,234 @@ pub fn qg_densitized_kinetic(n_s_modes: u32) -> Hamiltonian {
     Hamiltonian { terms }
 }
 
+/// The FULL 3D gauge-fixed QG one-particle operator, cross terms included
+/// (`qg3DHamiltonian`, `book.tex 8190`, in the densitized variables of
+/// `docs/qg_densitized_hamiltonian.cdb`) — the plan's QG-3.1 object of
+/// record. **Nothing is dropped**: the Weyl-ordered cross terms
+/// `½S·E + ⅓P·E` and the torsion block `−e(…)` are present, not a
+/// decoupled model.
+///
+/// After the change of variables `y = √e`, `S = y·S̃`, `P = y·P̃` the
+/// densitized remainder is
+///
+///   h = (1/16) p_s² − (1/24) p_y²                      (kinetic H0)
+///     + (1/2) ŷ p_s ê + (1/3) ŷ p_y ê                   (S·E, P·E cross)
+///     − y² ( T^ab E_ab + 2 T^ab_b E_a + ½ T_abc T^acb
+///            + ¼ T_abc T^abc − T_ba^a T^bc_c − ¼ T_ab T^ab )  (torsion)
+///
+/// realized on a minimal single-representative-component truncation of the
+/// one-particle field space `L²(ℝ⁴)`: one shear coordinate `s` (kinetic
+/// `+1/16`), the conformal coordinate `y` (kinetic `−1/24` — the
+/// wrong-sign direction), one derivative-variable coordinate `e`, and one
+/// torsion coordinate `τ`. The six torsion terms collapse in the
+/// single-component model to `−y²(3τê − ½τ²)`. The `e`/`τ` sectors carry no
+/// standalone quadratic terms — they enter exactly as in `book.tex 8190`,
+/// only through the couplings. The `y·p_y` product of the `P·E` term is
+/// Weyl-ordered (`½(ŷ p̂_y + p̂_y ŷ)`, the module convention, the Lean
+/// `qgWeylProd` F.3–F.4).
+///
+/// **This is the full, unregularized operator**: the conformal kinetic has
+/// the wrong sign, so the spectrum is indefinite (both signs) — no
+/// bounded-below / Friedrichs claim is made or needed. SIRK/Hashimoto solves
+/// the operator as-is (the shift-invert at imaginary `γ` resolves the real
+/// band). The positivity used elsewhere comes only from the R² potential of
+/// the positive reassembly — a *different* (derived) operator, not this one.
+///
+/// The one-particle matrix `h[i][j]` on the truncated Hermite basis
+/// `e_i = |n_s, n_y, n_e, n_τ⟩` (`n_levels` per coordinate, `n_levels⁴`
+/// states) is symmetrized bit-exactly, and the enclosure
+/// `H = Σ h[i][j] C†(e_i) A(e_j)` is the outer Fock Hamiltonian — quadratic
+/// in the outer ladders with every cross term inside `h`.
+pub fn qg3d_full_hamiltonian(n_levels: u32) -> Hamiltonian {
+    let l = n_levels as usize;
+    assert!(l >= 2, "need at least two Hermite levels per coordinate");
+    let dim = l * l * l * l;
+    let idx = |ns: usize, ny: usize, ne: usize, nt: usize| ((ns * l + ny) * l + ne) * l + nt;
+
+    // Per-coordinate matrices on the truncated Hermite basis (dimensionless
+    // oscillator convention): position x̂, momentum p̂, p̂², x̂², identity.
+    let mut x = vec![vec![0.0_f64; l]; l];
+    let mut p = vec![vec![Complex64::new(0.0, 0.0); l]; l];
+    for n in 0..l - 1 {
+        let a = ((n + 1) as f64 / 2.0).sqrt();
+        x[n][n + 1] = a;
+        x[n + 1][n] = a;
+        p[n][n + 1] = Complex64::new(0.0, a);
+        p[n + 1][n] = Complex64::new(0.0, -a);
+    }
+    let mut p2 = vec![vec![0.0_f64; l]; l];
+    for n in 0..l {
+        p2[n][n] = (n as f64) + 0.5;
+        if n + 2 < l {
+            let b = -0.5 * ((n + 1) as f64 * (n + 2) as f64).sqrt();
+            p2[n][n + 2] = b;
+            p2[n + 2][n] = b;
+        }
+    }
+    let mat_mul = |a: &[Vec<f64>], b: &[Vec<f64>]| -> Vec<Vec<f64>> {
+        let mut out = vec![vec![0.0_f64; l]; l];
+        for i in 0..l {
+            for j in 0..l {
+                let mut s = 0.0_f64;
+                for k in 0..l {
+                    s += a[i][k] * b[k][j];
+                }
+                out[i][j] = s;
+            }
+        }
+        out
+    };
+    let x2 = mat_mul(&x, &x);
+    let to_c64 = |m: &[Vec<f64>]| -> Vec<Vec<Complex64>> {
+        m.iter()
+            .map(|row| row.iter().map(|&v| Complex64::new(v, 0.0)).collect())
+            .collect()
+    };
+    let xc = to_c64(&x);
+    let p2c = to_c64(&p2);
+    let x2c = to_c64(&x2);
+    let mut id = vec![vec![0.0_f64; l]; l];
+    for i in 0..l {
+        id[i][i] = 1.0;
+    }
+    let idc = to_c64(&id);
+    // Weyl-ordered ½(ŷ p̂_y + p̂_y ŷ) for the y-mode of the P·E term.
+    let mul_c64 = |a: &[Vec<Complex64>], b: &[Vec<Complex64>]| -> Vec<Vec<Complex64>> {
+        let mut out = vec![vec![Complex64::new(0.0, 0.0); l]; l];
+        for i in 0..l {
+            for j in 0..l {
+                let mut s = Complex64::new(0.0, 0.0);
+                for k in 0..l {
+                    s += a[i][k] * b[k][j];
+                }
+                out[i][j] = s;
+            }
+        }
+        out
+    };
+    let yp = mul_c64(&xc, &p);
+    let py = mul_c64(&p, &xc);
+    let mut yp_weyl = vec![vec![Complex64::new(0.0, 0.0); l]; l];
+    for i in 0..l {
+        for j in 0..l {
+            yp_weyl[i][j] = (yp[i][j] + py[i][j]) / 2.0;
+        }
+    }
+
+    // h = Σ coeff · (M_s ⊗ M_y ⊗ M_e ⊗ M_τ), indices in order (s, y, e, τ).
+    let mut h = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+    let add = |h: &mut Vec<Vec<Complex64>>,
+               coeff: f64,
+               ms: &[Vec<Complex64>],
+               my: &[Vec<Complex64>],
+               me: &[Vec<Complex64>],
+               mt: &[Vec<Complex64>]| {
+        for ns in 0..l {
+            for ms2 in 0..l {
+                let cs = ms[ns][ms2];
+                if cs == Complex64::new(0.0, 0.0) {
+                    continue;
+                }
+                for ny in 0..l {
+                    for my2 in 0..l {
+                        let cy = cs * my[ny][my2];
+                        if cy == Complex64::new(0.0, 0.0) {
+                            continue;
+                        }
+                        for ne in 0..l {
+                            for me2 in 0..l {
+                                let ce = cy * me[ne][me2];
+                                if ce == Complex64::new(0.0, 0.0) {
+                                    continue;
+                                }
+                                for nt in 0..l {
+                                    for mt2 in 0..l {
+                                        let c = ce * mt[nt][mt2];
+                                        if c == Complex64::new(0.0, 0.0) {
+                                            continue;
+                                        }
+                                        h[idx(ns, ny, ne, nt)][idx(ms2, my2, me2, mt2)] +=
+                                            Complex64::new(coeff, 0.0) * c;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    // Kinetic H0: (1/16)p_s² − (1/24)p_y².
+    add(&mut h, 1.0 / 16.0, &p2c, &idc, &idc, &idc);
+    add(&mut h, -1.0 / 24.0, &idc, &p2c, &idc, &idc);
+    // Cross terms: (1/2) ŷ p_s ê (S·E) and (1/3) ŷ p_y ê (P·E, Weyl-ordered).
+    add(&mut h, 0.5, &p, &xc, &xc, &idc);
+    add(&mut h, 1.0 / 3.0, &idc, &yp_weyl, &xc, &idc);
+    // Torsion block −e(…) → −y²(3τê − ½τ²) = −3 ŷ² τ̂ ê + ½ ŷ² τ̂².
+    add(&mut h, -3.0, &idc, &x2c, &xc, &xc);
+    add(&mut h, 0.5, &idc, &x2c, &idc, &x2c);
+
+    // Symmetrize bit-exactly: h = (h + h†)/2 (the term-level H = H†
+    // certificate needs exact symmetry of the one-particle matrix).
+    for i in 0..dim {
+        for j in 0..dim {
+            let a = h[i][j];
+            let b = h[j][i].conj();
+            h[i][j] = (a + b) / 2.0;
+        }
+    }
+
+    // Enclosure: H = Σ h[i][j] C†(e_i) A(e_j), e_i the one-particle basis
+    // state |n_s, n_y, n_e, n_τ⟩ (creation left, annihilation right).
+    let mut terms = Vec::new();
+    for i in 0..dim {
+        let (is, iy, ie, it) = (i / (l * l * l) % l, i / (l * l) % l, i / l % l, i % l);
+        for j in 0..dim {
+            let c = h[i][j];
+            if c == Complex64::new(0.0, 0.0) {
+                continue;
+            }
+            let (js, jy, je, jt) = (j / (l * l * l) % l, j / (l * l) % l, j / l % l, j % l);
+            // Only nonzero occupations are recorded (vacuum modes are
+            // absent), so the universe labels match hand-built states.
+            let mut in_i = InnerBosonicState::vacuum();
+            if is > 0 {
+                in_i.modes.insert(0, is as u32);
+            }
+            if iy > 0 {
+                in_i.modes.insert(1, iy as u32);
+            }
+            if ie > 0 {
+                in_i.modes.insert(2, ie as u32);
+            }
+            if it > 0 {
+                in_i.modes.insert(3, it as u32);
+            }
+            let mut in_j = InnerBosonicState::vacuum();
+            if js > 0 {
+                in_j.modes.insert(0, js as u32);
+            }
+            if jy > 0 {
+                in_j.modes.insert(1, jy as u32);
+            }
+            if je > 0 {
+                in_j.modes.insert(2, je as u32);
+            }
+            if jt > 0 {
+                in_j.modes.insert(3, jt as u32);
+            }
+            terms.push((
+                c,
+                vec![
+                    Operator::OuterBosonCreate(in_i),
+                    Operator::OuterBosonAnnihilate(in_j),
+                ],
+            ));
+        }
+    }
+    Hamiltonian { terms }
+}
+
 /// The R + αR² (Starobinsky) gauge-fixed scalar-sector Hamiltonian, implementing
 /// the scalar part of the Cadabra2-derived `H_final`
 /// (`docs/qg_starobinsky_hamiltonian.cdb`): `ℋ = ½π² + ½(∇φ)² + V(φ)` with the
@@ -2112,6 +2340,18 @@ pub fn qg_starobinsky_hamiltonian(n_modes: u32, m: f64) -> Hamiltonian {
 /// exponential inside the one-particle operator of
 /// [`qg_starobinsky_vielbein_hamiltonian_full`] — is exactly the class
 /// covered by the PROVED compactly-supported-core statements above.
+///
+/// **Why this is not the full operator.** The object of record is the full
+/// 3D gauge-fixed `qg3DHamiltonian` (book.tex 8190 with the Weyl-ordered
+/// cross terms `½S·E + ⅓P·E − e(…)` included) — realized as
+/// [`qg3d_full_hamiltonian`]. This builder (and its full-exponential
+/// sibling) encloses the *decoupled* fiber model `h = h_TEGR ⊕ (m)`: the
+/// cross terms are assumed to vanish on the physical (BRST-closed) sector,
+/// which is not yet a theorem (plan QG-3.2(a)). It remains a legitimate
+/// *comparison* model (the small-field limit, with the exact gap `m`), but
+/// the numerics that count for the physical Hamiltonian are the full-
+/// operator solve (`qg3d_full_operator_sirk`, certified bands pinned in
+/// `fock_sirk/tests/fixtures/qg3d_full_bands.ndjson`).
 pub fn qg_starobinsky_vielbein_hamiltonian(n_grav: u32, m: f64) -> Hamiltonian {
     let mut terms = qg_tegr_hamiltonian(n_grav).terms;
     // The scalaron mode: a fresh universe beyond the graviton modes.
@@ -2154,6 +2394,18 @@ pub fn qg_starobinsky_vielbein_hamiltonian(n_grav: u32, m: f64) -> Hamiltonian {
 /// harmonic oscillator `½π² + ½m²φ̂²`, the eigenvalues to `m(n + ½)`, and the
 /// enclosure to the diagonal `Σₙ m(n+½)·N_n` — the full ladder of the
 /// massive scalaron.
+///
+/// **Why this is not the full operator.** "Full" here means the full
+/// *scalaron potential inside the one-particle operator* — it does NOT mean
+/// the full 3D gauge-fixed operator: the TEGR shear kinetic is the diagonal
+/// per-mode part and the cross terms `½S·E + ⅓P·E − e(…)` of book.tex 8190
+/// are absent (the decoupled fiber model). Whether they vanish on the
+/// physical (BRST-closed) sector is an open theorem (plan QG-3.2(a)); the
+/// full-operator enclosure is [`qg3d_full_hamiltonian`] (solved by
+/// `qg3d_full_operator_sirk`), and this builder remains the full-exponential
+/// *scalaron-fiber* comparison model. The SIRK/Hashimoto method is
+/// unchanged (solve the operator as-is; only the finite-Hermite truncation
+/// is an approximation).
 #[allow(clippy::needless_range_loop)] // matrix construction loops use
 // transpose access (kin[j][i], v_mat[j][i]); index loops are not needless.
 pub fn qg_starobinsky_vielbein_hamiltonian_full(

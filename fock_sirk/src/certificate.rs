@@ -244,3 +244,34 @@ pub fn emit_gap_certificate_ndjson_with(
 pub fn emit_gap_certificate_ndjson(gap: &GapCertificate) -> String {
     emit_gap_certificate_ndjson_with(gap, |_| {})
 }
+
+/// Serialize certified Ritz bands of a **single-sector** solve as NDJSON:
+/// one line per certified value, each self-describing
+/// `{"kind": "full_operator_band_certificate", "index": …, "theta": …,
+/// "delta": …, "lo": …, "hi": …, "residual": …, "roundoff": …,
+/// "enclosure": …}`.
+///
+/// This is the emission of the plan's QG-3.2(c) full-operator numerics: the
+/// certified bands are stated for the operator actually solved (the full
+/// `qg3d_full_hamiltonian`, cross terms included), with the honest caveat
+/// that an indefinite (not bounded-below) operator carries no mass-gap
+/// assembly — the bands certify the resolved spectrum of the truncated
+/// operator as solved.
+pub fn emit_ritz_bands_ndjson(certs: &[Certificate]) -> String {
+    let mut out = String::new();
+    for (i, c) in certs.iter().enumerate() {
+        out.push_str(&format!(
+            "{{\"kind\":\"full_operator_band_certificate\",\"index\":{i},\
+\"theta\":{:.17e},\"delta\":{:.17e},\"lo\":{:.17e},\"hi\":{:.17e},\
+\"residual\":{:.17e},\"roundoff\":{:.17e},\"enclosure\":{:.17e}}}\n",
+            c.value,
+            c.delta(),
+            c.lo,
+            c.hi,
+            c.residual,
+            c.roundoff,
+            c.enclosure
+        ));
+    }
+    out
+}

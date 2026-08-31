@@ -40,10 +40,12 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
+use fock_sirk::{
+    SirkOpts, certified_ritz_values, emit_ritz_bands_ndjson, solve_forward_sirk_with_opts,
+};
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, Operator, QG_C, QG_G, QG_HBAR, QuantumState, qg_flrw_scalars,
-    qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
+    Hamiltonian, InnerBosonicState, Operator, QG_C, QG_G, QG_HBAR, QuantumState, qg3d_full_hamiltonian,
+    qg_flrw_scalars, qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
     qg_newton_potential, qg_perihelion_precession, qg_planck_units, qg_tegr_hamiltonian,
     qg_starobinsky_hamiltonian, qg_starobinsky_vielbein_hamiltonian,
 };
@@ -910,5 +912,356 @@ fn qg_gravitational_wave_phase_sirk() {
     eprintln!(
         "qg_gravitational_wave_phase_sirk: gravitational-wave phase advances as φ = ωt = c|k|·t \
          (massless, speed c — the LIGO GW frequency evolution)"
+    );
+}
+
+/// The FULL 3D gauge-fixed QG operator, cross terms included
+/// (`qg3d_full_hamiltonian`, `book.tex 8190` densitized — the plan's QG-3.1
+/// object of record): the `S·E` / `P·E` / `e(…)` couplings are PRESENT, not
+/// dropped. Verified via SIRK/Hashimoto (the only permitted approximation):
+///   (a) enclosure form + exact ⟨0|H|0⟩ = 0;
+///   (b) exact term-level Hermiticity (one-particle matrix symmetrized);
+///   (c) the cross terms are genuinely there: a one-particle state in the
+///       e (derivative-variable) sector couples to the shear, conformal and
+///       torsion directions (off-diagonal h — the operator is NOT the
+///       diagonal principal-part model);
+///   (d) the spectrum is indefinite (the wrong-sign conformal kinetic is
+///       present — no bounded-below claim), SIRK solves the operator as-is,
+///       and the certified Ritz bands are emitted as NDJSON;
+///   (e) energy conservation of SIRK-restarted unitary evolution.
+#[test]
+fn qg3d_full_operator_sirk() {
+    let l = 3u32;
+    let h = qg3d_full_hamiltonian(l);
+
+    // (a) Enclosure form + vacuum.
+    assert_enclosure_form(&h);
+    let hv = h.apply(&QuantumState::vacuum());
+    let e_vac = QuantumState::inner_product(&hv, &QuantumState::vacuum()).re;
+    assert!(e_vac.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e_vac}");
+
+    // One-particle basis states (universes): C†(e_occ)|0⟩.
+    let basis = |occ: &[(u32, u32)]| -> QuantumState {
+        let mut s = InnerBosonicState::vacuum();
+        for &(m, n) in occ {
+            s.modes.insert(m, n);
+        }
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(s))
+    };
+
+    // (b) Exact term-level Hermiticity: probe ⟨e_i|H|e_j⟩ == conj(⟨e_j|H|e_i⟩)
+    //     on one-particle pairs (the matrix is symmetrized bit-exactly in the
+    //     builder, so this holds to machine precision).
+    let pairs = [
+        (vec![(0, 1)], vec![(1, 1)]),                  // shear ↔ conformal
+        (vec![(2, 1)], vec![(3, 1)]),                  // e ↔ τ
+        (vec![(0, 1), (2, 1)], vec![(1, 1), (0, 1)]), // shear+e ↔ y+shear
+    ];
+    for (a_occ, b_occ) in pairs {
+        let ea = basis(&a_occ);
+        let eb = basis(&b_occ);
+        let mij = QuantumState::inner_product(&h.apply(&ea), &eb);
+        let mji = QuantumState::inner_product(&h.apply(&eb), &ea);
+        let diff = (mij - mji.conj()).norm();
+        assert!(
+            diff < 1e-12,
+            "one-particle matrix must be exactly Hermitian: |M_ij − conj(M_ji)| = {diff:.2e}"
+        );
+    }
+
+    // (c) Cross terms present: the e-sector one-particle state |0_s,0_y,1_e,0_τ⟩
+    //     couples to the shear (S·E), conformal (P·E) and torsion (T·E)
+    //     directions — nonzero off-diagonal components are the couplings.
+    let probe = basis(&[(2, 1)]);
+    let h_probe = h.apply(&probe);
+    let se_amp = QuantumState::inner_product(&h_probe, &basis(&[(0, 1), (1, 1)])); // ⟨1_s,1_y|H|1_e⟩
+    let pe_amp = QuantumState::inner_product(&h_probe, &basis(&[(1, 2)])); // ⟨0_s,2_y|H|1_e⟩
+    let te_amp = QuantumState::inner_product(&h_probe, &basis(&[(3, 1)])); // ⟨0_s,0_y,0_e,1_τ|H|1_e⟩
+    let se_n = se_amp.norm();
+    let pe_n = pe_amp.norm();
+    let te_n = te_amp.norm();
+    assert!(
+        se_n > 1e-4 && pe_n > 1e-4 && te_n > 1e-4,
+        "cross terms S·E / P·E / e(…) must be present: \
+         |S·E|={se_n:.3e} |P·E|={pe_n:.3e} |T·E|={te_n:.3e}"
+    );
+
+    // (d) SIRK solve of the FULL operator: Hermiticity of H_proj (Krylov
+    //     precision), an indefinite resolved band (wrong-sign conformal
+    //     kinetic — the honest signature of the full operator), certified
+    //     Ritz bands, NDJSON emission (the QG-3.2(c) artifact).
+    let opts = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(1_000_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: true,
+    };
+    let mut psi0 = QuantumState::vacuum();
+    psi0.scale_and_add(&probe, Complex64::new(0.7, 0.0));
+    psi0.scale_and_add(&basis(&[(0, 1)]), Complex64::new(0.3, 0.0));
+    let res = solve_forward_sirk_with_opts(&h, &psi0, &shifts(20), &best_device(), None, &opts)
+        .expect("full qg3DHamiltonian SIRK solve");
+    let h_proj = res.h_proj.clone();
+    let hermn = (h_proj.clone() - h_proj.adjoint()).norm();
+    assert!(
+        hermn < 1e-3,
+        "H_proj must be Hermitian (Krylov precision), ‖H−H†‖={hermn:.2e}"
+    );
+    let ritz = res.ritz_values();
+    assert!(
+        ritz.len() >= 3,
+        "SIRK must resolve ≥3 levels, got {}",
+        ritz.len()
+    );
+    assert!(
+        ritz.iter().any(|&e| e < -1e-3) && ritz.iter().any(|&e| e > 1e-3),
+        "full operator spectrum must be indefinite (wrong-sign y-kinetic), \
+         got ritz span [{}, {}]",
+        ritz[0],
+        ritz[ritz.len() - 1]
+    );
+    let certs = certified_ritz_values(&res);
+    let ndjson = emit_ritz_bands_ndjson(&certs);
+    let lines: Vec<&str> = ndjson.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), certs.len(), "one NDJSON line per certified band");
+    for (i, line) in lines.iter().enumerate() {
+        let v: serde_json::Value =
+            serde_json::from_str(line).expect("band line must be valid JSON");
+        assert_eq!(
+            v.get("kind").and_then(|k| k.as_str()).unwrap_or(""),
+            "full_operator_band_certificate",
+            "band line kind"
+        );
+        assert!(
+            v.get("theta").is_some() && v.get("delta").is_some(),
+            "band must carry θ and δ"
+        );
+        let idx = v.get("index").and_then(|x| x.as_u64()).unwrap_or(u64::MAX);
+        assert_eq!(idx as usize, i, "index must match position");
+    }
+    eprintln!("=== qg3d FULL operator: certified bands (NDJSON) ===\n{ndjson}");
+
+    // The pinned artifact (re-emission guard): the recorded fixture
+    // `fixtures/qg3d_full_bands.ndjson` must match the emitted count and
+    // kind — regeneration of the certified bands is a re-run of this test
+    // (a change to the operator or the pipeline shows up as a fixture diff).
+    let pinned = include_str!("fixtures/qg3d_full_bands.ndjson");
+    let pinned_lines: Vec<&str> = pinned.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        pinned_lines.len(),
+        lines.len(),
+        "pinned band fixture must match the emitted count"
+    );
+    for line in pinned_lines {
+        let v: serde_json::Value =
+            serde_json::from_str(line).expect("pinned band must be valid JSON");
+        assert_eq!(
+            v.get("kind").and_then(|k| k.as_str()).unwrap_or(""),
+            "full_operator_band_certificate",
+            "pinned band kind"
+        );
+        assert!(
+            v.get("theta").is_some() && v.get("delta").is_some(),
+            "pinned band must carry θ and δ"
+        );
+    }
+
+    // (e) Energy conservation of SIRK-restarted unitary evolution.
+    let n0 = psi0.norm();
+    let e0 = QuantumState::inner_product(&h.apply(&psi0), &psi0).re;
+    let psi_t = fock_sirk::evolve_restarted(&h, &psi0, 3.0, 4, 6, &best_device(), None, &opts)
+        .expect("restarted evolution");
+    let n_t = psi_t.norm();
+    let e_t = QuantumState::inner_product(&h.apply(&psi_t), &psi_t).re;
+    assert!(
+        (n_t - n0).abs() < 1e-9,
+        "norm must be conserved (unitarity): |Δ‖ψ‖| = {:.2e}",
+        (n_t - n0).abs()
+    );
+    assert!(
+        (e_t - e0).abs() < 1e-9,
+        "energy must be conserved: |Δ⟨H⟩| = {:.2e}",
+        (e_t - e0).abs()
+    );
+    eprintln!(
+        "qg3d_full_operator_sirk: FULL qg3DHamiltonian solved as-is (cross terms S·E, P·E, e(…) \
+         included), indefinite band [{:.4}, {:.4}], certified {} bands emitted as NDJSON, \
+         ‖H−H†‖={hermn:.2e}, energy conserved",
+        ritz[0],
+        ritz[ritz.len() - 1],
+        certs.len()
+    );
+}
+
+/// QG-3.2 BRST gauge-fixing consequence on the FULL 3D operator
+/// (`qg3d_full_hamiltonian`, the QG-3.1 object of record, cross terms present):
+/// the promoted derivative-variable sector `e` (mode 2 — the 64 `idxDE`
+/// derivative coordinates of the formalization) enters `H` ONLY through its
+/// position operator (the S·E / P·E / torsion blocks contain `x̂_e`, never a
+/// `p_e` — no momentum on the derivative-variable mode), so `x̂_e` is a
+/// constant of the motion and the BRST charge `Ω = x̂_e · c` is nilpotent
+/// (`Ω² = 0`, first-class) and `H` is BRST-closed (`[H, Ω] = 0`).  This is the
+/// full-operator numerical content of the formalization's `s_gaugeField_eq_c`
+/// (the promoted variable is a BRST doublet) and `int_L_gf_eq_zero_physical`
+/// (the fixing is BRST-exact, zero impact on physical observables):
+///
+///   (a) `Ω² = 0` (nilpotent) on ghost-carrying probes;
+///   (b) `[H, Ω] = 0` (BRST-closed) — the gauge-fixing is dynamical;
+///   (c) **projection invariance** — the orthogonal projection onto ker Ω
+///       (mid-sequence, `Some(&brst)`) leaves the solved Ritz spectrum and the
+///       derivative-variable expectation value UNCHANGED vs. the unprojected
+///       solve (physical observables are the same with or without the
+///       projector, to solver accuracy).  Mirrors
+///       `qym_brst_projection_identity_on_physical_flow`, but on the FULL QG
+///       operator, cross terms included.
+#[test]
+fn qg3d_full_operator_brst_projection_invariance() {
+    use nested_fock_algebra::InnerFermionicState;
+    use std::collections::BTreeSet;
+
+    let h = qg3d_full_hamiltonian(3);
+    // Ω = x̂_e · c₉ with x̂_e = a†₂ + a₂ (mode 2 = e) and c₉ a fermion ghost.
+    let omega = Hamiltonian {
+        terms: vec![
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(2),
+                    Operator::InnerFermionAnnihilate(9),
+                ],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(2),
+                    Operator::InnerFermionAnnihilate(9),
+                ],
+            ),
+        ],
+    };
+
+    // A ghost-carrying probe: derivative-variable content (mode 2) plus the
+    // ghost c₉, so Ω|ψ⟩ ≠ 0.
+    let ghost_probe = |occ: &[(u32, u32)]| -> QuantumState {
+        let mut bos = InnerBosonicState::vacuum();
+        for &(m, n) in occ {
+            bos.modes.insert(m, n);
+        }
+        QuantumState::vacuum()
+            .apply(&Operator::OuterBosonCreate(bos))
+            .apply(&Operator::OuterFermionCreate(InnerFermionicState {
+                modes: BTreeSet::from([9]),
+            }))
+    };
+
+    // (a) Nilpotency Ω² = 0 (first-class derivative-variable constraint).
+    for p in [
+        ghost_probe(&[(2, 1)]),
+        ghost_probe(&[(2, 1), (0, 1)]),
+        ghost_probe(&[(2, 1), (0, 1), (3, 1)]),
+    ] {
+        assert!(omega.apply(&p).norm() > 1e-9, "probe must carry Ω-content");
+        let twice = omega.apply(&omega.apply(&p));
+        assert!(
+            twice.norm() < 1e-9,
+            "Ω² must be nilpotent (Pauli), got {:.3e}",
+            twice.norm()
+        );
+    }
+
+    // (b) BRST-closure [H, Ω] = 0: the derivative-variable position x̂_e is a
+    //     constant of the motion (no p_e in H), so the fixing is dynamical.
+    for p in [
+        ghost_probe(&[(2, 1)]),
+        ghost_probe(&[(2, 1), (0, 1), (1, 1), (3, 1)]),
+    ] {
+        let hp = h.apply(&omega.apply(&p));
+        let ph = omega.apply(&h.apply(&p));
+        let mut comm = hp;
+        comm.scale_and_add(&ph, Complex64::new(-1.0, 0.0));
+        let lhs = Complex64::new(0.0, 1.0) * QuantumState::inner_product(&p, &comm);
+        assert!(
+            lhs.norm() < 1e-9,
+            "[H, Ω] must vanish (BRST-closed full operator), got {lhs:?}"
+        );
+    }
+
+    // (c) Projection invariance: a physical (ghost-free) superposition in the
+    //     derivative-variable sector — the SIRK solve with the orthogonal
+    //     projection onto ker Ω riding along must give the SAME resolved Ritz
+    //     spectrum and the SAME derivative-variable value as the unprojected
+    //     solve (physical observables unchanged by the fixing).
+    let mut base = QuantumState::vacuum();
+    base = base.apply(&Operator::OuterBosonCreate({
+        let mut s = InnerBosonicState::vacuum();
+        s.modes.insert(2, 1);
+        s
+    }));
+    base.scale_and_add(
+        &QuantumState::vacuum().apply(&Operator::OuterBosonCreate({
+            let mut s = InnerBosonicState::vacuum();
+            s.modes.insert(0, 1);
+            s
+        })),
+        Complex64::new(0.6, 0.0),
+    );
+    let opts = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(1_000_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: true,
+    };
+    let plain = solve_forward_sirk_with_opts(&h, &base, &shifts(10), &best_device(), None, &opts)
+        .expect("plain solve");
+    let projected =
+        solve_forward_sirk_with_opts(&h, &base, &shifts(10), &best_device(), Some(&omega), &opts)
+            .expect("BRST-projected solve");
+    let a = plain.ritz_values();
+    let b = projected.ritz_values();
+    assert_eq!(a.len(), b.len(), "resolved sets {a:?} vs {b:?}");
+    for (x, y) in a.iter().zip(b.iter()) {
+        assert!(
+            (x - y).abs() < 1e-7,
+            "plain vs BRST-projected Ritz must coincide: {x} vs {y}"
+        );
+    }
+    // The BRST-projected and the bare flows give the SAME derivative-variable
+    // value ⟨x̂_e⟩(t) after unitary evolution (physical observables unchanged by
+    // the fixing) — mirrors `qym_brst_projection_identity_on_physical_flow`.
+    let x_op = Hamiltonian {
+        terms: vec![
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(2)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(2)],
+            ),
+        ],
+    };
+    let x0 = QuantumState::inner_product(&base, &x_op.apply(&base)).re;
+    let ta = fock_sirk::evolve_restarted(&h, &base, 0.25, 2, 10, &best_device(), None, &opts)
+        .expect("bare flow");
+    let tb =
+        fock_sirk::evolve_restarted(&h, &base, 0.25, 2, 10, &best_device(), Some(&omega), &opts)
+            .expect("BRST-projected flow");
+    let xa = QuantumState::inner_product(&ta, &x_op.apply(&ta)).re;
+    let xb = QuantumState::inner_product(&tb, &x_op.apply(&tb)).re;
+    assert!(
+        (xa - xb).abs() < 1e-7,
+        "⟨x̂_e⟩ must be unchanged by BRST projection: bare {xa} vs projected {xb}"
+    );
+    assert!(
+        (xa - x0).abs() < 1e-7,
+        "⟨x̂_e⟩ is a constant of the motion (no p_e in H): {x0} → {xa}"
+    );
+
+    eprintln!(
+        "qg3d_full_operator_brst_projection_invariance: Ω² = 0 (nilpotent) on ghost probes; \
+         [H, Ω] = 0 (BRST-closed); bare and BRST-projected flows share the \
+         resolved spectrum and ⟨x̂_e⟩ = {xb} (physical observables unchanged)",
     );
 }

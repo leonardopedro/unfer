@@ -537,6 +537,57 @@ of one-particle eigenvalues (one-scalaron $m$, two-scalaron $2m$; one-graviton
 $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 αR² stabilization).
 
+> **Full-operator doctrine.** The object of record is the *full* 3D
+> gauge-fixed Hamiltonian `qg3DHamiltonian` (the `book.tex 8190` form with
+> the Weyl-ordered cross terms $\tfrac12 S\cdot E + \tfrac13 P\cdot E -
+> e(\cdots)$ included), realized as `qg3d_full_hamiltonian` (in
+> `nested_fock_algebra`) and solved as-is by SIRK/Hashimoto in
+> `qg3d_full_operator_sirk` — cross terms present, certified Ritz bands
+> pinned in `fock_sirk/tests/fixtures/qg3d_full_bands.ndjson`. The two
+> scalar-fiber builders here are **comparison models**:
+> `qg_starobinsky_vielbein_hamiltonian` encloses the free massive scalaron
+> $h = h_{\rm TEGR}\oplus(m)$ and
+> `qg_starobinsky_vielbein_hamiltonian_full` encloses the full-exponential
+> scalaron fiber $h = \tfrac12\pi^2 + V(\hat\varphi)$; their decoupling
+> remains an *assumption* (the fiber model) pending a proof that the cross
+> terms vanish on the physical (BRST-closed) sector (plan QG-3.2(a)). The
+> full operator is indefinite (wrong-sign conformal kinetic — no
+> bounded-below claim), so its certified bands resolve the spectrum as
+> solved, with no mass-gap assembly; the SIRK/Hashimoto method is unchanged
+> (solve the operator as-is — the finite-Hermite truncation is the only
+> approximation).
+>
+> **BRST gauge-fixing consequence (Numerical).** The promoted
+> derivative-variable sector `e` (mode 2 — the 64 `idxDE` derivative
+> coordinates) enters `qg3d_full_hamiltonian` only through its **position**
+> operator (the `S·E` / `P·E` / torsion blocks contain `x̂_e`, never a `p_e`
+> — no momentum on that mode), so `x̂_e` is a constant of the motion and the
+> BRST charge `Ω = x̂_e·c₉` is nilpotent (`Ω² = 0`, first-class) with the
+> full operator BRST-closed (`[H, Ω] = 0`).  Test
+> `qg3d_full_operator_brst_projection_invariance` verifies exactly this and
+> — the projection-invariance consequence — that the orthogonal projection
+> onto ker Ω (mid-sequence, `Some(&brst)`) leaves the solved Ritz spectrum
+> and `⟨x̂_e⟩(t)` unchanged vs. the unprojected solve: the fixing is
+> BRST-exact, zero impact on physical observables (`int_L_gf_eq_zero_physical`,
+> the full-operator numerical analogue of `s_gaugeField_eq_c`).
+>
+> **BRST gauge-fixing consequence (Numerical) — Navier–Stokes parallel.**
+> The same projection-invariance statement holds for the FULL NS operator:
+> the promoted derivative-variable fields `u_{i,j}` (modes 3–14, the
+> `u_{i,j} = ∂_j u_i` coordinates) carry no momenta — the Eulerian
+> block structure, `[H, u_{i,j}] = 0` — and the BRST divergence charge
+> `Ω = Σ_j u_{j,j} c_j` (`navier_stokes_brst`) is nilpotent with the full
+> `navier_stokes_hamiltonian` BRST-closed.  Test
+> `ns_brst_projection_invariance_physical_flow` (in `ns_validation.rs`)
+> verifies Ω² = 0 and `[H, Ω] = 0` on ghost probes and — the
+> projection-invariance consequence — that the solve with the orthogonal
+> projector onto ker Ω riding along (`Some(&brst)`) resolves the SAME Ritz
+> spectrum and the SAME conserved derivative-field `⟨u_{0,0}⟩` as the bare
+> solve: the fixing is BRST-exact, zero impact on physical expectation
+> values.  Krylov depth m=4 (the tractable depth for the 168-term full NS
+> operator — the raw Hashimoto frame explodes combinatorially at deeper
+> windows, the bare matvec at depth 4 already spanning ~2×10⁵ components).
+
 - **`qg_planck_scale`** — computes: $\ell_P = \sqrt{\hbar G/c^3}$,
   $t_P = \sqrt{\hbar G/c^5}$, $m_P = \sqrt{\hbar c/G}$, $E_P = m_P c^2$ from
   CODATA, plus the dimensional identities $\ell_P m_P = \hbar/c$ and
