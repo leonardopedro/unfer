@@ -427,6 +427,10 @@ fn set_error(msg: &str) {
     UZ_LAST_ERROR.with(|e| *e.borrow_mut() = msg.to_string());
 }
 
+fn clear_error() {
+    UZ_LAST_ERROR.with(|e| *e.borrow_mut() = String::new());
+}
+
 fn get_error() -> String {
     UZ_LAST_ERROR.with(|e| e.borrow().clone())
 }
@@ -443,6 +447,9 @@ fn get_error() -> String {
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uz_init(cfg_json: *const u8, cfg_len: i64) -> i64 {
+    // Same fresh-channel-per-call discipline as `uk_*`: `uz_last_error` must
+    // describe THIS call, never a stale failure from an earlier one.
+    clear_error();
     if cfg_json.is_null() || cfg_len <= 0 {
         set_error("uz_init: null or empty config");
         return -1001;
@@ -492,6 +499,7 @@ pub extern "C" fn uz_push(
     frontier: *const u8,
     frontier_len: i64,
 ) -> i64 {
+    clear_error();
     if data.is_null() || data_len <= 0 {
         set_error("uz_push: null or empty data");
         return -1001;
@@ -528,6 +536,7 @@ pub extern "C" fn uz_push(
 /// Returns total bytes on success, -5000 on network/API failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn uz_pull(buf: *mut u8, cap: i64) -> i64 {
+    clear_error();
     let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
         None => {
@@ -549,6 +558,7 @@ pub extern "C" fn uz_pull(buf: *mut u8, cap: i64) -> i64 {
 /// Does NOT hit the network.
 #[unsafe(no_mangle)]
 pub extern "C" fn uz_manifest_json(buf: *mut u8, cap: i64) -> i64 {
+    clear_error();
     let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
         None => {

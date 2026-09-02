@@ -1335,3 +1335,44 @@ fn logos_compile_unparseable_is_4803() {
 
     uk_model_free(model);
 }
+
+/// The error channel describes the MOST RECENT call ("record facts where
+/// they happen"): after a failure, `uk_last_error` carries the failure; a
+/// subsequent SUCCESSFUL call must clear it. Regression for the sticky
+/// channel, where a caller that ran a failing call A, then a successful
+/// call B, then probed the channel got A's failure text attributed to B.
+#[test]
+fn last_error_is_cleared_by_a_subsequent_successful_call() {
+    // 1. A failing call populates the channel.
+    let (ptr, len) = json_ptr(b"not valid json {{");
+    let r = uk_model_create(ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64));
+    let err = read_error();
+    assert!(!err.is_empty(), "a failed call must record its error");
+
+    // 2. A successful call on the same thread clears it.
+    let (spec, slen) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(spec, slen);
+    assert!(model > 0, "model create must succeed: {}", read_error());
+    uk_model_free(model);
+
+    // 3. The channel is now fresh: the stale text is gone.
+    assert_eq!(
+        read_error(),
+        "",
+        "a successful call must clear the stale error channel"
+    );
+}
+
+/// An info call (`uk_version`) is a call too — probing the error channel
+/// after it must not resurrect an earlier failure either.
+#[test]
+fn last_error_cleared_by_info_call() {
+    let (ptr, len) = json_ptr(b"also not json");
+    let r = uk_model_create(ptr, len);
+    assert_eq!(r, -(Code::BAD_JSON.raw() as i64));
+    assert!(!read_error().is_empty());
+
+    assert!(uk_version() > 0);
+    assert_eq!(read_error(), "", "uk_version must refresh the channel");
+}

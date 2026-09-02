@@ -527,6 +527,14 @@ pub fn set_last_error(diag: &Diagnostic) {
     LAST_ERROR.with(|e| *e.borrow_mut() = json);
 }
 
+/// Clear the error channel. Every FFI entry point clears before running so
+/// `uk_last_error` describes the MOST RECENT call — never a stale failure
+/// from an earlier one ("record facts where they happen"). The read symbols
+/// (`uk_last_error` itself) must NOT clear before reading (see `ffi_entry`).
+pub fn clear_last_error() {
+    LAST_ERROR.with(|e| *e.borrow_mut() = String::new());
+}
+
 pub fn get_last_error() -> String {
     LAST_ERROR.with(|e| e.borrow().clone())
 }

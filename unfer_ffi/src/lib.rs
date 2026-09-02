@@ -58,6 +58,10 @@ fn snapshot_refuses_live_secret() -> Diagnostic {
 }
 
 fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i64 {
+    // Fresh error channel per call: `uk_last_error` must describe THIS call,
+    // never a stale failure from an earlier one. `uk_last_error` itself does
+    // not route through `ffi_entry`, so the read is unaffected.
+    handles::clear_last_error();
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(val)) => val,
         Ok(Err(diag)) => fail(diag),
@@ -157,6 +161,10 @@ fn read_bytes(ptr: *const u8, len: i64) -> Result<Vec<u8>, Diagnostic> {
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_version() -> i64 {
+    // Same fresh-channel-per-call discipline as `ffi_entry`: an info call is
+    // still a call, and a caller probing the error channel after it must not
+    // see a stale failure from an earlier operation.
+    handles::clear_last_error();
     VERSION
 }
 
@@ -184,6 +192,7 @@ pub extern "C" fn uk_model_create(spec_json: *const u8, len: i64) -> i64 {
 /// Free a model session. Returns 0 on success, -1004 if the handle is invalid.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_model_free(model: i64) -> i64 {
+    handles::clear_last_error();
     if handles::free_session(model) {
         0
     } else {
