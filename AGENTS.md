@@ -162,7 +162,7 @@ The project implements a split-mode architecture for **"Inverse-Free" Rational K
 - `fock_sirk` — SIRK solver (improved: GPU-optional, Gram whitening, BRST projection, restarted Krylov, state reconstruction).
 - `unfer_protocol` — serde types, UK-#### codes, repair hints (the shared contract).
 - `prob_kernel` — Born-rule layer: `Session` with `evolve`/`probability`/`condition`/`snapshot`; `verify` (nanoda Lean4 export verification, S29); `whyml` (WhyML emission + Why3 proof, S36).
-- `unfer_ffi` — handle-based C ABI: 21 `uk_*` + 5 `uz_*` symbols (`uz_*` under `--features zenodo`).
+- `unfer_ffi` — handle-based C ABI: the `uk_*`/`uz_*` symbol set (`uz_*` under `--features zenodo`). The authoritative census is the generated `EXPECTED_SYMBOLS*.txt` (S29 gate, `scripts/gen_symbol_artifacts`) — counts are never hand-maintained in prose.
 - `qfm` — Pauli–Grover + diffusion Hamiltonians, `dense_pauli_grover_matvec`, parity/MNIST sweeps.
 - `qfm_text` — text-domain QFM: corpus, features, LM, in-context adaptation, Oxieml decoder, GPU decode sketch.
 - `unfer_edge` — Pingora-based edge server for the `unfer_agent` protocol over HTTP (`admin.rs` S22 soft/hard config console under `--features audit`; `gate.rs`/`blueprint.rs`/`cells.rs` edge routes).

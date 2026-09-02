@@ -121,7 +121,16 @@ check "S27: snapshot refuses live secrets" \
 check "S27: uk_snapshot enforces the refusal" \
     grep -q "snapshot_refuses_live_secret" "$repo_root/unfer_ffi/src/lib.rs"
 
-# --- H1.12 Result channel is fresh per call (no stale facts) ---
+# --- H1.12 Symbol-count claims are banned from prose docs ---
+# README/AGENTS/ARCHITECTURE used to carry hand-maintained counts
+# ("14 uk_*", "81 uk_* + 5 uz_*", "21 uk_*") that went stale as the S29
+# checklist added symbols — the generated EXPECTED_SYMBOLS*.txt census is
+# the only authoritative count. Live docs must point at it, never hard-code
+# a number that rots.
+check "H1.12: live docs carry no hand-maintained uk_/uz_ symbol counts" \
+    bash -c "! grep -nE '[0-9]+ (\`uk_|\`uz_|uk_|uz_)' \"$repo_root/README.md\" \"$repo_root/AGENTS.md\" \"$repo_root/docs/ARCHITECTURE.md\" \"$repo_root/unfer_ffi/README.md\""
+
+# --- H1.13 Result channel is fresh per call (no stale facts) ---
 # Every result-producing uk_* op clears the per-session result slot on entry,
 # mirroring the error channel's fresh-per-call discipline: a FAILED op leaves
 # uk_get_result EMPTY, never the previous op's result served as this op's
@@ -131,13 +140,7 @@ check "S46: clear_last_result exists" \
 check "S46: every result producer clears the slot on entry" \
     bash -c "n=\"\$(grep -c 'handles::clear_last_result(model);' \"$repo_root/unfer_ffi/src/lib.rs\")\"; test \"\$n\" -ge 11"
 
-# --- H1.13 Symbol census files present (H2: generated from the registry) ---
-check "S29: EXPECTED_SYMBOLS.txt present" \
-    test -s "$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt"
-check "S29: generated C header present" \
-    test -s "$repo_root/unfer_ffi/include/unfer_kernel.h"
-
-# --- H1.12 Symbol census files present (H2: generated from the registry) ---
+# --- H1.14 Symbol census files present (H2: generated from the registry) ---
 check "S29: EXPECTED_SYMBOLS.txt present" \
     test -s "$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt"
 check "S29: generated C header present" \

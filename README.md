@@ -26,7 +26,7 @@ interaction.
 | SIRK solver | Inverse-Free Rational Krylov time evolution, Hermitian Gram whitening, restarted Krylov | `fock_sirk` |
 | Born-rule layer | `Session::{evolve, probability, condition, snapshot, bayesian_update}` | `prob_kernel` |
 | Protocol | serde types, UK-#### error codes, `RepairHint`s (Zero-language style) | `unfer_protocol` |
-| FFI | 14 `uk_*` extern "C" functions, handle table, buffer protocol | `unfer_ffi` |
+| FFI | `uk_*`/`uz_*` extern "C" functions (census: `unfer_ffi/EXPECTED_SYMBOLS*.txt`), handle table, buffer protocol | `unfer_ffi` |
 | QFM-TSR | Two-level hashing, offline training, 4-phase online generate | `qfm` |
 | Bayesian update | HMC on the TSR-evolved prior, `|v^dag c|^2` likelihood | `qfm::bayes` |
 

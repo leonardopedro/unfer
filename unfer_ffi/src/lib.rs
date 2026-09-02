@@ -7,7 +7,10 @@
 //! `handles` owns the typed handle registry; `zenodo` (feature `zenodo`)
 //! the Zenodo module interface.
 //!
-//! ABI surface: 84 `uk_*` + 5 `uz_*` symbols (see `tests/ffi.rs`).
+//! ABI surface: the `uk_*`/`uz_*` `extern "C"` symbols. The authoritative
+//! census is the generated `EXPECTED_SYMBOLS*.txt` (kept in sync by
+//! `scripts/gen_symbol_artifacts`, gated in `scripts/verify-invariants`) —
+//! never a hand-maintained count in prose.
 
 pub mod durable;
 mod handles;
