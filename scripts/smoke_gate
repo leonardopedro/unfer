@@ -6,7 +6,15 @@
 #   - `unfer_ffi` cdylib builds (`libunfer_ffi.so`) — the C ABI surface.
 #   - a genuinely missing config exits non-zero (modhost/agent fail closed).
 #
-# Exit 0 = green, 1 = a smoke failed.
+# Tooling discipline mirrors coverage_gate: if the Rust toolchain itself is
+# absent (no `cargo`), the gate prints [gap] and exits 0 — a clean tree without
+# the toolchain documents non-enforcement rather than failing forever. With
+# `cargo` present, a missing/stale artifact after the build is a hard [FAIL].
+#
+# Exit 0 = green (or toolchain absent → [gap]), 1 = a smoke failed.
+#
+# (Kept in sync with the CI job: .github/workflows/ci.yml installs the
+# toolchain before running verify-invariants, so H11 smokes run for real there.)
 
 set -u
 FAILED=0
@@ -14,6 +22,14 @@ FAILED=0
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "H11 real-entry-path smokes"
+
+# Toolchain absent → documented gap, never a permanent red (a bare runner with
+# no cargo would otherwise fail on the missing artifact forever, drowning every
+# real violation — see verify-invariants H11).
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "[gap] H11 smoke gate: cargo/rust toolchain not installed. Skipping (tooling absent)."
+    exit 0
+fi
 
 # 1. The unfer_ffi cdylib + staticlib build from built output.
 (cd "$repo_root" && cargo build -p unfer_ffi >/tmp/unfer_smoke_build.log 2>&1)

@@ -14,13 +14,23 @@ jobs:
   # ---------------------------------------------------------------------------
   # H1 (PLAN_HARNESS): maintenance-invariant gate. Turns the AGENTS.md
   # maintenance checklist into machine-checkable invariants. Passes on a clean
-  # tree, fails on a deliberately introduced violation.
+  # tree with the toolchain present, fails on a deliberately introduced
+  # violation.
+  #
+  # Toolchain is required, not optional: smoke_gate builds libunfer_ffi.so and
+  # the H11 coverage gate runs the unit harness under -C instrument-coverage,
+  # so the job installs stable + llvm-tools-preview. Without the toolchain the
+  # gates would print [gap] (tooling absent) and never actually enforce — the
+  # job would be green while the checks it claims to run did nothing.
   # ---------------------------------------------------------------------------
   verify-invariants:
     name: maintenance invariants (H1)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: install LLVM coverage tools (H11 per-file coverage gate)
+        run: rustup component add llvm-tools-preview
       - name: run scripts/verify-invariants
         run: bash scripts/verify-invariants
 
