@@ -599,11 +599,24 @@ impl GrantSet {
     /// The trust annotation for a granted effect, if one exists. An effect name
     /// granted but never annotated defaults to [`EffectKind::Mutate`] (conservative:
     /// an annotation cannot turn a side-effect into an observation).
+    ///
+    /// Resolution is content-based, never positional: duplicate annotations for
+    /// the same effect (malformed input) only resolve when they are *unanimous*.
+    /// Any conflict resolves to `None` — the caller's conservative `Mutate`
+    /// default — so a self-contradictory grant cannot bypass the approval lane
+    /// (apply immediately) by the accident of listing `observe` before `mutate`.
     pub fn effect_kind_of(&self, effect: &str) -> Option<EffectKind> {
-        self.effect_kinds
+        let mut kinds = self
+            .effect_kinds
             .iter()
-            .find(|g| g.name == effect)
-            .map(|g| g.effect_kind)
+            .filter(|g| g.name == effect)
+            .map(|g| g.effect_kind);
+        let first = kinds.next()?;
+        if kinds.all(|k| k == first) {
+            Some(first)
+        } else {
+            None
+        }
     }
 
     /// True when `self` is a subset of `other` (capability non-escalation).
@@ -612,7 +625,14 @@ impl GrantSet {
     /// introduction the caller does not already hold is escalation (S18/F17). The
     /// trust annotations close one more escalation path: a mutation cannot be
     /// relabeled `observe` (which bypasses approval) unless the parent already
-    /// holds that annotation for the same effect (F20).
+    /// holds that annotation for the same effect (F20). Annotation comparison
+    /// runs through [`GrantSet::effect_kind_of`] — the unanimous, content-based
+    /// resolution — so the verdict never depends on the order entries appear in
+    /// *either* set: a conflicting duplicate in `other` resolves to `None` and
+    /// can only *deny* a child's annotation request (fail-closed), never honor
+    /// one by list position. A set whose own annotations contradict itself is
+    /// consequently not its own subset (the `all` over its entries cannot be
+    /// satisfied) — minting from a self-contradictory grant is refused.
     pub fn is_subset_of(&self, other: &GrantSet) -> bool {
         let in_other = |s: &String| other.kernel.contains(s);
         self.kernel.iter().all(in_other)
@@ -818,6 +838,149 @@ mod grantset_tests {
             Some(EffectKind::Observe)
         );
         assert_eq!(base.effect_kind_of("never_granted"), None);
+    }
+
+    #[test]
+    fn conflicting_annotations_resolve_by_content_not_position() {
+        // The same malformed grant set in both orders must resolve identically:
+        // a self-contradictory annotation is *not* honored (None → Mutate → the
+        // approval lane), never the position-dependent first-match reading.
+        let observe_first = GrantSet {
+            kernel: vec![],
+            effects: vec!["x".into()],
+            observers: vec![],
+            resources: vec![],
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Mutate,
+                },
+            ],
+        };
+        let mutate_first = GrantSet {
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Mutate,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+            ],
+            ..observe_first.clone()
+        };
+        assert_eq!(observe_first.effect_kind_of("x"), None);
+        assert_eq!(mutate_first.effect_kind_of("x"), None);
+        // Unanimous duplicates stay honored (idempotent, not malformed).
+        let dup_observe = GrantSet {
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+            ],
+            ..observe_first.clone()
+        };
+        assert_eq!(dup_observe.effect_kind_of("x"), Some(EffectKind::Observe));
+    }
+
+    #[test]
+    fn subset_check_is_positional_free_for_annotations() {
+        // A conflicting duplicate in the parent resolves to None and can only
+        // deny a child's annotation request — never honor one by list position.
+        // Same parent in both orders must give the same verdict.
+        let parent_conflict = GrantSet {
+            kernel: vec![],
+            effects: vec!["x".into()],
+            observers: vec![],
+            resources: vec![],
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Mutate,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+            ],
+        };
+        let parent_conflict_reversed = GrantSet {
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Mutate,
+                },
+            ],
+            ..parent_conflict.clone()
+        };
+        let ask_observe = GrantSet {
+            effects: vec!["x".into()],
+            effect_kinds: vec![EffectGrant {
+                name: "x".into(),
+                effect_kind: EffectKind::Observe,
+            }],
+            ..Default::default()
+        };
+        let ask_mutate = GrantSet {
+            effects: vec!["x".into()],
+            effect_kinds: vec![EffectGrant {
+                name: "x".into(),
+                effect_kind: EffectKind::Mutate,
+            }],
+            ..Default::default()
+        };
+        // Neither reading is honored from an ambiguous parent, in either order.
+        assert!(!ask_observe.is_subset_of(&parent_conflict));
+        assert!(!ask_mutate.is_subset_of(&parent_conflict));
+        assert!(!ask_observe.is_subset_of(&parent_conflict_reversed));
+        assert!(!ask_mutate.is_subset_of(&parent_conflict_reversed));
+        // A self-contradictory set is not its own subset: minting from it is
+        // refused (fail-closed), and it can never mint into a clean child.
+        assert!(!parent_conflict.is_subset_of(&parent_conflict));
+        // Well-formed sets keep the full lattice: reflexivity and the relabel
+        // denial direction are unchanged.
+        assert!(ask_observe.is_subset_of(&ask_observe));
+        assert!(ask_mutate.is_subset_of(&ask_mutate));
+        // A child asking for the exact unanimous annotation the parent holds
+        // is allowed; duplicating it in the child is idempotent.
+        let parent_observe = GrantSet {
+            effects: vec!["x".into()],
+            effect_kinds: vec![EffectGrant {
+                name: "x".into(),
+                effect_kind: EffectKind::Observe,
+            }],
+            ..Default::default()
+        };
+        assert!(ask_observe.is_subset_of(&parent_observe));
+        assert!(!ask_mutate.is_subset_of(&parent_observe));
+        let dup_observe = GrantSet {
+            effect_kinds: vec![
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+                EffectGrant {
+                    name: "x".into(),
+                    effect_kind: EffectKind::Observe,
+                },
+            ],
+            ..ask_observe.clone()
+        };
+        assert!(dup_observe.is_subset_of(&parent_observe));
     }
 }
 

@@ -3792,6 +3792,41 @@ mod tests {
     }
 
     #[test]
+    fn conflicting_effect_annotation_cannot_bypass_approval_lane() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // F20: an `observe`-annotated effect auto-applies (never queues) — but
+        // only when the caller's grant annotations for that effect are
+        // *unanimous*. A self-contradictory grant (observe AND mutate for the
+        // same effect, i.e. malformed input) must queue for approval in BOTH
+        // JSON orders: the lane-bypass decision is a function of content, not
+        // of which annotation happens to be listed first.
+        for kinds in [
+            r#"[{"name":"send_notification","effect_kind":"observe"},{"name":"send_notification","effect_kind":"mutate"}]"#,
+            r#"[{"name":"send_notification","effect_kind":"mutate"},{"name":"send_notification","effect_kind":"observe"}]"#,
+        ] {
+            let caller = format!(
+                r#"{{"from":"gadget","principal":"lane_conflict_test","grants":{{"effects":["send_notification"],"effect_kinds":{kinds}}}}}"#
+            );
+            uk_set_caller(&caller).expect("caller json must parse");
+            // Submit under the caller's own principal: a bounded caller may
+            // read its own records (F8), so the state assertion below is about
+            // the lane verdict, not an observer denial.
+            let req = format!(
+                r#"{{"principal":"lane_conflict_test","effect":"send_notification","params":{{"to":"alice"}}}}"#
+            );
+            let (ptr, len) = json_ptr(&req);
+            let handle = uk_action_submit(ptr, len);
+            assert!(handle > 0, "expected action handle, got {handle}");
+            let record = action_get(handle);
+            assert_eq!(
+                record["state"], "pending",
+                "conflicting annotation must queue, not auto-apply: {kinds}"
+            );
+        }
+        uk_clear_caller();
+    }
+
+    #[test]
     fn action_pending_event_broadcasts_to_subscriptions() {
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
