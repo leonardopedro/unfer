@@ -3193,6 +3193,12 @@ mod tests {
 
     #[test]
     fn queue_drops_oldest_when_full() {
+        // The drop now surfaces on the owner ring (uk_owner_list), which is
+        // shared with the audit/owner suite — serialize on that lock.
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::clear_owner_log();
         let h = create_harmonic_model();
         let sub = subscribe(h);
         // Push exactly CAPACITY+1 set_prior events; the first must be dropped.
@@ -3211,6 +3217,14 @@ mod tests {
             count,
             handles::EVENT_QUEUE_CAPACITY,
             "queue must hold exactly CAPACITY events (oldest dropped)"
+        );
+
+        // The lost event is a recorded, intentional non-outcome: the operator
+        // consult must show the drop notice (not silent silence).
+        let owner = handles::list_owner_log();
+        assert!(
+            owner.iter().any(|l| l.contains("kernel.subscription") && l.contains("overran")),
+            "owner ring must record the subscription drop, got: {owner:?}"
         );
 
         uk_model_free(h);

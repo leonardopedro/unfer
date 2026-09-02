@@ -25,6 +25,11 @@ struct Subscription {
     model_handle: i64,
     query: EventQuery,
     events: VecDeque<String>,
+    /// Events dropped at queue capacity that the subscriber never saw.
+    /// Recorded where it happens so the operator consult (`uk_owner_list`)
+    /// can surface "this subscription fell behind" — a dropped event must be
+    /// a recorded, intentional non-outcome, not invisible silence.
+    dropped: u64,
 }
 
 static HANDLES: Mutex<Option<HashMap<i64, SessionEntry>>> = Mutex::new(None);
@@ -402,6 +407,22 @@ pub fn push_event(handle: i64, event: KernelEvent) {
             if sub.model_handle == handle && matches_query(&sub.query, &event) {
                 if sub.events.len() >= EVENT_QUEUE_CAPACITY {
                     sub.events.pop_front();
+                    sub.dropped += 1;
+                    // Surface the FIRST drop of a burst on the operator ring
+                    // (`uk_owner_list`): a sustained overflow would otherwise
+                    // flood the owner log with one line per lost event. The
+                    // cumulative count is included; further drops in the same
+                    // burst stay silent (the operator already knows to look).
+                    if sub.dropped == 1 {
+                        owner_log(
+                            "kernel.subscription",
+                            &format!(
+                                "model {:?}: subscription overran its {} event queue; \
+                                 events are being dropped (lost events will not be delivered)",
+                                sub.model_handle, EVENT_QUEUE_CAPACITY,
+                            ),
+                        );
+                    }
                 }
                 sub.events.push_back(event_json.clone());
             }
@@ -422,6 +443,19 @@ pub fn push_action_event(event: KernelEvent) {
             if matches_action_query(&sub.query, &event) {
                 if sub.events.len() >= EVENT_QUEUE_CAPACITY {
                     sub.events.pop_front();
+                    sub.dropped += 1;
+                    // Surface the FIRST drop of a burst (see push_event):
+                    // one operator-visible notice, not one per lost event.
+                    if sub.dropped == 1 {
+                        owner_log(
+                            "kernel.subscription",
+                            &format!(
+                                "model {:?}: approval lane overran its {} event queue; \
+                                 action events are being dropped",
+                                sub.model_handle, EVENT_QUEUE_CAPACITY,
+                            ),
+                        );
+                    }
                 }
                 sub.events.push_back(event_json.clone());
             }
@@ -487,6 +521,7 @@ pub fn create_subscription(model_handle: i64, query: EventQuery) -> Result<i64, 
             model_handle,
             query,
             events: VecDeque::new(),
+            dropped: 0,
         },
     );
     Ok(sub_handle)
