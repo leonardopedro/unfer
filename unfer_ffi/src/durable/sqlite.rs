@@ -133,6 +133,9 @@ impl DurableStore for SqliteDurableStore {
     }
 
     fn frontier(&self) -> Result<Vec<u8>, DurableError> {
+        // The frontier is the total record count (all streams), i.e. the
+        // number of writes committed so far. Rows are append-only, so `rowid`
+        // is insertion order and a fork can keep exactly the first N rows.
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM records", [], |r| r.get(0))
@@ -141,19 +144,49 @@ impl DurableStore for SqliteDurableStore {
     }
 
     fn fork_at(&self, frontier: &[u8]) -> Result<Box<dyn DurableStore>, DurableError> {
-        // A SQLite fork copies the whole database file (bounded store).
+        // A SQLite fork copies the whole database file, then truncates to the
+        // frontier: a fork keeps the first N writes (insertion order by
+        // `rowid`) and drops everything after — history up to and including
+        // the frontier, nothing later.
         let Some(dir) = &self._dir else {
             return Err(DurableError::Unsupported(
                 "fork of an in-memory sqlite store".into(),
             ));
         };
+        if frontier.len() != 8 {
+            return Err(DurableError::CorruptFrontier(
+                "sqlite frontier: expected 8-byte count".into(),
+            ));
+        }
+        let n = u64::from_le_bytes(frontier.try_into().unwrap());
+        let n = i64::try_from(n).unwrap_or(i64::MAX);
         let fork_dir = dir.join("fork");
         std::fs::create_dir_all(&fork_dir)
             .map_err(|e| DurableError::Io(format!("mkdir {}: {e}", fork_dir.display())))?;
-        std::fs::copy(dir.join("store.db"), fork_dir.join("store.db"))
-            .map_err(|e| DurableError::Io(format!("sqlite copy: {e}")))?;
-        let _ = frontier;
-        Ok(Box::new(SqliteDurableStore::open(Some(&fork_dir))?))
+        // WAL mode keeps committed rows in `store.db-wal` until a checkpoint,
+        // so copying only `store.db` would silently drop them. Copy the WAL
+        // (and the rebuildable shared-memory index) alongside; the fork's
+        // open recovers them.
+        for name in ["store.db", "store.db-wal", "store.db-shm"] {
+            let src = dir.join(name);
+            if src.exists() {
+                std::fs::copy(&src, fork_dir.join(name))
+                    .map_err(|e| DurableError::Io(format!("sqlite copy {name}: {e}")))?;
+            }
+        }
+        let fork = SqliteDurableStore::open(Some(&fork_dir))?;
+        {
+            let conn = fork.conn.lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute(
+                "DELETE FROM records WHERE rowid NOT IN \
+                 (SELECT rowid FROM records ORDER BY rowid ASC LIMIT ?1)",
+                [n],
+            )
+            .map_err(|e| DurableError::Io(format!("sqlite fork truncate: {e}")))?;
+            conn.execute_batch("COMMIT; BEGIN;")
+                .map_err(|e| DurableError::Io(format!("sqlite fork commit: {e}")))?;
+        }
+        Ok(Box::new(fork))
     }
 
     fn backend(&self) -> &'static str {

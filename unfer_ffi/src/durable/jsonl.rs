@@ -6,10 +6,15 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use unfer_protocol::durable::{DurableError, DurableStore};
 
 use super::DrainLock;
+
+/// Unique suffix per `JsonlDurableStore` instance, so two RAM-only stores in
+/// one process never share a scratch file (see `temp_dir`).
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Line-oriented durable store.
 ///
@@ -30,7 +35,17 @@ pub struct JsonlDurableStore {
     /// a complete line to a line reader) — the flag exists so the operator
     /// knows the last record of that stream may be truncated. Fail-visible
     /// rather than fail-silent.
+    ///
+    /// Only dir-backed stores are scanned: a RAM-only store's scratch files
+    /// are private (a fresh unique dir per store) and removed on drop, so no
+    /// one ever re-reads them — except via `fork_at`, which opens the fork
+    /// with a real dir, so a torn line copied into a fork *is* reported.
     snapshot_error: Option<String>,
+    /// Per-store scratch directory for in-memory streams (`dir == None`).
+    /// Unique per store so two RAM-only stores in one process cannot collide
+    /// on a shared temp file (or a shared fork target). Removed on drop;
+    /// forks (siblings under this dir) are the durable artifact and survive.
+    temp_dir: Option<PathBuf>,
 }
 
 impl JsonlDurableStore {
@@ -51,6 +66,13 @@ impl JsonlDurableStore {
             files: Mutex::new(std::collections::HashMap::new()),
             drain: DrainLock::default(),
             snapshot_error: dir.and_then(detect_torn_streams),
+            temp_dir: dir.is_none().then(|| {
+                std::env::temp_dir().join(format!(
+                    "unfer-jsonl-{}-{}",
+                    std::process::id(),
+                    NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+                ))
+            }),
         })
     }
 
@@ -69,8 +91,18 @@ impl JsonlDurableStore {
                     .map_err(|e| DurableError::Io(format!("open {}: {e}", path.display())))?
             }
             None => {
-                // In-memory fallback: an anonymous temp file so replay still works.
-                tempfile_like(stream)?
+                // In-memory fallback: this store's private scratch file so
+                // replay still works and two RAM-only stores cannot collide.
+                let td = self.temp_dir.as_ref().expect("in-memory store has a scratch dir");
+                std::fs::create_dir_all(td).map_err(|e| {
+                    DurableError::Io(format!("mkdir {}: {e}", td.display()))
+                })?;
+                let path = td.join(format!("{stream}.jsonl"));
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .map_err(|e| DurableError::Io(format!("open {}: {e}", path.display())))?
             }
         };
         files.insert(
@@ -82,13 +114,35 @@ impl JsonlDurableStore {
     }
 }
 
-fn tempfile_like(stream: &str) -> Result<std::fs::File, DurableError> {
-    let path = std::env::temp_dir().join(format!("unfer-jsonl-{}-{stream}", std::process::id()));
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| DurableError::Io(e.to_string()))
+/// Decode a JSONL frontier into per-stream byte cutoffs.
+///
+/// Encoding (opaque to callers): `[u32 BE name len][name][u64 BE byte len]`
+/// per stream, sorted by stream name for determinism. A fork replays exactly
+/// the listed streams, each truncated to its cutoff — history up to and
+/// including the frontier, never later records.
+fn decode_frontier(frontier: &[u8]) -> Result<Vec<(String, u64)>, DurableError> {
+    let mut out = Vec::new();
+    let mut rest = frontier;
+    while !rest.is_empty() {
+        if rest.len() < 4 {
+            return Err(DurableError::CorruptFrontier(
+                "jsonl frontier: truncated stream-name length".into(),
+            ));
+        }
+        let name_len = u32::from_be_bytes(rest[0..4].try_into().unwrap()) as usize;
+        rest = &rest[4..];
+        if rest.len() < name_len + 8 {
+            return Err(DurableError::CorruptFrontier(
+                "jsonl frontier: truncated stream record".into(),
+            ));
+        }
+        let name = String::from_utf8(rest[..name_len].to_vec())
+            .map_err(|e| DurableError::CorruptFrontier(format!("jsonl frontier: bad name: {e}")))?;
+        let len = u64::from_be_bytes(rest[name_len..name_len + 8].try_into().unwrap());
+        out.push((name, len));
+        rest = &rest[name_len + 8..];
+    }
+    Ok(out)
 }
 
 /// Scan `dir` for `<stream>.jsonl` files whose last byte is not a newline:
@@ -151,9 +205,11 @@ impl DurableStore for JsonlDurableStore {
     fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, DurableError> {
         let path = match &self.dir {
             Some(dir) => dir.join(format!("{stream}.jsonl")),
-            None => {
-                std::env::temp_dir().join(format!("unfer-jsonl-{}-{stream}", std::process::id()))
-            }
+            None => self
+                .temp_dir
+                .as_ref()
+                .expect("in-memory store has a scratch dir")
+                .join(format!("{stream}.jsonl")),
         };
         if !path.exists() {
             return Ok(Vec::new());
@@ -173,38 +229,79 @@ impl DurableStore for JsonlDurableStore {
     }
 
     fn frontier(&self) -> Result<Vec<u8>, DurableError> {
-        // JSONL has no version vector; the frontier is a per-stream byte length
-        // that a fork can truncate to. Opaque to callers.
+        // JSONL has no version vector; the frontier encodes each stream's
+        // current byte length, which a fork truncates to. A single per-stream
+        // map (not a sum) so a fork can cut each file at exactly its frontier
+        // length. Opaque to callers; see [`decode_frontier`].
         let files = self.files.lock().unwrap_or_else(|e| e.into_inner());
-        let mut sum = 0u64;
-        for f in files.values() {
-            sum = sum.wrapping_add(f.metadata().map(|m| m.len()).unwrap_or(0));
+        let mut streams: Vec<(&String, u64)> = files
+            .iter()
+            .filter_map(|(name, f)| f.metadata().ok().map(|m| (name, m.len())))
+            .collect();
+        streams.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = Vec::with_capacity(
+            streams.len() * (4 + 8) + streams.iter().map(|(n, _)| n.len()).sum::<usize>(),
+        );
+        for (name, len) in streams {
+            out.extend_from_slice(&(name.len() as u32).to_be_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&len.to_be_bytes());
         }
-        Ok(sum.to_le_bytes().to_vec())
+        Ok(out)
     }
 
     fn fork_at(&self, frontier: &[u8]) -> Result<Box<dyn DurableStore>, DurableError> {
-        // A JSONL fork copies every stream file (bounded; the files are small).
-        let dir = self.dir.clone().unwrap_or_else(|| {
-            std::env::temp_dir().join(format!("unfer-jsonl-fork-{}", std::process::id()))
-        });
+        // A JSONL fork replays exactly the streams recorded in the frontier,
+        // each truncated to its frontier byte length — history up to and
+        // including the frontier, and nothing later. A stream born after the
+        // frontier must not leak into the fork (so: never a blind copy of the
+        // current directory).
+        let cutoff = decode_frontier(frontier)?;
+        let dir = match &self.dir {
+            Some(dir) => dir.clone(),
+            // A RAM-only store forks into its own scratch dir, so two
+            // in-memory stores never aim at the same `fork/` target.
+            None => self
+                .temp_dir
+                .clone()
+                .expect("in-memory store has a scratch dir"),
+        };
         let fork_dir = dir.join("fork");
         std::fs::create_dir_all(&fork_dir)
             .map_err(|e| DurableError::Io(format!("mkdir {}: {e}", fork_dir.display())))?;
-        for entry in std::fs::read_dir(&dir).map_err(|e| DurableError::Io(e.to_string()))? {
-            let entry = entry.map_err(|e| DurableError::Io(e.to_string()))?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.ends_with(".jsonl") {
-                std::fs::copy(entry.path(), fork_dir.join(&*name))
-                    .map_err(|e| DurableError::Io(e.to_string()))?;
+        for (stream, len) in &cutoff {
+            let src = dir.join(format!("{stream}.jsonl"));
+            let dst = fork_dir.join(format!("{stream}.jsonl"));
+            let copied = std::fs::copy(&src, &dst)
+                .map_err(|e| DurableError::Io(format!("fork copy {stream}: {e}")))?;
+            if copied > *len {
+                // Truncate only when shrinking: growing would pad with zeros.
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&dst)
+                    .and_then(|f| f.set_len(*len))
+                    .map_err(|e| DurableError::Io(format!("fork truncate {stream}: {e}")))?;
             }
         }
-        let _ = frontier;
         Ok(Box::new(JsonlDurableStore::open(Some(&fork_dir))?))
     }
 
     fn backend(&self) -> &'static str {
         "jsonl"
+    }
+}
+
+impl Drop for JsonlDurableStore {
+    fn drop(&mut self) {
+        // RAM-only scratch files vanish with the store (the open contract
+        // says in-memory writes are dropped on exit). Forks live under this
+        // dir as `fork/` and are intentionally kept — they are the durable
+        // artifact a caller asked for.
+        if let Some(td) = &self.temp_dir {
+            let files = self.files.lock().unwrap_or_else(|e| e.into_inner());
+            for stream in files.keys() {
+                let _ = std::fs::remove_file(td.join(format!("{stream}.jsonl")));
+            }
+        }
     }
 }

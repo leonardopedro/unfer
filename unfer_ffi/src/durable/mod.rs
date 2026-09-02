@@ -288,6 +288,225 @@ mod tests {
     }
 
     #[test]
+    fn loro_fork_of_restarted_parent_is_deterministic() {
+        // A Loro fork itself is in-memory, so a “restart” of the fork is not
+        // applicable — but the fork-determinism property is: a durable
+        // frontier must remain forkable after the parent restarts, and the
+        // fork taken then must carry exactly the same history as the fork
+        // taken before the restart (same frontier → same history).
+        let scratch = Scratch::new("loro-fork-restart");
+        let store = LoroDurableStore::open(Some(&scratch.0));
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.append(streams::OWNER_LOG, b"(kernel.audit) one").unwrap();
+        store.flush().unwrap();
+        let frontier = store.frontier().unwrap();
+        // Post-frontier parent writes must never leak into either fork.
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+
+        let fork1 = store.fork_at(&frontier).unwrap();
+        let fork1_audit = fork1.replay(streams::AUDIT).unwrap();
+        let fork1_owner = fork1.replay(streams::OWNER_LOG).unwrap();
+        assert_eq!(fork1_audit, vec![b"{\"n\":1}".to_vec()]);
+        assert_eq!(fork1_owner, vec![b"(kernel.audit) one".to_vec()]);
+        drop(fork1);
+        drop(store);
+
+        // Restart: a fresh store on the same dir, then fork at the SAME
+        // (pre-restart) frontier. The fork must be byte-identical to fork1.
+        let store2 = LoroDurableStore::open(Some(&scratch.0));
+        let fork2 = store2
+            .fork_at(&frontier)
+            .expect("a durable frontier must remain forkable after restart");
+        assert_eq!(
+            fork2.replay(streams::AUDIT).unwrap(),
+            fork1_audit,
+            "restarted-parent fork must match the pre-restart fork"
+        );
+        assert_eq!(fork2.replay(streams::OWNER_LOG).unwrap(), fork1_owner);
+    }
+
+    #[test]
+    fn jsonl_fork_at_frontier_honors_byte_cutoff() {
+        let scratch = Scratch::new("jsonl-fork");
+        let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
+        // Write and flush two records, capturing the frontier after the first
+        // so the fork must cut before the second.
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.flush().unwrap();
+        let frontier = store.frontier().unwrap();
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+
+        let fork = store.fork_at(&frontier).unwrap();
+        // History up to and including the frontier: record n=2 must NOT leak.
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec()],
+            "fork must truncate to the frontier, not copy the current state"
+        );
+        // The fork diverges independently; the original is untouched.
+        fork.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        fork.flush().unwrap();
+        assert_eq!(fork.replay(streams::AUDIT).unwrap().len(), 2);
+        assert_eq!(store.replay(streams::AUDIT).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn jsonl_fork_at_unknown_frontier_fails_closed() {
+        let scratch = Scratch::new("jsonl-fork-bad");
+        let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        let err = store.fork_at(b"garbage").unwrap_err();
+        assert!(
+            matches!(err, DurableError::CorruptFrontier(_)),
+            "expected CorruptFrontier, got: {err:?}"
+        );
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_fork_at_frontier_honors_write_cutoff() {
+        let scratch = Scratch::new("sqlite-fork");
+        let store = SqliteDurableStore::open(Some(&scratch.0)).unwrap();
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.flush().unwrap();
+        let frontier = store.frontier().unwrap();
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+
+        let fork = store.fork_at(&frontier).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec()],
+            "fork must keep only the first frontier_count writes"
+        );
+        // The fork diverges independently; the original is untouched.
+        fork.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        fork.flush().unwrap();
+        assert_eq!(fork.replay(streams::AUDIT).unwrap().len(), 2);
+        assert_eq!(store.replay(streams::AUDIT).unwrap().len(), 2);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_fork_survives_restart() {
+        let scratch = Scratch::new("sqlite-fork-restart");
+        let store = SqliteDurableStore::open(Some(&scratch.0)).unwrap();
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.flush().unwrap();
+        let frontier = store.frontier().unwrap();
+        // Post-frontier parent writes must never leak into the fork.
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+
+        let fork = store.fork_at(&frontier).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec()]
+        );
+
+        // “Restart”: drop the fork and reopen it from its own directory, as a
+        // new process would. The WAL-resident committed row must come back
+        // through the copy, and the truncated cutoff must be durable.
+        drop(fork);
+        let fork = SqliteDurableStore::open(Some(&scratch.0.join("fork"))).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec()],
+            "restarted sqlite fork must hold only the frontier history"
+        );
+
+        // The fork's own writes survive its own restart too.
+        fork.append(streams::AUDIT, b"{\"n\":4}").unwrap();
+        fork.flush().unwrap();
+        drop(fork);
+        let fork = SqliteDurableStore::open(Some(&scratch.0.join("fork"))).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec(), b"{\"n\":4}".to_vec()]
+        );
+    }
+
+    #[test]
+    fn jsonl_fork_survives_restart() {
+        let scratch = Scratch::new("jsonl-fork-restart");
+        let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
+        store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
+        store.append(streams::OWNER_LOG, b"(kernel.audit) fork me").unwrap();
+        store.flush().unwrap();
+        let frontier = store.frontier().unwrap();
+        // Post-frontier parent writes must never leak into the fork.
+        store.append(streams::AUDIT, b"{\"n\":2}").unwrap();
+        store.flush().unwrap();
+
+        let fork = store.fork_at(&frontier).unwrap();
+        // The parent keeps writing after the fork; the two diverge.
+        store.append(streams::AUDIT, b"{\"n\":3}").unwrap();
+        store.flush().unwrap();
+
+        // “Restart”: the fork store is dropped and reopened from its own
+        // directory, as a new process would. The fork must still hold exactly
+        // the frontier history — the parent's later writes stay behind.
+        drop(fork);
+        let fork = JsonlDurableStore::open(Some(&scratch.0.join("fork"))).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec()],
+            "restarted fork must hold only the frontier history"
+        );
+        assert_eq!(
+            fork.replay(streams::OWNER_LOG).unwrap(),
+            vec![b"(kernel.audit) fork me".to_vec()]
+        );
+
+        // The fork's own writes survive its own restart too.
+        fork.append(streams::AUDIT, b"{\"n\":4}").unwrap();
+        fork.flush().unwrap();
+        drop(fork);
+        let fork = JsonlDurableStore::open(Some(&scratch.0.join("fork"))).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"n\":1}".to_vec(), b"{\"n\":4}".to_vec()]
+        );
+    }
+
+    #[test]
+    fn jsonl_inmemory_stores_are_isolated_and_forkable() {
+        // Two RAM-only stores in one process must not share a scratch file:
+        // each replays exactly its own records, and forking one never hits
+        // the other's data (nor a shared fork target).
+        let a = JsonlDurableStore::open(None).unwrap();
+        let b = JsonlDurableStore::open(None).unwrap();
+        a.append(streams::AUDIT, b"{\"owner\":\"a\"}").unwrap();
+        a.flush().unwrap();
+        b.append(streams::AUDIT, b"{\"owner\":\"b\"}").unwrap();
+        b.flush().unwrap();
+        assert_eq!(
+            a.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"owner\":\"a\"}".to_vec()],
+            "store a must not see store b's records"
+        );
+        assert_eq!(
+            b.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"owner\":\"b\"}".to_vec()]
+        );
+
+        // A fork of an in-memory store carries that store's frontier only.
+        let frontier = a.frontier().unwrap();
+        let fork = a.fork_at(&frontier).unwrap();
+        assert_eq!(
+            fork.replay(streams::AUDIT).unwrap(),
+            vec![b"{\"owner\":\"a\"}".to_vec()]
+        );
+        // The fork is an independent branch.
+        fork.append(streams::AUDIT, b"{\"n\":99}").unwrap();
+        fork.flush().unwrap();
+        assert_eq!(a.replay(streams::AUDIT).unwrap().len(), 1);
+        assert_eq!(fork.replay(streams::AUDIT).unwrap().len(), 2);
+    }
+
+    #[test]
     fn loro_corrupt_snapshot_recovers_visibly() {
         let scratch = Scratch::new("corrupt");
         let dir = &scratch.0;
