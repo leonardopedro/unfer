@@ -65,7 +65,22 @@ fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i6
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(val)) => val,
         Ok(Err(diag)) => fail(diag),
-        Err(_) => fail_code(Code::INTERNAL, format!("panic in {func_name}")),
+        // Record the panic PAYLOAD, not just the location: the panic message
+        // is the single most useful fact for diagnosing a kernel crash
+        // ("index out of bounds" beats "panic in uk_evolve" every time).
+        // `catch_unwind` hands it back as a Box<dyn Any>; downcast it before
+        // giving up on a generic note.
+        Err(payload) => {
+            let reason = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            fail_code(
+                Code::INTERNAL,
+                format!("panic in {func_name}: {reason}"),
+            )
+        }
     }
 }
 
@@ -934,6 +949,15 @@ pub extern "C" fn uk_blueprint_export_gadget(
 pub extern "C" fn uk_subscribe(model: i64, query_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_subscribe", || {
         let query: EventQuery = parse_json(query_json, len)?;
+        // Unknown event types are caller-recoverable: reject them up front so
+        // a typo'd type is a visible, named error instead of a subscription
+        // that silently matches nothing forever ("never dead-end the agent").
+        // BAD_JSON (1001): a query naming an unknown event type is caller
+        // error, not a kernel fault — same class as malformed input JSON.
+        if let Err(msg) = handles::validate_event_query(&query) {
+            return Err(Diagnostic::new(Code::BAD_JSON, msg, Severity::Error));
+        }
+        // Any remaining error is an invalid model handle → the standard -1004.
         handles::create_subscription(model, query).map_err(|_| bad_handle(model))
     })
 }
@@ -3055,6 +3079,26 @@ mod tests {
         assert_eq!(uk_version(), 1);
     }
 
+    /// REGRESSION: a panic inside a `uk_*` call must surface its PAYLOAD on
+    /// the error channel ("index out of bounds"), not just the location
+    /// ("panic in uk_whatever"). The panic message is the single most useful
+    /// fact for diagnosing a kernel crash — dropping it (as the old
+    /// `Err(_) => fail_code("panic in ...")` did) violates "record facts
+    /// where they happen".
+    #[test]
+    fn panic_inside_ffi_entry_records_payload() {
+        let code = ffi_entry("uk_test_panic", || -> Result<i64, Diagnostic> {
+            panic!("UK_PANIC_MARKER: index out of bounds")
+        });
+        assert_eq!(code, -(Code::INTERNAL.raw() as i64), "panic -> UK-INTERNAL");
+        let err = handles::get_last_error();
+        assert!(
+            err.contains("UK_PANIC_MARKER: index out of bounds"),
+            "payload must be recorded, got: {err}"
+        );
+        assert!(err.contains("panic in uk_test_panic"), "location too: {err}");
+    }
+
     #[test]
     fn create_free_happy_path() {
         let h = create_harmonic_model();
@@ -3226,6 +3270,32 @@ mod tests {
             owner.iter().any(|l| l.contains("kernel.subscription") && l.contains("overran")),
             "owner ring must record the subscription drop, got: {owner:?}"
         );
+
+        uk_model_free(h);
+    }
+
+    /// REGRESSION: a subscription query with an unknown event type must be a
+    /// VISIBLE error at subscribe time. Before validation, a typo (e.g.
+    /// `evovled`) created a subscription that silently matched nothing
+    /// forever — the subscriber believed it was subscribed and never learned
+    /// otherwise (dead-end).
+    #[test]
+    fn subscribe_with_unknown_type_fails_visibly() {
+        let h = create_harmonic_model();
+        assert!(h > 0);
+
+        let (ptr, len) = json_ptr(r#"{"types":["evovled"]}"#); // typo
+        let r = uk_subscribe(h, ptr, len);
+        assert!(r < 0, "unknown type must be rejected, got {r}");
+        let err = read_buf(|b, c| uk_last_error(b, c));
+        assert!(
+            err.contains("unknown event type 'evovled'") && err.contains("evolved"),
+            "error must name the bad type and the valid vocabulary: {err}"
+        );
+
+        // The valid spelling subscribes fine.
+        let (ptr2, len2) = json_ptr(r#"{"types":["evolved"]}"#);
+        assert!(uk_subscribe(h, ptr2, len2) > 0, "valid type must subscribe");
 
         uk_model_free(h);
     }

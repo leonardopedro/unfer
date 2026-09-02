@@ -463,6 +463,47 @@ pub fn push_action_event(event: KernelEvent) {
     }
 }
 
+/// The known event-type vocabulary for `EventQuery.types` — the session
+/// lane (model-scoped events) plus the approval lane (`action_*`).
+/// `matches_query`/`matches_action_query` accept only these; validating at
+/// subscribe time turns a typo (e.g. `evovled`) into an immediate, visible
+/// error instead of a subscription that silently never fires.
+const KNOWN_EVENT_TYPES: &[&str] = &[
+    "evolved",
+    "conditioned",
+    "observed",
+    "verified",
+    "simplified",
+    "logos_compiled",
+    "austral_unf",
+    "whyml_compiled",
+    "error",
+    "prior_set",
+    "hamiltonian_set",
+    "action_pending",
+    "action_resolved",
+];
+
+/// Validate a subscription query's `types` list. Every named type must be in
+/// [`KNOWN_EVENT_TYPES`]; the first unknown one is reported with the valid
+/// vocabulary so the caller can correct it (never a silently-dead
+/// subscription that matches nothing).
+pub fn validate_event_query(query: &EventQuery) -> Result<(), String> {
+    let Some(types) = &query.types else {
+        return Ok(());
+    };
+    for t in types {
+        if !KNOWN_EVENT_TYPES.contains(&t.as_str()) {
+            return Err(format!(
+                "unknown event type '{t}' in subscription query; \
+                 known types: [{}]",
+                KNOWN_EVENT_TYPES.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
     let Some(types) = &query.types else {
         return true;
@@ -503,6 +544,10 @@ fn matches_action_query(query: &EventQuery, event: &KernelEvent) -> bool {
 }
 
 pub fn create_subscription(model_handle: i64, query: EventQuery) -> Result<i64, String> {
+    // Reject unknown type names up front: a typo'd type must be a visible
+    // error at subscribe time, not a subscription that silently matches
+    // nothing forever ("never dead-end the agent").
+    validate_event_query(&query)?;
     let guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
     if guard
         .as_ref()
