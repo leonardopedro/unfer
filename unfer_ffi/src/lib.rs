@@ -923,6 +923,13 @@ pub extern "C" fn uk_blueprint_export_gadget(
 /// Register interest in a model's event stream.
 /// `query_json` is an `EventQuery` JSON (`{}` accepts all event types).
 /// Returns a positive subscription handle on success, <0 (-code) on error.
+///
+/// The per-subscription queue is BOUNDED (`EVENT_QUEUE_CAPACITY` = 64): when
+/// a matching event arrives at capacity, the OLDEST undelivered event is
+/// dropped so the queue never grows without bound. A slow consumer can
+/// therefore miss events it was subscribed to — poll promptly, or treat
+/// silence as "events may have been dropped" and re-derive state from the
+/// durable store (`uk_durable_status` reports its live status).
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_subscribe(model: i64, query_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_subscribe", || {
@@ -934,10 +941,19 @@ pub extern "C" fn uk_subscribe(model: i64, query_json: *const u8, len: i64) -> i
 /// Poll the next pending event from a subscription (returned by `uk_subscribe`).
 ///
 /// Buffer protocol: peek at the event and return its byte length; if `buf` is
-/// non-null and `cap` > 0, also pop the event and copy `min(needed, cap)` bytes.
-/// Callers should first probe with `buf=NULL, cap=0` to learn the size, allocate,
-/// then call again with a real buffer — the event stays in the queue until the
-/// second call. Returns 0 if no events are pending, <0 (-code) on error.
+/// non-null and `cap >= needed`, pop the event and copy the FULL event bytes.
+/// Callers should first probe with `buf=NULL, cap=0` to learn the size,
+/// allocate, then call again with a real buffer — the event stays in the
+/// queue until a call delivers it completely.
+///
+/// A call with a buffer SMALLER than the event (`cap < needed`) returns the
+/// needed length WITHOUT consuming: the caller can retry with a bigger
+/// buffer, and a too-small probe never truncates-and-loses the event tail
+/// (the destructive variant silently dropped the excess bytes and the next
+/// poll returned the *next* event — unrecoverable data loss).
+///
+/// Returns 0 if no events are pending, the event's byte length otherwise,
+/// <0 (-code) on error.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_poll(sub: i64, buf: *mut u8, cap: i64) -> i64 {
@@ -946,12 +962,14 @@ pub extern "C" fn uk_poll(sub: i64, buf: *mut u8, cap: i64) -> i64 {
         Some(None) => Ok(0),
         Some(Some(event_json)) => {
             let needed = event_json.len() as i64;
-            if cap > 0 && !buf.is_null() {
+            // Consume ONLY on a complete copy. `buf` non-null + `cap >= needed`
+            // means the whole event fits; anything smaller is a probe/too-small
+            // buffer and must leave the event queued (retryable, no data loss).
+            if !buf.is_null() && cap >= needed {
                 handles::poll_subscription(sub); // consume
-                let copy_len = std::cmp::min(needed, cap) as usize;
                 unsafe {
                     let src = event_json.as_bytes().as_ptr();
-                    std::ptr::copy_nonoverlapping(src, buf, copy_len);
+                    std::ptr::copy_nonoverlapping(src, buf, needed as usize);
                 }
             }
             Ok(needed)
@@ -3097,6 +3115,50 @@ mod tests {
         uk_model_free(h);
     }
 
+    /// REGRESSION: `uk_poll` must not consume an event when the caller's
+    /// buffer is too small. Before the fix, a `cap < needed` call popped the
+    /// event AND copied only the first `cap` bytes — the tail was silently
+    /// truncated and the event lost forever (the next poll returned the NEXT
+    /// event, so the loss was unrecoverable and undetectable). Now a
+    /// too-small poll returns the needed size without consuming: the caller
+    /// can retry, and the full event must be delivered intact.
+    #[test]
+    fn poll_with_too_small_buffer_keeps_event_for_retry() {
+        let h = create_harmonic_model();
+        let sub = subscribe(h);
+
+        // Enqueue two events so a premature consume would surface as the
+        // SECOND event appearing where the first should be.
+        let opts = r#"{"t":0.01}"#;
+        let (ptr, len) = json_ptr(opts);
+        assert_eq!(uk_evolve(h, ptr, len), 0);
+        assert_eq!(uk_evolve(h, ptr, len), 0);
+
+        // Learn the event size, then "poll" with a buffer one byte too small.
+        let needed = uk_poll(sub, std::ptr::null_mut(), 0);
+        assert!(needed > 1, "evolved event must be non-trivial, got {needed}");
+        let mut small = vec![0u8; (needed - 1) as usize];
+        assert_eq!(
+            uk_poll(sub, small.as_mut_ptr(), needed - 1),
+            needed,
+            "too-small poll must report the needed size"
+        );
+
+        // The event must STILL be queued: a full-size read delivers it whole.
+        let event_json = read_buf(|b, c| uk_poll(sub, b, c));
+        let event: serde_json::Value = serde_json::from_str(&event_json).unwrap();
+        assert_eq!(event["type"], "evolved", "first event must survive the too-small poll");
+        assert!(event["norm"].as_f64().unwrap() > 0.99);
+        assert!(event["solve_ms"].as_u64().is_some());
+
+        // And the second event is still queued behind it.
+        let second = read_buf(|b, c| uk_poll(sub, b, c));
+        let second: serde_json::Value = serde_json::from_str(&second).unwrap();
+        assert_eq!(second["type"], "evolved");
+
+        uk_model_free(h);
+    }
+
     #[test]
     fn condition_enqueues_event() {
         let h = create_harmonic_model();
@@ -3242,6 +3304,12 @@ mod tests {
 
     #[test]
     fn session_compact_ffi_roundtrip() {
+        // Reads the kernel-global durable slot (compact writes the compacted
+        // log through it); serialize against tests that swap that slot so a
+        // concurrently-live failing store cannot surface as a spurious -1010.
+        let _durable_lock = DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         assert!(h > 0);
 
@@ -3512,6 +3580,15 @@ mod tests {
 
     static BLUEPRINT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    // The durable store is kernel-global too (handles::DURABLE): every test
+    // that SWAPS that slot (init_durable / set_durable_for_tests) must hold
+    // this lock, and so must any test that READS durability under a swapped
+    // slot (e.g. session compact, whose -1010 surfaced the race when
+    // resolved_checkpoint_failure_surfaces_unknown_outcome's failing store was
+    // live concurrently). Acquired AFTER ACTION/AUDIT (fixed order) so a test
+    // holding the action locks never blocks on a holder of this one.
+    static DURABLE_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // The windowed meter is a process-global shared store (handles.rs). The FFI
     // tests that consume it serialize on this lock so one test's `uk_clear_meter`
     // never wipes another's window mid-run (repo convention).
@@ -3689,8 +3766,12 @@ mod tests {
         // Both locks: the reset wipes the audit/owner rings too, and those are
         // shared with the audit suite (AUDIT_AGENT_TESTS_LOCK). Acquire in a
         // fixed order (ACTION then AUDIT) to match the H4 helpers below.
+        // DURABLE last: this test swaps the kernel-global durable slot.
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Cold start: wipe in-memory rings + any prior durable store.
@@ -3842,8 +3923,14 @@ mod tests {
 
     #[test]
     fn resolved_checkpoint_failure_surfaces_unknown_outcome() {
+        // Swap of the kernel-GLOBAL durable slot: serialize with every other
+        // test that reads durability (session compact etc.) — a live failing
+        // store here surfaced as spurious -1010 in session_compact_ffi_roundtrip.
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
@@ -3939,6 +4026,9 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-audit-{}-{}",
@@ -4000,6 +4090,9 @@ mod tests {
     fn certificate_issued_is_durable_and_replayable() {
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
@@ -4071,6 +4164,9 @@ mod tests {
     fn corrupt_snapshot_surfaces_in_startup_log_status_and_consult() {
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
@@ -4163,6 +4259,9 @@ mod tests {
 
     #[test]
     fn t6_emitted_certificates_are_durably_recorded_end_to_end() {
+        let _durable_lock = DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use fock_sirk::{
             SirkOpts, certified_mass_gap, emit_gap_certificate_ndjson_with,
             solve_forward_sirk_with_opts,
