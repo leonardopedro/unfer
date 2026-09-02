@@ -1161,10 +1161,29 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
         match approved {
             None => Err(fail_action_not_found(action_handle)),
             Some(true) => {
-                // Durable resolved record (supersedes the in-flight marker).
+                // Durable resolved record (supersedes the in-flight marker). A
+                // checkpoint failure here leaves the in-flight marker durably
+                // committed with no resolved record after it — the same state
+                // a crash produces — so the outcome is unknown: mark it and
+                // refuse (UK-1010) instead of reporting a durably-resolved
+                // action the store never recorded.
                 let resolved = handles::with_action(action_handle, |r| r.clone());
-                if let Some(r) = resolved {
-                    handles::durable_append_action_resolved(&r);
+                if let Some(r) = resolved
+                    && let Err(e) = handles::durable_append_action_resolved(&r)
+                {
+                    handles::mark_unknown_outcome(action_handle);
+                    // Owner-log write-through (the `durable_append` ring
+                    // pattern): the operator ring carries the record even if
+                    // the FFI caller ignores the UK-1010 return, so the
+                    // interrupted action is discoverable after restart.
+                    handles::owner_log(
+                        "kernel.audit",
+                        &format!(
+                            "action {action_handle} resolved-record checkpoint failed; \
+                             marked UNKNOWN_OUTCOME (UK-1010): {e}"
+                        ),
+                    );
+                    return Err(Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error));
                 }
                 push_resolved(action_handle)?;
                 Ok(0)
@@ -3718,6 +3737,193 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A store whose `append` always fails — exercises the fail-closed
+    /// committed-session-event path end-to-end at the FFI (a committed
+    /// `Evolve` that cannot be durably appended must surface UK-1010, never
+    /// report success the store never recorded).
+    #[derive(Debug)]
+    struct SessionAppendFails;
+
+    impl unfer_protocol::durable::DurableStore for SessionAppendFails {
+        fn backend(&self) -> &'static str {
+            "test-failing-append"
+        }
+        fn append(
+            &self,
+            _stream: &str,
+            _record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
+            Err(unfer_protocol::durable::DurableError::Io(
+                "simulated session append failure".into(),
+            ))
+        }
+        fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
+            Ok(())
+        }
+        fn replay(
+            &self,
+            _stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+            Ok(Vec::new())
+        }
+        fn frontier(&self) -> Result<Vec<u8>, unfer_protocol::durable::DurableError> {
+            Ok(Vec::new())
+        }
+        fn fork_at(
+            &self,
+            _frontier: &[u8],
+        ) -> Result<Box<dyn unfer_protocol::durable::DurableStore>, unfer_protocol::durable::DurableError> {
+            Err(unfer_protocol::durable::DurableError::Unsupported(
+                "fork on failing-append store".into(),
+            ))
+        }
+    }
+
+    /// A durable store that fails `flush` on a specific call count, wrapping a
+    /// real backend — used to reproduce a resolved-record checkpoint failure
+    /// (the in-flight marker flushes, the resolved record does not).
+    #[derive(Debug)]
+    struct FlushFailAfterN {
+        inner: std::sync::Arc<dyn unfer_protocol::durable::DurableStore>,
+        flushes: std::sync::atomic::AtomicUsize,
+        fail_on: usize,
+    }
+
+    impl unfer_protocol::durable::DurableStore for FlushFailAfterN {
+        fn append(
+            &self,
+            stream: &str,
+            record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
+            self.inner.append(stream, record)
+        }
+
+        fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
+            let n = self
+                .flushes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            if n >= self.fail_on {
+                return Err(unfer_protocol::durable::DurableError::Io(format!(
+                    "simulated flush failure #{n}"
+                )));
+            }
+            self.inner.flush()
+        }
+
+        fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+            self.inner.replay(stream)
+        }
+
+        fn frontier(&self) -> Result<Vec<u8>, unfer_protocol::durable::DurableError> {
+            self.inner.frontier()
+        }
+
+        fn fork_at(
+            &self,
+            frontier: &[u8],
+        ) -> Result<Box<dyn unfer_protocol::durable::DurableStore>, unfer_protocol::durable::DurableError> {
+            self.inner.fork_at(frontier)
+        }
+
+        fn backend(&self) -> &'static str {
+            "test-failing"
+        }
+    }
+
+    #[test]
+    fn resolved_checkpoint_failure_surfaces_unknown_outcome() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-h4-resolved-fail-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = crate::durable::JsonlDurableStore::open(Some(&dir))
+            .expect("jsonl store open");
+        let failing = FlushFailAfterN {
+            inner: std::sync::Arc::new(real),
+            flushes: std::sync::atomic::AtomicUsize::new(0),
+            // uk_action_apply flushes 3x: checkpoint_diag (1), mark_inflight
+            // (2), resolved record (3). Failing at 3 keeps the in-flight marker
+            // durable but drops the resolved record — the crash window.
+            fail_on: 3,
+        };
+        handles::set_durable_for_tests(Some(std::sync::Arc::new(failing)));
+
+        // A pending action: the pending record writes through without flushing.
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert!(handle > 0);
+
+        // The resolved checkpoint fails: the side effect must NOT be reported
+        // as durably resolved — UK-1010, and the action marked unknown-outcome
+        // (mirroring what crash recovery would conclude from the durable
+        // stream: in-flight marker, no resolved record).
+        assert_eq!(uk_action_apply(handle), -1010);
+        assert!(handles::is_unknown_outcome(handle));
+
+        // Re-applying refuses (UK-1010) and the record surfaces the flag.
+        assert_eq!(uk_action_apply(handle), -1010);
+        let json = read_buf(|b, c| uk_action_get(handle, b, c));
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["unknown_outcome"], true);
+
+        // Owner-log write-through: the interrupted action is discoverable in
+        // the operator ring even though the FFI caller ignores the return.
+        let owner = handles::list_owner_log();
+        assert!(
+            owner
+                .iter()
+                .any(|l| l.contains("UNKNOWN_OUTCOME") && l.contains("action")),
+            "owner ring must record the unknown-outcome action, got: {owner:?}"
+        );
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_evolve_append_failure_surfaces_uk1010_at_ffi() {
+        // The full chain at the FFI boundary: uk_model_create → store_session
+        // → uk_evolve → log_then_apply → durable_append_event. A committed
+        // Evolve whose durable append fails must surface UK-1010
+        // (UNKNOWN_OUTCOME) as a negative C return — the prob_kernel unit
+        // test covers the kernel only, this pins the Diagnostic mapping
+        // end-to-end. The failing store is attached to THIS session only (via
+        // the same set_durable the kernel tests use), so the test cannot race
+        // any other test's global durable store.
+        let h = create_harmonic_model();
+        assert!(h > 0, "model create must succeed, got {h}");
+        handles::with_session_mut(h, |s| {
+            s.set_durable(Some(std::sync::Arc::new(SessionAppendFails)))
+        });
+
+        // The committed Evolve event cannot be durably appended: UK-1010,
+        // never a 0 (server-reported success the store never recorded).
+        let (ptr, len) = json_ptr(r#"{"t":0.01}"#);
+        assert_eq!(uk_evolve(h, ptr, len), -1010);
+
+        // The event stayed in the in-memory log (fold ≡ live invariant); the
+        // caller was told the durable outcome is unknown.
+        let session_len = handles::with_session(h, |s| s.event_log_len());
+        assert_eq!(session_len, Some(2), "root Create + the Evolve that failed to persist");
+
+        // A sibling without the failing store evolves fine (RAM-only) — the
+        // append failure was the cause, not the session state.
+        let h2 = create_harmonic_model();
+        assert!(h2 > 0);
+        let (ptr2, len2) = json_ptr(r#"{"t":0.01}"#);
+        assert_eq!(uk_evolve(h2, ptr2, len2), 0);
+    }
+
     #[test]
     fn audit_and_owner_log_survive_restart() {
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -4212,7 +4418,11 @@ mod tests {
 
     #[test]
     fn action_record_carries_caller_tag() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK
+        // Submits an action (kernel-global action-lane broadcast): serialize on
+        // ACTION_TESTS_LOCK too, in the fixed ACTION-then-AUDIT order, so the
+        // foreign action_pending cannot land in another test's subscription.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         uk_clear_caller();
@@ -4407,7 +4617,12 @@ mod tests {
 
     #[test]
     fn gatekeeper_approve_resolves_pending_and_lands_in_stream() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK
+        // Submits + applies actions (kernel-global action-lane broadcast):
+        // serialize on ACTION_TESTS_LOCK too, in the fixed ACTION-then-AUDIT
+        // order, so the foreign action_pending cannot land in another test's
+        // subscription.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
@@ -4471,7 +4686,11 @@ mod tests {
 
     #[test]
     fn gatekeeper_reject_keeps_pending_out_of_applied() {
-        let _lock = AUDIT_AGENT_TESTS_LOCK
+        // Submits an action (kernel-global action-lane broadcast): serialize on
+        // ACTION_TESTS_LOCK too, in the fixed ACTION-then-AUDIT order, so the
+        // foreign action_pending cannot land in another test's subscription.
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();

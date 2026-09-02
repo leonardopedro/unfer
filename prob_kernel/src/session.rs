@@ -256,15 +256,21 @@ impl Session {
     }
 
     /// H4: append a committed event to the durable `session` stream (if a
-    /// store is attached). Best-effort: a store failure is surfaced to the
-    /// owner log by the store layer; the in-memory log remains authoritative
-    /// for the live session.
-    fn durable_append_event(&self, ev: &SessionEvent) {
-        if let Some(store) = &self.durable
-            && let Ok(json) = serde_json::to_vec(ev)
-        {
-            let _ = store.append(streams::SESSION, &json);
-        }
+    /// store is attached). Fail-closed: an append (or encode) failure is
+    /// propagated so a committed event is never *silently* missing from the
+    /// durable log. The in-memory log remains authoritative for the live
+    /// session, but restart replay re-reads the store, so a dropped record
+    /// would shorten history with no one learning. The store layer has no
+    /// owner-log sink of its own — surfacing is the caller's job.
+    fn durable_append_event(&self, ev: &SessionEvent) -> Result<(), String> {
+        let Some(store) = &self.durable else {
+            return Ok(());
+        };
+        let json = serde_json::to_vec(ev)
+            .map_err(|e| format!("session event encode failed: {e}"))?;
+        store
+            .append(streams::SESSION, &json)
+            .map_err(|e| format!("session stream append failed: {e}"))
     }
 
     /// H4: the checkpoint barrier before a model-facing read. Fail-closed:
@@ -482,7 +488,14 @@ impl Session {
         self.next_seq = self.event_log.len() as u64;
         match result {
             Ok(v) => {
-                self.durable_append_event(&committed);
+                // Fail-closed: if the committed event could not be durably
+                // appended, the mutation is *not durable* — surface UK-1010
+                // instead of reporting success the store never recorded.
+                // The in-memory event must stay (folding the log must equal
+                // the live session); the caller learns the outcome is unknown
+                // until the durable record is verified.
+                self.durable_append_event(&committed)
+                    .map_err(|reason| KernelError::DurableCheckpointFailed { reason })?;
                 #[cfg(debug_assertions)]
                 self.debug_assert_reconstructable();
                 Ok(v)
@@ -1862,6 +1875,48 @@ mod tests {
     #[derive(Debug)]
     struct FailingFlushStore(MemStore);
 
+    /// A store whose `append` always fails — exercises the fail-closed
+    /// committed-event path (`durable_append_event` must propagate, never
+    /// `let _ =` silently drop).
+    #[derive(Debug)]
+    struct FailingAppendStore(MemStore);
+
+    impl unfer_protocol::durable::DurableStore for FailingAppendStore {
+        fn backend(&self) -> &'static str {
+            "mem-failing-append"
+        }
+        fn append(
+            &self,
+            _stream: &str,
+            _record: &[u8],
+        ) -> Result<(), unfer_protocol::durable::DurableError> {
+            Err(unfer_protocol::durable::DurableError::Io(
+                "simulated append failure".into(),
+            ))
+        }
+        fn flush(&self) -> Result<(), unfer_protocol::durable::DurableError> {
+            Ok(())
+        }
+        fn replay(
+            &self,
+            stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+            self.0.replay(stream)
+        }
+        fn frontier(&self) -> Result<Vec<u8>, unfer_protocol::durable::DurableError> {
+            self.0.frontier()
+        }
+        fn fork_at(
+            &self,
+            frontier: &[u8],
+        ) -> Result<
+            Box<dyn unfer_protocol::durable::DurableStore>,
+            unfer_protocol::durable::DurableError,
+        > {
+            self.0.fork_at(frontier)
+        }
+    }
+
     impl unfer_protocol::durable::DurableStore for FailingFlushStore {
         fn backend(&self) -> &'static str {
             "mem-failing"
@@ -1913,6 +1968,25 @@ mod tests {
             s.condition(&EventPredicate::Vacuum),
             Err(KernelError::DurableCheckpointFailed { .. })
         ));
+    }
+
+    #[test]
+    fn committed_event_append_failure_surfaces_uk1010() {
+        let mut s = non_qfm_session();
+        let store = std::sync::Arc::new(FailingAppendStore(MemStore::default()));
+        s.set_durable(Some(store.clone()));
+        // A committed event that cannot be durably appended must NOT report
+        // success: the mutation happened in memory but the durable log is
+        // missing the record — restart replay would be short by it.
+        let err = s.evolve(0.01).expect_err("evolve with failing append must fail");
+        assert!(
+            matches!(err, KernelError::DurableCheckpointFailed { .. }),
+            "expected DurableCheckpointFailed (→ UK-1010), got: {err:?}"
+        );
+        // And the in-memory log keeps the fold ≡ live invariant (the event
+        // stays; the caller was told the durable outcome is unknown).
+        assert_eq!(s.event_log_len(), 1 + 1, "root Create + the Evolve that failed to persist");
+        assert!(s.durable().is_some(), "store still attached");
     }
 
     #[test]

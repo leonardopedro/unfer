@@ -248,14 +248,23 @@ fn durable_append(stream: &str, record: &[u8]) {
 
 /// H4: durably append a resolved action record and checkpoint (supersedes the
 /// in-flight marker). Used by `uk_action_apply` after the effect fires.
-pub fn durable_append_action_resolved(record: &ActionRecord) {
+///
+/// Fail-closed: a checkpoint failure returns `Err` so the caller can mark the
+/// action unknown-outcome (the durable store still holds the in-flight marker
+/// with no resolved record after it — the crash window UK-1010 describes).
+pub fn durable_append_action_resolved(record: &ActionRecord) -> Result<(), String> {
     if let Ok(json) = serde_json::to_vec(&serde_json::json!({
         "id": record.id,
         "record": record,
     })) {
         durable_append(streams::ACTIONS, &json);
     }
-    let _ = checkpoint();
+    checkpoint().map_err(|e| {
+        format!(
+            "durable resolved record for action {} could not be flushed: {e}",
+            record.id
+        )
+    })
 }
 
 /// Surface a corrupt-snapshot recovery (if any) in the operator-facing owner
@@ -600,6 +609,13 @@ pub fn mark_unknown_outcome(handle: i64) {
         .unwrap_or_else(|e| e.into_inner())
         .get_or_insert_with(HashSet::new)
         .insert(handle);
+}
+
+/// Test-only: install a caller-provided durable store (e.g. a wrapper that
+/// fails `flush` to exercise the fail-closed checkpoint paths).
+#[cfg(test)]
+pub fn set_durable_for_tests(store: Option<Arc<dyn DurableStore>>) {
+    *DURABLE.lock().unwrap_or_else(|e| e.into_inner()) = store;
 }
 
 /// Test-only: wipe the in-memory rings and durable store so a test can
