@@ -393,6 +393,21 @@ pub fn set_last_result(handle: i64, json: String) {
     }
 }
 
+/// Clear the session's result slot. Every result-producing `uk_*` op calls
+/// this on entry, mirroring the error channel's fresh-per-call discipline
+/// (`ffi_entry`): the slot must describe *this* op's outcome, never a
+/// previous one. A failed op therefore leaves an EMPTY result — a visible
+/// "no result" for `uk_get_result` — instead of silently serving the
+/// previous op's JSON as if it were this op's output.
+pub fn clear_last_result(handle: i64) {
+    let mut guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut()
+        && let Some(entry) = map.get_mut(&handle)
+    {
+        entry.last_result = String::new();
+    }
+}
+
 pub fn get_last_result(handle: i64) -> Option<String> {
     let guard = HANDLES.lock().unwrap_or_else(|e| e.into_inner());
     let map = guard.as_ref()?;

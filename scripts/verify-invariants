@@ -121,6 +121,22 @@ check "S27: snapshot refuses live secrets" \
 check "S27: uk_snapshot enforces the refusal" \
     grep -q "snapshot_refuses_live_secret" "$repo_root/unfer_ffi/src/lib.rs"
 
+# --- H1.12 Result channel is fresh per call (no stale facts) ---
+# Every result-producing uk_* op clears the per-session result slot on entry,
+# mirroring the error channel's fresh-per-call discipline: a FAILED op leaves
+# uk_get_result EMPTY, never the previous op's result served as this op's
+# output. All 11 producers must carry the clear.
+check "S46: clear_last_result exists" \
+    grep -q "pub fn clear_last_result" "$repo_root/unfer_ffi/src/handles.rs"
+check "S46: every result producer clears the slot on entry" \
+    bash -c "n=\"\$(grep -c 'handles::clear_last_result(model);' \"$repo_root/unfer_ffi/src/lib.rs\")\"; test \"\$n\" -ge 11"
+
+# --- H1.13 Symbol census files present (H2: generated from the registry) ---
+check "S29: EXPECTED_SYMBOLS.txt present" \
+    test -s "$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt"
+check "S29: generated C header present" \
+    test -s "$repo_root/unfer_ffi/include/unfer_kernel.h"
+
 # --- H1.12 Symbol census files present (H2: generated from the registry) ---
 check "S29: EXPECTED_SYMBOLS.txt present" \
     test -s "$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt"

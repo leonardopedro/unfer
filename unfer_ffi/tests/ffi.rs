@@ -1376,3 +1376,41 @@ fn last_error_cleared_by_info_call() {
     assert!(uk_version() > 0);
     assert_eq!(read_error(), "", "uk_version must refresh the channel");
 }
+
+/// The RESULT channel is the error channel's mirror ("record facts where
+/// they happen"): after a FAILING op, `uk_get_result` must be EMPTY — never
+/// the previous op's result served as if it were this op's output. Every
+/// result-producing `uk_*` op clears the per-session slot on entry, so a
+/// caller that misses the return code can never act on an unrelated stale
+/// success. Regression for the sticky channel.
+#[test]
+fn failed_op_leaves_result_channel_empty() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // 1. A successful op fills the slot.
+    let (sp, sl) = json_ptr(b"let x: Int64 = 2; return (x + 3);");
+    assert_eq!(uk_austral_unf(model, sp, sl), 0, "{}", read_error());
+    let needed = uk_get_result(model, std::ptr::null_mut(), 0);
+    assert!(needed > 0, "a success must produce a result");
+
+    // 2. A FAILING op must empty it: 0 bytes, not the stale success.
+    let (sp2, sl2) = json_ptr(b"this is not austral at all !!!");
+    assert_eq!(
+        uk_austral_unf(model, sp2, sl2),
+        -(Code::AUSTRAL_UNF_FAILED.raw() as i64)
+    );
+    assert_eq!(
+        uk_get_result(model, std::ptr::null_mut(), 0),
+        0,
+        "a failed op must leave an EMPTY result channel, not the previous op's result"
+    );
+
+    // 3. The next success fills it again (fresh per call, no sticky residue).
+    let (sp3, sl3) = json_ptr(b"(x + 3)");
+    assert_eq!(uk_austral_unf(model, sp3, sl3), 0, "{}", read_error());
+    assert!(uk_get_result(model, std::ptr::null_mut(), 0) > 0);
+
+    uk_model_free(model);
+}

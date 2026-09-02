@@ -255,6 +255,10 @@ pub extern "C" fn uk_set_hamiltonian(model: i64, json: *const u8, len: i64) -> i
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_evolve", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let opts: serde_json::Value = parse_json(opts_json, len)?;
         let t = opts.get("t").and_then(|v| v.as_f64()).ok_or_else(|| {
             Diagnostic::new(
@@ -293,6 +297,10 @@ pub extern "C" fn uk_evolve(model: i64, opts_json: *const u8, len: i64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_condition", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(event_json, len)?;
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
@@ -315,6 +323,10 @@ pub extern "C" fn uk_condition(model: i64, event_json: *const u8, len: i64) -> i
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_event_probability(model: i64, event_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_event_probability", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(event_json, len)?;
         let prob = handles::with_session_mut(model, |s| s.probability(&event))
@@ -333,6 +345,10 @@ pub extern "C" fn uk_event_probability(model: i64, event_json: *const u8, len: i
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_observe(model: i64, obs_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_observe", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         handles::checkpoint_diag()?;
         let event: EventPredicate = parse_json(obs_json, len)?;
         let prior_p = handles::with_session_mut(model, |s| s.condition(&event))
@@ -368,6 +384,10 @@ pub extern "C" fn uk_proof_verify(
     spec_json_len: i64,
 ) -> i64 {
     ffi_entry("uk_proof_verify", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let export_bytes = read_bytes(export_ptr, export_len)?;
         let spec: LeanVerifySpec = if spec_json.is_null() || spec_json_len <= 0 {
             LeanVerifySpec::default()
@@ -404,6 +424,10 @@ pub extern "C" fn uk_proof_verify(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_symbolic_simplify(model: i64, spec_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_symbolic_simplify", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let spec: SymbolicSpec = parse_json(spec_json, len)?;
         let report = handles::with_session_mut(model, |s| s.symbolic_analyze(&spec))
             .ok_or_else(|| bad_handle(model))?
@@ -442,6 +466,10 @@ pub extern "C" fn uk_symbolic_simplify(model: i64, spec_json: *const u8, len: i6
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_whyml_emit(model: i64, spec_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_whyml_emit", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let spec: WhymlSpec = parse_json(spec_json, len)?;
         let report = handles::with_session(model, |s| s.whyml_emit(&spec))
             .ok_or_else(|| bad_handle(model))?
@@ -474,6 +502,10 @@ pub extern "C" fn uk_whyml_emit(model: i64, spec_json: *const u8, len: i64) -> i
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_logos_compile(model: i64, sentence_ptr: *const u8, sentence_len: i64) -> i64 {
     ffi_entry("uk_logos_compile", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let sentence = read_utf8(sentence_ptr, sentence_len)?;
         let report = handles::with_session_mut(model, |s| s.logos_compile(&sentence))
             .ok_or_else(|| bad_handle(model))?
@@ -512,6 +544,10 @@ pub extern "C" fn uk_logos_compile(model: i64, sentence_ptr: *const u8, sentence
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: i64) -> i64 {
     ffi_entry("uk_austral_unf", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let source = read_utf8(source_ptr, source_len)?;
         let report = handles::with_session(model, |s| s.austral_unf(&source))
             .ok_or_else(|| bad_handle(model))?
@@ -545,6 +581,10 @@ pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: 
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_bayesian_update", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let req: BayesianUpdateRequest = parse_json(req_json, len)?;
         // P7 P5: validate the HMC options. A leapfrog_steps=0 or
         // step_size=0 would silently produce a broken HMC chain. Surface
@@ -614,6 +654,10 @@ pub extern "C" fn uk_bayesian_update(model: i64, req_json: *const u8, len: i64) 
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_belief_propagation(model: i64, req_json: *const u8, len: i64) -> i64 {
     ffi_entry("uk_belief_propagation", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result (no stale facts).
+        handles::clear_last_result(model);
+
         let req: BeliefPropagationRequest = parse_json(req_json, len)?;
         // P8.8 (mirroring the P7.5 HMC validation): validate the BP
         // options. A `max_iter=0` or non-positive `step_size` would
@@ -659,8 +703,12 @@ pub extern "C" fn uk_belief_propagation(model: i64, req_json: *const u8, len: i6
 }
 
 /// Retrieve the JSON result of the last operation (evolve / condition /
-/// probability).  Buffer protocol: returns total bytes needed; copies
-/// `min(needed, cap)` into `buf`.  Returns <0 (-code) on error.
+/// probability / prove / simplify / whyml / logos / austral_unf / bayesian).
+/// The result slot is fresh per call: each result-producing op clears it on
+/// entry (like the error channel), so a FAILED op leaves it EMPTY — probing
+/// returns 0 bytes, never a previous op's result served as this op's output.
+/// Buffer protocol: returns total bytes needed; copies `min(needed, cap)`
+/// into `buf`.  Returns <0 (-code) on error (e.g. bad handle).
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_get_result(model: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_get_result", || match handles::get_last_result(model) {
