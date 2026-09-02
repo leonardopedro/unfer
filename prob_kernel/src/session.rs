@@ -1838,6 +1838,59 @@ mod tests {
     }
 
     #[test]
+    fn fork_after_compaction_diverges_independently() {
+        // A completed compaction bracket (CompactStart/CompactEnd carrying the
+        // folded summary) sits in the raw log at the END: forking AT the
+        // CompactEnd boundary replays the whole prefix — the bracket's summary
+        // seeds the session from the compacted state, so the fork reproduces
+        // the parent's live state. The compacted log must keep forking
+        // cleanly and stay fold ≡ live.
+        let mut s = non_qfm_session();
+        s.set_prior(&PriorSpec::Vacuum).expect("set_prior"); // seq 1 (settleable)
+        s.evolve(0.1).expect("evolve 1");
+        s.evolve(0.2).expect("evolve 2");
+        s.compact_through(1).expect("compact through SetPrior");
+        let compact_end_seq = s.event_log_len() - 1; // the CompactEnd node
+
+        // Fork at the CompactEnd boundary: same live state as the parent
+        // (the summary carries it), and the fork's log still holds the
+        // completed bracket.
+        let mut fork = s
+            .fork_at(compact_end_seq as u64)
+            .expect("fork at the CompactEnd boundary");
+        assert!(
+            (fork.t() - s.t()).abs() < 1e-12,
+            "fork at CompactEnd must reproduce the live state: fork t={}, parent t={}",
+            fork.t(),
+            s.t()
+        );
+        assert!(matches!(
+            fork.event_log().last().unwrap().spec,
+            SessionEventSpec::CompactEnd {
+                summary: Some(_),
+                ..
+            }
+        ));
+
+        // The compacted fork's log still folds ≡ live: replaying it raw
+        // reproduces the same session.
+        let replayed = Session::replay_for_test(fork.event_log());
+        assert!((replayed.t() - fork.t()).abs() < 1e-12);
+
+        // The fork diverges independently; the parent is untouched.
+        fork.evolve(0.05).expect("fork evolve");
+        assert!((fork.t() - (s.t() + 0.05)).abs() < 1e-12);
+        assert_eq!(fork.event_log_len(), s.event_log_len() + 1);
+
+        // The open-bracket record (CompactStart) is still refused as a fork
+        // boundary.
+        assert!(matches!(
+            s.fork_at((compact_end_seq - 1) as u64),
+            Err(KernelError::SessionForkRange { .. })
+        ));
+    }
+
+    #[test]
     fn ode_consult_methods() {
         // `analyze_self_adjointness` requires an OdeSystem Hamiltonian.
         let s = non_qfm_session();
