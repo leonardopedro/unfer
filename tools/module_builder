@@ -108,7 +108,11 @@ build_all() {
     ( cd "$CL_DIR" && cargo build --release --no-default-features --features "$CL_FEATURES" --bin modhost )
 
     echo ">> Building the Austral compiler"
-    ( cd "$AUSTRAL_DIR" && dune build lib/ bin/ )
+    # lib/BuiltInModules.ml is GENERATED (concat_builtins.py) and gitignored,
+    # so a fresh checkout lacks it and dune refuses the interface-only
+    # BuiltInModules module — regenerate it first (mirrors the Makefile's
+    # implicit rule for `make` / `make bridge`).
+    ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && dune build lib/ bin/ )
 }
 
 MODHOST="$CL_DIR/target/release/modhost"
