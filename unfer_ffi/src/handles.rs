@@ -1237,7 +1237,8 @@ fn vault_ring() -> std::sync::MutexGuard<'static, unfer_data::KeyRing> {
 static SKILLS: std::sync::Mutex<Option<unfer_protocol::skills::SkillRegistry>> =
     std::sync::Mutex::new(None);
 
-fn skill_registry() -> std::sync::MutexGuard<'static, Option<unfer_protocol::skills::SkillRegistry>> {
+fn skill_registry() -> std::sync::MutexGuard<'static, Option<unfer_protocol::skills::SkillRegistry>>
+{
     SKILLS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -1253,10 +1254,7 @@ pub fn skill_register(skill: unfer_protocol::skills::Skill) -> bool {
 /// Fetch a skill by id.
 pub fn skill_get(id: &str) -> Option<unfer_protocol::skills::Skill> {
     let guard = skill_registry();
-    guard
-        .as_ref()
-        .and_then(|r| r.get(id))
-        .cloned()
+    guard.as_ref().and_then(|r| r.get(id)).cloned()
 }
 
 /// List skills visible to `principal` (org-scoped + own + grant-free).
@@ -1273,10 +1271,7 @@ pub fn skill_list_visible(principal: &str) -> Vec<unfer_protocol::skills::Skill>
 #[allow(dead_code)]
 pub fn skill_promote(id: &str) -> bool {
     let mut guard = skill_registry();
-    guard
-        .as_mut()
-        .map(|r| r.promote(id))
-        .unwrap_or(false)
+    guard.as_mut().map(|r| r.promote(id)).unwrap_or(false)
 }
 
 /// Drop every skill (QA/console reset).
@@ -1370,6 +1365,43 @@ pub fn auction_apply(
     let seq = NEXT_AUCTION_SEQ.fetch_add(1, Ordering::SeqCst);
     let mut ledger = auction_ledger();
     ledger.apply_op(actor, kind, seq)
+}
+
+/// Retry-safe close (the round-20 `uk_poll`-class fix): compute the winner,
+/// serialize it, and ONLY commit the close when the caller's buffer can hold
+/// the full JSON. A probe (`buf` null / `cap <= 0`) or too-small buffer
+/// returns the needed size with the lot still OPEN — the caller retries with
+/// a bigger buffer, exactly like every sibling buffer op. Committed under one
+/// ledger lock hold so the probed size always matches the committed winner.
+/// Returns the buffer bytes on success, <0 (-code) on error.
+pub fn auction_close_json(
+    actor: &str,
+    lot_id: &unfer_protocol::AuctionId,
+    buf: *mut u8,
+    cap: i64,
+) -> Result<i64, Diagnostic> {
+    let _seq = NEXT_AUCTION_SEQ.fetch_add(1, Ordering::SeqCst);
+    let mut ledger = auction_ledger();
+    // Probe half: read-only winner computation (no mutation).
+    let winner = ledger.close_winner(actor, lot_id)?;
+    let json = serde_json::to_string(&winner).map_err(|e| {
+        Diagnostic::new(
+            unfer_protocol::Code::INTERNAL,
+            format!("serialize: {e}"),
+            unfer_protocol::Severity::Error,
+        )
+    })?;
+    let needed = json.len() as i64;
+    if buf.is_null() || cap < needed {
+        // Lot stays OPEN: the caller retries with a bigger buffer.
+        return Ok(needed);
+    }
+    // Commit half: the buffer is large enough, so close the lot now.
+    ledger.apply_close(actor, lot_id)?;
+    unsafe {
+        std::ptr::copy_nonoverlapping(json.as_ptr(), buf, json.len());
+    }
+    Ok(needed)
 }
 
 /// A JSON snapshot of one lot (or null).

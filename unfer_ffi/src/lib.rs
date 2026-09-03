@@ -79,10 +79,7 @@ fn ffi_entry(func_name: &str, f: impl FnOnce() -> Result<i64, Diagnostic>) -> i6
                 .map(|s| (*s).to_string())
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "non-string panic payload".to_string());
-            fail_code(
-                Code::INTERNAL,
-                format!("panic in {func_name}: {reason}"),
-            )
+            fail_code(Code::INTERNAL, format!("panic in {func_name}: {reason}"))
         }
     }
 }
@@ -860,19 +857,36 @@ pub extern "C" fn uk_blueprint_instantiate(cell: *const u8, len: i64) -> i64 {
 /// caller's principal as `created_by`. Re-importing identical bytes is idempotent and
 /// preserves the original minter. Buffer protocol: writes the `BlueprintRecord` JSON;
 /// returns total bytes needed, or <0 (-code) on error (UK-4100 invalid archive).
+///
+/// Retry-safe (the round-20 `uk_poll`-class fix): the registration is committed ONLY on
+/// a complete copy — a probe (`buf` null / `cap` 0) or too-small buffer returns the
+/// needed size with the registry untouched, so the caller retries with a bigger buffer.
+/// The record is computed, serialized, and committed under one registry lock hold, so
+/// the delivered JSON always matches the committed record.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // buffer protocol: copy only on a complete fit
 pub extern "C" fn uk_blueprint_import(cell: *const u8, len: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_blueprint_import", || {
         let bytes = read_bytes(cell, len)?;
         let principal = handles::current_caller().tag.principal.clone();
-        let record = unfer_data::blueprint::global_registry()
+        let mut registry = unfer_data::blueprint::global_registry()
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .register(&bytes, &principal)
+            .unwrap_or_else(|e| e.into_inner());
+        // Compute + serialize BEFORE committing: `record_for` validates the archive
+        // (so UK-4100 still surfaces on a probe) without inserting anything.
+        let record = registry
+            .record_for(&bytes, &principal)
             .map_err(|e| Diagnostic::new(Code::BLUEPRINT_INVALID, e, Severity::Error))?;
         let json = serde_json::to_string(&record)
             .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
-        Ok(write_buf(buf, cap, &json))
+        let needed = json.len() as i64;
+        if !buf.is_null() && cap >= needed {
+            registry.commit_record(&record, &bytes);
+            unsafe {
+                std::ptr::copy_nonoverlapping(json.as_bytes().as_ptr(), buf, needed as usize);
+            }
+        }
+        Ok(needed)
     })
 }
 
@@ -942,7 +956,14 @@ pub extern "C" fn uk_blueprint_cell(id: *const u8, id_len: i64, buf: *mut u8, ca
 /// instantiates its own session from the immutable template (never sharing a mutable
 /// instance). The archive must carry a session snapshot. Returns the new session handle
 /// as a JSON int. UK-4100 invalid, UK-4101 no session, UK-4102 unknown blueprint.
+///
+/// Retry-safe (the round-20 `uk_poll`-class fix): the fresh session is KEPT only on a
+/// complete copy — a probe (`buf` null / `cap` 0) or too-small buffer rolls the session
+/// back and returns the needed size, so a probe+retry spawns exactly one session, never
+/// a leaked unreachable orphan (pre-fix, every probe stored a session that the caller
+/// could never free).
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // buffer protocol: copy only on a complete fit
 pub extern "C" fn uk_blueprint_export_gadget(
     id: *const u8,
     id_len: i64,
@@ -979,10 +1000,30 @@ pub extern "C" fn uk_blueprint_export_gadget(
         let blob: SessionBlob = serde_json::from_slice(session)
             .map_err(|e| Diagnostic::new(Code::BAD_JSON, e.to_string(), Severity::Error))?;
         let session = Session::restore(blob).map_err(|e| e.to_diagnostic())?;
+        // Spawn, serialize, and keep ONLY on a complete copy. The handle is needed
+        // to serialize, so a probe/too-small buffer rolls the session back via
+        // `free_session` — the caller can probe any number of times without leaking.
         let handle = handles::store_session(session);
-        let json = serde_json::to_string(&serde_json::json!({ "handle": handle }))
-            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
-        Ok(write_buf(buf, cap, &json))
+        let json = match serde_json::to_string(&serde_json::json!({ "handle": handle })) {
+            Ok(j) => j,
+            Err(e) => {
+                handles::free_session(handle);
+                return Err(Diagnostic::new(
+                    Code::INTERNAL,
+                    e.to_string(),
+                    Severity::Error,
+                ));
+            }
+        };
+        let needed = json.len() as i64;
+        if buf.is_null() || cap < needed {
+            handles::free_session(handle);
+            return Ok(needed);
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(json.as_bytes().as_ptr(), buf, needed as usize);
+        }
+        Ok(needed)
     })
 }
 
@@ -1701,7 +1742,7 @@ pub extern "C" fn uk_posture_set(posture_ptr: *const u8, len: i64) -> i64 {
                     Code::BAD_JSON,
                     format!("unknown posture '{other}' (expect dangerous|auto|strict)"),
                     Severity::Error,
-                ))
+                ));
             }
         };
         handles::set_posture(posture);
@@ -1745,19 +1786,13 @@ pub extern "C" fn uk_skill_list(
 /// or UK-4102 BlueprintNoSession-style "not found" when absent.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn uk_skill_get(
-    id_ptr: *const u8,
-    id_len: i64,
-    buf: *mut u8,
-    cap: i64,
-) -> i64 {
+pub extern "C" fn uk_skill_get(id_ptr: *const u8, id_len: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_skill_get", || {
         let id = read_utf8(id_ptr, id_len)?;
         match handles::skill_get(&id) {
             Some(skill) => {
-                let json = serde_json::to_string(&skill).map_err(|e| {
-                    Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error)
-                })?;
+                let json = serde_json::to_string(&skill)
+                    .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
                 Ok(write_buf(buf, cap, &json))
             }
             None => Err(Diagnostic::new(
@@ -2065,7 +2100,9 @@ pub extern "C" fn uk_audit_clear() -> i64 {
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_durable_status(buf: *mut u8, cap: i64) -> i64 {
-    ffi_entry("uk_durable_status", || Ok(write_buf(buf, cap, &handles::durable_status_json())))
+    ffi_entry("uk_durable_status", || {
+        Ok(write_buf(buf, cap, &handles::durable_status_json()))
+    })
 }
 
 /// The corrupt-snapshot recovery report, if the durable store opened over an
@@ -2804,6 +2841,13 @@ pub extern "C" fn uk_auction_bid(op_json: *const u8, len: i64) -> i64 {
 /// the buffer (`{"lot_id":..,"bidder_did":..,"price_per_unit":..,"quantity":..,"total":..}`
 /// or `null` when the lot closes with no eligible bids). Returns buffer bytes
 /// on success, <0 (-code) on error.
+///
+/// Retry-safe (the round-20 `uk_poll`-class fix): the close is committed ONLY
+/// on a complete copy — a probe (`buf` null / `cap` 0) or too-small buffer
+/// returns the needed size with the lot still OPEN, so the caller retries
+/// with a bigger buffer. The winner is computed and the lot closed under one
+/// ledger lock hold, so the delivered JSON always matches the committed
+/// winner.
 #[unsafe(no_mangle)]
 pub extern "C" fn uk_auction_close(op_json: *const u8, len: i64, buf: *mut u8, cap: i64) -> i64 {
     ffi_entry("uk_auction_close", || {
@@ -2813,14 +2857,8 @@ pub extern "C" fn uk_auction_close(op_json: *const u8, len: i64, buf: *mut u8, c
             lot_id: String,
         }
         let c: CloseJson = parse_json(op_json, len)?;
-        let kind = unfer_protocol::AuctionOpKind::Close {
-            lot_id: unfer_protocol::AuctionId(parse_hex32(&c.lot_id, "lot_id")?),
-        };
-        let winner = handles::auction_apply(&c.actor, &kind)?;
-        let json = serde_json::to_string(&winner).map_err(|e| {
-            Diagnostic::new(Code::INTERNAL, format!("serialize: {e}"), Severity::Error)
-        })?;
-        Ok(write_buf(buf, cap, &json))
+        let lot_id = unfer_protocol::AuctionId(parse_hex32(&c.lot_id, "lot_id")?);
+        Ok(handles::auction_close_json(&c.actor, &lot_id, buf, cap)?)
     })
 }
 
@@ -3070,15 +3108,14 @@ mod tests {
         let (p, l) = json_ptr(low);
         assert_eq!(uk_auction_bid(p, l), -7303); // AuctionBidBelowFloor
 
-        // Close: deterministic winner is alice (6 × 500 = 3000). The close both
-        // mutates and writes, so use a single fixed-buffer call (the two-call
-        // probe/receive would apply the close twice).
+        // Close: deterministic winner is alice (6 × 500 = 3000). The close is
+        // retry-safe since round 20 (the winner is computed and the lot closed
+        // only on a complete copy), so the standard two-call buffer protocol
+        // works: probe for the size, then receive into a buffer of that size.
         let close = r#"{"actor":"did:unfer:seller","lot_id":"0101010101010101010101010101010101010101010101010101010101010101"}"#;
         let (p, l) = json_ptr(close);
-        let mut winner_buf = [0u8; 256];
-        let n = uk_auction_close(p, l, winner_buf.as_mut_ptr(), 256);
-        assert!(n > 0, "close must return the winner JSON length, got {n}");
-        let winner_json = String::from_utf8(winner_buf[..n as usize].to_vec()).unwrap();
+        let winner_json = read_buf(|b, c| uk_auction_close(p, l, b, c));
+        assert!(!winner_json.is_empty(), "close must return the winner JSON");
         let winner: serde_json::Value = serde_json::from_str(&winner_json).unwrap();
         assert_eq!(winner["bidder_did"], "did:unfer:alice");
         assert_eq!(winner["total"], 3000);
@@ -3096,6 +3133,83 @@ mod tests {
         // Bidding on the closed lot → -UK-7302.
         let (p, l) = json_ptr(bid);
         assert_eq!(uk_auction_bid(p, l), -7302); // AuctionLotClosed
+        uk_auction_clear();
+    }
+
+    /// REGRESSION (round 20): the two-call buffer protocol must be retry-safe
+    /// for `uk_auction_close`. Before the fix, the size-probe call (`buf` null,
+    /// `cap` 0) CLOSED the lot (the mutation ran before the copy), so the
+    /// second call failed with -UK-7302 and the caller never received the
+    /// winner. Now the probe returns the needed size with the lot still OPEN.
+    #[test]
+    fn auction_close_probe_keeps_lot_open_for_retry() {
+        let _lock = handles::AUCTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        uk_auction_clear();
+
+        let open = r#"{"actor":"did:unfer:seller","lot":{"lot_id":"0303030303030303030303030303030303030303030303030303030303030303","seller_did":"did:unfer:seller","asset":{"kind":"carbon_credits","amount":1000},"currency":"taler","floor":5,"opens_seq":1,"closes_seq":100}}"#;
+        let (p, l) = json_ptr(open);
+        assert_eq!(uk_auction_open(p, l), 0);
+        let bid = r#"{"actor":"did:unfer:alice","lot_id":"0303030303030303030303030303030303030303030303030303030303030303","price_per_unit":6,"quantity":500}"#;
+        let (p, l) = json_ptr(bid);
+        assert_eq!(uk_auction_bid(p, l), 0);
+
+        let close = r#"{"actor":"did:unfer:seller","lot_id":"0303030303030303030303030303030303030303030303030303030303030303"}"#;
+        let (p, l) = json_ptr(close);
+
+        // Probe: must return the needed size WITHOUT closing the lot.
+        let needed = uk_auction_close(p, l, std::ptr::null_mut(), 0);
+        assert!(
+            needed > 0,
+            "probe must return the winner size, got {needed}"
+        );
+
+        // The lot must STILL be open (the probe must not have consumed it):
+        // the standard read-buffer retry delivers the winner intact.
+        let winner_json = read_buf(|b, c| uk_auction_close(p, l, b, c));
+        let winner: serde_json::Value = serde_json::from_str(&winner_json).unwrap();
+        assert_eq!(winner["bidder_did"], "did:unfer:alice");
+        assert_eq!(winner["total"], 3000);
+
+        uk_auction_clear();
+    }
+
+    /// REGRESSION (round 20): a close with a too-small buffer must NOT close
+    /// the lot — it reports the needed size and keeps the winner deliverable
+    /// on retry (the `uk_poll` consume-only-on-complete-copy discipline).
+    #[test]
+    fn auction_close_too_small_buffer_keeps_lot_open() {
+        let _lock = handles::AUCTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        uk_auction_clear();
+
+        let open = r#"{"actor":"did:unfer:seller","lot":{"lot_id":"0404040404040404040404040404040404040404040404040404040404040404","seller_did":"did:unfer:seller","asset":{"kind":"carbon_credits","amount":1000},"currency":"taler","floor":5,"opens_seq":1,"closes_seq":100}}"#;
+        let (p, l) = json_ptr(open);
+        assert_eq!(uk_auction_open(p, l), 0);
+        let bid = r#"{"actor":"did:unfer:alice","lot_id":"0404040404040404040404040404040404040404040404040404040404040404","price_per_unit":6,"quantity":500}"#;
+        let (p, l) = json_ptr(bid);
+        assert_eq!(uk_auction_bid(p, l), 0);
+
+        let close = r#"{"actor":"did:unfer:seller","lot_id":"0404040404040404040404040404040404040404040404040404040404040404"}"#;
+        let (p, l) = json_ptr(close);
+
+        let needed = uk_auction_close(p, l, std::ptr::null_mut(), 0);
+        assert!(needed > 1, "winner JSON must be non-trivial, got {needed}");
+        let mut small = vec![0u8; (needed - 1) as usize];
+        assert_eq!(
+            uk_auction_close(p, l, small.as_mut_ptr(), needed - 1),
+            needed,
+            "too-small close must report the needed size"
+        );
+
+        // The lot must STILL be open: a full-size close delivers the winner.
+        let winner_json = read_buf(|b, c| uk_auction_close(p, l, b, c));
+        let winner: serde_json::Value = serde_json::from_str(&winner_json).unwrap();
+        assert_eq!(winner["bidder_did"], "did:unfer:alice");
+        assert_eq!(winner["total"], 3000);
+
         uk_auction_clear();
     }
 
@@ -3147,7 +3261,10 @@ mod tests {
             err.contains("UK_PANIC_MARKER: index out of bounds"),
             "payload must be recorded, got: {err}"
         );
-        assert!(err.contains("panic in uk_test_panic"), "location too: {err}");
+        assert!(
+            err.contains("panic in uk_test_panic"),
+            "location too: {err}"
+        );
     }
 
     #[test]
@@ -3231,7 +3348,10 @@ mod tests {
 
         // Learn the event size, then "poll" with a buffer one byte too small.
         let needed = uk_poll(sub, std::ptr::null_mut(), 0);
-        assert!(needed > 1, "evolved event must be non-trivial, got {needed}");
+        assert!(
+            needed > 1,
+            "evolved event must be non-trivial, got {needed}"
+        );
         let mut small = vec![0u8; (needed - 1) as usize];
         assert_eq!(
             uk_poll(sub, small.as_mut_ptr(), needed - 1),
@@ -3242,7 +3362,10 @@ mod tests {
         // The event must STILL be queued: a full-size read delivers it whole.
         let event_json = read_buf(|b, c| uk_poll(sub, b, c));
         let event: serde_json::Value = serde_json::from_str(&event_json).unwrap();
-        assert_eq!(event["type"], "evolved", "first event must survive the too-small poll");
+        assert_eq!(
+            event["type"], "evolved",
+            "first event must survive the too-small poll"
+        );
         assert!(event["norm"].as_f64().unwrap() > 0.99);
         assert!(event["solve_ms"].as_u64().is_some());
 
@@ -3318,7 +3441,9 @@ mod tests {
         // consult must show the drop notice (not silent silence).
         let owner = handles::list_owner_log();
         assert!(
-            owner.iter().any(|l| l.contains("kernel.subscription") && l.contains("overran")),
+            owner
+                .iter()
+                .any(|l| l.contains("kernel.subscription") && l.contains("overran")),
             "owner ring must record the subscription drop, got: {owner:?}"
         );
 
@@ -3408,6 +3533,14 @@ mod tests {
 
     #[test]
     fn session_fork_ffi_roundtrip() {
+        // Evolve + fork read/write the kernel-global durable slot (every
+        // session inherits `handles::durable()` at store time, and
+        // `uk_event_probability` flushes before serving). Serialize against
+        // the tests that swap that slot (e.g.
+        // resolved_checkpoint_failure_surfaces_unknown_outcome's failing
+        // store), exactly like the sibling session_compact_ffi_roundtrip — a
+        // concurrently-live failing store surfaces as a spurious -1010 here.
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         assert!(h > 0);
 
@@ -3442,9 +3575,7 @@ mod tests {
         // Reads the kernel-global durable slot (compact writes the compacted
         // log through it); serialize against tests that swap that slot so a
         // concurrently-live failing store cannot surface as a spurious -1010.
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         assert!(h > 0);
 
@@ -3622,6 +3753,162 @@ mod tests {
         uk_model_free(h);
         uk_model_free(g1);
         uk_model_free(g2);
+    }
+
+    /// REGRESSION (round-21 `uk_poll`-class fix): `uk_blueprint_import` used to
+    /// register the blueprint BEFORE copying the record JSON — a probe (`buf`
+    /// null / `cap` 0) or too-small buffer committed the registration even though
+    /// the call reported "needed size". A probe must be a read, never a mutation:
+    /// the registry stays untouched until a call that can deliver the full record.
+    #[test]
+    fn blueprint_import_probe_does_not_register() {
+        let _lock = BLUEPRINT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unfer_data::blueprint::clear_global_registry();
+        uk_clear_caller();
+
+        let h = create_harmonic_model();
+        let (vptr, vlen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, vptr, vlen), 0);
+        let cell = blueprint_cell_from_session(h);
+
+        set_caller_gadget("probe_publisher");
+        // Probe: reports the needed size, registers nothing.
+        let needed = uk_blueprint_import(cell.as_ptr(), cell.len() as i64, std::ptr::null_mut(), 0);
+        assert!(
+            needed > 0,
+            "probe must report the needed size, got {needed}"
+        );
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        assert_eq!(
+            list.as_array().map(|a| a.len()).unwrap_or(0),
+            0,
+            "a probe must not register the blueprint: {list_json}"
+        );
+
+        // Too-small non-null buffer: same contract — nothing registered, the needed
+        // size is stable (the record JSON is content-derived, so identical bytes
+        // always need the same size), and the buffer receives NO truncated prefix.
+        let mut tiny = [0xAAu8; 1];
+        let needed2 = uk_blueprint_import(cell.as_ptr(), cell.len() as i64, tiny.as_mut_ptr(), 1);
+        assert_eq!(
+            needed2, needed,
+            "too-small buffer reports the same needed size"
+        );
+        assert_eq!(
+            tiny[0], 0xAA,
+            "a too-small buffer must not receive a truncated prefix"
+        );
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 0);
+
+        // The real call registers exactly once and delivers the record.
+        let n = blueprint_import(&cell);
+        assert!(n > 0);
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 1);
+
+        uk_model_free(h);
+    }
+
+    /// REGRESSION (round-21 `uk_poll`-class fix): `uk_blueprint_export_gadget`
+    /// used to store the fresh session BEFORE copying the handle JSON — every
+    /// probe stored a session the caller could never reach or free (a leak), and
+    /// a probe+retry spawned TWO sessions. Now a probe/too-small buffer rolls the
+    /// session back, so probing is side-effect-free and a retry spawns exactly
+    /// one session, delivered completely.
+    ///
+    /// (The leak itself was verified pre-fix with a temporary single-threaded
+    /// `handles::session_count` check — see IMPROVEMENT_PLAN round 21: sessions are
+    /// shared across all test domains, so absolute counts race under the default
+    /// parallel run and are not asserted here.)
+    #[test]
+    fn blueprint_export_gadget_probe_is_retryable_and_delivers_complete_json() {
+        let _lock = BLUEPRINT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unfer_data::blueprint::clear_global_registry();
+        uk_clear_caller();
+
+        let h = create_harmonic_model();
+        let (vptr, vlen) = json_ptr(r#"{"t":0.05}"#);
+        assert_eq!(uk_evolve(h, vptr, vlen), 0);
+        let cell = blueprint_cell_from_session(h);
+        set_caller_gadget("gadget_publisher");
+        let needed = blueprint_import(&cell);
+        assert!(needed > 0);
+        let list_json = read_buf(|b, c| uk_blueprint_list(b, c));
+        let list: serde_json::Value = serde_json::from_str(&list_json).unwrap();
+        let cid = list[0]["blueprint_id"].as_str().unwrap().to_string();
+
+        // Probe: reports the needed size (and must not consume anything).
+        let n = uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, std::ptr::null_mut(), 0);
+        assert!(n > 0, "probe must report the needed size, got {n}");
+
+        // Too-small non-null buffer: reports the needed size and leaves the buffer
+        // UNTOUCHED (post-fix there is no truncated prefix — the old `write_buf`
+        // copied one byte of the handle JSON into it).
+        let mut tiny = [0xAAu8; 1];
+        let n2 = uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, tiny.as_mut_ptr(), 1);
+        assert!(
+            n2 > 0,
+            "too-small buffer must report the needed size, got {n2}"
+        );
+        assert_eq!(
+            tiny[0], 0xAA,
+            "a too-small buffer must not receive a truncated prefix"
+        );
+
+        // The real call spawns exactly ONE session (not a second orphan after the
+        // probe), delivered as a working per-user copy.
+        let out = read_raw(|b, c| uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, b, c));
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let g = v["handle"]
+            .as_i64()
+            .expect("gadget returns a session handle");
+        let (pptr, plen) = json_ptr(r#"{"kind":"vacuum"}"#);
+        assert_eq!(
+            uk_event_probability(g, pptr, plen),
+            0,
+            "spawned copy must answer"
+        );
+        let _p = read_buf(|b, c| uk_get_result(g, b, c));
+
+        // An exactly-fitting buffer delivers the COMPLETE handle JSON (never a
+        // truncated tail). The spawned handle's digit count can vary per call
+        // (handles are shared process-global), so re-probe for THIS call's size
+        // and give it headroom.
+        let need =
+            uk_blueprint_export_gadget(cid.as_ptr(), cid.len() as i64, std::ptr::null_mut(), 0);
+        assert!(need > 0);
+        let mut exact = vec![0u8; (need + 2) as usize];
+        let n3 = uk_blueprint_export_gadget(
+            cid.as_ptr(),
+            cid.len() as i64,
+            exact.as_mut_ptr(),
+            need + 2,
+        );
+        assert!(
+            n3 > 0 && n3 <= need + 2,
+            "a complete-copy buffer must hold the whole JSON, got {n3} vs cap {}",
+            need + 2
+        );
+        let v3: serde_json::Value = serde_json::from_slice(&exact[..n3 as usize]).unwrap();
+        assert!(
+            v3["handle"].as_i64().is_some() && v3["handle"].as_i64().unwrap() > 0,
+            "complete-copy buffer must carry the full handle JSON, got {v3}"
+        );
+        // That second spawn is also live and usable.
+        let g3 = v3["handle"].as_i64().unwrap();
+        assert_eq!(uk_event_probability(g3, pptr, plen), 0);
+
+        uk_model_free(h);
+        uk_model_free(g);
+        uk_model_free(g3);
     }
 
     fn export_gadget(cid: &str) -> i64 {
@@ -3941,9 +4228,7 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Cold start: wipe in-memory rings + any prior durable store.
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
@@ -4032,7 +4317,10 @@ mod tests {
         fn fork_at(
             &self,
             _frontier: &[u8],
-        ) -> Result<Box<dyn unfer_protocol::durable::DurableStore>, unfer_protocol::durable::DurableError> {
+        ) -> Result<
+            Box<dyn unfer_protocol::durable::DurableStore>,
+            unfer_protocol::durable::DurableError,
+        > {
             Err(unfer_protocol::durable::DurableError::Unsupported(
                 "fork on failing-append store".into(),
             ))
@@ -4071,7 +4359,10 @@ mod tests {
             self.inner.flush()
         }
 
-        fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
+        fn replay(
+            &self,
+            stream: &str,
+        ) -> Result<Vec<Vec<u8>>, unfer_protocol::durable::DurableError> {
             self.inner.replay(stream)
         }
 
@@ -4082,7 +4373,10 @@ mod tests {
         fn fork_at(
             &self,
             frontier: &[u8],
-        ) -> Result<Box<dyn unfer_protocol::durable::DurableStore>, unfer_protocol::durable::DurableError> {
+        ) -> Result<
+            Box<dyn unfer_protocol::durable::DurableStore>,
+            unfer_protocol::durable::DurableError,
+        > {
             self.inner.fork_at(frontier)
         }
 
@@ -4100,9 +4394,7 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-resolved-fail-{}-{}",
@@ -4113,8 +4405,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let real = crate::durable::JsonlDurableStore::open(Some(&dir))
-            .expect("jsonl store open");
+        let real = crate::durable::JsonlDurableStore::open(Some(&dir)).expect("jsonl store open");
         let failing = FlushFailAfterN {
             inner: std::sync::Arc::new(real),
             flushes: std::sync::atomic::AtomicUsize::new(0),
@@ -4180,7 +4471,11 @@ mod tests {
         // The event stayed in the in-memory log (fold ≡ live invariant); the
         // caller was told the durable outcome is unknown.
         let session_len = handles::with_session(h, |s| s.event_log_len());
-        assert_eq!(session_len, Some(2), "root Create + the Evolve that failed to persist");
+        assert_eq!(
+            session_len,
+            Some(2),
+            "root Create + the Evolve that failed to persist"
+        );
 
         // A sibling without the failing store evolves fine (RAM-only) — the
         // append failure was the cause, not the session state.
@@ -4196,9 +4491,7 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-audit-{}-{}",
@@ -4262,9 +4555,7 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-cert-{}-{}",
@@ -4336,9 +4627,7 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-snaperr-{}-{}",
@@ -4351,8 +4640,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         // Simulate the torn write: garbage replaces the snapshot on disk.
-        std::fs::write(dir.join("snapshot.bin"), b"\x00garbage: not a loro snapshot")
-            .unwrap();
+        std::fs::write(
+            dir.join("snapshot.bin"),
+            b"\x00garbage: not a loro snapshot",
+        )
+        .unwrap();
 
         // "Restart" over the corrupt file: init succeeds (fail-visible, not
         // fail-closed) and the recovery must be reportable.
@@ -4360,7 +4652,10 @@ mod tests {
             .expect("open must not fail on a corrupt snapshot");
         let reported = handles::report_snapshot_load_error();
         assert!(
-            reported.as_deref().unwrap_or_default().contains("snapshot import failed"),
+            reported
+                .as_deref()
+                .unwrap_or_default()
+                .contains("snapshot import failed"),
             "the corruption must be reported: {reported:?}"
         );
 
@@ -4429,20 +4724,17 @@ mod tests {
 
     #[test]
     fn t6_emitted_certificates_are_durably_recorded_end_to_end() {
-        let _durable_lock = DURABLE_TESTS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use fock_sirk::auto::shifts_for_range;
+        use fock_sirk::device::best_device;
         use fock_sirk::{
             SirkOpts, certified_mass_gap, emit_gap_certificate_ndjson_with,
             solve_forward_sirk_with_opts,
         };
-        use fock_sirk::auto::shifts_for_range;
-        use fock_sirk::device::best_device;
         use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, yang_mills_lattice};
 
         fn empty_vacuum() -> QuantumState {
-            QuantumState::vacuum()
-                .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
         }
         fn one_flux_on_link0() -> QuantumState {
             let mut inner = InnerBosonicState::vacuum();
@@ -4514,8 +4806,15 @@ mod tests {
         });
 
         // Three lines: even sector, odd sector, assembly; seqs 1,2,3.
-        assert_eq!(kinds, vec!["ritz_certificate", "ritz_certificate", "certified_mass_gap"]);
-        assert_eq!(seqs, vec![1, 2, 3], "each certificate gets a fresh sequence number");
+        assert_eq!(
+            kinds,
+            vec!["ritz_certificate", "ritz_certificate", "certified_mass_gap"]
+        );
+        assert_eq!(
+            seqs,
+            vec![1, 2, 3],
+            "each certificate gets a fresh sequence number"
+        );
 
         // Live status agrees: certificates stream length 3.
         let status: serde_json::Value =
@@ -4535,8 +4834,7 @@ mod tests {
             let line: serde_json::Value = serde_json::from_slice(rec).unwrap();
             assert_eq!(line["kind"], "certificate-issued");
             assert_eq!(
-                line["record"]["kind"],
-                kinds[i],
+                line["record"]["kind"], kinds[i],
                 "record {i} must be the emitted {}",
                 kinds[i]
             );
@@ -5267,7 +5565,14 @@ mod tests {
         assert_eq!(uk_skill_register(p, l), 0, "register");
 
         // get returns the skill.
-        let got = read_buf(|b, c| uk_skill_get("acme/carbon-audit".as_ptr(), "acme/carbon-audit".len() as i64, b, c));
+        let got = read_buf(|b, c| {
+            uk_skill_get(
+                "acme/carbon-audit".as_ptr(),
+                "acme/carbon-audit".len() as i64,
+                b,
+                c,
+            )
+        });
         let v: serde_json::Value = serde_json::from_str(&got).unwrap();
         assert_eq!(v["id"], "acme/carbon-audit");
         assert_eq!(v["grants"][0], "uk_cert_transfer");
@@ -5275,7 +5580,12 @@ mod tests {
         // list visible to a caller holding nothing sees the org skill.
         let list = read_buf(|b, c| uk_skill_list("alice".as_ptr(), 4, b, c));
         let arr: serde_json::Value = serde_json::from_str(&list).unwrap();
-        assert!(arr.as_array().unwrap().iter().any(|s| s["id"] == "acme/carbon-audit"));
+        assert!(
+            arr.as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["id"] == "acme/carbon-audit")
+        );
 
         // get on a missing skill → UK-4102 (BlueprintNotFound family).
         assert!(
@@ -5296,7 +5606,9 @@ mod tests {
         let (p, l) = json_ptr(pack);
         assert_eq!(uk_skill_pack_import(p, l), 0, "pack import");
 
-        let got = read_buf(|b, c| uk_skill_get("acme/fetcher".as_ptr(), "acme/fetcher".len() as i64, b, c));
+        let got = read_buf(|b, c| {
+            uk_skill_get("acme/fetcher".as_ptr(), "acme/fetcher".len() as i64, b, c)
+        });
         let v: serde_json::Value = serde_json::from_str(&got).unwrap();
         assert!(v["pack"].as_str().unwrap().contains("git.example"));
         assert_eq!(v["grants"][0], "uk_fetch");

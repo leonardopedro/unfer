@@ -133,8 +133,19 @@ impl BlueprintRegistry {
     ///
     /// Re-importing the same bytes (same CID) is idempotent and returns the *existing*
     /// record unchanged (blueprints are immutable — nothing is re-editable). Any other
-    /// cell yields a new immutable record. Returns the record + whether it was new.
+    /// cell yields a new immutable record.
     pub fn register(&mut self, cell: &[u8], created_by: &str) -> Result<BlueprintRecord, String> {
+        let record = self.record_for(cell, created_by)?;
+        self.commit_record(&record, cell);
+        Ok(record)
+    }
+
+    /// Compute the record that registering `cell` would produce, WITHOUT mutating.
+    /// Mirrors `register`'s idempotency: identical bytes yield the existing record
+    /// (first mint preserved), any other cell yields a fresh record. The FFI uses
+    /// this so a buffer probe or too-small buffer can learn the record and its size
+    /// without committing a registration ("consume only on a complete copy").
+    pub fn record_for(&self, cell: &[u8], created_by: &str) -> Result<BlueprintRecord, String> {
         let stored = store_cell(cell);
         let cid = stored.cid.clone();
         if let Some(existing) = self.records.get(&cid) {
@@ -144,17 +155,25 @@ impl BlueprintRegistry {
         }
         let parsed = unfer_protocol::Cell::parse(cell).map_err(|e| e.to_string())?;
         let metadata = parsed.metadata();
-        let record = BlueprintRecord {
+        Ok(BlueprintRecord {
             blueprint_id: cid.clone(),
             name: metadata.name.clone(),
             cell_cid: cid.clone(),
             manifest_json: serde_json::to_string(metadata).map_err(|e| e.to_string())?,
             immutable_blueprint_id: cid.clone(),
             created_by: created_by.to_string(),
-        };
-        self.records.insert(cid.clone(), record.clone());
-        self.cells.insert(cid, cell.to_vec());
-        Ok(record)
+        })
+    }
+
+    /// Commit a record previously computed by [`record_for`]: make the cell
+    /// addressable and the record visible. Idempotent — re-committing the same
+    /// record is a no-op (the first mint is preserved).
+    pub fn commit_record(&mut self, record: &BlueprintRecord, cell: &[u8]) {
+        let cid = record.blueprint_id.clone();
+        self.records
+            .entry(cid.clone())
+            .or_insert_with(|| record.clone());
+        self.cells.entry(cid).or_insert_with(|| cell.to_vec());
     }
 
     pub fn get(&self, blueprint_id: &str) -> Option<&BlueprintRecord> {

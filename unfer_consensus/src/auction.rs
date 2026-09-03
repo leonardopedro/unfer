@@ -216,15 +216,18 @@ impl AuctionLedger {
         Ok(())
     }
 
-    /// Close a lot and compute the deterministic winner: highest `price_per_unit`
-    /// wins, ties break to the earliest `seq`. The lot is always closed; no
-    /// eligible bids yield `Ok(None)`.
-    fn apply_close(
-        &mut self,
+    /// Compute the deterministic close winner WITHOUT closing the lot
+    /// (read-only; same validation as `apply_close`). This is the probe half
+    /// of a close: the FFI serializes the winner and only commits the
+    /// mutation (`apply_close`) when the caller's buffer can hold the full
+    /// JSON, so a too-small buffer must not consume the op (the round-20
+    /// retry-safe buffer discipline — the `uk_poll` class).
+    pub fn close_winner(
+        &self,
         actor: &str,
         lot_id: &AuctionId,
     ) -> Result<Option<AuctionWinner>, Diagnostic> {
-        let state = match self.lots.get_mut(&lot_id.0) {
+        let state = match self.lots.get(&lot_id.0) {
             Some(s) => s,
             None => {
                 return Err(Diagnostic::new(
@@ -248,7 +251,7 @@ impl AuctionLedger {
                 Severity::Error,
             ));
         }
-        let winner = state
+        Ok(state
             .bids
             .iter()
             .max_by(|a, b| {
@@ -263,7 +266,25 @@ impl AuctionLedger {
                 price_per_unit: winner.price_per_unit,
                 quantity: winner.quantity,
                 total: winner.price_per_unit.saturating_mul(winner.quantity),
-            });
+            }))
+    }
+
+    /// Close a lot and compute the deterministic winner: highest `price_per_unit`
+    /// wins, ties break to the earliest `seq`. The lot is always closed; no
+    /// eligible bids yield `Ok(None)`. The winner computation is shared with
+    /// the read-only `close_winner` (the commit half of the pair). Public so
+    /// the FFI can commit a close under the same ledger lock hold as the
+    /// size probe (`auction_close_json`).
+    pub fn apply_close(
+        &mut self,
+        actor: &str,
+        lot_id: &AuctionId,
+    ) -> Result<Option<AuctionWinner>, Diagnostic> {
+        let winner = self.close_winner(actor, lot_id)?;
+        let state = self
+            .lots
+            .get_mut(&lot_id.0)
+            .expect("close_winner just validated the lot exists");
         state.closed = true;
         state.winner = winner.clone();
         Ok(winner)
