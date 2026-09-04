@@ -12,6 +12,10 @@
 # Expects the sibling layout:
 #   $ROOT/unfer/        (this repo)
 #   $ROOT/australVM/    (compiler + CPS-JIT bridge)
+#
+# Local iteration: set MODULE_BUILDER_SKIP_BUILD=1 to skip the cargo /
+# dune builds and run straight against prebuilt artifacts (build them
+# once first, e.g. via `nix develop australVM` for the OCaml side).
 
 set -euo pipefail
 
@@ -100,6 +104,10 @@ fi
 
 # ── Common build steps ───────────────────────────────────────────
 build_all() {
+    if [ "${MODULE_BUILDER_SKIP_BUILD:-0}" = "1" ]; then
+        echo ">> Skipping builds (MODULE_BUILDER_SKIP_BUILD=1) — using prebuilt artifacts"
+        return
+    fi
     echo ">> Building unfer kernel FFI${FFI_FEATURES:+ ($FFI_FEATURES)}"
     ( cd "$UNFER_DIR" && cargo build --release -p unfer_ffi $FFI_FEATURES )
 
@@ -113,15 +121,22 @@ build_all() {
     # BuiltInModules module — regenerate it first (mirrors the Makefile's
     # implicit rule for `make` / `make bridge`).
     #
-    # `dune` lives in the opam switch's bin dir, which setup-ocaml does not
-    # add to PATH on CI (only `opam` itself is). Resolve it via `opam exec`
-    # when it isn't directly callable.
+    # `dune` may not be directly callable depending on the environment:
+    #   - CI: setup-ocaml v3 adds only `opam` to PATH (not the switch bin),
+    #     so resolve via `opam exec`.
+    #   - A dev box with nix: the australVM flake's devShell provides dune
+    #     (and python311) — run the whole OCaml step inside `nix develop`.
     if command -v dune >/dev/null 2>&1; then
-        DUNE=dune
+        ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && dune build lib/ bin/ )
+    elif command -v opam >/dev/null 2>&1; then
+        ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && opam exec -- dune build lib/ bin/ )
+    elif command -v nix >/dev/null 2>&1 && [ -f "$AUSTRAL_DIR/flake.nix" ]; then
+        ( cd "$AUSTRAL_DIR" && nix develop -c bash -c 'python3 concat_builtins.py && dune build lib/ bin/' )
     else
-        DUNE="opam exec -- dune"
+        echo "ERROR: no dune / opam / nix found — cannot build the Austral compiler" >&2
+        echo "  (CI: opam; dev boxes: bare dune or the australVM nix flake)" >&2
+        exit 1
     fi
-    ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && $DUNE build lib/ bin/ )
 }
 
 MODHOST="$CL_DIR/target/release/modhost"
