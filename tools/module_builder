@@ -165,6 +165,15 @@ run() {
         echo "PASS: $MODULE_NAME JIT execution succeeded."
     else
         echo "FAIL: expected JIT execution (Execution result: positive)." >&2
+        # Surface the actual compile output as a GitHub annotation (CI), so
+        # the reason is visible on the run without admin log access. Each
+        # line becomes one ::error:: annotation line; harmless locally where
+        # GITHUB_ACTIONS is unset.
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo "$JIT_OUT" | tail -40 | while IFS= read -r line; do
+                [ -n "$line" ] && echo "::error file=$MODULE_NAME::JIT: $line"
+            done
+        fi
         exit 1
     fi
 
@@ -174,6 +183,7 @@ run() {
         echo "PASS: granted manifest authorizes $DENY_SYM."
     else
         echo "FAIL: full manifest should authorize $DENY_SYM." >&2
+        [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error file=$MODULE_NAME::modhost authorize (full manifest, $DENY_SYM) failed: $("$MODHOST" authorize "$MODULE_TOML" "$MODULE_NAME" "$DENY_SYM" 2>&1 | tail -5 | tr '\n' ' ')"
         exit 1
     fi
 
@@ -183,6 +193,7 @@ run() {
     grep -v "$DENY_SYM" "$MODULE_TOML" > "$STRIPPED"
     if "$MODHOST" authorize "$STRIPPED" "$MODULE_NAME" "$DENY_SYM" 2>/dev/null; then
         echo "FAIL: stripped manifest must DENY $DENY_SYM." >&2
+        [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error file=$MODULE_NAME::modhost authorize (stripped manifest, $DENY_SYM) unexpectedly ALLOWED"
         exit 1
     else
         echo "PASS: revoking $DENY_SYM denies with UK-4001."
