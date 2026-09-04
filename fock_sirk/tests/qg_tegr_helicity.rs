@@ -43,7 +43,7 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, Operator, QuantumState, qg_tegr_hamiltonian,
 };
@@ -199,8 +199,6 @@ fn qg_tegr_flow_conserves_norm_energy() {
             (e_t - e0).abs() < 1e-7,
             "t = {t}: ⟨H⟩ = {e_t}, must stay {e0}"
         );
-        eprintln!(
-            "qg_tegr_flow: t = {t}, ‖ψ‖ = {norm:.12}, ⟨H⟩ = {e_t:.6} (initial {e0:.6})"
-        );
+        eprintln!("qg_tegr_flow: t = {t}, ‖ψ‖ = {norm:.12}, ⟨H⟩ = {e_t:.6} (initial {e0:.6})");
     }
 }

@@ -55,7 +55,10 @@ fn qg_hawking_temperature_solar_mass() {
     let t_h = HBAR * C.powi(3) / (8.0 * std::f64::consts::PI * G * M_SUN * KB);
     let expected = 6.17e-8; // K
     let rel = (t_h - expected).abs() / expected;
-    assert!(rel < 1e-2, "T_H = {t_h:.6e} K, expected {expected:.6e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-2,
+        "T_H = {t_h:.6e} K, expected {expected:.6e} (rel {rel:.2e})"
+    );
     // Inverse scaling: T_H ∝ 1/M — a 10 M_☉ hole is 10× colder.
     let t_h10 = HBAR * C.powi(3) / (8.0 * std::f64::consts::PI * G * 10.0 * M_SUN * KB);
     assert!((t_h10 - t_h / 10.0).abs() / (t_h / 10.0) < 1e-12);
@@ -64,13 +67,14 @@ fn qg_hawking_temperature_solar_mass() {
 #[test]
 fn qg_black_hole_evaporation_time_and_m3_scaling() {
     // τ = 5120πG²M³/(ℏc⁴)
-    let tau = |m: f64| {
-        5120.0 * std::f64::consts::PI * G * G * m.powi(3) / (HBAR * C.powi(4))
-    };
+    let tau = |m: f64| 5120.0 * std::f64::consts::PI * G * G * m.powi(3) / (HBAR * C.powi(4));
     let tau_sun = tau(M_SUN);
     let expected = 6.6e74; // s ≈ 2.1e67 yr
     let rel = (tau_sun - expected).abs() / expected;
-    assert!(rel < 5e-2, "τ = {tau_sun:.3e} s, expected {expected:.2e} (rel {rel:.2e})");
+    assert!(
+        rel < 5e-2,
+        "τ = {tau_sun:.3e} s, expected {expected:.2e} (rel {rel:.2e})"
+    );
     // Exact M³ scaling: doubling the mass ×8 the lifetime.
     assert!((tau(2.0 * M_SUN) / tau_sun - 8.0).abs() < 1e-9);
 }
@@ -100,18 +104,25 @@ fn qg_geodesic_constants_photon_sphere_and_isco() {
     let r_s = r_schw(M_SUN);
     let r_ph = 3.0 * G * M_SUN / (C * C);
     let r_isco = 6.0 * G * M_SUN / (C * C);
-    assert!((r_ph / r_s - 1.5).abs() < 1e-12, "r_ph = {r_ph}, r_s = {r_s}");
-    assert!((r_isco / r_s - 3.0).abs() < 1e-12, "ISCO = {r_isco}, r_s = {r_s}");
+    assert!(
+        (r_ph / r_s - 1.5).abs() < 1e-12,
+        "r_ph = {r_ph}, r_s = {r_s}"
+    );
+    assert!(
+        (r_isco / r_s - 3.0).abs() < 1e-12,
+        "ISCO = {r_isco}, r_s = {r_s}"
+    );
     // r_s for the Sun ≈ 2953 m.
-    assert!((r_s - 2953.0).abs() / 2953.0 < 1e-3, "r_s(M_☉) = {r_s:.1} m");
+    assert!(
+        (r_s - 2953.0).abs() / 2953.0 < 1e-3,
+        "r_s(M_☉) = {r_s:.1} m"
+    );
 }
 
 #[test]
 fn qg_gw_chirp_mass_and_f11_3_scaling() {
     // Chirp mass: M_c = (m₁m₂)^{3/5}/(m₁+m₂)^{1/5}.
-    let chirp = |m1: f64, m2: f64| {
-        (m1 * m2).powf(0.6) / (m1 + m2).powf(0.2)
-    };
+    let chirp = |m1: f64, m2: f64| (m1 * m2).powf(0.6) / (m1 + m2).powf(0.2);
     // GW150914: 36 + 29 M_☉ → M_c ≈ 28.3 M_☉ (LIGO).
     let m_c = chirp(36.0, 29.0);
     assert!(
@@ -120,7 +131,10 @@ fn qg_gw_chirp_mass_and_f11_3_scaling() {
     );
     // Quadrupole: ḟ ∝ M_c^{5/3} f^{11/3} → doubling f multiplies ḟ by 2^{11/3} ≈ 12.7.
     let fdot_ratio = 2f64.powf(11.0 / 3.0);
-    assert!((fdot_ratio - 12.699).abs() < 1e-3, "2^{{11/3}} = {fdot_ratio}");
+    assert!(
+        (fdot_ratio - 12.699).abs() < 1e-3,
+        "2^{{11/3}} = {fdot_ratio}"
+    );
     // Chirp mass enters ḟ with exponent 5/3: doubling M_c → ×2^{5/3} ≈ 3.17.
     let mc_ratio = 2f64.powf(5.0 / 3.0);
     assert!((mc_ratio - 3.175).abs() < 1e-3);
@@ -156,10 +170,7 @@ fn qg_peters_merger_time_a4_scaling() {
     // lengthens the inspiral ×16.
     let c5_g3 = C.powi(5) / G.powi(3);
     let m_ns = 1.4 * M_SUN; // 1.4 M_☉ neutron star
-    let t_merge = |a: f64| {
-        (5.0 / 256.0) * c5_g3 * a.powi(4)
-            / (m_ns * m_ns * (2.0 * m_ns))
-    };
+    let t_merge = |a: f64| (5.0 / 256.0) * c5_g3 * a.powi(4) / (m_ns * m_ns * (2.0 * m_ns));
     let a = 3.0e9; // m
     let t = t_merge(a);
     // Order of magnitude: ≈ 3.0e17 s (≈ 9.5 Gyr) for two 1.4 M_☉ stars at
@@ -193,5 +204,8 @@ fn qg_bekenstein_bound_saturated_by_schwarzschild() {
     // A non-BH system (say a 1 m sphere of 1 kg) sits far below the bound.
     let r = 1.0;
     let bound_1m = 2.0 * std::f64::consts::PI * KB * r * (m * C * C) / (HBAR * C);
-    assert!(bound_1m > s_bh * 1e20, "1 m sphere bound {bound_1m} ≫ S_BH {s_bh}");
+    assert!(
+        bound_1m > s_bh * 1e20,
+        "1 m sphere bound {bound_1m} ≫ S_BH {s_bh}"
+    );
 }

@@ -102,24 +102,21 @@ fn bos_state(mode: u32, count: u32) -> QuantumState {
 fn ghost_state(bosonic: InnerBosonicState, ghost_mode: u32) -> QuantumState {
     QuantumState::vacuum()
         .apply(&Operator::OuterBosonCreate(bosonic))
-        .apply(&Operator::OuterFermionCreate(nested_fock_algebra::InnerFermionicState {
-            modes: std::collections::BTreeSet::from([ghost_mode]),
-        }))
+        .apply(&Operator::OuterFermionCreate(
+            nested_fock_algebra::InnerFermionicState {
+                modes: std::collections::BTreeSet::from([ghost_mode]),
+            },
+        ))
 }
 
 /// The field operator `φ_m = a†_m + a_m` terms: `(c, op)` pairs.
 fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
-    ]
-}
-
-/// The momentum operator `π_m = i(a†_m − a_m)` terms.
-fn momentum_ops(mode: u32) -> Vec<(Complex64, Operator)> {
-    vec![
-        (Complex64::i(), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(0.0, -1.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(1.0, 0.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -147,7 +144,10 @@ fn momentum_expect(psi: &QuantumState, mode: u32) -> f64 {
     let h = Hamiltonian {
         terms: vec![
             (Complex64::i(), vec![Operator::InnerBosonCreate(mode)]),
-            (Complex64::new(0.0, -1.0), vec![Operator::InnerBosonAnnihilate(mode)]),
+            (
+                Complex64::new(0.0, -1.0),
+                vec![Operator::InnerBosonAnnihilate(mode)],
+            ),
         ],
     };
     let num = QuantumState::inner_product(psi, &h.apply(psi)).re;
@@ -214,7 +214,8 @@ fn product_state(parts: &[(u32, f64)]) -> QuantumState {
         }
         if !used {
             psi.scale_and_add(
-                &QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum())),
+                &QuantumState::vacuum()
+                    .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum())),
                 Complex64::new(1.0, 0.0),
             );
         } else {
@@ -264,7 +265,7 @@ fn hermite(n: usize, x: f64) -> f64 {
 /// (the value genuinely evolves — the massive Klein–Gordon oscillator).  By
 /// Ehrenfest, `d⟨φ_0⟩/dt = m⟨π_0⟩`.
 fn fiber_1d(m: f64) -> Hamiltonian {
-    let mut terms = vec![
+    let terms = vec![
         (
             Complex64::new(m, 0.0),
             vec![
@@ -275,10 +276,7 @@ fn fiber_1d(m: f64) -> Hamiltonian {
         // ½g_0² on mode 2, normal-ordered (⟨0|½g²|0⟩ = 0): ½a†² + a†a + ½a²
         (
             Complex64::new(0.5, 0.0),
-            vec![
-                Operator::InnerBosonCreate(2),
-                Operator::InnerBosonCreate(2),
-            ],
+            vec![Operator::InnerBosonCreate(2), Operator::InnerBosonCreate(2)],
         ),
         (
             Complex64::new(1.0, 0.0),
@@ -343,10 +341,34 @@ fn fiber_multi(m: f64) -> Hamiltonian {
 fn brst_1d() -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(2), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(2), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1), Operator::InnerFermionAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(2),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(2),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
         ],
     }
 }
@@ -362,19 +384,31 @@ fn brst_multi() -> Hamiltonian {
         let coeff = -2.0 * (m as f64 + 1.0);
         terms.push((
             Complex64::new(1.0, 0.0),
-            vec![Operator::InnerBosonCreate(gm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonCreate(gm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(1.0, 0.0),
-            vec![Operator::InnerBosonAnnihilate(gm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonAnnihilate(gm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(coeff, 0.0),
-            vec![Operator::InnerBosonCreate(pm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonCreate(pm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(coeff, 0.0),
-            vec![Operator::InnerBosonAnnihilate(pm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonAnnihilate(pm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
     }
     Hamiltonian { terms }
@@ -385,10 +419,22 @@ fn brst_multi() -> Hamiltonian {
 fn constraint_1d() -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(2)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(2)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(2)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(2)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonCreate(1)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(1)],
+            ),
         ],
     }
 }
@@ -454,12 +500,19 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
 
     // ── Physical initial wave-function (gauge condition by construction):
     // ⟨φ_0⟩ = 1, ⟨φ_1⟩ = 1/3, ⟨g_0⟩ = 2/3 = 2⟨φ_1⟩.
-    let psi0 = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+    let psi0 = normalize(&product_state(&[
+        (0, 1.0),
+        (1, amp(1.0 / 3.0)),
+        (2, amp(2.0 / 3.0)),
+    ]));
     let u0_0 = field_expect(&psi0, 0);
     let u1_0 = field_expect(&psi0, 1);
     let g0_0 = field_expect(&psi0, 2);
     assert!((u0_0 - 1.0).abs() < 1e-9, "⟨φ_0⟩ = {u0_0} must be 1");
-    assert!((u1_0 - 1.0 / 3.0).abs() < 1e-9, "⟨φ_1⟩ = {u1_0} must be 1/3");
+    assert!(
+        (u1_0 - 1.0 / 3.0).abs() < 1e-9,
+        "⟨φ_1⟩ = {u1_0} must be 1/3"
+    );
     assert!(
         (g0_0 - 2.0 * u1_0).abs() < 1e-9,
         "gauge condition by construction: ⟨g_0⟩ = {g0_0} = 2⟨φ_1⟩ = {}",
@@ -498,7 +551,11 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
     let mut bare_traj = Vec::new();
     let mut proj_traj = Vec::new();
     for (label, use_brst) in [("bare flow", None), ("BRST-projected flow", Some(&brst))] {
-        let mut psi = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+        let mut psi = normalize(&product_state(&[
+            (0, 1.0),
+            (1, amp(1.0 / 3.0)),
+            (2, amp(2.0 / 3.0)),
+        ]));
         let e0 = energy_expect(&psi, &h);
         let mut t = 0.0;
         let mut traj = Vec::new();
@@ -506,7 +563,13 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
             psi = evolve_restarted(&h, &psi, dt, 3, 3, &best_device(), use_brst, &opts)
                 .expect("SIRK restart");
             t += dt;
-            traj.push((t, field_expect(&psi, 0), field_expect(&psi, 1), energy_expect(&psi, &h), psi.norm()));
+            traj.push((
+                t,
+                field_expect(&psi, 0),
+                field_expect(&psi, 1),
+                energy_expect(&psi, &h),
+                psi.norm(),
+            ));
 
             // The gauge condition holds at all times — to SOLVER accuracy
             // (the truncated restarted-Krylov flow, not the exact flow; the
@@ -564,14 +627,22 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
     // shrinking quadratically — the exact flow (dt → 0) satisfies the
     // condition identically, as guaranteed by [H, C_0] = 0.
     {
-        let base = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+        let base = normalize(&product_state(&[
+            (0, 1.0),
+            (1, amp(1.0 / 3.0)),
+            (2, amp(2.0 / 3.0)),
+        ]));
         let drift = |dt: f64| {
-            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             (field_expect(&p, 2) - 2.0 * field_expect(&p, 1)).abs()
         };
         let d1 = drift(0.05);
         let d2 = drift(0.025);
-        assert!(d1 < 1e-3, "single-step gauge drift at dt=0.05 must be small, got {d1:.2e}");
+        assert!(
+            d1 < 1e-3,
+            "single-step gauge drift at dt=0.05 must be small, got {d1:.2e}"
+        );
         assert!(
             d2 < d1 / 4.0,
             "gauge drift must converge at least quadratically in dt: \
@@ -586,7 +657,8 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
     // domain).  Verify the finite-difference rate matches the operator
     // prediction, and the SIRK trajectory tracks the cos(mt) oscillation.
     let e = 1e-4;
-    let psi_pp = evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+    let psi_pp =
+        evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
     let fd = (field_expect(&psi_pp, 0) - u0_0) / e;
     let rhs = m * momentum_expect(&psi0, 0);
     assert!(
@@ -600,13 +672,19 @@ fn qg_starobinsky_derivative_variable_physical_observables_1d() {
     // dispersion ω = √(k²+m²)).  Evolve in small steps (the restarted-Krylov
     // solver tracks short intervals nearly exactly; the trajectory is tight
     // through t ≈ 1, so verify there).
-    for (t, expect) in [(0.25f64, 0.25f64.cos()), (0.5, 0.5f64.cos()), (0.75, 0.75f64.cos()), (1.0, 1.0f64.cos())] {
+    for (t, expect) in [
+        (0.25f64, 0.25f64.cos()),
+        (0.5, 0.5f64.cos()),
+        (0.75, 0.75f64.cos()),
+        (1.0, 1.0f64.cos()),
+    ] {
         let mut psi = psi0.clone();
         let mut tt = 0.0;
         let dt = 0.025;
         while tt < t - 1e-12 {
             let step = (t - tt).min(dt);
-            psi = evolve_restarted(&h, &psi, step, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            psi = evolve_restarted(&h, &psi, step, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             tt += step;
         }
         let phi_t = field_expect(&psi, 0);
@@ -646,8 +724,14 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
     for (m_idx, (gm, pm)) in [(4u32, 1u32), (5, 2), (6, 3)].into_iter().enumerate() {
         let cm: Hamiltonian = Hamiltonian {
             terms: vec![
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(gm)]),
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(gm)]),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonCreate(gm)],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonAnnihilate(gm)],
+                ),
                 (
                     Complex64::new(-2.0 * (m_idx as f64 + 1.0), 0.0),
                     vec![Operator::InnerBosonCreate(pm)],
@@ -716,9 +800,14 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
     let g0 = field_expect(&psi0, 4);
     let g1 = field_expect(&psi0, 5);
     let g2 = field_expect(&psi0, 6);
-    assert!((f0 - 1.0).abs() < 1e-9 && (f1 - 1.0 / 3.0).abs() < 1e-9, "field values");
     assert!(
-        (g0 - 2.0 * f1).abs() < 1e-9 && (g1 - 4.0 * f2).abs() < 1e-9 && (g2 - 6.0 * f3).abs() < 1e-9,
+        (f0 - 1.0).abs() < 1e-9 && (f1 - 1.0 / 3.0).abs() < 1e-9,
+        "field values"
+    );
+    assert!(
+        (g0 - 2.0 * f1).abs() < 1e-9
+            && (g1 - 4.0 * f2).abs() < 1e-9
+            && (g2 - 6.0 * f3).abs() < 1e-9,
         "gauge condition by construction: ⟨g_m⟩ = 2(m+1)⟨φ_(m+1)⟩ (got {g0}, {g1}, {g2})"
     );
 
@@ -753,7 +842,8 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
             );
         }
         // And the field itself is the genuine cubic the derivatives come from.
-        let phi_x = f0 * hermite(0, x) + f1 * hermite(1, x) + f2 * hermite(2, x) + f3 * hermite(3, x);
+        let phi_x =
+            f0 * hermite(0, x) + f1 * hermite(1, x) + f2 * hermite(2, x) + f3 * hermite(3, x);
         assert!(
             phi_x.abs() > 1e-3,
             "the field profile must be non-trivial at x = {x}, got ⟨φ⟩ = {phi_x}"
@@ -767,7 +857,8 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
     // analogue of ⟨u·∂_x u⟩ being computed from the promoted derivatives.
     for (m_idx, (fm, gm)) in [(0u32, 4u32), (1, 5), (2, 6)].into_iter().enumerate() {
         let prom = composite_expect(&psi0, &[fm, gm]);
-        let field_only = 2.0 * (m_idx as f64 + 1.0) * composite_expect(&psi0, &[fm, 1 + m_idx as u32]);
+        let field_only =
+            2.0 * (m_idx as f64 + 1.0) * composite_expect(&psi0, &[fm, 1 + m_idx as u32]);
         let next = 1 + m_idx as u32;
         assert!(
             (prom - field_only).abs() < 1e-9,
@@ -789,7 +880,15 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
             psi = evolve_restarted(&h, &psi, dt, 3, 3, &best_device(), use_brst, &opts)
                 .expect("SIRK restart");
             t += dt;
-            traj.push((t, field_expect(&psi, 0), field_expect(&psi, 1), field_expect(&psi, 2), field_expect(&psi, 3), energy_expect(&psi, &h), psi.norm()));
+            traj.push((
+                t,
+                field_expect(&psi, 0),
+                field_expect(&psi, 1),
+                field_expect(&psi, 2),
+                field_expect(&psi, 3),
+                energy_expect(&psi, &h),
+                psi.norm(),
+            ));
             // All three gauge conditions preserved to solver accuracy.
             for (gm, pm, coeff) in [(4u32, 1u32, 2.0f64), (5, 2, 4.0), (6, 3, 6.0)] {
                 let g_t = field_expect(&psi, gm);
@@ -815,7 +914,10 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
                 (e_t - e0).abs() < 1e-8,
                 "({label}, t={t}): ⟨H⟩ = {e_t} must be conserved (initial {e0})"
             );
-            assert!((psi.norm() - 1.0).abs() < 1e-8, "({label}, t={t}): norm conserved");
+            assert!(
+                (psi.norm() - 1.0).abs() < 1e-8,
+                "({label}, t={t}): norm conserved"
+            );
         }
         if label.starts_with("bare") {
             bare_traj = traj;
@@ -834,14 +936,18 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
                 && (u3a - u3b).abs() < 1e-9,
             "bare and gauge-fixed flows must give identical ⟨φ_0..3⟩ at t={t1}"
         );
-        assert!((ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9, "identical ⟨H⟩, ‖ψ‖ at t={t1}");
+        assert!(
+            (ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9,
+            "identical ⟨H⟩, ‖ψ‖ at t={t1}"
+        );
     }
 
     // Gauge drift convergence (all three conditions).
     {
         let base = normalize(&product_state(&parts));
         let drift = |dt: f64| {
-            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             let mut worst = 0.0f64;
             for (gm, pm, coeff) in [(4u32, 1u32, 2.0f64), (5, 2, 4.0), (6, 3, 6.0)] {
                 worst = worst.max((field_expect(&p, gm) - coeff * field_expect(&p, pm)).abs());
@@ -850,7 +956,10 @@ fn qg_starobinsky_derivative_variable_higher_hermite_modes() {
         };
         let d1 = drift(0.05);
         let d2 = drift(0.025);
-        assert!(d1 < 5e-3, "single-step multi-level gauge drift at dt=0.05 must be small, got {d1:.2e}");
+        assert!(
+            d1 < 5e-3,
+            "single-step multi-level gauge drift at dt=0.05 must be small, got {d1:.2e}"
+        );
         assert!(
             d2 < d1 / 4.0,
             "multi-level gauge drift must converge at least quadratically in dt: \

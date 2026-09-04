@@ -134,9 +134,7 @@ fn qed_compton_kinematics_and_thomson_limit() {
     //     must reduce to Thomson at low energy and to the log form
     //     (πr_e²/ε)(ln 2ε + 1/2) at high energy.
     let kn = |eps: f64| -> f64 {
-        let f = (1.0 - 2.0 * (eps + 1.0) / (eps * eps)) * (2.0 * eps + 1.0).ln()
-            + 0.5
-            + 4.0 / eps
+        let f = (1.0 - 2.0 * (eps + 1.0) / (eps * eps)) * (2.0 * eps + 1.0).ln() + 0.5 + 4.0 / eps
             - 1.0 / (2.0 * (2.0 * eps + 1.0).powi(2));
         std::f64::consts::PI * r_e * r_e / eps * f
     };
@@ -145,9 +143,7 @@ fn qed_compton_kinematics_and_thomson_limit() {
         (ratio_low - 1.0).abs() < 0.012,
         "Klein–Nishina must → Thomson as ε→0: σ(0.005)/σ_T = {ratio_low:.5}"
     );
-    let asym = |eps: f64| {
-        std::f64::consts::PI * r_e * r_e / eps * ((2.0 * eps).ln() + 0.5)
-    };
+    let asym = |eps: f64| std::f64::consts::PI * r_e * r_e / eps * ((2.0 * eps).ln() + 0.5);
     assert!(
         (kn(100.0) - asym(100.0)).abs() / kn(100.0) < 0.02,
         "Klein–Nishina must → (πr_e²/ε)(ln 2ε + ½) at high energy: \
@@ -202,8 +198,8 @@ fn qed_positronium_spectrum_and_lifetimes() {
     //     (leading order); the O(α) radiative correction brings it to 142.0 ns,
     //     matching the measured 142.05 ns.
     let a6 = ALPHA.powi(6);
-    let coeff = 2.0 * (std::f64::consts::PI * std::f64::consts::PI - 9.0)
-        / (9.0 * std::f64::consts::PI);
+    let coeff =
+        2.0 * (std::f64::consts::PI * std::f64::consts::PI - 9.0) / (9.0 * std::f64::consts::PI);
     let gamma_ortho = coeff * a6 * M_EV / HBAR_EV_S;
     let tau_ortho = 1.0 / gamma_ortho;
     assert!(
@@ -237,14 +233,17 @@ fn qed_uehling_vacuum_polarization_component() {
     // For hydrogen Z=1, n=2: Δν = −27.1 MHz — the published VP component of
     // the 2S₁/₂ Lamb shift (the self-energy component is +1085 MHz, and the
     // sum with the relativistic corrections is the 1057.8 MHz total).
-    let dvp_hz = -(4.0 / 15.0) * (ALPHA / std::f64::consts::PI) * ALPHA.powi(4) * M_EV / 8.0
-        / H_EV_S;
+    let dvp_hz =
+        -(4.0 / 15.0) * (ALPHA / std::f64::consts::PI) * ALPHA.powi(4) * M_EV / 8.0 / H_EV_S;
     assert!(
         (dvp_hz + 27.1e6).abs() / 27.1e6 < 0.02,
         "Uehling shift of 2S must be −27.1 MHz, got {dvp_hz:.3e} Hz"
     );
 
-    eprintln!("qed_uehling: Δν_VP(2S) = {dvp_hz:.3e} Hz = {:.3} MHz (published −27.1)", dvp_hz / 1e6);
+    eprintln!(
+        "qed_uehling: Δν_VP(2S) = {dvp_hz:.3e} Hz = {:.3} MHz (published −27.1)",
+        dvp_hz / 1e6
+    );
 }
 
 // ── 5. Bethe's Lamb shift estimate ──────────────────────────────────────────
@@ -262,9 +261,8 @@ fn qed_hydrogen_lamb_shift_bethe_estimate() {
     let ebar = 16.6 * RY_EV;
     let ln_ratio = (M_EV / ebar).ln();
     for &(n, mhz_pub) in &[(2u32, 1057.845f64), (3, 313.4)] {
-        let de = (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / (n as f64).powi(3))
-            * RY_EV
-            * ln_ratio;
+        let de =
+            (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / (n as f64).powi(3)) * RY_EV * ln_ratio;
         let mhz = de / H_EV_S / 1e6;
         assert!(
             (mhz - mhz_pub).abs() / mhz_pub < 0.02,
@@ -273,13 +271,17 @@ fn qed_hydrogen_lamb_shift_bethe_estimate() {
         );
     }
 
-    eprintln!("qed_lamb_shift_bethe: 2S {:.1} MHz (1057.8), 3S {:.1} MHz (313)", {
-        let de = (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / 8.0) * RY_EV * ln_ratio;
-        de / H_EV_S / 1e6
-    }, {
-        let de = (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / 27.0) * RY_EV * ln_ratio;
-        de / H_EV_S / 1e6
-    });
+    eprintln!(
+        "qed_lamb_shift_bethe: 2S {:.1} MHz (1057.8), 3S {:.1} MHz (313)",
+        {
+            let de = (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / 8.0) * RY_EV * ln_ratio;
+            de / H_EV_S / 1e6
+        },
+        {
+            let de = (8.0 / (3.0 * std::f64::consts::PI)) * (a3 / 27.0) * RY_EV * ln_ratio;
+            de / H_EV_S / 1e6
+        }
+    );
 }
 
 // ── 6. Rydberg ladder and the n=2 fine structure ────────────────────────────
@@ -342,10 +344,8 @@ fn qed_casimir_energy_and_force() {
     //     ~0.1%).
     let hbar_c = HBAR_EV_S * C_MS; // eV·m
     let d: f64 = 1.0e-6;
-    let e_area = -std::f64::consts::PI * std::f64::consts::PI * hbar_c
-        / (720.0 * d.powi(3)); // eV/m²
-    let f_area = -std::f64::consts::PI * std::f64::consts::PI * hbar_c
-        / (240.0 * d.powi(4)); // eV/m³
+    let e_area = -std::f64::consts::PI * std::f64::consts::PI * hbar_c / (720.0 * d.powi(3)); // eV/m²
+    let f_area = -std::f64::consts::PI * std::f64::consts::PI * hbar_c / (240.0 * d.powi(4)); // eV/m³
     let e_j = e_area * 1.602176634e-19; // J/m²
     let f_n = f_area * 1.602176634e-19; // N/m²
     assert!(
@@ -443,7 +443,7 @@ fn qed_blackbody_photon_gas_planck_spectrum() {
 
     // (d) Photon number density: n/V = (2ζ(3)/π²)T³ (ζ(3) = 1.2020569), and
     //     the radiation pressure P = U/(3V) (blackbody equation of state).
-    let zeta3 = 1.2020569031595942854;
+    let zeta3 = 1.202_056_903_159_594_2;
     let n_coeff = 2.0 * zeta3 / std::f64::consts::PI.powi(2);
     assert!(
         (n_coeff - 0.24357).abs() < 1e-3,

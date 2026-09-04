@@ -26,11 +26,11 @@
 mod hashimoto_support;
 
 use fock_sirk::device::best_device;
-use fock_sirk::{solve_forward_sirk_with_opts, SirkOpts};
-use hashimoto_support::{sirk_paper_shifts, BandParams};
+use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
+use hashimoto_support::{BandParams, sirk_paper_shifts};
 use nested_fock_algebra::{
-    qed_free_photon, qed_jaynes_cummings, qg_free_graviton,
-    qg_starobinsky_scalaron_field, InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, qed_free_photon, qed_jaynes_cummings,
+    qg_free_graviton, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
 
@@ -54,14 +54,6 @@ fn boson_universe(mode: u32) -> QuantumState {
     QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner))
 }
 
-fn fermion_universe(mode: u32) -> QuantumState {
-    QuantumState::vacuum().apply(&Operator::OuterFermionCreate(
-        nested_fock_algebra::InnerFermionicState {
-            modes: std::collections::BTreeSet::from([mode]),
-        },
-    ))
-}
-
 /// Solve at time t with the PAPER shift ladder mapped as z_j = i γ_j / t.
 fn solve_paper(
     ham: &nested_fock_algebra::Hamiltonian,
@@ -73,9 +65,8 @@ fn solve_paper(
         .iter()
         .map(|g| Complex64::new(0.0, g.re / bp.t))
         .collect();
-    let res =
-        solve_forward_sirk_with_opts(ham, psi, &shifts, &best_device(), None, &opts())
-            .expect("paper-shift SIRK solve");
+    let res = solve_forward_sirk_with_opts(ham, psi, &shifts, &best_device(), None, &opts())
+        .expect("paper-shift SIRK solve");
     let coeffs = res.time_evolve(bp.t);
     res.reconstruct(&coeffs)
 }
@@ -83,14 +74,12 @@ fn solve_paper(
 struct BandRow {
     m: usize,
     err: f64,
-    lo: f64,
     hi: f64,
-    e_m: f64,
-    exp_factor: f64,
 }
 
 /// Shared driver for DIAGONAL models: ψ₀ = Σ cᵢ |sector_i⟩ (+ vacuum),
 /// exact evolution = per-sector phases.
+#[allow(clippy::too_many_arguments)] // 8 context params of a test driver
 fn run_diagonal_banded(
     label: &str,
     ham: &nested_fock_algebra::Hamiltonian,
@@ -125,7 +114,7 @@ fn run_diagonal_banded(
             "  {:<3} {:.3e}   {:.3e}    {:.3e}    {:.3e}  {:.3e}",
             m, err, b.lo, b.hi, b.e_m, b.exp_factor
         );
-        rows.push(BandRow { m, err, lo: b.lo, hi: b.hi, e_m: b.e_m, exp_factor: b.exp_factor });
+        rows.push(BandRow { m, err, hi: b.hi });
     }
 
     // Assertions.
@@ -150,8 +139,7 @@ fn run_diagonal_banded(
     let floor = 1e-13_f64;
     let e_first = rows[0].err.max(floor);
     let e_last = rows[n_pts - 1].err.max(floor);
-    let slope = (e_first.ln() - e_last.ln())
-        / (rows[n_pts - 1].m - rows[0].m) as f64;
+    let slope = (e_first.ln() - e_last.ln()) / (rows[n_pts - 1].m - rows[0].m) as f64;
     println!(
         "  measured decay slope c = {slope:.3} (theorem h = {:.3})",
         bp.h
@@ -187,9 +175,11 @@ fn band_qed_free_photon_multimode() {
         &psi0,
         &omegas,
         &coeffs,
-        
-        &BandParams { big_n: 8.0, h: 0.5, t: 0.8 },
-        
+        &BandParams {
+            big_n: 8.0,
+            h: 0.5,
+            t: 0.8,
+        },
         &[4, 6, 8],
         omegas[3],
     );
@@ -226,7 +216,11 @@ fn band_qed_jaynes_cummings_rabi() {
     let psi0 = ket_photon.clone();
 
     let _ = &psi_exact;
-    let bp = BandParams { big_n: 8.0, h: 0.5, t };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t,
+    };
     let psi0_ref = &psi0;
     println!("— QED Jaynes–Cummings Rabi: N=50 h=1 t={t}");
     println!("  m   err         lo(C=2)      hi(C=11.08)  E_m        e^(-hm)");
@@ -246,7 +240,11 @@ fn band_qed_jaynes_cummings_rabi() {
             "  {m:<3} {err:.3e}   {:.3e}    {:.3e}    {:.3e}  {:.3e}",
             b.lo, b.hi, b.e_m, b.exp_factor
         );
-        assert!(err <= b.hi * (1.0 + 1e-9), "JC err {err:.3e} > band {:.3e} (m={m})", b.hi);
+        assert!(
+            err <= b.hi * (1.0 + 1e-9),
+            "JC err {err:.3e} > band {:.3e} (m={m})",
+            b.hi
+        );
         if let Some(p) = prev_err {
             assert!(err < p * 1.05 || err < 1e-7, "JC decay {p:.3e} → {err:.3e}");
         }
@@ -275,9 +273,11 @@ fn band_qg_scalaron_band_two_k() {
         &psi0,
         &omegas,
         &coeffs,
-        
-        &BandParams { big_n: 8.0, h: 0.5, t: 0.8 },
-        
+        &BandParams {
+            big_n: 8.0,
+            h: 0.5,
+            t: 0.8,
+        },
         &[4, 6, 8],
         omegas[1],
     );
@@ -303,59 +303,12 @@ fn band_qg_graviton_three_k() {
         &psi0,
         &omegas,
         &coeffs,
-        
-        &BandParams { big_n: 8.0, h: 0.5, t: 0.8 },
-        
+        &BandParams {
+            big_n: 8.0,
+            h: 0.5,
+            t: 0.8,
+        },
         &[4, 6, 8],
         ks[2],
     );
-}
-
-// ───────────────────────── tiny state-building helpers ────────────────────
-
-trait StateExt {
-    fn pipe_boson(self, inner: &InnerBosonicState, amp: Complex64) -> QuantumState;
-    fn pipe_fermion(self, mode: u32, amp: Complex64) -> QuantumState;
-    fn pipe_fermion_amp(self, mode: u32, amp: Complex64) -> QuantumState;
-    fn scale_diff(self, other: &QuantumState) -> QuantumState;
-    fn sub_amplitude(self, inner: &InnerBosonicState, amp: Complex64) -> QuantumState;
-    fn norm(self) -> f64;
-}
-
-impl StateExt for QuantumState {
-    fn pipe_boson(mut self, inner: &InnerBosonicState, amp: Complex64) -> QuantumState {
-        self.scale_and_add(
-            &QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner.clone())),
-            amp,
-        );
-        self
-    }
-    fn pipe_fermion(self, mode: u32, amp: Complex64) -> QuantumState {
-        self.pipe_fermion_amp(mode, amp)
-    }
-    fn pipe_fermion_amp(mut self, mode: u32, amp: Complex64) -> QuantumState {
-        self.scale_and_add(
-            &QuantumState::vacuum().apply(&Operator::OuterFermionCreate(
-                nested_fock_algebra::InnerFermionicState {
-                    modes: std::collections::BTreeSet::from([mode]),
-                },
-            )),
-            amp,
-        );
-        self
-    }
-    fn scale_diff(mut self, other: &QuantumState) -> QuantumState {
-        self.scale_and_add(other, Complex64::new(-1.0, 0.0));
-        self
-    }
-    fn sub_amplitude(mut self, inner: &InnerBosonicState, amp: Complex64) -> QuantumState {
-        self.scale_and_add(
-            &QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner.clone())),
-            -amp,
-        );
-        self
-    }
-    fn norm(self) -> f64 {
-        QuantumState::inner_product(&self, &self).re.sqrt()
-    }
 }

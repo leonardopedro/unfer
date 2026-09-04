@@ -23,13 +23,20 @@ fn ns_hagen_poiseuille_flow_rate_and_r4() {
     let q = flow(1e-3);
     let expected = 3.927e-7; // m³/s
     let rel = (q - expected).abs() / expected;
-    assert!(rel < 1e-3, "Q = {q:.4e}, expected {expected:.4e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-3,
+        "Q = {q:.4e}, expected {expected:.4e} (rel {rel:.2e})"
+    );
     // R⁴ scaling: doubling the radius ×16 the flow.
     assert!((flow(2e-3) / q - 16.0).abs() < 1e-9);
     // v_max = 2 v̄: v̄ = Q/(πR²), v_max = ΔP R²/(4μL).
     let v_mean = q / (PI * 1e-6);
     let v_max = 100.0 * 1e-6 / (4.0 * 1e-3 * 0.1);
-    assert!((v_max / v_mean - 2.0).abs() < 1e-9, "v_max/v̄ = {}", v_max / v_mean);
+    assert!(
+        (v_max / v_mean - 2.0).abs() < 1e-9,
+        "v_max/v̄ = {}",
+        v_max / v_mean
+    );
 }
 
 #[test]
@@ -71,7 +78,10 @@ fn ns_stokes_drag_linearity() {
     let f = drag(1e-6, 1e-4);
     let expected = 1.885e-12; // N
     let rel = (f - expected).abs() / expected;
-    assert!(rel < 1e-3, "F = {f:.4e} N, expected {expected:.4e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-3,
+        "F = {f:.4e} N, expected {expected:.4e} (rel {rel:.2e})"
+    );
     // Exact linearity in R and v.
     assert!((drag(2e-6, 1e-4) / f - 2.0).abs() < 1e-12);
     assert!((drag(1e-6, 2e-4) / f - 2.0).abs() < 1e-12);
@@ -133,11 +143,16 @@ fn ns_lamb_oseen_vortex_structure() {
     // Total circulation: ∫ω dA = Γ exactly (Gaussian integral — independent
     // of νt). Rectangle quadrature over r ∈ [0,10], h = 0.001.
     let t = 1.0;
-    let circ = 2.0 * PI * (0..10_000).fold(0.0, |acc, i| {
-        let r = (i as f64 + 0.5) * 0.001;
-        acc + vort(r, t) * r * 0.001
-    });
-    assert!((circ - gamma).abs() / gamma < 1e-3, "∫ω dA = {circ}, Γ = {gamma}");
+    let circ = 2.0
+        * PI
+        * (0..10_000).fold(0.0, |acc, i| {
+            let r = (i as f64 + 0.5) * 0.001;
+            acc + vort(r, t) * r * 0.001
+        });
+    assert!(
+        (circ - gamma).abs() / gamma < 1e-3,
+        "∫ω dA = {circ}, Γ = {gamma}"
+    );
     // Central vorticity decays as 1/t: ω(0,2t)/ω(0,t) = 1/2 exactly.
     let ratio = vort(0.0, 2.0 * t) / vort(0.0, t);
     assert!((ratio - 0.5).abs() < 1e-12, "ω(0) ∝ 1/t");
@@ -184,7 +199,10 @@ fn ns_reynolds_number_and_transition_pin() {
     assert!((re_c - 2300.0).abs() < 1e-12);
     // Doubling U crosses the transition.
     let re_turb = re(rho, 0.2, 0.02, mu);
-    assert!(re_lam < re_c && re_turb > re_c, "{re_lam} < {re_c} < {re_turb}");
+    assert!(
+        re_lam < re_c && re_turb > re_c,
+        "{re_lam} < {re_c} < {re_turb}"
+    );
 }
 
 #[test]

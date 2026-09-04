@@ -1452,10 +1452,7 @@ pub fn qed_kerr_cavity(omega: f64, chi: f64) -> Hamiltonian {
 /// statistics are the numerically-resolved prediction.
 pub fn qed_kerr_cavity_driven(omega: f64, chi: f64, g: f64) -> Hamiltonian {
     let mut terms = qed_kerr_cavity(omega, chi).terms;
-    terms.push((
-        Complex64::new(g, 0.0),
-        vec![Operator::InnerBosonCreate(0)],
-    ));
+    terms.push((Complex64::new(g, 0.0), vec![Operator::InnerBosonCreate(0)]));
     terms.push((
         Complex64::new(g, 0.0),
         vec![Operator::InnerBosonAnnihilate(0)],
@@ -1943,7 +1940,11 @@ pub fn qg_densitized_kinetic(n_s_modes: u32) -> Hamiltonian {
     let n_modes = n_s_modes + 1;
     let mut terms = Vec::new();
     for i in 0..n_modes {
-        let c = if i == n_s_modes { -1.0 / 24.0 } else { 1.0 / 16.0 };
+        let c = if i == n_s_modes {
+            -1.0 / 24.0
+        } else {
+            1.0 / 16.0
+        };
         let mut inner = InnerBosonicState::vacuum();
         inner.modes.insert(i, 1);
         // c·(B†B − ½(B†² + B²)) — the normal-ordered :𝒮²:/:𝒫²: realization.
@@ -2010,6 +2011,7 @@ pub fn qg_densitized_kinetic(n_s_modes: u32) -> Hamiltonian {
 /// states) is symmetrized bit-exactly, and the enclosure
 /// `H = Σ h[i][j] C†(e_i) A(e_j)` is the outer Fock Hamiltonian — quadratic
 /// in the outer ladders with every cross term inside `h`.
+#[allow(clippy::needless_range_loop)] // index arithmetic (i/l/l%l etc.) is semantic here
 pub fn qg3d_full_hamiltonian(n_levels: u32) -> Hamiltonian {
     let l = n_levels as usize;
     assert!(l >= 2, "need at least two Hermite levels per coordinate");
@@ -2443,8 +2445,7 @@ pub fn qg_starobinsky_vielbein_hamiltonian_full(
                     let e2k = -(2 * k as i32);
                     s += lam2.powi(e2k) / (fact[k] * fact[i - k] * fact[j - k]);
                 }
-                em[i][j] = e_lam_sq_2 * (fact[i] * fact[j]).sqrt()
-                    * lam_pow((i + j) as i32) * s;
+                em[i][j] = e_lam_sq_2 * (fact[i] * fact[j]).sqrt() * lam_pow((i + j) as i32) * s;
             }
         }
         em
@@ -2888,8 +2889,7 @@ pub fn astro_blackbody_photon_gas(t_k: f64) -> (f64, f64) {
 
 /// Electron plasma frequency `ω_p = √(ne²/(ε₀m_e))` → ordinary frequency, Hz.
 pub fn plasma_frequency_hz(n_m3: f64) -> f64 {
-    (n_m3 * phys::E * phys::E / (phys::EPS0 * phys::M_E)).sqrt()
-        / (2.0 * std::f64::consts::PI)
+    (n_m3 * phys::E * phys::E / (phys::EPS0 * phys::M_E)).sqrt() / (2.0 * std::f64::consts::PI)
 }
 
 /// Debye length `λ_D = √(ε₀kT/(ne²))`, m.
@@ -2921,7 +2921,8 @@ pub const BCS_GAP_RATIO: f64 = 1.764;
 pub fn inspiral_time_to_coalescence_s(chirp_mass_kg: f64, f_start_hz: f64) -> f64 {
     let c: f64 = 299_792_458.0;
     let gm = phys::G * chirp_mass_kg;
-    5.0 * c.powi(5) / (256.0 * gm.powf(5.0 / 3.0) * (std::f64::consts::PI * f_start_hz).powf(8.0 / 3.0))
+    5.0 * c.powi(5)
+        / (256.0 * gm.powf(5.0 / 3.0) * (std::f64::consts::PI * f_start_hz).powf(8.0 / 3.0))
 }
 
 /// Leading-order chirp rate `df/dt = (96/5)π^{8/3}(G𝓜/c³)^{5/3} f^{11/3}` (s⁻²).
@@ -2985,7 +2986,8 @@ pub fn em_larmor_collapse_time_s(r0_m: f64) -> f64 {
     // τ = r₀³ π ε₀ c³ m² / e⁴ · 4π ε₀ ... derived stepwise:
     // dr/dt = −e⁴k/(3πε₀ c³ m² r²)  ⇒  τ = r₀³ π ε₀ c³ m² / (e⁴ k/3)·(1/π?) —
     // assembled explicitly below from dr/dt to avoid sign/factor slips:
-    let drdt_coeff = phys::E.powi(4) * k / (3.0 * std::f64::consts::PI * phys::EPS0 * c.powi(3) * phys::M_E * phys::M_E);
+    let drdt_coeff = phys::E.powi(4) * k
+        / (3.0 * std::f64::consts::PI * phys::EPS0 * c.powi(3) * phys::M_E * phys::M_E);
     // τ = ∫ r² dr / drdt_coeff = r₀³/(3·drdt_coeff)
     r0_m.powi(3) / (3.0 * drdt_coeff)
 }
@@ -3056,7 +3058,8 @@ pub fn dyn_roche_limit_m(r_primary_m: f64, rho_primary: f64, rho_satellite: f64)
 /// Finite-amplitude pendulum period ratio `T/T₀` from the standard series
 /// `1 + θ₀²/16 + 11θ₀⁴/3072 + 173θ₀⁶/737280` (θ₀ in radians).
 pub fn dyn_pendulum_period_series_ratio(theta0_rad: f64) -> f64 {
-    1.0 + theta0_rad.powi(2) / 16.0 + 11.0 * theta0_rad.powi(4) / 3072.0
+    1.0 + theta0_rad.powi(2) / 16.0
+        + 11.0 * theta0_rad.powi(4) / 3072.0
         + 173.0 * theta0_rad.powi(6) / 737_280.0
 }
 
@@ -3078,8 +3081,7 @@ pub fn weak_muon_lifetime_lo_s() -> f64 {
     let gf_gev: f64 = 1.166_378_7e-5; // Fermi constant, GeV⁻²
     let mmu_gev: f64 = 0.105_658_374_5;
     let hbar_gev_s = 6.582_119_569e-25;
-    192.0 * std::f64::consts::PI.powi(3) * hbar_gev_s
-        / (gf_gev * gf_gev * mmu_gev.powi(5))
+    192.0 * std::f64::consts::PI.powi(3) * hbar_gev_s / (gf_gev * gf_gev * mmu_gev.powi(5))
 }
 
 /// Two-flavour vacuum oscillation first maximum `L/E` in km/GeV for a splitting
@@ -3105,19 +3107,31 @@ pub fn oscillator_beamsplitter(omega: f64, j: f64) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = vec![
         (
             Complex64::new(omega, 0.0),
-            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)],
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
         ),
         (
             Complex64::new(omega, 0.0),
-            vec![Operator::InnerBosonCreate(1), Operator::InnerBosonAnnihilate(1)],
+            vec![
+                Operator::InnerBosonCreate(1),
+                Operator::InnerBosonAnnihilate(1),
+            ],
         ),
         (
             Complex64::new(j, 0.0),
-            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(1)],
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(1),
+            ],
         ),
         (
             Complex64::new(j, 0.0),
-            vec![Operator::InnerBosonCreate(1), Operator::InnerBosonAnnihilate(0)],
+            vec![
+                Operator::InnerBosonCreate(1),
+                Operator::InnerBosonAnnihilate(0),
+            ],
         ),
     ];
     terms.retain(|(_, ops)| !ops.is_empty());
@@ -3132,12 +3146,12 @@ pub fn oscillator_displaced(omega: f64, g: f64) -> Hamiltonian {
         terms: vec![
             (
                 Complex64::new(omega, 0.0),
-                vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)],
+                vec![
+                    Operator::InnerBosonCreate(0),
+                    Operator::InnerBosonAnnihilate(0),
+                ],
             ),
-            (
-                Complex64::new(g, 0.0),
-                vec![Operator::InnerBosonCreate(0)],
-            ),
+            (Complex64::new(g, 0.0), vec![Operator::InnerBosonCreate(0)]),
             (
                 Complex64::new(g, 0.0),
                 vec![Operator::InnerBosonAnnihilate(0)],

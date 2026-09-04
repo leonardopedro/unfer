@@ -101,16 +101,21 @@ fn bos_state(mode: u32, count: u32) -> QuantumState {
 fn ghost_state(bosonic: InnerBosonicState, ghost_mode: u32) -> QuantumState {
     QuantumState::vacuum()
         .apply(&Operator::OuterBosonCreate(bosonic))
-        .apply(&Operator::OuterFermionCreate(nested_fock_algebra::InnerFermionicState {
-            modes: std::collections::BTreeSet::from([ghost_mode]),
-        }))
+        .apply(&Operator::OuterFermionCreate(
+            nested_fock_algebra::InnerFermionicState {
+                modes: std::collections::BTreeSet::from([ghost_mode]),
+            },
+        ))
 }
 
 /// The field operator `u_m = a†_m + a_m` terms: `(c, op)` pairs.
 fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(1.0, 0.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -118,7 +123,10 @@ fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
 fn momentum_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::i(), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(0.0, -1.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(0.0, -1.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -146,7 +154,10 @@ fn momentum_expect(psi: &QuantumState, mode: u32) -> f64 {
     let h = Hamiltonian {
         terms: vec![
             (Complex64::i(), vec![Operator::InnerBosonCreate(mode)]),
-            (Complex64::new(0.0, -1.0), vec![Operator::InnerBosonAnnihilate(mode)]),
+            (
+                Complex64::new(0.0, -1.0),
+                vec![Operator::InnerBosonAnnihilate(mode)],
+            ),
         ],
     };
     let num = QuantumState::inner_product(psi, &h.apply(psi)).re;
@@ -213,7 +224,8 @@ fn product_state(parts: &[(u32, f64)]) -> QuantumState {
         }
         if !used {
             psi.scale_and_add(
-                &QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum())),
+                &QuantumState::vacuum()
+                    .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum())),
                 Complex64::new(1.0, 0.0),
             );
         } else {
@@ -264,9 +276,24 @@ fn fiber_multi() -> Hamiltonian {
     let u0 = field_ops(0);
     let g0 = field_ops(4);
     let mut terms = vec![
-        (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonAnnihilate(0), Operator::InnerBosonAnnihilate(0)]),
+        (
+            Complex64::new(1.0, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
     ];
     for (cp, op_p) in &pi0 {
         for (cu, op_u) in &u0 {
@@ -293,19 +320,31 @@ fn brst_multi() -> Hamiltonian {
         let coeff = -2.0 * (m as f64 + 1.0);
         terms.push((
             Complex64::new(1.0, 0.0),
-            vec![Operator::InnerBosonCreate(gm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonCreate(gm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(1.0, 0.0),
-            vec![Operator::InnerBosonAnnihilate(gm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonAnnihilate(gm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(coeff, 0.0),
-            vec![Operator::InnerBosonCreate(pm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonCreate(pm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
         terms.push((
             Complex64::new(coeff, 0.0),
-            vec![Operator::InnerBosonAnnihilate(pm), Operator::InnerFermionAnnihilate(m)],
+            vec![
+                Operator::InnerBosonAnnihilate(pm),
+                Operator::InnerFermionAnnihilate(m),
+            ],
         ));
     }
     Hamiltonian { terms }
@@ -324,9 +363,24 @@ fn fiber_1d() -> Hamiltonian {
     let u0 = field_ops(0);
     let g0 = field_ops(2);
     let mut terms = vec![
-        (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonAnnihilate(0), Operator::InnerBosonAnnihilate(0)]),
+        (
+            Complex64::new(1.0, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
     ];
     for (cp, op_p) in &pi0 {
         for (cu, op_u) in &u0 {
@@ -350,9 +404,24 @@ fn fiber_2d() -> Hamiltonian {
     let pi0 = momentum_ops(0);
     let u0 = field_ops(0);
     let mut terms = vec![
-        (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonAnnihilate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)]),
-        (Complex64::new(-0.5, 0.0), vec![Operator::InnerBosonAnnihilate(0), Operator::InnerBosonAnnihilate(0)]),
+        (
+            Complex64::new(1.0, 0.0),
+            vec![
+                Operator::InnerBosonCreate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)],
+        ),
+        (
+            Complex64::new(-0.5, 0.0),
+            vec![
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ),
     ];
     for &gmode in &[3u32, 4u32] {
         let g = field_ops(gmode);
@@ -378,10 +447,34 @@ fn fiber_2d() -> Hamiltonian {
 fn brst_1d() -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(2), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(2), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1), Operator::InnerFermionAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(2),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(2),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
         ],
     }
 }
@@ -392,15 +485,63 @@ fn brst_2d() -> Hamiltonian {
     Hamiltonian {
         terms: vec![
             // g_x − 2u_{1,0}, fixed by c_0
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(3), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(3), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1), Operator::InnerFermionAnnihilate(0)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1), Operator::InnerFermionAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(3),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(3),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(1),
+                    Operator::InnerFermionAnnihilate(0),
+                ],
+            ),
             // g_y − 2u_{0,1}, fixed by c_1
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(4), Operator::InnerFermionAnnihilate(1)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(4), Operator::InnerFermionAnnihilate(1)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(2), Operator::InnerFermionAnnihilate(1)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(2), Operator::InnerFermionAnnihilate(1)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(4),
+                    Operator::InnerFermionAnnihilate(1),
+                ],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(4),
+                    Operator::InnerFermionAnnihilate(1),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(2),
+                    Operator::InnerFermionAnnihilate(1),
+                ],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(2),
+                    Operator::InnerFermionAnnihilate(1),
+                ],
+            ),
         ],
     }
 }
@@ -410,10 +551,22 @@ fn brst_2d() -> Hamiltonian {
 fn constraint_1d() -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(2)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(2)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(2)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(2)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonCreate(1)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(1)],
+            ),
         ],
     }
 }
@@ -450,7 +603,10 @@ fn ns_derivative_variable_physical_observables_1d() {
     // ── By-construction algebraic facts (the gauge structure itself).
     for s in [bos_state(0, 1), bos_state(1, 1), bos_state(2, 1)] {
         let nrm = comm_norm(&h, &c0, &s);
-        assert!(nrm < 1e-8, "[H, C_0] must vanish (constraint a constant of the motion), ‖[H,C_0]ψ‖ = {nrm:.3e}");
+        assert!(
+            nrm < 1e-8,
+            "[H, C_0] must vanish (constraint a constant of the motion), ‖[H,C_0]ψ‖ = {nrm:.3e}"
+        );
     }
     let ghosted = ghost_state(
         {
@@ -462,18 +618,32 @@ fn ns_derivative_variable_physical_observables_1d() {
         0,
     );
     let twice = brst.apply(&brst.apply(&ghosted));
-    assert!(twice.norm() < 1e-9, "Ω² must be nilpotent, ‖Ω²ψ‖ = {:.3e}", twice.norm());
+    assert!(
+        twice.norm() < 1e-9,
+        "Ω² must be nilpotent, ‖Ω²ψ‖ = {:.3e}",
+        twice.norm()
+    );
     let nrm = comm_norm(&h, &brst, &ghosted);
-    assert!(nrm < 1e-8, "[H, Ω] must vanish (BRST-closed fiber), ‖[H,Ω]ψ‖ = {nrm:.3e}");
+    assert!(
+        nrm < 1e-8,
+        "[H, Ω] must vanish (BRST-closed fiber), ‖[H,Ω]ψ‖ = {nrm:.3e}"
+    );
 
     // ── Physical initial wave-function (gauge condition by construction):
     // ⟨u_0⟩ = 1, ⟨u_1⟩ = 1/3, ⟨g_0⟩ = 2/3 = 2⟨u_1⟩.
-    let psi0 = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+    let psi0 = normalize(&product_state(&[
+        (0, 1.0),
+        (1, amp(1.0 / 3.0)),
+        (2, amp(2.0 / 3.0)),
+    ]));
     let u0_0 = field_expect(&psi0, 0);
     let u1_0 = field_expect(&psi0, 1);
     let g0_0 = field_expect(&psi0, 2);
     assert!((u0_0 - 1.0).abs() < 1e-9, "⟨u_0⟩ = {u0_0} must be 1");
-    assert!((u1_0 - 1.0 / 3.0).abs() < 1e-9, "⟨u_1⟩ = {u1_0} must be 1/3");
+    assert!(
+        (u1_0 - 1.0 / 3.0).abs() < 1e-9,
+        "⟨u_1⟩ = {u1_0} must be 1/3"
+    );
     assert!(
         (g0_0 - 2.0 * u1_0).abs() < 1e-9,
         "gauge condition by construction: ⟨g_0⟩ = {g0_0} = 2⟨u_1⟩ = {}",
@@ -512,7 +682,11 @@ fn ns_derivative_variable_physical_observables_1d() {
     let mut bare_traj = Vec::new();
     let mut proj_traj = Vec::new();
     for (label, use_brst) in [("bare flow", None), ("BRST-projected flow", Some(&brst))] {
-        let mut psi = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+        let mut psi = normalize(&product_state(&[
+            (0, 1.0),
+            (1, amp(1.0 / 3.0)),
+            (2, amp(2.0 / 3.0)),
+        ]));
         let e0 = energy_expect(&psi, &h);
         let mut t = 0.0;
         let mut traj = Vec::new();
@@ -520,7 +694,13 @@ fn ns_derivative_variable_physical_observables_1d() {
             psi = evolve_restarted(&h, &psi, dt, 3, 3, &best_device(), use_brst, &opts)
                 .expect("SIRK restart");
             t += dt;
-            traj.push((t, field_expect(&psi, 0), field_expect(&psi, 1), energy_expect(&psi, &h), psi.norm()));
+            traj.push((
+                t,
+                field_expect(&psi, 0),
+                field_expect(&psi, 1),
+                energy_expect(&psi, &h),
+                psi.norm(),
+            ));
 
             // The gauge condition holds at all times — to SOLVER accuracy
             // (the truncated restarted-Krylov flow, not the exact flow;
@@ -565,10 +745,14 @@ fn ns_derivative_variable_physical_observables_1d() {
     // The gauge condition makes the bare and the gauge-fixed implementations
     // agree on ALL physical observables.
     for ((t1, ua, u1a, ea, na), (t2, ub, u1b, eb, nb)) in bare_traj.iter().zip(proj_traj.iter()) {
-        assert!((t1 - t2).abs() < 1e-12 && (ua - ub).abs() < 1e-9 && (u1a - u1b).abs() < 1e-9,
-            "bare and gauge-fixed flows must give identical ⟨u_0⟩, ⟨u_1⟩ at t={t1}");
-        assert!((ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9,
-            "bare and gauge-fixed flows must give identical ⟨H⟩, ‖ψ‖ at t={t1}");
+        assert!(
+            (t1 - t2).abs() < 1e-12 && (ua - ub).abs() < 1e-9 && (u1a - u1b).abs() < 1e-9,
+            "bare and gauge-fixed flows must give identical ⟨u_0⟩, ⟨u_1⟩ at t={t1}"
+        );
+        assert!(
+            (ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9,
+            "bare and gauge-fixed flows must give identical ⟨H⟩, ‖ψ‖ at t={t1}"
+        );
     }
 
     // ── The gauge-condition drift is a CONTROLLED solver artifact: one step
@@ -576,14 +760,22 @@ fn ns_derivative_variable_physical_observables_1d() {
     // shrinking quadratically — the exact flow (dt → 0) satisfies the
     // condition identically, as guaranteed by [H, C_0] = 0.
     {
-        let base = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
+        let base = normalize(&product_state(&[
+            (0, 1.0),
+            (1, amp(1.0 / 3.0)),
+            (2, amp(2.0 / 3.0)),
+        ]));
         let drift = |dt: f64| {
-            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             (field_expect(&p, 2) - 2.0 * field_expect(&p, 1)).abs()
         };
         let d1 = drift(0.05);
         let d2 = drift(0.025);
-        assert!(d1 < 1e-3, "single-step gauge drift at dt=0.05 must be small, got {d1:.2e}");
+        assert!(
+            d1 < 1e-3,
+            "single-step gauge drift at dt=0.05 must be small, got {d1:.2e}"
+        );
         assert!(
             d2 < d1 / 4.0,
             "gauge drift must converge at least quadratically in dt: \
@@ -598,12 +790,21 @@ fn ns_derivative_variable_physical_observables_1d() {
     // finite-difference rate matches the operator prediction, both at t=0 and
     // after real evolution.
     let e = 1e-4;
-    for (t0, base) in [(0.0, &psi0), (0.15, &{
-        let mut p = normalize(&product_state(&[(0, 1.0), (1, amp(1.0 / 3.0)), (2, amp(2.0 / 3.0))]));
-        p = evolve_restarted(&h, &p, 0.15, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
-        p
-    })] {
-        let psi_pp = evolve_restarted(&h, base, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+    for (t0, base) in [
+        (0.0, &psi0),
+        (0.15, &{
+            let mut p = normalize(&product_state(&[
+                (0, 1.0),
+                (1, amp(1.0 / 3.0)),
+                (2, amp(2.0 / 3.0)),
+            ]));
+            p = evolve_restarted(&h, &p, 0.15, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
+            p
+        }),
+    ] {
+        let psi_pp =
+            evolve_restarted(&h, base, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
         let fd = (field_expect(&psi_pp, 0) - field_expect(base, 0)) / e;
         let rhs = 2.0 * momentum_expect(base, 0) + 4.0 * composite_expect(base, &[0, 2]);
         assert!(
@@ -619,7 +820,10 @@ fn ns_derivative_variable_physical_observables_1d() {
                 (rhs - phys).abs() < 1e-9,
                 "4⟨u_0g_0⟩ = {rhs} must equal the Euler advection 8⟨u_0⟩⟨u_1⟩ = {phys}"
             );
-            assert!(fd.abs() > 1e-2, "the value mode must genuinely evolve under the advection, d⟨u_0⟩/dt = {fd}");
+            assert!(
+                fd.abs() > 1e-2,
+                "the value mode must genuinely evolve under the advection, d⟨u_0⟩/dt = {fd}"
+            );
         }
     }
 
@@ -646,21 +850,50 @@ fn ns_derivative_variable_physical_observables_2d() {
     // ── By-construction algebraic facts.
     let c_x: Hamiltonian = Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(3)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(3)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(1)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(1)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(3)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(3)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonCreate(1)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(1)],
+            ),
         ],
     };
     let c_y: Hamiltonian = Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(4)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(4)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonCreate(2)]),
-            (Complex64::new(-2.0, 0.0), vec![Operator::InnerBosonAnnihilate(2)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(4)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(4)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonCreate(2)],
+            ),
+            (
+                Complex64::new(-2.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(2)],
+            ),
         ],
     };
-    for s in [bos_state(1, 1), bos_state(2, 1), bos_state(3, 1), bos_state(4, 1)] {
+    for s in [
+        bos_state(1, 1),
+        bos_state(2, 1),
+        bos_state(3, 1),
+        bos_state(4, 1),
+    ] {
         let nrm = comm_norm(&h, &c_x, &s);
         assert!(nrm < 1e-8, "[H, C_x] must vanish, ‖[H,C_x]ψ‖ = {nrm:.3e}");
         let nrm = comm_norm(&h, &c_y, &s);
@@ -735,11 +968,19 @@ fn ns_derivative_variable_physical_observables_2d() {
         let e0 = energy_expect(&psi, &h);
         let mut t = 0.0;
         let mut traj = Vec::new();
-        for dt in [0.05] {
+        {
+            let dt = 0.05;
             psi = evolve_restarted(&h, &psi, dt, 3, 3, &best_device(), use_brst, &opts)
                 .expect("SIRK restart");
             t += dt;
-            traj.push((t, field_expect(&psi, 0), field_expect(&psi, 1), field_expect(&psi, 2), energy_expect(&psi, &h), psi.norm()));
+            traj.push((
+                t,
+                field_expect(&psi, 0),
+                field_expect(&psi, 1),
+                field_expect(&psi, 2),
+                energy_expect(&psi, &h),
+                psi.norm(),
+            ));
             let u1_t = field_expect(&psi, 1);
             let u2_t = field_expect(&psi, 2);
             let gx_t = field_expect(&psi, 3);
@@ -757,7 +998,10 @@ fn ns_derivative_variable_physical_observables_2d() {
                 (e_t - e0).abs() < 1e-8,
                 "({label}, t={t}): ⟨H⟩ = {e_t} must be conserved (initial {e0})"
             );
-            assert!((psi.norm() - 1.0).abs() < 1e-8, "({label}, t={t}): norm conserved");
+            assert!(
+                (psi.norm() - 1.0).abs() < 1e-8,
+                "({label}, t={t}): norm conserved"
+            );
         }
         if label.starts_with("bare") {
             bare_traj = traj;
@@ -765,12 +1009,20 @@ fn ns_derivative_variable_physical_observables_2d() {
             proj_traj = traj;
         }
     }
-    for ((t1, ua, u1a, u2a, ea, na), (t2, ub, u1b, u2b, eb, nb)) in bare_traj.iter().zip(proj_traj.iter()) {
+    for ((t1, ua, u1a, u2a, ea, na), (t2, ub, u1b, u2b, eb, nb)) in
+        bare_traj.iter().zip(proj_traj.iter())
+    {
         assert!(
-            (t1 - t2).abs() < 1e-12 && (ua - ub).abs() < 1e-9 && (u1a - u1b).abs() < 1e-9 && (u2a - u2b).abs() < 1e-9,
+            (t1 - t2).abs() < 1e-12
+                && (ua - ub).abs() < 1e-9
+                && (u1a - u1b).abs() < 1e-9
+                && (u2a - u2b).abs() < 1e-9,
             "bare and gauge-fixed flows must give identical ⟨u_0⟩, ⟨u_1⟩, ⟨u_2⟩ at t={t1}"
         );
-        assert!((ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9, "identical ⟨H⟩, ‖ψ‖ at t={t1}");
+        assert!(
+            (ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9,
+            "identical ⟨H⟩, ‖ψ‖ at t={t1}"
+        );
     }
 
     // ── The gauge-condition drift is a CONTROLLED solver artifact: one step
@@ -780,14 +1032,18 @@ fn ns_derivative_variable_physical_observables_2d() {
     {
         let base = normalize(&product_state(&parts));
         let drift = |dt: f64| {
-            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             (field_expect(&p, 3) - 2.0 * field_expect(&p, 1))
                 .abs()
                 .max((field_expect(&p, 4) - 2.0 * field_expect(&p, 2)).abs())
         };
         let d1 = drift(0.05);
         let d2 = drift(0.025);
-        assert!(d1 < 5e-3, "single-step 2D gauge drift at dt=0.05 must be small, got {d1:.2e}");
+        assert!(
+            d1 < 5e-3,
+            "single-step 2D gauge drift at dt=0.05 must be small, got {d1:.2e}"
+        );
         assert!(
             d2 < d1 / 4.0,
             "2D gauge drift must converge at least quadratically in dt: \
@@ -799,7 +1055,8 @@ fn ns_derivative_variable_physical_observables_2d() {
     // at t=0 (⟨π_0⟩ = 0 on the two-level product state; the full gradient
     // advection).
     let e = 1e-4;
-    let psi_pp = evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+    let psi_pp =
+        evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
     let fd = (field_expect(&psi_pp, 0) - u0_0) / e;
     let rhs = 2.0 * momentum_expect(&psi0, 0)
         + 4.0 * (composite_expect(&psi0, &[0, 3]) + composite_expect(&psi0, &[0, 4]));
@@ -844,21 +1101,45 @@ fn ns_derivative_variable_higher_hermite_modes() {
     let mut c_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for (m_idx, (gm, pm)) in [(4u32, 1u32), (5, 2), (6, 3)].into_iter().enumerate() {
         let coeff = -2.0 * (m_idx as f64 + 1.0);
-        c_terms.push((Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(gm)]));
-        c_terms.push((Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(gm)]));
-        c_terms.push((Complex64::new(coeff, 0.0), vec![Operator::InnerBosonCreate(pm)]));
-        c_terms.push((Complex64::new(coeff, 0.0), vec![Operator::InnerBosonAnnihilate(pm)]));
+        c_terms.push((
+            Complex64::new(1.0, 0.0),
+            vec![Operator::InnerBosonCreate(gm)],
+        ));
+        c_terms.push((
+            Complex64::new(1.0, 0.0),
+            vec![Operator::InnerBosonAnnihilate(gm)],
+        ));
+        c_terms.push((
+            Complex64::new(coeff, 0.0),
+            vec![Operator::InnerBosonCreate(pm)],
+        ));
+        c_terms.push((
+            Complex64::new(coeff, 0.0),
+            vec![Operator::InnerBosonAnnihilate(pm)],
+        ));
     }
     let c_all = Hamiltonian { terms: c_terms };
-    for s in [bos_state(0, 1), bos_state(1, 1), bos_state(2, 1), bos_state(3, 1)] {
+    for s in [
+        bos_state(0, 1),
+        bos_state(1, 1),
+        bos_state(2, 1),
+        bos_state(3, 1),
+    ] {
         let nrm = comm_norm(&h, &c_all, &s);
-        assert!(nrm < 1e-8, "[H, C_m] must vanish (constraints constants of the motion), ‖[H,C]ψ‖ = {nrm:.3e}");
+        assert!(
+            nrm < 1e-8,
+            "[H, C_m] must vanish (constraints constants of the motion), ‖[H,C]ψ‖ = {nrm:.3e}"
+        );
     }
     // The promoted variables themselves are frozen (no momenta on them).
     for gm in 4..7u32 {
         let g_ham = field_hamiltonian(gm);
         let nrm = comm_norm(&h, &g_ham, &bos_state(gm, 1));
-        assert!(nrm < 1e-8, "[H, g_{}] must vanish (promoted derivative variable frozen), ‖[H,g]ψ‖ = {nrm:.3e}", gm - 4);
+        assert!(
+            nrm < 1e-8,
+            "[H, g_{}] must vanish (promoted derivative variable frozen), ‖[H,g]ψ‖ = {nrm:.3e}",
+            gm - 4
+        );
     }
     let ghosted = ghost_state(
         {
@@ -871,9 +1152,16 @@ fn ns_derivative_variable_higher_hermite_modes() {
         0,
     );
     let twice = brst.apply(&brst.apply(&ghosted));
-    assert!(twice.norm() < 1e-9, "Ω² must be nilpotent (multi-level), ‖Ω²ψ‖ = {:.3e}", twice.norm());
+    assert!(
+        twice.norm() < 1e-9,
+        "Ω² must be nilpotent (multi-level), ‖Ω²ψ‖ = {:.3e}",
+        twice.norm()
+    );
     let nrm = comm_norm(&h, &brst, &ghosted);
-    assert!(nrm < 1e-8, "[H, Ω] must vanish (multi-level BRST-closed fiber), ‖[H,Ω]ψ‖ = {nrm:.3e}");
+    assert!(
+        nrm < 1e-8,
+        "[H, Ω] must vanish (multi-level BRST-closed fiber), ‖[H,Ω]ψ‖ = {nrm:.3e}"
+    );
 
     // ── Physical initial state (gauge condition by construction):
     // ⟨u_0⟩ = 1, ⟨u_1⟩ = 1/3, ⟨u_2⟩ = 1/6, ⟨u_3⟩ = 1/12,
@@ -909,14 +1197,18 @@ fn ns_derivative_variable_higher_hermite_modes() {
     // its own (polynomial) gradient.
     for x in [-1.4, -0.6, 0.0, 0.3, 1.1, 2.0] {
         let g_x = g0_0 * hermite(0, x) + g1_0 * hermite(1, x) + g2_0 * hermite(2, x);
-        let du_dx = 2.0 * u1_0 * hermite(0, x) + 4.0 * u2_0 * hermite(1, x) + 6.0 * u3_0 * hermite(2, x);
+        let du_dx =
+            2.0 * u1_0 * hermite(0, x) + 4.0 * u2_0 * hermite(1, x) + 6.0 * u3_0 * hermite(2, x);
         assert!(
             (g_x - du_dx).abs() < 1e-9,
             "⟨g(x)⟩ = {g_x} must equal ∂_x⟨u(x)⟩ = {du_dx} at x = {x}"
         );
         // The advection u·∂_x u: the pointwise product of the field and its
         // gradient is a genuine polynomial — non-constant and non-trivial.
-        let u_x = u0_0 * hermite(0, x) + u1_0 * hermite(1, x) + u2_0 * hermite(2, x) + u3_0 * hermite(3, x);
+        let u_x = u0_0 * hermite(0, x)
+            + u1_0 * hermite(1, x)
+            + u2_0 * hermite(2, x)
+            + u3_0 * hermite(3, x);
         let adv_x = u_x * du_dx;
         assert!(
             adv_x.abs() > 1e-3,
@@ -959,7 +1251,12 @@ fn ns_derivative_variable_higher_hermite_modes() {
             psi = evolve_restarted(&h, &psi, dt, 3, 3, &best_device(), use_brst, &opts)
                 .expect("SIRK restart");
             t += dt;
-            traj.push((t, field_expect(&psi, 0), energy_expect(&psi, &h), psi.norm()));
+            traj.push((
+                t,
+                field_expect(&psi, 0),
+                energy_expect(&psi, &h),
+                psi.norm(),
+            ));
             for (gm, pm, coeff) in [(4u32, 1u32, 2.0f64), (5, 2, 4.0), (6, 3, 6.0)] {
                 let g_t = field_expect(&psi, gm);
                 let p_t = field_expect(&psi, pm);
@@ -976,8 +1273,14 @@ fn ns_derivative_variable_higher_hermite_modes() {
                 "({label}, t={t}): derivative content must stay frozen"
             );
             let e_t = energy_expect(&psi, &h);
-            assert!((e_t - e0).abs() < 1e-8, "({label}, t={t}): ⟨H⟩ = {e_t} conserved");
-            assert!((psi.norm() - 1.0).abs() < 1e-8, "({label}, t={t}): norm conserved");
+            assert!(
+                (e_t - e0).abs() < 1e-8,
+                "({label}, t={t}): ⟨H⟩ = {e_t} conserved"
+            );
+            assert!(
+                (psi.norm() - 1.0).abs() < 1e-8,
+                "({label}, t={t}): norm conserved"
+            );
         }
         if label.starts_with("bare") {
             bare_traj = traj;
@@ -986,13 +1289,20 @@ fn ns_derivative_variable_higher_hermite_modes() {
         }
     }
     for ((t1, ua, ea, na), (t2, ub, eb, nb)) in bare_traj.iter().zip(proj_traj.iter()) {
-        assert!((t1 - t2).abs() < 1e-12 && (ua - ub).abs() < 1e-9, "identical ⟨u_0⟩ at t={t1}");
-        assert!((ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9, "identical ⟨H⟩, ‖ψ‖ at t={t1}");
+        assert!(
+            (t1 - t2).abs() < 1e-12 && (ua - ub).abs() < 1e-9,
+            "identical ⟨u_0⟩ at t={t1}"
+        );
+        assert!(
+            (ea - eb).abs() < 1e-9 && (na - nb).abs() < 1e-9,
+            "identical ⟨H⟩, ‖ψ‖ at t={t1}"
+        );
     }
     {
         let base = normalize(&product_state(&parts));
         let drift = |dt: f64| {
-            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+            let p = evolve_restarted(&h, &base, dt, 3, 3, &best_device(), None, &opts)
+                .expect("SIRK restart");
             let mut worst = 0.0f64;
             for (gm, pm, coeff) in [(4u32, 1u32, 2.0f64), (5, 2, 4.0), (6, 3, 6.0)] {
                 worst = worst.max((field_expect(&p, gm) - coeff * field_expect(&p, pm)).abs());
@@ -1001,7 +1311,10 @@ fn ns_derivative_variable_higher_hermite_modes() {
         };
         let d1 = drift(0.05);
         let d2 = drift(0.025);
-        assert!(d1 < 5e-3, "single-step multi-level gauge drift at dt=0.05 must be small, got {d1:.2e}");
+        assert!(
+            d1 < 5e-3,
+            "single-step multi-level gauge drift at dt=0.05 must be small, got {d1:.2e}"
+        );
         assert!(
             d2 < d1 / 4.0,
             "multi-level gauge drift must converge at least quadratically in dt: \
@@ -1014,7 +1327,8 @@ fn ns_derivative_variable_higher_hermite_modes() {
     // variable; the higher content modes contribute through their frozen
     // constants).  At t=0 on the physical state: 4⟨u_0 g_0⟩ = 8⟨u_0⟩⟨u_1⟩.
     let e = 1e-4;
-    let psi_pp = evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
+    let psi_pp =
+        evolve_restarted(&h, &psi0, e, 3, 3, &best_device(), None, &opts).expect("SIRK restart");
     let fd = (field_expect(&psi_pp, 0) - u0_0) / e;
     let rhs = 2.0 * momentum_expect(&psi0, 0) + 4.0 * composite_expect(&psi0, &[0, 4]);
     assert!(
@@ -1089,7 +1403,11 @@ fn ns_derivative_variable_unphysical_data_inconsistent() {
     );
     // Nilpotency still holds on the unphysical data (first-class constraint).
     let twice = brst.apply(&brst.apply(&ghosted));
-    assert!(twice.norm() < 1e-9, "Ω² must be nilpotent even on unphysical data, ‖Ω²ψ‖ = {:.3e}", twice.norm());
+    assert!(
+        twice.norm() < 1e-9,
+        "Ω² must be nilpotent even on unphysical data, ‖Ω²ψ‖ = {:.3e}",
+        twice.norm()
+    );
 
     // The bare flow conserves the violation (does not spontaneously fix it).
     let opts = sirk_opts();

@@ -47,12 +47,11 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    ns_eulerian_fiber, qcd_ym_hamiltonian, qed_free_photon,
-    qg_starobinsky_gauge_fixed_scalaron, qg_starobinsky_scalaron_field, Hamiltonian,
-    InnerBosonicState, Operator, QuantumState,
+    Hamiltonian, InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
+    qed_free_photon, qg_starobinsky_gauge_fixed_scalaron, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
 
@@ -98,8 +97,7 @@ fn outer_one(occ: &[(u32, u32)]) -> QuantumState {
 /// labels used by the enclosure (species `[(m,n)]` ↔ state with occupation n
 /// in mode m).
 fn inner_state(occ: &[(u32, u32)]) -> QuantumState {
-    let mut s =
-        outer_vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let mut s = outer_vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     for &(m, n) in occ {
         for _ in 0..n {
             s = s.apply(&Operator::InnerBosonCreate(m));
@@ -115,7 +113,13 @@ fn inner_state(occ: &[(u32, u32)]) -> QuantumState {
 /// All one-universe inner states with total occupation ≤ `n_max` over
 /// `n_modes` modes (the inner one-particle basis `e_i`).
 fn inner_basis(n_modes: u32, n_max: u32) -> Vec<Vec<(u32, u32)>> {
-    fn rec(mode: u32, left: u32, n_modes: u32, acc: &mut Vec<(u32, u32)>, out: &mut Vec<Vec<(u32, u32)>>) {
+    fn rec(
+        mode: u32,
+        left: u32,
+        n_modes: u32,
+        acc: &mut Vec<(u32, u32)>,
+        out: &mut Vec<Vec<(u32, u32)>>,
+    ) {
         if mode == n_modes {
             out.push(acc.clone());
             return;
@@ -238,7 +242,11 @@ fn assert_exact_hermitian(h: &Hamiltonian) {
             if coeff.re == 0.0 { 0.0 } else { coeff.re },
             if coeff.im == 0.0 { 0.0 } else { coeff.im },
         );
-        (creators.join(","), annihilators.join(","), format!("{coeff_norm:?}"))
+        (
+            creators.join(","),
+            annihilators.join(","),
+            format!("{coeff_norm:?}"),
+        )
     };
     let mut keys: Vec<_> = h.terms.iter().map(term_key).collect();
     let mut adj_keys: Vec<_> = hd.terms.iter().map(term_key).collect();
@@ -256,7 +264,10 @@ fn assert_exact_hermitian(h: &Hamiltonian) {
 /// right). Mirrors `qg_validation.rs::assert_enclosure_form` — the structural
 /// certificate the QG doctrine asserts on its final Hamiltonian.
 fn assert_enclosure_form(h: &Hamiltonian) {
-    assert!(!h.terms.is_empty(), "enclosure-form Hamiltonian has no terms");
+    assert!(
+        !h.terms.is_empty(),
+        "enclosure-form Hamiltonian has no terms"
+    );
     for (coeff, ops) in &h.terms {
         let mut seen_annihilator = false;
         for op in ops {
@@ -346,7 +357,10 @@ fn hermiticity(m: &DMatrix<Complex64>) -> f64 {
 /// Returns `(h_plus, c, H_full)`.
 const GAP_MARGIN: f64 = 0.1;
 
-fn enclose_with_constant(h: &Hamiltonian, basis: &[Vec<(u32, u32)>]) -> (DMatrix<Complex64>, f64, Hamiltonian) {
+fn enclose_with_constant(
+    h: &Hamiltonian,
+    basis: &[Vec<(u32, u32)>],
+) -> (DMatrix<Complex64>, f64, Hamiltonian) {
     let h_mat = inner_matrix(h, basis);
     let floor = min_eig(&h_mat);
     // The ONLY allowed modification: add a constant to the one-particle
@@ -400,22 +414,34 @@ fn outer_vacuum_annihilated_by_full_hamiltonian_all_sectors() {
     // c is then just the fixed margin).
     let qed = qed_free_photon(&[1.0, 2.0, 3.0, 5.0]);
     let (_, _, full) = enclose_with_constant(&qed, &basis4);
-    assert!(full.apply(&outer_vacuum()).norm() < 1e-12, "QED vacuum annihilation");
+    assert!(
+        full.apply(&outer_vacuum()).norm() < 1e-12,
+        "QED vacuum annihilation"
+    );
 
     // QG: the massive scalaron field ω(k)=√(k²+m²), the gauge-fixed scalaron
     // (derivative variables), and the densitized kinetic (𝒮/𝒫 modes,
     // rebuilt with inner ops so it can serve as the one-particle Hamiltonian).
     let scalaron = qg_starobinsky_scalaron_field(&[0.0, 1.0, 2.0], 1.0);
     let (_, _, full) = enclose_with_constant(&scalaron, &basis3);
-    assert!(full.apply(&outer_vacuum()).norm() < 1e-12, "scalaron field vacuum annihilation");
+    assert!(
+        full.apply(&outer_vacuum()).norm() < 1e-12,
+        "scalaron field vacuum annihilation"
+    );
 
     let gf_scalaron = qg_starobinsky_gauge_fixed_scalaron(1.0);
     let (_, _, full) = enclose_with_constant(&gf_scalaron, &basis4);
-    assert!(full.apply(&outer_vacuum()).norm() < 1e-12, "gauge-fixed scalaron vacuum annihilation");
+    assert!(
+        full.apply(&outer_vacuum()).norm() < 1e-12,
+        "gauge-fixed scalaron vacuum annihilation"
+    );
 
     let densitized = densitized_inner(2);
     let (_, _, full) = enclose_with_constant(&densitized, &basis3);
-    assert!(full.apply(&outer_vacuum()).norm() < 1e-12, "densitized vacuum annihilation");
+    assert!(
+        full.apply(&outer_vacuum()).norm() < 1e-12,
+        "densitized vacuum annihilation"
+    );
 
     // NS: the Eulerian fiber (kinetic + advection + viscous offset). The FINAL
     // test Hamiltonian is its outer enclosure — clause 1 for NS.
@@ -423,7 +449,10 @@ fn outer_vacuum_annihilated_by_full_hamiltonian_all_sectors() {
     let c = [0.15_f64, 0.0, -0.1];
     let ns = ns_eulerian_fiber(&a, &c);
     let (_, _, full) = enclose_with_constant(&ns, &basis3);
-    assert!(full.apply(&outer_vacuum()).norm() < 1e-12, "NS vacuum annihilation");
+    assert!(
+        full.apply(&outer_vacuum()).norm() < 1e-12,
+        "NS vacuum annihilation"
+    );
 }
 
 /// The densitized kinetic as an INNER one-particle Hamiltonian (the qg_
@@ -435,7 +464,11 @@ fn densitized_inner(n_s_modes: u32) -> Hamiltonian {
     let n_modes = n_s_modes + 1;
     let mut terms = Vec::new();
     for i in 0..n_modes {
-        let c = if i == n_s_modes { -1.0 / 24.0 } else { 1.0 / 16.0 };
+        let c = if i == n_s_modes {
+            -1.0 / 24.0
+        } else {
+            1.0 / 16.0
+        };
         terms.push((
             Complex64::new(c, 0.0),
             vec![
@@ -445,10 +478,7 @@ fn densitized_inner(n_s_modes: u32) -> Hamiltonian {
         ));
         terms.push((
             Complex64::new(-c * 0.5, 0.0),
-            vec![
-                Operator::InnerBosonCreate(i),
-                Operator::InnerBosonCreate(i),
-            ],
+            vec![Operator::InnerBosonCreate(i), Operator::InnerBosonCreate(i)],
         ));
         terms.push((
             Complex64::new(-c * 0.5, 0.0),
@@ -545,22 +575,41 @@ fn qg_ns_outer_enclosure_vacuum_ground_structure() {
     let basis4 = inner_basis(4, 2);
 
     let cases: Vec<(&str, Hamiltonian, u32)> = vec![
-        ("scalaron_field", qg_starobinsky_scalaron_field(&[0.0, 1.0, 2.0], 1.0), 3),
-        ("gauge_fixed_scalaron", qg_starobinsky_gauge_fixed_scalaron(1.0), 4),
+        (
+            "scalaron_field",
+            qg_starobinsky_scalaron_field(&[0.0, 1.0, 2.0], 1.0),
+            3,
+        ),
+        (
+            "gauge_fixed_scalaron",
+            qg_starobinsky_gauge_fixed_scalaron(1.0),
+            4,
+        ),
         ("densitized_kinetic", densitized_inner(2), 3),
-        ("ns_eulerian_fiber", {
-            let a = [[0.0_f64, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
-            let c = [0.15_f64, 0.0, -0.1];
-            ns_eulerian_fiber(&a, &c)
-        }, 3),
+        (
+            "ns_eulerian_fiber",
+            {
+                let a = [[0.0_f64, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
+                let c = [0.15_f64, 0.0, -0.1];
+                ns_eulerian_fiber(&a, &c)
+            },
+            3,
+        ),
     ];
 
     for (name, h, n_modes) in cases {
-        let basis = if n_modes == 4 { basis4.clone() } else { basis3.clone() };
+        let basis = if n_modes == 4 {
+            basis4.clone()
+        } else {
+            basis3.clone()
+        };
         let (h_plus, _, full) = enclose_with_constant(&h, &basis);
 
         let h_mat = inner_matrix(&h, &basis);
-        assert!(hermiticity(&h_mat) < 1e-9, "{name}: one-particle matrix Hermitian");
+        assert!(
+            hermiticity(&h_mat) < 1e-9,
+            "{name}: one-particle matrix Hermitian"
+        );
         assert!(
             min_eig(&h_plus) > GAP_MARGIN - 1e-8,
             "{name}: shifted one-particle spectrum strictly positive"
@@ -574,7 +623,10 @@ fn qg_ns_outer_enclosure_vacuum_ground_structure() {
             "{name}: H|Ω⟩ = 0 exactly"
         );
         let e_min = min_eig(&m);
-        assert!(e_min.abs() < 1e-9, "{name}: ground = outer vacuum at E=0, got {e_min}");
+        assert!(
+            e_min.abs() < 1e-9,
+            "{name}: ground = outer vacuum at E=0, got {e_min}"
+        );
 
         let excited: Vec<usize> = (1..m.nrows()).collect();
         let gap = min_eig(&sector_slice(&m, &excited));
@@ -671,7 +723,11 @@ fn sirk_vacuum_start_rank_collapse_and_gapped_one_quanton_ritz() {
 
     for (name, h, g) in [
         ("qym_g1", qcd_ym_hamiltonian(1.0), 1.0_f64),
-        ("qed_free_photon", qed_free_photon(&[1.0, 2.0, 3.0, 5.0]), 0.0),
+        (
+            "qed_free_photon",
+            qed_free_photon(&[1.0, 2.0, 3.0, 5.0]),
+            0.0,
+        ),
     ] {
         let _ = g;
         let (_h_plus, _, full) = enclose_with_constant(&h, &basis4);
@@ -686,7 +742,10 @@ fn sirk_vacuum_start_rank_collapse_and_gapped_one_quanton_ritz() {
             &opts(),
         )
         .unwrap();
-        assert_eq!(res.rank, 1, "{name}: vacuum-start Krylov must collapse to rank 1");
+        assert_eq!(
+            res.rank, 1,
+            "{name}: vacuum-start Krylov must collapse to rank 1"
+        );
         let ritz = res.ritz_values();
         assert!(
             ritz.iter().all(|r| r.abs() < 1e-8),
@@ -714,15 +773,9 @@ fn sirk_vacuum_start_rank_collapse_and_gapped_one_quanton_ritz() {
         // at m=8 the rank drops to 8 and a ghost rung at 0.058 appears below
         // the exact 0.1 floor; at m=5 Rayleigh–Ritz is exact). m=5 is the
         // honest dependency-free window here.
-        let res1 = solve_forward_sirk_with_opts(
-            &full,
-            &start,
-            &shifts(5),
-            &best_device(),
-            None,
-            &opts(),
-        )
-        .unwrap();
+        let res1 =
+            solve_forward_sirk_with_opts(&full, &start, &shifts(5), &best_device(), None, &opts())
+                .unwrap();
         let ritz1 = res1.ritz_values();
         // The forward span is the CYCLIC span of the start vector — its rank
         // is the number of distinct eigenvalues carrying nonzero start

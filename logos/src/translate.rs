@@ -72,7 +72,11 @@ pub fn translate_coreir(ir: &CoreIR) -> Result<UnfTranslation, String> {
     let second = reduce_once(ir)?;
     let verified = second.0 == sym_expr && second.1 == unf_hash;
 
-    let value = if sym_expr.is_closed() { sym_expr.eval() } else { None };
+    let value = if sym_expr.is_closed() {
+        sym_expr.eval()
+    } else {
+        None
+    };
 
     let ted = deltanet::ted::from_sym_expr(&sym_expr);
     let (ted_string, ted_hash) = match &ted {
@@ -155,7 +159,9 @@ fn rewrite_calls(term: &CoreIR, env: &HashMap<String, CoreIR>) -> CoreIR {
             .cloned()
             .unwrap_or_else(|| CoreIR::Var(name.clone())),
         CoreIR::Lit(_) => term.clone(),
-        CoreIR::Con(tag, args) => CoreIR::Con(*tag, args.iter().map(|a| rewrite_calls(a, env)).collect()),
+        CoreIR::Con(tag, args) => {
+            CoreIR::Con(*tag, args.iter().map(|a| rewrite_calls(a, env)).collect())
+        }
         CoreIR::Lam(id, body) => CoreIR::Lam(id.clone(), Box::new(rewrite_calls(body, env))),
         CoreIR::App(f, a) => CoreIR::App(
             Box::new(rewrite_calls(f, env)),
@@ -183,10 +189,10 @@ fn rewrite_calls(term: &CoreIR, env: &HashMap<String, CoreIR>) -> CoreIR {
             id2.clone(),
             Box::new(rewrite_calls(body, env)),
         ),
-        CoreIR::Drop(id, body) => {
-            CoreIR::Drop(id.clone(), Box::new(rewrite_calls(body, env)))
+        CoreIR::Drop(id, body) => CoreIR::Drop(id.clone(), Box::new(rewrite_calls(body, env))),
+        CoreIR::Prim(op, args) => {
+            CoreIR::Prim(*op, args.iter().map(|a| rewrite_calls(a, env)).collect())
         }
-        CoreIR::Prim(op, args) => CoreIR::Prim(*op, args.iter().map(|a| rewrite_calls(a, env)).collect()),
     }
 }
 

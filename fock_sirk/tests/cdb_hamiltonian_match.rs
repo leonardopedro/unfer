@@ -40,9 +40,9 @@ use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, Operator, QuantumState, navier_stokes_hamiltonian,
-    ns_eulerian_fiber, qcd_ym_hamiltonian, qg_densitized_kinetic,
-    qg_starobinsky_gauge_fixed_scalaron, qg_starobinsky_scalaron_mass,
-    qg_starobinsky_derivative_brst, qg_tegr_hamiltonian, yang_mills_hamiltonian,
+    ns_eulerian_fiber, qcd_ym_hamiltonian, qg_densitized_kinetic, qg_starobinsky_derivative_brst,
+    qg_starobinsky_gauge_fixed_scalaron, qg_starobinsky_scalaron_mass, qg_tegr_hamiltonian,
+    yang_mills_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -257,7 +257,10 @@ fn qym_su3_terms_match_cdb_h_final() {
                 let mut found = false;
                 for a in 0..8usize {
                     let expected = Complex64::new(
-                        -(g * g / 8.0) * eps * eps2 * su3_f_mirror(a, b, c)
+                        -(g * g / 8.0)
+                            * eps
+                            * eps2
+                            * su3_f_mirror(a, b, c)
                             * su3_f_mirror(a, b2, c2),
                         0.0,
                     );
@@ -281,15 +284,22 @@ fn qym_su3_terms_match_cdb_h_final() {
     assert!(
         n2 == 480,
         "quadratic terms must be the g=0 480 (96 kinetic + 384 magnetic L²), got {n2}"
-    );    assert!(
+    );
+    assert!(
         n4 > n3,
         "quartic A⁴ terms outnumber cubic A³ (two NL factors): {n4} vs {n3}"
     );
-    eprintln!("qym_su3: g={g}: {n2} quadratic, {n3} cubic, {n4} quartic terms — all match H_final = ½π²+½B² (book.tex H_W sign)");
+    eprintln!(
+        "qym_su3: g={g}: {n2} quadratic, {n3} cubic, {n4} quartic terms — all match H_final = ½π²+½B² (book.tex H_W sign)"
+    );
 
     // Hermiticity: H = H† (adjoint pairs), real spectrum.
     let hd = h.adjoint();
-    assert_eq!(h.terms.len(), hd.terms.len(), "H and H† must have equal term counts");
+    assert_eq!(
+        h.terms.len(),
+        hd.terms.len(),
+        "H and H† must have equal term counts"
+    );
 }
 
 #[test]
@@ -316,7 +326,9 @@ fn qym_su3_vacuum_zero_point_matches_cdb() {
              (book.tex H_W sign + the A⁴ normal-ordering constant), got {e0}"
         );
     }
-    eprintln!("qym_su3_vacuum: ⟨0|H|0⟩ = −36(1+g²) — −(24·½ + 24·1) quadratic zero-points + the −36g² A⁴ normal-ordering constant (raw H_W, book.tex sign)");
+    eprintln!(
+        "qym_su3_vacuum: ⟨0|H|0⟩ = −36(1+g²) — −(24·½ + 24·1) quadratic zero-points + the −36g² A⁴ normal-ordering constant (raw H_W, book.tex sign)"
+    );
 }
 
 // ─────────────────────────────────────────────
@@ -425,19 +437,35 @@ fn qg_starobinsky_gauge_fixed_scalaron_frozen_derivatives() {
     // Structure: m·N_0 plus ½Σg_i² with g_i = a†+a: ½(a†+a)² = ½(a†a† + a†a +
     // aa† + aa) — 4 quadratic terms per gradient mode → 12, plus the number
     // term: 13 two-op terms, no cubic/quartic ones.
-    assert_eq!(h.terms.len(), 13, "H must be m·N_0 + ½Σg_i² (13 quadratic terms)");
+    assert_eq!(
+        h.terms.len(),
+        13,
+        "H must be m·N_0 + ½Σg_i² (13 quadratic terms)"
+    );
     let n_2op = h.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
-    assert_eq!(n_2op, 13, "all 13 terms are quadratic (no A³/A⁴ in the scalar sector)");
+    assert_eq!(
+        n_2op, 13,
+        "all 13 terms are quadratic (no A³/A⁴ in the scalar sector)"
+    );
     let n_3op = h.terms.iter().filter(|(_, ops)| ops.len() == 3).count();
-    assert_eq!(n_3op, 0, "no cubic terms in the quadratic gauge-fixed sector");
+    assert_eq!(
+        n_3op, 0,
+        "no cubic terms in the quadratic gauge-fixed sector"
+    );
 
     // [H, g_i] = 0: apply H∘g_i and g_i∘H to a probe state; equal componentwise.
     let probe = fock_state(&[(0, 1), (1, 1)]);
     for gi in 1..4u32 {
         let g_ham = Hamiltonian {
             terms: vec![
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(gi)]),
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(gi)]),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonCreate(gi)],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonAnnihilate(gi)],
+                ),
             ],
         };
         let hg = h.apply(&g_ham.apply(&probe));
@@ -458,7 +486,10 @@ fn qg_starobinsky_gauge_fixed_scalaron_frozen_derivatives() {
                 }
             }
         }
-        assert!(ok, "[H, g_{gi}] must vanish exactly (frozen derivative variable)");
+        assert!(
+            ok,
+            "[H, g_{gi}] must vanish exactly (frozen derivative variable)"
+        );
     }
 
     // [H, Ω] = 0 (BRST-closed): H and Ω commute on a probe state.
@@ -478,7 +509,9 @@ fn qg_starobinsky_gauge_fixed_scalaron_frozen_derivatives() {
     }
     assert!(ok2, "[H, Ω] must vanish (BRST-closed scalar sector)");
 
-    eprintln!("qg_starobinsky_gauge_fixed_scalaron: [H,g_i]=0 frozen derivatives, [H,Ω]=0 BRST-closed");
+    eprintln!(
+        "qg_starobinsky_gauge_fixed_scalaron: [H,g_i]=0 frozen derivatives, [H,Ω]=0 BRST-closed"
+    );
 }
 
 // ─────────────────────────────────────────────
@@ -524,9 +557,13 @@ fn qg_densitized_kinetic_hyperbolic_spectrum() {
     // (1/16e)S² − (1/24e)P² with e = y², S = y𝒮̃, P = y𝒫̃ is the flat operator.
     let y: f64 = 1.7;
     let (s_t, p_t): (f64, f64) = (0.31, -0.42);
-    let lhs = (1.0 / (16.0 * y * y)) * (y * s_t).powi(2) - (1.0 / (24.0 * y * y)) * (y * p_t).powi(2);
+    let lhs =
+        (1.0 / (16.0 * y * y)) * (y * s_t).powi(2) - (1.0 / (24.0 * y * y)) * (y * p_t).powi(2);
     let rhs = (1.0 / 16.0) * s_t * s_t - (1.0 / 24.0) * p_t * p_t;
-    assert!((lhs - rhs).abs() < 1e-12, "the 1/e singularity must be absorbed (e=y², S=y𝒮̃)");
+    assert!(
+        (lhs - rhs).abs() < 1e-12,
+        "the 1/e singularity must be absorbed (e=y², S=y𝒮̃)"
+    );
 
     // Hyperbolic spectrum: the flat d'Alembertian has eigenvalues of BOTH
     // signs (ESA by Strichartz — finite field-space signal speed — but not
@@ -553,7 +590,11 @@ fn qg_densitized_kinetic_hyperbolic_spectrum() {
     )
     .expect("densitized kinetic SIRK solve");
     let ritz = res.ritz_values();
-    assert!(ritz.len() >= 3, "must resolve ≥3 levels, got {}", ritz.len());
+    assert!(
+        ritz.len() >= 3,
+        "must resolve ≥3 levels, got {}",
+        ritz.len()
+    );
     let has_neg = ritz[0] < 0.0;
     let has_pos = ritz.iter().any(|&r| r > 0.0);
     assert!(
@@ -686,12 +727,20 @@ fn ns_hamiltonian_matches_euler_advection() {
             other => panic!("unexpected operator count {other}"),
         }
     }
-    assert_eq!(n_lin, 3 * 8, "3 components × 8 viscous terms (2 forward + 2 reverse × 2 ops)");
+    assert_eq!(
+        n_lin,
+        3 * 8,
+        "3 components × 8 viscous terms (2 forward + 2 reverse × 2 ops)"
+    );
     assert_eq!(n_quad, 3 * 48, "3 components × 48 advection terms");
 
     // Hermiticity: adjoint pairs.
     let hd = h.adjoint();
-    assert_eq!(h.terms.len(), hd.terms.len(), "H must equal H† in term count");
+    assert_eq!(
+        h.terms.len(),
+        hd.terms.len(),
+        "H must equal H† in term count"
+    );
 
     // ── Numerical Ehrenfest: d⟨u_0⟩/dt = i⟨[H, u_0]⟩ = 4⟨A_0⟩ ──
     // A_0 = Σ_j u_j·u_{0j} − ν·u_{12}: the Euler advection minus viscosity.
@@ -722,8 +771,14 @@ fn ns_hamiltonian_matches_euler_advection() {
     let a0_exp = QuantumState::inner_product(&psi, &a0_h.apply(&psi)).re;
     let u0_ham = Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let u0_0 = QuantumState::inner_product(&psi, &u0_ham.apply(&psi)).re;
@@ -767,7 +822,10 @@ fn ns_hamiltonian_matches_euler_advection() {
 fn field_ops_local(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(1.0, 0.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -800,7 +858,10 @@ fn qym_abelian_limit_cas_photon_structure() {
     assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
     // Hermiticity: H = H† in term count (adjoint pairs).
     assert_eq!(h.terms.len(), h.adjoint().terms.len(), "H must equal H†");
-    eprintln!("qym_abelian_limit_cas_photon_structure: g=0 → {} quadratic U(1) terms, ⟨0|H|0⟩={e0}", h.terms.len());
+    eprintln!(
+        "qym_abelian_limit_cas_photon_structure: g=0 → {} quadratic U(1) terms, ⟨0|H|0⟩={e0}",
+        h.terms.len()
+    );
 }
 
 // The U(1) CAS-photon SIRK solve is a heavy computation (the compiled
@@ -816,15 +877,20 @@ fn qym_abelian_limit_cas_photon_sirk() {
 
     // Numerical: Hermitian, bounded below with positive excitation gaps — the
     // free lattice photon.
-    let res = solve_forward_sirk_with_opts(&h, &vac, &shifts(6), &best_device(), None, &sirk_opts())
-        .expect("U(1) CAS photon SIRK solve");
+    let res =
+        solve_forward_sirk_with_opts(&h, &vac, &shifts(6), &best_device(), None, &sirk_opts())
+            .expect("U(1) CAS photon SIRK solve");
     let h_proj = res.h_proj.clone();
     assert!(
         (h_proj.clone() - h_proj.adjoint()).norm() < 1e-6,
         "U(1) CAS photon H_proj must be Hermitian"
     );
     let ritz = res.ritz_values();
-    assert!(ritz.len() >= 3, "must resolve ≥3 levels, got {}", ritz.len());
+    assert!(
+        ritz.len() >= 3,
+        "must resolve ≥3 levels, got {}",
+        ritz.len()
+    );
     assert!(
         ritz[0] > -10.0,
         "U(1) CAS photon spectrum must be bounded below (finite ground state), ritz0={}",
@@ -866,7 +932,11 @@ fn qg_tegr_kinetic_matches_cdb_h_final_sector() {
     assert_eq!(h_tegr.terms.len(), (n * 3) as usize, "3 terms per 𝒮 mode");
     // qg_densitized_kinetic(n): n+1 modes × 3 terms = 3(n+1) (the +1/16 𝒮
     // sector + the −1/24 conformal mode).
-    assert_eq!(h_dens.terms.len(), ((n + 1) * 3) as usize, "3 terms per mode incl. 𝒫");
+    assert_eq!(
+        h_dens.terms.len(),
+        ((n + 1) * 3) as usize,
+        "3 terms per mode incl. 𝒫"
+    );
 
     // Every term of qg_tegr_hamiltonian must appear identically among the
     // first 3n terms of qg_densitized_kinetic (the 𝒮 modes come first), and
@@ -874,7 +944,10 @@ fn qg_tegr_kinetic_matches_cdb_h_final_sector() {
     let mut matched = 0usize;
     for (ct, ots) in &h_tegr.terms {
         let mt = op_mode(&ots[0]);
-        assert!(mt < n as usize, "TEGR kinetic must stay on the 𝒮 modes, got mode {mt}");
+        assert!(
+            mt < n as usize,
+            "TEGR kinetic must stay on the 𝒮 modes, got mode {mt}"
+        );
         let found = h_dens.terms.iter().any(|(cd, ods)| {
             (cd - ct).norm() < 1e-12 && ods.len() == ots.len() && {
                 let mut same = true;
@@ -886,7 +959,10 @@ fn qg_tegr_kinetic_matches_cdb_h_final_sector() {
                 same
             }
         });
-        assert!(found, "TEGR term {ct} {ots:?} must equal a densitized-kinetic term");
+        assert!(
+            found,
+            "TEGR term {ct} {ots:?} must equal a densitized-kinetic term"
+        );
         matched += 1;
     }
     assert_eq!(matched, h_tegr.terms.len());
@@ -904,9 +980,15 @@ fn qg_tegr_kinetic_matches_cdb_h_final_sector() {
     }
 
     // Vacuum energy: the cdb kinetic is normal-ordered, so ⟨0|H|0⟩ = 0.
-    let e0 = QuantumState::inner_product(&QuantumState::vacuum(), &h_tegr.apply(&QuantumState::vacuum()))
-        .re;
-    assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0 (normal-ordered cdb kinetic), got {e0}");
+    let e0 = QuantumState::inner_product(
+        &QuantumState::vacuum(),
+        &h_tegr.apply(&QuantumState::vacuum()),
+    )
+    .re;
+    assert!(
+        e0.abs() < 1e-9,
+        "⟨0|H|0⟩ must be 0 (normal-ordered cdb kinetic), got {e0}"
+    );
 
     eprintln!(
         "qg_tegr_kinetic: qg_tegr_hamiltonian({n}) = the +1/16 𝒮 sector of \
@@ -956,7 +1038,10 @@ fn ns_eulerian_fiber_matches_quantized_euler_generator() {
             2 => {
                 n_2op += 1;
                 let (m0, m1) = (op_mode(&ops[0]), op_mode(&ops[1]));
-                assert!(m0 < 3 && m1 < 3, "hopping must be on velocity modes: {ops:?}");
+                assert!(
+                    m0 < 3 && m1 < 3,
+                    "hopping must be on velocity modes: {ops:?}"
+                );
                 pair_counts[m0][m1] += 1;
                 // The coefficient is purely imaginary with magnitude either
                 // |A[m0][m1]| (forward) or |A[m1][m0]| (reverse).
@@ -1007,18 +1092,21 @@ fn ns_eulerian_fiber_matches_quantized_euler_generator() {
             );
             if i == k {
                 assert_eq!(
-                    pair_mag_counts[i][k][0], 8,
+                    pair_mag_counts[i][k][0],
+                    8,
                     "pair ({i},{i}): all 8 terms carry |A[{{i}}{{i}}]| = {}",
                     a[i][i].abs()
                 );
             } else {
                 assert_eq!(
-                    pair_mag_counts[i][k][0], 4,
+                    pair_mag_counts[i][k][0],
+                    4,
                     "pair ({i},{k}): 4 forward terms must carry |A[{{i}}{{k}}]| = {}",
                     a[i][k].abs()
                 );
                 assert_eq!(
-                    pair_mag_counts[i][k][1], 4,
+                    pair_mag_counts[i][k][1],
+                    4,
                     "pair ({i},{k}): 4 reverse terms must carry |A[{{k}}{{i}}]| = {}",
                     a[k][i].abs()
                 );
@@ -1026,7 +1114,11 @@ fn ns_eulerian_fiber_matches_quantized_euler_generator() {
         }
     }
     // Hermiticity: H = H† (adjoint pairs).
-    assert_eq!(h.terms.len(), h.adjoint().terms.len(), "fiber must equal H†");
+    assert_eq!(
+        h.terms.len(),
+        h.adjoint().terms.len(),
+        "fiber must equal H†"
+    );
 
     // ── Exact Ehrenfest: i⟨[H, u_0]⟩ = 4⟨V_0⟩ = 4(Σ_k A_0k⟨u_k⟩ + c_0) ──
     // With H = Σ_i {π_i, V_i} and [π_0, u_0] = −2i, the Heisenberg equation
@@ -1036,15 +1128,27 @@ fn ns_eulerian_fiber_matches_quantized_euler_generator() {
     // A_0k and the affine offset c_0).
     let u0_ham = Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let uk_ham = |k: u32| -> Hamiltonian {
         Hamiltonian {
             terms: vec![
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(k)]),
-                (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(k)]),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonCreate(k)],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerBosonAnnihilate(k)],
+                ),
             ],
         }
     };
@@ -1057,9 +1161,9 @@ fn ns_eulerian_fiber_matches_quantized_euler_generator() {
     psi.scale_and_add(&psi.clone(), Complex64::new(1.0 / norm - 1.0, 0.0));
 
     // ⟨V_0⟩ = Σ_k A_0k⟨u_k⟩ + c_0 from the classical generator.
-    let v0_exp: f64 = (0..3).map(|k| a[0][k] * {
-        QuantumState::inner_product(&psi, &uk_ham(k as u32).apply(&psi)).re
-    }).sum::<f64>()
+    let v0_exp: f64 = (0..3)
+        .map(|k| a[0][k] * { QuantumState::inner_product(&psi, &uk_ham(k as u32).apply(&psi)).re })
+        .sum::<f64>()
         + c[0];
     // i⟨[H, u_0]⟩ computed directly as the commutator on the seed.
     let hu0 = h.apply(&u0_ham.apply(&psi));

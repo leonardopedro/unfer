@@ -203,7 +203,6 @@ impl Validator<'_> {
             }
         }
     }
-
 }
 
 /// Reject any cycle among the collected call edges. In this subset a
@@ -211,8 +210,7 @@ impl Validator<'_> {
 /// or transitively). `context` names the unit being validated for the
 /// diagnostic.
 fn check_cycles(calls: &[(String, String)], context: &str) -> Result<(), String> {
-    let mut adj: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for (from, to) in calls {
         adj.entry(from.clone()).or_default().push(to.clone());
     }
@@ -295,7 +293,9 @@ fn count_uses(term: &CoreIR, id: &str) -> usize {
             }
             n
         }
-        CoreIR::Fold(f, init, list) => count_uses(f, id) + count_uses(init, id) + count_uses(list, id),
+        CoreIR::Fold(f, init, list) => {
+            count_uses(f, id) + count_uses(init, id) + count_uses(list, id)
+        }
         CoreIR::Prim(_, args) => args.iter().map(|a| count_uses(a, id)).sum(),
         CoreIR::Clone(b, _c1, _c2, body) => {
             // The clone consumes the original exactly once; the copies are

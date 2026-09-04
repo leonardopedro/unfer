@@ -6,7 +6,9 @@
 //! libcublas/libcuda version conflict with the active GPU; `LD_LIBRARY_PATH`
 //! must point at the toolkit matching the driver.
 
-use fock_sirk::device::{GpuTriage, probe_cuda};
+use fock_sirk::device::GpuTriage;
+#[cfg(feature = "cuda")]
+use fock_sirk::device::probe_cuda;
 
 #[cfg(feature = "cuda")]
 fn main() {

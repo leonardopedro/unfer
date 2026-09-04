@@ -40,8 +40,8 @@ use std::collections::{HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
 use unfer_protocol::{
-    Code, Diagnostic, LiquidityPool, MathBondId, MarketOpKind, NegRiskOutcome, OutcomeId,
-    PoolId, PoolReport, Severity,
+    Code, Diagnostic, LiquidityPool, MarketOpKind, MathBondId, NegRiskOutcome, OutcomeId, PoolId,
+    PoolReport, Severity,
 };
 
 /// Internal per-trader position in an outcome.
@@ -226,10 +226,8 @@ impl MarketLedger {
             ));
         }
 
-        let outcome_reserves: Vec<(OutcomeId, u64)> = outcomes
-            .iter()
-            .map(|o| (o.outcome_id, 0))
-            .collect();
+        let outcome_reserves: Vec<(OutcomeId, u64)> =
+            outcomes.iter().map(|o| (o.outcome_id, 0)).collect();
 
         // Canonicalize each outcome's pool_id to the computed id so the stored
         // state cannot drift from the deterministic pool id.
@@ -332,18 +330,10 @@ impl MarketLedger {
             state.pool.total_shares += shares;
             *state.lp_map.entry(actor.to_string()).or_insert(0) += shares;
             // Update the Vec for serialization consistency.
-            if let Some(entry) = state
-                .pool
-                .lp_shares
-                .iter_mut()
-                .find(|(d, _)| d == actor)
-            {
+            if let Some(entry) = state.pool.lp_shares.iter_mut().find(|(d, _)| d == actor) {
                 entry.1 += shares;
             } else {
-                state
-                    .pool
-                    .lp_shares
-                    .push((actor.to_string(), shares));
+                state.pool.lp_shares.push((actor.to_string(), shares));
             }
         }
 
@@ -449,12 +439,7 @@ impl MarketLedger {
 
         // Update the Vec and drop zero-share entries so it stays in sync with
         // the lp_map.
-        if let Some(entry) = state
-            .pool
-            .lp_shares
-            .iter_mut()
-            .find(|(d, _)| d == actor)
-        {
+        if let Some(entry) = state.pool.lp_shares.iter_mut().find(|(d, _)| d == actor) {
             entry.1 -= shares;
         }
         state.pool.lp_shares.retain(|(_, s)| *s > 0);
@@ -539,15 +524,14 @@ impl MarketLedger {
         // Tokens granted at the post-trade marginal price P' = new_r / new_total:
         // tokens = net / P' = net * new_total / new_r. Guard the cast against
         // overflow in extreme price skews (new_total >= new_r so tokens >= net).
-        let tokens = u64::try_from(net as u128 * new_total as u128 / new_r as u128).map_err(
-            |_| {
+        let tokens =
+            u64::try_from(net as u128 * new_total as u128 / new_r as u128).map_err(|_| {
                 Diagnostic::new(
                     Code::MARKET_PRICE_UNDERFLOW,
                     "token grant overflow",
                     Severity::Error,
                 )
-            },
-        )?;
+            })?;
 
         state.reserve_map.insert(outcome_id.0, new_r);
         state.pool.total_reserve = new_total;
@@ -745,11 +729,7 @@ impl MarketLedger {
     /// `maturity_seq == u64::MAX` is the terminal "never" outcome that wins
     /// whenever no window covers the trigger. Ties break to the earliest
     /// stored order.
-    fn winner_for(
-        &self,
-        state: &PoolState,
-        signal: Option<u64>,
-    ) -> Result<OutcomeId, Diagnostic> {
+    fn winner_for(&self, state: &PoolState, signal: Option<u64>) -> Result<OutcomeId, Diagnostic> {
         let t = signal.unwrap_or(u64::MAX);
         let mut best: Option<(u64, OutcomeId)> = None;
         for o in &state.outcomes {
@@ -849,12 +829,7 @@ impl MarketLedger {
                 })?;
 
             state.lp_map.insert(actor.to_string(), 0);
-            if let Some(entry) = state
-                .pool
-                .lp_shares
-                .iter_mut()
-                .find(|(d, _)| d == actor)
-            {
+            if let Some(entry) = state.pool.lp_shares.iter_mut().find(|(d, _)| d == actor) {
                 entry.1 = 0;
             }
             state.pool.lp_shares.retain(|(_, s)| *s > 0);
@@ -1019,10 +994,7 @@ mod tests {
         );
         // Prices should still sum to ~1.
         let sum: f64 = report.prices.iter().map(|(_, p)| p).sum();
-        assert!(
-            (sum - 1.0).abs() < 0.01,
-            "prices should sum to 1: {sum}"
-        );
+        assert!((sum - 1.0).abs() < 0.01, "prices should sum to 1: {sum}");
     }
 
     #[test]
@@ -1055,7 +1027,10 @@ mod tests {
         // net = 3000 - 90 = 2910; new reserve A = 4000 + 2910 = 6910;
         // total = 12000 + 2910 = 14910.
         assert_eq!(state.pool.total_reserve, 14910);
-        assert_eq!(state.reserve_map.get(&outcome_a().0).copied().unwrap(), 6910);
+        assert_eq!(
+            state.reserve_map.get(&outcome_a().0).copied().unwrap(),
+            6910
+        );
         // Tokens = net * new_total / new_reserve = 2910 * 14910 / 6910 = 6279.
         let tokens = state
             .total_outcome_tokens
@@ -1063,7 +1038,10 @@ mod tests {
             .copied()
             .unwrap();
         let expected = 2910u128 * 14910u128 / 6910u128;
-        assert_eq!(tokens as u128, expected, "tokens minted at the post-trade price");
+        assert_eq!(
+            tokens as u128, expected,
+            "tokens minted at the post-trade price"
+        );
         // The trader holds exactly those tokens.
         assert_eq!(
             state
@@ -1231,7 +1209,10 @@ mod tests {
             3,
         )
         .unwrap();
-        assert_eq!(l2.pool(&pool_id()).unwrap().pool.winner, Some(outcome_never()));
+        assert_eq!(
+            l2.pool(&pool_id()).unwrap().pool.winner,
+            Some(outcome_never())
+        );
     }
 
     #[test]
@@ -1328,7 +1309,11 @@ mod tests {
             2,
         )
         .unwrap();
-        let err = l.apply_op("did:unfer:lp", &MarketOpKind::Claim { pool_id: pool_id() }, 3);
+        let err = l.apply_op(
+            "did:unfer:lp",
+            &MarketOpKind::Claim { pool_id: pool_id() },
+            3,
+        );
         assert_eq!(err.unwrap_err().code, Code::MARKET_NOT_RESOLVED);
     }
 
@@ -1380,19 +1365,31 @@ mod tests {
             6279
         );
         let trader_claim = l
-            .apply_op("did:unfer:trader", &MarketOpKind::Claim { pool_id: pool_id() }, 5)
+            .apply_op(
+                "did:unfer:trader",
+                &MarketOpKind::Claim { pool_id: pool_id() },
+                5,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(trader_claim, total);
         // LP claim: the accrued fee (90).
         let lp_claim = l
-            .apply_op("did:unfer:lp", &MarketOpKind::Claim { pool_id: pool_id() }, 6)
+            .apply_op(
+                "did:unfer:lp",
+                &MarketOpKind::Claim { pool_id: pool_id() },
+                6,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(lp_claim, 90);
         // Second claims pay nothing (idempotent).
         let again = l
-            .apply_op("did:unfer:trader", &MarketOpKind::Claim { pool_id: pool_id() }, 7)
+            .apply_op(
+                "did:unfer:trader",
+                &MarketOpKind::Claim { pool_id: pool_id() },
+                7,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(again, 0);
@@ -1423,7 +1420,11 @@ mod tests {
         )
         .unwrap();
         let claim = l
-            .apply_op("did:unfer:lp", &MarketOpKind::Claim { pool_id: pool_id() }, 4)
+            .apply_op(
+                "did:unfer:lp",
+                &MarketOpKind::Claim { pool_id: pool_id() },
+                4,
+            )
             .unwrap()
             .unwrap();
         assert_eq!(claim, 12000);
@@ -1502,7 +1503,11 @@ mod tests {
         )
         .unwrap();
         let state = l.pool(&pool_id()).unwrap();
-        let tokens = state.total_outcome_tokens.get(&outcome_a().0).copied().unwrap();
+        let tokens = state
+            .total_outcome_tokens
+            .get(&outcome_a().0)
+            .copied()
+            .unwrap();
         let total_before = state.pool.total_reserve;
 
         // Selling everything back pays at most the reserve — the pool's cash
@@ -1605,11 +1610,7 @@ mod tests {
         for (actor, kind, seq) in &ops {
             let r_a = a.apply_op(actor, kind, *seq);
             let r_b = b.apply_op(actor, kind, *seq);
-            assert_eq!(
-                r_a.is_ok(),
-                r_b.is_ok(),
-                "ops must agree at seq {seq}"
-            );
+            assert_eq!(r_a.is_ok(), r_b.is_ok(), "ops must agree at seq {seq}");
         }
         // Both ledgers converge on the same pool state.
         let report_a = a.report(&pool_id()).unwrap();

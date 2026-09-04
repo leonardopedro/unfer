@@ -37,8 +37,8 @@ impl AgentPreset {
     /// reason the preset is broken (a broken preset is *listed with its reason*,
     /// never skipped silently).
     pub fn from_json(s: &str, id: &str) -> Result<Self, String> {
-        let mut preset: AgentPreset = serde_json::from_str(s)
-            .map_err(|e| format!("preset '{id}' is not valid JSON: {e}"))?;
+        let mut preset: AgentPreset =
+            serde_json::from_str(s).map_err(|e| format!("preset '{id}' is not valid JSON: {e}"))?;
         if preset.id.is_empty() {
             preset.id = id.to_string();
         }
@@ -75,7 +75,7 @@ pub fn discover_roster(dir: &Path) -> Vec<RosterEntry> {
                 id: format!("<roster {dir:?}>"),
                 preset: None,
                 reason: Some(format!("cannot read roster dir: {e}")),
-            }]
+            }];
         }
     };
     let mut names: Vec<String> = read_dir
@@ -137,11 +137,7 @@ pub fn resolve_preset_chain(
     preset: Option<&AgentPreset>,
     agent: Option<&GrantSet>,
 ) -> ResolvedPreset {
-    fn pick<T: Clone>(
-        a: Option<&Vec<T>>,
-        p: Option<&Vec<T>>,
-        g: &[T],
-    ) -> Vec<T> {
+    fn pick<T: Clone>(a: Option<&Vec<T>>, p: Option<&Vec<T>>, g: &[T]) -> Vec<T> {
         a.filter(|v| !v.is_empty())
             .or_else(|| p.filter(|v| !v.is_empty()))
             .cloned()
@@ -174,11 +170,11 @@ pub fn resolve_preset_chain(
             &global.effect_kinds,
         ),
     };
-    grants.effect_kinds.retain(|eg| grants.effects.contains(&eg.name));
+    grants
+        .effect_kinds
+        .retain(|eg| grants.effects.contains(&eg.name));
     let tools = preset.map(|p| p.tools.clone()).unwrap_or_default();
-    let sections = preset
-        .map(|p| p.sections.clone())
-        .unwrap_or_default();
+    let sections = preset.map(|p| p.sections.clone()).unwrap_or_default();
     ResolvedPreset {
         grants,
         tools,
@@ -294,7 +290,10 @@ mod tests {
 
         // No agent → preset wins.
         let r = resolve_preset_chain(&global, Some(&preset), None);
-        assert_eq!(r.grants.kernel, vec!["uk_evolve", "uk_probability", "uk_version"]);
+        assert_eq!(
+            r.grants.kernel,
+            vec!["uk_evolve", "uk_probability", "uk_version"]
+        );
         // No preset → global wins.
         let r = resolve_preset_chain(&global, None, None);
         assert_eq!(r.grants.kernel, vec!["uk_version", "uk_snapshot"]);
@@ -330,7 +329,11 @@ mod tests {
         assert_eq!(roster.broken().len(), 1);
         assert_eq!(roster.broken()[0].id, "broken");
         assert!(
-            roster.broken()[0].reason.as_deref().unwrap().contains("broken"),
+            roster.broken()[0]
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("broken"),
             "reason surfaced: {:?}",
             roster.broken()[0].reason
         );

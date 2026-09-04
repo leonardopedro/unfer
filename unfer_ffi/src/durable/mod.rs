@@ -297,7 +297,9 @@ mod tests {
         let scratch = Scratch::new("loro-fork-restart");
         let store = LoroDurableStore::open(Some(&scratch.0));
         store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
-        store.append(streams::OWNER_LOG, b"(kernel.audit) one").unwrap();
+        store
+            .append(streams::OWNER_LOG, b"(kernel.audit) one")
+            .unwrap();
         store.flush().unwrap();
         let frontier = store.frontier().unwrap();
         // Post-frontier parent writes must never leak into either fork.
@@ -433,7 +435,9 @@ mod tests {
         let scratch = Scratch::new("jsonl-fork-restart");
         let store = JsonlDurableStore::open(Some(&scratch.0)).unwrap();
         store.append(streams::AUDIT, b"{\"n\":1}").unwrap();
-        store.append(streams::OWNER_LOG, b"(kernel.audit) fork me").unwrap();
+        store
+            .append(streams::OWNER_LOG, b"(kernel.audit) fork me")
+            .unwrap();
         store.flush().unwrap();
         let frontier = store.frontier().unwrap();
         // Post-frontier parent writes must never leak into the fork.
@@ -562,7 +566,9 @@ mod tests {
         std::fs::write(dir.join("owner_log.jsonl"), b"(kernel.audit) clean\n").unwrap();
 
         let store = JsonlDurableStore::open(Some(dir)).unwrap();
-        let err = store.snapshot_load_error().expect("torn line must be reported");
+        let err = store
+            .snapshot_load_error()
+            .expect("torn line must be reported");
         assert!(
             err.contains("audit") && err.contains("torn final line"),
             "report must name the torn stream: {err}"
@@ -608,7 +614,10 @@ mod tests {
         // Seed a multi-page database so a data page exists beyond page 1.
         {
             let store = SqliteDurableStore::open(Some(&dir)).unwrap();
-            assert!(store.snapshot_load_error().is_none(), "fresh db must be clean");
+            assert!(
+                store.snapshot_load_error().is_none(),
+                "fresh db must be clean"
+            );
             for i in 0..40 {
                 store
                     .append(streams::AUDIT, format!("record {i}").as_bytes())
@@ -624,7 +633,11 @@ mod tests {
         // corruption is what it reliably catches).
         let path = dir.join("store.db");
         let mut bytes = std::fs::read(&path).unwrap();
-        assert!(bytes.len() > 4096, "expected a multi-page db, got {}", bytes.len());
+        assert!(
+            bytes.len() > 4096,
+            "expected a multi-page db, got {}",
+            bytes.len()
+        );
         bytes[4096] = 0x00; // invalid b-tree page type
         std::fs::write(&path, &bytes).unwrap();
 

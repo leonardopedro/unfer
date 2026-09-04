@@ -49,8 +49,7 @@ impl LeaderLease {
         if tick < previous_tick {
             return false;
         }
-        (previous_tick..=tick)
-            .all(|t| Self::is_leader(t, participants, node_index))
+        (previous_tick..=tick).all(|t| Self::is_leader(t, participants, node_index))
     }
 }
 
@@ -70,7 +69,7 @@ mod tests {
         for tick in 0..6 {
             let a = LeaderLease::is_leader(tick, 2, 0);
             let b = LeaderLease::is_leader(tick, 2, 1);
-            assert_eq!(a ^ b, true, "exactly one leader per tick (tick {tick})");
+            assert!(a ^ b, "exactly one leader per tick (tick {tick})");
         }
     }
 

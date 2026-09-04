@@ -103,7 +103,10 @@ fn dagger_suffix(slice: &[char]) -> Option<usize> {
         k += 1;
     }
     // The dagger body: dagger / dag / † (as command name or bare char).
-    let body: String = slice[k..].iter().take_while(|c| **c != '}' && !c.is_whitespace()).collect();
+    let body: String = slice[k..]
+        .iter()
+        .take_while(|c| **c != '}' && !c.is_whitespace())
+        .collect();
     let is_dagger = matches!(body.as_str(), "dagger" | "dag" | "†");
     if !is_dagger {
         return None;

@@ -25,12 +25,11 @@
 mod hashimoto_support;
 
 use fock_sirk::device::best_device;
-use fock_sirk::{solve_forward_sirk_with_opts, SirkOpts};
-use hashimoto_support::{certify, print_certified, sirk_paper_shifts, BandParams};
+use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
+use hashimoto_support::{BandParams, certify, print_certified, sirk_paper_shifts};
 use nested_fock_algebra::{
-    qed_cavity_frequencies, qcd_ym_hamiltonian, ns_eulerian_fiber,
-    qg_free_graviton, qg_starobinsky_scalaron_field,
-    InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
+    qed_cavity_frequencies, qg_free_graviton, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
 
@@ -52,12 +51,8 @@ fn empty_vacuum() -> QuantumState {
 
 // Small adapter so tests can grab both Ritz values and the evolved state.
 trait SolveBoth {
-    fn solve_both(
-        &self,
-        psi: &QuantumState,
-        bp: &BandParams,
-        m: usize,
-    ) -> (Vec<f64>, QuantumState);
+    fn solve_both(&self, psi: &QuantumState, bp: &BandParams, m: usize)
+    -> (Vec<f64>, QuantumState);
 }
 impl SolveBoth for nested_fock_algebra::Hamiltonian {
     fn solve_both(
@@ -70,9 +65,8 @@ impl SolveBoth for nested_fock_algebra::Hamiltonian {
             .iter()
             .map(|g| Complex64::new(0.0, g.re / bp.t))
             .collect();
-        let res =
-            solve_forward_sirk_with_opts(self, psi, &shifts, &best_device(), None, &opts())
-                .expect("paper-shift SIRK solve");
+        let res = solve_forward_sirk_with_opts(self, psi, &shifts, &best_device(), None, &opts())
+            .expect("paper-shift SIRK solve");
         let ritz = res.ritz_values();
         let coeffs = res.time_evolve(bp.t);
         (ritz, res.reconstruct(&coeffs))
@@ -83,7 +77,11 @@ impl SolveBoth for nested_fock_algebra::Hamiltonian {
 fn qg_scalaron_gap_certified_contains_analytic() {
     let mass = 0.8_f64;
     let h = qg_starobinsky_scalaron_field(&[0.0], mass);
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 0.8 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 0.8,
+    };
     let analytic_gap = mass; // k→0 gap IS the scalaron mass
 
     let mut psi0 = empty_vacuum();
@@ -121,23 +119,16 @@ fn qg_scalaron_gap_certified_contains_analytic() {
     }
 }
 
-fn band_hi_of(bp: &BandParams, m: usize) -> f64 {
-    // Working spectral extent per model is passed by the caller through the
-    // band(); here we recompute the hi edge only (λ extent supplied below).
-    // Kept as a thin wrapper to avoid recomputing Lawson twice.
-    thread_local! {
-        static LAST_HI: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
-    }
-    let _ = (bp, m);
-    LAST_HI.with(|c| c.get())
-}
-
 #[test]
 fn qed_casimir_cavity_band_dispersion() {
     let d = 1.7_f64;
     let omegas = qed_cavity_frequencies(d, 4); // ω_n = nπ/d, n=1..=4
     let ham = nested_fock_algebra::qed_free_photon(&omegas);
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 0.8 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 0.8,
+    };
 
     let mut psi0 = empty_vacuum();
     for i in 0..omegas.len() as u32 {
@@ -162,24 +153,28 @@ fn qed_casimir_cavity_band_dispersion() {
         let d_theta = 2.0 * (lam / 2.0) * b.hi * psi0.norm();
         let mut worst = 0.0_f64;
         for &w in &omegas {
-            let dist = ritz.iter().map(|v| (v - w).abs()).fold(f64::INFINITY, f64::min);
+            let dist = ritz
+                .iter()
+                .map(|v| (v - w).abs())
+                .fold(f64::INFINITY, f64::min);
             worst = worst.max(dist.min(d_theta * 2.0));
             assert!(
                 dist <= d_theta,
                 "Casimir level {w:.4} outside certified radius {d_theta:.3e} at m={m}: {ritz:?}"
             );
         }
-        println!(
-            "  {m:<3} {worst:.3e}   {:.3e}",
-            b.hi
-        );
+        println!("  {m:<3} {worst:.3e}   {:.3e}", b.hi);
     }
 }
 
 #[test]
 fn qym_g0_spectrum_certified_nesting() {
     let h = qcd_ym_hamiltonian(0.0);
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 0.8 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 0.8,
+    };
     let mut psi0 = empty_vacuum();
     psi0.scale_and_add(
         &empty_vacuum().apply(&Operator::InnerBosonCreate(0)),
@@ -202,8 +197,7 @@ fn qym_g0_spectrum_certified_nesting() {
             r.into_iter().take(3).collect::<Vec<_>>()
         };
         assert!(resolved.len() == 3, "resolved window: {ritz:?}");
-        let diam =
-            2.0 * resolved.iter().map(|v| v.abs()).fold(0.0_f64, f64::max) + 1.0;
+        let diam = 2.0 * resolved.iter().map(|v| v.abs()).fold(0.0_f64, f64::max) + 1.0;
         let half_d = diam / 2.0;
         let cur: Vec<(f64, f64)> = resolved
             .iter()
@@ -241,7 +235,11 @@ fn band_hi_for(
 #[test]
 fn qym_gpairs_symmetry_certified_overlap() {
     let g_abs = 0.35_f64;
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 0.8 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 0.8,
+    };
     let mut psi0 = empty_vacuum();
     psi0.scale_and_add(
         &empty_vacuum().apply(&Operator::InnerBosonCreate(0)),
@@ -255,7 +253,13 @@ fn qym_gpairs_symmetry_certified_overlap() {
             let hm = qcd_ym_hamiltonian(-g_abs).solve_both(&psi0, &bp, 9);
             (hp.0, hm.0)
         };
-        let lam = plus.iter().chain(minus.iter()).map(|v| v.abs()).fold(0.0_f64, f64::max) * 2.0 + 1.0;
+        let lam = plus
+            .iter()
+            .chain(minus.iter())
+            .map(|v| v.abs())
+            .fold(0.0_f64, f64::max)
+            * 2.0
+            + 1.0;
         let b = bp.band(lam, 9, psi0.norm(), 0, 240, 40);
         let dp = 2.0 * (lam / 2.0) * b.hi * psi0.norm();
         let dm = dp;
@@ -287,7 +291,11 @@ fn ns_decay_amplitude_certified_interval() {
             ),
         ],
     };
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 1.0 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 1.0,
+    };
 
     let mut psi0 = empty_vacuum();
     psi0.scale_and_add(
@@ -317,7 +325,11 @@ fn qg_graviton_scalaron_certified_disjoint() {
     let m_scal = 0.55_f64;
     let hg = qg_free_graviton(&ks);
     let hs = qg_starobinsky_scalaron_field(&ks, m_scal);
-    let bp = BandParams { big_n: 8.0, h: 0.5, t: 0.8 };
+    let bp = BandParams {
+        big_n: 8.0,
+        h: 0.5,
+        t: 0.8,
+    };
 
     // Superposition starts: a pure number eigenstate collapses the Krylov
     // rank of a diagonal Hamiltonian.
@@ -346,17 +358,25 @@ fn qg_graviton_scalaron_certified_disjoint() {
                 .collect();
             v
         };
-        let rg = solve_forward_sirk_with_opts(&hg, &psi_g, &mk_shifts(), &best_device(), None, &opts())
-            .unwrap();
-        let rs = solve_forward_sirk_with_opts(&hs, &psi_s, &mk_shifts(), &best_device(), None, &opts())
-            .unwrap();
+        let rg =
+            solve_forward_sirk_with_opts(&hg, &psi_g, &mk_shifts(), &best_device(), None, &opts())
+                .unwrap();
+        let rs =
+            solve_forward_sirk_with_opts(&hs, &psi_s, &mk_shifts(), &best_device(), None, &opts())
+                .unwrap();
         // One-quanton sectors: lowest pair straddles {0, ω}; take the
         // SECOND rung (= ω) with its own residual.
-        let (th_g, rel_g) = rg.ritz_residuals().into_iter()
-            .filter(|&(t, _)| t > 1e-6).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        let (th_g, rel_g) = rg
+            .ritz_residuals()
+            .into_iter()
+            .filter(|&(t, _)| t > 1e-6)
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
             .expect("ω graviton rung");
-        let (th_s, rel_s) = rs.ritz_residuals().into_iter()
-            .filter(|&(t, _)| t > 1e-6).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        let (th_s, rel_s) = rs
+            .ritz_residuals()
+            .into_iter()
+            .filter(|&(t, _)| t > 1e-6)
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
             .expect("ω scalaron rung");
         // Absolute residual radius ≈ rel_res · max(|θ|, scale).
         let rad_g = rel_g * (th_g.abs() + 1.0);
@@ -369,10 +389,7 @@ fn qg_graviton_scalaron_certified_disjoint() {
         // A-priori Theorem 4.1 envelope (reported, not used for separation).
         let lam = th_s.abs() * 2.0 + 1.0;
         let b = bp.band(lam, m, psi_s.norm(), 0, 240, 40);
-        println!(
-            "      Theorem 4.1 ceiling for ω_scal: {:.3e}",
-            b.hi
-        );
+        println!("      Theorem 4.1 ceiling for ω_scal: {:.3e}", b.hi);
 
         assert!(th_s > th_g, "massive branch ordering");
         assert!(

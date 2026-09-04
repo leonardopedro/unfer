@@ -11,6 +11,12 @@
 //! check (they are *not* cosmology — they are the solar-system and laboratory
 //! anchors a correct theory of gravity must reproduce).
 //!
+//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
+//! ground state of the nested theory is always the outer-Fock vacuum — the
+//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
+//! creation (left) / annihilation (right) operators, with at most a
+//! constant added to make its spectrum positive (QYM/QG/NS).
+//!
 //!  1. `qg_starobinsky_newtonian_limit_yukawa` — the linearized weak-field
 //!     potential of the R² theory, `Φ(r) = −GM/r (1 + ⅓ e^{−mr})` — the
 //!     published f(R) Yukawa result (the `⅓` fifth-force coefficient from the
@@ -46,22 +52,16 @@
 //!     stays in the physical subspace while the bare flow leaks — the reason
 //!     the projector rides along in the solve.
 
-//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
-//! ground state of the nested theory is always the outer-Fock vacuum — the
-//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
-//! creation (left) / annihilation (right) operators, with at most a
-//! constant added to make its spectrum positive (QYM/QG/NS).
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState, QG_C,
-    QG_G, QG_HBAR, qg_free_graviton, qg_gps_rate, qg_gravitational_redshift,
-    qg_light_bending, qg_newton_potential, qg_perihelion_precession,
-    qg_starobinsky_derivative_brst, qg_starobinsky_gauge_fixed_scalaron,
-    qg_starobinsky_scalaron_field, qg_starobinsky_scalaron_mass,
-    qg_starobinsky_weak_field_potential,
+    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QG_C, QG_G, QG_HBAR,
+    QuantumState, qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
+    qg_newton_potential, qg_perihelion_precession, qg_starobinsky_derivative_brst,
+    qg_starobinsky_gauge_fixed_scalaron, qg_starobinsky_scalaron_field,
+    qg_starobinsky_scalaron_mass, qg_starobinsky_weak_field_potential,
 };
 use num_complex::Complex64;
 
@@ -112,8 +112,14 @@ fn ghost_state(bosonic: InnerBosonicState, ghost_mode: u32) -> QuantumState {
 fn field_hamiltonian(mode: u32) -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(mode)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(mode)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(mode)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(mode)],
+            ),
         ],
     }
 }
@@ -289,8 +295,9 @@ fn qg_starobinsky_scalaron_massive_dispersion_sirk() {
     };
 
     // (a) Vacuum: the normal-ordered scalaron vacuum energy is 0.
-    let res_vac = solve_forward_sirk_with_opts(&h, &inner_vac(), &shifts(4), &best_device(), None, &opts)
-        .expect("scalaron vacuum solve");
+    let res_vac =
+        solve_forward_sirk_with_opts(&h, &inner_vac(), &shifts(4), &best_device(), None, &opts)
+            .expect("scalaron vacuum solve");
     assert_hermitian(&res_vac.h_proj, "scalaron vacuum sector");
     let e_vac = res_vac.ground_state_energy().expect("vacuum Ritz value");
     assert!(
@@ -323,10 +330,10 @@ fn qg_starobinsky_scalaron_massive_dispersion_sirk() {
     //     Klein–Gordon dispersion), in contrast to the massless graviton whose
     //     group velocity is exactly c at every k (GW170817). Check both slopes
     //     stay below 1 and increase with k — the signature of the massive mode.
-    let slope_lo = ((ks[1] * ks[1] + m * m).sqrt() - (ks[0] * ks[0] + m * m).sqrt())
-        / (ks[1] - ks[0]);
-    let slope_hi = ((ks[3] * ks[3] + m * m).sqrt() - (ks[2] * ks[2] + m * m).sqrt())
-        / (ks[3] - ks[2]);
+    let slope_lo =
+        ((ks[1] * ks[1] + m * m).sqrt() - (ks[0] * ks[0] + m * m).sqrt()) / (ks[1] - ks[0]);
+    let slope_hi =
+        ((ks[3] * ks[3] + m * m).sqrt() - (ks[2] * ks[2] + m * m).sqrt()) / (ks[3] - ks[2]);
     assert!(
         slope_lo < slope_hi && slope_hi < 1.0,
         "the massive dispersion must be subluminal and rise toward c: \
@@ -505,8 +512,7 @@ fn qg_starobinsky_derivative_variable_brst() {
 
     // The bare (unprojected) flow grows the Ω-content — the physical subspace
     // is not invariant under the truncated dynamics.
-    let psi_b = evolve_restarted(&h, &unphysical, 0.2, 4, 3, &best_device(), None, &opts)
-        .unwrap();
+    let psi_b = evolve_restarted(&h, &unphysical, 0.2, 4, 3, &best_device(), None, &opts).unwrap();
     let omega_b = brst.apply(&psi_b).norm();
     assert!(
         omega_b > omega0 + 1e-3,

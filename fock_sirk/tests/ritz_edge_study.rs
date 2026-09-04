@@ -31,11 +31,9 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nalgebra::DVector;
-use nested_fock_algebra::{
-    InnerBosonicState, Operator, QuantumState, oscillator_displaced,
-};
+use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, oscillator_displaced};
 use num_complex::Complex64;
 
 const OMEGA: f64 = 1.7;
@@ -89,19 +87,16 @@ fn number_op() -> nested_fock_algebra::Hamiltonian {
 
 /// Eigen-decompose the projected Hamiltonian; return (values ascending,
 /// eigenvector columns matching).
-fn eigen_pairs(
-    h_proj: &nalgebra::DMatrix<Complex64>,
-) -> (Vec<f64>, Vec<DVector<Complex64>>) {
+fn eigen_pairs(h_proj: &nalgebra::DMatrix<Complex64>) -> (Vec<f64>, Vec<DVector<Complex64>>) {
     let eig = h_proj.clone().symmetric_eigen();
     let mut order: Vec<usize> = (0..eig.eigenvalues.len()).collect();
-    order.sort_by(|&a, &b| {
-        eig.eigenvalues[a]
-            .partial_cmp(&eig.eigenvalues[b])
-            .unwrap()
-    });
+    order.sort_by(|&a, &b| eig.eigenvalues[a].partial_cmp(&eig.eigenvalues[b]).unwrap());
     (
         order.iter().map(|&i| eig.eigenvalues[i]).collect(),
-        order.iter().map(|&i| eig.eigenvectors.column(i).into_owned()).collect(),
+        order
+            .iter()
+            .map(|&i| eig.eigenvectors.column(i).into_owned())
+            .collect(),
     )
 }
 
@@ -146,19 +141,29 @@ fn p2_low_end_converges_and_sits_on_a_conditioning_floor() {
                 .unwrap();
         let theta0 = res.ritz_values()[0];
         let err = (theta0 - exact_level(0.0)).abs();
-        assert!(err < tol, "canonical ground band violated at m={m}: err={err:.3e} ≥ {tol:.0e}");
+        assert!(
+            err < tol,
+            "canonical ground band violated at m={m}: err={err:.3e} ≥ {tol:.0e}"
+        );
     }
     // The wall itself: degradation must be present (documents reality; if a
     // future whitening fix removes it, update this test and the guide).
     let e8 = {
-        let r = solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(8), &best_device(), None, &opts()).unwrap();
+        let r =
+            solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(8), &best_device(), None, &opts())
+                .unwrap();
         (r.ritz_values()[0] - exact_level(0.0)).abs()
     };
     let e10 = {
-        let r = solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(10), &best_device(), None, &opts()).unwrap();
+        let r =
+            solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(10), &best_device(), None, &opts())
+                .unwrap();
         (r.ritz_values()[0] - exact_level(0.0)).abs()
     };
-    assert!(e10 > 50.0 * e8.max(1e-15), "conditioning wall expected: err(10)≫err(8)");
+    assert!(
+        e10 > 50.0 * e8.max(1e-15),
+        "conditioning wall expected: err(10)≫err(8)"
+    );
 }
 
 #[test]
@@ -199,16 +204,13 @@ fn p2b_unit_norm_frame_flattens_the_wall() {
         .unwrap();
         let theta0 = res.ritz_values()[0];
         let err = (theta0 - exact_level(0.0)).abs();
-        assert!(err < 5e-7, "unit-norm frame must stay flat: m={m} err={err:.3e}");
-        let ec = solve_forward_sirk_with_opts(
-            &h,
-            &vacuum(),
-            &shifts(m),
-            &best_device(),
-            None,
-            &opts(),
-        )
-        .unwrap();
+        assert!(
+            err < 5e-7,
+            "unit-norm frame must stay flat: m={m} err={err:.3e}"
+        );
+        let ec =
+            solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts())
+                .unwrap();
         let err_c = (ec.ritz_values()[0] - exact_level(0.0)).abs();
         assert!(
             err * 100.0 < err_c,
@@ -289,7 +291,10 @@ fn p3_topmost_ritz_climbs_toward_higher_rungs() {
             solve_forward_sirk_with_opts(&h, &vacuum(), &shifts(m), &best_device(), None, &opts())
                 .unwrap();
         let sup = *res.ritz_values().last().unwrap();
-        assert!(sup > prev_sup, "sup(Ritz) must climb with m: m={m} sup={sup}");
+        assert!(
+            sup > prev_sup,
+            "sup(Ritz) must climb with m: m={m} sup={sup}"
+        );
         // ...and never overshoots the next-unresolved rung band by much:
         assert!(sup < exact_level(m as f64) + 1e-6);
         prev_sup = sup;
@@ -321,10 +326,16 @@ fn p4_top_ritz_vector_is_a_high_occupation_mixture() {
     );
     // Mixture content: mean occupation well above the resolved window (n≤2).
     let n_mean = QuantumState::inner_product(&psi_top, &n_op.apply(&psi_top)).re / norm2;
-    assert!(n_mean > 2.0, "top vector must be high-n mixed, ⟨N⟩={n_mean:.3}");
+    assert!(
+        n_mean > 2.0,
+        "top vector must be high-n mixed, ⟨N⟩={n_mean:.3}"
+    );
     // Mixture content: mean occupation well above the resolved window (n≤2).
     let n_mean = QuantumState::inner_product(&psi_top, &n_op.apply(&psi_top)).re / norm2;
-    assert!(n_mean > 2.0, "top vector must be high-n mixed, ⟨N⟩={n_mean:.3}");
+    assert!(
+        n_mean > 2.0,
+        "top vector must be high-n mixed, ⟨N⟩={n_mean:.3}"
+    );
 
     // Ground pair: the EXACT displaced ground state is a coherent state with
     // mean occupation α² = (g/ω)² — the measured 0.0701 IS that physics, not
@@ -332,8 +343,7 @@ fn p4_top_ritz_vector_is_a_high_occupation_mixture() {
     let alpha_sq = (G / OMEGA).powi(2);
     let bot_coeffs = vecs.first().unwrap().clone();
     let psi_bot = res.reconstruct(&bot_coeffs);
-    let nb = QuantumState::inner_product(&psi_bot, &n_op.apply(&psi_bot))
-        .re
+    let nb = QuantumState::inner_product(&psi_bot, &n_op.apply(&psi_bot)).re
         / QuantumState::inner_product(&psi_bot, &psi_bot).re;
     assert!(
         (nb - alpha_sq).abs() < 0.02,

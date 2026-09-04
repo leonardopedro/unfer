@@ -34,9 +34,7 @@ impl GpuTriage {
     /// The documented remediation for this failure mode.
     pub fn fix(self) -> &'static str {
         match self {
-            GpuTriage::NoDevice => {
-                "install the NVIDIA driver and confirm `nvidia-smi` lists a GPU"
-            }
+            GpuTriage::NoDevice => "install the NVIDIA driver and confirm `nvidia-smi` lists a GPU",
             GpuTriage::ArchMismatch => {
                 "libcublas/libcuda version conflict with the active GPU — \
                  point LD_LIBRARY_PATH at the CUDA toolkit matching the driver \
@@ -66,10 +64,7 @@ impl GpuTriage {
             GpuTriage::OutOfMemory => "OUT_OF_MEMORY",
             GpuTriage::Other => "OTHER",
         };
-        format!(
-            "UK-GPU-{code} → {} (candle: {detail})",
-            self.fix()
-        )
+        format!("UK-GPU-{code} → {} (candle: {detail})", self.fix())
     }
 
     /// Map a candle CUDA init error to a triage code by its message.
@@ -185,16 +180,10 @@ mod tests {
                 "CUDA error: 2 out of memory (allocating 65536 bytes)",
                 GpuTriage::OutOfMemory,
             ),
-            (
-                "no CUDA-capable device is detected",
-                GpuTriage::NoDevice,
-            ),
+            ("no CUDA-capable device is detected", GpuTriage::NoDevice),
         ];
         for (msg, expected) in cases {
-            let e = candle_core::Error::Cuda(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                msg.to_string(),
-            )));
+            let e = candle_core::Error::Cuda(Box::new(std::io::Error::other(msg.to_string())));
             assert_eq!(
                 GpuTriage::from_candle_error(&e),
                 *expected,

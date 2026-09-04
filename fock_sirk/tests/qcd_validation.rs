@@ -440,7 +440,7 @@ fn qcd_gluon_dispersion_sirk() {
     );
 
     eprintln!("qcd_gluon_dispersion_sirk: free gluon is massless, ω=|k| (perturbative QCD)");
-}// ── 8. Mass gap: massless free gluon vs gauge-fixed QYM (SIRK) ──
+} // ── 8. Mass gap: massless free gluon vs gauge-fixed QYM (SIRK) ──
 
 #[test]
 fn qcd_mass_gap_sirk() {
@@ -477,15 +477,9 @@ fn qcd_mass_gap_sirk() {
         adaptive: false,
         unit_norm_steps: true,
     };
-    let res_even = solve_forward_sirk_with_opts(
-        &h_gf,
-        &inner_vac,
-        &shifts(12),
-        &best_device(),
-        None,
-        &opts,
-    )
-    .expect("gauge-fixed R-even solve");
+    let res_even =
+        solve_forward_sirk_with_opts(&h_gf, &inner_vac, &shifts(12), &best_device(), None, &opts)
+            .expect("gauge-fixed R-even solve");
     let mut inner_odd = InnerBosonicState::vacuum();
     inner_odd.modes.insert(0, 1);
     let r_odd = {
@@ -497,15 +491,9 @@ fn qcd_mass_gap_sirk() {
         s.scale_and_add(&s.clone(), Complex64::new(inv - 1.0, 0.0));
         s
     };
-    let res_odd = solve_forward_sirk_with_opts(
-        &h_gf,
-        &r_odd,
-        &shifts(12),
-        &best_device(),
-        None,
-        &opts,
-    )
-    .expect("gauge-fixed R-odd solve");
+    let res_odd =
+        solve_forward_sirk_with_opts(&h_gf, &r_odd, &shifts(12), &best_device(), None, &opts)
+            .expect("gauge-fixed R-odd solve");
     assert_hermitian(&res_even.h_proj, "gauge-fixed R-even sector");
     assert_hermitian(&res_odd.h_proj, "gauge-fixed R-odd sector");
 
@@ -528,8 +516,6 @@ fn qcd_mass_gap_sirk() {
         "qcd_mass_gap_sirk: free gluon massless (E(k→0)→0); gauge-fixed QYM gapped \
          at g=1 with E₁−E₀ = {gap:.4}"
     );
-
-
 }
 
 #[test]
@@ -599,10 +585,7 @@ fn qcd_gauge_fixed_pair_lowering_and_spectral_gap() {
 
 /// Exact low window `(E₀, E₁)` of the truncated gauge-fixed H on the
 /// N ≤ `n_max` basis (the exact reference for the SIRK Rayleigh–Ritz bounds).
-fn gauge_fixed_exact_low_window(
-    h: &nested_fock_algebra::Hamiltonian,
-    n_max: u32,
-) -> (f64, f64) {
+fn gauge_fixed_exact_low_window(h: &nested_fock_algebra::Hamiltonian, n_max: u32) -> (f64, f64) {
     let mut basis = Vec::new();
     for n0 in 0..=n_max {
         for n1 in 0..=n_max - n0 {

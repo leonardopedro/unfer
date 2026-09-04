@@ -93,10 +93,12 @@ impl JsonlDurableStore {
             None => {
                 // In-memory fallback: this store's private scratch file so
                 // replay still works and two RAM-only stores cannot collide.
-                let td = self.temp_dir.as_ref().expect("in-memory store has a scratch dir");
-                std::fs::create_dir_all(td).map_err(|e| {
-                    DurableError::Io(format!("mkdir {}: {e}", td.display()))
-                })?;
+                let td = self
+                    .temp_dir
+                    .as_ref()
+                    .expect("in-memory store has a scratch dir");
+                std::fs::create_dir_all(td)
+                    .map_err(|e| DurableError::Io(format!("mkdir {}: {e}", td.display())))?;
                 let path = td.join(format!("{stream}.jsonl"));
                 std::fs::OpenOptions::new()
                     .create(true)
@@ -154,17 +156,19 @@ fn detect_torn_streams(dir: &Path) -> Option<String> {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Some(stream) = name.strip_suffix(".jsonl") else { continue };
+        let Some(stream) = name.strip_suffix(".jsonl") else {
+            continue;
+        };
         let Ok(meta) = entry.metadata() else { continue };
         if meta.len() == 0 {
             continue;
         }
-        let Ok(mut f) = std::fs::File::open(entry.path()) else { continue };
+        let Ok(mut f) = std::fs::File::open(entry.path()) else {
+            continue;
+        };
         use std::io::{Read, Seek, SeekFrom};
         let mut last = [0u8; 1];
-        if f.seek(SeekFrom::End(-1)).is_ok()
-            && f.read_exact(&mut last).is_ok()
-            && last[0] != b'\n'
+        if f.seek(SeekFrom::End(-1)).is_ok() && f.read_exact(&mut last).is_ok() && last[0] != b'\n'
         {
             torn.push(stream.to_string());
         }

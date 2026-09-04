@@ -25,18 +25,13 @@ use nested_fock_algebra::{QG_C, QG_G, QG_HBAR};
 
 /// Hubble constant in s⁻¹ from km/s/Mpc (1 Mpc = 3.0856775814913673e19 km).
 fn h0_from_km_s_mpc(h0_km: f64) -> f64 {
-    let mpc_km = 3.085_677_581_491_367_3e19;
+    let mpc_km = 3.085_677_581_491_367e19;
     h0_km / mpc_km
 }
 
 /// RK4 integration of `dt/da = 1/f(a)` over `a ∈ [a_min, a_max]` with `n`
 /// steps. Returns the elapsed time in units of `1/H₀`.
-fn friedmann_age(
-    a_min: f64,
-    a_max: f64,
-    n: usize,
-    f: impl Fn(f64) -> f64,
-) -> f64 {
+fn friedmann_age(a_min: f64, a_max: f64, n: usize, f: impl Fn(f64) -> f64) -> f64 {
     let h = (a_max - a_min) / n as f64;
     let mut a = a_min;
     let mut t = 0.0;
@@ -89,7 +84,9 @@ fn qg_friedmann_matter_and_radiation_closed_forms() {
     let f_rad = scale_factor_rate(0.31, 9e-5, 0.69, 1e-6);
     let f_matter_only = scale_factor_rate(0.31, 0.0, 0.69, 1e-6);
     assert!(f_rad / f_matter_only > 5.0, "radiation must dominate early");
-    eprintln!("qg_friedmann_matter_and_radiation_closed_forms: RK4 matches a ~ t^(2/3), a ~ t^(1/2), a ~ e^(H0 t)");
+    eprintln!(
+        "qg_friedmann_matter_and_radiation_closed_forms: RK4 matches a ~ t^(2/3), a ~ t^(1/2), a ~ e^(H0 t)"
+    );
 }
 
 #[test]
@@ -104,16 +101,12 @@ fn qg_lcdm_universe_age() {
     let sec_per_gyr = 3.155_76e16;
 
     let age_gyr_closed =
-        (2.0 / (3.0 * h0 * omega_l.sqrt())) * ((omega_l / omega_m).sqrt()).asinh()
-            / sec_per_gyr;
+        (2.0 / (3.0 * h0 * omega_l.sqrt())) * ((omega_l / omega_m).sqrt()).asinh() / sec_per_gyr;
 
     let a_min = 1e-6;
-    let age_gyr_num = friedmann_age(
-        a_min,
-        1.0,
-        500_000,
-        |a| scale_factor_rate(omega_m, 1.0 - omega_m - omega_l, omega_l, a),
-    ) / h0
+    let age_gyr_num = friedmann_age(a_min, 1.0, 500_000, |a| {
+        scale_factor_rate(omega_m, 1.0 - omega_m - omega_l, omega_l, a)
+    }) / h0
         / sec_per_gyr;
 
     // Published value: 13.787 ± 0.020 Gyr (Planck 2018).
@@ -155,9 +148,13 @@ fn qg_starobinsky_efolds() {
     let k = (2.0f64 / 3.0).sqrt();
     let phi_end = 0.7;
     let phi = 6.0;
-    let closed =
-        (3.0 / 4.0) * (((phi * k).exp() - (phi_end * k).exp()) - k * (phi - phi_end));
-    let num = simpson(|x| starobinsky_efold_integrand(k, x), phi_end, phi, 1_000_000);
+    let closed = (3.0 / 4.0) * (((phi * k).exp() - (phi_end * k).exp()) - k * (phi - phi_end));
+    let num = simpson(
+        |x| starobinsky_efold_integrand(k, x),
+        phi_end,
+        phi,
+        1_000_000,
+    );
     assert!(
         (num - closed).abs() / closed < 1e-6,
         "N_e numerical {num:.6} vs closed form {closed:.6}"
@@ -166,16 +163,26 @@ fn qg_starobinsky_efolds() {
     // Large-φ asymptotic: N_e ≈ (3/4)e^{kφ} — the −kφ and −e^{kφ_end} terms
     // are negligible only at genuinely large φ (at φ = 6 the −kφ term is
     // still 4.5%); check at φ = 10 where the asymptotic holds to < 1%.
-    let asym = (3.0 / 4.0) * (phi * k).exp();
+    let _asym = (3.0 / 4.0) * (phi * k).exp();
     let phi10 = 10.0;
-    let num10 = simpson(|x| starobinsky_efold_integrand(k, x), phi_end, phi10, 2_000_000);
+    let num10 = simpson(
+        |x| starobinsky_efold_integrand(k, x),
+        phi_end,
+        phi10,
+        2_000_000,
+    );
     let asym10 = (3.0 / 4.0) * (phi10 * k).exp();
     assert!(
         (num10 - asym10).abs() / num10 < 1e-2,
         "N_e(10) must approach (3/4)e^(k·10): {num10:.3} vs {asym10:.3}"
     );
-    assert!(num > 50.0 && num < 200.0, "sensible inflation count: {num:.1}");
-    eprintln!("qg_starobinsky_efolds: N_e(6) = {num:.3} (closed {closed:.3}); N_e(10) = {num10:.3} (asymptotic {asym10:.3})");
+    assert!(
+        num > 50.0 && num < 200.0,
+        "sensible inflation count: {num:.1}"
+    );
+    eprintln!(
+        "qg_starobinsky_efolds: N_e(6) = {num:.3} (closed {closed:.3}); N_e(10) = {num10:.3} (asymptotic {asym10:.3})"
+    );
 }
 
 #[test]
@@ -226,5 +233,7 @@ fn qg_schwarzschild_black_hole_thermodynamics() {
             );
         }
     }
-    eprintln!("qg_schwarzschild_black_hole_thermodynamics: Smarr M=2TS, S=A/(4ℓ_P²), bound saturation all exact");
+    eprintln!(
+        "qg_schwarzschild_black_hole_thermodynamics: Smarr M=2TS, S=A/(4ℓ_P²), bound saturation all exact"
+    );
 }

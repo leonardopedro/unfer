@@ -25,8 +25,8 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 use unfer_protocol::{
-    AttributionBadgeId, AttributionCreditId, AttributionItem, AttributionOffer,
-    AttributionOpKind, AttributionReport, AttributionState, Code, Diagnostic, Severity,
+    AttributionBadgeId, AttributionCreditId, AttributionItem, AttributionOffer, AttributionOpKind,
+    AttributionReport, AttributionState, Code, Diagnostic, Severity,
 };
 
 /// Internal full state for one attribution credit.
@@ -215,7 +215,8 @@ impl AttributionLedger {
             }
             return Ok(()); // idempotent re-registration by the same owner
         }
-        self.items.insert(item.item_hash, (item.clone(), actor.to_string()));
+        self.items
+            .insert(item.item_hash, (item.clone(), actor.to_string()));
         Ok(())
     }
 
@@ -293,7 +294,10 @@ impl AttributionLedger {
         if offer.exclusive {
             for c in self.credits.values() {
                 if c.offer.original_item.item_hash == offer.original_item.item_hash
-                    && matches!(c.state, AttributionState::Offered | AttributionState::Approved)
+                    && matches!(
+                        c.state,
+                        AttributionState::Offered | AttributionState::Approved
+                    )
                 {
                     return Err(Diagnostic::new(
                         Code::ATTRIBUTION_CREDIT_EXISTS,
@@ -443,7 +447,12 @@ mod tests {
         }
     }
 
-    fn offer(derived: &AttributionItem, original: &AttributionItem, fee: u64, exclusive: bool) -> AttributionOffer {
+    fn offer(
+        derived: &AttributionItem,
+        original: &AttributionItem,
+        fee: u64,
+        exclusive: bool,
+    ) -> AttributionOffer {
         AttributionOffer {
             derived_item: derived.clone(),
             original_item: original.clone(),
@@ -461,47 +470,109 @@ mod tests {
         let shoe = item("Yeezy Boost 350 V2", 1);
         let sketch = item("Kanye's 2015 sketch", 2);
 
-        ledger.apply_op(adidas, &AttributionOpKind::RegisterItem { item: shoe.clone() }, 1).unwrap();
-        ledger.apply_op(kanye, &AttributionOpKind::RegisterItem { item: sketch.clone() }, 2).unwrap();
+        ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::RegisterItem { item: shoe.clone() },
+                1,
+            )
+            .unwrap();
+        ledger
+            .apply_op(
+                kanye,
+                &AttributionOpKind::RegisterItem {
+                    item: sketch.clone(),
+                },
+                2,
+            )
+            .unwrap();
 
         let id = credit_id(&offer(&shoe, &sketch, 5000, true), adidas, kanye);
         ledger
             .apply_op(
                 adidas,
-                &AttributionOpKind::OfferAttribution { offer: offer(&shoe, &sketch, 5000, true) },
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&shoe, &sketch, 5000, true),
+                },
                 3,
             )
             .unwrap();
         assert_eq!(ledger.report(&id).unwrap().state, AttributionState::Offered);
 
         // Only Kanye can approve.
-        let err = ledger.apply_op(adidas, &AttributionOpKind::Approve { credit_id: id }, 4).unwrap_err();
+        let err = ledger
+            .apply_op(adidas, &AttributionOpKind::Approve { credit_id: id }, 4)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_NOT_AUTHOR);
         // ... and only while Offered.
-        ledger.apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 5).unwrap();
+        ledger
+            .apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 5)
+            .unwrap();
         let r = ledger.report(&id).unwrap();
         assert_eq!(r.state, AttributionState::Approved);
         assert_eq!(r.approve_seq, Some(5));
-        let err = ledger.apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 6).unwrap_err();
+        let err = ledger
+            .apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 6)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_WRONG_STATE);
 
         // Public badge + per-view anonymous badge both mint deterministically.
         let viewer = [9u8; 32];
         let b_pub = badge_id(&id, None);
         let b_view = badge_id(&id, Some(viewer));
-        ledger.apply_op(&adidas.to_string(), &AttributionOpKind::IssueBadge { credit_id: id, viewer: None }, 7).unwrap();
-        ledger.apply_op(&adidas.to_string(), &AttributionOpKind::IssueBadge { credit_id: id, viewer: Some(viewer) }, 8).unwrap();
+        ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::IssueBadge {
+                    credit_id: id,
+                    viewer: None,
+                },
+                7,
+            )
+            .unwrap();
+        ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::IssueBadge {
+                    credit_id: id,
+                    viewer: Some(viewer),
+                },
+                8,
+            )
+            .unwrap();
         assert_eq!(ledger.report(&id).unwrap().badges, vec![b_pub, b_view]);
         // Same badge twice is refused.
-        let err = ledger.apply_op(&adidas.to_string(), &AttributionOpKind::IssueBadge { credit_id: id, viewer: None }, 9).unwrap_err();
+        let err = ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::IssueBadge {
+                    credit_id: id,
+                    viewer: None,
+                },
+                9,
+            )
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_BADGE_EXISTS);
 
         // Revoke: only Kanye, only while Approved; new badges refused after.
-        let err = ledger.apply_op(adidas, &AttributionOpKind::Revoke { credit_id: id }, 10).unwrap_err();
+        let err = ledger
+            .apply_op(adidas, &AttributionOpKind::Revoke { credit_id: id }, 10)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_NOT_AUTHOR);
-        ledger.apply_op(kanye, &AttributionOpKind::Revoke { credit_id: id }, 11).unwrap();
+        ledger
+            .apply_op(kanye, &AttributionOpKind::Revoke { credit_id: id }, 11)
+            .unwrap();
         assert_eq!(ledger.report(&id).unwrap().state, AttributionState::Revoked);
-        let err = ledger.apply_op(kanye, &AttributionOpKind::IssueBadge { credit_id: id, viewer: None }, 12).unwrap_err();
+        let err = ledger
+            .apply_op(
+                kanye,
+                &AttributionOpKind::IssueBadge {
+                    credit_id: id,
+                    viewer: None,
+                },
+                12,
+            )
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_BADGE_REVOKED);
     }
 
@@ -515,40 +586,90 @@ mod tests {
 
         // Unregistered items are refused.
         let err = ledger
-            .apply_op(a, &AttributionOpKind::OfferAttribution { offer: offer(&d, &o, 100, false) }, 1)
+            .apply_op(
+                a,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&d, &o, 100, false),
+                },
+                1,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_ITEM_UNKNOWN);
 
-        ledger.apply_op(a, &AttributionOpKind::RegisterItem { item: d.clone() }, 1).unwrap();
-        ledger.apply_op(b, &AttributionOpKind::RegisterItem { item: o.clone() }, 2).unwrap();
+        ledger
+            .apply_op(a, &AttributionOpKind::RegisterItem { item: d.clone() }, 1)
+            .unwrap();
+        ledger
+            .apply_op(b, &AttributionOpKind::RegisterItem { item: o.clone() }, 2)
+            .unwrap();
 
         // Self-attribution refused (A == B on the original).
         let err = ledger
-            .apply_op(a, &AttributionOpKind::OfferAttribution { offer: offer(&d, &d, 100, false) }, 3)
+            .apply_op(
+                a,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&d, &d, 100, false),
+                },
+                3,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_SELF_ATTRIBUTION);
 
         // Zero fee refused.
         let err = ledger
-            .apply_op(a, &AttributionOpKind::OfferAttribution { offer: offer(&d, &o, 0, false) }, 3)
+            .apply_op(
+                a,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&d, &o, 0, false),
+                },
+                3,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_FEE_ZERO);
 
         // Owner mismatch: B cannot offer A's derived item.
         let err = ledger
-            .apply_op(b, &AttributionOpKind::OfferAttribution { offer: offer(&d, &o, 100, false) }, 3)
+            .apply_op(
+                b,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&d, &o, 100, false),
+                },
+                3,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_OWNER_MISMATCH);
 
         // Item collision: A registers an item already registered to C.
         let c = "did:unfer:c";
-        ledger.apply_op(c, &AttributionOpKind::RegisterItem { item: item("mine", 5) }, 4).unwrap();
+        ledger
+            .apply_op(
+                c,
+                &AttributionOpKind::RegisterItem {
+                    item: item("mine", 5),
+                },
+                4,
+            )
+            .unwrap();
         let err = ledger
-            .apply_op(a, &AttributionOpKind::RegisterItem { item: item("mine", 5) }, 5)
+            .apply_op(
+                a,
+                &AttributionOpKind::RegisterItem {
+                    item: item("mine", 5),
+                },
+                5,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_ITEM_EXISTS);
         // Same owner re-registration is idempotent.
-        ledger.apply_op(c, &AttributionOpKind::RegisterItem { item: item("mine", 5) }, 6).unwrap();
+        ledger
+            .apply_op(
+                c,
+                &AttributionOpKind::RegisterItem {
+                    item: item("mine", 5),
+                },
+                6,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -561,29 +682,63 @@ mod tests {
         let sketch = item("Kanye's 2015 sketch", 2);
         let puma_shoe = item("Puma's derived sneaker", 3);
 
-        for (who, it) in [(adidas, shoe.clone()), (puma, puma_shoe.clone()), (kanye, sketch.clone())] {
-            ledger.apply_op(who, &AttributionOpKind::RegisterItem { item: it }, 1).unwrap();
+        for (who, it) in [
+            (adidas, shoe.clone()),
+            (puma, puma_shoe.clone()),
+            (kanye, sketch.clone()),
+        ] {
+            ledger
+                .apply_op(who, &AttributionOpKind::RegisterItem { item: it }, 1)
+                .unwrap();
         }
         // Adidas takes an exclusive credit on the sketch.
         ledger
-            .apply_op(adidas, &AttributionOpKind::OfferAttribution { offer: offer(&shoe, &sketch, 5000, true) }, 2)
+            .apply_op(
+                adidas,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&shoe, &sketch, 5000, true),
+                },
+                2,
+            )
             .unwrap();
         // Puma's offer against the same original is refused while it is live.
         let err = ledger
-            .apply_op(puma, &AttributionOpKind::OfferAttribution { offer: offer(&puma_shoe, &sketch, 4000, true) }, 3)
+            .apply_op(
+                puma,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&puma_shoe, &sketch, 4000, true),
+                },
+                3,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_CREDIT_EXISTS);
         // ... and even after Kanye approves Adidas' credit.
         let id = credit_id(&offer(&shoe, &sketch, 5000, true), adidas, kanye);
-        ledger.apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 4).unwrap();
+        ledger
+            .apply_op(kanye, &AttributionOpKind::Approve { credit_id: id }, 4)
+            .unwrap();
         let err = ledger
-            .apply_op(puma, &AttributionOpKind::OfferAttribution { offer: offer(&puma_shoe, &sketch, 4000, true) }, 5)
+            .apply_op(
+                puma,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&puma_shoe, &sketch, 4000, true),
+                },
+                5,
+            )
             .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_CREDIT_EXISTS);
         // Revocation opens the original item again.
-        ledger.apply_op(kanye, &AttributionOpKind::Revoke { credit_id: id }, 6).unwrap();
         ledger
-            .apply_op(puma, &AttributionOpKind::OfferAttribution { offer: offer(&puma_shoe, &sketch, 4000, true) }, 7)
+            .apply_op(kanye, &AttributionOpKind::Revoke { credit_id: id }, 6)
+            .unwrap();
+        ledger
+            .apply_op(
+                puma,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&puma_shoe, &sketch, 4000, true),
+                },
+                7,
+            )
             .unwrap();
     }
 
@@ -595,12 +750,35 @@ mod tests {
             let b = "did:unfer:b";
             let d = item("derived", 1);
             let o = item("original", 2);
-            ledger.apply_op(a, &AttributionOpKind::RegisterItem { item: d.clone() }, 1).unwrap();
-            ledger.apply_op(b, &AttributionOpKind::RegisterItem { item: o.clone() }, 2).unwrap();
+            ledger
+                .apply_op(a, &AttributionOpKind::RegisterItem { item: d.clone() }, 1)
+                .unwrap();
+            ledger
+                .apply_op(b, &AttributionOpKind::RegisterItem { item: o.clone() }, 2)
+                .unwrap();
             let id = credit_id(&offer(&d, &o, 100, exclusive), a, b);
-            ledger.apply_op(a, &AttributionOpKind::OfferAttribution { offer: offer(&d, &o, 100, exclusive) }, 3).unwrap();
-            ledger.apply_op(b, &AttributionOpKind::Approve { credit_id: id }, 4).unwrap();
-            ledger.apply_op(&a.to_string(), &AttributionOpKind::IssueBadge { credit_id: id, viewer: None }, 5).unwrap();
+            ledger
+                .apply_op(
+                    a,
+                    &AttributionOpKind::OfferAttribution {
+                        offer: offer(&d, &o, 100, exclusive),
+                    },
+                    3,
+                )
+                .unwrap();
+            ledger
+                .apply_op(b, &AttributionOpKind::Approve { credit_id: id }, 4)
+                .unwrap();
+            ledger
+                .apply_op(
+                    a,
+                    &AttributionOpKind::IssueBadge {
+                        credit_id: id,
+                        viewer: None,
+                    },
+                    5,
+                )
+                .unwrap();
             ledger.root()
         };
         // Replay of the identical log converges; a different term diverges.

@@ -85,7 +85,12 @@ impl SymExpr {
             SymExpr::Lit(l) => l.to_string(),
             SymExpr::Var(name) => name.clone(),
             SymExpr::Prim(op, a, b) => {
-                format!("({:?} {} {})", op, a.to_prefix_string(), b.to_prefix_string())
+                format!(
+                    "({:?} {} {})",
+                    op,
+                    a.to_prefix_string(),
+                    b.to_prefix_string()
+                )
             }
             SymExpr::App(f, a) => {
                 format!("({} {})", f.to_prefix_string(), a.to_prefix_string())
@@ -94,8 +99,7 @@ impl SymExpr {
                 if args.is_empty() {
                     format!("Tag{tag}")
                 } else {
-                    let inner: Vec<String> =
-                        args.iter().map(SymExpr::to_prefix_string).collect();
+                    let inner: Vec<String> = args.iter().map(SymExpr::to_prefix_string).collect();
                     format!("Tag{}({})", tag, inner.join(", "))
                 }
             }
@@ -134,11 +138,7 @@ impl SymExpr {
                 if *op == PrimOp::Not {
                     format!("(not {})", a.to_infix_string())
                 } else {
-                    format!(
-                        "({} {op_str} {})",
-                        a.to_infix_string(),
-                        b.to_infix_string()
-                    )
+                    format!("({} {op_str} {})", a.to_infix_string(), b.to_infix_string())
                 }
             }
             _ => self.to_prefix_string(),
@@ -194,7 +194,12 @@ fn readback_port(
         AgentKind::Con(tag, arity) => {
             let mut args = Vec::with_capacity(*arity as usize);
             for s in 1..=*arity {
-                args.push(readback_port(net, &net.get_aux(port.node, s)?, visited, depth + 1)?);
+                args.push(readback_port(
+                    net,
+                    &net.get_aux(port.node, s)?,
+                    visited,
+                    depth + 1,
+                )?);
             }
             Ok(SymExpr::Con(*tag, args))
         }
@@ -308,7 +313,10 @@ mod tests {
     fn f64_and_i64_never_coerce() {
         let ir = CoreIR::Prim(
             PrimOp::AddF64,
-            vec![CoreIR::Lit(Literal::F64(1.0)), CoreIR::Lit(Literal::Int64(2))],
+            vec![
+                CoreIR::Lit(Literal::F64(1.0)),
+                CoreIR::Lit(Literal::Int64(2)),
+            ],
         );
         let net = reduced(&ir);
         let sym = sym_readback(&net).unwrap();
@@ -321,7 +329,10 @@ mod tests {
     fn bool_calculation_evaluates() {
         let ir = CoreIR::Prim(
             PrimOp::Gt64,
-            vec![CoreIR::Lit(Literal::Int64(5)), CoreIR::Lit(Literal::Int64(2))],
+            vec![
+                CoreIR::Lit(Literal::Int64(5)),
+                CoreIR::Lit(Literal::Int64(2)),
+            ],
         );
         let net = reduced(&ir);
         let sym = sym_readback(&net).unwrap();

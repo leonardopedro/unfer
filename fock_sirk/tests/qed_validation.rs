@@ -625,8 +625,7 @@ fn qed_jaynes_cummings_vacuum_rabi_and_detuned_spectrum() {
     let mid = (omega + 0.6) / 2.0;
     let half = (g * g + 0.4 * 0.4 / 4.0).sqrt();
     assert!(
-        (ritz_d[0] - (mid - half)).abs() < 1e-9
-            && (ritz_d[1] - (mid + half)).abs() < 1e-9,
+        (ritz_d[0] - (mid - half)).abs() < 1e-9 && (ritz_d[1] - (mid + half)).abs() < 1e-9,
         "detuned doublet must be {mid} ± {half}, got {:?}",
         ritz_d
     );
@@ -652,9 +651,14 @@ fn qed_jaynes_cummings_vacuum_rabi_and_detuned_spectrum() {
             ),
         ],
     };
-    for (i, s) in [jc_state(0, false), jc_state(0, true), jc_state(1, true), jc_state(3, false)]
-        .iter()
-        .enumerate()
+    for (i, s) in [
+        jc_state(0, false),
+        jc_state(0, true),
+        jc_state(1, true),
+        jc_state(3, false),
+    ]
+    .iter()
+    .enumerate()
     {
         let hn = h_res.apply(&n_op.apply(s));
         let nh = n_op.apply(&h_res.apply(s));
@@ -669,7 +673,10 @@ fn qed_jaynes_cummings_vacuum_rabi_and_detuned_spectrum() {
     eprintln!(
         "qed_jaynes_cummings: on-resonance doublet {:?} (2g = {}), n=1 doublet {:?}, \
          detuned {:?}",
-        ritz, 2.0 * g, ritz1, ritz_d
+        ritz,
+        2.0 * g,
+        ritz1,
+        ritz_d
     );
 }
 
@@ -731,8 +738,7 @@ fn qed_jaynes_cummings_rabi_oscillation_and_revival() {
         "after one full Rabi period the atom must return to P_e = 1, got {pe_full}"
     );
     assert!(
-        (n0(&psi_full) - 1.0).abs() < 1e-6
-            && (e0(&psi_full) - e0(&psi0)).abs() < 1e-6,
+        (n0(&psi_full) - 1.0).abs() < 1e-6 && (e0(&psi_full) - e0(&psi0)).abs() < 1e-6,
         "JC evolution must conserve norm and energy"
     );
 
@@ -879,7 +885,13 @@ fn qed_static_charge_driven_field_oscillation() {
     let res = solve_forward_sirk_with_opts(&h, &psi0, &shifts(8), &best_device(), None, &opts)
         .expect("driven-field SIRK solve must complete");
 
-    for &t in &[0.5, 1.5, 2.5, std::f64::consts::PI, 2.0 * std::f64::consts::PI] {
+    for &t in &[
+        0.5,
+        1.5,
+        2.5,
+        std::f64::consts::PI,
+        2.0 * std::f64::consts::PI,
+    ] {
         let coeffs = res.time_evolve(t);
         let psi_t = res.reconstruct(&coeffs);
         for (i, (&(k, _), &amp)) in modes.iter().zip(amps.iter()).enumerate() {

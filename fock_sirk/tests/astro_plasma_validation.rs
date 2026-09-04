@@ -31,12 +31,10 @@
 //!     regime.
 
 use nested_fock_algebra::{
-    BCS_GAP_RATIO,
-    astro_blackbody_photon_gas, astro_chandrasekhar_mass_kg, astro_critical_density,
+    BCS_GAP_RATIO, astro_blackbody_photon_gas, astro_chandrasekhar_mass_kg, astro_critical_density,
     astro_eddington_luminosity_w, astro_hawking_temperature_k, astro_isco_gw_frequency_hz,
-    astro_schwarzschild_radius_m, inspiral_chirp_rate,
-    inspiral_time_to_coalescence_s, metrology_constants, phys, plasma_alfven_speed_ms,
-    plasma_debye_length_m, plasma_frequency_hz,
+    astro_schwarzschild_radius_m, inspiral_chirp_rate, inspiral_time_to_coalescence_s,
+    metrology_constants, phys, plasma_alfven_speed_ms, plasma_debye_length_m, plasma_frequency_hz,
 };
 
 fn rel(v: f64, target: f64) -> f64 {
@@ -115,9 +113,7 @@ fn plasma_ionosphere_frequency_and_debye_length() {
     // Debye length at T = 1000 K: ~2.2 mm; two algebraically identical
     // routes must agree exactly.
     let ld = plasma_debye_length_m(1000.0, n);
-    let ld_alt = ((phys::EPS0 * phys::K_B * 1000.0).sqrt()
-        / (phys::E * (n as f64).sqrt()))
-    .abs();
+    let ld_alt = ((phys::EPS0 * phys::K_B * 1000.0).sqrt() / (phys::E * n.sqrt())).abs();
     assert!(rel(ld, ld_alt) < 1e-12);
     assert!(ld > 1e-3 && ld < 1e-2, "λ_D = {ld:.3e} m");
 }
@@ -125,7 +121,7 @@ fn plasma_ionosphere_frequency_and_debye_length() {
 #[test]
 fn plasma_alfven_speed_solar_wind() {
     // Solar wind at 1 AU: B ≈ 5 nT, proton density ≈ 5 cm⁻³.
-    let rho = 5.0 * 1.672_621_92369e-27 * 1.0e6;
+    let rho = 5.0 * 1.67262192369e-27 * 1.0e6;
     let v_a = plasma_alfven_speed_ms(5.0e-9, rho);
     assert!(
         v_a > 3.0e4 && v_a < 7.0e4,
@@ -162,8 +158,7 @@ fn inspiral_chirp_ode_matches_closed_form() {
     // RK4-integrate df/dt = K f^{11/3} over one decade of frequency and
     // compare elapsed time with the closed form t(f₁) − t(f₂).
     let (f0, f1) = (35.0_f64, 350.0_f64);
-    let dt = inspiral_time_to_coalescence_s(chirp, f1) * -1.0
-        + inspiral_time_to_coalescence_s(chirp, f0);
+    let dt = -inspiral_time_to_coalescence_s(chirp, f1) + inspiral_time_to_coalescence_s(chirp, f0);
     let mut f = f0;
     let mut t_num = 0.0;
     let steps = 200_000;
@@ -183,14 +178,14 @@ fn inspiral_chirp_ode_matches_closed_form() {
     );
 
     // Chirp scaling: t ∝ 𝓜^{-5/3} — double the chirp mass, shrink the time.
-    let r = inspiral_time_to_coalescence_s(2.0 * chirp, f0)
-        / inspiral_time_to_coalescence_s(chirp, f0);
+    let r =
+        inspiral_time_to_coalescence_s(2.0 * chirp, f0) / inspiral_time_to_coalescence_s(chirp, f0);
     assert!(rel(r, (0.5f64).powf(5.0 / 3.0)) < 1e-9);
 
     // The LIGO-band sweep 35 → 150 Hz for this system takes the published
     // order-of-seconds-to-subsecond regime (GW150914 was in band ~0.2 s at
     // its higher chirp mass; here the integrator lands in 1–30 s).
-    let sweep = inspiral_time_to_coalescence_s(chirp, 35.0)
-        - inspiral_time_to_coalescence_s(chirp, 150.0);
+    let sweep =
+        inspiral_time_to_coalescence_s(chirp, 35.0) - inspiral_time_to_coalescence_s(chirp, 150.0);
     assert!(sweep > 0.01 && sweep < 60.0, "band sweep {sweep:.3} s");
 }

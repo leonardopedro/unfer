@@ -1,13 +1,9 @@
-use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
+use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::models::{navier_stokes_brst, navier_stokes_hamiltonian};
 use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState};
 use num_complex::Complex64;
 
-fn shifts(m: usize) -> Vec<Complex64> {
-    shifts_for_range((0, m))
-}
 fn ns_state(mode: u32, count: u32) -> QuantumState {
     let mut inner = InnerBosonicState::vacuum();
     inner.modes.insert(mode, count);

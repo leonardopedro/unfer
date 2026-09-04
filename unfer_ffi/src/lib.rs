@@ -2858,7 +2858,7 @@ pub extern "C" fn uk_auction_close(op_json: *const u8, len: i64, buf: *mut u8, c
         }
         let c: CloseJson = parse_json(op_json, len)?;
         let lot_id = unfer_protocol::AuctionId(parse_hex32(&c.lot_id, "lot_id")?);
-        Ok(handles::auction_close_json(&c.actor, &lot_id, buf, cap)?)
+        handles::auction_close_json(&c.actor, &lot_id, buf, cap)
     })
 }
 
@@ -4149,9 +4149,7 @@ mod tests {
             // Submit under the caller's own principal: a bounded caller may
             // read its own records (F8), so the state assertion below is about
             // the lane verdict, not an observer denial.
-            let req = format!(
-                r#"{{"principal":"lane_conflict_test","effect":"send_notification","params":{{"to":"alice"}}}}"#
-            );
+            let req = r#"{"principal":"lane_conflict_test","effect":"send_notification","params":{"to":"alice"}}"#.to_string();
             let (ptr, len) = json_ptr(&req);
             let handle = uk_action_submit(ptr, len);
             assert!(handle > 0, "expected action handle, got {handle}");

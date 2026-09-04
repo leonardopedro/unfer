@@ -122,20 +122,18 @@ impl KernelError {
                     .with_data(serde_json::json!({"residual": residual}))
             }
 
-            KernelError::Sirk(SirkError::LayoutNotBijective { index, message }) => {
-                Diagnostic::new(
-                    Code::LAYOUT_NOT_BIJECTIVE,
-                    self.to_string(),
-                    Severity::Error,
-                )
-                .with_hint(RepairHint::new(
-                    HintKind::ReduceScope,
-                    "solver.krylov_dim",
-                    "the state→index layout aliased two basis states; reduce the Krylov \
+            KernelError::Sirk(SirkError::LayoutNotBijective { index, message }) => Diagnostic::new(
+                Code::LAYOUT_NOT_BIJECTIVE,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReduceScope,
+                "solver.krylov_dim",
+                "the state→index layout aliased two basis states; reduce the Krylov \
                      dimension or report the layout bug (see the violation message)",
-                ))
-                .with_data(serde_json::json!({"index": index, "violation": message}))
-            }
+            ))
+            .with_data(serde_json::json!({"index": index, "violation": message})),
 
             KernelError::Sirk(SirkError::Numeric(msg)) => {
                 Diagnostic::new(Code::INTERNAL, msg.clone(), Severity::Error).with_hint(
@@ -282,16 +280,14 @@ impl KernelError {
                 reason,
             )),
 
-            KernelError::WhymlInvalid { reason } => Diagnostic::new(
-                Code::WHYML_SPEC_INVALID,
-                self.to_string(),
-                Severity::Error,
-            )
-            .with_hint(RepairHint::new(
-                HintKind::ReplaceValue,
-                "whyml.spec",
-                reason,
-            )),
+            KernelError::WhymlInvalid { reason } => {
+                Diagnostic::new(Code::WHYML_SPEC_INVALID, self.to_string(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::ReplaceValue,
+                        "whyml.spec",
+                        reason,
+                    ))
+            }
 
             KernelError::LogosFailed { reason } => Diagnostic::new(
                 Code::LOGOS_COMPILE_FAILED,
@@ -304,16 +300,14 @@ impl KernelError {
                 reason,
             )),
 
-            KernelError::AustralUnfFailed { reason } => Diagnostic::new(
-                Code::AUSTRAL_UNF_FAILED,
-                self.to_string(),
-                Severity::Error,
-            )
-            .with_hint(RepairHint::new(
-                HintKind::ReplaceValue,
-                "austral.source",
-                reason,
-            )),
+            KernelError::AustralUnfFailed { reason } => {
+                Diagnostic::new(Code::AUSTRAL_UNF_FAILED, self.to_string(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::ReplaceValue,
+                        "austral.source",
+                        reason,
+                    ))
+            }
 
             KernelError::SessionLogVersion { got, reason } => Diagnostic::new(
                 Code::SESSION_LOG_VERSION,

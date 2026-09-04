@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - name: install LLVM coverage tools (H11 per-file coverage gate)
         run: rustup component add llvm-tools-preview
@@ -43,6 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - name: cargo build
@@ -69,6 +77,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -89,6 +101,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - name: unfer_edge audit console tests
@@ -115,6 +131,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - run: cargo build --release -p unfer_ffi
@@ -172,6 +192,10 @@ jobs:
           # public repo without the token (GitHub's GITHUB_TOKEN
           # doesn't have access to sibling private repos).
           # token: ${{ secrets.AUSTRALVM_TOKEN }}
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -205,6 +229,10 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -234,6 +262,10 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -263,6 +295,10 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -292,6 +328,10 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -326,6 +366,10 @@ jobs:
         with:
           repository: leonardopedro/australVM
           path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -359,15 +403,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
   # fock_sirk/src/forward_sirk.rs are smoke-tested locally but not in CI.
-  # This job is gated on a self-hosted runner with the `gpu` label
-  # (no public GPU runner is configured; will only run when a self-hosted
-  # runner with the right label is online). The job mirrors qfm-tomo-e2e
-  # but enables the `cuda` feature for fock_sirk, exercising the GPU
-  # path of the SIRK solver. Closes the P6 D8 gap item ("CUDA toolkit
-  # pinning") at the runnable-path level; P9 P12 (toolkit pinning) and
-  # P8 P10 (CUDA kernel benchmark) are the next follow-ons.
+  # CUDA smoke: runs only when a self-hosted runner with the `gpu` label is
+  # registered AND the RUN_CUDA_SMOKE repository variable is set to `true`
+  # (Settings → Secrets and variables → Actions → Variables). Without the
+  # variable the job is *skipped*, so runs complete — a bare runner-gated job
+  # would sit in `queued` forever and hold every CI run hostage. Mirrors
+  # qfm-tomo-e2e but enables the `cuda` feature for fock_sirk.
   # ---------------------------------------------------------------------------
   qfm-tomo-e2e-cuda:
+    if: vars.RUN_CUDA_SMOKE == 'true'
     name: fock_sirk CUDA smoke (self-hosted GPU)
     runs-on: [self-hosted, gpu]
     steps:
@@ -375,6 +419,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
+      # unfer is at $GITHUB_WORKSPACE/unfer (path layout), so the
+      # ../../dynamic-arctic path dep resolves to $GITHUB_WORKSPACE/dynamic-arctic.
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        with:
+          repository: leonardopedro/dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:

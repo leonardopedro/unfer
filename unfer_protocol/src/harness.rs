@@ -105,10 +105,7 @@ pub fn resolve_runtime_choice(
     let is_approved = |candidate: &str| {
         (approved.is_empty() || approved.contains(&candidate)) && approved_known(candidate)
     };
-    let effective = |candidate: &str| {
-        is_approved(candidate)
-            && org_allows(candidate)
-    };
+    let effective = |candidate: &str| is_approved(candidate) && org_allows(candidate);
 
     // 1. Scope override (a scope may only pick an approved archetype at/above
     //    the org floor).
@@ -168,7 +165,13 @@ mod tests {
         // Per-scope archetype selection: the scope names a real archetype.
         let approved = ["austral_cps", "ecmascript"];
         assert_eq!(
-            resolve_runtime_choice(&approved, None, Some("ecmascript"), "austral_cps", Some("austral_cps")),
+            resolve_runtime_choice(
+                &approved,
+                None,
+                Some("ecmascript"),
+                "austral_cps",
+                Some("austral_cps")
+            ),
             RuntimeChoice::Profile("ecmascript"),
             "scope override wins over the module request"
         );
@@ -181,7 +184,9 @@ mod tests {
         let approved = ["austral_cps"];
         assert_eq!(
             resolve_runtime_choice(&approved, None, None, "austral_cps", Some("tidepool")),
-            RuntimeChoice::Rejected { requested: "tidepool".to_string() }
+            RuntimeChoice::Rejected {
+                requested: "tidepool".to_string()
+            }
         );
     }
 
@@ -209,7 +214,9 @@ mod tests {
         let org = Some("austral_cps");
         assert_eq!(
             resolve_runtime_choice(&approved, org, Some("ecmascript"), "austral_cps", None),
-            RuntimeChoice::Rejected { requested: "ecmascript".to_string() },
+            RuntimeChoice::Rejected {
+                requested: "ecmascript".to_string()
+            },
             "scope cannot widen below the org floor"
         );
         // A scope at the org floor resolves.
@@ -233,6 +240,9 @@ mod tests {
     fn kernelless_profile_reads_snapshot_only() {
         let k = profile("kernelless").unwrap();
         assert_eq!(k.transcript_format, "snapshot");
-        assert!(k.capabilities.is_empty(), "kernelless carries no kernel capability");
+        assert!(
+            k.capabilities.is_empty(),
+            "kernelless carries no kernel capability"
+        );
     }
 }

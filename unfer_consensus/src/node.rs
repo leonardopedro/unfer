@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use prob_kernel::Session;
 use unfer_protocol::{
-    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, MarketOpKind,
-    MathBondState, ModelSpec, Severity,
+    AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, MarketOpKind, MathBondState,
+    ModelSpec, Severity,
 };
 
 use crate::auction::AuctionLedger;
@@ -87,11 +87,7 @@ impl ConsensusNode {
         Ok(applied)
     }
 
-    fn apply_transaction(
-        &mut self,
-        seq: u64,
-        tx: &ConsensusTransaction,
-    ) -> Result<(), Diagnostic> {
+    fn apply_transaction(&mut self, seq: u64, tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
         match tx {
             ConsensusTransaction::IdentityOp(op) => {
                 self.identity.apply_identity_op(op)?;
@@ -114,16 +110,18 @@ impl ConsensusNode {
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
                 let key = crate::idempotency::certificate_key(op);
-                self.idempotency
-                    .once(&key, seq, || self.certs.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
+                self.idempotency.once(&key, seq, || {
+                    self.certs.apply_op(&actor, &kind, op.seq).map(|_| ())
+                })?;
             }
             ConsensusTransaction::AuctionOp(op) => {
                 // H7: a duplicated or replayed auction op applies exactly once.
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
                 let key = crate::idempotency::auction_key(op);
-                self.idempotency
-                    .once(&key, seq, || self.auction.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
+                self.idempotency.once(&key, seq, || {
+                    self.auction.apply_op(&actor, &kind, op.seq).map(|_| ())
+                })?;
             }
             ConsensusTransaction::MathBondOp(op) => {
                 // H7: a duplicated or replayed math bond op applies exactly once.
@@ -133,8 +131,9 @@ impl ConsensusNode {
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
                 let key = crate::idempotency::mathbond_key(op);
-                self.idempotency
-                    .once(&key, seq, || self.mathbond.apply_op(&actor, &kind, seq).map(|_| ()))?;
+                self.idempotency.once(&key, seq, || {
+                    self.mathbond.apply_op(&actor, &kind, seq).map(|_| ())
+                })?;
             }
             ConsensusTransaction::MarketOp(op) => {
                 // H7: a duplicated or replayed market op applies exactly once.
@@ -151,11 +150,7 @@ impl ConsensusNode {
                 } = &kind
                 {
                     let pool = self.market.pool(pool_id).ok_or_else(|| {
-                        Diagnostic::new(
-                            Code::MARKET_UNKNOWN_POOL,
-                            "unknown pool",
-                            Severity::Error,
-                        )
+                        Diagnostic::new(Code::MARKET_UNKNOWN_POOL, "unknown pool", Severity::Error)
                     })?;
                     let bond = self.mathbond.bond(&pool.pool.bond_id).ok_or_else(|| {
                         Diagnostic::new(
@@ -190,17 +185,17 @@ impl ConsensusNode {
                     }
                 }
                 let key = crate::idempotency::market_key(op);
-                self.idempotency
-                    .once(&key, seq, || self.market.apply_op(&actor, &kind, op.seq).map(|_| ()))?;
+                self.idempotency.once(&key, seq, || {
+                    self.market.apply_op(&actor, &kind, op.seq).map(|_| ())
+                })?;
             }
             ConsensusTransaction::AttributionOp(op) => {
                 // H7: a duplicated or replayed attribution op applies exactly once.
                 let actor = op.did.clone();
                 let kind = op.kind.clone();
                 let key = crate::idempotency::attribution_key(op);
-                self.idempotency.once(&key, seq, || {
-                    self.attribution.apply_op(&actor, &kind, seq)
-                })?;
+                self.idempotency
+                    .once(&key, seq, || self.attribution.apply_op(&actor, &kind, seq))?;
             }
         }
         Ok(())
@@ -292,7 +287,7 @@ impl ConsensusNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::certs::{CertificateLedger, MintAuthority};
+    use crate::certs::MintAuthority;
     use crate::engine::LocalConsensus;
     use crate::signing::Keypair;
     use unfer_protocol::{CertificateOp, CertificateOpKind, IdentityOp, IdentityOpKind};
@@ -332,21 +327,32 @@ mod tests {
         let shares: Vec<curve25519_dalek::scalar::Scalar> = coalition
             .iter()
             .map(|&k| {
-                arctic::arctic_core::sign2(&group_pk, &seckeys[(k - 1) as usize], coalition, &msg, &r1)
-                    .unwrap()
+                arctic::arctic_core::sign2(
+                    &group_pk,
+                    &seckeys[(k - 1) as usize],
+                    coalition,
+                    &msg,
+                    &r1,
+                )
+                .unwrap()
             })
             .collect();
-        let sig = arctic::arctic_core::combine(&group_pk, t, coalition, &msg, &r1, &shares).unwrap();
+        let sig =
+            arctic::arctic_core::combine(&group_pk, t, coalition, &msg, &r1, &shares).unwrap();
         let mut sig_bytes = [0u8; 64];
         sig_bytes[..32].copy_from_slice(sig.0.compress().as_bytes());
         sig_bytes[32..].copy_from_slice(&sig.1.to_bytes());
         op.signature = sig_bytes;
-        (ConsensusTransaction::CertificateOp(op), group_pk.compress().to_bytes())
+        (
+            ConsensusTransaction::CertificateOp(op),
+            group_pk.compress().to_bytes(),
+        )
     }
 
     #[test]
     fn threshold_mint_submit_syncs_through_the_gate() {
-        let (tx, pubkey) = threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
+        let (tx, pubkey) =
+            threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
         let mut node = make_node();
         node.set_mint_authority(MintAuthority::Threshold {
             threshold: 4,
@@ -363,7 +369,8 @@ mod tests {
 
     #[test]
     fn threshold_mint_rejects_forged_sig_at_submit() {
-        let (mut tx, pubkey) = threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
+        let (mut tx, pubkey) =
+            threshold_mint_tx(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", 1);
         if let ConsensusTransaction::CertificateOp(op) = &mut tx {
             op.signature[0] ^= 0xff;
         }
@@ -883,7 +890,10 @@ mod tests {
 
         // Applied exactly once: the input is spent once, conservation holds.
         assert_eq!(node.certs().total_supply(), 1000, "UK-7002 conservation");
-        assert!(node.certs().utxo(&coin).is_none(), "input spent exactly once");
+        assert!(
+            node.certs().utxo(&coin).is_none(),
+            "input spent exactly once"
+        );
         assert_eq!(node.certs().unspent_count(), 1, "one output, not two");
         // The second delivery was recognized as committed.
         assert!(
@@ -1226,9 +1236,7 @@ mod tests {
         sign_and_submit(&node2, &mut open2, &creator2);
         let mut mature2 = ConsensusTransaction::MathBondOp(MathBondOp {
             did: sponsor2.did(),
-            kind: MathBondOpKind::Mature {
-                bond_id: bond_id2,
-            },
+            kind: MathBondOpKind::Mature { bond_id: bond_id2 },
             seq: 0,
             signature: [0u8; 64],
         });

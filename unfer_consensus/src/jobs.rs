@@ -161,7 +161,10 @@ mod tests {
         let claim = q.claim_slot("sensitive-settle").unwrap();
         q.disable(&claim);
         assert_eq!(q.state("sensitive-settle"), Some(JobState::Disabled));
-        assert!(q.claim_slot("sensitive-settle").is_none(), "disabled job never fires");
+        assert!(
+            q.claim_slot("sensitive-settle").is_none(),
+            "disabled job never fires"
+        );
     }
 
     #[test]
@@ -169,6 +172,9 @@ mod tests {
         let mut q = JobQueue::new();
         q.enqueue("job");
         let _first = q.claim_slot("job").unwrap();
-        assert!(q.claim_slot("job").is_none(), "second claim must be refused");
+        assert!(
+            q.claim_slot("job").is_none(),
+            "second claim must be refused"
+        );
     }
 }

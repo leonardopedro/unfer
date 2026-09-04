@@ -22,8 +22,8 @@ use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
-    qed_free_photon, qed_jaynes_cummings,
+    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState, qed_free_photon,
+    qed_jaynes_cummings,
 };
 use num_complex::Complex64;
 
@@ -44,7 +44,10 @@ fn opts() -> SirkOpts {
 fn assert_hermitian(h_proj: &DMatrix<Complex64>, label: &str) {
     let dag = h_proj.adjoint();
     let diff = (h_proj.clone() - dag).norm();
-    assert!(diff < 1e-6, "{label}: H_proj must be Hermitian, ‖H−H†‖={diff}");
+    assert!(
+        diff < 1e-6,
+        "{label}: H_proj must be Hermitian, ‖H−H†‖={diff}"
+    );
 }
 
 fn sirk_ritz(h: &Hamiltonian, v0: &QuantumState, m: usize) -> Vec<f64> {
@@ -81,8 +84,8 @@ fn jc_state(n: u32, excited: bool) -> QuantumState {
 
 /// `|n⟩` — n photons in mode 0 of the free field.
 fn n_photon(n: u32) -> QuantumState {
-    let mut s = QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let mut s =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     for _ in 0..n {
         s = s.apply(&Operator::InnerBosonCreate(0));
     }
@@ -99,8 +102,8 @@ fn coherent_state(alpha: f64, n_max: u32) -> QuantumState {
     let mut bare = QuantumState::zero();
     for n in 0..=n_max {
         let amp = alpha.powi(n as i32) / (1..=n).fold(1.0_f64, |acc, k| acc * k as f64);
-        let mut ket = QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let mut ket =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
         for _ in 0..n {
             ket = ket.apply(&Operator::InnerBosonCreate(0));
         }
@@ -182,7 +185,10 @@ fn qed_coherent_state_poisson_statistics() {
         let psi = coherent_state(alpha, 24);
         // The state must be normalized.
         let norm = QuantumState::inner_product(&psi, &psi).re;
-        assert!((norm - 1.0).abs() < 1e-9, "coherent state must be normalized");
+        assert!(
+            (norm - 1.0).abs() < 1e-9,
+            "coherent state must be normalized"
+        );
         let mean_n = measure(&h_n, &psi);
         let mean_n2 = measure(&h_n2, &psi);
         let var = mean_n2 - mean_n * mean_n;
@@ -198,7 +204,10 @@ fn qed_coherent_state_poisson_statistics() {
         );
         // Mandel Q = (⟨N²⟩−⟨N⟩²)/⟨N⟩ − 1 = 0 for coherent light.
         let q = var / mean_n - 1.0;
-        assert!(q.abs() < 1e-5, "Mandel Q must vanish for coherent light, got {q}");
+        assert!(
+            q.abs() < 1e-5,
+            "Mandel Q must vanish for coherent light, got {q}"
+        );
     }
     eprintln!("qed_coherent_state_poisson_statistics: ⟨N⟩ = Var(N) = |α|², Q = 0");
 }
@@ -214,7 +223,9 @@ fn qed_zeta_minus_one_casimir_energy() {
     let abel = |eps: f64| -> f64 {
         // Σ_{n=1}^N n·e^{−nε}; tail < 1e-16.
         let n = ((40.0 / eps) as usize).max(100_000);
-        (1..=n).map(|k| (k as f64) * (-(k as f64) * eps).exp()).sum()
+        (1..=n)
+            .map(|k| (k as f64) * (-(k as f64) * eps).exp())
+            .sum()
     };
     for eps in [0.05, 0.02, 0.01] {
         let s = abel(eps);
@@ -234,9 +245,14 @@ fn qed_zeta_minus_one_casimir_energy() {
         let f_num = e_num / d; // dE/dd = −E/d (E ∝ 1/d), F = −dE/dd = E/d
         assert!((e_num - e_1d).abs() < 1e-12, "1D Casimir energy mismatch");
         assert!((f_num - f_1d).abs() < 1e-12, "1D Casimir force mismatch");
-        assert!(e_1d < 0.0 && f_1d < 0.0, "Casimir energy/force must be attractive");
+        assert!(
+            e_1d < 0.0 && f_1d < 0.0,
+            "Casimir energy/force must be attractive"
+        );
     }
-    eprintln!("qed_zeta_minus_one_casimir_energy: ζ(−1) = −1/12 extracted; E = −π/(24d), F = −π/(24d²)");
+    eprintln!(
+        "qed_zeta_minus_one_casimir_energy: ζ(−1) = −1/12 extracted; E = −π/(24d), F = −π/(24d²)"
+    );
 }
 
 #[test]
@@ -256,16 +272,14 @@ fn qed_photon_additivity_and_multimode_vacuum() {
     // energy ωᵢ; photons in distinct modes add.
     let omegas = [1.0, 2.0, 4.0];
     let h_multi = qed_free_photon(&omegas);
-    let vac = QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let vac =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     assert!(
         sirk_ground(&h_multi, &vac, 6).abs() < 1e-9,
         "multi-mode vacuum must have zero energy"
     );
     for (i, &w) in omegas.iter().enumerate() {
-        let one = vac
-            .clone()
-            .apply(&Operator::InnerBosonCreate(i as u32));
+        let one = vac.clone().apply(&Operator::InnerBosonCreate(i as u32));
         let e = sirk_ground(&h_multi, &one, 6);
         assert!(
             (e - w).abs() < 1e-9,
@@ -283,5 +297,7 @@ fn qed_photon_additivity_and_multimode_vacuum() {
         "two-photon cross-mode energy must be ω₁+ω₂ = {}, got {e}",
         omegas[0] + omegas[1]
     );
-    eprintln!("qed_photon_additivity_and_multimode_vacuum: nω additivity (n≤5), multi-mode vacuum = 0, cross-mode additivity");
+    eprintln!(
+        "qed_photon_additivity_and_multimode_vacuum: nω additivity (n≤5), multi-mode vacuum = 0, cross-mode additivity"
+    );
 }

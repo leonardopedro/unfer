@@ -16,6 +16,11 @@
 //! by Lawson's iteratively-reweighted minimax on a discretized Σ with the
 //! fixed SIRK denominator factored out (linear-in-coefficients problem).
 
+// This module is `mod`-included by two separate test binaries, each of which
+// uses only a subset of its items — so items unused by one binary look dead
+// to that compilation. Keep the shared scaffolding available to both.
+#![allow(dead_code)]
+
 use num_complex::Complex64;
 
 /// The paper's shift ladder: γ_j = N − h j for j = 1..=m, all strictly
@@ -50,6 +55,7 @@ pub struct BandParams {
     pub t: f64,
 }
 
+#[allow(dead_code)] // shared test-support module: each test binary reads a subset of fields
 pub struct BandOutcome {
     /// E_m = min_r ‖f − r‖_{∞,Σ} (Lawson minimax value).
     pub e_m: f64,
@@ -95,10 +101,14 @@ impl BandParams {
                 im_vals.push(-t * lam_v / d);
             }
         }
-        let (re_min, re_max) = (re_vals.iter().cloned().fold(f64::INFINITY, f64::min),
-                                re_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
-        let (im_min, im_max) = (im_vals.iter().cloned().fold(f64::INFINITY, f64::min),
-                                im_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
+        let (re_min, re_max) = (
+            re_vals.iter().cloned().fold(f64::INFINITY, f64::min),
+            re_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        );
+        let (im_min, im_max) = (
+            im_vals.iter().cloned().fold(f64::INFINITY, f64::min),
+            im_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        );
         // Pad slightly (open interior requirement of M(Σ)).
         let pad_re = 1e-9 + 1e-6 * (re_max - re_min).abs();
         let pad_im = 1e-9 + 1e-6 * (im_max - im_min).abs();
@@ -131,10 +141,7 @@ impl BandParams {
         };
 
         // Scaling map into the unit disc for conditioning of the basis.
-        let r_scale = pts
-            .iter()
-            .map(|z| z.norm())
-            .fold(1e-300_f64, f64::max);
+        let r_scale = pts.iter().map(|z| z.norm()).fold(1e-300_f64, f64::max);
         let _ = r_scale;
 
         // Chebyshev-like tensor basis in Re(ẑ), Im(ẑ): total degree ≤ m.
@@ -156,11 +163,8 @@ impl BandParams {
         // Lawson iterations: weighted least squares → minimax.
         let mut lawson_w = vec![1.0_f64; pts.len()];
         let mut coeffs = nalgebra::DVector::<Complex64>::zeros(dim);
-        let mut design_rows: Vec<Vec<Complex64>> = pts.iter().map(|z| basis(*z)).collect();
-        let mut rhs: Vec<Complex64> = pts
-            .iter()
-            .map(|z| f_of(*z) * q_of(*z))
-            .collect();
+        let design_rows: Vec<Vec<Complex64>> = pts.iter().map(|z| basis(*z)).collect();
+        let rhs: Vec<Complex64> = pts.iter().map(|z| f_of(*z) * q_of(*z)).collect();
         // Divide by |q| belongs to the ERROR metric, applied via Lawson
         // weights (rows already carry 1/|q| multiplicatively below).
         let qmag: Vec<f64> = pts.iter().map(|z| q_of(*z).norm()).collect();
@@ -195,7 +199,9 @@ impl BandParams {
                 ata[(a, a)] += Complex64::new(1e-13, 0.0);
             }
             let lu = ata.lu();
-            coeffs = lu.solve(&atb).unwrap_or_else(|| nalgebra::DVector::zeros(dim));
+            coeffs = lu
+                .solve(&atb)
+                .unwrap_or_else(|| nalgebra::DVector::zeros(dim));
 
             // Update Lawson weights ∝ |residual|.
             let mut max_res = 0.0_f64;
@@ -238,8 +244,8 @@ impl BandParams {
         let base = 2.0 * v_norm * exp_factor * e_m;
         BandOutcome {
             e_m,
-            lo: 2.0 * base,       // C = 2
-            hi: 11.08 * base,     // C = 11.08
+            lo: 2.0 * base,   // C = 2
+            hi: 11.08 * base, // C = 11.08
             exp_factor,
         }
     }
@@ -254,12 +260,7 @@ impl BandParams {
 /// Returns the certified interval [value − δ, value + δ]. This turns the
 /// band machinery into ERROR BARS for models without closed-form references
 /// — certified numerics for the interacting gauge-fixed Hamiltonians.
-pub fn certify(
-    value: f64,
-    op_norm_bound: f64,
-    band_hi: f64,
-    v_norm: f64,
-) -> (f64, f64) {
+pub fn certify(value: f64, op_norm_bound: f64, band_hi: f64, v_norm: f64) -> (f64, f64) {
     let delta = 2.0 * op_norm_bound * band_hi * v_norm;
     (value - delta, value + delta)
 }

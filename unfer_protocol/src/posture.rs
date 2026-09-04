@@ -14,17 +14,7 @@ use serde::{Deserialize, Serialize};
 /// [`SecurityPosture::compose`] takes the *stricter* of the org floor and a
 /// scope — a scope can only tighten, never widen below the org.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityPosture {
@@ -161,7 +151,9 @@ pub trait Screener {
 pub enum Screening {
     Trusted,
     /// Not screened — the payload is untrusted and must be surfaced as such.
-    Uncertified { notice: &'static str },
+    Uncertified {
+        notice: &'static str,
+    },
 }
 
 /// Apply the screener seam: with no screener installed (the default), a
@@ -283,7 +275,12 @@ mod tests {
         }
         let mut s = NoScreener;
         assert_eq!(
-            screen_with(&mut s, SecurityPosture::Dangerous, ProvenanceSource::Web, "p"),
+            screen_with(
+                &mut s,
+                SecurityPosture::Dangerous,
+                ProvenanceSource::Web,
+                "p"
+            ),
             Screening::Trusted,
             "dangerous posture disables inbound screening"
         );
@@ -293,7 +290,13 @@ mod tests {
     fn strict_admits_the_two_enders_in_a_pause_context() {
         // The pause helper admits exactly the two no-effect turn enders.
         let mut paused: Vec<&str> = Vec::new();
-        for sym in ["uk_fetch", "uk_gate_approve", "uk_version", "uk_session_close", "uk_evolve"] {
+        for sym in [
+            "uk_fetch",
+            "uk_gate_approve",
+            "uk_version",
+            "uk_session_close",
+            "uk_evolve",
+        ] {
             if SecurityPosture::strict_pauses(sym) {
                 paused.push(sym);
             }

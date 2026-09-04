@@ -214,9 +214,8 @@ fn qg_starobinsky_gauge_fixed_cadabra2_sirk() {
     two = two.apply(&Operator::InnerBosonCreate(0));
     psi0.scale_and_add(&one, Complex64::new(0.7, 0.0));
     psi0.scale_and_add(&two, Complex64::new(0.3, 0.0));
-    let res =
-        solve_forward_sirk_with_opts(&h_fock, &psi0, &shifts(8), &best_device(), None, &opts)
-            .expect("SIRK solve of the gauge-fixed Starobinsky Hamiltonian");
+    let res = solve_forward_sirk_with_opts(&h_fock, &psi0, &shifts(8), &best_device(), None, &opts)
+        .expect("SIRK solve of the gauge-fixed Starobinsky Hamiltonian");
     let dag = res.h_proj.clone().adjoint();
     assert!(
         (res.h_proj.clone() - dag).norm() < 1e-6,

@@ -148,8 +148,7 @@ mod tests {
     fn provenance_label_survives_validation() {
         use unfer_protocol::ProvenanceSource;
         // A web external-data op carries its provenance source through the gate.
-        let body =
-            br#"{"id":"1","op":"content_resolve","params":{},"provenance":"web"}"#;
+        let body = br#"{"id":"1","op":"content_resolve","params":{},"provenance":"web"}"#;
         let req = validate_request(body).unwrap();
         assert_eq!(req.provenance, Some(ProvenanceSource::Web));
         // Absent provenance stays absent (additive contract).
@@ -172,7 +171,7 @@ mod tests {
 
     #[test]
     fn absent_screener_surfaces_notice_never_silent_pass() {
-        use unfer_protocol::{InboundScreening, SecurityPosture, screen_with, Screener};
+        use unfer_protocol::{InboundScreening, Screener, SecurityPosture, screen_with};
         struct NoScreener;
         impl Screener for NoScreener {
             fn screened(&mut self, _s: unfer_protocol::ProvenanceSource, _p: &str) -> bool {
@@ -194,13 +193,7 @@ mod tests {
             }
         );
         // Strict also screens; dangerous does not.
-        assert!(SecurityPosture::Auto
-            .resolve()
-            .inbound_screening
-            == InboundScreening::External);
-        assert!(SecurityPosture::Strict
-            .resolve()
-            .inbound_screening
-            == InboundScreening::External);
+        assert!(SecurityPosture::Auto.resolve().inbound_screening == InboundScreening::External);
+        assert!(SecurityPosture::Strict.resolve().inbound_screening == InboundScreening::External);
     }
 }

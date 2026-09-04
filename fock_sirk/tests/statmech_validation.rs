@@ -18,7 +18,9 @@
 //! 6. `sm_photon_gas_pressure_and_adibatic_indices` — photon gas p = u/3;
 //!    γ = 5/3 monatomic and 7/5 rigid diatomic.
 
-use nested_fock_algebra::{phys, sm_bec_temperature_k, sm_sackur_tetrode_j_per_mol_k, sm_vdw_critical_ratio};
+use nested_fock_algebra::{
+    phys, sm_bec_temperature_k, sm_sackur_tetrode_j_per_mol_k, sm_vdw_critical_ratio,
+};
 
 fn rel(v: f64, t: f64) -> f64 {
     (v - t).abs() / t
@@ -62,7 +64,10 @@ fn sm_bec_ideal_gas_helium() {
     // Ideal-gas prediction ≈ 3.1 K; the INTERACTING liquid reaches the
     // λ-transition at 2.17 K — the published ideal-vs-real contrast.
     assert!(tc > 2.9 && tc < 3.3, "ideal T_c = {tc} K");
-    assert!(2.17 < tc, "interactions must LOWER the transition temperature");
+    assert!(
+        2.17 < tc,
+        "interactions must LOWER the transition temperature"
+    );
 }
 
 #[test]

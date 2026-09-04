@@ -1015,9 +1015,7 @@ mod tests {
         // ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c², identical to Part 4's H_gf.
         let h_action = &derived["H_action"];
         assert!(
-            h_action.contains("π")
-                && h_action.contains("grad2")
-                && h_action.contains("Rc"),
+            h_action.contains("π") && h_action.contains("grad2") && h_action.contains("Rc"),
             "H_action must be the action-derived gauge-fixed Hamiltonian \
              ½π² + ½(∂φ)² + V(φ) − (M²/2)R_c + αR_c²: {h_action}"
         );

@@ -25,7 +25,7 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
     InnerBosonicState, Operator, QuantumState, qed_free_photon, qed_kerr_cavity,
 };
@@ -81,7 +81,11 @@ fn sector_energy(h: &nested_fock_algebra::Hamiltonian, n: u32) -> f64 {
         solve_forward_sirk_with_opts(h, &n_photons(n), &shifts(6), &best_device(), None, &opts())
             .unwrap();
     let ritz = res.ritz_values();
-    assert_eq!(ritz.len(), 1, "|{n}⟩ is 1-dimensional (N conserved): got {ritz:?}");
+    assert_eq!(
+        ritz.len(),
+        1,
+        "|{n}⟩ is 1-dimensional (N conserved): got {ritz:?}"
+    );
     ritz[0]
 }
 

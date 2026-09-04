@@ -91,7 +91,10 @@ fn qed_schwinger_critical_field_pin() {
     let e_c = M_E_KG * M_E_KG * C.powi(3) / (E_CHARGE * HBAR);
     let expected = 1.323e18; // V/m, textbook value
     let rel = (e_c - expected).abs() / expected;
-    assert!(rel < 1e-3, "E_c = {e_c:.6e} V/m, expected {expected:.6e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-3,
+        "E_c = {e_c:.6e} V/m, expected {expected:.6e} (rel {rel:.2e})"
+    );
 }
 
 #[test]
@@ -130,10 +133,16 @@ fn qed_fine_structure_runs_upwards_leptonic() {
         "1/α_lept(M_Z) = {inv_alpha_z}, expected ≈ 134.6"
     );
     // Charge screening: α must increase with energy.
-    assert!(alpha_z > ALPHA, "α(M_Z) = {alpha_z} must exceed α(0) = {ALPHA}");
+    assert!(
+        alpha_z > ALPHA,
+        "α(M_Z) = {alpha_z} must exceed α(0) = {ALPHA}"
+    );
     // The leptonic piece accounts for most of the shift from 137.04 → 128.9.
     assert!((134.6 - inv_alpha_z).abs() < 0.3);
-    assert!((inv_alpha_z - 128.9).abs() > 4.0, "hadronic Δα must be missing");
+    assert!(
+        (inv_alpha_z - 128.9).abs() > 4.0,
+        "hadronic Δα must be missing"
+    );
 }
 
 #[test]
@@ -143,7 +152,10 @@ fn qed_fine_structure_from_si_constants() {
     // physical constant, now defined by the SI redefinition.
     let alpha = E_CHARGE * E_CHARGE / (4.0 * std::f64::consts::PI * EPS0 * HBAR * C);
     let rel = (alpha - ALPHA).abs() / ALPHA;
-    assert!(rel < 1e-8, "α from SI = {alpha}, CODATA {ALPHA} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-8,
+        "α from SI = {alpha}, CODATA {ALPHA} (rel {rel:.2e})"
+    );
 }
 
 #[test]
@@ -165,7 +177,10 @@ fn qed_rydberg_and_hydrogen_ionization() {
     let lambda_c = H_PLANCK / (M_E_KG * C);
     let expected_l = 2.426_310_238_67e-12; // m
     let rel_l = (lambda_c - expected_l).abs() / expected_l;
-    assert!(rel_l < 1e-8, "λ_C = {lambda_c:.6e}, expected {expected_l:.6e}");
+    assert!(
+        rel_l < 1e-8,
+        "λ_C = {lambda_c:.6e}, expected {expected_l:.6e}"
+    );
 }
 
 #[test]
@@ -186,7 +201,10 @@ fn qed_casimir_three_dimensional_coefficient() {
     // Numeric pin at d = 1 µm: E/A = −π²ħc/(720·(1e-6)³) = −4.334e-10 J/m².
     let expected_ea = -4.334e-10;
     let rel = (e1 - expected_ea).abs() / expected_ea.abs();
-    assert!(rel < 1e-2, "E/A(1 µm) = {e1:.3e} J/m², expected {expected_ea:.3e}");
+    assert!(
+        rel < 1e-2,
+        "E/A(1 µm) = {e1:.3e} J/m², expected {expected_ea:.3e}"
+    );
     // The pressure is the derivative: F/A = −d(E/A)/dd = −π²ħc/(240d⁴),
     // so F·d = 3·(E/A) exactly for the d⁻³ law.
     let f_over_a = -coeff * 3.0 * HBAR * C / d.powi(4); // −π²ħc/(240d⁴)

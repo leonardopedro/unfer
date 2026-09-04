@@ -178,7 +178,11 @@ pub enum MintAuthority {
     /// canonical op bytes must verify against `pubkey` (the compressed group
     /// Ristretto point). The aggregate signature occupies the op's existing
     /// 64-byte `signature` field (Ristretto point + scalar).
-    Threshold { threshold: u32, total: u32, pubkey: [u8; 32] },
+    Threshold {
+        threshold: u32,
+        total: u32,
+        pubkey: [u8; 32],
+    },
 }
 
 /// The certificate ledger state-transition engine.
@@ -275,7 +279,7 @@ impl CertificateLedger {
                 return Err(self.diag(
                     Code::CERT_MINT_NOT_AUTHORIZED,
                     "threshold mint verification requires a CertificateOp",
-                ))
+                ));
             }
         };
         let (threshold, total, pubkey) = match &self.mint_authority {
@@ -288,7 +292,7 @@ impl CertificateLedger {
                 return Err(self.diag(
                     Code::CERT_MINT_NOT_AUTHORIZED,
                     "ledger is not configured with a threshold mint authority",
-                ))
+                ));
             }
         };
         if !crate::signing::verify_arctic_threshold(pubkey, threshold, total, tx, &op.signature) {
@@ -910,8 +914,15 @@ mod proptests {
                 .unwrap()
             })
             .collect();
-        let sig = arctic::arctic_core::combine(&group_pk, t, coalition, &real_msg, &r1_outputs, &sigshares)
-            .expect("honest coalition must combine");
+        let sig = arctic::arctic_core::combine(
+            &group_pk,
+            t,
+            coalition,
+            &real_msg,
+            &r1_outputs,
+            &sigshares,
+        )
+        .expect("honest coalition must combine");
 
         // Serialize (RistrettoPoint, Scalar) → 32 + 32 = 64 bytes.
         let mut sig_bytes = [0u8; 64];
@@ -925,7 +936,15 @@ mod proptests {
 
     #[test]
     fn threshold_mint_authority_accepts_t_of_n_sig() {
-        let (tx, pubkey) = threshold_mint_op(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", [1u8; 32], 1);
+        let (tx, pubkey) = threshold_mint_op(
+            7,
+            4,
+            &[1, 2, 3, 4, 5, 6, 7],
+            100,
+            "did:unfer:alice",
+            [1u8; 32],
+            1,
+        );
         let mut l = CertificateLedger::new(MintAuthority::Threshold {
             threshold: 4,
             total: 7,
@@ -935,7 +954,8 @@ mod proptests {
         assert_eq!(l.threshold_params(), Some((4, 7)));
 
         // The threshold signature verifies against the group key.
-        l.verify_threshold_mint(&tx).expect("threshold sig must verify");
+        l.verify_threshold_mint(&tx)
+            .expect("threshold sig must verify");
 
         // And the mint applies.
         let op = match &tx {
@@ -957,8 +977,16 @@ mod proptests {
         // refuse the best they can produce. We emulate a forged attempt by
         // taking a valid 7-of-7 signature and corrupting it, then check the
         // ledger refuses.
-        let (mut tx, pubkey) = threshold_mint_op(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", [1u8; 32], 1);
-        let mut l = CertificateLedger::new(MintAuthority::Threshold {
+        let (mut tx, pubkey) = threshold_mint_op(
+            7,
+            4,
+            &[1, 2, 3, 4, 5, 6, 7],
+            100,
+            "did:unfer:alice",
+            [1u8; 32],
+            1,
+        );
+        let l = CertificateLedger::new(MintAuthority::Threshold {
             threshold: 4,
             total: 7,
             pubkey,
@@ -980,7 +1008,15 @@ mod proptests {
         // Sign one message, submit a different op: the aggregate signature is
         // message-bound (hash3 includes the canonical bytes), so verification
         // must fail.
-        let (mut tx, pubkey) = threshold_mint_op(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", [1u8; 32], 1);
+        let (mut tx, pubkey) = threshold_mint_op(
+            7,
+            4,
+            &[1, 2, 3, 4, 5, 6, 7],
+            100,
+            "did:unfer:alice",
+            [1u8; 32],
+            1,
+        );
         let l = CertificateLedger::new(MintAuthority::Threshold {
             threshold: 4,
             total: 7,
@@ -995,7 +1031,15 @@ mod proptests {
 
     #[test]
     fn threshold_authority_rejects_non_threshold_ledger() {
-        let (tx, pubkey) = threshold_mint_op(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", [1u8; 32], 1);
+        let (tx, pubkey) = threshold_mint_op(
+            7,
+            4,
+            &[1, 2, 3, 4, 5, 6, 7],
+            100,
+            "did:unfer:alice",
+            [1u8; 32],
+            1,
+        );
         let l = CertificateLedger::new(MintAuthority::Only("did:unfer:authority".into()));
         assert!(!l.is_threshold_authority());
         let err = l.verify_threshold_mint(&tx).unwrap_err();
@@ -1008,7 +1052,15 @@ mod proptests {
         // Determinism: two ledgers with the same threshold authority and the
         // same log produce the same state — the Arctic verification is a pure
         // function of (pubkey, tx), so identical log in ⇒ identical verdict out.
-        let (tx, pubkey) = threshold_mint_op(7, 4, &[1, 2, 3, 4, 5, 6, 7], 100, "did:unfer:alice", [1u8; 32], 1);
+        let (tx, pubkey) = threshold_mint_op(
+            7,
+            4,
+            &[1, 2, 3, 4, 5, 6, 7],
+            100,
+            "did:unfer:alice",
+            [1u8; 32],
+            1,
+        );
         let mut a = CertificateLedger::new(MintAuthority::Threshold {
             threshold: 4,
             total: 7,

@@ -3,9 +3,7 @@
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
-use nested_fock_algebra::{
-    InnerBosonicState, Operator, QuantumState, yang_mills_lattice,
-};
+use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, yang_mills_lattice};
 use num_complex::Complex64;
 
 fn shifts(m: usize) -> Vec<Complex64> {
@@ -23,8 +21,7 @@ fn opts() -> SirkOpts {
 }
 
 fn vac() -> QuantumState {
-    QuantumState::vacuum()
-        .apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
+    QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
 }
 
 fn one_flux() -> QuantumState {
@@ -46,7 +43,11 @@ fn sirk_ground(h: &nested_fock_algebra::Hamiltonian, v0: &QuantumState, m: usize
         .expect("ground state")
 }
 
-fn sirk_solve(h: &nested_fock_algebra::Hamiltonian, v0: &QuantumState, m: usize) -> fock_sirk::ForwardSirkResult {
+fn sirk_solve(
+    h: &nested_fock_algebra::Hamiltonian,
+    v0: &QuantumState,
+    m: usize,
+) -> fock_sirk::ForwardSirkResult {
     solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts())
         .expect("SIRK solve")
 }
@@ -77,8 +78,12 @@ fn su2_string_tension_scales() {
     }
     for i in 1..g_vals.len() {
         let slope = (gaps[i] / gaps[i - 1]).ln() / (g_vals[i] / g_vals[i - 1]).ln();
-        assert!((1.5..2.5).contains(&slope),
-            "log-log slope g={}→g={} = {slope:.3}, expected ≈ 2", g_vals[i-1], g_vals[i]);
+        assert!(
+            (1.5..2.5).contains(&slope),
+            "log-log slope g={}→g={} = {slope:.3}, expected ≈ 2",
+            g_vals[i - 1],
+            g_vals[i]
+        );
     }
     eprintln!("su2_string_tension_scales: gaps = {gaps:?}");
 }
@@ -89,8 +94,10 @@ fn su2_plaquette_expectation() {
     let beta = 2.0 / (g * g);
     let x: f64 = beta / 2.0;
     let p_series = x - x.powi(3) / 16.0 + 5.0 * x.powi(5) / 768.0;
-    assert!((0.0..0.1).contains(&p_series),
-        "plaquette at g=4: ⟨P⟩={p_series:.6}");
+    assert!(
+        (0.0..0.1).contains(&p_series),
+        "plaquette at g=4: ⟨P⟩={p_series:.6}"
+    );
     let e_plaquette = 1.0 - p_series;
     assert!(e_plaquette > 0.9, "E_P = {e_plaquette:.4}, expected > 0.9");
     let h = yang_mills_lattice(2, g, 1);
@@ -105,8 +112,15 @@ fn su2_sector_purity() {
     let h = yang_mills_lattice(2, g, 1);
     let res_even = sirk_solve(&h, &vac(), 4);
     let res_odd = sirk_solve(&h, &one_flux(), 4);
-    let max_overlap = res_even.w_sequence.iter()
-        .flat_map(|we| res_odd.w_sequence.iter().map(move |wo| QuantumState::inner_product(we, wo).norm()))
+    let max_overlap = res_even
+        .w_sequence
+        .iter()
+        .flat_map(|we| {
+            res_odd
+                .w_sequence
+                .iter()
+                .map(move |wo| QuantumState::inner_product(we, wo).norm())
+        })
         .fold(0.0_f64, f64::max);
     assert!(max_overlap < 1e-6, "max overlap = {max_overlap:.2e}");
     eprintln!("su2_sector_purity: max overlap = {max_overlap:.2e}");

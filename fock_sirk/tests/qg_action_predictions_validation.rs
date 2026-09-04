@@ -14,10 +14,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    qg_starobinsky_scalaron_mass, qg_starobinsky_weak_field_potential, qg_tegr_hamiltonian,
-    InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, qg_starobinsky_scalaron_mass,
+    qg_starobinsky_weak_field_potential, qg_tegr_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -61,16 +61,10 @@ fn qg_scalaron_mass_chain_action_to_band() {
             &empty_vacuum().apply(&Operator::InnerBosonCreate(0)),
             Complex64::new(1.0, 0.0),
         );
-        let ritz = solve_forward_sirk_with_opts(
-            &h,
-            &psi1,
-            &shifts(6),
-            &best_device(),
-            None,
-            &mk(true),
-        )
-        .unwrap()
-        .ritz_values();
+        let ritz =
+            solve_forward_sirk_with_opts(&h, &psi1, &shifts(6), &best_device(), None, &mk(true))
+                .unwrap()
+                .ritz_values();
         assert!(ritz.len() >= 2);
         let gap = ritz[1] - ritz[0];
         assert!(
@@ -124,28 +118,16 @@ fn qg_tegr_densitized_common_subsector() {
 
     // Identical one-quanton starts in 𝒮 mode 0.
     let psi = empty_vacuum().apply(&Operator::InnerBosonCreate(0));
-    let rt = solve_forward_sirk_with_opts(
-        &h_tegr,
-        &psi,
-        &shifts(7),
-        &best_device(),
-        None,
-        &mk(true),
-    )
-    .unwrap()
-    .ritz_values();
+    let rt =
+        solve_forward_sirk_with_opts(&h_tegr, &psi, &shifts(7), &best_device(), None, &mk(true))
+            .unwrap()
+            .ritz_values();
     // No residual filter here: the Bogoliubov blocks' true residuals sit
     // above the tight band by construction (unbounded ladders).
-    let rd = solve_forward_sirk_with_opts(
-        &h_dens,
-        &psi,
-        &shifts(7),
-        &best_device(),
-        None,
-        &mk(true),
-    )
-    .unwrap()
-    .ritz_values();
+    let rd =
+        solve_forward_sirk_with_opts(&h_dens, &psi, &shifts(7), &best_device(), None, &mk(true))
+            .unwrap()
+            .ritz_values();
 
     // Cross-builder agreement on the shared 𝒮 subsector. Both builders'
     // windows carry their own truncation bands (~0.1 scale, see S39/S40

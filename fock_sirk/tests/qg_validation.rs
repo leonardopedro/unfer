@@ -44,10 +44,10 @@ use fock_sirk::{
     SirkOpts, certified_ritz_values, emit_ritz_bands_ndjson, solve_forward_sirk_with_opts,
 };
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, Operator, QG_C, QG_G, QG_HBAR, QuantumState, qg3d_full_hamiltonian,
-    qg_flrw_scalars, qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
-    qg_newton_potential, qg_perihelion_precession, qg_planck_units, qg_tegr_hamiltonian,
-    qg_starobinsky_hamiltonian, qg_starobinsky_vielbein_hamiltonian,
+    Hamiltonian, InnerBosonicState, Operator, QG_C, QG_G, QG_HBAR, QuantumState, qg_flrw_scalars,
+    qg_free_graviton, qg_gps_rate, qg_gravitational_redshift, qg_light_bending,
+    qg_newton_potential, qg_perihelion_precession, qg_planck_units, qg_starobinsky_hamiltonian,
+    qg_starobinsky_vielbein_hamiltonian, qg_tegr_hamiltonian, qg3d_full_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -65,7 +65,10 @@ fn shifts(m: usize) -> Vec<Complex64> {
 /// right-to-left), so the doctrine is: each term splits as a creator block
 /// followed by an annihilator block, with no annihilator before a creator.
 fn assert_enclosure_form(h: &Hamiltonian) {
-    assert!(!h.terms.is_empty(), "enclosure-form Hamiltonian has no terms");
+    assert!(
+        !h.terms.is_empty(),
+        "enclosure-form Hamiltonian has no terms"
+    );
     for (coeff, ops) in &h.terms {
         let mut seen_annihilator = false;
         for op in ops {
@@ -520,15 +523,8 @@ fn qg_starobinsky_scalaron_sirk() {
     let mut psi0 = starobinsky_inner_vacuum();
     psi0.scale_and_add(&n_scalaron(0, 1), Complex64::new(0.7, 0.0));
     psi0.scale_and_add(&n_scalaron(0, 2), Complex64::new(0.3, 0.0));
-    let res = solve_forward_sirk_with_opts(
-        &h,
-        &psi0,
-        &shifts(8),
-        &best_device(),
-        None,
-        &opts,
-    )
-    .expect("Starobinsky SIRK solve");
+    let res = solve_forward_sirk_with_opts(&h, &psi0, &shifts(8), &best_device(), None, &opts)
+        .expect("Starobinsky SIRK solve");
     let h_proj = res.h_proj.clone();
     let hermn = (h_proj.clone() - h_proj.adjoint()).norm();
     assert!(
@@ -806,7 +802,11 @@ fn qg_starobinsky_vielbein_full_sirk() {
         let e_t = QuantumState::inner_product(&h.apply(&psi_t), &psi_t).re / n_t.powi(2);
         eprintln!(
             "  t={t}: ‖ψ‖={:.6} (init {:.6}), E={:.6} (init {:.6}), ΔE={:.3e}",
-            n_t, psi0.norm(), e_t, e0_init, (e_t - e0_init).abs()
+            n_t,
+            psi0.norm(),
+            e_t,
+            e0_init,
+            (e_t - e0_init).abs()
         );
         assert!(
             (e_t - e0_init).abs() < 1e-6,
@@ -953,8 +953,8 @@ fn qg3d_full_operator_sirk() {
     //     on one-particle pairs (the matrix is symmetrized bit-exactly in the
     //     builder, so this holds to machine precision).
     let pairs = [
-        (vec![(0, 1)], vec![(1, 1)]),                  // shear ↔ conformal
-        (vec![(2, 1)], vec![(3, 1)]),                  // e ↔ τ
+        (vec![(0, 1)], vec![(1, 1)]),                 // shear ↔ conformal
+        (vec![(2, 1)], vec![(3, 1)]),                 // e ↔ τ
         (vec![(0, 1), (2, 1)], vec![(1, 1), (0, 1)]), // shear+e ↔ y+shear
     ];
     for (a_occ, b_occ) in pairs {
@@ -1024,7 +1024,11 @@ fn qg3d_full_operator_sirk() {
     let certs = certified_ritz_values(&res);
     let ndjson = emit_ritz_bands_ndjson(&certs);
     let lines: Vec<&str> = ndjson.lines().filter(|l| !l.is_empty()).collect();
-    assert_eq!(lines.len(), certs.len(), "one NDJSON line per certified band");
+    assert_eq!(
+        lines.len(),
+        certs.len(),
+        "one NDJSON line per certified band"
+    );
     for (i, line) in lines.iter().enumerate() {
         let v: serde_json::Value =
             serde_json::from_str(line).expect("band line must be valid JSON");

@@ -42,8 +42,8 @@ use unfer_consensus::certs::{CertificateLedger, MintAuthority, commit_coin};
 use unfer_consensus::signing::{Keypair, sign_transaction};
 use unfer_protocol::{
     AttributionBadgeId, AttributionCreditId, AttributionItem, AttributionOffer, AttributionOp,
-    AttributionOpKind, CertId, CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction,
-    Diagnostic, Severity,
+    AttributionOpKind, CertId, CertificateOp, CertificateOpKind, Code, CoinRef,
+    ConsensusTransaction, Diagnostic, Severity,
 };
 
 const ATTRIBUTION_BLINDING: [u8; 32] = [0u8; 32];
@@ -150,7 +150,10 @@ impl AttributionService {
         author: &Keypair,
         item: &AttributionItem,
     ) -> Result<(), Diagnostic> {
-        self.apply_attribution(author, AttributionOpKind::RegisterItem { item: item.clone() })?;
+        self.apply_attribution(
+            author,
+            AttributionOpKind::RegisterItem { item: item.clone() },
+        )?;
         Ok(())
     }
 
@@ -202,7 +205,9 @@ impl AttributionService {
         let escrowed = self.escrow_fee(author_a, &id, &original_owner, offer.fee, funding)?;
         let applied = self.apply_attribution(
             author_a,
-            AttributionOpKind::OfferAttribution { offer: offer.clone() },
+            AttributionOpKind::OfferAttribution {
+                offer: offer.clone(),
+            },
         );
         if let Err(e) = applied {
             // The offer was refused: give the fee back so nothing is stranded.
@@ -219,7 +224,12 @@ impl AttributionService {
         author_b: &Keypair,
         credit_id: &AttributionCreditId,
     ) -> Result<(), Diagnostic> {
-        self.apply_attribution(author_b, AttributionOpKind::Approve { credit_id: *credit_id })?;
+        self.apply_attribution(
+            author_b,
+            AttributionOpKind::Approve {
+                credit_id: *credit_id,
+            },
+        )?;
         // Release every fee held for this credit to Author B.
         let holds: Vec<CertId> = self
             .fee_holds
@@ -241,7 +251,12 @@ impl AttributionService {
         author_b: &Keypair,
         credit_id: &AttributionCreditId,
     ) -> Result<(), Diagnostic> {
-        self.apply_attribution(author_b, AttributionOpKind::Revoke { credit_id: *credit_id })?;
+        self.apply_attribution(
+            author_b,
+            AttributionOpKind::Revoke {
+                credit_id: *credit_id,
+            },
+        )?;
         Ok(())
     }
 
@@ -349,7 +364,11 @@ impl AttributionService {
     /// Fee → Author B (approval payout).
     fn release_fee(&mut self, escrowed: CertId, recipient: &str) -> Result<CertId, Diagnostic> {
         let hold = self.fee_holds.get(&escrowed.0).ok_or_else(|| {
-            Diagnostic::new(Code::ESCROW_UNKNOWN, "fee escrow not found", Severity::Error)
+            Diagnostic::new(
+                Code::ESCROW_UNKNOWN,
+                "fee escrow not found",
+                Severity::Error,
+            )
         })?;
         if self.settled.contains(&escrowed.0) || hold.state != AttributionEscrowState::Holding {
             return Err(Diagnostic::new(
@@ -385,7 +404,11 @@ impl AttributionService {
     /// Fee → Author A (abandoned offer refund).
     fn refund_fee(&mut self, escrowed: CertId, recipient: &str) -> Result<CertId, Diagnostic> {
         let hold = self.fee_holds.get(&escrowed.0).ok_or_else(|| {
-            Diagnostic::new(Code::ESCROW_UNKNOWN, "fee escrow not found", Severity::Error)
+            Diagnostic::new(
+                Code::ESCROW_UNKNOWN,
+                "fee escrow not found",
+                Severity::Error,
+            )
         })?;
         if self.settled.contains(&escrowed.0) || hold.state != AttributionEscrowState::Holding {
             return Err(Diagnostic::new(
@@ -443,7 +466,11 @@ impl AttributionService {
         })
     }
 
-    fn emit_cert(&mut self, mut tx: ConsensusTransaction, signer: &Keypair) -> Result<(), Diagnostic> {
+    fn emit_cert(
+        &mut self,
+        mut tx: ConsensusTransaction,
+        signer: &Keypair,
+    ) -> Result<(), Diagnostic> {
         sign_transaction(&mut tx, signer);
         self.apply_transaction(&tx)?;
         self.ops.push(tx);
@@ -488,7 +515,9 @@ impl AttributionService {
             }
             other => Err(Diagnostic::new(
                 Code::INTERNAL,
-                format!("attribution service only observes certificate/attribution ops, got {other:?}"),
+                format!(
+                    "attribution service only observes certificate/attribution ops, got {other:?}"
+                ),
                 Severity::Error,
             )),
         }
@@ -621,7 +650,12 @@ mod tests {
         }
     }
 
-    fn offer(derived: &AttributionItem, original: &AttributionItem, fee: u64, exclusive: bool) -> AttributionOffer {
+    fn offer(
+        derived: &AttributionItem,
+        original: &AttributionItem,
+        fee: u64,
+        exclusive: bool,
+    ) -> AttributionOffer {
         AttributionOffer {
             derived_item: derived.clone(),
             original_item: original.clone(),
@@ -638,13 +672,20 @@ mod tests {
         kanye: &Keypair,
         fee: u64,
         exclusive: bool,
-    ) -> (AttributionItem, AttributionItem, AttributionCreditId, CertId) {
+    ) -> (
+        AttributionItem,
+        AttributionItem,
+        AttributionCreditId,
+        CertId,
+    ) {
         let shoe = item("Yeezy Boost 350 V2", 1);
         let sketch = item("Kanye's 2015 sketch", 2);
         svc.register_item(adidas, &shoe).unwrap();
         svc.register_item(kanye, &sketch).unwrap();
         let funding = mint_to(svc, auth, &adidas.did(), fee, [5u8; 32]);
-        let id = svc.offer(adidas, &offer(&shoe, &sketch, fee, exclusive), funding).unwrap();
+        let id = svc
+            .offer(adidas, &offer(&shoe, &sketch, fee, exclusive), funding)
+            .unwrap();
         (shoe, sketch, id, funding)
     }
 
@@ -658,17 +699,51 @@ mod tests {
 
         // After the offer, the fee sits in the escrow DID, not with A or B.
         assert_eq!(svc.certs().total_supply(), 5000);
-        assert_eq!(svc.certs().coins_of(&adidas.did()).iter().map(|c| c.amount).sum::<u64>(), 0);
-        assert_eq!(svc.certs().coins_of(&kanye.did()).iter().map(|c| c.amount).sum::<u64>(), 0);
-        assert_eq!(svc.attribution().report(&id).unwrap().state, AttributionState::Offered);
+        assert_eq!(
+            svc.certs()
+                .coins_of(&adidas.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            0
+        );
+        assert_eq!(
+            svc.certs()
+                .coins_of(&kanye.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            0
+        );
+        assert_eq!(
+            svc.attribution().report(&id).unwrap().state,
+            AttributionState::Offered
+        );
 
         // Only B approves; approval pays the fee out to B.
         let err = svc.approve(&adidas, &id).unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_NOT_AUTHOR);
         svc.approve(&kanye, &id).unwrap();
-        assert_eq!(svc.attribution().report(&id).unwrap().state, AttributionState::Approved);
-        assert_eq!(svc.certs().coins_of(&kanye.did()).iter().map(|c| c.amount).sum::<u64>(), 5000);
-        assert_eq!(svc.certs().coins_of(&adidas.did()).iter().map(|c| c.amount).sum::<u64>(), 0);
+        assert_eq!(
+            svc.attribution().report(&id).unwrap().state,
+            AttributionState::Approved
+        );
+        assert_eq!(
+            svc.certs()
+                .coins_of(&kanye.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            5000
+        );
+        assert_eq!(
+            svc.certs()
+                .coins_of(&adidas.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            0
+        );
         // No value created or destroyed.
         assert_eq!(svc.certs().total_supply(), 5000);
 
@@ -679,7 +754,10 @@ mod tests {
         assert_ne!(pub_badge.badge_id, anon_badge.badge_id);
         assert_eq!(pub_badge.badge_id, badge_id(&id, None));
         assert_eq!(anon_badge.badge_id, badge_id(&id, Some(viewer)));
-        assert_eq!(pub_badge.created, anon_badge.created, "same approval → same instant");
+        assert_eq!(
+            pub_badge.created, anon_badge.created,
+            "same approval → same instant"
+        );
         // The anonymous badge carries the viewer hash (and only the hash).
         let json: serde_json::Value = serde_json::from_str(&anon_badge.json).unwrap();
         assert_eq!(
@@ -687,7 +765,10 @@ mod tests {
             serde_json::Value::String(hex::encode(viewer))
         );
         let pub_json: serde_json::Value = serde_json::from_str(&pub_badge.json).unwrap();
-        assert_eq!(pub_json["credentialSubject"]["viewer"], serde_json::Value::Null);
+        assert_eq!(
+            pub_json["credentialSubject"]["viewer"],
+            serde_json::Value::Null
+        );
         // Re-issuing the same badge is refused (exactly-once).
         let err = svc.issue_badge(&adidas, &id, None).unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_BADGE_EXISTS);
@@ -696,12 +777,18 @@ mod tests {
         let err = svc.revoke(&adidas, &id).unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_NOT_AUTHOR);
         svc.revoke(&kanye, &id).unwrap();
-        assert_eq!(svc.attribution().report(&id).unwrap().state, AttributionState::Revoked);
+        assert_eq!(
+            svc.attribution().report(&id).unwrap().state,
+            AttributionState::Revoked
+        );
         let err = svc.issue_badge(&adidas, &id, Some(viewer)).unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_BADGE_REVOKED);
 
         // The derived item is still registered; the fee coin's origin is spent.
-        assert_eq!(svc.attribution().item_owner(&shoe.item_hash), Some(adidas.did().as_str()));
+        assert_eq!(
+            svc.attribution().item_owner(&shoe.item_hash),
+            Some(adidas.did().as_str())
+        );
         assert!(svc.certs().utxo(&funding).is_none());
     }
 
@@ -719,21 +806,41 @@ mod tests {
         // Unknown original item → refused at the service before any escrow.
         let ghost = item("ghost", 9);
         let funding = mint_to(&mut svc, &auth, &adidas.did(), 5000, [1u8; 32]);
-        let err = svc.offer(&adidas, &offer(&shoe, &ghost, 5000, false), funding).unwrap_err();
+        let err = svc
+            .offer(&adidas, &offer(&shoe, &ghost, 5000, false), funding)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_ITEM_UNKNOWN);
 
         // Wrong face value → refused, coin untouched.
         let funding = mint_to(&mut svc, &auth, &adidas.did(), 3000, [2u8; 32]);
-        let err = svc.offer(&adidas, &offer(&shoe, &sketch, 5000, false), funding).unwrap_err();
+        let err = svc
+            .offer(&adidas, &offer(&shoe, &sketch, 5000, false), funding)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_FEE_MISMATCH);
-        assert_eq!(svc.certs().coins_of(&adidas.did()).iter().map(|c| c.amount).sum::<u64>(), 8000);
+        assert_eq!(
+            svc.certs()
+                .coins_of(&adidas.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            8000
+        );
 
         // Ledger validation failures (self-attribution) refund the escrow.
         let funding = mint_to(&mut svc, &auth, &adidas.did(), 5000, [3u8; 32]);
-        let err = svc.offer(&adidas, &offer(&shoe, &shoe, 5000, false), funding).unwrap_err();
+        let err = svc
+            .offer(&adidas, &offer(&shoe, &shoe, 5000, false), funding)
+            .unwrap_err();
         assert_eq!(err.code, Code::ATTRIBUTION_SELF_ATTRIBUTION);
         // The fee came back to A — nothing stranded.
-        assert_eq!(svc.certs().coins_of(&adidas.did()).iter().map(|c| c.amount).sum::<u64>(), 13000);
+        assert_eq!(
+            svc.certs()
+                .coins_of(&adidas.did())
+                .iter()
+                .map(|c| c.amount)
+                .sum::<u64>(),
+            13000
+        );
         assert_eq!(svc.certs().total_supply(), 13000);
     }
 
@@ -755,7 +862,10 @@ mod tests {
         let b2 = svc2.issue_badge(&adidas, &id2, Some(viewer)).unwrap();
         assert_eq!(b1.badge_id, b2.badge_id);
         assert_eq!(b1.json, b2.json, "byte-identical assertion");
-        assert_eq!(b1.proof_value, b2.proof_value, "byte-identical Ed25519 proof");
+        assert_eq!(
+            b1.proof_value, b2.proof_value,
+            "byte-identical Ed25519 proof"
+        );
         assert_eq!(b1.created, b2.created);
     }
 

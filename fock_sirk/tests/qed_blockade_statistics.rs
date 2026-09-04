@@ -172,7 +172,7 @@ fn qed_kerr_blockade_sub_poissonian_antibunched() {
     for &chi in &[0.05_f64, 0.2, 0.5, 1.0] {
         let h = qed_kerr_cavity_driven(omega, chi, g);
         let psi0 = sirk_ground_state(&h, &inner_vacuum(), 12);
-        let (n_mean, var, fano, g2) = statistics(&psi0, &n_op);
+        let (n_mean, _var, fano, g2) = statistics(&psi0, &n_op);
         assert!(
             n_mean > 0.05,
             "χ={chi}: ⟨N⟩ = {n_mean} must be nonzero for the Fano factor to be meaningful"

@@ -127,7 +127,10 @@ struct Reduced {
 /// declaration (`function f(x: Int64): Int64 is … end;`), or a whole module
 /// (`module body … end module body.`). The first that parses wins.
 fn translate_with(source: &str) -> Result<Reduced, KernelError> {
-    use logos::translate::{translate_austral, translate_austral_expr, translate_austral_function, translate_austral_module};
+    use logos::translate::{
+        translate_austral, translate_austral_expr, translate_austral_function,
+        translate_austral_module,
+    };
 
     let fail = |e: String| KernelError::AustralUnfFailed {
         reason: format!("austral->deltanet translation failed: {e}"),

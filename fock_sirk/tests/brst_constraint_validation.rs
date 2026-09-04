@@ -18,10 +18,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    qcd_ym_hamiltonian, qed_jaynes_cummings, InnerBosonicState,
-    InnerFermionicState, Operator, QuantumState,
+    InnerBosonicState, InnerFermionicState, Operator, QuantumState, qcd_ym_hamiltonian,
+    qed_jaynes_cummings,
 };
 use num_complex::Complex64;
 use std::collections::BTreeSet;
@@ -47,7 +47,10 @@ fn empty_vacuum() -> QuantumState {
 fn ym_total_momentum() -> nested_fock_algebra::Hamiltonian {
     let mut t: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for mode in [0u32, 1] {
-        t.push((Complex64::new(0.0, 1.0), vec![Operator::InnerBosonCreate(mode)]));
+        t.push((
+            Complex64::new(0.0, 1.0),
+            vec![Operator::InnerBosonCreate(mode)],
+        ));
         t.push((
             Complex64::new(0.0, -1.0),
             vec![Operator::InnerBosonAnnihilate(mode)],
@@ -78,7 +81,7 @@ fn ym_brst_charge() -> nested_fock_algebra::Hamiltonian {
             ],
         ));
     }
-    nested_fock_algebra::Hamiltonian { terms: terms }
+    nested_fock_algebra::Hamiltonian { terms }
 }
 
 fn ghosted(b_mode: u32) -> QuantumState {
@@ -140,9 +143,15 @@ fn qym_brst_projection_identity_on_physical_flow() {
     let plain =
         solve_forward_sirk_with_opts(&h, &psi0, &shifts(8), &best_device(), None, &mk(true))
             .unwrap();
-    let projected =
-        solve_forward_sirk_with_opts(&h, &psi0, &shifts(8), &best_device(), Some(&omega), &mk(true))
-            .unwrap();
+    let projected = solve_forward_sirk_with_opts(
+        &h,
+        &psi0,
+        &shifts(8),
+        &best_device(),
+        Some(&omega),
+        &mk(true),
+    )
+    .unwrap();
 
     // Identical resolved spectra.
     let a = plain.resolved_ritz_values(5e-3);
@@ -153,10 +162,18 @@ fn qym_brst_projection_identity_on_physical_flow() {
     }
 
     // And the same Gauss content after evolution.
-    let ta =
-        evolve_restarted(&h, &psi0, 0.25, 2, 8, &best_device(), None, &mk(true)).unwrap();
-    let tb =
-        evolve_restarted(&h, &psi0, 0.25, 2, 8, &best_device(), Some(&omega), &mk(true)).unwrap();
+    let ta = evolve_restarted(&h, &psi0, 0.25, 2, 8, &best_device(), None, &mk(true)).unwrap();
+    let tb = evolve_restarted(
+        &h,
+        &psi0,
+        0.25,
+        2,
+        8,
+        &best_device(),
+        Some(&omega),
+        &mk(true),
+    )
+    .unwrap();
     let pa = QuantumState::inner_product(&ta, &p_op.apply(&ta));
     let pb = QuantumState::inner_product(&tb, &p_op.apply(&tb));
     assert!((pa - pb).norm() < 1e-7, "⟨P⟩ {pa} vs {pb}");
@@ -250,26 +267,14 @@ fn qg_densitized_beat_predicted_by_spectrum() {
     let y_state = empty_vacuum().apply(&Operator::InnerBosonCreate(y_mode));
 
     // Solve each sector separately for its energy; the beat is their split.
-    let es = solve_forward_sirk_with_opts(
-        &h,
-        &s_state,
-        &shifts(7),
-        &best_device(),
-        None,
-        &mk(true),
-    )
-    .unwrap()
-    .ritz_values()[0];
-    let ey = solve_forward_sirk_with_opts(
-        &h,
-        &y_state,
-        &shifts(7),
-        &best_device(),
-        None,
-        &mk(true),
-    )
-    .unwrap()
-    .ritz_values()[0];
+    let es =
+        solve_forward_sirk_with_opts(&h, &s_state, &shifts(7), &best_device(), None, &mk(true))
+            .unwrap()
+            .ritz_values()[0];
+    let ey =
+        solve_forward_sirk_with_opts(&h, &y_state, &shifts(7), &best_device(), None, &mk(true))
+            .unwrap()
+            .ritz_values()[0];
     let d_e = (es - ey).abs();
     assert!(d_e > 1e-3, "sectors must be spectrally split: {es} vs {ey}");
 

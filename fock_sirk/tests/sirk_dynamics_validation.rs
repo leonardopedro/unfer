@@ -23,10 +23,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    ns_eulerian_fiber, qcd_ym_hamiltonian, qg_free_graviton,
-    qg_starobinsky_scalaron_field, InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
+    qg_free_graviton, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
 
@@ -118,14 +118,12 @@ fn qg_graviton_vs_scalaron_speed_split() {
     for i in 0..ks.len() as u32 {
         psi.scale_and_add(&one_quanton(i), Complex64::new(1.0 + i as f64 * 0.41, 0.0));
     }
-    let rg =
-        solve_forward_sirk_with_opts(&hg, &psi, &shifts(9), &best_device(), None, &mk(true))
-            .unwrap()
-            .resolved_ritz_values(1e-5);
-    let rs =
-        solve_forward_sirk_with_opts(&hs, &psi, &shifts(9), &best_device(), None, &mk(true))
-            .unwrap()
-            .resolved_ritz_values(1e-5);
+    let rg = solve_forward_sirk_with_opts(&hg, &psi, &shifts(9), &best_device(), None, &mk(true))
+        .unwrap()
+        .resolved_ritz_values(1e-5);
+    let rs = solve_forward_sirk_with_opts(&hs, &psi, &shifts(9), &best_device(), None, &mk(true))
+        .unwrap()
+        .resolved_ritz_values(1e-5);
 
     // Graviton: EXACTLY massless ω = k.
     for &k in &ks {
@@ -142,8 +140,10 @@ fn qg_graviton_vs_scalaron_speed_split() {
             "scalaron ω({k}) missing from {rs:?}"
         );
         assert!(ws > k, "massive branch must sit above the massless one");
-        assert!(!rs.iter().any(|v| (v - k).abs() < 1e-6 && k > 1e-6),
-            "scalaron must NOT carry the massless level");
+        assert!(
+            !rs.iter().any(|v| (v - k).abs() < 1e-6 && k > 1e-6),
+            "scalaron must NOT carry the massless level"
+        );
     }
 }
 
@@ -200,8 +200,14 @@ fn ns_combined_decay_advection_rate() {
     );
     let u_op = nested_fock_algebra::Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let mut psi0 = empty_vacuum();
@@ -226,8 +232,17 @@ fn ns_combined_decay_advection_rate() {
     );
     let t_short = 0.25_f64;
     let a = evolve_restarted(&h, &psi0, t_short, 1, 12, &best_device(), None, &mk(true)).unwrap();
-    let b =
-        evolve_restarted(&h_pure, &psi0, t_short, 1, 12, &best_device(), None, &mk(true)).unwrap();
+    let b = evolve_restarted(
+        &h_pure,
+        &psi0,
+        t_short,
+        1,
+        12,
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap();
     let ua = QuantumState::inner_product(&a, &u_op.apply(&a)).re;
     let ub = QuantumState::inner_product(&b, &u_op.apply(&b)).re;
     let u0 = QuantumState::inner_product(&psi0, &u_op.apply(&psi0)).re;
@@ -242,9 +257,13 @@ fn ns_combined_decay_advection_rate() {
     );
 
     let t_long = 1.0_f64;
-    let s_long = evolve_restarted(&h, &psi0, t_long, 2, 10, &best_device(), None, &mk(true)).unwrap();
+    let s_long =
+        evolve_restarted(&h, &psi0, t_long, 2, 10, &best_device(), None, &mk(true)).unwrap();
     let norm = QuantumState::inner_product(&s_long, &s_long).re;
-    assert!((norm - psi0.norm().powi(2)).abs() < 1e-7, "unitarity drift {norm}");
+    assert!(
+        (norm - psi0.norm().powi(2)).abs() < 1e-7,
+        "unitarity drift {norm}"
+    );
     let et = QuantumState::inner_product(&s_long, &h.apply(&s_long));
     let e0 = QuantumState::inner_product(&psi0, &h.apply(&psi0));
     assert!(

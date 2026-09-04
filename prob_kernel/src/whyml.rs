@@ -150,9 +150,7 @@ pub fn whyml_emit(spec: &WhymlSpec) -> Result<WhymlReport, KernelError> {
         }),
         WhymlOp::Prove => {
             let cli = why3_cli_path().ok_or_else(|| KernelError::WhymlUnavailable {
-                reason: format!(
-                    "why3 not found (set {WHY3_CLI_ENV} or install the why3 package)"
-                ),
+                reason: format!("why3 not found (set {WHY3_CLI_ENV} or install the why3 package)"),
             })?;
             let (verified, err, engine_ms) = prove_with_cli(&cli, &whyml, spec.timeout_ms)?;
             Ok(WhymlReport {
@@ -463,7 +461,11 @@ mod tests {
         WhymlSpec {
             module_name: "AuthorizeGate".into(),
             function_name: "gate_verdict".into(),
-            grants: vec!["uk_version".into(), "uk_evolve".into(), "uk_model_create".into()],
+            grants: vec![
+                "uk_version".into(),
+                "uk_evolve".into(),
+                "uk_model_create".into(),
+            ],
             required: vec!["uk_version".into(), "uk_evolve".into()],
             kernel_externals: vec![],
             program: unfer_protocol::WhymlProgram::AuthorizeGate,
@@ -489,11 +491,21 @@ mod tests {
     fn emit_produces_wellformed_whyml() {
         let report = whyml_emit(&sample_spec()).unwrap();
         assert!(report.verified.is_none(), "Emit op must not verify");
-        assert!(report.whyml.contains("module AuthorizeGate"), "{}", report.whyml);
-        assert!(report.whyml.contains("let rec authorize"), "{}", report.whyml);
+        assert!(
+            report.whyml.contains("module AuthorizeGate"),
+            "{}",
+            report.whyml
+        );
+        assert!(
+            report.whyml.contains("let rec authorize"),
+            "{}",
+            report.whyml
+        );
         assert!(report.whyml.contains("gate_verdict"), "{}", report.whyml);
         assert!(
-            report.whyml.contains("ensures { result = True <-> is_subset required grants }"),
+            report
+                .whyml
+                .contains("ensures { result = True <-> is_subset required grants }"),
             "the soundness+completeness postcondition must be emitted: {}",
             report.whyml
         );
@@ -512,7 +524,11 @@ mod tests {
     #[test]
     fn emit_embeds_the_grant_context_for_audit() {
         let report = whyml_emit(&sample_spec()).unwrap();
-        assert!(report.whyml.contains("uk_version, uk_evolve, uk_model_create"));
+        assert!(
+            report
+                .whyml
+                .contains("uk_version, uk_evolve, uk_model_create")
+        );
         assert!(report.whyml.contains("uk_version, uk_evolve"));
     }
 
@@ -523,10 +539,7 @@ mod tests {
             ..sample_spec()
         };
         let err = whyml_emit(&spec).unwrap_err();
-        assert!(
-            matches!(err, KernelError::WhymlInvalid { .. }),
-            "{err:?}"
-        );
+        assert!(matches!(err, KernelError::WhymlInvalid { .. }), "{err:?}");
     }
 
     #[test]
@@ -536,10 +549,7 @@ mod tests {
             ..sample_spec()
         };
         let err = whyml_emit(&spec).unwrap_err();
-        assert!(
-            matches!(err, KernelError::WhymlInvalid { .. }),
-            "{err:?}"
-        );
+        assert!(matches!(err, KernelError::WhymlInvalid { .. }), "{err:?}");
     }
 
     #[test]
@@ -563,16 +573,22 @@ mod tests {
     #[test]
     fn npu_gate_emits_the_sram_invariant() {
         let report = whyml_emit(&npu_spec()).unwrap();
-        assert!(report.whyml.contains("module NpuDmaGate"), "{}", report.whyml);
         assert!(
-            report.whyml.contains("val constant MAX_NPU_SRAM : int = 262144"),
+            report.whyml.contains("module NpuDmaGate"),
+            "{}",
+            report.whyml
+        );
+        assert!(
+            report
+                .whyml
+                .contains("val constant MAX_NPU_SRAM : int = 262144"),
             "the hardware constant must be emitted: {}",
             report.whyml
         );
         assert!(
-            report.whyml.contains(
-                "ensures { result = True <-> buf.offset + bytes <= MAX_NPU_SRAM }"
-            ),
+            report
+                .whyml
+                .contains("ensures { result = True <-> buf.offset + bytes <= MAX_NPU_SRAM }"),
             "the dma_ok soundness+completeness postcondition must be emitted: {}",
             report.whyml
         );

@@ -140,14 +140,12 @@ impl ForwardSirkResult {
                 d[j] += self.scales[j] * c_hat[j - 1];
             }
 
-            let psi_norm2 = (c_hat.adjoint() * g_sub * &c_hat)[(0, 0)]
-                .re
-                .max(1e-300);
+            let psi_norm2 = (c_hat.adjoint() * g_sub * &c_hat)[(0, 0)].re.max(1e-300);
             // Residual VECTOR, formed before any metric contraction:
             //   e_j = d_j − θ ĉ_j  (j < m; vanishes identically in exact
             //        arithmetic by the Galerkin condition),
             //   e_m = τ_m ĉ_{m−1}   (the one component H pushes OUTSIDE the
-        //        projected basis — the entire physical content of the
+            //        projected basis — the entire physical content of the
             //        residual).
             // Then ‖Hψ − θψ‖² = e† G e exactly. Computing the norm this way
             // (instead of ‖Hψ‖² − θ²‖ψ‖²) avoids the catastrophic
@@ -231,7 +229,6 @@ impl ForwardSirkResult {
             .map(|(theta, _)| theta)
             .collect()
     }
-
 
     /// Estimate the **intra-sector** spectral gap `E₁ − E₀` from the two
     /// lowest Ritz values of a single SIRK solve.
@@ -329,10 +326,8 @@ pub fn certified_mass_gap_parity(
     opts: &SirkOpts,
 ) -> Option<crate::certificate::GapCertificate> {
     let device = crate::device::best_device();
-    let res_even =
-        solve_forward_sirk_with_opts(h, v_even, shifts, &device, None, opts).ok()?;
-    let res_odd =
-        solve_forward_sirk_with_opts(h, v_odd, shifts, &device, None, opts).ok()?;
+    let res_even = solve_forward_sirk_with_opts(h, v_even, shifts, &device, None, opts).ok()?;
+    let res_odd = solve_forward_sirk_with_opts(h, v_odd, shifts, &device, None, opts).ok()?;
 
     // Precondition 1: sector purity (the reflection symmetry R is exact for
     // all g of the gauge-fixed H) — the chains must be disjoint. The overlap

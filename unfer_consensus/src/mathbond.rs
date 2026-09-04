@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 use unfer_protocol::{
-    Code, Diagnostic, LeanVerifySpec, MathBondId, MathBondOpKind, MathBondReport,
-    MathBondState, MathBondTrigger, ProofReport, Severity,
+    Code, Diagnostic, LeanVerifySpec, MathBondId, MathBondOpKind, MathBondReport, MathBondState,
+    MathBondTrigger, ProofReport, Severity,
 };
 
 /// Internal record for one investment position.
@@ -256,10 +256,7 @@ impl MathBondLedger {
         if bond.state != MathBondState::Issued && bond.state != MathBondState::Funded {
             return Err(Diagnostic::new(
                 Code::MATHBOND_WRONG_STATE,
-                format!(
-                    "bond is {:?}, expected Issued or Funded",
-                    bond.state
-                ),
+                format!("bond is {:?}, expected Issued or Funded", bond.state),
                 Severity::Error,
             ));
         }
@@ -270,16 +267,13 @@ impl MathBondLedger {
                 Severity::Error,
             ));
         }
-        let new_invested = bond
-            .invested
-            .checked_add(amount)
-            .ok_or_else(|| {
-                Diagnostic::new(
-                    Code::MATHBOND_OVERFUNDED,
-                    "investment amount overflow",
-                    Severity::Error,
-                )
-            })?;
+        let new_invested = bond.invested.checked_add(amount).ok_or_else(|| {
+            Diagnostic::new(
+                Code::MATHBOND_OVERFUNDED,
+                "investment amount overflow",
+                Severity::Error,
+            )
+        })?;
         if new_invested > bond.principal {
             return Err(Diagnostic::new(
                 Code::MATHBOND_OVERFUNDED,
@@ -695,8 +689,12 @@ mod tests {
         assert_eq!(l.bond(&bond_id).unwrap().state, MathBondState::Funded);
 
         // Mature at/after maturity_seq.
-        l.apply_op("did:unfer:anyone", &MathBondOpKind::Mature { bond_id }, 1000)
-            .unwrap();
+        l.apply_op(
+            "did:unfer:anyone",
+            &MathBondOpKind::Mature { bond_id },
+            1000,
+        )
+        .unwrap();
         assert_eq!(l.bond(&bond_id).unwrap().state, MathBondState::Matured);
 
         // A Matured bond settles as a maturity refund; the trigger window is closed.
@@ -806,11 +804,7 @@ mod tests {
         for (actor, kind, seq) in &ops {
             let r_a = a.apply_op(actor, kind, *seq);
             let r_b = b.apply_op(actor, kind, *seq);
-            assert_eq!(
-                r_a.is_ok(),
-                r_b.is_ok(),
-                "ops must agree at seq {seq}"
-            );
+            assert_eq!(r_a.is_ok(), r_b.is_ok(), "ops must agree at seq {seq}");
         }
         // Both ledgers converge on the same bond state.
         let bond_id = compute_bond_id(&trigger, sponsor(), 10000, 500, 1000, researcher());
@@ -830,17 +824,17 @@ mod tests {
         };
 
         l.apply_op(
-                sponsor(),
-                &MathBondOpKind::Issue {
-                    trigger: small_trigger.clone(),
-                    principal: 1000,
-                    coupon_rate_bps: 500,
-                    maturity_seq: 1000,
-                    researcher_did: researcher().to_string(),
-                },
-                1,
-            )
-            .unwrap();
+            sponsor(),
+            &MathBondOpKind::Issue {
+                trigger: small_trigger.clone(),
+                principal: 1000,
+                coupon_rate_bps: 500,
+                maturity_seq: 1000,
+                researcher_did: researcher().to_string(),
+            },
+            1,
+        )
+        .unwrap();
         let bond_id = compute_bond_id(&small_trigger, sponsor(), 1000, 500, 1000, researcher());
 
         let err = l.apply_op(
@@ -918,7 +912,9 @@ mod tests {
             Ok(b) => b,
             Err(_) => {
                 // If the fixture is not available, skip this test gracefully.
-                eprintln!("confluence.ndjson fixture not available, skipping valid_proof_triggers_bond");
+                eprintln!(
+                    "confluence.ndjson fixture not available, skipping valid_proof_triggers_bond"
+                );
                 return;
             }
         };
@@ -966,10 +962,7 @@ mod tests {
             3,
         );
         assert!(result.is_err(), "garbage proof should be rejected");
-        assert_eq!(
-            result.unwrap_err().code,
-            Code::MATHBOND_PROOF_REJECTED
-        );
+        assert_eq!(result.unwrap_err().code, Code::MATHBOND_PROOF_REJECTED);
         // Bond stays in Funded state (not triggered).
         assert_eq!(l.bond(&bond_id).unwrap().state, MathBondState::Funded);
     }

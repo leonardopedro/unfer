@@ -44,7 +44,7 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
     InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter, oscillator_displaced,
     qg_starobinsky_derivative_brst, qg_starobinsky_gauge_fixed_scalaron,
@@ -84,9 +84,8 @@ fn ghost_state(b_mode: u32, g_mode: u32) -> QuantumState {
         ))
 }
 
-
 #[test]
-fn study_A_prune_is_invariant_below_the_noise_floor() {
+fn study_a_prune_is_invariant_below_the_noise_floor() {
     // (1) Spectral: displaced-oscillator ground level, m=8 unit-norm frame.
     let h = oscillator_displaced(1.7, 0.45);
     let v0 = vacuum();
@@ -166,7 +165,10 @@ fn study_b_brst_projection_is_identity_on_physical_sequences() {
         inner.modes.insert(0, 1);
         vacuum().apply(&Operator::OuterBosonCreate(inner))
     };
-    assert!(brst.apply(&psi_phys).norm() < 1e-12, "start must be physical");
+    assert!(
+        brst.apply(&psi_phys).norm() < 1e-12,
+        "start must be physical"
+    );
 
     let shifts = shifts_for_range((0, 6));
     let without = solve_forward_sirk_with_opts(
@@ -222,13 +224,15 @@ fn study_b_brst_projection_is_identity_on_physical_sequences() {
     {
         let mut inner = InnerBosonicState::vacuum();
         inner.modes.insert(0, 1);
-        let phys =
-            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
+        let phys = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
         psi_seed.scale_and_add(&phys, Complex64::new(1.0, 0.0));
         psi_seed.scale_and_add(&ghost_state(1, 0), Complex64::new(0.05, 0.0));
     }
     let contaminated = brst.apply(&psi_seed).norm();
-    assert!(contaminated > 1e-3, "seed must carry Ω-content: {contaminated:.3e}");
+    assert!(
+        contaminated > 1e-3,
+        "seed must carry Ω-content: {contaminated:.3e}"
+    );
     // NOTE the exact statement: [H,Ω]=0 conserves Ω-content even on
     // unphysical data — the truncated Krylov flow only perturbs it slightly.
     // What the mid-sequence projection BUYS is active enforcement down to
@@ -306,8 +310,14 @@ fn study_c_adaptive_truncation_never_engages_at_documented_budgets() {
     );
     let u_op = nested_fock_algebra::Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let mut psi0 =
@@ -342,5 +352,8 @@ fn study_c_adaptive_truncation_never_engages_at_documented_budgets() {
         (ua - ub).norm() < 1e-10,
         "adaptive guard must be inert at 50k budget: {ua} vs {ub}"
     );
-    assert!(b.len() * 100 < 50_000, "state must sit far below the budget");
+    assert!(
+        b.len() * 100 < 50_000,
+        "state must sit far below the budget"
+    );
 }

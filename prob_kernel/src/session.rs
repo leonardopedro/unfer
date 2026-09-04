@@ -266,8 +266,8 @@ impl Session {
         let Some(store) = &self.durable else {
             return Ok(());
         };
-        let json = serde_json::to_vec(ev)
-            .map_err(|e| format!("session event encode failed: {e}"))?;
+        let json =
+            serde_json::to_vec(ev).map_err(|e| format!("session event encode failed: {e}"))?;
         store
             .append(streams::SESSION, &json)
             .map_err(|e| format!("session stream append failed: {e}"))
@@ -1397,10 +1397,7 @@ impl Session {
     /// (no unknowns) collapse to the numerical result of their calculation;
     /// open terms stay symbolic (`Add64(x, 3)`). `verified` is the
     /// confluence self-check. Read-only: the numerical state is untouched.
-    pub fn austral_unf(
-        &self,
-        source: &str,
-    ) -> Result<unfer_protocol::AustralReport, KernelError> {
+    pub fn austral_unf(&self, source: &str) -> Result<unfer_protocol::AustralReport, KernelError> {
         crate::logos::austral_unf(source)
     }
 
@@ -1743,7 +1740,11 @@ mod tests {
         // event log gains exactly one Evolve record.
         let before = s.event_log_len();
         let report = s.evolve(0.1).expect("evolve");
-        assert!((report.norm - 1.0).abs() < 1e-9, "unitarity: {}", report.norm);
+        assert!(
+            (report.norm - 1.0).abs() < 1e-9,
+            "unitarity: {}",
+            report.norm
+        );
         assert!((s.t() - 0.1).abs() < 1e-12);
         assert_eq!(s.event_log_len(), before + 1);
         assert!(matches!(
@@ -1795,10 +1796,13 @@ mod tests {
 
         // Compaction through the settleable boundary (the root Create is
         // settleable; the Evolve is not — it would split the dependency).
-        assert!(matches!(
-            s.compact_through(1),
-            Err(KernelError::SessionCompactionBusy { .. })
-        ), "Evolve boundary must be refused");
+        assert!(
+            matches!(
+                s.compact_through(1),
+                Err(KernelError::SessionCompactionBusy { .. })
+            ),
+            "Evolve boundary must be refused"
+        );
         s.compact_through(0).expect("compact through root");
         // Lock closed: the derived log root is now the CompactEnd summary.
         assert!(!s.is_compaction_locked());
@@ -1894,10 +1898,10 @@ mod tests {
     fn ode_consult_methods() {
         // `analyze_self_adjointness` requires an OdeSystem Hamiltonian.
         let s = non_qfm_session();
-        assert!(matches!(
-            s.analyze_self_adjointness(),
-            Err(KernelError::Internal(_))
-        ), "non-ODE session must be refused");
+        assert!(
+            matches!(s.analyze_self_adjointness(), Err(KernelError::Internal(_))),
+            "non-ODE session must be refused"
+        );
 
         // A harmonic-oscillator ODE system runs the ESA pipeline end to end.
         let spec = ModelSpec {
@@ -2031,14 +2035,20 @@ mod tests {
         // A committed event that cannot be durably appended must NOT report
         // success: the mutation happened in memory but the durable log is
         // missing the record — restart replay would be short by it.
-        let err = s.evolve(0.01).expect_err("evolve with failing append must fail");
+        let err = s
+            .evolve(0.01)
+            .expect_err("evolve with failing append must fail");
         assert!(
             matches!(err, KernelError::DurableCheckpointFailed { .. }),
             "expected DurableCheckpointFailed (→ UK-1010), got: {err:?}"
         );
         // And the in-memory log keeps the fold ≡ live invariant (the event
         // stays; the caller was told the durable outcome is unknown).
-        assert_eq!(s.event_log_len(), 1 + 1, "root Create + the Evolve that failed to persist");
+        assert_eq!(
+            s.event_log_len(),
+            1 + 1,
+            "root Create + the Evolve that failed to persist"
+        );
         assert!(s.durable().is_some(), "store still attached");
     }
 
@@ -2087,10 +2097,7 @@ mod tests {
         ));
         // ... and a QFM session without a query is unusable (the pipeline
         // requires a raw input).
-        assert!(matches!(
-            s.evolve(0.1),
-            Err(KernelError::Internal(_))
-        ));
+        assert!(matches!(s.evolve(0.1), Err(KernelError::Internal(_))));
     }
 
     #[test]

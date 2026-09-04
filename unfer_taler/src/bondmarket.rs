@@ -536,11 +536,14 @@ impl BondMarketService {
             }],
         };
         self.emit_cert(lp, &lp.did(), kind)?;
-        self.pool_coins.entry(pool_id.0).or_default().push(PoolCoin {
-            pool_id,
-            coin,
-            amount,
-        });
+        self.pool_coins
+            .entry(pool_id.0)
+            .or_default()
+            .push(PoolCoin {
+                pool_id,
+                coin,
+                amount,
+            });
 
         let kind = MarketOpKind::AddLiquidity { pool_id, amount };
         self.apply_market(lp, kind)?;
@@ -600,11 +603,14 @@ impl BondMarketService {
             }],
         };
         self.emit_cert(trader, &trader.did(), kind)?;
-        self.pool_coins.entry(pool_id.0).or_default().push(PoolCoin {
-            pool_id,
-            coin,
-            amount,
-        });
+        self.pool_coins
+            .entry(pool_id.0)
+            .or_default()
+            .push(PoolCoin {
+                pool_id,
+                coin,
+                amount,
+            });
 
         let kind = MarketOpKind::BuyOutcome {
             pool_id,
@@ -695,7 +701,11 @@ impl BondMarketService {
 
     /// Row one investment coin to `recipient` (bounty → researcher, principal
     /// refund → investor).
-    fn row_investment_out(&mut self, hold: &InvestmentHold, recipient: &str) -> Result<(), Diagnostic> {
+    fn row_investment_out(
+        &mut self,
+        hold: &InvestmentHold,
+        recipient: &str,
+    ) -> Result<(), Diagnostic> {
         let did = self.investment_did(&hold.bond_id, &hold.investor, hold.origin);
         let out = commit_coin(hold.amount, recipient, &BLINDING);
         let kind = CertificateOpKind::Transfer {
@@ -716,7 +726,11 @@ impl BondMarketService {
     }
 
     /// Row the collateral coin to `recipient` (catastrophe payment → sponsor).
-    fn row_collateral_out(&mut self, hold: &CollateralHold, recipient: &str) -> Result<(), Diagnostic> {
+    fn row_collateral_out(
+        &mut self,
+        hold: &CollateralHold,
+        recipient: &str,
+    ) -> Result<(), Diagnostic> {
         let did = self.collateral_did(&hold.bond_id);
         let out = commit_coin(hold.principal, recipient, &BLINDING);
         let kind = CertificateOpKind::Transfer {
@@ -741,7 +755,12 @@ impl BondMarketService {
     /// the pool DID) are re-inserted. The pool's coin balance always covers
     /// ledger payouts (`cash == total_reserve + lp_fees`), so the spend is
     /// total and the transfer conserves exactly.
-    fn spend_pool(&mut self, pool_id: &PoolId, amount: u64, recipient: &str) -> Result<(), Diagnostic> {
+    fn spend_pool(
+        &mut self,
+        pool_id: &PoolId,
+        amount: u64,
+        recipient: &str,
+    ) -> Result<(), Diagnostic> {
         let pool_did = self.pool_did(pool_id);
         let mut coins = self.pool_coins.remove(&pool_id.0).unwrap_or_default();
         coins.sort_by_key(|c| (c.coin.0, c.amount));
@@ -978,23 +997,41 @@ mod tests {
 
         // Issue escrows the sponsor's collateral (10k) and funds the bond.
         let bond_id = svc
-            .issue_bond(&sponsor, trigger(), 10_000, 500, 5, &sponsor.did(), collateral)
+            .issue_bond(
+                &sponsor,
+                trigger(),
+                10_000,
+                500,
+                5,
+                &sponsor.did(),
+                collateral,
+            )
             .unwrap();
         assert_eq!(
             coins_of(&svc, &svc.collateral_did(&bond_id)),
             10_000,
             "collateral rowed into the bond escrow DID"
         );
-        assert_eq!(coins_of(&svc, &sponsor.did()), 0, "sponsor no longer holds the collateral");
+        assert_eq!(
+            coins_of(&svc, &sponsor.did()),
+            0,
+            "sponsor no longer holds the collateral"
+        );
 
         svc.invest(&investor, bond_id, 8_000, money).unwrap();
         // Partially funded (8000 of 10000) — the bond stays Issued and can
         // still mature; investors recover their share at settlement.
-        assert_eq!(svc.bonds().bond(&bond_id).unwrap().state, MathBondState::Issued);
+        assert_eq!(
+            svc.bonds().bond(&bond_id).unwrap().state,
+            MathBondState::Issued
+        );
 
         // Mature at consensus position 5 (>= maturity_seq 5).
         svc.mature(&investor, bond_id).unwrap();
-        assert_eq!(svc.bonds().bond(&bond_id).unwrap().state, MathBondState::Matured);
+        assert_eq!(
+            svc.bonds().bond(&bond_id).unwrap().state,
+            MathBondState::Matured
+        );
 
         svc.settle(&sponsor, bond_id).unwrap();
         // Investor: 8000 principal + 5% coupon (400) = 8400.
@@ -1003,7 +1040,10 @@ mod tests {
         assert_eq!(coins_of(&svc, &sponsor.did()), 9_600);
         // No value created or destroyed.
         assert_eq!(svc.certs().total_supply(), 18_000);
-        assert_eq!(svc.bonds().bond(&bond_id).unwrap().state, MathBondState::Settled);
+        assert_eq!(
+            svc.bonds().bond(&bond_id).unwrap().state,
+            MathBondState::Settled
+        );
     }
 
     #[test]
@@ -1017,7 +1057,9 @@ mod tests {
         let export_bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(_) => {
-                eprintln!("confluence.ndjson fixture not available; skipping triggered_bond_pays_bounty_and_catastrophe");
+                eprintln!(
+                    "confluence.ndjson fixture not available; skipping triggered_bond_pays_bounty_and_catastrophe"
+                );
                 return;
             }
         };
@@ -1045,20 +1087,45 @@ mod tests {
             string_extension: true,
         };
         let bond_id = svc
-            .issue_bond(&sponsor, nat_trigger.clone(), 10_000, 500, 1000, &researcher.did(), collateral)
+            .issue_bond(
+                &sponsor,
+                nat_trigger.clone(),
+                10_000,
+                500,
+                1000,
+                &researcher.did(),
+                collateral,
+            )
             .unwrap();
         svc.invest(&investor, bond_id, 6_000, money).unwrap();
 
-        let triggered = svc.submit_proof(&researcher, bond_id, export_bytes).unwrap();
+        let triggered = svc
+            .submit_proof(&researcher, bond_id, export_bytes)
+            .unwrap();
         assert!(triggered, "nanoda should verify the confluence proof");
-        assert_eq!(svc.bonds().bond(&bond_id).unwrap().state, MathBondState::Triggered);
+        assert_eq!(
+            svc.bonds().bond(&bond_id).unwrap().state,
+            MathBondState::Triggered
+        );
 
         svc.settle(&sponsor, bond_id).unwrap();
         // Researcher gets the 6000 invested as bounty; the sponsor keeps its
         // 10000 collateral as the catastrophe payment; the investor is wiped out.
-        assert_eq!(coins_of(&svc, &researcher.did()), 6_000, "bounty = invested");
-        assert_eq!(coins_of(&svc, &sponsor.did()), 10_000, "catastrophe payment = collateral");
-        assert_eq!(coins_of(&svc, &investor.did()), 0, "investors are wiped out on trigger");
+        assert_eq!(
+            coins_of(&svc, &researcher.did()),
+            6_000,
+            "bounty = invested"
+        );
+        assert_eq!(
+            coins_of(&svc, &sponsor.did()),
+            10_000,
+            "catastrophe payment = collateral"
+        );
+        assert_eq!(
+            coins_of(&svc, &investor.did()),
+            0,
+            "investors are wiped out on trigger"
+        );
         assert_eq!(svc.certs().total_supply(), 16_000);
     }
 
@@ -1077,7 +1144,15 @@ mod tests {
 
         // Bond: issue → invest → mature without a trigger (maturity at pos 5).
         let bond_id = svc
-            .issue_bond(&sponsor, trigger(), 10_000, 500, 5, &sponsor.did(), collateral)
+            .issue_bond(
+                &sponsor,
+                trigger(),
+                10_000,
+                500,
+                5,
+                &sponsor.did(),
+                collateral,
+            )
             .unwrap();
         svc.invest(&investor, bond_id, 10_000, money).unwrap();
         svc.mature(&investor, bond_id).unwrap();
@@ -1098,13 +1173,21 @@ mod tests {
             )
             .unwrap();
         svc.add_liquidity(&lp, pool_id, 12_000, lp_money).unwrap();
-        svc.buy_outcome(&trader, pool_id, never, 3_000, trader_money).unwrap();
-        assert_eq!(coins_of(&svc, &svc.pool_did(&pool_id)), 15_000, "pool holds LP + buy cash");
+        svc.buy_outcome(&trader, pool_id, never, 3_000, trader_money)
+            .unwrap();
+        assert_eq!(
+            coins_of(&svc, &svc.pool_did(&pool_id)),
+            15_000,
+            "pool holds LP + buy cash"
+        );
 
         // Bond matured without a trigger → the never outcome wins.
         let winner = svc.resolve(&sponsor, pool_id).unwrap();
         assert_eq!(winner, never);
-        assert_eq!(svc.market().pool(&pool_id).unwrap().pool.winner, Some(never));
+        assert_eq!(
+            svc.market().pool(&pool_id).unwrap().pool.winner,
+            Some(never)
+        );
 
         // Trader holds ALL winning tokens → claims the whole reserve (14910);
         // the LP collects the accrued 90 of fees.
@@ -1131,7 +1214,15 @@ mod tests {
         let stranger_money = mint_to(&mut svc, &auth, &stranger.did(), 1_000, [3u8; 32]);
 
         let bond_id = svc
-            .issue_bond(&sponsor, trigger(), 10_000, 500, 5, &sponsor.did(), collateral)
+            .issue_bond(
+                &sponsor,
+                trigger(),
+                10_000,
+                500,
+                5,
+                &sponsor.did(),
+                collateral,
+            )
             .unwrap();
         // Funding owned by someone else is refused before any coin moves.
         let err = svc
@@ -1145,7 +1236,11 @@ mod tests {
         let more = mint_to(&mut svc, &auth, &investor.did(), 5_000, [4u8; 32]);
         let err = svc.invest(&investor, bond_id, 5_000, more).unwrap_err();
         assert_eq!(err.code, Code::MATHBOND_OVERFUNDED);
-        assert_eq!(coins_of(&svc, &investor.did()), 5_000, "rejected investment never escrowed");
+        assert_eq!(
+            coins_of(&svc, &investor.did()),
+            5_000,
+            "rejected investment never escrowed"
+        );
     }
 
     #[test]
@@ -1162,7 +1257,15 @@ mod tests {
         let trader_money = mint_to(&mut svc, &auth, &trader.did(), 3_000, [4u8; 32]);
 
         let bond_id = svc
-            .issue_bond(&sponsor, trigger(), 10_000, 500, 5, &sponsor.did(), collateral)
+            .issue_bond(
+                &sponsor,
+                trigger(),
+                10_000,
+                500,
+                5,
+                &sponsor.did(),
+                collateral,
+            )
             .unwrap();
         svc.invest(&investor, bond_id, 10_000, money).unwrap();
         svc.mature(&investor, bond_id).unwrap();
@@ -1181,7 +1284,8 @@ mod tests {
             )
             .unwrap();
         svc.add_liquidity(&lp, pool_id, 12_000, lp_money).unwrap();
-        svc.buy_outcome(&trader, pool_id, never, 3_000, trader_money).unwrap();
+        svc.buy_outcome(&trader, pool_id, never, 3_000, trader_money)
+            .unwrap();
         svc.resolve(&sponsor, pool_id).unwrap();
         svc.claim(&trader, pool_id).unwrap();
         svc.claim(&lp, pool_id).unwrap();
@@ -1209,4 +1313,3 @@ mod tests {
         );
     }
 }
-

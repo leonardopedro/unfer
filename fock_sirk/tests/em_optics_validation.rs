@@ -17,9 +17,9 @@
 //!    picoseconds (the published textbook value).
 
 use nested_fock_algebra::{
-    em_brewster_angle_deg, em_critical_angle_deg, em_cyclotron_frequency_hz,
-    em_larmor_collapse_time_s, em_short_dipole_r_rad_ohm, em_skin_depth_m,
-    em_waveguide_cutoff_hz, phys, EM_HALF_WAVE_DIPOLE_R_RAD_OHM,
+    EM_HALF_WAVE_DIPOLE_R_RAD_OHM, em_brewster_angle_deg, em_critical_angle_deg,
+    em_cyclotron_frequency_hz, em_larmor_collapse_time_s, em_short_dipole_r_rad_ohm,
+    em_skin_depth_m, em_waveguide_cutoff_hz, phys,
 };
 
 fn rel(v: f64, t: f64) -> f64 {
@@ -56,10 +56,12 @@ fn em_dipole_radiation_resistance() {
     assert!(rel(r_short, 7.895_7) < 1e-4, "R_rad(short) = {r_short} Ω");
     assert!(rel(EM_HALF_WAVE_DIPOLE_R_RAD_OHM, 73.129) < 1e-6);
     // Scaling is quadratic in l/λ.
-    assert!(rel(
-        em_short_dipole_r_rad_ohm(0.2) / em_short_dipole_r_rad_ohm(0.1),
-        4.0
-    ) < 1e-12);
+    assert!(
+        rel(
+            em_short_dipole_r_rad_ohm(0.2) / em_short_dipole_r_rad_ohm(0.1),
+            4.0
+        ) < 1e-12
+    );
 }
 
 #[test]

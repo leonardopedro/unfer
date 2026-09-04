@@ -41,96 +41,546 @@ pub struct SymbolRecord {
 /// The canonical symbol census. Sorted by name. Generated bootstrap; kept as
 /// data (not code) so the generator can diff it byte-for-byte.
 pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
-    SymbolRecord { name: "uk_action_apply", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_action_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_action_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_action_reject", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_action_revert", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_action_submit", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_agent_grants", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_agent_kill", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_agent_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_agent_spawn", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_auction_bid", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_auction_close", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_auction_open", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_auction_report", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_audit_clear", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_audit_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_austral_unf", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_bayesian_update", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_belief_propagation", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_cell", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_export", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_blueprint_export_gadget", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_get_by_id", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_import", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_instantiate", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_blueprint_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_buf_free", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-SymbolRecord { name: "uk_cert_burn", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_cert_mint", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_cert_mint_request", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_cert_root", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_cert_set_authority", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_cert_status", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_cert_transfer", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_certificate_issued", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_condition", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_durable_snapshot_error", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_durable_status", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_event_probability", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_evolve", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_gate_approve", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: Some(5000) },
-    SymbolRecord { name: "uk_gate_list_pending", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_gate_reject", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_get_result", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_init", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_last_error", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_logos_compile", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_meter_status", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_model_create", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_model_free", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_observability", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_observe", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_ode_analyze", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_ode_measure_original", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_owner_clear", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_owner_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_owner_log", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_poll", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_posture_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_posture_set", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_proof_verify", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_registry_vetted", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_report_issue", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_request_resource", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_resource_forfeit", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_resource_introduce", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_resource_pending", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_resource_use", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_restore", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_secret_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_secret_put", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_secret_revoke", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_session_compact", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_session_fork", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_set_hamiltonian", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_set_prior", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_skill_get", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_skill_list", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_skill_pack_import", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_skill_register", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_snapshot", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_subscribe", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_symbolic_simplify", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uk_version", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uk_whyml_emit", kind: SymbolKind::Kernel, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uz_init", kind: SymbolKind::Zenodo, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uz_last_error", kind: SymbolKind::Zenodo, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uz_manifest_json", kind: SymbolKind::Zenodo, effect_kind: super::types::EffectKind::Observe, timeout_ms: None },
-    SymbolRecord { name: "uz_pull", kind: SymbolKind::Zenodo, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
-    SymbolRecord { name: "uz_push", kind: SymbolKind::Zenodo, effect_kind: super::types::EffectKind::Mutate, timeout_ms: None },
+    SymbolRecord {
+        name: "uk_action_apply",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_action_get",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_action_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_action_reject",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_action_revert",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_action_submit",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_agent_grants",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_agent_kill",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_agent_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_agent_spawn",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_auction_bid",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_auction_close",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_auction_open",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_auction_report",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_audit_clear",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_audit_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_austral_unf",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_bayesian_update",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_belief_propagation",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_cell",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_export",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_blueprint_export_gadget",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_get_by_id",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_import",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_instantiate",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_blueprint_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_buf_free",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_cert_burn",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_cert_mint",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_cert_mint_request",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_cert_root",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_cert_set_authority",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_cert_status",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_cert_transfer",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_certificate_issued",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_condition",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_durable_snapshot_error",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_durable_status",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_event_probability",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_evolve",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_gate_approve",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: Some(5000),
+    },
+    SymbolRecord {
+        name: "uk_gate_list_pending",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_gate_reject",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_get_result",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_init",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_last_error",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_logos_compile",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_meter_status",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_model_create",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_model_free",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_observability",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_observe",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_ode_analyze",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_ode_measure_original",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_owner_clear",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_owner_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_owner_log",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_poll",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_posture_get",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_posture_set",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_proof_verify",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_registry_vetted",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_report_issue",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_request_resource",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_resource_forfeit",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_resource_introduce",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_resource_pending",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_resource_use",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_restore",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_secret_get",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_secret_put",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_secret_revoke",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_session_compact",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_session_fork",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_set_hamiltonian",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_set_prior",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_skill_get",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_skill_list",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_skill_pack_import",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_skill_register",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_snapshot",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_subscribe",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_symbolic_simplify",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_version",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_whyml_emit",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uz_init",
+        kind: SymbolKind::Zenodo,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uz_last_error",
+        kind: SymbolKind::Zenodo,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uz_manifest_json",
+        kind: SymbolKind::Zenodo,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uz_pull",
+        kind: SymbolKind::Zenodo,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uz_push",
+        kind: SymbolKind::Zenodo,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
 ];
 
 impl SymbolRecord {
@@ -189,10 +639,16 @@ mod tests {
             .into_iter()
             .chain(SymbolRecord::zenodo_names())
             .collect();
-        assert_eq!(all, split, "kernel_names ∪ zenodo_names must cover the registry");
+        assert_eq!(
+            all, split,
+            "kernel_names ∪ zenodo_names must cover the registry"
+        );
         let k: HashSet<_> = SymbolRecord::kernel_names().into_iter().collect();
         let z: HashSet<_> = SymbolRecord::zenodo_names().into_iter().collect();
-        assert!(k.is_disjoint(&z), "kernel and zenodo names must not overlap");
+        assert!(
+            k.is_disjoint(&z),
+            "kernel and zenodo names must not overlap"
+        );
     }
 
     #[test]
@@ -207,8 +663,14 @@ mod tests {
 
     #[test]
     fn by_name_and_timeout_lookup() {
-        assert_eq!(SymbolRecord::by_name("uk_version").unwrap().kind, SymbolKind::Kernel);
-        assert_eq!(SymbolRecord::by_name("uz_push").unwrap().kind, SymbolKind::Zenodo);
+        assert_eq!(
+            SymbolRecord::by_name("uk_version").unwrap().kind,
+            SymbolKind::Kernel
+        );
+        assert_eq!(
+            SymbolRecord::by_name("uz_push").unwrap().kind,
+            SymbolKind::Zenodo
+        );
         assert!(SymbolRecord::by_name("uk_does_not_exist").is_none());
         assert_eq!(SymbolRecord::timeout_ms("uk_version"), None);
     }
@@ -218,7 +680,9 @@ mod tests {
         // Read-only consult symbols are Observe; everything else defaults to
         // Mutate. Verify a few known-observes and known-mutators.
         assert_eq!(
-            SymbolRecord::by_name("uk_meter_status").unwrap().effect_kind,
+            SymbolRecord::by_name("uk_meter_status")
+                .unwrap()
+                .effect_kind,
             super::super::types::EffectKind::Observe
         );
         assert_eq!(

@@ -5,10 +5,9 @@ mod algebra_tests {
     use crate::models::{
         QFM_DEFAULT_QUANTIZATION_SCALE, bose_hubbard_chain, gravity_hamiltonian,
         mehler_channel_overlap, navier_stokes_brst, navier_stokes_hamiltonian,
-        point_to_inner_state, qg3d_full_hamiltonian, qfm_hamiltonian,
-        qfm_hamiltonian_localized, qfm_hamiltonian_mehler_projector,
-        qfm_hamiltonian_mehler_projector_localized, yang_mills_hamiltonian,
-        yang_mills_lattice,
+        point_to_inner_state, qfm_hamiltonian, qfm_hamiltonian_localized,
+        qfm_hamiltonian_mehler_projector, qfm_hamiltonian_mehler_projector_localized,
+        qg3d_full_hamiltonian, yang_mills_hamiltonian, yang_mills_lattice,
     };
     use crate::{InnerBosonicState, Operator, QuantumState};
     use num_complex::Complex64;
@@ -74,7 +73,10 @@ mod algebra_tests {
     // creator. This is the structural fact that makes ⟨0|H|0⟩ = 0 and the
     // Bose additivity of the one-particle spectrum automatic.
     fn assert_enclosure_form(h: &crate::Hamiltonian) {
-        assert!(!h.terms.is_empty(), "enclosure-form Hamiltonian has no terms");
+        assert!(
+            !h.terms.is_empty(),
+            "enclosure-form Hamiltonian has no terms"
+        );
         for (coeff, ops) in &h.terms {
             let mut seen_annihilator = false;
             for op in ops {
@@ -1549,16 +1551,14 @@ mod algebra_tests {
         let hd = h.adjoint();
         assert_eq!(h.terms.len(), hd.terms.len());
         for t in &h.terms {
-            assert!(
-                t.0.im.abs() < 1e-12,
-                "Starobinsky coefficients are real"
-            );
+            assert!(t.0.im.abs() < 1e-12, "Starobinsky coefficients are real");
         }
         // EXACT term-level Hermiticity H = H† (shared helper).
         assert_exact_hermitian(&h);
         // The physical vacuum for inner operators is one empty inner universe.
-        let vac = crate::QuantumState::vacuum()
-            .apply(&crate::Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        let vac = crate::QuantumState::vacuum().apply(&crate::Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         let hv = h.apply(&vac);
         let e0 = crate::QuantumState::inner_product(&hv, &vac).re;
         assert!(e0.abs() < 1e-9, "⟨0|H|0⟩ must be 0, got {e0}");
@@ -1568,10 +1568,16 @@ mod algebra_tests {
         // state with ‖|n⟩‖² = n!).
         let one = vac.apply(&crate::Operator::InnerBosonCreate(0));
         let e1 = crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
-        assert!((e1 - 1.0).abs() < 1e-9, "one-scalaron energy must be m, got {e1}");
+        assert!(
+            (e1 - 1.0).abs() < 1e-9,
+            "one-scalaron energy must be m, got {e1}"
+        );
         let two = one.apply(&crate::Operator::InnerBosonCreate(0));
         let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
-        assert!((e2 - 2.0).abs() < 1e-9, "two-scalaron energy must be 2m, got {e2}");
+        assert!(
+            (e2 - 2.0).abs() < 1e-9,
+            "two-scalaron energy must be 2m, got {e2}"
+        );
     }
 
     #[test]
@@ -1648,14 +1654,19 @@ mod algebra_tests {
         // Hilbert space and produce components orthogonal to |ψ⟩.
         let mut s_one = crate::InnerBosonicState::vacuum();
         s_one.modes.insert(3, 1); // the scalaron mode = beyond the 3 gravitons
-        let one = crate::QuantumState::vacuum()
-            .apply(&crate::Operator::OuterBosonCreate(s_one.clone()));
-        let e1 =
-            crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
-        assert!((e1 - m).abs() < 1e-9, "one-scalaron energy must be m, got {e1}");
+        let one =
+            crate::QuantumState::vacuum().apply(&crate::Operator::OuterBosonCreate(s_one.clone()));
+        let e1 = crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
+        assert!(
+            (e1 - m).abs() < 1e-9,
+            "one-scalaron energy must be m, got {e1}"
+        );
         let two = one.apply(&crate::Operator::OuterBosonCreate(s_one));
         let e2 = crate::QuantumState::inner_product(&h.apply(&two), &two).re / two.norm().powi(2);
-        assert!((e2 - 2.0 * m).abs() < 1e-9, "two-scalaron energy must be 2m, got {e2}");
+        assert!(
+            (e2 - 2.0 * m).abs() < 1e-9,
+            "two-scalaron energy must be 2m, got {e2}"
+        );
 
         // The graviton sector: the one-graviton expectation is the TEGR
         // kinetic 1/16 per excitation (:𝒮²:/16 — the ESA content of the
@@ -1700,6 +1711,7 @@ mod algebra_tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)] // symmetry asserts need both [i][j] and [j][i]
     fn test_qg_starobinsky_vielbein_full_exponential_hermitian_and_structure() {
         // The FULL-exponential R²-vielbein enclosure
         // (qg_starobinsky_vielbein_hamiltonian_full): the same final
@@ -1742,14 +1754,16 @@ mod algebra_tests {
             // universes give the one-particle matrix; the graviton TEGR terms
             // are diagonal numbers we exclude by keeping only terms whose two
             // operators carry the scalaron mode (occupations of mode 2).
-            if let [crate::Operator::OuterBosonCreate(si),
-                    crate::Operator::OuterBosonAnnihilate(sj)] = &t.1[..]
+            if let [
+                crate::Operator::OuterBosonCreate(si),
+                crate::Operator::OuterBosonAnnihilate(sj),
+            ] = &t.1[..]
+                && let (Some(&ni), Some(&nj)) = (si.modes.get(&2), sj.modes.get(&2))
+                && ni < n as u32
+                && nj < n as u32
+                && t.1.len() == 2
             {
-                if let (Some(&ni), Some(&nj)) = (si.modes.get(&2), sj.modes.get(&2)) {
-                    if ni < n as u32 && nj < n as u32 && t.1.len() == 2 {
-                        h_restricted[ni as usize][nj as usize] += t.0.re;
-                    }
-                }
+                h_restricted[ni as usize][nj as usize] += t.0.re;
             }
         }
         // The matrix is real-symmetric (Hermitian one-particle operator).
@@ -1788,7 +1802,10 @@ mod algebra_tests {
         // the one-particle state |1⟩ carries the anharmonic energy
         // ⟨1|h|1⟩ > m (the quadratic model's exact eigenvalue).
         let e1_diag = h_restricted[1][1];
-        assert!(e1_diag > 1.0, "E(1) diagonal must exceed m = 1, got {e1_diag}");
+        assert!(
+            e1_diag > 1.0,
+            "E(1) diagonal must exceed m = 1, got {e1_diag}"
+        );
     }
 
     #[test]
@@ -1831,10 +1848,14 @@ mod algebra_tests {
         let ks = [0.5, 1.0, 1.5];
         let m = 1.0;
         let h = qg_starobinsky_scalaron_field(&ks, m);
-        let vac = crate::QuantumState::vacuum()
-            .apply(&crate::Operator::OuterBosonCreate(crate::InnerBosonicState::vacuum()));
+        let vac = crate::QuantumState::vacuum().apply(&crate::Operator::OuterBosonCreate(
+            crate::InnerBosonicState::vacuum(),
+        ));
         let e0 = crate::QuantumState::inner_product(&h.apply(&vac), &vac).re;
-        assert!(e0.abs() < 1e-9, "scalaron vacuum energy must be 0, got {e0}");
+        assert!(
+            e0.abs() < 1e-9,
+            "scalaron vacuum energy must be 0, got {e0}"
+        );
         let one = vac.apply(&crate::Operator::InnerBosonCreate(1));
         let e1 = crate::QuantumState::inner_product(&h.apply(&one), &one).re / one.norm().powi(2);
         let expected1 = (ks[1] * ks[1] + m * m).sqrt();
@@ -1851,7 +1872,8 @@ mod algebra_tests {
         );
         // m → 0: ω = |k| (massless — the graviton limit).
         let h0 = qg_starobinsky_scalaron_field(&ks, 0.0);
-        let e0_1 = crate::QuantumState::inner_product(&h0.apply(&one), &one).re / one.norm().powi(2);
+        let e0_1 =
+            crate::QuantumState::inner_product(&h0.apply(&one), &one).re / one.norm().powi(2);
         assert!(
             (e0_1 - ks[1]).abs() < 1e-9,
             "the m→0 limit must recover ω = |k| = {}, got {e0_1}",
@@ -1871,9 +1893,11 @@ mod algebra_tests {
         let probe = |bosonic: crate::InnerBosonicState, ghost: u32| {
             crate::QuantumState::vacuum()
                 .apply(&crate::Operator::OuterBosonCreate(bosonic))
-                .apply(&crate::Operator::OuterFermionCreate(crate::InnerFermionicState {
-                    modes: std::collections::BTreeSet::from([ghost]),
-                }))
+                .apply(&crate::Operator::OuterFermionCreate(
+                    crate::InnerFermionicState {
+                        modes: std::collections::BTreeSet::from([ghost]),
+                    },
+                ))
         };
         let bos = |mode: u32, n: u32| {
             let mut inner = crate::InnerBosonicState::vacuum();
@@ -1917,9 +1941,11 @@ mod algebra_tests {
         let probe = |bosonic: crate::InnerBosonicState, ghost: u32| {
             crate::QuantumState::vacuum()
                 .apply(&crate::Operator::OuterBosonCreate(bosonic))
-                .apply(&crate::Operator::OuterFermionCreate(crate::InnerFermionicState {
-                    modes: std::collections::BTreeSet::from([ghost]),
-                }))
+                .apply(&crate::Operator::OuterFermionCreate(
+                    crate::InnerFermionicState {
+                        modes: std::collections::BTreeSet::from([ghost]),
+                    },
+                ))
         };
         let bos = |mode: u32, n: u32| {
             let mut inner = crate::InnerBosonicState::vacuum();
@@ -1950,11 +1976,15 @@ mod algebra_tests {
         }
 
         // (2) [H, Ω] = 0: the gauge-fixed fiber is BRST-closed (AGENTS.md).
-        let comm_norm = |a: &crate::Hamiltonian, b: &crate::Hamiltonian, s: &crate::QuantumState| {
-            let mut d = a.apply(&b.apply(s));
-            d.scale_and_add(&b.apply(&a.apply(s)), num_complex::Complex64::new(-1.0, 0.0));
-            d.norm()
-        };
+        let comm_norm =
+            |a: &crate::Hamiltonian, b: &crate::Hamiltonian, s: &crate::QuantumState| {
+                let mut d = a.apply(&b.apply(s));
+                d.scale_and_add(
+                    &b.apply(&a.apply(s)),
+                    num_complex::Complex64::new(-1.0, 0.0),
+                );
+                d.norm()
+            };
         let probes = [
             probe(bos(3, 1), 0),
             probe(bos(1, 1), 0),
@@ -1973,26 +2003,49 @@ mod algebra_tests {
         // C_0 = g_0 − 2u_1.
         let c0: crate::Hamiltonian = crate::Hamiltonian {
             terms: vec![
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(3)]),
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(3)]),
-                (num_complex::Complex64::new(-2.0, 0.0), vec![crate::Operator::InnerBosonCreate(1)]),
-                (num_complex::Complex64::new(-2.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(1)]),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonCreate(3)],
+                ),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonAnnihilate(3)],
+                ),
+                (
+                    num_complex::Complex64::new(-2.0, 0.0),
+                    vec![crate::Operator::InnerBosonCreate(1)],
+                ),
+                (
+                    num_complex::Complex64::new(-2.0, 0.0),
+                    vec![crate::Operator::InnerBosonAnnihilate(1)],
+                ),
             ],
         };
         // C_1 = g_1 − 4u_2.
         let c1: crate::Hamiltonian = crate::Hamiltonian {
             terms: vec![
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(4)]),
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(4)]),
-                (num_complex::Complex64::new(-4.0, 0.0), vec![crate::Operator::InnerBosonCreate(2)]),
-                (num_complex::Complex64::new(-4.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(2)]),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonCreate(4)],
+                ),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonAnnihilate(4)],
+                ),
+                (
+                    num_complex::Complex64::new(-4.0, 0.0),
+                    vec![crate::Operator::InnerBosonCreate(2)],
+                ),
+                (
+                    num_complex::Complex64::new(-4.0, 0.0),
+                    vec![crate::Operator::InnerBosonAnnihilate(2)],
+                ),
             ],
         };
         // A bosonic-only occupation eigenstate (no ghosts) for the constraint
         // commutators.
         let bos_state = |mode: u32, n: u32| -> crate::QuantumState {
-            crate::QuantumState::vacuum()
-                .apply(&crate::Operator::OuterBosonCreate(bos(mode, n)))
+            crate::QuantumState::vacuum().apply(&crate::Operator::OuterBosonCreate(bos(mode, n)))
         };
         let bos_probes = [
             bos_state(0, 1),
@@ -2003,22 +2056,22 @@ mod algebra_tests {
         ];
         for s in &bos_probes {
             let nrm = comm_norm(&h, &c0, s);
-            assert!(
-                nrm < 1e-8,
-                "[H, C_0] must vanish: ‖[H,C_0]ψ‖ = {nrm:.3e}"
-            );
+            assert!(nrm < 1e-8, "[H, C_0] must vanish: ‖[H,C_0]ψ‖ = {nrm:.3e}");
             let nrm1 = comm_norm(&h, &c1, s);
-            assert!(
-                nrm1 < 1e-8,
-                "[H, C_1] must vanish: ‖[H,C_1]ψ‖ = {nrm1:.3e}"
-            );
+            assert!(nrm1 < 1e-8, "[H, C_1] must vanish: ‖[H,C_1]ψ‖ = {nrm1:.3e}");
         }
 
         // (4) [H, u_0] ≠ 0: the value mode genuinely evolves under the fiber.
         let u0: crate::Hamiltonian = crate::Hamiltonian {
             terms: vec![
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonCreate(0)]),
-                (num_complex::Complex64::new(1.0, 0.0), vec![crate::Operator::InnerBosonAnnihilate(0)]),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonCreate(0)],
+                ),
+                (
+                    num_complex::Complex64::new(1.0, 0.0),
+                    vec![crate::Operator::InnerBosonAnnihilate(0)],
+                ),
             ],
         };
         let nrm = comm_norm(&h, &u0, &bos_state(0, 1));

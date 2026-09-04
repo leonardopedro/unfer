@@ -55,13 +55,12 @@ impl SqliteDurableStore {
         // Fail-visible integrity probe BEFORE the init writes: a damaged but
         // openable database is reported, not silently served. "ok" is the
         // clean answer; anything else is a corruption report.
-        let snapshot_error = match conn.query_row("PRAGMA quick_check", [], |r| {
-            r.get::<_, String>(0)
-        }) {
-            Ok(report) if report.trim() == "ok" => None,
-            Ok(report) => Some(format!("sqlite quick_check: {report}")),
-            Err(e) => Some(format!("sqlite quick_check failed: {e}")),
-        };
+        let snapshot_error =
+            match conn.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0)) {
+                Ok(report) if report.trim() == "ok" => None,
+                Ok(report) => Some(format!("sqlite quick_check: {report}")),
+                Err(e) => Some(format!("sqlite quick_check failed: {e}")),
+            };
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS records (

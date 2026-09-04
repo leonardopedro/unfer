@@ -10,7 +10,9 @@
 //!    its own first maximum the θ₁₃ survival is exactly 1 − sin²(2θ₁₃) ≈ 0.915
 //!    (the Daya Bay value).
 
-use nested_fock_algebra::{neutrino_first_max_km_per_gev, neutrino_survival_two_flavor, weak_muon_lifetime_lo_s};
+use nested_fock_algebra::{
+    neutrino_first_max_km_per_gev, neutrino_survival_two_flavor, weak_muon_lifetime_lo_s,
+};
 
 fn rel(v: f64, t: f64) -> f64 {
     (v - t).abs() / t
@@ -19,7 +21,7 @@ fn rel(v: f64, t: f64) -> f64 {
 #[test]
 fn weak_muon_lifetime_from_gf() {
     let tau_lo = weak_muon_lifetime_lo_s();
-    let tau_meas = 2.196_9811e-6; // PDG muon lifetime
+    let tau_meas = 2.196_981_1e-6; // PDG muon lifetime
     // Leading order within 0.5%, and SHORTER than measured (the G_F
     // convention puts loop corrections on top of this tree-level rate).
     assert!(rel(tau_lo, tau_meas) < 5e-3, "τ_LO = {tau_lo:.4e} s");
@@ -43,7 +45,10 @@ fn neutrino_reactor_and_theta13() {
     // KamLAND: L = 180 km, reactor Ē ≈ 3.4 MeV ⇒ phase well past π
     // (beyond the first maximum, in the deep-suppression lobe).
     let phase_beyond = 1.267 * dm21 * 180.0 / 0.0034;
-    assert!(phase_beyond > std::f64::consts::PI, "KamLAND must sit past 1st max");
+    assert!(
+        phase_beyond > std::f64::consts::PI,
+        "KamLAND must sit past 1st max"
+    );
     let sin_sq_12 = 0.304;
     let pee_kamland = neutrino_survival_two_flavor(dm21, sin_sq_12, 180.0, 0.0034);
     assert!(

@@ -142,10 +142,7 @@ pub fn parse_austral_function(src: &str) -> Result<(String, CoreIR), String> {
     let mut p = Parser::new(src);
     p.skip_ws();
     if !p.starts_with("function") {
-        return Err(format!(
-            "expected `function`, got `{}`",
-            p.rest_preview()
-        ));
+        return Err(format!("expected `function`, got `{}`", p.rest_preview()));
     }
     p.bump_word("function");
     p.skip_ws();
@@ -396,9 +393,14 @@ impl<'a> Parser<'a> {
             }
             let tag_str = &self.src[start..self.pos];
             if tag_str.is_empty() {
-                return Err(format!("expected tag number after `Tag` at byte {}", self.pos));
+                return Err(format!(
+                    "expected tag number after `Tag` at byte {}",
+                    self.pos
+                ));
             }
-            let tag_id: u32 = tag_str.parse().map_err(|_| "tag number overflow".to_string())?;
+            let tag_id: u32 = tag_str
+                .parse()
+                .map_err(|_| "tag number overflow".to_string())?;
             self.skip_ws();
             if self.peek() == '(' {
                 self.bump();
@@ -581,8 +583,8 @@ enum BinOpTok {
 /// prints `+` for both `Add64` and `AddF64`), otherwise the Int64 family.
 /// Unknowns default to the Int64 family (the emitter's default typing).
 fn resolve_op(tok: BinOpTok, a: &CoreIR, b: &CoreIR) -> PrimOp {
-    let float = matches!(a, CoreIR::Lit(Literal::F64(_)))
-        || matches!(b, CoreIR::Lit(Literal::F64(_)));
+    let float =
+        matches!(a, CoreIR::Lit(Literal::F64(_))) || matches!(b, CoreIR::Lit(Literal::F64(_)));
     match (tok, float) {
         (BinOpTok::Add, false) => PrimOp::Add64,
         (BinOpTok::Add, true) => PrimOp::AddF64,
@@ -652,7 +654,10 @@ mod tests {
 
     #[test]
     fn parse_unknown_identifier_is_var() {
-        assert_eq!(parse_austral_expr("x").unwrap(), CoreIR::Var("x".to_string()));
+        assert_eq!(
+            parse_austral_expr("x").unwrap(),
+            CoreIR::Var("x".to_string())
+        );
         assert_eq!(
             parse_austral_expr("(x + 3)").unwrap(),
             CoreIR::Prim(
@@ -702,8 +707,8 @@ mod tests {
 
     #[test]
     fn parse_two_lets_ordered() {
-        let body =
-            parse_austral_statements("let x: Int64 = 1; let y: Int64 = 2; return (x + y);").unwrap();
+        let body = parse_austral_statements("let x: Int64 = 1; let y: Int64 = 2; return (x + y);")
+            .unwrap();
         match body {
             CoreIR::Let(x, vx, inner) => {
                 assert_eq!(x, "x");
@@ -724,10 +729,8 @@ mod tests {
     #[test]
     fn parse_clone_statement() {
         // clone after a let: let x = 1; clone x -> y, z; return (y + z);
-        let body = parse_austral_statements(
-            "let x: Int64 = 1; clone x -> y, z; return (y + z);",
-        )
-        .unwrap();
+        let body =
+            parse_austral_statements("let x: Int64 = 1; clone x -> y, z; return (y + z);").unwrap();
         match body {
             CoreIR::Let(x, vx, inner) => {
                 assert_eq!(x, "x");

@@ -17,9 +17,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter, qed_static_charge_interaction,
+    InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter,
+    qed_static_charge_interaction,
 };
 use num_complex::Complex64;
 
@@ -130,13 +131,17 @@ fn sirk_displaced_oscillator_exact_shift() {
     // The tolerance sits inside the gap after the third level, so exactly
     // the resolved rung set passes -- enforced by solver-computed truth.
     let resolved: Vec<f64> = res.resolved_ritz_values(2e-3);
-    assert_eq!(resolved.len(), 3, "exactly the first three rungs must resolve");
+    assert_eq!(
+        resolved.len(),
+        3,
+        "exactly the first three rungs must resolve"
+    );
     for v in &resolved {
         let n_float = (v + shift) / k;
         let n_round = n_float.round();
         let tol_e = 1e-4_f64.max(2e-3 * v.abs());
         assert!(
-            (n_float - n_round).abs() * k < tol_e && n_round >= 0.0 && n_round <= 3.0,
+            (n_float - n_round).abs() * k < tol_e && (0.0..=3.0).contains(&n_round),
             "Ritz {v} not on an exact level (band {tol_e:.2e})"
         );
     }

@@ -56,8 +56,8 @@ use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
-    qcd_free_gluon, qcd_pair_production, qed_free_photon, qed_jaynes_cummings,
-    qed_pair_production, qg_free_graviton, qg_starobinsky_hamiltonian, oscillator_displaced,
+    oscillator_displaced, qcd_free_gluon, qcd_pair_production, qed_free_photon,
+    qed_jaynes_cummings, qed_pair_production, qg_free_graviton, qg_starobinsky_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -89,7 +89,10 @@ fn unit_opts() -> SirkOpts {
 
 fn assert_hermitian(h_proj: &DMatrix<Complex64>, label: &str) {
     let diff = (h_proj - &h_proj.adjoint()).norm();
-    assert!(diff < 1e-6, "{label}: H_proj must be Hermitian, ‖H−H†‖={diff}");
+    assert!(
+        diff < 1e-6,
+        "{label}: H_proj must be Hermitian, ‖H−H†‖={diff}"
+    );
 }
 
 /// One empty inner bosonic universe — the vacuum for **inner** ladder
@@ -165,19 +168,28 @@ fn raw_canonical_sequence_no_guards_exact_predictions() {
     // QCD — free gluon field (inner construction).
     let h_gl = qcd_free_gluon(&[0.5, 1.5]);
     let g1 = sirk_ground(&h_gl, &n_boson(0, 1), 4, &opts);
-    assert!((g1 - 0.5).abs() < 1e-6, "one-gluon must be |k|=0.5, got {g1}");
+    assert!(
+        (g1 - 0.5).abs() < 1e-6,
+        "one-gluon must be |k|=0.5, got {g1}"
+    );
 
     // QG — free graviton field (outer construction, natural units c = 1).
     let h_gw = qg_free_graviton(&[1.0, 3.0]);
     let w1 = sirk_ground(&h_gw, &one_outer_boson(0), 4, &opts);
-    assert!((w1 - 1.0).abs() < 1e-6, "one-graviton must be c|k|=1, got {w1}");
+    assert!(
+        (w1 - 1.0).abs() < 1e-6,
+        "one-graviton must be c|k|=1, got {w1}"
+    );
 
     // QG(R²) — Starobinsky scalaron sector (inner construction), H = Σ m N_i.
     let h_sc = qg_starobinsky_hamiltonian(2, 0.8);
     let s_vac = sirk_ground(&h_sc, &inner_vac(), 4, &opts);
     assert!(s_vac.abs() < 1e-6, "scalaron vacuum must be 0, got {s_vac}");
     let s1 = sirk_ground(&h_sc, &n_boson(0, 1), 4, &opts);
-    assert!((s1 - 0.8).abs() < 1e-6, "one-scalaron must be m=0.8, got {s1}");
+    assert!(
+        (s1 - 0.8).abs() < 1e-6,
+        "one-scalaron must be m=0.8, got {s1}"
+    );
 
     // The point: the RAW canonical sequence — no pruning, no BRST, no
     // adaptive truncation, no unit-norm frame, no component budget — already
@@ -339,8 +351,14 @@ fn perturbation_theory_scope_map() {
     );
     let u_op = Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let mut probe = inner_vac();

@@ -32,7 +32,7 @@
 //!     to the `ns_eulerian_fiber` builder on the shared modes.
 
 use nested_fock_algebra::{
-    compile_latex, compile_to_fock, Hamiltonian, InnerBosonicState, Operator, QuantumState,
+    Hamiltonian, InnerBosonicState, Operator, QuantumState, compile_latex, compile_to_fock,
 };
 use num_complex::Complex64;
 
@@ -96,7 +96,10 @@ fn qym_number_operator_latex_dagger_is_exact() {
     let h = compile_latex(r"a_0^{dagger} * a_0");
     assert_eq!(h.terms.len(), 1, "a†a must be exactly one term");
     let (c, ops) = &h.terms[0];
-    assert!((c.re - 1.0).abs() < 1e-12 && c.im.abs() < 1e-12, "coeff must be 1, got {c}");
+    assert!(
+        (c.re - 1.0).abs() < 1e-12 && c.im.abs() < 1e-12,
+        "coeff must be 1, got {c}"
+    );
     assert!(
         matches!(ops[0], Operator::InnerBosonCreate(0)),
         "first op must be creation on mode 0: {ops:?}"
@@ -110,7 +113,11 @@ fn qym_number_operator_latex_dagger_is_exact() {
     let one = vac.apply(&Operator::InnerBosonCreate(0));
     let h_one = h.apply(&one);
     let key = one.components.keys().next().cloned().unwrap();
-    let amp = h_one.components.get(&key).copied().unwrap_or(Complex64::new(0.0, 0.0));
+    let amp = h_one
+        .components
+        .get(&key)
+        .copied()
+        .unwrap_or(Complex64::new(0.0, 0.0));
     assert!(
         (amp - Complex64::new(1.0, 0.0)).norm() < 1e-9,
         "N|1⟩ must be |1⟩, got amplitude {amp}"
@@ -125,7 +132,10 @@ fn cross_mode_latex_dagger_pairs() {
     let (c, ops) = &h.terms[0];
     assert!((c.re - 1.0).abs() < 1e-12, "coeff must be 1, got {c}");
     assert!(matches!(ops[0], Operator::InnerBosonCreate(1)), "{ops:?}");
-    assert!(matches!(ops[1], Operator::InnerBosonAnnihilate(2)), "{ops:?}");
+    assert!(
+        matches!(ops[1], Operator::InnerBosonAnnihilate(2)),
+        "{ops:?}"
+    );
 }
 
 #[test]
@@ -201,8 +211,15 @@ fn qym_abelian_b2_cas_matches_builder() {
     let h_builder = nested_fock_algebra::qcd_ym_hamiltonian(0.0);
 
     assert!(!h_cas.terms.is_empty());
-    assert_eq!(h_cas.terms.len(), h_cas.adjoint().terms.len(), "H must equal H†");
-    assert!(vac_energy(&h_cas).abs() < 1e-9, "⟨0|H|0⟩ = 0 (normal ordered)");
+    assert_eq!(
+        h_cas.terms.len(),
+        h_cas.adjoint().terms.len(),
+        "H must equal H†"
+    );
+    assert!(
+        vac_energy(&h_cas).abs() < 1e-9,
+        "⟨0|H|0⟩ = 0 (normal ordered)"
+    );
     assert_eq!(
         h_cas.terms.len(),
         h_builder.terms.len(),
@@ -265,8 +282,11 @@ fn qg_tegr_kinetic_cas_structure() {
         assert_eq!(ops.len(), 2);
         assert_eq!(mode_of(&ops[0]), 0);
         assert_eq!(mode_of(&ops[1]), 0);
-        assert!((c.re - 1.0 / 16.0).abs() < 1e-12, "coeff must be 1/16, got {c}");
-        coeffs.push(c.clone());
+        assert!(
+            (c.re - 1.0 / 16.0).abs() < 1e-12,
+            "coeff must be 1/16, got {c}"
+        );
+        coeffs.push(*c);
     }
     // The pair structure: (a†+a)² = a†² + a†a + aa† + aa, and the framework
     // normal-orders aa† → a†a + 1 (stripping the zero point), so the compile
@@ -327,10 +347,16 @@ fn qg_densitized_kinetic_cas_structure() {
         let m = mode_of(&ops[0]);
         assert_eq!(m, mode_of(&ops[1]));
         if m == 0 {
-            assert!((c.re - 1.0 / 16.0).abs() < 1e-12, "𝒮 coeff must be 1/16, got {c}");
+            assert!(
+                (c.re - 1.0 / 16.0).abs() < 1e-12,
+                "𝒮 coeff must be 1/16, got {c}"
+            );
             n_plus += 1;
         } else {
-            assert!((c.re + 1.0 / 24.0).abs() < 1e-12, "𝒫 coeff must be −1/24, got {c}");
+            assert!(
+                (c.re + 1.0 / 24.0).abs() < 1e-12,
+                "𝒫 coeff must be −1/24, got {c}"
+            );
             n_minus += 1;
         }
         assert!(c.im.abs() < 1e-12, "kinetic coefficients are real");
@@ -360,7 +386,11 @@ fn qg_scalaron_mass_term_cas() {
     let one = vac.apply(&Operator::InnerBosonCreate(0));
     let hv = h.apply(&one);
     let key = one.components.keys().next().cloned().unwrap();
-    let amp = hv.components.get(&key).copied().unwrap_or(Complex64::new(0.0, 0.0));
+    let amp = hv
+        .components
+        .get(&key)
+        .copied()
+        .unwrap_or(Complex64::new(0.0, 0.0));
     assert!(
         (amp.re - m).abs() < 1e-9 && amp.im.abs() < 1e-9,
         "one-scalaron energy must be m = {m}, got {amp}"
@@ -384,7 +414,11 @@ fn ns_euler_fiber_cas_matches_builder() {
         "(I) * (c_0 - a_0) * ({a01} * (c_1 + a_1)) + (I) * ({a01} * (c_1 + a_1)) * (c_0 - a_0)"
     );
     let h_cas = compile_to_fock(&cas);
-    assert_eq!(h_cas.terms.len(), 8, "2 orderings × 4 products = 8 raw terms");
+    assert_eq!(
+        h_cas.terms.len(),
+        8,
+        "2 orderings × 4 products = 8 raw terms"
+    );
 
     // The builder for the same 2×2 off-diagonal A (one hopping, no affine c),
     // filtered to the shared modes {0,1}.
@@ -397,16 +431,26 @@ fn ns_euler_fiber_cas_matches_builder() {
         .filter(|(_, ops)| ops.iter().all(|o| mode_of(o) < 2))
         .cloned()
         .collect();
-    assert_eq!(filtered.len(), 8, "builder must also emit 8 terms on modes {{0,1}}");
+    assert_eq!(
+        filtered.len(),
+        8,
+        "builder must also emit 8 terms on modes {{0,1}}"
+    );
 
     // Hermitian both.
-    assert_eq!(h_cas.terms.len(), h_cas.adjoint().terms.len(), "CAS fiber must be Hermitian");
+    assert_eq!(
+        h_cas.terms.len(),
+        h_cas.adjoint().terms.len(),
+        "CAS fiber must be Hermitian"
+    );
 
     // Every CAS term appears in the builder with the same coefficient.
     for (c_cas, ops_cas) in &h_cas.terms {
         assert!(
             has_term(
-                &Hamiltonian { terms: filtered.clone() },
+                &Hamiltonian {
+                    terms: filtered.clone()
+                },
                 *c_cas,
                 ops_cas
             ),

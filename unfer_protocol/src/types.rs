@@ -2129,16 +2129,12 @@ pub enum MathBondOpKind {
     /// (recording the passage of time); the ledger enforces that the consensus
     /// log is actually at/past `maturity_seq`. A `Matured` bond can then be
     /// settled as a maturity refund.
-    Mature {
-        bond_id: MathBondId,
-    },
+    Mature { bond_id: MathBondId },
     /// Finalize the bond: distribute collateral per the trigger/maturity
     /// outcome. Allowed only for a `Triggered` bond (trigger payout) or a
     /// `Matured` bond (maturity refund) — never for a live `Issued`/`Funded`
     /// bond, whose trigger window is still open.
-    Settle {
-        bond_id: MathBondId,
-    },
+    Settle { bond_id: MathBondId },
 }
 
 /// A signed math bond state transition.
@@ -2298,9 +2294,7 @@ pub enum MarketOpKind {
     /// tokens (pro-rata against the pool reserve) and their LP share (accrued
     /// fees; plus the whole reserve when nobody held winning tokens). Idempotent
     /// — a second claim pays nothing.
-    Claim {
-        pool_id: PoolId,
-    },
+    Claim { pool_id: PoolId },
 }
 
 /// A signed market state transition.

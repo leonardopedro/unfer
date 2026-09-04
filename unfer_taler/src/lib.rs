@@ -27,15 +27,15 @@
 //!
 //! Error codes: UK-7101..UK-7106 (see `unfer_protocol::codes`).
 
-pub mod auction;
 pub mod attribution;
+pub mod auction;
 pub mod bondmarket;
 pub mod denom;
 pub mod exchange;
 pub mod wire;
 
-pub use auction::{AuctionEscrowState, AuctionService, CreditHold, PaymentEscrow};
 pub use attribution::{AttributionEscrowState, AttributionService, FeeHold, OpenBadgeAssertion};
+pub use auction::{AuctionEscrowState, AuctionService, CreditHold, PaymentEscrow};
 pub use bondmarket::{BondMarketService, CollateralHold, InvestmentHold, PoolCoin};
 pub use denom::{Denomination, DenominationBook};
 pub use exchange::{PegOut, ReserveId, TalerExchange};

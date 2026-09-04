@@ -63,7 +63,10 @@ fn qym_plaquette_bessel_closed_form_matches_series() {
     assert!(su2_plaquette(50.0) > 0.96);
     let gap = 1.0 - su2_plaquette(50.0);
     let asym = 3.0 / (2.0 * 50.0);
-    assert!((gap - asym).abs() / asym < 0.05, "1−⟨P⟩ = {gap}, 3/(2β) = {asym}");
+    assert!(
+        (gap - asym).abs() / asym < 0.05,
+        "1−⟨P⟩ = {gap}, 3/(2β) = {asym}"
+    );
 }
 
 #[test]
@@ -76,11 +79,18 @@ fn qym_two_dimensional_wilson_area_law_exact() {
     // different shapes) — the hallmark of confinement in 2D.
     let w22 = w(2, 2);
     let w14 = w(1, 4);
-    assert!((w22 - w14).abs() / w22 < 1e-12, "W(2,2)={w22} vs W(1,4)={w14}");
+    assert!(
+        (w22 - w14).abs() / w22 < 1e-12,
+        "W(2,2)={w22} vs W(1,4)={w14}"
+    );
     // Perimeter would give W(2,2) = ⟨P⟩⁸ ≠ ⟨P⟩⁴; area wins: the perimeter
     // guess is smaller by a factor exp(4σ) ≈ ⟨P⟩⁴ ≈ 2.3e-4.
     let perimeter = p.powi(8);
-    assert!(perimeter / w22 < 1e-2, "area law beats perimeter (⟨P⟩⁸/⟨P⟩⁴ = {})", perimeter / w22);
+    assert!(
+        perimeter / w22 < 1e-2,
+        "area law beats perimeter (⟨P⟩⁸/⟨P⟩⁴ = {})",
+        perimeter / w22
+    );
     // Exact exponential: W(R,T) = exp(−σ R T), σ = −ln⟨P⟩.
     let sigma = -p.ln();
     let w33 = w(3, 3);
@@ -105,9 +115,7 @@ fn qym_creutz_ratio_extracts_string_tension_exactly_in_2d() {
     let p = su2_plaquette(beta);
     let sigma_exact = -p.ln();
     let w = |r: u32, t: u32| p.powi((r * t) as i32);
-    let creutz = |i: u32, j: u32| {
-        -(w(i, j) * w(i - 1, j - 1) / (w(i, j - 1) * w(i - 1, j))).ln()
-    };
+    let creutz = |i: u32, j: u32| -(w(i, j) * w(i - 1, j - 1) / (w(i, j - 1) * w(i - 1, j))).ln();
     for (i, j) in [(3u32, 3u32), (4, 2), (2, 4), (3, 2)] {
         let chi = creutz(i, j);
         let rel = (chi - sigma_exact).abs() / sigma_exact;
@@ -143,7 +151,10 @@ fn qym_string_tension_leading_strong_coupling() {
         let sigma = -su2_plaquette(beta).ln();
         let asym = 3.0 / (2.0 * beta);
         let rel = (sigma - asym).abs() / asym;
-        assert!(rel < 0.05, "β={beta}: σ={sigma:.5}, 3/(2β)={asym:.5}, rel {rel:.2e}");
+        assert!(
+            rel < 0.05,
+            "β={beta}: σ={sigma:.5}, 3/(2β)={asym:.5}, rel {rel:.2e}"
+        );
     }
 }
 
@@ -158,8 +169,8 @@ fn qym_polyakov_loop_confinement_order_parameter() {
     assert!(polyakov(0.05) < 0.03);
     assert!(polyakov(0.5) < 0.25);
     // Series check at β = 0.5: β/2 − β³/16 + β⁵/96 − 11β⁷/6144 = 0.242499.
-    let series = 0.5 / 2.0 - 0.5f64.powi(3) / 16.0 + 0.5f64.powi(5) / 96.0
-        - 11.0 * 0.5f64.powi(7) / 6144.0;
+    let series =
+        0.5 / 2.0 - 0.5f64.powi(3) / 16.0 + 0.5f64.powi(5) / 96.0 - 11.0 * 0.5f64.powi(7) / 6144.0;
     let exact = polyakov(0.5);
     assert!(
         (exact - series).abs() / exact < 1e-3,
@@ -184,7 +195,10 @@ fn qym_asymptotic_freedom_one_loop_running() {
     };
     // UV: α_s(1 TeV) < α_s(M_Z) — asymptotic freedom.
     let a_tev = alpha_at(1000.0);
-    assert!(a_tev < alpha_mz, "α_s(1 TeV) = {a_tev} must be < {alpha_mz}");
+    assert!(
+        a_tev < alpha_mz,
+        "α_s(1 TeV) = {a_tev} must be < {alpha_mz}"
+    );
     // IR: α_s(10 GeV) > α_s(M_Z) — growing toward confinement.
     let a_10 = alpha_at(10.0);
     assert!(a_10 > alpha_mz, "α_s(10 GeV) = {a_10} must be > {alpha_mz}");
@@ -196,7 +210,10 @@ fn qym_asymptotic_freedom_one_loop_running() {
         let inv = 1.0 / a_10 + (beta0 / (2.0 * std::f64::consts::PI)) * (m_z / 10.0).ln();
         1.0 / inv
     };
-    assert!((back - alpha_mz).abs() < 1e-9, "round-trip α_s(M_Z) = {back}");
+    assert!(
+        (back - alpha_mz).abs() < 1e-9,
+        "round-trip α_s(M_Z) = {back}"
+    );
     // β₀ > 0 is what makes the sign of the β-function negative (asymptotic freedom).
     assert!(beta0 > 0.0);
 }

@@ -84,11 +84,11 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    navier_stokes_brst, navier_stokes_hamiltonian, ns_eulerian_fiber, Hamiltonian,
-    InnerBosonicState, InnerFermionicState, Operator, QuantumState,
+    Hamiltonian, InnerBosonicState, InnerFermionicState, Operator, QuantumState,
+    navier_stokes_brst, navier_stokes_hamiltonian, ns_eulerian_fiber,
 };
 use num_complex::Complex64;
 
@@ -611,8 +611,8 @@ fn ns_hashimoto_shift_invert_selection() {
         //     1/μ_j recovers the NS spectrum from the shifted data (the
         //     shift-invert selection).
         let v = eigvecs.clone();
-        for j in 0..n {
-            let vj = v.column(j).into_owned();
+        for (j, vj_col) in v.column_iter().enumerate() {
+            let vj = vj_col.into_owned();
             let rvj = &r * &vj;
             let mu = 1.0 / (gamma - Complex64::new(lambdas[j], 0.0));
             let mut res_vec = rvj;
@@ -989,4 +989,3 @@ fn ns_brst_projection_invariance_physical_flow() {
          resolved spectrum and ⟨u_{{0,0}}⟩ = {xb} (physical observables unchanged)",
     );
 }
-

@@ -19,7 +19,9 @@
 pub mod parser;
 pub mod validate;
 
-pub use parser::{parse_austral_expr, parse_austral_function, parse_austral_module, parse_austral_statements};
+pub use parser::{
+    parse_austral_expr, parse_austral_function, parse_austral_module, parse_austral_statements,
+};
 pub use validate::{validate_body, validate_module};
 
 use crate::core_ir::{CoreIR, Literal, PrimOp};
@@ -219,12 +221,17 @@ pub fn fold_closed_through_deltanet(term: &CoreIR) -> CoreIR {
             }
             CoreIR::Prim(*op, args)
         }
-        CoreIR::Con(tag, args) => CoreIR::Con(*tag, args.iter().map(fold_closed_through_deltanet).collect()),
+        CoreIR::Con(tag, args) => CoreIR::Con(
+            *tag,
+            args.iter().map(fold_closed_through_deltanet).collect(),
+        ),
         CoreIR::App(f, a) => CoreIR::App(
             Box::new(fold_closed_through_deltanet(f)),
             Box::new(fold_closed_through_deltanet(a)),
         ),
-        CoreIR::Lam(id, body) => CoreIR::Lam(id.clone(), Box::new(fold_closed_through_deltanet(body))),
+        CoreIR::Lam(id, body) => {
+            CoreIR::Lam(id.clone(), Box::new(fold_closed_through_deltanet(body)))
+        }
         CoreIR::Let(id, value, body) => CoreIR::Let(
             id.clone(),
             Box::new(fold_closed_through_deltanet(value)),
@@ -345,8 +352,14 @@ mod tests {
         );
         let reduced = emit_austral_reduced(&ir);
         // `(2 + 3)` must have been replaced by `5` in the emitted Austral.
-        assert!(!reduced.contains("(2 + 3)"), "unreduced arithmetic emitted:\n{reduced}");
-        assert!(reduced.contains("return 5;"), "expected folded literal:\n{reduced}");
+        assert!(
+            !reduced.contains("(2 + 3)"),
+            "unreduced arithmetic emitted:\n{reduced}"
+        );
+        assert!(
+            reduced.contains("return 5;"),
+            "expected folded literal:\n{reduced}"
+        );
     }
 
     #[test]

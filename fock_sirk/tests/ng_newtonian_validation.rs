@@ -23,11 +23,12 @@ const YEAR_S: f64 = 365.25 * 86_400.0;
 
 #[test]
 fn ng_kepler_third_law_earth_year() {
-    let t = (4.0 * std::f64::consts::PI * std::f64::consts::PI * AU.powi(3)
-        / (G * M_SUN))
-    .sqrt();
+    let t = (4.0 * std::f64::consts::PI * std::f64::consts::PI * AU.powi(3) / (G * M_SUN)).sqrt();
     let rel = (t - YEAR_S).abs() / YEAR_S;
-    assert!(rel < 1e-3, "T = {t:.4e} s, sidereal year {YEAR_S:.4e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-3,
+        "T = {t:.4e} s, sidereal year {YEAR_S:.4e} (rel {rel:.2e})"
+    );
 }
 
 #[test]
@@ -47,7 +48,10 @@ fn ng_kepler_t2_proportional_a3() {
         let ratio = t * t / (a * a * a);
         let expected = k(G * (M_SUN + m_p));
         let rel = (ratio - expected).abs() / expected;
-        assert!(rel < 5e-3, "T²/a³ = {ratio:.6e}, expected {expected:.6e} (rel {rel:.2e})");
+        assert!(
+            rel < 5e-3,
+            "T²/a³ = {ratio:.6e}, expected {expected:.6e} (rel {rel:.2e})"
+        );
     }
 }
 
@@ -78,8 +82,13 @@ fn ng_shell_theorem_inside_and_outside() {
             let x = r_shell * theta.cos();
             let y = r_shell * theta.sin();
             let d = ((r - x).powi(2) + y * y).sqrt();
-            let dm = sigma * 2.0 * std::f64::consts::PI * r_shell * r_shell
-                * theta.sin() * (std::f64::consts::PI / n as f64);
+            let dm = sigma
+                * 2.0
+                * std::f64::consts::PI
+                * r_shell
+                * r_shell
+                * theta.sin()
+                * (std::f64::consts::PI / n as f64);
             a += G * dm * (r - x) / d.powi(3);
         }
         a
@@ -101,7 +110,10 @@ fn ng_escape_velocity_earth() {
     let v_esc = (2.0 * G * M_EARTH / R_EARTH).sqrt();
     let expected = 11_186.0; // m/s
     let rel = (v_esc - expected).abs() / expected;
-    assert!(rel < 5e-3, "v_esc = {v_esc:.1} m/s, expected {expected} (rel {rel:.2e})");
+    assert!(
+        rel < 5e-3,
+        "v_esc = {v_esc:.1} m/s, expected {expected} (rel {rel:.2e})"
+    );
     // √2 vs circular speed: v_circ = √(GM/R), v_esc = √2·v_circ.
     let v_circ = (G * M_EARTH / R_EARTH).sqrt();
     assert!((v_esc / v_circ - 2f64.sqrt()).abs() < 1e-12);
@@ -113,7 +125,10 @@ fn ng_uniform_sphere_binding_energy() {
     let u = 3.0 * G * M_EARTH * M_EARTH / (5.0 * R_EARTH);
     let expected = 2.24e32;
     let rel = (u - expected).abs() / expected;
-    assert!(rel < 1e-2, "U = {u:.3e} J, expected {expected:.2e} (rel {rel:.2e})");
+    assert!(
+        rel < 1e-2,
+        "U = {u:.3e} J, expected {expected:.2e} (rel {rel:.2e})"
+    );
 }
 
 #[test]
@@ -124,7 +139,10 @@ fn ng_gravitational_parameter_plumbing() {
     let gm_sun = G * M_SUN;
     let expected_sun: f64 = 1.327_124_400_18e20; // m³/s² (IAU 2015)
     let rel_sun = (gm_sun - expected_sun).abs() / expected_sun;
-    assert!(rel_sun < 1e-3, "GM_☉ = {gm_sun:.4e}, expected {expected_sun:.4e}");
+    assert!(
+        rel_sun < 1e-3,
+        "GM_☉ = {gm_sun:.4e}, expected {expected_sun:.4e}"
+    );
     let gm_earth = G * M_EARTH;
     let expected_earth: f64 = 3.986_004_418e14; // m³/s²
     let rel_earth = (gm_earth - expected_earth).abs() / expected_earth;
@@ -168,7 +186,10 @@ fn ng_hill_sphere_earth_moon() {
     let r_h = a * (m_moon / (3.0 * m_earth)).cbrt();
     let expected: f64 = 61_500.0e3; // m
     let rel = (r_h - expected).abs() / expected;
-    assert!(rel < 3e-2, "r_H = {r_h:.4e} m, expected {expected:.4e} (rel {rel:.2e})");
+    assert!(
+        rel < 3e-2,
+        "r_H = {r_h:.4e} m, expected {expected:.4e} (rel {rel:.2e})"
+    );
     // Scaling: r_H ∝ a·∛(m/M) — doubling the mass ratio multiplies by ∛2.
     let r_h2 = a * (2.0 * m_moon / (3.0 * m_earth)).cbrt();
     assert!((r_h2 / r_h - 2f64.cbrt()).abs() < 1e-12);
@@ -186,7 +207,10 @@ fn ng_roche_limit_earth_moon() {
     let d = r_earth * (2.0 * rho_earth / rho_moon).cbrt();
     let expected: f64 = 9_496.0e3; // m
     let rel = (d - expected).abs() / expected;
-    assert!(rel < 3e-2, "d_Roche = {d:.4e} m, expected {expected:.4e} (rel {rel:.2e})");
+    assert!(
+        rel < 3e-2,
+        "d_Roche = {d:.4e} m, expected {expected:.4e} (rel {rel:.2e})"
+    );
     // Scaling: d ∝ ∛(ρ_p/ρ_s) — a denser primary pushes the limit out.
     let d2 = r_earth * (2.0 * 2.0 * rho_earth / rho_moon).cbrt();
     assert!((d2 / d - 2f64.cbrt()).abs() < 1e-12);
@@ -249,5 +273,8 @@ fn ng_leapfrog_two_body_energy_conservation() {
         e_max = e_max.max(e);
     }
     let drift = ((e_max - e_min).abs() / e0.abs()).max((e_max - e0).abs() / e0.abs());
-    assert!(drift < 1e-4, "leapfrog energy drift over 100 orbits = {drift:.2e}");
+    assert!(
+        drift < 1e-4,
+        "leapfrog energy drift over 100 orbits = {drift:.2e}"
+    );
 }

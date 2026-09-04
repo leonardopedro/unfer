@@ -2,7 +2,13 @@
 //! established experimental results and analytic estimates of classical fluid
 //! dynamics (the S32–S34 pattern — QED/QCD/QG — extended to NS).
 //!
-//! These are the published numbers a Navier–Stokes solver must reproduce:
+//! These are the published numbers a Navier–Stokes solver must reproduce.
+//!
+//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
+//! ground state of the nested theory is always the outer-Fock vacuum — the
+//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
+//! creation (left) / annihilation (right) operators, with at most a
+//! constant added to make its spectrum positive (QYM/QG/NS).
 //!
 //!  1. `ns_kolmogorov_scales_and_spectrum` — the Kolmogorov `−5/3` energy
 //!     spectrum with the experimental constant `C_K ≈ 1.5` (range 1.4–1.7,
@@ -42,11 +48,6 @@
 //!     Fourier mode `du/dt = −νk²u`, and a SIRK-restarted evolution measures
 //!     the decay rate `νk²` numerically.
 
-//! **Ground-state doctrine** (`outer_vacuum_ground_validation.rs`): the
-//! ground state of the nested theory is always the outer-Fock vacuum — the
-//! final Hamiltonian is the one-particle Hamiltonian enclosed in outer
-//! creation (left) / annihilation (right) operators, with at most a
-//! constant added to make its spectrum positive (QYM/QG/NS).
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{
@@ -67,8 +68,14 @@ fn ns_state(mode: u32, count: u32) -> QuantumState {
 fn field_hamiltonian(mode: u32) -> Hamiltonian {
     Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(mode)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(mode)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(mode)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(mode)],
+            ),
         ],
     }
 }
@@ -203,10 +210,7 @@ fn ns_stokes_drag_osseen() {
     let f_stokes: f64 = 6.0 * std::f64::consts::PI * mu * r * u;
     let re: f64 = rho_air * u * (2.0 * r) / mu;
 
-    assert!(
-        re < 0.1,
-        "Stokes' law requires Re ≪ 1: here Re = {re:.2e}"
-    );
+    assert!(re < 0.1, "Stokes' law requires Re ≪ 1: here Re = {re:.2e}");
     assert!(
         (f_stokes - 3.41e-14).abs() / 3.41e-14 < 0.01,
         "F = 6πμrU = {f_stokes:.3e} N must be the Stokes value ≈ 3.4e-14 N"
@@ -273,8 +277,7 @@ fn ns_blasius_boundary_layer() {
         "Blasius shape factor H = δ*/θ = {h_shape} must be 2.5916"
     );
     assert!(
-        (delta_star / delta - 0.34416).abs() < 1e-3
-            && (theta / delta - 0.13282).abs() < 1e-3,
+        (delta_star / delta - 0.34416).abs() < 1e-3 && (theta / delta - 0.13282).abs() < 1e-3,
         "δ*/δ = {:.5} and θ/δ = {:.5} must be the Blasius ratios",
         delta_star / delta,
         theta / delta
@@ -421,7 +424,8 @@ fn ns_sirk_laminar_decay_rate() {
 
     // Probes: the coherent-like superposition |vac⟩+|1₀⟩ (⟨u⟩ ≠ 0) and pure
     // occupation eigenstates.
-    let mut psi0 = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+    let mut psi0 =
+        QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
     psi0.scale_and_add(&ns_state(0, 1), Complex64::new(1.0, 0.0));
 
     // (a) The Ehrenfest identity is exact on the probes.
@@ -485,7 +489,6 @@ fn ns_sirk_laminar_decay_rate() {
          (rel err {rel_err:.1e})"
     );
 
-
     // (d) THEORY-NATIVE single-shot evolution: Hashimoto/SIRK needs only ONE
     //     finite time and a sufficiently deep Krylov dimension -- no time
     //     slicing. The unit-norm frame (SirkOpts::unit_norm_steps) makes
@@ -506,4 +509,5 @@ fn ns_sirk_laminar_decay_rate() {
     assert!(
         (measured_single - analytic).abs() / analytic.abs() < 2e-2,
         "single-shot deep window must measure the Newtonian rate -νk²:          measured {measured_single:.4e} vs {analytic:.4e}"
-    );}
+    );
+}

@@ -41,13 +41,13 @@ fn rel(v: f64, target: f64) -> f64 {
 fn sr_mass_energy_anchors() {
     let (me, mmu, _, _, mp, mn) = sr_pdg_masses_mev();
     assert!(rel(me, 0.510_998_95) < 1e-9);
-    assert!(rel(mmu, 105.658_3745) < 1e-9);
-    assert!(rel(mp, 938.272_08816) < 1e-9);
+    assert!(rel(mmu, 105.658_374_5) < 1e-9);
+    assert!(rel(mp, 938.272_088_16) < 1e-9);
     // neutron heavier than proton by 1.293332 MeV (the β-decay driver):
     assert!(rel(mn - mp, 1.293_332) < 1e-6);
     // 1 u c² = 931.49410242 MeV (CODATA):
     let u_mev = phys::U * (299_792_458.0f64).powi(2) / phys::E / 1.0e6;
-    assert!(rel(u_mev, 931.494_10242) < 1e-8, "u c² = {u_mev} MeV");
+    assert!(rel(u_mev, 931.494_102_42) < 1e-8, "u c² = {u_mev} MeV");
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn sr_breit_wheeler_and_gzk_thresholds() {
 #[test]
 fn sr_cosmic_ray_muon_survival_frisch_smith() {
     let (_, mmu, _, _, _, _) = sr_pdg_masses_mev();
-    let tau0 = 2.196_9811e-6; // muon proper lifetime, s (PDG)
+    let tau0 = 2.196_981_1e-6; // muon proper lifetime, s (PDG)
     let altitude: f64 = 15_000.0; // m of atmosphere (Frisch–Smith setup)
     let c: f64 = 299_792_458.0;
 
@@ -99,7 +99,10 @@ fn sr_cosmic_ray_muon_survival_frisch_smith() {
     assert!(class_frac < 1e-9, "classical survival {class_frac:.3e}");
     // Relativistic: dilated length γcτ₀ ≈ 25 km ⇒ survival ~0.55 — measurable.
     let rel_frac = (-altitude / (gamma * c * tau0)).exp();
-    assert!(rel_frac > 0.2 && rel_frac < 0.9, "relativistic survival {rel_frac:.3}");
+    assert!(
+        rel_frac > 0.2 && rel_frac < 0.9,
+        "relativistic survival {rel_frac:.3}"
+    );
     // The contrast IS the published demonstration of time dilation.
     assert!(rel_frac / class_frac > 1e9);
 }
@@ -112,7 +115,10 @@ fn sr_lhc_dipole_field_and_revolution_frequency() {
     // Revolution frequency c/C with C = 26 658.883 m: 11 245.5 Hz.
     let circumference = 26_658.883;
     let f_rev = 299_792_458.0 / circumference;
-    assert!(rel(f_rev, 11_245.5) < 1e-4, "f_rev = {f_rev} Hz, want 11245.5");
+    assert!(
+        rel(f_rev, 11_245.5) < 1e-4,
+        "f_rev = {f_rev} Hz, want 11245.5"
+    );
 }
 
 #[test]
@@ -141,7 +147,10 @@ fn nuc_semf_binding_per_nucleon_peak_near_iron() {
     // Heavy-nucleus falloff: B/A(A=238) below B/A(peak) by ≥ 0.5 MeV
     // (the fission energy release scale).
     let ba_u = nuc_semf_binding_energy_mev(238, 92) / 238.0;
-    assert!(best_ba - ba_u > 0.4, "B/A falloff to uranium: {ba_u} vs {best_ba}");
+    assert!(
+        best_ba - ba_u > 0.4,
+        "B/A falloff to uranium: {ba_u} vs {best_ba}"
+    );
 }
 
 #[test]

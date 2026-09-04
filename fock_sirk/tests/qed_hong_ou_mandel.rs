@@ -23,7 +23,7 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
     Hamiltonian, InnerBosonicState, Operator, QuantumState, oscillator_beamsplitter,
     qcd_ym_hamiltonian,
@@ -110,9 +110,7 @@ fn qed_hong_ou_mandel_bunching() {
     let norm = QuantumState::inner_product(&psi_t, &psi_t).re;
     assert!((norm - 1.0).abs() < 1e-9, "norm = {norm}");
 
-    eprintln!(
-        "qed_hong_ou_mandel: |1,1⟩ → P₁₁ = {p11:.3e} (dip), P₂₀ = {p20:.6}, P₀₂ = {p02:.6}"
-    );
+    eprintln!("qed_hong_ou_mandel: |1,1⟩ → P₁₁ = {p11:.3e} (dip), P₂₀ = {p20:.6}, P₀₂ = {p02:.6}");
 }
 
 #[test]
@@ -152,9 +150,7 @@ fn qed_beamsplitter_balanced_splitting() {
         (n1_expect - 0.5).abs() < 1e-5,
         "⟨N₁⟩ = {n1_expect}, must be ½ after the 50:50 beamsplitter"
     );
-    eprintln!(
-        "qed_beamsplitter_balanced: P₁₀ = {p10:.6}, P₀₁ = {p01:.6}, ⟨N₁⟩ = {n1_expect:.6}"
-    );
+    eprintln!("qed_beamsplitter_balanced: P₁₀ = {p10:.6}, P₀₁ = {p01:.6}, ⟨N₁⟩ = {n1_expect:.6}");
 }
 
 #[test]
@@ -184,7 +180,9 @@ fn qed_hom_coincidence_curve_cos2_theta() {
             (p11 - expected).abs() < 1e-5,
             "θ = {theta:.4}: P₁₁ = {p11:.8}, cos²(θ) = {expected:.8}"
         );
-        eprintln!("qed_hom_coincidence_curve: θ = {theta:.4}, P₁₁ = {p11:.8} (cos²θ = {expected:.8})");
+        eprintln!(
+            "qed_hom_coincidence_curve: θ = {theta:.4}, P₁₁ = {p11:.8} (cos²θ = {expected:.8})"
+        );
     }
 }
 
@@ -195,15 +193,18 @@ fn qed_beamsplitter_unitarity_energy() {
     let psi11 = fock(1, 1);
     // ⟨H⟩₀ for |1,1⟩: H|1,1⟩ = J√2(|2,0⟩ + |0,2⟩) (computed in the test below
     // via the exact two-level sector instead of hard-coding).
-    let res =
-        solve_forward_sirk_with_opts(&h, &psi11, &shifts(8), &best_device(), None, &opts())
-            .unwrap();
+    let res = solve_forward_sirk_with_opts(&h, &psi11, &shifts(8), &best_device(), None, &opts())
+        .unwrap();
     let ritz = res.ritz_values();
     // The Krylov space from |1,1⟩ is the *symmetric* N = 2 subspace
     // span{|1,1⟩, (|2,0⟩+|0,2⟩)/√2}, where H = [[0, 2J],[2J, 0]]: the exact
     // spectrum is {−2J, +2J}. (The antisymmetric state (|2,0⟩−|0,2⟩)/√2 is
     // the E = 0 partner; it is orthogonal to |1,1⟩ and never entered.)
-    assert_eq!(ritz.len(), 2, "symmetric N = 2 sector has two levels: {ritz:?}");
+    assert_eq!(
+        ritz.len(),
+        2,
+        "symmetric N = 2 sector has two levels: {ritz:?}"
+    );
     assert!(
         (ritz[0] + 2.0 * j).abs() < 1e-8 && (ritz[1] - 2.0 * j).abs() < 1e-8,
         "symmetric N = 2 sector spectrum must be {{−2J, +2J}}: {ritz:?}"
@@ -308,7 +309,5 @@ fn qed_hom_bunching_from_abelian_gauge_fixed_hopping() {
         (p20 - 0.5).abs() < 1e-8 && (p02 - 0.5).abs() < 1e-8,
         "bunched outputs must share the weight: P₂₀ = {p20}, P₀₂ = {p02}"
     );
-    eprintln!(
-        "qed_hom_gauge_fixed_hopping: dip P₁₁ = 0, P₂₀ = {p20:.8}, P₀₂ = {p02:.8}"
-    );
+    eprintln!("qed_hom_gauge_fixed_hopping: dip P₁₁ = 0, P₂₀ = {p20:.8}, P₀₂ = {p02:.8}");
 }

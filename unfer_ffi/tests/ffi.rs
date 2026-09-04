@@ -1176,14 +1176,8 @@ fn whyml_emit_produces_the_authorization_gate() {
 
     let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
     let whyml = result["whyml"].as_str().unwrap();
-    assert!(
-        whyml.contains("module AuthorizeGate"),
-        "{whyml}"
-    );
-    assert!(
-        whyml.contains("let rec authorize"),
-        "{whyml}"
-    );
+    assert!(whyml.contains("module AuthorizeGate"), "{whyml}");
+    assert!(whyml.contains("let rec authorize"), "{whyml}");
     assert!(
         whyml.contains("result = True <-> is_subset required grants"),
         "the postcondition must be emitted: {whyml}"
@@ -1269,7 +1263,13 @@ fn austral_unf_closed_and_open() {
 
     // Open: an unknown `x` stays symbolic; no value.
     let (sp2, sl2) = json_ptr(b"(x + 3)");
-    assert_eq!(uk_austral_unf(model, sp2, sl2), 0, "{}: {}", read_error(), read_result(model));
+    assert_eq!(
+        uk_austral_unf(model, sp2, sl2),
+        0,
+        "{}: {}",
+        read_error(),
+        read_result(model)
+    );
     let result2: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
     assert_eq!(result2["value"], serde_json::Value::Null, "{result2}");
     assert_eq!(result2["sym_expr"], "(Add64 x 3)", "{result2}");
@@ -1290,7 +1290,13 @@ fn austral_unf_module_main_reduces() {
     let src = b"module body Probe is function add(x: Int64): Int64 is return (x + 1); end; \
                 function main(): Int64 is return add(41); end; end module body.";
     let (sp, sl) = json_ptr(src);
-    assert_eq!(uk_austral_unf(model, sp, sl), 0, "{}: {}", read_error(), read_result(model));
+    assert_eq!(
+        uk_austral_unf(model, sp, sl),
+        0,
+        "{}: {}",
+        read_error(),
+        read_result(model)
+    );
     let result: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
     assert_eq!(result["value"], "42", "{result}");
     assert_eq!(result["verified"], true, "{result}");

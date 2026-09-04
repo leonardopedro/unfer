@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn replay_is_deterministic_across_instances() {
         let seller = "did:unfer:seller";
-        let ops = vec![
+        let ops = [
             AuctionOpKind::Open {
                 lot: lot(seller, 3, 9),
             },

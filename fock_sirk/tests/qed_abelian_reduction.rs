@@ -58,7 +58,10 @@ use num_complex::Complex64;
 fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(1.0, 0.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(1.0, 0.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(1.0, 0.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -66,7 +69,10 @@ fn field_ops(mode: u32) -> Vec<(Complex64, Operator)> {
 fn momentum_ops(mode: u32) -> Vec<(Complex64, Operator)> {
     vec![
         (Complex64::new(0.0, 1.0), Operator::InnerBosonCreate(mode)),
-        (Complex64::new(0.0, -1.0), Operator::InnerBosonAnnihilate(mode)),
+        (
+            Complex64::new(0.0, -1.0),
+            Operator::InnerBosonAnnihilate(mode),
+        ),
     ]
 }
 
@@ -87,11 +93,7 @@ fn epsilon3(i: usize, j: usize, k: usize) -> f64 {
             }
         }
     }
-    if inversions % 2 == 0 {
-        1.0
-    } else {
-        -1.0
-    }
+    if inversions % 2 == 0 { 1.0 } else { -1.0 }
 }
 
 /// Add `coeff · A · A` terms for an operator list `A = Σ (c, op)` pairs.
@@ -247,11 +249,24 @@ fn qed_free_photon_is_normal_ordered_abelian_qym_free_sector() {
         // The squeezing part S_ω = ½(ω²−1)(a†²+a²) of (*).
         let mut sq = Vec::new();
         let c_sq = Complex64::new(0.5 * (omega * omega - 1.0), 0.0);
-        sq.push((c_sq, vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)]));
-        sq.push((c_sq, vec![Operator::InnerBosonAnnihilate(0), Operator::InnerBosonAnnihilate(0)]));
+        sq.push((
+            c_sq,
+            vec![Operator::InnerBosonCreate(0), Operator::InnerBosonCreate(0)],
+        ));
+        sq.push((
+            c_sq,
+            vec![
+                Operator::InnerBosonAnnihilate(0),
+                Operator::InnerBosonAnnihilate(0),
+            ],
+        ));
         let h_sq = Hamiltonian { terms: sq };
 
-        let basis = vec![fock_state(&[]), fock_state(&[(0, 1)]), fock_state(&[(0, 2)])];
+        let basis = vec![
+            fock_state(&[]),
+            fock_state(&[(0, 1)]),
+            fock_state(&[(0, 2)]),
+        ];
         let m_osc = matrix_of(&h_osc, &basis);
         let m_n = matrix_of(&qed_free_photon(&[omega]), &basis);
         let m_sq = matrix_of(&h_sq, &basis);
@@ -302,8 +317,8 @@ fn qed_free_photon_is_normal_ordered_abelian_qym_free_sector() {
                 "ω=1: ½π²+½A² must be 2·qed_free_photon(1)+I, ‖Δ‖={diff1}"
             );
             let zero_point = m_id.clone();
-            let diff2 = ((m_osc.clone() - zero_point) - m_n.clone() * Complex64::new(2.0, 0.0))
-                .norm();
+            let diff2 =
+                ((m_osc.clone() - zero_point) - m_n.clone() * Complex64::new(2.0, 0.0)).norm();
             assert!(
                 diff2 < 1e-9,
                 "ω=1: qed_free_photon(1) must be (½π²+½A²−I)/2, ‖Δ‖={diff2}"
@@ -486,7 +501,10 @@ fn qed_static_charge_displaced_oscillator_exact_ground() {
     let h2 = qed_static_charge_interaction(&[(1.0, 0.01)], 1.0, 0.3);
     let n_linear = h2.terms.iter().filter(|(_, ops)| ops.len() == 1).count();
     let n_free = h2.terms.iter().filter(|(_, ops)| ops.len() == 2).count();
-    assert_eq!(n_linear, 2, "A·J coupling must give 2 linear terms (B† and B)");
+    assert_eq!(
+        n_linear, 2,
+        "A·J coupling must give 2 linear terms (B† and B)"
+    );
     assert_eq!(n_free, 1, "the free photon must be the single number term");
 
     for &(k, dk, r, e) in &[

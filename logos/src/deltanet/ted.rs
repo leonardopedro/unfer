@@ -60,13 +60,18 @@ impl Ord for Monomial {
             std::cmp::Ordering::Equal => {}
             ord => return ord,
         }
-        self.vars.cmp(&other.vars).then(self.coeff.cmp(&other.coeff))
+        self.vars
+            .cmp(&other.vars)
+            .then(self.coeff.cmp(&other.coeff))
     }
 }
 
 impl Monomial {
     pub fn constant(c: i64) -> Self {
-        Monomial { coeff: c, vars: Vec::new() }
+        Monomial {
+            coeff: c,
+            vars: Vec::new(),
+        }
     }
 
     /// Multiply two monomials (coefficients wrap mod 2⁶⁴; exponents add).
@@ -138,7 +143,10 @@ impl Ted {
         let neg: Vec<Monomial> = other
             .terms
             .iter()
-            .map(|m| Monomial { coeff: m.coeff.wrapping_neg(), vars: m.vars.clone() })
+            .map(|m| Monomial {
+                coeff: m.coeff.wrapping_neg(),
+                vars: m.vars.clone(),
+            })
             .collect();
         self.add(&Ted { terms: neg })
     }
@@ -152,7 +160,9 @@ impl Ted {
         let mut acc = Ted::zero();
         for a in &self.terms {
             for b in &other.terms {
-                acc = acc.add(&Ted { terms: vec![a.mul(b)] });
+                acc = acc.add(&Ted {
+                    terms: vec![a.mul(b)],
+                });
             }
         }
         acc
@@ -207,11 +217,14 @@ fn monomial_to_string(m: &Monomial) -> String {
 /// remainders) — callers then fall back to the net-level UNF hash.
 pub fn from_sym_expr(expr: &SymExpr) -> Option<Ted> {
     match expr {
-        SymExpr::Lit(crate::core_ir::Literal::Int64(n)) => {
-            Some(Ted { terms: vec![Monomial::constant(*n)] })
-        }
+        SymExpr::Lit(crate::core_ir::Literal::Int64(n)) => Some(Ted {
+            terms: vec![Monomial::constant(*n)],
+        }),
         SymExpr::Var(name) => Some(Ted {
-            terms: vec![Monomial { coeff: 1, vars: vec![(name.clone(), 1)] }],
+            terms: vec![Monomial {
+                coeff: 1,
+                vars: vec![(name.clone(), 1)],
+            }],
         }),
         SymExpr::Prim(op, a, b) => {
             let ta = from_sym_expr(a)?;
@@ -239,10 +252,6 @@ mod tests {
 
     fn add(a: SymExpr, b: SymExpr) -> SymExpr {
         SymExpr::Prim(PrimOp::Add64, Box::new(a), Box::new(b))
-    }
-
-    fn sub(a: SymExpr, b: SymExpr) -> SymExpr {
-        SymExpr::Prim(PrimOp::Sub64, Box::new(a), Box::new(b))
     }
 
     fn mul(a: SymExpr, b: SymExpr) -> SymExpr {
@@ -311,11 +320,7 @@ mod tests {
         let b = SymExpr::Lit(Literal::Bool(true));
         assert!(from_sym_expr(&b).is_none());
         // And a comparison (Eq64) is outside the polynomial fragment.
-        let cmp = SymExpr::Prim(
-            PrimOp::Eq64,
-            Box::new(lit(1)),
-            Box::new(lit(2)),
-        );
+        let cmp = SymExpr::Prim(PrimOp::Eq64, Box::new(lit(1)), Box::new(lit(2)));
         assert!(from_sym_expr(&cmp).is_none());
     }
 

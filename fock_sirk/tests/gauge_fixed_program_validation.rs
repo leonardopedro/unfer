@@ -56,11 +56,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    ns_eulerian_fiber, qcd_ym_hamiltonian, qed_free_photon,
-    qg_densitized_kinetic, qg_starobinsky_scalaron_field, qg_tegr_hamiltonian,
-    InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
+    qed_free_photon, qg_densitized_kinetic, qg_starobinsky_scalaron_field, qg_tegr_hamiltonian,
 };
 use num_complex::Complex64;
 
@@ -82,7 +81,6 @@ fn empty_vacuum() -> QuantumState {
     QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
 }
 
-
 /// Superposition over one-quanton sectors |1_i> of the SAME outer universe
 /// (distinct inner occupations are distinct sectors; an eigenstate collapse
 /// is only avoided by mixing sectors, not modes).
@@ -91,23 +89,10 @@ fn sector_superposition(n_modes: u32) -> QuantumState {
     for i in 0..n_modes {
         let mut inner = InnerBosonicState::vacuum();
         inner.modes.insert(i, 1);
-        let s =
-            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
+        let s = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
         acc.scale_and_add(&s, Complex64::new(1.0 + i as f64 * 0.31, 0.0));
     }
     acc
-}
-
-fn number_op(mode: u32) -> nested_fock_algebra::Hamiltonian {
-    nested_fock_algebra::Hamiltonian {
-        terms: vec![(
-            Complex64::new(1.0, 0.0),
-            vec![
-                Operator::InnerBosonCreate(mode),
-                Operator::InnerBosonAnnihilate(mode),
-            ],
-        )],
-    }
 }
 
 // ───────────────────────────── QG (R² action) ─────────────────────────────
@@ -141,12 +126,24 @@ fn qg_scalaron_quartic_selfinteraction_pt_vs_sirk() {
     // ladder {E₀,E₂,…} and odd ladder {E₁,E₃,…} are resolved from SEPARATE
     // starts (vacuum and one-scalaron respectively).
     let one_scalaron = empty_vacuum().apply(&Operator::InnerBosonCreate(0));
-    let even =
-        solve_forward_sirk_with_opts(&h, &empty_vacuum(), &shifts(10), &best_device(), None, &mk(true))
-            .unwrap();
-    let odd =
-        solve_forward_sirk_with_opts(&h, &one_scalaron, &shifts(10), &best_device(), None, &mk(true))
-            .unwrap();
+    let even = solve_forward_sirk_with_opts(
+        &h,
+        &empty_vacuum(),
+        &shifts(10),
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap();
+    let odd = solve_forward_sirk_with_opts(
+        &h,
+        &one_scalaron,
+        &shifts(10),
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap();
     let ritz = even.ritz_values();
 
     // Vacuum rule: normal ordering kills the quartic vacuum term IDENTICALLY
@@ -162,7 +159,12 @@ fn qg_scalaron_quartic_selfinteraction_pt_vs_sirk() {
     let pt = |n: f64| m_mass * n + 1.5 * lam * n * (n - 1.0);
     let ritz_odd = odd.ritz_values();
     // Odd sector carries the same (slightly wider) truncation band.
-    assert!((ritz_odd[0] - pt(1.0)).abs() < 1.5e-2, "E₁ {} vs {}", ritz_odd[0], pt(1.0));
+    assert!(
+        (ritz_odd[0] - pt(1.0)).abs() < 1.5e-2,
+        "E₁ {} vs {}",
+        ritz_odd[0],
+        pt(1.0)
+    );
     // E₂ shows a genuine O(λ²) shift ON TOP of the O(λ) prediction
     // (measured +0.0997 at λ=0.05 — second-order quartic physics from the
     // |n±2⟩,|n±4⟩ intermediates), so its band admits the λ² scale.
@@ -195,10 +197,16 @@ fn qg_scalaron_quartic_selfinteraction_pt_vs_sirk() {
         }
         nested_fock_algebra::Hamiltonian { terms }
     };
-    let rb =
-        solve_forward_sirk_with_opts(&hb, &empty_vacuum(), &shifts(10), &best_device(), None, &mk(true))
-            .unwrap()
-            .ritz_values();
+    let rb = solve_forward_sirk_with_opts(
+        &hb,
+        &empty_vacuum(),
+        &shifts(10),
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap()
+    .ritz_values();
     // Truncation band on the absolute floor widens with λ; the physical
     // statement lives in the GAP departure below.
     assert!(rb.iter().all(|v| v.is_finite()) && rb.len() >= 3);
@@ -220,15 +228,13 @@ fn qg_scalaron_dispersion_band_light_limit() {
         for i in 0..ks.len() as u32 {
             let mut inner = InnerBosonicState::vacuum();
             inner.modes.insert(i, 1);
-            let s = QuantumState::vacuum()
-                .apply(&Operator::OuterBosonCreate(inner));
+            let s = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
             acc.scale_and_add(&s, Complex64::new(1.0 + i as f64 * 0.37, 0.0));
         }
         acc
     };
-    let res =
-        solve_forward_sirk_with_opts(&h, &psi, &shifts(9), &best_device(), None, &mk(true))
-            .unwrap();
+    let res = solve_forward_sirk_with_opts(&h, &psi, &shifts(9), &best_device(), None, &mk(true))
+        .unwrap();
     let got = res.resolved_ritz_values(5e-4);
     assert!(got.len() >= 4, "band must fully resolve, got {got:?}");
     for &k in &ks {
@@ -249,7 +255,10 @@ fn qg_scalaron_dispersion_band_light_limit() {
         let gv = k / w;
         assert!(gv < 1.0, "group velocity must be subluminal");
         if k > 0.0 {
-            assert!(gv > prev_gv, "group velocity must rise monotonically toward 1");
+            assert!(
+                gv > prev_gv,
+                "group velocity must rise monotonically toward 1"
+            );
             prev_gv = gv;
         }
     }
@@ -261,8 +270,7 @@ fn qg_densitized_hyperbolic_evolution_conserves() {
     let mut psi = empty_vacuum();
     psi = psi.apply(&Operator::InnerBosonCreate(0)); // one 𝒮 quanton
     let e0 = QuantumState::inner_product(&psi, &h.apply(&psi));
-    let psi_t =
-        evolve_restarted(&h, &psi, 0.3, 3, 10, &best_device(), None, &mk(true)).unwrap();
+    let psi_t = evolve_restarted(&h, &psi, 0.3, 3, 10, &best_device(), None, &mk(true)).unwrap();
     let norm = QuantumState::inner_product(&psi_t, &psi_t).re;
     assert!((norm - 1.0).abs() < 1e-9, "unitarity {norm}");
     let et = QuantumState::inner_product(&psi_t, &h.apply(&psi_t));
@@ -275,9 +283,15 @@ fn qg_densitized_hyperbolic_evolution_conserves() {
 #[test]
 fn qg_tegr_kinetic_bounded_below_positive_gaps() {
     let h = qg_tegr_hamiltonian(4);
-    let res =
-        solve_forward_sirk_with_opts(&h, &empty_vacuum(), &shifts(8), &best_device(), None, &mk(true))
-            .unwrap();
+    let res = solve_forward_sirk_with_opts(
+        &h,
+        &empty_vacuum(),
+        &shifts(8),
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap();
     let proj_norm = (res.h_proj.clone() - res.h_proj.adjoint()).norm();
     assert!(
         proj_norm < 1e-4 * res.h_proj.norm().max(1.0),
@@ -299,7 +313,10 @@ fn gauss_total_momentum() -> nested_fock_algebra::Hamiltonian {
     // equally, leaving B = A₀ − A₁ invariant, so [H(g=0), P] = 0 exactly.
     let mut t: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for mode in [0u32, 1] {
-        t.push((Complex64::new(0.0, 1.0), vec![Operator::InnerBosonCreate(mode)]));
+        t.push((
+            Complex64::new(0.0, 1.0),
+            vec![Operator::InnerBosonCreate(mode)],
+        ));
         t.push((
             Complex64::new(0.0, -1.0),
             vec![Operator::InnerBosonAnnihilate(mode)],
@@ -371,16 +388,25 @@ fn qym_spectrum_even_in_g() {
     let minus = collect(-0.4);
     assert_eq!(plus.len(), minus.len());
     for (p, mn) in plus.iter().zip(minus.iter()) {
-        assert!((p - mn).abs() < 1e-7, "|{p} − {mn}| — B(g)² must be even in g");
+        assert!(
+            (p - mn).abs() < 1e-7,
+            "|{p} − {mn}| — B(g)² must be even in g"
+        );
     }
 }
 
 #[test]
 fn qym_interacting_real_bounded_positive_gaps() {
     let h = qcd_ym_hamiltonian(0.5);
-    let res =
-        solve_forward_sirk_with_opts(&h, &empty_vacuum(), &shifts(9), &best_device(), None, &mk(true))
-            .unwrap();
+    let res = solve_forward_sirk_with_opts(
+        &h,
+        &empty_vacuum(),
+        &shifts(9),
+        &best_device(),
+        None,
+        &mk(true),
+    )
+    .unwrap();
     let anti = (res.h_proj.clone() - res.h_proj.adjoint()).norm();
     assert!(
         anti < 1e-4 * res.h_proj.norm().max(1.0),
@@ -393,7 +419,10 @@ fn qym_interacting_real_bounded_positive_gaps() {
     // not the bare truncation. What the truncation must guarantee is a
     // Hermitian, real, finite resolved band — asserted here.
     assert!(ritz.iter().all(|v| v.is_finite()), "finite band");
-    assert!(ritz.len() >= 5, "interacting band must resolve, got {ritz:?}");
+    assert!(
+        ritz.len() >= 5,
+        "interacting band must resolve, got {ritz:?}"
+    );
 }
 
 // ────────────────────────────────── QED ───────────────────────────────────
@@ -403,9 +432,8 @@ fn qed_multimode_energy_additivity_resolved_band() {
     let omegas = [1.0_f64, 1.5, 2.2, 3.1];
     let h = qed_free_photon(&omegas);
     let psi = sector_superposition(omegas.len() as u32);
-    let res =
-        solve_forward_sirk_with_opts(&h, &psi, &shifts(9), &best_device(), None, &mk(true))
-            .unwrap();
+    let res = solve_forward_sirk_with_opts(&h, &psi, &shifts(9), &best_device(), None, &mk(true))
+        .unwrap();
     let band = res.resolved_ritz_values(1e-5);
     for (i, &w) in omegas.iter().enumerate() {
         assert!(
@@ -419,10 +447,9 @@ fn qed_multimode_energy_additivity_resolved_band() {
     let psi2 = empty_vacuum()
         .apply(&Operator::InnerBosonCreate(0))
         .apply(&Operator::InnerBosonCreate(0));
-    let r2 =
-        solve_forward_sirk_with_opts(&h, &psi2, &shifts(6), &best_device(), None, &mk(true))
-            .unwrap()
-            .ritz_values();
+    let r2 = solve_forward_sirk_with_opts(&h, &psi2, &shifts(6), &best_device(), None, &mk(true))
+        .unwrap()
+        .ritz_values();
     assert!((r2.last().unwrap() - 2.0 * omegas[0]).abs() < 1e-9);
 
     // CROSS modes: |1₁,1₂⟩ carries ω₁+ω₂ — the two-quanta state lives in the
@@ -430,10 +457,9 @@ fn qed_multimode_energy_additivity_resolved_band() {
     let psi12 = empty_vacuum()
         .apply(&Operator::InnerBosonCreate(0))
         .apply(&Operator::InnerBosonCreate(1));
-    let r12 =
-        solve_forward_sirk_with_opts(&h, &psi12, &shifts(7), &best_device(), None, &mk(true))
-            .unwrap()
-            .resolved_ritz_values(1e-6);
+    let r12 = solve_forward_sirk_with_opts(&h, &psi12, &shifts(7), &best_device(), None, &mk(true))
+        .unwrap()
+        .resolved_ritz_values(1e-6);
     let target = omegas[0] + omegas[1];
     assert!(
         r12.iter().any(|v| (v - target).abs() < 1e-9),
@@ -457,8 +483,14 @@ fn ns_full_efold_laminar_decay_single_shot() {
     );
     let u_op = nested_fock_algebra::Hamiltonian {
         terms: vec![
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonCreate(0)]),
-            (Complex64::new(1.0, 0.0), vec![Operator::InnerBosonAnnihilate(0)]),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonCreate(0)],
+            ),
+            (
+                Complex64::new(1.0, 0.0),
+                vec![Operator::InnerBosonAnnihilate(0)],
+            ),
         ],
     };
     let mut psi0 =
@@ -492,8 +524,7 @@ fn ns_advective_energy_norm_conservation() {
     let mut psi = empty_vacuum();
     psi = psi.apply(&Operator::InnerBosonCreate(0));
     let e0 = QuantumState::inner_product(&psi, &h.apply(&psi));
-    let psi_t =
-        evolve_restarted(&h, &psi, 0.4, 3, 10, &best_device(), None, &mk(true)).unwrap();
+    let psi_t = evolve_restarted(&h, &psi, 0.4, 3, 10, &best_device(), None, &mk(true)).unwrap();
     let norm = QuantumState::inner_product(&psi_t, &psi_t).re;
     assert!((norm - 1.0).abs() < 1e-9);
     let et = QuantumState::inner_product(&psi_t, &h.apply(&psi_t));

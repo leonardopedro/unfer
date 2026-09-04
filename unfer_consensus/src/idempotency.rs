@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use unfer_protocol::{Diagnostic, ConsensusTransaction};
+use unfer_protocol::{ConsensusTransaction, Diagnostic};
 
 /// Exactly-once application guard for replayed/duplicated consensus delivery.
 ///
@@ -152,7 +152,10 @@ mod tests {
             ))
         });
         assert!(r.is_err());
-        assert!(!store.committed("k"), "a failed apply must stay uncommitted");
+        assert!(
+            !store.committed("k"),
+            "a failed apply must stay uncommitted"
+        );
     }
 
     #[test]
@@ -169,18 +172,20 @@ mod tests {
     #[test]
     fn identical_transfer_bytes_map_to_one_key() {
         use unfer_protocol::{CertificateOp, CertificateOpKind};
-        let mk = || ConsensusTransaction::CertificateOp(CertificateOp {
-            did: "did:unfer:bob".to_string(),
-            kind: CertificateOpKind::Burn {
-                inputs: vec![unfer_protocol::CoinRef {
-                    coin_id: unfer_protocol::CertId([7u8; 32]),
-                    amount: 100,
-                    owner: "did:unfer:bob".to_string(),
-                }],
-            },
-            seq: 1,
-            signature: [0u8; 64],
-        });
+        let mk = || {
+            ConsensusTransaction::CertificateOp(CertificateOp {
+                did: "did:unfer:bob".to_string(),
+                kind: CertificateOpKind::Burn {
+                    inputs: vec![unfer_protocol::CoinRef {
+                        coin_id: unfer_protocol::CertId([7u8; 32]),
+                        amount: 100,
+                        owner: "did:unfer:bob".to_string(),
+                    }],
+                },
+                seq: 1,
+                signature: [0u8; 64],
+            })
+        };
         let a = transaction_key(&mk()).unwrap();
         let b = transaction_key(&mk()).unwrap();
         assert_eq!(a, b, "same logical op must share one idempotency key");

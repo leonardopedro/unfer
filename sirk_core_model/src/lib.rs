@@ -173,10 +173,7 @@ pub fn gram_assembly(ws: &[Vec<C64>], m: usize, dim: usize) -> Vec<C64> {
         let wj: &Vec<C64> = &ws[j];
         let wk: &Vec<C64> = &ws[k];
         let e = gram_entry(wj, wk, dim);
-        g.push(C64 {
-            re: e.re,
-            im: e.im,
-        });
+        g.push(C64 { re: e.re, im: e.im });
         t += 1;
     }
     g
@@ -214,19 +211,17 @@ pub fn projection_identity(g_j_kp1: &C64, g_j_k: &C64, scale_kp1: f64, z_k: &C64
 ///
 /// Returns `T` as a dense `n × rank` matrix (row-major), the *whitened*
 /// change of basis; the identity `T* Ĝ T = I` is a theorem of the model.
-pub fn whitening_transform(
-    eigvals: &[f64],
-    eigvecs: &[C64],
-    n: usize,
-    rank: usize,
-) -> Vec<C64> {
+pub fn whitening_transform(eigvals: &[f64], eigvecs: &[C64], n: usize, rank: usize) -> Vec<C64> {
     let mut t: Vec<C64> = Vec::with_capacity(n * rank);
     let mut r = 0;
     while r < n {
         let mut l = 0;
         while l < rank {
             // T[r][l] = eigvecs[r][l] / sqrt(eigvals[l])
-            let ev = C64 { re: eigvecs[r * n + l].re, im: eigvecs[r * n + l].im };
+            let ev = C64 {
+                re: eigvecs[r * n + l].re,
+                im: eigvecs[r * n + l].im,
+            };
             let inv_sqrt = 1.0 / eigvals[l].sqrt();
             t.push(C64 {
                 re: ev.re * inv_sqrt,
@@ -314,8 +309,14 @@ mod tests {
         let ws = forward_sequence(&h, &v0, &z, 1, 2);
         let g = gram_assembly(&ws, 1, 2);
         // G[0][1] vs conj(G[1][0])
-        let g01 = C64 { re: g[0 * 2 + 1].re, im: g[0 * 2 + 1].im };
-        let g10 = C64 { re: g[1 * 2 + 0].re, im: g[1 * 2 + 0].im };
+        let g01 = C64 {
+            re: g[1].re,
+            im: g[1].im,
+        };
+        let g10 = C64 {
+            re: g[2].re,
+            im: g[2].im,
+        };
         assert!((g01.re - g10.re).abs() < 1e-12);
         assert!((g01.im + g10.im).abs() < 1e-12);
     }

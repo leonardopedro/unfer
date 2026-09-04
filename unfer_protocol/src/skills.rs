@@ -95,11 +95,7 @@ impl SkillRegistry {
         let own = format!("personal:{principal}");
         self.skills
             .iter()
-            .filter(|s| {
-                s.scope == "org"
-                    || s.scope == own
-                    || s.grants.is_empty()
-            })
+            .filter(|s| s.scope == "org" || s.scope == own || s.grants.is_empty())
             .collect()
     }
 
@@ -144,12 +140,20 @@ mod tests {
         reg.register(free);
 
         // Alice sees org + her own + grant-free.
-        let alice: Vec<&str> = reg.list_visible("alice").iter().map(|s| s.id.as_str()).collect();
+        let alice: Vec<&str> = reg
+            .list_visible("alice")
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect();
         assert!(alice.contains(&"acme/carbon-audit"));
         assert!(alice.contains(&"me/scratch"));
         assert!(alice.contains(&"public/hello"));
         // Bob does not see Alice's personal skill.
-        let bob: Vec<&str> = reg.list_visible("bob").iter().map(|s| s.id.as_str()).collect();
+        let bob: Vec<&str> = reg
+            .list_visible("bob")
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect();
         assert!(!bob.contains(&"me/scratch"));
     }
 
@@ -165,7 +169,7 @@ mod tests {
     #[test]
     fn promoted_skills_are_immutable_outside_admin_seam() {
         let mut reg = SkillRegistry::new();
-        let mut s = Skill::new("acme/x");
+        let s = Skill::new("acme/x");
         reg.register(s.clone());
         assert!(reg.promote("acme/x"));
         // A non-promoted re-register of a promoted skill is refused.

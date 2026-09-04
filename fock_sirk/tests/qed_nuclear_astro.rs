@@ -11,22 +11,31 @@ const M_E: f64 = 0.51099895; // MeV
 const G_F: f64 = 1.1663787e-5; // GeV⁻²
 const M_MU: f64 = 105.6583755; // MeV
 
-fn shifts(m: usize) -> Vec<Complex64> { shifts_for_range((0, m)) }
+fn shifts(m: usize) -> Vec<Complex64> {
+    shifts_for_range((0, m))
+}
 
 fn opts() -> SirkOpts {
-    SirkOpts { prune_eps: 1e-12, max_components: Some(100_000),
-        brst_tol: 1e-10, adaptive: false, unit_norm_steps: false }
+    SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(100_000),
+        brst_tol: 1e-10,
+        adaptive: false,
+        unit_norm_steps: false,
+    }
 }
 
 fn vac() -> QuantumState {
-    QuantumState::vacuum()
-        .apply(&nested_fock_algebra::Operator::OuterBosonCreate(
-            nested_fock_algebra::InnerBosonicState::vacuum()))
+    QuantumState::vacuum().apply(&nested_fock_algebra::Operator::OuterBosonCreate(
+        nested_fock_algebra::InnerBosonicState::vacuum(),
+    ))
 }
 
 fn sirk_ground(h: &nested_fock_algebra::Hamiltonian, v0: &QuantumState, m: usize) -> f64 {
     solve_forward_sirk_with_opts(h, v0, &shifts(m), &best_device(), None, &opts())
-        .expect("SIRK solve").ground_state_energy().expect("ground")
+        .expect("SIRK solve")
+        .ground_state_energy()
+        .expect("ground")
 }
 
 // ── 1. Fermi muon decay ──────────────────────────────────────────────
@@ -63,8 +72,10 @@ fn qed_gzk_cutoff_threshold() {
     // Standard GZK threshold: E_p ≈ 6.8 × 10¹⁷ eV ≈ 680 PeV.
     // (The commonly cited 5×10¹⁹ eV includes pion-channel and
     //  photopion-generation effects beyond the single Δ⁺ resonance.)
-    assert!(e_p_th > 1.0e17 && e_p_th < 1.0e19,
-        "GZK E_th={e_p_th:.4e} eV, expected ~6.8e17");
+    assert!(
+        e_p_th > 1.0e17 && e_p_th < 1.0e19,
+        "GZK E_th={e_p_th:.4e} eV, expected ~6.8e17"
+    );
     eprintln!("qed_gzk: E_th={e_p_th:.4e} eV (~680 PeV)");
 }
 
@@ -81,13 +92,16 @@ fn qed_lamb_shift_leading_order() {
     // Verify the α⁵ m_e scale is in the right ballpark:
     // α⁵ m_e c² / (6π) ≈ 0.136 GHz — the prefactor without the log.
     let prefactor_ghz = ALPHA.powi(5) * M_E * 1.0e6
-        / (6.0 * std::f64::consts::PI * 2.0 * std::f64::consts::PI * 6.582119569e-16) * 1.0e-9;
+        / (6.0 * std::f64::consts::PI * 2.0 * std::f64::consts::PI * 6.582119569e-16)
+        * 1.0e-9;
     // The log factor ln(1/α²) ≈ 10.1 lifts 0.136 to ≈ 1.057.
     let log_factor = (1.0 / (ALPHA * ALPHA)).ln();
     let estimate_ghz = prefactor_ghz * log_factor;
     let rel_err = (estimate_ghz - pdg_ghz).abs() / pdg_ghz;
-    assert!(rel_err < 0.30,
-        "Lamb estimate={estimate_ghz:.6} GHz, PDG={pdg_ghz:.6}, err={rel_err:.4e}");
+    assert!(
+        rel_err < 0.30,
+        "Lamb estimate={estimate_ghz:.6} GHz, PDG={pdg_ghz:.6}, err={rel_err:.4e}"
+    );
     eprintln!("qed_lamb: estimate={estimate_ghz:.6} GHz, PDG={pdg_ghz:.6} GHz");
     // Fock-level: JC ground at resonance is the vacuum.
     let h_jc = qed_free_photon(&[1.0]);
@@ -115,11 +129,13 @@ fn qed_positronium_hyperfine() {
     // PDG value: 203.389 GHz for the 1S triplet-singlet splitting.
     let delta_e_mev = 7.0 / 6.0 * ALPHA.powi(4) * M_E;
     let hbar_ev_s = 6.582119569e-16;
-    let nu_ghz = delta_e_mev * 1.0e6
-        / (2.0 * std::f64::consts::PI * hbar_ev_s) * 1.0e-9;
+    let nu_ghz = delta_e_mev * 1.0e6 / (2.0 * std::f64::consts::PI * hbar_ev_s) * 1.0e-9;
     let lo_pred = 408.773; // leading-order QED (7/6) α⁴ m_e c² / h
     let rel_err = (nu_ghz - lo_pred).abs() / lo_pred;
-    assert!(rel_err < 0.02, "Ps hfs={nu_ghz:.6} GHz, LO QED={lo_pred:.3}");
+    assert!(
+        rel_err < 0.02,
+        "Ps hfs={nu_ghz:.6} GHz, LO QED={lo_pred:.3}"
+    );
     eprintln!("qed_positronium: nu={nu_ghz:.6} GHz (LO QED={lo_pred:.3}, err={rel_err:.4e})");
 }
 
@@ -129,7 +145,10 @@ fn qed_positronium_hyperfine() {
 fn qed_schwinger_critical_field() {
     // The pair-production suppression factor exp(-π) ≈ 0.0432.
     let exp_factor = (-std::f64::consts::PI).exp();
-    assert!((exp_factor - 0.0432).abs() < 0.001, "exp(-pi)={exp_factor:.4}");
+    assert!(
+        (exp_factor - 0.0432).abs() < 0.001,
+        "exp(-pi)={exp_factor:.4}"
+    );
     // Fock-level: free photon vacuum is zero.
     let h = qed_free_photon(&[0.511, 0.511]);
     let g = sirk_ground(&h, &vac(), 4);

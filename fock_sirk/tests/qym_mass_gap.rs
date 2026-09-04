@@ -38,7 +38,7 @@
 //!    (one-particle) level the truncated spectrum dips below the vacuum rule
 //!    value — `⟨0|H|0⟩ = 0` but `E₀ < 0` (pair-squeezed); at strong coupling
 //!    (`g = 2`, `N ≤ 8`) the one-particle ground even flips reflection-odd.
-//!//!    **Ground-state doctrine (outer-vacuum reframing)** — see
+//!    **Ground-state doctrine (outer-vacuum reframing)** — see
 //!    `outer_vacuum_ground_validation.rs`: these inner-level negative levels
 //!    are the truncated spectrum of the ONE-PARTICLE Hamiltonian `h`, not
 //!    the ground state of the nested theory. The physical Hamiltonian is the
@@ -184,10 +184,7 @@ fn matrix_of(h: &Hamiltonian, basis: &[QuantumState]) -> DMatrix<Complex64> {
 }
 
 /// The exact low window `(E₀, E₁, E₁−E₀, vec)` of the truncated H.
-fn exact_low_window(
-    h: &Hamiltonian,
-    n_max: u32,
-) -> (f64, f64, f64, DMatrix<Complex64>) {
+fn exact_low_window(h: &Hamiltonian, n_max: u32) -> (f64, f64, f64, DMatrix<Complex64>) {
     let basis = truncated_basis(n_max);
     let n = basis.len();
     let m = matrix_of(h, &basis);
@@ -405,8 +402,12 @@ fn qym_gauge_fixed_spectral_gap_positive_stable() {
     );
     // Rayleigh–Ritz consistency with the SIRK sector solves.
     for &m in &[10usize, 12, 14] {
-        let te = solve_sector(&h, &empty_vacuum(), m).ground_state_energy().unwrap();
-        let to = solve_sector(&h, &r_odd_start(), m).ground_state_energy().unwrap();
+        let te = solve_sector(&h, &empty_vacuum(), m)
+            .ground_state_energy()
+            .unwrap();
+        let to = solve_sector(&h, &r_odd_start(), m)
+            .ground_state_energy()
+            .unwrap();
         assert!(
             te >= e0_8 - 1e-6 && to >= e1_8 - 1e-6,
             "m={m}: Ritz values must bound the exact levels from above: \
@@ -445,8 +446,12 @@ fn qym_gauge_fixed_abelian_limit_gapless() {
     );
     // Sector-ground coincidence at g = 0: θᵒ₀ = θᵉ₀ at every m.
     for &m in &[8usize, 10, 12, 14] {
-        let te = solve_sector(&g0, &empty_vacuum(), m).ground_state_energy().unwrap();
-        let to = solve_sector(&g0, &r_odd_start(), m).ground_state_energy().unwrap();
+        let te = solve_sector(&g0, &empty_vacuum(), m)
+            .ground_state_energy()
+            .unwrap();
+        let to = solve_sector(&g0, &r_odd_start(), m)
+            .ground_state_energy()
+            .unwrap();
         assert!(
             (to - te).abs() < 1e-4,
             "g=0: R-sector grounds must coincide at m={m}: θᵒ₀ = {to:.6}, θᵉ₀ = {te:.6}"
@@ -473,10 +478,7 @@ fn qym_gauge_fixed_gap_grows_with_coupling() {
         g1 > g05 + 0.02,
         "gap must grow from g=0.5 to g=1: {g05} → {g1}"
     );
-    assert!(
-        g2 > g1 + 0.5,
-        "gap must grow from g=1 to g=2: {g1} → {g2}"
-    );
+    assert!(g2 > g1 + 0.5, "gap must grow from g=1 to g=2: {g1} → {g2}");
     eprintln!(
         "qym_gauge_fixed_gap_grows_with_coupling: E₁−E₀ (N≤8) = {g05:.4} (g=0.5), \
          {g1:.4} (g=1), {g2:.4} (g=2)"
@@ -507,7 +509,10 @@ fn qym_gauge_fixed_one_particle_ground_sector_structure() {
     // by all of this: H|Ω⟩ = 0 identically and E₀ = 0 exactly.
     let vac = fock_state(&[]);
     assert!(
-        QuantumState::inner_product(&vac, &gauge_fixed(2.0).apply(&vac)).re.abs() < 1e-9,
+        QuantumState::inner_product(&vac, &gauge_fixed(2.0).apply(&vac))
+            .re
+            .abs()
+            < 1e-9,
         "⟨0|H|0⟩ = 0 (normal-ordered vacuum)"
     );
     let two_ph = fock_state(&[(0, 1), (1, 1)]);
@@ -609,8 +614,12 @@ fn qym_gauge_fixed_sirk_ritz_monotone_stable_in_m() {
     let mut vals_e = Vec::new();
     let mut vals_o = Vec::new();
     for &m in &[8usize, 10, 12, 14] {
-        let te = solve_sector(&h, &empty_vacuum(), m).ground_state_energy().unwrap();
-        let to = solve_sector(&h, &r_odd_start(), m).ground_state_energy().unwrap();
+        let te = solve_sector(&h, &empty_vacuum(), m)
+            .ground_state_energy()
+            .unwrap();
+        let to = solve_sector(&h, &r_odd_start(), m)
+            .ground_state_energy()
+            .unwrap();
         if let (Some(&pe), Some(&po)) = (vals_e.last(), vals_o.last()) {
             assert!(
                 te < pe - 1e-3 && to < po - 1e-3,
@@ -692,9 +701,8 @@ fn qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly() {
     let res_odd = solve_sector(&h, &v_odd, m);
     let manual = certified_mass_gap(&res_even, &res_odd).expect("manual certified gap");
 
-    let via_seam =
-        certified_mass_gap_parity(&h, &v_even, &v_odd, &shifts(m), &opts())
-            .expect("proof-facing certified gap");
+    let via_seam = certified_mass_gap_parity(&h, &v_even, &v_odd, &shifts(m), &opts())
+        .expect("proof-facing certified gap");
     assert!(
         (via_seam.lo - manual.lo).abs() < 1e-12 && (via_seam.hi - manual.hi).abs() < 1e-12,
         "seam must match manual assembly: seam [{}, {}] vs manual [{}, {}]",
@@ -715,7 +723,10 @@ fn qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly() {
         manual.odd.delta(),
         manual.even.delta(),
     );
-    assert!((lo - manual.lo).abs() < 1e-12, "spec lower bound matches T6");
+    assert!(
+        (lo - manual.lo).abs() < 1e-12,
+        "spec lower bound matches T6"
+    );
     let max_overlap = res_even
         .w_sequence
         .iter()
@@ -726,7 +737,10 @@ fn qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly() {
                 .map(move |wo| QuantumState::inner_product(we, wo).norm())
         })
         .fold(0.0_f64, f64::max);
-    assert!(parities_disjoint(max_overlap, 1e-8), "R-pure chains disjoint");
+    assert!(
+        parities_disjoint(max_overlap, 1e-8),
+        "R-pure chains disjoint"
+    );
     // The exact truncated gap sits inside the certified interval (the honest
     // positivity: the truncated gauge-fixed H is gapped).
     let (_, _, exact_gap, _) = exact_low_window(&h, 8);
@@ -738,7 +752,6 @@ fn qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly() {
     eprintln!(
         "qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly: seam [{:.6}, {:.6}] ∋ \
          E₁−E₀ = {exact_gap:.6}, chain overlap = {max_overlap:.2e}",
-        via_seam.lo,
-        via_seam.hi
+        via_seam.lo, via_seam.hi
     );
 }

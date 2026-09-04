@@ -148,18 +148,13 @@ mod tests {
         // H = [[2, 1], [1, 2]]: exact eigenpairs (3, u₊ = (1,1)/√2) and
         // (1, u₋ = (1,−1)/√2). A slightly-off vector must satisfy
         // |θ' − λ| ≤ ‖Hψ' − θ'ψ'‖ / ‖ψ'‖ — the bound the certificate uses.
-        let h = |v: (f64, f64)| -> (f64, f64) {
-            (2.0 * v.0 + v.1, v.0 + 2.0 * v.1)
-        };
+        let h = |v: (f64, f64)| -> (f64, f64) { (2.0 * v.0 + v.1, v.0 + 2.0 * v.1) };
         let psi = (1.0, 0.97); // near u₊, not exact
         let psi_psi = psi.0 * psi.0 + psi.1 * psi.1;
         let h_psi = h(psi);
         let psi_h_psi = psi.0 * h_psi.0 + psi.1 * h_psi.1;
         let theta = rayleigh_quotient(psi_h_psi, psi_psi);
-        let res = (
-            h_psi.0 - theta * psi.0,
-            h_psi.1 - theta * psi.1,
-        );
+        let res = (h_psi.0 - theta * psi.0, h_psi.1 - theta * psi.1);
         let res_norm = (res.0 * res.0 + res.1 * res.1).sqrt();
         let bound = parlett_bound(res_norm, psi_psi.sqrt());
         let true_err = (theta - 3.0).abs();
@@ -174,7 +169,10 @@ mod tests {
         let theta = rayleigh_quotient(psi_h_psi, 1.0);
         let res = (h_psi.0 - theta * s, h_psi.1 - theta * s);
         let bound = parlett_bound((res.0 * res.0 + res.1 * res.1).sqrt(), 1.0);
-        assert!(bound < 1e-14, "exact eigenpair must have zero residual bound");
+        assert!(
+            bound < 1e-14,
+            "exact eigenpair must have zero residual bound"
+        );
     }
 
     #[test]
@@ -185,9 +183,18 @@ mod tests {
         let rank = 4;
         let g_norm: f64 = 5.0;
         let theta: f64 = 1.98;
-        let cert = Certificate::new(theta, residual, backward_error_const(rank) * UNIT_ROUNDOFF * g_norm.max(1.0), 4.0 * UNIT_ROUNDOFF * theta.abs().max(1.0));
+        let cert = Certificate::new(
+            theta,
+            residual,
+            backward_error_const(rank) * UNIT_ROUNDOFF * g_norm.max(1.0),
+            4.0 * UNIT_ROUNDOFF * theta.abs().max(1.0),
+        );
         let spec = certified_width(residual, rank, g_norm, theta);
-        assert!((spec - cert.delta()).abs() < 1e-20, "spec {spec} vs certificate {}", cert.delta());
+        assert!(
+            (spec - cert.delta()).abs() < 1e-20,
+            "spec {spec} vs certificate {}",
+            cert.delta()
+        );
     }
 
     #[test]
@@ -202,7 +209,11 @@ mod tests {
         assert!((lo - (2.0 - 2e-6)).abs() < 1e-15, "T6 lower bound");
         assert!((glo - lo).abs() < 1e-15 && (ghi - (2.0 + 2e-6)).abs() < 1e-15);
         // The measured gap lies inside its own certified interval.
-        assert!(interval_contains(theta_o - theta_e, d_o + d_e, theta_o - theta_e));
+        assert!(interval_contains(
+            theta_o - theta_e,
+            d_o + d_e,
+            theta_o - theta_e
+        ));
         // The stopping rule fires only when lo > 0.
         assert!(gap_certified_positive(lo));
         assert!(!gap_certified_positive(-1.0));

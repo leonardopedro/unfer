@@ -84,31 +84,121 @@ mod tests {
     #[test]
     fn boson_mode_total_evaluates_cmp() {
         let s = bosonic(0, 2);
-        assert!(matches(&s, &EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Ge, value: 1 }));
-        assert!(matches(&s, &EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Eq, value: 2 }));
-        assert!(!matches(&s, &EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Lt, value: 2 }));
+        assert!(matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 0,
+                cmp: Cmp::Ge,
+                value: 1
+            }
+        ));
+        assert!(matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 0,
+                cmp: Cmp::Eq,
+                value: 2
+            }
+        ));
+        assert!(!matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 0,
+                cmp: Cmp::Lt,
+                value: 2
+            }
+        ));
         // An absent mode counts as 0.
-        assert!(matches(&s, &EventPredicate::BosonModeTotal { mode: 1, cmp: Cmp::Eq, value: 0 }));
-        assert!(matches(&s, &EventPredicate::BosonModeTotal { mode: 1, cmp: Cmp::Le, value: 1 }));
-        assert!(!matches(&s, &EventPredicate::BosonModeTotal { mode: 1, cmp: Cmp::Gt, value: 0 }));
+        assert!(matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 1,
+                cmp: Cmp::Eq,
+                value: 0
+            }
+        ));
+        assert!(matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 1,
+                cmp: Cmp::Le,
+                value: 1
+            }
+        ));
+        assert!(!matches(
+            &s,
+            &EventPredicate::BosonModeTotal {
+                mode: 1,
+                cmp: Cmp::Gt,
+                value: 0
+            }
+        ));
     }
 
     #[test]
     fn fermion_mode_present() {
-        assert!(matches(&fermionic(1), &EventPredicate::FermionModePresent { mode: 1 }));
-        assert!(!matches(&fermionic(1), &EventPredicate::FermionModePresent { mode: 2 }));
+        assert!(matches(
+            &fermionic(1),
+            &EventPredicate::FermionModePresent { mode: 1 }
+        ));
+        assert!(!matches(
+            &fermionic(1),
+            &EventPredicate::FermionModePresent { mode: 2 }
+        ));
     }
 
     #[test]
     fn universe_count_predicates() {
         let two_bosons = bosonic(0, 2);
-        assert!(matches(&two_bosons, &EventPredicate::BosonUniverseCount { cmp: Cmp::Eq, value: 1 }));
-        assert!(matches(&two_bosons, &EventPredicate::BosonUniverseCount { cmp: Cmp::Ge, value: 1 }));
-        assert!(matches(&two_bosons, &EventPredicate::BosonUniverseCount { cmp: Cmp::Le, value: 2 }));
-        assert!(!matches(&two_bosons, &EventPredicate::BosonUniverseCount { cmp: Cmp::Lt, value: 1 }));
-        assert!(matches(&fermionic(3), &EventPredicate::FermionUniverseCount { cmp: Cmp::Eq, value: 1 }));
-        assert!(matches(&fermionic(3), &EventPredicate::FermionUniverseCount { cmp: Cmp::Gt, value: 0 }));
-        assert!(!matches(&fermionic(3), &EventPredicate::FermionUniverseCount { cmp: Cmp::Lt, value: 1 }));
+        assert!(matches(
+            &two_bosons,
+            &EventPredicate::BosonUniverseCount {
+                cmp: Cmp::Eq,
+                value: 1
+            }
+        ));
+        assert!(matches(
+            &two_bosons,
+            &EventPredicate::BosonUniverseCount {
+                cmp: Cmp::Ge,
+                value: 1
+            }
+        ));
+        assert!(matches(
+            &two_bosons,
+            &EventPredicate::BosonUniverseCount {
+                cmp: Cmp::Le,
+                value: 2
+            }
+        ));
+        assert!(!matches(
+            &two_bosons,
+            &EventPredicate::BosonUniverseCount {
+                cmp: Cmp::Lt,
+                value: 1
+            }
+        ));
+        assert!(matches(
+            &fermionic(3),
+            &EventPredicate::FermionUniverseCount {
+                cmp: Cmp::Eq,
+                value: 1
+            }
+        ));
+        assert!(matches(
+            &fermionic(3),
+            &EventPredicate::FermionUniverseCount {
+                cmp: Cmp::Gt,
+                value: 0
+            }
+        ));
+        assert!(!matches(
+            &fermionic(3),
+            &EventPredicate::FermionUniverseCount {
+                cmp: Cmp::Lt,
+                value: 1
+            }
+        ));
     }
 
     #[test]
@@ -121,22 +211,71 @@ mod tests {
     #[test]
     fn boolean_combinators() {
         let s = bosonic(0, 2);
-        let one = EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Ge, value: 1 };
-        let two = EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Eq, value: 2 };
-        let three = EventPredicate::BosonModeTotal { mode: 0, cmp: Cmp::Eq, value: 3 };
-        assert!(matches(&s, &EventPredicate::And { parts: vec![one.clone(), two.clone()] }));
-        assert!(!matches(&s, &EventPredicate::And { parts: vec![one.clone(), three.clone()] }));
-        assert!(matches(&s, &EventPredicate::Or { parts: vec![three.clone(), one.clone()] }));
-        assert!(!matches(&s, &EventPredicate::Or { parts: vec![three.clone()] }));
-        assert!(matches(&s, &EventPredicate::Not { inner: Box::new(three) }));
-        assert!(!matches(&s, &EventPredicate::Not { inner: Box::new(one) }));
+        let one = EventPredicate::BosonModeTotal {
+            mode: 0,
+            cmp: Cmp::Ge,
+            value: 1,
+        };
+        let two = EventPredicate::BosonModeTotal {
+            mode: 0,
+            cmp: Cmp::Eq,
+            value: 2,
+        };
+        let three = EventPredicate::BosonModeTotal {
+            mode: 0,
+            cmp: Cmp::Eq,
+            value: 3,
+        };
+        assert!(matches(
+            &s,
+            &EventPredicate::And {
+                parts: vec![one.clone(), two.clone()]
+            }
+        ));
+        assert!(!matches(
+            &s,
+            &EventPredicate::And {
+                parts: vec![one.clone(), three.clone()]
+            }
+        ));
+        assert!(matches(
+            &s,
+            &EventPredicate::Or {
+                parts: vec![three.clone(), one.clone()]
+            }
+        ));
+        assert!(!matches(
+            &s,
+            &EventPredicate::Or {
+                parts: vec![three.clone()]
+            }
+        ));
+        assert!(matches(
+            &s,
+            &EventPredicate::Not {
+                inner: Box::new(three)
+            }
+        ));
+        assert!(!matches(
+            &s,
+            &EventPredicate::Not {
+                inner: Box::new(one)
+            }
+        ));
     }
 
     #[test]
     fn all_cmp_ops_covered() {
         let s = bosonic(0, 2);
         for cmp in [Cmp::Eq, Cmp::Ge, Cmp::Le, Cmp::Gt, Cmp::Lt] {
-            let _ = matches(&s, &EventPredicate::BosonModeTotal { mode: 0, cmp, value: 2 });
+            let _ = matches(
+                &s,
+                &EventPredicate::BosonModeTotal {
+                    mode: 0,
+                    cmp,
+                    value: 2,
+                },
+            );
         }
     }
 }

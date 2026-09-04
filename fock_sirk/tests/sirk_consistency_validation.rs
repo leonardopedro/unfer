@@ -12,10 +12,10 @@
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
-use fock_sirk::{evolve_restarted, solve_forward_sirk_with_opts, SirkOpts};
+use fock_sirk::{SirkOpts, evolve_restarted, solve_forward_sirk_with_opts};
 use nested_fock_algebra::{
-    ns_eulerian_fiber, oscillator_beamsplitter, oscillator_displaced,
-    qg_starobinsky_scalaron_field, InnerBosonicState, Operator, QuantumState,
+    InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, oscillator_beamsplitter,
+    oscillator_displaced, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
 

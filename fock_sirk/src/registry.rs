@@ -77,7 +77,7 @@ impl StateDictionary {
                                 (expected Some({i})) — two distinct basis states alias \
                                 one dense slot",
                         ),
-                    ))
+                    ));
                 }
             }
         }
