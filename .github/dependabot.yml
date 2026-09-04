@@ -1,0 +1,10 @@
+# Keep third-party GitHub Actions fresh. We pin `uses:` refs to commit SHAs
+# (with the tag kept as a trailing `# owner/repo@tag` comment); dependabot
+# proposes bumps of those tags so the SHA can be re-resolved deliberately.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
