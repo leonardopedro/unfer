@@ -27,8 +27,8 @@ jobs:
     name: maintenance invariants (H1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - name: install LLVM coverage tools (H11 per-file coverage gate)
         run: rustup component add llvm-tools-preview
       - name: run scripts/verify-invariants
@@ -42,9 +42,9 @@ jobs:
     name: workspace test (CPU)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - name: cargo build
         run: cargo build --workspace --release --verbose
       # Heavy tests run in release mode (per policy) with the numerically
@@ -68,11 +68,11 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -88,9 +88,9 @@ jobs:
     name: feature-gated tests (network/audit/zenodo/latex)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - name: unfer_edge audit console tests
         run: cargo test -p unfer_edge --features audit
       - name: unfer_ffi zenodo store tests
@@ -114,9 +114,9 @@ jobs:
     name: unfer_ffi C ABI symbols
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - run: cargo build --release -p unfer_ffi
       - name: assert generated census matches SYMBOL_REGISTRY (H2)
         run: |
@@ -157,11 +157,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
@@ -172,13 +172,13 @@ jobs:
           # public repo without the token (GitHub's GITHUB_TOKEN
           # doesn't have access to sibling private repos).
           # token: ${{ secrets.AUSTRALVM_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -197,21 +197,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -226,21 +226,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -255,21 +255,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -284,21 +284,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -318,21 +318,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/australVM
           path: australVM
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -372,11 +372,11 @@ jobs:
     runs-on: [self-hosted, gpu]
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           path: unfer
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
           workspaces: |
             unfer
