@@ -68,6 +68,12 @@ mod tests {
 
     #[test]
     fn audit_list_body_roundtrips_entries() {
+        // The action/audit stores are kernel-global (one kernel per process); gate
+        // and blueprint mutation tests serialize on the same lock, so this test
+        // must too or the len()==1 assertion below races with their clears.
+        let _lock = crate::gate::tests::store_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Clear, then append tagged entries through the kernel, then read them back
         // through the HTTP payload path.
         unfer_ffi::uk_audit_clear();
