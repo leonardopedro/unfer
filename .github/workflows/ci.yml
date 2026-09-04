@@ -81,8 +81,12 @@ jobs:
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
         run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+      # Explicit 1.97.1: rust-toolchain.toml overrides the toolchain the action
+      # installs, so without the explicit pin the rustfmt/clippy components land
+      # on the action's own (newer) stable and the pinned toolchain lacks them.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
@@ -196,6 +200,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -233,6 +240,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -266,6 +276,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -299,6 +312,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -332,6 +348,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -370,6 +389,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
@@ -425,6 +447,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
         with:
           repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # Swatinem/rust-cache@v2
         with:
