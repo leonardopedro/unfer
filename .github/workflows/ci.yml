@@ -27,7 +27,7 @@ jobs:
     name: maintenance invariants (H1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
@@ -46,7 +46,7 @@ jobs:
     name: workspace test (CPU)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
@@ -76,7 +76,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
@@ -104,7 +104,7 @@ jobs:
     name: feature-gated tests (network/audit/zenodo/latex)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
@@ -134,7 +134,7 @@ jobs:
     name: unfer_ffi C ABI symbols
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
       # unfer_consensus path-deps ../../dynamic-arctic; default checkout puts
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
@@ -181,11 +181,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
@@ -197,7 +197,7 @@ jobs:
           # doesn't have access to sibling private repos).
           # token: ${{ secrets.AUSTRALVM_TOKEN }}
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -228,16 +228,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -264,16 +264,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -300,16 +300,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -336,16 +336,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -377,16 +377,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       - name: checkout australVM (sibling)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/australVM
           path: australVM
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
@@ -438,13 +438,13 @@ jobs:
     runs-on: [self-hosted, gpu]
     steps:
       - name: checkout unfer (sibling layout)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           path: unfer
       # unfer is at $GITHUB_WORKSPACE/unfer (path layout), so the
       # ../../dynamic-arctic path dep resolves to $GITHUB_WORKSPACE/dynamic-arctic.
       - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
         with:
           repository: leonardopedro/dynamic-arctic
           # Explicit path: without it the checkout targets (and cleans) the
