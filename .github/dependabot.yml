@@ -1,6 +1,8 @@
-# Keep third-party GitHub Actions fresh. We pin `uses:` refs to commit SHAs
-# (with the tag kept as a trailing `# owner/repo@tag` comment); dependabot
-# proposes bumps of those tags so the SHA can be re-resolved deliberately.
+# Keep third-party GitHub Actions fresh. Policy (Sep 2026): `uses:` refs are
+# pinned to commit SHAs (with the tag kept as a trailing `# owner/repo@tag`
+# comment). dependabot proposes bumps of those tags — opening one grouped PR
+# for all non-major updates and keeping major bumps separate for deliberate
+# review (a major can change runner semantics, e.g. checkout's clean step).
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -8,3 +10,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    groups:
+      actions-non-major:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
