@@ -112,7 +112,16 @@ build_all() {
     # so a fresh checkout lacks it and dune refuses the interface-only
     # BuiltInModules module — regenerate it first (mirrors the Makefile's
     # implicit rule for `make` / `make bridge`).
-    ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && dune build lib/ bin/ )
+    #
+    # `dune` lives in the opam switch's bin dir, which setup-ocaml does not
+    # add to PATH on CI (only `opam` itself is). Resolve it via `opam exec`
+    # when it isn't directly callable.
+    if command -v dune >/dev/null 2>&1; then
+        DUNE=dune
+    else
+        DUNE="opam exec -- dune"
+    fi
+    ( cd "$AUSTRAL_DIR" && python3 concat_builtins.py && $DUNE build lib/ bin/ )
 }
 
 MODHOST="$CL_DIR/target/release/modhost"
