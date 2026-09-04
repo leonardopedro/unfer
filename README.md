@@ -73,7 +73,9 @@ layout is required.
 ## Quick start
 
 ### Prerequisites
-- Rust stable
+- Rust **1.97.1** (pinned via `rust-toolchain.toml`; rustup installs it
+  automatically and CI runs the same compiler — single toolchain across
+  the unfer/dynamic-arctic/australVM/velysterm repos)
 - CUDA toolkit 12.x (optional, for GPU SIRK — CPU is the default)
 - OCaml 4.13 + opam (only required to compile/run the Austral module demos)
 - `libcublas` and `nvcc` on the path (only for GPU)
