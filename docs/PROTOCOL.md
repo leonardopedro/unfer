@@ -666,8 +666,17 @@ with UK-4908, mirroring the australVM UK-4001 gate philosophy.
   "args": ["hello"],
   "grants": ["readonly"],
   "timeout_ms": 5000,
-  "cap_bytes": 65536
+  "cap_bytes": 65536,
+  "stdin": ""
 }
+
+`stdin` is additive (N7, velysterm `PLAN_mathed_full_vision.md`): the
+text written to the child process's stdin before its output is read
+(empty = no stdin, the N4 behavior). It is bounded by the same
+`cap_bytes` output cap, so an oversized pipe fails with UK-4910
+instead of filling a pipe. A `\exec(from: #ref)` segment threads the
+referenced segment's latest stdout into this field — the bash-pipe
+role, still fully grant-gated and audited.
 ```
 
 `grants` is the segment's requested grant name(s); the first one present
