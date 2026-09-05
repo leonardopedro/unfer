@@ -62,6 +62,9 @@ pub const SESSION_OPS: &[&str] = &[
     // mathed N4: scripted segments — a granted command run under the
     // worker's exec allowlist (deny-by-default; see docs/PROTOCOL.md)
     "exec",
+    // mathed N11: kernel segments — a granted, language-gated code run
+    // (Jupyter-kernel-compatible outputs; see docs/PROTOCOL.md)
+    "kernel_exec",
 ];
 
 /// Ops the edge gateway accepts and forwards to the backend.
@@ -145,6 +148,9 @@ pub const AGENT_OPS: &[&str] = &[
     // mathed N4: scripted segments — granted `\exec` commands (see
     // docs/PROTOCOL.md); agent-local, never forwarded to the edge.
     "exec",
+    // mathed N11: kernel segments — granted `\kernel` code runs (see
+    // docs/PROTOCOL.md); agent-local, never forwarded to the edge.
+    "kernel_exec",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).

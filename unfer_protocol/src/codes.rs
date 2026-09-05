@@ -164,6 +164,19 @@ impl Code {
     /// failure (exit code / stderr in the message).
     pub const EXEC_FAILED: Code = Code(4910);
 
+    /// mathed N11: `\kernel` segments — the requested kernel grant is not in
+    /// the worker's configured allowlist (deny-by-default — the australVM
+    /// UK-4001 gate philosophy, generalized from execs to kernels: safety
+    /// comes from grants, not per-kernel container isolation).
+    pub const KERNEL_GRANT_DENIED: Code = Code(4911);
+    /// mathed N11: the requested kernel language is not in the worker's
+    /// allowlist (`MATHED_KERNEL_LANGS`; deny-by-default like grants).
+    pub const KERNEL_LANG_DENIED: Code = Code(4912);
+    /// mathed N11: the kernel execution failed — module launch failure,
+    /// timeout, unparseable output, or a kernel-side error output
+    /// (message carries the detail).
+    pub const KERNEL_FAILED: Code = Code(4913);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -606,6 +619,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4910,
             "ExecFailed",
             "The granted command failed: non-zero exit or launch failure (exit code / stderr in the message).",
+        ),
+        (
+            4911,
+            "KernelGrantDenied",
+            "The kernel segment's grant is not in the worker's configured allowlist (default empty = deny everything); grant the segment's grant or remove the segment.",
+        ),
+        (
+            4912,
+            "KernelLangDenied",
+            "The kernel segment's language is not in the worker's language allowlist (MATHED_KERNEL_LANGS, default empty = deny everything); allow the language or remove the segment.",
+        ),
+        (
+            4913,
+            "KernelFailed",
+            "The kernel execution failed: module launch failure, timeout, unparseable output, or a kernel-side error output (message carries the detail).",
         ),
         (
             6001,

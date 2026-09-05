@@ -700,6 +700,58 @@ in the grant's vocabulary / metacharacter arg under `readonly`), UK-4910
 code / stderr / timeout). Every invocation is audited in the worker
 (bounded trail).
 
+### `kernel_exec`
+
+Run a granted `\kernel` segment — the mathed document-computing arc's
+Jupyter role (velysterm `PLAN_mathed_full_vision.md`, N11). Execution is
+**Jupyter-kernel-compatible**: the op's output contract mirrors the
+Jupyter wire protocol's content (`Stream`/`Result`/`Error`), and a real
+Jupyter kernel over the stdio transport is drivable through the same op.
+The generalization over Jupyter: safety comes from **grants, not
+per-kernel container isolation** — execution is a granted, audited
+capability, deny-by-default (the `module.toml` philosophy of australVM,
+UK-4001, generalized to kernels). The agent runs the code through the
+configured kernel module binary (`MATHED_KERNEL_BIN`) with a timeout
+and an output cap; execution lives in the worker, never in the editor
+process.
+
+**Request params:**
+
+```json
+{
+  "module": "mathed_kernel",
+  "language": "typst",
+  "code": "...",
+  "grants": ["kernel"],
+  "timeout_ms": 5000,
+  "cap_bytes": 65536
+}
+```
+
+`module` names the australVM plugin (velysterm `mathed_kernel`, a
+hosted module with `[grants] kernel = [uk_version, uk_model_create,
+uk_evolve, uk_event_probability, uk_model_free]`) or the compatibility
+backend; `language` is the kernel language, gated by the worker's
+language allowlist (`MATHED_KERNEL_LANGS`, comma-separated; default
+empty = deny everything). `grants` is the segment's requested grant
+name(s); the first one present in the worker's configured allowlist
+(`MATHED_EXEC_GRANTS`) wins. Both gates are deny-by-default.
+
+**Response result (exit 0):** `{"outputs": [<KernelOutput>...],
+"timing_ms": <u64>}`, where `KernelOutput` mirrors the Jupyter message
+content:
+
+```json
+{"output_type": "stream", "name": "stdout", "text": "..."}
+{"output_type": "execute_result", "mime": "text/plain", "data": "..."}
+{"output_type": "error", "ename": "...", "evalue": "...", "traceback": []}
+```
+
+**Response error:** UK-4911 (grant not configured), UK-4912 (language
+not configured), UK-4913 (module launch failure, timeout, unparseable
+output, or a kernel-side error output — message carries the detail).
+Every invocation is audited in the worker (bounded trail).
+
 ## Error codes
 
 | Code  | Name                      | Severity | Description                                                          |
@@ -756,6 +808,9 @@ code / stderr / timeout). Every invocation is audited in the worker
 | UK-4908 | ExecGrantDenied            | Error  | mathed `\exec`: the segment's grant is not in the worker's configured allowlist (default empty = deny everything). |
 | UK-4909 | ExecCommandDenied          | Error  | mathed `\exec`: the command is not in the grant's vocabulary, or a `readonly` arg contains shell metacharacters. |
 | UK-4910 | ExecFailed                 | Error  | mathed `\exec`: the granted command failed — non-zero exit, launch failure, or timeout (details in the message). |
+| UK-4911 | KernelGrantDenied          | Error  | mathed `\kernel`: the segment's grant is not in the worker's configured allowlist (default empty = deny everything). |
+| UK-4912 | KernelLangDenied           | Error  | mathed `\kernel`: the segment's language is not in the worker's language allowlist (`MATHED_KERNEL_LANGS`, default empty = deny everything). |
+| UK-4913 | KernelFailed               | Error  | mathed `\kernel`: the kernel execution failed — module launch failure, timeout, unparseable output, or a kernel-side error output (details in the message). |
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |
