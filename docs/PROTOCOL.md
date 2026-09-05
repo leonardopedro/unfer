@@ -649,6 +649,48 @@ refused with UK-1001.
 
 **Response result:** `{"ok": true, "preset": <string>}`
 
+### `exec`
+
+Run a granted scripted segment (`\exec`) — the mathed document-computing
+arc's bash role (velysterm `PLAN_mathed_document_computing.md`, N4). The
+agent runs the command **without a shell** under an explicit grant, with a
+timeout and an output cap; execution lives in the worker, never in the
+editor process. Deny-by-default: an empty allowlist refuses every segment
+with UK-4908, mirroring the australVM UK-4001 gate philosophy.
+
+**Request params:**
+
+```json
+{
+  "command": "echo",
+  "args": ["hello"],
+  "grants": ["readonly"],
+  "timeout_ms": 5000,
+  "cap_bytes": 65536
+}
+```
+
+`grants` is the segment's requested grant name(s); the first one present
+in the worker's configured allowlist wins. The worker allowlist is the
+`MATHED_EXEC_GRANTS` environment variable (comma-separated grant names;
+default empty = deny everything) or an explicit allowlist supplied by the
+embedding client. Grant vocabularies are data, not code — v1 ships
+`readonly` (safe builtins only: `echo`, `cat`, `head`, `tail`, `wc`,
+`grep`, `ls`, `pwd`, `printf`, `true`, `false`, `sleep`; args may not
+contain shell metacharacters) and `compute` (hosted numerical tools:
+`bc`). A grant that is not configured fails with UK-4908; a command
+outside its grant's vocabulary fails with UK-4909.
+
+**Response result (exit 0):** `{"stdout": "...", "stderr": "...",
+"exit_code": 0, "timing_ms": <u64>}` — the client renders `stdout` in
+ the block's output region.
+
+**Response error:** UK-4908 (grant not configured), UK-4909 (command not
+in the grant's vocabulary / metacharacter arg under `readonly`), UK-4910
+(non-zero exit, launch failure, or timeout — message carries the exit
+code / stderr / timeout). Every invocation is audited in the worker
+(bounded trail).
+
 ## Error codes
 
 | Code  | Name                      | Severity | Description                                                          |
@@ -702,6 +744,9 @@ refused with UK-1001.
 | UK-4905 | LayoutNotBijective        | Error  | GPU layout: the state→index layout map is not bijective — two distinct basis states alias one dense slot (or a slot has no state), so a dense GPU tensor would silently corrupt the Gram matrix. |
 | UK-4906 | BankConflictUnresolved    | Error  | GPU layout: the shared-memory bank assignment of the flattened basis admits an unresolvable conflict — no swizzle separates the colliding addresses modulo the bank count. |
 | UK-4907 | SwizzleImpossible         | Error  | GPU layout: the requested swizzle is impossible — the conflict equation (e.g. `2x + 4y ≡ 0 (mod 32)`) has no solution that is simultaneously bijective and conflict-free. |
+| UK-4908 | ExecGrantDenied            | Error  | mathed `\exec`: the segment's grant is not in the worker's configured allowlist (default empty = deny everything). |
+| UK-4909 | ExecCommandDenied          | Error  | mathed `\exec`: the command is not in the grant's vocabulary, or a `readonly` arg contains shell metacharacters. |
+| UK-4910 | ExecFailed                 | Error  | mathed `\exec`: the granted command failed — non-zero exit, launch failure, or timeout (details in the message). |
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |

@@ -153,6 +153,17 @@ impl Code {
     /// bijective and conflict-free.
     pub const SWIZZLE_IMPOSSIBLE: Code = Code(4907);
 
+    /// mathed N4: `\exec` scripted segments — the requested grant is not in
+    /// the worker's configured allowlist (env/file; default empty = deny
+    /// everything — the australVM UK-4001 gate philosophy).
+    pub const EXEC_GRANT_DENIED: Code = Code(4908);
+    /// mathed N4: the requested command is not in the grant's builtin
+    /// allowlist (readonly/compute vocabularies in v1).
+    pub const EXEC_COMMAND_DENIED: Code = Code(4909);
+    /// mathed N4: the granted command failed — non-zero exit or launch
+    /// failure (exit code / stderr in the message).
+    pub const EXEC_FAILED: Code = Code(4910);
+
     pub const CONSENSUS_NOT_READY: Code = Code(6001);
     pub const DUPLICATE_TRANSACTION: Code = Code(6002);
     pub const INVALID_SIGNATURE: Code = Code(6003);
@@ -580,6 +591,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4907,
             "SwizzleImpossible",
             "The requested swizzle is impossible: the conflict equation (e.g. 2x + 4y = 0 mod 32) has no solution that is simultaneously bijective and conflict-free.",
+        ),
+        (
+            4908,
+            "ExecGrantDenied",
+            "The scripted segment's grant is not in the worker's configured allowlist (default empty = deny everything); grant the segment's grant or remove the segment.",
+        ),
+        (
+            4909,
+            "ExecCommandDenied",
+            "The command is not in the grant's builtin allowlist (readonly/compute vocabularies in v1); use an allowed command or request a broader grant.",
+        ),
+        (
+            4910,
+            "ExecFailed",
+            "The granted command failed: non-zero exit or launch failure (exit code / stderr in the message).",
         ),
         (
             6001,

@@ -59,6 +59,9 @@ pub const SESSION_OPS: &[&str] = &[
     // H10: named GrantSet presets (agent-local — the client resolves the roster)
     "preset_list",
     "preset_set",
+    // mathed N4: scripted segments — a granted command run under the
+    // worker's exec allowlist (deny-by-default; see docs/PROTOCOL.md)
+    "exec",
 ];
 
 /// Ops the edge gateway accepts and forwards to the backend.
@@ -139,6 +142,9 @@ pub const AGENT_OPS: &[&str] = &[
     // H10: named GrantSet presets
     "preset_list",
     "preset_set",
+    // mathed N4: scripted segments — granted `\exec` commands (see
+    // docs/PROTOCOL.md); agent-local, never forwarded to the edge.
+    "exec",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).
