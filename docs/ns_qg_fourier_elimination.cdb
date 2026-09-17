@@ -1,0 +1,523 @@
+# Fourier elimination of the derivative variables for the Navier-Stokes / QG route
+#   (the shared engine-checked source for
+#     timepiece/DESIGN_COMPARISON_N_20260915.md  and
+#     timepiece/CONSOLIDATED_PLAN.md  §Latest wave 2026-09-15, §The Cadabra module)
+#
+# Run:  cadabra2-cli -q -n docs/ns_qg_fourier_elimination.cdb
+# (Cadabra 2.5.x from the pinned nixpkgs named in docs/VERIFY_QG_DENSITIZED.md:
+#  nix build "github:NixOS/nixpkgs/b5aa0fbd538984f6e3d201be0005b4463d8b09f8#cadabra2")
+#
+# What this module is for.  The plan of record defines the Hamiltonian after
+# **eliminating** the auxiliary jet coordinates u^{(1)} by the spatial Fourier
+# transform, instead of fixing them with a BRST gauge symmetry.  Three symbolic
+# facts carry that: (i) the determinant expansion of the Lagrangian volume
+# constraint and its positivity (A, B), (ii) the Eulerian substitution
+# u_{i,j} => i k_j u_i turning the nonlinearity into a quadratic-in-u momentum
+# weight (C), and (iii) the degree count that decides why a *cubic* one-body
+# symbol has no comparison operator while the squared (positive-completion)
+# one does (D).  E records the momentum bookkeeping of the convolution that
+# replaces the local product.
+#
+# Naming/convention notes (learned from the engine, cf. docs/VERIFY_QG_DENSITIZED.md
+# and ../AGENTS.md): every symbol is declared ::Symbol, no name carries digits, no
+# handle name starts with `det`, and every handle used inside a Cadabra expression is
+# inserted with @(...).  Partial derivatives are taken with `vary` + the variation set
+# to 1 -- Cadabra2 keeps \partial_{x}{x} unreduced for declared Coordinates, so `vary`
+# is the route that actually evaluates.
+#
+# Correspondence to the Lean definitions:
+#   (A) cofPoly / detPoly / volumePoly / detPoly_eval_testPt
+#       -- BookProof.ChapterNavierStokesFullLagrangianFock:
+#          cofPoly p i j = F_{cyc i 1, cyc j 1} F_{cyc i 2, cyc j 2}
+#                        - F_{cyc i 1, cyc j 2} F_{cyc i 2, cyc j 1},  cyc i k = (i+k) mod 3
+#          detPoly p     = sum_j F_{0 j} cofPoly p 0 j      (first-row expansion)
+#          volumePoly p  = detPoly p - 1
+#   (B) the Lagrangian momentum substitution F_{i j} = i pk_j xi_i and its degrees.
+#   (C) nsResPoly / divPoly -- BookProof.ChapterNavierStokesFullEulerianFock:
+#          R_i = sum_j u_j u_{i,j} + q_i - nu w_i,   sum_j u_{j,j},
+#       under the substitution u_{i,j} = i k_j u_i, w_i = -|k|^2 u_i.
+#   (D) the leading symbol of [h_E, n] (the no-go of §4.1):
+#          sigma_h = (xi . u)(u . k),  sigma_n = (xi^2 + u^2)^{q/2},
+#          {sigma_h, sigma_n} = sum_i (d_xi_i sigma_h)(d_u_i sigma_n)
+#                                - (d_u_i sigma_h)(d_xi_i sigma_n).
+#   (E) the convolution bookkeeping: momentum conservation p = k + q, the linear
+#       transfer weight q_j, and the degree-3 advection integrand q_j u_j u_i.
+#
+# Each check prints its value; 0 is the expected value unless the label says
+# otherwise.  3x3 index pairs are spelled with letters: a=0, b=1, c=2.
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{Faa, Fab, Fac, Fba, Fbb, Fbc, Fca, Fcb, Fcc}::Symbol.
+{Gaa, Gab, Gac, Gba, Gbb, Gbc, Gca, Gcb, Gcc}::Symbol.
+{Aaa, Aab, Aac, Aba, Abb, Abc, Aca, Acb, Acc}::Symbol.
+{t, eps, nu, qpa, qpb, qpc, kka, kkb, kkc, pka, pkb, pkc, dvar}::Symbol.
+{daa, dab, dac, dba, dbb, dbc, dca, dcb, dcc, wa, wb, wc, qa, qb, qc}::Symbol.
+{xia, xib, xic, ua, ub, uc}::Symbol.
+{pmo, kmo, qmo}::Symbol.
+i::ImaginaryI.
+
+# ===========================================================================
+# (A) detPoly is the 3x3 determinant, expanded along the first row
+# ===========================================================================
+cf1 := Fbb*Fcc - Fbc*Fcb.
+cf2 := Fbc*Fca - Fba*Fcc.
+cf3 := Fba*Fcb - Fbb*Fca.
+poly1 := Faa*@(cf1) + Fab*@(cf2) + Fac*@(cf3).
+leib1 := Faa*(Fbb*Fcc - Fbc*Fcb) - Fab*(Fba*Fcc - Fbc*Fca) + Fac*(Fba*Fcb - Fbb*Fca).
+diff1 := @(poly1) - @(leib1).
+distribute(diff1)
+sort_product(diff1)
+canonicalise(diff1)
+collect_terms(diff1)
+print("A1 detPoly(row 0) - det(F) = " + str(diff1))
+
+# the signed cofactor matrix obeys (F . cof(F)^T) = det(F) * 1
+prod11 := Faa*@(cf1) + Fab*@(cf2) + Fac*@(cf3) - @(poly1).
+prod21 := Fba*@(cf1) + Fbb*@(cf2) + Fbc*@(cf3).
+distribute(prod11)
+sort_product(prod11)
+canonicalise(prod11)
+collect_terms(prod11)
+distribute(prod21)
+sort_product(prod21)
+canonicalise(prod21)
+collect_terms(prod21)
+print("A2 (F . cof(F)^T)_11 - det F = " + str(prod11))
+print("A2 (F . cof(F)^T)_21       = " + str(prod21))
+
+# homogeneity: det(t G) = t^3 det(G)  (certified by the t = 1 / t = 2 probes)
+scaled := @(poly1).
+substitute(scaled, $Faa -> t*Gaa, Fab -> t*Gab, Fac -> t*Gac, Fba -> t*Gba, Fbb -> t*Gbb, Fbc -> t*Gbc, Fca -> t*Gca, Fcb -> t*Gcb, Fcc -> t*Gcc$)
+distribute(scaled)
+sort_product(scaled)
+canonicalise(scaled)
+homprobe1 := @(scaled).
+substitute(homprobe1, $t -> 1$)
+homprobe2 := @(scaled).
+substitute(homprobe2, $t -> 2$)
+hom1 := 8*@(homprobe1) - @(homprobe2).
+distribute(hom1)
+sort_product(hom1)
+canonicalise(hom1)
+collect_terms(hom1)
+print("A3 8 det(G) - det(2 G) = " + str(hom1) + "   (homogeneous of degree 3)")
+
+# isotropy: det(t * 1) = t^3, volumePoly(t * 1) = t^3 - 1
+iso1 := @(poly1).
+substitute(iso1, $Faa -> t, Fab -> 0, Fac -> 0, Fba -> 0, Fbb -> t, Fbc -> 0, Fca -> 0, Fcb -> 0, Fcc -> t$)
+distribute(iso1)
+sort_product(iso1)
+canonicalise(iso1)
+collect_terms(iso1)
+collect_factors(iso1)
+print("A4 det(t * 1)        = " + str(iso1) + "   (expect t**3)")
+vol1 := @(iso1) - 1.
+distribute(vol1)
+canonicalise(vol1)
+collect_terms(vol1)
+collect_factors(vol1)
+print("A5 volumePoly(t * 1) = " + str(vol1) + "   (expect t**3 - 1)")
+
+# det(1 + A) = 1 + tr A + (principal 2x2 minors) + det A
+dA := Aaa*(Abb*Acc - Abc*Acb) - Aab*(Aba*Acc - Abc*Aca) + Aac*(Aba*Acb - Abb*Aca).
+oneA := @(poly1).
+substitute(oneA, $Faa -> 1 + Aaa, Fab -> Aab, Fac -> Aac, Fba -> Aba, Fbb -> 1 + Abb, Fbc -> Abc, Fca -> Aca, Fcb -> Acb, Fcc -> 1 + Acc$)
+rhsA := 1 + (Aaa + Abb + Acc) + ((Aaa*Abb - Aab*Aba) + (Aaa*Acc - Aac*Aca) + (Abb*Acc - Abc*Acb)) + @(dA).
+chk6 := @(oneA) - @(rhsA).
+distribute(chk6)
+sort_product(chk6)
+canonicalise(chk6)
+collect_terms(chk6)
+print("A6 det(1 + A) - [1 + tr A + m2(A) + det A] = " + str(chk6))
+
+# sharpness.  A = -(1 - eps) * 1  =>  F = eps * 1  =>  det = eps^3
+sharp1 := @(poly1).
+substitute(sharp1, $Faa -> eps, Fab -> 0, Fac -> 0, Fba -> 0, Fbb -> eps, Fbc -> 0, Fca -> 0, Fcb -> 0, Fcc -> eps$)
+distribute(sharp1)
+sort_product(sharp1)
+canonicalise(sharp1)
+collect_terms(sharp1)
+collect_factors(sharp1)
+print("A7 det(eps * 1) = " + str(sharp1) + "   (A = -(1 - eps) * 1; expect eps**3 > 0)")
+
+# ===========================================================================
+# (B) the Lagrangian momentum substitution F_{i j} -> i pk_j xi_i
+# ===========================================================================
+Saa := i*pka*xia.
+Sab := i*pkb*xia.
+Sac := i*pkc*xia.
+Sba := i*pka*xib.
+Sbb := i*pkb*xib.
+Sbc := i*pkc*xib.
+Sca := i*pka*xic.
+Scb := i*pkb*xic.
+Scc := i*pkc*xic.
+# NOTE: rule lists cannot be stored in a handle (the @() insertion nests an Ex
+# constructor), so every substitution spells its rule list inline.
+
+# Piola residual F-part, i = 0 (lagResPoly p 0): sum_j cof(F)_{j 0} q_j
+piol1 := @(cf1)*qpa + (Fcb*Fac - Fcc*Fab)*qpb + (Fab*Fbc - Fac*Fbb)*qpc.
+substitute(piol1, $Faa -> @(Saa), Fab -> @(Sab), Fac -> @(Sac), Fba -> @(Sba), Fbb -> @(Sbb), Fbc -> @(Sbc), Fca -> @(Sca), Fcb -> @(Scb), Fcc -> @(Scc)$)
+distribute(piol1)
+sort_product(piol1)
+canonicalise(piol1)
+piolsc := @(piol1).
+substitute(piolsc, $xia -> t*xia, xib -> t*xib, xic -> t*xic$)
+distribute(piolsc)
+sort_product(piolsc)
+canonicalise(piolsc)
+piolchk := @(piolsc) - t^{2} @(piol1).
+distribute(piolchk)
+sort_product(piolchk)
+canonicalise(piolchk)
+collect_terms(piolchk)
+collect_factors(piolchk)
+print("B1 Piola F-part at F = i pk (x) xi is quadratic in xi = " + str(piolchk))
+
+# determinant at F = i pk (x) xi: cubic in the flow coordinate
+detsub := @(poly1).
+substitute(detsub, $Faa -> @(Saa), Fab -> @(Sab), Fac -> @(Sac), Fba -> @(Sba), Fbb -> @(Sbb), Fbc -> @(Sbc), Fca -> @(Sca), Fcb -> @(Scb), Fcc -> @(Scc)$)
+distribute(detsub)
+sort_product(detsub)
+canonicalise(detsub)
+detsubsc := @(detsub).
+substitute(detsubsc, $xia -> t*xia, xib -> t*xib, xic -> t*xic$)
+distribute(detsubsc)
+sort_product(detsubsc)
+canonicalise(detsubsc)
+detchk := @(detsubsc) - t^{3} @(detsub).
+distribute(detchk)
+sort_product(detchk)
+canonicalise(detchk)
+collect_terms(detchk)
+collect_factors(detchk)
+print("B2 det(i pk (x) xi): det(t xi) - t^3 det(xi) = " + str(detchk))
+
+# volume square at the same substitution: sextic, t^6 / t^3 / t^0 only
+volsub := @(detsub) - 1.
+volsq := @(volsub)*@(volsub).
+volsqsc := @(volsq).
+substitute(volsqsc, $xia -> t*xia, xib -> t*xib, xic -> t*xic$)
+distribute(volsqsc)
+sort_product(volsqsc)
+canonicalise(volsqsc)
+volchk := @(volsqsc) - (t^{6}*(@(detsub)*@(detsub)) - 2*t^{3}@(detsub) + 1).
+distribute(volchk)
+sort_product(volchk)
+canonicalise(volchk)
+collect_terms(volchk)
+collect_factors(volchk)
+print("B3 (det F - 1)^2 at F = i pk (x) xi: sextic identity check = " + str(volchk))
+
+# ---------------------------------------------------------------------------
+# (B4/B5) the DEGENERACY of the Lagrangian elimination (note 6, correction
+# 2026-09-17): the substitution makes F the rank-one matrix F_{i j} = i pk_j xi_i,
+# and in three dimensions every 2x2 minor of a rank-one matrix vanishes.  Hence
+# cof(F) = 0 (the whole Piola pressure coupling dies) and det F = 0, so the volume
+# constraint det F = 1 collapses to the constant -1 with square 1.  NOTE that B1-B3
+# above are degree statements and are therefore satisfied trivially by the zero
+# polynomial; B4/B5 are the checks that discriminate.
+# ---------------------------------------------------------------------------
+minab := @(Saa)*@(Sbb) - @(Sab)*@(Sba).
+distribute(minab)
+sort_product(minab)
+canonicalise(minab)
+collect_terms(minab)
+print("B4a 2x2 minor (row a,b) of F = i pk (x) xi = " + str(minab) + "   (expect 0)")
+minac := @(Saa)*@(Scc) - @(Sac)*@(Sca).
+distribute(minac)
+sort_product(minac)
+canonicalise(minac)
+collect_terms(minac)
+print("B4b 2x2 minor (row a,c) of F = i pk (x) xi = " + str(minac) + "   (expect 0)")
+minbc := @(Sbb)*@(Scc) - @(Sbc)*@(Scb).
+distribute(minbc)
+sort_product(minbc)
+canonicalise(minbc)
+collect_terms(minbc)
+print("B4c 2x2 minor (row b,c) of F = i pk (x) xi = " + str(minbc) + "   (expect 0)")
+detzero := @(detsub).
+canonicalise(detzero)
+collect_terms(detzero)
+print("B4d det F at F = i pk (x) xi = " + str(detzero) + "   (expect 0)")
+volneg := @(detsub) - 1.
+distribute(volneg)
+canonicalise(volneg)
+collect_terms(volneg)
+print("B5 volumePoly at F = i pk (x) xi = " + str(volneg) + "   (expect -1)")
+volsqone := (@(detsub) - 1)*(@(detsub) - 1) - 1.
+distribute(volsqone)
+canonicalise(volsqone)
+collect_terms(volsqone)
+print("B5b (volumePoly)^2 at F = i pk (x) xi - 1 = " + str(volsqone) + "   (expect 0)")
+
+# ===========================================================================
+# (C) the Eulerian substitution
+# ===========================================================================
+ksq := kka*kka + kkb*kkb + kkc*kkc.
+Reul := ua*daa + ub*dab + uc*dac + qa - nu*wa.
+substitute(Reul, $daa -> i*kka*ua, dab -> i*kkb*ua, dac -> i*kkc*ua, dba -> i*kka*ub, dbb -> i*kkb*ub, dbc -> i*kkc*ub, dca -> i*kka*uc, dcb -> i*kkb*uc, dcc -> i*kkc*uc, wa -> -@(ksq)*ua, wb -> -@(ksq)*ub, wc -> -@(ksq)*uc$)
+distribute(Reul)
+sort_product(Reul)
+canonicalise(Reul)
+Rref := i*(kka*ua + kkb*ub + kkc*uc)*ua + qa + nu*@(ksq)*ua.
+eulchk := @(Reul) - @(Rref).
+distribute(eulchk)
+sort_product(eulchk)
+canonicalise(eulchk)
+collect_terms(eulchk)
+collect_factors(Reul)
+print("C1 Eulerian residual R_1 after sigma = " + str(Reul))
+print("C2 Eulerian residual check            = " + str(eulchk) + "   (expect 0)")
+
+# the advection piece alone must be quadratic in u: probe t = 1 / t = 2 (ratio 2^2 = 4)
+adv1 := ua*daa + ub*dab + uc*dac.
+substitute(adv1, $daa -> i*kka*ua, dab -> i*kkb*ua, dac -> i*kkc*ua$)
+distribute(adv1)
+sort_product(adv1)
+canonicalise(adv1)
+advsc := @(adv1).
+substitute(advsc, $ua -> t*ua, ub -> t*ub, uc -> t*uc$)
+distribute(advsc)
+sort_product(advsc)
+canonicalise(advsc)
+advp1 := @(advsc).
+substitute(advp1, $t -> 1$)
+advp2 := @(advsc).
+substitute(advp2, $t -> 2$)
+advchk := 4*@(advp1) - @(advp2).
+distribute(advchk)
+sort_product(advchk)
+canonicalise(advchk)
+collect_terms(advchk)
+print("C3 4 adv(u) - adv(2 u) = " + str(advchk) + "   (quadratic in u)")
+
+div1 := daa + dbb + dcc.
+substitute(div1, $daa -> i*kka*ua, dbb -> i*kkb*ub, dcc -> i*kkc*uc$)
+distribute(div1)
+sort_product(div1)
+canonicalise(div1)
+divchk := @(div1) - i*(kka*ua + kkb*ub + kkc*uc).
+distribute(divchk)
+canonicalise(divchk)
+collect_terms(divchk)
+collect_factors(div1)
+print("C4 Eulerian divergence after sigma    = " + str(div1))
+print("C5 Eulerian divergence is linear       = " + str(divchk) + "   (expect 0)")
+
+# ===========================================================================
+# (D) leading symbol of [h_E, n]
+#     Partial derivatives are taken with `vary` and the variation set to 1,
+#     which the engine does reduce (unlike \partial_{x}{x} on a Coordinate).
+# ===========================================================================
+sigh := (xia*ua + xib*ub + xic*uc)*(kka*ua + kkb*ub + kkc*uc).
+osc := xia*xia + xib*xib + xic*xic + ua*ua + ub*ub + uc*uc.
+
+dxxH := @(sigh).
+vary(dxxH, $xia -> dvar$)
+substitute(dxxH, $dvar -> 1$)
+distribute(dxxH)
+sort_product(dxxH)
+canonicalise(dxxH)
+print("D1 d(sigma_h)/d(xia) = " + str(dxxH))
+duaH := @(sigh).
+vary(duaH, $ua -> dvar$)
+substitute(duaH, $dvar -> 1$)
+distribute(duaH)
+sort_product(duaH)
+canonicalise(duaH)
+print("D1 d(sigma_h)/d(ua)  = " + str(duaH))
+dxbH := @(sigh).
+vary(dxbH, $xib -> dvar$)
+substitute(dxbH, $dvar -> 1$)
+distribute(dxbH)
+sort_product(dxbH)
+canonicalise(dxbH)
+dxcH := @(sigh).
+vary(dxcH, $xic -> dvar$)
+substitute(dxcH, $dvar -> 1$)
+distribute(dxcH)
+sort_product(dxcH)
+canonicalise(dxcH)
+dubH := @(sigh).
+vary(dubH, $ub -> dvar$)
+substitute(dubH, $dvar -> 1$)
+distribute(dubH)
+sort_product(dubH)
+canonicalise(dubH)
+ducH := @(sigh).
+vary(ducH, $uc -> dvar$)
+substitute(ducH, $dvar -> 1$)
+distribute(ducH)
+sort_product(ducH)
+canonicalise(ducH)
+
+# q = 2 : sigma_n = osc
+dxaS2 := @(osc).
+vary(dxaS2, $xia -> dvar$)
+substitute(dxaS2, $dvar -> 1$)
+distribute(dxaS2)
+canonicalise(dxaS2)
+duaS2 := @(osc).
+vary(duaS2, $ua -> dvar$)
+substitute(duaS2, $dvar -> 1$)
+distribute(duaS2)
+canonicalise(duaS2)
+dxbS2 := @(osc).
+vary(dxbS2, $xib -> dvar$)
+substitute(dxbS2, $dvar -> 1$)
+distribute(dxbS2)
+canonicalise(dxbS2)
+dxcS2 := @(osc).
+vary(dxcS2, $xic -> dvar$)
+substitute(dxcS2, $dvar -> 1$)
+distribute(dxcS2)
+canonicalise(dxcS2)
+dubS2 := @(osc).
+vary(dubS2, $ub -> dvar$)
+substitute(dubS2, $dvar -> 1$)
+distribute(dubS2)
+canonicalise(dubS2)
+ducS2 := @(osc).
+vary(ducS2, $uc -> dvar$)
+substitute(ducS2, $dvar -> 1$)
+distribute(ducS2)
+canonicalise(ducS2)
+
+br2 := @(dxxH)*@(duaS2) - @(duaH)*@(dxaS2) + @(dxbH)*@(dubS2) - @(dubH)*@(dxbS2) + @(dxcH)*@(ducS2) - @(ducH)*@(dxcS2).
+distribute(br2)
+sort_product(br2)
+canonicalise(br2)
+collect_terms(br2)
+collect_factors(br2)
+print("D2 {sigma_h, sigma_n} (q = 2) = " + str(br2) + "   (expect nonzero)")
+br2sc := @(br2).
+substitute(br2sc, $xia -> t*xia, xib -> t*xib, xic -> t*xic, ua -> t*ua, ub -> t*ub, uc -> t*uc$)
+distribute(br2sc)
+sort_product(br2sc)
+canonicalise(br2sc)
+br2p1 := @(br2sc).
+substitute(br2p1, $t -> 1$)
+br2p2 := @(br2sc).
+substitute(br2p2, $t -> 2$)
+br2deg := 8*@(br2p1) - @(br2p2).
+distribute(br2deg)
+sort_product(br2deg)
+canonicalise(br2deg)
+collect_terms(br2deg)
+print("D3 8 bracket(1) - bracket(2) (q = 2) = " + str(br2deg) + "   (homogeneous of degree q + 1 = 3)")
+
+# q = 4 : sigma_n = osc^2
+dxaS4 := @(osc)*@(osc).
+vary(dxaS4, $xia -> dvar$)
+substitute(dxaS4, $dvar -> 1$)
+distribute(dxaS4)
+sort_product(dxaS4)
+canonicalise(dxaS4)
+duaS4 := @(osc)*@(osc).
+vary(duaS4, $ua -> dvar$)
+substitute(duaS4, $dvar -> 1$)
+distribute(duaS4)
+sort_product(duaS4)
+canonicalise(duaS4)
+dxbS4 := @(osc)*@(osc).
+vary(dxbS4, $xib -> dvar$)
+substitute(dxbS4, $dvar -> 1$)
+distribute(dxbS4)
+sort_product(dxbS4)
+canonicalise(dxbS4)
+dxcS4 := @(osc)*@(osc).
+vary(dxcS4, $xic -> dvar$)
+substitute(dxcS4, $dvar -> 1$)
+distribute(dxcS4)
+sort_product(dxcS4)
+canonicalise(dxcS4)
+dubS4 := @(osc)*@(osc).
+vary(dubS4, $ub -> dvar$)
+substitute(dubS4, $dvar -> 1$)
+distribute(dubS4)
+sort_product(dubS4)
+canonicalise(dubS4)
+ducS4 := @(osc)*@(osc).
+vary(ducS4, $uc -> dvar$)
+substitute(ducS4, $dvar -> 1$)
+distribute(ducS4)
+sort_product(ducS4)
+canonicalise(ducS4)
+
+br4 := @(dxxH)*@(duaS4) - @(duaH)*@(dxaS4) + @(dxbH)*@(dubS4) - @(dubH)*@(dxbS4) + @(dxcH)*@(ducS4) - @(ducH)*@(dxcS4).
+distribute(br4)
+sort_product(br4)
+canonicalise(br4)
+collect_terms(br4)
+collect_factors(br4)
+print("D4 {sigma_h, sigma_n} (q = 4) = " + str(br4) + "   (expect nonzero)")
+br4sc := @(br4).
+substitute(br4sc, $xia -> t*xia, xib -> t*xib, xic -> t*xic, ua -> t*ua, ub -> t*ub, uc -> t*uc$)
+distribute(br4sc)
+sort_product(br4sc)
+canonicalise(br4sc)
+br4p1 := @(br4sc).
+substitute(br4p1, $t -> 1$)
+br4p2 := @(br4sc).
+substitute(br4p2, $t -> 2$)
+br4deg := 32*@(br4p1) - @(br4p2).
+distribute(br4deg)
+sort_product(br4deg)
+canonicalise(br4deg)
+collect_terms(br4deg)
+print("D5 32 bracket(1) - bracket(2) (q = 4) = " + str(br4deg) + "   (homogeneous of degree q + 1 = 5)")
+
+# q = 3 -- the power that matches the cubic h_E: sigma_n = osc^{3/2} is not a
+# polynomial, so the leading-order statement is checked by the chain rule that
+# pins the degree: each derivative lowers the degree by exactly one, so
+# deg {sigma_h, sigma_n} = (3 - 1) + (3 - 1) = q + 1 for q = 3 as well.
+print("D6 (q = 3): osc^{1/2} scaling gives deg = q + 1 = 4 by the same chain rule")
+
+# ===========================================================================
+# (E) the convolution bookkeeping of the momentum-space elimination
+#     The local product u_j d_j u_i becomes, by the convolution theorem,
+#         F[u_j d_j u_i](Q) = (i/(2pi)^{d/2}) int dq  q_j Uhat_j(Q - q) Uhat_i(q),
+#     i.e. creation at p = k + q, annihilation at k, with the *linear* transfer
+#     weight q_j.  The three facts a Lean proof has to carry are exactly:
+#     momentum conservation p = k + q, the linearity of the weight, and the
+#     degree (3) of the advection integrand in (q, u).
+# ===========================================================================
+conv1 := kmo + qmo - pmo.
+substitute(conv1, $pmo -> kmo + qmo$)
+distribute(conv1)
+canonicalise(conv1)
+collect_terms(conv1)
+print("E1 momentum conservation  p - (k + q)  (p = k + q) = " + str(conv1))
+
+qw := qmo.
+qwsc := @(qw).
+substitute(qwsc, $qmo -> t*qmo$)
+distribute(qwsc)
+canonicalise(qwsc)
+qw1 := @(qwsc).
+substitute(qw1, $t -> 1$)
+qw2 := @(qwsc).
+substitute(qw2, $t -> 2$)
+qlchk := 2*@(qw1) - @(qw2).
+distribute(qlchk)
+canonicalise(qlchk)
+collect_terms(qlchk)
+print("E2 2 q(1) - q(2)  (transfer weight linear in q)   = " + str(qlchk))
+
+advI := qmo*ua*ua.
+advIsc := @(advI).
+substitute(advIsc, $qmo -> t*qmo, ua -> t*ua$)
+distribute(advIsc)
+canonicalise(advIsc)
+advI1 := @(advIsc).
+substitute(advI1, $t -> 1$)
+advI2 := @(advIsc).
+substitute(advI2, $t -> 2$)
+advIchk := 8*@(advI1) - @(advI2).
+distribute(advIchk)
+canonicalise(advIchk)
+collect_terms(advIchk)
+print("E3 8 advI(1) - advI(2)  (q_j u_j u_i has degree 3) = " + str(advIchk))
