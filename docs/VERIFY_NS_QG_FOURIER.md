@@ -43,7 +43,9 @@ check prints `0` unless noted.
 * **C1–C5 — the Eulerian substitution** `u_{i,j} ⇒ i k_j u_i`, `w_i ⇒ −|k|² u_i`:
   the residual becomes `i (k·u) u_i + q_i + ν|k|² u_i` (C1–C2), the advection alone is quadratic
   in `u` (C3), and the divergence is linear (C4–C5). This is the *positive completion* of
-  `DESIGN_COMPARISON_N_20260915.md` §5: the elimination is applied **inside the squares**, so the
+  `DESIGN_COMPARISON_N_20260915.md` §5: the elimination is applied **inside the squares** — each
+  square being the *modulus* square of a reduced form, so the advection is kept, squared
+  (`½((k·u)u_i)²`), rather than dropped (plan of record 2026‑09‑17b) — so the
   bare cubic never appears as a one-body symbol.
 * **D1–D6 — the leading symbol of `[h_E, n]`** (the §4.1 no-go). With
   `σ_h = (ξ·u)(u·k)` and `σ_n = (ξ² + u²)^{q/2}`, the Poisson bracket `{σ_h, σ_n}` is **non-zero**
