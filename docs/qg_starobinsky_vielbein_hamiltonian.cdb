@@ -39,7 +39,7 @@
 #               (independent of ∂_α e and ∂_α ψ), the variation factors:
 #               pi_st = (M²/2)ψ·π₀, π₀ the base Einstein polymomentum
 #               (factor_out(ψ) leaves the base chain).
-#   pi_psi    — the scalaron polymomentum: ψ has no kinetic term in the
+#   pi_psi_check — the scalaron polymomentum: ψ has no kinetic term in the
 #               Jordan frame, so π_ψ = ∂L/∂(∂₀ψ) = 0 (pi_psi_check -> 0); the
 #               scalaron kinetic appears only after the conformal rescaling to
 #               the Einstein frame (cf. the metric module's Vphi).
@@ -83,6 +83,23 @@
 # conformal rescaling (ψ enters the kinetic) before the flat-coefficient
 # argument applies; that is the standard f(R) → Einstein-frame chain.
 # Run: cadabra2-cli -q -n <this file>
+#
+# GOTCHA — `@()` AND UNDERSCORED NAMES.  The insertion macro `@(name)` resolves
+# `name` through the LaTeX parser, which reads `_` as a SUBSCRIPT separator
+# unless the stem before it is at least FOUR characters long.  Consequently
+#     @(action_st) -> the whole expression `action_st`       (stem `action`)
+#     @(ex1_st)    -> looks up the Python object `ex1`        (stem `ex1`)
+#     @(H_8182_st) -> looks up a product node `\prod`         (stem `H`)
+#     @(U_psi)     -> looks up a product node `\prod`         (stem `U`)
+# and the last three abort the run with
+#     RuntimeError: Python object '<...>' does not exist.
+# This is resolved in two ways below, and both are used deliberately:
+#   * an expression referenced by `@()` is named with a stem of four or more
+#     characters before its first underscore (here `Upot_psi`, not `U_psi`);
+#   * a pure duplication of an expression is done in Python, `dst = src.copy()`.
+#     That needs no macro, so no name constraint applies, and — unlike the
+#     plain `dst = src` — it is a deep copy: Cadabra manipulates expressions in
+#     place, so plain assignment would alias and corrupt `src`.
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)
@@ -124,6 +141,7 @@ substitute(fR_check, $ U(\psi) -> (M^4/(16 \alpha)) (\psi - 1)**2 $, repeat=True
 substitute(fR_check, $ \psi -> 1 + 4 \alpha R/M^2 $, repeat=True);
 distribute(fR_check);
 expand(fR_check);
+expand_power(fR_check);
 collect_factors(fR_check);
 substitute(fR_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
 substitute(fR_check, $ M^{2} (M^{2})**(-1) -> 1 $, repeat=True);
@@ -134,11 +152,14 @@ canonicalise(fR_check);
 collect_terms(fR_check);
 # The inverse relation (the Einstein-frame conformal factor as a function of R):
 R_from_psi := (M^2/(4 \alpha)) (\psi - 1).
-# The Starobinsky potential in the Jordan variable:
-U_psi := (M^4/(16 \alpha)) (\psi - 1)**2.
+# The Starobinsky potential in the Jordan variable (named `Upot_psi`, not
+# `U_psi`, so that the `@()` below resolves — see the GOTCHA note at the top):
+Upot_psi := (M^4/(16 \alpha)) (\psi - 1)**2.
 # R² content: αR² e = U(ψ)e at ψ = 1 + 4αR/M² (R2_check -> 0).
-R2_check := @(U_psi) e - \alpha R**2 e.
+R2_check := @(Upot_psi) e - \alpha R**2 e.
 substitute(R2_check, $ \psi -> 1 + 4 \alpha R/M^2 $, repeat=True);
+expand(R2_check);
+expand_power(R2_check);
 distribute(R2_check);
 collect_factors(R2_check);
 substitute(R2_check, $ (M^{2})**(-1) M^{2} -> 1 $, repeat=True);
@@ -163,16 +184,24 @@ substitute(ex1_st,$g^{\mu \nu} -> e^{\mu}_{a} e^{\nu}_{b} \eta^{a b}$,repeat=Tru
 distribute(ex1_st)
 rename_dummies(ex1_st)
 product_rule(ex1_st)
-unwrap(ex1_st)
+# NOTE: there is deliberately NO `unwrap(ex1_st)` here (the base module has one, and it is a
+# bug): `unwrap` removes the top node *of every term*, so on the sum produced by `product_rule`
+# it keeps only the FIRST term of the integrand.  Measured on this build: with `unwrap`,
+# `ex1_st` collapses to the single potential term `U(ψ)e` and `pi_st` to `0`; without it,
+# `ex1_st` is the full vielbein-expanded action density and `pi_st` the full polymomentum
+# `(M²/2)ψ·π₀`.  The `\int{}{}` wrapper must stay in place until after `integrate_by_parts`
+# (that is what lets it drop the total derivative); the integrand is then picked with `[0]`.
 distribute(ex1_st)
 rename_dummies(ex1_st);
 integrate_by_parts(ex1_st, $\partial_{\nu}{e_{\alpha}^{a}}$)
+# The `\int{integrand}{x}` node has the integrand as child 0 and the integration variable as
+# child 1 — take the integrand.
 ex1_st = ex1_st[0];
 
 # ===== 3. polymomentum BY VARIATION (generalizing the base module) =====
 # π^α_{ρk} = ∂L/∂(∂_α e^k_ρ). The variation picks up the (M²/2)ψ factor of
 # the kinetic part; the −U(ψ)e term has no ∂e and does not contribute.
-pi_st := @(ex1_st).
+pi_st = ex1_st.copy()
 vary(pi_st, $ e^{k}_{\rho} -> d{e^{k}_{\rho}}, e^{j1}_{\sigma} -> d{e^{j1}_{\sigma}} $)
 distribute(pi_st)
 rename_dummies(pi_st)
@@ -187,13 +216,13 @@ factor_out(pi_st, $ \psi $)
 # π_ψ = ∂L/∂(∂₀ψ) = 0 (pi_psi_check -> 0). Vary only the ψR kinetic part —
 # the variation of the abstract potential U(ψ) carries no ∂ψ either, so it
 # contributes nothing to the polymomentum.
-pi_psi := (M^2/2) \psi e R.
-vary(pi_psi, $ \psi -> d{\psi} $)
-distribute(pi_psi)
-substitute(pi_psi, $ \partial_{\alpha}{d{\psi}} -> \pi_{\psi}^{\alpha} $, repeat=True)
-substitute(pi_psi, $ d{\psi} -> 0 $, repeat=True)
-distribute(pi_psi)
-collect_terms(pi_psi)
+pi_psi_check := (M^2/2) \psi e R.
+vary(pi_psi_check, $ \psi -> d{\psi} $)
+distribute(pi_psi_check)
+substitute(pi_psi_check, $ \partial_{\alpha}{d{\psi}} -> \pi_{\psi}^{\alpha} $, repeat=True)
+substitute(pi_psi_check, $ d{\psi} -> 0 $, repeat=True)
+distribute(pi_psi_check)
+collect_terms(pi_psi_check)
 
 # ===== 4. TEGR / teleparallel torsion scalar (book.tex line 8130) =====
 # The base module verifies eR = e·T + div numerically; with R = T + B the R²
@@ -233,7 +262,7 @@ H_8182_st := (M^2/2) \psi ( - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a
 # potential term U(ψ)e appears with the same sign in −L_dec_st and +H_8182_st
 # and hence drops out of the difference (leg_check_st -> 0 by the 8182
 # identity, verified by the canonicalisation below).
-H_final_st := @(H_8182_st).
+H_final_st = H_8182_st.copy()
 # First: the A·A from p·T cancels -1/2 A·T e from -L (substitute A^ab = -2e T^ab):
 substitute(H_final_st, $ \mathcal{A}_{a b} -> -2 e T_{a b}, \mathcal{A}^{a b} -> -2 e T^{a b} $, repeat=True)
 substitute(H_final_st, $ \mathcal{P} -> -4 e T $, repeat=True)
@@ -272,7 +301,7 @@ rename_dummies(H_final_st)
 # ===== 6. the α → 0 limit recovers the base TEGR Hamiltonian =====
 # ψ = 1 + 4αR/M² → 1 and U(ψ) → 0 as α → 0 (R² off): the vielbein Starobinsky
 # Hamiltonian reduces to (M²/2)·(book.tex 8190) — the base module's H_final.
-base_limit_check := @(H_final_st).
+base_limit_check = H_final_st.copy()
 substitute(base_limit_check, $ U(\psi) -> 0 $, repeat=True)
 substitute(base_limit_check, $ \psi -> 1 $, repeat=True)
 distribute(base_limit_check)

@@ -144,7 +144,17 @@ substitute(ex,$g^{\mu \nu} -> e^{\mu}_{a} e^{\nu}_{b} \eta^{a b}$,repeat=True)
 distribute(ex)
 rename_dummies(ex)
 product_rule(ex)
-unwrap(ex)
+# NOTE: there is deliberately NO `unwrap(ex)` here (it used to be, and it was a BUG):
+# `unwrap` removes the top node of every term, so on the `\int{...}{x}`-wrapped sum
+# produced by `product_rule` it dropped the wrapper and left `ex[0]` pointing at the
+# FIRST term of the integrand.  Measured on this build: with `unwrap(ex)`, `len(ex1)` = 18
+# (one product of 18 factors, i.e. a single term of the expanded action) and `pi_derived`
+# collapsed accordingly; without it, `ex1` is the full 120-term `eR` integrand and
+# `pi_derived` the corresponding 132-term polymomentum — which is what the header of this
+# module and the Rust test describe.  The `\int{}{}` wrapper must stay in place until AFTER
+# `integrate_by_parts` (that is what lets the algorithm drop the total derivative); the
+# integrand is then picked with `[0]` (child 0 of the `\int` node; child 1 is the
+# integration variable) — exactly the idiom used in qg_starobinsky_vielbein_hamiltonian.cdb.
 distribute(ex)
 rename_dummies(ex);
 #substitute(ex, $\partial_{\mu \nu}{e_{\alpha}^{a}} -> \partial_{\mu}{\partial_{\nu}{e_{\alpha}^{a}}}$)
