@@ -445,12 +445,12 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   PDG confirms experimentally to ~10%).
 
 - **`qcd_gluon_dispersion_sirk`** — computes: the free-gluon field
-  The one-particle Hamiltonian is enclosed at the outer level,
-  $H = \sum_{i,j} h_{ij} C_i^\dagger A_j$, and diagonalized by SIRK: the outer
-  the outer-enclosed final Hamiltonian is $H=\sum_{i,j}h_{ij}C_i^\dagger A_j$;
-  the outer vacuum is exactly 0 and one-quanton energies come from the inner $h$.
-  one-gluon Ritz $= |k|$ per mode, $n$-gluon additivity. *Setup*:
-  $k \in \{0.5, 1.0, 1.5, 2.0\}$, $m=4$. *Asserts*: $10^{-6}$ (exact class).
+  Hamiltonian **enclosed at the outer level**, $H = \sum_{i,j} h_{ij}
+  C_i^\dagger A_j$ (creation left, annihilation right), and diagonalized by
+  SIRK. The outer vacuum is exactly $0$ and the one-quanton energies come from
+  the inner one-particle operator $h$: one-gluon Ritz $= |k|$ per mode, with
+  $n$-gluon additivity. *Setup*: $k \in \{0.5, 1.0, 1.5, 2.0\}$, $m=4$.
+  *Asserts*: $10^{-6}$ (exact class).
 
 - **`qcd_mass_gap_sirk`** — computes: the contrast between the massless free
   gluon ($E \to 0$ as $k\to 0$) and the confined Cadabra-derived 3D
@@ -768,6 +768,19 @@ $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 
 ### 5.4b Starobinsky derivative-variable observables — `qg_starobinsky_derivative_variable.rs`
 
+> **Plan-of-record note (2026-09-18).** The strategy of record for the derivative
+> variables is *elimination*, not gauge fixing: the vielbein derivative modes are
+> removed by the definition-time substitution $\sigma(D_{\mu\nu}^i(k)) = k_\mu e_\nu^i(k)$,
+> on the physical modes alone (`ChapterQgFourierElimination`,
+> `ChapterQgFullEliminated` in `../timepiece`), so the extended space never enters
+> the domain and no ghost sector is needed. The BRST/promoted-variable suites below
+> are the regression tests of that machinery in the numerical twin; they are
+> consistency checks of the same physical content, never the definition. The final
+> QG Hamiltonian of record is the *nine*-component one-particle operator enclosed
+> in outer creation-left/annihilation-right operators — the R² vielbein form with
+> the **full exponential** Einstein-frame wall and the interaction terms, with no
+> Taylor truncation.
+
 While §5.4 covers the *BRST structure* of the promoted spatial-gradient
 variables (nilpotence, commutation, Ω-growth under truncation), this suite
 checks what the **remaining physical observables** do while the gauge
@@ -894,6 +907,23 @@ consistent and calculable.
 
 ### 5.6 NS derivative-variable observables — `ns_derivative_variable_fixing.rs`
 
+> **Plan-of-record note (2026-09-18).** The derivative variables of the field are
+> **eliminated**, not gauge-fixed: the substitution $u_{i,j} \mapsto i k_j u_i$,
+> $w_i \mapsto -|k|^2 u_i$, $y_j \mapsto 0$ is applied inside the squares that make
+> up the Hamiltonian (`ChapterNsFourierElimination`), and the one-particle
+> Hamiltonian of record is the resulting **positive** sum of squares
+> $H_{\rm sp} = H_{\rm visc} + H_{\rm advect}$ on the reduced six-coordinate parcel
+> (`ChapterNsOneBodyDGamma`), whose final Hamiltonian is its outer enclosure
+> $H = \sum_{ij} h_{ij} C_i^\dagger A_j = d\Gamma(H_{\rm sp})$ — creation left,
+> annihilation right. The *mainstream* Navier–Stokes generator (the
+> Koopman–von Neumann / Liouville operator $\tfrac12\sum_m(\pi_mF_m + F_m\pi_m)$) is
+> symmetric but **unbounded below** (`ChapterNsKoopman`,
+> `nsKoopmanOp_not_bounded_below`), so it is **not** the operator that is enclosed;
+> the mainstream leg carries its own comparison operator, the Leray energy
+> $N_E = 1 + \|u\|^2$. The suites below are the regression tests of the twin's
+> promoted-variable/BRST machinery and of the affine-fiber hopping structure — a
+> consistency check of the same one-particle datum, and a *check* only.
+
 The promoted-derivative-variable formalism (book.tex §4159-4197): the field
 $u(x) = \sum_n u_n H_n(x)$ with physicists' Hermite polynomials
 ($\partial_x H_n = 2n H_{n-1}$) has the derivative operator
@@ -948,6 +978,16 @@ The Fock/SIRK machinery against the Lean-formalization thread
 (`../timepiece/CONSOLIDATED_PLAN.md`, NS items): the Eulerian
 derivatives-as-fields picture, the affine-fiber hopping structure, the
 Hashimoto shift-invert selection theorem, and the BRST divergence constraint.
+
+The derivative variables are **eliminated**, not fixed, in the plan of record (see
+the note at §5.6); the **final Hamiltonian** these suites are checked against when
+a full-theory or ground-state statement is made is the outer enclosure
+$H = \sum_{ij} h_{ij} C_i^\dagger A_j$ of the positive, Fourier-eliminated
+one-particle generator $H_{\rm sp} = H_{\rm visc} + H_{\rm advect}$
+(`ChapterNsOneBodyDGamma`, `ChapterNsKoopman` in `../timepiece`). The BRST
+objects below are the twin's consistency checks of the same datum: the divergence
+constraint $\Omega = \sum_j u_{j,j}\,c_j$, its nilpotency and its commutator with
+the Hamiltonian.
 
 - **`ns_derivative_fields_constant_of_motion`** — computes:
   $[H, u_{i,j}] = [H, u_{i,jj}] = 0$ **exactly** (derivative modes carry no
