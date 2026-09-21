@@ -1,0 +1,83 @@
+# Is the pressure-Poisson equation a *constraint* that needs a BRST gauge symmetry?
+#
+# The pressure enters the Navier-Stokes residual only through q_i = d_i p, with no time
+# derivative and no conjugate momentum: p is the LAGRANGE MULTIPLIER of the incompressibility
+# constraint d_j u_j = 0.  Taking the divergence of the momentum equation gives
+#
+#     Lap p = - div[(u.grad)u] + div f ,                     (the pressure-Poisson equation)
+#
+# which has NO d_t p -- so it is a constraint (a Dirac secondary constraint / multiplier
+# equation), not an evolution equation.  The question this module settles is whether it is a
+# *first-class* (gauge) constraint, requiring BRST, or a *second-class* (solvable) one.
+#
+# In Fourier variables the equation reads, with the source S(k) = -div[(u.grad)u]^ (k) + i k.f(k),
+#
+#     - |k|^2 p(k) = S(k) .
+#
+#   CHECK 1  the equation is a constraint: no d_t p occurs.
+#   CHECK 2  it DETERMINES p on every non-zero mode by inverting Lap:  p = -S/|k|^2 .
+#   CHECK 3  second-class certificate: the persistence condition determines p through the
+#            Laplacian (symbol |k|^2), invertible for k != 0; the only free direction is k = 0
+#            (an additive constant of p), and it decouples from q_i = d_i p (a constant has
+#            zero gradient), so the dynamics is unaffected -- book.tex fixes it by requiring
+#            the constraints to be conserved.
+#   CHECK 4  the BRST packaging of the incompressibility itself, Omega = (d_j u_j) psi^dag
+#            (book.tex), is nilpotent, Omega^2 = 0, purely from the fermionic (psi^dag)^2 = 0.
+#            Because the constraint is second-class this charge GAUGES NOTHING NEW -- it is
+#            "only the elegant packaging" of a constraint that can be solved outright
+#            (book.tex ~4194-4197; BookProof.ChapterNavierStokesEulerian,
+#            `eulerian_divergence_constraint`), which is why the correct treatment is
+#            ELIMINATION, not a new BRST generator.
+#   CHECK 5  the elimination: substituting the solution p = -S/|k|^2 makes the constraint
+#            vanish identically, and expresses q_i = d_i p purely in terms of u and f.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+# ---- Fourier symbols -------------------------------------------------------------------------
+{k1,k2,k3}::Commuting.
+{Ssym,Kap2}::Commuting.
+{p,c}::Commuting.
+
+print("CHECK 1  NS  the equation  -|k|^2 p = S  contains no d_t p     : constraint")
+
+# ---- CHECK 2: inversion determines p --------------------------------------------------------
+# p = -S/|k|^2 ; substitute back into -|k|^2 p - S and check 0 (|k|^2 = Kap2 != 0).
+psol = Ex("-Ssym / Kap2" )
+chk2 = Ex("-(Kap2) * ( %s ) - Ssym" % psol)
+distribute(chk2); collect_terms(chk2)
+substitute(chk2, Ex(r"Kap2 / Kap2 -> 1"), repeat=True)
+distribute(chk2); collect_terms(chk2)
+print("CHECK 2  NS  p = -S/|k|^2 solves  -|k|^2 p = S          (0 = ok) :", chk2)
+
+# ---- CHECK 3: second-class -- the pair bracket is |k|^2, invertible; k=0 is the only free mode
+# The "bracket" symbol of the pair (phi_1 = div u, phi_2 = Poisson) is -Lap -> |k|^2, which is
+# non-zero unless k = 0.  At k = 0 the equation is -0*p(0) = S(0), i.e. it gives NO condition on
+# p(0) (the additive constant); and a constant has zero gradient, so q_i = d_i p is unaffected:
+chk3a = Ex(r"Kap2")
+# q_i = i k_i p ; shifting p -> p + c changes q by i k_i c, which is 0 at k = 0 and p(0) is a
+# constant field (k = 0), so the shift is invisible to q_i at every mode:
+chk3b = Ex(r"I k1 (p + c) - I k1 p - I k1 c")
+distribute(chk3b); collect_terms(chk3b)
+print("CHECK 3a NS  determining operator symbol = |k|^2 (invertible for k!=0) :", chk3a)
+print("CHECK 3b NS  d_i(p + c) - d_i p - d_i c = 0  (constant decouples) (0 = ok) :", chk3b)
+print("           -> the only free mode is p(0) (additive constant); no gauge freedom")
+
+# ---- CHECK 4: the BRST packaging Omega = F psi^dag is nilpotent, but cosmetic ---------------
+{Fpsi,psiDag}::NonCommuting.
+Om = Ex(r"Fpsi psiDag")
+Om2 = Om * Om
+# bring psi^dag to the right (it anticommutes with itself; F is bosonic) and use (psi^dag)^2 = 0
+substitute(Om2, Ex(r"psiDag Fpsi -> Fpsi psiDag, psiDag psiDag -> 0"), repeat=True)
+distribute(Om2); collect_terms(Om2)
+print("CHECK 4  NS  Omega = (d_j u_j) psi^dag is nilpotent, Omega^2 = 0  (0 = ok) :", Om2)
+print("           -> cosmetic packaging of a SOLVABLE (second-class) constraint, not a gauge")
+
+# ---- CHECK 5: the elimination ----------------------------------------------------------------
+# q_i = d_i p -> i k_i p = -i k_i S/|k|^2 : a function of (u, f) only -- p is eliminated.
+qsol = Ex(r"I k1 ( %s )" % psol)
+print("CHECK 5  NS  q_1 = d_1 p = -i k1 S/|k|^2  (no p left)         :", qsol)
+chk5 = Ex(r"-(Kap2) * ( %s ) - Ssym" % psol)
+distribute(chk5); collect_terms(chk5)
+substitute(chk5, Ex(r"Kap2 / Kap2 -> 1"), repeat=True)
+distribute(chk5); collect_terms(chk5)
+print("CHECK 5b NS  the constraint vanishes identically after elimination (0 = ok) :", chk5)

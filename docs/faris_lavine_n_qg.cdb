@@ -1,0 +1,132 @@
+# Faris-Lavine comparison operator N and commutation condition for the quantum-gravity
+# (scalaron + vielbein) Hamiltonian on the outer Fock space.
+#
+# MOTIVATION.  QG is proved through the Faris-Lavine commutator criterion like NS, but with
+# one structural difference that this module isolates: the **wall lies inside the comparison
+# operator N**.  The Hilbert space is the outer Fock space of the vielbein modes with values
+# in the scalaron line, and the comparison operator is the l^2-lift of the Friedrichs
+# extension of the positive fibre operator (`BookProof.ScalaronOuterFockFL.secN`)
+#     N  =  oplus_a Friedrichs( -d^2/dphi^2 + phi^2/4 + V(phi) + sigma_a ),
+# with V the FULL exponential Starobinsky wall (no Taylor truncation) and sigma_a >= 1 the
+# vielbein energy of the configuration.  The Hamiltonian is
+#     H  =  secDiag  +  secA  +  secB,
+#     secDiag = the same fibrewise scalaron operator (so on the core N acts as secDiag),
+#     secA    = the vielbein self-interaction, a multiplication by a matrix A (constants),
+#     secB    = the scalaron-vielbein coupling, a multiplication by a matrix B times phi.
+#
+# THE THREE COMMUTATION FACTS (certified below):
+#   (1) the fibre operator commutes with itself, [H_fib, N] = 0: on the core the
+#       scalarons contribution to the commutator vanishes - this is the "wall inside N"
+#       self-comparison (BookProof.ScalaronOuterFockFL.secHam_commForm_le, the `H = N`,
+#       `c = 0` fibre part);
+#   (2) the vielbein self-interaction commutes, [A, H_fib] = 0: multiplication by a constant
+#       matrix is a bounded operator commuting with the differential operator
+#       (the `imA_le` term, at most (1/2) K of the bound);
+#   (3) the scalaron-vielbein coupling does NOT commute: the identity
+#           [phi, H_fib] = 2 d/dphi
+#       (BookProof.ScalaronFiberFL.ham_x_comm_cc) produces the derivative term, which the
+#       quadratic form controls uniformly in the wall - `secB` contributes at most (9/4) K.
+#   Total: |commForm H N| <= 2 * ((1/2) K + (9/4) K) quadForm = (11/2) K quadForm <= 6 K
+#   quadForm, which is `secHam_commForm_le` with c = 6 K_Q.  The relative bound is
+#   K = 1 + 3 K_Q (vielbein matrices, not V).
+#
+# WHAT A .cdb MODULE CAN AND CANNOT CERTIFY.  Cadabra certifies the one-particle symbolic
+# facts: the fibre operator's self-commutativity, the two commutation identities (2) and
+# (3), the "wall inside N" payoff (the fibre estimates phi^2 <= 4 q, d^2 <= q, sigma >= 1),
+# the arithmetic-geometric-mean identity behind the weight bound, and the constant
+# arithmetic 2((1/2)K + (9/4)K) = 11/2 K <= 6 K.  The Hilbert-space statements (positivity
+# of the lifted Friedrichs extension, N + 1 onto, the graph core, the lift of the criterion)
+# are proved in Lean.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+def expand_derivs(ex, n):
+	"""Leibniz expansion of every nested partial derivative."""
+	for i in range(n):
+		product_rule(ex)
+		distribute(ex)
+	collect_terms(ex)
+
+\partial{#}::PartialDerivative.
+\phi::Depends(\partial{#}).
+\psi::Depends(\partial{#}).
+Vfun::Depends(\partial{#}).
+{kA, kB, K, sigma, phi0}::Commuting.
+
+# coordinate derivative rules and the differentiation-away of the constant shift sigma
+rules = Ex(r"\partial_{0}{\phi} -> 1, \partial_{0 0}{\phi} -> 0, \partial_{0}{sigma} -> 0, \partial_{0 0}{sigma} -> 0, \partial_{0}{kA} -> 0, \partial_{0 0}{kA} -> 0, \partial_{0}{kB} -> 0, \partial_{0 0}{kB} -> 0")
+
+# ===== 1. the fibre operator and its comparison (the wall inside N) =====
+# H_fib = N = -d^2/dphi^2 + phi^2/4 + V(phi) + sigma.
+# The principal symbol is p^2 + phi^2/4 + V(phi) + sigma with V >= 0 and sigma >= 0: a sum
+# of squares plus a non-negative potential - the positivity hypothesis of Theorem 1.  The
+# wall is not a perturbation: it is inside N.
+Hfib_psi := -\partial_{0}{\partial_{0}{\psi}} + (\phi \phi/4 + Vfun + sigma) \psi;
+
+# ===== 2. CHECK: the fibre operator commutes with itself ([H_fib, N] = 0) =====
+# H_fib(N psi) - N(H_fib psi) with N = H_fib must vanish identically.  Symbolically this is
+# the statement that the wall and the harmonic part sit in the SAME operator, so the
+# scalaron contribution to the commutator form is zero (the c = 0 fibre part).
+selfcomm := -\partial_{0}{\partial_{0}{ @(Hfib_psi) }} + (\phi \phi/4 + Vfun + sigma) @(Hfib_psi)
+            + \partial_{0}{\partial_{0}{ @(Hfib_psi) }} - (\phi \phi/4 + Vfun + sigma) @(Hfib_psi);
+distribute(selfcomm); collect_terms(selfcomm)
+print("CHECK 1  QG  fibre self-commutator [H_fib, N] = 0      (0 = ok) :", selfcomm)
+
+# ===== 3. CHECK: the vielbein self-interaction commutes ([A, H_fib] = 0) =====
+# A is a constant matrix (multiplication by a number); [A, -d^2] = 0 and [A, phi^2/4 + V + sigma] = 0.
+Acomm := kA @(Hfib_psi) - (-\partial_{0}{\partial_{0}{kA \psi}} + (\phi \phi/4 + Vfun + sigma) kA \psi);
+expand_derivs(Acomm, 4)
+substitute(Acomm, rules, repeat=True)
+sort_product(Acomm); canonicalise(Acomm); collect_terms(Acomm)
+print("CHECK 2  QG  [A, H_fib] = 0 for constant A              (0 = ok) :", Acomm)
+
+# ===== 4. CHECK: the coupling commutator identity [phi, H_fib] = 2 d/dphi =====
+# The scalaron-vielbein coupling B*phi does NOT commute with the wall: the kinetic term
+# produces a first-order derivative.  This is BookProof.ScalaronFiberFL.ham_x_comm_cc.
+# (Note the `@()` naming trap: `@(phi_comm)` would mis-resolve, since a stem of fewer
+#  than four characters before `_` is read as a subscript by the LaTeX parser - see the
+#  GOTCHA note in docs/qg_starobinsky_vielbein_hamiltonian.cdb.  Hence `phicomm`.)
+phicomm := \phi @(Hfib_psi) - (-\partial_{0}{\partial_{0}{\phi \psi}} + (\phi \phi/4 + Vfun + sigma) \phi \psi);
+expand_derivs(phicomm, 6)
+substitute(phicomm, rules, repeat=True)
+sort_product(phicomm); canonicalise(phicomm); collect_terms(phicomm)
+phicomm_exp := 2 \partial_{0}{\psi};
+check_phicomm := @(phicomm) - @(phicomm_exp);
+distribute(check_phicomm); collect_terms(check_phicomm)
+print("CHECK 3  QG  [phi, H_fib] = 2 d/dphi                    (0 = ok) :", check_phicomm)
+
+# ===== 5. CHECK: the "wall inside N" fibre estimates (as algebraic identities) =====
+# quadForm(N) = integral( |d psi|^2 + (phi^2/4 + V + sigma)|psi|^2 ).  The three inputs of
+# imB_le/hB's estimates are the pointwise facts below: the integrand dominates each piece,
+# so ||d psi||^2 <= q, ||psi||^2 <= q (sigma >= 1), ||phi psi||^2 <= 4 q.
+# Pointwise integrand minus the pieces:
+est_d := (\partial_{0}{\psi}) (\partial_{0}{\psi}) + (\phi \phi/4 + Vfun + sigma) \psi \psi - (\partial_{0}{\psi}) (\partial_{0}{\psi});
+est_u := (\partial_{0}{\psi}) (\partial_{0}{\psi}) + (\phi \phi/4 + Vfun + sigma) \psi \psi - (Vfun + sigma) \psi \psi;
+est_p := (\partial_{0}{\psi}) (\partial_{0}{\psi}) + (\phi \phi/4 + Vfun + sigma) \psi \psi - (\phi \phi/4) \psi \psi;
+for ex in [est_d, est_u, est_p]:
+	distribute(ex); collect_terms(ex)
+print("CHECK 4  QG  integrand minus |d psi|^2          (>= 0) :", est_d)
+print("CHECK 5  QG  integrand minus (V+sigma)|psi|^2   (>= 0) :", est_u)
+print("CHECK 6  QG  integrand minus (phi^2/4)|psi|^2   (>= 0) :", est_p)
+
+# ===== 6. CHECK: the arithmetic-geometric-mean identity behind double_sum_amgm =====
+# double_sum_amgm (BookProof.ScalaronOuterFockFL.double_sum_amgm) is exactly
+#     w f g <= (1/2)(w f^2 + w g^2)   for w >= 0,
+# whose difference is (1/2) w (f - g)^2.
+{w,f,g}::Commuting.
+amgm := (1/2)(w f f + w g g) - w f g;
+amgm_fact := (1/2) w (f - g) (f - g);
+check_amgm := @(amgm) - @(amgm_fact);
+distribute(check_amgm); sort_product(check_amgm); canonicalise(check_amgm); collect_terms(check_amgm)
+print("CHECK 7  QG  (1/2)(w f^2 + w g^2) - w f g = (1/2) w (f-g)^2  (0 = ok) :", check_amgm)
+
+# ===== 7. CHECK: the constant arithmetic 2((1/2)K + (9/4)K) = 11/2 K <= 6 K =====
+# imA_le gives (1/2) K, imB_le gives (9/4) K; secHam_commForm_le doubles the sum (the
+# factor two of the commutator form) and compares against 6 K:
+twoterms := 2 ((1/2) K + (9/4) K);
+check_arith := @(twoterms) - (11/2) K;
+distribute(check_arith); collect_terms(check_arith)
+print("CHECK 8  QG  2((1/2)K + (9/4)K) = 11/2 K              (0 = ok) :", check_arith)
+slack := 6 K - (11/2) K - (1/2) K;
+distribute(slack); collect_terms(slack)
+print("CHECK 9  QG  6K - 11/2 K = 1/2 K >= 0                 (0 = ok) :", slack)

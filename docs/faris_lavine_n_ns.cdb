@@ -1,0 +1,197 @@
+# Faris-Lavine comparison operator N and commutation condition for the *auxiliary positive
+# sum-of-squares operator* of the Navier-Stokes sector.
+#
+# NAME NOTE (2026-09-19).  The operator H below is NOT the Navier-Stokes Hamiltonian.  It is
+# the positive Weyl-ordered sum of squares of the constraint forms - an *auxiliary positive
+# operator* for the NS sector, and it is what the Faris-Lavine comparison `N` is built from.
+#
+# CAUTION on book.tex's "H^2(x)".  The paragraph after book.tex eq. 4186 proposes "using
+# H^2(x) as a positive auxiliary operator in Corollary 1.1".  That literal object - the SQUARE
+# of the generator - is NOT a valid Faris-Lavine comparison N in general, and must not be
+# confused with the sum-of-squares operator used here.  Two independent reasons, the first
+# formalized in the tree:
+#   (i) the criterion (BookProof.ChapterFarisLavineCore.essentiallySelfAdjointOn_of_farisLavine)
+#       requires `N + 1` ONTO, and range(H^2 + 1) is contained in range(H - i) because
+#       H^2 + 1 = (H - i)(H + i) on the domain; so H^2 + 1 is not onto whenever H has a
+#       non-trivial deficiency - exactly the situation of the formalized refutation
+#       BookProof.FarisLavine.not_farisLavine_criterion_of_relative_bound (the limit-circle
+#       Jacobi operator with N = H satisfies both inequalities while ESA fails);
+#   (ii) D(H^2) is strictly smaller than D(H), so H^2 cannot serve as a comparison on the
+#       common FL domain at all.
+# The valid comparison for the NS *Hamiltonian* leg is instead the Leray energy
+# N_E = 1 + |u|^2 (BookProof.NsKoopman.nsEnergyOp, commForm_kvn_energy_bound,
+# nsKoopman_esa_of_energy_comparison); see `docs/ns_kvn_equation.cdb` CHECK 4-6.
+# The Navier-Stokes Hamiltonian proper is the Koopman-von Neumann / Liouville generator of the
+# FULL residual, which carries the pressure gradient q_i = d_i p (and the external force f_i) as
+# well as the advection and the viscosity,
+#     H_NS = pi^i ( u_j u_{i,j} + q_i - nu u_{i,jj} ) + h.c.
+# (tree: the residual is `BookProof.NsFullEuler.nsResPoly` = u_j u_{i,j} + q_i - nu w_i, with the
+# incompressibility `divPoly` = sum_j u_{j,j} = 0; in the mainstream Leray-Galerkin form the
+# pressure is eliminated by the Leray projection and the drift reduces to
+# `BookProof.NsKoopman.kvnPoly` / `nsKoopmanOp`).  It is *not* bounded below and it reproduces the
+# Navier-Stokes equations through i[H_NS, u_k] = 2 F_k,
+# F_k = u_j u_{k,j} + q_k - nu u_{k,jj} + f_k.  That statement - the one that identifies the NS
+# Hamiltonian - is verified in `docs/ns_kvn_equation.cdb` CHECK 1 (commutator) and CHECK 8
+# (pressure/constraint); this module verifies only the comparison-side algebra for the auxiliary
+# operator.
+#
+# MOTIVATION. The essential self-adjointness of the field-space Hamiltonians is proved in
+# `../timepiece` through the commutator criterion of
+#     W. G. Faris and R. B. Lavine, Commutators and self-adjointness of Hamiltonian
+#     operators, Commun. Math. Phys. 35 (1974), 39-48, Theorem 1,
+# formalized in BookProof/ChapterFarisLavineCore.essentiallySelfAdjointOn_of_farisLavine.
+# Theorem 1 asks for a positive self-adjoint operator N whose domain carries H (so H is
+# defined on D(N)), with N + 1 onto, and the commutator-form bound
+#     ± i [H, N]  <=  c N        i.e.  |commForm H N u| <= c * quadForm N u
+# on the core.  This module certifies the SYMBOLIC content of that certificate for the
+# auxiliary positive operator of the Navier-Stokes sector (NOT the NS Hamiltonian - see the
+# NAME NOTE above)
+#     H  =  (1/2) sum_j kappa_j pi_j^2  +  (1/2) sum_r L_r^2 ,   L_r = sum_i v_{ri} x_i ,
+#     pi_j = -i d/dx_j ,
+# against the harmonic comparison operator
+#     N  =  -Delta + |x|^2 / 4  =  sum_j ( -d_j^2 + (1/4) x_j^2 ) .
+# This is exactly the Faris-Lavine certificate of
+#     BookProof.ChapterSqSumFarisLavine      (commPoly_eq, commConst, commForm_sqSumOp_le,
+#                                             norm_sqSumOp_le)
+# consumed by BookProof.FarisLavineOnly.sqSumOp_esa_farisLavine and by every gauge-fixed NS
+# parcel family (BookProof.NsOuterFock.nsOuterFock_esa_farisLavine, c = 1/2 + 84 B^2).
+#
+# WHAT A .cdb MODULE CAN AND CANNOT CERTIFY.  Cadabra is a symbolic/algebraic engine on
+# classical expressions.  It certifies here: (i) that N is the positive harmonic
+# comparison (a sum of squares); (ii) that the commutator [H, N] is FIRST ORDER and has
+# exactly the shape the Lean commutator lemma claims - a constant plus symmetrized
+# momentum-coordinate products, the potential entering only through its gradient - so that
+# the commutator-form bound is a statement about the one-particle symbol; (iii) the two
+# elementary dominance identities (AM-GM and Young) that turn that shape into the bound
+# with the constants c = km/2 + 2M and K = 3 km/2 + 8 B.  It does NOT certify the Hilbert
+# space statements (symmetry, positivity as a quadratic form, N + 1 onto, the closedness of
+# the core); those are proved in Lean.
+#
+# PIPELINE.  Cells below:
+#   N               - the comparison operator, the sum of squares -d_j^2 + (1/4) x_j^2.
+#   Vpot            - the potential V = (1/2) sum_r L_r^2 (the second half of H).
+#   comm            - [H, N] phi computed by the Leibniz rule (product_rule), constants
+#                     differentiated away; must be first order in phi.
+#   comm_exp        - the claimed shape (commPoly_eq): a constant plus 2 (grad_j V) d_j
+#                     and the symmetrized momentum-coordinate products.
+#   check_comm      - comm - comm_exp, which must vanish identically.
+#   G1, G2          - the gradient d_j V (must equal grad_j = sum_r v_{rj} L_r).
+#   H11, H22        - the Laplacian d_j^2 V (must equal sum_r v_{rj}^2); these two are the
+#                     entries of the constant commConst.
+#   commConst       - -(1/4) sum_j kappa_j + sum_r sum_k v_{rk}^2  (the Lean commConst).
+#   amgm, young     - the dominance identities (a b <= a^2 + b^2/4) and
+#                     (2 g a <= g^2/(2M) + 2M a^2) as polynomial identities.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+def expand_derivs(ex, n):
+	"""Leibniz expansion of every nested partial derivative."""
+	for i in range(n):
+		product_rule(ex)
+		distribute(ex)
+	collect_terms(ex)
+
+\partial{#}::PartialDerivative.
+{x1,x2}::Depends(\partial{#}).
+V::Depends(\partial{#}).
+\phi::Depends(\partial{#}).
+
+# ===== derivative rules: coordinate derivatives (d_j x_k = delta_{jk}) and the
+# differentiation-away of the constant coefficients (kappa, v).  Order matters: the
+# delta rules for the coordinates must precede any "= 0" rule for the same pattern.
+xkills = [r"\partial_{1}{x1} -> 1", r"\partial_{2}{x2} -> 1",
+          r"\partial_{1}{x2} -> 0", r"\partial_{2}{x1} -> 0",
+          r"\partial_{1 1}{x1} -> 0", r"\partial_{2 2}{x1} -> 0", r"\partial_{1 2}{x1} -> 0",
+          r"\partial_{1 1}{x2} -> 0", r"\partial_{2 2}{x2} -> 0", r"\partial_{1 2}{x2} -> 0"]
+ckills = []
+for c in ["k1","k2","v11","v12","v21","v22"]:
+	for d in ["1","2","1 1","2 2","1 2"]:
+		ckills.append(r"\partial_{%s}{%s} -> 0" % (d, c))
+const_rules = Ex(", ".join(xkills + ckills))
+
+# ===== 1. the comparison operator N = -Delta + |x|^2/4 = sum_j ( -d_j^2 + (1/4)x_j^2 )
+# (D = 2 here; no step below uses the dimension, so the general case is the same term by
+#  term).  Each summand's principal symbol is p_j^2 + x_j^2/4 >= 0: N is a positive sum of
+#  squares, which is the positivity hypothesis of Theorem 1.
+Npot := (1/4)(x1 x1 + x2 x2);
+
+# ===== 2. the Hamiltonian: H = -(1/2)(k1 d1^2 + k2 d2^2) + Vpot, Vpot = (1/2) sum_r L_r^2
+L1 := v11 x1 + v12 x2.
+L2 := v21 x1 + v22 x2.
+Vpot := (1/2)( @(L1) @(L1) + @(L2) @(L2) );
+
+# ===== 3. the commutator [H, N] = H(N phi) - N(H phi), expanded by the Leibniz rule =====
+Nphi := -\partial_{1}{\partial_{1}{\phi}} - \partial_{2}{\partial_{2}{\phi}} + @(Npot) \phi.
+Hphi := -(1/2) k1 \partial_{1}{\partial_{1}{\phi}} - (1/2) k2 \partial_{2}{\partial_{2}{\phi}} + V \phi.
+comm := -(1/2) k1 \partial_{1}{\partial_{1}{ @(Nphi) }} - (1/2) k2 \partial_{2}{\partial_{2}{ @(Nphi) }} + V @(Nphi)
+        + \partial_{1}{\partial_{1}{ @(Hphi) }} + \partial_{2}{\partial_{2}{ @(Hphi) }} - @(Npot) @(Hphi);
+expand_derivs(comm, 12)
+substitute(comm, const_rules, repeat=True)
+sort_product(comm); canonicalise(comm); collect_terms(comm)
+
+# The claimed shape (BookProof.ChapterSqSumFarisLavine.commPoly_eq, read in the standard
+# pi_j = -i d_j convention): a constant, the symmetrized -kappa_j/2 (x_j d_j) products, and
+# twice the gradient of the potential dotted into the derivatives.
+comm_exp := -(1/4)(k1 + k2) \phi
+            - (1/2) k1 x1 \partial_{1}{\phi} - (1/2) k2 x2 \partial_{2}{\phi}
+            + 2 \partial_{1}{V} \partial_{1}{\phi} + 2 \partial_{2}{V} \partial_{2}{\phi}
+            + \partial_{1 1}{V} \phi + \partial_{2 2}{V} \phi;
+check_comm := @(comm) - @(comm_exp);
+distribute(check_comm); sort_product(check_comm); canonicalise(check_comm); collect_terms(check_comm)
+print("CHECK 1  NS  commutator [H,N] has the Faris-Lavine shape (0 = ok) :", check_comm)
+
+# ===== 4. the potential data: d_j V and d_j^2 V for V = (1/2) sum_r L_r^2 =====
+# d_j V must equal grad_j = sum_r v_{rj} L_r   (BookProof.ChapterSqSumFarisLavine.gradPoly),
+# and d_j^2 V must equal sum_r v_{rj}^2, whose sum is the constant commConst.
+G1 := \partial_{1}{ @(Vpot) }.
+G2 := \partial_{2}{ @(Vpot) }.
+for ex in [G1, G2]:
+	expand_derivs(ex, 6)
+	substitute(ex, const_rules, repeat=True)
+	sort_product(ex); canonicalise(ex); collect_terms(ex)
+grad1 := v11 @(L1) + v21 @(L2).
+grad2 := v12 @(L1) + v22 @(L2).
+check_g1 := @(G1) - @(grad1);
+check_g2 := @(G2) - @(grad2);
+distribute(check_g1); sort_product(check_g1); canonicalise(check_g1); collect_terms(check_g1)
+distribute(check_g2); sort_product(check_g2); canonicalise(check_g2); collect_terms(check_g2)
+print("CHECK 2a NS  d1 V = grad_1                        (0 = ok) :", check_g1)
+print("CHECK 2b NS  d2 V = grad_2                        (0 = ok) :", check_g2)
+
+H11 := \partial_{1}{ \partial_{1}{ @(Vpot) } }.
+H22 := \partial_{2}{ \partial_{2}{ @(Vpot) } }.
+for ex in [H11, H22]:
+	expand_derivs(ex, 8)
+	substitute(ex, const_rules, repeat=True)
+	sort_product(ex); canonicalise(ex); collect_terms(ex)
+check_h11 := @(H11) - (v11 v11 + v21 v21);
+check_h22 := @(H22) - (v12 v12 + v22 v22);
+distribute(check_h11); collect_terms(check_h11)
+distribute(check_h22); collect_terms(check_h22)
+print("CHECK 2c NS  d1^2 V = sum_r (v_r1)^2             (0 = ok) :", check_h11)
+print("CHECK 2d NS  d2^2 V = sum_r (v_r2)^2             (0 = ok) :", check_h22)
+
+# The constant of commPoly_eq: -(1/4) sum_j kappa_j + sum_r sum_k v_{rk}^2.
+commConst := -(1/4)(k1 + k2) + (v11 v11 + v12 v12 + v21 v21 + v22 v22);
+print("CHECK 3  NS  commConst = -1/4 sum kappa + sum v^2        :", commConst)
+
+# ===== 5. the two dominance identities behind the bound =====
+# The commutator contributes, per mode, |kappa_j|/2 * (b_j a_j) and, from the gradient,
+# 2 g_j a_j, with a_j = ||d_j u||, b_j = ||x_j u||, g_j = ||(grad_j) u||.  The bound
+#     |commForm| <= (km/2 + 2M) quadForm N,   quadForm N = sum_j (a_j^2 + b_j^2/4),
+# follows from the two elementary identities below, together with the Schur bound
+# sum_j g_j^2 <= M^2 sum_j b_j^2 (BookProof.ChapterSqSumFarisLavine.sum_gradFun_sq_le_of_schur).
+{a,b,g,M}::Commuting.
+amgm := (a a + (1/4) b b) - a b;
+amgm_fact := (a - b/2) (a - b/2);
+check_amgm := @(amgm) - @(amgm_fact);
+distribute(check_amgm); sort_product(check_amgm); canonicalise(check_amgm); collect_terms(check_amgm)
+print("CHECK 4a NS  a^2 + b^2/4 - a b = (a - b/2)^2       (0 = ok) :", check_amgm)
+
+# Multiplied through by 2M to keep the check polynomial:
+#   2M (g^2/(2M) + 2M a^2 - 2 g a) = g^2 + 4 M^2 a^2 - 4 M g a = (g - 2 M a)^2.
+young := (g g) + 4 M M (a a) - 4 M g a;
+young_fact := (g - 2 M a) (g - 2 M a);
+check_young := @(young) - @(young_fact);
+distribute(check_young); sort_product(check_young); canonicalise(check_young); collect_terms(check_young)
+print("CHECK 4b NS  g^2/(2M) + 2M a^2 - 2 g a = (g-2Ma)^2/(2M) (0 = ok) :", check_young)

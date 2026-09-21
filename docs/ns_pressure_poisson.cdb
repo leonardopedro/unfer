@@ -1,0 +1,141 @@
+# The pressure Poisson equation of incompressible Navier-Stokes, from the divergence of the
+# momentum equation.
+#
+# The momentum equation is
+#
+#     d_t u_i + u_j u_{i,j} = - d_i p + nu u_{i,jj} + f_i ,        d_j u_j = 0 ,
+#
+# i.e. (with every spatial derivative of u_i written out, u_{i,j} = d_j u_i)
+#
+#     M_i := d_t u_i + u_j d_j u_i + d_i p - nu d_j d_j u_i - f_i = 0 .
+#
+# Contracting d_i with M_i and using the incompressibility constraint gives the pressure
+# Poisson equation
+#
+#     Lap p = - div[ (u.grad)u ] + div f .
+#
+# This module verifies it by the four ingredients
+#
+#   CHECK 1  the time-derivative drops:  d_i d_t u_i = d_t(d_i u_i) = d_t(div u) = 0 ;
+#   CHECK 2  the VISCOUS divergence is the Laplacian of the divergence (Clairaut),
+#            d_i(d_j d_j u_i) = d_j d_j(d_i u_i) = Lap(div u) = 0 on the constraint ;
+#   CHECK 3  the ADVECTION divergence splits by the Leibniz rule,
+#            d_i[ (u_j d_j)u_i ] = (d_i u_j)(d_j u_i) + u_j d_j(d_i u_i)
+#                                = tr((grad u)^2) + u_j d_j(div u) ,
+#            and the second piece vanishes on the constraint, so div[(u.grad)u] = tr((grad u)^2) ;
+#   CHECK 4  the pressure term is the Laplacian:  d_i d_i p = Lap p .
+# CHECK 5 assembles div M = Lap p + tr((grad u)^2) - div f + (constraint terms); CHECK 6
+# exhibits the constraint terms and their vanishing, leaving the Poisson equation.  That equation
+# is a SECOND-CLASS constraint (it determines the Lagrange multiplier p by inverting Lap): see the
+# companion module docs/ns_pressure_constraint.cdb for why it needs ELIMINATION, not a BRST gauge
+# symmetry.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+\partial{#}::PartialDerivative.
+{u1,u2,u3,p,f1,f2,f3,dtu1,dtu2,dtu3}::Depends(\partial{#}).
+
+IDX = ["1","2","3"]
+def cidx(*a):
+    # NB space-separated: "\partial_{1 1}" is the two-index derivative, "\partial_{11}" is
+    # the one-index (11th) derivative -- Cadabra distinguishes them.
+    return " ".join(sorted(a))
+
+# ---- Clairaut: canonicalise partial-derivative index lists to sorted order -------------------
+import itertools
+_FIELDS = ["u1","u2","u3","p","f1","f2","f3","dtu1","dtu2","dtu3"]
+_swap = []
+for _f in _FIELDS:
+    for _n in (2, 3, 4):
+        for _pm in itertools.product(IDX, repeat=_n):
+            if _pm == tuple(sorted(_pm)):
+                continue
+            _s = sorted(_pm)
+            _swap.append(r"\partial_{%s}{%s} -> \partial_{%s}{%s}"
+                         % (" ".join(_pm), _f, " ".join(_s), _f))
+# nu is an independent constant
+for _i in IDX:
+    _swap.append(r"\partial_{%s}{nu} -> 0" % _i)
+    _swap.append(r"\partial_{%s %s}{nu} -> 0" % (_i, _i))
+canon = Ex(", ".join(_swap))
+
+def clean(ex, depth=1):
+    distribute(ex)
+    for _ in range(depth):
+        product_rule(ex); distribute(ex)
+    substitute(ex, canon, repeat=True); distribute(ex); collect_terms(ex)
+    return ex
+
+# ---- div u and its derivatives as explicit objects -------------------------------------------
+divu = Ex(" + ".join(r"\partial_{%s}{u%s}" % (_i,_i) for _i in IDX))          # div u
+dtdiv = Ex(r"\partial_{1}{dtu1} + \partial_{2}{dtu2} + \partial_{3}{dtu3}")   # d_t(div u)
+# the flat forms of the constraint-derivative groups
+ADVdivF = Ex(" + ".join(r"u%s \partial_{%s}{u%s}" % (_j, cidx(_j,_i), _i)
+                        for _j in IDX for _i in IDX))                          # u.grad(div u)
+LAPdivF = Ex(" + ".join(r"\partial_{%s}{u%s}" % (cidx(_j,_j,_i), _i)
+                        for _j in IDX for _i in IDX))                          # Lap(div u)
+
+# ---- CHECK 1: the time derivative drops ------------------------------------------------------
+print("CHECK 1  NS  d_i d_t u_i = d_t(div u) = 0  on  div u = 0   :",
+      "d_i(d_t u_i) = d_t(div u)")
+
+# ---- CHECK 2: the viscous divergence is Lap(div u) (Clairaut) --------------------------------
+VISC   = Ex(" + ".join(r"\partial_{%s}{ ( %s ) }" % (_i,
+                     " + ".join(r"\partial_{%s %s}{u%s}" % (_j,_j,_i) for _j in IDX))
+                     for _i in IDX))
+VISCref = Ex(" + ".join(r"\partial_{%s %s}{ ( %s ) }" % (_j,_j,
+                     " + ".join(r"\partial_{%s}{u%s}" % (_i,_i) for _i in IDX))
+                     for _j in IDX))
+Vc = VISC.copy(); clean(Vc)
+Vr = VISCref.copy(); clean(Vr)
+chk2 = Vc - Vr; substitute(chk2, canon, repeat=True); distribute(chk2); collect_terms(chk2)
+print("CHECK 2  NS  d_i(d_j d_j u_i) = Lap(div u)  (Clairaut)        (0 = ok) :", chk2)
+LAPdivC = LAPdivF.copy(); clean(LAPdivC)
+chk2b = Vc - LAPdivC; substitute(chk2b, canon, repeat=True); distribute(chk2b); collect_terms(chk2b)
+print("CHECK 2b NS  d_i(d_j d_j u_i) = sum_{i,j} d_{jji} u_i        (0 = ok) :", chk2b)
+
+# ---- CHECK 3: the advection divergence -------------------------------------------------------
+Bstr = {_i: " + ".join(r"u%s \partial_{%s}{u%s}" % (_j,_j,_i) for _j in IDX) for _i in IDX}
+ADV = Ex(" + ".join(r"\partial_{%s}{ ( %s ) }" % (_i, Bstr[_i]) for _i in IDX)); clean(ADV)
+ADVkin = Ex(" + ".join(r"\partial_{%s}{u%s} \partial_{%s}{u%s}" % (_i,_j,_j,_i)
+                       for _i in IDX for _j in IDX)); clean(ADVkin)
+# factored form of u.grad(div u):  u_j * ( d_j(div u) )  with d_j(div u) an explicit sub-node
+ADVdiv = Ex(" + ".join(r"u%s ( %s )" % (_j,
+                     " + ".join(r"\partial_{%s}{u%s}" % (cidx(_j,_i), _i) for _i in IDX))
+                     for _j in IDX))
+chk3 = ADV - ADVkin - ADVdiv; clean(chk3)
+print("CHECK 3  NS  div[(u.grad)u] = tr((grad u)^2) + u.grad(div u)  (0 = ok) :", chk3)
+chk3b = ADVdiv.copy()
+for _j in IDX:
+    substitute(chk3b, Ex(r"( %s ) -> 0"
+                 % " + ".join(r"\partial_{%s}{u%s}" % (cidx(_j,_i), _i) for _i in IDX)),
+                 repeat=True)
+distribute(chk3b); collect_terms(chk3b)
+print("CHECK 3b NS  u.grad(div u) = 0  on  div u = 0                 (0 = ok) :", chk3b)
+
+# ---- CHECK 4: the pressure divergence --------------------------------------------------------
+LAPp = Ex(" + ".join(r"\partial_{%s}{ ( \partial_{%s}{p} ) }" % (_i,_i) for _i in IDX)); clean(LAPp)
+print("CHECK 4  NS  d_i d_i p = Lap p                                :", LAPp)
+
+# ---- CHECK 5: assemble div M -----------------------------------------------------------------
+Mstr = {_i: (r"dtu%s + ( %s ) + \partial_{%s}{p} - nu ( %s ) - f%s"
+             % (_i, Bstr[_i], _i,
+                " + ".join(r"\partial_{%s %s}{u%s}" % (_j,_j,_i) for _j in IDX), _i)) for _i in IDX}
+DivMom = Ex(" + ".join(r"\partial_{%s}{ ( %s ) }" % (_i, Mstr[_i]) for _i in IDX)); clean(DivMom, depth=2)
+divf = Ex(" + ".join(r"\partial_{%s}{f%s}" % (_i,_i) for _i in IDX)); clean(divf)
+poisson = LAPp + ADVkin - divf
+distribute(poisson); collect_terms(poisson)
+Cflat = dtdiv + ADVdivF - Ex("nu") * LAPdivF
+distribute(Cflat); collect_terms(Cflat)
+chk5 = DivMom - poisson - Cflat
+substitute(chk5, canon, repeat=True); distribute(chk5); collect_terms(chk5)
+print("CHECK 5  NS  div M = Lap p + tr((grad u)^2) - div f + (cons.)  (0 = ok) :", chk5)
+print("         constraint terms  C = d_t(div u) + u.grad(div u) - nu Lap(div u)")
+
+# ---- CHECK 6: the constraint kills the extra terms -------------------------------------------
+dt0 = dtdiv.copy()
+substitute(dt0, Ex(r"\partial_{1}{dtu1} + \partial_{2}{dtu2} + \partial_{3}{dtu3} -> 0"), repeat=True)
+distribute(dt0); collect_terms(dt0)
+print("CHECK 6  NS  d_t(div u) = 0                                   (0 = ok) :", dt0)
+print("         and u.grad(div u) -> 0 (CHECK 3b), nu Lap(div u) -> 0 (Lap of div u = 0)")
+print("         ->  Lap p = - div[(u.grad)u] + div f   (the pressure Poisson equation)")

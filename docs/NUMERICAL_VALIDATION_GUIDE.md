@@ -25,6 +25,49 @@
 > where the predictions agree with experiment or other approximations, where
 > they fail and why, and which statements are explicitly not claimed.
 
+> **Convention: what "the final Hamiltonian" means here (NS / QG(R²) / QYM /
+> QED).**  For all four sectors the object of record is the **outer
+> enclosure** of an inner one-particle Hamiltonian on the nested Fock space,
+> $`H = \sum_{ij} h_{ij}\, C^\dagger(e_i)\, A(e_j) = d\Gamma(h)`, with
+> **creation on the left and annihilation on the right**.  The inner operator
+> enters verbatim (only a constant shift, used to establish positivity, is
+> allowed); the outer Hamiltonian is therefore quadratic in the outer ladders
+> for *any* $`h`, so a cubic/quartic nonlinearity or a full exponential wall
+> lives entirely in the one-particle matrix elements and adds **no** outer
+> vertex.  The nested space has two levels — the outer Fock space (ladders
+> $`C^\dagger/A`) and the inner one-particle Hilbert space on which $`h`
+> acts.
+>
+> **NS.**  The one-particle operator enclosed is the **positive**
+> sum-of-squares generator $`H_{\rm sp} = H_{\rm visc} + H_{\rm advect}`
+> on the Fourier-eliminated six-coordinate parcel
+> (`ChapterNsOneBodyDGamma`; `nsSpDGamma_esa_farisLavine`).  The *mainstream*
+> Navier–Stokes Hamiltonian — the Koopman–von Neumann (Liouville) generator
+> $`\tfrac12\sum_m(\pi_m F_m + F_m\pi_m)` of $`\dot u = -\nu A u + B(u,u)` — is
+> symmetric but **not bounded below** (`ChapterNsKoopman`,
+> `nsKoopmanOp_not_bounded_below`), so it is *not* the operator that gets
+> enclosed; its own leg carries the Leray-energy comparison
+> $`N_E = 1 + \lVert u\rVert^2` instead (`commForm_kvn_energy_bound`).  The
+> operator $`\tfrac12\pi^2 + \tfrac12(\mathrm{mulOp})^2` that some rows below
+> call the "NS Hamiltonian" is in fact the *auxiliary* comparison
+> (sum-of-squares) operator, not the generator of the equation.
+>
+> **Derivative variables: eliminated by the momentum-space convolution, not
+> fixed by BRST.**  In the formal theory the variables representing the
+> spatial derivatives of the fields are removed by a spatial Fourier
+> substitution *inside* the squares of the Hamiltonian, so that in momentum
+> space a product of fields with a spatial derivative becomes a
+> **convolution** (`ChapterNsAdvectionConvolution`:
+> `fourier_advection_convolution`, `fourier_advection_sum`;
+> $`\mathcal F[u_j\,\partial_m u_i](Q) = \int 2\pi i\,\langle q,m\rangle\,
+> \hat u_i(q)\,\hat u_j(Q-q)\,dq`).  The derivative-mode elimination is also
+> what removes the twenty-seven vielbein derivative modes in QG
+> (`ChapterQgFourierElimination`, `ChapterQgFullEliminated`).  The BRST
+> charges and the `brst_charge` projection discussed below are therefore
+> **optional numerical consistency checks** on the twin's operators — they
+> verify the projection-invariance of a sector that the formal route simply
+> eliminates — and are *not* the definition of the theory.
+
 ---
 
 ## 1. Why validate against published physics?
@@ -205,7 +248,7 @@ E4:7.3e-3, ...
 | `yang_mills_lattice` | Kogut–Susskind-inspired **comparison** lattice (NOT the Cadabra-derived gauge-fixed QYM — see `qcd_ym_hamiltonian`) | lattice strong-coupling gap $\approx g^2/2$ — a benchmark for the SIRK machinery, NOT a Millennium-positivity claim for this project's model |
 | `qg_free_graviton` | $\sum c\|k\| N_k$ | GW speed $= c$ (GW170817 constraint) |
 | `qg_starobinsky_*` | scalaron $\sum m N + \tfrac12\sum g^2$, $m^2=M^2/12\alpha$ | massive dispersion, ESA/boundedness of $R^2$ gravity |
-| `ns_eulerian_fiber` | $H = K_0 + \{\pi_0, u\cdot\partial u\}$ | Euler advection, gauge-fixed derivative variables |
+| `ns_eulerian_fiber` | $H = K_0 + \{\pi_0, u\cdot\partial u\}$ | Euler advection; derivative variables eliminated by the spatial Fourier substitution (momentum-space convolution), the BRST projection being only an optional consistency check |
 
 The Cadabra2 connection: several Hamiltonians are not transcribed by hand but
 **derived** — the classical action is varied, Legendre-transformed, and
@@ -223,7 +266,12 @@ decomposes into four verifiable steps, each pinned by tests:
 1. **Action → Hamiltonian (Cadabra2).** Each `docs/*.cdb` module starts from
 the classical action, varies it (polymomentum), Legendre-transforms, and
 gauge-fixes to produce $H_{\rm final}$: NS the quantized Euler generator
-$\sum_i\{\pi_i, A_i\}$, $A_i = \sum_j u_j u_{ij} - \nu u_{12+i}$; QG(R²) the
+$\sum_i\{\pi_i, A_i\}$, $A_i = \sum_j u_j u_{ij} - \nu u_{12+i}$ (in the formal
+theory the *inner one-particle* operator enclosed in the outer ladders is the
+positive sum-of-squares $H_{\rm sp} = H_{\rm visc} + H_{\rm advect}$ of
+`ChapterNsOneBodyDGamma`, and the derivative variables $u_{ij}$ are eliminated
+by the spatial Fourier substitution — the advection becoming a momentum-space
+convolution — not fixed by a gauge symmetry); QG(R²) the
 scalar sector $\tfrac12\pi^2 + \tfrac12(\nabla\phi)^2 + V(\phi)$ with the
 scalaron mass $m^2 = M^2/12\alpha$; QYM $H_{\rm final} = \tfrac12\pi^2 +
 \tfrac12 B^2$ with $B$ a genuine function of $A$; QED the $U(1)$
@@ -584,7 +632,14 @@ $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 > projector onto ker Ω riding along (`Some(&brst)`) resolves the SAME Ritz
 > spectrum and the SAME conserved derivative-field `⟨u_{0,0}⟩` as the bare
 > solve: the fixing is BRST-exact, zero impact on physical expectation
-> values.  Krylov depth m=4 (the tractable depth for the 168-term full NS
+> values.  (Scope: in the **formal** theory the NS derivative variables
+> `u_{i,j}` are not gauge-fixed but eliminated by the spatial Fourier
+> substitution, with the advection becoming a momentum-space convolution
+> (`ChapterNsAdvectionConvolution`); this projection is a numerical
+> consistency check on the twin's operator, not the route the proof takes,
+> and the operator enclosed in the full theory is the positive
+> `H_sp = H_visc + H_advect`, never the unbounded-below mainstream generator.)
+> Krylov depth m=4 (the tractable depth for the 168-term full NS
 > operator — the raw Hashimoto frame explodes combinatorially at deeper
 > windows, the bare matvec at depth 4 already spanning ~2×10⁵ components).
 

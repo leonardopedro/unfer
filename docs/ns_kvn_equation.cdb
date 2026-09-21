@@ -1,0 +1,358 @@
+# The Navier-Stokes *Hamiltonian* (the Koopman-von Neumann / Liouville generator of
+# book.tex 4186) and the equation it generates through its commutator with the velocity
+# density on the outer (nested) Fock space.
+#
+# WHY THIS MODULE EXISTS.  Earlier .md notes (and the header of `faris_lavine_n_ns.cdb`)
+# called the positive Weyl-ordered *sum-of-squares* operator
+#     H_sos = (1/2) sum_m pi_m^2 + (1/2) sum_r (mulOp Phi_r)^2
+# "the Navier-Stokes one-body Hamiltonian".  That is the wrong object: `H_sos` is the
+# *auxiliary positive operator* used to run the Faris-Lavine criterion (book.tex uses
+# "H^2(x) as a positive auxiliary operator in Corollary 1.1"), NOT the generator of the
+# flow.  The Navier-Stokes Hamiltonian is, verbatim book.tex 4186,
+#
+#     H = int d^3x ... a^dag(x,...) H(x,...) a(x,...)
+#     H(x,...) = pi^i ( u_j u_{i,j} + q_i - nu u_{i,jj} ) + h.c.  (pi^i = -i d/du_i)
+#
+# THE PRESSURE AND THE INCOMPRESSIBILITY CONSTRAINT.  The Navier-Stokes equation is
+#
+#     d_t u_i + u_j u_{i,j} = - d_i p + nu u_{i,jj} + f_i ,      d_j u_j = 0 ,
+#
+# so the drift must be the FULL residual, including the pressure gradient `q_i := d_i p` and
+# the external force `f_i`, exactly as the tree writes it: `BookProof.NsFullEuler.nsResPoly`
+# (`R_i = sum_j u_j u_{i,j} + q_i - nu w_i`), whose pressure-gradient coordinate is `qIdx`,
+# together with the incompressibility `BookProof.NsFullEuler.divPoly` (`sum_j u_{j,j} = 0`).
+# The pressure is NOT an independent dynamical field: it is the Lagrange multiplier of the
+# constraint, and
+#   (a) it does no work on the velocity, `sum_k u_k q_k = 0` on the divergence-free sector
+#       (`CHECK 8b`), which is exactly the pressure half of Leray's identity;
+#   (b) the constraint is carried either by the Fourier elimination (the reduced form
+#       `fourierVisc = q_i + nu|k|^2 u_i`, tree `nsElimSubst_resPoly`) or, in the mainstream
+#       Leray-Galerkin form, eliminated altogether by the Leray projection - in which case the
+#       drift reduces to `F_i = -nu lam_i u_i + B_i(u,u)` (timepiece
+#       `BookProof.NsKoopman.kvnPoly`; the pressure-free `Fk_core` below is exactly the tree's
+#       gauge-fixed symbol `nsSymbolPoint` - see CHECK 8d).
+#
+# the Hermitized "momentum x drift" Koopman-von Neumann (Liouville) form (in timepiece:
+# `BookProof.NsKoopman.kvnPoly` / `nsKoopmanOp`, `= 1/2 sum_m (pi_m F_m + F_m pi_m)`).
+#
+# NORMALIZATION.  book.tex writes H with NO explicit 1/2 (`pi^i F_i + h.c.`), whereas timepiece's
+# `kvnPoly` carries the Weyl 1/2.  So H_here = 2 * kvnPoly and the checks below read
+#     i[H, u_k] = 2 F_k   <=>   i[kvnPoly, u_k] = F_k ,
+# i.e. the factor two is pure normalization and the equation is the same one.  This module checks the defining property of
+# that Hamiltonian: its commutator with the velocity *density*
+#
+#     U_k = int d u  a^dag(phi,u) u_k a(phi,u)            ("u_k between a creation
+#                                                          operator on the left and an
+#                                                          annihilation on the right,
+#                                                          integrated over u_k")
+#
+# reproduces the Navier-Stokes equations on the nested Fock space.  Concretely:
+#
+#   CHECK 1   the one-body commutator  [ H(x), u_k ] = -2 i F_k  with
+#             F_k = u_j u_{k,j} - nu u_{k,jj}  the Navier-Stokes drift:  i[H,u_k] = 2 F_k.
+#             So the Heisenberg equation i d_t U_k = [U_k, H] is the Navier-Stokes equation.
+#   CHECK 1d  the contrast: the auxiliary sum-of-squares operator gives the *momentum*
+#             density (i[H_sos,u_k] = pi_k), not the drift - a different equation.
+#   CHECK 2   the outer (nested) Fock reduction: for the second quantization
+#             H = sum_{a,b} h_ab a^dag_a a_b and U_k = sum_ab m_ab a^dag_a a_b,
+#             [H, U_k] = sum_{a,e} [h,m]_{ae} a^dag_a a_e  (the CCR [a_b,a^dag_c]=delta_bc),
+#             i.e. the outer commutator is the second quantization of the one-body one.
+#   CHECK 3   the momentum-space (Fourier-eliminated) form of the drift:
+#             u_{k,j} -> i k_j u_k, u_{k,jj} -> -|k|^2 u_k gives
+#             F_k -> nu |k|^2 u_k + i (k.u) u_k, splitting into the viscous (diagonal) and
+#             the advective (momentum-transferring) parts, with the advection a
+#             *convolution* in momentum (book.tex item 3; proved in Lean by
+#             BookProof.NsAdvectionConvolution.fourier_advection_convolution).
+#   CHECK 4   the COMMUTATION condition of the Faris-Lavine criterion for the comparison
+#             N_E = 1 + |u|^2 (the Leray ENERGY): [H, N_E] = -4 i (sum_i u_i F_i) phi.
+#   CHECK 5   H is COMPLETE: the Hermitized pi^i F_i + F_i pi^i carries BOTH the flow term
+#             -2 i sum_i F_i d_i phi AND the Weyl-ordering / "+ h.c." term -i (div F) phi.
+#   CHECK 6   the VALID N: by Leray's identity sum_i u_i B_i = 0 the energy flux collapses to
+#             the sign-definite viscous dissipation, sum_i u_i F_i = nu |k|^2 |u|^2 >= 0.
+#             (H^2 is NOT a valid N - the criterion needs N + 1 ONTO, and D(H^2) is strictly
+#              smaller than D(H); the general refutation is
+#              BookProof.FarisLavine.not_farisLavine_criterion_of_relative_bound, and for the
+#              NS leg the formalized comparison is BookProof.NsKoopman.nsEnergyOp with
+#              nsKoopman_esa_of_energy_comparison / commForm_kvn_energy_bound.)
+#   CHECK 7   the advection is degree 2 in the one-particle coordinates (bilinear => a
+#             momentum-transferring convolution); the viscosity is degree 1 (diagonal).
+#   CHECK 8   the pressure and the constraint: (8a) the incompressibility symbol
+#             sum_j u_{j,j} -> i (k.u) and (8b) the pressure work sum_k u_k q_k -> i (k.u) p
+#             both vanish on the divergence-free (Leray) sector k.u = 0; (8c) apply it;
+#             (8d) dropping q_i from the full residual recovers the tree's gauge-fixed symbol
+#             `nsSymbolPoint`, i.e. the pressure is the projected-out / eliminated part, not a
+#             dynamical field of the reduced Hamiltonian.  The pressure-Poisson consequence
+#             Lap p = - div[(u.grad)u] + div f is derived in the companion module
+#             docs/ns_pressure_poisson.cdb.
+#
+# Run: cadabra2-cli -q -n <this file>
+
+\partial{#}::PartialDerivative.
+{u1,u2,u3}::Depends(\partial{#}).
+\phi::Depends(\partial{#}).
+{m11,m12,m13,m21,m22,m23,m31,m32,m33}::Depends(\partial{#}).
+{g11,g12,g13,g21,g22,g23,g31,g32,g33}::Depends(\partial{#}).
+# q_i = d_i p are the pressure-gradient coordinates (tree qIdx); f_i the external force.
+{q1,q2,q3}::Depends(\partial{#}).
+{f1,f2,f3}::Depends(\partial{#}).
+
+# The jets u_{k,j} (m{k}{j}) and u_{k,jj} (g{k}{j}) are *independent* real multiplication
+# coordinates in the inflated one-particle space (book.tex R^33); the only non-trivial
+# derivative is d/du_i u_l = delta_{il}.
+xr = []
+for i in ["1","2","3"]:
+    for k in ["1","2","3"]:
+        xr.append(r"\partial_{%s}{u%s} -> %s" % (i, k, "1" if i == k else "0"))
+for i in ["1","2","3"]:
+    for k in ["1","2","3"]:
+        xr.append(r"\partial_{%s %s}{u%s} -> 0" % (i, i, k))
+for c in ["m11","m12","m13","m21","m22","m23","m31","m32","m33",
+          "g11","g12","g13","g21","g22","g23","g31","g32","g33"]:
+    for i in ["1","2","3"]:
+        xr.append(r"\partial_{%s}{%s} -> 0" % (i, c))
+        xr.append(r"\partial_{%s %s}{%s} -> 0" % (i, i, c))
+# the viscosity `nu` is a constant:
+for i in ["1","2","3"]:
+    xr.append(r"\partial_{%s}{nu} -> 0" % i)
+    xr.append(r"\partial_{%s %s}{nu} -> 0" % (i, i))
+# the pressure-gradient and force coordinates are independent of the velocity u:
+for c in ["q1","q2","q3","f1","f2","f3"]:
+    for i in ["1","2","3"]:
+        xr.append(r"\partial_{%s}{%s} -> 0" % (i, c))
+        xr.append(r"\partial_{%s %s}{%s} -> 0" % (i, i, c))
+rules = Ex(", ".join(xr))
+
+# the pressure-free residual Fk_core(k) = u_j u_{k,j} - nu u_{k,jj} (book.tex 4186 / tree
+# `nsSymbolPoint`): advection + viscous, the part that survives the Leray projection.
+def Fk_core(k):
+    return r"u1 m%s1 + u2 m%s2 + u3 m%s3 - nu (g%s1 + g%s2 + g%s3)" % (k, k, k, k, k, k)
+
+# the FULL Navier-Stokes residual F_k = u_j u_{k,j} + q_k - nu u_{k,jj} + f_k (tree
+# `nsResPoly` plus the external force): what the commutator with the velocity density
+# reproduces, and what `d_t u_i = -F_i` needs (pressure and forcing included).
+def Fk(k):
+    return Fk_core(k) + r" + q%s + f%s" % (k, k)
+
+# the one-body Hamiltonian H = pi^i F_i + F_i pi^i  (pi^i = -i d/du_i), acting on `psi`:
+#   H psi = -i ( d_i(F_i psi) + F_i d_i psi ), summed over i.
+def Hact(psi):
+    parts = []
+    for i in "123":
+        parts.append(r"\partial_{%s}{ (%s) %s }" % (i, Fk(i), psi))
+        parts.append(r"(%s) \partial_{%s}{%s}" % (Fk(i), i, psi))
+    return Ex("-I ( " + " + ".join(parts) + " )")
+
+def expand_derivs(ex, n):
+    for _ in range(n):
+        product_rule(ex); distribute(ex); collect_terms(ex)
+
+# ===== CHECK 1: [H, u_k] = -2 i F_k  (the one-body statement) =====
+def check_onebody(k, uk):
+    comm = Hact(uk + r" \phi") - Ex(uk) * Hact(r"\phi")
+    product_rule(comm); distribute(comm); substitute(comm, rules, repeat=True)
+    sort_product(comm); collect_terms(comm)
+    chk = comm + Ex(r"2 I (%s) \phi" % Fk(k))
+    distribute(chk); sort_product(chk); collect_terms(chk)
+    return chk
+
+print("CHECK 1a NS one-body [H,u1] + 2 i F1 phi         (0 = NS drift) :", check_onebody("1", "u1"))
+print("CHECK 1b NS one-body [H,u2] + 2 i F2 phi         (0 = NS drift) :", check_onebody("2", "u2"))
+print("CHECK 1c NS one-body [H,u3] + 2 i F3 phi         (0 = NS drift) :", check_onebody("3", "u3"))
+print("         drift  F1 =", Fk("1"))
+print("         drift  F2 =", Fk("2"))
+print("         drift  F3 =", Fk("3"))
+
+# ===== CHECK 1d: the auxiliary sum-of-squares operator gives the momentum, not the drift =====
+# The kinetic square (1/2) sum_m pi_m^2 (pi_m = -i d_m) acting on u_1 phi:
+#    [ (1/2) sum_m pi_m^2, u_1 ] = -i pi_1 = - d/d u_1,  i.e.  i[H_sos_kin, u_1] = pi_1.
+sqkin = Ex(r"-(1/2)( \partial_{1}{\partial_{1}{u1 \phi}} + \partial_{2}{\partial_{2}{u1 \phi}} + \partial_{3}{\partial_{3}{u1 \phi}} )")
+sqref = Ex(r"-(1/2)( \partial_{1}{\partial_{1}{\phi}} + \partial_{2}{\partial_{2}{\phi}} + \partial_{3}{\partial_{3}{\phi}} )")
+ksq = sqkin - Ex(r"u1") * sqref
+expand_derivs(ksq, 8); substitute(ksq, rules, repeat=True)
+sort_product(ksq); collect_terms(ksq)
+chkksq = ksq + Ex(r"\partial_{1}{\phi}"); distribute(chkksq); sort_product(chkksq); collect_terms(chkksq)
+print("CHECK 1d NS auxiliary [(1/2)sum pi^2, u1] = -d1 phi (NOT the drift) :", chkksq)
+
+# ===== CHECK 2: the outer (nested) Fock reduction =====
+# H = sum h_ab a^dag_a a_b, U_1 = sum p_ab a^dag_a a_b (two modes), CCR [a_b,a^dag_c]=delta_bc.
+# The commutator is the second quantization of [h,p].
+{a1,a2,ad1,ad2}::NonCommuting.
+# take the coefficients to be explicit numbers (h = [[2,3],[5,7]], p = [[11,13],[17,19]]) so
+# that all scalar factors are literal and no ordering ambiguity survives.
+ccr = Ex(r"a1 ad1 -> ad1 a1 + 1, a2 ad2 -> ad2 a2 + 1, a1 ad2 -> ad2 a1, a2 ad1 -> ad1 a2");
+# like operators commute (bosonic) but are non-commuting symbols here, so bring them to a
+# canonical order in a second, separate pass (same-type order rules).
+so = Ex(r"ad1 ad2 -> ad2 ad1, a1 a2 -> a2 a1");
+def normalorder(ex):
+    distribute(ex); substitute(ex, ccr, repeat=True); distribute(ex)
+    substitute(ex, so, repeat=True); distribute(ex); collect_terms(ex)
+Hf = Ex(r"2 ad1 a1 + 3 ad1 a2 + 5 ad2 a1 + 7 ad2 a2");
+Uf = Ex(r"11 ad1 a1 + 13 ad1 a2 + 17 ad2 a1 + 19 ad2 a2");
+HU = Hf * Uf; normalorder(HU)
+UH = Uf * Hf; normalorder(UH)
+commf = HU - UH; distribute(commf); collect_terms(commf)
+# expected: sum_{a,e} [h,p]_{ae} a^dag_a a_e  with [h,p] = [[-14,-41],[45,14]]
+expf = Ex(r"-14 ad1 a1 - 41 ad1 a2 + 45 ad2 a1 + 14 ad2 a2");
+chkf = commf - expf; distribute(chkf); collect_terms(chkf)
+print("CHECK 2  NS outer Fock  [H,U] = sum [h,p] a^dag a      (0 = ok) :", chkf)
+
+# ===== CHECK 3: the Fourier-eliminated form of the drift =====
+# Substitute the spatial derivative by its momentum symbol (book.tex item 2:
+# u_{k,j} -> i k_j u_k, u_{k,jj} -> -|k|^2 u_k) and read off the viscous (diagonal) plus
+# advective (momentum-transferring) parts.  The advection becomes a convolution in
+# momentum (book.tex item 3 / Lean `fourier_advection_convolution`); here we certify the
+# symbol-level weight i k_j and the split.
+{k1,k2,k3}::Commuting.
+fruls = []
+for j in ["1","2","3"]:
+    for k in ["1","2","3"]:
+        fruls.append(r"m%s%s -> I k%s u%s" % (k, j, j, k))
+        fruls.append(r"g%s%s -> -k%s k%s u%s" % (k, j, j, j, k))
+frules = Ex(", ".join(fruls))
+F1f = Ex(Fk_core("1")); substitute(F1f, frules, repeat=True); distribute(F1f); collect_terms(F1f)
+F2f = Ex(Fk_core("2")); substitute(F2f, frules, repeat=True); distribute(F2f); collect_terms(F2f)
+F3f = Ex(Fk_core("3")); substitute(F3f, frules, repeat=True); distribute(F3f); collect_terms(F3f)
+print("CHECK 3a NS Fourier drift F1 =", F1f)
+print("CHECK 3b NS Fourier drift F2 =", F2f)
+print("CHECK 3c NS Fourier drift F3 =", F3f)
+# viscous part: nu |k|^2 u_k ; advective part: i (k.u) u_k
+vis1 = Ex(r"nu (k1 k1 + k2 k2 + k3 k3) u1");
+adv1 = Ex(r"I (k1 u1 + k2 u2 + k3 u3) u1");
+d1 = F1f - vis1 - adv1; distribute(d1); sort_product(d1); collect_terms(d1)
+print("CHECK 3d NS F1 - (nu|k|^2 u1 + i (k.u) u1)            (0 = ok) :", d1)
+
+# ===== CHECK 4: the VALID comparison operator N for this Hamiltonian =====
+# The comparison is the Leray ENERGY N_E = 1 + |u|^2 (BookProof.NsKoopman.energyPoly /
+# nsEnergyOp), NOT H^2.  A commutator-vanishing self-comparison such as H or H^2 is not a valid
+# N in general: the criterion needs a POSITIVE operator with N + 1 ONTO, and a vanishing
+# commutator / relative bound alone is insufficient - this is the formalized refutation
+# BookProof.FarisLavine.not_farisLavine_criterion_of_relative_bound (limit-circle Jacobi
+# operator with N = H: both inequalities hold, essential self-adjointness fails).  For N = H^2
+# the commutator bound is trivial but `H^2 + 1 onto` is exactly the closedness being proved
+# (range(H^2+1) is contained in range(H - i) since H^2+1 = (H-i)(H+i)).
+#
+# Commutation condition:  [H, N_E] = -2 i sum_i F_i (d_i N_E) = -4 i sum_i u_i F_i, i.e.
+#     i[H, N_E] = 4 sum_i u_i F_i,
+# which with F_i = -nu lam_i u_i + B_i and Leray's identity sum_i u_i B_i = 0 is the
+# sign-definite viscous dissipation i[H_NS,N_E] = -4 nu sum_i lam_i u_i^2 (book normalization;
+# -2 nu sum_i lam_i u_i^2 for kvnPoly), giving |commForm H_NS N_E| <= 2 nu Lambda quadForm N_E
+# (BookProof.NsKoopman.kvn_comm_energy / fluxPoly_eq / commForm_kvn_energy_bound).
+NEstr = r"1 + u1 u1 + u2 u2 + u3 u3"
+commE = Hact("(%s) \\phi" % NEstr) - Ex("(%s)" % NEstr) * Hact(r"\phi")
+expand_derivs(commE, 10)
+substitute(commE, rules, repeat=True); sort_product(commE); collect_terms(commE)
+fluxE = Ex("4 I ( u1 (%s) + u2 (%s) + u3 (%s) ) \\phi" % (Fk("1"), Fk("2"), Fk("3")))
+chkE = commE + fluxE
+distribute(chkE); sort_product(chkE); collect_terms(chkE)
+print("CHECK 4  NS  [H,N_E] + 4 i (sum_k u_k F_k) phi      (0 = ok) :", chkE)
+advflux = Ex("u1 (%s) + u2 (%s) + u3 (%s)" % (Fk("1"), Fk("2"), Fk("3")))
+print("         energy flux sum_k u_k F_k =", advflux)
+
+# ===== CHECK 5: H is COMPLETE - the Hermitized pi.F + F.pi carries BOTH terms =====
+#   H phi = pi^i (F_i phi) + F_i pi^i phi = -i ( d_i(F_i phi) + F_i d_i phi )
+#         = -2 i sum_i F_i d_i phi   -   i sum_i (d_i F_i) phi .
+# The first group is the *flow* (convection) term; the second is the Weyl-ordering / "+ h.c."
+# term.  A Hamiltonian written with only pi^i F_i would OMIT the second.  This check shows
+# the module's H carries it, and that it equals -i div F phi with div F = sum_i d_i F_i.
+flow = Ex(r"-2 I ( " + " + ".join(r"(%s) \partial_{%s}{\phi}" % (Fk(i), i) for i in "123") + " )")
+Hfull = Hact(r"\phi")
+expand_derivs(Hfull, 8)
+substitute(Hfull, rules, repeat=True)
+sort_product(Hfull); collect_terms(Hfull)
+ordterm = Hfull - flow
+distribute(ordterm); collect_terms(ordterm)
+# div F = sum_i d_i F_i.  In the inflated (free-field) variables d_i(u_j u_{i,j}) = u_{i,i} and
+# the viscosity jet is independent, so div F = sum_i u_{i,i} = div u.  (div u = 0 by
+# incompressibility; kept symbolic here so the identity is what is checked.)
+divF = Ex(r"-I ( m11 + m22 + m33 ) \phi")
+chk5 = ordterm - divF
+distribute(chk5); sort_product(chk5); collect_terms(chk5)
+print("CHECK 5  NS H - flow = ordering/div term -i (div F) phi   (0 = ok) :", chk5)
+print("         flow term  -2 i sum_i F_i d_i phi ; ordering term  -i (sum_i d_i F_i) phi")
+
+# ===== CHECK 6: the VALID comparison N_E, and why H^2 is NOT one =====
+# N_E = 1 + |u|^2 (the Leray ENERGY) is the valid comparison for the NS Hamiltonian.  Its
+# commutator is -4 i (sum_i u_i F_i) phi (CHECK 4); Leray's identity
+#     sum_i u_i B_i = 0      (B_i = u_j u_{i,j}; the advection + pressure do no work)
+# with F_i = B_i - nu u_{i,jj} collapses that to the SIGN-DEFINITE viscous dissipation
+#     sum_i u_i F_i = -nu sum_i u_i u_{i,jj} = nu sum_i |grad u_i|^2  >=  0
+# ( = nu |k|^2 |u|^2 in momentum space ), which is the Faris-Lavine bound of
+# BookProof.NsKoopman.commForm_kvn_energy_bound.  H^2 fails as N for two independent,
+# formalized reasons: (i) the criterion (essentiallySelfAdjointOn_of_farisLavine) requires
+# `N + 1` ONTO, and range(H^2+1) is contained in range(H - i) because H^2+1 = (H-i)(H+i) on
+# the domain, so H^2+1 is not onto whenever H has a nontrivial deficiency - the exact
+# situation of the formalized general refutation
+# BookProof.FarisLavine.not_farisLavine_criterion_of_relative_bound (limit-circle Jacobi
+# operator, N = H: both inequalities hold, essential self-adjointness fails); (ii) D(H^2) is
+# strictly smaller than D(H), so H^2 cannot be a comparison on the common FL domain.
+# flux = viscous + advective, and the advective part IS the Leray sum sum_i u_i B_i.
+# (Use the pressure-free part: the pressure work sum_k u_k q_k vanishes on the divergence-free
+# sector by CHECK 8b, and the force work is the separate external-source term.)
+flux6 = Ex("u1 (%s) + u2 (%s) + u3 (%s)" % (Fk_core("1"), Fk_core("2"), Fk_core("3")))
+vis6 = Ex(r"-nu ( u1 (g11 + g12 + g13) + u2 (g21 + g22 + g23) + u3 (g31 + g32 + g33) )")
+adv6 = flux6 - vis6
+distribute(adv6); sort_product(adv6); collect_terms(adv6)
+advref = Ex(r"u1 (u1 m11 + u2 m12 + u3 m13) + u2 (u1 m21 + u2 m22 + u3 m23) + u3 (u1 m31 + u2 m32 + u3 m33)")
+chk6a = adv6 - advref
+distribute(chk6a); sort_product(chk6a); collect_terms(chk6a)
+print("CHECK 6a NS energy flux = visc + Leray sum_i u_i B_i   (0 = ok) :", chk6a)
+# Leray: sum_i u_i B_i = 0, so what survives is the viscous dissipation; Fourier -> nu|k|^2|u|^2.
+visf = Ex(r"nu (k1 k1 + k2 k2 + k3 k3) (u1 u1 + u2 u2 + u3 u3)")
+visfo = vis6
+substitute(visfo, frules, repeat=True); distribute(visfo); sort_product(visfo); collect_terms(visfo)
+chk6b = visfo - visf
+distribute(chk6b); sort_product(chk6b); collect_terms(chk6b)
+print("CHECK 6b NS Leray gives sum_i u_i F_i = nu |k|^2 |u|^2  (0 = ok) :", chk6b)
+print("         -> |commForm H_NS N_E| <= 2 nu Lambda quadForm N_E  (commForm_kvn_energy_bound)")
+
+# ===== CHECK 7: the momentum-space advection is a CONVOLUTION (bilinear vs diagonal) =====
+# In the free-field parametrization the derivative variables are INDEPENDENT coordinates on
+# R^33, so the advective term u_j u_{i,j} is *bilinear* in the u-coordinates (it couples the
+# field u_j with the independent jet u_{i,j}), hence momentum-transferring - a convolution;
+# the viscosity -nu u_{i,jj} is *linear* in u (multiplying by the independent jet), hence
+# diagonal in momentum.  Verify the homogeneity degrees with a formal scaling variable `lam`.
+lam_rules = [r"%s -> lam %s" % (c, c) for c in
+             ["u1", "u2", "u3"] +
+             ["m%s%s" % (k, j) for k in "123" for j in "123"] +
+             ["g%s%s" % (k, j) for k in "123" for j in "123"]]
+lamrules = Ex(", ".join(lam_rules))
+advterm = Ex("u1 m11")            # u_j u_{i,j} at j=i=1
+visterm = Ex("g11")               # u_{1,11}
+substitute(advterm, lamrules); sort_product(advterm); collect_terms(advterm)
+substitute(visterm, lamrules); sort_product(visterm); collect_terms(visterm)
+chk7 = (advterm - Ex("lam lam u1 m11")) + (visterm - Ex("lam g11"))
+distribute(chk7); sort_product(chk7); collect_terms(chk7)
+print("CHECK 7  NS advection is degree 2 (convolution), viscosity degree 1 (diagonal) :", chk7)
+print("         transform-level statement: BookProof.NsAdvectionConvolution.fourier_advection_convolution")
+
+# ===== CHECK 8: the pressure gradient and the incompressibility constraint =====
+# The drift of CHECK 1 includes the pressure gradient q_k = d_k p (and the force f_k).  The
+# constraint structure is intact: (8a) sum_j u_{j,j} = 0 is the momentum scalar k.u = 0;
+# (8b) the pressure does no work, sum_k u_k q_k = i (k.u) p = 0 on the divergence-free
+# (Leray) sector - exactly the pressure half of Leray's identity, the one the reduced form
+# records; (8c) the substitution k.u = 0 kills both; (8d) dropping q_k from the full residual
+# gives the tree's gauge-fixed symbol `nsSymbolPoint`.
+# Fourier symbol of the pressure gradient: q_k -> i k_k p (p = the pressure scalar).
+qrules = Ex(r"q1 -> I k1 p, q2 -> I k2 p, q3 -> I k3 p")
+# (8a) incompressibility symbol: sum_j u_{j,j} -> i (k.u)
+divu = Ex(r"m11 + m22 + m33")
+fdiv = Ex(r"m11 -> I k1 u1, m22 -> I k2 u2, m33 -> I k3 u3")
+substitute(divu, fdiv); distribute(divu); collect_terms(divu)
+chk8a = divu - Ex(r"I (k1 u1 + k2 u2 + k3 u3)")
+distribute(chk8a); sort_product(chk8a); collect_terms(chk8a)
+print("CHECK 8a NS incompressibility sum_j u_{j,j} -> i (k.u)    (0 = ok) :", chk8a)
+# (8b) pressure work: sum_k u_k q_k -> i (k.u) p
+pwork = Ex(r"u1 q1 + u2 q2 + u3 q3")
+substitute(pwork, qrules); distribute(pwork); collect_terms(pwork)
+chk8b = pwork - Ex(r"I (k1 u1 + k2 u2 + k3 u3) p")
+distribute(chk8b); sort_product(chk8b); collect_terms(chk8b)
+print("CHECK 8b NS pressure work sum_k u_k q_k -> i (k.u) p   (0 = ok) :", chk8b)
+# (8c) on the divergence-free (Leray) sector k.u = 0 both vanish.
+dz = Ex(r"I (k1 u1 + k2 u2 + k3 u3)")
+mom0 = Ex(r"k1 u1 + k2 u2 + k3 u3 -> 0")
+substitute(dz, mom0); distribute(dz); collect_terms(dz)
+print("CHECK 8c NS div-free sector k.u = 0 kills 8a and 8b      (0 = ok) :", dz)
+# (8d) dropping q and f from the full residual gives the gauge-fixed (Leray) symbol.
+Fg = Ex(Fk("1")); qz = Ex(r"q1 -> 0, f1 -> 0")
+substitute(Fg, qz); distribute(Fg); collect_terms(Fg)
+print("CHECK 8d NS full residual minus (q,f) = tree nsSymbolPoint :", Fg)
