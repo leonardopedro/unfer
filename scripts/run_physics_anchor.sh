@@ -35,6 +35,7 @@ SUITES=(
     qcd_validation
     qcd_mass_gap_certified
     sm_validation
+    ns_sm_qg_momentum_convolution_validation
 )
 
 FAILED=0

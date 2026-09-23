@@ -2654,6 +2654,57 @@ non-perturbative content, not papered over.
 
 ---
 
+### 5.26 Momentum-space convolution identities (NS/QG/SM) — `ns_sm_qg_momentum_convolution_validation.rs`
+
+Ten pure-algebra tests pinning the discrete Fourier / convolution identities
+that the derivative-variable elimination (Cadabra E1–E3, Lean
+`BookProof.NsAdvectionConvolution`) and the SM Faris–Lavine degree split
+depend on. No SIRK solve, no experimental bands — exact discrete identities on
+small mode grids, tolerance class **exact arithmetic** (§6). DFT convention:
+unnormalized forward `𝓕f(Q)=Σ f(x)e^{−2πiQx}`, product theorem
+`𝓕(f·g)=(1/n)·(F⋆G)` with circular convolution `(f⋆g)[n]=Σ_m f[m]g[(n−m) mod n]`.
+
+1. **`ns_product_to_convolution_theorem`** — `𝓕(f·g) = (1/n)(F ⋆ G)` on a
+   16-point periodic grid (the Lean `fourier_mul_eq_convolution` form).
+2. **`ns_advection_is_momentum_convolution`** — real-space `u·∂u` equals the
+   mode sum `Σ_q i k(q) Û(q) Û(Q−q)/n` (Eulerian substitution `u′→iku`,
+   the `fourier_advection_convolution` identity).
+3. **`ns_momentum_conservation_p_eq_k_plus_q`** — check **E1**: sparse
+   spectra on `{k1,k2}×{q1,q2}` convolve only on the sumset `{k+q}` mod n;
+   outside support < 1e-12, explicit value at `p=k1+q1` matches the sum.
+4. **`ns_transfer_weight_linear_in_q`** — check **E2**: the transfer symbol
+   `q_j` is linear — homogeneous scaling `w(2q)/2=w(q)` and additivity
+   `w(q1)+w(q2)=w(q1+q2)` on in-band modes.
+5. **`ns_advection_integrand_degree_three`** — check **E3**: the integrand
+   `q_j Û_j Û_i` scales as `t³` under simultaneous field+momentum scaling
+   (degree order viscosity(1) < quadratic(2) < advection(3)).
+6. **`ns_viscosity_diagonal_vs_advection_convolution`** — viscous `ν|k|²u_k`
+   is strictly diagonal (perturbing `u[j≠m]` leaves `F[m]` unchanged to
+   1e-15); advective convolution couples most output modes (CHECK 3d/7).
+7. **`qg_fourier_elimination_degree_split`** — free graviton
+   `qg_free_graviton`: vacuum 0, one-quanton energy exactly `|k|`,
+   inter-mode hopping `⟨1|H|0⟩=0`, and the degree split diag(1) vs
+   convolution-weighted(3).
+8. **`sm_yukawa_momentum_vertex_and_quartic_split`** — **SM**: momentum
+   triples with `a+b≡c (mod n)` are exactly `n²` of `n³`; `:φ⁴:` degree 4,
+   `:π²:` degree 2; commutator coefficient degree 3 for `m=4`; reduced SM
+   has a Yukawa three-leg vertex and a quartic term.
+9. **`sm_free_field_modes_diagonal_in_momentum`** — full free SM field on
+   160 modes: energy exactly `ω·n` for multi-mode Fock states; off-diagonal
+   `|⟨9|H|3⟩|=0`.
+10. **`sm_gauge_higgs_reduced_has_convolution_vertices`** — reduced SM has
+    nonzero off-diagonal one-quanton couplings (mode mixing), ≥1 degree-4
+    term, and comparison `N` has zero vacuum expectation.
+
+*Non-claims*: these are discrete algebra identities, not continuum limits;
+the DFT is O(N²) naive (no FFT crates); SM tests use sector realizations
+(`sm_reduced_hamiltonian`, `sm_full_free_field_uniform`), not the full
+`D_B=163` interacting Hamiltonian (§5.24u). Symbolic companions:
+`docs/ns_qg_fourier_elimination.cdb` (E1–E3), `docs/VERIFY_FARIS_LAVINE_N.md`
+CHECK 3/7.
+
+---
+
 ## 6. The tolerance taxonomy
 
 | Class | Typical tolerance | Examples |
