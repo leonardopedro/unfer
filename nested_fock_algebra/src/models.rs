@@ -3159,3 +3159,470 @@ pub fn oscillator_displaced(omega: f64, g: f64) -> Hamiltonian {
         ],
     }
 }
+
+// ─────────────────────────────────────────────
+// Standard Model (SM) — Hashimoto-SIRK numerical realizations.
+//
+// Reduced / sector-wise realizations of the SM one-particle operator
+// h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa (book.tex; VERIFY_SM_FARIS_LAVINE).
+// Full D_B=163 is not SIRK-tractable; these mirror the QYM/QED pattern of
+// small mode-count Hamiltonians with exact structure (unitarity, [H,N_f]=0,
+// Mexican-hat minima, CKM/PMNS biunitarity) that SIRK diagonalizes directly.
+//
+// Mode layout (Higgs sector): mode 0 = φ, mode 1 = π_φ.
+// Mode layout (reduced combined): 0–1 gauge A, 2–3 gauge π, 4 = φ, 5 = π_φ;
+// inner fermion 0 = matter (quark/lepton) mode.
+// ─────────────────────────────────────────────
+
+/// Symbolic source of truth for the SM Higgs sector (Mexican-hat potential):
+/// `H = :½π²: + V(φ)` with `V = −½μ²:φ²: + ¼λ:φ⁴:` (reduced real component
+/// of the complex doublet). CAS normal-orders and strips the zero-point so
+/// `⟨0|H|0⟩ = 0` — the nested-Fock vacuum rule.
+pub fn sm_higgs_expression(mu2: f64, lambda: f64) -> String {
+    let phi = "(c_0 + a_0)";
+    let h_kin = "(c_1 * a_1) - (1/2)*(c_1*c_1 + a_1*a_1)";
+    let v = format!(
+        "(-1/2)*({mu2})*({phi})*({phi}) + (1/4)*({lambda})*({phi})*({phi})*({phi})*({phi})"
+    );
+    format!("({h_kin}) + ({v})")
+}
+
+/// SM Higgs Hamiltonian (reduced one-component Mexican-hat realization).
+/// Modes: 0 = φ, 1 = π_φ. Hermitian after CAS normal ordering.
+pub fn sm_higgs_hamiltonian(mu2: f64, lambda: f64) -> Hamiltonian {
+    compile_to_fock(&sm_higgs_expression(mu2, lambda))
+}
+
+/// Classical Mexican-hat potential `V(φ) = −½μ²φ² + ¼λφ⁴` (no quantum
+/// corrections). Minima at `φ* = ±√(μ²/λ)` with `V(φ*) = −μ⁴/(4λ)` for
+/// `μ², λ > 0`.
+pub fn sm_higgs_classical_potential(phi: f64, mu2: f64, lambda: f64) -> f64 {
+    -0.5 * mu2 * phi * phi + 0.25 * lambda * phi.powi(4)
+}
+
+/// Classical vacuum expectation value of the reduced Higgs field:
+/// `φ* = √(μ²/λ)` (positive branch) for `μ², λ > 0`.
+pub fn sm_higgs_vev(mu2: f64, lambda: f64) -> f64 {
+    assert!(mu2 > 0.0 && lambda > 0.0, "Mexican hat needs μ², λ > 0");
+    (mu2 / lambda).sqrt()
+}
+
+/// Symbolic source for the SM Yukawa sector: Higgs kinetic + potential +
+/// fermion mass + Yukawa coupling `y φ ψ†ψ` (one matter mode).
+/// Modes: 0 = φ, 1 = π_φ, inner fermion 0 = matter.
+pub fn sm_yukawa_expression(mu2: f64, lambda: f64, y: f64, m_f: f64) -> String {
+    let phi = "(c_0 + a_0)";
+    let h_higgs = sm_higgs_expression(mu2, lambda);
+    // Fermion mass (normally ordered n = ψ†ψ) + Yukawa vertex y φ n.
+    // Boson·fermion product commutes; CAS normal-orders the boson factor.
+    let mass_yuk = format!("({m_f})*c_f0*a_f0 + ({y})*({phi})*c_f0*a_f0");
+    format!("({h_higgs}) + ({mass_yuk})")
+}
+
+/// SM Yukawa Hamiltonian: Higgs sector + matter mass + Yukawa coupling.
+/// `[H, N_f] = 0` exactly (fermion number conservation) — tested by
+/// `sm_validation.rs`.
+pub fn sm_yukawa_hamiltonian(mu2: f64, lambda: f64, y: f64, m_f: f64) -> Hamiltonian {
+    compile_to_fock(&sm_yukawa_expression(mu2, lambda, y, m_f))
+}
+
+/// Fermion-number operator `N_f = Σ_j ψ†_j ψ_j` over `n_modes` inner
+/// fermion modes (all +1 charge — lepton/quark number in this reduced
+/// realization, no SU(2) doublet bookkeeping).
+pub fn sm_fermion_number(n_modes: usize) -> Hamiltonian {
+    let mut terms = Vec::with_capacity(n_modes);
+    for j in 0..n_modes {
+        terms.push((
+            Complex64::new(1.0, 0.0),
+            vec![
+                Operator::InnerFermionCreate(j as u32),
+                Operator::InnerFermionAnnihilate(j as u32),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// Faris–Lavine comparison operator for the Higgs sector (reduced):
+/// `N = :π²: + :φ⁴:` — quadratic in momentum, quartic in field. Structure
+/// pin for the FL `N₀ + c₀I` comparison (`faris_lavine_n_sm.cdb`); the full
+/// SM `N` (gauge quartics + fermionic oscillator) lives in the Cadabra module.
+pub fn sm_comparison_n() -> Hamiltonian {
+    // :π²: = 2·(:½π²:) form: 2c*a − (c²+a²) on mode 1;
+    // :φ⁴: via CAS on mode 0.
+    let phi = "(c_0 + a_0)";
+    let p2 = "2*(c_1 * a_1) - (c_1*c_1 + a_1*a_1)";
+    let phi4 = format!("({phi})*({phi})*({phi})*({phi})");
+    compile_to_fock(&format!("({p2}) + ({phi4})"))
+}
+
+/// Cabibbo mixing matrix (2×2 real orthogonal, δ-phase free):
+/// `V = [[cos θc, sin θc], [−sin θc, cos θc]]`. Numerical shadow of Cadabra
+/// CHECK 17 (`V V^T = I`).
+pub fn sm_ckm_cabibbo(theta: f64) -> [[f64; 2]; 2] {
+    let (c, s) = (theta.cos(), theta.sin());
+    [[c, s], [-s, c]]
+}
+
+/// Pontecorvo (PMNS) mixing matrix (2×2 real orthogonal — the one-angle
+/// reduction used for oscillation phenomenology in `weak_neutrino_validation`).
+/// Numerical shadow of Cadabra CHECK 25 (`U U^T = I`).
+pub fn sm_pmns_pontecorvo(theta: f64) -> [[f64; 2]; 2] {
+    sm_ckm_cabibbo(theta)
+}
+
+/// Biunitarity residual `(V D)^T (V D) − D²` for a 2×2 mixing matrix `V` and
+/// diagonal mass matrix `D = diag(m₁, m₂)`. Zero iff `V` is orthogonal and
+/// the charged-lepton/down-type bases are aligned — Cadabra CHECK 26a–c
+/// (`M†M = D²` for Yukawa mass matrices).
+pub fn sm_biunitary_residual(v: &[[f64; 2]; 2], d: [f64; 2]) -> [[f64; 2]; 2] {
+    // M = V·D (columns scaled by masses)
+    let m = [
+        [v[0][0] * d[0], v[0][1] * d[1]],
+        [v[1][0] * d[0], v[1][1] * d[1]],
+    ];
+    // M^T M
+    let mut mt_m = [[0.0_f64; 2]; 2];
+    for i in 0..2 {
+        for j in 0..2 {
+            mt_m[i][j] = m[0][i] * m[0][j] + m[1][i] * m[1][j];
+        }
+    }
+    // subtract D²
+    [
+        [mt_m[0][0] - d[0] * d[0], mt_m[0][1]],
+        [mt_m[1][0], mt_m[1][1] - d[1] * d[1]],
+    ]
+}
+
+/// Symbolic source for the reduced SM: QYM gauge sector (modes 0–3) +
+/// Higgs (modes 4–5) + Yukawa (fermion 0). Sector-wise realization of
+/// `h = h_Gauge + h_Higgs + h_Yukawa` on a SIRK-tractable mode budget.
+pub fn sm_reduced_expression(g: f64, mu2: f64, lambda: f64, y: f64, m_f: f64) -> String {
+    // Gauge: same B / π structure as qcd_ym_hamiltonian, modes 0–3.
+    let b = format!("((c_0 + a_0) - (c_1 + a_1) + ({g}/2)*(c_0 + a_0)*(c_1 + a_1))");
+    let h_mag = format!("(1/2)*({b})*({b})");
+    let h_gauge_kin = "(c_2 * a_2) - (1/2)*(c_2*c_2 + a_2*a_2) \
+                       + (c_3 * a_3) - (1/2)*(c_3*c_3 + a_3*a_3)";
+    // Higgs on modes 4 (φ), 5 (π_φ).
+    let phi = "(c_4 + a_4)";
+    let h_higgs_kin = "(c_5 * a_5) - (1/2)*(c_5*c_5 + a_5*a_5)";
+    let v = format!(
+        "(-1/2)*({mu2})*({phi})*({phi}) + (1/4)*({lambda})*({phi})*({phi})*({phi})*({phi})"
+    );
+    // Yukawa + mass on fermion 0.
+    let mass_yuk = format!("({m_f})*c_f0*a_f0 + ({y})*({phi})*c_f0*a_f0");
+    format!("({h_mag}) + ({h_gauge_kin}) + ({h_higgs_kin}) + ({v}) + ({mass_yuk})")
+}
+
+/// Reduced SM Hamiltonian: QYM gauge + Higgs Mexican-hat + Dirac mass +
+/// Yukawa on disjoint mode sectors (modes 0–5 boson, fermion 0). Hermitian;
+/// `[H, N_f] = 0`; SIRK-diagonalizable.
+pub fn sm_reduced_hamiltonian(g: f64, mu2: f64, lambda: f64, y: f64, m_f: f64) -> Hamiltonian {
+    compile_to_fock(&sm_reduced_expression(g, mu2, lambda, y, m_f))
+}
+
+// ─────────────────────────────────────────────
+// Full SM mode budget (D_B = 163), BRST ghosts, W±/Z polarizations.
+//
+// D_B arithmetic (book.tex R^{99} convention: base coords + fields + first
+// spatial derivatives, no momenta in the xi list — VERIFY_SM_FARIS_LAVINE):
+//   x                 : 3
+//   SU(3) G^a_i       : 8×3 = 24    G^a_{i,j} : 8×9 = 72   → 96
+//   SU(2) W^k_i       : 3×3 =  9    W^k_{i,j} : 3×9 = 27   → 36
+//   U(1)  B_i         : 3           B_{i,j}   : 3×3 =  9   → 12
+//   Higgs φ_a         : 4           φ_{a,j}   : 4×3 = 12   → 16
+//                                            TOTAL     = 163
+// Ghosts live in the Grassmann factor Z_2^{D_F} (not in D_B): 8 SU(3) +
+// 3 SU(2) + 1 U(1) = 12 Faddeev–Popov ghosts.
+// ─────────────────────────────────────────────
+
+/// Explicit D_B = 163 budget. Each field sector lists
+/// `(field_components, first_spatial_derivatives)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmModeBudget {
+    pub spatial_x: usize,
+    pub su3_field: usize,
+    pub su3_deriv: usize,
+    pub su2_field: usize,
+    pub su2_deriv: usize,
+    pub u1_field: usize,
+    pub u1_deriv: usize,
+    pub higgs_field: usize,
+    pub higgs_deriv: usize,
+}
+
+impl SmModeBudget {
+    /// The collective-coordinate budget of `docs/faris_lavine_n_sm.cdb` /
+    /// `VERIFY_SM_FARIS_LAVINE.md`: `D_B = 163`.
+    pub fn standard() -> Self {
+        Self {
+            spatial_x: 3,
+            su3_field: 24, // 8 generators × 3 spatial
+            su3_deriv: 72, // 8 × 9 first derivatives
+            su2_field: 9,  // 3 generators × 3 spatial
+            su2_deriv: 27, // 3 × 9
+            u1_field: 3,
+            u1_deriv: 9,
+            higgs_field: 4, // real components of the complex doublet
+            higgs_deriv: 12,
+        }
+    }
+
+    pub fn total(&self) -> usize {
+        self.spatial_x
+            + self.su3_field
+            + self.su3_deriv
+            + self.su2_field
+            + self.su2_deriv
+            + self.u1_field
+            + self.u1_deriv
+            + self.higgs_field
+            + self.higgs_deriv
+    }
+
+    /// Bosonic *ladder* modes: field + derivative coordinates only (base `x`
+    /// is the configuration manifold, quantized only through the fermionic
+    /// oscillator `−Δ_x + |x|^2 + 1` in `N_0`, not as a separate gauge-field
+    /// ladder). `160 = 163 − 3`.
+    pub fn field_ladder_modes(&self) -> usize {
+        self.total() - self.spatial_x
+    }
+
+    /// Disjoint mode index ranges for the field-ladder realization, in
+    /// budget order: SU(3) field, SU(3) deriv, SU(2) field, SU(2) deriv,
+    /// U(1) field, U(1) deriv, Higgs field, Higgs deriv. Half-open `[lo, hi)`.
+    pub fn field_mode_ranges(&self) -> Vec<(&'static str, usize, usize)> {
+        let mut lo = 0usize;
+        let mut out = Vec::new();
+        let push = |name: &'static str, n: usize, lo: &mut usize, out: &mut Vec<_>| {
+            out.push((name, *lo, *lo + n));
+            *lo += n;
+        };
+        push("su3_field", self.su3_field, &mut lo, &mut out);
+        push("su3_deriv", self.su3_deriv, &mut lo, &mut out);
+        push("su2_field", self.su2_field, &mut lo, &mut out);
+        push("su2_deriv", self.su2_deriv, &mut lo, &mut out);
+        push("u1_field", self.u1_field, &mut lo, &mut out);
+        push("u1_deriv", self.u1_deriv, &mut lo, &mut out);
+        push("higgs_field", self.higgs_field, &mut lo, &mut out);
+        push("higgs_deriv", self.higgs_deriv, &mut lo, &mut out);
+        out
+    }
+}
+
+/// Number of Faddeev–Popov ghosts in the SM temporal-gauge BRST charge:
+/// `|su3| + |su2| + |u1| = 8 + 3 + 1 = 12` (Grassmann `Z_2^{12}` block of
+/// `Z_2^{D_F}`; Majorana matter sits outside the ghost count).
+pub const SM_GHOST_COUNT: usize = 12;
+
+/// Ghost mode indices: `0..8` SU(3), `8..11` SU(2), `11..12` U(1).
+pub fn sm_ghost_mode_ranges() -> Vec<(&'static str, usize, usize)> {
+    vec![("su3", 0, 8), ("su2", 8, 11), ("u1", 11, 12)]
+}
+
+/// Free quadratic Hamiltonian on the full field-ladder budget (160 modes):
+/// `H = Σ_i ω_i :n_i:` with independent frequencies `omega[i]`.
+/// Structural realization of the full `D_B` field content — Hermitian,
+/// normal-ordered, SIRK-diagonal (no interaction terms).
+pub fn sm_full_free_field_hamiltonian(omega: &[f64]) -> Hamiltonian {
+    assert_eq!(
+        omega.len(),
+        SmModeBudget::standard().field_ladder_modes(),
+        "full free field needs one frequency per field-ladder mode (160)"
+    );
+    let mut terms = Vec::with_capacity(omega.len());
+    for (i, &w) in omega.iter().enumerate() {
+        terms.push((
+            Complex64::new(w, 0.0),
+            vec![
+                Operator::InnerBosonCreate(i as u32),
+                Operator::InnerBosonAnnihilate(i as u32),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// Uniform-frequency free field on the full 160-mode budget (all ω equal).
+pub fn sm_full_free_field_uniform(omega: f64) -> Hamiltonian {
+    let n = SmModeBudget::standard().field_ladder_modes();
+    sm_full_free_field_hamiltonian(&vec![omega; n])
+}
+
+/// Mass spectrum of the electroweak vector bosons after symmetry breaking
+/// (PDG tree-level): `W± ≈ 80.377 GeV`, `Z ≈ 91.1876 GeV`, `γ = 0`.
+/// Longitudinal modes of the massive bosons carry the Goldstone dressing.
+pub fn sm_weak_boson_masses_gev() -> [f64; 3] {
+    [80.377, 91.1876, 0.0]
+}
+
+/// Physical polarization count of one massive vector (W± or Z): 2 transverse
+/// + 1 longitudinal = 3. Photon (massless): 2 transverse.
+pub fn sm_vector_polarization_count(massive: bool) -> usize {
+    if massive { 3 } else { 2 }
+}
+
+/// Mode layout for the full electroweak polarization budget:
+/// `[W+_T0, W+_T1, W+_L, W-_T0, W-_T1, W-_L, Z_T0, Z_T1, Z_L, γ_T0, γ_T1]`
+/// — 6 W modes (2 charges × 3 pol) + 3 Z + 2 γ = **11 polarization modes**.
+pub fn sm_weak_polarization_mode_count() -> usize {
+    // 2 charges (W±) × 3 pol + Z 3 pol + γ 2 pol = 6 + 3 + 2 = 11.
+    2 * sm_vector_polarization_count(true)
+        + sm_vector_polarization_count(true)
+        + sm_vector_polarization_count(false)
+}
+
+/// `(name, mode, mass_GeV, is_longitudinal)` for each electroweak
+/// polarization mode in the 11-mode layout.
+pub fn sm_weak_polarization_table() -> Vec<(String, u32, f64, bool)> {
+    let [mw, mz, _] = sm_weak_boson_masses_gev();
+    let mut out = Vec::with_capacity(11);
+    let mut m = 0u32;
+    for charge in ["W+", "W-"] {
+        for (pol, long) in [("T0", false), ("T1", false), ("L", true)] {
+            out.push((format!("{charge}_{pol}"), m, mw, long));
+            m += 1;
+        }
+    }
+    for (pol, long) in [("T0", false), ("T1", false), ("L", true)] {
+        out.push((format!("Z_{pol}"), m, mz, long));
+        m += 1;
+    }
+    for pol in ["T0", "T1"] {
+        out.push((format!("gamma_{pol}"), m, 0.0, false));
+        m += 1;
+    }
+    out
+}
+
+/// Full electroweak polarization Hamiltonian: independent normal-ordered
+/// oscillators with frequency = boson mass (natural units ħ = c = 1),
+/// `H = Σ_pol m_pol :n_pol:`. Transverse modes of a given boson are
+/// degenerate; the longitudinal mode shares the same mass (the Goldstone
+/// dressing is encoded in the BRST/ghost sector, not in a split frequency).
+pub fn sm_weak_boson_hamiltonian() -> Hamiltonian {
+    let table = sm_weak_polarization_table();
+    let mut terms = Vec::with_capacity(table.len());
+    for (_, mode, mass, _) in table {
+        terms.push((
+            Complex64::new(mass, 0.0),
+            vec![
+                Operator::InnerBosonCreate(mode),
+                Operator::InnerBosonAnnihilate(mode),
+            ],
+        ));
+    }
+    Hamiltonian { terms }
+}
+
+/// SM BRST charge in the temporal (Weyl) gauge — book.tex Yang–Mills form
+/// specialized to `SU(3)×SU(2)×U(1)`:
+///
+///   `Ω = Σ_f  P_f · c†_f  −  (i/2) f_{abc} ψ†_a ψ†_b ψ_c` (non-abelian),
+///
+/// realized in the residual Gauss × ghost-raise pattern of `ym_brst_charge`.
+/// Ghost modes: `0..8` SU(3), `8..11` SU(2), `11..12` U(1) — the 12
+/// Faddeev–Popov ghosts of the SM temporal gauge (Grassmann `Z_2^{12}`
+/// block of `Z_2^{D_F}`).
+///
+/// Gauss generators act on **disjoint** field-mode blocks per ghost
+/// (color/gen stride in the full D_B field-ladder layout), so the abelian
+/// pieces commute and `Ω² = 0` by Pauli (`(c†)² = 0`) + commuting `P_f`.
+/// The SU(3) cubic ghost term `f_{abc} ψ†_a ψ†_b ψ_c` is included with
+/// antisymmetric `(a,b)` pairs (book.tex:7089); its square vanishes by
+/// the antisymmetry of `f` and the Jacobi identity (Lean
+/// `ChapterGhostField.brst_charge_nilpotent` / `GaugeSymmetry` cubic note).
+pub fn sm_brst_charge() -> Hamiltonian {
+    let ranges = SmModeBudget::standard().field_mode_ranges();
+    let (su3_lo, su3_hi) = (ranges[0].1, ranges[0].2);
+    let (su2_lo, su2_hi) = (ranges[2].1, ranges[2].2);
+    let (u1_lo, u1_hi) = (ranges[4].1, ranges[4].2);
+    debug_assert!(su3_hi - su3_lo == 24 && su2_hi - su2_lo == 9 && u1_hi - u1_lo == 3);
+
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+
+    // P · c† on disjoint Gauss blocks — momentum quadrature i(a† − a)
+    // times ghost raise (InnerFermionAnnihilate = ψ† in the nested
+    // convention of ym_brst_charge).
+    let push_gauss = |field_lo: usize, ghost: u32, terms: &mut Vec<_>| {
+        // Ghost g of an SU(3)/SU(2) factor owns a stride-3 spatial block
+        // starting at field_lo + 3*local_index; U(1) owns the whole block.
+        let local = if ghost < 8 {
+            ghost as usize
+        } else if ghost < 11 {
+            (ghost - 8) as usize
+        } else {
+            0
+        };
+        let stride_start = field_lo + 3 * local;
+        for spatial in 0..3usize {
+            let mode = (stride_start + spatial) as u32;
+            terms.push((
+                Complex64::new(0.0, 1.0),
+                vec![
+                    Operator::InnerBosonCreate(mode),
+                    Operator::InnerFermionAnnihilate(ghost),
+                ],
+            ));
+            terms.push((
+                Complex64::new(0.0, -1.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(mode),
+                    Operator::InnerFermionAnnihilate(ghost),
+                ],
+            ));
+        }
+    };
+
+    for g in 0u32..8 {
+        push_gauss(su3_lo, g, &mut terms);
+    }
+    for g in 0u32..3 {
+        push_gauss(su2_lo, 8 + g, &mut terms);
+    }
+    // U(1): single ghost owns the 3-field block (local index 0).
+    push_gauss(u1_lo, 11, &mut terms);
+
+    // Non-abelian cubic ghost term (SU(3), book.tex:7089):
+    //   −(i/2) f_{abc} ψ†_a ψ†_b ψ_c
+    // Emit each antisymmetric pair once (a < b); the reverse ordering is
+    // generated by fermionic anticommutation inside the product.
+    for (a, b, c, fabc) in su3_structure_constants() {
+        if a >= b {
+            continue;
+        }
+        // coeff = −i/2 * f
+        terms.push((
+            Complex64::new(0.0, -0.5 * fabc),
+            vec![
+                Operator::InnerFermionAnnihilate(a),
+                Operator::InnerFermionAnnihilate(b),
+                Operator::InnerFermionCreate(c),
+            ],
+        ));
+    }
+
+    Hamiltonian { terms }
+}
+
+/// Independent structure-constant triples `(a, b, c, f_{abc})` of `su(3)`
+/// with `a < b` (Gell-Mann λ_1..λ_8, 0-based). Generating set for the
+/// cubic ghost term; antisymmetry in `(a,b)` completes the rest.
+fn su3_structure_constants() -> Vec<(u32, u32, u32, f64)> {
+    // Standard nonzero f_{abc} with a < b (0-based indices):
+    // f146, f157, f247, f256, f345, f678 (all +1/2), f147, f156 (−1/2),
+    // f246, f257 (+1/2), f456, f574→f457, f647→f467 (+1/2),
+    // f458 = 1/(2√3), f568 = 1/(2√3), f778-type omitted (vanish).
+    vec![
+        (0, 3, 5, 0.5),                          // f_146
+        (0, 4, 6, 0.5),                          // f_157
+        (1, 3, 6, 0.5),                          // f_247
+        (1, 4, 5, 0.5),                          // f_256
+        (2, 3, 4, 0.5),                          // f_345
+        (5, 6, 7, 0.5),                          // f_678
+        (3, 4, 5, 0.5),                          // f_456
+        (3, 4, 7, 1.0 / (2.0 * 3.0_f64.sqrt())), // f_458
+        (4, 5, 7, 1.0 / (2.0 * 3.0_f64.sqrt())), // f_568
+    ]
+}

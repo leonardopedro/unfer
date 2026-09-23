@@ -34,6 +34,7 @@ SUITES=(
     sirk_hamiltonian_drive
     qcd_validation
     qcd_mass_gap_certified
+    sm_validation
 )
 
 FAILED=0

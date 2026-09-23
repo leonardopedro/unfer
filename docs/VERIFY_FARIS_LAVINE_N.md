@@ -9,8 +9,8 @@ for the Navier–Stokes and quantum‑gravity Hamiltonians used by `../timepiece
 | `docs/ns_pressure_constraint.cdb` | constraint nature of the pressure equation | second-class certificate: `p` is determined by `Δ` inversion (CHECK 2), the pair bracket is `|k|²` invertible on the non-zero modes (CHECK 3), book.tex's `Ω = (∂_j u_j)ψ†` nilpotency is cosmetic (CHECK 4), and the elimination removes `p` (CHECK 5) |
 | `docs/ns_pressure_poisson.cdb` | pressure Poisson equation | derives `Lap p = −div[(u·∇)u] + div f` from `div(momentum eq)` + incompressibility: Clairaut, the Leibniz split, and the constraint cancellations |
 | `docs/ns_kvn_equation.cdb` | NS *Hamiltonian* (KvN/Koopman generator of book.tex 4186) | the defining commutator `i[H,u_k] = 2F_k` (the NS drift, with the pressure gradient `q_k` and the force `f_k`) at the one‑body and outer‑Fock levels, the auxiliary‑operator contrast, the Fourier split `ν\|k\|²u_k + i(k·u)u_k`, and the pressure/incompressibility checks (CHECK 8) |
-| `docs/faris_lavine_n_ns.cdb` | NS **auxiliary** sum‑of‑squares operator / gauge‑fixed parcels | `N = −Δ + ¼‖x‖²`, the shape of `[H,N]` (`commPoly_eq`), `commConst`, the AM‑GM/Young constants |
-| `docs/faris_lavine_n_qg.cdb` | QG scalaron + vielbein (outer Fock) | `N = −∂²_φ + φ²/4 + V(φ) + σ` with the wall *inside*, `[H_fib,N]=0`, `[A,H_fib]=0`, `[φ,H_fib]=2∂_φ`, the c = 6K arithmetic |
+| `docs/faris_lavine_n_ns.cdb` | NS **auxiliary** sum‑of‑squares operator / gauge‑fixed parcels | `N = −Δ + ¼‖x‖²`, the shape of `[H,N]` (`commPoly_eq`), `commConst`, the AM‑GM/Young constants; **Part B** the oscillator core (CHECK 5a–5d) and the lift `dΓ(N)` identities (CHECK 6a–6b) |
+| `docs/faris_lavine_n_qg.cdb` | QG scalaron + vielbein (outer Fock) | `N = −∂²_φ + φ²/4 + V(φ) + σ` with the wall *inside*, `[H_fib,N]=0`, `[A,H_fib]=0`, `[φ,H_fib]=2∂_φ`, the c = 6K arithmetic; **Part B** the fibre core as *oscillator plus non‑negative multiplication* (CHECK 10a–10d) and the lift `dΓ(N)` identities (CHECK 11a–11b) |
 
 They are the Faris–Lavine counterpart of the existing Hamiltonian modules
 (`docs/yang_mills_hamiltonian.cdb`, `docs/qg_gauge_fixed_hamiltonian.cdb`, …): those certify
@@ -41,6 +41,12 @@ CHECK 2d NS  d2^2 V = sum_r (v_r2)^2             (0 = ok) : 0
 CHECK 3  NS  commConst = -1/4 sum kappa + sum v^2        : -1/4 k1 - 1/4 k2 + v11²+v12²+v21²+v22²
 CHECK 4a NS  a^2 + b^2/4 - a b = (a - b/2)^2       (0 = ok) : 0
 CHECK 4b NS  g^2/(2M) + 2M a^2 - 2 g a = (g-2Ma)^2/(2M) (0 = ok) : 0
+CHECK 5a NS  adag a = H_osc - 1/2                       (0 = ok) : 0
+CHECK 5b NS  [a, adag] = 1                              (0 = ok) : 0
+CHECK 5c NS  [adag a, a] = -a                           (0 = ok) : 0
+CHECK 5d NS  [adag a, adag] = adag                      (0 = ok) : 0
+CHECK 6a NS  [dGamma N, adag_2] = N_12 adag_1 + N_22 adag_2  (0 = ok) : 0
+CHECK 6b NS  [dGamma N, a_2] = -(N_21 a_1 + N_22 a_2)         (0 = ok) : 0
 ```
 
 * **CHECK 1** computes `[H,N]φ = H(Nφ) − N(Hφ)` by the Leibniz rule (`product_rule` loop, with
@@ -59,6 +65,20 @@ CHECK 4b NS  g^2/(2M) + 2M a^2 - 2 g a = (g-2Ma)^2/(2M) (0 = ok) : 0
   `(a−b/2)² ≥ 0`), used termwise for the signature contribution `Σ|κ_j|/2 · b_j a_j`, and Young's
   inequality `2 g a ≤ g²/(2M) + 2M a²`, used together with the Schur bound
   `Σ_j (∂_j V)² ≤ M²‖x‖²` (`sum_gradFun_sq_le_of_schur`) for the gradient contribution.
+* **CHECK 5a–5d — the core (obligation (i) below).**  With `a = ∂_x + x/2`, `a† = −∂_x + x/2`:
+  `a†a = H_osc − 1/2`, the CCR `[a,a†] = 1`, and the ladder `[a†a,a] = −a`, `[a†a,a†] = a†`.
+  (a)+(b) exhibit the ground state `aφ₀ = 0` (`φ₀ = e^{−x²/4}`); (b)+(c) make the Hermite
+  functions `a†ⁿφ₀` the eigenvectors of `H_osc` with eigenvalues `n + 1/2`, *arithmetic* in `n`.
+  On that core `H_osc` is diagonal with linear growth, so every core vector is an analytic
+  (Nelson) vector and the core is dense in the graph norm: `H_osc` is ESA on the Hermite core.
+  This is the symbolic content of `harmonicOsc_essentiallySelfAdjoint` /
+  `oscillator_essentiallySelfAdjoint_on_hermiteCore`.
+* **CHECK 6a–6b — the lift.**  The outer comparison is not `N` but its second quantization
+  `dΓ(N) = Σ_{i,j} N_ij a†_i a_j`, and the checks verify that it acts **one‑particle‑wise**,
+  `[dΓ(N), a†_k] = Σ_i N_ik a†_i`, `[dΓ(N), a_k] = −Σ_i N_ki a_i`.  This is exactly the
+  identity that makes the lifted core the finite‑particle **tensor** core built from the
+  one‑particle core `C₀` — and hence what a core‑transfer proof of obligation (ii) must consume;
+  it also makes explicit that the lifted comparison is a *different operator* from `N`.
 
 ## `docs/faris_lavine_n_qg.cdb` — checks and output
 
@@ -74,6 +94,12 @@ CHECK 6  QG  integrand minus (phi^2/4)|psi|^2   (>= 0) : (∂ψ)² + V ψ² + σ
 CHECK 7  QG  (1/2)(w f^2 + w g^2) - w f g = (1/2) w (f-g)^2  (0 = ok) : 0
 CHECK 8  QG  2((1/2)K + (9/4)K) = 11/2 K              (0 = ok) : 0
 CHECK 9  QG  6K - 11/2 K = 1/2 K >= 0                 (0 = ok) : 0
+CHECK 10a QG  adag a = H_osc - 1/2                    (0 = ok) : 0
+CHECK 10b QG  [a, adag] = 1                           (0 = ok) : 0
+CHECK 10c QG  N_a = (adag a + 1/2) + (V + sigma)      (0 = ok) : 0
+CHECK 10d QG  (sigma - 1) + 1 = sigma                 (0 = ok) : 0
+CHECK 11a QG  [dGamma N, adag_2] = N_12 adag_1 + N_22 adag_2 (0 = ok) : 0
+CHECK 11b QG  [dGamma N, a_2] = -(N_21 a_1 + N_22 a_2)       (0 = ok) : 0
 ```
 
 * **CHECK 1** is the fibre part: with the wall *inside* `N`, the fibrewise scalaron operator
@@ -95,6 +121,44 @@ CHECK 9  QG  6K - 11/2 K = 1/2 K >= 0                 (0 = ok) : 0
 * **CHECK 8–9** the constant arithmetic: `imA_le` gives `½K`, `imB_le` gives `9/4K`; the
   commutator form doubles the sum, `2(½K + 9/4K) = 11/2 K`, and `11/2 K ≤ 6K`
   (`6K − 11/2 K = ½K ≥ 0`), which is `secHam_commForm_le` with `c = 6·K_Q`.
+* **CHECK 10a–10d — the core (obligation (i) below).**  The wall `V` is *not* quadratic, so
+  there is no closed ladder for `N_a`; what makes `N_a` ESA on the core is its structure as an
+  **oscillator plus a non‑negative multiplication**: `N_a = (a†a + 1/2) + (V + σ_a)`, with
+  `V + σ_a ≥ 0` (`V ≥ 0` by `starobinskyV_nonneg`, `σ_a ≥ 1` by `QgModeData.one_le_sig`).  The
+  checks verify the factorization, the CCR, the split, and the shift arithmetic.  This is
+  precisely the hypothesis of `oscillatorPlus_esa` (an operator `−d²/dx² + x²/4 + W` with `W`
+  bounded below and **no** relative‑bound hypothesis on `W`), i.e. `WallPot.ham_esa` /
+  `starobinskyWall_esa`: the wall sits inside `N` and needs no smallness.
+* **CHECK 11a–11b — the lift.**  The outer comparison is the mode‑lift
+  `secN = dsComparison (fibCompar W Q) = ⊕_a Friedrichs(N_{σ_a})` on `Sec ι = ℓ²(ι; L²(ℝ_φ))`
+  (and `qgOuterComparison = dΓ(N₁)` in the 84‑coordinate `dΓ` spelling), *not* `h_s`.  The
+  checks verify the same one‑particle‑wise action `[dΓ(N), a†_k] = Σ_i N_ik a†_i`,
+  `[dΓ(N), a_k] = −Σ_i N_ki a_i`, which is what makes the lifted core the finite‑particle / mode
+  core and what a core‑transfer proof of obligation (ii) consumes.
+
+## The core, and the lift: why `N` itself must be ESA on the chosen core (Part B)
+
+Faris–Lavine as the tree formalizes it (`ChapterFarisLavineCore`, `structure CoreData`) is run on a
+**core** `C₀`: besides positivity and `N + 1` onto, the comparison `N` must be symmetric on `C₀`
+and `C₀` must be a core for `N` (`IsGraphCore`: every domain vector approximated by a core vector
+*together with its `N`‑image*).  Both modules now certify the symbolic content of that
+requirement, and of the lift:
+
+| Hamiltonian | `N` | core `C₀` | symbolic certificate | Lean target |
+| :-- | :-- | :-- | :-- | :-- |
+| NS one‑body / parcels (`H_sp = ½Σπ² + ½Σform²`, `spHam` / `nsSectorHam`) | `−Δ + ¼‖x‖²` | Hermite / Gauss‑polynomial `polyGaussCore D` | NS CHECK 5a–5d (factorization, CCR, ladder) | `harmonicOsc_essentiallySelfAdjoint`, `oscillator_essentiallySelfAdjoint_on_hermiteCore`, `polyGaussCore_dense` |
+| NS mainstream `H_NS = ½Σ(πF + Fπ)` (`kvnPoly`) | Leray energy `N_E = 1 + ‖u‖²` (multiplication; self‑adjoint, `N_E + 1` onto) | Gauss‑polynomial (`polyGaussCore d`) | CHECK 4–6 of `ns_kvn_equation.cdb` | `nsKoopman_esa_of_energy_comparison` |
+| QG fibre `h_s = −∂²_φ + φ²/4 + V + σ_a` | `N_a` = itself (Friedrichs) | compactly supported smooth `ccDomain ℝ` (Hermite core dense) | QG CHECK 10a–10d (oscillator plus non‑negative multiplication) | `oscillatorPlus_esa`, `WallPot.ham_esa`, `starobinskyWall_esa` |
+| QG outer `secHam` on `Sec ι` | `secN = dsComparison (fibCompar W Q)` | `secCore` (finite‑particle / mode core) | QG CHECK 11a–11b (lift acts one‑particle‑wise) | `secHam_essentiallySelfAdjointOn` (domain), `qgFull_esa_core_fl` (core) |
+| any outer Fock lift `dΓ(H₁)` | `dΓ(N₁)` | finite‑particle tensor core `⨁ₙ Γⁿ(C₀)` | NS CHECK 6a–6b / QG CHECK 11a–11b | `dGamma_essentiallySelfAdjointOn_fockCore`, `dGamma_essentiallySelfAdjointOn_of_esa`, `outerHam_esa_fl`, `dsOp_essentiallySelfAdjointOn` |
+
+**The two obligations are independent.**  (i) `N` is ESA on `C₀`; (ii) the *lifted* Hamiltonian
+is ESA on the *lifted* core.  Neither implies the other: the lifted operator is `dΓ(H₁)` (or the
+parcel/mode sum), not `H₁`, and the lifted core is the finite‑particle tensor core, not `C₀`.  The
+symbolic algebra certifying the lift (the `[dΓ(N), a†] = Σ N a†` identity) is what fixes the lifted
+core and what a core‑transfer proof must use.  Obligation (ii) is discharged in general by the
+core‑transfer / `dΓ`‑ESA wave (`ChapterGraphCoreTransfer`, `ChapterTensorGraphCore`,
+`ChapterSecondQuantizationCoreEsa`); obligation (i) — and the symmetrization step — remain.
 
 ## Correction (2026‑09‑19): which operator is *the* Navier–Stokes Hamiltonian
 
@@ -398,16 +462,65 @@ operator** — the harmonic oscillator `−Δ + ‖x‖²/4` (NS/YM parcels, QG 
 scalaron‑wall operator `−∂²_φ + φ²/4 + V(φ) + σ_a` with the wall inside (QG) — never a function
 of `H` itself.  With such a comparison the lift statement above applies as written.
 
+## Audit of the NS and QYM inner one‑particle operators (2026‑09‑21)
+
+Same exercise as the QG audit in `VERIFY_QG_STAROBINSKY_EINSTEIN_FRAME.md`: compare the
+one‑particle operator **as the plan states it** with the one **as the proofs define it**, read off
+the definitions rather than the doc‑comments.
+
+### NS
+
+| plan statement | Lean declaration | file:line | matches |
+| :-- | :-- | :-- | :-- |
+| reduced one‑body `H_sp = ½Σ_{m<6}π_m² + ½Σ_{r<7}(mulOp Φ_r)²` on `L²(ℝ⁶)` | `spHam Φ ν k = weylOp (spPi Φ) (spField Φ ν k)` (6 momenta, 7 forms) | `ChapterNsOneBodyDGamma.lean:194` | ✓ |
+| full one‑parcel `H₁ = nsSectorHam … 1 = ½Σπ² + ½Σ(mulOp Φ_r)²` on `L²(ℝ²¹)` | `nsSectorHam = weylOp (nsPiN n) (nsFieldN … n)` (12 momenta, 19 forms, `polyGaussCore (n*21)`) | `ChapterNavierStokesFullEulerianFock.lean:248` | ✓ |
+| outer `nsFullFockHam = dsOp (fun n => nsSectorHam … n) = dΓ(H₁)` on `⊕ₙ L²(ℝ^{21n})` | `nsFullFockHam = dsOp (…)`; `nsFockSpace = lp (fun n => L2d (n*21)) 2` | `:287`, `:277` | ✓ |
+| mainstream `H_NS = ½Σ_m(π_m F_m + F_m π_m)` with `F_i = −νλ_iu_i + B_i(u,u)` | `kvnPoly = Σ_i weylProd (momOp i) (mulOp (drift S i))`, `drift i = −νλ_i X_i + advOf bcoef i` | `ChapterNsKoopman/Part1.lean:185,179` | ✓ |
+| full residual `π^i(u_j u_{i,j} + q_i − ν u_{i,jj}) + h.c.`, `divPoly` | `nsResPoly = u_j u_{i,j} + q_i − ν w_i`, `divPoly = Σ_j u_{j,j}` | `ChapterNavierStokesFullEulerianFock.lean:143,149` | ✓ |
+| reduced family `redHam` (Fourier‑eliminated) | `redHam ν k n = weylOp (redPiN n) (redFieldN ν k n)` on `L²(ℝ^{6n})` | `ChapterNsFourierElimination.lean:512` | ✓ |
+
+**NS matches, with one disambiguation to keep.**  There are **two** one‑particle NS models in the
+tree, and the plan names both in different places:
+
+* the **reduced** (Fourier‑eliminated) one‑body operator `spHam` = `redHam ν k 1` on `L²(ℝ⁶)`
+  (6 momenta, 7 forms) — this is the leg of the Faris–Lavine proof (`spHam_esa_farisLavine`);
+* the **full** Eulerian one‑parcel `nsSectorHam … 1` on `L²(ℝ²¹)` (12 momenta, 19 forms), whose
+  `dΓ` is `nsFullFockHam`; and the full Lagrangian `lagSectorHam` on `L²(ℝ^{36n})`.
+
+The plan should say *which* one it means at each occurrence (`H_sp` = reduced vs `H₁` fixed by
+`nsSectorHam`).  No contradiction in the proofs.
+
+**One stale dimension, found and fixed.**  `../timepiece/HAMILTONIAN_AUDIT_20260918.md` §9 gave
+the nested space of the *full* Eulerian model as `L²(ℝ^{18n})`; the proof's `nsFockSpace` is
+`L²(ℝ^{21n})`.  The `18n` belongs to the **reduced / gauge‑fixed** family (`nsFamily`, `dim := n*18`,
+`ChapterNsOuterFockFarisLavine/Part2.lean:292`), not to `nsSectorHam`.  Fixed in the audit; the
+full Lagrangian `36n` was correct.
+
+### QYM
+
+| plan statement | Lean declaration | file:line | matches |
+| :-- | :-- | :-- | :-- |
+| one body `H₁ = ½Σπ² + ½ΣB²` on the Gauss–polynomial core of `L²(ℝ⁹⁹)` (24 momenta, 24 magnetic forms) | `ymHamiltonian Φ fabc = weylOp (piOps Φ) (magOps Φ fabc)`; `ymHamiltonian_quadForm` | `ChapterYangMillsHermite/Part2.lean:201,218` | ✓ |
+| abelian `ymHamiltonian = sqSumOp ymKap ymMagVec = ½Σ_j κ_jπ_j² + ½Σ_m B_m²` | `ymAbelian_eq_sqSumOp`; `sqSumOp` | `ChapterYangMillsOuterFockFL/Part1.lean:134`; `ChapterQgOuterFockEsa.lean:225` | ✓ |
+| parcels: 99 coordinates per parcel, 24 forms, `99n` total | `ymFamily` (`dim n = n*99`, `R = Fin n × YmForm`), `ymFamily_vv` | `ChapterYangMillsOuterFockFL/Part2.lean:322,342` | ✓ |
+| outer `outerHam` on `⊕ₙ L²(ℝ^{99n})`, ESA by Faris–Lavine | `outerHam = dsOp (fun n => F.secHam n)`; `ymOuterHam_esa_fl` | `ChapterSqSumOuterFamily.lean:224`; `ChapterYangMillsOuterFockFL/Part2.lean:356` | ✓ |
+
+**QYM matches term for term**, including the sign reconciliation (`book.tex:7077` writes
+`H = −½ππ − ½BB`; the proofs use the bounded‑below `+½Σπ² + ½ΣB²`, as both the plan and the
+`ymHamiltonian` docstring record).  No repair needed.
+
 ## What these modules do **not** certify
 
 Cadabra is a symbolic/algebraic engine on classical expressions.  It certifies the *one‑particle
-symbol*: the shape of the comparison operator `N`, the commutator `[H,N]`, and the algebraic
+symbol*: the shape of the comparison operator `N`, the commutator `[H,N]`, the oscillator
+factorization/CCR and the lift identity `[dΓ(N), a†_k] = Σ_i N_ik a†_i` (Part B), and the algebraic
 identities that turn the commutator into the bound with the stated constants.  It does **not**
 certify the Hilbert‑space statements — symmetry on the core, positivity as a quadratic form,
-surjectivity of `N + 1`, the graph‑core approximation, the existence of the (lifted) Friedrichs
-extension, and the lift of the criterion to the outer Fock space.  Those are proved in Lean
-(`BookProof.ChapterFarisLavineCore`, `BookProof.ChapterSqSumFarisLavine`,
-`BookProof.ChapterScalaronOuterFockFL`).  This is the same division of labour the existing
+surjectivity of `N + 1`, the graph‑core approximation itself (that the core is dense in the graph
+norm of `N`), the existence of the (lifted) Friedrichs extension, and the lift of the *criterion*
+to the outer Fock space.  Those are proved in Lean (`BookProof.ChapterFarisLavineCore`,
+`BookProof.ChapterSqSumFarisLavine`, `BookProof.ChapterScalaronOuterFockFL`,
+`BookProof.ChapterSecondQuantizationCoreEsa`).  This is the same division of labour the existing
 Hamiltonian modules have (see `VERIFY_CDB_TRUNCATION_AUDIT.md` and
 `../timepiece/HAMILTONIAN_AUDIT_20260918.md` §9).
 
@@ -422,4 +535,4 @@ $C2 -q -n docs/faris_lavine_n_qg.cdb
 ```
 
 All three run clean (`exit 0`, no traceback); `ns_kvn_equation.cdb` prints `0` for CHECK 1a–1d/2/3d,
-NS CHECK 1/2/4 and QG CHECK 1/2/3/7/8/9 print `0`.
+NS CHECK 1/2/4/5/6 and QG CHECK 1/2/3/7/8/9/10/11 print `0`.

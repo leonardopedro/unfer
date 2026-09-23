@@ -110,7 +110,7 @@ cargo test --release -p fock_sirk --test qed_validation \
     --test ns_further_validation --test qed_kerr_photon_blockade \
     --test qed_hong_ou_mandel --test qed_blockade_statistics \
     --test qg_tegr_helicity --test qed_abelian_reduction \
-    --test outer_vacuum_ground_validation
+    --test outer_vacuum_ground_validation --test sm_validation
 
 # Heavy compiler-route compiles (minutes unoptimized, seconds in release):
 scripts/run_heavy_tests.sh          # runs the #[ignore]d suites in --release
@@ -247,8 +247,16 @@ E4:7.3e-3, ...
 | `qcd_ym_hamiltonian` / `.cdb` | $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$, $B=(A_0-A_1)+\tfrac12 g A_0 A_1$ | Cadabra-derived Yang–Mills Hamiltonian, bounded-below spectrum |
 | `yang_mills_lattice` | Kogut–Susskind-inspired **comparison** lattice (NOT the Cadabra-derived gauge-fixed QYM — see `qcd_ym_hamiltonian`) | lattice strong-coupling gap $\approx g^2/2$ — a benchmark for the SIRK machinery, NOT a Millennium-positivity claim for this project's model |
 | `qg_free_graviton` | $\sum c\|k\| N_k$ | GW speed $= c$ (GW170817 constraint) |
-| `qg_starobinsky_*` | scalaron $\sum m N + \tfrac12\sum g^2$, $m^2=M^2/12\alpha$ | massive dispersion, ESA/boundedness of $R^2$ gravity |
+| `qg_starobinsky_*` | scalaron $\sum m N + \tfrac12\sum g^2$, $m^2=M^2/12\alpha$ — the **quadratic / small-field** realization; the record QG(R²) operator is the vielbein form with the **full exponential** Einstein-frame wall (no Taylor truncation) and the interaction terms (`qg3d_full_hamiltonian`; nine-component `qgElimFullModes` in Lean), see §5.3 | massive dispersion, ESA/boundedness of $R^2$ gravity — for the full wall and couplings, the plan-of-record note of §5.6 applies |
 | `ns_eulerian_fiber` | $H = K_0 + \{\pi_0, u\cdot\partial u\}$ | Euler advection; derivative variables eliminated by the spatial Fourier substitution (momentum-space convolution), the BRST projection being only an optional consistency check |
+| `sm_higgs_hamiltonian` | $:\tfrac12\pi^2: + V(\phi)$, $V=-\tfrac12\mu^2\phi^2+\tfrac14\lambda\phi^4$ | Mexican-hat minima $\phi^*=\pm\sqrt{\mu^2/\lambda}$, $V(\phi^*)=-\mu^4/(4\lambda)$; bounded-below SIRK spectrum |
+| `sm_yukawa_hamiltonian` | Higgs + $m_f\,\psi^\dagger\psi + y\,\phi\,\psi^\dagger\psi$ | $[H,N_f]=0$ (fermion-number superselection), vacuum 0, Hermitian |
+| `sm_reduced_hamiltonian` | $h_{\rm Gauge}+h_{\rm Higgs}+h_{\rm Yukawa}$ (modes 0–5 + fermion 0) | Combined sector structure: gauge + quartic + Yukawa terms, $[H,N_f]=0$ |
+| `sm_ckm_cabibbo` / `sm_pmns_pontecorvo` | real orthogonal 2×2 mixing | $VV^T=UU^T=I$, biunitary $(VD)^T(VD)=D^2$, $|V_{ij}|,|U_{ij}|\le 1$ (Cadabra CHECK 17–19, 25–27) |
+| `sm_comparison_n` | Faris–Lavine $N=:\pi^2:+:\phi^4:$ | quadratic-momentum / quartic-field structure, Hermitian, $N|0\rangle=0$ |
+| `SmModeBudget` / `sm_full_free_field_*` | full field-ladder budget $D_B=163$ (160 ladder modes + base $x$) | arithmetic pin $3{+}96{+}36{+}12{+}16=163$; free quadratic $H=\sum\omega_i :n_i:$ on all 160 modes |
+| `sm_brst_charge` | $\Omega=\sum_f P_f\,c^\dagger_f-\tfrac{i}{2}f_{abc}\psi^\dagger_a\psi^\dagger_b\psi_c$ | 12 Faddeev–Popov ghosts ($8{+}3{+}1$) in $\mathbb{Z}_2^{D_F}$; $\Omega^2=0$ on ghosted probes |
+| `sm_weak_boson_hamiltonian` | electroweak polarizations $H=\sum_{\rm pol} m_{\rm pol}:n_{\rm pol}:$ | $W^\pm$ (2×3) + $Z$ (3) + $\gamma$ (2) = 11 modes; PDG masses; transverse degeneracy |
 
 The Cadabra2 connection: several Hamiltonians are not transcribed by hand but
 **derived** — the classical action is varied, Legendre-transformed, and
@@ -557,13 +565,27 @@ in `docs/qg_gauge_fixed_hamiltonian.cdb`. Constants: `QG_G`, `QG_HBAR`,
 
 **The QG final Hamiltonian is the one-particle Hamiltonian enclosed in
 creation (on the left) and annihilation (on the right) operators acting on the
-nested Fock space**: $H = \sum h_{ij} C^\dagger(e_i)A(e_j)$. The R² (vielbein
-Starobinsky) version, `qg_starobinsky_vielbein_hamiltonian`, is the enclosure
-of the one-particle operator $h = h_{\rm TEGR}\oplus(m)$ — the TEGR
-one-particle kinetic $(1/16)\mathcal S^2$ plus the scalaron one-particle
-energy $m = \sqrt{V''(0)} = 1/\sqrt{12\alpha}$ — i.e.
-$H = \sum_i :(1/16)\mathcal S_i^2: + m\,N_\psi$. The R² content enters $h$
-through the mass $m = \sqrt{V''(0)}$. The nested Fock space has TWO levels: the
+nested Fock space**: $H = \sum h_{ij} C^\dagger(e_i)A(e_j)$. **The one-particle
+operator of record is the R² (Starobinsky) vielbein form in full**: the
+vielbein/torsion kinetic together with the *exact* exponential Einstein-frame
+scalaron wall $V(\varphi) = (M^4/16\alpha)(1-e^{-\sqrt{2/3}\varphi/M})^2$ —
+**exponential included, with no Taylor truncation** — and the
+scalaron–vielbein interaction terms, all inside $h$; in Lean that is the
+nine-component eliminated operator (`qgElimFullModes`, ESA proved as
+`qgElimFull_esa_farisLavine` / `starobinsky_qgElimFull_esa`), and in the twin
+it is the full-operator enclosure `qg3d_full_hamiltonian` (the Full-operator
+doctrine below). Two *scalar-fiber* realizations are used where their smaller
+content suffices, and both are comparison models rather than the record:
+`qg_starobinsky_vielbein_hamiltonian`, the enclosure of the quadratic
+$h = h_{\rm TEGR}\oplus(m)$ — the TEGR one-particle kinetic
+$(1/16)\mathcal S^2$ plus the scalaron one-particle energy
+$m = \sqrt{V''(0)} = 1/\sqrt{12\alpha}$, i.e.
+$H = \sum_i :(1/16)\mathcal S_i^2: + m\,N_\psi$, which is the small-field
+(quadratic) limit of the full wall — and
+`qg_starobinsky_vielbein_hamiltonian_full`, the truncated-Hermite enclosure of
+the full-exponential fiber $h = \tfrac12\pi^2 + V(\hat\varphi)$ with the wall
+used as-is; the second decouples the fiber from the vielbein cross terms the
+record operator carries. The nested Fock space has TWO levels: the
 outer Fock space (whose ladders are the $C^\dagger/A$ of the enclosure) and the
 inner one-particle Hilbert space on which $h$ acts. The outer Hamiltonian is a
 QUADRATIC (free-particle-like) form in the outer ladders for ANY one-particle
@@ -571,11 +593,9 @@ operator $h$ — so the FULL Einstein-frame scalaron potential
 $V(\varphi) = (M^4/16\alpha)(1-e^{-\sqrt{2/3}\varphi/M})^2$, exponential
 included, may live *inside* $h$ (in the one-particle matrix elements
 $\langle e_i, h e_j\rangle$), with NO 3-/4-particle vertices at the outer
-level. That is the realization `qg_starobinsky_vielbein_hamiltonian_full`
-(the truncated-Hermite enclosure of $h = \tfrac12\pi^2 + V(\hat\varphi)$;
-`qg_starobinsky_vielbein_hamiltonian` uses the quadratic part
-$h = h_{\rm TEGR}\oplus(m)$, the free massive scalaron with the exact gap $m$).
-The one-particle spectrum of the full $h$ is the Schr\"odinger spectrum of
+level — which is exactly why the record operator can carry the full wall and
+the interaction terms without any outer vertex. The one-particle spectrum of
+the full $h$ is the Schr\"odinger spectrum of
 $\tfrac12\pi^2 + V(\hat\varphi)$ (essential self-adjointness proved at first
 quantization in BookProof — `starobinskyWall_esa`,
 `starobinskyV_essentiallySelfAdjoint` on the compactly supported smooth core). Consequences
@@ -2507,6 +2527,99 @@ statements — what the constant shifts — not the ground state of the nested
 theory, which is always the outer-Fock vacuum. This same outer enclosure is
 required for QED, QG, and NS final-Hamiltonian tests; their inner one-particle
 operators are never presented as standalone full-theory Hamiltonians.
+
+### 5.24t Standard Model through Hashimoto-SIRK — `sm_validation.rs`
+
+The SM one-particle operator $h = h_{\rm Gauge}+h_{\rm Higgs}+h_{\rm Dirac}+h_{\rm Yukawa}$
+(`book.tex`; Cadabra module `docs/faris_lavine_n_sm.cdb`, CHECK 1–28) realized
+in **sector-wise / reduced mode budgets** — the *diagonalized* full
+$D_B = 163$ Hamiltonian is not SIRK-tractable (structural inventory and free
+field on the full budget are §5.24u) — and tested through the same
+SIRK–Hashimoto machinery as QYM and QED. Eight tests:
+
+- **`sm_higgs_potential_nested_fock_structure`** — Mexican-hat Higgs
+  $H=:\tfrac12\pi^2:+V(\phi)$, $V=-\tfrac12\mu^2\phi^2+\tfrac14\lambda\phi^4$:
+  normal-ordered vacuum $\langle0|H|0\rangle=0$ and $H|0\rangle=0$;
+  Hermiticity via the SIRK projection; classical minima
+  $\phi^*=\pm\sqrt{\mu^2/\lambda}$ with $V(\phi^*)=-\mu^4/(4\lambda)$ and
+  $\mathbb{Z}_2$ symmetry; quartic operator strings present at $\lambda>0$.
+- **`sm_higgs_sirk_spectrum_bounded_below`** — SIRK diagonalizes the Higgs
+  sector ($\mu^2<0$, $\lambda>0$): projected $H$ Hermitian, all Ritz values
+  finite and real, ground $E_0 > -10^6$ (quartic confinement), direct ground
+  helper agrees with the Ritz ground to $10^{-8}$.
+- **`sm_yukawa_fermion_number_conservation`** — $[H,N_f]=0$ exactly on
+  probes spanning vacuum / one-Higgs / one-fermion / Yukawa-vertex sectors;
+  vacuum 0; Hermitian on a one-fermion probe.
+- **`sm_ckm_pmns_unitarity_and_biunitary`** — numerical shadow of Cadabra
+  CHECK 17–19, 25–27: Cabibbo $VV^T=I$ and Pontecorvo $UU^T=I$; biunitary
+  residual $(VD)^T(VD)-D^2=0$ for charged-lepton / neutrino mass blocks
+  (Yukawa $M^\dagger M=D^2$); entrywise $|V_{ij}|,|U_{ij}|\le1$; PDG
+  phenomenology $|V_{ud}|\approx0.974$, $|V_{us}|\approx0.224$,
+  $|U_{e1}|=\cos\theta_{12}\approx0.822$, $\sin^2\theta_{12}\approx0.307$.
+- **`sm_reduced_gauge_higgs_structure`** — combined
+  $h_{\rm Gauge}+h_{\rm Higgs}+h_{\rm Yukawa}$ (modes 0–5 + fermion 0):
+  vacuum 0 and $H|0\rangle=0$; Hermitian; all three sector term types
+  present (gauge $\ge3$-operator strings, Higgs quartic $\ge4$, Yukawa
+  vertex); $[H,N_f]=0$ still holds.
+- **`sm_unitary_evolution_energy_conservation`** — restarted-Krylov time
+  evolution of a Higgs-sector superposition: norm and $\langle H\rangle$
+  conserved to $10^{-9}$.
+- **`sm_comparison_n_structure_and_positivity`** — Faris–Lavine comparison
+  $N=:\pi^2:+:\phi^4:$: Hermitian on four probes; quadratic-momentum and
+  quartic-field term structure; $N|0\rangle=0$; non-negative Rayleigh
+  quotient on a two-quanton momentum state (structural half of
+  $\pm h\le c_1N$; the full gauge+fermion $N$ is CHECK 1–24 in Cadabra).
+- **`sm_outer_vacuum_annihilated_reduced`** — outer enclosure
+  $H=\sum h_{ij}C^\dagger(e_i)A(e_j)$ of the reduced SM one-particle matrix
+  annihilates the outer vacuum $|\Omega\rangle$ (doctrine clause 1 of §5.24s,
+  extended to the SM sector); one-quanton energy finite.
+
+*Scope / non-claims* (mirroring `VERIFY_SM_FARIS_LAVINE.md`): the full
+$D_B=163$ SM Hamiltonian is **not** what is *diagonalized* here — only
+sector-wise realizations plus the structural/free inventory of §5.24u;
+measured Wolfenstein/PMNS parameters enter as PDG benchmarks, not as a fit;
+Majorana masses / see-saw are out of scope. BRST ghosts and the full
+electroweak $W^\pm,Z$ polarization budget are covered by the four tests of
+§5.24u. The Lean work order for the formal SM FL/ESA chain lives in
+`timepiece/CONSOLIDATED_PLAN.md` §D6b-SM (CHECK 1–28).
+
+### 5.24u Full $D_B=163$, BRST ghosts, $W^\pm/Z$ polarizations — `sm_validation.rs`
+
+Companion to §5.24t pinning the three items that section defers: the full
+collective-coordinate budget, the temporal-gauge BRST ghost sector, and the
+complete electroweak polarization mode budget. Four tests (in the same
+suite):
+
+- **`sm_db_163_mode_budget`** — arithmetic pin of
+  $D_B = 3_{(x)} + 96_{(\rm SU(3))} + 36_{(\rm SU(2))} + 12_{(\rm U(1))} +
+  16_{(\phi)} = 163$ (`SmModeBudget::standard()`; book.tex $\mathbb{R}^{99}$
+  convention applied to `faris_lavine_n_sm.cdb`): field-ladder modes tile
+  $[0,160)$ disjointly; ghost budget $8{+}3{+}1=12$ lives in
+  $\mathbb{Z}_2^{D_F}$ (**not** in $D_B$).
+- **`sm_full_free_field_structure`** — free quadratic Hamiltonian
+  $H=\sum_{i=0}^{159}\omega_i:n_i:$ on the full 160 field-ladder modes:
+  160 terms, $\langle0|H|0\rangle=0$, one-quanton energy $=\omega$ on every
+  sampled mode (including sector boundaries 24 / 96 / 148 / 159), three-quantum
+  energy $=3\omega$.
+- **`sm_brst_ghosts_nilpotent`** — `sm_brst_charge()` =
+  $\sum_f P_f\,c^\dagger_f$ (Gauss × ghost-raise on disjoint color/gen
+  blocks, `ym_brst_charge` pattern) plus the SU(3) cubic
+  $f_{abc}\psi^\dagger_a\psi^\dagger_b\psi_c$ (book.tex:7089): all 12 ghosts
+  appear; $\Omega^2=0$ on SU(3)/SU(2)/U(1) ghosted probes and a multi-ghost
+  probe ($\|\Omega^2\psi\|<10^{-9}$); $\Omega$ annihilates ghost-free probes.
+- **`sm_weak_boson_polarizations`** — full electroweak polarization budget
+  $W^\pm(2\times3)+Z(3)+\gamma(2)=11$ modes (`sm_weak_polarization_table`):
+  PDG masses $m_W=80.377$, $m_Z=91.1876$, $m_\gamma=0$; one longitudinal
+  mode each for $W^+,W^-,Z$ (Goldstone-dressed, same mass as the transverse
+  pair); exact transverse degeneracy; gap $m_Z-m_W$; vacuum energy 0; SIRK
+  Ritz spectrum on a $W$–$Z$ superposition Hermitian, finite, bounded below.
+
+*Non-claims for §5.24u*: the 163-coordinate interacting Hamiltonian is
+inventory + free realization only — **not** diagonalized; the BRST charge is
+the residual Gauss × ghost form (abelian nilpotency exact; the cubic SU(3)
+piece is emitted with the standard $f_{abc}$ generating set, Lean
+`ChapterGhostField` / `GaugeSymmetry` own the full nilpotency proof); PDG
+$W/Z$ masses are tree-level benchmarks.
 
 ### 5.25 The assumption ledger: match / fail / non-claim per system
 

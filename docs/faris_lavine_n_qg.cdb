@@ -130,3 +130,94 @@ print("CHECK 8  QG  2((1/2)K + (9/4)K) = 11/2 K              (0 = ok) :", check_
 slack := 6 K - (11/2) K - (1/2) K;
 distribute(slack); collect_terms(slack)
 print("CHECK 9  QG  6K - 11/2 K = 1/2 K >= 0                 (0 = ok) :", slack)
+
+# ============================================================================
+# PART B - THE CORE, AND THE LIFT TO THE OUTER FOCK SPACE (2026-09-21)
+# ============================================================================
+# Faris-Lavine is run on a CORE C_0, and the criterion (`CoreData`) needs the comparison N
+# ITSELF to be symmetric there and C_0 to be a core for N (dense in the GRAPH NORM of N).
+# For the QG fibre N_a = -d^2/dphi^2 + phi^2/4 + V(phi) + sigma_a the wall V is NOT quadratic,
+# so there is no closed ladder; what makes N_a ESA on the core is its structure as an
+# OSCILLATOR PLUS a non-negative multiplication operator,
+#     N_a = (adag a + 1/2) + (V(phi) + sigma_a),      V + sigma_a >= 0,
+# which is exactly the hypothesis of `oscillatorPlus_esa` (`-d^2/dx^2 + x^2/4 + W` with W
+# bounded below and NO relative-bound hypothesis on W) — the wall sits inside N and needs no
+# smallness.  The concrete core is the compactly supported smooth core `ccDomain ℝ` (the
+# Hermite / Gauss-polynomial core is dense in its graph norm).  This is obligation (i) at the
+# symbolic level; the Lean statements are `oscillatorPlus_esa`, `WallPot.ham_esa`,
+# `starobinskyWall_esa`.
+
+# ===== 10. the CORE: N_a is an oscillator PLUS a non-negative multiplication =====
+# With a = d/dphi + phi/2, adag = -d/dphi + phi/2 (one fibre degree):
+#   (a) FACTORIZATION  adag a = -d^2 + phi^2/4 - 1/2;
+#   (b) CCR             [a, adag] = 1;
+#   (c) SPLIT           N_a = (adag a + 1/2) + (V + sigma_a).
+# (a)+(b) exhibit the ground state (a phi_0 = 0, phi_0 = e^{-phi^2/4}); (c) is the
+# oscillator-plus structure.  The ladder [N_a, a] is NOT -a (the wall is not quadratic) — that is
+# why the wall must sit INSIDE N and no ladder is available; the ESA comes from (c) plus the
+# non-negativity V + sigma_a >= 0 (V >= 0 by `starobinskyV_nonneg`, sigma_a >= 1 by
+# `QgModeData.one_le_sig`).
+aphi := \partial_{0}{\psi} + (\phi/2) \psi;
+adagphi := -\partial_{0}{\psi} + (\phi/2) \psi;
+hoscpsi := -\partial_{0}{\partial_{0}{\psi}} + (\phi \phi/4) \psi;
+adagaphi := -\partial_{0}{ @(aphi) } + (\phi/2) @(aphi);
+aadagpsi := \partial_{0}{ @(adagphi) } + (\phi/2) @(adagphi);
+hfibpsi := -\partial_{0}{\partial_{0}{\psi}} + (\phi \phi/4 + Vfun + sigma) \psi;
+for ex in [adagaphi, aadagpsi]:
+	expand_derivs(ex, 6)
+	substitute(ex, rules, repeat=True)
+	sort_product(ex); canonicalise(ex); collect_terms(ex)
+osc_check := @(adagaphi) - (@(hoscpsi) - (1/2) \psi);
+distribute(osc_check); sort_product(osc_check); canonicalise(osc_check); collect_terms(osc_check)
+print("CHECK 10a QG  adag a = H_osc - 1/2                    (0 = ok) :", osc_check)
+ccr_check := @(aadagpsi) - @(adagaphi) - \psi;
+distribute(ccr_check); collect_terms(ccr_check)
+print("CHECK 10b QG  [a, adag] = 1                           (0 = ok) :", ccr_check)
+split_check := @(hfibpsi) - @(adagaphi) - (Vfun + sigma + (1/2)) \psi;
+distribute(split_check); sort_product(split_check); canonicalise(split_check); collect_terms(split_check)
+print("CHECK 10c QG  N_a = (adag a + 1/2) + (V + sigma)      (0 = ok) :", split_check)
+# The shift arithmetic behind the non-negativity of the added part: sigma_a >= 1, V >= 0.
+shift_check := (sigma - 1) + 1 - sigma;
+distribute(shift_check); collect_terms(shift_check)
+print("CHECK 10d QG  (sigma - 1) + 1 = sigma                 (0 = ok) :", shift_check)
+
+# ===== 11. the LIFT: the outer comparison is the lift of N_a, and ESA must be reproved there =====
+# The outer comparison is NOT N_a: it is the mode-lift `secN = dsComparison (fibCompar W Q)` =
+# oplus_a Friedrichs(N_{sigma_a}) on `Sec iota = l^2(iota ; L^2(R_phi))`, and in the `dGamma`
+# spelling over the 84-coordinate one-particle space it is `qgOuterComparison = dGamma(N1)`.  The
+# lifted Hamiltonian is `secHam` (or `dGamma(H1)`), not `h_s`.  ESA of the one-particle h_s on
+# its core does NOT imply ESA of the lift on the lifted core: the lifted core is the
+# finite-particle / mode core built from the one-particle core, and the operator is a different
+# one.  What the symbolic algebra certifies is that the lifted comparison acts
+# ONE-PARTICLE-WISE (the second-quantization identity)
+#     dGamma(N) = sum_{i,j} N_ij adag_i a_j ,
+#     [dGamma(N), adag_k] = sum_i N_ik adag_i ,   [dGamma(N), a_k] = - sum_i N_ki a_i ,
+# which is what makes the lifted core the tensor / finite-particle core.  The Lean statements for
+# obligation (ii) are `secHam_essentiallySelfAdjointOn` (domain), `qgFull_esa_core_fl` (core),
+# `dGamma_essentiallySelfAdjointOn_fockCore` / `dGamma_essentiallySelfAdjointOn_of_esa` (the
+# general lift) and `dsOp_essentiallySelfAdjointOn` (the l^2 spelling).
+{\a{1}, \a{2}, \adag{1}, \adag{2}}::NonCommuting.
+{N11op, N12op, N21op, N22op}::Commuting.
+DG := N11op \adag{1} \a{1} + N12op \adag{1} \a{2} + N21op \adag{2} \a{1} + N22op \adag{2} \a{2};
+liftcre := @(DG) \adag{2} - \adag{2} @(DG);
+distribute(liftcre); collect_terms(liftcre);
+substitute(liftcre, $ \a{1} \adag{1} -> 1 + \adag{1} \a{1} $, repeat=True);
+substitute(liftcre, $ \a{2} \adag{2} -> 1 + \adag{2} \a{2} $, repeat=True);
+substitute(liftcre, $ \a{1} \adag{2} -> \adag{2} \a{1} $, repeat=True);
+substitute(liftcre, $ \a{2} \adag{1} -> \adag{1} \a{2} $, repeat=True);
+substitute(liftcre, $ \adag{2} \adag{1} -> \adag{1} \adag{2} $, repeat=True);
+sort_product(liftcre); canonicalise(liftcre); collect_terms(liftcre);
+liftcrecheck := @(liftcre) - (N12op \adag{1} + N22op \adag{2});
+distribute(liftcrecheck); collect_terms(liftcrecheck)
+print("CHECK 11a QG  [dGamma N, adag_2] = N_12 adag_1 + N_22 adag_2 (0 = ok) :", liftcrecheck)
+liftann := @(DG) \a{2} - \a{2} @(DG);
+distribute(liftann); collect_terms(liftann);
+for _step in range(6):
+	substitute(liftann, $ \a{2} \adag{1} -> \adag{1} \a{2} $, repeat=True);
+	substitute(liftann, $ \a{2} \adag{2} -> 1 + \adag{2} \a{2} $, repeat=True);
+	substitute(liftann, $ \a{2} \a{1} -> \a{1} \a{2} $, repeat=True);
+	distribute(liftann); collect_terms(liftann);
+sort_product(liftann); canonicalise(liftann); collect_terms(liftann);
+liftanncheck := @(liftann) - (-N21op \a{1} - N22op \a{2});
+distribute(liftanncheck); collect_terms(liftanncheck)
+print("CHECK 11b QG  [dGamma N, a_2] = -(N_21 a_1 + N_22 a_2)       (0 = ok) :", liftanncheck)
