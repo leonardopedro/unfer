@@ -81,150 +81,160 @@ i::ImaginaryI.
 {haa, hab, hba, hbb}::Symbol.
 {a1, ad1, a2, ad2, a3, ad3}::NonCommuting.
 
+# ---- local reduction helper (the cli has no built-in clean/diff; cf. the
+# ---- def clean of docs/ns_pressure_poisson.cdb) --------------------------------
+# sort_product (CLI builtin, the one docs/ns_kvn_equation.cdb calls) puts every
+# product into a canonical factor order, so structurally equal terms written with
+# different factor order cancel under collect_terms.  Engine trap learned here:
+# hand-built swap rules of the form "b a -> a b" fed to substitute(...,
+# repeat=True) DO NOT TERMINATE in this CLI -- the commutative matcher re-fires
+# on its own output forever -- so ordering is delegated to sort_product, and
+# only the non-commutative ccr/cross rewrites (whose rules cannot re-match their
+# own output) go through substitute with repeat=True.
+def tidy(ex, depth=1):
+    distribute(ex)
+    for _ in range(depth):
+        product_rule(ex)
+        distribute(ex)
+    sort_product(ex)
+    distribute(ex)
+    canonicalise(ex)
+    collect_terms(ex)
+    return ex
+
 # ===========================================================================
-# E. the Eulerian starting point, in momentum space
+# E. the Eulerian starting point, in momentum space, in momentum space
 # ===========================================================================
-print("== E. Eulerian residual and constraint, after the spatial-Fourier elimination ==")
+print("== E. Eulerian residual and constraint, after the spatial-Fourier elimination ==");
 
 # CHECK 1: the residual symbol.  R_a = sum_y u_y u_{a,y} + q_a - nu w_a with the
 # elimination u_{a,y} -> i k_y u_a,  q_a -> i k_a p,  w_a -> -|k|^2 u_a must give
 # sigma(R_a) = i u_a (k.u) + i k_a p + nu |k|^2 u_a.
-ra0 := Ex(r"ua*duaa + ub*duab + uc*duac + qa - nu*wa")
-substitute(ra0, Ex(r"duaa -> I*ka*ua, duab -> I*kb*ua, duac -> I*kc*ua"), repeat=True)
-substitute(ra0, Ex(r"qa -> I*ka*p, wa -> - (ka*ka + kb*kb + kc*kc) * ua"), repeat=True)
-distribute(ra0); canonicalise(ra0); collect_terms(ra0)
-raexp := Ex(r"I*ua*(ka*ua + kb*ub + kc*uc) + I*ka*p + nu*(ka*ka + kb*kb + kc*kc)*ua")
-chk1 := @(ra0) - @(raexp)
-distribute(chk1); canonicalise(chk1); collect_terms(chk1)
-print("CHECK 1  NSLAG sigma(R_a) = i u_a (k.u) + i k_a p + nu |k|^2 u_a (0 = ok):", chk1)
+ra0 = Ex(r"ua*duaa + ub*duab + uc*duac + qa - nu*wa");
+substitute(ra0, Ex(r"duaa -> I*ka*ua, duab -> I*kb*ua, duac -> I*kc*ua"), repeat=True);
+substitute(ra0, Ex(r"qa -> I*ka*p, wa -> - (ka*ka + kb*kb + kc*kc) * ua"), repeat=True);
+tidy(ra0);
+raexp = Ex(r"I*ua*(ka*ua + kb*ub + kc*uc) + I*ka*p + nu*(ka*ka + kb*kb + kc*kc)*ua");
+chk1 := @(ra0) - @(raexp);
+tidy(chk1);
+print("CHECK 1  NSLAG sigma(R_a) = i u_a (k.u) + i k_a p + nu |k|^2 u_a (0 = ok):", chk1);
 
 # CHECK 2: the constraint in momentum space.  div u = u_{a,a} + u_{b,b} + u_{c,c}
 # |-> i (k.u): a LINEAR form in the modes; its surface is k.u = 0.  (That the pressure
 # p is its second-class multiplier, solved by p = -S/|k|^2, is certified in
 # docs/ns_pressure_constraint.cdb CHECK 1-5 -- not re-derived here.)
-div0 := Ex(r"duaa + dubb + ducc")
-substitute(div0, Ex(r"duaa -> I*ka*ua, dubb -> I*kb*ub, ducc -> I*kc*uc"), repeat=True)
-canonicalise(div0); collect_terms(div0)
-print("CHECK 2  NSLAG div u |-> i (k.u), the linear constraint symbol:", div0)
+div0 = Ex(r"duaa + dubb + ducc");
+substitute(div0, Ex(r"duaa -> I*ka*ua, dubb -> I*kb*ub, ducc -> I*kc*uc"), repeat=True);
+tidy(div0);
+print("CHECK 2  NSLAG div u |-> i (k.u), the linear constraint symbol:", div0);
 
 # ===========================================================================
 # J. the constraint transports: div u = 0 <=> det F = 1
 # ===========================================================================
-print("== J. Cauchy transport of the constraint into material variables ==")
+print("== J. Cauchy transport of the constraint into material variables ==");
 
 # the signed cofactors of F (the Lean cofPoly convention: C_xy = (-1)^{x+y} minor_xy,
 # verified identical to BookProof.ChapterNavierStokesFullLagrangianFock.cofPoly's
 # first-row expansion in DESIGN_COMPARISON_N_20260915.cdb A1/A2)
-cfaa := Ex(r"Fbb*Fcc - Fbc*Fcb")
-cfab := Ex(r"-(Fba*Fcc - Fbc*Fca)")
-cfac := Ex(r"Fba*Fcb - Fbb*Fca")
-cfba := Ex(r"-(Fab*Fcc - Fac*Fcb)")
-cfbb := Ex(r"Faa*Fcc - Fac*Fca")
-cfbc := Ex(r"-(Faa*Fcb - Fab*Fca)")
-cfca := Ex(r"Fab*Fbc - Fac*Fbb")
-cfcb := Ex(r"-(Faa*Fbc - Fac*Fba)")
-cfcc := Ex(r"Faa*Fcb - Fab*Fba")
+cfaa = Ex(r"Fbb*Fcc - Fbc*Fcb");
+cfab = Ex(r"-(Fba*Fcc - Fbc*Fca)");
+cfac = Ex(r"Fba*Fcb - Fbb*Fca");
+cfba = Ex(r"-(Fab*Fcc - Fac*Fcb)");
+cfbb = Ex(r"Faa*Fcc - Fac*Fca");
+cfbc = Ex(r"-(Faa*Fcb - Fab*Fca)");
+cfca = Ex(r"Fab*Fbc - Fac*Fbb");
+cfcb = Ex(r"-(Faa*Fbc - Fac*Fba)");
+cfcc = Ex(r"Faa*Fbb - Fab*Fba");
 
 # volumePoly = detPoly - 1 (Lean: detPoly is the first-row expansion, volumePoly = detPoly - 1)
-volpoly := Ex(r"Faa*(Fbb*Fcc - Fbc*Fcb) - Fab*(Fba*Fcc - Fbc*Fca) + Fac*(Fba*Fcb - Fbb*Fca) - 1")
+volpoly = Ex(r"Faa*(Fbb*Fcc - Fbc*Fcb) - Fab*(Fba*Fcc - Fbc*Fca) + Fac*(Fba*Fcb - Fbb*Fca) - 1");
 
 # CHECK 3: Jacobi's identity for the flow map: with Fdot_xy = sum_z du_xz F_zy
 # (d/dt X_x(a) = u_x(X(a)) differentiated in a),  d(det F)/dt = sum_xy C_xy Fdot_xy
 # must equal det F * div u = det F * sum_x du_xx.
-fdotaa := Ex(r"duaa*Faa + duab*Fba + duac*Fca")
-fdotab := Ex(r"duaa*Fab + duab*Fbb + duac*Fcb")
-fdotac := Ex(r"duaa*Fac + duab*Fbc + duac*Fcc")
-fdotba := Ex(r"duba*Faa + dubb*Fba + dubc*Fca")
-fdotbb := Ex(r"duba*Fab + dubb*Fbb + dubc*Fcb")
-fdotbc := Ex(r"duba*Fac + dubb*Fbc + dubc*Fcc")
-fdotca := Ex(r"duca*Faa + ducb*Fba + ducc*Fca")
-fdotcb := Ex(r"duca*Fab + ducb*Fbb + ducc*Fcb")
-fdotcc := Ex(r"duca*Fac + ducb*Fbc + ducc*Fcc")
-jacobi := @(cfaa)*@(fdotaa) + @(cfab)*@(fdotab) + @(cfac)*@(fdotac)
-       + @(cfba)*@(fdotba) + @(cfbb)*@(fdotbb) + @(cfbc)*@(fdotbc)
-       + @(cfca)*@(fdotca) + @(cfcb)*@(fdotcb) + @(cfcc)*@(fdotcc)
-rhsjac := (Ex(r"1") + @(volpoly)) * (duaa + dubb + ducc)
-chk3 := @(jacobi) - @(rhsjac)
-distribute(chk3); canonicalise(chk3); collect_terms(chk3)
-print("CHECK 3  NSLAG d(det F)/dt - det F * div u = 0   (Cauchy, 0 = ok):", chk3)
+fdotaa = Ex(r"duaa*Faa + duab*Fba + duac*Fca");
+fdotab = Ex(r"duaa*Fab + duab*Fbb + duac*Fcb");
+fdotac = Ex(r"duaa*Fac + duab*Fbc + duac*Fcc");
+fdotba = Ex(r"duba*Faa + dubb*Fba + dubc*Fca");
+fdotbb = Ex(r"duba*Fab + dubb*Fbb + dubc*Fcb");
+fdotbc = Ex(r"duba*Fac + dubb*Fbc + dubc*Fcc");
+fdotca = Ex(r"duca*Faa + ducb*Fba + ducc*Fca");
+fdotcb = Ex(r"duca*Fab + ducb*Fbb + ducc*Fcb");
+fdotcc = Ex(r"duca*Fac + ducb*Fbc + ducc*Fcc");
+jacobi := @(cfaa)*@(fdotaa) + @(cfab)*@(fdotab) + @(cfac)*@(fdotac)        + @(cfba)*@(fdotba) + @(cfbb)*@(fdotbb) + @(cfbc)*@(fdotbc)        + @(cfca)*@(fdotca) + @(cfcb)*@(fdotcb) + @(cfcc)*@(fdotcc);
+rhsjac := (1 + @(volpoly)) * (duaa + dubb + ducc);
+chk3 := @(jacobi) - @(rhsjac);
+tidy(chk3);
+print("CHECK 3  NSLAG d(det F)/dt - det F * div u = 0   (Cauchy, 0 = ok):", chk3);
 
 # CHECK 4: at F = I the constraint surface is exactly det F = 1 (volumePoly = 0),
 # i.e. the Eulerian constraint div u = 0 and the material constraint det F = 1 agree
 # on the initial slice where the flow map starts as the identity.
-volI := @(volpoly)
-substitute(volI, Ex(r"Faa -> 1, Fab -> 0, Fac -> 0, Fba -> 0, Fbb -> 1, Fbc -> 0, Fca -> 0, Fcb -> 0, Fcc -> 1"), repeat=True)
-canonicalise(volI); collect_terms(volI)
-print("CHECK 4  NSLAG volumePoly at F = I               (0 = ok):", volI)
+volI := @(volpoly);
+substitute(volI, Ex(r"Faa -> 1, Fab -> 0, Fac -> 0, Fba -> 0, Fbb -> 1, Fbc -> 0, Fca -> 0, Fcb -> 0, Fcc -> 1"), repeat=True);
+tidy(volI);
+print("CHECK 4  NSLAG volumePoly at F = I               (0 = ok):", volI);
 
-# CHECK 5: the linearization -- the linear part of volumePoly(I + t E) is tr E,
-# the displacement divergence (the Eulerian div u of the displacement field), and the
-# quadratic part is the principal 2x2 minors of E:
-#   d/dt|_0 volumePoly(I + t E) = eaa + ebb + ecc,
-#   d^2/dt^2|_0 volumePoly(I + t E) = 2 * (sum of principal 2x2 minors of E).
-volit := @(volpoly)
-substitute(volit, Ex(r"Faa -> 1 + t*eaa, Fbb -> 1 + t*ebb, Fcc -> 1 + t*ecc"), repeat=True)
-substitute(volit, Ex(r"Fab -> t*eab, Fac -> t*eac, Fba -> t*eba, Fbc -> t*ebc, Fca -> t*eca, Fcb -> t*ecb"), repeat=True)
-distribute(volit)
-dvol := diff(volit, t)
-chk5a := @(dvol) - (eaa + ebb + ecc)
-substitute(chk5a, Ex(r"t -> 0"), repeat=True)
-distribute(chk5a); canonicalise(chk5a); collect_terms(chk5a)
-print("CHECK 5a NSLAG linear part of volumePoly = div(displacement) (0 = ok):", chk5a)
-dvol2 := diff(volit, t)
-dvol2 := diff(@(dvol2), t)
-chk5b := (Ex(r"1")/2) * @(dvol2) - (eaa*ebb + eaa*ecc + ebb*ecc - eab*eba - eac*eca - ebc*ecb)
-substitute(chk5b, Ex(r"t -> 0"), repeat=True)
-distribute(chk5b); canonicalise(chk5b); collect_terms(chk5b)
-print("CHECK 5b NSLAG quadratic part = principal 2x2 minors (0 = ok):", chk5b)
+# CHECK 5: the exact expansion of the constraint at F = I + t E:
+#   vol(I + t E) = t tr(E) + t^2 (principal 2x2 minors of E) + t^3 det(E).
+# The linear part is the displacement divergence and the quadratic part the
+# minors (read off by inspection); the module verifies the stronger full
+# expansion directly, since the cli provides no scalar diff().
+volit := @(volpoly);
+substitute(volit, Ex(r"Faa -> 1 + t*eaa, Fbb -> 1 + t*ebb, Fcc -> 1 + t*ecc"), repeat=True);
+substitute(volit, Ex(r"Fab -> t*eab, Fac -> t*eac, Fba -> t*eba, Fbc -> t*ebc, Fca -> t*eca, Fcb -> t*ecb"), repeat=True);
+tidy(volit);
+chk5 := @(volit) - ( t*(eaa + ebb + ecc) + t*t*(eaa*ebb - eab*eba + eaa*ecc - eac*eca + ebb*ecc - ebc*ecb) + t*t*t*(eaa*(ebb*ecc - ebc*ecb) - eab*(eba*ecc - ebc*eca) + eac*(eba*ecb - ebb*eca)) );
+tidy(chk5); collect_terms(chk5);
+print("CHECK 5  NSLAG vol(I+tE) = t trE + t^2 minors + t^3 detE (0 = ok):", chk5);
 
 # ===========================================================================
 # M. the material substitution: what survives, what degenerates
 # ===========================================================================
-print("== M. material substitution (note section 6): F_ij -> i l_j xi_i, S_i -> -|l|^2 v_i ==")
+print("== M. material substitution (note section 6): F_ij -> i l_j xi_i, S_i -> -|l|^2 v_i ==");
 
-rank1 := Ex(r"Faa -> I*lla*xia, Fbb -> I*llb*xib, Fcc -> I*llc*xic, Fab -> I*lla*xib, Fac -> I*llc*xia, Fba -> I*llb*xia, Fbc -> I*llc*xib, Fca -> I*lla*xic, Fcb -> I*llb*xic")
+rank1 = Ex(r"Faa -> I*lla*xia, Fbb -> I*llb*xib, Fcc -> I*llc*xic, Fab -> I*llb*xia, Fac -> I*llc*xia, Fba -> I*lla*xib, Fbc -> I*llc*xib, Fca -> I*lla*xic, Fcb -> I*llb*xic");
 
 # CHECK 6: all nine cofactors vanish on the rank-one substitution (every 2x2 minor
 # of a rank-one matrix is zero) -- cof(F) = 0, the finding of CONSOLIDATED_PLAN.md
 # item 6 (rankOne_cof_zero, B4a-B4d of DESIGN_COMPARISON_N_20260915.cdb).
-minsq := @(cfaa)^2 + @(cfab)^2 + @(cfac)^2 + @(cfba)^2 + @(cfbb)^2 + @(cfbc)^2
-       + @(cfca)^2 + @(cfcb)^2 + @(cfcc)^2
-substitute(minsq, rank1, repeat=True)
-distribute(minsq); canonicalise(minsq); collect_terms(minsq)
-print("CHECK 6  NSLAG sum of squares of all cofactors under F = i l (x) xi (0 = ok):", minsq)
+minsq := @(cfaa)^2 + @(cfab)^2 + @(cfac)^2 + @(cfba)^2 + @(cfbb)^2 + @(cfbc)^2        + @(cfca)^2 + @(cfcb)^2 + @(cfcc)^2;
+substitute(minsq, rank1, repeat=True);
+tidy(minsq);
+print("CHECK 6  NSLAG sum of squares of all cofactors under F = i l (x) xi (0 = ok):", minsq);
 
 # CHECK 7: the constraint DEGENERATES under the elimination -- det F |-> 0, hence
 # volumePoly |-> -1 and volumePoly^2 |-> 1: a constant with no field content that
 # cannot couple to the field (lagElimSubst_volumePoly / _volumePoly_sq, B5/B5b).
-volrk := @(volpoly)
-substitute(volk, rank1, repeat=True)
-distribute(volk); canonicalise(volk); collect_terms(volk)
-print("CHECK 7a NSLAG volumePoly |-> det F - 1 under the rank-one map (expect -1):", volrk)
-volrk2 := @(volpoly) * @(volpoly)
-substitute(volk2, rank1, repeat=True)
-distribute(volk2); canonicalise(volk2); collect_terms(volk2)
-print("CHECK 7b NSLAG volumePoly^2 under the rank-one map (expect 1):", volrk2)
+volk := @(volpoly);
+substitute(volk, rank1, repeat=True);
+tidy(volk);
+print("CHECK 7a NSLAG volumePoly |-> det F - 1 under the rank-one map (expect -1):", volk);
+volk2 := @(volpoly) * @(volpoly);
+substitute(volk2, rank1, repeat=True);
+tidy(volk2);
+print("CHECK 7b NSLAG volumePoly^2 under the rank-one map (expect 1):", volk2);
 
 # CHECK 8: the Piola pressure term dies with the cofactors (lagElimSubst_piola):
 # the ENTIRE pressure coupling of the material momentum equation vanishes.
 # Component b of lagResPoly's pressure part: sum_j cof(F)_{j b} q_j.
-piolab := @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc
-substitute(piolab, rank1, repeat=True)
-distribute(piolab); canonicalise(piolab); collect_terms(piolab)
-print("CHECK 8  NSLAG Piola term sum_j cof(F)_{jb} q_j |-> 0 (0 = ok):", piolab)
+piolab := @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc;
+substitute(piolab, rank1, repeat=True);
+tidy(piolab);
+print("CHECK 8  NSLAG Piola term sum_j cof(F)_{jb} q_j |-> 0 (0 = ok):", piolab);
 
 # CHECK 9: what SURVIVES is the eliminated material momentum equation
 #   sigma(R_b) = mat_b + |l|^2 v_b      (lagElimSubst_lagResPoly):
 # lagResPoly R_b = mat_b + sum_j cof_{jb} q_j - S_b, with cof |-> 0 (CHECK 6/8) and
 # sigma(S_b) = -|l|^2 v_b: no pressure, acceleration plus viscous term.
-rb0 := matb + @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc - sb
-substitute(rb0, Ex(r"sb -> - (lla*lla + llb*llb + llc*llc) * vb"), repeat=True)
-substitute(rb0, rank1, repeat=True)
-distribute(rb0); canonicalise(rb0); collect_terms(rb0)
-rbexp := Ex(r"matb + (lla*lla + llb*llb + llc*llc) * vb")
-chk9 := @(rb0) - @(rbexp)
-distribute(chk9); canonicalise(chk9); collect_terms(chk9)
-print("CHECK 9  NSLAG eliminated material residual = a_b + |l|^2 v_b (0 = ok):", chk9)
+rb0 := matb + @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc - sb;
+substitute(rb0, Ex(r"sb -> - (lla*lla + llb*llb + llc*llc) * vb"), repeat=True);
+substitute(rb0, rank1, repeat=True);
+tidy(rb0);
+rbexp = Ex(r"matb + (lla*lla + llb*llb + llc*llc) * vb");
+chk9 := @(rb0) - @(rbexp);
+tidy(chk9);
+print("CHECK 9  NSLAG eliminated material residual = a_b + |l|^2 v_b (0 = ok):", chk9);
 
 # Reading (the reason the derivation needs the penalty): the elimination maps the
 # constraint to the constant -1 (CHECK 7), so det F is kept as an INDEPENDENT scalar
@@ -236,103 +246,108 @@ print("CHECK 9  NSLAG eliminated material residual = a_b + |l|^2 v_b (0 = ok):",
 # ===========================================================================
 # C. the one-parcel canonical Hamiltonian
 # ===========================================================================
-print("== C. the canonical one-parcel Hamiltonian h = 1/2 sum P^2 + nu sum Q^2 + sum f.P ==")
-print("     (omega = sqrt(2 nu); Q = (a+a^dag)/sqrt(2 omega), P = i sqrt(omega/2) (a^dag - a);")
-print("     the ladder algebra is shown at the package instance omega = 1, nu = 1/2;")
-print("     CHECK 12 carries the general omega = sqrt(2 nu))")
+print("== C. the canonical one-parcel Hamiltonian h = 1/2 sum P^2 + nu sum Q^2 + sum f.P ==");
+print("     (omega = sqrt(2 nu); Q = (a+a^dag)/sqrt(2 omega), P = i sqrt(omega/2) (a^dag - a);");
+print("     the ladder algebra is shown at the package instance omega = 1, nu = 1/2;");
+print("     CHECK 12 carries the general omega = sqrt(2 nu))");
 
 # ladder handles at omega = 1: P_m = i (ad_m - a_m)/sqrt(2), Q_m = (ad_m + a_m)/sqrt(2)
-Pa := Ex(r"I*(ad1 - a1)/sqrt(2)")
-Pb := Ex(r"I*(ad2 - a2)/sqrt(2)")
-Pc := Ex(r"I*(ad3 - a3)/sqrt(2)")
-Qa := Ex(r"(ad1 + a1)/sqrt(2)")
-Qb := Ex(r"(ad2 + a2)/sqrt(2)")
-Qc := Ex(r"(ad3 + a3)/sqrt(2)")
+Pa = Ex(r"I*(ad1 - a1)/sqrt(2)");
+Pb = Ex(r"I*(ad2 - a2)/sqrt(2)");
+Pc = Ex(r"I*(ad3 - a3)/sqrt(2)");
+Qa = Ex(r"(ad1 + a1)/sqrt(2)");
+Qb = Ex(r"(ad2 + a2)/sqrt(2)");
+Qc = Ex(r"(ad3 + a3)/sqrt(2)");
 
-ccr := Ex(r"a1 ad1 -> ad1 a1 + 1, a2 ad2 -> ad2 a2 + 1, a3 ad3 -> ad3 a3 + 1")
-cross := Ex(r"a1 ad2 -> ad2 a1, a1 ad3 -> ad3 a1, a2 ad1 -> ad1 a2, a2 ad3 -> ad3 a2, a3 ad1 -> ad1 a3, a3 ad2 -> ad2 a3, a1 a2 -> a2 a1, a1 a3 -> a3 a1, a2 a3 -> a3 a2, ad1 ad2 -> ad2 ad1, ad1 ad3 -> ad3 ad1, ad2 ad3 -> ad3 ad2")
+ccr = Ex(r"a1 ad1 -> ad1 a1 + 1, a2 ad2 -> ad2 a2 + 1, a3 ad3 -> ad3 a3 + 1");
+cross = Ex(r"a1 ad2 -> ad2 a1, a1 ad3 -> ad3 a1, a2 ad1 -> ad1 a2, a2 ad3 -> ad3 a2, a3 ad1 -> ad1 a3, a3 ad2 -> ad2 a3, a1 a2 -> a2 a1, a1 a3 -> a3 a1, a2 a3 -> a3 a2, ad1 ad2 -> ad2 ad1, ad1 ad3 -> ad3 ad1, ad2 ad3 -> ad3 ad2");
+
+# numeric folding: the engine NEVER evaluates I*I -> -1 or sqrt(x)^2 -> x on
+# its own, so those factors must be rewritten explicitly or the rational/I
+# prefactors of the ladder algebra can never cancel.  Engine traps learned:
+# a rule with a numeric prefactor on the lhs is rejected ((2 om)**(-1) om must
+# be written om**(-1) om, since (2 om)**(-1) normalises to (1/2) om**(-1)), and
+# a self-referential rule like Faa -> t*Faa must run WITHOUT repeat=True.
+numfold = Ex(r"I I -> -1, (sqrt(2))**(-1) (sqrt(2))**(-1) -> 1/2, sqrt(1/2 om) sqrt(1/2 om) -> 1/2 om, (sqrt(2*om))**(-1) (sqrt(2*om))**(-1) -> (2 om)**(-1), om**(-1) om -> 1");
+
+# normal-order a commutator check: expand FIRST (the ccr/cross patterns only
+# match once the products are distributed), rewrite the CCR, fold numerics,
+# then tidy.  (substitute before distribute was the original bug: the rules
+# silently matched nothing.)
+def norder(ex):
+    distribute(ex); distribute(ex); distribute(ex);
+    # alternate ccr and cross to a JOINT fixpoint: cross moves a's past ad's
+    # and can create fresh a ad adjacencies that ccr must still rewrite
+    # (one ccr pass followed by one cross pass leaves cubic residue).
+    for _ in range(4):
+        substitute(ex, ccr, repeat=True); distribute(ex);
+        substitute(ex, cross, repeat=True); distribute(ex);
+    substitute(ex, numfold, repeat=True);
+    tidy(ex); canonicalise(ex);
+    return ex
 
 # CHECK 11: the CCR [P_i, Q_j] = -i delta_ij (comm_lagP_lagQ).
-cca := @(Pa)*@(Qa) - @(Qa)*@(Pa) + Ex(r"I")
-substitute(cca, ccr, repeat=True); substitute(cca, cross, repeat=True)
-distribute(cca); collect_terms(cca); canonicalise(cca)
-print("CHECK 11a NSLAG [P_a, Q_a] + i = 0                    (0 = ok):", cca)
-ccb := @(Pb)*@(Qb) - @(Qb)*@(Pb) + Ex(r"I")
-substitute(ccb, ccr, repeat=True); substitute(ccb, cross, repeat=True)
-distribute(ccb); collect_terms(ccb); canonicalise(ccb)
-print("CHECK 11b NSLAG [P_b, Q_b] + i = 0                    (0 = ok):", ccb)
-ccc := @(Pc)*@(Qc) - @(Qc)*@(Pc) + Ex(r"I")
-substitute(ccc, ccr, repeat=True); substitute(ccc, cross, repeat=True)
-distribute(ccc); collect_terms(ccc); canonicalise(ccc)
-print("CHECK 11c NSLAG [P_c, Q_c] + i = 0                    (0 = ok):", ccc)
-ccx := @(Pa)*@(Qb) - @(Qb)*@(Pa) + @(Pa)*@(Qc) - @(Qc)*@(Pa)
-     + @(Pb)*@(Qa) - @(Qa)*@(Pb) + @(Pb)*@(Qc) - @(Qc)*@(Pb)
-     + @(Pc)*@(Qa) - @(Qa)*@(Pc) + @(Pc)*@(Qb) - @(Qb)*@(Pc)
-substitute(ccx, ccr, repeat=True); substitute(ccx, cross, repeat=True)
-distribute(ccx); collect_terms(ccx); canonicalise(ccx)
-print("CHECK 11d NSLAG sum_{i != j} [P_i, Q_j] = 0           (0 = ok):", ccx)
+cca := @(Pa)*@(Qa) - @(Qa)*@(Pa) + I;
+norder(cca);
+print("CHECK 11a NSLAG [P_a, Q_a] + i = 0                    (0 = ok):", cca);
+ccb := @(Pb)*@(Qb) - @(Qb)*@(Pb) + I;
+norder(ccb);
+print("CHECK 11b NSLAG [P_b, Q_b] + i = 0                    (0 = ok):", ccb);
+ccc := @(Pc)*@(Qc) - @(Qc)*@(Pc) + I;
+norder(ccc);
+print("CHECK 11c NSLAG [P_c, Q_c] + i = 0                    (0 = ok):", ccc);
+ccx := @(Pa)*@(Qb) - @(Qb)*@(Pa) + @(Pa)*@(Qc) - @(Qc)*@(Pa)      + @(Pb)*@(Qa) - @(Qa)*@(Pb) + @(Pb)*@(Qc) - @(Qc)*@(Pb)      + @(Pc)*@(Qa) - @(Qa)*@(Pc) + @(Pc)*@(Qb) - @(Qb)*@(Pc);
+norder(ccx);
+print("CHECK 11d NSLAG sum_{i != j} [P_i, Q_j] = 0           (0 = ok):", ccx);
 
 # CHECK 12: the oscillator identity 1/2 sum P^2 + nu sum Q^2 = omega (N + 3/2),
 # omega = sqrt(2 nu) encoded as nu -> om^2/2  (lagCan_secondOrder_eq / lagT_eq_number).
-Pl1 := Ex(r"I*sqrt(om/2)*(ad1 - a1)")
-Pl2 := Ex(r"I*sqrt(om/2)*(ad2 - a2)")
-Pl3 := Ex(r"I*sqrt(om/2)*(ad3 - a3)")
-Ql1 := Ex(r"(ad1 + a1)/sqrt(2*om)")
-Ql2 := Ex(r"(ad2 + a2)/sqrt(2*om)")
-Ql3 := Ex(r"(ad3 + a3)/sqrt(2*om)")
-tosc := (Ex(r"1")/2)*@(Pl1)*@(Pl1) + nu*@(Ql1)*@(Ql1)
-      + (Ex(r"1")/2)*@(Pl2)*@(Pl2) + nu*@(Ql2)*@(Ql2)
-      + (Ex(r"1")/2)*@(Pl3)*@(Pl3) + nu*@(Ql3)*@(Ql3)
-substitute(tosc, Ex(r"nu -> om*om/2"), repeat=True)
-distribute(tosc); canonicalise(tosc); collect_terms(tosc)
-chk12 := @(tosc) - om*(ad1*a1 + ad2*a2 + ad3*a3) - Ex(r"3*om/2")
-substitute(chk12, ccr, repeat=True); substitute(chk12, cross, repeat=True)
-distribute(chk12); collect_terms(chk12); canonicalise(chk12)
-print("CHECK 12 NSLAG 1/2 sum P^2 + nu sum Q^2 - omega (N + 3/2) = 0 (0 = ok):", chk12)
+Pl1 = Ex(r"I*sqrt(om/2)*(ad1 - a1)");
+Pl2 = Ex(r"I*sqrt(om/2)*(ad2 - a2)");
+Pl3 = Ex(r"I*sqrt(om/2)*(ad3 - a3)");
+Ql1 = Ex(r"(ad1 + a1)/sqrt(2*om)");
+Ql2 = Ex(r"(ad2 + a2)/sqrt(2*om)");
+Ql3 = Ex(r"(ad3 + a3)/sqrt(2*om)");
+tosc := 1/2*@(Pl1)*@(Pl1) + nu*@(Ql1)*@(Ql1)       + 1/2*@(Pl2)*@(Pl2) + nu*@(Ql2)*@(Ql2)       + 1/2*@(Pl3)*@(Pl3) + nu*@(Ql3)*@(Ql3);
+substitute(tosc, Ex(r"nu -> om*om/2"), repeat=True);
+tidy(tosc);
+chk12 := @(tosc) - om*(ad1*a1 + ad2*a2 + ad3*a3) - 3*om/2;
+norder(chk12);
+print("CHECK 12 NSLAG 1/2 sum P^2 + nu sum Q^2 - omega (N + 3/2) = 0 (0 = ok):", chk12);
 
 # CHECK 13: the completed-square expansion behind h + 1/2 |f|^2 = 1/2 sum (P_m+f_m)^2
 # + nu sum Q^2 (the Kato-Rellich input hFull = kinetic + viscous + drift + constraintOp,
 # and the source of the exact spectral shift -1/2 |f|^2 in ns_lagrangian_validation.rs):
 #   1/2 (P_m + f_m)^2 - 1/2 P_m^2 - f_m P_m - 1/2 f_m^2 = 0  for each m.
-Ppfa := @(Pa) + Ex(r"fa")
-Ppfb := @(Pb) + Ex(r"fb")
-Ppfc := @(Pc) + Ex(r"fc")
-chk13 := (Ex(r"1")/2)*@(Ppfa)*@(Ppfa) - (Ex(r"1")/2)*@(Pa)*@(Pa) - Ex(r"fa")*@(Pa) - Ex(r"1")/2*Ex(r"fa*fa")
-       + (Ex(r"1")/2)*@(Ppfb)*@(Ppfb) - (Ex(r"1")/2)*@(Pb)*@(Pb) - Ex(r"fb")*@(Pb) - Ex(r"1")/2*Ex(r"fb*fb")
-       + (Ex(r"1")/2)*@(Ppfc)*@(Ppfc) - (Ex(r"1")/2)*@(Pc)*@(Pc) - Ex(r"fc")*@(Pc) - Ex(r"1")/2*Ex(r"fc*fc")
-distribute(chk13); collect_terms(chk13); canonicalise(chk13)
-print("CHECK 13 NSLAG 1/2 (P+f)^2 - 1/2 P^2 - f P - 1/2 f^2 = 0 (0 = ok):", chk13)
+Ppfa := @(Pa) + fa;
+Ppfb := @(Pb) + fb;
+Ppfc := @(Pc) + fc;
+chk13 := 1/2*@(Ppfa)*@(Ppfa) - 1/2*@(Pa)*@(Pa) - fa*@(Pa) - 1/2*fa*fa        + 1/2*@(Ppfb)*@(Ppfb) - 1/2*@(Pb)*@(Pb) - fb*@(Pb) - 1/2*fb*fb        + 1/2*@(Ppfc)*@(Ppfc) - 1/2*@(Pc)*@(Pc) - fc*@(Pc) - 1/2*fc*fc;
+tidy(chk13); canonicalise(chk13);
+print("CHECK 13 NSLAG 1/2 (P+f)^2 - 1/2 P^2 - f P - 1/2 f^2 = 0 (0 = ok):", chk13);
 
 # CHECK 14: the Heisenberg equations of the derived Hamiltonian (omega = 1, nu = 1/2
 # instance):  d<Q_m>/dt = i[H, Q_m] = P_m + f_m,  d<P_m>/dt = i[H, P_m] = -2 nu Q_m.
-Hh := (Ex(r"1")/2)*@(Pa)*@(Pa) + (Ex(r"1")/2)*@(Qa)*@(Qa) + Ex(r"fa")*@(Pa)
-    + (Ex(r"1")/2)*@(Pb)*@(Pb) + (Ex(r"1")/2)*@(Qb)*@(Qb) + Ex(r"fb")*@(Pb)
-    + (Ex(r"1")/2)*@(Pc)*@(Pc) + (Ex(r"1")/2)*@(Qc)*@(Qc) + Ex(r"fc")*@(Pc)
-Im := Ex(r"I")
-eq14a := Im * (@(Hh)*@(Qa) - @(Qa)*@(Hh)) - (@(Pa) + Ex(r"fa"))
-substitute(eq14a, ccr, repeat=True); substitute(eq14a, cross, repeat=True)
-distribute(eq14a); collect_terms(eq14a); canonicalise(eq14a)
-print("CHECK 14a NSLAG i[H,Q_a] - (P_a + f_a) = 0           (0 = ok):", eq14a)
-eq14b := Im * (@(Hh)*@(Qb) - @(Qb)*@(Hh)) - (@(Pb) + Ex(r"fb"))
-substitute(eq14b, ccr, repeat=True); substitute(eq14b, cross, repeat=True)
-distribute(eq14b); collect_terms(eq14b); canonicalise(eq14b)
-print("CHECK 14b NSLAG i[H,Q_b] - (P_b + f_b) = 0           (0 = ok):", eq14b)
-eq14c := Im * (@(Hh)*@(Qc) - @(Qc)*@(Hh)) - (@(Pc) + Ex(r"fc"))
-substitute(eq14c, ccr, repeat=True); substitute(eq14c, cross, repeat=True)
-distribute(eq14c); collect_terms(eq14c); canonicalise(eq14c)
-print("CHECK 14c NSLAG i[H,Q_c] - (P_c + f_c) = 0           (0 = ok):", eq14c)
-eq14d := Im * (@(Hh)*@(Pa) - @(Pa)*@(Hh)) + Ex(r"Qa")
-substitute(eq14d, ccr, repeat=True); substitute(eq14d, cross, repeat=True)
-distribute(eq14d); collect_terms(eq14d); canonicalise(eq14d)
-print("CHECK 14d NSLAG i[H,P_a] + 2 nu Q_a = 0 (nu = 1/2)   (0 = ok):", eq14d)
-eq14e := Im * (@(Hh)*@(Pb) - @(Pb)*@(Hh)) + Ex(r"Qb")
-substitute(eq14e, ccr, repeat=True); substitute(eq14e, cross, repeat=True)
-distribute(eq14e); collect_terms(eq14e); canonicalise(eq14e)
-print("CHECK 14e NSLAG i[H,P_b] + 2 nu Q_b = 0 (nu = 1/2)   (0 = ok):", eq14e)
-eq14f := Im * (@(Hh)*@(Pc) - @(Pc)*@(Hh)) + Ex(r"Qc")
-substitute(eq14f, ccr, repeat=True); substitute(eq14f, cross, repeat=True)
-distribute(eq14f); collect_terms(eq14f); canonicalise(eq14f)
-print("CHECK 14f NSLAG i[H,P_c] + 2 nu Q_c = 0 (nu = 1/2)   (0 = ok):", eq14f)
+Hh := 1/2*@(Pa)*@(Pa) + 1/2*@(Qa)*@(Qa) + fa*@(Pa)     + 1/2*@(Pb)*@(Pb) + 1/2*@(Qb)*@(Qb) + fb*@(Pb)     + 1/2*@(Pc)*@(Pc) + 1/2*@(Qc)*@(Qc) + fc*@(Pc);
+Im = Ex(r"I");
+eq14a := I * (@(Hh)*@(Qa) - @(Qa)*@(Hh)) - (@(Pa) + fa);
+norder(eq14a);
+print("CHECK 14a NSLAG i[H,Q_a] - (P_a + f_a) = 0           (0 = ok):", eq14a);
+eq14b := I * (@(Hh)*@(Qb) - @(Qb)*@(Hh)) - (@(Pb) + fb);
+norder(eq14b);
+print("CHECK 14b NSLAG i[H,Q_b] - (P_b + f_b) = 0           (0 = ok):", eq14b);
+eq14c := I * (@(Hh)*@(Qc) - @(Qc)*@(Hh)) - (@(Pc) + fc);
+norder(eq14c);
+print("CHECK 14c NSLAG i[H,Q_c] - (P_c + f_c) = 0           (0 = ok):", eq14c);
+eq14d := I * (@(Hh)*@(Pa) - @(Pa)*@(Hh)) + @(Qa);
+norder(eq14d);
+print("CHECK 14d NSLAG i[H,P_a] + 2 nu Q_a = 0 (nu = 1/2)   (0 = ok):", eq14d);
+eq14e := I * (@(Hh)*@(Pb) - @(Pb)*@(Hh)) + @(Qb);
+norder(eq14e);
+print("CHECK 14e NSLAG i[H,P_b] + 2 nu Q_b = 0 (nu = 1/2)   (0 = ok):", eq14e);
+eq14f := I * (@(Hh)*@(Pc) - @(Pc)*@(Hh)) + @(Qc);
+norder(eq14f);
+print("CHECK 14f NSLAG i[H,P_c] + 2 nu Q_c = 0 (nu = 1/2)   (0 = ok):", eq14f);
 
 # CHECK 15: the FINAL Hamiltonian is the enclosure H = dGamma(h) = sum h_ij ad_i a_j
 # (creation LEFT, annihilation RIGHT).  Two structural facts:
@@ -340,35 +355,35 @@ print("CHECK 14f NSLAG i[H,P_c] + 2 nu Q_c = 0 (nu = 1/2)   (0 = ok):", eq14f)
 #        nsSpDGamma_number_conserving);
 #   15b  [dGamma(h), ad_1] = sum_i h_{i1} ad_i  -- the lift acts one-particle-wise
 #        (the identity behind lagOne_dGamma_esa).
-DG := Ex(r"haa*ad1*a1 + hab*ad1*a2 + hba*ad2*a1 + hbb*ad2*a2")
-Nop := Ex(r"ad1*a1 + ad2*a2")
-chk15a := @(DG)*@(Nop) - @(Nop)*@(DG)
-substitute(chk15a, ccr, repeat=True); substitute(chk15a, cross, repeat=True)
-distribute(chk15a); collect_terms(chk15a); canonicalise(chk15a)
-print("CHECK 15a NSLAG [dGamma(h), N] = 0                   (0 = ok):", chk15a)
-chk15b := @(DG)*Ex(r"ad1") - Ex(r"ad1")*@(DG) - (Ex(r"haa*ad1 + hba*ad2"))
-substitute(chk15b, ccr, repeat=True); substitute(chk15b, cross, repeat=True)
-distribute(chk15b); collect_terms(chk15b); canonicalise(chk15b)
-print("CHECK 15b NSLAG [dGamma(h), ad_1] - sum_i h_i1 ad_i (0 = ok):", chk15b)
+DG = Ex(r"haa*ad1*a1 + hab*ad1*a2 + hba*ad2*a1 + hbb*ad2*a2");
+Nop = Ex(r"ad1*a1 + ad2*a2");
+chk15a := @(DG)*@(Nop) - @(Nop)*@(DG);
+norder(chk15a);
+print("CHECK 15a NSLAG [dGamma(h), N] = 0                   (0 = ok):", chk15a);
+chk15b := @(DG)*ad1 - ad1*@(DG) - (haa*ad1 + hba*ad2);
+norder(chk15b);
+print("CHECK 15b NSLAG [dGamma(h), ad_1] - sum_i h_i1 ad_i (0 = ok):", chk15b);
 
 # CHECK 16: the penalty form V_kappa = kappa (det F - 1)^2 is SEXTIC in F
 # (the B3 degree check of DESIGN_COMPARISON_N_20260915.cdb, here derived by scaling
 # F |-> t F:  volumePoly(t F) = t^3 det F - 1, so its square is
 # t^6 (det F)^2 - 2 t^3 (det F) + 1).
-volrk3 := @(volpoly) * @(volpoly)
-substitute(volk3, Ex(r"Faa -> t*Faa, Fab -> t*Fab, Fac -> t*Fac, Fba -> t*Fba, Fbb -> t*Fbb, Fbc -> t*Fbc, Fca -> t*Fca, Fcb -> t*Fcb, Fcc -> t*Fcc"), repeat=True)
-distribute(volk3); canonicalise(volk3); collect_terms(volk3)
-deth := @(volpoly) + 1
-chk16 := @(volrk3) - (@(deth) * Ex(r"t*t*t") - 1) * (@(deth) * Ex(r"t*t*t") - 1)
-distribute(chk16); canonicalise(chk16); collect_terms(chk16)
-print("CHECK 16 NSLAG (det(tF) - 1)^2 = (t^3 det F - 1)^2    (0 = ok):", chk16)
+volk3 := @(volpoly) * @(volpoly);
+# single pass on purpose: the scaling rules re-introduce their own lhs symbol,
+# so repeat=True would loop forever (verified).
+substitute(volk3, Ex(r"Faa -> t*Faa, Fab -> t*Fab, Fac -> t*Fac, Fba -> t*Fba, Fbb -> t*Fbb, Fbc -> t*Fbc, Fca -> t*Fca, Fcb -> t*Fcb, Fcc -> t*Fcc"));
+tidy(volk3);
+deth := @(volpoly) + 1;
+chk16 := @(volk3) - (@(deth) * t*t*t - 1) * (@(deth) * t*t*t - 1);
+tidy(chk16); collect_terms(chk16);
+print("CHECK 16 NSLAG (det(tF) - 1)^2 = (t^3 det F - 1)^2    (0 = ok):", chk16);
 
-print("== summary ==")
-print("Eulerian  H = sum_i {pi_i, A_i}, A_i = sum_j u_j u_{i,j} + q_i - nu u_{i,jj}, div u = 0")
-print("  -> transported constraint (CHECK 3-5):   det F - 1 = 0")
-print("  -> material substitution (CHECK 6-9):    surviving residual a_i + |l|^2 v_i,")
-print("     constraint degenerate => det F independent mode + V_kappa = kappa (det F - 1)^2")
-print("  -> one-parcel h (CHECK 11-14):           1/2 sum P^2 + nu sum Q^2 + sum f.P,")
-print("     [P,Q] = -i,  1/2 P^2 + nu Q^2 = omega (N + 3/2),  Heisenberg at omega = sqrt(2 nu)")
-print("  -> final Hamiltonian (CHECK 15):         H = dGamma(h), creation left, annihilation")
-print("     right, number conserving; penalty rides as V_kappa (CHECK 16, sextic)")
+print("== summary ==");
+print("Eulerian  H = sum_i {pi_i, A_i}, A_i = sum_j u_j u_{i,j} + q_i - nu u_{i,jj}, div u = 0");
+print("  -> transported constraint (CHECK 3-5):   det F - 1 = 0");
+print("  -> material substitution (CHECK 6-9):    surviving residual a_i + |l|^2 v_i,");
+print("     constraint degenerate => det F independent mode + V_kappa = kappa (det F - 1)^2");
+print("  -> one-parcel h (CHECK 11-14):           1/2 sum P^2 + nu sum Q^2 + sum f.P,");
+print("     [P,Q] = -i,  1/2 P^2 + nu Q^2 = omega (N + 3/2),  Heisenberg at omega = sqrt(2 nu)");
+print("  -> final Hamiltonian (CHECK 15):         H = dGamma(h), creation left, annihilation");
+print("     right, number conserving; penalty rides as V_kappa (CHECK 16, sextic)");
