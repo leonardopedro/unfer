@@ -43,6 +43,7 @@ use crate::core_ir::CoreIR;
 use crate::harper_gate::HarperGate;
 use crate::lexicon::Lexicon;
 
+pub mod l1keys;
 pub mod table;
 
 pub use table::{placeholder_embedding, EngramTable, IngestStats};
@@ -223,7 +224,11 @@ pub fn tokenize(fragment: &str) -> Vec<String> {
 /// Derive one key from a CoreIR term, by delegating to `translate_coreir`.
 ///
 /// `depth` is the sub-derivation depth, recorded in the key (ENGRAM.md §2.2).
-fn key_of_coreir(ir: &CoreIR, granularity: Granularity, depth: u32) -> Result<EngramKey, KeyError> {
+pub(crate) fn key_of_coreir(
+    ir: &CoreIR,
+    granularity: Granularity,
+    depth: u32,
+) -> Result<EngramKey, KeyError> {
     let t = crate::translate::translate_coreir(ir).map_err(KeyError::Reduce)?;
     let unf = hex32(&t.unf_hash);
     if unf == [0u8; 32] {
@@ -362,6 +367,12 @@ pub fn segment(fragment: &str, granularity: Granularity, lexicon: &Lexicon) -> V
 /// ENGRAM.md §2.3 says a lookup at `g` must not fall back to a coarser `g`, so
 /// the unparsed fragment is simply *absent* at `Sentence`/`Subderiv` — a miss
 /// stays a miss — while the tagged window entry remains available at `Window`.
+/// The tagged §4 fallback, exposed so `l1keys` can place a world's mass
+/// somewhere visible when that world will not reduce.
+pub(crate) fn fallback_public(tokens: &[String]) -> EngramKey {
+    fallback(tokens)
+}
+
 fn fallback(tokens: &[String]) -> EngramKey {
     window_key(tokens, DEFAULT_WINDOW_N).as_fallback()
 }

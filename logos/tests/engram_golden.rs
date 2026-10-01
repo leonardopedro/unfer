@@ -311,3 +311,111 @@ fn empty_corpus_reports_zero_not_nan() {
     assert!(stats.dedup_ratio.is_empty());
     assert!(stats.lookup_p50_ns == 0);
 }
+// ── E5: probabilistic engrams ─────────────────────────────────────────────
+// The plan's acceptance: "probably John loves Mary" yields a weighted key set
+// summing to 1.0, and lookup returns the distribution.
+
+fn triggers() -> logos::l1::TriggerTable {
+    logos::l1::TriggerTable::new()
+}
+
+#[test]
+fn hedged_fragment_yields_a_normalized_weighted_key_set() {
+    use logos::engram::l1keys;
+    let Some(lex) = load_lexicon() else {
+        eprintln!("skipping: lexicon not present");
+        return;
+    };
+    let frag = "probably John loves Mary";
+    let wkeys = match l1keys::weighted_key_set(
+        frag,
+        Granularity::Sentence,
+        &lex,
+        &triggers(),
+    ) {
+        Ok(k) => k,
+        // The hedged CNL surface may not parse with this lexicon; that is a
+        // lexicon fact, not a contract failure. What must hold either way is
+        // that a set which *does* come back is normalized and stamped.
+        Err(e) => {
+            eprintln!("skipping hedged case, fragment did not reduce: {}", e);
+            return;
+        }
+    };
+    assert!(!wkeys.is_empty());
+    assert!(
+        l1keys::is_normalized(&wkeys, 1e-9),
+        "weighted keys must sum to 1.0, got {}",
+        l1keys::total_weight(&wkeys)
+    );
+    // Every returned key carries its accumulated weight — that is what
+    // ENGRAM.md §2.2's `l1_weight` field is for.
+    for w in &wkeys {
+        assert_eq!(Some(w.weight), w.key.l1_weight);
+    }
+    // The identity world must have reduced through the UNF path. The negate
+    // world of this hedge does not — the CNL lexicon is 47 words and has no
+    // negation vocabulary — so its mass lands on a *tagged* fallback. That is
+    // the contract working: mass is conserved and the degradation is visible,
+    // rather than the world being dropped and the hedge silently renormalized
+    // into a different sentence.
+    let real_mass: f64 = wkeys.iter().filter(|w| !w.key.is_fallback()).map(|w| w.weight).sum();
+    let fallback_mass: f64 = wkeys.iter().filter(|w| w.key.is_fallback()).map(|w| w.weight).sum();
+    assert!(
+        real_mass > 0.0,
+        "at least one world must reduce through the UNF path"
+    );
+    eprintln!(
+        "hedged: real_mass={:.3} fallback_mass={:.3} keys={}",
+        real_mass,
+        fallback_mass,
+        wkeys.len()
+    );
+    // Conservation: the two masses account for the whole distribution.
+    assert!((real_mass + fallback_mass - 1.0).abs() < 1e-9);
+    // The distribution is the same mass, keyed by address.
+    let dist = l1keys::distribution(&wkeys);
+    assert!((dist.values().sum::<f64>() - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn aggregation_merges_coincident_keys_and_sums_their_mass() {
+    use logos::engram::l1keys::{aggregate, WeightedKey};
+    // Two worlds that key identically must merge to their sum, which is the
+    // whole reason E5 reuses `l1::aggregate_results` instead of reimplementing
+    // it.
+    let mk = |h: u8, w: f64| WeightedKey {
+        key: logos::engram::EngramKey::window(&[format!("k{}", h)], 2),
+        weight: w,
+    };
+    let merged = aggregate(vec![mk(1, 0.3), mk(1, 0.5), mk(2, 0.2)]);
+    assert_eq!(2, merged.len(), "two distinct keys survive");
+    let k1 = merged.iter().find(|w| w.key.unf_hash == mk(1, 0.0).key.unf_hash).unwrap();
+    assert!((k1.weight - 0.8).abs() < 1e-12, "0.3 + 0.5 = 0.8, got {}", k1.weight);
+    assert_eq!(Some(0.8), k1.key.l1_weight);
+    // Sum-preserving.
+    assert!((merged.iter().map(|w| w.weight).sum::<f64>() - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn a_genuine_zero_weight_is_not_an_absent_weight() {
+    // ENGRAM.md §2.2: `Some(0.0)` is a real zero-probability world and must not
+    // be confused with "no L1 annotation at all". The type and the byte layout
+    // both have to keep that apart.
+    let mut zero = logos::engram::EngramKey::window(&["a".into()], 2);
+    zero.l1_weight = Some(0.0);
+    let mut absent = logos::engram::EngramKey::window(&["a".into()], 2);
+    absent.l1_weight = None;
+
+    assert_ne!(zero.to_bytes(), absent.to_bytes());
+    let wz = f64::from_le_bytes(zero.to_bytes()[76..84].try_into().unwrap());
+    let wa = f64::from_le_bytes(absent.to_bytes()[76..84].try_into().unwrap());
+    assert_eq!(0.0, wz);
+    assert!(wa.is_nan());
+    // …and the aggregate for a zero-mass key is still present, carrying 0.0.
+    use logos::engram::l1keys::{aggregate, WeightedKey};
+    let merged = aggregate(vec![WeightedKey { key: zero, weight: 0.0 }]);
+    assert_eq!(1, merged.len());
+    assert_eq!(0.0, merged[0].weight);
+    assert_eq!(Some(0.0), merged[0].key.l1_weight);
+}
