@@ -1,0 +1,46 @@
+Share one Why3 with australVM instead of building two
+
+unfer already used Why3 (S36: `uk_whyml_emit` shells out to `why3 prove` and
+`why3 extract`), and australVM's L5 driver does the same. So Why3 was about to
+be a second, independent copy — and it was, for a reason worth recording.
+
+The two flakes sit on different channels:
+
+  australVM   nixos-unstable  rev 34ab990…  ->  why3 1.8.2
+  unfer       nixos-23.05     rev 70bdade…  ->  why3 1.6.0
+
+Different revision means a different store path, so nix could not dedupe them:
+two builds on disk, two versions, and two `why3 config detect` runs writing the
+same `~/.why3.conf`. That is worse than the disk cost. Each project was
+validating `.mlw` files with a *different* engine, so a file one prover accepted
+could be refused by the other with no obvious cause — and `LiquidWhy3.prove`
+maps Why3's exit codes onto Proved/Refused, so a version difference would have
+surfaced as a mysterious contract rejection in one project only.
+
+Both now resolve to `wsh74nql0gb8f6qh8nq411p9vamnxr3k-why3-1.6.0`, and
+`alt-ergo` to `1rw1gv0…-alt-ergo-2.4.3`. One build, one version.
+
+**australVM cannot simply move to this channel.** Its flake documents why: the
+cranelift JIT bridge needs a newer rustc than 23.05 ships, and a binary built
+against 23.05's glibc cannot load a bridge `.so` built against unstable's. So
+australVM keeps nixos-unstable for its own toolchain and takes this channel as a
+separate `why3-nixpkgs` input used *only* for `why3` and `alt-ergo`. That gets
+the shared store path without touching the bridge.
+
+The emitted goldens were checked under both engines before aligning: they parse
+under 1.6.0 and 1.8.2 alike, and the exit-code mapping is sound under 1.6.0
+(`Valid` -> 0 -> `Proved`; `Timeout` and `Unknown` -> 2 -> `Unknown`, never a
+false pass).
+
+This also corrects a mistake of mine: I had used `alt-ergo-free` in australVM
+because `alt-ergo` is unfree and I did not want to flip that policy unilaterally.
+But unfer already sets `allowUnfree = true` repo-wide for CUDA, so the two
+projects would have been using *different provers*. `allowUnfree` is now scoped
+to the Why3 import in australVM, matching unfer, and both use the real
+`alt-ergo` — one prover, not two.
+
+Comment-only change; no dependency, output, or behaviour in unfer is altered.
+Verified: `nix develop` resolves why3 1.6.0, unfer_ffi builds.
+
+🤖 Generated with Codebuff
+Co-Authored-By: Codebuff <noreply@codebuff.com>

@@ -157,6 +157,24 @@
           # OCaml module that extends the australVM compiler (cycle closure).
           # Like Cadabra2 (GPL), Why3 and its provers stay subprocess-only so the
           # Rust/OCaml binaries never link their code.
+          #
+          # SHARED WITH ../australVM — this channel (nixos-23.05, rev 70bdade…)
+          # is the single source of truth for the Why3 toolchain across both
+          # repositories. australVM's flake takes it as a separate
+          # `why3-nixpkgs` input purely for `why3` and `alt-ergo`, because its
+          # own base channel has to stay on nixos-unstable (the cranelift bridge
+          # needs a newer rustc, and a 23.05-built binary cannot load an
+          # unstable-built shared library).
+          #
+          # That split is deliberate and it is why both resolve to the *same*
+          # store path: one Why3 on disk, one version, one `~/.why3.conf` that
+          # both provers agree with. It previously did not line up — australVM
+          # was pulling why3 1.8.2 from nixos-unstable against this repo's
+          # 1.6.0, so the two projects ran different engines over .mlw files and
+          # a file accepted by one could be refused by the other with no obvious
+          # cause. **If you change this channel, change australVM's
+          # `why3-nixpkgs` input to the same revision, or the duplication comes
+          # straight back.**
           pkgs.why3
           pkgs.alt-ergo
           pkgs.z3
