@@ -1,46 +1,45 @@
-Share one Why3 with australVM instead of building two
+Share the Why3 toolchain with australVM, on why3 1.8.x
 
-unfer already used Why3 (S36: `uk_whyml_emit` shells out to `why3 prove` and
-`why3 extract`), and australVM's L5 driver does the same. So Why3 was about to
-be a second, independent copy — and it was, for a reason worth recording.
+Reverses the direction of the previous commit. That one pointed australVM's
+Why3 at this repo's channel (nixos-23.05, why3 1.6.0) to get a shared store
+path. It worked — both resolved one build — but running the extraction driver
+showed 1.6.0 is the wrong version to converge on:
 
-The two flakes sit on different channels:
+    $ why3 extract -D unfer_ocaml.drv authorize_gate.mlw -o out.ml
+    Unknown val bool.Bool.infix =
 
-  australVM   nixos-unstable  rev 34ab990…  ->  why3 1.8.2
-  unfer       nixos-23.05     rev 70bdade…  ->  why3 1.6.0
+`lib/why3_plugin/unfer_ocaml.drv` maps `bool.Bool`'s `=`. That operator exists
+in Why3 1.8.x and does not exist in 1.6.0's `bool.Bool` (which has only andb,
+orb, notb, xorb, implb, ite). So the driver was written against 1.8.x, and
+this repo's own channel could not run it — the S36 extraction path was already
+broken here, and still exits 0 while failing, which is the same false-success
+shape as a missing prover.
 
-Different revision means a different store path, so nix could not dedupe them:
-two builds on disk, two versions, and two `why3 config detect` runs writing the
-same `~/.why3.conf`. That is worse than the disk cost. Each project was
-validating `.mlw` files with a *different* engine, so a file one prover accepted
-could be refused by the other with no obvious cause — and `LiquidWhy3.prove`
-maps Why3's exit codes onto Proved/Refused, so a version difference would have
-surfaced as a mysterious contract rejection in one project only.
+Converging on 1.8.2 instead fixes that rather than preserving it:
 
-Both now resolve to `wsh74nql0gb8f6qh8nq411p9vamnxr3k-why3-1.6.0`, and
-`alt-ergo` to `1rw1gv0…-alt-ergo-2.4.3`. One build, one version.
+  before   australVM  nixos-unstable  why3 1.8.2   sglqns…
+           unfer      nixos-23.05     why3 1.6.0   wsh74n…
+  after    both       nixos-unstable  why3 1.8.2   sglqns…   (one store path)
+           both       alt-ergo 2.6.3  jha8y7…              (one store path)
 
-**australVM cannot simply move to this channel.** Its flake documents why: the
-cranelift JIT bridge needs a newer rustc than 23.05 ships, and a binary built
-against 23.05's glibc cannot load a bridge `.so` built against unstable's. So
-australVM keeps nixos-unstable for its own toolchain and takes this channel as a
-separate `why3-nixpkgs` input used *only* for `why3` and `alt-ergo`. That gets
-the shared store path without touching the bridge.
+Neither base channel moves: australVM needs nixos-unstable for the cranelift
+bridge's glibc, this repo needs 23.05 for CUDA and Haskell. So the toolchain is
+pinned by revision on each side — `why3-nixpkgs` here at 34ab990…, which is the
+revision australVM's own channel already resolves. Pinned by revision rather than
+by branch deliberately: a floating `nixos-unstable` would let the two flakes
+drift apart silently the next time the channel advances.
 
-The emitted goldens were checked under both engines before aligning: they parse
-under 1.6.0 and 1.8.2 alike, and the exit-code mapping is sound under 1.6.0
-(`Valid` -> 0 -> `Proved`; `Timeout` and `Unknown` -> 2 -> `Unknown`, never a
-false pass).
+Checked before moving: `prob_kernel/src/whyml.rs` parses prover output by
+counting lines containing `Valid` and rejecting on `Invalid`/`Failure`/
+`Timeout`, so it does not depend on 1.6-era formatting. Its whyml tests pass
+under 1.8.2.
 
-This also corrects a mistake of mine: I had used `alt-ergo-free` in australVM
-because `alt-ergo` is unfree and I did not want to flip that policy unilaterally.
-But unfer already sets `allowUnfree = true` repo-wide for CUDA, so the two
-projects would have been using *different provers*. `allowUnfree` is now scoped
-to the Why3 import in australVM, matching unfer, and both use the real
-`alt-ergo` — one prover, not two.
+Side benefit: alt-ergo is now 2.6.3, the version Why3 1.8.x expects, so the
+"prover version not recognized" warning from the free 2.4.3 build is gone.
 
-Comment-only change; no dependency, output, or behaviour in unfer is altered.
-Verified: `nix develop` resolves why3 1.6.0, unfer_ffi builds.
+Verified: why3 extract on the driver succeeds (388-byte output — the case that
+failed on 1.6.0), identical store paths in both repos, unfer_ffi 113 and
+prob_kernel 53 tests pass.
 
 🤖 Generated with Codebuff
 Co-Authored-By: Codebuff <noreply@codebuff.com>

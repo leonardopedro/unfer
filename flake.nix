@@ -33,7 +33,27 @@
   # comes from the unstable channel, whose `cudaPackages` build cleanly.
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs, nixpkgs-unstable }:
+  # Why3 toolchain channel, shared with ../australVM.
+  #
+  # Pinned to the SAME revision australVM resolves its Why3 from, so `pkgs.why3`
+  # and `pkgs.alt-ergo` are one store path in both repositories: one build, one
+  # version, one ~/.why3.conf. This matters beyond disk — the two repos run the
+  # same `why3 prove` / `why3 extract` over `.mlw` files, and a version skew
+  # shows up as a file one engine accepts and the other refuses, with no obvious
+  # cause. It is not hypothetical: lib/why3_plugin/unfer_ocaml.drv maps
+  # `bool.Bool`'s `=`, which exists in why3 1.8.x and not in 1.6.0, so extraction
+  # fails on the older engine *while still exiting 0*.
+  #
+  # This is the `nixpkgs` channel australVM already uses, so it is spelled as a
+  # revision rather than a branch: a floating branch would let the two flakes
+  # drift apart silently the next time nixos-unstable advances.
+  #
+  # unfer's own base channel stays nixos-23.05 (CUDA, haskell); only why3 and
+  # alt-ergo come from here. **If you change this revision, change
+  # australVM's flake to match.**
+  inputs.why3-nixpkgs.url = "github:NixOS/nixpkgs/34ab99075ac4f7e40cf037eef32cb1c360bb85e9";
+
+  outputs = { self, nixpkgs, nixpkgs-unstable, why3-nixpkgs }:
     let
       pkgs = import nixpkgs {
         system = "x86_64-linux";
@@ -47,6 +67,12 @@
       # supports 12.6). `cudatoolkit` on the unstable channel already points at
       # the merged output, which contains bin/nvcc, include/cuda.h and the
       # libcudart/libcublas/cusolver shared libs in `lib/`.
+      # Why3 + provers, from the channel shared with ../australVM. See the
+      # `why3-nixpkgs` input for why the revision is pinned rather than floating.
+      pkgsWhy3 = import why3-nixpkgs {
+        system = "x86_64-linux";
+        config.allowUnfree = true;  # alt-ergo is unfree
+      };
       cudaToolkit = pkgsUnstable.cudaPackages_12_6.cudatoolkit;
 
       # Configure Haskell package set with targeted Egison modules from the unstable channel
@@ -158,25 +184,14 @@
           # Like Cadabra2 (GPL), Why3 and its provers stay subprocess-only so the
           # Rust/OCaml binaries never link their code.
           #
-          # SHARED WITH ../australVM — this channel (nixos-23.05, rev 70bdade…)
-          # is the single source of truth for the Why3 toolchain across both
-          # repositories. australVM's flake takes it as a separate
-          # `why3-nixpkgs` input purely for `why3` and `alt-ergo`, because its
-          # own base channel has to stay on nixos-unstable (the cranelift bridge
-          # needs a newer rustc, and a 23.05-built binary cannot load an
-          # unstable-built shared library).
-          #
-          # That split is deliberate and it is why both resolve to the *same*
-          # store path: one Why3 on disk, one version, one `~/.why3.conf` that
-          # both provers agree with. It previously did not line up — australVM
-          # was pulling why3 1.8.2 from nixos-unstable against this repo's
-          # 1.6.0, so the two projects ran different engines over .mlw files and
-          # a file accepted by one could be refused by the other with no obvious
-          # cause. **If you change this channel, change australVM's
-          # `why3-nixpkgs` input to the same revision, or the duplication comes
-          # straight back.**
-          pkgs.why3
-          pkgs.alt-ergo
+          # The toolchain now comes from the `why3-nixpkgs` input above, which
+          # australVM also resolves — one build, one version, one
+          # ~/.why3.conf. It did not line up originally: this repo was on why3
+          # 1.6.0 and australVM on 1.8.2, so the two ran different engines over
+          # .mlw files, and unfer_ocaml.drv — which needs 1.8.x — failed on
+          # this repo's own channel while still exiting 0.
+          pkgsWhy3.why3
+          pkgsWhy3.alt-ergo
           pkgs.z3
           pkgs.cvc5
           
