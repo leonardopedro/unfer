@@ -368,6 +368,21 @@ pub enum KernelEvent {
         unf_hash: String,
         verified: bool,
     },
+    /// E6: an engram was stored. `unf_hash` is the hex of the key's address
+    /// field; `replaced` is the weight that was displaced, or `None` for a
+    /// first store.
+    EngramStored {
+        unf_hash: String,
+        weight: f64,
+        replaced: Option<f64>,
+    },
+    /// E6: an engram lookup resolved. `weight` is `None` on a miss — recorded
+    /// as an event of its own so "the table does not know this sentence" is an
+    /// observable fact rather than silence.
+    EngramLookedUp {
+        unf_hash: String,
+        weight: Option<f64>,
+    },
     Error {
         diagnostic: Diagnostic,
     },

@@ -1420,3 +1420,138 @@ fn failed_op_leaves_result_channel_empty() {
 
     uk_model_free(model);
 }
+
+/// Build a fresh session from the shared harmonic spec.
+fn engram_model() -> i64 {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let m = uk_model_create(ptr, len);
+    assert!(m > 0, "model_create failed: {}", read_error());
+    m
+}
+
+/// A key in the canonical layout: magic, version, granularity, then a
+/// caller-chosen address field at 32..40 and the trailing weight slot at 76..84.
+fn engram_key(unf: u64, weight: Option<f64>) -> Vec<u8> {
+    let mut k = vec![0u8; 84];
+    k[0..4].copy_from_slice(b"ENGM");
+    k[4..6].copy_from_slice(&1u16.to_le_bytes()); // layout version
+    k[6] = 0;                                    // granularity: sentence
+    k[32..40].copy_from_slice(&unf.to_le_bytes());
+    k[76..84].copy_from_slice(&weight.unwrap_or(f64::NAN).to_le_bytes());
+    k
+}
+
+#[test]
+fn engram_store_then_lookup_round_trips_the_weight() {
+    let m = engram_model();
+    let key = engram_key(0x0102_0304_0506_0708, Some(0.8));
+    assert_eq!(
+        0,
+        uk_engram_store(m, key.as_ptr(), 84, 0.8f64.to_bits() as i64),
+        "{}",
+        read_error()
+    );
+    let stored: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
+    assert_eq!(stored["entries"], 1, "the store result reports the table size: {stored}");
+    assert_eq!(stored["replaced"], serde_json::Value::Null, "{stored}");
+
+    assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84), "{}", read_error());
+
+    let r: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
+    assert_eq!(r["weight"], 0.8, "{r}");
+    assert_eq!(r["found"], true, "{r}");
+    assert_eq!(r["unf_hash"].as_str().unwrap().len(), 64, "hex unf_hash");
+}
+
+#[test]
+fn engram_store_replaces_so_reingesting_is_idempotent() {
+    // The whole point of choosing replace over accumulate: storing the same
+    // sentence twice must not make it twice as likely.
+    let m = engram_model();
+    let key = engram_key(0x0909_0909_0909_0909, Some(0.5));
+    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    let r: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
+    assert_eq!(r["replaced"], serde_json::Value::Null, "first store displaces nothing: {r}");
+
+    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    let r2: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
+    // The collision is reported rather than silently swallowed...
+    assert_eq!(r2["replaced"], 0.5, "{r2}");
+    // ...and the table still holds one entry, not two.
+    assert_eq!(r2["entries"], 1, "{r2}");
+}
+
+#[test]
+fn a_miss_is_not_a_zero_weight() {
+    // An absent engram and an engram of probability 0 are different facts. A
+    // miss must be an error code, never a success carrying 0.0 — otherwise a
+    // caller cannot tell "never seen" from "seen and impossible", which is the
+    // distinction `logos::engram` keeps a dedicated test for.
+    let m = engram_model();
+    let key = engram_key(0x0707_0707_0707_0707, Some(0.0));
+    assert_eq!(-4403, uk_engram_lookup(m, key.as_ptr(), 84), "UK-4403 RESOURCE_NOT_FOUND");
+    // ...and a genuine zero weight, once stored, IS a hit.
+    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.0f64.to_bits() as i64));
+    assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84));
+    let r: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
+    assert_eq!(r["weight"], 0.0, "{r}");
+}
+
+#[test]
+fn engram_rejects_a_malformed_key_and_a_non_finite_weight() {
+    let m = engram_model();
+    let key = engram_key(1, Some(0.5));
+    // Wrong length: 83 is one byte short of the layout.
+    assert!(uk_engram_store(m, key.as_ptr(), 83, 0.5f64.to_bits() as i64) < 0);
+    // NaN is this project's encoding for "no L1 annotation", not a probability,
+    // so it must not be writable into a table of real masses.
+    assert!(uk_engram_store(m, key.as_ptr(), 84, f64::NAN.to_bits() as i64) < 0);
+    assert!(uk_engram_store(m, key.as_ptr(), 84, f64::INFINITY.to_bits() as i64) < 0);
+    // ...and the rejected key left nothing behind.
+    assert_eq!(-4403, uk_engram_lookup(m, key.as_ptr(), 84));
+}
+
+#[test]
+fn engram_rejects_a_bad_handle() {
+    let key = engram_key(1, Some(0.5));
+    // UK-1004, consistent with every other symbol.
+    assert_eq!(-1004, uk_engram_store(99999, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    assert_eq!(-1004, uk_engram_lookup(99999, key.as_ptr(), 84));
+}
+
+#[test]
+fn engram_operations_emit_observable_events() {
+    // A miss must be visible in the log, not silent: "the table has never seen
+    // this sentence" is a fact the operator needs, exactly like a zero weight.
+    let m = engram_model();
+    // Subscribe FIRST — the query filters events as they are pushed, so a
+    // subscription created afterwards would legitimately see nothing.
+    let (q, ql) = json_ptr(br#"{"types":["engram_stored","engram_looked_up"]}"#);
+    let sub = uk_subscribe(m, q, ql);
+    assert!(sub > 0, "uk_subscribe failed: {}", read_error());
+
+    let key = engram_key(0x0404_0404_0404_0404, Some(0.25));
+    let miss = engram_key(0x0505_0505_0505_0505, None);
+    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.25f64.to_bits() as i64));
+    assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84));
+    assert_eq!(-4403, uk_engram_lookup(m, miss.as_ptr(), 84));
+
+    // `uk_poll` yields ONE event per call (peek, then consume on a complete
+    // copy), so the drain is a loop, not a single bulk read.
+    let mut events = Vec::new();
+    for _ in 0..16 {
+        let needed = uk_poll(sub, std::ptr::null_mut(), 0);
+        if needed == 0 {
+            break;
+        }
+        let mut buf = vec![0u8; needed as usize];
+        assert_eq!(needed, uk_poll(sub, buf.as_mut_ptr(), needed), "complete copy");
+        events.push(String::from_utf8_lossy(&buf).into_owned());
+    }
+
+    assert_eq!(events.len(), 3, "store + hit + miss, got {events:?}");
+    let all = events.join("\n");
+    assert_eq!(all.matches("engram_stored").count(), 1, "{all}");
+    assert_eq!(all.matches("engram_looked_up").count(), 2, "hit and miss both record: {all}");
+    assert!(all.contains(r#""weight":null"#), "the miss records no weight: {all}");
+}

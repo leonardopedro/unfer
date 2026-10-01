@@ -36,6 +36,8 @@ uk_certificate_issued
 uk_condition
 uk_durable_snapshot_error
 uk_durable_status
+uk_engram_lookup
+uk_engram_store
 uk_event_probability
 uk_evolve
 uk_gate_approve

@@ -300,6 +300,18 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        name: "uk_engram_lookup",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_engram_store",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_get_result",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Observe,

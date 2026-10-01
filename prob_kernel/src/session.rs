@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use candle_core::Device;
@@ -194,6 +195,58 @@ pub struct Session {
     /// switch is valid only while the session has produced nothing (see
     /// `unfer_protocol::preset::switch_valid_when_blank`).
     start_preset: Option<String>,
+    /// E6: this session's engram table — an 84-byte ENGM key to the L1 weight
+    /// that key carries.
+    ///
+    /// The key is **opaque here on purpose**. Deriving one is `logos`' job
+    /// (`logos::engram`, and E8's `deltanet` pass emits them for compiled module
+    /// constants for free); this crate has no parser, no lexicon and no normal
+    /// form, and reaching for them would mean depending on all of it just to
+    /// hold bytes. What the kernel owes the rest of the system is durable
+    /// addressability: the same 84 bytes always mean the same engram.
+    engrams: HashMap<[u8; E6_KEY_BYTES], f64>,
+}
+
+/// E6: the byte length of one engram key, as laid out by `logos::engram`
+/// (magic `ENGM`, little-endian layout version, …, trailing optional f64
+/// weight). Pinned as a bare constant rather than imported so `prob_kernel`
+/// keeps no dependency on `logos`; `unfer_ffi::engram` asserts the two agree,
+/// so a layout change cannot drift past the ABI unnoticed.
+pub const E6_KEY_BYTES: usize = 84;
+
+impl Session {
+    /// E6: store one engram, returning the weight it displaced if the key was
+    /// already present.
+    ///
+    /// Storing **replaces** rather than accumulates. A store that added on
+    /// every call would let re-ingesting the same corpus inflate an engram's
+    /// probability without bound, and "I stored the same sentence twice"
+    /// would quietly become "that sentence is now twice as likely" — the sort
+    /// of drift that is invisible until a number looks wrong. Replace makes the
+    /// operation idempotent; the displaced weight is reported so a caller can
+    /// notice the collision instead of losing it.
+    ///
+    /// A non-finite weight is rejected: NaN is the encoding this project uses
+    /// for "no L1 annotation", so accepting it here would write an
+    /// absent-weight into a table that is supposed to hold real masses.
+    pub fn engram_store(&mut self, key: [u8; E6_KEY_BYTES], weight: f64) -> Result<Option<f64>, String> {
+        if !weight.is_finite() {
+            return Err(format!(
+                "engram weight must be finite, got {weight} (NaN is this project's encoding for an absent weight, not a probability)"
+            ));
+        }
+        Ok(self.engrams.insert(key, weight))
+    }
+
+    /// E6: the weight stored for `key`, or `None` if it was never stored.
+    pub fn engram_lookup(&self, key: &[u8; E6_KEY_BYTES]) -> Option<f64> {
+        self.engrams.get(key).copied()
+    }
+
+    /// E6: how many engrams this session holds.
+    pub fn engram_count(&self) -> usize {
+        self.engrams.len()
+    }
 }
 
 /// Serializable snapshot of a Session for save/restore.
@@ -402,6 +455,7 @@ impl Session {
             compaction_lock: None,
             durable: None,
             start_preset: None,
+            engrams: HashMap::new(),
         })
     }
 
@@ -790,6 +844,7 @@ impl Session {
             compaction_lock: None,
             durable: None,
             start_preset: None,
+            engrams: HashMap::new(),
         })
     }
 

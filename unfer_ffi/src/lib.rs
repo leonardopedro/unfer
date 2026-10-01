@@ -566,6 +566,139 @@ pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: 
     })
 }
 
+/// Read one engram key off the buffer protocol.
+///
+/// The key is an opaque 84-byte value in `logos::engram`'s canonical `ENGM`
+/// layout. This ABI stores and retrieves those bytes; it does not interpret
+/// them, which is why `unfer_ffi` needs no dependency on `logos`.
+///
+/// Buffer-protocol violations are reported as `BAD_JSON`, matching how
+/// `read_bytes`/`read_utf8` already classify a negative length or a null
+/// pointer — a wrong-length key is exactly that kind of fault, and inventing a
+/// new code for it would be a larger change than the fault warrants.
+fn read_engram_key(ptr: *const u8, len: i64) -> Result<[u8; prob_kernel::E6_KEY_BYTES], Diagnostic> {
+    let bytes = read_bytes(ptr, len)?;
+    if bytes.len() != prob_kernel::E6_KEY_BYTES {
+        return Err(Diagnostic::new(
+            Code::BAD_JSON,
+            format!(
+                "engram key must be exactly {} bytes, got {}",
+                prob_kernel::E6_KEY_BYTES,
+                bytes.len()
+            ),
+            Severity::Error,
+        ));
+    }
+    let mut key = [0u8; prob_kernel::E6_KEY_BYTES];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+/// The hex of the address field (bytes 32..64) — the `unf_hash`, i.e. the
+/// stable identity that two byte-identical layouts share regardless of the L1
+/// weight they currently carry.
+fn engram_unf_hex(key: &[u8]) -> String {
+    hex::encode(&key[32..64])
+}
+
+/// E6: store one engram in this session's table.
+///
+/// `key_ptr`/`key_len` must be exactly 84 bytes. `weight_bits` is an `f64` as
+/// raw bits, so the buffer protocol already in use for `Address[Nat8]` values
+/// carries it without a sentinel or a scale factor.
+///
+/// Storing replaces rather than accumulates, so re-ingesting a corpus is
+/// idempotent instead of inflating every engram it touches. The displaced
+/// weight comes back in the result channel so a caller can notice the
+/// collision.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-1004 bad handle, `BAD_JSON` for
+/// a malformed key or a non-finite weight.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_engram_store(model: i64, key_ptr: *const u8, key_len: i64, weight_bits: i64) -> i64 {
+    ffi_entry("uk_engram_store", || {
+        // Fresh result channel per call: a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result.
+        handles::clear_last_result(model);
+
+        let key = read_engram_key(key_ptr, key_len)?;
+        let weight = f64::from_bits(weight_bits as u64);
+        let replaced = handles::with_session_mut(model, |s| s.engram_store(key, weight))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| Diagnostic::new(Code::BAD_JSON, e, Severity::Error))?;
+
+        let unf_hash = engram_unf_hex(&key);
+        let result = serde_json::json!({
+            "unf_hash": unf_hash.clone(),
+            "weight": weight,
+            "replaced": replaced,
+            "entries": handles::with_session(model, |s| s.engram_count()),
+        });
+        let result_json = serde_json::to_string(&result)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, result_json);
+        handles::push_event(
+            model,
+            KernelEvent::EngramStored { unf_hash, weight, replaced },
+        );
+        Ok(0)
+    })
+}
+
+/// E6: look one engram up in this session's table.
+///
+/// Returns 0 on a hit — the weight is in the result channel. A miss is
+/// UK-4403 (`RESOURCE_NOT_FOUND`), not a success carrying a zero weight: an
+/// absent engram and an engram of probability 0 are different facts, and this
+/// codebase has a deliberate encoding for that difference in the key's trailing
+/// f64 slot (NaN = no annotation, 0.0 = a real zero-probability world).
+/// Collapsing them here would reintroduce the exact confusion `logos::engram`
+/// keeps a test for.
+///
+/// Returns <0 (-code) on error: UK-1004 bad handle, UK-4403 miss, `BAD_JSON`
+/// for a malformed key.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_engram_lookup(model: i64, key_ptr: *const u8, key_len: i64) -> i64 {
+    ffi_entry("uk_engram_lookup", || {
+        handles::clear_last_result(model);
+
+        let key = read_engram_key(key_ptr, key_len)?;
+        let weight = handles::with_session(model, |s| s.engram_lookup(&key))
+            .ok_or_else(|| bad_handle(model))?;
+
+        let unf_hash = engram_unf_hex(&key);
+        match weight {
+            Some(w) => {
+                let result =
+                    serde_json::json!({ "unf_hash": unf_hash.clone(), "weight": w, "found": true });
+                let result_json = serde_json::to_string(&result)
+                    .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+                handles::set_last_result(model, result_json);
+                handles::push_event(
+                    model,
+                    KernelEvent::EngramLookedUp { unf_hash, weight: Some(w) },
+                );
+                Ok(0)
+            }
+            None => {
+                // The miss is still recorded, so "the table has never seen this
+                // sentence" shows up in the event log as a fact of its own.
+                handles::push_event(
+                    model,
+                    KernelEvent::EngramLookedUp { unf_hash: unf_hash.clone(), weight: None },
+                );
+                Err(Diagnostic::new(
+                    Code::RESOURCE_NOT_FOUND,
+                    format!("no engram stored for {unf_hash}"),
+                    Severity::Error,
+                ))
+            }
+        }
+    })
+}
+
 /// Quantum Bayesian Update on the TSR-evolved prior
 /// (QFM.tex §8, P6 H follow-on).
 ///

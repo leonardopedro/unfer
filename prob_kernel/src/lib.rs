@@ -21,8 +21,8 @@ pub mod whyml;
 pub use error::KernelError;
 pub use logos::logos_compile;
 pub use session::{
-    BayesianUpdateReport, EvolveReport, SESSION_FORMAT_VERSION, Session, SessionBlob, SessionEvent,
-    SessionEventSpec, SessionOp, StateEntry, StateSummary,
+    BayesianUpdateReport, E6_KEY_BYTES, EvolveReport, SESSION_FORMAT_VERSION, Session, SessionBlob,
+    SessionEvent, SessionEventSpec, SessionOp, StateEntry, StateSummary,
 };
 pub use symbolic::symbolic_derive;
 pub use unfer_protocol;

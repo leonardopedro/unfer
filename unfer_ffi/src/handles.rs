@@ -492,6 +492,12 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     "logos_compiled",
     "austral_unf",
     "whyml_compiled",
+    // E6. These must be listed here as well as matched below: the list is a
+    // second, independent enumeration of `KernelEvent`, and leaving it stale
+    // makes a perfectly valid subscription query fail with "unknown event
+    // type" — the kind of drift the census gate does not cover.
+    "engram_stored",
+    "engram_looked_up",
     "error",
     "prior_set",
     "hamiltonian_set",
@@ -536,6 +542,8 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::LogosCompiled { .. } => "logos_compiled",
         KernelEvent::AustralUnf { .. } => "austral_unf",
         KernelEvent::WhymlCompiled { .. } => "whyml_compiled",
+        KernelEvent::EngramStored { .. } => "engram_stored",
+        KernelEvent::EngramLookedUp { .. } => "engram_looked_up",
         KernelEvent::Error { .. } => "error",
         KernelEvent::PriorSet => "prior_set",
         KernelEvent::HamiltonianSet => "hamiltonian_set",
