@@ -44,7 +44,9 @@ use crate::harper_gate::HarperGate;
 use crate::lexicon::Lexicon;
 
 pub mod l1keys;
+pub mod spill;
 pub mod table;
+pub mod tiered;
 
 pub use table::{placeholder_embedding, EngramTable, IngestStats};
 
