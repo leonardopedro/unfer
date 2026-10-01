@@ -43,6 +43,7 @@ use crate::core_ir::CoreIR;
 use crate::harper_gate::HarperGate;
 use crate::lexicon::Lexicon;
 
+pub mod ablation;
 pub mod l1keys;
 pub mod spill;
 pub mod table;
