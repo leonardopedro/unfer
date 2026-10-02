@@ -24,3 +24,4 @@
 pub mod formalizer;
 pub mod graph;
 pub mod llm;
+pub mod memory;
