@@ -342,11 +342,17 @@ pub struct Retrieved {
 /// Deliberately *not* stemmed and *not* stop-word-filtered against a language
 /// list: the statements are mathematical English and the vocabulary is 46 words,
 /// so an aggressive normalizer would remove signal rather than noise. The one
-/// filter is length ≥ 2, which drops `x`/`n`-style single letters that would
-/// otherwise match every lemma.
+/// filter is length ≥ 2 **characters**, which drops `x`/`n`-style single letters
+/// that would otherwise match every lemma.
+///
+/// Characters, not bytes: `str::len` counts bytes, and every mathematical
+/// variable in a proof — `β`, `ζ`, `ε` — is two bytes in UTF-8, so a byte-length
+/// filter keeps exactly the tokens it is meant to drop. That inflated the
+/// retrieval score with a free match against any statement mentioning a Greek
+/// letter, which is most of them.
 fn content_words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 2)
+        .filter(|w| w.chars().count() >= 2)
         .map(|w| w.to_lowercase())
         .collect()
 }
@@ -757,6 +763,30 @@ mod tests {
         store.insert(&formal("John runs"), prov("l1", "x")).unwrap();
         // "x y z" shares nothing of length >= 2 with the CNL.
         assert!(retrieve_lexical(&store, &node("l2", "x y z"), 3).is_empty());
+    }
+
+    /// `str::len` counts *bytes*, and every mathematical variable in a proof is
+    /// two bytes in UTF-8 — so a byte-length filter kept exactly the tokens it was
+    /// meant to drop, giving a free score boost to any statement that mentioned a
+    /// Greek letter. Which is most of them.
+    #[test]
+    fn single_character_unicode_words_are_dropped_too() {
+        let mut store = LemmaStore::new();
+        store
+            .insert(&formal("the cat sleeps"), prov("l1", "s"))
+            .unwrap();
+        // `β` is one character and two bytes. A byte filter let it through and
+        // matched it against a lemma containing no mathematics at all.
+        assert!(
+            retrieve_lexical(&store, &node("l2", "β β β"), 3).is_empty(),
+            "a single Greek letter must not match anything"
+        );
+        // Two characters still count, ASCII or not.
+        assert_eq!(
+            content_words("βγ δε").len(),
+            2,
+            "two-character runs are kept"
+        );
     }
 
     // ── L1 weighted retrieval ───────────────────────────────────────────────

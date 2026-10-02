@@ -1,0 +1,1300 @@
+[
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 206,
+  "nl_theorem": "Suppose that $u$ is continuous and $v$ is integrable and nonnegative\non a rectangle $R.$ Then\n$$\n\\int_R u(\\mathbf{X})v(\\mathbf{X})\\,d\\mathbf{X}=\nu(\\mathbf{X}_0)\\int_R v(\\mathbf{X})\\,d\\mathbf{X}\n$$\nfor some $\\mathbf{X}_0$ in $R.$\n",
+  "nl_proof": "Exercise~\\ref{exer:7.1.25}.\n\\begin{lemma}\\label{thmtype:7.1.29}\nSuppose that $S$ is contained in a bounded set $T$ and $f$ is integrable\non $S.$ Then\n $f_S$ $($see $\\eqref{eq:7.1.36})$ is integrable on $T,$ and\n$$\n\\int_T f_S(\\mathbf{X})\\,d\\mathbf{X}=\\int_S f(\\mathbf{X})\\,d\\mathbf{X}.\n$$\n\\end{lemma}\n\\nopagebreak\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "Suppose that u is continuous and v is integrable and nonnegative on a rectangle R.",
+    "statement": "Premise:\n• R is a rectangle in ℝⁿ [tc_1]\n• u: R → ℝ is a continuous function [tc_1]\n• v: R → ℝ is an integrable function [tc_1]\n• For all X in R, v(X) ≥ 0 [tc_1]",
+    "dependencies": []
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Then\n$$\n\\int_R u(\\mathbf{X})v(\\mathbf{X})\\,d\\mathbf{X}=\nu(\\mathbf{X}_0)\\int_R v(\\mathbf{X})\\,d\\mathbf{X}\n$$\nfor some $\\mathbf{X}_0$ in $R.$",
+    "statement": "We assume:\n• R is a rectangle in ℝⁿ [tc_1]\n• u: R → ℝ is a continuous function [tc_1]\n• v: R → ℝ is an integrable function [tc_1]\n• For all X in R, v(X) ≥ 0 [tc_1]\nTherefore, we conclude:\n• There exists an element X₀ in R such that ∫_R u(X)v(X) dX = u(X₀) * ∫_R v(X) dX [ts_1].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "The provided text does not contain a proof for this theorem; it refers to an external exercise. A formal proof would require constructing the argument from first principles, likely involving properties of continuous functions on compact sets (min/max values) and the Intermediate Value Theorem."
+   }
+  ]
+ },
+ {
+  "origin": "M series",
+  "id": 3,
+  "nl_theorem": "Let $(a_n)$ be a sequence defined by $a_n = \\frac{3n+1}{n+1}$. The limit of the sequence $(a_n)$ is $3$.",
+  "nl_proof": "To find the limit of the sequence $(a_n)$, we evaluate the expression $\\lim_{n \\to \\infty} \\frac{3n+1}{n+1}$. We can divide both the numerator and the denominator by the highest power of $n$, which is $n$. This gives us $\\lim_{n \\to \\infty} \\frac{(3n/n)+(1/n)}{(n/n)+(1/n)} = \\lim_{n \\to \\infty} \\frac{3+1/n}{1+1/n}$. We know that as $n$ approaches infinity, the term $1/n$ approaches $0$. Therefore, we can substitute $0$ for $1/n$ in the expression, which gives us $\\frac{3+0}{1+0}$. This simplifies to $3$. So, the limit of the sequence $(a_n)$ is $3$.",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "$(a_n)$ is a sequence defined by $a_n = \\frac{3n+1}{n+1}$",
+    "statement": "Premise:\n• aₙ = (3n+1)/(n+1) [tc_1]",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "To find the limit of the sequence $(a_n)$, we evaluate the expression $\\lim_{n \\to \\infty} \\frac{3n+1}{n+1}$. We can divide both the numerator and the denominator by the highest power of $n$, which is $n$. This gives us $\\lim_{n \\to \\infty} \\frac{3+1/n}{1+1/n}$",
+    "statement": "We assume:\n• aₙ = (3n+1)/(n+1) [tc_1]\nTherefore, we conclude:\n• lim_{n → ∞} aₙ = lim_{n → ∞} (3+1/n)/(1+1/n) [l1]",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "We know that as $n$ approaches infinity, the term $1/n$ approaches $0$. Therefore, we can substitute $0$ for $1/n$ in the expression, which gives us $\\frac{3+0}{1+0}$. This simplifies to $3$. So, the limit of the sequence $(a_n)$ is $3$.",
+    "statement": "We assume:\n• lim_{n → ∞} aₙ = lim_{n → ∞} (3+1/n)/(1+1/n) [l1]\nTherefore, we conclude:\n• lim_{n → ∞} aₙ = 3 [ts_1]",
+    "dependencies": [
+     "l1"
+    ]
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 111,
+  "nl_theorem": "If $P=\\{a_{n_i}\\}_1^\\infty$ and\n$Q=\n\\{a_{m_j}\\}_1^\\infty$ are respectively the subsequences of all\npositive and\nnegative terms in a conditionally convergent series $\\sum a_n,$ then\n\\begin{equation} \\label{eq:4.3.24}\n\\sum_{i=1}^\\infty a_{n_i}=\\infty\\mbox{\\quad and\\quad}\\sum_{j=1}^\\infty\na_{m_j}=-\\infty.\n\\end{equation}\n",
+  "nl_proof": "If both  series in \\eqref{eq:4.3.24} converge, then $\\sum\na_n$ converges absolutely, while if one converges and the other\ndiverges, then $\\sum a_n$ diverges to $\\infty$ or $-\\infty$. Hence,\nboth must diverge.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "If $P=\\{a_{n_i}\\}_1^\\infty$ and\n$Q=\n\\{a_{m_j}\\}_1^\\infty$ are respectively the subsequences of all\npositive and\nnegative terms in a conditionally convergent series $\\sum a_n,$",
+    "statement": "Premise:\n• Let $\\{a_n\\}$ be a sequence of real numbers. Let $P=\\{a_{n_i}\\}_{i=1}^\\infty$ be the subsequence of all positive terms of $\\{a_n\\}$, and $Q=\\{a_{m_j}\\}_{j=1}^\\infty$ be the subsequence of all negative terms of $\\{a_n\\}$. The series $\\sum a_n$ is conditionally convergent, which means that $\\sum_{n=1}^\\infty a_n$ converges to a finite limit, but $\\sum_{n=1}^\\infty |a_n|$ diverges [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "If both  series in \\eqref{eq:4.3.24} converge, then $\\sum\na_n$ converges absolutely",
+    "statement": "We assume:\n• Let $\\{a_n\\}$ be a sequence of real numbers, with its subsequence of positive terms being $P=\\{a_{n_i}\\}_{i=1}^\\infty$ and its subsequence of negative terms being $Q=\\{a_{m_j}\\}_{j=1}^\\infty$ [from tc_1].\n• The series of positive terms converges: $\\sum_{i=1}^\\infty a_{n_i} = L_P$.\n• The series of negative terms converges: $\\sum_{j=1}^\\infty a_{m_j} = L_Q$.\nTherefore, we conclude:\n• The series $\\sum a_n$ converges absolutely [l1].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "The sum of absolute values $\\sum |a_n|$ can be written as $\\sum a_{n_i} - \\sum a_{m_j}$. Since both series on the right are assumed to be summable, their difference is also summable. Thus, $\\sum |a_n|$ converges, which is the definition of absolute convergence."
+   },
+   {
+    "id": "l2",
+    "natural_language": "while if one converges and the other\ndiverges, then $\\sum a_n$ diverges to $\\infty$ or $-\\infty$.",
+    "statement": "We assume:\n• Let $\\{a_n\\}$ be a sequence of real numbers, with its subsequence of positive terms being $P=\\{a_{n_i}\\}_{i=1}^\\infty$ and its subsequence of negative terms being $Q=\\{a_{m_j}\\}_{j=1}^\\infty$ [from tc_1].\n• One of the series, $\\sum a_{n_i}$ or $\\sum a_{m_j}$, converges to a finite limit, while the other diverges.\nTherefore, we conclude:\n• The series $\\sum a_n$ diverges to $\\infty$ or $-\\infty$ [l2].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "The sum of a series $\\sum a_n$ can be related to the sums of its positive and negative parts. The sum of a convergent series and a divergent series is divergent. If $\\sum a_{n_i} \\to \\infty$ and $\\sum a_{m_j} \\to L_Q$, then the partial sums of $\\sum a_n$ will tend to $\\infty$."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Hence,\nboth must diverge.",
+    "statement": "We assume:\n• For a series $\\sum a_n$ with positive part $\\sum a_{n_i}$ and negative part $\\sum a_{m_j}$: the series $\\sum a_n$ is conditionally convergent, meaning it converges but not absolutely [tc_1].\n• If both $\\sum a_{n_i}$ and $\\sum a_{m_j}$ converge, then $\\sum a_n$ converges absolutely [l1].\n• If one of $\\sum a_{n_i}$ or $\\sum a_{m_j}$ converges and the other diverges, then $\\sum a_n$ diverges to $\\pm\\infty$ [l2].\nTherefore, we conclude:\n• Both $\\sum a_{n_i}$ and $\\sum a_{m_j}$ must diverge. Since all terms in $\\{a_{n_i}\\}$ are positive, its sum must diverge to $\\infty$. Since all terms in $\\{a_{m_j}\\}$ are negative, its sum must diverge to $-\\infty$ [ts_1].",
+    "dependencies": [
+     "tc_1",
+     "l1",
+     "l2"
+    ],
+    "lean_hint": "Proof by elimination. The premise [tc_1] is that $\\sum a_n$ converges but not absolutely. The case where both sub-series converge is ruled out by [l1], which would imply absolute convergence (a contradiction). The case where one sub-series converges and the other diverges is ruled out by [l2], which would imply divergence of $\\sum a_n$ (a contradiction). The only remaining possibility is that both sub-series diverge."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 23,
+  "nl_theorem": "  Suppose $a,b,n\\in\\Z$ are such that $n\\mid a$ and $n\\mid b$.  Then\n  $n\\mid \\gcd(a,b)$.\n\nWe can assume the following statement(s) without a proof. \n\nFor any integers $a,b,n$, we have\n$$\\gcd(an,bn) = \\gcd(a,b)\\cdot |n|.$$\n\n\n",
+  "nl_proof": "Since $n\\mid a$ and $n\\mid b$, there are integers\n$c_1$ and $c_2$, such that $a=n c_1$ and $b=n c_2$.\nThen, \n$\\gcd(a,b) = \\gcd(n c_1, nc_2) = n\\gcd(c_1, c_2)$,\nso $n$ divides $\\gcd(a,b)$.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "Suppose $a,b,n\\in\\Z$ are such that $n\\mid a$ and $n\\mid b$.",
+    "statement": "Premise:\n• $a, b, n$ are integers, $n$ divides $a$, and $n$ divides $b$ [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "For any integers $a,b,n$, we have\n$$\\gcd(an,bn) = \\gcd(a,b)\\cdot |n|.$$",
+    "statement": "Definition:\n• For any integers $x,y,z$, $\\gcd(zx,zy) = |z| \\cdot \\gcd(x,y)$ [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "Since $n\\mid a$ and $n\\mid b$, there are integers\n$c_1$ and $c_2$, such that $a=n c_1$ and $b=n c_2$.",
+    "statement": "We assume:\n• $a, b, n$ are integers, $n$ divides $a$, and $n$ divides $b$ [tc_1].\nTherefore, we conclude:\n• There exist integers $c_1, c_2$ such that $a = n \\cdot c_1$ and $b = n \\cdot c_2$ [l1].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "Apply the definition of divisibility (`dvd_def`) to the premises `n | a` and `n | b` from [tc_1] to obtain witnesses $c_1$ and $c_2$."
+   },
+   {
+    "id": "l2",
+    "natural_language": "Then, \n$\\gcd(a,b) = \\gcd(n c_1, nc_2) = n\\gcd(c_1, c_2)$,",
+    "statement": "We assume:\n• $a, b, n, c_1, c_2$ are integers, with $a = n \\cdot c_1$ and $b = n \\cdot c_2$ [l1].\n• For any integers $x,y,z$, we have $\\gcd(zx,zy) = |z| \\cdot \\gcd(x,y)$ [def_1].\nTherefore, we conclude:\n• $\\gcd(a,b) = n \\cdot \\gcd(c_1, c_2)$ [l2].",
+    "dependencies": [
+     "def_1",
+     "l1"
+    ],
+    "lean_hint": "Rewrite `a` and `b` in `gcd(a,b)` using the equalities from [l1]. Then, apply the axiom from [def_1]. Note that the proof uses `n` instead of `|n|`, which is a potential error if `n` is negative; follow the proof's conclusion and use `n`."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "so $n$ divides $\\gcd(a,b)$.",
+    "statement": "We assume:\n• There exist integers $c_1, c_2$ such that $a = n \\cdot c_1$ and $b = n \\cdot c_2$ [l1].\n• $\\gcd(a,b) = n \\cdot \\gcd(c_1, c_2)$ [l2].\nTherefore, we conclude:\n• $n$ divides $\\gcd(a,b)$ [ts_1].",
+    "dependencies": [
+     "l1",
+     "l2"
+    ],
+    "lean_hint": "From [l2], we have the equality `gcd(a,b) = n * gcd(c1, c2)`. Since $c_1$ and $c_2$ from [l1] are integers, their gcd is also an integer. This satisfies the definition of divisibility (`use Dvd.intro`)."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 20,
+  "nl_theorem": "For any integers $a$ and $b$, we have\n$$\n   \\gcd(a,b)= \\gcd(b,a) = \\gcd(\\pm a, \\pm b) = \\gcd(a,b-a) = \\gcd(a,b+a).\n$$\n",
+  "nl_proof": "We only prove that $\\gcd(a,b) = \\gcd(a,b-a)$, since the other cases\nare proved in a similar way. Suppose $d\\mid a$ and\n  $d\\mid b$, so there exist integers $c_1$ and $c_2$ such that $dc_1 =\n  a$ and $dc_2 = b$.  Then $b - a = dc_2 - dc_1 = d(c_2-c_1)$, so\n  $d\\mid b-a$.  Thus $\\gcd(a,b)\\leq \\gcd(a,b-a)$, since the set over\n  which we are taking the max for $\\gcd(a,b)$ is a subset of the set\n  for $\\gcd(a,b-a)$.  The same argument with $a$ replaced by $-a$\n  and $b$ replaced by $b-a$, shows that $\\gcd(a,b-a)=\\gcd(-a,b-a)\\leq\n  \\gcd(-a,b)=\\gcd(a,b)$, which proves that $\\gcd(a,b)=\\gcd(a,b-a)$.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "For any integers $a$ and $b$",
+    "statement": "Premise:\n• a and b are integers [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "gcd(a,b) = gcd(±a, ±b)",
+    "statement": "Premise:\n• For any integers x and y, gcd(x, y) = gcd(±x, ±y) [tc_2].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "Suppose $d\\mid a$ and $d\\mid b$, so there exist integers $c_1$ and $c_2$ such that $dc_1 = a$ and $dc_2 = b$. Then $b - a = dc_2 - dc_1 = d(c_2-c_1)$, so $d\\mid b-a$.",
+    "statement": "We assume:\n• a, b, and d are integers [tc_1].\n• d divides a [l1_assump1].\n• d divides b [l1_assump2].\nTherefore, we conclude:\n• d divides (b-a) [l1].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "Unfold the definition of divisibility. Since d|a and d|b, there exist integers c1, c2 such that a = d*c1 and b = d*c2. Substitute these into b-a and factor out d."
+   },
+   {
+    "id": "l2",
+    "natural_language": "Thus $\\gcd(a,b)\\leq \\gcd(a,b-a)$, since the set over which we are taking the max for $\\gcd(a,b)$ is a subset of the set for $\\gcd(a,b-a)$.",
+    "statement": "We assume:\n• a and b are integers [tc_1].\n• For any integer d, if d divides a and d divides b, then d divides (b-a) [l1].\nTherefore, we conclude:\n• The set of common divisors of a and b is a subset of the set of common divisors of a and (b-a), which implies gcd(a,b) ≤ gcd(a,b-a) [l2].",
+    "dependencies": [
+     "tc_1",
+     "l1"
+    ],
+    "lean_hint": "To show gcd(a,b) ≤ gcd(a,b-a), it suffices to show that the set of common divisors of (a,b) is a subset of the common divisors of (a,b-a). Let d be a common divisor of a and b. Then d|a is given. By l1, we have d|(b-a). Thus d is a common divisor of a and (b-a)."
+   },
+   {
+    "id": "l3",
+    "natural_language": "The same argument with $a$ replaced by $-a$ and $b$ replaced by $b-a$, shows that $\\gcd(a,b-a)=\\gcd(-a,b-a)\\leq \\gcd(-a,b)=\\gcd(a,b)$",
+    "statement": "We assume:\n• a and b are integers [tc_1].\n• For any integers x and y, gcd(x, y) = gcd(±x, ±y) [tc_2].\nTherefore, we conclude:\n• gcd(a, b-a) ≤ gcd(a, b) [l3].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ],
+    "lean_hint": "Prove the chain gcd(a,b-a) = gcd(-a,b-a) ≤ gcd(-a,b) = gcd(a,b). The equalities gcd(a,b-a) = gcd(-a,b-a) and gcd(-a,b) = gcd(a,b) follow from tc_2. The inequality gcd(-a,b-a) ≤ gcd(-a,b) follows by applying the same reasoning as in l1 and l2, but with inputs x=-a and y=b-a, which proves gcd(-a, b-a) ≤ gcd(-a, (b-a)-(-a)) = gcd(-a, b)."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "which proves that $\\gcd(a,b)=\\gcd(a,b-a)$.",
+    "statement": "We assume:\n• gcd(a,b) ≤ gcd(a,b-a) [l2].\n• gcd(a, b-a) ≤ gcd(a, b) [l3].\nTherefore, we conclude:\n• gcd(a,b) = gcd(a,b-a) [ts_1].",
+    "dependencies": [
+     "l2",
+     "l3"
+    ],
+    "lean_hint": "Apply the antisymmetry property of the ≤ relation (le_antisymm)."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 18,
+  "nl_theorem": "\\ithm{Mazur}\nLet~$E$ be an elliptic curve over~$\\Q$.  Then $E(\\Q)_{\\tor}$ is\nisomorphic to one of the following 15 groups:\n\\begin{align*}\n\\zmod{n} & \\qquad\\text{ for } n\\leq 10 \\text{ or } n=12,\\\\\n\\Z/2\\Z\\cross \\Z/2n &\\qquad \\text{ for } n \\leq 4.\n\\end{align*}\n",
+  "nl_proof": "We have\n\\begin{eqnarray*}\na^2+b^2&=&c^2\\\\\n\\frac{1}{2}ab&=&n\n\\end{eqnarray*}\nAdd or subtract $4$ times the second equation to the first to get\n\\begin{eqnarray*}\na^2\\pm2ab +b^2&=&c^2\\pm 4n\\\\\n(a\\pm b)^2 &=& c^2 \\pm 4n\\\\\n\\left(\\frac{a\\pm b}{2}\\right)^2 &=&\n   \\left( \\frac{c}{2}\\right)^2 \\pm n \\\\\n  &=& A \\pm n\n\\end{eqnarray*}\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "a^2+b^2&=&c^2",
+    "statement": "Premise:\n• Let a, b, c, n be elements of a field 𝔽, where 2 is invertible.\n• a² + b² = c² [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "\\frac{1}{2}ab&=&n",
+    "statement": "Premise:\n• Let a, b, c, n be elements of a field 𝔽, where 2 is invertible [tc_1].\n• (1/2) * a * b = n [tc_2].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "l1",
+    "natural_language": "Add or subtract $4$ times the second equation to the first to get\n\\begin{eqnarray*}\na^2\\pm2ab +b^2&=&c^2\\pm 4n",
+    "statement": "We assume:\n• a, b, c, n are elements of a field 𝔽 where 2 is invertible [tc_1].\n• a² + b² = c² [tc_1].\n• (1/2) * a * b = n [tc_2].\nTherefore, we conclude:\n• a² ± 2ab + b² = c² ± 4n [l1].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ],
+    "lean_hint": "From tc_2, derive 2ab = 4n. Then add/subtract this equation to/from tc_1. This can be handled by `linarith` or `ring`."
+   },
+   {
+    "id": "l2",
+    "natural_language": "(a\\pm b)^2 &=& c^2 \\pm 4n",
+    "statement": "We assume:\n• a, b are elements of a field 𝔽 [tc_1].\n• a² ± 2ab + b² = c² ± 4n [l1].\nTherefore, we conclude:\n• (a ± b)² = c² ± 4n [l2].",
+    "dependencies": [
+     "tc_1",
+     "l1"
+    ],
+    "lean_hint": "Rewrite the left-hand side of l1 using the formula for the square of a sum/difference. `ring` should solve this."
+   },
+   {
+    "id": "l3",
+    "natural_language": "\\left(\\frac{a\\pm b}{2}\\right)^2 &=& \n   \\left( \\frac{c}{2}\\right)^2 \\pm n",
+    "statement": "We assume:\n• a, b, c, n are elements of a field 𝔽 where 2 is invertible [tc_1].\n• (a ± b)² = c² ± 4n [l2].\nTherefore, we conclude:\n• ((a ± b)/2)² = (c/2)² ± n [l3].",
+    "dependencies": [
+     "tc_1",
+     "l2"
+    ],
+    "lean_hint": "Divide both sides of l2 by 4. Then simplify both sides using properties of squares and division. `field_simp` and `ring` will be useful."
+   },
+   {
+    "id": "def_1",
+    "natural_language": "&=& A \\pm n",
+    "statement": "Definition:\n• Given c, an element of a field 𝔽 where 2 is invertible [tc_1].\n• We define A = (c/2)² [def_1].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "&=& A \\pm n",
+    "statement": "We assume:\n• ((a ± b)/2)² = (c/2)² ± n [l3].\n• A = (c/2)² [def_1].\nTherefore, we conclude:\n• ((a ± b)/2)² = A ± n [ts_1].",
+    "dependencies": [
+     "l3",
+     "def_1"
+    ],
+    "lean_hint": "Substitute the definition of A from def_1 into the right-hand side of l3."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 24,
+  "nl_theorem": "If~$R$ is a complete set of residues modulo~$n$ and $a\\in\\Z$ with\n$\\gcd(a,n)=1$, then $aR = \\{ax : x \\in R\\}$\nis also a complete set of residues modulo~$n$.\n\nWe can assume the following statement(s) without a proof. \n\nIf $\\gcd(c,n)=1$ and\n$$\n   ac\\con bc\\pmod{n},\n$$\nthen $a \\con b\\pmod{n}$.\n\n\n",
+  "nl_proof": "If $ax\\con ax'\\pmod{n}$ with $x, x'\\in R$, then $x\\con{}x'\\pmod{n}$.\nBecause $R$ is a complete set of residues, this implies\nthat $x=x'$.  Thus the elements of\n$aR$ have distinct reductions modulo~$n$.\nIt follows, since $\\#aR=n$, that $aR$ is a\ncomplete set of residues modulo~$n$.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "If R is a complete set of residues modulo n",
+    "statement": "Premise:\n• R is a complete set of residues modulo n, which implies that R contains n integers and for any two distinct elements x, y ∈ R, x is not congruent to y modulo n (x <binary data, 2 bytes> y mod n) [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "a∈Z with gcd(a,n)=1",
+    "statement": "Premise:\n• a is an integer such that gcd(a, n) = 1 [tc_2].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "If gcd(c,n)=1 and\n$$\n   ac\\con bc\\pmod{n},\n$$\nthen a \\con b\\pmod{n}.",
+    "statement": "Definition:\n• The cancellation law for modular congruence holds: For any integers a, b, c and a positive integer n, if gcd(c, n) = 1 and ac ≡ bc (mod n), then a ≡ b (mod n) [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "If ax\\con ax'\\pmod{n} with x, x'\\in R, then x\\con{}x'\\pmod{n}.",
+    "statement": "We assume:\n• a is an integer such that gcd(a, n) = 1 [tc_2].\n• The cancellation law for modular congruence holds: For any integers k, l, m, if gcd(m, n) = 1 and km ≡ lm (mod n), then k ≡ l (mod n) [def_1].\nTherefore, we conclude:\n• For any integers x, x' ∈ R, if ax ≡ ax' (mod n), then x ≡ x' (mod n) [l1].",
+    "dependencies": [
+     "tc_2",
+     "def_1"
+    ],
+    "lean_hint": "Apply the cancellation law from def_1. Let c from def_1 be a from the current context. Let a and b from def_1 be x and x'. The condition gcd(c, n) = 1 is satisfied by tc_2 (gcd(a, n) = 1). The conclusion a ≡ b (mod n) becomes x ≡ x' (mod n)."
+   },
+   {
+    "id": "l2",
+    "natural_language": "Because R is a complete set of residues, this implies that x=x'.",
+    "statement": "We assume:\n• R is a complete set of residues modulo n, which implies for any x, x' ∈ R, if x ≡ x' (mod n), then x = x' [tc_1].\n• For any integers x, x' ∈ R, if ax ≡ ax' (mod n), then x ≡ x' (mod n) [l1].\nTherefore, we conclude:\n• For any integers x, x' ∈ R, if ax ≡ ax' (mod n), then x = x' [l2].",
+    "dependencies": [
+     "tc_1",
+     "l1"
+    ],
+    "lean_hint": "Chain the implications. From l1, we have ax ≡ ax' (mod n) → x ≡ x' (mod n). From the definition of a complete set of residues in tc_1, we have x ≡ x' (mod n) → x = x'. Combining these gives the conclusion."
+   },
+   {
+    "id": "l3",
+    "natural_language": "Thus the elements of aR have distinct reductions modulo n.",
+    "statement": "We assume:\n• For any integers x, x' ∈ R, if ax ≡ ax' (mod n), then x = x' [l2].\nTherefore, we conclude:\n• The elements of the set aR = {ax : x ∈ R} have distinct reductions modulo n. (This means that for any distinct x, x' ∈ R, it holds that ax is not congruent to ax' modulo n) [l3].",
+    "dependencies": [
+     "l2"
+    ],
+    "lean_hint": "The statement is the contrapositive of the implication in l2. l2 states `ax ≡ ax' (mod n) → x = x'`. The contrapositive is `x ≠ x' → ax <binary data, 2 bytes> ax' (mod n)`, which is the definition of having distinct reductions."
+   },
+   {
+    "id": "l4",
+    "natural_language": "since #aR=n",
+    "statement": "We assume:\n• R is a complete set of residues modulo n, which implies #R = n [tc_1].\n• For any integers x, x' ∈ R, if ax ≡ ax' (mod n), then x = x' [l2].\nTherefore, we conclude:\n• The cardinality of the set aR = {ax : x ∈ R} is n (#aR = n) [l4].",
+    "dependencies": [
+     "tc_1",
+     "l2"
+    ],
+    "lean_hint": "The implication in l2, `ax ≡ ax' (mod n) → x = x'`, proves that the map f(x) = ax is injective on the set R. (If f(x) = f(x'), then ax = ax', which implies ax ≡ ax' (mod n), which by l2 implies x=x'). Since R is a finite set, an injective map from R to its image aR means that #aR = #R. From tc_1, #R = n. Thus, #aR = n."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "It follows, since #aR=n, that aR is a complete set of residues modulo n.",
+    "statement": "We assume:\n• The elements of the set aR have distinct reductions modulo n [l3].\n• The cardinality of the set aR is n (#aR = n) [l4].\nTherefore, we conclude:\n• The set aR = {ax : x ∈ R} is a complete set of residues modulo n [ts_1].",
+    "dependencies": [
+     "l3",
+     "l4"
+    ],
+    "lean_hint": "This follows directly from the definition of a complete set of residues. A set is a complete set of residues modulo n if it contains exactly n elements and these elements are pairwise incongruent modulo n. These two conditions are established by l4 and l3, respectively."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 5,
+  "nl_theorem": "\\ithm{Euler's}\nIf $\\gcd(x,n)=1$, then\n$$\n   x^{\\vphi(n)} \\con 1\\pmod{n}.\n$$\n\nWe can assume the following statement(s) without a proof. \n\nIf~$R$ is a complete set of residues modulo~$n$ and $a\\in\\Z$ with\n$\\gcd(a,n)=1$, then $aR = \\{ax : x \\in R\\}$\nis also a complete set of residues modulo~$n$.\n\n\n",
+  "nl_proof": "As mentioned above, Euler's Theorem has the following group-theoretic\n\\index{Euler's theorem!group-theoretic interpretation}\ninterpretation.  The set of units in $\\zmod{n}$ is a group\n\\index{group!$(\\zmod{m})^*$}\n$$\n(\\zmod{n})^*\n= \\{ a \\in \\zmod{n} : \\gcd(a,n) = 1\\}\n$$\nthat has order~$\\vphi(n)$.  The theorem then asserts\nthat the order of an element of $(\\zmod{n})^*$ divides the order\n$\\vphi(n)$ of $(\\zmod{n})^*$.   This is a special case of the more\ngeneral fact (Lagrange's Theorem) that if~$G$ is a finite group and\n$g\\in G$, then the order of~$g$ divides the cardinality of~$G$.\nWe now give an elementary proof of the theorem.  Let\n$$\n  P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}.\n$$\nIn the same way that we proved Lemma~\\ref{lem:residues},\nwe see that the reductions modulo~$n$ of the elements of $xP$\nare the same as the reductions of the elements of $P$.\nThus\n$$\n \\prod_{a\\in P} (xa) \\con \\prod_{a \\in P} a \\pmod{n},\n$$\nsince the products are over the same numbers modulo~$n$.\nNow cancel the $a$'s on both sides to get\n$$x^{\\#P} \\con 1\\pmod{n},$$\nas claimed.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "If $\\gcd(x,n)=1$",
+    "statement": "Premise:\n• x and n are integers such that $\\gcd(x,n)=1$ [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "If~$R$ is a complete set of residues modulo~$n$ and $a\\in\\Z$ with $\\gcd(a,n)=1$, then $aR = \\{ax : x \\in R\\}$ is also a complete set of residues modulo~$n$.",
+    "statement": "Definition:\n• It is assumed that if R is a complete set of residues modulo n and a is an integer with $\\gcd(a,n)=1$, then the set $aR = \\{ax : x \\in R\\}$ is also a complete set of residues modulo n [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_2",
+    "natural_language": "Let\n$$\n  P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}.\n$$",
+    "statement": "Definition:\n• Let P be the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "In the same way that we proved Lemma~\\ref{lem:residues}, we see that the reductions modulo~$n$ of the elements of $xP$ are the same as the reductions of the elements of $P$.",
+    "statement": "We assume:\n• x and n are integers such that $\\gcd(x,n)=1$ [tc_1].\n• The principle that multiplying a complete residue system by a coprime integer permutes the system [def_1].\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\nTherefore, we conclude:\n• The set of residues of the elements of $xP$ modulo n is the same as the set of residues of the elements of P modulo n [l1].",
+    "dependencies": [
+     "tc_1",
+     "def_1",
+     "def_2"
+    ],
+    "lean_hint": "Apply the principle from def_1, adapted for a reduced residue system (P), showing that multiplication by x permutes the residues."
+   },
+   {
+    "id": "l2",
+    "natural_language": "Thus\n$$\n \\prod_{a\\in P} (xa) \\con \\prod_{a \\in P} a \\pmod{n},\n$$\nsince the products are over the same numbers modulo~$n$.",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• The set of residues of the elements of $xP$ modulo n is the same as the set of residues of the elements of P modulo n [l1].\nTherefore, we conclude:\n• $\\prod_{a\\in P} (xa) \\equiv \\prod_{a \\in P} a \\pmod{n}$ [l2].",
+    "dependencies": [
+     "def_2",
+     "l1"
+    ],
+    "lean_hint": "If two finite sets of integers are the same modulo n, their products are congruent modulo n. Apply this to the sets of residues from l1."
+   },
+   {
+    "id": "l3",
+    "natural_language": "Now cancel the $a$'s on both sides",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\nTherefore, we conclude:\n• The product of the elements in P, $\\prod_{a \\in P} a$, is coprime to n, i.e., $\\gcd(\\prod_{a \\in P} a, n) = 1$ [l3].",
+    "dependencies": [
+     "def_2"
+    ],
+    "lean_hint": "The product of integers coprime to n is also coprime to n. Use induction on the set P, where each element is coprime to n by definition."
+   },
+   {
+    "id": "l4",
+    "natural_language": "Now cancel the $a$'s on both sides to get\n$$x^{\\#P} \\con 1\\pmod{n},$$",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• $\\prod_{a\\in P} (xa) \\equiv \\prod_{a \\in P} a \\pmod{n}$ [l2].\n• $\\gcd(\\prod_{a \\in P} a, n) = 1$ [l3].\nTherefore, we conclude:\n• $x^{\\#P} \\equiv 1 \\pmod{n}$ [l4].",
+    "dependencies": [
+     "def_2",
+     "l2",
+     "l3"
+    ],
+    "lean_hint": "Rewrite the left side of l2 as $x^{\\#P} \\cdot \\prod_{a \\in P} a$. Then, use the property l3 to cancel the term $\\prod_{a \\in P} a$ from both sides of the congruence."
+   },
+   {
+    "id": "l5",
+    "natural_language": "The set of units in $\\zmod{n}$ is a group... that has order~$\\\u000bphi(n)$.",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• By definition, Euler's totient function $\\\u000bphi(n)$ counts the number of positive integers up to n that are relatively prime to n.\nTherefore, we conclude:\n• The cardinality of P is equal to Euler's totient function of n, i.e., $\\#P = \\\u000bphi(n)$ [l5].",
+    "dependencies": [
+     "def_2"
+    ],
+    "lean_hint": "Show that the definition of the set P corresponds directly to the definition of Euler's totient function $\\\u000bphi(n)$."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "$$x^{\\#P} \\con 1\\pmod{n},$$\nas claimed.",
+    "statement": "We assume:\n• $x^{\\#P} \\equiv 1 \\pmod{n}$ [l4].\n• $\\#P = \\\u000bphi(n)$ [l5].\nTherefore, we conclude:\n• $x^{\\\u000bphi(n)} \\equiv 1 \\pmod{n}$ [ts_1].",
+    "dependencies": [
+     "l4",
+     "l5"
+    ],
+    "lean_hint": "Substitute the equality from l5 into the congruence from l4."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 29,
+  "nl_theorem": "Let $a, b\\in\\Q$.  Then for any integer~$n$,\n$$\\#\\left((a,b)\\intersect \\Z\\right) \\con \\#\\left((a,b+2n)\\intersect \\Z\\right) \\pmod{2}$$\nand\n$$\n\\#\\left((a,b)\\intersect \\Z\\right) \\con \\#\\left((a-2n,b)\\intersect \\Z\\right) \\pmod{2},\n$$\nprovided that each interval involved in the congruence is nonempty.\n",
+  "nl_proof": "Let $\\lceil x\\rceil$ denotes\nthe least integer $\\geq x$.\nSince $n>0$,\n$$(a,b+2n) = (a,b) \\union [b,b+2n),$$\nwhere the union is disjoint.  There are $2n$ integers\n$$\n\\lceil b\\rceil, \\lceil b\\rceil+1, \\ldots, \\lceil b\\rceil +2n-1\n$$\nin the interval $[b,b+2n)$, so the first congruence of the lemma\nis true in this case.  We also have\n$$\n(a,b-2n) = (a,b)\\text{ minus } [b-2n,b)\n$$\nand $[b-2n,b)$ contains exactly $2n$ integers, so the lemma is\nalso true when~$n$ is negative.  The statement about\n$\\#\\left((a-2n,b)\\intersect \\Z\\right)$ is proved in a similar manner.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "Let $a, b\\in\\Q$.",
+    "statement": "Premise:\n• Let a and b be rational numbers [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "for any integer~$n$,",
+    "statement": "Premise:\n• Let n be an integer [tc_2].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_3",
+    "natural_language": "provided that each interval involved in the congruence is nonempty.",
+    "statement": "Premise:\n• Let a and b be rational numbers [tc_1]\n• Let n be an integer [tc_2]\n• The intervals (a,b), (a,b+2n), and (a-2n,b) are nonempty [tc_3].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ]
+   },
+   {
+    "id": "def_1",
+    "natural_language": "Let $\\lceil x\rceil$ denotes\nthe least integer $\\geq x$.",
+    "statement": "Definition:\n• For any rational number x, $\\lceil x\rceil$ denotes the least integer greater than or equal to x [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "Since $n>0$,\n$$(a,b+2n) = (a,b) \\union [b,b+2n),$$\nwhere the union is disjoint.",
+    "statement": "We assume:\n• a and b are rational numbers [tc_1]\n• n is a positive integer [tc_2]\nTherefore, we conclude:\n• For n > 0, the interval (a, b+2n) is the disjoint union of (a,b) and [b, b+2n), i.e., $(a,b+2n) = (a,b) \\cup [b,b+2n)$ and $(a,b) \\cap [b,b+2n) = \\emptyset$ [l1].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ],
+    "lean_hint": "Prove the set equality and disjointness based on the properties of intervals and the condition n > 0."
+   },
+   {
+    "id": "l2",
+    "natural_language": "There are $2n$ integers\n$$\n\\lceil b\rceil, \\lceil b\rceil+1, \\ldots, \\lceil b\rceil +2n-1\n$$\nin the interval $[b,b+2n)$,",
+    "statement": "We assume:\n• b is a rational number [tc_1]\n• n is a positive integer [tc_2]\n• $\\lceil x\rceil$ is the least integer $\\geq x$ [def_1]\nTherefore, we conclude:\n• For n > 0, the number of integers in the interval [b, b+2n), denoted $\\#([b,b+2n) \\cap \\mathbb{Z})$, is 2n [l2].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "def_1"
+    ],
+    "lean_hint": "The integers in the interval are from `ceil b` to `ceil(b+2n)-1` or `floor((b+2n)-epsilon)`. The number of integers in `[m, k)` is `k-m`. Here the integers are from `ceil b` to `ceil b + 2n -1`. The number is `(ceil b + 2n - 1) - (ceil b) + 1 = 2n`."
+   },
+   {
+    "id": "l3",
+    "natural_language": "so the first congruence of the lemma\nis true in this case.",
+    "statement": "We assume:\n• For n > 0, $(a,b+2n) = (a,b) \\cup [b,b+2n)$ is a disjoint union [l1]\n• For n > 0, the number of integers in [b, b+2n) is 2n [l2]\nTherefore, we conclude:\n• For n > 0, $\\#((a,b)\\cap\\mathbb{Z}) \\equiv \\#((a,b+2n)\\cap\\mathbb{Z}) \\pmod{2}$ [l3].",
+    "dependencies": [
+     "l1",
+     "l2"
+    ],
+    "lean_hint": "From the disjoint union in l1, we have $\\#((a,b+2n)\\cap\\mathbb{Z}) = \\#((a,b)\\cap\\mathbb{Z}) + \\#([b,b+2n)\\cap\\mathbb{Z})$. Substitute the count from l2 to get $\\#((a,b+2n)\\cap\\mathbb{Z}) = \\#((a,b)\\cap\\mathbb{Z}) + 2n$. The result follows by taking the equation modulo 2."
+   },
+   {
+    "id": "l4",
+    "natural_language": "We also have\n$$\n(a,b-2n) = (a,b)\\text{ minus } [b-2n,b)\n$$\nand $[b-2n,b)$ contains exactly $2n$ integers, so the lemma is\nalso true when~$n$ is negative.",
+    "statement": "We assume:\n• a, b are rational numbers [tc_1]\n• n is a negative integer [tc_2]\nTherefore, we conclude:\n• For n < 0, $\\#((a,b)\\cap\\mathbb{Z}) \\equiv \\#((a,b+2n)\\cap\\mathbb{Z}) \\pmod{2}$ [l4].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ],
+    "lean_hint": "The proof's reasoning for this case is flawed as written. A correct argument is to let m = -n > 0. The goal is to show $\\#((a,b)\\cap\\mathbb{Z}) \\equiv \\#((a,b-2m)\\cap\\mathbb{Z}) \\pmod{2}$. This can be done by applying the logic for the positive case (l3) to the interval (a, b-2m). Alternatively, one can use the decomposition $(a,b) = (a,b+2n) \\cup [b+2n, b)$, where for n<0 the interval $[b+2n, b)$ contains -2n integers, which is an even number."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "#\\left((a,b)\\intersect \\Z\\right) \\con #\\left((a,b+2n)\\intersect \\Z\\right) \\pmod{2}",
+    "statement": "We assume:\n• a,b are rational numbers [tc_1]\n• n is an integer [tc_2]\n• The intervals involved are nonempty [tc_3]\n• For n > 0, the congruence holds [l3]\n• For n < 0, the congruence holds [l4]\nTherefore, we conclude:\n• For any integer n, $\\#((a,b)\\cap\\mathbb{Z}) \\equiv \\#((a,b+2n)\\cap\\mathbb{Z}) \\pmod{2}$ [ts_1].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "tc_3",
+     "l3",
+     "l4"
+    ],
+    "lean_hint": "Combine the results from the cases n>0 (l3), n<0 (l4), and the trivial case n=0 where both sides of the congruence are equal."
+   },
+   {
+    "id": "ts_2",
+    "natural_language": "The statement about\n$$\n\\#\\left((a-2n,b)\\intersect \\Z\\right)\n$$\nis proved in a similar manner.",
+    "statement": "We assume:\n• a, b are rational numbers [tc_1]\n• n is an integer [tc_2]\n• The intervals involved are nonempty [tc_3]\nTherefore, we conclude:\n• For any integer n, $\\#((a,b)\\cap\\mathbb{Z}) \\equiv \\#((a-2n,b)\\cap\\mathbb{Z}) \\pmod{2}$ [ts_2].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "tc_3"
+    ],
+    "lean_hint": "The proof is by analogy to the first congruence. For n>0, decompose (a-2n, b) into a disjoint union of (a-2n, a) and [a,b). The interval [a-2n, a) contains 2n integers. This implies $\\#((a-2n,b)\\cap\\mathbb{Z}) = 2n + \\#([a,b)\\cap\\mathbb{Z})$. As $\\#((a,b)\\cap\\mathbb{Z})$ and $\\#([a,b)\\cap\\mathbb{Z})$ differ by at most one, this approach requires more careful handling of endpoints. A more robust symmetric argument on the left endpoint 'a' mirrors the one for 'b'."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 138,
+  "nl_theorem": "If $\\mathbf{X}$ and $\\mathbf{Y}$ are in $\\R^n,$ then\n\\begin{equation}\\label{eq:5.1.6}\n|\\mathbf{X}+\\mathbf{Y}|\\le |\\mathbf{X}|+|\\mathbf{Y}|,\n\\end{equation}\nwith equality if and only if one of the vectors is a nonnegative\nmultiple of the other$.$\n\nWe can assume the following statement(s) without a proof. \n\nIf $\\mathbf{X}$ and $\\mathbf{Y}$ are any two vectors in $\\R^n,$ then\n\\begin{equation} \\label{eq:5.1.3}\n|\\mathbf{X}\\cdot\\mathbf{Y}|\\le |\\mathbf{X}|\\,|\\mathbf{Y}|,\n\\end{equation}\nwith equality  if and only if one of the vectors is a scalar\nmultiple of the other$.$\n\n\n",
+  "nl_proof": "By definition,\n\\begin{equation} \\label{eq:5.1.7}\n\\begin{array}{rcl}\n|\\mathbf{X}+\\mathbf{Y}|^2\\ar=\\dst\\sum^n_{i=1} (x_i+y_i)^2=\\sum^n_{i=1} x^2_i+\n2\\sum^n_{i=1} x_iy_i+\\sum^n_{i=1}y^2_i\\\\[4\\jot]\n\\ar=|\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2\\\\[2\\jot]\n\\ar\\le  |\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2\\mbox{\\quad (by\nSchwarz's inequality)}\\\\[2\\jot]\n\\ar=(|\\mathbf{X}|+|\\mathbf{Y}|)^2.\n\\end{array}\n\\end{equation}\nHence,\n$$\n|\\mathbf{X}+\\mathbf{Y}|^2\\le (|\\mathbf{X}|+|\\mathbf{Y}|)^2.\n$$\nTaking square roots yields \\eqref{eq:5.1.6}.\nFrom the third line of \\eqref{eq:5.1.7},\nequality holds in \\eqref{eq:5.1.6} if and\nonly  if $\\mathbf{X}\\cdot\\mathbf{Y}=|\\mathbf{X}||\\mathbf{Y}|$, which is true if\nand\nonly if one of the vectors $\\mathbf{X}$ and $\\mathbf{Y}$ is a nonnegative\nscalar multiple of the other (Lemma~\\ref{thmtype:5.1.5}).\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "If $\\mathbf{X}$ and $\\mathbf{Y}$ are in $\\R^n,$",
+    "statement": "Premise:\n• $\\mathbf{X}$ and $\\mathbf{Y}$ are vectors in $\\mathbb{R}^n$ [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "If $\\mathbf{X}$ and $\\mathbf{Y}$ are any two vectors in $\\R^n,$ then\n\\begin{equation} \\label{eq:5.1.3}\n|\\mathbf{X}\\cdot\\mathbf{Y}|\\le |\\mathbf{X}|\\,|\\mathbf{Y}|,\n\\end{equation}\nwith equality  if and only if one of the vectors is a scalar\nmultiple of the other$.$",
+    "statement": "Premise:\n• For any vectors $\\mathbf{X}, \\mathbf{Y}$ in $\\mathbb{R}^n$, the Schwarz inequality holds: $|\\mathbf{X} \\cdot \\mathbf{Y}| \\le |\\mathbf{X}| |\\mathbf{Y}|$, with equality if and only if one of the vectors is a scalar multiple of the other [tc_2].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "By definition,",
+    "statement": "Definition:\n• For a vector $\\mathbf{V} \\in \\mathbb{R}^n$ with components $v_i$, its Euclidean norm is defined by $|\\mathbf{V}|^2 = \\sum_{i=1}^n v_i^2$. The dot product of vectors $\\mathbf{U}$ and $\\mathbf{V}$ is $\\mathbf{U} \\cdot \\mathbf{V} = \\sum_{i=1}^n u_i v_i$ [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "|\\mathbf{X}+\\mathbf{Y}|^2\\ar=\\dst\\sum^n_{i=1} (x_i+y_i)^2=\\sum^n_{i=1} x^2_i+\n2\\sum^n_{i=1} x_iy_i+\\sum^n_{i=1}y^2_i\\[4\\jot]\n\\ar=|\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2",
+    "statement": "We assume:\n• $\\mathbf{X}$ and $\\mathbf{Y}$ are vectors in $\\mathbb{R}^n$ [tc_1]\n• The definitions of vector norm and dot product [def_1]\nTherefore, we conclude:\n• $|\\mathbf{X}+\\mathbf{Y}|^2 = |\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2$ [l1].",
+    "dependencies": [
+     "tc_1",
+     "def_1"
+    ],
+    "lean_hint": "Expand $|\\mathbf{X}+\\mathbf{Y}|^2$ using the definition of the norm, then expand the binomial $(x_i+y_i)^2$, split the summation, and re-associate terms using the definitions of norm and dot product."
+   },
+   {
+    "id": "l2",
+    "natural_language": "\\ar\\le  |\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2\\mbox{\\quad (by\nSchwarz's inequality)}",
+    "statement": "We assume:\n• $\\mathbf{X}$ and $\\mathbf{Y}$ are vectors in $\\mathbb{R}^n$ [tc_1]\n• The Schwarz inequality: $|\\mathbf{X} \\cdot \\mathbf{Y}| \\le |\\mathbf{X}| |\\mathbf{Y}|$ [tc_2]\nTherefore, we conclude:\n• $|\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2 \\le |\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2$ [l2].",
+    "dependencies": [
+     "tc_1",
+     "tc_2"
+    ],
+    "lean_hint": "Use the fact that $\\mathbf{X}\\cdot\\mathbf{Y} \\le |\\mathbf{X}\\cdot\\mathbf{Y}|$, then apply the Schwarz inequality [tc_2]."
+   },
+   {
+    "id": "l3",
+    "natural_language": "\\ar=(|\\mathbf{X}|+|\\mathbf{Y}|)^2.",
+    "statement": "We assume:\n• $|\\mathbf{X}|$ and $|\\mathbf{Y}|$ are real numbers.\nTherefore, we conclude:\n• $|\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2 = (|\\mathbf{X}|+|\\mathbf{Y}|)^2$ [l3].",
+    "dependencies": [],
+    "lean_hint": "Apply the algebraic identity $a^2 + 2ab + b^2 = (a+b)^2$."
+   },
+   {
+    "id": "l4",
+    "natural_language": "Hence,\n$$\n|\\mathbf{X}+\\mathbf{Y}|^2\\le (|\\mathbf{X}|+|\\mathbf{Y}|)^2.\n$$",
+    "statement": "We assume:\n• $|\\mathbf{X}+\\mathbf{Y}|^2 = |\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2$ [l1]\n• $|\\mathbf{X}|^2+2(\\mathbf{X}\\cdot\\mathbf{Y})+|\\mathbf{Y}|^2 \\le |\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2$ [l2]\n• $|\\mathbf{X}|^2+2|\\mathbf{X}|\\,|\\mathbf{Y}|+|\\mathbf{Y}|^2 = (|\\mathbf{X}|+|\\mathbf{Y}|)^2$ [l3]\nTherefore, we conclude:\n• $|\\mathbf{X}+\\mathbf{Y}|^2 \\le (|\\mathbf{X}|+|\\mathbf{Y}|)^2$ [l4].",
+    "dependencies": [
+     "l1",
+     "l2",
+     "l3"
+    ],
+    "lean_hint": "Combine the equality from l1, the inequality from l2, and the equality from l3 via transitivity."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Taking square roots yields \\eqref{eq:5.1.6}.",
+    "statement": "We assume:\n• $|\\mathbf{X}+\\mathbf{Y}|^2 \\le (|\\mathbf{X}|+|\\mathbf{Y}|)^2$ [l4]\n• The norm of a vector is a non-negative real number.\nTherefore, we conclude:\n• $|\\mathbf{X}+\\mathbf{Y}| \\le |\\mathbf{X}|+|\\mathbf{Y}|$ [ts_1].",
+    "dependencies": [
+     "l4"
+    ],
+    "lean_hint": "Take the square root of both sides of the inequality from l4. Since the square root function is monotonically increasing for non-negative inputs, the inequality is preserved."
+   },
+   {
+    "id": "def_2",
+    "natural_language": "which is true if\nand\nonly if one of the vectors $\\mathbf{X}$ and $\\mathbf{Y}$ is a nonnegative\nscalar multiple of the other (Lemma~\\ref{thmtype:5.1.5}).",
+    "statement": "Definition:\n• For vectors $\\mathbf{X}, \\mathbf{Y}$ in $\\mathbb{R}^n$, the condition $\\mathbf{X}\\cdot\\mathbf{Y}=|\\mathbf{X}||\\mathbf{Y}|$ holds if and only if one of the vectors is a nonnegative scalar multiple of the other [def_2].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "This is a given lemma."
+   },
+   {
+    "id": "l5",
+    "natural_language": "From the third line of \\eqref{eq:5.1.7},\nequality holds in \\eqref{eq:5.1.6} if and\nonly  if $\\mathbf{X}\\cdot\\mathbf{Y}=|\\mathbf{X}||\\mathbf{Y}|$,",
+    "statement": "We assume:\n• The inequality $|\\mathbf{X}+\\mathbf{Y}| \\le |\\mathbf{X}|+|\\mathbf{Y}|$ [ts_1] is derived from the chain of relations in [l1], [l2], and [l3].\nTherefore, we conclude:\n• Equality holds in $|\\mathbf{X}+\\mathbf{Y}| \\le |\\mathbf{X}|+|\\mathbf{Y}|$ if and only if $\\mathbf{X}\\cdot\\mathbf{Y} = |\\mathbf{X}||\\mathbf{Y}|$ [l5].",
+    "dependencies": [
+     "l1",
+     "l2",
+     "l3",
+     "l4",
+     "ts_1"
+    ],
+    "lean_hint": "Equality in the final result [ts_1] holds iff equality holds at every step of the derivation. The only non-equality step is [l2], which becomes an equality iff $\\mathbf{X}\\cdot\\mathbf{Y} = |\\mathbf{X}||\\mathbf{Y}|$. "
+   },
+   {
+    "id": "ts_2",
+    "natural_language": "equality holds in \\eqref{eq:5.1.6} if and\nonly  if $\\mathbf{X}\\cdot\\mathbf{Y}=|\\mathbf{X}||\\mathbf{Y}|$, which is true if\nand\nonly if one of the vectors $\\mathbf{X}$ and $\\mathbf{Y}$ is a nonnegative\nscalar multiple of the other (Lemma~\\ref{thmtype:5.1.5}).",
+    "statement": "We assume:\n• Equality holds in $|\\mathbf{X}+\\mathbf{Y}| \\le |\\mathbf{X}|+|\\mathbf{Y}|$ if and only if $\\mathbf{X}\\cdot\\mathbf{Y} = |\\mathbf{X}||\\mathbf{Y}|$ [l5]\n• $\\mathbf{X}\\cdot\\mathbf{Y}=|\\mathbf{X}||\\mathbf{Y}|$ if and only if one of the vectors is a nonnegative scalar multiple of the other [def_2]\nTherefore, we conclude:\n• Equality holds in $|\\mathbf{X}+\\mathbf{Y}| \\le |\\mathbf{X}|+|\\mathbf{Y}|$ if and only if one of the vectors is a nonnegative scalar multiple of the other [ts_2].",
+    "dependencies": [
+     "l5",
+     "def_2"
+    ],
+    "lean_hint": "Apply the transitivity of 'if and only if' to the statements from l5 and def_2."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 1,
+  "nl_theorem": "If a nonempty set $S$ of real numbers  is bounded above$,$ then\n$\\sup S$ is the unique real number $\\beta$ such that\n\\begin{alist}\n\\item % (a)\n $x\\le\\beta$ for all $x$ in $S;$\n\\item % (b)\n if $\\epsilon>0$ $($no matter how small$)$$,$ there is an $x_0$ in\n$S$ such that\n$x_0>\n\\beta-\\epsilon.$\n\\end{alist}\n",
+  "nl_proof": "We first show that $\\beta=\\sup S$ has properties \\part{a} and\n\\part{b}. Since $\\beta$ is an upper bound of $S$, it must satisfy\n\\part{a}. Since any real number $a$ less than $\\beta$ can be written\nas $\\beta-\\epsilon$ with $\\epsilon=\\beta-a>0$, \\part{b} is just\nanother way of saying that no number less than $\\beta$ is an upper\nbound of $S$. Hence, $\\beta=\\sup S$ satisfies \\part{a} and \\part{b}.\nNow we show that there cannot be more than one real number with\nproperties \\part{a} and \\part{b}. Suppose that $\\beta_1<\\beta_2$ and\n$\\beta_2$ has property \\part{b}; thus, if $\\epsilon>0$, there is an\n$x_0$ in $S$ such that $x_0>\\beta_2-\\epsilon$. Then, by taking\n$\\epsilon=\\beta_2-\\beta_1$, we see that there is an $x_0$ in $S$ such\nthat\n$$\nx_0>\\beta_2-(\\beta_2-\\beta_1)=\\beta_1,\n$$\nso  $\\beta_1$ cannot have property \\part{a}. Therefore, there cannot\nbe more than one real number that satisfies both \\part{a} and\n\\part{b}.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "If a nonempty set $S$ of real numbers is bounded above",
+    "statement": "Premise:\n• S is a nonempty set of real numbers [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "If a nonempty set $S$ of real numbers is bounded above",
+    "statement": "Premise:\n• S is a nonempty set of real numbers [tc_1]\n• S is bounded above [tc_2].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "def_1",
+    "natural_language": "$x\\le\\beta$ for all $x$ in $S;$",
+    "statement": "Definition:\n• Property (a) for a real number β and a set S is: 'for all x in S, x ≤ β' [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_2",
+    "natural_language": "if $\\epsilon>0$ $($no matter how small$)$$,$ there is an $x_0$ in $S$ such that $x_0 > \\beta-\\epsilon.$",
+    "statement": "Definition:\n• Property (b) for a real number β and a set S is: 'for any ε > 0, there exists an x₀ in S such that x₀ > β - ε' [def_2].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "Since $\\beta$ is an upper bound of $S$, it must satisfy \\part{a}.",
+    "statement": "We assume:\n• S is a nonempty, bounded-above set of real numbers [tc_1, tc_2]\n• β = sup S\n• Property (a) is 'for all x in S, x ≤ β' [def_1]\nTherefore, we conclude:\n• β = sup S satisfies property (a) [l1].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "def_1"
+    ],
+    "lean_hint": "Unfold the definition of `sup S`. By definition, `sup S` is an upper bound for S. The definition of an upper bound is identical to property (a)."
+   },
+   {
+    "id": "l2",
+    "natural_language": "Since any real number $a$ less than $\\beta$ can be written as $\\beta-\\epsilon$ with $\\epsilon=\\beta-a>0$, \\part{b} is just another way of saying that no number less than $\\beta$ is an upper bound of $S$.",
+    "statement": "We assume:\n• S is a nonempty, bounded-above set of real numbers [tc_1, tc_2]\n• β = sup S\n• Property (b) is 'for any ε > 0, there exists an x₀ in S such that x₀ > β - ε' [def_2]\nTherefore, we conclude:\n• β = sup S satisfies property (b) [l2].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "def_2"
+    ],
+    "lean_hint": "Unfold the definition of `sup S`. By definition, `sup S` is the least upper bound. This means any number `a < sup S` is not an upper bound. Show that this condition is logically equivalent to property (b) by setting `a = sup S - ε`."
+   },
+   {
+    "id": "l3",
+    "natural_language": "Hence, $\\beta=\\sup S$ satisfies \\part{a} and \\part{b}.",
+    "statement": "We assume:\n• β = sup S satisfies property (a) [l1]\n• β = sup S satisfies property (b) [l2]\nTherefore, we conclude:\n• sup S is a real number that possesses properties (a) and (b) [l3].",
+    "dependencies": [
+     "l1",
+     "l2"
+    ],
+    "lean_hint": "Combine the two conclusions from previous steps."
+   },
+   {
+    "id": "def_3",
+    "natural_language": "Suppose that $\\beta_1<\\beta_2$ and $\\beta_2$ has property \\part{b}",
+    "statement": "Assumption for contradiction:\n• Suppose there exist two distinct real numbers, β₁ and β₂, that both satisfy properties (a) [def_1] and (b) [def_2] for set S. Assume without loss of generality that β₁ < β₂ [def_3].",
+    "dependencies": [
+     "def_1",
+     "def_2"
+    ]
+   },
+   {
+    "id": "l4",
+    "natural_language": "Then, by taking $\\epsilon=\\beta_2-\\beta_1$, we see that there is an $x_0$ in $S$ such that\n$$\nx_0>\\beta_2-(\\beta_2-\\beta_1)=\\beta_1,\n$$",
+    "statement": "We assume:\n• There exist two distinct real numbers, β₁ and β₂, satisfying properties (a) and (b), with β₁ < β₂ [def_3]\nTherefore, we conclude:\n• There exists an element x₀ in S such that x₀ > β₁ [l4].",
+    "dependencies": [
+     "def_3"
+    ],
+    "lean_hint": "From β₁ < β₂, define ε := β₂ - β₁, so ε > 0. Since β₂ has property (b), there exists x₀ ∈ S such that x₀ > β₂ - ε. Substitute ε and simplify: x₀ > β₂ - (β₂ - β₁) = β₁."
+   },
+   {
+    "id": "l5",
+    "natural_language": "so  $\\beta_1$ cannot have property \\part{a}.",
+    "statement": "We assume:\n• There exists an element x₀ in S such that x₀ > β₁ [l4]\n• Property (a) for β₁ states that for all x in S, x ≤ β₁ [def_1]\nTherefore, we conclude:\n• The statement 'there exists x₀ in S such that x₀ > β₁' contradicts property (a) for β₁, so β₁ cannot have property (a) [l5].",
+    "dependencies": [
+     "l4",
+     "def_1"
+    ],
+    "lean_hint": "The conclusion from l4 is the negation of property (a) for β₁."
+   },
+   {
+    "id": "l6",
+    "natural_language": "Therefore, there cannot be more than one real number that satisfies both \\part{a} and \\part{b}.",
+    "statement": "We assume:\n• The assumption of two distinct numbers β₁<β₂ satisfying properties (a) and (b) [def_3] leads to the conclusion that β₁ cannot satisfy property (a) [l5], a contradiction.\nTherefore, we conclude:\n• There is at most one real number that satisfies both properties (a) and (b) [l6].",
+    "dependencies": [
+     "def_3",
+     "l5"
+    ],
+    "lean_hint": "The assumption in def_3 leads to a contradiction (l5), so the assumption must be false. The negation of 'there exist two distinct numbers' is 'there is at most one number'."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Therefore, there cannot be more than one real number that satisfies both \\part{a} and \\part{b}.",
+    "statement": "We assume:\n• sup S is a real number that possesses properties (a) and (b) [l3]\n• There is at most one real number that satisfies both properties (a) and (b) [l6]\nTherefore, we conclude:\n• sup S is the unique real number that satisfies properties (a) and (b) [ts_1].",
+    "dependencies": [
+     "l3",
+     "l6"
+    ],
+    "lean_hint": "Combine the existence proof (l3) and the uniqueness proof (l6) to establish that sup S is the unique number with the given properties."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 58,
+  "nl_theorem": "For any~$a$ not divisible by~$p$,\n$$\n\\ds g_a^2 = (-1)^{(p-1)/2}p.\n$$\n",
+  "nl_proof": "If $a\\con 0\\pmod{p}$, then $\\zeta^a=1$, so the sum equals the number of summands,\nwhich is~$p$.  If $a\\not\\con 0\\pmod{p}$, then we use the\nidentity $$x^p - 1 = (x-1)(x^{p-1} + \\cdots + x + 1)$$ with $x = \\zeta^a$. We have\n $\\zeta^a\\neq 1$, so $\\zeta^a - 1 \\neq 0$ and\n$$\n\\sum_{n=0}^{p-1} \\zeta^{an} = \\frac{\\zeta^{ap}-1}{\\zeta^a-1} =\n\\frac{1-1}{\\zeta^a-1} = 0.\n$$\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "For any~$a$ not divisible by~$p$,\n$$\n\\ds g_a^2 = (-1)^{(p-1)/2}p.\n$$",
+    "statement": "Premise:\n• p is a prime number [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "If $a\\con 0\\pmod{p}$, then $\\zeta^a=1$, so the sum equals the number of summands",
+    "statement": "Premise:\n• p is a prime number [tc_1]\n• ζ is a primitive p-th root of unity, such that ζ^p = 1 and for any integer k with 1 ≤ k < p, ζ^k ≠ 1 [tc_2].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "tc_3",
+    "natural_language": "For any~$a$ not divisible by~$p$,",
+    "statement": "Premise:\n• a is an integer [tc_3].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_4",
+    "natural_language": "If $a\\con 0\\pmod{p}$",
+    "statement": "Premise:\n• a is an integer [tc_3]\n• a ≡ 0 (mod p) [tc_4].",
+    "dependencies": [
+     "tc_3"
+    ]
+   },
+   {
+    "id": "l1",
+    "natural_language": "If $a\\con 0\\pmod{p}$, then $\\zeta^a=1$",
+    "statement": "We assume:\n• ζ is a primitive p-th root of unity [tc_2]\n• a ≡ 0 (mod p) [tc_4].\nTherefore, we conclude:\n• ζ^a = 1 [l1].",
+    "dependencies": [
+     "tc_2",
+     "tc_4"
+    ],
+    "lean_hint": "Since a = kp for some integer k, it follows that ζ^a = ζ^(kp) = (ζ^p)^k. From tc_2, ζ^p = 1, so (ζ^p)^k = 1^k = 1."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "so the sum equals the number of summands,\nwhich is~$p$.",
+    "statement": "We assume:\n• ζ^a = 1 [l1].\nTherefore, we conclude:\n• The sum ∑_{n=0}^{p-1} ζ^{an} equals p [ts_1].",
+    "dependencies": [
+     "l1"
+    ],
+    "lean_hint": "Substitute ζ^a = 1 into the sum to get ∑_{n=0}^{p-1} (ζ^a)^n = ∑_{n=0}^{p-1} 1^n = ∑_{n=0}^{p-1} 1. This is the sum of p terms, each equal to 1."
+   },
+   {
+    "id": "tc_5",
+    "natural_language": "If $a\\not\\con 0\\pmod{p}$",
+    "statement": "Premise:\n• p is a prime number [tc_1]\n• a is an integer [tc_3]\n• a ≢ 0 (mod p) [tc_5].",
+    "dependencies": [
+     "tc_1",
+     "tc_3"
+    ]
+   },
+   {
+    "id": "l2",
+    "natural_language": "we use the identity $$x^p - 1 = (x-1)(x^{p-1} + \\cdots + x + 1)$$",
+    "statement": "We assume:\n• (General mathematical knowledge)\nTherefore, we conclude:\n• For any x and integer p ≥ 1, the identity x^p - 1 = (x-1)(∑_{n=0}^{p-1} x^n) holds [l2].",
+    "dependencies": [],
+    "lean_hint": "This is the standard formula for the sum of a geometric series. It can be proven by induction on p or found in a math library, e.g., `geom_sum_mul_sub_one`."
+   },
+   {
+    "id": "l3",
+    "natural_language": "We have\n $\\zeta^a\\neq 1$",
+    "statement": "We assume:\n• ζ is a primitive p-th root of unity [tc_2]\n• a ≢ 0 (mod p) [tc_5].\nTherefore, we conclude:\n• ζ^a ≠ 1 [l3].",
+    "dependencies": [
+     "tc_2",
+     "tc_5"
+    ],
+    "lean_hint": "From the definition of a primitive root of unity (tc_2), ζ^k = 1 if and only if k is a multiple of p. Since a is not a multiple of p (tc_5), ζ^a cannot be 1."
+   },
+   {
+    "id": "l4",
+    "natural_language": "so $\\zeta^a - 1 \\neq 0$",
+    "statement": "We assume:\n• ζ^a ≠ 1 [l3].\nTherefore, we conclude:\n• ζ^a - 1 ≠ 0 [l4].",
+    "dependencies": [
+     "l3"
+    ],
+    "lean_hint": "Apply the rule that `x ≠ y` is equivalent to `x - y ≠ 0`. In Lean, this can be proven with `sub_ne_zero.mpr`."
+   },
+   {
+    "id": "l5",
+    "natural_language": "$\\sum_{n=0}^{p-1} \\zeta^{an} = \\frac{\\zeta^{ap}-1}{\\zeta^a-1}$",
+    "statement": "We assume:\n• For any x and integer p ≥ 1, x^p - 1 = (x-1)(∑_{n=0}^{p-1} x^n) [l2]\n• ζ^a - 1 ≠ 0 [l4].\nTherefore, we conclude:\n• ∑_{n=0}^{p-1} ζ^{an} = (ζ^{ap}-1)/(ζ^a-1) [l5].",
+    "dependencies": [
+     "l2",
+     "l4"
+    ],
+    "lean_hint": "Rearrange the identity in l2 to get the geometric sum formula ∑_{n=0}^{p-1} x^n = (x^p-1)/(x-1), which is valid for x≠1. Apply this formula by substituting x = ζ^a. This substitution is valid because l4 ensures the denominator ζ^a - 1 is non-zero."
+   },
+   {
+    "id": "l6",
+    "natural_language": "= \\frac{1-1}{\\zeta^a-1}",
+    "statement": "We assume:\n• ∑_{n=0}^{p-1} ζ^{an} = (ζ^{ap}-1)/(ζ^a-1) [l5]\n• ζ is a primitive p-th root of unity [tc_2].\nTherefore, we conclude:\n• ∑_{n=0}^{p-1} ζ^{an} = (1-1)/(ζ^a-1) [l6].",
+    "dependencies": [
+     "l5",
+     "tc_2"
+    ],
+    "lean_hint": "Rewrite the numerator of the expression in l5. Since ζ^p = 1 (from tc_2), we have ζ^{ap} = (ζ^p)^a = 1^a = 1. Substitute this result."
+   },
+   {
+    "id": "ts_2",
+    "natural_language": "= 0.",
+    "statement": "We assume:\n• ∑_{n=0}^{p-1} ζ^{an} = (1-1)/(ζ^a-1) [l6]\n• ζ^a - 1 ≠ 0 [l4].\nTherefore, we conclude:\n• ∑_{n=0}^{p-1} ζ^{an} = 0 [ts_2].",
+    "dependencies": [
+     "l6",
+     "l4"
+    ],
+    "lean_hint": "Simplify the expression in l6. The numerator is 1-1=0. Since the denominator is non-zero (l4), the entire fraction is equal to 0."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 231,
+  "nl_theorem": "A subset $T$ of a metric $A$ is compact if and only if\nevery infinite sequence $\\{t_n\\}$ of members of  $T$  has a\nsubsequence that converges to a member of $T.$\n",
+  "nl_proof": "Suppose that  $T$ is compact and $\\{t_n\\}\\subset T$. If $\\{t_n\\}$\nhas only finitely many distinct terms, there is a $\\overline t$\nin $T$ such that $t_n=\\overline t$ for infinitely many values of $n$;\nif this is so for $n_1<n_2<\\cdots$, then\n$\\lim_{j\\to\\infty}t_{n_j}=\\overline t$. If $\\{t_n\\}$ has infinitely\nmany distinct terms, then $\\{t_n\\}$ has a limit point $\\overline t$ in\n$T$, so there are integers $n_1<n_2<\\cdots$  such that\n$\\rho(t_{n_j},\\overline t)<1/j$; therefore,\n$\\lim_{j\\to\\infty}t_{n_j}=\\overline t$.\nConversely, suppose that  every sequence in $T$ has a\nsubsequence that converges to a limit in $T$.\nIf $S$ is an infinite subset of $T$, we can choose a sequence\n$\\{t_n\\}$ of distinct points in $S$.  By assumption,\n$\\{t_n\\}$ has a subsequence that converges to a member  $\\overline t$\nof $T$. Since $\\overline t$ is a limit point of $\\{t_n\\}$, and\ntherefore of $T$, $T$ is compact.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "A subset $T$ of a metric $A$",
+    "statement": "Premise:\n• Let $(A, \\rho)$ be a metric space, and $T$ be a subset of $A$ [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "(The proof implicitly uses the Bolzano-Weierstrass property as the definition of compactness for a metric space.)",
+    "statement": "Definition:\n• A set $K$ in a metric space is compact if and only if every infinite subset of $K$ has a limit point in $K$. This is the Bolzano-Weierstrass property [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "Suppose that  $T$ is compact",
+    "statement": "Premise:\n• Let $(A, \\rho)$ be a metric space, and $T$ be a subset of $A$ [tc_1].\n• $T$ is compact [tc_2].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "l1",
+    "natural_language": "If {t_n} has only finitely many distinct terms, there is a $\\overline t$ in $T$ such that $t_n=\\overline t$ for infinitely many values of $n$;",
+    "statement": "We assume:\n• Let $\\{t_n\\}$ be an infinite sequence of members of $T \\subseteq A$ [tc_1].\n• The set of values $\\{t_n \\mid n \\in \\mathbb{N}\\}$ is finite.\nTherefore, we conclude:\n• There exists a point $\\overline{t} \\in T$ and a strictly increasing sequence of natural numbers $(n_j)_{j \\in \\mathbb{N}}$ such that $t_{n_j} = \\overline{t}$ for all $j$ [l1].",
+    "dependencies": [
+     "tc_1"
+    ],
+    "lean_hint": "This follows from the pigeonhole principle for an infinite sequence with a finite number of values."
+   },
+   {
+    "id": "l2",
+    "natural_language": "if this is so for $n_1<n_2<\\cdots$, then $\\lim_{j\\to\\infty}t_{n_j}=\\overline t$.",
+    "statement": "We assume:\n• There exists a point $\\overline{t} \\in T$ and a strictly increasing sequence of natural numbers $(n_j)_{j \\in \\mathbb{N}}$ such that $t_{n_j} = \\overline{t}$ for all $j$ [l1].\nTherefore, we conclude:\n• The subsequence $\\{t_{n_j}\\}$ converges to $\\overline{t}$ [l2].",
+    "dependencies": [
+     "l1"
+    ],
+    "lean_hint": "The limit of a constant sequence is the constant value itself. Use the definition of convergence."
+   },
+   {
+    "id": "l3",
+    "natural_language": "If $\\{t_n\\}$ has infinitely many distinct terms, then $\\{t_n\\}$ has a limit point $\\overline t$ in $T$,",
+    "statement": "We assume:\n• $T$ is a compact subset of a metric space $A$ [tc_2].\n• A set is compact iff every infinite subset has a limit point in the set [def_1].\n• $\\{t_n\\}$ is an infinite sequence in $T$ with infinitely many distinct terms.\nTherefore, we conclude:\n• The set of values $V = \\{t_n \\mid n \\in \\mathbb{N}\\}$ is an infinite subset of $T$ and thus has a limit point $\\overline{t} \\in T$ [l3].",
+    "dependencies": [
+     "tc_2",
+     "def_1"
+    ],
+    "lean_hint": "The set of values of the sequence is an infinite subset of a compact set T. By the Bolzano-Weierstrass property (def_1), it must have a limit point in T."
+   },
+   {
+    "id": "l4",
+    "natural_language": "so there are integers $n_1<n_2<\\cdots$  such that $\\rho(t_{n_j},\\overline t)<1/j$;",
+    "statement": "We assume:\n• The set of values of a sequence $\\{t_n\\}$ has a limit point $\\overline{t} \\in T$ [l3].\nTherefore, we conclude:\n• There exists a subsequence $\\{t_{n_j}\\}$ (with $n_1 < n_2 < \\dots$) such that for every natural number $j \\ge 1$, the distance $\\rho(t_{n_j}, \\overline{t}) < 1/j$ [l4].",
+    "dependencies": [
+     "l3"
+    ],
+    "lean_hint": "This is a direct application of the definition of a limit point. We can construct such a subsequence inductively."
+   },
+   {
+    "id": "l5",
+    "natural_language": "therefore, $\\lim_{j\\to\\infty}t_{n_j}=\\overline t$.",
+    "statement": "We assume:\n• There exists a subsequence $\\{t_{n_j}\\}$ and a point $\\overline{t}$ such that for every natural number $j \\ge 1$, $\\rho(t_{n_j}, \\overline{t}) < 1/j$ [l4].\nTherefore, we conclude:\n• The subsequence $\\{t_{n_j}\\}$ converges to $\\overline{t}$ [l5].",
+    "dependencies": [
+     "l4"
+    ],
+    "lean_hint": "Use the definition of convergence. For any $\\epsilon > 0$, choose $J$ such that $1/J < \\epsilon$. Then for all $j > J$, $\\rho(t_{n_j}, \\overline{t}) < 1/j < 1/J < \\epsilon$."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Suppose that  $T$ is compact and $\\{t_n\\}\\subset T$. If $\\{t_n\\}$ has only finitely many distinct terms, ... If $\\{t_n\\}$ has infinitely many distinct terms, ...",
+    "statement": "We assume:\n• $T$ is a compact subset of a metric space $A$ [tc_2].\n• For any infinite sequence in $T$ with finitely many distinct terms, there exists a convergent subsequence [l2].\n• For any infinite sequence in $T$ with infinitely many distinct terms, there exists a convergent subsequence [l5].\nTherefore, we conclude:\n• Every infinite sequence $\\{t_n\\}$ of members of $T$ has a subsequence that converges to a member of $T$ [ts_1].",
+    "dependencies": [
+     "tc_2",
+     "l2",
+     "l5"
+    ],
+    "lean_hint": "This combines the two cases. An infinite sequence must have either finitely or infinitely many distinct terms. In both cases, a convergent subsequence exists."
+   },
+   {
+    "id": "tc_3",
+    "natural_language": "suppose that  every sequence in $T$ has a subsequence that converges to a limit in $T$.",
+    "statement": "Premise:\n• Let $(A, \\rho)$ be a metric space, and $T$ be a subset of $A$ [tc_1].\n• Every sequence in $T$ has a subsequence that converges to a limit in $T$ [tc_3].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "l6",
+    "natural_language": "If $S$ is an infinite subset of $T$, we can choose a sequence $\\{t_n\\}$ of distinct points in $S$.",
+    "statement": "We assume:\n• $S$ is an infinite subset of $T$.\nTherefore, we conclude:\n• We can construct a sequence $\\{t_n\\}_{n \\in \\mathbb{N}}$ such that all $t_n$ are in $S$ and $t_n \\neq t_m$ for $n \\neq m$ [l6].",
+    "dependencies": [],
+    "lean_hint": "This follows from the axiom of countable choice on an infinite set."
+   },
+   {
+    "id": "l7",
+    "natural_language": "By assumption, $\\{t_n\\}$ has a subsequence that converges to a member  $\\overline t$ of $T$.",
+    "statement": "We assume:\n• Every sequence in $T$ has a subsequence that converges to a limit in $T$ [tc_3].\n• $\\{t_n\\}$ is a sequence of distinct points in $S \\subseteq T$ [l6].\nTherefore, we conclude:\n• There exists a subsequence $\\{t_{n_j}\\}$ of $\\{t_n\\}$ and a point $\\overline{t} \\in T$ such that $\\{t_{n_j}\\}$ converges to $\\overline{t}$ [l7].",
+    "dependencies": [
+     "tc_3",
+     "l6"
+    ],
+    "lean_hint": "Apply the hypothesis (tc_3) to the sequence constructed in l6."
+   },
+   {
+    "id": "l8",
+    "natural_language": "Since $\\overline t$ is a limit point of $\\{t_n\\}$, and therefore of $T$,",
+    "statement": "We assume:\n• $\\{t_{n_j}\\}$ is a subsequence of a sequence of distinct points $\\{t_n\\}$ from a set $S$ [l6].\n• $\\{t_{n_j}\\}$ converges to a point $\\overline{t} \\in T$ [l7].\nTherefore, we conclude:\n• $\\overline{t}$ is a limit point of the set $S$ [l8].",
+    "dependencies": [
+     "l6",
+     "l7"
+    ],
+    "lean_hint": "The limit of a sequence of distinct points from a set S is a limit point of S. For any neighborhood of t_bar, it contains infinitely many points of the subsequence, which are also points of S."
+   },
+   {
+    "id": "ts_2",
+    "natural_language": "$T$ is compact.",
+    "statement": "We assume:\n• Every sequence in $T$ has a subsequence that converges to a limit in $T$ [tc_3].\n• A set is compact if every infinite subset has a limit point in the set [def_1].\n• For any infinite subset $S \\subseteq T$, $S$ has a limit point $\\overline{t} \\in T$ [l8].\nTherefore, we conclude:\n• $T$ is compact [ts_2].",
+    "dependencies": [
+     "tc_3",
+     "def_1",
+     "l8"
+    ],
+    "lean_hint": "We have shown that any arbitrary infinite subset S of T has a limit point in T (l8). By the Bolzano-Weierstrass property (def_1), this implies T is compact."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_trench.json",
+  "id": 79,
+  "nl_theorem": "Let $f$ be defined on $[a,b].$ Then $f$ is continuous at $x_0$ in\n$[a,b]$ if and only if $w_f(x_0)=0.$ $($Continuity at $a$ or\n$b$ means continuity from the right or left, respectively.$)$\n",
+  "nl_proof": "Suppose that $a<x_0<b$.\nFirst, suppose that $w_f(x_0)=0$\nand $\\epsilon>0$. Then\n$$\nW_f[x_0-h,x_0+h]<\\epsilon\n$$\nfor some $h>0$, so\n$$\n|f(x)-f(x')|<\\epsilon\\mbox{\\quad if\\quad} x_0-h\\le x,x'\\le x_0+h.\n$$\n Letting $x'=x_0$, we conclude that\n$$\n|f(x)-f(x_0)|<\\epsilon\\mbox{\\quad if\\quad} |x-x_0|<h.\n$$\nTherefore, $f$ is continuous at $x_0$.\nConversely, if $f$ is continuous at $x_0$ and $\\epsilon>0$, there is a\n$\\delta>0$ such that\n$$\n|f(x)-f(x_0)|<\\frac{\\epsilon}{2}\\mbox{\\quad and\\quad} |f(x')-f(x_0)|<\n\\frac{\\epsilon}{2}\n$$\nif $x_0-\\delta\\le x$, $x'\\le x_0+\\delta$.  From the triangle\ninequality,\n$$\n|f(x)-f(x')|\\le|f(x)-f(x_0)|+|f(x')-f(x_0)|<\\epsilon,\n$$\nso\n$$\nW_f[x_0-h,x_0+h]\\le\\epsilon\\mbox{\\quad if\\quad} h<\\delta;\n$$\n therefore, $w_f(x_0)=0$.\nSimilar arguments apply if\n$x_0=a$ or $x_0=b$.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "Let $f$ be defined on $[a,b].$ Then $f$ is continuous at $x_0$ in $[a,b]$",
+    "statement": "Premise:\n• $f$ is a real-valued function defined on the closed interval $[a,b]$ and $x_0 \\in [a,b]$ [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_1",
+    "natural_language": "$f$ is continuous at $x_0$",
+    "statement": "Definition:\n• A function $f$ is continuous at $x_0 \\in [a,b]$ if for every $\\epsilon > 0$, there exists a $\\delta > 0$ such that for all $x \\in [a,b]$, if $|x - x_0| < \\delta$, then $|f(x) - f(x_0)| < \\epsilon$ [def_1].",
+    "dependencies": []
+   },
+   {
+    "id": "def_2",
+    "natural_language": "W_f[x_0-h,x_0+h]",
+    "statement": "Definition:\n• For an interval $I$, the oscillation of $f$ over $I$ is $W_f(I) = \\sup \\{ |f(x) - f(x')| : x, x' \\in I \\}$ [def_2].",
+    "dependencies": []
+   },
+   {
+    "id": "def_3",
+    "natural_language": "$w_f(x_0)=0.$",
+    "statement": "Definition:\n• The oscillation of $f$ at a point $x_0 \\in [a,b]$ is $w_f(x_0) = \\inf_{h>0} W_f([x_0-h, x_0+h] \\cap [a,b])$ [def_3].",
+    "dependencies": [
+     "def_2"
+    ]
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "Suppose that $a<x_0<b$.",
+    "statement": "Premise:\n• Let $f$ be defined on $[a,b]$ and $x_0 \\in [a,b]$ [tc_1].\n• We consider the case where $x_0$ is in the open interval $(a,b)$ [tc_2].",
+    "dependencies": [
+     "tc_1"
+    ]
+   },
+   {
+    "id": "tc_3",
+    "natural_language": "First, suppose that $w_f(x_0)=0$",
+    "statement": "Premise for the first implication:\n• Let $f$ be defined on $[a,b]$ and $x_0 \\in (a,b)$ [tc_2].\n• The oscillation of $f$ at $x_0$ is $w_f(x_0) = 0$ [tc_3].",
+    "dependencies": [
+     "tc_2"
+    ]
+   },
+   {
+    "id": "l1",
+    "natural_language": "Then W_f[x_0-h,x_0+h] < epsilon for some h>0",
+    "statement": "We assume:\n• For $x_0 \\in (a,b)$, the oscillation $w_f(x_0) = \\inf_{h>0} W_f([x_0-h, x_0+h] \\cap [a,b]) = 0$ [tc_3, def_3].\n• $\\epsilon > 0$ is a positive real number.\nTherefore, we conclude:\n• There exists an $h > 0$ such that $[x_0-h, x_0+h] \\subset [a,b]$ and $W_f([x_0-h, x_0+h]) < \\epsilon$ [l1].",
+    "dependencies": [
+     "tc_3",
+     "def_3"
+    ],
+    "lean_hint": "From the definition of infimum, for any ε > 0, there exists an element of the set smaller than ε. Since x_0 is in an open interval, we can choose h small enough so the interval is contained in [a,b]."
+   },
+   {
+    "id": "l2",
+    "natural_language": "so |f(x)-f(x')|<\\epsilon if x_0-h <= x,x' <= x_0+h.",
+    "statement": "We assume:\n• For a given interval $I$, $W_f(I) = \\sup \\{ |f(x) - f(x')| : x, x' \\in I \\}$ [def_2].\n• For some $h>0$, $W_f([x_0-h, x_0+h]) < \\epsilon$ [l1].\nTherefore, we conclude:\n• For all $x, x'$ such that $x, x' \\in [x_0-h, x_0+h]$, we have $|f(x) - f(x')| < \\epsilon$ [l2].",
+    "dependencies": [
+     "l1",
+     "def_2"
+    ],
+    "lean_hint": "This follows from the definition of supremum. If sup S < ε, then for all s ∈ S, s ≤ sup S < ε."
+   },
+   {
+    "id": "l3",
+    "natural_language": "Letting x'=x_0, we conclude that |f(x)-f(x_0)|<\\epsilon if |x-x_0|<h.",
+    "statement": "We assume:\n• For a certain $h>0$ and for all $x, x'$ in $[x_0-h, x_0+h]$, we have $|f(x) - f(x')| < \\epsilon$ [l2].\nTherefore, we conclude:\n• For that same $h>0$, for all $x \\in [a,b]$ such that $|x - x_0| < h$, we have $|f(x) - f(x_0)| < \\epsilon$ [l3].",
+    "dependencies": [
+     "l2"
+    ],
+    "lean_hint": "Specialize the statement by setting $x'=x_0$. Note that $x_0$ is in the interval $[x_0-h, x_0+h]$, and that the condition $|x-x_0|<h$ ensures $x$ is also in this interval."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "Therefore, f is continuous at x_0.",
+    "statement": "We assume:\n• For any $\\epsilon > 0$, there exists an $h > 0$ such that for all $x \\in [a,b]$ with $|x - x_0| < h$, we have $|f(x) - f(x_0)| < \\epsilon$ [l3].\n• The definition of continuity at $x_0$ [def_1].\nTherefore, we conclude:\n• $f$ is continuous at $x_0$ [ts_1].",
+    "dependencies": [
+     "l3",
+     "def_1"
+    ],
+    "lean_hint": "The assumption directly matches the definition of continuity, by taking δ = h."
+   },
+   {
+    "id": "tc_4",
+    "natural_language": "Conversely, if f is continuous at x_0",
+    "statement": "Premise for the second implication:\n• Let $f$ be defined on $[a,b]$ and $x_0 \\in (a,b)$ [tc_2].\n• $f$ is continuous at $x_0$ [tc_4].",
+    "dependencies": [
+     "tc_2"
+    ]
+   },
+   {
+    "id": "l4",
+    "natural_language": "if f is continuous at x_0 and epsilon>0, there is a delta>0 such that |f(x)-f(x_0)|<epsilon/2 and |f(x')-f(x_0)|<epsilon/2 if x_0-delta <= x, x' <= x_0+delta.",
+    "statement": "We assume:\n• $f$ is continuous at $x_0$ [tc_4] according to the definition [def_1].\n• $\\epsilon > 0$ is a positive real number.\nTherefore, we conclude:\n• There exists a $\\delta > 0$ such that for any $x, x'$ in $[a,b]$ satisfying $x_0-\\delta \\le x, x' \\le x_0+\\delta$, we have $|f(x) - f(x_0)| < \\epsilon/2$ and $|f(x') - f(x_0)| < \\epsilon/2$ [l4].",
+    "dependencies": [
+     "tc_4",
+     "def_1"
+    ],
+    "lean_hint": "Apply the definition of continuity with ε/2. This provides a δ' > 0 for an open interval. Any δ ≤ δ' for a closed interval will satisfy the condition."
+   },
+   {
+    "id": "l5",
+    "natural_language": "From the triangle inequality, |f(x)-f(x')| <= |f(x)-f(x_0)|+|f(x')-f(x_0)| < epsilon,",
+    "statement": "We assume:\n• For a given $\\epsilon > 0$ and $\\delta > 0$, for any $x, x'$ in $[x_0-\\delta, x_0+\\delta]$, we have $|f(x) - f(x_0)| < \\epsilon/2$ and $|f(x') - f(x_0)| < \\epsilon/2$ [l4].\nTherefore, we conclude:\n• For any such $x, x'$, we have $|f(x) - f(x')| < \\epsilon$ [l5].",
+    "dependencies": [
+     "l4"
+    ],
+    "lean_hint": "Apply the triangle inequality: $|f(x) - f(x')| = |(f(x) - f(x_0)) - (f(x') - f(x_0))| \\le |f(x) - f(x_0)| + |f(x') - f(x_0)|$. Substitute the given bounds to get the result."
+   },
+   {
+    "id": "l6",
+    "natural_language": "so W_f[x_0-h,x_0+h] <= epsilon if h < delta;",
+    "statement": "We assume:\n• For a given $\\delta > 0$ and any $x, x'$ in $[x_0-\\delta, x_0+\\delta] \\cap [a,b]$, $|f(x) - f(x')| < \\epsilon$ [l5].\n• The definition of oscillation on an interval $W_f(I)$ [def_2].\nTherefore, we conclude:\n• For any $h$ with $0 < h < \\delta$, we have $W_f([x_0-h, x_0+h] \\cap [a,b]) \\le \\epsilon$ [l6].",
+    "dependencies": [
+     "l5",
+     "def_2"
+    ],
+    "lean_hint": "If $h < \\delta$, then $[x_0-h, x_0+h] \\subseteq [x_0-\\delta, x_0+\\delta]$. Thus, for any pair $x,x'$ in the smaller interval, $|f(x)-f(x')|<\\epsilon$. This means ε is an upper bound for the set of differences, so the supremum $W_f$ must be less than or equal to ε."
+   },
+   {
+    "id": "ts_2",
+    "natural_language": "therefore, w_f(x_0)=0.",
+    "statement": "We assume:\n• For any $\\epsilon > 0$, there exists a $\\delta > 0$ such that for any $h \\in (0, \\delta)$, $W_f([x_0-h, x_0+h] \\cap [a,b]) \\le \\epsilon$ [l6].\n• The definition of oscillation at a point $w_f(x_0) = \\inf_{h>0} W_f([x_0-h, x_0+h] \\cap [a,b])$ [def_3].\nTherefore, we conclude:\n• $w_f(x_0) = 0$ [ts_2].",
+    "dependencies": [
+     "l6",
+     "def_3"
+    ],
+    "lean_hint": "The premise shows that the set of non-negative values $\\{W_f([x_0-h, x_0+h] \\cap [a,b]) : h > 0\\}$ has an infimum of 0, as for any ε>0, there is an element less than or equal to ε."
+   }
+  ]
+ },
+ {
+  "origin": "naturalproofs_stein.json",
+  "id": 26,
+  "nl_theorem": "  Suppose $a,b\\in(\\zmod{n})^*$ have orders~$r$ and~$s$, respectively,\n  and that $\\gcd(r,s)=1$.  Then $ab$ has order $rs$.\n",
+  "nl_proof": "This is a general fact about commuting elements of any group; our proof\nonly uses that $ab=ba$ and nothing special about $(\\zmod{n})^*$.  Since\n$$\n  (ab)^{rs} = a^{rs}b^{rs}=1,\n$$\nthe order of $ab$ is a divisor of $rs$.\nWrite this divisor as $r_1 s_1$ where $r_1\\mid r$\nand $s_1\\mid s$.\nRaise both sides of the equation\n$$\n  a^{r_1 s_1}b^{r_1 s_1} = (ab)^{r_1 s_1} = 1\n$$\nto the power $r_2 = r/r_1$ to obtain\n$$\n   a^{r_1 r_2 s_1} b^{r_1 r_2 s_1} = 1.\n$$\nSince $a^{r_1 r_2 s_1} = (a^{r_1 r_2})^{s_1} = 1$,  we have\n$$\n  b^{r_1 r_2 s_1} = 1,\n$$\nso $s\\mid r_1 r_2 s_1$.\nSince $\\gcd(s,r_1 r_2)=\\gcd(s,r) = 1$, it follows that $s=s_1$.\nSimilarly $r=r_1$, so the order of $ab$ is $rs$.\n",
+  "proof_graph": [
+   {
+    "id": "tc_1",
+    "natural_language": "This is a general fact about commuting elements of any group; our proof only uses that ab=ba",
+    "statement": "Premise:\n• Let G be a group, and let a, b ∈ G be commuting elements, i.e., ab=ba [tc_1].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_2",
+    "natural_language": "Suppose a,b... have orders r",
+    "statement": "Premise:\n• The element a has order r, where r is a positive integer [tc_2].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_3",
+    "natural_language": "Suppose a,b... have orders... s, respectively",
+    "statement": "Premise:\n• The element b has order s, where s is a positive integer [tc_3].",
+    "dependencies": []
+   },
+   {
+    "id": "tc_4",
+    "natural_language": "and that gcd(r,s)=1",
+    "statement": "Premise:\n• The orders r and s are coprime, i.e., gcd(r,s)=1 [tc_4].",
+    "dependencies": []
+   },
+   {
+    "id": "l1",
+    "natural_language": "Since (ab)^{rs} = a^{rs}b^{rs}=1",
+    "statement": "We assume:\n• a, b are commuting elements of a group G [tc_1]\n• The order of a is r [tc_2]\n• The order of b is s [tc_3]\nTherefore, we conclude:\n• (ab)^(rs) = 1 [l1].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "tc_3"
+    ],
+    "lean_hint": "Use `(ab)^n = a^n * b^n` for commuting elements. Then use `a^r=1` and `b^s=1` to show `a^(rs) = (a^r)^s = 1` and `b^(rs) = (b^s)^r = 1`."
+   },
+   {
+    "id": "l2",
+    "natural_language": "the order of ab is a divisor of rs.",
+    "statement": "We assume:\n• (ab)^(rs) = 1 [l1]\nTherefore, we conclude:\n• The order of ab, let's call it k, divides rs (i.e., k | rs) [l2].",
+    "dependencies": [
+     "l1"
+    ],
+    "lean_hint": "This is a direct application of the definition of order in a group: if g^n = 1, then order(g) divides n."
+   },
+   {
+    "id": "def_1",
+    "natural_language": "Write this divisor as r_1 s_1 where r_1∣r and s_1∣s.",
+    "statement": "Definition:\n• Let k be the order of ab. Since k | rs [l2] and gcd(r,s)=1 [tc_4], we can decompose k as k = r₁s₁ where r₁ and s₁ are positive integers such that r₁ | r and s₁ | s [def_1].",
+    "dependencies": [
+     "tc_4",
+     "l2"
+    ],
+    "lean_hint": "This decomposition relies on number theory, specifically that any divisor of a product of two coprime numbers can be uniquely factored into divisors of those numbers. Define r₁ = gcd(k, r) and s₁ = gcd(k, s) and show k = r₁s₁."
+   },
+   {
+    "id": "l3",
+    "natural_language": "(ab)^{r_1 s_1} = 1",
+    "statement": "We assume:\n• The order of ab is r₁s₁ [def_1]\nTherefore, we conclude:\n• (ab)^(r₁s₁) = 1 [l3].",
+    "dependencies": [
+     "def_1"
+    ],
+    "lean_hint": "By definition, raising an element to its order yields the identity element."
+   },
+   {
+    "id": "def_2",
+    "natural_language": "r_2 = r/r_1",
+    "statement": "Definition:\n• Given that r₁ | r [def_1], we define the integer r₂ such that r = r₁ * r₂ [def_2].",
+    "dependencies": [
+     "def_1"
+    ],
+    "lean_hint": "This defines r₂ as the result of integer division r / r₁."
+   },
+   {
+    "id": "l4",
+    "natural_language": "Raise both sides of the equation ... to the power r_2 = r/r_1 to obtain a^{r_1 r_2 s_1} b^{r_1 r_2 s_1} = 1.",
+    "statement": "We assume:\n• (ab)^(r₁s₁) = 1 [l3]\n• a and b commute [tc_1]\n• r = r₁ * r₂ [def_2]\nTherefore, we conclude:\n• a^(r₁r₂s₁) * b^(r₁r₂s₁) = 1 [l4].",
+    "dependencies": [
+     "tc_1",
+     "l3",
+     "def_2"
+    ],
+    "lean_hint": "Raise both sides of `l3` to the power r₂. Then use `(g^m)^n = g^(mn)` and `(ab)^n = a^n * b^n`."
+   },
+   {
+    "id": "l5",
+    "natural_language": "Since a^{r_1 r_2 s_1} = (a^{r_1 r_2})^{s_1} = 1",
+    "statement": "We assume:\n• The order of a is r [tc_2]\n• r = r₁ * r₂ [def_2]\nTherefore, we conclude:\n• a^(r₁r₂s₁) = 1 [l5].",
+    "dependencies": [
+     "tc_2",
+     "def_2"
+    ],
+    "lean_hint": "Rewrite the exponent as `(r₁r₂) * s₁ = r * s₁`. Since `order(a)=r`, `a^r=1`, and thus `(a^r)^s₁ = 1^s₁ = 1`."
+   },
+   {
+    "id": "l6",
+    "natural_language": "we have b^{r_1 r_2 s_1} = 1",
+    "statement": "We assume:\n• a^(r₁r₂s₁) * b^(r₁r₂s₁) = 1 [l4]\n• a^(r₁r₂s₁) = 1 [l5]\nTherefore, we conclude:\n• b^(r₁r₂s₁) = 1 [l6].",
+    "dependencies": [
+     "l4",
+     "l5"
+    ],
+    "lean_hint": "Substitute l5 into l4 and cancel the term `a^(r₁r₂s₁)` which is the identity element."
+   },
+   {
+    "id": "l7",
+    "natural_language": "so s∣r_1 r_2 s_1.",
+    "statement": "We assume:\n• b^(r₁r₂s₁) = 1 [l6]\n• The order of b is s [tc_3]\nTherefore, we conclude:\n• s | r₁r₂s₁ [l7].",
+    "dependencies": [
+     "l6",
+     "tc_3"
+    ],
+    "lean_hint": "From the definition of order, if g^n=1, then order(g) divides n. Apply this to element b."
+   },
+   {
+    "id": "l8",
+    "natural_language": "Since gcd(s,r_1 r_2)=gcd(s,r) = 1, it follows that s=s_1.",
+    "statement": "We assume:\n• s | r₁r₂s₁ [l7]\n• gcd(r,s) = 1 [tc_4]\n• s₁ | s [def_1]\n• r = r₁ * r₂ [def_2]\nTherefore, we conclude:\n• s = s₁ [l8].",
+    "dependencies": [
+     "l7",
+     "tc_4",
+     "def_1",
+     "def_2"
+    ],
+    "lean_hint": "First, show gcd(s, r₁r₂) = 1 by rewriting `r₁r₂` as `r` using `def_2` and applying `tc_4`. Then, use Euclid's lemma (or `Nat.Coprime.dvd_of_dvd_mul_left`) on `l7` to get `s | s₁`. Finally, use this with `s₁ | s` from `def_1` and `Nat.dvd_antisymm` to prove equality."
+   },
+   {
+    "id": "l9",
+    "natural_language": "Similarly r=r_1",
+    "statement": "We assume:\n• The initial premises [tc_1], [tc_2], [tc_3], [tc_4] and the decomposition of the order of ab [def_1].\nTherefore, we conclude:\n• r = r₁ [l9].",
+    "dependencies": [
+     "tc_1",
+     "tc_2",
+     "tc_3",
+     "tc_4",
+     "def_1"
+    ],
+    "lean_hint": "The proof is symmetric to the one for `l8` (s=s₁). Swap the roles of (a, r, r₁) with (b, s, s₁), define s₂=s/s₁, and follow the same logic."
+   },
+   {
+    "id": "ts_1",
+    "natural_language": "so the order of ab is rs.",
+    "statement": "We assume:\n• The order of ab is r₁s₁ [def_1]\n• s = s₁ [l8]\n• r = r₁ [l9]\nTherefore, we conclude:\n• The order of ab is rs [ts_1].",
+    "dependencies": [
+     "def_1",
+     "l8",
+     "l9"
+    ],
+    "lean_hint": "Substitute the results from l8 and l9 into the definition of the order from def_1."
+   }
+  ]
+ }
+]
