@@ -238,7 +238,50 @@ second is a distinction `Deltanet_plugin` cannot make (a bridge is present or
 it is not), and getting it wrong lets a broken kernel read as an absent one —
 which is the silent-pass failure mode that gate's own header warns about.
 
-## 9. Verification
+## 9. The document front end
+
+`\formal(#s, #f, "CNL"[, "readback"[, "hash"]])` is a mathed property statement:
+the span between `#s` and `#f` is the caption, the rest is the claim and its
+expected kernel answer. It is **non-visual and non-kernel** — it produces no
+figure and does not decide anything. Its only job is to carry a CNL sentence to
+a verifier and say what came back.
+
+emthin asks `logos unf <cnl> --json` during an ordinary relayout
+(`crates/emthin/src/docui/formals.rs`), so a claim in the document is checked by
+the same kernel surface §7 describes and the australVM plugin uses — one seam,
+two callers. One subprocess per distinct sentence, cached by sentence text:
+two steps with the same CNL are asked once, which is the transport half of the
+identity rule above.
+
+The rules that matter, all of them inherited from §8:
+
+- **No kernel, no-op.** `EMTHIN_LOGOS_BIN`, then `$PATH`, then nothing. A
+  checkout without `logos` still opens the editor.
+- **A kernel that ran and failed is not silent.** Exit 1 and exit 2 become
+  named verdicts in the document, so an out-of-lexicon word appears as
+  *"words not in the lexicon: Euler"* rather than as a block that simply has no
+  verdict.
+- **Declared and verified are different things.** The caption shows the declared
+  CNL in grey; the verdict arrives as a separate annotation. A document cannot
+  assert a hash it did not check.
+
+## 10. The DAG as a figure
+
+The HTML dependency graph from `--vis` is self-contained — no external `src`,
+no network — so it is an ordinary `\app` payload and needs nothing from the
+compositor beyond what any application needs:
+
+```typst
+#1 proof DAG #2 \app(#1, #2, 900, 600, "dag")
+#3 Mary sees Bob #4 \formal(#3, #4, "Mary sees Bob")
+```
+
+The first line reserves the slot and binds the app by glob; the second states
+the claim. They coexist in one document and neither disturbs the other, because
+a `\formal` step is not a figure and a DAG viewer is not special. That
+coexistence is itself a test.
+
+## 11. Verification
 
 | | result |
 |---|---|
@@ -246,6 +289,8 @@ which is the silent-pass failure mode that gate's own header warns about.
 | `logos --features llm-http` | 258 lib + 8 live-socket HTTP tests pass |
 | `eval_corpus` on the full 184-graph corpus | 173 validate; the 11 rejections are all real DAG violations in the source data |
 | `australVM` | `dune build @check` clean; `dune runtest --force` green, including 16 `FormalizePluginTest` cases with and without a kernel |
+| `cargo test -p emthin` | 164 lib + 20 integration pass; 2 ignored |
+| the two ignored emthin tests | pass against a real `logos` build — they check the subprocess contract, including that the kernel's own rejection reason survives to the document |
 
 Two known environmental limitations, both pre-existing and unrelated to this
 work:
@@ -257,12 +302,8 @@ work:
   This is why the kernel seam is exposed as `logos unf` rather than by calling
   `prob_kernel` directly.
 
-## 10. Not done
+## 12. Not done
 
-- **P7 — mathed/emthin integration.** No `\formal` statement family, no CNL
-  annotation splices, no DAG viewer hosted as an `\app` figure. The HTML DAG is
-  built to be that figure's payload (one file, no JavaScript, no `src`), but the
-  mathed side is untouched.
 - **Batch `cnl_formalize` protocol op.** §16 lists it as an optional
   optimization; `module.toml` says so in its `max_ms` note.
 - **The `TieredStore`/`Spill` payload lift** described in §5.
