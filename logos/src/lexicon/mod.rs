@@ -11,6 +11,21 @@ pub enum LexiconError {
     Format { line: usize, reason: String },
     #[error("missing required column: {0}")]
     MissingColumn(String),
+    /// The lexicon names constructors the compiler cannot encode.
+    ///
+    /// Not a parse problem: the TSV is well-formed, it just cannot be lowered.
+    /// `core_ir::compiler::tag_id` maps an unrecognized constructor to tag 0,
+    /// which is a legal tag, so the name is *discarded* and the term reads back
+    /// as `Unknown(...)`. Two distinct unrecognized constructors of the same
+    /// arity then produce the same term and the same UNF hash — a silent
+    /// identity collapse. Callers that build a lexicon rather than merely load
+    /// one (e.g. `formalize::formalizer::DomainLexicon::with_extension`) check
+    /// this up front so the collapse never happens.
+    #[error(
+        "lexicon names {names:?}, which the compiler cannot encode; only the \
+         {known} built-in constructors are representable"
+    )]
+    UnknownConstructor { names: Vec<String>, known: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]

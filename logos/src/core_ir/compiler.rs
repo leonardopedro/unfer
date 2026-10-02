@@ -66,6 +66,31 @@ fn instantiate_template(template: &SemExpr) -> CoreIR {
     }
 }
 
+/// The 25 constructors the L0 lexicon can produce, with the tag ids
+/// [`tag_id`] assigns them.
+///
+/// Exposed so a lexicon extension can be *checked* rather than silently
+/// degraded — see [`known_constructor`] and
+/// `formalize::formalizer::DomainLexicon::with_extension`.
+pub const BUILTIN_CONSTRUCTORS: &[&str] = &[
+    "Love", "See", "Like", "Eat", "Sleep", "Run", "Assign", "Add", "Mul", "Sub", "Eq", "Gt", "Lt",
+    "Not", "Restrict", "Give", "Big", "Small", "Red", "Blue", "Very", "Cat", "Dog", "Number",
+    "And",
+];
+
+/// Whether `name` has a tag in [`tag_id`].
+///
+/// The distinction matters because `tag_id` returns **0** for a name it does not
+/// know, and 0 is a legal tag: an unknown constructor therefore compiles to
+/// `Con(0, args)` and reads back as `Unknown(...)`. Two *different* unknown
+/// constructors with the same arity then produce the identical term, and so the
+/// identical UNF hash — a silent identity collapse, which in the autoformalizer
+/// (§14: identity is the UNF hash) would make two distinct proof steps compare
+/// equal. So anything building a lexicon must ask this first.
+pub fn known_constructor(name: &str) -> bool {
+    BUILTIN_CONSTRUCTORS.contains(&name)
+}
+
 fn tag_id(tag: &str) -> TagId {
     match tag {
         "Love" => 1,

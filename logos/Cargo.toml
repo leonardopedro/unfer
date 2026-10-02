@@ -4,12 +4,22 @@ version = "0.1.0"
 edition = "2024"
 description = "Controlled Natural Language compiler to verified execution graphs"
 
+[features]
+default = []
+# The OpenAI/vLLM-compatible HTTP transport for `formalize::llm`. Off by
+# default: the crate's own pipeline (gate → CCG → CoreIR → DeltaNet) needs no
+# network and no TLS, and `logos` is a dependency of crates that must not grow
+# either. `formalize::graph` and `formalize::formalizer` are available either
+# way — only the concrete `HttpTransport` is gated.
+llm-http = ["dep:ureq"]
+
 [dependencies]
 sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 unicode-segmentation = "1.10"
+ureq = { version = "2", features = ["json"], optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
