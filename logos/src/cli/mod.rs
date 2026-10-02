@@ -4,6 +4,8 @@ use crate::l1::{self, TriggerTable};
 use crate::lexicon::Lexicon;
 use std::process;
 
+pub mod formalize;
+
 fn compile_or_die(tree: &crate::ccg::DerivationTree, lexicon: &Lexicon) -> crate::core_ir::CoreIR {
     match crate::core_ir::compile_to_core_ir(tree, lexicon) {
         Ok(ir) => ir,
@@ -42,7 +44,7 @@ fn readback_or_die(net: &deltanet::Net) -> String {
 pub fn run_cli(args: Vec<String>) {
     if args.len() < 2 {
         eprintln!("Usage: logos <subcommand> [args]");
-        eprintln!("Subcommands: parse, run, verify, hash, l1");
+        eprintln!("Subcommands: parse, run, verify, hash, l1, formalize");
         process::exit(1);
     }
 
@@ -52,8 +54,10 @@ pub fn run_cli(args: Vec<String>) {
         "verify" => cmd_verify(&args[2..]),
         "hash" => cmd_hash(&args[2..]),
         "l1" => cmd_l1(&args[2..]),
+        "formalize" => process::exit(formalize::run(&args[2..])),
         _ => {
             eprintln!("Unknown subcommand: {}", args[1]);
+            eprintln!("Subcommands: parse, run, verify, hash, l1, formalize");
             process::exit(1);
         }
     }

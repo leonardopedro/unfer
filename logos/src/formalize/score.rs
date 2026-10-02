@@ -639,6 +639,14 @@ fn katz_centrality(adj: &[Vec<f64>]) -> Vec<f64> {
 pub struct NodeScore {
     pub id: String,
     pub kind: String,
+    /// Whether this node is one that *could* be judged.
+    ///
+    /// `false` for `tc_`/`def_` nodes, which are formalized but never proved —
+    /// so there is nothing to compare a formalized version against. Recorded
+    /// separately from [`NodeScore::unjudged`] because being unjudged is
+    /// expected for an assumption and a fault for a lemma, and a report that
+    /// conflated the two could never be clean on any graph with a premise.
+    pub provable: bool,
     /// The model verdict per component.
     pub tags: Vec<Tag>,
     /// Per-component feedback from the model.
@@ -670,13 +678,17 @@ pub struct LogosScore {
 }
 
 impl LogosScore {
-    /// Whether the report can be trusted as a verdict: nothing unjudged that
-    /// should have been, no structural faults, and a total.
+    /// Whether the report can be trusted as a verdict.
+    ///
+    /// Structure clean, every node formalized, and every node that *could* be
+    /// judged was. An assumption being unjudged is correct, not a fault — see
+    /// [`NodeScore::provable`] — so it does not count against the report.
     pub fn is_clean(&self) -> bool {
         self.dependency.is_clean()
-            && self.dependency.unformalized.is_empty()
-            && self.total.is_some()
-            && self.nodes.iter().all(|n| n.unjudged.is_none())
+            && self
+                .nodes
+                .iter()
+                .all(|n| !n.provable || n.unjudged.is_none())
     }
 }
 
@@ -726,6 +738,7 @@ pub fn unjudged_row(node: &GraphNode, reason: &str) -> NodeScore {
     NodeScore {
         id: node.id.clone(),
         kind: format!("{:?}", node.kind().unwrap_or(NodeKind::Lemma)),
+        provable: crate::formalize::formalizer::is_provable(node.kind().unwrap_or(NodeKind::Lemma)),
         tags: Vec::new(),
         feedback: Vec::new(),
         semantic_score: 0.0,
@@ -831,6 +844,7 @@ pub fn judge_graph<T: Transport>(
         rows.push(NodeScore {
             id: node.id.clone(),
             kind: format!("{:?}", node.kind().unwrap_or(NodeKind::Lemma)),
+            provable: true,
             semantic_score: sugeno_integral(&tags),
             tags,
             feedback,
@@ -869,6 +883,7 @@ mod tests {
         NodeScore {
             id: id.into(),
             kind: "Lemma".into(),
+            provable: true,
             tags: tags.to_vec(),
             feedback: Vec::new(),
             semantic_score: sugeno_integral(tags),

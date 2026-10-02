@@ -129,6 +129,25 @@ impl Lemma {
     }
 }
 
+impl Lemma {
+    /// View the lemma as a [`CnlFormalization`].
+    ///
+    /// `tries` is `0`, not a remembered attempt count: a cache hit made no
+    /// attempts, and reporting the count from the run that originally produced
+    /// the lemma would attribute work to a run that did not do it.
+    pub fn to_formalization(&self) -> CnlFormalization {
+        CnlFormalization {
+            cnl: self.cnl.clone(),
+            readback: self.readback.clone(),
+            unf_hash: self.unf_hash.clone(),
+            verified: self.verified,
+            value: self.value.clone(),
+            ted: self.ted.clone(),
+            tries: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemoryError {
     /// A lemma offered for insertion has no usable identity.
@@ -250,7 +269,12 @@ impl LemmaStore {
         self.by_cache_key
             .entry(provenance.cache_key())
             .or_insert_with(|| formalization.unf_hash.clone());
+        // Both counters are refreshed from the structures themselves rather than
+        // incremented alongside, so a new field cannot be forgotten: this bug
+        // already happened once, and a report that said "0 distinct lemmas"
+        // after storing nine is worse than no report.
         self.stats.cache_entries = self.by_cache_key.len();
+        self.stats.lemmas = self.lemmas.len();
         Ok(self
             .lemmas
             .get(&formalization.unf_hash)
@@ -501,6 +525,7 @@ pub fn from_json(text: &str) -> Result<LemmaStore, serde_json::Error> {
         }
     }
     store.stats.cache_entries = store.by_cache_key.len();
+    store.stats.lemmas = store.lemmas.len();
     Ok(store)
 }
 
@@ -545,6 +570,27 @@ mod tests {
         assert!(store.contains(&hash));
         assert_eq!(store.get(&hash).unwrap().readback, "Love(john, mary)");
         assert_eq!(store.stats().inserts, 1);
+    }
+
+    /// `StoreStats::lemmas` once read 0 after nine inserts, because it was a
+    /// field nobody maintained — so a report said "0 distinct lemmas" after
+    /// storing nine. Both counters are now derived from the structures rather
+    /// than incremented alongside, and this pins that they track.
+    #[test]
+    fn stats_track_the_structures() {
+        let mut store = LemmaStore::new();
+        store
+            .insert(&formal("John loves Mary"), prov("l1", "a"))
+            .unwrap();
+        store.insert(&formal("Bob runs"), prov("l2", "b")).unwrap();
+        // A shared lemma: distinct terms stay at 2, cache entries at 3.
+        store
+            .insert(&formal("John loves Mary"), prov("l3", "c"))
+            .unwrap();
+        assert_eq!(store.stats().lemmas, store.len());
+        assert_eq!(store.stats().cache_entries, store.by_cache_key.len());
+        assert_eq!(store.stats().lemmas, 2);
+        assert_eq!(store.stats().cache_entries, 3);
     }
 
     /// §17.4: a node without a unique normal form has no content address, so it
