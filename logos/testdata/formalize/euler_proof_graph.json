@@ -1,0 +1,80 @@
+[
+  {
+    "id": "tc_1",
+    "natural_language": "If $\\gcd(x,n)=1$",
+    "statement": "Premise:\n• x and n are integers such that $\\gcd(x,n)=1$ [tc_1].",
+    "dependencies": []
+  },
+  {
+    "id": "def_1",
+    "natural_language": "If~$R$ is a complete set of residues modulo~$n$ and $a\\in\\Z$ with $\\gcd(a,n)=1$, then $aR = \\{ax : x \\in R\\}$ is also a complete set of residues modulo~$n$.",
+    "statement": "Definition:\n• It is assumed that if R is a complete set of residues modulo n and a is an integer with $\\gcd(a,n)=1$, then the set $aR = \\{ax : x \\in R\\}$ is also a complete set of residues modulo n [def_1].",
+    "dependencies": []
+  },
+  {
+    "id": "def_2",
+    "natural_language": "Let\n$$\n  P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}.\n$$",
+    "statement": "Definition:\n• Let P be the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].",
+    "dependencies": []
+  },
+  {
+    "id": "l1",
+    "natural_language": "In the same way that we proved Lemma~\\ref{lem:residues}, we see that the reductions modulo~$n$ of the elements of $xP$ are the same as the reductions of the elements of $P$.",
+    "statement": "We assume:\n• x and n are integers such that $\\gcd(x,n)=1$ [tc_1].\n• The principle that multiplying a complete residue system by a coprime integer permutes the system [def_1].\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\nTherefore, we conclude:\n• The set of residues of the elements of $xP$ modulo n is the same as the set of residues of the elements of P modulo n [l1].",
+    "dependencies": [
+      "tc_1",
+      "def_1",
+      "def_2"
+    ],
+    "lean_hint": "Apply the principle from def_1, adapted for a reduced residue system (P), showing that multiplication by x permutes the residues."
+  },
+  {
+    "id": "l2",
+    "natural_language": "Thus\n$$\n \\prod_{a\\in P} (xa) \\con \\prod_{a \\in P} a \\pmod{n},\n$$\nsince the products are over the same numbers modulo~$n$.",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• The set of residues of the elements of $xP$ modulo n is the same as the set of residues of the elements of P modulo n [l1].\nTherefore, we conclude:\n• $\\prod_{a\\in P} (xa) \\equiv \\prod_{a \\in P} a \\pmod{n}$ [l2].",
+    "dependencies": [
+      "def_2",
+      "l1"
+    ],
+    "lean_hint": "If two finite sets of integers are the same modulo n, their products are congruent modulo n. Apply this to the sets of residues from l1."
+  },
+  {
+    "id": "l3",
+    "natural_language": "Now cancel the $a$'s on both sides",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\nTherefore, we conclude:\n• The product of the elements in P, $\\prod_{a \\in P} a$, is coprime to n, i.e., $\\gcd(\\prod_{a \\in P} a, n) = 1$ [l3].",
+    "dependencies": [
+      "def_2"
+    ],
+    "lean_hint": "The product of integers coprime to n is also coprime to n. Use induction on the set P, where each element is coprime to n by definition."
+  },
+  {
+    "id": "l4",
+    "natural_language": "Now cancel the $a$'s on both sides to get\n$$x^{\\#P} \\con 1\\pmod{n},$$",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• $\\prod_{a\\in P} (xa) \\equiv \\prod_{a \\in P} a \\pmod{n}$ [l2].\n• $\\gcd(\\prod_{a \\in P} a, n) = 1$ [l3].\nTherefore, we conclude:\n• $x^{\\#P} \\equiv 1 \\pmod{n}$ [l4].",
+    "dependencies": [
+      "def_2",
+      "l2",
+      "l3"
+    ],
+    "lean_hint": "Rewrite the left side of l2 as $x^{\\#P} \\cdot \\prod_{a \\in P} a$. Then, use the property l3 to cancel the term $\\prod_{a \\in P} a$ from both sides of the congruence."
+  },
+  {
+    "id": "l5",
+    "natural_language": "The set of units in $\\zmod{n}$ is a group... that has order~$\\\u000bphi(n)$.",
+    "statement": "We assume:\n• P is the set of integers $P = \\{ a : 1\\leq a \\leq n \\text{ and } \\gcd(a,n) = 1\\}$ [def_2].\n• By definition, Euler's totient function $\\\u000bphi(n)$ counts the number of positive integers up to n that are relatively prime to n.\nTherefore, we conclude:\n• The cardinality of P is equal to Euler's totient function of n, i.e., $\\#P = \\phi(n)$ [l5].",
+    "dependencies": [
+      "def_2"
+    ],
+    "lean_hint": "Show that the definition of the set P corresponds directly to the definition of Euler's totient function."
+  },
+  {
+    "id": "ts_1",
+    "natural_language": "$$x^{\\#P} \\con 1\\pmod{n},$$\nas claimed.",
+    "statement": "We assume:\n• $x^{\\#P} \\equiv 1 \\pmod{n}$ [l4].\n• $\\#P = \\phi(n)$ [l5].\nTherefore, we conclude:\n• $x^{\\phi(n)} \\equiv 1 \\pmod{n}$ [ts_1].",
+    "dependencies": [
+      "l4",
+      "l5"
+    ],
+    "lean_hint": "Substitute the equality from l5 into the congruence from l4."
+  }
+]
