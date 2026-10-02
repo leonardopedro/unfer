@@ -44,7 +44,7 @@ fn readback_or_die(net: &deltanet::Net) -> String {
 pub fn run_cli(args: Vec<String>) {
     if args.len() < 2 {
         eprintln!("Usage: logos <subcommand> [args]");
-        eprintln!("Subcommands: parse, run, verify, hash, l1, formalize");
+        eprintln!("Subcommands: parse, run, verify, hash, l1, unf, formalize");
         process::exit(1);
     }
 
@@ -54,10 +54,11 @@ pub fn run_cli(args: Vec<String>) {
         "verify" => cmd_verify(&args[2..]),
         "hash" => cmd_hash(&args[2..]),
         "l1" => cmd_l1(&args[2..]),
+        "unf" => cmd_unf(&args[2..]),
         "formalize" => process::exit(formalize::run(&args[2..])),
         _ => {
             eprintln!("Unknown subcommand: {}", args[1]);
-            eprintln!("Subcommands: parse, run, verify, hash, l1, formalize");
+            eprintln!("Subcommands: parse, run, verify, hash, l1, unf, formalize");
             process::exit(1);
         }
     }
@@ -208,6 +209,127 @@ fn cmd_l1(args: &[String]) {
     }
 }
 
+/// `logos unf <sentence> [--json]` — one CNL sentence to its unique normal form.
+///
+/// This is the kernel surface the Austral VM plugin calls
+/// (`australVM/lib/formalize_plugin.ml`, P5 of the rewrite plan): the
+/// `uk_logos_compile` protocol op is one call into the kernel process, which is
+/// not reachable from an OCaml compiler plugin, so the same operation is exposed
+/// as a subprocess whose stdout is a `LogosReport`-shaped object.
+///
+/// It prints `prob_kernel::logos::logos_compile`'s four fields — `result`,
+/// `unf_hash`, `verified`, `sentence` — and exits non-zero on any failure, so a
+/// caller can distinguish "did not reduce" from "ran and disagreed" without
+/// parsing prose.
+/// The body of [`cmd_unf`], without the `process::exit`.
+///
+/// Returns the line to print and the exit code. Split out because every other
+/// subcommand here exits on failure, and this one is the surface an external
+/// plugin parses — so its output and its exit codes are a contract, and a
+/// contract should be testable without a subprocess.
+fn unf_report(
+    sentence: &str,
+    lexicon: &Lexicon,
+    json: bool,
+) -> Result<(String, i32), (String, i32)> {
+    match crate::formalize::formalizer::verify_cnl(sentence, lexicon) {
+        Ok(r) => {
+            let line = if json {
+                // `LogosReport`'s shape, so a caller can parse this with the same
+                // schema the kernel protocol op uses.
+                let report = serde_json::json!({
+                    "result": r.readback,
+                    "unf_hash": r.unf_hash,
+                    "verified": r.verified,
+                    "sentence": r.cnl,
+                });
+                serde_json::to_string(&report).expect("a report of four strings serializes")
+            } else {
+                // Tab-separated rather than space-separated: `result` contains
+                // spaces (`Love(john, mary)`), so a caller splitting on
+                // whitespace would get the wrong fields.
+                format!("{}\t{}\t{}", r.readback, r.unf_hash, r.verified)
+            };
+            // Compiled but not *uniquely* reduced: still a success as a
+            // compilation, so code 2 rather than 1. The Austral plugin
+            // distinguishes them — a 1 is "the kernel rejected this", a 2 is "the
+            // kernel accepted it but cannot vouch for its identity".
+            Ok((line, if json || r.verified { 0 } else { 2 }))
+        }
+        Err(e) => Err((format!("error: {e}"), 1)),
+    }
+}
+
+fn cmd_unf(args: &[String]) {
+    let mut json = false;
+    let mut lexicon_path: Option<std::path::PathBuf> = None;
+    let mut words: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => json = true,
+            "--lexicon" => {
+                i += 1;
+                match args.get(i) {
+                    Some(p) => lexicon_path = Some(std::path::PathBuf::from(p)),
+                    None => {
+                        eprintln!("error: --lexicon needs a value");
+                        process::exit(1);
+                    }
+                }
+            }
+            "-h" | "--help" => {
+                println!("Usage: logos unf <sentence> [--json] [--lexicon <tsv>]");
+                return;
+            }
+            other => words.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    if words.is_empty() {
+        eprintln!("Usage: logos unf <sentence> [--json] [--lexicon <tsv>]");
+        process::exit(1);
+    }
+    let sentence = words.join(" ");
+
+    // The embedded lexicon by default, so this works from any directory — the
+    // plugin runs with whatever CWD the compiler has. `find_lexicon`'s
+    // CWD-relative search would only find it inside an unfer checkout.
+    let lex_path = lexicon_path.unwrap_or_else(|| {
+        let p = std::path::PathBuf::from("corpus/lexicon.tsv");
+        if p.exists() {
+            p
+        } else {
+            std::path::PathBuf::new()
+        }
+    });
+    let lexicon = if lex_path.as_os_str().is_empty() {
+        crate::formalize::formalizer::base_lexicon()
+    } else {
+        match Lexicon::load(&lex_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("error: {}: {e}", lex_path.display());
+                process::exit(1);
+            }
+        }
+    };
+
+    match unf_report(&sentence, &lexicon, json) {
+        Ok((line, 0)) => println!("{line}"),
+        Ok((line, code)) => {
+            println!("{line}");
+            process::exit(code);
+        }
+        Err((msg, code)) => {
+            eprintln!("{msg}");
+            process::exit(code);
+        }
+    }
+}
+
 fn find_lexicon() -> std::path::PathBuf {
     let candidates = [
         "corpus/lexicon.tsv",
@@ -255,5 +377,59 @@ fn tree_to_string(tree: &crate::ccg::DerivationTree) -> String {
                 result_category
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod unf_tests {
+    use super::unf_report;
+    use crate::formalize::formalizer::base_lexicon;
+
+    fn lex() -> crate::lexicon::Lexicon {
+        base_lexicon()
+    }
+
+    /// The line an external plugin parses, so its shape is a contract.
+    #[test]
+    fn the_plain_line_is_tab_separated() {
+        let (line, code) = unf_report("John loves Mary", &lex(), false).unwrap();
+        assert_eq!(code, 0);
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(fields.len(), 3, "{line}");
+        // `result` contains spaces, which is exactly why the separator is a tab.
+        assert_eq!(fields[0], "Love(john, mary)");
+        assert_eq!(fields[1].len(), 64, "a hex sha256: {}", fields[1]);
+        assert_eq!(fields[2], "true");
+    }
+
+    /// `--json` matches the kernel's `LogosReport`, so one parser serves both the
+    /// in-process op and this subprocess.
+    #[test]
+    fn the_json_line_is_a_logos_report() {
+        let (line, code) = unf_report("John loves Mary", &lex(), true).unwrap();
+        assert_eq!(code, 0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["result"], "Love(john, mary)");
+        assert_eq!(v["verified"], true);
+        assert_eq!(v["sentence"], "John loves Mary");
+        assert_eq!(v["unf_hash"].as_str().unwrap().len(), 64);
+    }
+
+    /// A failed reduction is code 1 with the reason on stderr — never a 0 with an
+    /// empty body, which a caller would read as "no result but no problem".
+    #[test]
+    fn a_failed_reduction_is_exit_one_with_a_reason() {
+        let (msg, code) = unf_report("Euler proves congruences", &lex(), true).unwrap_err();
+        assert_eq!(code, 1);
+        assert!(msg.starts_with("error:"), "{msg}");
+        assert!(
+            msg.contains("Euler"),
+            "the offending words are named: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_empty_sentence_is_rejected() {
+        assert!(unf_report("", &lex(), false).is_err());
     }
 }
