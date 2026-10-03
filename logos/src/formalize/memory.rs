@@ -236,6 +236,13 @@ impl LemmaStore {
             });
         }
 
+        // Whether the identity is already stored has to be decided *before*
+        // the entry exists. Testing `provenances.contains` afterwards asked
+        // "is this provenance new", which is trivially true for a lemma
+        // `or_insert_with` just built with an empty vec — so every fresh insert
+        // counted as an identity hit, and the counter tracked nothing.
+        let already_stored = self.lemmas.contains_key(&formalization.unf_hash);
+
         let existing = self
             .lemmas
             .entry(formalization.unf_hash.clone())
@@ -252,7 +259,7 @@ impl LemmaStore {
                 }
             });
 
-        if !existing.provenances.contains(&provenance) {
+        if already_stored && !existing.provenances.contains(&provenance) {
             // A *merge*: this term was already stored under another node.
             self.stats.identity_hits += 1;
         }
@@ -577,6 +584,40 @@ mod tests {
         assert!(store.contains(&hash));
         assert_eq!(store.get(&hash).unwrap().readback, "Love(john, mary)");
         assert_eq!(store.stats().inserts, 1);
+    }
+
+    /// `identity_hits` is documented as "offers that matched an existing lemma's
+    /// identity, merging provenance". It fired on every insert, because the test
+    /// ran *after* `or_insert_with`, so a brand-new lemma's `provenances` was the
+    /// empty vec it had just been built with and `contains` was trivially true.
+    #[test]
+    fn a_fresh_insert_is_not_an_identity_hit() {
+        let mut store = LemmaStore::new();
+        store
+            .insert(&formal("John loves Mary"), prov("l1", "a"))
+            .unwrap();
+        assert_eq!(
+            store.stats().identity_hits,
+            0,
+            "a lemma that did not exist before cannot be an identity hit"
+        );
+
+        // The same identity offered from a different node *is* a merge.
+        let f = formal("John loves Mary");
+        store.insert(&f, prov("l9", "another node")).unwrap();
+        assert_eq!(
+            store.stats().identity_hits,
+            1,
+            "a second node hitting an existing identity must count"
+        );
+
+        // Re-offering the same node again is not a new merge.
+        store.insert(&f, prov("l9", "another node")).unwrap();
+        assert_eq!(
+            store.stats().identity_hits,
+            1,
+            "re-offering the same provenance is not another merge"
+        );
     }
 
     /// `StoreStats::lemmas` once read 0 after nine inserts, because it was a
