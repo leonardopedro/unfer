@@ -87,10 +87,23 @@ pub fn weighted_keys(
             }
         }
     }
+    // `parse_sentence` returns one derivation *per ambiguity*, so each tree
+    // carries the full probability mass. Summing without normalizing therefore
+    // yields the number of parses, not 1: three readings of a fragment produced
+    // a total weight of 3.0, which broke `is_normalized` and pushed
+    // `certainty` above 1.0 — so an *ambiguous* fragment out-scored a certain
+    // one in `retrieve_weighted`, which is the opposite of what a confidence
+    // weight is for. Dividing by the total restores the distribution this
+    // module's own `is_normalized` asserts, and leaves the relative ordering of
+    // worlds untouched.
+    let total: f64 = out.iter().map(|k| k.weight).sum();
+    if total > 0.0 {
+        for k in &mut out {
+            k.weight /= total;
+        }
+    }
     Ok(out)
 }
-
-/// The keys of one world.
 ///
 /// A world is a `DerivationTree`, so it carries no surface text — which is
 /// exactly why `Window` granularity is not available per world: a window key
@@ -206,3 +219,107 @@ fn hex(bytes: &[u8; 32]) -> String {
     s
 }
 
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+    use crate::formalize::formalizer::base_lexicon;
+
+    fn keys_for(fragment: &str) -> Vec<WeightedKey> {
+        let lex = base_lexicon();
+        let triggers = TriggerTable::new();
+        weighted_key_set(fragment, Granularity::Sentence, &lex, &triggers)
+            .unwrap_or_else(|e| panic!("{fragment} should produce keys: {e:?}"))
+    }
+
+    /// `total_weight` is documented as "must be 1.0 for a fragment whose worlds
+    /// were exhaustive", and `is_normalized` is the module's own acceptance
+    /// check. `parse_sentence` returns one derivation per ambiguity and each
+    /// carried the full mass, so a fragment with N readings summed to N — the
+    /// module's acceptance check was failing on anything ambiguous.
+    #[test]
+    fn the_distribution_sums_to_one_however_many_readings_there_are() {
+        for fragment in [
+            "John sees Mary",
+            "probably John sees Mary",
+            "probably probably John runs",
+            "probably probably probably John runs",
+            "probably probably probably probably John runs",
+        ] {
+            let keys = keys_for(fragment);
+            assert!(
+                is_normalized(&keys, 1e-9),
+                "{fragment}: total weight {} is not 1.0",
+                total_weight(&keys)
+            );
+        }
+    }
+
+    /// Certainty is a confidence, so it must be a fraction. It exceeded 1.0 for
+    /// an ambiguous fragment (2.56 for a triply-hedged one), and
+    /// `retrieve_weighted` multiplies the lexical score by it — so *ambiguity
+    /// inflated* the score of the very examples it should have discounted.
+    #[test]
+    fn certainty_is_a_fraction_and_falls_as_the_hedge_grows() {
+        let lex = base_lexicon();
+        let triggers = TriggerTable::new();
+        let c = |f: &str| crate::formalize::memory::certainty(f, &lex, &triggers);
+
+        let certain = c("John sees Mary").expect("parses");
+        assert!((certain - 1.0).abs() < 1e-9, "got {certain}");
+
+        let mut previous = certain;
+        for fragment in [
+            "probably John sees Mary",
+            "probably probably John runs",
+            "probably probably probably John runs",
+        ] {
+            let now = c(fragment).expect("parses");
+            assert!(
+                (0.0..=1.0).contains(&now),
+                "{fragment}: certainty {now} is not a fraction"
+            );
+            assert!(
+                now < previous,
+                "{fragment}: certainty {now} did not fall below {previous}"
+            );
+            previous = now;
+        }
+    }
+
+    /// Normalizing must not flatten the *relative* mass of the worlds, which is
+    /// the part a caller actually reads.
+    #[test]
+    fn normalization_preserves_the_ordering_of_worlds() {
+        let one = keys_for("probably John sees Mary");
+        let two = keys_for("probably probably John runs");
+        for keys in [&one, &two] {
+            assert!(
+                keys.windows(2).all(|w| w[0].weight >= w[1].weight),
+                "keys must come back sorted by descending weight: {keys:?}"
+            );
+            assert!(
+                keys.iter().all(|k| k.weight > 0.0),
+                "no world may be normalized to zero mass"
+            );
+        }
+    }
+
+    /// A fragment whose worlds all fail to reduce puts its mass on tagged
+    /// fallbacks. After normalization that fallback still carries the whole
+    /// distribution, so a caller can tell "no evidence" from "no parse".
+    #[test]
+    fn a_fragment_that_only_produces_fallbacks_still_normalizes() {
+        let lex = base_lexicon();
+        let triggers = TriggerTable::new();
+        let keys =
+            weighted_key_set("Euler", Granularity::Sentence, &lex, &triggers).unwrap_or_default();
+        if keys.is_empty() {
+            return; // Nothing to say for this lexicon.
+        }
+        assert!(
+            is_normalized(&keys, 1e-9),
+            "total weight {} is not 1.0",
+            total_weight(&keys)
+        );
+    }
+}

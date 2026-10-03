@@ -428,10 +428,11 @@ pub fn certainty(fragment: &str, lexicon: &Lexicon, triggers: &TriggerTable) -> 
 /// it cannot work: an L1 world's key is derived from the world's
 /// `DerivationTree` ([`engram::l1keys`]), i.e. from the sub-derivation *under*
 /// the trigger, whereas a lemma's key is the UNF of a whole sentence. For
-/// `probably John sees Mary` the identity world's key is the same for every
-/// fragment with that trigger — it is the key of the bare `probably` modifier —
-/// so a store keyed by sentence UNFs would never match it and every lookup
-/// would silently return nothing.
+/// `probably John sees Mary`, the identity world is
+/// `App(Var("probably"), <the rest of the sentence>)` — the trigger enters as a
+/// free variable applied to everything after it. So a world key is neither the
+/// bare trigger nor any sentence's UNF, and a store keyed by sentence UNFs
+/// would not match it: every lookup would silently return nothing.
 ///
 /// So `l1keys` is used for what it can actually answer: how much of the
 /// probability mass reached the UNF path. That mass scales the lexical score, so
