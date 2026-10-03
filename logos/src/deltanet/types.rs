@@ -178,9 +178,19 @@ impl Net {
                 && let Some(principal) = &node.ports[0]
             {
                 let resolved = self.resolve_port(principal);
+                // An `Entity` is an unbound name — an unknown function or
+                // value — not an agent with an interaction rule. A pair with one
+                // is *suspended*, not a redex: the enclosing application waits
+                // for the name to be bound. `interact` has no `Entity` arm and
+                // falls through to a catch-all that does nothing, so forming
+                // the pair here made `add(41)` spin until the iteration cap
+                // with the node count unchanged. No rule can be broken by this,
+                // because no rule involves `Entity`.
                 if resolved.node != i as NodeId
                     && let Some(other_node) = &self.nodes[resolved.node as usize]
                     && !other_node.freed
+                    && !matches!(other_node.kind, AgentKind::Entity(_))
+                    && !matches!(node.kind, AgentKind::Entity(_))
                     && let Some(other_principal) = &other_node.ports[0]
                 {
                     let other_resolved = self.resolve_port(other_principal);

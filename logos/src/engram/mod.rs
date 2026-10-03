@@ -51,9 +51,12 @@ pub mod tiered;
 
 pub use table::{EngramTable, IngestStats, placeholder_embedding};
 
-/// Reduction iteration cap. A hostile corpus must not be able to hang ingest,
-/// so this is a *skip*, not an error (ENGRAM.md §4).
-pub const MAX_REDUCE_ITERS: u64 = 1_000_000;
+/// Reduction iteration cap, re-exported from [`deltanet::reducer`].
+///
+/// Defined there so the reducer and its cap cannot drift apart — the reducer used
+/// to carry a private copy of the same number while this constant, the one with
+/// the documented ENGRAM.md §4 rationale, had no readers at all.
+pub use crate::deltanet::reducer::MAX_REDUCE_ITERS;
 
 /// Default window order `n`, matching the paper's §4.1 baseline.
 pub const DEFAULT_WINDOW_N: usize = 3;

@@ -1,10 +1,14 @@
 use super::types::*;
 use crate::core_ir::{CONS_TAG, Literal, NIL_TAG, PrimOp};
 
+/// Iteration cap. A hostile corpus must not be able to hang ingest, so the
+/// reducer refuses to keep going — see [`reduce`] for why refusing is the only
+/// honest answer.
+pub const MAX_REDUCE_ITERS: u64 = 1_000_000;
+
 pub fn reduce(net: &mut Net) -> Result<(), String> {
     net.collect_active_pairs();
     let mut iterations = 0;
-    let max_iterations = 1_000_000;
 
     loop {
         // Evaluate any Prim whose two auxiliary ports both feed Lits. A
@@ -20,12 +24,25 @@ pub fn reduce(net: &mut Net) -> Result<(), String> {
             interact(net, a, b)?;
             net.collect_new_active_pairs();
             iterations += 1;
-            if iterations >= max_iterations {
-                eprintln!(
-                    "warning: reduction exceeded {} iterations, possible non-termination",
-                    max_iterations
-                );
-                break;
+            if iterations >= MAX_REDUCE_ITERS {
+                // An error, not a warning followed by `break`.
+                //
+                // Callers publish the UNF hash as the term's *identity*, and a
+                // half-reduced net is not a normal form: it hashes to something
+                // unrelated to the term's meaning while every downstream gate
+                // (`verified`, `LemmaStore::insert`, the pipeline's exit code)
+                // treats it as one. Returning `Ok` here published a wrong
+                // identity silently, which is strictly worse than refusing.
+                //
+                // ENGRAM.md §4 wants a hostile corpus to *skip* rather than fail;
+                // that is a decision for the layer above, and it has one —
+                // `engram::key_of_coreir` maps this to `KeyError::Reduce` and the
+                // L1 path falls back to a tagged key. The reducer's job is to
+                // say it did not finish.
+                return Err(format!(
+                    "reduction exceeded {MAX_REDUCE_ITERS} iterations; \
+                     the net has no normal form to identify"
+                ));
             }
         } else {
             break;
@@ -277,7 +294,17 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) -> Result<(), String> {
             Ok(())
         }
 
-        _ => Ok(()),
+        // No rule fired. That is only legitimate for a pair involving an
+        // `Entity`, which `collect_active_pairs` no longer forms; anything
+        // else reaching here is a missing interaction rule, and returning
+        // `Ok(())` for it turns a gap in the rule set into a silent spin.
+        _ => {
+            debug_assert!(
+                matches!(kind_a, AgentKind::Entity(_)) || matches!(kind_b, AgentKind::Entity(_)),
+                "no interaction rule for {kind_a:?} >< {kind_b:?}"
+            );
+            Ok(())
+        }
     }
 }
 
@@ -435,5 +462,68 @@ mod tests {
         // After reduction the add node is freed; the result literal is wired to root.
         let result = crate::deltanet::readback(&net).unwrap();
         assert_eq!(result, "4.75");
+    }
+    /// An application of an *unbound* name must terminate.
+    ///
+    /// `App >< Entity` matches no interaction rule — an `Entity` is a name
+    /// waiting to be bound, not an agent — but `collect_active_pairs` still
+    /// formed the pair, and `interact`'s catch-all returned `Ok(())` without
+    /// touching the net. The pair was therefore rediscovered on every pass, and
+    /// `add(41)` spun until the iteration cap with the node count unchanged.
+    ///
+    /// It reported success while doing so, which is how a half-reduced net came
+    /// to be published as a unique normal form with `verified: true`.
+    #[test]
+    fn an_application_of_an_unbound_name_terminates() {
+        let t = crate::translate::translate_austral_expr("add(41)").expect("must reduce");
+        assert_eq!(t.infix, "(add 41)", "the call stays symbolic");
+        assert!(
+            t.value.is_none(),
+            "an unbound function cannot produce a value, and must not pretend to"
+        );
+    }
+
+    /// Every open term the emitter dialect can produce has to come back, not
+    /// just this one shape.
+    #[test]
+    fn open_terms_reduce_rather_than_spin() {
+        for src in [
+            "(x + 1)",
+            "add(41)",
+            "f(1)",
+            "g(2)",
+            "(f 1) + (g 2)",
+            "probably(x)",
+        ] {
+            let t = crate::translate::translate_austral_expr(src)
+                .unwrap_or_else(|e| panic!("{src} should reduce: {e}"));
+            assert!(!t.unf_hash.is_empty(), "{src} produced no identity");
+        }
+    }
+
+    /// Two different arguments to the same free name are different terms, and
+    /// now that `App` is serialized they must have different identities too.
+    #[test]
+    fn distinct_open_terms_have_distinct_identities() {
+        let a = crate::translate::translate_austral_expr("add(41)").expect("a");
+        let b = crate::translate::translate_austral_expr("add(1)").expect("b");
+        assert_eq!(a.infix, "(add 41)");
+        assert_eq!(b.infix, "(add 1)");
+        assert_ne!(
+            a.unf_hash, b.unf_hash,
+            "different arguments, different terms"
+        );
+    }
+
+    /// The cap is one shared constant, not a private copy in the reducer beside
+    /// a documented one in `engram` with no readers.
+    #[test]
+    fn the_iteration_cap_is_a_single_shared_constant() {
+        assert_eq!(
+            MAX_REDUCE_ITERS,
+            crate::engram::MAX_REDUCE_ITERS,
+            "the reducer and the documented ENGRAM.md §4 cap must not drift"
+        );
+        assert!(MAX_REDUCE_ITERS > 0);
     }
 }
