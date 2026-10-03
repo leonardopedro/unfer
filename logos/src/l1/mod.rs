@@ -178,7 +178,18 @@ pub fn aggregate_results(worlds: &[(f64, String)]) -> Vec<(String, f64)> {
         *map.entry(result.clone()).or_insert(0.0) += *prob;
     }
     let mut results: Vec<(String, f64)> = map.into_iter().collect();
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Descending weight, then by key. The tiebreaker is load-bearing: the input
+    // is a `HashMap`, so equal-weight keys come out in a different order every
+    // process, and `engram::l1keys::weighted_key_set` inherits that ordering
+    // while documenting its result as "sorted by descending weight". Anything
+    // that hashes or compares the key set downstream then stops being
+    // reproducible — the crate elsewhere insists on byte-stable serialization, so
+    // a nondeterministic order here is a contradiction rather than a detail.
+    results.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     results
 }
 
@@ -220,5 +231,49 @@ mod tests {
         };
         let worlds = split_l1(&tree, &table);
         assert!(verify_world_probabilities(&worlds, 1e-9));
+    }
+    /// Equal weights must not come out in `HashMap` iteration order.
+    ///
+    /// The tiebreaker is what makes the output reproducible: without it, two keys
+    /// with the same weight swap places between processes, and every caller that
+    /// hashes or serializes the result sees a different value each run.
+    #[test]
+    fn equal_weights_come_back_in_a_stable_order() {
+        let worlds: Vec<(f64, String)> = vec![
+            (0.25, "charlie".into()),
+            (0.25, "alpha".into()),
+            (0.25, "delta".into()),
+            (0.25, "bravo".into()),
+        ];
+        let first = aggregate_results(&worlds);
+        assert_eq!(
+            first,
+            vec![
+                ("alpha".to_string(), 0.25),
+                ("bravo".to_string(), 0.25),
+                ("charlie".to_string(), 0.25),
+                ("delta".to_string(), 0.25),
+            ],
+            "ties break by key, ascending"
+        );
+        // Re-shuffling the input must not change the output.
+        let mut shuffled = worlds.clone();
+        shuffled.reverse();
+        assert_eq!(aggregate_results(&shuffled), first);
+    }
+
+    /// Weight still dominates the tiebreaker.
+    #[test]
+    fn weight_outranks_the_tiebreaker() {
+        let worlds: Vec<(f64, String)> = vec![
+            (0.1, "zebra".into()),
+            (0.9, "apple".into()),
+            (0.5, "mango".into()),
+        ];
+        let out = aggregate_results(&worlds);
+        assert_eq!(
+            out.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["apple", "mango", "zebra"]
+        );
     }
 }
