@@ -49,7 +49,7 @@ pub mod spill;
 pub mod table;
 pub mod tiered;
 
-pub use table::{placeholder_embedding, EngramTable, IngestStats};
+pub use table::{EngramTable, IngestStats, placeholder_embedding};
 
 /// Reduction iteration cap. A hostile corpus must not be able to hang ingest,
 /// so this is a *skip*, not an error (ENGRAM.md §4).
@@ -79,6 +79,21 @@ impl Granularity {
             Granularity::Window => 0,
             Granularity::Subderiv => 1,
             Granularity::Sentence => 2,
+        }
+    }
+
+    /// The inverse of [`Granularity::code`], or `None` for a byte that is not a
+    /// granularity.
+    ///
+    /// Needed by anything that reads a serialized granularity back — the spill
+    /// tier's index rebuild walks records on disk, and a file written by another
+    /// version must not be read as whichever granularity happens to match.
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Granularity::Window),
+            1 => Some(Granularity::Subderiv),
+            2 => Some(Granularity::Sentence),
+            _ => None,
         }
     }
 }
@@ -316,11 +331,9 @@ pub fn segment(fragment: &str, granularity: Granularity, lexicon: &Lexicon) -> V
     let tokens = tokenize(fragment);
 
     match granularity {
-        Granularity::Window => {
-            (2..=DEFAULT_WINDOW_N)
-                .map(|n| window_key(&tokens, n))
-                .collect()
-        }
+        Granularity::Window => (2..=DEFAULT_WINDOW_N)
+            .map(|n| window_key(&tokens, n))
+            .collect(),
         Granularity::Sentence | Granularity::Subderiv => {
             let gate = HarperGate::new();
             let g = gate.lint(fragment);
