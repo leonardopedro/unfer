@@ -159,11 +159,43 @@ impl TieredTable {
             // ingest pass, so dedup statistics do not depend on ordering.
             return Ok(());
         }
+        // The hot check above only asks about RAM. A key that was offloaded and
+        // is now re-ingested is in the spill index too, so inserting it here
+        // would leave the address in *both* tiers — the mass invariant this
+        // module is built around. Drop the spill index entry; the record stays
+        // on disk (append-only) and the hot copy is authoritative.
+        if let Some(spill) = self.spill.as_mut() {
+            spill.forget(key.granularity, &key.unf_hash);
+        }
         self.clock += 1;
         let clock = self.clock;
         slot.insert(key.unf_hash, Entry { emb, last: clock });
         self.victims
             .push(Reverse((clock, key.granularity, key.unf_hash)));
+        if self.hot_len() > self.hot_capacity {
+            self.offload_coldest()?;
+        }
+        Ok(())
+    }
+
+    /// Move a spill-resident entry into the hot tier, respecting the RAM budget.
+    ///
+    /// Promotion is a write to `hot`, so it has to run the same capacity check
+    /// `insert` does. Without it a `prefetch` of the whole key set pulled every
+    /// entry into RAM and `hot_capacity` stopped being a bound at all — which
+    /// is the whole justification for having two tiers.
+    fn promote(&mut self, key: &EngramKey, emb: Embedding) -> io::Result<()> {
+        self.clock += 1;
+        let last = self.clock;
+        self.hot
+            .entry(key.granularity)
+            .or_default()
+            .insert(key.unf_hash, Entry { emb, last });
+        self.victims
+            .push(Reverse((last, key.granularity, key.unf_hash)));
+        if let Some(spill) = self.spill.as_mut() {
+            spill.forget(key.granularity, &key.unf_hash);
+        }
         if self.hot_len() > self.hot_capacity {
             self.offload_coldest()?;
         }
@@ -230,19 +262,13 @@ impl TieredTable {
             return Ok(Some(entry.emb.clone()));
         }
         self.stats.cold_lookups += 1;
-        let Some(spill) = self.spill.as_mut() else {
-            return Ok(None);
+        let fetched = match self.spill.as_mut() {
+            Some(spill) => spill.get(key.granularity, &key.unf_hash)?,
+            None => return Ok(None),
         };
-        match spill.get(key.granularity, &key.unf_hash)? {
+        match fetched {
             Some(emb) => {
-                self.clock += 1;
-                let last = self.clock;
-                self.hot
-                    .entry(key.granularity)
-                    .or_default()
-                    .insert(key.unf_hash, Entry { emb: emb.clone(), last });
-                self.victims.push(Reverse((last, key.granularity, key.unf_hash)));
-                spill.forget(key.granularity, &key.unf_hash);
+                self.promote(key, emb.clone())?;
                 Ok(Some(emb))
             }
             None => Ok(None),
@@ -281,25 +307,24 @@ impl TieredTable {
                 .map(|m| m.contains_key(&key.unf_hash))
                 .unwrap_or(false);
             if already_hot {
-                // Not a miss: the key was already where the prefetch wanted it.
-                // Counting it as a hit would overstate the tier's usefulness.
-                self.stats.prefetch_hits += 1;
+                // Neither a hit nor a miss: the key was already where the
+                // prefetch wanted it, so the spill tier was never consulted.
+                // `prefetch_hit_rate` is documented as the fraction of asked
+                // keys actually *recoverable from the spill tier*, and counting
+                // an already-resident key made the rate read 1.0 for a batch
+                // that never touched the heap.
                 continue;
             }
-            let Some(spill) = self.spill.as_mut() else {
-                self.stats.prefetch_misses += 1;
-                continue;
+            let fetched = match self.spill.as_mut() {
+                Some(spill) => spill.get(key.granularity, &key.unf_hash)?,
+                None => {
+                    self.stats.prefetch_misses += 1;
+                    continue;
+                }
             };
-            match spill.get(key.granularity, &key.unf_hash)? {
+            match fetched {
                 Some(emb) => {
-                    self.clock += 1;
-                    let last = self.clock;
-                    self.hot
-                        .entry(key.granularity)
-                        .or_default()
-                        .insert(key.unf_hash, Entry { emb, last });
-                    self.victims.push(Reverse((last, key.granularity, key.unf_hash)));
-                    spill.forget(key.granularity, &key.unf_hash);
+                    self.promote(key, emb)?;
                     self.stats.prefetch_hits += 1;
                     recovered += 1;
                 }

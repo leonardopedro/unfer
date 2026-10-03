@@ -7,9 +7,9 @@
 
 use std::io::Write;
 
-use logos::engram::spill::{SpillTier, SPILL_HEADER};
-use logos::engram::tiered::TieredTable;
+use logos::engram::spill::{SPILL_HEADER, SpillTier};
 use logos::engram::table::window_key_for;
+use logos::engram::tiered::TieredTable;
 use logos::engram::{EngramKey, Granularity};
 
 /// A key with a distinct `unf_hash`, so no two collide in the index.
@@ -67,7 +67,10 @@ fn spill_tier_round_trips_an_embedding() {
 
     assert_eq!(1, spill.len());
     assert_eq!(SPILL_HEADER as u64 + 12, spill.bytes_on_disk());
-    assert_eq!(Some(emb_for(1)), spill.get(k.granularity, &k.unf_hash).unwrap());
+    assert_eq!(
+        Some(emb_for(1)),
+        spill.get(k.granularity, &k.unf_hash).unwrap()
+    );
     // A different address at the same granularity is a miss, not a near miss.
     let other = key_for(2);
     assert_eq!(None, spill.get(other.granularity, &other.unf_hash).unwrap());
@@ -104,7 +107,10 @@ fn the_same_address_spilled_twice_keeps_the_later_payload() {
     spill.put(k.granularity, &k.unf_hash, &vec![99.0]).unwrap();
 
     assert_eq!(1, spill.len(), "one address, one index entry");
-    assert_eq!(Some(vec![99.0]), spill.get(k.granularity, &k.unf_hash).unwrap());
+    assert_eq!(
+        Some(vec![99.0]),
+        spill.get(k.granularity, &k.unf_hash).unwrap()
+    );
 }
 
 #[test]
@@ -119,8 +125,16 @@ fn offload_moves_entries_to_disk_and_everything_stays_reachable() {
     }
 
     let s = t.stats();
-    assert_eq!(n, total(&t), "no entry may be lost or duplicated by offload");
-    assert!(s.hot <= 16, "RAM tier must respect its budget, got {}", s.hot);
+    assert_eq!(
+        n,
+        total(&t),
+        "no entry may be lost or duplicated by offload"
+    );
+    assert!(
+        s.hot <= 16,
+        "RAM tier must respect its budget, got {}",
+        s.hot
+    );
     assert!(s.spilled > 0, "something must have spilled at capacity 16");
     assert!(s.offload_events > 0);
     assert_eq!(s.spilled, s.offloaded_entries);
@@ -130,7 +144,11 @@ fn offload_moves_entries_to_disk_and_everything_stays_reachable() {
     // Every one of the n addresses is still findable, and with its own payload.
     for i in 0..n as usize {
         let k = key_for(i as u64);
-        assert_eq!(Some(emb_for(i as u64)), t.get(&k).unwrap(), "entry {i} lost");
+        assert_eq!(
+            Some(emb_for(i as u64)),
+            t.get(&k).unwrap(),
+            "entry {i} lost"
+        );
     }
 }
 
@@ -153,7 +171,11 @@ fn a_cold_get_promotes_back_into_ram() {
     // A second read is served from RAM.
     let before = t.stats().cold_lookups;
     let _ = t.get(&victim).unwrap();
-    assert_eq!(before, t.stats().cold_lookups, "promoted entry should be hot");
+    assert_eq!(
+        before,
+        t.stats().cold_lookups,
+        "promoted entry should be hot"
+    );
 }
 
 #[test]
@@ -170,7 +192,10 @@ fn prefetch_recovers_spilled_keys_and_reports_its_hit_rate() {
     // first prefetch — already-resident keys.
     let spilled: Vec<EngramKey> = (0..n as usize).map(|i| key_for(i as u64)).collect();
     let recovered = t.prefetch(&spilled).unwrap();
-    assert!(recovered > 0, "a prefetch of known keys must recover something");
+    assert!(
+        recovered > 0,
+        "a prefetch of known keys must recover something"
+    );
 
     let s = t.stats();
     assert_eq!(1, s.prefetch_batches);
@@ -187,7 +212,11 @@ fn prefetch_recovers_spilled_keys_and_reports_its_hit_rate() {
     // Still nothing lost after all that movement.
     assert_eq!(n, total(&t));
     for i in 0..n as usize {
-        assert_eq!(Some(emb_for(i as u64)), t.get(&key_for(i as u64)).unwrap(), "entry {i}");
+        assert_eq!(
+            Some(emb_for(i as u64)),
+            t.get(&key_for(i as u64)).unwrap(),
+            "entry {i}"
+        );
     }
 }
 
@@ -211,6 +240,100 @@ fn insert_is_first_write_wins_like_the_untiered_table() {
     t.insert(&k, emb_for(5)).unwrap();
     t.insert(&k, vec![-1.0, -1.0, -1.0]).unwrap();
     assert_eq!(Some(emb_for(5)), t.get(&k).unwrap());
+}
+
+/// Re-ingesting a key that was offloaded must leave it in exactly one tier.
+///
+/// The hot-side duplicate check only asks about RAM, so a key resident in the
+/// spill index was inserted into `hot` while its spill entry stayed put. The
+/// address was then in both tiers, which is the one thing this table's mass
+/// invariant forbids — and `hot_fraction`/`spill_bytes` double-counted it.
+/// The existing first-write-wins test missed it by only re-inserting while the
+/// key was still hot.
+#[test]
+fn reinserting_an_offloaded_key_does_not_leave_it_in_both_tiers() {
+    let sc = Scratch::new("reinboth");
+    let cap = 4;
+    let mut t = TieredTable::with_spill(&sc.path, cap).unwrap();
+    for i in 0..16u64 {
+        t.insert(&key_for(i), emb_for(i)).unwrap();
+    }
+    let spilled_before = t.stats().spilled;
+    assert!(spilled_before > 0, "the fixture must actually offload");
+
+    // key_for(0) is the oldest, so it is the first thing evicted.
+    let victim = key_for(0);
+    assert!(t.stats().spilled > 0);
+    let total_before = total(&t);
+
+    t.insert(&victim, emb_for(0)).unwrap();
+
+    assert_eq!(
+        total_before,
+        total(&t),
+        "16 distinct keys must stay 16 entries, not 17"
+    );
+    let s = t.stats();
+    assert!(s.hot <= cap, "hot={} must respect capacity {}", s.hot, cap);
+    assert!(t.contains(&victim), "the re-inserted key is still present");
+    assert_eq!(Some(emb_for(0)), t.get(&victim).unwrap());
+}
+
+/// Promotion is a write to `hot`, so it must run the same capacity check
+/// `insert` does. Otherwise prefetching a batch larger than the RAM budget
+/// silently turns the table back into an all-RAM table, and the two-tier
+/// justification evaporates.
+#[test]
+fn promotion_respects_the_ram_budget() {
+    let sc = Scratch::new("promote");
+    let cap = 4;
+    let mut t = TieredTable::with_spill(&sc.path, cap).unwrap();
+    let keys: Vec<EngramKey> = (0..16u64).map(key_for).collect();
+    for k in &keys {
+        t.insert(k, emb_for(0)).unwrap();
+    }
+
+    let all: Vec<EngramKey> = keys.clone();
+    let recovered = t.prefetch(&all).unwrap();
+    assert!(recovered > 0, "something must have been recoverable");
+    assert_eq!(
+        t.stats().hot,
+        t.stats().hot.min(cap),
+        "hot={} exceeded capacity {}",
+        t.stats().hot,
+        cap
+    );
+    assert!(t.stats().hot <= cap, "hot={} cap={}", t.stats().hot, cap);
+}
+
+/// `prefetch_hit_rate` is documented as the fraction of asked-for keys that
+/// were actually recoverable from the spill tier. A key already in RAM never
+/// consults the heap, so counting it as a hit made the rate read 1.0 for a batch
+/// that did not touch the spill at all.
+#[test]
+fn an_already_hot_key_is_neither_a_prefetch_hit_nor_a_miss() {
+    let sc = Scratch::new("prehot");
+    let mut t = TieredTable::with_spill(&sc.path, 8).unwrap();
+    let keys: Vec<EngramKey> = (0..8u64).map(key_for).collect();
+    for k in &keys {
+        t.insert(k, emb_for(0)).unwrap();
+    }
+    let before = t.stats();
+    assert_eq!(before.spilled, 0, "nothing has spilled yet");
+
+    let recovered = t.prefetch(&keys).unwrap();
+    assert_eq!(recovered, 0, "nothing was in the spill tier to recover");
+    let after = t.stats();
+    assert_eq!(
+        after.prefetch_hits, 0,
+        "an already-resident key is not a spill hit"
+    );
+    assert_eq!(after.prefetch_misses, 0, "nor is it a miss");
+    assert_eq!(
+        after.prefetch_hit_rate(),
+        0.0,
+        "the rate must not read 1.0 when the heap was never touched"
+    );
 }
 
 #[test]
@@ -289,11 +412,7 @@ fn e7_offload_overhead_and_prefetch_hit_rate() {
     let with_spill = t1.elapsed();
 
     // Prefetch a batch that is mostly cold: every key beyond the hot budget.
-    let batch: Vec<EngramKey> = keys[hot_capacity..]
-        .iter()
-        .take(10_000)
-        .cloned()
-        .collect();
+    let batch: Vec<EngramKey> = keys[hot_capacity..].iter().take(10_000).cloned().collect();
     let tp = std::time::Instant::now();
     let recovered = tiered.prefetch(&batch).unwrap();
     let _prefetch_elapsed = tp.elapsed();
@@ -327,15 +446,25 @@ fn e7_offload_overhead_and_prefetch_hit_rate() {
     println!("baseline ingest : {:?}", baseline);
     println!("tiered ingest   : {:?}", with_spill);
     println!("offload overhead: {:.2}%", overhead * 100.0);
-    println!("prefetch hit rate: {:.4} ({recovered} recovered of {})", s.prefetch_hit_rate(), batch.len());
+    println!(
+        "prefetch hit rate: {:.4} ({recovered} recovered of {})",
+        s.prefetch_hit_rate(),
+        batch.len()
+    );
     println!("hot/spilled     : {} / {}", s.hot, s.spilled);
     println!("offload events  : {}", s.offload_events);
     println!("spill bytes     : {}", s.spill_bytes);
     println!("RAM hot fraction: {:.4}", s.hot_fraction());
     println!();
     println!("--- denominator analysis ---");
-    println!("insert per entry (HashMap only): {:.0} ns", insert_per_entry * 1e9);
-    println!("spill write per entry:           {:.0} ns", write_per_entry * 1e9);
+    println!(
+        "insert per entry (HashMap only): {:.0} ns",
+        insert_per_entry * 1e9
+    );
+    println!(
+        "spill write per entry:           {:.0} ns",
+        write_per_entry * 1e9
+    );
     println!(
         "break-even: a real pipeline's embedding cost must exceed {:.0} ns/entry\n  for offload overhead to stay under {:.0}%.",
         breakeven_embed_per_entry.max(0.0) * 1e9,
@@ -359,8 +488,13 @@ fn scratch_files_are_removed() {
     let sc = Scratch::new("cleanup");
     {
         let mut spill = SpillTier::open(&sc.path).unwrap();
-        spill.put(Granularity::Sentence, &[1u8; 32], &vec![1.0]).unwrap();
-        let mut f = std::fs::OpenOptions::new().append(true).open(&sc.path).unwrap();
+        spill
+            .put(Granularity::Sentence, &[1u8; 32], &vec![1.0])
+            .unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&sc.path)
+            .unwrap();
         writeln!(f, "trailing bytes so the file is non-empty").unwrap();
     }
     let path = sc.path.clone();
