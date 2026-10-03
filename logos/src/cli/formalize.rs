@@ -814,11 +814,16 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
 
     // The HTTP transport is feature-gated, so this is where "no model reachable"
     // is discovered. Reported before any work is done.
+    //
+    // The output flags are parsed unconditionally so that `--help` and argument
+    // errors behave identically in both builds, but without a transport there is
+    // no pipeline to produce a report, a graph or a lemma store — so they are
+    // dropped here rather than silently honoured.
     #[cfg(not(feature = "llm-http"))]
-    let (report, graph) = {
-        let _ = (&text, &mut store, &opts);
-        return Err(PipelineError::NoTransport);
-    };
+    {
+        let _ = (&text, &mut store, &opts, &out, &vis, &memory_out);
+        Err(PipelineError::NoTransport)
+    }
     #[cfg(feature = "llm-http")]
     let (report, graph) = {
         use crate::formalize::llm::HttpTransport;
@@ -828,24 +833,30 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
         run_pipeline(&text, &mut client, &opts, &mut store)?
     };
 
-    if let Some(path) = &out {
-        write_report(path, &report)?;
-    }
-    if let Some(path) = &vis {
-        write_html(path, &report, &graph)?;
-    }
-    if let Some(path) = &memory_out {
-        save_store(path, &store)?;
-    }
+    #[cfg(feature = "llm-http")]
+    {
+        if let Some(path) = &out {
+            write_report(path, &report)?;
+        }
+        if let Some(path) = &vis {
+            write_html(path, &report, &graph)?;
+        }
+        if let Some(path) = &memory_out {
+            save_store(path, &store)?;
+        }
 
-    print_summary(&report, out.is_some());
-    Ok(if report.is_trustworthy() { 0 } else { 2 })
+        print_summary(&report, out.is_some());
+        Ok(if report.is_trustworthy() { 0 } else { 2 })
+    }
 }
 
 /// The human-readable summary, always printed.
 ///
 /// Written to stdout even when `--out` is given: a JSON file is for machines, and
 /// the point of running the command is to see what it found.
+///
+/// Feature-gated with the tail of `run_inner`, which is its only caller.
+#[cfg(feature = "llm-http")]
 fn print_summary(report: &PipelineReport, wrote_json: bool) {
     let kind = match report.input_kind {
         InputKind::NaturalLanguage => "natural-language proof",
