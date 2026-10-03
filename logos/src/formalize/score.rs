@@ -86,6 +86,19 @@ impl fmt::Display for Tag {
 
 /// Parse ProofFlow's three tag spellings, case-insensitively.
 ///
+/// The first `n` characters of `s`, never splitting a character.
+///
+/// `unf_hash` reaches this module by deserializing an arbitrary proof-graph
+/// JSON file, and nothing validates that it is hex — so byte-slicing it at a
+/// fixed offset panics on any multi-byte character near the boundary. That is a
+/// panic, not an error, on input the crate documents as untrusted.
+fn abbreviate(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 /// Returns [`None`] for an unrecognized verdict rather than guessing: the fuzzy
 /// measure treats a `C` as catastrophic and an `A` as perfect, so a wrong guess
 /// is far worse than a missing component.
@@ -791,7 +804,7 @@ pub fn build_judge_turn(
         node.statement,
         formalization.cnl,
         formalization.readback,
-        &formalization.unf_hash[..formalization.unf_hash.len().min(12)],
+        abbreviate(&formalization.unf_hash, 12),
     );
     if let Some(diag) = node
         .error_report
@@ -1376,6 +1389,53 @@ mod tests {
             "{}",
             turn.content
         );
+    }
+
+    /// `unf_hash` reaches `build_judge_turn` by deserializing an arbitrary
+    /// proof-graph JSON file, and nothing validates that it is hex. Byte-slicing
+    /// it at a fixed offset panicked on a multi-byte character straddling the
+    /// boundary — a panic, not an error, on untrusted input.
+    #[test]
+    fn a_non_ascii_unf_hash_is_abbreviated_not_panicked_on() {
+        let data = serde_json::json!([
+            {"id": "ts_1", "natural_language": "Mary sees Bob", "statement": "Mary sees Bob",
+             "dependencies": [],
+             "formalization": {
+                 "cnl": "Mary sees Bob",
+                 "readback": "See(mary, bob)",
+                 "unf_hash": "aαααααααα",
+                 "verified": true,
+                 "tries": 1
+             }},
+        ]);
+        let g = crate::formalize::graph::validate_proof_graph(&data).unwrap();
+        let mut f = formalization_of(&g.nodes[0]).expect("formalization survives deserialization");
+        f.unf_hash = "aαααααααα".into();
+        let turn = build_judge_turn(&g.nodes[0], &f);
+        assert!(
+            turn.content.contains("aαααααααα"),
+            "a hash shorter than the window is shown whole: {}",
+            turn.content
+        );
+    }
+
+    /// The abbreviation itself: character-based, never splitting a character,
+    /// and never panicking on a short or empty string.
+    #[test]
+    fn abbreviate_is_character_safe() {
+        assert_eq!(abbreviate("abcdef", 3), "abc");
+        assert_eq!(abbreviate("ab", 12), "ab", "shorter than the window");
+        assert_eq!(abbreviate("", 12), "");
+        assert_eq!(
+            abbreviate("ααααα", 3),
+            "ααα",
+            "counts characters, not bytes"
+        );
+        // 12 two-byte characters is 24 bytes: a byte-slice at 12 would split one.
+        assert_eq!(abbreviate("ααααααααααααα", 12).chars().count(), 12);
+        // An ASCII hash behaves as before.
+        let h = "600fbe115bf9d2788c7aaffbd64ff762762c48bb017d53338496b945ffa0d4e3";
+        assert_eq!(abbreviate(h, 12), &h[..12]);
     }
 
     #[test]
