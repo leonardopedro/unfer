@@ -284,13 +284,7 @@ mod tests {
     #[test]
     fn arithmetic_normal_forms_do_not_collide() {
         let cases = [
-            "(x + 3)",
-            "(y * z)",
-            "(a - b)",
-            "(f 1)",
-            "(g 2)",
-            "1.5 + x",
-            "x < 3",
+            "(x + 3)", "(y * z)", "(a - b)", "(f 1)", "(g 2)", "1.5 + x", "x < 3",
         ];
         let mut hashes = Vec::new();
         for src in cases {
