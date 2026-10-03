@@ -48,7 +48,9 @@ pub fn weighted_keys(
     let gate = crate::harper_gate::HarperGate::new();
     let g = gate.lint(fragment);
     if !g.accepted {
-        return Err(KeyError::GateRejected("fragment rejected by the gate".into()));
+        return Err(KeyError::GateRejected(
+            "fragment rejected by the gate".into(),
+        ));
     }
     let tokens: Vec<String> = g.tokens.into_iter().map(|t| t.text).collect();
     let trees = crate::ccg::parse_sentence(&tokens, lexicon);
@@ -63,7 +65,10 @@ pub fn weighted_keys(
             match keys_for_world(world, granularity, lexicon) {
                 Ok(keys) => {
                     for k in keys {
-                        out.push(WeightedKey { key: k, weight: prob });
+                        out.push(WeightedKey {
+                            key: k,
+                            weight: prob,
+                        });
                     }
                 }
                 Err(_) => {
@@ -102,8 +107,7 @@ fn keys_for_world(
 ) -> Result<Vec<EngramKey>, KeyError> {
     if granularity == Granularity::Window {
         return Err(KeyError::Compile(
-            "window keys are surface-derived and a world carries no surface text"
-                .into(),
+            "window keys are surface-derived and a world carries no surface text".into(),
         ));
     }
     let mut out = Vec::new();
@@ -201,3 +205,4 @@ fn hex(bytes: &[u8; 32]) -> String {
     }
     s
 }
+

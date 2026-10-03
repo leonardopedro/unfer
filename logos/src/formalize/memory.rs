@@ -859,10 +859,22 @@ mod tests {
         )
         .unwrap();
         let sentence = verify_cnl("John sees Mary", &lex).unwrap();
-        // The identity world's key is the trigger's own sub-derivation, so it is
-        // the same for every fragment carrying that trigger …
-        assert_eq!(a[0].key.unf_hash, b[0].key.unf_hash);
-        // … and is not any sentence's UNF.
+        // An L1 world key is the hash of a *world's* CoreIR, and the identity
+        // world is `App(Var("probably"), <the rest of the sentence>)` — the
+        // trigger enters as a free variable applied to everything after it. Two
+        // different sentences therefore give different keys, which is the point:
+        // an L1 key addresses a world, not the fragment it came from.
+        //
+        // This assertion was vacuous until the UNF serializer covered every
+        // agent kind. `App` used to serialize as a single catch-all byte, so
+        // these two keys were equal *because every key was equal*, and the test
+        // passed for the wrong reason.
+        assert_ne!(
+            a[0].key.unf_hash, b[0].key.unf_hash,
+            "two different sentences must not share an L1 world key"
+        );
+        // And an L1 key is never a sentence's UNF, so the two key spaces stay
+        // disjoint and a world key cannot be mistaken for a lemma key.
         let hex = |b: &[u8; 32]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         assert_ne!(hex(&a[0].key.unf_hash), sentence.unf_hash);
     }
