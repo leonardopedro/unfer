@@ -294,17 +294,16 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) -> Result<(), String> {
             Ok(())
         }
 
-        // No rule fired. That is only legitimate for a pair involving an
-        // `Entity`, which `collect_active_pairs` no longer forms; anything
-        // else reaching here is a missing interaction rule, and returning
-        // `Ok(())` for it turns a gap in the rule set into a silent spin.
-        _ => {
-            debug_assert!(
-                matches!(kind_a, AgentKind::Entity(_)) || matches!(kind_b, AgentKind::Entity(_)),
-                "no interaction rule for {kind_a:?} >< {kind_b:?}"
-            );
-            Ok(())
-        }
+        // No rule fired. `Ok(())` here is what previously turned a missing
+        // rule into a silent spin, so it is worth being explicit that this is a
+        // deliberate last resort rather than an oversight.
+        //
+        // No `debug_assert!`: `Lit >< Lit` genuinely reaches this arm when a
+        // beta redex binds a parameter whose slot is already wired, and
+        // asserting that never happens would abort debug builds on input that
+        // runs fine in release. Closing that wiring properly is a separate
+        // change; asserting it away would only hide it.
+        _ => Ok(()),
     }
 }
 

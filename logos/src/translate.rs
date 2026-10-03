@@ -15,8 +15,10 @@
 //!   • `infix`    — the arithmetic fragment in infix form (`(2 + 3) * 4`);
 //!   • `value`    — `Some(literal)` iff the term is closed and numeric;
 //!   • `unf_hash` — the content-addressable digest of the reduced net;
-//!   • `verified` — the confluence self-check (a second independent
-//!     reduction reproduces the identical UNF).
+//!   • `verified` — the reduction self-check: a second reduction reproduces
+//!     the identical UNF, *and* the reduced net is a fixed point (reducing it
+//!     again changes nothing). Not full confluence — see
+//!     `logos/lean/Confluence.lean`.
 
 use std::collections::HashMap;
 
@@ -66,11 +68,10 @@ impl UnfTranslation {
 }
 
 /// Translate a CoreIR term: compile → reduce → symbolic readback → value →
-/// UNF hash → TED, with the confluence self-check.
+/// UNF hash → TED, with the reduction self-check.
 pub fn translate_coreir(ir: &CoreIR) -> Result<UnfTranslation, String> {
     let (sym_expr, unf_hash) = reduce_once(ir)?;
-    let second = reduce_once(ir)?;
-    let verified = second.0 == sym_expr && second.1 == unf_hash;
+    let verified = second_pass_agrees(ir, &unf_hash)?;
 
     let value = if sym_expr.is_closed() {
         sym_expr.eval()
@@ -117,6 +118,36 @@ pub fn translate_austral_expr(src: &str) -> Result<UnfTranslation, String> {
 
 /// Compile `ir` to a net, reduce it, and return the symbolic readback +
 /// UNF hash.
+/// Reduce a second time and require the identity to be reproduced.
+///
+/// This used to call `reduce_once(ir)` twice on the *same* `ir` and compare.
+/// Every step of that path is deterministic — the active-pair stack is a
+/// `Vec`, the free list is LIFO, `readback` uses hash sets only as a visited
+/// guard — so the two results were the same value by construction and `verified`
+/// could only ever be `true`. The whole trust gate rested on it:
+/// `formalize_node_verified` retries on `!verified`, `LemmaStore::insert`
+/// refuses unverified lemmas, and `is_trustworthy()` maps it to exit code 0 vs 2.
+///
+/// What it checks now is a genuine property: that the reduced net is a **fixed
+/// point** — reducing it again changes nothing. That is not full confluence, and
+/// the docs should not pretend it is; confluence is what
+/// `logos/lean/Confluence.lean` machine-verifies over the finite state space.
+/// This is the cheap local check that the reducer actually finished: when
+/// `reduce` used to bail at the iteration cap and return `Ok`, the net still had
+/// work left, and this catches it.
+fn second_pass_agrees(ir: &CoreIR, first_hash: &str) -> Result<bool, String> {
+    let (_second_sym, second_hash) = reduce_once(ir)?;
+    if second_hash != first_hash {
+        return Ok(false);
+    }
+    // Fixed point: the *reduced* net must not change under further reduction.
+    let mut net = deltanet::compile_to_net(ir)?;
+    deltanet::reduce(&mut net)?;
+    let before = deltanet::unf_hash_string(&net)?;
+    deltanet::reduce(&mut net)?;
+    Ok(deltanet::unf_hash_string(&net)? == before)
+}
+
 fn reduce_once(ir: &CoreIR) -> Result<(SymExpr, String), String> {
     let mut net = deltanet::compile_to_net(ir)?;
     deltanet::reduce(&mut net)?;

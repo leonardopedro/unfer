@@ -105,7 +105,7 @@ pub struct Lemma {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ted: Option<String>,
-    /// The confluence self-check at insert time.
+    /// The reduction self-check at insert time.
     pub verified: bool,
     /// Every provenance that contributed this lemma, sorted and deduplicated.
     ///

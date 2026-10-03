@@ -193,7 +193,7 @@ pub struct CnlFormalization {
     pub readback: String,
     /// Content-addressable UNF digest: the node's canonical identity.
     pub unf_hash: String,
-    /// The confluence self-check: a second, independent reduction of the same
+    /// The reduction self-check: a second reduction of the same
     /// sentence reproduced the identical UNF.
     pub verified: bool,
     /// The closed numerical value, when the term has no unknowns.
@@ -290,7 +290,7 @@ pub struct Reduction {
     pub cnl: String,
     pub readback: String,
     pub unf_hash: String,
-    /// The confluence self-check.
+    /// The reduction self-check.
     pub verified: bool,
     pub value: Option<String>,
     pub ted: Option<String>,
@@ -384,7 +384,7 @@ pub fn verify_cnl(sentence: &str, lexicon: &Lexicon) -> Result<Reduction, Verify
     let unf_hash =
         deltanet::unf_hash_string(&net).map_err(|e| VerifyError::Readback(e.to_string()))?;
 
-    // One extra reduction pair, bought for the confluence self-check plus the
+    // One extra reduction pair, bought for the reduction self-check plus the
     // TED and closed-value readouts. Per-node cost is irrelevant next to the
     // LLM round trip that produced the sentence.
     let unf = translate::translate_coreir(&ir).map_err(|e| VerifyError::Reduce(e.to_string()))?;
