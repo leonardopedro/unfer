@@ -199,6 +199,13 @@ pub fn run_pipeline<T: Transport>(
         }
         None => DomainLexicon::base(),
     };
+    // `is_extended` is the flag that records "this run used a domain
+    // extension". It was being dropped here and reconstructed downstream as
+    // `word_count() > 46` — which happens to agree only because
+    // `corpus/lexicon.tsv` currently holds exactly 46 entries. Add one row to a
+    // data file the crate expects to grow, and every report starts claiming
+    // "(domain extension)" for stock L0.
+    let extended_lexicon = lexicon.is_extended();
     let lexicon = lexicon.lexicon();
 
     // Graph stage. A JSON input is read from disk; a proof is generated, which
@@ -347,7 +354,7 @@ pub fn run_pipeline<T: Transport>(
             score: scored,
             memory: store.stats().clone(),
             lexicon_words: lexicon.word_count(),
-            extended_lexicon: lexicon.word_count() > 46,
+            extended_lexicon,
         },
         graph,
     ))

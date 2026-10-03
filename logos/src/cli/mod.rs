@@ -254,7 +254,13 @@ fn unf_report(
             // compilation, so code 2 rather than 1. The Austral plugin
             // distinguishes them — a 1 is "the kernel rejected this", a 2 is "the
             // kernel accepted it but cannot vouch for its identity".
-            Ok((line, if json || r.verified { 0 } else { 2 }))
+            //
+            // `--json` does not buy a pass here. The documented contract, three
+            // lines up, is that this "exits non-zero on any failure, so a caller
+            // can distinguish 'did not reduce' from 'ran and disagreed'"; folding `json` in
+            // made code 2 unreachable for exactly the callers who asked for
+            // machine-readable output and are best placed to act on it.
+            Ok((line, if r.verified { 0 } else { 2 }))
         }
         Err(e) => Err((format!("error: {e}"), 1)),
     }

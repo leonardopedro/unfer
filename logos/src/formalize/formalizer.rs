@@ -1313,4 +1313,27 @@ mod tests {
         let round: serde_json::Value = serde_json::to_value(&graph.nodes).unwrap();
         assert_eq!(graph::validate_proof_graph(&round).unwrap().len(), 9);
     }
+    /// `is_extended` is what a report records as "this run used a domain
+    /// extension". `cli/formalize.rs` was dropping it and reconstructing the
+    /// answer as `word_count() > 46`, which agrees only because the base TSV
+    /// currently holds exactly 46 rows — so adding one word to the stock lexicon
+    /// would make every report claim "(domain extension)". These pin the flag
+    /// itself, which is what the report now reads.
+    #[test]
+    fn the_extended_flag_is_carried_not_reconstructed() {
+        assert!(
+            !DomainLexicon::base().is_extended(),
+            "stock L0 must not claim an extension"
+        );
+        let ext = DomainLexicon::with_extension("zebra\tNP\tVar(\"zebra\")\n").expect("valid TSV");
+        assert!(ext.is_extended(), "a domain extension must be flagged");
+        // And the reconstruction would have been wrong in both directions: the
+        // base is exactly at the threshold, and one added word crosses it.
+        assert_eq!(DomainLexicon::base().lexicon().word_count(), 46);
+        assert_eq!(
+            ext.lexicon().word_count(),
+            47,
+            "one extra word, which is all it takes to flip a >46 test"
+        );
+    }
 }
