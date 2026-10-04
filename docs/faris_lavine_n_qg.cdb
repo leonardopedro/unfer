@@ -1,3 +1,27 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: certify the symbolic content of the Faris-Lavine certificate for
+#   quantum gravity: the comparison N = -d^2/dphi^2 + phi^2/4 + V(phi) +
+#   sigma with the FULL exponential wall inside N, the key coupling identity
+#   [phi, H_fib] = 2 d_phi (the wall cannot remove it), and the
+#   wall-inside-N fibre estimates.
+# Role in the program: the algebraic half of the ESA route for the QG fibre
+#   and its outer Fock lift. The structure that makes N_a ESA on its core is
+#   oscillator PLUS non-negative multiplication (matching
+#   oscillatorPlus_esa / starobinskyWall_esa) — this module is the CAS
+#   witness for exactly that decomposition.
+# Certified content: CHECK 1-3 (fibre self-commutator, constant
+#   self-interaction, the [phi, H_fib] identity), CHECK 4-6 (fibre
+#   estimates), CHECK 7-9 (AM-GM and constant arithmetic), CHECK 10a-10d
+#   (oscillator + wall core), CHECK 11 (lift identity). All -> 0 (4-6 print
+#   the non-negative remainder). Evidence: docs/VERIFY_FARIS_LAVINE_N.md.
+# Improvement notes (goal alignment): this module and the Starobinsky
+#   modules are the CAS half of the QG story whose Lean half is on the work
+#   order (2026-10-04, section M4); when the one-particle form gap question
+#   is probed, the constants normalized here are the ones the Lean statement
+#   must reference — keep their names stable.
+# ======================================================================
 # Faris-Lavine comparison operator N and commutation condition for the quantum-gravity
 # (scalaron + vielbein) Hamiltonian on the outer Fock space.
 #

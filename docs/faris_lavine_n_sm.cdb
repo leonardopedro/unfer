@@ -1,3 +1,31 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: the Standard-Model counterpart of the Faris-Lavine comparison
+#   modules: h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa in the temporal
+#   (Weyl) gauge, with the non-abelian magnetic fields, the Higgs
+#   potential, the covariant derivatives, the CKM/PMNS-carrying Yukawa
+#   couplings, and the comparison operator N = N_0 + c_0 I (quartic in the
+#   non-abelian/Higgs fields, quadratic in derivatives and abelian pairs,
+#   plus the 3D oscillator per fermion).
+# Role in the program: the algebraic content of the three Faris-Lavine
+#   hypotheses IN FULL for the SM, including Higgs, quarks/CKM and
+#   leptons/PMNS. The Lean work order is section D6b-SM of
+#   ../timepiece/CONSOLIDATED_PLAN.md; this module is what that order means
+#   term by term.
+# Certified content: CHECK 1-28, exit 0, every check -> 0 (CHECK 9c is
+#   informational c_0-1): commutator shapes and orders (hypotheses ii/iii),
+#   domination/Young/Schwarz identities, Higgs assembly, CKM/PMNS
+#   biunitarity and row unitarity, Yukawa domination with mixing factors.
+# Honest boundaries: the Grassmann/CAR algebra and ghost sector, the
+#   spinor/Lorentz structure of h_Dirac, measured mixing parameters, and
+#   all Hilbert-space statements are NOT certified here — they are Lean's.
+#   See docs/VERIFY_SM_FARIS_LAVINE.md.
+# Improvement notes (goal alignment): the quartic+quadratic mix of N_0 is
+#   load-bearing (it is what terminates the commutator ladder) — any
+#   simplification of N_0 must re-run all 28 checks. Add new CHECKs for the
+#   infinitely-many-fermion-modes refinement when the Lean side states it.
+# ======================================================================
 # The Standard Model single-particle operator h and its Faris-Lavine comparison N
 # on the nested Fock space (temporal / Weyl gauge A_0 = W_0 = B_0 = 0).
 #

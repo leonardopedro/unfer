@@ -1,3 +1,22 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: the Lagrangian-line NS Hamiltonian: the deformation gradient
+#   det(I + grad xi) as a momentum-space triple convolution (detCoef), with
+#   cross-mode minors carried explicitly, and the Legendre structure of the
+#   Lagrangian realization.
+# Role in the program: the algebraic content behind the Lagrangian line of
+#   the NS proof programme (nsFullLagrangian / lagFullFockHam comparison
+#   objects in ../timepiece). It supplies exactly the convolution spelling
+#   the convention of record requires for derivative products.
+# Certified content: the determinant identity and its convolution
+#   coefficients; the Hamiltonian assembly checks (all -> 0).
+# Improvement notes (goal alignment): the convolution spelling here is one
+#   of the three instances of the convention of record (NS advection, QG
+#   Fourier elimination, Lagrangian det). Any new derivative product in any
+#   sector must add its convolution spelling in the same style — and the
+#   docs must cite this file for it.
+# ======================================================================
 # The Lagrangian-variables Navier-Stokes Hamiltonian derived FROM the Eulerian one,
 # carrying the incompressibility constraint through every step.
 #

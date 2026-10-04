@@ -1,3 +1,24 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: close the Jordan -> Einstein frame link: derive the Einstein-frame
+#   scalaron potential starobinskyV = (M^4/16 alpha)(1 - exp(-sqrt(2/3)
+#   phi/M))^2 from the Jordan form f(R) = (M^2/2) psi R - U(psi), instead of
+#   leaving it as a definition.
+# Role in the program: the proofs in ../timepiece use starobinskyV as the
+#   wall potential; this module is the derivation that licenses that use.
+#   The ONE standard input is the d=4 Brans-Dicke omega=0 coefficient 3/2;
+#   every algebraic consequence of it is CHECKed to 0.
+# Certified content: measure weight psi^2, V = U/psi^2 identity, the x =
+#   sqrt(2/3) phi/M substitution, canonical kinetic normalization (why the
+#   exponent is sqrt(2/3)), V(0)=0 / plateau / m^2 = M^2/(12 alpha).
+# Improvement notes (goal alignment): this module is the model for how an
+#   undefined-in-proof quantity should be discharged — apply the same pattern
+#   to the remaining analytic inputs on the work order (the uniform-in-eta
+#   one-particle form gap's normalization constants).
+#
+# Run: cadabra2-cli -q -n < this file (planner/CI only).
+# ======================================================================
 # THE MISSING LINK in the QG R² chain: Jordan -> Einstein frame.
 #
 # The sibling modules stop at the JORDAN-frame scalar-tensor form

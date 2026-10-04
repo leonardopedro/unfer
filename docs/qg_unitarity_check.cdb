@@ -1,3 +1,25 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: certify that the densitized change of variables is UNITARY —
+#   three kernels: (1) Jacobian/measure det(tilde-e) = y^3 det(e) = y^5;
+#   (2) half-density (van Vleck) norm kernel y^5 * y^-5 = 1; (3) flat-
+#   operator Hermiticity (Lagrange) identity, a total-derivative boundary
+#   term vanishing on the physical Hilbert space.
+# Role in the program: the guarantee that the densitized route does not
+#   change the theory — the three kernels must all vanish for the QG ESA
+#   analysis to transfer between forms.
+# Certified content: all three kernels -> 0 (the Lagrange kernel prints the
+#   non-negative remainder). Consumed by
+#   symbolic::tests::qg_densitized_change_of_variables_is_unitary.
+# Known note (docs/VERIFY_CDB_TRUNCATION_AUDIT.md): the two `unwrap` calls
+#   on PLAIN sums in the Hkern checks are benign — `unwrap` acts termwise
+#   there, so Hkern still reaches 0. Do not "clean them up" without
+#   re-running the audit's counterfactual procedure.
+# Improvement notes (goal alignment): add a CHECK for the domain/falloff
+#   side of the boundary-term vanishing (the physical Hilbert space
+#   assumption), closing the gap between formal and assumed steps.
+# ======================================================================
 # QG: unitary-implementability of the densitized-tetrad change of variables.
 #
 # Companion to docs/qg_densitized_hamiltonian.cdb. That file shows the

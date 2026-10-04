@@ -35,7 +35,7 @@ drives.
 |---|---|---|---|
 | `qg_gauge_fixed_hamiltonian.cdb` | `unwrap(ex)` before `integrate_by_parts` | `ex1` = **18** (one product of 18 factors = one summand), `pi_derived` = 2 summands; without the line: `ex1` = **120** summands, `pi_derived` = **132** summands | **truncated — repaired (below)** |
 | `qg_starobinsky_vielbein_hamiltonian.cdb` | `unwrap` (repaired 2026-09-18) | `ex1_st` = **121** summands, `pi_st` = ψ·π₀, `fR_check = R2_check = pi_psi_check = 0`, `H_final_st` 11 summands, `base_limit_check` 10 summands | clean (already repaired) |
-| `qg_unitarity_check.cdb` | `unwrap(lhs)`, `unwrap(rhs)` (lines 72/77) on plain sums | `Jcheck = 0`, `Unorm = 0`, `Hkern = 0`; `lhs` keeps **both** terms | clean — see note (b) |
+| `qg_unitarity_check.cdb` | `unwrap(lhs)`, `unwrap(rhs)` (in the `Hkern` checks; content reference — line numbers shifted when module-documentation headers were added 2026-10-04) on plain sums | `Jcheck = 0`, `Unorm = 0`, `Hkern = 0`; `lhs` keeps **both** terms | clean — see note (b) |
 | `ns_qg_fourier_elimination.cdb` | none (no `unwrap`, no sum indexing) | A1–E3 all hit their advertised values (`0`, `t**3`, `t**3-1`, …); C1/C4 non-trivial; exit 0 | clean |
 | `qg_starobinsky_hamiltonian.cdb` | none | all 12 advertised checks = `0` (`scalaron_check`, `V3_check`, `dV3_check`, `Vphi_zero`, `constraint_check`, `action_R2_check`, `pi_check`, `leg_check`, `pi_grav_check`, `leg_grav_check`, `gf_check_Dphi2`, `gf_check_Rc`); `pi_derived` = `∂₀φ π`, `pi_grav` = `¼M² ∂₀q Π` | clean |
 | `qg_densitized_hamiltonian.cdb` | none | `Ktrans` = `1/16 S̃_ab S̃^ab − 1/24 (P̃)²` = `Kflat`; `diff = 0` | clean — see note (a) |

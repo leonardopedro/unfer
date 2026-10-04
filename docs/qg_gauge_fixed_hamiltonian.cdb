@@ -1,3 +1,30 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: the 3D gauge-fixed quantum-gravity Hamiltonian FROM the classical
+#   action — the full chain action -> vary -> polymomentum -> Legendre
+#   transform -> H, reaching book.tex line 8190 (TEGR/teleparallel torsion
+#   form in the vielbein).
+# Role in the program: base module of the QG sector. The Starobinsky modules
+#   and the densitized module are generalizations/companions of this chain;
+#   the QG one-particle operators formalized in ../timepiece consume its
+#   output as the operator of record.
+# Certified content: ex1 (EH action density), t0_tegr (TEGR scalar),
+#   pi_derived (polymomentum BY VARIATION), H_final (Legendre transform),
+#   plus Part 5.6/5.7 gravitational-sector metric analogue. Every named
+#   check reduces to 0 under cadabra2-cli -q -n.
+# Known history: a silent `unwrap` truncation (kept only the first summand of
+#   ex1) was repaired 2026-09-18; the module-level audit of all seven .cdb
+#   modules is docs/VERIFY_CDB_TRUNCATION_AUDIT.md. Keep the epilogue size
+#   dumps: they are what makes this class of defect loud.
+# Improvement notes (goal alignment): wire the audit's epilogue (sizes of
+#   every named expression + counterfactual run) into the planner's CI gate
+#   (unfer/PLAN_MASS_GAP.md M2/M8) so a future truncation cannot be silent.
+#
+# Name-parsing gotchas (see unfer/AGENTS.md S30): `@()` needs >=4-char
+# stems; `dst = src.copy()` for duplication; `unwrap` strips the top node of
+# EVERY term — never use it after product_rule on a sum.
+# ======================================================================
 # Repaired 3D gauge-fixed QG Hamiltonian derivation (source: yangqg3.cnb / qg6.cnb).
 # Fully automated to book.tex's EXACT final form (line 8190):
 #   ex1 = eR (EH action density in the vielbein, cells 1+3)

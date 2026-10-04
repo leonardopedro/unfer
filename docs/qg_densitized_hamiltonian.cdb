@@ -1,3 +1,24 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: transform the singular kinetic (1/16e) S^2 - (1/24e) P^2 into
+#   densitized-tetrad variables (y = sqrt(e), tilde-e = sqrt(e) e) so the
+#   1/e is absorbed into field derivatives, leaving the flat
+#   constant-coefficient hyperbolic operator H_0 = (1/16) Delta_S - (1/24)
+#   d^2_y.
+# Role in the program: the change-of-variables record for the QG sector's
+#   ESA analysis (Strichartz route: flat d'Alembertian is ESA for the
+#   principal part; the wrong-sign y-direction is Case B). The module is the
+#   transformation record, NOT the object of record (which is the full
+#   qg3DHamiltonian under the final-Hamiltonian doctrine).
+# Certified content: the absorption of 1/e; the ESA sign analysis inputs.
+# Known audit finding (docs/VERIFY_CDB_TRUNCATION_AUDIT.md): the `diff`
+#   handle here is a hand-typed tautology that cannot fail — it never
+#   references Ktrans/Kflat. Improvement needed: wire the check to the
+#   actual transformed quantities so it can fail, and give it a Rust-side
+#   assertion (symbolic::tests) — tracked as an M8 item in
+#   unfer/PLAN_MASS_GAP.md's sibling maintenance lane.
+# ======================================================================
 # QG: change of variables to densitized tetrad variables.
 #
 # Source: book.tex line 8190 (the 3D gauge-fixed Hamiltonian). The kinetic

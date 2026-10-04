@@ -8,6 +8,15 @@ exact contracts, a runtime-enforced precondition seam, and NDJSON certificates
 consumable by the nanoda/lean4export pipeline (S29/S31). The Lean4 parts are
 out of scope here (LLM-Lean4-specialist).*
 
+> **Operational plan**: `../PLAN_MASS_GAP.md` (PLAN M) is the planner-side
+> plan for this pipeline — everything except Lean4 code (emission, gates,
+> fixtures, evidence). The Lean4 work order for the specialist lives in
+> `../../timepiece/CONSOLIDATED_PLAN.md`, section "State of the project —
+> 2026-10-04: the mass-gap proof in Lean4" (§M4). The proof is already
+> started (T1–T12 statuses there): nested Fock space gives the exact sector
+> structure and the SIRK–Hashimoto approximations carry rigorous certified
+> bands, which is what makes a proof over numerically located levels sound.*
+
 **Hamiltonian of record: the 3D gauge-fixed QYM Hamiltonian, not the lattice.**
 The mass-gap observable lives on `qcd_ym_hamiltonian(g)` — the nested-Fock
 realization of the Cadabra-derived `H_final = ½π² + ½B²` with

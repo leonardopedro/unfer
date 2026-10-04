@@ -1,3 +1,22 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: derive the pressure Poisson equation Lap p = -div[(u.grad)u] +
+#   div f of incompressible Navier-Stokes by contracting d_i with the
+#   momentum equation and imposing div u = 0.
+# Role in the program: the algebraic half of the constraint story completed
+#   by ns_pressure_constraint.cdb. It is what licenses the elimination of
+#   the pressure coordinate in the gauge-fixed NS symbols the Lean side
+#   formalizes.
+# Certified content: CHECK 2/2b (viscous divergence = Laplacian of the
+#   divergence, by Clairaut), CHECK 3/3b (Leibniz split of the advection
+#   divergence; the u.grad(div u) piece vanishes on div u = 0), CHECK 4-6
+#   (assembly and constraint-term cancellation). All -> 0.
+# Improvement notes (goal alignment): pair every change here with
+#   ns_pressure_constraint.cdb (the second-class verdict) so the
+#   derivation and the constraint classification never drift apart; record
+#   additions in docs/VERIFY_FARIS_LAVINE_N.md.
+# ======================================================================
 # The pressure Poisson equation of incompressible Navier-Stokes, from the divergence of the
 # momentum equation.
 #

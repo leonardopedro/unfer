@@ -1,3 +1,23 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: settle that the pressure Poisson equation is a SECOND-CLASS
+#   constraint — eliminate it, do not BRST it. The pressure enters only via
+#   q_i = d_i p (no d_t p, no conjugate momentum): it is the Lagrange
+#   multiplier of incompressibility, and the Poisson equation determines it.
+# Role in the program: fixes the constraint strategy of the NS sector
+#   (elimination, matching BookProof.ChapterNavierStokesEulerian's
+#   classification of div u = 0 as an explicit-solution constraint). The
+#   genuine gauge-generator BRST is the derivative gauge Omega = sum G_j
+#   chi_j, not the pressure.
+# Certified content: CHECK 1-5 — no d_t p; p = -S/|k|^2 solves the Poisson
+#   equation; the only free mode is the additive constant p(0), invisible to
+#   the dynamics; book.tex's nilpotent packaging is cosmetic; the
+#   elimination q_i = -i k_i S/|k|^2 is a function of (u, f) alone.
+# Improvement notes (goal alignment): if a future module proposes a BRST
+#   treatment for the pressure, this module's CHECKs are the refutation
+#   template — extend it rather than forking a second verdict.
+# ======================================================================
 # Is the pressure-Poisson equation a *constraint* that needs a BRST gauge symmetry?
 #
 # The pressure enters the Navier-Stokes residual only through q_i = d_i p, with no time

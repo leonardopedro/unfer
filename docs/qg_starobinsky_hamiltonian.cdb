@@ -1,3 +1,24 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: reduce the Starobinsky R + alpha R^2 action to the 3D gauge-fixed
+#   Hamiltonian; verify the ghost-free scalar-tensor equivalence and the
+#   conformal-mode potential structure (V3 parabola, Einstein-frame
+#   plateau, scalaron mass).
+# Role in the program: the R^2-stabilized QG sector. Supplies the analytic
+#   input behind the QG fiber Hamiltonians formalized in ../timepiece and the
+#   scalar-fiber comparison models of the numerical suites.
+# Certified content: fR/R2 checks (Jordan form IS f(R)), V3 minimum and
+#   boundedness below, starobinskyV plateau and small-field mass,
+#   constraint_check (Hamiltonian constraint solved for the conformal-mode
+#   curvature), the NS-pattern gauge fixing of spatial derivative variables.
+# Improvement notes (goal alignment): the falsifiable claims here feed
+#   test/numerics/qg-mass-gap.md; any new CHECK must land with a row in
+#   docs/VERIFY_QG_STAROBINSKY_*.md and, if it changes the operative
+#   algebra, a regeneration-gate run (unfer/PLAN_MASS_GAP.md M2).
+#
+# Run: cadabra2-cli -q -n < this file (planner/CI only).
+# ======================================================================
 # R + αR² (Starobinsky) 3D gauge-fixed Hamiltonian derivation.
 #
 # Action (the R + αR² extension of the Einstein-Hilbert action, α > 0):

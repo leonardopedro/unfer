@@ -1,3 +1,26 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: generalize the base-module derivation chain (action -> vary ->
+#   polymomentum -> Legendre -> H) to R + alpha R^2 in the VIELBEIN: the
+#   metric 3+1 split only fits special foliations, so the vielbein is the
+#   fundamental field and local Lorentz freedom stays explicit.
+# Role in the program: the general-space-time QG record. H_final_st =
+#   (M^2/2) psi * (book.tex 8190) + U(psi) e: the base TEGR Hamiltonian
+#   scaled by the scalaron field plus the potential density. The base limit
+#   check (alpha -> 0) recovers the base module — a generalization, not a
+#   different theory.
+# Certified content: fR_check/R2_check (Jordan form identity), pi_st
+#   factorization (psi is auxiliary), leg_check, base_limit_check.
+# Known history: `@()` aborted this module and `unwrap` collapsed ex1_st
+#   until 2026-09-18 (see docs/VERIFY_QG_STAROBINSKY_VIELBEIN.md).
+# Improvement notes (goal alignment): the extracted pi_psi_check name must
+#   stay in sync with the Rust extraction trailer; treat any rename as a
+#   contract change (regeneration gate, unfer/PLAN_MASS_GAP.md M2).
+#
+# Gotchas: @() stems >= 4 chars; `dst = src.copy()` (plain `dst = src`
+# aliases — Cadabra mutates in place); never `unwrap` after product_rule.
+# ======================================================================
 # Vielbein (tetrad) 3D gauge-fixed Hamiltonian for R + αR² (Starobinsky) gravity.
 #
 # MOTIVATION. The metric-route module (docs/qg_starobinsky_hamiltonian.cdb)

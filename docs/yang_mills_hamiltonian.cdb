@@ -1,3 +1,29 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: derive the Weyl-gauge Yang-Mills Hamiltonian of record,
+#   H_final = 1/2 pi^2 + 1/2 B^2, from the Legendre transform of
+#   L = 1/2 pi^2 - 1/2 B^2 (with F_0i = pi, 1/4 F_ij F^ij = 1/2 B^2),
+#   together with the BRST Gauss constraint G_y and the 3D epsilon identity.
+# Role in the program: this is the QYM mass-gap Hamiltonian of record. The
+#   nested-Fock realization `qcd_ym_hamiltonian(g)` in ../fock_sirk is this
+#   operator; every certified mass-gap band in docs/MASS_GAP_SPEC.md is a
+#   statement about it. Its reflection symmetry R: (A0,A1) -> (-A1,-A0) is
+#   what splits the certification into two pure sectors.
+# Certified content: CHECK cells verify the Gauss constraint, the Legendre
+#   transform, and the epsilon identity numerically (each -> 0). Consumed by
+#   `prob_kernel::symbolic::tests::yang_mills_*` through the run's stdout
+#   markers; comments here are ignored by that pipeline.
+# Improvement notes (goal alignment): the inline operative algebra in
+#   docs/MASS_GAP_SPEC.md must stay term-for-term consistent with the final
+#   cell here; if the derivation changes, the planner must re-run the
+#   regeneration gate (unfer/PLAN_MASS_GAP.md, M2/M8). Candidate extension:
+#   CHECK cells for the reflection-invariance of B^2, so the sector split is
+#   certified symbolically as well as numerically.
+#
+# Run: cadabra2-cli -q -n < this file   (planner/CI only; never in the
+# ../timepiece/unfer_contracts bundle, where copies are reference text).
+# ======================================================================
 # Yang-Mills: BRST-invariant 3D Hamiltonian in the Weyl gauge (book.tex ~7353).
 # Derivation:
 #   G_y = the Gauss constraint (BRST charge density), notebook cell 1.

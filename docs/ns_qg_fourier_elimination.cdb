@@ -1,3 +1,23 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: the Fourier-elimination spellings for NS and QG: spatial
+#   derivative modes are eliminated by the momentum-space substitution, so
+#   coordinate-space products of derivatives become convolutions
+#   (NS advection: u_j d_mu u_i -> sum_{p+q=k} i(u_p.q) u_q; QG: the
+#   twenty-seven vielbein derivative modes eliminated the same way).
+# Role in the program: the bridge between the gauge-fixed derivative
+#   variables of the Cadabra derivations and the Fourier symbols the Lean
+#   side formalizes (nsSymbolPoint, ChapterQgFourierElimination,
+#   ChapterQgFullEliminated). Where book.tex and the tree differ in spelling,
+#   this module is the reconciliation record.
+# Certified content: the elimination identities and symbol matches (all
+#   checks -> 0).
+# Improvement notes (goal alignment): the convention of record (2026-09-25
+#   consolidated entry) makes these spellings mandatory for any new proof
+#   touching derivative products; keep the three-instance list in the docs
+#   in sync with this file.
+# ======================================================================
 # Fourier elimination of the derivative variables for the Navier-Stokes / QG route
 #   (the shared engine-checked source for
 #     timepiece/DESIGN_COMPARISON_N_20260915.md  and

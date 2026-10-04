@@ -1,3 +1,27 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+#
+# Purpose: certify the SYMBOLIC content of the Faris-Lavine certificate for
+#   Navier-Stokes: the positive comparison operator N = -Delta + |x|^2/4,
+#   the commutator [H,N] being first order with the exact shape of
+#   BookProof.ChapterSqSumFarisLavine.commPoly_eq, and the AM-GM / Young
+#   identities behind the constants.
+# Role in the program: the algebraic half of the ESA route for NS. The
+#   Hilbert-space half (symmetry on a core, N+1 dense range, graph core,
+#   Friedrichs) is Lean; this module is what the Lean statement MEANS,
+#   checked independently by CAS. Part B certifies the oscillator core
+#   (ladder algebra, Hermite/Gauss core) and the lift identity
+#   dGamma(N) = sum N_ij a^dag_i a_j — the reason the lifted core is a
+#   finite-particle tensor core.
+# Certified content: CHECK 1-6 (commutator shape, gradient identities, AM-GM
+#   and Young), CHECK 5a-5d (oscillator core), CHECK 6 (lift identity) —
+#   all -> 0. Evidence: docs/VERIFY_FARIS_LAVINE_N.md.
+# Improvement notes (goal alignment): the two obligations (N ESA on C0; the
+#   LIFT ESA on the lifted core) are independent — never let a doc merge
+#   them. The per-Hamiltonian work list lives in ../timepiece/
+#   CONSOLIDATED_PLAN.md section D6b; new rows there should name the CHECK
+#   that certifies their symbolic content here.
+# ======================================================================
 # Faris-Lavine comparison operator N and commutation condition for the *auxiliary positive
 # sum-of-squares operator* of the Navier-Stokes sector.
 #
