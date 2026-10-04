@@ -358,3 +358,404 @@ mod tests {
         assert_eq!(r.grants.effect_kinds[0].effect_kind, EffectKind::Observe);
     }
 }
+
+// ---------------------------------------------------------------------------
+// C5: role presets over the same GrantSet vocabulary
+// ---------------------------------------------------------------------------
+//
+// `AgentPreset` above is the generic H10 mechanism: a named composition,
+// discovered from a roster, resolved through a chain. What it does not give you
+// is the *vocabulary* the multi-worker designs need -- a reviewer who cannot
+// mutate, a director who has no tools at all -- expressed as data so the
+// capability layer keeps enforcing it rather than convention.
+//
+// This is deliberately not a second permission system. A `RolePreset` is a
+// `GrantSet` value, so `is_subset_of` applies unchanged and every S21 invariant
+// (conservative `Mutate` default, no annotate-your-way-out) holds by
+// construction. The only new thing is which grants each name carries, and the
+// rule about which role may hold which preset.
+
+/// A named least-privilege grant set for one kind of worker.
+///
+/// Ordered by breadth: every preset is a subset of [`RolePreset::Maintainer`],
+/// and [`RolePreset::Orchestrator`] holds nothing at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RolePreset {
+    /// Orchestrates, executes nothing. No kernel symbols, no effects: the
+    /// director cannot act even if it decides to.
+    Orchestrator,
+    /// Reads status and results. No side-effecting symbol.
+    Reader,
+    /// Reader plus the verification and compile-to-normal-form surface.
+    ProverRunner,
+    /// Reader plus inspection and reporting.
+    Reviewer,
+    /// Reviewer plus the mutating blueprint/session surface.
+    Integrator,
+    /// Everything. The trusted-harness set; never a worker's default.
+    Maintainer,
+}
+
+/// The role a process is running as, which bounds the presets it may hold.
+///
+/// This is the C5 misuse rule. A worker holding `Maintainer` is refused at the
+/// loopback with an audit entry rather than trusted, because "the orchestrator
+/// gave this worker broad grants" is exactly the escalation the grant lattice
+/// exists to make visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AgentRole {
+    /// Plans and delegates. May hold `Orchestrator`, and the readers it needs to
+    /// see what it is delegating.
+    Director,
+    /// Executes. Any preset except `Maintainer`.
+    Worker,
+    /// Reviews output. `Reader`, `Reviewer`, `ProverRunner`.
+    Reviewer,
+}
+
+impl RolePreset {
+    pub const ALL: &'static [RolePreset] = &[
+        RolePreset::Orchestrator,
+        RolePreset::Reader,
+        RolePreset::ProverRunner,
+        RolePreset::Reviewer,
+        RolePreset::Integrator,
+        RolePreset::Maintainer,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            RolePreset::Orchestrator => "orchestrator",
+            RolePreset::Reader => "reader",
+            RolePreset::ProverRunner => "prover-runner",
+            RolePreset::Reviewer => "reviewer",
+            RolePreset::Integrator => "integrator",
+            RolePreset::Maintainer => "maintainer",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<RolePreset> {
+        RolePreset::ALL.iter().find(|p| p.name() == name).copied()
+    }
+
+    /// The grants this preset carries.
+    ///
+    /// No preset declares `effect_kinds`. That is the point: an unannotated
+    /// effect resolves to `Mutate` and so still queues for approval, whereas an
+    /// `observe` annotation would let it apply immediately. Leaving the
+    /// annotations off means a preset can never hand a worker a bypass -- there
+    /// is nothing in this table to relabel.
+    pub fn grants(self) -> GrantSet {
+        let kernel: &[&str] = match self {
+            RolePreset::Orchestrator => &[],
+            RolePreset::Reader => &[
+                "uk_version",
+                "uk_last_error",
+                "uk_get_result",
+                "uk_meter_status",
+                "uk_registry_vetted",
+            ],
+            RolePreset::ProverRunner => &[
+                "uk_version",
+                "uk_last_error",
+                "uk_get_result",
+                "uk_meter_status",
+                "uk_registry_vetted",
+                "uk_proof_verify",
+                "uk_logos_compile",
+                "uk_austral_unf",
+                "uk_symbolic_simplify",
+            ],
+            RolePreset::Reviewer => &[
+                "uk_version",
+                "uk_last_error",
+                "uk_get_result",
+                "uk_meter_status",
+                "uk_registry_vetted",
+                "uk_blueprint_list",
+                "uk_blueprint_export",
+                "uk_report_issue",
+            ],
+            RolePreset::Integrator => &[
+                "uk_version",
+                "uk_last_error",
+                "uk_get_result",
+                "uk_meter_status",
+                "uk_registry_vetted",
+                "uk_blueprint_list",
+                "uk_blueprint_export",
+                "uk_report_issue",
+                "uk_blueprint_import",
+                "uk_session_fork",
+            ],
+            // The trusted harness: every kernel symbol the registry defines, which
+            // is how `GrantSet` is built elsewhere for an unconstrained caller.
+            RolePreset::Maintainer => &[],
+        };
+        if matches!(self, RolePreset::Maintainer) {
+            return GrantSet {
+                kernel: crate::symbols::SYMBOL_REGISTRY
+                    .iter()
+                    .map(|r| r.name.to_string())
+                    .collect(),
+                ..GrantSet::default()
+            };
+        }
+        GrantSet::kernel(kernel)
+    }
+
+    /// May a process running as `role` hold this preset?
+    ///
+    /// The refusal is `Maintainer` for every non-trusted role. It is the one
+    /// preset that is not least-privilege, so handing it to a worker is either
+    /// a mistake or an escalation, and both deserve a loud refusal.
+    pub fn permitted_for(self, role: AgentRole) -> bool {
+        match role {
+            AgentRole::Director => !matches!(self, RolePreset::Maintainer),
+            AgentRole::Worker => !matches!(self, RolePreset::Maintainer),
+            AgentRole::Reviewer => matches!(
+                self,
+                RolePreset::Orchestrator
+                    | RolePreset::Reader
+                    | RolePreset::Reviewer
+                    | RolePreset::ProverRunner
+            ),
+        }
+    }
+}
+
+impl AgentRole {
+    pub fn name(self) -> &'static str {
+        match self {
+            AgentRole::Director => "director",
+            AgentRole::Worker => "worker",
+            AgentRole::Reviewer => "reviewer",
+        }
+    }
+}
+
+#[cfg(test)]
+mod role_preset_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn every_preset_is_a_subset_of_maintainer() {
+        // Least privilege, stated as a property rather than as an intention: if a
+        // new preset is added that reaches outside the harness set, this fails.
+        let harness = RolePreset::Maintainer.grants();
+        for preset in RolePreset::ALL.iter().copied() {
+            assert!(
+                preset.grants().is_subset_of(&harness),
+                "{} is not a subset of the maintainer set, so it is not least-privilege",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_preset_relation_is_a_diamond_not_a_ladder() {
+        // These are roles, not rungs. A reviewer and a prover-runner are both
+        // readers and neither contains the other, so a "monotonically widening
+        // ladder" is a false property -- asserting it was wrong, and asserting
+        // it is how the shape gets misdocumented afterwards.
+        //
+        // What actually holds: both specialisations extend Reader, Integrator
+        // extends Reviewer, and everything sits under Maintainer.
+        let reader = RolePreset::Reader.grants();
+        for specialisation in [RolePreset::ProverRunner, RolePreset::Reviewer] {
+            assert!(
+                reader.is_subset_of(&specialisation.grants()),
+                "{} must extend reader",
+                specialisation.name()
+            );
+            assert!(
+                !specialisation.grants().is_subset_of(&reader),
+                "{} adds nothing over reader, so it is not a distinct role",
+                specialisation.name()
+            );
+        }
+        assert!(
+            RolePreset::Reviewer
+                .grants()
+                .is_subset_of(&RolePreset::Integrator.grants()),
+            "integrator must extend reviewer"
+        );
+        assert!(
+            !RolePreset::ProverRunner
+                .grants()
+                .is_subset_of(&RolePreset::Integrator.grants()),
+            "a prover-runner is not an integrator; the two branches stay distinct"
+        );
+    }
+
+    #[test]
+    fn the_orchestrator_has_no_tools_at_all() {
+        // "Orchestrates but has no tools" is only meaningful if it is enforced.
+        let grants = RolePreset::Orchestrator.grants();
+        assert!(
+            grants.kernel.is_empty(),
+            "director must hold no kernel symbols"
+        );
+        assert!(grants.effects.is_empty(), "director must hold no effects");
+        assert!(grants.resources.is_empty());
+        assert!(grants.observers.is_empty());
+    }
+
+    #[test]
+    fn no_preset_declares_an_effect_annotation() {
+        // S21: an `observe` annotation makes an effect apply immediately
+        // instead of queueing for approval. A preset that carried one would be a
+        // bypass handed out by name, so none may declare any.
+        for preset in RolePreset::ALL.iter().copied() {
+            assert!(
+                preset.grants().effect_kinds.is_empty(),
+                "{} declares effect annotations; every unannotated effect already                  defaults to Mutate and queues, so an annotation here can only                  weaken the approval lane",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
+    fn readers_and_reviewers_cannot_reach_a_mutating_symbol() {
+        // The grants that change state, kept out of the read-side presets.
+        let mutating = [
+            "uk_blueprint_import",
+            "uk_session_fork",
+            "uk_session_compact",
+        ];
+        for preset in [
+            RolePreset::Reader,
+            RolePreset::Reviewer,
+            RolePreset::ProverRunner,
+            RolePreset::Orchestrator,
+        ] {
+            let held = preset.grants();
+            for symbol in mutating {
+                assert!(
+                    !held.kernel.iter().any(|k| k == symbol),
+                    "{} holds the mutating symbol {symbol}",
+                    preset.name()
+                );
+            }
+        }
+        // And the integrator, which is the role that exists to hold them, does.
+        assert!(
+            RolePreset::Integrator
+                .grants()
+                .kernel
+                .iter()
+                .any(|k| k == "uk_blueprint_import")
+        );
+    }
+
+    #[test]
+    fn maintainer_covers_every_kernel_symbol_the_registry_defines() {
+        let harness: BTreeSet<String> =
+            RolePreset::Maintainer.grants().kernel.into_iter().collect();
+        let registry: BTreeSet<String> = crate::symbols::SYMBOL_REGISTRY
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
+        let missing: Vec<&String> = registry.difference(&harness).collect();
+        assert!(
+            missing.is_empty(),
+            "maintainer is the trusted-harness set and must cover the registry;              missing {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_preset_symbol_exists_in_the_registry() {
+        // A preset naming a symbol the registry does not define would fail at
+        // mint time, far from the table that introduced it.
+        let registry: BTreeSet<&str> = crate::symbols::SYMBOL_REGISTRY
+            .iter()
+            .map(|r| r.name)
+            .collect();
+        for preset in RolePreset::ALL.iter().copied() {
+            for symbol in preset.grants().kernel {
+                assert!(
+                    registry.contains(symbol.as_str()),
+                    "{} names {symbol}, which is not in the registry",
+                    preset.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn names_round_trip_and_are_unique() {
+        let mut seen = BTreeSet::new();
+        for preset in RolePreset::ALL.iter().copied() {
+            assert!(
+                seen.insert(preset.name()),
+                "duplicate preset name {}",
+                preset.name()
+            );
+            assert_eq!(
+                Some(preset),
+                RolePreset::from_name(preset.name()),
+                "{} does not round-trip through from_name",
+                preset.name()
+            );
+        }
+        assert_eq!(RolePreset::ALL.len(), seen.len());
+        assert_eq!(None, RolePreset::from_name("no-such-preset"));
+    }
+
+    #[test]
+    fn a_worker_or_director_cannot_hold_maintainer() {
+        // The C5 misuse rule. Checked here as a pure predicate; the loopback
+        // refuses on the same predicate and writes an audit entry.
+        for role in [AgentRole::Worker, AgentRole::Director] {
+            assert!(
+                !RolePreset::Maintainer.permitted_for(role),
+                "a {} was permitted to hold maintainer",
+                role.name()
+            );
+            assert!(
+                !RolePreset::Maintainer.permitted_for(AgentRole::Reviewer),
+                "a reviewer was permitted to hold maintainer"
+            );
+        }
+        // Every non-maintainer preset is available to an ordinary worker.
+        for preset in RolePreset::ALL.iter().copied() {
+            if preset == RolePreset::Maintainer {
+                continue;
+            }
+            assert!(
+                preset.permitted_for(AgentRole::Worker),
+                "a worker was refused the ordinary preset {}",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_reviewer_cannot_hold_the_integrator_preset() {
+        // A reviewer that can import blueprints and fork sessions is not a
+        // reviewer. Read-only-by-role is the whole point of the role.
+        assert!(!RolePreset::Integrator.permitted_for(AgentRole::Reviewer));
+        assert!(RolePreset::Reviewer.permitted_for(AgentRole::Reviewer));
+    }
+
+    #[test]
+    fn role_and_preset_names_are_distinct_within_their_kind() {
+        // "reviewer" names both a preset and a role. They are separate vocabularies
+        // over separate types, and the tests above rely on that; a reader of the
+        // tables should not have to guess which is which.
+        let presets: BTreeSet<&str> = RolePreset::ALL.iter().map(|p| p.name()).collect();
+        let roles = ["director", "worker", "reviewer"];
+        // `reviewer` legitimately appears in both; every other role name must not
+        // collide with a preset name.
+        for role in roles {
+            if role == "reviewer" {
+                continue;
+            }
+            assert!(
+                !presets.contains(role),
+                "role name {role} collides with a preset name"
+            );
+        }
+    }
+}
