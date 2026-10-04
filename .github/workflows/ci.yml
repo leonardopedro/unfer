@@ -59,6 +59,8 @@ jobs:
         run: bash scripts/tree-size
       - name: book.tex / ODE.tex in sync (X1)
         run: bash scripts/check-book-sync
+      - name: status blocks present and sane (X2)
+        run: bash scripts/check-status
 
   # ---------------------------------------------------------------------------
   # Core: the unfer kernel workspace must build, lint and test on CPU.

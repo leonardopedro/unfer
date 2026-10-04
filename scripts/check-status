@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# X2 — status-doc gate.
+#
+# Each repo's README carries a machine-readable status line:
+#
+#     <!-- status: verified | tests: 110 dune / 14 suites | last_verified: 2026-10-04 -->
+#
+# This checks two things:
+#
+#   1. every repo in the workspace HAS such a line (a missing block is drift --
+#      an unstated status reads as an unverified one);
+#   2. the `last_verified:` date is not in the future, which catches a typo'd or
+#      copy-pasted date before it becomes a claim nobody checked.
+#
+# It deliberately does NOT re-run the suites. Counting tests differs per project
+# (cargo test, dune runtest, pytest) and a gate that shells into all of them is a
+# slow gate that gets skipped. The command behind each number is documented in
+# that repo's README Verification section; this checks that the claim exists and
+# is internally sane. Recomputing the counts is a job for each repo's own CI,
+# which already runs them.
+#
+# Usage:  scripts/check-status
+# Exit:   0 clean, 1 on a missing/invalid status block.
+
+set -uo pipefail
+
+find_root() {
+  local dir n c
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$dir" != / ]; do
+    n=0
+    for c in "$dir"/*/; do
+      [ -d "${c}.git" ] && n=$((n + 1))
+    done
+    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
+    dir="$(dirname "$dir")"
+  done
+  echo "cannot locate the workspace root" >&2
+  return 1
+}
+root="$(find_root)"
+
+# Repos that must carry a status block, and the README to look in.
+REPOS="australVM dynamic-arctic emthin unfer velysterm timepiece test"
+
+today="$(date +%F)"
+fail=0
+checked=0
+
+printf 'check-status: status blocks (today %s)\n' "$today"
+
+for repo in $REPOS; do
+  dir="$root/$repo"
+  [ -d "$dir/.git" ] || { printf 'skip %-16s (not a checkout)\n' "$repo"; continue; }
+
+  block=""
+  for f in README.md README; do
+    [ -f "$dir/$f" ] || continue
+    block="$(grep -m1 -oE '<!-- status: [^>]*-->' "$dir/$f" || true)"
+    [ -n "$block" ] && break
+  done
+
+  if [ -z "$block" ]; then
+    printf 'FAIL %-16s no status block in README\n' "$repo"
+    fail=1
+    continue
+  fi
+  checked=$((checked + 1))
+
+  for field in status tests last_verified; do
+    if ! printf '%s' "$block" | grep -qE "$field: [^ ]"; then
+      printf 'FAIL %-16s status block missing "%s:"\n' "$repo" "$field"
+      printf '       %s\n' "$block"
+      fail=1
+    fi
+  done
+
+  date_field="$(printf '%s' "$block" | grep -oE 'last_verified: [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -d' ' -f2)"
+  if [ -n "$date_field" ] && [ "$date_field" \> "$today" ]; then
+    printf 'FAIL %-16s last_verified %s is in the future\n' "$repo" "$date_field"
+    fail=1
+    continue
+  fi
+
+  # Age is reported, not enforced: a stale-but-honest date is information, and
+  # turning it into a hard failure only teaches people to bump the date without
+  # running anything.
+  if [ -n "$date_field" ]; then
+    age_days=$(( ( $(date -d "$today" +%s) - $(date -d "$date_field" +%s) ) / 86400 ))
+    if [ "$age_days" -gt 180 ]; then
+      printf 'WARN %-15s last verified %s (%d days ago)\n' "$repo" "$date_field" "$age_days"
+    fi
+  fi
+
+  printf 'ok   %-16s %s\n' "$repo" "$block"
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo >&2
+  echo "check-status: a status block is missing or malformed. Add one to the" >&2
+  echo "repo's README after actually running its suite:" >&2
+  echo >&2
+  echo '    <!-- status: verified | tests: <n> <cmd> | last_verified: YYYY-MM-DD -->' >&2
+  exit 1
+fi
+
+printf 'check-status: %d repo(s) carry a status block\n' "$checked"
