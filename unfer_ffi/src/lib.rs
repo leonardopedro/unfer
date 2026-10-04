@@ -3834,6 +3834,14 @@ mod tests {
         let _lock = BLUEPRINT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Also the durable lock, even though this test never resets durable
+        // state. `uk_*` answers UK-1010 when it finds an unresolved
+        // unknown-outcome action, and that latch is a process-global that
+        // `resolved_checkpoint_failure_surfaces_unknown_outcome` populates
+        // deliberately. Without this guard the two tests race, and a full
+        // `cargo test --workspace` fails with `gadget 2 must answer:
+        // -1010 != 0` -- reproducibly, in 3 of 3 runs when run as a pair.
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unfer_data::blueprint::clear_global_registry();
         uk_clear_caller();
 
