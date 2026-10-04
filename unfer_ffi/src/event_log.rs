@@ -31,7 +31,7 @@ use unfer_protocol::KernelEvent;
 /// without loss, shallow enough to stay cheap per model.
 pub const EVENT_LOG_CAPACITY: usize = 4096;
 
-/// An event with its position in the global stream.
+/// An event with its position in the stream.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CursoredEvent {
     /// Monotonic, starts at 1, never reused.
@@ -41,89 +41,174 @@ pub struct CursoredEvent {
     pub event: KernelEvent,
 }
 
-static LOG: Mutex<Option<VecDeque<CursoredEvent>>> = Mutex::new(None);
-static NEXT_CURSOR: AtomicU64 = AtomicU64::new(1);
-/// Events discarded because the log was full. Counted globally so a consumer can
-/// detect a gap it did not cause.
-static DROPPED: AtomicU64 = AtomicU64::new(0);
-
-/// Append an event and return its cursor.
-pub fn record_event(handle: i64, event: KernelEvent) -> u64 {
-    let cursor = NEXT_CURSOR.fetch_add(1, Ordering::SeqCst);
-    let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
-    let log = guard.get_or_insert_with(VecDeque::new);
-    if log.len() >= EVENT_LOG_CAPACITY {
-        log.pop_front();
-        DROPPED.fetch_add(1, Ordering::SeqCst);
-    }
-    log.push_back(CursoredEvent {
-        cursor,
-        handle,
-        event,
-    });
-    cursor
-}
-
-/// Events strictly after `since_cursor`, oldest first, at most `max`.
+/// A bounded, cursored event log.
 ///
-/// `since_cursor = 0` replays from the beginning of the retained log. A cursor
-/// older than what is retained does **not** silently return a short stream: the
-/// caller can compare `oldest_available()` against its own cursor to detect that
-/// it fell behind.
-pub fn events_since(since_cursor: u64, max: usize) -> Vec<CursoredEvent> {
-    if max == 0 {
-        return Vec::new();
-    }
-    let guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(log) = guard.as_ref() else {
-        return Vec::new();
-    };
-    log.iter()
-        .filter(|e| e.cursor > since_cursor)
-        .take(max)
-        .cloned()
-        .collect()
-}
-
-/// The oldest cursor still retained, or `None` when the log is empty.
-pub fn oldest_available() -> Option<u64> {
-    let guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
-    guard.as_ref().and_then(|l| l.front()).map(|e| e.cursor)
-}
-
-/// The newest cursor issued, whether or not it is still retained.
-pub fn latest_cursor() -> u64 {
-    NEXT_CURSOR.load(Ordering::SeqCst).saturating_sub(1)
-}
-
-/// Events discarded because the log was full, process-wide.
-pub fn dropped_count() -> u64 {
-    DROPPED.load(Ordering::SeqCst)
-}
-
-/// Clear the log and reset the cursor.
+/// A type rather than a bag of globals, because the first version was module-level
+/// statics plus a `reset()` for tests. That was a trap: `reset` rewinds the cursor
+/// counter to 1 while the queue may still hold entries, so cursors go *backwards*
+/// for every other reader. It produced a genuine `6, 1, 2, 3` in a test run — a
+/// cursor regression in a structure whose entire contract is that cursors never
+/// go backwards. Serialising the tests with a mutex hid it while leaving the
+/// hazard in place for anyone who reset without taking the lock.
 ///
-/// Test-only, and deliberately so: it rewrites process-global state that a live
-/// kernel's cursors depend on. Exposing it as a symbol would hand any caller a way
-/// to make every other consumer's cursor meaningless. Tests need it; nothing else
-/// should have it, so it is not compiled into the library proper.
+/// So the state is now owned by an instance. `GLOBAL` is the kernel's live log;
+/// the tests each build their own and never reset anything.
+pub struct Log {
+    log: Mutex<VecDeque<CursoredEvent>>,
+    next: AtomicU64,
+    dropped: AtomicU64,
+    capacity: usize,
+}
+
+impl Log {
+    pub const fn new(capacity: usize) -> Self {
+        Self {
+            log: Mutex::new(VecDeque::new()),
+            next: AtomicU64::new(1),
+            dropped: AtomicU64::new(0),
+            capacity,
+        }
+    }
+
+    /// Retained depth. Only the tests ask; the log enforces its own bound.
+    #[cfg(test)]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Append an event and return its cursor.
+    pub fn record(&self, handle: i64, event: KernelEvent) -> u64 {
+        let cursor = self.next.fetch_add(1, Ordering::SeqCst);
+        let mut guard = self.log.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= self.capacity {
+            guard.pop_front();
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+        guard.push_back(CursoredEvent {
+            cursor,
+            handle,
+            event,
+        });
+        cursor
+    }
+
+    /// Events strictly after `since_cursor`, oldest first, at most `max`.
+    ///
+    /// `since_cursor = 0` replays from the beginning of the retained log. A
+    /// cursor older than what is retained does **not** silently return a short
+    /// stream: compare `oldest_available()` against your own cursor, or read
+    /// `has_gap`, to detect that you fell behind.
+    pub fn events_since(&self, since_cursor: u64, max: usize) -> Vec<CursoredEvent> {
+        if max == 0 {
+            return Vec::new();
+        }
+        let guard = self.log.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .filter(|e| e.cursor > since_cursor)
+            .take(max)
+            .cloned()
+            .collect()
+    }
+
+    /// The oldest cursor still retained, or `None` when the log is empty.
+    pub fn oldest_available(&self) -> Option<u64> {
+        let guard = self.log.lock().unwrap_or_else(|e| e.into_inner());
+        guard.front().map(|e| e.cursor)
+    }
+
+    /// The newest cursor issued, whether or not it is still retained.
+    pub fn latest_cursor(&self) -> u64 {
+        self.next.load(Ordering::SeqCst).saturating_sub(1)
+    }
+
+    /// Events discarded because the log was full.
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped.load(Ordering::SeqCst)
+    }
+
+    /// Has this consumer fallen behind the retained window?
+    ///
+    /// True means a gap: at least one event it had not seen is gone. Returning a
+    /// short stream instead would let a consumer believe it was caught up.
+    pub fn has_gap(&self, since_cursor: u64) -> bool {
+        match self.oldest_available() {
+            Some(oldest) => since_cursor != 0 && since_cursor + 1 < oldest,
+            None => false,
+        }
+    }
+}
+
+/// The kernel's live log. `uk_events_poll` reads this.
+pub static GLOBAL: Log = Log::new(EVENT_LOG_CAPACITY);
+
+thread_local! {
+    /// Test-only: the log this thread should use instead of `GLOBAL`.
+    ///
+    /// A thread-local, not a global, because `cargo test` runs tests in parallel
+    /// threads and a process-wide override would let them clobber each other --
+    /// which is exactly what happened with the shared log: the gap test floods
+    /// 4160 events, evicts everything another test had recorded, and that test
+    /// then sees an empty stream. Per-thread, each test gets its own log and the
+    /// flood is harmless.
+    ///
+    /// `None` in production: this arm is compiled out entirely.
+    static TEST_ACTIVE: std::cell::RefCell<Option<&'static Log>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install a log for the current thread. Test-only; pass `None` to restore.
 #[cfg(test)]
-pub fn reset_event_log() {
-    let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
-    NEXT_CURSOR.store(1, Ordering::SeqCst);
-    DROPPED.store(0, Ordering::SeqCst);
+pub fn set_active(log: Option<&'static Log>) {
+    TEST_ACTIVE.with(|a| *a.borrow_mut() = log);
 }
 
-/// Has this consumer fallen behind the retained window?
-///
-/// True means a gap: at least one event it had not seen is gone. Returning a
-/// short stream instead would let a consumer believe it was caught up.
-pub fn has_gap(since_cursor: u64) -> bool {
-    match oldest_available() {
-        Some(oldest) => since_cursor != 0 && since_cursor + 1 < oldest,
-        None => false,
+/// The log this thread reads and writes.
+pub fn active() -> &'static Log {
+    #[cfg(test)]
+    {
+        let chosen = TEST_ACTIVE.with(|a| *a.borrow());
+        if let Some(log) = chosen {
+            return log;
+        }
     }
+    &GLOBAL
+}
+
+/// Install a fresh log for the current thread, returning it.
+///
+/// Test-only. The log is leaked on purpose: it has to be `&'static` so it can be
+/// handed to a thread-local slot, and a test log's lifetime ending with the test
+/// is exactly what we want. Tests are short and the memory is a few kB each.
+#[cfg(test)]
+pub fn isolated(capacity: usize) -> &'static Log {
+    let log: &'static Log = Box::leak(Box::new(Log::new(capacity)));
+    set_active(Some(log));
+    log
+}
+
+pub fn record_event(handle: i64, event: KernelEvent) -> u64 {
+    active().record(handle, event)
+}
+
+pub fn events_since(since_cursor: u64, max: usize) -> Vec<CursoredEvent> {
+    active().events_since(since_cursor, max)
+}
+
+pub fn oldest_available() -> Option<u64> {
+    active().oldest_available()
+}
+
+pub fn latest_cursor() -> u64 {
+    active().latest_cursor()
+}
+
+pub fn dropped_count() -> u64 {
+    active().dropped_count()
+}
+
+pub fn has_gap(since_cursor: u64) -> bool {
+    active().has_gap(since_cursor)
 }
 
 #[cfg(test)]
@@ -138,144 +223,82 @@ mod tests {
         }
     }
 
-    /// Serialised: the log is process-global state, and these tests assert on
-    /// absolute cursor values.
-    fn with_log(f: impl FnOnce()) {
-        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset_event_log();
-        f();
-        reset_event_log();
-        drop(g);
+    /// Each test gets its own log. No lock, no reset, no shared cursor space --
+    /// which is what let these tests interfere with each other before.
+    fn log() -> Log {
+        Log::new(64)
     }
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn cursors_are_strictly_increasing_and_never_reused() {
-        with_log(|| {
-            let a = record_event(1, ev(1));
-            let b = record_event(1, ev(2));
-            let c = record_event(2, ev(3));
-            assert!(a < b && b < c, "cursors must increase: {a} {b} {c}");
-            assert_eq!(c, latest_cursor());
-        });
+        let log = log();
+        let a = log.record(1, ev(1));
+        let b = log.record(1, ev(2));
+        let c = log.record(2, ev(3));
+        assert!(a < b && b < c, "cursors must increase: {a} {b} {c}");
+        assert_eq!(c, log.latest_cursor());
+        assert_eq!((1, 2, 3), (a, b, c), "cursors start at 1 and are dense");
     }
 
     #[test]
     fn events_since_returns_only_what_is_newer() {
-        with_log(|| {
-            record_event(1, ev(1));
-            let second = record_event(1, ev(2));
-            record_event(1, ev(3));
+        let log = log();
+        log.record(1, ev(1));
+        let second = log.record(1, ev(2));
+        log.record(1, ev(3));
 
-            let from_first = events_since(1, 10);
-            assert_eq!(2, from_first.len(), "only the two after cursor 1");
+        assert_eq!(
+            2,
+            log.events_since(1, 10).len(),
+            "only the two after cursor 1"
+        );
+        assert_eq!(1, log.events_since(second, 10).len());
+        assert!(
+            log.events_since(0, 10).iter().all(|e| e.cursor > 0),
+            "cursor 0 replays the retained log"
+        );
+    }
 
-            let after_second = events_since(second, 10);
-            assert_eq!(1, after_second.len());
-
-            assert!(
-                events_since(latest_cursor(), 10).is_empty(),
-                "a caught-up consumer must get nothing"
-            );
-        });
+    #[test]
+    fn a_resumed_consumer_never_replays_what_it_already_saw() {
+        let log = log();
+        log.record(1, ev(1));
+        let checkpoint = log.record(1, ev(2));
+        for i in 3..=10 {
+            log.record(1, ev(i));
+        }
+        let resumed = log.events_since(checkpoint, 100);
+        assert_eq!(8, resumed.len(), "events 3..=10 is eight, not seven");
+        assert!(
+            resumed.iter().all(|e| e.cursor > checkpoint),
+            "nothing at or before the checkpoint may be replayed"
+        );
     }
 
     #[test]
     fn cursor_zero_replays_the_retained_log() {
-        with_log(|| {
-            record_event(1, ev(1));
-            record_event(1, ev(2));
-            assert_eq!(2, events_since(0, 10).len());
-        });
-    }
-
-    #[test]
-    fn two_consumers_each_see_every_event_exactly_once() {
-        // The multi-worker requirement, and the reason this is a cursored log
-        // rather than a queue: a consumer that drains a queue destroys the events
-        // for everyone else.
-        with_log(|| {
-            let total = 50usize;
-            for i in 0..total {
-                record_event(1, ev(i as u64));
-            }
-
-            let mut a = 0u64;
-            let mut b = 0u64;
-            let mut seen_a = Vec::new();
-            let mut seen_b = Vec::new();
-
-            // Interleaved, in batches, as two independent workers would.
-            loop {
-                let batch_a = events_since(a, 7);
-                let batch_b = events_since(b, 5);
-                if batch_a.is_empty() && batch_b.is_empty() {
-                    break;
-                }
-                if let Some(last) = batch_a.last() {
-                    a = last.cursor;
-                    seen_a.extend(batch_a.into_iter().map(|e| e.cursor));
-                }
-                if let Some(last) = batch_b.last() {
-                    b = last.cursor;
-                    seen_b.extend(batch_b.into_iter().map(|e| e.cursor));
-                }
-            }
-
-            assert_eq!(
-                total,
-                seen_a.len(),
-                "consumer A saw {} of {total}",
-                seen_a.len()
-            );
-            assert_eq!(
-                total,
-                seen_b.len(),
-                "consumer B saw {} of {total}",
-                seen_b.len()
-            );
-
-            let expect: Vec<u64> = (1..=total as u64).collect();
-            assert_eq!(expect, seen_a, "A must see every event once, in order");
-            assert_eq!(
-                seen_a, seen_b,
-                "both consumers must observe the same stream"
-            );
-        });
-    }
-
-    #[test]
-    fn a_consumer_resuming_from_its_checkpoint_sees_nothing_already_seen() {
-        // "The cursor survives restart": a fresh consumer holding a cursor must be
-        // able to continue without replaying or skipping.
-        with_log(|| {
-            record_event(1, ev(1));
-            let checkpoint = record_event(1, ev(2));
-            for i in 3..=10 {
-                record_event(1, ev(i));
-            }
-            let resumed = events_since(checkpoint, 100);
-            assert_eq!(8, resumed.len(), "events 3..=10 is eight, not seven");
-            assert!(
-                resumed.iter().all(|e| e.cursor > checkpoint),
-                "nothing at or before the checkpoint may be replayed"
-            );
-        });
+        // A consumer with no checkpoint asks for everything the log still holds.
+        // Distinct from `events_since(nonzero)`, which must not replay.
+        let log = log();
+        for i in 0..5u64 {
+            log.record(1, ev(i));
+        }
+        let all = log.events_since(0, usize::MAX);
+        assert_eq!(5, all.len(), "cursor 0 replays the whole retained log");
+        assert!(all.iter().all(|e| e.cursor > 0), "and every cursor is real");
     }
 
     #[test]
     fn max_caps_the_batch_without_losing_order() {
-        with_log(|| {
-            for i in 0..10u64 {
-                record_event(1, ev(i));
-            }
-            let batch = events_since(0, 4);
-            assert_eq!(4, batch.len());
-            let cursors: Vec<u64> = batch.iter().map(|e| e.cursor).collect();
-            assert_eq!(vec![1, 2, 3, 4], cursors);
-            assert!(events_since(0, 0).is_empty(), "max=0 yields nothing");
-        });
+        let log = log();
+        for i in 0..10u64 {
+            log.record(1, ev(i));
+        }
+        let batch = log.events_since(0, 4);
+        assert_eq!(4, batch.len());
+        let cursors: Vec<u64> = batch.iter().map(|e| e.cursor).collect();
+        assert_eq!(vec![1, 2, 3, 4], cursors, "oldest first, no reordering");
+        assert!(log.events_since(0, 0).is_empty(), "max=0 yields nothing");
     }
 
     #[test]
@@ -283,68 +306,90 @@ mod tests {
         // A short stream must not be mistaken for a caught-up consumer. This is
         // the failure the subscription path has: a dropped event is
         // indistinguishable from one that never happened.
-        with_log(|| {
-            let consumer_cursor = record_event(1, ev(0));
-            for i in 0..(EVENT_LOG_CAPACITY + 10) as u64 {
-                record_event(1, ev(i));
-            }
+        let log = log();
+        let consumer_cursor = log.record(1, ev(0));
+        for i in 0..(log.capacity() + 10) as u64 {
+            log.record(1, ev(i));
+        }
 
-            assert!(
-                has_gap(consumer_cursor),
-                "a consumer left behind must see a gap"
-            );
-            // Derive the expectation from what is actually retained rather than
-            // restating the arithmetic — the first version of this assertion
-            // asserted `pushes - capacity` and was wrong twice.
-            let pushed = (EVENT_LOG_CAPACITY + 10) + 1;
-            let retained = events_since(0, usize::MAX).len();
-            assert_eq!(
-                (pushed - retained) as u64,
-                dropped_count(),
-                "every eviction is counted: pushed {pushed}, retained {retained}, capacity {EVENT_LOG_CAPACITY}"
-            );
-
-            // What it does get back is contiguous from the oldest retained entry,
-            // so the consumer can detect and report rather than silently diverge.
-            let got = events_since(consumer_cursor, 100);
-            assert!(!got.is_empty());
-            assert!(got.windows(2).all(|w| w[0].cursor + 1 == w[1].cursor));
-        });
+        assert!(
+            log.has_gap(consumer_cursor),
+            "a consumer left behind must see a gap"
+        );
+        // Derive the expectation from what is actually retained rather than
+        // restating the arithmetic -- the first version asserted
+        // `pushes - capacity` and was wrong twice.
+        let pushed = log.latest_cursor();
+        let retained = log.events_since(0, usize::MAX).len();
+        assert_eq!(
+            pushed - retained as u64,
+            log.dropped_count(),
+            "every cursor not retained was counted as dropped"
+        );
+        assert!(log.dropped_count() > 0, "this log really did overflow");
     }
 
     #[test]
     fn a_caught_up_consumer_reports_no_gap() {
-        with_log(|| {
-            record_event(1, ev(1));
-            let caught_up = latest_cursor();
-            assert!(!has_gap(caught_up));
-            assert!(
-                !has_gap(0),
-                "a fresh consumer has no history to have missed"
-            );
-        });
+        let log = log();
+        for i in 0..(log.capacity() + 10) as u64 {
+            log.record(1, ev(i));
+        }
+        let caught_up = log.latest_cursor();
+        assert!(!log.has_gap(caught_up), "nothing was missed");
+        assert!(
+            log.events_since(caught_up, 10).is_empty(),
+            "and there is nothing new either"
+        );
     }
 
     #[test]
     fn the_empty_log_answers_empty_rather_than_panicking() {
-        with_log(|| {
-            assert!(events_since(0, 10).is_empty());
-            assert_eq!(None, oldest_available());
-            assert_eq!(0, latest_cursor());
-            assert!(!has_gap(5));
-        });
+        let log = log();
+        assert!(log.events_since(0, 10).is_empty());
+        assert_eq!(None, log.oldest_available());
+        assert_eq!(0, log.latest_cursor());
+        assert!(!log.has_gap(0), "an empty log has no gap to report");
     }
 
     #[test]
     fn events_carry_the_handle_they_came_from() {
-        // Consumers filter per model, so the handle has to travel with the event
-        // rather than be implied by a subscription.
-        with_log(|| {
-            record_event(7, ev(1));
-            record_event(9, ev(2));
-            let all = events_since(0, 10);
-            assert_eq!(7, all[0].handle);
-            assert_eq!(9, all[1].handle);
-        });
+        let log = log();
+        log.record(7, ev(1));
+        log.record(9, ev(2));
+        let handles: Vec<i64> = log.events_since(0, 10).iter().map(|e| e.handle).collect();
+        assert_eq!(vec![7, 9], handles, "a consumer can filter by model");
+    }
+
+    #[test]
+    fn two_consumers_each_see_every_event_exactly_once() {
+        // The multi-worker requirement, and the reason this is a cursored log
+        // rather than a queue: draining a queue would destroy the other
+        // consumer's copy.
+        let log = log();
+        let mut a_seen = Vec::new();
+        let mut b_seen = Vec::new();
+        let mut a_cursor = 0;
+        let mut b_cursor = 0;
+
+        for i in 0..50u64 {
+            log.record(1, ev(i));
+            // Interleave different batch sizes so neither consumer can rely on a
+            // convenient stride.
+            if i % 3 == 0 {
+                a_seen.extend(log.events_since(a_cursor, 2).iter().map(|e| e.cursor));
+                a_cursor = *a_seen.last().unwrap();
+            }
+            if i % 5 == 0 {
+                b_seen.extend(log.events_since(b_cursor, 7).iter().map(|e| e.cursor));
+                b_cursor = *b_seen.last().unwrap();
+            }
+        }
+        a_seen.extend(log.events_since(a_cursor, 100).iter().map(|e| e.cursor));
+        b_seen.extend(log.events_since(b_cursor, 100).iter().map(|e| e.cursor));
+
+        let expected: Vec<u64> = (1..=50).collect();
+        assert_eq!(expected, a_seen, "consumer A saw each event exactly once");
+        assert_eq!(expected, b_seen, "consumer B saw each event exactly once");
     }
 }

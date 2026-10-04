@@ -3262,27 +3262,25 @@ pub extern "C" fn uk_events_poll(model: i64, cursor_ptr: *const u8, cursor_len: 
 mod tests {
     /// C1 `uk_events_poll`: the FFI/JSON layer over the cursored log.
     ///
-    /// Serialised on `DURABLE_TESTS_LOCK` because the log is process-global and
-    /// `cargo test` runs these in parallel threads. The log's own unit tests are
-    /// self-contained and need no lock; assertions about `latest_cursor` or
-    /// `gap` are not, because another test's events move those.
+    /// Each test installs its own log via `own_log`.
+    ///
+    /// Two earlier attempts at sharing are worth recording, because both failed in
+    /// ways that looked like kernel bugs:
+    ///
+    /// 1. `DURABLE_TESTS_LOCK` deadlocked the suite -- these tests held it across
+    ///    calls that take handle mutexes, while the durable tests take those
+    ///    mutexes and *then* that lock (ABBA). Six unrelated tests hung past 60s.
+    /// 2. The process-wide log itself cannot host parallel tests. The gap test
+    ///    floods 4160 events to force eviction, which evicts whatever another test
+    ///    recorded, and that test then reads an empty stream. Serialising with a
+    ///    mutex only hides it, and `reset()` made it worse: rewinding the cursor
+    ///    counter while entries remain produced a real `6, 1, 2, 3` -- cursors going
+    ///    *backwards* in a structure whose whole contract is that they never do.
+    ///
+    /// So the log is now a type, and a thread-local override (compiled out of
+    /// production) gives each test an isolated instance.
     mod events_poll_tests {
         use super::*;
-
-        /// Serialises these tests against *each other*, and nothing else.
-        ///
-        /// I first used DURABLE_TESTS_LOCK here, which deadlocked the suite: these
-        /// tests hold it across calls that take handle mutexes, while the durable
-        /// tests take those mutexes and *then* DURABLE_TESTS_LOCK (ABBA). Six
-        /// unrelated tests hung for over 60s.
-        ///
-        /// It is not needed. Every assertion here is scoped to a model handle this
-        /// test just created, and handles are unique among live models, so another
-        /// test's events cannot appear in this stream. The only process-wide values
-        /// asserted are ones another test can only move monotonically
-        /// (latest_cursor) or not at all. So a private lock is the right scope:
-        /// it excludes my own tests, whose reset_event_log would otherwise race.
-        static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
         /// Poll, then read the reply payload the way a real caller would.
         fn poll(model: i64, body: &str) -> serde_json::Value {
@@ -3300,6 +3298,17 @@ mod tests {
             let h = create_harmonic_model();
             assert!(h > 0, "create_harmonic_model failed");
             h
+        }
+
+        /// Give this test its own log.
+        ///
+        /// These tests exercise the FFI layer, which reads the process-wide log.
+        /// Sharing it deadlocks nothing but destroys results: the gap test floods
+        /// 4160 events to force eviction, which evicts whatever a parallel test had
+        /// recorded, and that test then reads an empty stream. An installed
+        /// thread-local log keeps the flood contained.
+        fn own_log(capacity: usize) -> &'static event_log::Log {
+            event_log::isolated(capacity)
         }
 
         /// Events already in the log for this model.
@@ -3320,8 +3329,7 @@ mod tests {
 
         #[test]
         fn a_poll_returns_events_and_advances_the_cursor() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let m = fresh_model();
             let base = baseline(m);
             event_log::record_event(m, KernelEvent::PriorSet);
@@ -3362,8 +3370,7 @@ mod tests {
 
         #[test]
         fn polling_from_the_last_cursor_returns_nothing_and_repeats_no_event() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let m = fresh_model();
             let base = baseline(m);
             event_log::record_event(m, KernelEvent::PriorSet);
@@ -3388,8 +3395,7 @@ mod tests {
 
         #[test]
         fn a_consumer_that_fell_behind_is_told_it_has_a_gap() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(event_log::EVENT_LOG_CAPACITY);
             let m = fresh_model();
 
             // Overflow the bounded log so the earliest events are evicted.
@@ -3418,8 +3424,7 @@ mod tests {
 
         #[test]
         fn max_caps_the_batch_and_says_so() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let m = fresh_model();
             let base = baseline(m);
             for _ in 0..10 {
@@ -3446,8 +3451,7 @@ mod tests {
 
         #[test]
         fn a_poll_only_returns_events_for_the_model_asked_about() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let mine = fresh_model();
             let other = fresh_model();
             let base = baseline(mine);
@@ -3473,8 +3477,7 @@ mod tests {
 
         #[test]
         fn an_empty_body_replays_the_retained_log() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let m = fresh_model();
             let base = baseline(m);
             event_log::record_event(m, KernelEvent::PriorSet);
@@ -3489,8 +3492,8 @@ mod tests {
 
         #[test]
         fn a_malformed_body_is_rejected_with_a_diagnostic() {
+            let _log = own_log(512);
             let _lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let m = fresh_model();
             let body = "{not json";
             let (p, l) = json_ptr(body);
@@ -3503,8 +3506,7 @@ mod tests {
 
         #[test]
         fn the_hard_ceiling_cannot_be_lifted_by_a_hostile_max() {
-            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            event_log::reset_event_log();
+            let _log = own_log(512);
             let m = fresh_model();
             let base = baseline(m);
             for _ in 0..8 {
