@@ -1435,7 +1435,7 @@ fn engram_key(unf: u64, weight: Option<f64>) -> Vec<u8> {
     let mut k = vec![0u8; 84];
     k[0..4].copy_from_slice(b"ENGM");
     k[4..6].copy_from_slice(&1u16.to_le_bytes()); // layout version
-    k[6] = 0;                                    // granularity: sentence
+    k[6] = 0; // granularity: sentence
     k[32..40].copy_from_slice(&unf.to_le_bytes());
     k[76..84].copy_from_slice(&weight.unwrap_or(f64::NAN).to_le_bytes());
     k
@@ -1452,7 +1452,10 @@ fn engram_store_then_lookup_round_trips_the_weight() {
         read_error()
     );
     let stored: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
-    assert_eq!(stored["entries"], 1, "the store result reports the table size: {stored}");
+    assert_eq!(
+        stored["entries"], 1,
+        "the store result reports the table size: {stored}"
+    );
     assert_eq!(stored["replaced"], serde_json::Value::Null, "{stored}");
 
     assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84), "{}", read_error());
@@ -1469,11 +1472,21 @@ fn engram_store_replaces_so_reingesting_is_idempotent() {
     // sentence twice must not make it twice as likely.
     let m = engram_model();
     let key = engram_key(0x0909_0909_0909_0909, Some(0.5));
-    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    assert_eq!(
+        0,
+        uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64)
+    );
     let r: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
-    assert_eq!(r["replaced"], serde_json::Value::Null, "first store displaces nothing: {r}");
+    assert_eq!(
+        r["replaced"],
+        serde_json::Value::Null,
+        "first store displaces nothing: {r}"
+    );
 
-    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    assert_eq!(
+        0,
+        uk_engram_store(m, key.as_ptr(), 84, 0.5f64.to_bits() as i64)
+    );
     let r2: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
     // The collision is reported rather than silently swallowed...
     assert_eq!(r2["replaced"], 0.5, "{r2}");
@@ -1489,9 +1502,16 @@ fn a_miss_is_not_a_zero_weight() {
     // distinction `logos::engram` keeps a dedicated test for.
     let m = engram_model();
     let key = engram_key(0x0707_0707_0707_0707, Some(0.0));
-    assert_eq!(-4403, uk_engram_lookup(m, key.as_ptr(), 84), "UK-4403 RESOURCE_NOT_FOUND");
+    assert_eq!(
+        -4403,
+        uk_engram_lookup(m, key.as_ptr(), 84),
+        "UK-4403 RESOURCE_NOT_FOUND"
+    );
     // ...and a genuine zero weight, once stored, IS a hit.
-    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.0f64.to_bits() as i64));
+    assert_eq!(
+        0,
+        uk_engram_store(m, key.as_ptr(), 84, 0.0f64.to_bits() as i64)
+    );
     assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84));
     let r: serde_json::Value = serde_json::from_str(&read_result(m)).unwrap();
     assert_eq!(r["weight"], 0.0, "{r}");
@@ -1515,7 +1535,10 @@ fn engram_rejects_a_malformed_key_and_a_non_finite_weight() {
 fn engram_rejects_a_bad_handle() {
     let key = engram_key(1, Some(0.5));
     // UK-1004, consistent with every other symbol.
-    assert_eq!(-1004, uk_engram_store(99999, key.as_ptr(), 84, 0.5f64.to_bits() as i64));
+    assert_eq!(
+        -1004,
+        uk_engram_store(99999, key.as_ptr(), 84, 0.5f64.to_bits() as i64)
+    );
     assert_eq!(-1004, uk_engram_lookup(99999, key.as_ptr(), 84));
 }
 
@@ -1532,7 +1555,10 @@ fn engram_operations_emit_observable_events() {
 
     let key = engram_key(0x0404_0404_0404_0404, Some(0.25));
     let miss = engram_key(0x0505_0505_0505_0505, None);
-    assert_eq!(0, uk_engram_store(m, key.as_ptr(), 84, 0.25f64.to_bits() as i64));
+    assert_eq!(
+        0,
+        uk_engram_store(m, key.as_ptr(), 84, 0.25f64.to_bits() as i64)
+    );
     assert_eq!(0, uk_engram_lookup(m, key.as_ptr(), 84));
     assert_eq!(-4403, uk_engram_lookup(m, miss.as_ptr(), 84));
 
@@ -1545,13 +1571,24 @@ fn engram_operations_emit_observable_events() {
             break;
         }
         let mut buf = vec![0u8; needed as usize];
-        assert_eq!(needed, uk_poll(sub, buf.as_mut_ptr(), needed), "complete copy");
+        assert_eq!(
+            needed,
+            uk_poll(sub, buf.as_mut_ptr(), needed),
+            "complete copy"
+        );
         events.push(String::from_utf8_lossy(&buf).into_owned());
     }
 
     assert_eq!(events.len(), 3, "store + hit + miss, got {events:?}");
     let all = events.join("\n");
     assert_eq!(all.matches("engram_stored").count(), 1, "{all}");
-    assert_eq!(all.matches("engram_looked_up").count(), 2, "hit and miss both record: {all}");
-    assert!(all.contains(r#""weight":null"#), "the miss records no weight: {all}");
+    assert_eq!(
+        all.matches("engram_looked_up").count(),
+        2,
+        "hit and miss both record: {all}"
+    );
+    assert!(
+        all.contains(r#""weight":null"#),
+        "the miss records no weight: {all}"
+    );
 }

@@ -147,7 +147,10 @@ fn sirk_opts() -> SirkOpts {
 
 fn assert_hermitian(m: &DMatrix<Complex64>, label: &str) {
     let diff = (m - m.adjoint()).norm();
-    assert!(diff < 1e-9, "{label}: must be Hermitian, ‖M−M†‖ = {diff:.3e}");
+    assert!(
+        diff < 1e-9,
+        "{label}: must be Hermitian, ‖M−M†‖ = {diff:.3e}"
+    );
 }
 
 // ── operator-polynomial builders (mirror the private helpers of models.rs) ───
@@ -529,8 +532,7 @@ fn ns_lagrangian_canonical_ladder_realization() {
         "ns_lagrangian_canonical_ladder_realization: [P,Q]=−i, ω(N+3/2) exact; \
          f=0 max spectral error {err0:.2e}, f≠0 lowest-10 max error {errf:.2e}, \
          ground {:.6} (analytic {:.6})",
-        evf[0],
-        expectedf[0]
+        evf[0], expectedf[0]
     );
 }
 
@@ -670,7 +672,10 @@ fn ns_lagrangian_dGamma_enclosure_parcel_sectors() {
         "one-parcel ground {} must ≈ analytic {analytic_ground}",
         l1[0]
     );
-    assert!(l1[0] > 0.0, "h must be positive so the vacuum is the ground");
+    assert!(
+        l1[0] > 0.0,
+        "h must be positive so the vacuum is the ground"
+    );
     assert!(ev2[0] >= 2.0 * l1[0] - 1e-8, "two-parcel ground = 2λ_min");
 
     eprintln!(
@@ -703,8 +708,9 @@ fn ns_lagrangian_sirk_hashimoto_selection() {
         s
     };
 
-    let res = solve_forward_sirk_with_opts(&h, &start, &shifts(4), &best_device(), None, &sirk_opts())
-        .expect("Lagrangian SIRK solve");
+    let res =
+        solve_forward_sirk_with_opts(&h, &start, &shifts(4), &best_device(), None, &sirk_opts())
+            .expect("Lagrangian SIRK solve");
     assert_hermitian(&res.h_proj, "Lagrangian projected Hamiltonian");
     let n = res.h_proj.nrows();
     assert!(n >= 2, "projected Lagrangian matrix must be ≥ 2×2, got {n}");
@@ -714,7 +720,10 @@ fn ns_lagrangian_sirk_hashimoto_selection() {
     // in — number conservation keeps the Krylov space in sector 1), and the
     // shift-invert Krylov captures the analytic ground.
     let ritz = res.ritz_values();
-    assert!(ritz.iter().all(|r| r.is_finite()), "Ritz values must be finite");
+    assert!(
+        ritz.iter().all(|r| r.is_finite()),
+        "Ritz values must be finite"
+    );
     assert!(
         ritz[0] >= l1[0] - 1e-8,
         "Ritz values cannot dip below λ_min(h) = {}: got {}",
@@ -812,10 +821,7 @@ fn ns_lagrangian_sirk_hashimoto_selection() {
     eprintln!(
         "ns_lagrangian_sirk_hashimoto: projected {}×{} Hermitian, Ritz ground {:.6} \
          vs λ_min {:.6}; resolvent bound/identity/recovery all hold at γ = i·0.5, i·1, i·2",
-        n,
-        n,
-        ritz[0],
-        l1[0]
+        n, n, ritz[0], l1[0]
     );
 }
 
@@ -904,7 +910,10 @@ fn ns_lagrangian_ehrenfest_unitary_flow() {
         }
     }
     assert!(w0 < 1e-10, "vacuum sector must stay empty: weight {w0:e}");
-    assert!(w2 < 1e-10, "two-parcel sector must stay empty: weight {w2:e}");
+    assert!(
+        w2 < 1e-10,
+        "two-parcel sector must stay empty: weight {w2:e}"
+    );
     assert!((w1 - 1.0).abs() < 1e-8, "one-parcel sector weight: {w1}");
 
     // (c) Ehrenfest along the flow: a short-time finite difference of ⟨Q_0⟩
@@ -1108,8 +1117,9 @@ fn ns_lagrangian_volume_constraint_penalty() {
     // The shift family `evolve_restarted` itself uses (imaginary, `i(1+0.2j)`):
     // the generic `shifts_for_range` family produces a frame whose
     // reconstruction loses most of the norm on this operator.
-    let cons_shifts: Vec<Complex64> =
-        (0..4).map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2)).collect();
+    let cons_shifts: Vec<Complex64> = (0..4)
+        .map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2))
+        .collect();
     let res =
         solve_forward_sirk_with_opts(&hk, &start, &cons_shifts, &best_device(), None, &opts_c)
             .expect("constrained Lagrangian SIRK solve");

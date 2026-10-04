@@ -229,7 +229,11 @@ impl Session {
     /// A non-finite weight is rejected: NaN is the encoding this project uses
     /// for "no L1 annotation", so accepting it here would write an
     /// absent-weight into a table that is supposed to hold real masses.
-    pub fn engram_store(&mut self, key: [u8; E6_KEY_BYTES], weight: f64) -> Result<Option<f64>, String> {
+    pub fn engram_store(
+        &mut self,
+        key: [u8; E6_KEY_BYTES],
+        weight: f64,
+    ) -> Result<Option<f64>, String> {
         if !weight.is_finite() {
             return Err(format!(
                 "engram weight must be finite, got {weight} (NaN is this project's encoding for an absent weight, not a probability)"

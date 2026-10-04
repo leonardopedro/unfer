@@ -75,10 +75,7 @@ impl TokenIds {
 
     /// The ids of a fragment's surface tokens.
     pub fn sequence(&mut self, fragment: &str) -> Vec<u64> {
-        fragment
-            .split_whitespace()
-            .map(|t| self.id(t))
-            .collect()
+        fragment.split_whitespace().map(|t| self.id(t)).collect()
     }
 }
 
@@ -242,7 +239,10 @@ mod tests {
     fn lookups_scale_with_tokens_times_heads() {
         assert_eq!(surface_lookups(0), 0);
         assert_eq!(surface_lookups(1), NGRAM_SIZES.len() * HEADS_PER_NGRAM);
-        assert_eq!(surface_lookups(10), 10 * NGRAM_SIZES.len() * HEADS_PER_NGRAM);
+        assert_eq!(
+            surface_lookups(10),
+            10 * NGRAM_SIZES.len() * HEADS_PER_NGRAM
+        );
     }
 
     #[test]

@@ -576,7 +576,10 @@ pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: 
 /// `read_bytes`/`read_utf8` already classify a negative length or a null
 /// pointer — a wrong-length key is exactly that kind of fault, and inventing a
 /// new code for it would be a larger change than the fault warrants.
-fn read_engram_key(ptr: *const u8, len: i64) -> Result<[u8; prob_kernel::E6_KEY_BYTES], Diagnostic> {
+fn read_engram_key(
+    ptr: *const u8,
+    len: i64,
+) -> Result<[u8; prob_kernel::E6_KEY_BYTES], Diagnostic> {
     let bytes = read_bytes(ptr, len)?;
     if bytes.len() != prob_kernel::E6_KEY_BYTES {
         return Err(Diagnostic::new(
@@ -616,7 +619,12 @@ fn engram_unf_hex(key: &[u8]) -> String {
 /// a malformed key or a non-finite weight.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn uk_engram_store(model: i64, key_ptr: *const u8, key_len: i64, weight_bits: i64) -> i64 {
+pub extern "C" fn uk_engram_store(
+    model: i64,
+    key_ptr: *const u8,
+    key_len: i64,
+    weight_bits: i64,
+) -> i64 {
     ffi_entry("uk_engram_store", || {
         // Fresh result channel per call: a failure below must leave
         // `uk_get_result` EMPTY, never the previous op's result.
@@ -640,7 +648,11 @@ pub extern "C" fn uk_engram_store(model: i64, key_ptr: *const u8, key_len: i64, 
         handles::set_last_result(model, result_json);
         handles::push_event(
             model,
-            KernelEvent::EngramStored { unf_hash, weight, replaced },
+            KernelEvent::EngramStored {
+                unf_hash,
+                weight,
+                replaced,
+            },
         );
         Ok(0)
     })
@@ -678,7 +690,10 @@ pub extern "C" fn uk_engram_lookup(model: i64, key_ptr: *const u8, key_len: i64)
                 handles::set_last_result(model, result_json);
                 handles::push_event(
                     model,
-                    KernelEvent::EngramLookedUp { unf_hash, weight: Some(w) },
+                    KernelEvent::EngramLookedUp {
+                        unf_hash,
+                        weight: Some(w),
+                    },
                 );
                 Ok(0)
             }
@@ -687,7 +702,10 @@ pub extern "C" fn uk_engram_lookup(model: i64, key_ptr: *const u8, key_len: i64)
                 // sentence" shows up in the event log as a fact of its own.
                 handles::push_event(
                     model,
-                    KernelEvent::EngramLookedUp { unf_hash: unf_hash.clone(), weight: None },
+                    KernelEvent::EngramLookedUp {
+                        unf_hash: unf_hash.clone(),
+                        weight: None,
+                    },
                 );
                 Err(Diagnostic::new(
                     Code::RESOURCE_NOT_FOUND,

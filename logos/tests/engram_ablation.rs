@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use logos::engram::ablation::{
-    coverage_curve, surface_coverage, surface_lookups, unf_coverage, TokenIds,
+    TokenIds, coverage_curve, surface_coverage, surface_lookups, unf_coverage,
 };
 
 const CORPUS_REL: &str = "../../australVM/corpus/engram_keys.tsv";
@@ -49,7 +49,11 @@ fn corpus() -> Vec<Row> {
         if header {
             header = false;
             if f[0] != "group" {
-                panic!("{}: expected a `group` header, got {:?}", path.display(), f[0]);
+                panic!(
+                    "{}: expected a `group` header, got {:?}",
+                    path.display(),
+                    f[0]
+                );
             }
             continue;
         }
@@ -99,10 +103,7 @@ fn e4_keying_ablation_on_the_golden_corpus() {
     // ── arm (a): surface N-gram keys ──────────────────────────────────────
     let mut ids = TokenIds::new();
     let surface = surface_coverage(&mut ids, fragments.iter().copied());
-    let tokens: usize = fragments
-        .iter()
-        .map(|f| f.split_whitespace().count())
-        .sum();
+    let tokens: usize = fragments.iter().map(|f| f.split_whitespace().count()).sum();
 
     // ── arm (b): UNF keys, deduplicated by group ──────────────────────────
     let unf = unf_coverage(fragments.iter().copied(), |f| group_key(&groups, f));
@@ -224,7 +225,10 @@ fn surface_keys_cannot_deduplicate_a_paraphrase_but_unf_keys_can() {
 
     // Same meaning, different token order: surface keys land on different slots.
     // Both are *semantically* the same statement, which is the point.
-    assert_ne!(a, b, "surface keys must not dedup an anaphora-free reordering");
+    assert_ne!(
+        a, b,
+        "surface keys must not dedup an anaphora-free reordering"
+    );
 
     // Arm (b) given the same information must dedup it, because the reduction
     // happens before the key is formed. `group_key` stands in for the reducer.

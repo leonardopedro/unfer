@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use logos::engram::{segment, Granularity};
+use logos::engram::{Granularity, segment};
 use logos::lexicon::Lexicon;
 
 const CORPUS_REL: &str = "../../australVM/corpus/engram_keys.tsv";
@@ -74,11 +74,7 @@ fn parse_corpus() -> Option<Vec<Row>> {
             expect: f[4].to_string(),
         });
     }
-    if rows.is_empty() {
-        None
-    } else {
-        Some(rows)
-    }
+    if rows.is_empty() { None } else { Some(rows) }
 }
 
 fn granularity_of(s: &str) -> Option<Granularity> {
@@ -112,7 +108,9 @@ fn golden_collide_rows_share_a_hash() {
     // group -> member -> hash, per granularity
     let mut index: BTreeMap<(String, String, String), BTreeMap<String, [u8; 32]>> = BTreeMap::new();
     for r in &rows {
-        let Some(g) = granularity_of(&r.granularity) else { continue };
+        let Some(g) = granularity_of(&r.granularity) else {
+            continue;
+        };
         if let Some(h) = hash_of(&lex, &r.member, g, &r.field) {
             index
                 .entry((r.group.clone(), r.granularity.clone(), r.field.clone()))
@@ -123,7 +121,10 @@ fn golden_collide_rows_share_a_hash() {
     let mut checked = 0usize;
     for ((group, gran, field), members) in &index {
         if !rows.iter().any(|r| {
-            &r.group == group && r.expect == "collide" && &r.granularity == gran && &r.field == field
+            &r.group == group
+                && r.expect == "collide"
+                && &r.granularity == gran
+                && &r.field == field
         }) {
             continue;
         }
@@ -163,7 +164,9 @@ fn golden_distinct_rows_do_not_share_a_hash() {
         if !group_rows.iter().any(|r| r.expect == "distinct") {
             continue;
         }
-        let Some(g) = granularity_of(gran) else { continue };
+        let Some(g) = granularity_of(gran) else {
+            continue;
+        };
         let hashes: BTreeMap<&str, [u8; 32]> = group_rows
             .iter()
             .filter_map(|r| hash_of(&lex, &r.member, g, field).map(|h| (r.member.as_str(), h)))
@@ -171,7 +174,9 @@ fn golden_distinct_rows_do_not_share_a_hash() {
         // Compare each `distinct` member against every *other* member of the
         // group; it must not equal any of them.
         for row in group_rows.iter().filter(|r| r.expect == "distinct") {
-            let Some(mine) = hashes.get(row.member.as_str()) else { continue };
+            let Some(mine) = hashes.get(row.member.as_str()) else {
+                continue;
+            };
             for (other, theirs) in &hashes {
                 if *other == row.member.as_str() {
                     continue;
@@ -181,14 +186,9 @@ fn golden_distinct_rows_do_not_share_a_hash() {
                 // the surface string differing — which it does by construction.
                 if g != Granularity::Window {
                     assert_ne!(
-                        mine,
-                        theirs,
+                        mine, theirs,
                         "group `{}` at {} on `{}`: `{}` and `{}` collapsed to the same digest",
-                        group,
-                        gran,
-                        field,
-                        row.member,
-                        other
+                        group, gran, field, row.member, other
                     );
                 }
             }
@@ -268,7 +268,7 @@ fn lookup_is_granularity_partitioned() {
 
 #[test]
 fn ingest_reports_parse_rate_and_never_nan() {
-    use logos::engram::{placeholder_embedding, EngramTable};
+    use logos::engram::{EngramTable, placeholder_embedding};
     let Some(lex) = load_lexicon() else {
         eprintln!("skipping: lexicon not present");
         return;
@@ -282,14 +282,28 @@ fn ingest_reports_parse_rate_and_never_nan() {
     let stats = t.ingest(&corpus, &lex, placeholder_embedding);
     // Every granularity must appear and every ratio must be a real number: a
     // report containing NaN cannot be compared or charted.
-    for g in [Granularity::Window, Granularity::Subderiv, Granularity::Sentence] {
+    for g in [
+        Granularity::Window,
+        Granularity::Subderiv,
+        Granularity::Sentence,
+    ] {
         let d = *stats
             .dedup_ratio
             .get(&g)
             .expect("every granularity is reported");
-        assert!(d.is_finite() && (0.0..=1.0).contains(&d), "{:?} dedup {}", g, d);
+        assert!(
+            d.is_finite() && (0.0..=1.0).contains(&d),
+            "{:?} dedup {}",
+            g,
+            d
+        );
         let p = *stats.parse_rate.get(&g).expect("parse_rate is reported");
-        assert!(p.is_finite() && (0.0..=1.0).contains(&p), "{:?} parse_rate {}", g, p);
+        assert!(
+            p.is_finite() && (0.0..=1.0).contains(&p),
+            "{:?} parse_rate {}",
+            g,
+            p
+        );
     }
     // The unparseable fragment must drag the parse rate below 1 for the UNF
     // granularities — this is the metric doing its job.
@@ -302,7 +316,7 @@ fn ingest_reports_parse_rate_and_never_nan() {
 
 #[test]
 fn empty_corpus_reports_zero_not_nan() {
-    use logos::engram::{placeholder_embedding, EngramTable};
+    use logos::engram::{EngramTable, placeholder_embedding};
     let Some(lex) = load_lexicon() else {
         return;
     };
@@ -327,12 +341,7 @@ fn hedged_fragment_yields_a_normalized_weighted_key_set() {
         return;
     };
     let frag = "probably John loves Mary";
-    let wkeys = match l1keys::weighted_key_set(
-        frag,
-        Granularity::Sentence,
-        &lex,
-        &triggers(),
-    ) {
+    let wkeys = match l1keys::weighted_key_set(frag, Granularity::Sentence, &lex, &triggers()) {
         Ok(k) => k,
         // The hedged CNL surface may not parse with this lexicon; that is a
         // lexicon fact, not a contract failure. What must hold either way is
@@ -359,8 +368,16 @@ fn hedged_fragment_yields_a_normalized_weighted_key_set() {
     // the contract working: mass is conserved and the degradation is visible,
     // rather than the world being dropped and the hedge silently renormalized
     // into a different sentence.
-    let real_mass: f64 = wkeys.iter().filter(|w| !w.key.is_fallback()).map(|w| w.weight).sum();
-    let fallback_mass: f64 = wkeys.iter().filter(|w| w.key.is_fallback()).map(|w| w.weight).sum();
+    let real_mass: f64 = wkeys
+        .iter()
+        .filter(|w| !w.key.is_fallback())
+        .map(|w| w.weight)
+        .sum();
+    let fallback_mass: f64 = wkeys
+        .iter()
+        .filter(|w| w.key.is_fallback())
+        .map(|w| w.weight)
+        .sum();
     assert!(
         real_mass > 0.0,
         "at least one world must reduce through the UNF path"
@@ -380,7 +397,7 @@ fn hedged_fragment_yields_a_normalized_weighted_key_set() {
 
 #[test]
 fn aggregation_merges_coincident_keys_and_sums_their_mass() {
-    use logos::engram::l1keys::{aggregate, WeightedKey};
+    use logos::engram::l1keys::{WeightedKey, aggregate};
     // Two worlds that key identically must merge to their sum, which is the
     // whole reason E5 reuses `l1::aggregate_results` instead of reimplementing
     // it.
@@ -390,8 +407,15 @@ fn aggregation_merges_coincident_keys_and_sums_their_mass() {
     };
     let merged = aggregate(vec![mk(1, 0.3), mk(1, 0.5), mk(2, 0.2)]);
     assert_eq!(2, merged.len(), "two distinct keys survive");
-    let k1 = merged.iter().find(|w| w.key.unf_hash == mk(1, 0.0).key.unf_hash).unwrap();
-    assert!((k1.weight - 0.8).abs() < 1e-12, "0.3 + 0.5 = 0.8, got {}", k1.weight);
+    let k1 = merged
+        .iter()
+        .find(|w| w.key.unf_hash == mk(1, 0.0).key.unf_hash)
+        .unwrap();
+    assert!(
+        (k1.weight - 0.8).abs() < 1e-12,
+        "0.3 + 0.5 = 0.8, got {}",
+        k1.weight
+    );
     assert_eq!(Some(0.8), k1.key.l1_weight);
     // Sum-preserving.
     assert!((merged.iter().map(|w| w.weight).sum::<f64>() - 1.0).abs() < 1e-12);
@@ -413,8 +437,11 @@ fn a_genuine_zero_weight_is_not_an_absent_weight() {
     assert_eq!(0.0, wz);
     assert!(wa.is_nan());
     // …and the aggregate for a zero-mass key is still present, carrying 0.0.
-    use logos::engram::l1keys::{aggregate, WeightedKey};
-    let merged = aggregate(vec![WeightedKey { key: zero, weight: 0.0 }]);
+    use logos::engram::l1keys::{WeightedKey, aggregate};
+    let merged = aggregate(vec![WeightedKey {
+        key: zero,
+        weight: 0.0,
+    }]);
     assert_eq!(1, merged.len());
     assert_eq!(0.0, merged[0].weight);
     assert_eq!(Some(0.0), merged[0].key.l1_weight);
