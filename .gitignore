@@ -50,3 +50,7 @@ qfm_text_runs/**/*.qfm
 # Heavy-test run logs are ephemeral; keep only the cited ALL-GREEN evidence log.
 logs/*
 !logs/heavy_tests_20260823_201105.log
+
+# Python bytecode caches (X5 build-artifact hygiene): regenerated on every run.
+__pycache__/
+*.pyc
