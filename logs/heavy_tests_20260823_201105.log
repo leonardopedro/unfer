@@ -1,0 +1,26 @@
+=== fock_sirk cdb_hamiltonian_match --release --ignored ===
+   Compiling fock_sirk v0.1.0 (/home/leo/Projects/unfer/fock_sirk)
+    Finished `release` profile [optimized] target(s) in 1.29s
+     Running tests/cdb_hamiltonian_match.rs (/home/leo/Projects/unfer/target/release/deps/cdb_hamiltonian_match-e0cea26c8bcdfdaf)
+
+running 1 test
+test qym_abelian_limit_cas_photon_sirk ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.03s
+
+  [pass] fock_sirk cdb_hamiltonian_match --release --ignored
+=== fock_sirk latex_cas_hamiltonian_match --release --ignored ===
+    Finished `release` profile [optimized] target(s) in 0.15s
+     Running tests/latex_cas_hamiltonian_match.rs (/home/leo/Projects/unfer/target/release/deps/latex_cas_hamiltonian_match-a10ecc170fb93cd4)
+
+running 2 tests
+test qym_abelian_b2_cas_matches_builder ... ok
+test qym_abelian_b2_latex_dagger_structure ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.06s
+
+  [pass] fock_sirk latex_cas_hamiltonian_match --release --ignored
+=== qfm_text heavy tests (skipped) ===
+  checkpoint not mounted at /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/unfer/qfm_text_runs/m8_nohash_shard0_v3/checkpoint_epoch0.qfm — skipping oxieml_fit_real_w / print_c0
+  (mount the drive and re-run the script to include them)
+ALL HEAVY TESTS GREEN — see /home/leo/Projects/unfer/logs/heavy_tests_20260823_201105.log
