@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# X1 — drift gate for the shared LaTeX corpus.
+#
+# `timepiece/` is the source of record; `unfer/` holds a synced copy because its
+# tests read `unfer/book.tex` and `unfer/ODE.tex` by that path. Those two files
+# were byte-identical and nobody knew it, so the pair drifted apart silently
+# before this gate existed -- and 724 KB of duplicated LaTeX is exactly the kind
+# of thing that rots.
+#
+# Compares content, not timestamps: a stale mtime with matching bytes is fine.
+#
+# Usage:  scripts/check-book-sync
+# Exit:   0 in sync, 1 on drift or a missing file.
+
+set -uo pipefail
+
+# Locate the workspace root -- the directory holding the sibling checkouts --
+# by walking up from this script until several git checkouts are visible.
+# Deriving it as "the script's parent" is wrong once these live in
+# unfer/scripts/ rather than at the workspace root.
+find_root() {
+  local dir n c
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$dir" != / ]; do
+    n=0
+    for c in "$dir"/*/; do
+      [ -d "${c}.git" ] && n=$((n + 1))
+    done
+    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
+    dir="$(dirname "$dir")"
+  done
+  echo "cannot locate the workspace root from ${BASH_SOURCE[0]}" >&2
+  return 1
+}
+root="$(find_root)"
+
+FILES=(book.tex ODE.tex)
+drift=0
+
+printf 'book-sync: source of record = timepiece/, mirrored into unfer/\n'
+for f in "${FILES[@]}"; do
+  src="$root/timepiece/$f"
+  dst="$root/unfer/$f"
+
+  if [ ! -f "$src" ]; then
+    printf 'FAIL %-9s source of record missing: %s\n' "$f" "$src" >&2
+    drift=1
+    continue
+  fi
+  if [ ! -f "$dst" ]; then
+    printf 'FAIL %-9s mirror missing: %s\n' "$f" "$dst" >&2
+    printf '       run scripts/sync-book\n' >&2
+    drift=1
+    continue
+  fi
+
+  a="$(sha256sum "$src" | cut -d' ' -f1)"
+  b="$(sha256sum "$dst" | cut -d' ' -f1)"
+  if [ "$a" != "$b" ]; then
+    printf 'FAIL %-9s drifted\n' "$f" >&2
+    printf '       timepiece %s\n' "$a" >&2
+    printf '       unfer     %s\n' "$b" >&2
+    drift=1
+  else
+    printf 'ok   %-9s %s\n' "$f" "${a:0:16}"
+  fi
+done
+
+if [ "$drift" -ne 0 ]; then
+  echo >&2
+  echo "book-sync: timepiece/ is the source of record. After editing it, run:" >&2
+  echo "    scripts/sync-book" >&2
+  echo "and commit the unfer/ copy in the same commit." >&2
+  exit 1
+fi
+
+echo "book-sync: in sync"

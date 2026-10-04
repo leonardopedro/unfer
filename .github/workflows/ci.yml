@@ -39,6 +39,28 @@ jobs:
         run: bash scripts/verify-invariants
 
   # ---------------------------------------------------------------------------
+  # X1/X5 hygiene gates. Cheap, and they catch the class of drift that is
+  # invisible in review: a generated file committed before its ignore rule
+  # existed, and the shared LaTeX corpus diverging between the two repos that
+  # hold a copy.
+  #
+  # timepiece is checked out as a sibling because `scripts/check-book-sync`
+  # needs both sides to compare. It is the source of record for book.tex and
+  # ODE.tex; unfer/ carries a synced copy because its tests read it by that path.
+  # ---------------------------------------------------------------------------
+  hygiene-gates:
+    name: artifact + corpus drift gates (X1/X5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      - name: checkout timepiece as sibling (shared LaTeX source of record)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/timepiece.git ../timepiece
+      - name: no tracked build artifacts (X5)
+        run: bash scripts/tree-size
+      - name: book.tex / ODE.tex in sync (X1)
+        run: bash scripts/check-book-sync
+
+  # ---------------------------------------------------------------------------
   # Core: the unfer kernel workspace must build, lint and test on CPU.
   # This locks in the per-crate baselines recorded in IMPLEMENTATION_PLAN.md.
   # ---------------------------------------------------------------------------

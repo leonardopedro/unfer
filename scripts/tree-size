@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# X5 — build-artifact gate.
+#
+# Fails when a build directory, bytecode cache, or compiler-emitted report is
+# tracked in git. Written because .gitignore alone is not enough: a file
+# committed *before* the ignore rule was added stays tracked forever, which is
+# how a 1.2 MB generated `calltree.html` and a CPython `.pyc` came to sit in
+# two repos' histories.
+#
+# Usage:  scripts/tree-size [repo ...]      (defaults to every sibling checkout)
+# Exit:   0 clean, 1 if anything is tracked that should not be.
+
+set -uo pipefail
+
+# Locate the workspace root -- the directory holding the sibling checkouts --
+# by walking up from this script until several git checkouts are visible.
+# Deriving it as "the script's parent" is wrong once these live in
+# unfer/scripts/ rather than at the workspace root.
+find_root() {
+  local dir n c
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$dir" != / ]; do
+    n=0
+    for c in "$dir"/*/; do
+      [ -d "${c}.git" ] && n=$((n + 1))
+    done
+    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
+    dir="$(dirname "$dir")"
+  done
+  echo "cannot locate the workspace root from ${BASH_SOURCE[0]}" >&2
+  return 1
+}
+
+# Directories and files that are outputs, never sources. Matched against
+# repo-relative paths from `git ls-files`.
+PATTERNS='(^|/)(_build|target|node_modules|__pycache__|\.venv|venv)/|(^|/)(calltree|error)\.html$|\.py[co]$|(^|/)logs?/[^/]*\.log$|\.orig$|\.rej$|\.swp$|~$|(^|/)\.DS_Store$'
+
+# `qfm_text_runs/` is deliberately absent: its metrics.ndjson and train.log are
+# pinned experimental evidence cited by the test suites, not build detritus.
+
+if [ "$#" -gt 0 ]; then
+  roots=("$@")
+else
+  root="$(find_root)"
+  roots=()
+  for d in "$root"/*/; do
+    [ -d "${d}.git" ] && roots+=("${d%/}")
+  done
+fi
+
+[ "${#roots[@]}" -gt 0 ] || {
+  echo "tree-size: no git checkouts found" >&2
+  exit 0
+}
+
+total=0
+for repo in "${roots[@]}"; do
+  [ -d "$repo/.git" ] || {
+    echo "tree-size: skipping $repo (not a git checkout)" >&2
+    continue
+  }
+  hits="$(git -C "$repo" ls-files | grep -E "$PATTERNS" || true)"
+  if [ -n "$hits" ]; then
+    n="$(printf '%s\n' "$hits" | wc -l)"
+    total=$((total + n))
+    echo "FAIL $repo: $n tracked build artifact(s)" >&2
+    printf '%s\n' "$hits" | sed 's/^/       /' >&2
+    echo "       Untrack with: git -C $repo rm --cached <path>" >&2
+  else
+    echo "ok   $repo: no tracked build artifacts"
+  fi
+done
+
+if [ "$total" -gt 0 ]; then
+  echo >&2
+  echo "tree-size: $total tracked build artifact(s). These are generated; commit" >&2
+  echo "the .gitignore rule AND git rm --cached the file -- an ignore added later" >&2
+  echo "does not apply retroactively." >&2
+  exit 1
+fi
+
+echo "tree-size: clean"

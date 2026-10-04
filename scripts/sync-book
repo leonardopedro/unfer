@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# X1 — the shared LaTeX corpus has one source of record.
+#
+# `timepiece/` is the source: it hosts the book build and the Lean corpus the
+# text describes. `unfer/` keeps a copy because its tests and docs read
+# `unfer/book.tex` and `unfer/ODE.tex` by that path.
+#
+#   timepiece/book.tex  ──sync──▶  unfer/book.tex
+#   timepiece/ODE.tex   ──sync──▶  unfer/ODE.tex
+#
+# `check-book-sync` is the gate; this is the fix. Run it after editing the
+# source, and commit both sides together -- a synced copy is a build artifact of
+# the source, not an independent edit.
+
+set -euo pipefail
+
+# Locate the workspace root -- the directory holding the sibling checkouts --
+# by walking up from this script until several git checkouts are visible.
+# Deriving it as "the script's parent" is wrong once these live in
+# unfer/scripts/ rather than at the workspace root.
+find_root() {
+  local dir n c
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$dir" != / ]; do
+    n=0
+    for c in "$dir"/*/; do
+      [ -d "${c}.git" ] && n=$((n + 1))
+    done
+    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
+    dir="$(dirname "$dir")"
+  done
+  echo "cannot locate the workspace root from ${BASH_SOURCE[0]}" >&2
+  return 1
+}
+root="$(find_root)"
+src="$root/timepiece"
+dst="$root/unfer"
+
+FILES=(book.tex ODE.tex)
+
+if [ ! -d "$src" ] || [ ! -d "$dst" ]; then
+  echo "sync-book: expected $src and $dst to exist" >&2
+  exit 1
+fi
+
+copied=0
+missing=0
+for f in "${FILES[@]}"; do
+  if [ ! -f "$src/$f" ]; then
+    echo "sync-book: source $src/$f does not exist" >&2
+    missing=1
+    continue
+  fi
+  if cmp -s "$src/$f" "$dst/$f"; then
+    echo "ok   $f (already in sync)"
+    continue
+  fi
+  cp "$src/$f" "$dst/$f"
+  echo "sync $f  timepiece -> unfer"
+  copied=$((copied + 1))
+done
+
+if [ "$missing" -ne 0 ]; then
+  echo "sync-book: a source file is missing; see above" >&2
+  exit 1
+fi
+
+if [ "$copied" -eq 0 ]; then
+  echo "sync-book: nothing to do"
+else
+  echo "sync-book: updated $copied file(s); commit the unfer/ copies alongside the source"
+fi
