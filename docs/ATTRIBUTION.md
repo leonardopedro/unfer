@@ -1,5 +1,12 @@
 # Attribution Carbon Credits (Open Badges + Taler Micropayments)
 
+> **Not the borrowed-work ledger.** This file documents the *attribution-credits
+> product feature*. The record of what this project borrowed from other projects —
+> Cadabra2, Why3, nanoda, lean4export, dynamic-arctic — is
+> [`../ATTRIBUTION.md`](../ATTRIBUTION.md), with per-repo detail in
+> [`../ATTRIBUTION.md`](../ATTRIBUTION.md) alongside it. Two files with the same
+> word in the name meant two unrelated meanings; the split is now explicit.
+
 > Architecture, design rationale, and test coverage for the author-approved
 > attribution market, implemented in `unfer_consensus::attribution` and
 > `unfer_taler::attribution`.
