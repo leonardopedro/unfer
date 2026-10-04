@@ -174,6 +174,30 @@
           pkg-config
           rustup
 
+          # Native build deps the workspace needs to compile at all. Found by
+          # running `cargo test --workspace`, not by reading the manifests: each
+          # one surfaces as an opaque `-sys` build-script panic rather than as
+          # anything recognisably ours.
+          #
+          #   zlib-ng  unfer_edge's Pingora pulls `libz-ng-sys`. Its pkg-config
+          #            probe does not match the `zlib-ng.pc` nixpkgs ships, so it
+          #            falls back to building the library from source via cmake.
+          #   cmake    therefore load-bearing rather than optional, and it must
+          #            come from the unstable channel: zlib-ng 2.3.3's CMake build
+          #            fails under 23.05's cmake 3.25.3 (`libz-ng-sys` build script
+          #            exits 101 with no diagnostic), which is why these are
+          #            `pkgsUnstable.*` and not `pkgs.*`.
+          #   pkgconf  23.05's `pkg-config` cannot see the paths above.
+          #   python3  interpreter for the stdio/HTTP test fixtures.
+          #
+          # Lean is deliberately absent: the S29/S31 proof tests are pinned to
+          # Lean 4.28.0 by githash (7e01a1bf), which no nixpkgs pin reproduces
+          # exactly. Provision it with elan instead -- see docs/LOGOS.md.
+          pkgsUnstable.zlib-ng
+          pkgsUnstable.cmake
+          pkgconf
+          python3
+
           # S30: Cadabra2 symbolic CAS (external subprocess engine).
           pkgsUnstable.cadabra2
 
