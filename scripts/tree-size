@@ -60,13 +60,46 @@ for repo in "${roots[@]}"; do
     continue
   }
   hits="$(git -C "$repo" ls-files | grep -E "$PATTERNS" || true)"
-  if [ -n "$hits" ]; then
-    n="$(printf '%s\n' "$hits" | wc -l)"
-    total=$((total + n))
-    echo "FAIL $repo: $n tracked build artifact(s)" >&2
-    printf '%s\n' "$hits" | sed 's/^/       /' >&2
+  if [ -z "$hits" ]; then
+    echo "ok   $repo: no tracked build artifacts"
+    continue
+  fi
+
+  # A repo may deliberately keep one of these. unfer's .gitignore whitelists
+  # `logs/heavy_tests_*.log` as "the cited ALL-GREEN evidence log", so a blanket
+  # pattern would flag an intentional retention and train people to delete it.
+  # The repo's own ignore rules are the authority.
+  #
+  # `--no-index` is essential. Without it `git check-ignore` consults the index
+  # and therefore reports *nothing* as ignored for a tracked file -- which made
+  # this loop classify every tracked path as "deliberately kept" and the gate
+  # unable to fail at all. It passed with a tracked .pyc still staged. Probe the
+  # rules, not the index.
+  real_hits=""
+  kept=""
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    if git -C "$repo" check-ignore --no-index -q "$h" 2>/dev/null; then
+      real_hits="$real_hits$h"$'\n'
+    else
+      kept="$kept$h"$'\n'
+    fi
+  done <<< "$hits"
+
+  n_real="$(printf '%s' "$real_hits" | grep -c . || true)"
+  n_kept="$(printf '%s' "$kept" | grep -c . || true)"
+
+  if [ "$n_real" -gt 0 ]; then
+    total=$((total + n_real))
+    echo "FAIL $repo: $n_real tracked build artifact(s)" >&2
+    printf '%s' "$real_hits" | sed 's/^/       /' >&2
     echo "       Untrack with: git -C $repo rm --cached <path>" >&2
-  else
+  fi
+  if [ "$n_kept" -gt 0 ]; then
+    echo "ok   $repo: $n_kept deliberately kept (whitelisted in .gitignore)" >&2
+    printf '%s' "$kept" | sed 's/^/       kept: /' >&2
+  fi
+  if [ "$n_real" -eq 0 ] && [ "$n_kept" -eq 0 ]; then
     echo "ok   $repo: no tracked build artifacts"
   fi
 done
