@@ -98,6 +98,35 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ### Talk to the kernel from the agent CLI
 ```bash
 # from unfer/ with velysterm as a sibling:
+
+<!-- status: verified | tests: 1656 cargo | last_verified: 2026-10-04 -->
+
+## Verification
+
+```sh
+nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
+#   1285 passed
+
+nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
+#   371 passed across 53 binaries
+```
+
+`fock_sirk` runs in release because the SIRK suites are numeric; see
+`AGENTS.md` on the memory-bounded run options.
+
+The S29/S31 proof tests need Lean **4.28.0** specifically, pinned by githash
+`7e01a1bf` — no nixpkgs pin reproduces it, so provision it with elan:
+
+```sh
+elan toolchain install leanprover/lean4:v4.28.0
+elan default leanprover/lean4:v4.28.0
+lake exe cache get     # mathlib v4.28.0 oleans; without it the build is hours
+```
+
+`flake.nix` deliberately does not carry Lean for that reason, and does carry the
+native deps (`zlib-ng`, `cmake` from the unstable channel) that `unfer_edge`'s
+`libz-ng-sys` needs.
+
 cd ../velysterm
 cargo run -p kernel_client --bin unfer_agent -- --help
 printf '{"id":"1","op":"version","params":{}}\n' \
