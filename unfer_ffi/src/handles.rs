@@ -415,6 +415,11 @@ pub fn get_last_result(handle: i64) -> Option<String> {
 }
 
 pub fn push_event(handle: i64, event: KernelEvent) {
+    // C1: also append to the global cursored log, so `uk_events_poll` can serve a
+    // consumer that needs to be sure it missed nothing. The subscription fan-out
+    // below is unchanged -- this answers a different question, it does not
+    // replace this one.
+    crate::event_log::record_event(handle, event.clone());
     let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
     let mut guard = SUBSCRIPTIONS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_mut() {

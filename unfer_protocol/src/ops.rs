@@ -51,6 +51,11 @@ pub const SESSION_OPS: &[&str] = &[
     "save_session",
     "restore_session",
     "poll_events",
+    // C1: cursored delivery, complementary to `poll_events`. `poll_events`
+    // serves the subscription path, whose bounded queue drops on overflow; this
+    // one serves a consumer that has to be able to say "I got to 41, send me 42
+    // onwards", including across a restart.
+    "events_poll",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",
@@ -137,6 +142,9 @@ pub const AGENT_OPS: &[&str] = &[
     "save_session",
     "restore_session",
     "poll_events",
+    // C1: cursored delivery; see the SESSION_OPS entry for why this is not
+    // just a second name for "poll_events".
+    "events_poll",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",

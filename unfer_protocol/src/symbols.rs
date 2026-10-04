@@ -288,6 +288,15 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        name: "uk_events_poll",
+        kind: SymbolKind::Kernel,
+        // Reading the event log grants nothing: it observes what already
+        // happened. Nothing here can widen a caller's reach, so the trust
+        // annotation is Observe and the call never queues for approval.
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_evolve",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Mutate,

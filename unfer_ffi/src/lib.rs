@@ -3176,8 +3176,348 @@ pub fn uk_auction_clear() {
 
 // ── tests ─────────────────────────────────────────────────────────────
 
+/// C1: read the cursored event log.
+///
+/// NDJSON stays the degenerate single-capability mode per S28; this is the
+/// polling half of C1, and `events_stream` is the push half.
+///
+/// The reply goes through the result channel (`uk_get_result`) like every other
+/// producing op, so S46's fresh-per-call discipline applies: the payload below
+/// describes *this* poll or is empty, never the previous one's.
+#[unsafe(no_mangle)]
+pub extern "C" fn uk_events_poll(model: i64, cursor_ptr: *const u8, cursor_len: i64) -> i64 {
+    ffi_entry("uk_events_poll", || {
+        #[derive(serde::Deserialize)]
+        struct PollReq {
+            #[serde(default)]
+            since_cursor: u64,
+            #[serde(default)]
+            max: Option<usize>,
+        }
+        let req: PollReq = match read_utf8(cursor_ptr, cursor_len) {
+            Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+                Diagnostic::new(
+                    Code::BAD_JSON,
+                    format!("events_poll request is not valid JSON: {e}"),
+                    Severity::Error,
+                )
+            })?,
+            // An empty body is the natural "give me everything you still have",
+            // so it is not an error.
+            Ok(_) => PollReq {
+                since_cursor: 0,
+                max: None,
+            },
+            Err(diag) => return Err(diag),
+        };
+        // Bounded by default: an unbounded poll is how a consumer turns a
+        // forgotten checkpoint into an allocation. The cap is generous enough for
+        // any real batch and is reported in the payload so a caller can tell it
+        // was truncated rather than guessing.
+        const DEFAULT_MAX: usize = 256;
+        let max = req.max.unwrap_or(DEFAULT_MAX).min(4096);
+
+        // Ask for one more than we will return, so `truncated` can mean "there were
+        // more events *for this consumer* than I am returning". Computed after
+        // per-model filtering, so it cannot be flipped by an unrelated model
+        // publishing while we read. Comparing against the process-wide latest
+        // cursor instead -- which is what I did first -- reports a truncated batch
+        // to a consumer whose events were all delivered: a false alarm on every
+        // busy kernel, and it made this test fail only under parallel load.
+        let mut filtered: Vec<event_log::CursoredEvent> =
+            event_log::events_since(req.since_cursor, max + 1)
+                .into_iter()
+                .filter(|e| e.handle == model)
+                .collect();
+        let truncated = filtered.len() > max;
+        filtered.truncate(max);
+
+        let latest = event_log::latest_cursor();
+        let oldest = event_log::oldest_available();
+        // Conservative and process-wide: if anything was evicted since this
+        // consumer's checkpoint, say so. Over-reporting a gap costs a resync;
+        // hiding one costs correctness, silently -- which is the failure this
+        // whole mechanism exists to prevent.
+        let gap = event_log::has_gap(req.since_cursor);
+
+        let payload = serde_json::json!({
+            "model": model,
+            "since_cursor": req.since_cursor,
+            "events": filtered,
+            "latest_cursor": latest,
+            "oldest_available": oldest,
+            // A gap means events this consumer never saw are gone. Reported, not
+            // hidden: a short stream that looks complete is how a worker silently
+            // diverges from the truth.
+            "gap": gap,
+            "truncated": truncated,
+            "dropped_total": event_log::dropped_count(),
+        });
+        handles::set_last_result(model, payload.to_string());
+        Ok(0)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    /// C1 `uk_events_poll`: the FFI/JSON layer over the cursored log.
+    ///
+    /// Serialised on `DURABLE_TESTS_LOCK` because the log is process-global and
+    /// `cargo test` runs these in parallel threads. The log's own unit tests are
+    /// self-contained and need no lock; assertions about `latest_cursor` or
+    /// `gap` are not, because another test's events move those.
+    mod events_poll_tests {
+        use super::*;
+
+        /// Serialises these tests against *each other*, and nothing else.
+        ///
+        /// I first used DURABLE_TESTS_LOCK here, which deadlocked the suite: these
+        /// tests hold it across calls that take handle mutexes, while the durable
+        /// tests take those mutexes and *then* DURABLE_TESTS_LOCK (ABBA). Six
+        /// unrelated tests hung for over 60s.
+        ///
+        /// It is not needed. Every assertion here is scoped to a model handle this
+        /// test just created, and handles are unique among live models, so another
+        /// test's events cannot appear in this stream. The only process-wide values
+        /// asserted are ones another test can only move monotonically
+        /// (latest_cursor) or not at all. So a private lock is the right scope:
+        /// it excludes my own tests, whose reset_event_log would otherwise race.
+        static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        /// Poll, then read the reply payload the way a real caller would.
+        fn poll(model: i64, body: &str) -> serde_json::Value {
+            let (p, l) = json_ptr(body);
+            assert_eq!(
+                uk_events_poll(model, p, l),
+                0,
+                "events_poll should succeed for body {body:?}"
+            );
+            let raw = read_buf(|b, c| uk_get_result(model, b, c));
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("payload is JSON: {e}"))
+        }
+
+        fn fresh_model() -> i64 {
+            let h = create_harmonic_model();
+            assert!(h > 0, "create_harmonic_model failed");
+            h
+        }
+
+        /// Events already in the log for this model.
+        ///
+        /// Constructing a model runs through `uk_model_create`, which may itself
+        /// publish a PriorSet. My first draft assumed it never does, so
+        /// `max_caps_the_batch_and_says_so` failed intermittently with a count one
+        /// higher than expected -- a test bug, not a kernel bug, and one that three
+        /// consecutive clean runs did not reproduce. Counting the baseline makes
+        /// every assertion below relative to what this test actually did, which is
+        /// the thing worth asserting anyway.
+        fn baseline(m: i64) -> usize {
+            event_log::events_since(0, 4096)
+                .iter()
+                .filter(|e| e.handle == m)
+                .count()
+        }
+
+        #[test]
+        fn a_poll_returns_events_and_advances_the_cursor() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+            let base = baseline(m);
+            event_log::record_event(m, KernelEvent::PriorSet);
+            event_log::record_event(m, KernelEvent::HamiltonianSet);
+
+            let first = poll(m, r#"{"since_cursor":0}"#);
+            let events = first["events"].as_array().expect("events array");
+            assert_eq!(
+                events.len(),
+                base + 2,
+                "both recorded events come back, on top of whatever construction emitted: {first}"
+            );
+            let kinds: Vec<&str> = events
+                .iter()
+                .filter_map(|e| e["event"]["type"].as_str())
+                .collect();
+            assert!(
+                kinds.contains(&"prior_set") && kinds.contains(&"hamiltonian_set"),
+                "both recorded kinds are present: {first}"
+            );
+
+            let c0 = events[0]["cursor"].as_u64().expect("cursor");
+            let c1 = events[1]["cursor"].as_u64().expect("cursor");
+            assert!(c1 > c0, "cursors increase: {c0} then {c1}");
+            // `>=`, not `==`: latest_cursor is process-wide and another test may
+            // publish between our snapshot and this read. It is informational --
+            // the resume point a caller stores is its own last received cursor.
+            assert!(
+                first["latest_cursor"].as_u64().unwrap_or(0) >= c1,
+                "latest_cursor covers what we just returned: {first}"
+            );
+            assert_eq!(first["gap"].as_bool(), Some(false));
+            // `dropped_total` is process-wide and deliberately not asserted here:
+            // another test publishing into the shared log would move it, and it
+            // carries no weight for this test. `a_consumer_that_fell_behind` is
+            // where dropping is actually asserted.
+        }
+
+        #[test]
+        fn polling_from_the_last_cursor_returns_nothing_and_repeats_no_event() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+            let base = baseline(m);
+            event_log::record_event(m, KernelEvent::PriorSet);
+            event_log::record_event(m, KernelEvent::PriorSet);
+
+            let first = poll(m, r#"{"since_cursor":0}"#);
+            let stream = first["events"].as_array().expect("events array");
+            assert_eq!(stream.len(), base + 2);
+            // Resume from the last cursor this consumer actually received, not from
+            // the process-wide latest: another test may publish in between.
+            let last = stream.last().unwrap()["cursor"].as_u64().expect("cursor");
+
+            // Resuming from the checkpoint must not replay. This is what makes a
+            // restart safe: an event is delivered once, ever.
+            let second = poll(m, &format!(r#"{{"since_cursor":{last}}}"#));
+            assert!(
+                second["events"].as_array().unwrap().is_empty(),
+                "an up-to-date consumer sees nothing new: {second}"
+            );
+            assert_eq!(second["gap"].as_bool(), Some(false));
+        }
+
+        #[test]
+        fn a_consumer_that_fell_behind_is_told_it_has_a_gap() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+
+            // Overflow the bounded log so the earliest events are evicted.
+            for _ in 0..(event_log::EVENT_LOG_CAPACITY + 64) {
+                event_log::record_event(m, KernelEvent::PriorSet);
+            }
+            assert!(
+                event_log::dropped_count() > 0,
+                "the log should have evicted something by now"
+            );
+
+            // Cursor 1 can no longer be served: those events are gone for good.
+            let stale = poll(m, r#"{"since_cursor":1}"#);
+            assert_eq!(
+                stale["gap"].as_bool(),
+                Some(true),
+                "a consumer resuming from an evicted cursor must be told, not silently short: {stale}"
+            );
+            assert!(stale["dropped_total"].as_u64().unwrap() > 0);
+            let first_returned = stale["events"][0]["cursor"].as_u64().unwrap();
+            assert!(
+                first_returned >= event_log::oldest_available().unwrap(),
+                "the returned stream starts inside the retained window"
+            );
+        }
+
+        #[test]
+        fn max_caps_the_batch_and_says_so() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+            let base = baseline(m);
+            for _ in 0..10 {
+                event_log::record_event(m, KernelEvent::PriorSet);
+            }
+            let total = base + 10;
+
+            let capped = poll(m, r#"{"since_cursor":0,"max":3}"#);
+            assert_eq!(
+                capped["events"].as_array().unwrap().len(),
+                3,
+                "max honoured"
+            );
+            assert_eq!(
+                capped["truncated"].as_bool(),
+                Some(total > 3),
+                "a capped batch must admit it was capped: {capped}"
+            );
+
+            let whole = poll(m, r#"{"since_cursor":0}"#);
+            assert_eq!(whole["events"].as_array().unwrap().len(), total);
+            assert_eq!(whole["truncated"].as_bool(), Some(false));
+        }
+
+        #[test]
+        fn a_poll_only_returns_events_for_the_model_asked_about() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let mine = fresh_model();
+            let other = fresh_model();
+            let base = baseline(mine);
+            event_log::record_event(mine, KernelEvent::PriorSet);
+            event_log::record_event(other, KernelEvent::PriorSet);
+            event_log::record_event(mine, KernelEvent::HamiltonianSet);
+
+            let payload = poll(mine, r#"{"since_cursor":0}"#);
+            let events = payload["events"].as_array().unwrap();
+            assert_eq!(
+                events.len(),
+                base + 2,
+                "only this model's own two events: {payload}"
+            );
+            for e in events {
+                assert_eq!(
+                    e["handle"].as_i64(),
+                    Some(mine),
+                    "another model's event leaked into this consumer's stream"
+                );
+            }
+        }
+
+        #[test]
+        fn an_empty_body_replays_the_retained_log() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+            let base = baseline(m);
+            event_log::record_event(m, KernelEvent::PriorSet);
+
+            let payload = poll(m, "");
+            assert_eq!(
+                payload["events"].as_array().unwrap().len(),
+                base + 1,
+                "an empty body means 'everything you still retain', not an error: {payload}"
+            );
+        }
+
+        #[test]
+        fn a_malformed_body_is_rejected_with_a_diagnostic() {
+            let _lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let m = fresh_model();
+            let body = "{not json";
+            let (p, l) = json_ptr(body);
+            assert_eq!(
+                uk_events_poll(m, p, l),
+                -1001,
+                "malformed JSON must be a BAD_JSON diagnostic, not a silent success"
+            );
+        }
+
+        #[test]
+        fn the_hard_ceiling_cannot_be_lifted_by_a_hostile_max() {
+            let _lock = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            event_log::reset_event_log();
+            let m = fresh_model();
+            let base = baseline(m);
+            for _ in 0..8 {
+                event_log::record_event(m, KernelEvent::PriorSet);
+            }
+            // Asking past the ceiling is clamped, not honoured: a caller must not
+            // be able to turn a poll into an unbounded allocation.
+            let payload = poll(m, r#"{"since_cursor":0,"max":100000000}"#);
+            assert_eq!(payload["events"].as_array().unwrap().len(), base + 8);
+            assert_eq!(payload["truncated"].as_bool(), Some(false));
+        }
+    }
+
     use super::*;
 
     fn json_ptr(s: &str) -> (*const u8, i64) {

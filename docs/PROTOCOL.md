@@ -132,6 +132,39 @@ Reconstruct a model from a previously saved blob. Returns a new `model_id`
 
 **Error codes:** UK-1001 (malformed blob).
 
+### events_poll
+
+Cursored event delivery (C1). Complements `poll_events`: that one serves the
+subscription path, whose bounded per-subscriber queue drops its oldest entry on
+overflow, so a dropped event is indistinguishable from one that never happened.
+This one is for a consumer that must be able to resume exactly where it stopped.
+
+Request (JSON object):
+
+| field | type | meaning |
+|---|---|---|
+| `since_cursor` | integer | return events strictly after this cursor; `0` replays the retained log |
+| `max` | integer | batch cap, default 256, hard ceiling 4096 |
+
+An empty body is accepted and means "everything you still retain".
+
+Reply: `0` on success, with the payload on the result channel (`uk_get_result`):
+
+| field | meaning |
+|---|---|
+| `events` | the batch, each `{cursor, handle, event}`, oldest first |
+| `latest_cursor` | newest cursor issued |
+| `oldest_available` | oldest cursor still retained, or null when the log is empty |
+| `gap` | **true** when this consumer fell behind and never saw events that are gone |
+| `truncated` | true when `max` cut the batch short of `latest_cursor` |
+| `dropped_total` | events evicted from the log, process-wide |
+
+`gap` and `truncated` exist so a short stream is never mistaken for a caught-up
+consumer. A worker that silently diverges from the truth is worse than one that
+is told it missed something.
+
+Kernel symbol: `uk_events_poll`. Observe-kind: reading the log grants nothing.
+
 ### `poll_events`
 
 Read pending kernel events (status changes, error notifications) from the

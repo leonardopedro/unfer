@@ -121,6 +121,9 @@ int64_t uk_engram_store(int64_t model,
 int64_t uk_event_probability(int64_t model,
                      const uint8_t* event_json,
                      int64_t len);
+int64_t uk_events_poll(int64_t model,
+               const uint8_t* cursor_ptr,
+               int64_t cursor_len);
 int64_t uk_evolve(int64_t model,
           const uint8_t* opts_json,
           int64_t len);

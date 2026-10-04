@@ -32,7 +32,7 @@ use unfer_protocol::KernelEvent;
 pub const EVENT_LOG_CAPACITY: usize = 4096;
 
 /// An event with its position in the global stream.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CursoredEvent {
     /// Monotonic, starts at 1, never reused.
     pub cursor: u64,
@@ -102,6 +102,12 @@ pub fn dropped_count() -> u64 {
 }
 
 /// Clear the log and reset the cursor.
+///
+/// Test-only, and deliberately so: it rewrites process-global state that a live
+/// kernel's cursors depend on. Exposing it as a symbol would hand any caller a way
+/// to make every other consumer's cursor meaningless. Tests need it; nothing else
+/// should have it, so it is not compiled into the library proper.
+#[cfg(test)]
 pub fn reset_event_log() {
     let mut guard = LOG.lock().unwrap_or_else(|e| e.into_inner());
     *guard = None;
