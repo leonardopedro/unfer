@@ -12,7 +12,7 @@
 //! canonicalization passes every `collide` row and fails these.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use logos::engram::{Granularity, segment};
 use logos::lexicon::Lexicon;

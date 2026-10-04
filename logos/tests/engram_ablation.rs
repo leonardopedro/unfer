@@ -13,12 +13,11 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use logos::engram::ablation::{
-    TokenIds, coverage_curve, surface_coverage, surface_lookups, unf_coverage,
-};
+use logos::engram::ablation::{TokenIds, coverage_curve, surface_coverage, unf_coverage};
 
 const CORPUS_REL: &str = "../../australVM/corpus/engram_keys.tsv";
 
+#[allow(dead_code)] // mirrors the corpus TSV schema; not every column is read here
 struct Row {
     group: String,
     fragment: String,
