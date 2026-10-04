@@ -29,6 +29,25 @@ gap() {
     GAPS=$((GAPS + 1))
 }
 
+# Same as `check`, but for a gate whose implementation is a python3 script.
+#
+# A missing interpreter is an absent tool, not a violated invariant, so it
+# reports [gap] like the LLVM coverage gate does rather than [FAIL]. Getting this
+# wrong is corrosive in a specific way: the gate then goes red on any machine
+# without python3 on PATH, and a permanently-red gate is one people learn to
+# ignore -- which is the opposite of what a gate is for. It also hides the real
+# signal, because a genuine census failure is indistinguishable from "no
+# interpreter here".
+check_py() {
+    local name="$1"
+    shift
+    if ! command -v python3 >/dev/null 2>&1; then
+        gap "$name (tooling absent: python3 not on PATH)"
+        return 0
+    fi
+    check "$name" "$@"
+}
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 # --- H1.1 Quadratic ordering: compile_expression strips zero-point scalars ---
@@ -150,7 +169,7 @@ check "S29: generated C header present" \
 # scripts/gen_symbol_artifacts regenerates EXPECTED_SYMBOLS.txt / _ZENODO /
 # unfer_kernel.h from unfer_protocol::symbols::SYMBOL_REGISTRY. The `check`
 # mode fails on any drift (and on the header cross-check).
-check "H2: symbol census generated from SYMBOL_REGISTRY (no drift)" \
+check_py "H2: symbol census generated from SYMBOL_REGISTRY (no drift)" \
     python3 "$repo_root/scripts/gen_symbol_artifacts" check
 check "H2: registry has no leading-whitespace symbol rows (nm-diff clean)" \
     bash -c "! grep -E '^ ' '$repo_root/unfer_ffi/EXPECTED_SYMBOLS.txt'"
@@ -158,7 +177,7 @@ check "H2: registry has no leading-whitespace symbol rows (nm-diff clean)" \
 # --- H2: PROTOCOL.md op/UK-code census does not drift from the code ---
 # Every op in AGENT_OPS and every UK-#### code in codes.rs must appear in
 # docs/PROTOCOL.md (the doc-sync gate; dsh analog).
-check "H2: PROTOCOL.md op + UK-code census in sync (doc-sync)" \
+check_py "H2: PROTOCOL.md op + UK-code census in sync (doc-sync)" \
     python3 "$repo_root/scripts/check_protocol_docsync"
 
 # --- H11: per-file coverage gate on prob_kernel/src + unfer_ffi/src ---
@@ -186,7 +205,7 @@ check "H12: notes implemented dir has the four categories" \
 
 # H12: cross-workspace duplication scan (FFI/NDJSON dispatch arms + UK-code
 # numeric constructors). Zero actionable hits required.
-check "H12: duplication scan has zero actionable hits" \
+check_py "H12: duplication scan has zero actionable hits" \
     python3 "$repo_root/scripts/duplication"
 
 echo
