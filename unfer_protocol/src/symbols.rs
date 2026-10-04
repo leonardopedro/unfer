@@ -270,6 +270,18 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        name: "uk_engram_lookup",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_engram_store",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_event_probability",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Observe,
@@ -295,18 +307,6 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
     },
     SymbolRecord {
         name: "uk_gate_reject",
-        kind: SymbolKind::Kernel,
-        effect_kind: super::types::EffectKind::Mutate,
-        timeout_ms: None,
-    },
-    SymbolRecord {
-        name: "uk_engram_lookup",
-        kind: SymbolKind::Kernel,
-        effect_kind: super::types::EffectKind::Observe,
-        timeout_ms: None,
-    },
-    SymbolRecord {
-        name: "uk_engram_store",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Mutate,
         timeout_ms: None,
