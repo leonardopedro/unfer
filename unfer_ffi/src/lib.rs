@@ -13,6 +13,7 @@
 //! never a hand-maintained count in prose.
 
 pub mod durable;
+mod event_log;
 mod handles;
 #[cfg(feature = "zenodo")]
 pub mod zenodo;
