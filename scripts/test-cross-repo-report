@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Exercise the cross-repo job's reporting step locally.
+#
+# The GitHub expression `${{ steps.X.outcome }}` is substituted by Actions before
+# the shell sees it. Here it is simulated with `OUT_<step>`, so the same logic can
+# be driven in every combination that matters -- in particular "one failed and the
+# rest must still be reported", which is the acceptance criterion.
+
+run_report() {
+  local unfer_out="$1" arctic_out="$2" velysterm_out="$3"
+  local failed=""
+  for step in unfer arctic velysterm; do
+    local outcome_var="${step}_out"
+    local outcome="${!outcome_var}"
+    if [ "$outcome" = "success" ]; then
+      echo "  PASS  $step"
+    else
+      echo "  FAIL  $step ($outcome)"
+      failed="$failed $step"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    echo
+    echo "cross-repo: broken repo(s):$failed"
+    return 1
+  fi
+  echo "cross-repo: all sibling repos verified"
+  return 0
+}
+
+expect() {
+  local label="$1" want_rc="$2" unfer="$3" arctic="$4" vely="$5"
+  local out rc
+  out="$(run_report "$unfer" "$arctic" "$vely")"; rc=$?
+  printf '%-34s rc=%s (want %s)  %s\n' "$label" "$rc" "$want_rc" \
+    "$(printf '%s' "$out" | tr '\n' '|')"
+  [ "$rc" = "$want_rc" ] || { echo "  MISMATCH"; return 1; }
+}
+
+fail=0
+expect "all green"                0 success success success || fail=1
+expect "unfer breaks (the X7 case)" 1 failure success success || fail=1
+expect "arctic breaks"            1 success failure success || fail=1
+expect "velysterm breaks"         1 success success failure || fail=1
+expect "one skipped, one broke"   1 skipped failure skipped  || fail=1
+expect "all skipped"              1 skipped skipped skipped  || fail=1
+
+echo
+[ "$fail" -eq 0 ] && echo "report logic: all cases behave" || echo "report logic: FAILED"
+exit "$fail"

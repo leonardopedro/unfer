@@ -63,6 +63,104 @@ jobs:
         run: bash scripts/check-status
 
   # ---------------------------------------------------------------------------
+  # X7: cross-repo integration.
+  #
+  # Every repo in this workspace passes its own CI against its own checkout, and
+  # three of them depend on a *sibling's* working tree: unfer path-deps
+  # dynamic-arctic and velysterm. A change in one that breaks another is
+  # invisible until someone runs the pair locally, which is exactly the failure
+  # mode a path dependency invites.
+  #
+  # Each repo runs as its own step with `if: always()` so nothing is skipped by
+  # an earlier failure, and a final step reports which repo broke which by name.
+  # That summary is the acceptance criterion: a deliberate break in prob_kernel
+  # has to show up as a *named* failure, not a red blob.
+  #
+  # The commands are the ones each README's Verification section documents, so
+  # there is one answer to "how do I check this repo" rather than two.
+  # ---------------------------------------------------------------------------
+  cross-repo:
+    name: cross-repo integration (X7)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+
+      - name: checkout siblings at their default branch
+        run: |
+          git clone --depth 1 https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          git clone --depth 1 https://github.com/leonardopedro/velysterm.git ../velysterm
+
+      # velysterm's document crates are Bevy-free but not dependency-free:
+      # winit/xkbcommon and the X/wayland client libs are found through
+      # pkg-config. Installing them explicitly is the difference between a gate
+      # that tests the workspace and one that reliably reports a missing -l flags.
+      - name: system deps for the velysterm crates
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcb1-dev libxcb-shm0-dev libxcb-render0-dev
+
+      # Layout note, because it is load-bearing and invisible: the siblings land
+      # in $GITHUB_WORKSPACE/../<repo>, which is what makes velysterm's
+      # `../../../unfer` path dependency resolve back to this checkout. That works
+      # because Actions checks out into a directory named after the repo. Moving
+      # the clones elsewhere would break the path dep with a confusing error, so
+      # the paths above are deliberate.
+      #
+      # The coupling this job exists to catch is real in both directions:
+      # unfer_consensus path-deps dynamic-arctic, and mathed_mini path-deps
+      # unfer_ffi and unfer_protocol. A green unfer run says nothing about
+      # whether either sibling still fits.
+
+      # The path-dependency hazard, called out explicitly: this job exists because
+      # `unfer_consensus` and `mathed_core` compile against a sibling checkout, so
+      # unfer's own green run says nothing about whether the sibling still fits.
+      - name: unfer (kernel + dynamic-arctic path dep)
+        id: unfer
+        run: cargo build --workspace
+
+      - name: dynamic-arctic (threshold authority)
+        id: arctic
+        run: |
+          cargo build --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
+          cargo test  --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
+
+      - name: velysterm (document engine emthin path-deps)
+        id: velysterm
+        run: |
+          cargo test --manifest-path ../velysterm/Cargo.toml \
+            -p mathed_core -p mathed_mini
+
+      # `if: always()`: one broken repo must not hide the state of the others.
+      - name: report which repo broke which
+        if: always()
+        run: |
+          # Each step records a conclusion either way, so this step runs even when
+          # the steps above were skipped by an earlier failure.
+          failed=""
+          for step in unfer arctic velysterm; do
+            if [ "${{ steps.$step.outcome }}" = "success" ]; then
+              echo "  PASS  $step"
+            else
+              echo "  FAIL  $step (${{ steps.$step.outcome }})"
+              failed="$failed $step"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo
+            echo "cross-repo: broken repo(s):$failed"
+            echo "  A dynamic-arctic failure here is usually an API drift in the"
+            echo "  threshold signatures that unfer_consensus depends on."
+            echo "  A velysterm failure here is usually a document-model change"
+            echo "  that emthin and unfer both consume."
+            exit 1
+          fi
+          echo "cross-repo: all sibling repos verified"
+
+  # ---------------------------------------------------------------------------
   # Core: the unfer kernel workspace must build, lint and test on CPU.
   # This locks in the per-crate baselines recorded in IMPLEMENTATION_PLAN.md.
   # ---------------------------------------------------------------------------
