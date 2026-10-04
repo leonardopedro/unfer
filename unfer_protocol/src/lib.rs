@@ -14,6 +14,7 @@
 
 pub mod archive;
 pub mod codes;
+pub mod codes_consts;
 pub mod durable;
 pub mod harness;
 pub mod ops;

@@ -556,6 +556,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             "The Lean4 export file did not type-check: a theorem or definition's proof term was rejected by the external kernel.",
         ),
         (
+            4802,
+            "ProofExportInvalid",
+            "The Lean4 export file was malformed or the LeanVerifySpec was invalid (unparseable NDJSON, missing declaration, oversize payload).",
+        ),
+        (
             4803,
             "LogosCompileFailed",
             "The CNL sentence could not be compiled to a unique normal form: no CCG parse, or the Logos compile/reduce/readback pipeline failed.",
@@ -564,11 +569,6 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4804,
             "AustralUnfFailed",
             "The AustralVM-language source could not be translated to a unique normal form through DeltaNets: unparseable Austral, or the lower/compile/reduce/readback pipeline failed.",
-        ),
-        (
-            4802,
-            "ProofExportInvalid",
-            "The Lean4 export file was malformed or the LeanVerifySpec was invalid (unparseable NDJSON, missing declaration, oversize payload).",
         ),
         (
             4901,
@@ -634,6 +634,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4913,
             "KernelFailed",
             "The kernel execution failed: module launch failure, timeout, unparseable output, or a kernel-side error output (message carries the detail).",
+        ),
+        (
+            5000,
+            "Internal",
+            "An internal invariant was violated; this is a bug, not a user error.",
         ),
         (
             6001,
@@ -925,11 +930,6 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             "AttributionFeeMismatch",
             "The escrowed fee e-coin's face value does not match the negotiated fee.",
         ),
-        (
-            5000,
-            "Internal",
-            "An internal invariant was violated; this is a bug, not a user error.",
-        ),
     ]
 }
 
@@ -1020,5 +1020,117 @@ impl Diagnostic {
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}: {}", self.code, self.name, self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codes_consts::CONSTS;
+
+    #[test]
+    fn every_code_constant_has_a_row_in_the_table() {
+        // The constant list and the `all()` table are maintained separately --
+        // see `codes_consts`'s header for why a macro was not used. If a code is
+        // added and `all()` is not, `name_of` answers `None` and every consumer
+        // that renders a diagnostic for it degrades to an unnamed error, with
+        // nothing failing.
+        let mut missing: Vec<&str> = CONSTS
+            .iter()
+            .filter(|(_, num)| name_of(*num).is_none())
+            .map(|(name, _)| *name)
+            .collect();
+        missing.sort_unstable();
+        assert!(
+            missing.is_empty(),
+            "{} code constant(s) missing from all(), so name_of() returns None \
+             for them: {missing:?}",
+            missing.len()
+        );
+    }
+
+    #[test]
+    fn no_table_row_lacks_a_constant() {
+        // The same drift in the other direction: a table row with no constant is
+        // a code nothing can raise, which is how dead entries accumulate.
+        let mut orphans: Vec<u32> = all()
+            .iter()
+            .map(|(code, _, _)| *code)
+            .filter(|code| !CONSTS.iter().any(|(_, num)| num == code))
+            .collect();
+        orphans.sort_unstable();
+        assert!(
+            orphans.is_empty(),
+            "all() carries {} row(s) with no matching constant: {orphans:?}",
+            orphans.len()
+        );
+    }
+
+    #[test]
+    fn the_table_is_sorted_and_free_of_duplicates() {
+        // `name_of`/`description_of` scan the table linearly, so ordering is not
+        // a performance concern -- but a duplicate code would make them return
+        // whichever row happens to come first, silently shadowing the other.
+        let codes: Vec<u32> = all().iter().map(|(c, _, _)| *c).collect();
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let seen: std::collections::BTreeSet<u32> = codes.iter().copied().collect();
+        let duplicates: Vec<u32> = codes
+            .iter()
+            .copied()
+            .filter(|c| seen.iter().filter(|s| *s == c).count() > 1)
+            .collect();
+        assert!(
+            duplicates.is_empty(),
+            "all() has duplicate code numbers, so name_of() returns whichever \
+             row comes first and silently shadows the other: {duplicates:?}"
+        );
+        assert!(
+            codes.windows(2).all(|w| w[0] < w[1]),
+            "all() must be in ascending code order so a reader can scan it"
+        );
+    }
+
+    #[test]
+    fn every_row_has_a_name_and_a_description() {
+        for (code, name, description) in all() {
+            assert!(
+                !name.trim().is_empty(),
+                "code {code} has an empty name, so Display renders a bare number"
+            );
+            assert!(
+                !description.trim().is_empty(),
+                "code {code} ({name}) has an empty description"
+            );
+        }
+    }
+
+    #[test]
+    fn codes_are_four_digits_and_the_table_agrees_with_display() {
+        // `Display` writes "UK-{n}", and every code appears in docs and logs in
+        // that form. A three- or five-digit number would render ambiguously
+        // next to the others, so the width is part of the contract.
+        for (name, num) in CONSTS {
+            assert!(
+                (1000..10_000).contains(num),
+                "{name} is {num}, which Display renders as UK-{num} -- outside \
+                 the four-digit UK-#### range"
+            );
+            assert_eq!(
+                Some(*name),
+                name_of(*num).map(|_| *name),
+                "name_of({num}) disagrees with constant {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_of_an_unissued_code_is_none_rather_than_a_wrong_answer() {
+        // 9999 is deliberately unassigned. A lookup that fell back to some
+        // default row would hand callers a plausible name for a code that does
+        // not exist.
+        assert_eq!(None, name_of(9999));
+        assert_eq!(None, description_of(9999));
     }
 }
