@@ -120,7 +120,7 @@ fn offload_moves_entries_to_disk_and_everything_stays_reachable() {
     // Capacity 16 with no spill would drop the surplus; with a spill it must
     // not, which is the difference E7 exists to make.
     let mut t = TieredTable::with_spill(&sc.path, 16).unwrap();
-    for i in 0..n as usize {
+    for i in 0..n {
         t.insert(&key_for(i as u64), emb_for(i as u64)).unwrap();
     }
 
@@ -142,7 +142,7 @@ fn offload_moves_entries_to_disk_and_everything_stays_reachable() {
     assert!(s.spill_bytes > 0);
 
     // Every one of the n addresses is still findable, and with its own payload.
-    for i in 0..n as usize {
+    for i in 0..n {
         let k = key_for(i as u64);
         assert_eq!(
             Some(emb_for(i as u64)),
@@ -183,14 +183,14 @@ fn prefetch_recovers_spilled_keys_and_reports_its_hit_rate() {
     let sc = Scratch::new("prefetch");
     let n = 32;
     let mut t = TieredTable::with_spill(&sc.path, 8).unwrap();
-    for i in 0..n as usize {
+    for i in 0..n {
         t.insert(&key_for(i as u64), emb_for(i as u64)).unwrap();
     }
     assert!(t.stats().spilled > 0);
 
     // Ask for a batch that is a mixture of spilled, absent, and — after the
     // first prefetch — already-resident keys.
-    let spilled: Vec<EngramKey> = (0..n as usize).map(|i| key_for(i as u64)).collect();
+    let spilled: Vec<EngramKey> = (0..n).map(|i| key_for(i as u64)).collect();
     let recovered = t.prefetch(&spilled).unwrap();
     assert!(
         recovered > 0,
@@ -205,13 +205,13 @@ fn prefetch_recovers_spilled_keys_and_reports_its_hit_rate() {
 
     // Prefetching a key that was never stored is a miss, not a fabricated hit.
     let absent = key_for(9999);
-    assert_eq!(0, t.prefetch(&[absent.clone()]).unwrap());
+    assert_eq!(0, t.prefetch(std::slice::from_ref(&absent)).unwrap());
     assert!(t.stats().prefetch_misses > 0);
     assert!(t.stats().prefetch_hit_rate() < 1.0);
 
     // Still nothing lost after all that movement.
     assert_eq!(n, total(&t));
-    for i in 0..n as usize {
+    for i in 0..n {
         assert_eq!(
             Some(emb_for(i as u64)),
             t.get(&key_for(i as u64)).unwrap(),

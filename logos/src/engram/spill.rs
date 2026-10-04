@@ -206,7 +206,7 @@ impl SpillTier {
         let mut header = [0u8; SPILL_HEADER];
         self.file.seek(SeekFrom::Start(offset))?;
         self.file.read_exact(&mut header)?;
-        if header[0] != granularity.code() || &header[5..] != &unf_hash[..] {
+        if header[0] != granularity.code() || header[5..] != unf_hash[..] {
             // The index and the file disagree. That is a corrupt spill, and
             // returning a plausible-looking entry would be worse than saying so.
             return Err(io::Error::new(

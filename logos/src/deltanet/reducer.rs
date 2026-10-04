@@ -523,6 +523,6 @@ mod tests {
             crate::engram::MAX_REDUCE_ITERS,
             "the reducer and the documented ENGRAM.md §4 cap must not drift"
         );
-        assert!(MAX_REDUCE_ITERS > 0);
+        const { assert!(MAX_REDUCE_ITERS > 0) };
     }
 }
