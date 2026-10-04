@@ -25,6 +25,7 @@ use unfer_protocol::{
     BayesianUpdateResult, BeliefPropagationRequest, BeliefPropagationResult, CallerKind, CallerTag,
     Code, Diagnostic, EffectKind, EventPredicate, EventQuery, GrantSet, HamiltonianSpec,
     KernelEvent, LeanVerifySpec, ModelSpec, PriorSpec, Severity, SymbolicSpec, WhymlSpec,
+    preset::{AgentRole, RolePreset},
 };
 
 pub use unfer_protocol;
@@ -2404,22 +2405,133 @@ pub extern "C" fn uk_agent_spawn(spec_json: *const u8, len: i64) -> i64 {
         #[derive(serde::Deserialize)]
         struct AgentSpawnReq {
             name: String,
-            grants: GrantSet,
+            /// Grants requested outright. Optional when `preset` is given: a
+            /// named preset is a least-privilege grant set, so accepting one is
+            /// strictly less error-prone than restating the symbols.
+            #[serde(default)]
+            grants: Option<GrantSet>,
+            /// C5: a named role preset, resolved to its grants.
+            #[serde(default)]
+            preset: Option<String>,
+            /// C5: the role the new agent runs as, which bounds the presets it may
+            /// hold. A worker asking for `maintainer` is refused.
+            #[serde(default)]
+            role: Option<String>,
             #[serde(default)]
             parent: Option<String>,
             #[serde(default)]
             chat_id: Option<String>,
         }
         let req: AgentSpawnReq = parse_json(spec_json, len)?;
+
+        // Resolve a preset into concrete grants before any subset check, so the
+        // escalation test applies to what is actually being minted rather than
+        // only to hand-written grant lists.
+        let resolved: GrantSet = match (&req.preset, &req.grants) {
+            (Some(preset_name), _) => match RolePreset::from_name(preset_name) {
+                Some(preset) => preset.grants(),
+                None => {
+                    return Err(Diagnostic::new(
+                        Code::BAD_HANDLE,
+                        format!(
+                            "unknown role preset {preset_name:?}; expected one of: {}",
+                            RolePreset::ALL
+                                .iter()
+                                .map(|p| p.name())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        Severity::Error,
+                    ));
+                }
+            },
+            (None, Some(grants)) => grants.clone(),
+            (None, None) => {
+                return Err(Diagnostic::new(
+                    Code::BAD_HANDLE,
+                    "agent_spawn needs either `grants` or a named `preset`",
+                    Severity::Error,
+                ));
+            }
+        };
+
+        // C5 misuse rule, at the loopback and before anything is minted. The
+        // predicate lives in unfer_protocol so the table and the check cannot
+        // disagree; this is the only place that consults it.
+        if let Some(role_name) = &req.role {
+            let role = match role_name.as_str() {
+                "director" => Some(AgentRole::Director),
+                "worker" => Some(AgentRole::Worker),
+                "reviewer" => Some(AgentRole::Reviewer),
+                other => {
+                    return Err(Diagnostic::new(
+                        Code::BAD_HANDLE,
+                        format!(
+                            "unknown agent role {other:?}; expected director, worker or reviewer"
+                        ),
+                        Severity::Error,
+                    ));
+                }
+            }
+            .expect("role names are matched literally above");
+            if !req
+                .preset
+                .as_deref()
+                .and_then(RolePreset::from_name)
+                .map(|p| p.permitted_for(role))
+                .unwrap_or(true)
+            {
+                let preset_name = req.preset.clone().unwrap_or_default();
+                // Audited, because a refused escalation is exactly the event an
+                // operator needs to see later. The pre-existing grant-escalation
+                // refusal below was silent, which is a gap worth naming in the
+                // commit rather than repeating here.
+                // Same shape and the same sanitiser `uk_audit_append` uses, so a
+                // refusal is recorded the same way as any other audited event --
+                // S23 requires `sanitize_sensitive` on anything that reaches the
+                // ring, and an agent name is caller-supplied like any other arg.
+                let mut args = serde_json::json!([{
+                    "agent": req.name,
+                    "role": role_name,
+                    "preset": preset_name,
+                    "refused": "role may not hold this preset",
+                }]);
+                handles::sanitize_sensitive(&mut args);
+                let ctx = handles::current_caller();
+                let seq = handles::store_audit(AuditEntry {
+                    seq: 0,
+                    caller: ctx.tag,
+                    symbol: "uk_agent_spawn".to_string(),
+                    ok: false,
+                    detail: Some(format!(
+                        "role {} may not hold preset {}",
+                        role_name, preset_name
+                    )),
+                    args,
+                    component: Some("kernel.agent".to_string()),
+                    context: None,
+                    sensitive: false,
+                });
+                return Err(Diagnostic::new(
+                    Code::AGENT_GRANT_ESCALATION,
+                    format!(
+                        "role {role_name:?} may not hold preset {preset_name:?} \
+                         (audit seq {seq})"
+                    ),
+                    Severity::Error,
+                ));
+            }
+        }
+
         let ctx = handles::current_caller();
         if let Some(caller_grants) = ctx.grants.as_ref()
-            && !req.grants.is_subset_of(caller_grants)
+            && !resolved.is_subset_of(caller_grants)
         {
             return Err(Diagnostic::new(
                 Code::AGENT_GRANT_ESCALATION,
                 format!(
                     "grant escalation refused: requested {:?} is not a subset of caller grants",
-                    req.grants
+                    resolved
                 ),
                 Severity::Error,
             ));
@@ -2428,7 +2540,10 @@ pub extern "C" fn uk_agent_spawn(spec_json: *const u8, len: i64) -> i64 {
         let agent = AgentInfo {
             id: format!("agent-{seq}"),
             name: req.name,
-            grants: req.grants,
+            // The *resolved* set: a preset and a hand-written list converge here,
+            // so the agent's recorded grants are what was actually checked against
+            // the caller's, not what was asked for.
+            grants: resolved.clone(),
             parent: req.parent,
             state: AgentState::Running,
             created_at: seq,
@@ -5014,6 +5129,19 @@ mod tests {
         serde_json::from_str(&json).unwrap()
     }
 
+    /// The trusted harness: no grant ceiling (), so the *role* rule
+    /// is what a refusal can be attributed to rather than the escalation check.
+    fn set_trusted_caller() {
+        handles::set_caller(CallerTag::new(CallerKind::Hook, "operator", None), None);
+    }
+
+    fn set_default_caller() {
+        handles::set_caller(
+            CallerTag::new(CallerKind::Hook, "operator", None),
+            Some(GrantSet::default()),
+        );
+    }
+
     fn set_caller_gadget(principal: &str) {
         let caller = format!(r#"{{"from":"gadget","principal":"{principal}","chat_id":"c-42"}}"#);
         uk_set_caller(&caller).expect("caller json must parse");
@@ -5997,5 +6125,156 @@ mod tests {
         assert_eq!(SymbolRecord::timeout_ms("uk_gate_approve"), Some(5000));
         assert_eq!(SymbolRecord::timeout_ms("uk_version"), None);
         assert_eq!(SymbolRecord::timeout_ms("uk_evolve"), None);
+    }
+
+    // ── C5: role presets at the loopback ──────────────────────────────────
+    //
+    // The rule under test: a named role preset resolves to its grants, the grants
+    // are checked against the caller's, and a role that may not hold the preset
+    // is refused *and audited*. The refusal is the part worth testing: a preset
+    // table nothing consults is documentation.
+
+    fn spawn_json(spec: &str) -> i64 {
+        uk_agent_spawn(json_ptr(spec).0, json_ptr(spec).1)
+    }
+
+    #[test]
+    fn agent_spawn_refuses_an_unknown_preset() {
+        handles::reset_durable_for_tests();
+        let rc = spawn_json(r#"{"name":"a","preset":"no-such-preset"}"#);
+        assert!(rc < 0, "an unknown preset must be refused, got {rc}");
+        let msg = handles::get_last_error();
+        assert!(
+            msg.contains("unknown role preset"),
+            "the diagnostic must name the problem, got: {msg}"
+        );
+        // The message should help by listing what is available.
+        assert!(
+            msg.contains("maintainer") && msg.contains("reader"),
+            "the diagnostic should list the known presets, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn agent_spawn_requires_grants_or_a_preset() {
+        handles::reset_durable_for_tests();
+        let rc = spawn_json(r#"{"name":"a"}"#);
+        assert!(
+            rc < 0,
+            "neither grants nor preset must be refused, got {rc}"
+        );
+        let msg = handles::get_last_error();
+        assert!(
+            msg.contains("grants") && msg.contains("preset"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_worker_may_not_hold_the_maintainer_preset_and_it_is_audited() {
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        handles::clear_audit();
+
+        // The trusted harness, so the *role* rule is what refuses -- not the
+        // grant-escalation check, which the harness would pass.
+        set_trusted_caller();
+        let rc = spawn_json(r#"{"name":"wide","role":"worker","preset":"maintainer"}"#);
+        assert!(
+            rc < 0,
+            "a worker holding maintainer must be refused, got {rc}"
+        );
+
+        let audit = handles::list_audit();
+        let refusal = audit
+            .iter()
+            .find(|e| e.symbol == "uk_agent_spawn" && !e.ok)
+            .expect("a refused spawn must leave an audit entry");
+        assert_eq!(
+            Some("kernel.agent".to_string()),
+            refusal.component,
+            "the entry must be attributable to the agent seam"
+        );
+        let detail = refusal.detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("worker") && detail.contains("maintainer"),
+            "the audit detail must name the role and preset, got: {detail}"
+        );
+        set_default_caller();
+    }
+
+    #[test]
+    fn a_director_may_not_hold_maintainer_either() {
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        set_trusted_caller();
+        assert!(
+            spawn_json(r#"{"name":"boss","role":"director","preset":"maintainer"}"#) < 0,
+            "a director is not a trusted harness; it must not hold maintainer"
+        );
+        set_default_caller();
+    }
+
+    #[test]
+    fn an_ordinary_worker_preset_is_accepted_and_recorded() {
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        set_trusted_caller();
+
+        let rc = spawn_json(r#"{"name":"reader-1","role":"worker","preset":"reader"}"#);
+        assert!(rc > 0, "a reader worker is the ordinary case, got {rc}");
+
+        // The recorded grants are the *resolved* ones, not the request's absent
+        // field: a preset that resolved to nothing would pass the role check and
+        // silently mint an agent with no capability.
+        let agent = handles::list_agents()
+            .into_iter()
+            .find(|(_, a)| a.name == "reader-1")
+            .map(|(_, a)| a)
+            .expect("the spawned agent is recorded");
+        assert_eq!(
+            unfer_protocol::preset::RolePreset::Reader.grants(),
+            agent.grants,
+            "the agent must carry the preset's grants"
+        );
+        set_default_caller();
+    }
+
+    #[test]
+    fn a_reviewer_may_not_hold_the_integrator_preset() {
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        set_trusted_caller();
+        assert!(
+            spawn_json(r#"{"name":"rev","role":"reviewer","preset":"integrator"}"#) < 0,
+            "a reviewer that can import blueprints is not a reviewer"
+        );
+        set_default_caller();
+    }
+
+    #[test]
+    fn an_unknown_role_is_refused_rather_than_defaulted() {
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        set_trusted_caller();
+        // Defaulting an unrecognised role to the *most* permissive would turn a
+        // typo into an escalation.
+        assert!(spawn_json(r#"{"name":"x","role":"admin","preset":"maintainer"}"#) < 0);
+        set_default_caller();
+    }
+
+    #[test]
+    fn an_explicit_grant_set_still_works() {
+        // The preset is additive: a caller that already spelled out its grants
+        // must keep working.
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        set_trusted_caller();
+        let rc = spawn_json(r#"{"name":"explicit","grants":{"kernel":["uk_version"]}}"#);
+        assert!(
+            rc > 0,
+            "an explicit grant list must still be accepted, got {rc}"
+        );
+        set_default_caller();
     }
 }
