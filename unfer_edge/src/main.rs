@@ -107,23 +107,27 @@ impl ProxyHttp for UnferGateway {
         session: &mut Session,
         _ctx: &mut GatewayCtx,
     ) -> pingora_core::Result<bool> {
+        // X6: the self-service routes are decided by `route()`, which is a pure
+        // function and is unit-tested. The Session I/O below is the untestable
+        // remainder; keeping it thin means the part that can be wrong is covered.
+        let path = session.req_header().uri.path().to_string();
+        let query = session.req_header().uri.query().map(str::to_string);
+        let decision = route(
+            session.req_header().method.as_str(),
+            &path,
+            query.as_deref(),
+        );
+
         // S13 (F12): per-op metrics before any forwarding. GET /metrics → JSON;
         // GET /metrics?format=prometheus → text exposition. Final.
-        if session.req_header().uri.path() == "/metrics" {
-            if session.req_header().method != "GET" {
-                let header = ResponseHeader::build(405u16, None)?;
-                session
-                    .write_response_header(Box::new(header), false)
-                    .await?;
-                session.write_response_body(None, true).await?;
-                return Ok(true);
-            }
-            let body = match session.req_header().uri.query() {
-                Some(q) if q.contains("format=prometheus") => edge_metrics()
+        if let Some(EarlyRoute::Metrics { prometheus }) = decision {
+            let body = if prometheus {
+                edge_metrics()
                     .to_prometheus(&filter::allowed_ops_vec(), &[])
-                    .into_bytes(),
-                _ => serde_json::to_vec(&edge_metrics().to_json(&filter::allowed_ops_vec(), &[]))
-                    .unwrap_or_else(|_| b"".to_vec()),
+                    .into_bytes()
+            } else {
+                serde_json::to_vec(&edge_metrics().to_json(&filter::allowed_ops_vec(), &[]))
+                    .unwrap_or_else(|_| b"".to_vec())
             };
             let body = bytes::Bytes::from(body);
             let mut header = ResponseHeader::build(200u16, None)?;
@@ -133,6 +137,33 @@ impl ProxyHttp for UnferGateway {
                 .write_response_header(Box::new(header), false)
                 .await?;
             session.write_response_body(Some(body), true).await?;
+            return Ok(true);
+        }
+
+        // X6: liveness and build identity.
+        if let Some(EarlyRoute::Healthz) = decision {
+            return write_json(
+                session,
+                200,
+                &serde_json::to_vec(&serde_json::json!({"status": "ok"})).unwrap_or_default(),
+            )
+            .await
+            .map(|_| true);
+        }
+        if let Some(EarlyRoute::Version) = decision {
+            return write_json(session, 200, &version_json())
+                .await
+                .map(|_| true);
+        }
+
+        // A known path reached with the wrong method.
+        if decision.is_none() {
+            let mut header = ResponseHeader::build(405u16, None)?;
+            header.insert_header("allow", "GET")?;
+            session
+                .write_response_header(Box::new(header), false)
+                .await?;
+            session.write_response_body(None, true).await?;
             return Ok(true);
         }
 
@@ -543,8 +574,58 @@ async fn read_body(session: &mut Session) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-/// Write a JSON maybe-short-circuit response (used by the audit/gate consoles).
-#[cfg(feature = "audit")]
+/// What the gateway answers itself, before anything is forwarded.
+///
+/// X6: `/healthz` and `/version` for operators, matching the endpoints
+/// dynamic-arctic exposes, so a deployment can probe either service the same way.
+///
+/// Extracted as a pure function on purpose. `request_filter` takes a pingora
+/// `Session`, which cannot be constructed without a real connection, so testing
+/// the handler means testing nothing. The decision table -- which path, which
+/// method, which status -- is where mistakes live, and that is pure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EarlyRoute {
+    /// `GET /metrics`, optionally in Prometheus text format.
+    Metrics { prometheus: bool },
+    /// `GET /healthz`
+    Healthz,
+    /// `GET /version`
+    Version,
+    /// `POST /api/cap/...`; the remainder of the path.
+    CapInvoke(String),
+    /// Anything else: forward upstream.
+    Proxy,
+}
+
+/// Decide how to handle a request, or `None` if the method is wrong for a path
+/// that does exist (the caller then answers 405).
+pub fn route(method: &str, path: &str, query: Option<&str>) -> Option<EarlyRoute> {
+    match path {
+        "/metrics" if method == "GET" => Some(EarlyRoute::Metrics {
+            prometheus: query.is_some_and(|q| q.contains("format=prometheus")),
+        }),
+        "/healthz" if method == "GET" => Some(EarlyRoute::Healthz),
+        "/version" if method == "GET" => Some(EarlyRoute::Version),
+        p if p.starts_with("/api/cap/") && method == "POST" => {
+            Some(EarlyRoute::CapInvoke(p["/api/cap/".len()..].to_string()))
+        }
+        // A known self-service path reached with the wrong method is a client
+        // error, not something to forward. Forwarding `POST /healthz` upstream
+        // would return a confusing upstream 404 instead of a 405.
+        "/metrics" | "/healthz" | "/version" => None,
+        _ => Some(EarlyRoute::Proxy),
+    }
+}
+
+/// The build identity this gateway reports.
+pub fn version_json() -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "service": "unfer_edge",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec())
+}
+
 async fn write_json(session: &mut Session, status: u16, body: &[u8]) -> pingora_core::Result<()> {
     let mut header = ResponseHeader::build(status, None)?;
     header.insert_header("content-type", "application/json")?;
@@ -611,4 +692,69 @@ fn main() {
     proxy.add_tcp(&listen);
     server.add_service(proxy);
     server.run_forever();
+}
+
+#[cfg(test)]
+mod early_route_tests {
+    use super::*;
+
+    #[test]
+    fn healthz_and_version_are_get_only() {
+        assert_eq!(route("GET", "/healthz", None), Some(EarlyRoute::Healthz));
+        assert_eq!(route("GET", "/version", None), Some(EarlyRoute::Version));
+        // Wrong method: None means "405", not "forward upstream".
+        for m in ["POST", "PUT", "DELETE", "HEAD"] {
+            assert_eq!(route(m, "/healthz", None), None, "{m} /healthz");
+            assert_eq!(route(m, "/version", None), None, "{m} /version");
+        }
+    }
+
+    #[test]
+    fn metrics_keeps_its_prometheus_format_switch() {
+        assert_eq!(
+            route("GET", "/metrics", None),
+            Some(EarlyRoute::Metrics { prometheus: false })
+        );
+        assert_eq!(
+            route("GET", "/metrics", Some("format=prometheus")),
+            Some(EarlyRoute::Metrics { prometheus: true })
+        );
+        assert_eq!(route("POST", "/metrics", None), None);
+    }
+
+    #[test]
+    fn capability_invoke_yields_the_remainder_and_requires_post() {
+        assert_eq!(
+            route("POST", "/api/cap/mint", None),
+            Some(EarlyRoute::CapInvoke("mint".to_string()))
+        );
+        assert_eq!(
+            route("POST", "/api/cap/a/b/c", None),
+            Some(EarlyRoute::CapInvoke("a/b/c".to_string()))
+        );
+        // GET must not execute a capability: that is the whole point of minting
+        // one. A GET falls through to the proxy instead of being dispatched.
+        assert_eq!(route("GET", "/api/cap/mint", None), Some(EarlyRoute::Proxy));
+    }
+
+    #[test]
+    fn everything_else_is_forwarded() {
+        for p in ["/", "/api/v1/foo", "/healthz/extra", "/api/cap"] {
+            assert_eq!(
+                route("POST", p, None),
+                Some(EarlyRoute::Proxy),
+                "{p} should forward"
+            );
+        }
+    }
+
+    #[test]
+    fn version_json_names_the_service_and_a_version() {
+        let v: serde_json::Value = serde_json::from_slice(&version_json()).expect("json");
+        assert_eq!(v["service"], "unfer_edge");
+        assert!(
+            !v["version"].as_str().unwrap_or_default().is_empty(),
+            "a version endpoint that reports no version is worse than none"
+        );
+    }
 }
