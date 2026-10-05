@@ -805,8 +805,7 @@ mod early_route_tests {
 
     #[test]
     fn version_json_names_the_service_and_a_version() {
-        let v: serde_json::Value =
-            serde_json::from_slice(&version_json(None, None)).expect("json");
+        let v: serde_json::Value = serde_json::from_slice(&version_json(None, None)).expect("json");
         assert_eq!(v["service"], "unfer_edge");
         assert!(
             !v["version"].as_str().unwrap_or_default().is_empty(),

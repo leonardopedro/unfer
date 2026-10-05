@@ -72,9 +72,7 @@ impl NudgeKind {
     pub fn instruction(self) -> &'static str {
         match self {
             NudgeKind::WrapUp => "finish the current step; do not start a new one.",
-            NudgeKind::StopClaiming => {
-                "stop claiming new scope; finish what you already hold."
-            }
+            NudgeKind::StopClaiming => "stop claiming new scope; finish what you already hold.",
             NudgeKind::MergeOrReportBlocked => {
                 "merge what you have, or report that you are blocked and why."
             }
@@ -199,7 +197,10 @@ mod tests {
         // A worker that reads only the final line should read the one that
         // matters most.
         let d = due(0, DEFAULT_CHECKPOINTS);
-        assert_eq!(d.last().map(|n| n.kind), Some(NudgeKind::MergeOrReportBlocked));
+        assert_eq!(
+            d.last().map(|n| n.kind),
+            Some(NudgeKind::MergeOrReportBlocked)
+        );
     }
 
     #[test]

@@ -346,7 +346,10 @@ impl Board {
 
     /// Cursor of the oldest retained entry (`latest + 1` when empty).
     pub fn oldest_available(&self) -> u64 {
-        self.entries.front().map(|e| e.cursor).unwrap_or(self.latest_cursor() + 1)
+        self.entries
+            .front()
+            .map(|e| e.cursor)
+            .unwrap_or(self.latest_cursor() + 1)
     }
 
     /// Whether a consumer resuming from `since_cursor` has missed entries that
@@ -446,9 +449,9 @@ const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
 /// uppercase). Listing them beats a generic "long random-looking run" rule,
 /// which would eat the commit hashes and digests this board legitimately carries.
 const TOKEN_PREFIXES: &[&str] = &[
-    "sk-",         // OpenAI-style
-    "sk_live_",    // Stripe-style
-    "ghp_",        // GitHub PAT
+    "sk-",      // OpenAI-style
+    "sk_live_", // Stripe-style
+    "ghp_",     // GitHub PAT
     "gho_",
     "github_pat_", // fine-grained GitHub PAT
     "xoxb-",       // Slack bot token
@@ -561,10 +564,7 @@ fn redact_keyed_values(text: &str) -> String {
             continue;
         }
         let klower = key.to_ascii_lowercase();
-        if !SENSITIVE_KEY_FRAGMENTS
-            .iter()
-            .any(|f| klower.contains(f))
-        {
+        if !SENSITIVE_KEY_FRAGMENTS.iter().any(|f| klower.contains(f)) {
             continue;
         }
         // Skip `=`, optional spaces, an opening quote, then the value.
@@ -578,9 +578,7 @@ fn redact_keyed_values(text: &str) -> String {
             vstart += 1;
         }
         let vend = text[vstart..]
-            .find(|c: char| {
-                c.is_whitespace() || c == ',' || c == '"' || c == '\'' || c == '}'
-            })
+            .find(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'' || c == '}')
             .map(|i| vstart + i)
             .unwrap_or(text.len());
         if vend <= vstart {
@@ -707,7 +705,10 @@ mod tests {
             b.has_gap(0),
             "a reader starting from 0 must be told the beginning is gone"
         );
-        assert!(!b.has_gap(25), "a reader at the oldest retained cursor is whole");
+        assert!(
+            !b.has_gap(25),
+            "a reader at the oldest retained cursor is whole"
+        );
     }
 
     #[test]
@@ -864,7 +865,10 @@ mod tests {
     fn whitespace_around_operators_is_ignored() {
         let b = grep_board();
         assert_eq!(GrepExpr::parse("  nanoda ,  claiming  ").matches_all(&b), 2);
-        assert_eq!(GrepExpr::parse(" unitarity & collapsed ").matches_all(&b), 1);
+        assert_eq!(
+            GrepExpr::parse(" unitarity & collapsed ").matches_all(&b),
+            1
+        );
     }
 
     #[test]
@@ -910,8 +914,7 @@ mod tests {
             "\"PATCH_SUMMARY\""
         );
         assert_eq!(serde_json::to_string(&BoardKind::Fact).unwrap(), "\"FACT\"");
-        let back: BoardKind =
-            serde_json::from_str("\"PATCH_SUMMARY\"").expect("round-trips");
+        let back: BoardKind = serde_json::from_str("\"PATCH_SUMMARY\"").expect("round-trips");
         assert_eq!(back, BoardKind::PatchSummary);
     }
 
@@ -919,8 +922,14 @@ mod tests {
     fn kind_parsing_is_forgiving_about_case_and_the_patch_spelling() {
         assert_eq!(BoardKind::parse("fail"), Some(BoardKind::Fail));
         assert_eq!(BoardKind::parse(" FAIL "), Some(BoardKind::Fail));
-        assert_eq!(BoardKind::parse("patch_summary"), Some(BoardKind::PatchSummary));
-        assert_eq!(BoardKind::parse("PATCHSUMMARY"), Some(BoardKind::PatchSummary));
+        assert_eq!(
+            BoardKind::parse("patch_summary"),
+            Some(BoardKind::PatchSummary)
+        );
+        assert_eq!(
+            BoardKind::parse("PATCHSUMMARY"),
+            Some(BoardKind::PatchSummary)
+        );
         assert_eq!(BoardKind::parse("nonsense"), None);
     }
 
@@ -1072,7 +1081,12 @@ mod tests {
         // Redaction must not destroy the entry's usefulness: the *fact* is still
         // on the board, only the credential is gone.
         let mut b = Board::new();
-        b.write(BoardKind::Fail, "w1", "zenodo push failed with api_key=abc123", None);
+        b.write(
+            BoardKind::Fail,
+            "w1",
+            "zenodo push failed with api_key=abc123",
+            None,
+        );
         assert_eq!(GrepExpr::parse("zenodo").matches_all(&b), 1);
         assert_eq!(GrepExpr::parse("abc123").matches_all(&b), 0);
     }
@@ -1085,12 +1099,12 @@ mod tests {
     }
 
     impl GrepExpr {
-/// Test helper: how many retained entries this expression selects.
-    ///
-    /// `pub` so sibling modules' tests can use it; it exists only under
-    /// `#[cfg(test)]` and is not part of the crate's surface.
-    pub fn matches_all(&self, b: &Board) -> usize {
-        b.grep(self).len()
-    }
+        /// Test helper: how many retained entries this expression selects.
+        ///
+        /// `pub` so sibling modules' tests can use it; it exists only under
+        /// `#[cfg(test)]` and is not part of the crate's surface.
+        pub fn matches_all(&self, b: &Board) -> usize {
+            b.grep(self).len()
+        }
     }
 }

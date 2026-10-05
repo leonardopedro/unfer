@@ -6750,9 +6750,11 @@ mod spawn_pacing_tests {
         assert!(rc < 0, "the second spawn is paced out");
 
         let entries = handles::list_audit();
-        let found = entries
-            .iter()
-            .any(|e| e.detail.as_deref().is_some_and(|d| d.contains("spawn pacing")));
+        let found = entries.iter().any(|e| {
+            e.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("spawn pacing"))
+        });
         assert!(found, "the audit ring must record why: {entries:#?}");
     }
 

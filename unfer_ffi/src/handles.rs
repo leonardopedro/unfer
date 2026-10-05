@@ -1224,9 +1224,7 @@ pub fn spawn_pace_retry_after(principal: &str) -> Option<u64> {
     let last = guard.as_ref()?.get(principal)?;
     let elapsed = std::time::Instant::now().duration_since(*last);
     let min = std::time::Duration::from_millis(interval);
-    Some(
-        (min.saturating_sub(elapsed).as_millis().div_ceil(1000) as u64).max(1),
-    )
+    Some((min.saturating_sub(elapsed).as_millis().div_ceil(1000) as u64).max(1))
 }
 
 /// Reset the pacer (QA/console reset, and test isolation).
@@ -2352,7 +2350,10 @@ mod spawn_pace_tests {
             assert!(spawn_pace_allows("alice"));
             assert!(!spawn_pace_allows("alice"));
             // One busy agent must not stall the whole organisation.
-            assert!(spawn_pace_allows("bob"), "bob is not paced by alice's spawn");
+            assert!(
+                spawn_pace_allows("bob"),
+                "bob is not paced by alice's spawn"
+            );
         });
     }
 
@@ -2378,7 +2379,10 @@ mod spawn_pace_tests {
             assert!(spawn_pace_allows("x"));
             assert!(!spawn_pace_allows("x"));
             clear_spawn_pace();
-            assert!(spawn_pace_allows("x"), "a console reset must clear the window");
+            assert!(
+                spawn_pace_allows("x"),
+                "a console reset must clear the window"
+            );
         });
     }
 

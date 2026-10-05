@@ -237,8 +237,12 @@ impl EvidenceError {
                 "cannot establish freshness: {worker}'s last change is no longer on the \
                  board, so there is nothing to compare the gate run against."
             ),
-            EvidenceError::NoFiles => "the patch summary names no files, so there is nothing to review.".to_string(),
-            EvidenceError::NoIdea => "the patch summary states no idea, so the change is unexplained.".to_string(),
+            EvidenceError::NoFiles => {
+                "the patch summary names no files, so there is nothing to review.".to_string()
+            }
+            EvidenceError::NoIdea => {
+                "the patch summary states no idea, so the change is unexplained.".to_string()
+            }
         }
     }
 }
@@ -260,11 +264,9 @@ pub fn validate(
     if summary.idea.trim().is_empty() {
         return Err(EvidenceError::NoIdea);
     }
-    let run = runs
-        .get(summary.run_id)
-        .ok_or(EvidenceError::UnknownRun {
-            run_id: summary.run_id,
-        })?;
+    let run = runs.get(summary.run_id).ok_or(EvidenceError::UnknownRun {
+        run_id: summary.run_id,
+    })?;
     if !run.verdict.is_pass() {
         return Err(EvidenceError::NotPassing {
             run_id: run.id,
@@ -346,8 +348,14 @@ mod tests {
     }
 
     fn pass_run(runs: &mut GateRuns, cursor: u64) -> u64 {
-        runs.record("verify-invariants", Verdict::Pass, cursor, Some("sha256:abc".into()), Some("34 passed".into()))
-            .id
+        runs.record(
+            "verify-invariants",
+            Verdict::Pass,
+            cursor,
+            Some("sha256:abc".into()),
+            Some("34 passed".into()),
+        )
+        .id
     }
 
     // ---- recording ---------------------------------------------------------
@@ -408,7 +416,13 @@ mod tests {
         let (mut b, mut runs) = (board(), GateRuns::new());
         worker_with_change(&mut b, "w1");
         let id = runs
-            .record("release-golden", Verdict::Fail, 10, None, Some("manifest differs".into()))
+            .record(
+                "release-golden",
+                Verdict::Fail,
+                10,
+                None,
+                Some("manifest differs".into()),
+            )
             .id;
         let (_, v) = submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", id);
         assert_eq!(
@@ -492,7 +506,11 @@ mod tests {
         let id = pass_run(&mut runs, 1); // ran before w1's change
         let (_, v) = submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", id);
         match v.unwrap_err() {
-            EvidenceError::Stale { run_id, last_change, .. } => {
+            EvidenceError::Stale {
+                run_id,
+                last_change,
+                ..
+            } => {
                 assert_eq!(run_id, id);
                 assert_eq!(last_change, 1, "the change is the board's first entry");
             }
@@ -506,15 +524,19 @@ mod tests {
         let (mut b, mut runs) = (board(), GateRuns::new());
         worker_with_change(&mut b, "w1");
         let stale = pass_run(&mut runs, 1);
-        assert!(submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", stale)
-            .1
-            .is_err());
+        assert!(
+            submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", stale)
+                .1
+                .is_err()
+        );
 
         worker_with_change(&mut b, "w1");
         let fresh = pass_run(&mut runs, b.latest_cursor() + 1);
-        assert!(submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", fresh)
-            .1
-            .is_ok());
+        assert!(
+            submit(&mut b, &runs, WORKER, &["a.rs".into()], "fix", fresh)
+                .1
+                .is_ok()
+        );
     }
 
     #[test]
@@ -524,8 +546,16 @@ mod tests {
         let w1_stale = pass_run(&mut runs, 1);
         worker_with_change(&mut b, "w2");
         let w2_fresh = pass_run(&mut runs, b.latest_cursor() + 1);
-        assert!(submit(&mut b, &runs, "w2", &["a.rs".into()], "w2 work", w2_fresh).1.is_ok());
-        assert!(submit(&mut b, &runs, "w1", &["b.rs".into()], "w1 work", w1_stale).1.is_err());
+        assert!(
+            submit(&mut b, &runs, "w2", &["a.rs".into()], "w2 work", w2_fresh)
+                .1
+                .is_ok()
+        );
+        assert!(
+            submit(&mut b, &runs, "w1", &["b.rs".into()], "w1 work", w1_stale)
+                .1
+                .is_err()
+        );
     }
 
     #[test]
@@ -540,7 +570,12 @@ mod tests {
             b.write(BoardKind::Observed, "filler", &format!("e{i}"), None);
         }
         let (_, v) = submit(&mut b, &runs, "ghost", &["a.rs".into()], "fix", id);
-        assert_eq!(v.unwrap_err(), EvidenceError::UnknownBase { worker: "ghost".into() });
+        assert_eq!(
+            v.unwrap_err(),
+            EvidenceError::UnknownBase {
+                worker: "ghost".into()
+            }
+        );
     }
 
     #[test]
@@ -576,8 +611,16 @@ mod tests {
         for e in [
             EvidenceError::Missing,
             EvidenceError::UnknownRun { run_id: 3 },
-            EvidenceError::NotPassing { run_id: 1, source: "x".into(), verdict: "fail" },
-            EvidenceError::Stale { run_id: 1, run_cursor: 2, last_change: 9 },
+            EvidenceError::NotPassing {
+                run_id: 1,
+                source: "x".into(),
+                verdict: "fail",
+            },
+            EvidenceError::Stale {
+                run_id: 1,
+                run_cursor: 2,
+                last_change: 9,
+            },
             EvidenceError::UnknownBase { worker: "w".into() },
             EvidenceError::NoFiles,
             EvidenceError::NoIdea,

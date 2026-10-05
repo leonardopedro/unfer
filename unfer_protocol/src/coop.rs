@@ -206,9 +206,7 @@ pub enum ClaimOutcome {
     /// claim is often benign — the same worker re-claiming after a restart, or two
     /// workers converging on the same obviously-correct owner. The information is
     /// what lets them settle it ([`Dm`]).
-    Overlaps {
-        existing: Vec<LiveClaim>,
-    },
+    Overlaps { existing: Vec<LiveClaim> },
 }
 
 /// Result of attempting a claim.
@@ -246,12 +244,7 @@ impl Coop {
     }
 
     /// Attempt to claim `scope` for `worker`.
-    pub fn claim(
-        &mut self,
-        board: &mut Board,
-        worker: &str,
-        scope: &str,
-    ) -> ClaimAttempt {
+    pub fn claim(&mut self, board: &mut Board, worker: &str, scope: &str) -> ClaimAttempt {
         let cs = ClaimScope::new(scope);
         let overlapping: Vec<LiveClaim> = self
             .claims
@@ -279,7 +272,9 @@ impl Coop {
             // two workers must not both believe they own a scope.
             ClaimAttempt {
                 entry,
-                outcome: ClaimOutcome::Overlaps { existing: overlapping },
+                outcome: ClaimOutcome::Overlaps {
+                    existing: overlapping,
+                },
             }
         }
     }
@@ -318,14 +313,7 @@ impl Coop {
     /// The board entry is a `BoardKind::Observed` rather than a private store so
     /// that a reader auditing the board can see that a negotiation happened. The
     /// message text itself goes only to the recipient's queue.
-    pub fn dm(
-        &mut self,
-        board: &mut Board,
-        from: &str,
-        to: &str,
-        text: &str,
-        priority: i64,
-    ) -> Dm {
+    pub fn dm(&mut self, board: &mut Board, from: &str, to: &str, text: &str, priority: i64) -> Dm {
         let cursor = board.latest_cursor() + 1;
         let msg = Dm {
             from: from.to_string(),
@@ -502,7 +490,7 @@ pub fn role_over(handoffs: &[Handoff], claim_cursor: u64, worker: &str) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::{Board, BoardKind, GrepExpr, CAPACITY};
+    use crate::board::{Board, BoardKind, CAPACITY, GrepExpr};
 
     fn board() -> Board {
         Board::new()
@@ -551,11 +539,14 @@ mod tests {
 
     #[test]
     fn a_directory_scope_overlaps_a_file_inside_it() {
-        assert!(ClaimScope::new("unfer/unfer_ffi/src").overlaps(&ClaimScope::new(
-            "unfer/unfer_ffi/src/handles.rs"
-        )));
-        assert!(ClaimScope::new("unfer/unfer_ffi/src/handles.rs")
-            .overlaps(&ClaimScope::new("unfer/unfer_ffi/src")));
+        assert!(
+            ClaimScope::new("unfer/unfer_ffi/src")
+                .overlaps(&ClaimScope::new("unfer/unfer_ffi/src/handles.rs"))
+        );
+        assert!(
+            ClaimScope::new("unfer/unfer_ffi/src/handles.rs")
+                .overlaps(&ClaimScope::new("unfer/unfer_ffi/src"))
+        );
     }
 
     #[test]
@@ -576,7 +567,9 @@ mod tests {
     fn a_glob_scope_overlaps_what_it_matches() {
         assert!(ClaimScope::new("unfer/*.rs").overlaps(&ClaimScope::new("unfer/handles.rs")));
         assert!(ClaimScope::new("unfer/handles.rs").overlaps(&ClaimScope::new("unfer/*.rs")));
-        assert!(ClaimScope::new("**/*.lean").overlaps(&ClaimScope::new("BookProof/ChapterFoo.lean")));
+        assert!(
+            ClaimScope::new("**/*.lean").overlaps(&ClaimScope::new("BookProof/ChapterFoo.lean"))
+        );
         assert!(ClaimScope::new("docs/*").overlaps(&ClaimScope::new("docs/RUNBOOK.md")));
     }
 
@@ -599,7 +592,10 @@ mod tests {
         // matcher only.
         assert!(one_seg_match("*", "anything"));
         assert!(one_seg_match("*.rs", "handles.rs"));
-        assert!(one_seg_match("*.rs", "a/handles.rs"), "per-segment matcher, not path-aware");
+        assert!(
+            one_seg_match("*.rs", "a/handles.rs"),
+            "per-segment matcher, not path-aware"
+        );
         assert!(one_seg_match("h?ndles.rs", "handles.rs"));
         assert!(!one_seg_match("h?ndles.rs", "handlesxrs"));
         assert!(one_seg_match("*", ""));
@@ -613,7 +609,10 @@ mod tests {
         // The path-aware property, at the layer that provides it.
         assert!(!seg_match(&["docs", "*.rs"], &["docs", "a", "b.rs"]));
         assert!(seg_match(&["docs", "*"], &["docs", "a"]));
-        assert!(seg_match(&["**", "*.lean"], &["BookProof", "ChapterFoo.lean"]));
+        assert!(seg_match(
+            &["**", "*.lean"],
+            &["BookProof", "ChapterFoo.lean"]
+        ));
     }
 
     // ---- claiming ----------------------------------------------------------
@@ -699,7 +698,11 @@ mod tests {
         let (mut b, mut c) = (board(), Coop::new());
         c.claim(&mut b, "w1", "a/b");
         assert_eq!(c.conflicting("w2", "a/b/c").len(), 1);
-        assert_eq!(c.conflicting("w1", "a/b/c").len(), 0, "self is not a conflict");
+        assert_eq!(
+            c.conflicting("w1", "a/b/c").len(),
+            0,
+            "self is not a conflict"
+        );
         assert_eq!(c.conflicting("w2", "z/z").len(), 0);
     }
 

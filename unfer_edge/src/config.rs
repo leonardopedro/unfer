@@ -28,7 +28,7 @@
 //! not do is widen what the admin refuse list protects -- see `HARD_PATCH_KEYS`
 //! below and the test that pins it.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Keys as they appear in the config file and as `UNFER_*` environment
 /// variables. One table, so the two spellings cannot drift apart.
@@ -368,12 +368,7 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect();
-        move |k| {
-            owned
-                .iter()
-                .find(|(ek, _)| ek == k)
-                .map(|(_, v)| v.clone())
-        }
+        move |k| owned.iter().find(|(ek, _)| ek == k).map(|(_, v)| v.clone())
     }
 
     fn flags(listen: Option<&str>, backend: Option<&str>) -> Flags {
@@ -418,7 +413,11 @@ mod tests {
     fn flag_beats_everything() {
         let file = json!({"listen": "10.0.0.1:8080"});
         let env = [("UNFER_LISTEN", "10.0.0.2:9090")];
-        let (cfg, prov) = Config::resolve(Some(&file), &env_of(&env), &flags(Some("10.0.0.3:7070"), None));
+        let (cfg, prov) = Config::resolve(
+            Some(&file),
+            &env_of(&env),
+            &flags(Some("10.0.0.3:7070"), None),
+        );
         assert_eq!(cfg.listen, "10.0.0.3:7070");
         assert_eq!(layer_of(&prov, "listen"), Layer::Flag);
     }
@@ -450,8 +449,14 @@ mod tests {
         // validation doing its job, not the coercion failing: the next test pins
         // the fallback.
         assert_eq!(scalar_to_string(&serde_json::json!("s")), Some("s".into()));
-        assert_eq!(scalar_to_string(&serde_json::json!(8080)), Some("8080".into()));
-        assert_eq!(scalar_to_string(&serde_json::json!(true)), Some("true".into()));
+        assert_eq!(
+            scalar_to_string(&serde_json::json!(8080)),
+            Some("8080".into())
+        );
+        assert_eq!(
+            scalar_to_string(&serde_json::json!(true)),
+            Some("true".into())
+        );
         assert_eq!(scalar_to_string(&serde_json::json!({"a": 1})), None);
         assert_eq!(scalar_to_string(&serde_json::json!([1])), None);
     }
@@ -501,7 +506,16 @@ mod tests {
 
     #[test]
     fn addresses_are_validated_before_pingora_sees_them() {
-        for bad in ["", "  ", "host", "host:", ":8080", "host:port", "host:99999", "ho st:80"] {
+        for bad in [
+            "",
+            "  ",
+            "host",
+            "host:",
+            ":8080",
+            "host:port",
+            "host:99999",
+            "ho st:80",
+        ] {
             assert!(!valid_addr(bad), "{bad:?} should be rejected");
         }
         for good in ["0.0.0.0:3000", "127.0.0.1:3001", "[::1]:8080"] {
@@ -561,9 +575,11 @@ mod tests {
 
     #[test]
     fn help_returns_usage_as_an_error_so_the_process_can_exit_non_zero() {
-        assert!(parse_args(&args(&["--help"]))
-            .expect_err("help is Err")
-            .contains("usage:"));
+        assert!(
+            parse_args(&args(&["--help"]))
+                .expect_err("help is Err")
+                .contains("usage:")
+        );
     }
 
     #[test]
@@ -579,7 +595,10 @@ mod tests {
         // `init` must not return early: returning on the subcommand and discarding
         // the rest of argv is how `--config` after it gets silently ignored, and
         // the wizard then writes to the default path while reporting success.
-        for form in [vec!["init", "--config", "/tmp/x.json"], vec!["init", "--config=/tmp/x.json"]] {
+        for form in [
+            vec!["init", "--config", "/tmp/x.json"],
+            vec!["init", "--config=/tmp/x.json"],
+        ] {
             let got = parse_args(&args(&form)).expect("init with config");
             assert_eq!(
                 got,
