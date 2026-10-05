@@ -20,6 +20,7 @@ pub mod coop;
 pub mod durable;
 pub mod evidence;
 pub mod harness;
+pub mod ingest;
 pub mod memory;
 pub mod nudge;
 pub mod ops;

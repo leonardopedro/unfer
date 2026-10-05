@@ -166,10 +166,34 @@ impl ProxyHttp for UnferGateway {
             .map(|_| true);
         }
 
+        // C4: the normalized message ingress. Deserializes
+        // `unfer_protocol::ingest::IngestBatch` — the *same* type
+        // dynamic-arctic's `/api/v1/messages` accepts — so a handler written
+        // once works for every platform and adding one is a config change.
+        if let Some(EarlyRoute::Ingest) = decision {
+            let raw = match read_body(session).await {
+                Ok(b) => b,
+                Err(_) => {
+                    return write_json(session, 400u16, b"{\"error\":\"body too large\"}")
+                        .await
+                        .map(|_| true);
+                }
+            };
+            let (status, body) = ingest_body(&raw);
+            return write_json(session, status, &body).await.map(|_| true);
+        }
+
         // A known path reached with the wrong method.
         if decision.is_none() {
             let mut header = ResponseHeader::build(405u16, None)?;
-            header.insert_header("allow", "GET")?;
+            header.insert_header(
+                "allow",
+                if session.req_header().uri.path() == "/api/v1/ingest" {
+                    "POST"
+                } else {
+                    "GET"
+                },
+            )?;
             session
                 .write_response_header(Box::new(header), false)
                 .await?;
@@ -603,8 +627,37 @@ pub enum EarlyRoute {
     Version,
     /// `POST /api/cap/...`; the remainder of the path.
     CapInvoke(String),
+    /// `POST /api/v1/ingest` — the normalized message ingress (C4).
+    Ingest,
     /// Anything else: forward upstream.
     Proxy,
+}
+
+/// Body of `POST /api/v1/ingest` (C4).
+///
+/// Thin by design: `unfer_protocol::ingest::handle_ingest_body` does the work and
+/// dynamic-arctic's `/api/v1/messages` calls the same function, so the two servers
+/// cannot drift into answering a sender differently. This only maps the outcome to
+/// a status code.
+///
+/// A partial accept is a **200**, not a 207: some messages were accepted and the
+/// ack says exactly which were refused. Using 207 would be more precise but most
+/// webhook senders treat any non-2xx as "retry everything", which would re-deliver
+/// the messages that already succeeded. A total failure is a 400.
+pub fn ingest_body(raw: &[u8]) -> (u16, Vec<u8>) {
+    use unfer_protocol::ingest::handle_ingest_body;
+    match handle_ingest_body(raw) {
+        Ok(ack) => (
+            200u16,
+            serde_json::to_vec(&ack).unwrap_or_else(|_| b"{}".to_vec()),
+        ),
+        Err(e) => (
+            400u16,
+            serde_json::json!({ "error": e.to_string() })
+                .to_string()
+                .into_bytes(),
+        ),
+    }
 }
 
 /// Decide how to handle a request, or `None` if the method is wrong for a path
@@ -619,10 +672,20 @@ pub fn route(method: &str, path: &str, query: Option<&str>) -> Option<EarlyRoute
         p if p.starts_with("/api/cap/") && method == "POST" => {
             Some(EarlyRoute::CapInvoke(p["/api/cap/".len()..].to_string()))
         }
+        // C4: the ingress. One shape for every platform, so adding a channel is
+        // a config change rather than a release.
+        "/api/v1/ingest" if method == "POST" => Some(EarlyRoute::Ingest),
         // A known self-service path reached with the wrong method is a client
         // error, not something to forward. Forwarding `POST /healthz` upstream
         // would return a confusing upstream 404 instead of a 405.
-        "/metrics" | "/healthz" | "/version" => None,
+        // A known path reached with the wrong method. Forwarding `POST /healthz`
+        // upstream would return a confusing upstream 404 instead of a 405.
+        //
+        // `/api/v1/ingest` belongs in this list, not just in the POST arm above:
+        // without it, a GET fell through to `_ => Some(EarlyRoute::Proxy)` and was
+        // forwarded upstream, where a sender would get a 404 from something that
+        // has never heard of the ingest schema.
+        "/metrics" | "/healthz" | "/version" | "/api/v1/ingest" => None,
         _ => Some(EarlyRoute::Proxy),
     }
 }
@@ -762,6 +825,122 @@ mod early_route_tests {
             assert_eq!(route(m, "/healthz", None), None, "{m} /healthz");
             assert_eq!(route(m, "/version", None), None, "{m} /version");
         }
+    }
+
+    /// C4: the ingest route is POST-only and never forwarded upstream.
+    ///
+    /// "Never forwarded" is the load-bearing half. If an ingress POST were treated
+    /// as proxy traffic, a sender's message would be forwarded to an upstream that
+    /// has never heard of the normalized schema and the failure would surface as an
+    /// upstream 404 instead of a validation error.
+    #[test]
+    fn ingest_is_post_only_and_local() {
+        assert_eq!(
+            route("POST", "/api/v1/ingest", None),
+            Some(EarlyRoute::Ingest)
+        );
+        for m in ["GET", "PUT", "DELETE"] {
+            assert_eq!(route(m, "/api/v1/ingest", None), None, "{m} /api/v1/ingest");
+        }
+    }
+
+    /// C4: the body handler accepts the shared type.
+    #[test]
+    fn a_clean_batch_is_accepted() {
+        use unfer_protocol::ingest::{IngestBatch, IngestMessage, IngestSource};
+        let batch = IngestBatch::new(vec![IngestMessage::new(
+            "m1",
+            IngestSource::Telegram,
+            "u1",
+            "hello",
+        )])
+        .unwrap();
+        let raw = serde_json::to_vec(&batch).unwrap();
+        let (status, body) = ingest_body(&raw);
+        assert_eq!(status, 200);
+        let ack: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(ack["accepted"], 1);
+        assert_eq!(ack["ids"][0], "telegram:m1");
+    }
+
+    /// C4: a partial accept is 200, not 207.
+    ///
+    /// Most webhook senders treat any non-2xx as "retry everything", so a 207
+    /// would cause the already-accepted messages to be delivered twice. The ack
+    /// still names every refusal.
+    #[test]
+    fn a_partial_accept_is_200_with_the_refusals_named() {
+        use unfer_protocol::ingest::{IngestBatch, IngestMessage, IngestSource};
+        let batch = IngestBatch::new(vec![
+            IngestMessage::new("m1", IngestSource::Telegram, "u1", "hi"),
+            IngestMessage::new("", IngestSource::Telegram, "u1", "no id"),
+        ])
+        .unwrap();
+        let raw = serde_json::to_vec(&batch).unwrap();
+        let (status, body) = ingest_body(&raw);
+        assert_eq!(status, 200);
+        let ack: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(ack["accepted"], 1);
+        assert_eq!(ack["rejected"][0]["index"], 1);
+        // The variant *name*, not the `Display` prose: a sender switches on this,
+        // so it has to be stable, and `Display` is the half most likely to be
+        // reworded. The prose is available separately for logs.
+        assert_eq!(ack["rejected"][0]["error"], "MissingId");
+    }
+
+    #[test]
+    fn a_malformed_envelope_is_400() {
+        for bad in [&b"not json"[..], b"", b"{}", b"[]"] {
+            let (status, _) = ingest_body(bad);
+            assert_eq!(status, 400, "{:?}", String::from_utf8_lossy(bad));
+        }
+    }
+
+    #[test]
+    fn an_oversize_batch_is_400_rather_than_partially_applied() {
+        use unfer_protocol::ingest::{IngestMessage, IngestSource, MAX_BATCH};
+        let many: Vec<IngestMessage> = (0..(MAX_BATCH + 1))
+            .map(|i| IngestMessage::new(format!("m{i}"), IngestSource::Webhook, "u", "x"))
+            .collect();
+        // Built bypassing `IngestBatch::new`, which is exactly what a hand-crafted
+        // request body does.
+        let raw = serde_json::to_vec(&serde_json::json!({ "messages": many })).unwrap();
+        let (status, _) = ingest_body(&raw);
+        assert_eq!(status, 400);
+    }
+
+    #[test]
+    fn a_secret_in_a_submitted_message_is_not_echoed() {
+        use unfer_protocol::ingest::{IngestBatch, IngestMessage, IngestSource};
+        let batch = IngestBatch::new(vec![IngestMessage::new(
+            "m1",
+            IngestSource::Webhook,
+            "u1",
+            "api_key=sk-live-abc123",
+        )])
+        .unwrap();
+        let raw = serde_json::to_vec(&batch).unwrap();
+        let (_, body) = ingest_body(&raw);
+        let text = String::from_utf8_lossy(&body);
+        assert!(!text.contains("abc123"), "{text}");
+    }
+
+    #[test]
+    fn an_unregistered_source_is_reported_as_a_health_signal() {
+        use unfer_protocol::ingest::{IngestBatch, IngestMessage, IngestSource};
+        let batch = IngestBatch::new(vec![IngestMessage::new(
+            "m1",
+            IngestSource::Other("matrix".into()),
+            "u1",
+            "hi",
+        )])
+        .unwrap();
+        let raw = serde_json::to_vec(&batch).unwrap();
+        let (status, body) = ingest_body(&raw);
+        assert_eq!(status, 200);
+        let ack: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(ack["unknown_sources"], 1);
+        assert_eq!(ack["ids"][0], "matrix:m1", "and it keeps its real name");
     }
 
     #[test]

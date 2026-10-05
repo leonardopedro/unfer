@@ -578,7 +578,11 @@ fn redact_bearer(text: &str) -> String {
             .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
             .map(|i| vstart + i)
             .unwrap_or(text.len());
-        if vend > vstart {
+        // Same invariant as `redact_token_prefix`: a `bearer ` match that begins
+        // inside a value already redacted must not slice backwards. The space
+        // inside the needle makes this hard to trigger today, which is exactly
+        // why it is asserted rather than assumed.
+        if vend > vstart && vstart >= last {
             out.push_str(&text[last..vstart]);
             out.push_str(REDACTED);
             last = vend;
@@ -610,6 +614,19 @@ fn redact_token_prefix(text: &str, prefix: &str) -> String {
                 .next_back()
                 .is_some_and(|c| c.is_alphanumeric());
         if boundary {
+            // A match starting inside a region already redacted is not a new
+            // match, it is part of the value we just removed.
+            //
+            // Without this, `sk-sk-` sets `last` to end-of-text on the first
+            // match and then slices `text[6..3]` on the second -- a panic. That
+            // is remotely reachable: `redact_secrets` runs on every board write,
+            // every memory append and every inbound message, so a sender posting
+            // two adjacent token-shaped strings could take the process down. The
+            // invariant is `start >= last`, and every redactor below relies on it.
+            if start < last {
+                from = start + prefix.len();
+                continue;
+            }
             let vend = text[start + prefix.len()..]
                 .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
                 .map(|i| start + prefix.len() + i)
@@ -672,7 +689,12 @@ fn redact_keyed_values(text: &str) -> String {
             .find(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'' || c == '}')
             .map(|i| vstart + i)
             .unwrap_or(text.len());
-        if vend <= vstart {
+        if vend <= vstart || vstart < last {
+            // `vstart < last` is the same backwards-slice hazard as in
+            // `redact_token_prefix`: a separator inside a value already redacted
+            // (`api_key::api_key`) looks like a fresh sensitive pair but is not,
+            // and slicing `text[last..vstart]` there panics. The `vend <= vstart`
+            // check alone does not catch it because both are inside one value.
             continue;
         }
         out.push_str(&text[last..vstart]);
@@ -684,6 +706,110 @@ fn redact_keyed_values(text: &str) -> String {
     }
     out.push_str(&text[last..]);
     out
+}
+
+/// Regression tests for the redactor's slice arithmetic.
+///
+/// Every one of these was a panic (`byte range starts at N but ends at M`) found
+/// by the C4 ingest property test, and every one was remotely reachable:
+/// `redact_secrets` runs on every board write, every memory append and every
+/// inbound message, so a sender posting two adjacent token-shaped strings could
+/// take the process down. The shared invariant is that a redaction pass never
+/// slices backwards — the next match must not begin before the end of the region
+/// already redacted.
+mod redaction_panic_tests {
+    use super::*;
+
+    #[test]
+    fn two_adjacent_token_prefixes_do_not_panic() {
+        // `sk-` at 0 sets `last` to end-of-text; the second `sk-` at 3 then
+        // sliced text[6..3].
+        for s in [
+            "sk-sk-",
+            "sk-sk-sk-",
+            "sk-live-sk-",
+            "ghp_ghp_",
+            "sk-ghp_sk-",
+        ] {
+            let out = redact_secrets(s);
+            assert!(
+                !out.contains("sk-") || !out.contains("ghp_"),
+                "{s:?} -> {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prefix_ending_in_a_delimiter_never_slices_backwards() {
+        for s in [
+            "sk-:sk-",
+            "sk-=sk-",
+            "sk-live-:sk-live-",
+            "sk-live-=sk-live-",
+        ] {
+            let _ = redact_secrets(s);
+        }
+    }
+
+    #[test]
+    fn adjacent_separators_inside_one_value_do_not_panic() {
+        // `api_key::api_key`: the second `:` looks like a fresh sensitive pair
+        // but is inside a value already redacted.
+        for s in [
+            "api_key::api_key",
+            "api_key:=:",
+            "token::token",
+            "api_key= =api_key",
+            "api_key:::",
+        ] {
+            let _ = redact_secrets(s);
+        }
+    }
+
+    #[test]
+    fn the_secret_is_still_removed_in_the_overlapping_cases() {
+        // The point of the fix is not merely "does not panic" — the overlapping
+        // token must still be gone.
+        let out = redact_secrets("sk-sk-");
+        assert!(!out.contains("sk-sk-"), "{out:?}");
+        assert!(out.contains(REDACTED), "{out:?}");
+    }
+
+    #[test]
+    fn a_known_prefix_redacts_even_inside_prose() {
+        // Deliberately aggressive, and worth stating rather than "fixing": `sk-`
+        // followed by any word redacts that word, so ordinary prose mentioning
+        // the prefix loses it. A false positive in a redactor is the safe
+        // direction -- the alternative is a live token surviving because it
+        // happened to sit next to an English word. The module note records the
+        // same trade-off for bare hex runs, which *are* left alone because board
+        // entries legitimately carry commit hashes and digests.
+        let out = redact_secrets("the sk- prefix is documented");
+        assert!(out.contains(REDACTED), "{out:?}");
+        assert!(!out.contains("sk-"), "{out:?}");
+    }
+
+    #[test]
+    fn redaction_growth_is_linear_and_bounded() {
+        // Each match replaces its value with a fixed 14-char marker, so the worst
+        // case is a constant-factor expansion: `sk-x ` (4 chars) becomes
+        // `***REDACTED*** ` (15). Bounded *and* linear is the property that
+        // matters. The caps in `Board::write`, `Memory::append` and
+        // `IngestMessage::new` are all applied after redaction precisely so this
+        // cannot turn into an allocation.
+        let unit = "sk-x ";
+        let many = unit.repeat(2_000);
+        let out = redact_secrets(&many);
+        let factor = out.len() as f64 / many.len() as f64;
+        assert!(factor < 4.0, "growth factor {factor} is not bounded");
+        // And proportional, not superlinear.
+        let half_len = unit.len() * 1_000;
+        let half_factor = redact_secrets(&unit.repeat(1_000)).len() as f64 / half_len as f64;
+        assert!(
+            (factor - half_factor).abs() < 0.01,
+            "growth is not linear: {factor} vs {half_factor}"
+        );
+    }
 }
 
 #[cfg(test)]

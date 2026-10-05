@@ -1,0 +1,29 @@
+[package]
+name = "unfer_protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# C4: fuzz target for the normalized ingest message.
+#
+# This crate is NOT part of the workspace and is not built by `cargo test`. It is
+# built by `cargo fuzz`, which needs nightly and libfuzzer-sys -- neither of which
+# is available in this environment. The invariant it asserts is therefore *also*
+# asserted by `ingest::property::arbitrary_json_never_panics` in
+# `unfer_protocol`, which runs in normal CI. That duplication is the point: a
+# fuzz target nobody can run is a comment, and the property is the part that
+# matters.
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+unfer_protocol = { path = "../unfer_protocol" }
+
+[[bin]]
+name = "ingest_message"
+path = "fuzz_targets/ingest_message.rs"
+test = false
+doc = false
+bench = false
