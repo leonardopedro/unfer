@@ -240,6 +240,9 @@ int64_t uk_snapshot(int64_t model,
 int64_t uk_subscribe(int64_t model,
              const uint8_t* query_json,
              int64_t len);
+int64_t uk_summarize(int64_t model,
+             const uint8_t* body_ptr,
+             int64_t body_len);
 int64_t uk_symbolic_simplify(int64_t model,
                      const uint8_t* spec_json,
                      int64_t len);

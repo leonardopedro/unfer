@@ -386,6 +386,20 @@ pub enum KernelEvent {
     /// C2: something was remembered. `chars` is the post-redaction,
     /// post-cap length, so a caller can see the cost of what it asked to keep
     /// rather than the cost of what it sent.
+    /// C6: a trace was summarized for a human surface.
+    ///
+    /// `lossy` travels with it for the same reason the ingest ack carries
+    /// `truncated`: a digest that dropped something and did not say so reads
+    /// exactly like a complete one, and the reader draws the wrong conclusion.
+    /// `selected_sentences` against `source_sentences` is the ratio that makes
+    /// "how much is missing" concrete.
+    Summarized {
+        channel: String,
+        chars: usize,
+        lossy: bool,
+        source_sentences: usize,
+        selected_sentences: usize,
+    },
     MemoryAppended {
         record_id: u64,
         chars: usize,

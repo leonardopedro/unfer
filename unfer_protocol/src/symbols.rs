@@ -575,6 +575,21 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        // Sorted position: after `uk_subscribe` ("sub" < "sum") and before
+        // `uk_symbolic_simplify` -- `su` < `sy`. The registry is kept sorted by
+        // name because `registry_names_are_unique_and_sorted` asserts it and the
+        // generator diffs it byte-for-byte, so a misplaced entry is a failure that
+        // looks like real drift.
+        name: "uk_summarize",
+        kind: SymbolKind::Kernel,
+        // Observe, per C6: summarization reads the session and returns text. It
+        // changes nothing, so under S21 it must never queue for approval -- were
+        // it Mutate, the one part of an agent loop that could not run unattended
+        // would be the part that reads its own history.
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_symbolic_simplify",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Mutate,

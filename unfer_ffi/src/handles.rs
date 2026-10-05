@@ -548,6 +548,7 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::WhymlCompiled { .. } => "whyml_compiled",
         KernelEvent::EngramStored { .. } => "engram_stored",
         KernelEvent::EngramLookedUp { .. } => "engram_looked_up",
+        KernelEvent::Summarized { .. } => "summarized",
         KernelEvent::MemoryAppended { .. } => "memory_appended",
         KernelEvent::MemoryRead { .. } => "memory_read",
         KernelEvent::Error { .. } => "error",

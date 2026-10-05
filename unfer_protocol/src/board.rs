@@ -896,7 +896,7 @@ mod snapshot_tests {
     fn a_gap_in_the_cursor_run_is_refused() {
         // A partial load would leave next_cursor pointing into the middle of
         // history and quietly produce collisions, so this is not "skip the line".
-        let mut b = filled();
+        let b = filled();
         let snap = b.to_ndjson();
         let lines: Vec<&str> = snap.lines().collect();
         let mut out = String::new();

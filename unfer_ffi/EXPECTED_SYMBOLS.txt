@@ -85,6 +85,7 @@ uk_skill_pack_import
 uk_skill_register
 uk_snapshot
 uk_subscribe
+uk_summarize
 uk_symbolic_simplify
 uk_version
 uk_whyml_emit

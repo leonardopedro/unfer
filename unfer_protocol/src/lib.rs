@@ -27,6 +27,7 @@ pub mod ops;
 pub mod posture;
 pub mod preset;
 pub mod skills;
+pub mod summarize;
 pub mod symbols;
 pub mod types;
 

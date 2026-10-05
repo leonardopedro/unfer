@@ -99,7 +99,7 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
-<!-- status: verified | tests: 1586 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
+<!-- status: verified | tests: 1621 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
 
 Scope note: the previous figure, 1656, counted the whole workspace *including*
 `fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04). This
@@ -115,7 +115,7 @@ evidence and G9 nudge modules).
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1586 passed
+#   1621 passed
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   371 passed across 53 binaries

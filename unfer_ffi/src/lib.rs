@@ -672,6 +672,114 @@ pub extern "C" fn uk_engram_store(
 ///
 /// Returns <0 (-code) on error: UK-1004 bad handle, UK-4403 miss, `BAD_JSON`
 /// for a malformed key.
+/// C6: summarize a trace for a human surface.
+///
+/// Request body: `{"trace": "...", "channel": "editor"}` — or `{"session": true}`
+/// to summarize this session's own event log instead of a supplied trace.
+/// `channel` is `console`, `docs` or `editor`; an unknown channel is refused
+/// rather than defaulted, because the channel decides how much gets dropped and a
+/// silent fallback would mean the reader is shown an amount nobody chose.
+///
+/// Returns 0; the result is an `unfer_protocol::summarize::Summary`: the `text` a
+/// human reads, plus `derived_from` (which sentences went in), `lossy`, `chars`
+/// and `budget`.
+///
+/// The result **cannot** contain a sentence that is not in the trace. Summarization
+/// here is extractive — it selects sentences, it does not write new ones — because
+/// an abstractive summarizer can assert something the trace never said, and the
+/// failure is invisible because the output reads like a summary. The full trace is
+/// never modified or discarded; this symbol only adds a view of it.
+///
+/// Observe-kind: reads the session, changes nothing, never queues for approval.
+///
+/// Returns <0 (-code): UK-1004 bad handle, `BAD_JSON` for a malformed body.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_summarize(model: i64, body_ptr: *const u8, body_len: i64) -> i64 {
+    ffi_entry("uk_summarize", || {
+        handles::clear_last_result(model);
+
+        #[derive(serde::Deserialize)]
+        struct SummarizeReq {
+            #[serde(default)]
+            trace: String,
+            /// Summarize this session's own log rather than a supplied trace.
+            #[serde(default)]
+            session: bool,
+            #[serde(default)]
+            channel: Option<String>,
+        }
+        let req: SummarizeReq = match read_utf8(body_ptr, body_len) {
+            Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+                Diagnostic::new(
+                    Code::BAD_JSON,
+                    format!("summarize request is not valid JSON: {e}"),
+                    Severity::Error,
+                )
+            })?,
+            Ok(_) => SummarizeReq {
+                trace: String::new(),
+                session: false,
+                channel: None,
+            },
+            Err(diag) => return Err(diag),
+        };
+
+        let channel_raw = req.channel.as_deref().unwrap_or("console");
+        let channel = unfer_protocol::summarize::Channel::parse(channel_raw).ok_or_else(|| {
+            Diagnostic::new(
+                Code::BAD_JSON,
+                format!(
+                    "unknown channel {channel_raw:?}; expected one of console, docs, editor. \
+                     The channel decides how much is dropped, so it is not defaulted -- a \
+                     silent fallback would show the reader an amount nobody chose."
+                ),
+                Severity::Error,
+            )
+        })?;
+
+        // Validate the handle *before* branching. The literal-trace path below
+        // never touches the session, so without this a call on a handle that does
+        // not exist succeeds -- which makes "does this handle exist" unanswerable,
+        // and handle validity is exactly what the capability model (S28) rests on.
+        handles::with_session(model, |_| ()).ok_or_else(|| bad_handle(model))?;
+
+        // `session: true` summarizes this session's own retained events, rendered
+        // one per line. Read through the handle so the trace is the *filtered* one:
+        // a summary of another model's events would be a different document.
+        let trace = if req.session {
+            let mut t = String::new();
+            for e in event_log::events_since(0, 1_000) {
+                if e.handle == model {
+                    t.push_str(&format!(
+                        "{}\n",
+                        serde_json::to_string(&e.event).unwrap_or_default()
+                    ));
+                }
+            }
+            t
+        } else {
+            req.trace
+        };
+
+        let summary = unfer_protocol::summarize::summarize(&trace, channel);
+        let json = serde_json::to_string(&summary)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, json);
+        handles::push_event(
+            model,
+            KernelEvent::Summarized {
+                channel: channel.as_str().to_string(),
+                chars: summary.chars,
+                lossy: summary.lossy,
+                source_sentences: summary.derived_from.source_sentences,
+                selected_sentences: summary.derived_from.sentences.len(),
+            },
+        );
+        Ok(0)
+    })
+}
+
 /// C2: remember one thing in this session's memory.
 ///
 /// Request body: `{"worker": "w1", "text": "..."}` (both fields optional;
@@ -3441,6 +3549,196 @@ pub extern "C" fn uk_events_poll(model: i64, cursor_ptr: *const u8, cursor_len: 
 
 #[cfg(test)]
 mod tests {
+    /// C6 `uk_summarize`: the FFI/JSON layer over the extractive summarizer.
+    ///
+    /// The acceptance for C6 is "overlay shows only summarized text; full trace
+    /// retrievable", and those are two different claims: the first is about what a
+    /// human surface receives, the second is about nothing being destroyed. Both
+    /// are asserted here rather than the single "summarize returns text" that
+    /// would pass either way.
+    mod summarize_tests {
+        use super::*;
+
+        fn trace() -> String {
+            "Started the run. The gate failed: cargo test reported 3 failures in              mathed_core. I read some documentation. Commit 5e7b2c6 touched              unfer_protocol/src/board.rs. The redaction fix closed 3 panics.              Nothing else was noteworthy in this run."
+                .to_string()
+        }
+
+        fn fresh_model() -> i64 {
+            let h = create_harmonic_model();
+            assert!(h > 0, "create_harmonic_model failed");
+            h
+        }
+
+        fn summarize(model: i64, body: &str) -> serde_json::Value {
+            let (p, l) = json_ptr(body);
+            assert_eq!(uk_summarize(model, p, l), 0, "summarize should succeed");
+            let raw = read_buf(|b, c| uk_get_result(model, b, c));
+            serde_json::from_str(&raw).expect("payload is JSON")
+        }
+
+        #[test]
+        fn a_summary_carries_its_provenance_and_budget() {
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": trace(), "channel": "editor" }).to_string();
+            let s = summarize(h, &body);
+            assert!(!s["text"].as_str().unwrap().is_empty());
+            assert_eq!(s["channel"], "editor");
+            assert_eq!(s["budget"], 320);
+            assert_eq!(s["lossy"], true, "the editor budget cannot hold the trace");
+            assert!(
+                s["derived_from"]["sentences"].as_array().unwrap().len() > 0,
+                "a summary must say which sentences it used"
+            );
+            assert!(
+                s["chars"].as_u64().unwrap() <= 320,
+                "{} over budget",
+                s["chars"]
+            );
+        }
+
+        /// The extractive guarantee, over the FFI boundary.
+        #[test]
+        fn no_sentence_in_the_summary_is_absent_from_the_trace() {
+            let h = fresh_model();
+            let t = trace();
+            for ch in ["console", "docs", "editor"] {
+                let body = serde_json::json!({ "trace": t, "channel": ch }).to_string();
+                let text = summarize(h, &body)["text"].as_str().unwrap().to_string();
+                for sentence in text.split(". ").map(str::trim).filter(|s| !s.is_empty()) {
+                    assert!(
+                        t.contains(sentence),
+                        "{ch}: {sentence:?} is not in the trace"
+                    );
+                }
+            }
+        }
+
+        /// The second half of the acceptance: the trace is still there afterwards.
+        #[test]
+        fn the_full_trace_stays_retrievable_after_summarizing() {
+            let h = fresh_model();
+            let t = trace();
+            let body = serde_json::json!({ "trace": t, "channel": "editor" }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert_eq!(uk_summarize(h, p, l), 0);
+
+            // The caller still holds the trace it passed in -- summarize consumes
+            // nothing and mutates nothing, it returns a second view.
+            assert_eq!(t, trace(), "the caller's trace was altered");
+            // And it can ask again, getting a different amount each time.
+            let wider = serde_json::json!({ "trace": t, "channel": "console" }).to_string();
+            let s2 = summarize(h, &wider);
+            assert!(
+                s2["chars"].as_u64().unwrap() >= summarize(h, &body)["chars"].as_u64().unwrap()
+            );
+        }
+
+        /// What a human surface receives is the summary and its honesty flags --
+        /// never the raw trace.
+        #[test]
+        fn a_human_surface_gets_the_summary_and_not_the_trace() {
+            let h = fresh_model();
+            let t = trace();
+            let body = serde_json::json!({ "trace": t, "channel": "editor" }).to_string();
+            let s = summarize(h, &body);
+            let text = s["text"].as_str().unwrap();
+            // Sentences the editor budget dropped are absent from what is shown...
+            assert!(!text.contains("Started the run"), "{}", text);
+            assert!(!text.contains("read some documentation"), "{}", text);
+            // ...and the payload says so rather than implying completeness.
+            assert_eq!(s["lossy"], true);
+            assert!(
+                s["derived_from"]["source_sentences"].as_u64().unwrap()
+                    > s["derived_from"]["sentences"].as_array().unwrap().len() as u64,
+                "provenance must show that something was left out"
+            );
+        }
+
+        #[test]
+        fn an_unknown_channel_is_refused_rather_than_defaulted() {
+            // The channel decides how much gets dropped. Defaulting it would show
+            // the reader an amount nobody chose.
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": trace(), "channel": "telepathy" }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert!(uk_summarize(h, p, l) < 0);
+        }
+
+        #[test]
+        fn a_missing_channel_defaults_to_console() {
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": trace() }).to_string();
+            assert_eq!(summarize(h, &body)["channel"], "console");
+        }
+
+        #[test]
+        fn an_empty_trace_summarizes_to_nothing_and_reports_no_loss() {
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": "", "channel": "docs" }).to_string();
+            let s = summarize(h, &body);
+            assert_eq!(s["text"], "");
+            assert_eq!(s["lossy"], false, "there was nothing to drop");
+        }
+
+        #[test]
+        fn summarizing_this_sessions_own_log_is_read_only() {
+            let h = fresh_model();
+            // Prime the log so `session: true` has something to read.
+            let body = serde_json::json!({ "trace": trace(), "channel": "console" }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert_eq!(uk_summarize(h, p, l), 0);
+
+            let own = serde_json::json!({ "session": true, "channel": "console" }).to_string();
+            let s = summarize(h, &own);
+            // It read the log rather than erroring, and reported honestly.
+            assert_eq!(s["channel"], "console");
+            assert!(s["derived_from"]["source_chars"].as_u64().unwrap() > 0);
+        }
+
+        #[test]
+        fn a_malformed_body_and_a_bad_handle_are_refused() {
+            let h = fresh_model();
+            let (p, l) = json_ptr("{not json");
+            assert!(uk_summarize(h, p, l) < 0);
+            let (p2, l2) = json_ptr("{}");
+            assert!(uk_summarize(99999, p2, l2) < 0);
+        }
+
+        #[test]
+        fn a_failed_call_leaves_the_previous_result_cleared() {
+            // S46: a FAILED op must leave uk_get_result empty, never the last
+            // success served as this call's output.
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": trace(), "channel": "docs" }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert_eq!(uk_summarize(h, p, l), 0);
+            let bad = json_ptr("{not json");
+            assert!(uk_summarize(h, bad.0, bad.1) < 0);
+            let raw = read_buf(|b, c| uk_get_result(h, b, c));
+            assert!(
+                raw.is_empty() || raw == "null" || raw == "{}",
+                "a failed summarize leaked a previous payload: {raw:?}"
+            );
+        }
+
+        #[test]
+        fn summarizing_is_observable() {
+            // "The reader saw a lossy digest" is an operator question, and silence
+            // does not answer it.
+            let h = fresh_model();
+            let body = serde_json::json!({ "trace": trace(), "channel": "editor" }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert_eq!(uk_summarize(h, p, l), 0);
+            assert!(
+                event_log::events_since(0, 10_000).iter().any(|e| {
+                    e.handle == h && matches!(e.event, KernelEvent::Summarized { lossy: true, .. })
+                }),
+                "a lossy summarize should be observable as lossy"
+            );
+        }
+    }
+
     /// C2 `uk_memory_append` / `uk_memory_read`: the FFI/JSON layer over the
     /// bounded store.
     ///
