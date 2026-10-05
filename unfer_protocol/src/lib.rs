@@ -13,8 +13,10 @@
 //! ```
 
 pub mod archive;
+pub mod board;
 pub mod codes;
 pub mod codes_consts;
+pub mod coop;
 pub mod durable;
 pub mod harness;
 pub mod ops;
@@ -25,7 +27,9 @@ pub mod symbols;
 pub mod types;
 
 pub use archive::*;
+pub use board::*;
 pub use codes::*;
+pub use coop::*;
 pub use durable::*;
 pub use harness::*;
 pub use ops::*;

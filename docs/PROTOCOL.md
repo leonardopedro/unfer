@@ -165,6 +165,194 @@ is told it missed something.
 
 Kernel symbol: `uk_events_poll`. Observe-kind: reading the log grants nothing.
 
+> **The NDJSON op of the same name is a different shape.** Over the agent
+> protocol, `events_poll` takes `{"model_id", "since_cursor", "max"}` and returns
+> `{"model_id", "since_cursor", "events": [{cursor, event}], "latest_cursor",
+> "oldest_available", "gap", "truncated", "dropped_total"}` — per model, with the
+> payload nested under `event` rather than flattened with a `handle`, and
+> `oldest_available` always a number rather than nullable. The C ABI is the
+> flat, process-wide, handle-tagged form. Both number cursors from 1 and both mean
+> "strictly after `since_cursor`", so a consumer's checkpoint logic is shared even
+> though the JSON is not. The two are kept in the same dialect deliberately:
+> matching semantics, different transport.
+
+---
+
+## Shared context and cooperation
+
+The ops below let several workers work the same corpus concurrently. All of them
+are **process-local to one `unfer_agent`** — this is a shared *context*, not a
+distributed service; the board lives in the agent's memory and is gone when it
+exits. That is a deliberate limit, and it is why nothing here claims to
+*prevent* anything.
+
+### The trust split
+
+Every board write carries an S21 effect kind, returned in the acknowledgement as
+`effect_kind`:
+
+| kind | effect kind | why |
+|---|---|---|
+| `OBSERVED`, `FACT`, `FAIL` | `observe` | appends text only; applies immediately |
+| `CLAIM`, `PATCH_SUMMARY` | `mutate` | asserts something peers or a human will act on; queues for approval |
+
+`FAIL` is `observe` despite being the most valuable kind on the board, precisely
+because it *removes* work rather than committing it.
+
+> **The agent binary does not enforce the lane.** It has no grant set; it is the
+> client of a grant, not a grantor. The annotation is reported so a gateway or a
+> peer *can* apply it (S21/S28), not because this process does. Do not read a
+> successful `board_write` as "this was approved".
+
+### board_write
+
+Append one typed entry.
+
+**Request params:**
+
+| field | type | meaning |
+|---|---|---|
+| `kind` | string | `OBSERVED` / `FACT` / `FAIL` / `CLAIM` / `PATCH_SUMMARY` (case-insensitive) |
+| `worker` | string | who is writing. **Recorded, not authenticated.** |
+| `text` | string | the one-line statement, capped at 280 chars |
+| `detail` | string? | optional evidence, capped at 4096 chars |
+
+**Response result:** `{"entry": <BoardEntry>, "effect_kind": "observe"|"mutate",
+"latest_cursor", "dropped"}`
+
+**Error codes:** UK-1001 (missing/empty `worker` or `text`, unknown `kind` —
+carries a `ReplaceValue` hint listing the valid kinds).
+
+`worker` is not authenticated because the board carries no authority: a `CLAIM`
+is settled by negotiation (below), and authority comes from the grant set. Making
+the field meaningful is the grant system's job; a board that implied otherwise
+would be making a security claim it cannot support.
+
+### board_read
+
+**Request params:** `{"limit": <integer>}` — default 50, ceiling 512 (the board's
+capacity).
+
+**Response result:** `{"entries": [<BoardEntry>...], "count", "retained",
+"dropped", "latest_cursor", "oldest_available"}` — oldest first.
+
+`dropped` travels with every read because the board is a bounded window, not the
+whole history: a reader that cannot tell a short history from a truncated one is
+misled.
+
+### board_grep
+
+**Request params:** `{"expr": <string>}` — `,` is OR, `&` is AND, both
+case-insensitive, AND binding tighter (`a&b,c` is `(a AND b) OR c`).
+
+Terms match the entry's **kind**, its `text`, and its `detail`. Kinds are
+searchable because "show me every failure" and "show me every claim" are the two
+queries the board exists to answer.
+
+Deliberately **not** a regex language: every regex engine is a denial-of-service
+surface on unauthenticated input, and two operators cover the real cases.
+
+An empty or absent `expr` matches everything (an empty *filter* means no filter).
+An expression of only separators (`",,"`) is refused as malformed rather than
+silently matching everything.
+
+**Response result:** `{"expr", "entries": [...], "count", "dropped"}`
+
+### Redaction
+
+`text` and `detail` are scrubbed before storage (`unfer_protocol::board::redact_secrets`):
+a sensitive key followed by a value (`api_key=…`), a `Bearer` credential, and
+known token shapes (`sk-`, `ghp_`, `github_pat_`, `xoxb-`, `AKIA`, `eyJ`…) are
+replaced with `***REDACTED***`.
+
+This is a **value-level** scrubber, complementing the key-level
+`uk_audit_append` sanitiser rather than replacing it: the key-level one rewrites
+fields by name and cannot see inside free text, and a board is the one surface
+where many workers paste command output. It is deliberately conservative — a bare
+long hex run is left alone, because board entries legitimately carry commit
+hashes and digests, and a board full of redactions is a board nobody reads.
+
+### agent_claim
+
+Claim a scope (G3).
+
+**Request params:** `{"worker": <string>, "scope": <string>}`
+
+`scope` is free-form — a file path, a module name, a Lean chapter, a task id.
+Overlap is decided structurally, by: identical scope; directory prefix on segment
+boundaries (so `src/foo` does **not** overlap `src/foobar`); or a segment-aware
+glob (`*` within a segment, `**` across).
+
+**Response result:**
+
+| field | meaning |
+|---|---|
+| `outcome` | `"granted"` or `"overlaps"` |
+| `scope` | the normalised scope |
+| `claim` | the granted claim, or `null` |
+| `conflicts_with` | the current holders — non-empty **only** when `overlaps` |
+| `live_claims` | every live claim |
+| `entry` | the `CLAIM` board entry (written either way) |
+
+**Error codes:** UK-1001 (missing/empty `worker` or `scope`).
+
+An overlap is **reported, not refused**. The board is a log, not a lock;
+arbitrating would need mutual exclusion over a distributed log, which is
+`unfer_consensus`'s job. What this op does is make the collision visible and
+attributable at the moment it happens, so the workers negotiate with `agent_dm`
+or a human sees it in the audit trail. The loser's scope is **not** registered as
+live: two workers must not both believe they own it.
+
+The `CLAIM` entry is written even on an overlap — the collision is part of the
+history and must not be invisible to a third worker reading later.
+
+### agent_dm
+
+Send a direct message to another worker.
+
+**Request params:** `{"from", "to", "text", "priority"}` — `priority` is an
+integer, default 0; higher sorts first.
+
+**Response result:** `{"delivered": <Dm>, "inbox_len", "dropped"}`
+
+Recorded on the board as well as delivered, so a reader auditing the board can
+see that a negotiation happened even if nobody acts on it. `text` is redacted.
+
+**Error codes:** UK-1001 (missing/empty `from`, `to` or `text`; non-integer
+`priority`).
+
+### agent_dm_read
+
+Read a worker's messages. **Request params:** `{"worker", "consume"}` —
+`consume` defaults to **false**.
+
+**Response result:** `{"messages": [...], "count", "dropped"}`
+
+Non-consuming by default, deliberately: a worker polls mid-turn, and a crash
+between reading and acting must not lose the message. This is the C1
+checkpoint lesson applied to the message queue. Queues are bounded at 64 per
+recipient, oldest dropped first, and `dropped` counts the loss.
+
+### agent_handoff
+
+Record a role hand-off (G7). **Request params:** `{"by", "claim_cursor", "role",
+"accept"}` — `role` is `implementer` / `reviewer` / `integrator`;
+`accept` defaults to false, meaning a *request*.
+
+**Response result:** `{"entry", "role_held": <string|null>, "claim_cursor"}`
+
+`role_held` is `null` until the accept arrives. A request records an intention;
+treating it as a role would put an unreviewed change into a "reviewed" state
+because somebody asked.
+
+**A hand-off grants no privilege.** `role` is a label that makes "who reviewed
+this" observable in the board history; authority still comes from the grant set
+(S21/S28). There is no field in the op that could widen a grant, which is what
+makes it safe to add without its own security review.
+
+**Error codes:** UK-1001 (missing `by`/`claim_cursor`, unknown `role` — carries a
+`ReplaceValue` hint).
+
 ### `poll_events`
 
 Read pending kernel events (status changes, error notifications) from the

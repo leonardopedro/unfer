@@ -64,6 +64,17 @@ pub const SESSION_OPS: &[&str] = &[
     // H10: named GrantSet presets (agent-local — the client resolves the roster)
     "preset_list",
     "preset_set",
+    // G1: the shared context board. Typed, append-only, sanitized, bounded;
+    // a projection over the same cursor space as `events_poll`, so a consumer
+    // can hold one checkpoint covering both. See `unfer_protocol::board`.
+    "board_write",
+    "board_read",
+    "board_grep",
+    // G3/G7: claim arbitration, worker-to-worker messages, role hand-off. See
+    // `unfer_protocol::coop` — an overlapping claim is *reported*, not refused.
+    "agent_claim",
+    "agent_dm",
+    "agent_handoff",
     // mathed N4: scripted segments — a granted command run under the
     // worker's exec allowlist (deny-by-default; see docs/PROTOCOL.md)
     "exec",
@@ -159,6 +170,22 @@ pub const AGENT_OPS: &[&str] = &[
     // mathed N11: kernel segments — granted `\kernel` code runs (see
     // docs/PROTOCOL.md); agent-local, never forwarded to the edge.
     "kernel_exec",
+    // G1: the shared context board — typed, append-only, sanitized, bounded.
+    // A projection over the same cursor space as `events_poll`, so one
+    // checkpoint covers both. `board_write` is Observe-kind for
+    // OBSERVED/FACT/FAIL and Mutate-kind for CLAIM/PATCH_SUMMARY, per
+    // `unfer_protocol::board::BoardKind::effect_kind`.
+    "board_write",
+    "board_read",
+    "board_grep",
+    // G3: claims with overlap detection, and direct messages between workers.
+    // `agent_claim` reports an overlap rather than refusing it -- see
+    // `unfer_protocol::coop` for why a board cannot arbitrate.
+    "agent_claim",
+    "agent_dm",
+    // G7: role hand-off. Carries no privilege; it records who is reviewing so
+    // the hand-off is observable after the fact.
+    "agent_handoff",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).
