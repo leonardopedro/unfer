@@ -73,6 +73,8 @@ pub const SESSION_OPS: &[&str] = &[
     // G4: gate-run recording and evidence-checked patch summaries.
     "gate_record",
     "patch_submit",
+    // G9 (b): task-scoped budget nudges. Pure event policy over the board.
+    "agent_nudge",
     // G3/G7: claim arbitration, worker-to-worker messages, role hand-off. See
     // `unfer_protocol::coop` — an overlapping claim is *reported*, not refused.
     "agent_claim",
@@ -195,6 +197,8 @@ pub const AGENT_OPS: &[&str] = &[
     // worker's last change. See `unfer_protocol::evidence`.
     "gate_record",
     "patch_submit",
+    // G9 (b): task-scoped budget nudges; see `unfer_protocol::nudge`.
+    "agent_nudge",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).

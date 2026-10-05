@@ -99,22 +99,23 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
-<!-- status: verified | tests: 1433 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
+<!-- status: verified | tests: 1484 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
 
 Scope note: the previous figure, 1656, counted the whole workspace *including*
 `fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04). This
 figure is the `unfer` workspace proper and excludes it. That is a scope change,
 not just a refresh, so it is stated rather than left for a reader to infer.
 
-Measured 2026-10-05 with the command below. The `unfer_edge` count grew by 31
-from the C3 configuration layer (54 tests, 76 with `--features audit`), and
-`unfer_protocol` by 78 from the G1 board and G3 cooperation modules.
+Measured 2026-10-05 with the command below. Growth since the previous figure of
+1322: `unfer_edge` +31 (the C3 configuration layer — 54 tests, 76 with
+`--features audit`) and `unfer_protocol` +131 (the G1 board, G3 cooperation, G4
+evidence and G9 nudge modules).
 
 ## Verification
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1433 passed
+#   1484 passed
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   371 passed across 53 binaries

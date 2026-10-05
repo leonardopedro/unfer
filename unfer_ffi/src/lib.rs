@@ -2537,6 +2537,45 @@ pub extern "C" fn uk_agent_spawn(spec_json: *const u8, len: i64) -> i64 {
                 Severity::Error,
             ));
         }
+        // G9: spawn pacing, at the same chokepoint as every other spawn refusal
+        // and before anything is minted. A burst of spawns is refused with
+        // UK-4601 — the same code a rate-limit breach produces — so a caller
+        // handles one limit, not two.
+        //
+        // Deliberately *after* the grant/preset checks: a request that was going
+        // to be refused for escalating its grants should say so, not report that
+        // it was too early. And the refusal does not update the pacer, so a
+        // client looping on this cannot extend its own lock-out.
+        if !handles::spawn_pace_allows(&handles::current_caller().tag.principal) {
+            let retry = handles::spawn_pace_retry_after(&handles::current_caller().tag.principal);
+            let mut args = serde_json::json!([{
+                "agent": req.name,
+                "refused": "spawn pacing",
+                "retry_after_secs": retry,
+            }]);
+            handles::sanitize_sensitive(&mut args);
+            let ctx = handles::current_caller();
+            let seq = handles::store_audit(AuditEntry {
+                seq: 0,
+                caller: ctx.tag,
+                symbol: "uk_agent_spawn".to_string(),
+                ok: false,
+                detail: Some(format!("spawn pacing; retry in {retry:?}s")),
+                args,
+                component: Some("kernel.agent".to_string()),
+                context: None,
+                sensitive: false,
+            });
+            return Err(Diagnostic::new(
+                Code::RATE_LIMITED,
+                format!(
+                    "agent spawn paced out (audit seq {seq}); retry in {}s",
+                    retry.unwrap_or(1)
+                ),
+                Severity::Error,
+            ));
+        }
+
         let seq = next_agent_seq();
         let agent = AgentInfo {
             id: format!("agent-{seq}"),
@@ -6635,5 +6674,109 @@ mod tests {
             "an explicit grant list must still be accepted, got {rc}"
         );
         set_default_caller();
+    }
+}
+
+// ── G9 (a): spawn pacing at the loopback chokepoint ────────────────────
+//
+// The pacer itself is tested in `handles::spawn_pace_enabled_tests`. What only
+// this layer can show is that the refusal actually reaches a caller of
+// `uk_agent_spawn` as UK-4601 and carries an audit entry -- the acceptance
+// criterion is about the chokepoint, not about the predicate behind it.
+//
+// Serialized: `set_spawn_min_interval_ms` and the pacer store are process-global.
+#[cfg(test)]
+mod spawn_pacing_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static SPAWN_PACING_LOCK: Mutex<()> = Mutex::new(());
+
+    fn json_ptr(s: &str) -> (*const u8, i64) {
+        (s.as_ptr(), s.len() as i64)
+    }
+
+    fn spawn_json(spec: &str) -> i64 {
+        uk_agent_spawn(json_ptr(spec).0, json_ptr(spec).1)
+    }
+
+    #[test]
+    fn a_spawn_burst_is_refused_with_rate_limited_at_the_chokepoint() {
+        let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        handles::reset_durable_for_tests();
+        handles::clear_spawn_pace();
+        handles::set_spawn_min_interval_ms(60_000);
+
+        let first = spawn_json(r#"{"name":"w1","preset":"reader"}"#);
+        handles::set_spawn_min_interval_ms(0);
+        handles::clear_spawn_pace();
+        assert!(first >= 0, "the first spawn proceeds, got {first}");
+
+        handles::clear_spawn_pace();
+        handles::set_spawn_min_interval_ms(60_000);
+        let burst: Vec<i64> = (0..8)
+            .map(|i| spawn_json(&format!(r#"{{"name":"w{i}","preset":"reader"}}"#)))
+            .collect();
+        handles::set_spawn_min_interval_ms(0);
+        handles::clear_spawn_pace();
+
+        assert!(burst[0] >= 0, "the first of the burst proceeds");
+        for rc in &burst[1..] {
+            assert!(
+                *rc == -(Code::RATE_LIMITED.raw() as i64),
+                "a paced-out spawn must be UK-4601, got {rc}"
+            );
+        }
+        let msg = handles::get_last_error();
+        assert!(
+            msg.contains("paced out"),
+            "the diagnostic must say it was pacing, not a grant problem: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_pacing_refusal_is_audited() {
+        // The refusal is a governance decision, so it belongs in the ring like
+        // every other refusal at this chokepoint.
+        let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        handles::reset_durable_for_tests();
+        handles::clear_spawn_pace();
+        handles::set_spawn_min_interval_ms(60_000);
+
+        spawn_json(r#"{"name":"first","preset":"reader"}"#);
+        let rc = spawn_json(r#"{"name":"second","preset":"reader"}"#);
+        handles::set_spawn_min_interval_ms(0);
+        handles::clear_spawn_pace();
+        assert!(rc < 0, "the second spawn is paced out");
+
+        let entries = handles::list_audit();
+        let found = entries
+            .iter()
+            .any(|e| e.detail.as_deref().is_some_and(|d| d.contains("spawn pacing")));
+        assert!(found, "the audit ring must record why: {entries:#?}");
+    }
+
+    #[test]
+    fn a_grant_refusal_is_reported_as_a_grant_problem_not_as_pacing() {
+        // Order matters: a request that was always going to be refused for its
+        // grants should say so, rather than reporting that it was too early.
+        let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        handles::reset_durable_for_tests();
+        handles::clear_spawn_pace();
+        handles::set_spawn_min_interval_ms(60_000);
+
+        // Prime the pacer so the next call *would* be paced out...
+        spawn_json(r#"{"name":"ok","preset":"reader"}"#);
+        // ...then make a request that fails the preset check.
+        let rc = spawn_json(r#"{"name":"bad","preset":"no-such-preset"}"#);
+        handles::set_spawn_min_interval_ms(0);
+        handles::clear_spawn_pace();
+
+        assert!(rc < 0);
+        let msg = handles::get_last_error();
+        assert!(
+            msg.contains("unknown role preset"),
+            "the real problem should be reported, got: {msg}"
+        );
     }
 }

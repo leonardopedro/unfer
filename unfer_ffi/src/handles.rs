@@ -1109,6 +1109,134 @@ pub fn clear_meter() {
     }
 }
 
+// ── agent-spawn pacer (G9) ──────────────────────────────────────────────
+//
+// ## Why this is separate from the meter above
+//
+// The S25 meter is **UTC-day windowed**: it answers "has this principal spent its
+// daily budget", which is cost governance. Spawn *staggering* is a different
+// question — "was the last spawn recent enough" — on a timescale of seconds. A
+// day-windowed counter cannot express it, so this is a second, finer limiter
+// rather than a reinterpretation of the first.
+//
+// It is still the **same chokepoint in the same place**: `uk_agent_spawn` refuses
+// here, before anything is minted, with the same UK-4601 a rate-limit breach
+// produces. Two limiters, one denial point — the S25 rule is that denial happens
+// at the loopback and never as a post-hoc report, and that is preserved.
+//
+// ## Why wall-clock is fine here
+//
+// Elsewhere in this workspace a wall-clock is avoided in state machines because
+// it makes them non-replayable. A pacer is not a state machine: it has no
+// history to replay, it exists precisely to measure real elapsed time, and its
+// whole job would be defeated by a logical clock. The distinction is why this
+// does not contradict `coop`'s cursor-based claim expiry.
+//
+// ## Default is disabled
+//
+// `UNFER_SPAWN_MIN_INTERVAL_MS`, default 0 = no pacing. That default is
+// deliberate: `uk_agent_spawn` is exercised by many existing tests, and a pacer
+// that was on by default would make them fail on wall-clock timing rather than on
+// anything they assert. Staggering is a deployment policy, so it is opt-in.
+
+/// Minimum milliseconds between two spawns by the same principal.
+///
+/// Read from the environment once, then cached in an `AtomicU64` rather than a
+/// `OnceLock` so that a test can override it and put it back. A `OnceLock<u64>`
+/// would make the value untestable per-case, which would leave the *enabled*
+/// path unverified -- and the enabled path is the one that matters.
+static SPAWN_INTERVAL_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
+static SPAWN_INTERVAL_ONCE: std::sync::Once = std::sync::Once::new();
+
+fn spawn_min_interval_ms() -> u64 {
+    use std::sync::atomic::Ordering;
+    SPAWN_INTERVAL_ONCE.call_once(|| {
+        let v = std::env::var("UNFER_SPAWN_MIN_INTERVAL_MS").unwrap_or_default();
+        SPAWN_INTERVAL_MS.store(spawn_interval_from(&v), Ordering::Relaxed);
+    });
+    SPAWN_INTERVAL_MS.load(Ordering::Relaxed)
+}
+
+/// Interpret the configured interval.
+///
+/// Split out from the cached read so the *default* can be tested as logic rather
+/// than as ambient process state: a test asserting "unset means 0" while other
+/// tests mutate the same global is order-dependent by construction, and the
+/// failure mode is a red suite that means nothing.
+fn spawn_interval_from(raw: &str) -> u64 {
+    raw.trim().parse::<u64>().unwrap_or(0)
+}
+
+/// Override the pacing interval. **Host-internal, for tests and the console.**
+///
+/// Not callable over the loopback. Production reads the environment; this exists
+/// so the refusal path can be exercised without a test waiting on real time.
+pub fn set_spawn_min_interval_ms(ms: u64) {
+    use std::sync::atomic::Ordering;
+    // Settle the environment read *first*. `call_once` stores the env value, so
+    // overriding before it has run would be silently undone by the very next
+    // read -- which is exactly what happened the first time this was tested.
+    let _ = spawn_min_interval_ms();
+    SPAWN_INTERVAL_MS.store(ms, Ordering::Relaxed);
+}
+
+/// Last successful spawn, per principal.
+static SPAWN_PACE: Mutex<Option<HashMap<String, std::time::Instant>>> = Mutex::new(None);
+
+/// Whether `principal` may spawn now, recording the attempt if so.
+///
+/// Returns `false` when pacing is enabled and the previous spawn was more recent
+/// than the configured interval. A refused spawn does **not** update the stored
+/// time: back-to-back retries must not extend the lock-out, or a caller looping
+/// on the refusal could starve itself indefinitely.
+///
+/// Purely a limiter — it grants nothing. What the spawned agent may do is decided
+/// by the grant set at the same chokepoint.
+pub fn spawn_pace_allows(principal: &str) -> bool {
+    let interval = spawn_min_interval_ms();
+    if interval == 0 {
+        return true; // disabled
+    }
+    let now = std::time::Instant::now();
+    let min = std::time::Duration::from_millis(interval);
+    let mut guard = SPAWN_PACE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(last) = map.get(principal)
+        && now.duration_since(*last) < min
+    {
+        return false;
+    }
+    map.insert(principal.to_string(), now);
+    true
+}
+
+/// Seconds until `principal` may spawn again, if pacing is enabled.
+///
+/// Surfaced in the refusal so a caller can back off by the right amount instead
+/// of guessing. Returns `None` when pacing is disabled.
+pub fn spawn_pace_retry_after(principal: &str) -> Option<u64> {
+    let interval = spawn_min_interval_ms();
+    if interval == 0 {
+        return None;
+    }
+    let guard = SPAWN_PACE.lock().unwrap_or_else(|e| e.into_inner());
+    let last = guard.as_ref()?.get(principal)?;
+    let elapsed = std::time::Instant::now().duration_since(*last);
+    let min = std::time::Duration::from_millis(interval);
+    Some(
+        (min.saturating_sub(elapsed).as_millis().div_ceil(1000) as u64).max(1),
+    )
+}
+
+/// Reset the pacer (QA/console reset, and test isolation).
+pub fn clear_spawn_pace() {
+    let mut guard = SPAWN_PACE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        map.clear();
+    }
+}
+
 // ── sensitive-forward latch (S26/F25) ──────────────────────────────────
 //
 // Once a caller observes `<*sensitive*>` data, the *fact of having observed it*
@@ -2132,5 +2260,136 @@ mod secret_vault_tests {
         assert!(vault_has_live_secrets());
         vault_clear();
         assert!(!vault_has_live_secrets());
+    }
+}
+
+// ONE lock for every pacer test.
+//
+// There were two modules with two mutexes guarding the same process-global
+// interval, so they did not exclude each other: an enabled-path test could set
+// the interval to 60s while a test asserting the default was running, and the
+// default test failed. That is the same defect class as X-F7 -- shared state not
+// covered by a lock every toucher holds -- and the lesson from that investigation
+// is to fix the locking rather than the symptom.
+#[cfg(test)]
+mod spawn_pace_tests {
+    use super::{
+        clear_spawn_pace, set_spawn_min_interval_ms, spawn_interval_from, spawn_pace_allows,
+        spawn_pace_retry_after,
+    };
+    use std::sync::Mutex;
+
+    static PACE_TESTS_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run `f` with pacing set to `ms`, always restoring the default afterwards so
+    /// a panic cannot leave the process-global interval changed for other tests.
+    fn with_interval<R>(ms: u64, f: impl FnOnce() -> R) -> R {
+        let _g = PACE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_spawn_pace();
+        set_spawn_min_interval_ms(ms);
+        let out = f();
+        set_spawn_min_interval_ms(0);
+        clear_spawn_pace();
+        out
+    }
+
+    // ---- the default, as logic rather than as ambient state -----------------
+
+    #[test]
+    fn an_unset_or_unparseable_interval_means_disabled() {
+        // Asserted on the parse, not on the global: "unset means 0" is a property
+        // of the configuration rule, and testing it through shared state made it
+        // order-dependent.
+        for raw in ["", "   ", "0", "abc", "-1", "3s", "1e3"] {
+            assert_eq!(spawn_interval_from(raw), 0, "{raw:?} should disable pacing");
+        }
+        assert_eq!(spawn_interval_from("3000"), 3000);
+        assert_eq!(spawn_interval_from("  250  "), 250);
+    }
+
+    #[test]
+    fn zero_means_no_pacing_at_all() {
+        with_interval(0, || {
+            for _ in 0..50 {
+                assert!(spawn_pace_allows("anyone"));
+            }
+            assert_eq!(spawn_pace_retry_after("anyone"), None);
+        });
+    }
+
+    // ---- the enabled path: the acceptance criterion ------------------------
+
+    #[test]
+    fn a_spawn_burst_is_refused_by_the_pacer() {
+        with_interval(60_000, || {
+            assert!(spawn_pace_allows("burst"), "the first spawn proceeds");
+            for i in 1..25 {
+                assert!(!spawn_pace_allows("burst"), "spawn {i} should be paced out");
+            }
+        });
+    }
+
+    #[test]
+    fn a_refused_spawn_does_not_extend_the_lockout() {
+        // If a refusal updated the stored time, a caller looping on the refusal
+        // could starve itself forever: each retry would push the window forward.
+        with_interval(40, || {
+            assert!(spawn_pace_allows("looper"));
+            for _ in 0..5 {
+                assert!(!spawn_pace_allows("looper"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            assert!(
+                spawn_pace_allows("looper"),
+                "the window must not have been extended"
+            );
+        });
+    }
+
+    #[test]
+    fn pacing_is_per_principal() {
+        with_interval(60_000, || {
+            assert!(spawn_pace_allows("alice"));
+            assert!(!spawn_pace_allows("alice"));
+            // One busy agent must not stall the whole organisation.
+            assert!(spawn_pace_allows("bob"), "bob is not paced by alice's spawn");
+        });
+    }
+
+    #[test]
+    fn a_refusal_reports_how_long_to_wait() {
+        with_interval(60_000, || {
+            assert!(spawn_pace_allows("waiter"));
+            let secs = spawn_pace_retry_after("waiter").expect("pacing is on");
+            assert!((1..=60).contains(&secs), "implausible retry_after: {secs}");
+        });
+    }
+
+    #[test]
+    fn retry_after_is_none_when_nothing_was_spawned() {
+        with_interval(60_000, || {
+            assert_eq!(spawn_pace_retry_after("never-spawned"), None);
+        });
+    }
+
+    #[test]
+    fn clearing_the_pacer_lets_the_next_spawn_through() {
+        with_interval(60_000, || {
+            assert!(spawn_pace_allows("x"));
+            assert!(!spawn_pace_allows("x"));
+            clear_spawn_pace();
+            assert!(spawn_pace_allows("x"), "a console reset must clear the window");
+        });
+    }
+
+    #[test]
+    fn disabling_pacing_lets_everything_through_again() {
+        with_interval(60_000, || {
+            assert!(spawn_pace_allows("x"));
+            assert!(!spawn_pace_allows("x"));
+            set_spawn_min_interval_ms(0);
+            assert!(spawn_pace_allows("x"), "pacing off must not pace");
+            assert_eq!(spawn_pace_retry_after("x"), None);
+        });
     }
 }

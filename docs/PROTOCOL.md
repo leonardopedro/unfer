@@ -436,6 +436,82 @@ worker named is the one who did the work.
 `idea` is the one genuinely-prose field and is **not** verified. That is the
 point: only the evidence is checked, so it stays clear which half is which.
 
+---
+
+## Budget pacing and nudges
+
+Two independent mechanisms, both opt-in. They are separate because they answer
+different questions on different timescales, and the plan's "built on the
+existing meter window" is only half true — see the note under spawn pacing.
+
+### Spawn pacing (`uk_agent_spawn`, C ABI)
+
+**This is not the S25 meter.** The meter is **UTC-day windowed**: it answers "has
+this principal spent its daily budget", which is cost governance. Spawn
+staggering asks "was the last spawn recent enough", on a timescale of seconds. A
+day-windowed counter cannot express that.
+
+So there are **two limiters at one chokepoint**: `uk_agent_spawn` refuses before
+anything is minted, and a pacing refusal produces the same **UK-4601
+`RATE_LIMITED`** a rate-limit breach does, so a caller handles one limit rather
+than two. The S25 rule that matters — denial happens at the loopback, never as a
+post-hoc report — is preserved.
+
+Configuration: `UNFER_SPAWN_MIN_INTERVAL_MS`, minimum milliseconds between two
+spawns by the same principal. **Default 0 = disabled**, deliberately: `uk_agent_spawn`
+is exercised by many existing tests, and a pacer on by default would make them
+fail on wall-clock timing rather than on anything they assert. Staggering is a
+deployment policy.
+
+Ordering: pacing is checked **after** the grant and preset checks. A request that
+was always going to be refused for escalating its grants should say so rather than
+reporting that it was too early.
+
+A refusal reports `retry_after_secs`, does **not** update the stored time (so a
+client looping on the refusal cannot extend its own lock-out), and is written to
+the audit ring like every other refusal at that chokepoint.
+
+Wall-clock is used here, unlike the rest of this codebase's state machines. That
+is consistent rather than contradictory: a pacer exists precisely to measure real
+elapsed time and has no history to replay.
+
+### agent_nudge
+
+Task-scoped deadline reminders.
+
+**Request params:**
+
+| field | type | meaning |
+|---|---|---|
+| `worker` | string | who is being nudged |
+| `remaining_secs` | integer | how long the task has left — **supplied by the caller** |
+| `checkpoints` | array? | `{at_secs_remaining, kind}`; defaults to `45min → stop_claiming`, `5min → merge_or_report_blocked` |
+
+**Response result:** `{"worker", "remaining_secs", "nudges": [...], "count"}`
+
+Kinds: `wrap_up`, `stop_claiming`, `merge_or_report_blocked`.
+
+**Error codes:** UK-1001 (missing `worker`/`remaining_secs`; a malformed or
+unknown-kind checkpoint).
+
+This process **owns no clock** — the harness knows how much time is left and says
+so, and `unfer_protocol::nudge` owns the policy. That makes every boundary case
+testable by passing a number, and keeps the policy free of the wall-clock that the
+rest of the workspace keeps out of state machines.
+
+**A checkpoint is delivered once, not once per poll.** Without that, a worker
+polled every second would be told "stop claiming new scope" a thousand times,
+which trains it to ignore nudges entirely. Dedup is per `(worker, kind)`, so one
+worker's nudges never silence another's.
+
+Nudges are written to the board as `OBSERVED` — a nudge states a fact about time
+and commits to nothing, so it must apply immediately rather than queue for
+approval. A worker blocked on an approval lane cannot act on a wrap-up reminder.
+
+The most urgent checkpoint the worker has reached is delivered **last**, so a
+worker reading only the final line reads the one that matters most. Ordering
+follows the kind's urgency, not the order the schedule was declared in.
+
 ### `poll_events`
 
 Read pending kernel events (status changes, error notifications) from the
