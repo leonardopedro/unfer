@@ -91,6 +91,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
           git clone --depth 1 https://github.com/leonardopedro/velysterm.git ../velysterm
+          git clone --depth 1 https://github.com/leonardopedro/australVM.git ../australVM
 
       # velysterm's document crates are Bevy-free but not dependency-free:
       # winit/xkbcommon and the X/wayland client libs are found through
@@ -103,6 +104,18 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev \
             libxcb1-dev libxcb-shm0-dev libxcb-render0-dev
 
+      # australVM's OCaml half needs a compiler before `make test` can run. The
+      # dependency install is `|| true` for the same reason the module e2e jobs
+      # do it: a transient opam mirror failure should not read as a code break,
+      # and the step that actually proves something is the one that runs the
+      # suite. `make test` (X4b) picks the dynamic loader itself.
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: ../australVM
+        run: opam install . --deps-only --yes || true
+
       # Layout note, because it is load-bearing and invisible: the siblings land
       # in $GITHUB_WORKSPACE/../<repo>, which is what makes velysterm's
       # `../../../unfer` path dependency resolve back to this checkout. That works
@@ -111,9 +124,10 @@ jobs:
       # the paths above are deliberate.
       #
       # The coupling this job exists to catch is real in both directions:
-      # unfer_consensus path-deps dynamic-arctic, and mathed_mini path-deps
-      # unfer_ffi and unfer_protocol. A green unfer run says nothing about
-      # whether either sibling still fits.
+      # unfer_consensus path-deps dynamic-arctic, mathed_mini path-deps
+      # unfer_ffi and unfer_protocol, and australVM's JIT bridge path-deps five
+      # unfer crates plus dynamic-arctic. A green unfer run says nothing about
+      # whether any of them still fits.
 
       # The path-dependency hazard, called out explicitly: this job exists because
       # `unfer_consensus` and `mathed_core` compile against a sibling checkout, so
@@ -134,6 +148,26 @@ jobs:
           cargo test --manifest-path ../velysterm/Cargo.toml \
             -p mathed_core -p mathed_mini
 
+      # australVM, in two steps because the coupling is in two languages.
+      #
+      # The Rust step is the one that matters most: safestos/cranelift is the
+      # most tightly path-depended crate in the workspace -- unfer_ffi,
+      # unfer_protocol, unfer_consensus, unfer_identity, unfer_data *and*
+      # dynamic-arctic, with unfer-kernel on by default -- and until now nothing
+      # in this job compiled it, so a prob_kernel change that broke the JIT
+      # bridge surfaced only in the six per-module e2e jobs, with no indication
+      # which repo had broken which.
+      - name: australVM (JIT bridge: five unfer path deps + dynamic-arctic)
+        id: australvm-rs
+        run: |
+          cargo test --manifest-path ../australVM/safestos/cranelift/Cargo.toml
+
+      # The OCaml half: the plugin/Why3-gate suite, through the X4b wrapper so
+      # the bridge .so is loaded by a loader that can actually load it.
+      - name: australVM (OCaml plugin + Why3 gate suites)
+        id: australvm-ocaml
+        run: make -C ../australVM test
+
       # `if: always()`: one broken repo must not hide the state of the others.
       - name: report which repo broke which
         if: always()
@@ -141,7 +175,7 @@ jobs:
           # Each step records a conclusion either way, so this step runs even when
           # the steps above were skipped by an earlier failure.
           failed=""
-          for step in unfer arctic velysterm; do
+          for step in unfer arctic velysterm australvm-rs australvm-ocaml; do
             if [ "${{ steps.$step.outcome }}" = "success" ]; then
               echo "  PASS  $step"
             else
@@ -156,6 +190,11 @@ jobs:
             echo "  threshold signatures that unfer_consensus depends on."
             echo "  A velysterm failure here is usually a document-model change"
             echo "  that emthin and unfer both consume."
+            echo "  An australvm-rs failure here is usually a uk_* symbol or C"
+            echo "  ABI change: the bridge registers against unfer_protocol's"
+            echo "  SYMBOL_REGISTRY and path-deps five unfer crates."
+            echo "  An australvm-ocaml failure is usually a plugin pass or a"
+            echo "  missing loader; run 'make -C australVM loader' to diagnose."
             exit 1
           fi
           echo "cross-repo: all sibling repos verified"

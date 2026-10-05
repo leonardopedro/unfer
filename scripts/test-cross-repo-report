@@ -5,17 +5,46 @@
 # the shell sees it. Here it is simulated with `OUT_<step>`, so the same logic can
 # be driven in every combination that matters -- in particular "one failed and the
 # rest must still be reported", which is the acceptance criterion.
+#
+# The step list is parsed out of the workflow rather than written here. A hardcoded
+# copy is a mirror that drifts: when australVM was added to the job this file still
+# looped over three steps and would have reported "all sibling repos verified" while
+# never examining the two new ones. Reading the workflow means adding a repo to the
+# job cannot leave this exerciser testing a stale copy of the logic.
+
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+workflow="$here/../.github/workflows/ci.yml"
+
+if [ ! -f "$workflow" ]; then
+  echo "report logic: cannot find $workflow" >&2
+  exit 1
+fi
+
+# The report step's `for step in ...` line, e.g. `for step in unfer arctic velysterm;`
+steps="$(sed -n 's/^ *for step in \(.*\); *do$/\1/p' "$workflow" | tail -1)"
+
+if [ -z "$steps" ]; then
+  echo "report logic: no 'for step in ...' list found in $workflow" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC2086
+set -- $steps
+nsteps=$#
+echo "report logic: $nsteps step(s) declared in the workflow: $steps"
+
+declare -A OUTCOME=()
 
 run_report() {
-  local unfer_out="$1" arctic_out="$2" velysterm_out="$3"
   local failed=""
-  for step in unfer arctic velysterm; do
-    local outcome_var="${step}_out"
-    local outcome="${!outcome_var}"
-    if [ "$outcome" = "success" ]; then
+  local step
+  for step in $steps; do
+    if [ "${OUTCOME[$step]}" = "success" ]; then
       echo "  PASS  $step"
     else
-      echo "  FAIL  $step ($outcome)"
+      echo "  FAIL  $step (${OUTCOME[$step]})"
       failed="$failed $step"
     fi
   done
@@ -28,22 +57,53 @@ run_report() {
   return 0
 }
 
+# expect <label> <want_rc> <outcome>...  (one per declared step)
 expect() {
-  local label="$1" want_rc="$2" unfer="$3" arctic="$4" vely="$5"
-  local out rc
-  out="$(run_report "$unfer" "$arctic" "$vely")"; rc=$?
-  printf '%-34s rc=%s (want %s)  %s\n' "$label" "$rc" "$want_rc" \
+  local label="$1" want_rc="$2"
+  shift 2
+  local out rc i=1 step
+  for step in $steps; do
+    OUTCOME[$step]="${!i}"
+    i=$((i + 1))
+  done
+  out="$(run_report)"
+  rc=$?
+  printf '%-38s rc=%s (want %s)  %s\n' "$label" "$rc" "$want_rc" \
     "$(printf '%s' "$out" | tr '\n' '|')"
-  [ "$rc" = "$want_rc" ] || { echo "  MISMATCH"; return 1; }
+  [ "$rc" = "$want_rc" ] || return 1
 }
 
 fail=0
-expect "all green"                0 success success success || fail=1
-expect "unfer breaks (the X7 case)" 1 failure success success || fail=1
-expect "arctic breaks"            1 success failure success || fail=1
-expect "velysterm breaks"         1 success success failure || fail=1
-expect "one skipped, one broke"   1 skipped failure skipped  || fail=1
-expect "all skipped"              1 skipped skipped skipped  || fail=1
+
+# all green
+outcomes=()
+for _ in $(seq 1 "$nsteps"); do outcomes+=(success); done
+expect "all green" 0 "${outcomes[@]}" || fail=1
+
+# each step in turn is the one that breaks
+for i in $(seq 1 "$nsteps"); do
+  outcomes=()
+  for j in $(seq 1 "$nsteps"); do
+    if [ "$j" = "$i" ]; then outcomes+=(failure); else outcomes+=(success); fi
+  done
+  # shellcheck disable=SC2086
+  label="$(echo $steps | cut -d' ' -f"$i") breaks"
+  expect "$label" 1 "${outcomes[@]}" || fail=1
+done
+
+# the acceptance case: one skipped, one broke, the rest still reported
+outcomes=()
+for j in $(seq 1 "$nsteps"); do
+  if [ "$j" -eq 1 ]; then outcomes+=(skipped)
+  elif [ "$j" -eq 2 ]; then outcomes+=(failure)
+  else outcomes+=(success); fi
+done
+expect "one skipped, one broke" 1 "${outcomes[@]}" || fail=1
+
+# all skipped: never a pass
+outcomes=()
+for _ in $(seq 1 "$nsteps"); do outcomes+=(skipped); done
+expect "all skipped" 1 "${outcomes[@]}" || fail=1
 
 echo
 [ "$fail" -eq 0 ] && echo "report logic: all cases behave" || echo "report logic: FAILED"
