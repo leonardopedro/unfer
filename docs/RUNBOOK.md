@@ -230,6 +230,10 @@ CI run it, because `timepiece` is the source of record for `book.tex`/`ODE.tex` 
 
 ## Related
 
+- [`../deploy/DEPLOY.md`](../deploy/DEPLOY.md) — **booting `unfer_edge` +
+  `arctic` together on a fresh machine**: systemd units, the full env-var
+  reference with defaults, secret handling, the container, and 24/7 operation.
+  Start here for a deployment; this file for one process.
 - `docs/PROTOCOL.md` — the NDJSON agent protocol and the op registry.
 - `docs/DEPLOYMENTS.md` — how the layers stack (gateway, VM, Nix packaging).
 - `docs/ARCHITECTURE.md` — the crate map.

@@ -1,0 +1,69 @@
+# unfer_edge — the S22 gateway.
+#
+# C8. Installed to /etc/systemd/system/unfer-edge.service, then:
+#   systemctl daemon-reload && systemctl enable --now unfer-edge
+#
+# Two things here are load-bearing and easy to get wrong:
+#
+#   EnvironmentFile=-/etc/unfer/edge.env
+#     The leading `-` means "start anyway if the file is absent". Without it a
+#     missing file is a hard boot failure, and the natural first run of this unit
+#     is before the file exists.
+#
+# StartLimitBurst / StartLimitIntervalSec
+#     The crash-loop guard, and the reason there is no ExecStartPre probe script
+#     here. A malformed --config file aborts startup by design (a config layer
+#     that is silently ignored is worse than one that is absent), but combined
+#     with Restart=on-failure that turns one typo into an infinite restart loop
+#     that hides the actual error. Capping the burst makes the unit enter
+#     `failed` and show the real message instead. A probe script would have been
+#     the wrong shape of fix: it needs a JSON parser on a fresh machine, and it
+#     duplicates validation unfer_edge already does.
+
+[Unit]
+Description=unfer_edge gateway (S22 admin, capability RPC, board ingress)
+Documentation=file:///opt/unfer/share/doc/unfer/RUNBOOK.md
+After=network-online.target
+Wants=network-online.target
+# See the note above: three failed starts in 60s and the unit stops, rather than
+# looping forever and burying the config error.
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=unfer
+Group=unfer
+EnvironmentFile=-/etc/unfer/edge.env
+Environment=RUST_LOG=info
+ExecStart=/opt/unfer/bin/unfer_edge --config /etc/unfer/edge.json
+Restart=on-failure
+RestartSec=2s
+
+# SIGTERM lets the pingora server finish in-flight requests. `KillSignal=SIGINT`
+# would abort them; the default SIGKILL after TimeoutStopSec would cut a request
+# mid-response, which for /api/v1/ingest means a sender that got no answer and
+# will retry.
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+# Hardening. The gateway needs outbound network and a read-only view of /etc/unfer;
+# it needs nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/unfer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# Loopback only: the admin console (S22) and the capability mint route are
+# loopback chokepoints. Binding them to a public interface would expose the mint
+# route to anyone who can reach the port.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

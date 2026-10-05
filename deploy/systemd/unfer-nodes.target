@@ -1,0 +1,15 @@
+# Grouping unit so arctic.service has something real to order itself against.
+#
+# `PartOf` means stopping this stops the nodes too, which is what an operator
+# wants when taking the cluster down; `WantedBy` means enabling the target pulls
+# the nodes in. An empty unit with no `WantedBy` would satisfy arctic's `After=`
+# syntactically while ordering it against nothing, which is the failure this file
+# exists to prevent: arctic starting before its quorum and answering every request
+# with "insufficient shares".
+
+[Unit]
+Description=unfer node group (quorum backing arctic)
+Documentation=file:///opt/unfer/share/doc/unfer/RUNBOOK.md
+
+[Install]
+WantedBy=multi-user.target

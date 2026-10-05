@@ -1,0 +1,48 @@
+# arctic — the AT-Protocol threshold authority.
+#
+# Lives in the dynamic-arctic repo; copied here because C8's acceptance is that a
+# fresh machine can boot BOTH servers from one document, and two runbooks in two
+# repositories is how an operator ends up with two half-correct setups.
+#
+# The dependency ordering is the point of the unit. arctic validates delegations
+# against a *quorum* of nodes, so starting it before those nodes exist produces an
+# authority that answers "insufficient shares" to every legitimate request — a
+# failure that looks like a key problem and is not. `unfer-nodes.target` is a
+# convenience grouping; if your nodes are elsewhere, drop the After= and say so in
+# your own unit rather than leaving a dependency on a target that does not exist.
+
+[Unit]
+Description=arctic AT-Protocol threshold authority
+Documentation=file:///opt/arctic/share/doc/arctic/RUNBOOK.md
+After=network-online.target unfer-nodes.target
+Wants=network-online.target
+# Same crash-loop guard as unfer-edge.service: a bad --config must surface as
+# `failed` with its message, not as a restart loop that hides it.
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=arctic
+Group=arctic
+EnvironmentFile=-/etc/arctic/arctic.env
+Environment=RUST_LOG=info
+ExecStart=/opt/arctic/bin/arctic --config /etc/arctic/arctic.json
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/arctic
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
