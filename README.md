@@ -99,22 +99,36 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
-<!-- status: verified | tests: 1322 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
+<!-- status: verified | tests: 1433 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
 
 Scope note: the previous figure, 1656, counted the whole workspace *including*
 `fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04). This
 figure is the `unfer` workspace proper and excludes it. That is a scope change,
 not just a refresh, so it is stated rather than left for a reader to infer.
 
+Measured 2026-10-05 with the command below. The `unfer_edge` count grew by 31
+from the C3 configuration layer (54 tests, 76 with `--features audit`), and
+`unfer_protocol` by 78 from the G1 board and G3 cooperation modules.
+
 ## Verification
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1285 passed
+#   1433 passed
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   371 passed across 53 binaries
 ```
+
+The workspace suite has two known-intermittent tests in `unfer_ffi`'s
+action/owner-log group (`action_apply_resolves_and_merges_applied_result`,
+`action_submit_queues_pending_record_with_provisional_result`). They fail
+roughly one run in ten under parallel execution and pass in isolation. The cause
+is documented in `AGENTS.md` §X-F7: several tests touch the action store, the
+owner log and the audit ring while holding only one of the four mutexes, so some
+of the shared state is uncovered by any of them. Reordering the locks was tried
+and made it worse; the prerequisite is an inventory of which test touches which
+store, and that has not been done.
 
 `fock_sirk` runs in release because the SIRK suites are numeric; see
 `AGENTS.md` on the memory-bounded run options.
