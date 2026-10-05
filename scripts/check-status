@@ -24,21 +24,8 @@
 
 set -uo pipefail
 
-find_root() {
-  local dir n c
-  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  while [ "$dir" != / ]; do
-    n=0
-    for c in "$dir"/*/; do
-      [ -d "${c}.git" ] && n=$((n + 1))
-    done
-    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
-    dir="$(dirname "$dir")"
-  done
-  echo "cannot locate the workspace root" >&2
-  return 1
-}
-root="$(find_root)"
+# shellcheck source=workspace-root.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-root.sh"
 
 # Repos that must carry a status block, and the README to look in.
 REPOS="australVM dynamic-arctic emthin unfer velysterm timepiece test"
@@ -46,12 +33,17 @@ REPOS="australVM dynamic-arctic emthin unfer velysterm timepiece test"
 today="$(date +%F)"
 fail=0
 checked=0
+skipped=0
+root="$(ws_root)"
 
-printf 'check-status: status blocks (today %s)\n' "$today"
+printf 'check-status: status blocks (today %s, root %s)\n' "$today" "$root"
 
 for repo in $REPOS; do
-  dir="$root/$repo"
-  [ -d "$dir/.git" ] || { printf 'skip %-16s (not a checkout)\n' "$repo"; continue; }
+  if ! dir="$(ws_checkout "$repo")"; then
+    printf 'skip %-16s (not checked out here)\n' "$repo"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
   block=""
   for f in README.md README; do
@@ -104,4 +96,16 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-printf 'check-status: %d repo(s) carry a status block\n' "$checked"
+# Zero repos inspected is not a pass. The root search this replaced needed three
+# sibling checkouts and CI has two, so this gate used to print "0 repo(s)" and
+# exit 0 -- green, having read nothing.
+if [ "$checked" -eq 0 ]; then
+  echo >&2
+  echo "check-status: found no repo to check under $root." >&2
+  echo "check-status: refusing to report a pass over zero repos." >&2
+  exit 1
+fi
+
+printf 'check-status: %d repo(s) carry a status block' "$checked"
+[ "$skipped" -gt 0 ] && printf ' (%d not checked out here)' "$skipped"
+printf '\n'

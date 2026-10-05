@@ -14,34 +14,20 @@
 
 set -euo pipefail
 
-# Locate the workspace root -- the directory holding the sibling checkouts --
-# by walking up from this script until several git checkouts are visible.
-# Deriving it as "the script's parent" is wrong once these live in
-# unfer/scripts/ rather than at the workspace root.
-find_root() {
-  local dir n c
-  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  while [ "$dir" != / ]; do
-    n=0
-    for c in "$dir"/*/; do
-      [ -d "${c}.git" ] && n=$((n + 1))
-    done
-    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
-    dir="$(dirname "$dir")"
-  done
-  echo "cannot locate the workspace root from ${BASH_SOURCE[0]}" >&2
-  return 1
-}
-root="$(find_root)"
-src="$root/timepiece"
-dst="$root/unfer"
+# shellcheck source=workspace-root.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-root.sh"
 
-FILES=(book.tex ODE.tex)
+src="$(ws_checkout timepiece || true)"
+dst="$(ws_checkout unfer || true)"
 
-if [ ! -d "$src" ] || [ ! -d "$dst" ]; then
-  echo "sync-book: expected $src and $dst to exist" >&2
+if [ -z "$src" ] || [ ! -d "$src" ] || [ -z "$dst" ] || [ ! -d "$dst" ]; then
+  echo "sync-book: expected a timepiece checkout (source) and an unfer checkout" >&2
+  echo "           (mirror) under $(ws_root), or WORKSPACE_ROOT set." >&2
+  echo "           found source='${src:-<none>}' mirror='${dst:-<none>}'" >&2
   exit 1
 fi
+
+FILES=(book.tex ODE.tex)
 
 copied=0
 missing=0

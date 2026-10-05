@@ -14,33 +14,34 @@
 
 set -uo pipefail
 
-# Locate the workspace root -- the directory holding the sibling checkouts --
-# by walking up from this script until several git checkouts are visible.
-# Deriving it as "the script's parent" is wrong once these live in
-# unfer/scripts/ rather than at the workspace root.
-find_root() {
-  local dir n c
-  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  while [ "$dir" != / ]; do
-    n=0
-    for c in "$dir"/*/; do
-      [ -d "${c}.git" ] && n=$((n + 1))
-    done
-    [ "$n" -ge 3 ] && { printf '%s' "$dir"; return 0; }
-    dir="$(dirname "$dir")"
-  done
-  echo "cannot locate the workspace root from ${BASH_SOURCE[0]}" >&2
-  return 1
-}
-root="$(find_root)"
+# shellcheck source=workspace-root.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-root.sh"
+
+# Both sides of the pair are required: a gate that cannot see the source of
+# record must fail loudly. Comparing against a path it invented is how this gate
+# spent its first CI run comparing `/book.tex` with `/timepiece/book.tex`.
+if ! corpus="$(ws_checkout timepiece)"; then
+  echo "book-sync: cannot find the timepiece checkout (source of record)." >&2
+  echo "          workspace root resolved to: $(ws_root)" >&2
+  echo "          expected: <root>/timepiece -- check timepiece out as a" >&2
+  echo "          sibling, or set WORKSPACE_ROOT." >&2
+  exit 1
+fi
+if ! hub="$(ws_checkout unfer)"; then
+  echo "book-sync: cannot find the unfer checkout (mirror)." >&2
+  echo "          workspace root resolved to: $(ws_root)" >&2
+  echo "          expected: <root>/unfer -- check unfer out as a sibling," >&2
+  echo "          or set WORKSPACE_ROOT." >&2
+  exit 1
+fi
 
 FILES=(book.tex ODE.tex)
 drift=0
 
-printf 'book-sync: source of record = timepiece/, mirrored into unfer/\n'
+printf 'book-sync: source of record = %s, mirrored into %s\n' "$corpus" "$hub"
 for f in "${FILES[@]}"; do
-  src="$root/timepiece/$f"
-  dst="$root/unfer/$f"
+  src="$corpus/$f"
+  dst="$hub/$f"
 
   if [ ! -f "$src" ]; then
     printf 'FAIL %-9s source of record missing: %s\n' "$f" "$src" >&2
