@@ -5339,7 +5339,6 @@ mod tests {
 
     #[test]
     fn t6_emitted_certificates_are_durably_recorded_end_to_end() {
-        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use fock_sirk::auto::shifts_for_range;
         use fock_sirk::device::best_device;
         use fock_sirk::{
@@ -5387,6 +5386,15 @@ mod tests {
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // X-F7: durable comes LAST, in the same order as the four sibling tests that
+        // take ACTION then AUDIT then DURABLE. This one used to take it FIRST, which
+        // is an ABBA inversion against exactly those four: it held DURABLE while
+        // waiting for ACTION, they held ACTION while waiting for DURABLE, and the
+        // pair deadlocked with the holder never returning -- which hung every other
+        // DURABLE_TESTS_LOCK test. Measured at 3-in-14 full-suite runs; a probe that
+        // printed acquire/release with the test's thread name identified this test
+        // as the holder.
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let dir = std::env::temp_dir().join(format!(
             "unfer-h4-t6-{}-{}",
@@ -6397,6 +6405,14 @@ mod tests {
         let _lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // X-F7: this test clears the owner log, so it must also serialise with
+        // ACTION_TESTS_LOCK -- the lock every other owner-log test holds. With only
+        // AUDIT_AGENT_TESTS_LOCK there is no common mutex, so this `uk_owner_clear`
+        // could wipe lines another test had just written, and
+        // `owner_logger_writes_dot_component_lines` failed intermittently on
+        // `assert!(uk_owner_clear() >= 2)`: it saw fewer lines than it wrote
+        // because a concurrent test had cleared them first.
+        let _owner_lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_owner_clear();
         uk_clear_caller();
