@@ -99,7 +99,12 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
-<!-- status: verified | tests: 1656 cargo | last_verified: 2026-10-04 -->
+<!-- status: verified | tests: 1322 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
+
+Scope note: the previous figure, 1656, counted the whole workspace *including*
+`fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04). This
+figure is the `unfer` workspace proper and excludes it. That is a scope change,
+not just a refresh, so it is stated rather than left for a reader to infer.
 
 ## Verification
 
