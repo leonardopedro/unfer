@@ -22,6 +22,7 @@ pub mod evidence;
 pub mod harness;
 pub mod ingest;
 pub mod memory;
+pub mod model_spec;
 pub mod nudge;
 pub mod ops;
 pub mod posture;

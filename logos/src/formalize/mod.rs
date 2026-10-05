@@ -21,6 +21,7 @@
 //! which is what makes the engram lemma store (§16 P3) and the readback
 //! round-trip in [`score`] content-addressed rather than string-matched.
 
+pub mod c7_smoke;
 pub mod completer;
 pub mod formalizer;
 pub mod graph;

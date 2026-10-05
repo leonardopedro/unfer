@@ -165,6 +165,57 @@ adding a startup key forces the question to be asked.
 
 ---
 
+## Model specs (local models)
+
+A model is named by one string. The prefix decides which backend and where it
+lives; nothing else is configured.
+
+| spec | backend | endpoint | local? |
+|---|---|---|---|
+| `gpt-4o-mini` | OpenAI-compatible | `OPENAI_BASE_URL`, else `https://api.openai.com/v1` | no |
+| `openai-compatible:http://localhost:8000/v1` | OpenAI-compatible | exactly that | yes |
+| `vllm/meta-llama/Llama-3.1-8B` | vLLM | `VLLM_BASE_URL`, else `http://localhost:8000/v1` | yes |
+| `hf/Qwen/Qwen2.5-Coder-32B` | HuggingFace **hosted** | `https://router.huggingface.co/v1` | **no** |
+| `hf-local/Qwen/Qwen2.5-Coder-32B` | HuggingFace, local server | `HF_LOCAL_BASE_URL`, else `http://localhost:8000/v1` | yes |
+| `kernel` | none | the kernel's solver answers | yes |
+
+**Why `hf/` and `hf-local/` are separate.** A HuggingFace repo id is not a
+location. The same `Qwen/Qwen2.5-7B` can be served by a hosted router or by a vLLM
+process on the next machine over, and the difference is whether your prompt leaves
+the host. A prefix that guessed would decide that silently, so it does not:
+`hf/` is hosted, `hf-local/` is local, and `ModelSpec::is_local()` is computed from
+the URL rather than declared, so a remote endpoint cannot be labelled local to
+satisfy a policy check.
+
+**Workers can use a different model.** Set `WORKER_MODEL_NAME` and workers resolve
+to it; leave it unset and they use the primary. It is an override, not a
+requirement — nothing changes for an operator who never sets it.
+
+### Smoke test
+
+One agent op against a local OpenAI-compatible endpoint, over a real socket:
+
+```sh
+cargo test -p logos --features llm-http c7_smoke
+```
+
+That starts a loopback server, resolves an `openai-compatible:` spec through the
+shared resolver, runs a real `chat` through `HttpTransport`, and asserts on both
+the request that arrived and the reply that came back. It proves prefix
+resolution, URL construction, request shape and reply parsing — everything this
+project owns. It does not prove a model produces good output; that needs weights.
+
+Against a real endpoint you have:
+
+```sh
+UNFER_SMOKE_BASE_URL=http://localhost:8000/v1 \
+UNFER_SMOKE_MODEL=Qwen/Qwen2.5-7B \
+  cargo test -p logos --features llm-http -- --ignored real_endpoint_smoke
+```
+
+It is `#[ignore]`d and skipped when `UNFER_SMOKE_BASE_URL` is unset. A smoke test
+that needs a GPU is a smoke test nobody runs.
+
 ## Rotate and revoke
 
 **Secrets do not live in configuration.** They go through `uk_secret_put` /

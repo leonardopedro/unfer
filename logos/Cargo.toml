@@ -24,3 +24,7 @@ ureq = { version = "2", features = ["json"], optional = true }
 [dev-dependencies]
 serde_json.workspace = true
 tempfile = "3"
+# C7: the smoke test resolves a model spec string through the shared resolver, so
+# the prefix convention and the transport are tested against each other rather
+# than separately. Dev-only -- `logos` itself does not depend on `unfer_protocol`.
+unfer_protocol = { path = "../unfer_protocol" }
