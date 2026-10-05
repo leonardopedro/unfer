@@ -308,6 +308,97 @@ impl Board {
         entry
     }
 
+    /// Serialize the retained entries as NDJSON, oldest first.
+    ///
+    /// G6 needs the board to be readable by a *different process* — the monthly
+    /// rollup in `timepiece` runs as a script, not as a session — and an
+    /// in-memory `VecDeque` cannot be. NDJSON rather than one JSON array so the
+    /// log stays appendable: a writer can add a line without rewriting the file,
+    /// and a truncated final line costs one entry instead of the whole log.
+    ///
+    /// A `dropped` count that has been rolled into the file travels in a header
+    /// line, because otherwise a snapshot silently forgets that entries were
+    /// lost and a reader would report a complete history that is not complete.
+    pub fn to_ndjson(&self) -> String {
+        let mut out = String::new();
+        let meta = serde_json::json!({
+            "record": "meta",
+            "dropped": self.dropped,
+            "next_cursor": self.next_cursor,
+        });
+        out.push_str(&meta.to_string());
+        out.push('\n');
+        for e in &self.entries {
+            match serde_json::to_string(e) {
+                Ok(line) => {
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+                // A `BoardEntry` is four owned fields; if it ever fails to
+                // serialize that is a bug, and dropping the line quietly would
+                // turn it into silent data loss in the one place G6 reads.
+                Err(_) => continue,
+            }
+        }
+        out
+    }
+
+    /// Parse an NDJSON snapshot, restoring entries and the cursor counter.
+    ///
+    /// Entries must arrive oldest-first with contiguous cursors. That is a real
+    /// constraint rather than a defensive one: `next_cursor` is a *shared*
+    /// ordering with the G4 gate-run registry, so a snapshot with a hole or a
+    /// rewind would hand out a cursor that already names a different fact. A
+    /// malformed snapshot is refused outright rather than partially loaded — a
+    /// partial load would leave `next_cursor` pointing into the middle of
+    /// history and quietly produce collisions.
+    ///
+    /// `dropped` from the header is additive with anything dropped since the
+    /// snapshot was taken, so truncating the file never resets the count.
+    pub fn from_ndjson(text: &str) -> Result<Board, String> {
+        let mut board = Board::new();
+        let mut expect: Option<u64> = None;
+        for (i, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| format!("board snapshot line {}: not JSON: {e}", i + 1))?;
+            if v.get("record").and_then(|r| r.as_str()) == Some("meta") {
+                let dropped = v.get("dropped").and_then(|d| d.as_u64()).unwrap_or(0);
+                board.dropped = dropped;
+                // A meta line may legitimately appear once, at the top. A later
+                // one that moves the cursor is the exact corruption above.
+                if let Some(n) = v.get("next_cursor").and_then(|n| n.as_u64()) {
+                    board.next_cursor = n;
+                }
+                continue;
+            }
+            let entry: BoardEntry = serde_json::from_value(v)
+                .map_err(|e| format!("board snapshot line {}: not an entry: {e}", i + 1))?;
+            // The first entry seeds the run; every later one must continue it.
+            let want = expect.unwrap_or(entry.cursor);
+            if entry.cursor != want {
+                return Err(format!(
+                    "board snapshot line {}: cursor {} breaks the run (expected {want}); \
+                     a partial load would make next_cursor collide with history",
+                    i + 1,
+                    entry.cursor
+                ));
+            }
+            expect = Some(entry.cursor + 1);
+            board.entries.push_back(entry);
+            board.next_cursor = board.next_cursor.max(expect.unwrap_or(1));
+        }
+        if board.entries.len() > CAPACITY {
+            let excess = board.entries.len() - CAPACITY;
+            board.entries.drain(..excess);
+            board.dropped += excess as u64;
+        }
+        Ok(board)
+    }
+
     /// The most recent `limit` entries, oldest first.
     pub fn tail(&self, limit: usize) -> Vec<&BoardEntry> {
         let skip = self.entries.len().saturating_sub(limit);
@@ -596,6 +687,162 @@ fn redact_keyed_values(text: &str) -> String {
 }
 
 #[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    fn filled() -> Board {
+        let mut b = Board::new();
+        b.write(
+            BoardKind::Fact,
+            "w1",
+            "the gap depends on the cadabra run",
+            None,
+        );
+        b.write(
+            BoardKind::Fail,
+            "w2",
+            "uniform_variance_bound sorrys out",
+            Some("all three"),
+        );
+        b.write(BoardKind::Claim, "w1", "editing src/board.rs", None);
+        b
+    }
+
+    #[test]
+    fn a_snapshot_round_trips() {
+        let b = filled();
+        let back = Board::from_ndjson(&b.to_ndjson()).expect("valid snapshot");
+        assert_eq!(back.all().len(), b.all().len());
+        for (a, c) in b.all().iter().zip(back.all().iter()) {
+            assert_eq!(a, c);
+        }
+    }
+
+    #[test]
+    fn the_cursor_counter_survives_so_the_next_write_does_not_collide() {
+        // The load-bearing property: cursors are shared with the G4 gate-run
+        // registry, so a restored board that restarted at 1 would hand out a
+        // cursor that already names a different fact.
+        let b = filled();
+        let next_before = b.peek_cursor();
+        let mut back = Board::from_ndjson(&b.to_ndjson()).unwrap();
+        assert_eq!(back.peek_cursor(), next_before);
+        let e = back.write(BoardKind::Observed, "w3", "after the restore", None);
+        assert_eq!(e.cursor, next_before);
+    }
+
+    #[test]
+    fn the_dropped_count_travels_with_the_snapshot() {
+        // Otherwise a truncated log reports a complete history that is not
+        // complete.
+        let mut b = Board::new();
+        for i in 0..(CAPACITY + 5) {
+            b.write(BoardKind::Observed, "w1", &format!("entry {i}"), None);
+        }
+        assert!(b.dropped() > 0);
+        let back = Board::from_ndjson(&b.to_ndjson()).unwrap();
+        assert_eq!(back.dropped(), b.dropped());
+    }
+
+    #[test]
+    fn appending_after_a_restore_continues_the_sequence() {
+        let mut b = filled();
+        let snap = b.to_ndjson();
+        b.write(
+            BoardKind::Observed,
+            "w9",
+            "written after the snapshot",
+            None,
+        );
+        // Re-loading the older snapshot must not resurrect or reorder what came
+        // after it, and the restored board is independent.
+        let back = Board::from_ndjson(&snap).unwrap();
+        assert_eq!(back.len(), 3);
+        assert!(
+            !back
+                .all()
+                .iter()
+                .any(|e| e.text.contains("after the snapshot"))
+        );
+    }
+
+    #[test]
+    fn a_gap_in_the_cursor_run_is_refused() {
+        // A partial load would leave next_cursor pointing into the middle of
+        // history and quietly produce collisions, so this is not "skip the line".
+        let mut b = filled();
+        let snap = b.to_ndjson();
+        let lines: Vec<&str> = snap.lines().collect();
+        let mut out = String::new();
+        for (i, l) in lines.iter().enumerate() {
+            if i == 2 {
+                // Drop the middle entry, leaving a hole.
+                continue;
+            }
+            out.push_str(l);
+            out.push('\n');
+        }
+        let err = Board::from_ndjson(&out).expect_err("a cursor gap must be refused");
+        assert!(err.contains("breaks the run"), "{err}");
+    }
+
+    #[test]
+    fn a_non_json_line_is_refused_with_its_line_number() {
+        let err =
+            Board::from_ndjson("{\"record\":\"meta\",\"dropped\":0,\"next_cursor\":1}\nnot json\n")
+                .expect_err("garbage must be refused");
+        assert!(err.contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_snapshot_is_an_empty_board() {
+        let b = Board::from_ndjson("").expect("empty is not malformed");
+        assert_eq!(b.len(), 0);
+        assert_eq!(b.peek_cursor(), 1);
+    }
+
+    #[test]
+    fn blank_lines_are_tolerated() {
+        // Appended files accumulate blank lines; refusing them would make the
+        // format hostile to the append-only usage it exists for.
+        let b = filled();
+        let mut noisy = b.to_ndjson().replace('\n', "\n\n");
+        noisy.push('\n');
+        let back = Board::from_ndjson(&noisy).expect("blank lines are fine");
+        assert_eq!(back.len(), 3);
+    }
+
+    #[test]
+    fn a_redacted_secret_is_not_reintroduced_by_a_snapshot() {
+        // Redaction happens on write, so this is really a check that the
+        // snapshot does not bypass it -- but a snapshot file is now on disk,
+        // which is exactly the kind of path S23 warns about.
+        let mut b = Board::new();
+        b.write(
+            BoardKind::Fail,
+            "w1",
+            "push failed; api_key=sk-live-abc123",
+            None,
+        );
+        let snap = b.to_ndjson();
+        assert!(!snap.contains("abc123"), "{snap}");
+        let back = Board::from_ndjson(&snap).unwrap();
+        assert!(!back.all()[0].text.contains("abc123"));
+    }
+
+    #[test]
+    fn an_oversized_snapshot_is_trimmed_and_counted() {
+        let mut b = Board::new();
+        for i in 0..(CAPACITY + 30) {
+            b.write(BoardKind::Observed, "w1", &format!("entry {i}"), None);
+        }
+        let snap = b.to_ndjson();
+        let back = Board::from_ndjson(&snap).expect("trim, not refuse");
+        assert_eq!(back.len(), CAPACITY);
+        assert!(back.dropped() >= 30, "the loss must stay visible");
+    }
+}
+
 mod tests {
     use super::*;
 
