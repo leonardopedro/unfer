@@ -245,6 +245,28 @@ impl Board {
         }
     }
 
+    /// The cursor the next entry would get, without consuming it.
+    ///
+    /// Public because cursors are a **shared** ordering, not a property of the
+    /// entry log: a recorded gate run takes one too (G4), and freshness is
+    /// compared across both. If a non-entry event predicted its own cursor as
+    /// `latest + 1` instead of taking it from here, a run and the next entry
+    /// would share a cursor and the staleness comparison would be off by one in
+    /// whichever direction happened to matter.
+    pub fn peek_cursor(&self) -> u64 {
+        self.next_cursor
+    }
+
+    /// Take the next cursor without writing an entry.
+    ///
+    /// Used by anything that needs to position itself in the shared ordering
+    /// without being an entry — currently the G4 gate-run registry.
+    pub fn reserve_cursor(&mut self) -> u64 {
+        let c = self.next_cursor;
+        self.next_cursor += 1;
+        c
+    }
+
     /// Append an entry, assigning it a cursor.
     ///
     /// `text` and `detail` pass through [`redact_secrets`] **before** the cap is
@@ -335,6 +357,27 @@ impl Board {
             Some(front) => since_cursor.saturating_add(1) < front.cursor,
             None => false,
         }
+    }
+
+    /// The cursor of the newest entry `worker` wrote that is **not** a
+    /// `PATCH_SUMMARY`, i.e. the last thing they actually changed.
+    ///
+    /// This is what makes merge evidence checkable without trusting the worker.
+    /// A `PATCH_SUMMARY` asserts "these files, this idea, and here is the gate
+    /// output"; the gate output is only meaningful if it was produced *after* the
+    /// last change it vouches for. The board already knows that ordering, so the
+    /// check reads it rather than taking the worker's word.
+    ///
+    /// Returns `None` when the worker has written nothing, or when every entry
+    /// they wrote has aged out of the bounded board. Callers must treat `None` as
+    /// *cannot establish freshness* and fail closed — see
+    /// [`crate::evidence`].
+    pub fn last_change_cursor(&self, worker: &str) -> Option<u64> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.worker == worker && e.kind != BoardKind::PatchSummary)
+            .map(|e| e.cursor)
     }
 }
 
@@ -608,6 +651,33 @@ mod tests {
         assert_eq!(cs, vec![1, 2, 3, 4, 5]);
         assert_eq!(b.latest_cursor(), 5);
         assert_eq!(b.oldest_available(), 1);
+    }
+
+    #[test]
+    fn a_reserved_cursor_is_consumed_and_never_reissued() {
+        // A gate run takes a cursor too (G4). If a reserved cursor could be
+        // handed out again, a run and an entry would share one and "newer than"
+        // would be ambiguous exactly where it is relied on.
+        let mut b = Board::new();
+        assert_eq!(b.peek_cursor(), 1);
+        assert_eq!(b.reserve_cursor(), 1);
+        assert_eq!(b.peek_cursor(), 2);
+        // Peeking does not consume.
+        assert_eq!(b.peek_cursor(), 2);
+        assert_eq!(b.reserve_cursor(), 2);
+        // ...and the next entry continues the same sequence.
+        assert_eq!(b.write(BoardKind::Observed, "w", "after", None).cursor, 3);
+    }
+
+    #[test]
+    fn a_reserved_cursor_leaves_no_entry_but_still_ages_the_history() {
+        let mut b = Board::new();
+        b.write(BoardKind::Observed, "w", "one", None);
+        b.reserve_cursor();
+        b.write(BoardKind::Observed, "w", "two", None);
+        let cs: Vec<u64> = b.all().iter().map(|e| e.cursor).collect();
+        assert_eq!(cs, vec![1, 3], "the gap is the reserved cursor");
+        assert_eq!(b.latest_cursor(), 3);
     }
 
     #[test]

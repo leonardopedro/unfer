@@ -353,6 +353,89 @@ makes it safe to add without its own security review.
 **Error codes:** UK-1001 (missing `by`/`claim_cursor`, unknown `role` — carries a
 `ReplaceValue` hint).
 
+---
+
+## Verify before merge
+
+Evidence for a patch is a **reference to a run this system recorded**, never
+pasted text. The reason is not fussiness: a human cannot tell pasted output from
+a plausible fabrication, output pasted before the last edit is stale with nothing
+marking it, and output from a *different* change is worse than none because it
+reads as evidence. None of those are fixed by asking people to be careful.
+
+So existence, verdict and freshness are all **checkable facts**:
+
+| check | what it stops |
+|---|---|
+| the run exists | fabricated ids — the trivial forgery |
+| the run passed | a recorded *failure* cited as evidence of correctness |
+| the run is newer than the worker's last change | evidence vouching for a patch that no longer exists |
+| files named, idea stated | an unreviewable empty summary |
+
+> **"Unknown" is not "pass".** A gate that could not decide — missing toolchain,
+> skipped, aborted — is recorded as `unknown` and does not authorise a merge. "I
+> could not check" and "it is fine" are different sentences.
+
+> **Fails closed.** If the worker's last change has aged out of the bounded
+> board, freshness cannot be established and the summary is **refused** rather
+> than assumed valid. A merge gate that degrades to "probably still fine"
+> eventually lets an unverified change through.
+
+### gate_record
+
+Record a run of a gate that **already exists**. This op runs nothing —
+`verify-invariants` (H1), the golden release manifest (S24), a test suite are
+invoked by whoever holds the workspace. It makes the *result* a thing the system
+knows about, so a summary can cite it.
+
+**Request params:**
+
+| field | type | meaning |
+|---|---|---|
+| `source` | string | which gate (`verify-invariants`, `release-golden`, a suite name…) |
+| `verdict` | string | `pass` / `fail`; anything else is recorded as `unknown` |
+| `digest` | string? | digest of the gate's own output |
+| `summary` | string? | one machine-extracted line, for a human scanning history |
+
+**Response result:** `{"run": <GateRun>, "runs_retained"}`
+
+The run's cursor is **reserved from the board**, not predicted by the caller. A
+caller able to choose it could backdate evidence and defeat the staleness check
+that is the entire point; predicting `latest + 1` would let a run and the next
+entry share a cursor.
+
+`digest` identifies the artefact **without** the text going on the board.
+
+### patch_submit
+
+Write a `PATCH_SUMMARY` citing a recorded run, and validate it.
+
+**Request params:** `{"worker", "files": [...], "idea", "run_id"}`
+
+**Response result:**
+
+| field | meaning |
+|---|---|
+| `accepted` | whether the evidence checked out |
+| `entry` | the `PATCH_SUMMARY` board entry |
+| `run` | the run it was accepted against, or absent |
+| `refusal` | a structured `{error: …}` — `no_files`, `no_idea`, `unknown_run`, `not_passing`, `stale`, `unknown_base` |
+| `reason` | the same refusal as a sentence an approving human can act on |
+
+**Error codes:** UK-1001 (missing `worker`, `files`, `idea` or `run_id`).
+
+The entry is written **whether or not the evidence checks out**. A refused summary
+is part of the history: a reader later must be able to see that a merge was
+attempted and why it did not happen, rather than seeing nothing.
+
+`worker` is explicit rather than inferred from the board's last entry — inferring
+it would attribute a summary to whoever wrote most recently, which is wrong the
+moment two workers interleave, and the staleness check is only meaningful if the
+worker named is the one who did the work.
+
+`idea` is the one genuinely-prose field and is **not** verified. That is the
+point: only the evidence is checked, so it stays clear which half is which.
+
 ### `poll_events`
 
 Read pending kernel events (status changes, error notifications) from the

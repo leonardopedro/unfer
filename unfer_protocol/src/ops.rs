@@ -70,6 +70,9 @@ pub const SESSION_OPS: &[&str] = &[
     "board_write",
     "board_read",
     "board_grep",
+    // G4: gate-run recording and evidence-checked patch summaries.
+    "gate_record",
+    "patch_submit",
     // G3/G7: claim arbitration, worker-to-worker messages, role hand-off. See
     // `unfer_protocol::coop` — an overlapping claim is *reported*, not refused.
     "agent_claim",
@@ -186,6 +189,12 @@ pub const AGENT_OPS: &[&str] = &[
     // G7: role hand-off. Carries no privilege; it records who is reviewing so
     // the hand-off is observable after the fact.
     "agent_handoff",
+    // G4: verify-before-merge. `gate_record` registers a run of a gate that
+    // already exists; `patch_submit` writes a PATCH_SUMMARY that cites one, and
+    // is refused when the citation is unknown, non-green, or older than the
+    // worker's last change. See `unfer_protocol::evidence`.
+    "gate_record",
+    "patch_submit",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).
