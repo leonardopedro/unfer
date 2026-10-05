@@ -24,7 +24,11 @@ use serde_json::{Value, json};
 
 /// Hard-config key namespace — never user-editable. Soft config in `soft_config.json`
 /// can advertise or announce anything, but it cannot shadow these host-global keys.
-const HARD_KEYS: &[&str] = &["grants", "auth", "storage", "backend"];
+///
+/// Public so `config::HARD_PATCH_KEYS` (the startup-side subset, in the always-compiled
+/// config module) can be checked against it rather than restated. This list is the
+/// authority; the cross-check lives in `config::tests`.
+pub const HARD_KEYS: &[&str] = &["grants", "auth", "storage", "backend"];
 
 /// The one KV-style key the soft config is mirrored under (the process "store").
 const SOFT_CONFIG_KEY: &str = "soft_config.json";

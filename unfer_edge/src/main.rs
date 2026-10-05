@@ -31,6 +31,7 @@ mod blueprint;
 #[cfg(feature = "audit")]
 mod caprpc;
 mod cells;
+pub mod config;
 mod filter;
 #[cfg(feature = "audit")]
 mod gate;
@@ -65,6 +66,11 @@ fn edge_metrics() -> &'static metrics::Metrics {
 struct GatewayConf {
     /// Host:port of the backend unfer_agent NDJSON HTTP server.
     backend_addr: String,
+    /// The effective startup configuration and which layer supplied each key, so
+    /// `GET /version` can answer "why is it bound to that port" instead of the
+    /// operator having to trust a precedence order. See `config`.
+    startup: config::Config,
+    provenance: config::Provenance,
 }
 
 /// The Pingora `ProxyHttp` implementation for the unfer gateway.
@@ -151,9 +157,13 @@ impl ProxyHttp for UnferGateway {
             .map(|_| true);
         }
         if let Some(EarlyRoute::Version) = decision {
-            return write_json(session, 200, &version_json())
-                .await
-                .map(|_| true);
+            return write_json(
+                session,
+                200,
+                &version_json(Some(&self.conf.startup), Some(&self.conf.provenance)),
+            )
+            .await
+            .map(|_| true);
         }
 
         // A known path reached with the wrong method.
@@ -617,13 +627,25 @@ pub fn route(method: &str, path: &str, query: Option<&str>) -> Option<EarlyRoute
     }
 }
 
-/// The build identity this gateway reports.
-pub fn version_json() -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
+/// The build identity this gateway reports, plus the effective startup
+/// configuration and the layer each key came from.
+///
+/// The provenance map is the point. `GET /healthz` says the process is alive and
+/// `GET /version` says which build it is; neither says which of four configuration
+/// layers actually won, which is the question an operator has when a port is not
+/// what they expected. It is the same shape dynamic-arctic's `/version` reports.
+pub fn version_json(
+    startup: Option<&config::Config>,
+    provenance: Option<&config::Provenance>,
+) -> Vec<u8> {
+    let mut v = serde_json::json!({
         "service": "unfer_edge",
         "version": env!("CARGO_PKG_VERSION"),
-    }))
-    .unwrap_or_else(|_| b"{}".to_vec())
+    });
+    if let (Some(cfg), Some(prov)) = (startup, provenance) {
+        v["config"] = cfg.to_json(prov);
+    }
+    serde_json::to_vec(&v).unwrap_or_else(|_| b"{}".to_vec())
 }
 
 async fn write_json(session: &mut Session, status: u16, body: &[u8]) -> pingora_core::Result<()> {
@@ -662,22 +684,55 @@ async fn send_rejection(
 fn main() {
     tracing_subscriber::fmt::init();
 
-    // Simple argv parsing (no external clap dep to keep the crate minimal).
-    let args: Vec<String> = std::env::args().collect();
-    let listen = args
-        .windows(2)
-        .find(|w| w[0] == "--listen")
-        .map(|w| w[1].clone())
-        .unwrap_or_else(|| "0.0.0.0:3000".to_string());
-    let backend = args
-        .windows(2)
-        .find(|w| w[0] == "--backend")
-        .map(|w| w[1].clone())
-        .or_else(|| std::env::var("UNFER_BACKEND").ok())
-        .unwrap_or_else(|| "127.0.0.1:3001".to_string());
+    let argv: Vec<String> = std::env::args().collect();
+    let invocation = match config::parse_args(&argv) {
+        Ok(i) => i,
+        Err(msg) => {
+            // `--help` arrives here as Err on purpose: usage plus a non-zero exit.
+            eprintln!("{msg}");
+            std::process::exit(2);
+        }
+    };
+
+    let (file, flags) = match invocation {
+        config::Invocation::Init { file } => {
+            // `init` needs no configuration and does not start a server. Writes a
+            // commented starter file where `--config` (in either position) or
+            // UNFER_EDGE_CONFIG says, else the default path.
+            let path = file.unwrap_or_else(|| match std::env::var("UNFER_EDGE_CONFIG") {
+                Ok(v) => std::path::PathBuf::from(v),
+                Err(_) => std::path::PathBuf::from("unfer_edge.json"),
+            });
+            let text = config::starter_config(&[]);
+            if let Err(e) = std::fs::write(&path, &text) {
+                eprintln!("unfer_edge init: cannot write {}: {e}", path.display());
+                std::process::exit(1);
+            }
+            println!("wrote {}", path.display());
+            println!("precedence: defaults < file < env < flags");
+            println!("next: unfer_edge --config {}", path.display());
+            return;
+        }
+        config::Invocation::Serve { file, flags } => (file, flags),
+    };
+
+    let parsed_file = match config::load_file(file.as_deref()) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("unfer_edge: {msg}");
+            std::process::exit(1);
+        }
+    };
+
+    let env = |k: &str| std::env::var(k).ok();
+    let (cfg, provenance) = config::Config::resolve(parsed_file.as_ref(), &env, &flags);
+    let listen = cfg.listen.clone();
+    let backend = cfg.backend.clone();
 
     let conf = Arc::new(GatewayConf {
         backend_addr: backend.clone(),
+        startup: cfg,
+        provenance,
     });
 
     let mut ops: Vec<&str> = filter::allowed_ops().into_iter().collect();
@@ -750,11 +805,40 @@ mod early_route_tests {
 
     #[test]
     fn version_json_names_the_service_and_a_version() {
-        let v: serde_json::Value = serde_json::from_slice(&version_json()).expect("json");
+        let v: serde_json::Value =
+            serde_json::from_slice(&version_json(None, None)).expect("json");
         assert_eq!(v["service"], "unfer_edge");
         assert!(
             !v["version"].as_str().unwrap_or_default().is_empty(),
             "a version endpoint that reports no version is worse than none"
         );
+        // With no configuration supplied the endpoint must not invent one. An
+        // operator reading `"config": {"listen": null}` learns nothing and may
+        // believe the value is unset when it is merely unreported.
+        assert!(
+            v.get("config").is_none(),
+            "config must be omitted rather than reported empty"
+        );
+    }
+
+    #[test]
+    fn version_json_reports_which_configuration_layer_won() {
+        // The X6 addition: `/healthz` says alive, `/version` says which build --
+        // but neither says which of defaults/file/env/flag actually supplied the
+        // listen address, which is the question an operator has when the port is
+        // wrong. Resolved through the real resolver so the test cannot drift from
+        // the precedence order it claims to report.
+        let file = serde_json::json!({"listen": "10.0.0.1:8080"});
+        let env = |k: &str| (k == "UNFER_BACKEND").then(|| "10.0.0.9:9000".to_string());
+        let flags = config::Flags::default();
+        let (cfg, prov) = config::Config::resolve(Some(&file), &env, &flags);
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&version_json(Some(&cfg), Some(&prov))).expect("json");
+        assert_eq!(v["service"], "unfer_edge");
+        assert_eq!(v["config"]["listen"], "10.0.0.1:8080");
+        assert_eq!(v["config"]["backend"], "10.0.0.9:9000");
+        assert_eq!(v["config"]["layers"]["listen"], "file");
+        assert_eq!(v["config"]["layers"]["backend"], "env");
     }
 }
