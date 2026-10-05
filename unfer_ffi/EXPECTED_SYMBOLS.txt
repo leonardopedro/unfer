@@ -48,6 +48,8 @@ uk_get_result
 uk_init
 uk_last_error
 uk_logos_compile
+uk_memory_append
+uk_memory_read
 uk_meter_status
 uk_model_create
 uk_model_free

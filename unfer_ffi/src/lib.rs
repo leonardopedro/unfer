@@ -672,6 +672,148 @@ pub extern "C" fn uk_engram_store(
 ///
 /// Returns <0 (-code) on error: UK-1004 bad handle, UK-4403 miss, `BAD_JSON`
 /// for a malformed key.
+/// C2: remember one thing in this session's memory.
+///
+/// Request body: `{"worker": "w1", "text": "..."}` (both fields optional;
+/// `worker` defaults to `"kernel"`). Returns 0; the stored record is in the
+/// result channel.
+///
+/// Redaction happens in `Memory::append`, before the text is stored, so a secret
+/// pasted into a summary is not merely hidden on read -- it was never written.
+/// The returned `chars` is therefore the post-redaction, post-cap length, which
+/// is also the only honest number to report back to a caller.
+///
+/// Returns <0 (-code): UK-1004 bad handle, `BAD_JSON` for a malformed body.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_memory_append(model: i64, body_ptr: *const u8, body_len: i64) -> i64 {
+    ffi_entry("uk_memory_append", || {
+        handles::clear_last_result(model);
+
+        #[derive(serde::Deserialize)]
+        struct AppendReq {
+            #[serde(default)]
+            worker: Option<String>,
+            #[serde(default)]
+            text: String,
+        }
+        let req: AppendReq = match read_utf8(body_ptr, body_len) {
+            Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+                Diagnostic::new(
+                    Code::BAD_JSON,
+                    format!("memory_append request is not valid JSON: {e}"),
+                    Severity::Error,
+                )
+            })?,
+            // An empty body is a legitimate "remember nothing said by nobody",
+            // not a malformed call.
+            Ok(_) => AppendReq {
+                worker: None,
+                text: String::new(),
+            },
+            Err(diag) => return Err(diag),
+        };
+        let worker = req.worker.unwrap_or_else(|| "kernel".to_string());
+
+        let (rec, evicted) = handles::with_session_mut(model, |s| {
+            let r = s.memory_append(&worker, &req.text);
+            (r, s.memory().evicted())
+        })
+        .ok_or_else(|| bad_handle(model))?;
+
+        let payload = serde_json::json!({
+            "record_id": rec.id,
+            "worker": rec.worker,
+            "text": rec.text,
+            "chars": rec.chars(),
+            "store_chars": handles::with_session(model, |s| s.memory().total_chars())
+                .unwrap_or(0),
+            "records": handles::with_session(model, |s| s.memory().len()).unwrap_or(0),
+            "evicted": evicted,
+        });
+        let json = serde_json::to_string(&payload)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, json);
+        handles::push_event(
+            model,
+            KernelEvent::MemoryAppended {
+                record_id: rec.id,
+                chars: rec.chars(),
+                evicted,
+            },
+        );
+        Ok(0)
+    })
+}
+
+/// C2: read this session's memory, retrieving if the store has evicted.
+///
+/// Request body: `{"query": "...", "budget": 4000}`. `budget` is in characters
+/// and defaults to the store's own cap; it is clamped, because a caller asking
+/// for an unbounded read is asking for the thing the cap exists to prevent.
+/// An empty query is not an error -- it means "no relevance signal", and the
+/// read returns the most recent records.
+///
+/// Returns 0; the result carries `truncated`, `total_chars`, `returned_chars`,
+/// `matched` and `evicted`. Those counts are not decoration: a caller that
+/// cannot tell a pruned read from a short history will draw the wrong conclusion
+/// from it.
+///
+/// Returns <0 (-code): UK-1004 bad handle, `BAD_JSON` for a malformed body.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_memory_read(model: i64, body_ptr: *const u8, body_len: i64) -> i64 {
+    ffi_entry("uk_memory_read", || {
+        handles::clear_last_result(model);
+
+        #[derive(serde::Deserialize)]
+        struct ReadReq {
+            #[serde(default)]
+            query: String,
+            #[serde(default)]
+            budget: Option<usize>,
+        }
+        let req: ReadReq = match read_utf8(body_ptr, body_len) {
+            Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+                Diagnostic::new(
+                    Code::BAD_JSON,
+                    format!("memory_read request is not valid JSON: {e}"),
+                    Severity::Error,
+                )
+            })?,
+            Ok(_) => ReadReq {
+                query: String::new(),
+                budget: None,
+            },
+            Err(diag) => return Err(diag),
+        };
+        let budget = req
+            .budget
+            .unwrap_or(unfer_protocol::memory::MEMORY_CAP)
+            .min(unfer_protocol::memory::MEMORY_CAP * 4);
+
+        let read = handles::with_session(model, |s| s.memory_read(&req.query, budget))
+            .ok_or_else(|| bad_handle(model))?;
+
+        let payload = serde_json::to_value(&read)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        let json = serde_json::to_string(&payload)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, json);
+        handles::push_event(
+            model,
+            KernelEvent::MemoryRead {
+                returned: read.records.len(),
+                matched: read.matched,
+                total_chars: read.total_chars,
+                returned_chars: read.returned_chars,
+                truncated: read.truncated,
+            },
+        );
+        Ok(0)
+    })
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn uk_engram_lookup(model: i64, key_ptr: *const u8, key_len: i64) -> i64 {
@@ -3299,6 +3441,237 @@ pub extern "C" fn uk_events_poll(model: i64, cursor_ptr: *const u8, cursor_len: 
 
 #[cfg(test)]
 mod tests {
+    /// C2 `uk_memory_append` / `uk_memory_read`: the FFI/JSON layer over the
+    /// bounded store.
+    ///
+    /// The store is per-session, so each test makes its own model and needs no
+    /// isolation beyond that. What these tests are really guarding is the
+    /// contract the counts describe: a caller that cannot tell a pruned read from
+    /// a short history will draw the wrong conclusion from it.
+    mod memory_tests {
+        use super::*;
+
+        fn fresh_model() -> i64 {
+            let h = create_harmonic_model();
+            assert!(h > 0, "create_harmonic_model failed");
+            h
+        }
+
+        fn append(model: i64, worker: &str, text: &str) -> serde_json::Value {
+            let body = serde_json::json!({ "worker": worker, "text": text }).to_string();
+            let (p, l) = json_ptr(&body);
+            assert_eq!(uk_memory_append(model, p, l), 0, "append should succeed");
+            let raw = read_buf(|b, c| uk_get_result(model, b, c));
+            serde_json::from_str(&raw).expect("append payload is JSON")
+        }
+
+        fn read(model: i64, query: &str, budget: Option<usize>) -> serde_json::Value {
+            let mut body = serde_json::Map::new();
+            body.insert("query".into(), query.into());
+            if let Some(b) = budget {
+                body.insert("budget".into(), b.into());
+            }
+            let s = serde_json::Value::Object(body).to_string();
+            let (p, l) = json_ptr(&s);
+            assert_eq!(uk_memory_read(model, p, l), 0, "read should succeed");
+            let raw = read_buf(|b, c| uk_get_result(model, b, c));
+            serde_json::from_str(&raw).expect("read payload is JSON")
+        }
+
+        fn texts(v: &serde_json::Value) -> Vec<String> {
+            v["records"]
+                .as_array()
+                .expect("records is an array")
+                .iter()
+                .map(|r| r["text"].as_str().unwrap_or_default().to_string())
+                .collect()
+        }
+
+        #[test]
+        fn a_short_memory_reads_back_whole() {
+            let h = fresh_model();
+            append(h, "w1", "the Faris-Lavine route is refuted");
+            let r = read(h, "anything", None);
+            assert_eq!(texts(&r).len(), 1);
+            assert_eq!(r["truncated"], false);
+            assert_eq!(r["retrieved"], false);
+            assert_eq!(r["total_chars"], r["returned_chars"]);
+        }
+
+        #[test]
+        fn an_empty_store_reads_empty_and_clean() {
+            let h = fresh_model();
+            let r = read(h, "anything", None);
+            assert!(texts(&r).is_empty());
+            assert_eq!(r["truncated"], false);
+        }
+
+        #[test]
+        fn a_secret_is_redacted_on_the_way_in() {
+            let h = fresh_model();
+            let rec = append(h, "w1", "the zenodo push failed; api_key=sk-live-abc123");
+            let stored = rec["text"].as_str().unwrap();
+            assert!(!stored.contains("abc123"), "{stored}");
+            assert!(
+                stored.contains("zenodo"),
+                "the useful part survives: {stored}"
+            );
+            // A complete read returns everything by design, so it does not filter
+            // on the query -- the property that matters is that nothing served back
+            // over FFI contains the secret at all.
+            let r = read(h, "abc123", Some(400));
+            for t in texts(&r) {
+                assert!(!t.contains("abc123"), "a read resurfaces the secret: {t}");
+            }
+        }
+
+        #[test]
+        fn a_bearer_token_never_crosses_the_boundary() {
+            let h = fresh_model();
+            let rec = append(h, "w1", "Authorization: Bearer ghp_realtokenvalue123");
+            assert!(!rec["text"].as_str().unwrap().contains("realtokenvalue123"));
+        }
+
+        #[test]
+        fn overflow_switches_to_retrieval_and_says_so() {
+            let h = fresh_model();
+            for i in 0..40 {
+                append(
+                    h,
+                    "w1",
+                    &format!(
+                        "routine step {i} of the ordinary pipeline {}",
+                        "pad ".repeat(60)
+                    ),
+                );
+            }
+            append(
+                h,
+                "w1",
+                "the QYM one-particle form gap is the outstanding input",
+            );
+
+            let r = read(h, "form gap QYM", Some(500));
+            assert_eq!(r["retrieved"], true);
+            assert!(
+                texts(&r).iter().any(|t| t.contains("form gap")),
+                "the matching record should be retrieved: {:?}",
+                texts(&r)
+            );
+            assert!(r["evicted"].as_u64().unwrap() > 0, "history was lost");
+        }
+
+        #[test]
+        fn retrieval_is_deterministic_across_calls() {
+            let h = fresh_model();
+            for i in 0..40 {
+                append(
+                    h,
+                    "w1",
+                    &format!(
+                        "routine step {i} of the ordinary pipeline {}",
+                        "pad ".repeat(60)
+                    ),
+                );
+            }
+            let a = read(h, "routine pipeline step", Some(400));
+            let b = read(h, "routine pipeline step", Some(400));
+            assert_eq!(a, b, "a re-read must not change what the agent concluded");
+        }
+
+        #[test]
+        fn a_read_respects_its_budget() {
+            let h = fresh_model();
+            for i in 0..40 {
+                append(
+                    h,
+                    "w1",
+                    &format!(
+                        "routine step {i} of the ordinary pipeline {}",
+                        "pad ".repeat(60)
+                    ),
+                );
+            }
+            let r = read(h, "routine", Some(300));
+            assert!(r["returned_chars"].as_u64().unwrap() <= 300);
+            assert_eq!(r["truncated"], true);
+        }
+
+        #[test]
+        fn an_absurd_budget_is_clamped_rather_than_honoured() {
+            let h = fresh_model();
+            append(h, "w1", "a remembered thing");
+            let r = read(h, "remembered", Some(usize::MAX));
+            // The store's own cap is what bounds this, not the caller's ask.
+            assert!(r["returned_chars"].as_u64().unwrap() <= 8000);
+        }
+
+        #[test]
+        fn an_empty_query_is_not_an_error() {
+            let h = fresh_model();
+            append(h, "w1", "something remembered");
+            let r = read(h, "", None);
+            assert_eq!(texts(&r).len(), 1);
+            assert_eq!(r["truncated"], false);
+        }
+
+        #[test]
+        fn a_malformed_body_is_refused() {
+            let h = fresh_model();
+            let (p, l) = json_ptr("{not json");
+            assert!(
+                uk_memory_read(h, p, l) < 0,
+                "malformed read must be refused"
+            );
+            let (p2, l2) = json_ptr("{not json");
+            assert!(
+                uk_memory_append(h, p2, l2) < 0,
+                "malformed append must be refused"
+            );
+        }
+
+        #[test]
+        fn a_bad_handle_is_refused() {
+            let (p, l) = json_ptr("{}");
+            assert!(uk_memory_read(99999, p, l) < 0);
+            let (p2, l2) = json_ptr("{}");
+            assert!(uk_memory_append(99999, p2, l2) < 0);
+        }
+
+        #[test]
+        fn append_and_read_emit_observable_events() {
+            // Silence is not a way to convey "nothing useful came back".
+            let h = fresh_model();
+            append(h, "w1", "a remembered thing");
+            read(h, "remembered", None);
+            assert!(
+                event_log::events_since(0, 10_000)
+                    .iter()
+                    .any(|e| e.handle == h && matches!(e.event, KernelEvent::MemoryAppended { .. })),
+                "an append should be observable"
+            );
+            assert!(
+                event_log::events_since(0, 10_000)
+                    .iter()
+                    .any(|e| e.handle == h && matches!(e.event, KernelEvent::MemoryRead { .. })),
+                "a read should be observable"
+            );
+        }
+
+        #[test]
+        fn a_failed_call_leaves_the_previous_result_cleared() {
+            let h = fresh_model();
+            append(h, "w1", "a remembered thing");
+            let (p, l) = json_ptr("{not json");
+            assert!(uk_memory_read(h, p, l) < 0);
+            let raw = read_buf(|b, c| uk_get_result(h, b, c));
+            assert!(
+                raw.is_empty() || raw == "null" || raw == "{}",
+                "a failed read must not leave the previous payload readable: {raw:?}"
+            );
+        }
+    }
+
     /// C1 `uk_events_poll`: the FFI/JSON layer over the cursored log.
     ///
     /// Each test installs its own log via `own_log`.

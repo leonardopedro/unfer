@@ -454,6 +454,14 @@ impl RolePreset {
                 "uk_get_result",
                 "uk_meter_status",
                 "uk_registry_vetted",
+                // C2: Observe-kind, so it needs no approval lane and every role
+                // below Maintainer can consult what it already remembers. Note
+                // `uk_memory_append` is deliberately *not* here: writing memory is
+                // Mutate-kind under S21, because memory is model-visible state
+                // that outlives the call. An unattended loop that wants to
+                // summarise its own segments needs a vetted grant for that, which
+                // is the intended posture rather than an oversight.
+                "uk_memory_read",
             ],
             RolePreset::ProverRunner => &[
                 "uk_version",
@@ -461,6 +469,7 @@ impl RolePreset {
                 "uk_get_result",
                 "uk_meter_status",
                 "uk_registry_vetted",
+                "uk_memory_read",
                 "uk_proof_verify",
                 "uk_logos_compile",
                 "uk_austral_unf",
@@ -472,6 +481,7 @@ impl RolePreset {
                 "uk_get_result",
                 "uk_meter_status",
                 "uk_registry_vetted",
+                "uk_memory_read",
                 "uk_blueprint_list",
                 "uk_blueprint_export",
                 "uk_report_issue",
@@ -482,6 +492,7 @@ impl RolePreset {
                 "uk_get_result",
                 "uk_meter_status",
                 "uk_registry_vetted",
+                "uk_memory_read",
                 "uk_blueprint_list",
                 "uk_blueprint_export",
                 "uk_report_issue",

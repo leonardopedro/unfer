@@ -6,6 +6,7 @@ use fock_sirk::{SirkOpts, evolve_restarted};
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use qfm::QfmPipeline;
 use unfer_protocol::durable::{DurableStore, streams};
+use unfer_protocol::memory::{Memory, MemoryRead, MemoryRecord};
 use unfer_protocol::{
     EventPredicate, HamiltonianSpec, HmcOptsSpec, ModelSpec, PriorSpec, SolverSpec,
 };
@@ -205,6 +206,15 @@ pub struct Session {
     /// hold bytes. What the kernel owes the rest of the system is durable
     /// addressability: the same 84 bytes always mean the same engram.
     engrams: HashMap<[u8; E6_KEY_BYTES], f64>,
+    /// C2: this session's bounded, retrievable memory.
+    ///
+    /// Separate from `event_log` on purpose. The log is the audit trail: every
+    /// mutating op, in order, replayable, and it must never drop anything. Memory
+    /// is what the *model* reads back, which is a different question with a
+    /// different answer -- a bounded window over summaries that retrieves rather
+    /// than truncating. Folding one into the other would either make the log
+    /// lossy or make memory unbounded.
+    memory: Memory,
 }
 
 /// E6: the byte length of one engram key, as laid out by `logos::engram`
@@ -250,6 +260,23 @@ impl Session {
     /// E6: how many engrams this session holds.
     pub fn engram_count(&self) -> usize {
         self.engrams.len()
+    }
+
+    /// C2: remember one thing. Redacted and capped by [`Memory::append`].
+    pub fn memory_append(&mut self, worker: &str, text: &str) -> MemoryRecord {
+        self.memory.append(worker, text)
+    }
+
+    /// C2: read memory, retrieving if the store has evicted anything.
+    ///
+    /// `budget` is in characters; the store's own caps bound the result too.
+    pub fn memory_read(&self, query: &str, budget: usize) -> MemoryRead {
+        self.memory.read(query, budget)
+    }
+
+    /// C2: direct access, for callers that need the raw store.
+    pub fn memory(&self) -> &Memory {
+        &self.memory
     }
 }
 
@@ -460,6 +487,7 @@ impl Session {
             durable: None,
             start_preset: None,
             engrams: HashMap::new(),
+            memory: Memory::new(),
         })
     }
 
@@ -849,6 +877,7 @@ impl Session {
             durable: None,
             start_preset: None,
             engrams: HashMap::new(),
+            memory: Memory::new(),
         })
     }
 

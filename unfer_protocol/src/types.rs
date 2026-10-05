@@ -383,6 +383,27 @@ pub enum KernelEvent {
         unf_hash: String,
         weight: Option<f64>,
     },
+    /// C2: something was remembered. `chars` is the post-redaction,
+    /// post-cap length, so a caller can see the cost of what it asked to keep
+    /// rather than the cost of what it sent.
+    MemoryAppended {
+        record_id: u64,
+        chars: usize,
+        evicted: u64,
+    },
+    /// C2: memory was read. Recorded as an event of its own for the reason
+    /// `EngramLookedUp` is: "the store returned nothing useful" is a fact an
+    /// operator needs to see, and silence is not a way to convey it.
+    ///
+    /// `truncated` travels with it because a pruned read and a short history
+    /// look identical to a caller that is not told which one happened.
+    MemoryRead {
+        returned: usize,
+        matched: usize,
+        total_chars: usize,
+        returned_chars: usize,
+        truncated: bool,
+    },
     Error {
         diagnostic: Diagnostic,
     },

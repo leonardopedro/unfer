@@ -176,6 +176,53 @@ Kernel symbol: `uk_events_poll`. Observe-kind: reading the log grants nothing.
 > though the JSON is not. The two are kept in the same dialect deliberately:
 > matching semantics, different transport.
 
+### Bounded memory (C2)
+
+Each session carries a bounded, retrievable memory. This is deliberately *not*
+the session event log: the log is the audit trail and must never drop anything,
+while memory is what the model reads back, and those want opposite policies.
+
+| symbol | kind | body | result |
+| --- | --- | --- | --- |
+| `uk_memory_append` | Mutate | `{"worker": "w1", "text": "..."}` | `{record_id, worker, text, chars, store_chars, records, evicted}` |
+| `uk_memory_read` | Observe | `{"query": "...", "budget": 4000}` | `{records, truncated, total_chars, returned_chars, evicted, matched, retrieved}` |
+
+`budget` is in characters, defaults to the store cap, and is clamped — a caller
+asking for an unbounded read is asking for the thing the cap exists to prevent.
+An empty `query` is not an error: it means "no relevance signal", and the read
+returns the most recent records.
+
+Retrieval is BM25 and deterministic. Ties break on record id, so re-reading
+memory cannot change what an agent concluded on a previous read. Under the cap a
+read returns everything; once records have been evicted it selects the
+highest-scoring records that fit `budget`.
+
+| field | meaning |
+| --- | --- |
+| `retrieved` | false when the read returned everything without choosing |
+| `truncated` | **true** when anything was left out — pruned, or over budget |
+| `matched` | records scoring against `query`, before the budget was applied |
+| `evicted` | records dropped from the store entirely, over time |
+
+`truncated` and `evicted` are not decoration. A caller that cannot tell a pruned
+read from a short history will draw the wrong conclusion from it.
+
+Text is redacted (`redact_secrets`) **before** it is stored, so a secret pasted
+into a summary was never written rather than merely hidden on read; `chars` is
+the post-redaction length and is the only honest cost to report back.
+
+`uk_memory_append` is Mutate under S21 because memory is model-visible state that
+outlives the call, so writing it is not an observation. `uk_memory_read` is
+Observe, so retrieval never queues for approval — an agent loop must be able to
+consult its memory unattended. The consequence is that an unattended loop wanting
+to append its own summaries needs a vetted grant for the append.
+
+Events: `memory_appended` (`record_id`, `chars`, `evicted`) and `memory_read`
+(`returned`, `matched`, `total_chars`, `returned_chars`, `truncated`). A read is
+recorded as an event of its own for the same reason `engram_looked_up` is:
+"the store returned nothing useful" is a fact an operator needs to see, and
+silence does not convey it.
+
 ---
 
 ## Shared context and cooperation

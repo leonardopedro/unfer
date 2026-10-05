@@ -345,6 +345,26 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        name: "uk_memory_append",
+        kind: SymbolKind::Kernel,
+        // Mutate, following `uk_engram_store`: this changes session state that a
+        // later read will report differently. The S21 default is deliberately the
+        // cautious one -- an un-annotated symbol is treated as side-effecting, so
+        // a new mutating entry point cannot quietly auto-apply.
+        effect_kind: super::types::EffectKind::Mutate,
+        timeout_ms: None,
+    },
+    SymbolRecord {
+        name: "uk_memory_read",
+        kind: SymbolKind::Kernel,
+        // Observe, for the same reason as `uk_events_poll`: reading what the
+        // session already remembers grants nothing and cannot widen a caller's
+        // reach, so it must never queue for approval. If it did, retrieval would
+        // be the one part of the loop an agent could not run unattended.
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_meter_status",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Observe,

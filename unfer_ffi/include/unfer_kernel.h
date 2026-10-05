@@ -141,6 +141,12 @@ int64_t uk_last_error(uint8_t* buf,
 int64_t uk_logos_compile(int64_t model,
                  const uint8_t* sentence_ptr,
                  int64_t sentence_len);
+int64_t uk_memory_append(int64_t model,
+                 const uint8_t* body_ptr,
+                 int64_t body_len);
+int64_t uk_memory_read(int64_t model,
+               const uint8_t* body_ptr,
+               int64_t body_len);
 int64_t uk_meter_status(const uint8_t* principal,
                 int64_t len,
                 const uint8_t* budget_json,
