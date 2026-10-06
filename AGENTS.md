@@ -76,6 +76,7 @@ Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 - [ ] **Math catastrophe bond (Plan R)**: the trigger is a nanoda proof run deterministically inside `apply_op` — no human oracle; a live bond cannot settle early and the id commits the full terms. → `docs/CONSENSUS_LEDGERS.md`
 - [ ] **Bond probability market (Plan R)**: buys mint at the **post-trade** marginal price; **resolution is not a caller choice** — it is a pure function of the trigger signal, and a forged resolve is refused. → `docs/CONSENSUS_LEDGERS.md`
 - [ ] **Attribution carbon credits (Plan R)**: the ledger takes the **consensus-log** seq, not the op seq, so a replayed approval keeps its badge date; badges are byte-identical across services. → `docs/CONSENSUS_LEDGERS.md`
+- [ ] **Test locks (X-F7)**: `unfer_ffi`'s test mutexes are per-store, not one global lock, and one test takes them in the opposite order from the majority — so several tests are known-intermittent under parallel execution. The inventory of which test holds which lock, and the one completed store, are in `docs/TEST_LOCKS.md`. **Never reorder or merge these locks without measuring over enough runs**: two mechanical attempts already made things worse.
 
 ## Crate Layout
 

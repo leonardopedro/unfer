@@ -99,37 +99,50 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
-<!-- status: verified | tests: 1640 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-05 -->
+<!-- status: verified | tests: 1764 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-06 -->
 
-Scope note: the previous figure, 1656, counted the whole workspace *including*
-`fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04). This
-figure is the `unfer` workspace proper and excludes it. That is a scope change,
-not just a refresh, so it is stated rather than left for a reader to infer.
+Scope note: this figure is the `unfer` workspace proper and **excludes**
+`fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04,
+measured separately in `--release` below). Excluding it is a scope choice, not
+a refresh, so it is stated rather than left for a reader to infer — as is the
+change from the previous figure, 1640.
 
-Measured 2026-10-05 with the command below. Growth since the previous figure of
-1322: `unfer_edge` +31 (the C3 configuration layer — 54 tests, 76 with
-`--features audit`) and `unfer_protocol` +131 (the G1 board, G3 cooperation, G4
-evidence and G9 nudge modules).
+Measured 2026-10-06 by summing every `test result: ok.` line of
+`cargo test --workspace --exclude fock_sirk` (66 test binaries + doc-tests, 0
+failures). **Debug and release agree exactly**, suite by suite — both were run,
+which is why the block can be checked against either. Growth since 1640:
+`decide_core` +94 (the D1–D15 analytic decision engine) plus the G1–G9
+protocol/ffi/edge additions.
+
+**CI recounts this number.** The test job tees its own release run and hands
+the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
+containing a failed suite and fails on any mismatch with the block above — so a
+stale count here is a red build, not a silent claim.
 
 ## Verification
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1640 passed
+#   1764 passed (2026-10-06; identical count in --release, per suite)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
-#   371 passed across 53 binaries
+#   371 passed across 53 binaries (2026-10-04)
 ```
 
-The workspace suite has two known-intermittent tests in `unfer_ffi`'s
+The workspace suite has **three** known-intermittent tests in `unfer_ffi`'s
 action/owner-log group (`action_apply_resolves_and_merges_applied_result`,
-`action_submit_queues_pending_record_with_provisional_result`). They fail
-roughly one run in ten under parallel execution and pass in isolation. The cause
-is documented in `AGENTS.md` §X-F7: several tests touch the action store, the
-owner log and the audit ring while holding only one of the four mutexes, so some
-of the shared state is uncovered by any of them. Reordering the locks was tried
-and made it worse; the prerequisite is an inventory of which test touches which
-store, and that has not been done.
+`action_submit_queues_pending_record_with_provisional_result`, and
+`queue_drops_oldest_when_full`, whose owner ring can be emptied under it by a
+test holding a *different* mutex). All three pass in isolation and fail only
+under parallel execution. The cause and the running inventory of which test
+holds which lock live in [`docs/TEST_LOCKS.md`](docs/TEST_LOCKS.md) — the first
+store (the owner log) is now charted, and it is what identified the third test
+on 2026-10-06. Reordering or merging these locks has been tried twice and made
+things worse both times, so the prerequisite remains the finished inventory.
+
+A run in which one of them fails is **not** evidence of a count: the CI test
+step stops there, and `scripts/check-status --recount` refuses a log containing
+a failed suite rather than summing past it.
 
 `fock_sirk` runs in release because the SIRK suites are numeric; see
 `AGENTS.md` on the memory-bounded run options.
@@ -191,18 +204,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 23, 2026-08-11)
+## Test & benchmark counts (rev 24, 2026-10-06)
 
-- Workspace tests: **676 green** on CPU (default features, `cargo test
-  --workspace`): fock_sirk 29 (26 unit + 3 heavy Krylov integration), logos 26,
-  nested_fock_algebra 43, ode_sirk 36,
-  prob_kernel 11 (+ 35 `session` integration), qfm 44 (+ 30 integration
-  validations: CFd/Ising/GW/CIFAR/MNIST/parity/sentiment/rank_truncation),
-  qfm_text 50 (+ 16 integration incl. `dense_w_krylov`, `smoothing_invariants`),
-  unfer_consensus 43, unfer_data 51 (+ 5 integration incl.
-  `release_manifest_golden`), unfer_edge 19, unfer_ffi 73 (+ 30 `ffi` ABI
-  tests incl. the header-drift gate), unfer_identity 6, unfer_protocol 27
-  (+ 51 `protocol` integration), unfer_taler 16.
+- Workspace tests: **1764 green** on CPU (default features,
+  `cargo test --workspace --exclude fock_sirk`, 66 test binaries +
+  doc-tests): `unfer_protocol` 392, logos 346, `unfer_ffi` 228,
+  `prob_kernel` 143, `unfer_consensus` 111, `nested_fock_algebra` 98,
+  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 61,
+  `unfer_data` 56, `unfer_taler` 36, `ode_sirk` 36, `unfer_identity` 6,
+  `sirk_core_model` 5. Debug and `--release` report the same count for
+  every suite (verified 2026-10-06; no test is gated on
+  `cfg(debug_assertions)`).
+- `fock_sirk` is measured separately (371 across 53 binaries,
+  2026-10-04, `--release`) and is **not** in the 1764 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -210,6 +224,13 @@ int64_t n = uk_get_result(model, buf, cap);
   `bayes_update_vs_n`).
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
+
+> The previous revision of this table (rev 23, 2026-08-11) claimed **676** and
+> was stale by a year of work — it predates the board/cooperation/evidence
+> modules, the configuration layer and `decide_core`. It is superseded by the
+> figures above, which are re-measured rather than carried forward: the status
+> block at the top of this file is checked against a live log by
+> `scripts/check-status --recount` in CI.
 
 ## Documentation
 

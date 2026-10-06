@@ -16,11 +16,17 @@
 # (cargo test, dune runtest, pytest) and a gate that shells into all of them is a
 # slow gate that gets skipped. The command behind each number is documented in
 # that repo's README Verification section; this checks that the claim exists and
-# is internally sane. Recomputing the counts is a job for each repo's own CI,
-# which already runs them.
+# is internally sane.
 #
-# Usage:  scripts/check-status
-# Exit:   0 clean, 1 on a missing/invalid status block.
+# X2 drift half (2026-10-06): `--recount REPO=LOG` recomputes a count from a log
+# of that repo's own suite instead of trusting the block, so a count claim is
+# checked by the run the repo already performs rather than by a second suite.
+# The CI test job tees its output and passes the log here; locally the same
+# command works against any captured run. A log containing a FAILED suite is
+# not evidence of a count and is refused, not summed past.
+#
+# Usage:  scripts/check-status [--recount REPO=LOG ...]
+# Exit:   0 clean, 1 on a missing/invalid status block or a recounted mismatch.
 
 set -uo pipefail
 
@@ -35,6 +41,52 @@ fail=0
 checked=0
 skipped=0
 root="$(ws_root)"
+
+# X2: optional recount requests, filled from --recount REPO=LOG.
+recount_specs=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --recount)
+      if [ $# -lt 2 ]; then
+        echo "check-status: --recount needs REPO=LOG" >&2
+        exit 2
+      fi
+      recount_specs="$recount_specs $2"
+      shift 2
+      ;;
+    *)
+      echo "check-status: unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Sum `test result: ok. N passed` over a cargo-test log. Fails (rather than
+# returning a number) when the log contains a FAILED suite: a broken run is not
+# a count of a green suite, and printing "N passed" from it would be exactly
+# the drift this gate exists to catch.
+recount_from_log() {
+  local log="$1"
+  if [ ! -f "$log" ]; then
+    printf 'FAIL recount: no such log: %s\n' "$log" >&2
+    return 1
+  fi
+  if grep -qE '^test result: FAILED' "$log" || \
+     grep -E '^test result:' "$log" | \
+       awk '{f = $6; gsub(/[^0-9]/, "", f); if (f + 0 > 0) bad = 1} END {exit bad ? 0 : 1}'; then
+    printf 'FAIL recount: %s contains a failed suite; a broken run cannot evidence a count\n' "$log" >&2
+    return 1
+  fi
+  local n
+  n="$(grep -E '^test result: ok\.' "$log" | awk '{s += $4} END {print s + 0}')"
+  local suites
+  suites="$(grep -cE '^test result:' "$log" || true)"
+  if [ "$suites" -eq 0 ]; then
+    printf 'FAIL recount: %s has no test-result lines (not a suite log?)\n' "$log" >&2
+    return 1
+  fi
+  printf '%s' "$n"
+}
 
 printf 'check-status: status blocks (today %s, root %s)\n' "$today" "$root"
 
@@ -85,6 +137,34 @@ for repo in $REPOS; do
   fi
 
   printf 'ok   %-16s %s\n' "$repo" "$block"
+
+  # X2 drift half: if this repo's count was asked for, recompute it from its
+  # suite log and hold the block to the number.
+  for spec in $recount_specs; do
+    case "$spec" in
+      "$repo="*)
+        log="${spec#*=}"
+        claimed="$(printf '%s' "$block" | grep -oE 'tests: [0-9]+' | grep -oE '[0-9]+')"
+        if [ -z "$claimed" ]; then
+          printf 'FAIL %-16s recount requested but the block has no numeric count\n' "$repo"
+          fail=1
+          continue
+        fi
+        if measured="$(recount_from_log "$log")"; then
+          if [ "$measured" = "$claimed" ]; then
+            printf 'ok   %-16s recount: %s tests, matches the block (%s)\n' "$repo" "$measured" "$log"
+          else
+            printf 'FAIL %-16s recount: log shows %s tests, block claims %s (%s)\n' \
+              "$repo" "$measured" "$claimed" "$log"
+            printf '       update the status block after the suite run, or cite the same scope\n'
+            fail=1
+          fi
+        else
+          fail=1
+        fi
+        ;;
+    esac
+  done
 done
 
 if [ "$fail" -ne 0 ]; then
