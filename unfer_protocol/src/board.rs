@@ -654,7 +654,7 @@ fn redact_keyed_values(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0usize;
 
-    for (idx, _) in text.match_indices(|c: char| c == '=' || c == ':') {
+    for (idx, _) in text.match_indices(['=', ':']) {
         // Walk back over the key.
         //
         // Quotes are stripped *first*, because a quoted key ends at the separator
@@ -717,6 +717,7 @@ fn redact_keyed_values(text: &str) -> String {
 /// take the process down. The shared invariant is that a redaction pass never
 /// slices backwards — the next match must not begin before the end of the region
 /// already redacted.
+#[cfg(test)]
 mod redaction_panic_tests {
     use super::*;
 
@@ -969,6 +970,7 @@ mod snapshot_tests {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1479,5 +1481,400 @@ mod tests {
         pub fn matches_all(&self, b: &Board) -> usize {
             b.grep(self).len()
         }
+    }
+}
+
+// ── durable board (G1's "survives restart") ──────────────────────────────────
+
+/// The stream name the board's append-only log is written under.
+///
+/// A `DurableStore` is shared by every subsystem that persists through it, so the
+/// name is part of the contract: two subsystems writing to `"board"` would read
+/// each other's records back on replay.
+pub const BOARD_STREAM: &str = "board";
+
+/// A [`Board`] with its entries persisted to a [`DurableStore`].
+///
+/// ## Why a wrapper and not a field on `Board`
+///
+/// `Board` is a pure value: `Clone`, `Default` and cheap to build, and every test
+/// constructs one with `Board::new()`. Durability is not part of that value — it
+/// is a *deployment* choice, and the overwhelming majority of boards in this
+/// workspace are short-lived session state that should never touch disk. Putting
+/// a store inside `Board` would mean every ephemeral board carried a filesystem
+/// handle, and would break `Clone` to boot.
+///
+/// ## The durability contract
+///
+/// Entries are appended **after** they are accepted in memory, and the append is
+/// **best-effort at write time, authoritative at [`BoardLog::flush`]**. That
+/// split is deliberate:
+///
+/// - A failed append does **not** fail the write. A board entry that a human can
+///   read in the editor but that did not reach the log is a degraded board; a
+///   board write that fails because a disk is full is an unusable one. The
+///   in-memory entry is authoritative for the session and [`BoardLog::flush`]
+///   reports what did not make it.
+/// - [`BoardLog::flush`] is where the guarantee becomes real, because that is the
+///   only point at which "the board survived the restart" can be claimed.
+///
+/// Nothing here can lose an entry that `flush` reported as persisted, and
+/// [`BoardLog::flush`] is what a caller must check before believing durability.
+#[derive(Debug)]
+pub struct BoardLog {
+    board: Board,
+    store: std::sync::Arc<dyn crate::durable::DurableStore>,
+    /// Cursor of the last entry known to be in the store.
+    ///
+    /// A watermark rather than a re-serialization of the whole board: replaying
+    /// `CAPACITY` entries on every flush would make persistence O(history) per
+    /// write, and the entries are immutable once written, so a cursor is a
+    /// sufficient high-water mark.
+    persisted: u64,
+    /// Entries whose append has been attempted and failed since the last flush.
+    ///
+    /// Counted, not stored: the entries themselves are still in `board`, so a
+    /// later flush can retry them. This is only the number `flush` reports.
+    unpersisted: u64,
+}
+
+impl BoardLog {
+    /// Open a durable board, replaying whatever is already in `store`.
+    ///
+    /// An empty or absent stream yields a fresh board at cursor 1 — a first run
+    /// is not an error. A **corrupt** stream is an error, on the same reasoning as
+    /// [`Board::from_ndjson`]: a partially replayed board hands out a
+    /// `next_cursor` that collides with history, which is worse than refusing to
+    /// start.
+    pub fn open(store: std::sync::Arc<dyn crate::durable::DurableStore>) -> Result<Self, String> {
+        let records = store
+            .replay(BOARD_STREAM)
+            .map_err(|e| format!("board log: replay failed: {e}"))?;
+        // Replay is a stream of appended *entries*, not a single snapshot with a
+        // meta header, so it is stitched into a snapshot shape before parsing —
+        // that way `Board::from_ndjson`'s cursor-contiguity check applies to a
+        // restored log too, instead of being bypassed for the durable path.
+        let mut text = String::new();
+        let mut highest = 0u64;
+        for (n, rec) in records.iter().enumerate() {
+            let v: serde_json::Value = serde_json::from_slice(rec)
+                .map_err(|e| format!("board log: record {n} is not JSON: {e}"))?;
+            if let Some(c) = v.get("cursor").and_then(|c| c.as_u64()) {
+                highest = highest.max(c);
+            }
+            text.push_str(&v.to_string());
+            text.push('\n');
+        }
+        let meta = serde_json::json!({
+            "record": "meta",
+            "dropped": 0,
+            // Replaying N entries means the next cursor is one past the highest
+            // one seen. This is what makes a restored board continue the same
+            // ordering rather than restarting it.
+            "next_cursor": highest + 1,
+        });
+        let mut restored = String::new();
+        restored.push_str(&meta.to_string());
+        restored.push('\n');
+        restored.push_str(&text);
+
+        let board = Board::from_ndjson(&restored)?;
+        Ok(BoardLog {
+            persisted: highest,
+            board,
+            store,
+            unpersisted: 0,
+        })
+    }
+
+    /// The board, for reading.
+    pub fn board(&self) -> &Board {
+        &self.board
+    }
+
+    /// The board, for writing.
+    pub fn board_mut(&mut self) -> &mut Board {
+        &mut self.board
+    }
+
+    /// Cursor of the last entry known to be in the store.
+    pub fn persisted_through(&self) -> u64 {
+        self.persisted
+    }
+
+    /// Entries accepted in memory whose append has not yet been confirmed.
+    pub fn unpersisted(&self) -> u64 {
+        self.unpersisted
+    }
+
+    /// Append every entry above the watermark, then flush.
+    ///
+    /// Returns the cursor the log is now persisted through, or the reason it is
+    /// not. Idempotent: calling it twice with no intervening write does nothing
+    /// the second time.
+    pub fn flush(&mut self) -> Result<u64, String> {
+        let pending: Vec<BoardEntry> = self
+            .board
+            .entries
+            .iter()
+            .filter(|e| e.cursor > self.persisted)
+            .cloned()
+            .collect();
+
+        for entry in &pending {
+            let line = serde_json::to_string(entry).map_err(|e| {
+                format!("board log: entry {} will not serialize: {e}", entry.cursor)
+            })?;
+            if let Err(e) = self.store.append(BOARD_STREAM, line.as_bytes()) {
+                self.unpersisted = (self.unpersisted as usize).saturating_add(pending.len()) as u64;
+                return Err(format!(
+                    "board log: append at cursor {} failed: {e}",
+                    entry.cursor
+                ));
+            }
+            // Advance per-entry, not at the end: a failure halfway through must
+            // not re-append the records that already landed, which for an
+            // append-only log would duplicate them on the next replay.
+            self.persisted = entry.cursor;
+        }
+
+        self.store
+            .flush()
+            .map_err(|e| format!("board log: flush failed: {e}"))?;
+        self.unpersisted = 0;
+        Ok(self.persisted)
+    }
+}
+
+#[cfg(test)]
+mod durable_tests {
+    use super::*;
+    use crate::durable::{DurableError, DurableStore};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// A minimal in-memory store, so the durability tests do not depend on a
+    /// backend this crate cannot see (`unfer_protocol` must not depend on
+    /// `unfer_ffi`'s Loro/JSONL backends).
+    #[derive(Debug, Default)]
+    struct MemStore {
+        streams: Mutex<HashMap<String, Vec<Vec<u8>>>>,
+        /// Appends to refuse, for the degraded-path test.
+        fail_append: Mutex<bool>,
+    }
+
+    impl MemStore {
+        fn refusing() -> Arc<MemStore> {
+            Arc::new(MemStore {
+                streams: Mutex::new(HashMap::new()),
+                fail_append: Mutex::new(true),
+            })
+        }
+    }
+
+    impl DurableStore for MemStore {
+        fn backend(&self) -> &'static str {
+            "mem"
+        }
+        fn append(&self, stream: &str, record: &[u8]) -> Result<(), DurableError> {
+            if *self.fail_append.lock().unwrap() {
+                return Err(DurableError::Io("refusing on purpose".into()));
+            }
+            self.streams
+                .lock()
+                .unwrap()
+                .entry(stream.to_string())
+                .or_default()
+                .push(record.to_vec());
+            Ok(())
+        }
+        fn flush(&self) -> Result<(), DurableError> {
+            Ok(())
+        }
+        fn replay(&self, stream: &str) -> Result<Vec<Vec<u8>>, DurableError> {
+            Ok(self
+                .streams
+                .lock()
+                .unwrap()
+                .get(stream)
+                .cloned()
+                .unwrap_or_default())
+        }
+        fn frontier(&self) -> Result<Vec<u8>, DurableError> {
+            Ok(b"mem".to_vec())
+        }
+        fn fork_at(&self, _f: &[u8]) -> Result<Box<dyn DurableStore>, DurableError> {
+            Err(DurableError::Unsupported("mem cannot fork".into()))
+        }
+    }
+
+    use std::sync::Arc;
+
+    /// **G1's acceptance criterion, verbatim: the board survives a restart.**
+    ///
+    /// The test is a real restart: the `BoardLog` is dropped and a *new* one is
+    /// opened over the same store. Nothing in memory carries across.
+    #[test]
+    fn the_board_survives_a_restart() {
+        let store = Arc::new(MemStore::default());
+
+        {
+            let mut log = BoardLog::open(store.clone()).expect("fresh store opens");
+            log.board_mut()
+                .write(BoardKind::Fail, "w1", "the Lavine route is refuted", None);
+            log.board_mut()
+                .write(BoardKind::Claim, "w2", "claiming the QYM form gap", None);
+            let through = log.flush().expect("flushes");
+            assert_eq!(through, 2, "both entries persisted");
+            assert_eq!(log.unpersisted(), 0);
+        } // <- the "process" ends here
+
+        // A new log over the same store: this is the restart.
+        let reopened = BoardLog::open(store).expect("replays");
+        let b = reopened.board();
+        assert_eq!(b.len(), 2, "both entries came back");
+        assert_eq!(b.all()[0].text, "the Lavine route is refuted");
+        assert_eq!(b.all()[1].kind, BoardKind::Claim);
+    }
+
+    /// The cursor must *continue*, not restart. A restored board that handed out
+    /// cursor 1 again would collide with the G4 gate-run registry, which shares
+    /// this ordering — that is the specific corruption a reset would cause.
+    #[test]
+    fn a_restored_board_continues_the_cursor_rather_than_resetting_it() {
+        let store = Arc::new(MemStore::default());
+        {
+            let mut log = BoardLog::open(store.clone()).unwrap();
+            log.board_mut().write(BoardKind::Fact, "w", "one", None);
+            log.board_mut().write(BoardKind::Fact, "w", "two", None);
+            log.flush().unwrap();
+        }
+        let mut reopened = BoardLog::open(store).unwrap();
+        assert_eq!(
+            reopened.board().peek_cursor(),
+            3,
+            "next cursor is one past the highest persisted one"
+        );
+        let e = reopened
+            .board_mut()
+            .write(BoardKind::Fact, "w", "three", None);
+        assert_eq!(e.cursor, 3, "no cursor is ever handed out twice");
+        reopened.flush().unwrap();
+    }
+
+    /// Appending the same entries twice would duplicate them on replay, which is
+    /// why `flush` is watermark-based and idempotent.
+    #[test]
+    fn flushing_twice_does_not_duplicate() {
+        let store = Arc::new(MemStore::default());
+        let mut log = BoardLog::open(store.clone()).unwrap();
+        log.board_mut().write(BoardKind::Fact, "w", "one", None);
+        log.flush().unwrap();
+        log.flush().unwrap();
+        log.flush().unwrap();
+        let records = store.replay(BOARD_STREAM).unwrap();
+        assert_eq!(records.len(), 1, "three flushes, one record");
+        assert_eq!(BoardLog::open(store).unwrap().board().len(), 1);
+    }
+
+    /// The degraded path: a board that cannot write must still serve reads. The
+    /// alternative — failing the write — would take the board down with the disk.
+    #[test]
+    fn a_write_survives_a_failing_append_and_the_loss_is_visible() {
+        let store = MemStore::refusing();
+        let mut log = BoardLog::open(store.clone()).unwrap();
+        let e = log
+            .board_mut()
+            .write(BoardKind::Fail, "w", "in memory even if not on disk", None);
+        assert_eq!(e.cursor, 1, "the entry is accepted for this session");
+        assert_eq!(log.board().len(), 1, "reads keep working");
+
+        let err = log.flush().expect_err("the append really did fail");
+        assert!(err.contains("append"), "{err}");
+        assert_eq!(log.unpersisted(), 1, "the loss is counted, not hidden");
+        assert!(
+            log.persisted_through() < e.cursor,
+            "the watermark did not advance past a failed append"
+        );
+    }
+
+    /// An entry that did persist must not be re-appended when a later flush
+    /// retries after a failure partway through.
+    #[test]
+    fn a_partial_flush_does_not_re_append_what_landed() {
+        let store = Arc::new(MemStore::default());
+        let mut log = BoardLog::open(store.clone()).unwrap();
+        log.board_mut().write(BoardKind::Fact, "w", "one", None);
+        log.board_mut().write(BoardKind::Fact, "w", "two", None);
+        log.flush().unwrap();
+        assert_eq!(log.persisted_through(), 2);
+
+        log.board_mut().write(BoardKind::Fact, "w", "three", None);
+        log.flush().unwrap();
+        let records = store.replay(BOARD_STREAM).unwrap();
+        assert_eq!(records.len(), 3, "three writes, three records, no repeats");
+    }
+
+    /// A corrupt log must refuse to open rather than half-load, for the same
+    /// reason `Board::from_ndjson` refuses: a partial load hands out a cursor
+    /// that collides with history.
+    #[test]
+    fn a_corrupt_log_is_refused_rather_than_half_loaded() {
+        #[derive(Debug, Default)]
+        struct Broken;
+        impl DurableStore for Broken {
+            fn backend(&self) -> &'static str {
+                "broken"
+            }
+            fn append(&self, _s: &str, _r: &[u8]) -> Result<(), DurableError> {
+                Ok(())
+            }
+            fn flush(&self) -> Result<(), DurableError> {
+                Ok(())
+            }
+            fn replay(&self, _s: &str) -> Result<Vec<Vec<u8>>, DurableError> {
+                Ok(vec![b"not json".to_vec()])
+            }
+            fn frontier(&self) -> Result<Vec<u8>, DurableError> {
+                Ok(vec![])
+            }
+            fn fork_at(&self, _f: &[u8]) -> Result<Box<dyn DurableStore>, DurableError> {
+                Err(DurableError::Unsupported("no".into()))
+            }
+        }
+        let err = BoardLog::open(Arc::new(Broken)).expect_err("refuses a corrupt log");
+        assert!(err.contains("not JSON"), "{err}");
+    }
+
+    /// An empty store is a first run, not an error.
+    #[test]
+    fn a_first_run_opens_empty_at_cursor_one() {
+        let log = BoardLog::open(Arc::new(MemStore::default())).unwrap();
+        assert_eq!(log.board().len(), 0);
+        assert_eq!(log.board().peek_cursor(), 1);
+        assert_eq!(log.persisted_through(), 0);
+    }
+
+    /// A secret posted to the board must not reach the log either — the log is
+    /// the durable copy, so persisting unredacted would outlive the redaction.
+    #[test]
+    fn the_durable_log_never_holds_what_the_board_redacted() {
+        let store = Arc::new(MemStore::default());
+        let mut log = BoardLog::open(store.clone()).unwrap();
+        log.board_mut()
+            .write(BoardKind::Observed, "w", "api_key=sk-live-abc123", None);
+        log.flush().unwrap();
+        let records = store.replay(BOARD_STREAM).unwrap();
+        let blob = String::from_utf8(records.concat()).unwrap();
+        assert!(
+            !blob.contains("abc123"),
+            "a secret reached the durable log: {blob}"
+        );
+        assert!(
+            !BoardLog::open(store).unwrap().board().all()[0]
+                .text
+                .contains("abc123"),
+            "and it must not come back on replay either"
+        );
     }
 }
