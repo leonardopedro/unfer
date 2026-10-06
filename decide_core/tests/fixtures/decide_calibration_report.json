@@ -1,0 +1,162 @@
+{
+  "any_candidate_meets_contract": false,
+  "candidates": [
+    {
+      "accuracy": 0.8333333333333334,
+      "auc": 1.0,
+      "ece": 0.08807105966940923,
+      "fpr95": 0.0,
+      "mechanism": "temperature",
+      "mode": "anacp",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.08807105966940923,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "temperature",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    },
+    {
+      "accuracy": 0.8333333333333334,
+      "auc": 1.0,
+      "ece": 0.08408964277407618,
+      "fpr95": 0.0,
+      "mechanism": "platt",
+      "mode": "anacp",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.08408964277407618,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "platt",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    },
+    {
+      "accuracy": 0.8333333333333334,
+      "auc": 1.0,
+      "ece": 0.08807105966940923,
+      "fpr95": 0.0,
+      "mechanism": "k_plus_one",
+      "mode": "anacp",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.08807105966940923,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "k_plus_one",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    },
+    {
+      "accuracy": 0.43333333333333335,
+      "auc": 1.0,
+      "ece": 0.10795622704501207,
+      "fpr95": 0.0,
+      "mechanism": "temperature",
+      "mode": "ananc",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.10795622704501207,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "temperature",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    },
+    {
+      "accuracy": 0.43333333333333335,
+      "auc": 1.0,
+      "ece": 0.06749935554912734,
+      "fpr95": 0.0,
+      "mechanism": "platt",
+      "mode": "ananc",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.06749935554912734,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "platt",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    },
+    {
+      "accuracy": 0.43333333333333335,
+      "auc": 1.0,
+      "ece": 0.10795622704501207,
+      "fpr95": 0.0,
+      "mechanism": "k_plus_one",
+      "mode": "ananc",
+      "report": {
+        "auc": 1.0,
+        "calibrator_version": 1,
+        "ece": 0.10795622704501207,
+        "engine_version": "decide_core/0.1.0",
+        "fpr95": 0.0,
+        "max_drift_epsilon": 0.05,
+        "mechanism": "k_plus_one",
+        "n_samples": 30,
+        "observed_max_drift": 0.0674048400915312,
+        "r1_normalization": true,
+        "r2_calibration": false,
+        "r3_monotonicity": true,
+        "r4_open_world_coherence": true,
+        "r5_class_arrival_stability": false
+      }
+    }
+  ],
+  "caveats": [
+    "SYNTHETIC CORPUS. `properties::native_corpus` generates its embeddings from a seeded PRNG with class-dependent anchors. It checks that the mechanisms are wired correctly end to end; it does NOT establish accuracy or calibration on real project data.",
+    "AUC = 1.0 / FPR95 = 0.0 is a property of that synthetic separability, not a claim about open-world performance. A perfect AUC here should be read as 'the plumbing works', never as 'this detects OOD well'.",
+    "The R5 drift bound is measured on a held-out-class comparison, which is a lower bound on the drift a real class-arrival stream would cause.",
+    "`n_samples` is small (held-out is one in four of the corpus). A metric on tens of samples has wide error bars; treat ECE differences below ~0.05 as noise.",
+    "A candidate that PASSES here licenses `calibrated: true` for the pinned (engine_version, calibrator_version) pair ONLY, and only via `Calibrator::is_calibrated`, which also re-checks the measured ECE."
+  ],
+  "corpus": {
+    "dim": 24,
+    "held_out_every": 4,
+    "per_class": 24
+  },
+  "engine_version": "decide_core/0.1.0"
+}

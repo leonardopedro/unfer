@@ -1,0 +1,25 @@
+[package]
+name = "decide_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = """
+Analytic (closed-form, no-backprop) continual decision layer: frozen embeddings
+in, typed Noul/Choice/Score answers out.
+
+Every method here is reimplemented from published equations and is cited in
+`docs/DECIDE_SPEC.md`. No third-party source is vendored (see the workspace
+`ATTRIBUTION.md`). The engine is deliberately OUTSIDE every trust path this
+project certifies: it emits advice, never authority.
+"""
+
+[dependencies]
+unfer_protocol = { path = "../unfer_protocol" }
+nalgebra = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

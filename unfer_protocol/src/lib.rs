@@ -17,6 +17,7 @@ pub mod board;
 pub mod codes;
 pub mod codes_consts;
 pub mod coop;
+pub mod decide;
 pub mod durable;
 pub mod evidence;
 pub mod harness;

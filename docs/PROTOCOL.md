@@ -229,9 +229,27 @@ silence does not convey it.
 
 The ops below let several workers work the same corpus concurrently. All of them
 are **process-local to one `unfer_agent`** — this is a shared *context*, not a
-distributed service; the board lives in the agent's memory and is gone when it
-exits. That is a deliberate limit, and it is why nothing here claims to
-*prevent* anything.
+distributed service. That is a deliberate limit, and it is why nothing here
+claims to *prevent* anything.
+
+### Durability: what is and is not true
+
+The board was process-local only. As of 2026-10-05 it **can** be durable, and the
+honest split is worth stating exactly:
+
+| surface | durable? | why |
+|---|---|---|
+| `unfer_protocol::board::BoardLog` | **yes** | wraps any `DurableStore` (the H4 durable-audit substrate) and survives a restart; see `board::durable_tests::the_board_survives_a_restart` |
+| `uk_*` / kernel surface | **yes** | `unfer_ffi` owns the Loro, JSONL and SQLite backends, so a store is reachable here |
+| the `unfer_agent` NDJSON host | **no, not yet** | `kernel_client` deliberately does not depend on `unfer_ffi` (see `velysterm/AGENTS.md`: the client drives `prob_kernel::Session` directly, without the FFI), so no durable backend is in its build graph |
+
+The remaining step for the NDJSON host is therefore a dependency decision, not a
+mechanism: either expose `BoardLog` through the FFI so the agent binary talks to
+the kernel's board, or give `kernel_client` a backend it can construct. Until
+one of those lands, **the board of a running `unfer_agent` is still lost on
+exit**, and nothing in the tree may claim otherwise. The bounded-memory and
+redaction guarantees below are unaffected either way — they are properties of
+`Board` itself.
 
 ### The trust split
 
@@ -558,6 +576,159 @@ approval. A worker blocked on an approval lane cannot act on a wrap-up reminder.
 The most urgent checkpoint the worker has reached is delivered **last**, so a
 worker reading only the final line reads the one that matters most. Ordering
 follows the kind's urgency, not the order the schedule was declared in.
+
+## Analytic decision engine (D5)
+
+Four ops over `decide_core`, the analytic (closed-form, no-backprop) decision
+layer. **Every one of them is `observe`-kind**: they record, ask, report and
+re-baseline. There is no path through any of them that can approve, merge,
+gate, sign or certify — the engine is advice, and advice able to enter a trust
+path would be authority. See `unfer_protocol::decide` and
+`docs/DECIDE_SPEC.md` for the engine side; this section is the wire contract.
+
+The agent holds one in-process engine instance, `None` until the first
+`decide_update`. It is **not durable**: the state lives and dies with the
+process, exactly like the `unfer_agent` host itself.
+
+### `decide_update`
+
+Record one labelled embedding; build the engine on the first call.
+
+**Request params:**
+
+| field | type | meaning |
+|---|---|---|
+| `label` | string | class this embedding belongs to (registered on first use) |
+| `embedding` | number[] | the frozen embedding; finite numbers only, non-empty |
+| `embedding_version` | string? | which embedding model produced *this* vector; must match the engine's |
+| `config` | object? | engine shape: `{embedding_version?, embedding_dim?, projected_dim?, heads?, mode? ("anacp"\|"ananc"), lambda?, alpha?}` |
+
+On the **first** call the engine is constructed: `config` supplies the shape,
+`embedding_dim` defaults to `embedding.len()` (the only dimension this process
+has observed), and `embedding_version` defaults to `unpinned`. On **later**
+calls a supplied `config` must equal the engine in force — a differing
+`config` is refused, never silently ignored — and unknown `config` fields are
+refused (UK-1001), not defaulted past.
+
+A `fit` runs after every update. With a single class there is no solve yet, so
+the response says `"fitted": false` with `fit_error` naming why; the
+observation is still recorded, because an update that succeeded does not fail
+because the algebra was not ready.
+
+**Response result:** `{"ok": true, "label": <string>, "samples": <u64>,
+"labels": [<string>...], "fitted": <bool>, "fit_error": <string|null>,
+"engine_version": <string>, "effect_kind": "observe"}`
+
+**Error codes:** UK-1001 (missing/empty `label`; malformed `embedding` or
+`config`; embedding-dimension mismatch; `config` vs engine-in-force mismatch).
+An observation whose `embedding_version` differs from the engine's is refused
+with **"embedding model changed"**: input-space statistics accumulated under
+one model are not comparable under another, so the honest response is to
+refuse and ask for an explicit migration (D7), never to re-project silently.
+
+### `decide_answer`
+
+Ask a typed question. The `Question` arrives as serde data with `kind` =
+`noul` | `choice` | `score`, so `unfer_protocol::decide`'s enum discipline
+applies unchanged, and `Question::validate` is enforced here: a `choice` needs
+≥ 2 options, a `score` ≥ 2 levels, and the `key` must be non-empty.
+
+**Request params:**
+
+| field | type | meaning |
+|---|---|---|
+| `question` | Question | `{kind, key, text, ...}` — options/labels travel with the question |
+| `embedding` | number[] | for `noul`/`score`: the embedding to ask about |
+| `embeddings` | number[][] | for `choice`: **one embedding per option**, same order as `options` |
+
+**Response result:** `{"answer": <Answer>, "admissible_as_advice": <bool>,
+"effect_kind": "observe"}`
+
+The answer carries the question's `key` — pairing request with answer is the
+caller's contract, and the engine leaves it empty. `calibrated` is `false`
+(and `probabilities` absent, `confidence` null) until a pinned calibration
+report has been installed through `decide_recalibrate`; the numbers are then
+**scores**, which is the whole point of the calibration discipline (A6:
+sum-to-1 is normalization, not calibration). `p_ood` appears only in `ananc`
+mode — the mode with an open-world mechanism; `anacp` has none and says so by
+omission rather than by inventing one.
+
+`admissible_as_advice` is the protocol's own check
+(`Answer::is_admissible_as_advice`): a `calibrated` answer carrying no
+probabilities is inadmissible by construction, so a consumer that would render
+it as probabilities fails loudly instead of quietly.
+
+**Error codes:** UK-1001 (no engine yet — call `decide_update`; no fitted
+readout yet; malformed question/embedding(s); option/embedding count
+mismatch).
+
+### `decide_state`
+
+Report what the engine has seen and whether its calibrator is still
+trustworthy.
+
+**Request params:** `{"probs": <number[]>?}` — a fresh per-class probability
+vector. When present it is fed to the armed drift monitor **first**, so
+class-arrival drift is measured on every state read (D12) instead of whenever
+someone remembers to check.
+
+**Response result:** `{"state": <DecideState>, "fitted": <bool>,
+"drift_measured": <bool>, "effect_kind": "observe"}`
+
+`DecideState` fields: `engine_version`, `protocol_version` (`decide/1`),
+`mode`, `embedding_version`, `embedding_dim`, `projected_dim`, `heads`,
+`labels`, `samples`, `calibrated`, `calibrator_mechanism`, `fit_ece`,
+`needs_recalibration`, `observed_drift`.
+
+Honesty notes, each one a test:
+
+- `drift_measured: false` means **no monitor was armed** — never "zero drift";
+  an `observed_drift` of `0.0` under an unarmed monitor says the same thing.
+- `fit_ece` is `null` (NaN) until a calibration has been measured, and
+  `NaN ≤ bar` is false, so an unmeasured calibrator can never report
+  `calibrated: true`.
+- `needs_recalibration: true` means the R5 monitor saw drift beyond ε since
+  the last re-baseline; a consumer **must** surface it.
+
+**Error codes:** UK-1001 (no engine yet; malformed `probs`).
+
+### `decide_recalibrate`
+
+Install a pinned calibration, or re-baseline the drift monitor. Two modes:
+
+1. **Re-baseline** — `{"reference": number[], "epsilon"?: number}`. Arms (or
+   resets) the drift monitor against `reference` with bound `epsilon`
+   (default 0.05). Installs nothing: `"installed": false`, and no number an
+   answer carries changes.
+2. **Install** — `{"calibrator": <Calibrator>, "report": <CalibrationReport>,
+   "reference": number[], "epsilon"?: number}`. The report is **required** —
+   an unmeasured calibrator may not carry the word calibrated — and the
+   install is refused unless every one of these holds:
+   - `report.meets_contract()`: all of R1–R5 passed. A failing report is a
+     legitimate artifact, and it licenses nothing; the refusal names what
+     failed.
+   - `report.engine_version` equals this engine's version: calibrators do not
+     transfer across engine builds.
+   - the calibrator matches the report on `mechanism` and
+     `calibrator_version`.
+   - `calibrator.fit_ece` equals the report's measured `ece` (±1e-9).
+   - `calibrator.validate()` passes — R3: a negative Platt slope inverts the
+     ID ordering and is refused at the door.
+
+When installing, `epsilon` defaults to `report.max_drift_epsilon`, so the
+monitor arms at the bound the report was actually measured against.
+
+**Response result:** `{"ok": true, "installed": <bool>, "calibrated": <bool>,
+"needs_recalibration": <bool>, "observed_drift": <f64>, "epsilon"?: <f64>,
+"effect_kind": "observe"}`
+
+**Error codes:** UK-1001 (no engine yet; missing/empty `reference`; a
+`calibrator` without its `report`; a failing or mismatched report).
+
+**What these ops never do.** No `decide_*` op writes to the board, approves a
+patch, mints a certificate or changes a grant; adding one would be a protocol
+change, not a parameter. That is the observe-only discipline stated as a
+wire-level fact.
 
 ### `poll_events`
 

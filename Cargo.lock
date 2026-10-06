@@ -942,6 +942,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "decide_core"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "proptest",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "unfer_protocol",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1300,6 +1313,7 @@ dependencies = [
  "nalgebra",
  "nested_fock_algebra",
  "num-complex",
+ "proptest",
  "quantrs2-symengine-pure",
  "rayon",
  "rustc-hash 2.1.2",

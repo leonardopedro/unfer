@@ -80,6 +80,13 @@ pub const SESSION_OPS: &[&str] = &[
     "agent_claim",
     "agent_dm",
     "agent_handoff",
+    // D5: the analytic decision engine. `observe`-kind only — none of these ops
+    // has a `Mutate` arm, which is what keeps a statistical layer out of every
+    // trust path this project certifies. See `unfer_protocol::decide`.
+    "decide_update",
+    "decide_answer",
+    "decide_state",
+    "decide_recalibrate",
     // mathed N4: scripted segments — a granted command run under the
     // worker's exec allowlist (deny-by-default; see docs/PROTOCOL.md)
     "exec",
@@ -199,6 +206,14 @@ pub const AGENT_OPS: &[&str] = &[
     "patch_submit",
     // G9 (b): task-scoped budget nudges; see `unfer_protocol::nudge`.
     "agent_nudge",
+    // D5: the analytic decision engine. `observe`-kind only — there is no
+    // `Mutate` arm for any of these, because the engine is advice and must
+    // never be able to approve, merge, gate, sign or certify. See
+    // `unfer_protocol::decide`.
+    "decide_update",
+    "decide_answer",
+    "decide_state",
+    "decide_recalibrate",
 ];
 
 /// Session ops the consensus node applies (multi-node merge support).
