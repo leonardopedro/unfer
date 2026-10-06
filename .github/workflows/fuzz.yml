@@ -1,0 +1,123 @@
+name: fuzz
+
+# D.1(b): the nightly job that makes `unfer/fuzz` real evidence.
+#
+# ## Why this file exists
+#
+# The `ingest_message` target is excluded from the workspace, so `cargo test`
+# never builds it, and `libfuzzer-sys` is not vendored — so before this job the
+# target was *reviewed source only*. The properties it checks are asserted in
+# ordinary CI too (`ingest::property::arbitrary_json_never_panics`, 20k messages),
+# which is why nothing was actually unprotected; but "a fuzz target exists" reads
+# as a stronger claim than "a fuzz target exists and has never been executed".
+#
+# What closed that gap is not only this job: it is that the four properties are
+# now single-sourced in `unfer_protocol::ingest_props` (D.1a). The target holds
+# no assertions of its own, so the fuzzer and the CI property test cannot drift
+# into checking different things — which is exactly how the ingest cap bug
+# (`caps` enforced only in the constructor, not on parse) survived 20k messages.
+#
+# ## What a green run does and does not mean
+#
+# Green means: this seed corpus, at this iteration count, found no panic, cap
+# breach, or round-trip violation. It is **not** a proof that `IngestMessage` is
+# safe against arbitrary input, and no document may say it is. The property test
+# remains the load-bearing evidence; this job is about *reach*.
+#
+# ## Why nightly, and why bounded
+#
+# libFuzzer is slow and `cargo-fuzz` has to be fetched from the network, so a
+# per-push job would be slower than the thing it checks and would make the default
+# branch's signal depend on crates.io. The run is bounded rather than
+# unbounded so the schedule cannot silently become an outage.
+
+on:
+  schedule:
+    # 03:23 UTC daily. Off the hour on purpose: every scheduled workflow in every
+    # repo fires at :00 and the queue is worse there.
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'max seconds per run'
+        required: false
+        default: '120'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ingest:
+    name: unfer_protocol ingest_message (libFuzzer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+
+      - name: install Rust nightly
+        run: |
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rustup override set nightly
+
+      - name: cache cargo-fuzz + registry
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/bin/cargo-fuzz
+          key: fuzz-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.toml') }}
+
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Seeds that already exercise the interesting paths, so the run does not
+      # start from "{}" and spend its budget rediscovering the shape. The
+      # over-long field is what the cap properties are *about*, and it is
+      # generated rather than pasted so the file stays readable.
+      - name: seed corpus
+        run: |
+          mkdir -p fuzz/corpus/ingest_message
+          cat > fuzz/corpus/ingest_message/valid_minimal <<'EOF'
+          {"id":"1","source":"webhook","sender":"u1","text":"hello"}
+          EOF
+          cat > fuzz/corpus/ingest_message/unknown_source <<'EOF'
+          {"id":"2","source":"a-platform-we-never-heard-of","sender":"u","text":"t"}
+          EOF
+          cat > fuzz/corpus/ingest_message/secret_shaped <<'EOF'
+          {"id":"3","source":"telegram","sender":"u","text":"api_key=sk-live-abc123"}
+          EOF
+          cat > fuzz/corpus/ingest_message/over_long_text <<'EOF'
+          {"id":"4","source":"discord","sender":"u","text":"PLACEHOLDER"}
+          EOF
+          cat > fuzz/corpus/ingest_message/many_attachments <<'EOF'
+          {"id":"5","source":"webhook","sender":"u","text":"t","attachments":[{"kind":"image","reference":"r1"},{"kind":"image","reference":"r2"},{"kind":"image","reference":"r3"},{"kind":"file","reference":"r4"},{"kind":"file","reference":"r5"},{"kind":"blob","reference":"r6"},{"kind":"blob","reference":"r7"},{"kind":"image","reference":"r8"},{"kind":"image","reference":"r9"},{"kind":"image","reference":"r10"},{"kind":"image","reference":"r11"},{"kind":"image","reference":"r12"},{"kind":"image","reference":"r13"},{"kind":"image","reference":"r14"},{"kind":"image","reference":"r15"},{"kind":"image","reference":"r16"},{"kind":"image","reference":"r17"}]}
+          EOF
+          # 9k chars: past MAX_MESSAGE_TEXT (8000), so the cap actually fires.
+          node -e '
+            const long = "A".repeat(9000);
+            const m = {id:"6",source:"discord",sender:"u",text:long};
+            require("fs").writeFileSync("fuzz/corpus/ingest_message/over_long_text",
+              JSON.stringify(m));
+          '
+
+      - name: fuzz (bounded)
+        run: |
+          cargo fuzz run ingest_message \
+            --fuzz-dir fuzz \
+            -- -max_total_time=${{ github.event.inputs.seconds || 120 }} \
+                 -rss_limit_mb=2560 \
+                 -timeout=10
+
+      # A crash artifact is the entire point of the run, so it is kept even on
+      # failure. Without this the job would report "red" and then discard the
+      # input that caused it, which is a rumour rather than a finding.
+      - name: archive crash artifacts
+        if: always()
+        uses: actions/upload-artifact@50769540e7f4bd5e21e526f35d6d7dc6e7fcb58b  # actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-ingest_message
+          path: |
+            fuzz/artifacts/ingest_message/
+            fuzz/corpus/ingest_message/
+          if-no-files-found: ignore
+          retention-days: 30

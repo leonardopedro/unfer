@@ -10,12 +10,21 @@ cargo-fuzz = true
 # C4: fuzz target for the normalized ingest message.
 #
 # This crate is NOT part of the workspace and is not built by `cargo test`. It is
-# built by `cargo fuzz`, which needs nightly and libfuzzer-sys -- neither of which
-# is available in this environment. The invariant it asserts is therefore *also*
-# asserted by `ingest::property::arbitrary_json_never_panics` in
-# `unfer_protocol`, which runs in normal CI. That duplication is the point: a
-# fuzz target nobody can run is a comment, and the property is the part that
-# matters.
+# built by `cargo fuzz`, which needs nightly and libfuzzer-sys.
+#
+# **The properties are single-sourced in `unfer_protocol::ingest_props`** (D.1a).
+# This target holds no assertions of its own; it calls those same predicates.
+# That is what keeps the fuzzer and `ingest::property::arbitrary_json_never_panics`
+# from drifting into checking different things — which is how the ingest cap bug
+# below survived a 20k-message property test.
+#
+# What this target adds over that test is *reach*, not rules.
+#
+# Before 2026-10-05 this crate was unbuildable in ordinary CI (libfuzzer-sys is
+# not vendored) and no job ran it, so no document could cite fuzzing as evidence.
+# `.github/workflows/fuzz.yml` now runs it on a nightly schedule. Until that job
+# has produced at least one green run, the honest status line remains
+# "property test in CI; fuzz target unrun".
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }

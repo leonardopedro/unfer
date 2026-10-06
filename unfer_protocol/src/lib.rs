@@ -22,6 +22,7 @@ pub mod durable;
 pub mod evidence;
 pub mod harness;
 pub mod ingest;
+pub mod ingest_props;
 pub mod memory;
 pub mod model_spec;
 pub mod nudge;

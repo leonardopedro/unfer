@@ -243,7 +243,7 @@ impl AttachmentKind {
 pub struct Attachment {
     pub kind: AttachmentKind,
     /// Where the content lives — a URL, a blob digest, a content id. Opaque here.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_capped_attachment_ref")]
     pub reference: String,
     /// Size the caller claims, in bytes. A claim, not a measurement: nothing
     /// verifies it, and it is recorded so a handler can decide whether fetching
@@ -256,6 +256,7 @@ pub struct Attachment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IngestMessage {
     /// The platform's own message id. Deduplication and tracing key; required.
+    #[serde(deserialize_with = "de_capped_id")]
     pub id: String,
     pub source: IngestSource,
     /// Channel, room, or conversation. `None` for a one-to-one surface that has
@@ -267,9 +268,11 @@ pub struct IngestMessage {
     pub thread: Option<String>,
     /// Who sent it. An identifier, **not** an identity claim — the same caveat as
     /// the board's `worker` field: nothing here proves the sender is who they say.
+    #[serde(deserialize_with = "de_capped_sender")]
     pub sender: String,
+    #[serde(deserialize_with = "de_capped_text")]
     pub text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_capped_attachments")]
     pub attachments: Vec<Attachment>,
     /// Unix seconds. `None` when the platform did not supply one, and it is
     /// `Option` rather than defaulted to "now" precisely so that an absent
@@ -463,6 +466,77 @@ fn truncate(s: &str, max: usize) -> String {
     out
 }
 
+/// Deserialize a field under the same redact-then-cap rule [`IngestMessage::new`]
+/// applies, so the caps are properties of *parsing* rather than of remembering
+/// to call the constructor.
+///
+/// ## Why this exists
+///
+/// Until 2026-10-05 the caps lived only in `new()`, and `IngestMessage` derived
+/// `Deserialize` — so a POST to `/api/v1/ingest` with a 100 MB `text` allocated
+/// 100 MB before anything capped it. The module documentation had claimed all
+/// along that "the cap that stops it is a number someone has to remember to
+/// lower", which is exactly the failure this closes.
+///
+/// It also made the fuzz property *vacuous*: `ingest_props`' P2 held over the
+/// 20k-message corpus only because that corpus never generated an over-long
+/// field. See `ingest_props::tests::a_long_message_is_truncated_not_rejected`,
+/// which is the regression test for the whole class.
+///
+/// Redact-then-cap, in that order, matching `new()`: truncating first could cut
+/// a secret in half and leave a scrub-shaped prefix that no longer matches.
+fn de_capped<'de, D>(d: D, max: usize) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(truncate(&redact_secrets(&raw), max))
+}
+
+/// Cap a list, keeping only the first `max` entries.
+///
+/// Truncates rather than failing so that an over-long batch is still *a
+/// message* — the same reasoning as `IngestSource::deserialize`, where refusing
+/// would turn a misconfigured sender into a silent drop.
+fn de_capped_list<'de, D, T>(d: D, max: usize) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    let mut v = Vec::deserialize(d)?;
+    v.truncate(max);
+    Ok(v)
+}
+
+// The `deserialize_with` shims below take the cap as a fixed constant each,
+// because serde passes only the deserializer. Writing them out keeps the
+// constants visible at the field declarations above instead of hiding them in a
+// closure.
+
+fn de_capped_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    de_capped(d, MAX_SCOPE)
+}
+
+fn de_capped_sender<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    de_capped(d, MAX_SENDER)
+}
+
+fn de_capped_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    de_capped(d, MAX_MESSAGE_TEXT)
+}
+
+fn de_capped_attachments<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<Attachment>, D::Error> {
+    de_capped_list(d, MAX_ATTACHMENTS)
+}
+
+/// Same rule, one level down: an attachment locator is a string on the wire and
+/// is capped exactly like any other text field.
+fn de_capped_attachment_ref<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    de_capped(d, MAX_ATTACHMENT_REF)
+}
+
 /// Whether a redacted string still carries a scrub mark.
 ///
 /// Used by tests and by a `/version`-style diagnostic. Exposed because "did
@@ -491,7 +565,10 @@ pub fn was_redacted(s: &str) -> bool {
 /// what actually finds parser disagreements, and a fixed seed keeps a failure
 /// reproducible -- a fuzz finding you cannot re-run is a rumour.
 pub mod property {
-    use super::*;
+    // No imports at all. The corpus generator below emits raw JSON text and the
+    // properties are asserted in `crate::ingest_props`, so this module names no
+    // type and no cap constant. Importing them here would be the beginning of
+    // the second copy that module exists to prevent.
 
     /// xorshift64*. Fixed seed, no clock: reproducible and dependency-free.
     struct Rng(u64);
@@ -591,61 +668,9 @@ pub mod property {
         let mut parsed = 0usize;
         for _ in 0..20_000 {
             let raw = corpus_message(&mut rng);
-
-            // 1. Parsing arbitrary bytes must never panic, and a failure is fine.
-            let Ok(msg) = serde_json::from_str::<IngestMessage>(&raw) else {
-                continue;
-            };
-            parsed += 1;
-
-            // 2. The caps hold on anything that parsed.
-            assert!(
-                msg.text.chars().count() <= MAX_MESSAGE_TEXT,
-                "text cap broken by {raw}"
-            );
-            assert!(
-                msg.sender.chars().count() <= MAX_SENDER,
-                "sender cap broken by {raw}"
-            );
-            assert!(
-                msg.attachments.len() <= MAX_ATTACHMENTS,
-                "attachment count cap broken by {raw}"
-            );
-            for a in &msg.attachments {
-                assert!(
-                    a.reference.chars().count() <= MAX_ATTACHMENT_REF,
-                    "attachment ref cap broken by {raw}"
-                );
+            if crate::ingest_props::check_raw(&raw) {
+                parsed += 1;
             }
-
-            // 3. Parse -> serialize -> parse is a fixed point.
-            let once = serde_json::to_string(&msg).expect("re-serializes");
-            let twice: IngestMessage =
-                serde_json::from_str(&once).expect("re-parses what it serialized");
-            assert_eq!(msg, twice, "not a fixed point: {raw}");
-
-            // 4. An unregistered source survives as its own name on the wire.
-            if !msg.source.is_known() {
-                let v: serde_json::Value = serde_json::from_str(&once).unwrap();
-                assert_eq!(
-                    v.get("source").and_then(|s| s.as_str()),
-                    Some(msg.source.as_str()),
-                    "an unregistered source lost its name: {raw}"
-                );
-            }
-
-            // And the constructor path redacts regardless of what went in.
-            let built = IngestMessage::new(
-                msg.id.clone(),
-                msg.source.clone(),
-                msg.sender.clone(),
-                msg.text.clone(),
-            );
-            assert!(
-                !built.text.contains("abc123"),
-                "a secret reached the store: {}",
-                built.text
-            );
         }
         // The corpus must actually be exercising the parser, or the properties
         // above are vacuous -- a generator that always produced invalid JSON
