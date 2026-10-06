@@ -1550,35 +1550,50 @@ impl BoardLog {
         let records = store
             .replay(BOARD_STREAM)
             .map_err(|e| format!("board log: replay failed: {e}"))?;
-        // Replay is a stream of appended *entries*, not a single snapshot with a
-        // meta header, so it is stitched into a snapshot shape before parsing —
-        // that way `Board::from_ndjson`'s cursor-contiguity check applies to a
-        // restored log too, instead of being bypassed for the durable path.
-        let mut text = String::new();
+        // Replay parses the stream itself instead of routing through
+        // `Board::from_ndjson`, and the difference is deliberate.
+        //
+        // A snapshot file is written wholesale, so a hole in its cursor run can
+        // only mean a torn or partial file, and `from_ndjson` refuses it: a
+        // partial load hands out a cursor that collides with history.
+        //
+        // An **append-only stream** has a second, legitimate source of holes:
+        // `Board::reserve_cursor`, which lets the G4 gate-run registry take a
+        // cursor from the shared ordering *without* writing an entry (the G4
+        // run and the next board entry must not predict the same number).
+        // Records here land in write order, so a mid-stream hole is only ever a
+        // reservation — a crash truncates the *tail*, which is handled by
+        // deriving `next_cursor` from the highest cursor seen. Refusing holes
+        // here would make "restart the agent after recording a gate run" a
+        // corrupt-log failure.
+        //
+        // What is still refused: a rewind or a duplicate cursor, which would
+        // hand the same number to two different facts — the property
+        // `from_ndjson` protects, kept at the level where it is knowable.
+        let mut board = Board::new();
         let mut highest = 0u64;
         for (n, rec) in records.iter().enumerate() {
             let v: serde_json::Value = serde_json::from_slice(rec)
                 .map_err(|e| format!("board log: record {n} is not JSON: {e}"))?;
-            if let Some(c) = v.get("cursor").and_then(|c| c.as_u64()) {
-                highest = highest.max(c);
+            let entry: BoardEntry = serde_json::from_value(v)
+                .map_err(|e| format!("board log: record {n} is not an entry: {e}"))?;
+            if entry.cursor <= highest {
+                return Err(format!(
+                    "board log: record {n} has cursor {} after {highest}; a rewind or a \
+                     duplicate would hand the same cursor to two facts",
+                    entry.cursor
+                ));
             }
-            text.push_str(&v.to_string());
-            text.push('\n');
+            highest = entry.cursor;
+            board.entries.push_back(entry);
         }
-        let meta = serde_json::json!({
-            "record": "meta",
-            "dropped": 0,
-            // Replaying N entries means the next cursor is one past the highest
-            // one seen. This is what makes a restored board continue the same
-            // ordering rather than restarting it.
-            "next_cursor": highest + 1,
-        });
-        let mut restored = String::new();
-        restored.push_str(&meta.to_string());
-        restored.push('\n');
-        restored.push_str(&text);
-
-        let board = Board::from_ndjson(&restored)?;
+        // One past the highest persisted cursor: an empty stream is a first run
+        // at cursor 1, and a truncated tail is re-derived rather than trusted.
+        board.next_cursor = highest + 1;
+        while board.entries.len() > CAPACITY {
+            board.entries.pop_front();
+            board.dropped += 1;
+        }
         Ok(BoardLog {
             persisted: highest,
             board,
@@ -1643,6 +1658,31 @@ impl BoardLog {
             .map_err(|e| format!("board log: flush failed: {e}"))?;
         self.unpersisted = 0;
         Ok(self.persisted)
+    }
+}
+
+impl std::ops::Deref for BoardLog {
+    type Target = Board;
+
+    /// A `BoardLog` **is** a board for reading and writing.
+    ///
+    /// Every `Board` method hands through, so a host upgrading from a bare
+    /// `Board` keeps compiling without rewriting its call sites (G1's wiring
+    /// into `unfer_agent` is fifteen of them). Mutations are still caught by
+    /// the watermark in [`BoardLog::flush`] — durability is a flush-time
+    /// concern, not a per-call one, so nothing needs to intercept the write.
+    ///
+    /// What this deliberately does *not* expose: the store. `append`/`flush`
+    /// live on `BoardLog` itself, so deref can hand out board operations but
+    /// never a path around the watermark.
+    fn deref(&self) -> &Board {
+        &self.board
+    }
+}
+
+impl std::ops::DerefMut for BoardLog {
+    fn deref_mut(&mut self) -> &mut Board {
+        &mut self.board
     }
 }
 
@@ -1853,6 +1893,51 @@ mod durable_tests {
         assert_eq!(log.board().len(), 0);
         assert_eq!(log.board().peek_cursor(), 1);
         assert_eq!(log.persisted_through(), 0);
+    }
+
+    /// G4 takes cursors from the shared ordering *without* writing entries
+    /// (`Board::reserve_cursor`), so a real log has holes in its cursor run.
+    /// A snapshot must refuse a hole (it cannot tell one from a torn file);
+    /// the append-only stream must not, or "restart after recording a gate
+    /// run" would be a corrupt-log failure.
+    #[test]
+    fn a_reserved_cursor_in_the_stream_is_a_hole_not_corruption() {
+        let store = Arc::new(MemStore::default());
+        {
+            let mut log = BoardLog::open(store.clone()).unwrap();
+            log.board_mut().write(BoardKind::Fact, "w", "one", None);
+            // The G4 gate-run registry's reservation: cursor 2, no entry.
+            assert_eq!(log.board_mut().reserve_cursor(), 2);
+            let e = log.board_mut().write(BoardKind::Fact, "w", "three", None);
+            assert_eq!(e.cursor, 3, "the shared ordering does not reuse 2");
+            log.flush().unwrap();
+        }
+
+        let reopened = BoardLog::open(store).expect("a reservation must not corrupt the replay");
+        assert_eq!(reopened.board().len(), 2, "both entries came back");
+        assert_eq!(
+            reopened.board().peek_cursor(),
+            4,
+            "the cursor continues past the hole — it does not rewind into it"
+        );
+    }
+
+    /// The other half of the split rule: a rewind or a duplicate cursor is
+    /// still refused, because it would hand the same number to two facts.
+    #[test]
+    fn a_rewound_cursor_is_refused_rather_than_half_loaded() {
+        let store = Arc::new(MemStore::default());
+        {
+            let mut log = BoardLog::open(store.clone()).unwrap();
+            log.board_mut().write(BoardKind::Fact, "w", "one", None);
+            log.board_mut().write(BoardKind::Fact, "w", "two", None);
+            log.flush().unwrap();
+        }
+        // Force a duplicate into the stream behind the log's back.
+        let first = store.replay(BOARD_STREAM).unwrap();
+        store.append(BOARD_STREAM, first[0].as_slice()).unwrap();
+        let err = BoardLog::open(store).expect_err("refuses the duplicate");
+        assert!(err.contains("same cursor"), "{err}");
     }
 
     /// A secret posted to the board must not reach the log either — the log is

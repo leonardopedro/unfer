@@ -234,22 +234,41 @@ claims to *prevent* anything.
 
 ### Durability: what is and is not true
 
-The board was process-local only. As of 2026-10-05 it **can** be durable, and the
-honest split is worth stating exactly:
+The board was process-local only. As of 2026-10-05 it **can** be durable; as of
+2026-10-06 the NDJSON host itself is wired to it (the last step the review plan
+listed as "a dependency decision, not a mechanism"). The honest split:
 
 | surface | durable? | why |
 |---|---|---|
 | `unfer_protocol::board::BoardLog` | **yes** | wraps any `DurableStore` (the H4 durable-audit substrate) and survives a restart; see `board::durable_tests::the_board_survives_a_restart` |
 | `uk_*` / kernel surface | **yes** | `unfer_ffi` owns the Loro, JSONL and SQLite backends, so a store is reachable here |
-| the `unfer_agent` NDJSON host | **no, not yet** | `kernel_client` deliberately does not depend on `unfer_ffi` (see `velysterm/AGENTS.md`: the client drives `prob_kernel::Session` directly, without the FFI), so no durable backend is in its build graph |
+| the `unfer_agent` NDJSON host | **yes, when configured** | the host opens its `BoardLog` over `unfer_ffi`'s store from `UNFER_DURABLE_DIR` / `UNFER_DURABLE_BACKEND` — the same two variables the kernel reads, so one deployment config points both hosts at one store — and replays the log at startup. With no directory configured the store (and the board) is in-memory: exactly the volatile host this always was. |
 
-The remaining step for the NDJSON host is therefore a dependency decision, not a
-mechanism: either expose `BoardLog` through the FFI so the agent binary talks to
-the kernel's board, or give `kernel_client` a backend it can construct. Until
-one of those lands, **the board of a running `unfer_agent` is still lost on
-exit**, and nothing in the tree may claim otherwise. The bounded-memory and
-redaction guarantees below are unaffected either way — they are properties of
-`Board` itself.
+What "flushed before the reply" means, concretely: every board mutation is
+flushed between `dispatch` and the response being written, so "the caller saw
+`ok`" and "the log has it" coincide. A response to a board-mutating op carries
+`persisted_through: <cursor>` when a store is configured — a number the caller
+checks instead of a word it trusts — or `durable_error: "<reason>"` when the
+append was accepted but the flush failed (append is best-effort at write time
+and authoritative at flush; `BoardLog` owns that split). A response **without**
+`persisted_through` means no store is configured: the reply makes no durability
+claim, because there is none to make.
+
+Two restart facts worth stating, both tested:
+
+- A **corrupt** board log refuses to start the agent rather than half-load —
+  same reasoning as `Board::from_ndjson`: a partial replay hands out a cursor
+  that collides with history. And a recorded gate run, which takes a cursor
+  from the shared ordering without writing an entry, is a legitimate *hole* in
+  the stream, not corruption: an append-only log can distinguish that from a
+  torn snapshot file (`board::durable_tests::a_reserved_cursor_in_the_stream_is_a_hole_not_corruption`).
+- What this host still does **not** persist: the gate-run registry
+  (`gate_record`), the in-memory coop claim/dm state (their *board entries*
+  replay; the live registries do not — a restart forgets, and `patch_submit`
+  citing an id from before the restart fails closed as unknown), sessions, and
+  the decide engine. Their board entries are durable; their process state is
+  not. The bounded-memory and redaction guarantees below are properties of
+  `Board` itself and are unaffected either way.
 
 ### The trust split
 
@@ -283,7 +302,11 @@ Append one typed entry.
 | `detail` | string? | optional evidence, capped at 4096 chars |
 
 **Response result:** `{"entry": <BoardEntry>, "effect_kind": "observe"|"mutate",
-"latest_cursor", "dropped"}`
+"latest_cursor", "dropped", "persisted_through"?}` — plus `persisted_through`
+(the cursor the store is now flushed through) when a durable store is
+configured, or `durable_error"?` (the reason) when the append was accepted but
+the flush failed; see *Durability* above. Neither field appears when no store
+is configured.
 
 **Error codes:** UK-1001 (missing/empty `worker` or `text`, unknown `kind` —
 carries a `ReplaceValue` hint listing the valid kinds).
