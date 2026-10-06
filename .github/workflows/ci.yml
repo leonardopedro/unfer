@@ -228,7 +228,7 @@ jobs:
       # in this job compiled it, so a prob_kernel change that broke the JIT
       # bridge surfaced only in the six per-module e2e jobs, with no indication
       # which repo had broken which.
-      - name: australVM (JIT bridge: five unfer path deps + dynamic-arctic)
+      - name: "australVM (JIT bridge: five unfer path deps + dynamic-arctic)"
         id: australvm-rs
         run: |
           cargo test --manifest-path ../australVM/safestos/cranelift/Cargo.toml
@@ -251,7 +251,7 @@ jobs:
       # and `emthin/flake.nix`, not from a run — the machine this was authored on
       # has no pkg-config and cannot build emthin at all. Treat the first run as
       # a hypothesis about the dependency list, not as a passing gate.
-      - name: emthin (compositor: velysterm mathed_core/mathed_mini path deps)
+      - name: "emthin (compositor: velysterm mathed_core/mathed_mini path deps)"
         id: emthin
         run: |
           if [ ! -f ../emthin/Cargo.toml ]; then
@@ -338,8 +338,23 @@ jobs:
       # Heavy tests run in release mode (per policy) with the numerically
       # optimized profile (lto=thin, codegen-units=1). Debug mode is reserved
       # for the fast unit suites; the physics/SIRK suites are release-only.
-      - name: cargo test (release)
-        run: cargo test --workspace --release --verbose
+      # Split in two so the status block's count can be recounted from the run
+      # CI already performs (X2 drift half): the workspace proper is teed and
+      # handed to `check-status --recount`, and `fock_sirk` — cited separately
+      # in the README as an external physics dependency — runs as its own step.
+      # Together they cover exactly what the single `--workspace --release`
+      # step this replaced did, with no extra build and no extra suite run.
+      #
+      # `pipefail` matters: without it a failing suite would exit 0 through
+      # `tee` and the step would look green. A failed suite also stops before
+      # the recount, which is right — a broken run cannot evidence a count.
+      - name: cargo test (release, workspace excluding fock_sirk)
+        run: |
+          set -o pipefail
+          cargo test --workspace --release --exclude fock_sirk --verbose 2>&1 | tee /tmp/unfer_tests.log
+          bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
+      - name: cargo test (release, fock_sirk)
+        run: cargo test -p fock_sirk --release --verbose
       # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
       # builder) are #[ignore]d so the debug default suite stays fast; they run
       # here in release via --ignored (0.01s each) — same mode as
