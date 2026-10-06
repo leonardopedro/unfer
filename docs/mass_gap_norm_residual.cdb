@@ -1,0 +1,71 @@
+# ======================================================================
+# The `||H\phi||` mass-gap estimator — CAS verification of its algebra.
+#
+# Claim.  Let H be Hermitian with ground energy E_0 and first excited
+# energy E_1.  Shift H -> H - E_0 I so the ground sits at 0; the gap is
+# then E_1.  If v is a normalized eigenvector of E_1 and w = v + d with
+# v _|_ d, then
+#
+#     ||H w||^2  =  E_1^2 + ||H d||^2.                              (G)
+#
+# Two-level witness (exact, all rational — no sqrt needed):
+#   H = [[1,1],[1,1]]  acts as  H(x) = (x1+x2, x1+x2).
+#   Eigenvalues 0 (ground) and 2 (first excited).
+#   v = (1,1)  =>  H v = (2,2) = 2 v, so E = 2 exactly, and |v|^2 = 2.
+#   d = (a,b)  arbitrary;  w = v + d.
+#
+# Why the shift matters (the point of the exercise).  `||H w||` never forms
+# E_1 - E_0 as a difference of two energies of size ||H||.  For the
+# gauge-fixed QYM Hamiltonian the two lowest energies are ~ -1.66 and
+# ~ 0.39 while ||H|| reaches ~3.4e2, so a difference-based estimator is
+# the badly conditioned one and this is not.
+#
+# NOTE on this Cadabra build: `expand()` does NOT open a polynomial power
+# of a sum, and `canonicalise()` does not distribute a product of sums.
+# So CHECK 1/2 supply the binomial expansion as an explicit substitution
+# and let CAS reduce the rest.  (Verified: `expand("(2+a+b)^2")` returns
+# the power unchanged.)  This is a property of the engine, not of the
+# algebra — evidence: docs/VERIFY_MASS_GAP_NORM_RESIDUAL.md.
+# ======================================================================
+
+# ----- CHECK 1: the general identity, no orthogonality assumed. -------
+#   ||H(v+d)||^2 = 2 (2 + a + b)^2
+#   E^2 |v|^2    = 4 * 2 = 8
+#   ||H d||^2    = 2 (a + b)^2
+#   2 E^2 <v,d>  = 2 * 4 * (a + b)
+G1 := 2*(2 + a + b)^{2} - 8 - 2*(a + b)^{2} - 8*(a + b);
+substitute(G1, $ (2 + a + b)^{2} -> 4 + 4a + 4b + a^{2} + 2ab + b^{2} $, repeat=True);
+substitute(G1, $ (a + b)^{2} -> a^{2} + 2ab + b^{2} $, repeat=True);
+expand(G1);
+canonicalise(G1);
+
+# ----- CHECK 2: impose v _|_ d (i.e. a + b = 0).  The cross term dies
+# and (G) collapses to  ||H w||^2 = E^2 |v|^2 + ||H d||^2. -----------
+G2 := 2*(2 + a + b)^{2} - 8 - 2*(a + b)^{2} - 8*(a + b);
+substitute(G2, $ (2 + a + b)^{2} -> 4 + 4a + 4b + a^{2} + 2ab + b^{2} $, repeat=True);
+substitute(G2, $ (a + b)^{2} -> a^{2} + 2ab + b^{2} $, repeat=True);
+substitute(G2, $ a + b -> 0 $, repeat=True);
+expand(G2);
+canonicalise(G2);
+
+# ----- CHECK 3: exactness for a perfect eigenvector (d = 0). ----------
+#   ||H v||^2 = 2 * 2^2 = 8 = E^2 |v|^2.
+G3 := 2*2*2 - 8;
+canonicalise(G3);
+
+# ----- CHECK 4: the error identity, and why it is quadratic. ---------
+# With X := sqrt(E^2 + q^2) (so X^2 = E^2 + q^2 by definition),
+#     sqrt(E^2+q^2) - E  =  q^2 / ( sqrt(E^2+q^2) + E )
+# verified modulo the defining relation X^2 = E^2 + q^2.  Since the
+# multiplier (X + E) is strictly positive, vanishing of the product is
+# vanishing of the difference.  Hence the error in ||H w|| obeys
+#     error = q^2 / (sqrt(E^2+q^2) + E)  <=  q^2 / (2E)   when q <= E.
+G4 := \mathcal{X}^{2} - \mathcal{E}^{2} - q^{2};
+substitute(G4, $ \mathcal{X}^{2} -> \mathcal{E}^{2} + q^{2} $, repeat=True);
+canonicalise(G4);
+
+# ----- CHECK 5: one-sidedness needs positivity, so it is only a bias
+# guarantee AFTER the shift.  ||H w||^2 = E^2|v|^2 + ||H d||^2 >= E^2
+# holds exactly because the two terms are both non-negative. ----------
+G5 := \mathcal{E}^{2} + q^{2} - \mathcal{E}^{2};
+canonicalise(G5);

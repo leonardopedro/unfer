@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# M9 — non-claim enforcement.
+#
+# **Improves** PLAN_M's §5 discipline. The honest boundaries live in prose, which
+# means nothing checks them: a future edit can upgrade "the truncated
+# gauge-fixed gap" to "the continuum mass gap" and CI is silent.
+#
+# ## This guard was written twice, and the first attempt failed
+#
+# The first version flagged four lines in the existing corpus, and **every one of
+# them was a false positive** — prose that correctly explains the distinction:
+#
+#   · "electric term `(g²/2)Σn` gaps the one-quantum sector, while the
+#     gauge-fixed …" — the *explanation* of why the two differ;
+#   · "…a-priori continuum gap bound). Until it closes, every certified number
+#     is …" — the negation itself, split across a line wrap;
+#   · "the lattice's $g^2/2$ electric law and the …" — again, the distinction.
+#
+# That is the honest failure mode of a prose guard: a gate that cries wolf gets
+# switched off, and then it protects nothing. So this version is deliberately
+# **narrow**. It fires only on an assertion that is hard to read any other way,
+# and it treats a sentence as safe if it carries any hedge. A narrow guard that
+# catches a real overclaim is worth having; a broad one that catches correct
+# prose is not.
+#
+# ## What it cannot do
+#
+# It is line-based and cannot read meaning. It does not replace the prose
+# discipline, and §5 of PLAN_MASS_GAP.md remains the text of record. What it buys
+# is that the *coarse* overclaim — the sentence someone writes when they forget
+# the boundary — fails CI.
+#
+# Usage:  bash scripts/check-non-claims
+set -u
+
+cd "$(dirname "$0")/.." || exit 2
+
+echo "[check-non-claims] M9 — boundary sentences as machine-checked invariants"
+
+DOCS=$(find docs ../test/numerics ../test/proofs -name '*.md' 2>/dev/null \
+        | grep -vE '/target/|/_build/' || true)
+
+if [ -z "$DOCS" ]; then
+    echo "  error: no prose documents found; the guard has nothing to scan."
+    exit 1
+fi
+
+# Hedges that make a sentence safe. Deliberately generous about *hedging* and
+# deliberately narrow about *asserting* — see the header.
+HEDGE='not |no |never |until |open|unproved|unproven|legacy|historical|truncat|requires|required|would |if |depends|separate|distinct|rather than|instead of|differs?|difference|lattice.a|electric|a priori|known gap|not yet|remain'
+
+# B1: a continuum gap asserted as settled. Requires the certification verb to be
+# close to BOTH "continuum" and "gap", so a sentence that merely mentions the
+# continuum leg in passing cannot match.
+B1='continuum[^.]{0,60}(mass )?gap[^.]{0,60}(is |was |has been |been )?(proved|certified|established|closed)|((proved|certified|established|closed)[^.]{0,60}continuum[^.]{0,40}gap)'
+
+# B2: the gauge-fixed gap *equated* with the lattice-era law. Requires an equality
+# or "is" adjacent to both, so "while the gauge-fixed …" cannot match.
+B2='gauge.fixed[^.]{0,30}(gap )?(is |=|equals )[^.]{0,12}g[^ ]{0,3}/ *2'
+
+OUT=$(awk -v b1="$B1" -v b2="$B2" -v hedge="$HEDGE" '
+function lower(s) { return tolower(s) }
+{
+    line = $0
+    low = lower(line)
+    # Skip fenced code and table rules: they are structure, not prose.
+    if (low ~ /^```/ || low ~ /^\|/ || low ~ /^---/) next
+    hedged = (low ~ hedge)
+
+    if (low ~ b1) {
+        if (!hedged) printf "B1\t%s\t%d\t%s\n", FILENAME, FNR, line
+    }
+    if (low ~ b2) {
+        if (!hedged) printf "B2\t%s\t%d\t%s\n", FILENAME, FNR, line
+    }
+}' $DOCS 2>/dev/null)
+
+if [ -z "$OUT" ]; then
+    n=$(printf '%s\n' $DOCS | wc -l | tr -d ' ')
+    echo "  scanned $n documents"
+    echo "  B1 truncated-vs-continuum:  no overclaim"
+    echo "  B2 gauge-fixed-vs-lattice:  no overclaim"
+    echo "[check-non-claims] PASS"
+    echo
+    echo "  Narrow by design — this catches the coarse overclaim only. §5 of"
+    echo "  PLAN_MASS_GAP.md remains the text of record."
+    exit 0
+fi
+
+echo "  flagged lines:"
+printf '%s\n' "$OUT" | while IFS=$'\t' read -r kind file ln text; do
+    printf '  [%s] %s:%s\n' "$kind" "$file" "$ln"
+    printf '         %.120s\n' "$text"
+done
+echo
+echo "[check-non-claims] FAIL — a boundary sentence overclaims."
+echo
+echo "  §5 of PLAN_MASS_GAP.md must not be upgraded:"
+echo "    · the certified claim is about the TRUNCATED gauge-fixed object H_m;"
+echo "    · the continuum leg needs gap-preserving norm-resolvent convergence of"
+echo "      the truncation family, or an independent a-priori bound — it is open;"
+echo "    · the gauge-fixed gap is its own number (≈ 0.09 at g = 1); the"
+echo "      lattice-era g²/2 is a historical fixture and a different object."
+echo
+echo "  If a flagged line is a legitimate NEGATED or explanatory statement, the"
+echo "  hedge list in this script missed it. Add the phrasing to HEDGE WITH a"
+echo "  comment saying why it is safe — do not widen the assertion patterns."
+exit 1

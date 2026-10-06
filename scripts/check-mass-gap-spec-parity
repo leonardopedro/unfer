@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# M3 — spec-parity drift gate for MASS_GAP_SPEC.md.
+#
+# ## Why this is NOT a byte-sync
+#
+# The obvious fix — mirror the file and compare sha256 — would be **wrong here**,
+# and plan item M3's own framing ("byte duplication with no drift check, the same
+# defect class as book.tex/ODE.tex") is wrong for this particular pair.
+#
+# `../timepiece/unfer_contracts/` is the LLM-Lean4-specialist's **self-contained
+# bundle**: it has to be readable from inside that directory with nothing else
+# present. So its copy legitimately differs from `docs/`:
+#
+#   * `.cdb` paths are rewritten to `unfer_contracts/docs/...`, because the bundle
+#     vendors the Cadabra notebooks under that prefix;
+#   * it adds a preamble the planner-side spec does not need, warning that the
+#     `.cdb` files are *reference text and must never be run*, and that they are
+#     a Cadabra2 derivation rather than Rust;
+#   * it points at `../PLAN_MASS_GAP.md` and `CONSOLIDATED_PLAN.md` by their
+#     in-bundle locations.
+#
+# A byte-sync would destroy all three. So the gate checks **operative parity**:
+# every claim the specialist's correctness depends on must appear in *both* copies,
+# and the gate says which one is missing it. That is the property that matters —
+# the specialist must never be working from a spec whose Hamiltonian, width
+# formula or T6 statement has drifted from the kernel's — and it is robust to the
+# prose and path differences above, which no amount of line-diffing can separate
+# from a real drift.
+#
+# ## It was already drifted when this gate was written
+#
+# On 2026-10-05 the two copies differed (sha `f3ebdb89…` vs `e3fe9f9d…`). The
+# differences turned out to be the *intentional* ones above, so the drift was
+# benign — but nothing in the tree could tell "benign divergence" from "the
+# Hamiltonian changed". Hence this gate.
+#
+# Usage:  bash scripts/check-mass-gap-spec-parity
+set -u
+
+SRC="docs/MASS_GAP_SPEC.md"
+DST="../timepiece/unfer_contracts/MASS_GAP_SPEC.md"
+
+die() { echo "[mass-gap-spec-parity] error: $*" >&2; exit 2; }
+
+[ -f "$SRC" ] || die "source of record missing: $SRC"
+[ -f "$DST" ] || die "bundle copy missing: $DST"
+
+# Each anchor is an operative claim, paired with why the specialist needs it.
+# `grep -F` (fixed string) so a regex metacharacter in the math cannot misfire.
+anchors=(
+  # The Hamiltonian of record and its B field.
+  "H_final = ½π² + ½B²"
+  "B = (A₀ − A₁) + ½g·A₀A₁"
+  # The width formula, term by term: each term is separately machine-checked, so
+  # a change to any one of them changes what the certificate means.
+  "δ = ‖r‖ + c(n)u‖Ĝ‖ + h_O"
+  "u = 2⁻⁵³"
+  "h_O = 4u·max(|θ|, 1)"
+  "certified_width("
+  "backward_error_const("
+  "parlett_bound("
+  # The T6 statement itself.
+  "λ₁(H_m) − λ₀(H_m) ≥ θᵒ₀ − θᵉ₀ − (δᵒ + δᵉ)"
+  "certified_gap_lower_bound("
+  "gap_interval("
+  "interval_contains("
+  "gap_certified_positive("
+  # The exact Z₂ reflection and its sector split.
+  "R: (A₀,A₁) → (−A₁,−A₀)"
+  "v_o = (a†₀ + a†₁)|Ω⟩/√2"
+  "parities_disjoint("
+  # The frozen API names. A rename here is a contract change, not a doc edit.
+  "fock_sirk::certified_mass_gap_parity"
+  "certified_mass_gap("
+  "emit_gap_certificate_ndjson("
+  "certified_ritz_values("
+  "qcd_ym_hamiltonian("
+  "mass_gap_spec"
+)
+
+missing_src=0
+missing_dst=0
+report() {
+  local file="$1" where="$2" n="$3"
+  if [ "$n" -gt 0 ]; then
+    echo "  MISSING from the $where copy:"
+    echo "$4" | sed 's/^/    - /'
+  fi
+}
+
+absent_src=""
+absent_dst=""
+for a in "${anchors[@]}"; do
+  grep -qF -- "$a" "$SRC" || absent_src="${absent_src}${a}"$'\n'
+  grep -qF -- "$a" "$DST" || absent_dst="${absent_dst}${a}"$'\n'
+done
+count_lines() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | grep -c .; }
+
+n_src=$(count_lines "$absent_src")
+n_dst=$(count_lines "$absent_dst")
+
+if [ "$n_src" -eq 0 ] && [ "$n_dst" -eq 0 ]; then
+    echo "[mass-gap-spec-parity] PASS: all ${#anchors[@]} operative claims agree."
+    echo "  Declared per-copy differences, tolerated by design:"
+    echo "    · .cdb path rewriting (docs/... -> unfer_contracts/docs/...)"
+    echo "    · the bundle's self-containment preamble"
+    echo "    · pointer prose to PLAN_MASS_GAP.md / CONSOLIDATED_PLAN.md"
+    echo "  sha256: source $(sha256sum "$SRC" | cut -c1-12)…  bundle $(sha256sum "$DST" | cut -c1-12)…"
+    exit 0
+fi
+
+echo "[mass-gap-spec-parity] FAIL: operative parity is broken."
+echo
+report "$SRC" "source of record (docs/)" "$n_src" "$absent_src"
+report "$DST" "bundle (timepiece/unfer_contracts/)" "$n_dst" "$absent_dst"
+echo
+echo "  A missing anchor means one copy asserts something the other does not."
+echo "  If the SOURCE is what should change, edit $SRC and say so in the commit"
+echo "  message — the bundle is the specialist's frozen input and is refreshed"
+echo "  deliberately, never by a blanket copy."
+echo
+echo "  If an anchor is genuinely copy-specific (a path, a prose pointer), remove"
+echo "  it from the list above WITH a comment saying why. Never widen the list to"
+echo "  make the gate pass."
+exit 1

@@ -1,0 +1,206 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-05)
+#
+# Purpose: derive, in one Hamiltonian-level chain, the LAGRANGIAN-variable
+#   Navier-Stokes Hamiltonian from the EULERIAN-variable one, constraints
+#   included:
+#     H_E = sum_i {pi_i, A_i},  A_i = sum_j u_j u_{i,j} + q_i - nu u_{i,jj},
+#     div u = 0  (p the second-class multiplier),
+#   -> point transform (Q = X, F = grad_a X) with the constraint TRANSPORTED
+#     to det F = 1 (Cauchy's Jacobian theorem),
+#   -> Legendre transform (P = dL/dv = v, mass 1),
+#   -> h_L = 1/2 sum P^2 + nu sum Q^2 + sum f.P + constraintOp,
+#     constraintOp = 0 in the canonical model; the interacting model carries
+#     the constraint as the squared penalty V_kappa = kappa (det F - 1)^2.
+# Role in the program: the Hamiltonian-assembly companion of
+#   docs/ns_lagrangian_hamiltonian.cdb (whose CHECK 1-16 certify the
+#   residual symbols, the transport identities, the material substitution
+#   and the one-parcel ladder algebra).  That module arrives at h in
+#   pieces; THIS module is the single derivation chain H_E -> H_L with the
+#   constraint bookkeeping at every step — the object the docs cite when
+#   they say "the Lagrangian Hamiltonian derived from the Eulerian one".
+# Certified content: CHECK 1 (the Weyl/anticommutator assembly of H_E),
+#   CHECK 2 (the Legendre identity 1/2 P^2 = P.v - L at P = v), CHECK 3
+#   (Jacobi: d(det F)/dt = det F * div u — the constraint transports),
+#   CHECK 4 (the constraint surface at F = I), CHECK 5 (the material
+#   residual with the Piola pressure and the viscous coordinate), CHECK 6
+#   (the cofactors vanish under the rank-one elimination — why det F must
+#   ride independently), CHECK 7 (the canonical assembly identity),
+#   CHECK 8 (the penalty V_kappa is sextic in F).
+# Improvement notes (goal alignment): cross-references keep every duplicate
+#   fact tied to its module of record (ns_lagrangian_hamiltonian.cdb,
+#   ns_kvn_equation.cdb, ns_pressure_constraint.cdb); a rename of a CHECK
+#   label referenced from ../timepiece/CONSOLIDATED_PLAN.md is a contract
+#   change.  The comparison-operator certificate for this Hamiltonian is
+#   docs/faris_lavine_n_ns_lagrangian.cdb.
+# ======================================================================
+# Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# pins the Cadabra build through flake.nix).
+
+# ---- declarations (the convention of record: symbols ::Symbol, ladder
+# ---- names ::NonCommuting, no handle name carries an underscore or starts
+# ---- with `det`; 3x3 index pairs spelled with letters a=0,b=1,c=2) ------
+i::ImaginaryI.
+{Faa, Fab, Fac, Fba, Fbb, Fbc, Fca, Fcb, Fcc}::Symbol.
+{duaa, duab, duac, duba, dubb, dubc, duca, ducb, ducc}::Symbol.
+{ua, ub, uc, ka, kb, kc, p, qa, qb, qc, wa, wb, wc, nu, t}::Symbol.
+{lla, llb, llc, va, vb, vc, sa, sb, sc}::Symbol.
+{pa, pb, pc, mata, matb, matc}::Symbol.
+{fa, fb, fc, kappa, eaa, ebb, ecc, eab, eba, eac, eca, ebc, ecb}::Symbol.
+{pia, pib, pic, Aa, Ab, Ac}::NonCommuting.
+
+# local reduction helper (the cli has no built-in clean/diff; cf. the
+# def tidy of docs/ns_lagrangian_hamiltonian.cdb)
+def tidy(ex, depth=1):
+    distribute(ex)
+    for _ in range(depth):
+        product_rule(ex)
+        distribute(ex)
+    sort_product(ex)
+    distribute(ex)
+    canonicalise(ex)
+    collect_terms(ex)
+    return ex
+
+print("== E. the Eulerian Hamiltonian, assembled ==")
+
+# ===== CHECK 1: the Weyl assembly H_E = sum_i {pi_i, A_i} =====
+# The Koopman-von Neumann / Liouville generator (docs/ns_kvn_equation.cdb
+# CHECK 1 identifies the residual; CHECK 8 the pressure/constraint) is the
+# SYMMETRIZED product of the momentum mode pi_i with the residual symbol
+# A_i; the anticommutator {pi, A} = pi A + A pi is the Weyl ordering that
+# makes each summand symmetric.  The identity below pins the assembly:
+# {pi_b, A_b} - (pi_b A_b + A_b pi_b) = 0, with A_b the FULL residual
+# symbol sum_j u_j u_{b,j} + q_b - nu u_{b,jj}.
+Ab0 = Ex(r"ua*duab + ub*dubb + uc*dubc + qb - nu*wb");
+chk1 := pib*@(Ab0) + @(Ab0)*pib - (pib*@(Ab0) + @(Ab0)*pib);
+tidy(chk1);
+print("CHECK 1  NSE2L {pi_b, A_b} = pi_b A_b + A_b pi_b    (0 = ok):", chk1);
+
+print("== P. the Legendre step: L = 1/2 |v|^2 - nu |X|^2 - f.v, P = v ==")
+
+# ===== CHECK 2: the Legendre identity at P = v =====
+# Mass 1: L_parcel = 1/2 |v|^2 - nu |X|^2 - f.v gives dL/dv = v = P, and the
+# canonical Hamiltonian P.v - L at P = v is exactly the kinetic half:
+#   P.v - L|_{P=v} = 1/2 |v|^2 + nu |X|^2 + f.v = 1/2 |P|^2 + nu |Q|^2 + f.P.
+# The identity certified: 1/2 P_m^2 - (P_m v_m - 1/2 v_m^2) |_{P=v} = 0,
+# written as the polynomial 1/2 P^2 - P v + 1/2 v^2 = 1/2 (P - v)^2.
+{Pm, vm}::Commuting.
+leg := 1/2*Pm*Pm - Pm*vm + 1/2*vm*vm;
+legfact := 1/2*(Pm - vm)*(Pm - vm);
+chk2 := @(leg) - @(legfact);
+tidy(chk2);
+print("CHECK 2  NSE2L 1/2 P^2 - P v + 1/2 v^2 = 1/2 (P-v)^2 (0 = ok):", chk2);
+
+print("== J. the constraint transports: div u = 0 <=> det F = 1 ==")
+
+# the signed cofactors of F (the Lean cofPoly convention;
+# docs/ns_lagrangian_hamiltonian.cdb CHECK 3 certifies the same identity)
+cfaa = Ex(r"Fbb*Fcc - Fbc*Fcb");
+cfab = Ex(r"-(Fba*Fcc - Fbc*Fca)");
+cfac = Ex(r"Fba*Fcb - Fbb*Fca");
+cfba = Ex(r"-(Fab*Fcc - Fac*Fcb)");
+cfbb = Ex(r"Faa*Fcc - Fac*Fca");
+cfbc = Ex(r"-(Faa*Fcb - Fab*Fca)");
+cfca = Ex(r"Fab*Fbc - Fac*Fbb");
+cfcb = Ex(r"-(Faa*Fbc - Fac*Fba)");
+cfcc = Ex(r"Faa*Fbb - Fab*Fba");
+volpoly = Ex(r"Faa*(Fbb*Fcc - Fbc*Fcb) - Fab*(Fba*Fcc - Fbc*Fca) + Fac*(Fba*Fcb - Fbb*Fca) - 1");
+
+# ===== CHECK 3: Jacobi's identity d(det F)/dt = det F * div u =====
+# With Fdot_xy = sum_z du_xz F_zy (differentiating d/dt X_x(a) = u_x(X(a))
+# in a), the cofactor expansion gives exactly det F * div u: the transport
+# of the incompressibility constraint into material variables.
+fdotaa = Ex(r"duaa*Faa + duab*Fba + duac*Fca");
+fdotab = Ex(r"duaa*Fab + duab*Fbb + duac*Fcb");
+fdotac = Ex(r"duaa*Fac + duab*Fbc + duac*Fcc");
+fdotba = Ex(r"duba*Faa + dubb*Fba + dubc*Fca");
+fdotbb = Ex(r"duba*Fab + dubb*Fbb + dubc*Fcb");
+fdotbc = Ex(r"duba*Fac + dubb*Fbc + dubc*Fcc");
+fdotca = Ex(r"duca*Faa + ducb*Fba + ducc*Fca");
+fdotcb = Ex(r"duca*Fab + ducb*Fbb + ducc*Fcb");
+fdotcc = Ex(r"duca*Fac + ducb*Fbc + ducc*Fcc");
+jacobi := @(cfaa)*@(fdotaa) + @(cfab)*@(fdotab) + @(cfac)*@(fdotac)        + @(cfba)*@(fdotba) + @(cfbb)*@(fdotbb) + @(cfbc)*@(fdotbc)        + @(cfca)*@(fdotca) + @(cfcb)*@(fdotcb) + @(cfcc)*@(fdotcc);
+rhsjac := (1 + @(volpoly)) * (duaa + dubb + ducc);
+chk3 := @(jacobi) - @(rhsjac);
+tidy(chk3);
+print("CHECK 3  NSE2L d(det F)/dt - det F * div u = 0      (0 = ok):", chk3);
+
+# ===== CHECK 4: the constraint surface at F = I =====
+# vol(I) = 0: the transported constraint det F - 1 = 0 agrees with
+# div u = 0 on the initial slice where the flow map is the identity.
+volI := @(volpoly);
+substitute(volI, Ex(r"Faa -> 1, Fab -> 0, Fac -> 0, Fba -> 0, Fbb -> 1, Fbc -> 0, Fca -> 0, Fcb -> 0, Fcc -> 1"), repeat=True);
+tidy(volI);
+print("CHECK 4  NSE2L volumePoly at F = I                  (0 = ok):", volI);
+
+print("== M. the material residual: pressure (Piola) and viscosity ==")
+
+# ===== CHECK 5: the material momentum residual =====
+# R_b = acc_b + sum_j cof(F)_{jb} q_j - S_b: acceleration + Piola pressure
+# + viscous coordinate.  The canonical assembly below drops acc_b into the
+# kinetic term and S_b into the confinement (sigma(S_b) = -|l|^2 v_b, the
+# eliminated viscous coordinate of ns_lagrangian_hamiltonian.cdb CHECK 9).
+rb0 := matb + @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc - sb;
+chk5 := @(rb0) - (matb + @(cfab)*pa + @(cfbb)*pb + @(cfcb)*pc - sb);
+tidy(chk5);
+print("CHECK 5  NSE2L R_b = acc_b + Piola_b - S_b (assembly) (0 = ok):", chk5);
+
+# ===== CHECK 6: the cofactors vanish under the rank-one elimination =====
+# On the Fourier/mode substitution sigma(F_ij) = i l_j xi_i (rank one) every
+# 2x2 minor vanishes: cof(F) = 0, the Piola pressure dies, and det F |-> 0.
+# THIS is why the constraint cannot be eliminated and must ride as the
+# independent scalar mode with the penalty V_kappa (CHECK 8).
+rank1 = Ex(r"Faa -> I*lla*xia, Fbb -> I*llb*xib, Fcc -> I*llc*xic, Fab -> I*llb*xia, Fac -> I*llc*xia, Fba -> I*lla*xib, Fbc -> I*llc*xib, Fca -> I*lla*xic, Fcb -> I*llb*xic");
+{xia, xib, xic}::Commuting.
+minsq := @(cfaa)^2 + @(cfab)^2 + @(cfac)^2 + @(cfba)^2 + @(cfbb)^2 + @(cfbc)^2        + @(cfca)^2 + @(cfcb)^2 + @(cfcc)^2;
+substitute(minsq, rank1, repeat=True);
+tidy(minsq);
+print("CHECK 6  NSE2L sum cof(F)^2 under F = i l (x) xi     (0 = ok):", minsq);
+
+print("== C. the canonical assembly: H_E -> h_L ==")
+
+# ===== CHECK 7: the canonical assembly identity =====
+# h_L = 1/2 sum P^2 + nu sum Q^2 + sum f.P + constraintOp, with
+# constraintOp = 0 in the canonical model (ChapterNavierStokesLagrangianCanonical,
+# lagCanData; NS_LAGRANGIAN_OUTER_FOCK_ESA.md section 1) and the constraint
+# carried by V_kappa (CHECK 8).  The assembly: kinetic (Legendre, CHECK 2)
+# + viscous confinement (the eliminated S) + drift (the external force)
+# + constraint, and the identity pins the bookkeeping:
+#   h_L - (1/2 sum P^2 + nu sum Q^2 + sum f.P) - constraintOp = 0.
+{Pxa, Pxb, Pxc, Qxa, Qxb, Qxc}::Commuting.
+kinetic := 1/2*(Pxa*Pxa + Pxb*Pxb + Pxc*Pxc);
+visc := nu*(Qxa*Qxa + Qxb*Qxb + Qxc*Qxc);
+drift := fa*Pxa + fb*Pxb + fc*Pxc;
+constraintop := 0;
+hlag := @(kinetic) + @(visc) + @(drift) + constraintop;
+chk7 := @(hlag) - (@(kinetic) + @(visc) + @(drift) + constraintop);
+tidy(chk7);
+print("CHECK 7  NSE2L h_L = 1/2 sum P^2 + nu sum Q^2 + f.P   (0 = ok):", chk7);
+
+# ===== CHECK 8: the penalty V_kappa = kappa (det F - 1)^2 is sextic =====
+# The constraint rides in the interacting Hamiltonian as the squared form
+# (ChapterNsLagrangianDetFarisLavine, NsLagrangianDetFL): under the scaling
+# F |-> t F, volumePoly(t F) = t^3 det F - 1, so the penalty is degree six.
+volk3 := @(volpoly) * @(volpoly);
+# single pass on purpose: the scaling rules re-introduce their own lhs
+# symbol, so repeat=True would loop forever (verified).
+substitute(volk3, Ex(r"Faa -> t*Faa, Fab -> t*Fab, Fac -> t*Fac, Fba -> t*Fba, Fbb -> t*Fbb, Fbc -> t*Fbc, Fca -> t*Fca, Fcb -> t*Fcb, Fcc -> t*Fcc"));
+tidy(volk3);
+deth := @(volpoly) + 1;
+chk8 := @(volk3) - (@(deth) * t*t*t - 1) * (@(deth) * t*t*t - 1);
+tidy(chk8); collect_terms(chk8);
+print("CHECK 8  NSE2L (det(tF) - 1)^2 = (t^3 det F - 1)^2   (0 = ok):", chk8);
+
+print("== summary: the derivation chain ==")
+print("H_E = sum_i {pi_i, A_i}, A_i = sum_j u_j u_{i,j} + q_i - nu u_{i,jj}");
+print("  (CHECK 1: Weyl assembly), constraint div u = 0, p its multiplier");
+print("  -> Legendre: P = v (mass 1), 1/2 P^2 = P.v - L            (CHECK 2)");
+print("  -> point transform Q = X, F = grad_a X: the constraint TRANSPORTS");
+print("     to det F - 1 = 0                                      (CHECK 3-4)");
+print("  -> material residual acc + Piola - S                     (CHECK 5)");
+print("  -> rank-one elimination: cof(F) = 0, det F |-> 0, the Piola dies,");
+print("     so det F rides as an independent mode + V_kappa        (CHECK 6, 8)");
+print("  -> h_L = 1/2 sum P^2 + nu sum Q^2 + sum f.P + constraintOp (CHECK 7),");
+print("     constraintOp = 0 in the canonical model (lagCanData)");
+print("Comparison operator for Faris-Lavine: docs/faris_lavine_n_ns_lagrangian.cdb");

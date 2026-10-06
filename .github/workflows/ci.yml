@@ -61,6 +61,18 @@ jobs:
         run: bash scripts/check-book-sync
       - name: status blocks present and sane (X2)
         run: bash scripts/check-status
+      # M9: the truncated-vs-continuum and gauge-fixed-vs-lattice boundaries are
+      # prose, so nothing checks them by default and a future edit can upgrade a
+      # truncated claim to a continuum one silently. Narrow by design: it caught a
+      # planted overclaim and produced no false positives across the corpus.
+      - name: no boundary overclaim in status prose (M9)
+        run: bash scripts/check-non-claims
+      # M3: the two MASS_GAP_SPEC.md copies legitimately differ (the timepiece
+      # bundle is self-contained: rewritten .cdb paths plus its own preamble), so
+      # this checks operative parity rather than bytes. It was already drifted
+      # when written; the differences turned out to be the declared ones.
+      - name: MASS_GAP_SPEC.md operative parity (M3)
+        run: bash scripts/check-mass-gap-spec-parity
 
   # ---------------------------------------------------------------------------
   # X7: cross-repo integration.
@@ -87,11 +99,56 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
 
-      - name: checkout siblings at their default branch
+      # ---------------------------------------------------------------------
+      # Sibling pins (X7).
+      #
+      # Every sibling is checked out at an explicitly named ref rather than at
+      # whatever the remote's default branch happens to be. Branch names are
+      # legal values here; a 40-character commit SHA is the stronger choice and
+      # is what makes a red run reproducible months later.
+      #
+      # These are `main` because that is what has been observed to exist on the
+      # remotes. They are NOT invented SHAs: pinning to a commit that was never
+      # pushed would break every run of this job, which is a worse outcome than
+      # tracking a branch. To pin, replace the value with a real SHA from
+      # `git ls-remote <url> refs/heads/main` and commit that; the resolved SHA
+      # is echoed by the report step below either way, so a failure always names
+      # the exact commit it saw.
+      # ---------------------------------------------------------------------
+      - name: checkout siblings at pinned refs
+        env:
+          DYNAMIC_ARCTIC_REF: main
+          VELYSTERM_REF: main
+          AUSTRALVM_REF: main
+          EMTHIN_REF: main
         run: |
-          git clone --depth 1 https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
-          git clone --depth 1 https://github.com/leonardopedro/velysterm.git ../velysterm
-          git clone --depth 1 https://github.com/leonardopedro/australVM.git ../australVM
+          set -euo pipefail
+          clone() {
+            local url="$1" ref="$2" dest="$3"
+            git clone --depth 1 --branch "$ref" "$url" "$dest"
+            echo "  $dest @ $(git -C "$dest" rev-parse HEAD)"
+          }
+          clone https://github.com/leonardopedro/dynamic-arctic.git "$DYNAMIC_ARCTIC_REF" ../dynamic-arctic
+          clone https://github.com/leonardopedro/velysterm.git       "$VELYSTERM_REF"       ../velysterm
+          clone https://github.com/leonardopedro/australVM.git        "$AUSTRALVM_REF"       ../australVM
+
+      # emthin is cloned separately and best-effort. Two reasons, both honest:
+      #   * its remote URL was inferred from the sibling naming convention and
+      #     has never been confirmed by a successful run, and
+      #   * its build needs a system dependency set that has never been
+      #     exercised on a runner.
+      # So a failure here must not take down the four steps that are known
+      # good. It is reported as its own verdict — SKIP, meaning "not covered",
+      # never PASS — because a gate that silently stops covering something is
+      # how a gap becomes invisible.
+      - name: checkout emthin at pinned ref (best effort)
+        env:
+          EMTHIN_REF: main
+        run: |
+          git clone --depth 1 --branch "$EMTHIN_REF" \
+            https://github.com/leonardopedro/emthin.git ../emthin \
+            && echo "  ../emthin @ $(git -C ../emthin rev-parse HEAD)" \
+            || echo "  NOTE: emthin checkout failed; the emthin step will report SKIP"
 
       # velysterm's document crates are Bevy-free but not dependency-free:
       # winit/xkbcommon and the X/wayland client libs are found through
@@ -103,6 +160,20 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev \
             libxcb1-dev libxcb-shm0-dev libxcb-render0-dev
+
+      # emthin's own build needs more than the document crates do:
+      # `emthin-dbus` -> gio -> glib-sys locates glib with pkg-config at
+      # build-script time, calloop's libudev-sys needs udev's `.pc` (which comes
+      # from systemd, not from a `libudev` package), smithay's wayland frontend
+      # links libxkbcommon and libinput directly, and the gbm renderer needs mesa.
+      # See `emthin/docs/build-notes.md`, which documents this set.
+      - name: system deps for emthin
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pkg-config libglib2.0-dev libudev-dev libinput-dev libseat-dev \
+            libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev \
+            wayland-protocols libexpat1-dev
 
       # australVM's OCaml half needs a compiler before `make test` can run. The
       # dependency install is `|| true` for the same reason the module e2e jobs
@@ -168,20 +239,58 @@ jobs:
         id: australvm-ocaml
         run: make -C ../australVM test
 
+      # emthin was, until 2026-10-05, built by nothing — it has no CI of its own
+      # (no `.github/`), and it path-deps velysterm's mathed_core and
+      # mathed_mini, so a velysterm change could break it invisibly. `cargo check`
+      # rather than `cargo build`: the point is that the crate graph still
+      # resolves against its siblings, which is the coupling X7 exists to catch,
+      # and linking smithay would buy nothing for that.
+      #
+      # HONESTY BOUNDARY: this step has never been observed green. The system
+      # dependency list above is transcribed from `emthin/docs/build-notes.md`
+      # and `emthin/flake.nix`, not from a run — the machine this was authored on
+      # has no pkg-config and cannot build emthin at all. Treat the first run as
+      # a hypothesis about the dependency list, not as a passing gate.
+      - name: emthin (compositor: velysterm mathed_core/mathed_mini path deps)
+        id: emthin
+        run: |
+          if [ ! -f ../emthin/Cargo.toml ]; then
+            echo "::warning::emthin was not checked out; this job says nothing about whether it still builds against velysterm"
+            exit 0
+          fi
+          cargo check --manifest-path ../emthin/Cargo.toml -p emthin
+
       # `if: always()`: one broken repo must not hide the state of the others.
       - name: report which repo broke which
         if: always()
         run: |
+          # The resolved commit of every sibling, so a failure is attributable to
+          # an exact tree rather than to "velysterm, sometime".
+          echo "sibling commits:"
+          for d in ../dynamic-arctic ../velysterm ../australVM ../emthin; do
+            [ -d "$d/.git" ] && echo "  $(basename "$d") $(git -C "$d" rev-parse HEAD)"
+          done
+          echo
           # Each step records a conclusion either way, so this step runs even when
           # the steps above were skipped by an earlier failure.
+          #
+          # `not covered` is derived from whether the repo is actually present,
+          # not from the step's exit code: the emthin step deliberately exits 0
+          # when it could not check the repo out, so trusting the outcome alone
+          # would print PASS for a repo nothing was checked against.
           failed=""
-          for step in unfer arctic velysterm australvm-rs australvm-ocaml; do
-            if [ "${{ steps.$step.outcome }}" = "success" ]; then
-              echo "  PASS  $step"
-            else
-              echo "  FAIL  $step (${{ steps.$step.outcome }})"
-              failed="$failed $step"
+          skipped=""
+          for step in unfer arctic velysterm australvm-rs australvm-ocaml emthin; do
+            if [ "$step" = "emthin" ] && [ ! -f ../emthin/Cargo.toml ]; then
+              echo "  SKIP  $step (not covered: repo not checked out)"
+              skipped="$skipped $step"
+              continue
             fi
+            case "${{ steps.$step.outcome }}" in
+              success) echo "  PASS  $step" ;;
+              skipped) echo "  SKIP  $step (step did not run)" ; skipped="$skipped $step" ;;
+              *)       echo "  FAIL  $step (${{ steps.$step.outcome }})" ; failed="$failed $step" ;;
+            esac
           done
           if [ -n "$failed" ]; then
             echo
@@ -190,6 +299,9 @@ jobs:
             echo "  threshold signatures that unfer_consensus depends on."
             echo "  A velysterm failure here is usually a document-model change"
             echo "  that emthin and unfer both consume."
+            echo "  An emthin failure is usually a velysterm document-model change"
+            echo "  (it path-deps mathed_core and mathed_mini), or a missing system"
+            echo "  library -- see emthin/docs/build-notes.md."
             echo "  An australvm-rs failure here is usually a uk_* symbol or C"
             echo "  ABI change: the bridge registers against unfer_protocol's"
             echo "  SYMBOL_REGISTRY and path-deps five unfer crates."
@@ -198,6 +310,13 @@ jobs:
             exit 1
           fi
           echo "cross-repo: all sibling repos verified"
+          if [ -n "$skipped" ]; then
+            echo
+            echo "cross-repo: NOT COVERED:$skipped"
+            echo "  A SKIP is not a PASS. These repos are outside this job's"
+            echo "  reach right now, and nothing here should be read as evidence"
+            echo "  that they still build."
+          fi
 
   # ---------------------------------------------------------------------------
   # Core: the unfer kernel workspace must build, lint and test on CPU.
@@ -232,6 +351,26 @@ jobs:
       # deliberately-changed manifest only with UPDATE_GOLDEN=1 (never in CI).
       - name: release manifest golden gate (F23)
         run: cargo test -p unfer_data --test release_manifest_golden
+
+      # D6 / D-C6: the pinned calibration report must match a fresh run.
+      #
+      # This is a golden gate in the same sense as the manifest above, and for
+      # the same reason: the report is the *only* thing that can move the engine
+      # from emitting scores to emitting probabilities, so it must not be
+      # editable by hand. `decide_report` exits 0 whether the contract passes or
+      # fails — a failing measurement is a result, not a crash — so the gate is
+      # the byte comparison, not the exit code.
+      - name: decide calibration report is fresh
+        run: |
+          cp decide_core/tests/fixtures/decide_calibration_report.json /tmp/committed.json
+          cargo run -p decide_core --bin decide_report -- --write
+          if ! diff -u /tmp/committed.json decide_core/tests/fixtures/decide_calibration_report.json; then
+            echo "::error::decide_core calibration report drifted from a fresh run."
+            echo "If the change is intended, commit the regenerated fixture with"
+            echo "  cargo run -p decide_core --bin decide_report -- --write"
+            echo "and state in the commit message which R-requirement verdict changed."
+            exit 1
+          fi
 
   lint:
     name: fmt + clippy

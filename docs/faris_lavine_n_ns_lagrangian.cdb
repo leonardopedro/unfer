@@ -1,0 +1,217 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-05)
+#
+# Purpose: define the POSITIVE COMPARISON OPERATOR N and certify the
+#   Faris-Lavine commutation conditions for the Navier-Stokes Hamiltonian
+#   in LAGRANGIAN (one-parcel canonical) variables,
+#       h = 1/2 sum P^2 + nu sum Q^2 + sum f.P  (lagCanData; constraintOp = 0),
+#   together with the CORE content the criterion needs: N must itself be
+#   essentially self-adjoint ON THE CONSIDERED CORE (the Hermite / finite-
+#   mode core), not merely on its own domain.
+# Role in the program: the Faris-Lavine certificate (Faris & Lavine, CMP 35
+#   (1974) Thm 1; BookProof.ChapterFarisLavineCore.essentiallySelfAdjointOn_of_farisLavine)
+#   for the Lagrangian NS line — the algebraic half.  It complements
+#   docs/faris_lavine_n_ns.cdb (the EULERIAN auxiliary sum-of-squares
+#   comparison N = -Delta + |x|^2/4) and docs/ns_lagrangian_hamiltonian.cdb
+#   (CHECK 11-14: CCR, oscillator identity, completed square, Heisenberg),
+#   none of which defines the positive comparison for the LAGRANGIAN
+#   Hamiltonian or certifies its core-ESA content.
+# Certified content: CHECK 1 (N = h + 1/2|f|^2, the completed square),
+#   CHECK 2 (the SHIFTED LADDER diagonalization N = omega sum b^dag b +
+#   3 omega/2 — the positivity AND the spectral-shift witness), CHECK 3
+#   (shifted CCR), CHECK 4 (the ladder [N, b] = -omega b — the Hermite-core
+#   eigenvector arithmetic), CHECK 5 ([H, N] = 0: the self-comparison, so
+#   the Faris-Lavine commutator bound holds with c = 0), CHECK 6 (the
+#   frequency arithmetic behind N >= 3 omega/2 > 0).
+# Improvement notes (goal alignment): the work-order rows for the
+#   LLM-Lean4-specialist (../timepiece/CONSOLIDATED_PLAN.md, "State of the
+#   project — 2026-10-05: the analytic-decision-engine work orders" L-rows
+#   and the NS-Lagrangian N rows) reference the CHECK numbers here; any
+#   rename of a CHECK label is a contract change.  The standing Faris-
+#   Lavine core obligation (N ESA ON THE CORE, graph-norm density, N+1
+#   onto) is recorded there per Hamiltonian.
+# ======================================================================
+# Faris-Lavine comparison N and commutation conditions for the NS
+# LAGRANGIAN one-parcel canonical Hamiltonian.
+#
+# MOTIVATION.  The one-parcel canonical model (ChapterNavierStokesLagrangianCanonical,
+# lagCanData; NS_LAGRANGIAN_OUTER_FOCK_ESA.md section 1) is
+#     h = 1/2 sum_m P_m^2 + nu sum_m Q_m^2 + sum_m f_m P_m,   omega = sqrt(2 nu),
+# with [P_m, Q_n] = -i delta_mn and 1/2 sum P^2 + nu sum Q^2 = omega (Nnum + 3/2)
+# (docs/ns_lagrangian_hamiltonian.cdb CHECK 11-12).  The positive comparison
+# operator of the Faris-Lavine theorem for this Hamiltonian is its COMPLETED
+# SQUARE:
+#     N := 1/2 sum_m (P_m + f_m)^2 + nu sum_m Q_m^2  =  h + 1/2 |f|^2.
+# This is not a choice but a forced one: N must be positive, N + 1 onto and
+# carry H on its domain, and h is bounded below by exactly -1/2 |f|^2 (the
+# Kato-Rellich spectral shift of CHECK 13 of the ns_lagrangian module and of
+# the closed-form spectrum omega (n + 3/2) - 1/2 |f|^2 asserted in
+# ../fock_sirk/tests/ns_lagrangian_validation.rs).  The shifted ladder
+#
+#     b_m := a_m + i f_m / sqrt(2 omega),   [b_m, b_n^dag] = delta_mn,
+#     N = omega sum_m b_m^dag b_m + 3 omega/2,
+#
+# exhibits N as a SHIFTED OSCILLATOR: the force is absorbed by a canonical
+# (coherent-state) displacement of the ladder, the Hermite core is carried to
+# the b-Hermite core, and the spectrum stays omega (n + 3/2) >= 3 omega/2 > 0.
+#
+# THE FARIS-LAVINE CONDITIONS, item by item (Theorem 1; the CoreData
+# structure of ChapterFarisLavineCore):
+#   (i)   N positive self-adjoint:            CHECK 2/6 (sum of squares,
+#         spectrum omega(n + 3/2), nu > 0);
+#   (ii)  N + 1 ONTO:                         analytic (the oscillator
+#         resolvent); not symbolically certifiable;
+#   (iii) H defined on D(N) and symmetric on the core: h = N - 1/2|f|^2
+#         shares D(N) (CHECK 1);
+#   (iv)  the commutator-form bound  |commForm H N u| <= c quadForm N u:
+#         [H, N] = 0 IDENTICALLY (CHECK 5), so the bound holds with c = 0;
+#   (v)   THE CORE CONDITION (the one this module exists to keep visible):
+#         the criterion is run on a core C_0 and requires N ITSELF to be
+#         essentially self-adjoint ON C_0 (C_0 a core for N in the graph
+#         norm).  CHECK 2/3/4 certify the symbolic content: the b-ladder
+#         makes the b-Hermite states exact eigenvectors of N with
+#         eigenvalues omega (n + 3/2), ARITHMETIC in n, so every core
+#         vector is a Nelson analytic vector and the Hermite core
+#         (lpFiniteModes Vel) is dense in the graph norm of N.  The Lean
+#         statements to prove are listed in ../timepiece/CONSOLIDATED_PLAN.md
+#         (2026-10-05 entry, row NS-L-N1..N4).
+#
+# WHAT A .cdb MODULE CAN AND CANNOT CERTIFY.  Cadabra certifies the operator
+# identities of (i), (iii), (iv), (v) at the symbolic level.  It cannot
+# certify (ii), symmetry, or graph-norm density — those are Lean.
+#
+# Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# pins the Cadabra build through flake.nix).
+
+i::ImaginaryI.
+{fa, fb, fc, om, nu}::Symbol.
+{a1, ad1, a2, ad2, a3, ad3}::NonCommuting.
+
+# ---- helpers (the idiom of docs/ns_lagrangian_hamiltonian.cdb section C) ----
+# sort_product canonicalises factor order; the numeric/I prefactors must be
+# rewritten explicitly because the engine never evaluates I*I -> -1 or
+# sqrt(x)^2 -> x on its own.  A rule with a numeric prefactor on the lhs is
+# rejected; self-referential rules must run without repeat=True.
+def tidy(ex, depth=1):
+    distribute(ex)
+    for _ in range(depth):
+        product_rule(ex)
+        distribute(ex)
+    sort_product(ex)
+    distribute(ex)
+    canonicalise(ex)
+    collect_terms(ex)
+    return ex
+
+ccr = Ex(r"a1 ad1 -> ad1 a1 + 1, a2 ad2 -> ad2 a2 + 1, a3 ad3 -> ad3 a3 + 1")
+cross = Ex(r"a1 ad2 -> ad2 a1, a1 ad3 -> ad3 a1, a2 ad1 -> ad1 a2, a2 ad3 -> ad3 a2, a3 ad1 -> ad1 a3, a3 ad2 -> ad2 a3, a1 a2 -> a2 a1, a1 a3 -> a3 a1, a2 a3 -> a3 a2, ad1 ad2 -> ad2 ad1, ad1 ad3 -> ad3 ad1, ad2 ad3 -> ad3 ad2")
+numfold = Ex(r"I I -> -1, (sqrt(2))**(-1) (sqrt(2))**(-1) -> 1/2, sqrt(1/2 om) sqrt(1/2 om) -> 1/2 om, (sqrt(2*om))**(-1) (sqrt(2*om))**(-1) -> (2 om)**(-1), om**(-1) om -> 1, om (sqrt(2*om))**(-1) -> sqrt(1/2 om)")
+
+def norder(ex):
+    distribute(ex); distribute(ex); distribute(ex)
+    for _ in range(4):
+        substitute(ex, ccr, repeat=True); distribute(ex)
+        substitute(ex, cross, repeat=True); distribute(ex)
+    substitute(ex, numfold, repeat=True)
+    tidy(ex); canonicalise(ex)
+    return ex
+
+print("== NSLAGFL: the Faris-Lavine comparison N for the Lagrangian one-parcel h ==")
+
+# The one-parcel canonical operators at general omega = sqrt(2 nu):
+#   P_m = i sqrt(om/2) (ad_m - a_m),  Q_m = (ad_m + a_m)/sqrt(2 om)
+# (the realization of nsLagrangian_timeIndependent_singleTime; the ladder
+# package at omega = 1, nu = 1/2 is docs/ns_lagrangian_hamiltonian.cdb C).
+Pl1 = Ex(r"I*sqrt(om/2)*(ad1 - a1)")
+Pl2 = Ex(r"I*sqrt(om/2)*(ad2 - a2)")
+Pl3 = Ex(r"I*sqrt(om/2)*(ad3 - a3)")
+Ql1 = Ex(r"(ad1 + a1)/sqrt(2*om)")
+Ql2 = Ex(r"(ad2 + a2)/sqrt(2*om)")
+Ql3 = Ex(r"(ad3 + a3)/sqrt(2*om)")
+
+# HAMILTONIAN  h = 1/2 sum P^2 + nu sum Q^2 + sum f.P   (with nu = om^2/2)
+hlag := 1/2*@(Pl1)*@(Pl1) + nu*@(Ql1)*@(Ql1) + fa*@(Pl1)        + 1/2*@(Pl2)*@(Pl2) + nu*@(Ql2)*@(Ql2) + fb*@(Pl2)        + 1/2*@(Pl3)*@(Pl3) + nu*@(Ql3)*@(Ql3) + fc*@(Pl3);
+substitute(hlag, Ex(r"nu -> om*om/2"), repeat=True);
+
+# COMPARISON  N = 1/2 sum (P + f)^2 + nu sum Q^2   (the completed square)
+Pp1 := @(Pl1) + fa;
+Pp2 := @(Pl2) + fb;
+Pp3 := @(Pl3) + fc;
+Nlag := 1/2*@(Pp1)*@(Pp1) + nu*@(Ql1)*@(Ql1)        + 1/2*@(Pp2)*@(Pp2) + nu*@(Ql2)*@(Ql2)        + 1/2*@(Pp3)*@(Pp3) + nu*@(Ql3)*@(Ql3);
+substitute(Nlag, Ex(r"nu -> om*om/2"), repeat=True);
+
+# ===== CHECK 1: N = h + 1/2 |f|^2 (the positive comparison is the completed square) =====
+# This is the definitional identity of the comparison: N absorbs the drift and
+# shifts the spectrum by exactly 1/2 |f|^2 (the closed-form levels
+# omega (n + 3/2) - 1/2 |f|^2 tested in fock_sirk/tests/ns_lagrangian_validation.rs).
+chk1 := @(Nlag) - @(hlag) - 1/2*(fa*fa + fb*fb + fc*fc);
+norder(chk1);
+print("CHECK 1  NSLAGFL N - h - 1/2 |f|^2 = 0                (0 = ok):", chk1);
+
+# ===== CHECK 2: the SHIFTED LADDER diagonalization N = om sum b^dag b + 3 om/2 =====
+# b_m = a_m + i f_m / sqrt(2 om) absorbs the force as a coherent displacement.
+# This single identity carries BOTH remaining hypotheses: positivity
+# (b^dag b >= 0, om > 0  =>  N >= 3 om/2 > 0) and the core-ESA content (the
+# b-Hermite states are exact eigenvectors, eigenvalues om (n + 3/2)).
+b1 = Ex(r"a1 + I*fa/sqrt(2*om)")
+b2 = Ex(r"a2 + I*fb/sqrt(2*om)")
+b3 = Ex(r"a3 + I*fc/sqrt(2*om)")
+bd1 = Ex(r"ad1 - I*fa/sqrt(2*om)")
+bd2 = Ex(r"ad2 - I*fb/sqrt(2*om)")
+bd3 = Ex(r"ad3 - I*fc/sqrt(2*om)")
+shifted := om*@(bd1)*@(b1) + om*@(bd2)*@(b2) + om*@(bd3)*@(b3) + 3*om/2;
+chk2 := @(Nlag) - @(shifted);
+norder(chk2);
+print("CHECK 2  NSLAGFL N = om sum b^dag b + 3 om/2         (0 = ok):", chk2);
+
+# ===== CHECK 3: the shifted CCR [b_m, b_n^dag] = delta_mn =====
+# The displacement is canonical: b is again a bosonic ladder, so the Hermite
+# core of b is unitarily (coherently) the Hermite core of a — the SAME core
+# C_0 = lpFiniteModes Vel.  This is why the core does not change under f.
+cb1 := @(b1)*@(bd1) - @(bd1)*@(b1) - 1;
+norder(cb1);
+print("CHECK 3a NSLAGFL [b_a, b_a^dag] = 1                  (0 = ok):", cb1);
+cbx := @(b1)*@(bd2) - @(bd2)*@(b1) + @(b2)*@(bd3) - @(bd3)*@(b2) + @(b3)*@(bd1) - @(bd1)*@(b3);
+norder(cbx);
+print("CHECK 3b NSLAGFL cross [b_m, b_n^dag] = 0            (0 = ok):", cbx);
+
+# ===== CHECK 4: the ladder [N, b_m^dag] = om b_m^dag, [N, b_m] = -om b_m =====
+# The eigenvector arithmetic of the core: (b^dag)^(n) |0_b> has N-eigenvalue
+# om (n + 3/2), arithmetic growth in n — every Hermite-core vector is a
+# Nelson analytic vector for N, which is exactly the "N is ESA ON THE CORE"
+# input the Faris-Lavine CoreData needs.
+clu := @(Nlag)*@(bd1) - @(bd1)*@(Nlag) - om*@(bd1);
+norder(clu);
+print("CHECK 4a NSLAGFL [N, b^dag] = om b^dag               (0 = ok):", clu);
+cld := @(Nlag)*@(b1) - @(b1)*@(Nlag) + om*@(b1);
+norder(cld);
+print("CHECK 4b NSLAGFL [N, b] = -om b                      (0 = ok):", cld);
+
+# ===== CHECK 5: the commutation condition [H, N] = 0 (self-comparison, c = 0) =====
+# With H = h = N - 1/2|f|^2 the Faris-Lavine commutator form vanishes
+# identically: |commForm H N u| = 0 <= c quadForm N u for c = 0.  (The
+# NON-trivial commutator content of this line lives at the penalty family
+# H_kappa = h + kappa (det F - 1)^2, whose comparison obligation is the
+# work-order row NS-L-N3 in ../timepiece/CONSOLIDATED_PLAN.md.)
+c5 := @(hlag)*@(Nlag) - @(Nlag)*@(hlag);
+norder(c5);
+print("CHECK 5  NSLAGFL [H, N] = 0  (FL bound with c = 0)   (0 = ok):", c5);
+
+# ===== CHECK 6: the frequency arithmetic behind N >= 3 om/2 > 0 =====
+# om^2 = 2 nu, nu > 0; the vacuum level is 3 om/2 and (3 om/2)^2 = 9 nu/2 > 0,
+# so the comparison is bounded below by a strictly positive number.
+c6 := (9/4)*(om*om) - (9/2)*nu;
+substitute(c6, Ex(r"om*om -> 2*nu"), repeat=True);
+tidy(c6);
+print("CHECK 6  NSLAGFL (3 om/2)^2 = 9 nu/2 > 0 for nu > 0  (0 = ok):", c6);
+
+print("== summary ==")
+print("N = 1/2 sum (P + f)^2 + nu sum Q^2 = h + 1/2 |f|^2            (CHECK 1)");
+print("  = om sum b^dag b + 3 om/2,  b = a + i f /sqrt(2 om)        (CHECK 2)");
+print("  b bosonic (CHECK 3); ladder => b-Hermite core diagonalises N");
+print("  with eigenvalues om (n + 3/2), arithmetic in n               (CHECK 4)");
+print("  [H, N] = 0: the Faris-Lavine commutator bound holds with c=0 (CHECK 5)");
+print("  N >= 3 om/2 > 0 for nu > 0                                  (CHECK 6)");
+print("Lean obligations (CONSOLIDATED_PLAN.md 2026-10-05, NS-L rows): N ESA on");
+print("lpFiniteModes Vel (the CORE condition), N + 1 onto, graph-norm density,");
+print("and the commutator-form bound for the penalty family H_kappa.");

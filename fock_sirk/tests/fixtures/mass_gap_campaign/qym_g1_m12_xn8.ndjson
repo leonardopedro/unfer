@@ -1,0 +1,4 @@
+{"kind":"campaign_metadata","coupling":1.00000000000000000e0,"krylov_order":12,"crosscheck_truncation":8,"exact_gap_at_crosscheck":9.11612240660333306e-2,"hamiltonian":"qcd_ym_hamiltonian(g)","solve_source":"fock_sirk::certificate"}
+{"kind":"ritz_certificate","parity":"even","theta":-1.53148569854909788e0,"delta":3.35020865794149181e0,"lo":-4.88169435649058947e0,"hi":1.81872295939239392e0,"residual":3.35020865779109611e0,"roundoff":1.50394931066648210e-10,"enclosure":6.80116273765340067e-16}
+{"kind":"ritz_certificate","parity":"odd","theta":-2.10294533461603539e0,"delta":4.08764398164254317e0,"lo":-6.19058931625857856e0,"hi":1.98469864702650778e0,"residual":4.08764398149314090e0,"roundoff":1.49400940511686736e-10,"enclosure":9.33895332007510687e-16}
+{"kind":"certified_mass_gap","gap":-5.71459636066937504e-1,"lo":-8.00931227565097181e0,"hi":6.86639300351709725e0,"delta":7.43785263958403497e0,"certified_positive":false}

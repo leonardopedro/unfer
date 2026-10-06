@@ -1,0 +1,205 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-05)
+#
+# Purpose: define the POSITIVE COMPARISON OPERATOR N and certify the
+#   Faris-Lavine commutation conditions for the quantum-gravity Hamiltonian
+#   in LAGRANGIAN (vielbein) variables — the general-frame record
+#   H_final_st of docs/qg_starobinsky_vielbein_hamiltonian.cdb: the vielbein
+#   e is the fundamental field, the scalaron psi carries the R + alpha R^2
+#   wall U(psi), and the vielbein energy sigma >= 1 labels the modes.  The
+#   comparison is the SCALARON FIBRE OSCILLATOR WITH THE FULL WALL INSIDE N,
+#     N_a = -d^2/dphi^2 + phi^2/4 + U(phi) + sigma_a,
+# together with the CORE content the criterion needs: N must itself be
+# essentially self-adjoint ON THE CONSIDERED CORE (the Hermite /
+# Gauss-polynomial core), not merely on its own domain.
+# Role in the program: the Faris-Lavine certificate (Faris & Lavine, CMP 35
+#   (1974) Thm 1) for the vielbein-Lagrangian QG line; the algebraic twin of
+#   the Lean route oscillatorPlus_esa / starobinskyWall_esa /
+#   BookProof.ScalaronOuterFockFL.secN.  Complements
+#   docs/faris_lavine_n_qg.cdb (the outer-Fock lifting and the wall-inside-N
+#   fibre estimates) by pinning the N OF THE LAGRANGIAN (vielbein) RECORD
+#   and its core-ESA structure in one place.
+# Certified content: CHECK 1 (N = oscillator PLUS non-negative
+#   multiplication — the positivity split), CHECK 2 (factorization
+#   adag a = -d^2 + phi^2/4 - 1/2), CHECK 3 (CCR), CHECK 4 (the wall
+#   non-negativity witness U + sigma >= 1), CHECK 5 (the coupling identity
+#   [phi, H_fib] = 2 d/dphi — the wall cannot remove it), CHECK 6
+#   (vielbein self-interaction commutes), CHECK 7 (self-comparison
+#   [H_fib, N] = 0), CHECK 8 (the commutator-form constant arithmetic
+#   2((1/2)K + (9/4)K) = 11/2 K <= 6K).
+# Improvement notes (goal alignment): the work-order rows for the
+#   LLM-Lean4-specialist (../timepiece/CONSOLIDATED_PLAN.md, 2026-10-05
+#   entry, QG-L rows) reference the CHECK labels here; renames are a
+#   contract change.  The standing Faris-Lavine core obligation (N ESA ON
+#   THE CORE) is recorded there per Hamiltonian.
+# ======================================================================
+# Faris-Lavine comparison N and commutation conditions for the QG
+# LAGRANGIAN (vielbein) Hamiltonian.
+#
+# MOTIVATION.  The vielbein-Lagrangian record (docs/qg_starobinsky_vielbein_
+# hamiltonian.cdb) is H_final_st = (M^2/2) psi * (TEGR Hamiltonian) + U(psi) e,
+# whose scalaron fibre on the vielbein modes is
+#     H_fib = N = -d^2/dphi^2 + phi^2/4 + U(phi) + sigma,
+# with U the FULL exponential Starobinsky wall (no Taylor truncation) and
+# sigma = sigma_a >= 1 the vielbein energy of the mode (QgModeData.one_le_sig;
+# U >= 0 by starobinskyV_nonneg).  The wall sits INSIDE the comparison
+# operator — there is no ladder for H_fib (the wall is not quadratic) — and
+# what makes N ESA on the core is the OSCILLATOR-PLUS structure
+#     N = (adag a + 1/2) + (U(phi) + sigma),
+# exactly the hypothesis of `oscillatorPlus_esa` (-d^2/dx^2 + x^2/4 + W with
+# W bounded below, NO relative-bound hypothesis on W): the wall needs no
+# smallness.  The concrete core is the Hermite / Gauss-polynomial core
+# (ccDomain R / polyGaussCore), dense in the graph norm of N.
+#
+# THE FARIS-LAVINE CONDITIONS, item by item:
+#   (i)   N positive:                      CHECK 1/2/4 (sum of squares plus
+#         non-negative multiplication, N >= 1);
+#   (ii)  N + 1 ONTO:                      analytic (oscillator resolvent);
+#   (iii) H defined on D(N):               H = N on the core fibre
+#         (CHECK 7, self-comparison);
+#   (iv)  the commutator-form bound:       |commForm H N| <= 6 K_Q quadForm
+#         (CHECK 5-8: the coupling identity [phi, H_fib] = 2 d/dphi gives
+#         the derivative term, bounded by (9/4) K; the vielbein
+#         self-interaction contributes (1/2) K; the factor two of the
+#         commutator form gives 11/2 K <= 6 K with slack 1/2 K);
+#   (v)   THE CORE CONDITION:              N itself must be ESA ON the
+#         core C_0 (C_0 a core for N in the graph norm).  CHECK 1/2/3
+#         certify the symbolic content: the factorization exhibits the
+#         ground state (a phi_0 = 0, phi_0 = exp(-phi^2/4)) and the
+#         oscillator part is diagonal on the Hermite states with
+#         arithmetic eigenvalues n + 1/2; the added part U + sigma >= 0 is
+#         non-negative multiplication.  Lean: oscillatorPlus_esa,
+#         WallPot.ham_esa, starobinskyWall_esa.
+#
+# WHAT A .cdb MODULE CAN AND CANNOT CERTIFY.  Cadabra certifies the one-
+# particle symbolic facts below.  The Hilbert-space statements (symmetry,
+# Friedrichs positivity of the lift, N + 1 onto, graph core, the lift of
+# the criterion to the outer Fock space) are Lean; the lifting identities
+# are docs/faris_lavine_n_qg.cdb CHECK 11.
+#
+# Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# pins the Cadabra build through flake.nix).
+
+def expand_derivs(ex, n):
+	"""Leibniz expansion of every nested partial derivative."""
+	for i in range(n):
+		product_rule(ex)
+		distribute(ex)
+	collect_terms(ex)
+
+\partial{#}::PartialDerivative.
+\phi::Depends(\partial{#}).
+\psi::Depends(\partial{#}).
+Ufun::Depends(\partial{#}).
+{kA, K, sigma}::Commuting.
+
+# coordinate derivative rules and the differentiation-away of the constants
+rules = Ex(r"\partial_{0}{\phi} -> 1, \partial_{0 0}{\phi} -> 0, \partial_{0}{sigma} -> 0, \partial_{0 0}{sigma} -> 0, \partial_{0}{kA} -> 0, \partial_{0 0}{kA} -> 0, \partial_{0}{Ufun} -> 0, \partial_{0 0}{Ufun} -> 0")
+
+print("== QGLAGFL: the Faris-Lavine comparison N for the vielbein-Lagrangian QG ==")
+
+# The fibre operator: H_fib = N = -d^2/dphi^2 + phi^2/4 + U(phi) + sigma.
+Hfibpsi := -\partial_{0}{\partial_{0}{\psi}} + (\phi \phi/4 + Ufun + sigma) \psi;
+
+# ===== CHECK 1: the OSCILLATOR-PLUS split (the positivity structure) =====
+# N = (adag a + 1/2) + (U + sigma): oscillator PLUS non-negative
+# multiplication.  With a = d/dphi + phi/2, adag = -d/dphi + phi/2.
+aphi := \partial_{0}{\psi} + (\phi/2) \psi;
+adagphi := -\partial_{0}{\psi} + (\phi/2) \psi;
+adagaphi := -\partial_{0}{ @(aphi) } + (\phi/2) @(aphi);
+expand_derivs(adagaphi, 6)
+substitute(adagaphi, rules, repeat=True)
+sort_product(adagaphi); canonicalise(adagaphi); collect_terms(adagaphi)
+hoscpsi := -\partial_{0}{\partial_{0}{\psi}} + (\phi \phi/4) \psi;
+splitcheck := @(Hfibpsi) - @(adagaphi) - (Ufun + sigma + (1/2)) \psi;
+distribute(splitcheck); sort_product(splitcheck); canonicalise(splitcheck); collect_terms(splitcheck)
+print("CHECK 1  QGLAGFL N = (adag a + 1/2) + (U + sigma)   (0 = ok) :", splitcheck)
+
+# ===== CHECK 2: factorization adag a = H_osc - 1/2 =====
+# The ground state of the oscillator part: a phi_0 = 0 with phi_0 =
+# exp(-phi^2/4); the Hermite states adag^n phi_0 have oscillator
+# eigenvalues n + 1/2 — the arithmetic-in-n content of the core.
+osccheck := @(adagaphi) - (@(hoscpsi) - (1/2) \psi);
+distribute(osccheck); sort_product(osccheck); canonicalise(osccheck); collect_terms(osccheck)
+print("CHECK 2  QGLAGFL adag a = H_osc - 1/2               (0 = ok) :", osccheck)
+
+# ===== CHECK 3: CCR [a, adag] = 1 =====
+aadagpsi := \partial_{0}{ @(adagphi) } + (\phi/2) @(adagphi);
+expand_derivs(aadagpsi, 6)
+substitute(aadagpsi, rules, repeat=True)
+sort_product(aadagpsi); canonicalise(aadagpsi); collect_terms(aadagpsi)
+ccrcheck := @(aadagpsi) - @(adagaphi) - \psi;
+distribute(ccrcheck); collect_terms(ccrcheck)
+print("CHECK 3  QGLAGFL [a, adag] = 1                      (0 = ok) :", ccrcheck)
+
+# ===== CHECK 4: the wall non-negativity witness U + sigma >= 1 =====
+# sigma >= 1 (QgModeData.one_le_sig) and U >= 0 (starobinskyV_nonneg), so
+# the added part of CHECK 1 is >= 1 > 0 and N >= 1: the positivity
+# hypothesis of Theorem 1 with no smallness condition on the wall.
+{Usig, sigmam1}::Commuting.
+wallge1 := (Ufun + sigma) - 1 - (Ufun + (sigma - 1));
+distribute(wallge1); collect_terms(wallge1)
+print("CHECK 4a QGLAGFL (U + sigma) - 1 = U + (sigma - 1)  (0 = ok) :", wallge1)
+wallpart := Ufun + (sigma - 1);
+distribute(wallpart); collect_terms(wallpart)
+print("CHECK 4b QGLAGFL U + (sigma - 1) (>= 0, both terms)  :", wallpart)
+
+# ===== CHECK 5: the coupling identity [phi, H_fib] = 2 d/dphi =====
+# The scalaron-vielbein coupling B*phi does NOT commute with the wall: the
+# kinetic term produces a first-order derivative — this is
+# BookProof.ScalaronFiberFL.ham_x_comm_cc.  (The @() naming trap: a stem of
+# fewer than four characters before `_` is read as a subscript; hence
+# `phicomm`, cf. docs/qg_starobinsky_vielbein_hamiltonian.cdb GOTCHA.)
+phicomm := \phi @(Hfibpsi) - (-\partial_{0}{\partial_{0}{\phi \psi}} + (\phi \phi/4 + Ufun + sigma) \phi \psi);
+expand_derivs(phicomm, 6)
+substitute(phicomm, rules, repeat=True)
+sort_product(phicomm); canonicalise(phicomm); collect_terms(phicomm)
+phicommexp := 2 \partial_{0}{\psi};
+checkphicomm := @(phicomm) - @(phicommexp);
+distribute(checkphicomm); collect_terms(checkphicomm)
+print("CHECK 5  QGLAGFL [phi, H_fib] = 2 d/dphi             (0 = ok) :", checkphicomm)
+
+# ===== CHECK 6: the vielbein self-interaction commutes ([A, H_fib] = 0) =====
+# A is a constant matrix (multiplication by a number): [A, -d^2] = 0 and
+# [A, phi^2/4 + U + sigma] = 0.  The `imA_le` term of the form bound.
+Acomm := kA @(Hfibpsi) - (-\partial_{0}{\partial_{0}{kA \psi}} + (\phi \phi/4 + Ufun + sigma) kA \psi);
+expand_derivs(Acomm, 4)
+substitute(Acomm, rules, repeat=True)
+sort_product(Acomm); canonicalise(Acomm); collect_terms(Acomm)
+print("CHECK 6  QGLAGFL [A, H_fib] = 0 for constant A       (0 = ok) :", Acomm)
+
+# ===== CHECK 7: the self-comparison ([H_fib, N] = 0) =====
+# The wall and the harmonic part sit in the SAME operator: on the core the
+# scalaron contribution to the commutator form vanishes (the c = 0 fibre
+# part of secHam_commForm_le).
+selfcomm := -\partial_{0}{\partial_{0}{ @(Hfibpsi) }} + (\phi \phi/4 + Ufun + sigma) @(Hfibpsi)
+            + \partial_{0}{\partial_{0}{ @(Hfibpsi) }} - (\phi \phi/4 + Ufun + sigma) @(Hfibpsi);
+distribute(selfcomm); collect_terms(selfcomm)
+print("CHECK 7  QGLAGFL [H_fib, N] = 0                     (0 = ok) :", selfcomm)
+
+# ===== CHECK 8: the commutator-form constant arithmetic =====
+# imA_le gives (1/2) K, imB_le gives (9/4) K (the derivative term of
+# CHECK 5, controlled uniformly in the wall); the factor two of the
+# commutator form gives 2((1/2)K + (9/4)K) = 11/2 K <= 6 K with slack
+# 1/2 K >= 0 — the `secHam_commForm_le` constant c = 6 K_Q.
+twoterms := 2 ((1/2) K + (9/4) K);
+checkarith := @(twoterms) - (11/2) K;
+distribute(checkarith); collect_terms(checkarith)
+print("CHECK 8a QGLAGFL 2((1/2)K + (9/4)K) = 11/2 K        (0 = ok) :", checkarith)
+slack := 6 K - (11/2) K - (1/2) K;
+distribute(slack); collect_terms(slack)
+print("CHECK 8b QGLAGFL 6K - 11/2 K = 1/2 K >= 0           (0 = ok) :", slack)
+
+print("== summary ==")
+print("N = -d^2/dphi^2 + phi^2/4 + U(phi) + sigma (the vielbein-Lagrangian");
+print("    comparison, wall INSIDE N) = (adag a + 1/2) + (U + sigma) (CHECK 1)");
+print("    factorization + CCR: the Hermite/Gauss core diagonalises the");
+print("    oscillator part, U + sigma >= 1 is non-negative multiplication");
+print("    (CHECK 2-4): N is ESA ON THE CORE by oscillatorPlus_esa");
+print("    (the Faris-Lavine core condition).");
+print("Commutation conditions: [phi, H_fib] = 2 d/dphi (CHECK 5),");
+print("    [A, H_fib] = 0 (CHECK 6), [H_fib, N] = 0 (CHECK 7),");
+print("    form bound 11/2 K <= 6 K (CHECK 8).");
+print("Lean obligations (CONSOLIDATED_PLAN.md 2026-10-05, QG-L rows):");
+print("    N ESA on ccDomain/polyGaussCore, N + 1 onto, graph-norm density,");
+print("    and the outer-Fock lift (faris_lavine_n_qg.cdb CHECK 11).");
