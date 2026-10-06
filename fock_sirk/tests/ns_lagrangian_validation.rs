@@ -382,7 +382,7 @@ fn triples_up_to(n_max: u32) -> Vec<[u32; 3]> {
 fn ns_lagrangian_canonical_ladder_realization() {
     let w = omega();
 
-    let probes = vec![
+    let probes = [
         lag_state([0, 0, 0]),
         lag_state([1, 0, 0]),
         lag_state([0, 1, 0]),
@@ -539,6 +539,7 @@ fn ns_lagrangian_canonical_ladder_realization() {
 // ── 2. the outer-Fock enclosure and the parcel sectors ──────────────────────
 
 #[test]
+#[allow(non_snake_case)]
 fn ns_lagrangian_dGamma_enclosure_parcel_sectors() {
     let w = omega();
     let n_max = 2u32;
@@ -986,7 +987,7 @@ fn ns_lagrangian_volume_constraint_penalty() {
     let vol_h = ham(vol.clone());
     let vol_sq_h = ham(pmul(&vol, &vol));
 
-    let probes = vec![
+    let probes = [
         lag_state([0, 0, 0]),
         lag_state([1, 0, 0]),
         lag_state([0, 1, 1]),

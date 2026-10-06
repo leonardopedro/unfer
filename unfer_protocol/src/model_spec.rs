@@ -163,7 +163,7 @@ impl ModelSpec {
                         base_url: base.clone(),
                         loopback: is_loopback(&base),
                     },
-                    2 | _ => ModelBackend::HuggingFace {
+                    _ => ModelBackend::HuggingFace {
                         base_url: base.clone(),
                         loopback: is_loopback(&base),
                     },
@@ -254,7 +254,7 @@ fn model_from_url(url: &str) -> String {
     let last = path
         .split('/')
         .filter(|s| !s.is_empty())
-        .next_back()
+        .rfind(|_| true)
         .unwrap_or("");
     // Strip the conventional API version suffix; it is not a model name.
     let last = last.strip_prefix("v1").unwrap_or(last);
@@ -346,7 +346,7 @@ mod tests {
         let local = ModelSpec::parse("hf-local/Qwen/Qwen2.5-Coder-32B");
         assert_eq!(hosted.model, local.model, "same repo, different place");
         assert_ne!(hosted.backend.base_url(), local.backend.base_url());
-        assert!(hosted.is_local() == false && local.is_local());
+        assert!(!hosted.is_local() && local.is_local());
     }
 
     #[test]

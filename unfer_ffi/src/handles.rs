@@ -1171,10 +1171,20 @@ fn spawn_interval_from(raw: &str) -> u64 {
     raw.trim().parse::<u64>().unwrap_or(0)
 }
 
-/// Override the pacing interval. **Host-internal, for tests and the console.**
+/// Override the pacing interval. **Test-only today.**
 ///
-/// Not callable over the loopback. Production reads the environment; this exists
-/// so the refusal path can be exercised without a test waiting on real time.
+/// Not callable over the loopback, and — unlike its siblings `clear_meter`,
+/// `clear_audit` and `clear_vetted` — it is not wrapped in a `uk_*` C ABI entry
+/// either, so there is no operator-console surface for it yet. `handles` is a
+/// private module, so an embedding host cannot reach it either. Production
+/// therefore configures pacing solely through `UNFER_SPAWN_MIN_INTERVAL_MS`.
+///
+/// This exists so the *refusal* path can be exercised without a test waiting on
+/// real time. Closing the console gap means adding an `uk_spawn_pace_set` entry
+/// through the S29 checklist (registry row -> generated artifacts), which is
+/// deliberately not done here: G9(a)'s acceptance is the refusal at the
+/// chokepoint, and that is covered without widening the C ABI.
+#[cfg(test)]
 pub fn set_spawn_min_interval_ms(ms: u64) {
     use std::sync::atomic::Ordering;
     // Settle the environment read *first*. `call_once` stores the env value, so
@@ -1230,7 +1240,13 @@ pub fn spawn_pace_retry_after(principal: &str) -> Option<u64> {
     Some((min.saturating_sub(elapsed).as_millis().div_ceil(1000) as u64).max(1))
 }
 
-/// Reset the pacer (QA/console reset, and test isolation).
+/// Reset the pacer (test isolation).
+///
+/// Like [`set_spawn_min_interval_ms`], test-only: there is no `uk_spawn_pace_clear`
+/// console entry, so the pacer's per-principal state cannot be reset from outside
+/// the process. Production consequence: `SPAWN_PACE` lives for the lifetime of the
+/// process, which is what a pacer measuring real elapsed time wants anyway.
+#[cfg(test)]
 pub fn clear_spawn_pace() {
     let mut guard = SPAWN_PACE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_mut() {

@@ -276,12 +276,11 @@ fn sm_ckm_pmns_unitarity_and_biunitary() {
             vvt[i][j] = v[i][0] * v[j][0] + v[i][1] * v[j][1];
         }
     }
-    for i in 0..2 {
-        for j in 0..2 {
+    for (i, vvt_row) in vvt.iter().enumerate() {
+        for (j, got) in vvt_row.iter().enumerate() {
             let target = if i == j { 1.0 } else { 0.0 };
-            let got = vvt[i][j];
             assert!(
-                (got - target).abs() < 1e-12,
+                (*got - target).abs() < 1e-12,
                 "CKM V V^T[{i}{j}] = {got}, want {target}"
             );
         }
@@ -311,9 +310,8 @@ fn sm_ckm_pmns_unitarity_and_biunitary() {
     // Two "masses" (down-type / charged-lepton masses in the 2×2 block).
     let d = [0.005_f64, 1.2_f64];
     let res = sm_biunitary_residual(&v, d);
-    for i in 0..2 {
-        for j in 0..2 {
-            let got = res[i][j];
+    for (i, res_row) in res.iter().enumerate() {
+        for (j, got) in res_row.iter().enumerate() {
             assert!(got.abs() < 1e-12, "biunitary residual[{i}{j}] = {got}");
         }
     }
@@ -327,12 +325,11 @@ fn sm_ckm_pmns_unitarity_and_biunitary() {
             uut[i][j] = u[i][0] * u[j][0] + u[i][1] * u[j][1];
         }
     }
-    for i in 0..2 {
-        for j in 0..2 {
+    for (i, uut_row) in uut.iter().enumerate() {
+        for (j, got) in uut_row.iter().enumerate() {
             let target = if i == j { 1.0 } else { 0.0 };
-            let got = uut[i][j];
             assert!(
-                (got - target).abs() < 1e-12,
+                (*got - target).abs() < 1e-12,
                 "PMNS U U^T[{i}{j}] = {got}, want {target}"
             );
         }
@@ -361,9 +358,8 @@ fn sm_ckm_pmns_unitarity_and_biunitary() {
     // PMNS biunitarity for the neutrino mass matrix M_ν = U D — CHECK 26b.
     let d_nu = [0.0001_f64, 0.009_f64]; // eV-scale (normal hierarchy sketch)
     let res_nu = sm_biunitary_residual(&u, d_nu);
-    for i in 0..2 {
-        for j in 0..2 {
-            let got = res_nu[i][j];
+    for (i, res_nu_row) in res_nu.iter().enumerate() {
+        for (j, got) in res_nu_row.iter().enumerate() {
             assert!(got.abs() < 1e-12, "PMNS biunitary residual[{i}{j}] = {got}");
         }
     }
@@ -788,10 +784,10 @@ fn sm_brst_ghosts_nilpotent() {
     let mut ghost_touched = [false; SM_GHOST_COUNT];
     for (_, ops) in &omega.terms {
         for op in ops {
-            if let Operator::InnerFermionAnnihilate(g) | Operator::InnerFermionCreate(g) = op {
-                if (*g as usize) < SM_GHOST_COUNT {
-                    ghost_touched[*g as usize] = true;
-                }
+            if let Operator::InnerFermionAnnihilate(g) | Operator::InnerFermionCreate(g) = op
+                && (*g as usize) < SM_GHOST_COUNT
+            {
+                ghost_touched[*g as usize] = true;
             }
         }
     }

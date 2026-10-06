@@ -376,7 +376,7 @@ mod tests {
     fn ids_are_unique_and_monotonic() {
         let mut runs = GateRuns::new();
         for c in 1..=5 {
-            assert_eq!(pass_run(&mut runs, c), c as u64);
+            assert_eq!(pass_run(&mut runs, c), c);
         }
         assert_eq!(runs.len(), 5);
     }

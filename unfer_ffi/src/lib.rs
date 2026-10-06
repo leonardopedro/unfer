@@ -3587,8 +3587,10 @@ mod tests {
             assert_eq!(s["budget"], 320);
             assert_eq!(s["lossy"], true, "the editor budget cannot hold the trace");
             assert!(
-                s["derived_from"]["sentences"].as_array().unwrap().len() > 0,
-                "a summary must say which sentences it used"
+                !s["derived_from"]["sentences"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
             );
             assert!(
                 s["chars"].as_u64().unwrap() <= 320,

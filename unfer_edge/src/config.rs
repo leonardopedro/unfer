@@ -118,18 +118,18 @@ impl Config {
                 // would mean a config written the obvious way is silently ignored
                 // in favour of the default -- a file layer that quietly discards
                 // what you wrote looks exactly like a file layer that is working.
-                if let Some(raw) = obj.get(*key).and_then(scalar_to_string) {
-                    if apply(&mut out, key, &raw) {
-                        prov.insert((*key).to_string(), Layer::File);
-                    }
+                if let Some(raw) = obj.get(*key).and_then(scalar_to_string)
+                    && apply(&mut out, key, &raw)
+                {
+                    prov.insert((*key).to_string(), Layer::File);
                 }
             }
         }
         for (key, env_name, _) in KEYS {
-            if let Some(raw) = env(env_name) {
-                if apply(&mut out, key, &raw) {
-                    prov.insert((*key).to_string(), Layer::Env);
-                }
+            if let Some(raw) = env(env_name)
+                && apply(&mut out, key, &raw)
+            {
+                prov.insert((*key).to_string(), Layer::Env);
             }
         }
         if let Some(v) = &flags.listen {

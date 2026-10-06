@@ -545,7 +545,7 @@ mod tests {
         m.append("w1", &"y".repeat(MEMORY_CAP * 2));
         // The huge record is capped on the way in, so it cannot dominate.
         assert!(m.total_chars() <= MEMORY_CAP + RECORD_CAP);
-        assert!(m.len() >= 1);
+        assert!(!m.is_empty());
     }
 
     #[test]
