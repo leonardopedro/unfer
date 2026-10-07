@@ -96,11 +96,63 @@ binding constraint here.
 
 Not the prefactor — whether the exponential regime is ever **entered**. Measured
 `q` is `2.98` at `m = 8` and rises monotonically to `9.13` at `m = 128` (no
-turnover, full rank, fixed window). Target is `≈ 4e-3`. Given exponential decay at
+turnover, fixed window; rank has already collapsed by `m = 128` — see the sweep
+below). Target is `≈ 4e-3`. Given exponential decay at
 rate `ρ` from `q ≈ 3`, the extra orders needed are `log(730)/|log ρ|` — roughly
 10–20 for `ρ ≈ 0.5…0.7`, i.e. feasible. But it has not been observed to arrive by
-`m = 128`. See `PLAN_MASS_GAP.md` for the two placement experiments that rule out
+`m = 128`, nor by `m = 256` (the sweep below closes that measurement,
+negatively). See `PLAN_MASS_GAP.md` for the two placement experiments that rule out
 the easy explanations.
+
+### The sweep past `m = 128` — A3, measured 2026-10-07
+
+Does `q` turn over somewhere past `m = 128` and enter the exponential regime the
+Hashimoto rate predicts for the φ-function error? **No.**
+`fock_sirk/tests/zz_turnover.rs` (`#[ignore]`, run under
+`cargo test --release -p fock_sirk --test zz_turnover -- --ignored --nocapture`,
+7 291 s total for the sweep) ran harmonic shifts `γ_k = γ_0 + kh`, `h = 2/(m−1)`,
+fixed window width 2:
+
+| m | rank | θ₀ | q₀ | τ_m | q_pos | rel_err | flags |
+|---:|---:|---:|---:|---:|---:|---:|:--|
+| 4 | 4 | −0.98074334 | 2.7289e0 | 6.4063e1 | 6.5438e0 | 3.8711e0 | |
+| 8 | 8 | −1.34864876 | 2.9790e0 | 2.2386e2 | 5.7489e0 | 2.4396e0 | |
+| 16 | 16 | −1.65823907 | 3.7455e0 | 7.8547e2 | 6.5641e0 | 2.5509e0 | |
+| 32 | 24 | −1.66243272 | 4.8228e0 | 2.8161e3 | 8.4154e0 | 4.2081e0 | |
+| 64 | 35 | −1.65809798 | 6.5067e0 | 1.0336e4 | 1.1370e1 | 7.6997e0 | |
+| 128 | 50 | −1.65248000 | 9.0861e0 | 3.7267e4 | 1.6065e1 | 1.5117e1 | rank < m/2 |
+| 192 | 61 | −1.63573825 | 1.1219e1 | 7.5845e4 | 1.9785e1 | 2.3522e1 | rank < m/2 |
+| 256 | 71 | −1.65042383 | 1.2941e1 | 1.2390e5 | 2.2505e1 | 3.0739e1 | rank < m/2 |
+
+```text
+completed m: [4, 8, 16, 32, 64, 128, 192, 256]
+first degenerate m (rank < m/2): Some(128)
+```
+
+Three findings, ordered by how much they change:
+
+1. **No turnover.** `q₀` rises monotonically `2.73 → 12.9` across the entire
+   sweep and `rel_err` climbs `3.87 → 30.7` against a target of `≈ 4e-3`. For
+   this configuration (harmonic shifts, window width 2) the exponential regime
+   is never entered; more `m` buys residual, not convergence. The question above
+   is answered **negatively here** — which bounds the *configuration*, not the
+   construction: window placement and width are untouched by this sweep
+   (`PLAN_MASS_GAP.md`'s two placement experiments remain the other axes).
+2. **Rank collapse begins at `m = 128` and does not recover** (`50 < 64`,
+   `61 < 96`, `71 < 128`). The flagged rows are therefore **not** measurements
+   of the window's convergence — that is exactly what the probe's `DEGENERATE`
+   flag means — so they bound the trend but must not be quoted as the window's
+   own residual. The "full rank" assumption behind the earlier note held only
+   through `m = 64` (rank 35).
+3. **θ₀ stays ≈ −1.65 throughout** (−1.6357 at the degenerate `m = 192`),
+   consistent with a converged extremal value: the residual is the problem, not
+   the eigenvalue estimate.
+
+Consequence for the programme: this is a closed, negative measurement. The
+escape has to come from a different construction (window placement/width, or the
+gap-specific eigenvalue bound of `PLAN_MASS_GAP.md` §M4.6), not from extending
+this sweep. Reporting any of these rows as progress toward the gap would be the
+kind of claim `scripts/check-non-claims` exists to catch.
 
 1. **No cancellation.** `||H w||` never forms `E_1 - E_0` as a difference of two
    energies of size `||H||`. Measured for the gauge-fixed QYM Hamiltonian: two
