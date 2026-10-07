@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1769 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-07 -->
+<!-- status: verified | tests: 1774 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-07 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -114,15 +114,18 @@ a refresh, so it is stated rather than left for a reader to infer — as is the
 change from the previous figure, 1640.
 
 Measured 2026-10-07 by summing every `test result: ok.` line of
-`cargo test --workspace --exclude fock_sirk` (67 test binaries + doc-tests —
-53 binary suites + 14 doc-test groups —, 0 failures). **Debug and release
+`cargo test --workspace --exclude fock_sirk` (68 test binaries + doc-tests —
+54 binary suites + 14 doc-test groups —, 0 failures). **Debug and release
 agree exactly**, suite by suite — both were run, which is why the block can be
 checked against either. Growth since 1640:
 `decide_core` +94 (the D1–D15 analytic decision engine) plus the G1–G9
 protocol/ffi/edge additions. Growth since the 1764 of 2026-10-06:
 `unfer_protocol` +4 (the `cell_tool` blueprint CLI behind the N2
 module-reconstruction gate) and `unfer_edge` +1 (A9's loopback-default
-pinning test).
+pinning test). Growth since the 1769 of rev 25 (also 2026-10-07): the same
+two crates again — `unfer_protocol` +4 (G3's escalation board records) and
+`unfer_edge` +1 (X6's `ops_e2e`, a new test binary probing the ops surface
+over a real socket, hence 53 → 54 binary suites).
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -133,7 +136,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1769 passed (2026-10-07; identical count in --release, per suite)
+#   1774 passed (2026-10-07; identical count in --release, per suite)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04
@@ -213,19 +216,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 25, 2026-10-07)
+## Test & benchmark counts (rev 26, 2026-10-07)
 
-- Workspace tests: **1769 green** on CPU (default features,
-  `cargo test --workspace --exclude fock_sirk`, 67 test binaries +
-  doc-tests): `unfer_protocol` 396, logos 346, `unfer_ffi` 228,
+- Workspace tests: **1774 green** on CPU (default features,
+  `cargo test --workspace --exclude fock_sirk`, 68 test binaries +
+  doc-tests): `unfer_protocol` 400, logos 346, `unfer_ffi` 228,
   `prob_kernel` 143, `unfer_consensus` 111, `nested_fock_algebra` 98,
-  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 62,
+  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 63,
   `unfer_data` 56, `unfer_taler` 36, `ode_sirk` 36, `unfer_identity` 6,
   `sirk_core_model` 5. Debug and `--release` report the same count for
   every suite (verified 2026-10-06; no test is gated on
   `cfg(debug_assertions)`).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1769 above.
+  2026-10-06, `--release`) and is **not** in the 1774 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
