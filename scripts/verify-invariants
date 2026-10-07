@@ -96,16 +96,20 @@ check "S23: uk_report_issue is a no-op unless ERROR_REPORT_BINDING provisioned" 
     grep -q "ERROR_REPORT_BINDING" "$repo_root/unfer_ffi/src/lib.rs"
 
 # --- H1.7 Vacuum initialization ---
-# Documented invariant: QuantumState::vacuum() has >=1 empty inner universe
-# (OuterBosonCreate(InnerBosonicState::vacuum())). The implementation currently
-# returns OuterState::vacuum() with an EMPTY bosonic map (0 universes); the
-# test at lib.rs:573-578 documents this known non-enforcement.
-if grep -q "bosonic: BTreeMap::new()" "$repo_root/nested_fock_algebra/src/lib.rs"; then
-    gap "Vacuum: QuantumState::vacuum() lacks the documented empty inner universe (known non-enforcement, see nested_fock_algebra/src/lib.rs vacuum_initialization_single_component test)"
-else
-    check "Vacuum: QuantumState::vacuum() has >=1 empty inner universe" \
-        grep -q "InnerBosonicState::vacuum" "$repo_root/nested_fock_algebra/src/lib.rs"
-fi
+# A16: the invariant as first written ("QuantumState::vacuum() has >=1 empty
+# inner universe") misdescribed the design. vacuum() is the *outer* Fock
+# vacuum — zero universes, and canonically so: a {vac: 0} entry would not
+# round-trip (annihilation REMOVES an entry at n==1, so create-then-annihilate
+# would not return to it). The real rule is the one the test corpus follows:
+# anything applying INNER operators first creates one empty inner universe via
+# `OuterBosonCreate(InnerBosonicState::vacuum())`. Both halves are now
+# checkable, so this gate is a check again instead of a permanent [gap].
+check "H1.7: vacuum() is the zero-universe outer Fock vacuum" \
+    grep -q "bosonic: BTreeMap::new()" "$repo_root/nested_fock_algebra/src/lib.rs"
+check "H1.7: inner-operator tests create one empty inner universe first" \
+    grep -rq "OuterBosonCreate(InnerBosonicState::vacuum())" "$repo_root/nested_fock_algebra/src"
+check "H1.7: the false 'vacuum() contains a universe' claim stays retired" \
+    sh -c "! grep -rqE 'vacuum\(\) has (>=|≥) 1 empty inner universe' '$repo_root/AGENTS.md' '$repo_root/PLAN_HARNESS.md'"
 
 # --- H1.8 S26 sensitive latch: sensitive observation latches caller set ---
 check "S26: SENSITIVE_LATCH store present" \

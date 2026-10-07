@@ -570,10 +570,14 @@ mod tests {
         let (outer, amp) = vac.components.iter().next().unwrap();
         assert!((amp.re - 1.0).abs() < 1e-12);
         assert!(amp.im.abs() < 1e-12);
-        // NOTE: OuterState::vacuum() currently has an empty bosonic map
-        // (0 inner universes). AGENTS.md documents that it should have at
-        // least one empty inner universe, but the implementation does not
-        // yet enforce this. The test asserts the current behavior.
+        // A16: this assertion IS the spec, not a known non-enforcement. The
+        // vacuum is the *outer* Fock vacuum — zero inner universes, canonically
+        // ({vac: 0} would not round-trip: annihilation removes an entry at
+        // n==1). An earlier version of AGENTS.md claimed vacuum() should carry
+        // >=1 empty inner universe; the real rule — now what AGENTS.md,
+        // PLAN_HARNESS and verify-invariants all say — is that anything
+        // applying INNER operators first creates one universe with
+        // `OuterBosonCreate(InnerBosonicState::vacuum())`.
         assert_eq!(outer.bosonic.len(), 0);
         assert_eq!(outer.fermionic.len(), 0);
     }

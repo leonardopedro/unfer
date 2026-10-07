@@ -136,7 +136,10 @@ of a parallel tool.
    - the S22 admin refuse list (`grants`/`auth`/`storage`/`backend`) rejects
      patches and leaves the soft config byte-identical on refusal;
    - `sanitize_sensitive` covers every secret-plausible field (S23);
-   - `QuantumState::vacuum()` has ≥ 1 empty inner universe;
+   - inner-operator tests start from `QuantumState::vacuum()` **plus one empty
+     inner universe** (`OuterBosonCreate(InnerBosonicState::vacuum())`) —
+     `vacuum()` itself is the zero-universe outer Fock vacuum (A16 retired the
+     earlier over-claim about what `vacuum()` contains);
    - a `sensitive: true` observation latches the caller set (S26);
    - the meter (UTC-day key) is the single denial point for UK-4601/4602 (S25);
    - new `KernelEvent` variants have a `handles.rs` event-type matcher (S29);
