@@ -58,6 +58,12 @@ pub const SESSION_OPS: &[&str] = &[
     // of the same record: same cursors, written instead of polled, opt-in.
     "events_poll",
     "events_stream",
+    // C2: this session's bounded, retrievable memory. Append is Mutate (it is
+    // model-visible state that outlives the call); read is Observe (an agent
+    // loop must be able to consult its memory unattended). See
+    // `unfer_protocol::memory`.
+    "memory_append",
+    "memory_read",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",
@@ -182,6 +188,11 @@ pub const AGENT_OPS: &[&str] = &[
     // cursored events instead of waiting to be asked (off by default).
     "events_poll",
     "events_stream",
+    // C2: this session's bounded memory, the NDJSON half of the C ABI's
+    // `uk_memory_append`/`uk_memory_read` — same store, same caps, same
+    // dialect of counts.
+    "memory_append",
+    "memory_read",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",

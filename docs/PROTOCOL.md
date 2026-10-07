@@ -248,6 +248,20 @@ Observe, so retrieval never queues for approval — an agent loop must be able t
 consult its memory unattended. The consequence is that an unattended loop wanting
 to append its own summaries needs a vetted grant for the append.
 
+**The NDJSON ops of the same names** (`memory_append`, `memory_read`) are the
+same store on the agent channel — same caps, same clamps, same counts — with
+three differences worth stating:
+
+- both take `model_id` (the memory is the session's, and an unknown handle is
+  UK-1004 like every other per-model op);
+- `memory_append` requires `text` non-empty — an empty record is noise a
+  caller can decide not to write — and defaults `worker` to `"kernel"` when it
+  is absent; its reply adds `effect_kind: "mutate"`;
+- both push the same `KernelEvent` the C ABI does (`memory_appended`,
+  `memory_read`) into the model's cursored log, so a subscriber sees one
+  dialect regardless of which transport touched the memory — and with
+  `events_stream` enabled, the append arrives as a pushed line.
+
 Events: `memory_appended` (`record_id`, `chars`, `evicted`) and `memory_read`
 (`returned`, `matched`, `total_chars`, `returned_chars`, `truncated`). A read is
 recorded as an event of its own for the same reason `engram_looked_up` is:
