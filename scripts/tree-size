@@ -8,7 +8,33 @@
 # two repos' histories.
 #
 # Usage:  scripts/tree-size [repo ...]      (defaults to every sibling checkout)
-# Exit:   0 clean, 1 if anything is tracked that should not be.
+# Exit:   0 clean, 1 if anything is tracked that should not be, or if a kept
+#         directory has drifted from its retention policy.
+#
+# ## Retention policy (X5, 2026-10-07) — what is kept, and why
+#
+# Tracked = cited evidence. Everything generated is untracked, and a file a
+# document actually cites may be retained tracked by whitelisting it by name
+# in that repo's .gitignore — the repo's own ignore rules are the authority
+# for which is which (the check below probes them with `git check-ignore
+# --no-index`, never the index). Two directories have a stated rule:
+#
+#   qfm_text_runs/  pinned experimental evidence. Only `metrics.ndjson`,
+#                   `train.log` and `train.toml` are tracked — the numbers the
+#                   test suites cite. Checkpoints (`*.qfm`, ~3.9 GB) are
+#                   gitignored and removed by `tools/clean_qfm_text_runs.sh`
+#                   (dry-run by default). Any other tracked file under
+#                   `qfm_text_runs/` fails this gate: retention is an
+#                   allowlist, not a default.
+#   logs/           ephemeral run logs, gitignored wholesale. The exception
+#                   is a log cited as evidence (e.g. `logs/heavy_tests_*.log`,
+#                   the recorded ALL-GREEN run), whitelisted by name in
+#                   .gitignore. `logs/*` is gitignored, `!logs/<cited>` is the
+#                   retention act.
+#
+# Deleting stale artifacts is therefore always safe for anything NOT tracked
+# here; amending retention is a deliberate edit to the allowlist above (and to
+# .gitignore), never a side effect of a commit.
 
 set -uo pipefail
 
@@ -19,8 +45,10 @@ set -uo pipefail
 # repo-relative paths from `git ls-files`.
 PATTERNS='(^|/)(_build|target|node_modules|__pycache__|\.venv|venv)/|(^|/)(calltree|error)\.html$|\.py[co]$|(^|/)logs?/[^/]*\.log$|\.orig$|\.rej$|\.swp$|~$|(^|/)\.DS_Store$'
 
-# `qfm_text_runs/` is deliberately absent: its metrics.ndjson and train.log are
-# pinned experimental evidence cited by the test suites, not build detritus.
+# `qfm_text_runs/` is deliberately absent from the artifact patterns: its
+# metrics.ndjson and train.log are pinned experimental evidence cited by the
+# test suites, not build detritus — and a pattern would flag an intentional
+# retention. Its *shape* (evidence-only) is enforced separately below.
 
 if [ "$#" -gt 0 ]; then
   roots=("$@")
@@ -44,6 +72,23 @@ for repo in "${roots[@]}"; do
     echo "tree-size: skipping $repo (not a git checkout)" >&2
     continue
   }
+
+  # X5 retention shape: qfm_text_runs/ is an allowlist (see the header).
+  # Checked before the artifact scan (which `continue`s past repos with no
+  # artifact hits) because this is retention drift, not a build artifact —
+  # the remedy is an allowlist edit or an untrack, and the message should say
+  # which policy was crossed.
+  evidence_bad="$(git -C "$repo" ls-files -- 'qfm_text_runs' 2>/dev/null | \
+    grep -vE '(^|/)(metrics\.ndjson|train\.log|train\.toml)$' || true)"
+  if [ -n "$evidence_bad" ]; then
+    total=$((total + 1))
+    echo "FAIL $repo: tracked file(s) outside the qfm_text_runs/ retention policy" >&2
+    printf '%s\n' "$evidence_bad" | sed 's/^/       /' >&2
+    echo "       Policy: only metrics.ndjson / train.log / train.toml are retained" >&2
+    echo "       as evidence (scripts/tree-size header). Untrack with:" >&2
+    echo "       git -C $repo rm --cached <path>" >&2
+  fi
+
   hits="$(git -C "$repo" ls-files | grep -E "$PATTERNS" || true)"
   if [ -z "$hits" ]; then
     echo "ok   $repo: no tracked build artifacts"
@@ -91,9 +136,10 @@ done
 
 if [ "$total" -gt 0 ]; then
   echo >&2
-  echo "tree-size: $total tracked build artifact(s). These are generated; commit" >&2
-  echo "the .gitignore rule AND git rm --cached the file -- an ignore added later" >&2
-  echo "does not apply retroactively." >&2
+  echo "tree-size: $total violation(s) — a tracked build artifact, or a tracked" >&2
+  echo "file outside a kept directory's retention policy. These are generated;" >&2
+  echo "commit the .gitignore rule AND git rm --cached the file -- an ignore" >&2
+  echo "added later does not apply retroactively." >&2
   exit 1
 fi
 
