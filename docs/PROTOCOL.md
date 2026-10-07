@@ -487,6 +487,84 @@ makes it safe to add without its own security review.
 **Error codes:** UK-1001 (missing `by`/`claim_cursor`, unknown `role` — carries a
 `ReplaceValue` hint).
 
+### sync_edit
+
+Record a document's own edit footprint (G5) — the local half of write-time
+conflict detection.
+
+**Request params:** `{"doc": <string>, "blocks": [{"start": <int>, "end": <int>}, ...]}`
+
+**Response result:** `{"doc", "packet": <DeltaPacket>}` — `packet` is the
+envelope a delta carrier would send (`revision`, `base_revision`, `blocks`,
+`bytes`), with `bytes` **empty by design**: this op records *what* changed;
+shipping *how* is the transport's job (the editor's reserved `b'D'` frame on
+the presence socket), not this op's.
+
+Each call advances the document's revision by one. Footprints are **per
+document**: an edit to `a.md` can never make an import into `b.md` look stale.
+
+**Error codes:** UK-1001 (missing/empty `doc`; missing/empty `blocks`; a
+`blocks[i]` without integer `start`/`end`; a reversed range — refused rather
+than read as empty, which would drop the very declaration the packet came to
+make).
+
+### sync_import
+
+Classify a peer's imported delta against this document's own footprint and —
+when both sides touched the same blocks since the packet's base revision —
+write the conflict to the board (G5).
+
+**Request params:** `{"worker", "doc", "peer", "revision", "base_revision", "blocks": [...]}`
+
+- `worker` — who is importing; the board entry's author.
+- `peer` — who sent the packet. The sender travels with the packet rather
+  than being fixed per tracker, because one agent serves many peers and the
+  footprint it classifies against is the document's, not one pair's.
+- `revision` / `base_revision` / `blocks` — the packet's declaration.
+
+**Response result (clean):**
+
+| field | meaning |
+|---|---|
+| `conflict` | `false` |
+| `doc`, `peer` | what was checked |
+| `my_revision` | this document's revision at check time |
+| `their_revision`, `their_base` | the packet's, echoed |
+| `declared_blocks` | how many blocks the packet declared |
+
+**Response result (conflict):**
+
+| field | meaning |
+|---|---|
+| `conflict` | `true` |
+| `deduped` | `true` when this exact packet was already reported; the original `cursor` is returned — the same rule `agent_escalate` and `agent_nudge` follow |
+| `cursor` | the `FAIL` entry's cursor |
+| `entry` | the `FAIL` entry: text `"<doc>: <explanation>"`, detail the structured record. `null` only if the bounded board has since dropped it |
+| `record` | the `ConflictRecord`: peer, both revisions, both footprints, the specific overlaps |
+| `my_revision` | this document's revision at check time |
+| `effect_kind` | `"observe"` — recording a conflict approves nothing |
+| `lane` | what the reader is to do with it |
+
+**A clean import writes nothing.** An entry per non-conflicting import would
+bury the ones that matter; the board is the conflict lane, not a transcript.
+
+**Error codes:** UK-1001 (missing/empty `worker`, `doc` or `peer`;
+non-integer `revision`/`base_revision`; the `blocks` refusals listed under
+`sync_edit`).
+
+This is the half of G5 that was missing: `mathed_core::sync` always produced a
+`ConflictRecord`, but nothing wrote it anywhere a reader could see, so G2 step
+5 ("re-check both sides' acceptance criteria, re-merge") had no input. The
+entry is `FAIL` — the kind whose whole purpose (G1's acceptance) is that a peer
+stops and does not re-derive — and it is Observe-kind, because only
+`CLAIM`/`ESCALATE`/`PATCH_SUMMARY` mutate.
+
+What the op deliberately does **not** do is apply the delta: classification is
+pure with respect to the document (the editor applies and merges), and an agent
+op that rewrote a document it does not own would be a second writer with no
+lock. The `b'D'` delta frame on the presence socket is where applying happens;
+until it exists, the transport half of C13 is the remaining work, not this op.
+
 ---
 
 ## Verify before merge

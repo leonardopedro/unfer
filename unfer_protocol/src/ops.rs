@@ -83,6 +83,13 @@ pub const SESSION_OPS: &[&str] = &[
     "agent_dm",
     "agent_escalate",
     "agent_handoff",
+    // G5: write-time conflict detection over the CRDT edit footprints.
+    // `sync_edit` records what this document changed; `sync_import`
+    // classifies a peer's packet against those footprints and, on an overlap,
+    // writes the conflict to the board as a FAIL entry so G2 step 5 can see
+    // it. See `mathed_core::sync` and docs/PROTOCOL.md.
+    "sync_edit",
+    "sync_import",
     // D5: the analytic decision engine. `observe`-kind only — none of these ops
     // has a `Mutate` arm, which is what keeps a statistical layer out of every
     // trust path this project certifies. See `unfer_protocol::decide`.
@@ -204,6 +211,12 @@ pub const AGENT_OPS: &[&str] = &[
     // G7: role hand-off. Carries no privilege; it records who is reviewing so
     // the hand-off is observable after the fact.
     "agent_handoff",
+    // G5: write-time conflict detection. `sync_edit` records this document's
+    // own footprint; `sync_import` classifies a peer's packet against it and
+    // routes an overlap to the board as a FAIL entry (Observe-kind — recording
+    // a conflict approves nothing). See `mathed_core::sync`.
+    "sync_edit",
+    "sync_import",
     // G4: verify-before-merge. `gate_record` registers a run of a gate that
     // already exists; `patch_submit` writes a PATCH_SUMMARY that cites one, and
     // is refused when the citation is unknown, non-green, or older than the
