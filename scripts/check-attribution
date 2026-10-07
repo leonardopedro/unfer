@@ -1,0 +1,401 @@
+#!/usr/bin/env bash
+# X9 — attribution-ledger gate. Machine-checks policy #4 of ATTRIBUTION.md:
+#
+#   "If a commit adapts an external pattern, add the row in the same commit.
+#    A grep for `adapted from`, `inspired by`, `based on` and `derived from`
+#    across the trees should resolve to either a row here or an internal
+#    cross-reference."
+#
+# What this gate actually does (the real rule, not the aspirational one):
+#
+#   1. Scans the seven licensed checkouts plus the workspace root plan docs
+#      for adaptation-claim phrases. The phrase set is wider than policy #4's
+#      four: `ported from` and `borrowed from` are included because a code
+#      port that names its source (emthin's niri port) is exactly the claim
+#      the ledger exists for. ATTRIBUTION.md files themselves are excluded --
+#      they ARE the ledger, and policy text quotes the phrases verbatim.
+#   2. A hit resolves when, in a window of the hit line +/- 2 lines, we find
+#      EITHER
+#        a. a ledger token -- a source name from the first column of the
+#           workspace ATTRIBUTION.md (when present) union this repo's own
+#           ATTRIBUTION.md, matched as a whole word; OR
+#        b. an internal cross-reference -- a path to a file that exists here
+#           (resolved against the citing file's directory, the repo root, the
+#           workspace root, and -- for CI, where the workspace root holds no
+#           checkouts -- the repo root with the first path component dropped).
+#      Otherwise the hit must match a reviewed allowlist entry below
+#      Hits fall into two classes: tier 1 is the attributive claim
+#      (`adapted/inspired/ported/borrowed from` -- a claim that external work
+#      was taken), tier 2 is `based on` / `derived from` (overwhelmingly
+#      internal derivations: "derived from the key", "based on 0"). Tier 1 is
+#      never allowlistable at file granularity: an entry must name the exact
+#      content it excuses, or carry class 2 to excuse only tier-2 hits.
+#      Allowlist entry format: path-regex :: line-regex :: class :: reason,
+#      where class is 1, 2 or * (any).
+#   3. Each checked-out repo must carry its own ATTRIBUTION.md pointing back
+#      at `../ATTRIBUTION.md` (the per-repo row pointer X9 requires).
+#
+# What it deliberately does NOT claim:
+#   - The window rule proves a hit resolves to *at least one* recorded source,
+#     not that every source named on a multi-source line is recorded. That
+#     limit is why the ledger's prose review still matters.
+#   - `book.tex` / `ODE.tex` (the shared LaTeX corpus, source of record for
+#     the literature) are excluded by name: their phrase hits are prose
+#     around \cite, not adaptation claims. A real adaptation claim written
+#     there would be missed -- the corpus is a book, not a code tree.
+#   - It cannot distinguish "cited" from "copied from". Same limit as the
+#     ledger's check 2; provenance is the authors' record, not a grep's.
+#
+# Usage:  scripts/check-attribution [-v] [--repo-only]
+#           -v           list every hit and how it resolved (triage mode)
+#           --repo-only  scan only this checkout against only its own ledger
+#                        (the CI shape: no workspace root, no root plan docs,
+#                        root ledger ignored)
+# Exit:   0 clean, 1 on an unresolved hit, a missing per-repo ledger pointer,
+#         or a scan that inspected nothing (0 hits is never a pass here).
+
+set -uo pipefail
+
+# shellcheck source=workspace-root.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-root.sh"
+
+# Word-bounded: without the leading `\b`, `ported from` also matches
+# "Exported from" (six hits in mathed_mini alone), which is a claim about
+# our own output, not about a source.
+PHRASE_RE='\b(adapted from|inspired by|ported from|borrowed from|based on|derived from)\b'
+
+# The licensed checkouts (same set as check-status) and the root plan docs we
+# own. AnaNC.md at the root is a source *paper*, not ours -- not scanned.
+REPOS="australVM dynamic-arctic emthin unfer velysterm timepiece test"
+ROOT_DOCS="PROJECT_REVIEW_AND_IMPROVEMENT_PLAN.md PLAN_MATHED_NATIVE_AND_IMPROVEMENT.md PLAN_ANALYTIC_DECISION_ENGINE.md"
+
+INCLUDES=(
+  --include='*.md' --include='*.rs' --include='*.py' --include='*.sh'
+  --include='*.tex' --include='*.toml' --include='*.yaml' --include='*.yml'
+  --include='*.nix' --include='*.c' --include='*.h' --include='*.cjs'
+  --include='*.js' --include='*.ts' --include='*.lean' --include='*.lua'
+  --include='*.el' --include='*.ml' --include='*.mli' --include='*.txt'
+)
+# Licences and bibliographies quote the phrases as text; build dirs are not
+# our trees. ATTRIBUTION.md is excluded by name (all levels) per rule 1.
+EXCLUDE_DIRS=(
+  --exclude-dir=.git --exclude-dir=target --exclude-dir=_build
+  --exclude-dir=.lake --exclude-dir=node_modules --exclude-dir=.venv
+  --exclude-dir=__pycache__ --exclude-dir=dist
+)
+EXCLUDE_FILES=(
+  --exclude=ATTRIBUTION.md --exclude=LICENSE --exclude='LICENSE-*'
+  --exclude=COPYING --exclude='*.bib' --exclude='*.olean'
+  --exclude=book.tex --exclude=ODE.tex
+)
+
+# Reviewed exemptions: path-regex :: line-regex :: class :: reason.
+#   class 1 -- exempts an attributive-claim (tier-1) hit on a matching line
+#   class 2 -- exempts only `based on` / `derived from` (tier-2) hits
+#   *       -- exempts a matching line whatever the phrase
+# Line regexes stay over *content*, never line numbers, so entries survive
+# edits above them. File-wide `.*` entries are class 2 on purpose: in prose,
+# math and code-comment trees `derived from` means "computed from our own
+# state", and a future `adapted from <source>` written there must still be
+# forced onto a ledger row.
+ALLOW=(
+  '^test/(numerics|basics|book)/ :: .* :: 2 :: prose site: literature/economics, citations not adaptation claims'
+  '^test/README.md$ :: .* :: 2 :: site meta prose'
+  '^test/unfer/foundations.md$ :: .* :: 2 :: quotes ../basics/bond.md prose'
+  '^test/software/math\.md$ :: .* :: 2 :: prose site describing external tools (Bend, Lambdapi), not adapting them'
+  '^timepiece/ :: .* :: 2 :: timepiece: Lean/LaTeX/math corpus -- derived from = derivation; tier-1 (health.sh ax) still enforced'
+  '^australVM/engram.md$ :: .* :: 2 :: reproduction of the DeepSeek Engram paper: its own derivation claims, not our adaptation claims'
+  '^australVM/engram.md$ :: inspired by Attention :: * :: academic citations (Bahdanau/Vaswani) in the engram design note'
+  '^australVM/docs/ :: .* :: 2 :: australVM own history/walkthrough docs: internal decisions and visibility state'
+  '^australVM/(safestos|editor)/ :: .* :: 2 :: australVM subtree (in-tree SafestOS copy) and editor grammar: internal derivation comments'
+  '^australVM/lib/HtmlError.ml$ :: based on span :: * :: OCaml error-span arithmetic'
+  '^australVM/arctic\.md$ :: .* :: 2 :: paper write-up: bibliography lines and formal derivations'
+  '^velysterm/ :: .* :: 2 :: velysterm: derived-from comments describe our own document model; ports (foot) are tier-1 and stay enforced'
+  '^dynamic-arctic/ :: .* :: 2 :: protocol/crypto derivations; the cited paper (Arctic, Komlo & Goldberg) is rowed in this repo ledger'
+  '^unfer/ :: .* :: 2 :: unfer: derived-from/based-on describe our own state and math; tier-1 (cloudflare-os, Azuro, ax) still enforced'
+  '^emthin/AGENTS.md$ :: Patterns derived from git history :: * :: this repo defaults distilled from its own history'
+  '^emthin/crates/emthin/src/docui/layout.rs$ :: Derived from the same :: * :: recompute from our own letterbox rect'
+  '^emthin/crates/emthin/src/docui/model.rs$ :: derived from it :: * :: recompute-from-own-state comment'
+  '^emthin/crates/emthin/src/docui/mod.rs$ :: JSON path is derived from :: * :: internal path derivation'
+  '^emthin/crates/emthin/src/ipc/messages.rs$ :: rather than derived from serde :: * :: hand-written names, explicitly not derived'
+  '^emthin/crates/emthin/src/state/ime.rs$ :: Cache key derived from|based on (cache alone|the new focus) :: * :: internal routing comments'
+  '^emthin/crates/emthin/src/grabs.rs$ :: based on the edge :: * :: resize-axis arithmetic'
+  '^emthin/docs/REWRITE_PLAN.md$ :: A key derived from something other than :: * :: key-derivation design note'
+  '^PLAN_.*\.md$ :: .* :: 2 :: root plans: mathematical derivations'
+  '^PROJECT_REVIEW_AND_IMPROVEMENT_PLAN\.md$ :: this tree .*adapted from :: * :: quotes policy #4 itself (the rule, not a claim)'
+  '^unfer/docs/IMPLEMENTATION_PLAN\.md$ :: ported from .mathed :: * :: internal port of velysterm own glyph index (the module is mathed::glyphs), not an external source'
+  '^unfer/docs/PLAN_REFI_EXCHANGE\.md$ :: Adapted from the 6-phase :: * :: the owner confirmed 2026-10-07 this is their own earlier plan; in-house, not a third-party source'
+)
+
+verbose=0
+repo_only=0
+for arg in "$@"; do
+  case "$arg" in
+    -v) verbose=1 ;;
+    --repo-only) repo_only=1 ;;
+    -h | --help)
+      sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "check-attribution: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+root="$(ws_root)"
+[ -n "$root" ] || { echo "check-attribution: cannot locate the workspace root." >&2; exit 1; }
+
+# ── ledger tokens ──────────────────────────────────────────────────────────
+
+# Print one normalised token per line for the first column of every table in
+# $1 whose header is `| source | ... |` (the two source tables; the repo
+# licence table is skipped). Precedence inside a cell: link text, then bold
+# text, then the first backticked span, then the cell up to its first
+# separator. The first word is emitted too, so `Why3 + alt-ergo` yields
+# `why3` (alt-ergo has its own row).
+ledger_tokens() {
+  local f="$1" cell l
+  [ -f "$f" ] || return 0
+  awk -F'|' '
+    /^\|/ {
+      if (tolower($2) ~ /^[[:space:]]*source[[:space:]]*$/) { intab = 1; next }
+      if (intab) print $2
+      next
+    }
+    { intab = 0 }
+  ' "$f" | while IFS= read -r cell; do
+    # Regexes live in variables: an unquoted literal with a bare `)` inside
+    # `[[ =~ ]]` upsets the parser before the regex engine ever sees it. And
+    # POSIX ERE does not honour backslash escapes *inside* bracket
+    # expressions -- `[^\]]` parses there as "not backslash, then a literal
+    # ]", which is not what is meant -- so the brackets use the `[^]]` /
+    # `[^`]` idioms instead.
+    local re_link='\[([^]]+)\]\([^)]*\)'
+    local re_bold='\*\*([^*]+)\*\*'
+    local re_tick='`([^`]+)`'
+    if [[ "$cell" =~ $re_link ]]; then cell="${BASH_REMATCH[1]}"; fi
+    if [[ "$cell" =~ $re_bold ]]; then cell="${BASH_REMATCH[1]}"; fi
+    if [[ "$cell" =~ $re_tick ]]; then cell="${BASH_REMATCH[1]}"; fi
+    cell="${cell//\`/}"
+    cell="${cell//\*/}"
+    cell="${cell%% (*}"
+    cell="${cell%% —*}"
+    cell="${cell%%,*}"
+    cell="$(printf '%s' "$cell" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$cell" ] || continue
+    l="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
+    printf '%s\n' "$l"
+    if [[ "$l" == *" "* ]]; then printf '%s\n' "${l%% *}"; fi
+  done | while IFS= read -r l; do
+    [ "${#l}" -ge 2 ] || continue
+    printf '%s' "$l" | grep -q '[[:alnum:]]' || continue
+    # A stopword smuggled in as a "first word" (e.g. `the` from an unsplit
+    # cell) would resolve every line that contains it. Refuse them.
+    case "$l" in
+      the | a | an | and | of | to | for | this | that | with | see | not | is | in | on | by) continue ;;
+    esac
+    printf '%s\n' "$l"
+  done | sort -u
+}
+
+# Tokens -> one grep -E alternation, every token word-bounded by construction
+# of the match call (`grep -iw`). Escaping keeps anything non-alnum literal.
+build_token_re() {
+  local tok
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    # Escape only regex metacharacters. Escaping every non-alnum (the first
+    # cut) made GNU grep print "stray \\ before /" warnings for tokens like
+    # `deepseek-ai/deepseek-harness` on every line of the scan.
+    printf '%s' "$tok" | sed 's/[][(){}|^$*.+?\\]/\\&/g'
+    printf '|'
+  done | sed 's/|$//'
+}
+
+root_tokens=""
+root_ledger="$root/ATTRIBUTION.md"
+if [ "$repo_only" -eq 1 ]; then
+  : # CI shape: the workspace root in CI holds sibling checkouts, not the
+    # ledger; resolution must succeed from this repo's own ATTRIBUTION.md.
+elif [ -f "$root_ledger" ]; then
+  root_tokens="$(ledger_tokens "$root_ledger" | build_token_re)"
+else
+  echo "check-attribution: no workspace ATTRIBUTION.md at $root -- resolving against per-repo ledgers only (CI shape)"
+fi
+
+# ── targets ────────────────────────────────────────────────────────────────
+
+repos_scanned=()
+if [ "$repo_only" -eq 1 ]; then
+  own="$(ws_own_repo)"
+  [ -n "$own" ] && repos_scanned=("$(basename "$own")")
+else
+  for r in $REPOS; do
+    if dir="$(ws_checkout "$r")"; then repos_scanned+=("$r"); else printf 'skip %s (not checked out here)\n' "$r"; fi
+  done
+fi
+
+[ "${#repos_scanned[@]}" -gt 0 ] || {
+  echo "check-attribution: no repo to scan. Refusing to pass over an empty tree." >&2
+  exit 1
+}
+
+docs_scanned=()
+if [ "$repo_only" -eq 0 ]; then
+  for d in $ROOT_DOCS; do [ -f "$root/$d" ] && docs_scanned+=("$d"); done
+fi
+
+# ── per-repo ledger pointers (X9: every repo carries one) ──────────────────
+
+fail=0
+for r in "${repos_scanned[@]}"; do
+  f="$root/$r/ATTRIBUTION.md"
+  if [ ! -f "$f" ]; then
+    echo "FAIL $r/ATTRIBUTION.md missing -- every repo carries a ledger pointer"
+    fail=1
+  elif ! grep -q '](\.\./ATTRIBUTION\.md)' "$f"; then
+    echo "FAIL $r/ATTRIBUTION.md does not point at ../ATTRIBUTION.md"
+    fail=1
+  fi
+done
+
+# ── scan ───────────────────────────────────────────────────────────────────
+
+targets=()
+for r in "${repos_scanned[@]}"; do targets+=("$r"); done
+for d in "${docs_scanned[@]:-}"; do [ -n "$d" ] && targets+=("$d"); done
+
+hits=0
+by_ledger=0
+by_path=0
+by_allow=0
+fails=0
+
+scan_hits="$(cd "$root" && grep -rniH -E "$PHRASE_RE" \
+  "${INCLUDES[@]}" "${EXCLUDE_DIRS[@]}" "${EXCLUDE_FILES[@]}" \
+  "${targets[@]}" 2>/dev/null || true)"
+
+[ -n "$scan_hits" ] || {
+  echo "check-attribution: 0 hits across ${#targets[@]} target(s)." >&2
+  echo "check-attribution: the trees certainly contain adaptation claims; a silent grep is a broken gate, not a clean one." >&2
+  exit 1
+}
+
+resolve_line() {
+  # $1 file (root-relative), $2 hit line number, $3 hit text
+  # sets $resolution to ledger | path | allow | none
+  local f="$1" n="$2" line="$3" entry p rest l cl why
+  local file_dir repo_dir window cand tp base hit_class line_lc
+  local tier1_re='\b(adapted from|inspired by|ported from|borrowed from)\b'
+
+  resolution="none"
+
+  # A line carrying an attributive claim is tier 1 no matter what else it
+  # says: class-2 exemptions can never swallow it. Matched case-insensitively
+  # -- "Adapted from cloudflare-os" is exactly as much a claim as the
+  # lowercase spelling, and a case-sensitive test quietly reclassified the
+  # capitalised ones as tier 2.
+  line_lc="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$line_lc" =~ $tier1_re ]]; then hit_class=1; else hit_class=2; fi
+
+  file_dir="$root/$(dirname "$f")"
+  case "$f" in
+    */*) repo_dir="$root/${f%%/*}" ;;
+    *) repo_dir="$root" ;;
+  esac
+
+  window="$(sed -n "$((n > 2 ? n - 2 : 1)),$((n + 2))p" "$root/$f")"
+
+  local token_re="$repo_tokens"
+  if [ -n "$root_tokens" ]; then token_re="$root_tokens${token_re:+|$token_re}"; fi
+  if [ -n "$token_re" ] && printf '%s\n' "$window" | grep -qiwE "$token_re"; then
+    resolution="ledger"
+    [ "$verbose" -eq 1 ] && printf 'ledger %s\n' "$f"
+    return 0
+  fi
+
+  while IFS= read -r cand; do
+    cand="$(printf '%s' "$cand" | sed 's/[`,.:;)]*$//')"
+    [ -n "$cand" ] || continue
+    for tp in "$file_dir/$cand" "$repo_dir/$cand" "$root/$cand"; do
+      if [ -e "$tp" ]; then
+        resolution="path"
+        [ "$verbose" -eq 1 ] && printf 'path   %s  -> %s\n' "$f" "$cand"
+        return 0
+      fi
+    done
+    base="${cand#*/}"
+    if [ "$base" != "$cand" ]; then
+      for tp in "$file_dir/$base" "$repo_dir/$base" "$root/$base"; do
+        if [ -e "$tp" ]; then
+          resolution="path"
+          [ "$verbose" -eq 1 ] && printf 'path   %s  -> %s\n' "$f" "$base"
+          return 0
+        fi
+      done
+    fi
+  done < <(printf '%s\n' "$window" |
+    grep -oE '(\.\./)*[A-Za-z0-9_][A-Za-z0-9_./+-]*\.(md|tex|py|rs|sh|cdb|lean|yaml|yml|toml|cjs|js|ts|el|nix|txt|json)' || true)
+
+  # Ledger and cross-reference are tried first, so the report counts real
+  # resolutions before exemptions. Only then the reviewed allowlist, and only
+  # for the hit's own phrase class.
+  for entry in "${ALLOW[@]}"; do
+    # Fields: path :: line :: class :: reason -- trim the spaces around each
+    # field: an untrimmed `^path$ ` never matches anything.
+    p="$(printf '%s' "${entry%%::*}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    rest="${entry#*::}"
+    l="$(printf '%s' "${rest%%::*}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    rest="${rest#*::}"
+    cl="$(printf '%s' "${rest%%::*}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    why="${rest#*::}"
+    [ "$cl" = "*" ] || [ "$cl" = "$hit_class" ] || continue
+    if [[ "$f" =~ $p && "$line" =~ $l ]]; then
+      resolution="allow"
+      [ "$verbose" -eq 1 ] && printf 'allow  %s  [class %s] (%s)\n' "$f" "$cl" "$why"
+      return 0
+    fi
+  done
+}
+
+printf 'check-attribution: scanning %d repo(s), %d root doc(s)\n' "${#repos_scanned[@]}" "${#docs_scanned[@]}"
+
+while IFS=: read -r f n line; do
+  [ -n "$f" ] || continue
+  hits=$((hits + 1))
+  # Per-repo token set for this file (root union own, computed cheaply).
+  case "$f" in
+    */*) repo_of="${f%%/*}" ;;
+    *) repo_of="" ;;
+  esac
+  repo_tokens=""
+  if [ -n "$repo_of" ] && [ -f "$root/$repo_of/ATTRIBUTION.md" ]; then
+    repo_tokens="$(ledger_tokens "$root/$repo_of/ATTRIBUTION.md" | build_token_re)"
+  fi
+
+  resolution=""
+  resolve_line "$f" "$n" "$line"
+  case "$resolution" in
+    ledger) by_ledger=$((by_ledger + 1)) ;;
+    path) by_path=$((by_path + 1)) ;;
+    allow) by_allow=$((by_allow + 1)) ;;
+    *)
+      fails=$((fails + 1))
+      fail=1
+      printf 'FAIL %s:%s\n' "$f" "$n"
+      printf '     %s\n' "$(printf '%s' "$line" | cut -c1-160)"
+      printf '     resolve with: a source row in ATTRIBUTION.md (workspace root and/or this repo'\''s), an existing internal doc named on the line, or a reviewed allowlist entry.\n'
+      ;;
+  esac
+done <<<"$scan_hits"
+
+printf 'check-attribution: %d hit(s): %d ledger, %d internal cross-ref, %d allowlisted, %d unresolved\n' \
+  "$hits" "$by_ledger" "$by_path" "$by_allow" "$fails"
+
+if [ "$fail" -ne 0 ]; then
+  echo "check-attribution: an adaptation claim does not resolve to a ledger row or cross-reference." >&2
+  exit 1
+fi
+printf 'check-attribution: every adaptation claim resolves\n'

@@ -77,6 +77,13 @@ jobs:
         run: bash scripts/check-book-sync
       - name: status blocks present and sane (X2)
         run: bash scripts/check-status
+      # X9: every adaptation claim ("adapted from", "inspired by", "ported
+      # from", ...) in the trees must resolve to an ATTRIBUTION.md ledger row
+      # or an internal cross-reference. In CI this is the narrow shape: this
+      # checkout, its own ledger -- the workspace root here holds siblings,
+      # not the root ledger, so resolution must succeed from unfer's own rows.
+      - name: attribution ledger (X9)
+        run: bash scripts/check-attribution
       # M9: the truncated-vs-continuum and gauge-fixed-vs-lattice boundaries are
       # prose, so nothing checks them by default and a future edit can upgrade a
       # truncated claim to a continuum one silently. Narrow by design: it caught a
