@@ -6,26 +6,11 @@ Welcome, Agent. This repository contains high-performance tools for quantum fiel
 
 Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 
-- **SIRK split-mode.** Forward sequence $w_k=(H-z_kI)w_{k-1}$ on the CPU (the
-  branching is exponential, so it stays sparse); `StateDictionary` offloaded, Gram
-  matrix and $H_{proj}$ formed on GPU via `candle-core`. Device:
-  `Device::cuda_if_available(0)`.
-- **CAS.** Fields $\mapsto a^\dagger+a$, momenta $\mapsto i(a^\dagger-a)$. The
-  compiler MUST drop pure scalar terms in distribution — that is what makes
-  $\langle0|H|0\rangle=0$. Physics Hamiltonians must commute with the BRST charge.
-  **Quartic-and-worse models MUST bypass `Expression::expand()`** and build
-  `Operator` structures directly: $O(10^4)$ terms recurse infinitely in `distribute`.
-- **LaTeX.** `mathhook` → AST → `latex.rs` → operator strings. The LALRPOP parser
-  **requires explicit `*` or `\cdot`**; implicit multiplication by spacing is a
-  parse error.
-- **Numerics.** Inverse-free, so no $O(N^3)$ solves. $H_{proj}=W^\dagger H_{raw}W$
-  by eigendecomposition (whitening replaced a Cholesky that panicked on degenerate
-  Grams); if singular, reduce $m$ or shift $z_k$. **Always** use `nalgebra`'s Padé
-  `exp()` for reduced-system evolution or unitarity is lost.
-- **GPU triage (T2.2).** `device::probe_cuda`/`best_device` emit
-  `UK-GPU-<CODE> → <fix>`: `NO_DEVICE`, `ARCH_MISMATCH` (libcublas/libcuda vs
-  driver — fix `LD_LIBRARY_PATH`), `LIBRARY_MISSING`, `OUT_OF_MEMORY` (shrink
-  basis/window), `OTHER`. See `fock_sirk/examples/debug_cuda.rs`.
+- **SIRK split-mode.** Forward sequence $w_k=(H-z_kI)w_{k-1}$ on the CPU (the branching is exponential, so it stays sparse); `StateDictionary` offloaded, Gram matrix and $H_{proj}$ formed on GPU via `candle-core`. Device: `Device::cuda_if_available(0)`.
+- **CAS.** Fields $\mapsto a^\dagger+a$, momenta $\mapsto i(a^\dagger-a)$. The compiler MUST drop pure scalar terms in distribution — that is what makes $\langle0|H|0\rangle=0$. Physics Hamiltonians must commute with the BRST charge. **Quartic-and-worse models MUST bypass `Expression::expand()`** and build `Operator` structures directly: $O(10^4)$ terms recurse infinitely in `distribute`.
+- **LaTeX.** `mathhook` → AST → `latex.rs` → operator strings. The LALRPOP parser **requires explicit `*` or `\cdot`**; implicit multiplication by spacing is a parse error.
+- **Numerics.** Inverse-free, so no $O(N^3)$ solves. $H_{proj}=W^\dagger H_{raw}W$ by eigendecomposition (whitening replaced a Cholesky that panicked on degenerate Grams); if singular, reduce $m$ or shift $z_k$. **Always** use `nalgebra`'s Padé `exp()` for reduced-system evolution or unitarity is lost.
+- **GPU triage (T2.2).** `device::probe_cuda`/`best_device` emit `UK-GPU-<CODE> → <fix>`: `NO_DEVICE`, `ARCH_MISMATCH` (libcublas/libcuda vs driver — fix `LD_LIBRARY_PATH`), `LIBRARY_MISSING`, `OUT_OF_MEMORY`, `OTHER`. See `fock_sirk/examples/debug_cuda.rs`.
 
 ## Maintenance Checklist
 
@@ -70,7 +55,6 @@ Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 - [ ] **Outer-vacuum ground doctrine (S45)**: the nested-Fock ground is **always** the outer vacuum; `H|Ω⟩ = 0` identically. → `docs/NUMERICAL_VALIDATION_GUIDE.md`
 - [ ] **Momentum-space convolution (S47)**: `f⋆g[n] = Σ_m f[m]g[(n−m) mod n]` — **not** `g[(n+m)]`. → `docs/NUMERICAL_VALIDATION_GUIDE.md`
 - [ ] **Event-sourced Session (H3)**: `Session` is a write-ahead log — each mutating op appends a typed `SessionEvent` *before* it applies, and `restore` replays with strict-monotonic-seq + bracket-balance validation. **A compaction boundary must be a settled record — never `Evolve` (tool-pairing) and never `CompactStart`**; QFM sessions cannot be compacted at all. `debug_assert_reconstructable` replays the raw log after every op, so replay must stay deterministic. New `SessionEventSpec`/`SessionOp` variants keep the version marker, restore validation and the `PROTOCOL.md` row in sync. → `docs/PROTOCOL.md`, codes UK-1006..1009
-- [ ] **Certificate ledger (Plan R)**: the UTXO/carbon-certificate state machine lives in
 - [ ] **Certificate ledger (Plan R)**: `unfer_consensus::certs`. Four invariants — conservation on transfer, no double-spend, owner-only spend, mint-authority check — and the whole ledger is a pure function of the log. `MintAuthority::Threshold` makes minting a t-of-n Arctic/Shine check, verified identically on submit and on replay. → `docs/CONSENSUS_LEDGERS.md`
 - [ ] **Unified auction (Plan R)**: clearing is a pure function of the bids (highest `price_per_unit`, ties to earliest `seq`), so every node converges on the same winner; escrow is conserving and its face value equals the bid total. → `docs/CONSENSUS_LEDGERS.md`
 - [ ] **Math catastrophe bond (Plan R)**: the trigger is a nanoda proof run deterministically inside `apply_op` — no human oracle; a live bond cannot settle early and the id commits the full terms. → `docs/CONSENSUS_LEDGERS.md`
@@ -108,28 +92,20 @@ still fit — they compile against a *sibling's working tree*, which is what the
 The australVM bridge is the most tightly coupled crate in the workspace. Siblings:
 `../australVM`, `../velysterm` (also hosts the `unfer_agent` binary),
 `../dynamic-arctic`, `../timepiece`. See `PROJECT_PLAN.md`.
+
 ## Resolved Limitations
 
-Stages S1–S6, all closed: **CUDA optional** (tests run CPU-only; `cuda` is
-additive), **Gram robustness** (eigendecomposition whitening replaced the bare
-Cholesky that panicked on degenerate Grams), **BRST projection** (proper
-`project_physical` via CG), **explosion bounds** (`SirkOpts` +
-`compile_expression_bounded`), **the NS test** (re-enabled, runs the real solver),
-**restarted Krylov** (`evolve_restarted` + `reconstruct`).
-
-The QFM star-topology findings — rank saturation, the `m ≥ 3` floor, the
-`λ₀` sweet spot, anti-learning at `m = 3`, and the absence of generalization in
-single-mode-per-input encoding — are empirical results that took a search to
-establish. They live in **[`docs/QFM_STAR_TOPOLOGY.md`](docs/QFM_STAR_TOPOLOGY.md)**.
-
-One API note: `compile_channels` takes a `per_mode_weights` parameter
-(`Option<&HashMap<(u32,u32), f64>>`); pass `None` for uniform `λ₁`.
+Stages S1–S6 all closed (CUDA optional, Gram whitening, BRST projection,
+explosion bounds, NS test, restarted Krylov) — detail:
+**[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** §Resolved limitations. The
+QFM star-topology findings (rank saturation, the `m ≥ 3` floor, the `λ₀` sweet
+spot, anti-learning at `m = 3`, no generalization in single-mode-per-input
+encoding) and the `compile_channels` `per_mode_weights` API note:
+**[`docs/QFM_STAR_TOPOLOGY.md`](docs/QFM_STAR_TOPOLOGY.md)**.
 
 ## Core Dependencies
-- `candle-core`: GPU tensor management (with the `cuda` feature).
-- `mathhook`: LaTeX / math parsing.
-- `nalgebra`: linear algebra for the reduced subspace.
-- `quantrs2-symengine-pure`: symbolic expression AST.
+`candle-core` (GPU), `mathhook` (LaTeX), `nalgebra` (reduced subspace),
+`quantrs2-symengine-pure` (symbolic AST).
 
 ---
 *Note: This project targets the Millennium Prize requirements for Yang-Mills and Navier-Stokes existence by resolving dynamics over discrete Fock-basis boundaries.*

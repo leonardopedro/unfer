@@ -12,8 +12,8 @@ Status: drafted after a full audit of all three workspaces (668 + 319 tests,
       — Done: the manifest already listed all 65, but the four functions were
       `pub extern "C"` **without** `#[unsafe(no_mangle)]`, so the cdylib never
       exported them (61 actual). Added `no_mangle` to all four in
-      `unfer_ffi/src/lib.rs`; `nm -D` now shows exactly 65 `uk_*` matching
-      `EXPECTED_SYMBOLS.txt` and 5 `uz_*` matching `EXPECTED_SYMBOLS_ZENODO.txt`
+      `unfer_ffi/src/lib.rs`; `nm -D` now shows exactly the `uk_*` set of
+      `EXPECTED_SYMBOLS.txt` and the `uz_*` set of `EXPECTED_SYMBOLS_ZENODO.txt`
       (zenodo feature). All 73 lib + 30 integration + 1 doctest tests pass.
       The `ffi-symbols` CI job's awk/diff check now succeeds.
 - [x] 2. Add 26 missing `uk_*` to bridge dispatch table
@@ -121,10 +121,11 @@ Status: drafted after a full audit of all three workspaces (668 + 319 tests,
       surfacing as a downstream UK-1003.
 - [x] 15. C header declares 18 of 65 ABI functions
       (`unfer_ffi/include/unfer_kernel.h`).
-      — Done: the header declares all 65 `uk_*` (64 return `int64_t`, one —
-      `uk_ode_measure_original` — returns `double`, matching the Rust
-      `-> f64`) and all 5 `uz_*`. Verified symbol-for-symbol against
-      `EXPECTED_SYMBOLS.txt` / `EXPECTED_SYMBOLS_ZENODO.txt`.
+      — Done: the header declares every symbol of the census — all return
+      `int64_t` except `uk_ode_measure_original` (returns `double`, matching
+      the Rust `-> f64`) — verified symbol-for-symbol against
+      `EXPECTED_SYMBOLS.txt` / `EXPECTED_SYMBOLS_ZENODO.txt`; the counts live
+      only in those generated files.
 
 ## Tier 3 — Security surface
 
@@ -169,7 +170,8 @@ Status: drafted after a full audit of all three workspaces (668 + 319 tests,
       (nested_fock_algebra, fock_sirk, unfer_protocol, prob_kernel,
       unfer_ffi, logos, unfer_consensus, unfer_identity, unfer_data);
       18 READMEs created (11 unfer + 8 velysterm — both repos' missing
-      census cleared); C header completed in #15 (65 uk_* + 5 uz_*);
+      census cleared); C header completed in #15 (counts from the generated
+      census, never hand-maintained);
       3 runnable doctests added (unfer_protocol, unfer_identity, unfer_ffi)
       — all pass, doc build shows only pre-existing benign warnings.
 - [x] 24. Stale docs: `unfer_agent.rs` says 8 ops (now 32); velysterm

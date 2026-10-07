@@ -15,7 +15,7 @@
 
 ## 0. Status — the proof has already started
 
-> ### Execution status, 2026-10-06
+> ### Execution status, 2026-10-07
 >
 > All nine items were executed. Summary, with the detail under each item:
 >
@@ -24,8 +24,8 @@
 > | **M1** campaign | **DONE, but measuring the WRONG OBJECT.** 20 pinned fixtures, no coupling certifies a positive gap — **and the emitted quantity is an intra-sector diagnostic, not the physical mass gap.** See the sector correction below; this supersedes every other M1 conclusion. |
 > | **M2** gate | **DONE as a command**, acceptance PARTIAL | Runs the canonical order and refuses to touch fixtures when a step is unproven. Steps 2–3 could not run on this host (no Aeneas bundle, no network), so **byte-identical reproduction is unverified**. |
 > | **M3** spec parity | **DONE** | The copies *had* drifted. A byte-sync would have destroyed the bundle's self-containment, so the gate checks 22 operative claims instead. |
-> | **M4** suites | **PARTIAL** | Upkeep done; the §4 ↔ test bijection is still only greppable by hand. |
-> | **M5** f64 complement | **PARTIAL** | 12 proptest properties done. **The Kani harness does not exist.** |
+> | **M4** suites | **DONE** | All 35 tests green in debug + release, runtimes measured and pinned in the seven suite headers; §4 ↔ test bijection machine-checked by `check-mass-gap-claims` in CI. |
+> | **M5** f64 complement | **DONE, 2 residual gaps** | 12 proptest properties + **15 Kani harnesses: 12 proven, 3 CBMC timeouts at 30 min** (SAT-hard monotonicity proofs, *not* counterexamples). The 4 first-run failures were a CBMC `__builtin_powi` model artifact — root-caused and fixed. |
 > | **M6** evidence | **DONE** | Fixtures are self-describing, hashes manifested, log entry written. |
 > | **M7** docs | **PARTIAL** | Boundaries enforced; the **public `test/` pages are not yet updated** with the negative result. |
 > | **M8** H-of-record seam | **no change needed** | Untouched by M1–M9; its Cadabra tests are *unrun here* (no `cadabra2-cli`). |
@@ -467,17 +467,34 @@ in `PROJECT_PLAN.md`); add the release-profile note to each suite header.
 **Acceptance**: `MASS_GAP_SPEC.md` §4 table ↔ test names bijection checkable
 by grep; heavy-suite logs current. Owner: planner.
 
-> **RESULT (2026-10-06) — PARTIAL: upkeep done, no new suites added, bijection
-> check NOT built.** Every claim row of `MASS_GAP_SPEC.md` §4 is already pinned by a
+> **RESULT (2026-10-07) — DONE.** Every claim row of `MASS_GAP_SPEC.md` §4 is already pinned by a
 > named test (`qym_mass_gap.rs`, `qcd_mass_gap_certified.rs`,
 > `hashimoto_error_bands.rs`, `bands_program_gauge_fixed.rs`,
 > `guard_justification_study.rs`, `outer_vacuum_ground_validation.rs`,
-> `assumption_ledger.rs`), and all are green. The **§4 ↔ test bijection check is not
-> machine-checked** — it is greppable by hand, so a claim row added to the spec
-> without a test would go unnoticed. The heavy suites now run in CI through the M1
-> campaign (release profile), which closes the "heavy-suite logs current" half of
-> the acceptance; the per-suite release-profile header note was not added
-> everywhere.
+> `assumption_ledger.rs`), and all are green in both profiles. The
+> **§4 ↔ test bijection is now machine-checked**: `scripts/check-mass-gap-claims`
+> verifies both directions (row → test and test → row) plus the "(N tests)"
+> count, against **both** copies of the spec (the `docs/` copy and the
+> `timepiece/unfer_contracts/` bundle the specialist reads), and runs in CI as
+> the M4 step. Heavy suites run on schedule through the M1 campaign in CI
+> (release profile), which closes the "heavy-suite logs current" half of the
+> acceptance. The per-suite release-profile note was added to **all seven**
+> headers with measured debug and release runtimes (M4, 2026-10-07):
+>
+> | suite | debug (dev profile) | release (CI profile) |
+> |---|---|---|
+> | `qym_mass_gap` | 10 passed / 2664.75s | 10 / 23.01s |
+> | `bands_program_gauge_fixed` | 6 passed / 2148.28s | 6 / 3.57s |
+> | `outer_vacuum_ground_validation` | 6 passed / 2246.49s | 6 / 0.19s |
+> | `qcd_mass_gap_certified` | 3 passed / 882.50s | 3 / 13.53s |
+> | `hashimoto_error_bands` | 4 passed / 91.39s | 4 / 3.63s |
+> | `guard_justification_study` | 3 passed / 67.51s | 3 / 12.27s |
+> | `assumption_ledger` | 3 passed / 0.07s | 3 / 0.01s |
+>
+> All 35 tests passed in both profiles (debug runs on 2026-10-07, release on
+> 2026-10-06). **No new suites were added**, and none was needed: every §4 row
+> was already pinned by a named test; the gap was the machine check and the
+> header notes, both now closed.
 >
 > **On the reflection-sector correction:** the spec's `≈ 0.09 at g = 1` was already
 > corrected away from the lattice's `g²/2`. M1 pinned down which quantity that
@@ -498,20 +515,78 @@ property-test wave.
 **Acceptance**: `scripts/verify-invariants` (H1) or `cargo test` runs the new
 properties; Kani harness documented with expected runtime. Owner: planner.
 
-> **RESULT (2026-10-06) — the proptest half is DONE; the Kani half is NOT DONE.**
-> `fock_sirk/tests/mass_gap_properties.rs`, 12 properties, all passing:
+> **RESULT (2026-10-07) — both halves DONE; 12 of 15 Kani harnesses proven, 3 CBMC
+> timeouts recorded as residual gaps.**
+>
+> **Proptest half** (2026-10-06): `fock_sirk/tests/mass_gap_properties.rs`, 12
+> properties, all passing:
 > `certified_width` monotone in the residual and in `‖Ĝ‖`; width never negative or
 > non-finite; `interval_contains` reflexive; `gap_interval` ordered; the interval
 > endpoints **are** the T6 assembly (`lo = θᵒ − θᵉ − (δᵒ + δᵉ)`); the certified lower
 > bound lies inside the interval; `certified_positive` follows `lo`;
 > `backward_error_const` monotone in the rank; `UNIT_ROUNDOFF` pinned to exactly
 > `2⁻⁵³`; `parlett_bound` monotone in the residual; the Rayleigh quotient finite on
-> its domain.
+> its domain. All 12 are mirrored as Kani harnesses.
 >
-> **The Kani harness does not exist.** `kani` is not a workspace dependency, there
-> is no `#[kani::proof]` anywhere, and this environment cannot install the
-> toolchain. Recorded as outstanding rather than claimed. `fock_sirk`'s
-> `dev-dependencies` gained `proptest`; nothing else changed.
+> **Kani half** (2026-10-07): `fock_sirk/src/mass_gap_kani.rs`, **15 harnesses** —
+> the 12 property mirrors plus three witness-follows lemmas
+> (`the_disjointness_predicate_follows_its_witness`,
+> `the_vacuum_predicate_follows_its_tolerance`, and the parlett non-negativity
+> witness). Measured verdicts (Kani 0.68.0, CBMC 6.11.0):
+>
+> | harness | verdict | time |
+> |---|---|---|
+> | `the_vacuum_predicate_follows_its_tolerance` | SUCCESSFUL | 0.10s |
+> | `the_disjointness_predicate_follows_its_witness` | SUCCESSFUL | 0.07s |
+> | `the_parlett_bound_is_non_negative` | SUCCESSFUL | 0.23s |
+> | `the_rayleigh_quotient_is_finite` | SUCCESSFUL | 0.10s |
+> | `the_unit_roundoff_constant_is_pinned` | SUCCESSFUL | 0.03s |
+> | `certified_positive_follows_lo` | SUCCESSFUL | 0.10s |
+> | `backward_error_is_monotone_in_the_rank` | SUCCESSFUL | 2.17s |
+> | `the_width_is_never_negative` | SUCCESSFUL | 1.14s |
+> | `the_gap_interval_is_ordered` | SUCCESSFUL | 3.10s |
+> | `interval_containment_is_reflexive` | SUCCESSFUL | 43.4s |
+> | `the_certified_lower_bound_lies_inside_the_gap_interval` | SUCCESSFUL | 240.0s |
+> | `the_gap_interval_endpoints_match_the_t6_assembly` | SUCCESSFUL | 494.5s |
+> | `the_parlett_bound_is_monotone_in_the_residual` | **FAILED — CBMC timed out** (30m bound; an unbounded run ground 2h02m on the same 40 343-var / 194 499-clause instance) | 30m |
+> | `the_width_is_monotone_in_the_operator_norm` | **FAILED — CBMC timed out** (30m bound) | 30m |
+> | `the_width_is_monotone_in_the_residual` | **FAILED — CBMC timed out** (30m bound) | 30m |
+>
+> **A timeout is not a counterexample.** Kani prints `CBMC timed out. …` in place
+> of a trace for these three; all three are monotonicity proofs over symbolic
+> `f64` through multiply/divide, i.e. SAT-hard. They are recorded as **residual
+> gaps**, not as property failures, and every non-`powi` check inside each of
+> those harnesses passes. Rerun command for any one of them:
+>
+> ```sh
+> cd unfer && export CARGO_TARGET_DIR=/tmp/kani-target2 RUSTUP_TOOLCHAIN=1.97.1
+> cargo kani -Z unstable-options -p fock_sirk --ignore-global-asm \
+>   --harness-timeout 30m --harness the_parlett_bound_is_monotone_in_the_residual
+> ```
+>
+> **Run caveats (documented, per acceptance):** `kani` is *not* a crates.io
+> dependency and must never be added to `Cargo.toml` — `cargo kani` injects its own
+> copy from `~/.kani/`; harnesses live in the lib behind `#[cfg(kani)]` because
+> cargo-kani 0.68 verifies lib/bin only (no `--tests`), with
+> `[lints.rust] unexpected_cfgs … check-cfg = ['cfg(kani)']` keeping clippy clean;
+> the transitive `pulp` dependency needs `-Z unstable-options --ignore-global-asm`,
+> which **skips** those global-asm bodies — a soundness caveat for anything proved
+> about `pulp` internals (none of these harnesses touch it); `--harness-timeout`
+> is itself experimental and needs `-Z unstable-options`.
+>
+> **The 4 first-run failures were a verifier artifact, root-caused.** Before the
+> fix, `the_unit_roundoff_constant_is_pinned`, `backward_error_is_monotone_in_the_rank`,
+> `the_width_is_monotone_in_the_residual`, and `the_width_is_monotone_in_the_operator_norm`
+> each failed exactly one check while every sibling check passed. Cause: CBMC 6.11's
+> model of `__builtin_powi` is the Ankerl bit-hack with a **fresh nondeterministic
+> exponent per call** (`__VERIFIER_nondet_int32_t()` assumed `≥ −90253`), so
+> `x.powi(n)` is not `x*x*…*x` inside the verifier. Rustc -O emits two `mulsd` for
+> `x.powi(3)` (5M-pattern bit sweep: 0 mismatches), and `2f64.powi(-53)` folds to
+> bits `0x3CA0_0000_0000_0000`. Fixes: `backward_error_const` now computes
+> `n * n * n` literally, and the roundoff harness pins `to_bits()` instead of
+> comparing through `powi`; the module header records the rule "nothing here calls
+> `powi`". Reruns of the first two then passed (0.03s / 2.17s); the two width
+> harnesses then hit the 30m timeout above.
 >
 > Two generator facts the properties had to respect: `rayleigh_quotient`
 > legitimately **panics** on a zero vector (the quotient is undefined), so the

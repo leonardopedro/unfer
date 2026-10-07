@@ -41,6 +41,13 @@
 //!   direct component counts ≪ budget. The one model that genuinely needs
 //!   the engagement (quartic Yang–Mills lattice, l≥4) documents its dropped-
 //!   mass bound via its existing spectral-tolerance tests.
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **3 passed / 67.51s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **3 passed /
+//! 12.27s** (~5.5×). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

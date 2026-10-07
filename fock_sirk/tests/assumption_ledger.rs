@@ -49,6 +49,13 @@
 //!      coherent state is NOT — there the exact Poisson sum is the
 //!      prediction, not the truncated solver. No failure is hidden by
 //!      loosening a tolerance or changing the model.
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **3 passed / 0.07s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **3 passed /
+//! 0.01s**. The debug numbers are recorded for completeness — this suite is
+//! cheap in both profiles.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

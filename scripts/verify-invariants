@@ -145,9 +145,14 @@ check "S27: uk_snapshot enforces the refusal" \
 # ("14 uk_*", "81 uk_* + 5 uz_*", "21 uk_*") that went stale as the S29
 # checklist added symbols — the generated EXPECTED_SYMBOLS*.txt census is
 # the only authoritative count. Live docs must point at it, never hard-code
-# a number that rots.
+# a number that rots. Extended by plan2 A7 to the four plan/status docs that
+# still carried stale counts (LODY_PATTERNS_PLAN, IMPROVEMENT_PLAN,
+# PLAN_parallel_unfer, PLAN_HARNESS). Deliberately NOT covered:
+# docs/IMPLEMENTATION_PLAN.md — its matches are frozen historical spec rows
+# ("14 uk_* extern fns") plus a false positive ("4 `uk_observe` calls" = a
+# call count, not a symbol census).
 check "H1.12: live docs carry no hand-maintained uk_/uz_ symbol counts" \
-    bash -c "! grep -nE '[0-9]+ (\`uk_|\`uz_|uk_|uz_)' \"$repo_root/README.md\" \"$repo_root/AGENTS.md\" \"$repo_root/docs/ARCHITECTURE.md\" \"$repo_root/unfer_ffi/README.md\""
+    bash -c "! grep -nE '[0-9]+ (\`uk_|\`uz_|uk_|uz_)' \"$repo_root/README.md\" \"$repo_root/AGENTS.md\" \"$repo_root/docs/ARCHITECTURE.md\" \"$repo_root/unfer_ffi/README.md\" \"$repo_root/docs/LODY_PATTERNS_PLAN.md\" \"$repo_root/docs/IMPROVEMENT_PLAN.md\" \"$repo_root/PLAN_parallel_unfer.md\" \"$repo_root/PLAN_HARNESS.md\""
 
 # --- H1.13 Result channel is fresh per call (no stale facts) ---
 # Every result-producing uk_* op clears the per-session result slot on entry,
@@ -207,6 +212,16 @@ check "H12: notes implemented dir has the four categories" \
 # numeric constructors). Zero actionable hits required.
 check_py "H12: duplication scan has zero actionable hits" \
     python3 "$repo_root/scripts/duplication"
+
+# --- X3: AGENTS.md knowledge-extraction budget ---
+# X3 extracted the S30* essays into docs/ pages (118K -> 16K) and left
+# one-line invariants + pointers, but nothing stopped the checklist from
+# growing back — it sat at 135 lines against a <=~120 target with no gate,
+# which is how extraction budgets get silently lost. The count is the
+# budget's observable: a paragraph that wants to live here belongs in
+# docs/ with a link, not in a longer checklist.
+check "X3: AGENTS.md stays within the 120-line extraction budget" \
+    bash -c 'n=$(wc -l < "$0"); [ "$n" -le 120 ]' "$repo_root/AGENTS.md"
 
 echo
 echo "verify-invariants: $PASSED passed, $GAPS explained gap(s), $FAILED failed"

@@ -46,8 +46,17 @@ pub const UNIT_ROUNDOFF: f64 = 1.1102230246251565e-16;
 
 /// Conservative backward-error constant `c(n) = n³` (§4.1): `n` = Krylov
 /// rank of the whitened reduced Hamiltonian.
+///
+/// Written `n * n * n` rather than `n.powi(3)` (which
+/// `certificate::backward_error_const` still uses): the two are
+/// bit-identical on hardware — LLVM lowers `powi(3)` to exactly these two
+/// multiplies (verified in the generated asm, and over 5 M random bit
+/// patterns) — but CBMC's library model of `__builtin_powi` is a
+/// *nondeterministic approximation*, so Kani can prove nothing about a
+/// `powi` result. See the `mass_gap_kani` module header.
 pub fn backward_error_const(rank: usize) -> f64 {
-    (rank as f64).powi(3)
+    let n = rank as f64;
+    n * n * n
 }
 
 /// Parlett's a-posteriori bound: for a computed pair `(θ, ψ)` of `H_m`,

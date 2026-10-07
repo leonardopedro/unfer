@@ -70,9 +70,11 @@ The H4 durable store (`unfer_ffi/src/durable/`) already had the
 
 ### 3. `unfer` — FFI exposure of live status
 
-`unfer_ffi` now exports **84 `uk_*` symbols**. Two new symbols, both
-registered in the single-source-of-truth `SYMBOL_REGISTRY` and regenerated
-through `scripts/gen_symbol_artifacts` (header + `EXPECTED_SYMBOLS.txt` +
+`unfer_ffi` exports its `uk_*` set from the single-source-of-truth
+`SYMBOL_REGISTRY` — the count lives only in the generated
+`EXPECTED_SYMBOLS.txt`, never as a number in this plan. Two new symbols in
+this pass, both registered in `SYMBOL_REGISTRY` and regenerated through
+`scripts/gen_symbol_artifacts` (header + `EXPECTED_SYMBOLS.txt` +
 `EXPECTED_SYMBOLS_ZENODO.txt`):
 
 - **`uk_durable_status(buf, cap)`** — buffer-out JSON live status: backend
@@ -270,6 +272,7 @@ neither can race the kernel's writes.
 - `cargo test -p mathed_core` green (154) and `cargo build -p mathed` green
   in `velysterm`; clippy clean.
 - `cargo test -p unfer_ffi -p unfer_protocol` green in `unfer` (94 lib +
-  44 ffi integration + 109 protocol); `scripts/gen_symbol_artifacts check`
-  clean (84 uk_ + 5 uz_ in sync).
+  44 ffi integration + 109 protocol);  `scripts/gen_symbol_artifacts check`
+  clean (header, `EXPECTED_SYMBOLS.txt`, and `EXPECTED_SYMBOLS_ZENODO.txt`
+  in sync with the registry).
 - Both repos committed and synced.

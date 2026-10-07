@@ -27,6 +27,11 @@ quantrs2-symengine-pure = "0.1.3"
 criterion = "0.5"
 # M5: property tests for the pure mass-gap functions (mass_gap_properties.rs).
 proptest = { workspace = true }
+# M5: Kani harnesses for the same pure core (src/mass_gap_kani.rs). No
+# `kani` dependency here: the crate is not on crates.io (the name there is a
+# placeholder) — `cargo kani` injects its own library from ~/.kani. The module
+# is `#[cfg(kani)]`-gated, so ordinary `cargo test` compiles an empty module
+# and the suite counts do not move.
 
 [[bench]]
 name = "sirk"
@@ -39,3 +44,9 @@ harness = false
 name = "sirk_cuda"
 harness = false
 required-features = ["cuda"]
+
+# `cfg(kani)` is set only by `cargo kani`. Register it so rustc's
+# unexpected-cfg lint — enforced as `-D warnings` by CI — accepts the
+# `#[cfg(kani)]` gates in src/lib.rs and src/mass_gap_kani.rs.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

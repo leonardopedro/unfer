@@ -44,6 +44,14 @@
 //! bases plus SIRK–Hashimoto solves (`solve_forward_sirk_with_opts`) for the
 //! solver-level signatures. Every sector test asserts one-particle
 //! Hermiticity as a correctness gate (the enclosure is Hermitian iff `h` is).
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **6 passed / 2246.49s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **6 passed /
+//! 0.19s** (~11800× — the debug run is dominated by debug-assert-checked
+//! linear algebra). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one — ~37 min in debug.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

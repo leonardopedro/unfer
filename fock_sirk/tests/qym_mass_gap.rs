@@ -58,6 +58,14 @@
 //!    (the lattice's strict `lo > 0` stopping rule is not honestly
 //!    reachable here: the deep squeezing makes the Krylov residuals large at
 //!    the solved `m`, so the certified widths honestly cover the gap).
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **10 passed / 2664.75s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **10 passed /
+//! 23.01s** (~116×). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one — this suite alone
+//! is ~44 min in debug.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

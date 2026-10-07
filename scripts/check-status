@@ -42,6 +42,32 @@ checked=0
 skipped=0
 root="$(ws_root)"
 
+# X2: presence is not visibility. `grep` finds `<!-- status: ... -->` inside a
+# fenced code block too, where it renders as literal source text instead of a
+# status line -- two READMEs shipped exactly that (the X2 insertion landed
+# between an opener and its closer), and this gate passed over both because
+# grep cannot see rendering. The same defect one level up is a fence left
+# unclosed: it swallows everything after it as code. Track fence state with
+# CommonMark's rule -- a *closing* fence carries no info string -- and report
+# which problem a README has. Output: ok | trapped | unclosed | unseen.
+status_fences() {
+  awk '
+    /^```/ {
+      rest = $0; sub(/^`+/, "", rest)
+      if (!open) { open = 1; next }
+      if (rest ~ /^[[:space:]]*$/) open = 0
+      next
+    }
+    /<!-- status:/ { seen = 1; if (open) trapped = 1 }
+    END {
+      if (trapped) { print "trapped"; exit 1 }
+      if (open)    { print "unclosed"; exit 1 }
+      if (!seen)   { print "unseen"; exit 1 }
+      print "ok"
+    }
+  ' "$1"
+}
+
 # X2: optional recount requests, filled from --recount REPO=LOG.
 recount_specs=""
 while [ $# -gt 0 ]; do
@@ -98,10 +124,14 @@ for repo in $REPOS; do
   fi
 
   block=""
+  block_file=""
   for f in README.md README; do
     [ -f "$dir/$f" ] || continue
     block="$(grep -m1 -oE '<!-- status: [^>]*-->' "$dir/$f" || true)"
-    [ -n "$block" ] && break
+    if [ -n "$block" ]; then
+      block_file="$dir/$f"
+      break
+    fi
   done
 
   if [ -z "$block" ]; then
@@ -110,6 +140,27 @@ for repo in $REPOS; do
     continue
   fi
   checked=$((checked + 1))
+
+  case "$(status_fences "$block_file")" in
+    ok) ;;
+    trapped)
+      printf 'FAIL %-16s status block sits inside a code fence (renders as literal text)\n' "$repo"
+      printf '       move the block above the fence, or close the fence before it: %s\n' "$block_file"
+      fail=1
+      continue
+      ;;
+    unclosed)
+      printf 'FAIL %-16s unclosed code fence -- everything after it renders as code\n' "$repo"
+      printf '       balance the fences in %s\n' "$block_file"
+      fail=1
+      continue
+      ;;
+    *)
+      printf 'FAIL %-16s could not determine fence state of %s\n' "$repo" "$block_file"
+      fail=1
+      continue
+      ;;
+  esac
 
   for field in status tests last_verified; do
     if ! printf '%s' "$block" | grep -qE "$field: [^ ]"; then

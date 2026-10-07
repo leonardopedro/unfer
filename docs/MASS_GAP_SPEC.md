@@ -111,7 +111,7 @@ continuum Millennium mass gap. The continuum passage needs one additional
 | **gapped at g>0**: E₁−E₀ = 0.091 stable across N≤6/N≤8; SIRK Ritz values bound the exact levels from above | `qym_gauge_fixed_spectral_gap_positive_stable` | ✓ |
 | **gapless abelian limit**: g=0 truncated gap shrinks with depth (0.34→0.19→0.12 at N≤4/6/8); R-sector grounds coincide at every m | `qym_gauge_fixed_abelian_limit_gapless` | ✓ |
 | gap grows with g (0.030 at g=0.5, 0.091 at g=1, 1.24 at g=2, N≤8) | `qym_gauge_fixed_gap_grows_with_coupling` | ✓ |
-| squeezed ground, not the Fock vacuum (E₀<0; R-odd at strong coupling) | `qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum` | ✓ |
+| one-particle ground is squeezed, not the Fock vacuum (E₀<0 under ⟨0|H|0⟩=0; R-odd at strong coupling) — a one-particle diagnostic; the nested-Fock ground stays the outer vacuum (S45) | `qym_gauge_fixed_one_particle_ground_sector_structure` | ✓ |
 | SIRK sector Ritz values tighten with m | `qym_gauge_fixed_sirk_ritz_monotone_stable_in_m` | ✓ |
 | certified interval encloses the exact truncated gap | `qym_gauge_fixed_certified_enclosure_of_exact_gap` | ✓ |
 | seam = manual assembly; spec predicates fire | `qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly` | ✓ |

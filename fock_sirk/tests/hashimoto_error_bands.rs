@@ -22,6 +22,13 @@
 //! Each test prints its band table [m, err, lo(C=2), hi(C=11.08), E_m,
 //! e^{-hm}] and asserts: measurement ≤ upper edge; overall error decay
 //! across m; geometric tightening of the band.
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **4 passed / 91.39s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **4 passed /
+//! 3.63s** (~25×). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one.
 
 mod hashimoto_support;
 

@@ -76,8 +76,9 @@ Every item below maps to a stage.
 
 ## System context
 
-- **unfer** — the kernel: `prob_kernel::Session`, `unfer_ffi` (65 `uk_*` +
-  `uz_*` symbols; loopback with S21/S23/S25/S26/S27/S28), `unfer_protocol`
+- **unfer** — the kernel: `prob_kernel::Session`, `unfer_ffi` (`uk_*` +
+  `uz_*` symbols per the generated `EXPECTED_SYMBOLS*.txt` census; loopback
+  with S21/S23/S25/S26/S27/S28), `unfer_protocol`
   (serde + UK-####), QFT engines, `logos`, `ode_sirk`, `unfer_consensus`
   (QuePaxa + cert/auction ledgers + math-bond SPV + vAMM/NegRisk market),
   `unfer_identity`, `unfer_data`, `unfer_edge`, `unfer_taler`,
@@ -770,4 +771,3 @@ existing mechanism" left it here with its useful kernel folded into a stage.
 2. After H8 lands: `../unfer/docs/MODULE_RECIPE.md` (archetype-selection
    vocabulary).
 3. After H3/H4 land: event-log + durability notes in `../velysterm/AGENTS.md`
-   and `../australVM/AGENTS.md` kernel-facing sections.

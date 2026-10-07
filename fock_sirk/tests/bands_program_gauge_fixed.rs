@@ -21,6 +21,13 @@
 //!    speed split established by rigorous bound alone.
 //! 6. `qed_casimir_cavity_band_dispersion` — Casimir cavity ω_n = nπ/d:
 //!    exact diagonal reference + band tables (fourth bounded model).
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **6 passed / 2148.28s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **6 passed /
+//! 3.57s** (~602×). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one — ~36 min in debug.
 
 mod hashimoto_support;
 

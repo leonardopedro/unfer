@@ -7,7 +7,7 @@ Parallel workstream 1 of 3. Companion plans: `australVM/PLAN_parallel_australvm.
 
 Three repos form one system:
 - **unfer** (this repo) — the kernel: `prob_kernel::Session` (Born-rule API), `unfer_ffi`
-  (21 `uk_*` + 5 `uz_*` C symbols), `unfer_protocol` (serde + UK-#### codes), `qfm`/`qfm_text`,
+  (C symbols per the generated `EXPECTED_SYMBOLS*.txt` census), `unfer_protocol` (serde + UK-#### codes), `qfm`/`qfm_text`,
   6 Austral modules, plus new crates: `logos` (CNL→verified execution compiler),
   `ode_sirk` (ODE→Hamiltonian singularity detection), `unfer_consensus` (QuePaxa federation),
   `unfer_data` (encrypted chunked data plane), `unfer_identity` (DID/keypair).
@@ -26,7 +26,7 @@ here propagates to both. Keep this repo green at all times.
 1. **Ownership**: modify only files inside this repo. Cross-repo *reads* are fine.
    Cross-repo *writes* are forbidden, except steps explicitly marked `[SYNC]`.
 2. **Frozen contract** (additive-only changes allowed; no renames/removals/signature changes):
-   - the 21 `uk_*` and 5 `uz_*` symbols and their C signatures;
+   - the `uk_*`/`uz_*` symbols (census: `unfer_ffi/EXPECTED_SYMBOLS*.txt`) and their C signatures;
    - `prob_kernel::Session` public API;
    - `unfer_protocol` serde types and UK-#### code assignments;
    - the NDJSON agent ops (20+); `module.toml` grant vocabulary.
@@ -52,7 +52,7 @@ here propagates to both. Keep this repo green at all times.
 |-------|---------|
 | A1 | Committed Pauli–Grover in-flight work |
 | A2 | Doc-drift sweep (AGENTS.md, MODULE_RECIPE, PROTOCOL.md, ARCHITECTURE) — DONE |
-| A3 | FFI symbol CI gate (`EXPECTED_SYMBOLS.txt`, 21 uk_* + 5 uz_*) — DONE |
+| A3 | FFI symbol CI gate (generated `EXPECTED_SYMBOLS.txt` census) — DONE |
 | A4 | `tools/module_builder` — unified build+test for all 6 modules — DONE |
 | A5 | Property & fuzz tests (nested_fock_algebra proptest, unfer_protocol fuzz) — DONE |
 

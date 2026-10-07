@@ -99,10 +99,16 @@ bash bayes_update_module/run_demo.sh # Quantum Bayesian Update
 ```bash
 # from unfer/ with velysterm as a sibling:
 
+cd ../velysterm
+cargo run -p kernel_client --bin unfer_agent -- --help
+printf '{"id":"1","op":"version","params":{}}\n' \
+  | cargo run -p kernel_client --bin unfer_agent
+```
+
 <!-- status: verified | tests: 1764 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-06 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
-`fock_sirk` (an external physics dependency, 371 tests as of 2026-10-04,
+`fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
 measured separately in `--release` below). Excluding it is a scope choice, not
 a refresh, so it is stated rather than left for a reader to infer — as is the
 change from the previous figure, 1640.
@@ -126,7 +132,8 @@ nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
 #   1764 passed (2026-10-06; identical count in --release, per suite)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
-#   371 passed across 53 binaries (2026-10-04)
+#   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04
+#   — three test binaries added by the M1/M4/M5 mass-gap campaign)
 ```
 
 The workspace suite has **three** known-intermittent tests in `unfer_ffi`'s
@@ -159,12 +166,6 @@ lake exe cache get     # mathlib v4.28.0 oleans; without it the build is hours
 `flake.nix` deliberately does not carry Lean for that reason, and does carry the
 native deps (`zlib-ng`, `cmake` from the unstable channel) that `unfer_edge`'s
 `libz-ng-sys` needs.
-
-cd ../velysterm
-cargo run -p kernel_client --bin unfer_agent -- --help
-printf '{"id":"1","op":"version","params":{}}\n' \
-  | cargo run -p kernel_client --bin unfer_agent
-```
 
 ### GPU SIRK (optional, requires CUDA toolkit)
 ```bash
@@ -215,8 +216,8 @@ int64_t n = uk_get_result(model, buf, cap);
   `sirk_core_model` 5. Debug and `--release` report the same count for
   every suite (verified 2026-10-06; no test is gated on
   `cfg(debug_assertions)`).
-- `fock_sirk` is measured separately (371 across 53 binaries,
-  2026-10-04, `--release`) and is **not** in the 1764 above.
+- `fock_sirk` is measured separately (401 across 56 binaries,
+  2026-10-06, `--release`) and is **not** in the 1764 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`

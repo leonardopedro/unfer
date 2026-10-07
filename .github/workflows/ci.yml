@@ -73,6 +73,12 @@ jobs:
       # when written; the differences turned out to be the declared ones.
       - name: MASS_GAP_SPEC.md operative parity (M3)
         run: bash scripts/check-mass-gap-spec-parity
+      # M4: §4's table is the contract pinning each claim to a named test, and
+      # both directions had gone stale by hand only -- row 7 named a function
+      # that had been renamed. Both copies of the spec are checked, bundle
+      # included, because the specialist reads that copy.
+      - name: MASS_GAP_SPEC.md §4 rows ↔ suite tests bijection (M4)
+        run: bash scripts/check-mass-gap-claims
 
   # ---------------------------------------------------------------------------
   # X7: cross-repo integration.

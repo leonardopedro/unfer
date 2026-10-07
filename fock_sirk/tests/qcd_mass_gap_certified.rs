@@ -25,6 +25,13 @@
 //!    NDJSON with the sector labels, θ, δ consumed by the Lean4 T6 instance
 //!    (`ChapterSirkCertifiedGap`); the `certified_positive` flag truthfully
 //!    reflects `lo > 0` of the emitted numbers.
+//!
+//! ## Measured runtimes (M4, 2026-10-07)
+//!
+//! Debug (`cargo test`, dev profile): **3 passed / 882.50s**; release
+//! (`cargo test -p fock_sirk --release`, the CI profile): **3 passed /
+//! 13.53s** (~65×). The debug numbers are recorded so the cost of running
+//! the default profile is known before anyone starts one.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;

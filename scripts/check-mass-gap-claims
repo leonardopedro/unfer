@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# M4 — §4 claim-table ↔ test-name bijection.
+#
+# `MASS_GAP_SPEC.md` §4 is a contract: each claim row names the test that pins
+# it. Both directions can rot while every grep still "finds something":
+#
+#   row → test:  a row names a test that was renamed (row 7 named
+#                `qym_gauge_fixed_ground_is_squeezed_not_fock_vacuum` after the
+#                function had become `qym_gauge_fixed_one_particle_ground_sector_
+#                structure` — the table asserted a pin that did not exist);
+#   test → row:  a test is added or renamed and no row claims it, so a claim
+#                class silently loses its pin.
+#
+# So this checks the bijection explicitly, in both directions, plus the
+# "(N tests)" count §4 states about the suite. The same check runs against the
+# timepiece bundle's copy of the spec and suite, because the specialist reads
+# that copy — a stale name there misleads the reader who cannot see this repo.
+#
+# Usage:  bash scripts/check-mass-gap-claims
+# Exit:   0 bijection holds, 1 on any unpaired row/test or a count mismatch.
+
+set -uo pipefail
+
+SPEC="docs/MASS_GAP_SPEC.md"
+SUITE="fock_sirk/tests/qym_mass_gap.rs"
+BUNDLE_SPEC="../timepiece/unfer_contracts/MASS_GAP_SPEC.md"
+BUNDLE_SUITE="../timepiece/unfer_contracts/fock_sirk/tests/qym_mass_gap.rs"
+
+fail=0
+
+# The §4 section only: from its heading to the next one.
+section4() { awk '/^## 4\./{in4=1; next} /^## [0-9]/{in4=0} in4' "$1"; }
+
+# Test names claimed by §4's table: the backticked identifier in the cell
+# immediately before the ✓ measured-column. Claim cells in this table carry no
+# backticks of their own (checked when this gate was written), and unescaped
+# `|` inside physics notation (⟨0|H|0⟩) means naive column splitting would
+# miscount — so anchor on the ✓ row end instead of on columns.
+table_names() {
+  section4 "$1" | sed -n 's/^|.*`\([a-z][a-z0-9_]*\)` *|.*✓.*$/\1/p' | sort -u
+}
+
+# Every #[test] function in the suite file.
+test_fns() {
+  grep -A1 -h '#\[test\]' "$1" | sed -n 's/^fn \([a-z0-9_]*\)(.*/\1/p' | sort -u
+}
+
+check_pair() {
+  local spec="$1" suite="$2" label="$3"
+  if [ ! -f "$spec" ]; then
+    printf '[mass-gap-bijection] skip %s: no %s\n' "$label" "$spec"
+    return
+  fi
+  if [ ! -f "$suite" ]; then
+    printf '[mass-gap-bijection] FAIL %s: suite file missing: %s\n' "$label" "$suite" >&2
+    fail=1
+    return
+  fi
+
+  local rows tests orphan_rows orphan_tests pair_fail=0
+  rows="$(table_names "$spec")"
+  tests="$(test_fns "$suite")"
+  if [ -z "$rows" ]; then
+    printf '[mass-gap-bijection] FAIL %s: §4 table yielded no test names — the table format changed and this gate must follow it, not pass vacuously\n' "$label" >&2
+    fail=1
+    return
+  fi
+  orphan_rows="$(comm -23 <(printf '%s\n' "$rows") <(printf '%s\n' "$tests"))"
+  orphan_tests="$(comm -13 <(printf '%s\n' "$rows") <(printf '%s\n' "$tests"))"
+
+  if [ -n "$orphan_rows" ]; then
+    printf '[mass-gap-bijection] FAIL %s: §4 rows name tests that do not exist:\n' "$label" >&2
+    printf '%s\n' "$orphan_rows" | sed 's/^/    - /' >&2
+    pair_fail=1
+  fi
+  if [ -n "$orphan_tests" ]; then
+    printf '[mass-gap-bijection] FAIL %s: tests with no §4 row claiming them:\n' "$label" >&2
+    printf '%s\n' "$orphan_tests" | sed 's/^/    - /' >&2
+    pair_fail=1
+  fi
+
+  # The "(N tests)" the section states about the suite.
+  local claimed actual
+  claimed="$(section4 "$spec" | grep -oE '\([0-9]+ tests?\)' | grep -oE '[0-9]+' | head -1)"
+  actual="$(printf '%s\n' "$tests" | grep -c .)"
+  if [ -n "$claimed" ] && [ "$claimed" -ne "$actual" ]; then
+    printf '[mass-gap-bijection] FAIL %s: §4 says (%s tests) but %s defines %s\n' \
+      "$label" "$claimed" "$suite" "$actual" >&2
+    pair_fail=1
+  fi
+
+  if [ "$pair_fail" -eq 0 ]; then
+    printf '[mass-gap-bijection] ok   %s: %s rows ↔ %s tests\n' "$label" \
+      "$(printf '%s\n' "$rows" | grep -c .)" "$actual"
+  else
+    fail=1
+  fi
+}
+
+check_pair "$SPEC" "$SUITE" "docs/MASS_GAP_SPEC.md"
+check_pair "$BUNDLE_SPEC" "$BUNDLE_SUITE" "timepiece/unfer_contracts"
+
+if [ "$fail" -ne 0 ]; then
+  echo >&2
+  echo '[mass-gap-bijection] FAIL: the §4 table is the contract. When a test' >&2
+  echo 'renames or a claim is corrected, move the spec table, both copies of it,' >&2
+  echo 'and the suite in one commit (PLAN_MASS_GAP M4).' >&2
+  exit 1
+fi
+echo '[mass-gap-bijection] PASS: §4 rows and suite tests are in bijection.'

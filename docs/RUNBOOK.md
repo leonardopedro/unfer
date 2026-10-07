@@ -256,6 +256,23 @@ detritus. It fails if a build directory is tracked, and it refuses to report
 "clean" when it inspected zero repositories — a gate that finds nothing must not
 read as a repo with nothing wrong.
 
+### Retention policy (`qfm_text_runs/` and `logs/`)
+
+The two directories that sit on the build-output/keep boundary have explicit
+rules, because "it's tracked, so it must matter" and "it's small, so who cares"
+are both ways evidence rots:
+
+| path | tracked? | retention |
+|---|---|---|
+| `qfm_text_runs/*/{metrics.ndjson,train.log,train.toml}` | **yes** (~184 KB, 31 files) | Kept indefinitely: provenance for the measured numbers in `docs/QFM_TEXT_STATUS.md` and `docs/IMPLEMENTATION_PLAN.md`. Remove one only together with the doc line that cites it — an orphaned log is clutter, an uncited number is an unsourced claim. |
+| `qfm_text_runs/*/*.qfm` | no (gitignored) | Regenerable checkpoints, ~177 MB each and historically ~3.9 GB in total — over GitHub's 100 MB per-file limit, so they *cannot* be tracked. Prune any time with `tools/clean_qfm_text_runs.sh` (dry-run by default; `--force` deletes); all of them are currently pruned. The two `#[ignore]`d tests and one example that consume one (`oxieml_fit_real_w`, `print_c0`, `examples/diag_outer_vacuum`) name it by absolute path and stay skipped until someone re-trains, re-runs the training step, and updates that path — they do not regenerate the file themselves. |
+| `logs/*` | no (gitignored) | Ephemeral: a heavy-suite log documents one run, and the run it documents is superseded by the next. `.gitignore` whitelists exactly one file — `logs/heavy_tests_20260823_201105.log`, the all-green run `PROJECT_PLAN.md` cites. To cite a *new* all-green log: add the whitelist exception, update the citation, and drop the old exception in the same commit, so the repo never cites two "the" logs. |
+
+The general rule: **a tracked artifact stays only while something citable
+points at it.** `scripts/tree-size` enforces the other half — nothing that is
+generated may become tracked — but it cannot see an orphan, so the citation is
+the retention decision.
+
 ---
 
 ## Verify

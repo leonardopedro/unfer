@@ -22,6 +22,12 @@ pub mod evolve;
 pub mod forward_sirk;
 pub mod linalg;
 pub mod mass_gap_spec;
+// M5: Kani harnesses for the pure mass-gap core. `cargo kani` sets the
+// `kani` cfg and verifies lib targets only (its CLI has no `--tests`), so
+// the harnesses live here rather than in `tests/`. A plain build compiles an
+// empty module, and no `#[test]` lives there, so suite counts do not move.
+#[cfg(kani)]
+mod mass_gap_kani;
 pub mod registry;
 pub mod tensor_state;
 
