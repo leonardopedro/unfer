@@ -142,7 +142,7 @@ not just the value but **which of the four configuration layers produced it**.
 ```json
 {
   "service": "unfer_edge",
-  "config": { "listen": "0.0.0.0:3000" },
+  "config": { "listen": "127.0.0.1:3000" },
   "provenance": { "layers": { "listen": "env", "backend": "default" } }
 }
 ```
@@ -157,7 +157,7 @@ Every variable below is optional. Defaults are in the runbooks.
 
 | Variable | Default | Omit to… | Notes |
 |---|---|---|---|
-| `UNFER_LISTEN` | `0.0.0.0:3000` | bind `0.0.0.0:3000` | Set `127.0.0.1` when a reverse proxy fronts it |
+| `UNFER_LISTEN` | `127.0.0.1:3000` | bind `127.0.0.1:3000` (loopback) | **There is no wire auth** (A9): `/api/cap/*` attributes every request to the admin principal and the admin console trusts an `x-principal` header. Widen only behind an authenticating TLS proxy |
 | `UNFER_BACKEND` | `127.0.0.1:3001` | proxy to `127.0.0.1:3001` | With no reachable upstream, non-self-service routes 502 |
 | `UNFER_ADMIN_PRINCIPAL` | `operator` | run the S22 console as `operator` | **Minted once at startup.** Only unset deliberately |
 | `UNFER_PRESETS_DIR` | *(none)* | use inline grants only | Where the `GrantSet` role roster is discovered |

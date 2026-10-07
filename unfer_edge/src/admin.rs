@@ -17,6 +17,12 @@
 //! * A non-admin principal is answered `403` on both routes.
 //! * A `PATCH` naming a hard key (`grants`, `auth`, `storage`, `backend`) is refused
 //!   (UK-style 400 with `error`), and never mutates the soft config.
+//! * A9 (the honest boundary): the principal on a request arrives in an
+//!   `x-principal` header and is **not authenticated** — `is_admin` compares
+//!   strings, it does not prove who sent them. The console is therefore only
+//!   as safe as the socket is private, which is what the loopback default for
+//!   `listen` (config.rs `KEYS`) buys. Listen wider only behind a real
+//!   authenticating proxy.
 
 use std::sync::{Mutex, OnceLock};
 

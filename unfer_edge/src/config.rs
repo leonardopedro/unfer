@@ -32,9 +32,16 @@ use serde_json::{Value, json};
 
 /// Keys as they appear in the config file and as `UNFER_*` environment
 /// variables. One table, so the two spellings cannot drift apart.
+///
+/// A9: the `listen` default is **loopback**, not `0.0.0.0`. `unfer_edge` has no
+/// wire authentication — `/api/cap/*` attributes every request to the admin
+/// principal and the admin console trusts a spoofable `x-principal` header —
+/// so the network boundary is the only boundary. A deployment that must listen
+/// wider sets `UNFER_LISTEN` explicitly, in front of a TLS terminator or VPN
+/// (`deploy/DEPLOY.md` says so next to the row).
 pub const KEYS: &[(&str, &str, &str)] = &[
     // (key, env var, default)
-    ("listen", "UNFER_LISTEN", "0.0.0.0:3000"),
+    ("listen", "UNFER_LISTEN", "127.0.0.1:3000"),
     ("backend", "UNFER_BACKEND", "127.0.0.1:3001"),
 ];
 
@@ -95,7 +102,9 @@ pub type Provenance = std::collections::BTreeMap<String, Layer>;
 impl Config {
     pub fn defaults() -> Config {
         Config {
-            listen: "0.0.0.0:3000".to_string(),
+            // A9: loopback by default — see the `KEYS` doc: there is no wire
+            // auth, so exposing the port IS exposing the admin surface.
+            listen: "127.0.0.1:3000".to_string(),
             backend: "127.0.0.1:3001".to_string(),
         }
     }
@@ -390,6 +399,18 @@ mod tests {
         assert_eq!(cfg, Config::defaults());
         assert_eq!(layer_of(&prov, "listen"), Layer::Default);
         assert_eq!(layer_of(&prov, "backend"), Layer::Default);
+    }
+
+    #[test]
+    fn the_default_listen_is_loopback_because_there_is_no_wire_auth() {
+        // A9: `unfer_edge` attributes every `/api/cap/*` request to the admin
+        // principal, and the admin console trusts an `x-principal` header —
+        // the socket is the only trust boundary there is. Widening this
+        // default reopens the gap A9 closed; the fix for wanting the port
+        // wider is session auth behind a proxy, not a bigger bind.
+        assert_eq!(Config::defaults().listen, "127.0.0.1:3000");
+        let (cfg, _) = Config::resolve(None, &env_of(&[]), &flags(None, None));
+        assert_eq!(cfg.listen, "127.0.0.1:3000");
     }
 
     #[test]

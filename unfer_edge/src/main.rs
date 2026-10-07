@@ -218,8 +218,16 @@ impl ProxyHttp for UnferGateway {
             // Mint/promise/revoke routes carry the operation's payload; invoke
             // carries a CapCall. The caller is the request's principal-less
             // identity for now; minted capabilities are owned by the admin
-            // principal (S22 seam, `UNFER_ADMIN_PRINCIPAL`). In a full
-            // deployment the caller comes from the authenticated session.
+            // principal (S22 seam, `UNFER_ADMIN_PRINCIPAL`).
+            //
+            // A9 (documented gap, deliberately not papered over): there is NO
+            // session authentication here — *every* `/api/cap/*` request is
+            // attributed to the admin principal, because the wire carries no
+            // caller identity to attribute it to. The compensating control is
+            // the loopback default for `listen` (config.rs KEYS): the socket
+            // is the trust boundary until a real authenticated session lands.
+            // Until then, treat `UNFER_LISTEN=0.0.0.0` as handing out the
+            // capability authority to the network.
             let caller = admin::admin_principal();
             let (status, body): (u16, Vec<u8>) = match path.as_str() {
                 "/api/cap/mint" => match serde_json::from_slice::<caprpc::MintReq>(&raw) {
@@ -403,6 +411,14 @@ impl ProxyHttp for UnferGateway {
         // is minted once at session start (env `UNFER_ADMIN_PRINCIPAL`); PATCH of the
         // soft config is refused for non-admin principals (403) and for hard keys
         // (grants/auth/storage/backend, 400). Never proxies to the module backend.
+        //
+        // A9 (documented gap): `x-principal` below is TRUSTED, not verified —
+        // any client that can reach the socket can name the admin principal.
+        // That is why the default `listen` is loopback (config.rs): the 403
+        // logic is real against *modules* routed by the gate, but against a
+        // raw network client it is theatre until session auth exists. The
+        // loopback default is what makes this acceptable-by-design rather
+        // than an open admin port.
         #[cfg(feature = "audit")]
         {
             let path = session.req_header().uri.path().to_string();

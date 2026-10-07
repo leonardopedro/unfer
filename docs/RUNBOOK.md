@@ -16,7 +16,7 @@ nothing to back up" and "keep the configuration". One dialect, two servers.
 ### `unfer_edge` — the gateway
 
 ```sh
-cargo run -p unfer_edge                                   # 0.0.0.0:3000 → 127.0.0.1:3001
+cargo run -p unfer_edge                                   # 127.0.0.1:3000 → 127.0.0.1:3001 (loopback: A9)
 cargo run -p unfer_edge -- init                           # write ./unfer_edge.json
 cargo run -p unfer_edge -- init --config /etc/unfer/edge.json
 cargo run -p unfer_edge -- --config /etc/unfer/edge.json --listen 127.0.0.1:8080
@@ -126,7 +126,7 @@ forwarded upstream — forwarding `POST /healthz` would return a confusing upstr
 
 | key | env | default |
 |---|---|---|
-| `listen` | `UNFER_LISTEN` | `0.0.0.0:3000` |
+| `listen` | `UNFER_LISTEN` | `127.0.0.1:3000` |
 | `backend` | `UNFER_BACKEND` | `127.0.0.1:3001` |
 
 Values are read once at startup; there is no hot reload.
