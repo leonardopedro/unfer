@@ -72,7 +72,8 @@ pub const CAPACITY: usize = 512;
 /// What kind of statement an entry is.
 ///
 /// Serialized in the **upper case** the Agensh-style literature uses
-/// (`OBSERVED` / `FACT` / `FAIL` / `CLAIM` / `PATCH_SUMMARY`) because these
+/// (`OBSERVED` / `FACT` / `FAIL` / `CLAIM` / `ESCALATE` / `PATCH_SUMMARY`)
+/// because these
 /// strings appear verbatim in work orders and board greps, and matching the
 /// spelling people write saves a translation layer in every consumer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,6 +88,13 @@ pub enum BoardKind {
     Fail,
     /// "I am working on this scope." See [`BoardKind::effect_kind`].
     Claim,
+    /// "Negotiation has failed; this needs a human." Written by the
+    /// `agent_escalate` op — the explicit path from an unresolvable claim
+    /// collision (or exhausted backtracks) to the human approval lane. The
+    /// kind exists so a human greps `ESCALATE` and finds exactly the items
+    /// waiting for them, instead of inferring escalation from a `CLAIM` plus
+    /// DM history, which is what "the escalation path exists" used to mean.
+    Escalate,
     /// "Here is what changed and here is the machine-generated gate output."
     PatchSummary,
 }
@@ -97,6 +105,7 @@ impl BoardKind {
         BoardKind::Fact,
         BoardKind::Fail,
         BoardKind::Claim,
+        BoardKind::Escalate,
         BoardKind::PatchSummary,
     ];
 
@@ -107,6 +116,7 @@ impl BoardKind {
             BoardKind::Fact => "FACT",
             BoardKind::Fail => "FAIL",
             BoardKind::Claim => "CLAIM",
+            BoardKind::Escalate => "ESCALATE",
             BoardKind::PatchSummary => "PATCH_SUMMARY",
         }
     }
@@ -121,6 +131,7 @@ impl BoardKind {
             "FACT" => Some(BoardKind::Fact),
             "FAIL" => Some(BoardKind::Fail),
             "CLAIM" => Some(BoardKind::Claim),
+            "ESCALATE" => Some(BoardKind::Escalate),
             "PATCH_SUMMARY" | "PATCHSUMMARY" => Some(BoardKind::PatchSummary),
             _ => None,
         }
@@ -128,11 +139,13 @@ impl BoardKind {
 
     /// The S21 trust annotation for writing this kind.
     ///
-    /// `Claim` and `PatchSummary` are `Mutate`: they are assertions other agents
-    /// and humans act on. The rest only append text and are `Observe`.
+    /// `Claim`, `Escalate` and `PatchSummary` are `Mutate`: they are
+    /// assertions other agents and humans act on (an escalation asks a human
+    /// to act, which is exactly the kind of thing a grant should cover).
+    /// The rest only append text and are `Observe`.
     pub fn effect_kind(self) -> EffectKind {
         match self {
-            BoardKind::Claim | BoardKind::PatchSummary => EffectKind::Mutate,
+            BoardKind::Claim | BoardKind::Escalate | BoardKind::PatchSummary => EffectKind::Mutate,
             BoardKind::Observed | BoardKind::Fact | BoardKind::Fail => EffectKind::Observe,
         }
     }
@@ -988,6 +1001,8 @@ mod tests {
     fn claim_and_patch_summary_are_mutating_and_the_rest_are_not() {
         assert_eq!(BoardKind::Claim.effect_kind(), EffectKind::Mutate);
         assert_eq!(BoardKind::PatchSummary.effect_kind(), EffectKind::Mutate);
+        // G3: an escalation is Mutate on purpose — it asks a human to act.
+        assert_eq!(BoardKind::Escalate.effect_kind(), EffectKind::Mutate);
         for k in [BoardKind::Observed, BoardKind::Fact, BoardKind::Fail] {
             assert_eq!(k.effect_kind(), EffectKind::Observe, "{k:?}");
         }
@@ -995,7 +1010,7 @@ mod tests {
 
     #[test]
     fn every_kind_has_exactly_one_effect_kind_and_the_map_is_total() {
-        // If a sixth kind is added, this forces a decision about its trust
+        // If a new kind is added, this forces a decision about its trust
         // annotation instead of inheriting `Mutate` by default.
         for k in BoardKind::ALL {
             let _ = k.effect_kind();
@@ -1010,8 +1025,9 @@ mod tests {
             .iter()
             .filter(|k| k.effect_kind() == EffectKind::Mutate)
             .collect();
-        assert_eq!(mutating.len(), 2);
+        assert_eq!(mutating.len(), 3);
         assert!(mutating.contains(&&BoardKind::Claim));
+        assert!(mutating.contains(&&BoardKind::Escalate));
         assert!(mutating.contains(&&BoardKind::PatchSummary));
     }
 

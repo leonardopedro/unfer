@@ -75,10 +75,13 @@ pub const SESSION_OPS: &[&str] = &[
     "patch_submit",
     // G9 (b): task-scoped budget nudges. Pure event policy over the board.
     "agent_nudge",
-    // G3/G7: claim arbitration, worker-to-worker messages, role hand-off. See
-    // `unfer_protocol::coop` — an overlapping claim is *reported*, not refused.
+    // G3/G7: claim arbitration, worker-to-worker messages, escalation to the
+    // human lane, role hand-off. See `unfer_protocol::coop` — an overlapping
+    // claim is *reported*, not refused, and when negotiation fails
+    // `agent_escalate` puts it in front of a human as an ESCALATE entry.
     "agent_claim",
     "agent_dm",
+    "agent_escalate",
     "agent_handoff",
     // D5: the analytic decision engine. `observe`-kind only — none of these ops
     // has a `Mutate` arm, which is what keeps a statistical layer out of every
@@ -185,16 +188,19 @@ pub const AGENT_OPS: &[&str] = &[
     // G1: the shared context board — typed, append-only, sanitized, bounded.
     // A projection over the same cursor space as `events_poll`, so one
     // checkpoint covers both. `board_write` is Observe-kind for
-    // OBSERVED/FACT/FAIL and Mutate-kind for CLAIM/PATCH_SUMMARY, per
+    // OBSERVED/FACT/FAIL and Mutate-kind for CLAIM/ESCALATE/PATCH_SUMMARY, per
     // `unfer_protocol::board::BoardKind::effect_kind`.
     "board_write",
     "board_read",
     "board_grep",
-    // G3: claims with overlap detection, and direct messages between workers.
-    // `agent_claim` reports an overlap rather than refusing it -- see
-    // `unfer_protocol::coop` for why a board cannot arbitrate.
+    // G3: claims with overlap detection, direct messages between workers, and
+    // the explicit escalation to the human lane. `agent_claim` reports an
+    // overlap rather than refusing it — see `unfer_protocol::coop` for why a
+    // board cannot arbitrate — and `agent_escalate` is what happens when the
+    // workers cannot settle it among themselves.
     "agent_claim",
     "agent_dm",
+    "agent_escalate",
     // G7: role hand-off. Carries no privilege; it records who is reviewing so
     // the hand-off is observable after the fact.
     "agent_handoff",

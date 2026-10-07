@@ -218,11 +218,29 @@ pub struct ClaimAttempt {
     pub outcome: ClaimOutcome,
 }
 
+/// An escalation to the human approval lane: who stopped negotiating, on what
+/// scope, why, and where on the board it sits.
+///
+/// The record exists so "escalation" is a thing the board *contains* rather
+/// than a story told about a CLAIM plus DM history (G3's missing half).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Escalated {
+    pub worker: String,
+    pub scope: String,
+    pub reason: String,
+    /// Cursor of the `ESCALATE` board entry this escalation is.
+    pub cursor: u64,
+}
+
 /// The cooperation state layered over a [`Board`]: live claims and per-recipient
 /// message queues.
 #[derive(Debug, Clone, Default)]
 pub struct Coop {
     claims: Vec<LiveClaim>,
+    /// Escalations raised to the human lane, oldest first. Deduped per
+    /// `(worker, scope)` by [`Coop::escalate`], for the same reason nudges are
+    /// deduped: a lane nobody can read is a lane nobody reads.
+    escalations: Vec<Escalated>,
     dms: std::collections::BTreeMap<String, VecDeque<Dm>>,
     /// Messages lost to queue overflow, per recipient.
     ///
@@ -306,6 +324,68 @@ impl Coop {
             .filter(|c| c.worker != worker && ClaimScope::new(&c.scope).overlaps(&cs))
             .cloned()
             .collect()
+    }
+
+    /// Every escalation raised so far, oldest first.
+    pub fn escalations(&self) -> &[Escalated] {
+        &self.escalations
+    }
+
+    /// Escalate a negotiation that has failed to the human approval lane.
+    ///
+    /// Writes a `BoardKind::Escalate` entry carrying the *reason* as text and
+    /// the current holders as `detail` — the human gets the evidence with the
+    /// request instead of having to reconstruct it. An escalation with no live
+    /// holders (a backtrack-exhausted loop, `coop_loop`'s "escalate rather
+    /// than retry") still writes, and says so.
+    ///
+    /// Re-escalating the same `(worker, scope)` does not append again: it
+    /// returns the original entry with `false`. One item per negotiation, the
+    /// way `unfer_protocol::nudge` keeps one item per `(worker, kind)` — a
+    /// collision already in front of a human must not become five items
+    /// because one worker kept retrying. A different worker escalating the
+    /// same scope is new information and gets its own entry.
+    pub fn escalate(
+        &mut self,
+        board: &mut Board,
+        worker: &str,
+        scope: &str,
+        reason: &str,
+    ) -> (BoardEntry, bool) {
+        let cs = ClaimScope::new(scope);
+        if let Some(prev) = self
+            .escalations
+            .iter()
+            .find(|e| e.worker == worker && e.scope == cs.scope)
+        {
+            // The ring may have dropped the original entry (CAPACITY); a
+            // cursor nobody can read must not be returned as an answer.
+            if let Some(entry) = board.all().into_iter().find(|e| e.cursor == prev.cursor) {
+                return ((*entry).clone(), false);
+            }
+            self.escalations
+                .retain(|e| !(e.worker == worker && e.scope == cs.scope));
+        }
+
+        let holders = self.conflicting(worker, &cs.scope);
+        let detail = if holders.is_empty() {
+            "no live claim holders (raised from loop exhaustion, not a collision)".to_string()
+        } else {
+            holders
+                .iter()
+                .map(|c| format!("{} @ {}", c.worker, c.scope))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let text = format!("{worker} escalates {}: {reason}", cs.scope);
+        let entry = board.write(BoardKind::Escalate, worker, &text, Some(&detail));
+        self.escalations.push(Escalated {
+            worker: worker.to_string(),
+            scope: cs.scope,
+            reason: reason.to_string(),
+            cursor: entry.cursor,
+        });
+        (entry, true)
     }
 
     /// Send a direct message.
@@ -915,5 +995,67 @@ mod tests {
         assert_eq!(b.len(), CAPACITY);
         assert_eq!(b.dropped(), 3);
         assert!(b.has_gap(0));
+    }
+
+    // ---- escalation to the human lane (G3) --------------------------------
+
+    #[test]
+    fn an_escalation_is_a_board_entry_that_carries_the_holders_as_evidence() {
+        let (mut b, mut c) = (board(), Coop::new());
+        c.claim(&mut b, "w1", "src/board.rs");
+        let (entry, fresh) = c.escalate(&mut b, "w2", "src/board.rs", "DMs went unanswered");
+        assert!(fresh, "the first escalation writes");
+        assert_eq!(entry.kind, BoardKind::Escalate);
+        assert_eq!(entry.text, "w2 escalates src/board.rs: DMs went unanswered");
+        let detail = entry.detail.expect("the holders travel with the request");
+        assert!(detail.contains("w1 @ src/board.rs"), "{detail}");
+        assert_eq!(c.escalations().len(), 1);
+        // The human lane greps ONE kind: ESCALATE, not CLAIM-plus-DM-story.
+        assert_eq!(b.grep(&GrepExpr::parse("ESCALATE")).len(), 1);
+    }
+
+    #[test]
+    fn re_escalating_one_negotiation_does_not_spam_the_lane() {
+        let (mut b, mut c) = (board(), Coop::new());
+        let (first, fresh) = c.escalate(&mut b, "w1", "a/b", "backtracks exhausted");
+        assert!(fresh);
+        let (again, fresh) = c.escalate(&mut b, "w1", "a/b", "still exhausted");
+        assert!(!fresh, "same worker + scope must not append a second item");
+        assert_eq!(again.cursor, first.cursor, "the original entry is returned");
+        assert_eq!(b.grep(&GrepExpr::parse("ESCALATE")).len(), 1);
+        // A *different* worker escalating the same scope is new information.
+        let (_, fresh) = c.escalate(&mut b, "w2", "a/b", "I hold it, back off");
+        assert!(fresh);
+        assert_eq!(b.grep(&GrepExpr::parse("ESCALATE")).len(), 2);
+        assert_eq!(c.escalations().len(), 2);
+    }
+
+    #[test]
+    fn an_escalation_with_no_holders_says_so_rather_than_implying_one() {
+        // The other escalation source: not a collision but a loop that ran
+        // out of backtracks (`coop_loop`: "escalate rather than retry").
+        let (mut b, mut c) = (board(), Coop::new());
+        let (entry, fresh) = c.escalate(&mut b, "w1", "src/x", "backtracks exhausted");
+        assert!(fresh);
+        assert_eq!(entry.kind, BoardKind::Escalate);
+        let detail = entry.detail.unwrap();
+        assert!(detail.contains("no live claim holders"), "{detail}");
+    }
+
+    #[test]
+    fn an_escalation_redacts_a_secret_in_its_reason() {
+        // The reason is free text from an agent, exactly like a claim or a DM.
+        let (mut b, mut c) = (board(), Coop::new());
+        let (entry, _) = c.escalate(
+            &mut b,
+            "w1",
+            "a/b",
+            "blocked; token=sk-live-abc123 pasted in chat",
+        );
+        assert!(
+            !entry.text.contains("sk-live-abc123"),
+            "the reason must be redacted like any board text: {}",
+            entry.text
+        );
     }
 }

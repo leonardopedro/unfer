@@ -278,7 +278,7 @@ Every board write carries an S21 effect kind, returned in the acknowledgement as
 | kind | effect kind | why |
 |---|---|---|
 | `OBSERVED`, `FACT`, `FAIL` | `observe` | appends text only; applies immediately |
-| `CLAIM`, `PATCH_SUMMARY` | `mutate` | asserts something peers or a human will act on; queues for approval |
+| `CLAIM`, `ESCALATE`, `PATCH_SUMMARY` | `mutate` | asserts something peers or a human will act on; queues for approval |
 
 `FAIL` is `observe` despite being the most valuable kind on the board, precisely
 because it *removes* work rather than committing it.
@@ -296,7 +296,7 @@ Append one typed entry.
 
 | field | type | meaning |
 |---|---|---|
-| `kind` | string | `OBSERVED` / `FACT` / `FAIL` / `CLAIM` / `PATCH_SUMMARY` (case-insensitive) |
+| `kind` | string | `OBSERVED` / `FACT` / `FAIL` / `CLAIM` / `ESCALATE` / `PATCH_SUMMARY` (case-insensitive) |
 | `worker` | string | who is writing. **Recorded, not authenticated.** |
 | `text` | string | the one-line statement, capped at 280 chars |
 | `detail` | string? | optional evidence, capped at 4096 chars |
@@ -381,6 +381,7 @@ glob (`*` within a segment, `**` across).
 | `conflicts_with` | the current holders — non-empty **only** when `overlaps` |
 | `live_claims` | every live claim |
 | `entry` | the `CLAIM` board entry (written either way) |
+| `escalate_with` | `"agent_escalate"` — present **only** on an overlap, naming the next step |
 
 **Error codes:** UK-1001 (missing/empty `worker` or `scope`).
 
@@ -388,8 +389,10 @@ An overlap is **reported, not refused**. The board is a log, not a lock;
 arbitrating would need mutual exclusion over a distributed log, which is
 `unfer_consensus`'s job. What this op does is make the collision visible and
 attributable at the moment it happens, so the workers negotiate with `agent_dm`
-or a human sees it in the audit trail. The loser's scope is **not** registered as
-live: two workers must not both believe they own it.
+and, when they cannot settle it, escalate with `agent_escalate` — the reply
+names that op so the path is in the message, not only in a prompt. The loser's
+scope is **not** registered as live: two workers must not both believe they own
+it.
 
 The `CLAIM` entry is written even on an overlap — the collision is part of the
 history and must not be invisible to a third worker reading later.
@@ -420,6 +423,49 @@ Non-consuming by default, deliberately: a worker polls mid-turn, and a crash
 between reading and acting must not lose the message. This is the C1
 checkpoint lesson applied to the message queue. Queues are bounded at 64 per
 recipient, oldest dropped first, and `dropped` counts the loss.
+
+### agent_escalate
+
+Escalate a negotiation that has failed to the human lane (G3).
+
+**Request params:** `{"worker": <string>, "scope": <string>, "reason": <string>}`
+
+`reason` is required — an escalation without a why is an item a human cannot
+act on — and is redacted like any board text.
+
+**Response result:**
+
+| field | meaning |
+|---|---|
+| `escalated` | `true` when a new entry was written |
+| `deduped` | `true` when this worker+scope was already escalated; the original `cursor` is returned |
+| `cursor` | the `ESCALATE` entry's cursor |
+| `scope` | the normalised scope |
+| `entry` | the full `ESCALATE` entry: reason as text, current holders as `detail` |
+| `holders` | live claims overlapping the scope (empty for a loop-exhaustion escalation) |
+| `escalations_for_scope` | how many escalations this scope now has, across workers |
+| `effect_kind` | `"mutate"` — an escalation asks a human to act |
+| `lane` | what the human side does with it |
+
+**Error codes:** UK-1001 (missing/empty `worker`, `scope` or `reason`).
+
+This is the explicit half of G3's escalation path. `agent_claim` reports the
+overlap and `agent_dm` carries the negotiation; when neither settles it, this
+op puts the collision in front of a human as **one `ESCALATE` entry** — so the
+human lane greps a kind instead of reconstructing "did these two ever settle
+it?" from CLAIM-plus-DM history. Re-escalating the same `worker`+`scope` does
+not append again (the same dedup rule `agent_nudge` uses): a lane that fills
+with retries is a lane nobody reads. A *different* worker escalating the same
+scope is new information and gets its own entry.
+
+Escalation is not only for collisions: the cooperation loop's
+backtrack-exhausted state ("escalate rather than retry") escalates through the
+same op, and its entry says `no live claim holders` instead of implying a
+collision that is not there.
+
+A human resolves it by posting the decision back on the board (`board_write`,
+a `FACT` or a `CLAIM` entry), so the answer lands on the same ordered record
+the escalation is.
 
 ### agent_handoff
 
