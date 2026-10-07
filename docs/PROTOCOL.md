@@ -176,6 +176,37 @@ Kernel symbol: `uk_events_poll`. Observe-kind: reading the log grants nothing.
 > though the JSON is not. The two are kept in the same dialect deliberately:
 > matching semantics, different transport.
 
+### events_stream
+
+Server-push over the same channel — C1's push half. `events_poll` answers
+"what happened since I last looked"; this writes each event as it happens, so
+a consumer no longer has to ask.
+
+Request: `{"on": <bool>}` — per connection rather than per model, because the
+channel *is* the consumer.
+
+Reply: `{"streaming", "stream_dropped", "latest_cursor", "shape"}`.
+
+While on, every event is written after the response of the request that
+produced it, in cursor order, as `{"cursor": N, "event": {...}}` — the same
+per-item object `events_poll` returns, and **without `id`**, which is how a
+client tells a push from a response: a response always has `id`.
+
+**The cursor carries exactly-once; the push does not have to.** Pushes are
+best-effort — the outbox is bounded (64) and an evicted push is counted in
+`stream_dropped`, never silently discarded — but the event itself stays in the
+per-model log, so a consumer that kept its `since_cursor` picks it up on the
+next poll with no loss and no duplicate. Turning `on` off discards pending
+pushes and changes nothing else.
+
+Off by default: NDJSON stays the degenerate single-capability mode (S28), so a
+client that never enables this sees a byte-identical stream to the one it saw
+before the op existed.
+
+**Error codes:** UK-1001 (`on` missing or not a boolean).
+
+Observe-kind: enabling a push grants nothing.
+
 ### Bounded memory (C2)
 
 Each session carries a bounded, retrievable memory. This is deliberately *not*

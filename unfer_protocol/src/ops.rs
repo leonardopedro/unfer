@@ -54,8 +54,10 @@ pub const SESSION_OPS: &[&str] = &[
     // C1: cursored delivery, complementary to `poll_events`. `poll_events`
     // serves the subscription path, whose bounded queue drops on overflow; this
     // one serves a consumer that has to be able to say "I got to 41, send me 42
-    // onwards", including across a restart.
+    // onwards", including across a restart. `events_stream` is the push half
+    // of the same record: same cursors, written instead of polled, opt-in.
     "events_poll",
+    "events_stream",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",
@@ -176,8 +178,10 @@ pub const AGENT_OPS: &[&str] = &[
     "restore_session",
     "poll_events",
     // C1: cursored delivery; see the SESSION_OPS entry for why this is not
-    // just a second name for "poll_events".
+    // just a second name for "poll_events". `events_stream` pushes the same
+    // cursored events instead of waiting to be asked (off by default).
     "events_poll",
+    "events_stream",
     "close_model",
     "logos_compile",
     "ode_to_hamiltonian",
