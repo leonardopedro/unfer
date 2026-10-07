@@ -854,3 +854,12 @@ unmeasured past `m = 128` — see the turnover question in that file.
 > `UPDATE_GOLDEN=1`; the honesty grep in `scripts/regen_mass_gap.sh` still
 > parses the assembly line. Still open and untouched: the `q` reachability
 > target, the `m = 128` turnover question (A3), and every `.lean`-side guard.
+>
+> **The separate decision requirement 2 asked for (the diagnostic's shift)**:
+> the one-particle diagnostic stays **unshifted**. Shifting `h` would change
+> the pinned T6 numbers the frozen contract (`§2`, additive-only NDJSON
+> schema) was written around, and the absence itself is already pinned as
+> data — `the_documented_positivity_shift_is_absent` fails loudly if a shift
+> appears, with instructions to invert it. So the precondition violation stays
+> documented rather than papered over; adding the shift remains a deliberate,
+> separately-gated contract change, not a side effect of this work order.
