@@ -92,13 +92,19 @@ symbol as a typed Austral function (e.g. `kernelVersion(): Int64`).
 8. If you call a `uk_*` symbol not yet in the bindings, add it to
    `UnferKernel.aui/.aum` (mirror an existing `pragma Foreign_Import`).
 
-## 6. Known limitation / extension point
+## 6. Live-JIT enforcement (was: "known limitation / extension point")
 
-The JIT's authorization principal is currently the **calling function** name
-(e.g. `run`), while manifests grant by **module** name. The `modhost` binary and
-`run_demo.sh` exercise the manifest decision directly against
-`ManifestAuthEngine`; threading the module name into
-`cps.rs::check_call_permission` so the live JIT enforces module-level grants
-inline is a documented extension point (one-line principal change once the CPS
-encodes the module name). See [ARCHITECTURE.md](ARCHITECTURE.md) extension
-point #1.
+The JIT's authorization principal is the **module** name. Manifest load
+(`safestos_load_auth_manifest()`, or `module.rs::load` at hot-swap) records
+`[module] name` as the deployment principal, and
+`cps.rs::check_call_permission` — the check the CPS emitter runs at compile
+*time for every call* — attributes each gated `uk_*`/`uz_*` call to it,
+falling back to the CPS header's module name and then (binaries predating
+module headers) to the calling function.
+
+`modhost` and `run_demo.sh` still exercise the manifest decision directly.
+The live path itself is pinned by
+`cps.rs::a10_live_grant_tests::live_jit_denies_uk_calls_the_module_manifest_does_not_grant`:
+a kernel call the module's manifest does not grant is denied UK-4001 **with
+the module named as the principal** (A10 — this section previously claimed
+the threading did not exist).
