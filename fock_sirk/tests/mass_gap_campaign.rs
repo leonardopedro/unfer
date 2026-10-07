@@ -8,10 +8,26 @@
 //! `E_0 = 0`** in the zero-outer-boson sector, and one-particle states are
 //! diagnostics only.
 //!
-//! So these 20 fixtures, and anything fed to the Lean gap table from them, are
-//! **diagnostics**. Work order §M4.9 (`PLAN_MASS_GAP.md` §7,
-//! `CONSOLIDATED_PLAN.md` §M4.9) is the fix; until it lands, do not read
-//! `certified_positive: false` as a statement about the mass gap.
+//! So these 20 fixtures' `ritz_certificate` / `certified_mass_gap` lines, and
+//! anything fed to the Lean gap table from them, are **diagnostics** — and
+//! since §M4.9 landed they say so in every row (`"sector"`,
+//! `"physical":false`): do not read `certified_positive: false` as a statement
+//! about the mass gap.
+//!
+//! **§M4.9 emission (2026-10-07).** `run_campaign` now additionally resolves
+//! `φ₁` — the first state **above** the outer vacuum within the sector the
+//! start spans, from `phi1_start` (a multi-species + squeezed-pair
+//! superposition, different from both diagnostic starts) — and appends one
+//! `physical_gap` row per `(g, m)` carrying `gap = ‖H φ₁‖`,
+//! `q = ‖H φ₁ − e₁ φ₁‖` beside it, the signed `e1`, and a sector label.
+//! That row is the §M4.9 **estimator, not a certificate**: it carries no
+//! band, so the Lean gap table stays empty until a row qualifies
+//! (`CONSOLIDATED_PLAN.md` §M4.6 option (c)); `q` is what the reader judges
+//! it by, and it is never defaulted. The start-vector question (§M4.9
+//! requirement 3, a free parameter) records one measured fact: the
+//! multi-outer-boson variant of the start hits the component budget
+//! (`StateExplosion` at 265k > 200k components, `g = 1, m = 10`) — see
+//! `phi1_start`.
 //!
 //! **Also missing: the positivity shift.** `mass_gap_spec.rs:135` requires the
 //! one-particle `h` to be shifted for positivity before enclosure;
@@ -53,8 +69,8 @@
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{
-    SirkOpts, certified_mass_gap, certified_ritz_values, emit_gap_certificate_ndjson,
-    solve_forward_sirk_with_opts,
+    PhysicalGapCertificate, SirkOpts, certified_mass_gap, certified_ritz_values,
+    emit_gap_certificate_ndjson, emit_physical_gap_ndjson, solve_forward_sirk_with_opts,
 };
 use nested_fock_algebra::{InnerBosonicState, Operator, QuantumState, qcd_ym_hamiltonian};
 use num_complex::Complex64;
@@ -101,6 +117,64 @@ fn r_odd_start() -> QuantumState {
     let inv = 1.0 / 2.0f64.sqrt();
     s.scale_and_add(&s.clone(), Complex64::new(inv - 1.0, 0.0));
     s
+}
+
+/// The sector label every physical-gap row from this campaign carries: the
+/// state is resolved in the one-outer-boson sector, at the first level above
+/// the outer vacuum (`E₀ = 0`). It names *both* halves — outer-number sector
+/// and above-vacuum selection — because §M4.9's requirement is that a reader
+/// can tell from the row alone where the number came from.
+const PHYSICAL_SECTOR: &str = "one_outer_boson_above_vacuum";
+
+/// §M4.9's `φ₁` start vector (requirement 3: a *free parameter*, recorded
+/// and pinned here): an equal-weight superposition over all four one-quanton
+/// species **plus** the squeezed-pair inner content `|1₀,1₁⟩` — different
+/// from both diagnostic starts (the one-outer-boson inner vacuum and the
+/// two-species R-odd state), spanning exactly the sector where S45 pins the
+/// first excited state to live (one-quanton floor first, two-quanton floor
+/// above it — `outer_vacuum_ground_validation.rs`).
+///
+/// **Why not a two-outer-boson start, measured (2026-10-07).** The literal
+/// "multi-outer-boson" variant — one-quanton ⊕ a two-outer-boson component —
+/// was implemented first and does not fit the campaign's component budget:
+/// the two-quanton sector's product space grows past
+/// `max_components = 200_000` during the solve itself
+/// (`StateExplosion { components: 265896 }` at `g = 1, m = 10`), because
+/// `H = dΓ(h)` block-diagonally preserves the sector's norm, so pruning never
+/// sheds it. Resolving the two-quanton sector is therefore a heavier-lift
+/// open item (it travels with the §M4.9 / turnover questions), not something
+/// this campaign can do per row at `m ≥ 10`.
+fn phi1_start() -> QuantumState {
+    let mut s = QuantumState::zero();
+    for species in 0..4u32 {
+        s.scale_and_add(&fock_state(&[(species, 1)]), Complex64::new(1.0, 0.0));
+    }
+    s.scale_and_add(&fock_state(&[(0, 1), (1, 1)]), Complex64::new(1.0, 0.0));
+    let norm = s.norm();
+    s.scale_and_add(&s.clone(), Complex64::new(1.0 / norm - 1.0, 0.0));
+    s
+}
+
+/// The first state **above** the outer vacuum that this solve resolves: the
+/// lowest Ritz pair with `θ > 0` (the vacuum sits at `E₀ = 0` by
+/// `H|Ω⟩ = 0`; a level at or below zero is not `φ₁`). Returns the
+/// whitened-frame coefficients of that Ritz vector for
+/// [`fock_sirk::ForwardSirkResult::reconstruct`]. `None` means the solve
+/// resolved nothing above the vacuum — and §M4.9's contract is then simply
+/// that no physical row is emitted (the table's "empty if none" case).
+fn first_above_vacuum(res: &fock_sirk::ForwardSirkResult) -> Option<nalgebra::DVector<Complex64>> {
+    let eig = res.h_proj.clone().symmetric_eigen();
+    let mut order: Vec<usize> = (0..eig.eigenvalues.len()).collect();
+    order.sort_by(|&a, &b| {
+        eig.eigenvalues[a]
+            .partial_cmp(&eig.eigenvalues[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let idx = order.into_iter().find(|&i| eig.eigenvalues[i] > 0.0)?;
+    Some(nalgebra::DVector::from_iterator(
+        eig.eigenvalues.len(),
+        eig.eigenvectors.column(idx).iter().copied(),
+    ))
 }
 
 fn solve_sector(g: f64, start: &QuantumState, m: usize) -> fock_sirk::ForwardSirkResult {
@@ -182,6 +256,7 @@ fn run_campaign(g_values: &[f64], m_values: &[usize], n_values: &[usize]) -> Vec
             let odd = r_odd_start();
             let res_even = solve_sector(g, &even, m);
             let res_odd = solve_sector(g, &odd, m);
+            let res_phi = solve_sector(g, &phi1_start(), m);
 
             let ce = certified_ritz_values(&res_even);
             let co = certified_ritz_values(&res_odd);
@@ -193,7 +268,18 @@ fn run_campaign(g_values: &[f64], m_values: &[usize], n_values: &[usize]) -> Vec
             let gap = certified_mass_gap(&res_even, &res_odd).unwrap_or_else(|| {
                 panic!("g = {g}, m = {m}: certified mass gap assembly returned None")
             });
-            let ndjson = emit_gap_certificate_ndjson(&gap);
+            let base = emit_gap_certificate_ndjson(&gap);
+            // The §M4.9 physical row, appended after the three diagnostic
+            // lines: `gap = ‖Hφ₁‖` measured by matvec, `q` beside it. If the
+            // solve resolved no state above the outer vacuum, no physical row
+            // is emitted — the row's absence is the honest output, not a zero.
+            let ndjson = match first_above_vacuum(&res_phi).and_then(|coeffs| {
+                let phi = res_phi.reconstruct(&coeffs);
+                PhysicalGapCertificate::measure(PHYSICAL_SECTOR, &h, &phi)
+            }) {
+                Some(cert) => format!("{base}{}", emit_physical_gap_ndjson(&cert)),
+                None => base,
+            };
 
             for &n in n_values {
                 let (_, _, eg) = exact_gap(&h, n as u32);
@@ -343,6 +429,112 @@ fn the_table_records_which_rows_actually_certify() {
         .filter(|r| r.g == 0.0)
         .any(|r| flag_is_true(&r.ndjson, "certified_positive"));
     assert!(!control_certified, "the gapless control certified a gap");
+}
+
+// ── §M4.9: the physical-gap row ────────────────────────────────────────
+
+/// Every emitted row names its sector and whether it is the physical gap or
+/// a diagnostic (§M4.9 acceptance). A row that cannot do either should not
+/// exist — that omission is exactly what once let a one-particle diagnostic
+/// read as a mass gap.
+#[test]
+fn every_row_names_its_sector_and_whether_it_is_physical() {
+    let rows = run_campaign(&[1.0], &[10], &[8]);
+    let lines: Vec<&str> = rows[0].ndjson.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        4,
+        "three diagnostic lines + one physical line:\n{}",
+        rows[0].ndjson
+    );
+    for line in &lines {
+        assert!(
+            field(line, "sector").is_some(),
+            "row without a sector label: {line}"
+        );
+        assert!(
+            field(line, "physical").is_some(),
+            "row without a physical/diagnostic flag: {line}"
+        );
+    }
+    for line in &lines[..3] {
+        assert_eq!(field(line, "physical"), Some("false"), "{line}");
+        assert!(
+            line.contains("one_outer_boson"),
+            "diagnostic sector must say where it lives: {line}"
+        );
+    }
+    assert_eq!(field(lines[3], "physical"), Some("true"), "{}", lines[3]);
+    assert_eq!(
+        field(lines[3], "sector"),
+        Some("\"one_outer_boson_above_vacuum\""),
+        "{}",
+        lines[3]
+    );
+    assert!(
+        lines[3].contains("\"kind\":\"physical_gap\""),
+        "{}",
+        lines[3]
+    );
+}
+
+/// The physical row carries `q` beside `gap` and satisfies the §M4.9
+/// identity `gap² = e1² + q²` (the machine-checkable form of
+/// `‖Hφ₁‖² = E₁² + ‖H d‖²`), with `rel_err_est = ½(q/e1)²` — and it must not
+/// pretend to a certified band it does not have.
+#[test]
+fn the_physical_gap_row_reports_q_beside_gap_and_obeys_the_identity() {
+    let rows = run_campaign(&[1.0], &[10], &[8]);
+    let phys = rows[0]
+        .ndjson
+        .lines()
+        .find(|l| l.contains("\"physical_gap\""))
+        .unwrap_or_else(|| panic!("no physical_gap row emitted:\n{}", rows[0].ndjson));
+    let num = |key: &str| -> f64 {
+        field(phys, key)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("{key} missing or unparseable: {phys}"))
+    };
+    let (gap, q, e1, rel) = (num("gap"), num("q"), num("e1"), num("rel_err_est"));
+
+    assert!(e1 > 0.0, "φ₁ must lie above the outer vacuum: e1 = {e1}");
+    assert!(q.is_finite() && q >= 0.0, "q = {q}");
+
+    let pythagoras = (e1 * e1 + q * q).sqrt();
+    assert!(
+        (gap - pythagoras).abs() <= 1e-9 * gap.max(1.0),
+        "gap = {gap} but sqrt(e1² + q²) = {pythagoras} — the identity must hold to roundoff"
+    );
+    let expected_rel = 0.5 * (q / e1) * (q / e1);
+    assert!(
+        (rel - expected_rel).abs() <= 1e-12 * expected_rel.max(1.0),
+        "rel_err_est = {rel}, ½(q/e1)² = {expected_rel}"
+    );
+    assert!(
+        !phys.contains("\"lo\":") && !phys.contains("\"certified_positive\""),
+        "the physical row must not carry certificate fields it does not have: {phys}"
+    );
+}
+
+/// The `φ₁` start is its own start vector (§M4.9 requirement 3): normalized,
+/// carrying all four species plus the squeezed-pair content (its overlap with
+/// the two-species R-odd start is √(2/5) of the equal five-component weight —
+/// not 1, so it is not the diagnostic start in disguise), and with no overlap
+/// with the even diagnostic start.
+#[test]
+fn the_phi1_start_lives_outside_both_diagnostic_starts() {
+    let phi = phi1_start();
+    assert!((phi.norm() - 1.0).abs() < 1e-12, "norm = {}", phi.norm());
+    let w_r_odd = QuantumState::inner_product(&r_odd_start(), &phi).norm();
+    assert!(
+        (w_r_odd - 2.0 / 10.0f64.sqrt()).abs() < 1e-9,
+        "|⟨r_odd|φ₁⟩| = {w_r_odd}, expected √(2/5) = 2/√10 from the five equal components"
+    );
+    let w_even = QuantumState::inner_product(&empty_vacuum(), &phi).norm();
+    assert!(
+        w_even < 1e-12,
+        "|⟨even_start|φ₁⟩| = {w_even} — the start must not sit in the even diagnostic's mode"
+    );
 }
 
 #[test]

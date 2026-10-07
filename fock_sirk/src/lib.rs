@@ -32,8 +32,10 @@ pub mod registry;
 pub mod tensor_state;
 
 pub use certificate::{
-    Certificate, GapCertificate, certified_ground_state, certified_mass_gap, certified_ritz_values,
-    emit_gap_certificate_ndjson, emit_gap_certificate_ndjson_with, emit_ritz_bands_ndjson,
+    Certificate, GapCertificate, PhysicalGapCertificate, certified_ground_state,
+    certified_mass_gap, certified_ritz_values, emit_gap_certificate_ndjson,
+    emit_gap_certificate_ndjson_with, emit_physical_gap_ndjson, emit_physical_gap_ndjson_with,
+    emit_ritz_bands_ndjson,
 };
 pub use device::best_device;
 pub use evolve::evolve_restarted;

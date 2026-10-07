@@ -793,3 +793,64 @@ Requirements, in order:
 `q` must fall to `≈ 4.1e-3` for three digits (`VERIFY_MASS_GAP_NORM_RESIDUAL.md`,
 reachability ledger). Whether the residual ever enters an exponential regime is
 unmeasured past `m = 128` — see the turnover question in that file.
+
+---
+
+> **RESULT (2026-10-07) — DONE on the Rust emission side; the Lean reader
+> guards remain with the specialist (§M4.9 items 2–3 of `CONSOLIDATED_PLAN.md`).**
+>
+> **Library seam** (`fock_sirk/src/certificate.rs`): `PhysicalGapCertificate
+> { sector, e1, gap, q, rel_err_est }` with `measure(sector, h, φ)` computing
+> all three numbers from one matvec pair — `e1 = ⟨φ|H|φ⟩`, `gap = ‖Hφ‖`,
+> `q = ‖Hφ − e₁φ‖` — and returning `None` when `e1 ≤ 0`, so a state at or
+> below the outer vacuum structurally cannot become a physical row (the
+> "table empty if none" case is enforced, not hoped for). The Pythagorean
+> identity `gap² = e1² + q²` (the machine-checkable form of `‖Hφ₁‖² = E₁² +
+> ‖H d‖²`) and `rel_err_est = ½(q/e1)²` are pinned by exact-arithmetic unit
+> tests on a toy number-operator Hamiltonian. Emitter:
+> `emit_physical_gap_ndjson[_with]` → one self-describing
+> `{"kind":"physical_gap","sector","physical":true,"gap","q","e1",
+> "rel_err_est"}` line.
+>
+> **Requirement 4, every row**: the diagnostic emitter now stamps all three of
+> its lines with `"sector"` (`one_outer_boson_r_even` / `one_outer_boson_r_odd`
+> /
+> `one_outer_boson_r_split`) and `"physical":false`. The schema change is
+> strictly additive — kinds and field order of the old keys are unchanged, and
+> the `unfer_ffi` T6 recorder test (which asserts the exact
+> `ritz_certificate ×2 + certified_mass_gap` kind sequence and durable replay)
+> passes unmodified.
+>
+> **Campaign** (`fock_sirk/tests/mass_gap_campaign.rs`): `run_campaign` runs a
+> third solve per `(g, m)` from `phi1_start` and appends one physical row per
+> row. *The φ₁ free parameter (requirement 3), recorded*: the start is an
+> equal-weight superposition over all four one-quanton species plus the
+> squeezed-pair content `|1₀,1₁⟩` — different from both diagnostic starts,
+> pinned by `the_phi1_start_lives_outside_both_diagnostic_starts` — and
+> `first_above_vacuum` selects the **lowest Ritz pair with `θ > 0`** as the
+> first state above the outer vacuum. The literal multi-outer-boson variant of
+> the start (⊕ a two-outer-boson component) was implemented first and
+> **measured not to fit**: the two-quanton sector's product space passes the
+> 200k component budget during the solve itself (`StateExplosion {
+> components: 265896 }` at `g = 1, m = 10`), and because `H = dΓ(h)`
+> block-diagonally preserves the sector, pruning never sheds it. Resolving the
+> two-quanton sector per-row is therefore filed with the other open
+> questions, not done.
+>
+> **What the rows say** (all 20 regenerated fixtures): every row has `e1 > 0`
+> and satisfies the identity to roundoff, but `rel_err_est` runs `0.86 – 3.2e1`
+> — `q` is not remotely at the `4.1e-3` reachability target, so **no physical
+> row certifies and the Lean gap table stays empty** (option (c)), exactly as
+> the acceptance allows. The `g = 0` control gets a physical row too — a
+> truncation artefact like its diagnostic counterpart, and a reason the
+> reader's positivity/refusal logic must exist on the physical side as well.
+>
+> **Verification**: 6 new `certificate.rs` unit tests + 3 new campaign tests;
+> `cargo test -p fock_sirk --lib` 44/44; `mass_gap_campaign` 17 passed (+4
+> ignored diagnostics); `qcd_mass_gap_certified` + `qym_mass_gap` green;
+> `unfer_ffi` certificate tests 2/2; `check-mass-gap-claims` PASS (10 ↔ 10
+> both copies), `check-mass-gap-spec-parity` PASS (22 claims); clippy clean,
+> `cargo fmt --check` clean. Fixtures + `MANIFEST.tsv` regenerated with
+> `UPDATE_GOLDEN=1`; the honesty grep in `scripts/regen_mass_gap.sh` still
+> parses the assembly line. Still open and untouched: the `q` reachability
+> target, the `m = 128` turnover question (A3), and every `.lean`-side guard.
