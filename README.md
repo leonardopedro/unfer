@@ -136,18 +136,22 @@ nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   — three test binaries added by the M1/M4/M5 mass-gap campaign)
 ```
 
-The workspace suite has **three** known-intermittent tests in `unfer_ffi`'s
+The workspace suite had **three** known-intermittent tests in `unfer_ffi`'s
 action/owner-log group (`action_apply_resolves_and_merges_applied_result`,
 `action_submit_queues_pending_record_with_provisional_result`, and
-`queue_drops_oldest_when_full`, whose owner ring can be emptied under it by a
-test holding a *different* mutex). All three pass in isolation and fail only
-under parallel execution. The cause and the running inventory of which test
-holds which lock live in [`docs/TEST_LOCKS.md`](docs/TEST_LOCKS.md) — the first
-store (the owner log) is now charted, and it is what identified the third test
-on 2026-10-06. Reordering or merging these locks has been tried twice and made
-things worse both times, so the prerequisite remains the finished inventory.
+`queue_drops_oldest_when_full`, whose owner ring could be emptied under it by a
+test holding a *different* mutex). **A12 closed them**: the inventory of which
+test holds which lock is finished — it found that `reset_durable_for_tests`
+wipes *all four* shared stores (eleven callers held one lock or none) and that
+the spawn-pacing knob was guarded by two different mutexes that did not exclude
+each other — every multi-lock test now takes a single order (P → ACTION →
+AUDIT → DURABLE), and the one remaining inversion was caught deadlocking the
+suite live before being converted. The fixed binary ran **100/100 clean at 16
+test threads** (campaign protocol: `timeout 60` per run, so a deadlock counts
+as a failure). The full evidence chain lives in
+[`docs/TEST_LOCKS.md`](docs/TEST_LOCKS.md).
 
-A run in which one of them fails is **not** evidence of a count: the CI test
+A run in which a test fails is **not** evidence of a count: the CI test
 step stops there, and `scripts/check-status --recount` refuses a log containing
 a failed suite rather than summing past it.
 

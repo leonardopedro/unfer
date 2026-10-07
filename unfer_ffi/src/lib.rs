@@ -4700,6 +4700,12 @@ mod tests {
 
     #[test]
     fn condition_enqueues_event() {
+        // A12: `uk_condition` checkpoints before running, and a session created
+        // while `resolved_checkpoint_failure...`'s failing store is live keeps
+        // that store — either way the op surfaces a spurious -1010. Serialize on
+        // the durable slot like the sibling session tests (D alone: no other
+        // test lock is touched).
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         let sub = subscribe(h);
         // Condition on the vacuum (should succeed — vacuum prior has mass 1).
@@ -4717,6 +4723,11 @@ mod tests {
 
     #[test]
     fn set_prior_enqueues_event() {
+        // A12: this test flaked as -1010 — a session created while another
+        // test's failing store was installed inherits it, so `uk_set_prior`
+        // fails its flush. Serialize on the durable slot (D) for the whole
+        // body, exactly like session_compact_ffi_roundtrip.
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         let sub = subscribe(h);
         let prior = r#"{"kind":"vacuum"}"#;
@@ -4734,6 +4745,12 @@ mod tests {
     fn queue_drops_oldest_when_full() {
         // The drop now surfaces on the owner ring (uk_owner_list), which is
         // shared with the audit/owner suite — serialize on that lock.
+        //
+        // A12: ACTION first, then AUDIT (the majority order) — the owner log is
+        // also cleared by ACTION-only tests (owner_logger/report_issue), so
+        // holding A excludes them and holding U excludes the audit suite. One
+        // order, no new inversion: this converts the test from U-only to A→U.
+        let _action_lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _audit_lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -4811,6 +4828,10 @@ mod tests {
 
     #[test]
     fn subscribe_filters_by_event_type() {
+        // A12: `uk_set_prior` flushes through the kernel-global durable slot;
+        // a session created while another test's failing store is live would
+        // surface a spurious -1010 here. Serialize on the durable slot (D).
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         // Subscribe to only "evolved" events.
         let (qptr, qlen) = json_ptr(r#"{"types":["evolved"]}"#);
@@ -4932,6 +4953,11 @@ mod tests {
 
     #[test]
     fn blueprint_export_instantiate_roundtrip() {
+        // A12: `uk_event_probability` checkpoints before running — a session
+        // created while another test's failing store is live would surface a
+        // spurious -1010. Serialize on the durable slot (D alone; this test
+        // never touches the shared blueprint registry, so no B needed).
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         assert!(h > 0);
 
@@ -5160,6 +5186,16 @@ mod tests {
         let _lock = BLUEPRINT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // A12: this test flaked 3/100 as -1010 ("spawned copy must answer").
+        // `uk_event_probability` checkpoints, so it READS durability — and a
+        // live failing store here did worse than fail itself: its extra flush
+        // consumed the fail-after-3 counter that
+        // `resolved_checkpoint_failure_surfaces_unknown_outcome` (A→U→D)
+        // sequences its crash window on, so that test's apply failed at the
+        // WRONG flush and never marked unknown-outcome. D after B, the order
+        // `blueprint_import_register_list_export_gadget_two_sessions` already
+        // takes.
+        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unfer_data::blueprint::clear_global_registry();
         uk_clear_caller();
 
@@ -5338,7 +5374,10 @@ mod tests {
     // resolved_checkpoint_failure_surfaces_unknown_outcome's failing store was
     // live concurrently). Acquired AFTER ACTION/AUDIT (fixed order) so a test
     // holding the action locks never blocks on a holder of this one.
-    static DURABLE_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    //
+    // A12: pub(crate) because `spawn_pacing_tests` (a sibling module) now takes
+    // it too — its four-store reset must hold every store it wipes.
+    pub(crate) static DURABLE_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // The windowed meter is a process-global shared store (handles.rs). The FFI
     // tests that consume it serialize on this lock so one test's `uk_clear_meter`
@@ -5350,8 +5389,9 @@ mod tests {
     // The action store is kernel-global (shared FFI statics), so the action tests
     // serialize on ACTION_TESTS_LOCK: they must not run concurrently or they would
     // interfere through the shared queue (counts and buffer sizes).
-
-    static ACTION_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    //
+    // A12: pub(crate) so `spawn_pacing_tests`' four-store reset can hold it.
+    pub(crate) static ACTION_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn submit_action(effect: &str, params: &str) -> i64 {
         let req = format!(r#"{{"principal":"test_module","effect":"{effect}","params":{params}}}"#);
@@ -6184,8 +6224,9 @@ mod tests {
     // The audit trail and agent registry are kernel-global (shared FFI statics),
     // so these tests serialize on AUDIT_AGENT_TESTS_LOCK (like the action store)
     // and clear the stores first.
-
-    static AUDIT_AGENT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    //
+    // A12: pub(crate) so `spawn_pacing_tests`' four-store reset can hold it.
+    pub(crate) static AUDIT_AGENT_TESTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn audit_list() -> serde_json::Value {
         let json = read_buf(|b, c| uk_audit_list(b, c));
@@ -6267,6 +6308,9 @@ mod tests {
 
     #[test]
     fn agent_spawn_bounded_and_list() {
+        // A12: spawning reads the pacing knob, so hold SPAWN_PACING too or a
+        // concurrent pacing test's 60s window refuses this spawn (UK-4601).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -6307,6 +6351,9 @@ mod tests {
 
     #[test]
     fn agent_kill_lifecycle() {
+        // A12: spawning reads the pacing knob, so hold SPAWN_PACING too or a
+        // concurrent pacing test's 60s window refuses this spawn (UK-4601).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -6324,6 +6371,9 @@ mod tests {
 
     #[test]
     fn agent_grants_returns_bounded_set() {
+        // A12: spawning reads the pacing knob, so hold SPAWN_PACING too or a
+        // concurrent pacing test's 60s window refuses this spawn (UK-4601).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -7114,6 +7164,17 @@ mod tests {
         // F22 discipline gate: feed a known token through the logging surface (the
         // host loopback's `uk_audit_append` — where a leaked credential-keyed param
         // would land) and scan audit + owner logs for it.
+        // A12: ACTION first, then AUDIT — the majority order every other
+        // multi-lock test in this file takes (P→A→U→D where pacing applies).
+        // This test used to acquire them U→A, because the missing lock was
+        // appended after the existing one — and that inversion was caught
+        // deadlocking the suite live: this test holds AUDIT and waits for
+        // ACTION while a gatekeeper test holds ACTION and waits for AUDIT,
+        // leaving all 16 test threads blocked. `zz_inversions.py` (the final
+        // inventory scan) named this test as the ONLY remaining inversion,
+        // so the reordering that once regressed is now the single missing
+        // piece of one order everywhere.
+        let _owner_lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _lock = AUDIT_AGENT_TESTS_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -7124,7 +7185,6 @@ mod tests {
         // `owner_logger_writes_dot_component_lines` failed intermittently on
         // `assert!(uk_owner_clear() >= 2)`: it saw fewer lines than it wrote
         // because a concurrent test had cleared them first.
-        let _owner_lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         uk_audit_clear();
         uk_owner_clear();
         uk_clear_caller();
@@ -7211,6 +7271,18 @@ mod tests {
 
     #[test]
     fn agent_spawn_refuses_an_unknown_preset() {
+        // A12: reset clears all four stores and spawn reads the pacing knob —
+        // hold every store the reset wipes plus pacing, majority order P→A→U→D.
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let rc = spawn_json(r#"{"name":"a","preset":"no-such-preset"}"#);
         assert!(rc < 0, "an unknown preset must be refused, got {rc}");
@@ -7228,6 +7300,17 @@ mod tests {
 
     #[test]
     fn agent_spawn_requires_grants_or_a_preset() {
+        // A12: same four-store reset as its sibling — P→A→U→D.
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         let rc = spawn_json(r#"{"name":"a"}"#);
         assert!(
@@ -7243,7 +7326,16 @@ mod tests {
 
     #[test]
     fn a_worker_may_not_hold_the_maintainer_preset_and_it_is_audited() {
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         handles::clear_audit();
 
@@ -7276,7 +7368,19 @@ mod tests {
 
     #[test]
     fn a_director_may_not_hold_maintainer_either() {
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A12: the reset below wipes DURABLE+ACTIONS+AUDIT+OWNER_LOG and spawn
+        // reads the pacing knob — hold every wiped store plus pacing, order
+        // P→A→U→D (the majority order written out at the acquisition sites).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         set_trusted_caller();
         assert!(
@@ -7288,7 +7392,19 @@ mod tests {
 
     #[test]
     fn an_ordinary_worker_preset_is_accepted_and_recorded() {
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A12: the reset below wipes DURABLE+ACTIONS+AUDIT+OWNER_LOG and spawn
+        // reads the pacing knob — hold every wiped store plus pacing, order
+        // P→A→U→D (the majority order written out at the acquisition sites).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         set_trusted_caller();
 
@@ -7313,7 +7429,19 @@ mod tests {
 
     #[test]
     fn a_reviewer_may_not_hold_the_integrator_preset() {
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A12: the reset below wipes DURABLE+ACTIONS+AUDIT+OWNER_LOG and spawn
+        // reads the pacing knob — hold every wiped store plus pacing, order
+        // P→A→U→D (the majority order written out at the acquisition sites).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         set_trusted_caller();
         assert!(
@@ -7325,7 +7453,19 @@ mod tests {
 
     #[test]
     fn an_unknown_role_is_refused_rather_than_defaulted() {
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A12: the reset below wipes DURABLE+ACTIONS+AUDIT+OWNER_LOG and spawn
+        // reads the pacing knob — hold every wiped store plus pacing, order
+        // P→A→U→D (the majority order written out at the acquisition sites).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         set_trusted_caller();
         // Defaulting an unrecognised role to the *most* permissive would turn a
@@ -7338,7 +7478,19 @@ mod tests {
     fn an_explicit_grant_set_still_works() {
         // The preset is additive: a caller that already spelled out its grants
         // must keep working.
-        let _durable = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A12: the reset below wipes DURABLE+ACTIONS+AUDIT+OWNER_LOG and spawn
+        // reads the pacing knob — hold every wiped store plus pacing, order
+        // P→A→U→D (the majority order written out at the acquisition sites).
+        let _pace = SPAWN_PACING_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         set_trusted_caller();
         let rc = spawn_json(r#"{"name":"explicit","grants":{"kernel":["uk_version"]}}"#);
@@ -7358,12 +7510,19 @@ mod tests {
 // criterion is about the chokepoint, not about the predicate behind it.
 //
 // Serialized: `set_spawn_min_interval_ms` and the pacer store are process-global.
+//
+// A12: the lock lives at crate root (not inside this module) because every test
+// that *spawns* must hold it too — a spawn under another test's 60s pacing
+// window is refused UK-4601. One lock, both modules, order P→A→U→D.
+//
+// `handles::spawn_pace_tests` aliases this same static (`PACE_TESTS_LOCK`):
+// two mutexes guarding one global knob exclude nothing.
+#[cfg(test)]
+pub(crate) static SPAWN_PACING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod spawn_pacing_tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static SPAWN_PACING_LOCK: Mutex<()> = Mutex::new(());
 
     fn json_ptr(s: &str) -> (*const u8, i64) {
         (s.as_ptr(), s.len() as i64)
@@ -7376,6 +7535,16 @@ mod spawn_pacing_tests {
     #[test]
     fn a_spawn_burst_is_refused_with_rate_limited_at_the_chokepoint() {
         let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        // A12: reset wipes all four stores; hold them too, after pacing (P→A→U→D).
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         handles::clear_spawn_pace();
         handles::set_spawn_min_interval_ms(60_000);
@@ -7412,6 +7581,16 @@ mod spawn_pacing_tests {
         // The refusal is a governance decision, so it belongs in the ring like
         // every other refusal at this chokepoint.
         let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        // A12: reset wipes all four stores; hold them too, after pacing (P→A→U→D).
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         handles::clear_spawn_pace();
         handles::set_spawn_min_interval_ms(60_000);
@@ -7436,6 +7615,16 @@ mod spawn_pacing_tests {
         // Order matters: a request that was always going to be refused for its
         // grants should say so, rather than reporting that it was too early.
         let _g = SPAWN_PACING_LOCK.lock().unwrap();
+        // A12: reset wipes all four stores; hold them too, after pacing (P→A→U→D).
+        let _action = tests::ACTION_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _audit = tests::AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable = tests::DURABLE_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         handles::reset_durable_for_tests();
         handles::clear_spawn_pace();
         handles::set_spawn_min_interval_ms(60_000);

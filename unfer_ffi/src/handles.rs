@@ -2294,9 +2294,13 @@ mod spawn_pace_tests {
         clear_spawn_pace, set_spawn_min_interval_ms, spawn_interval_from, spawn_pace_allows,
         spawn_pace_retry_after,
     };
-    use std::sync::Mutex;
 
-    static PACE_TESTS_LOCK: Mutex<()> = Mutex::new(());
+    /// A12: this module and `lib.rs::spawn_pacing_tests` share ONE lock
+    /// (`crate::SPAWN_PACING_LOCK`), because they mutate the same process-global
+    /// interval. A second mutex here meant the two modules did not exclude each
+    /// other: this test's 40ms/60s window leaked into a lib.rs test spawning
+    /// concurrently (UK-4601 / a lockout that never expired).
+    use crate::SPAWN_PACING_LOCK as PACE_TESTS_LOCK;
 
     /// Run `f` with pacing set to `ms`, always restoring the default afterwards so
     /// a panic cannot leave the process-global interval changed for other tests.
