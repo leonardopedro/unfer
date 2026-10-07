@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1764 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-06 -->
+<!-- status: verified | tests: 1769 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-07 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -113,12 +113,16 @@ measured separately in `--release` below). Excluding it is a scope choice, not
 a refresh, so it is stated rather than left for a reader to infer — as is the
 change from the previous figure, 1640.
 
-Measured 2026-10-06 by summing every `test result: ok.` line of
-`cargo test --workspace --exclude fock_sirk` (66 test binaries + doc-tests, 0
-failures). **Debug and release agree exactly**, suite by suite — both were run,
-which is why the block can be checked against either. Growth since 1640:
+Measured 2026-10-07 by summing every `test result: ok.` line of
+`cargo test --workspace --exclude fock_sirk` (67 test binaries + doc-tests —
+53 binary suites + 14 doc-test groups —, 0 failures). **Debug and release
+agree exactly**, suite by suite — both were run, which is why the block can be
+checked against either. Growth since 1640:
 `decide_core` +94 (the D1–D15 analytic decision engine) plus the G1–G9
-protocol/ffi/edge additions.
+protocol/ffi/edge additions. Growth since the 1764 of 2026-10-06:
+`unfer_protocol` +4 (the `cell_tool` blueprint CLI behind the N2
+module-reconstruction gate) and `unfer_edge` +1 (A9's loopback-default
+pinning test).
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -129,7 +133,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1764 passed (2026-10-06; identical count in --release, per suite)
+#   1769 passed (2026-10-07; identical count in --release, per suite)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04
@@ -209,19 +213,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 24, 2026-10-06)
+## Test & benchmark counts (rev 25, 2026-10-07)
 
-- Workspace tests: **1764 green** on CPU (default features,
-  `cargo test --workspace --exclude fock_sirk`, 66 test binaries +
-  doc-tests): `unfer_protocol` 392, logos 346, `unfer_ffi` 228,
+- Workspace tests: **1769 green** on CPU (default features,
+  `cargo test --workspace --exclude fock_sirk`, 67 test binaries +
+  doc-tests): `unfer_protocol` 396, logos 346, `unfer_ffi` 228,
   `prob_kernel` 143, `unfer_consensus` 111, `nested_fock_algebra` 98,
-  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 61,
+  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 62,
   `unfer_data` 56, `unfer_taler` 36, `ode_sirk` 36, `unfer_identity` 6,
   `sirk_core_model` 5. Debug and `--release` report the same count for
   every suite (verified 2026-10-06; no test is gated on
   `cfg(debug_assertions)`).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1764 above.
+  2026-10-06, `--release`) and is **not** in the 1769 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -230,7 +234,11 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> The previous revision of this table (rev 23, 2026-08-11) claimed **676** and
+> Revision history of this table: **rev 25** (2026-10-07) adds the
+> `cell_tool` blueprint CLI (+4, `unfer_protocol`) and A9's loopback-default
+> test (+1, `unfer_edge`), re-measured by the same command rather than carried
+> forward. **rev 24** (2026-10-06) claimed 1764. The revision before that
+> (**rev 23**, 2026-08-11) claimed **676** and
 > was stale by a year of work — it predates the board/cooperation/evidence
 > modules, the configuration layer and `decide_core`. It is superseded by the
 > figures above, which are re-measured rather than carried forward: the status
