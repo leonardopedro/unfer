@@ -19,7 +19,7 @@
 //! The canonical form is normalized back into the CAS-string dialect
 //! (`c_0 * a_0`, explicit `*`, no braced indices) so it can flow back into
 //! [`nested_fock_algebra::compile_to_fock`] and become a numerical
-//! [`Hamiltonian`].
+//! [`nested_fock_algebra::Hamiltonian`].
 
 use std::io::Write;
 use std::path::PathBuf;

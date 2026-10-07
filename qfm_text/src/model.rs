@@ -125,7 +125,7 @@ pub struct QfmTextModel {
     /// basis with R partitions of the infinite-dimensional
     /// hypersphere of inner wave-functions.
     ///
-    /// In the Fock basis: c_0[fock] has R non-zero components
+    /// In the Fock basis: `c_0[fock]` has R non-zero components
     /// each equal to `√R` (R = number of partitions). Only the
     /// first M of these have known Krylov projections (the rows
     /// of the W matrix). The Krylov-projected c_0 is:
@@ -555,7 +555,7 @@ impl QfmTextModel {
     /// of training data points) to allow distinguishing the
     /// training data. Default: R = 10 * M.
     ///
-    /// In the Fock basis: c_0[fock] has R non-zero components equal
+    /// In the Fock basis: `c_0[fock]` has R non-zero components equal
     /// to `√R` (the first R Fock basis elements, R = number of
     /// partitions). The remaining infinite components are zero.
     ///
@@ -1189,7 +1189,7 @@ impl QfmTextModel {
     /// Preprocess the raw Krylov-decoded `p̃` (already restricted to
     /// the per-context active modes by `decode_sketched_at`)
     /// according to the configured
-    /// [`DecodeStrategy`](crate::config::DecodeStrategy). This is the
+    /// [`DecodeStrategy`]. This is the
     /// structural fix for the unigram-floor collapse documented in
     /// `QFM_TEXT_STATUS.md` §"The real bottleneck".
     ///

@@ -25,12 +25,12 @@
 //! `default-features = false`. That is deliberate: the part of `logos` that
 //! matters — gate → CCG → CoreIR → DeltaNet → readback → hash — needs no
 //! network, and `logos` is a dependency of crates that must not acquire a TLS
-//! stack. Only [`HttpTransport`] is gated; [`LlmClient`] and the whole
+//! stack. Only `HttpTransport` is gated; [`LlmClient`] and the whole
 //! `formalize` pipeline are available without it.
 //!
 //! # vLLM / OpenAI compatibility
 //!
-//! [`HttpTransport`] speaks `POST {base_url}/chat/completions` with the OpenAI
+//! `HttpTransport` speaks `POST {base_url}/chat/completions` with the OpenAI
 //! message schema, which is what vLLM, llama.cpp's server, Ollama's OpenAI
 //! shim, LM Studio, TGI, and OpenAI itself all implement. Pointing at a local
 //! vLLM is therefore a base-URL change and nothing else — the same property
@@ -50,7 +50,7 @@ pub const PROOF_GRAPH_PROMPT: &str = include_str!("prompts/proof_graph_cnl.md");
 ///
 /// ProofFlow ships `_no_think` variants of several prompts. Those exist to
 /// suppress reasoning traces for cheaper models; here they are not ported
-/// because [`PROMPT_VARIANTS`] selects the file by name and a caller can add
+/// because `PROMPT_VARIANTS` selects the file by name and a caller can add
 /// `_no_think` files without touching the pipeline.
 pub const CNL_FORMALIZER_PROMPT: &str = include_str!("prompts/cnl_formalizer.md");
 
@@ -354,7 +354,7 @@ fn classify(e: ureq::Error) -> LlmError {
 /// Replays a fixed sequence of replies, then repeats the last one.
 ///
 /// This is the test seam for every retry loop in `formalize`. The
-/// [`crate::formalize::graph::Scripted`] responder in P1 is the same idea; this
+/// `crate::formalize::graph::Scripted` responder in P1 is the same idea; this
 /// one is at the transport layer so it also covers [`LlmClient`]'s request
 /// assembly and reply extraction.
 #[derive(Debug, Clone)]

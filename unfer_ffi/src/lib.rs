@@ -2402,7 +2402,7 @@ pub fn uk_vault_clear() {
 }
 
 /// Host-loopback gate: consume one unit of the caller's windowed budget for a
-/// *metered* symbol. Returns the [`handles::MeterDecision`] tag (`0` = allowed,
+/// *metered* symbol. Returns the `handles::MeterDecision` tag (`0` = allowed,
 /// `1` = rate-limited, `2` = budget-exceeded). This is the single denial point
 /// for cost governance — the loopback calls it before dispatching a metered
 /// `uk_*`, never after the fact.
@@ -3182,7 +3182,7 @@ pub extern "C" fn uk_cert_mint(op_json: *const u8, len: i64) -> i64 {
 
 /// Submit an oracle-backed mint (Plan R Phase 3). Takes a `MintRequest` JSON:
 ///
-///   {"owner":DID,"amount":u64,"source":"unfccc:vc:<orderId>","blinding?":"hex32"}
+///   {"owner":DID,"amount":u64,"source":"unfccc:vc:&lt;orderId&gt;","blinding?":"hex32"}
 ///
 /// The `source` MUST reference a public UN cancellation record
 /// (`unfccc:vc:<orderId>`) — UK-7007 `CERT_ORACLE_REJECTED` otherwise. The

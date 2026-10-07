@@ -32,9 +32,25 @@ jobs:
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
         run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+      # A6: smoke_gate's smokes 2-3 exercise binaries that live in *sibling*
+      # repos (`unfer_agent` in velysterm, `modhost` in australVM). Without the
+      # siblings they print [gap] ("tooling absent") and the job stayed green
+      # while two of the three real entry paths were not covered. Clone the
+      # siblings and build the two binaries so the smokes run for real — the
+      # goal is not "no [gap]" but coverage; a missing binary after these build
+      # steps is a hard [FAIL] inside smoke_gate itself.
+      - name: checkout velysterm + australVM as siblings (smoke_gate smokes 2-3)
+        run: |
+          git clone --depth 1 --branch main https://github.com/leonardopedro/velysterm.git ../velysterm
+          git clone --depth 1 --branch main https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - name: install LLVM coverage tools (H11 per-file coverage gate)
         run: rustup component add llvm-tools-preview
+      - name: build the sibling binaries smoke_gate exercises
+        run: |
+          cargo build --locked --manifest-path ../velysterm/Cargo.toml -p kernel_client --bin unfer_agent
+          cargo build --locked --manifest-path ../australVM/safestos/cranelift/Cargo.toml \
+            --no-default-features --features unfer-kernel --bin modhost
       - name: run scripts/verify-invariants
         run: bash scripts/verify-invariants
 
@@ -211,18 +227,18 @@ jobs:
       # unfer's own green run says nothing about whether the sibling still fits.
       - name: unfer (kernel + dynamic-arctic path dep)
         id: unfer
-        run: cargo build --workspace
+        run: cargo build --locked --workspace
 
       - name: dynamic-arctic (threshold authority)
         id: arctic
         run: |
-          cargo build --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
-          cargo test  --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
+          cargo build --locked --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
+          cargo test  --locked --manifest-path ../dynamic-arctic/Cargo.toml --no-default-features
 
       - name: velysterm (document engine emthin path-deps)
         id: velysterm
         run: |
-          cargo test --manifest-path ../velysterm/Cargo.toml \
+          cargo test --locked --manifest-path ../velysterm/Cargo.toml \
             -p mathed_core -p mathed_mini
 
       # australVM, in two steps because the coupling is in two languages.
@@ -237,7 +253,7 @@ jobs:
       - name: "australVM (JIT bridge: five unfer path deps + dynamic-arctic)"
         id: australvm-rs
         run: |
-          cargo test --manifest-path ../australVM/safestos/cranelift/Cargo.toml
+          cargo test --locked --manifest-path ../australVM/safestos/cranelift/Cargo.toml
 
       # The OCaml half: the plugin/Why3-gate suite, through the X4b wrapper so
       # the bridge .so is loaded by a loader that can actually load it.
@@ -264,7 +280,7 @@ jobs:
             echo "::warning::emthin was not checked out; this job says nothing about whether it still builds against velysterm"
             exit 0
           fi
-          cargo check --manifest-path ../emthin/Cargo.toml -p emthin
+          cargo check --locked --manifest-path ../emthin/Cargo.toml -p emthin
 
       # `if: always()`: one broken repo must not hide the state of the others.
       - name: report which repo broke which
@@ -340,7 +356,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: cargo build
-        run: cargo build --workspace --release --verbose
+        run: cargo build --locked --workspace --release --verbose
       # Heavy tests run in release mode (per policy) with the numerically
       # optimized profile (lto=thin, codegen-units=1). Debug mode is reserved
       # for the fast unit suites; the physics/SIRK suites are release-only.
@@ -357,21 +373,21 @@ jobs:
       - name: cargo test (release, workspace excluding fock_sirk)
         run: |
           set -o pipefail
-          cargo test --workspace --release --exclude fock_sirk --verbose 2>&1 | tee /tmp/unfer_tests.log
+          cargo test --locked --workspace --release --exclude fock_sirk --verbose 2>&1 | tee /tmp/unfer_tests.log
           bash scripts/check-status --recount unfer=/tmp/unfer_tests.log
       - name: cargo test (release, fock_sirk)
-        run: cargo test -p fock_sirk --release --verbose
+        run: cargo test --locked -p fock_sirk --release --verbose
       # The heavy nested_fock_algebra physics unit tests (e.g. the quartic QYM
       # builder) are #[ignore]d so the debug default suite stays fast; they run
       # here in release via --ignored (0.01s each) — same mode as
       # scripts/run_heavy_tests.sh.
       - name: heavy physics unit tests (release, ignored)
-        run: cargo test -p nested_fock_algebra --release --lib -- --ignored
+        run: cargo test --locked -p nested_fock_algebra --release --lib -- --ignored
       # F23 (S24): the release manifest is byte-addressed and pinned; a wrong byte in
       # any module changes the manifest and fails this explicit golden gate. Regenerate a
       # deliberately-changed manifest only with UPDATE_GOLDEN=1 (never in CI).
       - name: release manifest golden gate (F23)
-        run: cargo test -p unfer_data --test release_manifest_golden
+        run: cargo test --locked -p unfer_data --test release_manifest_golden
 
       # D6 / D-C6: the pinned calibration report must match a fresh run.
       #
@@ -384,7 +400,7 @@ jobs:
       - name: decide calibration report is fresh
         run: |
           cp decide_core/tests/fixtures/decide_calibration_report.json /tmp/committed.json
-          cargo run -p decide_core --bin decide_report -- --write
+          cargo run --locked -p decide_core --bin decide_report -- --write
           if ! diff -u /tmp/committed.json decide_core/tests/fixtures/decide_calibration_report.json; then
             echo "::error::decide_core calibration report drifted from a fresh run."
             echo "If the change is intended, commit the regenerated fixture with"
@@ -411,7 +427,25 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # A6: only default features were ever clippy'd. The gated surfaces are
+      # *tested* by the gated-features job but were never linted. `pkg/feature`
+      # syntax scopes each feature to the crate that defines it (bare names
+      # under --workspace would be ambiguous). `cuda` stays out deliberately:
+      # it is self-hosted-GPU-only (qfm-tomo-e2e-cuda) and this is every
+      # non-default feature the gated-features job exercises.
+      - run: >
+          cargo clippy --locked --workspace --all-targets
+          --features unfer_edge/audit,unfer_ffi/zenodo,unfer_ffi/latex,nested_fock_algebra/latex,prob_kernel/latex,unfer_consensus/network,unfer_taler/network
+          -- -D warnings
+      # A6: velysterm's rust.yml has both of these and unfer had neither —
+      # a no-default-features workspace build (a feature combination the
+      # default matrix never compiles) and rustdoc with warnings denied
+      # (doc rot is invisible to clippy and to the test suites).
+      - run: cargo check --locked --workspace --no-default-features
+      - run: cargo doc --locked --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   # ---------------------------------------------------------------------------
   # Feature-gated jobs: the default-features matrix never compiles the
@@ -433,19 +467,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - name: unfer_edge audit console tests
-        run: cargo test -p unfer_edge --features audit
+        run: cargo test --locked -p unfer_edge --features audit
       - name: unfer_ffi zenodo store tests
-        run: cargo test -p unfer_ffi --features zenodo
+        run: cargo test --locked -p unfer_ffi --features zenodo
       - name: nested_fock_algebra latex CAS tests
-        run: cargo test -p nested_fock_algebra --features latex
+        run: cargo test --locked -p nested_fock_algebra --features latex
       - name: prob_kernel latex tests
-        run: cargo test -p prob_kernel --features latex
+        run: cargo test --locked -p prob_kernel --features latex
       - name: unfer_ffi latex tests
-        run: cargo test -p unfer_ffi --features latex
+        run: cargo test --locked -p unfer_ffi --features latex
       - name: unfer_consensus QuePaxa network tests
-        run: cargo test -p unfer_consensus --features network
+        run: cargo test --locked -p unfer_consensus --features network
       - name: unfer_taler network testnet tests
-        run: cargo test -p unfer_taler --features network
+        run: cargo test --locked -p unfer_taler --features network
 
   # ---------------------------------------------------------------------------
   # Integration spine: build the FFI as a shared lib and assert the uk_* C ABI
@@ -462,7 +496,7 @@ jobs:
         run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
-      - run: cargo build --release -p unfer_ffi
+      - run: cargo build --locked --release -p unfer_ffi
       - name: assert generated census matches SYMBOL_REGISTRY (H2)
         run: |
           python3 scripts/gen_symbol_artifacts check || { echo "FAIL: run scripts/gen_symbol_artifacts"; exit 1; }
@@ -476,7 +510,7 @@ jobs:
             exit 1
           fi
           echo "All $(wc -l < unfer_ffi/EXPECTED_SYMBOLS.txt) uk_* symbols match EXPECTED_SYMBOLS.txt."
-      - run: cargo build --release -p unfer_ffi --features zenodo
+      - run: cargo build --locked --release -p unfer_ffi --features zenodo
       - name: assert 5 uz_* symbols match EXPECTED_SYMBOLS_ZENODO.txt (zenodo feature)
         run: |
           nm -D --defined-only target/release/libunfer_ffi.so \
@@ -744,6 +778,116 @@ jobs:
           echo "PASS: auth gate enforces uz_push grant"
 
   # ---------------------------------------------------------------------------
+  # A6: the three module e2e jobs that had none.
+  #
+  # Six modules (demo, qfm, qfm_tomo, bayes, iterated_bayes, zenodo) had e2e
+  # jobs; client_module, gatekeeper_module and durable_status_module had only
+  # their in-repo tests, so nothing exercised them end-to-end on CI. The pair
+  # and the Austral module need different harnesses — client/gatekeeper are
+  # ECMAScript-archetype modules whose positive flow + deny tests live in
+  # australVM's `ecmascript_module` test binary (behind the `ecmascript`
+  # feature, which *nothing* in CI enabled: cross-repo runs cranelift tests
+  # with default features only), while durable_status_module is an Austral
+  # module that goes through module_builder like the other six.
+  # ---------------------------------------------------------------------------
+  client-gatekeeper-e2e:
+    name: client_module + gatekeeper_module end-to-end (workerd + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      # The ECMAScript backend runs each module in a workerd sidecar. The tests
+      # auto-discover the runtime (UNFER_WORKERD, $PATH, fnm installs) and
+      # *skip themselves* when it is absent — which is exactly how this suite
+      # could be green while covering nothing. The `command -v` assertion makes
+      # the install a precondition: no runtime = red, never a silent skip.
+      # HONESTY: the install line is verified against the npm registry
+      # (`npm view workerd` resolves) but the full suite has not been observed
+      # green on a fresh runner; treat the first run as the experiment.
+      - name: install the workerd sidecar runtime
+        run: |
+          npm install -g workerd
+          command -v workerd
+          # The package's postinstall moves the native binary over its Node
+          # launcher. If npm blocks install scripts, bin/workerd stays the
+          # launcher: ModuleHost arms SO_PEERCRED with the launcher's pid, the
+          # real workerd's connection is then 403'd with a body the harness
+          # maps to `undefined`, and every test fails with a cryptic
+          # "reading ... of undefined" — measured locally (2026-10-07). Assert
+          # ELF so a blocked postinstall fails here, loudly, instead.
+          bin="$(readlink -f "$(command -v workerd)")"
+          if ! head -c 4 "$bin" | od -An -tx1 | grep -q "7f 45 4c 46"; then
+            echo "::error::workerd at $bin is the Node launcher, not the native ELF (postinstall blocked) — the suite would fail with undefined kernel calls"
+            exit 1
+          fi
+      - name: client + gatekeeper pair e2e (submit → approve/reject → merged result, + deny)
+        working-directory: unfer
+        run: >
+          cargo test --locked --manifest-path ../australVM/safestos/cranelift/Cargo.toml
+          --features ecmascript --test ecmascript_module -- --nocapture
+
+  durable-status-e2e:
+    name: durable_status_module end-to-end (Austral CPS-JIT + UK-4001)
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout unfer (sibling layout)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          path: unfer
+      - name: checkout australVM (sibling)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/australVM
+          path: australVM
+      - name: checkout dynamic-arctic (sibling path dep, unfer_consensus)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+        with:
+          repository: leonardopedro/dynamic-arctic
+          # Explicit path: without it the checkout targets (and cleans) the
+          # workspace root, wiping the unfer/australVM sibling checkouts.
+          path: dynamic-arctic
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            unfer
+            australVM/safestos/cranelift
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.13"
+      - name: install australVM OCaml deps
+        working-directory: australVM
+        run: opam install . --deps-only --yes || true
+      # `run` = Austral compile through the CPS-JIT with the manifest's grants
+      # authorized (positive) + the stripped-manifest denial (UK-4001). The
+      # local verification of record for this exact command is
+      # docs/LODY_PATTERNS_PLAN.md §12 ("Verified: tools/module_builder run
+      # durable_status_module").
+      - name: run durable_status_module (via module_builder)
+        working-directory: unfer
+        run: bash tools/module_builder run durable_status_module
+
+  # ---------------------------------------------------------------------------
   # CUDA-on-CI: GPU smoke for the SIRK solver. The 14 CUDA tests in
   # fock_sirk/src/forward_sirk.rs are smoke-tested locally but not in CI.
   # CUDA smoke: runs only when a self-hosted runner with the `gpu` label is
@@ -786,4 +930,4 @@ jobs:
         # records the LD_LIBRARY_PATH requirement.
         env:
           LD_LIBRARY_PATH: /lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
-        run: cargo test -p fock_sirk --features cuda -- --nocapture
+        run: cargo test --locked -p fock_sirk --features cuda -- --nocapture

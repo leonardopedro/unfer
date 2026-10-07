@@ -85,7 +85,7 @@ pub enum BoardKind {
     /// An approach that did not work, and why. The highest-value entry kind:
     /// its whole purpose is to stop a peer re-deriving a dead end.
     Fail,
-    /// "I am working on this scope." See [`BoardEntry::effect_kind`].
+    /// "I am working on this scope." See [`BoardKind::effect_kind`].
     Claim,
     /// "Here is what changed and here is the machine-generated gate output."
     PatchSummary,
@@ -1493,7 +1493,7 @@ mod tests {
 /// each other's records back on replay.
 pub const BOARD_STREAM: &str = "board";
 
-/// A [`Board`] with its entries persisted to a [`DurableStore`].
+/// A [`Board`] with its entries persisted to a `DurableStore`.
 ///
 /// ## Why a wrapper and not a field on `Board`
 ///

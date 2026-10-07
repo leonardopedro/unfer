@@ -165,7 +165,7 @@ impl BlueprintRegistry {
         })
     }
 
-    /// Commit a record previously computed by [`record_for`]: make the cell
+    /// Commit a record previously computed by [`Self::record_for`]: make the cell
     /// addressable and the record visible. Idempotent — re-committing the same
     /// record is a no-op (the first mint is preserved).
     pub fn commit_record(&mut self, record: &BlueprintRecord, cell: &[u8]) {

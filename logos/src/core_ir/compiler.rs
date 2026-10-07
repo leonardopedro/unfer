@@ -67,7 +67,7 @@ fn instantiate_template(template: &SemExpr) -> CoreIR {
 }
 
 /// The 25 constructors the L0 lexicon can produce, with the tag ids
-/// [`tag_id`] assigns them.
+/// `tag_id` assigns them.
 ///
 /// Exposed so a lexicon extension can be *checked* rather than silently
 /// degraded — see [`known_constructor`] and
@@ -78,7 +78,7 @@ pub const BUILTIN_CONSTRUCTORS: &[&str] = &[
     "And",
 ];
 
-/// Whether `name` has a tag in [`tag_id`].
+/// Whether `name` has a tag in `tag_id`.
 ///
 /// The distinction matters because `tag_id` returns **0** for a name it does not
 /// know, and 0 is a legal tag: an unknown constructor therefore compiles to

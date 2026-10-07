@@ -1,8 +1,8 @@
 //! Math catastrophe bond + probability market settlement over the certificate
 //! ledger — the operator-side analogue of [`AuctionService`](crate::auction::AuctionService).
 //!
-//! The deterministic engines ([`MathBondLedger`](unfer_consensus::mathbond::MathBondLedger)
-//! and [`MarketLedger`](unfer_consensus::mathbond_market::MarketLedger)) only
+//! The deterministic engines ([`MathBondLedger`]
+//! and [`MarketLedger`]) only
 //! decide state. This service turns those decisions into settled value with
 //! ordinary, conserving `CertificateOp`s, exactly like the auction service:
 //! every e-coin is rowed into (and out of) DIDs derived deterministically from

@@ -51,7 +51,7 @@ pub mod tiered;
 
 pub use table::{EngramTable, IngestStats, placeholder_embedding};
 
-/// Reduction iteration cap, re-exported from [`deltanet::reducer`].
+/// Reduction iteration cap, re-exported from [`crate::deltanet::reducer`].
 ///
 /// Defined there so the reducer and its cap cannot drift apart — the reducer used
 /// to carry a private copy of the same number while this constant, the one with

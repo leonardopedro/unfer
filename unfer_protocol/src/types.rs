@@ -1061,7 +1061,7 @@ pub struct AuditEntry {
     /// F25 forward policy: this entry represents a `<*sensitive*>` observation.
     /// When set, the caller's sticky observation set latches and the loopback
     /// refuses forward-mutating ops (egress, hand-off, blueprints, writes) with
-    /// [`Code::SENSITIVE_LATCHED`] until an operator clears it. Set by the
+    /// [`crate::codes::Code::SENSITIVE_LATCHED`] until an operator clears it. Set by the
     /// gatekeeper/`uk_*` that minted the read — never by the reader.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sensitive: bool,
@@ -1538,7 +1538,7 @@ pub struct LogosReport {
 ///
 /// The source is lowered to CoreIR, compiled to an interaction net, reduced
 /// to its unique normal form, and read back as a **symbolic expression**
-/// ([`SymExpr`](logos::deltanet::symbolic::SymExpr)). Whenever the term has
+/// (**`SymExpr`**, from `logos::deltanet::symbolic`). Whenever the term has
 /// **no unknown variables** the expression collapses to the numerical result
 /// of its calculation (`value`), e.g. `ADD` of two 64-bit integers → `5`;
 /// when unknowns remain (`Add64(x, 3)`) `value` is `None` and the symbolic

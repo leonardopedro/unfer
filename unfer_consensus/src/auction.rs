@@ -1,7 +1,7 @@
 //! Deterministic unified-auction engine (Prebid-model open auction).
 //!
 //! This is the state-transition engine every QuePaxa node runs when it applies
-//! an [`AuctionOp`] from the consensus log — the marketplace analogue of the
+//! an [`AuctionOp`](unfer_protocol::AuctionOp) from the consensus log — the marketplace analogue of the
 //! [`CertificateLedger`](crate::certs::CertificateLedger). It is fully
 //! deterministic: a node checks an op (lot existence, floor, seller, self-bid,
 //! quantity) and only then lets it into state, and the unified-auction clearing
@@ -12,16 +12,16 @@
 //! The engine supports two markets with the same mechanism (Prebid's "unified
 //! auction" model):
 //!
-//! - **Carbon credits** ([`AuctionAsset::CarbonCredits`]): a seller offers a
+//! - **Carbon credits** ([`AuctionAsset::CarbonCredits`](unfer_protocol::AuctionAsset::CarbonCredits)): a seller offers a
 //!   lot of credits at a floor price; the winner's payment settles through the
 //!   certificate ledger (Taler e-coin or credits) and the seller's certificate
 //!   for the lot transfers to the winner.
-//! - **Publicity inventory** ([`AuctionAsset::PublicitySlot`]): a publisher
+//! - **Publicity inventory** ([`AuctionAsset::PublicitySlot`](unfer_protocol::AuctionAsset::PublicitySlot)): a publisher
 //!   offers an ad slot as an AdSense alternative; the winner pays the publisher
 //!   through the same rails. There is no ledger asset to deliver.
 //!
 //! The engine only decides the winner. Escrow of payment and delivery of the
-//! credit certificate are ordinary [`CertificateOp::Transfer`]s rowed by the
+//! credit certificate are ordinary [`CertificateOpKind::Transfer`](unfer_protocol::CertificateOpKind::Transfer)s rowed by the
 //! marketplace operator (see `unfer_taler::auction::AuctionService`), exactly
 //! like the Phase-4 [`EscrowService`](crate::escrow::EscrowService).
 

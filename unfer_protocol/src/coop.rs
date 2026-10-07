@@ -33,7 +33,7 @@
 //!    engine is a denial-of-service surface on unauthenticated input, and a claim
 //!    scope is exactly that kind of input.
 //!
-//! Claims expire on an explicit [`Board::expire_claims`] call rather than on a
+//! Claims expire on an explicit [`Coop::expire_claims`] call rather than on a
 //! wall clock, for the same reason the rest of this project avoids wall-clock
 //! time in state machines: a ledger that depends on `now` is not replayable. The
 //! caller passes the current cursor, which is monotonic and already in hand.

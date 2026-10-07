@@ -533,7 +533,7 @@ pub fn sample_hmc_single(posterior: &Posterior, opts: &HmcOpts) -> DVector<Compl
 /// by a global phase are physically identical yet maximally distant on
 /// the raw sphere; each sample is therefore phase-aligned to the running
 /// mean before the logarithmic map, realizing the projective geodesic
-/// distance $d([\mu],[s]) = \arccos|\langle\mu\,|\,s\rangle|$.
+/// distance $d(\[\mu\],\[s\]) = \arccos|\langle\mu\,|\,s\rangle|$.
 ///
 /// Algorithm (Riemannian gradient descent):
 /// 1. Initialize $\mu \leftarrow s_0$.

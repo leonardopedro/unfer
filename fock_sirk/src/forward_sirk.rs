@@ -21,7 +21,7 @@ pub struct ForwardSirkResult {
     /// Whitening transform `W` (`m x rank`) mapping whitened coefficients back to
     /// Krylov-vector coordinates. `Wᴴ G_sub W = I_rank`.
     pub w_whiten: DMatrix<Complex64>,
-    /// The retained Krylov sequence `w_0, ..., w_m` used by [`reconstruct`] to map
+    /// The retained Krylov sequence `w_0, ..., w_m` used by [`Self::reconstruct`] to map
     /// whitened-basis coefficients back to a [`QuantumState`]. The stored
     /// vectors are the UNIT-NORM recurrence frame `ŵ_k` (see [`Self::scales`]).
     pub w_sequence: Vec<QuantumState>,

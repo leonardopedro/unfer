@@ -79,7 +79,7 @@ impl Manifest {
 }
 
 /// A memory-mapped shard: a flat little-endian u32 file, lazy-mapped on
-/// open. Iteration via [`Shard::tokens`] and [`Shard::windows`] works
+/// open. Iteration via [`Shard::iter`] and [`Shard::windows`] works
 /// on the mmap'd region with no further allocation.
 pub struct Shard {
     /// Absolute path of the mapped file.

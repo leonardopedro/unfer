@@ -34,7 +34,7 @@
 //! obeys), and weighted retrieval
 //! ([`crate::engram::l1keys::weighted_key_set`]).
 //!
-//! Consequently [`crate::engram::tiered::TieredStore`] and
+//! Consequently [`crate::engram::tiered::TieredTable`] and
 //! [`crate::engram::spill`] are *not* used for the payload. Both are typed to
 //! `Embedding`, and their spill addressing ([`crate::engram::spill::spill_addr`])
 //! is by `(granularity, unf_hash)` — which is exactly this module's key, so

@@ -783,7 +783,7 @@ pub fn point_to_inner_state(point: &[f64], scale: f64) -> InnerBosonicState {
 /// carrying [`point_to_inner_state`]`(points[j], scale)`.
 ///
 /// `points` and `alphas` are zipped pairwise (extra elements in the longer
-/// slice are ignored); use [`potential::optimal_coefficients`] (in the
+/// slice are ignored); use `qfm::potential::optimal_coefficients` (in the
 /// `qfm` crate) to derive `alphas` from `points` directly.
 pub fn qfm_hamiltonian_localized(points: &[Vec<f64>], alphas: &[f64], scale: f64) -> Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();

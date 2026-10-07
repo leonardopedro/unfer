@@ -2,7 +2,7 @@
 //!
 //! A trusted marketplace operator (the escrow agent) rows a certificate into a
 //! deterministic intermediate DID between a buyer and a seller. Every
-//! transition is an ordinary [`CertificateOp::Transfer`] on the consensus log:
+//! transition is an ordinary [`CertificateOpKind::Transfer`] on the consensus log:
 //!
 //! 1. [`EscrowService::hold`] — the buyer transfers the coin into the escrow
 //!    DID, derived deterministically from the operator's master key, the two

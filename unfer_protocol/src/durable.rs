@@ -3,7 +3,7 @@
 //!
 //! The kernel's audit trail, owner log, resolved posture/config, queued
 //! approval work, and session event log are all *events in a stream*. The
-//! in-memory rings ([`crate::unfer_ffi`] `handles`) are a read-through cache
+//! in-memory rings (`unfer_ffi` `handles`) are a read-through cache
 //! in front of this store; [`DurableStore::flush`] is the checkpoint barrier
 //! that makes buffered writes durable. A [`DurableStore`] is `Send + Sync` so
 //! a single store can back the whole process.

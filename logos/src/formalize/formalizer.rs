@@ -28,7 +28,7 @@
 //!
 //! L0 is a 46-word toy language ([`BASE_LEXICON_TSV`]). Stock L0 will not
 //! formalize a real proof — plan §17.1 calls this the top risk. The machinery
-//! below is real; the *coverage* comes from [`with_domain_lexicon`], which
+//! below is real; the *coverage* comes from [`DomainLexicon::with_extension`], which
 //! extends the lexicon per domain. An un-lexiconable node is reported as a
 //! [`VerifyError::NoParse`] with the failing words named, never silently
 //! dropped.
@@ -73,7 +73,7 @@ pub fn base_lexicon() -> Lexicon {
 ///
 /// # An extension may only add *words*, not *constructors*
 ///
-/// [`with_extension`] rejects a TSV that introduces a `Con("Name", …)` the
+/// [`DomainLexicon::with_extension`] rejects a TSV that introduces a `Con("Name", …)` the
 /// compiler does not know. That is a real and easily-missed restriction:
 /// `core_ir::compiler::tag_id` maps an unrecognized constructor to tag **0**,
 /// which is a legal tag, so the constructor's *name is discarded* and the term
@@ -605,7 +605,7 @@ pub fn build_user_turn(
 /// - the model reply is appended to the transcript by the client, so the next
 ///   attempt sees its own failed sentence;
 /// - the correction turn carries the **typed** failure, so an out-of-lexicon
-///   word is named rather than summarized as "Lean error: <unknown>".
+///   word is named rather than summarized as "`Lean error: <unknown>`".
 ///
 /// The loop stops at `compiles`, not `verified`: P4's completer owns the
 /// reduction-identity half. Passing `require_verified` moves the stop condition,

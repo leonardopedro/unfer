@@ -34,7 +34,7 @@ use crate::{Hamiltonian, cas::compile_to_fock};
 ///
 /// **Fallthrough path:** if the input contains unsupported syntax (e.g.
 /// `<psi|phi>` ket-bra notation), it is normalized to a LaTeX equivalent
-/// and delegated to [`compile_latex`]. mathhook's LALRPOP parser is
+/// and delegated to [`crate::latex::compile_latex`]. mathhook's LALRPOP parser is
 /// strict and will return an error for unsupported math; callers should
 /// stick to the operator-product dialect for full coverage.
 pub fn compile_typst_math(input: &str) -> Hamiltonian {

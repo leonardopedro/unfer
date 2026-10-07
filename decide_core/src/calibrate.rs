@@ -17,8 +17,8 @@
 //!
 //! | req | property | checked by |
 //! |---|---|---|
-//! | R1 | `probabilities` sums to 1 ± 1e-9 | [`Calibration::probabilities`] + test |
-//! | R2 | ECE ≤ 0.05 on held-out data | [`CalibrationReport::expected_calibration_error`] |
+//! | R1 | `probabilities` sums to 1 ± 1e-9 | [`Calibrator::probabilities`] + test |
+//! | R2 | ECE ≤ 0.05 on held-out data | [`expected_calibration_error`] + `report.rs`'s `best_ece <= DEFAULT_MAX_ECE` |
 //! | R3 | `P(ID)` is non-decreasing in the ID score | [`Calibrator::p_id`] (monotone by construction) |
 //! | R4 | `P(ID) + P(OOD) = 1`, one estimator not two | [`Calibrator::p_ood`] |
 //! | R5 | class arrival moves probabilities by ≤ ε, else declare `recalibrated` | [`DriftMonitor`] |

@@ -3,7 +3,7 @@
 //! This is a *configuration layer*, not a new security primitive: it composes
 //! the existing S21 approval lane, S22 admin seam, S23 sanitizer, S25 meter, and
 //! S26 latch. [`SecurityPosture`] selects how those primitives are wired for a
-//! deployment (or a scope); [`Provenance`] labels external data so the `auto`
+//! deployment (or a scope); [`ProvenanceSource`] labels external data so the `auto`
 //! posture can screen it before it reaches agent context.
 
 use serde::{Deserialize, Serialize};

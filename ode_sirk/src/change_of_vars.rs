@@ -18,7 +18,7 @@ pub enum CoV {
 pub struct TransformedSystem {
     /// The ODE system in the new coordinates.
     pub new_ode: ODESystem,
-    /// For each original variable index, a closure mapping E[w] → E[x].
+    /// For each original variable index, a closure mapping `E[w]` → `E[x]`.
     pub observable_maps: HashMap<usize, Box<dyn Fn(f64) -> f64 + Send + Sync>>,
 }
 

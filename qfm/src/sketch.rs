@@ -68,7 +68,7 @@ impl CountSketch {
     }
 
     /// Apply the sketch to a dense vector x in R^d.
-    /// Returns x̃ in R^k where x̃[h] += s(c) * x[c].
+    /// Returns x̃ in R^k where `x̃[h] += s(c) * x[c]`.
     /// Complexity: O(d) (dense loop; for sparse inputs use `apply_indexed`).
     pub fn apply(&self, x: &[f64]) -> Vec<f64> {
         let mut out = vec![0.0; self.k];

@@ -14,7 +14,7 @@
 //! shift-multiply polynomial over token IDs, XOR-mixed across offsets, reduced
 //! modulo a per-head prime — **not** the reference's own code, which is
 //! torch-level and coupled to the decoder model. The arithmetic is transcribed
-//! faithfully (see [`surface_hash_at`]); what is reimplemented is the plumbing,
+//! faithfully (see `surface_hash_at`); what is reimplemented is the plumbing,
 //! and only the table-index behaviour is being compared.
 //!
 //! ## Why the two are not interchangeable, measured

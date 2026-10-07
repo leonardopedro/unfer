@@ -164,7 +164,7 @@ pub fn build_complete_turn(
 /// is the same early return as ProofFlow's `isinstance` guard, and
 /// [`CompleteError::NothingToComplete`] when the formalizer produced nothing.
 ///
-/// The retry loop itself is [`formalize_node_verified`]'s; this function decides
+/// The retry loop itself is [`crate::formalize::formalizer::formalize_node_verified`]'s; this function decides
 /// *whether* to run it and supplies the completion-specific prompt. Splitting it
 /// that way keeps one retry loop in the pipeline rather than two that could
 /// drift.
@@ -232,7 +232,7 @@ pub fn complete_node<T: Transport>(
     }
 }
 
-/// Drive [`formalize_node_verified`] from a pre-built turn.
+/// Drive [`crate::formalize::formalizer::formalize_node_verified`] from a pre-built turn.
 ///
 /// Drive the retry loop from a pre-built turn, demanding a unique normal form.
 ///

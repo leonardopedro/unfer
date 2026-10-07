@@ -1,6 +1,6 @@
 //! Structured symbolic readback of a reduced interaction net.
 //!
-//! [`readback`](crate::deltanet::readback) renders the reduced net as a
+//! [`readback`](crate::deltanet::readback()) renders the reduced net as a
 //! string. This module reads the same net back as a **symbolic expression
 //! tree** ([`SymExpr`]) whose leaves are either concrete literals or
 //! *unknowns* ([`SymExpr::Var`], from `Entity` agents — free variables that

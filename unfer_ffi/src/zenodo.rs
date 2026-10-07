@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn manifest_first_push_names_snapshot_0() {
-        let mut c = init_client_no_net();
+        let c = init_client_no_net();
         // Build the file name as push_bytes would (without actually uploading).
         let is_first = c.manifest.file_sequence.is_empty();
         let squash = !is_first && c.delta_count >= c.squash_after;
