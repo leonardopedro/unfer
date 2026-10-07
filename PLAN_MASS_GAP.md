@@ -27,7 +27,7 @@
 > | **M4** suites | **DONE** | All 35 tests green in debug + release, runtimes measured and pinned in the seven suite headers; §4 ↔ test bijection machine-checked by `check-mass-gap-claims` in CI. |
 > | **M5** f64 complement | **DONE, 2 residual gaps** | 12 proptest properties + **15 Kani harnesses: 12 proven, 3 CBMC timeouts at 30 min** (SAT-hard monotonicity proofs, *not* counterexamples). The 4 first-run failures were a CBMC `__builtin_powi` model artifact — root-caused and fixed. |
 > | **M6** evidence | **DONE** | Fixtures are self-describing, hashes manifested, log entry written. |
-> | **M7** docs | **PARTIAL** | Boundaries enforced; the **public `test/` pages are not yet updated** with the negative result. |
+> | **M7** docs | **DONE** | Boundaries enforced, and the public `test/` pages carry the negative result (`test/numerics/qym-mass-gap.md` campaign section + T11/T12 row; `test/proofs/proof-plans.md` open item 6). Verified 2026-10-07 by `check_site.py` and `scripts/check-non-claims`. |
 > | **M8** H-of-record seam | **no change needed** | Untouched by M1–M9; its Cadabra tests are *unrun here* (no `cadabra2-cli`). |
 > | **M9** non-claims | **DONE** | First version had 4 false positives and was rewritten narrow. Now 0 FP over 70 docs, and catches a planted overclaim. |
 >
@@ -642,6 +642,16 @@ Owner: planner (docs).
 > That is the remaining M7 work and it is the one that matters for the public
 > face: a reader of the site currently sees `g = 1` numbers without being told that
 > **no coupling certifies a positive gap**.
+>
+> **RESOLVED (2026-10-07) — the note above is stale; both pages now carry it.**
+> `qym-mass-gap.md` has the section "The 2026-10-06 campaign: no coupling
+> certifies a positive gap" (20 fixtures, the 87× window, the residual
+> mechanism, the sector correction, the vacuous-assertion warning) and its
+> proof-status table's T11/T12 row states "none certifies a positive gap —
+> §M4.9 gates §M4.3"; `proof-plans.md` carries the finding as open item 6 of
+> the honest ledger, cross-linking the numerics page. Both pass the site's own
+> gates: `python3 scripts/check_site.py` (exit 0, 62 pages, no broken links)
+> and `unfer/scripts/check-non-claims` (PASS). M7 is closed.
 
 ### M8 — Hamiltonian-of-record seam upkeep (S)
 **Improves**: the S30 Cadabra2 coupling — the Hamiltonian of record must keep
