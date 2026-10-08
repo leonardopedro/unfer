@@ -19,7 +19,7 @@ cross-repo table — including what was deliberately **not** adopted — is
 | claurst | GPL-3.0 — verified from the clone at `../claurst/` (2026-10-07) | inspiration only for the sandbox layering; never vendored | `unfer_nixvm/` (design influence) |
 | cloud-hypervisor-build | Apache-2.0/BSD (see `docs/IMPLEMENTATION_PLAN.md` §P11.23; sibling **retired 2026-10-07** — GitHub API 404 + SSH not-found, no local copy, external mount gone; licence doc-sourced, unverified) | NixOS-on-a-VM sandbox composed, not edited (one launch-script path fix in place) | `unfer_nixvm/` |
 | Azuro | see upstream public documentation | vAMM + NegRisk market framing, plan-stage only | `docs/MATHBOND.md`, `docs/PLAN_REFI_EXCHANGE.md` |
-| qm | see `PLAN_HARNESS.md` (sibling absent — **retired 2026-10-07**, re-verified absent via GitHub API 404 + SSH not-found and a local sweep; licence unverified, doc-sourced) | harness patterns (durable-by-default, idempotency + leader lease, claim slots, posture classifier) | `PLAN_HARNESS.md` |
+| qm | MIT — verified from the clone at `../qm/` (`github.com/yc-software/qm`, LICENSE read 2026-10-08; the owner cloned it locally, superseding the 2026-10-07 *retired* verdict); see `PLAN_HARNESS.md` for the adapted patterns | harness patterns (durable-by-default, idempotency + leader lease, claim slots, posture classifier) | `PLAN_HARNESS.md` |
 
 ## Notes
 
