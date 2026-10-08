@@ -267,8 +267,12 @@
           echo "[unfer-cuda-shell] Haskell environment with Egison loaded"
         '';
 
-        # Rustup default toolchain.
-        RUSTUP_TOOLCHAIN = "stable";
+        # NO RUSTUP_TOOLCHAIN here on purpose (same rule as velysterm's
+        # flake): it used to be "stable", which *overrides* rust-toolchain.toml
+        # (the env var beats the toolchain file), so `nix develop` silently ran
+        # stable while CI ran the pinned compiler — two toolchains, two clippy
+        # lint sets. rustup resolves rust-toolchain.toml from the cwd, so the
+        # shell and CI agree by construction.
       };
     };
 }

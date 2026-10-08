@@ -4657,6 +4657,13 @@ mod tests {
     /// can retry, and the full event must be delivered intact.
     #[test]
     fn poll_with_too_small_buffer_keeps_event_for_retry() {
+        // X-F7 (2026-10-08): fresh models inherit `handles::durable()` at
+        // store time (session_fork's documented rule), so this test's
+        // `uk_evolve(… ) == 0` asserts raced a concurrently-live failing
+        // global store and surfaced as a spurious -1010 (2 runs in 20 under
+        // load). Hold the swap lock, exactly like every other evolve test
+        // that reads durability under a possibly-swapped slot.
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         let sub = subscribe(h);
 
@@ -5821,9 +5828,20 @@ mod tests {
         // Evolve whose durable append fails must surface UK-1010
         // (UNKNOWN_OUTCOME) as a negative C return — the prob_kernel unit
         // test covers the kernel only, this pins the Diagnostic mapping
-        // end-to-end. The failing store is attached to THIS session only (via
-        // the same set_durable the kernel tests use), so the test cannot race
-        // any other test's global durable store.
+        // end-to-end.
+        //
+        // X-F7 (2026-10-08): the store on `h` IS session-local (the
+        // `set_durable` below overrides whatever was inherited), but the
+        // comment this test used to carry — "cannot race any other test's
+        // global durable store" — was false: `store_session` inherits
+        // `handles::durable()` (the kernel-GLOBAL slot), so the sibling `h2`
+        // below runs against whatever store another test has live there. A
+        // concurrently-installed failing store (resolved_checkpoint…'s
+        // FlushFailAfterN) surfaced exactly as the session_fork comment
+        // predicts: spurious -1010 on h2's evolve (captured: left -1010,
+        // right 0, 6 runs in 20 under load). Hold the swap lock so the global
+        // slot cannot move under the sibling.
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let h = create_harmonic_model();
         assert!(h > 0, "model create must succeed, got {h}");
         handles::with_session_mut(h, |s| {

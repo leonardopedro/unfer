@@ -42,8 +42,8 @@ UNFER_DIR="$(cd "$HERE/.." && pwd)"
 BUNDLE="$HERE/module_reconstruction"
 
 # Same toolchain convention as scripts/regen_mass_gap.sh: unfer is pinned to
-# 1.97.1 via the environment (no rust-toolchain.toml in this repo).
-export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.97.1}"
+# 1.99.0 via the environment (no rust-toolchain.toml in this repo).
+export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.0}"
 
 for f in "$BUNDLE/demo_module.cell" "$BUNDLE/demo_module.manifest" \
          "$HERE/module_builder"; do

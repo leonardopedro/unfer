@@ -425,12 +425,12 @@ jobs:
       # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
       - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
         run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
-      # Explicit 1.97.1: rust-toolchain.toml overrides the toolchain the action
+      # Explicit 1.99.0: rust-toolchain.toml overrides the toolchain the action
       # installs, so without the explicit pin the rustfmt/clippy components land
       # on the action's own (newer) stable and the pinned toolchain lacks them.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.1
+          toolchain: 1.99.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check

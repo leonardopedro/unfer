@@ -73,7 +73,7 @@ layout is required.
 ## Quick start
 
 ### Prerequisites
-- Rust **1.97.1** (pinned via `rust-toolchain.toml`; rustup installs it
+- Rust **1.99.0** (pinned via `rust-toolchain.toml`; rustup installs it
   automatically and CI runs the same compiler — single toolchain across
   the unfer/dynamic-arctic/australVM/velysterm repos)
 - CUDA toolkit 12.x (optional, for GPU SIRK — CPU is the default)
@@ -140,7 +140,8 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1774 passed (2026-10-07; identical count in --release, per suite)
+#   1785 passed (2026-10-08, rev 27; was 1774 on 2026-10-07 — D7's
+#   backbone-choice tests added 11 in decide_core)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04

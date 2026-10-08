@@ -38,7 +38,7 @@
 set -u
 
 cd "$(dirname "$0")/.." || exit 2
-export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.97.1}"
+export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.0}"
 
 MODE="${1:-run}"
 STRICT=0

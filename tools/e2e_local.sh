@@ -6,7 +6,7 @@
 #
 # What it needs, and how each piece is resolved:
 #   - Rust side (unfer_ffi, the cranelift bridge, modhost): the host
-#     rustup toolchain; the repo's rust-toolchain.toml pins 1.97.1, so a
+#     rustup toolchain; the repo's rust-toolchain.toml pins 1.99.0, so a
 #     bare `cargo` invocation already uses the CI compiler.
 #   - OCaml side (the austral compiler): `dune` + OCaml libs. module_builder
 #     uses a bare `dune` if present, `opam exec -- dune` if opam is, and

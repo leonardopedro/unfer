@@ -559,7 +559,7 @@ properties; Kani harness documented with expected runtime. Owner: planner.
 > those harnesses passes. Rerun command for any one of them:
 >
 > ```sh
-> cd unfer && export CARGO_TARGET_DIR=/tmp/kani-target2 RUSTUP_TOOLCHAIN=1.97.1
+> cd unfer && export CARGO_TARGET_DIR=/tmp/kani-target2 RUSTUP_TOOLCHAIN=1.99.0
 > cargo kani -Z unstable-options -p fock_sirk --ignore-global-asm \
 >   --harness-timeout 30m --harness the_parlett_bound_is_monotone_in_the_residual
 > ```

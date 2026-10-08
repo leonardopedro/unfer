@@ -42,7 +42,7 @@ tools/e2e_local.sh demo_module        # any module dir under the repo root
 How each toolchain piece is resolved (mirrors CI exactly):
 
 - **Rust side** (`unfer_ffi`, the cranelift bridge, `modhost`): the host
-  rustup toolchain — the repo's `rust-toolchain.toml` pins 1.97.1, so a bare
+  rustup toolchain — the repo's `rust-toolchain.toml` pins 1.99.0, so a bare
   `cargo` invocation already uses the CI compiler. First run does the cold
   release builds; later runs are incremental via the cargo cache.
 - **OCaml side** (the austral compiler): `module_builder` tries, in order,

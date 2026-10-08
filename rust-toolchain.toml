@@ -5,4 +5,5 @@
 # local builds and all CI jobs (workspace tests in release, feature-gated
 # suites, lint) use exactly this compiler. Bump deliberately with a commit.
 [toolchain]
-channel = "1.97.1"
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]

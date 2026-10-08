@@ -147,14 +147,44 @@ deadlock records as a failure instead of hanging the campaign):
    | **after step 4** | **100 runs, 0 failed, 0 deadlocks** | — |
 
 Every step's fix was verified again by the full 175-test run after rebuild,
-plus `cargo fmt --all --check`.
-
-## What is deliberately NOT claimed
+plus `cargo fmt --all --check`.## What is deliberately NOT claimed
 
 * The scan proves *lock-order* acyclicity; it says nothing about shared state
-  guarded by no lock at all — those are found only by running, which is why
-  the 100-run campaign is the acceptance, not the scan.
+  guarded by no lock at all — those are found only by running, which is why the
+  100-run campaign is the acceptance, not the scan.
 * `README.md`'s historical flake notes for the two named action tests remain
   as written; those tests were observed green throughout the final campaign
   but no cross-crate (full-workspace) campaign was rerun as part of A12 — the
   100-run protocol covers this binary alone.
+
+## The class was not finished — two more members (2026-10-08)
+
+A fresh campaign under **machine load** (release, 16 threads,
+`cargo test -p unfer_ffi` — lib + `tests/ffi.rs`, 20 runs, other builds
+saturating the box) failed **8/20 runs**, entirely in two tests that hold
+**no locks at all**:
+
+| test | runs failed | captured value |
+|---|---|---|
+| `session_evolve_append_failure_surfaces_uk1010_at_ffi` | 6/20 | `left: -1010, right: 0` (the sibling `h2`'s evolve) |
+| `poll_with_too_small_buffer_keeps_event_for_retry` | 2/20 | same class, first `uk_evolve(…) == 0` |
+
+**Mechanism** — already documented in this file's method but applied to two
+comments that denied it: `store_session` does
+`session.set_durable(durable())` (`handles.rs`), so *every fresh model
+inherits the kernel-global slot*. A concurrently-live failing store
+(`resolved_checkpoint_failure_surfaces_unknown_outcome`'s `FlushFailAfterN`,
+which holds A → U → D across its whole window) therefore surfaces as a
+spurious -1010 in any lock-free test that creates a model and evolves it.
+`session_fork_ffi_roundtrip`'s comment states exactly this and takes
+`DURABLE_TESTS_LOCK`; the two failing tests did not — each carried a comment
+asserting the opposite ("the failing store is attached to THIS session only…
+so the test cannot race any other test's global durable store"), and the A12
+inventory had *trusted those comments* when it chose which tests to convert.
+
+**Fix** (2026-10-08): both tests take `DURABLE_TESTS_LOCK` as their only lock
+(single-lock holders cannot enter the P → A → U → D cycle), and both comments
+now state the inheritance rule instead of denying it. Same protocol,
+post-fix: **0/20**. The general lesson, written down so the next inventory
+does not repeat the mistake: *a comment claiming "this cannot race" is a
+hypothesis about a shared slot; only the campaign tests it.*
