@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1774 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-07 -->
+<!-- status: verified | tests: 1785 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-08 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -113,13 +113,17 @@ measured separately in `--release` below). Excluding it is a scope choice, not
 a refresh, so it is stated rather than left for a reader to infer — as is the
 change from the previous figure, 1640.
 
-Measured 2026-10-07 by summing every `test result: ok.` line of
+Measured 2026-10-08 by summing every `test result: ok.` line of
 `cargo test --workspace --exclude fock_sirk` (68 test binaries + doc-tests —
 54 binary suites + 14 doc-test groups —, 0 failures). **Debug and release
 agree exactly**, suite by suite — both were run, which is why the block can be
 checked against either. Growth since 1640:
-`decide_core` +94 (the D1–D15 analytic decision engine) plus the G1–G9
-protocol/ffi/edge additions. Growth since the 1764 of 2026-10-06:
+`decide_core` +105 (the D1–D15 analytic decision engine) plus the G1–G9
+protocol/ffi/edge additions. Growth since the 1774 of 2026-10-07:
+`decide_core` +11 (D7's backbone choice at the seam — Matryoshka
+`#truncate`, an `#instruction` prefix and dual-stream concat, each folded
+into the embedding identity so two settings cannot share statistics).
+Growth since the 1764 of 2026-10-06:
 `unfer_protocol` +4 (the `cell_tool` blueprint CLI behind the N2
 module-reconstruction gate) and `unfer_edge` +1 (A9's loopback-default
 pinning test). Growth since the 1769 of rev 25 (also 2026-10-07): the same
@@ -216,19 +220,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 26, 2026-10-07)
+## Test & benchmark counts (rev 27, 2026-10-08)
 
-- Workspace tests: **1774 green** on CPU (default features,
+- Workspace tests: **1785 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, 68 test binaries +
   doc-tests): `unfer_protocol` 400, logos 346, `unfer_ffi` 228,
   `prob_kernel` 143, `unfer_consensus` 111, `nested_fock_algebra` 98,
-  `decide_core` 94, `qfm` 88, `qfm_text` 64, `unfer_edge` 63,
+  `decide_core` 105, `qfm` 88, `qfm_text` 64, `unfer_edge` 63,
   `unfer_data` 56, `unfer_taler` 36, `ode_sirk` 36, `unfer_identity` 6,
   `sirk_core_model` 5. Debug and `--release` report the same count for
-  every suite (verified 2026-10-06; no test is gated on
+  every suite (verified 2026-10-08; no test is gated on
   `cfg(debug_assertions)`).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1774 above.
+  2026-10-06, `--release`) and is **not** in the 1785 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -237,7 +241,10 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 25** (2026-10-07) adds the
+> Revision history of this table: **rev 27** (2026-10-08) claims **1785**
+> after D7's backbone-choice work added 11 tests to `decide_core`, measured
+> by the same command in both debug and `--release` rather than carried
+> forward. **rev 26** (2026-10-07) claimed 1774. **rev 25** (2026-10-07) adds the
 > `cell_tool` blueprint CLI (+4, `unfer_protocol`) and A9's loopback-default
 > test (+1, `unfer_edge`), re-measured by the same command rather than carried
 > forward. **rev 24** (2026-10-06) claimed 1764. The revision before that
