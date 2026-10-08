@@ -40,7 +40,7 @@
     # break once this flake is evaluated from a git store copy rather than
     # the working tree.
     cloud-hypervisor-build = {
-      url = "path:/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/cloud-hypervisor-build";
+      url = "path:/home/leo/Projects/cloud-hypervisor-build";
       flake = false;
     };
   };

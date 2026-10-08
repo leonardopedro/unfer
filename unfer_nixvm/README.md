@@ -30,7 +30,7 @@ projects rather than vendoring either into the other.
   claurst code is used here.
 
 This flake (`unfer_nixvm/flake.nix`) does not modify `../../cloud-hypervisor-build`'s
-`configuration.nix` — it takes it as a flake input (`path:../../cloud-hypervisor-build`)
+`configuration.nix` — it takes it as a flake input (`path:/home/leo/Projects/cloud-hypervisor-build`, absolute deliberately — see the comment in `flake.nix`)
 and layers a second NixOS module on top that adds `unfer.packages.x86_64-linux.unfer-ffi`
 to the guest's `environment.systemPackages`, producing `vm-perf-with-unfer` /
 `vm-sec-with-unfer` image outputs.

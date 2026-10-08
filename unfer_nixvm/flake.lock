@@ -3,13 +3,13 @@
     "cloud-hypervisor-build": {
       "flake": false,
       "locked": {
-        "lastModified": 1782887965,
-        "narHash": "sha256-/abWP/WIHUy9QF6kx9hbmoBf+LFN3uVgkQHLfzkM1iA=",
-        "path": "/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/cloud-hypervisor-build",
+        "lastModified": 1791432564,
+        "narHash": "sha256-hoN+wc7TiygxJjBriM1+/krkErqHGbKoGNTnOsxgfpk=",
+        "path": "/home/leo/Projects/cloud-hypervisor-build",
         "type": "path"
       },
       "original": {
-        "path": "/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/cloud-hypervisor-build",
+        "path": "/home/leo/Projects/cloud-hypervisor-build",
         "type": "path"
       }
     },
@@ -122,7 +122,8 @@
     "unfer": {
       "inputs": {
         "nixpkgs": "nixpkgs_3",
-        "nixpkgs-unstable": "nixpkgs-unstable"
+        "nixpkgs-unstable": "nixpkgs-unstable",
+        "why3-nixpkgs": "why3-nixpkgs"
       },
       "locked": {
         "path": "..",
@@ -133,6 +134,22 @@
         "type": "path"
       },
       "parent": []
+    },
+    "why3-nixpkgs": {
+      "locked": {
+        "lastModified": 1788179007,
+        "narHash": "sha256-hn1oU2rue2SYK8dAr8+WNZWtbsz1S2W5mnHlSEuh3bo=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "34ab99075ac4f7e40cf037eef32cb1c360bb85e9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "34ab99075ac4f7e40cf037eef32cb1c360bb85e9",
+        "type": "github"
+      }
     }
   },
   "root": "root",
