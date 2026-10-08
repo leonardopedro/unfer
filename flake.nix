@@ -98,6 +98,12 @@
         version = "0.1.0";
         src = ./.;
         cargoLock.lockFile = ./Cargo.lock;
+        # S29 added `nanoda_lib` as a git dependency; importCargoLock cannot
+        # derive its vendor hash from Cargo.lock alone (the other ~2k crates are
+        # crates.io, hashed from the lock), so it must be pinned here.
+        cargoLock.outputHashes = {
+          "nanoda_lib-0.4.13" = "sha256-PkC6zZ2GveKmgi6oi6EXGHAd62s+3EmHZIGj22bUCus=";
+        };
         buildAndTestSubdir = "unfer_ffi";
         # The full workspace test suite (fock_sirk, qfm, etc.) is exercised by CI;
         # this derivation only needs to produce the unfer_ffi artifacts.
@@ -112,6 +118,9 @@
         version = "0.1.0";
         src = ./.;
         cargoLock.lockFile = ./Cargo.lock;
+        cargoLock.outputHashes = {
+          "nanoda_lib-0.4.13" = "sha256-PkC6zZ2GveKmgi6oi6EXGHAd62s+3EmHZIGj22bUCus=";
+        };
         buildAndTestSubdir = "unfer_data";
         # unfer_data is a plain rlib (no cdylib, no bins), so the default
         # cargo-install leaves $out empty; ship the rlib explicitly so the
