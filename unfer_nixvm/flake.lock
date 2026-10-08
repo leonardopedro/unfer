@@ -3,13 +3,13 @@
     "cloud-hypervisor-build": {
       "flake": false,
       "locked": {
-        "lastModified": 1791432564,
-        "narHash": "sha256-hoN+wc7TiygxJjBriM1+/krkErqHGbKoGNTnOsxgfpk=",
-        "path": "/home/leo/Projects/cloud-hypervisor-build",
+        "lastModified": 1791435376,
+        "narHash": "sha256-36IQNOBMWQxblJNagKB3zxm/TpbWMa5ZOWnp+mussKc=",
+        "path": "/home/leo/Projects/australVM/cloud_hypervisor_vm",
         "type": "path"
       },
       "original": {
-        "path": "/home/leo/Projects/cloud-hypervisor-build",
+        "path": "/home/leo/Projects/australVM/cloud_hypervisor_vm",
         "type": "path"
       }
     },

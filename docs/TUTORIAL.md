@@ -355,10 +355,14 @@ per-item license analysis).
   input (the workspace's `edition = "2024"` needs a newer rustc than the CUDA devShell's
   deliberately-pinned `nixos-23.05` ships; that devShell is untouched). (2) new subdirectory
   `unfer/unfer_nixvm/flake.nix` (it lives inside the unfer repo, not as a separate sibling
-  checkout, since its `packages.*` output is entirely about the unfer kernel) takes
-  `../cloud-hypervisor-build`'s `configuration.nix` as a
+  checkout, since its `packages.*` output is entirely about the unfer kernel) takes the
+  recipe's `configuration.nix` as a
   raw (`flake = false`) path input — not edited, upstream stays the single source of truth —
-  and layers a NixOS module installing `unfer-ffi` on top, producing `vm-perf-with-unfer` /
+  (2026-10-08: that input points at the *tracked* recipe,
+  `australVM/cloud_hypervisor_vm/`, byte-identical to any regenerated tree's copy — so the
+  composition evaluates from committed files only; the `cloud-hypervisor-build/` tree is
+  launch-only) and layers a NixOS module installing `unfer-ffi` on top, producing
+  `vm-perf-with-unfer` /
   `vm-sec-with-unfer` image outputs. `nix eval` confirmed the whole composition is
   well-formed, reaching real NixOS `system.build.toplevel` evaluation, before this sandboxed
   session's disk (~17G free) ran out attempting to realize the full image via `nix build` —

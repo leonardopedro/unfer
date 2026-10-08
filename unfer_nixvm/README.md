@@ -22,15 +22,23 @@ projects rather than vendoring either into the other.
   `setup.sh` at run time instead of being vendored — without the ~930MB of
   vendored upstream checkouts and build output) is committed at
   `../../australVM/cloud_hypervisor_vm/` — see that directory's `setup.sh` to
-  regenerate an equivalent working tree from source.
+  regenerate an equivalent working tree from source. **2026-10-08 (owner
+  note):** this flake's path input points at the *tracked recipe directory*
+  directly (the two `configuration.nix` copies are byte-identical —
+  `setup.sh` copies the recipe's over), so evaluating the composition needs
+  only committed files; the regenerated `cloud-hypervisor-build/` tree is
+  launch-only, carrying the two spectrum0-patched binaries the launch script
+  runs.
 - **`../../claurst`** (`GPL-3.0`) — **inspiration only, never vendored**: its
   agent-drives-the-VM interaction style (a terminal coding agent that issues
   commands into a sandboxed environment) is the intended long-run UX for
   `unfer_agent`/`unfer_edge` fronting a kernel running inside this VM — no
   claurst code is used here.
 
-This flake (`unfer_nixvm/flake.nix`) does not modify `../../cloud-hypervisor-build`'s
-`configuration.nix` — it takes it as a flake input (`path:/home/leo/Projects/cloud-hypervisor-build`, absolute deliberately — see the comment in `flake.nix`)
+This flake (`unfer_nixvm/flake.nix`) does not modify the recipe's
+`configuration.nix` — it takes it as a flake input
+(`path:/home/leo/Projects/australVM/cloud_hypervisor_vm`, absolute
+purposely — see the comment in `flake.nix`)
 and layers a second NixOS module on top that adds `unfer.packages.x86_64-linux.unfer-ffi`
 to the guest's `environment.systemPackages`, producing `vm-perf-with-unfer` /
 `vm-sec-with-unfer` image outputs.
@@ -118,15 +126,24 @@ nix run .#sandboxed-sidecar-smoke
 
 ## Launching (host-side, NOT run by this session — requires `sudo`, real GPU/network device access)
 
-`../../cloud-hypervisor-build/full-stack-vm-launch.sh` still does the actual
+`../../australVM/cloud_hypervisor_vm/full-stack-vm-launch.sh` still does the actual
 launch (GPU backend, virtiofsd exporters, tap networking, `cloud-hypervisor`
-invocation). Point its `--disk` argument at this flake's built image instead
-of `./result/nixos.img`:
+invocation). On NixOS it now resolves its own dependencies (2026-10-08): the
+spectrum0-patched `cloud-hypervisor`/`crosvm` from the `setup.sh`-regenerated
+`cloud-hypervisor-build/` tree (or `CLOUD_HYPERVISOR=`/`CROSVM=`), kernel +
+initrd from `/run/booted-system/{kernel,initrd}`, and virtiofsd from PATH
+(`nix develop` in the recipe provides it). Use `DISK=` to point `--disk` at
+this flake's image:
 
 ```sh
-cd ../../cloud-hypervisor-build
-sudo ./full-stack-vm-launch.sh --strategy perf   # or --strategy sec
+cd ../../australVM/cloud_hypervisor_vm
+nix develop -c ./full-stack-vm-launch.sh --strategy perf   # or --strategy sec
+DISK=/path/to/unfer_nixvm/result/nixos.img ./full-stack-vm-launch.sh  # with-unfer image
 ```
+
+(`setup.sh` copies all four recipe files into the regenerated tree, so
+running the launch from there — where the binaries sit next to the script —
+works identically.)
 
 **This session deliberately did not run this script**, or anything that
 mounts real host directories, opens GPU device sockets, configures tap
@@ -146,11 +163,14 @@ above `cloud-hypervisor-build/`, this pointed at a nonexistent directory
 rather than the host's real Nix store, silently breaking the "host store IS
 guest store" mechanism this whole design depends on. This session's P11.23
 work fixed it in place to `--shared-dir /nix` (the host's real, absolute Nix
-store) — see the commit/diff in `../../cloud-hypervisor-build/full-stack-vm-launch.sh`.
+store) — see the commit/diff in the recipe's `full-stack-vm-launch.sh`
+(`../../australVM/cloud_hypervisor_vm/full-stack-vm-launch.sh`, copied into
+any regenerated tree by `setup.sh`).
 
 ## A design decision this flake does *not* make unilaterally: read-only vs. read-write `/nix`
 
-`../../cloud-hypervisor-build/configuration.nix` currently mounts the shared
+The recipe's `configuration.nix` (byte-identical in any regenerated
+`cloud-hypervisor-build/` copy) currently mounts the shared
 `/nix` **read-only** (`options = [ "ro" ]`) in the guest. That's the safe
 default: a compromised or buggy guest process cannot corrupt the host's
 store. It also means the plan's aspirational "packages installed in the VM
