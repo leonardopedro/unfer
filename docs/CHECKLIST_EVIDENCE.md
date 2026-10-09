@@ -54,7 +54,7 @@ to the page named in its row — not summarised away.
 |---|---|---|
 | S31 | `logos_compile` reduces to a UNF; `verified` is a confluence self-check. Proof terms must stay `rfl` — `native_decide` emits terms nanoda cannot reduce. | [LOGOS.md](LOGOS.md) |
 | S36 | Why3 is **subprocess-only** (LGPL); `check_with_grants` is pure so tests never mutate the process env. | [WHYML_CYCLE.md](WHYML_CYCLE.md) |
-| S36b | run australVM's OCaml tests via `make -C australVM test` (X4b picks the loader); the old `run`-name collision note no longer applies (X4a). | [../australVM/Makefile](../australVM/Makefile) |
+| S36b | run australVM's OCaml tests via `make -C australVM test` (X4b picks the loader); the old `run`-name collision note no longer applies (X4a). | [../../australVM/Makefile](../../australVM/Makefile) |
 | S37 | Austral→DeltaNet→UNF→TED; `ted_hash` is the content-addressable algebraic hash on top of `unf_hash`. | [LOGOS.md](LOGOS.md) |
 
 ## Numeric validation

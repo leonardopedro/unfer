@@ -146,6 +146,9 @@ nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04
 #   — three test binaries added by the M1/M4/M5 mass-gap campaign)
+
+nix-shell -p python3 --run "python3 scripts/check-links"
+#   relative markdown links resolve (CI: .github/workflows/linkcheck.yml)
 ```
 
 The workspace suite had **three** known-intermittent tests in `unfer_ffi`'s
@@ -309,5 +312,4 @@ the "Next steps to improve" section in
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE)
-or [MIT license](LICENSE-MIT) at your option.
+Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE).

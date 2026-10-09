@@ -10,8 +10,8 @@
 | Symbol | Meaning | Where |
 |---|---|---|
 | $H(\cdot)$ | SHA-256, domain-separated by `"unfer:coin"`, `"unfer:nullifier"`, `"unfer:smt"` | `certs.rs` |
-| $C_i$ | A coin commitment `CertId` | [`commit_coin`](unfer_consensus/src/certs.rs) |
-| $\nu(C_i)$ | Nullifier of a coin | [`nullifier_for`](unfer_consensus/src/certs.rs) |
+| $C_i$ | A coin commitment `CertId` | [`commit_coin`](../unfer_consensus/src/certs.rs) |
+| $\nu(C_i)$ | Nullifier of a coin | [`nullifier_for`](../unfer_consensus/src/certs.rs) |
 | $\mathcal{U}$ | The unspent set (UTXO map `coin_id → Coin`) | `CertificateLedger.utxos` |
 | $\Sigma$ | The spent set (consumed nullifiers) | `CertificateLedger.spent` |
 | $r$ | Sparse-Merkle root over UTXOs at depth 256 | `CertificateLedger.root()` |

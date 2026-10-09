@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""check-links — the federation's relative markdown-link checker.
+
+Exits non-zero when a relative link in this repository's markdown points at
+something that does not exist.
+
+Design notes:
+  * every target is resolved against the directory of the document that
+    contains it, NOT the repository root — that distinction is the whole
+    reason this checker exists;
+  * anchors (`#...`) are not validated for content, only the file they sit on;
+  * fenced code blocks, inline code spans and HTML comments are ignored (they
+    quote links as examples, and LaTeX like `ℱ[u_j](Q)` otherwise parses as a
+    link);
+  * external targets (http(s), mailto, protocol-relative) are skipped, since
+    reachability of the wider web is not this repo's contract.
+
+Usage:
+    python3 scripts/check-links [FILE ...]
+
+With no arguments every tracked-looking *.md under the repository root is
+checked (build/vcs directories are skipped).
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+from urllib.parse import unquote
+
+SKIP_DIRS = {
+    ".git", "target", "node_modules", ".lake", "_build", "__pycache__",
+    "dist", "result", ".direnv", "ol10", "vendor",
+}
+SCHEMES = ("http://", "https://", "mailto:", "ftp://", "//", "data:", "tel:", "file:")
+
+# [text](target) and ![alt](target). The closing `)` is required (with an
+# optional "title"), because a destination containing whitespace —
+# `[0,1](1 + T)⁻¹` in prose — is not a link under CommonMark either: it stays
+# literal text, so checking it would be a false positive.
+INLINE_RE = re.compile(
+    r"\[[^\]]*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"
+)
+
+# reference definitions: [id]: target "title"
+REF_RE = re.compile(r"^\s*\[[^\]]+\]:\s*(<[^>]*>|\S+)", re.MULTILINE)
+# HTML anchors/images inside markdown
+HREF_RE = re.compile(r"(?:href|src)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+# A fence may sit inside blockquote/list prefixes (`> ````, `> > ```…`), whose
+# backticks must be blanked too or they flip code-span pairing for the rest of
+# the file.
+FENCE_RE = re.compile(r"^\s*(?:>\s*)*(?:-\s+|\d+\.\s+)?(```|~~~)")
+COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+# Inline code spans quote text; a `[x](y)` inside `backticks` never renders
+# as a link (LaTeX like `ℱ[u_j](Q)` is the classic false positive).
+CODE_SPAN_RE = re.compile(r"`+")
+
+
+def strip_code_spans(text: str) -> str:
+    """Blank inline code spans the way CommonMark pairs them.
+
+    A span opens with a backtick *run* and closes with the first later run of
+    the **same length**; runs in between are content. Pairing runs by length
+    (rather than matching backticks one-by-one) matters: a stray ``` in prose
+    would otherwise shift every later pair and expose `[0,1](1` as a fake
+    link. Unmatched runs stay literal, exactly as a renderer shows them.
+    Newlines are preserved so reported line numbers stay correct.
+    """
+    runs = list(CODE_SPAN_RE.finditer(text))
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(runs):
+        j = i + 1
+        while j < len(runs) and len(runs[j].group()) != len(runs[i].group()):
+            j += 1
+        if j < len(runs):
+            spans.append((runs[i].start(), runs[j].end()))
+            i = j + 1
+        else:
+            i += 1  # unmatched opener stays literal
+    out: list[str] = []
+    prev = 0
+    for a, b in spans:
+        out.append(text[prev:a])
+        out.append("\n" * text[a:b].count("\n"))
+        prev = b
+    out.append(text[prev:])
+    return "".join(out)
+
+
+def iter_markdown(root: Path, explicit: list[str]) -> list[Path]:
+    if explicit:
+        return [Path(p).resolve() for p in explicit]
+    out = []
+    for p in sorted(root.rglob("*.md")):
+        rel = p.relative_to(root)
+        if any(part in SKIP_DIRS for part in rel.parts):
+            continue
+        out.append(p)
+    return out
+
+
+def targets_in(text: str) -> list[tuple[int, str]]:
+    """Return (line number, raw target) pairs, skipping code and comments."""
+    text = COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    # Blank fenced blocks first so their ``` markers cannot confuse the
+    # code-span pass, and so nothing inside a block is ever read as a link.
+    # Split on "\n" only: str.splitlines() also breaks on \u2028/\x85/\f,
+    # which would make reported line numbers disagree with grep -n.
+    lines = text.split("\n")
+    in_fence = False
+    fence_marker = ""
+    for i, line in enumerate(lines):
+        m = FENCE_RE.match(line)
+        if m:
+            marker = m.group(1)
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif marker == fence_marker:
+                in_fence = False
+            lines[i] = ""
+        elif in_fence:
+            lines[i] = ""
+    # Inline spans may run across lines; newlines go back so line numbers stay.
+    text = strip_code_spans("\n".join(lines))
+    found: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        for rx in (INLINE_RE, REF_RE, HREF_RE):
+            for hit in rx.findall(line):
+                found.append((lineno, hit))
+    return found
+
+
+def resolve(doc: Path, target: str, root: Path) -> Path | None:
+    """Return the path a relative target points at, or None if skippable."""
+    t = target.strip()
+    if t.startswith("<") and t.endswith(">"):
+        t = t[1:-1].strip()
+    if not t or t.startswith(SCHEMES):
+        return None
+    path_part = t.partition("#")[0]
+    if not path_part:
+        return None  # pure same-file anchor
+    path_part = unquote(path_part)
+    if path_part.startswith("/"):
+        return root / path_part.lstrip("/")
+    return (doc.parent / path_part).resolve()
+
+
+def main(argv: list[str]) -> int:
+    root = Path(__file__).resolve().parent.parent
+    docs = iter_markdown(root, argv)
+    if not docs:
+        print("check-links: no markdown files found", file=sys.stderr)
+        return 1
+
+    broken: list[str] = []
+    total = 0
+    external = 0
+    for doc in docs:
+        try:
+            text = doc.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            broken.append(f"{doc}: unreadable ({exc})")
+            continue
+        for lineno, target in targets_in(text):
+            stripped = target.strip().strip("<>")
+            if stripped.startswith(SCHEMES) or not stripped:
+                external += 1
+                continue
+            resolved = resolve(doc, target, root)
+            if resolved is None:
+                continue
+            total += 1
+            if not resolved.exists():
+                try:
+                    shown = resolved.relative_to(root)
+                except ValueError:
+                    shown = resolved
+                broken.append(
+                    f"{doc.relative_to(root)}:{lineno}: {target} -> {shown} (missing)"
+                )
+
+    if broken:
+        print(f"check-links: {len(broken)} broken link(s):", file=sys.stderr)
+        for b in broken:
+            print(f"  {b}", file=sys.stderr)
+        return 1
+
+    print(
+        f"check-links: OK — {len(docs)} document(s), {total} relative link(s) "
+        f"resolve ({external} external skipped)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
