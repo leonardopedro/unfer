@@ -370,7 +370,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -410,7 +410,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -446,7 +446,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -482,7 +482,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -518,7 +518,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
@@ -559,7 +559,7 @@ jobs:
           workspaces: |
             unfer
             australVM/safestos/cranelift
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
+      - uses: ocaml/setup-ocaml@93303b622b2522e4411e295f9e77411a24912ac7  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
       - name: install australVM OCaml deps
