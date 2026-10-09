@@ -25,7 +25,20 @@
 # command works against any captured run. A log containing a FAILED suite is
 # not evidence of a count and is refused, not summed past.
 #
-# Usage:  scripts/check-status [--recount REPO=LOG ...]
+# X2 drive half (2026-10-09): --recount only helped someone who already had a
+# log, and no CI job and no human passes one -- so the numbers were checked by
+# nothing, which was the remaining hole. `--run [REPO...]` runs the repo's own
+# suite itself and feeds its log to the same recount path, so the check no
+# longer depends on remembering to supply evidence.
+#
+# Scope is deliberately narrow: only cargo-shaped suites can be recounted (the
+# parser sums `test result: ok. N passed`), and only the repos registered in
+# recount_cmd() below. Everything else -- dune, Lean, the link graph -- reports
+# a gap rather than a failure, and `timepiece`'s marker honestly says "not run".
+# A missing toolchain is a gap for the same reason as verify-invariants' gates:
+# "no interpreter here" must not be indistinguishable from real drift.
+#
+# Usage:  scripts/check-status [--recount REPO=LOG ...] [--run [REPO ...]]
 # Exit:   0 clean, 1 on a missing/invalid status block or a recounted mismatch.
 
 set -uo pipefail
@@ -68,8 +81,10 @@ status_fences() {
   ' "$1"
 }
 
-# X2: optional recount requests, filled from --recount REPO=LOG.
+# X2: optional recount requests, filled from --recount REPO=LOG and --run.
 recount_specs=""
+run_specs=""
+run_all=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --recount)
@@ -80,12 +95,65 @@ while [ $# -gt 0 ]; do
       recount_specs="$recount_specs $2"
       shift 2
       ;;
+    --run)
+      shift
+      if [ $# -eq 0 ]; then
+        run_all=1
+        break
+      fi
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --*) break ;;
+          *) run_specs="$run_specs $1"; shift ;;
+        esac
+      done
+      ;;
     *)
       echo "check-status: unknown argument: $1" >&2
       exit 2
       ;;
   esac
 done
+
+# The cheapest command that produces a cargo-shaped log for a repo, i.e. the
+# one already documented in that README's Verification section. Empty means
+# "cannot be recounted" -- reported as a gap, never as a pass.
+recount_cmd() {
+  case "$1" in
+    dynamic-arctic)
+      printf '%s' 'cargo test --all-features --locked'
+      ;;
+    emthin)
+      printf '%s' 'nix develop -c cargo test --workspace'
+      ;;
+    unfer)
+      printf '%s' 'cargo test --workspace --exclude fock_sirk --locked'
+      ;;
+    velysterm)
+      printf '%s' 'nix develop -c cargo test --workspace'
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+# Run a registered command inside the checkout, tee its output to a log, and
+# return 0 only if a log was produced (whether or not the suite is green --
+# recount_from_log is what judges a green suite a prerequisite for a count).
+# The caller decides what "no command registered" means for its own output.
+run_recount_cmd() {
+  local repo="$1" dir="$2" log="$3" cmd
+  cmd="$(recount_cmd "$repo")"
+  if ! ( cd "$dir" && eval "$cmd" ) >"$log" 2>&1; then
+    : # a failing suite still produces a log; recount_from_log refuses it below
+  fi
+  if [ ! -s "$log" ]; then
+    printf 'gap  %-16s %s produced no output (tooling absent?)\n' "$repo" "$cmd"
+    return 1
+  fi
+  return 0
+}
 
 # Sum `test result: ok. N passed` over a cargo-test log. Fails (rather than
 # returning a number) when the log contains a FAILED suite: a broken run is not
@@ -216,6 +284,45 @@ for repo in $REPOS; do
         ;;
     esac
   done
+
+  # X2 drive half: --run executes this repo's own registered suite and feeds
+  # its log to the very same recount path above, so the number in the block is
+  # checked without somebody having to remember to pass a log. The comparison
+  # is identical to --recount's; only the way the evidence arrives differs.
+  if [ "$run_all" -eq 1 ] || [ -n "$run_specs" ]; then
+    want=0
+    if [ "$run_all" -eq 1 ]; then
+      want=1
+    else
+      for r in $run_specs; do [ "$r" = "$repo" ] && want=1; done
+    fi
+    if [ "$want" -eq 1 ]; then
+      if [ -z "$(recount_cmd "$repo")" ]; then
+        printf 'gap  %-16s not recounted: suite is not cargo-shaped (no parser for it)\n' "$repo"
+      else
+        log="$(mktemp -t "check-status.$repo.XXXXXX")"
+        printf 'run  %-16s %s\n' "$repo" "$(recount_cmd "$repo")"
+        if run_recount_cmd "$repo" "$dir" "$log"; then
+          claimed="$(printf '%s' "$block" | grep -oE 'tests: [0-9]+' | grep -oE '[0-9]+' | head -1)"
+          if [ -z "$claimed" ]; then
+            printf 'gap  %-16s block has no numeric count to compare against\n' "$repo"
+          elif measured="$(recount_from_log "$log")"; then
+            if [ "$measured" = "$claimed" ]; then
+              printf 'ok   %-16s recount: %s tests, matches the block\n' "$repo" "$measured"
+            else
+              printf 'FAIL %-16s recount: suite reports %s tests, block claims %s\n' \
+                "$repo" "$measured" "$claimed"
+              printf '       update the status block after the suite run, or cite the same scope\n'
+              fail=1
+            fi
+          else
+            fail=1
+          fi
+        fi
+        rm -f "$log"
+      fi
+    fi
+  fi
 done
 
 if [ "$fail" -ne 0 ]; then
