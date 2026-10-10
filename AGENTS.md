@@ -75,7 +75,8 @@ Per-crate detail: **`docs/ARCHITECTURE.md`**. What is load-bearing here:
 - **`unfer_consensus` carries five ledgers** (`certs`, `auction`, `mathbond`,
   `mathbond_market`, `attribution`); `unfer_taler` settles them against GNU Taler.
   All must stay deterministic — same log, same root, no wall-clock or randomness in
-  the state machine.
+  the state machine; the verify-invariants H1.15 gate greps production paths for
+  clock/RNG reads (`signing.rs` keygen is the documented exception).
 - **`unfer_edge`** is a Pingora proxy in front of `unfer_agent`; `admin.rs` is the
   S22 console. Ops: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
