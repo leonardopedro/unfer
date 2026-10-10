@@ -37,7 +37,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 echo "[check-non-claims] M9 — boundary sentences as machine-checked invariants"
 
-DOCS=$(find docs ../test/numerics ../test/proofs -name '*.md' 2>/dev/null \
+DOCS=$(find docs ../test/numerical-physics ../test/mathematical-foundations -name '*.md' 2>/dev/null \
         | grep -vE '/target/|/_build/' || true)
 
 if [ -z "$DOCS" ]; then
