@@ -1,4 +1,4 @@
-# Two Analytic Heads on One Frozen Backbone: EmbeddingGemma2 + AnaCP/AnaNC versus EmbeddingGemma2 + Quantum Flow Matching
+# One Frozen Backbone, Two Analytic Pipelines: EmbeddingGemma2 + AnaCP→AnaNC versus EmbeddingGemma2 + Quantum Flow Matching
 
 **Status:** technical report, 2026-10-12.
 **Code bases:** `unfer/decide_core` (engine version pinned by
@@ -22,13 +22,16 @@ code base; this article uses AnaNC throughout.
 We compare two analytically-trained decision stacks that share the same
 frozen representation layer — Google's EmbeddingGemma (300M parameters,
 matryoshka-truncated to 256 dimensions, instruction-prefixed) — and differ
-entirely in the head that consumes its embeddings.
+entirely in the analytic pipeline that consumes its embeddings.
 
 The first stack (`decide_core`) is a **discriminative decision engine**:
-a seeded GELU random projection to width $D$ followed by one of two
-closed-form target constructions — *AnaCP* spread-mean targets (contrastive
-separation of whitened class means) or *AnaNC* equiangular-trace-frame
-(ETF) targets fit by orthogonal Procrustes — and a ridge solve whose
+a seeded GELU random projection to width $D$ followed by the
+*sequential* AnaCP→AnaNC combination the project's governing plan
+mandates — AnaCP's closed-form contrastive projection adapts the
+backbone's features first, and AnaNC's collapse readout (ETF target
+geometry, max-cosine decision and ID/OOD score) runs on the projected
+features — realized in the shipped engine as one closed-form map whose
+target geometry is selectable per surface — and a ridge solve whose
 weights are accumulated in constant memory on a stream. It performs no
 gradient step anywhere. Its output is deliberately *advice*: scores only,
 never certified probabilities, never in a trust path.
@@ -56,10 +59,12 @@ The headline result is structural rather than a winner: **both stacks
 are "expensive offline, microseconds online" designs with a
 $10^5$–$10^6$ fit-to-inference cost ratio, and both fail in the same
 way — by geometric collapse.** The decision engine's AnaNC head forgets
-catastrophically (max forgetting $1.0$ at every $D$) because its ETF
-readout degenerates under class arrival; QFM-Text's Krylov basis
-collapses to rank 1–2 because its dressed vacua are nearly parallel.
-Where they differ is in what they refuse to claim: the decision engine
+catastrophically (max forgetting $1.0$ at every $D$); and when the very
+same anti-forgetting protocol is run over a QFM-TSR class-arrival
+stream, the flow forgets just as badly (measured max forgetting $1.0$)
+while the raw similarity geometry under it forgets nothing ($0.0$) —
+placing both collapses inside the analytic machinery, not in the
+data. Where they differ is in what they refuse to claim: the decision engine
 withholds `calibrated: true` because its measured ECE fails its own
 contract, while QFM's Born probabilities are exact by construction yet
 still lose to a classical $n$-gram on held-out perplexity. Exactness and
@@ -113,6 +118,49 @@ meaningless we say so.
 Specification: `unfer/docs/DECIDE_SPEC.md`; implementation:
 `unfer/decide_core`. Methods: Momeni, Xiao & Liu, *AnaCP* (NeurIPS 2025)
 and *Continual OOD Detection with Analytic Neural Collapse* (AAAI 2026).
+
+### 2.0 The planned combination — one stage after the other
+
+The decision model studied here is the **sequential AnaCP→AnaNC
+combination** as specified by the governing implementation plan at the
+time the implementation executed (`~/Projects/PLAN_ANALYTIC_DECISION_ENGINE.md`,
+re-tracing the original sketch in `~/Projects/PromptANaCP`). The
+sketch's order — adopted as the product shape by the plan, with each
+stage's mathematics corrected by its audit (defects A1–A9) — is
+strictly staged:
+
+1. **Stage 1 — AnaCP (feature adaptation, applied first).**
+   Accumulate the statistics a closed-form contrastive projection
+   needs, solve for the projection analytically, and project the frozen
+   backbone's features through it onto the unit sphere. No gradients:
+   the embedding is adapted *after* the backbone, by a closed-form
+   solve.
+2. **Stage 2 — AnaNC (collapse readout, applied to the projected
+   features).** On the *projected* features, accumulate class
+   prototypes under the equiangular-trace-frame constraint and decide
+   by cosine to them; the maximum cosine is the ID/OOD score.
+
+So: EmbeddingGemma2 → AnaCP projection → AnaNC readout — one after the
+other; neither "one or another" nor an average. The plan's audit
+corrected each stage's math without disturbing the order: the real
+AnaCP stage solves ridge-to-spread-means in the RP space (A1), the
+real AnaNC stage solves the ETF as a Procrustes constraint (A2), and
+the ID score is max-cosine rather than an energy (A5).
+
+**How the shipped engine realizes the sequence.** `decide_core` folds
+the two stages into one closed-form map: the ridge solve
+$W = (A+\lambda I)^{-1}B$ *is* the adaptation stage (features are
+pulled toward the target means by the solve itself), and the cosine
+readout against the mapped targets *is* the collapse stage. The target
+construction that parameterizes the sequence is selectable per
+surface — `Mode::Anacp` (spread means) where closed-set accuracy is
+the product, `Mode::Ananc` (ETF-Procrustes plus the max-cosine ID
+score) where open-world geometry is. All "AnaCP" and "AnaNC" numbers
+in §4.1 are therefore two surface parameterizations of the one
+combined, staged model — measured through its two surface selections —
+not two rival systems. The strictly two-layer sketch (a separate
+`W_proj` followed by normalized-sum prototypes) was the form the
+plan's audit rejected; the staging survived, that arithmetic did not.
 
 ### 2.1 Pipeline
 
@@ -340,9 +388,36 @@ nearly parallel to the Fock vacuum. Per-context diagnostics: mean
 KL(emp‖QFM) = 3.84 nats, mean cosine 0.38, top-1 hit 33%, top-5 hit 8%
 — *identical* for $m=8$ and $m=32$, and the model misplaces 4–10%
 probability on wrong tokens even on fully deterministic contexts.
-Per-token inference: 4 ms ($m=8$) / 0.5 ms ($m=32$) on CPU; a full
-128M-token in-sample eval projects to ~140 h CPU (≈3 h on the project's
-GTX 1060 if `decode_sketched` were GPU-resident).
+**D-C6 forgetting protocol over a QFM-TSR class-arrival stream
+(new measurement, 2026-10-12; `qfm/tests/forgetting_matrix.rs`).**
+The comparison's open question — does QFM forget under class arrival? —
+is now measured by running the *identical* D-C6 task-incremental
+protocol on a QFM-TSR arrival sequence: a seeded 8-class structured
+fixture ($d=64$, 8 train + 4 held-out per class), classes arriving two
+per task, the pipeline refitted on the cumulative bank after each task
+(the closed-form refit, the flow analog of the engine's re-solve),
+attribution = class of the nearest training point (cosine) of the
+`generate()` output:
+
+| protocol arm | t=0 | t=1 | t=2 | t=3 (final) | max forgetting |
+|---|---|---|---|---|---:|
+| QFM-TSR refit | [0.00 1.00] | [0.00 0.00 1.00 0.00] | [0.00 0.00 1.00 0.00 0.00 0.00] | [0.00 0.00 1.00 0.00 0.00 0.00 0.00 0.00] | **1.0000** |
+| raw-NN baseline (no flow) | [1.00 1.00] | all 1.00 | all 1.00 | all 1.00 | **0.0000** |
+
+The flow arm forgets catastrophically — the same number `decide_core`
+measures for its AnaNC selection (1.0) — and its final-row accuracy is
+$1/8$: at every task the attribution collapses onto a single class
+region, the rank-truncation representative-output collapse already
+documented per fixture in QFM.tex rev 29–30. The baseline arm is the
+load-bearing control: identical arrival sequence, identical bank
+growth, attribution taken on the raw query — and it forgets
+*nothing* at perfect accuracy. The forgetting is therefore inside the
+flow, not in the class-arrival interference the bank growth would
+carry. The matrix is printed by the test; the flow arm's scalar is
+deliberately not pinned by an assertion (the rev 37 diffusion
+Hamiltonian targets exactly this collapse, and a pipeline improvement
+must not read as a test failure) — the baseline's $0.0$ *is* asserted,
+as the protocol's own sanity check.
 
 ### 4.3 Side-by-side on comparable axes
 
@@ -357,7 +432,7 @@ No shared dataset exists, so the honest comparison table is on
 | state size | 2.2 MiB (full $D\times D$ Gram) | $\mathcal{O}(K_2\!\cdot\!m)$ + per-mode histograms |
 | inference memory | one $D$-vector | one $K_2$-vector |
 | continual mechanism | refit from sufficient statistics | Bayesian posterior → prior (HMC) |
-| forgetting measured | yes: AnaCP 0.5, AnaNC **1.0** | not on the same protocol; posterior update demonstrated end-to-end |
+| forgetting measured | yes: AnaCP 0.5, AnaNC **1.0** (D-C6) | **yes, D-C6 over an arrival stream: refit 1.0, raw-geometry control 0.0**; Bayesian-continuation arm untested |
 | probability claim | **refused** (ECE/drift contract fails) | Born-exact by construction, but held-out ppl loses to $n$-gram |
 | worst measured failure | AnaNC forgetting 1.0; AnaCP ECE 0.084 > 0.05 | $W$-rank collapse; ppl gap 1.05–1.39×; deterministic contexts get 4–10% wrong mass |
 
@@ -422,18 +497,26 @@ A reader choosing between the stacks on the criterion "which gives me
 trustworthy probabilities" gets the same answer from both: neither, yet.
 The difference is only in how loudly each says it.
 
-**4. Forgetting is measured on one side and engineered on the other —
-and the measurements don't yet exist to compare them.** Stack A
-measures forgetting as a first-class artifact (the task-incremental
-accuracy matrix, gated in the pinned fixture) and reports AnaCP 0.5,
-AnaNC 1.0. Stack B's Bayesian update is, philosophically, the stronger
-continual mechanism — a posterior *is* a sufficient statistic for the
-next arrival, and the iterated-bayes module drives
-update→evolve→update end-to-end — but no forgetting-matrix protocol has
-been run against it. This is the cleanest place for future work: the
-D-C6 matrix protocol is corpus-agnostic and could be run over a
-QFM-TSR sequence of arrivals directly. Until then, "QFM forgets less"
-is a hypothesis, not a result.
+**4. Forgetting is now measured on both sides — and the numbers are the
+same.** The comparison's original gap (Stack A measures forgetting;
+Stack B only engineers a continual mechanism) is closed: the D-C6
+protocol run over a QFM-TSR arrival stream measures **1.0** for the
+refit arm — identical to the engine's AnaNC selection — against **0.0**
+for the raw-geometry control on the same stream. The parallel with
+AnaNC is exact and diagnostic: in both stacks the forgetting is not in
+the data (the control forgets nothing; the engine's own AnaCP
+selection forgets only 0.5) but in the analytic machinery's geometry —
+AnaNC's ETF readout degenerating under refit, the flow's rank-truncated
+basis steering every query to one representative class region. The
+hypothesis the article previously left open — "QFM forgets less,
+because a posterior is a sufficient statistic for the next arrival" —
+is now measured false *for the refit path* and remains open only for
+the Bayesian-continuation arm (posterior → prior), which this protocol
+does not exercise and which is the obvious next measurement. A second
+shared lesson falls out: both stacks' forgetting numbers are made
+interpretable by a control arm that isolates machinery from data —
+without the 0.0 baseline, a 1.0 would be an accusation against class
+arrival itself.
 
 **5. The corpora explain more than the methods do — read the accuracy
 gap accordingly.** AnaCP's 0.833–0.900 and AUC 1.0 come from a *synthetic
@@ -488,6 +571,12 @@ are interchangeable; on everything else they do not compete.
    compile path, and rev 37 is introducing a new diffusion Hamiltonian
    targeting the W-rank root cause. The negative result is
    revision-stamped and expected to move.
+6. **Scope of the new forgetting measurement.** The D-C6-over-QFM
+   number (refit 1.0, control 0.0) is one seeded synthetic 8-class
+   $d=64$ stream, refit-per-task arm only; it establishes that the
+   flow *can* forget catastrophically while its geometry stays
+   separable, on this stream. The Bayesian-continuation arm and real
+   embedding streams are unmeasured.
 
 ## 7. Conclusion
 
