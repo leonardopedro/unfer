@@ -416,6 +416,29 @@ jobs:
             exit 1
           fi
 
+      # The D-ablation fixture (DECIDE_SPEC §4) is a golden gate in the same
+      # sense: it is what licenses — or refuses to license — the engine's
+      # `projected_dim` default, so it must not be hand-editable. Release only:
+      # the sweep is O(D³) in the whitening eigendecomposition and D=512 makes
+      # it minutes in debug against ~30 s here.
+      - name: decide D-ablation fixture is fresh
+        run: |
+          cp decide_core/tests/fixtures/decide_d_ablation.json /tmp/committed-abl.json
+          cargo run --locked --release -p decide_core --bin decide_ablation -- --write
+          if ! diff -u /tmp/committed-abl.json decide_core/tests/fixtures/decide_d_ablation.json; then
+            echo "::error::decide_core D-ablation fixture drifted from a fresh run."
+            echo "If the change is intended, commit the regenerated fixture with"
+            echo "  cargo run --release -p decide_core --bin decide_ablation -- --write"
+            echo "and state in the commit message which measured cell changed and why."
+            exit 1
+          fi
+
+      # The heavy decide_core tests: the fixture golden gate and the
+      # report↔ablation cross-check at D=256. Both are #[ignore]d because they
+      # run the full sweep; release makes them ~16 s rather than minutes.
+      - name: decide_core heavy tests (release, ignored)
+        run: cargo test --locked --release -p decide_core --lib -- --ignored
+
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest

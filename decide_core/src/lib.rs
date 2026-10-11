@@ -75,6 +75,7 @@
 //! assert!(a.confidence.is_none(), "no confidence without calibration");
 //! ```
 
+pub mod ablation;
 pub mod backbone;
 pub mod calibrate;
 pub mod certified;
@@ -159,10 +160,16 @@ pub enum DecideError {
 ///
 /// Sized against the papers' own numbers: the default projection there is
 /// `D = 5000`, which is 25M floats per head. This project's label sets are tens
-/// of classes, not thousands, so the default is much smaller — and the plan
-/// requires the `D`-ablation to be re-run on project data before any default is
-/// blessed. That has not happened yet, which is why these are `tunable and
-/// unpinned` rather than "validated".
+/// of classes, not thousands, so the default is much smaller.
+///
+/// The `D`-ablation has been run on the project corpus
+/// ([`ablation`], pinned in `tests/fixtures/decide_d_ablation.json`): `D = 512`
+/// is the measured-best cell for `anacp`, so the default is measured rather
+/// than merely sensible — **for that mode only**. For `ananc` the same sweep
+/// makes `D = 512` the *worst* cell on that corpus (best: `D = 16`) and shows
+/// its catastrophic forgetting is 1.0 at every `D`, so no `D` fixes it. The
+/// default is left shared and unchanged rather than re-tuned on synthetic
+/// data; see `docs/DECIDE_SPEC.md` §4 for the table and the verdict.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecideConfig {
     /// The embedding model's identity. Part of engine identity: statistics
@@ -425,21 +432,32 @@ impl DecideCore {
     }
 
     /// Solve every head and build the readouts.
+    ///
+    /// Each head's target construction (a `D × D` whitening eigendecomposition
+    /// for `spread_means`, a Procrustes for `etf`) is built **once** and shared
+    /// by the solve and the readout prototypes. Building it twice — the
+    /// previous shape — was both the dominant cost of a fit at large `D` and a
+    /// latent disagreement risk: two constructions that merely *happen* to
+    /// agree are two chances to differ, and the readout must classify against
+    /// exactly what the head was fitted to.
     pub fn fit(&mut self) -> Result<(), DecideError> {
         let mut readouts = Vec::with_capacity(self.heads.len());
         for h in &self.heads {
             // Whitening happens in the space the solve happens in: the head's own
             // RP covariance, not the input-space one.
             let cov = h.ridge.rp_covariance();
-            let theta = h.ridge.solve(
+            let means = h.ridge.rp_class_means()?;
+            let targets = h.ridge.target_construction(
+                &means,
                 self.config.mode.target_kind(),
                 self.config.alpha,
                 cov.as_ref(),
-            )?;
+            );
+            let theta = h.ridge.solve_with_targets(&means, &targets)?;
             // The prototypes the head classifies against are the *images* of the
             // target means under the learned map, exactly as the source methods
             // define them: cosine similarity to a mapped target is the readout.
-            let protos = mapped_prototypes(&theta, &h.ridge, cov.as_ref(), &self.config)?;
+            let protos = mapped_prototypes(&theta, &targets);
             readouts.push(NcmHead::new(protos, self.labels.clone()));
         }
         self.readouts = readouts;
@@ -650,40 +668,15 @@ impl DecideCore {
 /// Map the target means through the ridge solution to get the prototypes.
 ///
 /// The prototypes are the images of the class means under the learned map — the
-/// definition the source methods use. Recomputing the target construction here
-/// (rather than storing it in `RidgeHead`) keeps one construction per call site,
-/// so the solve and the readout cannot disagree about what was targeted.
+/// definition the source methods use. `targets` is the *same* matrix the solve
+/// was given (`C × t`, classes as rows), so the readout cannot classify against
+/// a different target than the head was fitted to. `theta` is `D × t`, so
+/// `theta · Tᵀ` is `D × C` and the transpose puts classes back on rows.
 fn mapped_prototypes(
     theta: &nalgebra::DMatrix<f64>,
-    ridge: &RidgeHead,
-    cov: Option<&nalgebra::DMatrix<f64>>,
-    config: &DecideConfig,
-) -> Result<nalgebra::DMatrix<f64>, DecideError> {
-    // RP class means as a `k × C` matrix (classes are rows), matching the
-    // orientation the target constructions expect.
-    let counts = ridge.counts();
-    let cols: Vec<usize> = (0..counts.len()).filter(|&c| counts[c] > 0).collect();
-    let mut means = nalgebra::DMatrix::zeros(cols.len(), config.projected_dim);
-    for (row, &c) in cols.iter().enumerate() {
-        let n = counts[c] as f64;
-        let s = ridge.rp_sum(c);
-        for k in 0..config.projected_dim {
-            means[(row, k)] = s[k] / n;
-        }
-    }
-    let targets = match config.mode.target_kind() {
-        // Spread means are written in column-major orientation (features ×
-        // classes), so transpose in and back out. This must produce *exactly*
-        // what `RidgeHead::solve` produced, or the readout would classify
-        // against a different target than the head was fitted to.
-        TargetKind::SpreadMeans => {
-            targets::spread_means(&means.transpose(), cov, config.alpha).transpose()
-        }
-        TargetKind::Etf => targets::etf_procrustes(&means, means.nrows()),
-    };
-    // `theta` is `k × D`; targets are `C × t`. Map each target and transpose to
-    // `t × C` so the readout indexes rows by class.
-    Ok((theta * targets.transpose()).transpose())
+    targets: &nalgebra::DMatrix<f64>,
+) -> nalgebra::DMatrix<f64> {
+    (theta * targets.transpose()).transpose()
 }
 
 #[cfg(test)]

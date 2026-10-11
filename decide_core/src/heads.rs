@@ -153,8 +153,14 @@ impl RidgeHead {
         self.rp_counts[id] += 1;
     }
 
-    /// RP-space class means as a `k × C` matrix (classes are rows).
-    fn rp_class_means(&self) -> Result<DMatrix<f64>, SolveError> {
+    /// RP-space class means as a `C × k` matrix (classes are rows).
+    ///
+    /// Public because it is the *input* both the target construction and the
+    /// readout are defined on: `DecideCore::fit` builds the targets once from
+    /// these means and hands the same matrix to the solve and to the
+    /// prototypes, so the two cannot disagree about which classes are present
+    /// or about what was targeted. See [`Self::solve_with_targets`].
+    pub fn rp_class_means(&self) -> Result<DMatrix<f64>, SolveError> {
         let cols: Vec<usize> = (0..self.rp_counts.len())
             .filter(|&c| self.rp_counts[c] > 0)
             .collect();
@@ -171,10 +177,16 @@ impl RidgeHead {
         Ok(m)
     }
 
-    /// Solve `θ = (A + λI)⁻¹ B` for the given target construction.
+    /// Solve `θ = (A + λI)⁻¹ B` against a freshly built target construction.
     ///
-    /// Returns a `D × k` matrix. `targets` is `k × C` with classes as rows, so
-    /// `B = Σ_c n_c · r_c · t_cᵀ` becomes `means_rowspaceᵀ · diag(n) · targets`.
+    /// Convenience wrapper over [`Self::solve_with_targets`] for callers that
+    /// need only the solve. `DecideCore::fit` does **not** use it: it builds
+    /// the targets once and shares them with the readout, because the
+    /// construction is a `D × D` eigendecomposition and the readout needs the
+    /// very same matrix (see [`Self::solve_with_targets`]).
+    ///
+    /// Returns a `D × t` matrix: `B = Σ_c n_c · r_c · t_cᵀ`, solved against
+    /// `A + λI`.
     pub fn solve(
         &self,
         kind: TargetKind,
@@ -182,23 +194,66 @@ impl RidgeHead {
         rp_cov: Option<&DMatrix<f64>>,
     ) -> Result<DMatrix<f64>, SolveError> {
         let means = self.rp_class_means()?;
-        let c = means.nrows();
-        let counts: Vec<f64> = (0..self.rp_counts.len())
-            .filter(|&i| self.rp_counts[i] > 0)
-            .map(|i| self.rp_counts[i] as f64)
-            .collect();
+        let targets = self.target_construction(&means, kind, alpha, rp_cov);
+        self.solve_with_targets(&means, &targets)
+    }
 
-        let targets = match kind {
+    /// The target construction for this head's class means — the single place
+    /// the two modes' geometry is chosen.
+    ///
+    /// Shared by [`Self::solve`] and [`DecideCore::fit`](crate::DecideCore::fit)
+    /// so "what the head was fitted to" and "what the readout classifies
+    /// against" are the same matrix rather than two equal-by-luck copies.
+    pub fn target_construction(
+        &self,
+        means: &DMatrix<f64>,
+        kind: TargetKind,
+        alpha: f64,
+        rp_cov: Option<&DMatrix<f64>>,
+    ) -> DMatrix<f64> {
+        match kind {
             // Spread means operate on the *input-space* class means; at the head
             // level the same construction is applied to the RP-space means so
             // the two modes share one code path and one set of tests. The
             // covariance passed in is the RP one, in the same space.
             TargetKind::SpreadMeans => {
-                let as_cols = means.transpose();
-                targets::spread_means(&as_cols, rp_cov, alpha).transpose()
+                targets::spread_means(&means.transpose(), rp_cov, alpha).transpose()
             }
-            TargetKind::Etf => targets::etf_procrustes(&means, c),
-        };
+            TargetKind::Etf => targets::etf_procrustes(means, means.nrows()),
+        }
+    }
+
+    /// Solve against the given target construction.
+    ///
+    /// `targets` is `C × t` (classes as rows), i.e. exactly what
+    /// [`targets::spread_means`] / [`targets::etf_procrustes`] return. Building
+    /// it is the caller's job — [`DecideCore::fit`](crate::DecideCore::fit)
+    /// builds it **once** per head and reuses it for the readout prototypes —
+    /// because the construction is the expensive part of a fit at large `D`
+    /// (a `D × D` whitening eigendecomposition), and computing it twice also
+    /// meant the solve and the readout each re-derived "the same" target from
+    /// the same inputs rather than sharing one.
+    ///
+    /// `means` is passed in alongside the targets so the row used to weight
+    /// `B` and the rows of `targets` cannot be different views of the class
+    /// set.
+    pub fn solve_with_targets(
+        &self,
+        means: &DMatrix<f64>,
+        targets: &DMatrix<f64>,
+    ) -> Result<DMatrix<f64>, SolveError> {
+        let counts: Vec<f64> = (0..self.rp_counts.len())
+            .filter(|&i| self.rp_counts[i] > 0)
+            .map(|i| self.rp_counts[i] as f64)
+            .collect();
+        if counts.len() < 2 {
+            return Err(SolveError::TooFewClasses(counts.len()));
+        }
+        assert_eq!(
+            means.nrows(),
+            targets.nrows(),
+            "one target row per class means row"
+        );
 
         // B = Mᵀ diag(n) T, where M is `C × k` of RP class means and T is
         // `C × t` of targets. The target width is whatever the construction

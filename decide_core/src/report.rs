@@ -46,11 +46,25 @@ fn split(corpus: &[Labelled]) -> (Vec<&Labelled>, Vec<&Labelled>) {
     )
 }
 
-fn engine_for(mode: Mode, labels: &[NativeLabel], dim: usize) -> Result<DecideCore, String> {
+/// The projected dimension `D` the **pinned calibration report** is produced at.
+///
+/// The report fixture is byte-compared against a fresh run in CI, so this number
+/// is part of the artifact: moving it regenerates the fixture. It is a named
+/// constant rather than a literal so the D-ablation (`crate::ablation`) can
+/// cross-check its `D = 256` rows against the report and prove the two harnesses
+/// are measuring the same thing rather than two things that look alike.
+pub const PINNED_PROJECTED_DIM: usize = 256;
+
+fn engine_for(
+    mode: Mode,
+    labels: &[NativeLabel],
+    dim: usize,
+    projected_dim: usize,
+) -> Result<DecideCore, String> {
     let mut core = DecideCore::new(DecideConfig {
         embedding_version: "native-corpus-v1".to_string(),
         embedding_dim: dim,
-        projected_dim: 256,
+        projected_dim,
         heads: 1,
         mode,
         lambda: 100.0,
@@ -82,6 +96,118 @@ pub struct FitOutcome {
 /// close, and a future change to the corpus can be checked against the runner-up
 /// rather than against nothing.
 pub fn fit_all_candidates(per_class: usize, dim: usize) -> Result<Vec<FitOutcome>, String> {
+    fit_all_candidates_at(per_class, dim, PINNED_PROJECTED_DIM)
+}
+
+/// Score every held-out sample against a fitted core.
+///
+/// Returns `(predicted, true, ID score)` per sample. Shared with the
+/// D-ablation (`crate::ablation`) so that harness measures through the same
+/// protocol rather than a copy of it — a second copy would be a second thing
+/// to keep honest.
+pub(crate) fn score_held_out(
+    core: &DecideCore,
+    held: &[&Labelled],
+    labels: &[NativeLabel],
+) -> Result<Vec<(String, String, f64)>, String> {
+    let mut scored: Vec<(String, String, f64)> = Vec::new();
+    for s in held {
+        let sims = core.similarities(&s.embedding).map_err(|e| e.to_string())?;
+        let mut best = 0usize;
+        for i in 1..sims.len() {
+            if sims[i] > sims[best] {
+                best = i;
+            }
+        }
+        let id = sims[best];
+        // A held-out sample is "in-distribution" when its true label is among
+        // the registered ones — which it always is here, so the OOD metrics
+        // are measured by treating a *low* ID score as the positive class,
+        // which is the same threshold-free question the source papers ask.
+        scored.push((
+            labels[best].name().to_string(),
+            s.label.name().to_string(),
+            id,
+        ));
+    }
+    Ok(scored)
+}
+
+/// The threshold-free OOD metrics over scored held-out samples: `(AUC, FPR95)`.
+///
+/// The *positive* class is "this sample reads as in-distribution", i.e. a
+/// **high** ID score — `roc_auc` sorts ascending so the winning group must hold
+/// the higher ranks. Marking low scores as positive instead would measure a
+/// perfectly good detector as perfectly inverted (AUC 0.0), which is exactly
+/// the bug this comment replaces.
+///
+/// The threshold is the median, which selects no operating point: the split is
+/// fixed by the data, not chosen to flatter the result, which is the
+/// threshold-free discipline the source papers report AUC/FPR95 for.
+pub(crate) fn ood_metrics(scored: &[(String, String, f64)]) -> (f64, f64) {
+    let mut ids: Vec<f64> = scored.iter().map(|(_, _, id)| *id).collect();
+    ids.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = ids.get(ids.len() / 2).copied().unwrap_or(0.0);
+    let ood_scored: Vec<(f64, bool)> = scored
+        .iter()
+        .map(|(_, _, id)| (*id, *id >= median))
+        .collect();
+    (roc_auc(&ood_scored), fpr_at_95_tpr(&ood_scored))
+}
+
+/// Fit one calibrator mechanism by grid search on the scored split.
+///
+/// One parameter on a coarse grid, not a gradient: the plan requires no
+/// backprop anywhere, and a grid over a one-parameter family is the honest
+/// closed-form-ish alternative. The fitted `temperature` and `platt_a` are the
+/// same searched value, as in the original D6 implementation — the Platt family
+/// is searched on the same grid rather than a second one, so the three
+/// mechanisms are compared at equal effort.
+pub(crate) fn fit_mechanism(mechanism: Mechanism, scored: &[(String, String, f64)]) -> Calibrator {
+    let mut best_t = 1.0f64;
+    let mut best_ece = f64::INFINITY;
+    for i in 0..=40 {
+        let t = 0.05 * (i as f64) + 0.01;
+        let trial = Calibrator {
+            mechanism,
+            temperature: t,
+            platt_a: t,
+            ..Calibrator::default()
+        };
+        if trial.validate().is_err() {
+            continue;
+        }
+        let b: Vec<(f64, bool)> = scored
+            .iter()
+            .map(|(p, t2, id)| (trial.p_id(*id), p == t2))
+            .collect();
+        let e = expected_calibration_error(&b);
+        if e.is_finite() && e < best_ece {
+            best_ece = e;
+            best_t = t;
+        }
+    }
+    Calibrator {
+        mechanism,
+        temperature: best_t,
+        platt_a: best_t,
+        platt_b: 0.0,
+        ood_bias: 0.0,
+        fit_ece: best_ece,
+        version: 1,
+    }
+}
+
+/// The same fit at an explicit projected dimension `D`.
+///
+/// This is the seam the D-ablation (`crate::ablation`) sweeps;
+/// [`fit_all_candidates`] is this function at [`PINNED_PROJECTED_DIM`], so the
+/// pinned report and the ablation are measured by one protocol.
+pub fn fit_all_candidates_at(
+    per_class: usize,
+    dim: usize,
+    projected_dim: usize,
+) -> Result<Vec<FitOutcome>, String> {
     let labels = NativeLabel::all();
     let corpus = native_corpus(per_class, dim);
     let (fit, held) = split(&corpus);
@@ -91,104 +217,35 @@ pub fn fit_all_candidates(per_class: usize, dim: usize) -> Result<Vec<FitOutcome
 
     let mut out = Vec::new();
     for mode in [Mode::Anacp, Mode::Ananc] {
-        let mut core = engine_for(mode, &labels, dim)?;
+        let mut core = engine_for(mode, &labels, dim, projected_dim)?;
         for s in &fit {
             core.observe(s.label.name(), &s.embedding)
                 .map_err(|e| e.to_string())?;
         }
         core.fit().map_err(|e| e.to_string())?;
 
-        // Score every held-out sample: predicted label, and the ID score for the
-        // OOD metrics.
-        let mut scored: Vec<(String, String, f64)> = Vec::new();
-        for s in &held {
-            let sims = core.similarities(&s.embedding).map_err(|e| e.to_string())?;
-            let mut best = 0usize;
-            for i in 1..sims.len() {
-                if sims[i] > sims[best] {
-                    best = i;
-                }
-            }
-            let id = sims[best];
-            // A held-out sample is "in-distribution" when its true label is among
-            // the registered ones — which it always is here, so the OOD metrics
-            // are measured by treating a *low* ID score as the positive class,
-            // which is the same threshold-free question the source papers ask.
-            scored.push((
-                labels[best].name().to_string(),
-                s.label.name().to_string(),
-                id,
-            ));
-        }
+        let scored = score_held_out(&core, &held, &labels)?;
 
         let accuracy =
             scored.iter().filter(|(p, t, _)| p == t).count() as f64 / scored.len() as f64;
 
-        // OOD framing. The *positive* class is "this sample reads as
-        // in-distribution", i.e. a **high** ID score — `roc_auc` sorts ascending
-        // so the winning group must hold the higher ranks. Marking low scores as
-        // positive instead would measure a perfectly good detector as perfectly
-        // inverted (AUC 0.0), which is exactly the bug this comment replaces.
-        //
-        // The threshold is the median, which selects no operating point: the
-        // split is fixed by the data, not chosen to flatter the result, which is
-        // the threshold-free discipline the source papers report AUC/FPR95 for.
-        let mut ids: Vec<f64> = scored.iter().map(|(_, _, id)| *id).collect();
-        ids.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let median = ids.get(ids.len() / 2).copied().unwrap_or(0.0);
-        let ood_scored: Vec<(f64, bool)> = scored
-            .iter()
-            .map(|(_, _, id)| (*id, *id >= median))
-            .collect();
-        let auc = roc_auc(&ood_scored);
-        let fpr95 = fpr_at_95_tpr(&ood_scored);
+        let (auc, fpr95) = ood_metrics(&scored);
 
-        let bins: Vec<(f64, bool)> = scored.iter().map(|(p, t, id)| (*id, p == t)).collect();
-        // Measured here for the record; the per-candidate ECE below is the one
-        // the calibrator is selected on, since it is measured after fitting.
-        let _uncalibrated_ece = expected_calibration_error(&bins);
+        // R5: measure the drift a class arrival actually causes, by re-fitting
+        // with one class held out and comparing. Hoisted out of the mechanism
+        // loop below: it depends on neither the mechanism nor its fitted
+        // parameter, so calling it per-mechanism refitted two engines three
+        // times for one number.
+        let (drift_eps, drift_seen) = measure_class_arrival_drift(dim, per_class, projected_dim)?;
 
         for mechanism in [
             Mechanism::Temperature,
             Mechanism::Platt,
             Mechanism::KPlusOne,
         ] {
-            // Fit one parameter by a coarse grid search on the held-out split.
-            // A grid, not a gradient: the plan requires no backprop anywhere, and
-            // a grid over a one-parameter family is the honest closed-form-ish
-            // alternative.
-            let mut best_t = 1.0f64;
-            let mut best_ece = f64::INFINITY;
-            for i in 0..=40 {
-                let t = 0.05 * (i as f64) + 0.01;
-                let trial = Calibrator {
-                    mechanism,
-                    temperature: t,
-                    platt_a: t,
-                    ..Calibrator::default()
-                };
-                if trial.validate().is_err() {
-                    continue;
-                }
-                let b: Vec<(f64, bool)> = scored
-                    .iter()
-                    .map(|(p, t2, id)| (trial.p_id(*id), p == t2))
-                    .collect();
-                let e = expected_calibration_error(&b);
-                if e.is_finite() && e < best_ece {
-                    best_ece = e;
-                    best_t = t;
-                }
-            }
-            let calibrator = Calibrator {
-                mechanism,
-                temperature: best_t,
-                platt_a: best_t,
-                platt_b: 0.0,
-                ood_bias: 0.0,
-                fit_ece: best_ece,
-                version: 1,
-            };
+            let calibrator = fit_mechanism(mechanism, &scored);
+            let best_t = calibrator.temperature;
+            let best_ece = calibrator.fit_ece;
 
             let r1 = {
                 // Normalization holds by construction; verified by construction
@@ -227,10 +284,6 @@ pub fn fit_all_candidates(per_class: usize, dim: usize) -> Result<Vec<FitOutcome
                 ok
             };
 
-            // R5: measure the drift a class arrival actually causes, by
-            // re-fitting with one class held out and comparing.
-            let (drift_eps, drift_seen) = measure_class_arrival_drift(dim, per_class)?;
-
             let report = CalibrationReport {
                 mechanism,
                 calibrator_version: calibrator.version,
@@ -265,19 +318,35 @@ pub fn fit_all_candidates(per_class: usize, dim: usize) -> Result<Vec<FitOutcome
     Ok(out)
 }
 
+/// R5's class-arrival drift at an explicit projected dimension: `(ε, observed)`.
+///
+/// The seam the D-ablation measures through, so the ablation's `drift` column
+/// and the report's R5 verdict come from one implementation.
+pub fn class_arrival_drift_at(
+    dim: usize,
+    per_class: usize,
+    projected_dim: usize,
+) -> Result<(f64, f64), String> {
+    measure_class_arrival_drift(dim, per_class, projected_dim)
+}
+
 /// R5: the drift a class arrival causes in the calibrator's input distribution.
 ///
 /// Measures it rather than asserting zero, because zero is not available: adding
 /// a class changes the simplex, so the honest deliverable is a *measured* bound
 /// that consumers can compare against (this is the same discipline as a
 /// certificate band that widens rather than a number that lies).
-fn measure_class_arrival_drift(dim: usize, per_class: usize) -> Result<(f64, f64), String> {
+fn measure_class_arrival_drift(
+    dim: usize,
+    per_class: usize,
+    projected_dim: usize,
+) -> Result<(f64, f64), String> {
     let labels = NativeLabel::all();
     let corpus = native_corpus(per_class, dim);
     let without_last: Vec<NativeLabel> = labels[..labels.len() - 1].to_vec();
 
     let build = |ls: &[NativeLabel]| -> Result<DecideCore, String> {
-        let mut core = engine_for(Mode::Ananc, ls, dim)?;
+        let mut core = engine_for(Mode::Ananc, ls, dim, projected_dim)?;
         for s in corpus.iter().filter(|s| !s.held_out) {
             if ls.iter().any(|l| l.name() == s.label.name()) {
                 core.observe(s.label.name(), &s.embedding)
@@ -397,11 +466,23 @@ pub fn accuracy_matrix(
     dim: usize,
     mode: Mode,
 ) -> Result<AccuracyMatrix, String> {
+    accuracy_matrix_at(labels, per_class, dim, PINNED_PROJECTED_DIM, mode)
+}
+
+/// The same matrix at an explicit projected dimension — the seam the D-ablation
+/// sweeps. [`accuracy_matrix`] is this function at [`PINNED_PROJECTED_DIM`].
+pub fn accuracy_matrix_at(
+    labels: &[NativeLabel],
+    per_class: usize,
+    dim: usize,
+    projected_dim: usize,
+    mode: Mode,
+) -> Result<AccuracyMatrix, String> {
     let corpus = native_corpus(per_class, dim);
     let mut core = DecideCore::new(DecideConfig {
         embedding_version: "native-corpus-v1".to_string(),
         embedding_dim: dim,
-        projected_dim: 256,
+        projected_dim,
         heads: 1,
         mode,
         lambda: 100.0,

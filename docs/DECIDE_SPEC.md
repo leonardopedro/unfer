@@ -248,14 +248,100 @@ The papers' default is `D = 5000`, which is 25M floats per head — dominated by
 `D × D` Gram. This project's label sets are tens of classes, so `decide_core`
 defaults to `D = 512`, `H = 1`.
 
-**These defaults are not validated.** The plan requires AnaCP's `D`-ablation
-(Table 2, rows 13–16) to be re-run on project data before any default is
-blessed, and that has not happened. They are *sensible*, not *measured*.
+**The `D`-ablation has now been run** (it was the standing precondition on
+blessing any default). `cargo run --release -p decide_core --bin
+decide_ablation`, pinned as `decide_core/tests/fixtures/decide_d_ablation.json`
+and gated byte-for-byte in CI. It sweeps `D ∈ {4, 8, 16, 32, 64, 128, 256,
+512}` on the project corpus through the **same protocol** as the pinned
+calibration report — the `D = 256` cells reproduce that report's accuracy and
+best-ECE to the last rounded digit, which is asserted by test rather than taken
+on trust.
+
+| D | `anacp` acc | `ananc` acc | `ananc` forget | floors (`anacp`) | state |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 0.467 | *refused* (ETF) | — | 1 | 6.6 KiB |
+| 8 | 0.467 | 0.367 | 1.00 | 1 | 8.1 KiB |
+| 16 | 0.500 | **0.500** | 1.00 | 1 | 11.7 KiB |
+| 32 | 0.567 | 0.467 | 1.00 | 1 | 21.9 KiB |
+| 64 | 0.733 | 0.433 | 1.00 | 1 | 54.4 KiB |
+| 128 | 0.700 | 0.400 | 1.00 | 39 | 167 KiB |
+| 256 | 0.833 | 0.433 | 1.00 | 167 | 585 KiB |
+| 512 | **0.900** | 0.333 | 1.00 | 423 | 2.2 MiB |
+
+### What the sweep establishes
+
+**1. The two modes want opposite `D`s, and one shared default cannot be right
+for both.** `anacp` accuracy rises monotonically-ish across the whole grid
+(0.467 → 0.900), so `D = 512` is the measured-best cell and the default is
+right *for `anacp`*. `ananc` does the opposite: its best cell is `D = 16`
+(0.500) and `D = 512` is its **worst** (0.333). On this corpus the default is
+measured-best for one mode and measured-worst for the other.
+
+**2. `ananc`'s catastrophic forgetting is not a `D` artifact.** `max_forgetting`
+is 1.00 at **every** `D` — including the ones where its accuracy is best. So
+the D11 finding is structural to the ETF/cosine readout on this corpus, and
+"increase `D`" is ruled out as its remedy. That negative result is the most
+useful thing the sweep produced: it closes a remedy that would otherwise be
+reached for.
+
+**3. The mechanism behind the large-`D` divergence is measured, not
+speculated.** The sweep reads the whitening instrument the crate already
+exposes (`targets::half_power::floored_eigenvalues` — "a degenerate covariance
+silently changes the geometry, and the consumer is entitled to know").
+`n_train = 90` caps the RP-covariance rank at 89, so every `D ≥ 128` is
+rank-deficient and `spread_means`' whitening floors `D − 89` directions —
+measured as exactly 39 / 167 / 423 at `D = 128 / 256 / 512`. `ananc` floors
+**zero**, because the ETF construction does no whitening at all. `ananc` is
+geometry-critical and degrades as the projection stretches; `anacp`'s spread
+means tolerate it.
+
+**4. No `D` rescues calibration.** R5 (drift ≤ 0.05) fails at **every** `D`;
+R2 (ECE ≤ 0.05) passes only at scattered cells (`anacp` at 4/16/32/128,
+`ananc` at 16/32) — never at the shipped default, and non-monotonically, which
+on 30 held-out samples is noise rather than a signal. So the D-ablation does
+**not** move the calibration verdict: `calibrated: true` stays unlicensed, and
+`Calibrator::is_calibrated` still refuses.
+
+### The verdict on the default
+
+**The default stays `D = 512`, and it is now measured rather than merely
+sensible — but only for `anacp`.** For `ananc` the sweep licenses *nothing*:
+it shows the shipped default is the worst cell on this corpus, and the
+honest response is to record that rather than to re-tune on synthetic data.
+Changing the default on the strength of a seeded corpus would trade one
+unvalidated number for another. What would license a change is the same
+ablation re-run on real project embeddings; the harness now exists to run it
+(`d_ablation(per_class, dim, dims)` takes any corpus width and class count), so
+this is a measurement away, not a rewrite.
+
+A reader who wants the practical guidance *now*: on this corpus `ananc` loses
+nothing down to `D = 16` (11.7 KiB vs 2.2 MiB — 190× less state) and is worse at
+512, so an `ananc`-only deployment should not pay for the default; and no `D`
+below 512 matches `anacp`'s accuracy outside one standard error on 30 samples
+(±0.055), so `anacp` cannot shed the cost either.
+
+**The `D`-ablation cannot bless a default for real data**, for the same reason
+the calibration report cannot: the corpus is synthetic. The sweep's `caveats`
+block says so, and its numbers are a *relative* comparison across `D` on that
+corpus — which is exactly what the plan asked for and no more.
 
 `projected_dim` must be `≥` the number of classes for `ananc` — see the
 precondition above. `decide_core` does not enforce it at construction; the
 precondition fires at the solve, which is where the geometry is actually
-needed.
+needed. The sweep carries `D = 4` against 5 classes precisely to keep that
+precondition demonstrated: the cell is recorded as **refused** with the reason,
+not skipped, and a `#[should_panic]` test pins the harness's refusal to the
+engine's own assert so the two cannot drift apart.
+
+**The harness itself is part of the result.** Fitting each cell originally
+built the target construction twice — once in the solve, once for the readout
+prototypes — so a `D × D` whitening eigendecomposition ran twice per fit; both
+sites now share one construction (`RidgeHead::solve_with_targets`), which
+halved the sweep and removed the possibility of the solve and readout targeting
+different things. `measure_class_arrival_drift` was likewise called inside the
+mechanism loop, refitting two engines three times for one number. Neither
+change moves any measured value: the regenerated report fixture is
+byte-identical, and the sweep's numbers are unchanged.
 
 ---
 

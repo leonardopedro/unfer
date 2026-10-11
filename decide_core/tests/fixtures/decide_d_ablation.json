@@ -1,0 +1,222 @@
+{
+  "caveats": [
+    "SYNTHETIC CORPUS. The embeddings come from a seeded PRNG with class anchors (`properties::native_corpus`). The sweep is a RELATIVE comparison across D on this corpus and a mechanism check; it is not an accuracy claim on real project data.",
+    "`ece` is the BEST of the three D6 mechanisms on the report's own grid search, measured in-sample on the held-out split exactly as the pinned calibration report measures it. It is comparable to that report, not to a fresh generalization estimate.",
+    "`drift` is R5's measured class-arrival drift through the report's own DriftMonitor; the tolerance ε is 0.05. The monitor builds `ananc` engines (the only mode the report arms it for), so `drift` is a function of D ALONE and repeats identically across the two modes at the same D — that repetition is the harness being honest about what it measured, not a copied cell.",
+    "`max_forgetting` is the task-incremental accuracy matrix's largest per-column decay (D-C6), measured per row's own mode. It is a different measurement on a different object from `drift`.",
+    "`floored_eigenvalues` counts RP-covariance eigenvalues the whitening floored at 1e-12 during the fit — directions whitening destroyed. n_train=90 caps covariance rank at 89, so every D >= 128 is rank-deficient by construction and floors roughly D-89 directions. It is 0 for every ananc row by construction: the ETF/Procrustes target does no whitening at all. That is the mechanism behind the two modes bending differently at large D.",
+    "`state_floats` counts persistent analytic state at heads=1: C*d input means + d*d shared outer product + (d*D RP + D*D Gram + C*D per-class RP sums) + C*D readout prototypes. Label strings excluded.",
+    "A `refused` row is the method's own precondition, not a crash and not a zero: `targets::etf_procrustes` asserts D >= C, and this harness records the refusal instead of letting the assert abort the sweep.",
+    "Rounded to 6 decimals so last-bit floating-point noise cannot fail the CI byte gate; nothing here is measured more finely than tens of held-out samples support."
+  ],
+  "corpus": {
+    "dim": 24,
+    "held_out_every": 4,
+    "per_class": 24
+  },
+  "dims": [
+    4,
+    8,
+    16,
+    32,
+    64,
+    128,
+    256,
+    512
+  ],
+  "engine_version": "decide_core/0.1.0",
+  "rows": [
+    {
+      "a_avg": 0.466667,
+      "accuracy": 0.466667,
+      "drift": null,
+      "ece": 0.0354,
+      "floored_eigenvalues": 1,
+      "max_forgetting": 0.333333,
+      "mode": "anacp",
+      "projected_dim": 4,
+      "refused": null,
+      "state_floats": 848
+    },
+    {
+      "a_avg": 0.466667,
+      "accuracy": 0.466667,
+      "drift": 0.117123,
+      "ece": 0.101916,
+      "floored_eigenvalues": 1,
+      "max_forgetting": 0.333333,
+      "mode": "anacp",
+      "projected_dim": 8,
+      "refused": null,
+      "state_floats": 1032
+    },
+    {
+      "a_avg": 0.5,
+      "accuracy": 0.5,
+      "drift": 0.088441,
+      "ece": 0.002094,
+      "floored_eigenvalues": 1,
+      "max_forgetting": 0.166667,
+      "mode": "anacp",
+      "projected_dim": 16,
+      "refused": null,
+      "state_floats": 1496
+    },
+    {
+      "a_avg": 0.566667,
+      "accuracy": 0.566667,
+      "drift": 0.13901,
+      "ece": 0.003949,
+      "floored_eigenvalues": 1,
+      "max_forgetting": 0.333333,
+      "mode": "anacp",
+      "projected_dim": 32,
+      "refused": null,
+      "state_floats": 2808
+    },
+    {
+      "a_avg": 0.733333,
+      "accuracy": 0.733333,
+      "drift": 0.088908,
+      "ece": 0.072538,
+      "floored_eigenvalues": 1,
+      "max_forgetting": 0.333333,
+      "mode": "anacp",
+      "projected_dim": 64,
+      "refused": null,
+      "state_floats": 6968
+    },
+    {
+      "a_avg": 0.7,
+      "accuracy": 0.7,
+      "drift": 0.094693,
+      "ece": 0.035994,
+      "floored_eigenvalues": 39,
+      "max_forgetting": 0.166667,
+      "mode": "anacp",
+      "projected_dim": 128,
+      "refused": null,
+      "state_floats": 21432
+    },
+    {
+      "a_avg": 0.833333,
+      "accuracy": 0.833333,
+      "drift": 0.067405,
+      "ece": 0.08409,
+      "floored_eigenvalues": 167,
+      "max_forgetting": 0.5,
+      "mode": "anacp",
+      "projected_dim": 256,
+      "refused": null,
+      "state_floats": 74936
+    },
+    {
+      "a_avg": 0.9,
+      "accuracy": 0.9,
+      "drift": 0.114366,
+      "ece": 0.067597,
+      "floored_eigenvalues": 423,
+      "max_forgetting": 0.333333,
+      "mode": "anacp",
+      "projected_dim": 512,
+      "refused": null,
+      "state_floats": 280248
+    },
+    {
+      "a_avg": null,
+      "accuracy": null,
+      "drift": null,
+      "ece": null,
+      "floored_eigenvalues": null,
+      "max_forgetting": null,
+      "mode": "ananc",
+      "projected_dim": 4,
+      "refused": "ETF precondition: projected_dim 4 < 5 classes; targets::etf_procrustes refuses, because Procrustes cannot span the ETF with fewer features than classes (loud precondition)",
+      "state_floats": 848
+    },
+    {
+      "a_avg": 0.366667,
+      "accuracy": 0.366667,
+      "drift": 0.117123,
+      "ece": 0.13422,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 8,
+      "refused": null,
+      "state_floats": 1032
+    },
+    {
+      "a_avg": 0.5,
+      "accuracy": 0.5,
+      "drift": 0.088441,
+      "ece": 0.000859,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 16,
+      "refused": null,
+      "state_floats": 1496
+    },
+    {
+      "a_avg": 0.466667,
+      "accuracy": 0.466667,
+      "drift": 0.13901,
+      "ece": 0.034206,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 32,
+      "refused": null,
+      "state_floats": 2808
+    },
+    {
+      "a_avg": 0.433333,
+      "accuracy": 0.433333,
+      "drift": 0.088908,
+      "ece": 0.067584,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 64,
+      "refused": null,
+      "state_floats": 6968
+    },
+    {
+      "a_avg": 0.4,
+      "accuracy": 0.4,
+      "drift": 0.094693,
+      "ece": 0.100843,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 128,
+      "refused": null,
+      "state_floats": 21432
+    },
+    {
+      "a_avg": 0.433333,
+      "accuracy": 0.433333,
+      "drift": 0.067405,
+      "ece": 0.067499,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 256,
+      "refused": null,
+      "state_floats": 74936
+    },
+    {
+      "a_avg": 0.333333,
+      "accuracy": 0.333333,
+      "drift": 0.114366,
+      "ece": 0.167562,
+      "floored_eigenvalues": 0,
+      "max_forgetting": 1.0,
+      "mode": "ananc",
+      "projected_dim": 512,
+      "refused": null,
+      "state_floats": 280248
+    }
+  ]
+}

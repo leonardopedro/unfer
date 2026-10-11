@@ -129,6 +129,19 @@ pub mod half_power {
     pub fn floored_eigenvalues() -> Vec<f64> {
         LAST_FLOORED.with(|c| c.borrow().clone())
     }
+
+    /// Forget the last observation, so a caller can tell "this computation
+    /// floored nothing" from "no computation ran".
+    ///
+    /// Without this, a reader that samples the thread-local after a code path
+    /// which never called `sym_half_power` (e.g. `etf_procrustes`, which does
+    /// no whitening at all) silently inherits the previous caller's numbers —
+    /// a stale instrument reporting as if it were live. The D-ablation hit
+    /// exactly that: every `ananc` cell appeared to floor 423 directions,
+    /// which was the neighbouring `anacp` cell's value.
+    pub fn clear_floored() {
+        LAST_FLOORED.with(|c| c.borrow_mut().clear());
+    }
 }
 
 /// Summed pairwise cosine similarity of the columns of `m`, ignoring self-pairs.

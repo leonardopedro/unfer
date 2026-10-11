@@ -64,6 +64,13 @@ run_suite "nested_fock_algebra heavy unit tests --release --ignored" \
     bash -c "cd '$repo_root/nested_fock_algebra' && timeout 1800 cargo test --release --lib -- --ignored" \
     || FAILED=$((FAILED + 1))
 
+# 1c. decide_core heavy tests: the D-ablation golden fixture and the
+# report↔ablation cross-check at D=256. Both are O(D³) in the whitening
+# eigendecomposition — minutes in debug, ~16 s in release.
+run_suite "decide_core heavy tests --release --ignored" \
+    bash -c "cd '$repo_root' && timeout 900 cargo test --locked --release -p decide_core --lib -- --ignored" \
+    || FAILED=$((FAILED + 1))
+
 # 2. qfm_text heavy tests: need the trained checkpoint on the external drive.
 CKPT="/media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba/unfer/qfm_text_runs/m8_nohash_shard0_v3/checkpoint_epoch0.qfm"
 if [ -f "$CKPT" ]; then
