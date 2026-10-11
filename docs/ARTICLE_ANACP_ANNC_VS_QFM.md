@@ -327,6 +327,18 @@ core, Rust release build, 20 000 timed queries after warm-up, 5 classes,
 | AnaNC | 256 | 30.5 ms | 5.8 ms | 7.7 µs |
 | AnaNC | 512 | 199 ms | **43 ms** | **15.6 µs** |
 
+**In-repo reproduction (added after the first measurement).** The
+table above is now reproducible with a committed criterion bench —
+`cargo bench -p decide_core --bench latency`
+(`decide_core/benches/latency.rs`), which re-measures the same three
+costs on the same corpus protocol ($n_\mathrm{train}=90$) in about two
+minutes. Its quick-mode figures on the same host reproduce the table
+to within a factor of ~1.3 — fit AnaCP/AnaNC at $D=512$: **2.64 s /
+41.3 ms**; predict at $D=512$: **20.9 µs / 16.7 µs**; predict at
+$D=16$: 0.43 µs / 0.75 µs — including the 64× fit asymmetry between
+the modes. The prose conclusions below therefore rest on an in-tree
+measurement, not a one-off harness.
+
 The 67× fit-time gap between the two modes at $D=512$ is structural and
 is the most interesting number in this table. AnaCP's whitening performs
 an eigendecomposition *and* an SVD in the $D$-dimensional RP space
