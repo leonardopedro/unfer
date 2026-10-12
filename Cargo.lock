@@ -945,6 +945,7 @@ dependencies = [
 name = "decide_core"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "nalgebra",
  "proptest",
  "rustc-hash 2.1.3",
