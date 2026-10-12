@@ -314,6 +314,39 @@ $D-89$ directions (39/167/423 at $D=128/256/512$), while AnaNC — which
 does no whitening — floors zero; the ETF/cosine readout then degrades as
 the projection stretches.
 
+**New: the arrival-order census** (2026-10-12;
+`decide_core/tests/order_sensitivity.rs`). The pinned matrix measures
+forgetting for *one* class arrival order. Does the method forget, or
+does *this order* make it forget? The census re-runs the identical
+protocol over **all 120 permutations** of the five-class arrival
+sequence at $D=32$ (0.11 s total) and twelve sampled orders at the
+pinned $D=256$ (~11 s, `#[ignore]`d with the other heavy gates):
+
+| mode | width | orders | min (best order) | median | max (worst) |
+|---|---|---:|---:|---:|---:|
+| AnaCP | $D=32$ | 120 | 0.1667 | 0.6667 | 0.8333 |
+| AnaNC | $D=32$ | 120 | **0.0000** | 1.0000 | 1.0000 |
+| AnaCP | $D=256$ | 12 | 0.1667 | 0.5000 | 0.6667 |
+| AnaNC | $D=256$ | 12 | **0.0000** | 1.0000 | 1.0000 |
+
+The census **refines the structural claim** made earlier in this
+article and in `DECIDE_SPEC.md` §4. AnaNC's catastrophic forgetting is
+*order-sensitive, not order-robust*: in the median arrival order it is
+total (the pinned report's 1.0 is the typical case, confirmed at both
+widths), but there exist orders — e.g.
+`editor-intent > claim > doc-track > fact > fail`, which puts the ETF's
+first anchor class last in the measurement — at which it forgets
+**nothing at all**. AnaCP is likewise order-sensitive but bounded:
+0.17–0.83 at $D=32$ and 0.17–0.67 at $D=256$, so even AnaCP's *worst*
+order beats AnaNC's *median* order. The honest reading of the pinned
+single-order number is therefore "catastrophic in the typical order",
+not "catastrophic in every order" — and a deployment that can choose
+its class arrival order holds a real, measured lever (the best order
+forgot zero at both widths). The census asserts only range-sanity and
+the completeness of the 120 orders; the distribution itself is
+reported, so a future method improvement cannot register as a test
+failure.
+
 **New latency measurements** (this session; AMD Ryzen AI 5 340, single
 core, Rust release build, 20 000 timed queries after warm-up, 5 classes,
 90 observations, harness outside the repo at `/tmp/decide_bench`):
@@ -420,7 +453,22 @@ The flow arm forgets catastrophically — the same number `decide_core`
 measures for its AnaNC selection (1.0) — and its final-row accuracy is
 $1/8$: at every task the attribution collapses onto a single class
 region, the rank-truncation representative-output collapse already
-documented per fixture in QFM.tex rev 29–30. The baseline arm is the
+documented per fixture in QFM.tex rev 29–30. Two further arms pin the
+down:
+
+* **Arrival-order sweep.** The identical protocol under four arrival
+  permutations (natural, reverse, pair-swap, rotate-1):
+  `max_forgetting = 1.0000` in **all four**, with the *same* final
+  row every time — attribution collapses onto the same class region
+  regardless of order. Unlike the decision engine's heads (§4.1), the
+  flow's forgetting is **order-robust**: the collapse target is a
+  property of the mode geometry, not of the arrival sequence.
+* **State accounting.** The compiled engine at the final bank
+  ($M=64$, $K_2=64$) holds $W$ (64×2 complex), $W_\mathrm{prob}$
+  (256 f64) and $H_m$ (2×2) — **4.1 KiB resident**, ~140× smaller
+  than the decision engine's $D=256$ Gram (585 KiB) and consistent
+  with the W-rank-1–2 diagnosis: at these sizes the flow really *is* a
+  rank-2 object, and its memory currency says so. The baseline arm is the
 load-bearing control: identical arrival sequence, identical bank
 growth, attribution taken on the raw query — and it forgets
 *nothing* at perfect accuracy. The forgetting is therefore inside the
@@ -441,10 +489,10 @@ No shared dataset exists, so the honest comparison table is on
 | offline fit | 2.91 s (AnaCP) / 43 ms (AnaNC), $n=90$ | 3.6 s ($M=1000$); ~2 s at $d=1024$ truncated |
 | online decision | 7.6 µs / 15.6 µs per query | 20 µs per generate ($d=1024$) |
 | fit:predict ratio | $\sim4\times10^5$ (AnaCP) | $\sim2\times10^5$ |
-| state size | 2.2 MiB (full $D\times D$ Gram) | $\mathcal{O}(K_2\!\cdot\!m)$ + per-mode histograms |
+| state size | 585 KiB ($D=256$) / 2.2 MiB ($D=512$, full Gram) | **4.1 KiB** compiled resident ($K_2=64$, rank 2) + per-mode histograms |
 | inference memory | one $D$-vector | one $K_2$-vector |
 | continual mechanism | refit from sufficient statistics | Bayesian posterior → prior (HMC) |
-| forgetting measured | yes: AnaCP 0.5, AnaNC **1.0** (D-C6) | **yes, D-C6 over an arrival stream: refit 1.0, raw-geometry control 0.0**; Bayesian-continuation arm untested |
+| forgetting measured | order-*sensitive*: AnaCP 0.17–0.83, AnaNC **0.00–1.00** across arrival orders (medians 0.67 / 1.00; all 120 orders @ $D=32$) | order-*robust*: **1.00** in all four arrival orders, same collapse target; raw-geometry control 0.0; Bayesian-continuation arm untested |
 | probability claim | **refused** (ECE/drift contract fails) | Born-exact by construction, but held-out ppl loses to $n$-gram |
 | worst measured failure | AnaNC forgetting 1.0; AnaCP ECE 0.084 > 0.05 | $W$-rank collapse; ppl gap 1.05–1.39×; deterministic contexts get 4–10% wrong mass |
 
@@ -454,7 +502,43 @@ online latencies are the same order of magnitude — single-digit
 microseconds for the decision head, tens of microseconds for the
 generative head. Neither stack is latency-bound; both are
 *state*-bound in different currencies (dense $D\times D$ Gram vs
-$K_2$-wide sparse mode banks).
+$K_2$-wide sparse mode banks) — and §4.4 now measures both currencies
+on one machine.
+
+### 4.4 Same-host scaling measurements (new, 2026-10-12)
+
+Both stacks' criterion benches were run on the *same* machine (AMD
+Ryzen AI 5 340, single-core, `--quick`) — the first apples-to-apples
+cost comparison in this article. The QFM bench groups were re-sized to
+small cells at rev 18 (P7 P3), so these numbers confirm the *scaling
+laws* on-host; the large-size points remain the rev-15 figures quoted
+in §4.2 (compile $M{=}1000$ ≈ 3.6 s, generate $d{=}1024$ ≈ 20 µs).
+
+| operation | stack | measured (this host) |
+|---|---|---|
+| compile, $M=4/8/16$ | QFM | 42 µs / 63 µs / 193 µs (superlinear — the SIRK Gram) |
+| fit, 90 obs, $D=16/256/512$ | AnaCP | 28 µs / 199 ms / 2.64 s |
+| fit, 90 obs, $D=16/256/512$ | AnaNC | 7.6 µs / 5.4 ms / 41 ms |
+| generate, $d=4/8/16$ | QFM | 853 ns / 909 ns / 976 ns (≈flat in $d$ — the rank-2 object again) |
+| sketch apply, $d=64/256/1024/4096$ | QFM | 38 ns / 148 ns / 551 ns / 2.27 µs (linear in $d$) |
+| predict, $D=16/256/512$ | AnaCP | 0.43 µs / 4.1 µs / 20.9 µs |
+| predict, $D=16/256/512$ | AnaNC | 0.75 µs / 8.0 µs / 16.7 µs |
+| Bayesian update, 1 likelihood | QFM | ~130 µs base; +65 µs per likelihood ($n=4/16$: 193/433 µs — linear) |
+| Bayesian update vs leapfrog $10/20/50$ | QFM | 36 / 66 / 154 µs (linear, ≈3.1 µs/step) |
+| Bayesian update vs $m=4/8/16$ | QFM | ~65 µs flat (the $m^2$ term is negligible at these $m$) |
+
+Three readings. (i) The stacks' *online* costs overlap at the sub-10 µs
+scale — the §4.3 conclusion now rests on same-host numbers for both
+sides rather than one side's numbers from one host. (ii) The *offline*
+costs differ by three orders at shipped widths, for the currency
+reason already identified: AnaCP decomposes a $D\times D$ covariance;
+QFM's SIRK Gram at these bench sizes is tiny. (iii) QFM's
+*decision-shaped* operation — a Bayesian update on one observation —
+starts at ~65–130 µs, **10–100× a decision-engine predict**, because
+it runs an HMC chain where the head runs a matvec. On a
+keystroke-driven surface both heads are cheap; on a per-observation
+posterior the flow is not, and the leapfrog line (≈3.1 µs/step) is the
+knob that scales that cost.
 
 ## 5. Making sense of the results
 
@@ -545,7 +629,36 @@ let their numbers be read that way — the fixtures' caveat blocks say so
 in machine-readable form — and that shared refusal is arguably the most
 important thing the two stacks have in common.
 
-**6. Where one stack should actually be preferred, today.** For a
+**7. The two stacks' forgetting differs on exactly one axis: order
+sensitivity.** The census (§4.1) and the QFM order sweep (§4.2) now
+let the comparison say something mechanistic. The discriminative
+heads' forgetting is order-*sensitive*: AnaNC ranges 0.00–1.00 across
+arrival orders (the same method forgets everything or nothing
+depending on which class anchors the frame first), AnaCP 0.17–0.83
+(bounded, and its worst order beats AnaNC's median). The flow's
+forgetting is order-*robust*: 1.00 in every permutation, always
+collapsing onto the same class region. The asymmetry has a clear
+mechanism — the ETF is rebuilt from the observed class means on every
+refit, so its geometry *inherits* the arrival history, while the
+flow's Hamiltonian is a function of the cumulative bank's mode
+weights and its collapse target is set by the mode geometry alone.
+Practically: an operator who can choose the class arrival order holds
+a measured lever against the ETF head (best order: zero forgetting at
+both widths) and no lever at all against the flow.
+
+**8. Memory and latency are different currencies, and each stack is
+rich in one.** The compiled flow is 4.1 KiB resident at $K_2=64$ —
+140× under the decision engine's $D=256$ Gram — and its online
+generate is sub-microsecond at bench widths; but its *decision-shaped*
+operation (the Bayesian update) costs 10–100× a head predict (§4.4),
+and its accuracy-shaped failure (the collapse) is total. The head is
+state-heavier and answer-cheaper; the flow is state-lighter and
+posterior-expensive. A surface that classifies keystrokes wants the
+head; a surface that assimilates observations into a posterior wants
+the flow — and neither wants the other's currency converted at
+parity.
+
+**9. Where one stack should actually be preferred, today.** For a
 surface that ranks, classifies, or gates on frozen embeddings with tens
 of classes and constant memory, Stack A is the only one of the two that
 does the task at all, and its µs-scale predict cost makes it
@@ -589,6 +702,12 @@ are interchangeable; on everything else they do not compete.
    flow *can* forget catastrophically while its geometry stays
    separable, on this stream. The Bayesian-continuation arm and real
    embedding streams are unmeasured.
+7. **Scope of the order experiments.** The decide_core census is
+   exhaustive but tiny (5 classes, synthetic, $D=32$ with a 12-order
+   check at $D=256$); the QFM sweep is four permutations of an
+   8-class synthetic stream. Both establish *existence* — arrival
+   orders exist on which forgetting differs dramatically (heads) or
+   never differs (flow) — not prevalence on real streams.
 
 ## 7. Conclusion
 

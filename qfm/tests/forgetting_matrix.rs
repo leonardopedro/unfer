@@ -203,14 +203,38 @@ fn compile(bank: &[Vec<f64>]) -> QfmPipeline {
     QfmPipeline::compile(bank, &config).expect("QFM compile on arrival bank")
 }
 
+/// The arrival orders the sensitivity arm sweeps: identity, reverse,
+/// adjacent-pair swap, and a rotation. Four orders of eight classes —
+/// enough to distinguish "always collapses" from "usually collapses"
+/// without the 8! explosion the decide_core census enjoys at five
+/// classes.
+fn arrival_orders() -> Vec<(&'static str, Vec<usize>)> {
+    let natural: Vec<usize> = (0..CLASSES).collect();
+    let mut reverse = natural.clone();
+    reverse.reverse();
+    let mut swapped = natural.clone();
+    swapped.swap(0, 1);
+    let mut rotated = natural.clone();
+    rotated.rotate_left(1);
+    vec![
+        ("natural", natural),
+        ("reverse", reverse),
+        ("pair-swap", swapped),
+        ("rotate-1", rotated),
+    ]
+}
+
 /// One protocol arm: `use_flow` runs the generated output through the
 /// pipeline; otherwise attribution is taken on the raw query.
-fn run_protocol(use_flow: bool) -> Vec<Vec<f64>> {
+/// `arrivals` is the class-arrival permutation; classes are batched
+/// [`TASK_CLASSES`] at a time in that order.
+fn run_protocol(use_flow: bool, arrivals: &[usize]) -> Vec<Vec<f64>> {
     let (train, train_y, held, held_y) = corpus(SEED);
-    let tasks: Vec<usize> = (0..CLASSES).step_by(TASK_CLASSES).collect();
     let mut rows: Vec<Vec<f64>> = Vec::new();
-    for t_start in tasks {
-        let seen: Vec<usize> = (0..=t_start + TASK_CLASSES - 1).collect();
+    let mut seen_so_far: Vec<usize> = Vec::new();
+    for task in arrivals.chunks(TASK_CLASSES) {
+        seen_so_far.extend_from_slice(task);
+        let seen: Vec<usize> = seen_so_far.clone();
         let bank: Vec<Vec<f64>> = train
             .iter()
             .zip(train_y.iter())
@@ -299,14 +323,49 @@ fn render(rows: &[Vec<f64>]) -> String {
         .join("\n")
 }
 
+/// Arrival-order sensitivity of the measured forgetting: is the flow's
+/// collapse a property of the method, or of this order? (The decide_core
+/// census at five classes found its methods strongly order-sensitive —
+/// see `decide_core/tests/order_sensitivity.rs` — so the question is
+/// live here too.) Reported, not pinned, like every other outcome
+/// number in this file.
+#[test]
+fn qfm_tsr_forgetting_across_arrival_orders() {
+    println!("QFM-TSR max_forgetting across arrival orders (d={D}, refit arm):");
+    let mut values = Vec::new();
+    for (name, order) in arrival_orders() {
+        let rows = run_protocol(true, &order);
+        let f = max_forgetting(&rows);
+        let final_row: Vec<String> = rows
+            .last()
+            .expect("one row per task")
+            .iter()
+            .map(|v| format!("{v:.2}"))
+            .collect();
+        println!(
+            "  {name:>9}: max_forgetting = {f:.4}  final row = [{}]",
+            final_row.join(" ")
+        );
+        assert!((0.0..=1.0).contains(&f), "out of range for {name}");
+        values.push(f);
+    }
+    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    println!(
+        "  spread across orders: {min:.4}..{max:.4} — order-robust = {}",
+        (max - min) < 1e-9
+    );
+}
+
 /// The measured artifact: the QFM-refit arm's matrix, its max forgetting,
 /// and the raw-NN baseline for attribution. Determinism is asserted by
 /// running the flow arm twice — a seeded fixture with a fixed S1 seed must
 /// not drift.
 #[test]
 fn d_c6_forgetting_matrix_over_qfm_tsr_arrival() {
-    let flow = run_protocol(true);
-    let again = run_protocol(true);
+    let natural: Vec<usize> = (0..CLASSES).collect();
+    let flow = run_protocol(true, &natural);
+    let again = run_protocol(true, &natural);
     for (a, b) in flow.iter().zip(again.iter()) {
         for (x, y) in a.iter().zip(b.iter()) {
             if x.is_nan() && y.is_nan() {
@@ -315,7 +374,32 @@ fn d_c6_forgetting_matrix_over_qfm_tsr_arrival() {
             assert_eq!(x, y, "protocol must be deterministic on the seeded fixture");
         }
     }
-    let base = run_protocol(false);
+    let base = run_protocol(false, &natural);
+
+    // State size of the compiled engine at the final bank — the memory
+    // currency the article's side-by-side table compares against the
+    // decision engine's D x D Gram. w() is K_2 x rank Complex64, w_prob()
+    // is K_2 x rank^2 f64, h_m() is rank x rank Complex64.
+    let (train, train_y, _, _) = corpus(SEED);
+    let final_bank: Vec<Vec<f64>> = train
+        .iter()
+        .zip(train_y.iter())
+        .map(|(x, _)| x.clone())
+        .collect();
+    let built = compile(&final_bank);
+    let state_bytes = built.w().len() * 16 + built.w_prob().len() * 8 + built.h_m().len() * 16;
+    println!(
+        "QFM-TSR state at final bank (M={}, K_2={}): W {} x {}, W_prob {} elements, \
+         H_m {} x {} -> {:.1} KiB resident",
+        final_bank.len(),
+        built.k2_dim(),
+        built.w().nrows(),
+        built.w().ncols(),
+        built.w_prob().len(),
+        built.h_m().nrows(),
+        built.h_m().ncols(),
+        state_bytes as f64 / 1024.0,
+    );
 
     let flow_f = max_forgetting(&flow);
     let base_f = max_forgetting(&base);
