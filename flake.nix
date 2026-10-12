@@ -84,6 +84,34 @@
 
       # S7: pinned workerd npm version (Cloudflare ships daily builds).
       workerdVersion = "1.20260808.1";
+
+      # ── Voice dialogue stack (parakeet ASR + piper TTS) ──────────────────
+      #
+      # The `voice` devShell packages the two speech models the `voice/`
+      # dialogue harness needs, both pinned by sha256 so the store path is
+      # content-addressed (same reproducibility doctrine as the workerd
+      # tarballs below):
+      #
+      #   parakeet-compact  NVIDIA parakeet-tdt-0.6b-v2, int8 ONNX export
+      #                     (k2-fsa/sherpa-onnx compatible; ~661 MB total,
+      #                     RTF 0.029 on this host's CPU — measured).
+      #   piper-voice-en    rhasspy piper en_US-lessac-medium (~63 MB) for
+      #                     the speak-back half of the full/speak modes.
+      #
+      # Both are model *weights*, not code: the executables come from
+      # nixpkgs (sherpa-onnx 1.12.x, piper-tts 1.4.x). parakeet "compact"
+      # = the int8 encoder quantization, which is what makes CPU-only
+      # real-time ASR possible on the Ryzen AI 5 340.
+      parakeetBase = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main";
+      parakeetFiles = {
+        "encoder.int8.onnx" = "sha256-oysS0Xu7wwnQaG+7zCmHtem4Mzp9qD+msInwoqzWUas=";
+        "decoder.int8.onnx" = "sha256-trtkljRXI3uQDklu6ZlLWSlFJkOfvMH+z3BbMaFca04=";
+        "joiner.int8.onnx"  = "sha256-eUYWQ2eUbn+fKaEiQHwyUraA266aUTQ+skiNBXw8Q9I=";
+        "tokens.txt"        = "sha256-7BgrcN1CETr/bFNyx1ysWMlSRD6yIyL1e71/U5d9SX0=";
+      };
+      parakeetSrcs = pkgsUnstable.lib.mapAttrs (file: sha256:
+        pkgsUnstable.fetchurl { url = "${parakeetBase}/${file}"; inherit sha256; })
+        parakeetFiles;
     in
     {
       # P11.23: `unfer_ffi` (the handle-based C ABI, cdylib+rlib) built as a
@@ -135,6 +163,32 @@
         doCheck = false;
       };
 
+      # The weights plus a `parakeet` entry point that pins every model
+      # argument, so the harness never passes a path that could go stale.
+      # `PARAKEET_THREADS` overrides the decode thread count (default 4).
+      packages.x86_64-linux.parakeet-compact = pkgsUnstable.writeShellScriptBin "parakeet" ''
+        exec ${pkgsUnstable.sherpa-onnx}/bin/sherpa-onnx-offline \
+          --tokens=${parakeetSrcs."tokens.txt"} \
+          --encoder=${parakeetSrcs."encoder.int8.onnx"} \
+          --decoder=${parakeetSrcs."decoder.int8.onnx"} \
+          --joiner=${parakeetSrcs."joiner.int8.onnx"} \
+          --num-threads="''${PARAKEET_THREADS:-4}" \
+          "$@"
+      '';
+      # piper reads the .onnx and expects the same-stem .onnx.json beside
+      # it, so the two files must land in one directory.
+      packages.x86_64-linux.piper-voice-en = pkgsUnstable.runCommand "piper-voice-en_US-lessac-medium" {} ''
+        mkdir -p $out
+        cp ${pkgsUnstable.fetchurl {
+          url = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx";
+          sha256 = "sha256-Xv4J5pkCGHgnr2RuGm6dJp3udp+Yd9F7FrG0buqvAZ8=";
+        }} $out/en_US-lessac-medium.onnx
+        cp ${pkgsUnstable.fetchurl {
+          url = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json";
+          sha256 = "sha256-7+GcQXvtBV8taZCCSMa6ZQ+hNbyGiw5quz2hgdq2kKA=";
+        }} $out/en_US-lessac-medium.onnx.json
+      '';
+
       # S7: the workerd runtime, packaged from Cloudflare's npm tarballs (no Bazel/clang build,
       # no node shim). The meta tarball's `bin/workerd` is a node wrapper; we overwrite it with
       # the statically-linked platform binary from `@cloudflare/workerd-linux-64` and keep the
@@ -170,6 +224,32 @@
           license = pkgsUnstable.lib.licenses.asl20;
           mainProgram = "workerd";
         };
+      };
+
+      # Voice dialogue shell: parakeet ASR + piper TTS + the `voice/`
+      # harness. Deliberately separate from the CUDA default shell — the
+      # dialogue loop needs none of that, and `nix develop .#voice` should
+      # stay instant. The Gemma side is not packaged here: the harness
+      # talks to the already-configured FastFlowLM server on :8081.
+      devShells.x86_64-linux.voice = pkgsUnstable.mkShell {
+        name = "unfer-voice";
+        packages = with pkgsUnstable; [
+          sherpa-onnx
+          piper-tts
+          pipewire   # pw-record / pw-play (the NixOS system pipewire already
+                     # provides these on PATH, but the shell must not depend
+                     # on system configuration)
+          curl
+          jq
+          python3
+          self.packages.x86_64-linux.parakeet-compact
+          self.packages.x86_64-linux.piper-voice-en
+        ];
+        shellHook = ''
+          export PARAKEET=${self.packages.x86_64-linux.parakeet-compact}/bin/parakeet
+          export PIPER_VOICE=${self.packages.x86_64-linux.piper-voice-en}/en_US-lessac-medium.onnx
+          echo "[unfer-voice] parakeet ASR + piper TTS ready — run: ./voice/voice.sh full|speak|listen|type"
+        '';
       };
 
       devShells.x86_64-linux.default = pkgs.mkShell {
