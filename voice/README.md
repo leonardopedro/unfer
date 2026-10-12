@@ -17,6 +17,49 @@ answers stay in context).
 
 `./voice.sh reset` clears the session transcript.
 
+## One-shot modes (for embedders)
+
+The four modes above are interactive loops. For programs that want to
+*drive* a dialogue turn — notably the **emthin `\voice` block**, which
+treats this harness as its plugin the way `mathed` treats
+`mathed_slint_browser` — there are two one-shot subcommands:
+
+```sh
+./voice.sh turn    [--say] [--history FILE] "TEXT"   text  → one turn → text
+./voice.sh dictate [--say] [--history FILE]          mic   → one turn → text
+```
+
+The embedder contract:
+
+- **stdout**: exactly one JSON object,
+  `{"utterance": "...", "reply": "..."}`. Nothing else is ever
+  printed there; progress (`you> ...`, `● listening`) goes to stderr.
+- **exit 0** on success; **exit != 0** with `FAIL <reason>` on stderr
+  and empty stdout on any failure (model down, mic missing, empty
+  transcription).
+- **`--history FILE`**: the rolling conversation is read from FILE —
+  an OpenAI-style `[{"role": "user"|"assistant", "content": ...}]`
+  array — instead of `~/.local/state/unfer-voice-session.json`, and the
+  new turns are **not** persisted. The caller owns the transcript, so
+  an editor can keep it in its own document and the document stays the
+  single source of truth (edit history there → the next turn sees the
+  edited history).
+- **`--say`**: speak the reply with piper (interactive `full`/`speak`
+  always do; one-shot says only when asked). Audio never appears on
+  stdout, so piping the JSON is always safe.
+- Only the tools the chosen path needs are required: `turn` without
+  `--say` needs just `jq` + `curl` (a text-only box, no audio stack);
+  `dictate` adds `pw-record` + parakeet; `--say` adds `piper` +
+  `pw-play`.
+
+A minimal round trip:
+
+```sh
+$ ./voice.sh turn --history /tmp/t.json "hello"
+you> hello
+{"utterance": "hello", "reply": "..."}
+```
+
 ## Running it
 
 ```sh
