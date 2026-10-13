@@ -16,8 +16,11 @@
 #
 #   The one-shot contract: exactly one JSON object on stdout —
 #   {"utterance": "...", "reply": "..."} — progress on stderr, exit 0.
-#   A failure is exit != 0 with `FAIL <reason>` on stderr and nothing on
-#   stdout. `--history FILE` reads the rolling conversation from FILE
+#   A failure is exit != 0 with `FAIL <code> <reason>` on stderr and
+#   nothing on stdout. The code is machine-readable and closed —
+#   `usage | env | history | mic | llm` (table in README.md) — so an
+#   embedder branches on the code and treats the reason as prose.
+#   `--history FILE` reads the rolling conversation from FILE
 #   (OpenAI-style [{"role": ..., "content": ...}]) instead of the session
 #   file and does not persist the new turns: the caller owns the
 #   transcript, so an editor can keep it in its own document. `--say`
@@ -47,6 +50,11 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLM_URL="${LLM_URL:-http://127.0.0.1:8081/v1}"
+# Display form of the URL: userinfo (`user:pass@`) and query parameters
+# (`?token=…`) are stripped before anything is echoed or put in a FAIL
+# line — a credentialed URL must not reach stderr, a caller's error
+# splice (emthin splices FAIL reasons into the document), or a log.
+LLM_URL_DISP="$(printf '%s' "${LLM_URL%%\?*}" | sed -E 's#(https?://)[^/@]*@#\1#')"
 LLM_MODEL="${LLM_MODEL:-gemma4-it:12b}"
 VOICE_MODEL="${VOICE_MODEL:-${PIPER_VOICE:-/usr/share/piper5/voices/en_US-lessac-medium.onnx}}"
 VOICE_SECS="${VOICE_SECS:-6}"
@@ -56,8 +64,11 @@ STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/unfer-voice-session.json"
 TMPD="$(mktemp -d /tmp/voice.XXXXXX)"
 trap 'rm -rf "$TMPD"' EXIT
 
-die() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
-need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1 (run inside: nix develop .#voice)"; }
+# die <code> <reason...> — the FAIL line's first token after FAIL is the
+# closed-set code (README.md's table); embedders branch on it, the reason
+# is human detail and free to change wording.
+die() { local code="$1"; shift; printf 'FAIL %s %s\n' "$code" "$*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die env "missing tool: $1 (run inside: nix develop .#voice)"; }
 
 # ── argument parsing ─────────────────────────────────────────────────────────
 # Flags are taken wherever they appear, so `turn --say "hi"` and
@@ -70,7 +81,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --say) SAY=1; shift ;;
     --history)
-      [ $# -ge 2 ] || die "--history needs a file path"
+      [ $# -ge 2 ] || die usage "--history needs a file path"
       HISTORY="$2"; shift 2 ;;
     --history=*) HISTORY="${1#--history=}"; shift ;;
     *) POS+=("$1"); shift ;;
@@ -86,7 +97,7 @@ case "$MODE" in
   turn|dictate|full|speak|listen|type) ;;
   reset) rm -f "$STATE_FILE"; echo "session cleared."; exit 0 ;;
   -h|--help|help) sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *) die "unknown mode '$MODE' (want: turn | dictate | full | speak | listen | type | reset)" ;;
+  *) die usage "unknown mode '$MODE' (want: turn | dictate | full | speak | listen | type | reset)" ;;
 esac
 
 # `--say` is a one-shot flag; the interactive modes decide speaking by mode.
@@ -104,7 +115,7 @@ esac
 # Speaking: interactive full/speak always, one-shot only with --say.
 if [ "$MODE" = "full" ] || [ "$MODE" = "speak" ] || [ "$SAY" = 1 ]; then
   need pw-play
-  [ -f "$VOICE_MODEL" ] || die "piper voice not found: $VOICE_MODEL (nix develop .#voice sets it)"
+  [ -f "$VOICE_MODEL" ] || die env "piper voice not found: $VOICE_MODEL (nix develop .#voice sets it)"
 fi
 
 # ── session transcript ───────────────────────────────────────────────────────
@@ -132,10 +143,10 @@ ask_llm() { # $1=user utterance → prints the reply
   local body="$TMPD/req.json"
   local hist_json
   if [ -n "$HISTORY" ]; then
-    [ -f "$HISTORY" ] || die "history file not found: $HISTORY"
+    [ -f "$HISTORY" ] || die history "history file not found: $HISTORY"
     hist_json="$(cat "$HISTORY")"
     printf '%s' "$hist_json" | jq -e 'type == "array"' >/dev/null \
-      || die "history file is not a JSON array: $HISTORY"
+      || die history "history file is not a JSON array: $HISTORY"
   else
     hist_json="$(cat "$STATE_FILE")"
   fi
@@ -154,7 +165,7 @@ ask_llm() { # $1=user utterance → prints the reply
     -H 'Content-Type: application/json' --data @"$body" > "$resp"
   local reply
   reply="$(jq -r '.choices[0].message.content // empty' "$resp")"
-  [ -n "$reply" ] || die "no reply from $LLM_URL (model up? /usr/local/bin/gemma4-toggle): $(head -c 300 "$resp")"
+  [ -n "$reply" ] || die llm "no reply from $LLM_URL_DISP (model up? /usr/local/bin/gemma4-toggle): $(head -c 300 "$resp")"
   if [ -z "$HISTORY" ]; then
     push_turn user "$utterance"
     push_turn assistant "$reply"
@@ -201,12 +212,12 @@ oneshot() {
   local utt reply
   case "$MODE" in
     turn)
-      [ -n "$REST" ] || die "turn needs an utterance: voice.sh turn \"hello there\""
+      [ -n "$REST" ] || die usage "turn needs an utterance: voice.sh turn \"hello there\""
       utt="$REST" ;;
     dictate)
       record "$TMPD/in.wav"
       utt="$(transcribe "$TMPD/in.wav")"
-      [ -n "$utt" ] || die "heard nothing (microphone up? VOICE_SECS=${VOICE_SECS}s)" ;;
+      [ -n "$utt" ] || die mic "heard nothing (microphone up? VOICE_SECS=${VOICE_SECS}s)" ;;
   esac
   printf 'you> %s\n' "$utt" >&2
   reply="$(ask_llm "$utt")"
@@ -221,7 +232,7 @@ case "$MODE" in
 esac
 
 # ── the loop ─────────────────────────────────────────────────────────────────
-echo "[voice:$MODE] talking to $LLM_MODEL at $LLM_URL — ctrl-c to stop, 'bye' to end session"
+echo "[voice:$MODE] talking to $LLM_MODEL at $LLM_URL_DISP — ctrl-c to stop, 'bye' to end session"
 while true; do
   utt="$(get_utterance || true)"
   [ -n "${utt:-}" ] || continue

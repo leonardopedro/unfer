@@ -89,6 +89,10 @@ pub const SESSION_OPS: &[&str] = &[
     // `agent_escalate` puts it in front of a human as an ESCALATE entry.
     "agent_claim",
     "agent_dm",
+    // The inbox half of the DM channel: read (and optionally consume) a
+    // worker's messages. Dispatched and tested since G3 but missing from
+    // these tables until the op-catalog gate caught the drift.
+    "agent_dm_read",
     "agent_escalate",
     "agent_handoff",
     // G5: write-time conflict detection over the CRDT edit footprints.
@@ -222,6 +226,7 @@ pub const AGENT_OPS: &[&str] = &[
     // workers cannot settle it among themselves.
     "agent_claim",
     "agent_dm",
+    "agent_dm_read",
     "agent_escalate",
     // G7: role hand-off. Carries no privilege; it records who is reviewing so
     // the hand-off is observable after the fact.

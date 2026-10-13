@@ -1,0 +1,278 @@
+# Changelog
+
+All notable changes to unfer are documented here.
+Generated from conventional commits via git-cliff.
+
+## [Unreleased]
+
+### Bug Fixes
+- Pin nanoda_lib's outputHashes so unfer-ffi/unfer-data evaluate
+- One workspace-root implementation, and stop the gates passing vacuously
+- X-F7 -- ABBA deadlock and a missing lock in the test locks
+- Restore the ALL-GREEN evidence log I wrongly untracked, and fix the gate
+- A missing python3 is a gap, not a failure
+- Stop two durable tests racing on the unknown-outcome latch
+- Sort SYMBOL_REGISTRY, closing a test that has been red
+- Equal-weight results came out in HashMap order
+- Two reporting details that were reconstructed instead of carried
+- A tagged fallback and a real window key shared one slot
+- Every fresh lemma insert counted as an identity hit
+- An ambiguous fragment scored *higher* than a certain one
+- `verified` was a tautology, and it is now a fixed-point check
+- An unbound application spun to the iteration cap and reported success
+- The two-tier table broke its own mass invariant three ways
+- The spill tier lost everything it wrote
+- A non-ASCII `unf_hash` from a graph file panicked the judge prompt
+- The UNF hash collapsed every non-constructor term to one constant
+- The default build's `formalize` was carrying dead code
+
+### Build
+- Provision the native deps the workspace actually needs
+
+### CI
+- Close the coverage gaps -- module e2e jobs, sibling smoke binaries, --locked, non-default lint
+- Recount the status block from CI's own test log (X2), and fix invalid YAML
+- AustralVM in the cross-repo job, and a report exerciser that cannot drift (X7)
+- Cross-repo integration job (X7)
+- Add scripts/check-status to the hygiene-gates job (X2)
+- Artifact + shared-corpus drift gates (X1/X5)
+- Pin lint toolchain explicitly; fix e2e sibling checkout path
+- Pin third-party actions to commit SHAs
+- Add zenodo_store_module gate (type-check + auth; JIT blocked by pre-existing CPS-JIT crash)
+- FFI symbol CI gate — assert all 18 uk_* + 5 uz_* symbols
+
+### Documentation
+- Comparison report -- AnaCP/AnaNC vs QFM on one frozen EmbeddingGemma2 backbone
+- Bake nix-shell prerequisites into verification; refresh Cargo.lock; join link gate
+- Recount to 1785 (rev 27) after D7's backbone-choice tests
+- X2 -- recount to 1774 (rev 26), debug == release suite by suite
+- M7 -- the stale "public pages not updated" note is corrected
+- X2 -- recount to 1769 (rev 25), measured by CI's own log
+- A10 -- §6 records live-JIT module enforcement as done, with its test
+- A16 -- retire the false vacuum claim, gate the real rule
+- Record the §M4.9 requirement-2 decision — the diagnostic stays unshifted
+- X2 drift half -- recount the status block against a real log
+- Boot unfer_edge + arctic from one document (C8)
+- Measured test count (1433), and name the two known-intermittent tests
+- Extract the checklist into docs pages, 118K -> 16K (X3)
+- State the unfer test count and its scope explicitly
+- Retire the stale JitTest collision claim (X4a)
+- Per-repo attribution ledger (X9)
+- Status block with the measured count and the commands behind it (X2)
+- Add PLAN_MASS_GAP planner plan and document all 15 Cadabra modules
+- P7 leaves "Not done" — the document front end
+- FORMALIZE.md — the NL → CNL adaptation
+- Note pinned 1.97.1 toolchain in prerequisites
+- Mark mathed build/test resolved locally via velysterm flake (plan item 30)
+- Doc-drift sweep — AGENTS.md, MODULE_RECIPE.md, PROTOCOL.md, ARCHITECTURE.md
+- Correct P11.23 docs — SpectrumOS patches are downloaded, not vendored
+- Rev 23 'P9.15.1 velyst examples port closure' update
+- Rev 22 'P9.14 mathed_mini Step 4 closure' QMF.tex update
+- Rev 22 'P9.14 mathed_mini Step 4 closure' update
+- Rev 21 'P8.7 + P8.8 + velysterm typst 0.15 merge' update
+- Rev 18 'Current state and next steps' update
+- Rev 18 status block + updated progress checklist
+- Post-rev 17 'Current state and next steps' sections
+- Update rev 17 HEAD references (a10feb1)
+- Add P6 H — Quantum Bayesian Update on the TSR-evolved prior
+- Update IMPLEMENTATION_PLAN.md to reflect rev 15 push (HEAD 0441ebf)
+- Mark P6 A1, A2, B3 complete (rev 9)
+- Mark all P5 items #23-#32 complete (rev 6 final)
+- Mark P5 #30 done + fill commit hash (39f08ab)
+- Mark P5 #32 done + rev 6 status (all items complete)
+- Mark P5 #31 done (QFM CI gate added in previous commit)
+- Mark P5 #24/#28/#29 done in IMPLEMENTATION_PLAN.md
+- Re-anchor QMF.tex on Wavefunction Flows (Layden et al., arXiv:2510.08462)
+- Make QMF.tex pedagogical and self-contained
+- P4 #16/#17/#18 done — green velysterm CI, clippy baseline, RepairHints
+- P4 #15 done — \prior/\solver wired through the dispatcher (velysterm da57c44)
+- P3.10 translator follow-ups committed (velysterm 0916146)
+- P3.10/P3.11 complete — both frontends share the kernel path
+- P3.11 inline \prob overlay done
+- P3.11 kernel_client wired into mathed_mini (end-to-end \prob)
+- P3.10 translator Step 5 (collapsible panel) done
+- P3.10 translator pipeline Steps 1-4 done (plan update)
+
+### Features
+- One-shot turn/dictate subcommands for embedders
+- Parakeet ASR + piper TTS dialogue harness via the flake
+- D-C6 forgetting protocol over a QFM-TSR arrival stream -- measured, with a geometry control
+- D-ablation sweep pins projected_dim as measured, not assumed
+- Drive the recount ourselves so counts are actually checked
+- C2 -- register memory_append/memory_read for the agent channel
+- C1 -- register events_stream, the push half
+- G5 -- sync_edit and sync_import, the conflict surface
+- G3 -- escalation becomes a first-class board record
+- D.4 -- cell_tool and the module-reconstruction task bundle
+- §M4.9 physical-gap emission — every row names its sector, gap=||H phi_1|| with q beside it
+- M4 gates + M5 Kani complement -- 12/15 proven, powi artifact root-caused
+- G1 closure -- replay distinguishes reservation holes from corruption
+- M1-M9 -- campaign fixtures, property tests, three gates, and the CI steps that run them
+- G1 groundwork -- BoardLog wraps any DurableStore
+- Cap the wire on the way in, single-sourced with the fuzz target (D.1a)
+- D5 -- the analytic decision engine, its typed protocol, and the observe-only wire (A4)
+- C7 -- model spec prefixes, and a smoke test that runs in CI
+- C6 -- uk_summarize, an extractive digest for human surfaces
+- One normalized message schema for both HTTP surfaces (C4)
+- NDJSON snapshot so the board survives the process (G6)
+- C2 -- uk_memory_append / uk_memory_read over the bounded store
+- C2 -- bounded memory that retrieves instead of truncating
+- G9 -- spawn pacing at the loopback, and deadline nudges
+- G4 -- merge evidence is a reference to a recorded run
+- Config-file precedence, an init generator, and a runbook (X6, C3)
+- The G1 shared context board and G3 cooperation
+- /healthz and /version, via a testable routing table (X6)
+- C1 -- uk_events_poll, a cursored event read
+- A cursored event log (C1, foundation)
+- Enforce the C5 role rule at the loopback, with an audit entry
+- Role presets as data over GrantSet (C5)
+- `logos unf` — the kernel surface the Austral VM plugin calls
+- `logos formalize` — the pipeline as a command
+- CNL completer and LogosScore
+- Engram-keyed lemma memory for the formalizer
+- Verify per-node CNL by reduction, with an LLM client
+- Port ProofFlow's proof-graph builder to Rust
+- Phase 4 data plane — chunking, X25519+AES-GCM encryption, magnet URIs
+- QuePaxa federation layer — consensus, identity, relay ops
+- Working end-to-end pipeline — parse→compile→reduce→readback→hash
+- Project Logos v3 — CNL→verified execution graph compiler (Phases M0–M6)
+- ODE→Hamiltonian singularity detection pipeline (ode_sirk)
+- Extract tools/module_builder — unified build+test runner for all 6 modules
+- Rev 30 — P10.16.7 d=1024 cross-domain scaling (CFD L=32, Ising L=32, GW d=1024)
+- Rev 29 — P10.16.5 Kolmogorov CFD + P10.16.6 post-Newtonian GW cross-domain (rev 29)
+- Rev 27+28 — Ising/Yang-Mills validation, unfer_edge proxy, Nix package for P11.23
+- P10.16.3 — rank-truncation extension via SVD on the W basis
+- P10.16.2 + P11.24 — real CIFAR-10 fixture + Zenodo-Loro module (rev 25)
+- P10.16.1 — CIFAR-10 16×16 synthetic baseline + SIRK shift overflow fix (rev 24)
+- P6 G + P6 H follow-on — full SIRK basis + kernel surface wiring (rev 17)
+- P6 H — Quantum Bayesian Update on the TSR-evolved prior (rev 16)
+- P6 F.19 + F.20 — qfm_tomo_module demo + criterion benchmarks (rev 15)
+- P6 E — Workstream F hardening + QFM tomographic module (rev 13)
+- P6 B4 — streaming/subscription surface (uk_subscribe/uk_poll)
+- P6 D10 — session persistence + observability
+- P6 A2 — adaptive scaling beyond l=4
+- P6 A1 — mass-gap extraction from SIRK Ritz values
+- Quantum Flow Matching module (QMFplan Workstream E, Stages 19-21)
+
+### Other
+- Committed criterion reproduction of the article's latency table
+- H1.15 determinism boundary for unfer_consensus
+- Pin 1.99.0, drop the flake's stable override; X-F7 lock close-out
+- Choose the backbone — MRL truncation, instruction prefix, dual-stream
+- Qm verified from the local clone (MIT)
+- Pattern row follows the two-folder layout (rewrite-v3 + main)
+- Machine-check the attribution ledger and row unfer's missing sources
+- A9 -- default listen is loopback, and the missing auth is stated where it matters
+- Solve for the break-even instead of quoting a misleading ratio
+- The keying ablation, on the half that does not need a GPU
+- Local e2e recipe — module_builder nix fallback + e2e_local.sh
+- Group non-major action bumps into one PR
+- Grant uk_event_probability required by the CPS JIT
+- Surface JIT/auth failures as GitHub annotations
+- Resolve dune via opam exec on CI
+- Regenerate lib/BuiltInModules.ml before dune build
+- Record panic payloads and reject unknown subscription types
+- Dropped events are operator-visible, not silent
+- Never truncate-and-lose an event on a small buffer; fix durable-test flake
+- Uk_last_error/uz_last_error describe the most recent call, never a stale one
+- Fork after compaction diverges from a self-consistent compacted log
+- Fail-closed durable appends and checkpoints, no silent drops or flakes
+- Forks honor their frontier, in-memory stores get private scratch
+- Fix aeneas_sirk.sh output flag; drop crate-root duplicate
+- Regenerate Aeneas model from current source; fix script
+- Run heavy tests in release mode (workspace test job + ignored units)
+- Vielbein Starobinsky Cadabra2 module and full-exponential enclosure realization
+- Mass-gap formalization on the 3D gauge-fixed QYM Hamiltonian
+- Gauge-fixed-Hamiltonian prediction legs for HOM, pair production, mass gap
+- Cadabra-anchored QED/QG suites + solver gotcha fixes
+- Single shared DurableStatus consult (STREAM_NAMES + consult_status)
+- Pack live-status + recovery-report byte counts in run()
+- Surface corrupt-snapshot recovery to operators
+- Layout-claim registry and device work; protocol codes; validation guide
+- Resolve Lody-pattern items 6-7 as analyzed non-actions, mark plan complete
+- Live stream lengths + coalesced Loro flush, Lody-patterns plan
+- Certified Ritz values and the certified cross-sector mass gap (T6 surface)
+- Per-test what&how walkthrough in GitHub LaTeX; claim decomposition + assumption ledger
+- 5.17 certified-numerics suite + two-tier certification note (S43 follow-up)
+- Certified numerics — Theorem 4.1 bands propagated to observable error bars
+- Hashimoto Theorem 4.1 error bands for program-sector models
+- Dynamics, constraints, action-chains, consistency — 15 more program-sector SIRK tests + tutorial
+- Gauge-fixed program validation — 10 SIRK tests across NS/QYM/QED/QG(R2)
+- S39 edge-study entry superseded by frame+residual API and guard study; drop probe scratch file
+- EM/optics, statistical-mechanics, classical-dynamics, weak/neutrino anchors + SIRK coupled-oscillator suite (21 tests)
+- SR/nuclear + astro/plasma numerical anchors (17 published-number tests)
+- Skills registry over module path (australVM/velysterm)
+- Skills registry (discovery/sharing over the module path)
+- Mark H5/H6 DONE with status notes
+- Note Tidepool handler-stack + Egison matcher composability alongside Cordis
+- Per-stage existing-feature review grounding each stage in the improvement-first principle
+- Perturbative validation suites (QED/QCD/QG/NS) + quadratic-ordering fix + PLAN H
+- Kernel-computed rfl Confluence proof verified independently in nanoda
+- Numerical (F64) reduction in the UNF pipeline
+- Verify the densitized change of variables is unitary (Cadabra2)
+- Densitized-tetrad change of variables (Strichartz ESA)
+- Yang-Mills Weyl-gauge Hamiltonian derivation (book.tex ~7353)
+- Re-add p^a·T_a drop with the physical boundary-term justification
+- Revert the unjustified p^a·T_a drop (keeps the full 8182 form)
+- Declare e commuting with torsion so -e·T·T·e + e·T·T·e collapses
+- Fold to book.tex's exact closed form (correct S^2 sign, A->-2eT)
+- Use the notebook's jump (book.tex 8182) to reach the simple form
+- Derive the polymomentum by varying the Teleparallel Lagrangian
+- Automated re-derivation of H_final via the Legendre transform
+- Add book.tex's final 3D gauge-fixed Hamiltonian (H_final)
+- Deliver the TEGR/teleparallel torsion scalar (book.tex target)
+- Reach torsion-form Hamiltonian; document book.tex divergence
+- Repair and integrate the 3D gauge-fixed Hamiltonian derivation
+- Gravity-parallel numerical and symbolic calculus tests
+- Cadabra2 symbolic coupling in the probability kernel
+- Lean4 proof verification via nanoda_lib in the probability kernel
+- IMPROVEMENT_PLAN items 4-18 + 27 across the contract seams
+- Cargo fmt --all (426 files) so the fmt gate passes
+- Add S25/S27 symbols to EXPECTED_SYMBOLS.txt (61 -> 65)
+- Ode_sirk — fix clippy eq_op error + 5 warnings
+- Phase 4 secondary-market escrow (EscrowService) on the consensus log
+- A UNFCCC oracle client joins the cluster as a provenance auditor
+- The GNU Taler exchange is a member of the QuePaxa cluster
+- Close the decide-but-not-yet-applied crash window
+- Durable node state — full-cluster restart with NetworkCluster::resume
+- Phase 6 testnet lite — ConsensusNode over rust-quepaxa mTLS cluster
+- Phase 5 GNU Taler exchange adapter (unfer_taler)
+- Phase 3 oracle mint contract — MintRequest + uk_cert_mint_request
+- Multi-node certificate-root convergence test
+- Harden multi-input transfers + real UNFCCC oracle anchor
+- Plan R step 5 — white-paper math flow UN → QuePaxa → Taler
+- Plan R — proptest invariants for certificate ledger
+- Metering, sensitive latch, secret vault, capability RPC (F24-F27)
+- Gatekeeper archetype, blueprint edge, trust annotations, admin console, observability, release protocol (F18-F23)
+- Resource grants + introductions (F17)
+- Mark Part II F9/F10/F11/F13 implemented (S10/S11/S12/S14)
+- Auto-m + batch-shift helpers + weak-scaling bench (F15)
+- Edge op metrics + GET /metrics (F12)
+- Property-test invariants for the capability lattice, content plane, FFI buffers (F16)
+- Cell retention (pin/GC) + key rotation + /cell read route (F14)
+- Capability-minting chokepoint (F5) — plan/docs
+- Observers / information-flow re-check (F8)
+- Package the workerd sidecar via Nix (unfer-workerd/unfer-data derivations, sandboxed-sidecar bundle + smoke app, PLAN status)
+- Agent accountability + audit (CallerTag trail, AgentSpawner bounded agents, uk_audit_*/uk_agent_* symbols, edge audit console)
+- Instance isolation + blueprints (.cell archives, initialize_from_blueprint, content-plane store)
+- Deferred approval + local simulation (ActionRecord, effects grant namespace, uk_action_* trio)
+- Consistency cleanup, new-crate docs, integration tests, property tests
+- Complete Pauli–Grover research (kernel coupling, a sweep, CIFAR, GPU decode)
+- Remove stray copy of BayesUpdateModule.aum
+- Bose_hubbard builtin model (hopping + on-site interaction)
+- Linearity gate + docs for the linear Model handle wrapper
+- Delete uk_subscribe/uk_poll dead surface (v1)
+
+### Refactor
+- Make the C1 log a type, so tests get isolated instances
+- Move into unfer/ as a subdirectory (was a standalone dir)
+
+### Tests
+- A3 -- the turnover sweep past m=128 is measured, and negative
+- X6 -- the ops surface is probed over a real socket
+- One lock order, one pacing knob, one durable-slot rule -- 0/100 flaky
+- Guard the code table, and fix the drift it found
+- Drop two unused imports, explain the unread Row fields
+- Evaluation harness over ProofFlow's human proof graphs
+- Property & fuzz tests for nested_fock_algebra and unfer_protocol; fix qfm_text warnings
+

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# TODO-ledger gate (australVM).
+#
+# The burn-down mechanism from PLAN_CROSS_PROJECT_REVIEW_2026-10-12 §B1,
+# sized to what the scan actually found: a full-tree grep showed the repo's
+# "TODO debt" is entirely markdown *history* (status tables in
+# COMPLETION_SUMMARY/SESSION_*/docs/history, README templates) — zero
+# actionable markers in code. So the invariant is the honest one:
+#
+#   * CODE files (*.rs, *.sh, *.py, *.toml) carry no TODO/FIXME/HACK/XXX
+#     marker unless the file is listed in docs/TODO_LEDGER.md (each ledger
+#     line names the file and the reviewed reason it may carry markers);
+#   * markdown is out of scan scope BY POLICY: historical status prose
+#     records a past state and must not be rewritten to satisfy a gate;
+#   * a ledger entry whose file no longer carries any marker is reported
+#     as [stale] (remove it in the change that lands the work).
+#
+# Exit 0 = green, 1 = an unledgered marker or nothing to do but fix.
+
+set -u
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+LEDGER="$repo_root/docs/TODO_LEDGER.md"
+cd "$repo_root"
+
+if [ ! -f "$LEDGER" ]; then
+    echo "[FAIL] docs/TODO_LEDGER.md missing (the ledger is the contract)"
+    exit 1
+fi
+
+hits="$(grep -rInE '\b(TODO|FIXME|HACK|XXX)\b' \
+    --include='*.rs' --include='*.sh' --include='*.py' --include='*.toml' \
+    --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules \
+    --exclude-dir=.lake --exclude-dir=result --exclude-dir=_build \
+    . 2>/dev/null || true)"
+
+FAILED=0
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    f="${line%%:*}"
+    f="${f#./}"
+    if grep -qE "^\|\s+\`$f\`" "$LEDGER"; then
+        echo "[ledgered] $line"
+    else
+        echo "[FAIL] unledgered marker: $line"
+        FAILED=1
+    fi
+done <<< "$hits"
+
+# Stale entries: ledger rows whose file now carries no marker at all.
+while IFS= read -r row; do
+    f="$(printf '%s' "$row" | sed -E 's/^\|\s+`([^`]*)`.*/\1/')"
+    [ -n "$f" ] || continue
+    if ! printf '%s\n' "$hits" | grep -q "^\./$f:\|^[^:]*/$f:"; then
+        echo "[stale] ledger row for $f — no marker remains; remove the row"
+    fi
+done < <(grep -E '^\|\s+`[^`]+\`' "$LEDGER" 2>/dev/null || true)
+
+if [ "$FAILED" -eq 0 ]; then
+    echo "check-todo-ledger: green (every code marker is reviewed in docs/TODO_LEDGER.md)"
+fi
+exit "$FAILED"

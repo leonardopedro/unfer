@@ -99,7 +99,7 @@ EXCLUDE_FILES=(
 # state", and a future `adapted from <source>` written there must still be
 # forced onto a ledger row.
 ALLOW=(
-  '^test/(numerics|basics|book)/ :: .* :: 2 :: prose site: literature/economics, citations not adaptation claims'
+  '^test/(numerics|basics|book|numerical-physics|the-program)/ :: .* :: 2 :: prose site: literature/economics/physics derivations, citations not adaptation claims'
   '^test/README.md$ :: .* :: 2 :: site meta prose'
   '^test/unfer/foundations.md$ :: .* :: 2 :: quotes ../basics/bond.md prose'
   '^test/software/math\.md$ :: .* :: 2 :: prose site describing external tools (Bend, Lambdapi), not adapting them'

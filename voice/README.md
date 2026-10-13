@@ -34,9 +34,21 @@ The embedder contract:
 - **stdout**: exactly one JSON object,
   `{"utterance": "...", "reply": "..."}`. Nothing else is ever
   printed there; progress (`you> ...`, `● listening`) goes to stderr.
-- **exit 0** on success; **exit != 0** with `FAIL <reason>` on stderr
-  and empty stdout on any failure (model down, mic missing, empty
-  transcription).
+- **exit 0** on success; **exit != 0** with `FAIL <code> <reason>` on
+  stderr and empty stdout on any failure. The code is machine-readable
+  and **closed** — embedders branch on it, the reason is human detail
+  whose wording may change:
+
+  | code | meaning | typical fix |
+  |---|---|---|
+  | `usage` | bad invocation (unknown mode, `turn` without text, `--history` without a path) | fix the command line |
+  | `env` | a tool or asset is missing (jq/curl/pw-record/parakeet/piper, voice model) | run inside `nix develop .#voice` |
+  | `history` | `--history FILE` not found, or not a JSON array | point at the caller's transcript |
+  | `mic` | recording/ASR produced nothing (dictate/listen/full) | check the mic, raise `VOICE_SECS` |
+  | `llm` | the model endpoint returned no reply | start the server (`gemma4-toggle`), check `LLM_URL` |
+
+  The emthin `\voice` block maps every failure onto its `voice_failed`
+  IPC error (`emthin/docs/error-contract.md`), reason line included.
 - **`--history FILE`**: the rolling conversation is read from FILE —
   an OpenAI-style `[{"role": "user"|"assistant", "content": ...}]`
   array — instead of `~/.local/state/unfer-voice-session.json`, and the

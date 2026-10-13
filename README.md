@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1792 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-12 -->
+<!-- status: verified | tests: 1792 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-13 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,

@@ -1,0 +1,77 @@
+# Heavy test lane — the slow suites the per-push CI never runs.
+#
+# ci.yml is the fast gate: invariants, smokes, the default (non-ignored)
+# suite. The heavy physics/SIRK/QFM suites behind `#[ignore]` live only in
+# `scripts/run_heavy_tests.sh`, which until now was a human remember-to-run
+# script — exactly the orphan this workflow adopts (CI layering adapted from
+# REA: one fast gate per push, scheduled real-environment lanes per concern).
+#
+# Triggering:
+#   * schedule — weekly, so a slow regression (a CAS match drifting, an
+#     ignored decide_core test rotting) surfaces without a human;
+#   * workflow_dispatch — run on demand before a release or after touching
+#     a heavy suite; the `quick` input forwards --quick to the script.
+#
+# Siblings: only dynamic-arctic is cloned (unfer_consensus path-deps it, so
+# the workspace does not resolve without it). velysterm/australVM are NOT
+# cloned — their binaries are only exercised by smoke_gate, which belongs to
+# the fast lane in ci.yml.
+
+name: Heavy tests
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC, off the top-of-hour stampede
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "forward --quick to run_heavy_tests.sh"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  heavy:
+    name: ignored physics/SIRK/QFM suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 210 # five suites at up to 30min each, plus builds
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+
+      # Same X7 discipline as ci.yml: named ref, resolved SHA echoed.
+      - name: checkout dynamic-arctic sibling (unfer_consensus path dep)
+        env:
+          DYNAMIC_ARCTIC_REF: main
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$DYNAMIC_ARCTIC_REF" \
+            https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          echo "  ../dynamic-arctic @ $(git -C ../dynamic-arctic rev-parse HEAD)"
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+
+      - name: run the heavy suites
+        run: |
+          if [ "${{ inputs.quick }}" = "true" ]; then
+            bash scripts/run_heavy_tests.sh --quick
+          else
+            bash scripts/run_heavy_tests.sh
+          fi
+
+      # The script's own log is the record; surface its tail in the step
+      # output so a red run is diagnosable without downloading anything.
+      # logs/ is inside the checkout, so the step below finds the newest one.
+      - name: show the heavy-run log tail
+        if: always()
+        run: |
+          latest=$(find logs -maxdepth 1 -name 'heavy_tests_*.log' -type f \
+                    -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-) || true
+          if [ -n "$latest" ]; then
+            echo "--- $latest (last 120 lines) ---"
+            tail -120 "$latest"
+          else
+            echo "no heavy-test log was produced"
+          fi
