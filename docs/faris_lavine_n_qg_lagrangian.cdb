@@ -78,6 +78,7 @@
 # are docs/faris_lavine_n_qg.cdb CHECK 11.
 #
 # Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# Formalized in: ../timepiece/Book/SecondQuantizationEsa.lean (tag "second-quantization-esa") - reader-facing chapter.
 # pins the Cadabra build through flake.nix).
 
 def expand_derivs(ex, n):

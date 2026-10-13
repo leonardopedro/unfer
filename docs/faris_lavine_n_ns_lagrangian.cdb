@@ -81,6 +81,7 @@
 # certify (ii), symmetry, or graph-norm density — those are Lean.
 #
 # Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# Formalized in: ../timepiece/Book/NsComparisonOperator.lean (tag "ns-comparison-operator"), NsOneParticleHamiltonian.lean (tag "ns-one-particle-hamiltonian") - reader-facing chapter.
 # pins the Cadabra build through flake.nix).
 
 i::ImaginaryI.

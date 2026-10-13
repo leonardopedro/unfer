@@ -38,6 +38,7 @@
 #         - e(T^ab E_ab + 2 T^ab_b E_a + 1/2 T_abc T^acb + 1/4 T_abc T^abc
 #             - T_ba^a T^bc_c - 1/4 T_ab T^ab)
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity") - reader-facing chapter.
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)

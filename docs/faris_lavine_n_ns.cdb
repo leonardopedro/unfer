@@ -107,6 +107,7 @@
 #                     (2 g a <= g^2/(2M) + 2M a^2) as polynomial identities.
 #
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/FreeField.lean (tag "free-field"), NsComparisonOperator.lean (tag "ns-comparison-operator") - reader-facing chapter.
 
 def expand_derivs(ex, n):
 	"""Leibniz expansion of every nested partial derivative."""

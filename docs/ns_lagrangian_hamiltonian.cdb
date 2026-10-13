@@ -21,6 +21,7 @@
 # carrying the incompressibility constraint through every step.
 #
 # Run:  cadabra2-cli -q -n docs/ns_lagrangian_hamiltonian.cdb
+# Formalized in: ../timepiece/Book/NsOneParticleHamiltonian.lean (tag "ns-one-particle-hamiltonian") - reader-facing chapter.
 # (Cadabra 2.5.x from the pinned nixpkgs named in docs/VERIFY_QG_DENSITIZED.md:
 #  nix build "github:NixOS/nixpkgs/b5aa0fbd538984f6e3d201be0005b4463d8b09f8#cadabra2"
 #  or `nix develop` in this repository; see docs/VERIFY_FARIS_LAVINE_N.md.)

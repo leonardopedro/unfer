@@ -24,6 +24,7 @@
 #     timepiece/CONSOLIDATED_PLAN.md  §Latest wave 2026-09-15, §The Cadabra module)
 #
 # Run:  cadabra2-cli -q -n docs/ns_qg_fourier_elimination.cdb
+# Formalized in: ../timepiece/Book/FourierElimination.lean (tag "fourier-elimination"), QgElimination.lean (tag "qg-elimination") - reader-facing chapter.
 # (Cadabra 2.5.x from the pinned nixpkgs named in docs/VERIFY_QG_DENSITIZED.md:
 #  nix build "github:NixOS/nixpkgs/b5aa0fbd538984f6e3d201be0005b4463d8b09f8#cadabra2")
 #

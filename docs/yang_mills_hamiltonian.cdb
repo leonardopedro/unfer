@@ -22,6 +22,7 @@
 #   certified symbolically as well as numerically.
 #
 # Run: cadabra2-cli -q -n < this file   (planner/CI only; never in the
+# Formalized in: ../timepiece/Book/YangMillsQuantization.lean (tag "quantization-time-evolution") - reader-facing chapter.
 # ../timepiece/unfer_contracts bundle, where copies are reference text).
 # ======================================================================
 # Yang-Mills: BRST-invariant 3D Hamiltonian in the Weyl gauge (book.tex ~7353).

@@ -967,9 +967,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
 
 [[package]]
 name = "derivative"
@@ -2453,9 +2453,9 @@ dependencies = [
 
 [[package]]
 name = "libz-ng-sys"
-version = "1.1.29"
+version = "1.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "879917b256f6317769b9f374b435805a8697013098aacce5a38ac106cd6a9469"
+checksum = "fbace61184843c17c2507bcaff9e5e723eac1058af7dc67f3e26c1a2ab3fc9a2"
 dependencies = [
  "cmake",
  "libc",
@@ -2857,8 +2857,8 @@ dependencies = [
 
 [[package]]
 name = "nanoda_lib"
-version = "0.4.19"
-source = "git+https://github.com/ammkrn/nanoda_lib#3a2407216ee84a75f9e1aead6803d0578be06ae7"
+version = "0.4.22"
+source = "git+https://github.com/ammkrn/nanoda_lib#735733408022619f5ccf2133e34dd002e8ae861c"
 dependencies = [
  "indexmap 2.14.2",
  "num-bigint 0.5.1",
@@ -3520,7 +3520,7 @@ dependencies = [
  "tokio-test",
  "unicase",
  "windows-sys 0.59.0",
- "zstd 0.14.1",
+ "zstd 0.14.2",
 ]
 
 [[package]]
@@ -6215,9 +6215,9 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.14.1"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4a9ecd0608fac4196ed58e1f337e9a72680fcc9ee449b8bcde6acea680b46f0"
+checksum = "057cfd910cfac363a0ada849592624b4c9ff2e10bef504c3433810d78ed96f93"
 dependencies = [
  "zstd-safe 8.1.0",
 ]

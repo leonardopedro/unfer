@@ -18,6 +18,7 @@
 #   algebra, a regeneration-gate run (unfer/PLAN_MASS_GAP.md M2).
 #
 # Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: ../timepiece/Book/Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 # ======================================================================
 # R + αR² (Starobinsky) 3D gauge-fixed Hamiltonian derivation.
 #

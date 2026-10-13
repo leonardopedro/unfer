@@ -106,6 +106,7 @@
 # conformal rescaling (ψ enters the kinetic) before the flat-coefficient
 # argument applies; that is the standard f(R) → Einstein-frame chain.
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity"), Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 #
 # GOTCHA — `@()` AND UNDERSCORED NAMES.  The insertion macro `@(name)` resolves
 # `name` through the LaTeX parser, which reads `_` as a SUBSCRIPT separator

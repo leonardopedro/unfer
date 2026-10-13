@@ -52,6 +52,7 @@
 #            vanish identically, and expresses q_i = d_i p purely in terms of u and f.
 #
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/NsOneParticleHamiltonian.lean (tag "ns-one-particle-hamiltonian"), FourierElimination.lean (tag "fourier-elimination") - reader-facing chapter.
 
 # ---- Fourier symbols -------------------------------------------------------------------------
 {k1,k2,k3}::Commuting.

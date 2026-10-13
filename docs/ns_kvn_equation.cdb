@@ -25,6 +25,7 @@
 #   docs/VERIFY_FARIS_LAVINE_N.md.
 #
 # Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: ../timepiece/Book/NavierStokesHashimoto.lean (tag "navier-stokes-hashimoto") - reader-facing chapter.
 # ======================================================================
 # The Navier-Stokes *Hamiltonian* (the Koopman-von Neumann / Liouville generator of
 # book.tex 4186) and the equation it generates through its commutator with the velocity

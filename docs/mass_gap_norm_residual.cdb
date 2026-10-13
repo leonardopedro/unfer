@@ -28,6 +28,7 @@
 # algebra — evidence: docs/VERIFY_MASS_GAP_NORM_RESIDUAL.md.
 # ======================================================================
 
+# Formalized in: ../timepiece/Book/SirkReliability.lean (tag "sirk-reliability"), Numerics.lean (tag "constants-suite") - reader-facing chapter.
 # ----- CHECK 1: the general identity, no orthogonality assumed. -------
 #   ||H(v+d)||^2 = 2 (2 + a + b)^2
 #   E^2 |v|^2    = 4 * 2 = 8

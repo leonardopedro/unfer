@@ -35,6 +35,7 @@
 #   docs/faris_lavine_n_ns_lagrangian.cdb.
 # ======================================================================
 # Run: cadabra2-cli -q -n <this file>   (or `nix develop` in unfer/, which
+# Formalized in: ../timepiece/Book/NsOneParticleHamiltonian.lean (tag "ns-one-particle-hamiltonian") - reader-facing chapter.
 # pins the Cadabra build through flake.nix).
 
 # ---- declarations (the convention of record: symbols ::Symbol, ladder

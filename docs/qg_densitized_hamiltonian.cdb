@@ -41,6 +41,7 @@
 # (regular, vanishing at e -> 0).
 #
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity") - reader-facing chapter.
 
 # ===== index & symbol declarations =====
 \partial{#}::PartialDerivative.
@@ -96,8 +97,28 @@ Kflat := (1/16) \tilde{S}_{a b} \tilde{S}^{a b} - (1/24) \tilde{P} \tilde{P}.
 H0 := (1/16) Delta_S - (1/24) D_y D_y.
 
 # ===== 4. verification: Ktrans - Kflat = 0 =====
-diff := (1/16) \tilde{S}_{a b} \tilde{S}^{a b} - (1/24) \tilde{P} \tilde{P}
-        - (1/16) \tilde{S}_{a b} \tilde{S}^{a b} + (1/24) \tilde{P} \tilde{P}.
+# Wired to the ACTUAL derived quantities `Ktrans` (the result of the step-2
+# substitution chain) and `Kflat` (the declared flat target), so this check
+# can FAIL: if the 1/e absorption in step 2 broke, Ktrans would still carry
+# e^{-1} and the difference would not vanish.  Both names have no underscore,
+# so the `@()` insertion macro resolves them (docs/CADABRA2_GOTCHAS.md).  The
+# previous form of `diff` was a hand-typed `(1/16)S~^2 - ... - (1/16)S~^2 + ...`
+# tautology -- identically zero by construction regardless of step 2, so it
+# certified nothing (docs/VERIFY_CDB_TRUNCATION_AUDIT.md, audit finding).
+diff := @(Ktrans) - @(Kflat).
 distribute(diff)
+# collect_factors BEFORE canonicalise/collect_terms: cadabra renders the P̃²
+# term in Ktrans (post collect_factors) as the POWER (P̃)**2 but the bare
+# product P̃ P̃ in Kflat, and canonicalise alone does NOT unify the two
+# representations — the difference would print as
+#   -1/24 (P̃)**2 + 1/24 P̃ P̃
+# (non-zero) even though both are P̃².  collect_factors puts both sides in
+# the product form so they cancel; this is a canonicalization, not an
+# assumption.  Verified: with collect_factors, diff -> 0.
+collect_factors(diff)
 canonicalise(diff)
+collect_terms(diff)
 # diff must be identically 0 (the singular 1/e has been absorbed).
+# Note: `diff` is a verification-only handle; it is not extracted by the
+# Rust pipeline (prob_kernel::symbolic::tests extracts Hraw/Ktrans/Kflat/H0),
+# so wiring it to the real quantities changes no downstream contract.
