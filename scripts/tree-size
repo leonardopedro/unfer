@@ -35,6 +35,24 @@
 # Deleting stale artifacts is therefore always safe for anything NOT tracked
 # here; amending retention is a deliberate edit to the allowlist above (and to
 # .gitignore), never a side effect of a commit.
+#
+# ## Identity contract (record: scripts/check-backup-sync, 2026-10-14)
+#
+# This file has ONE canonical copy — the workspace-root `scripts/tree-size` —
+# and two asserted byte-identical mirrors:
+#
+#   unfer/scripts/tree-size  per-repo mirror; unfer's CI runs it directly
+#     (`bash scripts/tree-size` in ci.yml), so drift there would stay green at
+#     the root and go red only in unfer's own pipeline — the same failure
+#     shape check-attribution's mirror had.
+#   emthin/workspace-backup/scripts/tree-size  backup mirror (manifest:
+#     scripts/workspace-backup-files); the workspace root is not a git repo,
+#     so the mirror gives this file version control.
+#
+# Both halves are asserted `cmp`-identical: the unfer pair by
+# scripts/check-backup-sync, the backup pair by scripts/sync-workspace-backup
+# --check. Edit HERE, then re-copy into unfer/scripts/ and run
+# scripts/sync-workspace-backup; commit both mirrors in their own repos.
 
 set -uo pipefail
 
