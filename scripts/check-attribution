@@ -66,8 +66,13 @@ PHRASE_RE='\b(adapted from|inspired by|ported from|borrowed from|based on|derive
 
 # The licensed checkouts (same set as check-status) and the root plan docs we
 # own. AnaNC.md at the root is a source *paper*, not ours -- not scanned.
+# Root plans: PROJECT_REVIEW... predates the PLAN_ prefix; every PLAN_*.md
+# is globbed at scan time (see docs_scanned) so a new cycle's plan doc is
+# covered from its first version -- this was a hand-maintained list and
+# went stale across the 10-12/10-14 cycles (found when PLAN_S4_BACKLOG_
+# wasn't picked up).
 REPOS="australVM dynamic-arctic emthin unfer velysterm timepiece test"
-ROOT_DOCS="PROJECT_REVIEW_AND_IMPROVEMENT_PLAN.md PLAN_MATHED_NATIVE_AND_IMPROVEMENT.md PLAN_ANALYTIC_DECISION_ENGINE.md"
+ROOT_DOCS="PROJECT_REVIEW_AND_IMPROVEMENT_PLAN.md"
 
 INCLUDES=(
   --include='*.md' --include='*.rs' --include='*.py' --include='*.sh'
@@ -82,6 +87,12 @@ EXCLUDE_DIRS=(
   --exclude-dir=.git --exclude-dir=target --exclude-dir=_build
   --exclude-dir=.lake --exclude-dir=node_modules --exclude-dir=.venv
   --exclude-dir=__pycache__ --exclude-dir=dist
+  # emthin/workspace-backup/ is a byte-identical mirror of the root plan docs,
+  # which ARE scanned as root docs — every claim is checked at its source, and
+  # window-relative path resolution differs inside the mirror (the same claim
+  # resolves at root and not from emthin/, producing asymmetric verdicts on
+  # identical text). Mirror integrity is scripts/check-backup-sync's job.
+  --exclude-dir=workspace-backup
 )
 EXCLUDE_FILES=(
   --exclude=ATTRIBUTION.md --exclude=LICENSE --exclude='LICENSE-*'
@@ -245,6 +256,11 @@ fi
 docs_scanned=()
 if [ "$repo_only" -eq 0 ]; then
   for d in $ROOT_DOCS; do [ -f "$root/$d" ] && docs_scanned+=("$d"); done
+  # Glob every PLAN_*.md (root is defined above): a new cycle's plan doc
+  # is scanned from its first version, no hand-maintained list to update.
+  for p in "$root"/PLAN_*.md; do
+    [ -f "$p" ] && docs_scanned+=("${p##*/}")
+  done
 fi
 
 # ── per-repo ledger pointers (X9: every repo carries one) ──────────────────
@@ -255,8 +271,13 @@ for r in "${repos_scanned[@]}"; do
   if [ ! -f "$f" ]; then
     echo "FAIL $r/ATTRIBUTION.md missing -- every repo carries a ledger pointer"
     fail=1
-  elif ! grep -q '](\.\./ATTRIBUTION\.md)' "$f"; then
-    echo "FAIL $r/ATTRIBUTION.md does not point at ../ATTRIBUTION.md"
+  elif ! grep -qE '\]\(\.\./ATTRIBUTION\.md\)|`\.\./ATTRIBUTION\.md`' "$f"; then
+    # D1 (2026-10-14): the pointer may be a markdown LINK or a backticked
+    # PATH. The pointer's existence is the policy; the markup is not --
+    # test/ is a published GitBook where an out-of-tree link is dead weight,
+    # so its ATTRIBUTION.md referenced the ledger as a path (which broke this
+    # check until it accepted both forms). Neither form present = fail.
+    echo "FAIL $r/ATTRIBUTION.md does not point at ../ATTRIBUTION.md (needs ](../ATTRIBUTION.md) or \`../ATTRIBUTION.md\`)"
     fail=1
   fi
 done
