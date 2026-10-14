@@ -8,7 +8,7 @@ single summand?  The specific mechanism under suspicion is `unwrap` applied to a
 same day), plus indexing (`expr[n]`) on a sum.
 
 **Scope note (2026-10-14):** the audit covered the 7 modules that existed on 2026-09-18; `docs/`
-now holds 21 modules.  The later modules were written with the guard pattern *in-module*: their
+now holds 22 modules.  The later modules were written with the guard pattern *in-module*: their
 truncation guards are ordinary CHECK rows with pinned expected sizes (`ns_compressible_lagrangian`,
 `sm_gauge_fixed_hamiltonian` document "no `unwrap` after `product_rule`" in their headers, and
 `yang_mills_hamiltonian` / `qg_densitized_hamiltonian` / `qg_starobinsky_vielbein_hamiltonian`

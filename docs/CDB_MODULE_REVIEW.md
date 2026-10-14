@@ -199,6 +199,37 @@ was affected, so this also unblocks future quartic+ models.
 clean here on 2026-10-13/14 — every CHECK at its advertised value (the "not runnable on aarch64"
 note above is the 2026-10-13 record and is now historical).
 
+## Update 2026-10-14 (later) — 22 modules: the momentum-space product module
+
+### New module (21 → 22)
+
+| module | content | checks |
+|---|---|---|
+| `docs/momentum_space_products.cdb` | the momentum-space product algebra behind `test/mathematical-foundations/momentum-space-products.md`: product → convolution on a three-mode grid, the derivative symbol riding on the integration **leg** (not the total momentum), the completion-of-squares transfer identity `(ip)·(iq) = |p|²/2 + |q|²/2 − |p+q|²/2`, and the quartic-at-one-point = quadratic-in-the-composite identity `[F⁴]_R = Σ_Q ψ_Q ψ_{R−Q}` coefficient-wise and at zero total momentum — with two negative controls (leg-vs-total contrast, the S47 `−m`/`+m` index convention) that must stay nonzero | 14, all at their advertised values (sizes pinned: 6/6, 4/4, 21→15 vs 15, 3/3/3) |
+
+Evidence and counterfactuals: `docs/VERIFY_MOMENTUM_SPACE_PRODUCTS.md` (a wrong
+stage-2 table entry fails CHECK 8/10 only; a sign error in the composite ψ fails
+CHECK 2/8/10 — the two sides are independent). c-number bookkeeping only: no
+ladder operators, no normal ordering — the operator form of the rewriting is
+stated, not proved, in the `test/` page.
+
+### Two new engine traps (recorded in `CADABRA2_GOTCHAS.md` §2b)
+
+- a trailing `#` comment on a `:=` line **silently drops the assignment** and
+  the failure surfaces lines later as `Python object '<later handle>' does not
+  exist`;
+- `x := len(ex)` pushes the right-hand side through the expression parser and
+  **silently swallows the rest of the file** (no output, no traceback) — size
+  captures must use plain Python `x = len(ex)`.
+
+Also learned: Cadabra's `distribute` already collects like terms, so
+post-distribute and post-collect `len` agree — pin what the engine prints, not
+what the algebra predicts (this is why the size labels above differ from the
+term counts an unmerged expansion would give).
+
+All 22 modules were re-run on 2026-10-14 after the additions (rc = 0 each,
+every CHECK at its advertised value); the other 21 are byte-unchanged.
+
 ## Recommended follow-ups (not done here)
 
 1. **Run the symbolic seam on an x86_64 host** (or build cadabra2 for aarch64)
