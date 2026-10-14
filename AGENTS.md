@@ -14,6 +14,7 @@ Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 
 ## Maintenance Checklist
 
+- [ ] **Attribution-gate mirror (2026-10-14)**: `scripts/check-attribution` and `scripts/workspace-root.sh` must stay byte-identical with the workspace-root copies — the workspace runner's `check-backup-sync` fails the sweep on drift, and this repo's CI runs its own copy directly, so drift stays green at the root and breaks only here (as it did when the root copy gained the `workspace-backup` exclusion and the `PLAN_*` glob: 3 unresolved claims here, 0 at the root). After editing either file at the root, re-copy it into `unfer/scripts/` and commit both sides.
 - [ ] **Quadratic Ordering Check**: Verify that `compile_expression` continues to strip zero-point energy constants.
 - [ ] **LaTeX Mapping Check**: Ensure `compile_latex` correctly interprets $a_i^\dagger$ as a creation operator and $a_i$ as annihilation. Note that the `mathhook` LALRPOP parser strictly requires explicit multiplication symbols (`*` or `\cdot`) instead of implicit spacing.
 - [ ] **Commutator Validation**: Ensure non-commuting operators are never reordered by the symbolic engine (avoid `.simplify()` where order matters).
