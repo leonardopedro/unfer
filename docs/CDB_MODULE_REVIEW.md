@@ -1,6 +1,7 @@
 # Cadabra module review — `docs/*.cdb`
 
-**Review date:** 2026-10-13. **Scope:** all 19 `.cdb` modules under `docs/`,
+**Review date:** 2026-10-13 (updated 2026-10-14 — see *Update* below; scope grew from 19 to
+21 `.cdb` modules). **Scope:** all 19 `.cdb` modules under `docs/`,
 the Rust pipeline that consumes them (`prob_kernel/src/symbolic.rs`), and the
 three `fock_sirk` suites that verify the derived Hamiltonians numerically
 (`cdb_hamiltonian_match.rs`, `latex_cas_hamiltonian_match.rs`,
@@ -138,6 +139,65 @@ more trustworthy of the two — worth stating in `AGENTS.md`.
 to build around a missing sibling path-dependency (`../../dynamic-arctic`, only
 reached via `unfer_consensus`→`unfer_ffi`), and has been **restored to its
 original 16-member list**.
+
+## Update 2026-10-14 — 21 modules, the CHECK-label honesty pass, and the CAS `expand()` fix
+
+### New modules (19 → 21)
+
+| module | content | checks |
+|---|---|---|
+| `docs/ns_compressible_lagrangian.cdb` | the most general barotropic compressible NS in Lagrangian variables: determinant/cofactor identities, the Jacobi `d(det F)/dt = det F div u`, `d(ρJ)/dt = 0` + the `ρ = ρ₀/J` solution, the barotropic chain `p = −dW/dJ = ρ²e′(ρ) = ρε′ − ε`, `dp = ρ dh`, the acoustic fiber `(ω−ck)(ω+ck) = ω²−c²k²`, momentum-conservation convolution products, weight-degree and pressure-degree checks, diagonal viscosity, the Legendre identity `H = πv − L` at `π = ρ₀v`, and the Faris–Lavine domination `N − h = ` completion square | 19, all at their advertised values |
+| `docs/sm_gauge_fixed_hamiltonian.cdb` | the FULL Standard-Model Hamiltonian in the temporal (Weyl) gauge on the nested Fock space: `SU(3)×SU(2)×U(1)` with non-abelian magnetic fields, the Higgs doublet with the **unbroken** Mexican-hat potential `V = −½μ²φ² + ¼λφ⁴` in exact form, the Weyl-fermion kinetic sector, Yukawa couplings with CKM/PMNS mixing, BRST assembly; plus the unbroken ↔ broken shift identity (CHECK 13) and `m_h² = 2λv²` (CHECK 14) | 14, all at their advertised values |
+
+### CHECK-label honesty pass (eight modules, 2026-10-13)
+
+All 19 then-existing modules were run end-to-end (every CHECK at its advertised value), and eight
+were edited so the labels state what each check **actually** reduces to:
+`mass_gap_norm_residual.cdb`, `qg_densitized_hamiltonian.cdb`, `yang_mills_hamiltonian.cdb`,
+`qg_starobinsky_vielbein_hamiltonian.cdb`, `qg_gauge_fixed_hamiltonian.cdb`,
+`qg_starobinsky_hamiltonian.cdb`, `qg_starobinsky_einstein_frame.cdb`, `qg_unitarity_check.cdb`.
+The substance: `mass_gap_norm_residual.cdb` CHECK 5 expects the **non-negative remainder `q²`**
+(not 0 — it is a one-sidedness bias, not an identity), and the silent-truncation guards pin their
+**measured sizes** so a collapse to fewer terms fails the label (QGGF 120/132, STARVB 121/2 + 10
+terms, QGDEN 5/2/2/2, YMH 2/6/6); the Starobinsky expectation labels (plateau `M⁴/(16α)`, …) state
+their expected values likewise. The affected `VERIFY_*.md` rows were aligned to match.
+
+### Three new numerical suites (`fock_sirk/tests/`)
+
+- `ns_compressible_lagrangian_validation.rs` (12 tests) — the barotropic/Lagrangian identities
+  numerically, incl. convolution products.
+- `sm_gauge_fixed_validation.rs` (8 tests) — the SM gauge-fixed content: ε-contractions,
+  Mexican-hat algebra, normal-ordering/`⟨0|H|0⟩ = 0`, BRST nilpotency, assembly.
+- `sm_higgs_mechanism_sirk.rs` (3 tests) — **Hashimoto-SIRK dynamics of the Higgs mechanism** in
+  the nested Fock space, with gauge-invariant (radial-only) initial and final states that mimic the
+  broken states. Measured: the displaced condensate survives one full period with `⟨φ⟩` never
+  collapsing to the symmetric point (`⟨φ⟩ ∈ [1.67, 1.95]` vs `v = 1.414`), the gauge-invariant
+  `⟨φ†φ⟩` stays within 25% of its condensate value `⟨φ⟩₀²/2 + ½` (coherent spread `Δφ² = 1`),
+  norm + energy conserved; the condensate oscillates at the radial-mode mass
+  (`ω_measured = 1.315` vs `m_h = √(2λ)v = 1.414`, the anharmonic shift of the displaced state);
+  and after one period the gauge-invariant in/out state returns with fidelity `|⟨ψ(T)|ψ(0)⟩| =
+  0.936`.
+
+### F6 (fixed) — `compile_to_fock` hung on any φ⁴: the external CAS `expand()` is exponential
+
+The `sm_validation` suite could not complete: `sm_higgs_potential_nested_fock_structure` hung
+forever in `sm_higgs_hamiltonian` → `compile_to_fock`.  Cause: `quantrs2-symengine-pure`'s
+`Expression::expand()` distributes products over sums via repeated whole-arena node merges —
+quadratic-to-exponential in the number of factors.  Measured on the module's own sub-expressions:
+two binomial factors 14 ms, four 11 s, six (the full SM Higgs Mexican hat) effectively never.  The
+fix is in `nested_fock_algebra/src/cas.rs`: `compile_expression_bounded` no longer calls
+`expand()`; the existing memoized, `max_terms`-bounded `distribute_bounded` does the same
+order-preserving distribution on the S-expression (the external serializer emits only
+`+ * / neg ^ sqrt`, all handled).  The full SM Higgs compiles in **< 1 ms to 23 terms**
+(1 kinetic + 2 quadratic + 4 + 16 quartic), and all 76 `nested_fock_algebra` unit tests and 12
+`sm_validation` tests pass.  Pre-existing defect: any model with a product of ≥ 4 binomial factors
+was affected, so this also unblocks future quartic+ models.
+
+### Engine note
+
+`cadabra2-cli` **2.5.15 is on `PATH` on this machine** (nix profile), and all 21 modules were run
+clean here on 2026-10-13/14 — every CHECK at its advertised value (the "not runnable on aarch64"
+note above is the 2026-10-13 record and is now historical).
 
 ## Recommended follow-ups (not done here)
 

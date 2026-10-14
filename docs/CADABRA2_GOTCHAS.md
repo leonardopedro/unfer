@@ -78,8 +78,10 @@ non-empty and tetrad-shaped.
 The `unwrap` defect was then found in the base module too, which is why there is
 now a module-level audit: [`VERIFY_CDB_TRUNCATION_AUDIT.md`](VERIFY_CDB_TRUNCATION_AUDIT.md)
 dumps the size of every named expression, runs counterfactuals, and replays the
-Rust extraction trailer. It covers all seven `docs/*.cdb` modules and confirmed
-the base module was the only truncated one.
+Rust extraction trailer. It covers the seven `docs/*.cdb` modules that existed on
+2026-09-18 and confirmed the base module was the only truncated one. (`docs/` has
+21 modules as of 2026-10-14; the later ones carry their size guards as in-module
+CHECK rows with pinned expected sizes.)
 
 **The general lesson, and it is not Cadabra-specific:** a CHECK that reduces to 0
 can still be asserting nothing. Any assertion of the form "the derivation
@@ -119,9 +121,14 @@ Hermiticity), not a proof of anything beyond that.
 `symbolic_analyze` canonicalizes the expression (TeX subset, or the `c_0 * a_0`
 CAS dialect); `normalize_to_cas_dialect` translates Cadabra2's **braced** output
 back into the dialect `compile_to_fock` accepts, closing the loop into a numerical
-`Hamiltonian`. Both directions are load-bearing: a module that emits Cadabra's
-braced form without the reverse translation produces a `Hamiltonian` the compiler
-cannot read, and the failure surfaces much later as an empty operator.
+`Hamiltonian`.Both directions are load-bearing: a module that emits Cadabra's
+braced form without the reverse translation produces a `Hamiltonian` the compiler cannot read, and
+the failure surfaces much later as an empty operator.
+
+One trap on the CAS side of that loop (not Cadabra — review finding F6): `compile_to_fock` must
+**not** call the external `Expression::expand()` — it is quadratic-to-exponential in the number of
+factors (φ⁴ takes ~11 s; six factors hang). The memoized `distribute_bounded` in
+`nested_fock_algebra/src/cas.rs` does the same distribution bounded and in < 1 ms.
 
 ---
 
@@ -142,6 +149,8 @@ the project's goals. Evidence lives in:
 | `ns_qg_fourier_elimination.cdb` | [VERIFY_NS_QG_FOURIER.md](VERIFY_NS_QG_FOURIER.md) |
 | `ns_kvn_equation.cdb`, `ns_pressure_poisson.cdb`, `ns_pressure_constraint.cdb` | [VERIFY_FARIS_LAVINE_N.md](VERIFY_FARIS_LAVINE_N.md) |
 | `ns_lagrangian_hamiltonian.cdb` | [VERIFY_NS_QG_FOURIER.md](VERIFY_NS_QG_FOURIER.md) |
+| `mass_gap_norm_residual.cdb` | [VERIFY_MASS_GAP_NORM_RESIDUAL.md](VERIFY_MASS_GAP_NORM_RESIDUAL.md) |
+| `ns_compressible_lagrangian.cdb`, `sm_gauge_fixed_hamiltonian.cdb` (2026-10-13) | the 2026-10-14 update in [CDB_MODULE_REVIEW.md](CDB_MODULE_REVIEW.md); numerical seam `fock_sirk/tests/{ns_compressible_lagrangian_validation,sm_gauge_fixed_validation,sm_higgs_mechanism_sirk}.rs` |
 
 Related: [NUMERICAL_VALIDATION_GUIDE.md](NUMERICAL_VALIDATION_GUIDE.md) for the
 numeric side, [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map,

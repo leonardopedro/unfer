@@ -68,14 +68,19 @@ pub fn compile_expression_bounded(
     expr: Expression,
     limits: &ExpansionLimits,
 ) -> Result<Hamiltonian, CasError> {
-    // 1. We ONLY call .expand(), NOT .simplify().
-    // The default simplify() pass assumes commutativity (a*b = b*a),
-    // which would destroy the physics of non-commuting operators.
-    // .expand() preserves order while distributing (a+b)*c -> a*c + b*c.
-    let expanded = expr.expand();
+    // 1. NOT .simplify(): the default simplify() pass assumes commutativity
+    //    (a*b = b*a), which would destroy the physics of non-commuting
+    //    operators.
+    //    NOT .expand() either: quantrs2-symengine-pure's expand distributes
+    //    products over sums via repeated whole-arena node merges, which is
+    //    quadratic-to-exponential in the number of factors — measured at ~11 s
+    //    for the four binomial factors of a φ⁴ potential and hanging outright
+    //    at six (the full SM Higgs Mexican hat). Distribution is done below by
+    //    `distribute_bounded`, which preserves factor order, is memoized, and
+    //    aborts at `limits.max_terms` instead of exploding.
 
-    // 2. Parse the resulting order-preserved S-expression string.
-    let s_expr = expanded.to_string();
+    // 2. Serialize the order-preserved (unexpanded) S-expression string.
+    let s_expr = expr.to_string();
     let mut ast = SExpr::parse(&s_expr)
         .ok_or_else(|| CasError::Parse("failed to parse internal S-expression".into()))?;
     // 3. Apply quadratic ordering logic before distribution
@@ -539,3 +544,4 @@ fn normal_order_inner(ops: &mut Vec<Operator>) -> f64 {
     *ops = creators;
     zeropoint
 }
+

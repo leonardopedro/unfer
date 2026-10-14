@@ -12,12 +12,14 @@
 #   transformation record, NOT the object of record (which is the full
 #   qg3DHamiltonian under the final-Hamiltonian doctrine).
 # Certified content: the absorption of 1/e; the ESA sign analysis inputs.
-# Known audit finding (docs/VERIFY_CDB_TRUNCATION_AUDIT.md): the `diff`
-#   handle here is a hand-typed tautology that cannot fail — it never
-#   references Ktrans/Kflat. Improvement needed: wire the check to the
-#   actual transformed quantities so it can fail, and give it a Rust-side
-#   assertion (symbolic::tests) — tracked as an M8 item in
-#   unfer/PLAN_MASS_GAP.md's sibling maintenance lane.
+# Audit history (docs/VERIFY_CDB_TRUNCATION_AUDIT.md, docs/CDB_MODULE_REVIEW.md
+#   F1/F2, fixed 2026-10-13): `diff` used to be a hand-typed tautology
+#   (X − X) that could not fail; it is now wired to the actual derived
+#   quantities (`diff := @(Ktrans) - @(Kflat)`) and the Rust test
+#   (symbolic::tests::qg_densitized_tetrad_absorb_1_over_e) asserts
+#   `diff == 0`. The module now PRINTS its checks (CHECK 1 below), so a
+#   plain `cadabra2-cli -q -n` run can fail visibly like the faris_lavine_*
+#   modules.
 # ======================================================================
 # QG: change of variables to densitized tetrad variables.
 #
@@ -119,6 +121,14 @@ collect_factors(diff)
 canonicalise(diff)
 collect_terms(diff)
 # diff must be identically 0 (the singular 1/e has been absorbed).
-# Note: `diff` is a verification-only handle; it is not extracted by the
-# Rust pipeline (prob_kernel::symbolic::tests extracts Hraw/Ktrans/Kflat/H0),
-# so wiring it to the real quantities changes no downstream contract.
+# Note: `diff` is verification-first but IS also extracted by the Rust test
+# (symbolic::tests::qg_densitized_tetrad_absorb_1_over_e asserts diff == 0).
+
+# ===== 5. verification output (self-certification) =====
+# Every docs/*.cdb module prints its checks in the house style so a plain
+# `cadabra2-cli -q -n` run reports them (docs/CDB_MODULE_REVIEW.md): a silent
+# check can never fail visibly. The term counts are the silent-truncation
+# guard (docs/CADABRA2_GOTCHAS.md §3) — `diff` would also print 0 if both
+# sides had collapsed to a single term, so the sizes are printed alongside.
+print("CHECK 1  QGDEN Ktrans - Kflat = 0  (1/e fully absorbed, 0 = ok):", diff);
+print("CHECK 2  QGDEN term counts Hraw / Ktrans / Kflat / H0  (truncation guard, expect 5 / 2 / 2 / 2):", len(Hraw), len(Ktrans), len(Kflat), len(H0));

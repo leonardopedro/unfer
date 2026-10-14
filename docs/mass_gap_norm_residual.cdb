@@ -70,3 +70,13 @@ canonicalise(G4);
 # holds exactly because the two terms are both non-negative. ----------
 G5 := \mathcal{E}^{2} + q^{2} - \mathcal{E}^{2};
 canonicalise(G5);
+
+# ===== verification output (self-certification) =====
+# Printed in the house CHECK style so `cadabra2-cli -q -n` reports them
+# (docs/CDB_MODULE_REVIEW.md: a silent check certifies nothing). All five
+# must print 0.
+print("CHECK 1  MGNR ||H(v+d)||^2 identity, general (0 = ok):", G1);
+print("CHECK 2  MGNR identity under v perp d (0 = ok):", G2);
+print("CHECK 3  MGNR exact eigenvector (0 = ok):", G3);
+print("CHECK 4  MGNR error identity modulo X^2 = E^2 + q^2 (0 = ok):", G4);
+print("CHECK 5  MGNR one-sidedness ||H w||^2 - E^2 = q^2 >= 0 (expect q^2, the non-negative remainder):", G5);

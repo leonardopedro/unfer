@@ -16,6 +16,13 @@
 #   on PLAIN sums in the Hkern checks are benign — `unwrap` acts termwise
 #   there, so Hkern still reaches 0. Do not "clean them up" without
 #   re-running the audit's counterfactual procedure.
+# Audit fix (docs/CDB_MODULE_REVIEW.md F3, 2026-10-13): `Jcheck` used to be
+#   `y^3 y^2 - J` with a by-hand substitution `y^3 y^2 -> y^5` — it checked
+#   that the rule applied, not that det(tilde e) = y^3 det(e). It is now
+#   WIRED to the epsilon contractions themselves (jactilde - y^3 jacexp),
+#   so it fails if the y-factors sit anywhere but one per frame column.
+#   The module also PRINTS its three kernels (house style), so a plain
+#   `cadabra2-cli -q -n` run can fail visibly.
 # Improvement notes (goal alignment): add a CHECK for the domain/falloff
 #   side of the boundary-term vanishing (the physical Hilbert space
 #   assumption), closing the gap between formal and assumed steps.
@@ -64,18 +71,42 @@ e^{i}_{a}::Depends(\partial{#}).
 y::Depends(\partial{#}).
 \epsilon_{a b c}::EpsilonTensor.
 \epsilon^{a b c}::EpsilonTensor.
+# The measure factor y, the frame e and the constant epsilons all commute, so
+# sort_product/canonicalise can put the y^3 factor of det(tilde e) and of
+# y^3 det(e) in the same slot for the wired Jacobian check (CHECK 1 below):
+{y, e^{i}_{a}, \epsilon_{a b c}, \epsilon^{i j k}}::Commuting.
 # det(tilde e) for tilde e = y e, in 3D:
 det_tilde := (1/6) \epsilon_{a b c} \epsilon^{i j k} (y e^{i}_{a}) (y e^{j}_{b}) (y e^{k}_{c}).
 distribute(det_tilde)
 collect_factors(det_tilde)
 canonicalise(det_tilde)
-# = y^3 det(e); substitute det(e) = e = y^2  =>  y^5:
-J := y^{5}.
-# Jacobian identity check: y^3 * y^2 = y^5
-Jcheck := y^{3} y^{2} - @(J).
-substitute(Jcheck, $ y^{3} y^{2} -> y^{5} $, repeat=True)
+# det(e) itself: the same epsilon contraction WITHOUT the y factors, so the
+# Jacobian identity can be wired to the contraction instead of a hand rule:
+jacexp := (1/6) \epsilon_{a b c} \epsilon^{i j k} e^{i}_{a} e^{j}_{b} e^{k}_{c}.
+distribute(jacexp)
+collect_factors(jacexp)
+canonicalise(jacexp)
+# Jacobian identity, WIRED (audit fix F3): det(tilde e) - y^3 det(e) = 0,
+# because tilde e = y e pulls exactly one factor y out of each of the three
+# frame columns. This check FAILS if the y-factors are misplaced; the old
+# form (y^3 y^2 - J with a by-hand substitution y^3 y^2 -> y^5) could not.
+# `jactilde` is a .copy() alias with a single-word name so the @() insertion
+# macro resolves it (docs/CADABRA2_GOTCHAS.md §1 — @() stems >= 4 chars).
+jactilde = det_tilde.copy()
+# (the factor is spelled y y y, not y^{3}: this build's expand_power flattens
+#  collected (y)**3 but leaves a typed y^{3} intact — see the module run)
+Jcheck := @(jactilde) - y y y @(jacexp).
+distribute(Jcheck)
+# flatten BOTH y-power spellings — collect_factors renders the pulled-out
+# factor as (y)**3 while the typed factor is y^{3}; expand_power turns both
+# into y y y so sort_product/canonicalise can merge the two terms:
+expand_power(Jcheck)
+sort_product(Jcheck)
 canonicalise(Jcheck)
-collect_factors(Jcheck)
+collect_terms(Jcheck)
+# Closed Jacobian value of record: det(e) = e = y^2  =>  det(tilde e) = y^5,
+# so the field-space measure transforms with J = y^5:
+J := y^{5}.
 
 # ===== (2) half-density unitarity kernel =====
 # Norm preservation kernel: D\tilde e = J De and (U psi) = J^{-1/2} psi(e)
@@ -104,3 +135,10 @@ distribute(Hkern)
 canonicalise(Hkern)
 sort_product(Hkern)
 canonicalise(Hkern)
+
+# ===== verification output (self-certification) =====
+# The three kernels of the module's purpose, printed in the house style so
+# `cadabra2-cli -q -n` reports them (all three must print 0):
+print("CHECK 1  QGUNI det(tilde e) - y^3 det(e) = 0  (wired Jacobian, 0 = ok):", Jcheck);
+print("CHECK 2  QGUNI half-density kernel y^5 y^-5 - 1 = 0  (0 = ok):", Unorm);
+print("CHECK 3  QGUNI Lagrange boundary kernel = 0  (0 = ok):", Hkern);

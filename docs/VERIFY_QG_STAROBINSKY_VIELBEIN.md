@@ -18,7 +18,7 @@ and, through the crate that consumes it (this is the check that pins the module)
 
     CADABRA_CLI=$C2 cargo test -p prob_kernel --lib qg_starobinsky_vielbein_hamiltonian_derivation_runs
 
-The module's check values (`fR_check`, `R2_check`, `pi_psi`, `H_final_st`, `base_limit_check`) are
+The module's check values (`fR_check`, `R2_check`, `pi_psi_check`, `H_final_st`, `base_limit_check`) are
 its last `collect_terms` targets; running without `-n` displays each reduction, and appending a
 one-cell epilogue that `print`s them gives the machine-readable values quoted below.
 
@@ -142,19 +142,22 @@ plus the potential density `+ U(ψ) e`.  All ten coefficients agree with `(M²/2
 scalaron field, as claimed.  The `p^a T_a` vector terms are dropped as a boundary term, as in the
 base module.
 
-## CHECK 4 — the α → 0 limit: `base_limit_check = (M²/2) · (book.tex 8190)`
+## The α → 0 limit (module `CHECK 5`, truncation guard — expect 10 terms)
 
-With `U(ψ) → 0`, `ψ → 1` the same ten terms appear **without** the `ψ` factor and without the
+`base_limit_check = (M²/2) · (book.tex 8190)`: with `U(ψ) → 0`, `ψ → 1` the same ten terms appear
+**without** the `ψ` factor and without the
 potential: the base TEGR 3D gauge-fixed Hamiltonian scaled by `M²/2` — so the module is a genuine
-generalization of `qg_gauge_fixed_hamiltonian.cdb`, not a different theory.  (The base module's
+generalization of `qg_gauge_fixed_hamiltonian.cdb`, not a different theory.  The module's CHECK 5
+pins the size alongside: `len(base_limit_check)` **expect 10 terms**.  (The base module's
 own `H_final` reproduces book.tex 8190 with the coefficients `1/16, −1/24, ½, ⅓`, see
 `VERIFY_QG_DENSITIZED.md`.)
 
-## CHECK 5 — the derivation itself: `ex1_st` is the expanded action and `pi_st` its polymomentum
+## The derivation itself (module `CHECK 4`, truncation guard — expect 121 / 2): `ex1_st` is the expanded action and `pi_st` its polymomentum
 
-After the fourth defect was repaired:
+After the fourth defect was repaired (module `CHECK 4` pins both sizes):
 
     len(ex1_st)        = 121        (the expanded action density as a sum; a single term before)
+    len(pi_st)         = 2          (the (M^2/2) psi * pi_0 factorization as a product)
     pi_st              = ψ ( 1/4 M² e e^{μ}_a e^{β}_b η^{ab} e^{α}_c e_μ^{a2} … π_{βγ}^{j} + … )
 
 i.e. the polymomentum by variation of the full vielbein action, with the `(M²/2)ψ` factor pulled

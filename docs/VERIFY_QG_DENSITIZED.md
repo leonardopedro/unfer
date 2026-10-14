@@ -56,6 +56,21 @@ The `e(…)` torsion block `𝒯^ab E_ab + 2 𝒯^ab_b E_a + ½ 𝒯_abc 𝒯^ac
 − 𝒯_ba^a 𝒯^bc_c − ¼ 𝒯_ab 𝒯^ab` is untouched by the momentum substitution (it contains no
 `S`/`T`), so it passes straight through — CHECK 3.
 
+## The module's house-style CHECK rows (2026-10-13/14)
+
+`docs/qg_densitized_hamiltonian.cdb` prints its checks in the house style so a plain
+`cadabra2-cli -q -n` run reports them:
+
+    CHECK 1  QGDEN Ktrans - Kflat = 0  (1/e fully absorbed, 0 = ok): 0
+    CHECK 2  QGDEN term counts Hraw / Ktrans / Kflat / H0  (truncation guard, expect 5 / 2 / 2 / 2): 5 2 2 2
+
+CHECK 1 is the load-bearing equality of this file's CHECK 1 above, wired as
+`diff := @(Ktrans) - @(Kflat)`.  It was previously a hand-typed `X − X` tautology that could not
+fail (review finding F1 in `CDB_MODULE_REVIEW.md`); the Rust test then only asserted substrings
+until F2 added `assert_eq!(ktrans, kflat)`.  CHECK 2 pins the term counts so CHECK 1 cannot pass
+on two collapsed single-term expressions (the silent-truncation guard of
+`CADABRA2_GOTCHAS.md` §3).
+
 ## What is an identity vs. what is an input
 
 * **Pure algebra, verified above:** `1/16e` and `−1/24e` densitize to `1/16`, `−1/24`;

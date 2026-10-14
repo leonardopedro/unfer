@@ -84,6 +84,7 @@ pub mod heads;
 pub mod properties;
 pub mod report;
 pub mod rp;
+pub mod sequential;
 pub mod stats;
 pub mod targets;
 
@@ -152,6 +153,8 @@ pub enum DecideError {
     Seam(String),
     #[error("project asked for {requested} heads; the supported range is 1..=3")]
     HeadCount { requested: usize },
+    #[error("staging violation: {0}")]
+    Staging(String),
     #[error("analytic solve failed: {0}")]
     Solve(#[from] SolveError),
 }
@@ -250,6 +253,11 @@ pub struct DecideCore {
     stats: StreamingStats,
     heads: Vec<Head>,
     readouts: Vec<NcmHead>,
+    /// The solve each readout was built from (`θ`, one per head), retained so
+    /// [`DecideCore::project`] can emit the adapted feature the readout
+    /// classifies in. Kept in lockstep with `readouts`: both are replaced by
+    /// `fit`, both mean "fitted".
+    thetas: Vec<nalgebra::DMatrix<f64>>,
     calibrator: Calibrator,
     drift: Option<DriftMonitor>,
     fitted: bool,
@@ -285,6 +293,7 @@ impl DecideCore {
             stats,
             heads,
             readouts: Vec::new(),
+            thetas: Vec::new(),
             calibrator: Calibrator::uncalibrated(),
             drift: None,
             fitted: false,
@@ -442,6 +451,7 @@ impl DecideCore {
     /// exactly what the head was fitted to.
     pub fn fit(&mut self) -> Result<(), DecideError> {
         let mut readouts = Vec::with_capacity(self.heads.len());
+        let mut thetas = Vec::with_capacity(self.heads.len());
         for h in &self.heads {
             // Whitening happens in the space the solve happens in: the head's own
             // RP covariance, not the input-space one.
@@ -459,10 +469,60 @@ impl DecideCore {
             // define them: cosine similarity to a mapped target is the readout.
             let protos = mapped_prototypes(&theta, &targets);
             readouts.push(NcmHead::new(protos, self.labels.clone()));
+            thetas.push(theta);
         }
         self.readouts = readouts;
+        self.thetas = thetas;
         self.fitted = true;
         Ok(())
+    }
+
+    /// The adapted feature: the stage-1 handoff of the sequential
+    /// AnaCP→AnaNC model (see [`crate::sequential`]).
+    ///
+    /// This is the feature the readout effectively classifies in. Class `c`'s
+    /// prototype is `θ·t_c`, so the similarity numerator is
+    /// `cos(z, θ t_c) ∝ (θᵀ z)·t_c` — the adapted feature is `f = θᵀ z`,
+    /// L2-normalized (the reference implementations normalize at exactly this
+    /// point, and stage 2 normalizes again at its seam — idempotent).
+    /// Multi-head engines average the heads' normalized features, mirroring the
+    /// reference's mean-over-head-outputs.
+    ///
+    /// Refuses before [`Self::fit`]: without a solve there is no `θ`, and
+    /// handing stage 2 a raw RP expansion instead of an adapted feature would
+    /// silently change what the sequence means.
+    pub fn project(&self, x: &DVector<f64>) -> Result<DVector<f64>, DecideError> {
+        if !self.fitted {
+            return Err(DecideError::NotFitted);
+        }
+        if x.len() != self.config.embedding_dim {
+            return Err(DecideError::EmbeddingDim {
+                expected: self.config.embedding_dim,
+                got: x.len(),
+            });
+        }
+        let mut acc = DVector::zeros(self.config.projected_dim);
+        for (h, theta) in self.heads.iter().zip(self.thetas.iter()) {
+            let z = h.rp.expand(x);
+            let f = theta.transpose() * &z;
+            if f.len() != acc.len() {
+                return Err(DecideError::Staging(format!(
+                    "head projects to width {} but the configured stage-2 width is {}",
+                    f.len(),
+                    acc.len()
+                )));
+            }
+            let n = f.norm();
+            if n > 0.0 {
+                acc += &f / n;
+            }
+        }
+        acc /= self.heads.len() as f64;
+        let n = acc.norm();
+        if n > 0.0 {
+            acc /= n;
+        }
+        Ok(acc)
     }
 
     /// Cosine similarities from every head, averaged.

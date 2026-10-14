@@ -203,3 +203,21 @@ H_final := \pi^{i}_{a} \pi^{i}_{a} - ( (1/2) \pi^{i}_{a} \pi^{i}_{a} - (1/2) B_{
 distribute(H_final)
 rename_dummies(H_final)
 canonicalise(H_final)
+
+# ===== verification output (self-certification) =====
+# The Legendre target of the derivation — the physics content the numerical
+# seam implements (nested_fock_algebra::models::yang_mills_hamiltonian,
+# verified term-by-term in fock_sirk/tests/cdb_hamiltonian_match.rs):
+#   H_Weyl = 1/2 pi^2 + 1/2 B^2  (book.tex H_W = -1/2 pi^2 - 1/2 B^2 in its
+#   H = a^dag i d_0 a - L convention). The check is WIRED to the derived
+#   H_final through a .copy() alias — `hfinal` has a single-word name so the
+#   @() insertion macro resolves it (docs/CADABRA2_GOTCHAS.md §1).
+hfinal = H_final.copy()
+htarget := (1/2) \pi^{i}_{a} \pi^{i}_{a} + (1/2) B_{i a} B_{i a}.
+hcheck := @(hfinal) - @(htarget).
+distribute(hcheck)
+rename_dummies(hcheck)
+canonicalise(hcheck)
+collect_terms(hcheck)
+print("CHECK 1  YMH H_Weyl = 1/2 pi^2 + 1/2 B^2 (0 = ok):", hcheck);
+print("CHECK 2  YMH truncation guard len(H_final) / len(s2) / len(s3) (expect 2 / 6 / 6):", len(H_final), len(s2), len(s3));
