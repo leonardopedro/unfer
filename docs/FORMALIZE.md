@@ -224,6 +224,20 @@ the australVM plugin. Exit `1` is a rejected sentence, `2` is one that compiled
 without a unique normal form — a distinction the plugin needs, because
 collapsing them would make an unverifiable declaration look like a rejected one.
 
+### Harness contract
+
+What a driver may rely on without reading the code (mirrors
+`../voice/README.md`'s contract section):
+
+| item | contract |
+|---|---|
+| entry | `cargo run -p logos --features llm-http -- formalize <input> [--out report.json] [--vis dag.html] [--lexicon corpus/lexicon.tsv] [--memory-out lemmas.json]` · single sentence: `logos unf <sentence> --json` · `<input>` may be a proof-graph JSON, which skips the graph stage |
+| preconditions | an OpenAI-compatible server via `OPENAI_BASE_URL` / `OPENAI_MODEL` (vLLM, llama.cpp, Ollama, TGI, LM Studio all speak the chat schema). `OPENAI_API_KEY` is **optional**: `None` sends no `Authorization` header and is never defaulted to an empty string that would authenticate as nobody. The HTTP transport sits behind `--features llm-http` (`dep:ureq`); without it the deterministic half — graph validation, kernel, scoring on fixtures — still builds and tests. |
+| outcome | exit `0` ran and trustworthy · `1` bad usage or a stage failed · `2` ran but the result is not trustworthy. `logos unf`: `1` rejected sentence, `2` compiled without a unique normal form. |
+| honest skip | no live model ⇒ **no accuracy claim**: everything verified so far is the deterministic half and a scripted transport (§12), and §4's predicted-low accuracy stands until a real run happens. Absent transport is a stage failure (exit 1), never a silent pass. |
+| redaction | the API key exists only in the request header — the serialized body carries no `api_key` field (asserted by test) — and errors carry the stage plus message, never request headers. |
+| artifacts | `report.json` (machine-readable verdict per node + obligations), `dag.html` (self-contained graph, `--vis`), `lemmas.json` (memory-out for reuse). |
+
 ## 8. The Austral VM gate
 
 `australVM/lib/formalize_plugin.ml` registers a `gate_pass` that verifies `cnl_`

@@ -90,6 +90,24 @@ No `nix develop` needed if `PARAKEET`, `PIPER_VOICE`, `piper`, `pw-record`
 and `pw-play` are already on PATH (the script only checks the tools its
 mode actually uses).
 
+## Harness contract
+
+What a caller may rely on, stated as a contract (same discipline as
+`logos`' entry in `../docs/FORMALIZE.md` §7) so a driver never has to
+read the script to know what a run means.
+
+| item | contract |
+|---|---|
+| entry | `./voice.sh <full\|speak\|listen\|type>` interactive · `./voice.sh turn [--say] [--history FILE] "TEXT"` and `./voice.sh dictate [--say]` one-shot (JSON on stdout) · `./voice.sh reset` clears the transcript · `-h` help |
+| preconditions | the speech stack on PATH (`nix develop .#voice` supplies `PARAKEET`, `PIPER_VOICE`, `piper`, `pw-record`, `pw-play`) **and** the Gemma server up (`/usr/local/bin/gemma4-toggle`, FastFlowLM at `http://127.0.0.1:8081/v1`; overrides `LLM_URL`, `LLM_MODEL`). Per-mode tool checks only — a mode never demands another mode's tools. |
+| outcome | success = exit 0 (one-shot: JSON `{"utterance": …, "reply": …}` on stdout, progress on stderr). Every failure = exit ≠ 0 with exactly one `FAIL <code> <reason>` line on stderr. |
+| FAIL codes | **closed set of five** — `env` (missing tool/voice, remediation: `nix develop .#voice`), `usage` (bad arguments/mode), `history` (session file unreadable/not a JSON array), `mic` (recorder heard nothing; `VOICE_SECS`), `llm` (no reply; remediation: toggle the model, response prefix echoed). Shapes, retryability and harm ranks: `../../docs/user-visible-errors.csv` rows 1–5 — that catalog is the drift gate's parity source (`scripts/check-error-catalog`). |
+| redaction | URLs reach logs/FAIL reasons only through `LLM_URL_DISP`, which strips userinfo and the query string — the workspace redaction policy's worked example. The `llm` reason includes the first 300 bytes of the upstream response (may echo upstream content: harm rank 1 on record). |
+| state | the session transcript is per-user state at `~/.local/state/unfer-voice-session.json`, never repo state; `reset` (or deleting it) is the whole cleanup. An accidental exit does not lose it. |
+
+Honest limit: no VAD — fixed-length recording (`VOICE_SECS`, default 6 s);
+an empty transcript re-prompts, it does not fabricate a turn.
+
 ## The pieces
 
 - **ASR — parakeet.** NVIDIA parakeet-tdt-0.6b-v2, int8 ONNX export
