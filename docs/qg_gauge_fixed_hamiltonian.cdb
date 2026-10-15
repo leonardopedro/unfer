@@ -38,6 +38,7 @@
 #         - e(T^ab E_ab + 2 T^ab_b E_a + 1/2 T_abc T^acb + 1/4 T_abc T^abc
 #             - T_ba^a T^bc_c - 1/4 T_ab T^ab)
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity") - reader-facing chapter.
 def post_process(ex):
 	#unwrap(ex)
 	eliminate_kronecker(ex)
@@ -267,4 +268,16 @@ substitute(H_final, $ T_{a} T^{b a}_{b} -> 0 $, repeat=True)
 substitute(H_final, $ T_{a} T^{a b}_{b} -> 0 $, repeat=True)
 rename_dummies(H_final)
 distribute(H_final)
+
+# ===== verification output (self-certification + truncation guard) =====
+# The sizes are the silent-truncation guard of docs/CADABRA2_GOTCHAS.md §3:
+# `ex1` must be the full 120-term eR integrand and `pi_derived` the full
+# 132-term polymomentum (the measured values in
+# docs/VERIFY_CDB_TRUNCATION_AUDIT.md). A truncated `ex1` (a single
+# 18-factor product) still yields a non-empty `pi_derived`, so nothing but
+# these counts catches that failure mode — they print on every run, in the
+# house CHECK style (docs/CDB_MODULE_REVIEW.md: a silent check certifies
+# nothing).
+print("CHECK 1  QGGF len(ex1) eR integrand terms (truncation guard, expect 120):", len(ex1));
+print("CHECK 2  QGGF len(pi_derived) polymomentum terms (truncation guard, expect 132):", len(pi_derived));
 canonicalise(H_final)

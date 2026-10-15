@@ -18,6 +18,7 @@
 #   algebra, a regeneration-gate run (unfer/PLAN_MASS_GAP.md M2).
 #
 # Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: ../timepiece/Book/Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 # ======================================================================
 # R + αR² (Starobinsky) 3D gauge-fixed Hamiltonian derivation.
 #
@@ -546,3 +547,25 @@ collect_terms(leg_grav_check);
 # constraint_check, which trades the conformal-mode curvature R_c.)
 H_total := (1/2) \pi**2 + (1/2) grad2 + (M^4/(16 \alpha)) (1 - \exp(-x))**2
            + (2/M^2) \Pi**2 + (M^2/8) dqsq - (M^2/2) Rc + \alpha Rc**2.
+
+# ===== 6. verification output (self-certification) =====
+# The module's checks, printed in the house style so a plain
+# `cadabra2-cli -q -n` run can fail visibly (docs/CDB_MODULE_REVIEW.md: a
+# silent check certifies nothing). Every check prints 0 except CHECK 6, which
+# must print the plateau value M^4/(16 alpha). No series expansion, no
+# small-field approximation: the potential is checked in its exact
+# exponential form throughout.
+print("CHECK 1  STARB f(R) = (M^2/2) psi R - U(psi), scalaron identity (0 = ok):", scalaron_check);
+print("CHECK 2  STARB V3(Rc) completed square, bounded below (0 = ok):", V3_check);
+print("CHECK 3  STARB dV3/dRc = 0 at Rc = M^2/(4 alpha) (0 = ok):", dV3_check);
+print("CHECK 4  STARB V(0) = 0, Minkowski vacuum (0 = ok):", Vphi_zero);
+print("CHECK 5  STARB dV/dphi = 0 at phi = 0, global minimum (0 = ok):", dVphi_zero);
+print("CHECK 6  STARB V(phi -> +inf) plateau (expect M^4/(16 alpha)):", Vplat);
+print("CHECK 7  STARB gauge fixing Dphi2 -> grad2 resolves (0 = ok):", gf_check_Dphi2);
+print("CHECK 8  STARB conformal-mode R_c decomposition resolves (0 = ok):", gf_check_Rc);
+print("CHECK 9  STARB Hamiltonian constraint solved for R_c (0 = ok):", constraint_check);
+print("CHECK 10 STARB action_R2 = (M^2/2) psi R - U(psi) (0 = ok):", action_R2_check);
+print("CHECK 11 STARB pi = d0 phi (0 = ok):", pi_check);
+print("CHECK 12 STARB Legendre identity, scalar sector (0 = ok):", leg_check);
+print("CHECK 13 STARB Pi = (M^2/4) d0 q (0 = ok):", pi_grav_check);
+print("CHECK 14 STARB Legendre identity, gravity sector (0 = ok):", leg_grav_check);

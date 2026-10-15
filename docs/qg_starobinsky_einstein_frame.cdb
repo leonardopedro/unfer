@@ -18,6 +18,7 @@
 #   one-particle form gap's normalization constants).
 #
 # Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: ../timepiece/Book/Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 # ======================================================================
 # THE MISSING LINK in the QG R² chain: Jordan -> Einstein frame.
 #
@@ -159,3 +160,20 @@ substitute(m2_check, $ M^{4} (M)**(-2) -> M^{2} $, repeat=True);
 substitute(m2_check, $ \alpha (\alpha)**(-1) -> 1 $, repeat=True);
 canonicalise(m2_check);
 collect_terms(m2_check);
+
+# ===== 5. verification output (self-certification) =====
+# The module's checks, printed in the house style so a plain
+# `cadabra2-cli -q -n` run can fail visibly (docs/CDB_MODULE_REVIEW.md).
+# Every check prints 0 except CHECK 10, which must print the plateau value
+# M^4/(16 alpha). The chain is exact — the closed exponential form of
+# starobinskyV is used throughout, never a series truncation.
+print("CHECK 1  STAREF sqrt(g) = psi^2 sqrt(gtilde), measure weight (0 = ok):", measure_check);
+print("CHECK 2  STAREF V = U/psi^2 conformal weight identity (0 = ok):", Vweight_check);
+print("CHECK 3  STAREF (1 - 1/psi)^2 = (1 - e^-x)^2 at psi = e^x (0 = ok):", closed_check);
+print("CHECK 4  STAREF closed form is literally starobinskyV (0 = ok):", Vphi_check);
+print("CHECK 5  STAREF sqrt(2/3)^2 = 2/3 (0 = ok):", sqrt_check);
+print("CHECK 6  STAREF inverse normalization sqrt(3/2) sqrt(2/3) = 1 (0 = ok):", norm_check);
+print("CHECK 7  STAREF kinetic normalization (3M^2/4)(2/(3M^2)) = 1/2 (0 = ok):", kin_check);
+print("CHECK 8  STAREF V(0) = 0 (0 = ok):", Vzero_check);
+print("CHECK 9  STAREF scalaron mass m^2 = M^2/(12 alpha) (0 = ok):", m2_check);
+print("CHECK 10 STAREF plateau V(phi -> +inf) (expect M^4/(16 alpha)):", Vplat_check);

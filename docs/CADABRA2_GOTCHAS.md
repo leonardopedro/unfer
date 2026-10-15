@@ -64,6 +64,39 @@ confirmed no module has one. If you add one, that audit result is no longer true
 fine — `Hkern` still reaches 0. Content reference, not a line number: line
 numbers shift when the module-documentation headers change.
 
+## 2b. The `:=` line traps (found 2026-10-14, writing `momentum_space_products.cdb`)
+
+Both traps are **silent**: the file keeps parsing and the failure surfaces
+somewhere else, or nowhere.
+
+**A trailing `#` comment on a `:=` line drops the assignment.**
+
+```text
+psA := um*um.                 # comment
+fldx := um*Em + uo*Eo + up*Ep.
+sq1 := @(fldx)*@(fldx).
+distribute(sq1)               # RuntimeError: Python object 'fldx' does not exist
+```
+
+The misreported error names a *later* handle — the comment kills its own line,
+not the one that fails. Comments on their own lines are fine even with
+`u_{-2}`, `@()` and `$...$` inside them (verified). The whole existing corpus
+already puts comments on their own lines; keep it that way.
+
+**`x := len(ex)` silently swallows the rest of the file.** `:=` pushes its
+right-hand side through the Cadabra expression parser; `len(...)` is not a
+Cadabra expression, and the parse failure produces **no output and no
+traceback** — the script simply stops before the next statement. Size captures
+must use plain Python: `x = len(ex)` (verified working, including inside
+`print`).
+
+Related engine fact worth knowing when pinning sizes: `distribute` **already
+collects like terms** (with coefficient arithmetic — identical terms with
+opposite coefficients cancel there), so the post-`distribute` `len` equals the
+post-`collect_terms` `len` unless a symbol table (e.g. the `E_a E_b -> E_{a+b}`
+momentum table of `momentum_space_products.cdb`) changes term identity in
+between. Pin what the engine actually prints, not what the algebra predicts.
+
 ## 3. Silent truncation — the failure mode to watch for
 
 The base module `qg_gauge_fixed_hamiltonian.cdb` had a *silent* truncation: its
@@ -78,8 +111,10 @@ non-empty and tetrad-shaped.
 The `unwrap` defect was then found in the base module too, which is why there is
 now a module-level audit: [`VERIFY_CDB_TRUNCATION_AUDIT.md`](VERIFY_CDB_TRUNCATION_AUDIT.md)
 dumps the size of every named expression, runs counterfactuals, and replays the
-Rust extraction trailer. It covers all seven `docs/*.cdb` modules and confirmed
-the base module was the only truncated one.
+Rust extraction trailer. It covers the seven `docs/*.cdb` modules that existed on
+2026-09-18 and confirmed the base module was the only truncated one. (`docs/` has
+22 modules as of 2026-10-14; the later ones carry their size guards as in-module
+CHECK rows with pinned expected sizes.)
 
 **The general lesson, and it is not Cadabra-specific:** a CHECK that reduces to 0
 can still be asserting nothing. Any assertion of the form "the derivation
@@ -119,9 +154,14 @@ Hermiticity), not a proof of anything beyond that.
 `symbolic_analyze` canonicalizes the expression (TeX subset, or the `c_0 * a_0`
 CAS dialect); `normalize_to_cas_dialect` translates Cadabra2's **braced** output
 back into the dialect `compile_to_fock` accepts, closing the loop into a numerical
-`Hamiltonian`. Both directions are load-bearing: a module that emits Cadabra's
-braced form without the reverse translation produces a `Hamiltonian` the compiler
-cannot read, and the failure surfaces much later as an empty operator.
+`Hamiltonian`.Both directions are load-bearing: a module that emits Cadabra's
+braced form without the reverse translation produces a `Hamiltonian` the compiler cannot read, and
+the failure surfaces much later as an empty operator.
+
+One trap on the CAS side of that loop (not Cadabra — review finding F6): `compile_to_fock` must
+**not** call the external `Expression::expand()` — it is quadratic-to-exponential in the number of
+factors (φ⁴ takes ~11 s; six factors hang). The memoized `distribute_bounded` in
+`nested_fock_algebra/src/cas.rs` does the same distribution bounded and in < 1 ms.
 
 ---
 
@@ -140,8 +180,11 @@ the project's goals. Evidence lives in:
 | `qg_starobinsky_hamiltonian.cdb` | [VERIFY_QG_STAROBINSKY_EINSTEIN_FRAME.md](VERIFY_QG_STAROBINSKY_EINSTEIN_FRAME.md) |
 | `qg_starobinsky_vielbein_hamiltonian.cdb` | [VERIFY_QG_STAROBINSKY_VIELBEIN.md](VERIFY_QG_STAROBINSKY_VIELBEIN.md) |
 | `ns_qg_fourier_elimination.cdb` | [VERIFY_NS_QG_FOURIER.md](VERIFY_NS_QG_FOURIER.md) |
+| `momentum_space_products.cdb` | [VERIFY_MOMENTUM_SPACE_PRODUCTS.md](VERIFY_MOMENTUM_SPACE_PRODUCTS.md) |
 | `ns_kvn_equation.cdb`, `ns_pressure_poisson.cdb`, `ns_pressure_constraint.cdb` | [VERIFY_FARIS_LAVINE_N.md](VERIFY_FARIS_LAVINE_N.md) |
 | `ns_lagrangian_hamiltonian.cdb` | [VERIFY_NS_QG_FOURIER.md](VERIFY_NS_QG_FOURIER.md) |
+| `mass_gap_norm_residual.cdb` | [VERIFY_MASS_GAP_NORM_RESIDUAL.md](VERIFY_MASS_GAP_NORM_RESIDUAL.md) |
+| `ns_compressible_lagrangian.cdb`, `sm_gauge_fixed_hamiltonian.cdb` (2026-10-13) | the 2026-10-14 update in [CDB_MODULE_REVIEW.md](CDB_MODULE_REVIEW.md); numerical seam `fock_sirk/tests/{ns_compressible_lagrangian_validation,sm_gauge_fixed_validation,sm_higgs_mechanism_sirk}.rs` |
 
 Related: [NUMERICAL_VALIDATION_GUIDE.md](NUMERICAL_VALIDATION_GUIDE.md) for the
 numeric side, [ARCHITECTURE.md](ARCHITECTURE.md) for the crate map,

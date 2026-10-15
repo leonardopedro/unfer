@@ -734,7 +734,7 @@ mod tests {
         }
         let derived = symbolic_derive(
             QG_DENSITIZED_DERIVATION,
-            &["Hraw", "Ktrans", "Kflat", "H0"],
+            &["Hraw", "Ktrans", "Kflat", "H0", "diff"],
             120_000,
         )
         .unwrap();
@@ -771,6 +771,30 @@ mod tests {
         assert!(
             kflat.contains("1/16") && kflat.contains("1/24"),
             "Kflat should be the flat kinetic form: {kflat}"
+        );
+        // The load-bearing assertion: the transformed kinetic `Ktrans` is
+        // IDENTICALLY the flat target `Kflat` — the whole point of the
+        // densitized change of variables is that the 1/e is absorbed and
+        // nothing but the constant-coefficient operator remains.
+        //
+        // We do NOT compare the rendered `Ktrans`/`Kflat` strings directly:
+        // cadabra prints the same P̃² as a power `(P̃)**2` in `Ktrans` (whose
+        // pipeline ends in collect_factors) but as the explicit product
+        // `P̃ P̃` in `Kflat`, and `canonicalise` does not unify the two
+        // representations — a raw string compare would fail on a
+        // mathematically-correct result.  Instead we assert on the `.cdb`'s
+        // own `diff = @(Ktrans) - @(Kflat)` handle (with collect_factors so
+        // both sides share one representation), which cadabra reduces to 0.
+        // That is rendering-insensitive AND stronger than the old hand-typed
+        // `diff = X - X` tautology (which could not fail) and than the
+        // substring probes above (which pass even if a residual e^{-1}
+        // survived in a part the `contains` probes did not touch).
+        let diff = &derived["diff"];
+        assert_eq!(
+            diff.replace(' ', ""),
+            "0",
+            "Ktrans must equal Kflat identically (1/e fully absorbed into the \
+             densitized variables): diff = Ktrans - Kflat = {diff}",
         );
     }
 

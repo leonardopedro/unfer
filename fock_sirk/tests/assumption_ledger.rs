@@ -95,9 +95,13 @@ fn unit_opts() -> SirkOpts {
 }
 
 fn assert_hermitian(h_proj: &DMatrix<Complex64>, label: &str) {
+    // 2e-6 (was 1e-6, loosened 2026-10-14 by owner request): the debug build
+    // on this aarch64 box measures ‖H−H†‖ = 1.06e-6 on the displaced-oscillator
+    // window — a float-summation artifact (the builder bypasses the CAS), not
+    // a physics change; the owner bound is 2e-6.
     let diff = (h_proj - &h_proj.adjoint()).norm();
     assert!(
-        diff < 1e-6,
+        diff < 2e-6,
         "{label}: H_proj must be Hermitian, ‖H−H†‖={diff}"
     );
 }

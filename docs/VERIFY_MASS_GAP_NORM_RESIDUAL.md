@@ -37,6 +37,12 @@ and `2` (first excited). `v = (1,1)` gives `H v = (2,2) = 2v` exactly, `|v|^2 = 
 `G5` is the informative one: it is *supposed* to be `q^2`, and `q^2 >= 0` is
 exactly the one-sidedness guarantee.
 
+House-style rows (`cadabra2-cli -q -n`), current labels — CHECK 5's label states its expectation
+honestly (the remainder is `q^2`, not zero):
+
+    CHECK 4  MGNR error identity modulo X^2 = E^2 + q^2 (0 = ok): 0
+    CHECK 5  MGNR one-sidedness ||H w||^2 - E^2 = q^2 >= 0 (expect q^2, the non-negative remainder): q^2
+
 ## Engine limitation, recorded because it will bite again
 
 This Cadabra build (2.5.14) does **not** open a polynomial power of a sum:

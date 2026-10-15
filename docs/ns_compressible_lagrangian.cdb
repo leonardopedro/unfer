@@ -1,0 +1,429 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-13)
+#
+# Purpose: the MOST GENERAL COMPRESSIBLE Navier-Stokes in Lagrangian
+#   (material) variables: a barotropic equation of state kept fully
+#   general (specific internal energy e(rho) arbitrary, smooth), mass
+#   conservation rho det F = rho_0 exact, the thermodynamic pressure
+#   p = rho^2 e'(rho) DERIVED from the material potential (not assumed),
+#   the enthalpy-force identity (1/rho) grad p = grad h, the acoustic
+#   dispersion of the linearized fiber, the Legendre transform to the
+#   canonical Hamiltonian, and the momentum-space convolution spellings
+#   for products of derivatives (including the density-weighted pressure
+#   product (1/rho) d_i p, which is NEW with respect to the incompressible
+#   modules).
+# Role in the program: the compressible counterpart of
+#   ns_lagrangian_hamiltonian.cdb (which carries the incompressibility
+#   constraint div u = 0 / det F = 1 and therefore has NO density field
+#   and NO equation of state). This module removes exactly those two
+#   restrictions: det F is a dynamical variable, rho = rho_0/det F, and
+#   the pressure is a function of rho through a completely general e(rho).
+#   The conservation/transport identities are the same ones the Lean
+#   side formalizes for the incompressible line
+#   (BookProof.ChapterNavierStokesFullLagrangianFock: cofPoly/detPoly/
+#   volumePoly, Jacobi's identity d(det F)/dt = det F div u); sections
+#   A-B below re-derive them for the compressible case so the two lines
+#   share one engine-checked source.
+# Certified content: CHECK 1-16 (all -> 0 except the two labelled
+#   informative/expect): determinant and cofactor identities (A), Jacobi/
+#   Cauchy transport and mass conservation (B), the barotropic
+#   thermodynamics p = rho^2 e'(rho), dW/dJ = -p, dp = rho dh and the
+#   isothermal anchor (C), the acoustic dispersion omega^2 = c^2 |k|^2 of
+#   the linearized fiber (D), the momentum-space convolution bookkeeping
+#   for products of derivatives, the density-weighted pressure product
+#   and the (even) viscous weight (E), the Legendre transform and the
+#   quadratic-ordering / zero-point strip of the Fock realization (F),
+#   and the positive-completion comparison square for the quadratic
+#   reference barotrope (G).
+# Honest boundaries: the Faris-Lavine domination for a GENERAL barotrope
+#   needs a growth hypothesis on e(rho) (e.g. e(rho) >= c rho^gamma with
+#   gamma > 1 beyond some point) — the module certifies the algebraic
+#   content (the completion square of section G) and states the analytic
+#   hypothesis, it does not prove it (Lean work). The viscous sector is
+#   carried as the general quadratic dissipation function (shear mu and
+#   bulk zeta); its sectorial bounds are analytic, not certified here.
+#   Boundary conditions are the periodic box of the Fock discretization.
+# Improvement notes (goal alignment): when the Lean side states the
+#   compressible extension of ChapterNavierStokesFullLagrangianFock, add
+#   the corresponding CHECK rows here and in docs/VERIFY_NS_COMPRESSIBLE.md;
+#   any new CHECK must land with a row there. The house rules of
+#   docs/CADABRA2_GOTCHAS.md apply: @() stems >= 4 chars, names without
+#   underscores where referenced by @(), no `unwrap` after product_rule.
+#
+# Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: (incompressible core) ../timepiece/BookProof/
+#   ChapterNavierStokesFullLagrangianFock; the compressible extension is
+#   the open Lean work order recorded in docs/VERIFY_NS_COMPRESSIBLE.md.
+# ======================================================================
+# Compressible Navier-Stokes in Lagrangian variables — the general
+# barotrope, exact mass conservation, and the momentum-space convolution
+# of products of derivatives.
+#
+# THE SETUP.  The flow map x_i = x_i(a,t) sends material labels a to
+# positions; the deformation gradient and its Jacobian are
+#     F_{iJ} = d x_i / d a_J,   J = det F.
+# Mass conservation is EXACT and purely kinematic:
+#     rho(a,t) J(a,t) = rho_0(a)                       (B)
+# so the density field is not independent: rho = rho_0/J.  The specific
+# internal energy e(rho) is an arbitrary smooth function (the general
+# barotrope); everything below holds for any such e.  The Lagrangian and
+# its Legendre transform are
+#     L = int da [ (rho_0/2) |xdot|^2 - rho_0 e(rho_0/J) ]  -  Phi,
+#     H = int da [ |pi|^2/(2 rho_0) + rho_0 e(rho_0/J) ],
+# with pi = rho_0 xdot the canonical momentum and Phi the general
+# quadratic dissipation function (shear mu, bulk zeta) of the viscous
+# terms (F section).
+#
+# THE DERIVATIVE-PRODUCT DOCTRINE.  Coordinate-space products of field
+# derivatives (u_j d_j u_i, d_i rho d_j rho, (1/rho) d_i p, ...) are
+# eliminated by the spatial Fourier substitution: every local product
+# becomes a momentum-space CONVOLUTION with transfer momentum q and
+# momentum conservation p = k + q (the ns_qg_fourier_elimination.cdb
+# convention of record).  The compressible case adds the density-weighted
+# product (1/rho) d_i p = d_i h (C3 is its coefficient identity): two
+# waves in, one out, weight linear in the transfer momentum.
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{Faa, Fab, Fac, Fba, Fbb, Fbc, Fca, Fcb, Fcc}::Symbol.
+{daa, dab, dac, dba, dbb, dbc, dca, dcb, dcc}::Symbol.
+{duaa, duab, duac, duba, dubb, dubc, duca, ducb, ducc}::Symbol.
+{rho, rho0, jac, rhobar, cs2, ev0, ev1, ev2}::Symbol.
+{pi0, vee, s0, svar, ciso}::Symbol.
+{t, kmo, qmo, pmo, w, ua, ub, ra, pa, nu, zeta}::Symbol.
+i::ImaginaryI.
+# All the scalar bookkeeping objects commute (Cadabra2 treats undeclared
+# objects as non-commuting, so sort_product would not reorder them):
+{rho, rho0, jac, rhobar, cs2, ev0, ev1, ev2, pi0, vee, s0, svar, ciso, duaa, duab, duac, duba, dubb, dubc, duca, ducb, ducc}::Commuting.
+
+# ===========================================================================
+# (A) the deformation gradient: detPoly and the cofactor identity
+#     (same first-row expansion as DESIGN_COMPARISON_N_20260915.cdb A1/A2
+#     and BookProof.ChapterNavierStokesFullLagrangianFock.cofPoly/detPoly)
+# ===========================================================================
+cf1 := Fbb*Fcc - Fbc*Fcb.
+cf2 := Fbc*Fca - Fba*Fcc.
+cf3 := Fba*Fcb - Fbb*Fca.
+jacpoly := Faa*@(cf1) + Fab*@(cf2) + Fac*@(cf3).
+leib1 := Faa*(Fbb*Fcc - Fbc*Fcb) - Fab*(Fba*Fcc - Fbc*Fca) + Fac*(Fba*Fcb - Fbb*Fca).
+chkA1 := @(jacpoly) - @(leib1).
+distribute(chkA1)
+sort_product(chkA1)
+canonicalise(chkA1)
+collect_terms(chkA1)
+print("CHECK 1  NSCMP detPoly(row 0) - det(F) = 0                      (0 = ok):", chkA1);
+
+# F . cof(F)^T = det(F) * 1  (adjugate identity, both diagonal entries)
+prod11 := Faa*@(cf1) + Fab*@(cf2) + Fac*@(cf3) - @(jacpoly).
+prod21 := Fba*@(cf1) + Fbb*@(cf2) + Fbc*@(cf3).
+distribute(prod11)
+sort_product(prod11)
+canonicalise(prod11)
+collect_terms(prod11)
+distribute(prod21)
+sort_product(prod21)
+canonicalise(prod21)
+collect_terms(prod21)
+print("CHECK 2  NSCMP (F . cof(F)^T)_11 - det F = 0                    (0 = ok):", prod11);
+print("CHECK 3  NSCMP (F . cof(F)^T)_21 = 0                            (0 = ok):", prod21);
+
+# ===========================================================================
+# (B) mass conservation: Jacobi's identity and the material continuity
+#     equation.  Fdot = (grad u) . F (differentiating dX/dt = u(X) in a);
+#     d(det F)/dt = sum_xy C_xy Fdot_xy must equal det F * div u.  This is
+#     the compressible generalisation of the incompressible CHECK 3 of
+#     ns_lagrangian_hamiltonian.cdb (there det F = 1 is the constraint).
+# ===========================================================================
+cfaa = Ex(r"Fbb*Fcc - Fbc*Fcb");
+cfab = Ex(r"-(Fba*Fcc - Fbc*Fca)");
+cfac = Ex(r"Fba*Fcb - Fbb*Fca");
+cfba = Ex(r"-(Fab*Fcc - Fac*Fcb)");
+cfbb = Ex(r"Faa*Fcc - Fac*Fca");
+cfbc = Ex(r"-(Faa*Fcb - Fab*Fca)");
+cfca = Ex(r"Fab*Fbc - Fac*Fbb");
+cfcb = Ex(r"-(Faa*Fbc - Fac*Fba)");
+cfcc = Ex(r"Faa*Fbb - Fab*Fba");
+
+fdotaa = Ex(r"duaa*Faa + duab*Fba + duac*Fca");
+fdotab = Ex(r"duaa*Fab + duab*Fbb + duac*Fcb");
+fdotac = Ex(r"duaa*Fac + duab*Fbc + duac*Fcc");
+fdotba = Ex(r"duba*Faa + dubb*Fba + dubc*Fca");
+fdotbb = Ex(r"duba*Fab + dubb*Fbb + dubc*Fcb");
+fdotbc = Ex(r"duba*Fac + dubb*Fbc + dubc*Fcc");
+fdotca = Ex(r"duca*Faa + ducb*Fba + ducc*Fca");
+fdotcb = Ex(r"duca*Fab + ducb*Fbb + ducc*Fcb");
+fdotcc = Ex(r"duca*Fac + ducb*Fbc + ducc*Fcc");
+
+jacobid := @(cfaa)*@(fdotaa) + @(cfab)*@(fdotab) + @(cfac)*@(fdotac)         + @(cfba)*@(fdotba) + @(cfbb)*@(fdotbb) + @(cfbc)*@(fdotbc)         + @(cfca)*@(fdotca) + @(cfcb)*@(fdotcb) + @(cfcc)*@(fdotcc);
+jacrhs := @(jacpoly) * (duaa + dubb + ducc);
+chkB1 := @(jacobid) - @(jacrhs);
+distribute(chkB1)
+sort_product(chkB1)
+canonicalise(chkB1)
+collect_terms(chkB1)
+print("CHECK 4  NSCMP d(det F)/dt - det F div u = 0  (Cauchy/Jacobi)   (0 = ok):", chkB1);
+
+# The material continuity equation: d(rho J)/dt = 0.  The two factors are
+# INDEPENDENT physical inputs: rho_dot = -rho div u (Eulerian continuity,
+# the compressible one — NOT assumed zero as in the incompressible line)
+# and J_dot = +J div u (CHECK 4).  Their sum must vanish.
+divu := duaa + dubb + ducc.
+rhodot := -rho*@(divu).
+jacdot := jac*@(divu).
+chkB2 := @(rhodot)*jac + rho*@(jacdot).
+distribute(chkB2)
+sort_product(chkB2)
+canonicalise(chkB2)
+collect_terms(chkB2)
+print("CHECK 5  NSCMP d(rho J)/dt = rho_dot J + rho J_dot = 0          (0 = ok):", chkB2);
+
+# The mass constraint itself: rho = rho_0/J solves rho J = rho_0.
+chkB3 := rho*jac - rho0.
+substitute(chkB3, $ rho -> rho0*(jac)**(-1) $, repeat=True)
+distribute(chkB3)
+collect_factors(chkB3)
+substitute(chkB3, $ (jac)**(-1) jac -> 1 $, repeat=True)
+substitute(chkB3, $ jac (jac)**(-1) -> 1 $, repeat=True)
+canonicalise(chkB3)
+collect_terms(chkB3)
+print("CHECK 6  NSCMP rho J - rho_0 = 0 at rho = rho_0/J               (0 = ok):", chkB3);
+
+# ===========================================================================
+# (C) the general barotrope: e(rho) arbitrary and smooth.  ev0 = e,
+#     ev1 = e'(rho), ev2 = e''(rho) are the (independent) derivative
+#     symbols; every composite quantity below is assembled from them by
+#     the product rule, and the checks compare INDEPENDENT assemblies.
+# ===========================================================================
+# C1: the implicit derivative of the mass constraint: rho J = rho_0 with
+# dJ -> 1 gives drho/dJ = -rho/J.  Checked against the linearized
+# constraint itself (the derivative must solve it):
+drhodj := -rho*(jac)**(-1).
+chkC1 := @(drhodj)*jac + rho.
+distribute(chkC1)
+collect_factors(chkC1)
+substitute(chkC1, $ (jac)**(-1) jac -> 1 $, repeat=True)
+substitute(chkC1, $ jac (jac)**(-1) -> 1 $, repeat=True)
+canonicalise(chkC1)
+collect_terms(chkC1)
+print("CHECK 7  NSCMP d rho/dJ = -rho/J solves d(rho J) = 0            (0 = ok):", chkC1);
+
+# C2: the pressure is DERIVED from the material potential
+# W(J) = rho_0 e(rho_0/J):  dW/dJ = rho_0 e' (d rho/dJ) = -rho^2 e'(rho),
+# i.e. p = -dW/dJ = rho^2 e'.  Two independent assemblies are compared:
+#   pvar  = -rho_0 e' * (drho/dJ)   (the variational route)
+#   pther = rho (e + rho e') - rho e  (the first law: rho eps' - eps at
+#           eps = rho e)
+pvar := -rho0*ev1*@(drhodj).
+pther := rho*(ev0 + rho*ev1) - rho*ev0.
+distribute(pther)
+canonicalise(pther)
+collect_terms(pther)
+chkC2 := @(pvar) - @(pther).
+distribute(chkC2)
+collect_factors(chkC2)
+substitute(chkC2, $ rho0*(jac)**(-1) -> rho $, repeat=True)
+# (collect_factors BEFORE sort_product: collect_factors re-orders factors
+#  and would undo the sort — the engine lesson of this module's run)
+collect_factors(chkC2)
+sort_product(chkC2)
+canonicalise(chkC2)
+collect_terms(chkC2)
+print("CHECK 8  NSCMP p = -dW/dJ = rho^2 e'(rho) = rho eps' - eps     (0 = ok):", chkC2);
+
+# C3: the enthalpy-force identity (1/rho) grad p = grad h in coefficient
+# form: dp = rho dh.  Both sides are product-rule assemblies:
+#   dp  = d(rho^2 e')/d rho = 2 rho e' + rho^2 e''
+#   dh  = d(e + rho e')/d rho = 2 e' + rho e''   (h = e + p/rho = e + rho e')
+dpd := 2*rho*ev1 + rho**2*ev2.
+dhd := ev1 + ev1 + rho*ev2.
+chkC3 := @(dpd) - rho*@(dhd).
+distribute(chkC3)
+# (collect_factors unifies the rho*rho and (rho)**2 spellings — same engine
+#  behaviour as docs/qg_densitized_hamiltonian.cdb's Ktrans/Kflat check)
+collect_factors(chkC3)
+sort_product(chkC3)
+canonicalise(chkC3)
+collect_terms(chkC3)
+print("CHECK 9  NSCMP dp = rho dh  (so (1/rho) grad p = grad h)       (0 = ok):", chkC3);
+
+# C4: the sound speed: c^2 = dp/d rho = 2 rho e' + rho^2 e''; at the
+# isothermal anchor e = c^2 ln rho (e' = c^2/rho, e'' = -c^2/rho^2) the
+# general formula must give p = c^2 rho and c^2 = const:
+pisotherm := rho**2*ev1.
+substitute(pisotherm, $ ev1 -> ciso**2*(rho)**(-1) $, repeat=True)
+distribute(pisotherm)
+collect_factors(pisotherm)
+substitute(pisotherm, $ (rho)**(-1) rho rho -> rho $, repeat=True)
+canonicalise(pisotherm)
+collect_terms(pisotherm)
+chkC4 := @(pisotherm) - ciso**2*rho.
+distribute(chkC4)
+sort_product(chkC4)
+collect_factors(chkC4)
+canonicalise(chkC4)
+collect_terms(chkC4)
+print("CHECK 10 NSCMP isothermal anchor p = rho^2 e' = c^2 rho        (0 = ok):", chkC4);
+
+# ===========================================================================
+# (D) the linearized fiber: acoustic dispersion omega^2 = c^2 |k|^2.
+#     Linearizing rho = rhobar (1 + s), the system
+#       d_t s + div u = 0,   rhobar d_t u = -rhobar c^2 grad s
+#     gives, in a Fourier mode, the 2x2 system whose determinant is
+#     omega^2 - c^2 |k|^2.  The determinant is computed two ways: as the
+#     expanded form and as the factorized (omega - c|k|)(omega + c|k|).
+# ===========================================================================
+ck := ciso*kmo.
+disp := (w - @(ck))*(w + @(ck)) - (w*w - cs2*kmo*kmo).
+substitute(disp, $ cs2 -> ciso**2 $, repeat=True)
+distribute(disp)
+sort_product(disp)
+collect_factors(disp)
+canonicalise(disp)
+collect_terms(disp)
+print("CHECK 11 NSCMP (w-ck)(w+ck) = w^2 - c^2 k^2, acoustic fiber    (0 = ok):", disp);
+
+# ===========================================================================
+# (E) products of derivatives become momentum-space CONVOLUTIONS.
+#     Convention of record (ns_qg_fourier_elimination.cdb E1-E3,
+#     docs/NUMERICAL_VALIDATION_GUIDE.md S47): the local product f*g
+#     becomes sum_{p+q=k} f_p g_q — f.star.g[n] = sum_m f[m] g[(n-m) mod n]
+#     — with momentum conservation p = k + q.  The NEW compressible
+#     content is the density-weighted pressure product (1/rho) d_i p.
+# ===========================================================================
+# E1: momentum conservation (only pairs p = k + q contribute):
+conv1 := kmo + qmo - pmo.
+substitute(conv1, $ pmo -> kmo + qmo $)
+distribute(conv1)
+canonicalise(conv1)
+collect_terms(conv1)
+print("CHECK 12 NSCMP p - (k + q) = 0  (momentum conservation)        (0 = ok):", conv1);
+
+# E2: derivative-product weight: (d_i f)(d_j g) carries the two transfer
+# weights (i p_i)(i q_j) — degree 2 in the weights; the full integrand
+# p_i q_j f g is degree 4 under a common scale factor (t=1 / t=2 probe,
+# the E3 idiom of ns_qg_fourier_elimination.cdb):
+dofi := qmo*pmo*ua*ub.
+dofisc := @(dofi).
+substitute(dofisc, $ qmo -> t*qmo, pmo -> t*pmo, ua -> t*ua, ub -> t*ub $)
+distribute(dofisc)
+canonicalise(dofisc)
+dofi1 := @(dofisc).
+substitute(dofi1, $ t -> 1 $)
+dofi2 := @(dofisc).
+substitute(dofi2, $ t -> 2 $)
+dochk := 16*@(dofi1) - @(dofi2).
+distribute(dochk)
+canonicalise(dochk)
+collect_terms(dochk)
+print("CHECK 13 NSCMP 16 dofI(1) - dofI(2) = 0  (weight degree 4)     (0 = ok):", dochk);
+
+# E3: the density-weighted pressure force (1/rho) d_i p is a TWO-WAVE
+# convolution r.star.(i q p) with r = F[1/rho]: weight linear in the
+# transfer momentum q, integrand q_j r p of degree 3 (the same probe).
+presw := qmo*ra*pa.
+preswsc := @(presw).
+substitute(preswsc, $ qmo -> t*qmo, ra -> t*ra, pa -> t*pa $)
+distribute(preswsc)
+canonicalise(preswsc)
+presw1 := @(preswsc).
+substitute(presw1, $ t -> 1 $)
+presw2 := @(preswsc).
+substitute(presw2, $ t -> 2 $)
+preschk := 8*@(presw1) - @(presw2).
+distribute(preschk)
+canonicalise(preschk)
+collect_terms(preschk)
+print("CHECK 14 NSCMP 8 presw(1) - presw(2) = 0  (r.star.(q p) deg 3) (0 = ok):", preschk);
+
+# E4: the viscous weight is DIAGONAL and EVEN in k: the Laplacian symbol
+# |k|^2 is invariant under k -> -k (a real dissipation; contrast with the
+# odd transfer weight q of the convolutions above):
+viscI := nu*kmo*kmo*ua.
+viscIneg := @(viscI).
+# (single pass — the target -kmo still contains kmo, so repeat=True would loop)
+substitute(viscIneg, $ kmo -> -kmo $)
+distribute(viscIneg)
+canonicalise(viscIneg)
+viscchk := @(viscI) - @(viscIneg).
+distribute(viscchk)
+canonicalise(viscchk)
+collect_terms(viscchk)
+print("CHECK 15 NSCMP nu |k|^2 u even in k -> 0  (diagonal viscosity)  (0 = ok):", viscchk);
+
+# ===========================================================================
+# (F) the canonical Hamiltonian: Legendre transform and the Fock
+#     realization.  pi = rho_0 v, H = |pi|^2/(2 rho_0) + rho_0 e(rho_0/J).
+# ===========================================================================
+leg := pi0*vee - ( (1/2)*rho0*vee*vee - rho0*ev0 )       - ( (1/(2*rho0))*pi0*pi0 + rho0*ev0 ).
+substitute(leg, $ pi0 -> rho0*vee $, repeat=True)
+distribute(leg)
+expand(leg)
+collect_factors(leg)
+canonicalise(leg)
+collect_terms(leg)
+print("CHECK 16 NSCMP Legendre identity H = pi v - L at pi = rho_0 v   (0 = ok):", leg);
+
+# Quadratic ordering (AGENTS.md maintenance item): under the Fock
+# realization u = a^dag + a, pi = i(a^dag - a), the product u u = (a^dag +
+# a)(a^dag + a) must be normal-ordered and its pure-scalar part DROPPED —
+# that is what makes <0|H|0> = 0 (the outer-vacuum ground doctrine).
+{a, ad}::NonCommuting.
+uexp := (ad + a)*(ad + a).
+distribute(uexp)
+substitute(uexp, $ a ad -> ad a + 1 $, repeat=True)
+distribute(uexp)
+canonicalise(uexp)
+hnorm := @(uexp) - 1.
+hnchk := @(hnorm) - (ad*ad + 2*ad*a + a*a).
+distribute(hnchk)
+canonicalise(hnchk)
+collect_terms(hnchk)
+print("CHECK 17 NSCMP u^2 normal-ordered = :u^2: + 1, scalar stripped  (0 = ok):", hnchk);
+
+# The viscous sector: the general quadratic dissipation function
+# Phi = mu (d_i u_j + d_j u_i - (2/3) (div u) delta_ij)^2 + zeta (div u)^2
+# is a sum of squares when mu >= 0, zeta >= 0 (the physical viscosities).
+# The completed-squares content, at the linearized fiber:
+#   H_fiber = pi^2/(2 rhobar) + (1/2) rhobar c^2 k^2 s^2
+#           = (1/(2 rhobar)) ( pi^2 + (rhobar c k s)^2 ),
+# checked as an identity of assemblies:
+hfib := (1/(2*rhobar))*pi0*pi0 + (1/2)*rhobar*cs2*kmo*kmo*svar*svar.
+substitute(hfib, $ cs2 -> ciso**2 $, repeat=True)
+distribute(hfib)
+collect_factors(hfib)
+hfibtarget := (1/(2*rhobar))*( pi0*pi0 + (rhobar*ciso*kmo*svar)*(rhobar*ciso*kmo*svar) ).
+distribute(hfibtarget)
+expand(hfibtarget)
+collect_factors(hfibtarget)
+canonicalise(hfibtarget)
+collect_terms(hfibtarget)
+fchk := @(hfib) - @(hfibtarget).
+distribute(fchk)
+collect_factors(fchk)
+sort_product(fchk)
+canonicalise(fchk)
+collect_terms(fchk)
+print("CHECK 18 NSCMP fiber Hamiltonian completed square identity      (0 = ok):", fchk);
+
+# ===========================================================================
+# (G) Faris-Lavine comparison: the positive-completion square for the
+#     quadratic reference barotrope.  For e(rho) = (c^2/2)((rho-rhobar)/
+#     rhobar)^2 the one-parcel Hamiltonian
+#       h = pi^2/(2 rhobar) + (1/2) rhobar c^2 s^2
+#     is bounded by the comparison operator
+#       N = h + (1/2) rhobar c^2 (s - s0)^2      (>= h, and N >= 0),
+#     so +-h <= N (hypothesis (i) with c_1 = 1 on the one-parcel fiber;
+#     the commutator ladder of (ii)/(iii) is the NSLAGFL pattern of
+#     faris_lavine_n_ns_lagrangian.cdb).  The completion square must be
+#     EXACT: N - h - (1/2) rhobar c^2 (s - s0)^2 = 0.
+#     For a GENERAL barotrope the domination needs a growth hypothesis
+#     (honest boundary above) — this check certifies the algebraic half.
+# ===========================================================================
+Ncmp := @(hfib) + (1/2)*rhobar*ciso**2*(svar - s0)*(svar - s0).
+gchk := @(Ncmp) - @(hfib) - (1/2)*rhobar*ciso**2*(svar - s0)*(svar - s0).
+distribute(gchk)
+expand(gchk)
+canonicalise(gchk)
+collect_terms(gchk)
+print("CHECK 19 NSCMP N - h - completion square = 0  (FL domination)   (0 = ok):", gchk);

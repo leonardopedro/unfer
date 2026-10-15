@@ -63,6 +63,7 @@
 # are proved in Lean.
 #
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/SecondQuantizationEsa.lean (tag "second-quantization-esa") - reader-facing chapter.
 
 def expand_derivs(ex, n):
 	"""Leibniz expansion of every nested partial derivative."""

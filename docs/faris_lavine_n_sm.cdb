@@ -113,6 +113,7 @@
 # Majorana masses / see-saw are OUT (book.tex works in their absence).
 #
 # Run: cadabra2-cli -q -n <this file>          (exit 0; every *_check → 0)
+# Formalized in: ../timepiece/Book/StandardModel.lean (tag "standard-model") - reader-facing chapter.
 #
 # GOTCHA (same engine as the sibling modules): a single-element property list `{c}::Commuting.`
 # aborts with "A list property cannot be assigned to a single object" — declare at least two

@@ -11,7 +11,9 @@
 #   check (alpha -> 0) recovers the base module — a generalization, not a
 #   different theory.
 # Certified content: fR_check/R2_check (Jordan form identity), pi_st
-#   factorization (psi is auxiliary), leg_check, base_limit_check.
+#   factorization (psi is auxiliary), pi_psi_check (auxiliary-field
+#   polymomentum vanishes), base_limit_check — all printed in the house
+#   style below so a plain run can fail visibly (docs/CDB_MODULE_REVIEW.md).
 # Known history: `@()` aborted this module and `unwrap` collapsed ex1_st
 #   until 2026-09-18 (see docs/VERIFY_QG_STAROBINSKY_VIELBEIN.md).
 # Improvement notes (goal alignment): the extracted pi_psi_check name must
@@ -106,6 +108,7 @@
 # conformal rescaling (ψ enters the kinetic) before the flat-coefficient
 # argument applies; that is the standard f(R) → Einstein-frame chain.
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity"), Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 #
 # GOTCHA — `@()` AND UNDERSCORED NAMES.  The insertion macro `@(name)` resolves
 # `name` through the LaTeX parser, which reads `_` as a SUBSCRIPT separator
@@ -283,8 +286,11 @@ H_8182_st := (M^2/2) \psi ( - (1/4) S_{a b} S^{a b} e + (2/3) T T e + (1/2) A_{a
 # The Legendre consistency H = π·∂₀e − L: by construction H_8182_st is the
 # 8182 absorbed form of the Legendre transform (as in the base module); the
 # potential term U(ψ)e appears with the same sign in −L_dec_st and +H_8182_st
-# and hence drops out of the difference (leg_check_st -> 0 by the 8182
-# identity, verified by the canonicalisation below).
+# and hence drops out of the H_8182_st difference (the 8182 identity,
+# verified by the canonicalisation below). Note: there is no separate
+# `leg_check_st` handle — the cancellation is carried by the
+# canonicalisation of H_final_st itself; the base module
+# (qg_gauge_fixed_hamiltonian.cdb) holds the corresponding Legendre steps.
 H_final_st = H_8182_st.copy()
 # First: the A·A from p·T cancels -1/2 A·T e from -L (substitute A^ab = -2e T^ab):
 substitute(H_final_st, $ \mathcal{A}_{a b} -> -2 e T_{a b}, \mathcal{A}^{a b} -> -2 e T^{a b} $, repeat=True)
@@ -330,3 +336,15 @@ substitute(base_limit_check, $ \psi -> 1 $, repeat=True)
 distribute(base_limit_check)
 sort_product(base_limit_check)
 canonicalise(base_limit_check)
+
+# ===== 7. verification output (self-certification) =====
+# The module's checks, printed in the house style so a plain
+# `cadabra2-cli -q -n` run can fail visibly (docs/CDB_MODULE_REVIEW.md).
+# CHECK 4/5 are the silent-truncation guards of docs/CADABRA2_GOTCHAS.md §3
+# (the size values of record live in docs/VERIFY_CDB_TRUNCATION_AUDIT.md):
+# a collapsed ex1_st would still yield a non-empty pi_st.
+print("CHECK 1  STARVB f(R) = (M^2/2) psi R - U(psi) in vielbein variables (0 = ok):", fR_check);
+print("CHECK 2  STARVB alpha R^2 content equals U(psi) e (0 = ok):", R2_check);
+print("CHECK 3  STARVB scalaron polymomentum pi_psi = 0, psi auxiliary (0 = ok):", pi_psi_check);
+print("CHECK 4  STARVB truncation guard len(ex1_st) / len(pi_st) (expect 121 / 2 — the base module's 120-term eR integrand + the U(psi) e potential term):", len(ex1_st), len(pi_st));
+print("CHECK 5  STARVB alpha -> 0 limit size vs base TEGR (expect 10 terms):", len(base_limit_check));

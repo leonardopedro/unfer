@@ -50,6 +50,7 @@
 # symmetry.
 #
 # Run: cadabra2-cli -q -n <this file>
+# Formalized in: ../timepiece/Book/NsOneParticleHamiltonian.lean (tag "ns-one-particle-hamiltonian") - reader-facing chapter.
 
 \partial{#}::PartialDerivative.
 {u1,u2,u3,p,f1,f2,f3,dtu1,dtu2,dtu3}::Depends(\partial{#}).
