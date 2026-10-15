@@ -358,10 +358,24 @@ fn the_gapless_control_does_not_certify_a_positive_gap() {
     // truncation artefact, not a real gap. The control's job is to prove the
     // pipeline *can say so*.
     //
-    // Note the sign: the control's measured gap is **negative** (≈ −4e-9), not
+    // Note the sign: the control's measured gap is **negative**, not
     // positive-and-small. An earlier version of this test asserted `gap > 0` and
     // was wrong — it assumed the artefact would land on the positive side. The
     // property worth asserting is the one below, which holds either way.
+    //
+    // The bound is 1e-5, not 1e-6: the artefact does NOT shrink with
+    // truncation depth (the comment that claimed this was wrong), it grows —
+    // the pinned fixtures record −3.9e-9 at m = 10 but −9.3e-7 at m = 12
+    // (`qym_g0_m12_*.ndjson`), and fresh solves scatter around 1e-6 at m = 12
+    // (a 2026-10-15 run measured −1.05e-6, which is how the stale 1e-6 bound
+    // was found to sit *inside* the artefact's natural scatter: it passed by
+    // 7% at fixture time and failed by 5% on a later run).  1e-5 is the
+    // honest roundoff-scale bound for the m = 12 control, and it still
+    // separates the artefact from every real-coupling row by three orders of
+    // magnitude (the fixtures' real gaps are ≥ 1.3e-1).  The m-dependence of
+    // the artefact (SIRK convergence noise growing with Krylov order) is a
+    // pipeline finding, tracked in the workspace review plan — not something
+    // this control can decide.
     let rows = run_campaign(&[0.0], &[10, 12], &[6]);
     for r in &rows {
         let gap = parse_gap(&r.ndjson);
@@ -369,7 +383,7 @@ fn the_gapless_control_does_not_certify_a_positive_gap() {
         let hi = parse_hi(&r.ndjson);
 
         assert!(
-            gap.abs() < 1e-6,
+            gap.abs() < 1e-5,
             "g = 0, m = {}: the gap must sit at the roundoff scale, not be a real gap: {gap}",
             r.m
         );
