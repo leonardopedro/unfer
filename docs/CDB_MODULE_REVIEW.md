@@ -241,9 +241,18 @@ every CHECK at its advertised value); the other 21 are byte-unchanged.
 Evidence, counterfactuals, and the two new engine notes (non-commuting
 `substitute` needs distribute between passes; `sort_product` fixes
 ImaginaryI/`Symbol` ordering): `docs/VERIFY_TRANSFORMED_ESA_CHARTS.md`.
-Numerical companion (10 tests, always runs):
-`fock_sirk/tests/transformed_esa_charts_validation.rs` — includes the ODE
-chapter's norm-conservation headline past the classical blow-up. One
+Numerical companions (29 tests total, always run):
+`fock_sirk/tests/transformed_esa_charts_validation.rs` (10 — includes the ODE
+chapter's norm-conservation headline past the classical blow-up),
+`fock_sirk/tests/qg_half_density_stone_flow_validation.rs` (9 — the QG-D-C
+rows: the half-density unitary Jacobian of
+`ChapterQuantumGravityHalfDensity` and the `qgR2_stone_flow` mode flow of
+`ChapterStarobinskyPotential`), and
+`fock_sirk/tests/ns_penalty_lyapunov_validation.rs` (10 — the NS-L-C.3 row:
+the penalty + Lyapunov faces of
+`ChapterNsLagrangianDetFarisLavine` and the lifted comparison
+`dΓ(N_L) + 1` on the Fock sectors m = 0,1,2 with its resolvent estimate).
+One
 mislabel was caught by that suite during development (CHECK 5's label
 read "= 2H" for the identity `½(px²+x²p) = H`); the cleared algebra was
 correct, the label and test were fixed in the same pass.
