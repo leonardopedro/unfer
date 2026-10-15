@@ -31,6 +31,22 @@
 # suite itself and feeds its log to the same recount path, so the check no
 # longer depends on remembering to supply evidence.
 #
+# P4 half (2026-10-15): the recount fixes the *block*, but the same day's
+# drift review found four README/AGENTS files whose test-count *prose*
+# disagreed with their own just-recounted blocks -- the block was checked and
+# the sentence above it was not. Count prose is drift like any other, so the
+# two headline shapes a stale count actually ships as are now held to the
+# block's number:
+#
+#   `# N passed`     the Verification snippet annotation
+#   `N tests pass`   the README headline
+#
+# Sub-scope prose ("23 passing unit tests", "was 1785 on ...") deliberately
+# does not match: a scoped number is not the block's to contradict. A
+# sub-scope annotation that wants guard-grade treatment gets a scope label
+# ("# fock_sirk: 401 passed ..."), which reads better anyway. The op-count
+# form of this doctrine lives in velysterm's check-op-catalog (round-2 F4).
+#
 # Scope is deliberately narrow: only cargo-shaped suites can be recounted (the
 # parser sums `test result: ok. N passed`), and only the repos registered in
 # recount_cmd() below. Everything else -- dune, Lean, the link graph -- reports
@@ -253,6 +269,26 @@ for repo in $REPOS; do
     if [ "$age_days" -gt 180 ]; then
       printf 'WARN %-15s last verified %s (%d days ago)\n' "$repo" "$date_field" "$age_days"
     fi
+  fi
+
+  # P4: prose claims vs the block. Only when the block carries a number --n  # an honest "none"/"not run" block cannot be contradicted by a count.
+  block_count="$(printf '%s' "$block" | grep -oE 'tests: [0-9]+' | grep -oE '[0-9]+' | head -1)"
+  if [ -n "$block_count" ]; then
+    for f in README.md README AGENTS.md AGENTS; do
+      [ -f "$dir/$f" ] || continue
+      while IFS=: read -r lineno rest; do
+        for num in $(printf '%s\n' "$rest" \
+            | grep -oE '#[[:space:]]*[0-9][0-9,]* passed|[0-9][0-9,]* tests pass' \
+            | grep -oE '[0-9][0-9,]*' | tr -d ',' | sort -u); do
+          if [ "$num" != "$block_count" ]; then
+            printf 'FAIL %-16s %s:%s: prose claims %s tests, block says %s\n' \
+              "$repo" "$f" "$lineno" "$num" "$block_count"
+            printf '       recount, then update the line -- or label its scope: "# <suite>: %s passed ..."\n' "$num"
+            fail=1
+          fi
+        done
+      done < <(grep -nE '#[[:space:]]*[0-9][0-9,]* passed|[0-9][0-9,]* tests pass' "$dir/$f" || true)
+    done
   fi
 
   printf 'ok   %-16s %s\n' "$repo" "$block"

@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1792 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-13 -->
+<!-- status: verified | tests: 1797 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-15 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -140,12 +140,12 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1785 passed (2026-10-08, rev 27; was 1774 on 2026-10-07 — D7's
-#   backbone-choice tests added 11 in decide_core)
+#   1797 passed (2026-10-15, rev 28; was 1785 on 2026-10-08 — see the
+#   counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
-#   401 passed across 56 binaries (2026-10-06; was 371 across 53 on 2026-10-04
-#   — three test binaries added by the M1/M4/M5 mass-gap campaign)
+#   fock_sirk: 401 passed across 56 binaries (2026-10-06; was 371 across 53
+#   on 2026-10-04 — three test binaries added by the M1/M4/M5 mass-gap campaign)
 
 nix-shell -p python3 --run "python3 scripts/check-links"
 #   relative markdown links resolve (CI: .github/workflows/linkcheck.yml)
@@ -224,19 +224,19 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 27, 2026-10-08)
+## Test & benchmark counts (rev 28, 2026-10-15)
 
-- Workspace tests: **1785 green** on CPU (default features,
-  `cargo test --workspace --exclude fock_sirk`, 68 test binaries +
-  doc-tests): `unfer_protocol` 400, logos 346, `unfer_ffi` 228,
-  `prob_kernel` 143, `unfer_consensus` 111, `nested_fock_algebra` 98,
-  `decide_core` 105, `qfm` 88, `qfm_text` 64, `unfer_edge` 63,
-  `unfer_data` 56, `unfer_taler` 36, `ode_sirk` 36, `unfer_identity` 6,
-  `sirk_core_model` 5. Debug and `--release` report the same count for
-  every suite (verified 2026-10-08; no test is gated on
-  `cfg(debug_assertions)`).
+- Workspace tests: **1797 green** on CPU (default features,
+  `cargo test --workspace --exclude fock_sirk`, test binaries +
+  doc-tests attributed by target name from a single log):
+  `unfer_protocol` 402, logos 352, `unfer_ffi` 229,
+  `prob_kernel` 143, `decide_core` 116, `unfer_consensus` 111,
+  `nested_fock_algebra` 98, `qfm` 91, `unfer_edge` 63, `qfm_text` 62,
+  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `unfer_identity` 7,
+  `sirk_core_model` 5 (sums to the header; `check-status --recount`
+  verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1785 above.
+  2026-10-06, `--release`) and is **not** in the 1797 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -245,7 +245,11 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 27** (2026-10-08) claims **1785**
+> Revision history of this table: **rev 28** (2026-10-15) claims **1797**
+> after the sequential-decision and ESA-validation suites landed
+> (`decide_core/tests/sequential.rs` and the `ns_*`/`sm_*`/`transformed_esa`
+> validation suites), re-measured by the same command and attributed by
+> target name from one log rather than carried forward. **rev 27** (2026-10-08) claimed **1785**
 > after D7's backbone-choice work added 11 tests to `decide_core`, measured
 > by the same command in both debug and `--release` rather than carried
 > forward. **rev 26** (2026-10-07) claimed 1774. **rev 25** (2026-10-07) adds the
