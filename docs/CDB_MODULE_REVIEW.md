@@ -230,6 +230,24 @@ term counts an unmerged expansion would give).
 All 22 modules were re-run on 2026-10-14 after the additions (rc = 0 each,
 every CHECK at its advertised value); the other 21 are byte-unchanged.
 
+## Update 2026-10-15 — 23 modules: the transformed-operator ESA module
+
+### New module (22 → 23)
+
+| module | content | checks |
+|---|---|---|
+| `docs/transformed_esa_charts.cdb` | the symbolic half of "closing ESA of the transformed operator" in the three variable systems of the work order (`../timepiece/CONSOLIDATED_PLAN.md` 2026-10-15, rows ODE-C / NS-L-C / QG-D-C): the reciprocal chart `w = −1/x` of `x' = x²` (classical solution via the quotient rule, chain rule `ẇ = 1` — complete flow, chart of the flow = translation, Weyl commutator `[x²,p] = 2ix`, the two spellings `½(px²+x²p) = H = x²p − ix`, the chartW kernel × Jacobian = 1), the Lagrangian completed square (shifted oscillator), and the densitized absorption (`1/e = 4(dy/de)²` at `e = y²` — the honest factor 4 — and `(1/16e)S² = (1/16)(S/y)²`) | 9, all at their advertised values |
+
+Evidence, counterfactuals, and the two new engine notes (non-commuting
+`substitute` needs distribute between passes; `sort_product` fixes
+ImaginaryI/`Symbol` ordering): `docs/VERIFY_TRANSFORMED_ESA_CHARTS.md`.
+Numerical companion (10 tests, always runs):
+`fock_sirk/tests/transformed_esa_charts_validation.rs` — includes the ODE
+chapter's norm-conservation headline past the classical blow-up. One
+mislabel was caught by that suite during development (CHECK 5's label
+read "= 2H" for the identity `½(px²+x²p) = H`); the cleared algebra was
+correct, the label and test were fixed in the same pass.
+
 ## Recommended follow-ups (not done here)
 
 1. **Run the symbolic seam on an x86_64 host** (or build cadabra2 for aarch64)
