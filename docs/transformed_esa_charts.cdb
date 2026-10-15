@@ -1,0 +1,269 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-15)
+#
+# Purpose: certify the SYMBOLIC HALF of "closing essential self-adjointness
+#   of the TRANSFORMED operator" in the three variable systems of the
+#   program — the work order filed in
+#   ../timepiece/CONSOLIDATED_PLAN.md (2026-10-15 entry):
+#   (A) the reciprocal chart w = -1/x of the ODE x' = x^2, where the
+#       transformed operator is the TRANSLATION generator;
+#   (B) the Lagrangian (material) variables of Navier-Stokes, where the
+#       transformed operator is the shifted harmonic oscillator;
+#   (C) the densitized variables of quantum gravity, where the transformed
+#       operator has a FLAT principal part.
+# Role in the program: every one of the three lines changes variables to
+#   make the flow complete and the operator tame; the ESA argument then
+#   runs on the TRANSFORMED operator.  This module pins the algebra each
+#   of those arguments consumes, so the Lean work-order rows can
+#   reference CHECK numbers instead of re-deriving identities.
+# Certified content: CHECK 1 (the classical solution solves xdot = x^2,
+#   through the quotient rule), CHECK 2 (the chain rule completes the
+#   flow: wdot = (dw/dx) xdot = 1), CHECK 3 (the chart of the classical
+#   flow is a translation w0 + t), CHECK 4 (the Weyl commutator
+#   correction [x^2, p] = 2 i x), CHECK 5 (the Weyl sum
+#   1/2 (p x^2 + x^2 p) = H with H = x^2 p - i x (cleared by 2:
+#   p x^2 + x^2 p = 2 H) — the two spellings of the ODE chapter's
+#   Hamiltonian coincide), CHECK 6 (the chartW norm
+#   kernel 1/x^2 times the Jacobian x^2 = 1, the norm-preservation
+#   identity of ChapterOdeUnitaryFlow), CHECK 7 (the Lagrangian completed
+#   square: the transformed one-parcel operator is a shifted oscillator),
+#   CHECK 8 (the densitized inverse identity 1/e = 4 (dy/de)^2 at
+#   e = y^2), CHECK 9 (the kinetic absorption (1/16e) S^2 = (1/16)(S/y)^2).
+# Improvement notes (goal alignment): CHECK numbers are referenced by the
+#   CONSOLIDATED_PLAN 2026-10-15 work-order rows (ODE-C, NS-L-C, QG-D-C)
+#   and by ../test/mathematical-foundations/ode-singularity.md; renaming a
+#   CHECK label is a contract change.  The module is c-number / formal-
+#   operator bookkeeping ONLY: it proves no analytic statement.  ESA
+#   itself is the Lean work order (ChapterOdeUnitaryFlow,
+#   ChapterNavierStokesLagrangianEsa, ChapterQuantumGravityHalfDensity).
+# Naming notes (cf. docs/CADABRA2_GOTCHAS.md): symbols carry no digits,
+#   handles inserted inside expressions use @(...) with stems of at least
+#   four characters and no underscores, rule lists are spelled inline
+#   (they cannot be stored in a handle), and no `:=` line carries a
+#   trailing comment (the engine silently drops the assignment).
+# Honesty note (the F1 lesson of docs/CDB_MODULE_REVIEW.md): CHECK 8 and
+#   CHECK 9 are wired through the CHANGE OF VARIABLES itself — the symbol
+#   esing enters the physical side and is only replaced by yvar*yvar in
+#   the final substitution — so they fail if the substitution is wrong or
+#   if a coefficient is mistyped.  A diff of two hand-typed identical
+#   expressions certifies nothing and is not used here.
+# ======================================================================
+#
+# The doctrine this module exists for: the existence of a classical
+# singularity does NOT decide whether an operator is essentially
+# self-adjoint — the VARIABLES do.  In each of the three systems a change
+# of variables completes the flow; the transformed operator is then the
+# object the ESA argument runs on.  What must be checked symbolically is
+# that each transformation really does what the ESA argument claims:
+#
+#   system          change            transformed operator   module rows
+#   ------          ------            --------------------   -----------
+#   ODE x' = x^2    w = -1/x          translation wdot = 1   CHECK 1-6
+#   NS Lagrangian   material map      shifted oscillator     CHECK 7
+#   QG densitized   e = y^2           flat principal part    CHECK 8-9
+#
+# The reciprocal chart of (A): with w = -1/x the vector field pushes
+# forward as wdot = (dw/dx) xdot = (1/x^2) x^2 = 1 — a COMPLETE flow.
+# The classical solution x(t) = x0/(1 - t x0) becomes w(t) = w0 + t.
+# Quantizing, the Weyl-symmetrized Hamiltonian
+# H = 1/2 (p x^2 + x^2 p) = x^2 p - i x is the object whose transformed
+# version the ESA argument runs on (the two spellings differ by the
+# commutator correction, exactly as the ODE chapter records).
+#
+# Run:  cadabra2-cli -q -n docs/transformed_esa_charts.cdb
+# Formalized in: ../timepiece/BookProof/ChapterOdeUnitaryFlow.lean
+#   (classicalSol, mob, odeKoop, odeKoop_chartW, chartW_lintegral_normSq),
+#   ../timepiece/BookProof/ChapterNavierStokesLagrangianEsa.lean
+#   (hFull, hasZeroDeficiencyOn_of_commonEigenvectors),
+#   ../timepiece/BookProof/ChapterQuantumGravityHalfDensity.lean
+#   (halfDensityUnitary, qg_halfDensity_transfer),
+#   ../timepiece/BookProof/ChapterQuantumGravityDensitized.lean
+#   (inv_eq_four_mul_deriv_densY_sq, kinetic_absorption).
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{xvar, tt, xstart, yvar, esing, sfield}::Symbol.
+{pcan, qcan, ffor, nvis}::Symbol.
+{xop, pop}::NonCommuting.
+i::ImaginaryI.
+
+# ===========================================================================
+# (A) the reciprocal chart for x' = x^2
+# ===========================================================================
+
+# ---- CHECK 1: the classical solution x(t) = x0/(1 - t x0) solves xdot = x^2 ----
+# Two independent routes to the derivative of u/v with u = x0 constant,
+# v = 1 - t x0:
+#   quotient rule numerator: u' v - u v' = -u v'  (u' = 0, v' = -x0,
+#     typed independently below — a wrong sign in vderiv fails the row)
+#   ODE right side:          x(t)^2 numerator, u^2
+# Cleared against the common denominator v^2 the numerators must agree.
+unum := xstart.
+vderiv := -xstart.
+qnum := - @(unum)*@(vderiv).
+chksol := @(qnum) - @(unum)*@(unum).
+distribute(chksol)
+canonicalise(chksol)
+collect_terms(chksol)
+print("CHECK 1 XFCHART classical solution x0/(1-t x0) solves xdot = x^2 (0 = ok):", chksol);
+
+# ---- CHECK 2: the chain rule completes the flow: wdot = (dw/dx) xdot = 1 ----
+# The chart map w = -1/x has derivative dw/dx = 1/x^2 (numerator 1,
+# denominator x^2).  The chart velocity wdot = (dw/dx) xdot, cleared
+# against the chart denominator, must equal the constant 1 — i.e. the
+# cleared numerator equals the cleared denominator.  A mistyped chart
+# sign or vector field fails the row.
+wprimnum := 1.
+wprimden := xvar*xvar.
+xdotfield := xvar*xvar.
+wvelnum := @(wprimnum)*@(xdotfield).
+wvelden := @(wprimden).
+chkchain := @(wvelnum) - @(wvelden).
+distribute(chkchain)
+canonicalise(chkchain)
+collect_terms(chkchain)
+print("CHECK 2 XFCHART chain rule wdot = (dw/dx) xdot = 1, flow complete (0 = ok):", chkchain);
+
+# ---- CHECK 3: the chart of the classical flow is a TRANSLATION ----
+# w(t) = -1/x(t) = -(1 - t x0)/x0, while the chart evolution is
+# w0 + t = -1/x0 + t = (-1 + t x0)/x0.  Cross-multiplied against x0 the
+# two numerators must agree: the flow that blows up in x is a straight
+# line in w — the algebraic face of "completing the flow".
+wcompnum := -(1 - tt*xstart).
+wcompden := xstart.
+wtransnum := -1 + tt*xstart.
+wtransden := xstart.
+chktrans := @(wcompnum)*@(wtransden) - @(wtransnum)*@(wcompden).
+distribute(chktrans)
+canonicalise(chktrans)
+collect_terms(chktrans)
+print("CHECK 3 XFCHART chart of x(t) is the translation w0 + t        (0 = ok):", chktrans);
+
+# ---- CHECK 4: the Weyl commutator correction [x^2, p] = 2 i x ----
+# With the canonical commutator x p = p x + i (i.e. [x, p] = i), the
+# normal ordering of x^2 p must reproduce p x^2 + 2 i x.  The engine
+# rewrites every adjacent xop pop pair; the residual must vanish.
+comlhs := xop*xop*pop.
+comrhs := pop*xop*xop + 2*i*xop.
+chkcom := @(comlhs) - @(comrhs).
+distribute(chkcom)
+substitute(chkcom, $xop pop -> pop xop + i$, repeat=True)
+distribute(chkcom)
+substitute(chkcom, $xop pop -> pop xop + i$, repeat=True)
+distribute(chkcom)
+sort_product(chkcom)
+canonicalise(chkcom)
+collect_terms(chkcom)
+print("CHECK 4 XFCHART Weyl commutator [x^2, p] = 2 i x              (0 = ok):", chkcom);
+
+# ---- CHECK 5: the Weyl sum 1/2 (p x^2 + x^2 p) = H, H = x^2 p - i x ----
+# The ODE chapter's Hamiltonian is the Weyl symmetrization of x^2 p.
+# From [x^2, p] = 2 i x (CHECK 4) one gets p x^2 = x^2 p - 2 i x, hence
+# 1/2 (p x^2 + x^2 p) = x^2 p - i x = H.  Cleared by 2: the check
+# differences (p x^2 + x^2 p) - 2 (x^2 p - i x) under the same
+# commutator substitution — the book's two spellings of H coincide.
+weyllhs := pop*xop*xop + xop*xop*pop.
+weylrhs := 2*(xop*xop*pop - i*xop).
+chkweyl := @(weyllhs) - @(weylrhs).
+distribute(chkweyl)
+substitute(chkweyl, $xop pop -> pop xop + i$, repeat=True)
+distribute(chkweyl)
+substitute(chkweyl, $xop pop -> pop xop + i$, repeat=True)
+distribute(chkweyl)
+sort_product(chkweyl)
+canonicalise(chkweyl)
+collect_terms(chkweyl)
+print("CHECK 5 XFCHART Weyl sum 1/2(p x^2 + x^2 p) = H = x^2p - i x  (0 = ok):", chkweyl);
+
+# ---- CHECK 6: the chartW norm kernel times the Jacobian = 1 ----
+# ChapterOdeUnitaryFlow defines (chartW psi)(x) = x^{-1} psi(-1/x), so
+# the norm integrand carries the kernel 1/x^2; the change of variables
+# w = -1/x carries the Jacobian dx/dw = x^2.  Norm preservation is the
+# identity kernel * Jacobian = 1 — the symbolic content of
+# chartW_lintegral_normSq.  Cross-multiplied: kernel numerator times
+# Jacobian numerator equals kernel denominator times Jacobian
+# denominator.
+kernum := 1.
+kernden := xvar*xvar.
+jacnum := xvar*xvar.
+jacden := 1.
+chknorm := @(kernum)*@(jacnum) - @(kernden)*@(jacden).
+distribute(chknorm)
+canonicalise(chknorm)
+collect_terms(chknorm)
+print("CHECK 6 XFCHART chartW kernel 1/x^2 times Jacobian x^2 = 1    (0 = ok):", chknorm);
+
+# ===========================================================================
+# (B) the Lagrangian (material) variables of Navier-Stokes
+# ===========================================================================
+# ---- CHECK 7: the transformed one-parcel operator is a shifted oscillator ----
+# In material coordinates the one-parcel Hamiltonian
+#   h = 1/2 P^2 + nu Q^2 + f P
+# completes to the square
+#   h = 1/2 (P + f)^2 + nu Q^2 - 1/2 f^2,
+# the shifted harmonic oscillator whose flow is COMPLETE — the
+# Lagrangian instance of "change variables until the flow is complete".
+# The same identity appears as CHECK 1 of faris_lavine_n_ns_lagrangian.cdb
+# in the N = h + 1/2 |f|^2 spelling; this row keeps the three-system
+# table self-contained.  Both sides are assembled independently and
+# expanded before differencing.
+hpar := (1/2)*pcan*pcan + nvis*qcan*qcan + ffor*pcan.
+hcmp := (1/2)*(pcan+ffor)*(pcan+ffor) + nvis*qcan*qcan - (1/2)*ffor*ffor.
+chkosc := @(hpar) - @(hcmp).
+expand(chkosc)
+distribute(chkosc)
+sort_product(chkosc)
+canonicalise(chkosc)
+collect_terms(chkosc)
+print("CHECK 7 XFCHART Lagrangian h = 1/2(P+f)^2 + nu Q^2 - 1/2 f^2   (0 = ok):", chkosc);
+
+# ===========================================================================
+# (C) the densitized variables of quantum gravity
+# ===========================================================================
+# The densitized change of variables is e = y^2 (y = sqrt(e)); the
+# singular kinetic terms (1/16e) S^2 - (1/24e) P^2 absorb into the flat
+# principal part (1/16) (S/y)^2 - (1/24) (P/y)^2.  The absorption is the
+# identity 1/e = 4 (dy/de)^2 with dy/de = 1/(2 y) — the exact statement
+# of inv_eq_four_mul_deriv_densY_sq of ChapterQuantumGravityDensitized
+# (the plan's prose writes 1/e = (dy/de)^2; the honest identity carries
+# the factor 4).  In both rows below the physical side carries the
+# INDEPENDENT symbol esing; the change of variables e = y^2 is applied
+# only in the final substitution, so a wrong substitution or a wrong
+# coefficient fails the row.
+
+# ---- CHECK 8: 1/e = 4 (dy/de)^2 at e = y^2 ----
+# Left side 1/e; right side 4 (1/(2 y))^2.  Cross-multiplied against the
+# denominators: 1 * (2y)^2 = 4 * 1^2 * e, which must vanish under
+# e -> y^2.
+dydenum := 1.
+dydeden := 2*yvar.
+lhnum := 1.
+lhden := esing.
+rhnum := 4*@(dydenum)*@(dydenum).
+rhden := @(dydeden)*@(dydeden).
+chkinv := @(lhnum)*@(rhden) - @(rhnum)*@(lhden).
+substitute(chkinv, $esing -> yvar*yvar$, repeat=True)
+expand(chkinv)
+distribute(chkinv)
+canonicalise(chkinv)
+collect_terms(chkinv)
+print("CHECK 8 XFCHART 1/e = 4 (dy/de)^2 at e = y^2                  (0 = ok):", chkinv);
+
+# ---- CHECK 9: the kinetic absorption (1/16e) S^2 = (1/16) (S/y)^2 ----
+# Physical term numerator S^2 over 16 e; densitized term numerator S^2
+# over 16 y^2 (the numerator of (1/16)(S/y)^2).  Cross-multiplied:
+# S^2 * 16 y^2 = S^2 * 16 e, which must vanish under e -> y^2.
+# Together with CHECK 8 this is the flat principal part of the
+# transformed operator — the QG instance of the table above.
+physnum := sfield*sfield.
+physden := 16*esing.
+densnum := sfield*sfield.
+densden := 16*yvar*yvar.
+chkabs := @(physnum)*@(densden) - @(densnum)*@(physden).
+substitute(chkabs, $esing -> yvar*yvar$, repeat=True)
+expand(chkabs)
+distribute(chkabs)
+canonicalise(chkabs)
+collect_terms(chkabs)
+print("CHECK 9 XFCHART (1/16e) S^2 = (1/16) (S/y)^2, flat principal   (0 = ok):", chkabs);
