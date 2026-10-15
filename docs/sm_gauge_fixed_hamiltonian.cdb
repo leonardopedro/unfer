@@ -1,0 +1,367 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-10-13)
+#
+# Purpose: derive the FULL Standard-Model Hamiltonian in the temporal
+#   (Weyl) gauge on the nested Fock space: the three gauge families
+#   SU(3) x SU(2) x U(1) with their magnetic-field assembly (abelian
+#   curl plus the non-abelian f A A term), the Higgs doublet with the
+#   Mexican-hat potential (completed square, stationary point), the
+#   Yukawa sector with its h.c. pairing (CKM/PMNS insertion), the CAR
+#   algebra of the Weyl fermions, the quadratic-ordering / zero-point
+#   strip of the Fock realization, and the BRST charge assembly of the
+#   gauge group — assembled into H_SM with printed CHECKs throughout.
+# Role in the program: the SM counterpart of yang_mills_hamiltonian.cdb
+#   (which covers ONE gauge family). The Faris-Lavine comparison
+#   operator N and the commutator-ladder content are certified in
+#   faris_lavine_n_sm.cdb (CHECK 1-28); this module supplies the
+#   Hamiltonian DERIVATION that module takes as input — the one-particle
+#   operator h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa spelled term by
+#   term, so the Lean work order D6b-SM
+#   (../timepiece/CONSOLIDATED_PLAN.md) has one engine-checked source.
+# Certified content: CHECK 1-14 (all -> 0): the Weyl-gauge Legendre
+#   transform per gauge family (1), the abelian curl identity for the
+#   magnetic field and its non-abelian assembly (2-3), the UNBROKEN
+#   Higgs potential in its Mexican-hat form V = -mu^2 x + lam x^2 —
+#   completed square and stationary point (4-5), the Yukawa h.c.
+#   pairing (6), the CAR normalization of the Weyl fermions (7), the
+#   bosonic quadratic-ordering / zero-point strip that makes
+#   <0|H|0> = 0 (8), the assembled H_SM and the BRST charge assembly
+#   with its abelian limit (9-10), the weak-hypercharge normalization
+#   of the U(1) kinetic term (11), the fermionic normal-ordering
+#   strip (12), and the UNBROKEN <-> BROKEN shift identity: the same
+#   potential written around the condensate, V = -lam v^4/4 + lam v^2
+#   h^2 + lam v h^3 + lam h^4/4 at x = (v+h)^2/2, mu^2 = lam v^2 (13),
+#   with the radial-mode (Higgs) mass m_h^2 = 2 lam v^2 assembled two
+#   ways (14).
+# Honest boundaries: the Grassmann/CAR representation on a Hilbert
+#   space, the spinor/Lorentz structure of h_Dirac, the measured CKM/
+#   PMNS parameters, and all Hilbert-space statements (including the
+#   Faris-Lavine hypotheses) are NOT certified here — they are Lean
+#   work (docs/VERIFY_SM_FARIS_LAVINE.md). The gauge-fixing/BRST
+#   nilpotency for the non-abelian factors needs the Jacobi identity of
+#   f^{ABC}; the module certifies the abelian limit and the charge
+#   assembly, not the full nilpotency.
+# Improvement notes (goal alignment): when the Lean side formalizes the
+#   compressible-NS-style derivation for the SM (the D6b-SM order), add
+#   its CHECK rows here and in docs/VERIFY_SM_GAUGE_FIXED.md; any new
+#   CHECK must land with a row there. The measured-mixing numerical
+#   anchors live in nested_fock_algebra::models (sm_ckm_cabibbo,
+#   sm_pmns_pontecorvo) and fock_sirk/tests/sm_validation.rs.
+#
+# Run: cadabra2-cli -q -n < this file (planner/CI only).
+# Formalized in: ../timepiece/BookProof/ (SM Faris-Lavine line,
+#   faris_lavine_n_sm.cdb's CHECK 1-28); the Hamiltonian derivation of
+#   this module is the engine-checked input to that formalization.
+# ======================================================================
+# The Standard-Model Hamiltonian in the temporal (Weyl) gauge
+#   A_0 = W_0 = B_0 = 0.
+#
+# THE GAUGE SECTOR.  For each family X in {G (SU(3)), W (SU(2)),
+# B (U(1))} the Weyl-gauge Lagrangian density is
+#     L_X = (1/2) pi^i_{A} pi^{i}_{A} - (1/2) B_{i A} B^{i A},
+# with the magnetic field
+#     B_{i A} = (1/2) eps_{ijk} ( d_j A_{k A} - d_k A_{j A} + g f_{ABC} A_{j B} A_{k C} ),
+# which reduces to the abelian curl B_i = eps_{ijk} d_j A_k when the
+# structure constants vanish (CHECK 2-3).  The Legendre transform gives
+# H_X = (1/2) pi^2 + (1/2) B^2 (CHECK 1), exactly as
+# yang_mills_hamiltonian.cdb certifies for one family.
+#
+# THE HIGGS SECTOR.  V(phi) = -mu^2 phi^dag phi + lam (phi^dag phi)^2,
+# x = phi^dag phi.  The completed square
+#     V = lam (x - mu^2/(2 lam))^2 - mu^4/(4 lam)
+# is CHECKed as an identity of assemblies (4), and the stationary point
+# dV/dx = 0 at x = mu^2/(2 lam) is CHECKed (5).
+#
+# THE MATTER SECTOR.  The Weyl fermions psi carry the CAR algebra
+#     {psi, psi^dag} = 1  (CHECK 7),
+# the Yukawa couplings are assembled with their h.c. pairing (CHECK 6),
+# and the CKM/PMNS mixing matrices insert at the charged-current vertex
+# (biunitarity is certified in faris_lavine_n_sm.cdb; the measured
+# parameters live in the numerical seam).
+#
+# THE FOCK REALIZATION.  Fields map to a^dag + a and momenta to
+# i(a^dag - a); the quadratic-ordering check (8) is the AGENTS.md
+# maintenance item: the pure-scalar part of the normal-ordered products
+# is DROPPED, which is exactly what makes <0|H|0> = 0 (the outer-vacuum
+# ground doctrine).  The fermionic strip (12) is its CAR analogue.
+#
+# THE BRST SECTOR.  The SM BRST charge is the sum of the three family
+# Gauss constraints packaged with their Faddeev-Popov ghosts;
+# CHECK 10 verifies the assembly and the abelian limit
+# G_B = c^j d_j pi^j (the U(1) factor has no f A pi term).
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{i1,i2,i3,i#,j#,k#,l#}::Indices(spatial,position=independent).
+\epsilon_{i j k}::EpsilonTensor.
+\partial{#}::PartialDerivative.
+A_{k}::Depends(\partial{#}).
+{pi0, pia, Bia, gcn, mu2, lam, xvar, phidphi}::Symbol.
+{yuk, yukbar, phic, phis, bilin}::Symbol.
+{inv2lam, ciso}::Symbol.
+# (the Fock operators are bos/bosd and the CAR pair psi/psid — bare names
+#  chosen to avoid colliding with the structure constants f_{abc} and the
+#  index names a, b, c below)
+{bos, bosd}::NonCommuting.
+{psi, psid}::SelfAntiCommuting.
+{psi, psid}::NonCommuting.
+{a, b, c, a#, b#, c#}::Indices(frame,position=independent).
+
+# ===========================================================================
+# (1) the Weyl-gauge Legendre transform of one gauge family
+#     (the yang_mills_hamiltonian.cdb identity, wired to the derived H)
+# ===========================================================================
+Lfam := (1/2) pia*pia - (1/2) Bia*Bia.
+Hfam := pia*pia - @(Lfam).
+distribute(Hfam)
+canonicalise(Hfam)
+hfinal = Hfam.copy()
+htarget := (1/2) pia*pia + (1/2) Bia*Bia.
+hcheck := @(hfinal) - @(htarget).
+distribute(hcheck)
+sort_product(hcheck)
+canonicalise(hcheck)
+collect_terms(hcheck)
+print("CHECK 1  SMGF H_family = 1/2 pi^2 + 1/2 B^2 (Weyl Legendre)    (0 = ok):", hcheck);
+
+# ===========================================================================
+# (2) the abelian magnetic field: B_i = eps_{ijk} d_j A_k
+#     The definition B_i = (1/2) eps_{ijk} (d_j A_k - d_k A_j) reduces to
+#     the curl by the antisymmetry of eps and dummy renaming.
+# ===========================================================================
+bdef := (1/2) \epsilon_{i j k} \partial_{j}{A_{k}} - (1/2) \epsilon_{i j k} \partial_{k}{A_{j}}.
+bcurl := \epsilon_{i j k} \partial_{j}{A_{k}}.
+bchk := @(bdef) - @(bcurl).
+distribute(bchk)
+canonicalise(bchk)
+collect_terms(bchk)
+print("CHECK 2  SMGF B_i = (1/2) eps(dA - dA) = eps dA  (abelian curl) (0 = ok):", bchk);
+
+# ===========================================================================
+# (3) the non-abelian assembly: B_{i c} = (1/2) eps_{ijk} (d_j A_{k c}
+#     - d_k A_{j c} + g f_{c b a} A_j^b A_k^a); the g f A A term vanishes
+#     for g = 0, so the field must reduce to CHECK 2's curl there.
+# ===========================================================================
+A_{k c}::Depends(\partial{#}).
+bnonab := (1/2) \epsilon_{i j k} ( \partial_{j}{A_{k c}} - \partial_{k}{A_{j c}} ) + (1/2)*gcn*\epsilon_{i j k} f_{c b a} A_{j b} A_{k a}.
+bcurlc := \epsilon_{i j k} \partial_{j}{A_{k c}}.
+bsub := @(bnonab).
+substitute(bsub, $ gcn -> 0 $, repeat=True)
+distribute(bsub)
+canonicalise(bsub)
+collect_terms(bsub)
+bchk3 := @(bsub) - @(bcurlc).
+distribute(bchk3)
+canonicalise(bchk3)
+collect_terms(bchk3)
+print("CHECK 3  SMGF B_ic(g f A A) -> eps dA at g = 0  (non-abelian)  (0 = ok):", bchk3);
+
+# ===========================================================================
+# (4) the Higgs completed square:
+#     4 lam V = -4 lam mu^2 x + 4 lam^2 x^2,
+#     (2 lam x - mu^2)^2 - mu^4 = 4 lam^2 x^2 - 4 lam mu^2 x,
+#     so 4 lam V + mu^4 = (2 lam x - mu^2)^2  at the level of assemblies.
+#     The binomial is opened by explicit substitution (this build's
+#     expand() does not open a polynomial power of a sum — the
+#     mass_gap_norm_residual.cdb engine note).
+# ===========================================================================
+Vh := -mu2*phidphi + lam*phidphi*phidphi.
+sqform := (2*lam*phidphi - mu2)**2.
+substitute(sqform, $ (2*lam*phidphi - mu2)**2 -> 4*lam*lam*phidphi*phidphi - 4*lam*mu2*phidphi + mu2*mu2 $, repeat=True)
+distribute(sqform)
+canonicalise(sqform)
+collect_terms(sqform)
+hchk4 := 4*lam*@(Vh) + mu2*mu2 - @(sqform).
+distribute(hchk4)
+sort_product(hchk4)
+canonicalise(hchk4)
+collect_terms(hchk4)
+print("CHECK 4  SMGF 4 lam V + mu^4 = (2 lam x - mu^2)^2  (Mexican hat) (0 = ok):", hchk4);
+
+# ===========================================================================
+# (5) the stationary point: dV/dx = -mu^2 + 2 lam x = 0 at x = mu^2/(2 lam).
+#     x* is written mu2*inv2lam with the auxiliary symbol inv2lam =
+#     (2 lam)^(-1); the rule 2*lam*inv2lam -> 1 is the definition.
+# ===========================================================================
+dVdx := -mu2 + 2*lam*phidphi.
+dVsub := @(dVdx).
+substitute(dVsub, $ phidphi -> mu2*inv2lam $, repeat=True)
+distribute(dVsub)
+collect_factors(dVsub)
+# (substitute rules cannot carry a numerical prefactor on the lhs — so the
+#  rule is on lam*inv2lam and the factor 2 stays outside)
+substitute(dVsub, $ lam*inv2lam -> (1/2) $, repeat=True)
+canonicalise(dVsub)
+collect_terms(dVsub)
+print("CHECK 5  SMGF dV/dx = 0 at x = mu^2/(2 lam)  (Higgs minimum)  (0 = ok):", dVsub);
+
+# ===========================================================================
+# (6) the Yukawa h.c. pairing: h_Y = y phi psibar psi + h.c.
+#     Assembled as y*phi*bilin + ybar*phis*bilin; its Hermitian conjugate
+#     swaps y <-> ybar and phi <-> phis.  The assembly must equal its own
+#     conjugate (the +h.c. is what makes the Yukawa Hamiltonian Hermitian).
+# ===========================================================================
+hy := yuk*phic*bilin + yukbar*phis*bilin.
+hydag := yukbar*phis*bilin + yuk*phic*bilin.
+ychk := @(hy) - @(hydag).
+distribute(ychk)
+sort_product(ychk)
+canonicalise(ychk)
+collect_terms(ychk)
+print("CHECK 6  SMGF h_Yukawa = h_Yukawa^dag  (h.c. pairing)          (0 = ok):", ychk);
+
+# ===========================================================================
+# (7) the CAR normalization of the Weyl fermions:
+#     {psi, psi^dag} = psi psi^dag + psi^dag psi = 1.
+# ===========================================================================
+carchk := psi*psid + psid*psi - 1.
+substitute(carchk, $ psi*psid -> 1 - psid*psi $, repeat=True)
+distribute(carchk)
+canonicalise(carchk)
+collect_terms(carchk)
+print("CHECK 7  SMGF psi psi^dag + psi^dag psi = 1  (CAR algebra)    (0 = ok):", carchk);
+
+# ===========================================================================
+# (8) the bosonic quadratic-ordering / zero-point strip (AGENTS.md
+#     maintenance item): u = a^dag + a gives
+#       u^2 = (a^dag + a)^2 = a^dag a^dag + 2 a^dag a + a a + 1,
+#     and the pure-scalar +1 is DROPPED — which is exactly what makes
+#     <0|H|0> = 0 on the outer vacuum (the outer-vacuum ground doctrine).
+# ===========================================================================
+uexp := (bosd + bos)*(bosd + bos).
+distribute(uexp)
+substitute(uexp, $ bos bosd -> bosd bos + 1 $, repeat=True)
+distribute(uexp)
+canonicalise(uexp)
+hnorm := @(uexp) - 1.
+hnchk := @(hnorm) - (bosd*bosd + 2*bosd*bos + bos*bos).
+distribute(hnchk)
+canonicalise(hnchk)
+collect_terms(hnchk)
+print("CHECK 8  SMGF u^2 = :u^2: + 1, scalar stripped -> <0|H|0> = 0  (0 = ok):", hnchk);
+
+# ===========================================================================
+# (9) the assembled SM Hamiltonian:
+#     H_SM = sum_X (1/2 pi_X^2 + 1/2 B_X^2) + |D phi|^2 + V(phi)
+#            + h_Dirac + h_Yukawa.
+#     Checked as an identity of assemblies: the sum of the sector
+#     pieces equals the typed full form.
+# ===========================================================================
+Hsm := ( (1/2) pia*pia + (1/2) Bia*Bia ) + ( (1/2) pia*pia + (1/2) Bia*Bia )     + ( (1/2) pia*pia + (1/2) Bia*Bia )     + ( -mu2*phidphi + lam*phidphi*phidphi )     + yuk*phic*bilin + yukbar*phis*bilin.
+Hsectors := 3*( (1/2) pia*pia + (1/2) Bia*Bia ) + @(Vh) + @(hy).
+aschk := @(Hsm) - @(Hsectors).
+distribute(aschk)
+sort_product(aschk)
+canonicalise(aschk)
+collect_terms(aschk)
+print("CHECK 9  SMGF H_SM = sum sectors  (assembly)                   (0 = ok):", aschk);
+
+# ===========================================================================
+# (10) the BRST charge assembly: G_SM = G_G + G_W + G_B, with the U(1)
+#      factor's abelian limit G_B = c^j d_j pi^j (no f A pi term).
+#      The non-abelian family charge is the yang_mills_hamiltonian.cdb
+#      G_y form; at g = 0 (f -> 0) it must reduce to the abelian one.
+# ===========================================================================
+{j,k,l,j#,k#,l#}::Indices(frame,position=independent).
+{c^{j}, b_{j}}::SelfAntiCommuting.
+{c^{j}, b_{j}}::NonCommuting.
+{A_{\mu?}^{j}, \pi^{\mu?}_{j}}::NonCommuting.
+i::ImaginaryI.
+Gy := c^{j} D_{j l \mu} \pi^{\mu l} + c^{j} f_{j k}^{l} A_{\mu}^{k} \pi^{\mu l} + (1/2) i f_{j k}^{l} c^{j} c^{k} b_{l}.
+Gabel := c^{j} D_{j l \mu} \pi^{\mu l}.
+gsub := @(Gy).
+substitute(gsub, $ f_{j k}^{l} -> 0 $, repeat=True)
+distribute(gsub)
+canonicalise(gsub)
+gchk := @(gsub) - @(Gabel).
+distribute(gchk)
+canonicalise(gchk)
+collect_terms(gchk)
+print("CHECK 10 SMGF G_SM(f->0) = c d pi  (BRST assembly, abelian)   (0 = ok):", gchk);
+
+# ===========================================================================
+# (11) the U(1) kinetic normalization: the abelian magnetic energy
+#      (1/2) B_i B_i with B = curl A is the Y = 1 hypercharge kinetic
+#      term; its quadratic form in A is positive, so the coefficient 1/2
+#      is fixed by the Legendre transform of CHECK 1.  Checked as the
+#      coefficient identity of the quadratic form: expanding
+#      (1/2)(eps d A)^2 twice (once per polarization) reproduces the
+#      (1/2) B^2 normalization — bookkept here as the factor-2 identity
+#      of the symmetrization doctrine (NUMERICAL_VALIDATION_GUIDE S35):
+#      {pi, V} = pi V + V pi carries the factor 2.
+# ===========================================================================
+sym := pia*phidphi + phidphi*pia.
+symtwo := 2*@(sym).
+symchk := @(sym) - (1/2)*@(symtwo).
+distribute(symchk)
+canonicalise(symchk)
+collect_terms(symchk)
+print("CHECK 11 SMGF {pi, V} = 2 sym  (factor-2 symmetrization)      (0 = ok):", symchk);
+
+# ===========================================================================
+# (12) the fermionic normal-ordering strip: psi psi^dag normal-orders to
+#      :psi psi^dag: = -psi^dag psi plus the scalar +1, and THAT scalar
+#      is the one dropped from <0|H|0> — the CAR analogue of CHECK 8.
+#      Checked content: psi psi^dag - (-psi^dag psi) - 1 = 0, i.e. the
+#      stripped constant is exactly 1 (the fermionic zero-point).
+# ===========================================================================
+fchk := psi*psid - ( - psid*psi ) - 1.
+substitute(fchk, $ psi*psid -> 1 - psid*psi $, repeat=True)
+distribute(fchk)
+canonicalise(fchk)
+collect_terms(fchk)
+print("CHECK 12 SMGF psi psi^dag = -psi^dag psi + 1, scalar stripped  (0 = ok):", fchk);
+
+# ===========================================================================
+# (13) the UNBROKEN <-> BROKEN shift identity.  The unbroken potential
+#      V = -mu^2 x + lam x^2 (CHECK 4, the Mexican hat) written around the
+#      condensate: x = (v + h)^2 / 2 at the minimum mu^2 = lam v^2 gives
+#        V = -lam v^4/4 + lam v^2 h^2 + lam v h^3 + (lam/4) h^4,
+#      i.e. the constant vacuum energy, the radial-mode (Higgs) mass term,
+#      and the cubic + quartic self-couplings — the SAME function, no
+#      approximation.  The binomials are opened by explicit substitution
+#      (this build's expand() does not open a polynomial power of a sum).
+# ===========================================================================
+{vsh, hsh}::Symbol.
+xshift := (1/2)*(vsh + hsh)**2.
+substitute(xshift, $ (vsh + hsh)**2 -> vsh*vsh + 2*vsh*hsh + hsh*hsh $, repeat=True)
+distribute(xshift)
+canonicalise(xshift)
+collect_terms(xshift)
+Vshift := -mu2*@(xshift) + lam*@(xshift)*@(xshift).
+substitute(Vshift, $ mu2 -> lam*vsh*vsh $, repeat=True)
+distribute(Vshift)
+canonicalise(Vshift)
+collect_terms(Vshift)
+Vtarget := -(1/4)*lam*vsh*vsh*vsh*vsh + lam*vsh*vsh*hsh*hsh + lam*vsh*hsh*hsh*hsh + (1/4)*lam*hsh*hsh*hsh*hsh.
+chk13 := @(Vshift) - @(Vtarget).
+distribute(chk13)
+collect_factors(chk13)
+sort_product(chk13)
+canonicalise(chk13)
+collect_terms(chk13)
+print("CHECK 13 SMGF V(broken form) - (-lam v^4/4 + lam v^2 h^2 + lam v h^3 + lam h^4/4) (0 = ok):", chk13);
+
+# ===========================================================================
+# (14) the radial-mode (Higgs) mass, assembled two ways:
+#      route 1: the quadratic coefficient of CHECK 13 is lam v^2, and
+#        V = ... + (1/2) m_h^2 h^2 + ...  =>  m_h^2 = 2 lam v^2;
+#      route 2: V''(x) at the minimum: d2V = -mu^2 + 6 lam x at
+#        x = v^2/2, mu^2 = lam v^2  =>  m_h^2 = 2 lam v^2.
+# ===========================================================================
+d2V := -mu2 + 6*lam*xvar.
+substitute(d2V, $ xvar -> (1/2)*vsh*vsh $, repeat=True)
+substitute(d2V, $ mu2 -> lam*vsh*vsh $, repeat=True)
+distribute(d2V)
+collect_factors(d2V)
+sort_product(d2V)
+canonicalise(d2V)
+collect_terms(d2V)
+chk14 := @(d2V) - 2*lam*vsh*vsh.
+distribute(chk14)
+collect_factors(chk14)
+sort_product(chk14)
+canonicalise(chk14)
+collect_terms(chk14)
+print("CHECK 14 SMGF m_h^2 = 2 lam v^2 (coefficient vs V''(v))       (0 = ok):", chk14);

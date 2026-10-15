@@ -1,0 +1,347 @@
+# =====================================================================
+# MODULE DOCUMENTATION (2026-10-14)
+#
+# Purpose: the momentum-space product algebra in three steps — (i) a
+#   derivative at a point becomes a polynomial symbol on one momentum leg,
+#   (ii) a product of fields at one point in space becomes a convolution
+#   of their transforms (total-momentum delta), and (iii) a QUARTIC
+#   expression in the field at one point in space is rewritten, exactly,
+#   as a QUADRATIC expression in the composite field at different points
+#   of momentum space.  The composite psi_Q = sum_p u_p u_{Q-p} is itself
+#   a convolution, so the rewriting is: quartic in the elementary modes at
+#   one spatial point  <=>  quadratic in the composite at momentum points
+#   Q and -Q (equivalently, coefficient-wise, [F^4]_R = sum_Q psi_Q psi_{R-Q}).
+# Role in the program: the commutative (c-number) bookkeeping engine behind
+#   the Fourier-elimination strategy (docs/ns_qg_fourier_elimination.cdb,
+#   the sibling module: jet elimination u_{i,j} -> i k_j u_i) and behind the
+#   outer-Fock reading of the same identity: because the nested
+#   construction has ONE outer Fock system, pair composites a(p)a(Q-p) at
+#   different momentum points are operators on that same space, and the
+#   quartic same-point interaction is a quadratic form in them (the
+#   two-particle sector, dGamma of the two-body kernel).
+# Certified content (all CHECK rows at their advertised values):
+#   1-2   the product-to-convolution theorem on a three-mode grid (sizes
+#         pinned: the pointwise product expands to 9 monomials, collects
+#         to 6; the convolution side likewise),
+#   3-4   the derivative is a symbol on the integration LEG (u_p -> i p u_p)
+#         and rides inside the convolution,
+#   5     the leg weight is NOT the total-momentum weight (expect nonzero),
+#   6     the completion of squares (i p).(i q) = |p|^2/2 + |q|^2/2
+#         - |p+q|^2/2 — the identity that transfers derivative weights
+#         onto the composite,
+#   7-10  the quartic-at-one-point = quadratic-in-the-composite identity,
+#         coefficient by coefficient and at zero total momentum, with
+#         sizes pinned (under the momentum table the quartic side carries
+#         15 monomials, the pairing side 15, the zero-mode coefficient 3
+#         against the pairing's 3),
+#   11-13 degree probes (composite quadratic; pairing and quartic both
+#         degree 4 — the replacement does not change the degree),
+#   14    the convolution index convention: (Q - p) differs from (Q + p)
+#         on an inversion-asymmetric transform (expect nonzero), the
+#         negative control for the S47 sign convention.
+# Improvement notes: this module is c-number bookkeeping ONLY — no ladder
+#   operators, no normal ordering, no commutators.  The operator statement
+#   (the quartic outer-Fock interaction as a quadratic form in pair
+#   composites) lives in Lean (ChapterFockCubicQuarticStability carries the
+#   mode-diagonal quartic; ChapterNsAdvectionConvolution the advection
+#   convolution) and in the reader-facing page
+#   ../test/mathematical-foundations/momentum-space-products.md.
+# Naming notes (cf. docs/CADABRA2_GOTCHAS.md): symbols carry no digits,
+#   handles inserted inside expressions use @(...), rule lists are spelled
+#   inline (they cannot be stored in a handle), no `:=` line carries a
+#   trailing comment, and the E-substitution is the momentum table
+#   (E_a E_b -> E_{a+b}) for the toy grid below.
+# =====================================================================
+
+# Momentum-space products: convolutions as products of derivatives, and the
+# quartic -> quadratic composite rewriting.
+#
+# Run:  cadabra2-cli -q -n docs/momentum_space_products.cdb
+# Formalized in: ../timepiece/BookProof/ChapterNsAdvectionConvolution.lean (product -> convolution,
+#   derivative as symbol), ../timepiece/Book/FourierElimination.lean (tag "fourier-elimination" —
+#   the elimination these products serve).  The composite pairing of CHECK 7-9 is CAS bookkeeping
+#   at the c-number level; its operator form is stated (not proved) in
+#   ../test/mathematical-foundations/momentum-space-products.md.
+#
+# What this module is for.  The plan of record writes products of fields —
+# and of their spatial derivatives — at ONE point of space as convolutions
+# of the momentum modes, and the current idea to push further is that a
+# QUARTIC same-point expression (four mode factors, e.g. the normal-ordered
+# interaction :phi(x)^4:) is exactly a QUADRATIC expression in the composite
+# psi_Q = sum_p u_p u_{Q-p}: quartic at one spatial point in the elementary
+# modes <=> quadratic in psi at different points (Q and -Q) of momentum
+# space.  The toy model is one-dimensional with three modes p in {-1,0,1}:
+#
+#   F       = um E_{-1} + uo E_0 + up E_{+1}      (the field at a point;
+#                                                  E_a E_b -> E_{a+b} is
+#                                                  momentum conservation)
+#   u_p     = 0 for |p| > 1                       (out-of-grid modes dropped)
+#   psi_Q   = sum_p u_p u_{Q-p}                   (the composite: a convolution)
+#
+# The E-substitution table below IS the momentum-conservation bookkeeping:
+# every CHECK compares an expression built by expanding a pointwise product
+# (and applying the table) against the same quantity built independently
+# from the convolution index formula, so a wrong table entry or a wrong
+# index sign fails the row.  Sizes are pinned so a collapse fails the label.
+#
+# Naming/convention notes (learned from the engine, cf.
+# docs/CADABRA2_GOTCHAS.md): every symbol is declared ::Symbol, no name
+# carries digits, handles inserted inside expressions use @(...), rule
+# lists are spelled inline (they cannot be stored in a handle), and the
+# letter labels of E are spelled with m/o/p prefixes because digits are
+# not allowed in names (E_{-2} is written Emm, E_{+4} is Epppp).
+
+# ===========================================================================
+# declarations
+# ===========================================================================
+{um, uo, up, Emmmm, Emmm, Emm, Em, Eo, Ep, Epp, Eppp, Epppp}::Symbol.
+{t, pla, plb, plc, qla, qlb, qlc}::Symbol.
+i::ImaginaryI.
+
+# the composite psi_Q (the convolution), Q = -2..2; out-of-grid modes are 0:
+#   psi_{-2} = sum_p u_p u_{-2-p} = u_{-1}u_{-1}   (psA)
+#   psi_{-1} = u_{-1}u_0 + u_0u_{-1}               (psB)
+#   psi_0    = u_{-1}u_1 + u_0u_0 + u_1u_{-1}      (psC)
+#   psi_1    = u_0u_1 + u_1u_0                     (psD)
+#   psi_2    = u_1u_1                              (psE)
+# NOTE: no trailing comments on `:=` lines anywhere in this module — the
+# engine silently drops the assignment and the failure surfaces lines later
+# as `Python object '...' does not exist`; and size captures use plain
+# Python `x = len(ex)` — `x := len(ex)` pushes the right-hand side through
+# the expression parser and silently swallows the rest of the file
+# (cf. docs/CADABRA2_GOTCHAS.md).
+psA := um*um.
+psB := um*uo + uo*um.
+psC := um*up + uo*uo + up*um.
+psD := uo*up + up*uo.
+psE := up*up.
+
+# ===========================================================================
+# (A) product -> convolution:  F^2 at one point vs sum_Q psi_Q E_Q
+#     The pointwise square is 9 products of mode factors; Cadabra's
+#     distribute already collects them into 6 monomials, and the E-table
+#     groups them by total momentum.  The convolution side is
+#     built from the index formula psi_Q = sum_p u_p u_{Q-p} and must agree.
+# ===========================================================================
+fldx := um*Em + uo*Eo + up*Ep.
+
+# the momentum table: E_a E_b -> E_{a+b} for every pair on the toy grid
+# (both factor orders are listed, so the rule fires regardless of sorting).
+# Every product below carries exactly two E factors (one per mode factor),
+# so a single rule application normal-orders the momentum conservation.
+
+sq1 := @(fldx)*@(fldx).
+distribute(sq1)
+sort_product(sq1)
+nraw1= len(sq1)
+substitute(sq1, $Emm*Emm -> Emmmm, Emm*Em -> Emmm, Em*Emm -> Emmm, Emm*Eo -> Emm, Eo*Emm -> Emm, Emm*Ep -> Em, Ep*Emm -> Em, Emm*Epp -> Eo, Epp*Emm -> Eo, Em*Em -> Emm, Em*Eo -> Em, Eo*Em -> Em, Em*Ep -> Eo, Ep*Em -> Eo, Em*Epp -> Ep, Epp*Em -> Ep, Eo*Eo -> Eo, Eo*Ep -> Ep, Ep*Eo -> Ep, Eo*Epp -> Epp, Epp*Eo -> Epp, Ep*Ep -> Epp, Ep*Epp -> Eppp, Epp*Ep -> Eppp, Epp*Epp -> Epppp$)
+canonicalise(sq1)
+collect_terms(sq1)
+nlhs1= len(sq1)
+
+rhs1 := @(psA)*Emm + @(psB)*Em + @(psC)*Eo + @(psD)*Ep + @(psE)*Epp.
+distribute(rhs1)
+sort_product(rhs1)
+nrawr1= len(rhs1)
+canonicalise(rhs1)
+collect_terms(rhs1)
+nrhs1= len(rhs1)
+
+diff1 := @(sq1) - @(rhs1).
+distribute(diff1)
+sort_product(diff1)
+canonicalise(diff1)
+collect_terms(diff1)
+print("CHECK 1 MSP sizes F^2 both sides (distribute collects the 9 products to 6 monomials; expect 6 6 6 6):", nraw1, nlhs1, nrawr1, nrhs1)
+print("CHECK 2 MSP F^2 - sum_Q psi_Q E_Q, the product-to-convolution theorem (expect 0):", diff1)
+
+# ===========================================================================
+# (B) the derivative is a symbol:  u_p -> i p u_p, attached to the
+#     integration LEG of the convolution, not to the total momentum.
+# ===========================================================================
+fldd := @(fldx).
+substitute(fldd, $um -> -i*um, uo -> 0, up -> i*up$)
+distribute(fldd)
+canonicalise(fldd)
+collect_terms(fldd)
+
+lhs2 := @(fldx)*@(fldd).
+distribute(lhs2)
+sort_product(lhs2)
+nrawl2= len(lhs2)
+substitute(lhs2, $Emm*Emm -> Emmmm, Emm*Em -> Emmm, Em*Emm -> Emmm, Emm*Eo -> Emm, Eo*Emm -> Emm, Emm*Ep -> Em, Ep*Emm -> Em, Emm*Epp -> Eo, Epp*Emm -> Eo, Em*Em -> Emm, Em*Eo -> Em, Eo*Em -> Em, Em*Ep -> Eo, Ep*Em -> Eo, Em*Epp -> Ep, Epp*Em -> Ep, Eo*Eo -> Eo, Eo*Ep -> Ep, Ep*Eo -> Ep, Eo*Epp -> Epp, Epp*Eo -> Epp, Ep*Ep -> Epp, Ep*Epp -> Eppp, Epp*Ep -> Eppp, Epp*Epp -> Epppp$)
+canonicalise(lhs2)
+collect_terms(lhs2)
+
+rhs2 := -i*um*um*Emm + (-i*uo*um)*Em + (-i*up*um + i*um*up)*Eo + i*uo*up*Ep + i*up*up*Epp.
+distribute(rhs2)
+sort_product(rhs2)
+nrawr2= len(rhs2)
+canonicalise(rhs2)
+collect_terms(rhs2)
+
+diff2 := @(lhs2) - @(rhs2).
+distribute(diff2)
+sort_product(diff2)
+canonicalise(diff2)
+collect_terms(diff2)
+print("CHECK 3 MSP sizes F . dF both sides (distribute collects, the E_0 pair cancels; expect 4 4 4 4):", nrawl2, len(lhs2), nrawr2, len(rhs2))
+print("CHECK 4 MSP F . dF - sum_{Q,q} u_{Q-q} (i q) u_q E_Q, symbol on the leg (expect 0):", diff2)
+
+# leg weight vs total-momentum weight: the coefficient of E_1 in the
+# convolution is i uo up (only the q = 1 leg contributes); weighting the
+# composite psi_1 by the TOTAL momentum i*Q = i would give i (uo up + up uo).
+# The difference is nonzero: the derivative's symbol rides on the leg.
+extract3 := @(rhs2).
+substitute(extract3, $Emm -> 0, Em -> 0, Eo -> 0, Epp -> 0$)
+distribute(extract3)
+canonicalise(extract3)
+collect_terms(extract3)
+tot3 := i*@(psD)*Ep.
+diff3 := @(extract3) - @(tot3).
+distribute(diff3)
+sort_product(diff3)
+canonicalise(diff3)
+collect_terms(diff3)
+print("CHECK 5 MSP leg weight - total-momentum weight at Q = 1 (expect nonzero, printed -Ep i uo up):", diff3)
+
+# ===========================================================================
+# (C) completion of squares: the transfer identity for derivative weights.
+#     (i p).(i q) = -p.q = (|p|^2 + |q|^2 - |p+q|^2)/2, so a derivative
+#     weight on two legs of one composite splits into one-body leg squares
+#     plus a total-momentum square — the mechanical step that carries
+#     derivatives into the composite rewriting.
+# ===========================================================================
+dot6 := pla*qla + plb*qlb + plc*qlc.
+pplusq6 := (pla+qla)*(pla+qla) + (plb+qlb)*(plb+qlb) + (plc+qlc)*(plc+qlc).
+psq6 := pla*pla + plb*plb + plc*plc.
+qsq6 := qla*qla + qlb*qlb + qlc*qlc.
+chk6 := 2*@(dot6) - @(pplusq6) + @(psq6) + @(qsq6).
+distribute(chk6)
+sort_product(chk6)
+canonicalise(chk6)
+collect_terms(chk6)
+print("CHECK 6 MSP 2 p.q - |p+q|^2 + |p|^2 + |q|^2 (0 = ok; (ip).(iq) = |p|^2/2 + |q|^2/2 - |p+q|^2/2):", chk6)
+
+# ===========================================================================
+# (D) the quartic at one point = the quadratic in the composite.
+#     [F^4]_R = sum_Q psi_Q psi_{R-Q} for every total momentum R, i.e. the
+#     quartic same-point expression equals a quadratic expression in the
+#     composite at the momentum-point PAIR (Q, R-Q) — different points of
+#     momentum space.  CHECK 7-8 compare coefficient by coefficient;
+#     CHECK 9-10 isolate the zero total momentum (the space-integrated
+#     pairing sum_Q psi_Q psi_{-Q}).
+# ===========================================================================
+qu1 := @(sq1)*@(sq1).
+distribute(qu1)
+sort_product(qu1)
+nraw4= len(qu1)
+substitute(qu1, $Emm*Emm -> Emmmm, Emm*Em -> Emmm, Em*Emm -> Emmm, Emm*Eo -> Emm, Eo*Emm -> Emm, Emm*Ep -> Em, Ep*Emm -> Em, Emm*Epp -> Eo, Epp*Emm -> Eo, Em*Em -> Emm, Em*Eo -> Em, Eo*Em -> Em, Em*Ep -> Eo, Ep*Em -> Eo, Em*Epp -> Ep, Epp*Em -> Ep, Eo*Eo -> Eo, Eo*Ep -> Ep, Ep*Eo -> Ep, Eo*Epp -> Epp, Epp*Eo -> Epp, Ep*Ep -> Epp, Ep*Epp -> Eppp, Epp*Ep -> Eppp, Epp*Epp -> Epppp$)
+canonicalise(qu1)
+collect_terms(qu1)
+
+# the quadratic pairing: for each R, sum over the split Q + (R - Q)
+rhs5 := @(psA)*@(psA)*Emmmm + (@(psA)*@(psB) + @(psB)*@(psA))*Emmm + (@(psA)*@(psC) + @(psB)*@(psB) + @(psC)*@(psA))*Emm + (@(psA)*@(psD) + @(psB)*@(psC) + @(psC)*@(psB) + @(psD)*@(psA))*Em + (@(psA)*@(psE) + @(psB)*@(psD) + @(psC)*@(psC) + @(psD)*@(psB) + @(psE)*@(psA))*Eo + (@(psB)*@(psE) + @(psC)*@(psD) + @(psD)*@(psC) + @(psE)*@(psB))*Ep + (@(psC)*@(psE) + @(psD)*@(psD) + @(psE)*@(psC))*Epp + (@(psD)*@(psE) + @(psE)*@(psD))*Eppp + @(psE)*@(psE)*Epppp.
+distribute(rhs5)
+sort_product(rhs5)
+nraw5= len(rhs5)
+canonicalise(rhs5)
+collect_terms(rhs5)
+
+diff5 := @(qu1) - @(rhs5).
+distribute(diff5)
+sort_product(diff5)
+canonicalise(diff5)
+collect_terms(diff5)
+print("CHECK 7 MSP sizes F^4: quartic side 21 -> 15 under the momentum table, pairing side 15 (expect 21 15 15 15):", nraw4, len(qu1), nraw5, len(rhs5))
+print("CHECK 8 MSP F^4 - sum_Q psi_Q psi_{R-Q} per total momentum R (expect 0):", diff5)
+
+# the zero total momentum: [F^4]_{E_0} vs the pairing sum_Q psi_Q psi_{-Q}
+extract9 := @(qu1).
+substitute(extract9, $Emmmm -> 0, Emmm -> 0, Emm -> 0, Em -> 0, Ep -> 0, Epp -> 0, Eppp -> 0, Epppp -> 0$)
+distribute(extract9)
+canonicalise(extract9)
+collect_terms(extract9)
+pr1 := @(psA)*@(psE) + @(psB)*@(psD) + @(psC)*@(psC) + @(psD)*@(psB) + @(psE)*@(psA).
+distribute(pr1)
+sort_product(pr1)
+nraw9= len(pr1)
+canonicalise(pr1)
+collect_terms(pr1)
+diff9 := @(extract9) - @(pr1)*Eo.
+distribute(diff9)
+sort_product(diff9)
+canonicalise(diff9)
+collect_terms(diff9)
+print("CHECK 9 MSP sizes zero-mode: [F^4]_{E_0}, pairing (distribute collects the 19 pair products to 3 monomials; expect 3 3 3):", len(extract9), nraw9, len(pr1))
+print("CHECK 10 MSP [F^4]_{E_0} - sum_Q psi_Q psi_{-Q} (expect 0):", diff9)
+
+# ===========================================================================
+# (E) degree probes: the composite is quadratic in u-hat, and both sides of
+#     the rewriting are degree 4 — the replacement changes the ORDER in the
+#     operator counting (quartic -> quadratic x quadratic) without changing
+#     the degree in the amplitudes.
+# ===========================================================================
+pca := @(psC).
+substitute(pca, $um -> t*um, uo -> t*uo, up -> t*up$)
+distribute(pca)
+canonicalise(pca)
+collect_terms(pca)
+pco := @(pca).
+substitute(pco, $t -> 1$)
+pct := @(pca).
+substitute(pct, $t -> 2$)
+chk11 := 4*@(pco) - @(pct).
+distribute(chk11)
+sort_product(chk11)
+canonicalise(chk11)
+collect_terms(chk11)
+print("CHECK 11 MSP 4 psi_0(1) - psi_0(2) (expect 0, psi is quadratic in u-hat):", chk11)
+
+pba := @(pr1).
+substitute(pba, $um -> t*um, uo -> t*uo, up -> t*up$)
+distribute(pba)
+canonicalise(pba)
+collect_terms(pba)
+pbo := @(pba).
+substitute(pbo, $t -> 1$)
+pbt := @(pba).
+substitute(pbt, $t -> 2$)
+chk12 := 16*@(pbo) - @(pbt).
+distribute(chk12)
+sort_product(chk12)
+canonicalise(chk12)
+collect_terms(chk12)
+print("CHECK 12 MSP 16 P(1) - P(2) (expect 0, the pairing sum_Q psi_Q psi_{-Q} is degree 4):", chk12)
+
+qca := @(qu1).
+substitute(qca, $um -> t*um, uo -> t*uo, up -> t*up$)
+distribute(qca)
+canonicalise(qca)
+collect_terms(qca)
+qco := @(qca).
+substitute(qco, $t -> 1$)
+qct := @(qca).
+substitute(qct, $t -> 2$)
+chk13 := 16*@(qco) - @(qct).
+distribute(chk13)
+sort_product(chk13)
+canonicalise(chk13)
+collect_terms(chk13)
+print("CHECK 13 MSP 16 F^4(1) - F^4(2) (expect 0, the quartic is degree 4):", chk13)
+
+# ===========================================================================
+# (F) the convolution index convention (negative control, S47):
+#     (u star u)_1 = sum_p u_p u_{1-p} is NOT sum_p u_p u_{1+p}; the two
+#     agree only on an inversion-symmetric transform.  The printed
+#     difference is the guard for the sign convention of the discrete
+#     convolution f star g[n] = sum_m f[m] g[(n-m) mod n].
+# ===========================================================================
+cma := uo*up + up*uo.
+cmb := um*uo + uo*up.
+chk14 := @(cma) - @(cmb).
+distribute(chk14)
+sort_product(chk14)
+canonicalise(chk14)
+collect_terms(chk14)
+print("CHECK 14 MSP (u star u)_1 minus the +index convention (expect nonzero, uo up - um uo):", chk14)
