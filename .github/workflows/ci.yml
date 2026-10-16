@@ -310,8 +310,8 @@ jobs:
           failed=""
           skipped=""
           # GitHub expressions have no dynamic member access: the previous
-          # `case "${{ steps.$step.outcome }}"` was an expression *lexing*
-          # error ("unexpected character '$'") inside a run: block, which
+          # dynamic steps-outcome interpolation inside this run: block was an
+          # expression *lexing* error ("unexpected character '$'"), which
           # invalidates the whole workflow file at push validation — every
           # CI run failed with zero jobs since this block was written
           # (first observed 2026-10-16, present since ≤ a690697). Bind each
