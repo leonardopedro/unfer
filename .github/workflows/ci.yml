@@ -42,7 +42,10 @@ jobs:
       - name: checkout velysterm + australVM as siblings (smoke_gate smokes 2-3)
         run: |
           git clone --depth 1 --branch main https://github.com/leonardopedro/velysterm.git ../velysterm
-          git clone --depth 1 --branch main https://github.com/leonardopedro/australVM.git ../australVM
+          # master, not main: australVM's only remote branch is `master`
+          # (`git ls-remote --heads` shows refs/heads/master alone), so
+          # `--branch main` made this step the exact point H1 went red.
+          git clone --depth 1 --branch master https://github.com/leonardopedro/australVM.git ../australVM
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
       - name: install LLVM coverage tools (H11 per-file coverage gate)
         run: rustup component add llvm-tools-preview
@@ -136,7 +139,8 @@ jobs:
       # legal values here; a 40-character commit SHA is the stronger choice and
       # is what makes a red run reproducible months later.
       #
-      # These are `main` because that is what has been observed to exist on the
+      # These are `main` (australVM: `master` — it has no `main` branch on
+      # the remote) because that is what has been observed to exist on the
       # remotes. They are NOT invented SHAs: pinning to a commit that was never
       # pushed would break every run of this job, which is a worse outcome than
       # tracking a branch. To pin, replace the value with a real SHA from
@@ -148,7 +152,8 @@ jobs:
         env:
           DYNAMIC_ARCTIC_REF: main
           VELYSTERM_REF: main
-          AUSTRALVM_REF: main
+          # master: australVM has no `main` branch on the remote.
+          AUSTRALVM_REF: master
           EMTHIN_REF: main
         run: |
           set -euo pipefail
