@@ -24,13 +24,13 @@ pub fn from_hex(hex: &str) -> Result<Vec<u8>, String> {
         return Err("cell_hex must have an even number of digits".to_string());
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks_exact(2) {
-        let hi = (pair[0] as char)
-            .to_digit(16)
-            .ok_or("cell_hex is not hex")?;
-        let lo = (pair[1] as char)
-            .to_digit(16)
-            .ok_or("cell_hex is not hex")?;
+    // The even-length check above leaves no remainder, so every byte lands in
+    // a pair.
+    let (pairs, rest) = hex.as_bytes().as_chunks::<2>();
+    debug_assert!(rest.is_empty());
+    for &[a, b] in pairs {
+        let hi = (a as char).to_digit(16).ok_or("cell_hex is not hex")?;
+        let lo = (b as char).to_digit(16).ok_or("cell_hex is not hex")?;
         out.push((hi * 16 + lo) as u8);
     }
     Ok(out)
