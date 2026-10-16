@@ -93,16 +93,25 @@ fn coherent_radial(alpha: f64, n_max: usize) -> QuantumState {
 /// ⟨φ⟩ = ⟨ψ|(a†+a)|ψ⟩ / ⟨ψ|ψ⟩ on mode 0.
 fn phi_expectation(psi: &QuantumState) -> f64 {
     let mut up = psi.apply(&Operator::InnerBosonCreate(0));
-    up.scale_and_add(&psi.apply(&Operator::InnerBosonAnnihilate(0)), Complex64::new(1.0, 0.0));
+    up.scale_and_add(
+        &psi.apply(&Operator::InnerBosonAnnihilate(0)),
+        Complex64::new(1.0, 0.0),
+    );
     QuantumState::inner_product(&up, psi).re / QuantumState::inner_product(psi, psi).re
 }
 
 /// Gauge-invariant observable ⟨φ†φ⟩ = ⟨φ²/2⟩ = ⟨(a†+a)²⟩/2 on mode 0.
 fn phi_dag_phi_expectation(psi: &QuantumState) -> f64 {
     let mut u = psi.apply(&Operator::InnerBosonCreate(0));
-    u.scale_and_add(&psi.apply(&Operator::InnerBosonAnnihilate(0)), Complex64::new(1.0, 0.0));
+    u.scale_and_add(
+        &psi.apply(&Operator::InnerBosonAnnihilate(0)),
+        Complex64::new(1.0, 0.0),
+    );
     let mut u2 = u.apply(&Operator::InnerBosonCreate(0));
-    u2.scale_and_add(&u.apply(&Operator::InnerBosonAnnihilate(0)), Complex64::new(1.0, 0.0));
+    u2.scale_and_add(
+        &u.apply(&Operator::InnerBosonAnnihilate(0)),
+        Complex64::new(1.0, 0.0),
+    );
     QuantumState::inner_product(&u2, psi).re / (2.0 * QuantumState::inner_product(psi, psi).re)
 }
 
@@ -177,9 +186,7 @@ fn sm_higgs_mechanism_condensate_mimics_broken_vacuum() {
             (xd_t - xd0).abs() < 0.25 * xd0,
             "⟨φ†φ⟩ must stay within 25% of its condensate value {xd0} at t={t}: {xd_t}"
         );
-        eprintln!(
-            "higgs-mechanism t={t:.3}: ⟨φ⟩={phi_t:.6}, ⟨φ†φ⟩={xd_t:.6}, ⟨H⟩={e_t:.6}"
-        );
+        eprintln!("higgs-mechanism t={t:.3}: ⟨φ⟩={phi_t:.6}, ⟨φ†φ⟩={xd_t:.6}, ⟨H⟩={e_t:.6}");
     }
 }
 
@@ -255,8 +262,7 @@ fn sm_higgs_mechanism_radial_mass_from_oscillation() {
             }
             let mut res = 0.0f64;
             for (&t, &p) in ts.iter().zip(phis.iter()) {
-                let model =
-                    sol[0] + sol[1] * (omega * t).cos() + sol[2] * (omega * t).sin();
+                let model = sol[0] + sol[1] * (omega * t).cos() + sol[2] * (omega * t).sin();
                 res += (model - p) * (model - p);
             }
             if res < best.0 {
@@ -314,7 +320,10 @@ fn sm_higgs_mechanism_gauge_invariant_in_out_states() {
     // point:
     let phi_in = phi_expectation(&psi0);
     let phi_out = phi_expectation(&psi_t);
-    assert!(phi_in > 0.5 * v, "in-state must be the broken-like condensate");
+    assert!(
+        phi_in > 0.5 * v,
+        "in-state must be the broken-like condensate"
+    );
     assert!(
         phi_out > 0.5 * v,
         "out-state must be the broken-like condensate: ⟨φ⟩={phi_out}"

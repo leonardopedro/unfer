@@ -71,7 +71,10 @@ use num_complex::Complex64;
 /// Forward DFT `F[k] = Σ_t f[t] exp(−2πi k t / n)`.
 fn dft(f: &[Complex64]) -> Vec<Complex64> {
     let n = f.len();
-    assert!(n > 0 && n.is_power_of_two(), "DFT length must be a power of two");
+    assert!(
+        n > 0 && n.is_power_of_two(),
+        "DFT length must be a power of two"
+    );
     let mut out = vec![Complex64::new(0.0, 0.0); n];
     for (k, out_k) in out.iter_mut().enumerate() {
         let mut sum = Complex64::new(0.0, 0.0);
@@ -186,11 +189,7 @@ fn ns_cmp_jacobi_transport_identity() {
             let r: Vec<usize> = (0..3).filter(|&x| x != a).collect();
             let c: Vec<usize> = (0..3).filter(|&x| x != b).collect();
             let minor = f[r[0]][c[0]] * f[r[1]][c[1]] - f[r[0]][c[1]] * f[r[1]][c[0]];
-            if (a + b) % 2 == 0 {
-                minor
-            } else {
-                -minor
-            }
+            if (a + b) % 2 == 0 { minor } else { -minor }
         };
         let mut tr = 0.0;
         for i in 0..3 {
@@ -235,7 +234,10 @@ fn ns_cmp_mass_conservation_rho_j() {
         let j_dot_theory = j_at(t) * div_u;
         let rho_dot_theory = -rho_at(t) * div_u;
         assert!((j_dot - j_dot_theory).abs() < 1e-6, "J_dot = J div u");
-        assert!((rho_dot - rho_dot_theory).abs() < 1e-6, "rho_dot = -rho div u");
+        assert!(
+            (rho_dot - rho_dot_theory).abs() < 1e-6,
+            "rho_dot = -rho div u"
+        );
         // and their combination — the material continuity equation:
         let cont = rho_dot * j_at(t) + rho_at(t) * j_dot;
         assert!(
@@ -292,7 +294,13 @@ fn ns_cmp_enthalpy_force_identity() {
     let c2 = 1.7f64;
     let gamma = 1.35f64;
     for &kind in &[0isize, 1] {
-        let e_of = |r: f64| if kind == 0 { e_iso(r, c2) } else { e_poly(r, c2, gamma) };
+        let e_of = |r: f64| {
+            if kind == 0 {
+                e_iso(r, c2)
+            } else {
+                e_poly(r, c2, gamma)
+            }
+        };
         for &rho in &[0.5f64, 1.2, 2.9] {
             let h = 1e-6 * rho.max(1.0);
             let p_of = |r: f64| {
@@ -376,14 +384,8 @@ fn ns_cmp_density_weighted_pressure_convolution() {
             0.7 * (x).cos() - 0.2 * (2.0 * x).sin()
         })
         .collect();
-    let inv_rho: Vec<Complex64> = rho
-        .iter()
-        .map(|&r| Complex64::new(1.0 / r, 0.0))
-        .collect();
-    let p_c: Vec<Complex64> = pfield
-        .iter()
-        .map(|&v| Complex64::new(v, 0.0))
-        .collect();
+    let inv_rho: Vec<Complex64> = rho.iter().map(|&r| Complex64::new(1.0 / r, 0.0)).collect();
+    let p_c: Vec<Complex64> = pfield.iter().map(|&v| Complex64::new(v, 0.0)).collect();
 
     // real-space target: (1/rho) dp/dx by spectral differentiation:
     let p_hat = dft(&p_c);
@@ -499,7 +501,10 @@ fn ns_cmp_viscous_weight_even_diagonal() {
     for &k in &[-4.2f64, -1.0, 0.0, 2.3, 5.5] {
         let w = nu * k * k;
         let w_neg = nu * (-k) * (-k);
-        assert!((w - w_neg).abs() < 1e-14, "viscous weight must be even in k");
+        assert!(
+            (w - w_neg).abs() < 1e-14,
+            "viscous weight must be even in k"
+        );
     }
     // diagonal: a single input mode k produces output only at k (the
     // Laplacian is a multiplication operator in momentum space), while an
@@ -562,10 +567,9 @@ fn ns_cmp_fiber_completed_square() {
     for &k in &[-2.0f64, 0.0, 1.3] {
         for &pi in &[-0.7f64, 0.0, 1.9] {
             for &s in &[-0.4f64, 0.25] {
-                let hfib = pi * pi / (2.0 * rho_bar)
-                    + 0.5 * rho_bar * c * c * k * k * s * s;
-                let target = (pi * pi + (rho_bar * c * k * s) * (rho_bar * c * k * s))
-                    / (2.0 * rho_bar);
+                let hfib = pi * pi / (2.0 * rho_bar) + 0.5 * rho_bar * c * c * k * k * s * s;
+                let target =
+                    (pi * pi + (rho_bar * c * k * s) * (rho_bar * c * k * s)) / (2.0 * rho_bar);
                 assert!(
                     (hfib - target).abs() < 1e-12,
                     "completed square at k={k}, pi={pi}, s={s}"

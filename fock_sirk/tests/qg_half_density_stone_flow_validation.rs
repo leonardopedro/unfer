@@ -142,10 +142,7 @@ fn hd_unitary_norm_preservation() {
     // (a) g(e) = e^{−e}: both sides 1/2 (analytic).
     let g2_a = |e: f64| (-2.0 * e).exp();
     let lhs_a = trapz_halfline_compactified(g2_a, 200_001);
-    let rhs_a = trapz_halfline_compactified(
-        |y: f64| g2_a(y * y) * 2.0 * y,
-        200_001,
-    );
+    let rhs_a = trapz_halfline_compactified(|y: f64| g2_a(y * y) * 2.0 * y, 200_001);
     assert!((lhs_a - 0.5).abs() < 1e-9, "LHS (a): {lhs_a}");
     assert!((rhs_a - 0.5).abs() < 1e-9, "RHS (a): {rhs_a}");
 
@@ -153,10 +150,7 @@ fn hd_unitary_norm_preservation() {
     // (analytic).  Algebraic tails on both sides — compactified.
     let g2_b = |e: f64| (1.0 + e).powf(-3.0);
     let lhs_b = trapz_halfline_compactified(g2_b, 200_001);
-    let rhs_b = trapz_halfline_compactified(
-        |y: f64| g2_b(y * y) * 2.0 * y,
-        200_001,
-    );
+    let rhs_b = trapz_halfline_compactified(|y: f64| g2_b(y * y) * 2.0 * y, 200_001);
     assert!((lhs_b - 0.5).abs() < 1e-6, "LHS (b): {lhs_b}");
     assert!((rhs_b - 0.5).abs() < 1e-6, "RHS (b): {rhs_b}");
 
@@ -164,10 +158,7 @@ fn hd_unitary_norm_preservation() {
     // the two quadratures must agree with each other.
     let g2_c = |e: f64| (-e).exp() * (3.0 * e).cos() * (3.0 * e).cos();
     let lhs_c = trapz_halfline_compactified(g2_c, 400_001);
-    let rhs_c = trapz_halfline_compactified(
-        |y: f64| g2_c(y * y) * 2.0 * y,
-        400_001,
-    );
+    let rhs_c = trapz_halfline_compactified(|y: f64| g2_c(y * y) * 2.0 * y, 400_001);
     assert!(
         (lhs_c - rhs_c).abs() < 1e-6 * (1.0 + lhs_c),
         "chart-norm mismatch: {lhs_c} vs {rhs_c}"
@@ -210,10 +201,7 @@ fn hd_intertwines_multiplication() {
     // RHS is ∫ (1/16) e^{−2e} de = 1/32 analytically.
     let v = |e: f64| (-e).exp() / 16.0;
     let g2 = |e: f64| (-e).exp();
-    let lhs = trapz_halfline_compactified(
-        |y: f64| v(y * y) * g2(y * y) * 2.0 * y,
-        200_001,
-    );
+    let lhs = trapz_halfline_compactified(|y: f64| v(y * y) * g2(y * y) * 2.0 * y, 200_001);
     let rhs = trapz_halfline_compactified(|e: f64| v(e) * g2(e), 200_001);
     assert!((rhs - 1.0 / 32.0).abs() < 1e-9, "RHS: {rhs}");
     assert!(
@@ -225,10 +213,7 @@ fn hd_intertwines_multiplication() {
     // g(e) = (1+e)^{−1}: RHS = ∫ (1/16)(1+e)^{−4} de = 1/48.
     let v2 = |e: f64| 1.0 / (16.0 * (1.0 + e) * (1.0 + e));
     let g2b = |e: f64| (1.0 + e).powf(-2.0);
-    let lhs2 = trapz_halfline_compactified(
-        |y: f64| v2(y * y) * g2b(y * y) * 2.0 * y,
-        200_001,
-    );
+    let lhs2 = trapz_halfline_compactified(|y: f64| v2(y * y) * g2b(y * y) * 2.0 * y, 200_001);
     let rhs2 = trapz_halfline_compactified(|e: f64| v2(e) * g2b(e), 200_001);
     assert!((rhs2 - 1.0 / 48.0).abs() < 1e-6, "RHS2: {rhs2}");
     assert!(
@@ -249,7 +234,9 @@ fn qg_conf_v_completed_square_and_bound() {
     let conf_v = |m: f64, alpha: f64, rc: f64| -(m * m / 2.0) * rc + alpha * rc * rc;
     let mut seed = 0x4528_21E6_38D0_1377u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 8.0 - 4.0
     };
     for _ in 0..200 {
@@ -264,7 +251,10 @@ fn qg_conf_v_completed_square_and_bound() {
         );
         // the lower bound −M⁴/(16α), attained at the vertex
         let floor = -m.powi(4) / (16.0 * alpha);
-        assert!(lhs >= floor - 1e-12 * (1.0 + floor.abs()), "bound violated: {lhs} < {floor}");
+        assert!(
+            lhs >= floor - 1e-12 * (1.0 + floor.abs()),
+            "bound violated: {lhs} < {floor}"
+        );
         let at_vertex = conf_v(m, alpha, m * m / (4.0 * alpha));
         assert!(
             (at_vertex - floor).abs() < 1e-12 * (1.0 + floor.abs()),
@@ -295,7 +285,9 @@ fn qg_mode_symbol_real_unbounded_potential_ge() {
     let floor = -m.powi(4) / (16.0 * alpha);
     let mut seed = 0x082E_FA98_EC4E_6C89u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 6.0 - 3.0
     };
     let mut lam_max = 0.0f64;
@@ -304,7 +296,10 @@ fn qg_mode_symbol_real_unbounded_potential_ge() {
         let b_k = rng();
         let rc_k = rng();
         let v_k = -(m * m / 2.0) * rc_k + alpha * rc_k * rc_k;
-        assert!(v_k >= floor - 1e-12 * (1.0 + floor.abs()), "V_k below floor at k={k}");
+        assert!(
+            v_k >= floor - 1e-12 * (1.0 + floor.abs()),
+            "V_k below floor at k={k}"
+        );
         let lam = (1.0 / 16.0) * a_k * a_k - (1.0 / 24.0) * b_k * b_k + v_k;
         assert!(lam.is_finite(), "mode symbol must be a real number");
         lam_max = lam_max.max(lam.abs());
@@ -332,7 +327,9 @@ fn qg_stone_flow_group_and_norm() {
     let n = 64usize;
     let mut seed = 0xA409_3822_299F_31D0u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
     };
     // a genuinely ℓ² state (geometric decay), the mode symbol, and the
@@ -345,8 +342,7 @@ fn qg_stone_flow_group_and_norm() {
             let a = rng();
             let b = rng();
             let rc = rng();
-            (1.0 / 16.0) * a * a - (1.0 / 24.0) * b * b
-                + (-(m * m / 2.0) * rc + alpha * rc * rc)
+            (1.0 / 16.0) * a * a - (1.0 / 24.0) * b * b + (-(m * m / 2.0) * rc + alpha * rc * rc)
         })
         .collect();
     let u = |t: f64, c: &[Complex64]| -> Vec<Complex64> {
@@ -358,9 +354,7 @@ fn qg_stone_flow_group_and_norm() {
             })
             .collect()
     };
-    let norm = |v: &[Complex64]| -> f64 {
-        v.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt()
-    };
+    let norm = |v: &[Complex64]| -> f64 { v.iter().map(|z| z.norm_sqr()).sum::<f64>().sqrt() };
     let n0 = norm(&c);
     for t in [0.0f64, 0.3, 2.0, -7.5, 25.0] {
         let ut = u(t, &c);
@@ -396,7 +390,9 @@ fn qg_stone_flow_generator() {
     let n = 8usize;
     let mut seed = 0x082E_FA98_EC4E_6C89u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
     };
     let c: Vec<Complex64> = (0..n).map(|_| Complex64::new(rng(), rng())).collect();
@@ -440,7 +436,9 @@ fn qg_deficiency_resolvent_bound() {
     let n = 32usize;
     let mut seed = 0xDEAD_BEEF_CAFE_F00Du64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 4.0 - 2.0
     };
     let lam: Vec<f64> = (0..n).map(|k| (k as f64) * 0.7 - 3.0 + rng()).collect();

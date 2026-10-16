@@ -544,4 +544,3 @@ fn normal_order_inner(ops: &mut Vec<Operator>) -> f64 {
     *ops = creators;
     zeropoint
 }
-

@@ -288,11 +288,7 @@ impl SequentialCore {
                 best = i;
             }
         }
-        let label = self
-            .labels
-            .get(best)
-            .cloned()
-            .unwrap_or_default();
+        let label = self.labels.get(best).cloned().unwrap_or_default();
         Ok((label, sims[best]))
     }
 }

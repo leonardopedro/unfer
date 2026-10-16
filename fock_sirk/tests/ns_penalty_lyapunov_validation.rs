@@ -73,10 +73,14 @@ impl Poly {
         Poly { t: vec![] }
     }
     fn one() -> Poly {
-        Poly { t: vec![(Exp([0; 4]), Complex64::new(1.0, 0.0))] }
+        Poly {
+            t: vec![(Exp([0; 4]), Complex64::new(1.0, 0.0))],
+        }
     }
     fn term(e: [u8; 4], c: Complex64) -> Poly {
-        Poly { t: vec![(Exp(e), c)] }
+        Poly {
+            t: vec![(Exp(e), c)],
+        }
     }
     fn var(i: usize) -> Poly {
         let mut e = [0u8; 4];
@@ -217,11 +221,17 @@ struct Model {
 fn model(nu: f64, kappa: f64) -> Model {
     let x: Vec<Poly> = (0..4).map(Poly::var).collect();
     // V = (κ/4)(x0² + x1²) + (κ/8)x0²x1²
-    let v = x[0].mul(&x[0]).scale(kappa / 4.0)
+    let v = x[0]
+        .mul(&x[0])
+        .scale(kappa / 4.0)
         .add(&x[1].mul(&x[1]).scale(kappa / 4.0))
         .add(&x[0].mul(&x[0]).mul(&x[1].mul(&x[1])).scale(kappa / 8.0));
-    let d0 = x[0].scale(kappa / 2.0).add(&x[0].mul(&x[1].mul(&x[1])).scale(kappa / 4.0));
-    let d1 = x[1].scale(kappa / 2.0).add(&x[0].mul(&x[0]).mul(&x[1]).scale(kappa / 4.0));
+    let d0 = x[0]
+        .scale(kappa / 2.0)
+        .add(&x[0].mul(&x[1].mul(&x[1])).scale(kappa / 4.0));
+    let d1 = x[1]
+        .scale(kappa / 2.0)
+        .add(&x[0].mul(&x[0]).mul(&x[1]).scale(kappa / 4.0));
     let g = [
         x[2].clone(),
         x[3].clone(),
@@ -252,7 +262,11 @@ fn h_act(m: &Model, p: &Poly) -> Poly {
     acc = acc.add(&p.scale(0.5 * m.div_g));
     // multiply by −i
     Poly {
-        t: acc.t.iter().map(|(e, c)| (*e, *c * Complex64::new(0.0, -1.0))).collect(),
+        t: acc
+            .t
+            .iter()
+            .map(|(e, c)| (*e, *c * Complex64::new(0.0, -1.0)))
+            .collect(),
     }
 }
 
@@ -293,8 +307,7 @@ fn gauss_hermite(n: usize) -> (Vec<f64>, Vec<f64>) {
     let mut z = 0.0f64;
     for i in 0..n {
         z = if i == 0 {
-            (2.0 * n as f64 + 1.0).sqrt()
-                - 1.85575 * (2.0 * n as f64 + 1.0).powf(-1.0 / 6.0)
+            (2.0 * n as f64 + 1.0).sqrt() - 1.85575 * (2.0 * n as f64 + 1.0).powf(-1.0 / 6.0)
         } else if i == 1 {
             z - 1.14 * (n as f64).powf(0.426) / z
         } else if i == 2 {
@@ -406,7 +419,10 @@ fn pl_gauss_hermite_quadrature_exact() {
             .zip(&weights)
             .map(|(&x, &w)| w * x.powi(2 * m as i32))
             .sum();
-        assert!((got - exact).abs() < 1e-12 * (1.0 + exact), "moment {m}: {got} vs {exact}");
+        assert!(
+            (got - exact).abs() < 1e-12 * (1.0 + exact),
+            "moment {m}: {got} vs {exact}"
+        );
     }
     // Σ w = √π
     let s: f64 = weights.iter().sum();
@@ -461,21 +477,33 @@ fn pl_penalty_nonneg_and_zero_set() {
         (1.0 + grad[0][0]) * (1.0 + grad[1][1]) - grad[0][1] * grad[1][0] - 1.0
     };
     let v_shear = dft_penalty(&det_shear, kappa, n);
-    assert!(v_shear < 1e-20, "shear must be exactly incompressible: V = {v_shear}");
+    assert!(
+        v_shear < 1e-20,
+        "shear must be exactly incompressible: V = {v_shear}"
+    );
     let x0 = 0.8f64;
     let v_long = dft_penalty(&|a1, _a2| x0 * a1.cos(), kappa, n);
-    assert!(v_long > 1e-6, "compressible configuration must pay the penalty");
+    assert!(
+        v_long > 1e-6,
+        "compressible configuration must pay the penalty"
+    );
     // the closed form agrees on the same longitudinal configuration
     assert!((v_long - pot_v(x0, 0.0, kappa)).abs() < 1e-10 * (1.0 + v_long));
     // the leading behaviour V(εξ) = ε² (κ/4)(ξ₁² + ξ₂²) + O(ε⁴)
     let eps = 1e-3f64;
     let lead = eps * eps * kappa / 4.0 * (x0 * x0);
     let got = pot_v(eps * x0, 0.0, kappa);
-    assert!((got - lead).abs() < 1e-6 * lead, "leading order mismatch: {got} vs {lead}");
+    assert!(
+        (got - lead).abs() < 1e-6 * lead,
+        "leading order mismatch: {got} vs {lead}"
+    );
     // V is linear in κ (bulk modulus)
     let v1 = pot_v(0.8, -0.3, 1.0);
     let v2 = pot_v(0.8, -0.3, 5.0);
-    assert!((5.0 * v1 - v2).abs() < 1e-12 * (1.0 + v2), "κ-linearity failed");
+    assert!(
+        (5.0 * v1 - v2).abs() < 1e-12 * (1.0 + v2),
+        "κ-linearity failed"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -598,7 +626,10 @@ fn pl_liouville_divergence() {
             div += (fp[i] - fm[i]) / (2.0 * eps);
         }
         let target = -nu * 2.0; // −ν Σ lam_j
-        assert!((div - target).abs() < 1e-5, "div F = {div}, expected {target}");
+        assert!(
+            (div - target).abs() < 1e-5,
+            "div F = {div}, expected {target}"
+        );
     }
 }
 
@@ -943,17 +974,21 @@ fn pl_lifted_deficiency_resolvent_bound() {
     let (_h, n1) = comparison_matrix(nu, kappa);
     let (_, shifted) = dgamma_sector(&n1, 2);
     let n = shifted.nrows();
-    assert!(herm_residual(&shifted) < 1e-9, "A must be self-adjoint to have the bound");
+    assert!(
+        herm_residual(&shifted) < 1e-9,
+        "A must be self-adjoint to have the bound"
+    );
     let mut seed = 0x5A17_2B3C_4D5E_6F70u64;
     for &(re, im) in &[(0.0f64, 0.5f64), (0.7, 1.0), (-2.0, 2.5), (1.0, -0.25)] {
         let z = Complex64::new(re, im);
-        let a_shift = &shifted - DMatrix::from_fn(n, n, |i, j| {
-            if i == j {
-                z
-            } else {
-                Complex64::new(0.0, 0.0)
-            }
-        });
+        let a_shift = &shifted
+            - DMatrix::from_fn(
+                n,
+                n,
+                |i, j| {
+                    if i == j { z } else { Complex64::new(0.0, 0.0) }
+                },
+            );
         let lu = a_shift.clone().lu();
         for _ in 0..8 {
             let psi = DVector::from_fn(n, |_, _| Complex64::new(rng(&mut seed), rng(&mut seed)));

@@ -93,14 +93,8 @@ fn handoff_is_unit_norm_stage2_wide_and_never_stale() {
 
     // Nothing answers before a fit: without a solve there is no theta, and a
     // raw RP expansion must not masquerade as an adapted feature.
-    assert!(matches!(
-        seq.project(&x),
-        Err(DecideError::NotFitted)
-    ));
-    assert!(matches!(
-        seq.similarities(&x),
-        Err(DecideError::NotFitted)
-    ));
+    assert!(matches!(seq.project(&x), Err(DecideError::NotFitted)));
+    assert!(matches!(seq.similarities(&x), Err(DecideError::NotFitted)));
     assert!(matches!(seq.id_score(&x), Err(DecideError::NotFitted)));
 
     // One observation per class is enough for both stages to solve.
@@ -136,8 +130,7 @@ fn handoff_is_unit_norm_stage2_wide_and_never_stale() {
     );
 
     // …which a pure-AnaCP surface does not have. Structural, not measured.
-    let mut cp_only =
-        DecideCore::new(base_config(CORPUS_DIM, d_cp, Mode::Anacp)).unwrap();
+    let mut cp_only = DecideCore::new(base_config(CORPUS_DIM, d_cp, Mode::Anacp)).unwrap();
     for l in ["alpha", "beta", "gamma"] {
         cp_only.register(l).unwrap();
     }
@@ -165,7 +158,9 @@ fn refit_after_new_observations_reprojects_the_whole_stream() {
     seq.observe("b", &DVector::from_vec(vec![-1.0; CORPUS_DIM]))
         .unwrap();
     seq.fit().unwrap();
-    let first = seq.project(&DVector::from_vec(vec![0.7; CORPUS_DIM])).unwrap();
+    let first = seq
+        .project(&DVector::from_vec(vec![0.7; CORPUS_DIM]))
+        .unwrap();
 
     // A late arrival moves stage 1's theta, so stage 2 must be rebuilt —
     // answering under the old projection would be defect A4 at sequence level.
@@ -177,7 +172,9 @@ fn refit_after_new_observations_reprojects_the_whole_stream() {
         Err(DecideError::NotFitted)
     ));
     seq.fit().unwrap();
-    let second = seq.project(&DVector::from_vec(vec![0.7; CORPUS_DIM])).unwrap();
+    let second = seq
+        .project(&DVector::from_vec(vec![0.7; CORPUS_DIM]))
+        .unwrap();
     assert_eq!(seq.stage2().samples() as usize, seq.samples());
     assert!(
         (first - second).norm() > 0.0,
@@ -206,10 +203,7 @@ fn sequential_matrix(
 
     let mut rows: Vec<Vec<f64>> = Vec::new();
     for (t, arrived) in labels.iter().enumerate() {
-        for s in corpus
-            .iter()
-            .filter(|s| !s.held_out && s.label == *arrived)
-        {
+        for s in corpus.iter().filter(|s| !s.held_out && s.label == *arrived) {
             seq.observe(arrived.name(), &s.embedding)?;
         }
         // One observed class has no between-class geometry; record undefined

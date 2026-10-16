@@ -78,7 +78,9 @@ fn sm_gf_magnetic_field_abelian_reduction() {
     let mut a = vec![vec![vec![[0.0f64; 2]; n]; n]; n];
     let mut seed = 1234567u64;
     let mut next = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
     };
     for i in 0..n {
@@ -322,7 +324,9 @@ fn sm_gf_brst_abelian_limit_assembly() {
     // abelian charge through the Grassmann ghost (c² = 0).
     let mut seed = 987654321u64;
     let mut next = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
     };
     for _ in 0..32 {

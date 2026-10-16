@@ -188,11 +188,7 @@ fn xf_weyl_commutator_correction() {
         ppsi[i] = Complex64::new(0.0, -1.0) * d;
     }
     // x² p ψ
-    let x2p: Vec<Complex64> = xs
-        .iter()
-        .zip(&ppsi)
-        .map(|(&x, &v)| v * (x * x))
-        .collect();
+    let x2p: Vec<Complex64> = xs.iter().zip(&ppsi).map(|(&x, &v)| v * (x * x)).collect();
     // p (x² ψ) = −i d/dx (x² ψ)
     let x2psi: Vec<Complex64> = xs.iter().map(|&x| psi(x) * (x * x)).collect();
     let mut px2 = vec![Complex64::new(0.0, 0.0); n];
@@ -298,7 +294,9 @@ fn xf_lagrangian_completed_square() {
     // complete flow) — the Lagrangian instance of the doctrine.
     let mut seed = 0x243F_6A88_85A3_08D3u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 4.0 - 2.0
     };
     for _ in 0..64 {
@@ -308,7 +306,10 @@ fn xf_lagrangian_completed_square() {
         let nu = rng().abs() + 0.1;
         let lhs = 0.5 * p * p + nu * q * q + f * p;
         let rhs = 0.5 * (p + f) * (p + f) + nu * q * q - 0.5 * f * f;
-        assert!((lhs - rhs).abs() < 1e-12 * (1.0 + lhs.abs()), "{lhs} vs {rhs}");
+        assert!(
+            (lhs - rhs).abs() < 1e-12 * (1.0 + lhs.abs()),
+            "{lhs} vs {rhs}"
+        );
     }
 }
 
@@ -322,7 +323,10 @@ fn xf_densitized_inverse_identity() {
         let lhs = 1.0 / e;
         let dyde = 1.0 / (2.0 * y);
         let rhs = 4.0 * dyde * dyde;
-        assert!((lhs - rhs).abs() < 1e-12 * (1.0 + lhs), "at y={y}: {lhs} vs {rhs}");
+        assert!(
+            (lhs - rhs).abs() < 1e-12 * (1.0 + lhs),
+            "at y={y}: {lhs} vs {rhs}"
+        );
     }
 }
 
@@ -334,7 +338,9 @@ fn xf_kinetic_absorption() {
     // 1/(16e) equals (1/16)(1/y)².
     let mut seed = 0x1319_8A2E_0370_7344u64;
     let mut rng = move || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64 / (1u64 << 53) as f64) * 8.0 - 4.0
     };
     for _ in 0..64 {
