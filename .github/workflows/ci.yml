@@ -280,8 +280,22 @@ jobs:
       - name: australVM (OCaml plugin + Why3 gate suites)
         id: australvm-ocaml
         run: |
-          make -C ../australVM bridge
-          make -C ../australVM test
+          # Capture to a file and re-emit the tail as an annotation on
+          # failure: this step has never been observed green, and the
+          # annotations are the one channel readable without log access
+          # (the same pattern as emthin's E2E step). `|| rc=$?`, not rc=$?
+          # alone: the runner's shell is bash -e, which would abort at the
+          # failing make and skip the mirror.
+          rc=0
+          { make -C ../australVM bridge && make -C ../australVM test; } \
+            > /tmp/australvm-ocaml.log 2>&1 || rc=$?
+          tail -40 /tmp/australvm-ocaml.log
+          if [ $rc -ne 0 ]; then
+            body=$(tail -25 /tmp/australvm-ocaml.log \
+              | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
+            echo "::error::australvm-ocaml rc=$rc | $body"
+            exit $rc
+          fi
 
       # emthin was, until 2026-10-05, built by nothing — it has no CI of its own
       # (no `.github/`), and it path-deps velysterm's mathed_core and
