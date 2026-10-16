@@ -113,7 +113,11 @@ jobs:
       # input that caused it, which is a rumour rather than a finding.
       - name: archive crash artifacts
         if: always()
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526f35d6d7dc6e7fcb58b  # actions/upload-artifact@v4
+        # ea165f8d = a valid upload-artifact v4 commit (the previous pin
+        # 50769540 does not exist upstream: the API answers 422 for it, so the
+        # scheduled run failed at "archive crash artifacts"). Same major the
+        # comment claims; verified 200 via the GitHub commits API.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # actions/upload-artifact@v4
         with:
           name: fuzz-crashes-ingest_message
           path: |
