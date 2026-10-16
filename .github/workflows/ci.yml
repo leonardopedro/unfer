@@ -269,9 +269,19 @@ jobs:
 
       # The OCaml half: the plugin/Why3-gate suite, through the X4b wrapper so
       # the bridge .so is loaded by a loader that can actually load it.
+      #
+      # `make bridge` first, as australVM's AGENTS.md documents: the release
+      # .so is not committed, so on a fresh checkout `make test`'s
+      # check-bridge-fresh gate exits at its first question ("$(BRIDGE_SRC)
+      # does not exist … make bridge"), which is exactly how this step read
+      # red on its first runs (exit 2 from make). Building it here also
+      # satisfies the staleness half of the gate — the sources were checked
+      # out before we built, so nothing is newer than the artifact.
       - name: australVM (OCaml plugin + Why3 gate suites)
         id: australvm-ocaml
-        run: make -C ../australVM test
+        run: |
+          make -C ../australVM bridge
+          make -C ../australVM test
 
       # emthin was, until 2026-10-05, built by nothing — it has no CI of its own
       # (no `.github/`), and it path-deps velysterm's mathed_core and
