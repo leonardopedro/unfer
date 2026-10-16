@@ -189,13 +189,17 @@ fn ns_cmp_jacobi_transport_identity() {
             let r: Vec<usize> = (0..3).filter(|&x| x != a).collect();
             let c: Vec<usize> = (0..3).filter(|&x| x != b).collect();
             let minor = f[r[0]][c[0]] * f[r[1]][c[1]] - f[r[0]][c[1]] * f[r[1]][c[0]];
-            if (a + b) % 2 == 0 { minor } else { -minor }
+            if (a + b).is_multiple_of(2) {
+                minor
+            } else {
+                -minor
+            }
         };
         let mut tr = 0.0;
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in fdot.iter().enumerate() {
+            for (j, &fij) in row.iter().enumerate() {
                 // tr(adj(F) Fdot) = sum_{a,b} cof_{a b} Fdot_{a b}
-                tr += cof(i, j) * fdot[i][j];
+                tr += cof(i, j) * fij;
             }
         }
         (d, tr / d)
@@ -254,9 +258,12 @@ fn ns_cmp_pressure_from_material_potential() {
     let c2 = 1.9f64;
     let gamma = 1.4f64;
     let rho0 = 2.1f64;
-    let barotropes: [(&str, Box<dyn Fn(f64) -> f64>); 2] = [
-        ("isothermal", Box::new(|r: f64| e_iso(r, c2))),
-        ("polytropic", Box::new(|r: f64| e_poly(r, c2, gamma))),
+    // Named so the `Box<dyn Fn …>` pair stays readable: clippy's
+    // type_complexity gate rejects the inline array type.
+    type Barotrope = (&'static str, Box<dyn Fn(f64) -> f64>);
+    let barotropes: [Barotrope; 2] = [
+        ("isothermal", Box::new(move |r: f64| e_iso(r, c2))),
+        ("polytropic", Box::new(move |r: f64| e_poly(r, c2, gamma))),
     ];
     for (name, e_of) in &barotropes {
         for &rho in &[0.4f64, 1.0, 3.3] {

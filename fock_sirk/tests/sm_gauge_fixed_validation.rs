@@ -83,10 +83,10 @@ fn sm_gf_magnetic_field_abelian_reduction() {
             .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
     };
-    for i in 0..n {
-        for j in 0..n {
-            for k in 0..n {
-                a[i][j][k] = [next(), next()];
+    for ai in a.iter_mut() {
+        for aj in ai.iter_mut() {
+            for ak in aj.iter_mut() {
+                *ak = [next(), next()];
             }
         }
     }
@@ -197,15 +197,15 @@ fn sm_gf_car_algebra_and_vacuum() {
         out
     };
     let ac = anticomm(psi, psid);
-    for i in 0..2 {
-        for j in 0..2 {
+    for (i, row) in ac.iter().enumerate() {
+        for (j, &acij) in row.iter().enumerate() {
             let expected = if i == j {
                 Complex64::new(1.0, 0.0)
             } else {
                 Complex64::new(0.0, 0.0)
             };
             assert!(
-                (ac[i][j] - expected).norm() < 1e-14,
+                (acij - expected).norm() < 1e-14,
                 "{{psi, psi^dag}} must be the identity at ({i},{j})"
             );
         }

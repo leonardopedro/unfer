@@ -112,8 +112,8 @@ impl Poly {
         for (e1, c1) in &self.t {
             for (e2, c2) in &other.t {
                 let mut e = [0u8; 4];
-                for k in 0..4 {
-                    e[k] = e1.0[k] + e2.0[k];
+                for (slot, (&a, &b)) in e.iter_mut().zip(e1.0.iter().zip(e2.0.iter())) {
+                    *slot = a + b;
                 }
                 out = out.add(&Poly::term(e, c1 * c2));
             }
@@ -137,9 +137,9 @@ impl Poly {
         let mut s = Complex64::new(0.0, 0.0);
         for (e, c) in &self.t {
             let mut p = *c;
-            for k in 0..4 {
-                for _ in 0..e.0[k] {
-                    p *= x[k];
+            for (&exp, &xk) in e.0.iter().zip(x.iter()) {
+                for _ in 0..exp {
+                    p *= xk;
                 }
             }
             s += p;
@@ -292,7 +292,7 @@ fn hermite(n: usize, x: f64) -> f64 {
 /// Nodes by Newton on `H_n`, weights from
 /// `w_i = 2^{n−1} n! √π / (n² H_{n−1}(x_i)²)`.
 fn gauss_hermite(n: usize) -> (Vec<f64>, Vec<f64>) {
-    assert!(n >= 1 && n <= 24);
+    assert!((1..=24).contains(&n));
     let mut nodes = vec![0.0f64; n];
     let mut weights = vec![0.0f64; n];
     let mut log_two_pow = 0.0f64; // ln(2^{n-1} n!)
@@ -378,9 +378,9 @@ fn random_state(seed: &mut u64) -> Poly {
         let e = loop {
             let mut e = [0u8; 4];
             let mut total = 0u8;
-            for k in 0..4 {
-                e[k] = (rng(seed).abs() * 1.6) as u8 % 3;
-                total += e[k];
+            for slot in e.iter_mut() {
+                *slot = (rng(seed).abs() * 1.6) as u8 % 3;
+                total += *slot;
             }
             if total <= 3 {
                 break e;

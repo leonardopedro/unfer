@@ -57,10 +57,10 @@
 //!    `e = y²` — the flat principal part of the densitized operator.
 //!
 //! 10. `xf_quantized_evolution_conserves_norm` — the ODE chapter's
-//!    headline, past the classical blow-up: the operator family
-//!    `(e^{−iHt}ψ)(x) = (1+tx)⁻¹ ψ(x/(1+tx))` conserves `∫|ψ|² dx` for
-//!    `t` beyond `1/x0`, the measure-level resolution of the singularity
-//!    (`odeKoop_lintegral_normSq`).
+//!     headline, past the classical blow-up: the operator family
+//!     `(e^{−iHt}ψ)(x) = (1+tx)⁻¹ ψ(x/(1+tx))` conserves `∫|ψ|² dx` for
+//!     `t` beyond `1/x0`, the measure-level resolution of the singularity
+//!     (`odeKoop_lintegral_normSq`).
 
 use num_complex::Complex64;
 
