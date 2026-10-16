@@ -217,9 +217,27 @@ jobs:
       - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.13"
+      # The install keeps its `|| true` (a transient opam mirror failure must
+      # not read as a code break), but the 2026-10-16 run showed the cost of
+      # swallowing it silently: `make bridge` then died with `dune: not found`
+      # (error 127) and nothing said why. So the failure is now mirrored as a
+      # warning annotation with the opam log tail, and dune's presence is
+      # asserted outright — the next red run names its own cause.
       - name: install australVM OCaml deps
         working-directory: ../australVM
-        run: opam install . --deps-only --yes || true
+        run: |
+          rc=0
+          opam install . --deps-only --yes > /tmp/opam-deps.log 2>&1 || rc=$?
+          if [ $rc -ne 0 ]; then
+            body=$(tail -20 /tmp/opam-deps.log \
+              | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
+            echo "::warning::opam install of australVM deps failed (rc=$rc); the OCaml step will fail if dune is missing | $body"
+          fi
+          if command -v dune >/dev/null 2>&1; then
+            echo "dune on PATH: $(command -v dune)"
+          else
+            echo "::error::dune is not on PATH after 'opam install . --deps-only' (rc=$rc) — see the warning above for opam's own output"
+          fi
 
       # Layout note, because it is load-bearing and invisible: the siblings land
       # in $GITHUB_WORKSPACE/../<repo>, which is what makes velysterm's
