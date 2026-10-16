@@ -551,10 +551,32 @@ jobs:
         run: cargo test --locked -p prob_kernel --features latex
       - name: unfer_ffi latex tests
         run: cargo test --locked -p unfer_ffi --features latex
+      # These two pass on the dev box (115+4 and the taler net suite) and
+      # failed on the runner in ~2 minutes with no reachable text; capture
+      # and mirror the tail so the run itself says why. `|| rc=$?`: the
+      # runner shell is bash -e and would abort before the mirror.
       - name: unfer_consensus QuePaxa network tests
-        run: cargo test --locked -p unfer_consensus --features network
+        run: |
+          rc=0
+          cargo test --locked -p unfer_consensus --features network \
+            > /tmp/consensus-net.log 2>&1 || rc=$?
+          tail -40 /tmp/consensus-net.log
+          if [ $rc -ne 0 ]; then
+            body=$(tail -25 /tmp/consensus-net.log | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
+            echo "::error::consensus-network rc=$rc | $body"
+            exit $rc
+          fi
       - name: unfer_taler network testnet tests
-        run: cargo test --locked -p unfer_taler --features network
+        run: |
+          rc=0
+          cargo test --locked -p unfer_taler --features network \
+            > /tmp/taler-net.log 2>&1 || rc=$?
+          tail -40 /tmp/taler-net.log
+          if [ $rc -ne 0 ]; then
+            body=$(tail -25 /tmp/taler-net.log | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
+            echo "::error::taler-network rc=$rc | $body"
+            exit $rc
+          fi
 
   # ---------------------------------------------------------------------------
   # Integration spine: build the FFI as a shared lib and assert the uk_* C ABI
