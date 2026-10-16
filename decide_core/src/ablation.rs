@@ -112,7 +112,8 @@ pub struct AblationRow {
     /// otherwise an `ananc` cell would report the previous `anacp` cell's
     /// floors, which is precisely how this column lied on its first run.)
     pub floored_eigenvalues: Option<u64>,
-    /// Persistent analytic state at this `D`, in f64s. See [`state_floats`].
+    /// Persistent analytic state at this `D`, in f64s. Counted by the
+    /// crate-private `state_floats` helper rather than by running the model.
     pub state_floats: u64,
 }
 
