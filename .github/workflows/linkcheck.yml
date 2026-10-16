@@ -10,5 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+      # The link graph names the workspace layout a lone checkout does not
+      # have: ATTRIBUTION.md:5 links ../ATTRIBUTION.md (the workspace-root
+      # ledger, mirrored byte-identically in emthin/workspace-backup), and
+      # deploy/DEPLOY.md + docs/CHECKLIST_EVIDENCE.md link into sibling
+      # repos (../../dynamic-arctic/docs/RUNBOOK.md, ../../australVM/Makefile).
+      # Materialize that layout: the mirror at the root path, the siblings at
+      # their repo-relative paths (default branches; clones keep the links'
+      # targets real files rather than stubs).
+      - name: workspace layout (root ATTRIBUTION + sibling repos)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/leonardopedro/emthin/main/workspace-backup/ATTRIBUTION.md -o ../ATTRIBUTION.md
+          git clone --depth 1 https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          git clone --depth 1 https://github.com/leonardopedro/australVM.git ../australVM
       - name: check-links
         run: python3 scripts/check-links
