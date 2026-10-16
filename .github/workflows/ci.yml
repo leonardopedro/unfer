@@ -309,16 +309,32 @@ jobs:
           # would print PASS for a repo nothing was checked against.
           failed=""
           skipped=""
+          # GitHub expressions have no dynamic member access: the previous
+          # `case "${{ steps.$step.outcome }}"` was an expression *lexing*
+          # error ("unexpected character '$'") inside a run: block, which
+          # invalidates the whole workflow file at push validation — every
+          # CI run failed with zero jobs since this block was written
+          # (first observed 2026-10-16, present since ≤ a690697). Bind each
+          # literal outcome to a shell variable first (hyphenated ids need
+          # the index syntax), then index shell variables from the loop.
+          declare -A outcome=(
+            [unfer]="${{ steps.unfer.outcome }}"
+            [arctic]="${{ steps.arctic.outcome }}"
+            [velysterm]="${{ steps.velysterm.outcome }}"
+            [australvm-rs]="${{ steps['australvm-rs'].outcome }}"
+            [australvm-ocaml]="${{ steps['australvm-ocaml'].outcome }}"
+            [emthin]="${{ steps.emthin.outcome }}"
+          )
           for step in unfer arctic velysterm australvm-rs australvm-ocaml emthin; do
             if [ "$step" = "emthin" ] && [ ! -f ../emthin/Cargo.toml ]; then
               echo "  SKIP  $step (not covered: repo not checked out)"
               skipped="$skipped $step"
               continue
             fi
-            case "${{ steps.$step.outcome }}" in
+            case "${outcome[$step]}" in
               success) echo "  PASS  $step" ;;
               skipped) echo "  SKIP  $step (step did not run)" ; skipped="$skipped $step" ;;
-              *)       echo "  FAIL  $step (${{ steps.$step.outcome }})" ; failed="$failed $step" ;;
+              *)       echo "  FAIL  $step (${outcome[$step]})" ; failed="$failed $step" ;;
             esac
           done
           if [ -n "$failed" ]; then
