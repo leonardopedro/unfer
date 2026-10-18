@@ -209,35 +209,34 @@ jobs:
             libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev \
             wayland-protocols libexpat1-dev
 
-      # australVM's OCaml half needs a compiler before `make test` can run. The
-      # dependency install is `|| true` for the same reason the module e2e jobs
-      # do it: a transient opam mirror failure should not read as a code break,
-      # and the step that actually proves something is the one that runs the
-      # suite. `make test` (X4b) picks the dynamic loader itself.
-      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032  # ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "4.13"
-      # The install keeps its `|| true` (a transient opam mirror failure must
-      # not read as a code break), but the 2026-10-16 run showed the cost of
-      # swallowing it silently: `make bridge` then died with `dune: not found`
-      # (error 127) and nothing said why. So the failure is now mirrored as a
-      # warning annotation with the opam log tail, and dune's presence is
-      # asserted outright — the next red run names its own cause.
-      - name: install australVM OCaml deps
-        working-directory: ../australVM
-        run: |
-          rc=0
-          opam install . --deps-only --yes > /tmp/opam-deps.log 2>&1 || rc=$?
-          if [ $rc -ne 0 ]; then
-            body=$(tail -20 /tmp/opam-deps.log \
-              | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')
-            echo "::warning::opam install of australVM deps failed (rc=$rc); the OCaml step will fail if dune is missing | $body"
-          fi
-          if command -v dune >/dev/null 2>&1; then
-            echo "dune on PATH: $(command -v dune)"
-          else
-            echo "::error::dune is not on PATH after 'opam install . --deps-only' (rc=$rc) — see the warning above for opam's own output"
-          fi
+      # australVM's OCaml half needs a toolchain before `make test` can run.
+      #
+      # 2026-10-18: replaced the opam path that could never have worked in
+      # this job's layout. The annotations on every red run say it precisely:
+      # `opam install . --deps-only` answered `No switch is currently set`
+      # (rc=50), so dune was never installed and `make bridge` died at
+      # `dune: not found` (127). Cause: setup-ocaml creates a *local* switch
+      # (`_opam`) at the workspace root — i.e. inside this checkout — while
+      # the siblings are deliberately cloned *outside* it (that is what makes
+      # velysterm's `../../../unfer` path dep resolve), and opam's local-switch
+      # walk-up from `../australVM` never crosses back into the workspace. The
+      # module e2e jobs only escape this because their siblings sit *inside*
+      # the workspace, so their walk-up finds `_opam`.
+      #
+      # The fix uses the toolchain australVM's own CI runs these same two
+      # commands with (`make bridge`, `make test` — see australVM's
+      # .github/workflows/build-and-test.yml, green on every run): the flake's
+      # devShell, pinned by the committed flake.lock. Same commands, same
+      # shell, one answer to "how do I check this repo" instead of a second,
+      # never-green environment. Verified locally on 2026-10-18 in this exact
+      # sibling layout: `nix develop ../australVM -c ... make -C ../australVM
+      # bridge && ... test` builds the bridge and passes all 16 suites.
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703  # nixbuild/nix-quick-install-action@v30
+
+      # (The suite step itself runs after `australvm-rs` below — the two
+      # languages stay paired. The `|| rc=$?` annotation-mirroring pattern is
+      # unchanged from the opam era: annotations are the one channel readable
+      # without log access.)
 
       # Layout note, because it is load-bearing and invisible: the siblings land
       # in $GITHUB_WORKSPACE/../<repo>, which is what makes velysterm's
@@ -295,17 +294,25 @@ jobs:
       # red on its first runs (exit 2 from make). Building it here also
       # satisfies the staleness half of the gate — the sources were checked
       # out before we built, so nothing is newer than the artifact.
+      #
+      # Under `nix develop` rather than opam (see the install step above for
+      # why opam could never work from this layout). `nix develop <path> -c`
+      # keeps the caller's cwd — asserted locally 2026-10-18 — so the
+      # `make -C ../australVM` resolves against this checkout's sibling, the
+      # same path every cargo step above uses. `make test` picks the dynamic
+      # loader itself; with no UNFER_LOGOS_BIN set here the formalize suite
+      # reports skipped rather than red.
       - name: australVM (OCaml plugin + Why3 gate suites)
         id: australvm-ocaml
         run: |
           # Capture to a file and re-emit the tail as an annotation on
-          # failure: this step has never been observed green, and the
-          # annotations are the one channel readable without log access
-          # (the same pattern as emthin's E2E step). `|| rc=$?`, not rc=$?
-          # alone: the runner's shell is bash -e, which would abort at the
-          # failing make and skip the mirror.
+          # failure: the annotations are the one channel readable without log
+          # access (the same pattern as emthin's E2E step). `|| rc=$?`, not
+          # rc=$? alone: the runner's shell is bash -e, which would abort at
+          # the failing make and skip the mirror.
           rc=0
-          { make -C ../australVM bridge && make -C ../australVM test; } \
+          nix develop ../australVM -c bash -c \
+            'make -C ../australVM bridge && make -C ../australVM test' \
             > /tmp/australvm-ocaml.log 2>&1 || rc=$?
           tail -40 /tmp/australvm-ocaml.log
           if [ $rc -ne 0 ]; then
