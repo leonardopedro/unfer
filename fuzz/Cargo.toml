@@ -29,6 +29,13 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 unfer_protocol = { path = "../unfer_protocol" }
+# The target's constructor-reach parse (`serde_json::from_str` after
+# `check_raw`) needs serde_json in *this* crate's namespace:
+# unfer_protocol depending on it does not make it importable here
+# (Rust 2018+). Missing since the target was first written, which is why
+# every nightly run in .github/workflows/fuzz.yml red on a *build* error,
+# not a finding. Same version the workspace pins (../Cargo.toml).
+serde_json = "1.0.150"
 
 [[bin]]
 name = "ingest_message"

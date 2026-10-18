@@ -27,17 +27,36 @@
 //! - **P4 — an unregistered source survives as its own name.** `IngestSource::Other`
 //!   must not be flattened into a placeholder, or adding a platform becomes a
 //!   data-loss event instead of a config change.
+//! - **P5 — scrubbing converges in one pass.** [`redaction_is_idempotent`].
+//!   Parsing re-redacts every string field, so P3 holds only because
+//!   re-redacting already-redacted text is a no-op; when it is not, a
+//!   secret-shaped field drifts a little further on every serialize→parse hop
+//!   and the "fixed point" is a slow erosion. The fuzzer found exactly that on
+//!   2026-10-18 — the first day the fuzz crate could compile at all.
 //!
-//! ## A fifth check that is not a property
+//! ## A check that is not a property
 //!
 //! The constructor redaction ([`IngestMessage::new`]) is verified separately, in
 //! `ingest.rs`'s own tests. It is a statement about *construction*, not about
 //! parsing, and it cannot be reached from the fuzzer — which is precisely why it
 //! is asserted where it is and not here. See [`redacted_on_construction`].
 
+use crate::board::redact_secrets;
 use crate::ingest::{
     IngestMessage, MAX_ATTACHMENT_REF, MAX_ATTACHMENTS, MAX_MESSAGE_TEXT, MAX_SENDER,
 };
+
+/// Run P5: scrubbing an already-scrubbed string changes nothing.
+///
+/// Split out like P2/P3 so a caller with a scrubber question does not have to
+/// build a message to ask it. The fuzzer reaches this on every byte string it
+/// tries — including strings that are not JSON at all, which is where P3 cannot
+/// look and the only reason this is a property in its own right.
+pub fn redaction_is_idempotent(raw: &str) {
+    let once = redact_secrets(raw);
+    let twice = redact_secrets(&once);
+    assert_eq!(once, twice, "redaction is not idempotent");
+}
 
 /// Run P2 and P3 against a message that is known to have parsed.
 ///
@@ -103,12 +122,18 @@ pub fn check_parsed(msg: &IngestMessage) {
     an_unregistered_source_survives(msg);
 }
 
-/// Check one raw input end to end: P1, then P2–P4 if it parsed.
+/// Check one raw input end to end: P1 and P5 on the raw bytes, then P2–P4 if
+/// it parsed.
 ///
 /// Returns `true` when the input parsed, so a caller can assert its corpus is
 /// actually exercising the parser rather than passing vacuously — a generator
-/// that always produced invalid JSON would satisfy P1..P4 trivially.
+/// that always produced invalid JSON would satisfy P1..P4 trivially. P5 runs
+/// either way: scrubbing is defined on arbitrary text, not only on JSON.
 pub fn check_raw(raw: &str) -> bool {
+    // P5. Scrubbing must converge in one pass, and it runs on raw text before
+    // anything below can look at it.
+    redaction_is_idempotent(raw);
+
     // P1. Any failure here is a *result*, not an error: the point is that the
     // parser returns instead of unwinding.
     let Ok(msg) = serde_json::from_str::<IngestMessage>(raw) else {

@@ -7,7 +7,7 @@
 //! `unfer_protocol::ingest::property::arbitrary_json_never_panics`, so the
 //! coverage-guided fuzzer and the CI property test check exactly the same
 //! things and cannot drift apart. That single-sourcing is the point of this
-//! rewrite: the previous version asserted the same four properties a second
+//! rewrite: the previous version asserted the same five properties a second
 //! time, which meant the fuzzer could disagree with CI about what "correct"
 //! meant. See `ingest_props.rs` for the properties themselves.
 //!
@@ -30,7 +30,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    // P1 (no panic) plus P2/P3/P4 for anything that parsed.
+    // P1 (no panic) and P5 (scrubbing converges) on every input, plus
+    // P2/P3/P4 for anything that parsed.
     let parsed = ingest_props::check_raw(text);
 
     if parsed {

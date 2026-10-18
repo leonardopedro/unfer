@@ -550,7 +550,7 @@ pub fn was_redacted(s: &str) -> bool {
 ///
 /// ## Why this exists alongside a fuzz target
 ///
-/// `fuzz/fuzz_targets/ingest_message.rs` states the same four properties, but a
+/// `fuzz/fuzz_targets/ingest_message.rs` states the same five properties, but a
 /// fuzz target needs nightly and `libfuzzer-sys`, neither of which this
 /// environment has -- so it is a comment that happens to compile. This module
 /// runs the identical assertions over a large generated corpus in ordinary CI,
@@ -659,7 +659,7 @@ pub mod property {
         o
     }
 
-    /// The four fuzz properties, over a generated corpus.
+    /// The five fuzz properties, over a generated corpus.
     ///
     /// 20k messages keeps this well under a second while covering every fragment
     /// combination the alphabet allows many times over.

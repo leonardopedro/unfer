@@ -11,7 +11,7 @@ name: fuzz
 # which is why nothing was actually unprotected; but "a fuzz target exists" reads
 # as a stronger claim than "a fuzz target exists and has never been executed".
 #
-# What closed that gap is not only this job: it is that the four properties are
+# What closed that gap is not only this job: it is that the properties are
 # now single-sourced in `unfer_protocol::ingest_props` (D.1a). The target holds
 # no assertions of its own, so the fuzzer and the CI property test cannot drift
 # into checking different things — which is exactly how the ingest cap bug

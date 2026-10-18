@@ -676,10 +676,27 @@ fn redact_keyed_values(text: &str) -> String {
         // empty key. Stripping it gives `{"token`, whose last delimiter is the
         // `{`, so the key comes out as `token`.
         let kb = text[..idx].trim_end().trim_end_matches('"');
-        let kstart = kb
+        let mut kstart = kb
             .rfind(|c: char| c.is_whitespace() || c == ',' || c == '{' || c == '"')
             .map(|i| i + 1)
             .unwrap_or(0);
+        // A walked-back key that crosses a scrub mark sits *inside or after* a
+        // value an earlier pass already redacted: reaching the mark at all
+        // means the walk found no delimiter, which is the whole hazard. Clamp
+        // to just after the last mark. On `api_keyi0:***REDACTED***':-:::'t`
+        // the second separator would otherwise walk back over the mark, see
+        // `api_key` again, and redact a second time — so scrubbing is not a
+        // fixed point and parse→serialize→parse drifts (P3). That is not
+        // hypothetical: it is the first thing the ingest fuzzer found, on
+        // 2026-10-18, the first day its crate could compile at all.
+        //
+        // The clamp must not become an evasion: `***REDACTED***token:secret`
+        // still redacts, because the fragment itself survives the clamp. Only
+        // a fragment *glued inside* the key on both sides by the mark stops
+        // firing, and that shape is the drift this exists to stop.
+        if let Some(rel) = kb[kstart..].rfind(REDACTED) {
+            kstart += rel + REDACTED.len();
+        }
         let key = kb[kstart..].trim_matches('"');
         if key.is_empty() {
             continue;
@@ -719,6 +736,66 @@ fn redact_keyed_values(text: &str) -> String {
     }
     out.push_str(&text[last..]);
     out
+}
+
+/// Redaction must converge in one pass.
+///
+/// `redact_secrets` runs on every board write, every memory append and every
+/// inbound message, and a parsed message must be a fixed point of
+/// parse→serialize→parse (P3) — which holds only if scrubbing already-redacted
+/// text changes nothing. These are the regressions for the ingest fuzzer's
+/// first real finding (2026-10-18): the fuzz crate had never compiled (no
+/// `serde_json` dependency), so the nightly job had never once executed
+/// an input, and the first run that did found this inside two minutes.
+#[cfg(test)]
+mod redaction_idempotence_tests {
+    use super::*;
+
+    #[test]
+    fn a_mark_glued_to_the_next_separator_does_not_redact_twice() {
+        // The fuzzer's shape: no delimiter between the scrub mark and the next
+        // `:`, so the walked-back key for `:-` spans the mark and would see
+        // `api_key` a second time, eating `-:::` as a fresh "secret".
+        let s = "api_keyi0:sekrit':-:::'tail";
+        let once = redact_secrets(s);
+        assert!(!once.contains("sekrit"), "the secret must go: {once}");
+        assert_eq!(
+            redact_secrets(&once),
+            once,
+            "one pass, then stable — scrubbing is a function, not a process"
+        );
+    }
+
+    #[test]
+    fn a_mark_prefixing_a_sensitive_key_still_redacts() {
+        // The counter-case to the clamp: a mark must not become a general
+        // evasion by sitting between key and separator.
+        let out = redact_secrets("***REDACTED***token:sekrit");
+        assert!(!out.contains("sekrit"), "{out}");
+    }
+
+    #[test]
+    fn every_scrubber_shape_settles_after_one_pass() {
+        for s in [
+            "api_key=sk-live-abc123",
+            "Authorization: Bearer ghp_realtokenvalue",
+            "sk-sk-",
+            "api_key::api_key",
+            "token=a token=b",
+            "password: hunter2, secret=x",
+            "api_keyi0:sekrit':-:::'tail",
+            "***REDACTED***token:sekrit",
+            "bearer ***REDACTED***x",
+            "no secrets here",
+        ] {
+            let once = redact_secrets(s);
+            assert_eq!(
+                redact_secrets(&once),
+                once,
+                "not idempotent: {s:?} -> {once:?}"
+            );
+        }
+    }
 }
 
 /// Regression tests for the redactor's slice arithmetic.
