@@ -113,6 +113,7 @@ ALLOW=(
   '^test/(numerics|basics|book|numerical-physics|the-program)/ :: .* :: 2 :: prose site: literature/economics/physics derivations, citations not adaptation claims'
   '^test/README.md$ :: .* :: 2 :: site meta prose'
   '^test/unfer/foundations.md$ :: .* :: 2 :: quotes ../basics/bond.md prose'
+  '^test/unfer/intro\.md$ :: .* :: 2 :: prose site: an interpretation of a cited physics reference (bertoin94), explicitly "not a theorem derived from it" — no adaptation claimed'
   '^test/software/math\.md$ :: .* :: 2 :: prose site describing external tools (Bend, Lambdapi), not adapting them'
   '^timepiece/ :: .* :: 2 :: timepiece: Lean/LaTeX/math corpus -- derived from = derivation; tier-1 (health.sh ax) still enforced'
   '^australVM/engram.md$ :: .* :: 2 :: reproduction of the DeepSeek Engram paper: its own derivation claims, not our adaptation claims'
@@ -136,6 +137,12 @@ ALLOW=(
   '^PROJECT_REVIEW_AND_IMPROVEMENT_PLAN\.md$ :: this tree .*adapted from :: * :: quotes policy #4 itself (the rule, not a claim)'
   '^unfer/docs/IMPLEMENTATION_PLAN\.md$ :: ported from .mathed :: * :: internal port of velysterm own glyph index (the module is mathed::glyphs), not an external source'
   '^unfer/docs/PLAN_REFI_EXCHANGE\.md$ :: Adapted from the 6-phase :: * :: the owner confirmed 2026-10-07 this is their own earlier plan; in-house, not a third-party source'
+  # Generator boilerplate: the skeleton-subtraction pass stamps every emitted
+  # bundle with this exact sentence, which names no source, so the window rule
+  # can never see the ledger row. Tier 1, but the entry excuses that one
+  # sentence verbatim — the real claim (openai/math@1581d4c, Apache-2.0) is
+  # rowed in ATTRIBUTION.md and stamped in the file's own line-1 header.
+  '^timepiece/Downloads/_deps/Definitions/Def_OAI_Analysis_DirectCrouzeix_ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: skeleton-subtraction generator boilerplate; source named in the file header (openai/math@1581d4c) and rowed in ATTRIBUTION.md'
 )
 
 verbose=0
