@@ -142,7 +142,10 @@ ALLOW=(
   # can never see the ledger row. Tier 1, but the entry excuses that one
   # sentence verbatim — the real claim (openai/math@1581d4c, Apache-2.0) is
   # rowed in ATTRIBUTION.md and stamped in the file's own line-1 header.
-  '^timepiece/Downloads/_deps/Definitions/Def_OAI_Analysis_DirectCrouzeix_ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: skeleton-subtraction generator boilerplate; source named in the file header (openai/math@1581d4c) and rowed in ATTRIBUTION.md'
+  # (Path updated 2026-10-20: the owner's Downloads -> converted migration
+  # moved the file from timepiece/Downloads/_deps/Definitions/ to
+  # timepiece/converted/Definitions/; the sentence is unchanged.)
+  '^timepiece/converted/Definitions/Def_OAI_Analysis_DirectCrouzeix_ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: skeleton-subtraction generator boilerplate; source named in the file header (openai/math@1581d4c) and rowed in ATTRIBUTION.md'
 )
 
 verbose=0
