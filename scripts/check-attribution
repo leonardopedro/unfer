@@ -146,6 +146,13 @@ ALLOW=(
   # moved the file from timepiece/Downloads/_deps/Definitions/ to
   # timepiece/converted/Definitions/; the sentence is unchanged.)
   '^timepiece/converted/Definitions/Def_OAI_Analysis_DirectCrouzeix_ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: skeleton-subtraction generator boilerplate; source named in the file header (openai/math@1581d4c) and rowed in ATTRIBUTION.md'
+  # The timepiece/math/ subtree (2026-10-20) is a *verbatim* copy of openai/math
+  # itself (Apache-2.0, rowed above), so the same boilerplate sentence occurs
+  # in the two vendored files that carry it upstream. Each entry names its
+  # exact path and the exact line; nothing else under timepiece/math/ is
+  # excused.
+  '^timepiece/math/OAI/NumberTheory/SiegelZeros/Structure/CharacterEstimates\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: verbatim copy of openai/math@1581d4c upstream file; source rowed in ATTRIBUTION.md (openai/math)'
+  '^timepiece/math/OAI/Analysis/DirectCrouzeix/ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: verbatim copy of openai/math@1581d4c upstream file; source rowed in ATTRIBUTION.md (openai/math)'
 )
 
 verbose=0
