@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1800 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-20 -->
+<!-- status: verified | tests: 1846 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-21 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -134,6 +134,11 @@ Growth since the 1797 of rev 28: `unfer_protocol` +3 — the redaction-
 idempotence regressions added for the ingest fuzzer's first real finding
 (P3 drift on a scrub mark glued to the next separator; see
 `board::redaction_idempotence_tests`).
+Growth since the 1800 of rev 29: `pcnl` +46 (27 at rev 30, 19 at
+rev 31) — the unadjusted SG-pCNL × nGPT-lite transformer crate behind
+`docs/plan_bayes_ngpt.md` (sampler, toy transformer, diagnostics,
+`safetensors` trajectory persistence) plus its numerical validation
+battery (`pcnl/tests/numerics.rs`).
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -144,7 +149,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1800 passed (2026-10-18, rev 29; was 1797 on 2026-10-18 — see the
+#   1846 passed (2026-10-21, rev 31; was 1827 on 2026-10-20 — see the
 #   counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
@@ -228,19 +233,20 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 29, 2026-10-18)
+## Test & benchmark counts (rev 31, 2026-10-21)
 
-- Workspace tests: **1800 green** on CPU (default features,
+- Workspace tests: **1846 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by target name from a single log):
   `unfer_protocol` 405, logos 352, `unfer_ffi` 229,
   `prob_kernel` 143, `decide_core` 116, `unfer_consensus` 111,
   `nested_fock_algebra` 98, `qfm` 91, `unfer_edge` 63, `qfm_text` 62,
-  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `unfer_identity` 7,
+  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `pcnl` 46,
+  `unfer_identity` 7,
   `sirk_core_model` 5 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1800 above.
+  2026-10-06, `--release`) and is **not** in the 1846 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -249,7 +255,17 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 29** (2026-10-18) claims **1800**
+> Revision history of this table: **rev 31** (2026-10-21) claims **1846**
+> after `pcnl` gained `tests/numerics.rs` — a 19-test numerical
+> validation battery (prior shell, pCN stationarity, finite-difference
+> gradients, batch-scaling identity, causality, Robbins–Monro
+> summability, bit-determinism) — re-measured by the same command from
+> this run's own log.
+> **rev 30** (2026-10-20) claims **1827**
+> after the `pcnl` crate (unadjusted SG-pCNL × nGPT-lite transformer,
+> `docs/plan_bayes_ngpt.md`) joined the workspace with 27 tests,
+> re-measured by the same command from this run's own log.
+> **rev 29** (2026-10-18) claims **1800**
 > after the fuzz-found P3 fix added three redaction-idempotence regression
 > tests to `unfer_protocol`, re-measured by the same command from this
 > run's own log. **rev 28** (2026-10-15) claims **1797**
