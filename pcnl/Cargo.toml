@@ -1,0 +1,14 @@
+[package]
+name = "pcnl"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "pCNL Bayesian adaptation for a normalized (nGPT-lite) transformer — docs/plan_bayes_ngpt.md"
+
+[dependencies]
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+rayon = { workspace = true }
+safetensors = { workspace = true }

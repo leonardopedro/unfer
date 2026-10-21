@@ -1,9 +1,14 @@
+> **Status (2026-10-20):** implemented as workspace crate `pcnl/`;
+> the full Week-3 run's measured numbers and plan-conformance notes are
+> in [`docs/PCNL_STATUS.md`](PCNL_STATUS.md).
+
 ### 1. Technology Stack Selection & Justification
 
 | Layer | Recommended Choice | Justification & Alternatives |
 | :--- | :--- | :--- |
 | **Tensor & Autograd Engine** | **`candle` (Hugging Face)** | Minimalist, idiomatic Rust with native autograd (`candle-core`, `candle-nn`). It has zero heavy C++ dependencies (unlike `tch-rs`/LibTorch) while supporting CUDA, Metal, and AVX CPU backends. *(Alternative: `burn` is viable, but `candle` offers cleaner low-level pointer and gradient manipulation for custom MCMC loops).* |
-| **MCMC & Math Core** | **`rand` + `rand_distr`** | High-performance, cryptographically reproducible Gaussian noise sampling ($\boldsymbol{\xi} \sim \mathcal{N}(0, \sigma^2 \mathbf{I})$) using deterministic seeds (`ChaCha8Rng`). |
+| **MCMC & Math Core** | **`rand` + `rand_distr`** | Sampling $\boldsymbol{\xi} \sim \mathcal{N}(0, \sigma^2 \mathbf{I})$ + noise injection. |
+| **Data Ingestion** | **Custom Mini-Batch DataLoader** | Batched iterator over token sequences in Rust to feed streaming stochastic gradients. |
 | **Serialization / State** | **`safetensors`** | Zero-copy weight serialization to save and stream posterior parameter trajectories to disk during sampling. |
 | **CLI & Diagnostics** | **`clap` + `indicatif`** | Fast CLI for sweep configurations, step-size tuning, and real-time MCMC progress bars. |
 | **Reference Validation (Justified Alternative)** | **Python / JAX (Phase 0 only)** | *Temporary alternative:* A minimal 150-line JAX/PyTorch reference script in Phase 0 is strongly recommended to establish baseline MCMC acceptance rates and verify mathematical convergence on a toy dataset before writing the Rust implementation. |
@@ -44,24 +49,37 @@ Inside the forward pass, each tensor is dynamically evaluated as $\widehat{W} = 
 
 ---
 
-### 3. Mathematical Formulation of the pCNL Sampler
+### 3. Mathematical Formulation: Unadjusted SG-pCNL (Stochastic Gradient pCNL)
 
-To adapt the model to new dataset $\mathcal{D}$, the continuous prior is chosen as $\boldsymbol{\theta} \sim \mathcal{N}(0, \sigma^2 \mathbf{I})$.
+The full-batch Metropolis filter is completely eliminated. The transition is unconditionally
+accepted at every mini-batch step.
 
-#### A. Proposal Step
-Given current weights $\boldsymbol{\theta}$ and data potential $\Phi(\boldsymbol{\theta}) = \mathcal{L}(\mathcal{D}; \boldsymbol{\theta})$:
-1. Sample noise: $\boldsymbol{\xi} \sim \mathcal{N}(0, \sigma^2 \mathbf{I})$.
-2. Compute loss gradient: $\mathbf{g} = \nabla_{\boldsymbol{\theta}} \mathcal{L}(\mathcal{D}; \boldsymbol{\theta})$ via `candle` backward pass.
-3. Propose $\boldsymbol{\theta}'$:
-   $$\boldsymbol{\theta}' = \sqrt{1 - \beta^2}\,\boldsymbol{\theta} + \beta\,\boldsymbol{\xi} - \frac{\beta^2 \sigma^2}{2} \mathbf{g}$$
-   where $\beta \in (0, 1]$ is the step-size parameter.
+#### A. Unadjusted Update Rule
+For mini-batch $B_t$ of size $B$ sampled from dataset of size $N$:
 
-#### B. Exact Metropolis–Hastings Acceptance Ratio
-To guarantee exact detailed balance under Langevin drift (accounting for the drift transition asymmetry), the acceptance probability $\alpha(\boldsymbol{\theta}, \boldsymbol{\theta}')$ is:
-$$\alpha(\boldsymbol{\theta}, \boldsymbol{\theta}') = \min\left(1, \, \exp\left( -\mathcal{L}(\boldsymbol{\theta}') + \mathcal{L}(\boldsymbol{\theta}) - \Delta_{\text{drift}}(\boldsymbol{\theta}, \boldsymbol{\theta}') \right)\right)$$
-where the drift correction term is:
-$$\Delta_{\text{drift}}(\boldsymbol{\theta}, \boldsymbol{\theta}') = \frac{1}{2} \langle \mathbf{g} + \mathbf{g}', \, \boldsymbol{\theta}' - \sqrt{1 - \beta^2}\boldsymbol{\theta} \rangle + \frac{\beta^2 \sigma^2}{8} \left( \|\mathbf{g}\|^2 - \|\mathbf{g}'\|^2 \right)$$
-*(Note: If $\beta$ is small or you use pure pCN without drift, $\Delta_{\text{drift}} = 0$. In nGPT, because $\|\mathbf{g}\|$ is strictly bounded, $\Delta_{\text{drift}}$ remains numerically well-conditioned).*
+$$g_{\text{batch}} = (N / B) \sum_{i \in B_t} \nabla_\theta \ell_i(\theta_t)$$
+$$\theta_{t+1} = \sqrt{1 - \beta_t^2}\,\theta_t + \beta_t\,\xi_t - \frac{\beta_t^2 \sigma^2}{2} g_{\text{batch}}$$
+
+where:
+- $\xi_t \sim \mathcal{N}(0, \sigma^2 I)$ is prior-preserving Ornstein-Uhlenbeck noise.
+- $(N / B)$ scales the mini-batch gradient into an unbiased estimate of the full potential.
+
+#### B. Stability via nGPT Lipschitz Geometry
+Without the Metropolis-Hastings reject mechanism, standard transformers diverge due to
+unbounded gradient noise covariance: $\text{Cov}[g_{\text{batch}}] \to \infty$ as attention saturates.
+
+Under nGPT:
+1. Unit representations ($\|x\| = 1$) + Cosine attention logit clamping $[-\tau, \tau]$
+   guarantee that individual sample gradients are uniformly bounded: $\|\nabla_\theta \ell_i(\theta)\| \le M$.
+2. The stochastic gradient covariance is strictly bounded:
+   $$\mathbb{E}\left[ \|g_{\text{batch}} - g_{\text{full}}\|^2 \right] \le (N^2 / B) \cdot M^2$$
+3. This bounded perturbation prevents the chain from escaping into degenerate regions,
+   guaranteeing geometric ergodicity under Robbins-Monro annealing.
+
+#### C. Step-Size Schedule ($\beta_t$)
+Replace dual-averaging acceptance tuning with a learning-rate style decay schedule:
+- **Option 1 (Robbins-Monro):** $\beta_t = \beta_0 (1 + \gamma t)^{-\kappa}$, $\kappa \in (0.5, 1]$
+- **Option 2 (Cyclical SG-pCNL):** Cyclical cosine decay to alternately explore modes and sample posteriors.
 
 ---
 
@@ -77,8 +95,9 @@ $$\Delta_{\text{drift}}(\boldsymbol{\theta}, \boldsymbol{\theta}') = \frac{1}{2}
 * **Goal:** Verify that normalized attention stabilizes pCNL compared to standard dot-product attention.
 * **Tasks:**
   * Implement a 1-layer toy transformer on a sequence task (e.g., character prediction or modular arithmetic).
-  * Run pCNL on standard Softmax vs. Scaled Cosine/nGPT attention.
-  * Confirm that standard attention suffers from acceptance collapse ($\alpha \to 0$ due to gradient spikes), while nGPT attention maintains steady acceptance rates ($\alpha \approx 20\% - 40\%$).
+  * Run unadjusted mini-batch steps on a toy task:
+    * Verify that standard Dot-Product Transformer explodes or suffers random walks due to unbounded mini-batch gradient spikes.
+    * Verify that nGPT maintains stable parameter norms $\|\theta_t\| \sim \sigma \sqrt{P}$ across 10,000 mini-batch iterations without MH rejection.
 
 #### Phase 1: Rust Foundation & Normalized Architecture (3–5 Days)
 * **Crates:** `candle-core`, `candle-nn`.
@@ -90,22 +109,13 @@ $$\Delta_{\text{drift}}(\boldsymbol{\theta}, \boldsymbol{\theta}') = \frac{1}{2}
     $$A_{ij} = \text{softmax}\left(\tau \cdot \frac{q_i \cdot k_j}{\|q_i\| \|k_j\| + \epsilon}\right)$$
   * Construct `FlatParameters`: A struct that packs all trainable tensors into a single contiguous `candle::Tensor` of shape $[P]$ and unpacks them back into module weight references.
 
-#### Phase 2: The pCNL Engine in Rust (3–4 Days)
+#### Phase 2: The Unadjusted SG-pCNL Engine in Rust (3–4 Days)
 * **Crates:** `rand`, `rand_distr`, `rayon` (for parallel chains).
 * **Tasks:**
-  * Implement the proposal kernel:
-    ```rust
-    pub struct PcnlSampler {
-        pub beta: f64,
-        pub sigma: f64,
-        pub current_theta: Tensor,
-        pub current_loss: f64,
-        pub current_grad: Tensor,
-    }
-    ```
-  * Implement proposal generation and backward pass evaluation.
-  * Implement the Metropolis accept/reject check using uniform sampling $\log u < \log \alpha$.
-  * Add an **Adaptive Step-Size ($\beta$) Controller**: Dual averaging (similar to NUTS) targeting an optimal acceptance rate of $\sim 23.4\%$ to $50\%$.
+  * Implement streaming Mini-Batch DataLoader in Candle.
+  * Remove all Metropolis-Hastings evaluation logic (eliminating the redundant forward pass on $\theta_{\text{proposed}}$).
+  * Implement `SgPcnlScheduler`: implements step-size decay $\beta_t = \beta_0 (1 + \gamma \cdot \text{step})^{-0.55}$.
+  * Update parameters in-place on GPU memory after each backward pass.
 
 #### Phase 3: Bayesian Adaptation Pipeline (3–4 Days)
 * **Tasks:**
@@ -131,67 +141,68 @@ $$\Delta_{\text{drift}}(\boldsymbol{\theta}, \boldsymbol{\theta}') = \frac{1}{2}
 Below is the core loop demonstrating how the proposal, gradient evaluation, and Metropolis step fit together cleanly in `candle`:
 
 ```rust
-use candle_core::{Result, Tensor, DType, Device};
-use rand::distributions::StandardNormal;
-use rand::prelude::*;
-
-pub struct PcnlState {
-    pub theta: Tensor,
-    pub loss: f64,
-    pub grad: Tensor,
-    pub beta: f64,
-    pub sigma: f64,
+pub struct SgPcnlState {
+    pub theta: Tensor,       // Contiguous parameter vector [P]
+    pub sigma: f64,          // Prior std dev (isotropic)
+    pub beta_0: f64,         // Initial step size
+    pub gamma: f64,          // Decay rate
+    pub kappa: f64,          // Decay exponent (e.g., 0.55)
+    pub step_count: usize,
+    pub dataset_size: usize,
+    pub batch_size: usize,
 }
 
-impl PcnlState {
-    pub fn step<F>(&mut self, loss_and_grad_fn: F, rng: &mut impl Rng) -> Result<bool>
-    where
-        F: Fn(&Tensor) -> Result<(f64, Tensor)>,
-    {
+impl SgPcnlState {
+    /// Executes an in-place Unadjusted SG-pCNL update using mini-batch gradient.
+    /// Memory complexity: O(B * T * d * L), strictly decoupled from total dataset size N.
+    pub fn step_unadjusted(
+        &mut self,
+        batch_grad: &Tensor, // Evaluated on current mini-batch
+        rng: &mut impl Rng,
+    ) -> Result<()> {
         let p = self.theta.elem_count();
         let dev = self.theta.device();
 
-        // 1. Sample isotropic Gaussian noise: xi ~ N(0, sigma^2 * I)
+        // 1. Compute scheduled step size beta_t
+        let t = self.step_count as f64;
+        let beta = self.beta_0 * (1.0 + self.gamma * t).powf(-self.kappa);
+        self.step_count += 1;
+
+        // 2. Sample isotropic Gaussian noise: xi ~ N(0, sigma^2 * I)
         let noise_vec: Vec<f32> = rng.sample_iter(StandardNormal)
             .take(p)
             .map(|x: f32| x * (self.sigma as f32))
             .collect();
         let xi = Tensor::from_vec(noise_vec, &[p], dev)?;
 
-        // 2. Compute pCNL Proposal: theta' = sqrt(1 - beta^2) * theta + beta * xi - (beta^2 * sigma^2 / 2) * grad
-        let sqrt_decay = (1.0 - self.beta * self.beta).sqrt() as f64;
-        let drift_coeff = (self.beta * self.beta * self.sigma * self.sigma / 2.0) as f64;
+        // 3. Scale stochastic gradient to full dataset potential: g = (N / B) * g_batch
+        let scale = (self.dataset_size as f64) / (self.batch_size as f64);
+        let scaled_grad = (batch_grad * scale)?;
+
+        // 4. Unadjusted pCNL Step:
+        //    theta_{t+1} = sqrt(1 - beta^2) * theta_t + beta * xi - (beta^2 * sigma^2 / 2) * g
+        let sqrt_decay = (1.0 - beta * beta).sqrt();
+        let drift_coeff = (beta * beta * self.sigma * self.sigma) / 2.0;
 
         let theta_decay = (&self.theta * sqrt_decay)?;
-        let noise_term = (&xi * self.beta)?;
-        let drift_term = (&self.grad * drift_coeff)?;
+        let noise_term = (&xi * beta)?;
+        let drift_term = (&scaled_grad * drift_coeff)?;
 
-        let theta_proposed = ((theta_decay + noise_term)? - drift_term)?;
+        // Direct unconditional in-place assignment (No MH evaluation pass)
+        self.theta = ((theta_decay + noise_term)? - drift_term)?;
 
-        // 3. Evaluate potential and gradient at proposed state
-        let (proposed_loss, proposed_grad) = loss_and_grad_fn(&theta_proposed)?;
-
-        // 4. Compute log acceptance ratio: log(alpha) = -L(theta') + L(theta) - drift_correction
-        let log_likelihood_diff = self.loss - proposed_loss;
-        
-        // (Optional: include exact Delta_drift here if beta is large)
-        let log_alpha = log_likelihood_diff; 
-
-        // 5. Metropolis Accept/Reject Step
-        let u: f64 = rng.gen();
-        if (u.ln()) < log_alpha {
-            self.theta = theta_proposed;
-            self.loss = proposed_loss;
-            self.grad = proposed_grad;
-            Ok(true) // Accepted
-        } else {
-            Ok(false) // Rejected, retain current state
-        }
+        Ok(())
     }
 }
 ```
 
+### Key Operational Changes Summary
+
+1. **Computational Throughput Doubles:** Standard pCNL required two forward evaluations per step (one at $\theta$, one at proposed $\theta'$). Unadjusted SG-pCNL requires only **one backward pass** per iteration on the current mini-batch.
+2. **VRAM Footprint Decoupled:** Peak memory consumption is entirely independent of dataset size $N$. It is governed purely by mini-batch size $B \times$ sequence length $T$.
+3. **Hyperparameter Tuning Shift:** Rather than dynamically tuning $\beta$ to track a $23.4\%$ MH acceptance target, tuning shifts to classical SGLD schedules: setting the initial step size $\beta_0$ and polynomial decay rate $\kappa \in (0.5, 1.0]$.
+
 ### 6. Recommended Timeline & Milestones
 * **Week 1:** Complete Phase 0 (validation in JAX) and Phase 1 (Rust architecture and weight flattening).
-* **Week 2:** Implement Phase 2 (pCNL sampler, dual-averaging step-size controller, safe tensors persistence).
+* **Week 2:** Implement Phase 2 (unadjusted SG-pCNL engine, mini-batch loader, Robbins-Monro $\beta$ schedule, safe tensors persistence).
 * **Week 3:** Run adaptation experiments on a clean task (e.g., adapting an nGPT from synthetic Task A to Task B, tracking OOD calibration vs. Adam). Compile empirical metrics.
