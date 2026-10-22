@@ -24,7 +24,7 @@ use crate::diag::{ess, gelman_rubin};
 use crate::model::{Shapes, Variant, init_flat};
 use crate::persist::save_chain_trajectory;
 use crate::sampler::{SgPcnlScheduler, SgPcnlState, norm};
-use crate::task::{BatchLoader, Dataset, Task, momentum_sgd};
+use crate::task::{BatchLoader, Dataset, Task, adam, momentum_sgd, sgld_chain};
 use candle_core::Tensor;
 use rand::{Rng, SeedableRng};
 use std::path::PathBuf;
@@ -51,10 +51,26 @@ pub struct Config {
     pub gamma: f64,
     pub kappa: f64,
     pub sgd_steps_on_b: usize,
+    /// Adam's fine-tuning steps on Task B (Phase 4's "SGD/Adam" pair).
+    pub adam_steps_on_b: usize,
+    /// Adam step size — the standard default; SGD's pair uses
+    /// `pretrain_lr`, so the two deterministic baselines keep their
+    /// own conventional settings rather than sharing one lr.
+    pub adam_lr: f64,
     pub init_std: f64,
     /// Week 2 — when set, every chain's thinned trajectory is written
     /// to this directory as `.safetensors` (plan §1, `safetensors`).
     pub save_dir: Option<PathBuf>,
+    /// Plan §3C Option 2 (Phase 4b): 0 = Robbins–Monro (Option 1);
+    /// > 0 = cyclical cosine decay with this period, applied to every
+    /// sampler chain (pCNL, SGLD, MH-pCNL) so the schedule is the only
+    /// thing that changed between two runs of one seed.
+    pub cyclical_period: usize,
+    /// Phase 4b: whether to run the Metropolis-filtered predecessor
+    /// (`task::mh_pcnl_chain`) as the reference comparator. Tests may
+    /// disable it to keep debug-mode runtime down; the full run keeps
+    /// it on.
+    pub run_mh: bool,
 }
 
 impl Default for Config {
@@ -82,8 +98,12 @@ impl Default for Config {
             gamma: 1e-3,
             kappa: 0.55,
             sgd_steps_on_b: 1_000,
+            adam_steps_on_b: 1_000,
+            adam_lr: 0.05,
             init_std: 0.1,
             save_dir: None,
+            cyclical_period: 0,
+            run_mh: true,
         }
     }
 }
@@ -108,7 +128,18 @@ impl Config {
             thin: 4,
             batch_size: 32,
             sgd_steps_on_b: 60,
+            adam_steps_on_b: 60,
+            run_mh: false,
             ..Self::default()
+        }
+    }
+
+    /// The debug-sized experiment *with* the MH-filtered comparator
+    /// (Phase 4b's `mh` quick config).
+    pub fn quick_mh() -> Self {
+        Self {
+            run_mh: true,
+            ..Self::quick()
         }
     }
 }
@@ -125,6 +156,40 @@ pub struct VariantReport {
     pub nll_b_before: f64,
     pub acc_b_sgd: f64,
     pub nll_b_sgd: f64,
+    /// Phase 4's second deterministic comparator: Adam on Task B.
+    pub acc_b_adam: f64,
+    pub nll_b_adam: f64,
+    /// Phase 4's standard-sampler comparator: SGLD chains on Task B —
+    /// same β schedule and noise magnitude as the pCNL step, prior
+    /// handled as a gradient term (see `task::sgld_chain`).
+    pub sgld_radial_final: f64,
+    pub sgld_radial_max: f64,
+    pub sgld_ess_loss: f64,
+    pub sgld_rhat_loss: f64,
+    pub sgld_bma_accuracy: f64,
+    pub sgld_bma_nll: f64,
+    pub sgld_bma_ece: f64,
+    pub sgld_bma_models: usize,
+    pub sgld_seconds: f64,
+    /// Split-R̂ over the *union* of SG-pCNL and SGLD loss chains:
+    /// ≈1 is the evidence that both algorithms sample the same
+    /// distribution (they agree to O(β⁴) per step — `task::sgld_chain`).
+    pub rhat_cross: f64,
+    /// Phase 4b — the Metropolis-filtered predecessor (`cfg.run_mh`):
+    /// acceptance rate in %, radial shell, diagnostics, BMA, kept
+    /// samples per chain, wall-clock, and `rhat_cross_mh` — the
+    /// filtered∪unfiltered cross-R̂ that isolates the unadjusted bias.
+    pub mh_accept_rate: f64,
+    pub mh_radial_final: f64,
+    pub mh_ess_loss: f64,
+    pub mh_rhat_loss: f64,
+    pub mh_bma_accuracy: f64,
+    pub mh_bma_nll: f64,
+    pub mh_bma_ece: f64,
+    pub mh_bma_models: usize,
+    pub mh_kept_per_chain: usize,
+    pub mh_seconds: f64,
+    pub rhat_cross_mh: f64,
     /// Schedule bookkeeping (§3C) — replaces the old acceptance pair.
     pub beta_start: f64,
     pub beta_end: f64,
@@ -192,7 +257,8 @@ impl Report {
         for v in &self.variants {
             s.push_str(&format!(
                 "[{variant}] P={p}\n  pre-train A: loss {l0:.4} -> {l1:.4}, acc_A {aa:.1}%\n  \
-                 B baselines: before {ab:.1}% (NLL {nb:.4}), SGD-on-B {as_:.1}% (NLL {ns:.4})\n",
+                 B baselines: before {ab:.1}% (NLL {nb:.4}), SGD-on-B {as_:.1}% (NLL {ns:.4}), \
+                 Adam-on-B {ad:.1}% (NLL {nd:.4})\n",
                 variant = v.variant,
                 p = v.p,
                 l0 = v.loss_a_first,
@@ -202,6 +268,8 @@ impl Report {
                 nb = v.nll_b_before,
                 as_ = v.acc_b_sgd,
                 ns = v.nll_b_sgd,
+                ad = v.acc_b_adam,
+                nd = v.nll_b_adam,
             ));
             if v.exploded {
                 let where_ = if v.exploded_in_pretrain {
@@ -256,6 +324,43 @@ impl Report {
                 la = v.last_state_accuracy,
                 sec = v.seconds,
             ));
+            s.push_str(&format!(
+                "  SGLD (baseline): radial final {rf:.1} max {rmx:.1} vs sigma*sqrt(P) {re:.1} | \
+                 ESS(loss) {el:.0} | Rhat(loss) {rl:.3} | BMA {ba:.1}% NLL {bn:.4} ECE {be:.4} \
+                 (K={k}) | cross-Rhat {xc:.3} | {sec:.1}s\n",
+                rf = v.sgld_radial_final,
+                rmx = v.sgld_radial_max,
+                re = v.radial_expected,
+                el = v.sgld_ess_loss,
+                rl = v.sgld_rhat_loss,
+                ba = v.sgld_bma_accuracy,
+                bn = v.sgld_bma_nll,
+                be = v.sgld_bma_ece,
+                k = v.sgld_bma_models,
+                xc = v.rhat_cross,
+                sec = v.sgld_seconds,
+            ));
+            if v.mh_kept_per_chain == 0 {
+                s.push_str("  MH-pCNL (filtered): off (cfg.run_mh = false)\n");
+            } else {
+                s.push_str(&format!(
+                    "  MH-pCNL (filtered): accept {ac:.1}% | radial final {rf:.1} vs sigma*sqrt(P) {re:.1} | \
+                     ESS(loss) {el:.0} | Rhat(loss) {rl:.3} | BMA {ba:.1}% NLL {bn:.4} ECE {be:.4} \
+                     (K={k}) | kept {kc} per chain | cross-Rhat {xc:.3} | {sec:.1}s\n",
+                    ac = v.mh_accept_rate,
+                    rf = v.mh_radial_final,
+                    re = v.radial_expected,
+                    el = v.mh_ess_loss,
+                    rl = v.mh_rhat_loss,
+                    ba = v.mh_bma_accuracy,
+                    bn = v.mh_bma_nll,
+                    be = v.mh_bma_ece,
+                    k = v.mh_bma_models,
+                    kc = v.mh_kept_per_chain,
+                    xc = v.rhat_cross_mh,
+                    sec = v.mh_seconds,
+                ));
+            }
             if !v.saved_files.is_empty() {
                 s.push_str(&format!(
                     "  saved: {} trajectory file(s): {}\n",
@@ -346,6 +451,64 @@ fn radial(theta: &Tensor) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
+/// Bayesian model averaging over one or more chains' thinned samples:
+/// returns `(accuracy %, NLL, ECE, K models used)`. One implementation
+/// shared by the SG-pCNL chains and the SGLD comparator, so the two
+/// numbers in the report are computed by the *same* code.
+fn bma_metrics(
+    chains: &[Vec<Tensor>],
+    shapes: &Shapes,
+    variant: Variant,
+    data: &Dataset,
+) -> (f64, f64, f64, usize) {
+    let n_test = data.test_y.dim(0).expect("n_test");
+    let vocab = shapes.vocab;
+    let mut prob_sum = vec![0.0f64; n_test * vocab];
+    let mut k_models = 0usize;
+    for sample in chains.iter().flatten() {
+        if radial(sample).is_finite()
+            && let Ok(logits) = crate::model::forward(sample, shapes, variant, &data.test_x)
+            && let Ok(rows) = logits.to_vec2::<f32>()
+        {
+            for (i, row) in rows.iter().enumerate() {
+                let p = softmax_rows(&row.iter().map(|x| *x as f64).collect::<Vec<_>>());
+                for (v, pv) in p.into_iter().enumerate() {
+                    prob_sum[i * vocab + v] += pv;
+                }
+            }
+            k_models += 1;
+        }
+    }
+    if k_models == 0 {
+        return (f64::NAN, f64::NAN, f64::NAN, 0);
+    }
+    let avg: Vec<f64> = prob_sum.iter().map(|x| x / k_models as f64).collect();
+    let targets = data.test_y.to_vec1::<u32>().expect("targets");
+    let mut hits = 0usize;
+    let mut nll = 0.0f64;
+    for (i, &t) in targets.iter().enumerate() {
+        let mut best = 0usize;
+        let mut best_p = -1.0f64;
+        for v in 0..vocab {
+            let p = avg[i * vocab + v];
+            if p > best_p {
+                best_p = p;
+                best = v;
+            }
+        }
+        if best as u32 == t {
+            hits += 1;
+        }
+        nll -= (avg[i * vocab + t as usize] + 1e-12).ln();
+    }
+    (
+        100.0 * hits as f64 / targets.len() as f64,
+        nll / targets.len() as f64,
+        expected_calibration_error(&avg, vocab, &targets, 10),
+        k_models,
+    )
+}
+
 /// Full run: per variant — Task-A pre-train, baselines, unadjusted
 /// SG-pCNL chains on Task B, diagnostics, BMA.
 pub fn run_experiment(cfg: &Config) -> Report {
@@ -421,7 +584,8 @@ fn run_chain(
         .collect();
     let init = (theta_a + Tensor::from_vec(jitter, vec![p_dim], theta_a.device()).expect("jit"))
         .expect("init = theta_a + noise");
-    let mut state = SgPcnlState::new(init, cfg.sigma, scheduler, cfg.n_train, cfg.batch_size);
+    let mut state =
+        SgPcnlState::new(init, cfg.sigma, scheduler, cfg.n_train, cfg.batch_size, cfg.cyclical_period);
     let mut loss_chain: Vec<f64> = Vec::new();
     let mut kept: Vec<Tensor> = Vec::new();
     let mut coord_values: Vec<Vec<f64>> = (0..coords.len())
@@ -554,6 +718,76 @@ fn run_variant(
         .nll(&theta_b_sgd, shapes, variant)
         .expect("nll B sgd");
 
+    // ---- Phase 4's other deterministic comparator: Adam on B -------
+    let (theta_b_adam, _) = adam(
+        data_b,
+        shapes,
+        variant,
+        theta_a.clone(),
+        cfg.adam_steps_on_b,
+        cfg.adam_lr,
+    );
+    let acc_b_adam = data_b
+        .accuracy(&theta_b_adam, shapes, variant)
+        .expect("acc B adam");
+    let nll_b_adam = data_b
+        .nll(&theta_b_adam, shapes, variant)
+        .expect("nll B adam");
+
+    // ---- Phase 4's standard sampler: SGLD chains on B --------------
+    // Same start distribution as the pCNL chains (θ_A + prior jitter),
+    // own RNG/loader streams seeded from cfg.seed + 700 + c.
+    let sgld_t0 = std::time::Instant::now();
+    let jitter_init = |c: usize| -> Tensor {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.seed.wrapping_add(700 + c as u64));
+        let n = rand_distr::StandardNormal;
+        let j: Vec<f32> = (0..p_dim)
+            .map(|_| {
+                let z: f32 = rng.sample(n);
+                z * cfg.sigma as f32
+            })
+            .collect();
+        (theta_a.clone() + Tensor::from_vec(j, vec![p_dim], theta_a.device()).expect("jit"))
+            .expect("sgld init = theta_a + noise")
+    };
+    let sgld_outcomes: Vec<crate::task::SgldOutcome> = if exploded_in_pretrain {
+        Vec::new() // no finite θ_A to adapt from — same guard as the chains
+    } else {
+        (0..cfg.chains)
+            .map(|c| sgld_chain(cfg, variant, data_b, jitter_init(c), c))
+            .collect()
+    };
+    let sgld_seconds = sgld_t0.elapsed().as_secs_f64();
+
+    // ---- Phase 4b: the Metropolis-filtered predecessor -----------
+    // Same proposal, same schedule, same thinning as the unadjusted
+    // chains — the only difference is the exact full-batch filter,
+    // so the cross-R̂ over the two families' loss chains isolates
+    // what dropping the filter costs (plan §4 Phase 4b).
+    let mh_t0 = std::time::Instant::now();
+    let mh_outcomes: Vec<crate::task::MhOutcome> = if exploded_in_pretrain || !cfg.run_mh {
+        Vec::new()
+    } else {
+        (0..cfg.chains)
+            .map(|c| {
+                let mut rng =
+                    rand::rngs::StdRng::seed_from_u64(cfg.seed.wrapping_add(900 + c as u64));
+                let n = rand_distr::StandardNormal;
+                let j: Vec<f32> = (0..p_dim)
+                    .map(|_| {
+                        let z: f32 = rng.sample(n);
+                        z * cfg.sigma as f32
+                    })
+                    .collect();
+                let init = (theta_a.clone()
+                    + Tensor::from_vec(j, vec![p_dim], theta_a.device()).expect("jit"))
+                .expect("mh init = theta_a + noise");
+                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c)
+            })
+            .collect()
+    };
+    let mh_seconds = mh_t0.elapsed().as_secs_f64();
+
     // ---- unadjusted SG-pCNL chains on Task B ------------------------
     let scheduler = SgPcnlScheduler {
         beta_0: cfg.beta_0,
@@ -658,51 +892,75 @@ fn run_variant(
     };
 
     // ---- Phase 3: BMA over finite thinned samples -------------------
-    let n_test = data_b.test_y.dim(0).expect("n_test");
-    let vocab = shapes.vocab;
-    let mut prob_sum = vec![0.0f64; n_test * vocab];
-    let mut k_models = 0usize;
-    for sample in kept.iter().flatten() {
-        if radial(sample).is_finite()
-            && let Ok(logits) = crate::model::forward(sample, shapes, variant, &data_b.test_x)
-            && let Ok(rows) = logits.to_vec2::<f32>()
-        {
-            for (i, row) in rows.iter().enumerate() {
-                let p = softmax_rows(&row.iter().map(|x| *x as f64).collect::<Vec<_>>());
-                for (v, pv) in p.into_iter().enumerate() {
-                    prob_sum[i * vocab + v] += pv;
-                }
-            }
-            k_models += 1;
+    let (bma_accuracy, bma_nll, bma_ece, k_models) = bma_metrics(&kept, shapes, variant, data_b);
+
+    // ---- Phase 4: the SGLD comparator's diagnostics + cross-R̂ ------
+    let mut sgld_kept_all: Vec<Vec<Tensor>> = Vec::new();
+    let mut sgld_loss_chains: Vec<Vec<f64>> = Vec::new();
+    let (mut sgld_rad_max, mut sgld_rad_final) = (0.0f64, 0.0f64);
+    for oc in sgld_outcomes {
+        sgld_rad_max = sgld_rad_max.max(oc.radial_max);
+        if oc.radial_final.is_finite() {
+            sgld_rad_final = oc.radial_final;
         }
+        sgld_loss_chains.push(oc.kept_loss);
+        sgld_kept_all.push(oc.kept);
     }
-    let (bma_accuracy, bma_nll, bma_ece) = if k_models == 0 {
-        (f64::NAN, f64::NAN, f64::NAN)
+    let (sgld_bma_accuracy, sgld_bma_nll, sgld_bma_ece, sgld_bma_models) =
+        bma_metrics(&sgld_kept_all, shapes, variant, data_b);
+    let sgld_ess_loss = if sgld_loss_chains.is_empty() {
+        f64::NAN
     } else {
-        let avg: Vec<f64> = prob_sum.iter().map(|x| x / k_models as f64).collect();
-        let targets = data_b.test_y.to_vec1::<u32>().expect("targets");
-        let mut hits = 0usize;
-        let mut nll = 0.0f64;
-        for (i, &t) in targets.iter().enumerate() {
-            let mut best = 0usize;
-            let mut best_p = -1.0f64;
-            for v in 0..vocab {
-                let p = avg[i * vocab + v];
-                if p > best_p {
-                    best_p = p;
-                    best = v;
-                }
-            }
-            if best as u32 == t {
-                hits += 1;
-            }
-            nll -= (avg[i * vocab + t as usize] + 1e-12).ln();
+        median(&mut sgld_loss_chains.iter().map(|c| ess(c)).collect::<Vec<_>>())
+    };
+    let sgld_rhat_loss = gelman_rubin(&sgld_loss_chains);
+    let rhat_cross = {
+        let mut all = loss_chains.clone();
+        all.extend(sgld_loss_chains.iter().cloned());
+        if all.len() >= 2 {
+            gelman_rubin(&all)
+        } else {
+            f64::NAN
         }
-        (
-            100.0 * hits as f64 / targets.len() as f64,
-            nll / targets.len() as f64,
-            expected_calibration_error(&avg, vocab, &targets, 10),
-        )
+    };
+
+    // ---- Phase 4b: the filtered comparator's diagnostics ----------
+    let mut mh_kept_all: Vec<Vec<Tensor>> = Vec::new();
+    let mut mh_loss_chains: Vec<Vec<f64>> = Vec::new();
+    let (mut mh_accept_sum, mut mh_rad_final, mut mh_steps, mut mh_kept_len) =
+        (0usize, 0.0f64, 0usize, 0usize);
+    for oc in mh_outcomes {
+        mh_accept_sum += oc.accepted;
+        mh_steps += oc.steps;
+        if oc.radial_final.is_finite() {
+            mh_rad_final = oc.radial_final;
+        }
+        mh_kept_len = oc.kept.len();
+        mh_loss_chains.push(oc.kept_loss);
+        mh_kept_all.push(oc.kept);
+    }
+    let mh_accept_rate = if mh_steps == 0 {
+        f64::NAN
+    } else {
+        100.0 * mh_accept_sum as f64 / mh_steps as f64
+    };
+    let (mh_bma_accuracy, mh_bma_nll, mh_bma_ece, mh_bma_models) =
+        bma_metrics(&mh_kept_all, shapes, variant, data_b);
+    let mh_ess_loss = if mh_loss_chains.is_empty() {
+        f64::NAN
+    } else {
+        median(&mut mh_loss_chains.iter().map(|c| ess(c)).collect::<Vec<_>>())
+    };
+    let mh_rhat_loss = gelman_rubin(&mh_loss_chains);
+    // the filtered ∪ unfiltered cross-R̂ — Phase 4b's bias probe
+    let rhat_cross_mh = {
+        let mut all = loss_chains.clone();
+        all.extend(mh_loss_chains.iter().cloned());
+        if all.len() >= 2 {
+            gelman_rubin(&all)
+        } else {
+            f64::NAN
+        }
     };
 
     let last_state_accuracy = if exploded {
@@ -738,6 +996,29 @@ fn run_variant(
         nll_b_before,
         acc_b_sgd,
         nll_b_sgd,
+        acc_b_adam,
+        nll_b_adam,
+        sgld_radial_final: sgld_rad_final,
+        sgld_radial_max: sgld_rad_max,
+        sgld_ess_loss,
+        sgld_rhat_loss,
+        sgld_bma_accuracy,
+        sgld_bma_nll,
+        sgld_bma_ece,
+        sgld_bma_models,
+        sgld_seconds,
+        rhat_cross,
+        mh_accept_rate,
+        mh_radial_final: mh_rad_final,
+        mh_ess_loss,
+        mh_rhat_loss,
+        mh_bma_accuracy,
+        mh_bma_nll,
+        mh_bma_ece,
+        mh_bma_models,
+        mh_kept_per_chain: mh_kept_len,
+        mh_seconds,
+        rhat_cross_mh,
         beta_start,
         beta_end,
         steps: cfg.steps,
@@ -790,6 +1071,9 @@ mod tests {
                 ("acc_a", v.acc_a_pretrained),
                 ("acc_b_before", v.acc_b_before),
                 ("acc_b_sgd", v.acc_b_sgd),
+                ("nll_b_sgd", v.nll_b_sgd),
+                ("acc_b_adam", v.acc_b_adam),
+                ("nll_b_adam", v.nll_b_adam),
                 ("loss_a_first", v.loss_a_first),
             ] {
                 assert!(x.is_finite(), "{} {label} not finite: {x}", v.variant);
@@ -840,6 +1124,74 @@ mod tests {
                     "ECE outside [0,1]: {}",
                     v.bma_ece
                 );
+                // SGLD comparator: finite, in-range diagnostics, and the
+                // sampler stays in its stationary ball (‖θ‖ ≈ σ√P).
+                assert!(
+                    v.sgld_bma_models > 0,
+                    "SGLD BMA needs finite samples, got {}",
+                    v.sgld_bma_models
+                );
+                assert!(
+                    (0.0..=100.0).contains(&v.sgld_bma_accuracy),
+                    "sgld bma acc {}",
+                    v.sgld_bma_accuracy
+                );
+                assert!(v.sgld_bma_nll.is_finite(), "sgld bma nll");
+                assert!(
+                    v.sgld_radial_final.is_finite() && v.sgld_radial_final > 0.0,
+                    "sgld radial {}",
+                    v.sgld_radial_final
+                );
+                assert!(
+                    v.sgld_radial_max <= 3.0 * v.radial_expected + 1e-9,
+                    "SGLD left the stationary ball: {} vs 3x {}",
+                    v.sgld_radial_max,
+                    v.radial_expected
+                );
+                assert!(
+                    v.sgld_ess_loss.is_finite() && v.sgld_ess_loss > 0.0,
+                    "sgld ESS {}",
+                    v.sgld_ess_loss
+                );
+                assert!(
+                    v.sgld_rhat_loss.is_finite() && v.sgld_rhat_loss > 0.5,
+                    "sgld Rhat {}",
+                    v.sgld_rhat_loss
+                );
+                // Phase 4's coupling diagnostic: cross-Rhat over the
+                // pCNL and SGLD loss chains (defined when both kept).
+                assert!(
+                    v.rhat_cross.is_finite() && v.rhat_cross > 0.5,
+                    "cross-Rhat {}",
+                    v.rhat_cross
+                );
+                // The Phase-4b filtered comparator, when enabled:
+                // ran, kept samples, accepted *some* proposals, and
+                // agrees with the unadjusted chains across algorithms.
+                if v.mh_kept_per_chain > 0 {
+                    assert!(
+                        (0.0..=100.0).contains(&v.mh_accept_rate),
+                        "mh accept {}",
+                        v.mh_accept_rate
+                    );
+                    assert!(v.mh_bma_models > 0, "MH BMA needs finite samples");
+                    assert!(
+                        (0.0..=100.0).contains(&v.mh_bma_accuracy),
+                        "mh bma acc {}",
+                        v.mh_bma_accuracy
+                    );
+                    assert!(v.mh_bma_nll.is_finite(), "mh bma nll");
+                    assert!(
+                        v.mh_radial_final.is_finite() && v.mh_radial_final > 0.0,
+                        "mh radial {}",
+                        v.mh_radial_final
+                    );
+                    assert!(
+                        v.rhat_cross_mh.is_finite() && v.rhat_cross_mh > 0.5,
+                        "mh cross-Rhat {}",
+                        v.rhat_cross_mh
+                    );
+                }
                 // The plan's stability claim is *nGPT's*: the cosine
                 // variant must hold ‖θ‖ ≈ σ√P. The standard variant's
                 // radial behaviour is exactly what Phase 0 measures —
@@ -887,7 +1239,9 @@ mod tests {
 
     #[test]
     fn report_renders_every_headline_field() {
-        let cfg = Config::quick();
+        // quick_mh, so the filtered comparator's line (and the
+        // acceptance-rate field) is exercised too
+        let cfg = Config::quick_mh();
         let text = run_experiment(&cfg).render();
         for needle in [
             "SG-pCNL (unadjusted)",
@@ -895,6 +1249,11 @@ mod tests {
             "B baselines",
             "beta",
             "ECE",
+            "Adam-on-B",
+            "SGLD (baseline)",
+            "cross-Rhat",
+            "MH-pCNL (filtered)",
+            "accept",
         ] {
             assert!(text.contains(needle), "missing {needle}:\n{text}");
         }

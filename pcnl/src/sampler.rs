@@ -61,6 +61,10 @@ pub struct SgPcnlState {
     pub step_count: usize,
     pub dataset_size: usize,
     pub batch_size: usize,
+    /// §3C Option 2: 0 = Robbins–Monro (Option 1); > 0 = cyclical
+    /// cosine decay with this period. The mode is per-state so an
+    /// experiment can run both schedules on the same seed.
+    pub period: usize,
 }
 
 impl SgPcnlState {
@@ -70,6 +74,7 @@ impl SgPcnlState {
         scheduler: SgPcnlScheduler,
         dataset_size: usize,
         batch_size: usize,
+        period: usize,
     ) -> Self {
         Self {
             theta,
@@ -80,17 +85,32 @@ impl SgPcnlState {
             step_count: 0,
             dataset_size,
             batch_size,
+            period,
         }
     }
 
-    /// Current scheduled step size (also what the next update uses).
-    pub fn beta(&self) -> f64 {
+    /// The scheduler this state's fields describe.
+    pub fn scheduler(&self) -> SgPcnlScheduler {
         SgPcnlScheduler {
             beta_0: self.beta_0,
             gamma: self.gamma,
             kappa: self.kappa,
         }
-        .beta_at(self.step_count)
+    }
+
+    /// Current scheduled step size (also what the next update uses).
+    pub fn beta(&self) -> f64 {
+        self.scheduled(self.step_count)
+    }
+
+    /// β_t under the configured schedule: Robbins–Monro when
+    /// `period == 0`, cyclical cosine otherwise (plan §3C).
+    pub fn scheduled(&self, step: usize) -> f64 {
+        if self.period == 0 {
+            self.scheduler().beta_at(step)
+        } else {
+            self.scheduler().beta_cyclical(step, self.period)
+        }
     }
 
     /// Executes an in-place Unadjusted SG-pCNL update using a
@@ -105,8 +125,7 @@ impl SgPcnlState {
         let dev = self.theta.device();
 
         // 1. scheduled step size β_t (no acceptance feedback anywhere)
-        let t = self.step_count as f64;
-        let beta = (self.beta_0 * (1.0 + self.gamma * t).powf(-self.kappa)).clamp(1e-6, 0.999);
+        let beta = self.scheduled(self.step_count);
         self.step_count += 1;
 
         // 2. ξ ~ N(0, σ² I): prior-preserving OU noise
@@ -220,6 +239,7 @@ mod tests {
             },
             100,
             25,
+            0,
         );
         let grad = Tensor::from_vec(vec![0.1f32, 0.2, -0.3], &[3], dev).unwrap();
 
@@ -377,6 +397,7 @@ mod tests {
                 },
                 m,
                 m,
+                0,
             )
         };
         let loss_grad = |theta: &T| -> Result<(f64, T)> {
@@ -453,6 +474,7 @@ mod tests {
                 },
                 10,
                 10,
+                0,
             );
             // target: Φ = ½‖θ − c‖² with c = (1, −1, 2, 0) ⇒ N(c, I+N(0,σ²)
             // posterior mean = c·N/(N+1)… loose level check only

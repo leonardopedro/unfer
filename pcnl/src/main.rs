@@ -51,6 +51,17 @@ fn main() {
                 i += 1;
                 cfg.save_dir = Some(args.get(i).expect("--save-dir DIR").clone().into());
             }
+            // §3C Option 2 / Phase 4b: cyclical cosine schedule
+            "--cyclical" => {
+                i += 1;
+                cfg.cyclical_period = args
+                    .get(i)
+                    .expect("--cyclical PERIOD")
+                    .parse()
+                    .expect("period is a number");
+            }
+            // Phase 4b: disable the filtered comparator (default: on)
+            "--no-mh" => cfg.run_mh = false,
             "--sigma" | "--beta0" | "--gamma" | "--kappa" => {
                 let key = args[i].trim_start_matches('-').to_string();
                 i += 1;
@@ -66,7 +77,8 @@ fn main() {
             other => {
                 eprintln!(
                     "unknown arg: {other} (try: quick | --steps N | --seed N | --report-file PATH | \
-                     --save-dir DIR | --sigma F | --beta0 F | --gamma F | --kappa F)"
+                     --save-dir DIR | --cyclical PERIOD | --no-mh | --sigma F | --beta0 F | \
+                     --gamma F | --kappa F)"
                 );
                 std::process::exit(2);
             }

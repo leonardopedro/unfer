@@ -1,6 +1,8 @@
 //! The toy sequence tasks (plan Phase 0: "character prediction or
-//! modular arithmetic") and the deterministic-training baseline the
-//! adaptation is measured against (Phase 4's "SGD/Adam" comparator).
+//! modular arithmetic") and the baselines the adaptation is measured
+//! against (Phase 4's "SGD/Adam" comparator, plus standard SGLD —
+//! the classical stochastic-gradient Langevin sampler that is the
+//! obvious analogous algorithm to unadjusted SG-pCNL).
 //!
 //! Token layout: `0 = BOS`, digits `0..K` are tokens `1..=K`.
 //! Sequence `[BOS, a, b]` predicts the next token:
@@ -198,6 +200,365 @@ pub fn momentum_sgd(
     (theta, trace)
 }
 
+/// Adam on the flat vector — the second deterministic fine-tuning
+/// comparator Phase 4 names ("SGD/Adam"). Full-batch, like
+/// [`momentum_sgd`], so the two deterministic baselines differ only in
+/// the update rule. Standard hyperparameters (β₁=0.9, β₂=0.999,
+/// ε=1e-8), no gradient clipping: Adam's per-coordinate normalization
+/// is its own protection, and clipping would silently make it a
+/// different algorithm. Non-finite loss stops the run (same
+/// contract as `momentum_sgd`: the trace is the evidence).
+pub fn adam(
+    data: &Dataset,
+    shapes: &Shapes,
+    variant: Variant,
+    theta0: Tensor,
+    steps: usize,
+    lr: f64,
+) -> (Tensor, Vec<f64>) {
+    let mut theta = theta0;
+    let mut m = Tensor::zeros(theta.dims(), candle_core::DType::F32, theta.device()).expect("cpu");
+    let mut v = Tensor::zeros(theta.dims(), candle_core::DType::F32, theta.device()).expect("cpu");
+    let (b1, b2, eps) = (0.9f64, 0.999f64, 1e-8f64);
+    let mut trace = Vec::with_capacity(steps);
+    for t in 1..=steps {
+        let (loss, grad) = data.loss_and_grad(&theta, shapes, variant).expect("grad");
+        trace.push(loss);
+        if !loss.is_finite() {
+            break;
+        }
+        m = (m.affine(b1, 0.0).expect("m") + grad.affine(1.0 - b1, 0.0).expect("g")).expect("m'");
+        let g2 = grad.sqr().expect("g²");
+        v = (v.affine(b2, 0.0).expect("v") + g2.affine(1.0 - b2, 0.0).expect("g²")).expect("v'");
+        // bias-corrected step: θ ← θ − lr · m̂ / (√v̂ + ε)
+        let mh = m.affine(1.0 / (1.0 - b1.powi(t as i32)), 0.0).expect("m̂");
+        let vh = v.affine(1.0 / (1.0 - b2.powi(t as i32)), 0.0).expect("v̂");
+        let denom = (vh.sqrt().expect("√v̂") + eps).expect("√v̂+ε");
+        let step = (mh / denom).expect("m̂/√v̂").affine(lr, 0.0).expect("lr·");
+        theta = (&theta - &step).expect("θ'");
+    }
+    (theta, trace)
+}
+
+/// Outcome of one standard SGLD chain (plan Phase 4's "standard
+/// SGLD" comparator).
+pub struct SgldOutcome {
+    pub final_theta: Tensor,
+    /// Thinned post-burn samples, same cadence as the SG-pCNL chains.
+    pub kept: Vec<Tensor>,
+    /// Full-batch loss at the kept steps (the ESS/R̂ series).
+    pub kept_loss: Vec<f64>,
+    pub radial_max: f64,
+    pub radial_final: f64,
+    /// Max scaled mini-batch gradient actually applied, for the
+    /// Phase-0 spike report (same measure the pCNL chains record).
+    pub max_scaled_grad: f64,
+    pub grad_nonfinite: bool,
+    /// Model evaluations, for Phase 4b's counted throughput: one
+    /// mini-batch backward per step, one full-batch forward per kept
+    /// step (the ESS/R̂ series).
+    pub grad_evals: usize,
+    pub loss_evals: usize,
+}
+
+/// **Standard SGLD** — stochastic-gradient Langevin dynamics with the
+/// prior as a gradient term, the classical analogous algorithm to
+/// unadjusted SG-pCNL (plan §4 Phase 4: "benchmark against … standard
+/// SGLD"). With `h_t = β_t²·σ²/2` (the *same* Robbins–Monro β
+/// schedule, so the comparison isolates the algorithm and not the
+/// step-size policy):
+///
+/// ```text
+/// θ ← θ − h_t·(g_batch + θ/σ²) + √(2·h_t)·ξ,   ξ ~ N(0, I)
+/// ```
+///
+/// Matched to the pCNL step by construction: likelihood-channel drift
+/// `h·g = (β²σ²/2)·g` and per-step noise variance `2h = β²σ²` are
+/// *exactly* the pCNL step's; the difference is the prior channel —
+/// SGLD puts `−h·θ/σ²` in the drift, pCNL contracts by `√(1−β²)`
+/// (which preserves N(0, σ²I) exactly at constant β). The two agree
+/// to O(β⁴) per step, so any measured disagreement is discretization,
+/// not target: that is what the cross-algorithm R̂ in the report
+/// measures.
+pub fn sgld_chain(
+    cfg: &crate::experiment::Config,
+    variant: Variant,
+    data: &Dataset,
+    theta0: Tensor,
+    chain: usize,
+) -> SgldOutcome {
+    use crate::sampler::SgPcnlScheduler;
+    use rand::Rng as _;
+    use rand::SeedableRng;
+    use rand_distr::StandardNormal;
+
+    let shapes = &cfg.shapes;
+    let sigma = cfg.sigma;
+    let steps = cfg.steps;
+    let scheduler = SgPcnlScheduler {
+        beta_0: cfg.beta_0,
+        gamma: cfg.gamma,
+        kappa: cfg.kappa,
+    };
+    // same per-chain seed convention as the pCNL chains, offset so the
+    // two samplers' streams are independent
+    let seed = cfg.seed.wrapping_add(800 + chain as u64);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut loader = BatchLoader::new(cfg.n_train, cfg.batch_size, seed.wrapping_add(1));
+    let mut theta = theta0;
+    let p_dim = theta.elem_count();
+    let dev = theta.device().clone();
+    let mut kept = Vec::new();
+    let mut kept_loss = Vec::new();
+    let mut radial_max = 0.0f64;
+    let mut radial_final = 0.0f64;
+    let mut max_scaled_grad = 0.0f64;
+    let mut grad_nonfinite = false;
+    let sigma2 = sigma * sigma;
+
+    for t in 0..steps {
+        let (bx, by) = loader.next(data);
+        let (_batch_loss, sum_grad) = data
+            .batch_grad(&theta, shapes, variant, &bx, &by)
+            .expect("mini-batch grad");
+        // the scaled g that drives the step: (N/B)·Σ = N·mean_B
+        let scale = cfg.n_train as f64 / cfg.batch_size as f64;
+        match crate::sampler::norm(&sum_grad) {
+            Ok(g) if g.is_finite() => max_scaled_grad = max_scaled_grad.max(g * scale),
+            _ => grad_nonfinite = true,
+        }
+
+        // h_t = β_t²·σ²/2 from the SAME power-law schedule
+        let beta = scheduler.beta_at(t);
+        let h = beta * beta * sigma2 / 2.0;
+        // prior as gradient: −h·θ/σ² ≡ θ·(1 − β²/2)
+        let contraction = 1.0 - beta * beta / 2.0;
+        // likelihood drift: −h·(N/B)·Σ
+        let drift = sum_grad.affine(h * scale, 0.0).expect("drift");
+        // noise: √(2h)·ξ, ξ ~ N(0, I)  (per-step variance 2h = β²σ²,
+        // exactly the pCNL step's noise variance)
+        let noise: Vec<f32> = (0..p_dim)
+            .map(|_| {
+                let x: f32 = rng.sample(StandardNormal);
+                x
+            })
+            .collect();
+        let xi = Tensor::from_vec(noise, vec![p_dim], &dev).expect("cpu noise");
+        let noise_term = xi.affine((2.0 * h).sqrt(), 0.0).expect("√(2h)·ξ");
+
+        let prior = theta.affine(contraction, 0.0).expect("prior");
+        theta = ((prior - drift).expect("θ−drift") + noise_term).expect("θ'");
+
+        let r = crate::sampler::norm(&theta).unwrap_or(f64::NAN);
+        if r.is_finite() {
+            radial_max = radial_max.max(r);
+            radial_final = r;
+        }
+        if t >= cfg.burn && (t - cfg.burn).is_multiple_of(cfg.thin) {
+            kept.push(theta.clone());
+            let logits =
+                crate::model::forward(&theta, shapes, variant, &data.train_x).expect("forward");
+            let l = candle_nn::loss::cross_entropy(&logits, &data.train_y).expect("full loss");
+            kept_loss.push(l.to_scalar::<f32>().expect("scalar") as f64);
+        }
+    }
+    let loss_evals = kept_loss.len();
+    SgldOutcome {
+        final_theta: theta,
+        kept,
+        kept_loss,
+        radial_max,
+        radial_final,
+        max_scaled_grad,
+        grad_nonfinite,
+        grad_evals: cfg.steps,
+        loss_evals,
+    }
+}
+
+/// Outcome of one Metropolis-filtered pCNL chain (Phase 4b's
+/// reference comparator — the algorithm the specialist diff deleted,
+/// kept to *measure* what the filter bought).
+pub struct MhOutcome {
+    pub final_theta: Tensor,
+    pub kept: Vec<Tensor>,
+    /// Full-batch potential at the kept steps (cached across
+    /// accept/reject — the filter's second pass is reused, not redone).
+    pub kept_loss: Vec<f64>,
+    pub radial_max: f64,
+    pub radial_final: f64,
+    /// Accepted proposals out of `steps` proposals.
+    pub accepted: usize,
+    pub steps: usize,
+    /// Model evaluations (Phase 4b's counted throughput): mini-batch
+    /// backward passes and full-batch forward passes.
+    pub grad_evals: usize,
+    pub loss_evals: usize,
+    pub grad_nonfinite: bool,
+}
+
+/// **Metropolis-filtered pCNL** — the predecessor algorithm the
+/// 2026-10-21 specialist diff deleted, restored as the Phase-4b
+/// comparator (plan §4 Phase 4b). Same proposal as the unadjusted
+/// step ([`crate::sampler::SgPcnlState::step_unadjusted`]), same
+/// schedule (Robbins–Monro or cyclical per `cfg.cyclical_period`),
+/// same thinning — the *only* difference between the two chains is
+/// the filter, so any disagreement localizes in it.
+///
+/// The filter is the predecessor's own: the exact full-batch
+/// likelihood ratio `log α = L(θ) − L(θ′)`, evaluated on the toy
+/// potential `Φ(θ) = L(D; θ)` (the dataset *is* the potential, so
+/// there is no mini-batch bias in the ratio itself). Cost accounting
+/// (the report's claim 1, counted by the `*_evals` fields): one
+/// mini-batch backward + one full-batch forward per step (the
+/// current state's `L` is cached across accept/reject), versus the
+/// unadjusted chain's one mini-batch backward + a full-batch forward
+/// only every `thin` steps.
+///
+/// Honesty note on exactness: the drift-preconditioned proposal is
+/// not exactly symmetric — the fully exact ratio would carry the
+/// Gaussian-measure correction `(‖θ − m(θ′)‖² − ‖θ′ − m(θ)‖²) /
+/// (2β²σ²)` with `m(θ) = √(1−β²)θ − (β²σ²/2)g(θ)`, which costs a
+/// second backward pass. The predecessor used the likelihood ratio
+/// alone and this comparator is faithful to it; at β ≤ 0.3 the
+/// asymmetry is O(β²) in the log-ratio, and the cross-R̂ between the
+/// filtered and unfiltered loss chains is the empirical check that
+/// nothing measurable hides in the omission.
+pub fn mh_pcnl_chain(
+    cfg: &crate::experiment::Config,
+    variant: Variant,
+    data: &Dataset,
+    theta0: Tensor,
+    chain: usize,
+) -> MhOutcome {
+    use crate::sampler::SgPcnlScheduler;
+    use rand::Rng as _;
+    use rand::SeedableRng;
+    use rand_distr::StandardNormal;
+
+    let shapes = &cfg.shapes;
+    let sigma = cfg.sigma;
+    let p_dim = shapes.flat_size();
+    let scheduler = SgPcnlScheduler {
+        beta_0: cfg.beta_0,
+        gamma: cfg.gamma,
+        kappa: cfg.kappa,
+    };
+    // three independent streams per chain (noise / accept uniforms /
+    // batches), all derived from one chain seed
+    let seed = cfg.seed.wrapping_add(1200 + chain as u64);
+    let mut noise_rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut accept_rng = rand::rngs::StdRng::seed_from_u64(seed.wrapping_add(1));
+    let mut loader = BatchLoader::new(cfg.n_train, cfg.batch_size, seed.wrapping_add(2));
+    let n = StandardNormal;
+    let jitter: Vec<f32> = (0..p_dim)
+        .map(|_| {
+            let z: f32 = noise_rng.sample(n);
+            z * cfg.sigma as f32
+        })
+        .collect();
+    let dev = theta0.device().clone();
+    let mut theta = (theta0 + Tensor::from_vec(jitter, vec![p_dim], &dev).expect("jit"))
+        .expect("mh init = theta_a + noise");
+
+    let full_loss = |th: &Tensor| -> Option<f64> {
+        let logits = crate::model::forward(th, shapes, variant, &data.train_x).ok()?;
+        let l = candle_nn::loss::cross_entropy(&logits, &data.train_y).ok()?;
+        let l = l.to_scalar::<f32>().ok()? as f64;
+        l.is_finite().then_some(l)
+    };
+    let mut grad_evals = 0usize;
+    let mut loss_evals = 1usize; // L(θ₀), computed below
+    let mut loss_now = full_loss(&theta);
+
+    let mut kept = Vec::new();
+    let mut kept_loss = Vec::new();
+    let mut radial_max = 0.0f64;
+    let mut radial_final = 0.0f64;
+    let mut accepted = 0usize;
+    let mut grad_nonfinite = false;
+
+    for t in 0..cfg.steps {
+        let beta = if cfg.cyclical_period == 0 {
+            scheduler.beta_at(t)
+        } else {
+            scheduler.beta_cyclical(t, cfg.cyclical_period)
+        };
+        let (bx, by) = loader.next(data);
+        let (_bl, sum_grad) = data
+            .batch_grad(&theta, shapes, variant, &bx, &by)
+            .expect("mini-batch grad");
+        grad_evals += 1;
+        match crate::sampler::norm(&sum_grad) {
+            Ok(g) if g.is_finite() => {}
+            _ => grad_nonfinite = true,
+        }
+        // proposal — identical to the unadjusted step
+        let scale = (cfg.n_train as f64) / (cfg.batch_size as f64);
+        let noise_vec: Vec<f32> = (0..p_dim)
+            .map(|_| {
+                let x: f32 = noise_rng.sample(StandardNormal);
+                x * sigma as f32
+            })
+            .collect();
+        let xi = Tensor::from_vec(noise_vec, vec![p_dim], &dev).expect("cpu noise");
+        let decayed = theta
+            .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
+            .expect("decay");
+        let noised = (&decayed + &xi.affine(beta, 0.0).expect("noise")).expect("proposal mean");
+        let drift = sum_grad
+            .affine(scale * beta * beta * sigma * sigma / 2.0, 0.0)
+            .expect("drift");
+        let proposal = (&noised - &drift).expect("proposal");
+
+        // the predecessor's exact full-batch likelihood-ratio filter
+        loss_evals += 1;
+        let loss_prop = full_loss(&proposal);
+        let log_alpha = match (loss_now, loss_prop) {
+            (Some(l_now), Some(l_prop)) => l_now - l_prop,
+            // non-finite potential at the proposal ⇒ reject; at the
+            // *current* state ⇒ the chain is dead (kept as evidence)
+            (_, None) => f64::NEG_INFINITY,
+            (None, _) => break,
+        };
+        let u: f64 = accept_rng.random();
+        if u.is_finite() && u.ln() < log_alpha {
+            theta = proposal;
+            accepted += 1;
+            loss_now = loss_prop;
+        }
+
+        let r = crate::sampler::norm(&theta).unwrap_or(f64::NAN);
+        if r.is_finite() {
+            radial_max = radial_max.max(r);
+            radial_final = r;
+        }
+        if t >= cfg.burn && (t - cfg.burn).is_multiple_of(cfg.thin) {
+            match loss_now {
+                Some(l) => {
+                    kept.push(theta.clone());
+                    kept_loss.push(l);
+                }
+                None => break, // current state has no finite potential
+            }
+        }
+    }
+    // `loss_evals` counts L(θ₀) + one full-batch forward per step;
+    // the kept series reuses the cached value — no extra pass.
+    MhOutcome {
+        final_theta: theta,
+        kept,
+        kept_loss,
+        radial_max,
+        radial_final,
+        accepted,
+        steps: cfg.steps,
+        grad_evals,
+        loss_evals,
+        grad_nonfinite,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,7 +610,15 @@ mod tests {
         let s = tiny();
         let data = Dataset::new(Task::A, 8, 128, 64, 9);
         let theta0 = init_flat(&s, 0.1, 4);
-        let (theta, trace) = momentum_sgd(&data, &s, Variant::Cosine, theta0, 150, 0.5, 0.9);
+        // 600 steps, not the 150 this budget had before 2026-10-21b:
+        // normalizing V and O (the fix `tests/formal_claims.rs`
+        // forced — plan §2, Lean M4's ‖W_v‖,‖W_o‖ ≤ 1 hypotheses)
+        // removes the two radial gauge directions the raw weights
+        // offered and shrinks the attention sublayer's per-layer
+        // magnitude, so the *same* claims (≥50% loss reduction,
+        // acc > 30% vs 12.5% chance) need a larger budget. Measured:
+        // 200→15.6%, 400→26.6%, 600→32.8%, 900→39.1%.
+        let (theta, trace) = momentum_sgd(&data, &s, Variant::Cosine, theta0, 600, 0.5, 0.9);
         let first = trace[0];
         let last = *trace.last().unwrap();
         assert!(last < 0.5 * first, "loss {first} -> {last}");

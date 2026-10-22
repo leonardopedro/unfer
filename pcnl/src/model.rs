@@ -5,11 +5,13 @@
 //! identical `P`, identical shapes, identical task.
 //!
 //! * `Variant::Cosine` — nGPT-lite: embeddings on the unit sphere,
-//!   `Q,K` from Frobenius-normalised weights, logits `τ·(q̂·k̂)` with
-//!   `τ = √d` (so the logit *range* matches standard scaled attention,
-//!   only the hypersphere constrains it), geodesic (nlerp) residuals
-//!   that re-normalise after every sub-layer, and a cosine head tied
-//!   to the embedding table.
+//!   Q, K, V, O and both MLP matrices from Frobenius-normalised
+//!   weights, logits `τ·(q̂·k̂)` with `τ = √d` (so the logit *range*
+//!   matches standard scaled attention, only the hypersphere constrains
+//!   it), geodesic (nlerp) residuals that re-normalise after every
+//!   sub-layer, and a cosine head tied to the embedding table.
+//!   (V/O joined the normalisation 2026-10-21b — see `attention()`: the
+//!   forward pass must be scale-invariant for M2/M4 to apply to it.)
 //! * `Variant::Standard` — the plain transformer: affine-free LN,
 //!   dot-product attention with the `1/√d` scale, additive residuals,
 //!   tied raw head scaled by `1/√d`.
@@ -138,7 +140,17 @@ pub fn attention(
         ),
         Variant::Standard => (h.broadcast_matmul(&w.wq)?, h.broadcast_matmul(&w.wk)?),
     };
-    let v = h.broadcast_matmul(&w.wv)?;
+    // V and O join the normalisation in the cosine variant (2026-10-21b):
+    // plan §2 evaluates *each* tensor as W/(‖W‖_F+ε), the Lean M4
+    // theorems hypothesise ‖W_v‖, ‖W_o‖ ≤ 1, and without them the
+    // forward pass is NOT scale-invariant — which breaks M2's
+    // ⟨θ,∇Φ⟩ = 0 and Theorem 1's uniform bound for the implementation
+    // (caught by `tests/formal_claims.rs`). The standard variant stays
+    // raw: the unnormalized stack *is* the Phase-0 contrast.
+    let v = match variant {
+        Variant::Cosine => h.broadcast_matmul(&normalize_fro(&w.wv)?)?,
+        Variant::Standard => h.broadcast_matmul(&w.wv)?,
+    };
     let mut scores = q.broadcast_matmul(&k.transpose(D::Minus2, D::Minus1)?)?; // [B, T, T]
     scores = match variant {
         Variant::Cosine => scores.affine(tau, 0.0)?,
@@ -157,7 +169,10 @@ pub fn attention(
     let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
     let out = probs.broadcast_matmul(&v)?; // [B, T, D]
     debug_assert_eq!(out.dims(), &[b, t, d]);
-    out.broadcast_matmul(&w.wo)
+    match variant {
+        Variant::Cosine => out.broadcast_matmul(&normalize_fro(&w.wo)?),
+        Variant::Standard => out.broadcast_matmul(&w.wo),
+    }
 }
 
 /// One transformer layer: norm → attention → geodesic residual →

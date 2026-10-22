@@ -142,7 +142,7 @@ fn zero_gradient_pcn_preserves_the_prior() {
         let mut r2_sum = 0.0;
         for i in 0..m {
             let theta = init_flat(&s, sigma, 5000 + i as u64);
-            let mut state = SgPcnlState::new(theta, sigma, sched(beta_0), 100, 25);
+            let mut state = SgPcnlState::new(theta, sigma, sched(beta_0), 100, 25, 0);
             let mut rng = rand::rngs::StdRng::seed_from_u64(9000 + i as u64);
             state.step_unadjusted(&zero, &mut rng).unwrap();
             let xs = state.theta.to_vec1::<f32>().unwrap();
@@ -186,7 +186,7 @@ fn zero_gradient_chain_stays_on_the_shell_over_many_steps() {
     );
 
     let zero = Tensor::zeros(p, DType::F32, dev()).unwrap();
-    let mut state = SgPcnlState::new(theta0, sigma, sched(0.3), 100, 25);
+    let mut state = SgPcnlState::new(theta0, sigma, sched(0.3), 100, 25, 0);
     let mut rng = rand::rngs::StdRng::seed_from_u64(78);
     let mut r2_after_100 = 0.0;
     for t in 0..300 {
@@ -241,7 +241,7 @@ fn drift_term_matches_the_ou_second_moment_identity() {
     let m = 2000;
     let mut r2_sum = 0.0;
     for i in 0..m {
-        let mut state = SgPcnlState::new(theta0.clone(), sigma, sched(beta), 100, 25);
+        let mut state = SgPcnlState::new(theta0.clone(), sigma, sched(beta), 100, 25, 0);
         let mut rng = rand::rngs::StdRng::seed_from_u64(31_000 + i as u64);
         state.step_unadjusted(&zero, &mut rng).unwrap();
         r2_sum += state
@@ -735,8 +735,12 @@ fn micro() -> Config {
         gamma: 1e-3,
         kappa: 0.55,
         sgd_steps_on_b: 40,
+        adam_steps_on_b: 40,
+        adam_lr: 0.05,
         init_std: 0.1,
         save_dir: None,
+        cyclical_period: 0,
+        run_mh: true,
     }
 }
 
@@ -747,7 +751,12 @@ fn experiment_is_bit_deterministic_across_reruns() {
     let mut r2 = run_experiment(&cfg);
     assert_eq!(r1.variants.len(), r2.variants.len());
     for v in r1.variants.iter_mut().chain(r2.variants.iter_mut()) {
-        v.seconds = 0.0; // wall-clock is the one legitimately varying field
+        // wall-clock is the one legitimately varying field (all
+        // three timers: pCNL chains, the SGLD comparator's chains,
+        // and the Phase-4b filtered comparator's chains)
+        v.seconds = 0.0;
+        v.sgld_seconds = 0.0;
+        v.mh_seconds = 0.0;
         v.saved_files.clear();
     }
     assert_eq!(
