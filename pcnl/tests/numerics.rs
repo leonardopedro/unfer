@@ -715,6 +715,7 @@ fn micro() -> Config {
     Config {
         seed: 4242,
         k: 8,
+        task_b: Task::B,
         shapes: Shapes {
             vocab: 9,
             d: 16,

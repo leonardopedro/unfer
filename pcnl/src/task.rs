@@ -9,6 +9,9 @@
 //!
 //! * [`Task::A`] — `(a + b) mod K`  (the base task)
 //! * [`Task::B`] — `(a + 2b) mod K` (the adaptation target)
+//! * [`Task::Modular`] — `(pa + qb + r) mod K` (the task×budget
+//!   matrix's knob: `r ≠ 0` shifts are label-permutations of A,
+//!   `(p,q) ≠ (1,1)` needs genuinely new features)
 //!
 //! The full training set *is* the pCNL potential Φ — no minibatching
 //! inside the MCMC loop, so the Metropolis ratio is exact for the
@@ -22,6 +25,12 @@ use rand::SeedableRng;
 pub enum Task {
     A,
     B,
+    /// `(p·a + q·b + r) mod K` — the configurable adaptation target
+    /// (the task×budget matrix's knob). `A ≡ (1,1,0)`, `B ≡ (1,2,0)`;
+    /// the shift `r ≠ 0` family is *label-permutation-close* to A
+    /// (same features, rotated head), the `(p,q)` ≠ `(1,1)` family
+    /// requires genuinely new features.
+    Modular { p: usize, q: usize, r: usize },
 }
 
 impl Task {
@@ -29,6 +38,17 @@ impl Task {
         match self {
             Task::A => (a + b) % k,
             Task::B => (a + 2 * b) % k,
+            Task::Modular { p, q, r } => (p * a + q * b + r) % k,
+        }
+    }
+
+    /// One-line formula for the report header, so every run names the
+    /// task it measured.
+    pub fn formula(&self, k: usize) -> String {
+        match self {
+            Task::A => format!("(a+b) mod {k}"),
+            Task::B => format!("(a+2b) mod {k}"),
+            Task::Modular { p, q, r } => format!("({p}a+{q}b+{r}) mod {k}"),
         }
     }
 }
@@ -589,6 +609,29 @@ mod tests {
                 );
             }
         }
+        // the Modular knob degenerates to A and B at their parameters
+        // (so a matrix cell at (1,1,0)/(1,2,0) *is* the plan's task),
+        // and a pure shift r ≠ 0 is a bijection of A's labels.
+        assert_eq!(
+            Task::Modular { p: 1, q: 1, r: 0 }.label(3, 5, k),
+            Task::A.label(3, 5, k)
+        );
+        assert_eq!(
+            Task::Modular { p: 1, q: 2, r: 0 }.label(3, 5, k),
+            Task::B.label(3, 5, k)
+        );
+        let shift = Task::Modular { p: 1, q: 1, r: 3 };
+        for a in 0..k {
+            for b in 0..k {
+                assert_eq!(
+                    shift.label(a, b, k),
+                    (Task::A.label(a, b, k) + 3) % k,
+                    "shift = A + r"
+                );
+            }
+        }
+        assert_eq!(shift.formula(k), "(1a+1b+3) mod 8");
+        assert_eq!(Task::B.formula(k), "(a+2b) mod 8");
     }
 
     #[test]

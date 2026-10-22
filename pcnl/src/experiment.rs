@@ -33,6 +33,11 @@ use std::path::PathBuf;
 pub struct Config {
     pub seed: u64,
     pub k: usize,
+    /// The adaptation target the chains sample (task×budget matrix's
+    /// knob). `Task::B` is the plan's canonical target; `Task::Modular`
+    /// selects the simple/complex cells. Task A (the pre-train) stays
+    /// fixed — the story is "pre-train on A, adapt to B".
+    pub task_b: Task,
     pub shapes: Shapes,
     pub n_train: usize,
     pub n_test: usize,
@@ -78,6 +83,7 @@ impl Default for Config {
         Self {
             seed: 20261020,
             k: 8,
+            task_b: Task::B,
             shapes: Shapes {
                 vocab: 9,
                 d: 32,
@@ -242,7 +248,8 @@ impl Report {
         let mut s = String::new();
         s.push_str(&format!(
             "SG-pCNL (unadjusted) x nGPT-lite toy run (seed {}, sigma={}, beta0={}, kappa={}, \
-             gamma={}, batch={}, chains={}, steps={}, burn={}, thin={})\n",
+             gamma={}, batch={}, chains={}, steps={}, burn={}, thin={}, taskA=(a+b) mod {}, \
+             taskB={}, n_train={}, pretrain={})\n",
             self.config.seed,
             self.config.sigma,
             self.config.beta_0,
@@ -252,7 +259,11 @@ impl Report {
             self.config.chains,
             self.config.steps,
             self.config.burn,
-            self.config.thin
+            self.config.thin,
+            self.config.k,
+            self.config.task_b.formula(self.config.k),
+            self.config.n_train,
+            self.config.pretrain_steps
         ));
         for v in &self.variants {
             s.push_str(&format!(
@@ -514,7 +525,7 @@ fn bma_metrics(
 pub fn run_experiment(cfg: &Config) -> Report {
     let data_a = Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, cfg.seed);
     let data_b = Dataset::new(
-        Task::B,
+        cfg.task_b,
         cfg.k,
         cfg.n_train,
         cfg.n_test,

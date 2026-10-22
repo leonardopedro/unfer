@@ -62,6 +62,81 @@ fn main() {
             }
             // Phase 4b: disable the filtered comparator (default: on)
             "--no-mh" => cfg.run_mh = false,
+            // task×budget matrix: adaptation target (p:q:r = "(pa+qb+r) mod k");
+            // "b" is the canonical (a+2b) mod k.
+            "--task-b" => {
+                i += 1;
+                let spec = args.get(i).expect("--task-b b | --task-b p:q:r").clone();
+                cfg.task_b = if spec == "b" {
+                    pcnl::task::Task::B
+                } else {
+                    let parts: Vec<usize> = spec
+                        .split(':')
+                        .map(|x| x.parse().expect("p:q:r are numbers"))
+                        .collect();
+                    assert!(parts.len() == 3, "--task-b p:q:r (or 'b')");
+                    pcnl::task::Task::Modular {
+                        p: parts[0],
+                        q: parts[1],
+                        r: parts[2],
+                    }
+                };
+            }
+            // task×budget matrix: class count (vocab follows: k+1 incl. BOS)
+            "--k" => {
+                i += 1;
+                cfg.k = args.get(i).expect("--k N").parse().expect("k is a number");
+                cfg.shapes.vocab = cfg.k + 1;
+            }
+            "--n-train" => {
+                i += 1;
+                cfg.n_train = args
+                    .get(i)
+                    .expect("--n-train N")
+                    .parse()
+                    .expect("n-train is a number");
+            }
+            "--pretrain" => {
+                i += 1;
+                cfg.pretrain_steps = args
+                    .get(i)
+                    .expect("--pretrain N")
+                    .parse()
+                    .expect("pretrain is a number");
+            }
+            "--chains" => {
+                i += 1;
+                cfg.chains = args
+                    .get(i)
+                    .expect("--chains N")
+                    .parse()
+                    .expect("chains is a number");
+            }
+            // task×budget matrix: model size (the P axis of the budget).
+            "--d" => {
+                i += 1;
+                cfg.shapes.d = args.get(i).expect("--d N").parse().expect("d is a number");
+            }
+            "--ff" => {
+                i += 1;
+                cfg.shapes.ff = args.get(i).expect("--ff N").parse().expect("ff is a number");
+            }
+            "--layers" => {
+                i += 1;
+                cfg.shapes.layers = args
+                    .get(i)
+                    .expect("--layers N")
+                    .parse()
+                    .expect("layers is a number");
+            }
+            "--init-std" => {
+                i += 1;
+                cfg.init_std = args
+                    .get(i)
+                    .expect("--init-std F")
+                    .parse()
+                    .expect("init-std is a float");
+            }
             "--sigma" | "--beta0" | "--gamma" | "--kappa" => {
                 let key = args[i].trim_start_matches('-').to_string();
                 i += 1;
@@ -77,8 +152,9 @@ fn main() {
             other => {
                 eprintln!(
                     "unknown arg: {other} (try: quick | --steps N | --seed N | --report-file PATH | \
-                     --save-dir DIR | --cyclical PERIOD | --no-mh | --sigma F | --beta0 F | \
-                     --gamma F | --kappa F)"
+                     --save-dir DIR | --cyclical PERIOD | --no-mh | --task-b b|p:q:r | --k N | \
+                     --n-train N | --pretrain N | --chains N | --d N | --ff N | --layers N | \
+                     --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F)"
                 );
                 std::process::exit(2);
             }
