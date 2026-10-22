@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1846 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-21 -->
+<!-- status: verified | tests: 1858 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-22 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -149,7 +149,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1846 passed (2026-10-21, rev 31; was 1827 on 2026-10-20 — see the
+#   1858 passed (2026-10-22, rev 32; was 1846 on 2026-10-21 — see the
 #   counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
@@ -233,20 +233,20 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 31, 2026-10-21)
+## Test & benchmark counts (rev 32, 2026-10-22)
 
-- Workspace tests: **1846 green** on CPU (default features,
+- Workspace tests: **1858 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by target name from a single log):
   `unfer_protocol` 405, logos 352, `unfer_ffi` 229,
   `prob_kernel` 143, `decide_core` 116, `unfer_consensus` 111,
   `nested_fock_algebra` 98, `qfm` 91, `unfer_edge` 63, `qfm_text` 62,
-  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `pcnl` 46,
+  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `pcnl` 58,
   `unfer_identity` 7,
   `sirk_core_model` 5 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1846 above.
+  2026-10-06, `--release`) and is **not** in the 1858 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -255,7 +255,13 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 31** (2026-10-21) claims **1846**
+> Revision history of this table: **rev 32** (2026-10-22) claims **1858**
+> after `pcnl` gained `tests/comparators.rs` (4 Phase-4 comparator tests)
+> and `tests/formal_claims.rs` (8 formal-claims twins) with the V/O-
+> normalization commit — landed without a recount — re-measured by the
+> same command from this run's own log (`check-status --recount`, suite
+> green; only the `pcnl` line moved, 46 → 58).
+> **rev 31** (2026-10-21) claims **1846**
 > after `pcnl` gained `tests/numerics.rs` — a 19-test numerical
 > validation battery (prior shell, pCN stationarity, finite-difference
 > gradients, batch-scaling identity, causality, Robbins–Monro
