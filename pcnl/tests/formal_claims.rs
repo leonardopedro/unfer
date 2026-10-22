@@ -36,12 +36,7 @@ fn tiny() -> Shapes {
 
 /// Central finite differences of a map `R^P → R^P` at `theta` along
 /// direction `h`, relative step `eps`.
-fn fd_direction(
-    f: impl Fn(&Tensor) -> Tensor,
-    theta: &Tensor,
-    h: &Tensor,
-    eps: f64,
-) -> Vec<f32> {
+fn fd_direction(f: impl Fn(&Tensor) -> Tensor, theta: &Tensor, h: &Tensor, eps: f64) -> Vec<f32> {
     let plus = f(&(theta + (h.affine(eps, 0.0).unwrap())).unwrap());
     let minus = f(&(theta - (h.affine(eps, 0.0).unwrap())).unwrap());
     let p = plus.to_vec1::<f32>().unwrap();
@@ -89,14 +84,11 @@ fn sphere_projection_derivative_matches_finite_differences() {
         let analytic: Vec<f32> = vn
             .iter()
             .zip(&hvec)
-            .map(|(vi, hi)| ((1.0 / norm) * (*hi as f64) - (vh / norm.powi(3)) * (*vi as f64)) as f32)
+            .map(|(vi, hi)| {
+                ((1.0 / norm) * (*hi as f64) - (vh / norm.powi(3)) * (*vi as f64)) as f32
+            })
             .collect();
-        let fd = fd_direction(
-            |t| normalize_last(t).unwrap(),
-            &v,
-            &h,
-            1e-3 * norm.max(1.0),
-        );
+        let fd = fd_direction(|t| normalize_last(t).unwrap(), &v, &h, 1e-3 * norm.max(1.0));
         for (a, b) in analytic.iter().zip(&fd) {
             assert!(
                 (a - b).abs() <= 1e-2 + 5e-2 * a.abs(),
@@ -119,7 +111,11 @@ fn tangent_projector_never_increases_norms() {
         let norm: f64 = vn.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
         let hn = h.to_vec1::<f32>().unwrap();
         let hnorm: f64 = hn.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-        let vh: f64 = vn.iter().zip(&hn).map(|(a, b)| (*a as f64) * (*b as f64)).sum();
+        let vh: f64 = vn
+            .iter()
+            .zip(&hn)
+            .map(|(a, b)| (*a as f64) * (*b as f64))
+            .sum();
         let dn: f64 = vn
             .iter()
             .zip(&hn)
@@ -188,11 +184,15 @@ fn gradient_is_orthogonal_to_position() {
     let data = Dataset::new(Task::B, 8, 64, 32, 13);
     for seed in 0..4u64 {
         let theta = init_flat(&s, 0.3, seed);
-        let (_, g) = loss_and_grad(&theta, &s, Variant::Cosine, &data.train_x, &data.train_y)
-            .unwrap();
+        let (_, g) =
+            loss_and_grad(&theta, &s, Variant::Cosine, &data.train_x, &data.train_y).unwrap();
         let tv = theta.to_vec1::<f32>().unwrap();
         let gv = g.to_vec1::<f32>().unwrap();
-        let dot: f64 = tv.iter().zip(&gv).map(|(a, b)| (*a as f64) * (*b as f64)).sum();
+        let dot: f64 = tv
+            .iter()
+            .zip(&gv)
+            .map(|(a, b)| (*a as f64) * (*b as f64))
+            .sum();
         let tn: f64 = tv.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
         let gn: f64 = gv.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
         let rel = dot.abs() / (tn * gn);
@@ -322,7 +322,9 @@ fn batch_gradient_noise_below_the_pathwise_ceiling() {
         let mut idx: Vec<u32> = (0..n_train as u32).collect();
         // Fisher–Yates with the LCG
         for i in (1..idx.len()).rev() {
-            st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            st = st
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let j = (st >> 33) as usize % (i + 1);
             idx.swap(i, j);
         }
@@ -330,7 +332,9 @@ fn batch_gradient_noise_below_the_pathwise_ceiling() {
         let xi = Tensor::from_vec(idx.clone(), vec![batch], &Device::Cpu).unwrap();
         let bx = data.train_x.index_select(&xi, 0).unwrap();
         let by = data.train_y.index_select(&xi, 0).unwrap();
-        let (_, sum) = data.batch_grad(&theta, &s, Variant::Cosine, &bx, &by).unwrap();
+        let (_, sum) = data
+            .batch_grad(&theta, &s, Variant::Cosine, &bx, &by)
+            .unwrap();
         let g = sum.to_vec1::<f32>().unwrap();
         // scaled: (N/B)·Σ_batch; full: N·mean = the sum over all
         let scale = (n_train / batch) as f64;
@@ -395,7 +399,9 @@ fn covariance_shrinks_with_batch_size() {
             let mut st = 0x517CC1B727220A95u64 ^ (d * 31 + batch as u64);
             let mut idx: Vec<u32> = (0..n_train as u32).collect();
             for i in (1..idx.len()).rev() {
-                st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                st = st
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let j = (st >> 33) as usize % (i + 1);
                 idx.swap(i, j);
             }
@@ -421,8 +427,14 @@ fn covariance_shrinks_with_batch_size() {
     let n32 = noise_at(32);
     let n128 = noise_at(128);
     // monotone in B, and the trend is substantial (≈4× per 4× batch)
-    assert!(n8 > n32, "noise should shrink with B: B=8 {n8} vs B=32 {n32}");
-    assert!(n32 > n128, "noise should shrink with B: B=32 {n32} vs B=128 {n128}");
+    assert!(
+        n8 > n32,
+        "noise should shrink with B: B=8 {n8} vs B=32 {n32}"
+    );
+    assert!(
+        n32 > n128,
+        "noise should shrink with B: B=32 {n32} vs B=128 {n128}"
+    );
     // B = N: the batch IS the dataset, so the scaled gradient is exact
     assert!(
         n128 < 1e-6 * (n8 + 1.0) + 1e-12,
