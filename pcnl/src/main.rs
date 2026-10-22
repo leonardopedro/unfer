@@ -62,6 +62,10 @@ fn main() {
             }
             // Phase 4b: disable the filtered comparator (default: on)
             "--no-mh" => cfg.run_mh = false,
+            // §6.4.1's reachability follow-up: N(θ_A, σ²I) adaptation
+            // prior — the chains explore around the pre-trained
+            // weights instead of the origin's prior shell.
+            "--prior-center-a" => cfg.prior_center_at_a = true,
             // task×budget matrix: adaptation target (p:q:r = "(pa+qb+r) mod k");
             // "b" is the canonical (a+2b) mod k.
             "--task-b" => {
@@ -119,7 +123,11 @@ fn main() {
             }
             "--ff" => {
                 i += 1;
-                cfg.shapes.ff = args.get(i).expect("--ff N").parse().expect("ff is a number");
+                cfg.shapes.ff = args
+                    .get(i)
+                    .expect("--ff N")
+                    .parse()
+                    .expect("ff is a number");
             }
             "--layers" => {
                 i += 1;
@@ -154,7 +162,8 @@ fn main() {
                     "unknown arg: {other} (try: quick | --steps N | --seed N | --report-file PATH | \
                      --save-dir DIR | --cyclical PERIOD | --no-mh | --task-b b|p:q:r | --k N | \
                      --n-train N | --pretrain N | --chains N | --d N | --ff N | --layers N | \
-                     --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F)"
+                     --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F | \
+                     --prior-center-a)"
                 );
                 std::process::exit(2);
             }

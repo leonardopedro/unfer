@@ -742,6 +742,7 @@ fn micro() -> Config {
         save_dir: None,
         cyclical_period: 0,
         run_mh: true,
+        prior_center_at_a: false,
     }
 }
 
@@ -861,4 +862,213 @@ fn diagnostics_behave_on_synthetic_chains() {
     let shifted: Vec<f64> = c.iter().map(|v| v + 3.0).collect();
     let r_far = gelman_rubin(&[c, shifted]);
     assert!(r_far > 3.0, "mode-separated R̂ {r_far} too small");
+}
+
+// ---------------------------------------------------------------------
+// 12. The task×budget knob: run_experiment must honor Config.task_b
+// ---------------------------------------------------------------------
+
+/// The §6.4.1 matrix configuration at debug scale: K = 4 classes and
+/// the tiny shapes (P = 552) where the task family is demonstrably
+/// learnable — the doc's own finding, and the reason the assertions
+/// below can demand real accuracy rather than chance-level noise
+/// (at K = 8 these shapes cannot solve the family at all).
+fn matrix() -> Config {
+    Config {
+        k: 4,
+        task_b: Task::B,
+        shapes: Shapes {
+            vocab: 5,
+            d: 8,
+            ff: 16,
+            layers: 1,
+        },
+        n_train: 256,
+        n_test: 128,
+        pretrain_steps: 500,
+        chains: 2,
+        steps: 800,
+        burn: 400,
+        thin: 4,
+        batch_size: 32,
+        sgd_steps_on_b: 60,
+        adam_steps_on_b: 60,
+        run_mh: false,
+        ..micro()
+    }
+}
+
+/// `--task-b` selects *which task the chains adapt to* (§6.4.1's
+/// knob). Regression: the report must name the target and, more to
+/// the point, the B-side numbers must be measured on that target's
+/// data — `acc_b_before` is θ_A evaluated on D_B, so it stays at
+/// θ_A's own accuracy exactly when B ≡ A and drops on a new task.
+#[test]
+fn run_experiment_honors_the_task_b_knob() {
+    // B ≡ A: θ_A is pre-trained on (a+b), so it scores like itself
+    let r_a = run_experiment(&Config {
+        task_b: Task::A,
+        ..matrix()
+    });
+    assert_eq!(r_a.config.task_b, Task::A, "report echoes the target");
+    let text_a = r_a.render();
+    assert!(
+        text_a.contains("taskB=(a+b) mod 4"),
+        "render must name B ≡ A:\n{text_a}"
+    );
+
+    // B = (a+2b): a different task, so the same θ_A scores far lower
+    let r_b = run_experiment(&matrix());
+    assert_eq!(r_b.config.task_b, Task::B);
+    assert!(
+        r_b.render().contains("taskB=(a+2b) mod 4"),
+        "render must name the canonical target"
+    );
+
+    for (r, label) in [(&r_a, "B≡A"), (&r_b, "B=(a+2b)")] {
+        for v in &r.variants {
+            assert!(
+                (0.0..=100.0).contains(&v.acc_b_before),
+                "{label} acc_b_before {}",
+                v.acc_b_before
+            );
+        }
+    }
+    // The knob changes what B *is* — measured on the cosine variant,
+    // the one the whole matrix (§6.4.1) runs: θ_A on its own task vs
+    // on a new one. The standard-softmax variant is excluded the way
+    // the doc excludes it: its pre-train does not learn by design
+    // (the Phase-0 baseline), so both its B-numbers sit at chance.
+    for (va, vb) in r_a
+        .variants
+        .iter()
+        .zip(&r_b.variants)
+        .filter(|(v, _)| v.variant.contains("nGPT"))
+    {
+        assert!(
+            va.acc_b_before > vb.acc_b_before + 15.0,
+            "task_b ignored: B≡A gives acc_b_before {} but (a+2b) gives {}",
+            va.acc_b_before,
+            vb.acc_b_before
+        );
+        // B ≡ A: θ_A evaluated on a fresh A sample ≈ its pre-train accuracy
+        assert!(
+            (va.acc_b_before - va.acc_a_pretrained).abs() < 15.0,
+            "B≡A acc_b_before {} far from acc_a {} — wrong data?",
+            va.acc_b_before,
+            va.acc_a_pretrained
+        );
+    }
+}
+
+// ---------------------------------------------------------------------
+// 13. The centered adaptation prior (§6.4.1's reachability follow-up)
+// ---------------------------------------------------------------------
+
+/// Centering the prior at θ_A (N(θ_A, σ²I) instead of N(0, σ²I)) is
+/// what makes adaptation *reachable*: the chain equilibrates on the
+/// shell around the pre-trained weights instead of being dragged to
+/// the origin's shell during burn-in, so when B ≡ A its posterior
+/// predictive rises off chance (§6.4.1's open item: 46.1 % → 24.6 %
+/// with the origin prior; 52.7 % centered at the reference budget —
+/// above θ_A itself — and 26.6 % → 35.2 % at this debug budget, where
+/// the shell-averaged BMA dilutes θ_A's point accuracy).
+#[test]
+fn centered_prior_keeps_the_chain_at_theta_a() {
+    // B ≡ A, the cell §6.4.1 reports as failing with the origin prior
+    let cfg_k = matrix().k as f64;
+    let base = Config {
+        task_b: Task::A,
+        ..matrix()
+    };
+    let origin = run_experiment(&base);
+    let centered = run_experiment(&Config {
+        prior_center_at_a: true,
+        ..base
+    });
+
+    for (r, named) in [(&origin, false), (&centered, true)] {
+        let text = r.render();
+        // the origin-prior header must stay byte-identical to §6.3/§6.4
+        assert!(
+            text.contains("prior=theta_A") == named,
+            "header must name the centered prior only when it is on:\n{text}"
+        );
+    }
+
+    let mut checked = 0;
+    for (vo, vc) in origin.variants.iter().zip(&centered.variants) {
+        if vo.exploded || vc.exploded {
+            continue; // the Phase-0 outcome, not a reachability fact
+        }
+        checked += 1;
+        // 1 — geometry: with centering on, radial_final is ‖θ−θ_A‖ and
+        // must sit on the σ√P shell *around θ_A* (the shell claim of
+        // §3B, relocated — not a chain that wandered off to the origin).
+        assert!(
+            vc.radial_final.is_finite()
+                && (vc.radial_final - vc.radial_expected).abs() / vc.radial_expected < 0.5,
+            "centered radial {} not on the θ_A shell {}",
+            vc.radial_final,
+            vc.radial_expected
+        );
+        // The origin-prior chain's final radius is *also* ≈ σ√P —
+        // it collapsed onto the origin's shell — so the reachability
+        // failure lives in the burn-in travel: it starts at θ_A's
+        // shell (‖θ_A‖ ≫ σ√P) and is dragged out to the origin's,
+        // while the centered chain never leaves θ_A's neighborhood.
+        assert!(
+            vc.radial_max <= 2.5 * vc.radial_expected,
+            "centered chain left θ_A's neighborhood: max {} vs shell {}",
+            vc.radial_max,
+            vc.radial_expected
+        );
+        assert!(
+            vo.radial_max > 2.0 * vo.radial_expected,
+            "origin radial max {} ≈ shell {} — expected the burn-in collapse?",
+            vo.radial_max,
+            vo.radial_expected
+        );
+        // 2 — reachability: the centered posterior predictive keeps a
+        // substantial part of θ_A's accuracy and beats the uniform
+        // predictor in NLL, while the origin-prior chain collapses to
+        // chance. (Measured at this budget: 35.2 % / NLL 1.0604 vs
+        // origin 26.6 % / chance 25 % / uniform NLL ln 4 = 1.3863 —
+        // the *shell-averaged* BMA dilutes θ_A's point accuracy, so
+        // the claim is "well above the collapse", not "≥ θ_A".)
+        let chance = 100.0 / cfg_k;
+        assert!(
+            vc.bma_accuracy > 0.5 * vc.acc_b_before,
+            "centered BMA {} fell below half of θ_A's own {} — not adapting around θ_A",
+            vc.bma_accuracy,
+            vc.acc_b_before
+        );
+        assert!(
+            vc.bma_accuracy > chance + 5.0,
+            "centered BMA {} at chance ({chance}) — prior centering lost the likelihood",
+            vc.bma_accuracy
+        );
+        assert!(
+            vc.bma_nll < cfg_k.ln(),
+            "centered NLL {} not below the uniform predictor {}",
+            vc.bma_nll,
+            cfg_k.ln()
+        );
+        assert!(
+            vc.bma_accuracy > vo.bma_accuracy + 5.0,
+            "centering did not fix reachability: centered {} vs origin {}",
+            vc.bma_accuracy,
+            vo.bma_accuracy
+        );
+        // 3 — and the SGLD twin, which receives the same translation,
+        // must agree with the pCNL chains it is coupled to (measured:
+        // both 35.2 %, cross-R̂ 1.06).
+        assert!(
+            vc.sgld_bma_accuracy > 0.5 * vc.acc_b_before,
+            "centered SGLD twin {} did not follow its pCNL sibling {}",
+            vc.sgld_bma_accuracy,
+            vc.bma_accuracy
+        );
+    }
+    assert!(checked > 0, "every variant exploded — nothing was measured");
 }

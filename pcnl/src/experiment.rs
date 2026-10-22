@@ -67,15 +67,25 @@ pub struct Config {
     /// to this directory as `.safetensors` (plan §1, `safetensors`).
     pub save_dir: Option<PathBuf>,
     /// Plan §3C Option 2 (Phase 4b): 0 = Robbins–Monro (Option 1);
-    /// > 0 = cyclical cosine decay with this period, applied to every
-    /// sampler chain (pCNL, SGLD, MH-pCNL) so the schedule is the only
-    /// thing that changed between two runs of one seed.
+    /// any period > 0 = cyclical cosine decay with that period, applied
+    /// to every sampler chain (pCNL, SGLD, MH-pCNL) so the schedule is
+    /// the only thing that changed between two runs of one seed.
     pub cyclical_period: usize,
     /// Phase 4b: whether to run the Metropolis-filtered predecessor
     /// (`task::mh_pcnl_chain`) as the reference comparator. Tests may
     /// disable it to keep debug-mode runtime down; the full run keeps
     /// it on.
     pub run_mh: bool,
+    /// §6.4.1's reachability follow-up: center the adaptation prior
+    /// at θ_A — i.e. sample from N(θ_A, σ²I)·L(D_B; θ) instead of
+    /// N(0, σ²I)·L(D_B; θ) — so the chains equilibrate on the shell
+    /// around the pre-trained weights instead of being contracted to
+    /// the origin's shell during burn-in (B = A then fails at 24.6 %
+    /// while θ_A itself scores 46.1 %: §6.4.1's open item).
+    /// `false` (the plan's original prior) keeps every reported run
+    /// reproducible; the SGLD twin and the MH filter receive the same
+    /// translation, so the cross-R̂ still couples the same target.
+    pub prior_center_at_a: bool,
 }
 
 impl Default for Config {
@@ -110,6 +120,7 @@ impl Default for Config {
             save_dir: None,
             cyclical_period: 0,
             run_mh: true,
+            prior_center_at_a: false,
         }
     }
 }
@@ -246,10 +257,19 @@ impl Report {
     /// quotes and the snapshot test pins structurally.
     pub fn render(&self) -> String {
         let mut s = String::new();
+        // The centered adaptation prior (§6.4.1's follow-up) is named
+        // in the header only when it is on, so every run of the plan's
+        // original config renders byte-identically to the reports the
+        // doc quotes verbatim.
+        let prior = if self.config.prior_center_at_a {
+            ", prior=theta_A"
+        } else {
+            ""
+        };
         s.push_str(&format!(
             "SG-pCNL (unadjusted) x nGPT-lite toy run (seed {}, sigma={}, beta0={}, kappa={}, \
              gamma={}, batch={}, chains={}, steps={}, burn={}, thin={}, taskA=(a+b) mod {}, \
-             taskB={}, n_train={}, pretrain={})\n",
+             taskB={}, n_train={}, pretrain={}{})\n",
             self.config.seed,
             self.config.sigma,
             self.config.beta_0,
@@ -263,7 +283,8 @@ impl Report {
             self.config.k,
             self.config.task_b.formula(self.config.k),
             self.config.n_train,
-            self.config.pretrain_steps
+            self.config.pretrain_steps,
+            prior
         ));
         for v in &self.variants {
             s.push_str(&format!(
@@ -462,6 +483,18 @@ fn radial(theta: &Tensor) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
+/// ‖θ − μ‖ — the radius the shell diagnostics are stated in. With
+/// the plan's origin prior μ = 0 this is [`radial`] itself; with the
+/// centered adaptation prior (§6.4.1's follow-up) the shell the chain
+/// equilibrates on is around θ_A, so that is what is compared to
+/// σ√P.
+fn radial_about(theta: &Tensor, center: Option<&Tensor>) -> f64 {
+    match center.and_then(|c| (theta - c).ok()) {
+        Some(dev) => radial(&dev),
+        None => radial(theta),
+    }
+}
+
 /// Bayesian model averaging over one or more chains' thinned samples:
 /// returns `(accuracy %, NLL, ECE, K models used)`. One implementation
 /// shared by the SG-pCNL chains and the SGLD comparator, so the two
@@ -595,8 +628,18 @@ fn run_chain(
         .collect();
     let init = (theta_a + Tensor::from_vec(jitter, vec![p_dim], theta_a.device()).expect("jit"))
         .expect("init = theta_a + noise");
-    let mut state =
-        SgPcnlState::new(init, cfg.sigma, scheduler, cfg.n_train, cfg.batch_size, cfg.cyclical_period);
+    let mut state = SgPcnlState::new(
+        init,
+        cfg.sigma,
+        scheduler,
+        cfg.n_train,
+        cfg.batch_size,
+        cfg.cyclical_period,
+    );
+    if cfg.prior_center_at_a {
+        state = state.centered_at(theta_a.clone());
+    }
+    let center = cfg.prior_center_at_a.then_some(theta_a);
     let mut loss_chain: Vec<f64> = Vec::new();
     let mut kept: Vec<Tensor> = Vec::new();
     let mut coord_values: Vec<Vec<f64>> = (0..coords.len())
@@ -633,7 +676,7 @@ fn run_chain(
             .step_unadjusted(&sum_grad, &mut noise_rng)
             .expect("unadjusted step");
 
-        let r = radial(&state.theta);
+        let r = radial_about(&state.theta, center);
         if !r.is_finite() {
             exploded = true;
             exploded_at.get_or_insert(t);
@@ -764,8 +807,9 @@ fn run_variant(
     let sgld_outcomes: Vec<crate::task::SgldOutcome> = if exploded_in_pretrain {
         Vec::new() // no finite θ_A to adapt from — same guard as the chains
     } else {
+        let center = cfg.prior_center_at_a.then(|| theta_a.clone());
         (0..cfg.chains)
-            .map(|c| sgld_chain(cfg, variant, data_b, jitter_init(c), c))
+            .map(|c| sgld_chain(cfg, variant, data_b, jitter_init(c), c, center.as_ref()))
             .collect()
     };
     let sgld_seconds = sgld_t0.elapsed().as_secs_f64();
@@ -779,6 +823,7 @@ fn run_variant(
     let mh_outcomes: Vec<crate::task::MhOutcome> = if exploded_in_pretrain || !cfg.run_mh {
         Vec::new()
     } else {
+        let center = cfg.prior_center_at_a.then(|| theta_a.clone());
         (0..cfg.chains)
             .map(|c| {
                 let mut rng =
@@ -793,7 +838,7 @@ fn run_variant(
                 let init = (theta_a.clone()
                     + Tensor::from_vec(j, vec![p_dim], theta_a.device()).expect("jit"))
                 .expect("mh init = theta_a + noise");
-                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c)
+                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c, center.as_ref())
             })
             .collect()
     };

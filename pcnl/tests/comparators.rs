@@ -59,11 +59,22 @@ fn unadjusted_halves_model_evaluations() {
     let p = shapes.flat_size();
     let theta0 = Tensor::zeros(p, candle_core::DType::F32, &candle_core::Device::Cpu).unwrap();
 
-    let mh = mh_pcnl_chain(&cfg, pcnl::model::Variant::Cosine, &data, theta0.clone(), 0);
+    let mh = mh_pcnl_chain(
+        &cfg,
+        pcnl::model::Variant::Cosine,
+        &data,
+        theta0.clone(),
+        0,
+        None,
+    );
     assert_eq!(mh.steps, cfg.steps);
     assert_eq!(mh.grad_evals, cfg.steps, "one mini-batch backward per step");
     // L(θ₀) + one full-batch forward per proposal
-    assert_eq!(mh.loss_evals, 1 + cfg.steps, "one full-batch forward per proposal");
+    assert_eq!(
+        mh.loss_evals,
+        1 + cfg.steps,
+        "one full-batch forward per proposal"
+    );
     let kept_expected = (cfg.steps - cfg.burn).div_ceil(cfg.thin);
     assert!(mh.kept.len() <= kept_expected && !mh.kept.is_empty());
 
@@ -97,12 +108,18 @@ fn mh_acceptance_decreases_with_beta() {
         };
         let data = Dataset::new(Task::B, cfg.k, cfg.n_train, cfg.n_test, 43);
         let p = cfg.shapes.flat_size();
-        let theta0 =
-            Tensor::zeros(p, candle_core::DType::F32, &candle_core::Device::Cpu).unwrap();
+        let theta0 = Tensor::zeros(p, candle_core::DType::F32, &candle_core::Device::Cpu).unwrap();
         let mut accepted = 0usize;
         let mut steps = 0usize;
         for c in 0..2 {
-            let oc = mh_pcnl_chain(&cfg, pcnl::model::Variant::Cosine, &data, theta0.clone(), c);
+            let oc = mh_pcnl_chain(
+                &cfg,
+                pcnl::model::Variant::Cosine,
+                &data,
+                theta0.clone(),
+                c,
+                None,
+            );
             accepted += oc.accepted;
             steps += oc.steps;
         }
@@ -145,7 +162,12 @@ fn mh_and_unadjusted_agree_on_the_posterior() {
     // and the two BMAs land in the same neighbourhood (20 accuracy
     // points is the noise floor at 64 test examples)
     let gap = (v.bma_accuracy - v.mh_bma_accuracy).abs();
-    assert!(gap < 25.0, "BMA gap {gap} too large: {} vs {}", v.bma_accuracy, v.mh_bma_accuracy);
+    assert!(
+        gap < 25.0,
+        "BMA gap {gap} too large: {} vs {}",
+        v.bma_accuracy,
+        v.mh_bma_accuracy
+    );
 }
 
 /// §3C Option 2 end-to-end: a cyclical run (period 64 on a 240-step
@@ -175,5 +197,9 @@ fn cyclical_run_is_stable_and_reported() {
     );
     // BMA stays defined under the cyclical schedule
     assert!(v.bma_models > 0, "cyclical BMA needs finite samples");
-    assert!((0.0..=100.0).contains(&v.bma_accuracy), "cyclical bma {}", v.bma_accuracy);
+    assert!(
+        (0.0..=100.0).contains(&v.bma_accuracy),
+        "cyclical bma {}",
+        v.bma_accuracy
+    );
 }

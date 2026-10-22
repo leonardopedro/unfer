@@ -30,7 +30,11 @@ pub enum Task {
     /// the shift `r ≠ 0` family is *label-permutation-close* to A
     /// (same features, rotated head), the `(p,q)` ≠ `(1,1)` family
     /// requires genuinely new features.
-    Modular { p: usize, q: usize, r: usize },
+    Modular {
+        p: usize,
+        q: usize,
+        r: usize,
+    },
 }
 
 impl Task {
@@ -306,6 +310,7 @@ pub fn sgld_chain(
     data: &Dataset,
     theta0: Tensor,
     chain: usize,
+    center: Option<&Tensor>,
 ) -> SgldOutcome {
     use crate::sampler::SgPcnlScheduler;
     use rand::Rng as _;
@@ -351,7 +356,10 @@ pub fn sgld_chain(
         // h_t = β_t²·σ²/2 from the SAME power-law schedule
         let beta = scheduler.beta_at(t);
         let h = beta * beta * sigma2 / 2.0;
-        // prior as gradient: −h·θ/σ² ≡ θ·(1 − β²/2)
+        // prior as gradient: −h·(θ−μ)/σ² ⇒ θ ← μ + (1 − β²/2)(θ−μ)
+        // (μ = 0 is the plan's origin-centered prior; μ = θ_A the
+        // centered adaptation prior — the SGLD twin must target the
+        // same posterior as the pCNL chains it is compared to)
         let contraction = 1.0 - beta * beta / 2.0;
         // likelihood drift: −h·(N/B)·Σ
         let drift = sum_grad.affine(h * scale, 0.0).expect("drift");
@@ -366,10 +374,22 @@ pub fn sgld_chain(
         let xi = Tensor::from_vec(noise, vec![p_dim], &dev).expect("cpu noise");
         let noise_term = xi.affine((2.0 * h).sqrt(), 0.0).expect("√(2h)·ξ");
 
-        let prior = theta.affine(contraction, 0.0).expect("prior");
+        let prior = match center {
+            Some(c) => ((&theta - c)
+                .expect("θ−μ")
+                .affine(contraction, 0.0)
+                .expect("(1−β²/2)(θ−μ)")
+                + c)
+                .expect("μ + (1−β²/2)(θ−μ)"),
+            None => theta.affine(contraction, 0.0).expect("prior"),
+        };
         theta = ((prior - drift).expect("θ−drift") + noise_term).expect("θ'");
 
-        let r = crate::sampler::norm(&theta).unwrap_or(f64::NAN);
+        let r = match center {
+            Some(c) => crate::sampler::norm(&(&theta - c).expect("θ−μ for radial")),
+            None => crate::sampler::norm(&theta),
+        }
+        .unwrap_or(f64::NAN);
         if r.is_finite() {
             radial_max = radial_max.max(r);
             radial_final = r;
@@ -450,6 +470,7 @@ pub fn mh_pcnl_chain(
     data: &Dataset,
     theta0: Tensor,
     chain: usize,
+    center: Option<&Tensor>,
 ) -> MhOutcome {
     use crate::sampler::SgPcnlScheduler;
     use rand::Rng as _;
@@ -513,7 +534,10 @@ pub fn mh_pcnl_chain(
             Ok(g) if g.is_finite() => {}
             _ => grad_nonfinite = true,
         }
-        // proposal — identical to the unadjusted step
+        // proposal — identical to the unadjusted step, translated to
+        // the prior mean μ (a pure translation: the pCN prior-ratio
+        // cancellation that leaves the filter a likelihood ratio is
+        // shift-invariant, so μ = θ_A needs no filter change)
         let scale = (cfg.n_train as f64) / (cfg.batch_size as f64);
         let noise_vec: Vec<f32> = (0..p_dim)
             .map(|_| {
@@ -522,9 +546,17 @@ pub fn mh_pcnl_chain(
             })
             .collect();
         let xi = Tensor::from_vec(noise_vec, vec![p_dim], &dev).expect("cpu noise");
-        let decayed = theta
-            .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
-            .expect("decay");
+        let decayed = match center {
+            Some(c) => ((&theta - c)
+                .expect("θ−μ")
+                .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
+                .expect("decay")
+                + c)
+                .expect("centered decay"),
+            None => theta
+                .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
+                .expect("decay"),
+        };
         let noised = (&decayed + &xi.affine(beta, 0.0).expect("noise")).expect("proposal mean");
         let drift = sum_grad
             .affine(scale * beta * beta * sigma * sigma / 2.0, 0.0)
@@ -548,7 +580,11 @@ pub fn mh_pcnl_chain(
             loss_now = loss_prop;
         }
 
-        let r = crate::sampler::norm(&theta).unwrap_or(f64::NAN);
+        let r = match center {
+            Some(c) => crate::sampler::norm(&(&theta - c).expect("θ−μ for radial")),
+            None => crate::sampler::norm(&theta),
+        }
+        .unwrap_or(f64::NAN);
         if r.is_finite() {
             radial_max = radial_max.max(r);
             radial_final = r;

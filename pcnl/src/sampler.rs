@@ -65,6 +65,13 @@ pub struct SgPcnlState {
     /// cosine decay with this period. The mode is per-state so an
     /// experiment can run both schedules on the same seed.
     pub period: usize,
+    /// Prior mean μ. `None` is the plan's N(0, σ²I). `Some(θ_A)` is
+    /// the *centered adaptation prior* N(θ_A, σ²I) (§6.4.1's
+    /// reachability follow-up): the OU step then contracts toward
+    /// θ_A, so the chain equilibrates on the shell *around the
+    /// pre-trained weights* instead of being dragged to the shell
+    /// around the origin before the likelihood can act.
+    pub center: Option<Tensor>,
 }
 
 impl SgPcnlState {
@@ -86,7 +93,16 @@ impl SgPcnlState {
             dataset_size,
             batch_size,
             period,
+            center: None,
         }
+    }
+
+    /// Same state with the prior centered at `center` (θ_A): every
+    /// step below acts on the deviation θ − μ and adds μ back, so the
+    /// stationary shell of the zero-gradient kernel is N(μ, σ²I).
+    pub fn centered_at(mut self, center: Tensor) -> Self {
+        self.center = Some(center);
+        self
     }
 
     /// The scheduler this state's fields describe.
@@ -142,17 +158,28 @@ impl SgPcnlState {
         let scale = (self.dataset_size as f64) / (self.batch_size as f64);
         let scaled_grad = batch_grad.affine(scale, 0.0)?;
 
-        // 4. unadjusted step:
-        //    θ ← √(1−β²)·θ + β·ξ − (β²σ²/2)·g
+        // 4. unadjusted step about the prior mean μ:
+        //    θ ← μ + √(1−β²)·(θ−μ) + β·ξ − (β²σ²/2)·g
+        //  (μ = 0 reduces term-for-term to the plan's skeleton; μ = θ_A
+        //   is the centered adaptation prior — a pure translation, so
+        //   the noise, the drift and the pCN prior-ratio cancellation
+        //   behind the MH filter are all unchanged.)
         let sqrt_decay = (1.0 - beta * beta).max(0.0).sqrt();
         let drift_coeff = (beta * beta * self.sigma * self.sigma) / 2.0;
 
-        let theta_decay = self.theta.affine(sqrt_decay, 0.0)?;
+        let decayed = match &self.center {
+            Some(c) => (&self.theta - c)?.affine(sqrt_decay, 0.0)?,
+            None => self.theta.affine(sqrt_decay, 0.0)?,
+        };
         let noise_term = xi.affine(beta, 0.0)?;
         let drift_term = scaled_grad.affine(drift_coeff, 0.0)?;
 
         // direct unconditional assignment — no MH evaluation pass
-        self.theta = ((theta_decay + noise_term)? - drift_term)?;
+        let updated = ((decayed + noise_term)? - drift_term)?;
+        self.theta = match &self.center {
+            Some(c) => (c + updated)?,
+            None => updated,
+        };
 
         Ok(())
     }
@@ -269,6 +296,112 @@ mod tests {
             assert!((g - e).abs() < 1e-6, "got {g}, expected {e}");
         }
         assert_eq!(state.step_count, 1, "step counter advances");
+    }
+
+    #[test]
+    fn centered_update_is_the_origin_step_translated_by_theta_a() {
+        // The centered adaptation prior (§6.4.1's follow-up) is a pure
+        // translation: with μ the step must equal
+        //   μ + [√(1−β²)(θ−μ) + βξ − (β²σ²/2)·(N/B)Σ]
+        // where the bracket is *exactly* the μ = 0 update applied to
+        // θ−μ. So run both from the same seed and compare.
+        let dev = &Device::Cpu;
+        let theta = Tensor::from_vec(vec![0.5f32, -0.25, 0.75], &[3], dev).unwrap();
+        let center = Tensor::from_vec(vec![3.0f32, -1.0, 2.0], &[3], dev).unwrap();
+        let grad = Tensor::from_vec(vec![0.1f32, 0.2, -0.3], &[3], dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.4,
+            gamma: 0.0,
+            kappa: 0.55,
+        };
+
+        // origin-centered run, from θ − μ
+        let deviated = (&theta - &center).unwrap();
+        let mut origin = SgPcnlState::new(deviated.clone(), 2.0, sched, 100, 25, 0);
+        let mut r1 = rand::rngs::StdRng::seed_from_u64(42);
+        origin.step_unadjusted(&grad, &mut r1).unwrap();
+
+        // θ_A-centered run, from θ — same noise stream
+        let mut centered =
+            SgPcnlState::new(theta.clone(), 2.0, sched, 100, 25, 0).centered_at(center.clone());
+        let mut r2 = rand::rngs::StdRng::seed_from_u64(42);
+        centered.step_unadjusted(&grad, &mut r2).unwrap();
+
+        // θ_μ = μ + (origin step from θ−μ), to the bit the same ξ draws
+        let expected = (&center + origin.theta).unwrap();
+        let got = centered.theta.to_vec1::<f32>().unwrap();
+        for (g, e) in got.iter().zip(expected.to_vec1::<f32>().unwrap().iter()) {
+            assert!((g - e).abs() < 1e-6, "got {g}, expected {e}");
+        }
+    }
+
+    #[test]
+    fn centered_zero_gradient_kernel_is_stationary_on_the_theta_a_shell() {
+        // With g = 0 the centered kernel is an OU process with fixed
+        // point μ: E‖θ‖² relaxes to ‖μ‖² + Pσ², not to Pσ². This is
+        // the reachability property the follow-up exists for — the
+        // chain equilibrates on the shell *around the pre-trained
+        // weights* instead of being dragged to the origin's shell.
+        let dev = &Device::Cpu;
+        let p_dim = 64usize;
+        let sigma = 0.5f64;
+        let mu: Vec<f32> = (0..p_dim).map(|i| (i as f32) * 0.1).collect();
+        let center = Tensor::from_vec(mu.clone(), &[p_dim], dev).unwrap();
+        let mu_sq: f64 = mu.iter().map(|x| (*x as f64).powi(2)).sum();
+        let theta0 = Tensor::zeros(p_dim, candle_core::DType::F32, dev).unwrap();
+        let zero_grad = Tensor::zeros(p_dim, candle_core::DType::F32, dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.5,
+            gamma: 1e-4,
+            kappa: 0.55,
+        };
+
+        let mut centered =
+            SgPcnlState::new(theta0.clone(), sigma, sched, 100, 25, 0).centered_at(center.clone());
+        let mut origin = SgPcnlState::new(theta0, sigma, sched, 100, 25, 0);
+        let mut r1 = rand::rngs::StdRng::seed_from_u64(7);
+        let mut r2 = rand::rngs::StdRng::seed_from_u64(7);
+
+        // sample the tail of each chain: ‖θ‖² for μ = 0,
+        // ‖θ−μ‖² for the centered one (both should sit at Pσ²)
+        let mut centered_off: Vec<f64> = Vec::new();
+        let mut centered_abs: Vec<f64> = Vec::new();
+        let mut origin_off: Vec<f64> = Vec::new();
+        for t in 0..3_000 {
+            centered.step_unadjusted(&zero_grad, &mut r1).unwrap();
+            origin.step_unadjusted(&zero_grad, &mut r2).unwrap();
+            if t >= 2_000 {
+                let dc = (&centered.theta - &center).unwrap();
+                centered_off.push(norm(&dc).unwrap().powi(2));
+                centered_abs.push(norm(&centered.theta).unwrap().powi(2));
+                origin_off.push(norm(&origin.theta).unwrap().powi(2));
+            }
+        }
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let shell = (p_dim as f64) * sigma * sigma; // Pσ²
+        let c_off = mean(&centered_off);
+        let o_off = mean(&origin_off);
+        // both kernels sit on their own shell to within Monte-Carlo error
+        assert!(
+            (c_off - shell).abs() / shell < 0.10,
+            "centered ‖θ−μ‖² = {c_off} vs Pσ² = {shell}"
+        );
+        assert!(
+            (o_off - shell).abs() / shell < 0.10,
+            "origin ‖θ‖² = {o_off} vs Pσ² = {shell}"
+        );
+        // and the centered chain lives at θ_A + shell: E‖θ‖² = ‖μ‖² + Pσ²
+        // (measured directly — the cross term is what the origin run lacks)
+        let c_abs = mean(&centered_abs);
+        let expected_abs = mu_sq + shell;
+        assert!(
+            (c_abs - expected_abs).abs() / expected_abs < 0.10,
+            "centered ‖θ‖² = {c_abs}, expected ‖μ‖² + Pσ² = {expected_abs}"
+        );
+        assert!(
+            c_abs > 10.0 * shell,
+            "centered chain collapsed toward the origin: ‖θ‖² = {c_abs} (‖μ‖² = {mu_sq})"
+        );
     }
 
     #[test]

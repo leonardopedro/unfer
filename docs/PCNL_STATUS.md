@@ -130,8 +130,12 @@ radius.
   mean.
 - **`clap` + `indicatif`: not adopted.** The CLI is a small manual
   parser covering the plan's sweep/step-size surface (`--steps --seed
-  --sigma --beta0 --gamma --kappa --save-dir --report-file`); no
-  progress bar — the run reports wall time per variant instead.
+  --sigma --beta0 --gamma --kappa --save-dir --report-file`) plus the
+  task×budget matrix knobs (`--task-b p:q:r|b --k --d --ff --layers
+  --n-train --pretrain --chains --cyclical --no-mh --init-std`) and
+  the centered adaptation prior (`--prior-center-a`, §6.4.2 of
+  `test/unfer/ngpt.md`); no progress bar — the run reports wall time
+  per variant instead.
 - **`rayon` (Phase 2, "parallel chains"): done.** Chains run in
   parallel and are merged in chain order — measured 377.7 s → 263.1 s
   on the full run, with byte-identical output (§"Parallel chains").
@@ -143,7 +147,7 @@ radius.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 46 tests (27 unit + 19 numerical)
+cargo test -p pcnl --locked                              # 62 tests (29 unit + 33 numerical)
 cargo run --release -p pcnl -- --report-file out.txt --save-dir /tmp/traj
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors
 ```
