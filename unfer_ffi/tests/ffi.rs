@@ -1323,6 +1323,82 @@ fn austral_unf_unparseable_is_4804() {
     uk_model_free(model);
 }
 
+/// Conversion check (`uk_austral_defeq`): equivalent sources succeed with
+/// the isomorphism witness; a completed *non*-equivalent check is also
+/// success (verdict false, witness null — absent, not empty).
+#[test]
+fn austral_defeq_equivalent_and_not() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // Equivalent: (x + (2 + 3)) and (x + 5) reduce to the same net.
+    let (ap, al) = json_ptr(b"(x + (2 + 3))");
+    let (bp, bl) = json_ptr(b"(x + 5)");
+    assert_eq!(
+        uk_austral_defeq(model, ap, al, bp, bl),
+        0,
+        "defeq should succeed: {}",
+        read_error()
+    );
+    let r: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(r["equivalent"], true, "{r}");
+    assert_eq!(r["unf_hash_a"], r["unf_hash_b"], "{r}");
+    let w = r["witness"]
+        .as_array()
+        .expect("the certificate travels when equivalent");
+    assert!(!w.is_empty(), "{r}");
+
+    // Not equivalent: distinct normal forms — still exit 0, verdict false,
+    // and no certificate.
+    let (cp, cl) = json_ptr(b"(x + 1)");
+    let (dp, dl) = json_ptr(b"(x + 2)");
+    assert_eq!(
+        uk_austral_defeq(model, cp, cl, dp, dl),
+        0,
+        "a completed check is success even when it answers no: {}",
+        read_error()
+    );
+    let r2: serde_json::Value = serde_json::from_str(&read_result(model)).unwrap();
+    assert_eq!(r2["equivalent"], false, "{r2}");
+    assert!(r2["witness"].is_null(), "{r2}");
+    assert_ne!(r2["unf_hash_a"], r2["unf_hash_b"], "{r2}");
+
+    uk_model_free(model);
+}
+
+/// Conversion check: a side that fails to translate is a hard UK-4805 —
+/// and the result channel is fresh per call (S46): after the failure it is
+/// EMPTY, never the previous op's report.
+#[test]
+fn austral_defeq_bad_side_is_4805_and_clears_result() {
+    let (ptr, len) = json_ptr(HARMONIC_SPEC.as_bytes());
+    let model = uk_model_create(ptr, len);
+    assert!(model > 0);
+
+    // Seed the result channel with a success first.
+    let (sp, sl) = json_ptr(b"let x: Int64 = 2; return (x + 3);");
+    assert_eq!(uk_austral_unf(model, sp, sl), 0, "{}", read_error());
+    assert!(!read_result(model).is_empty(), "seed report present");
+
+    let (ap, al) = json_ptr(b"(x + 1)");
+    let (bp, bl) = json_ptr(b"@@@ nope @@@");
+    let r = uk_austral_defeq(model, ap, al, bp, bl);
+    assert_eq!(
+        r,
+        -(Code::AUSTRAL_DEFEQ_FAILED.raw() as i64),
+        "got {r}: {}",
+        read_error()
+    );
+    assert_eq!(
+        uk_get_result(model, std::ptr::null_mut(), 0),
+        0,
+        "a failed conversion check must leave the result channel empty"
+    );
+
+    uk_model_free(model);
+}
+
 /// Logos: an unparseable sentence is a hard UK-4803 error.
 #[test]
 fn logos_compile_unparseable_is_4803() {

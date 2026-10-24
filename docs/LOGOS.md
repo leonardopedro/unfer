@@ -226,7 +226,48 @@ logos run "John adds two three"   # full pipeline → readback
 logos verify "one is one" "Eq(1, 1)"  # assert expected output
 logos hash "the cat sleeps"       # UNF hash (hex)
 logos l1 "probably John loves Mary"   # probabilistic worlds
+logos iso "(x + 5)" "(x + (2 + 3))"  # conversion check + isomorphism witness
 ```
+
+## Conversion check (`logos iso`, `austral_defeq`)
+
+Two sources (any ingestion shape: expression, statement list, function,
+module body) are each reduced to their unique normal form and compared —
+and when they agree, the comparison carries an **isomorphism witness** π:
+the node permutation between the two reduced nets
+(`deltanet::unf::isomorphism_witness`), re-checkable by
+`IsomorphismWitness::verifies` (canonical zip + kind/wiring preservation
+under π). This is the conversion certificate of the lean4mm0 pipeline
+(`../australVM/docs/lean4mm0.md`); the target theory that will carry it
+into proof traces is `../australVM/docs/cic.mm0`
+(`net_isomorphism_step`).
+
+Surfaces, all over the same seam (`logos::translate::translate_austral_any`
+→ `check_equivalence`):
+
+- **CLI** — `logos iso <a> <b> [--json]`: exit 0 = equivalent (witness
+  printed), 2 = compiled but not equivalent, 1 = a source failed. The plain
+  line is tab-separated (`equivalent`, `unf_hash_a`, `unf_hash_b`,
+  witness as `a>b` comma pairs or `-`); `--json` adds symbolic readbacks
+  and a `null`-when-absent witness.
+- **Kernel API** — `prob_kernel::logos::austral_defeq(a, b)` returns the
+  `AustralDefeqReport`: verdict, both UNF digests, both TED digests, and
+  the witness. Net-level equality is shape-sensitive (`x + x` ≠ `2 * x`
+  as nets) while the TED digests still agree — the report exposes both
+  notions rather than hiding which one held.
+- **Kernel symbol** — `uk_austral_defeq` (S29-registered: registry row,
+  EXPECTED_SYMBOLS.txt, generated C header, australVM `UNFER_SYMBOLS`,
+  ProverRunner preset; `KernelEvent::AustralDefeq`; failures are UK-4805
+  `AUSTRAL_DEFEQ_FAILED`). A completed check that answers "not equivalent"
+  is **success** (0 with `equivalent: false`) — only an untranslatable
+  side is an error. Failure leaves the result channel empty (S46).
+- **Compiler gate** — australVM's `Deltanet_plugin` pass calls the symbol
+  through the `austral_defeq_translate` bridge: every top-level constant's
+  initializer and the compiler's own evaluated literal must reduce to the
+  same net, certificate included. This *subsumes* the legacy float-value
+  comparison (kept as fallback): equal nets ⇒ equal values, and the net
+  comparison is exact where the float path was lossy (Int64 > 2^53,
+  NaN).
 
 ## Tests
 

@@ -568,6 +568,59 @@ pub extern "C" fn uk_austral_unf(model: i64, source_ptr: *const u8, source_len: 
     })
 }
 
+/// Conversion check (definitional equality) between two AustralVM-language
+/// source fragments, via DeltaNets.
+///
+/// `a_ptr`/`a_len` and `b_ptr`/`b_len` are two NUL-free UTF-8 Austral source
+/// fragments (any ingestion shape `uk_austral_unf` accepts). Each side is
+/// lowered to CoreIR, compiled to an interaction net, and reduced to its
+/// unique normal form; the sides are then compared. When the normal forms
+/// are isomorphic the report carries the **isomorphism witness** π — the
+/// node permutation certifying the equality (`equivalent: true`, `witness`
+/// populated) — so a caller can act on a conversion step's certificate
+/// rather than on matching digests alone. The report (`AustralDefeqReport`:
+/// verdict + both UNF digests + both TED digests + witness) is stored in
+/// `uk_get_result` and broadcast as an `austral_defeq` event.
+///
+/// A completed check whose verdict is "not equivalent" is **success** (0
+/// with `equivalent: false`); only a side that fails to translate is an
+/// error.
+///
+/// Returns 0 on success, <0 (-code) on error: UK-4805 either side failed to
+/// translate, UK-1004 bad handle.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn uk_austral_defeq(
+    model: i64,
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> i64 {
+    ffi_entry("uk_austral_defeq", || {
+        // Fresh result channel per call (S46): a failure below must leave
+        // `uk_get_result` EMPTY, never the previous op's result.
+        handles::clear_last_result(model);
+
+        let source_a = read_utf8(a_ptr, a_len)?;
+        let source_b = read_utf8(b_ptr, b_len)?;
+        let report = handles::with_session(model, |s| s.austral_defeq(&source_a, &source_b))
+            .ok_or_else(|| bad_handle(model))?
+            .map_err(|e| e.to_diagnostic())?;
+        let report_json = serde_json::to_string(&report)
+            .map_err(|e| Diagnostic::new(Code::INTERNAL, e.to_string(), Severity::Error))?;
+        handles::set_last_result(model, report_json);
+        let event = KernelEvent::AustralDefeq {
+            equivalent: report.equivalent,
+            unf_hash_a: report.unf_hash_a,
+            unf_hash_b: report.unf_hash_b,
+            witness_pairs: report.witness.as_ref().map(|w| w.len()).unwrap_or(0),
+        };
+        handles::push_event(model, event);
+        Ok(0)
+    })
+}
+
 /// Read one engram key off the buffer protocol.
 ///
 /// The key is an opaque 84-byte value in `logos::engram`'s canonical `ENGM`

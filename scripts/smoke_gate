@@ -32,6 +32,16 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # 1. The unfer_ffi cdylib + staticlib build from built output.
+#
+# aarch64 hosts need `+fp16`: gemm-f16 (via gemm-common) emits fp16 NEON
+# unconditionally there, so an unflagged build dies with
+# "instruction requires: fullfp16" — the documented invocation for such hosts
+# is `RUSTFLAGS="-C target-feature=+fp16"` (docs/CDB_MODULE_REVIEW.md). Without
+# this the H11 smoke is a permanent red on aarch64 while CI (x86_64) stays
+# green, which buries real violations. A caller-provided RUSTFLAGS wins.
+if [ "$(uname -m)" = "aarch64" ]; then
+    export RUSTFLAGS="${RUSTFLAGS:--C target-feature=+fp16}"
+fi
 (cd "$repo_root" && cargo build -p unfer_ffi >/tmp/unfer_smoke_build.log 2>&1)
 if [ -f "$repo_root/target/debug/libunfer_ffi.so" ]; then
     echo "  [pass] unfer_ffi cdylib present ($(du -h "$repo_root/target/debug/libunfer_ffi.so" | cut -f1))"

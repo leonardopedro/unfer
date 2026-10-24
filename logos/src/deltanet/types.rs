@@ -19,7 +19,7 @@ impl Port {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AgentKind {
     App,
     Abs,

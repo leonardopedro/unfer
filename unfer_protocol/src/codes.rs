@@ -116,6 +116,13 @@ impl Code {
     /// lower/compile/reduce/readback pipeline failed.
     pub const AUSTRAL_UNF_FAILED: Code = Code(4804);
 
+    /// The conversion check could not run: either side of
+    /// `uk_austral_defeq` failed to translate to a unique normal form
+    /// (unparseable Austral, or a lower/compile/reduce/readback failure).
+    /// A *completed* check whose verdict is "not equivalent" is success
+    /// (0) with `equivalent: false`, not this code.
+    pub const AUSTRAL_DEFEQ_FAILED: Code = Code(4805);
+
     /// S29: the Lean4 export file could not be type-checked — a theorem or
     /// definition's proof term did not check (type mismatch, missing
     /// declaration, or a kernel panic inside nanoda_lib).
@@ -569,6 +576,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             4804,
             "AustralUnfFailed",
             "The AustralVM-language source could not be translated to a unique normal form through DeltaNets: unparseable Austral, or the lower/compile/reduce/readback pipeline failed.",
+        ),
+        (
+            4805,
+            "AustralDefeqFailed",
+            "The conversion check could not run: a side of uk_austral_defeq failed to translate to a unique normal form. A completed check that found the sides not equivalent succeeds with equivalent: false.",
         ),
         (
             4901,

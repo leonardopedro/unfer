@@ -368,6 +368,19 @@ pub enum KernelEvent {
         unf_hash: String,
         verified: bool,
     },
+    /// A conversion check between two AustralVM source fragments ran
+    /// (`uk_austral_defeq`): both sides reduced to their unique normal forms
+    /// and compared. `equivalent` is the verdict (isomorphic normal forms),
+    /// and `witness_pairs` is how many `(node in A, node in B)` pairs the
+    /// isomorphism certificate carried (0 when not equivalent — an absent
+    /// certificate, not an empty one). Broadcast to subscribers of the model
+    /// handle.
+    AustralDefeq {
+        equivalent: bool,
+        unf_hash_a: String,
+        unf_hash_b: String,
+        witness_pairs: usize,
+    },
     /// E6: an engram was stored. `unf_hash` is the hex of the key's address
     /// field; `replaced` is the weight that was displaced, or `None` for a
     /// first store.
@@ -1568,6 +1581,43 @@ pub struct AustralReport {
     pub verified: bool,
     /// The Austral source that was translated (echoed for audit).
     pub source: String,
+}
+
+/// Result of a conversion check between two AustralVM-language source
+/// fragments (the `uk_austral_defeq` symbol).
+///
+/// Both sides are lowered to CoreIR, compiled to interaction nets, reduced
+/// to their unique normal forms, and compared. When the normal forms are
+/// isomorphic the report carries the **isomorphism witness** π — the node
+/// permutation between the two reduced nets
+/// (`logos::deltanet::unf::isomorphism_witness`), re-checkable by
+/// `IsomorphismWitness::verifies`. This is the kernel-level definitional-
+/// equality check of the lean4mm0 pipeline
+/// (`../australVM/docs/lean4mm0.md`); the MM0 rule it will feed is
+/// `net_isomorphism_step` in `../australVM/docs/cic.mm0`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AustralDefeqReport {
+    /// True iff the unique normal forms are isomorphic (equal `unf_hash`
+    /// and a witness was produced).
+    pub equivalent: bool,
+    /// Symbolic readback of side A.
+    pub sym_expr_a: String,
+    /// Symbolic readback of side B.
+    pub sym_expr_b: String,
+    /// The content-addressed UNF digest of A's reduced net.
+    pub unf_hash_a: String,
+    /// The content-addressed UNF digest of B's reduced net.
+    pub unf_hash_b: String,
+    /// The algebraic (TED) digest of A, when it lies in the Int64
+    /// arithmetic fragment.
+    pub ted_hash_a: Option<String>,
+    /// The algebraic (TED) digest of B, when it lies in the Int64
+    /// arithmetic fragment.
+    pub ted_hash_b: Option<String>,
+    /// The isomorphism witness π: `(node in A, node in B)` per canonical
+    /// position of the two reduced nets. `None` when not equivalent — an
+    /// absent certificate, not an empty one.
+    pub witness: Option<Vec<(u32, u32)>>,
 }
 
 // ── Cadabra2 symbolic coupling (S30) ──────────────────────────────────

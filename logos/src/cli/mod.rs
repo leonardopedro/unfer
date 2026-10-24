@@ -44,7 +44,7 @@ fn readback_or_die(net: &deltanet::Net) -> String {
 pub fn run_cli(args: Vec<String>) {
     if args.len() < 2 {
         eprintln!("Usage: logos <subcommand> [args]");
-        eprintln!("Subcommands: parse, run, verify, hash, l1, unf, formalize");
+        eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize");
         process::exit(1);
     }
 
@@ -55,10 +55,11 @@ pub fn run_cli(args: Vec<String>) {
         "hash" => cmd_hash(&args[2..]),
         "l1" => cmd_l1(&args[2..]),
         "unf" => cmd_unf(&args[2..]),
+        "iso" => cmd_iso(&args[2..]),
         "formalize" => process::exit(formalize::run(&args[2..])),
         _ => {
             eprintln!("Unknown subcommand: {}", args[1]);
-            eprintln!("Subcommands: parse, run, verify, hash, l1, unf, formalize");
+            eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize");
             process::exit(1);
         }
     }
@@ -350,6 +351,177 @@ fn find_lexicon() -> std::path::PathBuf {
     }
     eprintln!("Error: lexicon.tsv not found");
     process::exit(1);
+}
+
+/// `logos iso <source-a> <source-b> [--json]` — the conversion check.
+///
+/// The two sources (any shape `logos unf`'s kernel ingestion accepts:
+/// expression, statement list, function, module body) are each lowered,
+/// reduced to their unique normal form, and compared. Equivalent sources
+/// additionally yield the **isomorphism witness** — the node permutation π
+/// between the two reduced nets — which is the conversion certificate the
+/// lean4mm0 plan (`australVM/docs/lean4mm0.md`) packages into proof traces.
+///
+/// Exit-code contract, mirroring [`unf_report`]: 0 = equivalent (with a
+/// witness), 2 = both compiled but are *not* equivalent, 1 = a source failed
+/// to compile/translate. Callers can therefore distinguish "not equal" from
+/// "did not run" without parsing prose.
+fn iso_report(src_a: &str, src_b: &str, json: bool) -> Result<(String, i32), (String, i32)> {
+    let fail = |e: String| (format!("error: {e}"), 1);
+    let ta = crate::translate::translate_austral_any(src_a).map_err(fail)?;
+    let tb = crate::translate::translate_austral_any(src_b).map_err(fail)?;
+    let witness = crate::translate::check_equivalence(&ta, &tb).map_err(fail)?;
+
+    let equivalent = witness.is_some();
+    let pairs: Vec<(u32, u32)> = witness
+        .map(|w| w.pairs)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let line = if json {
+        let report = serde_json::json!({
+            "equivalent": equivalent,
+            "unf_hash_a": ta.unf_hash,
+            "unf_hash_b": tb.unf_hash,
+            "sym_expr_a": ta.sym_expr.to_prefix_string(),
+            "sym_expr_b": tb.sym_expr.to_prefix_string(),
+            // null (not []) when not equivalent: an absent certificate is a
+            // different statement than an empty one.
+            "witness": if equivalent {
+                serde_json::Value::from(
+                    pairs
+                        .iter()
+                        .map(|(a, b)| serde_json::json!([a, b]))
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                serde_json::Value::Null
+            },
+        });
+        serde_json::to_string(&report).expect("a report of strings and pairs serializes")
+    } else {
+        // Tab-separated, like `unf_report`'s plain line; the witness is
+        // comma-separated `g1>g2` node-id pairs, or `-` when absent.
+        let w = if equivalent {
+            let s = pairs
+                .iter()
+                .map(|(a, b)| format!("{a}>{b}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            if s.is_empty() { "-".to_string() } else { s }
+        } else {
+            "-".to_string()
+        };
+        format!("{}\t{}\t{}\t{}", equivalent, ta.unf_hash, tb.unf_hash, w)
+    };
+    Ok((line, if equivalent { 0 } else { 2 }))
+}
+
+fn cmd_iso(args: &[String]) {
+    let mut json = false;
+    let mut positional: Vec<String> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "--json" => json = true,
+            "-h" | "--help" => {
+                println!("Usage: logos iso <source-a> <source-b> [--json]");
+                return;
+            }
+            other => positional.push(other.to_string()),
+        }
+    }
+    if positional.len() != 2 {
+        eprintln!("Usage: logos iso <source-a> <source-b> [--json]");
+        process::exit(1);
+    }
+
+    match iso_report(&positional[0], &positional[1], json) {
+        Ok((line, 0)) => println!("{line}"),
+        Ok((line, code)) => {
+            println!("{line}");
+            process::exit(code);
+        }
+        Err((msg, code)) => {
+            eprintln!("{msg}");
+            process::exit(code);
+        }
+    }
+}
+
+#[cfg(test)]
+mod iso_tests {
+    use super::iso_report;
+
+    /// The plain line is tab-separated and the exit code is 0 for equivalent
+    /// sources — a contract, like `unf_report`'s.
+    #[test]
+    fn equivalent_sources_yield_zero_and_a_witness() {
+        let (line, code) = iso_report("(x + (2 + 3))", "(x + 5)", false).unwrap();
+        assert_eq!(code, 0);
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(fields.len(), 4, "{line}");
+        assert_eq!(fields[0], "true");
+        assert_eq!(fields[1], fields[2], "equal normal forms share a digest");
+        assert!(fields[3].contains('>'), "a witness lists g1>g2 pairs: {line}");
+    }
+
+    #[test]
+    fn equivalent_json_carries_the_witness_pairs() {
+        let (line, code) = iso_report("(2 + 3)", "5", true).unwrap();
+        assert_eq!(code, 0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["equivalent"], true);
+        let w = v["witness"].as_array().expect("a witness is present");
+        assert!(!w.is_empty());
+        // The permutation is injective on both sides. It is genuinely
+        // non-trivial: "(2 + 3)" reaches its result literal through nodes
+        // the literal-only source "5" never allocated, so positions map
+        // across different node ids (e.g. [3, 0]).
+        let mut from = std::collections::HashSet::new();
+        let mut to = std::collections::HashSet::new();
+        for pair in w {
+            assert_eq!(pair.as_array().unwrap().len(), 2, "{pair}");
+            let a = pair[0].as_u64().unwrap();
+            let b = pair[1].as_u64().unwrap();
+            assert!(from.insert(a), "g1 node {a} paired twice");
+            assert!(to.insert(b), "g2 node {b} paired twice");
+        }
+        assert!(
+            w.iter().any(|p| p[0] != p[1]),
+            "the witness is a real permutation, not the identity: {line}"
+        );
+    }
+
+    /// Not equivalent: code 2 (both compiled) and no witness — never a 1,
+    /// which would mean a source failed to run.
+    #[test]
+    fn nonequivalent_sources_yield_two_and_no_witness() {
+        let (line, code) = iso_report("(x + 1)", "(x + 2)", false).unwrap();
+        assert_eq!(code, 2);
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(fields[0], "false");
+        assert_eq!(fields[3], "-");
+        // Different digests, so the disagreement is visible to a caller.
+        assert_ne!(fields[1], fields[2]);
+    }
+
+    #[test]
+    fn nonequivalent_json_has_a_null_witness() {
+        let (line, code) = iso_report("(x + 1)", "(1 + x)", true).unwrap();
+        assert_eq!(code, 2);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["equivalent"], false);
+        assert!(v["witness"].is_null(), "absent ≠ empty: {line}");
+    }
+
+    /// A source that will not compile is a 1 with the reason on stderr — the
+    /// caller can tell "did not run" from "ran and disagreed".
+    #[test]
+    fn an_uncompilable_source_is_exit_one() {
+        let (msg, code) = iso_report("(x + 1)", "@@@ nonsense @@@", true).unwrap_err();
+        assert_eq!(code, 1);
+        assert!(msg.starts_with("error:"), "{msg}");
+    }
 }
 
 fn tree_to_string(tree: &crate::ccg::DerivationTree) -> String {

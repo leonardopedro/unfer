@@ -1588,6 +1588,7 @@ Every invocation is audited in the worker (bounded trail).
 | UK-4802 | ProofExportInvalid      | Error    | The lean4export payload was malformed or oversize.                   |
 | UK-4803 | LogosCompileFailed      | Error    | The CNL sentence could not be compiled to a UNF.                     |
 | UK-4804 | AustralUnfFailed        | Error    | AustralVM source could not be translated to a unique normal form through DeltaNets. |
+| UK-4805 | AustralDefeqFailed      | Error    | The conversion check could not run: a side of `uk_austral_defeq` failed to translate. A completed check that answers "not equivalent" is success (0, `equivalent: false`). |
 | UK-4901 | SymbolicEngineUnavailable | Error  | The Cadabra2 subprocess engine was not available.                    |
 | UK-4902 | SymbolicExpressionInvalid | Error  | The symbolic expression failed validation.                          |
 | UK-4903 | WhyMLEngineUnavailable    | Error  | The Why3 subprocess engine was not available (whyml prove).        |

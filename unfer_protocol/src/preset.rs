@@ -473,6 +473,7 @@ impl RolePreset {
                 "uk_proof_verify",
                 "uk_logos_compile",
                 "uk_austral_unf",
+                "uk_austral_defeq",
                 "uk_symbolic_simplify",
             ],
             RolePreset::Reviewer => &[

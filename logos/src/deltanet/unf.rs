@@ -217,6 +217,236 @@ pub fn unf_hash_string(net: &Net) -> Result<String, String> {
     Ok(hex::encode(&hash))
 }
 
+// ── Isomorphism witness (the conversion certificate) ─────────────────
+//
+// The lean4mm0 plan (`australVM/docs/lean4mm0.md`, adapted) needs more than
+// a yes/no equality on normal forms: a *conversion step* in a proof trace
+// has to carry a certificate that two normal forms are the same net, not
+// merely two nets with the same digest. This is that certificate, and it is
+// derived from the canonical serializer above rather than from a second
+// traversal scheme: the serializer already visits nodes in a deterministic
+// root-directed DFS order that ignores allocation history, so the bijection
+// between two equal-serializing nets is exactly "the same position in the
+// walk". No new hash, no second net representation — the ENGRAM discipline.
+
+/// An isomorphism between two nets with identical canonical serializations.
+///
+/// `pairs[c] = (node_in_g1, node_in_g2)` — the two nodes occupying canonical
+/// position `c` of the (identical) serializations. The permutation is total
+/// over the reachable, non-freed nodes of both nets.
+#[derive(Debug, Clone)]
+pub struct IsomorphismWitness {
+    pub pairs: Vec<(NodeId, NodeId)>,
+}
+
+impl IsomorphismWitness {
+    /// The number of canonical positions the witness covers.
+    pub fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    /// Re-check the certificate against the nets it claims to relate.
+    ///
+    /// The witness is only as good as the traversal that produced it, so a
+    /// consumer that will *act* on it (emit a conversion step, say) should
+    /// call this: it re-walks both nets, requires the recorded pairing to be
+    /// exactly the canonical zip, and then checks structure under the
+    /// permutation — same agent kind at every paired position, and aux ports
+    /// that wire to *matching canonical positions* on both sides. Sharing,
+    /// cycles (back-references) and unwired aux ports all have to agree.
+    pub fn verifies(&self, g1: &Net, g2: &Net) -> bool {
+        let walk1 = match canonical_walk(g1) {
+            Ok(w) => w,
+            Err(_) => return false,
+        };
+        let walk2 = match canonical_walk(g2) {
+            Ok(w) => w,
+            Err(_) => return false,
+        };
+        if walk1.len() != self.pairs.len() || walk2.len() != self.pairs.len() {
+            return false;
+        }
+        // The pairing must be exactly the canonical zip.
+        for (c, (n1, n2)) in self.pairs.iter().enumerate() {
+            if walk1[c] != *n1 || walk2[c] != *n2 {
+                return false;
+            }
+        }
+        // Structural agreement under π: canonical position -> position.
+        let pos1: HashMap<NodeId, u32> = walk1
+            .iter()
+            .enumerate()
+            .map(|(c, n)| (*n, c as u32))
+            .collect();
+        let pos2: HashMap<NodeId, u32> = walk2
+            .iter()
+            .enumerate()
+            .map(|(c, n)| (*n, c as u32))
+            .collect();
+        for (n1, n2) in &self.pairs {
+            let (Some(node1), Some(node2)) = (
+                g1.nodes.get(*n1 as usize).and_then(|n| n.as_ref()),
+                g2.nodes.get(*n2 as usize).and_then(|n| n.as_ref()),
+            ) else {
+                return false;
+            };
+            if node1.kind != node2.kind {
+                return false;
+            }
+            for slot in 1..=node1.kind.aux_count() {
+                let t1 = node1.ports.get(slot as usize).and_then(|p| p.as_ref());
+                let t2 = node2.ports.get(slot as usize).and_then(|p| p.as_ref());
+                match (t1, t2) {
+                    (None, None) => {}
+                    (Some(p1), Some(p2)) => {
+                        let r1 = g1.resolve_port(p1);
+                        let r2 = g2.resolve_port(p2);
+                        match (pos1.get(&r1.node), pos2.get(&r2.node)) {
+                            (Some(c1), Some(c2)) if c1 == c2 => {}
+                            _ => return false,
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        true
+    }
+}
+
+/// The canonical visit order of `net` as a plain node list.
+///
+/// Computed *through* [`isomorphism_witness`] on the net against itself, so
+/// the order used by certificate verification can never drift from the order
+/// the certificate producer used — they are the same call.
+fn canonical_walk(net: &Net) -> Result<Vec<NodeId>, String> {
+    Ok(isomorphism_witness(net, net)?
+        .expect("a net is always isomorphic to itself")
+        .pairs
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect())
+}
+
+/// The conversion certificate for two reduced nets: `Some(witness)` when
+/// `g1` and `g2` have identical canonical serializations (hence are
+/// isomorphic as rooted port graphs), `None` when they do not.
+///
+/// Serialization errors (the depth guard) propagate instead of silently
+/// declining to certify.
+pub fn isomorphism_witness(g1: &Net, g2: &Net) -> Result<Option<IsomorphismWitness>, String> {
+    // Cheap necessary condition first — and the one that lines up with the
+    // content-addressed identity the rest of the pipeline already trusts.
+    if canonical_serialize(g1)? != canonical_serialize(g2)? {
+        return Ok(None);
+    }
+    let mut pairs = Vec::new();
+    let mut seen1: HashMap<usize, u32> = HashMap::new();
+    let mut seen2: HashMap<usize, u32> = HashMap::new();
+    let mut next_index: u32 = 0;
+    let ok = lockstep_port(
+        g1,
+        &g1.root,
+        g2,
+        &g2.root,
+        &mut pairs,
+        &mut seen1,
+        &mut seen2,
+        &mut next_index,
+        0,
+    )?;
+    // `ok == false` here would mean equal bytes but a diverging walk — a bug
+    // in this module, not a genuine non-isomorphism. Refuse to certify.
+    Ok(if ok { Some(IsomorphismWitness { pairs }) } else { None })
+}
+
+/// Mirror of [`serialize_port`]: same resolution of freed forwarding stubs,
+/// same first-visit ordering, same aux-slot recursion, same depth guard —
+/// but instead of emitting bytes it records `(g1 node, g2 node)` per canonical
+/// position and refuses (returns `Ok(false)`) at the first structural
+/// disagreement.
+fn lockstep_port(
+    g1: &Net,
+    p1: &Port,
+    g2: &Net,
+    p2: &Port,
+    out: &mut Vec<(NodeId, NodeId)>,
+    seen1: &mut HashMap<usize, u32>,
+    seen2: &mut HashMap<usize, u32>,
+    next_index: &mut u32,
+    depth: u32,
+) -> Result<bool, String> {
+    if depth > MAX_DEPTH {
+        return Err(format!(
+            "unf: net deeper than {MAX_DEPTH} nodes; refusing to certify it"
+        ));
+    }
+    let n1 = g1.nodes.get(p1.node as usize).and_then(|n| n.as_ref());
+    let n2 = g2.nodes.get(p2.node as usize).and_then(|n| n.as_ref());
+    // Absent on one side only: the serializations would differ (ABSENT vs a
+    // tag) — unreachable after the byte check, kept as defence in depth.
+    match (n1, n2) {
+        (None, None) => return Ok(true),
+        (None, Some(_)) | (Some(_), None) => return Ok(false),
+        _ => {}
+    }
+    let (node1, node2) = (n1.unwrap(), n2.unwrap());
+
+    // Freed nodes are forwarding stubs: follow, exactly like the serializer.
+    if node1.freed || node2.freed {
+        if node1.freed != node2.freed {
+            return Ok(false);
+        }
+        let t1 = node1.ports.get(p1.slot as usize).and_then(|p| p.as_ref());
+        let t2 = node2.ports.get(p2.slot as usize).and_then(|p| p.as_ref());
+        return match (t1, t2) {
+            (Some(q1), Some(q2)) => {
+                lockstep_port(g1, q1, g2, q2, out, seen1, seen2, next_index, depth + 1)
+            }
+            (None, None) => Ok(true),
+            _ => Ok(false),
+        };
+    }
+
+    // A revisit must be a revisit at the same canonical position on both sides.
+    match (seen1.get(&(p1.node as usize)), seen2.get(&(p2.node as usize))) {
+        (Some(c1), Some(c2)) if c1 == c2 => return Ok(true),
+        (None, None) => {}
+        _ => return Ok(false),
+    }
+
+    // First visit: kinds must agree, then record and recurse.
+    if node1.kind != node2.kind {
+        return Ok(false);
+    }
+    let canonical = *next_index;
+    *next_index += 1;
+    seen1.insert(p1.node as usize, canonical);
+    seen2.insert(p2.node as usize, canonical);
+    out.push((p1.node, p2.node));
+
+    for slot in 1..=node1.kind.aux_count() {
+        let a1 = node1.ports.get(slot as usize).and_then(|p| p.as_ref());
+        let a2 = node2.ports.get(slot as usize).and_then(|p| p.as_ref());
+        match (a1, a2) {
+            (Some(q1), Some(q2)) => {
+                if !lockstep_port(g1, q1, g2, q2, out, seen1, seen2, next_index, depth + 1)? {
+                    return Ok(false);
+                }
+            }
+            // An unwired aux port is a real state (an open term's unknown);
+            // it must be unwired on the other side too.
+            (None, None) => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 // Minimal hex encode (avoid adding dependency)
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {
@@ -392,5 +622,123 @@ mod tests {
         let mut net = Net::new();
         net.root = Port::principal(9999);
         assert_eq!(canonical_serialize(&net).unwrap(), vec![tag::ABSENT]);
+    }
+
+    // ── isomorphism witness ───────────────────────────────────────────
+
+    /// Two nets denoting the same constructor tree but built with different
+    /// allocation orders: equal serializations, and a non-identity witness
+    /// that pairs each canonical position with the right node on each side.
+    #[test]
+    fn witness_pairs_equal_nets_across_allocation_orders() {
+        // g1: leaves allocated first, then root.
+        let mut g1 = Net::new();
+        let l1 = g1.alloc_node(AgentKind::Con(1, 0));
+        let l2 = g1.alloc_node(AgentKind::Con(2, 0));
+        let r1 = g1.alloc_node(AgentKind::Con(3, 2));
+        g1.wire(Port::new(r1, 1), Port::principal(l1));
+        g1.wire(Port::new(r1, 2), Port::principal(l2));
+        g1.root = Port::principal(r1);
+
+        // g2: root allocated first, leaves in the opposite order.
+        let mut g2 = Net::new();
+        let r2 = g2.alloc_node(AgentKind::Con(3, 2));
+        let l2b = g2.alloc_node(AgentKind::Con(2, 0));
+        let l1b = g2.alloc_node(AgentKind::Con(1, 0));
+        g2.wire(Port::new(r2, 1), Port::principal(l1b));
+        g2.wire(Port::new(r2, 2), Port::principal(l2b));
+        g2.root = Port::principal(r2);
+
+        assert_eq!(unf_hash(&g1).unwrap(), unf_hash(&g2).unwrap());
+        let w = isomorphism_witness(&g1, &g2)
+            .unwrap()
+            .expect("equal serializations must yield a witness");
+        // Canonical order is root, aux1, aux2 — so position 0 is the root.
+        assert_eq!(w.pairs[0], (r1, r2));
+        assert!(
+            w.pairs.contains(&(l1, l1b)) && w.pairs.contains(&(l2, l2b)),
+            "leaf pairing follows shape, not allocation: {:?}",
+            w.pairs
+        );
+        assert!(w.verifies(&g1, &g2));
+        // And it is a genuine non-identity permutation of node ids.
+        assert!(w.pairs.iter().any(|(a, b)| a != b));
+    }
+
+    #[test]
+    fn witness_declines_different_nets() {
+        let a = lit(AgentKind::Con(1, 0));
+        let b = lit(AgentKind::Con(2, 0));
+        assert!(isomorphism_witness(&a, &b).unwrap().is_none());
+    }
+
+    /// A tampered pairing — two positions swapped — must fail verification
+    /// even though the witness *shape* is right.
+    #[test]
+    fn verifies_rejects_a_tampered_pairing() {
+        let mut g1 = Net::new();
+        let a = g1.alloc_node(AgentKind::Con(1, 0));
+        let b = g1.alloc_node(AgentKind::Con(2, 0));
+        let r = g1.alloc_node(AgentKind::Con(3, 2));
+        g1.wire(Port::new(r, 1), Port::principal(a));
+        g1.wire(Port::new(r, 2), Port::principal(b));
+        g1.root = Port::principal(r);
+
+        let mut w = isomorphism_witness(&g1, &g1).unwrap().unwrap();
+        assert!(w.verifies(&g1, &g1));
+        // Swap the two leaf pairings: same multiset of nodes, wrong mapping.
+        let i = w.pairs.iter().position(|(x, _)| *x == a).unwrap();
+        let j = w.pairs.iter().position(|(x, _)| *x == b).unwrap();
+        w.pairs.swap(i, j);
+        assert!(!w.verifies(&g1, &g1), "a tampered π must not verify");
+    }
+
+    /// Sharing must be respected by the certificate: a shared child and two
+    /// equal children are different nets, and the witness over a *shared*
+    /// net against itself must record the shared node once.
+    #[test]
+    fn witness_records_shared_nodes_once() {
+        let mut shared = Net::new();
+        let leaf = shared.alloc_node(AgentKind::Con(1, 0));
+        let root = shared.alloc_node(AgentKind::Con(2, 2));
+        shared.wire(Port::new(root, 1), Port::principal(leaf));
+        shared.wire(Port::new(root, 2), Port::principal(leaf));
+        shared.root = Port::principal(root);
+
+        let w = isomorphism_witness(&shared, &shared).unwrap().unwrap();
+        assert_eq!(w.len(), 2, "root + one shared leaf: {:?}", w.pairs);
+        assert!(w.verifies(&shared, &shared));
+    }
+
+    /// A cyclic net (open terms can leave `Dup` structure pointing back at
+    /// itself) must still yield a self-witness that verifies — back-reference
+    /// positions have to agree on both sides.
+    #[test]
+    fn witness_covers_cyclic_nets() {
+        let mut net = Net::new();
+        let a = net.alloc_node(AgentKind::Dup(0));
+        let b = net.alloc_node(AgentKind::Era);
+        net.wire(Port::new(a, 1), Port::principal(b));
+        net.wire(Port::new(a, 2), Port::principal(a));
+        net.root = Port::principal(a);
+
+        let w = isomorphism_witness(&net, &net).unwrap().unwrap();
+        assert!(w.verifies(&net, &net));
+    }
+
+    /// End-to-end over the real pipeline: two different Austral sources that
+    /// reduce to the same normal form are related by a verifying witness.
+    #[test]
+    fn witness_over_reduced_translations() {
+        let t1 = crate::translate::translate_austral_expr("(x + (2 + 3))").unwrap();
+        let t2 = crate::translate::translate_austral_expr("(x + 5)").unwrap();
+        assert_eq!(t1.unf_hash, t2.unf_hash);
+        let w = isomorphism_witness(&t1.net, &t2.net)
+            .unwrap()
+            .expect("equal UNF digests must yield a witness");
+        assert!(w.verifies(&t1.net, &t2.net));
+        // And the converse: sources with different normal forms do not.
+        let t3 = crate::translate::translate_austral_expr("(x + 6)").unwrap();
+        assert!(isomorphism_witness(&t1.net, &t3.net).unwrap().is_none());
     }
 }

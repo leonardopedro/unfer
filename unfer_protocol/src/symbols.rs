@@ -138,6 +138,12 @@ pub const SYMBOL_REGISTRY: &[SymbolRecord] = &[
         timeout_ms: None,
     },
     SymbolRecord {
+        name: "uk_austral_defeq",
+        kind: SymbolKind::Kernel,
+        effect_kind: super::types::EffectKind::Observe,
+        timeout_ms: None,
+    },
+    SymbolRecord {
         name: "uk_austral_unf",
         kind: SymbolKind::Kernel,
         effect_kind: super::types::EffectKind::Observe,

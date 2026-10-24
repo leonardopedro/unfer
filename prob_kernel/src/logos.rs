@@ -12,7 +12,7 @@
 //! A self-contained default lexicon is embedded here so the kernel symbol does
 //! not depend on a working-directory-relative `corpus/lexicon.tsv`.
 
-use unfer_protocol::{AustralReport, LogosReport};
+use unfer_protocol::{AustralDefeqReport, AustralReport, LogosReport};
 
 use logos::ccg;
 use logos::core_ir;
@@ -100,96 +100,78 @@ pub fn austral_unf(source: &str) -> Result<AustralReport, KernelError> {
     let verified = second.unf_hash == first.unf_hash && second.sym_expr == first.sym_expr;
 
     Ok(AustralReport {
-        sym_expr: first.sym_expr,
-        infix: first.infix,
-        value: first.value,
-        unf_hash: first.unf_hash,
-        ted: first.ted,
-        ted_hash: first.ted_hash,
+        sym_expr: first.sym_expr.to_prefix_string(),
+        infix: first.infix.clone(),
+        value: first.value.clone().map(|l| l.to_string()),
+        unf_hash: first.unf_hash.clone(),
+        ted: first.ted_string.clone(),
+        ted_hash: first.ted_hash.clone(),
         verified,
         source: source.to_string(),
     })
 }
 
-/// The reduced fields of one translation pass (before the confluence check).
-struct Reduced {
-    sym_expr: String,
-    infix: String,
-    value: Option<String>,
-    unf_hash: String,
-    ted: Option<String>,
-    ted_hash: Option<String>,
+// ── Conversion check (definitional equality via the UNF) ──────────────────
+
+/// The result of a conversion check between two AustralVM source fragments —
+/// [`unfer_protocol::AustralDefeqReport`], the protocol type crossing the
+/// FFI boundary as JSON.
+///
+/// This is the kernel-level form of the lean4mm0 plan's conversion step: two
+/// terms are definitionally equal when their DeltaNet normal forms are
+/// isomorphic, and the *certificate* of that equality is the node
+/// permutation `witness` — not just the matching digests. When the net-level
+/// digests differ but both terms lie in the Int64-arithmetic fragment, the
+/// TED hashes still tell the *algebraic* story (`x + x` vs `2 * x`); that
+/// distinction is reported rather than hidden, so a caller can see which
+/// notion of equality held.
+
+/// Definitional-equality check: reduce both sources to their unique normal
+/// forms and certify the comparison with an isomorphism witness.
+///
+/// Both the ingestion of either side and the witness computation map to
+/// [`KernelError::AustralDefeqFailed`] (UK-4805): a caller asking the
+/// *conversion* question gets the conversion code, never the single-source
+/// translation code (UK-4804).
+pub fn austral_defeq(a: &str, b: &str) -> Result<AustralDefeqReport, KernelError> {
+    use KernelError::AustralDefeqFailed;
+
+    let as_defeq = |e: KernelError| match e {
+        KernelError::AustralUnfFailed { reason } => AustralDefeqFailed { reason },
+        other => other,
+    };
+    let ta = translate_with(a).map_err(as_defeq)?;
+    let tb = translate_with(b).map_err(as_defeq)?;
+    let witness = logos::translate::check_equivalence(&ta, &tb).map_err(|e| AustralDefeqFailed {
+        reason: format!("austral->deltanet conversion check failed: {e}"),
+    })?;
+    let equivalent = witness.is_some();
+    let witness = witness.map(|w| w.pairs.into_iter().collect::<Vec<(u32, u32)>>());
+
+    Ok(AustralDefeqReport {
+        equivalent,
+        sym_expr_a: ta.sym_expr.to_prefix_string(),
+        sym_expr_b: tb.sym_expr.to_prefix_string(),
+        unf_hash_a: ta.unf_hash,
+        unf_hash_b: tb.unf_hash,
+        ted_hash_a: ta.ted_hash,
+        ted_hash_b: tb.ted_hash,
+        witness,
+    })
 }
 
 /// One translation pass; the report's `verified` field is populated by
 /// [`austral_unf`]'s confluence check. Accepts, in order: a statement list
 /// (`let … return e;`), a single expression (`(2 + 3)`), a function
 /// declaration (`function f(x: Int64): Int64 is … end;`), or a whole module
-/// (`module body … end module body.`). The first that parses wins.
-fn translate_with(source: &str) -> Result<Reduced, KernelError> {
-    use logos::translate::{
-        translate_austral, translate_austral_expr, translate_austral_function,
-        translate_austral_module,
-    };
-
-    let fail = |e: String| KernelError::AustralUnfFailed {
+/// (`module body … end module body.`) — the dispatch itself lives in
+/// `logos::translate::translate_austral_any` (the CLI's `logos iso` uses the
+/// same seam, so the compiler plugin, the kernel op and the CLI cannot
+/// disagree on what a source *is*).
+fn translate_with(source: &str) -> Result<logos::translate::UnfTranslation, KernelError> {
+    logos::translate::translate_austral_any(source).map_err(|e| KernelError::AustralUnfFailed {
         reason: format!("austral->deltanet translation failed: {e}"),
-    };
-    let s = source.trim_start();
-
-    // The form is chosen by the source shape, so a *validation* rejection
-    // (recursion / linearity) is never swallowed as "wrong form":
-    //   • `module body …` → the whole-module translation (validates every
-    //     function, links, reduces `main`);
-    //   • `function …` → the single-function translation;
-    //   • otherwise → statement list first, then a bare expression.
-    if s.starts_with("module body") {
-        return translate_austral_module(source)
-            .map(|m| reduced_of(&m.main))
-            .map_err(fail);
-    }
-    if s.starts_with("function") {
-        return translate_austral_function(source)
-            .map(|(_name, t)| reduced_of(&t))
-            .map_err(fail);
-    }
-    // Statement list first (its parse covers the `let … return e;` shape);
-    // a validation rejection there is a real error, not "wrong form" — so
-    // propagate it. A *syntax* failure falls through to the bare-expression
-    // form.
-    match translate_austral(source) {
-        Ok(t) => return Ok(reduced_of(&t)),
-        Err(e) => {
-            if looks_like_statement_list(source) {
-                return Err(fail(e));
-            }
-        }
-    }
-    translate_austral_expr(source)
-        .map(|t| reduced_of(&t))
-        .map_err(fail)
-}
-
-/// Heuristic: does the source look like a `let … return …;` statement list
-/// (as opposed to a bare expression)? Used so a *validation* failure on a
-/// statement list is surfaced as such instead of being retried as an
-/// expression.
-fn looks_like_statement_list(source: &str) -> bool {
-    let s = source.trim_start();
-    s.starts_with("let ") || s.starts_with("let\t") || s.contains(" return ")
-}
-
-/// Project a `logos::translate::UnfTranslation` onto the reduced report
-/// fields (symbolic readback, value, both UNF hashes).
-fn reduced_of(t: &logos::translate::UnfTranslation) -> Reduced {
-    Reduced {
-        sym_expr: t.sym_expr.to_prefix_string(),
-        infix: t.infix.clone(),
-        value: t.value.clone().map(|l| l.to_string()),
-        unf_hash: t.unf_hash.clone(),
-        ted: t.ted_string.clone(),
-        ted_hash: t.ted_hash.clone(),
-    }
+    })
 }
 
 fn compile_with(sentence: &str, lexicon: &Lexicon) -> Result<LogosReport, KernelError> {
@@ -312,6 +294,58 @@ mod tests {
     #[test]
     fn austral_unparseable_is_error() {
         assert!(austral_unf("this is not austral at all !!!").is_err());
+    }
+
+    // ── conversion check (austral_defeq) ────────────────────────────
+
+    #[test]
+    fn defeq_equal_normal_forms_certified_with_witness() {
+        // (x + (2 + 3)) reduces to the same net as (x + 5): equal digests
+        // and a non-empty isomorphism witness.
+        let r = austral_defeq("(x + (2 + 3))", "(x + 5)").unwrap();
+        assert!(r.equivalent);
+        assert_eq!(r.unf_hash_a, r.unf_hash_b);
+        let w = r.witness.expect("equivalence carries its certificate");
+        assert!(!w.is_empty());
+        // The permutation is injective on each side.
+        let from: std::collections::HashSet<u32> = w.iter().map(|(a, _)| *a).collect();
+        let to: std::collections::HashSet<u32> = w.iter().map(|(_, b)| *b).collect();
+        assert_eq!(from.len(), w.len(), "g1 nodes repeat");
+        assert_eq!(to.len(), w.len(), "g2 nodes repeat");
+    }
+
+    #[test]
+    fn defeq_closed_forms_agree() {
+        let r = austral_defeq("let x: Int64 = 2; return (x + 3);", "5").unwrap();
+        assert!(r.equivalent);
+        assert_eq!(r.sym_expr_a, "5");
+        assert_eq!(r.sym_expr_b, "5");
+    }
+
+    #[test]
+    fn defeq_distinct_normal_forms_not_equivalent() {
+        // Addition is not commutative *as a net*: Add64(x, 1) ≠ Add64(1, x).
+        let r = austral_defeq("(x + 1)", "(1 + x)").unwrap();
+        assert!(!r.equivalent);
+        assert!(r.witness.is_none());
+        assert_ne!(r.unf_hash_a, r.unf_hash_b);
+    }
+
+    #[test]
+    fn defeq_reports_the_algebraic_fallback_when_nets_differ() {
+        // x + x and 2 * x are different nets but the same TED polynomial:
+        // the report exposes both digests so the caller sees which equality
+        // (net-level vs algebraic) holds.
+        let r = austral_defeq("(x + x)", "(2 * x)").unwrap();
+        assert!(!r.equivalent, "net-level defeq is shape-sensitive");
+        assert_ne!(r.unf_hash_a, r.unf_hash_b);
+        assert_eq!(r.ted_hash_a, r.ted_hash_b);
+        assert!(r.ted_hash_a.is_some());
+    }
+
+    #[test]
+    fn defeq_unparseable_side_is_error() {
+        assert!(austral_defeq("(x + 1)", "@@@ nope @@@").is_err());
     }
 
     #[test]

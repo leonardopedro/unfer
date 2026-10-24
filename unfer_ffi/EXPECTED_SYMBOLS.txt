@@ -14,6 +14,7 @@ uk_auction_open
 uk_auction_report
 uk_audit_clear
 uk_audit_list
+uk_austral_defeq
 uk_austral_unf
 uk_bayesian_update
 uk_belief_propagation

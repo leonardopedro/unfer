@@ -1489,6 +1489,18 @@ impl Session {
         crate::logos::austral_unf(source)
     }
 
+    /// Conversion check between two AustralVM source fragments: reduce both
+    /// to their unique normal forms and certify the comparison with an
+    /// isomorphism witness (`uk_austral_defeq`). Read-only: the numerical
+    /// state is untouched.
+    pub fn austral_defeq(
+        &self,
+        a: &str,
+        b: &str,
+    ) -> Result<unfer_protocol::AustralDefeqReport, KernelError> {
+        crate::logos::austral_defeq(a, b)
+    }
+
     /// Run a multi-cell Cadabra2 derivation pipeline (S30) and capture the
     /// named expressions it produces (e.g. the QG gauge-fixed Hamiltonian
     /// derivation in `docs/qg_gauge_fixed_hamiltonian.cdb`). Read-only: the

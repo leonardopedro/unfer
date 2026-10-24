@@ -40,7 +40,7 @@ Detail: **`docs/ARCHITECTURE.md`**. The rules that are easy to get wrong:
 - [ ] **NS/QYM inner-operator audit (S30l)**: the proof's `nsFockSpace` is `L²(ℝ^{21n})`; the audit's `ℝ^{18n}` was stale and is fixed. → `docs/VERIFY_FARIS_LAVINE_N.md`
 - [ ] **Standard Model `N` (S30m)**: CHECK 1–28 verified; the CAR/ghost, spinor/Lorentz, parameter and Hilbert-space statements are **not** certified and are Lean work. → `docs/VERIFY_SM_FARIS_LAVINE.md`
 - [ ] **Logos CNL→UNF (S31)**: `verified` is a confluence self-check; proof terms must stay `rfl` — `native_decide` emits terms nanoda cannot reduce. → `docs/LOGOS.md`
-- [ ] **Austral↔DeltaNet↔UNF↔TED (S37)**: `ted_hash` is the content-addressable *algebraic* hash on top of `unf_hash`. → `docs/LOGOS.md`
+- [ ] **Austral↔DeltaNet↔UNF↔TED (S37)**: `ted_hash` is the content-addressable *algebraic* hash on top of `unf_hash`. The conversion check is `uk_austral_defeq` (S29-registered; witness-carrying; a completed "not equivalent" verdict is success — only an untranslatable side is UK-4805) and australVM's `Deltanet_plugin` gates constants on it. → `docs/LOGOS.md`
 - [ ] **WhyML compiler-extension cycle (S36)**: Why3 (LGPL) is **subprocess-only**; `check_with_grants` is pure so tests never mutate the process env. → `docs/WHYML_CYCLE.md`
 - [ ] **QED validation (S32)**: the γ↔e⁺e⁻ vertex must list positron annihilation **before** electron creation. → `docs/NUMERICAL_VALIDATION_GUIDE.md`
 - [ ] **QCD validation (S33)**: colour factors are computed from the SU(3) structure constants, not hard-coded; `C_F·e²` multiplies the amplitude **square**. → `docs/NUMERICAL_VALIDATION_GUIDE.md`

@@ -55,6 +55,9 @@ pub enum KernelError {
     #[error("Austral->deltanet UNF translation failed: {reason}")]
     AustralUnfFailed { reason: String },
 
+    #[error("Austral->deltanet conversion check failed: {reason}")]
+    AustralDefeqFailed { reason: String },
+
     #[error(
         "session event-log format version {got} is unsupported, or the log is malformed: {reason}"
     )]
@@ -305,6 +308,15 @@ impl KernelError {
                     .with_hint(RepairHint::new(
                         HintKind::ReplaceValue,
                         "austral.source",
+                        reason,
+                    ))
+            }
+
+            KernelError::AustralDefeqFailed { reason } => {
+                Diagnostic::new(Code::AUSTRAL_DEFEQ_FAILED, self.to_string(), Severity::Error)
+                    .with_hint(RepairHint::new(
+                        HintKind::ReplaceValue,
+                        "austral.defeq",
                         reason,
                     ))
             }

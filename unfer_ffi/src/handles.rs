@@ -545,6 +545,7 @@ fn matches_query(query: &EventQuery, event: &KernelEvent) -> bool {
         KernelEvent::Simplified { .. } => "simplified",
         KernelEvent::LogosCompiled { .. } => "logos_compiled",
         KernelEvent::AustralUnf { .. } => "austral_unf",
+        KernelEvent::AustralDefeq { .. } => "austral_defeq",
         KernelEvent::WhymlCompiled { .. } => "whyml_compiled",
         KernelEvent::EngramStored { .. } => "engram_stored",
         KernelEvent::EngramLookedUp { .. } => "engram_looked_up",

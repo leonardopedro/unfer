@@ -58,6 +58,12 @@ pub struct UnfTranslation {
     /// Confluence self-check: a second reduction of the same term reproduces
     /// the identical UNF.
     pub verified: bool,
+    /// The reduced net itself — the single net representation the UNF digest
+    /// was taken over. Carried so a *conversion check* between two
+    /// translations ([`check_equivalence`]) can produce an isomorphism
+    /// witness from the nets the pipeline already reduced, instead of
+    /// re-compiling them.
+    pub net: deltanet::Net,
 }
 
 impl UnfTranslation {
@@ -70,7 +76,7 @@ impl UnfTranslation {
 /// Translate a CoreIR term: compile → reduce → symbolic readback → value →
 /// UNF hash → TED, with the reduction self-check.
 pub fn translate_coreir(ir: &CoreIR) -> Result<UnfTranslation, String> {
-    let (sym_expr, unf_hash) = reduce_once(ir)?;
+    let (sym_expr, unf_hash, net) = reduce_once(ir)?;
     let verified = second_pass_agrees(ir, &unf_hash)?;
 
     let value = if sym_expr.is_closed() {
@@ -95,7 +101,60 @@ pub fn translate_coreir(ir: &CoreIR) -> Result<UnfTranslation, String> {
         ted_string,
         ted_hash,
         verified,
+        net,
     })
+}
+
+/// Dispatch a source fragment by shape, mirroring the kernel-side ingestion
+/// order (`prob_kernel::logos::austral_unf`): a whole `module body …` yields
+/// its linked `main`; a `function …` declaration yields its body-with-unknowns;
+/// otherwise a statement list (`let … return e;`) is tried first and a bare
+/// expression is the fallback. A *validation* rejection (recursion,
+/// linearity) on a statement list is surfaced as an error, not swallowed as
+/// "wrong form".
+pub fn translate_austral_any(src: &str) -> Result<UnfTranslation, String> {
+    let s = src.trim_start();
+    if s.starts_with("module body") {
+        return translate_austral_module(src).map(|m| m.main);
+    }
+    if s.starts_with("function") {
+        return translate_austral_function(src).map(|(_name, t)| t);
+    }
+    match translate_austral(src) {
+        Ok(t) => Ok(t),
+        Err(e) => {
+            if looks_like_statement_list(src) {
+                Err(e)
+            } else {
+                translate_austral_expr(src)
+            }
+        }
+    }
+}
+
+/// Heuristic: does the source look like a `let … return …;` statement list
+/// (as opposed to a bare expression)?
+pub fn looks_like_statement_list(src: &str) -> bool {
+    let s = src.trim_start();
+    s.starts_with("let ") || s.starts_with("let\t") || s.contains(" return ")
+}
+
+/// The conversion check between two reduced translations: `Some(witness)`
+/// when their unique normal forms are isomorphic (equal canonical
+/// serialization — the same content-addressed identity the pipeline already
+/// trusts), `None` when they are not.
+///
+/// The digest comparison is the fast path; the witness is computed from the
+/// two reduced nets the translations already carry, so no reduction is
+/// repeated.
+pub fn check_equivalence(
+    a: &UnfTranslation,
+    b: &UnfTranslation,
+) -> Result<Option<deltanet::IsomorphismWitness>, String> {
+    if a.unf_hash != b.unf_hash {
+        return Ok(None);
+    }
+    deltanet::isomorphism_witness(&a.net, &b.net)
 }
 
 /// Translate an Austral source fragment (statement list: `let`s then
@@ -136,7 +195,7 @@ pub fn translate_austral_expr(src: &str) -> Result<UnfTranslation, String> {
 /// `reduce` used to bail at the iteration cap and return `Ok`, the net still had
 /// work left, and this catches it.
 fn second_pass_agrees(ir: &CoreIR, first_hash: &str) -> Result<bool, String> {
-    let (_second_sym, second_hash) = reduce_once(ir)?;
+    let (_second_sym, second_hash, _second_net) = reduce_once(ir)?;
     if second_hash != first_hash {
         return Ok(false);
     }
@@ -148,12 +207,12 @@ fn second_pass_agrees(ir: &CoreIR, first_hash: &str) -> Result<bool, String> {
     Ok(deltanet::unf_hash_string(&net)? == before)
 }
 
-fn reduce_once(ir: &CoreIR) -> Result<(SymExpr, String), String> {
+fn reduce_once(ir: &CoreIR) -> Result<(SymExpr, String, deltanet::Net), String> {
     let mut net = deltanet::compile_to_net(ir)?;
     deltanet::reduce(&mut net)?;
     let sym = deltanet::sym_readback(&net)?;
     let hash = deltanet::unf_hash_string(&net)?;
-    Ok((sym, hash))
+    Ok((sym, hash, net))
 }
 
 /// Peel the outer lambda(s) off a function term, leaving the body with the

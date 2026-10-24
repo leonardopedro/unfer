@@ -55,6 +55,11 @@ int64_t uk_auction_report(const uint8_t* lot_id_json,
 int64_t uk_audit_clear();
 int64_t uk_audit_list(uint8_t* buf,
               int64_t cap);
+int64_t uk_austral_defeq(int64_t model,
+                 const uint8_t* a_ptr,
+                 int64_t a_len,
+                 const uint8_t* b_ptr,
+                 int64_t b_len);
 int64_t uk_austral_unf(int64_t model,
                const uint8_t* source_ptr,
                int64_t source_len);
