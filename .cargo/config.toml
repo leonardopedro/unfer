@@ -1,0 +1,33 @@
+# Target-specific rustflags for the unfer workspace.
+#
+# Why this exists: `candle-core` (0.8.4, pulled in by prob_kernel/qfm/fock_sirk)
+# depends on `gemm` unconditionally — there is no feature to switch it off — and
+# `gemm-common` hand-writes its half-precision kernels as inline `asm!`
+# (`fadd {v}.8h`, `fmla {v}.8h` in `gemm-common/src/simd.rs`). Those mnemonics
+# take `fullfp16`, and the crate only enables `fp16` on its own functions, so on
+# aarch64 the assembler rejects them:
+#
+#     error: instruction requires: fullfp16
+#       --> gemm-common-0.18.2/src/simd.rs:1994
+#
+# Enabling both features here is what makes the crate compile. It is *not* a
+# runtime hazard, for two reasons:
+#
+#   1. gemm never executes the fp16 kernels unconditionally: every entry point
+#      goes through `try_new()`, which returns `None` unless
+#      `feature_detected!("neon") && feature_detected!("fp16")` — a runtime
+#      CPUID check, compiled into the caller. On an aarch64 CPU without fp16,
+#      the kernels are present in the binary and simply never run; gemm falls
+#      back to its generic scalar path.
+#   2. The section is gated on `target_arch = "aarch64"`, so Intel and AMD
+#      builds are untouched: no flag, no codegen change, same binary as before
+#      this file existed.
+#
+# On a host whose CPU lacks fp16, nothing changes at runtime either — see
+# (1). This host reports `asimdhp`, so it has the feature in the first place.
+#
+# To override or drop these flags for one build, `RUSTFLAGS` in the environment
+# takes precedence over this file (it is not merged, it replaces it), so
+# `RUSTFLAGS="" cargo test -p prob_kernel` builds without them.
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["-C", "target-feature=+fp16,+fullfp16"]
