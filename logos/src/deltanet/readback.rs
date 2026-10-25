@@ -22,7 +22,10 @@ fn readback_port(
     };
 
     if node.freed {
-        if let Some(target) = &node.ports[port.slot as usize] {
+        // Bounds-guarded like `resolve_port`: a stale slot on a stub (or a
+        // one-port `Lit`/`Entity`) has nothing to forward to, and indexing
+        // raw panicked mid-readback.
+        if let Some(target) = node.ports.get(port.slot as usize).and_then(|p| p.as_ref()) {
             return readback_port(net, target, visited);
         }
         return Ok("<freed>".to_string());

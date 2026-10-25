@@ -114,14 +114,23 @@ impl Net {
     }
 
     pub fn alloc_node(&mut self, kind: AgentKind) -> NodeId {
-        if let Some(id) = self.free_list.pop() {
-            self.nodes[id as usize] = Some(Node::new(kind));
-            id
-        } else {
-            let id = self.nodes.len() as NodeId;
-            self.nodes.push(Some(Node::new(kind)));
-            id
-        }
+        // Deliberately never reuse a freed id — `free_list` still records
+        // frees, but nothing pops it.
+        //
+        // A freed node is a *forwarding stub* by design: `net.root`, the
+        // body wire beta leaves on `App.2`, and every un-redirected partner
+        // keep pointing at `(id, slot)`, and `resolve_port`, readback and
+        // hashing all follow those pointers through freed nodes. Recycling
+        // the id replaced the stub with an unrelated fresh node, so a walk
+        // either indexed past the new node's port vector ("index out of
+        // bounds") or — when the stale slot happened to be in range —
+        // followed the *new* node's port: reading another term's wire and
+        // publishing a value that was never computed. In-place reuse needs
+        // a real allocator that knows the stub is unreachable; none of the
+        // interaction rules can promise that.
+        let id = self.nodes.len() as NodeId;
+        self.nodes.push(Some(Node::new(kind)));
+        id
     }
 
     pub fn free_node(&mut self, id: NodeId) {
@@ -139,19 +148,41 @@ impl Net {
     }
 
     pub fn wire(&mut self, a: Port, b: Port) {
-        if let Some(node) = self.nodes[a.node as usize].as_mut() {
-            node.ports[a.slot as usize] = Some(b.clone());
+        // Bounds-guarded: a `Lit`/`Entity` has exactly one port (its
+        // principal), so wiring an out-of-range slot is a no-op rather than a
+        // panic. Every caller that legitimately means "this port" uses the
+        // principal slot.
+        if let Some(node) = self.nodes.get_mut(a.node as usize).and_then(|n| n.as_mut())
+            && let Some(slot) = node.ports.get_mut(a.slot as usize)
+        {
+            *slot = Some(b.clone());
         }
-        if let Some(node) = self.nodes[b.node as usize].as_mut() {
-            node.ports[b.slot as usize] = Some(a);
+        if let Some(node) = self.nodes.get_mut(b.node as usize).and_then(|n| n.as_mut())
+            && let Some(slot) = node.ports.get_mut(b.slot as usize)
+        {
+            *slot = Some(a);
         }
     }
 
     pub fn get_aux(&self, node: NodeId, slot: u8) -> Result<Port, String> {
-        self.nodes[node as usize]
-            .as_ref()
-            .and_then(|n| n.ports[slot as usize].clone())
-            .ok_or_else(|| format!("no port at node {} slot {}", node, slot))
+        let node_ref = self
+            .nodes
+            .get(node as usize)
+            .and_then(|n| n.as_ref())
+            .ok_or_else(|| format!("no such node {node}"))?;
+        node_ref
+            .ports
+            .get(slot as usize)
+            .and_then(|p| p.clone())
+            .ok_or_else(|| {
+                format!(
+                    "no port at node {} slot {} ({} has {} port(s))",
+                    node,
+                    slot,
+                    node_ref.kind,
+                    node_ref.ports.len()
+                )
+            })
     }
 
     pub fn get_principal(&self, node: NodeId) -> Result<Port, String> {
@@ -215,8 +246,11 @@ impl Net {
             }
             match self.nodes.get(current.node as usize) {
                 Some(Some(node)) if node.freed => {
-                    if let Some(target) = &node.ports[current.slot as usize] {
-                        current = target.clone();
+                    // Bounds-guarded: a freed `Lit`/`Entity` has one port
+                    // (its principal); resolving a higher slot has nothing to
+                    // hop to and is already terminal.
+                    if let Some(Some(t)) = node.ports.get(current.slot as usize) {
+                        current = t.clone();
                         depth += 1;
                     } else {
                         return current;

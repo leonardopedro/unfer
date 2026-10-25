@@ -201,14 +201,14 @@ fn interact(net: &mut Net, a: NodeId, b: NodeId) -> Result<(), String> {
                 AgentKind::Dup(l) => *l,
                 _ => unreachable!(),
             };
-            commute_dup_through(net, a, b, dup_level, true)
+            commute_dup_through(net, a, b, dup_level)
         }
         (_, AgentKind::Dup(_)) => {
             let dup_level = match &kind_b {
                 AgentKind::Dup(l) => *l,
                 _ => unreachable!(),
             };
-            commute_dup_through(net, b, a, dup_level, false)
+            commute_dup_through(net, b, a, dup_level)
         }
 
         // Era >< anything: erase
@@ -312,10 +312,10 @@ fn commute_dup_through(
     dup_id: NodeId,
     other_id: NodeId,
     level: u16,
-    dup_is_left: bool,
 ) -> Result<(), String> {
-    let dup_port = net.get_aux(dup_id, if dup_is_left { 1 } else { 2 })?;
-    let _dup_port2 = net.get_aux(dup_id, if dup_is_left { 2 } else { 1 })?;
+    // The Dup's two aux wires are the duplication result: one copy feeds each.
+    let dup_out1 = net.get_aux(dup_id, 1)?.clone();
+    let dup_out2 = net.get_aux(dup_id, 2)?.clone();
 
     let other_kind = net.nodes[other_id as usize].as_ref().unwrap().kind.clone();
     let other_aux_count = other_kind.aux_count();
@@ -323,23 +323,27 @@ fn commute_dup_through(
     let new_other1 = net.alloc_node(other_kind.clone());
     let new_other2 = net.alloc_node(other_kind);
 
+    // Each aux wire of the interacting agent is itself read by both copies,
+    // so it fans out through a *single* fresh duplicator: one Dup, principal
+    // on the original wire, aux 1 feeding copy 1 and aux 2 feeding copy 2.
+    // (Creating two Dups per aux here double-wired the original port.)
     for slot in 1..=other_aux_count {
         let orig = net.get_aux(other_id, slot)?;
         let new1_port = Port::new(new_other1, slot);
         let new2_port = Port::new(new_other2, slot);
-        let dup1 = net.alloc_node(AgentKind::Dup(level));
-        let dup2 = net.alloc_node(AgentKind::Dup(level));
+        let dup = net.alloc_node(AgentKind::Dup(level));
 
-        net.wire(Port::principal(dup1), orig.clone());
-        net.wire(Port::new(dup1, 1), new1_port.clone());
-        net.wire(Port::new(dup1, 2), new2_port.clone());
-
-        net.wire(Port::principal(dup2), orig);
-        net.wire(Port::new(dup2, 1), new1_port);
-        net.wire(Port::new(dup2, 2), new2_port);
+        net.wire(Port::principal(dup), orig);
+        net.wire(Port::new(dup, 1), new1_port);
+        net.wire(Port::new(dup, 2), new2_port);
     }
 
-    net.wire(Port::principal(dup_id), dup_port);
+    // The interacting agent's principal is what the Dup was feeding. Each
+    // copy now takes one of the Dup's two aux wires, so both copies — and no
+    // dangling wire — replace the original agent.
+    net.wire(dup_out1, Port::principal(new_other1));
+    net.wire(dup_out2, Port::principal(new_other2));
+
     net.free_node(other_id);
     Ok(())
 }

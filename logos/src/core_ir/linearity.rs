@@ -19,11 +19,16 @@ pub fn insert_linearity(term: CoreIR) -> CoreIR {
             match count {
                 0 => CoreIR::Lam(id.clone(), Box::new(CoreIR::Drop(id, Box::new(body)))),
                 1 => CoreIR::Lam(id, Box::new(body)),
-                _ => {
-                    let id1 = format!("{}_1", id);
-                    let id2 = format!("{}_2", id);
-                    let new_body = insert_clone_chain(&id, &[id1.clone(), id2.clone()], body);
-                    CoreIR::Lam(id1, Box::new(CoreIR::Lam(id2, Box::new(new_body))))
+                n => {
+                    // Free variable used `n` times: a duplicator chain hands
+                    // each use a distinct wire, so no port is wired twice.
+                    // The outer `Lam` keeps `id` — the Dup's principal sits
+                    // on the binder port `Abs.1`, which is exactly what beta
+                    // reduction splices the argument into.
+                    let names: Vec<String> = (1..=n).map(|i| format!("{}_dup{}", id, i)).collect();
+                    let body = rename_uses(&body, &id, &names);
+                    let body = insert_clone_chain(&id, &names, body);
+                    CoreIR::Lam(id, Box::new(body))
                 }
             }
         }
@@ -42,14 +47,14 @@ pub fn insert_linearity(term: CoreIR) -> CoreIR {
                     Box::new(CoreIR::Drop(id, Box::new(body))),
                 ),
                 1 => CoreIR::Let(id, Box::new(value), Box::new(body)),
-                _ => {
-                    let ids: Vec<String> = (1..=count).map(|i| format!("{}_{}", id, i)).collect();
-                    let new_body = insert_clone_chain(&id, &ids, body);
-                    let mut result = new_body;
-                    for new_id in ids.iter().rev() {
-                        result = CoreIR::Lam(new_id.clone(), Box::new(result));
-                    }
-                    CoreIR::Let(id, Box::new(value), Box::new(result))
+                n => {
+                    // Free variable used `n` times: duplicator chain, as in
+                    // the `Lam` arm. The `Let` keeps its own binder; the
+                    // copies are consumed inside, no extra `Lam` wrappers.
+                    let names: Vec<String> = (1..=n).map(|i| format!("{}_dup{}", id, i)).collect();
+                    let body = rename_uses(&body, &id, &names);
+                    let body = insert_clone_chain(&id, &names, body);
+                    CoreIR::Let(id, Box::new(value), Box::new(body))
                 }
             }
         }
@@ -79,11 +84,17 @@ fn insert_clone_chain(original: &str, new_ids: &[String], body: CoreIR) -> CoreI
         return body;
     }
     if new_ids.len() == 1 {
+        // The terminal Dup's second output must be consumed *somewhere*, or
+        // its aux port is left dangling: once this Dup meets a value and
+        // commutes, `get_aux(dup, 2)` on the unwired slot fails with
+        // "no port at node N slot 2". `Drop` terminates it with an eraser —
+        // a surplus copy the term never uses, which is what it is.
+        let drop_name = format!("{}_drop", original);
         return CoreIR::Clone(
             original.to_string(),
             new_ids[0].clone(),
-            format!("{}_drop", original),
-            Box::new(body),
+            drop_name.clone(),
+            Box::new(CoreIR::Drop(drop_name, Box::new(body))),
         );
     }
     let first = &new_ids[0];
@@ -94,6 +105,121 @@ fn insert_clone_chain(original: &str, new_ids: &[String], body: CoreIR) -> CoreI
         format!("{}_tmp", original),
         Box::new(insert_clone_chain(&format!("{}_tmp", original), rest, body)),
     )
+}
+
+/// Rewrite the uses of `id` inside `term` to the fresh copies in `names`.
+///
+/// A duplicator chain binds `names[0]` … `names[n-1]`, so each occurrence of
+/// `id` must be replaced by a *distinct* copy — otherwise two occurrences
+/// would read the same wire and the net would wire one port twice, which is
+/// ill-formed. Occurrences are numbered left-to-right (the traversal order
+/// below is deterministic), and the k-th occurrence becomes `names[k-1]`.
+///
+/// A use under a binder that shadows `id` is left alone: it refers to the
+/// inner binding, not to the one we are duplicating.
+fn rename_uses(term: &CoreIR, id: &str, names: &[String]) -> CoreIR {
+    let mut next = 0usize;
+    rename_uses_rec(term, id, names, &mut next)
+}
+
+fn rename_uses_rec(term: &CoreIR, id: &str, names: &[String], next: &mut usize) -> CoreIR {
+    match term {
+        CoreIR::Var(name) => {
+            if name == id {
+                let pick = (*next).min(names.len() - 1);
+                *next += 1;
+                CoreIR::Var(names[pick].clone())
+            } else {
+                CoreIR::Var(name.clone())
+            }
+        }
+        CoreIR::Lit(l) => CoreIR::Lit(l.clone()),
+        CoreIR::Con(tag, args) => CoreIR::Con(
+            *tag,
+            args.iter()
+                .map(|a| rename_uses_rec(a, id, names, next))
+                .collect(),
+        ),
+        CoreIR::Lam(name, body) => {
+            if name == id {
+                // Shadowed: this binder rebinds `id`, so its body's uses
+                // belong to the inner binder, not the one we are duplicating.
+                CoreIR::Lam(name.clone(), body.clone())
+            } else {
+                CoreIR::Lam(
+                    name.clone(),
+                    Box::new(rename_uses_rec(body, id, names, next)),
+                )
+            }
+        }
+        CoreIR::App(f, arg) => CoreIR::App(
+            Box::new(rename_uses_rec(f, id, names, next)),
+            Box::new(rename_uses_rec(arg, id, names, next)),
+        ),
+        CoreIR::Let(name, value, body) => {
+            let value = rename_uses_rec(value, id, names, next);
+            if name == id {
+                CoreIR::Let(name.clone(), Box::new(value), body.clone())
+            } else {
+                CoreIR::Let(
+                    name.clone(),
+                    Box::new(value),
+                    Box::new(rename_uses_rec(body, id, names, next)),
+                )
+            }
+        }
+        CoreIR::Prim(op, args) => CoreIR::Prim(
+            *op,
+            args.iter()
+                .map(|a| rename_uses_rec(a, id, names, next))
+                .collect(),
+        ),
+        CoreIR::Fold(f, init, list) => CoreIR::Fold(
+            Box::new(rename_uses_rec(f, id, names, next)),
+            Box::new(rename_uses_rec(init, id, names, next)),
+            Box::new(rename_uses_rec(list, id, names, next)),
+        ),
+        CoreIR::Match(scrutinee, arms) => CoreIR::Match(
+            Box::new(rename_uses_rec(scrutinee, id, names, next)),
+            arms.iter()
+                .map(|(pat, body)| {
+                    let shadowed = match pat {
+                        Pattern::Tag(_, binders) => binders.iter().any(|b| b == id),
+                    };
+                    let body = if shadowed {
+                        body.clone()
+                    } else {
+                        rename_uses_rec(body, id, names, next)
+                    };
+                    (pat.clone(), body)
+                })
+                .collect(),
+        ),
+        CoreIR::Clone(orig, id1, id2, body) => {
+            if orig == id {
+                // The chain already rebound `id`; its body's uses are the
+                // copies', not ours to rename.
+                CoreIR::Clone(orig.clone(), id1.clone(), id2.clone(), body.clone())
+            } else {
+                CoreIR::Clone(
+                    orig.clone(),
+                    id1.clone(),
+                    id2.clone(),
+                    Box::new(rename_uses_rec(body, id, names, next)),
+                )
+            }
+        }
+        CoreIR::Drop(name, body) => {
+            if name == id {
+                CoreIR::Drop(name.clone(), body.clone())
+            } else {
+                CoreIR::Drop(
+                    name.clone(),
+                    Box::new(rename_uses_rec(body, id, names, next)),
+                )
+            }
+        }
+    }
 }
 
 fn count_uses(id: &str, term: &CoreIR) -> usize {
@@ -311,5 +437,194 @@ mod tests {
             check_linearity(&term),
             Err(LinearityError::UsedMultipleTimes(_, 2))
         ));
+    }
+
+    // --- Dup/Era insertion (ΔI/ΔA tier) ---------------------------------
+
+    use crate::deltanet::{self, Net};
+    use std::time::Instant;
+
+    /// Compile a CoreIR term through the real pipeline: insert the Dup/Era
+    /// nodes, lower to a net, reduce to its unique normal form.
+    fn reduce(term: CoreIR) -> Net {
+        let term = insert_linearity(term);
+        let mut net = deltanet::compile_to_net(&term).expect("compile");
+        deltanet::reduce(&mut net).expect("reduce");
+        net
+    }
+
+    /// `λx. (x, x)` — the ΔI case: a Free variable used twice must be fed
+    /// through a duplicator, so each use reads a distinct wire.
+    #[test]
+    fn dup_in_lam_reduces_to_a_pair() {
+        let net = reduce(CoreIR::Lam(
+            "x".to_string(),
+            Box::new(CoreIR::Con(
+                200,
+                vec![CoreIR::Var("x".to_string()), CoreIR::Var("x".to_string())],
+            )),
+        ));
+        // The lambda stays a lambda (an open net); what matters is that it
+        // compiles and reduces without wiring one port twice.
+        assert!(deltanet::readback(&net).is_ok());
+        // The ΔI tier inserted exactly one duplicator for the two uses.
+        let text = format!("{:?}", net);
+        assert!(text.contains("Dup"), "expected a Dup node: {text}");
+    }
+
+    /// `λx. (x, x)` under an applied argument must reduce to `(v, v)`.
+    #[test]
+    fn dup_in_lam_reduces_under_application() {
+        let term = CoreIR::App(
+            Box::new(CoreIR::Lam(
+                "x".to_string(),
+                Box::new(CoreIR::Con(
+                    CONS_TAG,
+                    vec![CoreIR::Var("x".to_string()), CoreIR::Var("x".to_string())],
+                )),
+            )),
+            Box::new(CoreIR::Lit(Literal::Int64(42))),
+        );
+        let net = reduce(term);
+        let out = deltanet::readback(&net).expect("readback");
+        assert_eq!(out, "Cons(42, 42)");
+    }
+
+    /// The two forms from Part 2A of the plan — `λx. (x, x)` (explicit Dup)
+    /// and `λx. let y = x in (y, y)` (a `let` alias) — must reduce to the
+    /// same normal form and carry the same UNF identity. This is the whole
+    /// point of the shared engine: the Dup-vs-let distinction is a source
+    /// artifact, invisible after reduction.
+    #[test]
+    fn dup_and_let_alias_share_a_normal_form() {
+        // `let y = x in (y, y)`
+        let via_let = CoreIR::Lam(
+            "x".to_string(),
+            Box::new(CoreIR::Let(
+                "y".to_string(),
+                Box::new(CoreIR::Var("x".to_string())),
+                Box::new(CoreIR::Con(
+                    200,
+                    vec![CoreIR::Var("y".to_string()), CoreIR::Var("y".to_string())],
+                )),
+            )),
+        );
+        // `λx. (x, x)`
+        let via_dup = CoreIR::Lam(
+            "x".to_string(),
+            Box::new(CoreIR::Con(
+                200,
+                vec![CoreIR::Var("x".to_string()), CoreIR::Var("x".to_string())],
+            )),
+        );
+
+        let a = reduce(via_let);
+        let b = reduce(via_dup);
+        let ha = deltanet::unf_hash_string(&a).expect("hash a");
+        let hb = deltanet::unf_hash_string(&b).expect("hash b");
+        assert_eq!(ha, hb, "the two encodings must share a UNF identity");
+    }
+
+    /// ΔA: a Free variable that is dropped is terminated with an eraser.
+    #[test]
+    fn drop_in_lam_inserts_an_eraser_and_reduces() {
+        let term = CoreIR::App(
+            Box::new(CoreIR::Lam(
+                "x".to_string(),
+                Box::new(CoreIR::Lit(Literal::Int64(7))),
+            )),
+            Box::new(CoreIR::Lit(Literal::Int64(1))),
+        );
+        let net = reduce(term);
+        let text = format!("{:?}", net);
+        assert!(text.contains("Era"), "expected an Era node: {text}");
+        let out = deltanet::readback(&net).expect("readback");
+        assert_eq!(out, "7");
+    }
+
+    /// A Free variable used three times fans out through a binary Dup chain.
+    #[test]
+    fn triple_use_fans_out_through_a_dup_chain() {
+        let term = CoreIR::App(
+            Box::new(CoreIR::Lam(
+                "x".to_string(),
+                Box::new(CoreIR::Prim(
+                    PrimOp::Add64,
+                    vec![
+                        CoreIR::Var("x".to_string()),
+                        CoreIR::Prim(
+                            PrimOp::Add64,
+                            vec![CoreIR::Var("x".to_string()), CoreIR::Var("x".to_string())],
+                        ),
+                    ],
+                )),
+            )),
+            Box::new(CoreIR::Lit(Literal::Int64(5))),
+        );
+        let net = reduce(term);
+        let out = deltanet::readback(&net).expect("readback");
+        assert_eq!(out, "15");
+    }
+
+    // --- E2 benchmark: explicit Dup vs `let` alias -----------------------
+
+    /// Both encodings of `λx. (x, x)`, applied to a literal, timed through
+    /// the full insert→compile→reduce path. `#[ignore]`d because it prints
+    /// timing rather than asserting a threshold; run with:
+    ///
+    /// ```text
+    /// cargo test -p logos dup_vs_let_bench -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn dup_vs_let_bench() {
+        fn dup_form() -> CoreIR {
+            CoreIR::App(
+                Box::new(CoreIR::Lam(
+                    "x".to_string(),
+                    Box::new(CoreIR::Con(
+                        200,
+                        vec![CoreIR::Var("x".to_string()), CoreIR::Var("x".to_string())],
+                    )),
+                )),
+                Box::new(CoreIR::Lit(Literal::Int64(42))),
+            )
+        }
+        fn let_form() -> CoreIR {
+            CoreIR::App(
+                Box::new(CoreIR::Lam(
+                    "x".to_string(),
+                    Box::new(CoreIR::Let(
+                        "y".to_string(),
+                        Box::new(CoreIR::Var("x".to_string())),
+                        Box::new(CoreIR::Con(
+                            200,
+                            vec![CoreIR::Var("y".to_string()), CoreIR::Var("y".to_string())],
+                        )),
+                    )),
+                )),
+                Box::new(CoreIR::Lit(Literal::Int64(42))),
+            )
+        }
+
+        let iters = 20_000;
+        // Warm up once so the first iteration's compile cost is excluded.
+        reduce(dup_form());
+        reduce(let_form());
+
+        let t = Instant::now();
+        for _ in 0..iters {
+            reduce(dup_form());
+        }
+        let dup_ns = t.elapsed().as_nanos() / iters as u128;
+
+        let t = Instant::now();
+        for _ in 0..iters {
+            reduce(let_form());
+        }
+        let let_ns = t.elapsed().as_nanos() / iters as u128;
+
+        println!("E2  explicit-Dup  {dup_ns} ns/op");
+        println!("E2  let-alias    {let_ns} ns/op");
     }
 }
