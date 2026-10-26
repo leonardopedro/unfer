@@ -77,6 +77,100 @@ mod tests {
         );
     }
 
+    /// The ε in `W/(‖W‖_F + ε)` is the *only* thing that breaks exact
+    /// scale invariance, and it breaks it at a computable order. For a
+    /// radial rescaling `W ↦ cW` with `ρ = ‖W‖_F`:
+    ///
+    /// ```text
+    /// Ŵ(cW) = cW/(cρ + ε) = ŵ · c(ρ + ε)/(cρ + ε),
+    /// ```
+    /// so the direction is untouched and the relative defect is exactly
+    /// `ε|c−1|/(cρ + ε)`, whose log-scale derivative at `c = 1` is
+    /// `ε/(ρ + ε) = O(ε/ρ)`. At the toy's shell (ρ = σ√P ≈ 45.2, ε = 1e-6)
+    /// that is 2.2e-8: twelve orders below the 5e-3 floor §6.5 measures
+    /// for ⟨θ, ∇Φ⟩, which is why the floor is autodiff noise and not the
+    /// regularizer. This test pins the order and the linearity in ε —
+    /// without it, "ε is harmless" is an assertion, not a measurement.
+    #[test]
+    fn epsilon_breaks_scale_invariance_only_at_order_eps() {
+        let w = [0.3f64, -1.2, 4.0, 0.5, -0.7, 2.1];
+        let rho = w.iter().map(|x| x * x).sum::<f64>().sqrt();
+
+        // the map in f64, mirroring `normalize_fro`
+        let scaled = |c: f64, eps: f64| -> Vec<f64> {
+            let r = c * rho;
+            w.iter().map(|x| c * x / (r + eps)).collect()
+        };
+
+        for eps in [1e-6f64, 5e-7] {
+            let base = scaled(1.0, eps);
+            for c in [0.5f64, 2.0, 4.0, 10.0] {
+                let got = scaled(c, eps);
+                // same direction, so the defect is a scalar ratio
+                let rel = (0..w.len())
+                    .map(|i| (got[i] - base[i]).abs())
+                    .sum::<f64>()
+                    / base.iter().map(|x| x.abs()).sum::<f64>();
+                let predicted = eps * (c - 1.0).abs() / (c * rho + eps);
+                assert!(
+                    (rel - predicted).abs() < 1e-12 + 1e-6 * predicted,
+                    "eps={eps} c={c}: measured {rel} vs predicted {predicted}"
+                );
+            }
+            // log-scale derivative at c = 1 is ε/(ρ+ε). Differentiate
+            // the scalar ratio in log space: the absolute defect is ~1e-7
+            // and a plain central difference cancels against an O(1)
+            // baseline (measured 4.7 % off at h = 1e-7, which is exactly
+            // the cancellation, not the algebra).
+            let ln_ratio = |c: f64| (c * (rho + eps) / (c * rho + eps)).ln();
+            let h = 1e-3;
+            let d = (ln_ratio(1.0 + h) - ln_ratio(1.0 - h)) / (2.0 * h);
+            let predicted = eps / (rho + eps);
+            // h = 1e-3 leaves an O(h²) ≈ 1e-6 relative truncation term
+            // (measured 1.1e-6 at eps = 5e-7); the order, not the last
+            // digit, is what this pins.
+            assert!(
+                (d - predicted).abs() < 2e-5 * predicted,
+                "eps={eps}: d ln/d ln c {d} vs ε/(ρ+ε) {predicted}"
+            );
+        }
+        // linear in ε: halving the regularizer halves the defect
+        let d1: f64 = {
+            let (a, b) = (scaled(2.0, 1e-6), scaled(1.0, 1e-6));
+            (0..w.len()).map(|i| (a[i] - b[i]).abs()).sum()
+        };
+        let d2: f64 = {
+            let (a, b) = (scaled(2.0, 5e-7), scaled(1.0, 5e-7));
+            (0..w.len()).map(|i| (a[i] - b[i]).abs()).sum()
+        };
+        assert!((d1 / d2 - 2.0).abs() < 0.01, "d1/d2 = {} not 2", d1 / d2);
+    }
+
+    /// And the real (f32) implementation is that map: its defect at
+    /// `c = 2` matches the f64 prediction to f32 precision.
+    #[test]
+    fn normalize_fro_epsilon_defect_matches_the_analytic_order() {
+        let dev = &Device::Cpu;
+        let w = vec![0.3f32, -1.2, 4.0, 0.5, -0.7, 2.1];
+        let rho_f64 = w.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+        let base = normalize_fro(&Tensor::from_vec(w.clone(), &[2, 3], dev).unwrap()).unwrap();
+        let scaled_w: Vec<f32> = w.iter().map(|x| 2.0 * x).collect();
+        let doubled = normalize_fro(&Tensor::from_vec(scaled_w, &[2, 3], dev).unwrap()).unwrap();
+        let b = base.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let d = doubled.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let rel: f64 = b
+            .iter()
+            .zip(d.iter())
+            .map(|(x, y)| (*y as f64 - *x as f64).abs())
+            .sum::<f64>()
+            / b.iter().map(|x| (*x as f64).abs()).sum::<f64>();
+        let predicted = EPS / (2.0 * rho_f64 + EPS); // c = 2 ⇒ ε/(2ρ+ε)
+        assert!(
+            (rel - predicted).abs() < 1e-5,
+            "measured {rel} vs analytic {predicted}"
+        );
+    }
+
     #[test]
     fn normalize_fro_unit_frobenius() {
         let dev = &Device::Cpu;
