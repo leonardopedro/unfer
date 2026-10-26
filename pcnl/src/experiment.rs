@@ -421,7 +421,12 @@ fn median(xs: &mut [f64]) -> f64 {
 /// 10 equal-width confidence bins on [0,1],
 /// `ECE = Σ_b (|b|/n)·|acc(b) − conf(b)|`.
 /// `probs` is row-major `[n × vocab]`, already averaged over models.
-fn expected_calibration_error(probs: &[f64], vocab: usize, targets: &[u32], n_bins: usize) -> f64 {
+pub fn expected_calibration_error(
+    probs: &[f64],
+    vocab: usize,
+    targets: &[u32],
+    n_bins: usize,
+) -> f64 {
     if targets.is_empty() || vocab == 0 {
         return f64::NAN;
     }
@@ -454,7 +459,10 @@ fn expected_calibration_error(probs: &[f64], vocab: usize, targets: &[u32], n_bi
     ece
 }
 
-fn softmax_rows(logits: &[f64]) -> Vec<f64> {
+/// Row-wise softmax of one `[K]` logit row — shared with
+/// `examples/readout_compare.rs` so the readout table and the report's
+/// BMA numbers are computed by the *same* code.
+pub fn softmax_rows(logits: &[f64]) -> Vec<f64> {
     let m = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let mut out: Vec<f64> = logits.iter().map(|x| (x - m).exp()).collect();
     let sum: f64 = out.iter().sum();
