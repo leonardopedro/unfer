@@ -1,0 +1,9 @@
+[package]
+name = "mm0web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "mm0 proof webservice — verify submitted proofs, publish them to a project's Zenodo deposit (snapshot + delta), serve a prove2.me-style page."
+
+[dependencies]
+serde_json = { workspace = true }
