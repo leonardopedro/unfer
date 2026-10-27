@@ -2826,6 +2826,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mm0web"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "nalgebra"
 version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
