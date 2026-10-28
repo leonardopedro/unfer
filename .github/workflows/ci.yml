@@ -85,8 +85,20 @@ jobs:
       # or an internal cross-reference. In CI this is the narrow shape: this
       # checkout, its own ledger -- the workspace root here holds siblings,
       # not the root ledger, so resolution must succeed from unfer's own rows.
+      #
+      # Push-race guard: ../timepiece is cloned at job start, so a ledger row
+      # pushed to timepiece while this run is starting loses the race and
+      # surfaces as unresolved hits that are in fact resolved upstream (run
+      # #246 died exactly here, its rows landing 74 s too late). A failure
+      # therefore re-clones the sibling from current main and retries once; a
+      # real regression fails both attempts and stays red.
       - name: attribution ledger (X9)
-        run: bash scripts/check-attribution
+        run: |
+          if bash scripts/check-attribution; then exit 0; fi
+          echo "X9: re-cloning ../timepiece from current main and retrying once (push-race guard)" >&2
+          rm -rf ../timepiece
+          git clone --depth 1 --branch main https://github.com/leonardopedro/timepiece.git ../timepiece
+          bash scripts/check-attribution
       # M9: the truncated-vs-continuum and gauge-fixed-vs-lattice boundaries are
       # prose, so nothing checks them by default and a future edit can upgrade a
       # truncated claim to a continuum one silently. Narrow by design: it caught a
