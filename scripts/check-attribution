@@ -371,7 +371,7 @@ resolve_line() {
       done
     fi
   done < <(printf '%s\n' "$window" |
-    grep -oE '(\.\./)*[A-Za-z0-9_][A-Za-z0-9_./+-]*\.(md|tex|py|rs|sh|cdb|lean|yaml|yml|toml|cjs|js|ts|el|nix|txt|json)' || true)
+    grep -oE '(\.\./)*[A-Za-z0-9_][A-Za-z0-9_./+-]*\.(md|tex|py|rs|sh|cdb|mm0|lean|yaml|yml|toml|cjs|js|ts|el|nix|txt|json)' || true)
 
   # Ledger and cross-reference are tried first, so the report counts real
   # resolutions before exemptions. Only then the reviewed allowlist, and only
