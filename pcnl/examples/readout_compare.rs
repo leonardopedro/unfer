@@ -72,12 +72,7 @@ fn state_probs(
 }
 
 /// Mean of the selected states' distributions, per test example.
-fn mean_over(
-    states: &[Vec<Vec<f64>>],
-    picks: &[usize],
-    n_test: usize,
-    k: usize,
-) -> Vec<Vec<f64>> {
+fn mean_over(states: &[Vec<Vec<f64>>], picks: &[usize], n_test: usize, k: usize) -> Vec<Vec<f64>> {
     let mut out = vec![vec![0.0f64; k]; n_test];
     for &s in picks {
         for (i, row) in states[s].iter().enumerate() {
@@ -104,10 +99,11 @@ fn metrics(probs: &[Vec<f64>], targets: &[u32], rule: Rule) -> (f64, f64, f64) {
     for (i, row) in probs.iter().enumerate() {
         let y = targets[i] as usize;
         loss += rule.loss(row, y);
-        let (best, _) = row
-            .iter()
-            .enumerate()
-            .fold((0usize, -1.0f64), |acc, (j, p)| if *p > acc.1 { (j, *p) } else { acc });
+        let (best, _) =
+            row.iter().enumerate().fold(
+                (0usize, -1.0f64),
+                |acc, (j, p)| if *p > acc.1 { (j, *p) } else { acc },
+            );
         if best == y {
             hits += 1;
         }
@@ -135,8 +131,15 @@ fn main() -> candle_core::Result<()> {
 
     println!(
         "SG-pCNL quick run (seed {}, k {}, shapes {}x{}x{}, chains {}, steps {}, burn {}, thin {})",
-        cfg.seed, cfg.k, cfg.shapes.vocab, cfg.shapes.d, cfg.shapes.layers, cfg.chains,
-        cfg.steps, cfg.burn, cfg.thin
+        cfg.seed,
+        cfg.k,
+        cfg.shapes.vocab,
+        cfg.shapes.d,
+        cfg.shapes.layers,
+        cfg.chains,
+        cfg.steps,
+        cfg.burn,
+        cfg.thin
     );
     let report = run_experiment(&cfg);
     // identical reconstruction to `run_experiment`'s Task-B data
@@ -197,7 +200,10 @@ fn main() -> candle_core::Result<()> {
         let mut point_brier = 0.0f64;
         for i in 0..n_test {
             let y = targets[i] as usize;
-            let mean_loss: f64 = states.iter().map(|s| Rule::Brier.loss(&s[i], y)).sum::<f64>()
+            let mean_loss: f64 = states
+                .iter()
+                .map(|s| Rule::Brier.loss(&s[i], y))
+                .sum::<f64>()
                 / states.len() as f64;
             let chain_loss = Rule::Brier.loss(&p_bar[i], y);
             let tr: f64 = states

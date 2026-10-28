@@ -56,7 +56,11 @@ impl Rule {
 
     /// The loss of distribution `p` after the outcome `y`.
     pub fn loss(&self, p: &[f64], y: usize) -> f64 {
-        debug_assert!(y < p.len(), "outcome {y} outside a {}-class readout", p.len());
+        debug_assert!(
+            y < p.len(),
+            "outcome {y} outside a {}-class readout",
+            p.len()
+        );
         match self {
             Rule::Brier => p
                 .iter()
@@ -74,7 +78,6 @@ impl Rule {
         }
     }
 }
-
 
 /// Clamp to a distribution: negatives to 0, non-finite to 0, then
 /// renormalise; an all-zero row becomes uniform (the honest "no
@@ -98,7 +101,10 @@ pub fn normalize(p: &[f64]) -> Vec<f64> {
 /// The chain readout: the arithmetic mean of the per-state distributions
 /// (i.e. the Monte-Carlo posterior predictive at the sampled states).
 pub fn mean_dist(states: &[Vec<f64>]) -> Vec<f64> {
-    assert!(!states.is_empty(), "the chain readout needs at least one state");
+    assert!(
+        !states.is_empty(),
+        "the chain readout needs at least one state"
+    );
     let k = states[0].len();
     let mut acc = vec![0.0f64; k];
     for s in states {
@@ -238,7 +244,10 @@ impl Enumerated {
     pub fn exact_expected_chain_loss(&self, rule: Rule, y: usize, m: usize) -> f64 {
         let s = self.states();
         assert!(m >= 1, "m ≥ 1");
-        assert!(s.pow(m as u32) <= 200_000, "exact enumeration would be {s}^{m}");
+        assert!(
+            s.pow(m as u32) <= 200_000,
+            "exact enumeration would be {s}^{m}"
+        );
         let mut total = 0.0f64;
         let mut idx = vec![0usize; m];
         loop {
@@ -444,9 +453,8 @@ mod tests {
         let q = normalize(&[0.6, 0.3, 0.1]);
         for y in 0..3 {
             // E_{Y~q}[Brier(p, Y)] is minimised uniquely at p = q.
-            let expected = |p: &[f64]| -> f64 {
-                (0..3).map(|k| q[k] * Rule::Brier.loss(p, k)).sum()
-            };
+            let expected =
+                |p: &[f64]| -> f64 { (0..3).map(|k| q[k] * Rule::Brier.loss(p, k)).sum() };
             let at_q = expected(&q);
             for p in simplices(20) {
                 if (p[0] - q[0]).abs() < 1e-9
@@ -468,14 +476,10 @@ mod tests {
     fn log_and_spherical_are_strictly_proper() {
         let q = normalize(&[0.5, 0.3, 0.2]);
         for rule in [Rule::Log, Rule::Spherical] {
-            let expected =
-                |p: &[f64]| -> f64 { (0..3).map(|k| q[k] * rule.loss(p, k)).sum() };
+            let expected = |p: &[f64]| -> f64 { (0..3).map(|k| q[k] * rule.loss(p, k)).sum() };
             let at_q = expected(&q);
             for p in simplices(20) {
-                let same = p
-                    .iter()
-                    .zip(q.iter())
-                    .all(|(a, b)| (a - b).abs() < 1e-9);
+                let same = p.iter().zip(q.iter()).all(|(a, b)| (a - b).abs() < 1e-9);
                 if same {
                     continue;
                 }
@@ -555,7 +559,7 @@ mod tests {
         for y in 0..3 {
             let gains = loo_brier_gains(&states, y);
             assert_eq!(gains.len(), 3);
-            for i in 0..3 {
+            for (i, gain) in gains.iter().enumerate() {
                 let kept: Vec<Vec<f64>> = states
                     .iter()
                     .enumerate()
@@ -564,9 +568,8 @@ mod tests {
                     .collect();
                 let direct = brier(&mean_dist(&kept), y) - brier(&mean_dist(&states), y);
                 assert!(
-                    (gains[i] - direct).abs() < 1e-12,
-                    "y={y} i={i}: closed form {} ≠ direct {direct}",
-                    gains[i]
+                    (gain - direct).abs() < 1e-12,
+                    "y={y} i={i}: closed form {gain} ≠ direct {direct}"
                 );
             }
         }
@@ -583,12 +586,20 @@ mod tests {
             let lhs: f64 = loo_brier_gains(&states, y).iter().sum();
             let rhs: f64 = states
                 .iter()
-                .map(|u| u.iter().zip(p.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>())
+                .map(|u| {
+                    u.iter()
+                        .zip(p.iter())
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum::<f64>()
+                })
                 .sum::<f64>()
                 / ((m - 1) * (m - 1)) as f64;
             assert!((lhs - rhs).abs() < 1e-12, "y={y}: {lhs} ≠ {rhs}");
         }
-        assert!(loo_brier_gains(&states[..1], 0).is_empty(), "m=1 has no LOO");
+        assert!(
+            loo_brier_gains(&states[..1], 0).is_empty(),
+            "m=1 has no LOO"
+        );
     }
 
     #[test]
@@ -609,9 +620,7 @@ mod tests {
         assert!((chain1 - exact_point).abs() < 0.02, "m=1 chain {chain1}");
         for m in [2usize, 4, 8, 16] {
             let (_, _, mean_m, _) = simulate(&post, &q, m, reps, 11);
-            let exact_m: f64 = (0..3)
-                .map(|y| q[y] * post.predicted_brier_m(y)(m))
-                .sum();
+            let exact_m: f64 = (0..3).map(|y| q[y] * post.predicted_brier_m(y)(m)).sum();
             assert!(
                 (mean_m - exact_m).abs() < 0.01,
                 "m={m}: simulated {mean_m} vs exact {exact_m}"
@@ -676,7 +685,7 @@ mod tests {
         let post = post3();
         for y in 0..3 {
             let u = &post.dists[y % 3];
-            assert!((chain_reward(&[u.clone()], y) + brier(u, y)).abs() < 1e-12);
+            assert!((chain_reward(std::slice::from_ref(u), y) + brier(u, y)).abs() < 1e-12);
         }
     }
 

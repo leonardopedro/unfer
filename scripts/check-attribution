@@ -153,6 +153,25 @@ ALLOW=(
   # excused.
   '^timepiece/math/OAI/NumberTheory/SiegelZeros/Structure/CharacterEstimates\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: verbatim copy of openai/math@1581d4c upstream file; source rowed in ATTRIBUTION.md (openai/math)'
   '^timepiece/math/OAI/Analysis/DirectCrouzeix/ExtremalEmbedding\.lean$ :: Portions of this file have been adapted from an external source :: 1 :: verbatim copy of openai/math@1581d4c upstream file; source rowed in ATTRIBUTION.md (openai/math)'
+  # The converted/ SW-port bundle (2026-10-28): the aristotle(2) export's
+  # regenerated headers name the intermediate port ("the v4.29.0 port, commit
+  # 10e1218...") and the Lean v4.32.2 / Mathlib 905b958 move, but not the
+  # source project the window rule needs. The Siegel-Walfisz bundle IS rowed
+  # in timepiece/ATTRIBUTION.md (PrimeNumberTheoremAnd v4.32.2, commit
+  # 6a380f0c, landed in Downloads/_deps/Definitions/Def_SWPort_00[01].lean —
+  # the same definitions converted/ re-exports). Tier 1, excused by the exact
+  # sentence in the exact two files; nothing else under converted/ is.
+  '^timepiece/converted/Definitions/Def_SWPort_00[01]\.lean$ :: Re-ported from the :: 1 :: re-export of the PrimeNumberTheoremAnd Siegel-Walfisz bundle rowed in timepiece/ATTRIBUTION.md; the regenerated header names the v4.29.0 intermediate port instead of the project'
+  # The same file's Mathlib-section provenance header: it names the exact
+  # Mathlib file and blob (and Yury Kudryashov as author); both mathlib and
+  # openai/math are rowed in timepiece/ATTRIBUTION.md. Complements the
+  # generator-boilerplate entry above for this file's other claim sentence.
+  '^timepiece/converted/Definitions/Def_OAI_Analysis_DirectCrouzeix_ExtremalEmbedding\.lean$ :: adapted from Mathlib\.Analysis\.Complex\.RiemannMapping :: 1 :: openai/math skeleton-subtraction export of a Mathlib section; Mathlib source named in the header (Authors + blob URL) and rowed in ATTRIBUTION.md (mathlib, openai/math)'
+  # math28 ports openai/math's Progressions results and cites them by their
+  # upstream in-repo path (math/OAI/...) — a path that exists in the
+  # workspace checkout but not in CI's single-sibling shape, so the window
+  # cross-reference cannot resolve it there. The source is rowed.
+  '^timepiece/math28/Math28/ErdosProgressions\.lean$ :: ported from .math/OAI/Combinatorics/Progressions :: 1 :: port of the openai/math Progressions results (rowed in timepiece/ATTRIBUTION.md); the cited math/OAI/ path resolves only in the workspace checkout, not CI'
 )
 
 verbose=0

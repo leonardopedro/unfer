@@ -105,10 +105,7 @@ fn main() {
         max_proof_bytes: 4 * 1024 * 1024,
         audit: audit.clone(),
         publisher: Arc::new(Publisher::spawn(store.clone(), audit.clone())),
-        daily: Arc::new(DailyCap::new(
-            daily_cap,
-            Duration::from_secs(24 * 3600),
-        )),
+        daily: Arc::new(DailyCap::new(daily_cap, Duration::from_secs(24 * 3600))),
     };
 
     std::fs::create_dir_all(&cfg.store.state_dir).expect("create state dir");
@@ -120,7 +117,10 @@ fn main() {
     });
     println!(
         "mm0web listening on http://{} (state {}, checker {} + {}, zenodo {})",
-        listener.local_addr().map(|a| a.to_string()).unwrap_or(bind.clone()),
+        listener
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or(bind.clone()),
         state.display(),
         cfg.checker.mm0_rs.display(),
         cfg.checker.mm0_c.display(),

@@ -312,14 +312,16 @@ impl KernelError {
                     ))
             }
 
-            KernelError::AustralDefeqFailed { reason } => {
-                Diagnostic::new(Code::AUSTRAL_DEFEQ_FAILED, self.to_string(), Severity::Error)
-                    .with_hint(RepairHint::new(
-                        HintKind::ReplaceValue,
-                        "austral.defeq",
-                        reason,
-                    ))
-            }
+            KernelError::AustralDefeqFailed { reason } => Diagnostic::new(
+                Code::AUSTRAL_DEFEQ_FAILED,
+                self.to_string(),
+                Severity::Error,
+            )
+            .with_hint(RepairHint::new(
+                HintKind::ReplaceValue,
+                "austral.defeq",
+                reason,
+            )),
 
             KernelError::SessionLogVersion { got, reason } => Diagnostic::new(
                 Code::SESSION_LOG_VERSION,

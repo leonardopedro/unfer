@@ -215,7 +215,15 @@ pub fn curl(
     upload: Option<&Path>,
 ) -> Result<(u16, String), String> {
     let mut cmd = Command::new("curl");
-    cmd.args(["-sS", "--max-time", "120", "-X", method, "-w", "\n%{http_code}"]);
+    cmd.args([
+        "-sS",
+        "--max-time",
+        "120",
+        "-X",
+        method,
+        "-w",
+        "\n%{http_code}",
+    ]);
     for (k, v) in headers {
         cmd.arg("-H").arg(format!("{k}: {v}"));
     }

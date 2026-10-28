@@ -237,7 +237,7 @@ pub struct VariantReport {
     pub bma_accuracy: f64,
     pub bma_nll: f64,
     /// Phase 4's Expected Calibration Error of the BMA predictive
-    /// distribution (10 equal-width confidence bins on [0,1]).
+    /// distribution (10 equal-width confidence bins on \[0,1\]).
     pub bma_ece: f64,
     pub last_state_accuracy: f64,
     pub bma_models: usize,
@@ -418,7 +418,7 @@ fn median(xs: &mut [f64]) -> f64 {
 }
 
 /// Phase 4 — Expected Calibration Error over a predictive distribution:
-/// 10 equal-width confidence bins on [0,1],
+/// 10 equal-width confidence bins on \[0,1\],
 /// `ECE = Σ_b (|b|/n)·|acc(b) − conf(b)|`.
 /// `probs` is row-major `[n × vocab]`, already averaged over models.
 pub fn expected_calibration_error(

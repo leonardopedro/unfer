@@ -107,9 +107,7 @@ mod tests {
             for c in [0.5f64, 2.0, 4.0, 10.0] {
                 let got = scaled(c, eps);
                 // same direction, so the defect is a scalar ratio
-                let rel = (0..w.len())
-                    .map(|i| (got[i] - base[i]).abs())
-                    .sum::<f64>()
+                let rel = (0..w.len()).map(|i| (got[i] - base[i]).abs()).sum::<f64>()
                     / base.iter().map(|x| x.abs()).sum::<f64>();
                 let predicted = eps * (c - 1.0).abs() / (c * rho + eps);
                 assert!(

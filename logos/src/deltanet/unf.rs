@@ -361,7 +361,11 @@ pub fn isomorphism_witness(g1: &Net, g2: &Net) -> Result<Option<IsomorphismWitne
     )?;
     // `ok == false` here would mean equal bytes but a diverging walk — a bug
     // in this module, not a genuine non-isomorphism. Refuse to certify.
-    Ok(if ok { Some(IsomorphismWitness { pairs }) } else { None })
+    Ok(if ok {
+        Some(IsomorphismWitness { pairs })
+    } else {
+        None
+    })
 }
 
 /// Mirror of [`serialize_port`]: same resolution of freed forwarding stubs,
@@ -369,6 +373,7 @@ pub fn isomorphism_witness(g1: &Net, g2: &Net) -> Result<Option<IsomorphismWitne
 /// but instead of emitting bytes it records `(g1 node, g2 node)` per canonical
 /// position and refuses (returns `Ok(false)`) at the first structural
 /// disagreement.
+#[allow(clippy::too_many_arguments)] // its mirror `serialize_port`'s walk state, threaded through one hop per node
 fn lockstep_port(
     g1: &Net,
     p1: &Port,
@@ -413,7 +418,10 @@ fn lockstep_port(
     }
 
     // A revisit must be a revisit at the same canonical position on both sides.
-    match (seen1.get(&(p1.node as usize)), seen2.get(&(p2.node as usize))) {
+    match (
+        seen1.get(&(p1.node as usize)),
+        seen2.get(&(p2.node as usize)),
+    ) {
         (Some(c1), Some(c2)) if c1 == c2 => return Ok(true),
         (None, None) => {}
         _ => return Ok(false),

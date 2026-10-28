@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -16,8 +16,10 @@ use crate::audit::Audit;
 use crate::checker::{self, CheckerConfig};
 use crate::http::{self, Request};
 use crate::publisher::{Publisher, QueueError};
-use crate::store::{self, Index, StoreConfig, Zenodo, slug,
-    STATE_PUBLISH_FAILED, STATE_PUBLISHED, STATE_QUEUED, STATE_VERIFIED};
+use crate::store::{
+    self, Index, STATE_PUBLISH_FAILED, STATE_PUBLISHED, STATE_QUEUED, STATE_VERIFIED, StoreConfig,
+    Zenodo, slug,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -139,7 +141,11 @@ impl RateLimiter {
 pub type Response = (u16, String, Vec<u8>);
 
 fn html(status: u16, body: String) -> Response {
-    (status, "text/html; charset=utf-8".to_string(), body.into_bytes())
+    (
+        status,
+        "text/html; charset=utf-8".to_string(),
+        body.into_bytes(),
+    )
 }
 
 fn json(status: u16, body: serde_json::Value) -> Response {
@@ -193,11 +199,7 @@ pub fn handle(req: &Request, cfg: &Config, limiter: &RateLimiter) -> Response {
             "text/plain".to_string(),
             b"GET / (or POST to /verify or /publish)".to_vec(),
         ),
-        _ => (
-            404,
-            "text/plain".to_string(),
-            b"not found\n".to_vec(),
-        ),
+        _ => (404, "text/plain".to_string(), b"not found\n".to_vec()),
     }
 }
 
@@ -206,19 +208,35 @@ fn healthz(cfg: &Config) -> Response {
     let zenodo = Zenodo::new(cfg.store.zenodo.clone(), cfg.store.state_dir.clone());
     let body = format!(
         "checker: {}\nmm0-rs: {}\nmm0-c: {}\nzenodo: {} ({})\n",
-        if checker_ok { "ready" } else { "missing toolchain" },
+        if checker_ok {
+            "ready"
+        } else {
+            "missing toolchain"
+        },
         cfg.checker.mm0_rs.display(),
         cfg.checker.mm0_c.display(),
-        if zenodo.configured() { "configured" } else { "unconfigured" },
+        if zenodo.configured() {
+            "configured"
+        } else {
+            "unconfigured"
+        },
         cfg.store.zenodo.base_url,
     );
     // 503 when the service cannot do its one job. `AX`-style health semantics:
     // exit non-zero means unhealthy, and a healthcheck that lies is worse than
     // none.
     if checker_ok {
-        (200, "text/plain; charset=utf-8".to_string(), body.into_bytes())
+        (
+            200,
+            "text/plain; charset=utf-8".to_string(),
+            body.into_bytes(),
+        )
     } else {
-        (503, "text/plain; charset=utf-8".to_string(), body.into_bytes())
+        (
+            503,
+            "text/plain; charset=utf-8".to_string(),
+            body.into_bytes(),
+        )
     }
 }
 
@@ -232,7 +250,12 @@ fn which(bin: &std::path::Path) -> Option<PathBuf> {
         .find(|p| std::fs::metadata(p).is_ok())
 }
 
-fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish: bool) -> Response {
+fn verify_or_publish(
+    req: &Request,
+    cfg: &Config,
+    limiter: &RateLimiter,
+    publish: bool,
+) -> Response {
     if !limiter.allow(req.peer) {
         return (
             429,
@@ -267,11 +290,9 @@ fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish
         return bad_request("submission exceeds the per-field size limit");
     }
 
-    let workdir = cfg.work_root.join(format!(
-        "{}-{}",
-        slug(&project),
-        crate::store::now_unix()
-    ));
+    let workdir = cfg
+        .work_root
+        .join(format!("{}-{}", slug(&project), crate::store::now_unix()));
     let outcome = checker::check(&cfg.checker, &mm0, &mm1, &workdir);
     let _ = std::fs::remove_dir_all(&workdir);
     let id = store::proof_id(&title, &mm0, &mm1);
@@ -347,16 +368,20 @@ fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish
                     "url": url, "status": status_path(&project, &id)}),
             )
         } else {
-            html(200, render_result("Already published", &text, Some(&url), cfg))
+            html(
+                200,
+                render_result("Already published", &text, Some(&url), cfg),
+            )
         };
     }
 
-    if is_new && !cfg.daily.allow(req.peer) {            let _ = cfg.audit.record(
-                "rate-limited",
-                &project,
-                &id,
-                json!({"limit": "daily", "max": cfg.daily.max()}),
-            );
+    if is_new && !cfg.daily.allow(req.peer) {
+        let _ = cfg.audit.record(
+            "rate-limited",
+            &project,
+            &id,
+            json!({"limit": "daily", "max": cfg.daily.max()}),
+        );
         let msg = format!(
             "daily cap: at most {} new proofs per client per 24h \
              (re-verifying or revising one you already published is free)\n",
@@ -388,7 +413,10 @@ fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish
                     "ZENODO_API_KEY is not set"}),
             )
         } else {
-            html(502, render_result("Verified, not published", &text, None, cfg))
+            html(
+                502,
+                render_result("Verified, not published", &text, None, cfg),
+            )
         };
     }
 
@@ -402,7 +430,9 @@ fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish
 
     match cfg.publisher.enqueue(&project, &id) {
         Ok(()) => {
-            let _ = cfg.audit.record("queued", &project, &id, json!({"title": title}));
+            let _ = cfg
+                .audit
+                .record("queued", &project, &id, json!({"title": title}));
             let status = status_path(&project, &id);
             let text = format!(
                 "{id}\nverified and queued for publishing — the deposit is built by \
@@ -432,12 +462,21 @@ fn verify_or_publish(req: &Request, cfg: &Config, limiter: &RateLimiter, publish
                 };
             }
             let _ = index.save(&cfg.store.state_dir);
-            let _ = cfg.audit.record("queue-full", &project, &id, json!({"error": e.to_string()}));
-            let text = format!("{id}\nverified and stored, but publishing could not be queued: {e}\n");
+            let _ = cfg
+                .audit
+                .record("queue-full", &project, &id, json!({"error": e.to_string()}));
+            let text =
+                format!("{id}\nverified and stored, but publishing could not be queued: {e}\n");
             if req.wants_json() {
-                json(503, json!({"accepted": true, "queued": false, "proof": id, "error": e.to_string()}))
+                json(
+                    503,
+                    json!({"accepted": true, "queued": false, "proof": id, "error": e.to_string()}),
+                )
             } else {
-                html(503, render_result("Verified, queue unavailable", &text, None, cfg))
+                html(
+                    503,
+                    render_result("Verified, queue unavailable", &text, None, cfg),
+                )
             }
         }
     }
@@ -448,11 +487,19 @@ fn status_path(project: &str, id: &str) -> String {
 }
 
 fn bad_request(msg: &str) -> Response {
-    (400, "text/plain; charset=utf-8".to_string(), format!("{msg}\n").into_bytes())
+    (
+        400,
+        "text/plain; charset=utf-8".to_string(),
+        format!("{msg}\n").into_bytes(),
+    )
 }
 
 fn server_error(msg: &str) -> Response {
-    (500, "text/plain; charset=utf-8".to_string(), format!("{msg}\n").into_bytes())
+    (
+        500,
+        "text/plain; charset=utf-8".to_string(),
+        format!("{msg}\n").into_bytes(),
+    )
 }
 
 fn get_manifest(req: &Request, cfg: &Config) -> Response {
@@ -504,26 +551,43 @@ fn get_status(req: &Request, cfg: &Config) -> Response {
         String::new()
     };
     let zenodo = Zenodo::new(cfg.store.zenodo.clone(), cfg.store.state_dir.clone());
-    let record_link = p.record.map(|r| {
-        let url = zenodo.record_url(r);
-        format!("<p>record: <a href=\"{}\">{}</a></p>", http::escape_html(&url), http::escape_html(&url))
-    }).unwrap_or_default();
-    let doi = p.doi.as_ref()
-        .map(|d| format!("<p>doi: <a href=\"https://doi.org/{}\">{}</a></p>",
-                         http::escape_html(d), http::escape_html(d)))
+    let record_link = p
+        .record
+        .map(|r| {
+            let url = zenodo.record_url(r);
+            format!(
+                "<p>record: <a href=\"{}\">{}</a></p>",
+                http::escape_html(&url),
+                http::escape_html(&url)
+            )
+        })
+        .unwrap_or_default();
+    let doi = p
+        .doi
+        .as_ref()
+        .map(|d| {
+            format!(
+                "<p>doi: <a href=\"https://doi.org/{}\">{}</a></p>",
+                http::escape_html(d),
+                http::escape_html(d)
+            )
+        })
         .unwrap_or_default();
     let events: Vec<String> = cfg
         .audit
         .read()
         .iter()
         .filter(|e| e["proof"] == id.as_str())
-        .map(|e| format!(
-            "<li>{} — {}{}</li>",
-            http::escape_html(e["action"].as_str().unwrap_or("?")),
-            e["ts"].as_u64().unwrap_or(0),
-            e.get("error").map(|x| format!(" — {}", http::escape_html(x.as_str().unwrap_or(""))))
-                .unwrap_or_default()
-        ))
+        .map(|e| {
+            format!(
+                "<li>{} — {}{}</li>",
+                http::escape_html(e["action"].as_str().unwrap_or("?")),
+                e["ts"].as_u64().unwrap_or(0),
+                e.get("error")
+                    .map(|x| format!(" — {}", http::escape_html(x.as_str().unwrap_or(""))))
+                    .unwrap_or_default()
+            )
+        })
         .collect();
     let body = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">{refresh}\
@@ -626,7 +690,11 @@ fn render_page(cfg: &Config) -> String {
         "checker {} / {} · zenodo {} · {} projects",
         cfg.checker.mm0_rs.display(),
         cfg.checker.mm0_c.display(),
-        if zenodo.configured() { "configured" } else { "unconfigured (verify works, publish does not)" },
+        if zenodo.configured() {
+            "configured"
+        } else {
+            "unconfigured (verify works, publish does not)"
+        },
         projects.len()
     );
     let _ = index;
@@ -637,7 +705,13 @@ fn render_page(cfg: &Config) -> String {
 
 fn render_result(heading: &str, body: &str, url: Option<&str>, cfg: &Config) -> String {
     let link = url
-        .map(|u| format!("<p><a href=\"{}\">{}</a></p>", http::escape_html(u), http::escape_html(u)))
+        .map(|u| {
+            format!(
+                "<p><a href=\"{}\">{}</a></p>",
+                http::escape_html(u),
+                http::escape_html(u)
+            )
+        })
         .unwrap_or_default();
     let _ = cfg;
     format!(
@@ -776,7 +850,10 @@ mod tests {
         assert_eq!(status, 200);
         assert!(!body.contains("http-equiv"), "must stop refreshing: {body}");
         assert!(body.contains("10.5281/zenodo.42"), "{body}");
-        assert!(body.contains("records/42"), "links the Zenodo record: {body}");
+        assert!(
+            body.contains("records/42"),
+            "links the Zenodo record: {body}"
+        );
         let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
     }
 
@@ -793,9 +870,15 @@ mod tests {
     fn the_events_endpoint_returns_the_audit_trail() {
         let cfg = test_cfg("events");
         let rl = RateLimiter::new(100, Duration::from_millis(10));
-        cfg.audit.record("queued", "unfer", "p1", json!({"title": "t"})).unwrap();
-        cfg.audit.record("published", "unfer", "p1", json!({"record": 9})).unwrap();
-        cfg.audit.record("verified", "other", "p2", json!({})).unwrap();
+        cfg.audit
+            .record("queued", "unfer", "p1", json!({"title": "t"}))
+            .unwrap();
+        cfg.audit
+            .record("published", "unfer", "p1", json!({"record": 9}))
+            .unwrap();
+        cfg.audit
+            .record("verified", "other", "p2", json!({}))
+            .unwrap();
 
         let r = handle(&req("GET", "/events?project=unfer", ""), &cfg, &rl);
         assert_eq!(r.0, 200);
@@ -806,7 +889,13 @@ mod tests {
         let r = handle(&req("GET", "/events", ""), &cfg, &rl);
         let v: serde_json::Value = serde_json::from_slice(&r.2).unwrap();
         assert_eq!(v["count"], 3);
-        assert!(v["events"].as_array().unwrap().iter().all(|e| e["ts"].is_number()));
+        assert!(
+            v["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["ts"].is_number())
+        );
         let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
     }
 
@@ -824,7 +913,12 @@ mod tests {
         assert_eq!(v["state"], "published");
         assert_eq!(v["doi"], "10.5281/zenodo.42");
         assert_eq!(v["record"], 42);
-        assert!(v["status"].as_str().unwrap().starts_with("/status?project=unfer"));
+        assert!(
+            v["status"]
+                .as_str()
+                .unwrap()
+                .starts_with("/status?project=unfer")
+        );
         let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
     }
 

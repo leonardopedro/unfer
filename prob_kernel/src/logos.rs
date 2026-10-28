@@ -125,7 +125,7 @@ pub fn austral_unf(source: &str) -> Result<AustralReport, KernelError> {
 /// TED hashes still tell the *algebraic* story (`x + x` vs `2 * x`); that
 /// distinction is reported rather than hidden, so a caller can see which
 /// notion of equality held.
-
+///
 /// Definitional-equality check: reduce both sources to their unique normal
 /// forms and certify the comparison with an isomorphism witness.
 ///
@@ -142,9 +142,10 @@ pub fn austral_defeq(a: &str, b: &str) -> Result<AustralDefeqReport, KernelError
     };
     let ta = translate_with(a).map_err(as_defeq)?;
     let tb = translate_with(b).map_err(as_defeq)?;
-    let witness = logos::translate::check_equivalence(&ta, &tb).map_err(|e| AustralDefeqFailed {
-        reason: format!("austral->deltanet conversion check failed: {e}"),
-    })?;
+    let witness =
+        logos::translate::check_equivalence(&ta, &tb).map_err(|e| AustralDefeqFailed {
+            reason: format!("austral->deltanet conversion check failed: {e}"),
+        })?;
     let equivalent = witness.is_some();
     let witness = witness.map(|w| w.pairs.into_iter().collect::<Vec<(u32, u32)>>());
 

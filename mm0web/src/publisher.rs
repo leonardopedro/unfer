@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::audit::Audit;
-use crate::store::{Index, StoreConfig, Zenodo, STATE_PUBLISH_FAILED, STATE_PUBLISHED};
+use crate::store::{Index, STATE_PUBLISH_FAILED, STATE_PUBLISHED, StoreConfig, Zenodo};
 
 /// Jobs waiting to be pushed. Small on purpose: the worker is one thread and
 /// Zenodo is the bottleneck, so a deep queue only hides backpressure.
@@ -181,7 +181,11 @@ mod tests {
         assert_eq!(backoff(0), BACKOFF_BASE);
         assert_eq!(backoff(1), BACKOFF_BASE * 2);
         assert!(backoff(3) <= BACKOFF_CAP);
-        assert_eq!(backoff(64), BACKOFF_CAP, "absurd attempt counts stay bounded");
+        assert_eq!(
+            backoff(64),
+            BACKOFF_CAP,
+            "absurd attempt counts stay bounded"
+        );
     }
 
     #[test]
@@ -219,10 +223,13 @@ mod tests {
             proof: id.clone(),
             attempt: MAX_ATTEMPTS,
         };
-        mark_failed(&StoreConfig {
-            state_dir: dir.clone(),
-            zenodo: Default::default(),
-        }, &job);
+        mark_failed(
+            &StoreConfig {
+                state_dir: dir.clone(),
+                zenodo: Default::default(),
+            },
+            &job,
+        );
 
         let back = Index::load(&dir, "unfer");
         assert_eq!(back.proofs[&id].state, STATE_PUBLISH_FAILED);

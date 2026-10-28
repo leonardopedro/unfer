@@ -81,7 +81,10 @@ pub fn check(cfg: &CheckerConfig, mm0_src: &str, mm1_src: &str, workdir: &Path) 
     );
     match stage1 {
         Ok((code, out)) => {
-            log.push_str(&format!("$ {} compile proof.mm1 proof.mmb\n", cfg.mm0_rs.display()));
+            log.push_str(&format!(
+                "$ {} compile proof.mm1 proof.mmb\n",
+                cfg.mm0_rs.display()
+            ));
             log.push_str(&out);
             if code != 0 {
                 return CheckOutcome::reject("mm0-rs", log);
@@ -96,9 +99,17 @@ pub fn check(cfg: &CheckerConfig, mm0_src: &str, mm1_src: &str, workdir: &Path) 
     }
 
     // Stage 2 — mm0-c <in.mmb>, with the mm0 source on stdin.
-    match run(&cfg.mm0_c, &[&path_str(&mmb_path)], Some(mm0_src), cfg.timeout) {
+    match run(
+        &cfg.mm0_c,
+        &[&path_str(&mmb_path)],
+        Some(mm0_src),
+        cfg.timeout,
+    ) {
         Ok((code, out)) => {
-            log.push_str(&format!("\n$ {} proof.mmb < proof.mm0\n", cfg.mm0_c.display()));
+            log.push_str(&format!(
+                "\n$ {} proof.mmb < proof.mm0\n",
+                cfg.mm0_c.display()
+            ));
             log.push_str(&out);
             if code != 0 {
                 return CheckOutcome::reject("mm0-c", log);
@@ -261,7 +272,11 @@ mod tests {
         };
         let out = check(&missing, "s\n", "p\n", &d.join("w2"));
         assert_eq!(out.stage, "missing-toolchain");
-        assert!(out.log.contains("cargo install --path mm0/mm0-rs"), "{}", out.log);
+        assert!(
+            out.log.contains("cargo install --path mm0/mm0-rs"),
+            "{}",
+            out.log
+        );
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -276,7 +291,11 @@ mod tests {
         };
         let started = Instant::now();
         let out = check(&cfg, "s\n", "p\n", &d.join("w"));
-        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
         assert!(!out.accepted);
         assert!(out.log.contains("timed out"), "{}", out.log);
         let _ = fs::remove_dir_all(&d);

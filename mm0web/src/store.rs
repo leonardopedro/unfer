@@ -97,10 +97,7 @@ impl Proof {
             mm0: p["mm0"].as_str().unwrap_or("").to_string(),
             mm1: p["mm1"].as_str().unwrap_or("").to_string(),
             record: p["record"].as_u64(),
-            state: p["state"]
-                .as_str()
-                .unwrap_or(STATE_VERIFIED)
-                .to_string(),
+            state: p["state"].as_str().unwrap_or(STATE_VERIFIED).to_string(),
             doi: p["doi"].as_str().map(str::to_string),
             created_at: p["created_at"].as_u64().unwrap_or(0),
         }
@@ -252,8 +249,8 @@ impl Index {
             ..Default::default()
         };
         for (i, bytes) in files.iter().enumerate() {
-            let v: Value = serde_json::from_slice(bytes)
-                .map_err(|e| format!("file {i} is not JSON: {e}"))?;
+            let v: Value =
+                serde_json::from_slice(bytes).map_err(|e| format!("file {i} is not JSON: {e}"))?;
             if let Some(map) = v["proofs"].as_object() {
                 for (id, p) in map {
                     let seq = p["seq"].as_u64().unwrap_or(0);
@@ -388,7 +385,10 @@ impl Zenodo {
     }
 
     fn auth(&self) -> (String, String) {
-        ("Authorization".to_string(), format!("Bearer {}", self.cfg.api_key))
+        (
+            "Authorization".to_string(),
+            format!("Bearer {}", self.cfg.api_key),
+        )
     }
 
     fn remote_path(&self, project: &str) -> PathBuf {
@@ -419,7 +419,11 @@ impl Zenodo {
             }),
             file_sequence: v["file_sequence"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default(),
             delta_count: v["delta_count"].as_u64().unwrap_or(0) as usize,
             last_seq: v["last_seq"].as_u64().unwrap_or(0),
@@ -478,14 +482,17 @@ impl Zenodo {
     fn create_deposit(&self, project: &str) -> Result<(u64, String), String> {
         let url = format!("{}/deposit/depositions", self.cfg.base_url);
         let body = json!({"metadata": self.deposit_metadata(project)}).to_string();
-        let (code, text) =
-            http::curl("POST", &url, &[(self.auth())], Some(body.as_bytes()), None)?;
+        let (code, text) = http::curl("POST", &url, &[(self.auth())], Some(body.as_bytes()), None)?;
         if !(200..300).contains(&code) {
             return Err(format!("create deposit failed ({code}): {text}"));
         }
-        let v: Value = serde_json::from_str(&text).map_err(|e| format!("create deposit JSON: {e}"))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("create deposit JSON: {e}"))?;
         let id = v["id"].as_u64().ok_or("no id in create response")?;
-        let bucket = v["links"]["bucket"].as_str().unwrap_or_default().to_string();
+        let bucket = v["links"]["bucket"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         Ok((id, bucket))
     }
 
@@ -538,7 +545,10 @@ impl Zenodo {
             return Err(format!("draft fetch failed ({code}): {text}"));
         }
         let v: Value = serde_json::from_str(&text).map_err(|e| format!("draft JSON: {e}"))?;
-        let bucket = v["links"]["bucket"].as_str().unwrap_or_default().to_string();
+        let bucket = v["links"]["bucket"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         Ok((draft_id, bucket))
     }
 
@@ -552,7 +562,10 @@ impl Zenodo {
             &url,
             &[
                 (self.auth()),
-                ("Content-Type".to_string(), "application/octet-stream".to_string()),
+                (
+                    "Content-Type".to_string(),
+                    "application/octet-stream".to_string(),
+                ),
             ],
             Some(bytes),
             None,
@@ -630,7 +643,11 @@ impl Zenodo {
             None => {
                 let is_first = st.file_sequence.is_empty();
                 let squash = !is_first && st.delta_count >= self.cfg.squash_after;
-                let kind = if is_first || squash { "snapshot" } else { "delta" };
+                let kind = if is_first || squash {
+                    "snapshot"
+                } else {
+                    "delta"
+                };
                 let n = st
                     .file_sequence
                     .iter()
@@ -730,8 +747,9 @@ impl Zenodo {
             .get("manifest.json")
             .ok_or("manifest.json is not in the record")?
             .clone();
-        let manifest: Value = serde_json::from_slice(&http::curl_download(&manifest_url, &[(self.auth())])?)
-            .map_err(|e| format!("manifest JSON: {e}"))?;
+        let manifest: Value =
+            serde_json::from_slice(&http::curl_download(&manifest_url, &[(self.auth())])?)
+                .map_err(|e| format!("manifest JSON: {e}"))?;
         let mut files = Vec::new();
         for name in manifest["file_sequence"]
             .as_array()
@@ -837,12 +855,12 @@ mod tests {
         assert_eq!(slug("unfer proofs/2026"), "unfer-proofs-2026");
         assert_eq!(slug("  "), "project");
         let z = Zenodo::new(ZenodoConfig::default(), PathBuf::from("/tmp"));
-        assert_eq!(
-            z.record_url(42),
-            "https://sandbox.zenodo.org/records/42"
-        );
+        assert_eq!(z.record_url(42), "https://sandbox.zenodo.org/records/42");
         assert!(!z.configured());
-        assert!(z.push(&Index::default()).is_err(), "unconfigured store must refuse");
+        assert!(
+            z.push(&Index::default()).is_err(),
+            "unconfigured store must refuse"
+        );
     }
 
     #[test]
@@ -881,7 +899,10 @@ mod tests {
 
         let same = idx.upsert("t", "a", "b");
         assert_eq!(same, id);
-        assert_eq!(idx.proofs[&id].created_at, created, "first-seen time sticks");
+        assert_eq!(
+            idx.proofs[&id].created_at, created,
+            "first-seen time sticks"
+        );
         assert_eq!(idx.proofs[&id].record, Some(5));
         assert_eq!(idx.proofs[&id].state, STATE_VERIFIED);
     }
@@ -892,7 +913,10 @@ mod tests {
         let z = Zenodo::new(ZenodoConfig::default(), dir.clone());
         let mut st = RemoteState {
             record_id: Some(3),
-            draft: Some(Draft { id: 4, bucket: "https://b/4".into() }),
+            draft: Some(Draft {
+                id: 4,
+                bucket: "https://b/4".into(),
+            }),
             inflight: Some(Inflight {
                 filename: "delta_2.bin".into(),
                 kind: "delta".into(),

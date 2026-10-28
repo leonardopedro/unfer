@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1862 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-22 -->
+<!-- status: verified | tests: 1934 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-28 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -142,7 +142,12 @@ battery (`pcnl/tests/numerics.rs`). Growth since the 1858 of rev 32:
 `pcnl` +4 — the task×budget regression (`run_experiment_honors_the
 task_b_knob`) and the centered-adaptation-prior tests (the OU kernel's
 translation identity, its stationarity on the θ_A shell, and the
-reachability cell itself), behind `Config.prior_center_at_a`.
+reachability cell itself), behind `Config.prior_center_at_a`. Growth
+since the 1862 of rev 33: +72 — `mm0web` +36 (the new Zenodo
+deposit/store/publisher crate), `pcnl` +13 (the §9.3 chain-readout
+proper-score battery and the ε-projection scale-invariance tests),
+`logos` +10 (the defeq conversion-witness suite), plus `prob_kernel`
++5, `qfm_text` +4, `unfer_ffi` +2 and `unfer_data` +2.
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -153,7 +158,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1862 passed (2026-10-22, rev 33; was 1858 at rev 32, 1846 at rev 31 —
+#   1934 passed (2026-10-28, rev 34; was 1862 at rev 33, 1858 at rev 32 —
 #   see the counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
@@ -237,20 +242,20 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 33, 2026-10-22)
+## Test & benchmark counts (rev 34, 2026-10-28)
 
-- Workspace tests: **1862 green** on CPU (default features,
+- Workspace tests: **1934 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by target name from a single log):
-  `unfer_protocol` 405, logos 352, `unfer_ffi` 229,
-  `prob_kernel` 143, `decide_core` 116, `unfer_consensus` 111,
-  `nested_fock_algebra` 98, `qfm` 91, `unfer_edge` 63, `qfm_text` 62,
-  `unfer_data` 52, `ode_sirk` 36, `unfer_taler` 30, `pcnl` 62,
-  `unfer_identity` 7,
+  `unfer_protocol` 405, logos 362, `unfer_ffi` 231,
+  `prob_kernel` 148, `decide_core` 116, `unfer_consensus` 111,
+  `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 66,
+  `unfer_edge` 63, `unfer_data` 54, `ode_sirk` 36, `mm0web` 36,
+  `unfer_taler` 30, `unfer_identity` 7,
   `sirk_core_model` 5 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1862 above.
+  2026-10-06, `--release`) and is **not** in the 1934 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -259,7 +264,16 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 33** (2026-10-22) claims **1862**
+> Revision history of this table: **rev 34** (2026-10-28) claims **1934**
+> after `mm0web` joined the workspace (36 tests — store index, deposit
+> lifecycle, publisher, audit log and web surface behind the mock-Zenodo
+> e2e scenarios) and `pcnl` (+13: the §9.3 chain-readout proper-score
+> battery and the ε-projection scale-invariance tests), `logos` (+10, the
+> defeq conversion-witness suite), `prob_kernel` (+5), `qfm_text` (+4),
+> `unfer_ffi` (+2) and `unfer_data` (+2) gained tests — re-measured by
+> the same command from this run's own log (`check-status --recount`,
+> suite green in release).
+> **rev 33** (2026-10-22) claims **1862**
 > after `pcnl` gained the task×budget regression
 > (`run_experiment_honors_the_task_b_knob`) and three tests for the
 > centered adaptation prior (`Config.prior_center_at_a`, §6.4.2 of

@@ -462,7 +462,10 @@ mod iso_tests {
         assert_eq!(fields.len(), 4, "{line}");
         assert_eq!(fields[0], "true");
         assert_eq!(fields[1], fields[2], "equal normal forms share a digest");
-        assert!(fields[3].contains('>'), "a witness lists g1>g2 pairs: {line}");
+        assert!(
+            fields[3].contains('>'),
+            "a witness lists g1>g2 pairs: {line}"
+        );
     }
 
     #[test]

@@ -120,8 +120,13 @@ mod tests {
     fn events_are_json_lines_in_order() {
         let a = audit("order");
         a.record("verified", "unfer", "p1", json!({})).unwrap();
-        a.record("published", "unfer", "p1", json!({"record": 7, "doi": "10.1/x"}))
-            .unwrap();
+        a.record(
+            "published",
+            "unfer",
+            "p1",
+            json!({"record": 7, "doi": "10.1/x"}),
+        )
+        .unwrap();
         let ev = a.read();
         assert_eq!(ev.len(), 2);
         assert_eq!(ev[0]["action"], "verified");
@@ -158,7 +163,13 @@ mod tests {
 
     #[test]
     fn the_vocabulary_covers_the_publish_lifecycle() {
-        for needed in ["verified", "rejected", "queued", "published", "publish-failed"] {
+        for needed in [
+            "verified",
+            "rejected",
+            "queued",
+            "published",
+            "publish-failed",
+        ] {
             assert!(ACTIONS.contains(&needed), "{needed} missing");
         }
     }

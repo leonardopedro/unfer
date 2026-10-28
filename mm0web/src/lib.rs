@@ -44,4 +44,4 @@ pub use audit::Audit;
 pub use checker::{CheckOutcome, CheckerConfig};
 pub use publisher::Publisher;
 pub use store::{StoreConfig, ZenodoConfig};
-pub use web::{Config, handle, RateLimiter};
+pub use web::{Config, RateLimiter, handle};

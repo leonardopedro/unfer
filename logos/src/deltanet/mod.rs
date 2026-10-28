@@ -12,4 +12,6 @@ pub use reducer::reduce;
 pub use symbolic::{SymExpr, sym_readback};
 pub use ted::{Ted, from_sym_expr as ted_from_sym_expr};
 pub use types::*;
-pub use unf::{IsomorphismWitness, canonical_serialize, isomorphism_witness, unf_hash, unf_hash_string};
+pub use unf::{
+    IsomorphismWitness, canonical_serialize, isomorphism_witness, unf_hash, unf_hash_string,
+};
