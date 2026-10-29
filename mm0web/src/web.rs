@@ -405,12 +405,14 @@ fn verify_or_publish(
             "{id}\nverified and stored locally, but ZENODO_API_KEY is not set, \
              so nothing was published\n\n{}",
             outcome.log
-        );
-        return if req.wants_json() {
+        );        return if req.wants_json() {
             json(
                 502,
-                json!({"accepted": true, "published": false, "proof": id, "error":
-                    "ZENODO_API_KEY is not set"}),
+                json!({"accepted": true, "published": false, "proof": id,
+                    // The verification stands; a client showing this record
+                    // should still be able to show what the checkers said.
+                    "log": outcome.log,
+                    "error": "ZENODO_API_KEY is not set"}),
             )
         } else {
             html(
@@ -470,7 +472,8 @@ fn verify_or_publish(
             if req.wants_json() {
                 json(
                     503,
-                    json!({"accepted": true, "queued": false, "proof": id, "error": e.to_string()}),
+                    json!({"accepted": true, "queued": false, "proof": id,
+                        "log": outcome.log, "error": e.to_string()}),
                 )
             } else {
                 html(
@@ -513,16 +516,23 @@ fn get_proof(req: &Request, cfg: &Config) -> Response {
     let id = req.field("id").unwrap_or_default();
     let index = Index::load(&cfg.store.state_dir, &project);
     match index.proofs.get(&id) {
-        Some(p) => json(
-            200,
-            json!({
-                "id": p.id, "title": p.title, "fingerprint": p.fingerprint,
-                "seq": p.seq, "verified": p.verified, "record": p.record,
-                "state": p.state, "doi": p.doi,
-                "status": status_path(&project, &p.id),
-                "mm0": p.mm0, "mm1": p.mm1,
-            }),
-        ),
+        Some(p) => {
+            let zenodo = Zenodo::new(cfg.store.zenodo.clone(), cfg.store.state_dir.clone());
+            json(
+                200,
+                json!({
+                    "id": p.id, "title": p.title, "fingerprint": p.fingerprint,
+                    "seq": p.seq, "verified": p.verified, "record": p.record,
+                    "state": p.state, "doi": p.doi,
+                    // The Zenodo record page, the same link `/status` renders:
+                    // a client showing a proof wants both the DOI and where
+                    // the archived bytes live.
+                    "url": p.record.map(|r| zenodo.record_url(r)),
+                    "status": status_path(&project, &p.id),
+                    "mm0": p.mm0, "mm1": p.mm1,
+                }),
+            )
+        }
         None => json(404, json!({"error": "no such proof", "id": id})),
     }
 }

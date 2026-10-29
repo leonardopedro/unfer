@@ -116,6 +116,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # create a draft
         if parts == ["api", "deposit", "depositions"]:
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                # Real Zenodo refuses a JSON body without this header. The mock
+                # used to accept anything, which is how a missing header only
+                # showed up in production.
+                self._json(415, {"status": 415,
+                                 "message": "Invalid 'Content-Type' header. "
+                                            "Expected one of: application/json"})
+                return
             with lock:
                 did = self._new_id()
                 state["drafts"][did] = {"files": {}}

@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 /// Lifecycle of a wire transfer as seen by the exchange.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WireStatus {
     /// Booked by the gateway; the bank has not settled it yet.
     Preparing,
@@ -23,7 +23,7 @@ pub enum WireStatus {
 }
 
 /// A bank transfer id + amount the exchange bookkeeps.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WireRef {
     /// Opaque bank-side reference (hex).
     pub wire_id: String,
@@ -39,6 +39,18 @@ pub trait WireGateway {
     fn prepare_transfer(&mut self, to: &str, amount: u64) -> Result<WireRef, String>;
     fn confirm(&mut self, wire_id: &str) -> Result<WireStatus, String>;
     fn get(&self, wire_id: &str) -> Option<&WireRef>;
+
+    /// Every wire this gateway knows about, for a durable exchange snapshot.
+    /// A live bank backend would instead re-query the bank on restart, so the
+    /// default is empty and `import` is a no-op.
+    fn export(&self) -> Vec<WireRef> {
+        Vec::new()
+    }
+
+    /// Restore wires from a snapshot. Implementations must keep their transfer
+    /// ids monotonic past the imported set so a restored exchange never reuses
+    /// a bank reference.
+    fn import(&mut self, _wires: Vec<WireRef>) {}
 }
 
 /// In-memory gateway for tests and the demo flow. Wire ids are monotonic
@@ -57,6 +69,14 @@ impl SimulatedWireGateway {
     /// The full record, mirroring the bank statement.
     pub fn wires(&self) -> &HashMap<String, WireRef> {
         &self.wires
+    }
+
+    /// Restore a statement. `next_id` is advanced past every restored
+    /// `taler-wire:<n>` id so new transfers never collide with old ones.
+    pub fn from_wires(wires: Vec<WireRef>) -> Self {
+        let mut gw = Self::default();
+        gw.import(wires);
+        gw
     }
 }
 
@@ -84,6 +104,23 @@ impl WireGateway for SimulatedWireGateway {
 
     fn get(&self, wire_id: &str) -> Option<&WireRef> {
         self.wires.get(wire_id)
+    }
+
+    fn export(&self) -> Vec<WireRef> {
+        let mut wires: Vec<WireRef> = self.wires.values().cloned().collect();
+        wires.sort_by(|a, b| a.wire_id.cmp(&b.wire_id));
+        wires
+    }
+
+    fn import(&mut self, wires: Vec<WireRef>) {
+        for wire in wires {
+            if let Some(suffix) = wire.wire_id.strip_prefix("taler-wire:") {
+                if let Ok(n) = u64::from_str_radix(suffix, 16) {
+                    self.next_id = self.next_id.max(n);
+                }
+            }
+            self.wires.insert(wire.wire_id.clone(), wire);
+        }
     }
 }
 

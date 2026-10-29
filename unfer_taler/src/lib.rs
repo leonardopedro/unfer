@@ -38,5 +38,5 @@ pub use attribution::{AttributionEscrowState, AttributionService, FeeHold, OpenB
 pub use auction::{AuctionEscrowState, AuctionService, CreditHold, PaymentEscrow};
 pub use bondmarket::{BondMarketService, CollateralHold, InvestmentHold, PoolCoin};
 pub use denom::{Denomination, DenominationBook};
-pub use exchange::{PegOut, ReserveId, TalerExchange};
+pub use exchange::{ExchangeSnapshot, PegOut, ReserveId, TalerExchange};
 pub use wire::{SimulatedWireGateway, WireGateway, WireRef, WireStatus};

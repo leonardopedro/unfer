@@ -482,7 +482,19 @@ impl Zenodo {
     fn create_deposit(&self, project: &str) -> Result<(u64, String), String> {
         let url = format!("{}/deposit/depositions", self.cfg.base_url);
         let body = json!({"metadata": self.deposit_metadata(project)}).to_string();
-        let (code, text) = http::curl("POST", &url, &[(self.auth())], Some(body.as_bytes()), None)?;
+        // Zenodo rejects a JSON body without this header (415 "Invalid
+        // 'Content-Type' header"), and the local mock does not check — so the
+        // real API is what catches a missing one.
+        let (code, text) = http::curl(
+            "POST",
+            &url,
+            &[
+                (self.auth()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+            Some(body.as_bytes()),
+            None,
+        )?;
         if !(200..300).contains(&code) {
             return Err(format!("create deposit failed ({code}): {text}"));
         }

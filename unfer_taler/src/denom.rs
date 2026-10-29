@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 /// A face value the treasury will mint e-coins for, live until `expires_seq`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Denomination {
     pub value: u64,
     /// Last consensus seq at which this denomination may be withdrawn (inclusive);
@@ -53,6 +53,11 @@ impl DenominationBook {
     /// Every registered value (including expired ones).
     pub fn values(&self) -> impl Iterator<Item = u64> + '_ {
         self.entries.keys().copied()
+    }
+
+    /// Every entry (including expired ones), in value order.
+    pub fn entries(&self) -> impl Iterator<Item = &Denomination> + '_ {
+        self.entries.values()
     }
 }
 

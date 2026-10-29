@@ -138,7 +138,7 @@ impl SparseMerkle {
 }
 
 /// A certificate currently held (unspent) in the ledger.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Coin {
     pub coin_id: CertId,
     pub amount: u64,
@@ -167,7 +167,7 @@ pub fn nullifier_for(coin_id: &CertId) -> Nullifier {
 }
 
 /// Determines which authority is allowed to mint certificates.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MintAuthority {
     /// Minting is disabled (safe default).
     None,
@@ -200,6 +200,19 @@ impl Default for CertificateLedger {
     }
 }
 
+/// A serializable image of the ledger.
+///
+/// The sparse-Merkle tree is *not* stored node by node: it is rebuilt from the
+/// unspent set, which hashes to the identical root because insertion is
+/// deterministic. That keeps the image small and makes a restore verifiable
+/// (the caller can compare `root()` against a recorded one).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LedgerSnapshot {
+    pub mint_authority: MintAuthority,
+    pub utxos: Vec<Coin>,
+    pub spent: Vec<Nullifier>,
+}
+
 impl CertificateLedger {
     pub fn new(mint_authority: MintAuthority) -> Self {
         Self {
@@ -212,6 +225,32 @@ impl CertificateLedger {
 
     pub fn root(&self) -> [u8; 32] {
         self.smt.root()
+    }
+
+    /// A durable image of the ledger (see [`LedgerSnapshot`]).
+    pub fn snapshot(&self) -> LedgerSnapshot {
+        let mut utxos: Vec<Coin> = self.utxos.values().cloned().collect();
+        utxos.sort_by(|a, b| a.coin_id.0.cmp(&b.coin_id.0));
+        let mut spent: Vec<Nullifier> = self.spent.iter().copied().collect();
+        spent.sort_by(|a, b| a.0.cmp(&b.0));
+        LedgerSnapshot {
+            mint_authority: self.mint_authority.clone(),
+            utxos,
+            spent,
+        }
+    }
+
+    /// Rebuild a ledger from a snapshot. The sparse-Merkle root comes back
+    /// identical to the one the snapshot was taken from; the caller keeps its
+    /// own copy of the root to verify that.
+    pub fn from_snapshot(snapshot: &LedgerSnapshot) -> Self {
+        let mut ledger = Self::new(snapshot.mint_authority.clone());
+        for coin in &snapshot.utxos {
+            ledger.smt.insert(&coin.coin_id.0, coin.coin_id.0);
+            ledger.utxos.insert(coin.coin_id.0, coin.clone());
+        }
+        ledger.spent = snapshot.spent.iter().copied().collect();
+        ledger
     }
 
     pub fn unspent_count(&self) -> usize {

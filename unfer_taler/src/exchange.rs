@@ -22,7 +22,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use unfer_consensus::certs::{CertificateLedger, MintAuthority};
+use serde::{Deserialize, Serialize};
+use unfer_consensus::certs::{CertificateLedger, LedgerSnapshot, MintAuthority};
 use unfer_consensus::signing::Keypair;
 use unfer_protocol::{
     CertId, CertificateOp, CertificateOpKind, Code, CoinRef, ConsensusTransaction, Diagnostic,
@@ -37,7 +38,7 @@ use crate::wire::{WireGateway, WireRef, WireStatus};
 pub type ReserveId = [u8; 32];
 
 /// A peg-out wire in flight to a merchant's bank account.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegOut {
     pub wire: WireRef,
     pub merchant_did: String,
@@ -49,6 +50,33 @@ pub struct PegOut {
 struct Reserve {
     owner: String,
     balance: u64,
+}
+
+/// A durable image of the exchange's private (fiat-side) state plus its mirror
+/// of the certificate ledger and the emitted consensus log.
+///
+/// The treasury key is deliberately absent: a host keeps that secret in its own
+/// key file and passes the `Keypair` back on restore, so a state snapshot can
+/// be backed up without carrying signing material.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExchangeSnapshot {
+    /// The treasury DID the snapshot was taken with; restore refuses a
+    /// mismatch rather than silently serving a different mint authority.
+    pub treasury_did: String,
+    pub ledger: LedgerSnapshot,
+    pub denominations: Vec<Denomination>,
+    pub reserves: Vec<(String, String, u64)>,
+    pub merchant_balances: Vec<(String, u64)>,
+    pub funded: Vec<String>,
+    pub deposited: Vec<String>,
+    pub coin_blinding: Vec<(String, String)>,
+    pub peg_outs: Vec<PegOut>,
+    pub gateway_wires: Vec<WireRef>,
+    pub current_seq: u64,
+    pub funded_outstanding: u64,
+    pub fiat_in: u64,
+    pub fiat_out: u64,
+    pub ops: Vec<ConsensusTransaction>,
 }
 
 /// The GNU Taler exchange adapter.
@@ -108,6 +136,183 @@ impl TalerExchange {
         self.treasury.did()
     }
 
+    /// A durable image of every field this exchange owns (see
+    /// [`ExchangeSnapshot`]).
+    pub fn snapshot(&self) -> ExchangeSnapshot {
+        let mut reserves: Vec<(String, String, u64)> = self
+            .reserves
+            .iter()
+            .map(|(id, r)| (hex::encode(id), r.owner.clone(), r.balance))
+            .collect();
+        reserves.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut merchants: Vec<(String, u64)> = self
+            .merchant_balances
+            .iter()
+            .map(|(did, bal)| (did.clone(), *bal))
+            .collect();
+        merchants.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut funded: Vec<String> = self.funded.iter().map(hex::encode).collect();
+        funded.sort();
+        let mut deposited: Vec<String> = self.deposited.iter().map(hex::encode).collect();
+        deposited.sort();
+        let mut coin_blinding: Vec<(String, String)> = self
+            .coin_blinding
+            .iter()
+            .map(|(coin, blind)| (hex::encode(coin), hex::encode(blind)))
+            .collect();
+        coin_blinding.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut peg_outs: Vec<PegOut> = self.peg_outs.values().cloned().collect();
+        peg_outs.sort_by(|a, b| a.wire.wire_id.cmp(&b.wire.wire_id));
+        ExchangeSnapshot {
+            treasury_did: self.treasury.did(),
+            ledger: self.ledger.snapshot(),
+            denominations: self.book.entries().cloned().collect(),
+            reserves,
+            merchant_balances: merchants,
+            funded,
+            deposited,
+            coin_blinding,
+            peg_outs,
+            gateway_wires: self.gateway.export(),
+            current_seq: self.current_seq,
+            funded_outstanding: self.funded_outstanding,
+            fiat_in: self.fiat_in,
+            fiat_out: self.fiat_out,
+            ops: self.ops.clone(),
+        }
+    }
+
+    /// Restore an exchange from a snapshot. The gateway is seeded with the
+    /// wires the snapshot recorded so a pending peg-out can still be confirmed
+    /// or cancelled after a restart.
+    pub fn from_snapshot(
+        treasury: Keypair,
+        gateway: Box<dyn WireGateway>,
+        snap: &ExchangeSnapshot,
+    ) -> Result<Self, String> {
+        if snap.treasury_did != treasury.did() {
+            return Err(format!(
+                "snapshot belongs to {}, not {}",
+                snap.treasury_did,
+                treasury.did()
+            ));
+        }
+        let mut book = DenominationBook::new();
+        for d in &snap.denominations {
+            book.issue(d.value, d.expires_seq);
+        }
+        let mut gw = gateway;
+        gw.import(snap.gateway_wires.clone());
+        let mut reserves = HashMap::new();
+        for (id, owner, balance) in &snap.reserves {
+            let bytes = hex32(id).ok_or_else(|| format!("bad reserve id {id}"))?;
+            reserves.insert(
+                bytes,
+                Reserve {
+                    owner: owner.clone(),
+                    balance: *balance,
+                },
+            );
+        }
+        let exchange = Self {
+            ledger: CertificateLedger::from_snapshot(&snap.ledger),
+            book,
+            gateway: gw,
+            current_seq: snap.current_seq,
+            ops: snap.ops.clone(),
+            reserves,
+            merchant_balances: snap.merchant_balances.iter().cloned().collect(),
+            funded_outstanding: snap.funded_outstanding,
+            funded: snap.funded.iter().filter_map(|s| hex32(s)).collect(),
+            deposited: snap.deposited.iter().filter_map(|s| hex32(s)).collect(),
+            coin_blinding: snap
+                .coin_blinding
+                .iter()
+                .filter_map(|(c, b)| Some((hex32(c)?, hex32(b)?)))
+                .collect(),
+            fiat_in: snap.fiat_in,
+            fiat_out: snap.fiat_out,
+            peg_outs: snap
+                .peg_outs
+                .iter()
+                .map(|p| (p.wire.wire_id.clone(), p.clone()))
+                .collect(),
+            treasury,
+        };
+        exchange
+            .audit()
+            .map_err(|e| format!("restored state fails the fiat audit: {}", e.message))?;
+        Ok(exchange)
+    }
+
+    /// The consensus sequence the exchange has advanced to (denomination
+    /// expiry is measured against it).
+    pub fn current_seq(&self) -> u64 {
+        self.current_seq
+    }
+
+    /// Value inside e-coins minted by this exchange that are still in customer
+    /// hands (i.e. funded, not yet deposited).
+    pub fn funded_outstanding(&self) -> u64 {
+        self.funded_outstanding
+    }
+
+    /// A reserve's owner and remaining balance.
+    pub fn reserve(&self, reserve_id: &ReserveId) -> Option<(&str, u64)> {
+        self.reserves
+            .get(reserve_id)
+            .map(|r| (r.owner.as_str(), r.balance))
+    }
+
+    /// Every reserve, in id order (an audit/console view).
+    pub fn reserves(&self) -> Vec<(ReserveId, String, u64)> {
+        let mut out: Vec<(ReserveId, String, u64)> = self
+            .reserves
+            .iter()
+            .map(|(id, r)| (*id, r.owner.clone(), r.balance))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Every merchant fiat balance, in DID order.
+    pub fn merchants(&self) -> Vec<(String, u64)> {
+        let mut out: Vec<(String, u64)> = self
+            .merchant_balances
+            .iter()
+            .map(|(did, bal)| (did.clone(), *bal))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Whether this exchange minted the e-coin (and it is not deposited yet).
+    pub fn is_funded(&self, coin_id: &CertId) -> bool {
+        self.funded.contains(&coin_id.0)
+    }
+
+    /// Whether the e-coin was already deposited to a merchant.
+    pub fn is_deposited(&self, coin_id: &CertId) -> bool {
+        self.deposited.contains(&coin_id.0)
+    }
+
+    /// A peg-out wire by id.
+    pub fn peg_out_wire(&self, wire_id: &str) -> Option<&PegOut> {
+        self.peg_outs.get(wire_id)
+    }
+
+    /// Every peg-out, in wire-id order.
+    pub fn peg_outs(&self) -> Vec<PegOut> {
+        let mut out: Vec<PegOut> = self.peg_outs.values().cloned().collect();
+        out.sort_by(|a, b| a.wire.wire_id.cmp(&b.wire.wire_id));
+        out
+    }
+
+    /// The denomination book (including expired entries).
+    pub fn denominations(&self) -> Vec<Denomination> {
+        self.book.entries().cloned().collect()
+    }
+
     /// Fiat that arrived across the seam (confirmed peg-ins).
     pub fn fiat_in(&self) -> u64 {
         self.fiat_in
@@ -120,6 +325,13 @@ impl TalerExchange {
 
     pub fn ledger(&self) -> &CertificateLedger {
         &self.ledger
+    }
+
+    /// The bank-facing gateway, for a host that drives the two-phase seam
+    /// itself (e.g. a sandbox "incoming wire" endpoint). A production bank
+    /// backend belongs behind this seam either way.
+    pub fn gateway_mut(&mut self) -> &mut dyn WireGateway {
+        self.gateway.as_mut()
     }
 
     /// Every signed certificate op the exchange has emitted, in sequence.
@@ -303,6 +515,75 @@ impl TalerExchange {
         Ok(total)
     }
 
+    // -- certificates that are not fiat-backed e-coins -----------------------
+
+    /// Mint carbon certificates as the treasury (the mint authority) without a
+    /// reserve behind them. This is the asset side of the exchange: a UNFCCC
+    /// provenance reference is attached to the mint, and the value is backed by
+    /// the registry record rather than by fiat. It does not change any
+    /// fiat-side balance, so the conservation audit is unaffected.
+    pub fn mint_certificate(
+        &mut self,
+        amount: u64,
+        owner: &str,
+        blinding: &[u8; 32],
+        source: Option<String>,
+    ) -> Result<CertId, Diagnostic> {
+        self.current_seq += 1;
+        let seq = self.current_seq;
+        let kind = CertificateOpKind::Mint {
+            amount,
+            owner: owner.to_string(),
+            blinding: *blinding,
+            source,
+        };
+        let op = CertificateOp {
+            did: self.treasury.did(),
+            kind,
+            seq,
+            signature: [0u8; 64],
+        };
+        let mut ids = self.push_op(op, &self.treasury.clone())?;
+        Ok(ids.swap_remove(0))
+    }
+
+    /// Transfer certificates owned by `owner` to another DID. `outputs` are
+    /// `(amount, new_owner)` pairs and must conserve the input total.
+    pub fn transfer_certificate(
+        &mut self,
+        owner: &Keypair,
+        inputs: &[CoinRef],
+        outputs: &[(u64, String)],
+    ) -> Result<Vec<CertId>, Diagnostic> {
+        if outputs.is_empty() {
+            return Err(diag(
+                Code::CERT_AMOUNT_MISMATCH,
+                "a transfer needs at least one output",
+            ));
+        }
+        self.current_seq += 1;
+        let seq = self.current_seq;
+        let outs: Vec<CoinRef> = outputs
+            .iter()
+            .map(|(amount, to)| CoinRef {
+                coin_id: CertId([0u8; 32]),
+                amount: *amount,
+                owner: to.clone(),
+            })
+            .collect();
+        let kind = CertificateOpKind::Transfer {
+            inputs: inputs.to_vec(),
+            outputs: outs,
+        };
+        let op = CertificateOp {
+            did: owner.did(),
+            kind,
+            seq,
+            signature: [0u8; 64],
+        };
+        self.push_op(op, owner)
+    }
+
     pub fn merchant_balance(&self, merchant_did: &str) -> u64 {
         self.merchant_balances
             .get(merchant_did)
@@ -424,6 +705,11 @@ impl TalerExchange {
         self.ops.push(tx);
         self.ledger.apply_op(&op.did, &op.kind, op.seq)
     }
+}
+
+fn hex32(s: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(s).ok()?;
+    bytes.as_slice().try_into().ok()
 }
 
 fn withdraw_blinding(reserve_id: &ReserveId, amount: u64, seq: u64) -> [u8; 32] {
@@ -691,6 +977,73 @@ mod tests {
         ex.current_seq += 11; // now past seq 10
         let err = ex.withdraw(reserve, 25).unwrap_err();
         assert_eq!(err.code, Code::TALER_DENOM_UNSUPPORTED);
+    }
+
+    #[test]
+    fn snapshot_round_trips_and_keeps_pending_wires_actionable() {
+        let treasury = Keypair::from_bytes(&[7u8; 32]);
+        let mut ex = TalerExchange::new(
+            treasury.clone(),
+            Box::new(SimulatedWireGateway::new()),
+        );
+        ex.issue_denomination(100, u64::MAX);
+        ex.issue_denomination(500, 1_000);
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
+        let reserve = rid(11);
+        let mut gw = SimulatedWireGateway::new();
+        fund(&mut ex, &mut gw, reserve, &alice.did());
+        let coin = ex.withdraw(reserve, 500).unwrap();
+        ex.deposit(
+            &alice,
+            &[CoinRef {
+                coin_id: coin,
+                amount: 500,
+                owner: alice.did(),
+            }],
+            &bob.did(),
+        )
+        .unwrap();
+        let peg = ex.peg_out(&bob.did(), 200, "DE99 bank").unwrap();
+        let root = ex.ledger().root();
+        let supply = ex.ledger().total_supply();
+
+        // Through JSON, as a host persists it.
+        let json = serde_json::to_string(&ex.snapshot()).unwrap();
+        let snap: ExchangeSnapshot = serde_json::from_str(&json).unwrap();
+        let mut restored = TalerExchange::from_snapshot(
+            treasury.clone(),
+            Box::new(SimulatedWireGateway::new()),
+            &snap,
+        )
+        .unwrap();
+
+        assert_eq!(restored.ledger().root(), root);
+        assert_eq!(restored.ledger().total_supply(), supply);
+        assert_eq!(restored.reserve(&reserve), ex.reserve(&reserve));
+        assert_eq!(restored.merchant_balance(&bob.did()), 300);
+        assert_eq!(restored.ops().len(), ex.ops().len());
+        assert_eq!(restored.current_seq(), ex.current_seq());
+        assert!(restored.audit().is_ok());
+
+        // The pending wire survived: it can still be confirmed after restore,
+        // and the restored gateway allocates ids past the imported ones.
+        restored.confirm_peg_out(&peg.wire.wire_id).unwrap();
+        assert!(restored.peg_out_wire(&peg.wire.wire_id).unwrap().confirmed);
+        let next = restored.peg_out(&bob.did(), 100, "DE99 bank").unwrap();
+        assert_ne!(next.wire.wire_id, peg.wire.wire_id);
+        assert!(restored.audit().is_ok());
+
+        // A snapshot restored under a different treasury is refused.
+        let other = Keypair::from_bytes(&[9u8; 32]);
+        assert!(
+            TalerExchange::from_snapshot(
+                other,
+                Box::new(SimulatedWireGateway::new()),
+                &snap
+            )
+            .is_err()
+        );
     }
 
     proptest::proptest! {

@@ -1,0 +1,39 @@
+[Unit]
+Description=mm0 proof service (verify mm0 developments, publish them to a Zenodo project deposit)
+Documentation=file:%h/Projects/unfer/mm0web/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/unfer
+# systemd's default PATH does not include ~/.local/bin, where the checkers live.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/mm0web/mm0web.env
+# Loopback only: the exchange reaches it on the same host, and a public
+# listener would be an explicit --bind 0.0.0.0 change here.
+ExecStart=%h/Projects/unfer/target/release/mm0web \
+    --bind ${MM0WEB_LISTEN} \
+    --state ${MM0WEB_STATE_DIR}
+
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+# The checker runs two subprocesses per submission and writes only its state
+# directory and a scratch tree under it.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/mm0web
+ReadOnlyPaths=%h/Projects/unfer
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=default.target
