@@ -111,11 +111,20 @@ EXCLUDE_FILES=(
 # forced onto a ledger row.
 #
 # Retired 2026-10-28 (usage-audited: -v showed these matching zero hits):
-# engram.md x2, the PROJECT_REVIEW_AND_IMPROVEMENT_PLAN entry and the two
-# timepiece/math/OAI class-1 rows all name files that no longer exist (the
-# Downloads -> converted migration moved them), and `^PLAN_*.md`'s root-plan
-# tier-2 hits all resolve via ledger tokens / cross-refs today. Re-add only
-# with a fresh -v audit.
+# engram.md x2 and the two timepiece/math/OAI class-1 rows all name files
+# that no longer exist (the Downloads -> converted migration moved them).
+# Re-add only with a fresh -v audit.
+#
+# Re-added 2026-10-29: the two root-doc entries (`^PLAN_*.md`,
+# PROJECT_REVIEW) return with the workspace root. The 10-28 retirement called
+# their zero hits current fact -- but that audit ran while the root ledger and
+# the root plan docs were MISSING from the workspace, so the root docs were
+# not scanned at all; a zero-hit under a scan that omits the files is not an
+# exemption that stopped matching. On restore the hits came back, and they
+# are exactly what these entries were written for: policy text quoting the
+# phrase verbatim, and prose math derivations. The Downloads entry's 2026-10-20
+# path note also completes today: the pre-migration Downloads copy was finally
+# removed 2026-10-29 (owner's recorded 2026-10-20 decision).
 ALLOW=(
   '^test/(numerics|basics|book|numerical-physics|the-program)/ :: .* :: 2 :: prose site: literature/economics/physics derivations, citations not adaptation claims'
   '^test/README.md$ :: .* :: 2 :: site meta prose'
@@ -138,6 +147,8 @@ ALLOW=(
   '^emthin/crates/emthin/src/state/ime.rs$ :: Cache key derived from|based on (cache alone|the new focus) :: * :: internal routing comments'
   '^emthin/crates/emthin/src/grabs.rs$ :: based on the edge :: * :: resize-axis arithmetic'
   '^emthin/docs/REWRITE_PLAN.md$ :: A key derived from something other than :: * :: key-derivation design note'
+  '^PLAN_.*\.md$ :: .* :: 2 :: root plans: mathematical derivations'
+  '^PROJECT_REVIEW_AND_IMPROVEMENT_PLAN\.md$ :: this tree .*adapted from :: * :: quotes policy #4 itself (the rule, not a claim)'
   '^unfer/docs/IMPLEMENTATION_PLAN\.md$ :: ported from .mathed :: * :: internal port of velysterm own glyph index (the module is mathed::glyphs), not an external source'
   '^unfer/docs/PLAN_REFI_EXCHANGE\.md$ :: Adapted from the 6-phase :: * :: the owner confirmed 2026-10-07 this is their own earlier plan; in-house, not a third-party source'
   # Generator boilerplate: the skeleton-subtraction pass stamps every emitted
