@@ -2829,7 +2829,10 @@ dependencies = [
 name = "mm0web"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "serde_json",
+ "sha2",
+ "unfer_measure",
 ]
 
 [[package]]
@@ -5532,6 +5535,16 @@ dependencies = [
  "serde_json",
  "unfer_consensus",
  "unfer_protocol",
+]
+
+[[package]]
+name = "unfer_measure"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

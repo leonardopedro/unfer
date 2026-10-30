@@ -7,3 +7,13 @@ description = "mm0 proof webservice — verify submitted proofs, publish them to
 
 [dependencies]
 serde_json = { workspace = true }
+# The svcmux-bundle-v1 measurement, shared with refi so both webservers'
+# /attestation answers come from one canonical implementation (and both
+# pin the vectors svcmux pins).
+unfer_measure = { path = "../unfer_measure" }
+
+[dev-dependencies]
+# Recompute bindings in tests the way a verifier does — raw sha2, not via
+# the crate under test.
+sha2 = "0.10"
+hex = "0.4"

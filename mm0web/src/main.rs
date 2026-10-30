@@ -106,6 +106,7 @@ fn main() {
         audit: audit.clone(),
         publisher: Arc::new(Publisher::spawn(store.clone(), audit.clone())),
         daily: Arc::new(DailyCap::new(daily_cap, Duration::from_secs(24 * 3600))),
+        listen: bind.clone(),
     };
 
     std::fs::create_dir_all(&cfg.store.state_dir).expect("create state dir");

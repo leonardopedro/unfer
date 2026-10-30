@@ -39,6 +39,10 @@ pub struct Config {
     pub publisher: Arc<Publisher>,
     /// Rolling per-client cap on *new* proofs per day.
     pub daily: Arc<DailyCap>,
+    /// The address the listener was asked to bind. Part of the service's
+    /// svcmux bundle: the supervisor's manifest records the same string, so
+    /// a port change rotates this service's digest and nobody else's.
+    pub listen: String,
 }
 
 impl Default for Config {
@@ -59,6 +63,7 @@ impl Default for Config {
             audit,
             publisher,
             daily: Arc::new(DailyCap::new(DAILY_DEFAULT, Duration::from_secs(24 * 3600))),
+            listen: "127.0.0.1:8080".to_string(),
         }
     }
 }
@@ -187,6 +192,7 @@ pub fn handle(req: &Request, cfg: &Config, limiter: &RateLimiter) -> Response {
         ("GET", "/proof") => get_proof(req, cfg),
         ("GET", "/proofs") => list_proofs(req, cfg),
         ("GET", "/status") => get_status(req, cfg),
+        ("GET", "/attestation") => attestation(req, cfg),
         ("GET", "/events") => get_events(req, cfg),
         ("POST", "/verify") | ("POST", "/api/v1/verify") => {
             verify_or_publish(req, cfg, limiter, false)
@@ -201,6 +207,48 @@ pub fn handle(req: &Request, cfg: &Config, limiter: &RateLimiter) -> Response {
         ),
         _ => (404, "text/plain".to_string(), b"not found\n".to_vec()),
     }
+}
+
+/// This service's own measurement, nonce-bound: the outside-in view
+/// (`svcmux`'s manifest) checked against the inside-out one. The canonical
+/// `svcmux-bundle-v1` form lives in `unfer_measure`, which pins the same
+/// vectors the supervisor does — so the two measurements must agree, and a
+/// disagreement means something changed underneath one of them.
+fn attestation(req: &Request, cfg: &Config) -> Response {
+    const MAX_NONCE: usize = 512;
+    let nonce = match req.query.get("nonce") {
+        Some(n) if !n.is_empty() && n.len() <= MAX_NONCE => n.clone(),
+        _ => {
+            return (
+                400,
+                "text/plain; charset=utf-8".to_string(),
+                format!("attestation requires ?nonce=<challenge> (1..{MAX_NONCE} bytes)\n")
+                    .into_bytes(),
+            )
+        }
+    };
+    let state = cfg.store.state_dir.to_string_lossy().into_owned();
+    let identity = unfer_measure::Identity {
+        id: "mm0web",
+        state_root: &state,
+        listen: &cfg.listen,
+        env_prefixes: &["MM0WEB_", "ZENODO_"],
+    };
+    let bundle = match unfer_measure::Bundle::for_service(&identity) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                500,
+                "text/plain; charset=utf-8".to_string(),
+                format!("measurement failed: {e}\n").into_bytes(),
+            )
+        }
+    };
+    let binding = unfer_measure::attestation_binding(&bundle.bundle, &nonce);
+    let mut body = serde_json::to_value(&bundle).unwrap_or(serde_json::Value::Null);
+    body["nonce"] = serde_json::json!(nonce);
+    body["binding"] = serde_json::json!(binding);
+    (200, "application/json".to_string(), body.to_string().into_bytes())
 }
 
 fn healthz(cfg: &Config) -> Response {
@@ -774,6 +822,34 @@ mod tests {
     }
 
     #[test]
+    fn attestation_binds_the_nonce_to_this_processes_bundle() {
+        let cfg = Config::default();
+        let rl = RateLimiter::new(100, Duration::from_millis(10));
+        let resp = handle(&req("GET", "/attestation?nonce=challenge-1", ""), &cfg, &rl);
+        assert_eq!(resp.0, 200, "{}", String::from_utf8_lossy(&resp.2));
+        let v: serde_json::Value = serde_json::from_slice(&resp.2).expect("JSON answer");
+        assert_eq!(v["spec"], "svcmux-bundle-v1");
+        assert_eq!(v["id"], "mm0web");
+        for k in ["binary_sha256", "config_sha256", "bundle"] {
+            assert_eq!(
+                v[k].as_str().unwrap_or("").len(),
+                64,
+                "{k} must be a hex sha256"
+            );
+        }
+        // Recompute the binding the way a verifier does — raw sha2 over the
+        // served digest, not through the crate that produced it.
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(v["bundle"].as_str().unwrap().as_bytes());
+        h.update([0]);
+        h.update(b"challenge-1");
+        assert_eq!(v["binding"], hex::encode(h.finalize()), "nonce binds digest");
+        // No nonce, no statement: an unbound answer would replay trivially.
+        assert_eq!(handle(&req("GET", "/attestation", ""), &cfg, &rl).0, 400);
+    }
+
+    #[test]
     fn a_missing_project_is_a_bad_request() {
         let cfg = Config::default();
         let rl = RateLimiter::new(100, Duration::from_millis(10));
@@ -824,6 +900,7 @@ mod tests {
                 Arc::new(Audit::new(&dir)),
             )),
             daily: Arc::new(DailyCap::new(DAILY_DEFAULT, Duration::from_secs(24 * 3600))),
+            listen: "127.0.0.1:0".to_string(),
         }
     }
 
