@@ -1,0 +1,13 @@
+[package]
+name = "unfer_measure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "svcmux-bundle-v1 — the canonical per-service bundle digest: the same bytes the confidential guest's supervisor (svcmux), its webservices and australVM's rs_service_bundle each recompute independently."
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
