@@ -244,6 +244,17 @@ then verifies every one. For a claim the emitter cannot close, the `.goal` file
 is the goal statement to hand back, and `--hint` is how the answer returns. That
 is the loop: **the LLM proposes, MM0 disposes.**
 
+The endpoint is any OpenAI-shaped server, so "the model" can be a hosted key, a
+local vLLM, or — through `scripts/llm_proxy` — an out-of-band answerer: the
+proxy parks each request in a state dir (`/tmp/llm/req.json` by default,
+`LLM_PROXY_STATE` to relocate, port from `argv[1]`), waits for `ans.json`, and
+serves it as the reply. That is how an agent or a person answers the *real*
+pipeline prompt by hand — write `ans.json` and the seam continues. The same
+deferred flow runs in `tests/mm0.rs` against a private state dir and an
+ephemeral port, so the transport → parse → judge path has a regression
+test with no hosted service in it: the proposals arrive over HTTP and are still
+judged only by mm0-rs.
+
 ## Checked against existing MM0 theorems
 
 `logos/mm0/upstream.txt` is a second corpus, and its sentences were not written

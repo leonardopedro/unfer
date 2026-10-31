@@ -253,6 +253,171 @@ fn hints_are_judged_not_believed() {
     );
 }
 
+/// The `--llm` seam against a *deferred* endpoint, end to end.
+///
+/// `scripts/llm_proxy` receives the pipeline's real prompt, parks it on disk,
+/// and answers only once an out-of-band model writes `ans.json`. The test
+/// itself plays that model here — the same files let an agent (or a person)
+/// answer by hand, which is how this seam gets run live, with a real model
+/// reasoning about the actual goal. What is pinned is the contract the loop
+/// rests on: the goal really goes out over the OpenAI transport, the model's
+/// proposals really come back through it, and their fate is mm0-rs's judgment
+/// — named in the verdict either way — never a claim made by the transport.
+#[cfg(feature = "llm-http")]
+#[test]
+fn the_deferred_proxy_carries_model_proposals_into_judgment() {
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    if !tools() {
+        return;
+    }
+    if Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping: `python3` is not on PATH; deferred-proxy seam not run");
+        return;
+    }
+
+    // Kill whatever is still running if an assertion trips mid-flight.
+    struct Kills(Vec<Child>);
+    impl Drop for Kills {
+        fn drop(&mut self) {
+            for c in &mut self.0 {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+    let state = tempfile::tempdir().expect("scratch state dir");
+    let slurp = |name: &str| {
+        std::fs::read_to_string(state.path().join(name)).unwrap_or_default()
+    };
+    // Claim a loopback port and release it: unique per run, so parallel tests
+    // cannot collide on the default port.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a free loopback port")
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let proxy_log = std::fs::File::create(state.path().join("proxy.log")).expect("log");
+    let proxy = Command::new("python3")
+        .arg(format!(
+            "{}/../scripts/llm_proxy",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg(port.to_string())
+        .env("LLM_PROXY_STATE", state.path())
+        .stderr(Stdio::from(proxy_log))
+        .spawn()
+        .expect("the proxy runs");
+    let mut kids = Kills(vec![proxy]);
+
+    let mut listening = false;
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            listening = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        listening,
+        "the proxy never listened: {}",
+        slurp("proxy.log")
+    );
+
+    let ask_out = std::fs::File::create(state.path().join("ask.out")).expect("log");
+    let ask_err = std::fs::File::create(state.path().join("ask.err")).expect("log");
+    kids.0.push(
+        Command::new(env!("CARGO_BIN_EXE_logos"))
+            .args([
+                "mm0", "ask", "for all x, y: x times y equals y times x", "--llm",
+            ])
+            .env("OPENAI_BASE_URL", format!("http://127.0.0.1:{port}/v1"))
+            .env("OPENAI_API_KEY", "deferred-proxy-test")
+            .env("OPENAI_MODEL", "deferred-model")
+            .stdout(Stdio::from(ask_out))
+            .stderr(Stdio::from(ask_err))
+            .spawn()
+            .expect("logos runs"),
+    );
+
+    // The seam's first half: the *real* prompt lands on disk.
+    for _ in 0..150 {
+        if state.path().join("req.ready").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let request = std::fs::read_to_string(state.path().join("req.json")).unwrap_or_else(|e| {
+        panic!(
+            "no request reached the proxy: {e}\nproxy: {}\nask: {}",
+            slurp("proxy.log"),
+            slurp("ask.err")
+        )
+    });
+    assert!(
+        request.contains("You are helping close a goal")
+            && request.contains("logos_math"),
+        "the system prompt went out: {request}"
+    );
+    assert!(
+        request.contains(
+            "teq (tapp (tapp tprim_mul v_x) v_y) (tapp (tapp tprim_mul v_y) v_x)"
+        ),
+        "the goal went out: {request}"
+    );
+
+    // The model's turn: two proposals, most promising first.
+    let reply = serde_json::json!({
+        "id": "chatcmpl-deferred",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deferred-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "[\"(eq_sym (mul_s))\", \"(bogus_mul_comm v_x v_y)\"]"
+            },
+            "finish_reason": "stop"
+        }],
+    });
+    std::fs::write(state.path().join("ans.json"), reply.to_string())
+        .expect("the answer is written");
+
+    // …and the seam's second half: judgment, not belief.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = kids.0[1].try_wait().expect("logos status") {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("`mm0 ask --llm` never finished\nask: {}", slurp("ask.err"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(status.code(), Some(1), "unproved exits 1, got {status}");
+
+    let mut verdict = slurp("ask.out");
+    verdict.push_str(&slurp("ask.err"));
+    assert!(verdict.contains("verdict: unproved"), "{verdict}");
+    // Both model-supplied terms were carried into the judged candidate list
+    // and named after failing elaboration — the transport vouches for nothing.
+    for term in ["(eq_sym (mul_s))", "(bogus_mul_comm v_x v_y)"] {
+        assert!(
+            verdict.contains(term),
+            "proposal not judged and named: {term}\n{verdict}"
+        );
+    }
+    assert!(verdict.contains("no candidate typechecked"), "{verdict}");
+}
+
 #[test]
 fn the_upstream_corpus_parses() {
     // `unfer/logos/mm0/upstream.txt` rewrites theorems from MM0's Peano
