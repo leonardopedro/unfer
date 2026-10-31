@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""OpenAI-shaped /chat/completions endpoint that defers to an out-of-band model.
+
+Saves each incoming request to $LLM_PROXY_STATE/req.json (default /tmp/llm),
+drops req.ready, then blocks until ans.json appears and serves that verbatim as
+the model's reply. Two ways to be the model behind `logos ... --llm`:
+
+* **manually / as an agent**: run this, point the seam at it
+  (`OPENAI_BASE_URL=http://127.0.0.1:PORT/v1`), watch `req.json` for the real
+  pipeline prompt, write `ans.json` from wherever you like — that is how an
+  agent plays the LLM in the test loop;
+* **in a test**: spawn this with a private state dir (`LLM_PROXY_STATE`) and
+  an ephemeral port (`argv[1]`, default 8100); the test itself writes
+  `ans.json` after asserting on `req.json`.
+
+Either way the seam under test is the real transport: one
+`POST {base_url}/chat/completions`, one OpenAI-shaped reply.
+"""
+import http.server
+import os
+import sys
+import time
+
+STATE = os.environ.get("LLM_PROXY_STATE", "/tmp/llm")
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8100
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        sys.stderr.write("[proxy] %s\n" % (fmt % args))
+        sys.stderr.flush()
+
+    def _reply(self, code, body, ctype="application/json"):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        if not self.path.rstrip("/").endswith("/chat/completions"):
+            self._reply(404, b'{"error":"unknown path"}')
+            return
+        n = int(self.headers.get("Content-Length", 0))
+        req = self.rfile.read(n)
+        with open(os.path.join(STATE, "req.json"), "wb") as f:
+            f.write(req)
+        open(os.path.join(STATE, "req.ready"), "w").close()
+        sys.stderr.write("[proxy] request stored, waiting for ans.json\n")
+        sys.stderr.flush()
+
+        ans = os.path.join(STATE, "ans.json")
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            if os.path.exists(ans):
+                time.sleep(0.05)  # let the writer finish flushing
+                with open(ans, "rb") as f:
+                    body = f.read()
+                os.remove(ans)
+                os.remove(os.path.join(STATE, "req.ready"))
+                self._reply(200, body)
+                return
+            time.sleep(0.2)
+        self._reply(504, b'{"error":"model never answered"}')
+
+    def do_GET(self):
+        self._reply(200, b'{"ok":true}')
+
+
+if __name__ == "__main__":
+    os.makedirs(STATE, exist_ok=True)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    sys.stderr.write("[proxy] listening on 127.0.0.1:%d (state %s)\n" % (PORT, STATE))
+    sys.stderr.flush()
+    srv.serve_forever()
