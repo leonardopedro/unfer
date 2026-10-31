@@ -48,6 +48,7 @@
 
 pub mod audit;
 pub mod checker;
+pub mod embed;
 pub mod graph;
 pub mod http;
 pub mod publisher;

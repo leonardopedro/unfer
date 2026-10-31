@@ -26,11 +26,16 @@
 
 use crate::dagviz::{self, escape};
 use crate::formalize::completer::{self, CompleteOptions, CompleteReport};
+use crate::formalize::embed::{Embedder, HashingEmbedder};
 use crate::formalize::formalizer::{self, CnlFormalization, DomainLexicon, FormalizeOptions};
 use crate::formalize::graph::{self, Validated};
+use crate::formalize::hybrid::{self, LemmaIndex, XerjNode};
+use crate::formalize::index::IndexParams;
 use crate::formalize::llm::{LlmClient, LlmConfig, Transport};
 use crate::formalize::memory::{self, LemmaStore};
 use crate::formalize::score::{self, Aggregation, LogosScore};
+#[cfg(feature = "llm-http")]
+use crate::formalize::embed::HttpEmbedder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -56,6 +61,68 @@ pub struct PipelineOptions {
     pub lexicon: Option<PathBuf>,
     /// Refute rather than prove.
     pub prove_negation: bool,
+    /// How few-shot examples reach the formalizer's prompt (P3/P9).
+    pub retrieval: RetrievalOptions,
+}
+
+/// Which few-shot retrieval arms run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalMode {
+    /// Statement/CNL vocabulary overlap (`memory::retrieve_lexical`).
+    /// Offline, deterministic, the default.
+    #[default]
+    Lexical,
+    /// RRF fusion of the lexical arm, a semantic arm over the LEANN-shaped
+    /// lemma index, and a xerj node when one is configured
+    /// (`formalize::hybrid`).
+    Hybrid,
+}
+
+/// Retrieval configuration: flags, with env fallbacks (`UNFER_*`) applied
+/// by the CLI. Nothing here has a network dependency until `embed_url` or
+/// `xerj_url` is set — `hybrid` with neither runs the semantic arm on
+/// lexical feature hashing, which the report states as such.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalOptions {
+    pub mode: RetrievalMode,
+    /// OpenAI-compatible `/embeddings` base URL — EmbeddingGemma 2 through
+    /// llama.cpp/Ollama/TEI. `None` = lexical hashing (labelled `lexical`,
+    /// never `semantic`).
+    #[serde(default)]
+    pub embed_url: Option<String>,
+    /// Model field sent to `embed_url`, and the id reported with every hit.
+    #[serde(default = "default_embed_model")]
+    pub embed_model: String,
+    /// Matryoshka truncation (768/512/256/128); 0 = native.
+    #[serde(default)]
+    pub embed_dims: usize,
+    /// A running xerj node — its ranking joins the fusion as an arm.
+    #[serde(default)]
+    pub xerj_url: Option<String>,
+    #[serde(default = "default_xerj_index")]
+    pub xerj_index: String,
+}
+
+fn default_embed_model() -> String {
+    "embeddinggemma-2".into()
+}
+
+fn default_xerj_index() -> String {
+    "lemmas".into()
+}
+
+impl Default for RetrievalOptions {
+    fn default() -> Self {
+        RetrievalOptions {
+            mode: RetrievalMode::default(),
+            embed_url: None,
+            embed_model: default_embed_model(),
+            embed_dims: 0,
+            xerj_url: None,
+            xerj_index: default_xerj_index(),
+        }
+    }
 }
 
 impl Default for PipelineOptions {
@@ -69,6 +136,7 @@ impl Default for PipelineOptions {
             aggregation: Aggregation::Katz,
             lexicon: None,
             prove_negation: false,
+            retrieval: RetrievalOptions::default(),
         }
     }
 }
@@ -93,10 +161,43 @@ pub struct PipelineReport {
     pub completion: Option<CompleteReport>,
     pub score: Option<LogosScore>,
     pub memory: memory::StoreStats,
+    /// What retrieval did: which arms, which model, how many examples the
+    /// prompts actually carried. A run that claims to be retrieval-augmented
+    /// has to say what retrieved.
+    #[serde(default)]
+    pub retrieval: RetrievalReport,
     /// Words in the lexicon in force.
     pub lexicon_words: usize,
     /// Whether a domain extension was applied.
     pub extended_lexicon: bool,
+}
+
+/// What retrieval did during the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RetrievalReport {
+    pub mode: RetrievalMode,
+    /// `model@dims` of the semantic arm's embedder; `None` in lexical mode.
+    #[serde(default)]
+    pub embedder: Option<String>,
+    /// `base/index` of a xerj node when its arm was configured.
+    #[serde(default)]
+    pub xerj: Option<String>,
+    /// Few-shot examples actually rendered into prompts (a cache hit asks
+    /// for none).
+    #[serde(default)]
+    pub examples: usize,
+}
+
+impl Default for RetrievalReport {
+    fn default() -> Self {
+        RetrievalReport {
+            mode: RetrievalMode::default(),
+            embedder: None,
+            xerj: None,
+            examples: 0,
+        }
+    }
 }
 
 impl PipelineReport {
@@ -209,6 +310,12 @@ pub fn run_pipeline<T: Transport>(
     let extended_lexicon = lexicon.is_extended();
     let lexicon = lexicon.lexicon();
 
+    // Retrieval setup (P3/P9). Lexical needs nothing; hybrid builds the
+    // LEANN-shaped index over the store's lemmas once, before any node runs,
+    // and grows it as the run remembers new lemmas.
+    let mut retrieval = RetrievalCtx::new(&opts.retrieval, store)?;
+    let mut examples_served = 0usize;
+
     // Graph stage. A JSON input is read from disk; a proof is generated, which
     // is the one stage that cannot be skipped.
     let (mut graph, input_kind) = if looks_like_graph_json(input) {
@@ -232,6 +339,9 @@ pub fn run_pipeline<T: Transport>(
         // Retrieval-augmented: P3's few-shot examples are the whole reason the
         // store exists, so the dependency CNL is offered by default here.
         include_dependency_cnl: true,
+        // Base value only — every node gets its own block, computed just
+        // before it formalizes (a cache-hit node asks for none).
+        few_shot: String::new(),
     };
 
     // Formalization, in topological order so a dependency's UNF is known before
@@ -256,13 +366,25 @@ pub fn run_pipeline<T: Transport>(
         };
         let cached = store.lookup_provenance(&cache_key).cloned();
 
+        // Few-shot examples, only for a node that will actually ask the
+        // model: a cache hit needs no example, and retrieval is a query per
+        // node (one batched embed call per hop over the lemma index).
+        let examples = if cached.is_none() {
+            retrieval.examples_for(store, &node)
+        } else {
+            Vec::new()
+        };
+        let mut node_opts = formalize_opts.clone();
+        node_opts.few_shot = memory::few_shot_block(&examples);
+        examples_served += examples.len();
+
         let result = match &cached {
             Some(lemma) => Ok(lemma.to_formalization()),
             None if opts.no_verify => {
-                formalizer::formalize_node(&node, &deps, llm, lexicon, &formalize_opts)
+                formalizer::formalize_node(&node, &deps, llm, lexicon, &node_opts)
             }
             None => {
-                formalizer::formalize_node_verified(&node, &deps, llm, lexicon, &formalize_opts)
+                formalizer::formalize_node_verified(&node, &deps, llm, lexicon, &node_opts)
             }
         };
 
@@ -284,6 +406,11 @@ pub fn run_pipeline<T: Transport>(
                 // §17.4: no unique normal form, no content address.
                 if f.verified && cached.is_none() {
                     let _ = store.remember(&node, &f, &model, PROMPT_VERSION);
+                    // Keep the hybrid index current with what was just
+                    // remembered — an incremental insert recomputes and
+                    // drops vectors, so the store can grow all run without
+                    // the index growing at rest.
+                    retrieval.index_lemma(store, &f.unf_hash);
                 }
                 graph.nodes[i].formalization = Some(serde_json::to_value(&f).map_err(|e| {
                     PipelineError::Formalize(format!("a formalization did not serialize: {e}"))
@@ -349,11 +476,19 @@ pub fn run_pipeline<T: Transport>(
     Ok((
         PipelineReport {
             input_kind,
-            warnings: graph.warnings.iter().map(|w| w.to_string()).collect(),
+            warnings: {
+                let mut w: Vec<String> = graph.warnings.iter().map(|w| w.to_string()).collect();
+                w.extend(retrieval.warnings.iter().cloned());
+                w
+            },
             nodes,
             completion,
             score: scored,
             memory: store.stats().clone(),
+            retrieval: RetrievalReport {
+                examples: examples_served,
+                ..retrieval.report.clone()
+            },
             lexicon_words: lexicon.word_count(),
             extended_lexicon,
         },
@@ -365,6 +500,124 @@ pub fn run_pipeline<T: Transport>(
 /// key (§17.3). Kept as a constant so a prompt edit and a cache invalidation are
 /// the same commit.
 pub const PROMPT_VERSION: &str = "v1";
+
+/// How many examples each arm offers per node. Three: enough for the model
+/// to see a pattern, few enough that the prompt stays about *this* node —
+/// and RRF over three arms with k=60 still separates rank 1 from rank 3.
+const RETRIEVAL_K: usize = 3;
+
+/// The retrieval configuration turned into running state: what was set up,
+/// and what the report should say about it.
+struct RetrievalCtx {
+    report: RetrievalReport,
+    embedder: Option<Box<dyn Embedder>>,
+    index: Option<LemmaIndex>,
+    xerj: Option<XerjNode>,
+    /// Non-fatal retrieval problems (an insert that failed mid-run). They
+    /// are surfaced as report warnings rather than swallowed: a run whose
+    /// index quietly stopped tracking the store must say so.
+    warnings: Vec<String>,
+}
+
+impl RetrievalCtx {
+    fn new(opts: &RetrievalOptions, store: &LemmaStore) -> Result<Self, PipelineError> {
+        match opts.mode {
+            RetrievalMode::Lexical => Ok(RetrievalCtx {
+                report: RetrievalReport::default(),
+                embedder: None,
+                index: None,
+                xerj: None,
+                warnings: Vec::new(),
+            }),
+            RetrievalMode::Hybrid => {
+                let embedder = build_embedder(opts)?;
+                let index = LemmaIndex::build(store, embedder.as_ref(), IndexParams::default())
+                    .map_err(|e| PipelineError::Formalize(format!("retrieval index: {e}")))?;
+                let xerj = opts
+                    .xerj_url
+                    .as_ref()
+                    .map(|u| XerjNode::new(u.clone(), opts.xerj_index.clone()));
+                Ok(RetrievalCtx {
+                    report: RetrievalReport {
+                        mode: RetrievalMode::Hybrid,
+                        embedder: Some(format!("{}@{}", embedder.id(), embedder.dims())),
+                        xerj: opts
+                            .xerj_url
+                            .as_ref()
+                            .map(|u| format!("{u}/{}", opts.xerj_index)),
+                        examples: 0,
+                    },
+                    embedder: Some(embedder),
+                    index: Some(index),
+                    xerj,
+                    warnings: Vec::new(),
+                })
+            }
+        }
+    }
+
+    /// One node's few-shot examples, from the configured arms.
+    fn examples_for(&self, store: &LemmaStore, node: &graph::GraphNode) -> Vec<memory::Retrieved> {
+        match self.report.mode {
+            RetrievalMode::Lexical => memory::retrieve_lexical(store, node, RETRIEVAL_K),
+            RetrievalMode::Hybrid => match (&self.index, &self.embedder) {
+                (Some(index), Some(embedder)) => hybrid::retrieve_hybrid(
+                    store,
+                    index,
+                    embedder.as_ref(),
+                    node,
+                    RETRIEVAL_K,
+                    self.xerj.as_ref(),
+                ),
+                // Setup guarantees both in hybrid mode; falling back to
+                // lexical keeps the prompt honest instead of empty.
+                _ => memory::retrieve_lexical(store, node, RETRIEVAL_K),
+            },
+        }
+    }
+
+    /// Index a freshly remembered lemma (hybrid mode only).
+    fn index_lemma(&mut self, store: &LemmaStore, unf_hash: &str) {
+        if let (Some(index), Some(embedder)) = (&mut self.index, &self.embedder) {
+            if let Some(lemma) = store.get(unf_hash) {
+                if let Err(e) = index.insert(embedder.as_ref(), lemma) {
+                    self.warnings.push(format!(
+                        "retrieval: new lemma {unf_hash} not indexed ({e}) — \
+                         subsequent hybrid retrieval sees the store without it"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The semantic arm's embedder: EmbeddingGemma 2 when an endpoint is
+/// configured, xerj's honest lexical feature-hashing otherwise.
+#[cfg(feature = "llm-http")]
+fn build_embedder(opts: &RetrievalOptions) -> Result<Box<dyn Embedder>, PipelineError> {
+    Ok(match (&opts.embed_url, opts.embed_dims) {
+        (Some(url), dims) => {
+            Box::new(HttpEmbedder::new(url.clone(), opts.embed_model.clone(), dims))
+        }
+        (None, 0) => Box::new(HashingEmbedder::default()),
+        (None, dims) => Box::new(HashingEmbedder::new(dims)),
+    })
+}
+
+#[cfg(not(feature = "llm-http"))]
+fn build_embedder(opts: &RetrievalOptions) -> Result<Box<dyn Embedder>, PipelineError> {
+    if opts.embed_url.is_some() {
+        return Err(PipelineError::Formalize(
+            "--embed-url needs an HTTP client: rebuild with `--features llm-http` \
+             (the embeddings call is a network request, like the LLM one)"
+                .into(),
+        ));
+    }
+    Ok(match opts.embed_dims {
+        0 => Box::new(HashingEmbedder::default()),
+        dims => Box::new(HashingEmbedder::new(dims)),
+    })
+}
 
 /// Whether the input is a proof-graph JSON document rather than prose.
 fn looks_like_graph_json(input: &str) -> bool {
@@ -596,7 +849,20 @@ Options:
   --no-verify          accept sentences that compile without reducing uniquely
   --negate             refute rather than prove
   --aggregation <k>    equal | laplacian | katz (default katz)
+  --retrieval <m>      lexical (default) | hybrid — how few-shot examples
+                       are retrieved for the formalizer's prompt
+  --embed-url <url>    OpenAI-compatible /embeddings endpoint for hybrid's
+                       semantic arm (EmbeddingGemma 2 behind llama.cpp,
+                       Ollama, TEI, LiteRT). Default: offline lexical
+                       feature hashing, reported as lexical.
+  --embed-model <id>   model field for --embed-url (default embeddinggemma-2)
+  --embed-dims <n>     Matryoshka truncation, 0 = native (default 0)
+  --xerj-url <url>     a running xerj node: its ranking joins the fusion
+  --xerj-index <name>  that node's index (default lemmas)
   -h, --help           this text
+
+Env fallbacks (flags win): UNFER_EMBED_URL, UNFER_EMBED_MODEL,
+UNFER_EMBED_DIMS, UNFER_XERJ_URL, UNFER_XERJ_INDEX.
 
 Exit codes: 0 ran and trustworthy · 1 bad usage or a stage failed ·
 2 ran, but the result is not trustworthy.";
@@ -628,6 +894,25 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
     let mut memory_in: Option<PathBuf> = None;
     let mut memory_out: Option<PathBuf> = None;
     let mut opts = PipelineOptions::default();
+
+    // Env defaults for retrieval, seeded *before* the flag loop so a flag
+    // always wins. Empty strings stay unset: an empty embed URL is a
+    // relative request to nowhere, an empty xerj index queries the wrong
+    // thing silently.
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    opts.retrieval.embed_url = env("UNFER_EMBED_URL");
+    if let Some(m) = env("UNFER_EMBED_MODEL") {
+        opts.retrieval.embed_model = m;
+    }
+    if let Some(d) = env("UNFER_EMBED_DIMS") {
+        opts.retrieval.embed_dims = d.parse().map_err(|_| {
+            PipelineError::Input(format!("UNFER_EMBED_DIMS {d} is not a number"))
+        })?;
+    }
+    opts.retrieval.xerj_url = env("UNFER_XERJ_URL");
+    if let Some(x) = env("UNFER_XERJ_INDEX") {
+        opts.retrieval.xerj_index = x;
+    }
 
     let mut i = 0;
     while i < args.len() {
@@ -668,6 +953,28 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
             "--skip-score" => opts.score = false,
             "--no-verify" => opts.no_verify = true,
             "--negate" => opts.prove_negation = true,
+            "--retrieval" => {
+                let v = take_value(&mut i)?;
+                opts.retrieval.mode = match v.as_str() {
+                    "lexical" => RetrievalMode::Lexical,
+                    "hybrid" => RetrievalMode::Hybrid,
+                    other => {
+                        return Err(PipelineError::Input(format!(
+                            "--retrieval {other} is not one of lexical, hybrid"
+                        )));
+                    }
+                };
+            }
+            "--embed-url" => opts.retrieval.embed_url = Some(take_value(&mut i)?),
+            "--embed-model" => opts.retrieval.embed_model = take_value(&mut i)?,
+            "--embed-dims" => {
+                let v = take_value(&mut i)?;
+                opts.retrieval.embed_dims = v.parse().map_err(|_| {
+                    PipelineError::Input(format!("--embed-dims {v} is not a number"))
+                })?;
+            }
+            "--xerj-url" => opts.retrieval.xerj_url = Some(take_value(&mut i)?),
+            "--xerj-index" => opts.retrieval.xerj_index = take_value(&mut i)?,
             "--aggregation" => {
                 let v = take_value(&mut i)?;
                 opts.aggregation = match v.as_str() {
@@ -1228,6 +1535,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/deeper/report.json");
         let report = PipelineReport {
+            retrieval: RetrievalReport::default(),
             input_kind: InputKind::ProofGraphJson,
             warnings: vec![],
             nodes: vec![],
@@ -1253,6 +1561,7 @@ mod tests {
                 completion: None,
                 score: None,
                 memory: Default::default(),
+                retrieval: RetrievalReport::default(),
                 lexicon_words: 0,
                 extended_lexicon: false,
             },
@@ -1268,5 +1577,92 @@ mod tests {
             }
             other => panic!("expected Io, got {other:?}"),
         }
+    }
+
+    // ── retrieval wiring (P3/P9) ───────────────────────────────────────────
+
+    /// A store with one verified lemma, so retrieval has something to find.
+    fn seeded_store() -> LemmaStore {
+        let mut store = LemmaStore::new();
+        let f = crate::formalize::formalizer::verify_cnl("John loves Mary", &base_lexicon())
+            .expect("the stock lexicon sentence verifies")
+            .into_formalization(1);
+        store
+            .insert(
+                &f,
+                memory::Provenance {
+                    node_id: "l1".into(),
+                    node_text: "John loves Mary".into(),
+                    model: "test-model".into(),
+                    prompt_version: "v1".into(),
+                },
+            )
+            .expect("verified formalization inserts");
+        store
+    }
+
+    fn hybrid_opts() -> PipelineOptions {
+        PipelineOptions {
+            retrieval: RetrievalOptions {
+                mode: RetrievalMode::Hybrid,
+                ..RetrievalOptions::default()
+            },
+            ..PipelineOptions::default()
+        }
+    }
+
+    #[test]
+    fn the_report_states_the_default_retrieval_mode() {
+        let mut llm = staged(vec![judge(
+            r#"{"evaluation": ["Perfectly match"], "feedback": ["ok"]}"#,
+        )]);
+        let (report, _) = run_pipeline(
+            &euler_json(),
+            &mut llm,
+            &PipelineOptions::default(),
+            &mut LemmaStore::new(),
+        )
+        .unwrap();
+        assert_eq!(report.retrieval.mode, RetrievalMode::Lexical);
+        assert_eq!(report.retrieval.embedder, None, "no model claimed when none ran");
+        assert_eq!(report.retrieval.xerj, None);
+        assert_eq!(report.retrieval.examples, 0, "an empty store serves nothing");
+    }
+
+    #[test]
+    fn hybrid_mode_runs_offline_and_names_the_lexical_hashing_honestly() {
+        // No endpoint configured: the semantic arm is feature hashing, and
+        // the report must say `lexical-feature-hashing` — never "semantic".
+        let mut llm = staged(vec![judge(
+            r#"{"evaluation": ["Perfectly match"], "feedback": ["ok"]}"#,
+        )]);
+        let (report, _) = run_pipeline(
+            &euler_json(),
+            &mut llm,
+            &hybrid_opts(),
+            &mut LemmaStore::new(),
+        )
+        .unwrap();
+        assert_eq!(report.retrieval.mode, RetrievalMode::Hybrid);
+        assert_eq!(
+            report.retrieval.embedder.as_deref(),
+            Some("lexical-feature-hashing@384")
+        );
+    }
+
+    #[test]
+    fn hybrid_mode_counts_the_examples_it_put_into_prompts() {
+        let mut llm = staged(vec![judge(
+            r#"{"evaluation": ["Perfectly match"], "feedback": ["ok"]}"#,
+        )]);
+        let mut store = seeded_store();
+        let (report, _) = run_pipeline(&euler_json(), &mut llm, &hybrid_opts(), &mut store).unwrap();
+        assert!(
+            report.retrieval.examples > 0,
+            "nodes asked the model with a non-empty store: {:?}",
+            report.retrieval
+        );
+        // The run also indexed the store: the report's embedder is set.
+        assert!(report.retrieval.embedder.is_some());
     }
 }

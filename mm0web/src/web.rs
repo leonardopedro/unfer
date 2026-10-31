@@ -16,6 +16,9 @@ use crate::audit::Audit;
 use crate::checker::{self, CheckerConfig};
 use crate::graph::Graph;
 use crate::http::{self, Request};
+use logos::formalize::embed::{percent_encode, Embedder};
+use logos::formalize::hybrid::{rrf_fuse, RRF_K};
+use logos::formalize::index::RecomputeIndex;
 use crate::publisher::{Publisher, QueueError};
 use crate::store::{
     self, Index, STATE_PUBLISH_FAILED, STATE_PUBLISHED, STATE_QUEUED, STATE_VERIFIED, StoreConfig,
@@ -44,6 +47,9 @@ pub struct Config {
     /// svcmux bundle: the supervisor's manifest records the same string, so
     /// a port change rotates this service's digest and nobody else's.
     pub listen: String,
+    /// The optional search arms (semantic embedder, xerj node) and the
+    /// shared corpus-index cache. `None`/empty = substring search only.
+    pub search: SearchConfig,
 }
 
 impl Default for Config {
@@ -65,6 +71,7 @@ impl Default for Config {
             publisher,
             daily: Arc::new(DailyCap::new(DAILY_DEFAULT, Duration::from_secs(24 * 3600))),
             listen: "127.0.0.1:8080".to_string(),
+            search: SearchConfig::default(),
         }
     }
 }
@@ -199,6 +206,7 @@ pub fn handle(req: &Request, cfg: &Config, limiter: &RateLimiter) -> Response {
         ("GET", "/graph") => get_graph(req, cfg, false),
         ("GET", "/api/v1/graph") => get_graph(req, cfg, true),
         ("GET", "/search") => get_search(req, cfg, false),
+        ("GET", "/api/v1/search-bulk") => get_search_bulk(cfg),
         ("GET", "/api/v1/search") => get_search(req, cfg, true),
         ("GET", "/stats") => get_stats(cfg, false),
         ("GET", "/api/v1/stats") => get_stats(cfg, true),
@@ -768,7 +776,75 @@ fn get_graph(req: &Request, cfg: &Config, as_json: bool) -> Response {
 /// query on a whole development matches a lot, and the page is for finding.
 const SEARCH_LIMIT: usize = 50;
 
-/// One declaration a search matched.
+/// Upper bound on declarations the semantic arm will index. Above it the
+/// arm reports itself *unavailable* rather than turning one query into a
+/// marathon of `curl` batches; the substring arm always answers.
+const SEARCH_INDEX_MAX: usize = 50_000;
+
+/// How many declarations one `/embeddings` request carries: one `curl`
+/// process and one server forward pass per batch (LEANN's dynamic batching,
+/// at the transport level — and what keeps a first build from becoming one
+/// enormous request an endpoint may refuse).
+const EMBED_BATCH: usize = 64;
+
+/// Where a running xerj node lives, if the operator has one. Its ranking
+/// joins the fusion as an arm; a node that is down makes the arm
+/// *unavailable*, never the endpoint an error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct XerjEndpoint {
+    pub base: String,
+    pub index: String,
+}
+
+/// The corpus index cache: one entry, keyed by a fingerprint of the corpus
+/// it was built from, shared across request threads through `Arc` (`Config`
+/// is cloned per connection — without the shared cache every request would
+/// re-embed the whole store).
+#[derive(Debug, Default)]
+pub struct IndexCache {
+    fingerprint: Option<u64>,
+    index: Option<RecomputeIndex>,
+    /// Why the last build failed. Cached like a success: an endpoint that
+    /// is down then costs one failed round per corpus change, not one per
+    /// query, and the reason is reported to the user either way.
+    error: Option<String>,
+}
+
+/// The optional search arms.
+///
+/// With neither set (the default, and what `Config::default()` gives the
+/// tests) search is exactly what it was before this existed: substring
+/// over stored declarations, no vectors, no fusion. See
+/// `logos::formalize::hybrid` for the fusion this file applies.
+#[derive(Clone, Default)]
+pub struct SearchConfig {
+    /// The semantic arm — EmbeddingGemma 2 through this crate's
+    /// `CurlEmbedder` (`embed.rs`). `None` = no semantic arm, not a broken
+    /// one; only a *configured* arm that fails is reported as unavailable.
+    pub embedder: Option<Arc<dyn Embedder>>,
+    /// A xerj node whose ranking joins the fusion.
+    pub xerj: Option<XerjEndpoint>,
+    pub cache: Arc<Mutex<IndexCache>>,
+}
+
+/// Manual, because `dyn Embedder` is a trait object: the model id is what
+/// is interesting, the trait itself has nothing to say.
+impl std::fmt::Debug for SearchConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchConfig")
+            .field(
+                "embedder",
+                &self.embedder.as_ref().map(|e| format!("{}@{}", e.id(), e.dims())),
+            )
+            .field("xerj", &self.xerj)
+            .field("cache", &self.cache)
+            .finish()
+    }
+}
+
+/// One declaration a search matched — also one row of the corpus, and one
+/// node of the semantic arm's index.
+#[derive(Debug, Clone)]
 struct Hit {
     project: String,
     proof: String,
@@ -779,79 +855,407 @@ struct Hit {
     statement: String,
 }
 
-fn search_hits(cfg: &Config, q: &str) -> Vec<Hit> {
-    let needle = q.to_lowercase();
-    let mut hits = Vec::new();
+impl Hit {
+    /// The declaration's identity, in the shape a xerj bulk load uses as
+    /// `_id` — so the arm's `_id`s map straight back onto corpus rows.
+    fn key(&self) -> String {
+        format!("{}/{}/{}@{}", self.project, self.proof, self.decl, self.line)
+    }
+
+    /// What gets embedded: name and statement together, the same composite
+    /// the `_bulk` export offers as `text`, so the node's BM25 and this
+    /// index rank the same content.
+    fn text(&self) -> String {
+        format!("{} {}", self.decl, self.statement)
+    }
+}
+
+/// Every declaration of every stored proof — the corpus all arms rank over.
+fn corpus(cfg: &Config) -> Vec<Hit> {
+    let mut out = Vec::new();
     for (project, p) in all_proofs(cfg) {
         let g = Graph::build(&p.mm0, &p.mm1).accepted();
         for d in &g.decls {
-            if d.name.to_lowercase().contains(&needle)
-                || d.statement.to_lowercase().contains(&needle)
-            {
-                hits.push(Hit {
-                    project: project.clone(),
-                    proof: p.id.clone(),
-                    title: p.title.clone(),
-                    decl: d.name.clone(),
-                    kind: d.kind.as_str(),
-                    line: d.line(),
-                    statement: d.statement.clone(),
-                });
-                if hits.len() >= SEARCH_LIMIT {
-                    return hits;
+            out.push(Hit {
+                project: project.clone(),
+                proof: p.id.clone(),
+                title: p.title.clone(),
+                decl: d.name.clone(),
+                kind: d.kind.as_str(),
+                line: d.line(),
+                statement: d.statement.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// A fingerprint of the corpus text the index rests on. A `Hasher` over the
+/// identity fields *and* the statement: a proof's content is
+/// content-addressed, so in practice this only changes when a proof is
+/// added — which is exactly when the index must be rebuilt.
+fn fingerprint(corpus: &[Hit]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for hit in corpus {
+        hit.project.hash(&mut h);
+        hit.proof.hash(&mut h);
+        hit.decl.hash(&mut h);
+        hit.line.hash(&mut h);
+        hit.statement.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// One scored result with the arms that ranked it.
+struct ScoredHit {
+    hit: Hit,
+    arms: Vec<String>,
+    rrf: f64,
+}
+
+/// What one search did, across all its arms. The JSON and the page both
+/// render from this, so a report cannot claim an arm that did not answer.
+#[derive(Default)]
+struct SearchOutcome {
+    hits: Vec<ScoredHit>,
+    /// Declarations considered (the corpus size).
+    corpus: usize,
+    /// Arms that returned hits, with their counts.
+    answering: BTreeMap<&'static str, usize>,
+    /// Configured arms that could not run, with why.
+    unavailable: BTreeMap<&'static str, String>,
+    /// `model@dims` of the configured embedder, if any.
+    embedder: Option<String>,
+    /// How many *optional* arms were configured — whether or not they
+    /// answered. The page reads exactly as it did before fusion existed
+    /// when this is 0.
+    configured: usize,
+}
+
+impl SearchOutcome {
+    /// `rrf` when two or more arms ranked, `single` for one, `none` for a
+    /// query nothing matched. Named so a client never has to guess whether
+    /// a ranking was fused.
+    fn fusion(&self) -> &'static str {
+        match self.answering.len() {
+            0 => "none",
+            1 => "single",
+            _ => "rrf",
+        }
+    }
+
+    /// Whether any optional arm was configured at all — with none, the
+    /// page must read exactly as it did before fusion existed.
+    fn has_optional_arms(&self) -> bool {
+        self.configured > 0
+    }
+}
+
+/// The semantic arm: index (or reuse) the corpus, query the graph.
+///
+/// Returns `(hits, why-unavailable)`. An unconfigured embedder is not an
+/// unavailable arm — it is a service with one arm, which is the default
+/// and needs no apology.
+fn semantic_arm(
+    cfg: &Config,
+    rows: &[Hit],
+    query: &str,
+) -> (Vec<(usize, f32)>, Option<String>) {
+    let Some(embedder) = cfg.search.embedder.as_ref() else {
+        return (Vec::new(), None);
+    };
+    if rows.len() > SEARCH_INDEX_MAX {
+        return (
+            Vec::new(),
+            Some(format!(
+                "corpus is {} declarations, over the {} cap for embedding",
+                rows.len(),
+                SEARCH_INDEX_MAX
+            )),
+        );
+    }
+
+    let fp = fingerprint(rows);
+    // The lock covers build *and* query: two concurrent first-searches
+    // would otherwise both pay for the build (a stampede), and the index
+    // is immutable once built, so holding it through the query only
+    // serialises queries — which this service already does per request
+    // thread anyway.
+    let mut cache = cfg.search.cache.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.fingerprint != Some(fp) {
+        let texts: Vec<String> = rows.iter().map(Hit::text).collect();
+        *cache = match build_index(embedder.as_ref(), &texts) {
+            Ok(index) => IndexCache { fingerprint: Some(fp), index: Some(index), error: None },
+            Err(reason) => IndexCache { fingerprint: Some(fp), index: None, error: Some(reason) },
+        };
+    }
+    let Some(index) = cache.index.as_ref() else {
+        return (
+            Vec::new(),
+            cache.error.clone().or_else(|| Some("the index is not built".to_string())),
+        );
+    };
+    match index.search(embedder.as_ref(), query, SEARCH_LIMIT) {
+        Ok((hits, _stats)) => (
+            hits.into_iter()
+                .map(|h| (h.idx, h.score))
+                // A non-positive cosine means the row does not resemble
+                // the query at all — a ranked nothing. The graph traversal
+                // scores everything it reaches, so the filter is what
+                // keeps "visited" from reading as "matched".
+                .filter(|(_, score)| *score > 0.0)
+                .collect(),
+            None,
+        ),
+        Err(e) => (Vec::new(), Some(e.to_string())),
+    }
+}
+
+/// Embed the corpus in batches and build the LEANN-shaped index — which
+/// stores texts and a pruned graph, **not** these vectors; they are dropped
+/// the moment the graph exists.
+fn build_index(embedder: &dyn Embedder, texts: &[String]) -> Result<RecomputeIndex, String> {
+    RecomputeIndex::build_chunked(
+        embedder,
+        texts.to_vec(),
+        logos::formalize::index::IndexParams::default(),
+        EMBED_BATCH,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// The xerj arm: URI-search a running node, read `_id`s in rank order.
+///
+/// The reply is Elasticsearch-shaped because that is the interchange xerj
+/// documents (`GET /{index}/_search?q=…`); ids are [`Hit::key`]s, so any
+/// id that is not in this corpus is dropped rather than guessed at.
+fn xerj_arm(cfg: &Config, query: &str, size: usize) -> (Vec<String>, Option<String>) {
+    let Some(node) = cfg.search.xerj.as_ref() else {
+        return (Vec::new(), None);
+    };
+    let url = format!(
+        "{}/{}/_search?q={}&size={}",
+        node.base.trim_end_matches('/'),
+        node.index,
+        percent_encode(query),
+        size
+    );
+    match http::curl("GET", &url, &[], None, None) {
+        Err(e) => (Vec::new(), Some(e)),
+        Ok((0, _)) => (
+            Vec::new(),
+            // `%{http_code}` 000/0: the connection never completed. Not a
+            // reply — a reply would have a status.
+            Some("node unreachable (connection failed)".to_string()),
+        ),
+        Ok((code, _body)) if !(200..300).contains(&code) => {
+            (Vec::new(), Some(format!("node answered {code}")))
+        }
+        Ok((_, body)) => {
+            let value: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(v) => v,
+                Err(e) => return (Vec::new(), Some(format!("node reply is not JSON: {e}"))),
+            };
+            let Some(hits) = value.get("hits").and_then(|h| h.get("hits")).and_then(|h| h.as_array())
+            else {
+                return (Vec::new(), Some("node reply has no hits.hits".to_string()));
+            };
+            let ids = hits
+                .iter()
+                .filter_map(|h| h.get("_id").and_then(|i| i.as_str()).map(String::from))
+                .collect();
+            (ids, None)
+        }
+    }
+}
+
+/// One search, all arms, fused.
+///
+/// Arms: **substring** (always — the pre-fusion behaviour, capped and in
+/// corpus order), **semantic** (when an embedder is configured), **xerj**
+/// (when a node is). Fusion is RRF over the arms' rankings
+/// (`logos::formalize::hybrid`), because a cosine, a word-overlap ratio
+/// and a BM25 score are not on one scale and must not be added.
+fn search(cfg: &Config, query: &str) -> SearchOutcome {
+    let rows = corpus(cfg);
+    let needle = query.to_lowercase();
+
+    // Substring arm — the same loop and cap as before fusion existed.
+    let mut substring: Vec<usize> = Vec::new();
+    for (i, hit) in rows.iter().enumerate() {
+        if hit.decl.to_lowercase().contains(&needle)
+            || hit.statement.to_lowercase().contains(&needle)
+        {
+            substring.push(i);
+            if substring.len() >= SEARCH_LIMIT {
+                break;
+            }
+        }
+    }
+
+    // Semantic arm.
+    let mut outcome = SearchOutcome {
+        corpus: rows.len(),
+        embedder: cfg
+            .search
+            .embedder
+            .as_ref()
+            .map(|e| format!("{}@{}", e.id(), e.dims())),
+        configured: usize::from(cfg.search.embedder.is_some())
+            + usize::from(cfg.search.xerj.is_some()),
+        ..SearchOutcome::default()
+    };
+    let (semantic_raw, semantic_error) = semantic_arm(cfg, &rows, query);
+    if let Some(reason) = semantic_error {
+        outcome.unavailable.insert("semantic", reason);
+    }
+    let semantic: Vec<usize> = semantic_raw.iter().map(|(i, _)| *i).collect();
+
+    // xerj arm.
+    let (xerj_keys, xerj_error) = xerj_arm(cfg, query, SEARCH_LIMIT);
+    if let Some(reason) = xerj_error {
+        outcome.unavailable.insert("xerj", reason);
+    }
+    let mut xerj: Vec<usize> = Vec::new();
+    if !xerj_keys.is_empty() {
+        let by_key: HashMap<String, usize> =
+            rows.iter().enumerate().map(|(i, h)| (h.key(), i)).collect();
+        for key in xerj_keys {
+            if let Some(&i) = by_key.get(&key) {
+                if !xerj.contains(&i) {
+                    xerj.push(i);
                 }
             }
         }
     }
-    hits
+
+    for (name, list) in [("substring", &substring), ("semantic", &semantic), ("xerj", &xerj)] {
+        if !list.is_empty() {
+            outcome.answering.insert(name, list.len());
+        }
+    }
+
+    let fused = rrf_fuse(
+        &[
+            ("substring", substring),
+            ("semantic", semantic),
+            ("xerj", xerj),
+        ],
+        RRF_K,
+    );
+
+    outcome.hits = fused
+        .into_iter()
+        .take(SEARCH_LIMIT)
+        .filter_map(|f| {
+            let hit = rows.get(f.idx)?.clone();
+            // An arm appears here only if it ranked this row, i.e. only if
+            // it answered — `answering` and `because` cannot disagree.
+            let arms = f.arms.iter().map(|a| a.arm.clone()).collect();
+            Some(ScoredHit { hit, arms, rrf: f.score })
+        })
+        .collect();
+    outcome
 }
 
 /// `physlibsearch` takes a natural-language sentence and returns the formal
-/// statement it matches; this service has no embedding model and does not
-/// pretend to. What it can honestly offer over *its* corpus — every stored
-/// proof's own declarations — is substring search over names and statements,
-/// answered from the same index that answers `/proof`.
+/// statement it matches, with a model behind it. This service answers over
+/// *its* corpus — every stored proof's own declarations — and says which
+/// arms answered: substring over names and statements always; a semantic
+/// arm and a xerj node when they are configured (`MM0WEB_EMBED_URL`,
+/// `MM0WEB_XERJ_URL`), fused by RRF. With neither configured it is the
+/// substring search it always was, and the reply says only that.
 fn get_search(req: &Request, cfg: &Config, as_json: bool) -> Response {
     let q = req.field("q").unwrap_or_default();
     let q = q.trim().to_string();
     if q.is_empty() {
         return if as_json {
-            json(200, json!({"query": "", "count": 0, "results": []}))
+            json(200, json!({"query": "", "count": 0, "results": [],
+                "corpus": 0, "arms": {}, "unavailable": {},
+                "fusion": "none", "embedder": null}))
         } else {
-            html(200, search_page("", &[]))
+            html(200, search_page("", &SearchOutcome::default()))
         };
     }
-    let hits = search_hits(cfg, &q);
+    let outcome = search(cfg, &q);
     if as_json {
-        let results: Vec<serde_json::Value> = hits
+        let results: Vec<serde_json::Value> = outcome
+            .hits
             .iter()
-            .map(|h| {
+            .map(|s| {
+                let h = &s.hit;
                 json!({
                     "declaration": h.decl, "kind": h.kind, "line": h.line,
                     "statement": h.statement, "title": h.title,
                     "project": h.project, "proof": h.proof,
                     "graph": format!("/graph?project={}&id={}", h.project, h.proof),
+                    "arms": s.arms, "rrf": s.rrf,
                 })
             })
             .collect();
         json(
             200,
-            json!({"query": q, "count": hits.len(), "results": results}),
+            json!({
+                "query": q,
+                "count": outcome.hits.len(),
+                "results": results,
+                "corpus": outcome.corpus,
+                "arms": outcome.answering,
+                "unavailable": outcome.unavailable,
+                "fusion": outcome.fusion(),
+                "embedder": outcome.embedder,
+            }),
         )
     } else {
-        html(200, search_page(&q, &hits))
+        html(200, search_page(&q, &outcome))
     }
 }
 
-fn search_page(q: &str, hits: &[Hit]) -> String {
-    let rows: Vec<String> = hits
+/// Every stored declaration as an Elasticsearch `_bulk` NDJSON body —
+/// the load side of the xerj arm:
+///
+/// ```text
+/// curl -H 'content-type: application/x-ndjson' --data-binary @decls.ndjson \\
+///      http://127.0.0.1:9200/declarations/_bulk
+/// ```
+///
+/// `_id` is [`Hit::key`] (what the arm reads back) and `text` is
+/// [`Hit::text`] (what the semantic arm embeds), so the node's BM25 ranks
+/// the same content our vectors do.
+fn get_search_bulk(cfg: &Config) -> Response {
+    let rows = corpus(cfg);
+    let mut out = String::new();
+    for h in &rows {
+        let doc = json!({
+            "project": h.project, "proof": h.proof, "title": h.title,
+            "name": h.decl, "kind": h.kind, "line": h.line,
+            "statement": h.statement, "text": h.text(),
+        });
+        out.push_str(&format!(
+            "{{\"index\":{{\"_id\":\"{}\"}}}}\n{}\n",
+            h.key(),
+            serde_json::to_string(&doc).expect("a flat json object serializes")
+        ));
+    }
+    (
+        200,
+        "application/x-ndjson; charset=utf-8".to_string(),
+        out.into_bytes(),
+    )
+}
+
+fn search_page(q: &str, outcome: &SearchOutcome) -> String {
+    let rows: Vec<String> = outcome
+        .hits
         .iter()
-        .map(|h| {
+        .map(|s| {
+            let h = &s.hit;
             format!(
                 "<li><code>{d}</code> <span>{k}</span>, line {l} — \
                  <a href=\"/graph?project={p}&id={i}\">graph</a> · \
                  <a href=\"/proof?project={p}&id={i}\">{t}</a><br>\
-                 <span class=\"stmt\">{s}</span></li>",
+                 <span class=\"stmt\">{s}</span>{via}</li>",
                 d = http::escape_html(&h.decl),
                 k = h.kind,
                 l = h.line,
@@ -859,12 +1263,17 @@ fn search_page(q: &str, hits: &[Hit]) -> String {
                 i = http::escape_html(&h.proof),
                 t = http::escape_html(&h.title),
                 s = http::escape_html(&h.statement),
+                via = if outcome.has_optional_arms() && s.arms.len() > 1 {
+                    format!(" <span>via {}</span>", s.arms.join(" + "))
+                } else {
+                    String::new()
+                },
             )
         })
         .collect();
-    let summary = if q.is_empty() {
+    let mut summary = if q.is_empty() {
         "type part of a declaration name or of a statement".to_string()
-    } else if hits.is_empty() {
+    } else if outcome.hits.is_empty() {
         format!(
             "no declaration in any stored proof matched <code>{}</code>",
             http::escape_html(q)
@@ -873,10 +1282,36 @@ fn search_page(q: &str, hits: &[Hit]) -> String {
         format!(
             "{} match{} — a match is a declaration whose name or statement \
              contains the query (capped at {SEARCH_LIMIT})",
-            hits.len(),
-            if hits.len() == 1 { "" } else { "es" }
+            outcome.hits.len(),
+            if outcome.hits.len() == 1 { "" } else { "es" }
         )
     };
+    // The arm note exists only when an optional arm is configured: with
+    // none, this page must read exactly as it did before fusion existed.
+    if outcome.has_optional_arms() {
+        let arms: Vec<String> = outcome
+            .answering
+            .iter()
+            .map(|(a, n)| format!("{a} ({n})"))
+            .collect();
+        if !arms.is_empty() {
+            let how = if outcome.answering.len() > 1 {
+                "fused by rrf"
+            } else {
+                "one arm answered"
+            };
+            summary.push_str(&format!(" — arms answering: {}, {how}", arms.join(" · ")));
+            if let Some(model) = &outcome.embedder {
+                summary.push_str(&format!("; semantic via {model}"));
+            }
+        }
+        for (arm, why) in &outcome.unavailable {
+            summary.push_str(&format!(
+                " · {arm} arm unavailable: {}",
+                http::escape_html(why)
+            ));
+        }
+    }
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <title>search</title></head><body><h1>search stored declarations</h1>\
@@ -1195,6 +1630,7 @@ mod tests {
             )),
             daily: Arc::new(DailyCap::new(DAILY_DEFAULT, Duration::from_secs(24 * 3600))),
             listen: "127.0.0.1:0".to_string(),
+            search: SearchConfig::default(),
         }
     }
 
@@ -1409,5 +1845,258 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
+    }
+
+    // ── the optional search arms (P9) ──────────────────────────────────────
+
+    use logos::formalize::embed::{EmbedError, Embedding};
+
+    /// A stand-in embedder with a controllable notion of similarity:
+    /// `prop`-vocabulary (including the word "special", which this fake
+    /// declares a synonym of) maps to one vector, everything else to
+    /// another. Deterministic, offline, and — like xerj's default embedder
+    /// — honestly not neural: its id says so.
+    #[derive(Debug)]
+    struct FakeEmbedder;
+
+    impl Embedder for FakeEmbedder {
+        fn id(&self) -> &str {
+            "fake-test-embedder"
+        }
+
+        fn dims(&self) -> usize {
+            4
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Embedding>, EmbedError> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let lower = t.to_lowercase();
+                    if lower.contains("special") || lower.contains("prop") {
+                        vec![1.0, 0.0, 0.0, 0.0]
+                    } else {
+                        vec![0.0, 1.0, 0.0, 0.0]
+                    }
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn with_no_optional_arms_the_search_reply_is_the_shape_it_always_was() {
+        let (cfg, _id) = queued_cfg("plainsearch", STATE_PUBLISHED);
+        let rl = RateLimiter::new(100, Duration::from_millis(10));
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2)
+                .unwrap();
+        assert_eq!(v["count"], 1, "{v}");
+        assert_eq!(v["results"][0]["declaration"], "Prop");
+        // …and the new fields tell the same single-arm truth rather than
+        // claiming a semantic arm that was never configured.
+        assert!(v["embedder"].is_null(), "{v}");
+        assert_eq!(v["arms"]["substring"], 1, "{v}");
+        assert_eq!(v["fusion"], "single", "{v}");
+        assert_eq!(v["unavailable"], serde_json::json!({}), "{v}");
+        assert_eq!(v["corpus"], 1, "{v}");
+        let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
+    }
+
+    #[test]
+    fn the_semantic_arm_finds_what_substring_cannot_and_names_its_model() {
+        let (mut cfg, _id) = queued_cfg("semarm", STATE_PUBLISHED);
+        cfg.search.embedder = Some(Arc::new(FakeEmbedder));
+        let rl = RateLimiter::new(100, Duration::from_millis(10));
+
+        // "special" appears in no declaration name and no statement:
+        // substring alone finds nothing, the semantic arm maps it onto the
+        // Prop vocabulary the fake declares.
+        let v: serde_json::Value = serde_json::from_slice(
+            &handle(&req("GET", "/api/v1/search?q=special", ""), &cfg, &rl).2,
+        )
+        .unwrap();
+        assert_eq!(v["count"], 1, "semantic-only hit: {v}");
+        assert_eq!(v["results"][0]["declaration"], "Prop", "{v}");
+        assert_eq!(v["arms"]["semantic"], 1, "substring did not answer: {v}");
+        assert!(v["arms"].get("substring").is_none(), "{v}");
+        assert_eq!(v["fusion"], "single", "{v}");
+        assert_eq!(v["embedder"], "fake-test-embedder@4", "{v}");
+        let via: Vec<String> = v["results"][0]["arms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap().to_string())
+            .collect();
+        assert!(via.contains(&"semantic".to_string()), "{v}");
+        // The graph scores everything it reaches, but a row with no
+        // similarity is filtered rather than padded in: only the matching
+        // declaration counts as a semantic hit, and the corpus counter
+        // says how many rows were ranked over.
+        assert_eq!(v["corpus"], 1, "{v}");
+
+        // Both arms answer "prop": the reply says rrf, and the hit says
+        // which arms ranked it.
+        let v: serde_json::Value = serde_json::from_slice(
+            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
+        )
+        .unwrap();
+        assert_eq!(v["fusion"], "rrf", "{v}");
+        assert!(
+            v["arms"]["substring"].as_u64().unwrap_or(0) >= 1
+                && v["arms"]["semantic"].as_u64().unwrap_or(0) >= 1,
+            "{v}"
+        );
+        let via = v["results"][0]["arms"].as_array().unwrap();
+        assert_eq!(via.len(), 2, "both arms ranked the one hit: {v}");
+
+        // The page says the same thing in prose.
+        let page = handle(&req("GET", "/search?q=special", ""), &cfg, &rl);
+        let body = String::from_utf8_lossy(&page.2);
+        assert!(body.contains("arms answering: semantic"), "{body}");
+        assert!(body.contains("fake-test-embedder@4"), "{body}");
+        let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
+    }
+
+    #[test]
+    fn a_xerj_arm_merges_hits_and_a_down_node_is_reported_not_fatal() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let (mut cfg, _id) = queued_cfg("xerjarm", STATE_PUBLISHED);
+        let rl = RateLimiter::new(100, Duration::from_millis(10));
+
+        // Configured but unreachable: search still answers, and the arm is
+        // reported unavailable with a reason — never a 500.
+        cfg.search.xerj = Some(XerjEndpoint {
+            base: "http://127.0.0.1:1".to_string(),
+            index: "declarations".to_string(),
+        });
+        let v: serde_json::Value = serde_json::from_slice(
+            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
+        )
+        .unwrap();
+        assert_eq!(v["count"], 1, "substring still answers: {v}");
+        assert!(
+            v["unavailable"].get("xerj").is_some(),
+            "the down arm is named: {v}"
+        );
+        assert_eq!(v["fusion"], "single", "{v}");
+
+        // A node that answers: its ranked _id joins the fusion. The id is
+        // the one `search-bulk` hands out, so the test reads it back from
+        // the live corpus rather than hard-coding a line number.
+        let bulk = String::from_utf8_lossy(
+            &handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl).2,
+        )
+        .into_owned();
+        let first_doc: serde_json::Value = serde_json::from_str(bulk.lines().nth(1).unwrap()).unwrap();
+        let key = format!(
+            "{}/{}/{}@{}",
+            first_doc["project"].as_str().unwrap(),
+            first_doc["proof"].as_str().unwrap(),
+            first_doc["name"].as_str().unwrap(),
+            first_doc["line"].as_u64().unwrap()
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let reply = format!(
+            "{{\"hits\":{{\"hits\":[{{\"_id\":\"{key}\"}}]}}}}"
+        );
+        let seen = std::sync::Arc::new(Mutex::new(String::new()));
+        let seen_in_thread = seen.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            loop {
+                let mut h = String::new();
+                reader.read_line(&mut h).unwrap();
+                if h == "\r\n" || h.is_empty() {
+                    break;
+                }
+            }
+            *seen_in_thread.lock().unwrap() = line.clone();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                         content-length: {}\r\nconnection: close\r\n\r\n{}",
+                        reply.len(),
+                        reply
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            let _ = stream.flush();
+        });
+        cfg.search.xerj = Some(XerjEndpoint {
+            base: format!("http://{addr}"),
+            index: "declarations".to_string(),
+        });
+
+        let v: serde_json::Value = serde_json::from_slice(
+            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
+        )
+        .unwrap();
+        server.join().unwrap();
+        let request = seen.lock().unwrap().clone();
+        assert!(request.starts_with("GET /declarations/_search?q=prop&size=50"), "{request}");
+        assert_eq!(v["count"], 1, "{v}");
+        assert_eq!(v["arms"]["xerj"], 1, "{v}");
+        assert_eq!(v["arms"]["substring"], 1, "{v}");
+        assert_eq!(v["fusion"], "rrf", "two arms fused: {v}");
+        assert!(v["unavailable"].get("xerj").is_none(), "{v}");
+        let via = v["results"][0]["arms"].as_array().unwrap();
+        assert_eq!(via.len(), 2, "the hit carries both arms: {v}");
+        let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
+    }
+
+    #[test]
+    fn the_bulk_export_is_loadable_ndjson_with_the_ids_the_arm_reads_back() {
+        let (cfg, _id) = queued_cfg("bulkexport", STATE_PUBLISHED);
+        let (status, ctype, body) = handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero());
+        assert_eq!(status, 200);
+        assert!(ctype.starts_with("application/x-ndjson"), "{ctype}");
+        let text = String::from_utf8(body).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len() % 2, 0, "two lines per declaration");
+        for pair in lines.chunks(2) {
+            let action: serde_json::Value = serde_json::from_str(pair[0]).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(pair[1]).unwrap();
+            let id = action["index"]["_id"].as_str().unwrap();
+            assert_eq!(
+                id,
+                format!(
+                    "{}/{}/{}@{}",
+                    doc["project"].as_str().unwrap(),
+                    doc["proof"].as_str().unwrap(),
+                    doc["name"].as_str().unwrap(),
+                    doc["line"].as_u64().unwrap()
+                ),
+                "the _id is exactly what the xerj arm reads back"
+            );
+            assert_eq!(
+                doc["text"].as_str().unwrap(),
+                format!(
+                    "{} {}",
+                    doc["name"].as_str().unwrap(),
+                    doc["statement"].as_str().unwrap()
+                ),
+                "text is the same composite the semantic arm embeds"
+            );
+        }
+        // Deterministic: two exports diff clean.
+        let again = String::from_utf8(
+            handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero()).2,
+        )
+        .unwrap();
+        assert_eq!(text, again);
+        let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
+    }
+
+    /// A limiter that never trips, for tests whose subject is not rate.
+    fn rl_zero() -> RateLimiter {
+        RateLimiter::new(1000, Duration::from_secs(60))
     }
 }

@@ -23,8 +23,11 @@
 
 pub mod c7_smoke;
 pub mod completer;
+pub mod embed;
 pub mod formalizer;
 pub mod graph;
+pub mod hybrid;
+pub mod index;
 pub mod llm;
 pub mod memory;
 pub mod score;

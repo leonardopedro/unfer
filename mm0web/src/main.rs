@@ -9,6 +9,15 @@
 //! MM0WEB_MM0_C=/path/mm0-c    # default: from PATH
 //! MM0WEB_RATE=10              # submissions per client per minute
 //! MM0WEB_VERIFY_TIMEOUT=60    # seconds per checker stage
+//! MM0WEB_EMBED_URL=…          # OpenAI-compatible /embeddings endpoint
+//!                             # (EmbeddingGemma 2 behind llama.cpp/Ollama/TEI):
+//!                             # enables /search's semantic arm
+//! MM0WEB_EMBED_MODEL=…        # default embeddinggemma-2
+//! MM0WEB_EMBED_DIMS=…         # MRL truncation, 0 = native (default 0)
+//! MM0WEB_EMBED_KEY=…          # bearer token for the embed endpoint (optional)
+//! MM0WEB_XERJ_URL=…           # a running xerj node: its ranking joins the
+//!                             # search fusion as a third arm
+//! MM0WEB_XERJ_INDEX=…         # that node's index (default declarations)
 //! ```
 //!
 //! Binds loopback by default on purpose: this is meant to run on the
@@ -22,9 +31,10 @@ use std::time::Duration;
 
 use mm0web::audit::Audit;
 use mm0web::checker::CheckerConfig;
+use mm0web::embed::{CurlEmbedder, EmbedConfig};
 use mm0web::publisher::Publisher;
 use mm0web::store::{StoreConfig, ZenodoConfig};
-use mm0web::web::{self, Config, DailyCap, RateLimiter};
+use mm0web::web::{self, Config, DailyCap, RateLimiter, XerjEndpoint};
 
 fn main() {
     let mut bind = "127.0.0.1:8080".to_string();
@@ -71,6 +81,29 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(web::DAILY_DEFAULT);
 
+    // The optional search arms. Unset (the default) leaves search exactly
+    // as it was: substring over stored declarations. An empty value is
+    // treated as unset by `env` — an empty embed URL would be a relative
+    // request to nowhere.
+    let search = {
+        let embedder = env("MM0WEB_EMBED_URL").map(|url| {
+            Arc::new(CurlEmbedder::new(EmbedConfig {
+                url,
+                model: env("MM0WEB_EMBED_MODEL")
+                    .unwrap_or_else(|| "embeddinggemma-2".to_string()),
+                dims: env("MM0WEB_EMBED_DIMS").and_then(|v| v.parse().ok()).unwrap_or(0),
+                key: env("MM0WEB_EMBED_KEY"),
+            }))
+                as Arc<dyn logos::formalize::embed::Embedder>
+        });
+        let xerj = env("MM0WEB_XERJ_URL").map(|base| XerjEndpoint {
+            base,
+            index: env("MM0WEB_XERJ_INDEX")
+                .unwrap_or_else(|| "declarations".to_string()),
+        });
+        web::SearchConfig { embedder, xerj, cache: Default::default() }
+    };
+
     let zenodo = ZenodoConfig {
         api_key: env("ZENODO_API_KEY").unwrap_or_default(),
         base_url: env("MM0WEB_ZENODO_BASE")
@@ -107,6 +140,7 @@ fn main() {
         publisher: Arc::new(Publisher::spawn(store.clone(), audit.clone())),
         daily: Arc::new(DailyCap::new(daily_cap, Duration::from_secs(24 * 3600))),
         listen: bind.clone(),
+        search,
     };
 
     std::fs::create_dir_all(&cfg.store.state_dir).expect("create state dir");

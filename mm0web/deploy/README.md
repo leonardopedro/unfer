@@ -24,6 +24,14 @@ MM0WEB_LISTEN=127.0.0.1:8081
 MM0WEB_STATE_DIR=/home/leo/.local/share/mm0web
 MM0WEB_PUBLIC_URL=http://127.0.0.1:8081
 MM0WEB_CREATOR=ReFi Exchange
+# Optional search arms ("Search arms" below). Unset — the default — keeps
+# /search at substring search over stored declarations.
+#MM0WEB_EMBED_URL=http://127.0.0.1:8082/v1  # OpenAI-compatible /embeddings: llama.cpp (GGUF), Ollama, TEI or LiteRT serving EmbeddingGemma 2
+#MM0WEB_EMBED_MODEL=embeddinggemma-2         # the id reported with every semantic hit
+#MM0WEB_EMBED_DIMS=256                       # Matryoshka truncation; 0 = native (768)
+#MM0WEB_EMBED_KEY=                           # bearer token, if the endpoint wants one
+#MM0WEB_XERJ_URL=http://127.0.0.1:9200       # a running xerj node: its ranking joins the fusion
+#MM0WEB_XERJ_INDEX=declarations
 # Leave ZENODO_API_KEY unset to verify without archiving: submissions are
 # verified and stored locally, and the caller is told plainly that nothing was
 # published. Set it (and MM0WEB_ZENODO_BASE for the sandbox) to archive.
@@ -53,10 +61,18 @@ local index, cannot accept, reject or publish anything, and are the same over
 GET /graph?project=unfer&id=<proof-id>
 GET /api/v1/graph?project=unfer&id=<proof-id>   # the graph itself, all of it
 
-# substring search over stored declarations (name or statement, case-insensitive);
-# every hit links at the graph of the proof that declares it
+# search over stored declarations; every hit links at the graph of the
+# proof that declares it. Arms: substring (name or statement,
+# case-insensitive) always, semantic + a xerj node when configured —
+# fused by RRF, and the JSON says which arms answered and which were
+# unavailable (see "Search arms")
 GET /search?q=nat
 GET /api/v1/search?q=nat
+
+# every declaration as Elasticsearch _bulk NDJSON — the load side of the
+# xerj arm (_id = project/proof/name@line, text = the same composite the
+# semantic arm embeds)
+GET /api/v1/search-bulk
 
 # totals over every stored proof: projects, states, declarations, references
 GET /stats
@@ -72,6 +88,43 @@ undeclared name cannot be a defect, so those are reported as information
 stops drawing boxes and says so instead — a figure that size is unreadable —
 while the JSON endpoint carries every node.
 
+
+## Search arms (optional)
+
+With no env set, `/search` is substring search over stored declarations —
+the service as it was before this existed, and the reply says only that
+(`"arms":{"substring":n}`, `"fusion":"single"`, `"embedder":null`).
+
+`MM0WEB_EMBED_URL` adds a **semantic** arm: declarations (name + statement)
+are embedded through that endpoint — EmbeddingGemma 2 behind llama.cpp
+(GGUF), Ollama, TEI or LiteRT all speak the OpenAI `/embeddings` schema —
+and ranked in a LEANN-shaped index that stores **texts and a pruned graph,
+never vectors**: only the visited path of a query is re-embedded, in one
+batched request per hop. `MM0WEB_EMBED_DIMS` selects an MRL truncation
+(512/256/128); `0` keeps the native dimension. The index is cached per
+corpus fingerprint (identity + statement of every row) and rebuilt when a
+proof is added; `MM0WEB_EMBED_DIMS` and the model id are reported with
+every semantic hit so a ranking is traceable to the model that made it.
+
+`MM0WEB_XERJ_URL` adds a third arm against a running xerj node. Load the
+corpus into it once:
+
+```sh
+curl -sS http://127.0.0.1:8081/api/v1/search-bulk > /tmp/decls.ndjson
+curl -sS -H 'content-type: application/x-ndjson' --data-binary @/tmp/decls.ndjson \
+     "http://127.0.0.1:9200/declarations/_bulk"
+```
+
+Arms are fused with Reciprocal-Rank Fusion (`k=60`): a cosine, a word
+overlap and a BM25 score are not on one scale, so only the *rankings* are
+combined, never the raw scores. The JSON carries per-hit `arms` and `rrf`,
+per-arm answering counts, `corpus`, and `unavailable` — a configured arm
+that cannot run is named with its reason (a dead endpoint is
+`unreachable`, not a status somebody sent), and search itself never fails
+because an optional arm is down. The HTML summary line states the same.
+
+The honesty rule is xerj's: nothing here says *semantic* unless a model is
+actually configured behind `MM0WEB_EMBED_URL`.
 
 ## Publishing for real
 

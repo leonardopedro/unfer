@@ -421,6 +421,17 @@ pub struct FormalizeOptions {
     /// duplicate hash and reports it; this flag controls whether the model is
     /// even given the material.
     pub include_dependency_cnl: bool,
+    /// Retrieved few-shot examples, pre-rendered by `memory::few_shot_block`
+    /// (lexical, or hybrid — see `formalize::hybrid`). Appended verbatim to
+    /// the user turn.
+    ///
+    /// A `String` rather than a `Vec<Retrieved>` because the loop below is
+    /// deliberately ignorant of retrieval: it builds prompts, and how the
+    /// examples were chosen (which arms, which model, what fusion) belongs
+    /// to the report, not to the prompt builder. Empty means none — and an
+    /// empty block stays absent rather than announced (see
+    /// `memory::few_shot_block`).
+    pub few_shot: String,
 }
 
 impl Default for FormalizeOptions {
@@ -428,6 +439,7 @@ impl Default for FormalizeOptions {
         FormalizeOptions {
             max_retries: 3,
             include_dependency_cnl: false,
+            few_shot: String::new(),
         }
     }
 }
@@ -591,6 +603,13 @@ pub fn build_user_turn(
              your sentence must denote this step's own new fact.\n",
             node.dependencies
         ));
+    }
+
+    // P3/P9: retrieved examples (lexically or hybrid-fused) — the whole
+    // reason the lemma store exists. Rendered block, so this function sees
+    // text and the retriever keeps its arm/fusion knowledge to itself.
+    if !opts.few_shot.is_empty() {
+        content.push_str(&opts.few_shot);
     }
 
     Turn::user(content)
@@ -1179,6 +1198,33 @@ mod tests {
         );
         assert!(on.content.contains("Love(john, mary)"), "{}", on.content);
         assert!(on.content.contains("must denote"), "{}", on.content);
+    }
+
+    /// The retrieved few-shot block reaches the prompt verbatim (rendered by
+    /// `memory::few_shot_block`, whether the arms were lexical or hybrid),
+    /// and an empty one stays absent rather than announcing the gap.
+    #[test]
+    fn the_prompt_carries_the_retrieved_examples_block() {
+        let n = GraphNode::new("l1", "quote", "a statement", Vec::<String>::new());
+        let with = build_user_turn(
+            &n,
+            &[],
+            &FormalizeOptions {
+                few_shot: "\nPreviously formalized steps you may reuse or must \
+                 deliberately differ from:\n  deadbeef (CNL `John loves Mary` …)\n"
+                    .into(),
+                ..FormalizeOptions::default()
+            },
+        );
+        assert!(with.content.contains("Previously formalized steps"), "{}", with.content);
+        assert!(with.content.contains("deadbeef"), "{}", with.content);
+
+        let without = build_user_turn(&n, &[], &FormalizeOptions::default());
+        assert!(
+            !without.content.contains("Previously formalized steps"),
+            "{}",
+            without.content
+        );
     }
 
     /// The prompt carries the node's statement and its dependencies — the two

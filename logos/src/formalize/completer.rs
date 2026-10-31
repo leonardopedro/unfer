@@ -203,6 +203,10 @@ pub fn complete_node<T: Transport>(
         // false so that if the loop is ever changed to build its own prompt it
         // will not silently start offering dependency CNL and inviting a copy.
         include_dependency_cnl: false,
+        // Likewise: the repair turn carries the failing sentence, not
+        // retrieved examples. Retrieval answers "what should this new step
+        // look like"; a repair already has the step.
+        few_shot: String::new(),
     };
 
     match repair_until_unique(turn, llm, lexicon, &repair) {

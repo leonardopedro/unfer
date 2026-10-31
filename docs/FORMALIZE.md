@@ -149,11 +149,23 @@ the UNF path. `memory::certainty` returns that (0.8 for `probably X`, since the
 0.2 negate lands on a tagged fallback) and it scales the lexical score, so a
 hedged fragment retrieves the same examples while reporting less confidence.
 
-Retrieval is **lexical**, deliberately. There is no embedding model in the
-pipeline — `placeholder_embedding` is derived from the key, so similarity on it
-would be similarity of *hashes*, which says nothing about meaning. Overlap of
-content words is weak but honest, and a weak real signal beats a
-strong-looking one that measures nothing.
+Retrieval is **lexical by default**, deliberately. `placeholder_embedding`
+is derived from the key, so similarity on it would be similarity of *hashes*,
+which says nothing about meaning — that has never been the default, and
+still is not. Overlap of content words is weak but honest, and a weak real
+signal beats a strong-looking one that measures nothing.
+
+What P9 added (`docs/RETRIEVAL.md`): an optional **hybrid** mode
+(`--retrieval hybrid`, with `--embed-url` / `UNFER_EMBED_URL` naming an
+EmbeddingGemma 2 endpoint) fuses the lexical rank with a semantic rank over
+`formalize::index` — a LEANN-shaped index that stores the store's texts and
+a pruned graph, never vectors, recomputing the visited path per query — and
+optionally a running xerj node's rank, all by RRF (`formalize::hybrid`).
+The semantic arm runs on a real model when an endpoint is configured and on
+xerj's honestly-named *lexical feature hashing* when it is not; the run
+report (`retrieval: {mode, embedder, xerj, examples}`) says which. Either
+way the retrieved examples now reach the prompt: `build_user_turn` appends
+`memory::few_shot_block`'s rendering, which is what P3's store was for.
 
 ## 6. Scoring
 
@@ -204,6 +216,16 @@ cargo run -p logos --features llm-http -- formalize proof.md \
     --lexicon corpus/lexicon.tsv --memory-out lemmas.json
 ```
 
+Few-shot retrieval is on (lexical) whenever the store has examples; hybrid
+fusion and a real embedding endpoint are opt-in:
+
+```sh
+# semantic arm on EmbeddingGemma 2 behind any OpenAI-compatible server
+OPENAI_BASE_URL=… UNFER_EMBED_URL=http://localhost:8082/v1 \
+  cargo run -p logos --features llm-http -- formalize proof.md \
+    --retrieval hybrid --embed-dims 256 --memory-in lemmas.json
+```
+
 Pointing at a local vLLM is a base-URL change and nothing else — the OpenAI
 chat schema is what vLLM, llama.cpp, Ollama's shim, TGI and LM Studio all
 implement:
@@ -231,8 +253,8 @@ What a driver may rely on without reading the code (mirrors
 
 | item | contract |
 |---|---|
-| entry | `cargo run -p logos --features llm-http -- formalize <input> [--out report.json] [--vis dag.html] [--lexicon corpus/lexicon.tsv] [--memory-out lemmas.json]` · single sentence: `logos unf <sentence> --json` · `<input>` may be a proof-graph JSON, which skips the graph stage |
-| preconditions | an OpenAI-compatible server via `OPENAI_BASE_URL` / `OPENAI_MODEL` (vLLM, llama.cpp, Ollama, TGI, LM Studio all speak the chat schema). `OPENAI_API_KEY` is **optional**: `None` sends no `Authorization` header and is never defaulted to an empty string that would authenticate as nobody. The HTTP transport sits behind `--features llm-http` (`dep:ureq`); without it the deterministic half — graph validation, kernel, scoring on fixtures — still builds and tests. |
+| entry | `cargo run -p logos --features llm-http -- formalize <input> [--out report.json] [--vis dag.html] [--lexicon corpus/lexicon.tsv] [--memory-out lemmas.json] [--retrieval lexical\|hybrid] [--embed-url url] [--embed-model id] [--embed-dims n] [--xerj-url url] [--xerj-index name]` · single sentence: `logos unf <sentence> --json` · `<input>` may be a proof-graph JSON, which skips the graph stage |
+| preconditions | an OpenAI-compatible server via `OPENAI_BASE_URL` / `OPENAI_MODEL` (vLLM, llama.cpp, Ollama, TGI, LM Studio all speak the chat schema). `OPENAI_API_KEY` is **optional**: `None` sends no `Authorization` header and is never defaulted to an empty string that would authenticate as nobody. The HTTP transport sits behind `--features llm-http` (`dep:ureq`); without it the deterministic half — graph validation, kernel, scoring on fixtures — still builds and tests. The hybrid semantic arm needs the same feature for `--embed-url` (reported as a stage error if asked for without it); the default lexical arm and the offline hashing arm need neither network nor feature. Env fallbacks: `UNFER_EMBED_URL`, `UNFER_EMBED_MODEL`, `UNFER_EMBED_DIMS`, `UNFER_XERJ_URL`, `UNFER_XERJ_INDEX` (flags win). |
 | outcome | exit `0` ran and trustworthy · `1` bad usage or a stage failed · `2` ran but the result is not trustworthy. `logos unf`: `1` rejected sentence, `2` compiled without a unique normal form. |
 | honest skip | no live model ⇒ **no accuracy claim**: everything verified so far is the deterministic half and a scripted transport (§12), and §4's predicted-low accuracy stands until a real run happens. Absent transport is a stage failure (exit 1), never a silent pass. |
 | redaction | the API key exists only in the request header — the serialized body carries no `api_key` field (asserted by test) — and errors carry the stage plus message, never request headers. |
