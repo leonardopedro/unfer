@@ -30,11 +30,37 @@ true: 12 times 1 equals 12
 false: two times three equals five
 false: five times five equals twenty four
 
+# ── the scale boundary: the first claim whose numeral overflowed the checker ──
+# `99 * 99` builds the numeral `ts^9801 tz`, deep enough that mm0's checkers
+# (which recurse over term structure) blew the default 8MB stack and aborted
+# with `thread 'main' has overflowed its stack` before giving any verdict.
+# The tools are now spawned with room to fit (emit.rs `tool_cmd`), so both
+# directions certify. One large line keeps that fix honest; the rest of the
+# corpus stays small so its certificates stay readable.
+true: 99 times 99 equals 9801
+false: 99 times 99 equals 9802
+
 # ── nesting: the operator that commits first ─────────────────────────────────
 true: two plus three times four equals fourteen
 true: (two plus three) times four equals twenty
 false: two plus three times four equals twenty
 true: two times two plus two times two equals eight
+
+# ── the grammar's other spellings of the same operators ──────────────────────
+# `and` reads as `+`, `multiplied by` as `*`, `equal to` as `=`, and
+# capitalization does not matter: each line below is the *same certificate* as
+# its plain-spelling sibling above (theorem names are content-addressed on the
+# goal), so this section checks that the alternate spellings really lower to
+# the same claim rather than to something merely similar.
+true: two and three equals five
+true: two plus three equal to five
+true: Two Plus Three Equals Five
+true: three multiplied by four equals twelve
+
+# ── numeral words: teens, hyphens, and mixing bases on one side ──────────────
+true: 17 + twenty five = 42
+true: seventeen plus five equals twenty two
+true: twenty-five plus zero equals 25
 
 # ── the successor: the constructor the upstream Peano theorems are stated in ─
 true: suc 4 equals 5
@@ -43,17 +69,28 @@ true: suc (two plus three) equals six
 false: suc 4 equals 4
 proved: for all a: a plus one equals suc a
 proved: for all a: suc a plus zero equals suc a
+# the other two spellings of the constructor, nested around a number and
+# around a parenthesized expression
+true: successor of 4 equals 5
+true: the successor of (2 + 3) equals six
+true: suc (suc (suc 3)) equals 6
+false: suc (suc 2) equals 5
 
 # ── questions: the same certificates, reported as answers ────────────────────
 true: is two plus three five?
 false: is two plus three six?
 false: does two times three equal seven?
+# `is ... equal to` and `does ... equal`, over a product and the constructor
+true: is 42 equal to six times seven?
+true: does the successor of three equal four?
 
 # ── open claims: both sides rewrite to the same normal form ─────────────────
 # (`for all a: a + suc b = suc (a + b)` and the rest of the recursion laws
 # themselves are in `upstream.txt`, next to the MM0 theorems they come from.)
 proved: for all x: x plus zero equals x
 proved: for all x: x times zero equals zero
+# parentheses around a whole side, the same claim as the first line here
+proved: for all a: (a plus zero) equals a
 
 # ── the honest negative: a true fact this fragment cannot prove ──────────────
 # Commutativity needs induction; the theory has no induction rule, and the

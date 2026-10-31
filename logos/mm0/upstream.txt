@@ -58,6 +58,12 @@ proved: for all a: suc a equals a plus one
 proved: for all a: suc a plus two equals suc (suc (suc a))
 # mulS2 at a successor operand: `a * suc a = a * a + a`.
 proved: for all a: a times suc a equals a times a plus a
+# the `suceq add02` step of an upstream proof, stated as its own claim:
+# congruence under `suc` wrapping a rewriting step.
+proved: for all a: suc (a plus zero) equals suc a
+# both operands' zero stripped before the product (eq_mul_l / eq_mul_r over
+# add_z twice) — the `muleq2` shape with a variable on each side.
+proved: for all a, b: (a plus zero) times (b plus zero) equals a times b
 
 # ── the induction-only group, honestly unproved ─────────────────────────────
 # Each of these is *true in the standard model* and unreachable in the
@@ -66,6 +72,9 @@ proved: for all a: a times suc a equals a times a plus a
 # correct answer, and the reason the corpus records rather than hides.
 unproved: for all a: zero plus a equals a
 unproved: for all a: one plus a equals suc a
+# `two + a` is addS1 twice over add01 — the same induction boundary, one more
+# shape: rewriting gets stuck on the variable right operand either way.
+unproved: for all a: two plus a equals suc (suc a)
 unproved: for all a, b: suc a plus b equals suc (a plus b)
 unproved: for all a, b: suc a plus b equals a plus suc b
 unproved: for all a, b: a plus b equals b plus a
@@ -127,6 +136,15 @@ true: 3 * 2 = 3 + 3
 true: suc 3 * 4 = 3 * 4 + 4
 # mul01 at 5
 true: 0 * 5 = 0
+# add4 again, with larger numerals
+true: (5 + 6) + (7 + 8) = (5 + 7) + (6 + 8)
+# addass at 4, 5, 6
+true: (4 + 5) + 6 = 4 + (5 + 6)
+# mulS1 at 7, 8: the successor sits on the *left* operand, so the recursion
+# still runs on the right one — `suc 7 * 8` is `(suc 7) * 8`, as in the source.
+true: suc 7 * 8 = 7 * 8 + 8
+# muladd written in number words
+true: three times (four plus five) equals three times four plus three times five
 
 # ── misquotations of the same theorems, which must be refuted ────────────────
 # addcom with the second operand misconverted: 7 = 8 is false.

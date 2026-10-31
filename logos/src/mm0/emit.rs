@@ -30,6 +30,7 @@
 //! stable under reordering and re-emission, and two differently spelled claims
 //! with the same goal share a name.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -431,6 +432,47 @@ pub fn have_elaborator() -> bool {
         .is_ok()
 }
 
+/// Build a command for an mm0 tool that gives the child a big stack.
+///
+/// The checkers recurse over term structure, so a numeral like `ts^9801 tz`
+/// (the value of `99 * 99`) is thousands of frames deep and overflows the
+/// default 8MB stack: `ask "99 times 99 equals 9801" --verify` used to abort
+/// with `thread 'main' has overflowed its stack` before any verdict, while the
+/// very same artifact verifies once the checker has room (and `mm0-c`, which
+/// is iterative over the proof stream, was always fine with it). The tool is
+/// `exec`'d through a shell that raises `ulimit -s` first; argv, stdin and the
+/// exit code are unchanged because `exec` replaces the shell.
+///
+/// The wrapper is used only when the tool can already be spawned directly:
+/// a missing `mm0-rs` must stay a spawn error ("could not run") rather than
+/// becoming a 127 exit that reads as "the kernel said no" — that distinction
+/// is what [`elaborates`] and [`verify_mm0`] promise their callers. Where `sh`
+/// or the rlimit cannot cooperate, the tool runs with the default stack, i.e.
+/// exactly the previous behavior.
+fn tool_cmd(var: &str, default: &str, args: &[&OsStr]) -> Command {
+    let tool = tool(var, default);
+    let available = Command::new(&tool).arg("--version").output().is_ok();
+    if available && cfg!(unix) {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(
+                "ulimit -s 524288 2>/dev/null || ulimit -s unlimited \
+                 2>/dev/null; exec \"$0\" \"$@\"",
+            )
+            .arg(&tool);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd
+    } else {
+        let mut cmd = Command::new(&tool);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd
+    }
+}
+
 /// Ask mm0 whether the proof in `mm1` checks against the statements in `mm0`.
 ///
 /// Returns `Ok(false)` for a rejected proof and `Err` when the tool could not be
@@ -445,12 +487,18 @@ fn elaborates(mm0: &str, mm1: &str) -> Result<bool, String> {
     let mm0_path = dir.join("claim.mm0");
     std::fs::write(&mm0_path, mm0).map_err(|e| format!("{}: {e}", mm0_path.display()))?;
 
-    let out = Command::new(tool("MM0_RS", "mm0-rs"))
-        .arg("compile")
-        .arg(&mm1_path)
-        .arg(dir.join("claim.mmb"))
-        .output()
-        .map_err(|e| format!("could not run `mm0-rs`: {e} (set MM0_RS)"))?;
+    let mmb_path = dir.join("claim.mmb");
+    let out = tool_cmd(
+        "MM0_RS",
+        "mm0-rs",
+        &[
+            OsStr::new("compile"),
+            mm1_path.as_os_str(),
+            mmb_path.as_os_str(),
+        ],
+    )
+    .output()
+    .map_err(|e| format!("could not run `mm0-rs`: {e} (set MM0_RS)"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = std::fs::remove_dir_all(&dir);
@@ -497,12 +545,13 @@ pub fn verify_mm0(mm0: &Path) -> Result<Verified, String> {
         return Err(format!("no {} beside {}", mm1.display(), mm0.display()));
     }
     let mmb = mm0.with_extension("mmb");
-    let out = Command::new(tool("MM0_RS", "mm0-rs"))
-        .arg("compile")
-        .arg(&mm1)
-        .arg(&mmb)
-        .output()
-        .map_err(|e| format!("could not run `mm0-rs`: {e} (set MM0_RS)"))?;
+    let out = tool_cmd(
+        "MM0_RS",
+        "mm0-rs",
+        &[OsStr::new("compile"), mm1.as_os_str(), mmb.as_os_str()],
+    )
+    .output()
+    .map_err(|e| format!("could not run `mm0-rs`: {e} (set MM0_RS)"))?;
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -518,8 +567,7 @@ pub fn verify_mm0(mm0: &Path) -> Result<Verified, String> {
 
     // `mm0-c` reads the `.mm0` on stdin: `mm0-c MMB < MM0`.
     let source = std::fs::File::open(mm0).map_err(|e| format!("{}: {e}", mm0.display()))?;
-    let check = Command::new(tool("MM0_C", "mm0-c"))
-        .arg(&mmb)
+    let check = tool_cmd("MM0_C", "mm0-c", &[mmb.as_os_str()])
         .stdin(source)
         .output();
     let mm0_c_exit = match check {

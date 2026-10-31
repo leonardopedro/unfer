@@ -159,6 +159,14 @@ both are commented at their definitions in `src/mm0/emit.rs`:
   C checker walks off the end of the claim without it;
 * the `.mm1` theorem is `pub` — a private theorem's proof reaches the `.mmb` but
   its *declaration* does not, and `mm0-c` then reports `expecting a theorem`.
+* the checkers are spawned with a raised stack (`emit.rs::tool_cmd`): `99 times
+  99` builds the numeral `ts^9801 tz`, deep enough that mm0-rs recursed through
+  the default 8MB stack and aborted with `thread 'main' has overflowed its
+  stack` before any verdict could be printed — the very same artifact verifies
+  once the child has room, so the tool is `exec`'d through `ulimit -s` (argv,
+  stdin and the exit code unchanged), while a *missing* tool still fails as a
+  spawn error rather than reading as a rejection. The corpus keeps one large
+  line (`99 * 99 = 9801` and its refutation) so the boundary stays tested.
 
 An unproved claim writes `<theorem>.goal` instead: a statement without a proof is
 a `sorry`, `mm0-c` rejects those (correctly), and calling the file a certificate
