@@ -227,7 +227,25 @@ logos verify "one is one" "Eq(1, 1)"  # assert expected output
 logos hash "the cat sleeps"       # UNF hash (hex)
 logos l1 "probably John loves Mary"   # probabilistic worlds
 logos iso "(x + 5)" "(x + (2 + 3))"  # conversion check + isomorphism witness
+logos mm0 ask "two plus three equals five"  # CNL sentence → MM0 theorem (exit 0)
+logos mm0 ask "is two plus three six?"       # …refuted (exit 2)
 ```
+
+## Math fragment certified by MM0 (`logos mm0`)
+
+A controlled-natural-language subset of arithmetic is compiled by the pipeline
+above (CNL → CoreIR → DeltaNet net → reducer) and then *encoded as an MM0
+term*, so a sentence becomes a theorem whose certificate is the answer: proved
+`teq L R` is **yes**, `teq L R ⟹ tfals` is **no**, no certificate is "do not
+know" — the pipeline never guesses. An LLM may propose the rule instantiations
+that quantified claims need (`--hint`, `--llm`), but every proposal is checked by
+mm0-rs before it enters the artifact; the quantified claims the recursion laws
+settle are proved by rewriting both sides to normal form, no guesswork involved.
+The target theory is `logos/mm0/logos_math.mm0` (agent layer + bridge axioms +
+Peano recursion + refutation), and the fragment is exercised against theorems
+from MM0's own Peano development in `logos/mm0/upstream.txt`. See
+[`LOGOS_MM0.md`](LOGOS_MM0.md) for the grammar, the certificate shapes, the CLI
+and `australVM/scripts/logos2mm0` (including its tamper anchor).
 
 ## Conversion check (`logos iso`, `austral_defeq`)
 

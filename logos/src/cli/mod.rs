@@ -44,7 +44,7 @@ fn readback_or_die(net: &deltanet::Net) -> String {
 pub fn run_cli(args: Vec<String>) {
     if args.len() < 2 {
         eprintln!("Usage: logos <subcommand> [args]");
-        eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize");
+        eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize, mm0");
         process::exit(1);
     }
 
@@ -57,9 +57,10 @@ pub fn run_cli(args: Vec<String>) {
         "unf" => cmd_unf(&args[2..]),
         "iso" => cmd_iso(&args[2..]),
         "formalize" => process::exit(formalize::run(&args[2..])),
+        "mm0" => process::exit(crate::mm0::run(&args[2..])),
         _ => {
             eprintln!("Unknown subcommand: {}", args[1]);
-            eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize");
+            eprintln!("Subcommands: parse, run, verify, hash, l1, unf, iso, formalize, mm0");
             process::exit(1);
         }
     }
