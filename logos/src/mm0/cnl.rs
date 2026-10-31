@@ -56,7 +56,9 @@ impl Claim {
         // against the variables the body actually uses. The quantifier is not
         // *needed* — a free variable is universally quantified by the emitted
         // theorem's binders — so a `for all` that names a variable the body
-        // never mentions is an error rather than silently dropped.
+        // never mentions is an error rather than silently dropped, and a name
+        // listed twice is refused for the same reason: collapsing `a, a` to one
+        // binder would hide the slip instead of reporting it.
         let declared = p.parse_forall()?;
 
         // Interrogative openers. `is` is also an equality word, so it is only
@@ -93,9 +95,10 @@ impl Claim {
                 all.sort();
                 all
             };
+            // `declared` is duplicate-free (`parse_forall` refuses a name
+            // listed twice), so sorting is enough to compare it with `used`.
             let mut declared_sorted = declared.clone();
             declared_sorted.sort();
-            declared_sorted.dedup();
             if declared_sorted != used {
                 return Err(format!(
                     "`for all` names {} but the claim uses {}",
@@ -176,6 +179,9 @@ impl Parser {
                     return Ok(names);
                 }
                 Some(t) if t.chars().next().is_some_and(|c| c.is_alphabetic()) => {
+                    if names.iter().any(|n| n == t) {
+                        return Err(format!("`for all` names `{t}` twice"));
+                    }
                     names.push(t.to_string());
                     self.pos += 1;
                 }

@@ -99,6 +99,15 @@ fn cnl_quantifier_names_the_variables_the_claim_uses() {
 
     let e = Claim::parse("for every x and y: x plus zero equals x").unwrap_err();
     assert!(e.contains("names x, y"), "{e}");
+
+    // A name listed twice is refused too: deduplicating it silently would turn
+    // `for all a, a:` — a slip no reader intends — into the same certificate as
+    // `for all a:`, hiding the mistake the check exists to report.
+    let e = Claim::parse("for all a, a: a plus zero equals a").unwrap_err();
+    assert!(e.contains("names `a` twice"), "{e}");
+
+    let e = Claim::parse("for all a, b, a: a plus b equals b plus a").unwrap_err();
+    assert!(e.contains("names `a` twice"), "{e}");
 }
 
 #[test]
