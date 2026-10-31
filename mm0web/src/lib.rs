@@ -11,7 +11,20 @@
 //! ```text
 //! browser ──POST /verify──▶ checker ──▶ Accepted / Rejected (+ toolchain log)
 //!         └─POST /publish─▶ store ────▶ Zenodo deposit ──▶ record URL + DOI
+//!         └─GET /graph|/search|/stats ▶ derived views of what is stored
 //! ```
+//!
+//! The third line is read-only and derives everything it shows: `/graph`
+//! renders one submission's dependency graph (its declarations, what they
+//! rest on, the faults in that structure), `/search` finds declarations
+//! across the index, `/stats` totals it. None of them can accept, reject or
+//! publish — the two checkers remain the only verdict in the service. The
+//! graph is this project's reading of the point ProofFlow makes with its
+//! `check_DAG` stage (`../../../ProofFlow/`, study in `../../docs/PROOFFLOW_STUDY.md`):
+//! a proof is easier to trust when you can see what rests on what. Its rules
+//! are the ones already ported in `logos::formalize::graph`, parity-tested
+//! from `graph::tests`, and the figure comes from `logos::dagviz` — the same
+//! canvas `logos --vis` writes.
 //!
 //! Three deliberate scope decisions, from the operator's answers when this was
 //! scoped:
@@ -35,6 +48,7 @@
 
 pub mod audit;
 pub mod checker;
+pub mod graph;
 pub mod http;
 pub mod publisher;
 pub mod store;

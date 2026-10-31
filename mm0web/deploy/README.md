@@ -41,6 +41,38 @@ systemctl --user enable --now mm0web.service
 curl -sS http://127.0.0.1:8081/healthz
 ```
 
+## Reading a submission
+
+The graph, search and stats routes are **read-only**: they answer from the
+local index, cannot accept, reject or publish anything, and are the same over
+`/…` (HTML) and `/api/v1/…` (JSON).
+
+```sh
+# one proof's dependency graph: the layered figure, its fault list, and the
+# declared/referenced/unused accounting under it
+GET /graph?project=unfer&id=<proof-id>
+GET /api/v1/graph?project=unfer&id=<proof-id>   # the graph itself, all of it
+
+# substring search over stored declarations (name or statement, case-insensitive);
+# every hit links at the graph of the proof that declares it
+GET /search?q=nat
+GET /api/v1/search?q=nat
+
+# totals over every stored proof: projects, states, declarations, references
+GET /stats
+GET /api/v1/stats
+```
+
+Two things the graph deliberately does not do. It never decides anything —
+the verdict comes from `mm0-rs`/`mm0-c` alone, and an empty or faulted graph
+neither accepts nor rejects a submission; the fault list is a hint about the
+*shape* of what was judged. And for a submission the checkers **accepted**, an
+undeclared name cannot be a defect, so those are reported as information
+(variables, notation tokens, proof-script helpers) rather than faults —the page says so where it lists them. A submission above 500 declarations
+stops drawing boxes and says so instead — a figure that size is unreadable —
+while the JSON endpoint carries every node.
+
+
 ## Publishing for real
 
 Without `ZENODO_API_KEY` nothing is archived: `POST /api/v1/publish` verifies,

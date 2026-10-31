@@ -508,4 +508,78 @@ mod tests {
             report.error, report.failing_theorem
         );
     }
+
+    /// The quasi-Riemann (7/8) certificate (`timepiece/QuasiRiemannCertificate.lean`),
+    /// exported to lean4export NDJSON 3.1.0 by the official tool (backport
+    /// revision `d065b00`) on the pinned Lean 4.28.0 toolchain and pinned here.
+    /// Nine `rfl` certificates over the arithmetic skeleton of the zero-free
+    /// half-plane `7/8 < Re s`: the bound read exactly (0.8750), θ·10⁴ = 8750,
+    /// the cross-multiplied identity 7·10000 = 8·8750, θ < 1 (the "quasi"), the
+    /// ε = 1/8 gap, the in/out-of-half-plane boundary at 10⁻⁴, and the principal
+    /// pole at s = 1 sitting *inside* the half-plane (the point the Dirichlet
+    /// statement excludes separately via `hpole`).  The file also carries the
+    /// statement of record over opaque analytic stand-ins — asserted, not
+    /// proved: the analytic proof is `OAI.riemannZeta_ne_zero_of_seven_eighths_lt_re`
+    /// in `math/lean/OAI/NumberTheory/DirichletL/Nonvanishing.lean` (Mathlib,
+    /// ~2,900-file DirichletL tree; the full analytic export is the
+    /// `quasi_rh_proof` test below).
+    /// Regenerate with the header comment of `QuasiRiemannCertificate.lean`.
+    #[test]
+    fn quasi_rh_certificate_verifies_in_nanoda() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/quasi_rh_certificate.ndjson"
+        );
+        let bytes = std::fs::read(path).expect("read quasi_rh_certificate.ndjson fixture");
+        let spec = LeanVerifySpec {
+            nat_extension: true,
+            string_extension: true,
+            ..LeanVerifySpec::standard_axioms()
+        };
+        let report = verify_export(&bytes, &spec).unwrap();
+        assert!(
+            report.verified,
+            "nanoda rejected the quasi-Riemann certificate: {:?} (failing: {:?})",
+            report.error, report.failing_theorem
+        );
+    }
+
+    /// The real quasi-Riemann proof (7/8): `OAI.riemannZeta_ne_zero_of_seven_eighths_lt_re`
+    /// (`math/lean/OAI/NumberTheory/DirichletL/Nonvanishing.lean`), exported
+    /// with its full dependency cone by lean4export 3.1.0 on Lean 4.34.1 —
+    /// 1.7 GB, 30.6 M expr records, 122,151 declarations (99,084 thm /
+    /// 21,634 def / 3 axiom / 1,430 induct). The three axioms are exactly
+    /// `propext`, `Quot.sound`, `Classical.choice` — all in the standard
+    /// permit list; no `sorryAx`, no unsafe declarations.
+    ///
+    /// Regenerate (from `math/lean`, after `lake build` of the target):
+    ///   LEAN_PATH=$(lake env printenv LEAN_PATH) \
+    ///   ~/Projects/lean4export-v434/.lake/build/bin/lean4export \
+    ///     OAI.NumberTheory.DirichletL.Nonvanishing \
+    ///     -- OAI.riemannZeta_ne_zero_of_seven_eighths_lt_re \
+    ///     > prob_kernel/tests/fixtures/quasi_rh_proof.ndjson
+    ///
+    /// Opt-in only (1.7 GB parse + full kernel run):
+    ///   cargo test --release -p prob_kernel -- --ignored quasi_rh_proof
+    #[test]
+    #[ignore = "1.7 GB export — run explicitly"]
+    fn quasi_rh_proof_verifies_in_nanoda() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/quasi_rh_proof.ndjson"
+        );
+        let bytes = std::fs::read(path).expect("read quasi_rh_proof.ndjson fixture");
+        let spec = LeanVerifySpec {
+            nat_extension: true,
+            string_extension: true,
+            max_export_bytes: 2 * 1024 * 1024 * 1024,
+            ..LeanVerifySpec::standard_axioms()
+        };
+        let report = verify_export(&bytes, &spec).unwrap();
+        assert!(
+            report.verified,
+            "nanoda rejected the quasi-Riemann proof: {:?} (failing: {:?})",
+            report.error, report.failing_theorem
+        );
+    }
 }

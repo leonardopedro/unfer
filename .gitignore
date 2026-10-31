@@ -58,3 +58,4 @@ logs/*
 # Python bytecode caches (X5 build-artifact hygiene): regenerated on every run.
 __pycache__/
 *.pyc
+quasi_rh_proof.ndjson

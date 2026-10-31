@@ -24,6 +24,7 @@
 //! produced a report but found problems is not the same as a run that could not
 //! happen, and a script that checks only `!= 0` cannot tell them apart.
 
+use crate::dagviz::{self, escape};
 use crate::formalize::completer::{self, CompleteOptions, CompleteReport};
 use crate::formalize::formalizer::{self, CnlFormalization, DomainLexicon, FormalizeOptions};
 use crate::formalize::graph::{self, Validated};
@@ -388,145 +389,52 @@ pub fn report_json(report: &PipelineReport) -> Result<String, serde_json::Error>
 /// Layout is layered: `layer(n) = 0` for a node with no dependencies, else
 /// `1 + max(layer(deps))`. The graph is already topologically ordered, so one
 /// pass suffices.
+///
+/// The figure itself comes from [`crate::dagviz`], the canvas shared with
+/// `mm0web`'s submission graph: this function decides what each box *means*,
+/// the canvas decides where it is drawn.
 pub fn dag_html(report: &PipelineReport, graph: &Validated) -> String {
     let layers = layer_assignment(graph);
-    let row_height = 108.0f64;
-    let box_width = 320.0f64;
-    let gap_x = 56.0f64;
-    let gap_y = 26.0f64;
-    let margin = 28.0f64;
 
     let by_id: std::collections::BTreeMap<&str, &NodeReport> =
         report.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
-    // Index within each layer, assigned in one pass so the layout is O(n) rather
-    // than re-deriving the layers per node.
-    let mut next_in_layer: std::collections::BTreeMap<usize, usize> = Default::default();
-    let mut widest = 0usize;
-    let mut positions: std::collections::BTreeMap<&str, (f64, f64)> =
-        std::collections::BTreeMap::new();
-    for node in &graph.nodes {
-        let layer = *layers.get(node.id.as_str()).unwrap_or(&0);
-        let row_index = next_in_layer.entry(layer).or_insert(0);
-        positions.insert(
-            node.id.as_str(),
-            (
-                margin + *row_index as f64 * (box_width + gap_x),
-                margin + layer as f64 * (row_height + gap_y),
-            ),
-        );
-        *row_index += 1;
-        widest = widest.max(*row_index);
-    }
-    let tallest = layers.values().copied().max().unwrap_or(0) + 1;
-
-    let width = margin * 2.0 + widest as f64 * (box_width + gap_x);
-    let height = margin * 2.0 + tallest as f64 * (row_height + gap_y);
-
-    let mut svg = String::new();
-    svg.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width:.0} {height:.0}\" \
-         width=\"100%\" role=\"img\" aria-label=\"proof dependency graph\">\n"
-    ));
-    svg.push_str(
-        "<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" \
-         markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\">\
-         <path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#8a8f98\"/></marker></defs>\n",
-    );
-
-    // Edges first, so boxes paint over the arrowheads.
-    for node in &graph.nodes {
-        let Some(&(x, y)) = positions.get(node.id.as_str()) else {
-            continue;
-        };
-        for dep in &node.dependencies {
-            let Some(&(dx, dy)) = positions.get(dep.as_str()) else {
-                continue;
-            };
-            let (x1, y1) = (dx + box_width, dy + row_height / 2.0);
-            let (x2, y2) = (x, y + row_height / 2.0);
-            svg.push_str(&format!(
-                "<path d=\"M {x1:.1} {y1:.1} C {x1:.1} {y2:.1} {x2:.1} {y1:.1} {x2:.1} {y2:.1}\" \
-                 fill=\"none\" stroke=\"#8a8f98\" stroke-width=\"1.4\" \
-                 marker-end=\"url(#arrow)\"/>\n"
-            ));
-        }
-    }
-
-    for node in &graph.nodes {
-        let Some(&(x, y)) = positions.get(node.id.as_str()) else {
-            continue;
-        };
-        let row = by_id.get(node.id.as_str()).copied();
-        let stroke = row_color(row);
-        svg.push_str(&format!(
-            "<g><rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{box_width}\" height=\"{row_height}\" \
-             rx=\"8\" fill=\"#ffffff\" stroke=\"{stroke}\" stroke-width=\"2\"/>\n"
-        ));
-        svg.push_str(&format!(
-            "<text x=\"{:.1}\" y=\"{:.1}\" font-family=\"ui-monospace,SFMono-Regular,Menlo,monospace\" \
-             font-size=\"15\" font-weight=\"700\" fill=\"#1b1e23\">{} <tspan \
-             font-weight=\"400\" fill=\"#6b7076\">{}</tspan></text>\n",
-            x + 14.0,
-            y + 26.0,
-            escape(node.id.as_str()),
-            escape(&row.map(|r| r.kind.clone()).unwrap_or_default())
-        ));
-        let mut line = 2usize;
-        for (text, dy) in [
-            (
-                row.and_then(|r| r.formalization.as_ref().map(|f| f.cnl.clone())),
-                48.0,
-            ),
-            (
-                row.and_then(|r| r.formalization.as_ref().map(|f| f.readback.clone())),
-                68.0,
-            ),
-            (
-                row.and_then(|r| r.formalization.as_ref().map(|f| short_hash(&f.unf_hash))),
-                88.0,
-            ),
-        ] {
-            if let Some(t) = text {
-                svg.push_str(&format!(
-                    "<text x=\"{:.1}\" y=\"{:.1}\" font-family=\"ui-monospace,\
-                     SFMono-Regular,Menlo,monospace\" font-size=\"12\" fill=\"#3a3f45\">{}</text>\n",
-                    x + 14.0,
-                    y + dy,
-                    escape(&truncate(&t, 44))
-                ));
-                line += 1;
+    // The page's semantics, not the canvas': what a node is, how it fared,
+    // and what it rests on.
+    let boxes: Vec<dagviz::BoxView> = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            let row = by_id.get(node.id.as_str()).copied();
+            let mut lines = Vec::new();
+            if let Some(f) = row.and_then(|r| r.formalization.as_ref()) {
+                lines.push(f.cnl.clone());
+                lines.push(f.readback.clone());
+                lines.push(short_hash(&f.unf_hash));
             }
-        }
-        if let Some(r) = row {
-            if let Some(err) = &r.error {
-                svg.push_str(&format!(
-                    "<text x=\"{:.1}\" y=\"{:.1}\" font-family=\"ui-monospace,\
-                     SFMono-Regular,Menlo,monospace\" font-size=\"11\" fill=\"#a4262c\">\
-                     {}</text>\n",
-                    x + 14.0,
-                    y + 26.0 + line as f64 * 14.0,
-                    escape(&truncate(err, 44))
-                ));
-            }
-            if let Some(s) = report
-                .score
-                .as_ref()
-                .and_then(|sc| sc.nodes.iter().find(|n| n.id == r.id))
-            {
-                svg.push_str(&format!(
-                    "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" \
-                     font-family=\"ui-monospace,SFMono-Regular,Menlo,monospace\" \
-                     font-size=\"12\" fill=\"#1b1e23\">score {:.2}</text>\n",
-                    x + box_width - 14.0,
-                    y + 26.0,
-                    s.semantic_score
-                ));
-            }
-        }
-        svg.push_str("</g>\n");
-    }
-    svg.push_str("</svg>\n");
+            let accent = row.and_then(|r| r.error.clone()).map(|e| (e, "#a4262c"));
+            let badge = row.and_then(|r| {
+                report
+                    .score
+                    .as_ref()
+                    .and_then(|sc| sc.nodes.iter().find(|n| n.id == r.id))
+                    .map(|s| format!("score {:.2}", s.semantic_score))
+            });
+            let mut b = dagviz::BoxView::new(
+                *layers.get(node.id.as_str()).unwrap_or(&0),
+                node.id.clone(),
+                row_color(row),
+            );
+            b.subtitle = row.map(|r| r.kind.clone()).unwrap_or_default();
+            b.lines = lines;
+            b.accent = accent;
+            b.badge = badge;
+            b.deps = node.dependencies.clone();
+            b
+        })
+        .collect();
+    let svg = dagviz::svg(&boxes, &dagviz::Canvas::default());
+
 
     let legend = "<p class=\"legend\">\
 <span class=\"sw ok\"></span> formalized &amp; uniquely reduced \
@@ -612,23 +520,6 @@ fn row_color(row: Option<&NodeReport>) -> &'static str {
             None => "#8a8f98",
         },
     }
-}
-
-fn truncate(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(n.saturating_sub(1)).collect();
-    format!("{head}…")
-}
-
-/// Minimal HTML escaping. The report contains model output and file content, so
-/// this is a correctness requirement, not a nicety.
-fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// Write `report_json` to `path`, creating parent directories.
@@ -865,6 +756,7 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
 /// Feature-gated with the tail of `run_inner`, which is its only caller.
 #[cfg(feature = "llm-http")]
 fn print_summary(report: &PipelineReport, wrote_json: bool) {
+    use crate::dagviz::truncate;
     let kind = match report.input_kind {
         InputKind::NaturalLanguage => "natural-language proof",
         InputKind::ProofGraphJson => "proof-graph JSON",
@@ -1270,6 +1162,7 @@ mod tests {
 
     #[test]
     fn truncation_keeps_the_tail_visible_as_an_ellipsis() {
+        use crate::dagviz::truncate;
         assert_eq!(truncate("short", 10), "short");
         let long = "x".repeat(50);
         let t = truncate(&long, 10);

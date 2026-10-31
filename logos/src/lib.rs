@@ -14,6 +14,9 @@
 pub mod austral_codegen;
 pub mod ccg;
 pub mod cli;
+/// The layered SVG both dependency-graph pages are drawn with: the CLI's
+/// `--vis dag.html` and `mm0web`'s submission graph.
+pub mod dagviz;
 pub mod core_ir;
 pub mod deltanet;
 pub mod engram;

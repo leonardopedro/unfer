@@ -3,7 +3,7 @@
 //! works" means here. Verification is synchronous (it is two subprocesses);
 //! publishing is queued (`crate::publisher`) and observed at `/status`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use serde_json::json;
 
 use crate::audit::Audit;
 use crate::checker::{self, CheckerConfig};
+use crate::graph::Graph;
 use crate::http::{self, Request};
 use crate::publisher::{Publisher, QueueError};
 use crate::store::{
@@ -179,6 +180,7 @@ project deposit (snapshot + incremental deltas).</p>
      <button name="action" value="publish" type="submit">Verify and publish</button></p>
 </form>
 <p>Published proofs: PROJECT_LINKS</p>
+<p><a href="/search">search</a> · <a href="/stats">stats</a> · <a href="/events">audit log</a></p>
 </body></html>
 "#;
 
@@ -194,6 +196,12 @@ pub fn handle(req: &Request, cfg: &Config, limiter: &RateLimiter) -> Response {
         ("GET", "/status") => get_status(req, cfg),
         ("GET", "/attestation") => attestation(req, cfg),
         ("GET", "/events") => get_events(req, cfg),
+        ("GET", "/graph") => get_graph(req, cfg, false),
+        ("GET", "/api/v1/graph") => get_graph(req, cfg, true),
+        ("GET", "/search") => get_search(req, cfg, false),
+        ("GET", "/api/v1/search") => get_search(req, cfg, true),
+        ("GET", "/stats") => get_stats(cfg, false),
+        ("GET", "/api/v1/stats") => get_stats(cfg, true),
         ("POST", "/verify") | ("POST", "/api/v1/verify") => {
             verify_or_publish(req, cfg, limiter, false)
         }
@@ -344,6 +352,18 @@ fn verify_or_publish(
     let outcome = checker::check(&cfg.checker, &mm0, &mm1, &workdir);
     let _ = std::fs::remove_dir_all(&workdir);
     let id = store::proof_id(&title, &mm0, &mm1);
+    // The graph is a *view*, built here so a result page can embed it. The
+    // verdict below comes from the checkers; nothing here can reject.
+    let graph = Graph::build(&mm0, &mm1);
+    let graph = if outcome.accepted {
+        // An accepted submission's undeclared names are information, not
+        // defects — the checkers already judged it.
+        graph.accepted()
+    } else {
+        graph
+    };
+    let failed = failed_nodes(&graph, &outcome.log);
+    let graph_ref: Option<(&Graph, &HashSet<String>)> = Some((&graph, &failed));
 
     if !outcome.accepted {
         let _ = cfg.audit.record(
@@ -364,7 +384,7 @@ fn verify_or_publish(
                 json!({"accepted": false, "stage": outcome.stage, "log": outcome.log}),
             )
         } else {
-            html(400, render_result("Rejected", &text, None, cfg))
+            html(400, render_result("Rejected", &text, None, graph_ref))
         };
     }
     let _ = cfg.audit.record(
@@ -381,7 +401,7 @@ fn verify_or_publish(
                 json!({"accepted": true, "stage": outcome.stage, "log": outcome.log}),
             )
         } else {
-            html(200, render_result("Accepted", &outcome.log, None, cfg))
+            html(200, render_result("Accepted", &outcome.log, None, graph_ref))
         };
     }
 
@@ -418,7 +438,7 @@ fn verify_or_publish(
         } else {
             html(
                 200,
-                render_result("Already published", &text, Some(&url), cfg),
+                render_result("Already published", &text, Some(&url), graph_ref),
             )
         };
     }
@@ -438,7 +458,7 @@ fn verify_or_publish(
         return if req.wants_json() {
             json(429, json!({"error": "daily-cap", "message": msg}))
         } else {
-            html(429, render_result("Daily cap reached", &msg, None, cfg))
+            html(429, render_result("Daily cap reached", &msg, None, None))
         };
     }
 
@@ -465,7 +485,7 @@ fn verify_or_publish(
         } else {
             html(
                 502,
-                render_result("Verified, not published", &text, None, cfg),
+                render_result("Verified, not published", &text, None, graph_ref),
             )
         };
     }
@@ -526,7 +546,7 @@ fn verify_or_publish(
             } else {
                 html(
                     503,
-                    render_result("Verified, queue unavailable", &text, None, cfg),
+                    render_result("Verified, queue unavailable", &text, None, graph_ref),
                 )
             }
         }
@@ -682,6 +702,244 @@ fn get_events(req: &Request, cfg: &Config) -> Response {
     json(200, json!({"events": ev, "count": ev.len()}))
 }
 
+/// Every project directory that carries an index, in name order.
+fn projects(cfg: &Config) -> Vec<String> {
+    let mut projects: Vec<String> = std::fs::read_dir(&cfg.store.state_dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().join("index.json").is_file())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    projects.sort();
+    projects
+}
+
+/// Every stored proof, as `(project, proof)` — what search and stats read.
+fn all_proofs(cfg: &Config) -> Vec<(String, store::Proof)> {
+    let mut out = Vec::new();
+    for p in projects(cfg) {
+        let index = Index::load(&cfg.store.state_dir, &p);
+        out.extend(index.proofs.into_values().map(|pr| (p.clone(), pr)));
+    }
+    out
+}
+
+/// One submission's dependency graph — the page (`/graph`) or the raw graph
+/// (`/api/v1/graph`).
+fn get_graph(req: &Request, cfg: &Config, as_json: bool) -> Response {
+    let project = req.field("project").unwrap_or_default();
+    let id = req.field("id").unwrap_or_default();
+    let index = Index::load(&cfg.store.state_dir, &project);
+    let Some(p) = index.proofs.get(&id) else {
+        let msg = format!(
+            "the graph needs ?project=…&id=… of a stored proof \n\
+             (got project={project} id={id})\n"
+        );
+        return if as_json {
+            json(
+                404,
+                json!({"error": "no such proof", "project": project, "id": id}),
+            )
+        } else {
+            (404, "text/plain; charset=utf-8".to_string(), msg.into_bytes())
+        };
+    };
+    let g = Graph::build(&p.mm0, &p.mm1).accepted();
+    if as_json {
+        return json(200, g.to_json());
+    }
+    let title = format!("{} — dependency graph", p.title);
+    let note = format!(
+        "<p>proof <a href=\"/proof?project={pr}&id={pid}\">{t}</a> · seq {} · \
+         <a href=\"{st}\">status</a> · \
+         <a href=\"/api/v1/graph?project={pr}&id={pid}\">graph as JSON</a></p>",
+        p.seq,
+        pr = http::escape_html(&project),
+        pid = http::escape_html(&id),
+        t = http::escape_html(&p.title),
+        st = http::escape_html(&status_path(&project, &id)),
+    );
+    html(200, g.html(&title, &note, &HashSet::new()))
+}
+
+/// At most this many declarations come back from a search — a substring
+/// query on a whole development matches a lot, and the page is for finding.
+const SEARCH_LIMIT: usize = 50;
+
+/// One declaration a search matched.
+struct Hit {
+    project: String,
+    proof: String,
+    title: String,
+    decl: String,
+    kind: &'static str,
+    line: u32,
+    statement: String,
+}
+
+fn search_hits(cfg: &Config, q: &str) -> Vec<Hit> {
+    let needle = q.to_lowercase();
+    let mut hits = Vec::new();
+    for (project, p) in all_proofs(cfg) {
+        let g = Graph::build(&p.mm0, &p.mm1).accepted();
+        for d in &g.decls {
+            if d.name.to_lowercase().contains(&needle)
+                || d.statement.to_lowercase().contains(&needle)
+            {
+                hits.push(Hit {
+                    project: project.clone(),
+                    proof: p.id.clone(),
+                    title: p.title.clone(),
+                    decl: d.name.clone(),
+                    kind: d.kind.as_str(),
+                    line: d.line(),
+                    statement: d.statement.clone(),
+                });
+                if hits.len() >= SEARCH_LIMIT {
+                    return hits;
+                }
+            }
+        }
+    }
+    hits
+}
+
+/// `physlibsearch` takes a natural-language sentence and returns the formal
+/// statement it matches; this service has no embedding model and does not
+/// pretend to. What it can honestly offer over *its* corpus — every stored
+/// proof's own declarations — is substring search over names and statements,
+/// answered from the same index that answers `/proof`.
+fn get_search(req: &Request, cfg: &Config, as_json: bool) -> Response {
+    let q = req.field("q").unwrap_or_default();
+    let q = q.trim().to_string();
+    if q.is_empty() {
+        return if as_json {
+            json(200, json!({"query": "", "count": 0, "results": []}))
+        } else {
+            html(200, search_page("", &[]))
+        };
+    }
+    let hits = search_hits(cfg, &q);
+    if as_json {
+        let results: Vec<serde_json::Value> = hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "declaration": h.decl, "kind": h.kind, "line": h.line,
+                    "statement": h.statement, "title": h.title,
+                    "project": h.project, "proof": h.proof,
+                    "graph": format!("/graph?project={}&id={}", h.project, h.proof),
+                })
+            })
+            .collect();
+        json(
+            200,
+            json!({"query": q, "count": hits.len(), "results": results}),
+        )
+    } else {
+        html(200, search_page(&q, &hits))
+    }
+}
+
+fn search_page(q: &str, hits: &[Hit]) -> String {
+    let rows: Vec<String> = hits
+        .iter()
+        .map(|h| {
+            format!(
+                "<li><code>{d}</code> <span>{k}</span>, line {l} — \
+                 <a href=\"/graph?project={p}&id={i}\">graph</a> · \
+                 <a href=\"/proof?project={p}&id={i}\">{t}</a><br>\
+                 <span class=\"stmt\">{s}</span></li>",
+                d = http::escape_html(&h.decl),
+                k = h.kind,
+                l = h.line,
+                p = http::escape_html(&h.project),
+                i = http::escape_html(&h.proof),
+                t = http::escape_html(&h.title),
+                s = http::escape_html(&h.statement),
+            )
+        })
+        .collect();
+    let summary = if q.is_empty() {
+        "type part of a declaration name or of a statement".to_string()
+    } else if hits.is_empty() {
+        format!(
+            "no declaration in any stored proof matched <code>{}</code>",
+            http::escape_html(q)
+        )
+    } else {
+        format!(
+            "{} match{} — a match is a declaration whose name or statement \
+             contains the query (capped at {SEARCH_LIMIT})",
+            hits.len(),
+            if hits.len() == 1 { "" } else { "es" }
+        )
+    };
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <title>search</title></head><body><h1>search stored declarations</h1>\
+         <form method=\"get\" action=\"/search\"><input name=\"q\" size=\"40\" \
+         value=\"{}\"><button>search</button></form><p>{}</p><ul>{}</ul>\
+         <p><a href=\"/\">home</a> · <a href=\"/stats\">stats</a> · \
+         <a href=\"/api/v1/search?q={}\">json</a></p></body></html>",
+        http::escape_html(q),
+        summary,
+        rows.join(""),
+        http::escape_html(q),
+    )
+}
+
+/// What the corpus looks like in total: how much is stored, and how much
+/// graph there is across all of it. The same counters the graph page shows
+/// for one submission, summed.
+fn get_stats(cfg: &Config, as_json: bool) -> Response {
+    let proofs = all_proofs(cfg);
+    let mut states: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_kind: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let (mut declarations, mut references, mut faults) = (0usize, 0usize, 0usize);
+    for (_, p) in &proofs {
+        *states.entry(p.state.clone()).or_insert(0) += 1;
+        // Every stored proof passed the checker, so its undeclared names
+        // count as information, not faults, in the totals below.
+        let g = Graph::build(&p.mm0, &p.mm1).accepted();
+        declarations += g.len();
+        references += g.reference_count();
+        faults += g.fault_count();
+        for (k, v) in g.counts_by_kind() {
+            *by_kind.entry(k).or_insert(0) += v;
+        }
+    }
+    let body = json!({
+        "projects": projects(cfg).len(),
+        "proofs": proofs.len(),
+        "states": states,
+        "graph": {
+            "declarations": declarations,
+            "references": references,
+            "faults": faults,
+            "by_kind": by_kind,
+        },
+    });
+    if as_json {
+        return json(200, body);
+    }
+    let pretty = serde_json::to_string_pretty(&body).unwrap_or_default();
+    html(
+        200,
+        format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <title>stats</title></head><body><h1>stats</h1><p>totals over every \
+             stored proof; a fault is a structural one (see \
+             <a href=\"/search\">search</a>), never a checker verdict.</p>\
+             <pre>{}</pre><p><a href=\"/\">home</a> · \
+             <a href=\"/api/v1/stats\">json</a></p></body></html>",
+            http::escape_html(&pretty)
+        ),
+    )
+}
+
 fn render_queued(project: &str, id: &str, body: &str, _cfg: &Config) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -761,7 +1019,12 @@ fn render_page(cfg: &Config) -> String {
         .replace("STATUS", &http::escape_html(&status))
 }
 
-fn render_result(heading: &str, body: &str, url: Option<&str>, cfg: &Config) -> String {
+fn render_result(
+    heading: &str,
+    body: &str,
+    url: Option<&str>,
+    graph: Option<(&Graph, &HashSet<String>)>,
+) -> String {
     let link = url
         .map(|u| {
             format!(
@@ -771,14 +1034,45 @@ fn render_result(heading: &str, body: &str, url: Option<&str>, cfg: &Config) -> 
             )
         })
         .unwrap_or_default();
-    let _ = cfg;
+    // The submission's own dependency graph, embedded rather than linked: the
+    // verdict above and the shape of what was judged belong on one page
+    // (`crate::graph` builds it; nothing here re-judges it).
+    let graph_html = graph
+        .filter(|(g, _)| !g.is_empty())
+        .map(|(g, failed)| {
+            format!(
+                "<h2>dependency graph</h2><style>{}</style>{}",
+                crate::graph::STYLE,
+                g.body_fragment(failed)
+            )
+        })
+        .unwrap_or_default();
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{h}</title></head><body>\
-         <h1>{h}</h1>{link}<pre>{log}</pre><p><a href=\"/\">back</a></p></body></html>",
+         <h1>{h}</h1>{link}<pre>{log}</pre>{graph}<p><a href=\"/\">back</a></p></body></html>",
         h = http::escape_html(heading),
         link = link,
-        log = http::escape_html(body)
+        log = http::escape_html(body),
+        graph = graph_html
     )
+}
+
+/// The node names a rejection log names. Only lines that read as a diagnostic
+/// count: a name that merely appeared in a quoted excerpt elsewhere would
+/// paint the whole graph red.
+fn failed_nodes(g: &Graph, log: &str) -> HashSet<String> {
+    let diag: Vec<String> = log
+        .lines()
+        .map(str::to_lowercase)
+        .filter(|l| {
+            l.contains("error") || l.contains("warning") || l.contains("unknown identifier")
+        })
+        .collect();
+    g.decls
+        .iter()
+        .filter(|d| diag.iter().any(|l| l.contains(d.name.as_str())))
+        .map(|d| d.name.clone())
+        .collect()
 }
 
 #[cfg(test)]
@@ -1026,5 +1320,94 @@ mod tests {
         for _ in 0..10 {
             assert!(off.allow(ip));
         }
+    }
+
+    /// The three read-only routes this service gained for looking *at* a
+    /// submission: its graph, a search over stored declarations, and the
+    /// corpus totals. None of them can accept, reject or publish anything.
+    #[test]
+    fn the_graph_search_and_stats_routes_answer_their_own_questions() {
+        let (cfg, id) = queued_cfg("routes", STATE_PUBLISHED);
+        let rl = RateLimiter::new(100, Duration::from_millis(10));
+
+        let page = handle(
+            &req("GET", &format!("/graph?project=unfer&id={id}"), ""),
+            &cfg,
+            &rl,
+        );
+        assert_eq!(page.0, 200, "{}", String::from_utf8_lossy(&page.2));
+        let body = String::from_utf8_lossy(&page.2);
+        assert!(body.contains("<svg"), "the figure is on the page");
+        assert!(body.contains("dependency graph"));
+        assert!(!body.contains("<script"), "no JavaScript, as everywhere here");
+        assert!(body.contains("/proof?project=unfer"), "it links back: {body}");
+
+        let raw = handle(
+            &req(
+                "GET",
+                &format!("/api/v1/graph?project=unfer&id={id}"),
+                "",
+            ),
+            &cfg,
+            &rl,
+        );
+        let v: serde_json::Value = serde_json::from_slice(&raw.2).unwrap();
+        assert_eq!(v["counts"]["declarations"], 1, "{v}");
+        assert_eq!(v["unused"][0], "Prop", "{v}");
+
+        // A graph nobody can be pointed at is a 404, not an empty figure.
+        assert_eq!(
+            handle(&req("GET", "/graph?project=unfer&id=nope", ""), &cfg, &rl).0,
+            404
+        );
+        assert_eq!(
+            handle(
+                &req("GET", "/api/v1/graph?project=unfer&id=nope", ""),
+                &cfg,
+                &rl
+            )
+            .0,
+            404
+        );
+
+        // Search: case-insensitive substring over stored declarations, and
+        // every hit links at the graph of the proof that declares it.
+        let hits = handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl);
+        let v: serde_json::Value = serde_json::from_slice(&hits.2).unwrap();
+        assert_eq!(v["count"], 1, "{v}");
+        assert_eq!(v["results"][0]["declaration"], "Prop");
+        assert_eq!(v["results"][0]["kind"], "sort");
+        assert!(
+            v["results"][0]["graph"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(&id),
+            "{v}"
+        );
+        let page = handle(&req("GET", "/search?q=prop", ""), &cfg, &rl);
+        assert_eq!(page.0, 200);
+        let body = String::from_utf8_lossy(&page.2);
+        assert!(body.contains("/graph?project=unfer"), "{body}");
+        // No query is the form, not a match-all dump.
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/search", ""), &cfg, &rl).2)
+                .unwrap();
+        assert_eq!(v["count"], 0, "{v}");
+
+        // Stats: the same counters, summed over every stored proof.
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/stats", ""), &cfg, &rl).2)
+                .unwrap();
+        assert_eq!(v["proofs"], 1, "{v}");
+        assert_eq!(v["graph"]["declarations"], 1, "{v}");
+        assert_eq!(v["states"]["published"], 1, "{v}");
+        assert_eq!(handle(&req("GET", "/stats", ""), &cfg, &rl).0, 200);
+        assert_eq!(
+            handle(&req("GET", "/api/v1/nope", ""), &cfg, &rl).0,
+            404,
+            "the api namespace does not swallow typos"
+        );
+
+        let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
     }
 }

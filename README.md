@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1934 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-28 -->
+<!-- status: verified | tests: 1961 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-30 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -148,6 +148,13 @@ deposit/store/publisher crate), `pcnl` +13 (the §9.3 chain-readout
 proper-score battery and the ε-projection scale-invariance tests),
 `logos` +10 (the defeq conversion-witness suite), plus `prob_kernel`
 +5, `qfm_text` +4, `unfer_ffi` +2 and `unfer_data` +2.
+Growth since the 1934 of rev 34: +27 — `mm0web` +18 (the submission
+dependency graph, `/graph` + `/api/v1/graph`, `/search` +
+`/api/v1/search`, `/stats`, and the DAG rules parity-tested against the
+ported ProofFlow `check_dag`), `logos` +3 (the `dagviz` figure canvas
+shared by `--vis dag.html` and mm0web's graph page), plus `prob_kernel`
++1, `unfer_taler` +1 and `unfer_measure` +4 (its first row) from the
+commits in between.
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -158,7 +165,7 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1934 passed (2026-10-28, rev 34; was 1862 at rev 33, 1858 at rev 32 —
+#   1961 passed (2026-10-30, rev 35; was 1934 at rev 34, 1862 at rev 33 —
 #   see the counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
@@ -242,20 +249,20 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 34, 2026-10-28)
+## Test & benchmark counts (rev 35, 2026-10-30)
 
-- Workspace tests: **1934 green** on CPU (default features,
+- Workspace tests: **1961 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by target name from a single log):
-  `unfer_protocol` 405, logos 362, `unfer_ffi` 231,
-  `prob_kernel` 148, `decide_core` 116, `unfer_consensus` 111,
+  `unfer_protocol` 405, logos 365, `unfer_ffi` 231,
+  `prob_kernel` 149, `decide_core` 116, `unfer_consensus` 111,
   `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 66,
-  `unfer_edge` 63, `unfer_data` 54, `ode_sirk` 36, `mm0web` 36,
-  `unfer_taler` 30, `unfer_identity` 7,
-  `sirk_core_model` 5 (sums to the header; `check-status --recount`
+  `unfer_edge` 63, `unfer_data` 54, `mm0web` 54,
+  `ode_sirk` 36, `unfer_taler` 31, `unfer_identity` 7,
+  `sirk_core_model` 5, `unfer_measure` 4 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1934 above.
+  2026-10-06, `--release`) and is **not** in the 1961 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -264,7 +271,15 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 34** (2026-10-28) claims **1934**
+> Revision history of this table: **rev 35** (2026-10-30) claims **1961**
+> after `mm0web` gained the submission-graph surface (+18 — the dependency
+> graph and its DAG rules, the `/graph` and `/search` routes, and the parity
+> test against `logos`' ported ProofFlow `check_dag`) and `logos` gained the
+> shared `dagviz` figure canvas (+3), with `prob_kernel` +1, `unfer_taler` +1
+> and `unfer_measure` +4 (its first row) from the commits in between —
+> re-measured by the same command from this run's own log
+> (`check-status --recount`, suite green).
+> **rev 34** (2026-10-28) claimed **1934**
 > after `mm0web` joined the workspace (36 tests — store index, deposit
 > lifecycle, publisher, audit log and web surface behind the mock-Zenodo
 > e2e scenarios) and `pcnl` (+13: the §9.3 chain-readout proper-score

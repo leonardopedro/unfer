@@ -7,6 +7,11 @@ description = "mm0 proof webservice — verify submitted proofs, publish them to
 
 [dependencies]
 serde_json = { workspace = true }
+# The layered dependency-graph canvas (`logos::dagviz`), shared with logos'
+# own `--vis dag.html` so the two graph pages cannot drift apart. `logos` is
+# reached as a library inside this workspace, with default features: no
+# network, no TLS (see logos/Cargo.toml).
+logos = { path = "../logos" }
 # The svcmux-bundle-v1 measurement, shared with refi so both webservers'
 # /attestation answers come from one canonical implementation (and both
 # pin the vectors svcmux pins).

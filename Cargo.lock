@@ -2830,6 +2830,7 @@ name = "mm0web"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "logos",
  "serde_json",
  "sha2",
  "unfer_measure",
