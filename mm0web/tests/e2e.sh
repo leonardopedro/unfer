@@ -13,6 +13,9 @@
 #   3  crash-resume: killed mid-upload, the restart reuses the same deposit
 #   4  limits: per-minute rate limit and the per-client daily cap
 #   5  no API key: verify and store work, publish says so plainly
+#   6  search: the semantic arm over a fake OpenAI-schema embedder (rrf
+#      fusion, JSON + HTML), the `_bulk` NDJSON export, and a dead embed
+#      endpoint degrading to substring-only search
 
 set -u
 
@@ -29,11 +32,12 @@ WEB_BIN="$ROOT/target/debug/mm0web"
 MOCK="$ROOT/mm0web/tests/mock_zenodo.py"
 MOCK_PORT="${MOCK_PORT:-8919}"
 WEB_PORT="${WEB_PORT:-18919}"
+EMBED_PORT="${EMBED_PORT:-8929}"
 BASE="http://127.0.0.1:$WEB_PORT"
 ZBASE="http://127.0.0.1:$MOCK_PORT/api"
 WORK="$(mktemp -d /tmp/mm0web-e2e.XXXXXX)"
 PASS=0; FAIL=0
-MOCK_PID=""; WEB_PID=""
+MOCK_PID=""; WEB_PID=""; EMBED_PID=""
 
 say()  { printf '%s\n' "$*"; }
 ok()   { PASS=$((PASS+1)); say "  ok   $*"; }
@@ -91,7 +95,8 @@ run_web() { # run_web [VAR=val ...]  — overrides come after the defaults
 
 stop_web()  { [ -n "$WEB_PID" ] && kill -9 "$WEB_PID" 2>/dev/null; wait "$WEB_PID" 2>/dev/null; WEB_PID=""; }
 stop_mock() { [ -n "$MOCK_PID" ] && kill "$MOCK_PID" 2>/dev/null; wait "$MOCK_PID" 2>/dev/null; MOCK_PID=""; }
-cleanup() { stop_web; stop_mock; rm -rf "$WORK"; }
+stop_embed() { [ -n "$EMBED_PID" ] && kill "$EMBED_PID" 2>/dev/null; wait "$EMBED_PID" 2>/dev/null; EMBED_PID=""; }
+cleanup() { stop_web; stop_mock; stop_embed; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 wait_url() { # wait_url <url> <seconds>
@@ -108,6 +113,9 @@ wait_url() { # wait_url <url> <seconds>
 FIX="$WORK/fix"; mkdir -p "$FIX"
 printf 'sort Prop;\n' > "$FIX/fast.mm0"
 cp "$FIX/fast.mm0" "$FIX/fast.mm1"
+# a second, distinct declaration so the search corpus has two rows
+printf 'sort Nat;\n' > "$FIX/nat.mm0"
+cp "$FIX/nat.mm0" "$FIX/nat.mm1"
 # spec is fine; the proof file names a sort the spec never declared
 printf 'sort Prop;\n' > "$FIX/bad.mm0"
 printf 'sort Prop;\nsort Nope;\n' > "$FIX/bad.mm1"
@@ -282,6 +290,129 @@ curl -sS -m 5 "$BASE/proof?project=unfer&id=$NOKEY_ID" -o "$WORK/proof.json"
 check "verify still works without a key" 200 "$(submit verify nokey2 "$FIX/fast.mm0" "$FIX/fast.mm1")"
 check "healthz still ready" 200 "$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "$BASE/healthz")"
 stop_web; stop_mock
+fi
+
+# ---------------------------------------------------------------------------
+if should_run 6; then
+say "== scenario 6: semantic search, rrf fusion, and the _bulk export =="
+rm -rf "$WORK/state"
+
+# A stand-in embedding server speaking the OpenAI /embeddings schema:
+# bag-of-words vectors over 4096 md5 bins, so a query sharing a word with
+# a declaration scores cosine > 0 while unrelated rows do not. The
+# transport and the wiring are the point here — curl -> socket -> reply ->
+# index -> cosine -> rrf — not the geometry; the ranking semantics have
+# their own unit tests in Rust.
+cat > "$WORK/fake_embed.py" <<'PY'
+import hashlib, json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+def vec(text):
+    v = [0.0] * 4096
+    for w in text.lower().split():
+        w = w.strip("(),.;:{}[]\\\"'")
+        if w:
+            v[int(hashlib.md5(w.encode()).hexdigest(), 16) % 4096] += 1.0
+    return v
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path != "/embeddings":
+            self.send_error(404)
+            return
+        n = int(self.headers.get("content-length", 0))
+        req = json.loads(self.rfile.read(n))
+        body = json.dumps({"data": [
+            {"index": i, "embedding": vec(t)}
+            for i, t in enumerate(req["input"])
+        ]}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+python3 "$WORK/fake_embed.py" "$EMBED_PORT" >"$WORK/embed.log" 2>&1 &
+EMBED_PID=$!
+# wait_url only needs an HTTP answer; the handler has no GET, and a 501
+# is still proof the socket is up.
+wait_url "http://127.0.0.1:$EMBED_PORT/embeddings" 10 || exit 1
+
+# no API key: publishing returns 502 but stores locally (scenario 5),
+# which is all the corpus needs.
+run_web ZENODO_API_KEY= MM0WEB_EMBED_URL="http://127.0.0.1:$EMBED_PORT"
+
+check "publish stores without a key (prop)" 502 "$(submit publish sem-prop "$FIX/fast.mm0" "$FIX/fast.mm1")"
+check "publish stores without a key (nat)" 502 "$(submit publish sem-nat "$FIX/nat.mm0" "$FIX/nat.mm1")"
+
+i=0
+while [ "$i" -lt 20 ]; do
+  curl -sS -m 5 "$BASE/api/v1/search?q=zzzz" -o "$WORK/s.json" 2>/dev/null
+  [ "$(jget "$WORK/s.json" corpus)" = "2" ] && break
+  sleep 0.5; i=$((i+1))
+done
+check "corpus indexed" 2 "$(jget "$WORK/s.json" corpus)"
+
+curl -sS -m 30 "$BASE/api/v1/search?q=Prop" -o "$WORK/s.json"
+check "search: corpus" 2 "$(jget "$WORK/s.json" corpus)"
+check "search: embedder reported" "embeddinggemma-2@0" "$(jget "$WORK/s.json" embedder)"
+check "search: substring arm answered" 1 "$(jget "$WORK/s.json" arms.substring)"
+SEM="$(jget "$WORK/s.json" arms.semantic)"
+[ -n "$SEM" ] && [ "$SEM" -ge 1 ] 2>/dev/null && ok "semantic arm answered ($SEM row(s))" || bad "semantic arm silent: $(head -c 300 "$WORK/s.json")"
+check "search: fusion is rrf" rrf "$(jget "$WORK/s.json" fusion)"
+check "search: no arm unavailable" "" "$(jget "$WORK/s.json" unavailable.semantic)"
+check "search: top hit is Prop" Prop "$(jget "$WORK/s.json" results.0.declaration)"
+
+curl -sS -m 30 "$BASE/api/v1/search?q=Nat" -o "$WORK/s.json"
+check "search (nat): top hit is Nat" Nat "$(jget "$WORK/s.json" results.0.declaration)"
+check "search (nat): fusion is rrf" rrf "$(jget "$WORK/s.json" fusion)"
+
+HTML="$(curl -sS -m 30 "$BASE/search?q=Prop")"
+echo "$HTML" | grep -q "semantic via embeddinggemma-2@0" && ok "HTML page names the model" || bad "html: $(echo "$HTML" | head -c 300)"
+echo "$HTML" | grep -q "fused by rrf" && ok "HTML page says fused by rrf" || bad "html has no fusion note: $(echo "$HTML" | head -c 300)"
+
+# ---- the _bulk export: the load side of the xerj arm --------------------
+curl -sS -m 30 -D "$WORK/bulk.hdr" "$BASE/api/v1/search-bulk" -o "$WORK/bulk.ndjson"
+grep -qi '^content-type: application/x-ndjson' "$WORK/bulk.hdr" && ok "bulk content-type is x-ndjson" || bad "headers: $(head -2 "$WORK/bulk.hdr" | tr -d '\\r')"
+BULK_DOCS="$(python3 - "$WORK/bulk.ndjson" <<'PY'
+import json, sys
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l]
+if len(lines) % 2:
+    print("odd line count %d" % len(lines))
+    raise SystemExit
+n = 0
+for i, line in enumerate(lines):
+    obj = json.loads(line)          # every line must stand alone
+    if i % 2 == 0:
+        assert "index" in obj and "_id" in obj["index"], obj
+    else:
+        for key in ("project", "proof", "title", "name", "kind",
+                    "line", "statement", "text"):
+            assert key in obj, key
+        n += 1
+print(n)
+PY
+)"
+check "bulk exports every declaration as a doc" 2 "$BULK_DOCS"
+grep -q '/Prop@' "$WORK/bulk.ndjson" && ok "bulk carries the Prop _id" || bad "no /Prop@ id in the export"
+grep -q '/Nat@' "$WORK/bulk.ndjson" && ok "bulk carries the Nat _id" || bad "no /Nat@ id in the export"
+
+# ---- a dead embed endpoint degrades, it does not take search down -------
+stop_web
+stop_embed                 # the same port, now refusing connections
+run_web ZENODO_API_KEY= MM0WEB_EMBED_URL="http://127.0.0.1:$EMBED_PORT"
+curl -sS -m 30 "$BASE/api/v1/search?q=Prop" -o "$WORK/s.json"
+check "dead embedder: substring still answers" 1 "$(jget "$WORK/s.json" count)"
+check "dead embedder: fusion falls back to single" single "$(jget "$WORK/s.json" fusion)"
+DEAD="$(jget "$WORK/s.json" unavailable.semantic)"
+[ -n "$DEAD" ] && ok "semantic arm says why it is down ($DEAD)" || bad "no semantic unavailability: $(head -c 300 "$WORK/s.json")"
+check "search still reports the configured model" "embeddinggemma-2@0" "$(jget "$WORK/s.json" embedder)"
+stop_web
 fi
 
 # ---------------------------------------------------------------------------
