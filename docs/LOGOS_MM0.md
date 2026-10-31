@@ -211,6 +211,33 @@ keeps the first that elaborates. MM0 infers the arguments, so a candidate is
 just a rule name in a proof term — a hallucinated rule fails to typecheck and is
 discarded.
 
+A `--hint` is a *complete* mm0 proof term, which is how the premise-carrying
+rules are offered at all: `eq_add_l`, `eq_add_r`, `eq_mul_l`, `eq_mul_r`,
+`eq_ts`, `eq_app`, `eq_sym`, `eq_trans`, `s_inj` and `fals_elim` take their
+premises as ordinary arguments, so a bare `(eq_mul_l)` has holes nothing fills.
+A hint carries the rule's term arguments first, then the proofs of its
+premises:
+
+```text
+--hint '(eq_mul_l (tadd v_x tz) v_x v_y (add_z v_x))'
+```
+
+reads "congruence on the left factor of `·`, with `add_z v_x :
+teq (tadd v_x tz) v_x` discharging the premise". Whatever the hint, its fate is
+the rules' own — it is *elaborated*, and if it does not prove the goal it is
+rejected and **named** in the unproved reason:
+
+```text
+no candidate typechecked: (prim_add_denote), (prim_mul_denote), (add_z),
+  (add_s), (mul_z), (mul_s), (eq_refl), (eq_mul_l (tadd v_x tz) v_x v_y (add_z v_x))
+```
+
+For an equational claim in *this* theory a hint is never the winning step —
+the rewriter normalises operands in place, so anything `eq_mul_l` could close
+is already closed before candidates run. The form is what matters here: the
+induction rule the theory is missing will be premise-carrying too, and that is
+the day a proposed hint can change a verdict.
+
 `--llm` asks a model for candidate proof terms (`formalize::llm`, the same
 transport `formalize` uses; `OPENAI_BASE_URL`/`OPENAI_MODEL`/`OPENAI_API_KEY`),
 then verifies every one. For a claim the emitter cannot close, the `.goal` file
