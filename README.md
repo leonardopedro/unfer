@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 1961 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-30 -->
+<!-- status: verified | tests: 2014 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-31 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -155,6 +155,19 @@ ported ProofFlow `check_dag`), `logos` +3 (the `dagviz` figure canvas
 shared by `--vis dag.html` and mm0web's graph page), plus `prob_kernel`
 +1, `unfer_taler` +1 and `unfer_measure` +4 (its first row) from the
 commits in between.
+Growth since the 1961 of rev 35: +53 — `logos` +44 (the retrieval
+plane of `docs/RETRIEVAL.md`: the `Embedder` trait with its offline
+lexical hasher and live-socket OpenAI-schema client, the LEANN-shaped
+`RecomputeIndex` with recall-vs-brute-force and storage-claim tests,
+RRF fusion + the lemma index + the `_bulk` export, the few-shot prompt
+wiring and the CLI's `--retrieval`/`--embed-url`/`--xerj-*` flags —
+plus the 19 `mm0` bridge tests in `logos/tests/mm0.rs` that arrived
+with the 10-31 pull), `mm0web` +9 (the semantic arm against an
+injected embedder, the xerj arm against a scripted socket, the
+`search-bulk` export, and `CurlEmbedder`'s live-socket transport), and
+`unfer_data`/`qfm_text` swapping 2 tests (both ship an
+`integration.rs`; counts are now attributed by cargo's own package id
+rather than by target name — their sum is unchanged).
 
 **CI recounts this number.** The test job tees its own release run and hands
 the log to `scripts/check-status --recount unfer=<log>`, which refuses a log
@@ -165,8 +178,8 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   1961 passed (2026-10-30, rev 35; was 1934 at rev 34, 1862 at rev 33 —
-#   see the counts table below for the per-crate breakdown)
+#   2014 passed (2026-10-31, rev 36; was 1961 at rev 35, 1934 at rev 34,
+#   1862 at rev 33 — see the counts table below for the per-crate breakdown)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   fock_sirk: 401 passed across 56 binaries (2026-10-06; was 371 across 53
@@ -249,20 +262,20 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 35, 2026-10-30)
+## Test & benchmark counts (rev 36, 2026-10-31)
 
-- Workspace tests: **1961 green** on CPU (default features,
+- Workspace tests: **2014 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
-  doc-tests attributed by target name from a single log):
-  `unfer_protocol` 405, logos 365, `unfer_ffi` 231,
+  doc-tests attributed by cargo's own package id from a single log):
+  logos 409, `unfer_protocol` 405, `unfer_ffi` 231,
   `prob_kernel` 149, `decide_core` 116, `unfer_consensus` 111,
-  `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 66,
-  `unfer_edge` 63, `unfer_data` 54, `mm0web` 54,
+  `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 64,
+  `unfer_edge` 63, `mm0web` 63, `unfer_data` 56,
   `ode_sirk` 36, `unfer_taler` 31, `unfer_identity` 7,
   `sirk_core_model` 5, `unfer_measure` 4 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 1961 above.
+  2026-10-06, `--release`) and is **not** in the 2014 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -271,7 +284,16 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 35** (2026-10-30) claims **1961**
+> Revision history of this table: **rev 36** (2026-10-31) claims **2014**
+> after the retrieval plane landed (`docs/RETRIEVAL.md`: EmbeddingGemma 2
+> behind an `Embedder` trait, a LEANN-shaped vector index that stores no
+> vectors, RRF fusion with an optional xerj arm, and few-shot examples
+> finally wired into the formalizer's prompt) — `logos` +44, `mm0web` +9,
+> plus the `unfer_data`/`qfm_text` integration-target attribution swap (±2,
+> same sum, now by package id) and the `mm0` bridge tests that arrived with
+> the 10-31 pull — re-measured by the same command from this run's own log
+> (`check-status --recount`, suite green).
+> **rev 35** (2026-10-30) claims **1961**
 > after `mm0web` gained the submission-graph surface (+18 — the dependency
 > graph and its DAG rules, the `/graph` and `/search` routes, and the parity
 > test against `logos`' ported ProofFlow `check_dag`) and `logos` gained the

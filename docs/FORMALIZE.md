@@ -321,8 +321,8 @@ coexistence is itself a test.
 
 | | result |
 |---|---|
-| `cargo test -p logos` | 258 lib + 11 eval + 44 integration pass |
-| `logos --features llm-http` | 258 lib + 8 live-socket HTTP tests pass |
+| `cargo test -p logos` | 331 lib + 11 eval + 23 integration + 19 mm0 + 25 engram pass (409 in the package; re-measured 2026-10-31) |
+| `logos --features llm-http` | 338 lib + 8 live-socket HTTP tests pass (re-measured 2026-10-31) |
 | `eval_corpus` on the full 184-graph corpus | 173 validate; the 11 rejections are all real DAG violations in the source data |
 | `australVM` | `dune build @check` clean; `dune runtest --force` green, including 16 `FormalizePluginTest` cases with and without a kernel |
 | `cargo test -p emthin` | 164 lib + 20 integration pass; 2 ignored |
