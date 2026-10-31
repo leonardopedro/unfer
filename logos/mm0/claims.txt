@@ -1,0 +1,62 @@
+# The math fragment's claim corpus — every line is a sentence the pipeline
+# certifies, with the verdict it must reach. `logos mm0 claims` runs this file
+# and fails if any line reaches a different verdict, so a change that makes the
+# pipeline prove something false (or stop proving something true) is caught here
+# rather than by a reader of the certificates.
+#
+# `true:`  — closed claim, must be certified by a proof of `teq L R`
+# `false:` — closed claim, must be refuted (`teq L R ⟹ tfals`)
+# `proved:`— open (quantified) claim, must be closed by rewriting (or a rule)
+#
+# Keep the numbers small: the proof of a sum is as long as the right operand, so
+# 30 + 12 is 12 `add_s` steps — cheap, and the corpus stays readable.
+
+# ── closed sums ──────────────────────────────────────────────────────────────
+true: two plus three equals five
+true: 1 + 1 = 2
+true: zero plus zero equals zero
+true: twelve plus eight equals twenty
+true: 30 + 12 = 42
+false: two plus three equals six
+false: two plus two equals five
+false: 30 + 12 = 41
+false: zero plus zero equals one
+
+# ── closed products ──────────────────────────────────────────────────────────
+true: two times three equals six
+true: five times five equals twenty five
+true: 7 * 0 = 0
+true: 12 times 1 equals 12
+false: two times three equals five
+false: five times five equals twenty four
+
+# ── nesting: the operator that commits first ─────────────────────────────────
+true: two plus three times four equals fourteen
+true: (two plus three) times four equals twenty
+false: two plus three times four equals twenty
+true: two times two plus two times two equals eight
+
+# ── the successor: the constructor the upstream Peano theorems are stated in ─
+true: suc 4 equals 5
+true: 5 equals suc 4
+true: suc (two plus three) equals six
+false: suc 4 equals 4
+proved: for all a: a plus one equals suc a
+proved: for all a: suc a plus zero equals suc a
+
+# ── questions: the same certificates, reported as answers ────────────────────
+true: is two plus three five?
+false: is two plus three six?
+false: does two times three equal seven?
+
+# ── open claims: both sides rewrite to the same normal form ─────────────────
+# (`for all a: a + suc b = suc (a + b)` and the rest of the recursion laws
+# themselves are in `upstream.txt`, next to the MM0 theorems they come from.)
+proved: for all x: x plus zero equals x
+proved: for all x: x times zero equals zero
+
+# ── the honest negative: a true fact this fragment cannot prove ──────────────
+# Commutativity needs induction; the theory has no induction rule, and the
+# emitter does not guess. The expectation is "no verdict", so a future change
+# that starts proving it must do so by adding a real rule to the theory.
+unproved: for all x, y: x plus y equals y plus x

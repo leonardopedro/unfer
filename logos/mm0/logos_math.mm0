@@ -1,0 +1,112 @@
+-- logos_math.mm0 — the MM0 target theory for the math fragment of the
+-- logos CNL (`logos mm0 ...`).
+--
+-- What it is for: a sentence in the controlled natural language is compiled
+-- by the *existing* logos pipeline (CNL → CoreIR → DeltaNet net), and the net
+-- is then encoded here as an MM0 term. A claim ("two plus three equals five")
+-- becomes a theorem of this theory, and a question ("is two plus three five?")
+-- becomes a theorem whose *shape* answers it: a proof of `teq L R` answers
+-- yes, a proof of `tfals` under the hypothesis `teq L R` answers no. mm0-rs
+-- elaborates, mm0-c re-checks. Nothing is asserted about a particular sum:
+-- the only arithmetic content is the recursion schema below, so a wrong sum
+-- cannot typecheck.
+--
+-- The three layers, and why each is needed:
+--
+--   1. The *agent* layer (`tapp`, `tprim_add`, `tprim_mul`, `tz`, `ts`) is the
+--      DeltaNet encoding itself: `Prim(Add64)` with a literal on each aux port
+--      is `tapp (tapp tprim_add a) b` — the same shape `deltanet::unf::
+--      canonical_serialize` walks and `deltanet::reducer` folds. `ts^n tz` is
+--      `Lit(Int64 n)`'s payload as a Peano numeral, because MM0 has no decimal
+--      literal syntax of its own (mm0-rs rejects bare `1` inside a math string
+--      unless a numeral token is declared for it — see australVM/mm0/
+--      gap_certificate.mm0 — and structural numerals are what the refutation
+--      rule needs anyway).
+--
+--   2. The *bridge* layer (`prim_add_denote`, `prim_mul_denote`) states what
+--      the agents mean: this is the one place the encoding is interpreted, and
+--      it is deliberately a definition, not a fact about particular numbers.
+--
+--   3. The *arithmetic* layer (`add_z`/`add_s`/`mul_z`/`mul_s`) is Peano
+--      recursion. Ground evaluation is a proof built from these rules, so the
+--      arithmetic the certificate verifies is the arithmetic that is proved —
+--      the emitter's native evaluation (`mm0::proof::value`) is only ever used
+--      to *aim* the proof, and a disagreement is caught by mm0-rs rejecting
+--      the certificate.
+--
+-- Consistency: layers 2 and 3 are definitional, and `tfals` is inhabited only
+-- through `z_ne_s`, i.e. only if `tz` and `ts _` were equal. No axiom collapses
+-- that distinction, so the theory has a standard model (the term algebra of
+-- finite numerals) and a `tfals` proof really is a refutation. That is what
+-- makes "no" an answer rather than a failure to find a proof.
+--
+-- Style note (same as australVM/docs/cic.mm0): premises are stated with `>` as
+-- *hypothesis binders*, never as `->` inside a single formula. MM0's logic has
+-- no internal modus ponens, so an `->`-shaped axiom can be proved but never
+-- applied; hypothesis form is the applicable inference rule.
+
+provable sort Prop;
+sort Term;
+
+-- Parentheses must be standalone tokens in math strings; without this the
+-- secondary lexer splits `(tadd a b)` on whitespace.
+delimiter $ ( ) $;
+
+-- ── 1. The DeltaNet agent encoding ──────────────────────────────────────────
+-- Payloads are structural: `tz`/`ts` is a `Lit(Int64 n)` payload, and the two
+-- primitive agents are the `Prim` heads with `unf.rs::prim_tag` bytes
+-- Add64 = 0x00 and Mul64 = 0x02.
+
+term tz: Term;
+term ts (a: Term): Term;
+term tapp (f a: Term): Term;          -- App agent (a Prim's application spine)
+term tprim_add: Term;                 -- Prim(Add64),  prim_tag 0x00
+term tprim_mul: Term;                 -- Prim(Mul64),  prim_tag 0x02
+
+-- The judgment itself, declared before any axiom uses it.
+term teq (a b: Term): Prop;
+term tfals: Prop;
+
+-- ── 2. The bridge: what the agents denote ──────────────────────────────────
+
+term tadd (a b: Term): Term;
+term tmul (a b: Term): Term;
+
+axiom prim_add_denote (a b: Term):
+  $ teq (tapp (tapp tprim_add a) b) (tadd a b) $;
+axiom prim_mul_denote (a b: Term):
+  $ teq (tapp (tapp tprim_mul a) b) (tmul a b) $;
+
+-- ── 3. Judgmental equality ─────────────────────────────────────────────────
+
+axiom eq_refl (a: Term): $ teq a a $;
+axiom eq_sym (a b: Term): $ teq a b $ > $ teq b a $;
+axiom eq_trans (a b c: Term):
+  $ teq a b $ > $ teq b c $ > $ teq a c $;
+
+-- Congruence: needed wherever an equality is used under an agent.
+axiom eq_ts (a b: Term): $ teq a b $ > $ teq (ts a) (ts b) $;
+axiom eq_app (f f2 a a2: Term):
+  $ teq f f2 $ > $ teq a a2 $ > $ teq (tapp f a) (tapp f2 a2) $;
+axiom eq_add_l (a b c: Term): $ teq a b $ > $ teq (tadd a c) (tadd b c) $;
+axiom eq_add_r (a b c: Term): $ teq b c $ > $ teq (tadd a b) (tadd a c) $;
+axiom eq_mul_l (a b c: Term): $ teq a b $ > $ teq (tmul a c) (tmul b c) $;
+axiom eq_mul_r (a b c: Term): $ teq b c $ > $ teq (tmul a b) (tmul a c) $;
+
+-- ── 4. Peano recursion ─────────────────────────────────────────────────────
+-- The only arithmetic content of the theory. Every ground sum the pipeline
+-- ever certifies is derived from these two rules per operator.
+
+axiom add_z (a: Term): $ teq (tadd a tz) a $;
+axiom add_s (a b: Term): $ teq (tadd a (ts b)) (ts (tadd a b)) $;
+axiom mul_z (a: Term): $ teq (tmul a tz) tz $;
+axiom mul_s (a b: Term): $ teq (tmul a (ts b)) (tadd (tmul a b) a) $;
+
+-- ── 5. Refutation ─────────────────────────────────────────────────────────
+-- "Is two plus three six?" is answered *no* by proving that assuming it yields
+-- `tfals`: peel the common `ts` prefix with `s_inj`, then the two numerals
+-- differ in whether they are `tz` or `ts _`, which `z_ne_s` refuses.
+
+axiom s_inj (a b: Term): $ teq (ts a) (ts b) $ > $ teq a b $;
+axiom z_ne_s (a: Term): $ teq tz (ts a) $ > $ tfals $;
+axiom fals_elim (p: Prop): $ tfals $ > $ p $;
