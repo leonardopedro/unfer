@@ -64,6 +64,10 @@ proved: for all a: suc (a plus zero) equals suc a
 # both operands' zero stripped before the product (eq_mul_l / eq_mul_r over
 # add_z twice) — the `muleq2` shape with a variable on each side.
 proved: for all a, b: (a plus zero) times (b plus zero) equals a times b
+# congruence under `times` on the left alone: `eq_mul_l` carries the add_z
+# premise as an argument, but the rewriter never needs it — it normalises the
+# operand in place, which is why the premise-carrying rules are not in RULES.
+proved: for all a, b: (a plus zero) times b equals a times b
 
 # ── the induction-only group, honestly unproved ─────────────────────────────
 # Each of these is *true in the standard model* and unreachable in the

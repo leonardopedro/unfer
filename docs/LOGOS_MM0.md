@@ -72,7 +72,8 @@ level it is the numeral constructor `ts e`.
 
 `for all x, y:` is accepted for readability and then checked against the
 variables the body actually uses: a quantifier that quantifies nothing is an
-error, not a silently unused binder. It is not *needed* — a free variable is
+error, not a silently unused binder, and a name listed twice (`for all a, a:`)
+is refused rather than collapsed. It is not *needed* — a free variable is
 universally quantified by the theorem's MM0 binders — which is why the two
 spellings of a claim are the same certificate.
 
