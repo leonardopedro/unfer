@@ -219,6 +219,40 @@ fn values_and_refusals_of_open_expressions() {
 
 // ── the upstream corpus ─────────────────────────────────────────────────────
 
+// ── the candidate seam (`--hint`, `--llm`) ────────────────────────
+
+#[test]
+fn hints_are_judged_not_believed() {
+    if !tools() {
+        return;
+    }
+    // The proposal seam (`--hint`, `--llm`): every candidate — the theory's
+    // own rules first, then whatever was proposed — is *elaborated*, never
+    // believed. A hallucinated term must be rejected by mm0-rs and named in
+    // the unproved reason, so a caller can see what was tried.
+    let claim = Claim::parse("for all x, y: x plus y equals y plus x").expect("parses");
+    let cert = emit::certify(&claim, &["(bogus_one v_x)".into()])
+        .expect("certifies (as unproved)");
+    match &cert.verdict {
+        Verdict::Unproved(reason) => {
+            assert!(reason.contains("(bogus_one v_x)"), "hint not reported: {reason}");
+            // the theory's own rules were offered first
+            assert!(reason.contains("(add_s)"), "rules not offered: {reason}");
+        }
+        v => panic!("a bogus hint must not prove anything, got {v:?}"),
+    }
+
+    // A well-formed hint does not change that verdict either: this theory
+    // has no induction rule, and a candidate that typechecks would have to
+    // actually prove the goal — not merely be well-formed.
+    let cert = emit::certify(&claim, &["(eq_refl)".into()]).expect("certifies");
+    assert!(
+        matches!(cert.verdict, Verdict::Unproved(_)),
+        "eq_refl cannot prove commutativity: {:?}",
+        cert.verdict
+    );
+}
+
 #[test]
 fn the_upstream_corpus_parses() {
     // `unfer/logos/mm0/upstream.txt` rewrites theorems from MM0's Peano
