@@ -299,11 +299,21 @@ their proof. Rewriting under congruence settles them (§ Proving an open claim).
 
 ## What is not there yet
 
-* **No induction.** `x + y = y + x`, `x * (y + z) = x*y + x*z`, associativity —
-  all true, all unproved, and `upstream.txt` records exactly which upstream
-  theorems are out of reach and why. Adding induction is the next real step, and
-  it is a change to the *theory*: `peano5` needs an object logic with
-  substitution (`wff x`, `[a/x]p`), not one more axiom.
+* **No induction — in the fragment.** `x + y = y + x`, `x * (y + z) = x*y + x*z`,
+  associativity — all true, all unproved *by the pipeline*, and `upstream.txt`
+  records exactly which upstream theorems are out of reach and why. Adding
+  induction to `logos_math` is the next real step, and it is a change to the
+  *theory*: `peano5` needs an object logic with substitution (`wff x`, `[a/x]p`),
+  not one more axiom (mm0's parser rejects the short route outright — a binder
+  cannot have an arrow type, so there is no way to pass a motive to an
+  induction rule). What *can* be done today is committed:
+  `logos/mm0/addass.mm1` states associativity — the sentence
+  `for all a, b, c: (a plus b) plus c equals a plus (b plus c)`, whose automatic
+  translation `logos mm0 ask … --out` writes as `logos_f2488ffcf247ed68.goal` —
+  and proves it by importing the upstream development (vendored verbatim under
+  `logos/mm0/upstream/`, digama0/mm0, CC0) and applying its existing induction
+  proof `'(addass)`. The pipeline's `unproved` verdict is untouched: both
+  answers are kept, and neither is weakened to make the other look better.
 * **Two operators.** `+` and `*` on numerals and variables. Subtraction,
   division, comparison and lists have no bridge axioms yet; each is a small
   addition (a `tprim_*` constant, a `*_denote` axiom, and — for a recursive one —
@@ -326,6 +336,7 @@ their proof. Rewriting under congruence settles them (§ Proving an open claim).
 | existing MM0 theorems, rewritten in the CNL, reach theirs | `unfer/logos/mm0/upstream.txt` + `australVM/scripts/logos2mm0` |
 | rewriting closes what the recursion laws justify | `logos/tests/mm0.rs` (no toolchain needed) |
 | the theory alone still compiles and checks | `australVM/scripts/logos2mm0` |
+| a CNL theorem proved from upstream's induction proof | `logos/mm0/addass.mm1` + `logos/tests/mm0.rs` (mm0-rs) |
 
 `australVM/scripts/verify-invariants` runs `australVM/scripts/logos2mm0`, which
 gaps (rather than fails) when the mm0 toolchain or cargo is absent, and fails

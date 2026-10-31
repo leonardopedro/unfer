@@ -1,0 +1,31 @@
+-- addass.mm1 — the associativity of addition, as the CNL states it:
+--
+--     for all a, b, c: (a plus b) plus c equals a plus (b plus c)
+--
+-- The pipeline translates that sentence to MM0 automatically — `logos mm0 ask
+-- "<sentence>" --out DIR` writes `logos_f2488ffcf247ed68.goal`, whose claim is
+--
+--     theorem logos_f2488ffcf247ed68 (v_a: Term) (v_b: Term) (v_c: Term):
+--       $ teq (tapp (tapp tprim_add (tapp (tapp tprim_add v_a) v_b)) v_c)
+--             (tapp (tapp tprim_add v_a) (tapp (tapp tprim_add v_b) v_c)) $;
+--
+-- and reports it *unproved*: `logos_math.mm0` has no induction rule, so the
+-- recursion laws cannot join `(tadd (tadd v_a v_b) v_c)` to
+-- `(tadd v_a (tadd v_b v_c))`, and the verdict says so rather than guessing.
+--
+-- This file is the mm0 code that closes the same claim, by *reusing the
+-- already existing upstream proof*: `examples/peano.mm1`'s `addass`, itself an
+-- induction over `peano5`. Upstream is vendored verbatim under `upstream/`
+-- (digama0/mm0, CC0 — see ATTRIBUTION.md) so the proof checks from this repo
+-- alone: `mm0-rs compile logos/mm0/addass.mm1 out.mmb`.
+--
+-- The correspondence between the two statements is the layer-2 bridge of
+-- `logos_math.mm0`: the pipeline's net encoding (`teq`/`tapp` over sort
+-- `Term`) denotes upstream's Peano notation (`=`/`+` over sort `nat`) — the
+-- same reading `prim_add_denote` states. What is proved here is the theorem
+-- the CNL sentence says; what the pipeline reports is what *its* theory can
+-- derive without induction. Both are kept, and neither is weakened to make
+-- the other look better.
+import "upstream/peano.mm1";
+
+theorem logos_cnl_addass (v_a v_b v_c: nat): $ (v_a + v_b) + v_c = v_a + (v_b + v_c) $ = '(addass);
