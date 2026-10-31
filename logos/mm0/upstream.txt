@@ -1,0 +1,152 @@
+# Statements rewritten from MM0 theorems that already exist, into the CNL of
+# `logos mm0`.
+#
+# Source: MM0's own Peano-arithmetic development, `examples/peano.mm0`
+# (statements and axioms) and `examples/peano.mm1` (proofs), from
+# https://github.com/digama0/mm0 (the checkout read while writing this corpus was
+# at `/tmp/mm0/`; the licence is CC0-1.0, recorded in `../../ATTRIBUTION.md`).
+# Every entry quotes the upstream name and statement, so the CNL line can be
+# checked against the source by eye:
+#
+#     theorem add12: $ a + 1 = suc a $ = '(eqtr addS (suceq add0));
+#
+# `suc` is written either as `suc a` or as `the successor of a`; both are the
+# same term, so they produce the same certificate under the same name.
+#
+# Why a second corpus at all: `claims.txt` was written to fit the fragment.
+# These sentences were written for a real development first and squeezed into
+# the fragment second, which is the only way to find out where the fragment and
+# the theory stop — and the expectations below are the honest answer, not what
+# would make the run green:
+#
+#   * `proved:`   the recursion laws (`add_z`/`add_s`/`mul_z`/`mul_s`) settle it
+#   * `unproved:` true, but upstream proves it by *induction* (`peano5`), which
+#                 this theory does not have; the pipeline must say so, not guess
+#   * `true:`/`false:`  ground instances of an upstream theorem, decided by
+#                 evaluation on one side and refutation on the other
+
+# ── the recursion axioms, as the theorems upstream derives from them ────────
+# add02: $ a + 0 = a $
+proved: for all a: a plus zero equals a
+# mul02: $ a * 0 = 0 $
+proved: for all a: a times zero equals zero
+# addS2: $ a + suc b = suc (a + b) $
+# The parentheses are load-bearing in the CNL too: `the successor of a plus b`
+# is `(suc a) + b`, exactly as `suc a + b` is in the MM0 source.
+proved: for all a, b: a plus the successor of b equals the successor of (a plus b)
+# mulS2: $ a * suc b = a * b + a $
+proved: for all a, b: a times the successor of b equals a times b plus a
+# add12: $ a + 1 = suc a $
+proved: for all a: a plus one equals suc a
+# add12, in the other spelling: the same claim, the same certificate.
+proved: for all a: a plus one equals the successor of a
+# add22: $ a + 2 = suc (suc a) $
+proved: for all a: a plus two equals suc (suc a)
+
+# ── consequences that need congruence, not induction ────────────────────────
+# The `eqeqd addeq2`/`muleq2` steps of the upstream proofs, stated as claims:
+# a zero in an inner operand is rewritten inside the outer operator.
+proved: for all a, b: (a plus zero) plus (b plus zero) equals a plus b
+proved: for all a: a plus (zero plus zero) equals a
+proved: for all a: (a plus zero) plus zero equals a
+proved: for all a, b: a times (b times zero) equals zero
+proved: for all a, b: (a times b) times zero equals a times zero
+# add12 read right-to-left: `suc a` is `a + 1`.
+proved: for all a: suc a equals a plus one
+# add22 one level out, and with the successor on the left: the recursion
+# consumes the *right* operand, so this is a different path through the rules.
+proved: for all a: suc a plus two equals suc (suc (suc a))
+# mulS2 at a successor operand: `a * suc a = a * a + a`.
+proved: for all a: a times suc a equals a times a plus a
+
+# ── the induction-only group, honestly unproved ─────────────────────────────
+# Each of these is *true in the standard model* and unreachable in the
+# equational fragment: `teq` has a model where `tz + a` is stuck, so no
+# reflexivity/congruence/recursion chain can prove them. `unproved` here is the
+# correct answer, and the reason the corpus records rather than hides.
+unproved: for all a: zero plus a equals a
+unproved: for all a: one plus a equals suc a
+unproved: for all a, b: suc a plus b equals suc (a plus b)
+unproved: for all a, b: suc a plus b equals a plus suc b
+unproved: for all a, b: a plus b equals b plus a
+unproved: for all a, b, c: (a plus b) plus c equals a plus (b plus c)
+unproved: for all a, b, c: a plus (b plus c) equals b plus (a plus c)
+unproved: for all a, b, c: (a plus b) plus c equals (a plus c) plus b
+unproved: for all a, b, c, d: (a plus b) plus (c plus d) equals (a plus c) plus (b plus d)
+unproved: for all a: zero times a equals zero
+unproved: for all a: a times one equals a
+unproved: for all a: one times a equals a
+unproved: for all a: a times two equals a plus a
+unproved: for all a: two times a equals a plus a
+unproved: for all a, b: suc a times b equals a times b plus b
+unproved: for all a, b: a times b equals b times a
+unproved: for all a, b, c: a times (b plus c) equals a times b plus a times c
+unproved: for all a, b, c: (a plus b) times c equals a times c plus b times c
+unproved: for all a, b, c: (a times b) times c equals a times (b times c)
+unproved: for all a, b, c: a times (b times c) equals b times (a times c)
+unproved: for all a, b, c: (a times b) times c equals (a times c) times b
+
+# ── false, and the fragment says so by declining ────────────────────────────
+# `a + 1 = a` is false in the standard model, but refuting a *universal* claim
+# would need a counterexample search, which this fragment does not have. It says
+# `unproved` — not `false` — and that distinction is the point of keeping the
+# line: no verdict is honest, a guessed "no" would not be.
+unproved: for all a: a plus one equals a
+unproved: for all a: suc a equals a plus two
+
+# ── ground instances: one numeral assignment per upstream theorem ───────────
+# addcom at 3, 4
+true: 3 + 4 = 4 + 3
+# addass at 1, 2, 3
+true: (1 + 2) + 3 = 1 + (2 + 3)
+# add4 at 1, 2, 3, 4
+true: (1 + 2) + (3 + 4) = (1 + 3) + (2 + 4)
+# add01 at 9
+true: 0 + 9 = 9
+# add11 at 4
+true: 1 + 4 = suc 4
+# addSass at 2, 3
+true: suc 2 + 3 = 2 + suc 3
+# mulcom at 3, 4
+true: 3 * 4 = 4 * 3
+# muladd at 2, 3, 4
+true: 2 * (3 + 4) = 2 * 3 + 2 * 4
+# addmul at 2, 3, 4
+true: (2 + 3) * 4 = 2 * 4 + 3 * 4
+# mulass at 2, 3, 4
+true: (2 * 3) * 4 = 2 * (3 * 4)
+# mul11 at 5
+true: 1 * 5 = 5
+# mul12 at 7
+true: 7 * 1 = 7
+# mul21 at 3
+true: 2 * 3 = 3 + 3
+# mul22 at 3
+true: 3 * 2 = 3 + 3
+# mulS1 at 3, 4
+true: suc 3 * 4 = 3 * 4 + 4
+# mul01 at 5
+true: 0 * 5 = 0
+
+# ── misquotations of the same theorems, which must be refuted ────────────────
+# addcom with the second operand misconverted: 7 = 8 is false.
+false: 3 + 4 = 5 + 3
+# add12 with the successor off by one: 5 = 6 is false.
+false: 4 + 1 = suc 5
+# mul22 with the right side misconverted: 6 = 5 is false.
+false: 3 * 2 = 3 + 2
+# mul01 wrong: 0 = 5 is false.
+false: 0 * 5 = 5
+# muladd missing the second distributive term: 14 = 10 is false.
+false: 2 * (3 + 4) = 2 * 3 + 4
+
+# ── the same sentences asked as questions ───────────────────────────────────
+true: is 3 + 4 equal to 4 + 3?
+false: is 2 * (3 + 4) equal to 2 * 3 + 4?
+proved: for all a: is a plus zero equal to a?
+
+# ── names that collide with the theory's own constants ──────────────────────
+# `tz` is the theory's zero. A CNL variable called `tz` must become `v_tz`, or
+# the emitted binder would capture the constant.
+proved: for all tz: tz plus zero equals tz
+proved: for all ts: ts times zero equals zero
