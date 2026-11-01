@@ -1,0 +1,53 @@
+# Kopperman–Solovay fragment fixtures (unfer/docs/LOGOS_MM0.md, "The
+# Kopperman layer"). The decidable fragment: equalities between finite-head
+# inner products with literal (or universally quantified) coordinates.
+#
+# Three verdicts appear here on purpose:
+#
+#   true:     ground claims, decided by evaluation and cross-checked against
+#             the DeltaNet reducer on both sides' arithmetic expansions;
+#   proved:   open claims, closed by rewriting and/or the bounded obvious
+#             layer (commutativity, the inner-product laws) — every candidate
+#             chain is replayed by mm0-rs before it counts;
+#   unproved: true in the standard model but unreachable without a rule the
+#             theory does not have — induction, a case split on a vector
+#             variable, or an axiom the overlay does not state. These stay
+#             goals, which is the fragment's honest boundary, and the gate
+#             counts them: a corpus that could not say "I do not know" would
+#             pass vacuously.
+
+# ── ground: evaluation decides, the reducer corroborates ─────────────────────
+true: the inner product of the vector of 1, 2 and the vector of 3, 4 equals 11
+false: the inner product of the vector of 1, 2 and the vector of 3, 4 equals 12
+true: the inner product of the vector of 2, 0 and the vector of 0, 5 equals zero
+true: the inner product of the vector of 3, 4 and the zero vector equals zero
+true: the coordinate 1 of the vector of 3, 4 equals 4
+true: the sum of the vector of 1, 2 and the vector of 3, 4 equals the vector of 4, 6
+true: the scalar 3 times the vector of 1, 2 equals the vector of 3, 6
+
+# ── open: rewriting alone closes these ───────────────────────────────────────
+proved: for all u: the inner product of u and the zero vector equals zero
+proved: for all u: the inner product of the zero vector and u equals zero
+proved: for all u: the sum of the zero vector and u equals u
+proved: for all u, w: the inner product of the vector of 1, 2 and the vector of u, w equals u plus two times w
+
+# ── open: the bounded obvious layer closes these, replayed by mm0-rs ─────────
+proved: for all u, v: the inner product of u and v equals the inner product of v and u
+proved: for all u, v, w: the inner product of u and the sum of v and w equals the inner product of u and v plus the inner product of u and w
+proved: for all u, v: the inner product of u and the sum of v and the zero vector equals the inner product of u and v
+proved: for all u, v: the inner product of the scalar two times u and v equals two times the inner product of u and v
+
+# ── open: calculational composition (chains of laws, not one step) ───────────
+proved: for all u: two times the inner product of u and u equals the inner product of u and u plus the inner product of u and u
+
+# ── the honest boundary: goals, not certificates ─────────────────────────────
+# Positive definiteness is an *implication* (`inpr_pos` takes a hypothesis
+# binder), so nothing here derives u·u = 0 from u·u = 0.
+unproved: for all u: the inner product of u and u equals zero
+# Vector commutativity is not an axiom of the overlay: it follows from the
+# coordinatewise laws plus induction, which this theory does not have.
+unproved: for all u, v: the sum of u and v equals the sum of v and u
+# Expanding an inner product whose second argument is a variable reads
+# `tcoord (ttail u)`; relating that to `tcoord u (s u)` needs a case split
+# on `u` (`tvnil` or `tvcons`) that the theory has no rule for.
+unproved: for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u

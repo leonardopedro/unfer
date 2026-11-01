@@ -176,7 +176,7 @@ would misrepresent it. The `.goal` file is exactly what the LLM loop below needs
 ## CLI
 
 ```bash
-logos mm0 theory [--out FILE]        # the theory, byte for byte
+logos mm0 theory [--out FILE] [--kopperman]  # the theory, byte for byte
 logos mm0 ask "<sentence>" [options] # certify one sentence
 logos mm0 claims <FILE> [options]    # certify a fixture, check its expectations
 logos mm0 check <FILE.mm0 | DIR>     # mm0-rs + mm0-c over written artifacts
@@ -297,6 +297,85 @@ their proof. Rewriting under congruence settles them (§ Proving an open claim).
   second needs parentheses, exactly as in the MM0 source. Getting this wrong does
   not silently prove the wrong thing — the claim is just not the upstream one.
 
+## The Kopperman layer
+
+The second target theory answers a second kind of sentence: Hilbert-space
+claims over `logos/mm0/kopperman.mm0`, an *overlay* concatenated onto
+`logos_math.mm0` (`logos mm0 theory --kopperman` dumps the pair; the gate
+re-checks it on its own). Both fragments share `Prop`, `Term`, `teq`, the
+numerals and the bridge, so a certificate for either is one self-contained
+`.mm0`/`.mm1` pair. The prover is based on Kopperman's Hilbert-space axioms as
+packaged by the sibling `timepiece` repo (`Kopperman_Tutorial.p.tex`,
+`BookProof/Toolbox/PhysMehler.lean`); the theory's own header records the
+three layers and what each is for.
+
+```text
+sentence ──cnl──► KClaim ──raw──► NF ──renorm──► normal form + proof
+                                          │
+                logos_math.mm0 + kopperman.mm0 ──► mm0-rs ──► mm0-c
+```
+
+**The surface syntax** (`logos/src/mm0/kop.rs`) is a second fragment with its
+own words — `the inner product of V and W`, `the coordinate i of V`,
+`the vector of c, …`, `the sum of V, W`, `the scalar s times V`,
+`the zero vector` — and its own discipline: *formation checking*. The parser is
+sort-directed (scalar position parses scalars, vector position parses
+vectors), a name may be used at only one sort in one sentence, and a number in
+vector position is refused rather than read as a variable. That is the whole
+soft-type story, and it lives in the CNL because MM0's `Term` is one sort: the
+catcher must be the parser.
+
+**The normaliser** rewrites a term with the K2 recursion rules (`coord_*`,
+`vadd_*`, `vscal_*`, `inpr_*`, `tail_*`) and the Peano laws, lifting each step
+through the congruence axioms (`eq_tinpr`, `eq_tvcons`, …). The rules are
+left-linear, non-overlapping and terminating, so the fragment decides its own
+equations — and normal-form *equality* is spelling equality: the goal text is
+what mm0 checks, so two structures that spell the same term are the same term.
+An inner product with a stuck first argument and a literal second flips
+(`inpr_sym`) before expanding, which is what makes `u · tvnil` compute to zero.
+
+**Ground claims** are decided by evaluation, cross-checked against the DeltaNet
+reducer on both sides' arithmetic *expansions* (`KExpr::expand` — the inner
+product of two literal heads is the Σ of coordinate products, an expression the
+existing lowering already compiles and folds). A false one is refuted in the
+other direction (`teq L R` implies `tfals`, peeled with `s_inj`/`z_ne_s`), and
+a true one records the isomorphism witness π, exactly like the arithmetic
+fragment.
+
+**The bounded obvious layer** is what the recursion laws cannot reach. The
+catalogue is the theory's *equality* laws the normaliser deliberately does not
+apply — commutativity, associativity, distributivity, the five inner-product
+laws, and the Peano recursion offered again so a restructured term can peel.
+Each law is tried at the root first (one step — the obvious inference), then
+anywhere in the term in chains of bounded depth, composed with `eq_trans` and
+lifted through the term contexts (the relators `eq_add_l`, `eq_tinpr`, …):
+*calculational composition*. Every candidate that meets is **replayed by
+mm0-rs** — the search proposes a chain, the elaborator accepts or rejects it,
+and only an accepted one becomes a certificate. A claim like
+`2 * (u·u) = (u·u) + (u·u)` needs two steps and a re-normalisation between
+them; one obvious step is not enough, and a chain that does not elaborate is
+not an answer.
+
+**The lexicon** (`kop::LEXICON`) is one table from theory symbol to CNL phrase,
+with `None` marking a sealed symbol no sentence may name (the K3 sequence layer
+— Kopperman's Warning: one named infinite constant destroys decidability — the
+order predicates, and `ttail`, which appears only in normal forms). The parser
+consumes the table and `logos/tests/kopperman.rs` checks it against
+`kopperman.mm0`'s own `term` declarations *both ways*: a theory symbol cannot
+be added without the CNL knowing it, and the lexicon cannot name a symbol the
+theory does not declare.
+
+**What stays a goal** is recorded in `logos/mm0/kop_claims.txt` and counted by
+the gate (a corpus that cannot say "I do not know" passes vacuously):
+
+* `u · u = 0` — positive definiteness is an *implication* (`inpr_pos` takes a
+  hypothesis binder), so nothing derives it;
+* `u + v = v + u` for vectors — not an axiom of the overlay; it follows from
+  the coordinatewise laws plus induction, which this theory does not have;
+* `2·u + 3·v` against a literal head — expanding an inner product whose second
+  argument is a variable reads `tcoord (ttail u)`, and relating that to
+  `tcoord u (s u)` needs a case split on `u` the theory has no rule for.
+
 ## What is not there yet
 
 * **No induction — in the fragment.** `x + y = y + x`, `x * (y + z) = x*y + x*z`,
@@ -334,6 +413,9 @@ their proof. Rewriting under congruence settles them (§ Proving an open claim).
 | a **tampered** certificate is rejected | `logos/tests/mm0.rs`, `scripts/logos2mm0` |
 | the corpus reaches its expected verdicts | `unfer/logos/mm0/claims.txt` + `australVM/scripts/logos2mm0` |
 | existing MM0 theorems, rewritten in the CNL, reach theirs | `unfer/logos/mm0/upstream.txt` + `australVM/scripts/logos2mm0` |
+| Kopperman fragment: formation checks, verdicts, obvious/calculational layers, lexicon coverage | `logos/tests/kopperman.rs` |
+| Kopperman corpus reaches its expected verdicts (incl. the goals) | `unfer/logos/mm0/kop_claims.txt` + `australVM/scripts/logos2mm0` |
+| the Kopperman overlay alone still compiles and checks | `australVM/scripts/logos2mm0` |
 | rewriting closes what the recursion laws justify | `logos/tests/mm0.rs` (no toolchain needed) |
 | the theory alone still compiles and checks | `australVM/scripts/logos2mm0` |
 | a CNL theorem proved from upstream's induction proof | `logos/mm0/addass.mm1` + `logos/tests/mm0.rs` (mm0-rs) |

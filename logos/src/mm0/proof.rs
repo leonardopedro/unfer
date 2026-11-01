@@ -293,7 +293,7 @@ fn closed_value(e: &Expr) -> u64 {
 /// certificates readable: a claim like `a + 0 = a` then reads as
 /// `(eq_trans (prim_add_denote) (add_z))` rather than as the same chain padded
 /// with three reflexive steps.
-fn chain(first: &str, second: &str) -> String {
+pub(crate) fn chain(first: &str, second: &str) -> String {
     let identity = |p: &str| p.is_empty() || p == "(eq_refl)";
     if identity(first) {
         second.to_string()
@@ -310,7 +310,7 @@ fn chain(first: &str, second: &str) -> String {
 /// (eq_refl)` proves `a + c = a + c`, and MM0 will accept it, but a certificate
 /// full of steps that rewrite nothing is harder to read than the rewriting it is
 /// supposed to show.
-fn lift(rule: &str, proof: &str) -> String {
+pub(crate) fn lift(rule: &str, proof: &str) -> String {
     if proof == "(eq_refl)" || proof.is_empty() {
         String::new()
     } else {
@@ -329,7 +329,7 @@ fn or_refl(proof: String) -> String {
 }
 
 /// `(eq_sym proof)`, or the proof itself when it is already reflexive.
-fn sym(proof: &str) -> String {
+pub(crate) fn sym(proof: &str) -> String {
     if proof == "(eq_refl)" || proof.is_empty() {
         "(eq_refl)".to_string()
     } else {

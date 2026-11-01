@@ -312,7 +312,7 @@ impl Parser {
 /// Punctuation is dropped rather than tokenized: a comma is a separator the
 /// grammar already knows about (after the universal quantifier), and a stray
 /// period should not be a parse error in a sentence a human typed.
-fn tokenize(text: &str) -> Vec<String> {
+pub(crate) fn tokenize(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut word = String::new();
     for c in text.chars() {
@@ -338,7 +338,7 @@ fn tokenize(text: &str) -> Vec<String> {
 }
 
 /// The value of a numeral token, decimal or spelled.
-fn number_value(token: &str) -> Option<u64> {
+pub(crate) fn number_value(token: &str) -> Option<u64> {
     if let Ok(n) = token.parse::<u64>() {
         return Some(n);
     }
