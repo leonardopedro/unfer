@@ -365,6 +365,19 @@ consumes the table and `logos/tests/kopperman.rs` checks it against
 be added without the CNL knowing it, and the lexicon cannot name a symbol the
 theory does not declare.
 
+**The LLM seam** speaks this layer's vocabulary: `logos mm0 ask --llm` on a
+Kopperman sentence sends `kop::LLM_SYSTEM` — the K2 rule catalogue *and the
+Kopperman goal format* (the `goal: $ teq L R $` line the seam sends, the `v_`
+prefix on variables, which constructors build a scalar side and which a vector
+one, and which vocabularies are sealed) — instead of the arithmetic fragment's
+agent-spine rules, and whatever comes back is replayed by mm0-rs like any
+`--hint`, with each failed proposal *named in the unproved reason*.
+`logos/tests/kopperman.rs` pins both halves without a hosted service: the
+catalogue against the theory's own `axiom` declarations (every offered rule
+really exists; every overlay axiom that could close a `teq` is offered, the
+Prop-valued/hypothesis-bound/sealed ones named as exceptions), and the
+transport against the same deferred proxy `tests/mm0.rs` uses.
+
 **What stays a goal** is recorded in `logos/mm0/kop_claims.txt` and counted by
 the gate (a corpus that cannot say "I do not know" passes vacuously):
 
@@ -374,7 +387,10 @@ the gate (a corpus that cannot say "I do not know" passes vacuously):
   the coordinatewise laws plus induction, which this theory does not have;
 * `2·u + 3·v` against a literal head — expanding an inner product whose second
   argument is a variable reads `tcoord (ttail u)`, and relating that to
-  `tcoord u (s u)` needs a case split on `u` the theory has no rule for.
+  `tcoord u (s u)` needs a case split on `u` the theory has no rule for;
+* the coordinatewise vector laws — `c·(d·v) = (c·d)·v`, `(u+v)+w = u+(v+w)`,
+  `c·(u+v) = c·u + c·v` — true in the standard model, each needing a head
+  induction (or a case split on a variable) the theory does not have.
 
 ## What is not there yet
 
@@ -414,6 +430,7 @@ the gate (a corpus that cannot say "I do not know" passes vacuously):
 | the corpus reaches its expected verdicts | `unfer/logos/mm0/claims.txt` + `australVM/scripts/logos2mm0` |
 | existing MM0 theorems, rewritten in the CNL, reach theirs | `unfer/logos/mm0/upstream.txt` + `australVM/scripts/logos2mm0` |
 | Kopperman fragment: formation checks, verdicts, obvious/calculational layers, lexicon coverage | `logos/tests/kopperman.rs` |
+| Kopperman LLM catalogue matches the theory and the goal format; proposals are judged | `logos/tests/kopperman.rs` (the deferred-proxy half needs `llm-http`) |
 | Kopperman corpus reaches its expected verdicts (incl. the goals) | `unfer/logos/mm0/kop_claims.txt` + `australVM/scripts/logos2mm0` |
 | the Kopperman overlay alone still compiles and checks | `australVM/scripts/logos2mm0` |
 | rewriting closes what the recursion laws justify | `logos/tests/mm0.rs` (no toolchain needed) |

@@ -415,3 +415,281 @@ fn a_tampered_certificate_is_rejected() {
         "mm0-rs/mm0-c must reject a certificate whose statement was altered"
     );
 }
+
+// ── the LLM seam: the catalogue, the goal format, the judgment ──────────────
+
+/// The `--llm` catalogue is data *about* the theory, checked against it the
+/// same way [`LEXICON`] is: every rule the prompt offers must be a real
+/// declaration of the target theory (a hallucinated name in the prompt is a
+/// hallucination waiting to happen), every axiom of the overlay must be
+/// offered — with the two that cannot close an equality goal named as
+/// exceptions rather than silently dropped — and the goal format the prompt
+/// promises must be the one [`KClaim::goal_of`] actually produces.
+#[test]
+fn llm_catalogue_tracks_the_theory_and_goal_format() {
+    // The "Rules available:" list, up to its terminating period.
+    let offered: Vec<&str> = kop::LLM_SYSTEM
+        .split_once("Rules available: ")
+        .map(|(_, rest)| rest.split('.').next().unwrap_or_default())
+        .unwrap_or_else(|| panic!("LLM_SYSTEM lost its rule catalogue"))
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert!(
+        offered.len() > 30,
+        "the catalogue looks too thin: {} rules",
+        offered.len()
+    );
+
+    // Every offered rule is a declaration of the full target theory.
+    let declared: Vec<String> = kop::KTHEORY
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("axiom ")
+                .or_else(|| line.strip_prefix("theorem "))?;
+            rest.split_whitespace()
+                .next()
+                .map(|name| name.trim_end_matches(['(', ':']).to_string())
+        })
+        .collect();
+    for rule in &offered {
+        assert!(
+            declared.iter().any(|d| d == rule),
+            "`{rule}` is offered to the model but is not an axiom or theorem of the Kopperman theory"
+        );
+    }
+
+    // Every axiom of the overlay itself is offered. The exceptions are
+    // named, not dropped — each is an axiom that cannot close a bare `teq`:
+    // Prop-valued conclusions (`tle`/`tlt` atoms), hypothesis binders, or
+    // statements over the sealed K1/K3 vocabulary no CNL sentence can reach.
+    let cannot_close_a_teq = [
+        // inpr_pos is an implication; eq_tapply mentions the sealed K3
+        // sequence layer.
+        "inpr_pos",
+        "eq_tapply",
+        // K1 order: conclusions are `tle`/`tlt` atoms or refute to tfals.
+        "le_refl",
+        "le_antisym",
+        "le_trans",
+        "lt_le",
+        "lt_irrefl",
+        "lt_asym",
+        "le_add_r",
+        "le_mul_nonneg",
+        // K1 roots: hypothesis-bound, and `tsqrt`/`tcbrt` are sealed in the
+        // CNL — no goal can even mention them.
+        "rcf_sqrt",
+        "rcf_cbrt",
+        // K1 completeness: hypothesis-bound over the sealed sequence layer.
+        "sup_upper",
+        "sup_approx",
+        // K3: Prop-valued, or over sealed vocabulary.
+        "cauchy_complete",
+        "conv_limit",
+        "riesz_fischer",
+        "rat_approx",
+    ];
+    let mut overlay = 0usize;
+    for line in include_str!("../mm0/kopperman.mm0").lines() {
+        let Some(rest) = line.trim_start().strip_prefix("axiom ") else {
+            continue;
+        };
+        overlay += 1;
+        let name = rest.split_whitespace().next().unwrap_or_default();
+        let name = name.trim_end_matches(['(', ':']);
+        if cannot_close_a_teq.contains(&name) {
+            continue;
+        }
+        assert!(
+            offered.contains(&name),
+            "the overlay's `{name}` is never offered to the model"
+        );
+    }
+    assert!(
+        overlay > 20,
+        "the overlay axiom parse looks wrong: {overlay}"
+    );
+
+    // The goal format the prompt promises is the goal `goal_of` produces:
+    // a `teq` line whose variables carry the `v_` prefix.
+    let goal = KClaim::parse(
+        "for all u, v: the inner product of u and v equals the inner product of v and u",
+    )
+    .expect("parses")
+    .goal_of();
+    assert!(goal.starts_with("teq "), "goal shape: {goal}");
+    assert!(
+        goal.contains("v_u") && goal.contains("v_v"),
+        "the `v_` prefix the prompt names: {goal}"
+    );
+    assert!(
+        kop::LLM_SYSTEM.contains("goal: $ teq L R $"),
+        "the prompt must describe the goal line the seam sends"
+    );
+}
+
+/// The `--llm` seam on a *Kopperman* goal, against the same deferred endpoint
+/// `tests/mm0.rs` uses: the Kopperman catalogue (not the arithmetic one) must
+/// go out with the Kopperman goal, and the model's proposals must come back
+/// into mm0-rs's judgment — named in the verdict when they fail, exactly like
+/// the arithmetic fragment's `the_deferred_proxy_carries_model_proposals_into_judgment`.
+#[cfg(feature = "llm-http")]
+#[test]
+fn the_deferred_proxy_carries_kopperman_proposals_into_judgment() {
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    if !tools() {
+        return;
+    }
+    if Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping: `python3` is not on PATH; deferred-proxy seam not run");
+        return;
+    }
+
+    struct Kills(Vec<Child>);
+    impl Drop for Kills {
+        fn drop(&mut self) {
+            for c in &mut self.0 {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+    let state = tempfile::tempdir().expect("scratch state dir");
+    let slurp = |name: &str| std::fs::read_to_string(state.path().join(name)).unwrap_or_default();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a free loopback port")
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let proxy_log = std::fs::File::create(state.path().join("proxy.log")).expect("log");
+    let proxy = Command::new("python3")
+        .arg(format!(
+            "{}/../scripts/llm_proxy",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg(port.to_string())
+        .env("LLM_PROXY_STATE", state.path())
+        .stderr(Stdio::from(proxy_log))
+        .spawn()
+        .expect("the proxy runs");
+    let mut kids = Kills(vec![proxy]);
+
+    let mut listening = false;
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            listening = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        listening,
+        "the proxy never listened: {}",
+        slurp("proxy.log")
+    );
+
+    // A goal the obvious layer cannot close: vector commutativity needs
+    // induction, so without a hint this claim stays a goal.
+    let ask_out = std::fs::File::create(state.path().join("ask.out")).expect("log");
+    let ask_err = std::fs::File::create(state.path().join("ask.err")).expect("log");
+    kids.0.push(
+        Command::new(env!("CARGO_BIN_EXE_logos"))
+            .args([
+                "mm0",
+                "ask",
+                "for all u, v: the sum of u and v equals the sum of v and u",
+                "--llm",
+            ])
+            .env("OPENAI_BASE_URL", format!("http://127.0.0.1:{port}/v1"))
+            .env("OPENAI_API_KEY", "deferred-proxy-test")
+            .env("OPENAI_MODEL", "deferred-model")
+            .stdout(Stdio::from(ask_out))
+            .stderr(Stdio::from(ask_err))
+            .spawn()
+            .expect("logos runs"),
+    );
+
+    for _ in 0..150 {
+        if state.path().join("req.ready").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let request = std::fs::read_to_string(state.path().join("req.json")).unwrap_or_else(|e| {
+        panic!(
+            "no request reached the proxy: {e}\nproxy: {}\nask: {}",
+            slurp("proxy.log"),
+            slurp("ask.err")
+        )
+    });
+    // The Kopperman catalogue went out — not the arithmetic fragment's: a
+    // K2 rule is named, and the agent-spine vocabulary it does not offer is
+    // absent.
+    assert!(
+        request.contains("theory `kopperman`")
+            && request.contains("inpr_cons")
+            && request.contains("eq_tvadd"),
+        "the Kopperman catalogue went out: {request}"
+    );
+    assert!(
+        !request.contains("tprim_mul"),
+        "the arithmetic catalogue leaked into a Kopperman goal: {request}"
+    );
+    // …with the Kopperman goal in the format the catalogue promises.
+    assert!(
+        request.contains("teq (tvadd v_u v_v) (tvadd v_v v_u)"),
+        "the Kopperman goal went out: {request}"
+    );
+
+    // The model's turn: one real rule that does not apply, one hallucination.
+    let reply = serde_json::json!({
+        "id": "chatcmpl-deferred",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deferred-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "[\"(inpr_sym)\", \"(bogus_vector_comm v_u v_v)\"]"
+            },
+            "finish_reason": "stop"
+        }],
+    });
+    std::fs::write(state.path().join("ans.json"), reply.to_string())
+        .expect("the answer is written");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = kids.0[1].try_wait().expect("logos status") {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("`mm0 ask --llm` never finished\nask: {}", slurp("ask.err"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(status.code(), Some(1), "unproved exits 1, got {status}");
+
+    let mut verdict = slurp("ask.out");
+    verdict.push_str(&slurp("ask.err"));
+    assert!(verdict.contains("verdict: unproved"), "{verdict}");
+    // Both proposals were carried into the judged candidate list, replayed
+    // by mm0-rs, and named in the reason — the transport vouches for nothing.
+    assert!(
+        verdict.contains("(inpr_sym)") && verdict.contains("(bogus_vector_comm v_u v_v)"),
+        "the model's proposals were not named in the verdict: {verdict}"
+    );
+}

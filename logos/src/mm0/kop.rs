@@ -2066,16 +2066,27 @@ fn refute_from(left: &str, right: &str, a: u64, b: u64, hyp: &str) -> Result<Str
 }
 
 /// The rules the LLM is offered for a Kopperman goal — the theory's own
-/// vocabulary, by name. As in the arithmetic fragment, whatever comes back
-/// is only ever a candidate: `certify` hands each one to mm0-rs.
+/// vocabulary, by name, plus the *goal format* the seam actually sends
+/// (`goal: $ teq L R $`, `v_`-prefixed variables, which constructors build
+/// which side) so the model is answering the term it is shown. As in the
+/// arithmetic fragment, whatever comes back is only ever a candidate:
+/// `certify` hands each one to mm0-rs.
 pub const LLM_SYSTEM: &str = "\
 You are helping close a goal in the MM0 theory `kopperman` (over `logos_math`).
+The goal arrives as `goal: $ teq L R $` — a proof that the terms L and R denote
+the same thing. Variables carry a `v_` prefix (the name u appears as `v_u`), and
+MM0 has one sort, so scalar and vector variables are both `Term`. A scalar side
+is built from numerals, tadd, tmul, tinpr, tcoord; a vector side from tvnil,
+tvcons, tvadd, tvscal.
 Rules available: inpr_nil, inpr_cons, inpr_sym, inpr_add_l, inpr_add_r, inpr_scal_l,
 inpr_scal_r, vadd_nil, vadd_cons_nil, vadd_cons_cons, vscal_nil, vscal_cons, coord_nil,
 coord_cons_z, coord_cons_s, tail_nil, tail_cons, add_z, add_s, mul_z, mul_s, add_comm,
 add_assoc, mul_comm, mul_assoc, distrib, eq_refl, eq_sym, eq_trans, eq_tinpr, eq_tcoord,
 eq_tvcons, eq_tvadd, eq_tvscal, eq_ttail, eq_add_l, eq_add_r, eq_mul_l, eq_mul_r, eq_ts.
 Terms: tz, ts, tadd, tmul, tinpr, tcoord, ttail, tvnil, tvcons, tvadd, tvscal, teq.
+The order and sequence vocabularies are sealed (tle, tlt, tsqrt, and all of K3 —
+tlimit, tsup, tcauchy), and inpr_pos takes a hypothesis binder: none of them can
+close a bare teq, so never propose one.
 Reply with ONLY a JSON array of MM0 proof terms (strings), most promising first.
 A proof term looks like `(inpr_sym)` or `(eq_trans (inpr_cons) (eq_add_l (add_z)))`.";
 
@@ -2217,8 +2228,11 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
     {
         candidates.push(("calculational chain".to_string(), mid));
     }
+    // The proposal's *label is the proposal itself*, so a failure names it
+    // in the unproved reason — the arithmetic fragment's
+    // `hints_are_judged_not_believed` contract: what was tried is visible.
     for hint in hints {
-        candidates.push(("hint".to_string(), hint.clone()));
+        candidates.push((hint.clone(), hint.clone()));
     }
 
     let mut failures = Vec::new();
