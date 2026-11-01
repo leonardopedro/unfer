@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 2030 cargo (workspace excluding fock_sirk) | last_verified: 2026-11-01 -->
+<!-- status: verified | tests: 2031 cargo (workspace excluding fock_sirk) | last_verified: 2026-11-01 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -178,8 +178,8 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   2030 passed (2026-11-01, rev 38; was 2016 at rev 37, 2015 at rev 36,
-#   1961 at rev 35, 1934 at rev 34, 1862 at rev 33 — see the counts table below)
+#   2031 passed (2026-11-01, rev 39; was 2030 at rev 38, 2016 at rev 37,
+#   2015 at rev 36, 1961 at rev 35, 1934 at rev 34 — see the counts table below)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   fock_sirk: 401 passed across 56 binaries (2026-10-06; was 371 across 53
@@ -262,12 +262,12 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 38, 2026-11-01)
+## Test & benchmark counts (rev 39, 2026-11-01)
 
-- Workspace tests: **2030 green** on CPU (default features,
+- Workspace tests: **2031 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by cargo's own package id from a single log):
-  logos 425, `unfer_protocol` 405, `unfer_ffi` 231,
+  logos 426, `unfer_protocol` 405, `unfer_ffi` 231,
   `prob_kernel` 149, `decide_core` 116, `unfer_consensus` 111,
   `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 64,
   `unfer_edge` 63, `mm0web` 63, `unfer_data` 56,
@@ -275,7 +275,7 @@ int64_t n = uk_get_result(model, buf, cap);
   `sirk_core_model` 5, `unfer_measure` 4 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 2030 above.
+  2026-10-06, `--release`) and is **not** in the 2031 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -284,7 +284,13 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 38** (2026-11-01) claims **2030**
+> Revision history of this table: **rev 39** (2026-11-01) claims **2031**
+> after the tutorial-derived Kopperman batch landed (`logos/mm0/kop_claims.txt`
+> 19 → 35 claims from `timepiece/Kopperman_Tutorial.p.tex`, plus the `--llm`
+> seam's Kopperman rule catalogue and goal format with its catalogue and
+> deferred-proxy tests — logos 425 → 426) — recounted from this run's own log
+> via `check-status --recount unfer=<log>` (2031, matches the block).
+> **rev 38** (2026-11-01) claims **2030**
 > after the Kopperman Hilbert-space fragment landed (`logos/src/mm0/kop.rs`,
 > `logos/mm0/kopperman.mm0` — a second CNL fragment certifying inner-product
 > claims over the overlay, pinned by `logos/tests/kopperman.rs`, with the
