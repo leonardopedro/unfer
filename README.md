@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 2015 cargo (workspace excluding fock_sirk) | last_verified: 2026-10-31 -->
+<!-- status: verified | tests: 2016 cargo (workspace excluding fock_sirk) | last_verified: 2026-11-01 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -178,8 +178,8 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   2015 passed (2026-10-31, rev 36; was 1961 at rev 35, 1934 at rev 34,
-#   1862 at rev 33 — see the counts table below for the per-crate breakdown)
+#   2016 passed (2026-11-01, rev 37; was 2015 at rev 36, 1961 at rev 35,
+#   1934 at rev 34, 1862 at rev 33 — see the counts table below)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
 #   fock_sirk: 401 passed across 56 binaries (2026-10-06; was 371 across 53
@@ -262,12 +262,12 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 36, 2026-10-31)
+## Test & benchmark counts (rev 37, 2026-11-01)
 
-- Workspace tests: **2015 green** on CPU (default features,
+- Workspace tests: **2016 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by cargo's own package id from a single log):
-  logos 410, `unfer_protocol` 405, `unfer_ffi` 231,
+  logos 411, `unfer_protocol` 405, `unfer_ffi` 231,
   `prob_kernel` 149, `decide_core` 116, `unfer_consensus` 111,
   `nested_fock_algebra` 98, `qfm` 91, `pcnl` 75, `qfm_text` 64,
   `unfer_edge` 63, `mm0web` 63, `unfer_data` 56,
@@ -275,7 +275,7 @@ int64_t n = uk_get_result(model, buf, cap);
   `sirk_core_model` 5, `unfer_measure` 4 (sums to the header; `check-status --recount`
   verified against this run's own log).
 - `fock_sirk` is measured separately (401 across 56 binaries,
-  2026-10-06, `--release`) and is **not** in the 2015 above.
+  2026-10-06, `--release`) and is **not** in the 2016 above.
 - 6 end-to-end Austral module demos, each with a positive + UK-4001
   negative test.
 - 4 criterion benchmark groups in `qfm/benches/pipeline.rs`
@@ -284,7 +284,13 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 36** (2026-10-31) claims **2015**
+> Revision history of this table: **rev 37** (2026-11-01) claims **2016**
+> after the CNL associativity artifact landed (`logos/mm0/addass.mm1`: the
+> `for all a, b, c` associativity theorem proved from upstream peano.mm1's
+> induction proof, pinned by `the_cnl_associativity_theorem_is_proved_from_upstream`
+> — logos 410 → 411) — re-measured from this run's own log via
+> `check-status --run unfer` (suite green, recount 2016 vs the block's stale
+> 2015 caught and fixed here). **rev 36** (2026-10-31) claims **2015**
 > after the retrieval plane landed (`docs/RETRIEVAL.md`: EmbeddingGemma 2
 > behind an `Embedder` trait, a LEANN-shaped vector index that stores no
 > vectors, RRF fusion with an optional xerj arm, and few-shot examples
