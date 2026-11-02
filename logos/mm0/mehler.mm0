@@ -1,0 +1,40 @@
+-- mehler.mm0 — the Kopperman/Mehler tail-determination overlay.
+--
+-- Optional extension of `kopperman.mm0`, selected with `logos mm0 … --mehler`
+-- (the target theory becomes logos_math + kopperman + this file). The base
+-- overlay leaves a variable vector's tail *unknown* — `tail_nil`/`tail_cons`
+-- fire only on literal heads, so `tcoord (ttail u) i` is stuck — which is
+-- exactly the "infinite, unknown tail of the inner wave-function" that
+-- `timepiece/RandomMap/RandomMap2.lean` makes explicit as the product
+-- `InnerSpace N = InnerHead N × InnerTail` with the Mehler/Kopperman prior
+-- over the tail. This overlay *determines* that tail: its coordinates are the
+-- parent's shifted coordinates, and every constructor acts coordinatewise.
+-- With it the fragment reaches the Kopperman/Mehler theory — the tutorial's
+-- vectors-as-coordinate-functions reading (`inner_at2`, `row`) — instead of
+-- the bare finite-head skeleton.
+--
+-- Soundness, same style as the rest of the overlay: every axiom below holds
+-- in the standard model where a vector denotes its coordinate function
+-- ℕ → ℝ. None of them is an induction principle and none introduces a
+-- quantifier inside a formula — Kopperman's Warning (Section V, 1967) is not
+-- touched, and the fragment's decision procedure is unchanged: these laws
+-- are *not* normaliser rewrite rules (that would break the confluence the
+-- normal-form argument rests on); the prover carries them in the bounded
+-- obvious layer, where every candidate is still replayed by mm0-rs.
+
+-- The tail reads the parent's coordinates one position on: the random tail
+-- is not free — it is determined by the vector it is attached to.
+axiom coord_tail (v i: Term): $ teq (tcoord (ttail v) i) (tcoord v (ts i)) $;
+
+-- Vector addition acts coordinatewise, for *any* arguments — the general
+-- law whose literal-head instances are `vadd_cons_cons`/`vadd_nil`.
+axiom vadd_coord (u v i: Term):
+  $ teq (tcoord (tvadd u v) i) (tadd (tcoord u i) (tcoord v i)) $;
+
+-- Scalar multiplication acts coordinatewise, likewise.
+axiom vscal_coord (c v i: Term):
+  $ teq (tcoord (tvscal c v) i) (tmul c (tcoord v i)) $;
+
+-- The head/tail decomposition is total: head atom plus tail reconstruct the
+-- vector — the unit/counit of the `InnerHead × InnerTail` product.
+axiom vec_eta (v: Term): $ teq (tvcons (tcoord v tz) (ttail v)) v $;

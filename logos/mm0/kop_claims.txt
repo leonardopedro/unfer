@@ -93,3 +93,25 @@ unproved: for all u, v, w: the sum of (the sum of u, v), w equals the sum of u, 
 # law the tutorial's `vec`/`row` arithmetic assumes, again coordinatewise
 # true and again needing induction over the head.
 unproved: for all c, u, v: the scalar c times the sum of u, v equals the sum of the scalar c times u, the scalar c times v
+
+# ── the Kopperman/Mehler overlay: the random tail, fully determined ──────────
+# `theory: mehler` switches the claims below to the target theory with
+# mm0/mehler.mm0 concatenated (what `--mehler` selects): the tail's
+# coordinates and every constructor's action on coordinates are axioms there
+# — sound in the standard model, no induction, no quantifier inside a
+# formula, and the normaliser untouched (the prover carries the new laws in
+# the bounded obvious layer, replayed by mm0-rs like every other candidate).
+theory: mehler
+
+# coord_tail closes the case split the base fragment cannot touch: the tail
+# of a variable vector reads the parent's coordinates one position on.
+proved: for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u
+# vadd_coord / vscal_coord: the constructors act coordinatewise for *any*
+# arguments — the general laws whose literal-head instances are recursion.
+proved: for all u, v, i: the coordinate i of the sum of u, v equals the coordinate i of u plus the coordinate i of v
+proved: for all c, v, i: the coordinate i of the scalar c times v equals c times the coordinate i of v
+# The boundary does not move: determination is not induction. Vector
+# commutativity still needs extensionality (equal at every coordinate),
+# which needs quantification inside formulas — out of the fragment by
+# design; this claim stays a goal under `--mehler` too.
+unproved: for all u, v: the sum of u and v equals the sum of v and u

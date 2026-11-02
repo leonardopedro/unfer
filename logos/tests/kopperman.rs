@@ -26,6 +26,13 @@ fn certify(sentence: &str) -> Certificate {
     kop::certify(&claim, &[]).unwrap_or_else(|e| panic!("{sentence}: {e}"))
 }
 
+/// Certify against the Kopperman/Mehler theory (`--mehler`): the
+/// tail-determination axioms are in the target, so may be cited.
+fn certify_mehler(sentence: &str) -> Certificate {
+    let claim = KClaim::parse(sentence).unwrap_or_else(|e| panic!("{sentence}: {e}"));
+    kop::certify_in(&claim, &[], kop::Theory::Mehler).unwrap_or_else(|e| panic!("{sentence}: {e}"))
+}
+
 // ── the surface syntax ──────────────────────────────────────────────────────
 
 #[test]
@@ -414,6 +421,178 @@ fn a_tampered_certificate_is_rejected() {
         emit::verify_mm0(&mm0).is_err(),
         "mm0-rs/mm0-c must reject a certificate whose statement was altered"
     );
+}
+
+// ── the Kopperman/Mehler overlay: the random tail, fully determined ─────────
+
+/// The `--mehler` extension, end to end at the verdict level: the case split
+/// the base fragment cannot touch closes under the determination axioms (and
+/// the proof *cites* the axiom it used), the coordinatewise laws each close
+/// with their own axiom, and the vector-equality boundary does not move —
+/// determination is not induction.
+#[test]
+fn mehler_determines_the_random_tail() {
+    let split = "for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u";
+    assert!(
+        matches!(certify(split).verdict, Verdict::Unproved(_)),
+        "the base fragment must still leave the case split as a goal"
+    );
+    let cert = certify_mehler(split);
+    assert!(
+        matches!(cert.verdict, Verdict::Proved),
+        "{}",
+        cert.verdict.label()
+    );
+    assert!(
+        cert.mm1.contains("(coord_tail)"),
+        "the proof must cite coord_tail: {}",
+        cert.mm1
+    );
+
+    let sum = "for all u, v, i: the coordinate i of the sum of u, v equals the coordinate i of u plus the coordinate i of v";
+    assert!(matches!(certify(sum).verdict, Verdict::Unproved(_)));
+    let cert = certify_mehler(sum);
+    assert!(
+        matches!(cert.verdict, Verdict::Proved),
+        "{}",
+        cert.verdict.label()
+    );
+    assert!(cert.mm1.contains("(vadd_coord)"), "{}", cert.mm1);
+
+    let scal = "for all c, v, i: the coordinate i of the scalar c times v equals c times the coordinate i of v";
+    let cert = certify_mehler(scal);
+    assert!(
+        matches!(cert.verdict, Verdict::Proved),
+        "{}",
+        cert.verdict.label()
+    );
+    assert!(cert.mm1.contains("(vscal_coord)"), "{}", cert.mm1);
+
+    // The boundary: vector commutativity needs extensionality, not
+    // determination — still a goal under `--mehler`.
+    assert!(matches!(
+        certify_mehler("for all u, v: the sum of u and v equals the sum of v and u").verdict,
+        Verdict::Unproved(_)
+    ));
+
+    // The two target theories differ by exactly the overlay file.
+    assert!(
+        kop::MEHLER_THEORY.contains("axiom coord_tail"),
+        "the mehler theory must carry the determination axioms"
+    );
+    assert!(
+        !kop::KTHEORY.contains("axiom coord_tail"),
+        "the base theory must not carry them — `--mehler` is optional"
+    );
+}
+
+/// The `--mehler` rule catalogue, checked against the overlay the same way
+/// the base catalogue is checked against `kopperman.mm0`: every offered rule
+/// exists, every overlay axiom is offered (all four are unconditional
+/// equalities, so none may be silently dropped), the mehler catalogue keeps
+/// every base rule, and the goal format the prompt promises is the one
+/// `goal_of` produces.
+#[test]
+fn llm_mehler_catalogue_tracks_the_overlay() {
+    fn rules_of<'a>(system: &'a str, name: &str) -> Vec<&'a str> {
+        system
+            .split_once("Rules available: ")
+            .map(|(_, rest)| rest.split('.').next().unwrap_or_default())
+            .unwrap_or_else(|| panic!("{name} lost its rule catalogue"))
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+    let offered = rules_of(kop::LLM_SYSTEM_MEHLER, "LLM_SYSTEM_MEHLER");
+    let base = rules_of(kop::LLM_SYSTEM, "LLM_SYSTEM");
+    assert!(offered.len() > 30, "catalogue too thin: {}", offered.len());
+
+    // A `--mehler` session must not lose a base rule.
+    for rule in &base {
+        assert!(
+            offered.contains(rule),
+            "`{rule}` is in the base catalogue but missing from the mehler one"
+        );
+    }
+
+    // Every offered rule is a declaration of the mehler target theory.
+    let declared: Vec<String> = kop::MEHLER_THEORY
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("axiom ")
+                .or_else(|| line.strip_prefix("theorem "))?;
+            rest.split_whitespace()
+                .next()
+                .map(|n| n.trim_end_matches(['(', ':']).to_string())
+        })
+        .collect();
+    for rule in &offered {
+        assert!(
+            declared.iter().any(|d| d == rule),
+            "`{rule}` is offered to the model but is not an axiom or theorem of the mehler theory"
+        );
+    }
+
+    // Every axiom of the overlay file is offered: all four are unconditional
+    // equalities that can close a bare `teq`.
+    let mut overlay = 0usize;
+    for line in include_str!("../mm0/mehler.mm0").lines() {
+        let Some(rest) = line.trim_start().strip_prefix("axiom ") else {
+            continue;
+        };
+        overlay += 1;
+        let name = rest.split_whitespace().next().unwrap_or_default();
+        let name = name.trim_end_matches(['(', ':']);
+        assert!(
+            offered.contains(&name),
+            "the mehler axiom `{name}` is never offered to the model"
+        );
+    }
+    assert_eq!(overlay, 4, "mehler.mm0 should carry exactly four axioms");
+
+    // And the promised goal format is the one `goal_of` produces.
+    let goal = KClaim::parse(
+        "for all u, v, i: the coordinate i of the sum of u, v equals the coordinate i of u plus the coordinate i of v",
+    )
+    .expect("parses")
+    .goal_of();
+    assert!(goal.starts_with("teq "), "goal shape: {goal}");
+    assert!(
+        kop::LLM_SYSTEM_MEHLER.contains("goal: $ teq L R $"),
+        "the prompt must describe the goal line the seam sends"
+    );
+}
+
+/// The `--mehler` certificates are real: mm0-rs elaborates them and mm0-c
+/// re-checks them, over the extended theory that carries the axioms they
+/// cite.
+#[test]
+fn mehler_certificates_verify_with_mm0_rs_and_mm0_c() {
+    if !tools() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("scratch dir");
+    for sentence in [
+        "for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u",
+        "for all u, v, i: the coordinate i of the sum of u, v equals the coordinate i of u plus the coordinate i of v",
+        "for all c, v, i: the coordinate i of the scalar c times v equals c times the coordinate i of v",
+    ] {
+        let cert = certify_mehler(sentence);
+        assert!(
+            matches!(cert.verdict, Verdict::Proved),
+            "{}",
+            cert.verdict.label()
+        );
+        let mm0 = dir.path().join(format!("{}.mm0", cert.name));
+        let mm1 = dir.path().join(format!("{}.mm1", cert.name));
+        std::fs::write(&mm0, &cert.mm0).expect("write .mm0");
+        std::fs::write(&mm1, &cert.mm1).expect("write .mm1");
+        let v = emit::verify_mm0(&mm0).unwrap_or_else(|e| panic!("{sentence}: {e}"));
+        assert!(v.sorts.is_some(), "{sentence}: expected a sorts line");
+    }
 }
 
 // ── the LLM seam: the catalogue, the goal format, the judgment ──────────────

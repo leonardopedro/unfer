@@ -65,7 +65,7 @@ pub fn run(args: &[String]) -> i32 {
 
 const USAGE: &str = "\
 usage:
-  logos mm0 theory [--out FILE] [--kopperman]  dump the target theory
+  logos mm0 theory [--out FILE] [--kopperman] [--mehler]  dump the target theory
   logos mm0 ask <sentence> [options]            certify one sentence
   logos mm0 claims <FILE> [options]             certify a fixture, check expectations
   logos mm0 check <FILE.mm0 | DIR>              run mm0-rs and mm0-c on artifacts
@@ -76,14 +76,19 @@ ask options:
   --json             one JSON object instead of prose
   --hint TERM        try TERM (an mm0 proof term) for an open claim; repeatable
   --llm              ask the LLM for hint terms (needs the `llm-http` feature)
+  --mehler           use the Kopperman/Mehler tail-determination theory
+                     (theory: mehler sections in a claims file do the same)
 
 exit codes: 0 yes (true / proved), 2 no (refuted), 1 unproved or error";
 
 fn cmd_theory(args: &[String]) -> i32 {
     // `--kopperman` dumps the full Hilbert-space target theory (the agent
-    // layer plus the overlay); the default stays the arithmetic one.
-    let theory = if has_flag(args, "--kopperman") {
-        kop::KTHEORY
+    // layer plus the overlay); `--mehler` adds the tail-determination
+    // extension on top of it; the default stays the arithmetic one.
+    let theory = if has_flag(args, "--mehler") {
+        kop::Theory::Mehler.text()
+    } else if has_flag(args, "--kopperman") {
+        kop::Theory::Base.text()
     } else {
         emit::THEORY
     };
@@ -170,13 +175,18 @@ fn cmd_ask(args: &[String]) -> i32 {
             emit::certify(&claim, &hints)
         }
         Ok(Parsed::Kop(claim)) => {
+            let theory = if has_flag(args, "--mehler") {
+                kop::Theory::Mehler
+            } else {
+                kop::Theory::Base
+            };
             if has_flag(args, "--llm") {
-                match llm_hints_with(kop::LLM_SYSTEM, &claim.goal_of()) {
+                match llm_hints_with(theory.llm_system(), &claim.goal_of()) {
                     Ok(more) => hints.extend(more),
                     Err(e) => eprintln!("llm: {e}"),
                 }
             }
-            kop::certify(&claim, &hints)
+            kop::certify_in(&claim, &hints, theory)
         }
         Err(e) => {
             eprintln!("{e}");
@@ -300,20 +310,25 @@ fn write_certificate(dir: &str, cert: &Certificate) -> Result<Option<(PathBuf, P
 
 /// One line of a claims file: `true: …`, `false: …`, `proved: …`, or a bare
 /// sentence (which must not be refuted — the default expectation is "yes").
+/// `mehler` is the `theory:` directive in force at that line: `None` means
+/// no directive has been seen (the `--mehler` flag decides), `Some(b)` the
+/// directive has fixed it.
 struct Expected {
     line: usize,
     sentence: String,
     want: Option<Verdict>,
+    mehler: Option<bool>,
 }
 
 fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
     let mut out = Vec::new();
+    let mut current: Option<bool> = None;
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (want, sentence) = match line.split_once(':') {
+        let (want, sentence, mehler) = match line.split_once(':') {
             Some((tag, rest)) if matches!(tag.trim(), "true" | "false" | "proved" | "unproved") => {
                 let want = match tag.trim() {
                     "true" => Verdict::True,
@@ -321,16 +336,36 @@ fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
                     "unproved" => Verdict::Unproved(String::new()),
                     _ => Verdict::Proved,
                 };
-                (Some(want), rest.trim().to_string())
+                (Some(want), rest.trim().to_string(), current)
             }
+            // `theory: base` / `theory: mehler` switches the target theory for
+            // every claim below it — the fixture says which theory each claim
+            // expects, so one file (and one gate run) covers both.
+            Some((tag, rest)) if tag.trim() == "theory" => match rest.trim() {
+                "base" => {
+                    current = Some(false);
+                    continue;
+                }
+                "mehler" => {
+                    current = Some(true);
+                    continue;
+                }
+                other => {
+                    return Err(format!(
+                        "line {}: unknown theory `{other}` (base | mehler)",
+                        i + 1
+                    ));
+                }
+            },
             // `for all x: …` has a colon of its own, so a colon that is not one
             // of the tags is part of the sentence.
-            _ => (None, line.to_string()),
+            _ => (None, line.to_string(), current),
         };
         out.push(Expected {
             line: i + 1,
             sentence,
             want,
+            mehler,
         });
     }
     Ok(out)
@@ -341,7 +376,9 @@ fn cmd_claims(args: &[String]) -> i32 {
         .iter()
         .find(|a| !a.starts_with("--") && !is_flag_value(args, a))
     else {
-        eprintln!("usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json]\n\n{USAGE}");
+        eprintln!(
+            "usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json] [--mehler]\n\n{USAGE}"
+        );
         return UNKNOWN;
     };
     let text = match std::fs::read_to_string(file) {
@@ -362,13 +399,22 @@ fn cmd_claims(args: &[String]) -> i32 {
     let out_dir = flag_value(args, "--out");
     let verify = has_flag(args, "--verify");
     let as_json = has_flag(args, "--json");
+    // The theory for claims no `theory:` directive fixes.
+    let default_mehler = has_flag(args, "--mehler");
 
     let mut failures = 0usize;
     let mut results = Vec::new();
     for case in cases {
         let cert = match parse_claim(&case.sentence) {
             Ok(Parsed::Arith(claim)) => emit::certify(&claim, &[]),
-            Ok(Parsed::Kop(claim)) => kop::certify(&claim, &[]),
+            Ok(Parsed::Kop(claim)) => {
+                let theory = if case.mehler.unwrap_or(default_mehler) {
+                    kop::Theory::Mehler
+                } else {
+                    kop::Theory::Base
+                };
+                kop::certify_in(&claim, &[], theory)
+            }
             Err(e) => {
                 eprintln!("line {}: {e}", case.line);
                 failures += 1;

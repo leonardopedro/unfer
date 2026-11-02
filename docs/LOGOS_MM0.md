@@ -176,7 +176,7 @@ would misrepresent it. The `.goal` file is exactly what the LLM loop below needs
 ## CLI
 
 ```bash
-logos mm0 theory [--out FILE] [--kopperman]  # the theory, byte for byte
+logos mm0 theory [--out FILE] [--kopperman] [--mehler]  # the theory, byte for byte
 logos mm0 ask "<sentence>" [options] # certify one sentence
 logos mm0 claims <FILE> [options]    # certify a fixture, check its expectations
 logos mm0 check <FILE.mm0 | DIR>     # mm0-rs + mm0-c over written artifacts
@@ -187,6 +187,8 @@ ask/claims options:
   --json         one JSON object instead of prose (per claim in `claims`)
   --hint TERM    try TERM (an MM0 proof term) for an open claim; repeatable
   --llm          ask the LLM for hint terms (needs `--features llm-http`)
+  --mehler       use the Kopperman/Mehler tail-determination theory
+                 (a `theory: mehler` section in a claims file does the same)
 
 exit codes: 0 yes (true/proved), 2 no (refuted), 1 unproved or error
 ```
@@ -376,7 +378,42 @@ agent-spine rules, and whatever comes back is replayed by mm0-rs like any
 catalogue against the theory's own `axiom` declarations (every offered rule
 really exists; every overlay axiom that could close a `teq` is offered, the
 Prop-valued/hypothesis-bound/sealed ones named as exceptions), and the
-transport against the same deferred proxy `tests/mm0.rs` uses.
+transport against the same deferred proxy `tests/mm0.rs` uses. Under `--mehler`
+the seam sends `LLM_SYSTEM_MEHLER` — the base catalogue plus the four
+determination rules — checked against the extended theory the same way.
+
+**The optional Kopperman/Mehler overlay** (`--mehler`). The base overlay
+leaves a variable vector's tail *unknown*: the recursion rules fire only on
+literal heads, so `tcoord (ttail u) i` is stuck — the "infinite, unknown
+tail" that `timepiece/RandomMap/RandomMap2.lean` makes explicit as
+`InnerSpace N = InnerHead N × InnerTail`, with the Mehler/Kopperman prior
+over the tail. `logos mm0 theory --mehler` (and `ask --mehler`, or a
+`theory: mehler` section in a claims file) concatenates
+`logos/mm0/mehler.mm0` on top of the overlay: four axioms that *determine*
+the tail — `coord_tail` (the tail reads the parent's coordinates one
+position on), `vadd_coord`/`vscal_coord` (the constructors act
+coordinatewise for **any** arguments — the general laws whose literal-head
+instances are the recursion rules), and `vec_eta` (head atom plus tail
+reconstructs the vector, the unit/counit of the `InnerHead × InnerTail`
+product). All four are first-order equations, sound in the standard model
+where a vector denotes its coordinate function, and none is an induction
+principle or quantifies inside a formula — Kopperman's Warning is untouched.
+The decision procedure is untouched too: the laws are deliberately *not*
+normaliser rewrite rules (overlapping the recursion rules at variable
+indices would break the confluence normal-form equality rests on); they
+join the bounded obvious layer, each candidate replayed by mm0-rs, and
+`LLM_SYSTEM_MEHLER` offers them by name.
+
+What `--mehler` buys: the `2·u + 3·v` case-split goal closes, and coordinate
+facts about variable vectors (`the coordinate i of the sum of u, v`, the
+scalar-multiplication twin) become certifiable — the certificates embed the
+extended theory and cite its axioms, and the gate re-checks that theory on
+its own. What it does *not* buy: the vector-equality goals (commutativity,
+associativity, distributivity over vectors) need *extensionality* — equal at
+every coordinate, a quantifier inside the formula — which stays out of the
+fragment by design. `kop_claims.txt` carries both theories in one file via
+the `theory: base` / `theory: mehler` directive, so one gate run covers both,
+and an ignored directive would fail the mehler expectations immediately.
 
 **What stays a goal** is recorded in `logos/mm0/kop_claims.txt` and counted by
 the gate (a corpus that cannot say "I do not know" passes vacuously):
@@ -387,7 +424,9 @@ the gate (a corpus that cannot say "I do not know" passes vacuously):
   the coordinatewise laws plus induction, which this theory does not have;
 * `2·u + 3·v` against a literal head — expanding an inner product whose second
   argument is a variable reads `tcoord (ttail u)`, and relating that to
-  `tcoord u (s u)` needs a case split on `u` the theory has no rule for;
+  `tcoord u (s u)` needs a case split on `u` the theory has no rule for
+  (the base fragment's boundary; the `--mehler` overlay's `coord_tail`
+  closes it — same sentence, certified under `theory: mehler`);
 * the coordinatewise vector laws — `c·(d·v) = (c·d)·v`, `(u+v)+w = u+(v+w)`,
   `c·(u+v) = c·u + c·v` — true in the standard model, each needing a head
   induction (or a case split on a variable) the theory does not have.
@@ -431,6 +470,7 @@ the gate (a corpus that cannot say "I do not know" passes vacuously):
 | existing MM0 theorems, rewritten in the CNL, reach theirs | `unfer/logos/mm0/upstream.txt` + `australVM/scripts/logos2mm0` |
 | Kopperman fragment: formation checks, verdicts, obvious/calculational layers, lexicon coverage | `logos/tests/kopperman.rs` |
 | Kopperman LLM catalogue matches the theory and the goal format; proposals are judged | `logos/tests/kopperman.rs` (the deferred-proxy half needs `llm-http`) |
+| the `--mehler` tail determination: laws close their claims, both theories re-check | `logos/tests/kopperman.rs`, `kop_claims.txt` (`theory: mehler`) + `australVM/scripts/logos2mm0` |
 | Kopperman corpus reaches its expected verdicts (incl. the goals) | `unfer/logos/mm0/kop_claims.txt` + `australVM/scripts/logos2mm0` |
 | the Kopperman overlay alone still compiles and checks | `australVM/scripts/logos2mm0` |
 | rewriting closes what the recursion laws justify | `logos/tests/mm0.rs` (no toolchain needed) |

@@ -68,6 +68,59 @@ pub const KTHEORY: &str = concat!(
     include_str!("../../mm0/kopperman.mm0")
 );
 
+/// The optional Kopperman/Mehler target theory: the base overlay plus the
+/// tail-determination extension (`mm0/mehler.mm0`), selected with `--mehler`.
+/// Written out literally because `concat!` only takes literals.
+pub const MEHLER_THEORY: &str = concat!(
+    include_str!("../../mm0/logos_math.mm0"),
+    "\n",
+    include_str!("../../mm0/kopperman.mm0"),
+    "\n",
+    include_str!("../../mm0/mehler.mm0")
+);
+
+/// Which target theory a certificate is built against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theory {
+    /// The base Kopperman overlay: the finite-head skeleton, a variable
+    /// vector's tail unknown.
+    Base,
+    /// The Kopperman/Mehler overlay (`--mehler`): the random tail is fully
+    /// determined — `coord_tail`, `vadd_coord`, `vscal_coord`, `vec_eta`.
+    Mehler,
+}
+
+impl Theory {
+    /// The `.mm0` theory text a certificate embeds. A proof citing a
+    /// `--mehler` axiom only elaborates against the mehler text, which is
+    /// why every artifact carries the theory it was proved against.
+    pub fn text(self) -> &'static str {
+        match self {
+            Theory::Base => KTHEORY,
+            Theory::Mehler => MEHLER_THEORY,
+        }
+    }
+
+    /// The rules the obvious layer may offer for this theory: the base
+    /// catalogue, plus the determination laws under `--mehler`. The
+    /// determination laws are deliberately *not* normaliser rewrite rules —
+    /// see `mm0/mehler.mm0` — so this list is where they live.
+    fn laws(self) -> Vec<&'static Law> {
+        match self {
+            Theory::Base => LAWS_BASE.iter().collect(),
+            Theory::Mehler => LAWS_BASE.iter().chain(LAWS_MEHLER.iter()).collect(),
+        }
+    }
+
+    /// The LLM rule catalogue for this theory.
+    pub fn llm_system(self) -> &'static str {
+        match self {
+            Theory::Base => LLM_SYSTEM,
+            Theory::Mehler => LLM_SYSTEM_MEHLER,
+        }
+    }
+}
+
 // ── the lexicon ─────────────────────────────────────────────────────────────
 //
 // One table, consulted by the parser *and* checked against the theory by the
@@ -1679,7 +1732,7 @@ fn law_inpr_scal_r_rev(n: &NF) -> Option<NF> {
 /// first (they re-peek a restructured term), then the field laws, then the
 /// inner-product laws. `eq_refl` is deliberately absent — a step that
 /// rewrites nothing carries no information the normal forms have not.
-static LAWS: &[Law] = &[
+static LAWS_BASE: &[Law] = &[
     Law {
         name: "add_z",
         fwd: law_add_z,
@@ -1749,6 +1802,128 @@ static LAWS: &[Law] = &[
         name: "inpr_scal_r",
         fwd: law_inpr_scal_r,
         rev: Some(law_inpr_scal_r_rev),
+    },
+];
+
+// ── the Kopperman/Mehler determination laws (`--mehler` only) ───────────────
+//
+// The four axioms of `mm0/mehler.mm0`, as obvious-layer laws: each rewrites a
+// stuck coordinate fact into a determined one (and back, where the converse
+// helps a meeting). They are *not* added to the normaliser — overlapping the
+// recursion rules at variable indices would break the confluence the
+// normal-form argument rests on — so they live only here, inside the bounded
+// search, where every candidate is replayed by mm0-rs like any other.
+
+fn law_coord_tail(n: &NF) -> Option<NF> {
+    match n {
+        NF::Coord(v, i) => match v.as_ref() {
+            NF::VTail(u) => Some(NF::Coord(u.clone(), Box::new(NF::Ts(i.clone())))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn law_coord_tail_rev(n: &NF) -> Option<NF> {
+    match n {
+        NF::Coord(u, i) => match i.as_ref() {
+            NF::Ts(inner) => Some(NF::Coord(Box::new(NF::VTail(u.clone())), inner.clone())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn law_vadd_coord(n: &NF) -> Option<NF> {
+    match n {
+        NF::Coord(v, i) => match v.as_ref() {
+            NF::VAdd(a, b) => Some(NF::TAdd(
+                Box::new(NF::Coord(a.clone(), i.clone())),
+                Box::new(NF::Coord(b.clone(), i.clone())),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn law_vadd_coord_rev(n: &NF) -> Option<NF> {
+    match n {
+        NF::TAdd(x, y) => match (x.as_ref(), y.as_ref()) {
+            (NF::Coord(a, i), NF::Coord(b, j)) if i.spelling() == j.spelling() => Some(NF::Coord(
+                Box::new(NF::VAdd(a.clone(), b.clone())),
+                i.clone(),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn law_vscal_coord(n: &NF) -> Option<NF> {
+    match n {
+        NF::Coord(v, i) => match v.as_ref() {
+            NF::VScal(s, u) => Some(NF::TMul(
+                s.clone(),
+                Box::new(NF::Coord(u.clone(), i.clone())),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn law_vscal_coord_rev(n: &NF) -> Option<NF> {
+    match n {
+        NF::TMul(s, c) => match c.as_ref() {
+            NF::Coord(u, i) => Some(NF::Coord(
+                Box::new(NF::VScal(s.clone(), u.clone())),
+                i.clone(),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The unit of the head/tail decomposition: `tvcons (tcoord v tz) (ttail v)`
+/// is `v`. Forward only — the reverse would eta-expand every variable in
+/// every state, flooding the bounded search with syntactic variants of
+/// nothing.
+fn law_vec_eta(n: &NF) -> Option<NF> {
+    match n {
+        NF::VCons(c, t) => match (c.as_ref(), t.as_ref()) {
+            (NF::Coord(v, i), NF::VTail(u))
+                if i.spelling() == "tz" && u.spelling() == v.spelling() =>
+            {
+                Some((**v).clone())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+static LAWS_MEHLER: &[Law] = &[
+    Law {
+        name: "coord_tail",
+        fwd: law_coord_tail,
+        rev: Some(law_coord_tail_rev),
+    },
+    Law {
+        name: "vadd_coord",
+        fwd: law_vadd_coord,
+        rev: Some(law_vadd_coord_rev),
+    },
+    Law {
+        name: "vscal_coord",
+        fwd: law_vscal_coord,
+        rev: Some(law_vscal_coord_rev),
+    },
+    Law {
+        name: "vec_eta",
+        fwd: law_vec_eta,
+        rev: None,
     },
 ];
 
@@ -1842,11 +2017,16 @@ fn apply_at(n: &NF, path: &[usize], law: &Law, rev: bool) -> NF {
 }
 
 /// Every (path, law, orientation) that rewrites something, in a bounded walk.
-fn applications(n: &NF, out: &mut Vec<(Vec<usize>, &'static Law, bool)>, budget: &mut usize) {
+fn applications(
+    n: &NF,
+    out: &mut Vec<(Vec<usize>, &'static Law, bool)>,
+    budget: &mut usize,
+    laws: &[&'static Law],
+) {
     if *budget == 0 {
         return;
     }
-    for law in LAWS {
+    for law in laws {
         if (law.fwd)(n).is_some() {
             out.push((Vec::new(), law, false));
             *budget -= 1;
@@ -1866,7 +2046,7 @@ fn applications(n: &NF, out: &mut Vec<(Vec<usize>, &'static Law, bool)>, budget:
     }
     for (k, child) in n.children().iter().enumerate() {
         let mut sub = Vec::new();
-        applications(child, &mut sub, budget);
+        applications(child, &mut sub, budget, laws);
         for (mut path, law, rev) in sub {
             path.insert(0, k);
             out.push((path, law, rev));
@@ -1900,10 +2080,10 @@ fn step(n: &NF, path: &[usize], law: &Law, rev: bool) -> (NF, String) {
 
 /// The obvious layer: one law at the root of either side, re-normalised.
 /// Candidates in catalogue order, each a proof of `teq lhsNF rhsNF`.
-fn obvious(lhs: &NF, rhs: &NF) -> Vec<(String, String)> {
+fn obvious(lhs: &NF, rhs: &NF, laws: &[&'static Law]) -> Vec<(String, String)> {
     let target = rhs.spelling();
     let mut out = Vec::new();
-    for law in LAWS {
+    for law in laws {
         for rev in [false, true] {
             let matches = if rev {
                 law.rev.is_some_and(|f| f(lhs).is_some())
@@ -1928,7 +2108,7 @@ fn obvious(lhs: &NF, rhs: &NF) -> Vec<(String, String)> {
 /// Calculational composition: bounded chains of catalogue laws, from both
 /// sides, meeting at a common normal form. Returns the proof of
 /// `teq lhsNF rhsNF` when they meet.
-fn calculational(lhs: &NF, rhs: &NF) -> Option<String> {
+fn calculational(lhs: &NF, rhs: &NF, laws: &[&'static Law]) -> Option<String> {
     let target = rhs.spelling();
     if lhs.spelling() == target {
         return Some("(eq_refl)".to_string());
@@ -1945,17 +2125,17 @@ fn calculational(lhs: &NF, rhs: &NF) -> Option<String> {
         // Expand whichever side is smaller — the meeting is symmetric, and
         // this spends the budget where the term structure has more room.
         if from_lhs.len() <= from_rhs.len() {
-            if let Some(mid) = expand(&mut from_lhs, &mut frontier_l, &from_rhs) {
+            if let Some(mid) = expand(&mut from_lhs, &mut frontier_l, &from_rhs, laws) {
                 return Some(mid);
             }
-            if let Some(mid) = expand_rev(&mut from_rhs, &mut frontier_r, &from_lhs) {
+            if let Some(mid) = expand_rev(&mut from_rhs, &mut frontier_r, &from_lhs, laws) {
                 return Some(mid);
             }
         } else {
-            if let Some(mid) = expand_rev(&mut from_rhs, &mut frontier_r, &from_lhs) {
+            if let Some(mid) = expand_rev(&mut from_rhs, &mut frontier_r, &from_lhs, laws) {
                 return Some(mid);
             }
-            if let Some(mid) = expand(&mut from_lhs, &mut frontier_l, &from_rhs) {
+            if let Some(mid) = expand(&mut from_lhs, &mut frontier_l, &from_rhs, laws) {
                 return Some(mid);
             }
         }
@@ -1970,8 +2150,9 @@ fn expand(
     states: &mut HashMap<String, (NF, String)>,
     frontier: &mut Vec<NF>,
     other: &HashMap<String, (NF, String)>,
+    laws: &[&'static Law],
 ) -> Option<String> {
-    meet(states, frontier, other, true)
+    meet(states, frontier, other, true, laws)
 }
 
 /// The same, expanding the right side: the chain is assembled the other way
@@ -1980,8 +2161,9 @@ fn expand_rev(
     states: &mut HashMap<String, (NF, String)>,
     frontier: &mut Vec<NF>,
     other: &HashMap<String, (NF, String)>,
+    laws: &[&'static Law],
 ) -> Option<String> {
-    meet(states, frontier, other, false)
+    meet(states, frontier, other, false, laws)
 }
 
 fn meet(
@@ -1989,6 +2171,7 @@ fn meet(
     frontier: &mut Vec<NF>,
     other: &HashMap<String, (NF, String)>,
     mine_is_lhs: bool,
+    laws: &[&'static Law],
 ) -> Option<String> {
     let mut next = Vec::new();
     'states: for n in frontier.drain(..) {
@@ -1998,7 +2181,7 @@ fn meet(
             .unwrap_or_default();
         let mut apps = Vec::new();
         let mut budget = MAX_APPLICATIONS;
-        applications(&n, &mut apps, &mut budget);
+        applications(&n, &mut apps, &mut budget, laws);
         for (path, law, rev) in apps {
             let (rn, p) = step(&n, &path, law, rev);
             let spelled = rn.spelling();
@@ -2032,9 +2215,10 @@ fn meet(
 
 /// A `.mm0`/`.mm1` pair for one Kopperman claim: the full overlay theory,
 /// then the claim. Same pairing `emit::file_text` writes, one theory longer.
-fn file_text(statement: &str) -> String {
+fn file_text(statement: &str, theory: Theory) -> String {
     format!(
-        "{KTHEORY}\n-- ── claim ──────────────────────────────────────────────────────────────\n{statement}\n"
+        "{}\n-- ── claim ──────────────────────────────────────────────────────────────\n{statement}\n",
+        theory.text()
     )
 }
 
@@ -2090,6 +2274,33 @@ close a bare teq, so never propose one.
 Reply with ONLY a JSON array of MM0 proof terms (strings), most promising first.
 A proof term looks like `(inpr_sym)` or `(eq_trans (inpr_cons) (eq_add_l (add_z)))`.";
 
+/// The same catalogue under `--mehler`: the Kopperman/Mehler tail-determination
+/// overlay is in effect, so its four rules join the list. Kept as a second
+/// literal rather than assembled — the catalogue is data the tests check
+/// against the theory either way, and a readable one beats a generated one.
+pub const LLM_SYSTEM_MEHLER: &str = "\
+You are helping close a goal in the MM0 theory `kopperman` (over `logos_math`),
+with the Kopperman/Mehler tail-determination overlay (`--mehler`) in effect:
+the random tail of a vector is determined, so coord_tail, vadd_coord, vscal_coord
+and vec_eta are available alongside the base rules.
+The goal arrives as `goal: $ teq L R $` — a proof that the terms L and R denote
+the same thing. Variables carry a `v_` prefix (the name u appears as `v_u`), and
+MM0 has one sort, so scalar and vector variables are both `Term`. A scalar side
+is built from numerals, tadd, tmul, tinpr, tcoord; a vector side from tvnil,
+tvcons, tvadd, tvscal.
+Rules available: coord_tail, vadd_coord, vscal_coord, vec_eta, inpr_nil,
+inpr_cons, inpr_sym, inpr_add_l, inpr_add_r, inpr_scal_l,
+inpr_scal_r, vadd_nil, vadd_cons_nil, vadd_cons_cons, vscal_nil, vscal_cons, coord_nil,
+coord_cons_z, coord_cons_s, tail_nil, tail_cons, add_z, add_s, mul_z, mul_s, add_comm,
+add_assoc, mul_comm, mul_assoc, distrib, eq_refl, eq_sym, eq_trans, eq_tinpr, eq_tcoord,
+eq_tvcons, eq_tvadd, eq_tvscal, eq_ttail, eq_add_l, eq_add_r, eq_mul_l, eq_mul_r, eq_ts.
+Terms: tz, ts, tadd, tmul, tinpr, tcoord, ttail, tvnil, tvcons, tvadd, tvscal, teq.
+The order and sequence vocabularies are sealed (tle, tlt, tsqrt, and all of K3 —
+tlimit, tsup, tcauchy), and inpr_pos takes a hypothesis binder: none of them can
+close a bare teq, so never propose one.
+Reply with ONLY a JSON array of MM0 proof terms (strings), most promising first.
+A proof term looks like `(coord_tail)` or `(eq_trans (inpr_cons) (eq_add_l (add_z)))`.";
+
 /// How many candidate chains are replayed by mm0-rs before the claim is left
 /// as a goal. A bound, not a search cutoff: each candidate is one elaboration,
 /// and a sentence that needs hundreds is not a sentence of the fragment.
@@ -2105,6 +2316,16 @@ const MAX_ELABORATIONS: usize = 48;
 /// it, the certificate keeps both normal forms — the goal a human (or a
 /// `--hint`) has to answer — and never a guess.
 pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> {
+    certify_in(claim, hints, Theory::Base)
+}
+
+/// Certify one Kopperman claim against an explicit target theory — `--mehler`
+/// selects [`Theory::Mehler`], whose certificates embed the tail-determination
+/// axioms and may cite them. Same verdict shape as [`certify`].
+pub fn certify_in(claim: &KClaim, hints: &[String], theory: Theory) -> Result<Certificate, String> {
+    // Every artifact embeds the theory it was proved against: a proof citing
+    // a `--mehler` axiom only elaborates against the mehler text.
+    let embed = |statement: &str| file_text(statement, theory);
     let goal = claim.goal_of();
     let (nf_l, p_l) = norm_side(&claim.lhs);
     let (nf_r, p_r) = norm_side(&claim.rhs);
@@ -2191,8 +2412,8 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
             goal,
             proof: proof_txt.clone(),
             theorem: theorem.clone(),
-            mm0: file_text(&format!("{theorem};")),
-            mm1: file_text(&format!("pub {theorem} = '{proof_txt};")),
+            mm0: embed(&format!("{theorem};")),
+            mm1: embed(&format!("pub {theorem} = '{proof_txt};")),
             net_witness,
             unf_hashes,
         });
@@ -2212,8 +2433,8 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
             goal,
             proof: proof_txt.clone(),
             theorem: theorem.clone(),
-            mm0: file_text(&format!("{theorem};")),
-            mm1: file_text(&format!("pub {theorem} = '{proof_txt};")),
+            mm0: embed(&format!("{theorem};")),
+            mm1: embed(&format!("pub {theorem} = '{proof_txt};")),
             net_witness: None,
             unf_hashes: None,
         });
@@ -2222,8 +2443,9 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
     // The bounded obvious layer: catalogue chains first (each is one
     // elaboration), then the hints, last so a proposal cannot shadow the
     // theory's own laws.
-    let mut candidates: Vec<(String, String)> = obvious(&nf_l, &nf_r);
-    if let Some(mid) = calculational(&nf_l, &nf_r)
+    let laws = theory.laws();
+    let mut candidates: Vec<(String, String)> = obvious(&nf_l, &nf_r, &laws);
+    if let Some(mid) = calculational(&nf_l, &nf_r, &laws)
         && !candidates.iter().any(|(_, p)| *p == mid)
     {
         candidates.push(("calculational chain".to_string(), mid));
@@ -2239,8 +2461,8 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
     let decl = format!("{theorem};");
     for (label, mid) in candidates.into_iter().take(MAX_ELABORATIONS) {
         let proof_txt = proof::join(&p_l, &mid, &p_r);
-        let mm1 = file_text(&format!("pub {theorem} = '{proof_txt};"));
-        match emit::elaborates(&file_text(&decl), &mm1)? {
+        let mm1 = embed(&format!("pub {theorem} = '{proof_txt};"));
+        match emit::elaborates(&embed(&decl), &mm1)? {
             true => {
                 return Ok(Certificate {
                     claim: format!("{} equals {}", claim.lhs.pretty(), claim.rhs.pretty()),
@@ -2250,7 +2472,7 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
                     goal,
                     proof: proof_txt,
                     theorem,
-                    mm0: file_text(&decl),
+                    mm0: embed(&decl),
                     mm1,
                     net_witness: None,
                     unf_hashes: None,
@@ -2280,8 +2502,8 @@ pub fn certify(claim: &KClaim, hints: &[String]) -> Result<Certificate, String> 
         verdict: Verdict::Unproved(reason),
         goal,
         proof: String::new(),
-        mm0: file_text(&decl),
-        mm1: file_text(&format!("pub {theorem};")),
+        mm0: embed(&decl),
+        mm1: embed(&format!("pub {theorem};")),
         theorem,
         net_witness: None,
         unf_hashes: None,

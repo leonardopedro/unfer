@@ -253,9 +253,13 @@ overlay on the same theory (`logos mm0 theory --kopperman`). It adds a
 sort-checked CNL (formation errors are refused, not certified), a normaliser
 for the vector recursion rules, and a *bounded* obvious-inference layer: the
 equality laws the recursion cannot reach, in chains of bounded depth, each
-candidate replayed by mm0-rs. What those laws still cannot reach — positive
-definiteness, vector commutativity, the `ttail` case-split — is recorded as
-goals in `logos/mm0/kop_claims.txt`, which the same gate counts.
+candidate replayed by mm0-rs. An optional overlay (`--mehler`,
+`logos/mm0/mehler.mm0`) determines a variable vector's random tail — the
+Kopperman/Mehler reading of `RandomMap2`'s `InnerHead × InnerTail` — which
+closes the `ttail` case-split without touching induction or the decision
+procedure. What neither theory reaches — positive definiteness, vector
+commutativity (it needs extensionality) — is recorded as goals in
+`logos/mm0/kop_claims.txt`, which the same gate counts.
 
 ## Conversion check (`logos iso`, `austral_defeq`)
 
