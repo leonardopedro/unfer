@@ -24,6 +24,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
@@ -333,24 +334,70 @@ fn build_script(spec: &SymbolicSpec) -> String {
     }
 }
 
+/// Sequence for temp-script names, so in-process uniqueness never depends on
+/// the clock reading the same tick twice.
+static SCRIPT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Write the script to a fresh temp file and return its path.
+///
+/// Creation is `create_new` (O_CREAT|O_EXCL), never `File::create`, because
+/// `create` *truncates*. The old name was pid + clock-nanoseconds: two
+/// threads reading the same tick got the same path, the second `File::create`
+/// zeroed a script whose engine was still reading it, and Cadabra2 compiled
+/// the splice — one script's first bytes followed by another's remainder —
+/// as `SyntaxError: unterminated string literal`. That is the intermittent
+/// failure the `mass_gap_norm_residual` CAS tests showed under workspace
+/// load (they pass alone, flake in the full run): a reader that saw a
+/// prefix of file A and the tail of file B.
+///
+/// The name now carries pid + nonce + sequence: the sequence makes paths
+/// within this process unique by construction (atomic, so no clock accident
+/// can alias two writers), the nonce keeps stale files from a recycled pid
+/// out of the way, and `create_new` guarantees that whatever a name does
+/// collide with is *never rewritten* — the open fails and the retry takes
+/// the next sequence number instead.
 fn write_temp_script(script: &str) -> Result<PathBuf, KernelError> {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!(
-        "unfer_symbolic_{}_{}.cdb",
-        std::process::id(),
-        nonce
-    ));
-    let mut file = std::fs::File::create(&path).map_err(|e| KernelError::SymbolicInvalid {
-        reason: format!("failed to create temp script: {e}"),
-    })?;
-    file.write_all(script.as_bytes())
-        .map_err(|e| KernelError::SymbolicInvalid {
-            reason: format!("failed to write temp script: {e}"),
-        })?;
-    Ok(path)
+    let pid = std::process::id();
+    let mut last_err = None;
+    for _ in 0..16 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = SCRIPT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("unfer_symbolic_{pid}_{nonce}_{seq}.cdb"));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Only reachable via a stale file from a recycled pid; the
+                // next iteration's sequence number is a fresh name.
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => {
+                return Err(KernelError::SymbolicInvalid {
+                    reason: format!("failed to create temp script: {e}"),
+                });
+            }
+        };
+        file.write_all(script.as_bytes())
+            .map_err(|e| KernelError::SymbolicInvalid {
+                reason: format!("failed to write temp script: {e}"),
+            })?;
+        return Ok(path);
+    }
+    Err(KernelError::SymbolicInvalid {
+        reason: format!(
+            "failed to create temp script: all 16 fresh names collided ({})",
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "no attempt made".into())
+        ),
+    })
 }
 
 fn run_cli(
