@@ -16,6 +16,8 @@
 #   6  search: the semantic arm over a fake OpenAI-schema embedder (rrf
 #      fusion, JSON + HTML), the `_bulk` NDJSON export, and a dead embed
 #      endpoint degrading to substring-only search
+#   7  a timepiece-style two-file development: the conversion's spec+proof
+#      pair verifies, publishes, and answers /graph, /search, /stats
 
 set -u
 
@@ -413,6 +415,111 @@ DEAD="$(jget "$WORK/s.json" unavailable.semantic)"
 [ -n "$DEAD" ] && ok "semantic arm says why it is down ($DEAD)" || bad "no semantic unavailability: $(head -c 300 "$WORK/s.json")"
 check "search still reports the configured model" "embeddinggemma-2@0" "$(jget "$WORK/s.json" embedder)"
 stop_web
+fi
+
+# ---------------------------------------------------------------------------
+if should_run 7; then
+say "== scenario 7: a timepiece-style two-file development =="
+rm -rf "$WORK/state"
+run_mock
+run_web
+
+# A miniature of timepiece/converted/mm0: judgmental state equality
+# (`seq`), pair axioms, a def that unfolds, and two theorems proved in
+# mm1 quote style — the shape the conversion actually publishes, unlike
+# the one-line `fast` fixture. Both files repeat the spec (mm1 is
+# compiled standalone), exactly as kopperman_mehler.{mm0,mm1} do.
+cat > "$FIX/tk.mm0" <<'MM0'
+provable sort Prop;
+sort State;
+delimiter $ ( ) $;
+
+term seq (a b: State): Prop;
+term scons (a b: State): State;
+term sfst (a: State): State;
+term ssnd (a: State): State;
+
+axiom seq_trans (a b c: State): $ seq a b $ > $ seq b c $ > $ seq a c $;
+axiom seq_cong_scons (a b c d: State):
+  $ seq a c $ > $ seq b d $ > $ seq (scons a b) (scons c d) $;
+axiom sfst_cons (a b: State): $ seq (sfst (scons a b)) a $;
+axiom ssnd_cons (a b: State): $ seq (ssnd (scons a b)) b $;
+axiom scons_eta (a: State): $ seq (scons (sfst a) (ssnd a)) a $;
+
+def swap (z: State): State = $ scons (ssnd z) (sfst z) $;
+
+theorem swap_apply (a b: State): $ seq (swap (scons a b)) (scons b a) $;
+theorem swap_involution (z: State): $ seq (swap (swap z)) z $;
+MM0
+cat > "$FIX/tk.mm1" <<'MM1'
+provable sort Prop;
+sort State;
+delimiter $ ( ) $;
+
+term seq (a b: State): Prop;
+term scons (a b: State): State;
+term sfst (a: State): State;
+term ssnd (a: State): State;
+
+axiom seq_trans (a b c: State): $ seq a b $ > $ seq b c $ > $ seq a c $;
+axiom seq_cong_scons (a b c d: State):
+  $ seq a c $ > $ seq b d $ > $ seq (scons a b) (scons c d) $;
+axiom sfst_cons (a b: State): $ seq (sfst (scons a b)) a $;
+axiom ssnd_cons (a b: State): $ seq (ssnd (scons a b)) b $;
+axiom scons_eta (a: State): $ seq (scons (sfst a) (ssnd a)) a $;
+
+def swap (z: State): State = $ scons (ssnd z) (sfst z) $;
+
+pub theorem swap_apply (a b: State): $ seq (swap (scons a b)) (scons b a) $ =
+  '(seq_cong_scons ssnd_cons sfst_cons);
+
+pub theorem swap_involution (z: State): $ seq (swap (swap z)) z $ =
+  '(seq_trans (seq_cong_scons ssnd_cons sfst_cons) scons_eta);
+MM1
+
+check "verify the two-file development" 200 "$(submit verify tk "$FIX/tk.mm0" "$FIX/tk.mm1")"
+[ "$(jget "$WORK/out" accepted)" = "True" ] && ok "accepted by mm0-rs + mm0-c" || bad "body: $(head -c 300 "$WORK/out")"
+
+check "publish queues" 202 "$(submit publish tk-pub "$FIX/tk.mm0" "$FIX/tk.mm1")"
+FP="$(jget "$WORK/out" proof)"
+if wait_published "$FP" 60; then ok "published to the sandbox ($FP)"; else bad "never published: $(cat "$WORK/proof.json" 2>/dev/null)"; fi
+DOI="$(jget "$WORK/proof.json" doi)"
+[ -n "$DOI" ] && ok "DOI surfaced ($DOI)" || bad "no DOI on /proof"
+
+# the ProofFlow-like extras, against this record
+curl -sS -m 20 "$BASE/api/v1/graph?project=unfer&id=$FP" -o "$WORK/tkg.json"
+GDECLS="$(python3 - "$WORK/tkg.json" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1]))
+decls = {d["name"]: d for d in g["declarations"]}
+ok = (len(decls) == 14
+      and all(decls.get(t, {}).get("kind") == "theorem" and decls[t]["proved"]
+              for t in ("swap_apply", "swap_involution"))
+      and g["counts"]["by_kind"].get("axiom") == 5
+      and g["counts"].get("accepted") is True)
+print(len(decls) if ok else "bad")
+PY
+)"
+check "graph JSON: 14 decls, swap theorems proved, 5 axioms" 14 "$GDECLS"
+
+curl -sS -m 20 "$BASE/graph?project=unfer&id=$FP" -o "$WORK/tkg.html"
+grep -q "swap_involution" "$WORK/tkg.html" && ok "graph HTML renders the DAG" || bad "no swap_involution in the graph page"
+
+curl -sS -m 30 "$BASE/api/v1/search?q=swap" -o "$WORK/tks.json"
+check "search: corpus is the record's declarations" 14 "$(jget "$WORK/tks.json" corpus)"
+check "search: three swap hits" 3 "$(jget "$WORK/tks.json" count)"
+grep -q 'swap_involution' "$WORK/tks.json" && ok "search returns swap_involution" || bad "no swap_involution hit: $(head -c 300 "$WORK/tks.json")"
+
+curl -sS -m 20 "$BASE/api/v1/stats" -o "$WORK/tkst.json"
+check "stats: declarations" 14 "$(jget "$WORK/tkst.json" graph.declarations)"
+check "stats: axioms" 5 "$(jget "$WORK/tkst.json" graph.by_kind.axiom)"
+check "stats: theorems" 2 "$(jget "$WORK/tkst.json" graph.by_kind.theorem)"
+check "stats: one published proof" 1 "$(jget "$WORK/tkst.json" states.published)"
+
+curl -sS -m 20 "$BASE/manifest?project=unfer" -o "$WORK/tkm.json"
+[ "$(jget "$WORK/tkm.json" project)" = "unfer" ] && ok "manifest serves the project" || bad "manifest: $(head -c 200 "$WORK/tkm.json")"
+
+stop_web; stop_mock
 fi
 
 # ---------------------------------------------------------------------------

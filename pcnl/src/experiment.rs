@@ -43,6 +43,16 @@ pub struct Config {
     pub n_test: usize,
     pub pretrain_steps: usize,
     pub pretrain_lr: f64,
+    /// Use Adam (at `adam_lr`) instead of heavy-ball SGD (`pretrain_lr`,
+    /// momentum 0.9) for the Task-A pre-train.
+    ///
+    /// Off by default: every report the doc quotes uses the plan's
+    /// momentum-SGD pre-train.  Switched on, it is the *tuned pre-train
+    /// control* for the standard-softmax baseline, whose SGD pre-train at
+    /// lr 0.6 diverges (loss 851) before the sampler is ever started —
+    /// which makes the Phase-0 comparison between the variants test the
+    /// pre-train's stability as much as the architecture.
+    pub pretrain_adam: bool,
     pub chains: usize,
     /// Total unadjusted iterations (plan Phase 0: 10,000).
     pub steps: usize,
@@ -104,6 +114,7 @@ impl Default for Config {
             n_test: 256,
             pretrain_steps: 1_500,
             pretrain_lr: 0.6,
+            pretrain_adam: false,
             chains: 4,
             steps: 10_000,
             burn: 5_000,
@@ -266,10 +277,17 @@ impl Report {
         } else {
             ""
         };
+        // Same convention for the pre-train optimizer: named only when it
+        // is not the plan's momentum SGD, so quoted reports stay identical.
+        let opt = if self.config.pretrain_adam {
+            ", pretrain_opt=adam"
+        } else {
+            ""
+        };
         s.push_str(&format!(
             "SG-pCNL (unadjusted) x nGPT-lite toy run (seed {}, sigma={}, beta0={}, kappa={}, \
              gamma={}, batch={}, chains={}, steps={}, burn={}, thin={}, taskA=(a+b) mod {}, \
-             taskB={}, n_train={}, pretrain={}{})\n",
+             taskB={}, n_train={}, pretrain={}{}{})\n",
             self.config.seed,
             self.config.sigma,
             self.config.beta_0,
@@ -284,7 +302,8 @@ impl Report {
             self.config.task_b.formula(self.config.k),
             self.config.n_train,
             self.config.pretrain_steps,
-            prior
+            prior,
+            opt
         ));
         for v in &self.variants {
             s.push_str(&format!(
@@ -743,15 +762,29 @@ fn run_variant(
     };
 
     // ---- Phase 3 pre-train on Task A -------------------------------
-    let (theta_a, trace_a) = momentum_sgd(
-        data_a,
-        shapes,
-        variant,
-        theta0.clone(),
-        cfg.pretrain_steps,
-        cfg.pretrain_lr,
-        0.9,
-    );
+    // Default: the plan's heavy-ball SGD.  `pretrain_adam` swaps in the
+    // tuned optimizer so that a variant whose SGD pre-train diverges can
+    // still be compared on the *sampler* rather than on the pre-train.
+    let (theta_a, trace_a) = if cfg.pretrain_adam {
+        adam(
+            data_a,
+            shapes,
+            variant,
+            theta0.clone(),
+            cfg.pretrain_steps,
+            cfg.adam_lr,
+        )
+    } else {
+        momentum_sgd(
+            data_a,
+            shapes,
+            variant,
+            theta0.clone(),
+            cfg.pretrain_steps,
+            cfg.pretrain_lr,
+            0.9,
+        )
+    };
     let acc_a = data_a.accuracy(&theta_a, shapes, variant).expect("acc A");
     let loss_a_first = trace_a[0];
     let loss_a_last = *trace_a.last().unwrap();

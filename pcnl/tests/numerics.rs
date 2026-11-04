@@ -743,6 +743,7 @@ fn micro() -> Config {
         cyclical_period: 0,
         run_mh: true,
         prior_center_at_a: false,
+        pretrain_adam: false,
     }
 }
 

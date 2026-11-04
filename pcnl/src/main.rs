@@ -51,6 +51,9 @@ fn main() {
                 i += 1;
                 cfg.save_dir = Some(args.get(i).expect("--save-dir DIR").clone().into());
             }
+            // Tuned-pre-train control: Adam (at `--adam-lr`'s default 0.05)
+            // for the Task-A pre-train instead of heavy-ball SGD.
+            "--pretrain-adam" => cfg.pretrain_adam = true,
             // §3C Option 2 / Phase 4b: cyclical cosine schedule
             "--cyclical" => {
                 i += 1;
@@ -163,7 +166,7 @@ fn main() {
                      --save-dir DIR | --cyclical PERIOD | --no-mh | --task-b b|p:q:r | --k N | \
                      --n-train N | --pretrain N | --chains N | --d N | --ff N | --layers N | \
                      --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F | \
-                     --prior-center-a)"
+                     --prior-center-a | --pretrain-adam)"
                 );
                 std::process::exit(2);
             }
