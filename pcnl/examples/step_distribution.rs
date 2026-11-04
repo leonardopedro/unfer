@@ -31,6 +31,17 @@
 //! predictive of an inflated network is a different object, not a better
 //! posterior.
 //!
+//! **The `… pin` arms answer the radius half of that.**  `π`'s radial marginal
+//! is a shell of width `σ/√2` around `σ√P`, so renormalising the proposal's
+//! norm back to the shell is a small perturbation of the target and removes the
+//! `O(h)` bias that collapsed ULA to `‖θ‖ = 17`.  Measured (2 seeds):
+//! `ULA h = σ²/8` unpinned is 2.1443 NLL / 0.1439 ECE at radius 17.1, and pinned
+//! it is **2.1096 / 0.0774 at radius 45.2** — the best-calibrated arm in the
+//! table, and with a *lower* `r` (0.187), because the projection removes the
+//! radial noise component.  So the earlier "ULA is worthless" reading was that
+//! radius artefact; pushing `r` (`pCN β = 0.9` pinned: 2.5662 / 0.4618; ULA
+//! `h = σ²` pinned: 2.6604 / 0.4351) is still harmful at any radius.
+//!
 //! ```text
 //! cargo run --release -p pcnl --example step_distribution
 //! ```
@@ -116,20 +127,33 @@ fn main() {
         let sigma = cfg.sigma;
 
         // (label, pcn beta or ULA h)
-        let mut arms: Vec<(String, Option<f64>, Option<f64>)> = vec![
-            ("pCN β=0.3".into(), Some(cfg.beta_0), None),
-            ("pCN β=0.9".into(), Some(0.9), None),
-            ("pCN β=1.0".into(), Some(1.0), None),
+        // (label, pcn beta, ula h, pin the radius to the shell)
+        let mut arms: Vec<(String, Option<f64>, Option<f64>, bool)> = vec![
+            ("pCN β=0.3".into(), Some(cfg.beta_0), None, false),
+            ("pCN β=0.9".into(), Some(0.9), None, false),
+            ("pCN β=1.0".into(), Some(1.0), None, false),
         ];
         for frac in H_FRACS {
             arms.push((
                 format!("ULA h=σ²/{:.0}", 1.0 / frac),
                 None,
                 Some(frac * sigma * sigma),
+                false,
             ));
         }
+        // The shell-pinned arms: the same drift, with the radius projected back
+        // onto σ√P after every step, so `r` can be raised without the radial
+        // column moving.  The target becomes the sphere-constrained one.
+        arms.push(("pCN β=0.9 pin".into(), Some(0.9), None, true));
+        arms.push((
+            "ULA σ²/8 pin".into(),
+            None,
+            Some(0.125 * sigma * sigma),
+            true,
+        ));
+        arms.push(("ULA σ² pin".into(), None, Some(sigma * sigma), true));
 
-        for (label, beta, h) in arms {
+        for (label, beta, h, pinned) in arms {
             let mut theta = theta_a.clone();
             let mut loader = BatchLoader::new(cfg.n_train, cfg.batch_size, seed ^ 0xbeef);
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed ^ 0xfeed);
@@ -185,6 +209,14 @@ fn main() {
                     ((prior_term - likelihood_term).expect("drift sum") + noise_term)
                         .expect("ula step")
                 };
+                let mut next = next;
+                if pinned {
+                    let n = pcnl::sampler::norm(&next).unwrap_or(f64::NAN);
+                    if n.is_finite() && n > 0.0 {
+                        let shell = sigma * p_f.sqrt();
+                        next = next.affine(shell / n, 0.0).expect("pin to the shell");
+                    }
+                }
                 theta = next;
                 let r = pcnl::sampler::norm(&theta).unwrap_or(f64::NAN);
                 if !r.is_finite() {

@@ -177,6 +177,11 @@ impl BatchLoader {
 }
 
 /// Plain momentum-SGD on the flat vector — the deterministic baseline
+/// Squared Euclidean norm of a flat tensor, in f64.
+fn squared_norm(x: &Tensor) -> f64 {
+    crate::sampler::dot(x, x).unwrap_or(f64::NAN)
+}
+
 /// Phase 4 benchmarks pCNL against, and Phase 3's Task-A pre-trainer.
 /// Gradients are clipped to norm `PRETRAIN_CLIP` (both variants alike):
 /// the clip is part of the *baseline's* definition, so an unnormalized
@@ -482,13 +487,22 @@ pub struct MhOptions {
     /// is unaffected, so for a drift-free pCN proposal a cap changes the
     /// proposal and not the target.
     ///
-    /// **That invariance is approximate here.**  The ratio is the likelihood
-    /// ratio only, `exp(λ(L(θ)−L(θ′)))`, which is exact Metropolis only when
-    /// the drift is zero (pCN's prior cancellation needs the drift-free mean
-    /// `√(1−β²)θ`).  With a drift the chain is pCNL, whose invariant law is
-    /// not `π`; §6.5.6(c) measures the resulting radial drift (‖θ‖ 1.1–1.3e3
-    /// against a 45.2 shell at `β = 0.01–0.03`), so read cap-comparisons as
-    /// "same approximate law to within the pCNL bias", not as "same target".
+    /// **That invariance is approximate unless `exact` is set.**  The default
+    /// ratio is the likelihood ratio only, `exp(λN(L(θ)−L(θ′)))`, which is
+    /// exact Metropolis only when the drift is zero (pCN's prior cancellation
+    /// needs the drift-free mean `√(1−β²)θ`).  With a drift the chain is pCNL,
+    /// whose invariant law is not `π`; read cap-comparisons as "same
+    /// approximate law to within the pCNL bias", not as "same target" — and use
+    /// `exact: true` when the cap has to be shown not to move the target.
+    ///
+    /// **The radius is not the diagnostic.**  §6.5.6(c) read `‖θ‖ ≈ 1.1–1.3e3`
+    /// as pCNL bias, but that is `‖θ_A‖` — the chain starts at `θ_A + σξ` with
+    /// `‖θ_A‖ ≈ 1338`, and at `β = 0.03` the OU contraction's `1/β² ≈ 1111`
+    /// steps outlast the 400-step run.  The radius never had a chance to relax.
+    /// The cosine likelihood is also exactly flat under a global rescale
+    /// (`posterior_radius`, and the `cosine_likelihood_is_flat_along_a_radial_ray`
+    /// test), so `π`'s radial marginal is the prior's `σ√P` shell at any `λ` and
+    /// a genuine excursion would mean the *proposal*, not the target.
     pub grad_norm_cap: Option<f64>,
     /// Temperature on the potential: the proposal drift and the acceptance
     /// log-ratio both use `λ·L`, so `λ = 1` is the published target and
@@ -498,6 +512,13 @@ pub struct MhOptions {
     /// `λ = 1`.  Kept losses are always reported as the raw `L`, untempered,
     /// so a `λ < 1` row is comparable to the `λ = 1` rows.
     pub potential_scale: f64,
+    /// Full Metropolis–Hastings instead of the predecessor's likelihood-only
+    /// filter.  `true` uses the full-batch gradient (the proposal mean must be
+    /// a function of `θ`), computes the reverse proposal's density with a
+    /// second backward pass, and includes the prior ratio — so the chain
+    /// targets `π_λ ∝ N(0,σ²I)·exp(−λ·N·L)` exactly, at 2 backward passes per
+    /// step.  `false` (default) is pCNL, the published comparator.
+    pub exact: bool,
 }
 
 impl Default for MhOptions {
@@ -505,6 +526,7 @@ impl Default for MhOptions {
         Self {
             grad_norm_cap: None,
             potential_scale: 1.0,
+            exact: false,
         }
     }
 }
@@ -571,7 +593,14 @@ pub fn mh_pcnl_chain(
         } else {
             scheduler.beta_cyclical(t, cfg.cyclical_period)
         };
-        let (bx, by) = loader.next(data);
+        // `exact` needs the *full-batch* gradient: the proposal mean must be
+        // a deterministic function of θ for the reverse density to exist.
+        let (bx, by) = if opts.exact {
+            (data.train_x.clone(), data.train_y.clone())
+        } else {
+            let (x, y) = loader.next(data);
+            (x.clone(), y.clone())
+        };
         let (_bl, sum_grad) = data
             .batch_grad(&theta, shapes, variant, &bx, &by)
             .expect("mini-batch grad");
@@ -584,7 +613,11 @@ pub fn mh_pcnl_chain(
         // the prior mean μ (a pure translation: the pCN prior-ratio
         // cancellation that leaves the filter a likelihood ratio is
         // shift-invariant, so μ = θ_A needs no filter change)
-        let scale = (cfg.n_train as f64) / (cfg.batch_size as f64);
+        let scale = if opts.exact {
+            1.0 // the full batch is already the potential's gradient
+        } else {
+            (cfg.n_train as f64) / (cfg.batch_size as f64)
+        };
         // Optional drift cap on the *proposal* (default `None` in every
         // reported run).  This is what makes the filtered kernel a fair
         // test for the standard stack (§6.5.3): the cap changes only the
@@ -630,14 +663,78 @@ pub fn mh_pcnl_chain(
             .expect("drift");
         let proposal = (&noised - &drift).expect("proposal");
 
+        // The Gaussian-measure correction: with a drift the proposal is not
+        // prior-reversible, so q(θ|θ′)/q(θ′|θ) ≠ 1 and the exact ratio needs
+        // both means (a second full-batch backward).  `exact` includes it and
+        // targets π_λ ∝ N(0,σ²I)·exp(−λ·N·L) term for term.
+        // Exact Metropolis needs three terms, not one: the target ratio, the
+        // proposal ratio, and the prior ratio.  pCN cancels the last two only
+        // when the drift is zero, which is why the likelihood-only ratio is
+        // exact in the drift-free limit and pCNL (approximate) otherwise.
+        let (log_prior_ratio, log_q_ratio) = if opts.exact {
+            let (_lp, g_prop) = data
+                .batch_grad(&proposal, shapes, variant, &data.train_x, &data.train_y)
+                .expect("full-batch grad at the proposal");
+            grad_evals += 1;
+            let mean_at = |th: &Tensor, g: &Tensor| -> Tensor {
+                let decayed = match center {
+                    Some(c) => ((th - c)
+                        .expect("θ−μ")
+                        .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
+                        .expect("decay")
+                        + c)
+                        .expect("centered decay"),
+                    None => th
+                        .affine((1.0 - beta * beta).max(0.0).sqrt(), 0.0)
+                        .expect("decay"),
+                };
+                let d = g
+                    .affine(
+                        opts.potential_scale * beta * beta * sigma * sigma / 2.0,
+                        0.0,
+                    )
+                    .expect("drift");
+                (&decayed - &d).expect("proposal mean")
+            };
+            let m_now = mean_at(&theta, &sum_grad);
+            let m_prop = mean_at(&proposal, &g_prop);
+            let d_now = squared_norm(&(&proposal - &m_now).expect("θ′−m(θ)"));
+            let d_prop = squared_norm(&(&theta - &m_prop).expect("θ−m(θ′)"));
+            let s2 = beta * beta * sigma * sigma;
+            // log q(θ|θ′) − log q(θ′|θ) = (‖θ′−m(θ)‖² − ‖θ−m(θ′)‖²) / 2β²σ²
+            let q = if s2 > 0.0 {
+                (d_now - d_prop) / (2.0 * s2)
+            } else {
+                0.0
+            };
+            // the prior N(μ, σ²I): its ratio is what the drift destroys
+            let prior = |th: &Tensor| -> f64 {
+                let d = match center {
+                    Some(c) => squared_norm(&(th - c).expect("θ−μ")),
+                    None => squared_norm(th),
+                };
+                -d / (2.0 * sigma * sigma)
+            };
+            (prior(&proposal) - prior(&theta), q)
+        } else {
+            (0.0, 0.0)
+        };
+
         // the predecessor's full-batch likelihood-ratio filter — exact only
-        // in the drift-free limit (§6.5.6(c): pCNL's invariant law is not π)
+        // in the drift-free limit unless `exact` is on (§6.5.6(c))
         loss_evals += 1;
         let loss_prop = full_loss(&proposal);
         let log_alpha = match (loss_now, loss_prop) {
-            // the tempered ratio: λ·(L(θ) − L(θ′)); λ = 1 is the published
-            // filter, and the kept loss below stays the raw L
-            (Some(l_now), Some(l_prop)) => opts.potential_scale * (l_now - l_prop),
+            // the tempered ratio: λ·N·(L(θ) − L(θ′)).  The `N` matters: the
+            // drift is the gradient of the *summed* loss Σℓ = N·L, so a ratio
+            // on the mean L underweights the likelihood by N — a metropolis
+            // chain then accepts climbs it could not, i.e. it is not the
+            // stated target at all.
+            (Some(l_now), Some(l_prop)) => {
+                opts.potential_scale * cfg.n_train as f64 * (l_now - l_prop)
+                    + log_prior_ratio
+                    + log_q_ratio
+            }
             // non-finite potential at the proposal ⇒ reject; at the
             // *current* state ⇒ the chain is dead (kept as evidence)
             (_, None) => f64::NEG_INFINITY,
@@ -645,6 +742,28 @@ pub fn mh_pcnl_chain(
         };
         let u: f64 = accept_rng.random();
         if u.is_finite() && u.ln() < log_alpha {
+            // `PCNL_MH_DEBUG` prints the acceptance decomposition for moves
+            // that push the norm outward — the only ones a prior-confined
+            // target can never accept in bulk.
+            if std::env::var_os("PCNL_MH_DEBUG").is_some() {
+                let (r_before, r_after) = (
+                    crate::sampler::norm(&theta).unwrap_or(f64::NAN),
+                    crate::sampler::norm(&proposal).unwrap_or(f64::NAN),
+                );
+                if r_after > r_before * 1.002 {
+                    let like = match (loss_now, loss_prop) {
+                        (Some(l0), Some(l1)) => {
+                            opts.potential_scale * cfg.n_train as f64 * (l0 - l1)
+                        }
+                        _ => f64::NAN,
+                    };
+                    eprintln!(
+                        "t={t:>6} r {r_before:>9.2} -> {r_after:>9.2}  like {like:>10.3}  \
+                         prior {log_prior_ratio:>12.3}  q {log_q_ratio:>10.3}  \
+                         alpha {log_alpha:>12.3}"
+                    );
+                }
+            }
             theta = proposal;
             accepted += 1;
             loss_now = loss_prop;

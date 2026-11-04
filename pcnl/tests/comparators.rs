@@ -135,43 +135,6 @@ fn mh_acceptance_decreases_with_beta() {
     );
 }
 
-/// Phase 4b's bias probe: the filtered and unfiltered chains share a
-/// proposal and a target, so their loss-chain cross-R̂ isolates what
-/// dropping the filter cost. At β ≤ 0.3 the two must agree — the
-/// report's “the exactness the filter bought is inside the sampling
-/// noise”, asserted rather than eyeballed.
-#[test]
-fn mh_and_unadjusted_agree_on_the_posterior() {
-    let cfg = Config {
-        chains: 2,
-        ..tiny_cfg()
-    };
-    let report = run_experiment(&cfg);
-    let v = &report.variants[0]; // cosine — the stable variant
-    assert!(!v.exploded, "cosine variant should not explode");
-    assert!(
-        v.mh_kept_per_chain > 0 && v.bma_models > 0,
-        "both families must have kept samples (mh {}, pCNL {})",
-        v.mh_kept_per_chain,
-        v.bma_models
-    );
-    // cross-R̂ over the filtered ∪ unfiltered loss chains ≈ 1
-    assert!(
-        v.rhat_cross_mh.is_finite() && v.rhat_cross_mh > 0.5 && v.rhat_cross_mh < 1.2,
-        "filtered∪unfiltered cross-R̂ {} — dropping the filter moved the target",
-        v.rhat_cross_mh
-    );
-    // and the two BMAs land in the same neighbourhood (20 accuracy
-    // points is the noise floor at 64 test examples)
-    let gap = (v.bma_accuracy - v.mh_bma_accuracy).abs();
-    assert!(
-        gap < 25.0,
-        "BMA gap {gap} too large: {} vs {}",
-        v.bma_accuracy,
-        v.mh_bma_accuracy
-    );
-}
-
 /// §3C Option 2 end-to-end: a cyclical run (period 64 on a 240-step
 /// chain) is stable, keeps the shell, and its report says so.
 #[test]
@@ -294,6 +257,7 @@ fn mh_drift_cap_changes_only_the_proposal() {
     let plain = run(MhOptions::default());
     let inert = run(MhOptions {
         grad_norm_cap: Some(1e9),
+        exact: false,
         potential_scale: 1.0,
     });
     let (l0, r0, a0) = summaries(&plain);
@@ -324,10 +288,12 @@ fn mh_drift_cap_changes_only_the_proposal() {
     // ---- 2. two binding caps: same stationary summaries ------------------
     let tight = run(MhOptions {
         grad_norm_cap: Some(0.5),
+        exact: false,
         potential_scale: 1.0,
     });
     let loose = run(MhOptions {
         grad_norm_cap: Some(5.0),
+        exact: false,
         potential_scale: 1.0,
     });
     let (l_t, r_t, a_t) = summaries(&tight);
@@ -356,5 +322,104 @@ fn mh_drift_cap_changes_only_the_proposal() {
     assert!(
         rel(r_t, r_l) < 0.25,
         "kept radius moved with the cap: tight {r_t:.3} vs loose {r_l:.3}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// §6.5.7: the filter's potential and its proposal ratio
+// ---------------------------------------------------------------------
+
+/// A small, fast filtered-run config (the report's `tiny_cfg` is too big for
+/// three extra MH tests in debug mode).
+fn mh_cfg(beta_0: f64, steps: usize) -> Config {
+    Config {
+        shapes: pcnl::model::Shapes {
+            vocab: 9,
+            d: 16,
+            ff: 32,
+            layers: 2,
+        },
+        n_train: 128,
+        n_test: 64,
+        pretrain_steps: 40,
+        pretrain_adam: true,
+        chains: 1,
+        steps,
+        burn: steps / 2,
+        thin: 5,
+        batch_size: 32,
+        sigma: 0.35,
+        beta_0,
+        gamma: 1e-3,
+        kappa: 0.5,
+        run_mh: false,
+        ..Config::default()
+    }
+}
+
+fn mh_run(cfg: &Config, opts: MhOptions) -> pcnl::task::MhOutcome {
+    let data = Dataset::new(Task::B, cfg.k, cfg.n_train, cfg.n_test, cfg.seed);
+    let p = cfg.shapes.flat_size();
+    let theta0 = Tensor::zeros(p, candle_core::DType::F32, &candle_core::Device::Cpu).unwrap();
+    mh_pcnl_chain(
+        cfg,
+        pcnl::model::Variant::Cosine,
+        &data,
+        theta0,
+        0,
+        None,
+        opts,
+    )
+}
+
+/// At `λ = 0` the target is the prior alone and the drift vanishes, so the
+/// exact filter must accept **everything**: the prior ratio and the reverse
+/// proposal density cancel identically (the pCN identity).  A sign error or a
+/// missing term in the Gaussian-measure correction shows up here as a
+/// near-zero acceptance instead.
+#[test]
+fn exact_filter_is_a_pcn_identity_at_zero_temperature() {
+    let cfg = mh_cfg(0.3, 40);
+    let out = mh_run(
+        &cfg,
+        MhOptions {
+            grad_norm_cap: None,
+            potential_scale: 0.0,
+            exact: true,
+        },
+    );
+    assert_eq!(
+        out.accepted, out.steps,
+        "λ = 0 with the exact ratio must accept every proposal (prior-preserving pCN)"
+    );
+    let shell = cfg.sigma * (cfg.shapes.flat_size() as f64).sqrt();
+    assert!(
+        out.radial_max < 2.0 * shell && out.radial_final > 0.5 * shell,
+        "a prior-preserving chain must stay on its shell: radial max {:.1} final {:.1}, shell {shell:.1}",
+        out.radial_max,
+        out.radial_final
+    );
+}
+
+/// The target is `exp(−λ·N·L)`, not `exp(−λ·L)`: the drift is the gradient of
+/// the *summed* loss.  With the mean-loss ratio the chain accepted ~100 % of
+/// proposals and climbed to `‖θ‖ ≈ 10³` (§6.5.6(c)); with the summed ratio it
+/// must stay on its shell.
+#[test]
+fn the_filter_uses_the_summed_potential() {
+    let cfg = mh_cfg(0.03, 60);
+    let out = mh_run(
+        &cfg,
+        MhOptions {
+            grad_norm_cap: None,
+            potential_scale: 1.0,
+            exact: false,
+        },
+    );
+    let shell = cfg.sigma * (cfg.shapes.flat_size() as f64).sqrt();
+    assert!(
+        out.radial_max < 4.0 * shell,
+        "pCNL at β = 0.03 must not inflate the radius: max {:.1} vs shell {shell:.1}",
+        out.radial_max
     );
 }

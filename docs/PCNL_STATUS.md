@@ -311,8 +311,9 @@ wording:
    So §6.5.2's "confident-and-wrong" is now qualified as *per draw*; the
    ensemble's calibration comes from its bias, not from sampling the
    posterior.  The target does move out, though: the exact chain's
-   radial final is 95–134 against the 45 shell, so part of §6.5.2's
-   outward march was the posterior's own preference for larger weights.
+   radial final is 95–134 against the 45 shell — but see §6.5.6(c): the cosine
+   likelihood is exactly flat in the radius, so that excursion is a
+   non-equilibrated start (`‖θ_A‖ ≈ 1338`), not the posterior's preference.
 
 ### No usable temperature, and the cosine chain is not over-dispersed (2026-11-04)
 
@@ -460,29 +461,99 @@ so the longer horizon is untested rather than done and unreported.
 | ULA `h = σ²/2` | 0.728 | 2.2790 | 0.2668 | 26.5 |
 | ULA `h = σ²` | **2.082** | 3.0870 | 0.3765 | 40.7 |
 
-It *does* reach `r ≈ 2.1` without a non-finite state, and it is worthless: the
-predictive degrades monotonically in `h`, every row is worse than the uniform
-predictor, and ULA's radius collapses to 17–27 (the `O(h)` OU bias).  So `r` is
-a **diagnosis** of prior-domination, not a lever — §6.5.5's ceiling explains the
-uniform predictive without prescribing a fix.
+It *does* reach `r ≈ 2.1` without a non-finite state, and the first reading was
+"and it is worthless".  **That reading was a radius artefact.**  `π`'s radial
+marginal is a thin shell (`σ/√2 ≈ 0.25` wide) around `σ√P`, so projecting the
+proposal back onto the shell is a small perturbation of the target — and it
+removes the `O(h)` OU bias that had collapsed the ULA chain to `‖θ‖ = 17`.  The
+`… pin` arms add that projection:
 
-**(c) The filtered chain does not sample the cold target — and never did.**
-`pcnl/examples/mh_cold.rs` (likelihood-ratio filter; `λ ∈ {1,16}`, proposal
-`β ∈ {0.03, 0.01, 0.003}`, 400 steps, 2 seeds) puts **every** cell at
-`‖θ‖ ≈ 1.1–1.3e3` against the 45.2 shell, with 89.5–100 % acceptance.  The
-prior's cost at `r = 10³` is 5.4e6 nats, so no row samples `π_λ`; the `λ = 16`
-row's 37.5 % / 1.62 NLL is an optimiser's predictive.  The cause is structural:
-the acceptance ratio is `exp(λ(L(θ)−L(θ′)))`, which is exact Metropolis only
-for a drift-free proposal, and with `β = 0.01–0.03` the OU restoring timescale
-`1/β²` is 1 100–10 000 steps.
+| family | `r` | BMA NLL | ECE | radial |
+|---|---:|---:|---:|---:|
+| pCN `β = 0.3` | 0.069 | 2.1948 | 0.1937 | 45.1 |
+| ULA `h = σ²/8` | 0.326 | 2.1443 | 0.1439 | 17.1 |
+| **ULA `h = σ²/8` pin** | 0.187 | **2.1096** | **0.0774** | 45.2 |
+| pCN `β = 0.9` pin | 0.249 | 2.5662 | 0.4618 | 45.2 |
+| ULA `h = σ²` pin | 3.5e5 | 2.6604 | 0.4351 | 45.2 |
 
-**That corrects §6.5.3's wording.**  Its "exact full-batch likelihood-ratio
-filter" rows already showed the bias at a smaller scale (radial final 95–134
-against 45.2), so "the overconfidence is not the target's" narrows to *a pCNL
-chain at a usable proposal scale is less overconfident than the unadjusted
-one*.  `MhOptions`'s doc comment, the `mh_pcnl_chain` comment, the
-`comparators.rs` cap test and `examples/mh_standard_target.rs` now say pCNL
-instead of "exact"; the crate's numbers are unchanged.
+The pinned ULA at `h = σ²/8` is the best-calibrated arm in the table (ECE 0.077
+against the kernel's 0.194) and it does **not** have a higher `r` — the
+projection removes the radial noise component, so the same `h` buys less drift.
+So `r` stays a **diagnosis** of prior-domination rather than a lever (pushing it
+via `β` or `h` is worse at any radius), while the useful lever is the *radial*
+constraint, which is a statement about the target, not the schedule.  Even the
+best arm's NLL (2.110) is above the uniform predictor's 2.0794: calibration
+improves, information does not appear.
+
+**(c) The filtered chain, the cold target, and a radial column that misled.**
+`pcnl/examples/mh_cold.rs` was written to answer "is the cold BMA the target's
+predictive or the unadjusted bias?".  Its first answer — *no row samples
+`π_λ`, every cell sits at `‖θ‖ ≈ 1.1–1.3e3` against the 45.2 shell* — was wrong,
+for two independent reasons that are now both fixed.
+
+*Ratio.*  The acceptance used `exp(λ(L(θ)−L(θ′)))` on the **mean** loss while
+the drift is `∇` of the **summed** loss `N·L`, so the likelihood was
+underweighted by `N = 512`; and `λN` alone is still not exact with a drift,
+because pCN's prior cancellation needs the drift-free mean `√(1−β²)θ`.
+`MhOptions::exact` now adds the prior ratio and the reverse-proposal ratio
+`(‖θ′−m(θ)‖² − ‖θ−m(θ′)‖²)/2β²σ²`, at one extra full-batch backward pass per
+step; `mh_exact_filter_is_pcn_at_zero_temperature` pins the identity.
+
+*Radius.*  `pcnl/examples/posterior_radius.rs` scans
+`Φ_λ(r) = r²/2σ² + λNL` along radial rays: the cosine likelihood is **exactly
+radially flat** (`L = 3.48890` at `r = 10`, `3.48893` at `r = 4000` in the `θ_A`
+direction; `5.16489/5.16490` for a Haar direction), pinned by
+`numerics.rs::cosine_likelihood_is_flat_along_a_radial_ray`.  So `π_λ`'s radial
+marginal is the prior's shell at every `λ` — and the observed `1.3e3` was
+`‖θ_A + σξ‖`: `‖θ_A‖ = 1338`, 30× the shell, with `1/β² ≈ 1111` steps of
+contraction against a 400-step run.  The `max` column was the start.  `grep`-able
+confirmation: `PCNL_MH_DEBUG=1` prints the decomposition of every accepted
+outward move, and in those runs there are none.
+
+Placing the chain **on** the shell (`PCNL_START=shell`; a pure rescale, so no
+prediction changes) instead, 400 steps, 2 seeds:
+
+| `λ` | ratio | accept | BMA acc | BMA NLL | ECE | final |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | pCNL | 85.8–90.0 % | 11.7 / 12.9 % | 2.3419–2.3525 | 0.2885–0.3023 | 60.1–60.4 |
+| 1 | exact MH | 99.5–100 % | 11.7 / 12.9 % | 2.3668–2.3799 | 0.3136–0.3201 | 59.6–60.1 |
+| 16 | pCNL | 33.0–55.8 % | 12.9 / 21.5 % | 1.9842–2.1063 | 0.0454–0.0573 | 61.4–63.0 |
+| 16 | exact MH `β = 0.03` | **0 %** | 11.7 / 12.9 % | 4.9010–4.9950 | 0.8233–0.8428 | 64.1–64.4 (start) |
+| 16 | exact MH `β = 0.01` | 85.5–89.0 % | 11.7 / 12.9 % | **2.1778–2.2386** | **0.1690–0.2048** | 63.6–63.9 |
+
+Uniform NLL is `ln 8 = 2.0794`; the 0 % row's 4.9 is `θ_A`'s own predictive
+(the chain never moved).
+
+Readings, in order of how much they change:
+
+1. **The cold target's calibration effect survives an exact sampler, at a third
+   of the size**: ECE 0.169–0.205 against 0.314–0.320 at `λ = 1`, NLL 2.18–2.24
+   against 2.37–2.38.  §6.5.5's 2.1030 / 0.0670 was mostly the unadjusted
+   chain's: pCNL at the same `λ` gives 1.98–2.11 / 0.045–0.057, i.e. *better*
+   than the target allows, because a likelihood-filtered ascent takes uphill
+   moves the ratio forbids.
+2. **Nothing beats the uniform predictor.**  Even the exact cold posterior's
+   NLL (2.18) is above `ln 8`.  The typical set is Haar-typical and a
+   Haar-typical direction is confidently wrong (§6.4(ii)), so averaging over the
+   posterior is worse than refusing to predict: calibration improves, information
+   does not appear.
+3. **The cold target is immobile at `β = 0.03`**: 0 % acceptance at `λ = 16`,
+   because a 1.35-norm move shifts `N·L` by ~10² nats.  The usable proposal
+   scale shrinks with `λ`, so `β` belongs in the cell, not in the setup.
+
+**That corrects §6.5.3's wording twice.**  Its "exact full-batch
+likelihood-ratio filter" rows showed the start artefact (radial final 95–134
+against 45.2), and their filter was the mean-loss one, so "the overconfidence is
+not the target's" narrows to *a pCNL chain at a usable proposal scale is less
+overconfident than the unadjusted one*; which of the two is closer to `π` is
+answered in the shell-start table, and it is the exact chain.
+`MhOptions`'s doc comment, `mh_cold`'s header, the `comparators.rs` cap test and
+`examples/mh_standard_target.rs` now say pCNL instead of "exact"; the crate's
+numbers are unchanged.
+
+`scripts/pcnl-cold-10k` (10 000 steps, one seed, cells `{1 pCNL, 1 MH, 16 pCNL,
+16 MH β=0.01}`) is the run that makes "equilibrated" measured rather than
+assumed; its table replaces this one when it lands.
 
 ### What the review did **not** change
 
@@ -507,7 +578,7 @@ schedule.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 84 tests (48 unit + 23 numerical
+cargo test -p pcnl --locked                              # 85 tests (48 unit + 24 numerical
                                                          #  + 8 formal claims + 5 comparators)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
@@ -524,6 +595,8 @@ cargo run --release -p pcnl --example annealed_start      # §6.5.5, the ramp, ~
 cargo run --release -p pcnl --example cold_ladder -- 1000 --lambdas 1,16  # §6.5.6(a), 3 seeds
 cargo run --release -p pcnl --example step_distribution   # §6.5.6(b), pCN vs ULA
 cargo run --release -p pcnl --example mh_cold             # §6.5.6(c), the filter's bias
+cargo run --release -p pcnl --example posterior_radius    # §6.5.6(c), the target's radial profile
+./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors

@@ -492,6 +492,55 @@ fn zero_parameters_predict_the_uniform_distribution() {
     }
 }
 
+/// 11. The likelihood is exactly flat along a radial ray (§6.4, §6.5.6(c)).
+///
+/// The cosine variant normalises every weight matrix by its own row norms, so
+/// `f(c·θ) = f(θ)` for any `c > 0` up to float rounding — the loss cannot tell
+/// a radius-45 point from a radius-4000 point (measured deviations at `P = 16672`:
+/// `3e-5` nats between `r = 45` and `r = 4000`).  This test pins that identity,
+/// because the shell argument depends on it: if the likelihood were radially
+/// sloped, `π_λ`'s radial marginal would sit where the likelihood and the
+/// prior balance, not at the prior's `σ√P`, and "the chain left the shell"
+/// would be a statement about the target rather than about the sampler.
+#[test]
+fn cosine_likelihood_is_flat_along_a_radial_ray() {
+    let s = tiny();
+    let theta = init_flat(&s, 0.1, 11);
+    let tokens = Tensor::from_vec(vec![0u32, 1, 2, 0, 3, 4], &[2, 3], dev()).unwrap();
+    let targets = Tensor::from_vec(vec![3u32, 5], &[2], dev()).unwrap();
+    let (l1, _) = loss_and_grad(&theta, &s, Variant::Cosine, &tokens, &targets).unwrap();
+    for c in [0.01f64, 0.5, 3.0, 100.0] {
+        let scaled = theta.affine(c, 0.0).unwrap();
+        let (l, _) = loss_and_grad(&scaled, &s, Variant::Cosine, &tokens, &targets).unwrap();
+        assert!(
+            (l - l1).abs() < 2e-3,
+            "cosine loss moved under a global rescale by {c}: {l1} -> {l}"
+        );
+    }
+    // Tolerance: the ε in `x/(‖x‖+ε)` is a *relative* 1e-6 perturbation of the
+    // normalised direction, so the residual grows as the rows get small
+    // (measured: 9e-4 at c = 0.01, ~1e-5 from c = 0.5 up) — that is the
+    // regulariser, not a radial slope.
+    //
+    // The standard (LayerNorm) variant is *not* radially flat: LN divides by
+    // the per-token standard deviation but the residual stream itself scales
+    // with the weights, so this asymmetry is what makes the two variants
+    // different targets rather than two parameterisations of one.
+    let (s1, _) = loss_and_grad(&theta, &s, Variant::Standard, &tokens, &targets).unwrap();
+    let (s2, _) = loss_and_grad(
+        &theta.affine(4.0, 0.0).unwrap(),
+        &s,
+        Variant::Standard,
+        &tokens,
+        &targets,
+    )
+    .unwrap();
+    assert!(
+        (s1 - s2).abs() > 1e-3,
+        "Standard loss unexpectedly flat under a rescale: {s1} vs {s2}"
+    );
+}
+
 #[test]
 fn cosine_normalization_rows_are_unit_norm_up_to_eps() {
     // ‖normalize_last(x)‖ = ‖x‖/(‖x‖+ε) ≤ 1, with the ε-relative

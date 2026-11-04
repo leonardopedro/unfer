@@ -117,6 +117,7 @@ fn main() {
             let opts = MhOptions {
                 // the cap is the normalized geometry's scale, as in §6.5.2
                 grad_norm_cap: Some(7.0e2),
+                exact: false,
                 potential_scale: lambda,
             };
             let out = mh_pcnl_chain(

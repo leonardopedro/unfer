@@ -236,6 +236,7 @@ fn main() {
                         None,
                         MhOptions {
                             grad_norm_cap: Some(cap),
+                            exact: false,
                             potential_scale: 1.0,
                         },
                     )

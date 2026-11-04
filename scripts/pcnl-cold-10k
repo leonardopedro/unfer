@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# One-seed, 10 000-step cold-target ladder (§6.5.6(c) follow-up).
+#
+# The 400-step table in `pcnl/examples/mh_cold.rs` is a *relaxation* run: at
+# β = 0.03 the OU contraction has timescale 1/β² ≈ 1 111 steps, and θ_A starts
+# at ‖θ_A‖ ≈ 1.3e3, so nothing in that table is equilibrated.  This run is the
+# one long enough for the radius to become a statement about the target.
+#
+# Cells: λ = 1 {pCNL, MH} and λ = 16 {pCNL, MH at β = 0.01}.  β = 0.03 at
+# λ = 16 is excluded because the exact filter accepts 0 % there (a full-batch
+# 1.35-norm move shifts N·L by ~10² nats); β = 0.01 is the scale that samples.
+#
+#   STEPS=10000 BURN=5000 THIN=100 SEEDS=20261020 CELLS=0,1,2,4 \
+#     ./scripts/pcnl-cold-10k > /tmp/pcnl-cold-10k.log 2>&1
+#
+# Wall time on two cores: ~40 min per chain, ~2.7 h for the four cells.  The
+# output table is what `docs/PCNL_STATUS.md` quotes; copy it there when it
+# finishes rather than re-deriving the numbers from a log nobody kept.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+STEPS="${STEPS:-10000}"
+BURN="${BURN:-5000}"
+THIN="${THIN:-100}"
+SEEDS="${SEEDS:-20261020}"
+CELLS="${CELLS:-0,1,2,4}"
+
+cargo build --release -p pcnl --example mh_cold >/dev/null
+PCNL_START=shell \
+  PCNL_STEPS="$STEPS" \
+  PCNL_BURN="$BURN" \
+  PCNL_THIN="$THIN" \
+  PCNL_SEEDS="$SEEDS" \
+  PCNL_MH_CELLS="$CELLS" \
+  exec ./target/release/examples/mh_cold
