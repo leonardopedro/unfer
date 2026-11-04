@@ -153,6 +153,23 @@ pub struct SgPcnlState {
     /// every reported run uses) leaves the update exactly the plan's
     /// formula.
     pub grad_norm_cap: Option<f64>,
+    /// Final likelihood temperature `λ`.  The drift is
+    /// `λ_t·β_t²σ²/2·g_t`, so `1.0` (the default) is the published target
+    /// and `λ < 1` flattens the likelihood relative to the Gaussian prior.
+    /// Written together with [`Self::anneal_steps`].
+    pub potential_scale: f64,
+    /// Length of the temperature ramp: `λ_t = potential_scale·min(1, t/steps)`.
+    /// `0` (the default) means no ramp — `λ_t = potential_scale` at every step.
+    ///
+    /// This is the "annealed start" of §6.4.1's reachability item: a chain
+    /// begun at `λ ≈ 0` is the prior (`t = 0` gives `λ = 0` exactly), so the
+    /// direction it carries into the ramp is diffuse rather than a single
+    /// Haar draw's; the likelihood is then switched on while the OU term keeps
+    /// the radius on the shell.  It is a *schedule*, not a change of target:
+    /// after `anneal_steps` the kernel is the published one, and the kept
+    /// draws (which start at `burn`) are at `λ = 1` whenever
+    /// `anneal_steps ≤ burn`.
+    pub anneal_steps: usize,
 }
 
 impl SgPcnlState {
@@ -176,6 +193,8 @@ impl SgPcnlState {
             period,
             center: None,
             grad_norm_cap: None,
+            potential_scale: 1.0,
+            anneal_steps: 0,
         }
     }
 
@@ -201,6 +220,18 @@ impl SgPcnlState {
         self.scheduled(self.step_count)
     }
 
+    /// `λ_t`, the likelihood temperature at `step`: the constant
+    /// [`Self::potential_scale`] when no ramp is set, otherwise a linear
+    /// ramp `λ₀·min(1, t/anneal_steps)` that reaches `λ₀` exactly at
+    /// `anneal_steps` and stays there.
+    pub fn lambda_at(&self, step: usize) -> f64 {
+        if self.anneal_steps == 0 {
+            return self.potential_scale;
+        }
+        let frac = (step as f64 / self.anneal_steps as f64).min(1.0);
+        self.potential_scale * frac
+    }
+
     /// β_t under the configured schedule: Robbins–Monro when
     /// `period == 0`, cyclical cosine otherwise (plan §3C).
     pub fn scheduled(&self, step: usize) -> f64 {
@@ -222,8 +253,11 @@ impl SgPcnlState {
         let p = self.theta.elem_count();
         let dev = self.theta.device();
 
-        // 1. scheduled step size β_t (no acceptance feedback anywhere)
+        // 1. scheduled step size β_t (no acceptance feedback anywhere) and
+        //    the likelihood temperature λ_t for *this* step (indexed before
+        //    the increment, so λ₀ = 0 at t = 0 under a ramp)
         let beta = self.scheduled(self.step_count);
+        let lambda = self.lambda_at(self.step_count);
         self.step_count += 1;
 
         // 2. ξ ~ N(0, σ² I): prior-preserving OU noise
@@ -262,7 +296,9 @@ impl SgPcnlState {
         //   the noise, the drift and the pCN prior-ratio cancellation
         //   behind the MH filter are all unchanged.)
         let sqrt_decay = (1.0 - beta * beta).max(0.0).sqrt();
-        let drift_coeff = (beta * beta * self.sigma * self.sigma) / 2.0;
+        // λ = 1 is the published kernel; a ramp only scales the drift, so the
+        // OU term (and with it the pCN prior-preserving structure) is untouched
+        let drift_coeff = lambda * (beta * beta * self.sigma * self.sigma) / 2.0;
 
         let decayed = match &self.center {
             Some(c) => (&self.theta - c)?.affine(sqrt_decay, 0.0)?,
@@ -496,6 +532,118 @@ mod tests {
             assert!((g - e).abs() < 1e-6, "got {g}, expected {e}");
         }
         assert_eq!(state.step_count, 1, "step counter advances");
+    }
+
+    #[test]
+    fn temperature_ramp_is_monotone_and_lands_exactly() {
+        // §6.4.1's annealed start is a *schedule*: λ₀ = 0 at t = 0, λ = 1
+        // exactly at `anneal_steps`, constant after. If this drifts, a run
+        // labelled "anneal 0→1 over B steps" is not the target it claims.
+        let dev = &Device::Cpu;
+        let theta = Tensor::zeros(3, candle_core::DType::F32, dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 1e-3,
+            kappa: 0.5,
+        };
+        let mut ramp = SgPcnlState::new(theta.clone(), 0.35, sched, 100, 25, 0);
+        assert_eq!(ramp.lambda_at(0), 1.0, "default is the published λ = 1");
+        ramp.anneal_steps = 1_000;
+        assert_eq!(ramp.lambda_at(0), 0.0, "the ramp starts at the prior");
+        assert!((ramp.lambda_at(500) - 0.5).abs() < 1e-12);
+        assert_eq!(ramp.lambda_at(1_000), 1.0, "λ reaches 1 exactly at the end");
+        assert_eq!(ramp.lambda_at(10_000), 1.0, "and stays there");
+        let mut prev = 0.0;
+        for t in 0..1_000 {
+            let l = ramp.lambda_at(t);
+            assert!(
+                l >= prev,
+                "ramp must not decrease: {l} after {prev} at t = {t}"
+            );
+            prev = l;
+        }
+        // a ramp with a final λ < 1 lands there, not at 1
+        ramp.potential_scale = 0.4;
+        assert!((ramp.lambda_at(2_000) - 0.4).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_potential_scale_is_exactly_the_drift_multiplier() {
+        // §6.5.5's cold-posterior arm is only interpretable if λ multiplies
+        // the drift and nothing else: two steps from the same state and the
+        // same noise must differ by exactly −h·(λ₂−λ₁)·g.
+        let dev = &Device::Cpu;
+        let theta = Tensor::from_vec(vec![0.4f32, -0.7, 0.2, 1.1], &[4], dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let g = Tensor::from_vec(vec![0.5f32, 1.5, -2.0, 0.25], &[4], dev).unwrap();
+
+        let mut one = SgPcnlState::new(theta.clone(), 0.35, sched, 100, 25, 0);
+        let mut r = rand::rngs::StdRng::seed_from_u64(7);
+        one.step_unadjusted(&g, &mut r).unwrap();
+
+        let mut cold = SgPcnlState::new(theta, 0.35, sched, 100, 25, 0);
+        cold.potential_scale = 4.0;
+        let mut r = rand::rngs::StdRng::seed_from_u64(7);
+        cold.step_unadjusted(&g, &mut r).unwrap();
+
+        let (a, b) = (
+            one.theta.to_vec1::<f32>().unwrap(),
+            cold.theta.to_vec1::<f32>().unwrap(),
+        );
+        // the drift uses the (N/B)-scaled gradient: dataset 100, batch 25
+        let h = 0.3f64 * 0.3 * 0.35 * 0.35 / 2.0;
+        let scale = 100.0 / 25.0;
+        let expected: Vec<f32> = g
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .map(|gi| -3.0 * h as f32 * scale as f32 * gi)
+            .collect();
+        for i in 0..4 {
+            let observed = b[i] - a[i];
+            assert!(
+                (observed - expected[i]).abs() < 1e-6,
+                "λ = 4 must subtract exactly 3·h·g at coord {i}: got {observed}, want {}",
+                expected[i]
+            );
+        }
+    }
+
+    #[test]
+    fn zero_temperature_kernel_is_exactly_pcn() {
+        // At λ = 0 the drift must vanish *identically* — the step is then the
+        // pCN proposal, whose invariant law is the prior. Anything else (a
+        // λ left in the noise, a drift computed from the unscaled gradient)
+        // would show here as a difference between a nonzero and a zero
+        // gradient under the same noise stream.
+        let dev = &Device::Cpu;
+        let theta = Tensor::from_vec(vec![0.5f32, -0.25, 0.75], &[3], dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.4,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let grad = Tensor::from_vec(vec![3.0f32, -1.0, 2.0], &[3], dev).unwrap();
+        let zero = Tensor::zeros(3, candle_core::DType::F32, dev).unwrap();
+
+        let mut cold = SgPcnlState::new(theta.clone(), 2.0, sched, 100, 25, 0);
+        cold.potential_scale = 0.0;
+        let mut r = rand::rngs::StdRng::seed_from_u64(11);
+        cold.step_unadjusted(&grad, &mut r).unwrap();
+
+        let mut pcn = SgPcnlState::new(theta, 2.0, sched, 100, 25, 0);
+        let mut r = rand::rngs::StdRng::seed_from_u64(11);
+        pcn.step_unadjusted(&zero, &mut r).unwrap();
+
+        assert_eq!(
+            cold.theta.to_vec1::<f32>().unwrap(),
+            pcn.theta.to_vec1::<f32>().unwrap(),
+            "λ = 0 must be bit-identical to the zero-gradient pCN step"
+        );
     }
 
     #[test]

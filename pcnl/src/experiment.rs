@@ -106,6 +106,32 @@ pub struct Config {
     /// reproducible; the SGLD twin and the MH filter receive the same
     /// translation, so the cross-R̂ still couples the same target.
     pub prior_center_at_a: bool,
+    /// Length of the **likelihood-temperature ramp**: the drift is
+    /// `λ_t·β_t²σ²/2·g_t` with `λ_t = min(1, t/anneal_steps)`.
+    ///
+    /// `0` (the default) is the published kernel at `λ = 1` at every step.
+    /// A positive value is §6.4.1's reachability arms race made explicit: the
+    /// chain starts at the prior (`λ₀ = 0`) and the likelihood is switched on
+    /// over `anneal_steps` steps, so the direction the chain carries into the
+    /// adaptation is not one Haar draw's.  The target after the ramp is the
+    /// same `N(0, σ²I)·L`, so the kept draws (`t ≥ burn`) are at `λ = 1`
+    /// whenever `anneal_steps ≤ burn`; a longer ramp means the kept draws are
+    /// still tempered, and the report says so.
+    pub anneal_steps: usize,
+    /// Likelihood temperature `λ` on the potential: every arm samples
+    /// `π_λ ∝ N(0, σ²I)·exp(−λ·NL)`, so `λ = 1` (the default) is the
+    /// published target, `λ > 1` is a *cold* posterior and `λ < 1` hot.
+    ///
+    /// §6.5.5's information-to-noise ratio `r = β_tσ‖g_t‖/(2√P)` grows with
+    /// `λ` at fixed `‖g‖` (sublinearly in practice — a sharper target also
+    /// shrinks the gradient), which is why cold was the untested direction:
+    /// §6.5.4's ladder only went hot (`λ ≤ 1`) and found every rung worse.
+    /// The report prints the measured `r` whenever the target or the ramp is
+    /// non-default.
+    /// All three arms (pCNL, SGLD, MH) receive the same `λ`; the MH filter's
+    /// acceptance ratio is tempered in step so it stays exact for `π_λ`, and
+    /// the kept losses stay raw.
+    pub potential_scale: f64,
 }
 
 impl Default for Config {
@@ -142,6 +168,8 @@ impl Default for Config {
             cyclical_period: 0,
             run_mh: true,
             prior_center_at_a: false,
+            anneal_steps: 0,
+            potential_scale: 1.0,
         }
     }
 }
@@ -245,6 +273,11 @@ pub struct VariantReport {
     /// The Phase-0 spike measure: max ‖scaled g‖ actually applied
     /// (finite values only; `grad_nonfinite` carries the rest).
     pub max_scaled_grad_norm: f64,
+    /// Mean over steps of the step's information-to-noise ratio,
+    /// `h_t·λ_t·‖g_t‖ / (β_t σ √P)` — the drift norm against the pCN
+    /// noise norm (§6.5.5).  `r ≈ 0.05` means the direction is re-drawn
+    /// from the prior ~20× faster than the likelihood can steer it.
+    pub information_ratio: f64,
     pub max_batch_loss: f64,
     pub radial_expected: f64, // σ√P
     pub radial_final: f64,
@@ -315,6 +348,35 @@ impl Report {
             prior,
             opt
         ));
+        // A tempered target is part of the run's identity too: the kept
+        // losses are raw, so a reader cannot recover λ from them.
+        if self.config.potential_scale != 1.0 {
+            s.push_str(&format!(
+                "  target: likelihood temperature λ = {} — π ∝ N(0,σ²I)·exp(−λ·NL) \
+                 ({} posterior); r = βσ‖g‖/(2√P) grows with λ, and the measured r is \
+                 printed on each SG-pCNL line\n",
+                self.config.potential_scale,
+                if self.config.potential_scale > 1.0 {
+                    "cold"
+                } else {
+                    "hot"
+                }
+            ));
+        }
+        // The annealed start is part of the run's identity: a reader must
+        // be able to tell whether the kept draws are at λ = 1 or mid-ramp.
+        if self.config.anneal_steps > 0 {
+            let lands_before_burn = self.config.anneal_steps <= self.config.burn;
+            s.push_str(&format!(
+                "  anneal: likelihood temperature λ_t = min(1, t/{}) (λ₀ = 0); kept draws {} \n",
+                self.config.anneal_steps,
+                if lands_before_burn {
+                    "are at λ = 1"
+                } else {
+                    "are still tempered — not the λ = 1 posterior"
+                }
+            ));
+        }
         // §4.3 (corrected): the schedule's mobility budget belongs in
         // the artifact, not only in the prose — `Σβ_t²` over the run and
         // whether the schedule has any left afterwards. A finite budget
@@ -414,6 +476,15 @@ impl Report {
                 la = v.last_state_accuracy,
                 sec = v.seconds,
             ));
+            // §6.5.5's diagnostic, printed only when the target is not the
+            // published one, so every λ = 1 render stays byte-identical.
+            if self.config.potential_scale != 1.0 || self.config.anneal_steps > 0 {
+                s.push_str(&format!(
+                    "  information-to-noise r = {:.3} (mean h_t·λ_t·‖g_t‖ / β_tσ√P; \
+                     r ≪ 1 means the direction is prior-drawn)\n",
+                    v.information_ratio
+                ));
+            }
             s.push_str(&format!(
                 "  SGLD (baseline): radial final {rf:.1} max {rmx:.1} vs sigma*sqrt(P) {re:.1} | \
                  ESS(loss) {el:.0} | Rhat(loss) {rl:.3} | BMA {ba:.1}% NLL {bn:.4} ECE {be:.4} \
@@ -653,6 +724,7 @@ struct ChainOutcome {
     /// One series per `coords` entry; empty when the chain kept nothing.
     coord_values: Vec<Vec<f64>>,
     max_scaled_grad: f64,
+    information_ratio: f64,
     max_batch_loss: f64,
     grad_nonfinite: bool,
     exploded: bool,
@@ -705,6 +777,8 @@ fn run_chain(
     if cfg.prior_center_at_a {
         state = state.centered_at(theta_a.clone());
     }
+    state.anneal_steps = cfg.anneal_steps;
+    state.potential_scale = cfg.potential_scale;
     let center = cfg.prior_center_at_a.then_some(theta_a);
     let mut loss_chain: Vec<f64> = Vec::new();
     let mut kept: Vec<Tensor> = Vec::new();
@@ -712,6 +786,8 @@ fn run_chain(
         .map(|_| Vec::with_capacity((cfg.steps - cfg.burn) / cfg.thin + 1))
         .collect();
     let mut max_scaled_grad = 0.0f64;
+    let mut ratio_sum = 0.0f64;
+    let mut ratio_n = 0usize;
     let mut max_batch_loss = 0.0f64;
     let mut grad_nonfinite = false;
     let mut exploded = false;
@@ -734,6 +810,15 @@ fn run_chain(
         match norm(&sum_grad) {
             Ok(gn) if gn.is_finite() => {
                 max_scaled_grad = max_scaled_grad.max(gn * scale);
+                // §6.5.5: the drift norm against the pCN noise norm, with
+                // this step's λ (the ramp's and the target's, both applied)
+                let beta = state.scheduled(t);
+                let noise = beta * cfg.sigma * (p_dim as f64).sqrt();
+                let h = state.lambda_at(t) * beta * beta * cfg.sigma * cfg.sigma / 2.0;
+                if noise > 0.0 {
+                    ratio_sum += h * gn * scale / noise;
+                    ratio_n += 1;
+                }
             }
             _ => grad_nonfinite = true, // the Phase-0 spike, as evidence
         }
@@ -774,6 +859,11 @@ fn run_chain(
         final_state: state.theta.clone(),
         coord_values,
         max_scaled_grad,
+        information_ratio: if ratio_n == 0 {
+            f64::NAN
+        } else {
+            ratio_sum / ratio_n as f64
+        },
         max_batch_loss,
         grad_nonfinite,
         exploded,
@@ -925,7 +1015,10 @@ fn run_variant(
                     init,
                     c,
                     center.as_ref(),
-                    Default::default(),
+                    crate::task::MhOptions {
+                        potential_scale: cfg.potential_scale,
+                        ..Default::default()
+                    },
                 )
             })
             .collect()
@@ -956,6 +1049,8 @@ fn run_variant(
     };
 
     let mut max_scaled_grad = 0.0f64;
+    let mut ratio_sum = 0.0f64;
+    let mut ratio_n = 0usize;
     let mut max_batch_loss = 0.0f64;
     let mut grad_nonfinite = false;
     let mut exploded = exploded_in_pretrain;
@@ -971,6 +1066,10 @@ fn run_variant(
 
     for oc in outcomes {
         max_scaled_grad = max_scaled_grad.max(oc.max_scaled_grad);
+        if oc.information_ratio.is_finite() {
+            ratio_sum += oc.information_ratio;
+            ratio_n += 1;
+        }
         max_batch_loss = max_batch_loss.max(oc.max_batch_loss);
         grad_nonfinite |= oc.grad_nonfinite;
         if oc.exploded {
@@ -1171,6 +1270,11 @@ fn run_variant(
         exploded_in_pretrain,
         grad_nonfinite,
         max_scaled_grad_norm: max_scaled_grad,
+        information_ratio: if ratio_n == 0 {
+            f64::NAN
+        } else {
+            ratio_sum / ratio_n as f64
+        },
         max_batch_loss,
         radial_expected,
         radial_final: if exploded { f64::NAN } else { radial_final },

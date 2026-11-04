@@ -78,6 +78,27 @@ fn main() {
             // prior — the chains explore around the pre-trained
             // weights instead of the origin's prior shell.
             "--prior-center-a" => cfg.prior_center_at_a = true,
+            // Annealed start (plan §6.4.1): λ_t = min(1, t/N), so the chain
+            // begins at the prior and the likelihood is switched on over N
+            // steps.  0 (the default) is the published λ = 1 kernel.
+            "--anneal" => {
+                i += 1;
+                cfg.anneal_steps = args
+                    .get(i)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| panic!("--anneal N"));
+            }
+            // Likelihood temperature λ on the potential (§6.5.5): 1 is the
+            // published target, > 1 cold, < 1 hot.  r ∝ λ, so this is the
+            // only knob that can raise the step's information-to-noise ratio.
+            "--lambda" => {
+                i += 1;
+                cfg.potential_scale = args
+                    .get(i)
+                    .expect("--lambda F")
+                    .parse()
+                    .expect("lambda is a number");
+            }
             // task×budget matrix: adaptation target (p:q:r = "(pa+qb+r) mod k");
             // "b" is the canonical (a+2b) mod k.
             "--task-b" => {
@@ -175,7 +196,7 @@ fn main() {
                      --save-dir DIR | --cyclical PERIOD | --no-mh | --task-b b|p:q:r | --k N | \
                      --n-train N | --pretrain N | --chains N | --d N | --ff N | --layers N | \
                      --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F (mobility \
-                     window (1/4, 1/2]; default 0.5) | --prior-center-a | --pretrain-adam)"
+                     window (1/4, 1/2]; default 0.5) | --prior-center-a | --pretrain-adam | --anneal N)"
                 );
                 std::process::exit(2);
             }

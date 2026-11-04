@@ -352,6 +352,84 @@ bit-identical, and two binding caps return the same kept potential (rel ΔL
 2–7 %) and radius (rel Δ 0.0–0.2 %) — the cap moves the proposal, not the
 target.
 
+### The annealed start: implemented, tested, null (2026-11-04)
+
+§6.5.4(b) said the cosine ensemble "has not left its mode".  The candidate
+fix was a schedule rather than a target: `--anneal N` runs
+`λ_t = min(1, t/N)` on the drift only (`λ_t β_t²σ²/2·g_t`), so the chain
+starts at the prior and the likelihood fades in while the OU term holds
+the radius.  It is implemented in `SgPcnlState::lambda_at` (the SGLD twin
+gets the same `λ_t`; the MH comparator keeps its target at `λ = 1`, so
+probes run `--no-mh`), it is reported (the artifact says whether the kept
+draws are at `λ = 1` — a ramp longer than the burn is flagged), and it
+changes nothing on the cosine chain at the published scale:
+
+| `N` | draw acc | BMA NLL | gap | cross-cos | drift/noise |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 12.89 % | 2.1923 | 0.0271 | −0.0018 | 0.050 |
+| 750 | 12.89 % | 2.1923 | 0.0271 | −0.0018 | 0.037 |
+
+(`examples/annealed_start.rs`; `P = 16 672`, 2 chains, 1 500 steps,
+burn 750, seed 20261020.  The ratio falls because the second run's first
+half is at `λ < 1`, i.e. the ramp is applied — the predictive does not
+move.)
+
+The mechanism is the per-step information-to-noise ratio
+`r = β_tσ‖g_t‖/(2√P)` — the drift norm against the pCN noise norm.  At
+`β₀ = 0.3` it is **0.05**: the proposal replaces a `β² = 9 %` fraction of
+the norm with fresh prior noise every step, so the direction is re-drawn
+~20× faster than the likelihood can steer it, and the chain reports the
+prior's predictive.  At the sharpest admissible proposal (`β = 1`) it is
+still only 0.17, and a ramp or a temperature scales its numerator and
+nothing else.  That single number explains the uniform-ish predictive,
+the 0.028-nat ensemble gap, the monotone harm of tempering, this null,
+and §6.4.2's centred chains scoring `θ_A`'s accuracy: **the pCN step's
+information-to-noise ratio is bounded by ~0.2 here**, so reachability is
+a step-distribution problem, not a schedule problem.
+
+Scope note: the flag is not inert.  At the `quick` configuration
+(`P = 4 240`) `--anneal 200` takes the *standard* variant from a step-5
+explosion to a surviving run (BMA 12.5 % → 50.0 %, NLL → 1.7622, max
+scaled `‖g‖` still 2.8e4).  The null is about the cosine chain at the
+published scale, not about the code path.
+
+**The same ratio says where to turn instead: cold `λ`.**  At fixed `‖g‖`
+`r ∝ λ`, so §6.5.4's hot ladder (`λ ≤ 1`) was the direction that *lowers* the
+information ratio.
+`--lambda L` now sets `π_λ ∝ N(0,σ²I)·exp(−λ·NL)` on all three arms (the MH
+ratio is tempered in step, so it is exact for `π_λ`; kept losses stay raw)
+and the report states the target and its `r`.
+
+| `λ` | measured `r` | BMA NLL | ECE | BMA acc |
+|---:|---:|---:|---:|---:|
+| 1 | 0.048 | 2.1966 | 0.2128 | 15.6 % |
+| 2 | 0.073 | 2.1411 | 0.1424 | 15.6 % |
+| 4 | 0.112 | 2.1142 | 0.0970 | 15.6 % |
+| 8 | 0.169 | 2.1006 | 0.0686 | 15.6 % |
+| 16 | 0.248 | 2.0922 | 0.0499 | 15.6 % |
+
+(`quick`, `P = 4 240`, 400 steps, cosine, one seed; `r` is the report's own
+measurement, and its growth is sublinear — `∝ λ^0.6` — because a sharper
+target also shrinks `‖g‖`.)  Monotone on both scores, accuracy flat, uniform's
+2.0794 still unbeaten: cold `λ` removes overconfidence (ECE four-fold) without
+buying accuracy.  Published scale
+(`P = 16 672`, 1 000 steps, 2 chains, one seed) agrees and shows the cost:
+
+| `λ` | BMA NLL | ECE | BMA acc | radial max |
+|---:|---:|---:|---:|---:|
+| 1 | 2.1958 | 0.1897 | 11.7 % | 101.1 |
+| 4 | 2.1252 | 0.1018 | 11.7 % | 104.7 |
+| 16 | **2.1030** | **0.0670** | 11.7 % | 139.2 |
+
+Accuracy never moves (11.7 % vs the 12.5 % chance line) — calibration
+improves while the direction stays uninformative — and the excursion grows
+(3.1× the shell at `λ = 16` against 2.2× at `λ = 1`).  So §6.5.4(a)'s "no
+usable temperature" was a **hot**-ladder statement; cold is the useful
+direction, but temperature cannot close the gap: `r = 1` needs `λ ≈ 20` at
+fixed `‖g‖` and `λ ≈ 150` at the measured `λ^0.6`, and the standard variant
+dies at steps 2–3 in every cold cell.  The ceiling that matters is a step
+distribution that does not pay `β ≤ 1`.
+
 ### What the review did **not** change
 
 Nothing in the Lean development or the readout module is touched: those
@@ -365,13 +443,17 @@ cannot be sampled. The load-bearing open item is unchanged and unrelated to the
 schedule: **an ensemble that has not left its mode**. The write-up's
 §6.5.1(c) measures it — seven seeds, `R̂`(loss) ≈ 1 marks chains that
 found the *same* (usually poor) mode, and BMA rises to 48.8–54.7 % only
-once 8 chains or 30 000 steps let the ensemble split.
+once 8 chains or 30 000 steps let the ensemble split. §6.5.5 now gives the
+mechanism: `r = βσ‖g‖/(2√P) ≈ 0.05` at `β₀ = 0.3`, so the direction is
+prior-dominated and neither a ramp nor a temperature can reach the
+informative set — what has to change is the step distribution, not the
+schedule.
 
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 80 tests (45 unit + 22 numerical
+cargo test -p pcnl --locked                              # 84 tests (48 unit + 23 numerical
                                                          #  + 8 formal claims + 5 comparators)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
@@ -384,6 +466,9 @@ cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar vol
 cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
 cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
 cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
+cargo run --release -p pcnl --example annealed_start      # §6.5.5, the ramp, ~12 min
+cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
+cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors
 ```
 

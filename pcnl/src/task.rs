@@ -353,9 +353,17 @@ pub fn sgld_chain(
             _ => grad_nonfinite = true,
         }
 
-        // h_t = β_t²·σ²/2 from the SAME power-law schedule
+        // h_t = β_t²·σ²/2 from the SAME power-law schedule, with the same
+        // likelihood temperature the pCNL chains use, so the two samplers
+        // stay coupled (cross-R̂) under an annealed start
         let beta = scheduler.beta_at(t);
-        let h = beta * beta * sigma2 / 2.0;
+        let lambda = cfg.potential_scale
+            * if cfg.anneal_steps == 0 {
+                1.0
+            } else {
+                (t as f64 / cfg.anneal_steps as f64).min(1.0)
+            };
+        let h = lambda * beta * beta * sigma2 / 2.0;
         // prior as gradient: −h·(θ−μ)/σ² ⇒ θ ← μ + (1 − β²/2)(θ−μ)
         // (μ = 0 is the plan's origin-centered prior; μ = θ_A the
         // centered adaptation prior — the SGLD twin must target the

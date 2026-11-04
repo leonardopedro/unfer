@@ -105,7 +105,7 @@ printf '{"id":"1","op":"version","params":{}}\n' \
   | cargo run -p kernel_client --bin unfer_agent
 ```
 
-<!-- status: verified | tests: 2039 cargo (workspace excluding fock_sirk) | last_verified: 2026-11-04 -->
+<!-- status: verified | tests: 2043 cargo (workspace excluding fock_sirk) | last_verified: 2026-11-04 -->
 
 Scope note: this figure is the `unfer` workspace proper and **excludes**
 `fock_sirk` (an external physics dependency, 401 tests as of 2026-10-06,
@@ -178,7 +178,8 @@ stale count here is a red build, not a silent claim.
 
 ```sh
 nix-shell -p zlib-ng cmake --run "cargo test --workspace --exclude fock_sirk"
-#   2039 passed (2026-11-04, rev 42; was 2038 at rev 41, 2034 at rev 40, 2031 at rev 39, 2030 at rev 38,
+#   2043 passed (2026-11-04, rev 43; was 2039 at rev 42, 2038 at rev 41, 2034 at rev 40, 2031 at rev 39,
+#   2030 at rev 38,
 #   2016 at rev 37, 2015 at rev 36, 1961 at rev 35 — see the counts table below)
 
 nix-shell -p zlib-ng cmake --run "cargo test -p fock_sirk --release"
@@ -262,14 +263,14 @@ int64_t h = uk_evolve(model, opts_json, opts_len);
 int64_t n = uk_get_result(model, buf, cap);
 ```
 
-## Test & benchmark counts (rev 42, 2026-11-04)
+## Test & benchmark counts (rev 43, 2026-11-04)
 
-- Workspace tests: **2039 green** on CPU (default features,
+- Workspace tests: **2043 green** on CPU (default features,
   `cargo test --workspace --exclude fock_sirk`, test binaries +
   doc-tests attributed by cargo's own package id from a single log):
   logos 429, `unfer_protocol` 405, `unfer_ffi` 231,
   `prob_kernel` 149, `decide_core` 116, `unfer_consensus` 111,
-  `nested_fock_algebra` 98, `qfm` 91, `pcnl` 80, `qfm_text` 64,
+  `nested_fock_algebra` 98, `qfm` 91, `pcnl` 84, `qfm_text` 64,
   `unfer_edge` 63, `mm0web` 63, `unfer_data` 56,
   `ode_sirk` 36, `unfer_taler` 31, `unfer_identity` 7,
   `sirk_core_model` 5, `unfer_measure` 4 (sums to the header; `check-status --recount`
@@ -284,7 +285,12 @@ int64_t n = uk_get_result(model, buf, cap);
 - GPU smoke: 14 CUDA tests green locally; the cuda feature is
   CPU-default-disabled in CI.
 
-> Revision history of this table: **rev 42** (2026-11-04) claims **2039**
+> Revision history of this table: **rev 43** (2026-11-04) claims **2043**
+> after three §6.5.5 tests (`--anneal`'s ramp: `λ₀ = 0`, `λ = 1` exactly at
+> `N`, monotone, `λ = 0` bit-identical to a pCN step, plus the report lines)
+> and one for the cold arm (`--lambda` is exactly the drift multiplier) —
+> `pcnl` 80 → 84.  The annealed-start and cold-`λ` measurements are examples,
+> not tests, so no other crate moves.  **rev 42** (2026-11-04) claims **2039**
 > after `mh_drift_cap_changes_only_the_proposal` — the regression that pins the
 > drift cap as proposal-only (bit-identical when inert, same kept potential and
 > radius under two binding caps) — `pcnl` 79 → 80.  **rev 41** (2026-11-04)

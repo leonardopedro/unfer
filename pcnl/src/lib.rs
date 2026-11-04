@@ -16,6 +16,11 @@
 //!   conditions are on the drift coefficient `β²σ²/2`, not on `β` — and
 //!   `SgPcnlScheduler::total_mobility` reports the budget that decides
 //!   whether an annealed run can reach the posterior at all.
+//!   `SgPcnlState::lambda_at` is the likelihood ramp (`--anneal N`, a
+//!   schedule and not a target change); §6.5.5 measures it as a null on
+//!   the cosine chain, because the per-step drift is only
+//!   `βσ‖g‖/(2√P) ≈ 5 %` of the pCN noise — a ramp scales that
+//!   numerator and nothing else.
 //! * [`task`] — the toy modular-arithmetic tasks, the mini-batch
 //!   [`task::BatchLoader`], and the momentum-SGD baseline.
 //! * [`persist`] — Week 2's `safetensors` trajectory persistence (§1).

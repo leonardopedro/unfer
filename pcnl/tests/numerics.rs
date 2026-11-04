@@ -839,6 +839,8 @@ fn micro() -> Config {
         run_mh: true,
         prior_center_at_a: false,
         pretrain_adam: false,
+        anneal_steps: 0,
+        potential_scale: 1.0,
     }
 }
 
@@ -1203,5 +1205,60 @@ fn centered_prior_keeps_the_chain_at_theta_a() {
     assert!(
         sgld_mean > 0.5 * theta_a_mean,
         "centered SGLD twin {sgld_mean} did not follow its pCNL sibling {centered_mean}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// 11. The annealed start is reported, and the kept draws' temperature is
+//     stated (plan §6.4.1's reachability item)
+// ---------------------------------------------------------------------
+#[test]
+fn the_report_names_the_annealed_start_and_whether_kept_draws_are_tempered() {
+    // `--anneal N` is a schedule, not a target change, so the artifact has to
+    // say which side of the ramp the kept draws are on: `N <= burn` lands the
+    // temperature at 1 before thinning, a longer ramp leaves every kept draw
+    // tempered and the run cannot be quoted as the λ = 1 posterior.
+    let mut cfg = Config::quick();
+    cfg.run_mh = false;
+    cfg.anneal_steps = cfg.burn / 2;
+    let short = run_experiment(&cfg).render();
+    assert!(
+        short.contains("anneal: likelihood temperature"),
+        "annealed run must name the ramp:\n{short}"
+    );
+    assert!(
+        short.contains("are at λ = 1"),
+        "a ramp that ends before burn must say so:\n{short}"
+    );
+
+    cfg.anneal_steps = cfg.steps + 1_000; // outlasts the whole run
+    let long = run_experiment(&cfg).render();
+    assert!(
+        long.contains("still tempered"),
+        "a ramp beyond the run must be flagged:\n{long}"
+    );
+
+    // A tempered target is named too, and the *measured* information ratio is
+    // printed with it — the whole §6.5.5 reading rests on that number being
+    // the run's own, not a constant in the prose.
+    cfg.anneal_steps = 0;
+    cfg.potential_scale = 2.0;
+    let cold = run_experiment(&cfg).render();
+    assert!(
+        cold.contains("target: likelihood temperature λ = 2"),
+        "a tempered target must be named:\n{cold}"
+    );
+    assert!(
+        cold.contains("information-to-noise r ="),
+        "a tempered run must report its measured information ratio:\n{cold}"
+    );
+
+    // …and the default artifact carries neither line, so every published
+    // render stays byte-identical.
+    cfg.potential_scale = 1.0;
+    let plain = run_experiment(&cfg).render();
+    assert!(
+        !plain.contains("anneal:") && !plain.contains("information-to-noise"),
+        "the default run must not gain a header line:\n{plain}"
     );
 }
