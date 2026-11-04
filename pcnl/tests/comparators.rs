@@ -20,7 +20,7 @@
 
 use candle_core::Tensor;
 use pcnl::experiment::{Config, run_experiment};
-use pcnl::task::{Dataset, Task, mh_pcnl_chain};
+use pcnl::task::{Dataset, MhOptions, Task, mh_pcnl_chain};
 
 fn tiny_cfg() -> Config {
     Config {
@@ -66,7 +66,7 @@ fn unadjusted_halves_model_evaluations() {
         theta0.clone(),
         0,
         None,
-        None,
+        Default::default(),
     );
     assert_eq!(mh.steps, cfg.steps);
     assert_eq!(mh.grad_evals, cfg.steps, "one mini-batch backward per step");
@@ -120,7 +120,7 @@ fn mh_acceptance_decreases_with_beta() {
                 theta0.clone(),
                 c,
                 None,
-                None,
+                Default::default(),
             );
             accepted += oc.accepted;
             steps += oc.steps;
@@ -203,5 +203,153 @@ fn cyclical_run_is_stable_and_reported() {
         (0.0..=100.0).contains(&v.bma_accuracy),
         "cyclical bma {}",
         v.bma_accuracy
+    );
+}
+
+/// **The drift cap changes the proposal, not the target** (§6.5.3's licence).
+///
+/// §6.5.2 caps the standard stack's drift so the chain stops exploding, and
+/// §6.5.3 reads the *filtered* capped chain as an exact sample of the same
+/// target.  That reading is only sound if the cap cannot move the invariant
+/// distribution, which is what this test pins in two steps:
+///
+/// 1. **Inertness, exactly.**  A cap above the gradient's own norm must leave
+///    the chain bit-identical to the uncapped one — same proposals, same
+///    accepts, same kept tensors.  If the cap ever leaked into the acceptance
+///    decision or the noise, this fails to the bit.
+/// 2. **Invariance under binding caps, statistically.**  Two caps that both
+///    bind must return the same stationary summaries: the same mean potential
+///    over kept draws (raw `L`, untempered) and the same mean radius, within
+///    Monte-Carlo error.  A cap inside the ratio (a tempered target) or a cap
+///    that changed the noise/step would shift the potential by a visible
+///    margin, far outside the tolerance below.
+#[test]
+fn mh_drift_cap_changes_only_the_proposal() {
+    // Deliberately *smaller* than `tiny_cfg`: this test runs four chains
+    // of filtered steps and must stay cheap in an unoptimised test
+    // build (P = 148 here, against 2 408 in `tiny_cfg`).
+    let cfg = Config {
+        k: 4,
+        shapes: pcnl::model::Shapes {
+            vocab: 5,
+            d: 4,
+            ff: 8,
+            layers: 1,
+        },
+        n_train: 64,
+        n_test: 32,
+        chains: 2,
+        steps: 200,
+        burn: 100,
+        thin: 2,
+        batch_size: 8,
+        beta_0: 0.3,
+        sigma: 0.5,
+        run_mh: false,
+        ..Config::default()
+    };
+    let data = Dataset::new(Task::B, cfg.k, cfg.n_train, cfg.n_test, 77);
+    let p = cfg.shapes.flat_size();
+    let theta0 = Tensor::zeros(p, candle_core::DType::F32, &candle_core::Device::Cpu).unwrap();
+
+    let run = |opts: MhOptions| -> Vec<pcnl::task::MhOutcome> {
+        (0..cfg.chains)
+            .map(|c| {
+                mh_pcnl_chain(
+                    &cfg,
+                    pcnl::model::Variant::Cosine,
+                    &data,
+                    theta0.clone(),
+                    c,
+                    None,
+                    opts,
+                )
+            })
+            .collect()
+    };
+    let summaries = |runs: &[pcnl::task::MhOutcome]| -> (f64, f64, usize) {
+        let kept: Vec<Tensor> = runs.iter().flat_map(|o| o.kept.clone()).collect();
+        let losses = runs.iter().flat_map(|o| o.kept_loss.clone());
+        let n = losses.clone().count() as f64;
+        let mean_loss = losses.sum::<f64>() / n;
+        let mean_radius = kept
+            .iter()
+            .map(|t| pcnl::sampler::norm(t).unwrap_or(f64::NAN))
+            .filter(|r| r.is_finite())
+            .sum::<f64>()
+            / kept.len() as f64;
+        (
+            mean_loss,
+            mean_radius,
+            runs.iter().map(|o| o.accepted).sum(),
+        )
+    };
+
+    // ---- 1. the inert cap: bit-identical ---------------------------------
+    let plain = run(MhOptions::default());
+    let inert = run(MhOptions {
+        grad_norm_cap: Some(1e9),
+        potential_scale: 1.0,
+    });
+    let (l0, r0, a0) = summaries(&plain);
+    let (l1, r1, a1) = summaries(&inert);
+    assert_eq!(a0, a1, "an inert cap must not change the accept count");
+    assert_eq!(
+        l0.to_bits(),
+        l1.to_bits(),
+        "raw kept loss changed: {l0} vs {l1}"
+    );
+    assert_eq!(
+        r0.to_bits(),
+        r1.to_bits(),
+        "kept radius changed: {r0} vs {r1}"
+    );
+    for (x, y) in plain.iter().zip(&inert) {
+        assert_eq!(x.accepted, y.accepted);
+        assert_eq!(x.kept.len(), y.kept.len());
+        for (t, u) in x.kept.iter().zip(&y.kept) {
+            assert_eq!(
+                t.to_vec1::<f32>().unwrap(),
+                u.to_vec1::<f32>().unwrap(),
+                "an inert cap perturbed a kept draw"
+            );
+        }
+    }
+
+    // ---- 2. two binding caps: same stationary summaries ------------------
+    let tight = run(MhOptions {
+        grad_norm_cap: Some(0.5),
+        potential_scale: 1.0,
+    });
+    let loose = run(MhOptions {
+        grad_norm_cap: Some(5.0),
+        potential_scale: 1.0,
+    });
+    let (l_t, r_t, a_t) = summaries(&tight);
+    let (l_l, r_l, a_l) = summaries(&loose);
+    let steps: usize = tight.iter().map(|o| o.steps).sum();
+    assert!(
+        a_t as f64 / steps as f64 > 0.1 && a_l as f64 / steps as f64 > 0.1,
+        "the invariance claim needs two *usable* proposals: acceptance {:.3} vs {:.3}",
+        a_t as f64 / steps as f64,
+        a_l as f64 / steps as f64
+    );
+    let rel = |a: f64, b: f64| (a - b).abs() / a.abs().max(b.abs()).max(1e-12);
+    eprintln!(
+        "cap invariance: tight L {l_t:.4} r {r_t:.3} (accept {:.2}) vs loose L {l_l:.4} r {r_l:.3} \
+         (accept {:.2}); rel dL {:.3} dr {:.3}",
+        a_t as f64 / steps as f64,
+        a_l as f64 / steps as f64,
+        rel(l_t, l_l),
+        rel(r_t, r_l)
+    );
+    assert!(
+        rel(l_t, l_l) < 0.20,
+        "kept potential moved with the cap (a tempered ratio would do this): \
+         tight {l_t:.4} vs loose {l_l:.4}"
+    );
+    assert!(
+        rel(r_t, r_l) < 0.25,
+        "kept radius moved with the cap: tight {r_t:.3} vs loose {r_l:.3}"
     );
 }

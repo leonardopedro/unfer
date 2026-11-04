@@ -38,7 +38,7 @@ use candle_core::Tensor;
 use pcnl::experiment::{Config, bma_metrics};
 use pcnl::model::{Shapes, Variant, init_flat};
 use pcnl::sampler::{SgPcnlScheduler, SgPcnlState, norm};
-use pcnl::task::{BatchLoader, Dataset, Task, adam, mh_pcnl_chain};
+use pcnl::task::{BatchLoader, Dataset, MhOptions, Task, adam, mh_pcnl_chain};
 use rand::SeedableRng;
 
 const SEEDS: [u64; 3] = [20261020, 20261021, 20261022];
@@ -232,7 +232,10 @@ fn main() {
                         theta_a.clone(),
                         c,
                         None,
-                        Some(cap),
+                        MhOptions {
+                            grad_norm_cap: Some(cap),
+                            potential_scale: 1.0,
+                        },
                     )
                 })
                 .collect();
@@ -262,7 +265,7 @@ fn main() {
                     theta_a.clone(),
                     c,
                     None,
-                    None,
+                    MhOptions::default(),
                 )
             })
             .collect();

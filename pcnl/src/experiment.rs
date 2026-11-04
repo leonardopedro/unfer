@@ -918,7 +918,15 @@ fn run_variant(
                 let init = (theta_a.clone()
                     + Tensor::from_vec(j, vec![p_dim], theta_a.device()).expect("jit"))
                 .expect("mh init = theta_a + noise");
-                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c, center.as_ref(), None)
+                crate::task::mh_pcnl_chain(
+                    cfg,
+                    variant,
+                    data_b,
+                    init,
+                    c,
+                    center.as_ref(),
+                    Default::default(),
+                )
             })
             .collect()
     };

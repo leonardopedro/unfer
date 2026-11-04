@@ -297,13 +297,13 @@ wording:
    1.96–2.15 nats — at or just above the uniform predictor's 2.079, not
    the 4–5.7 of the unadjusted arm.  The per-draw overconfidence is the
    unadjusted drift's.
-2. **Exact sampling is unavailable at the prior's own temperature.**  At
+2. **At the kernel's own proposal scale the filter freezes.**  At
    `β₀ = 0.3` acceptance is 0.3–20 %, and with no cap it is **0.0 %** in
    3 of 3 seeds — the standard stack's likelihood varies more per pCN
-   step than the prior's noise allows.  That is a tempering problem on
-   top of the step-scale problem, and it is the sharper form of the
-   Phase-0 claim: the unnormalized stack lacks both a step scale and a
-   usable temperature.
+   step than the prior's noise allows.  That is a proposal-scale
+   problem, not a temperature one (`β₀/10` accepts 96–98 %), and the
+   temperature sweep below confirms it: `λ = 1` is already usable and
+   every `λ < 1` is worse.
 3. **Bias ≠ worse predictive.**  The unadjusted capped chain's BMA is
    1.84–1.92 NLL at 19.9–42.2 % accuracy, *better* than the exact chain
    at the same budget: individually overconfident, mutually disagreeing
@@ -313,6 +313,44 @@ wording:
    posterior.  The target does move out, though: the exact chain's
    radial final is 95–134 against the 45 shell, so part of §6.5.2's
    outward march was the posterior's own preference for larger weights.
+
+### No usable temperature, and the cosine chain is not over-dispersed (2026-11-04)
+
+Two follow-ups the §6.5.3 result raised, both measured.
+
+**(a) Tempering the standard stack makes it worse, not better.**
+`pcnl/examples/temperature_sweep.rs`: target
+`π_λ ∝ N(0,σ²I)·exp(−λNL)`, proposal at the usable `β₀/10` with the §6.5.2
+cap, raw kept losses, 3 seeds, 500 steps.  BMA NLL at `σ = 0.35`:
+
+| `λ` | 1 | 0.3 | 0.1 | 0.03 | 0.01 | 0.003 |
+|---|---:|---:|---:|---:|---:|---:|
+| BMA NLL | **2.25–2.34** | 2.62–3.57 | 4.56–6.39 | 8.80–12.62 | 11.82–15.70 | 12.92–17.06 |
+| acceptance | 93–98 % | 96–99 % | 95–99 % | 98–99 % | 99–100 % | 100 % |
+
+Acceptance was never binding at `β₀/10`, and lowering `λ` moves the target
+towards the prior, whose Haar-typical directions are confidently wrong
+(§6.4(ii)) — so the predictive degrades monotonically.  At `σ = 2` acceptance
+drops (47.6–56.6 % at `λ = 0.1`) and the predictive is no better.  There is no
+temperature at which the standard stack's posterior is informative; `λ = 1`
+is the best of the ladder, and it is near-uniform.
+
+**(b) The cosine chain's draws agree.**  `pcnl/examples/overdispersion.rs`
+scores each kept draw and the BMA over the same draws:
+
+| chain | per-draw NLL | BMA NLL | gap |
+|---|---:|---:|---:|
+| cosine | 2.220–2.223 | 2.193–2.194 | **+0.028** |
+| standard, capped (§6.5.2) | 4.11–5.72 | 1.84–1.92 | ≈ +3.5 |
+
+So the standard chain's calibration comes from averaging disagreeing,
+individually overconfident draws, while the cosine chain's ensemble is worth
+0.03 nats over a single draw — "an ensemble that has not left its mode",
+quantified.  `pcnl/tests/comparators.rs::mh_drift_cap_changes_only_the_proposal`
+pins the licence this rests on: a non-binding cap leaves the filtered chain
+bit-identical, and two binding caps return the same kept potential (rel ΔL
+2–7 %) and radius (rel Δ 0.0–0.2 %) — the cap moves the proposal, not the
+target.
 
 ### What the review did **not** change
 
@@ -333,8 +371,8 @@ once 8 chains or 30 000 steps let the ensemble split.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 79 tests (45 unit + 22 numerical
-                                                         #  + 8 formal claims + 4 comparators)
+cargo test -p pcnl --locked                              # 80 tests (45 unit + 22 numerical
+                                                         #  + 8 formal claims + 5 comparators)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
 # The corrected default is kappa = 0.5; the schedule's budget is in the report.
@@ -344,6 +382,8 @@ cargo run --release -p pcnl --example step_scale_control  # §6.5.2, reduced con
 cargo run --release -p pcnl --example step_scale_control -- --reference  # the table
 cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar volume
 cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
+cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
+cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors
 ```
 

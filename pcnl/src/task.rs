@@ -464,6 +464,34 @@ pub struct MhOutcome {
 /// asymmetry is O(β²) in the log-ratio, and the cross-R̂ between the
 /// filtered and unfiltered loss chains is the empirical check that
 /// nothing measurable hides in the omission.
+/// **Options for the filtered comparator.**  `Default` is the published
+/// configuration — the kernel's own step and the untempered potential — so
+/// every reported run is unchanged by this type's existence.
+#[derive(Clone, Copy, Debug)]
+pub struct MhOptions {
+    /// Cap on the `(N/B)`-scaled *proposal* gradient (§6.5.2).  `None`
+    /// leaves the proposal at the kernel's own step.  The Metropolis ratio
+    /// is unaffected, so a cap changes the proposal and not the target.
+    pub grad_norm_cap: Option<f64>,
+    /// Temperature on the potential: the proposal drift and the acceptance
+    /// log-ratio both use `λ·L`, so `λ = 1` is the published target and
+    /// `λ < 1` flattens the likelihood relative to the prior.  This is the
+    /// knob §6.5.3's *usable temperature* is a function of: the standard
+    /// stack's likelihood is sharp enough that no proposal scale accepts at
+    /// `λ = 1`.  Kept losses are always reported as the raw `L`, untempered,
+    /// so a `λ < 1` row is comparable to the `λ = 1` rows.
+    pub potential_scale: f64,
+}
+
+impl Default for MhOptions {
+    fn default() -> Self {
+        Self {
+            grad_norm_cap: None,
+            potential_scale: 1.0,
+        }
+    }
+}
+
 pub fn mh_pcnl_chain(
     cfg: &crate::experiment::Config,
     variant: Variant,
@@ -471,7 +499,7 @@ pub fn mh_pcnl_chain(
     theta0: Tensor,
     chain: usize,
     center: Option<&Tensor>,
-    grad_norm_cap: Option<f64>,
+    opts: MhOptions,
 ) -> MhOutcome {
     use crate::sampler::SgPcnlScheduler;
     use rand::Rng as _;
@@ -546,7 +574,7 @@ pub fn mh_pcnl_chain(
         // proposal, and the Metropolis ratio below keeps the chain exact
         // for the target, so acceptance and the kept predictive say
         // whether the *target* is overconfident rather than the drift.
-        let sum_grad = match grad_norm_cap {
+        let sum_grad = match opts.grad_norm_cap {
             Some(cap) => {
                 let n = crate::sampler::norm(&sum_grad).map(|g| g * scale);
                 match n {
@@ -578,7 +606,10 @@ pub fn mh_pcnl_chain(
         };
         let noised = (&decayed + &xi.affine(beta, 0.0).expect("noise")).expect("proposal mean");
         let drift = sum_grad
-            .affine(scale * beta * beta * sigma * sigma / 2.0, 0.0)
+            .affine(
+                opts.potential_scale * scale * beta * beta * sigma * sigma / 2.0,
+                0.0,
+            )
             .expect("drift");
         let proposal = (&noised - &drift).expect("proposal");
 
@@ -586,7 +617,9 @@ pub fn mh_pcnl_chain(
         loss_evals += 1;
         let loss_prop = full_loss(&proposal);
         let log_alpha = match (loss_now, loss_prop) {
-            (Some(l_now), Some(l_prop)) => l_now - l_prop,
+            // the tempered ratio: λ·(L(θ) − L(θ′)); λ = 1 is the published
+            // filter, and the kept loss below stays the raw L
+            (Some(l_now), Some(l_prop)) => opts.potential_scale * (l_now - l_prop),
             // non-finite potential at the proposal ⇒ reject; at the
             // *current* state ⇒ the chain is dead (kept as evidence)
             (_, None) => f64::NEG_INFINITY,
