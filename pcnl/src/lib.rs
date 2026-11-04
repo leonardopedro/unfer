@@ -11,7 +11,11 @@
 //! * [`model`] — Phase 1's flat-parameter toy transformer, both the
 //!   cosine (nGPT-lite) and the standard variants on one `θ ∈ R^P`.
 //! * [`sampler`] — Phase 2's `SgPcnlState::step_unadjusted` and the
-//!   `SgPcnlScheduler` (plan §3C; no acceptance feedback anywhere).
+//!   `SgPcnlScheduler` (plan §3C; no acceptance feedback anywhere). The
+//!   exponent window is `κ ∈ (1/4, 1/2]` — the decreasing-step
+//!   conditions are on the drift coefficient `β²σ²/2`, not on `β` — and
+//!   `SgPcnlScheduler::total_mobility` reports the budget that decides
+//!   whether an annealed run can reach the posterior at all.
 //! * [`task`] — the toy modular-arithmetic tasks, the mini-batch
 //!   [`task::BatchLoader`], and the momentum-SGD baseline.
 //! * [`persist`] — Week 2's `safetensors` trajectory persistence (§1).

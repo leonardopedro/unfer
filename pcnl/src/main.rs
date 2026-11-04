@@ -4,10 +4,19 @@
 //! cargo run --release -p pcnl            # full run (10k steps/chain)
 //! cargo run --release -p pcnl -- quick   # debug-sized run
 //! cargo run --release -p pcnl -- --report-file OUT.txt
-//! cargo run --release -p pcnl -- --save-dir DIR --beta0 0.3 --kappa 0.55
+//! cargo run --release -p pcnl -- --save-dir DIR --beta0 0.3 --kappa 0.5
 //! ```
 //!
 //! Deterministic: every number below is a function of `Config::seed`.
+//!
+//! `--kappa` is the schedule exponent `β_t = β₀(1+γt)^(−κ)`. The
+//! mobility window is `(1/4, 1/2]` — the decreasing-step conditions are
+//! on the drift coefficient `β_t²σ²/2`, not on `β_t` — so the default is
+//! `0.5`. A `κ > 1/2` run has finite total mobility; the report says so
+//! and the numbers stay reproducible, they are just a fixed-`β`
+//! statement about the kernel rather than convergence to the posterior.
+//! `--kappa 0.55` regenerates the pre-2026-11-03 runs quoted in
+//! `docs/PCNL_STATUS.md`.
 
 use pcnl::experiment::{Config, run_experiment};
 
@@ -165,8 +174,8 @@ fn main() {
                     "unknown arg: {other} (try: quick | --steps N | --seed N | --report-file PATH | \
                      --save-dir DIR | --cyclical PERIOD | --no-mh | --task-b b|p:q:r | --k N | \
                      --n-train N | --pretrain N | --chains N | --d N | --ff N | --layers N | \
-                     --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F | \
-                     --prior-center-a | --pretrain-adam)"
+                     --init-std F | --sigma F | --beta0 F | --gamma F | --kappa F (mobility \
+                     window (1/4, 1/2]; default 0.5) | --prior-center-a | --pretrain-adam)"
                 );
                 std::process::exit(2);
             }

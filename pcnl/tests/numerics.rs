@@ -538,50 +538,145 @@ fn cosine_normalization_rows_are_unit_norm_up_to_eps() {
 }
 
 // ---------------------------------------------------------------------
-// 9. Robbins–Monro summability of the schedule (plan §3C)
+// 9. The mobility window of the schedule (plan §4.3, corrected 2026-11-03)
 // ---------------------------------------------------------------------
 
 #[test]
-fn robbins_monro_partial_sums_diverge_and_converge() {
-    // κ = 0.55 ∈ (0.5, 1]: Σβₜ ~ T^{1−κ} → ∞ (unbiasedness) while
-    // Σβₜ² saturates (variance control). Checked on the real
-    // scheduler with the default γ = 1e-3, numerically.
-    let s = SgPcnlScheduler {
+fn mobility_conditions_are_on_beta_squared_not_on_beta() {
+    // The gradient enters through h_t = β_t²σ²/2, so convergence of the
+    // *annealed* chain needs Σβₜ² = ∞ (mobility) and Σβₜ⁴ < ∞ (noise),
+    // i.e. κ ∈ (1/4, 1/2]. κ = 0.55 — the plan's original window and
+    // every run before 2026-11-03 — has Σβₜ² → 900 < ∞: finite total
+    // mobility. This test used to call that saturation a pass.
+    let inside = SgPcnlScheduler {
         beta_0: 0.3,
         gamma: 1e-3,
+        kappa: 0.5,
+    };
+    let outside = SgPcnlScheduler {
+        kappa: 0.55,
+        ..inside
+    };
+    assert!(inside.kappa_in_mobility_window(), "κ = 1/2 is the edge");
+    assert!(!outside.kappa_in_mobility_window());
+    assert!(
+        !SgPcnlScheduler {
+            kappa: 0.25,
+            ..inside
+        }
+        .kappa_in_mobility_window()
+    );
+    assert!(
+        !SgPcnlScheduler {
+            kappa: 0.2,
+            ..inside
+        }
+        .kappa_in_mobility_window()
+    );
+
+    // Σβ diverges in both (β_t → 0 but not summable): ratio ≈ 10^(1−κ).
+    let sum_beta =
+        |s: &SgPcnlScheduler, t_max: usize| -> f64 { (0..t_max).map(|t| s.beta_at(t)).sum() };
+    for s in [inside, outside] {
+        let r = sum_beta(&s, 100_000) / sum_beta(&s, 10_000);
+        assert!((2.0..4.0).contains(&r), "Σβ ratio {r} at κ = {}", s.kappa);
+    }
+
+    // The discriminator is the *mobility*: finite for κ > 1/2, unbounded
+    // for κ ≤ 1/2 — and the two closed forms of the write-up (§4.3).
+    assert!(inside.total_mobility().is_none(), "κ = 1/2 keeps moving");
+    let budget = outside.total_mobility().expect("finite budget");
+    assert!((budget - 900.0).abs() < 1.0, "budget {budget} vs 900");
+    let spent = outside.partial_mobility(2_000_000);
+    assert!((spent - 479.2).abs() < 1.0, "spent {spent} vs 479.2");
+    let log_form = 0.09 / 1e-3 * (1.0 + 1e-3 * 2_000_000f64).ln();
+    let used = inside.partial_mobility(2_000_000);
+    assert!(
+        (used - log_form).abs() < 0.01 * log_form,
+        "κ=1/2 spent {used} vs (β₀²/γ)ln(1+γT) = {log_form}"
+    );
+}
+
+#[test]
+fn a_finite_mobility_schedule_cannot_cross_a_far_mode() {
+    // What a finite budget *does*, on the exact mean recursion of a
+    // quadratic target: Φ(θ) = ½λ‖θ − c‖² with prior N(0, σ²I) has the
+    // posterior mean μ* = c·λσ²/(1+λσ²), and the chain's mean obeys
+    //   m_{t+1} = √(1−β²)·m_t − (β²σ²/2)·λ(m_t − c)
+    // (no noise in a mean). Both its contraction and its pull are
+    // `O(β²)`, so both accumulate only while `Σβ²` still has budget:
+    //   residual(T) = floor · exp(−tail_mobility(T)),
+    // with the floor fixed by the *whole* budget `Σβ²` and therefore
+    // unreachable by any horizon. Measured on the recursion below:
+    // residual·exp(tail) = 0.383333 at κ = 0.55 (both horizons) and
+    // 0.810021 at κ = 0.8 — the two floors the review's point 1 predicts.
+    let (lambda, sigma) = (1.0f64, 1.0f64);
+    let c = 100.0f64;
+    let mu_star = c * lambda * sigma * sigma / (1.0 + lambda * sigma * sigma);
+    let residual = |s: SgPcnlScheduler, steps: usize| -> f64 {
+        let mut m = 0.0f64;
+        for t in 0..steps {
+            let b = s.beta_at(t);
+            let decay = (1.0 - b * b).max(0.0).sqrt();
+            let h = b * b * sigma * sigma / 2.0;
+            m = decay * m - h * lambda * (m - c);
+        }
+        (mu_star - m) / mu_star
+    };
+    // γ = 1 keeps the budget small enough to see: 0.09/(2κ−1) is 0.9 at
+    // κ = 0.55 and 0.15 at κ = 0.8 (against the reference run's 900).
+    let frozen = SgPcnlScheduler {
+        beta_0: 0.3,
+        gamma: 1.0,
         kappa: 0.55,
     };
-    let sum_to = |t_max: usize| -> (f64, f64) {
-        let mut s1 = 0.0;
-        let mut s2 = 0.0;
-        for t in 0..t_max {
-            let b = s.beta_at(t);
-            s1 += b;
-            s2 += b * b;
-        }
-        (s1, s2)
+    assert!(frozen.total_mobility().unwrap() < 1.0);
+
+    // The invariant: whatever the horizon, `residual · exp(tail)` is the
+    // same floor. 50 000 → 2 000 000 steps moves the residual and moves
+    // the unspent budget by the same factor, exactly.
+    let (r1, r2) = (residual(frozen, 50_000), residual(frozen, 2_000_000));
+    let floor = |s: &SgPcnlScheduler, r: f64, t: usize| {
+        r * (-s.tail_mobility(t).expect("finite budget")).exp()
     };
-    let (s1_1e4, s2_1e4) = sum_to(10_000);
-    let (s1_1e5, s2_1e5) = sum_to(100_000);
-    // ∑β keeps growing: ratio ≈ (10)^{1−κ} = 10^0.45 ≈ 2.8
-    let r1 = s1_1e5 / s1_1e4;
+    let (f1, f2) = (floor(&frozen, r1, 50_000), floor(&frozen, r2, 2_000_000));
     assert!(
-        (2.0..5.0).contains(&r1),
-        "Σβ must diverge like T^0.45: ratio {r1}"
+        (f1 - f2).abs() < 1e-3 * f1,
+        "the floor is horizon-free: {f1} vs {f2}"
     );
-    // ∑β² is bounded by its ceiling β₀²/(γ(2κ−1)) = 0.09/1e-4 = 900
-    let ceiling = s.beta_0 * s.beta_0 / (s.gamma * (2.0 * s.kappa - 1.0));
     assert!(
-        s2_1e5 < ceiling,
-        "Σβ² = {s2_1e5} must stay under the analytic ceiling {ceiling}"
+        f2 > 0.3,
+        "a finite budget leaves 30 %+ of the gap: floor {f2} (residual {r2})"
     );
-    let r2 = s2_1e5 / s2_1e4;
+
+    // A smaller budget freezes further out (κ = 0.8: floor 0.81), and by
+    // 50 000 steps it is already *at* the floor — the tail is 2e-4.
+    let very_frozen = SgPcnlScheduler {
+        kappa: 0.8,
+        ..frozen
+    };
+    let (v1, v2) = (
+        residual(very_frozen, 50_000),
+        residual(very_frozen, 2_000_000),
+    );
+    assert!((v1 - v2).abs() < 1e-3, "κ = 0.8 is frozen: {v1} -> {v2}");
     assert!(
-        r2 < 2.0,
-        "Σβ² must saturate (ratio {r2} from 1e4 to 1e5 steps)"
+        floor(&very_frozen, v1, 50_000) > 2.0 * f2,
+        "smaller budget must freeze further out"
     );
-    // and β never dies within a realistic run
-    assert!(s.beta_at(1_000_000) > 0.0);
+
+    // κ = 1/2 has no floor at all: the same horizon buys real motion, and
+    // it is well past what the frozen schedule could ever reach.
+    let moving = SgPcnlScheduler {
+        kappa: 0.5,
+        ..frozen
+    };
+    let (m1, m2) = (residual(moving, 50_000), residual(moving, 2_000_000));
+    assert!(m2 < 0.75 * m1, "κ = 1/2 must keep closing: {m1} -> {m2}");
+    assert!(
+        m2 < r2,
+        "unbounded mobility must beat the frozen schedule: {m2} vs {r2}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -734,7 +829,7 @@ fn micro() -> Config {
         sigma: 0.35,
         beta_0: 0.3,
         gamma: 1e-3,
-        kappa: 0.55,
+        kappa: 0.5,
         sgd_steps_on_b: 40,
         adam_steps_on_b: 40,
         adam_lr: 0.05,

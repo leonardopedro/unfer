@@ -64,6 +64,16 @@ pub struct Config {
     pub sigma: f64,
     pub beta_0: f64,
     pub gamma: f64,
+    /// Polynomial-decay exponent, `β_t = β₀(1+γt)^{−κ}`.
+    ///
+    /// The mobility window is `(1/4, 1/2]`, because the decreasing-step
+    /// conditions are on the coefficient that multiplies the gradient,
+    /// `h_t = β_t²σ²/2` — not on `β_t` (plan §4.3, corrected
+    /// 2026-11-03). `κ = 0.55`, the plan's original default, makes
+    /// `Σβ_t² → β₀²/(γ(2κ−1)) < ∞`: finite total mobility, a chain that
+    /// freezes where it is. The default is `1/2`, the borderline case;
+    /// every report states the budget it computed and warns when the
+    /// exponent is outside the window.
     pub kappa: f64,
     pub sgd_steps_on_b: usize,
     /// Adam's fine-tuning steps on Task B (Phase 4's "SGD/Adam" pair).
@@ -123,7 +133,7 @@ impl Default for Config {
             sigma: 0.35,
             beta_0: 0.3,
             gamma: 1e-3,
-            kappa: 0.55,
+            kappa: 0.5,
             sgd_steps_on_b: 1_000,
             adam_steps_on_b: 1_000,
             adam_lr: 0.05,
@@ -305,6 +315,35 @@ impl Report {
             prior,
             opt
         ));
+        // §4.3 (corrected): the schedule's mobility budget belongs in
+        // the artifact, not only in the prose — `Σβ_t²` over the run and
+        // whether the schedule has any left afterwards. A finite budget
+        // is the freeze: the chain cannot travel further than it allows.
+        if self.config.cyclical_period > 0 {
+            s.push_str("  schedule: cyclical cosine — Σβ_t² grows without bound (no freeze)\n");
+        } else {
+            let sched = SgPcnlScheduler {
+                beta_0: self.config.beta_0,
+                gamma: self.config.gamma,
+                kappa: self.config.kappa,
+            };
+            let used = sched.partial_mobility(self.config.steps);
+            match sched.total_mobility() {
+                None => s.push_str(&format!(
+                    "  schedule: mobility Σβ_t² = {used:.1} over {steps} steps, budget unbounded \
+                     (kappa = {kappa} <= 1/2)\n",
+                    steps = self.config.steps,
+                    kappa = self.config.kappa
+                )),
+                Some(budget) => s.push_str(&format!(
+                    "  schedule: mobility Σβ_t² = {used:.1} of a finite budget {budget:.1} \
+                     (kappa = {kappa} > 1/2), {left:.1} unspent — the chain freezes; these numbers \
+                     describe the kernel at the beta's visited, not convergence to the posterior\n",
+                    kappa = self.config.kappa,
+                    left = sched.tail_mobility(self.config.steps).unwrap_or(0.0)
+                )),
+            }
+        }
         for v in &self.variants {
             s.push_str(&format!(
                 "[{variant}] P={p}\n  pre-train A: loss {l0:.4} -> {l1:.4}, acc_A {aa:.1}%\n  \
@@ -526,7 +565,7 @@ fn radial_about(theta: &Tensor, center: Option<&Tensor>) -> f64 {
 /// returns `(accuracy %, NLL, ECE, K models used)`. One implementation
 /// shared by the SG-pCNL chains and the SGLD comparator, so the two
 /// numbers in the report are computed by the *same* code.
-fn bma_metrics(
+pub fn bma_metrics(
     chains: &[Vec<Tensor>],
     shapes: &Shapes,
     variant: Variant,
@@ -879,7 +918,7 @@ fn run_variant(
                 let init = (theta_a.clone()
                     + Tensor::from_vec(j, vec![p_dim], theta_a.device()).expect("jit"))
                 .expect("mh init = theta_a + noise");
-                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c, center.as_ref())
+                crate::task::mh_pcnl_chain(cfg, variant, data_b, init, c, center.as_ref(), None)
             })
             .collect()
     };
@@ -1351,6 +1390,7 @@ mod tests {
             "cross-Rhat",
             "MH-pCNL (filtered)",
             "accept",
+            "mobility",
         ] {
             assert!(text.contains(needle), "missing {needle}:\n{text}");
         }

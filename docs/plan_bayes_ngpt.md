@@ -126,14 +126,51 @@ Under nGPT:
    is the sharper *variance* claim; it is the empirical target of the M5 check in
    `pcnl/tests/formal_claims.rs`, not a Lean theorem.)*
 3. This bounded perturbation prevents the chain from escaping into degenerate regions,
-   guaranteeing geometric ergodicity under Robbins-Monro annealing.
-   *(Still open: no ergodicity theorem for the unadjusted chain is formalized —
-   §7.6 lists what remains prose.)*
+   which is what keeps the chain tight at fixed $\beta$. It does **not** by itself
+   guarantee geometric ergodicity of the *annealed* chain.
+   *(Corrected 2026-11-04: the earlier text claimed the annealing gives geometric
+   ergodicity. No ergodicity theorem for the unadjusted chain is formalized — §7.6
+   lists what remains prose — and the schedule's own conditions were wrong (§3C).
+   Also note the $M$ in this bound is the $\varepsilon$-regularized constant
+   $K/\varepsilon \approx 10^6$ at the reference numbers, attained only where
+   $\|W\| \lesssim \varepsilon$: the bound is finite, but it is not small where the
+   chain lives. What confines the chain in the runs is the pCN contraction, measured,
+   not this inequality.)*
+
+   The same reasoning fixes the scope of the standard-transformer comparison. Because
+   the drift is $h_t g_t$, a stack without an intrinsic gradient scale is run at a
+   step size nobody chose; `examples/step_scale_control.rs` measures the consequence
+   (write-up §6.5.2): with the standard drift capped at the normalized arm's own
+   gradient magnitude, the chain survives (3/3 seeds, both configurations), so what
+   the normalization supplies is the *step scale* — the reason $\beta$ needs no tuning
+   — not a proof that unnormalized attention cannot be sampled. The capped chain is
+   still not a sampler of anything (a capped gradient is not a gradient field), and
+   its surviving predictive is overconfident rather than calibrated.
 
 #### C. Step-Size Schedule ($\beta_t$)
 Replace dual-averaging acceptance tuning with a learning-rate style decay schedule:
-- **Option 1 (Robbins-Monro):** $\beta_t = \beta_0 (1 + \gamma t)^{-\kappa}$, $\kappa \in (0.5, 1]$
+- **Option 1 (Robbins-Monro):** $\beta_t = \beta_0 (1 + \gamma t)^{-\kappa}$, $\kappa \in (1/4, 1/2]$
 - **Option 2 (Cyclical SG-pCNL):** Cyclical cosine decay to alternately explore modes and sample posteriors.
+
+> **Corrected 2026-11-04: the window is on $\beta_t^2$, not on $\beta_t$.** The
+> gradient enters the update through $h_t = \beta_t^2\sigma^2/2$, so the
+> decreasing-step conditions are $\sum h_t = \infty$ and $\sum h_t^2 < \infty$,
+> i.e. $\sum\beta_t^2 = \infty$ (infinite *mobility* — a chain with summable
+> steps travels a finite distance and freezes) and $\sum\beta_t^4 < \infty$
+> (accumulated gradient noise vanishes). For the polynomial schedule that is
+> $\kappa \in (1/4, 1/2]$, with $\kappa = 1/2$ the edge, where
+> $\sum\beta_t^2 \sim (\beta_0^2/\gamma)\ln(1+\gamma T)$.
+>
+> The original $\kappa \in (0.5, 1]$ sits on the wrong side of that threshold:
+> $\sum\beta_t^2 \to \beta_0^2/(\gamma(2\kappa-1)) = 900$ at the reference
+> numbers, i.e. finite total mobility. Every run recorded in §6 and in
+> `docs/PCNL_STATUS.md` used $\kappa = 0.55$ and is therefore a fixed-$\beta$
+> statement about the kernel at the $\beta$ values visited; it may be cited for
+> mixing and predictive behaviour but **not** as evidence of convergence to
+> $\mu(\cdot\mid\mathcal{D})$. The crate's default is now $\kappa = 0.5$,
+> `SgPcnlScheduler::total_mobility` reports the budget, and
+> `examples/schedule_mobility.rs` measures the resulting floor on the
+> exactly-solvable Gaussian target.
 
 ---
 
@@ -281,7 +318,7 @@ impl SgPcnlState {
 
 1. **Computational Throughput Doubles:** Standard pCNL required two forward evaluations per step (one at $\theta$, one at proposed $\theta'$). Unadjusted SG-pCNL requires only **one backward pass** per iteration on the current mini-batch. *(Measured 2026-10-21b: evaluation counts are deterministic — 2 vs 1 model evaluations per step, asserted in `pcnl/tests/comparators.rs::unadjusted_halves_model_evaluations`; wall-clock on the full run: the filtered chain costs ≈1.4–1.6× the unadjusted chain per step because its second pass is forward-only.)*
 2. **VRAM Footprint Decoupled:** Peak memory consumption is entirely independent of dataset size $N$. It is governed purely by mini-batch size $B \times$ sequence length $T$. *(Structural: the chain state is $\theta \in \mathbb{R}^P$ + one streamed mini-batch; asserted by the batch-invariance test.)*
-3. **Hyperparameter Tuning Shift:** Rather than dynamically tuning $\beta$ to track a $23.4\%$ MH acceptance target, tuning shifts to classical SGLD schedules: setting the initial step size $\beta_0$ and polynomial decay rate $\kappa \in (0.5, 1.0]$. *(Implemented — `SgPcnlScheduler`; the acceptance rate survives only as a *diagnostic* of the filtered comparator, where it measures what the filter would have rejected.)*
+3. **Hyperparameter Tuning Shift:** Rather than dynamically tuning $\beta$ to track a $23.4\%$ MH acceptance target, tuning shifts to classical SGLD schedules: setting the initial step size $\beta_0$ and polynomial decay rate $\kappa \in (1/4, 1/2]$ — the conditions are on the drift coefficient $h_t = \beta_t^2\sigma^2/2$, not on $\beta_t$, so the original $\kappa \in (0.5, 1.0]$ gives $\sum h_t < \infty$ and a chain that freezes (§3C, corrected 2026-11-03). *(Implemented — `SgPcnlScheduler`, default $\kappa = 1/2$; the acceptance rate survives only as a *diagnostic* of the filtered comparator, where it measures what the filter would have rejected.)*
 4. **The filter's cost was buying exactness — measured, not assumed:** the filtered and unfiltered chains share a proposal and a target, so their loss-chain cross-$\hat{R}$ isolates the unadjusted bias. On the full run the two agree (cross-$\hat{R}$ within the same range as the SGLD comparator's), i.e. at $\beta \le 0.3$ the exactness the filter bought is inside the sampling noise — the empirical content of “the drift and noise match to $O(\beta^4)$”.
 
 ### 6. Recommended Timeline & Milestones

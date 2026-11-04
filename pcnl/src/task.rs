@@ -471,6 +471,7 @@ pub fn mh_pcnl_chain(
     theta0: Tensor,
     chain: usize,
     center: Option<&Tensor>,
+    grad_norm_cap: Option<f64>,
 ) -> MhOutcome {
     use crate::sampler::SgPcnlScheduler;
     use rand::Rng as _;
@@ -539,6 +540,24 @@ pub fn mh_pcnl_chain(
         // cancellation that leaves the filter a likelihood ratio is
         // shift-invariant, so μ = θ_A needs no filter change)
         let scale = (cfg.n_train as f64) / (cfg.batch_size as f64);
+        // Optional drift cap on the *proposal* (default `None` in every
+        // reported run).  This is what makes the filtered kernel a fair
+        // test for the standard stack (§6.5.3): the cap changes only the
+        // proposal, and the Metropolis ratio below keeps the chain exact
+        // for the target, so acceptance and the kept predictive say
+        // whether the *target* is overconfident rather than the drift.
+        let sum_grad = match grad_norm_cap {
+            Some(cap) => {
+                let n = crate::sampler::norm(&sum_grad).map(|g| g * scale);
+                match n {
+                    Ok(n) if n.is_finite() && n > cap => {
+                        sum_grad.affine(cap / n, 0.0).expect("capped proposal grad")
+                    }
+                    _ => sum_grad,
+                }
+            }
+            None => sum_grad,
+        };
         let noise_vec: Vec<f32> = (0..p_dim)
             .map(|_| {
                 let x: f32 = noise_rng.sample(StandardNormal);

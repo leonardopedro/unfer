@@ -66,6 +66,7 @@ fn unadjusted_halves_model_evaluations() {
         theta0.clone(),
         0,
         None,
+        None,
     );
     assert_eq!(mh.steps, cfg.steps);
     assert_eq!(mh.grad_evals, cfg.steps, "one mini-batch backward per step");
@@ -118,6 +119,7 @@ fn mh_acceptance_decreases_with_beta() {
                 &data,
                 theta0.clone(),
                 c,
+                None,
                 None,
             );
             accepted += oc.accepted;

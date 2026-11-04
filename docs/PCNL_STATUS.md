@@ -143,12 +143,207 @@ radius.
   `SgPcnlScheduler::beta_cyclical`, measured run uses Option 1
   (Robbins–Monro).**
 
+## Corrections (2026-11-04): the schedule's mobility window, and a review's five points
+
+An external review of the write-up (`test/unfer/ngpt.md`) raised five
+points. Four are right and one is wrong on a factual detail; the
+verdicts below are checked against the engine, not accepted as given.
+The one that required a **code** change is point 1.
+
+| # | the review's point | verdict |
+|---|---|---|
+| 1 | the decreasing-step conditions are applied to `β_t`, but the gradient is multiplied by `h_t = β_t²σ²/2`; with `κ ∈ (0.5,1]`, `Σh_t < ∞`, so the convergence claim fails | **confirmed, now fixed in the crate.** The window is `κ ∈ (1/4, 1/2]`: `Σβ² = ∞` (mobility) and `Σβ⁴ < ∞` (noise). The review's `κ ≤ 1/2` is necessary; the `1/4` end is its missing other half |
+| 2 | Theorem 1's gradient bound is vacuous: `1/‖W‖` unbounded, `≈1/ε = 10⁶` with the ε | **confirmed in substance, corrected in wording.** The bound is *finite* but not small where the chain lives (attained only for `‖W‖ ≲ ε`); the drift it permits is ~5.5e3 per step at `β = 0.3`, two orders above the 45-rad shell it is meant to confine. Nothing in the crate ever relied on it for stability — the runs are confined by the pCN contraction, measured |
+| 3 | the σ-sweep cannot be evidence: the likelihood is scale-invariant, so `u = θ/σ` evolves σ-free | **confirmed** — and now pinned in code, not just in prose (`sampler::tests::the_kernel_is_sigma_free_in_rescaled_units`). The 4-width agreement is a units check by construction |
+| 4 | the `P/2` "entropy wall" conflicts with the Haar prior on direction and fails its own shift cell | **confirmed; already withdrawn** (write-up §6.4, 2026-11-03). The radial marginal is the prior's `σχ_P` because the likelihood is constant on rays; concentration in *direction* is a log-volume question, and finding it is a reachability question |
+| 5 | the standard-transformer baseline is a strawman ("no normalization", pre-train blew up), and Kim et al. does not say what it is cited for | **right about the confound, wrong that it rescues the baseline.** `model.rs`'s standard variant *is* an ordinary pre-LN transformer; Kim et al. is about input-Lipschitz, not weight-space Hessians (write-up fixed 2026-11-03). The pre-train confound was real and `--pretrain-adam` closed it (explosion in 3/3 at steps 4–5) — but a **second** confound sat underneath: the drift is `h_t·g_t`, so the standard stack was being run at a step size nobody chose. `examples/step_scale_control` removes it: capping the standard drift at the normalized geometry's own gradient magnitude (`C` measured, 3 seeds, both configurations) makes the chain survive in 3/3 — so the numerical explosion is a step-size claim and "cannot be sampled" is withdrawn. The surviving chain is *not* a sampler of anything (a capped gradient is not a gradient field), overshoots to 3.6× the shell, and its kept NLL is 4.1–5.7 nats against 2.08 for the uniform predictor |
+
+### What changed in the crate
+
+- **`sampler.rs`**: the module documents the corrected window;
+  `SgPcnlScheduler::kappa_in_mobility_window()`,
+  `partial_mobility(steps)`, `tail_mobility(from)` and
+  `total_mobility()` are the budget as API — `tail_mobility` is `None`
+  exactly when the schedule never freezes.
+- **The default exponent is now `κ = 0.5`** (`Config::default`), the
+  window's edge. Every report prints a `schedule: mobility Σβ_t² = …`
+  line, and a finite budget is named as such: "the chain freezes; these
+  numbers describe the kernel at the beta's visited, not convergence to
+  the posterior". `--kappa 0.55` still reproduces the historical runs.
+- **Two tests that asserted the wrong condition were flipped**: the
+  scheduler unit test (`κ ∈ (0.5,1]` → `(1/4,1/2]`) and
+  `numerics.rs` §9, which read the saturation of `Σβ²` at 900 as a
+  *pass* — it is the failure mode.- **`examples/schedule_mobility.rs`** measures the consequence on the
+  exactly-solvable target `Φ = ½λ‖θ−c‖²`: the mean obeys
+  `m_{t+1} = √(1−β²)m_t − (β²σ²/2)λ(m_t − c)`, so contraction and pull are
+  both `O(β²)` and the residual is `floor·exp(−tail(T))` — the remaining
+  approach *is* the unspent budget, and the floor is fixed by all of it.
+- **`SgPcnlState::grad_norm_cap`** (default `None`) caps the scaled
+  gradient before the drift; it exists only for §6.5.2's step-scale
+  control and a unit test pins that a non-binding cap is bit-identical to
+  no cap. **`examples/step_scale_control.rs`** is that control: it measures
+  the normalized arm's own gradient magnitude `C` and re-runs the standard
+  stack with the drift capped at `C`.
+
+### The step-scale control (2026-11-04), measured
+
+Reference configuration, `P = 16 672`, 1 000 steps, two chains, three seeds:
+
+| arm | max scaled ‖g‖ | radial max | radial final | kept acc | kept NLL | died |
+|---|---:|---:|---:|---:|---:|---:|
+| cosine, as published | 0.8–1.1e3 | 1206–1299 | 45.0–45.4 | 11.7–13.3 % | 2.219–2.223 | — |
+| standard, uncapped | up to 1.2e24 | 1.7e13–6.8e21 | — | — | — | step 5–6 |
+| standard, drift capped at `C` | 0.08–1.1e6 | 110–164 | 44.5–45.1 | 14.6–16.1 % | 4.11–5.72 | — |
+
+Three conclusions, and the third is the one that keeps the write-up honest:
+
+1. **The numerical explosion is a step-size claim.** The uncapped standard
+   gradient reaches 2.9e12–1.5e21 times `C`; with that budget imposed the
+   chain survives 3/3 (reduced configuration too, 2 000 steps). What dries up
+   with the blow-up is not "an unnormalized stack cannot be run" but the
+   no-tuning property: `β` only means something against a potential with an
+   intrinsic scale, which the normalized geometry has and the standard stack
+   lacks.
+2. **Surviving is not sampling.** A capped gradient is not a gradient field,
+   so the capped chain has no Gibbs target and no posterior interpretation.
+   The control isolates arithmetic, not validity.
+3. **The surviving chain fails differently and worse.** It overshoots the
+   shell 3.6× and its predictive is overconfident-and-wrong (kept NLL
+   4.11–5.72 against `ln 8 = 2.08`), where the cosine arm's is
+   calibrated-uniform. Reduced configuration: radial final 9.1 / 16.1 / 20.7
+   from a shell of 8.22, drifting toward the `r ≈ σ²C ≈ 370` balance point —
+   consistent with §2.3's "the drift sees a geometry it cannot be stable in",
+   now with the step-size confound removed from the evidence.
+
+### Measured (the example's own output)
+
+Reference numbers `β₀ = 0.3`, `σ = λ = 1`, `c = 100`, `μ* = 50`:
+
+| γ | κ | Σβ² @1e4 | Σβ² @1e6 | budget | residual @1e3 → @1e6 | floor |
+|---|---:|---:|---:|---:|---|---:|
+| 1e-3 | 0.5 | 215.9 | 621.8 | ∞ | 0.00579 → 0.00001 | — |
+| 1e-3 | 0.55 | 191.9 | 449.0 | **900.0** | 0.00540 → 0.00001 | 0 |
+| 1e-3 | 0.8 | 114.5 | 147.7 | 150.0 | 0.00386 → 0.00000 | 0 |
+| 1 | 0.5 | 0.881 | 1.295 | ∞ | 0.506 → 0.272 | — |
+| 1 | 0.55 | 0.594 | 0.727 | **0.900** | 0.602 → 0.481 | **0.3833** |
+| 1 | 0.8 | 0.205 | 0.206 | 0.150 | 0.812 → 0.810 | **0.8100** |
+
+Two readings, and the distinction matters:
+
+- **At the reference `γ = 1e-3` the freeze is asymptotic and invisible.**
+  The budget is 900 — far more than a 10 000-step run needs — so
+  `κ = 0.55` and `κ = 1/2` are indistinguishable in the residual column.
+  This is why the numbers in the rest of this document stand as *mixing
+  and predictive* measurements. What they cannot be cited for is
+  convergence to the posterior, which is the review's point and the
+  reason the default moved.
+- **At `γ = 1` the floor is in plain sight.** `κ = 0.8` is at 0.8100 by
+  step 10³ and at 0.8100 at step 10⁶ — frozen; `κ = 0.55` keeps creeping
+toward 0.3833; `κ = 1/2` has no floor and keeps closing at about 19 %
+  per decade of steps (0.506 → 0.412 → 0.335 → 0.272).
+  `residual(T)·exp(−tail(T))` is the *same number at
+  every horizon* (0.383333 and 0.810021 to six decimals), which is the
+  sharp form of "the unspent budget is the remaining ability".
+
+### The Haar volume of the task, measured (2026-11-04)
+
+The write-up's §6.4(ii) argued that the direction posterior is a volume
+competition and that the favourable set is a `≈ exp(−N·I)` fraction of
+the sphere.  That sentence now has a measurement
+(`pcnl/examples/sphere_volume.rs`): `R` Haar directions at the shell
+radius, scored on the held-out split.
+
+| configuration | Haar-typical CE | best of R | uniform `ln K` | Adam-on-B | reached Adam-on-B |
+|---|---:|---:|---:|---:|---:|
+| reference, `R = 2000` | 4.967 (sd 0.163) | 4.311 | 2.079 | 1.081 | **0 / 2000** |
+| reduced, `R = 4000` | 2.510 (sd 0.245) | 1.571 | 1.386 | 0.963 | **0 / 4000** |
+
+So the favourable Haar fraction is below `1.5e-3` at 95 % in the
+reference configuration (the fine-tuned direction is 23.8 Haar-sd out; a
+Gaussian extrapolation gives `1e-125`, printed as parametric only),
+while the energy side is `NΔ = 512 × 3.886 = 1 990` nats.  The
+competition is not tight for *sampling*: no Haar draw comes within
+2.2 nats of the uniform predictor, so the posterior's mass on the
+informative set is reachable only by moving — §6.4.2's finding.  Two
+reading notes the example prints rather than hides: a Haar direction's
+logits barely depend on the input, so it predicts one constant class and
+its accuracy *is* that class's frequency (12.9 % against an 18.4 % best
+constant predictor — hence "beats chance" is the wrong threshold and the
+loss ladder is the measurement), and the draw law is radius-free
+(mean CE 4.965 at `4×` the shell vs 4.967 at the shell, up to `ε`).
+
+### The exact target on the standard stack (2026-11-04)
+
+§6.5.2's capped unadjusted chain was overconfident per draw (kept NLL
+4.11–5.72).  `pcnl/examples/mh_standard_target.rs` runs the same stack
+under the **Metropolis-filtered** kernel (capped *proposal*, exact
+full-batch likelihood ratio) to ask whether that is the target or the
+bias.  Reference configuration, 1 000 steps, 2 chains, 3 seeds:
+
+| arm | accept | radial final | BMA acc | BMA NLL |
+|---|---:|---:|---:|---:|
+| `θ_A` (reference) | — | — | 8.6–12.5 % | 3.17–28.83 |
+| unadjusted, capped | — | 44.4–45.1 | 19.9–42.2 % | 1.84–1.92 |
+| MH, `β₀ = 0.3` | 0.3–20.2 % | 44.9–148.5 | 8.6–12.5 % | 2.40–11.08 |
+| MH, `β₀/10` | **96.0–98.0 %** | 95.5–134.0 | 18.4–24.2 % | **1.96–2.15** |
+| MH, `β₀/30` | 99.2–99.4 % | 119.0–170.6 | 8.6–13.3 % | 2.39–2.91 |
+| MH, uncapped | 0.0 % | 122.5–176.3 | 10.9–14.5 % | 10.60–17.14 |
+
+Three findings, and the third is a correction to this document's own
+wording:
+
+1. **The overconfidence is not the target's.**  At a proposal scale the
+   filter can accept (`β₀/10`, 96–98 %), the exact chain's BMA is
+   1.96–2.15 nats — at or just above the uniform predictor's 2.079, not
+   the 4–5.7 of the unadjusted arm.  The per-draw overconfidence is the
+   unadjusted drift's.
+2. **Exact sampling is unavailable at the prior's own temperature.**  At
+   `β₀ = 0.3` acceptance is 0.3–20 %, and with no cap it is **0.0 %** in
+   3 of 3 seeds — the standard stack's likelihood varies more per pCN
+   step than the prior's noise allows.  That is a tempering problem on
+   top of the step-scale problem, and it is the sharper form of the
+   Phase-0 claim: the unnormalized stack lacks both a step scale and a
+   usable temperature.
+3. **Bias ≠ worse predictive.**  The unadjusted capped chain's BMA is
+   1.84–1.92 NLL at 19.9–42.2 % accuracy, *better* than the exact chain
+   at the same budget: individually overconfident, mutually disagreeing
+   draws average into a calibrated mixture (an over-dispersed sampler).
+   So §6.5.2's "confident-and-wrong" is now qualified as *per draw*; the
+   ensemble's calibration comes from its bias, not from sampling the
+   posterior.  The target does move out, though: the exact chain's
+   radial final is 95–134 against the 45 shell, so part of §6.5.2's
+   outward march was the posterior's own preference for larger weights.
+
+### What the review did **not** change
+
+Nothing in the Lean development or the readout module is touched: those
+are statements at fixed `β` about the kernel (`timepiece/pcnl.md`
+already says so in §3's scope note).  The architecture results are
+untouched as *measurements* — the numbers in §6.4/§6.5.1(b) stand — but
+their scope narrowed on 2026-11-04: the standard-stack comparison is a
+step-scale comparison (§6.5.2 above), so what it supports is that the
+normalization supplies the step scale, not that an unnormalized stack
+cannot be sampled. The load-bearing open item is unchanged and unrelated to the
+schedule: **an ensemble that has not left its mode**. The write-up's
+§6.5.1(c) measures it — seven seeds, `R̂`(loss) ≈ 1 marks chains that
+found the *same* (usually poor) mode, and BMA rises to 48.8–54.7 % only
+once 8 chains or 30 000 steps let the ensemble split.
+
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 62 tests (29 unit + 33 numerical)
-cargo run --release -p pcnl -- --report-file out.txt --save-dir /tmp/traj
+cargo test -p pcnl --locked                              # 79 tests (45 unit + 22 numerical
+                                                         #  + 8 formal claims + 4 comparators)
+# The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
+cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
+# The corrected default is kappa = 0.5; the schedule's budget is in the report.
+cargo run --release -p pcnl -- --report-file out.txt
+cargo run -p pcnl --example schedule_mobility            # the mobility/floor table
+cargo run --release -p pcnl --example step_scale_control  # §6.5.2, reduced config
+cargo run --release -p pcnl --example step_scale_control -- --reference  # the table
+cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar volume
+cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors
 ```
 

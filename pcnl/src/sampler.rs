@@ -7,8 +7,29 @@
 //! power-law step-size schedule (plan §3C, Option 1):
 //!
 //! ```text
-//! β_t = β_0 · (1 + γ·t)^(−κ),   κ ∈ (0.5, 1]
+//! β_t = β_0 · (1 + γ·t)^(−κ),   κ ∈ (1/4, 1/2]
 //! ```
+//!
+//! **The exponent window is on `β_t²`, not on `β_t`** (corrected
+//! 2026-11-03). The gradient enters through the drift coefficient
+//! `h_t = β_t²σ²/2`, so the decreasing-step conditions of stochastic
+//! approximation are `Σ h_t = ∞` and `Σ h_t² < ∞`, i.e.
+//!
+//! ```text
+//! Σ β_t² = ∞   (infinite total mobility)      ⟸ 2κ ≤ 1
+//! Σ β_t⁴ < ∞   (vanishing accumulated noise)  ⟸ 4κ > 1
+//! ```
+//!
+//! hence `κ ∈ (1/4, 1/2]`. `κ = 1/2` is the borderline case, where the
+//! mobility diverges only logarithmically (`Σ β_t² ~ (β₀²/γ)·ln(1+γT)`).
+//! The plan's original `κ ∈ (0.5, 1]` sits on the wrong side of that
+//! threshold: it makes `Σ β_t² → β₀²/(γ(2κ−1))` **finite**, and a chain
+//! whose step sizes are summable travels a finite distance and then
+//! freezes wherever it is — it cannot relocate the predictive to the
+//! posterior's mode. [`SgPcnlScheduler::total_mobility`] is `None`
+//! exactly when the chain never freezes, and
+//! [`SgPcnlScheduler::kappa_in_mobility_window`] is the check every run
+//! of the experiment reports.
 //!
 //! The gradient handed to [`SgPcnlState::step_unadjusted`] is the
 //! **sum over the batch** (the loader's mean gradient × B), because
@@ -31,11 +52,57 @@ pub struct SgPcnlScheduler {
 }
 
 impl SgPcnlScheduler {
+    /// Exclusive lower end of the exponent window: `Σ β_t⁴ < ∞` needs
+    /// `4κ > 1`, so `κ = 1/4` itself diverges.
+    pub const KAPPA_MIN: f64 = 0.25;
+    /// Inclusive upper end: `Σ β_t² = ∞` needs `2κ ≤ 1`.
+    pub const KAPPA_MAX: f64 = 0.5;
+
     /// `β_t = β_0 (1 + γ·t)^(−κ)` — the skeleton's schedule with
-    /// κ = 0.55 by default (inside the plan's (0.5, 1]).
+    /// κ = 1/2 by default (the borderline case of the corrected window).
     pub fn beta_at(&self, step: usize) -> f64 {
         let t = step as f64;
         (self.beta_0 * (1.0 + self.gamma * t).powf(-self.kappa)).clamp(1e-6, 0.999)
+    }
+
+    /// Whether `κ` sits in the mobility window `(1/4, 1/2]` — the only
+    /// range in which the annealed chain keeps moving *and* its
+    /// accumulated gradient noise vanishes. Outside it, the run is a
+    /// fixed-`β` statement about the kernel, not convergence to the
+    /// posterior.
+    pub fn kappa_in_mobility_window(&self) -> bool {
+        self.kappa > Self::KAPPA_MIN && self.kappa <= Self::KAPPA_MAX
+    }
+
+    /// `Σ_{t<T} β_t²` — the **mobility** spent by step `T`. This is the
+    /// σ-free quantity: the drift coefficient on the θ-scale is `σ²/2`
+    /// times it, and on `u = θ/σ` it is exactly `(1/2)·Σβ_t²`
+    /// ([`SgPcnlState`]'s update, with `g(σu) = g(u)/σ`). It is how far
+    /// the chain can be pulled, in units the schedule controls.
+    pub fn partial_mobility(&self, steps: usize) -> f64 {
+        (0..steps).map(|t| self.beta_at(t).powi(2)).sum()
+    }
+
+    /// `Σ_{t≥from} β_t²` — the mobility the schedule still has after
+    /// step `from`. `None` when the sum diverges (`κ ≤ 1/2`): a chain
+    /// that keeps moving forever. For `κ > 1/2` the integral test gives
+    /// the closed form `β₀²(1+γ·from)^{1−2κ}/(γ(2κ−1))`, which is the
+    /// size of the budget still unspent — hence the freeze.
+    pub fn tail_mobility(&self, from: usize) -> Option<f64> {
+        if self.kappa <= 0.5 {
+            return None;
+        }
+        let t = from as f64;
+        Some(
+            self.beta_0 * self.beta_0 * (1.0 + self.gamma * t).powf(1.0 - 2.0 * self.kappa)
+                / (self.gamma * (2.0 * self.kappa - 1.0)),
+        )
+    }
+
+    /// `Σ_{t≥0} β_t²` — the whole mobility budget of the schedule.
+    /// `None` (infinite) exactly when `κ ≤ 1/2`.
+    pub fn total_mobility(&self) -> Option<f64> {
+        self.tail_mobility(0)
     }
 
     /// Cyclical cosine decay (plan §3C Option 2): each cycle starts at
@@ -57,7 +124,7 @@ pub struct SgPcnlState {
     pub sigma: f64,    // Prior std dev (isotropic)
     pub beta_0: f64,   // Initial step size
     pub gamma: f64,    // Decay rate
-    pub kappa: f64,    // Decay exponent (0.55)
+    pub kappa: f64,    // Decay exponent (0.5 — the mobility window's edge)
     pub step_count: usize,
     pub dataset_size: usize,
     pub batch_size: usize,
@@ -72,6 +139,20 @@ pub struct SgPcnlState {
     /// pre-trained weights* instead of being dragged to the shell
     /// around the origin before the likelihood can act.
     pub center: Option<Tensor>,
+    /// **Control only, default `None`:** cap the norm of the
+    /// `(N/B)`-scaled mini-batch gradient before it enters the drift.
+    ///
+    /// This exists for one question (§6.5.2 of `test/unfer/ngpt.md`):
+    /// when a *non*-scale-invariant stack explodes under this kernel, is
+    /// that a property of its geometry, or a statement that the pCN
+    /// coefficient `β²σ²/2` prescribes a step size for a potential whose
+    /// gradient has no natural scale? With the cap set the drift can move
+    /// θ by at most `h_t·cap` per step, so both variants can be handed the
+    /// same displacement budget and the explosion re-measured. It is
+    /// **not part of the kernel**: `None` (the default, and the value
+    /// every reported run uses) leaves the update exactly the plan's
+    /// formula.
+    pub grad_norm_cap: Option<f64>,
 }
 
 impl SgPcnlState {
@@ -94,6 +175,7 @@ impl SgPcnlState {
             batch_size,
             period,
             center: None,
+            grad_norm_cap: None,
         }
     }
 
@@ -158,6 +240,21 @@ impl SgPcnlState {
         let scale = (self.dataset_size as f64) / (self.batch_size as f64);
         let scaled_grad = batch_grad.affine(scale, 0.0)?;
 
+        // 3b. optional drift cap (default off, a control and not a
+        //     kernel feature): ‖g‖ ≤ cap, so the drift displacement is
+        //     at most h_t·cap. Off, this is the identity.
+        let scaled_grad = match self.grad_norm_cap {
+            Some(cap) => {
+                let n = norm(&scaled_grad)?;
+                if n.is_finite() && n > cap {
+                    scaled_grad.affine(cap / n, 0.0)?
+                } else {
+                    scaled_grad
+                }
+            }
+            None => scaled_grad,
+        };
+
         // 4. unadjusted step about the prior mean μ:
         //    θ ← μ + √(1−β²)·(θ−μ) + β·ξ − (β²σ²/2)·g
         //  (μ = 0 reduces term-for-term to the plan's skeleton; μ = θ_A
@@ -213,15 +310,26 @@ mod tests {
         let s = SgPcnlScheduler {
             beta_0: 0.3,
             gamma: 1e-4,
-            kappa: 0.55,
+            kappa: 0.5,
         };
-        assert!((0.5..1.0).contains(&s.kappa), "κ must sit in (0.5, 1]");
+        // The corrected window is (1/4, 1/2] — the conditions are on
+        // β_t² (the drift coefficient is β_t²σ²/2), so κ = 0.55 leaves
+        // Σβ_t² finite. This test used to assert the opposite.
+        assert!(
+            s.kappa_in_mobility_window(),
+            "κ must sit in (1/4, 1/2], got {}",
+            s.kappa
+        );
+        assert!(
+            !SgPcnlScheduler { kappa: 0.55, ..s }.kappa_in_mobility_window(),
+            "κ = 0.55 has finite total mobility"
+        );
         let b0 = s.beta_at(0);
         assert!((b0 - 0.3).abs() < 1e-12, "β_0 = {b0}");
         let mut prev = b0;
         for step in [1, 10, 100, 1_000, 10_000] {
             let b = s.beta_at(step);
-            let expected = 0.3 * (1.0 + 1e-4 * step as f64).powf(-0.55);
+            let expected = 0.3 * (1.0 + 1e-4 * step as f64).powf(-0.5);
             assert!(
                 (b - expected).abs() < 1e-12,
                 "β_{step} = {b}, expected {expected}"
@@ -229,8 +337,100 @@ mod tests {
             assert!(b <= prev, "monotone decay: {b} after {prev}");
             prev = b;
         }
-        // κ > 0.5 is what the RM theory needs for ∑β=∞, ∑β²<∞
+        // κ ≤ 1/2 is what the mobility condition needs (Σβ² = ∞); the
+        // point of the window's *upper* end is that β decays at all.
         assert!(s.beta_at(10_000) > 0.0, "step size never vanishes in a run");
+        assert!(s.beta_at(10_000) < b0, "the schedule decays: β_T < β_0");
+    }
+
+    /// The mobility bookkeeping, against the two closed forms the
+    /// write-up quotes (§4.3): `Σβ² → β₀²/(γ(2κ−1))` for `κ > 1/2`
+    /// (900 at the reference numbers, 479.2 by step 2e6) and
+    /// `Σβ² ~ (β₀²/γ)·ln(1+γT)` at `κ = 1/2` (684.2 at 2e6).
+    #[test]
+    fn mobility_budget_matches_the_closed_form() {
+        let inside = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 1e-3,
+            kappa: 0.5,
+        };
+        let outside = SgPcnlScheduler {
+            kappa: 0.55,
+            ..inside
+        };
+
+        // κ = 1/2: no finite budget — the chain can always still move.
+        assert!(inside.total_mobility().is_none());
+        assert!(inside.tail_mobility(10_000).is_none());
+        let used = inside.partial_mobility(2_000_000);
+        let log_form = 0.09 / 1e-3 * (1.0 + 1e-3 * 2_000_000f64).ln();
+        assert!(
+            (used - log_form).abs() < 0.01 * log_form,
+            "κ=1/2 mobility {used} vs log form {log_form}"
+        );
+
+        // κ = 0.55: finite — 900 in total, 479.2 spent by step 2e6, so
+        // the remaining 420.8 is all the motion the chain will ever get.
+        let total = outside.total_mobility().expect("finite budget");
+        assert!((total - 900.0).abs() < 1.0, "total mobility {total}");
+        let spent = outside.partial_mobility(2_000_000);
+        assert!((spent - 479.2).abs() < 1.0, "spent {spent}");
+        let left = outside.tail_mobility(2_000_000).expect("finite tail");
+        assert!((left - (total - spent)).abs() < 0.02 * total, "tail {left}");
+        // and the tail shrinks: the freeze gets arbitrarily deep.
+        assert!(outside.tail_mobility(2_000_000).unwrap() < outside.tail_mobility(1_000).unwrap());
+    }
+
+    /// The σ-sweep is a units check, and this is *why*: with a loss
+    /// that is scale-invariant on the shell (`g(cθ) = g(θ)/c`, the exact
+    /// statement of Φ(cθ) = Φ(θ)), the update in `u = θ/σ` is
+    /// σ-free — decay, noise `βξ'` and drift `(β²/2)g(u)`. So two
+    /// chains at σ and 4σ, from θ and 4θ on one noise stream, are the
+    /// same trajectory on the u-scale. A σ-sweep therefore cannot
+    /// measure anything about the posterior (write-up §6.5.1(a)).
+    #[test]
+    fn the_kernel_is_sigma_free_in_rescaled_units() {
+        let dev = &Device::Cpu;
+        let p = 8usize;
+        let base: Vec<f32> = (0..p).map(|i| 0.3 + 0.1 * i as f32).collect();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 1e-3,
+            kappa: 0.5,
+        };
+        // g(θ) = θ/‖θ‖²: homogeneous of degree −1, i.e. the exact
+        // scale-equivariance of a scale-invariant potential.
+        let grad = |theta: &Tensor| -> Tensor {
+            let n = norm(theta).unwrap().powi(2);
+            theta.affine(1.0 / n, 0.0).unwrap()
+        };
+
+        let run = |scale: f32| -> Vec<f32> {
+            let init: Vec<f32> = base.iter().map(|x| x * scale).collect();
+            let mut state = SgPcnlState::new(
+                Tensor::from_vec(init, vec![p], dev).unwrap(),
+                scale as f64,
+                sched,
+                64,
+                64,
+                0,
+            );
+            let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+            for _ in 0..200 {
+                let g = grad(&state.theta);
+                state.step_unadjusted(&g, &mut rng).unwrap();
+            }
+            state.theta.to_vec1::<f32>().unwrap()
+        };
+
+        let one = run(1.0);
+        let four = run(4.0);
+        for (i, (a, b)) in one.iter().zip(four.iter()).enumerate() {
+            assert!(
+                (b - 4.0 * a).abs() < 1e-5 * (1.0 + b.abs()),
+                "coord {i}: σ=4 trajectory {b} is not 4× the σ=1 one {a}"
+            );
+        }
     }
 
     #[test]
@@ -296,6 +496,84 @@ mod tests {
             assert!((g - e).abs() < 1e-6, "got {g}, expected {e}");
         }
         assert_eq!(state.step_count, 1, "step counter advances");
+    }
+
+    #[test]
+    fn the_drift_cap_bounds_the_step_and_is_off_by_default() {
+        // §6.5.2's fairness control is only a control if the cap does
+        // exactly one thing: bound ‖drift‖ by h_t·cap. Three runs from
+        // one seed measure the three claims.
+        let dev = &Device::Cpu;
+        let p = 4usize;
+        let theta = Tensor::from_vec(vec![1.0f32, -2.0, 0.5, 0.0], &[p], dev).unwrap();
+        let sched = SgPcnlScheduler {
+            beta_0: 0.5,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let (n, b, sigma, cap) = (100usize, 25usize, 1.0f64, 1.0f64);
+        // sum-form gradient of norm 5 → scaled (N/B) norm 20;
+        // h = β²σ²/2 = 0.125, so the uncapped drift is 2.5 while the
+        // capped one must be ≤ 0.125.
+        let grad = Tensor::from_vec(vec![3.0f32, 4.0, 0.0, 0.0], &[p], dev).unwrap();
+        let zero = Tensor::zeros(p, candle_core::DType::F32, dev).unwrap();
+
+        let base = {
+            let mut s = SgPcnlState::new(theta.clone(), sigma, sched, n, b, 0);
+            let mut r = rand::rngs::StdRng::seed_from_u64(7);
+            s.step_unadjusted(&zero, &mut r).unwrap();
+            s.theta.to_vec1::<f32>().unwrap()
+        };
+
+        let mut capped = SgPcnlState::new(theta.clone(), sigma, sched, n, b, 0);
+        capped.grad_norm_cap = Some(cap);
+        let mut r = rand::rngs::StdRng::seed_from_u64(7);
+        capped.step_unadjusted(&grad, &mut r).unwrap();
+        let drift_capped: f64 = capped
+            .theta
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .zip(&base)
+            .map(|(a, b)| ((*a - *b) as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let h = 0.5 * 0.5 * sigma * sigma / 2.0;
+        assert!(
+            (drift_capped - h * cap).abs() < 1e-6,
+            "capped drift {drift_capped} should equal h·cap = {}",
+            h * cap
+        );
+
+        let mut plain = SgPcnlState::new(theta.clone(), sigma, sched, n, b, 0);
+        let mut r = rand::rngs::StdRng::seed_from_u64(7);
+        plain.step_unadjusted(&grad, &mut r).unwrap();
+        let drift_plain: f64 = plain
+            .theta
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .zip(&base)
+            .map(|(a, b)| ((*a - *b) as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            (drift_plain - h * 20.0).abs() < 1e-5,
+            "uncapped drift {drift_plain} should be h·(N/B)·‖Σ‖ = {}",
+            h * 20.0
+        );
+
+        // Off by default: a cap above the gradient's norm is the
+        // identity to the bit, so no reported run can be affected.
+        let mut loose = SgPcnlState::new(theta.clone(), sigma, sched, n, b, 0);
+        loose.grad_norm_cap = Some(1e12);
+        let mut r = rand::rngs::StdRng::seed_from_u64(7);
+        loose.step_unadjusted(&grad, &mut r).unwrap();
+        assert_eq!(
+            loose.theta.to_vec1::<f32>().unwrap(),
+            plain.theta.to_vec1::<f32>().unwrap(),
+            "a non-binding cap must not perturb the step"
+        );
     }
 
     #[test]
