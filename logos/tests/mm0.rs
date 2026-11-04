@@ -583,6 +583,53 @@ fn induction_only_claims_stay_unproved() {
     }
 }
 
+// ── the CNL theorem, proved from the upstream development ───────────────
+
+#[test]
+fn the_cnl_associativity_theorem_is_proved_from_upstream() {
+    if !tools() {
+        return;
+    }
+    // The pipeline's own verdict stays exactly as honest as before: inside
+    // `logos_math` (no induction) associativity is a goal — named, with the
+    // two normal forms and the missing rule spelled out.
+    let claim = Claim::parse("for all a, b, c: (a plus b) plus c equals a plus (b plus c)")
+        .expect("parses");
+    let cert = emit::certify(&claim, &[]).expect("certifies");
+    assert!(
+        matches!(cert.verdict, Verdict::Unproved(_)),
+        "without induction the fragment must not claim it: {:?}",
+        cert.verdict
+    );
+
+    // The committed mm1 closes the *same* theorem by importing the upstream
+    // development (vendored verbatim under `logos/mm0/upstream/`, CC0) and
+    // applying its existing induction proof `'(addass)`. This is the mm0 code
+    // that proves what the rewriter cannot — checked by mm0-rs, same as every
+    // certificate, rather than believed.
+    let mm1 = format!("{}/mm0/addass.mm1", env!("CARGO_MANIFEST_DIR"));
+    assert!(std::path::Path::new(&mm1).exists(), "{mm1} is missing");
+    let dir = tempfile::tempdir().expect("scratch dir");
+    let mmb = dir.path().join("addass.mmb");
+    let mm0rs = std::env::var("MM0_RS").unwrap_or_else(|_| "mm0-rs".into());
+    let out = std::process::Command::new(&mm0rs)
+        .arg("compile")
+        .arg(&mm1)
+        .arg(&mmb)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run `{mm0rs}`: {e} (set MM0_RS)"));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success() && !text.lines().any(|l| l.starts_with("error")),
+        "the upstream associativity proof must check:\n{text}"
+    );
+    assert!(mmb.exists(), "a compiled proof is written");
+}
+
 // ── mm0 itself ──────────────────────────────────────────────────────────────
 
 /// Write a certificate to a scratch directory and run the tools on it.

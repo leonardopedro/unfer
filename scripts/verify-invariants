@@ -217,9 +217,10 @@ check "H11: per-file coverage gate green" \
     bash "$repo_root/scripts/coverage_gate"
 
 # --- H11: real-entry-path smokes (built artifacts, not sources) ---
-# The cdylib builds, the unfer_agent binary answers the NDJSON contract, and a
-# genuinely missing config exits non-zero (fail closed). Unbuilt sibling
-# binaries → [gap].
+# The cdylib builds, the unfer_agent binary answers the NDJSON contract, a
+# genuinely missing config exits non-zero (fail closed), and the `logos`
+# `--llm` seam's feature-gated suite runs (`--features llm-http` — never
+# compiled by the default build). Unbuilt sibling binaries → [gap].
 check "H11: real-entry-path smokes green" \
     bash "$repo_root/scripts/smoke_gate"
 

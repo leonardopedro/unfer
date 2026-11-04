@@ -1,0 +1,117 @@
+# Kopperman–Solovay fragment fixtures (unfer/docs/LOGOS_MM0.md, "The
+# Kopperman layer"). The decidable fragment: equalities between finite-head
+# inner products with literal (or universally quantified) coordinates.
+#
+# Three verdicts appear here on purpose:
+#
+#   true:     ground claims, decided by evaluation and cross-checked against
+#             the DeltaNet reducer on both sides' arithmetic expansions;
+#   proved:   open claims, closed by rewriting and/or the bounded obvious
+#             layer (commutativity, the inner-product laws) — every candidate
+#             chain is replayed by mm0-rs before it counts;
+#   unproved: true in the standard model but unreachable without a rule the
+#             theory does not have — induction, a case split on a vector
+#             variable, or an axiom the overlay does not state. These stay
+#             goals, which is the fragment's honest boundary, and the gate
+#             counts them: a corpus that could not say "I do not know" would
+#             pass vacuously.
+
+# ── ground: evaluation decides, the reducer corroborates ─────────────────────
+true: the inner product of the vector of 1, 2 and the vector of 3, 4 equals 11
+false: the inner product of the vector of 1, 2 and the vector of 3, 4 equals 12
+true: the inner product of the vector of 2, 0 and the vector of 0, 5 equals zero
+true: the inner product of the vector of 3, 4 and the zero vector equals zero
+true: the coordinate 1 of the vector of 3, 4 equals 4
+true: the sum of the vector of 1, 2 and the vector of 3, 4 equals the vector of 4, 6
+true: the scalar 3 times the vector of 1, 2 equals the vector of 3, 6
+
+# ── open: rewriting alone closes these ───────────────────────────────────────
+proved: for all u: the inner product of u and the zero vector equals zero
+proved: for all u: the inner product of the zero vector and u equals zero
+proved: for all u: the sum of the zero vector and u equals u
+proved: for all u, w: the inner product of the vector of 1, 2 and the vector of u, w equals u plus two times w
+
+# ── open: the bounded obvious layer closes these, replayed by mm0-rs ─────────
+proved: for all u, v: the inner product of u and v equals the inner product of v and u
+proved: for all u, v, w: the inner product of u and the sum of v and w equals the inner product of u and v plus the inner product of u and w
+proved: for all u, v: the inner product of u and the sum of v and the zero vector equals the inner product of u and v
+proved: for all u, v: the inner product of the scalar two times u and v equals two times the inner product of u and v
+
+# ── open: calculational composition (chains of laws, not one step) ───────────
+proved: for all u: two times the inner product of u and u equals the inner product of u and u plus the inner product of u and u
+
+# ── the tutorial's UPL skeleton, as sentences ────────────────────────────────
+# Sentences after `timepiece/Kopperman_Tutorial.p.tex` §Implementation: the
+# UPL `inner_at2` loop (a Σ over a finite head — the same recursion as
+# `inpr_cons`), `vec s` (the amplitude at coordinate 0, zero elsewhere →
+# `tvcons s tvnil`), `c_sq_norm_at` (‖v‖² computed as v·v) and the real case
+# of `modulus_sq` (c · conj c → c times c; the fragment's scalars are real).
+true: the inner product of the vector of 1, 2, 3 and the vector of 4, 5, 6 equals 32
+true: the inner product of the vector of 3, 4 and the vector of 3, 4 equals 25
+true: the inner product of the vector of 2 and the vector of 5 equals 10
+false: the inner product of the vector of 1, 2, 3 and the vector of 4, 5, 6 equals 31
+# `inner_at2` at level 0 with symbolic amplitudes: vec(c)·vec(d) = c·d.
+proved: for all c, d: the inner product of the vector of c and the vector of d equals c times d
+# `vec s` puts s at coordinate 0 and zeroes everywhere after — coord 0 reads
+# s, coord 1 falls off the head into the tail (two rules, one sentence).
+proved: for all s: the coordinate 0 of the vector of s equals s
+proved: for all s: the coordinate 1 of the vector of s equals zero
+proved: for all c: the scalar c times the zero vector equals the zero vector
+# The real case of `modulus_sq`: v·v for the one-coordinate head `vec c`.
+proved: for all c: the inner product of the vector of c and the vector of c equals c times c
+# The English `and` in a sum list reads left-folded: `the sum of u, v and w`
+# is `the sum of (the sum of u, v), w` — this pins the sugar end-to-end
+# (it closes by reflexivity, which is the point: the two spell one term).
+proved: for all u, v, w: the sum of u, v and w equals the sum of (the sum of u, v), w
+
+# ── more laws: the other inner-product side, and a restructured sum ──────────
+# The right-hand scalar law mirrors the left one already above.
+proved: for all u, v: the inner product of u and the scalar two times v equals two times the inner product of u and v
+# Bilinearity with the summands commuted: one obvious step (inpr_add_l/r),
+# then add_comm under the relator, composed with eq_trans.
+proved: for all u, v, w: the inner product of (the sum of u, v) and w equals the inner product of v and w plus the inner product of u and w
+proved: for all u, v, w: the inner product of u and (the sum of v, w) equals the inner product of u and w plus the inner product of u and v
+
+# ── the honest boundary: goals, not certificates ─────────────────────────────
+# Positive definiteness is an *implication* (`inpr_pos` takes a hypothesis
+# binder), so nothing here derives u·u = 0 from u·u = 0.
+unproved: for all u: the inner product of u and u equals zero
+# Vector commutativity is not an axiom of the overlay: it follows from the
+# coordinatewise laws plus induction, which this theory does not have.
+unproved: for all u, v: the sum of u and v equals the sum of v and u
+# Expanding an inner product whose second argument is a variable reads
+# `tcoord (ttail u)`; relating that to `tcoord u (s u)` needs a case split
+# on `u` (`tvnil` or `tvcons`) that the theory has no rule for.
+unproved: for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u
+# Scalar associativity of `tvscal`: true in the standard model (c·(d·v_i) =
+# (c·d)·v_i coordinatewise), but `vscal_cons` only fires on a literal head,
+# so reaching it needs a case split on v the theory has no rule for.
+unproved: for all c, d, v: the scalar c times (the scalar d times v) equals the scalar (c times d) times v
+# Vector associativity: same story — coordinatewise true, induction needed.
+unproved: for all u, v, w: the sum of (the sum of u, v), w equals the sum of u, (the sum of v, w)
+# Scalar multiplication distributes over vector addition: the vector-space
+# law the tutorial's `vec`/`row` arithmetic assumes, again coordinatewise
+# true and again needing induction over the head.
+unproved: for all c, u, v: the scalar c times the sum of u, v equals the sum of the scalar c times u, the scalar c times v
+
+# ── the Kopperman/Mehler overlay: the random tail, fully determined ──────────
+# `theory: mehler` switches the claims below to the target theory with
+# mm0/mehler.mm0 concatenated (what `--mehler` selects): the tail's
+# coordinates and every constructor's action on coordinates are axioms there
+# — sound in the standard model, no induction, no quantifier inside a
+# formula, and the normaliser untouched (the prover carries the new laws in
+# the bounded obvious layer, replayed by mm0-rs like every other candidate).
+theory: mehler
+
+# coord_tail closes the case split the base fragment cannot touch: the tail
+# of a variable vector reads the parent's coordinates one position on.
+proved: for all u: the inner product of the vector of 2, 3 and u equals two times the coordinate 0 of u plus three times the coordinate 1 of u
+# vadd_coord / vscal_coord: the constructors act coordinatewise for *any*
+# arguments — the general laws whose literal-head instances are recursion.
+proved: for all u, v, i: the coordinate i of the sum of u, v equals the coordinate i of u plus the coordinate i of v
+proved: for all c, v, i: the coordinate i of the scalar c times v equals c times the coordinate i of v
+# The boundary does not move: determination is not induction. Vector
+# commutativity still needs extensionality (equal at every coordinate),
+# which needs quantification inside formulas — out of the fragment by
+# design; this claim stays a goal under `--mehler` too.
+unproved: for all u, v: the sum of u and v equals the sum of v and u

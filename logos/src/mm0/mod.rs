@@ -30,10 +30,12 @@
 pub mod bridge;
 pub mod cnl;
 pub mod emit;
+pub mod kop;
 pub mod proof;
 
 pub use cnl::Claim;
 pub use emit::{Certificate, Verdict};
+pub use kop::KClaim;
 pub use proof::Expr;
 
 use std::path::PathBuf;
@@ -63,7 +65,7 @@ pub fn run(args: &[String]) -> i32 {
 
 const USAGE: &str = "\
 usage:
-  logos mm0 theory [--out FILE]                 dump the target theory
+  logos mm0 theory [--out FILE] [--kopperman] [--mehler]  dump the target theory
   logos mm0 ask <sentence> [options]            certify one sentence
   logos mm0 claims <FILE> [options]             certify a fixture, check expectations
   logos mm0 check <FILE.mm0 | DIR>              run mm0-rs and mm0-c on artifacts
@@ -74,13 +76,25 @@ ask options:
   --json             one JSON object instead of prose
   --hint TERM        try TERM (an mm0 proof term) for an open claim; repeatable
   --llm              ask the LLM for hint terms (needs the `llm-http` feature)
+  --mehler           use the Kopperman/Mehler tail-determination theory
+                     (theory: mehler sections in a claims file do the same)
 
 exit codes: 0 yes (true / proved), 2 no (refuted), 1 unproved or error";
 
 fn cmd_theory(args: &[String]) -> i32 {
+    // `--kopperman` dumps the full Hilbert-space target theory (the agent
+    // layer plus the overlay); `--mehler` adds the tail-determination
+    // extension on top of it; the default stays the arithmetic one.
+    let theory = if has_flag(args, "--mehler") {
+        kop::Theory::Mehler.text()
+    } else if has_flag(args, "--kopperman") {
+        kop::Theory::Base.text()
+    } else {
+        emit::THEORY
+    };
     let out = flag_value(args, "--out");
     match out {
-        Some(path) => match std::fs::write(&path, emit::THEORY) {
+        Some(path) => match std::fs::write(&path, theory) {
             Ok(()) => {
                 println!("{}", path);
                 YES
@@ -91,10 +105,55 @@ fn cmd_theory(args: &[String]) -> i32 {
             }
         },
         None => {
-            print!("{}", emit::THEORY);
+            print!("{theory}");
             YES
         }
     }
+}
+
+/// A parsed sentence: the arithmetic fragment's claim, or the Kopperman
+/// fragment's. The arithmetic parser is tried first — its sentences are a
+/// subset of what the Kopperman parser accepts, and keeping the old path
+/// first keeps every existing fixture reading exactly as before.
+enum Parsed {
+    Arith(Claim),
+    Kop(KClaim),
+}
+
+/// Parse a sentence in either math fragment.
+///
+/// When neither accepts it, the diagnostic has to come from *some* parser,
+/// and the two disagree about what is wrong: a sentence with the Kopperman
+/// vocabulary gets the Kopperman parser's complaint (the arithmetic one
+/// would only say where it stopped, which for `the inner product of …` is
+/// always at the first word). Anything else keeps the arithmetic one, whose
+/// diagnostics the existing tests pin.
+fn parse_claim(text: &str) -> Result<Parsed, String> {
+    match Claim::parse(text) {
+        Ok(c) => Ok(Parsed::Arith(c)),
+        Err(arith_err) => match KClaim::parse(text) {
+            Ok(k) => Ok(Parsed::Kop(k)),
+            Err(kop_err) => Err(if mentions_kopperman(text) {
+                kop_err
+            } else {
+                arith_err
+            }),
+        },
+    }
+}
+
+/// Whether the sentence speaks the Kopperman vocabulary — used only to pick
+/// which parser's diagnostic to report when neither accepts the sentence.
+fn mentions_kopperman(text: &str) -> bool {
+    [
+        "inner product",
+        "vector",
+        "coordinate",
+        "the sum of",
+        "the scalar",
+    ]
+    .iter()
+    .any(|k| text.contains(k))
 }
 
 fn cmd_ask(args: &[String]) -> i32 {
@@ -103,23 +162,38 @@ fn cmd_ask(args: &[String]) -> i32 {
         eprintln!("usage: logos mm0 ask <sentence>\n\n{USAGE}");
         return UNKNOWN;
     }
-    let claim = match Claim::parse(&text) {
-        Ok(c) => c,
+
+    let mut hints = flag_values(args, "--hint");
+    let cert = match parse_claim(&text) {
+        Ok(Parsed::Arith(claim)) => {
+            if has_flag(args, "--llm") {
+                match llm_hints(&emit::goal_of(&claim)) {
+                    Ok(more) => hints.extend(more),
+                    Err(e) => eprintln!("llm: {e}"),
+                }
+            }
+            emit::certify(&claim, &hints)
+        }
+        Ok(Parsed::Kop(claim)) => {
+            let theory = if has_flag(args, "--mehler") {
+                kop::Theory::Mehler
+            } else {
+                kop::Theory::Base
+            };
+            if has_flag(args, "--llm") {
+                match llm_hints_with(theory.llm_system(), &claim.goal_of()) {
+                    Ok(more) => hints.extend(more),
+                    Err(e) => eprintln!("llm: {e}"),
+                }
+            }
+            kop::certify_in(&claim, &hints, theory)
+        }
         Err(e) => {
             eprintln!("{e}");
             return UNKNOWN;
         }
     };
-
-    let mut hints = flag_values(args, "--hint");
-    if has_flag(args, "--llm") {
-        match llm_hints(&emit::goal_of(&claim)) {
-            Ok(more) => hints.extend(more),
-            Err(e) => eprintln!("llm: {e}"),
-        }
-    }
-
-    let cert = match emit::certify(&claim, &hints) {
+    let cert = match cert {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
@@ -236,20 +310,25 @@ fn write_certificate(dir: &str, cert: &Certificate) -> Result<Option<(PathBuf, P
 
 /// One line of a claims file: `true: …`, `false: …`, `proved: …`, or a bare
 /// sentence (which must not be refuted — the default expectation is "yes").
+/// `mehler` is the `theory:` directive in force at that line: `None` means
+/// no directive has been seen (the `--mehler` flag decides), `Some(b)` the
+/// directive has fixed it.
 struct Expected {
     line: usize,
     sentence: String,
     want: Option<Verdict>,
+    mehler: Option<bool>,
 }
 
 fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
     let mut out = Vec::new();
+    let mut current: Option<bool> = None;
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (want, sentence) = match line.split_once(':') {
+        let (want, sentence, mehler) = match line.split_once(':') {
             Some((tag, rest)) if matches!(tag.trim(), "true" | "false" | "proved" | "unproved") => {
                 let want = match tag.trim() {
                     "true" => Verdict::True,
@@ -257,16 +336,36 @@ fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
                     "unproved" => Verdict::Unproved(String::new()),
                     _ => Verdict::Proved,
                 };
-                (Some(want), rest.trim().to_string())
+                (Some(want), rest.trim().to_string(), current)
             }
+            // `theory: base` / `theory: mehler` switches the target theory for
+            // every claim below it — the fixture says which theory each claim
+            // expects, so one file (and one gate run) covers both.
+            Some((tag, rest)) if tag.trim() == "theory" => match rest.trim() {
+                "base" => {
+                    current = Some(false);
+                    continue;
+                }
+                "mehler" => {
+                    current = Some(true);
+                    continue;
+                }
+                other => {
+                    return Err(format!(
+                        "line {}: unknown theory `{other}` (base | mehler)",
+                        i + 1
+                    ));
+                }
+            },
             // `for all x: …` has a colon of its own, so a colon that is not one
             // of the tags is part of the sentence.
-            _ => (None, line.to_string()),
+            _ => (None, line.to_string(), current),
         };
         out.push(Expected {
             line: i + 1,
             sentence,
             want,
+            mehler,
         });
     }
     Ok(out)
@@ -277,7 +376,9 @@ fn cmd_claims(args: &[String]) -> i32 {
         .iter()
         .find(|a| !a.starts_with("--") && !is_flag_value(args, a))
     else {
-        eprintln!("usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json]\n\n{USAGE}");
+        eprintln!(
+            "usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json] [--mehler]\n\n{USAGE}"
+        );
         return UNKNOWN;
     };
     let text = match std::fs::read_to_string(file) {
@@ -298,19 +399,29 @@ fn cmd_claims(args: &[String]) -> i32 {
     let out_dir = flag_value(args, "--out");
     let verify = has_flag(args, "--verify");
     let as_json = has_flag(args, "--json");
+    // The theory for claims no `theory:` directive fixes.
+    let default_mehler = has_flag(args, "--mehler");
 
     let mut failures = 0usize;
     let mut results = Vec::new();
     for case in cases {
-        let claim = match Claim::parse(&case.sentence) {
-            Ok(c) => c,
+        let cert = match parse_claim(&case.sentence) {
+            Ok(Parsed::Arith(claim)) => emit::certify(&claim, &[]),
+            Ok(Parsed::Kop(claim)) => {
+                let theory = if case.mehler.unwrap_or(default_mehler) {
+                    kop::Theory::Mehler
+                } else {
+                    kop::Theory::Base
+                };
+                kop::certify_in(&claim, &[], theory)
+            }
             Err(e) => {
                 eprintln!("line {}: {e}", case.line);
                 failures += 1;
                 continue;
             }
         };
-        let cert = match emit::certify(&claim, &[]) {
+        let cert = match cert {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("line {}: {e}", case.line);
@@ -497,16 +608,26 @@ fn words(args: &[String]) -> String {
 /// labour — the LLM proposes, MM0 disposes.
 #[cfg(feature = "llm-http")]
 fn llm_hints(goal: &str) -> Result<Vec<String>, String> {
-    use crate::formalize::graph::Turn;
-    use crate::formalize::llm::{HttpTransport, LlmClient, LlmConfig};
-
-    let mut client = LlmClient::new(HttpTransport::new(), LlmConfig::default());
-    let system = "You are helping close a goal in the MM0 theory `logos_math`. \
+    const SYSTEM: &str = "\
+You are helping close a goal in the MM0 theory `logos_math`. \
 Rules available: prim_add_denote, prim_mul_denote, eq_refl, eq_sym, eq_trans, eq_ts, \
 eq_app, eq_add_l, eq_add_r, eq_mul_l, eq_mul_r, add_z, add_s, mul_z, mul_s, s_inj, \
 z_ne_s, fals_elim. Terms: tz (zero), ts (successor), tadd, tmul, tapp, tprim_add, \
 tprim_mul, teq. Reply with ONLY a JSON array of MM0 proof terms (strings), most \
 promising first. A proof term looks like `(add_z)` or `(eq_trans (add_s) (eq_ts (add_z)))`.";
+    llm_hints_with(SYSTEM, goal)
+}
+
+/// The LLM seam, parameterised by the theory's rule catalogue: the
+/// arithmetic fragment and the Kopperman fragment offer different vocabular
+/// to the model, but the contract is the same — whatever comes back is only
+/// ever a candidate list, and mm0-rs is the judge (see [`llm_hints`]).
+#[cfg(feature = "llm-http")]
+fn llm_hints_with(system: &str, goal: &str) -> Result<Vec<String>, String> {
+    use crate::formalize::graph::Turn;
+    use crate::formalize::llm::{HttpTransport, LlmClient, LlmConfig};
+
+    let mut client = LlmClient::new(HttpTransport::new(), LlmConfig::default());
     let ask = Turn::user(&format!("goal: $ {goal} $"));
     let reply = client.chat(system, &[ask]).map_err(|e| e.to_string())?;
     let parsed: serde_json::Value = serde_json::from_str(reply.trim())
@@ -524,5 +645,10 @@ promising first. A proof term looks like `(add_z)` or `(eq_trans (add_s) (eq_ts 
 
 #[cfg(not(feature = "llm-http"))]
 fn llm_hints(_goal: &str) -> Result<Vec<String>, String> {
+    Err("this build has no `llm-http` feature; pass --hint instead".into())
+}
+
+#[cfg(not(feature = "llm-http"))]
+fn llm_hints_with(_system: &str, _goal: &str) -> Result<Vec<String>, String> {
     Err("this build has no `llm-http` feature; pass --hint instead".into())
 }

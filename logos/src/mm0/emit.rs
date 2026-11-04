@@ -140,7 +140,7 @@ impl Certificate {
 
 /// A public name for a goal: the goal's digest, so that the same claim always
 /// gets the same theorem name and a corpus diff shows only real changes.
-fn theorem_name(goal: &str, refutation: bool) -> String {
+pub(crate) fn theorem_name(goal: &str, refutation: bool) -> String {
     let mut h = Sha256::new();
     h.update(if refutation {
         "refute:".as_bytes()
@@ -478,7 +478,7 @@ fn tool_cmd(var: &str, default: &str, args: &[&OsStr]) -> Command {
 /// Returns `Ok(false)` for a rejected proof and `Err` when the tool could not be
 /// run at all — a distinction the caller must preserve, since "the kernel said
 /// no" and "there is no kernel here" are different facts about a claim.
-fn elaborates(mm0: &str, mm1: &str) -> Result<bool, String> {
+pub(crate) fn elaborates(mm0: &str, mm1: &str) -> Result<bool, String> {
     let dir = temp_dir("elab")?;
     let mm1_path = dir.join("claim.mm1");
     std::fs::write(&mm1_path, mm1).map_err(|e| format!("{}: {e}", mm1_path.display()))?;

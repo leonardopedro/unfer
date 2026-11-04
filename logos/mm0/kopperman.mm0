@@ -1,0 +1,205 @@
+-- kopperman.mm0 — the Kopperman Hilbert-space layer of the logos theory.
+--
+-- This file is an *overlay*: the emitter concatenates `logos_math.mm0` (the
+-- agent/Peano layer) with this file to form the full target theory of a
+-- Hilbert-space claim (`KTHEORY` in `src/mm0/emit.rs`). It is written as an
+-- overlay so the agent layer has exactly one copy: both fragments share
+-- `Prop`, `Term`, `teq`, the numerals and the bridge, and a certificate for
+-- either fragment is one self-contained `.mm0`/`.mm1` pair.
+--
+-- The prover this grounds is based on Kopperman's Hilbert-space axioms:
+-- R. Kopperman, "The L_{ω1,ω1}-Theory of Hilbert Spaces" (1967), as packaged
+-- by `Kopperman_Tutorial.p.tex` and `BookProof/Toolbox/PhysMehler.lean` in
+-- the sibling `timepiece` repo (the `Formalism` structure). Its three
+-- layers match those sources:
+--
+--   K1. The real system — the scalar field as Kopperman's "reflexive real
+--       system": an ordered field with square/cube roots (real closed — the
+--       Solovay/Tarski scalar theory of `timepiece/Book`, whose decidable
+--       core is ℝ_alg, the algebraic reals) and Dedekind completeness in
+--       ε-form. The Peano numerals `tz`/`ts` inside `Term` are the
+--       *computable skeleton* — the decidable dense subset — not the whole
+--       field: `tsqrt (ts tz)` exists and is not a numeral, which is the
+--       honest shape of a completed real system over a decidable core.
+--
+--   K2. The Hilbert system — finite-head vectors and their inner product.
+--       A vector is its head, `tvnil`/`tvcons` (`InnerHead N = Fin N → ℝ`
+--       of `timepiece/RandomMap/RandomMap2.lean`, spelled as a list); the
+--       recursion rules make the decidable fragment *compute* (they are the
+--       rewrite system `src/mm0/kop.rs` normalises with), and the laws
+--       below are the inner-product axioms themselves. Positive
+--       definiteness uses hypothesis-binder form like `logos_math.mm0`:
+--       `> ` is the applicable inference, never `->` inside a formula.
+--
+--   K3. The ontological layer — sequences, limits, the Riesz–Fischer
+--       skeleton of completeness, and the decidable dense subset. No CNL
+--       sentence can name a limit: Kopperman's Warning (Section V, 1967) is
+--       that one named infinite constant destroys decidability, and the
+--       fragment honours it — `tlimit`/`tsup` appear only in theory axioms,
+--       never in a certificate this prover builds.
+--
+-- Standard model (what makes the axioms sound): scalars in the complete
+-- real closed field ℝ; a vector term denotes its coordinate function
+-- ℕ → ℝ (finite support); `teq` is equality of denotations; junk
+-- applications of operations outside their intended arguments are total and
+-- unconstrained. Every axiom below holds under that interpretation — the
+-- same style of consistency claim `logos_math.mm0` makes for its layer.
+--
+-- The sequence-layer predicates (`tcauchy`, `tsummable`, `tconv`,
+-- `tbounded`) are primitives constrained by K1/K3's axioms: mm0's term
+-- language is first-order, so Kopperman's L_{ω1,ω1} sequence quantifiers
+-- are reified as terms with `tapply` — exactly the move the tutorial itself
+-- makes in UPL ("we model these infinite quantifiers via dependent types").
+-- The ε-form statements they *can* carry (Dedekind completeness, the
+-- Riesz–Fischer shape of `BookProof/ChapterRieszFischer`) are stated in
+-- full; the remaining ε–δ content is noted where it belongs, not faked.
+
+-- ── K1. The real system ─────────────────────────────────────────────────────
+
+-- Order. Primitive predicates; the connectives live in hypothesis binders.
+term tle (a b: Term): Prop;
+term tlt (a b: Term): Prop;
+
+axiom le_refl (a: Term): $ tle a a $;
+axiom le_antisym (a b: Term): $ tle a b $ > $ tle b a $ > $ teq a b $;
+axiom le_trans (a b c: Term): $ tle a b $ > $ tle b c $ > $ tle a c $;
+axiom lt_le (a b: Term): $ tlt a b $ > $ tle a b $;
+axiom lt_irrefl (a: Term): $ tlt a a $ > $ tfals $;
+axiom lt_asym (a b: Term): $ tlt a b $ > $ tlt b a $ > $ tfals $;
+axiom le_add_r (a b c: Term): $ tle a b $ > $ tle (tadd a c) (tadd b c) $;
+axiom le_mul_nonneg (a b: Term): $ tle tz a $ > $ tle tz b $ > $ tle tz (tmul a b) $;
+
+-- Field laws of the scalar operations: `tadd`/`tmul` read as the field
+-- operations (the standard model has `ts a = a + 1`), consistent with the
+-- Peano recursion of `logos_math.mm0`, which also holds in ℝ.
+axiom add_comm (a b: Term): $ teq (tadd a b) (tadd b a) $;
+axiom add_assoc (a b c: Term): $ teq (tadd (tadd a b) c) (tadd a (tadd b c)) $;
+axiom mul_comm (a b: Term): $ teq (tmul a b) (tmul b a) $;
+axiom mul_assoc (a b c: Term): $ teq (tmul (tmul a b) c) (tmul a (tmul b c)) $;
+axiom distrib (a b c: Term): $ teq (tmul a (tadd b c)) (tadd (tmul a b) (tmul a c)) $;
+
+-- Real closed field: every positive element has a square root, every
+-- element a cube root. Full RCF is the schema over all odd degrees; degrees
+-- 1 and 3 are the instances statable without degree-indexed symbols, and
+-- this is recorded rather than glossed (the axiom is what the fragment
+-- uses: `sqrt` of a positive numeral exists, and is not a numeral).
+term tsqrt (a: Term): Term;
+term tcbrt (a: Term): Term;
+axiom rcf_sqrt (a: Term): $ tlt tz a $ > $ teq (tmul (tsqrt a) (tsqrt a)) a $;
+axiom rcf_cbrt (a: Term): $ teq (tmul (tmul (tcbrt a) (tcbrt a)) (tcbrt a)) a $;
+
+-- Dedekind completeness, in ε-form: a bounded scalar sequence has a least
+-- upper bound, approached within e > 0. `s` ranges over sequence terms
+-- (K3); `tapply s n` is the n-th element.
+term tapply (s n: Term): Term;
+term tbounded (s M: Term): Prop;
+term tsup (s: Term): Term;
+term tnear (s e: Term): Term;
+axiom sup_upper (s M: Term): $ tbounded s M $ > $ tle (tsup s) M $;
+axiom sup_approx (s M e: Term):
+  $ tbounded s M $ > $ tlt tz e $ > $ tle (tapply s (tnear s e)) (tadd (tsup s) e) $;
+
+-- ── K2. The Hilbert system: finite-head vectors ─────────────────────────────
+
+term tvnil: Term;
+term tvcons (c v: Term): Term;
+term tcoord (v i: Term): Term;
+term ttail (v: Term): Term;
+term tvadd (u v: Term): Term;
+term tvscal (s v: Term): Term;
+term tinpr (u v: Term): Term;
+
+-- Coordinates: `tcoord` reads position `i`, `tvcons` puts `c` at 0 and
+-- shifts the tail right. These four rules are what makes a head *compute*.
+axiom coord_nil (i: Term): $ teq (tcoord tvnil i) tz $;
+axiom coord_cons_z (c v: Term): $ teq (tcoord (tvcons c v) tz) c $;
+axiom coord_cons_s (c v i: Term): $ teq (tcoord (tvcons c v) (ts i)) (tcoord v i) $;
+axiom tail_nil: $ teq (ttail tvnil) tvnil $;
+axiom tail_cons (c v: Term): $ teq (ttail (tvcons c v)) v $;
+
+-- Vector addition: coordinatewise, `tvnil` padded from either side (the
+-- zero vector is the identity of every head — both rules are needed, and
+-- together they are confluent: nil/nil meets only `vadd_nil`).
+axiom vadd_nil (v: Term): $ teq (tvadd tvnil v) v $;
+axiom vadd_cons_nil (c v: Term): $ teq (tvadd (tvcons c v) tvnil) (tvcons c v) $;
+axiom vadd_cons_cons (c d u v: Term):
+  $ teq (tvadd (tvcons c u) (tvcons d v)) (tvcons (tadd c d) (tvadd u v)) $;
+
+-- Scalar multiplication.
+axiom vscal_nil (s: Term): $ teq (tvscal s tvnil) tvnil $;
+axiom vscal_cons (s c v: Term):
+  $ teq (tvscal s (tvcons c v)) (tvcons (tmul s c) (tvscal s v)) $;
+
+-- The inner product: recursion on the first head, reading the second's
+-- coordinates. For literal heads this computes through the Peano layer
+-- (that is the decidable Kopperman–Solovay fragment); the laws below say
+-- what it is in general.
+axiom inpr_nil (v: Term): $ teq (tinpr tvnil v) tz $;
+axiom inpr_cons (c u v: Term):
+  $ teq (tinpr (tvcons c u) v)
+        (tadd (tmul c (tcoord v tz)) (tinpr u (ttail v))) $;
+
+-- The inner-product laws (Kopperman's Hilbert system). Symmetry and
+-- bilinearity hold in the standard model (the recursion above is the exact
+-- Σ over both supports) but are not *derivable* from the recursion without
+-- induction — so they are axioms, exactly as in Kopperman's system, and a
+-- claim like "the inner product of u and v equals that of v and u" closes
+-- by citing `inpr_sym`, replayed by mm0.
+axiom inpr_sym (u v: Term): $ teq (tinpr u v) (tinpr v u) $;
+axiom inpr_add_l (u v w: Term):
+  $ teq (tinpr (tvadd u v) w) (tadd (tinpr u w) (tinpr v w)) $;
+axiom inpr_add_r (u v w: Term):
+  $ teq (tinpr u (tvadd v w)) (tadd (tinpr u v) (tinpr u w)) $;
+axiom inpr_scal_l (s u v: Term):
+  $ teq (tinpr (tvscal s u) v) (tmul s (tinpr u v)) $;
+axiom inpr_scal_r (s u v: Term):
+  $ teq (tinpr u (tvscal s v)) (tmul s (tinpr u v)) $;
+-- Positive definiteness: ‖v‖² = 0 implies v is the zero vector.
+axiom inpr_pos (v: Term): $ teq (tinpr v v) tz $ > $ teq v tvnil $;
+
+-- Congruence: to rewrite inside a vector term each constructor transports
+-- the equality of its arguments (the `eq_app` of the agent layer, per
+-- constructor). Without these the normaliser could only rewrite at the root.
+axiom eq_tvcons (a b u v: Term): $ teq a b $ > $ teq u v $ > $ teq (tvcons a u) (tvcons b v) $;
+axiom eq_tcoord (u v i j: Term): $ teq u v $ > $ teq i j $ > $ teq (tcoord u i) (tcoord v j) $;
+axiom eq_ttail (u v: Term): $ teq u v $ > $ teq (ttail u) (ttail v) $;
+axiom eq_tvadd (a b c d: Term): $ teq a b $ > $ teq c d $ > $ teq (tvadd a c) (tvadd b d) $;
+axiom eq_tvscal (s t u v: Term): $ teq s t $ > $ teq u v $ > $ teq (tvscal s u) (tvscal t v) $;
+axiom eq_tinpr (a b c d: Term): $ teq a b $ > $ teq c d $ > $ teq (tinpr a c) (tinpr b d) $;
+axiom eq_tapply (s t n m: Term): $ teq s t $ > $ teq n m $ > $ teq (tapply s n) (tapply t m) $;
+
+-- ── K3. The ontological layer: sequences, limits, density ───────────────────
+--
+-- Kopperman's L_{ω1,ω1} quantifies over sequences; in a first-order term
+-- language a sequence is reified as a term with `tapply` (the tutorial's
+-- own note: "we model these infinite quantifiers via dependent types").
+-- The predicates are primitive and constrained by the completeness and
+-- density axioms below; no CNL sentence can name a limit — Kopperman's
+-- Warning (Section V, 1967): one named infinite constant destroys
+-- decidability, by way of isolating one number, reconstructing the
+-- integers, and importing undecidable Peano Arithmetic.
+
+term tcauchy (s: Term): Prop;
+term tlimit (s: Term): Term;
+term tconv (s: Term): Prop;
+axiom cauchy_complete (s: Term): $ tcauchy s $ > $ tconv s $;
+axiom conv_limit (s: Term): $ tconv s $ > $ teq (tlimit s) (tlimit s) $;
+
+-- Riesz–Fischer skeleton: a summable series of vectors has a sum, and the
+-- sum is the limit of its partial sums — the shape of Book's verified core
+-- (`completeSpace_iff_summable_norm`, `BookProof/ChapterRieszFischer`).
+term tsummable (s: Term): Prop;
+term tpartial (s: Term): Term;
+term tseries (s: Term): Term;
+axiom riesz_fischer (s: Term): $ tsummable s $ > $ teq (tseries s) (tlimit (tpartial s)) $;
+
+-- The decidable dense subset: every vector is approximated, within e > 0,
+-- by a rational-coefficient finite head — the computable skeleton of
+-- `PhysMehler.Formalism` (`skeleton_countable` + `skeleton_dense`), with
+-- the existential packaged as a witness term because mm0 formulas carry
+-- binders, not quantifiers over `Term`.
+term trat (v: Term): Prop;
+term tclose (u v e: Term): Prop;
+term tvapprox (v e: Term): Term;
+axiom rat_approx (v e: Term):
+  $ tlt tz e $ > $ trat (tvapprox v e) $ > $ tclose (tvapprox v e) v e $;

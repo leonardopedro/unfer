@@ -5,6 +5,9 @@
 # settle, and wrong entry wiring. Runs from built output only.
 #   - `unfer_ffi` cdylib builds (`libunfer_ffi.so`) — the C ABI surface.
 #   - a genuinely missing config exits non-zero (modhost/agent fail closed).
+#   - the `logos` `--llm` seam under `--features llm-http` (smoke 4) — the one
+#     source-level suite here, because the default-features build never
+#     compiles the HTTP transport at all.
 #
 # Tooling discipline mirrors coverage_gate: if the Rust toolchain itself is
 # absent (no `cargo`), the gate prints [gap] and exits 0 — a clean tree without
@@ -79,6 +82,23 @@ else
         echo "[FAIL] modhost exited 0 on a missing module dir"
         FAILED=$((FAILED + 1))
     fi
+fi
+
+# 4. The `logos` `--llm` seam, under `--features llm-http`.
+#
+# The default-features build never compiles the HTTP transport, so every other
+# gate here — and the default `cargo test` run — stays green while the seam
+# itself rots. This run includes the deferred-proxy E2E (`scripts/llm_proxy` →
+# transport → parse → judgment), which needs `python3` to spawn the proxy and
+# `mm0-rs` to judge; each absence makes that one test skip *itself* with a
+# printed reason (the `tools()` discipline), never silently pass, and the rest
+# of the feature-gated suite still gates either way.
+if (cd "$repo_root" && cargo test -p logos --features llm-http >/tmp/unfer_smoke_llm_http.log 2>&1); then
+    echo "  [pass] logos --features llm-http test run ($(grep -c '^test result: ok' /tmp/unfer_smoke_llm_http.log) suites green)"
+else
+    echo "[FAIL] logos --features llm-http test run"
+    tail -30 /tmp/unfer_smoke_llm_http.log
+    FAILED=$((FAILED + 1))
 fi
 
 if [ "$FAILED" -gt 0 ]; then

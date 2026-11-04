@@ -247,6 +247,20 @@ from MM0's own Peano development in `logos/mm0/upstream.txt`. See
 [`LOGOS_MM0.md`](LOGOS_MM0.md) for the grammar, the certificate shapes, the CLI
 and `australVM/scripts/logos2mm0` (including its tamper anchor).
 
+A second fragment over the same pipeline answers Hilbert-space sentences —
+inner products of finite-head vectors — against `logos/mm0/kopperman.mm0`, an
+overlay on the same theory (`logos mm0 theory --kopperman`). It adds a
+sort-checked CNL (formation errors are refused, not certified), a normaliser
+for the vector recursion rules, and a *bounded* obvious-inference layer: the
+equality laws the recursion cannot reach, in chains of bounded depth, each
+candidate replayed by mm0-rs. An optional overlay (`--mehler`,
+`logos/mm0/mehler.mm0`) determines a variable vector's random tail — the
+Kopperman/Mehler reading of `RandomMap2`'s `InnerHead × InnerTail` — which
+closes the `ttail` case-split without touching induction or the decision
+procedure. What neither theory reaches — positive definiteness, vector
+commutativity (it needs extensionality) — is recorded as goals in
+`logos/mm0/kop_claims.txt`, which the same gate counts.
+
 ## Conversion check (`logos iso`, `austral_defeq`)
 
 Two sources (any ingestion shape: expression, statement list, function,
