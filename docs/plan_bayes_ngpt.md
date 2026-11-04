@@ -38,6 +38,22 @@
 >    chain is reported as a diagnostic (it collapses for the standard
 >    variant — the Phase-0 story, now with the MH chain's own numbers).
 >
+> **Status (2026-11-04): the plan re-executed end-to-end on current
+> `main`; Phase 0 confirmed, Phase 3 NOT.** The full 10 000-step run
+> (same seed, same command) reproduces the §3B radial result under the
+> cosine geometry (‖θ‖ mean 45.3 / final 45.7 vs σ√P = 45.19) and kills
+> the standard variant at step 3 with a non-finite gradient — but BMA
+> lands at 11.7 % (chance 12.5 %), and the SGLD and MH-filtered
+> comparators report the *same* 11.7 %, so the missing filter is not the
+> cause. A 100× σ sweep (0.02 … 2.0) leaves the readout unchanged, and
+> chain length (600 → 3 000 steps) does not move it either; only the
+> centered adaptation prior §6.4.2 improves it (21.1 % at σ = 0.03,
+> still below Adam-on-B's 43 %). This run's numbers, the previous
+> (2026-10-20) numbers they replace, and the concrete next steps are in
+> [`docs/PCNL_STATUS.md`](PCNL_STATUS.md). The host also had an unrelated
+> global OOM event before the run (waydroid/desktop processes; this
+> experiment peaked at ≈ 0.4 GB RSS) — see the same doc.
+>
 > New evidence surface (plan §4 Phase 4b): **MH-filtered pCNL as the
 > standard analogous algorithm** (same proposal, exact full-batch MH
 > filter — the algorithm the diff deleted), the **cyclical schedule
@@ -279,7 +295,7 @@ impl SgPcnlState {
 
 ### Key Operational Changes Summary
 
-1. **Computational Throughput Doubles:** Standard pCNL required two forward evaluations per step (one at $\theta$, one at proposed $\theta'$). Unadjusted SG-pCNL requires only **one backward pass** per iteration on the current mini-batch. *(Measured 2026-10-21b: evaluation counts are deterministic — 2 vs 1 model evaluations per step, asserted in `pcnl/tests/comparators.rs::unadjusted_halves_model_evaluations`; wall-clock on the full run: the filtered chain costs ≈1.4–1.6× the unadjusted chain per step because its second pass is forward-only.)*
+1. **Computational Throughput Doubles:** Standard pCNL required two forward evaluations per step (one at $\theta$, one at proposed $\theta'$). Unadjusted SG-pCNL requires only **one backward pass** per iteration on the current mini-batch. *(Measured 2026-10-21b: evaluation counts are deterministic — 2 vs 1 model evaluations per step, asserted in  `pcnl/tests/comparators.rs::unadjusted_halves_model_evaluations`. Wall-clock is the weaker statement and host-dependent: on the 2026-11-04 run (4 chains on 2 rayon threads) the unadjusted chain took 1050 s, the filtered chain 464 s and the SGLD comparator 218 s — the opposite ordering from the count, because the unadjusted chain adds a full-batch forward every `thin` steps and its rayon scheduling differs. Trust the counts.)*
 2. **VRAM Footprint Decoupled:** Peak memory consumption is entirely independent of dataset size $N$. It is governed purely by mini-batch size $B \times$ sequence length $T$. *(Structural: the chain state is $\theta \in \mathbb{R}^P$ + one streamed mini-batch; asserted by the batch-invariance test.)*
 3. **Hyperparameter Tuning Shift:** Rather than dynamically tuning $\beta$ to track a $23.4\%$ MH acceptance target, tuning shifts to classical SGLD schedules: setting the initial step size $\beta_0$ and polynomial decay rate $\kappa \in (0.5, 1.0]$. *(Implemented — `SgPcnlScheduler`; the acceptance rate survives only as a *diagnostic* of the filtered comparator, where it measures what the filter would have rejected.)*
 4. **The filter's cost was buying exactness — measured, not assumed:** the filtered and unfiltered chains share a proposal and a target, so their loss-chain cross-$\hat{R}$ isolates the unadjusted bias. On the full run the two agree (cross-$\hat{R}$ within the same range as the SGLD comparator's), i.e. at $\beta \le 0.3$ the exactness the filter bought is inside the sampling noise — the empirical content of “the drift and noise match to $O(\beta^4)$”.
