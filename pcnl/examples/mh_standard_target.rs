@@ -16,12 +16,14 @@
 //!    gradient field, so the chain has no Gibbs target; its outward march
 //!    is an artefact, and the exact target sits near `θ_A`.
 //!
-//! The Metropolis filter separates them.  `task::mh_pcnl_chain` proposes
-//! with the *same* capped step and accepts with the exact full-batch
-//! likelihood ratio, so the cap changes only the proposal and the chain is
-//! exact for the target.  If the filtered chain's kept predictive is also
-//! overconfident, (1) holds; if it stays near `θ_A`'s calibrated numbers,
-//! (2) does.
+//! The filter separates them.  `task::mh_pcnl_chain` proposes with the
+//! *same* capped step and accepts with the full-batch likelihood ratio.  Note
+//! what that is: a likelihood-ratio filter is exact Metropolis only for a
+//! drift-free proposal, so the filtered chain is pCNL, not an exact sample of
+//! `π` — §6.5.6(c) measures the bias directly (‖θ‖ 1.1–1.3e3 against the 45.2
+//! shell at β = 0.01–0.03).  Read the rows as "the filtered chain's
+//! predictive", not "the target's": if it is also overconfident, (1) survives
+//! this comparison; if it stays near `θ_A`'s calibrated numbers, (2) does.
 //!
 //! Three arms per seed, reference configuration, two chains:
 //! * `unadjusted, capped` — the §6.5.2 row, reproduced here;

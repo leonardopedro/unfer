@@ -430,6 +430,60 @@ fixed `‖g‖` and `λ ≈ 150` at the measured `λ^0.6`, and the standard vari
 dies at steps 2–3 in every cold cell.  The ceiling that matters is a step
 distribution that does not pay `β ≤ 1`.
 
+### Three follow-ups to the cold result (2026-11-04)
+
+**(a) Three seeds.**  `pcnl/examples/cold_ladder.rs` reruns the ladder at the
+same 1 000-step budget with three seeds (`P = 16 672`, 2 chains, thin 50).
+The bands are disjoint, so §6.5.5's single-seed row replicates:
+
+| `λ` | BMA NLL | ECE | BMA acc | `r` | per-draw − BMA gap |
+|---:|---|---|---|---:|---|
+| 1 | 2.1894 / 2.1899 / 2.2036 | 0.1853 / 0.1889 / 0.1909 | 11.72–13.28 % | 0.054 | 0.0267–0.0297 |
+| 16 | **2.0932 / 2.0995 / 2.1155** | **0.0576 / 0.0628 / 0.0642** | 11.72–13.28 % | 0.242–0.249 | 0.0189–0.0302 |
+
+The per-draw NLL falls with the BMA (2.2191–2.2316 → 2.1182–2.1457) and the gap
+does not move: cold `λ` calibrates each draw, not the ensemble's diversity.  A
+10 000-step matrix is ≈ 15 CPU-hours at the measured 0.3 s/step on two cores,
+so the longer horizon is untested rather than done and unreported.
+
+**(b) A step distribution that does not pay `β ≤ 1`.**  Euler–Langevin's
+`r = h‖g‖/(√(2h)σ√P)` has no `β ≤ 1` ceiling.  `pcnl/examples/step_distribution.rs`
+(400 steps, 2 seeds, 1 chain):
+
+| family | `r` | BMA NLL | ECE | radial final |
+|---|---:|---:|---:|---:|
+| pCN `β = 0.3` | 0.069 | 2.1948 | 0.1937 | 45.1 |
+| pCN `β = 0.9` | 0.238 | 2.5609 | 0.4592 | 47.0 |
+| pCN `β = 1.0` | 0.370 | 2.9745 | 0.6003 | 47.5 |
+| ULA `h = σ²/8` | 0.326 | 2.1443 | 0.1439 | 17.1 |
+| ULA `h = σ²/4` | 0.462 | 2.1804 | 0.1854 | 18.8 |
+| ULA `h = σ²/2` | 0.728 | 2.2790 | 0.2668 | 26.5 |
+| ULA `h = σ²` | **2.082** | 3.0870 | 0.3765 | 40.7 |
+
+It *does* reach `r ≈ 2.1` without a non-finite state, and it is worthless: the
+predictive degrades monotonically in `h`, every row is worse than the uniform
+predictor, and ULA's radius collapses to 17–27 (the `O(h)` OU bias).  So `r` is
+a **diagnosis** of prior-domination, not a lever — §6.5.5's ceiling explains the
+uniform predictive without prescribing a fix.
+
+**(c) The filtered chain does not sample the cold target — and never did.**
+`pcnl/examples/mh_cold.rs` (likelihood-ratio filter; `λ ∈ {1,16}`, proposal
+`β ∈ {0.03, 0.01, 0.003}`, 400 steps, 2 seeds) puts **every** cell at
+`‖θ‖ ≈ 1.1–1.3e3` against the 45.2 shell, with 89.5–100 % acceptance.  The
+prior's cost at `r = 10³` is 5.4e6 nats, so no row samples `π_λ`; the `λ = 16`
+row's 37.5 % / 1.62 NLL is an optimiser's predictive.  The cause is structural:
+the acceptance ratio is `exp(λ(L(θ)−L(θ′)))`, which is exact Metropolis only
+for a drift-free proposal, and with `β = 0.01–0.03` the OU restoring timescale
+`1/β²` is 1 100–10 000 steps.
+
+**That corrects §6.5.3's wording.**  Its "exact full-batch likelihood-ratio
+filter" rows already showed the bias at a smaller scale (radial final 95–134
+against 45.2), so "the overconfidence is not the target's" narrows to *a pCNL
+chain at a usable proposal scale is less overconfident than the unadjusted
+one*.  `MhOptions`'s doc comment, the `mh_pcnl_chain` comment, the
+`comparators.rs` cap test and `examples/mh_standard_target.rs` now say pCNL
+instead of "exact"; the crate's numbers are unchanged.
+
 ### What the review did **not** change
 
 Nothing in the Lean development or the readout module is touched: those
@@ -467,6 +521,9 @@ cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact t
 cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
 cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
 cargo run --release -p pcnl --example annealed_start      # §6.5.5, the ramp, ~12 min
+cargo run --release -p pcnl --example cold_ladder -- 1000 --lambdas 1,16  # §6.5.6(a), 3 seeds
+cargo run --release -p pcnl --example step_distribution   # §6.5.6(b), pCN vs ULA
+cargo run --release -p pcnl --example mh_cold             # §6.5.6(c), the filter's bias
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published
 cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-lite_chain0.safetensors

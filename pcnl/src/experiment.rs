@@ -986,7 +986,8 @@ fn run_variant(
 
     // ---- Phase 4b: the Metropolis-filtered predecessor -----------
     // Same proposal, same schedule, same thinning as the unadjusted
-    // chains — the only difference is the exact full-batch filter,
+    // chains — the only difference is the full-batch likelihood filter
+    // (pCNL: exact only in the drift-free limit, §6.5.6(c)),
     // so the cross-R̂ over the two families' loss chains isolates
     // what dropping the filter costs (plan §4 Phase 4b).
     let mh_t0 = std::time::Instant::now();

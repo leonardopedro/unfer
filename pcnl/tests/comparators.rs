@@ -206,12 +206,17 @@ fn cyclical_run_is_stable_and_reported() {
     );
 }
 
-/// **The drift cap changes the proposal, not the target** (§6.5.3's licence).
+/// **The drift cap changes the proposal, not (much) the target** (§6.5.3's
+/// licence, qualified by §6.5.6(c)).
 ///
 /// §6.5.2 caps the standard stack's drift so the chain stops exploding, and
-/// §6.5.3 reads the *filtered* capped chain as an exact sample of the same
-/// target.  That reading is only sound if the cap cannot move the invariant
-/// distribution, which is what this test pins in two steps:
+/// §6.5.3 reads the *filtered* capped chain as a sample of the same target.
+/// That reading is only sound if the cap cannot move the invariant
+/// distribution — and it is only *approximately* sound, because the filter's
+/// acceptance is the likelihood ratio alone (exact Metropolis needs a
+/// drift-free pCN proposal), so the filtered chain is pCNL and its invariant
+/// law is not `π` at all.  What this test pins is the weaker, honest claim
+/// that two caps give the same kept summaries to within the pCNL bias:
 ///
 /// 1. **Inertness, exactly.**  A cap above the gradient's own norm must leave
 ///    the chain bit-identical to the uncapped one — same proposals, same

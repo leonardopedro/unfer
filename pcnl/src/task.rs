@@ -453,7 +453,7 @@ pub struct MhOutcome {
 /// same thinning — the *only* difference between the two chains is
 /// the filter, so any disagreement localizes in it.
 ///
-/// The filter is the predecessor's own: the exact full-batch
+/// The filter is the predecessor's own: the full-batch
 /// likelihood ratio `log α = L(θ) − L(θ′)`, evaluated on the toy
 /// potential `Φ(θ) = L(D; θ)` (the dataset *is* the potential, so
 /// there is no mini-batch bias in the ratio itself). Cost accounting
@@ -478,8 +478,17 @@ pub struct MhOutcome {
 #[derive(Clone, Copy, Debug)]
 pub struct MhOptions {
     /// Cap on the `(N/B)`-scaled *proposal* gradient (§6.5.2).  `None`
-    /// leaves the proposal at the kernel's own step.  The Metropolis ratio
-    /// is unaffected, so a cap changes the proposal and not the target.
+    /// leaves the proposal at the kernel's own step.  The acceptance ratio
+    /// is unaffected, so for a drift-free pCN proposal a cap changes the
+    /// proposal and not the target.
+    ///
+    /// **That invariance is approximate here.**  The ratio is the likelihood
+    /// ratio only, `exp(λ(L(θ)−L(θ′)))`, which is exact Metropolis only when
+    /// the drift is zero (pCN's prior cancellation needs the drift-free mean
+    /// `√(1−β²)θ`).  With a drift the chain is pCNL, whose invariant law is
+    /// not `π`; §6.5.6(c) measures the resulting radial drift (‖θ‖ 1.1–1.3e3
+    /// against a 45.2 shell at `β = 0.01–0.03`), so read cap-comparisons as
+    /// "same approximate law to within the pCNL bias", not as "same target".
     pub grad_norm_cap: Option<f64>,
     /// Temperature on the potential: the proposal drift and the acceptance
     /// log-ratio both use `λ·L`, so `λ = 1` is the published target and
@@ -621,7 +630,8 @@ pub fn mh_pcnl_chain(
             .expect("drift");
         let proposal = (&noised - &drift).expect("proposal");
 
-        // the predecessor's exact full-batch likelihood-ratio filter
+        // the predecessor's full-batch likelihood-ratio filter — exact only
+        // in the drift-free limit (§6.5.6(c): pCNL's invariant law is not π)
         loss_evals += 1;
         let loss_prop = full_loss(&proposal);
         let log_alpha = match (loss_now, loss_prop) {
