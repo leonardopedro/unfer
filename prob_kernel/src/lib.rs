@@ -26,5 +26,5 @@ pub use session::{
 };
 pub use symbolic::symbolic_derive;
 pub use unfer_protocol;
-pub use verify::verify_export;
+pub use verify::{verify_export, verify_export_with_trust, TrustOutcome};
 pub use whyml::{why3_available, whyml_emit};

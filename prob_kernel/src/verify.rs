@@ -18,11 +18,13 @@
 //! the panic payload is captured into the report instead of unwinding into
 //! the caller.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nanoda_lib::util::Config;
+use nanoda_lib::name::Name;
+use nanoda_lib::util::{Config, NamePtr, TcCtx};
 use sha2::{Digest, Sha256};
 use unfer_protocol::{LeanVerifySpec, ProofReport};
 
@@ -30,6 +32,21 @@ use crate::error::KernelError;
 
 /// Maximum export payload accepted (16 MiB, matching [`LeanVerifySpec`]).
 const MAX_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
+/// The result of a run that may have skipped a previously-verified base.
+///
+/// `report.declarations_checked` counts the declarations this *run* checked,
+/// which is `total - skipped`; a trusted run is therefore not the same claim
+/// as a full one, and [`TrustOutcome`] keeps the split visible so callers can
+/// say which they got instead of reporting a bare `verified: true`.
+pub struct TrustOutcome {
+    pub report: ProofReport,
+    /// How many declarations were already covered by the trusted base.
+    pub skipped: usize,
+    /// Names this run type-checked, in environment order (empty unless
+    /// `collect_names` was requested).
+    pub checked_names: Vec<String>,
+}
 
 /// Type-check a Lean4 export file against [`nanoda_lib`].
 ///
@@ -42,6 +59,32 @@ pub fn verify_export(
     export_bytes: &[u8],
     spec: &LeanVerifySpec,
 ) -> Result<ProofReport, KernelError> {
+    verify_export_with_trust(export_bytes, spec, None, false).map(|o| o.report)
+}
+
+/// Type-check an export, optionally skipping declarations whose *names* a
+/// previous run already verified.
+///
+/// Why this exists: `lean4export -- <roots>` narrows the roots, not the
+/// payload, so every module that imports Mathlib carries the same transitive
+/// closure — measured on `BookProof.ChapterA4`, 24 own declarations dragged in
+/// 54,053 more (369 MiB, 399 s of nanoda). The closure is byte-identical work
+/// from chapter to chapter, so it is re-checked once per chapter for no gain.
+///
+/// `trusted` is the set of names a *full* run (with `collect_names = true`) has
+/// already type-checked; those declarations stay in the environment (their
+/// types must be present for the remaining declarations to check at all) but
+/// are not re-checked. This is trust-by-name, which is exactly as strong as the
+/// manifest: whoever supplies `trusted` is asserting those declarations were
+/// checked against the same environment. Do not accept a manifest from an
+/// untrusted party — for the local corpus pipeline the manifest is written by
+/// the immediately preceding full run (`scripts/lean-corpus-trust`).
+pub fn verify_export_with_trust(
+    export_bytes: &[u8],
+    spec: &LeanVerifySpec,
+    trusted: Option<&HashSet<String>>,
+    collect_names: bool,
+) -> Result<TrustOutcome, KernelError> {
     if export_bytes.is_empty() {
         return Err(KernelError::ProofExportInvalid {
             reason: "export payload is empty".into(),
@@ -63,13 +106,13 @@ pub fn verify_export(
     // `pub(crate)`); `Config::to_export_file` reads a path or stdin. Write the
     // payload to a temp file so we stay on the public API surface.
     let tmp_path = write_temp_export(export_bytes)?;
-    let result = verify_at_path(&tmp_path, spec);
+    let result = verify_at_path(&tmp_path, spec, trusted, collect_names);
     let _ = std::fs::remove_file(&tmp_path);
 
     match result {
-        Ok(mut report) => {
-            report.export_hash = Some(export_hash);
-            Ok(report)
+        Ok(mut outcome) => {
+            outcome.report.export_hash = Some(export_hash);
+            Ok(outcome)
         }
         Err(e) => Err(e),
     }
@@ -79,7 +122,9 @@ pub fn verify_export(
 fn verify_at_path(
     path: &std::path::Path,
     spec: &LeanVerifySpec,
-) -> Result<ProofReport, KernelError> {
+    trusted: Option<&HashSet<String>>,
+    collect_names: bool,
+) -> Result<TrustOutcome, KernelError> {
     let config = Config {
         export_file_path: Some(path.to_path_buf()),
         use_stdin: false,
@@ -108,22 +153,73 @@ fn verify_at_path(
     let n_declars = export_file.declars.len();
     let skipped_names = skipped;
 
+    // Render every declaration name once, in environment order, so the trust
+    // filter can match against the manifest without a `TcCtx` per declaration.
+    // Name pointers here are tagged `DagMarker::ExportFile`, so they read out of
+    // the export's own dag and the scratch context is just the reader.
+    let names: Vec<String> = if trusted.is_none() && !collect_names {
+        Vec::new()
+    } else {
+        export_file.with_ctx(|ctx| {
+            export_file
+                .declars
+                .iter()
+                .map(|(name, _)| name_to_string(ctx, *name))
+                .collect()
+        })
+    };
+
+    let mut checked = 0usize;
+    let mut checked_names: Vec<String> = Vec::new();
+
     // nanoda panics on a rejected proof (`assert!` inside `check_all_declars`).
     // Catch the panic and turn it into a `verified: false` report rather than
     // unwinding into the kernel caller. In `strict` mode the rejection is a
     // hard UK-4801 error instead.
-    let panic_payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        export_file.check_all_declars();
+    let panic_payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match trusted {
+        None => {
+            export_file.check_all_declars();
+            checked = n_declars;
+            if collect_names {
+                checked_names = names.clone();
+            }
+        }
+        Some(set) => {
+            // Skipped declarations stay in the environment: the remaining
+            // declarations need their types to check at all. Only the re-check
+            // is skipped.
+            for ((_, declar), name) in export_file.declars.iter().zip(names.iter()) {
+                if set.contains(name) {
+                    continue;
+                }
+                export_file.check_declar(declar);
+                checked += 1;
+                if collect_names {
+                    checked_names.push(name.clone());
+                }
+            }
+        }
     }))
     .err();
 
+    let skipped_count = if trusted.is_some() { n_declars - checked } else { 0 };
+    // Without a trusted base the kernel sees the whole export, which is what
+    // `declarations_checked` has always meant (and what the pinned-fixture tests
+    // assert). With one it means what this run actually examined — reporting the
+    // export's size there would overstate the claim.
+    let reported_checked = if trusted.is_some() { checked.max(1) } else { n_declars };
+
     match panic_payload {
-        None => Ok(ProofReport {
-            verified: true,
-            declarations_checked: n_declars,
-            failing_theorem: None,
-            error: skipped_error(&skipped_names),
-            export_hash: None,
+        None => Ok(TrustOutcome {
+            report: ProofReport {
+                verified: true,
+                declarations_checked: reported_checked,
+                failing_theorem: None,
+                error: skipped_error(&skipped_names),
+                export_hash: None,
+            },
+            skipped: skipped_count,
+            checked_names,
         }),
         Some(payload) => {
             let message = panic_message(payload);
@@ -138,14 +234,44 @@ fn verify_at_path(
             if spec.strict {
                 Err(KernelError::ProofVerify { reason: message })
             } else {
-                Ok(ProofReport {
-                    verified: false,
-                    declarations_checked: n_declars,
-                    failing_theorem: failing.or(Some("(unknown)".into())),
-                    error: Some(format!("proof rejected: {message}")),
-                    export_hash: None,
+                Ok(TrustOutcome {
+                    report: ProofReport {
+                        verified: false,
+                        declarations_checked: reported_checked,
+                        failing_theorem: failing.or(Some("(unknown)".into())),
+                        error: Some(format!("proof rejected: {message}")),
+                        export_hash: None,
+                    },
+                    skipped: skipped_count,
+                    checked_names,
                 })
             }
+        }
+    }
+}
+
+/// Render a name the way nanoda's pretty printer does: components joined with
+/// `.`, anonymous root elided, numeric components rendered as decimal. The
+/// trusted manifest is written with this same function, so a round trip through
+/// the file compares equal.
+fn name_to_string<'t, 'p: 't>(ctx: &mut TcCtx<'t, 'p>, n: NamePtr<'t>) -> String {
+    match ctx.read_name(n) {
+        Name::Anon => String::new(),
+        Name::Str(pfx, sfx, _) => {
+            let mut out = name_to_string(ctx, pfx);
+            if !out.is_empty() {
+                out.push('.');
+            }
+            out.push_str(ctx.read_string(sfx).as_ref());
+            out
+        }
+        Name::Num(pfx, sfx, _) => {
+            let mut out = name_to_string(ctx, pfx);
+            if !out.is_empty() {
+                out.push('.');
+            }
+            out.push_str(&sfx.to_string());
+            out
         }
     }
 }
