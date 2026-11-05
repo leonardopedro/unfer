@@ -50,14 +50,30 @@ gradients ... superseded by the 11.7 % measured here on the corrected model" —
 and every post-fix number in this document agrees with it. What was stale was
 this file's front page, not the study.
 
-The cause is dated and visible in the history: `2fc095f` (2026-10-22) joined
-**V and O to the Frobenius normalization** in the cosine forward pass — the
-change `tests/formal_claims.rs` forced, because the pre-fix pass was not
-scale-invariant and M2's ⟨θ,∇Φ⟩ = 0 failed for the implementation. The
-2026-10-20 block predates it. The tell is the pre-train line: the old run
-converged to the uniform distribution (loss 2.0743 ≈ ln 8, acc_A 12.9 %),
-today's trains properly (loss 1.1812, acc_A 43.8 %), so the chain starts in a
-different place and its kept draws sit in a different region.
+**A/B on the commit itself, same seed, same flags.**  Not inferred from dates:
+`pcnl` was built standalone at `7efbd97` (the parent of `2fc095f`) and run with
+`--kappa 0.55`, then compared with HEAD:
+
+| | `7efbd97` (pre-fix) | HEAD (post-fix) |
+|---|---|---|
+| pre-train A | 4.8819 → **2.0743**, acc_A 12.9 % | 5.0673 → **1.1812**, acc_A 43.8 % |
+| `θ_A` on B | 9.4 % (2.0939) | 4.3 % (4.1523) |
+| SGD-on-B (same `θ_A`) | 14.1 % (2.0953) | 32.0 % (1.8045) |
+| max scaled ‖g‖ | 8 349.8 | 1 002.9 |
+| BMA (K=2000) | **57.0 % / 1.0668** | **11.7 % / 2.1863** |
+| last-state / ESS(loss) / R̂(loss) | 41.7 % / 25 / 1.066 | 11.7 % / 194 / 1.004 |
+
+The pre-fix build reproduces the archived *regime* — an informative BMA from a
+chance-level `θ_A`, the same 12.9 % pre-train and 14.1 % SGD-on-B — but not its
+last digit (57.0 % vs the quoted 54.7 %, 1.0668 vs 1.0686), so the quoted block
+was not produced by this exact commit either; it is a pre-fix build of the same
+regime.  The change is `2fc095f` (2026-10-22), which joined **V and O to the
+Frobenius normalization** in the cosine forward pass — forced by
+`tests/formal_claims.rs`, because the pre-fix pass was not scale-invariant and
+M2's ⟨θ,∇Φ⟩ = 0 failed for the implementation.  The tell is the pre-train
+column: the fix made Task A learnable (43.8 % vs 12.9 %) and cut the gradient's
+scale ~8×, so the same `β_t` now moves the chain far less relative to the
+likelihood.
 
 What survives and what does not:
 
@@ -665,6 +681,60 @@ numbers are unchanged.
 `STEPS=50000` extends it, which is what the still-contracting `β = 0.01` radius
 would need.
 
+### Handed the solution, the kernel still loses it — the target is the constraint (2026-11-05)
+
+Every sampling arm reports the prior's predictive at the published budget while
+Adam-on-B reaches 49.2 % from the same `θ_A`.  That leaves **search** and
+**retention** inseparable, so `pcnl/examples/adam_start.rs` starts the same
+unadjusted kernel at Adam's Task-B solution (rescaled to `σ√P` — a pure rescale,
+and the cosine forward pass is scale-invariant, so no prediction changes) and
+follows it, under two priors: the published `N(0, σ²I)`, and `centered_at` the
+solution (`N(θ_Adam, σ²I)`, §6.4.2's centred adaptation prior).
+
+The first fact is where the solution lives:
+
+| point | acc (B) | NLL | `‖θ‖` |
+|---|---:|---:|---:|
+| `θ_A` | 4.30 % | 4.1523 | 94.0 (2.1 × shell) |
+| `θ_Adam` (Task B) | **49.22 %** | 1.3136 | **1272.6 (28.2 × shell)** |
+
+and the second is what the kernel does with it (2 chains at `β₀ = 0.3`,
+10 000 steps; 1 chain at `β₀ = 0.03`, 2 000 steps):
+
+| β₀ | prior | `t = 10` | `t = 100` | kept BMA | BMA NLL | ECE |
+|---:|---|---:|---:|---:|---:|---:|
+| 0.3 | origin | 11.72 % | 11.72 % | 11.72 % | 2.1857 | 0.1802 |
+| 0.3 | anchored | 11.72 % | 11.72 % | 11.72 % | 2.1819 | 0.1675 |
+| 0.03 | origin | 12.11 % | 17.58 % | 12.89 % | 2.0979 | 0.1791 |
+| 0.03 | anchored | 12.11 % | 17.58 % | **17.19 %** | **1.9500** | **0.1487** |
+
+Three readings:
+
+1. **Retention fails before search does.** At the published proposal one step of
+   prior noise is `βσ√P = 13.6` in a 45-norm shell, and a sharp 49 % fine-tune
+   is gone by step 10 — *with the prior centred on it*. Nothing about finding
+   the solution is being tested there; the step itself is larger than the
+   solution's basin.
+2. **A smaller step keeps a neighbourhood, and the anchored BMA is the first
+   sampling result in this study below the uniform predictor**: 1.9500 nats
+   against ln 8 = 2.0794, 0.15 nats better than the identical arm with the
+   origin prior. So the prior's *centre* is worth something once the step can
+   preserve structure — a retention version of §6.4.2's centring finding.
+3. **Why nothing can reach 49 % at the published target: the prior's radius.**
+   `π ∝ N(0, σ²I)·exp(−λNL)` pays `r²/2σ² ≈ 6.6 × 10⁶` nats at the solution's
+   norm, so `π` assigns it vanishing mass and *any* sampler of `π` reports the
+   shell's Haar-typical direction, which is chance. This is the same arithmetic
+   as §6.5.6(c)'s radial profile, used in the other direction: there it showed
+   the likelihood cannot move the chain off the shell, here it shows the shell
+   cannot hold the solution.
+
+The consequence is a target change, not a schedule or step-size search.  §3.3's
+scale invariance says predictions depend only on the **direction** of `θ`, so
+the target that contains the solution is a uniform (Haar) prior on the sphere
+at fixed radius — where the solution's direction has full mass — rather than a
+Gaussian in `θ` whose shell is `σ√P = 45` while the fine-tune lives at 1 273.
+That is the next experiment this study implies and it is not yet run.
+
 ### What the review did **not** change
 
 Nothing in the Lean development or the readout module is touched: those
@@ -708,6 +778,8 @@ cargo run --release -p pcnl --example cold_ladder -- 1000 --lambdas 1,16  # §6.
 cargo run --release -p pcnl --example step_distribution   # §6.5.6(b), pCN vs ULA
 cargo run --release -p pcnl --example mh_cold             # §6.5.6(c), the filter's bias
 cargo run --release -p pcnl --example posterior_radius    # §6.5.6(c), the target's radial profile
+cargo run --release -p pcnl --example adam_start          # the solution handed to the kernel
+cargo run --release -p pcnl --example adam_start -- 2000 --chains 1 --thin 20 --beta0 0.03  # …at a small step
 ./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published
@@ -716,3 +788,10 @@ cargo run --release -p pcnl --example dump_trajectory -- /tmp/traj/cosine_nGPT-l
 
 Gates: `cargo fmt -p pcnl -- --check` and
 `cargo clippy -p pcnl --all-targets -- -D warnings` are clean.
+
+**One entry point.**  `./scripts/pcnl-reproduce [--all|STAGE…]` runs the
+commands above as named stages, one log each under `--out` (default
+`/tmp/pcnl-reproduce`), with the wall time printed per stage and a failing
+stage stopping the run — `--list` names them, `--all` is the ~4–6 h full set,
+and the default subset is the fast gate.  The 2026-10-20 block went stale
+because a quoted run had no one-command path back to it; this is that path.

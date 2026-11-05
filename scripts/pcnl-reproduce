@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Regenerate every number quoted in `docs/PCNL_STATUS.md`.
+#
+# The status doc's "Reproduce / verify" block is a list of ~18 commands, each
+# with its own budget (seconds to hours).  Typing them one at a time is how the
+# 2026-10-20 headline stayed stale for two weeks: nobody reran it.  This runs
+# them in named stages, keeps one log per stage under `--out`, and prints the
+# wall time each took so a reader can judge whether a stage was finished or
+# merely started.
+#
+#   ./scripts/pcnl-reproduce                     # cheap stages + the report
+#   ./scripts/pcnl-reproduce --all               # everything (~4-6 h, 2 cores)
+#   ./scripts/pcnl-reproduce overdispersion      # one stage
+#   ./scripts/pcnl-reproduce --list
+#
+# Stages, cheapest first (wall times are two-core measurements, release build):
+#
+#   test            86 tests                                    ~3 min
+#   quick           the quick-config report                     ~20 s
+#   volume          §6.4(ii) Haar volume                        ~10 s
+#   mobility        §4.3 mobility/floor table                   ~1 min
+#   step-scale      §6.5.2 reduced config                       ~2 min
+#   step-scale-ref  §6.5.2 reference (θ_A, capped)              ~15 min
+#   mh-standard     §6.5.3 the standard stack under the filter  ~5 min
+#   temperature     §6.5.4(a) hot λ ladder                      ~20 min
+#   overdispersion  §6.5.4(b) per-draw vs BMA, 1k + 10k         ~40 min
+#   anneal          §6.5.5 the ramp                             ~25 min
+#   cold-1k         §6.5.6(a) cold ladder, 3 seeds              ~60 min
+#   stepdist        §6.5.6(b) pCN vs ULA, pinned and not        ~35 min
+#   mh-cold         §6.5.6(c) the filter's bias, 400 steps      ~25 min
+#   radius          §6.5.6(c) the target's radial profile       ~1 min
+#   report          the published report (10 000 × 4 chains)    ~45 min
+#   adam-start      the Adam-solution start, both priors        ~25 min
+#   cold-10k        §6.5.6(c) the 10 000-step ladder            ~2.7 h
+#
+# The default set is `test quick volume mobility step-scale overdispersion`
+# plus nothing long: it is the subset that fails fast when a change broke the
+# kernel, which is what a gate needs.  `--all` is the archaeology.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+OUT="${OUT:-/tmp/pcnl-reproduce}"
+ALL_STAGES=(
+  test quick volume mobility step-scale step-scale-ref mh-standard
+  temperature overdispersion anneal cold-1k stepdist mh-cold radius report
+  adam-start cold-10k
+)
+DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
+
+usage() {
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  echo
+  echo "stages: ${ALL_STAGES[*]}"
+}
+
+list_stages() {
+  printf '%s\n' "${ALL_STAGES[@]}"
+}
+
+run_stage() {
+  local stage="$1"
+  local log="$OUT/$stage.txt"
+  local start=$SECONDS
+  case "$stage" in
+  test)
+    cargo test --release -p pcnl --locked
+    ;;
+  quick)
+    cargo run --release -p pcnl -- quick --report-file "$log"
+    ;;
+  volume)
+    cargo run --release -p pcnl --example sphere_volume
+    ;;
+  mobility)
+    cargo run --release -p pcnl --example schedule_mobility
+    ;;
+  step-scale)
+    cargo run --release -p pcnl --example step_scale_control
+    ;;
+  step-scale-ref)
+    cargo run --release -p pcnl --example step_scale_control -- --reference
+    ;;
+  mh-standard)
+    cargo run --release -p pcnl --example mh_standard_target
+    ;;
+  temperature)
+    cargo run --release -p pcnl --example temperature_sweep
+    ;;
+  overdispersion)
+    # 1 000 steps, three seeds (the doc's §6.5.4(b) table) …
+    cargo run --release -p pcnl --example overdispersion
+    # … and the published-horizon rows, on the report's exact construction.
+    cargo run --release -p pcnl --example overdispersion -- 10000 --chains 4 \
+      --thin 10 --kappa 0.55 --pretrain sgd --start jitter --seeds 1
+    ;;
+  anneal)
+    cargo run --release -p pcnl --example annealed_start
+    ;;
+  cold-1k)
+    cargo run --release -p pcnl --example cold_ladder -- 1000 --lambdas 1,4,16
+    ;;
+  stepdist)
+    cargo run --release -p pcnl --example step_distribution
+    ;;
+  mh-cold)
+    cargo run --release -p pcnl --example mh_cold
+    ;;
+  radius)
+    cargo run --release -p pcnl --example posterior_radius
+    ;;
+  report)
+    # The quoted block used κ = 0.55; the current default is 0.5, and the doc
+    # now carries both (they agree to 0.0002 nats of BMA at this seed).
+    cargo run --release -p pcnl -- --kappa 0.55 --report-file "$log"
+    ;;
+  adam-start)
+    cargo run --release -p pcnl --example adam_start -- 10000 --chains 2 --thin 20
+    ;;
+  cold-10k)
+    ./scripts/pcnl-cold-10k
+    ;;
+  *)
+    echo "unknown stage: $stage" >&2
+    echo "stages: ${ALL_STAGES[*]}" >&2
+    exit 2
+    ;;
+  esac
+  local elapsed=$((SECONDS - start))
+  printf '✔ %-15s %4d s  → %s\n' "$stage" "$elapsed" "$log"
+}
+
+stages=()
+for arg in "$@"; do
+  case "$arg" in
+  --list) list_stages; exit 0 ;;
+  -h | --help) usage; exit 0 ;;
+  --all) stages=("${ALL_STAGES[@]}") ;;
+  -o | --out)
+    shift
+    OUT="$1"
+    ;;
+  -*) echo "unknown flag: $arg" >&2; usage >&2; exit 2 ;;
+  *) stages+=("$arg") ;;
+  esac
+done
+[ ${#stages[@]} -eq 0 ] && stages=("${DEFAULT_STAGES[@]}")
+
+mkdir -p "$OUT"
+echo "pcnl-reproduce → $OUT"
+echo "stages: ${stages[*]}"
+echo
+
+failures=()
+for stage in "${stages[@]}"; do
+  log="$OUT/$stage.txt"
+  mkdir -p "$(dirname "$log")"
+  # Every stage tees to its log; the pipe keeps the command's own status so a
+  # failure stops the run instead of being swallowed by the tee.
+  if ! run_stage "$stage" 2>&1 | tee -a "$log"; then
+    failures+=("$stage")
+    echo "✘ $stage failed (log: $log)" >&2
+  fi
+done
+
+echo
+if [ ${#failures[@]} -gt 0 ]; then
+  echo "failed stages: ${failures[*]}" >&2
+  exit 1
+fi
+echo "all ${#stages[@]} stage(s) completed; logs in $OUT"
