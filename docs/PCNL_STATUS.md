@@ -497,7 +497,7 @@ underweighted by `N = 512`; and `λN` alone is still not exact with a drift,
 because pCN's prior cancellation needs the drift-free mean `√(1−β²)θ`.
 `MhOptions::exact` now adds the prior ratio and the reverse-proposal ratio
 `(‖θ′−m(θ)‖² − ‖θ−m(θ′)‖²)/2β²σ²`, at one extra full-batch backward pass per
-step; `mh_exact_filter_is_pcn_at_zero_temperature` pins the identity.
+step; `exact_filter_is_a_pcn_identity_at_zero_temperature` pins the identity.
 
 *Radius.*  `pcnl/examples/posterior_radius.rs` scans
 `Φ_λ(r) = r²/2σ² + λNL` along radial rays: the cosine likelihood is **exactly
