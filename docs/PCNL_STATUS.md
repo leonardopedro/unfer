@@ -19,16 +19,75 @@
 
 | Variant | Phase-0 outcome | radial ‖θ‖ (σ√P = 45.19) | BMA acc / NLL / ECE | SGD-on-B acc | ESS(loss) | R̂(loss) |
 |---|---|---|---|---:|---:|---:|
-| **cosine / nGPT-lite** | stable, 10 000 unadjusted steps, no MH | mean 45.5, final 45.7, max 61.1 | **54.7 % / 1.0686 / 0.1589** (K=2000) | 14.1 % | 18 | 1.115 |
+| **cosine / nGPT-lite** (current model) | stable, 10 000 unadjusted steps, no MH | mean 45.3, final 45.7, max 101.1 | **11.7 % / 2.1863 / 0.1798** (K=2000) | 32.0 % (Adam 49.2 %) | 194 | 1.004 |
+| cosine / nGPT-lite (2026-10-20 archive, **stale**) | same | mean 45.5, final 45.7, max 61.1 | 54.7 % / 1.0686 / 0.1589 (K=2000) | 14.1 % | 18 | 1.115 |
 | **standard softmax** | **EXPLODED at step 3** (non-finite gradient) | max 6.9e18 | n/a (chain died) | 10.9 % | — | — |
 
 Chance level is 12.5 % (8 classes). The plan's Phase-0 hypothesis is
 **confirmed for this config, measured**: the unadjusted update survives
-only under the normalized geometry. The plan's §3B radial claim holds
-(‖θ‖ stayed at σ√P while the angular components adapted — BMA learned
-Task B from a ≈-chance start).
+only under the normalized geometry, and its radial claim holds (‖θ‖ stayed
+at σ√P). The *architecture* result stands; the 2026-10-20 row's 54.7 %
+BMA does **not** — see "The 2026-10-20 report is stale" below.
 
-## Report (verbatim)
+## The 2026-10-20 report is stale (2026-11-05)
+
+Rerunning the documented invocation under the current model
+(`cargo run --release -p pcnl -- --kappa 0.55 --report-file …`, same seed,
+same flags) does **not** print the block below:
+
+```text
+[cosine/nGPT-lite] P=16672
+  pre-train A: loss 5.0673 -> 1.1812, acc_A 43.8%
+  B baselines: before 4.3% (NLL 4.1523), SGD-on-B 32.0% (NLL 1.8045), Adam-on-B 49.2% (NLL 1.3136)
+  SG-pCNL: beta 0.3000 -> 0.0802 over 10000 steps | max scaled|g| 1002.897 max batch loss 4.918 | radial final 45.7 max 101.1 mean 45.3 vs sigma*sqrt(P) 45.2 | ESS(loss) 194 ESS(coord)med 15 | Rhat(loss) 1.004 Rhat coord med 1.086 max 1.537 | BMA 11.7% NLL 2.1863 ECE 0.1798 (K=2000) last-state 11.7% | 2577.9s
+  SGLD (baseline): radial final 45.3 max 101.3 vs sigma*sqrt(P) 45.2 | ESS(loss) 201 | Rhat(loss) 1.004 | BMA 11.7% NLL 2.1839 ECE 0.1775 (K=2000) | cross-Rhat 1.006 | 506.7s
+  MH-pCNL (filtered): accept 21.3% | radial final 45.6 vs sigma*sqrt(P) 45.2 | ESS(loss) 66 | Rhat(loss) 1.016 | BMA 11.7% NLL 2.1433 ECE 0.1227 (K=2000) | kept 500 per chain | cross-Rhat 2.572 | 1221.7s
+```
+
+`test/unfer/ngpt.md` §6.5.1(b) already says so — "The pre-fix headline —
+BMA 54.7 %, last-state 41.3 % — was an artifact of those unnormalized
+gradients ... superseded by the 11.7 % measured here on the corrected model" —
+and every post-fix number in this document agrees with it. What was stale was
+this file's front page, not the study.
+
+The cause is dated and visible in the history: `2fc095f` (2026-10-22) joined
+**V and O to the Frobenius normalization** in the cosine forward pass — the
+change `tests/formal_claims.rs` forced, because the pre-fix pass was not
+scale-invariant and M2's ⟨θ,∇Φ⟩ = 0 failed for the implementation. The
+2026-10-20 block predates it. The tell is the pre-train line: the old run
+converged to the uniform distribution (loss 2.0743 ≈ ln 8, acc_A 12.9 %),
+today's trains properly (loss 1.1812, acc_A 43.8 %), so the chain starts in a
+different place and its kept draws sit in a different region.
+
+What survives and what does not:
+
+* **Phase 0's contrast survives, more sharply.** The standard stack still dies
+  at unadjusted step 3 with a non-finite gradient (scaled ‖g‖ 1.2e21, radial
+  6.5e18); the cosine variant still runs 10 000 steps at ‖θ‖ = 45.3–45.7
+  against σ√P = 45.2. The radial claim is unchanged.
+* **The BMA headline does not — at either schedule exponent.** The default
+  `κ = 0.5` run gives 11.7 % / 2.1865 with ESS(loss) 226 and R̂(loss) 1.004,
+  i.e. the same result with an unbounded mobility budget, so this is not the
+  `Σβ² < ∞` freeze of §4.3 either. 11.7 % / 2.1863 is the uniform predictor
+  (ln 8 = 2.0794), last-state the same 11.7 % — no averaging gain at all. The
+  archived 54.7 % / 1.0686 and its "averaging is worth ~13 points" reading are
+  artifacts of the pre-fix model and are marked as such wherever quoted.
+* **Task B is learnable, and the chain does not find it.** From the same θ_A,
+  the momentum-SGD baseline reaches 32.0 % (1.8045) and Adam 49.2 % (1.3136),
+  while every sampling arm — unadjusted, SGLD, and the exact MH filter — sits
+  at 11.7 %. That is §6.5's reachability result, at the published budget and
+  on the current model, and it is a *stronger* statement than the archived
+  report could make.
+* **Mixing is now good** (R̂(loss) 1.004, ESS(loss) 194 of 500): the two
+  families that used to disagree (R̂ 1.115) agree, and they agree on the
+  prior's predictive. The exact filter's cross-R̂ of 2.572 against the
+  unadjusted chain is the one non-converged diagnostic — expected, since one
+  is `π` and the other is a filtered ascent (§6.5.3).
+
+Everything from §6.5.1 onward in this document and in `test/unfer/ngpt.md`
+was measured **after** the fix and is unaffected.
+
+## Report (verbatim, 2026-10-20 — pre-normalization-fix, see above)
 
 ```text
 SG-pCNL (unadjusted) x nGPT-lite toy run (seed 20261020, sigma=0.35, beta0=0.3, kappa=0.55, gamma=0.001, batch=64, chains=4, steps=10000, burn=5000, thin=10)
@@ -67,40 +126,54 @@ the Task-A pre-train, the SGD-on-B baseline, diagnostics, BMA and the
 - full report before/after: **identical** modulo timing and save paths;
 - the four saved trajectory files: **byte-identical** (`cmp`).
 
+*Those wall times are pre-fix and pre-`run_mh`-default.* The same command
+today takes 2 577.9 s: the V/O normalization did not change the sampling
+cost, but the report now also runs the SGLD baseline (506.7 s) and the
+exact MH filter (1 221.7 s, one extra full-batch backward per step).
+The 1.44× `rayon` speedup is a fact about the chain loop, not about the
+total — it is not comparable across those two defaults.
+
 ## Reading against the plan
 
 **Phase 0 — confirmed, as measured.** The standard dot-product variant
-died at unadjusted step 3 with a non-finite gradient (scaled ‖g‖ ~1e21,
-radial ~7e18 against σ√P = 45.2); its deterministic Task-A pre-train had
-already blown up to loss 851. The cosine variant ran all 10 000
+died at unadjusted step 3 with a non-finite gradient (scaled ‖g‖ 1.2e21,
+radial 6.5e18 against σ√P = 45.2); its deterministic Task-A pre-train had
+already blown up to loss 3835. The cosine variant ran all 10 000
 unadjusted mini-batch steps with no Metropolis filter anywhere, radial
-mean 45.5 / final 45.7 vs σ√P 45.2 (max 61.1 is a transient), exactly
-the §3B claim. This is one config, one seed — not a proof.
+mean 45.3 / final 45.7 vs σ√P = 45.2 (max 101.1 is a transient, and it is
+the same 2.2 × shell §6.5.5's `λ = 1` ladder reports), exactly the §3B
+claim. This is one config, one seed — not a proof.
 
-**Phase 3 — BMA works, and beats its own baselines *here*.** BMA
-54.7 % / NLL 1.0686 from a start at 9.4 % (≈ chance), vs. the
-no-adaptation baseline (9.4 % / 2.0939) and this run's SGD-on-B
-baseline (14.1 % / 2.0953). Last-state accuracy is 41.3 % < BMA 54.7 % —
-the averaging itself is worth ~13 points, which is the plan's argument
-for BMA over a single adapted θ.
+**Phase 3 — BMA does not beat its baselines on the current model.** The
+archived run's 54.7 % / 1.0686 / last-state 41.3 % is a pre-fix artifact
+(see the staleness section above). Today's published-budget run gives
+**11.7 % / 2.1863 / last-state 11.7 %** — the uniform predictor, with no
+averaging gain — against a momentum-SGD baseline of 32.0 % / 1.8045 and
+Adam-on-B at 49.2 % / 1.3136 from the *same* θ_A. So the information is
+reachable by supervised training and not by any of the three sampling
+arms. That is not a failure of BMA as an estimator; it is §6.5's finding
+that the sampler never reaches the informative set, and averaging draws
+that all sit in the prior's region cannot manufacture information.
 
-*Two honest caveats on that comparison:*
+*Two caveats on that comparison, both still true:*
 - The SGD baseline uses the pre-train learning rate (0.6) for 1 000
-  steps — it is **not** a tuned Adam/SGD. "Beats deterministic
-  fine-tuning" is not established; "beats this baseline" is.
-- The Task-A pre-train converged to the uniform distribution
-  (loss 2.0743 ≈ ln 8 = 2.0794, acc 12.9 % ≈ chance), so the chain
-  starts from an ≈uninformative θ_A + noise; Task B was learned almost
-  entirely by the chain.
+  steps — not a tuned optimiser. The tuned comparison is the Adam arm
+  (49.2 %), which is a stronger baseline than the plan's.
+- The Task-A pre-train now trains properly (loss 1.1812, acc_A 43.8 %),
+  so θ_A is informative about Task A and only 4.3 % on Task B: the chain
+  starts from a *good* pre-trained point, which makes its failure to
+  adapt harder to attribute to a bad start.
 
-**Phase 4 — diagnostics are mixed and are reported as such.**
-- ESS(loss) ≈ 18 of 500 kept draws/chain, ESS(coord) median 15 — the
-  trajectory is highly autocorrelated.
-- R̂(loss) 1.115, coordinate R̂ median 1.088 / **max 1.380** — chains
-  have *not* fully mixed in 10 000 steps. Anything downstream of the
-  posterior (BMA, ECE) should be read as provisional until R̂ ≤ 1.01.
-- ECE 0.1589 (10-bin, BMA predictive): still noticeably overconfident;
-  NLL 1.0686 is the better-behaved number.
+**Phase 4 — diagnostics are reported as measured, current model.**
+- ESS(loss) 194 of 500 kept draws/chain, ESS(coord) median 15 — the loss
+  chain decorrelates, the coordinates still do not.
+- R̂(loss) 1.004, coordinate R̂ median 1.086 / **max 1.537**. The chains
+  agree on the *value* of the potential while their coordinates differ —
+  the signature of many directions with the same, near-uniform
+  likelihood (§6.4(ii)), not of non-convergence.
+- ECE 0.1798 (10-bin, BMA predictive) against NLL 2.1863 ≈ ln 8: a
+  near-uniform predictor cannot be badly calibrated; the ECE is the
+  residual of a slightly excess-confidence at the shell.
 - The standard variant contributes no diagnostics — it exploded before
   the burn-in; the report says where and with what evidence
   (finite spike recorded *and* `gradient non-finite`), never a silent 0.
@@ -347,7 +420,28 @@ scores each kept draw and the BMA over the same draws:
 So the standard chain's calibration comes from averaging disagreeing,
 individually overconfident draws, while the cosine chain's ensemble is worth
 0.03 nats over a single draw — "an ensemble that has not left its mode",
-quantified.  `pcnl/tests/comparators.rs::mh_drift_cap_changes_only_the_proposal`
+quantified.
+
+**Does ten times the budget split it?** That reading is a 1 000-step
+measurement, and the archived headline (§ above) claimed 54.7 % / 1.0686 at
+10 000 steps — so the gap was re-measured at the published horizon.
+`overdispersion` now rebuilds the report's construction exactly (data A on
+`seed`, data B on `seed+1`, weights on `seed+2`, `θ_A + σξ` start, per-chain
+streams at `seed+{200,400}+c`) and takes `--kappa`/`--thin`/`--pretrain`:
+
+| steps | chains | κ | seeds | per-draw NLL | BMA NLL | gap |
+|---:|---:|---:|---|---:|---:|---:|
+| 1 000 | 4 | 0.55 | 20261020 | 2.2221 | 2.1950 | 0.0271 |
+| 1 000 | 4 | 0.55 | 20261021 | 2.2173 | 2.1894 | 0.0278 |
+| 10 000 | 4 | 0.55 | 20261020 | 2.2014 | 2.1861 | **0.0154** |
+| 10 000 | 2 | 0.5 | 3 seeds | 2.2021–2.2064 | 2.1848–2.1896 | 0.0162–0.0173 |
+
+Ten times the budget moves each draw by −0.02 nats and *shrinks* the gap by
+40 %: the draws agree more, not less, and the ensemble's advantage over a
+single draw falls to 0.015 nats against the uniform predictor's 2.0794. The
+"has not left its mode" reading is therefore not a short-run artifact — it
+gets stronger with budget, and the archived 54.7 % cannot be a slow-burn
+version of the same chain.  `pcnl/tests/comparators.rs::mh_drift_cap_changes_only_the_proposal`
 pins the licence this rests on: a non-binding cap leaves the filtered chain
 bit-identical, and two binding caps return the same kept potential (rel ΔL
 2–7 %) and radius (rel Δ 0.0–0.2 %) — the cap moves the proposal, not the
@@ -594,8 +688,8 @@ schedule.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 85 tests (48 unit + 24 numerical
-                                                         #  + 8 formal claims + 5 comparators)
+cargo test -p pcnl --locked                              # 86 tests (48 unit + 24 numerical
+                                                         #  + 8 formal claims + 6 comparators)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
 # The corrected default is kappa = 0.5; the schedule's budget is in the report.
@@ -607,6 +701,8 @@ cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar vol
 cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
 cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
 cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
+cargo run --release -p pcnl --example overdispersion -- 10000 --chains 4 --thin 10 \
+    --kappa 0.55 --pretrain sgd --start jitter --seeds 1   # …at the published horizon
 cargo run --release -p pcnl --example annealed_start      # §6.5.5, the ramp, ~12 min
 cargo run --release -p pcnl --example cold_ladder -- 1000 --lambdas 1,16  # §6.5.6(a), 3 seeds
 cargo run --release -p pcnl --example step_distribution   # §6.5.6(b), pCN vs ULA
