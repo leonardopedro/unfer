@@ -31,6 +31,7 @@
 #   radius          §6.5.6(c) the target's radial profile       ~1 min
 #   report          the published report (10 000 × 4 chains)    ~45 min
 #   adam-start      the Adam-solution start, both priors        ~25 min
+#   sphere          the Haar prior on directions, six cells     ~45 min
 #   cold-10k        §6.5.6(c) the 10 000-step ladder            ~2.7 h
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
@@ -43,7 +44,7 @@ OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
-  adam-start cold-10k
+  adam-start sphere cold-10k
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -115,6 +116,9 @@ run_stage() {
     ;;
   adam-start)
     cargo run --release -p pcnl --example adam_start -- 10000 --chains 2 --thin 20
+    ;;
+  sphere)
+    cargo run --release -p pcnl --example sphere_chain -- 1200
     ;;
   cold-10k)
     ./scripts/pcnl-cold-10k

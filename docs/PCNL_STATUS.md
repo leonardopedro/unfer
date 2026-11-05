@@ -735,6 +735,70 @@ at fixed radius — where the solution's direction has full mass — rather than
 Gaussian in `θ` whose shell is `σ√P = 45` while the fine-tune lives at 1 273.
 That is the next experiment this study implies and it is not yet run.
 
+### The repaired target: a Haar prior on directions, and a step that still cannot move (2026-11-05)
+
+§6.5.7's diagnosis was that the isotropic Gaussian excludes the solution, and
+the repair it implies is a uniform (Haar) prior on the **direction** of `θ` at
+fixed radius — legitimate because the cosine forward pass is scale-invariant,
+so predictions depend only on the direction.  `pcnl/src/sphere.rs` implements
+that target's kernel: exponential-map pCN on `S^{P−1}` with an **exact**
+Metropolis filter.  The proposal's density in tangent coordinates is
+`N(v; m(u), τ²)·(sin|v|/|v|)^{P−2}`; the reverse move runs back along the same
+geodesic, so `|w| = |v|` and the Jacobian is the same factor on both sides and
+cancels — the ratio is Gaussian-times-likelihood with no numerical integration.
+`sphere.rs`'s circle tests pin it: `λ = 0` is Haar, and with a von Mises target
+`E[u₁] = I₁(κ)/I₀(κ)` at every step size (two real bugs — an unscaled `τ` and a
+negated reverse tangent — were caught by exactly that moment and by nothing
+else).
+
+`pcnl/examples/sphere_chain.rs`, 1 200 steps, one chain, `λ = 1`,
+`ρ = σ√P = 45.19`, seed 20261020:
+
+| where / cell | acc (B) | NLL | `‖θ‖` |
+|---|---|---:|---:|
+| `θ_Adam` (ambient) | 49.22 % | 1.3136 | 1272.6 |
+| `ρ·u_Adam` (same direction, on the shell) | **49.22 %** | **1.3136** | 45.19 |
+| `ρ·u_Haar` | 11.72 % | 4.6667 | 45.19 |
+
+| β₀ | start | accept | BMA acc | BMA NLL |
+|---:|---|---:|---:|---:|
+| 0.3 | Adam | **0.0 %** | 49.22 % | 1.3136 |
+| 0.3 | Haar | 32.2 % | 11.72 % | 2.1818 |
+| 0.03 | Adam | **0.0 %** | 49.22 % | 1.3136 |
+| 0.03 | Haar | **100 %** | 11.72 % | 2.1832 |
+| 0.01 | Adam | 0.6 % | 46.88 % | 1.3281 |
+| 0.01 | Haar | 99.7 % | 11.72 % | **2.9027** |
+
+Three results, in order of how much they change:
+
+1. **The prior diagnosis is confirmed at the target level.** `ρ·u_Adam` scores
+   *identically* to `θ_Adam` (49.22 % / 1.3136), so a Haar prior on directions
+   contains the solution with full mass.  §6.5.7 was right that the Gaussian's
+   radius, not the kernel, was excluding it.
+2. **Repairing the prior is not enough: the repaired target cannot be sampled
+   at any proposal scale this study used.**  From the solution's direction the
+   exact filter accepts **nothing** at `β₀ = 0.3` and `β₀ = 0.03`, and 0.6 %
+   (≈7 of 1 200 proposals) at `β₀ = 0.01`.  Those 49.22 % rows are a *frozen
+   start*, not an ensemble, and the acceptance column is the only thing that
+   distinguishes them.
+3. **Acceptance is a property of position, not of the kernel.**  The same chain,
+   same steps, from a Haar direction accepts 32 % / 100 % / 99.7 % and mixes
+   freely — in the region where the likelihood is flat, at chance, with NLL
+   2.18–2.90 (the draws are *confidently* wrong, §6.4(ii)'s Haar-typical
+   predictive).  So §6.5.6's 90–100 % acceptance in the ambient kernel was a
+   **symptom of sampling the flat region**, not evidence that the sampler
+   worked.  High acceptance and prior-dominated predictions are the same fact.
+
+The two halves of the story are now complementary and both are measured: the
+isotropic Gaussian prior excludes the solution, and once that is repaired a
+fixed *isotropic* pCN step still cannot both move and accept in 16 672
+dimensions (the informative direction's likelihood changes by `O(1)` nats per
+step at `β = 0.01`, against a proposal whose Gaussian term cannot compensate).
+What that leaves is a **preconditioned** proposal — per-coordinate or
+Fisher/curvature-scaled — not a smaller or larger one, and a re-reading of the
+"prior-dominated" evidence in §6.4–6.5 as a statement about the coupling of
+target curvature to step size.
+
 ### What the review did **not** change
 
 Nothing in the Lean development or the readout module is touched: those
@@ -758,7 +822,7 @@ schedule.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 86 tests (48 unit + 24 numerical
+cargo test -p pcnl --locked                              # 89 tests (51 unit + 24 numerical
                                                          #  + 8 formal claims + 6 comparators)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
@@ -780,6 +844,7 @@ cargo run --release -p pcnl --example mh_cold             # §6.5.6(c), the filt
 cargo run --release -p pcnl --example posterior_radius    # §6.5.6(c), the target's radial profile
 cargo run --release -p pcnl --example adam_start          # the solution handed to the kernel
 cargo run --release -p pcnl --example adam_start -- 2000 --chains 1 --thin 20 --beta0 0.03  # …at a small step
+cargo run --release -p pcnl --example sphere_chain        # the Haar prior on directions
 ./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published

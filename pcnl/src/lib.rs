@@ -38,4 +38,5 @@ pub mod normalize;
 pub mod persist;
 pub mod readout;
 pub mod sampler;
+pub mod sphere;
 pub mod task;
