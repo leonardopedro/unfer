@@ -44,10 +44,19 @@
 //! the exact filter at `λ = 16` accepts **0 %**: a 1.35-norm move changes the
 //! direction enough to shift `N·L` by ~10² nats, so no ratio can cover it.
 //! `β = 0.01` accepts 86–89 % at the same `λ` and returns the cold posterior's
-//! own predictive: NLL 2.18–2.24, ECE 0.17–0.20, accuracy at chance.  That is
-//! better calibrated than `λ = 1` (ECE 0.31) but still worse than the uniform
-//! predictor's `ln 8 = 2.0794` — calibration without information, and a third
-//! of the size §6.5.5's unadjusted ladder reported.
+//! own predictive: NLL 2.18–2.24, ECE 0.17–0.20, accuracy at chance.
+//!
+//! **Those 400-step numbers are a relaxation, not the answer.**  At 10 000
+//! steps (`scripts/pcnl-cold-10k`, 50 kept draws, one seed) the same cell gives
+//! NLL **2.0993 / ECE 0.0614** against §6.5.5's unadjusted `2.1030 / 0.0670` —
+//! so the cold ladder's calibration is the *target's*, and the 400-step rows
+//! were under-mixed.  `λ = 1` reads 2.1568/0.1339 (pCNL) and 2.1899/0.1810
+//! (exact), so the filter changes little where the target is flat enough for
+//! pCNL to be nearly right.  Long-horizon pCNL at `λ = 16` goes the other way —
+//! 19.5 % acceptance, 34.8 % accuracy, 1.4783 NLL — manufacturing information
+//! the posterior does not have.  No exact row reaches above-chance accuracy, and
+//! the best NLL (2.0993) is still 0.02 nats above the uniform predictor's
+//! `ln 8 = 2.0794`.
 //!
 //! ```text
 //! cargo run --release -p pcnl --example mh_cold

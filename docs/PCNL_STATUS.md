@@ -524,22 +524,38 @@ prediction changes) instead, 400 steps, 2 seeds:
 Uniform NLL is `ln 8 = 2.0794`; the 0 % row's 4.9 is `θ_A`'s own predictive
 (the chain never moved).
 
-Readings, in order of how much they change:
+**The 10 000-step ladder, and what it changes.**  The 400-step rows above are
+still relaxing (`1/β² = 1.1e3` steps at `β = 0.03`, `1e4` at `β = 0.01`), so
+`scripts/pcnl-cold-10k` reruns the four usable cells with 10 000 steps, burn
+5 000, thin 100 (50 kept draws, one seed, shell start):
 
-1. **The cold target's calibration effect survives an exact sampler, at a third
-   of the size**: ECE 0.169–0.205 against 0.314–0.320 at `λ = 1`, NLL 2.18–2.24
-   against 2.37–2.38.  §6.5.5's 2.1030 / 0.0670 was mostly the unadjusted
-   chain's: pCNL at the same `λ` gives 1.98–2.11 / 0.045–0.057, i.e. *better*
-   than the target allows, because a likelihood-filtered ascent takes uphill
-   moves the ratio forbids.
-2. **Nothing beats the uniform predictor.**  Even the exact cold posterior's
-   NLL (2.18) is above `ln 8`.  The typical set is Haar-typical and a
-   Haar-typical direction is confidently wrong (§6.4(ii)), so averaging over the
-   posterior is worse than refusing to predict: calibration improves, information
-   does not appear.
-3. **The cold target is immobile at `β = 0.03`**: 0 % acceptance at `λ = 16`,
-   because a 1.35-norm move shifts `N·L` by ~10² nats.  The usable proposal
-   scale shrinks with `λ`, so `β` belongs in the cell, not in the setup.
+| `λ` | ratio | accept | BMA acc | BMA NLL | ECE | final |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | pCNL | 90.5 % | 12.9 % | 2.1568 | 0.1339 | 49.1 |
+| 1 | exact MH | 99.9 % | 12.9 % | 2.1899 | 0.1810 | 48.4 |
+| 16 | pCNL | 19.5 % | **34.8 %** | **1.4783** | 0.0891 | 59.0 |
+| 16 | exact MH `β = 0.01` | 99.2 % | 12.9 % | **2.0993** | **0.0614** | 61.1 |
+
+1. **The cold result replicates under an exact filter.**  `2.0993 / 0.0614`
+   against §6.5.5's unadjusted `2.1030 / 0.0670` — the cold ladder's calibration
+   was the target's, not the filter's bias.  My 400-step reading of "a third of
+   the size" was under-mixing, and the 10k run is what settles it.
+2. **At `λ = 1` the two ratios agree** (2.157/0.134 against 2.190/0.181): where
+   the target is flat enough for pCNL's drift to be nearly right, filtering it
+   changes little.  The filter matters where the target is sharp.
+3. **Long-horizon pCNL at `λ = 16` departs upward**: 19.5 % acceptance,
+   34.8 % accuracy, 1.4783 NLL — *above* chance, which no exact draw reaches
+   (all at 12.9 %).  That is the unadjusted bias, and it shows up as
+   information the posterior does not have, not as miscalibration.
+4. **The radius cannot contaminate these columns.**  The exact rows end at
+   48–61 against 45.2 and are still contracting (1e4 steps at `β = 0.01`, and
+   `1e4` is the whole run); but the cosine likelihood is exactly
+   scale-invariant, so every rescaled point gives the *same* predictive.  The
+   radial coordinate affects the acceptance (hence mixing) and nothing in the
+   accuracy/NLL/ECE columns.
+5. **Still nothing beats the uniform predictor**, narrowly: the best row,
+   2.0993, is 0.02 nats above `ln 8 = 2.0794`.  Cold `λ` buys calibration, not
+   information.
 
 **That corrects §6.5.3's wording twice.**  Its "exact full-batch
 likelihood-ratio filter" rows showed the start artefact (radial final 95–134
@@ -551,9 +567,9 @@ answered in the shell-start table, and it is the exact chain.
 `examples/mh_standard_target.rs` now say pCNL instead of "exact"; the crate's
 numbers are unchanged.
 
-`scripts/pcnl-cold-10k` (10 000 steps, one seed, cells `{1 pCNL, 1 MH, 16 pCNL,
-16 MH β=0.01}`) is the run that makes "equilibrated" measured rather than
-assumed; its table replaces this one when it lands.
+`scripts/pcnl-cold-10k` is the run that produced the 10 000-step table above;
+`STEPS=50000` extends it, which is what the still-contracting `β = 0.01` radius
+would need.
 
 ### What the review did **not** change
 
