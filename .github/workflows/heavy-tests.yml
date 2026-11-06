@@ -51,7 +51,7 @@ jobs:
           echo "  ../dynamic-arctic @ $(git -C ../dynamic-arctic rev-parse HEAD)"
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # Swatinem/rust-cache@v2
 
       - name: run the heavy suites
         run: |
