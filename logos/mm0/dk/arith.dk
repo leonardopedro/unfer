@@ -1,0 +1,31 @@
+(; arith.dk — a Dedukti-style presentation of the arithmetic fragment.
+   Translated by `logos mm0 dk logos/mm0/dk/arith.dk`: every rule below is
+   re-proved as its own mm0 theorem (so the rewrite system is not assumed),
+   and every `thm` becomes a `teq` theorem whose proof is the explicit chain
+   of Peano rewrites that Dedukti's `refl` would have performed by conversion.
+   Checked with mm0-rs and re-checked with mm0-c.
+
+   The last three theorems exercise the proof-term forms: a citation of an
+   earlier theorem, `sym(...)`, and `trans(..., ...)` whose intermediate term
+   is recovered here by normalising the left side. ;)
+
+symbol zero : nat.
+symbol succ : nat -> nat.
+symbol plus : nat -> nat -> nat.
+symbol times : nat -> nat -> nat.
+symbol eq : nat -> nat -> Prop.
+
+rule plus(x, zero) --> x.
+rule plus(x, succ(y)) --> succ(plus(x, y)).
+rule times(x, zero) --> zero.
+rule times(x, succ(y)) --> plus(times(x, y), x).
+
+thm two_plus_three : eq plus(succ(succ(zero)), succ(succ(succ(zero)))) succ(succ(succ(succ(succ(zero))))) := refl.
+thm two_times_three : eq times(succ(succ(zero)), succ(succ(succ(zero)))) succ(succ(succ(succ(succ(succ(zero)))))) := refl.
+thm plus_zero_right : x : nat -> eq plus(x, zero) x := refl.
+thm times_zero : (x : nat) -> eq times(x, zero) zero := refl.
+thm plus_succ : (x y : nat) -> eq plus(x, succ(y)) succ(plus(x, y)) := refl.
+
+thm plus_zero_inst : eq plus(succ(zero), zero) succ(zero) := plus_zero_right.
+thm plus_zero_flipped : eq succ(zero) plus(succ(zero), zero) := sym(plus_zero_inst).
+thm plus_zero_composed : eq plus(succ(zero), zero) succ(zero) := trans(plus_zero_inst, refl).
