@@ -1,0 +1,18 @@
+(; induction_gap.dk — the front end's negative anchor.
+   Commutativity is *true* in the standard model but not in the congruence the
+   recursion laws generate, so it cannot be translated as a conversion: the
+   front end must refuse it and name both normal forms. Run
+
+       logos mm0 dk logos/mm0/dk/induction_gap.dk
+
+   and expect exit 1 with "do not convert to a common normal form". ;)
+
+symbol zero : nat.
+symbol succ : nat -> nat.
+symbol plus : nat -> nat -> nat.
+symbol eq : nat -> nat -> Prop.
+
+rule plus(x, zero) --> x.
+rule plus(x, succ(y)) --> succ(plus(x, y)).
+
+thm comm : (x y : nat) -> eq plus(x, y) plus(y, x) := refl.

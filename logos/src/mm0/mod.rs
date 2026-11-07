@@ -29,6 +29,7 @@
 
 pub mod bridge;
 pub mod cnl;
+pub mod dk;
 pub mod emit;
 pub mod kop;
 pub mod proof;
@@ -38,7 +39,7 @@ pub use emit::{Certificate, Verdict};
 pub use kop::KClaim;
 pub use proof::Expr;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Exit codes, the same contract `logos unf`/`logos iso` already use: 0 for yes,
 /// 2 for no, 1 for "did not run / could not decide".
@@ -56,6 +57,7 @@ pub fn run(args: &[String]) -> i32 {
         "ask" => cmd_ask(&args[1..]),
         "claims" => cmd_claims(&args[1..]),
         "check" => cmd_check(&args[1..]),
+        "dk" => cmd_dk(&args[1..]),
         other => {
             eprintln!("unknown `logos mm0` command: {other}\n\n{USAGE}");
             UNKNOWN
@@ -69,6 +71,9 @@ usage:
   logos mm0 ask <sentence> [options]            certify one sentence
   logos mm0 claims <FILE> [options]             certify a fixture, check expectations
   logos mm0 check <FILE.mm0 | DIR>              run mm0-rs and mm0-c on artifacts
+  logos mm0 dk <FILE.dk> [--out DIR]           translate a Dedukti/Lambdapi file, then
+                                                compile it with mm0-rs and re-check it
+                                                with mm0-c (always: that is the point)
 
 ask options:
   --out DIR          write <theorem>.mm0 / <theorem>.mm1
@@ -80,6 +85,61 @@ ask options:
                      (theory: mehler sections in a claims file do the same)
 
 exit codes: 0 yes (true / proved), 2 no (refuted), 1 unproved or error";
+
+/// `logos mm0 dk <FILE.dk>`: translate a Dedukti/Lambdapi presentation into the
+/// target theory and have mm0 judge it.
+///
+/// Verification is not behind a flag here. A front end is only worth something
+/// if its output is checked, so the artifacts are always compiled by `mm0-rs`
+/// and re-checked by `mm0-c`, and a rejection is an error rather than a note —
+/// the same contract `scripts/logos2mm0` holds the CNL path to.
+fn cmd_dk(args: &[String]) -> i32 {
+    let file = match args.first().filter(|a| !a.starts_with('-')) {
+        Some(f) => f.clone(),
+        None => {
+            eprintln!("usage: logos mm0 dk <FILE.dk> [--out DIR]\n\n{USAGE}");
+            return UNKNOWN;
+        }
+    };
+    let out = flag_value(args, "--out");
+    match dk::run(Path::new(&file), out.as_deref().map(Path::new)) {
+        Ok((translated, verified)) => {
+            println!("dk:      {file}");
+            println!(
+                "rules:   {} re-proved in the theory (each one is its own mm0 theorem)",
+                translated.rules.len()
+            );
+            for rule in &translated.rules {
+                println!("  {:<12} {}  = '{} ", rule.name, rule.statement, rule.proof);
+            }
+            println!("thm:     {} translated", translated.theorems.len());
+            for thm in &translated.theorems {
+                println!(
+                    "  {:<20} {}  = '{} ",
+                    thm.name, thm.statement, thm.proof
+                );
+            }
+            println!(
+                "mm0:     ok{} ({})",
+                verified
+                    .sorts
+                    .as_ref()
+                    .map(|s| format!(", {s}"))
+                    .unwrap_or_default(),
+                verified.mmb.display()
+            );
+            match verified.mm0_c_exit {
+                Some(code) => println!("mm0-c:   exit {code} (independent checker over the .mmb)"),
+                None => println!("mm0-c:   not found; the elaborator's verdict stands alone"),
+            }
+            YES
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            UNKNOWN
+        }
+    }
+}
 
 fn cmd_theory(args: &[String]) -> i32 {
     // `--kopperman` dumps the full Hilbert-space target theory (the agent
