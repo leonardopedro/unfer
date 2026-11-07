@@ -54,6 +54,42 @@
 //! walk to 90 % with growth exponent 0.521, so the chain is heading to the
 //! shell where the mass is, not relaxing inside the cone.
 //!
+//! **`--cap [R]` makes the question well posed — and freezes the chain.**  If `π`
+//! is prior-dominated then "what is the posterior mean?" has the base rate as its
+//! answer and every 46–51 % number is a conditional; restricting the *target* to
+//! `d(u_Adam, u) ≤ R` (default `r₁`) makes that conditional the law the chain has,
+//! and it costs the kernel nothing (`π = 0` outside turns outward moves into
+//! rejections, so `shell_jump`'s symmetric ratio stays exact;
+//! `pcnl::sphere::restrict_to_cap`, with a Haar-on-the-cap moment test).
+//!
+//! It does not work in `P = 16 672`, and the reason is worth keeping: *measured*
+//! 0.0 % acceptance at `R = r₁` and 0.1 % at `R = 2.3e-3`, both with `R̂ = ∞`.
+//! A step `r` from radius `R` stays inside only when `⟨u,ŵ⟩ ≥ r/(2R)`, whose
+//! probability is `Φ̄(r√P/(2R))` — `e^{−P/8}` at `R = r` — and `d²` gains `r²` per
+//! step, so the walk reaches the boundary in `(R/r)² ≈ 7` steps and never leaves.
+//! The pinned run still prices the conditional (48.44 % / 1.3132, against the
+//! sweep's 48.95 % / 1.3132) but it is four points, not a sample.
+//!
+//! **`--arm latitude --d0 R` is the kernel that lives on the boundary.**
+//! `sphere::latitude_jump` rotates about the `u_Adam` axis, so `⟨u_Adam,u⟩` is
+//! invariant to machine precision: the cap never rejects and the target *is*
+//! `π(· | d = R)`.  `--step` sets the shell step (relaxation `(sin R/r)²` steps).
+//! Four radii, two chains, 10 000 steps: BMA 47.66 / 46.48 / 48.44 / 39.84 % at
+//! `R = 8.61e-4, 2.3e-3, 1e-2, 7.9e-2`, every `R̂(NLL) ≤ 1.04` — the first
+//! *converged* posterior numbers in the study, and the first agreement between an
+//! exact chain and the ball-IS sweep (48.8–49.0 %) on the same functional.  At
+//! `1e-2` rad the conditional's NLL (1.3045) is better than the anchor's (1.3136).
+//!
+//! **The radial law, and the data it would take.**  With Haar on the sphere,
+//! geodesic polars give `p(d) ∝ exp(−N·L(d))·(sin d)^{P−2}`, so the mode solves
+//! `N·L′(d)·d = P − 2`.  Fitting this example's own sweep column
+//! (`N·L ≈ 2200·d^{1.05}`) puts that mode at `d* = 6.5 rad`: **there is no interior
+//! mode**, the density rises to the equatorial shell, and `π`'s predictive is the
+//! base rate — the sharp form of prior-dominated, and why the 10 k/50 k walks
+//! diffuse as `√t` with no turn-around.  The same equation prices the fix:
+//! `N·L′(2.3e-3) ≥ (P−2)/2.3e-3 = 7.25e6` against the measured `1.1e3`, i.e.
+//! `N ≈ 3.4e6` examples (6.6e3× the 512 used).
+//!
 //! **`--arm guided`** replaces the uniform direction with a von Mises–Fisher
 //! draw about the ascent direction (`PCNL_KAPPA_GUIDE`, exact for every `κ`).
 //! Its drift budget is `r·A`, `A ≈ κ/(P−2)`, so drift and the free walk cross at
@@ -69,6 +105,8 @@
 //! cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --arm density
 //! cargo run --release -p pcnl --example basin_posterior -- --prior-is 2048
 //! PCNL_KAPPA_GUIDE=100 cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --arm guided --chains 4
+//! cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap
+//! cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 2 --arm latitude --d0 2.3e-3 --step 1.15e-3
 //! ```
 
 use candle_core::{Device, Tensor};
@@ -138,6 +176,10 @@ struct Env {
     radius: f64,
     u0: Vec<f64>,
     l0: f64,
+    /// Geodesic radius of the target's cap about `u_Adam`; `inf` = unrestricted.
+    cap: f64,
+    /// Latitude held fixed by `--arm latitude` (the radius of the conditional).
+    d0: f64,
 }
 
 impl Env {
@@ -184,6 +226,8 @@ impl Env {
             radius,
             u0,
             l0: 0.0,
+            cap: f64::INFINITY,
+            d0: 0.0,
         };
         env.l0 = env.pot(&env.u0.clone());
         env
@@ -254,6 +298,17 @@ fn run_chain(
     if arm == "shell" || arm == "guided" {
         cur = env.u0.clone();
         cur_l = env.l0;
+    } else if arm == "latitude" {
+        // start *on* the latitude, in a seeded direction
+        let mut v: Vec<f64> = (0..env.p_dim)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
+        project(&mut v, &env.u0);
+        let nv = norm_of(&v).max(1e-300);
+        cur = (0..env.p_dim)
+            .map(|i| env.d0.cos() * env.u0[i] + env.d0.sin() * v[i] / nv)
+            .collect();
+        cur_l = env.pot(&cur);
     } else {
         // start from a draw of the fixed law, not from its mode
         let sd = r1 / (env.p_dim as f64).sqrt();
@@ -295,6 +350,8 @@ fn run_chain(
     };
     if arm == "shell" {
         let log_target = |u: &[f64]| -env.n * env.pot(u);
+        let log_target = pcnl::sphere::restrict_to_cap(log_target, &env.u0, env.cap);
+        let log_target = &log_target;
         for t in 0..steps {
             let (prop, take, prop_l) =
                 pcnl::sphere::shell_jump(&cur, -env.n * cur_l, r1, &log_target, &mut rng);
@@ -325,6 +382,8 @@ fn run_chain(
             .unwrap_or(0.3);
         let live = std::env::var("PCNL_LIVE_GRAD").is_ok_and(|v| v == "1");
         let log_target = |u: &[f64]| -env.n * env.pot(u);
+        let log_target = pcnl::sphere::restrict_to_cap(log_target, &env.u0, env.cap);
+        let log_target = &log_target;
         let direction = |x: &[f64]| {
             if live {
                 let (_, g) = env
@@ -344,6 +403,29 @@ fn run_chain(
                 r1,
                 kappa,
                 &direction,
+                &log_target,
+                &mut rng,
+            );
+            if take {
+                cur = prop;
+                cur_l = -prop_l / env.n;
+                accepted += 1;
+            }
+            record(env, &mut chain, &cur, cur_l, t, burn, thin);
+            report(t, &cur, cur_l, accepted);
+        }
+    } else if arm == "latitude" {
+        // The move keeps `⟨a,u⟩` fixed, so the target is the conditional
+        // `π(· | d(u, u₀) = d₀)` and the cap can never reject a proposal.
+        let log_target = |u: &[f64]| -env.n * env.pot(u);
+        let log_target = pcnl::sphere::restrict_to_cap(log_target, &env.u0, env.cap);
+        let log_target = &log_target;
+        for t in 0..steps {
+            let (prop, take, prop_l) = pcnl::sphere::latitude_jump(
+                &cur,
+                -env.n * cur_l,
+                r1,
+                &env.u0,
                 &log_target,
                 &mut rng,
             );
@@ -623,8 +705,18 @@ fn main() {
     let chains: usize = flag("--chains").and_then(|v| v.parse().ok()).unwrap_or(1);
     let arm = flag("--arm").unwrap_or_else(|| "shell".into());
     let no_sweep = args.iter().any(|a| a == "--no-sweep");
+    // `--cap [R]` restricts the *target* to a cap of radius `R` (default: the
+    // measured r₁) about u_Adam.  Nothing in the kernel changes: the missing
+    // mass outside the cap turns every outward move into a rejection.
+    // `--step R` overrides the jump radius (default: the sweep's one-nat r₁).
+    // The latitude arm needs it: its relaxation time along the shell is
+    // `(sin d₀ / r)²` steps, so a shell at 0.08 rad cannot mix in 10 000 steps
+    // at `r = r₁` and has to be walked with a longer step.
+    let step_flag = flag("--step").and_then(|v| v.parse::<f64>().ok());
+    let cap_flag = args.iter().any(|a| a == "--cap");
+    let cap_radius = flag("--cap").and_then(|v| v.parse::<f64>().ok());
 
-    let env = Env::new(SEED);
+    let mut env = Env::new(SEED);
     if let Some(m) = flag("--prior-is").and_then(|v| v.parse::<usize>().ok()) {
         prior_is(&env, m);
         return;
@@ -660,6 +752,8 @@ fn main() {
             "width r", "ESS", "angle mean", "acc %", "NLL", "in basin %", "N·medΔL", "N·maxΔL"
         );
         let mut max_ess = (f64::NEG_INFINITY, 0.0f64);
+        // (width, N·medΔL) per row: the inputs to the posterior-scale line below.
+        let mut rows: Vec<(f64, f64)> = Vec::new();
         let mut one_nat: Option<f64> = None;
         let (mut pred_lo, mut pred_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ 0x15);
@@ -708,6 +802,7 @@ fn main() {
                 n * med_dl,
                 n * dl_max
             );
+            rows.push((width, n * med_dl));
             pred_lo = pred_lo.min(w_acc);
             pred_hi = pred_hi.max(w_acc);
             if ess > max_ess.0 {
@@ -719,6 +814,55 @@ fn main() {
         }
         if let Some(r) = one_nat {
             r1 = r;
+        }
+        // **The posterior's own scale.**  Haar on the sphere in geodesic polar
+        // coordinates is `(sin d)^{P−2} dd dΩ`, so the posterior in the radius is
+        // `p(d) ∝ exp(−N·L(d))·(sin d)^{P−2}` and its mode solves
+        // `N·L′(d)·d = P−2` (for `d ≪ 1`).  Fitting the sweep's own column as
+        // `N·L = c·d^β` gives `d* = ((P−2)/(cβ))^{1/β}`, and the same equation
+        // says how much data would put the mode inside the basin.  This is the
+        // question every 46–51 % number in the docs is really conditional on.
+        let fit: Vec<(f64, f64)> = rows.iter().copied().filter(|(_, y)| *y > 0.0).collect();
+        if fit.len() >= 3 {
+            let m = fit.len() as f64;
+            let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+            for (w, y) in &fit {
+                let (x, ly) = (w.ln(), y.ln());
+                sx += x;
+                sy += ly;
+                sxx += x * x;
+                sxy += x * ly;
+            }
+            let beta = (m * sxy - sx * sy) / (m * sxx - sx * sx);
+            let c = ((sy - beta * sx) / m).exp();
+            let d_star = ((p_f - 2.0) / (c * beta)).powf(1.0 / beta);
+            println!(
+                "   posterior scale: N·L ≈ {c:.1}·d^{beta:.2} against the Haar volume d^{:.0};\n   \
+                 the mode of p(d) ∝ e^{{−N·L}}·d^{{P−2}} is d* = {d_star:.2e} rad",
+                p_f - 2.0
+            );
+            if d_star > 1.5 {
+                println!(
+                    "   → beyond the equator, i.e. **no interior mode**: the volume wins and\n   \
+                     π's predictive is the base rate, whatever the kernel does."
+                );
+            }
+            // the gradient needed at the basin radius, and the data shortfall
+            let need = (p_f - 2.0) / BASIN;
+            let have = rows
+                .iter()
+                .find(|(w, _)| (*w - BASIN).abs() < 1e-9)
+                .map(|(_, y)| y / BASIN);
+            if let Some(have) = have {
+                println!(
+                    "   \n   to localize at the basin radius {BASIN:.1e}: N·L′ ≥ (P−2)/r = \
+                     {need:.2e} nats/rad\n   \
+                     against the measured {have:.2e} at N = {n:.0} — a factor \
+                     {:.1e}, i.e. N ≈ {:.1e} examples.\n",
+                    need / have,
+                    n * need / have
+                );
+            }
         }
         println!(
             "\n2. the target's width and predictive\n   \
@@ -732,6 +876,34 @@ fn main() {
     }
 
     // ---- 3. the chains ------------------------------------------------------
+    if let Some(st) = step_flag {
+        println!(
+            "   jump radius overridden: r = {st:.3e} rad ({:.2} r₁)\n",
+            st / r1
+        );
+        r1 = st;
+    }
+    if arm == "latitude" {
+        env.d0 = flag("--d0").and_then(|v| v.parse().ok()).unwrap_or(r1);
+        println!(
+            "   arm latitude: the target is conditioned on d(u_Adam, u) = {:.3e} rad \
+             ({:.2} r₁).\n   \
+             The move keeps ⟨u_Adam, u⟩ fixed, so the radius is exact every step, \
+             the cap\n   \
+             never rejects, and the chain can move *on* the shell a free-angle walk \
+             gets stuck on.\n",
+            env.d0,
+            env.d0 / r1
+        );
+    }
+    if cap_flag {
+        env.cap = cap_radius.unwrap_or(r1);
+        println!(
+            "   target restricted to cap: d(u_Adam, u) ≤ {:.3e} rad (kernel unchanged;\n   \
+             proposals outside the cap are rejected by π = 0, so the ratio stays exact)\n",
+            env.cap
+        );
+    }
     let burn = steps / 5;
     let thin = (steps / 400).max(1);
     let runs: Vec<Chain> = if chains <= 1 {
@@ -771,8 +943,20 @@ fn main() {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(0.3);
         format!("fixed-radius guided jump (r = {r1:.2e} rad, κ = {kappa})")
+    } else if arm == "latitude" {
+        // `⟨u₀,u⟩` is fixed by construction, so the target *is* the shell
+        // conditional and the cap cannot bite; the radius column below is
+        // constant by design rather than frozen by rejection.
+        format!("fixed-latitude rotation (r = {r1:.2e} rad, exact ratio)")
     } else {
         format!("fixed-density independence sampler (r = {r1:.2e} rad, exact ratio)")
+    };
+    let label = if arm == "latitude" {
+        format!("{label}, target ∩ shell d = {:.2e} rad", env.d0)
+    } else if env.cap.is_finite() {
+        format!("{label}, target ∩ cap {:.2e} rad", env.cap)
+    } else {
+        label
     };
     println!(
         "3. {} chain(s): {label}\n   {steps} steps, burn {burn}, thin {thin}",
