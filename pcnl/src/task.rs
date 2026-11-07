@@ -109,6 +109,17 @@ impl Dataset {
         loss_and_grad(theta, shapes, variant, &self.train_x, &self.train_y)
     }
 
+    /// The same potential, forward pass only.  Exact samplers ask for
+    /// `log π(θ)` at every proposal and never for the gradient, so building the
+    /// backward graph only to drop it (`loss_and_grad(..).0`, which examples did)
+    /// pays for the whole reverse sweep per step.  Identical value to
+    /// `loss_and_grad(..).0`, by construction: same forward, same cross-entropy.
+    pub fn train_loss(&self, theta: &Tensor, shapes: &Shapes, variant: Variant) -> Result<f64> {
+        let logits = crate::model::forward(theta, shapes, variant, &self.train_x)?;
+        let loss = candle_nn::loss::cross_entropy(&logits, &self.train_y)?;
+        Ok(loss.to_scalar::<f32>()? as f64)
+    }
+
     /// Classification accuracy on the held-out split, in percent.
     pub fn accuracy(&self, theta: &Tensor, shapes: &Shapes, variant: Variant) -> Result<f64> {
         let logits = crate::model::forward(theta, shapes, variant, &self.test_x)?;
@@ -180,6 +191,41 @@ impl BatchLoader {
 /// Squared Euclidean norm of a flat tensor, in f64.
 fn squared_norm(x: &Tensor) -> f64 {
     crate::sampler::dot(x, x).unwrap_or(f64::NAN)
+}
+
+/// The Gaussian half of the Metropolis–Hastings log ratio for the pCNL
+/// proposal family
+///
+/// ```text
+/// q(θ′ | θ) = N(θ′; m(θ), β²σ² I),   m(θ) = √(1−β²)(θ−μ) + μ − h·∇U(θ)
+/// ```
+///
+/// namely `log q(θ|θ′) − log q(θ′|θ) = (‖θ′−m(θ)‖² − ‖θ−m(θ′)‖²) / (2β²σ²)`.
+/// The Gaussian's normalizer cancels because both ends use the same
+/// covariance — the reason *this* kernel needs no determinant term, unlike
+/// the spherical one, where `Σ = P D P` is restricted to the tangent space
+/// (`sphere::SpherePcn::step_inner`).
+///
+/// Both means must come from the **same** proposal map: whatever is done to
+/// the forward drift (a cap, a temperature) has to be done to the reverse
+/// one, or `q(θ|θ′)` is not the density of the move the chain made and the
+/// filter targets neither `π` nor the unadjusted chain. `log_pi_diff` is the
+/// target's log ratio `log π(θ′) − log π(θ)`, prior and tempered likelihood
+/// already combined.
+pub fn pcn_proposal_log_ratio(
+    log_pi_diff: f64,
+    theta: &Tensor,
+    proposal: &Tensor,
+    m_now: &Tensor,
+    m_prop: &Tensor,
+    s2: f64,
+) -> f64 {
+    if s2 <= 0.0 || !s2.is_finite() {
+        return log_pi_diff;
+    }
+    let d_now = squared_norm(&(proposal - m_now).expect("θ′−m(θ)"));
+    let d_prop = squared_norm(&(theta - m_prop).expect("θ−m(θ′)"));
+    log_pi_diff + (d_now - d_prop) / (2.0 * s2)
 }
 
 /// Phase 4 benchmarks pCNL against, and Phase 3's Task-A pre-trainer.
@@ -531,6 +577,61 @@ impl Default for MhOptions {
     }
 }
 
+/// The normalized geometry's own gradient scale: the largest *fully scaled*
+/// mini-batch gradient norm `‖∇U‖ = ‖g‖·N/B` that the cosine chain produces
+/// over its first `steps` steps.
+///
+/// §6.5.2 anchors the standard stack's drift cap here, because the cap is a
+/// statement about the geometry's displacement budget and so has to be
+/// measured rather than chosen.  It used to live twice: a private copy in
+/// `examples/mh_standard_target.rs` and a rounded literal `7.0e2` in
+/// `examples/temperature_sweep.rs`.  The measured caps are 712 / 757 / 764 for
+/// the three seeds, so the literal is 6–9 % low — a cap that only changes the
+/// proposal cannot move the target, but the two files' acceptance columns were
+/// no longer the same experiment.  One definition, called from both:
+///
+/// ```text
+/// cargo run --release -p pcnl --example mh_standard_target
+/// ```
+///
+/// prints the value it uses (`cap C = …`) next to every row.
+pub fn cosine_gradient_scale(
+    cfg: &crate::experiment::Config,
+    data: &Dataset,
+    theta_a: &Tensor,
+    steps: usize,
+) -> f64 {
+    use crate::sampler::{SgPcnlScheduler, SgPcnlState};
+
+    let sched = SgPcnlScheduler {
+        beta_0: cfg.beta_0,
+        gamma: cfg.gamma,
+        kappa: cfg.kappa,
+    };
+    let mut state = SgPcnlState::new(
+        theta_a.clone(),
+        cfg.sigma,
+        sched,
+        cfg.n_train,
+        cfg.batch_size,
+        0,
+    );
+    let mut loader = BatchLoader::new(cfg.n_train, cfg.batch_size, cfg.seed ^ 0xabc);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.seed ^ 0xdef);
+    let mut max = 0.0f64;
+    for _ in 0..steps {
+        let (x, y) = loader.next(data);
+        let (_l, g) = data
+            .batch_grad(&state.theta, &cfg.shapes, Variant::Cosine, &x, &y)
+            .expect("grad");
+        if let Ok(n) = crate::sampler::norm(&g) {
+            max = max.max(n * cfg.n_train as f64 / cfg.batch_size as f64);
+        }
+        state.step_unadjusted(&g, &mut rng).expect("step");
+    }
+    max
+}
+
 pub fn mh_pcnl_chain(
     cfg: &crate::experiment::Config,
     variant: Variant,
@@ -624,18 +725,36 @@ pub fn mh_pcnl_chain(
         // proposal, and the Metropolis ratio below keeps the chain exact
         // for the target, so acceptance and the kept predictive say
         // whether the *target* is overconfident rather than the drift.
-        let sum_grad = match opts.grad_norm_cap {
-            Some(cap) => {
-                let n = crate::sampler::norm(&sum_grad).map(|g| g * scale);
-                match n {
-                    Ok(n) if n.is_finite() && n > cap => {
-                        sum_grad.affine(cap / n, 0.0).expect("capped proposal grad")
+        //
+        // That claim only holds if the cap is part of the *proposal map* and
+        // is therefore applied at both ends of the ratio:
+        //
+        // ```text
+        // m(θ) = √(1−β²)(θ−μ) + μ − h·cap(∇U(θ))
+        // ```
+        //
+        // Before 2026-11-06 the reverse mean used the *raw* gradient, so
+        // q(θ|θ′) was the density of a move the chain never proposed.  With a
+        // binding cap the reverse `‖θ−m(θ′)‖²` is enormous and `log α` is
+        // correspondingly huge: the “exact” filter accepted essentially every
+        // move and behaved like the unadjusted capped chain it was supposed to
+        // test.  No reported run combined `exact` with a cap, so no published
+        // number moves; the combination was simply wrong as an API.
+        let apply_cap = |g: &Tensor| -> Tensor {
+            match opts.grad_norm_cap {
+                Some(cap) => {
+                    let n = crate::sampler::norm(g).map(|x| x * scale);
+                    match n {
+                        Ok(n) if n.is_finite() && n > cap => {
+                            g.affine(cap / n, 0.0).expect("capped proposal grad")
+                        }
+                        _ => g.clone(),
                     }
-                    _ => sum_grad,
                 }
+                None => g.clone(),
             }
-            None => sum_grad,
         };
+        let sum_grad = apply_cap(&sum_grad);
         let noise_vec: Vec<f32> = (0..p_dim)
             .map(|_| {
                 let x: f32 = noise_rng.sample(StandardNormal);
@@ -671,7 +790,7 @@ pub fn mh_pcnl_chain(
         // proposal ratio, and the prior ratio.  pCN cancels the last two only
         // when the drift is zero, which is why the likelihood-only ratio is
         // exact in the drift-free limit and pCNL (approximate) otherwise.
-        let (log_prior_ratio, log_q_ratio) = if opts.exact {
+        let (log_prior_ratio, exact_means) = if opts.exact {
             let (_lp, g_prop) = data
                 .batch_grad(&proposal, shapes, variant, &data.train_x, &data.train_y)
                 .expect("full-batch grad at the proposal");
@@ -696,17 +815,10 @@ pub fn mh_pcnl_chain(
                     .expect("drift");
                 (&decayed - &d).expect("proposal mean")
             };
+            // `sum_grad` is already capped and scaled; `g_prop` must be too,
+            // or the reverse mean is not the mean of the map that proposed.
             let m_now = mean_at(&theta, &sum_grad);
-            let m_prop = mean_at(&proposal, &g_prop);
-            let d_now = squared_norm(&(&proposal - &m_now).expect("θ′−m(θ)"));
-            let d_prop = squared_norm(&(&theta - &m_prop).expect("θ−m(θ′)"));
-            let s2 = beta * beta * sigma * sigma;
-            // log q(θ|θ′) − log q(θ′|θ) = (‖θ′−m(θ)‖² − ‖θ−m(θ′)‖²) / 2β²σ²
-            let q = if s2 > 0.0 {
-                (d_now - d_prop) / (2.0 * s2)
-            } else {
-                0.0
-            };
+            let m_prop = mean_at(&proposal, &apply_cap(&g_prop));
             // the prior N(μ, σ²I): its ratio is what the drift destroys
             let prior = |th: &Tensor| -> f64 {
                 let d = match center {
@@ -715,10 +827,11 @@ pub fn mh_pcnl_chain(
                 };
                 -d / (2.0 * sigma * sigma)
             };
-            (prior(&proposal) - prior(&theta), q)
+            (prior(&proposal) - prior(&theta), Some((m_now, m_prop)))
         } else {
-            (0.0, 0.0)
+            (0.0, None)
         };
+        let s2 = beta * beta * sigma * sigma;
 
         // the predecessor's full-batch likelihood-ratio filter — exact only
         // in the drift-free limit unless `exact` is on (§6.5.6(c))
@@ -731,9 +844,14 @@ pub fn mh_pcnl_chain(
             // chain then accepts climbs it could not, i.e. it is not the
             // stated target at all.
             (Some(l_now), Some(l_prop)) => {
-                opts.potential_scale * cfg.n_train as f64 * (l_now - l_prop)
-                    + log_prior_ratio
-                    + log_q_ratio
+                let log_pi_diff =
+                    opts.potential_scale * cfg.n_train as f64 * (l_now - l_prop) + log_prior_ratio;
+                match &exact_means {
+                    Some((m_now, m_prop)) => {
+                        pcn_proposal_log_ratio(log_pi_diff, &theta, &proposal, m_now, m_prop, s2)
+                    }
+                    None => log_pi_diff,
+                }
             }
             // non-finite potential at the proposal ⇒ reject; at the
             // *current* state ⇒ the chain is dead (kept as evidence)
@@ -757,9 +875,17 @@ pub fn mh_pcnl_chain(
                         }
                         _ => f64::NAN,
                     };
+                    let q = match &exact_means {
+                        Some((m_now, m_prop)) => {
+                            let p =
+                                pcn_proposal_log_ratio(0.0, &theta, &proposal, m_now, m_prop, s2);
+                            if p.is_finite() { p } else { f64::NAN }
+                        }
+                        None => f64::NAN,
+                    };
                     eprintln!(
                         "t={t:>6} r {r_before:>9.2} -> {r_after:>9.2}  like {like:>10.3}  \
-                         prior {log_prior_ratio:>12.3}  q {log_q_ratio:>10.3}  \
+                         prior {log_prior_ratio:>12.3}  q {q:>10.3}  \
                          alpha {log_alpha:>12.3}"
                     );
                 }
@@ -818,6 +944,25 @@ mod tests {
         }
     }
 
+    /// The forward-only potential used by exact samplers must return the same
+    /// number as the gradient form it replaced — same `forward`, same
+    /// `cross_entropy`, no backward pass built.  A sampler whose potential
+    /// drifts from the trained objective would silently change its target, so
+    /// the identity is asserted rather than assumed.
+    #[test]
+    fn train_loss_equals_the_loss_from_the_gradient_form() {
+        let shapes = tiny();
+        let data = Dataset::new(Task::A, 4, 64, 16, 7);
+        let theta = init_flat(&shapes, 0.1, 11);
+        let fwd = data
+            .train_loss(&theta, &shapes, Variant::Cosine)
+            .expect("train_loss");
+        let (grad_form, _) = data
+            .loss_and_grad(&theta, &shapes, Variant::Cosine)
+            .expect("loss_and_grad");
+        assert_eq!(fwd, grad_form, "train_loss must match loss_and_grad.0");
+    }
+
     #[test]
     fn tasks_are_deterministic_and_distinct() {
         let k = 8;
@@ -871,6 +1016,44 @@ mod tests {
         );
         let xs = d.train_x.flatten_all().unwrap().to_vec1::<u32>().unwrap();
         assert!(xs.iter().all(|&x| (0..=8).contains(&x)));
+    }
+
+    /// The q-ratio is checked against a dense Gaussian evaluated in f64 at
+    /// both ends — not against itself. A sign error, a factor of two, or the
+    /// two means swapped all move the answer by O(1) here.
+    #[test]
+    fn exact_q_ratio_matches_a_dense_gaussian_ratio() {
+        let dev = Device::Cpu;
+        let p = 3usize;
+        let t = |v: Vec<f32>| Tensor::from_vec(v, vec![p], &dev).unwrap();
+        let theta = t(vec![0.4, -1.1, 2.0]);
+        let proposal = t(vec![0.9, -0.7, 1.4]);
+        let m_now = t(vec![0.35, -1.0, 1.9]);
+        let m_prop = t(vec![0.8, -0.8, 1.5]);
+        let s2 = 0.0625f64; // β = 0.25, σ = 1
+
+        // log q(x|y) = −‖x−m(y)‖²/(2s²) + const, const identical both ways
+        let sq = |a: &Tensor, b: &Tensor| -> f64 {
+            let a = a.to_vec1::<f32>().unwrap();
+            let b = b.to_vec1::<f32>().unwrap();
+            a.iter()
+                .zip(&b)
+                .map(|(x, y)| ((*x as f64) - (*y as f64)).powi(2))
+                .sum()
+        };
+        let want = (sq(&proposal, &m_now) - sq(&theta, &m_prop)) / (2.0 * s2);
+        let got = pcn_proposal_log_ratio(0.0, &theta, &proposal, &m_now, &m_prop, s2);
+        // f32 storage: the dense side is exact in f64, the tensor side
+        // accumulates in f32, so the agreement is to float precision.
+        assert!((got - want).abs() < 1e-5, "q ratio {got} vs dense {want}");
+        // and the target term passes through unchanged
+        let with_pi = pcn_proposal_log_ratio(-3.5, &theta, &proposal, &m_now, &m_prop, s2);
+        assert!((with_pi - (want - 3.5)).abs() < 1e-5, "{with_pi}");
+        // β = 0 has no proposal density to correct
+        assert_eq!(
+            pcn_proposal_log_ratio(-3.5, &theta, &proposal, &m_now, &m_prop, 0.0),
+            -3.5
+        );
     }
 
     #[test]

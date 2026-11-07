@@ -44,7 +44,8 @@ OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
-  adam-start sphere cold-10k
+  adam-start sphere curvature mode subspace basin basin-chains sphere-rep
+  sphere-ladder cold-10k
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -118,7 +119,48 @@ run_stage() {
     cargo run --release -p pcnl --example adam_start -- 10000 --chains 2 --thin 20
     ;;
   sphere)
-    cargo run --release -p pcnl --example sphere_chain -- 1200
+    # 600 steps is the budget every table in the status doc quotes (burn 300,
+    # thin 20, K = 15).  1 200 steps was the pre-fix budget and its β₀ = 0.01
+    # row averaged the accepting early steps with the frozen later ones.
+    cargo run --release -p pcnl --example sphere_chain -- 600
+    cargo run --release -p pcnl --example sphere_chain -- 600 --precond
+    ;;
+  curvature)
+    cargo run --release -p pcnl --example curvature_probe
+    ;;
+  mode)
+    cargo run --release -p pcnl --example sphere_mode
+    ;;
+  subspace)
+    cargo run --release -p pcnl --example subspace_bound
+    ;;
+  basin)
+    # The target's own predictive: the 128-probe width sweep and the one-nat
+    # radius it implies (~10 min).  The chains that go with it are separate
+    # because each is ~45 min:
+    #   cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --arm shell
+    #   cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --arm density
+    cargo run --release -p pcnl --example basin_posterior
+    ;;
+  basin-chains)
+    # Is the shell arm's outward climb a random walk or a drift?  Four
+    # independent 10 k chains: split-R̂, per-chain growth exponent, and the
+    # pairwise angle between net displacements (~18 min on two cores).
+    # 2026-11-06: exponent 0.509, angle 89.7° → a walk, not a drift.
+    PCNL_PROGRESS=1 cargo run --release -p pcnl --example basin_posterior -- \
+      10000 --no-sweep --chains 4
+    ;;
+  sphere-rep)
+    # The replicate check the status doc's metric cell quotes: four chains at
+    # 400 steps (--seeds 2 --chains 2) → R̂ = 2.998, 49.02 % ± 3.04
+    # (~15 min on two cores).
+    cargo run --release -p pcnl --example sphere_chain -- 400 --precond \
+      --beta 0.003 --start adam --seeds 2 --chains 2
+    ;;
+  sphere-ladder)
+    # The full metric ladder, exact ratio: all four β rungs × both starts,
+    # 400 steps, two chains per cell (~40 min on two cores).
+    cargo run --release -p pcnl --example sphere_chain -- 400 --precond --seeds 2
     ;;
   cold-10k)
     ./scripts/pcnl-cold-10k

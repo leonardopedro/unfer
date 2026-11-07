@@ -23,46 +23,90 @@
 //!   sub-1/2000 fraction of the sphere (§6.4(ii)), so this should stay at
 //!   chance — the difference from the Adam start is what retention is worth.
 //!
-//! **Measured (2026-11-05): the target contains the solution, and the filter
-//! refuses to move there.**  1 200 steps, one chain, λ = 1, ρ = σ√P:
+//! **Measured (2026-11-05).**  600 steps (burn 300, thin 20, 1 chain, λ = 1,
+//! so K = 15 kept draws), both proposals from the same two starts:
 //!
 //! | β₀ | start | accept | BMA acc | BMA NLL |
 //! |---:|---|---:|---:|---:|
 //! | 0.3 | Adam | **0.0 %** | 49.22 % | 1.3136 |
-//! | 0.3 | Haar | 32.2 % | 11.72 % | 2.1818 |
+//! | 0.3 | Haar | 32.3 % | 11.72 % | 2.1879 |
 //! | 0.03 | Adam | **0.0 %** | 49.22 % | 1.3136 |
-//! | 0.03 | Haar | **100 %** | 11.72 % | 2.1832 |
-//! | 0.01 | Adam | 0.6 % | 46.88 % | 1.3281 |
-//! | 0.01 | Haar | 99.7 % | 11.72 % | **2.9027** |
+//! | 0.03 | Haar | 100 % | 11.72 % | 2.2069 |
+//! | 0.01 | Adam | 0.2 % | 48.05 % | 1.3288 |
+//! | 0.01 | Haar | 99.8 % | 11.72 % | 3.7238 |
+//! | **0.003** | Adam | 91.8 % | 37.50 % | 1.4527 |
+//! | 0.003 | Haar | 99.8 % | 11.72 % | 4.5922 |
 //!
-//! Three things follow.
+//! The metric arm, re-measured 2026-11-06 with the corrected ratio (400 steps,
+//! burn 200, thin 20, K = 10, `--precond --seeds 2` → 2 chains per cell):
+//!
+//! | β₀ | start | accept | BMA acc | BMA NLL | R̂(loss) |
+//! |---:|---|---:|---:|---:|---:|
+//! | 0.3 | Adam | 0.0 % | 49.22 % | 1.3136 | 1.000 (frozen) |
+//! | 0.3 | Haar | 0.2 % | 11.72 % | 3.1410 | ∞ (frozen) |
+//! | 0.03 | Adam | 2.8 % | 48.44 % | 1.3200 | 1.361 |
+//! | 0.03 | Haar | 7.2 % | 11.72 % | 4.6420 | 3.220 |
+//! | 0.01 | Adam | **53.5 %** | 48.44 % | 1.3174 | 2.058 |
+//! | 0.01 | Haar | 55.2 % | 11.72 % | 4.6622 | 2.454 |
+//! | **0.003** | Adam | **87.8 %** | 49.02 % ± 3.04 | 1.3140 | 2.998 |
+//! | 0.003 | Haar | 83.2 % | 11.72 % | 4.6650 | 2.722 |
+//!
+//! Five readings.
 //!
 //! 1. **Scale invariance holds at the target level**: `ρ·u_Adam` scores
 //!    49.22 % / 1.3136, *identical* to `θ_Adam` at 28× the radius.  The sphere
 //!    target therefore contains the solution, which the Gaussian one did not —
 //!    the §6.5.7 diagnosis was right about the prior.
-//! 2. **It cannot be sampled at any proposal scale used in this study.**  From
-//!    the solution's direction the exact filter accepts **nothing** at
-//!    `β₀ = 0.3` and at `β₀ = 0.03`, and 0.6 % (≈7 moves in 1 200 steps) at
-//!    `β₀ = 0.01`.  The 49.22 % rows are a *frozen start*, and the acceptance
-//!    column is what says so.
-//! 3. **Acceptance is a property of position, not of the kernel.**  The same
-//!    chain from a Haar direction accepts 100 % at `β₀ = 0.03` and mixes
-//!    freely — at chance, where the likelihood is flat.  So the ambient runs'
-//!    90–100 % acceptance (§6.5.6) was a symptom of sampling the flat region,
-//!    not evidence that the sampler was working.
+//! 2. **The filter's acceptance is governed by `λN‖g‖σβ`** (the typical pCN
+//!    exponent), which is why the *isotropic* `adam` cells are dead above
+//!    `β₀ = 0.003`: see `examples/curvature_probe.rs`, which locates the
+//!    isotropic window there.  Before that probe the grid had no cell that
+//!    could move.  The metric arm moves one rung higher — reading 4.
+//! 3. **With a curvature metric the chain holds the solution's neighbourhood —
+//!    for a while.**  At `β₀ = 0.003` the metric arm accepts 87.8 % and its BMA
+//!    scores **49.02 % ± 3.04** (4 chains, 400 steps) against 49.22 % at the
+//!    start, while the isotropic arm accepts 92 % and diffuses to 37.50 % over
+//!    600 steps.  **Not converged** (`R̂(loss) = 3.00`), and the 10 000-step run
+//!    (`--steps 10000 --seeds 2 --chains 2`, 4 chains, K = 250) shows why the
+//!    reading must stay narrow: acceptance 86.1 %, BMA **46.39 %** / NLL 1.3412,
+//!    across-chain ± 0.37 pts, `R̂ = 2.894`.  The chains *agree* by 10 000 steps
+//!    and agree on something **worse** than the frozen start: the 400-step
+//!    49.02 % was retention, and at τ = 2.3×10⁻⁵ rad/step the run explores
+//!    √10⁴·τ = 2.3×10⁻³ rad, three times the 7.7×10⁻⁴ rad to the mode
+//!    (`examples/sphere_mode.rs`, 51.17 % / NLL 1.2748).  So the neighbourhood
+//!    is a transient, not a stationary law.  The earlier metric figures in this
+//!    file's history (42 % accept, 51.17 %) came from an inexact ratio and are
+//!    withdrawn; see `sphere`'s module docs.
+//! 4. **The metric widens the accepting window, by about the predicted
+//!    amount, and still cannot reach the published β.**  At `β₀ = 0.01` the
+//!    isotropic chain accepts 0.2 %; the metric accepts **53.5 %** — the
+//!    frontier moves `0.003 → 0.01`, about 3.3× in β, against the 5.6× ceiling
+//!    predicted by the measured curvature heterogeneity (31.6× in τ²).  That
+//!    is the `22.2 %` the pre-fix ratio claimed, now re-measured and of the
+//!    same order, so the *mechanism* was never the bug — only the numbers.
+//!    `β₀ = 0.03` is back to 2.8 % and `β₀ = 0.3` to 0.0 %, so bridging
+//!    `0.01 → 0.3` still needs 30× more in β and the `√P` gap stands.
+//!    Note what the widened window buys: at `β₀ = 0.01` the chain moves
+//!    freely and its BMA is 48.44 %, *below* the frozen start's 49.22 % —
+//!    acceptance is reach, not information, which is reading 5's point.
+//! 5. **Acceptance is still a property of position, not of the kernel**, and for
+//!    the metric it cuts both ways: from the Haar direction the same metric
+//!    *lowers* acceptance (32.3 % → 0.2 % at `β₀ = 0.3`) because the flat region's
+//!    estimated curvature inflates the drift, while in the informative region it
+//!    is what makes the chain stay.  A metric transferred across regions is not
+//!    a free improvement.
 //!
-//! The two mechanism findings are now complementary: the isotropic Gaussian
-//! prior excludes the solution (§6.5.7), and once the prior is repaired to a
-//! Haar law on the sphere, a fixed isotropic pCN step still cannot both move
-//! and accept in 16 672 dimensions.  The next lever is the proposal's
-//! *preconditioning*, not its size — with a step scaled to the local curvature
-//! (per-coordinate or Fisher/preconditioned pCN) the body of §6.4–6.5's
-//! "prior-dominated" evidence would have to be re-read.
+//! The two mechanism findings are complementary: the isotropic Gaussian prior
+//! excludes the solution (§6.5.7), and once the prior is repaired to a Haar law
+//! on the sphere a *fixed isotropic* step still cannot both move and accept in
+//! 16 672 dimensions.  Preconditioning fixes the second only where the
+//! curvature is heterogeneous — enough to hold the solution's neighbourhood,
+//! not enough to accept the published step.
 //!
 //! ```text
-//! cargo run --release -p pcnl --example sphere_chain            # all six cells
-//! cargo run --release -p pcnl --example sphere_chain -- 400     # shorter
+//! cargo run --release -p pcnl --example sphere_chain                    # both proposals
+//! cargo run --release -p pcnl --example sphere_chain -- 600 --precond   # the metric arm
+//! cargo run --release -p pcnl --example sphere_chain -- 400             # shorter
 //! ```
 
 use candle_core::Tensor;
@@ -72,9 +116,17 @@ use pcnl::sampler::{SgPcnlScheduler, norm};
 use pcnl::sphere::SpherePcn;
 use pcnl::task::{Dataset, Task, adam, momentum_sgd};
 use rand::SeedableRng;
+use rayon::prelude::*;
 
 const SEED: u64 = 20261020;
-const BETAS: [f64; 3] = [0.3, 0.03, 0.01];
+
+/// One chain's contribution: `((accept %, BMA acc, BMA NLL), per-draw test
+/// losses, (acc at t = 0, 10, 100))`.
+type Cell = ((f64, f64, f64), Vec<f64>, (f64, f64, f64));
+/// `0.003` is the rung `curvature_probe` located: the filter needs
+/// `λN‖g‖σβ ≲ 2` at the solution's direction, and only β ≤ 0.003 satisfies it.
+/// Without it the grid never contains a cell that can move.
+const BETAS: [f64; 4] = [0.3, 0.03, 0.01, 0.003];
 
 fn unit(v: &Tensor) -> Tensor {
     let n = norm(v).expect("norm");
@@ -91,6 +143,26 @@ fn main() {
         cfg.steps = n;
         cfg.burn = n / 2;
     }
+    // `--precond` swaps in the metric proposal (`step_preconditioned`), whose
+    // metric is estimated over the first `metric_warmup` steps and then frozen.
+    let precond = args.iter().any(|a| a == "--precond");
+    // `--beta V` restricts the grid to one β; `--seeds K` / `--chains N`
+    // replicate each cell, which is what makes a split-R̂ possible.
+    let flag = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let only_beta = flag("--beta").and_then(|v| v.parse::<f64>().ok());
+    let only_start = flag("--start");
+    let seeds: usize = flag("--seeds")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    let chains_per_cell: usize = flag("--chains")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1);
 
     let p_dim = cfg.shapes.flat_size();
     let radius = cfg.sigma * (p_dim as f64).sqrt();
@@ -134,7 +206,7 @@ fn main() {
     println!(
         "sphere_chain — exact spherical pCN (uniform prior on the direction)\n\
          P = {p_dim}, ρ = σ√P = {radius:.2}, target B, uniform NLL ln {} = {ln_k:.4}\n\
-         {steps} steps, burn {burn}, thin 20, 1 chain, λ = 1, seed {SEED}\n",
+         {steps} steps, burn {burn}, thin 20, λ = 1, seed {SEED}, precond {precond}\n",
         cfg.k,
         ln_k = (cfg.k as f64).ln(),
         steps = cfg.steps,
@@ -159,42 +231,113 @@ fn main() {
         "β₀", "start", "accept", "acc t=0", "acc t=10", "acc t=100", "BMA acc", "BMA NLL", "K"
     );
     for beta_0 in BETAS {
+        if let Some(b) = only_beta
+            && (beta_0 - b).abs() > 1e-12
+        {
+            continue;
+        }
         for (label, u0) in [("adam", adam_dir.clone()), ("haar", haar_dir.clone())] {
+            if let Some(want) = &only_start
+                && want != label
+            {
+                continue;
+            }
             let sched = SgPcnlScheduler {
                 beta_0,
                 gamma: 0.0,
                 kappa: 0.5,
             };
-            let mut chain = SpherePcn::new(u0, radius, cfg.sigma, sched, cfg.n_train, 1.0);
-            let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.seed ^ (beta_0.to_bits()) ^ 0x5ced);
-            let mut kept: Vec<Tensor> = Vec::new();
-            let (mut a0, mut a10, mut a100) = (0.0, 0.0, 0.0);
-            for t in 0..cfg.steps {
-                let theta = chain.theta().expect("theta");
-                match t {
-                    0 => a0 = acc(&theta),
-                    10 => a10 = acc(&theta),
-                    100 => a100 = acc(&theta),
-                    _ => {}
-                }
-                chain
-                    .step(
-                        |th| data_b.loss_and_grad(th, &cfg.shapes, Variant::Cosine),
-                        &mut rng,
+            // One row per cell unless `--seeds`/`--chains` ask for replicates,
+            // in which case the row is the mean and the split-R̂ is printed
+            // under it: a single chain's BMA with 10–15 kept draws is not a
+            // posterior, and every such number here has R̂ ≫ 1 behind it.
+            let (mut a0, mut a10, mut a100) = (0.0f64, 0.0f64, 0.0f64);
+            // Replicates run in parallel: each chain owns its RNG stream, so the
+            // draws do not depend on the schedule.
+            let jobs: Vec<(usize, usize)> = (0..seeds)
+                .flat_map(|s| (0..chains_per_cell).map(move |c| (s, c)))
+                .collect();
+            let results: Vec<Cell> = jobs
+                .par_iter()
+                .map(|&(s, c)| {
+                    let mut t0 = (0.0f64, 0.0f64, 0.0f64);
+                    let mut chain =
+                        SpherePcn::new(u0.clone(), radius, cfg.sigma, sched, cfg.n_train, 1.0);
+                    if precond {
+                        chain = chain.with_preconditioner();
+                    }
+                    let mut rng = rand::rngs::StdRng::seed_from_u64(
+                        cfg.seed
+                            ^ beta_0.to_bits()
+                            ^ 0x5ced
+                            ^ ((s as u64) << 32)
+                            ^ (c as u64).wrapping_mul(0x9e37_79b9),
+                    );
+                    let mut kept: Vec<Tensor> = Vec::new();
+                    for t in 0..cfg.steps {
+                        let theta = chain.theta().expect("theta");
+                        match t {
+                            0 => t0.0 = acc(&theta),
+                            10 => t0.1 = acc(&theta),
+                            100 => t0.2 = acc(&theta),
+                            _ => {}
+                        }
+                        let pot =
+                            |th: &Tensor| data_b.loss_and_grad(th, &cfg.shapes, Variant::Cosine);
+                        if precond {
+                            chain.step_preconditioned(pot, &mut rng)
+                        } else {
+                            chain.step(pot, &mut rng)
+                        }
+                        .expect("sphere step");
+                        if t >= cfg.burn && (t - cfg.burn).is_multiple_of(20) {
+                            kept.push(chain.theta().expect("theta"));
+                        }
+                    }
+                    let (bma_acc, bma_nll, _ece, _k) =
+                        bma_metrics(&[kept.clone()], &cfg.shapes, Variant::Cosine, &data_b);
+                    (
+                        (
+                            100.0 * chain.accepted as f64 / cfg.steps as f64,
+                            bma_acc,
+                            bma_nll,
+                        ),
+                        // per-draw test loss, for the cross-chain R̂
+                        kept.iter().map(nll).collect::<Vec<f64>>(),
+                        t0,
                     )
-                    .expect("sphere step");
-                if t >= cfg.burn && (t - cfg.burn).is_multiple_of(20) {
-                    kept.push(chain.theta().expect("theta"));
+                })
+                .collect();
+            let rows: Vec<(f64, f64, f64)> = results.iter().map(|r| r.0).collect();
+            let losses: Vec<Vec<f64>> = results.iter().map(|r| r.1.clone()).collect();
+            for r in &results {
+                if r.2.0 > 0.0 {
+                    (a0, a10, a100) = r.2;
                 }
             }
-            let chains = vec![kept];
-            let (bma_acc, bma_nll, _ece, k) =
-                bma_metrics(&chains, &cfg.shapes, Variant::Cosine, &data_b);
+            let m = rows.len() as f64;
+            let mean = |f: &dyn Fn(&(f64, f64, f64)) -> f64| rows.iter().map(f).sum::<f64>() / m;
+            let sd = |f: &dyn Fn(&(f64, f64, f64)) -> f64| {
+                let mu = mean(f);
+                (rows.iter().map(|r| (f(r) - mu).powi(2)).sum::<f64>() / (m - 1.0).max(1.0)).sqrt()
+            };
+            let acc_mean = mean(&|r| r.1);
+            let nll_mean = mean(&|r| r.2);
+            let rhat = pcnl::diag::gelman_rubin(&losses);
+            let spread = if m > 1.0 {
+                format!("± {:.2} pts / {:+.4} nats", sd(&|r| r.1), sd(&|r| r.2))
+            } else {
+                String::from("(1 chain)")
+            };
             println!(
                 "{beta_0:>6}  {label:>6}  {:>7.1}%  {a0:>8.2}%  {a10:>8.2}%  {a100:>8.2}%  \
-                 {bma_acc:>8.2}%  {bma_nll:>9.4}  {k:>7}",
-                100.0 * chain.accepted as f64 / cfg.steps as f64
+                 {acc_mean:>8.2}%  {nll_mean:>9.4}  {:>7}",
+                mean(&|r| r.0),
+                cfg.steps / 40
             );
+            if m > 1.0 {
+                println!("          {label:>6}  {m:.0} chains  {spread}  R̂(loss) = {rhat:.4}");
+            }
         }
     }
     println!(

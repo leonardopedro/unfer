@@ -40,7 +40,9 @@ use candle_core::Tensor;
 use pcnl::experiment::{Config, bma_metrics};
 use pcnl::model::{Shapes, Variant, init_flat};
 use pcnl::sampler::{SgPcnlScheduler, SgPcnlState, norm};
-use pcnl::task::{BatchLoader, Dataset, MhOptions, Task, adam, mh_pcnl_chain};
+use pcnl::task::{
+    BatchLoader, Dataset, MhOptions, Task, adam, cosine_gradient_scale, mh_pcnl_chain,
+};
 use rand::SeedableRng;
 
 const SEEDS: [u64; 3] = [20261020, 20261021, 20261022];
@@ -72,38 +74,6 @@ fn cfg_for(seed: u64) -> Config {
         run_mh: false,
         ..Config::default()
     }
-}
-
-/// The normalized geometry's own gradient scale: the largest scaled
-/// mini-batch gradient the cosine chain produces over its first 200 steps.
-fn cosine_gradient_scale(cfg: &Config, data: &Dataset, theta_a: &Tensor) -> f64 {
-    let sched = SgPcnlScheduler {
-        beta_0: cfg.beta_0,
-        gamma: cfg.gamma,
-        kappa: cfg.kappa,
-    };
-    let mut state = SgPcnlState::new(
-        theta_a.clone(),
-        cfg.sigma,
-        sched,
-        cfg.n_train,
-        cfg.batch_size,
-        0,
-    );
-    let mut loader = BatchLoader::new(cfg.n_train, cfg.batch_size, cfg.seed ^ 0xabc);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.seed ^ 0xdef);
-    let mut max = 0.0f64;
-    for _ in 0..200 {
-        let (x, y) = loader.next(data);
-        let (_l, g) = data
-            .batch_grad(&state.theta, &cfg.shapes, Variant::Cosine, &x, &y)
-            .expect("grad");
-        if let Ok(n) = norm(&g) {
-            max = max.max(n * cfg.n_train as f64 / cfg.batch_size as f64);
-        }
-        state.step_unadjusted(&g, &mut rng).expect("step");
-    }
-    max
 }
 
 /// The unadjusted chain with a drift cap, thinned exactly like the MH arm.
@@ -189,7 +159,7 @@ fn main() {
             cfg.adam_lr,
         )
         .0;
-        let cap = cosine_gradient_scale(&cfg, &data_b, &theta_a_cos);
+        let cap = cosine_gradient_scale(&cfg, &data_b, &theta_a_cos, 200);
 
         let (acc_a, nll_a) = (
             data_b

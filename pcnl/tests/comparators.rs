@@ -423,3 +423,69 @@ fn the_filter_uses_the_summed_potential() {
         out.radial_max
     );
 }
+
+/// The drift cap is part of the *proposal map*: `m(θ) = √(1−β²)(θ−μ)+μ −
+/// h·cap(∇U(θ))`, evaluated at both ends of the ratio. The pre-fix code capped
+/// only the forward mean, so `q(θ|θ′)` was the density of a move the chain
+/// never proposed; the reverse term then carried the *raw* gradient and the
+/// “exact” filter silently stopped being exact — in this configuration it
+/// over-rejected (23/400 accepted instead of 58/400), and on a stack whose
+/// gradient is `1e6×` the cap it rubber-stamps every move instead.
+///
+/// The discriminating property does not need the target: a cap small enough
+/// that `h·cap` is negligible makes the drift vanish, so the proposal is pCN
+/// and the *exact* filter must coincide with the likelihood-only one. Only a
+/// cap-consistent ratio satisfies that; a cap-consistent ratio is also the
+/// only one that can be exact when the cap binds.
+#[test]
+fn exact_filter_is_cap_consistent() {
+    let cfg = mh_cfg(0.3, 300);
+    let run = |cap: f64, exact: bool| {
+        mh_run(
+            &cfg,
+            MhOptions {
+                grad_norm_cap: Some(cap),
+                potential_scale: 1.0,
+                exact,
+            },
+        )
+    };
+    let mean_loss = |o: &pcnl::task::MhOutcome| -> f64 {
+        o.kept_loss.iter().sum::<f64>() / o.kept_loss.len() as f64
+    };
+    // hard cap: h·cap ≈ 3e-3 against a proposal scale of 0.11, i.e. the drift
+    // is negligible and both filters reduce to the same pCN chain
+    let exact = run(0.5, true);
+    let pcnl = run(0.5, false);
+    assert!(
+        (exact.accepted as i64 - pcnl.accepted as i64).abs() <= 3,
+        "a negligible drift must leave exact and pcnl agreeing: {} vs {} accepted of {}",
+        exact.accepted,
+        pcnl.accepted,
+        exact.steps
+    );
+    assert!(
+        (mean_loss(&exact) - mean_loss(&pcnl)).abs() < 1e-2,
+        "mean kept loss {} vs {}",
+        mean_loss(&exact),
+        mean_loss(&pcnl)
+    );
+    // and the filter is not a rubber stamp with the cap on
+    assert!(exact.accepted < exact.steps, "every proposal accepted");
+    // an inert cap cannot change the exact chain at all
+    let inert = run(1e12, true);
+    let uncapped = mh_run(
+        &cfg,
+        MhOptions {
+            grad_norm_cap: None,
+            potential_scale: 1.0,
+            exact: true,
+        },
+    );
+    assert_eq!(inert.accepted, uncapped.accepted);
+    assert_eq!(
+        mean_loss(&inert).to_bits(),
+        mean_loss(&uncapped).to_bits(),
+        "an inert cap perturbed the exact chain"
+    );
+}

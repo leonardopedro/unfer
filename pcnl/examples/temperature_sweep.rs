@@ -14,6 +14,13 @@
 //! a row is the temperature.  Kept losses are reported as the raw `L`, so a
 //! `λ < 1` row is comparable to the `λ = 1` rows.
 //!
+//! **The cap is measured, not rounded.**  It was the literal `7.0e2` here while
+//! `mh_standard_target` measured it; the measured values are 712 / 757 / 764,
+//! so the literal was 6–9 % low and these rows were not quite the §6.5.2 cell
+//! they claimed to be.  Both files now call `task::cosine_gradient_scale` — a
+//! cap changes only the proposal (the ratio stays exact for `π_λ`), so no
+//! conclusion moves, but the acceptance column is now the same experiment.
+//!
 //! Two questions, and the second is the one that matters:
 //! 1. **Where is it usable?**  Acceptance rises as `λ` falls; the first row
 //!    with acceptance in the tens of percent is the usable temperature.
@@ -31,7 +38,7 @@
 use candle_core::Tensor;
 use pcnl::experiment::{Config, bma_metrics};
 use pcnl::model::{Shapes, Variant, init_flat};
-use pcnl::task::{Dataset, MhOptions, Task, adam, mh_pcnl_chain};
+use pcnl::task::{Dataset, MhOptions, Task, adam, cosine_gradient_scale, mh_pcnl_chain};
 
 const SEEDS: [u64; 3] = [20261020, 20261021, 20261022];
 /// `(sigma, lambda)` cells: a lambda ladder at the reference width, then two
@@ -88,35 +95,44 @@ fn main() {
     for seed in SEEDS {
         let data_a = Dataset::new(Task::A, 8, 512, 256, seed);
         let data_b = Dataset::new(Task::B, 8, 512, 256, seed);
+        let shapes = Shapes {
+            vocab: 9,
+            d: 32,
+            ff: 64,
+            layers: 2,
+        };
         let theta_a = adam(
             &data_a,
-            &Shapes {
-                vocab: 9,
-                d: 32,
-                ff: 64,
-                layers: 2,
-            },
+            &shapes,
             Variant::Standard,
-            init_flat(
-                &Shapes {
-                    vocab: 9,
-                    d: 32,
-                    ff: 64,
-                    layers: 2,
-                },
-                0.1,
-                seed,
-            ),
+            init_flat(&shapes, 0.1, seed),
             1000,
             0.05,
         )
         .0;
+        // §6.5.2's cap, measured on the cosine geometry at the reference
+        // `β₀ = 0.3` (the same quantity `mh_standard_target` prints), not the
+        // rounded literal this file used to carry.
+        let theta_a_cos = adam(
+            &data_a,
+            &shapes,
+            Variant::Cosine,
+            init_flat(&shapes, 0.1, seed),
+            1000,
+            0.05,
+        )
+        .0;
+        let cap = {
+            let mut cref = cfg_for(seed, 0.35);
+            cref.beta_0 = 0.3;
+            cosine_gradient_scale(&cref, &data_b, &theta_a_cos, 200)
+        };
 
         for (sigma, lambda) in CELLS {
             let cfg = cfg_for(seed, sigma);
             let opts = MhOptions {
-                // the cap is the normalized geometry's scale, as in §6.5.2
-                grad_norm_cap: Some(7.0e2),
+                // the normalized geometry's scale, as in §6.5.2
+                grad_norm_cap: Some(cap),
                 exact: false,
                 potential_scale: lambda,
             };
@@ -137,6 +153,7 @@ fn main() {
                 out.radial_final
             );
         }
+        println!("          (cap C = {cap:.3e})");
     }
 
     println!(
