@@ -1639,12 +1639,195 @@ prior-dominated and neither a ramp nor a temperature can reach the
 informative set — what has to change is the step distribution, not the
 schedule.
 
+### A cap freezes the chain; the fix is a latitude move (2026-11-07)
+
+The previous section left one thing unnamed: the 48–51 % numbers are estimates
+of `E[acc | d(u, u₀) ≤ r]`, and the chain that would sample that conditional
+walks *out* of the ball.  Restricting the **target** to the ball is the exact
+fix in principle (`sphere::restrict_to_cap`; the kernel is untouched and the
+ratio stays exact because `π = 0` outside), and it is the wrong move in `P =
+16 672` in practice — measured, both radii:
+
+| run | target | accept | `d` reached | `R̂`(NLL) | per-draw acc / NLL | BMA acc / NLL |
+|---|---|---:|---:|---:|---|---|
+| `--cap` (= `r₁`) | `π ∩ {d ≤ 8.61e-4}` | **0.0 %** | 8.610e-4 after 1 step | ∞ | — | — |
+| `--cap 2.3e-3` | `π ∩ {d ≤ 2.3e-3}` | **0.1 %** | 2.266e-3 by `t ≈ 7` | ∞ | 46.5–48.4 % / 1.310–1.317 | 48.44 % / 1.3132 |
+
+Both runs pin to the cap boundary and stop.  The arithmetic is the geometry of
+§3.3 again: a step `r` from radius `d` lands at `d′² = d² + r² − 2dr·t` with
+`t = ⟨u, ŵ⟩`, so at the boundary `d = R` the move stays inside only when
+`t ≥ r/(2R)`; on `S^{P−1}`, `t` has sd `1/√P`, so the acceptance there is
+`Φ̄(r√P/(2R))` — `e^{−P/8}` at `R = r`, and 0.7 % at `R = 2.7 r` (which is the
+measured first-1000-step column).  The walk reaches `d = R` in `(R/r)² ≈ 7`
+steps because `d²` accumulates `r²` per step, and it never leaves.  No radius
+fixes this: inside a cap the Haar measure `(sin d)^{P−2} dd` puts essentially
+all of its volume **on the boundary**, so the boundary is exactly where the
+chain has to live.
+
+The number the pinned run reports is still worth having, because it is not a
+sample but it is a *point estimate that two independent methods agree on*: four
+boundary points give 48.44 % / NLL 1.3132, and the 128-probe self-normalized
+importance sample of §"Is 46.39 % the target's predictive?" gives 48.95 % /
+1.3132 at the same radius.  The conditional's predictive is 48.4–49.0 %; what
+the cap run cannot do is put an error bar on it (`R̂ = ∞` is the diagnostic
+saying so, and it is the one column that would have caught this without the
+distance column).
+
+**`sphere::latitude_jump` is the kernel that can live on the boundary.**  It
+rotates `u` about the axis `u₀`, so `⟨u₀, u⟩` is invariant to machine precision:
+the proposal is the uniform measure on the geodesic sphere of radius `r`
+*inside* the latitude, the reverse law is the same object at `u′`, and
+`log α = log π(u′) − log π(u)` with no Jacobian.  The cap never rejects a
+proposal, the radius column is constant by construction rather than by
+censoring, and the relaxation time along the shell is `(sin d₀ / r)²` steps —
+which is the knob `--step` exposes, because at `d₀ = 0.079` the default `r₁`
+needs 8 400 steps to cross the shell and a 3e-3 step needs 700.
+
+Three defects were found while writing it, and all are worth recording because
+the first two look like kernel bugs and are, while the third looks like physics
+and is arithmetic:
+
+1. **Projecting with `w − ⟨w,u⟩u − ⟨w,a⟩a` is not a projection.**  The two
+   directions are nearly dependent (`⟨a,u⟩ = c`), so subtracting both at once is
+   a Jacobi step whose error shrinks by `c²` per pass: at `c = 0.92` two passes
+   still leave a fifth of the component, the direction leaves the latitude, and
+   the chain walks off the sphere while `⟨a,u⟩` stays right.  Measured `|u|` =
+   1.12 after one step.  The span removed must be an *orthonormal* pair —
+   `{a, û}` with `û = (u − c·a)/sin d` — which makes one pass exact.
+2. **The construction preserves `⟨a,u⟩` but not `|u|`, and the error
+   amplifies.**  With `û` taken as `(u − c·a)/sin d`, a rounding error `δ` in
+   `|u|` returns as `|û| = 1 + δ/sin²d`, the next proposal is `1 + δ·cot²d`, and
+   the growth is geometric: from `1e−16` to `O(1)` in ~50 steps.  Measured
+   `|u| = 3.07` at the worst kept draw.  Rebuilding the proposal from `c` and
+   the transverse *direction* (rather than its normalised sine) makes every
+   accepted state exactly unit and self-heals a bad input.
+
+   What this one cost is worth stating: the moment test did **not** catch it —
+   `E[u₂]` read 0.434 off-sphere against 0.445 on-sphere (the correct value is
+   0.429, so both are within one se).  The invariant had to be instrumented
+   directly (`|u|`, per kept draw).  A tolerance wide enough for mixing noise is
+   also wide enough to hide a broken manifold, so the two need separate columns.
+3. **The anchor is only `f32`-unit, and `|a|` leaks into `|u|`.**  `u₀` is
+   `to_vec(&unit(&theta_Adam))`, so `|a| = 1 ± 5e-8`, not 1.  A kernel built as
+   `c·a + s·(…)` with `s = √(1−c²)` then gains `2c²(|a|² − 1)` in `|u|²` every
+   step: `|u|` walks up by `5e-8` per step until `⟨a,u⟩` reaches 1, `sin d` hits
+   0, and the chain freezes on the anchor with every later move rejected.  The
+   collapse time is `(1 − cos d₀)/(2|a|δ)` steps — `≈ 10³` at `d₀ = 8.61e-4`,
+   `≈ 10⁵` at `d₀ = 0.079` — which is why the tests at `d₀ ∈ {0.4, 1.0}` passed
+   and the two smallest radii did not: they read `d = 0`, `R̂ = ∞` and an
+   acceptance decaying as `1/t` (0.8 % at `d₀ = r₁`, 6.0 % at `2.3e-3`), which
+   from a distance looks like a chain that is simply rejecting.
+
+   The fix is to normalise both vectors *inside* the kernel and rebuild the
+   state as `c·â + s·(…)` with `c = ⟨u,â⟩/(|u||a|)`, so every accepted state is
+   exactly on the unit sphere and the invariant holds to rounding.  The
+   regression test is the pair `(|u|, ⟨â,u⟩)` at `d₀ = 8.61e-4` over 4 000
+   steps with an `f32`-unit anchor: the frozen-chain failure moves `⟨â,u⟩` by
+   `1 − cos d₀ = 3.7e-7`, the fixed kernel by `5e-16` per step with no
+   amplification.
+
+And one test-side error of the same family as §6.5's: at `P = 3` the latitude is
+a **circle**, so the conditional law of a vMF target is the 2-D von Mises
+(`I₁(z)/I₀(z)`), not the `S²` formula `coth z − 1/z`.  Writing the `S²` form
+predicts 0.306 where the kernel gives 0.445 (closed form 0.429).  The dimension
+that fixes the closed form is the dimension of the *conditioned* space (`P − 2`
+for the direction), not of the sphere — the test now uses `P = 4`, where the
+latitude is `S²` and the elementary form applies, and asserts `E[u₁] = c`
+(pinned) alongside `E[u₂] = s·A(κ s/√2)`.
+
+### The conditional predictive, sampled instead of censored (2026-11-07)
+
+With the kernel fixed, `--arm latitude --d0 R` measures `E[acc | d = d₀]` exactly,
+for a radius chosen rather than reached.  Two chains, 10 000 steps each, burn
+2 000, every radius converged:
+
+| `d₀` (rad) | step | accept | per-draw acc / NLL | BMA acc / NLL | `R̂`(NLL) |
+|---:|---:|---:|---|---|---:|
+| 8.61e-4 (`r₁`) | 4.30e-4 | 90.9 % | 48.80–48.93 % / 1.3135 | 47.66 % / 1.3133 | 0.997 |
+| 2.30e-3 (basin) | 1.15e-3 | 75.3 % | 49.01–49.15 % / 1.3128 | 46.48 % / 1.3124 | 1.002 |
+| 1.00e-2 | 3.00e-3 | 35.0 % | 47.30–47.54 % / 1.3093 | 48.44 % / 1.3045 | 1.003 |
+| 7.90e-2 (the walk's endpoint) | 3.00e-3 | 43.5 % | 35.23–36.77 % / 1.4673 | 39.84 % / 1.4471 | 1.038 |
+| anchor (`d₀ = 0`) | — | — | 49.22 % / 1.3136 | — | — |
+
+Five readings, in order of how much they change the document:
+
+1. **These are the first *converged* posterior numbers in the project.**  Every
+   earlier conditional (46.4 %, 48.8 %, 49.8 %) had `R̂ ≥ 1.5` or was an
+   importance-sampling estimate; these are exact-MH chains with `R̂(NLL) ≤ 1.04`
+   at every radius, so the quantities are target properties with error bars.
+2. **The conditional predictive is flat at 46.5–48.4 % for `d₀ ≤ 10⁻² rad`, and
+   it agrees with the ball-IS sweep** (48.8–49.0 % at 2.3e-3, 48.4 % at 5e-3).
+   Two independent methods — self-normalized IS and an exact chain — now agree on
+   the same functional, which is the check the whole "conditional, not
+   predictive" reading needed.
+3. **At 1e-2 rad the conditional mean predicts *better* than the anchor**
+   (NLL 1.3045 against 1.3136).  The point estimate the whole study is anchored
+   at is not the best predictor even within a shell the target still has mass in.
+4. **At 7.9e-2 the conditional falls to ~40 % / NLL 1.447**, which is what the
+   free walk was reporting (34.8 % at 10 k, 33.2 % at 50 k) — the numbers that
+   used to look like a mixing artefact are now the *target's own* conditional at
+   the radius the walk happened to reach.  Same quantity, now measured rather
+   than approached.
+5. **Acceptance is the potential's transverse variation, not the sphere.**  91 %
+   at `r₁`, 75 % at 2.7 `r₁`, 35 % at 10⁻², 44 % at 7.9e-2 — the last one rises
+   again because the far shell is flat (§6.5.6's "acceptance is a property of
+   position").
+
+### The posterior's own scale, and how much data would change it (2026-11-07)
+
+Everything above measures `E[· | d ≤ r]` or `E[· | d = r]`.  What the document has
+never had is the radial law that says **which** `r` the posterior itself prefers,
+and the sweep's own columns are enough to get it.  With Haar on `S^{P−1}`, geodesic
+polar coordinates give
+
+```text
+p(d) ∝ exp(−N·L(d)) · (sin d)^{P−2},      mode:  N·L′(d)·d = P − 2   (d ≪ 1)
+```
+
+and the six-point sweep of `N·medΔL` fits `N·L ≈ 2200·d^{1.05}` (a log-log
+least-squares over the rows, printed by the example as `posterior scale`).  The
+mode is then
+
+```text
+d* = ((P − 2)/(cβ))^{1/β} = (16 670/(2200·1.05))^{0.95} = 6.5 rad
+```
+
+**`6.5` rad is not a radius on a sphere of circumference `2π`: there is no
+interior mode at all.**  The density rises in `d` out to the equatorial shell, so
+`π`'s mass — and therefore its predictive — is the base rate, and the number is
+the sharp version of "prior-dominated": not a sampler failing to find a mode, but
+a target with no mode to find.  It also explains the free walk of the 10 k and
+50 k runs: a potential with `N·L′·d ≪ P − 2` over the whole reachable range exerts
+no restoring force, so `d` grows as `√t` and never turns around.  And the earlier
+Haar volume estimate (§6.4(ii): the equatorial shell outweighing a 1 mrad ball by
+`10^{54 000}`) is the same inequality seen from the volume side — the ball
+`d ≤ r₁` carries a fraction `~10^{−5.4e4}` of `π`, so the 46.5–48.4 % conditionals
+above are a tail, not the predictive, however exactly they are sampled.
+
+**What would put the mode inside the basin.**  The same equation, evaluated at
+`r = 2.3e-3`, says the likelihood gradient must reach
+
+```text
+N·L′(2.3e-3) ≥ (P − 2)/2.3e-3 = 7.25 × 10⁶ nats/rad,
+```
+
+against the measured `1.10 × 10³` at `N = 512` — a shortfall of `6.6 × 10³`, i.e.
+**`N ≈ 3.4 × 10⁶` examples** (per-example gradient `2.1` nats/rad, so at `P = 16 672`
+the crossover is `N ≈ P/(2·2.1·d)`).  That is the quantitative content of the
+project's scaling story: the Bayesian update on this architecture at this `P`
+needs six thousand times the data to localize anywhere near the basin, and no
+schedule, temperature, proposal or filter changes the number — only `N` does.
+The example prints both figures on every run with the sweep, so the claim is
+recomputed rather than transcribed.
+
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 106 tests (67 unit + 24 numerical
+cargo test -p pcnl --locked                              # 112 tests (73 unit + 24 numerical
                                                          #  + 8 formal claims + 7 comparators)
+                                                         # (debug build: ~40 min on 2 cores;
+                                                         #  `--release` is ~6 min)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
 # The corrected default is kappa = 0.5; the schedule's budget is in the report.
@@ -1653,6 +1836,17 @@ cargo run -p pcnl --example schedule_mobility            # the mobility/floor ta
 cargo run --release -p pcnl --example step_scale_control  # §6.5.2, reduced config
 cargo run --release -p pcnl --example step_scale_control -- --reference  # the table
 cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar volume
+# the 2026-11-07 target-conditioning ladder: exact shell conditionals, R̂ < 1.05
+for spec in "8.61e-4 4.3e-4" "2.3e-3 1.15e-3" "1e-2 3e-3" "7.9e-2 3e-3"; do
+  set -- $spec
+  cargo run --release -p pcnl --example basin_posterior -- \
+    10000 --no-sweep --chains 2 --arm latitude --d0 $1 --step $2
+done
+# the cap-freeze control (0.0 % / 0.1 % acceptance, R̂ = inf) and the
+# posterior-scale line (d* = 6.5 rad, N ≈ 3.4e6) come from the same example:
+cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap
+cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap 2.3e-3
+cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell
 cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
 cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
 cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
