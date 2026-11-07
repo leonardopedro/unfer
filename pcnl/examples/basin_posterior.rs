@@ -664,6 +664,7 @@ fn prior_is(env: &Env, m: usize) {
     let (lo_b, hi_b) = (edges[best.1], edges[best.1 + 1]);
     let vol_shell = log_vol_of(hi_b) - log_vol_of(edges[1]);
     let like_shell = env.n * (sum_l[best.1] / n[best.1] as f64 - env.l0) / 10f64.ln();
+    let shell_label = format!("{lo_b:.1e}–{hi_b:.2} rad");
     println!(
         "\n   prior predictive (unweighted): acc {:.2} %, NLL {:.4}   ← what a draw from π ≈ Haar scores\n   \
          self-normalized IS from Haar:   acc {:.2} %, NLL {:.4},  ESS {:.2} of {m}\n   \
@@ -684,7 +685,7 @@ fn prior_is(env: &Env, m: usize) {
         env.n * (l_w - env.l0),
         spread,
         spread,
-        format!("{lo_b:.1e}–{hi_b:.2} rad"),
+        shell_label,
         vol_shell,
         -like_shell,
         vol_shell - like_shell,

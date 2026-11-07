@@ -547,7 +547,9 @@ pub fn latitude_jump(
     // `(1 − cos d₀)/(2|a|δ)` steps, i.e. ~10³ at 8.6e-4 and ~10⁵ at 0.079.
     let an = (anchor.iter().map(|x| x * x).sum::<f64>()).sqrt();
     let un = (u.iter().map(|x| x * x).sum::<f64>()).sqrt();
-    if !(an > 0.0) || !(un > 0.0) {
+    // `ok` rather than the comparison inside the `!`: a NaN fails either test.
+    let ok = an > 0.0 && un > 0.0;
+    if !ok {
         return (u.to_vec(), false, log_target_u);
     }
     // the state, as a point of the unit sphere, written about the unit anchor
@@ -555,7 +557,8 @@ pub fn latitude_jump(
     let s = (1.0 - c * c).max(0.0).sqrt();
     let v: Vec<f64> = (0..p).map(|i| u[i] / un - c * anchor[i] / an).collect();
     let m = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if !(m > 1e-12) || !(s > 1e-12) {
+    let ok = m > 1e-12 && s > 1e-12;
+    if !ok {
         return (u.to_vec(), false, log_target_u);
     }
     let ub: Vec<f64> = v.iter().map(|x| x / m).collect();
@@ -706,7 +709,7 @@ pub fn drift_direction(g: &[f64], x: &[f64]) -> Vec<f64> {
 /// the `shell_jump` law.
 fn sample_vmf_tangent(u: &[f64], mu: &[f64], kappa: f64, rng: &mut impl Rng) -> Vec<f64> {
     let p = u.len();
-    if !(kappa > 0.0) || !kappa.is_finite() {
+    if !kappa.is_finite() || kappa <= 0.0 {
         return uniform_tangent(u, rng);
     }
     if p == 2 {
@@ -1251,34 +1254,42 @@ mod tests {
 
     // ---- the fixed-latitude jump -----------------------------------------
 
-    /// `steps` proposals of [`latitude_jump`] about `anchor`, every `thin`-th
-    /// draw kept after `burn`, plus the acceptance rate.
+    /// How long to run a test chain: proposals, burn-in, thinning and seed.
+    /// Bundled so `latitude_chain` (which also needs the anchor) stays under
+    /// clippy's argument limit without touching the knobs themselves.
+    #[derive(Clone, Copy)]
+    struct Run {
+        steps: usize,
+        burn: usize,
+        thin: usize,
+        seed: u64,
+    }
+
+    /// [`Run::steps`] proposals of [`latitude_jump`] about `anchor`, every
+    /// `thin`-th draw kept after `burn`, plus the acceptance rate.
     fn latitude_chain(
         u0: Vec<f64>,
         r: f64,
         anchor: &[f64],
         log_target: &dyn Fn(&[f64]) -> f64,
-        steps: usize,
-        burn: usize,
-        thin: usize,
-        seed: u64,
+        run: Run,
     ) -> (Vec<Vec<f64>>, f64) {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(run.seed);
         let mut u = u0;
         let mut lu = log_target(&u);
         let (mut accepted, mut kept) = (0usize, Vec::new());
-        for t in 0..steps {
+        for t in 0..run.steps {
             let (next, take, ln) = latitude_jump(&u, lu, r, anchor, log_target, &mut rng);
             if take {
                 u = next;
                 lu = ln;
                 accepted += 1;
             }
-            if t >= burn && (t - burn).is_multiple_of(thin) {
+            if t >= run.burn && (t - run.burn).is_multiple_of(run.thin) {
                 kept.push(u.clone());
             }
         }
-        (kept, accepted as f64 / steps as f64)
+        (kept, accepted as f64 / run.steps as f64)
     }
 
     /// **The move stays on the latitude and is uniform there.**  On a flat
@@ -1300,7 +1311,13 @@ mod tests {
         start[0] = d0.cos();
         start[1] = d0.sin();
         let flat = |_: &[f64]| 0.0;
-        let (kept, rate) = latitude_chain(start, 0.25, &anchor, &flat, 20_000, 1_000, 5, 71);
+        let run = Run {
+            steps: 20_000,
+            burn: 1_000,
+            thin: 5,
+            seed: 71,
+        };
+        let (kept, rate) = latitude_chain(start, 0.25, &anchor, &flat, run);
         assert!(rate > 0.95, "a flat target must accept, got {rate}");
         let c = d0.cos();
         for u in &kept {
@@ -1357,7 +1374,13 @@ mod tests {
             let sq = std::f64::consts::FRAC_1_SQRT_2;
             kappa * (sq * u[0] + sq * u[1])
         };
-        let (kept, rate) = latitude_chain(start, 0.2, &anchor, &log_target, 60_000, 1_000, 5, 72);
+        let run = Run {
+            steps: 60_000,
+            burn: 1_000,
+            thin: 5,
+            seed: 72,
+        };
+        let (kept, rate) = latitude_chain(start, 0.2, &anchor, &log_target, run);
         assert!(rate > 0.25, "acceptance {rate} too low to judge");
         let z = kappa * s * std::f64::consts::FRAC_1_SQRT_2;
         let theory = s * (1.0 / z.tanh() - 1.0 / z);
