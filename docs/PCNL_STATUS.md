@@ -1818,7 +1818,10 @@ Five readings, in order of how much they change the document:
    whatever the thinning (`thin 1 200` leaves 26 draws per half, whose own null
    spans [0.974, 1.093]).  The honest form of that row is "`R̂` 1.05, consistent
    with stationarity but unable to certify it; settling it needs ~200 k steps,
-   not more thinning".  What the re-run *did* settle is the BMA, which is what the
+   not more thinning".  The other lever is the jump radius itself: since
+   `τ = (sin d₀/r)²` and the shell is flat out there, `r = 1e-2` would give
+   `τ ≈ 62` steps and buy an order of magnitude of mixing per step — the natural
+   next run, and much cheaper than 200 k steps.  What the re-run *did* settle is the BMA, which is what the
    row is quoted for: 4 chains average to **42.97 % / 1.4349** where the 2-chain
    run gave 37.89 % / 1.4410 — the per-chain accuracies are the same (36.5–37.4 %
    both times), so the 5-point gain is the averaging over four chains, and the
