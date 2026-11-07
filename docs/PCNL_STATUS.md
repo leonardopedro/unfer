@@ -707,6 +707,11 @@ The first fact is where the solution lives:
 | `θ_A` | 4.30 % | 4.1523 | 94.0 (2.1 × shell) |
 | `θ_Adam` (Task B) | **49.22 %** | 1.3136 | **1272.6 (28.2 × shell)** |
 
+> **Both rows are stale — see the 2026-11-07 correction.**  They are the
+> pre-fix 2026-10-20 baselines, not a measurement of the current model; the
+> current values are `θ_A 13.67 % / 4.2124 / 124.9` and
+> `θ_Adam 55.08 % / 1.1367 / 1620.1`.
+
 and the second is what the kernel does with it (2 chains at `β₀ = 0.3`,
 10 000 steps; 1 chain at `β₀ = 0.03`, 2 000 steps):
 
@@ -1639,6 +1644,157 @@ prior-dominated and neither a ramp nor a temperature can reach the
 informative set — what has to change is the step distribution, not the
 schedule.
 
+### The dimension budget: how many directions can 512 examples constrain? (2026-11-07)
+
+Every "`π` is prior-dominated" sentence in §6.5.2–6.5.7 rests on one arithmetic
+claim: a cap of angular radius `d` on `S^{P−1}` holds a fraction
+`≈ (sin(d/2))^{P−1}` of the sphere.  That is the measure of a **cosine** cap —
+right at `P = 3`, wrong everywhere else.  `pcnl/src/budget.rs` carries the exact
+law instead,
+
+```text
+f_m(d) = ½ · I_{sin²d}((m−1)/2, ½),      d ≤ π/2,
+```
+
+with `I` the regularized incomplete beta, evaluated in log space (Lentz
+continued fraction) because `x^a` underflows outright at
+`m = 16 672, d = 10⁻³`.  Nine unit tests pin it: the three closed forms (`d/π`
+at `m = 2`, `sin²(d/2)` at `m = 3`, `(d − sin d cos d)/π` at `m = 4`),
+Monte-Carlo at `m = 5, 9, 23`, monotonicity in both arguments, the published
+configuration's five-figure cost, the inversion the budget is solved with, the
+nearest-of-`n` radius, and degenerate radii.
+
+The price is the point.  For large `m`,
+`−ln f_m(d) ≈ (m−1)·ln(1/sin d)`, so **directions cost nats linearly**, and a
+likelihood can pay at most `N·ΔL` of them:
+
+```text
+m* = N·ΔL / ln(1/sin d)        — how many directions the data can localize
+```
+
+`examples/dimension_budget` measures both sides at the reference configuration
+(`P = 16 672`, `N = 512`, seed 20261020, anchor `u_Adam`):
+
+**1. The geometry, validated.**  256 Haar draws, each at its distance from
+`u_Adam`: min 1.5508, p5 1.5580, median 1.5706, max 1.5934 rad.  The exact law
+predicts the nearest of 256 at **1.5502 rad** (0.04 % off), and 0.000 of 256
+inside 0.1 rad — measured 0.  The "1.0–1.6 rad" row quoted earlier in this
+document is a *bucket label*, not an observation: no Haar draw in this study
+has landed nearer than 1.55 rad ≈ 89°.
+
+**2. The purse.**  `N·ΔL` along eight random rays from the anchor (median; mean
+and max tell the same story, the spread is why every `m*` below is quoted with
+its best-ray value):
+
+| radius (rad) | `N·ΔL` median | max | held-out acc |
+|---:|---:|---:|---:|
+| 1.0e-3 | 0.27 | 0.51 | 55.08 % |
+| 2.3e-3 | 1.44 | 3.06 | 53.91 % |
+| 5.0e-3 | 6.80 | 13.67 | 51.95 % |
+| 1.0e-2 | 26.47 | 45.25 | 48.83 % |
+| 2.0e-2 | 108.53 | 131.66 | 40.23 % |
+| 4.0e-2 | 370.63 | 450.86 | 28.52 % |
+
+`N·ΔL` grows as `d^1.95` over the ladder — quadratic, which is what a smooth
+loss must give — and then saturates.  The informative set is a **level set**,
+bounded energetically, not a cone: the loss rises in every direction, so there
+is no ridge for a sampler to slide along.
+
+**3. The budget.**  `cost/dir` is `−ln sin d`; `m*` is the exact-law answer,
+and the last column is the same quantity on the friendliest ray.
+
+| radius | cost/dir | exact cap cost at `P = 16 672` | nats available | `m*` | best ray |
+|---:|---:|---:|---:|---:|---:|
+| 1.0e-3 | 6.91 | 115 165 | 0.27 | 2.0 | 2.0 |
+| 2.3e-3 | 6.07 | 101 280 | 1.44 | 2.0 | 2.0 |
+| 5.0e-3 | 5.30 | 88 334 | 6.80 | 2.5 | 3.5 |
+| 1.0e-2 | 4.61 | 76 779 | 26.47 | 6.5 | 10.5 |
+| 2.0e-2 | 3.91 | 65 224 | 108.53 | 28.5 | 33.5 |
+| 4.0e-2 | 3.22 | 53 672 | 370.63 | 115.5 | 140.5 |
+
+`m* = 2.0` is the module's floor — the budget is below the circle's own price,
+so those rows say "cannot pin even a plane", not "two directions".
+
+**4. Is this a fact about `P = 16 672`?**  Same data, same radius (0.04 rad),
+`N·ΔL = 370.63`, varying only the ambient dimension:
+
+| `P` | cap cost | `m*` | `m*/P` | verdict |
+|---:|---:|---:|---:|---|
+| 42 | 134.8 | 115.5 | 275 % | localizable |
+| 100 | 321.9 | 115.5 | 116 % | localizable |
+| 512 | 1 649 | 115.5 | 22.6 % | partly localizable |
+| 4 240 | 13 651 | 115.5 | 2.7 % | prior-dominated |
+| 16 672 | 53 672 | 115.5 | 0.69 % | prior-dominated |
+
+`m*` is identical at every `P` because the budget counts **nats, not
+parameters**.  What `P` moves is the *share* of the tangent space the posterior
+can reach — 0.69 % here.  Equivalently: the largest model whose 0.04-rad cap
+512 examples can still pin is `P ≈ 115`, and `P = 16 672` is 145× short.
+
+**5. What the proxy cost.**  The old formula's error is not noise but exactly
+`(P−1)·ln 2` in the large-`P` limit:
+
+| radius | exact | proxy | difference |
+|---:|---:|---:|---:|
+| 1.0e-3 | 115 165.0 | 126 714.6 | 11 549.7 |
+| 2.0e-2 | 65 224.2 | 76 773.1 | 11 548.8 |
+| 4.0e-2 | 53 672.1 | 65 218.4 | 11 546.3 |
+
+At `P = 16 672` that is 11 547 nats — 5 014 decades, against a six-figure
+margin, so **the prior-domination verdict never depended on it**.  But the
+*crossover* is a different matter: it lives at `m ≈ 10`, where a factor of
+`2^m` is the entire answer, which is why the exact law replaces the proxy in
+the module rather than beside it.
+
+**The verdict of the cycle.**  At the radii where the fine-tune's held-out
+accuracy survives (0.01–0.02 rad, 48.8 %–40.2 %), the data can localize
+**7–29 directions out of 16 671**.  Three unrelated measurements agree on a
+single- to double-digit effective dimension:
+
+* this budget: `m* = 6.5` at 0.01 rad, 28.5 at 0.02 rad;
+* `subspace_bound`'s Hessian spectrum: the top 8 eigenvectors carry 72.8 % of
+  `Tr H` ⇒ rank ≈ 11;
+* the fixed-radius chain's free-walk growth exponent (0.509 of a diffusive
+  walk) and 89.7° pairwise displacement angles.
+
+So the sampler results are not a kernel defect.  At `P = 16 672` the **target**
+constrains 99.3 % of the tangent space not at all, and a pCN step spends its
+noise exactly there; no schedule, metric or guidance term changes that
+arithmetic, which is consistent with §6.5.6–6.5.8 having exhausted those
+levers.  The open question is no longer the kernel but **which `m*`-dimensional
+conditioning to sample**: an informed rank-`m*` subspace (e.g. the Adam-on-B
+path's own Hessian block) is where the tempered target becomes samplable, and
+that is the next experiment.  The whole section is one command,
+`cargo run --release -p pcnl --example dimension_budget`, wired into
+`./scripts/pcnl-reproduce budget` as the three-minute anchor-drift canary.
+
+> **Correction, same day: the §6.5.5 reference points are the *pre-fix* block's,
+> not a measurement.**  Rerunning `adam_start` (defaults, seed 20261020, 5
+> steps) prints
+> `θ_A 13.67 % / 4.2124 / ‖θ‖ 124.9 (2.8 × shell)` and
+> `θ_Adam 55.08 % / 1.1367 / ‖θ‖ 1620.1 (35.8 × shell)`.  The table above line
+> 707 records `θ_A 4.30 % / 4.1523 / 94.0 (2.1 ×)` and
+> `θ_Adam 49.22 % / 1.3136 / 1272.6 (28.2 ×)` — and those are *verbatim* the
+> `B baselines: before 4.3% (NLL 4.1523) … Adam-on-B 49.2% (NLL 1.3136)` line
+> of the 2026-10-20 block that this document's opening section declares
+> non-reproducible.  The 2026-11-05 section reused the stale pre-fix baselines
+> as its anchor instead of re-measuring them, and every later table that quotes
+> `49.22 %` as its frozen start row inherits that.  Consequences: the anchor
+> sits **further** out than recorded (35.8 × shell, not 28.2 ×), and each
+> "46 % vs the anchor" comparison in §6.5.6–6.5.7 is ≈6 points low in its gap.
+> What does **not** move is any geometric quantity — radii, cap masses, `m*` —
+> because they are ratios at fixed data; the budget's verdict is unchanged in
+> kind and slightly stronger (a further-out anchor with the same `N·ΔL` buys
+> even fewer directions).
+>
+> One loose end, recorded rather than explained: the two examples score the
+> *same* point (direction `u_Adam`, radius 45.19) 0.02 nats apart — 1.1139 in
+> `dimension_budget`, 1.1367 in `adam_start` — while agreeing exactly on the
+> 55.08 % accuracy.  So the forward pass is exactly rank-invariant across a
+> rescale but only approximately value-invariant; `EPS = 1e-6` is too small to
+> account for 2 % of 1.14, and nothing in this section depends on which of the
+> two is quoted.
+
 ## Reproduce / verify
 
 ```bash
@@ -1685,6 +1841,7 @@ cargo run --release -p pcnl --example basin_posterior -- 50000 --no-sweep --arm 
 cargo run --release -p pcnl --example sphere_chain -- 400 --precond --beta 0.003 --start adam --seeds 2 --chains 2  # the R̂
 cargo run --release -p pcnl --example sphere_chain -- 400 --precond --seeds 2  # the metric ladder
 cargo run --release -p pcnl --example sphere_chain -- 10000 --precond --beta 0.003 --start adam --seeds 2 --chains 2  # the 10k cell, R̂ 2.894 (~1 h 40 m)
+cargo run --release -p pcnl --example dimension_budget  # the exact cap law, the purse, m* (~3 min)
 ./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published

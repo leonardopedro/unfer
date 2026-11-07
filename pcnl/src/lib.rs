@@ -30,7 +30,13 @@
 //! * [`readout`] — §9.3 (M1/M4) of the ngpt research plan: proper scores
 //!   of the *chain* posterior predictive, the exact finite-`m` Brier
 //!   identity, and the leave-one-out reward baseline the RL arm needs.
+//! * [`budget`] — the information–volume budget: the **exact** Haar cap-mass
+//!   law `½I_{sin²d}((m−1)/2, ½)` and the number of directions a finite data
+//!   set can localize (`m* = N·ΔL / ln(1/sin d)`).  This is the arithmetic
+//!   behind `docs/PCNL_STATUS.md`'s "π is prior-dominated", and it explains
+//!   the free-walk exponents (§6.5.9).
 
+pub mod budget;
 pub mod diag;
 pub mod experiment;
 pub mod model;

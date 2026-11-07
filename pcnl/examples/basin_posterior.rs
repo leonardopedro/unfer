@@ -503,7 +503,10 @@ fn prior_is(env: &Env, m: usize) {
         let l = env.pot(&u);
         let a = env.acc(&u);
         let nl = env.nll(&u);
-        let k = edges.windows(2).position(|w| d >= w[0] && d < w[1]).unwrap_or(edges.len() - 2);
+        let k = edges
+            .windows(2)
+            .position(|w| d >= w[0] && d < w[1])
+            .unwrap_or(edges.len() - 2);
         n[k] += 1;
         sum_l[k] += l;
         sum_a[k] += a;
@@ -520,14 +523,7 @@ fn prior_is(env: &Env, m: usize) {
         "\n3. the prior's own predictive and where π's mass can be ({m} Haar directions)\n   \
          the prior is Haar, so `exp(−N·L)` is the whole posterior weight\n\n   \
          {:>13}  {:>6}  {:>8}  {:>9}  {:>11}  {:>12}  {:>7}  {:>8}",
-        "d range (rad)",
-        "n",
-        "train L",
-        "N·ΔL",
-        "log10 volume",
-        "log10 weight",
-        "acc %",
-        "NLL"
+        "d range (rad)", "n", "train L", "N·ΔL", "log10 volume", "log10 weight", "acc %", "NLL"
     );
     let pf = p as f64;
     // Cap measure up to a `d`-independent constant: `∫₀^d sin^{P−2} ≈
@@ -577,6 +573,7 @@ fn prior_is(env: &Env, m: usize) {
     let (lo_b, hi_b) = (edges[best.1], edges[best.1 + 1]);
     let vol_shell = log_vol_of(hi_b) - log_vol_of(edges[1]);
     let like_shell = env.n * (sum_l[best.1] / n[best.1] as f64 - env.l0) / 10f64.ln();
+    let shell_label = format!("{lo_b:.1e}–{hi_b:.2} rad");
     println!(
         "\n   prior predictive (unweighted): acc {:.2} %, NLL {:.4}   ← what a draw from π ≈ Haar scores\n   \
          self-normalized IS from Haar:   acc {:.2} %, NLL {:.4},  ESS {:.2} of {m}\n   \
@@ -597,7 +594,7 @@ fn prior_is(env: &Env, m: usize) {
         env.n * (l_w - env.l0),
         spread,
         spread,
-        format!("{lo_b:.1e}–{hi_b:.2} rad"),
+        shell_label,
         vol_shell,
         -like_shell,
         vol_shell - like_shell,

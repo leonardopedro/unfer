@@ -19,6 +19,7 @@
 #   quick           the quick-config report                     ~20 s
 #   volume          §6.4(ii) Haar volume                        ~10 s
 #   mobility        §4.3 mobility/floor table                   ~1 min
+#   budget          the exact cap law + the dimension budget    ~3 min
 #   step-scale      §6.5.2 reduced config                       ~2 min
 #   step-scale-ref  §6.5.2 reference (θ_A, capped)              ~15 min
 #   mh-standard     §6.5.3 the standard stack under the filter  ~5 min
@@ -44,7 +45,7 @@ OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
-  adam-start sphere curvature mode subspace basin basin-chains sphere-rep
+  adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
   sphere-ladder cold-10k
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
@@ -133,6 +134,13 @@ run_stage() {
     ;;
   subspace)
     cargo run --release -p pcnl --example subspace_bound
+    ;;
+  budget)
+    # The anchor-drift canary: the exact cap law, the likelihood's purse and the
+    # dimension budget `m*` (2026-11-07).  It rebuilds the same Env every other
+    # stage does, so a change that moves `u_Adam` shows up here in three minutes
+    # rather than as a stale table a week later.
+    cargo run --release -p pcnl --example dimension_budget
     ;;
   basin)
     # The target's own predictive: the 128-probe width sweep and the one-nat

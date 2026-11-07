@@ -556,7 +556,7 @@ pub fn drift_direction(g: &[f64], x: &[f64]) -> Vec<f64> {
 /// the `shell_jump` law.
 fn sample_vmf_tangent(u: &[f64], mu: &[f64], kappa: f64, rng: &mut impl Rng) -> Vec<f64> {
     let p = u.len();
-    if !(kappa > 0.0) || !kappa.is_finite() {
+    if !kappa.is_finite() || kappa <= 0.0 {
         return uniform_tangent(u, rng);
     }
     if p == 2 {
