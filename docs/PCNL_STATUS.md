@@ -1751,18 +1751,20 @@ looks like physics and is arithmetic:
   asserts `E[u₁] = c` (pinned) alongside `E[u₂] = s·A(κ s/√2)`.
 
 **4. What the fixed kernel measures.**  `--arm latitude --d0 R` measures
-`E[acc | d = d₀]` exactly, for a radius chosen rather than reached.  Two chains,
-10 000 steps each, burn 2 000, every radius converged:
+`E[acc | d = d₀]` exactly, for a radius chosen rather than reached.  All cells
+20 000–30 000 steps where noted, otherwise 10 000; burn 20 %, thinning 25–75:
 
-| `d₀` (rad) | step | accept | per-draw acc / NLL | BMA acc / NLL | `R̂`(NLL) |
-|---:|---:|---:|---|---|---:|
-| 8.61e-4 (`r₁`) | 4.30e-4 | 90.9 % | 48.80–48.93 % / 1.3135 | 47.66 % / 1.3133 | 0.997 |
-| 2.30e-3 (basin) | 1.15e-3 | 75.3 % | 49.01–49.15 % / 1.3128 | 46.48 % / 1.3124 | 1.002 |
-| 1.00e-2 | 3.00e-3 | 35.0 % | 47.30–47.54 % / 1.3093 | 48.44 % / 1.3045 | 1.003 |
-| 7.90e-2 (the walk's endpoint) | 3.00e-3 | 43.5 % | 35.23–36.77 % / 1.4673 | 39.84 % / 1.4471 | 1.038 |
-| anchor (`d₀ = 0`) | — | — | 49.22 % / 1.3136 | — | — |
+| `d₀` (rad) | step | accept | per-draw acc / NLL | BMA acc / NLL | `R̂`(NLL) | `R̂`(loss) |
+|---:|---:|---:|---|---:|---:|---:|
+| 8.61e-4 (`r₁`) | 4.30e-4 | 90.9 % | 48.80–48.93 % / 1.3135 | 47.66 % / 1.3133 | 0.997 | 0.998 |
+| 2.30e-3 (basin) | 1.15e-3 | 75.3 % | 49.01–49.15 % / 1.3128 | 46.48 % / 1.3124 | 1.002 | 1.003 |
+| 1.00e-2 | 3.00e-3 | 35.0 % | 47.30–47.54 % / 1.3093 | 48.44 % / 1.3045 | 1.003 | 1.021 |
+| 1.50e-2 | 3.00e-3 | 33.7 % | 46.21–47.38 % / 1.3151 | 48.44 % / 1.3090 | 1.008 | 1.010 |
+| 4.00e-2 (4 ch, 20 k) | 3.00e-3 | 35.6 % | 42.84–43.35 % / 1.3644 | 44.92 % / 1.3519 | 1.052 | 1.066 |
+| 7.90e-2 (2 ch, 30 k) | 3.00e-3 | 43.5 % | 36.75–37.45 % / 1.4574 | 37.89 % / 1.4410 | 1.140 | **1.025** |
+| anchor (`d₀ = 0`) | — | — | 49.22 % / 1.3136 | — | — | — |
 
-Four readings, in order of how much they change the document:
+Five readings, in order of how much they change the document:
 
 1. **These are the first *converged* posterior numbers in the project.**  Every
    earlier conditional (46.4 %, 48.8 %, 49.8 %) had `R̂ ≥ 1.5` or was an
@@ -1776,14 +1778,28 @@ Four readings, in order of how much they change the document:
 3. **At 1e-2 rad the conditional mean predicts *better* than the anchor**
    (NLL 1.3045 against 1.3136).  The point estimate the whole study is anchored
    at is not the best predictor even within a shell the target still has mass in.
-4. **At 7.9e-2 the conditional falls to ~40 % / NLL 1.447**, which is what the
-   free walk was reporting (34.8 % at 10 k, 33.2 % at 50 k) — the numbers that
-   used to look like a mixing artefact are now the *target's own* conditional at
-   the radius the walk happened to reach.  Same quantity, now measured rather
-   than approached.  Acceptance tracks the potential's transverse variation, not
-   the sphere: 91 % at `r₁`, 75 % at 2.7 `r₁`, 35 % at 10⁻², 44 % at 7.9e-2 —
-   the last one rising again because the far shell is flat (§6.5.6's "acceptance
-   is a property of position").
+4. **Where it falls off: between 1.5e-2 and 4e-2 rad.**  Per-draw NLL by radius
+   is 1.3128 (2.3e-3), 1.3093 (1e-2), 1.3151 (1.5e-2), **1.3644 (4e-2)**, 1.4574
+   (7.9e-2) — flat to 1.5e-2 and then rising 0.05 nats by 4e-2 and 0.14 by 7.9e-2,
+   with accuracy 49 → 47 → 43 → 37 %.  The falloff is not a kernel artefact: it
+   is the conditional mean leaving the region where the data informs the
+   direction, and it coincides with `N·medΔL` crossing ~100–200 nats (78 at
+   2e-2, 220 at 4e-2).  Acceptance tracks the potential's transverse variation,
+   not the sphere: 91 % at `r₁`, 75 % at 2.7 `r₁`, 35 % at 10⁻², 36 % at 4e-2,
+   44 % at 7.9e-2 — the last rising again because the far shell is flat
+   (§6.5.6's "acceptance is a property of position").
+
+   **The `R̂` columns disagree in a way that is itself the result.**  At 7.9e-2
+   the 30 000-step run gives `R̂(loss) = 1.025` — converged, as asked — while
+   `R̂(NLL) = 1.140` got *worse* than its own 10 000-step value (1.038), and at
+   4e-2 the four chains agree on the NLL to 0.003 yet `R̂` reads 1.052.  Both
+   cells are thinned at 50–75 steps while the shell's relaxation time along the
+   latitude is `(sin d₀/r)² = 178` steps at 4e-2 and `690` at 7.9e-2: the kept
+   draws are 70–90 % correlated, so `R̂` is measuring the thinning as much as the
+   mixing.  The honest form of these two rows is "values agree across chains to
+   ≤ 0.5 %, `R̂` is thinning-limited"; the cell that is *cleanly* converged at
+   every radius is `d₀ ≤ 1.5e-2`, and a 4-chain re-run with `--thin 400` is what
+   would settle the outer two.
 
 **5. Why the exact conditionals are a tail, not the predictive.**  Everything in
 (4) measures `E[· | d ≤ r]` or `E[· | d = r]`; what the document had never had is
@@ -1797,21 +1813,69 @@ cannot — read once along the radius and once across the tangent space.
 p(d) ∝ exp(−N·L(d)) · (sin d)^{P−2},      mode:  N·L′(d)·d = P − 2   (d ≪ 1)
 ```
 
-and the six-point sweep of `N·medΔL` fits `N·L ≈ 2200·d^{1.05}` (a log-log
-least-squares over the rows, printed by the example as `posterior scale`).  The
-mode is then
+and a log-log fit of the sweep's `N·medΔL` column gives `N·L ≈ c·d^β`, so
+`d* = ((P−2)/(cβ))^{1/β}` — printed by the example as `posterior scale`.
 
-```text
-d* = ((P − 2)/(cβ))^{1/β} = (16 670/(2200·1.05))^{0.95} = 6.5 rad
-```
+**The fit is not the result: the fit is grid-dependent, and the grid decides.**
+Three sweeps of the *same* target over three ranges give
 
-**`6.5` rad is not a radius on a sphere of circumference `2π`: there is no
-interior mode at all.**  The density rises in `d` out to the equatorial shell, so
-`π`'s mass — and therefore its predictive — is the base rate, and the number is
-the sharp version of "prior-dominated": not a sampler failing to find a mode, but
-a target with no mode to find.  It also explains the free walk of the 10 k and
-50 k runs: a potential with `N·L′·d ≪ P − 2` over the whole reachable range exerts
-no restoring force, so `d` grows as `√t` and never turns around.
+| grid (rad) | `c` | `β` | `d*` |
+|---|---:|---:|---:|
+| 1e-4 – 1e-2 | 2 200 | 1.05 | 6.5 rad |
+| 1e-2 – 8e-2 | 40 840 | 1.63 | 0.43 rad |
+| 2e-2 – 4e-1 | 793 | 0.39 | 2.9 × 10⁴ rad |
+
+i.e. seven decades of answer from one function, because the local exponent moves
+from 0.4 to 1.6 across the range and the mode equation extrapolates it.  The
+quantity to quote is therefore the **measured inequality**, which needs no fit —
+the mode exists where `β·N·L(d)` reaches `P − 2 = 16 670`:
+
+| d (rad) | 1e-4 | 1e-3 | 1e-2 | 2e-2 | 4e-2 | 1e-1 | 2e-1 | 4e-1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N·medΔL` | 0.16 | 1.35 | 24.7 | 78 | 220 | **606** | 606 | 302 |
+| test acc | 49.2 % | 48.8 % | 46.8 % | 43.4 % | 31.3 % | 14.5 % | 16.8 % | 11.7 % |
+
+The largest value measured anywhere inside 0.4 rad is `606`; even with the
+steepest local `β = 1.6` that is `970` against `16 670`, **a factor 17 short**.  So
+the density is still rising at 0.4 rad, where the accuracy has already reached
+the base rate (11.7 %) — **there is no interior mode, and `π`'s predictive is the
+base rate.**  That is the sharp version of "prior-dominated": not a sampler
+failing to find a mode, but a target with no mode inside the range where the
+model is informative at all.  It also explains the free walk of the 10 k and
+50 k runs: `N·L′·d ≪ P − 2` over the whole reachable range, so there is no
+restoring force and `d` grows as `√t` without turning around.  (The `d*` figures
+the example prints remain useful where the grid brackets the mode — it does for
+the two smaller models below — but for this target the inequality is the claim.)
+
+**The same inequality makes a prediction: shrink `P` and the mode comes inside.**
+Same data, same `N = 512`, only the model width changed (`--shapes d,ff,layers`),
+each row refitting `c, β` on its own grid:
+
+| `P` | shapes | `c` | `β` | `d*` | `r₁` | anchor acc / NLL | best conditional in the grid |
+|---:|---|---:|---:|---:|---:|---|---|
+| 16 672 | 32,64,2 | 2 200 | 1.05 | 6.5 rad | 8.61e-4 | 49.22 % / 1.3136 | 49.22 % (anchor) |
+| 4 824 | 24,48,1 | 3 664 | 0.86 | 1.66 rad | 9.62e-5 | 33.59 % / 1.4626 | **37.75 %** / 1.4647 (1e-3) |
+| 2 192 | 16,32,1 | 10 971 | 1.14 | **0.217 rad** | 3.66e-4 | 26.17 % / 1.6651 | 26.17 % (anchor) |
+| 584 | 8,16,1 | 5 979 | 0.95 | **0.0905 rad** | 1.37e-4 | 20.70 % / 1.6499 | 28.52 % / 1.7223 (3e-3, ESS 1.0) |
+
+Three things hold and one does not.  **Held:** `d*` falls monotonically with `P`
+(6.5 → 1.66 → 0.22 → 0.09 rad), the interior-mode threshold is crossed between
+`P = 4 824` (`d* = 1.66 rad`, still outside the sphere's equator) and `P = 2 192`
+(`d* = 0.22 rad`, inside), and the two smallest models are the ones whose grid
+*brackets* the mode, so their `d*` is a measurement rather than an extrapolation.
+**Not held:** the naive form `d* ∝ P` (which assumes `c` is `P`-independent, as a
+unit tangent's directional derivative `|∇L|/√P` with `|∇L| ∝ √P` suggests).  Measured
+`c` grows 1.7× then 3× as `P` drops 3.5× and 2.2×, i.e. a smaller model is much
+more sensitive *per direction*, so `d*` falls faster than linearly: 6.5→0.22 is
+30× for a 7.6× drop in `P`.  The scaling law is therefore structural (there is a
+mode when `β·N·L(d) = P − 2`, and shrinking `P` finds it) but not parametric in
+`P` alone — `c(P)` has to be measured, and `c` grows as the model shrinks.
+
+One more reading from the same table: at `P = 4 824` the best conditional in the
+grid (37.75 % at 1e-3 rad) beats the anchor (33.59 %) by 4 points, while at
+`P = 16 672` no conditional beats the anchor at all until 4e-2, where it is 5
+points *below*.  That is the same fact as the mode: with fewer parameters the
+posterior's mass lies where the data has actually informed the direction.
 
 The same equation fixes what would put the mode *inside*.  At `r = 2.3e-3` it
 asks for
@@ -2011,8 +2075,10 @@ for spec in "8.61e-4 4.3e-4" "2.3e-3 1.15e-3" "1e-2 3e-3" "7.9e-2 3e-3"; do
   cargo run --release -p pcnl --example basin_posterior -- \
     10000 --no-sweep --chains 2 --arm latitude --d0 $1 --step $2
 done
-# the cap-freeze control (0.0 % / 0.1 % acceptance, R̂ = inf) and the
-# posterior-scale line (d* = 6.5 rad, N ≈ 3.4e6) come from the same example:
+# the cap-freeze control (0.0 % / 0.1 % acceptance, R̂ = inf), the radial
+# profile out to 0.4 rad, and the data requirement (N ≈ 3.4e6) come from the
+# same example — see the `scale` stage of scripts/pcnl-reproduce for the
+# wide-grid, 4-chain and --shapes invocations:
 cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap
 cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap 2.3e-3
 cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell
