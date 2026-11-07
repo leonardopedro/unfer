@@ -111,6 +111,7 @@
 
 use candle_core::{Device, Tensor};
 use pcnl::experiment::{Config, bma_metrics};
+use pcnl::model::Shapes;
 use pcnl::model::{Variant, init_flat};
 use pcnl::sampler::norm;
 use pcnl::task::{Dataset, Task, adam, momentum_sgd};
@@ -183,11 +184,19 @@ struct Env {
 }
 
 impl Env {
-    fn new(seed: u64) -> Self {
-        let cfg = Config {
+    /// `shapes` overrides the model width (`--shapes`), which sets `P`.  The
+    /// scaling measurement needs it: the radial law says the posterior's mode is
+    /// at `d* = ((P−2)/(cβ))^{1/β}`, so changing `P` alone is the cleanest test
+    /// of the law — except that `c` is re-measured at each `P`, which is the
+    /// point (a smaller model can have a flatter or steeper landscape).
+    fn new(seed: u64, shapes: Option<Shapes>) -> Self {
+        let mut cfg = Config {
             seed,
             ..Config::default()
         };
+        if let Some(sh) = shapes {
+            cfg.shapes = sh;
+        }
         let p_dim = cfg.shapes.flat_size();
         let radius = cfg.sigma * (p_dim as f64).sqrt();
         let n = cfg.n_train as f64;
@@ -715,7 +724,22 @@ fn main() {
     let cap_flag = args.iter().any(|a| a == "--cap");
     let cap_radius = flag("--cap").and_then(|v| v.parse::<f64>().ok());
 
-    let mut env = Env::new(SEED);
+    // `--shapes d,ff,layers` changes the model width, hence `P`.  `vocab` stays
+    // the default's (the task's alphabet), so only the parameter count moves.
+    let shapes = flag("--shapes").map(|v| {
+        let parts: Vec<usize> = v
+            .split(',')
+            .filter_map(|x| x.trim().parse::<usize>().ok())
+            .collect();
+        assert_eq!(parts.len(), 3, "--shapes wants d,ff,layers");
+        Shapes {
+            vocab: Config::default().shapes.vocab,
+            d: parts[0],
+            ff: parts[1],
+            layers: parts[2],
+        }
+    });
+    let mut env = Env::new(SEED, shapes);
     if let Some(m) = flag("--prior-is").and_then(|v| v.parse::<usize>().ok()) {
         prior_is(&env, m);
         return;
@@ -756,7 +780,17 @@ fn main() {
         let mut one_nat: Option<f64> = None;
         let (mut pred_lo, mut pred_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ 0x15);
-        for width in WIDTHS {
+        // `--widths a,b,c` replaces the default grid.  The one-nat radius moves
+        // with `P` (a smaller model needs a wider ball to pay one nat), so the
+        // scaling runs pass their own grid instead of the `P = 16 672` one.
+        let widths: Vec<f64> = match flag("--widths") {
+            Some(list) => list
+                .split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect(),
+            None => WIDTHS.to_vec(),
+        };
+        for width in widths {
             let sd = width / p_f.sqrt();
             let mut pts: Vec<(Vec<f64>, f64, f64)> = Vec::with_capacity(probes);
             let mut lmin = f64::INFINITY;
