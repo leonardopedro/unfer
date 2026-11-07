@@ -772,13 +772,28 @@ fn main() {
     } else {
         println!(
             "1. width sweep (self-normalized IS, {probes} probes each)\n   \
-             {:>9}  {:>8}  {:>11}  {:>9}  {:>9}  {:>10}  {:>10}  {:>9}",
-            "width r", "ESS", "angle mean", "acc %", "NLL", "in basin %", "N·medΔL", "N·maxΔL"
+             {:>9}  {:>8}  {:>11}  {:>9}  {:>9}  {:>10}  {:>10}  {:>9}  {:>9}",
+            "width r",
+            "ESS",
+            "angle mean",
+            "acc %",
+            "NLL",
+            "in basin %",
+            "N·medΔL",
+            "N·maxΔL",
+            "N·L′·tan d"
         );
         let mut max_ess = (f64::NEG_INFINITY, 0.0f64);
         // (width, N·medΔL) per row: the inputs to the posterior-scale line below.
         let mut rows: Vec<(f64, f64)> = Vec::new();
         let mut one_nat: Option<f64> = None;
+        // The exact radial mode equation is `N·L′(d) = (P−2)·cot d`, i.e.
+        // `N·L′(d)·tan d = P − 2` (the `d ≪ 1` form replaces `tan d` by `d`).
+        // The column below is that left-hand side, differenced between adjacent
+        // grid rows; `best_mode` keeps the largest value seen, which is what
+        // decides whether a mode exists *anywhere* on the measured range.
+        let mut prev: Option<(f64, f64)> = None;
+        let mut best_mode: Option<(f64, f64)> = None;
         let (mut pred_lo, mut pred_hi) = (f64::INFINITY, f64::NEG_INFINITY);
         let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ 0x15);
         // `--widths a,b,c` replaces the default grid.  The one-nat radius moves
@@ -829,13 +844,22 @@ fn main() {
             dls.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let med_dl = dls[dls.len() / 2];
             let dl_max = *dls.last().unwrap();
+            let mode_lhs = prev.map(|(w0, y0)| n * (med_dl - y0) / (width - w0) * width.tan());
+            if let Some(lhs) = mode_lhs {
+                best_mode = Some(match best_mode {
+                    Some((b, wb)) if b >= lhs => (b, wb),
+                    _ => (lhs, width),
+                });
+            }
             println!(
                 "   {width:>9.1e}  {ess:>8.1}  {w_angle:>11.3e}  {w_acc:>9.2}  {w_nll:>9.4}  \
-                 {:>10.1}  {:>9.2}  {:>9.2}",
+                 {:>10.1}  {:>9.2}  {:>9.2}  {:>9.2}",
                 100.0 * in_cap,
                 n * med_dl,
-                n * dl_max
+                n * dl_max,
+                mode_lhs.unwrap_or(f64::NAN)
             );
+            prev = Some((width, med_dl));
             rows.push((width, n * med_dl));
             pred_lo = pred_lo.min(w_acc);
             pred_hi = pred_hi.max(w_acc);
@@ -898,6 +922,25 @@ fn main() {
                 );
             }
         }
+        // The inequality that needs no fit: a mode at radius `d` requires the
+        // likelihood's log-slope to pay the Haar volume's, `N·L′(d)·tan d =
+        // P − 2`.  If the largest measured left-hand side is short of `P − 2`,
+        // there is no interior mode on the whole grid — not as an extrapolation
+        // from a fitted exponent, but as an inequality over measured rows.
+        if let Some((lhs, at)) = best_mode {
+            let need = p_f - 2.0;
+            println!(
+                "   exact mode equation N·L′·tan d = P−2: largest measured {lhs:.3e} at \
+                 d = {at:.1e} rad\n   \
+                 against P−2 = {need:.0} — a factor {:.3e} short{}.\n",
+                need / lhs.max(1e-300),
+                if lhs < need {
+                    ", so no mode exists on the measured range"
+                } else {
+                    ""
+                }
+            );
+        }
         println!(
             "\n2. the target's width and predictive\n   \
              one-nat radius N·E[ΔL] = 1: r₁ = {r1:.2e} rad\n   \
@@ -939,7 +982,13 @@ fn main() {
         );
     }
     let burn = steps / 5;
-    let thin = (steps / 400).max(1);
+    // 400 kept draws is the default budget.  `--thin N` overrides it, which the
+    // convergence check needs: `R̂` on the outer shells is thinning-limited, and
+    // the only way to tell thinning from mixing is to keep draws further apart
+    // than the shell's own relaxation time `(sin d₀/r)²`.
+    let thin = flag("--thin")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or((steps / 400).max(1));
     let runs: Vec<Chain> = if chains <= 1 {
         vec![run_chain(&env, &arm, r1, steps, burn, thin, SEED ^ 0x5a11)]
     } else {

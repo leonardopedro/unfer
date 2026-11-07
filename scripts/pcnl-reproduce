@@ -36,8 +36,12 @@
 #   cold-10k        §6.5.6(c) the 10 000-step ladder            ~2.7 h
 #   target-condition  §6.4–6.5 conditionals, exact: 4 radii +
 #                     the two cap-freeze controls + the radial law  ~60 min
-#   scale           the radial profile to 0.4 rad, the 4e-2 / 7.9e-2 cells
-#                   at 4 chains, and the P-scaling table (3 sizes)   ~50 min
+#   scale           the radial profile to the pole, the 4e-2 / 7.9e-2 cells
+#                   at 4 chains, and the P-scaling table (3 sizes)   ~60 min
+#   scale2          the profile's three follow-ups: the outer shells at
+#                   --thin 400, the small models' d* shells, and where
+#                   those small models are actually informative   ~90 min
+#   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
 # plus nothing long: it is the subset that fails fast when a change broke the
@@ -50,7 +54,7 @@ ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
-  sphere-ladder cold-10k target-condition scale
+  sphere-ladder cold-10k target-condition scale scale2 rhat-null
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -195,11 +199,16 @@ run_stage() {
     cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell
     ;;
   scale)
-    # The radial profile to 0.4 rad (the mode inequality), the two falloff
+    # The radial profile to the pole (the mode inequality), the two falloff
     # cells at 4 chains, and the P-scaling table.  `--widths` replaces the
     # default grid, `--shapes d,ff,layers` changes P.
+    #
+    # The profile grid must stop *short* of pi/2: `N·L'·tan d` is the exact mode
+    # residual, and tan flips sign just past the pole, so a 1.5708 row prints a
+    # sign-flipped artefact.  Use 1.5707 (2026-11-07: the whole-sphere grid's
+    # largest informative residual is 888 at 6e-2 vs P - 2 = 16 670).
     for w in 1e-2,1.5e-2,2.5e-2,4e-2,6e-2,8e-2 \
-             2e-2,4e-2,6e-2,1e-1,1.5e-1,2e-1,3e-1,4e-1; do
+             2e-2,4e-2,6e-2,1e-1,2e-1,3e-1,4e-1,5e-1,6e-1,8e-1,1.0,1.2,1.4,1.5707; do
       cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell --widths "$w"
     done
     cargo run --release -p pcnl --example basin_posterior -- \
@@ -212,6 +221,41 @@ run_stage() {
       cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
         --shapes "$sh" --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,1e-1
     done
+    ;;
+  scale2)
+    # 2026-11-07: the three follow-ups the whole-sphere grid made possible.
+    #
+    # (a) The outer shells re-run with a thinning gap wide enough that R-hat
+    #     can separate thinning from mixing: 4 chains, 40 k steps, --thin 400
+    #     (~35 min each; `rhat-null` says what R-hat to expect if they are
+    #     stationary).  2026-11-07 at 4e-2: R-hat(NLL) 1.052 -> 1.003 and the
+    #     BMA is 44.92 % / 1.3506 against the old 44.92 % / 1.3519, so the old
+    #     cell's R-hat was thinning, exactly as its null predicted.
+    # (b) The small models' shells at their own mode radii d* = 0.217, 0.0905.
+    #     At P = 2192 the predictive is the base rate (no informative mass at
+    #     the mode); at P = 584 it is 3.5 points above its anchor but R-hat 7.2,
+    #     i.e. uncertified.  `--step` is set to the shell's own residual floor
+    #     (0.05 / 0.02 rad) so acceptance is not zero.
+    # (c) Where each small model is actually informative, for comparison with
+    #     (b): the same grid as the large model, truncated at 2*d*.
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 4e-2 --step 3e-3 --thin 400
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 7.9e-2 --step 3e-3 --thin 400
+    cargo run --release -p pcnl --example basin_posterior -- \
+      20000 --no-sweep --chains 4 --arm latitude --shapes 16,32,1 --d0 0.217 --step 0.05
+    cargo run --release -p pcnl --example basin_posterior -- \
+      20000 --no-sweep --chains 4 --arm latitude --shapes 8,16,1 --d0 0.0905 --step 0.02
+    cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
+      --shapes 16,32,1 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,1e-1,2.17e-1
+    cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
+      --shapes 8,16,1 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,9.05e-2
+    ;;
+  rhat-null)
+    # What a stationary chain reports as split R-hat when its kept draws are
+    # still correlated: the null the outer-shell cells in the status doc are
+    # read against.  Pure Python, ~11 s.
+    ./scripts/pcnl-rhat-null
     ;;
   *)
     echo "unknown stage: $stage" >&2

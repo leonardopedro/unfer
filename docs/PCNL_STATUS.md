@@ -1760,16 +1760,18 @@ looks like physics and is arithmetic:
 | 2.30e-3 (basin) | 1.15e-3 | 75.3 % | 49.01–49.15 % / 1.3128 | 46.48 % / 1.3124 | 1.002 | 1.003 |
 | 1.00e-2 | 3.00e-3 | 35.0 % | 47.30–47.54 % / 1.3093 | 48.44 % / 1.3045 | 1.003 | 1.021 |
 | 1.50e-2 | 3.00e-3 | 33.7 % | 46.21–47.38 % / 1.3151 | 48.44 % / 1.3090 | 1.008 | 1.010 |
-| 4.00e-2 (4 ch, 20 k) | 3.00e-3 | 35.6 % | 42.84–43.35 % / 1.3644 | 44.92 % / 1.3519 | 1.052 | 1.066 |
-| 7.90e-2 (2 ch, 30 k) | 3.00e-3 | 43.5 % | 36.75–37.45 % / 1.4574 | 37.89 % / 1.4410 | 1.140 | **1.025** |
+| 4.00e-2 (4 ch, 40 k, thin 400) | 3.00e-3 | 35.4 % | 43.04–44.12 % / 1.3648 | 44.92 % / 1.3506 | **1.003** | **1.005** |
+| 7.90e-2 (4 ch, 40 k, thin 400) | 3.00e-3 | 43.2 % | 36.48–37.40 % / 1.4583 | 42.97 % / 1.4349 | 1.050 | 1.069 |
 | anchor (`d₀ = 0`) | — | — | 49.22 % / 1.3136 | — | — | — |
 
 Five readings, in order of how much they change the document:
 
 1. **These are the first *converged* posterior numbers in the project.**  Every
    earlier conditional (46.4 %, 48.8 %, 49.8 %) had `R̂ ≥ 1.5` or was an
-   importance-sampling estimate; these are exact-MH chains with `R̂(NLL) ≤ 1.04`
-   at every radius, so the quantities are target properties with error bars.
+   importance-sampling estimate; these are exact-MH chains with `R̂(NLL) ≤ 1.01`
+   at every radius through 4e-2 and 1.05 at 7.9e-2, so the quantities are target
+   properties with error bars (see the null table in point 4 for what those last
+   two digits can and cannot certify).
 2. **The conditional predictive is flat at 46.5–48.4 % for `d₀ ≤ 10⁻² rad`, and
    it agrees with the ball-IS sweep** (48.8–49.0 % at 2.3e-3, 48.4 % at 5e-3).
    Two independent methods — self-normalized IS and an exact chain — now agree on
@@ -1779,7 +1781,7 @@ Five readings, in order of how much they change the document:
    (NLL 1.3045 against 1.3136).  The point estimate the whole study is anchored
    at is not the best predictor even within a shell the target still has mass in.
 4. **Where it falls off: between 1.5e-2 and 4e-2 rad.**  Per-draw NLL by radius
-   is 1.3128 (2.3e-3), 1.3093 (1e-2), 1.3151 (1.5e-2), **1.3644 (4e-2)**, 1.4574
+   is 1.3128 (2.3e-3), 1.3093 (1e-2), 1.3151 (1.5e-2), **1.3648 (4e-2)**, 1.4572
    (7.9e-2) — flat to 1.5e-2 and then rising 0.05 nats by 4e-2 and 0.14 by 7.9e-2,
    with accuracy 49 → 47 → 43 → 37 %.  The falloff is not a kernel artefact: it
    is the conditional mean leaving the region where the data informs the
@@ -1789,17 +1791,39 @@ Five readings, in order of how much they change the document:
    44 % at 7.9e-2 — the last rising again because the far shell is flat
    (§6.5.6's "acceptance is a property of position").
 
-   **The `R̂` columns disagree in a way that is itself the result.**  At 7.9e-2
-   the 30 000-step run gives `R̂(loss) = 1.025` — converged, as asked — while
-   `R̂(NLL) = 1.140` got *worse* than its own 10 000-step value (1.038), and at
-   4e-2 the four chains agree on the NLL to 0.003 yet `R̂` reads 1.052.  Both
-   cells are thinned at 50–75 steps while the shell's relaxation time along the
-   latitude is `(sin d₀/r)² = 178` steps at 4e-2 and `690` at 7.9e-2: the kept
-   draws are 70–90 % correlated, so `R̂` is measuring the thinning as much as the
-   mixing.  The honest form of these two rows is "values agree across chains to
-   ≤ 0.5 %, `R̂` is thinning-limited"; the cell that is *cleanly* converged at
-   every radius is `d₀ ≤ 1.5e-2`, and a 4-chain re-run with `--thin 400` is what
-   would settle the outer two.
+   **The outer two cells were re-run at a gap wide enough to test the thinning
+   story, and the story holds — for one of them.**  The first pass ran them
+   thinned at 50–75 steps while the shell's relaxation time along the latitude is
+   `(sin d₀/r)² = 178` steps at 4e-2 and `692` at 7.9e-2, i.e. the kept draws were
+   75–90 % correlated; `scripts/pcnl-rhat-null` turns that into a prediction for a
+   chain that does nothing wrong (stationary AR(1) with `ρ = exp(−thin/τ)`, the
+   example's own split formula, 3 000 replicates):
+
+   | cell | `τ` | thin | `ρ` | null `E[R̂]` | null 95 % | null 99 % | observed |
+   |---|---:|---:|---:|---:|---|---:|---:|
+   | 4e-2, 2 ch / 20 k | 178 | 50 | 0.755 | 1.019 | [0.998, 1.066] | 1.081 | 1.052 — inside |
+   | 4e-2, 4 ch / 40 k | 178 | **400** | 0.105 | 1.003 | [0.991, 1.023] | 1.029 | **1.003 — at the null's mean** |
+   | 7.9e-2, 2 ch / 30 k | 692 | 75 | 0.897 | 1.056 | [1.001, 1.183] | 1.229 | 1.140 — inside |
+   | 7.9e-2, 4 ch / 40 k | 692 | **400** | 0.561 | 1.033 | [0.998, 1.089] | 1.103 | 1.050 — inside |
+
+   So at 4e-2 the wide gap **settles it**: `R̂(NLL)` falls 1.052 → **1.003**,
+   exactly the null's expectation for the new thinning, while the BMA is
+   unchanged (44.92 % / 1.3506 against 44.92 % / 1.3519) — the old 1.052 was
+   thinning, and the cell is converged.  At 7.9e-2 the same treatment only gets
+   to 1.050, because `τ = 692` means `thin 400` still leaves `ρ = 0.56`; the null
+   for *that* thinning expects 1.033 with a 95 % band up to 1.089, so 1.050 is
+   again unindictable and again underdetermined.  Widening the gap further does
+   not help: 40 000 steps at `τ = 692` is only ~58 effectively independent draws
+   per chain, and at 58 draws the split-`R̂` cannot resolve better than ~1.05
+   whatever the thinning (`thin 1 200` leaves 26 draws per half, whose own null
+   spans [0.974, 1.093]).  The honest form of that row is "`R̂` 1.05, consistent
+   with stationarity but unable to certify it; settling it needs ~200 k steps,
+   not more thinning".  What the re-run *did* settle is the BMA, which is what the
+   row is quoted for: 4 chains average to **42.97 % / 1.4349** where the 2-chain
+   run gave 37.89 % / 1.4410 — the per-chain accuracies are the same (36.5–37.4 %
+   both times), so the 5-point gain is the averaging over four chains, and the
+   2-chain number was an under-averaged BMA rather than a property of the shell.
+   Every radius `d₀ ≤ 1.5e-2` remains cleanly converged.
 
 **5. Why the exact conditionals are a tail, not the predictive.**  Everything in
 (4) measures `E[· | d ≤ r]` or `E[· | d = r]`; what the document had never had is
@@ -1839,7 +1863,42 @@ The largest value measured anywhere inside 0.4 rad is `606`; even with the
 steepest local `β = 1.6` that is `970` against `16 670`, **a factor 17 short**.  So
 the density is still rising at 0.4 rad, where the accuracy has already reached
 the base rate (11.7 %) — **there is no interior mode, and `π`'s predictive is the
-base rate.**  That is the sharp version of "prior-dominated": not a sampler
+base rate.**
+
+**Extending the profile to the equator turns "inside 0.4 rad" into the whole
+sphere.**  One grid (`2e-2, 4e-2, 6e-2, 1e-1, … , 1.4, π/2`, one probe set so
+every `ΔL` is measured against the same minimum) measures `N·medΔL` *and* the
+left-hand side of the exact mode equation, `N·L′(d)·tan d`, which is what a mode
+needs to equal `P − 2` (the `d ≪ 1` form replaces `tan d` by `d`):
+
+| d (rad) | 2e-2 | 4e-2 | 6e-2 | 1e-1 | 2e-1 | 3e-1 | 4e-1 | 6e-1 | 1.0 | 1.4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N·medΔL` | 78 | 220 | **515** | **606** | 296 | 370 | 315 | 217 | 209 | 254 |
+| test acc | 43.4 % | 31.3 % | 27.3 % | 14.5 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % |
+| `N·L′·tan d` | — | 282 | **888** | 227 | −627 | 229 | −235 | −333 | −47 | **1 444** |
+
+Two things happen out there.  `N·medΔL` peaks at `1e-1` rad and then *falls*:
+every row past `2e-1` is at the base rate (11.7 %) and the loss is flat, so the
+radial likelihood stops growing.  The ceiling is the base-rate gap
+`N·ΔL ≤ 512 × 3.73 ≈ 1 910`, which bounds this column — not the grid.  And the
+mode residual `N·L′·tan d` never comes near `P − 2 = 16 670`: its largest value
+in the informative band (`d ≤ 0.14` rad, where accuracy still beats the base
+rate) is `888` at `6e-2` rad, a factor **19** short; its largest value anywhere
+is `1 444` at `1.4` rad, and that is a finite-difference artefact — the *median*
+wanders `203.8 → 253.6` over `0.2` rad where the loss is flat, multiplied by
+`tan 1.4 = 5.8` — still a factor **11.5** short.  Since
+`d ln p/dd = (P−2)cot d − N·L′(d) > 0` is exactly `N·L′·tan d < P − 2`, the
+density **increases all the way to the equator**.  The mode is not just outside
+0.4 rad: it is nowhere on the sphere, and the mass that decides the predictive
+sits at `d ≈ π/2`, where the accuracy is the base rate.  That is now a
+measurement over the entire sphere rather than an extrapolation from the
+informative band.
+
+(The grid has one trap: a row must satisfy `d < π/2`, because `tan` changes sign
+just past the pole.  `1.5708` is past it, and its residual is the sign-flipped
+`−3.2 × 10⁵` — a row, not a result.)  The log-log fit on the same grid returns
+`β = 0.02`, `d* = 4 × 10¹⁵³` rad: the third grid in a row to give a different
+nonsense answer, and the reason the document quotes the inequality, not the fit.  That is the sharp version of "prior-dominated": not a sampler
 failing to find a mode, but a target with no mode inside the range where the
 model is informative at all.  It also explains the free walk of the 10 k and
 50 k runs: `N·L′·d ≪ P − 2` over the whole reachable range, so there is no
@@ -1876,6 +1935,62 @@ grid (37.75 % at 1e-3 rad) beats the anchor (33.59 %) by 4 points, while at
 `P = 16 672` no conditional beats the anchor at all until 4e-2, where it is 5
 points *below*.  That is the same fact as the mode: with fewer parameters the
 posterior's mass lies where the data has actually informed the direction.
+
+**The mode radius is not the informative radius — measured directly.**  `d*` is
+where the *density* peaks; it is not where the *model* still knows anything.  The
+two smallest models let that be checked rather than argued: run the latitude
+shell at each `d*` (`--no-sweep --chains 4`, 20 000 steps, burn 4 000, thin 50,
+`--step 0.05` and `0.02`, four chains so `R̂` is defined):
+
+| `P` | shell `d` | acceptance | per-chain acc | BMA acc / NLL | anchor acc / NLL | split `R̂` |
+|---:|---:|---:|---|---|---|---|
+| 2 192 | 0.217 rad | 0.6–1.7 % | 11.76 / 11.85 / 12.27 / 10.71 % | **11.72 % / 2.0932** | 26.17 % / 1.6651 | 2.44 / 3.29 |
+| 584 | 0.0905 rad | 0.5–0.7 % | 22.91 / 24.48 / 23.53 / 15.14 % | **24.22 % / 1.8075** | 20.70 % / 1.6499 | 7.18 / 7.26 |
+
+The `P = 2 192` answer is unambiguous: at the radius the first grid's fit called
+its mode, the shell's predictive is **exactly the base rate** (11.72 %), and every chain agrees — 11.7
+% is not a mixing accident, it is where the loss has gone flat.  So the mode sits
+*outside* the informative band for that model, and "the density peaks here" says
+nothing about accuracy.  The `P = 584` shell is the interesting middle case:
+accuracy rises 3.5 points over the anchor (24.22 % vs 20.70 %) while NLL worsens
+(1.8075 vs 1.6499) — the averaging is sharpening the vote without improving the
+calibration — and the split `R̂` of 7.2 says the four chains have *not* mixed:
+one of them sits at 15.14 % while the other three are at 22.9–24.5 %.  An
+acceptance of 0.5–0.7 % is the cause: at `β = 0.95` on a shell 0.09 rad out, the
+proposal almost never moves anywhere useful, so 20 k steps is a short walk and
+`R̂` is reporting it.  This is a **failure**, not a thinning artefact (contrast
+the `--thin 400` nulls below, where the same statistic at 1.05–1.14 is
+consistent with stationarity), and it means the `P = 584` row of the scaling
+table should be read as *a shell that is more accurate than its anchor but not
+certified*.
+
+Taken together: the inequality predicts where the mode goes as `P` shrinks, the
+small models confirm it, and the shells at `d*` show that landing on the mode
+buys nothing — at `P = 2 192` it is the base rate, and at `P = 584` it is a
+4-point accuracy gain carried by unmixed chains.  The quantity that decides the
+predictive is the mass-weighted loss over the whole sphere, not the location of
+the peak.
+
+**Where those models are informative, for comparison** (same sweep, grids ending
+at `2.2 × d*`):
+
+| `P` | 1e-4 | 3e-4 | 1e-3 | 3e-3 | 1e-2 | 3e-2 | 9e-2 | 2.2e-1 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 192 acc (ESS) | 26.17 (126) | 26.12 (114) | 25.09 (42) | 22.45 (3.5) | 25.00 (1.0) | 9.38 (1.0) | — | 11.72 (1.0) |
+| 584 acc (ESS) | 20.83 (123) | 20.76 (86) | 20.81 (5.7) | 28.52 (1.0) | 16.02 (1.0) | 13.28 (1.0) | 11.33 (1.0) | — |
+
+The first three columns are the instrument working (ESS 42–126): `P = 2 192`
+sits at its anchor's 26.2 % out to `1e-3` rad and `P = 584` at 20.8 %, i.e. both
+models are informative only inside `~10⁻³` rad.  Everything from `3e-3` out has
+**ESS 1.0** — one importance weight carries the estimate — so those accuracy
+figures (9.38 %, 28.52 %, 11.33 %) are single-probe numbers, not measurements,
+and they are exactly why the latitude chains exist: the sweep cannot say what
+lives at 0.09 rad, and the chain can.  Read that way the two instruments agree
+where both work (`≤ 1e-3` rad) and only the chain speaks beyond it.  The mode
+therefore lies outside the informative band under *either* grid: the fit's `d*`
+is 0.217 rad from the original grid and 0.52 rad from this one (`P = 2 192`),
+0.0905 and 0.0864 rad (`P = 584`) — grid-dependent as always, but every value is
+`10–50×` past the radius where accuracy is still above the base rate.
 
 The same equation fixes what would put the mode *inside*.  At `r = 2.3e-3` it
 asks for
