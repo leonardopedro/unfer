@@ -734,4 +734,24 @@ mod tests {
         let m = translate_austral_module(src).unwrap();
         assert_eq!(m.main.value, Some(Literal::Int64(3)));
     }
+
+    #[test]
+    fn a_bound_variable_reads_back_as_a_variable() {
+        // A λ's aux slot 1 is its bound variable; the symbolic readback used to
+        // follow it into the body and report `(lam x0 <cycle>)` instead of the
+        // variable, so `main(x) = x + 1` printed a term it is not.
+        let src = "module body Probe is\n\
+                   function main(x: Int64): Int64 is\n\
+                       return (x + 1);\n\
+                   end;\n\
+               end module body.\n";
+        let m = translate_austral_module(src).unwrap();
+        let printed = m.main.sym_expr.to_prefix_string();
+        assert!(!printed.contains("cycle"), "printed a cycle: {printed}");
+        assert!(printed.contains("Add64"), "lost the body: {printed}");
+        assert!(
+            printed.matches("lam").count() == 1,
+            "a variable occurrence read back as an abstraction: {printed}"
+        );
+    }
 }

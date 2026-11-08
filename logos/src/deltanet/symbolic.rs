@@ -190,6 +190,15 @@ fn readback_port(
         return Ok(SymExpr::Stuck("freed".to_string()));
     }
 
+    // Aux slot 1 of a `λ` *is* its bound variable (`compile_to_net`:
+    // `net.bind_var(id, Port::new(node, 1))`). Reaching that port means an
+    // occurrence of the variable, not the abstraction: reading the body again
+    // from here printed `(lam x0 <cycle>)` where `x0` belonged — a variable
+    // reported as a cycle, and the printed term was not the term.
+    if port.slot == 1 && matches!(node.kind, AgentKind::Abs) {
+        return Ok(SymExpr::Var(format!("x{}", port.node)));
+    }
+
     match &node.kind {
         AgentKind::Lit(lit) => Ok(SymExpr::Lit(lit.clone())),
         AgentKind::Entity(name) => Ok(SymExpr::Var(name.clone())),
