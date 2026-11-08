@@ -266,6 +266,19 @@ impl SpherePcn {
 
         let v: Vec<f64> = (0..p).map(|i| e[i] + m0[i]).collect();
         let a = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        // R0.4 (2026-11-08): the exponential map is one-to-one only on the ball
+        // `‖v‖ < π`. Past it a proposal has several preimages, the closed-form
+        // pushforward `(sin a/a)^{P−2}` describes one of them, and
+        // `reverse_tangent_vec` divides by `sin a` (zero at `a = π`). Restrict
+        // the proposal to the ball: `a` is a length along the geodesic, so the
+        // reverse move is inside it too, every accepted move keeps the exact
+        // ratio, and an over-long proposal is simply a rejection. The truncated
+        // Gaussian's normaliser differs from 1 by `exp(−π²/(2τ²))`, which at the
+        // reported `τ = β/√P ≤ 0.04` is `exp(−3e3)` — invisible.
+        if !a.is_finite() || a >= std::f64::consts::PI {
+            self.step_count += 1;
+            return Ok((false, f64::NEG_INFINITY));
+        }
         let u_next = exp_map_vec(&u, &v, a);
         let u_next_t = Tensor::from_vec(
             u_next.iter().map(|x| *x as f32).collect(),
@@ -1018,12 +1031,58 @@ mod tests {
     /// between *accepted* states, so on a chain that accepts nothing `Δg ≡ 0`,
     /// `d` collapsed to all-ones and the metric was inert on exactly the cells it
     /// exists for.  Measured along the proposal it is available regardless of
-    /// acceptance, so a frozen chain still learns the anisotropy.
+    /// acceptance.
+    ///
+    /// **Changed 2026-11-08 (R0.4).**  The old version of this test used a
+    /// curvature of 1e6, which makes the drift `|m| ≈ 3.6e4 ≫ π`: every proposal
+    /// left the injectivity ball, so the metric was being learned from proposals
+    /// that had no MH ratio at all.  With the ball now enforced (`step_inner`)
+    /// that regime proposes nothing, accepts nothing and learns nothing —
+    /// recorded in the first half below — and the property this test exists for
+    /// is checked inside the ball, where proposals do have a ratio.
     #[test]
-    fn warmup_learns_the_metric_even_when_nothing_is_accepted() {
+    fn warmup_learns_the_metric_from_proposals() {
         let dev = Device::Cpu;
-        // Two directions, curvatures 1e6 and 1: `0.5(a·u₁² + b·u₂²)` on S¹.
-        let (a, b) = (1e6f64, 1.0f64);
+        // First: outside the ball, nothing is proposed and nothing learned.
+        let stiff = SpherePcn::new(
+            Tensor::from_vec(vec![0.8f32, 0.6], vec![2], &dev).unwrap(),
+            1.0,
+            1.0,
+            SgPcnlScheduler {
+                beta_0: 0.3,
+                gamma: 0.0,
+                kappa: 0.5,
+            },
+            1,
+            1.0,
+        )
+        .with_preconditioner();
+        let big = move |theta: &Tensor| {
+            let cell = theta.flatten_all()?.to_vec1::<f32>()?;
+            let (x, y) = (cell[0] as f64, cell[1] as f64);
+            let g = Tensor::from_vec(
+                vec![(1e6 * x) as f32, y as f32],
+                vec![2],
+                &candle_core::Device::Cpu,
+            )?;
+            Ok((0.5 * (1e6 * x * x + y * y), g))
+        };
+        let mut stiff = stiff;
+        stiff.metric_warmup = 4;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..4 {
+            let (acc, log_alpha) = stiff.step_preconditioned(big, &mut rng).unwrap();
+            assert!(!acc);
+            assert_eq!(log_alpha, f64::NEG_INFINITY);
+        }
+        assert!(
+            stiff.precond.is_none(),
+            "proposals outside the injectivity ball must not feed the metric"
+        );
+
+        // Inside the ball: curvature 40 vs 1, proposals legal and mostly
+        // rejected, the metric still picks up the anisotropy.
+        let (a, b) = (40f64, 1.0f64);
         let target = move |theta: &Tensor| {
             let cell = theta.flatten_all()?.to_vec1::<f32>()?;
             let (x, y) = (cell[0] as f64, cell[1] as f64);
@@ -1055,14 +1114,14 @@ mod tests {
                 .step_preconditioned(target, &mut rng)
                 .expect("preconditioned step");
         }
-        assert_eq!(
-            chain.accepted, 0,
-            "the point must be frozen for this test to mean anything"
+        assert!(
+            chain.accepted < chain.metric_warmup as usize,
+            "most proposals must be rejected for the proposal-side estimate to matter"
         );
         let d = chain.precond.clone().expect("a metric was estimated");
         assert!(
-            d[0] < 0.2 && d[1] > 1.5,
-            "frozen chain should still learn that direction 0 is stiff: d = {d:?}"
+            d[0] < 0.2 && d[1] > 0.3 && d[1] > 4.0 * d[0],
+            "the proposal-side estimate should see direction 0 as {a}× stiffer: d = {d:?}"
         );
     }
 
@@ -1509,6 +1568,53 @@ mod tests {
         assert!(
             (mean - theory).abs() < 4.0 * se,
             "shell E[u₁] = {mean}, von Mises–Fisher says {theory} (batch-means se {se}, accept {rate})"
+        );
+    }
+
+    /// R0.4: a tangent proposal longer than π has several preimages on the
+    /// sphere, so it cannot be given a single-density MH ratio.  With
+    /// `σ/radius = 10` the step's `τ` is ~10 and `‖v‖ > π` immediately: the
+    /// chain must stand still and report a rejection, not a `sin a → 0` ratio.
+    /// The second half checks the guard is invisible at the reported `τ ≈ 0.04`.
+    #[test]
+    fn overlong_tangent_proposals_are_rejected_not_ratioed() {
+        let dev = Device::Cpu;
+        let sched = SgPcnlScheduler {
+            beta_0: 0.999,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let mut chain = SpherePcn::new(
+            Tensor::from_vec(vec![1.0f32, 0.0], vec![2], &dev).unwrap(),
+            1.0,
+            10.0, // σ/radius = 10 → τ ≈ 10 ≫ π on the first step
+            sched,
+            1,
+            1.0,
+        );
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        let before = chain.u.to_vec1::<f32>().unwrap();
+        let (acc, log_alpha) = chain.step(von_mises(2.0, 1.0, false), &mut rng).unwrap();
+        assert!(!acc, "an over-long proposal must not be accepted");
+        assert_eq!(log_alpha, f64::NEG_INFINITY);
+        assert_eq!(chain.u.to_vec1::<f32>().unwrap(), before, "state moved");
+
+        // Reported regime: the same call yields a finite ratio.
+        let mut ok = SpherePcn::new(
+            Tensor::from_vec(vec![1.0f32, 0.0], vec![2], &dev).unwrap(),
+            1.0,
+            1.0,
+            SgPcnlScheduler {
+                beta_0: 0.05,
+                ..sched
+            },
+            1,
+            1.0,
+        );
+        let (_, log_alpha) = ok.step(von_mises(2.0, 1.0, false), &mut rng).unwrap();
+        assert!(
+            log_alpha.is_finite(),
+            "τ = 0.05 is far inside the injectivity radius, got {log_alpha}"
         );
     }
 

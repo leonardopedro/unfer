@@ -2779,8 +2779,28 @@ One real crash fell out of this: `experiment::median` sorted with
 It now drops non-finite entries and returns `NaN` when none are left — an unavailable
 number instead of a crash.
 
-What is *not* done yet from R0: the exact-proposal audit (R0.4), the metric-freeze record
-(R0.5), and the run manifest (R0.6).  The tables in this document still report the raw
+**(d) The tangent proposal's support (R0.4, in part).**  `SpherePcn::step_inner`
+proposes `u′ = exp_u v` with `‖v‖ = a`.  The exponential map is one-to-one only on the
+ball `a < π`; past it a proposal has several preimages, the closed-form pushforward
+`(sin a/a)^{P−2}` describes one of them, and the reverse transport divides by `sin a`,
+which is zero at `a = π`.  The proposal is now restricted to the ball: `a` is a length
+along the geodesic, so the reverse move is inside it too, every accepted move keeps the
+exact ratio, and an over-long proposal is a plain rejection.  The truncated Gaussian's
+normaliser differs from 1 by `exp(−π²/(2τ²))`, i.e. `exp(−3e3)` at the reported
+`τ = β/√P ≤ 0.04` — invisible.  Measured consequence, which is also a correction to an
+older claim: the warm-up test that used curvature `1e6` was learning a metric from
+proposals with `|m| ≈ 3.6e4 ≫ π`, i.e. from proposals that have no ratio at all.  With
+the ball enforced that cell proposes nothing, accepts nothing and learns nothing; the
+property the test exists for (the metric comes from proposals, not accepted states) is
+now checked at curvature 40, inside the ball.  The exact invariant-moment tests
+(`zero_likelihood_is_haar_on_the_circle`, `anisotropic_metric_is_exact_on_s2`,
+`restricted_metric_inverse_matches_the_dense_one`) are unchanged and still pass, so the
+restriction does not touch the regime the reported chains run in.
+
+What is *not* done yet from R0: the rest of the exact-proposal audit (the sphere and
+latitude conditionals are audited and moment-tested already; the cap-conditioned target
+and the cyclical schedule are not), the metric-freeze record (R0.5), and the run
+manifest (R0.6).  The tables in this document still report the raw
 `ess`/`gelman_rubin` from before the rank statistics existed, which is why their `R̂`
 values are comparable across dates; the null tables, which are what certify them, are
 unchanged.
