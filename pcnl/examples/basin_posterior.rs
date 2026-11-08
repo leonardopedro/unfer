@@ -196,8 +196,24 @@ impl Env {
     /// requirement (`N ≈ 3.4e6`) rests on, and the reason the flag exists.
     /// `adam_steps` overrides how long the anchor is trained (`--adam-steps`),
     /// and `adam_lr` its step size (`--adam-lr`, default 0.05).  Since the
-    /// full-batch step is an inverse length, `--adam-lr` is what makes the
-    /// anchor converged rather than merely longer-trained at large `N`.
+    /// full-batch step is an inverse length, the step size is what decides
+    /// whether a longer run is also a better anchor at large `N`.
+    ///
+    /// **No `1/N` or `1/√N` law in `lr` was found** (2026-11-08).  Measured
+    /// anchors, train mean loss / test acc:
+    ///
+    /// - `N = 2 048`, 1000 steps: 0.05 → 1.7446 / 22.7 %, 0.025 → 1.7426 /
+    ///   22.3 %, 0.0125 → 1.7382 / 31.3 %, 0.006 → 1.7390 / 32.4 %.  Lower
+    ///   `lr` is clearly better here.
+    /// - `N = 8 192`: 0.05 @ 1000 → 1.6058, 0.05 @ 8000 → 1.6157,
+    ///   0.0125 @ 1000 → 1.6188, 0.0125 @ 4000 → 1.6111, 0.003 @ 2000 →
+    ///   1.6915.  The default is the best of the five.
+    /// - `N = 16 384`: 0.05 @ 1000 → 1.6119 / 26.9 %, 0.0125 @ 4000 →
+    ///   1.6231 / 26.9 %: the default wins again.
+    ///
+    /// Each `N` is a different training set, so these cells compare anchors, not
+    /// a scaling law.  The default therefore stays 0.05, and the printed anchor
+    /// line carries the `lr` and step count it was trained with.
     /// It is the control for the `--n-train` reading: the sweep measures `ΔL`
     /// against `u_Adam`, so if the small-width column is the *anchor's* own
     /// offset from the loss minimum rather than the population's slope, a
@@ -777,9 +793,10 @@ fn main() {
     // for whether the small-width `ΔL` is the anchor's offset or the landscape's.
     let adam_steps = flag("--adam-steps").and_then(|v| v.parse::<usize>().ok());
     // `adam` is full-batch with a fixed step, so its learning rate is an inverse
-    // length, not a dimensionless constant: 0.05 is stable at N = 512 and
-    // oscillatory at N = 8192, which makes "more steps" and "converged"
-    // different questions.  Exposed so the anchor can be moved off the default.
+    // length, not a dimensionless constant, which makes "more steps" and
+    // "converged" different questions at large `N`.  Exposed so the anchor can
+    // be moved off the default; no `1/N` or `1/√N` law reproduces the best
+    // measured anchor at all three `N`s (the grid is in `Env::new`).
     let adam_lr = flag("--adam-lr").and_then(|v| v.parse::<f64>().ok());
     let mut env = Env::new(SEED, shapes, n_train, adam_steps, adam_lr);
     if let Some(m) = flag("--prior-is").and_then(|v| v.parse::<usize>().ok()) {
@@ -795,12 +812,14 @@ fn main() {
         "basin_posterior — the tempered sphere target's own predictive\n\
          P = {p_dim}, ρ = σ√P = {:.2}, N = {n:.0}, λ = 1, task B\n\
          u_Adam: train mean loss {l0:.4}, test acc {:.2} %, test NLL {:.4}, \
-         uniform NLL {:.4}\n\
+         uniform NLL {:.4}  (lr {:.2e}, {} full-batch steps)\n\
          the β = {BETA:.1e} chain's 10 k walk spans β√steps = {walk:.3} rad\n",
         env.radius,
         env.acc(&env.u0.clone()),
         env.nll(&env.u0.clone()),
         (env.cfg.k as f64).ln(),
+        env.cfg.adam_lr,
+        env.cfg.adam_steps_on_b,
     );
 
     // ---- 1-2. the width sweep ----------------------------------------------
