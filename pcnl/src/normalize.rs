@@ -22,9 +22,49 @@ pub fn normalize_last(x: &Tensor) -> Result<Tensor> {
 
 /// Frobenius-normalise a 2-D weight matrix so `‖W‖_F = 1`. This is the
 /// `Ŵ = W / (‖W‖_F + ε)` of the plan's `NormalizedLinear`.
+///
+/// **The value is `W/(‖W‖_F + ε)`; the derivative is not.**  `‖W‖_F` is
+/// read out with `to_scalar`, which detaches it from the autodiff graph, so
+/// the backward pass sees the map as a fixed rescaling `W ↦ cW` and drops the
+/// `∂‖W‖_F/∂W` term.  That is a deliberate, measured choice (2026-11-08):
+/// every number recorded before this date — anchors included — was produced
+/// with the stopped form, and it is the map `NormGrad::Stopped` reproduces.
+/// Use [`normalize_fro_with`] with `NormGrad::Exact` wherever a *gradient*
+/// claim is being made (§R0.1 of `RESEARCH_PLAN.md`); the two agree on values
+/// to f32 rounding and differ only in the radial term, whose measured size is
+/// pinned by `tests/numerics.rs::stopped_gradient_bias_is_the_radial_term`.
 pub fn normalize_fro(w: &Tensor) -> Result<Tensor> {
-    let fro = w.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()? as f64;
-    w.affine(1.0 / (fro + EPS), 0.0)
+    normalize_fro_with(w, NormGrad::Stopped)
+}
+
+/// Which derivative of the normalisation a caller wants.  The forward value
+/// is the same function either way; only autodiff differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormGrad {
+    /// Differentiate `W/(‖W‖_F + ε)` as written, including the
+    /// `−W (W·g) / (r (r + ε))` radial term.  This is the true Jacobian of the
+    /// forward map, and the only form whose gradient is consistent with a
+    /// finite difference of the loss.
+    Exact,
+    /// Freeze the denominator at its scalar value (what `normalize_fro` did
+    /// before 2026-11-08).  The backward pass then sees `W ↦ cW` with `c` a
+    /// constant, so the gradient keeps a radial component that the forward map
+    /// does not respond to.
+    Stopped,
+}
+
+/// `normalize_fro` with an explicit derivative convention.
+pub fn normalize_fro_with(w: &Tensor, mode: NormGrad) -> Result<Tensor> {
+    match mode {
+        NormGrad::Exact => {
+            let fro = w.sqr()?.sum_all()?.sqrt()?;
+            w.broadcast_div(&(fro + EPS)?)
+        }
+        NormGrad::Stopped => {
+            let fro = w.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()? as f64;
+            w.affine(1.0 / (fro + EPS), 0.0)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +207,96 @@ mod tests {
             (rel - predicted).abs() < 1e-5,
             "measured {rel} vs analytic {predicted}"
         );
+    }
+
+    /// Both conventions are the same *value*: the stopped form only differs in
+    /// the scalar's dtype path (f32 norm → f64 reciprocal vs f32 broadcast).
+    #[test]
+    fn norm_grad_modes_agree_on_the_value() {
+        let dev = &Device::Cpu;
+        for scale in [1e-3f32, 1.0, 40.0] {
+            let w = Tensor::from_vec(
+                [0.3, -1.2, 4.0, 0.5, -0.7, 2.1]
+                    .iter()
+                    .map(|x| x * scale)
+                    .collect::<Vec<f32>>(),
+                &[2, 3],
+                dev,
+            )
+            .unwrap();
+            let a = normalize_fro_with(&w, NormGrad::Exact)
+                .unwrap()
+                .flatten_all()
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap();
+            let b = normalize_fro_with(&w, NormGrad::Stopped)
+                .unwrap()
+                .flatten_all()
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap();
+            for (x, y) in a.iter().zip(b.iter()) {
+                assert!((x - y).abs() <= 2e-7 * x.abs().max(1.0), "{x} vs {y}");
+            }
+        }
+    }
+
+    /// The exact Jacobian, checked against a central difference of the map
+    /// itself — no loss, no chain: this isolates the term the stopped form
+    /// drops.  `d/dW_ij [W_ab/(r+ε)] = δ/r₊ − W_ab W_ij/(r r₊²)`.
+    #[test]
+    fn exact_norm_gradient_matches_finite_differences() {
+        use candle_core::Var;
+        let dev = &Device::Cpu;
+        let base = [0.3f64, -1.2, 4.0, 0.5, -0.7, 2.1];
+        for scale in [0.05f64, 1.0, 30.0] {
+            let w0: Vec<f32> = base.iter().map(|x| (x * scale) as f32).collect();
+            let w = Tensor::from_vec(w0.clone(), &[2, 3], dev).unwrap();
+            // a fixed covector to contract with, so the check is on one number
+            let co =
+                Tensor::from_vec(vec![1.0f32, -0.5, 0.25, 2.0, -1.5, 0.75], &[2, 3], dev).unwrap();
+            let f = |t: &Tensor| -> f64 {
+                normalize_fro_with(t, NormGrad::Exact)
+                    .unwrap()
+                    .mul(&co)
+                    .unwrap()
+                    .sum_all()
+                    .unwrap()
+                    .to_scalar::<f32>()
+                    .unwrap() as f64
+            };
+            let var = Var::from_tensor(&w).unwrap();
+            let y = normalize_fro_with(var.as_tensor(), NormGrad::Exact)
+                .unwrap()
+                .mul(&co)
+                .unwrap()
+                .sum_all()
+                .unwrap();
+            let g = y.backward().unwrap();
+            let an = g
+                .get(var.as_tensor())
+                .unwrap()
+                .flatten_all()
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap();
+            let h = 1e-3;
+            for i in 0..6 {
+                let mut p = w0.clone();
+                p[i] += h as f32;
+                let mut m = w0.clone();
+                m[i] -= h as f32;
+                let fd = (f(&Tensor::from_vec(p, &[2, 3], dev).unwrap())
+                    - f(&Tensor::from_vec(m, &[2, 3], dev).unwrap()))
+                    / (2.0 * h);
+                assert!(
+                    (fd - an[i] as f64).abs() < 1e-4 + 2e-2 * fd.abs(),
+                    "scale {scale} entry {i}: fd {fd} vs exact {}",
+                    an[i]
+                );
+            }
+        }
     }
 
     #[test]

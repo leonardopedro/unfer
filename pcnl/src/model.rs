@@ -21,7 +21,7 @@
 //! fixed point, a fraction of the cost; the head is weight-tied in
 //! both variants to keep `P` identical; `τ` is fixed, not learnable.
 
-use crate::normalize::{normalize_fro, normalize_last};
+use crate::normalize::{NormGrad, normalize_fro_with, normalize_last};
 use candle_core::{D, Device, Result, Tensor};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +126,9 @@ pub fn attention(
     w: &LayerSlices,
     variant: Variant,
     tau: f64,
+    norm: NormGrad,
 ) -> Result<Tensor> {
+    let fro = |t: &Tensor| normalize_fro_with(t, norm);
     let (b, t, d) = h.dims3()?;
     // Storage convention (Shapes::layout): every weight is [in, out],
     // so projections are plain `x @ W` — no transpose. (Square Q/K/V/O
@@ -135,8 +137,8 @@ pub fn attention(
         Variant::Cosine => (
             // Q, K from Frobenius-normalised weights, then rows on the
             // sphere: logits = τ·(q̂ᵢ · k̂ⱼ) ∈ [−τ, τ].
-            normalize_last(&h.broadcast_matmul(&normalize_fro(&w.wq)?)?)?,
-            normalize_last(&h.broadcast_matmul(&normalize_fro(&w.wk)?)?)?,
+            normalize_last(&h.broadcast_matmul(&fro(&w.wq)?)?)?,
+            normalize_last(&h.broadcast_matmul(&fro(&w.wk)?)?)?,
         ),
         Variant::Standard => (h.broadcast_matmul(&w.wq)?, h.broadcast_matmul(&w.wk)?),
     };
@@ -148,7 +150,7 @@ pub fn attention(
     // (caught by `tests/formal_claims.rs`). The standard variant stays
     // raw: the unnormalized stack *is* the Phase-0 contrast.
     let v = match variant {
-        Variant::Cosine => h.broadcast_matmul(&normalize_fro(&w.wv)?)?,
+        Variant::Cosine => h.broadcast_matmul(&fro(&w.wv)?)?,
         Variant::Standard => h.broadcast_matmul(&w.wv)?,
     };
     let mut scores = q.broadcast_matmul(&k.transpose(D::Minus2, D::Minus1)?)?; // [B, T, T]
@@ -170,26 +172,33 @@ pub fn attention(
     let out = probs.broadcast_matmul(&v)?; // [B, T, D]
     debug_assert_eq!(out.dims(), &[b, t, d]);
     match variant {
-        Variant::Cosine => out.broadcast_matmul(&normalize_fro(&w.wo)?),
+        Variant::Cosine => out.broadcast_matmul(&fro(&w.wo)?),
         Variant::Standard => out.broadcast_matmul(&w.wo),
     }
 }
 
 /// One transformer layer: norm → attention → geodesic residual →
 /// norm → MLP → geodesic residual (cosine), or LN/add (standard).
-pub fn layer(x: &Tensor, w: &LayerSlices, variant: Variant, tau: f64) -> Result<Tensor> {
+pub fn layer(
+    x: &Tensor,
+    w: &LayerSlices,
+    variant: Variant,
+    tau: f64,
+    norm: NormGrad,
+) -> Result<Tensor> {
+    let fro = |t: &Tensor| normalize_fro_with(t, norm);
     match variant {
         Variant::Cosine => {
-            let a = attention(&normalize_last(x)?, w, variant, tau)?;
+            let a = attention(&normalize_last(x)?, w, variant, tau, norm)?;
             let x = normalize_last(&(x + a)?)?;
             let m = normalize_last(&x)?
-                .broadcast_matmul(&normalize_fro(&w.w1)?)?
+                .broadcast_matmul(&fro(&w.w1)?)?
                 .gelu()?
-                .broadcast_matmul(&normalize_fro(&w.w2)?)?;
+                .broadcast_matmul(&fro(&w.w2)?)?;
             normalize_last(&(x + m)?)
         }
         Variant::Standard => {
-            let a = attention(&layer_norm(x)?, w, variant, tau)?;
+            let a = attention(&layer_norm(x)?, w, variant, tau, norm)?;
             let x = (x + a)?;
             let m = layer_norm(&x)?
                 .broadcast_matmul(&w.w1)?
@@ -202,11 +211,29 @@ pub fn layer(x: &Tensor, w: &LayerSlices, variant: Variant, tau: f64) -> Result<
 
 /// Forward pass over token sequences `[B, T]`, returning next-position
 /// logits `[B, V]` (the last position's prediction).
+///
+/// Values do not depend on the derivative convention, so this uses the
+/// historical one; see [`forward_norm`] for the exact-Jacobian path.
 pub fn forward(
     theta: &Tensor,
     shapes: &Shapes,
     variant: Variant,
     tokens: &Tensor,
+) -> Result<Tensor> {
+    forward_norm(theta, shapes, variant, tokens, NormGrad::Stopped)
+}
+
+/// `forward` with an explicit derivative convention for the Frobenius
+/// normalisations.  `NormGrad::Exact` differentiates the map as written and is
+/// the form whose gradient agrees with a finite difference of the loss; the
+/// default keeps the stopped denominator every recorded anchor was trained
+/// with (`RESEARCH_PLAN.md` §R0.1).
+pub fn forward_norm(
+    theta: &Tensor,
+    shapes: &Shapes,
+    variant: Variant,
+    tokens: &Tensor,
+    norm: NormGrad,
 ) -> Result<Tensor> {
     let tau = (shapes.d as f64).sqrt();
     let s = unflatten(theta, shapes)?;
@@ -224,7 +251,7 @@ pub fn forward(
     };
     let mut x = emb;
     for w in &s.layers {
-        x = layer(&x, w, variant, tau)?;
+        x = layer(&x, w, variant, tau, norm)?;
     }
     let last = x.narrow(1, x.dim(1)? - 1, 1)?.squeeze(1)?; // [B, D]
     match variant {
@@ -248,9 +275,22 @@ pub fn loss_and_grad(
     tokens: &Tensor,
     targets: &Tensor,
 ) -> Result<(f64, Tensor)> {
+    loss_and_grad_norm(theta, shapes, variant, tokens, targets, NormGrad::Stopped)
+}
+
+/// `loss_and_grad` with an explicit derivative convention for the Frobenius
+/// normalisations (see [`forward_norm`]).
+pub fn loss_and_grad_norm(
+    theta: &Tensor,
+    shapes: &Shapes,
+    variant: Variant,
+    tokens: &Tensor,
+    targets: &Tensor,
+    norm: NormGrad,
+) -> Result<(f64, Tensor)> {
     use candle_core::Var;
     let var = Var::from_tensor(theta)?;
-    let logits = forward(var.as_tensor(), shapes, variant, tokens)?;
+    let logits = forward_norm(var.as_tensor(), shapes, variant, tokens, norm)?;
     let loss = candle_nn::loss::cross_entropy(&logits, targets)?;
     let grads = loss.backward()?;
     let grad = grads

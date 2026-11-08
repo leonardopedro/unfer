@@ -2707,6 +2707,84 @@ anchor-drift canary).
 > account for 2 % of 1.14, and nothing in this section depends on which of the
 > two is quoted.
 
+## R0 — numerical and diagnostic trust (2026-11-08)
+
+`pcnl/RESEARCH_PLAN.md` gates every new inference result behind R0: the numerics have
+to be honest before another ladder is worth running.  Three items are done here, each
+with the measurement that licenses it.  The plan's own rule applies to the rest: nothing
+below changes a *forward* value, so the recorded anchors and tables stand; what changed
+is what the code reports about them.
+
+**(a) The normalisation's derivative (`RESEARCH_PLAN.md` R0.1).**  `normalize_fro`
+computes `W/(‖W‖_F + ε)` but reads `‖W‖_F` out with `to_scalar`, which detaches it from
+the graph: the backward pass sees a fixed rescaling and drops the `∂‖W‖/∂W` term.  That
+is now an explicit choice, `NormGrad::Stopped` (the historical form, still the default,
+because every number in this document was produced with it) versus `NormGrad::Exact`
+(via `normalize_fro_with`, `forward_norm`, `loss_and_grad_norm`).  Measurements:
+
+* the two agree on the **value** to f32 rounding, at scales 1e-3…40 (unit test);
+* the **exact** form matches a directional finite difference at θ-scales 1e-3, 1 and
+  50, along a generic direction, the global ray, and one block's ray — the last two are
+  what the old coordinate-wise check could not see;
+* the **stopped** form's gradient differs from the exact one by
+  `|Δg|/|g_e| = 1.4e-3` at `P = 3 232` (worst per-block residual of the identity
+  `g_e = g_s − (W·g_s)/(r(r+ε))·W` is 4.8e-6, and the largest radial share of a stopped
+  block gradient is 0.069).  The bias is small because the cosine loss is radially flat
+  (§6.5, `cosine_likelihood_is_flat_along_a_radial_ray`): the term it drops points where
+  the map barely responds.
+
+So: **the surrogate is labelled, not silently kept, and its drift bias is 0.1 %** — small
+enough that the recorded anchors are not wrong for a gradient reason, large enough that a
+*gradient-level* claim (drift, ⟨θ,∇Φ⟩ floors, SG-bias curves in R2) must say which form it
+used.  All reported chain results use MH ratios, which never touch the gradient, so none
+of them is affected either way.
+
+**(b) The schedule's floor (R0.2).**  `beta_at` clamps at `1e-6`, so the implemented
+sequence has **infinite** total mobility for every `κ`; the Robbins–Monro window
+(`Σβ² = ∞`, `Σβ⁴ < ∞`) is a statement about the unfloored power law.  Both laws are now
+named (`beta_at_unfloored`), the crossover is computed (`floor_crossover`, exact formula
+`((β₀/ε)^{1/κ} − 1)/γ`), and the answer is that it never binds in this project's runs:
+
+| schedule | `β₀` | `γ` | `κ` | floor binds at | longest run |
+|---|---:|---:|---:|---:|---:|
+| default | 0.3 | 1e-4 | 0.5 | 9.0e14 steps | 2e5 |
+| pre-2026-11-04 | 0.3 | 1e-4 | 0.55 | 9.1e13 steps | 2e5 |
+| `κ = 0.6` control | 0.3 | 1e-4 | 0.6 | 1.3e13 steps | 2e5 |
+
+`beta_at(step) == beta_at_unfloored(step)` bit-for-bit over 0…200 000 for both reported
+exponents (test `floor_crossover_is_where_the_laws_part_company`).  The freeze statements
+for `κ > 1/2` therefore describe the power law *and* the code, because the code is the
+power law over every horizon anyone has run.
+
+**(c) Frozen traces are failures, not good scores (R0.3).**  Before today `diag::ess`
+returned `N` for a constant chain (“every draw agrees”) and `gelman_rubin` returned
+`1.0` for two identically frozen chains (no between-chain and no within-chain
+variance).  Both are the two numbers a stuck chain must never get.  Now:
+
+* `movement(chains) -> Movement { chains, frozen, unique_max, nonfinite }` is the
+  evidence, and `is_frozen`/`is_degenerate` are the flags a report can gate on;
+* frozen → `NaN` from `ess`, `gelman_rubin`, `split_rhat_rank`, `ess_bulk`, `ess_tail`;
+* frozen at *different* values → `+inf` from `gelman_rubin` (a real disagreement, not a
+  missing one) and `NaN` from the rank statistics (their rank spread is finite by
+  construction, so a zero-variance within-chain term has no defined ratio);
+* any non-finite draw → `NaN` from all five, rather than a plausible-looking number;
+* the plan's gate statistics now exist: rank-normalised split `R̂`
+  (`split_rhat_rank`, bulk and folded combined, `Φ⁻¹` Blom scores) and `ess_bulk` /
+  `ess_tail` as in Vehtari et al. (2021) — validated against iid draws (bulk ESS within
+  half of the draw count, tail ESS above 100 of 4 000) and against AR(1) sticks
+  (bulk ESS < 20 % of 4 000).
+
+One real crash fell out of this: `experiment::median` sorted with
+`partial_cmp().unwrap()`, so a single frozen coordinate made the quick report panic.
+It now drops non-finite entries and returns `NaN` when none are left — an unavailable
+number instead of a crash.
+
+What is *not* done yet from R0: the exact-proposal audit (R0.4), the metric-freeze record
+(R0.5), and the run manifest (R0.6).  The tables in this document still report the raw
+`ess`/`gelman_rubin` from before the rank statistics existed, which is why their `R̂`
+values are comparable across dates; the null tables, which are what certify them, are
+unchanged.
+
 ## Reproduce / verify
 
 ```bash

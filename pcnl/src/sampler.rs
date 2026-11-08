@@ -58,11 +58,47 @@ impl SgPcnlScheduler {
     /// Inclusive upper end: `Σ β_t² = ∞` needs `2κ ≤ 1`.
     pub const KAPPA_MAX: f64 = 0.5;
 
-    /// `β_t = β_0 (1 + γ·t)^(−κ)` — the skeleton's schedule with
-    /// κ = 1/2 by default (the borderline case of the corrected window).
-    pub fn beta_at(&self, step: usize) -> f64 {
+    /// The implemented floor: `beta_at` never goes below this, so the
+    /// implemented sequence has **infinite** total mobility for every `κ`.
+    /// The window argument (`Σβ² = ∞`, `Σβ⁴ < ∞` for `1/4 < κ ≤ 1/2`) is about
+    /// the unfloored power law; see [`Self::floor_crossover`] for where the two
+    /// part company, and [`Self::tail_mobility`] for which law it describes.
+    pub const BETA_FLOOR: f64 = 1e-6;
+
+    /// `β_t = β_0 (1 + γ·t)^(−κ)` with **no** floor — the mathematical
+    /// schedule, which is what the Robbins–Monro conditions are stated about.
+    pub fn beta_at_unfloored(&self, step: usize) -> f64 {
         let t = step as f64;
-        (self.beta_0 * (1.0 + self.gamma * t).powf(-self.kappa)).clamp(1e-6, 0.999)
+        self.beta_0 * (1.0 + self.gamma * t).powf(-self.kappa)
+    }
+
+    /// `β_t = β_0 (1 + γ·t)^(−κ)` — the skeleton's schedule with
+    /// κ = 1/2 by default (the borderline case of the corrected window),
+    /// clamped to `[BETA_FLOOR, 0.999]`.  The clamp is what runs: at the
+    /// default `γ` the crossover is ~10¹⁴ steps (measured in
+    /// `floor_crossover_*` tests), so every reported run is the unfloored law
+    /// to within its last digit — but the two are different sequences, and a
+    /// mobility claim has to say which one it is about.
+    pub fn beta_at(&self, step: usize) -> f64 {
+        self.beta_at_unfloored(step).clamp(Self::BETA_FLOOR, 0.999)
+    }
+
+    /// First step at which the floor binds, `t = ((β₀/floor)^{1/κ} − 1)/γ`.
+    /// `None` when that is not representable (it is beyond `usize`, or `γ = 0`
+    /// with `β₀` above the floor).
+    pub fn floor_crossover(&self) -> Option<usize> {
+        if self.beta_0 <= Self::BETA_FLOOR {
+            return Some(0);
+        }
+        if self.gamma <= 0.0 {
+            return None;
+        }
+        let t = ((self.beta_0 / Self::BETA_FLOOR).powf(1.0 / self.kappa) - 1.0) / self.gamma;
+        if t.is_finite() && t < usize::MAX as f64 {
+            Some(t.ceil() as usize)
+        } else {
+            None
+        }
     }
 
     /// Whether `κ` sits in the mobility window `(1/4, 1/2]` — the only
@@ -83,11 +119,16 @@ impl SgPcnlScheduler {
         (0..steps).map(|t| self.beta_at(t).powi(2)).sum()
     }
 
-    /// `Σ_{t≥from} β_t²` — the mobility the schedule still has after
-    /// step `from`. `None` when the sum diverges (`κ ≤ 1/2`): a chain
-    /// that keeps moving forever. For `κ > 1/2` the integral test gives
-    /// the closed form `β₀²(1+γ·from)^{1−2κ}/(γ(2κ−1))`, which is the
-    /// size of the budget still unspent — hence the freeze.
+    /// `Σ_{t≥from} β_t²` for the **unfloored** law.  `None` when that sum
+    /// diverges (`κ ≤ 1/2`): a chain whose unfloored schedule keeps moving
+    /// forever.  For `κ > 1/2` the integral test gives the closed form
+    /// `β₀²(1+γ·from)^{1−2κ}/(γ(2κ−1))`, the size of the budget still
+    /// unspent — hence the "freeze".
+    ///
+    /// The implemented sequence is [`Self::beta_at`], which is clamped at
+    /// [`Self::BETA_FLOOR`] and therefore has infinite total mobility for every
+    /// `κ`; the freeze statement is a property of the power law, not of the
+    /// code, and is true here only because the floor binds at ~10¹⁴ steps.
     pub fn tail_mobility(&self, from: usize) -> Option<f64> {
         if self.kappa <= 0.5 {
             return None;
@@ -415,6 +456,58 @@ mod tests {
         assert!((left - (total - spent)).abs() < 0.02 * total, "tail {left}");
         // and the tail shrinks: the freeze gets arbitrarily deep.
         assert!(outside.tail_mobility(2_000_000).unwrap() < outside.tail_mobility(1_000).unwrap());
+    }
+
+    /// Where the implemented clamp and the mathematical power law part company
+    /// (`RESEARCH_PLAN.md` §R0.2).  Two claims, both checkable:
+    /// the crossover formula is the one `beta_at` obeys, and at every schedule
+    /// this crate actually runs the crossover is ~10¹⁴ steps away, so the two
+    /// laws agree bit-for-bit over the run.
+    #[test]
+    fn floor_crossover_is_where_the_laws_part_company() {
+        // Deliberately small numbers so the crossover is reachable in a test.
+        let s = SgPcnlScheduler {
+            beta_0: 0.1,
+            gamma: 1.0,
+            kappa: 1.0,
+        };
+        let t = s.floor_crossover().expect("reachable crossover");
+        // Exact value is 99999; f64 gives 1e5·(1 − 2.2e-16), so the ceil lands on
+        // either side of the last integer.  What is checkable is the *property*.
+        assert!((99_999..=100_000).contains(&t), "crossover {t}");
+        assert_eq!(s.beta_at(t), SgPcnlScheduler::BETA_FLOOR);
+        assert!(
+            s.beta_at_unfloored(t) <= SgPcnlScheduler::BETA_FLOOR,
+            "the crossover must be past the point where the law drops below the floor"
+        );
+        assert!(
+            s.beta_at(t - 2) > SgPcnlScheduler::BETA_FLOOR
+                && s.beta_at(t - 2) == s.beta_at_unfloored(t - 2),
+            "above the crossover the two laws must agree"
+        );
+        assert!(s.beta_at(t * 10) == SgPcnlScheduler::BETA_FLOOR);
+
+        // The reported schedules: γ = 1e-4, β₀ = 0.3 at both exponents.
+        for kappa in [0.5, 0.55] {
+            let s = SgPcnlScheduler {
+                beta_0: 0.3,
+                gamma: 1e-4,
+                kappa,
+            };
+            let cross = s.floor_crossover().expect("representable");
+            assert!(
+                cross > 10_000_000_000_000,
+                "κ = {kappa}: floor binds at {cross} steps, closer than expected"
+            );
+            // So over the longest run in the ledger the clamp never fires.
+            for step in [0usize, 1, 1_000, 200_000] {
+                assert_eq!(
+                    s.beta_at(step).to_bits(),
+                    s.beta_at_unfloored(step).to_bits(),
+                    "κ = {kappa} step {step}: the clamp fired"
+                );
+            }
+        }
     }
 
     /// The σ-sweep is a units check, and this is *why*: with a loss

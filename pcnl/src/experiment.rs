@@ -534,12 +534,20 @@ impl Report {
     }
 }
 
+/// Median of the finite values; `NaN` when there are none.
+///
+/// Diagnostics now report `NaN` for frozen or non-finite traces
+/// (`diag::Movement`), so this must not be able to panic on them: a single
+/// stuck coordinate used to make every median `NaN`-poisoned *and* the sort
+/// fail, which turned "this coordinate never moved" into a crash in the quick
+/// report.  `total_cmp` orders NaN last, so the finite prefix is the input.
 fn median(xs: &mut [f64]) -> f64 {
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let n = xs.len();
+    xs.sort_by(|a, b| a.total_cmp(b));
+    let n = xs.iter().take_while(|x| x.is_finite()).count();
     if n == 0 {
-        f64::NAN
-    } else if n % 2 == 1 {
+        return f64::NAN;
+    }
+    if n % 2 == 1 {
         xs[n / 2]
     } else {
         0.5 * (xs[n / 2 - 1] + xs[n / 2])

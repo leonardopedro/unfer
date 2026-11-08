@@ -168,6 +168,10 @@ mod tests {
     /// `1.5708` row prints `−3.2 × 10⁵` and means nothing, because the radius is
     /// no longer a coordinate the mode equation describes.
     #[test]
+    // `1.5708` below is a *grid row* (the profile's 90° sample), not an
+    // approximation to π/2: at exactly π/2 the residual is 0 and the assertion
+    // that the row is past the pole would be false.
+    #[allow(clippy::approx_constant)]
     fn pole_flips_both_terms() {
         let p = 16_672;
         let just_inside = std::f64::consts::FRAC_PI_2 - 1e-3;
