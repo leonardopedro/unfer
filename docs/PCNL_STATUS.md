@@ -2193,16 +2193,137 @@ points and +0.037 NLL.  Its `R̂` is inside the null, but that null is loose
 "no evidence of non-convergence", not the certification the `N = 8 192` run
 earned.
 
-Put beside the `N = 8 192` row, this is the first scaling trend in the project
-that points the useful way.  Over a 4× increase in `N` the mode's gap to its own
-anchor moves from **−3.1 points / +0.037 NLL** to **+2.7 points / +0.0017 NLL**,
-i.e. the NLL gap shrinks by more than an order of magnitude while the mode itself
-travels inward from 0.0195 to 0.00857 rad.  The two rows are different radii, so
-this is not one object measured twice, and the accuracy steps are grained at
-0.39 %; but the direction is what a localized posterior has to show to be worth
-computing: as data accumulates, the conditional at the peak of `p(d)` approaches
-the anchor's quality instead of wandering away from it.  That is now measured at
-two rungs rather than assumed at one.
+Pairing those two rows suggested a trend — the mode's gap to its anchor closing
+as `N` grows — and that reading does not survive the third rung.
+
+**A third rung, `N = 16 384`, and the anchor's learning rate.**  Extrapolating the
+ladder's fit (`d* ∝ N^−0.6`) predicted 3.76e-3 rad; the sweep at `N = 16 384`
+(64 probes, same protocol) put it at **3.02e-3**, so the inward motion continues
+(0.228 → 0.0195 → 0.00857 → 0.00302 rad).  Sampling that shell (4 chains, 20 k
+steps, burn 4 000, thin 10, `r = 1e-3`, acceptance 0.4–0.5 %):
+
+```text
+per-chain acc 22.98 / 23.91 / 24.39 / 24.26 %   NLL 1.6094 / 1.6099 / 1.6093 / 1.6096
+BMA 23.44 % / 1.6095      anchor (N = 16 384): 26.95 % / 1.6086
+split-R̂(NLL) 1.2825   split-R̂(train L) 1.3614
+null at r_eff = 6.7e-5: E[R̂] 1.272, 95 % [1.071, 1.602]  ->  inside, tight null
+```
+
+The NLL gap to the anchor is now 0.0009 — the smallest of the ladder — but the
+accuracy gap is **−3.5 points**, the wrong sign for the trend.  So the NLL part of
+the trend is real and the accuracy part is not: over three rungs the NLL gap falls
+monotonically (0.0371 → 0.0017 → 0.0009) while the accuracy gap goes −3.1 → +2.7 →
+−3.5.  With three rungs instead of two, "the mode buys accuracy" is withdrawn.
+
+Before drawing that conclusion, the anchors themselves have to be examined, and
+they do not hold up.  `adam` is full-batch with a **fixed** step `lr = 0.05` and no
+schedule, so the step is an inverse length, not a dimensionless constant:
+
+| `N` | steps | lr | train L | acc % | NLL |
+|---:|---:|---:|---:|---:|---:|
+| 2 048 | 1 000 | 0.05 | 1.7446 | 22.66 | 1.7467 |
+| 2 048 | 2 000 | 0.05 | 1.7476 | 20.70 | 1.7485 |
+| 2 048 | 2 000 | **0.005** | 1.7415 | **28.12** | **1.7318** |
+| 8 192 | 1 000 | 0.05 | 1.6058 | 21.88 | 1.5988 |
+| 8 192 | 8 000 | 0.05 | 1.6157 | 24.61 | 1.6089 |
+
+Doubling the steps at `N = 2 048` *raises* the train loss (1.7446 → 1.7476): the
+trajectory is oscillating around the minimum, not descending into it.  Ten times
+fewer `lr` at the same step count cuts it to 1.7415 and buys 7.4 accuracy points and
+0.017 NLL.  At `N = 8 192`, 8× the steps leaves train loss above where 1 000 steps
+had it.  This is consistent with the `P = 16 672`, `N = 512` control, where the same
+`lr` improved monotonically (1.2532 → 1.1136 → 1.0962): the default is calibrated to
+`N = 512` and stops being stable by `N = 2 048`.  `--adam-lr` now exists
+(`pcnl/examples/basin_posterior.rs`) to move it.
+
+The consequence is that **`d*` is a property of the anchor, not of the model**.  Two
+re-anchorings move it without moving the physics: `N = 2 048` gives 0.0195 →
+0.0130 rad as the anchor goes 22.66 → 28.12 %, and `N = 8 192` gives 0.00857 →
+0.00438 rad at a (itself not better-trained) 8 000-step anchor.  The interior mode's
+*existence* survives all of this; its *radius* moves by ×1.5–2.
+
+**The re-anchored `N = 2 048` rung, sampled.**  Sweeping with `--adam-lr 0.005
+--adam-steps 2000` puts `d* = 1.30e-2` and reports the predictive there as **11.72 % /
+2.1860 — the base rate**.  The chain at 1.30e-2 (same four-chain protocol, `r = 2e-3`,
+acceptance 0.6–0.9 %) says otherwise:
+
+```text
+per-chain acc 27.30 / 27.56 / 25.54 / 24.94 %   NLL 1.7807 / 1.7575 / 1.7604 / 1.7592
+BMA 29.30 % / 1.7611      anchor (2000 @ lr 0.005): 28.12 % / 1.7318
+split-R̂(NLL) 1.7862   null E[R̂] 1.659, 95 % [1.192, 2.405]  ->  inside, loose
+```
+
+So the chain finds 29.30 % where the sweep found the base rate: a **17.5-point
+disagreement**, because the 1e-2 row's ESS is 1.0.  That is the sharpest statement
+of the section's recurring theme — an ESS-1 row is not a noisy measurement, it is
+one probe, and it can be wrong by more than a base rate.  Every claim in this
+document that rests on an ESS-1 row (including "the predictive collapses to the base
+rate by 1e-2 rad" in the earlier sweeps) is provisional until a chain confirms it;
+here the chain refuted it.
+
+Against its own well-trained anchor the mode is +1.2 accuracy points and 0.029 NLL
+*worse* — so on the one rung with a defensible anchor, the mode is a wash on
+accuracy and a small loss on calibration.
+
+**The ladder as it now stands.**
+
+| `N` | `d*` | anchor acc / NLL | mode shell BMA | Δacc / ΔNLL | `R̂`(NLL) verdict |
+|---:|---:|---|---|---|---|
+| 2 048 | 0.0195 | 22.66 / 1.7467 | 19.53 / 1.7838 | −3.1 / +0.037 | inside, loose |
+| 2 048 | 0.0130 | 28.12 / 1.7318 | 29.30 / 1.7611 | +1.2 / +0.029 | inside, loose |
+| 8 192 | 0.00857 | 21.88 / 1.5988 | 24.61 / 1.6005 | +2.7 / +0.0017 | **below null mean** |
+| 16 384 | 0.00302 | 26.95 / 1.6086 | 23.44 / 1.6095 | −3.5 / +0.0009 | inside, tight |
+
+Read across, only one quantity is monotone: **the NLL gap closes with `N`**, from
+0.037 to under 0.001, i.e. the modal conditional's calibration converges onto the
+anchor's.  Accuracy does not follow a trend and changes sign twice, and the anchors
+in rows 1, 3 and 4 are all lr-limited to different degrees, which is enough to
+explain swings of a few points on its own (7.4 points at `N = 2 048` from `lr`
+alone).
+
+**Where a localized posterior is worth computing.**  Four rungs, two of them
+re-anchored, put the answer somewhere narrower than the two-rung reading suggested:
+
+- The earlier guess — a threshold near `N ≈ 10P` above which localizing pays in
+  accuracy — is withdrawn.  The third rung and the re-anchored rung both put the
+  mode *below* its anchor in accuracy, and `lr` alone is worth 7.4 points at
+  `N = 2 048`, which is larger than the middle rung's +2.7.
+- What survives is one monotone fact: **the NLL gap closes with `N`** (+0.037 →
+  +0.0009) and never changes sign, so localizing at the peak of `p(d)` never buys
+  calibration, it only stops costing it.
+- And one robust negative: at `N = 2 048`, `8 192` and `16 384` a four-chain shell
+  at the mode **ties** the anchor on accuracy at best.  The anchor is what improves
+  with data; the modal shell is a slightly worse copy of it.
+
+So the interior mode is not worth four chains at any `N` measured here.  Where the
+compute *is* worth spending is the small-`d` end of the informative band: at
+`N = 2 048` the 1e-4 and 3e-4 widths report NLL 1.7307 / 1.7281 against the anchor's
+1.7318 at the same accuracy, i.e. `π` there is the anchor plus a useful amount of
+its own noise rather than the anchor with the data forgotten.  `p(d)`'s peak and the
+place where the predictive is worth sampling are different places, and the gap
+between them widens with `N`.
+
+Three things follow for where to compute, stated with the evidence each has:
+
+1. **Sample a band, not the peak.**  `bma_metrics` (`pcnl/src/experiment.rs`) is the
+   mean softmax probability over *every* kept draw, and per-chain acc (line 525 /
+   1100) is the mean single-draw accuracy — so BMA-minus-per-chain is a measurable
+   ensemble effect, not an artefact of the reporting.  On that reading the wide
+   0.0905 rad shell reached 44.92 % from per-chain numbers of 23.9–25.5 %, nearly
+   double any single draw, because 3 200 diverse draws outvote each other's errors.
+   The tight mode shell has none of that gain (24.61 % on ~25 % per chain).  If the deliverable is accuracy, breadth beats
+   sitting on the mode, at least at `N = 512`–`2 048` where that shell was measured.
+2. **Do not spend the localization on NLL.**  Every mode-radius measurement here
+   lands at or slightly above its anchor's NLL (four rungs, +0.0009 to +0.037).  A
+   use case that needs calibrated probabilities gets nothing from the interior mode
+   and pays 16× per step to compute it.  If calibration is the deliverable, the
+   small-`d` end is the place to look: at `N = 2 048` the 1e-4 and 3e-4 widths both
+   report NLL *better* than the anchor (1.7307 / 1.7281 against 1.7318) at the same
+   accuracy — where `π` is still essentially the anchor plus its own noise.
+3. **The compute is not the constraint until `N` is large.**  A certified shell at
+   `N = 8 192` costs ~35 min of one core — but the same protocol at 0.09 rad took
+   200 k steps because its relaxation time is 100× longer.  The expensive dimension
+   is the shell's radius relative to the jump, not the model.
 
 One cost note that constrains what can be measured next: the potential is the mean
 over the *whole* training set, so a chain step at `N = 8 192` costs 16× one at

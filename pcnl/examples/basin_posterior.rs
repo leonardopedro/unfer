@@ -194,7 +194,10 @@ impl Env {
     /// `N·L′(d)·tan d < P − 2` is exactly linear in `N` only if the per-example
     /// landscape does not move with `N` — which is an assumption the data
     /// requirement (`N ≈ 3.4e6`) rests on, and the reason the flag exists.
-    /// `adam_steps` overrides how long the anchor is trained (`--adam-steps`).
+    /// `adam_steps` overrides how long the anchor is trained (`--adam-steps`),
+    /// and `adam_lr` its step size (`--adam-lr`, default 0.05).  Since the
+    /// full-batch step is an inverse length, `--adam-lr` is what makes the
+    /// anchor converged rather than merely longer-trained at large `N`.
     /// It is the control for the `--n-train` reading: the sweep measures `ΔL`
     /// against `u_Adam`, so if the small-width column is the *anchor's* own
     /// offset from the loss minimum rather than the population's slope, a
@@ -204,6 +207,7 @@ impl Env {
         shapes: Option<Shapes>,
         n_train: Option<usize>,
         adam_steps: Option<usize>,
+        adam_lr: Option<f64>,
     ) -> Self {
         let mut cfg = Config {
             seed,
@@ -217,6 +221,9 @@ impl Env {
         }
         if let Some(m) = adam_steps {
             cfg.adam_steps_on_b = m;
+        }
+        if let Some(lr) = adam_lr {
+            cfg.adam_lr = lr;
         }
         let p_dim = cfg.shapes.flat_size();
         let radius = cfg.sigma * (p_dim as f64).sqrt();
@@ -769,7 +776,12 @@ fn main() {
     // `--adam-steps M` trains the anchor longer, holding `N` fixed: the control
     // for whether the small-width `ΔL` is the anchor's offset or the landscape's.
     let adam_steps = flag("--adam-steps").and_then(|v| v.parse::<usize>().ok());
-    let mut env = Env::new(SEED, shapes, n_train, adam_steps);
+    // `adam` is full-batch with a fixed step, so its learning rate is an inverse
+    // length, not a dimensionless constant: 0.05 is stable at N = 512 and
+    // oscillatory at N = 8192, which makes "more steps" and "converged"
+    // different questions.  Exposed so the anchor can be moved off the default.
+    let adam_lr = flag("--adam-lr").and_then(|v| v.parse::<f64>().ok());
+    let mut env = Env::new(SEED, shapes, n_train, adam_steps, adam_lr);
     if let Some(m) = flag("--prior-is").and_then(|v| v.parse::<usize>().ok()) {
         prior_is(&env, m);
         return;
