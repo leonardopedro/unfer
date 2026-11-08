@@ -45,6 +45,7 @@
 #   mode-584        P = 584's mode radius, two rungs (0.00857/0.0195) ~45 min
 #   anchor-lr       lr vs N (7 anchor cells), two N = 2048 modes, and
 #                   the N = 8192 small-d band chain (~90 min)      ~3 h
+#   breadth         four shells at one N and one anchor            ~40 min
 #   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
 #   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #
@@ -60,7 +61,7 @@ ALL_STAGES=(
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
   sphere-ladder cold-10k target-condition scale scale2 n-scaling mode-584
-  anchor-lr wide-radius rhat-null
+  anchor-lr breadth wide-radius rhat-null
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -350,6 +351,25 @@ run_stage() {
     # reaches 3.3e-3 rad and 1.6109.  ~90 min per radius.
     cargo run --release -p pcnl --example basin_posterior -- 20000 --shapes 8,16,1 \
       --n-train 8192 --no-sweep --chains 4 --adam-steps 8000 --step 1e-5 --thin 10
+    ;;
+  breadth)
+    # Does breadth pay?  Radius had never been varied at fixed N and fixed anchor;
+    # the ladder's one positive number is an accuracy number, and it invited
+    # "ensemble spread buys accuracy".  Four shells at N = 2048's best anchor (lr
+    # 0.0125, 1000 steps: 31.25 % / 1.7270), 4 chains, 10 k steps, burn 2 000,
+    # thin 10.  BMA accuracy falls 31.25 -> 28.12 -> 23.83 -> 21.09 and NLL rises
+    # 1.7352 -> 1.7563 -> 1.7803 -> 1.8780: the smallest shell only ties the anchor
+    # and from 1e-2 out nothing reaches it.  The certified N = 512 table has the
+    # same sign (4e-2 -> 44.92 %, 7.9e-2 -> 42.97 % against 49.22 %), so the
+    # N = 8192 wide shell's 44.92 % against 21.88 % is the outlier -- and it is
+    # also the uncertified one.  ~9 min per shell.
+    # Nulls: 3e-3 8.06e-5 | 1e-2 1.73e-4 | 3e-2 4.24e-4 | 9e-2 1.30e-3
+    for cell in "3e-3 1e-3" "1e-2 2e-3" "3e-2 3e-3" "9e-2 1e-2"; do
+      set -- $cell
+      cargo run --release -p pcnl --example basin_posterior -- 10000 --shapes 8,16,1 \
+        --n-train 2048 --no-sweep --chains 4 --arm latitude --d0 "$1" --step "$2" \
+        --thin 10 --adam-steps 1000 --adam-lr 0.0125
+    done
     ;;
   wide-radius)
     # The falsified shortcut for the 7.9e-2 cell: tripling the jump radius

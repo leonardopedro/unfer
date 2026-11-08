@@ -2380,11 +2380,56 @@ not certified numbers; what they establish is the direction, on four chains each
 
 What does replicate is the **ensemble** gain: both runs report BMA 26.56 % from
 per-chain 23.4–25.1 %, i.e. +1.7 to +2.9 points of accuracy from averaging 800 draws
-spread over 1.3e-3–3.3e-3 rad — the same mechanism as the 0.0905 rad shell's 44.92 %,
-at 70× smaller radius.  Accuracy comes from breadth; NLL never does.  The sweep rows
+spread over 1.3e-3–3.3e-3 rad — the same averaging gain the 0.0905 rad shell at
+`N = 8 192` showed (+23 points over its anchor) at 70× smaller radius.  What that
+gain is *worth* is the next block's question; NLL gains nothing from it here.  The
+sweep rows
 that motivated the test are IS probes at a radius the chain does not occupy: at 1e-4
 a 1e-4 jump has acceptance `e^{−17.6}` (that row's `N·medΔL`), so no chain of this
 length is ever there.
+
+**Does breadth pay?  Four shells at one `N` and one anchor (`N = 2 048`).**  The
+ladder's one positive number is an *accuracy* number, and the reading it invited was
+"ensemble spread buys accuracy": the 0.00857 rad shell at `N = 8 192` reported
++2.7 points over its anchor, and the 0.0905 rad shell there reported 44.92 % BMA over
+21.88 % (uncertified, and never reproduced).  Radius was never varied at fixed `N`
+and fixed anchor, so the reading was never tested.  It has now been, at `N = 2 048`
+with the best measured anchor (`lr 0.0125`, 1 000 steps: 31.25 % / 1.7270), four
+shells, 4 chains each, 10 k steps, burn 2 000, thin 10:
+
+| shell `d₀` | jump `r` | acceptance | BMA acc / NLL | per-chain acc | anchor | `R̂`(NLL) / (loss) | null |
+|---:|---:|---|---|---|---|---|---|
+| 3.0e-3 | 1e-3 | 0.5–0.8 % | 31.25 / 1.7352 | 29.72–32.24 | 31.25 / 1.7270 | 1.268 / 1.245 | E 1.356, 95 % [1.096, 1.777] |
+| 1.0e-2 | 2e-3 | 0.6–0.8 % | 28.12 / 1.7563 | 25.86–29.95 | " | 1.525 / 1.505 | E 1.753, 95 % [1.213, 2.623] |
+| 3.0e-2 | 3e-3 | 1.8–2.5 % | 23.83 / 1.7803 | 20.97–25.21 | " | 3.389 / 3.606 | E 2.022, 95–99 % |
+| 9.0e-2 | 1e-2 | 1.6–1.8 % | 21.09 / 1.8780 | 12.32–22.49 | " | 2.115 / 2.548 | E 1.988, 95 % [1.279, 3.112] |
+
+Every column is monotone in the radius, and in the direction *against* the reading:
+BMA accuracy falls 31.25 → 28.12 → 23.83 → 21.09 and NLL rises 1.7352 → 1.7563 →
+1.7803 → 1.8780.  The best shell is the smallest, and it only **ties** the anchor's
+accuracy (31.25) while losing 0.008 nat of NLL; nothing from 1e-2 outward reaches the
+anchor at all (−3.1, −7.4, −10.2 points).  All four `R̂` are inside their nulls, but
+that is a weak statement here: acceptance of 2 % at `d₀ = 3e-2` means τ ≈ 5 000 steps
+and 8 000 post-burn steps is 1.6 τ, so the two far shells are direction, not
+certificates — they are also the two that are furthest below the anchor, so the
+uncertainty cannot rescue the reading.
+
+What the shells *do* show is the ensemble repairing its own draws, which is a
+different claim from beating the anchor: at `d₀ = 9e-2` the worst chain is 12.32 %,
+the mean per-chain is 17.7 %, and the BMA is 21.09 % (+7.5 over the worst, +3.4 over
+the mean).  Spread makes averaging worth something; it does not make the average
+*good*.
+
+This is now the second `N` at which a fixed-radius ladder contradicts "breadth beats
+the mode", and the two ladders agree with each other.  The certified `N = 512` table
+above has 4e-2 → 44.92 % and 7.9e-2 → 42.97 % against an anchor of **49.22 %**, and
+the 200 k-step `N = 8 192` shell reaches 44.92 % against an anchor of **21.88 %**.
+So across three `N` the same protocol gives −4.3, −7.4 to −10.2 (four radii) and
++23.0 points: the `N = 8 192` wide shell is the outlier, and it is also the one
+whose `R̂` sits above its null and whose per-chain draws (23.9–25.5 %) sit *at* its
+anchor rather than below it — a different regime (far draws cost nothing per-draw at
+that anchor), not a better one.  Its 44.92 % is therefore not evidence that a shell
+buys accuracy; it is an uncertified anomaly that two other `N` reverse.
 
 **Where a localized posterior is worth computing.**  Five rungs, three of them at
 `N = 2 048` under different anchors, put the answer somewhere narrower than the
@@ -2413,14 +2458,16 @@ are reported ends up 0.0008–0.0020 nat *worse* than its anchor.
 
 Three things follow for where to compute, stated with the evidence each has:
 
-1. **Sample a band, not the peak.**  `bma_metrics` (`pcnl/src/experiment.rs`) is the
-   mean softmax probability over *every* kept draw, and per-chain acc (line 525 /
-   1100) is the mean single-draw accuracy — so BMA-minus-per-chain is a measurable
-   ensemble effect, not an artefact of the reporting.  On that reading the wide
-   0.0905 rad shell reached 44.92 % from per-chain numbers of 23.9–25.5 %, nearly
-   double any single draw, because 3 200 diverse draws outvote each other's errors.
-   The tight mode shell has none of that gain (24.61 % on ~25 % per chain).  If the deliverable is accuracy, breadth beats
-   sitting on the mode, at least at `N = 512`–`2 048` where that shell was measured.
+1. **Average over a band, but do not expect the average to beat the anchor.**
+   `bma_metrics` (`pcnl/src/experiment.rs`) is the mean softmax probability over
+   *every* kept draw, and per-chain acc (line 525 / 1100) is the mean single-draw
+   accuracy — so BMA-minus-per-chain is a measurable ensemble effect, not an
+   artefact of the reporting.  It is large where the draws disagree: the wide
+   0.0905 rad shell at `N = 8 192` reaches 44.92 % on per-chain 23.9–25.5 %, and at
+   `N = 2 048`, `d₀ = 9e-2`, 21.09 % on per-chain 12.32–22.49 %.  But the anchor
+   wins at both `N` where it is certified: 49.22 % against 44.92 % and 42.97 % at
+   `N = 512`, 31.25 % against 31.25 → 21.09 % at `N = 2 048`.  So a band buys
+   robustness against a single bad draw, not accuracy.
 2. **Do not spend the localization on NLL.**  Every mode-radius measurement here
    lands at or slightly above its anchor's NLL (five rungs, +0.0009 to +0.037).  A
    use case that needs calibrated probabilities gets nothing from the interior mode

@@ -1037,7 +1037,7 @@ fn main() {
         env.d0 = flag("--d0").and_then(|v| v.parse().ok()).unwrap_or(r1);
         println!(
             "   arm latitude: the target is conditioned on d(u_Adam, u) = {:.3e} rad \
-             ({:.2} r₁).\n   \
+             ({:.2} × the jump radius).\n   \
              The move keeps ⟨u_Adam, u⟩ fixed, so the radius is exact every step, \
              the cap\n   \
              never rejects, and the chain can move *on* the shell a free-angle walk \
