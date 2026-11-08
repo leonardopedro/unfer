@@ -2420,6 +2420,12 @@ the mean per-chain is 17.7 %, and the BMA is 21.09 % (+7.5 over the worst, +3.4 
 the mean).  Spread makes averaging worth something; it does not make the average
 *good*.
 
+The step budget is not innocent in this reading — the same far shell at `N = 8 192`
+doubles its BMA accuracy between 20 k and 200 k steps (next block) — so read the four
+rows as "at 10 k steps", not as converged shells.  That caveat does not rescue the
+reading, because every row here is a *deficit* and longer runs move the two far ones in
+the direction that would make their per-chain numbers worse, not better.
+
 This is now the second `N` at which a fixed-radius ladder contradicts "breadth beats
 the mode", and the two ladders agree with each other.  The certified `N = 512` table
 above has 4e-2 → 44.92 % and 7.9e-2 → 42.97 % against an anchor of **49.22 %**, and
@@ -2430,6 +2436,28 @@ whose `R̂` sits above its null and whose per-chain draws (23.9–25.5 %) sit *a
 anchor rather than below it — a different regime (far draws cost nothing per-draw at
 that anchor), not a better one.  Its 44.92 % is therefore not evidence that a shell
 buys accuracy; it is an uncertified anomaly that two other `N` reverse.
+
+**How much of the breadth reading is exploration?  (`N = 8 192`, one shell, two step
+budgets.)**  The 0.0905 rad shell's 44.92 % came from a 200 k-step run with 800 draws
+per chain.  The same cell (default anchor 21.88 % / 1.5988, `r = 3e-3`, `d₀ = 9.05e-2`)
+at 20 k steps, burn 4 000, thin 20 (400 draws per chain) gives:
+
+| steps / thin | per-chain acc | per-chain NLL | train L | BMA acc / NLL | `R̂`(NLL) / (loss) |
+|---|---|---|---|---|---|
+| 20 k / 20 | 23.86–24.79 % | 1.6088–1.6140 | 1.6123–1.6171 | 28.12 % / 1.6100 | 1.689 / 2.338 |
+| 200 k / 100 | 23.85–25.54 % | 1.7016–1.7320 | — | 44.92 % / 1.6999 | 1.24 / 1.80 |
+
+Per-chain accuracy barely moves (24.4 → 24.7 %) and per-chain NLL gets 0.09 *worse*,
+while the BMA gains 16.8 points.  That is the signature of coverage, not of the radius:
+at 20 k steps the four chains sit in the part of the shell nearest the mode direction
+(hence the better per-chain NLL), and at 200 k they have spread over the whole shell,
+where single draws predict worse but their errors cancel.  So the 44.92 % is an
+*exploration* effect that a 20 k budget does not reach, and the honest statement of
+where breadth pays is: at a fixed step budget, breadth costs accuracy against a
+certified anchor; with 10× the steps on a far shell, the ensemble can outvote its own
+per-draw deficit.  The four-shell ladder above is a 10 k-step ladder for exactly this
+reason, and its far two rows (2 % acceptance, τ ≈ 5 000 steps) are the least converged
+of the four.
 
 **Where a localized posterior is worth computing.**  Five rungs, three of them at
 `N = 2 048` under different anchors, put the answer somewhere narrower than the
