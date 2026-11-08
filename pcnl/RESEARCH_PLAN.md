@@ -1,0 +1,392 @@
+# pcnl research and development plan
+
+Date: 2026-11-08. Implementation inspected at unfer commit
+`5b4b79c77f8c35bb4039ab1c755733621b5cd68f`.
+
+## Objective and reading order
+
+Develop a reproducible Bayesian-adaptation laboratory that can answer two questions:
+does a tractable, explicitly specified posterior improve predictions over a strong point
+baseline, and can a sampler approximate that posterior within a measured compute budget?
+Treat target quality, sampler accuracy and decision/readout quality as separate experiments.
+
+The first research bet is **adaptation in a likelihood-informed parameter subspace**,
+followed by a full-target sampler with different proposals inside and outside that subspace.
+Do not start another ambient step-size/temperature ladder as the default next experiment.
+The accumulated negative results make target specification and verification the next gates.
+
+This file is the forward work order for `pcnl`; it supersedes the unexecuted priorities of
+[the original implementation plan](../docs/plan_bayes_ngpt.md) as a reading guide only.
+That document remains the original design/formalization record.
+[PCNL_STATUS.md](../docs/PCNL_STATUS.md) remains the measured-results ledger.
+The motivating discussion is [ngpt.md](../../test/unfer/ngpt.md), especially §6.5.9,
+§6.6 and §9.3–§9.9. Cite those headings rather than mutable line numbers.
+No experiment, code fix or Lean compilation is claimed by this planning revision.
+
+## Evidence and what it licenses
+
+The discussion records stable normalized runs that nevertheless lose useful predictions;
+centered priors that change reachability and posterior concentration; cold/annealed/metric
+controls that do not solve the ambient target problem; and informative cap/latitude
+conditionals whose predictions are not the unrestricted posterior predictive.
+The November 7 discussion also corrects older optimizer anchors and absolute accuracy values.
+Regenerate anchors before comparing any new result with a historical table.
+
+The exact Haar cap law is implemented in [budget.rs](src/budget.rs), while the proposed
+dimension budget combines that geometry with measured likelihood contrasts. Use it to
+choose candidate ranks, not as a theorem that the likelihood constrains exactly 7–29
+directions or that every remaining direction is flat. A few random rays, a local Hessian
+and the absence of visits to a rare cap cannot exclude unseen informative regions.
+In particular, importance sampling with high ESS among observed prior draws can still
+miss a small region with large likelihood. Record the overlap limitation.
+
+For a cap of prior mass `p`, a rigorous likelihood-ratio bound `exp(B)` between its
+interior and exterior would bound posterior odds by `exp(B) * p / (1-p)`.
+Ray-based estimates of `B` do not establish that uniform bound. The measured budget and
+this conditional inequality must remain distinct. Use the exact incomplete-beta cap
+probability for calculations; reserve its large-dimension approximation for interpretation.
+
+The implementation is finite dimensional with isotropic covariance, not a trace-class
+infinite-dimensional Gaussian model. “Dimension robust” needs a controlled scaling study;
+bounded gradients and finite gradient-noise variance alone do not prove posterior accuracy,
+ergodicity, mixing, or a nonvanishing acceptance rate uniform in dimension.
+
+## Implementation inventory
+
+Paths here are relative to `pcnl/`; existing modules are reuse points, not completed
+solutions to the new milestones.
+
+| Component | Existing surface | Next use |
+|---|---|---|
+| Model and geometry | `src/model.rs`, `src/normalize.rs` | Forward/gradient contract |
+| Ambient SG engine | `src/sampler.rs` | Approximate-kernel comparator |
+| Direction kernels | `src/sphere.rs` | Audited sphere and conditional controls |
+| Geometry accounting | `src/budget.rs`, `src/radial.rs` | Rank hypotheses and cap costs |
+| Prediction scores | `src/readout.rs` | BMA, proper-score and reward estimators |
+| Experiments | `src/task.rs`, `src/experiment.rs` | Shared tasks and baselines |
+| Diagnostics | `src/diag.rs` | Stationarity and Monte Carlo uncertainty |
+| Saved draws | `src/persist.rs` | Trajectories plus run metadata |
+| Reproduction | `../scripts/pcnl-reproduce` | Named evidence stages |
+
+Proposed new modules below do not yet exist. Do not count the research plan as an
+implementation or treat a command naming a proposed example as an available command.
+
+## R0 — establish numerical and experimental trust before new inference
+
+**Development tasks, in order:**
+
+1. Check the end-to-end `loss_and_grad` against directional finite differences on tiny
+   models, multiple parameter blocks and several nonzero norm scales. Include zero and
+   near-zero behavior. `normalize_fro` currently calls `to_scalar` on the norm and then
+   rescales the tensor: its denominator is outside the autodiff graph. Decide explicitly
+   whether the intended derivative is a stopped-gradient surrogate or the derivative of
+   the normalized forward map. For posterior-gradient claims implement and test the latter;
+   if a surrogate is retained, label it and evaluate its drift bias. An exact MH kernel
+   can use a surrogate drift only with its actual proposal density in the ratio.
+2. Resolve the schedule contract in `sampler.rs`. `beta_at` clamps to `1e-6`, so the
+   implemented sequence eventually has a positive floor, even when the mathematical
+   power law has sums `sum beta^2 = infinity`, `sum beta^4 < infinity` for
+   `1/4 < kappa <= 1/2`. Tail-mobility formulas for the unfloored law do not describe
+   the floored implementation. Expose separate annealing and finite-floor modes; report
+   the floor crossover and actual mobility. The exponent window is only one necessary
+   schedule condition, not a convergence theorem. Cyclical sampling is a separate mode.
+3. Make frozen/nonfinite traces diagnostic failures or explicitly unavailable values.
+   `diag::ess` currently returns the draw count for zero variance; identical constant
+   chains can produce `Rhat = 1`. Neither licenses a mixing claim. Add a movement flag,
+   acceptance/unique-state count where relevant, and tests for stuck chains in both
+   identical and different states. Use rank-normalized split/folded Rhat and bulk/tail
+   ESS, with independent cross-checks on synthetic traces and a documented convention.
+   Use [Vehtari et al.](https://arxiv.org/abs/1903.08008) for the diagnostic definitions.
+4. Audit every “exact” proposal against its implemented density. For spherical tangent
+   Gaussians, handle the exponential map's multiple preimages beyond the injectivity
+   radius, or use a support restriction with the correct forward/reverse normalizers.
+   Check restricted-metric determinants, tangent covariance, Jacobians and any safeguards.
+   A fixed ambient metric still induces a position-dependent tangent law. Treat fixed
+   geodesic shell, latitude and cap-conditioned targets separately. Verify detailed balance
+   or invariant moments on circle/S2 targets with known answers before high-dimensional runs.
+5. Freeze metric adaptation before stationary draws and record the freeze point. Separate
+   warm-up, nonstationary annealing and stationary sampling in reports. Do not interpret
+   ordinary ESS/Rhat on an arbitrary decaying-step trace as stationary-chain diagnostics.
+6. Add a run manifest beside saved draws: code revision and dirty diff identity, model and
+   normalization version, task/data/anchor hashes, split seeds, target/prior/temperature,
+   optimizer and sampler configuration, actual schedule, basis/metric hash, device/dtype,
+   warm-up/thinning, evaluations, wall time, memory and nonfinite events. Saving draws is
+   not exact resumption; resumption additionally needs RNG, loader and adaptation state.
+
+**Acceptance:** finite-difference discrepancies are within documented scale/dtype tolerances;
+schedule reports agree with evaluated steps; frozen traces fail the reporting gate; each
+exact comparator agrees with a known low-dimensional target within Monte Carlo uncertainty.
+Re-run affected old cells after a gradient/model fix. Preserve old logs as superseded data.
+
+## R1 — specify and test the informed-subspace target
+
+**Research hypothesis:** a rank-limited adaptation model can retain the pretrained model's
+useful predictions while expressing uncertainty in directions informed by task data.
+This is a model-selection hypothesis, not a claim that projection preserves the ambient
+posterior. Start with an affine Gaussian model because its prior and MH ratio are simple.
+
+For frozen anchor `theta_ref`, prior covariance factor `C_half` and orthonormal columns
+`B` of size `P x r`, define
+
+```text
+theta(z) = theta_ref + C_half B z
+z ~ N(0, I_r)
+pi_r(dz) proportional to exp[-lambda * sum_i loss_i(theta(z))] N(0, I_r)(dz)
+```
+
+Specify whether `theta_ref` is pretrained on Task A, independently supplied, or fitted
+on Task B. A Task-B anchor or basis defining the prior is empirical Bayes/data reuse;
+label it, use a held-out selection split or cross-fitting when evaluating that choice,
+and keep the ordinary Task-A-prior experiment as a separate arm. Temperature `lambda`
+changes the target; it is not a sampler step size. `lambda = 1` is the likelihood target.
+
+Use the exact coordinate gradient `B^T C_half^T grad_theta Phi`. Candidate bases are
+training-trajectory PCA, prior-whitened Gauss–Newton/Fisher directions and a random
+orthonormal control at matched rank. A raw loss Hessian may be indefinite; state which
+curvature operator and prior metric define “informed”. Compare the tangent construction
+with this affine one only after specifying the chart prior and volume factor. Do not
+silently interpret a global unit-sphere prior as a product of tensor-wise spheres.
+
+**Development:** add `src/subspace.rs` for basis validation, maps and projected gradients;
+`src/target.rs` for target identity and shared full-data potential; and a proposed
+`examples/subspace_adaptation.rs` using the existing model/task machinery. Implement
+exact MH-pCN in `z` first:
+
+```text
+z' = sqrt(1-beta^2) z + beta xi,    xi ~ N(0,I_r)
+log alpha = min(0, Phi(z) - Phi(z'))
+```
+
+Use the common full-data target at both ends. The Gaussian prior cancellation follows
+from this proposal's prior reversibility; it does not hold for an arbitrary Langevin
+proposal without its drift-density correction. Validate ranks 1–2 against quadrature
+on controlled targets before measuring transformer adaptation. Ranks 4/8/16/32 are an
+initial experiment grid, not ranks established by the budget estimate.
+
+The motivation for distinguishing informed directions from the Gaussian complement is
+the [DILI construction](https://arxiv.org/abs/1411.3688), whose Gaussian-reference
+assumptions must be checked for this target. It does not guarantee useful transformer BMA.
+
+**Acceptance:** known-target posterior means/covariances and predictive integrals agree;
+random and informed rank controls use identical target scale, baseline and budgets; report
+accuracy, NLL, Brier, predictive MCSE and mixing for every rank. An informed basis must
+beat or explain its tie with a random basis, not just beat a failed ambient run.
+
+## R2 — separate target restriction, full-target proposals and SG bias
+
+Two different extensions follow R1:
+
+* **Restricted adaptation:** freeze the complement and sample `pi_r`. This is the explicit
+  smaller model above. Measure its posterior predictive and compare its point optimizer.
+* **Full-target informed proposals:** in whitened coordinates split
+  `v = B z + B_perp q`; use informed proposals for `z` and prior-preserving pCN for `q`,
+  with the full likelihood and correct acceptance ratios. This changes mixing while
+  retaining the declared ambient posterior. If that posterior predicts the base rate,
+  accurately sampling it is a negative target result, not a failed kernel result.
+
+The prior-preserving proposal principle is from
+[Cotter et al.](https://arxiv.org/abs/1202.0709); an infinite-dimensional claim additionally
+requires compatible discretizations and trace-class covariance. Diagonal/block covariance
+at finite `P` alone supplies neither condition.
+
+After an exact low-rank reference is available, compare full-gradient unadjusted pCNL,
+mini-batch SG-pCNL and SGLD at fixed target, with gradient scaling checked as
+`(N/batch) * batch_sum = N * batch_mean`. Vary step size and batch size, track distance
+to the reference predictive/moments with uncertainty, and distinguish drift-discretization
+bias from stochastic-gradient bias. A clipped gradient is a control and changes the drift;
+unconditional acceptance is not “100% MH acceptance”.
+
+**Proposed development:** `src/reference.rs` for exact low-dimensional targets and
+`examples/subspace_bias.rs` for shared-budget comparisons. Keep covariance block definitions
+and whitening maps explicit. Do not adapt the selected basis while collecting fixed-target
+samples unless a valid adaptive-MCMC argument is supplied.
+
+**Acceptance:** measured bias decreases or plateaus with a reported reason as step/batch
+controls change; gains are reported as ESS or predictive precision per likelihood/backward
+evaluation and per second. Require useful accuracy of the reference target before spending
+on a more scalable approximate sampler. No new “dimension independent” claim without
+holding the underlying statistical target/discretization family meaningfully comparable.
+
+## R3 — proper-score readouts and decision quality (ngpt workstream A)
+
+Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
+ensemble identity separate from a posterior claim: averaging available predictions can
+lower Brier without those predictions being equilibrium posterior draws.
+
+For independent states, finite-mixture Brier inflation is `tr(Cov(p))/m`. For stationary
+correlated states the exact inflation is instead
+
+```text
+tr Var(p_hat_m) = [m tr Gamma_0 + 2 sum_{k=1}^{m-1}(m-k) tr Gamma_k] / m^2
+```
+
+where `Gamma_k = Cov(p_t, p_{t+k})`. Test both against analytic chains or exact
+enumeration. Nonstationary states also carry bias. Random subsets of one finite retained
+pool answer a finite-population sampling question, with its own covariance correction.
+Do not use the iid formula as a certificate for a correlated trajectory.
+
+Compare point Adam, temperature-scaled Adam, matched-cost independent point ensembles,
+single draws and BMA at matched evaluation cost. Tune temperature on development data
+only; report NLL/Brier as primary proper scores, accuracy as utility, and ECE/AURC/coverage
+as diagnostics. Use paired evaluation inputs and bootstrap at the data/seed level;
+chain draws are not independent experiment replicates. Include in-domain, noise and
+declared distribution-shift tests.
+
+For the RLCD extension, first verify the reward estimator's target gradient. Averaging
+parameter-state predictions changes a rationale-mixture estimator; a leave-one-out baseline
+is not automatically unbiased when states/rationales share dependence. Provide a finite
+enumeration test of the actual expectation. Distinguish variance reduction conditional
+on the label from unconditional reward variance, which includes outcome noise.
+
+**Acceptance:** independent-run predictive uncertainty covers reference values, and any
+claimed score gain survives a strong calibrated point baseline with a reported interval.
+If a usable target's chain readout loses to that baseline at equal cost on three seeds,
+record the negative result and stop RL integrations pending a new hypothesis.
+
+## R4 — add a learnable structured task before external model scaling
+
+Keep modular arithmetic as a regression fixture, including Task B = A and label-shift
+controls. `Dataset::materialize` draws from only `K^2` possible input pairs, so larger
+`N` mostly changes repeated-example likelihood weight. Add an exhaustive input census,
+pair-overlap report, and separate protocols for repeated observations, disjoint-pair
+generalization and task shift. Increasing repeats is not evidence of more diverse data.
+
+Introduce a small CPU-compatible task with known signal/noise and an informative point
+solution: first teacher–student classification or a tiny sequence task; then a real
+tokenizer/batching/checkpoint task only after the interface exists. Compare the same train,
+development and test splits across all inference arms. Add label noise/OOD perturbations
+with a specified generative process. Establish that the optimizer can solve each task
+before diagnosing a posterior or sampler failure. Do not relabel failure on one task as
+a general theorem about standard attention or transformer Bayesian adaptation.
+
+**Proposed development:** a task/evaluation trait beside `src/task.rs`, shared likelihood
+and minibatch scaling, and one deterministic benchmark fixture. Measure acquisition,
+retention on Task A, calibration and task-B accuracy. GPU/checkpoint work needs a separately
+budgeted experiment; it is not needed for R0–R3.
+
+## R5 — gated extensions of ngpt §9
+
+These workstreams follow an informative target and audited readout. They are optional
+branches with their own falsifiers, not prerequisites for finishing the core crate.
+
+| Branch | Minimum deliverable | Advance only if |
+|---|---|---|
+| B: latent link | Direction/radius interface, per-mode scores | Toy passes; real link available |
+| C: reused depth | Shared-parameter map, dense baseline | Protocol and training code exist |
+| D: hierarchy | Level scorer and schedule contract | Task/level interface exists |
+
+**B — HybridLink:** consume the sphere-link prototype as an external reference, not an
+already integrated Candle model. Compare raw, normalized and radius-bounded links under
+matched data/training; measure task utility and per-mode NLL/Brier/ECE. Include learned
+temperature/radius controls. Normalization may limit scale drift without improving
+calibration. A real integration also requires rollout replay and model compatibility.
+An inspector can show predictive disagreement, but that disagreement is posterior
+uncertainty only after the sampling/target gates pass.
+
+**C — reused depth:** compare shared and dense models at both matched unique-parameter
+count and matched forward/backward compute, reporting the mismatch when both cannot
+be matched. Preserve shared-variable identity in flattening and basis construction.
+Measure ICL/IWL and head diagnostics per retained state. A smaller `P` can also change
+representation capacity and priors. Growing depth changes dimension: copying a posterior
+sample is not a reversible-jump kernel; define an explicit new-model pushforward and
+re-equilibration, or postpone posterior-preserving dimension changes.
+
+**D — coarse-to-fine:** import level schedules/metrics as data, not NCM training as a
+dependency. Validate the level semantics before computing capacity: `length * log K`
+is a per-level code ceiling, and cumulative versus residual/innovation codes have different
+joint accounting. It is not automatically comparable to a weight-space Haar cap cost.
+Measure actual conditional entropy and held-out conditional NLL per level; pre-register
+the proposed link to localization, rather than asserting the first ceiling crossing
+predicts collapse. Compare flat and block schedules with the same target and frozen
+blocks eventually updated; if fine blocks stay fixed, label a restricted target.
+For Sudoku use solved/cell/valid-grid metrics, hold out puzzles and avoid full-solution
+leakage into the conditioning interface. Start with a tiny structured synthetic hierarchy.
+
+External training runs and GPU reproduction remain blocked on their actual dependencies
+until inspected at execution time. Do not inherit an old “host has no torch/GPU” statement
+as a permanent environment fact. Keep external benchmark claims in their source records.
+
+## R6 — formal contracts and claims discipline
+
+Read `../docs/plan_bayes_ngpt.md` §7 and ngpt §6.6 against the actual sibling Lean files.
+Name projection-domain, covariance and architecture hypotheses; a numerical test is not
+a proof, and a theorem about an ideal projection is not a theorem about detached autodiff.
+The original [nGPT paper](https://arxiv.org/abs/2410.01131) motivates hyperspherical
+representations; it does not certify this nGPT-lite kernel or its stochastic gradients.
+
+Prioritize bridge statements with direct acceptance tests: projected-gradient chain rule;
+Gaussian subspace pushforward; prior reversibility of pCN; correlated Brier decomposition;
+and the finite-floor schedule distinction. Only then consider a rigorous cap-odds bound
+with its global likelihood assumptions. Match the implemented epsilon map and parameter
+domain explicitly. Keep exact density algebra, floating-point tests and empirical mixing
+claims in separate evidence categories.
+
+Faris–Lavine, nested-Fock field theory and Hashimoto solver guarantees are not required
+to validate this statistical crate. A proposed bridge to those topics needs its own
+operator/domain statement; do not infer it from a Lipschitz/noise theorem. MM0 export or
+nanoda checking is a separate proof-artifact task, not evidence of sampler stationarity.
+
+## Milestones, budgets and stop rules
+
+Roles denote ownership to assign, not agents spawned by this planning task.
+
+| Milestone | Dependency | Owner role | Timebox | Review artifact |
+|---|---|---|---|---|
+| M0: trustworthy baseline | none | numerics/experiment | 1–2 weeks | R0 fixes and manifests |
+| M1: subspace reference | M0 | inference | 1 week | Known-target tests and rank sweep |
+| M2: target comparison | M1 | research | 1–2 weeks | Random/informed/point comparison |
+| M3: bias and BMA | M2 | inference/evaluation | 1–2 weeks | Bias curves and predictive MCSE |
+| M4: structured task | M0, then M2–M3 | model/data | 1–2 weeks | Data contract and paired report |
+| M5: external branch | M3–M4 | integration | scoped later | Falsifiable branch result |
+| M6: Lean bridges | M0–M3 | formalization | scoped later | Compiled hypothesis audit |
+
+Timeboxes are planning estimates; hardware and research failures can change them.
+For M2 use ranks 4/8/16/32, three task regimes and three paired seeds as a screening grid;
+prune failing cells rather than multiply every optional arm. Add at least four independent
+stationary chains for promoted cells. Record a screening cap of 30 CPU-minutes per cell
+and an initial promoted-cell cap of 4 CPU-hours; exceeding either produces an inconclusive
+result unless a revised budget and expected precision are recorded first.
+
+Operational mixing gates are rank/folded Rhat below 1.01, bulk/tail ESS at least 400 for
+declared key observables, no frozen/nonfinite traces, and predictive MCSE smaller than
+the effect being claimed. These are investigation thresholds, not convergence proofs.
+Monitor train potential, radius, informed coordinates, random complement projections and
+predictions; loss Rhat alone is insufficient. Report cells that fail the gate without
+presenting their predictive as a converged posterior result. Validate any special
+finite-horizon Rhat null without using it to waive failed predictive-precision checks.
+
+Stop or redirect when: R0 exposes a changed gradient/model (regenerate affected evidence);
+informed and random subspaces tie (revisit basis hypothesis); exact low-rank targets
+cannot match calibrated point utility (revisit the model/prior before SG engineering);
+or approximate sampling cannot meet precision per compute (retain the exact small-model
+result). A well-sampled weak posterior is a target failure; a useful frozen trajectory
+is not a sampling success. Publish negative and inconclusive cells alongside positive ones.
+
+## Reproduction and definition of done
+
+Run existing commands from the **unfer repository root**. The script stage list is the
+authority for available named stages; its default set includes a potentially lengthy test
+suite, and `--all` includes many hours of historical experiments. Do not run it implicitly.
+
+```bash
+./scripts/pcnl-reproduce --list
+cargo test --release -p pcnl --locked
+./scripts/pcnl-reproduce quick
+./scripts/pcnl-reproduce budget
+./scripts/pcnl-reproduce rhat-null
+cargo run --release -p pcnl --example subspace_bound
+cargo run --release -p pcnl --example readout_compare
+```
+
+Run the existing gradient and numerical tests appropriate to each implementation change,
+then the known-target tests added in R0/R1; do not repeat every expensive historical ladder
+without a changed hypothesis. Separate build time from sampling time. Store per-cell logs,
+manifests, draws or predictive summaries, diagnostics and uncertainty intervals together.
+Every reported table must be regenerable from those artifacts and identify its anchor.
+
+The core plan is complete when R0–R4 deliver an audited target/kernel distinction, exact
+small-model references, a tested informed-subspace comparison, a quantified SG bias budget,
+and a properly calibrated readout study on a learnable task, whether the primary research
+hypothesis succeeds or fails. Record the result in `../docs/PCNL_STATUS.md` and update the
+discussion only after results exist. External branches, billion-parameter scaling and
+infinite-dimensional convergence are separate follow-on projects.
