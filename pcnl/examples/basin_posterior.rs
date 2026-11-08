@@ -844,7 +844,11 @@ fn main() {
             dls.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let med_dl = dls[dls.len() / 2];
             let dl_max = *dls.last().unwrap();
-            let mode_lhs = prev.map(|(w0, y0)| n * (med_dl - y0) / (width - w0) * width.tan());
+            // `pcnl::radial` carries the equation and its boundary cases; here
+            // the derivative is the finite difference between adjacent rows.
+            let mode_lhs = prev.map(|(w0, y0)| {
+                pcnl::radial::mode_residual(n, (med_dl - y0) / (width - w0), width)
+            });
             if let Some(lhs) = mode_lhs {
                 best_mode = Some(match best_mode {
                     Some((b, wb)) if b >= lhs => (b, wb),

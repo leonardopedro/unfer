@@ -35,6 +35,10 @@
 //!   set can localize (`m* = N·ΔL / ln(1/sin d)`).  This is the arithmetic
 //!   behind `docs/PCNL_STATUS.md`'s "π is prior-dominated", and it explains
 //!   the free-walk exponents (§6.5.9).
+//! * [`radial`] — the same inequality along the radius: Haar's log-derivative
+//!   `(P−2)·cot d` against `N·L′(d)`, and the exact mode equation
+//!   `N·L′(d)·tan d = P − 2` whose left side the sweep prints. §5's
+//!   "no mode anywhere on the sphere" is a comparison of those two numbers.
 
 pub mod budget;
 pub mod diag;
@@ -42,6 +46,7 @@ pub mod experiment;
 pub mod model;
 pub mod normalize;
 pub mod persist;
+pub mod radial;
 pub mod readout;
 pub mod sampler;
 pub mod sphere;

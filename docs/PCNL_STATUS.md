@@ -1818,10 +1818,29 @@ Five readings, in order of how much they change the document:
    whatever the thinning (`thin 1 200` leaves 26 draws per half, whose own null
    spans [0.974, 1.093]).  The honest form of that row is "`R̂` 1.05, consistent
    with stationarity but unable to certify it; settling it needs ~200 k steps,
-   not more thinning".  The other lever is the jump radius itself: since
-   `τ = (sin d₀/r)²` and the shell is flat out there, `r = 1e-2` would give
-   `τ ≈ 62` steps and buy an order of magnitude of mixing per step — the natural
-   next run, and much cheaper than 200 k steps.  What the re-run *did* settle is the BMA, which is what the
+   not more thinning".
+
+   **The obvious cheaper lever — a wider jump radius — was tested and refuted.**
+   Since `τ = (sin d₀/r)²`, tripling `r` to `1e-2` should cut the relaxation to
+   62 steps.  It does not, because acceptance is the gate: on the same shell and
+   the same seed budget (4 chains, 40 k steps, thin 400)
+
+   | `r` (rad) | acceptance | `τ_eff = (sin d₀)²/(a·r²)` | BMA acc / NLL | `R̂`(NLL) / `R̂`(loss) | null for `τ_eff` |
+   |---:|---:|---:|---|---|---|
+   | 3e-3 | 43.2 % | 692 | 42.97 % / 1.4349 | 1.050 / 1.069 | E 1.033, 99 % 1.103 |
+   | 1e-2 | 2.0–2.7 % | **2 661** | 41.41 % / 1.4370 | 1.115 / 1.444 | E 1.161, 95 % [1.029, 1.372] |
+
+   Twenty times fewer moves accepted, so the *effective* diffusion step is
+   `r√a ≈ 1.5e-3` — smaller than the `3e-3` that already worked — and
+   `τ_eff = (sin d₀)²/(a·r²)` is 4× worse, not 11× better.  What the run reports
+   is exactly what that null expects: `R̂(NLL)` 1.115 sits *below* its mean of
+   1.161 and `R̂(loss)` 1.444 at its 99th percentile, i.e. no evidence of
+   disagreement between chains, only of a walk that barely moves.  Acceptance is
+   not even stationary over the run — 8.4 % over the first 2 000 steps, 2.0–
+   2.7 % over 40 000 — so a jump this wide is not a diffusive step on this shell
+   at all.  The radius has an optimum near where acceptance is ~40 %, and past
+   that the only lever left is steps: ~200 k at `r = 3e-3`, whose ~290
+   independent draws per chain would put the null's 95 % band inside ±0.02.  What the re-run *did* settle is the BMA, which is what the
    row is quoted for: 4 chains average to **42.97 % / 1.4349** where the 2-chain
    run gave 37.89 % / 1.4410 — the per-chain accuracies are the same (36.5–37.4 %
    both times), so the 5-point gain is the averaging over four chains, and the
@@ -1899,9 +1918,38 @@ informative band.
 
 (The grid has one trap: a row must satisfy `d < π/2`, because `tan` changes sign
 just past the pole.  `1.5708` is past it, and its residual is the sign-flipped
-`−3.2 × 10⁵` — a row, not a result.)  The log-log fit on the same grid returns
-`β = 0.02`, `d* = 4 × 10¹⁵³` rad: the third grid in a row to give a different
-nonsense answer, and the reason the document quotes the inequality, not the fit.  That is the sharp version of "prior-dominated": not a sampler
+`−3.2 × 10⁵` — a row, not a result.  `pcnl::radial` pins that boundary: past the
+pole both `tan` and `cot` flip, so the residual goes negative and the volume
+weight starts *shrinking*, which is why the density peaks at `π/2` and falls.)
+The log-log fit on the same grid returns `β = 0.02`, `d* = 4 × 10¹⁵³` rad: the
+third grid in a row to give a different nonsense answer, and the reason the
+document quotes the inequality, not the fit.
+
+**The far rows are a weak instrument, so they were re-measured on a denser
+grid.**  A 128-probe sweep at `d ≳ 0.1` rad has ESS 1.0, so `N·medΔL` there is a
+median over directions the weights do not average.  Eleven rows spanning
+`0.1–0.4` rad (same probe budget) read
+`563, 614, 556, 538, 362, 606, 376, 380, 274, 204, 350` — a ±30 % scatter about
+~400 with no trend — and the residual column swings between `−1 602` and
+`+2 469` with no structure.  Two consequences, both going the same way:
+
+* the largest residual anywhere on the denser grid is **2 469** at `0.2` rad,
+  still a factor **6.8** short of `P − 2 = 16 670`.  The sparse grid's `1 444`
+  was therefore not an upper bound and not a mode: it was one draw from that
+  scatter.  What survives every grid is the inequality,
+  `N·L′(d)·tan d ≪ P − 2` on `0 ≤ d ≤ π/2`;
+* the log-log fit on this grid returns **`NaN`**, because `N·medΔL` is no longer
+  monotone in `d`.  Third grid, third different answer — and the first that is
+  not even a number, which is the clearest statement yet that the fit is not
+  describing the target.
+
+The accuracy column shows the same scatter: two rows (0.1 and 0.2 rad) read
+16.8 % where their neighbours read 11.7 %, at ESS 1.0 — probe-set noise, not
+target structure.  One by-product is worth flagging because it is easy to
+misread: on this grid the one-nat radius is `r₁ = 4.21e-3` rad rather than
+`8.61e-4`, both being the max-ESS width scaled by `1/√(N·E[ΔL])`.  `r₁` is a
+property of the grid, so no `r₁`-relative claim (`13.33 r₁`, `26.33 r₁`) should be
+read without the grid that produced it.  That is the sharp version of "prior-dominated": not a sampler
 failing to find a mode, but a target with no mode inside the range where the
 model is informative at all.  It also explains the free walk of the 10 k and
 50 k runs: `N·L′·d ≪ P − 2` over the whole reachable range, so there is no

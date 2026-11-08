@@ -15,7 +15,7 @@
 #
 # Stages, cheapest first (wall times are two-core measurements, release build):
 #
-#   test            112 tests (release)                        ~6 min
+#   test            117 tests (5 are `radial`'s)               ~30 min
 #   quick           the quick-config report                     ~20 s
 #   volume          §6.4(ii) Haar volume                        ~10 s
 #   mobility        §4.3 mobility/floor table                   ~1 min
@@ -41,6 +41,7 @@
 #   scale2          the profile's three follow-ups: the outer shells at
 #                   --thin 400, the small models' d* shells, and where
 #                   those small models are actually informative   ~90 min
+#   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
 #   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
@@ -54,7 +55,7 @@ ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
-  sphere-ladder cold-10k target-condition scale scale2 rhat-null
+  sphere-ladder cold-10k target-condition scale scale2 wide-radius rhat-null
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -256,6 +257,16 @@ run_stage() {
     # still correlated: the null the outer-shell cells in the status doc are
     # read against.  Pure Python, ~11 s.
     ./scripts/pcnl-rhat-null
+    ;;
+  wide-radius)
+    # The falsified shortcut for the 7.9e-2 cell: tripling the jump radius
+    # (`tau = (sin d0/r)^2`) does not buy mixing, because acceptance falls from
+    # 43 % to 2.0-2.7 % — `tau_eff = (sin d0)^2/(a r^2)` goes 692 -> 2661.  Run
+    # it to see the negative result rather than take it on trust (~40 min);
+    # `./scripts/pcnl-rhat-null 7.9e-2 1.53e-3 40000 400 4 <Rhat>` is the null
+    # to read it against.
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 7.9e-2 --step 1e-2 --thin 400
     ;;
   *)
     echo "unknown stage: $stage" >&2
