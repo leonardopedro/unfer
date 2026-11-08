@@ -2138,14 +2138,51 @@ by training alone.  Past `10⁻²` growth is superlinear (`γ = 0.80–1.32`).
 
 The consequence is the project's first interior mode: `N·maxΔL` reaches 160 → 773
 → 4 272 against `P − 2 = 582`, and the fit's `d*` falls 0.228 → 0.0195 → 0.00857
-rad.  Two caveats keep that from being a certificate.  First, **ESS is 1.0 on every
-row from `1e-2` out**, so the crossing is carried by one importance weight per
-probe; the `P = 584` anchor control is reassuring (`1e-2` and `3e-2` move only
-±5 %, 223→193 and 184→177, unlike the small-`d` rows) but it is a different
-statistic.  Second, `d* = 0.00857` rad sits *inside* the band where the sweep is
-blind, so the only instrument that can check it is the latitude shell — at
-`d = 0.0086` rad, `N = 8 192`, four chains.  That run has not been done; until it
-is, "interior mode at `P = 584`" is a fit to single-probe rows, not a measurement.
+rad.  Two caveats kept that from being a certificate on its own.  First, **ESS is
+1.0 on every row from `1e-2` out**, so the crossing is carried by one importance
+weight per probe; the `P = 584` anchor control was reassuring (`1e-2` and `3e-2`
+move only ±5 %, 223→193 and 184→177, unlike the small-`d` rows) but it is a
+different statistic.  Second, `d* = 0.00857` rad sits *inside* the band where the
+sweep is blind, so only the latitude shell can check it.  So the chain was run.
+
+**The mode radius, sampled — and certified.**  Latitude shell at `d₀ = 0.00857`
+rad, `N = 8 192`, 4 chains, 20 000 steps, burn 4 000, thin 20, `r = 2e-3`:
+
+```text
+acceptance 0.5–0.8 %      per-chain acc 24.10 / 26.31 / 24.98 / 24.89 %
+per-chain NLL 1.6009 / 1.6006 / 1.6006 / 1.6006     BMA 24.61 % / 1.6005
+split-R̂(NLL) 1.0498   split-R̂(train L) 1.3654
+anchor (N = 8 192): 21.88 % / 1.5988      base rate 11.72 %
+```
+
+The null at the acceptance-corrected radius `r_eff = 2e-3·√0.0073 = 1.70e-4`
+(`τ = (sin d₀/r_eff)² = 2 541` steps, `ρ = e^{−20/2 541} = 0.992`, 3 000
+replicates) expects `E[R̂] = 1.328`, 95 % `[1.088, 1.715]`, 99 % 1.812.  The
+observed `R̂(NLL)` 1.0498 is **below the null's mean** — better mixed than a
+stationary AR(1) with that thinning — and `R̂(loss)` 1.3654 lands on the null's
+mean.  This is the first *converged* chain measurement in the project at a mode
+radius, and it certifies the sweep's extrapolation: the interior mode at
+`P = 584`, `N = 8 192` is real, not a single-probe artefact.
+
+What it is worth is the familiar answer.  At the density's peak the predictive is
+24.61 % / 1.6005 against the anchor's 21.88 % / 1.5988: **+2.7 points of accuracy
+and a NLL 0.0017 *worse*** — the peak of `p(d)` is not where calibration improves,
+which `P = 2 192` reached in its extreme form (base rate exactly) and this model
+reaches in a mild one.  Note also that the far 0.0905 rad shell reported a higher
+BMA accuracy, 44.92 %, on the same per-chain numbers (23.9–25.5 %): that gap is the
+averaging gain from *diversity* across a wide shell, not evidence that accuracy
+grows with radius.  The tight shell here holds near-identical draws, so its BMA
+is 24.61 % and buys nothing from averaging.  Thinned 20 and `R̂`-certified, the
+statement is: the mode buys accuracy over the anchor, buys 1.5 % in NLL at best,
+and the wide shell's 46 % belongs to the ensemble rather than to the posterior's
+peak.
+
+One cost note that constrains what can be measured next: the potential is the mean
+over the *whole* training set, so a chain step at `N = 8 192` costs 16× one at
+`N = 512`.  This shell was affordable only because a 0.0086 rad shell relaxes in
+`(sin d₀/r)² ≈ 18` steps, so 20 k steps is ~1 000 relaxation times; the same
+protocol at 0.09 rad needed 200 k.  Future `N`-ladders of shells should be priced
+in relaxation times, not steps.
 
 **The `P = 584` shell, out to 200 000 steps.**  The uncertified `d₀ = 0.0905` shell
 was rerun 10× longer (4 chains, burn 40 000, thin 100, 800 draws each) at two step
@@ -2169,10 +2206,11 @@ certify it; the number does not deserve a confidence interval yet.
 Taken as a whole the cycle leaves the project's shape unchanged and its one
 quantitative scaling claim retired: accuracy at a fixed radius is real and
 anchor-relative, the mode sits outside the informative band at `P = 16 672` under
-any anchor, at `P = 584` it moves inside as `N` grows but only on single-probe
-rows, and "how much data to localize" is not yet a measurable quantity — the
-instrument that would measure it has to hold the anchor fixed, which means training
-to convergence *before* the sweep, not sweeping with more data.
+any anchor, at `P = 584` it moves inside as `N` grows (now certified by a converged
+shell at 0.00857 rad, where the mode buys +2.7 accuracy points and no NLL), and
+"how much data to localize" is not yet a measurable quantity — the instrument that
+would measure it has to hold the anchor fixed, which means training to convergence
+*before* the sweep, not sweeping with more data.
 
 *The tangent coordinate.*  The radial law says `d` never came in; the second
 question is how many **directions** the data bought, and it has the same answer
