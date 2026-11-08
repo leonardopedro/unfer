@@ -2051,11 +2051,128 @@ N·L′(2.3e-3) ≥ (P − 2)/2.3e-3 = 7.25 × 10⁶ nats/rad,
 ```
 
 against the measured `1.10 × 10³` at `N = 512` — a shortfall of `6.6 × 10³`, i.e.
-**`N ≈ 3.4 × 10⁶` examples** (per-example gradient `2.1` nats/rad, so at
-`P = 16 672` the crossover is `N ≈ P/(2·2.1·d)`).  That is the quantitative content
-of the project's scaling story: the Bayesian update on this architecture at this
-`P` needs six thousand times the data to localize anywhere near the basin, and no
-schedule, temperature, proposal or filter changes the number — only `N` does.
+`N ≈ 3.4 × 10⁶` examples.  **That figure is withdrawn in the next subsection**: it
+is a property of how far the anchor had converged, not of the target, and at
+*fixed* `N` it moves by a factor 55.  The inequality itself survives, because it
+is the outer rows — `d ≥ 10⁻²` rad — that carry the no-mode conclusion, and those
+are the rows the anchor control leaves alone.
+
+**Data scaling, measured instead of extrapolated.**  The `N ≈ 3.4e6` claim rests on
+one assumption, `N·L′ ∝ N`, taken from a single `N = 512` run.  Two experiments
+test it directly: change `N` at fixed anchor schedule, then change the anchor
+schedule at fixed `N`.
+
+The paired sweep first (`--n-train 512` vs `2048`, same five widths, same 128-probe
+stream, same `u_Adam` task):
+
+| `r` (rad) | `N·medΔL`, `N = 512` | `N·medΔL`, `N = 2048` | ratio | per-example `medΔL` 512 → 2048 |
+|---:|---:|---:|---:|---:|
+| 1.0e-3 | 1.55 | 19.20 | 12.4 | 0.0030 → 0.0094 |
+| 2.3e-3 | 3.40 | 39.95 | 11.8 | 0.0066 → 0.0195 |
+| 5.0e-3 | 4.97 | 79.09 | 15.9 | 0.0097 → 0.0386 |
+| 1.0e-2 | 17.28 | 160.05 | 9.3 | 0.034 → 0.078 |
+| 4.0e-2 | 229.75 | 895.33 | 3.9 | 0.449 → 0.437 |
+
+Four times the data buys `≈12–16×` the loss at small widths and `3.9×` at the
+outermost one, i.e. superlinear inside `5e-3` rad and linear outside `1e-2`.  But
+the anchor moved in the same step — train loss 1.2532 → 1.1887, test accuracy
+49.22 % → 44.92 % — so "more data" and "deeper anchor" are confounded in that
+column, and only the per-example column could have separated them.
+
+So hold `N = 512` and train the anchor 4× and 8× longer (`--adam-steps`, 4000 and
+8000, same widths, same probes):
+
+| anchor steps | train loss | test acc / NLL | 1e-3 | 2.3e-3 | 5e-3 | 1e-2 | 4e-2 |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 000 | 1.2532 | 49.22 % / 1.3136 | 1.55 | 3.40 | 4.97 | 17.28 | 229.75 |
+| 4 000 | 1.1136 | 50.00 % / 1.2125 | 14.39 | 38.62 | 133.37 | 253.74 | 460.77 |
+| 8 000 | 1.0962 | 57.81 % / 1.1804 | 44.62 | 136.87 | 351.87 | 526.72 | 290.86 |
+| *for comparison:* `N = 2048`, 1 000 steps | 1.1887 | 44.92 % / 1.2266 | 19.20 | 39.95 | 79.09 | 160.05 | 895.33 |
+
+At the basin radius `2.3e-3` the same 512 examples give 3.40, 38.62 and 136.87 for
+1 000, 4 000 and 8 000 anchor steps: **the 8 000-step anchor exceeds what 4× the
+data achieved**, and 4 000 steps lands on it (38.62 vs 39.95, 3 %).  The printed data
+requirement follows the anchor, not `N`:
+
+```text
+N = 512, adam 1 000  →  N ≈ 3.4 × 10⁶
+N = 512, adam 4 000  →  N ≈ 2.0 × 10⁵
+N = 512, adam 8 000  →  N ≈ 6.2 × 10⁴
+```
+
+That is a factor 55 at *identical* data, and a factor 1.4 between 4 000 and 8 000
+steps.  Since test accuracy is still rising at 57.81 %, none of these is the
+converged value — `6.2e4` is an upper bound that keeps falling with training.  The
+honest statement is therefore: **`N·L′` at small `d` is set by the anchor's
+convergence depth, so any data requirement computed from it is a statement about
+Adam, not about `π`.**  Withdrawing `3.4e6` is not a correction of the arithmetic;
+the arithmetic was right and the quantity it measured was the wrong one.
+
+What the control leaves intact is the outer range.  There `4×` data gives `3.9×`
+the loss — linear, as assumed — and 8× anchor training does not reproduce that
+(290.86, *below* the 4 000-step 460.77, so this row has `±2×` run-to-run scatter of
+its own).  The exact mode equation is evaluated on those rows, and across the three
+anchors its largest measured value is 283, 461 and 980 (in `N·maxΔL`) against
+`P − 2 = 16 670` — short by 17–60× every time.  The **no-interior-mode conclusion at
+`P = 16 672` stands on all three anchors**.  The fitted `d*` (1.06, 0.744 and 89.5
+rad) does not: the 89.5 is the fit degenerating when the last row drops below the
+one before it, and all three are grid-and-anchor artefacts of the same small-`d`
+columns, quoted only as "≫ the 2.3e-3 basin radius".
+
+**The one model that does grow an interior mode.**  The same `N` ladder at
+`P = 584` (`8,16,1`, seven widths, `N = 512 / 2 048 / 8 192`, 64 probes):
+
+| `r` | 1e-4 | 3e-4 | 1e-3 | 3e-3 | 1e-2 | 3e-2 | 9e-2 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N = 512` | 0.53 | 1.13 | 12.60 | 111.28 | 223.14 | 184.40 | 172.76 |
+| `N = 2 048` | 0.44 | 1.72 | 13.78 | 131.44 | 672.49 | 1 109.99 | 689.42 |
+| `N = 8 192` | 0.22 | 1.43 | 16.92 | 140.87 | 1 192.94 | 4 039.83 | 3 811.93 |
+| γ (8× `N`) | −0.38 | +0.11 | +0.14 | +0.11 | +0.80 | +1.32 | +1.32 |
+
+Three regimes, and the first one is a warning about the control: at `1e-4` the
+loss *falls* with `N` (`γ < 0`), so there the measurement is not the target's own
+curvature at all but noise in a ball narrower than the anchor's own basin.
+Between `3e-4` and `3e-3` the growth saturates (`γ ≈ 0.11` for 8× data) — this is
+the anchor-limited band, and it is why the `P = 16 672` number above could be moved
+by training alone.  Past `10⁻²` growth is superlinear (`γ = 0.80–1.32`).
+
+The consequence is the project's first interior mode: `N·maxΔL` reaches 160 → 773
+→ 4 272 against `P − 2 = 582`, and the fit's `d*` falls 0.228 → 0.0195 → 0.00857
+rad.  Two caveats keep that from being a certificate.  First, **ESS is 1.0 on every
+row from `1e-2` out**, so the crossing is carried by one importance weight per
+probe; the `P = 584` anchor control is reassuring (`1e-2` and `3e-2` move only
+±5 %, 223→193 and 184→177, unlike the small-`d` rows) but it is a different
+statistic.  Second, `d* = 0.00857` rad sits *inside* the band where the sweep is
+blind, so the only instrument that can check it is the latitude shell — at
+`d = 0.0086` rad, `N = 8 192`, four chains.  That run has not been done; until it
+is, "interior mode at `P = 584`" is a fit to single-probe rows, not a measurement.
+
+**The `P = 584` shell, out to 200 000 steps.**  The uncertified `d₀ = 0.0905` shell
+was rerun 10× longer (4 chains, burn 40 000, thin 100, 800 draws each) at two step
+sizes, against nulls computed at the acceptance-corrected radius
+`r_eff = r√(mean acceptance)`:
+
+| `r` | acceptance | per-chain acc | BMA acc / NLL | `R̂`(NLL) / `R̂`(loss) | null 95 % / 99 % |
+|---:|---|---|---|---|---|
+| 1.0e-2 | 0.3–1.9 % | 24.86 / 25.29 / 25.31 / 20.20 % | 43.75 % / 1.7215 | 2.80 / 3.91 | [1.021, 1.195] / 1.235 |
+| 3.0e-3 | 19.7–34.1 % | 23.85 / 25.54 / 22.38 / 22.97 % | 44.92 % / 1.6999 | 1.24 / 1.80 | [1.010, 1.096] / 1.113 |
+
+A 3× narrower step lifts acceptance from ~1 % to ~30 % and cuts `R̂`(NLL) from
+7.18 (at 20 k steps) to 1.24 — the walk-length diagnosis was correct.  It still
+sits above the 99 % null, so the shell is **not certified**: what remains is a
+level difference between chains (NLL 1.7016, 1.7230, 1.7320, 1.7294 — a spread of
+~1.5 standard errors per chain at 800 draws), which only longer chains narrow, not
+a different step.  The accuracy it reports (44.9 %) is 24 points above its anchor
+in the BMA sense and 3 points per-chain, so the *effect* survives the failure to
+certify it; the number does not deserve a confidence interval yet.
+
+Taken as a whole the cycle leaves the project's shape unchanged and its one
+quantitative scaling claim retired: accuracy at a fixed radius is real and
+anchor-relative, the mode sits outside the informative band at `P = 16 672` under
+any anchor, at `P = 584` it moves inside as `N` grows but only on single-probe
+rows, and "how much data to localize" is not yet a measurable quantity — the
+instrument that would measure it has to hold the anchor fixed, which means training
+to convergence *before* the sweep, not sweeping with more data.
 
 *The tangent coordinate.*  The radial law says `d` never came in; the second
 question is how many **directions** the data bought, and it has the same answer

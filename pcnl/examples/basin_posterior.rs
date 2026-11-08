@@ -189,13 +189,34 @@ impl Env {
     /// at `d* = ((P−2)/(cβ))^{1/β}`, so changing `P` alone is the cleanest test
     /// of the law — except that `c` is re-measured at each `P`, which is the
     /// point (a smaller model can have a flatter or steeper landscape).
-    fn new(seed: u64, shapes: Option<Shapes>) -> Self {
+    /// `n_train` overrides the dataset size (`--n-train`).  The potential is
+    /// `N·L` with `L` the *mean* cross-entropy, so the mode inequality
+    /// `N·L′(d)·tan d < P − 2` is exactly linear in `N` only if the per-example
+    /// landscape does not move with `N` — which is an assumption the data
+    /// requirement (`N ≈ 3.4e6`) rests on, and the reason the flag exists.
+    /// `adam_steps` overrides how long the anchor is trained (`--adam-steps`).
+    /// It is the control for the `--n-train` reading: the sweep measures `ΔL`
+    /// against `u_Adam`, so if the small-width column is the *anchor's* own
+    /// offset from the loss minimum rather than the population's slope, a
+    /// better-converged anchor lowers it at fixed `N`.
+    fn new(
+        seed: u64,
+        shapes: Option<Shapes>,
+        n_train: Option<usize>,
+        adam_steps: Option<usize>,
+    ) -> Self {
         let mut cfg = Config {
             seed,
             ..Config::default()
         };
         if let Some(sh) = shapes {
             cfg.shapes = sh;
+        }
+        if let Some(m) = n_train {
+            cfg.n_train = m;
+        }
+        if let Some(m) = adam_steps {
+            cfg.adam_steps_on_b = m;
         }
         let p_dim = cfg.shapes.flat_size();
         let radius = cfg.sigma * (p_dim as f64).sqrt();
@@ -740,7 +761,15 @@ fn main() {
             layers: parts[2],
         }
     });
-    let mut env = Env::new(SEED, shapes);
+    // `--n-train N` changes the dataset size, hence the potential `N·L` and the
+    // anchor (Adam is refit on the larger set).  The sweep columns are already
+    // `N`-multiplied, so two `N`s measure whether the per-example landscape is
+    // `N`-independent: if it is, every column scales by the ratio of the `N`s.
+    let n_train = flag("--n-train").and_then(|v| v.parse::<usize>().ok());
+    // `--adam-steps M` trains the anchor longer, holding `N` fixed: the control
+    // for whether the small-width `ΔL` is the anchor's offset or the landscape's.
+    let adam_steps = flag("--adam-steps").and_then(|v| v.parse::<usize>().ok());
+    let mut env = Env::new(SEED, shapes, n_train, adam_steps);
     if let Some(m) = flag("--prior-is").and_then(|v| v.parse::<usize>().ok()) {
         prior_is(&env, m);
         return;
@@ -772,7 +801,7 @@ fn main() {
     } else {
         println!(
             "1. width sweep (self-normalized IS, {probes} probes each)\n   \
-             {:>9}  {:>8}  {:>11}  {:>9}  {:>9}  {:>10}  {:>10}  {:>9}  {:>9}",
+             {:>9}  {:>8}  {:>11}  {:>9}  {:>9}  {:>10}  {:>10}  {:>10}  {:>9}  {:>9}",
             "width r",
             "ESS",
             "angle mean",
@@ -781,8 +810,13 @@ fn main() {
             "in basin %",
             "N·medΔL",
             "N·maxΔL",
+            "medΔL",
             "N·L′·tan d"
         );
+        // `medΔL` (per-example) is printed next to `N·medΔL` because the two
+        // move differently with `N`: `N·medΔL` is what the mode inequality uses,
+        // but it confounds the data count with how far the anchor itself has
+        // moved, and only the per-example column says whether that happened.
         let mut max_ess = (f64::NEG_INFINITY, 0.0f64);
         // (width, N·medΔL) per row: the inputs to the posterior-scale line below.
         let mut rows: Vec<(f64, f64)> = Vec::new();
@@ -857,10 +891,11 @@ fn main() {
             }
             println!(
                 "   {width:>9.1e}  {ess:>8.1}  {w_angle:>11.3e}  {w_acc:>9.2}  {w_nll:>9.4}  \
-                 {:>10.1}  {:>9.2}  {:>9.2}  {:>9.2}",
+                 {:>10.1}  {:>9.2}  {:>10.2}  {:>9.2}  {:>9.2}",
                 100.0 * in_cap,
                 n * med_dl,
                 n * dl_max,
+                med_dl,
                 mode_lhs.unwrap_or(f64::NAN)
             );
             prev = Some((width, med_dl));
@@ -920,7 +955,10 @@ fn main() {
                     "   \n   to localize at the basin radius {BASIN:.1e}: N·L′ ≥ (P−2)/r = \
                      {need:.2e} nats/rad\n   \
                      against the measured {have:.2e} at N = {n:.0} — a factor \
-                     {:.1e}, i.e. N ≈ {:.1e} examples.\n",
+                     {:.1e}, i.e. N ≈ {:.1e} examples.\n   \
+                     (this extrapolates N·L′ ∝ N; the per-example `medΔL` column is what \
+                     tests that, so compare it across `--n-train` runs before trusting the \
+                     linear step — measured, it saturates at small widths.)\n",
                     need / have,
                     n * need / have
                 );
