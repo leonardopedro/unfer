@@ -226,12 +226,238 @@ pub fn strip_lams(term: &CoreIR) -> CoreIR {
     }
 }
 
+/// Rename the free occurrences of `from` to `to`, stopping at a rebinding.
+///
+/// Substitution into a function body has to be capture-avoiding: two functions
+/// written by hand both name their parameter `x`, and inlining one into the
+/// other would capture the caller's `x` (measured: `main(x) is return f(x)` with
+/// `f(x) is return (x + 1)` failed to translate at all, and the readback of a
+/// single-function module showed a `(lam x0 <cycle>)` where a variable belonged).
+fn rename_free(term: &CoreIR, from: &str, to: &str) -> CoreIR {
+    fn go(t: &CoreIR, from: &str, to: &str) -> CoreIR {
+        match t {
+            CoreIR::Var(name) => {
+                if name == from {
+                    CoreIR::Var(to.to_string())
+                } else {
+                    t.clone()
+                }
+            }
+            CoreIR::Lit(_) => t.clone(),
+            CoreIR::Con(tag, args) => CoreIR::Con(*tag, args.iter().map(|a| go(a, from, to)).collect()),
+            CoreIR::Prim(op, args) => {
+                CoreIR::Prim(*op, args.iter().map(|a| go(a, from, to)).collect())
+            }
+            CoreIR::App(f, a) => CoreIR::App(Box::new(go(f, from, to)), Box::new(go(a, from, to))),
+            CoreIR::Lam(id, body) => {
+                if id == from {
+                    // Shadowed: the inner binder owns this name.
+                    t.clone()
+                } else {
+                    CoreIR::Lam(id.clone(), Box::new(go(body, from, to)))
+                }
+            }
+            CoreIR::Let(id, v, body) => CoreIR::Let(
+                id.clone(),
+                Box::new(go(v, from, to)),
+                Box::new(if id == from { *body.clone() } else { go(body, from, to) }),
+            ),
+            CoreIR::Match(s, arms) => CoreIR::Match(
+                Box::new(go(s, from, to)),
+                arms.iter().map(|(p, b)| (p.clone(), go(b, from, to))).collect(),
+            ),
+            CoreIR::Fold(f, i, l) => CoreIR::Fold(
+                Box::new(go(f, from, to)),
+                Box::new(go(i, from, to)),
+                Box::new(go(l, from, to)),
+            ),
+            CoreIR::Clone(id, a, b, body) => {
+                if id == from || a == from || b == from {
+                    t.clone()
+                } else {
+                    CoreIR::Clone(
+                        id.clone(),
+                        a.clone(),
+                        b.clone(),
+                        Box::new(go(body, from, to)),
+                    )
+                }
+            }
+            CoreIR::Drop(id, body) => CoreIR::Drop(id.clone(), Box::new(go(body, from, to))),
+        }
+    }
+    go(term, from, to)
+}
+
+/// Alpha-rename every function's parameters to names unique to that function,
+/// so linking is capture-avoiding without depending on how the source spelled
+/// its parameters.
+fn uniquify_params(funcs: &[(String, CoreIR)]) -> Vec<(String, CoreIR)> {
+    funcs
+        .iter()
+        .map(|(name, term)| {
+            // Peel the spine first: re-wrapping a λ inside the loop peels nothing
+            // and spins forever (measured: every module translation hung).
+            let mut params: Vec<String> = Vec::new();
+            let mut body = term.clone();
+            while let CoreIR::Lam(param, inner) = body {
+                params.push(param);
+                body = *inner;
+            }
+            let mut t = body;
+            for (idx, param) in params.iter().enumerate().rev() {
+                let fresh = format!("{name}__p{idx}");
+                t = CoreIR::Lam(fresh.clone(), Box::new(rename_free(&t, param, &fresh)));
+            }
+            (name.clone(), t)
+        })
+        .collect()
+}
+
+fn free_vars(term: &CoreIR, bound: &mut Vec<String>, out: &mut std::collections::HashSet<String>) {
+    match term {
+        CoreIR::Var(n) => {
+            if !bound.iter().any(|b| b == n) {
+                out.insert(n.clone());
+            }
+        }
+        CoreIR::Lit(_) => {}
+        CoreIR::Con(_, args) | CoreIR::Prim(_, args) => {
+            for a in args {
+                free_vars(a, bound, out);
+            }
+        }
+        CoreIR::App(f, a) => {
+            free_vars(f, bound, out);
+            free_vars(a, bound, out);
+        }
+        CoreIR::Lam(p, body) | CoreIR::Let(p, _, body) => {
+            if let CoreIR::Let(_, v, _) = term {
+                free_vars(v, bound, out);
+            }
+            bound.push(p.clone());
+            free_vars(body, bound, out);
+            bound.pop();
+        }
+        CoreIR::Match(s, arms) => {
+            free_vars(s, bound, out);
+            for (_, b) in arms {
+                free_vars(b, bound, out);
+            }
+        }
+        CoreIR::Fold(f, i, l) => {
+            free_vars(f, bound, out);
+            free_vars(i, bound, out);
+            free_vars(l, bound, out);
+        }
+        CoreIR::Clone(_, _, _, body) => free_vars(body, bound, out),
+        CoreIR::Drop(_, body) => free_vars(body, bound, out),
+    }
+}
+
+/// `term[name := arg]`, capture-avoiding.
+///
+/// The binder is alpha-renamed when `arg` has a free variable the binder would
+/// capture, which is what makes substitution safe under nested `let`/`λ`.
+fn subst(term: &CoreIR, name: &str, arg: &CoreIR, counter: &mut usize) -> CoreIR {
+    match term {
+        CoreIR::Var(n) => {
+            if n == name {
+                arg.clone()
+            } else {
+                term.clone()
+            }
+        }
+        CoreIR::Lit(_) => term.clone(),
+        CoreIR::Con(tag, args) => CoreIR::Con(
+            *tag,
+            args.iter().map(|a| subst(a, name, arg, counter)).collect(),
+        ),
+        CoreIR::Prim(op, args) => CoreIR::Prim(
+            *op,
+            args.iter().map(|a| subst(a, name, arg, counter)).collect(),
+        ),
+        CoreIR::App(f, a) => CoreIR::App(
+            Box::new(subst(f, name, arg, counter)),
+            Box::new(subst(a, name, arg, counter)),
+        ),
+        CoreIR::Lam(p, body) => {
+            if p == name {
+                return term.clone();
+            }
+            let mut afree = std::collections::HashSet::new();
+            free_vars(arg, &mut Vec::new(), &mut afree);
+            if afree.contains(p) {
+                *counter += 1;
+                let fresh = format!("{p}__b{counter}");
+                let renamed = rename_free(body, p, &fresh);
+                return CoreIR::Lam(
+                    fresh,
+                    Box::new(subst(&renamed, name, arg, counter)),
+                );
+            }
+            CoreIR::Lam(p.clone(), Box::new(subst(body, name, arg, counter)))
+        }
+        CoreIR::Let(p, v, body) => {
+            let v2 = subst(v, name, arg, counter);
+            if p == name {
+                return CoreIR::Let(p.clone(), Box::new(v2), body.clone());
+            }
+            let mut afree = std::collections::HashSet::new();
+            free_vars(arg, &mut Vec::new(), &mut afree);
+            if afree.contains(p) {
+                *counter += 1;
+                let fresh = format!("{p}__b{counter}");
+                let renamed = rename_free(body, p, &fresh);
+                return CoreIR::Let(
+                    fresh,
+                    Box::new(v2),
+                    Box::new(subst(&renamed, name, arg, counter)),
+                );
+            }
+            CoreIR::Let(p.clone(), Box::new(v2), Box::new(subst(body, name, arg, counter)))
+        }
+        CoreIR::Match(s, arms) => CoreIR::Match(
+            Box::new(subst(s, name, arg, counter)),
+            arms.iter()
+                .map(|(p, b)| (p.clone(), subst(b, name, arg, counter)))
+                .collect(),
+        ),
+        CoreIR::Fold(f, i, l) => CoreIR::Fold(
+            Box::new(subst(f, name, arg, counter)),
+            Box::new(subst(i, name, arg, counter)),
+            Box::new(subst(l, name, arg, counter)),
+        ),
+        CoreIR::Clone(id, a, b, body) => CoreIR::Clone(
+            id.clone(),
+            a.clone(),
+            b.clone(),
+            Box::new(subst(body, name, arg, counter)),
+        ),
+        CoreIR::Drop(id, body) => {
+            CoreIR::Drop(id.clone(), Box::new(subst(body, name, arg, counter)))
+        }
+    }
+}
+
+/// Beta-reduce one application: `(λp. b) a` → `b[p := a]`.
+fn beta_apply(func: &CoreIR, arg: &CoreIR) -> CoreIR {
+    match func {
+        CoreIR::Lam(p, body) => {
+            let mut counter = 0usize;
+            subst(body, p, arg, &mut counter)
+        }
+        other => CoreIR::App(Box::new(other.clone()), Box::new(arg.clone())),
+    }
+}
+
 /// Link a module's function definitions into a single closed term: every
 /// call to a defined function (`CoreIR::Var(f)`) is replaced by the function's
-/// lambda, so the deltanet reducer beta-reduces the calls. The subset is
-/// non-recursive, so substitution terminates. Returns the linked `main`
-/// (or the first function when no `main` is defined).
+/// lambda and beta-reduced here, because the net reducer does not reduce under a
+/// binder. The subset is non-recursive, so substitution terminates. Returns the
+/// linked `main` (or the first function when no `main` is defined).
 pub fn link_functions(funcs: &[(String, CoreIR)]) -> CoreIR {
+    let funcs = uniquify_params(funcs);
     let env: HashMap<String, CoreIR> = funcs.iter().cloned().collect();
     let main = funcs
         .iter()
@@ -253,10 +479,18 @@ fn rewrite_calls(term: &CoreIR, env: &HashMap<String, CoreIR>) -> CoreIR {
             CoreIR::Con(*tag, args.iter().map(|a| rewrite_calls(a, env)).collect())
         }
         CoreIR::Lam(id, body) => CoreIR::Lam(id.clone(), Box::new(rewrite_calls(body, env))),
-        CoreIR::App(f, a) => CoreIR::App(
-            Box::new(rewrite_calls(f, env)),
-            Box::new(rewrite_calls(a, env)),
-        ),
+        CoreIR::App(f, a) => {
+            let f2 = rewrite_calls(f, env);
+            let a2 = rewrite_calls(a, env);
+            // Inline the call here rather than leaving a redex: the net reducer
+            // does not reduce under a binder, so a call inside a λ stayed an
+            // `App(Lam .., x)` all the way to readback (`(lam x0 (Add64
+            // (lam x0 <cycle>) 1))`).
+            match &f2 {
+                CoreIR::Lam(..) => rewrite_calls(&beta_apply(&f2, &a2), env),
+                _ => CoreIR::App(Box::new(f2), Box::new(a2)),
+            }
+        }
         CoreIR::Let(id, value, body) => CoreIR::Let(
             id.clone(),
             Box::new(rewrite_calls(value, env)),
@@ -458,5 +692,46 @@ mod tests {
         assert!(m.main.is_closed());
         assert_eq!(m.main.value, Some(Literal::Int64(42)));
         assert!(m.main.verified);
+    }
+
+    #[test]
+    fn module_call_with_a_parameter_inlines_without_capture() {
+        // Both functions name their parameter `x`. Linking used to capture the
+        // caller's `x` (and then fail to translate at all); with alpha-renaming
+        // and beta-reduction in the linker, `main(x) = f(x)` is `main(x) = x+1`.
+        let calling = "module body Probe is\n\
+                       function f(x: Int64): Int64 is\n\
+                           return (x + 1);\n\
+                       end;\n\
+                       function main(x: Int64): Int64 is\n\
+                           return f(x);\n\
+                       end;\n\
+                   end module body.\n";
+        let inlined = "module body Probe is\n\
+                       function main(x: Int64): Int64 is\n\
+                           return (x + 1);\n\
+                       end;\n\
+                   end module body.\n";
+        let a = translate_austral_module(calling).unwrap();
+        let b = translate_austral_module(inlined).unwrap();
+        assert_eq!(a.main.unf_hash, b.main.unf_hash);
+        assert!(!a.main.is_closed());
+    }
+
+    #[test]
+    fn module_call_beta_reduces_a_parameterised_callee() {
+        // The reduced term must not still contain a redex: `f(2)` where
+        // `f(x) = x + 1` is 3, and a call left for the net reducer would keep
+        // the application node (the net reducer does not reduce under a binder).
+        let src = "module body Probe is\n\
+                   function f(x: Int64): Int64 is\n\
+                       return (x + 1);\n\
+                   end;\n\
+                   function main(): Int64 is\n\
+                       return f(2);\n\
+                   end;\n\
+               end module body.\n";
+        let m = translate_austral_module(src).unwrap();
+        assert_eq!(m.main.value, Some(Literal::Int64(3)));
     }
 }
