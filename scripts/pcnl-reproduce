@@ -42,7 +42,7 @@
 #                   --thin 400, the small models' d* shells, and where
 #                   those small models are actually informative   ~90 min
 #   n-scaling       does the mode residual scale as N? (3 runs)  ~36 min
-#   mode-584        the chain at P = 584's mode radius 0.00857    ~35 min
+#   mode-584        P = 584's mode radius, two rungs (0.00857/0.0195) ~45 min
 #   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
 #   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #
@@ -286,9 +286,19 @@ run_stage() {
     # ~35 min, and the cost is the train set: a step at N = 8192 is 16x a step
     # at N = 512, which is why this shell is priced in relaxation times
     # (tau = (sin d0/r)^2 = 18 steps) rather than in steps.
-    cargo run --release -p pcnl --example basin_posterior -- \
-      20000 --shapes 8,16,1 --n-train 8192 --no-sweep --chains 4 \
-      --arm latitude --d0 8.57e-3 --step 2e-3 --burn 4000 --thin 20
+    #
+    # The second rung is the same protocol at N = 2048, d* = 0.0195, where the
+    # mode is *worse* than its anchor (19.53 % / 1.7838 vs 22.66 % / 1.7467):
+    # the pair is what makes the mode's value scale with N, from -3.1 points and
+    # +0.037 NLL to +2.7 points and +0.0017 NLL.  Its R-hat 1.3702 is inside a
+    # loose null (tau 8788, 95 % [1.266, 2.978]), not certified.
+    # `./scripts/pcnl-rhat-null 1.95e-2 2.08e-4 20000 20 4 1.3702`
+    for cell in "8192 8.57e-3" "2048 1.95e-2"; do
+      set -- $cell
+      cargo run --release -p pcnl --example basin_posterior -- \
+        20000 --shapes 8,16,1 --n-train "$1" --no-sweep --chains 4 \
+        --arm latitude --d0 "$2" --step 2e-3 --burn 4000 --thin 20
+    done
     ;;
   wide-radius)
     # The falsified shortcut for the 7.9e-2 cell: tripling the jump radius

@@ -2177,6 +2177,33 @@ statement is: the mode buys accuracy over the anchor, buys 1.5 % in NLL at best,
 and the wide shell's 46 % belongs to the ensemble rather than to the posterior's
 peak.
 
+**The same protocol one rung down, `N = 2 048`.**  `d* = 0.0195` rad, 4 chains,
+20 000 steps, burn 4 000, thin 20, `r = 2e-3`, acceptance 0.9–1.2 %:
+
+```text
+per-chain acc 16.91 / 21.58 / 17.76 / 18.45 %   NLL 1.7869 / 1.7840 / 1.7869 / 1.7910
+BMA 19.53 % / 1.7838      anchor (N = 2 048): 22.66 % / 1.7467
+split-R̂(NLL) 1.3702   split-R̂(train L) 1.5759
+null at r_eff = 2.08e-4: E[R̂] 1.929, 95 % [1.266, 2.978]
+```
+
+Here the mode is **worse than its own anchor** on both metrics — −3.1 accuracy
+points and +0.037 NLL.  Its `R̂` is inside the null, but that null is loose
+(`τ = 8 788` steps, `ρ = 0.998`, 95 % spans 1.27–2.98), so the honest reading is
+"no evidence of non-convergence", not the certification the `N = 8 192` run
+earned.
+
+Put beside the `N = 8 192` row, this is the first scaling trend in the project
+that points the useful way.  Over a 4× increase in `N` the mode's gap to its own
+anchor moves from **−3.1 points / +0.037 NLL** to **+2.7 points / +0.0017 NLL**,
+i.e. the NLL gap shrinks by more than an order of magnitude while the mode itself
+travels inward from 0.0195 to 0.00857 rad.  The two rows are different radii, so
+this is not one object measured twice, and the accuracy steps are grained at
+0.39 %; but the direction is what a localized posterior has to show to be worth
+computing: as data accumulates, the conditional at the peak of `p(d)` approaches
+the anchor's quality instead of wandering away from it.  That is now measured at
+two rungs rather than assumed at one.
+
 One cost note that constrains what can be measured next: the potential is the mean
 over the *whole* training set, so a chain step at `N = 8 192` costs 16× one at
 `N = 512`.  This shell was affordable only because a 0.0086 rad shell relaxes in
@@ -2207,7 +2234,8 @@ Taken as a whole the cycle leaves the project's shape unchanged and its one
 quantitative scaling claim retired: accuracy at a fixed radius is real and
 anchor-relative, the mode sits outside the informative band at `P = 16 672` under
 any anchor, at `P = 584` it moves inside as `N` grows (now certified by a converged
-shell at 0.00857 rad, where the mode buys +2.7 accuracy points and no NLL), and
+shell at 0.00857 rad, where the mode buys +2.7 accuracy points and no NLL, against
+−3.1 points and +0.037 NLL one rung down at `N = 2 048`), and
 "how much data to localize" is not yet a measurable quantity — the instrument that
 would measure it has to hold the anchor fixed, which means training to convergence
 *before* the sweep, not sweeping with more data.
