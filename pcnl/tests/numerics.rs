@@ -1092,6 +1092,15 @@ fn experiment_is_bit_deterministic_across_reruns() {
         v.mh_seconds = 0.0;
         v.saved_files.clear();
     }
+    // R0.6's manifest is identity and cost metadata, not a draw: its timestamp,
+    // wall time and peak RSS legitimately differ between two runs of one seed.
+    // Everything else in it (revision, hashes, phases, eval counts) is
+    // seed-determined and stays in the comparison.
+    for r in [&mut r1, &mut r2] {
+        r.manifest.created_unix = 0;
+        r.manifest.work.wall_seconds = 0.0;
+        r.manifest.work.peak_mem_mb = None;
+    }
     assert_eq!(
         format!("{r1:?}"),
         format!("{r2:?}"),

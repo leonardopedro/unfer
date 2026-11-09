@@ -2797,10 +2797,71 @@ now checked at curvature 40, inside the ball.  The exact invariant-moment tests
 `restricted_metric_inverse_matches_the_dense_one`) are unchanged and still pass, so the
 restriction does not touch the regime the reported chains run in.
 
+**(e) The kept window, and where the metric froze (R0.5).**  Every chain in this document
+runs a *decaying* step size: `β_t = β₀(1 + γt)^{−κ}` never levels off, so no window of any
+run is a stationary chain, and `ESS`/`R̂` computed on the kept draws describe the annealing
+window and nothing beyond it.  The reports said that nowhere.  Now:
+
+* `experiment::Window::of(cfg, scheduler)` records `start, end, β_start, β_end, λ` and one
+  exact `stationary` bit, and every variant prints it under its diagnostics:
+  `window: kept t=200..400 of 400 steps (thin 4, 50 draws/chain, 2 chains) | beta
+  0.2739->0.2536 lambda 1.00 | NONSTATIONARY: the ESS/Rhat above describe this
+  decaying-step window, not a stationary chain` (`Config::quick()`, measured).
+* `stationary` is equality, not a tolerance: `β` identical at both ends of the window and
+  `λ` already at the full target.  Under the default `κ = 0.5`, `γ = 1e-3`, 10 000 steps /
+  burn 5 000, the kept window runs `β 0.1225 → 0.0905` — 26 % lower at its end — so the
+  default answer is `NONSTATIONARY` and 500 draws per chain, not 500 stationary draws.
+  Only `γ = 0` reaches `stationary`; a likelihood ramp that runs into the window keeps it
+  nonstationary even then, and the record shows the tempered `λ` at the window's start
+  (`window_separates_annealing_from_stationary_sampling`).
+* `experiment::phases()` emits `warmup`, `likelihood-ramp`, `kept` as separate records
+  (each with its own `λ`/`β` pair).  They overlap by design — a phase says what the kernel
+  was doing over a range, it does not partition the run.
+* Metric freeze: `SpherePcn::metric_freeze()` returns `None`, `Installed{dim,hash}`,
+  `Frozen{at,dim,hash}` or `Adapting{step,dim}`, and `metric_record()` is the manifest
+  form.  `examples/sphere_chain --precond` prints it under the cell (`metric
+  diagonal-secant frozen at step 200 (dim 4240)`), so a preconditioned number now says
+  whether its kept draws were drawn with the metric that was reported.
+* A real defect fell out of writing the freeze record: `set_metric` installed a metric but
+  left the warm-up flag on, so the first `step_preconditioned` replaced the installed `d`
+  with a one-proposal secant.  `set_metric` now freezes at step 0
+  (`metric_freeze_records_where_adaptation_stops` checks the installed `d` survives a
+  step).  The ambient experiment has no metric to freeze — its proposal is isotropic — and
+  records `"metric": {"kind": "isotropic"}` explicitly rather than omitting the field.
+
+**(f) The run manifest (R0.6).**  `pcnl/src/manifest.rs` writes `{stem}.manifest.json`
+beside the saved draws (`--save-dir`), hand-written JSON with a fixed key order and
+non-finite values as `null` (no new dependency).  One measured file, from
+`cargo run --release -p pcnl -- quick --save-dir /tmp/pcnl-r05`:
+
+```json
+{"tool":"pcnl","version":"0.1.0","created_unix":1794188928,
+ "code":{"revision":"8d397fad63ea","dirty_hash":11004078211542389397,"dirty_files":6},
+ "model":{"variant":"cosine/nGPT-lite | standard softmax","p":4240,"dtype":"f32",
+          "device":"cpu","normalization":"fro-stopped/v1"},
+ "data":{"task":"B","k":8,"n_train":128,"n_test":64,"seed":20261020,
+         "hash":5721120083230051558,"anchor_hash":3732154325063501809},
+ "target":{"lambda":1.0,"prior":"N(0, sigma^2 I)","anneal_steps":0},
+ "phases":[{"name":"warmup","start":0,"end":200,...},
+           {"name":"kept","start":200,"end":400,...,"stationary":false}],
+ "metric":{"kind":"isotropic","freeze_step":null,"adapting":false,"dim":0,"hash":null},
+ "work":{"forward_evals":102400,"backward_evals":102400,"wall_seconds":11.36,
+         "peak_mem_mb":12.7,"nonfinite_events":1}}
+```
+
+The hashes are FNV-1a 64: `data.hash` covers the four materialised index tensors (not the
+seed that made them, which two draws can coincide on), `anchor_hash` covers the frozen
+Task-A θ_A, `code.dirty_hash` covers the tracked diff.  **Limits, stated because a
+manifest that overclaims is worse than none:** it is an *identity*, not a resumption
+record — RNG, loader and adaptation states are not saved, so it cannot restart a run; a
+dirty hash names a diff that was present, not the binary that ran (that needs
+`build.rs`-stamped object hashes); `peak_mem_mb` is process-wide `VmHWM` and includes the
+pre-train.  Report text changed by one line per variant (`window:`), so older logs remain
+valid as data but no longer byte-match a re-render.
+
 What is *not* done yet from R0: the rest of the exact-proposal audit (the sphere and
 latitude conditionals are audited and moment-tested already; the cap-conditioned target
-and the cyclical schedule are not), the metric-freeze record (R0.5), and the run
-manifest (R0.6).  The tables in this document still report the raw
+and the cyclical schedule are not).  The tables in this document still report the raw
 `ess`/`gelman_rubin` from before the rank statistics existed, which is why their `R̂`
 values are comparable across dates; the null tables, which are what certify them, are
 unchanged.
@@ -2809,8 +2870,8 @@ unchanged.
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 121 tests (82 unit + 24 numerical
-                                                         #  + 8 formal claims + 7 comparators)
+cargo test -p pcnl --locked                              # 146 tests (105 unit + 7 comparators
+                                                         #  + 8 formal claims + 26 numerical)
                                                          # (debug build: ~40 min on 2 cores;
                                                          #  `--release` is ~6 min)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):

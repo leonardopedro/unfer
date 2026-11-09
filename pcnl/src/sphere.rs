@@ -99,11 +99,33 @@ pub struct SpherePcn {
     /// Steps during which the metric is estimated; frozen afterwards, which is
     /// what keeps the chain exactly `π`-invariant after warm-up.
     pub metric_warmup: usize,
+    /// Set by [`Self::set_metric`]: the metric came from the caller, not from
+    /// warm-up, and is reported as installed rather than "learned by step k".
+    pub metric_installed: bool,
 }
 
 /// `(accepted, log α)` — the second is worth recording: a chain that rejects
 /// everything still reports the same predictive it started with.
 pub type StepOutcome = (bool, f64);
+
+/// R0.5 — where adapt-then-freeze leaves a chain's metric.
+///
+/// The question a report has to answer is not "is there a metric" but whether
+/// the draws came from a **fixed** one. `Adapting` means the proposal was still
+/// changing under the trajectory, so those states are warm-up, not samples;
+/// `Frozen`/`Installed` name the step at which that stopped happening.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetricFreeze {
+    /// No metric: the isotropic proposal (also the state of a preconditioner
+    /// that finished warm-up without ever accumulating a usable secant).
+    None,
+    /// Installed by the caller and held fixed from step 0.
+    Installed { dim: usize, hash: u64 },
+    /// Estimated during warm-up and frozen at this step.
+    Frozen { at: usize, dim: usize, hash: u64 },
+    /// Warm-up still running at `step`: no sample yet comes from a fixed kernel.
+    Adapting { step: usize, dim: usize },
+}
 
 impl SpherePcn {
     pub fn new(
@@ -131,6 +153,7 @@ impl SpherePcn {
             abs_dg: Vec::new(),
             abs_disp: Vec::new(),
             metric_warmup: 200,
+            metric_installed: false,
         }
     }
 
@@ -196,6 +219,11 @@ impl SpherePcn {
     }
 
     /// Install a metric directly (tests, and experiments that hold `d` fixed).
+    ///
+    /// Installing **freezes**: `metric_warmup` is set to 0, so the next step
+    /// does not immediately overwrite the caller's metric with a one-proposal
+    /// secant. Without that, "installed" and "estimated" were the same state
+    /// and a caller's `d` survived exactly one step.
     pub fn set_metric(&mut self, d: Vec<f64>) {
         assert!(!d.is_empty(), "metric must not be empty");
         assert!(
@@ -204,6 +232,75 @@ impl SpherePcn {
         );
         self.precond = Some(d);
         self.precond_enabled = true;
+        self.metric_installed = true;
+        self.metric_warmup = 0;
+    }
+
+    /// R0.5 — record where the metric stopped adapting (see [`MetricFreeze`]).
+    pub fn metric_freeze(&self) -> MetricFreeze {
+        fn hash(d: &[f64]) -> u64 {
+            let mut h = crate::manifest::Fnv::new();
+            for x in d {
+                h.write(&x.to_le_bytes());
+            }
+            h.finish()
+        }
+        match &self.precond {
+            None if !self.precond_enabled => MetricFreeze::None,
+            // Enabled but never accumulated: isotropic until warm-up ends,
+            // then a frozen identity — which is `None`, not "learned".
+            None => {
+                if self.step_count < self.metric_warmup {
+                    MetricFreeze::Adapting {
+                        step: self.step_count,
+                        dim: 0,
+                    }
+                } else {
+                    MetricFreeze::None
+                }
+            }
+            Some(d) if self.metric_installed => MetricFreeze::Installed {
+                dim: d.len(),
+                hash: hash(d),
+            },
+            Some(d) if self.step_count < self.metric_warmup => MetricFreeze::Adapting {
+                step: self.step_count,
+                dim: d.len(),
+            },
+            Some(d) => MetricFreeze::Frozen {
+                at: self.metric_warmup,
+                dim: d.len(),
+                hash: hash(d),
+            },
+        }
+    }
+
+    /// The manifest form of [`Self::metric_freeze`].
+    pub fn metric_record(&self) -> crate::manifest::MetricRecord {
+        match self.metric_freeze() {
+            MetricFreeze::None => crate::manifest::MetricRecord::isotropic(),
+            MetricFreeze::Installed { dim, hash } => crate::manifest::MetricRecord {
+                kind: "installed-diagonal".into(),
+                freeze_step: Some(0),
+                adapting: false,
+                dim,
+                hash: Some(hash),
+            },
+            MetricFreeze::Frozen { at, dim, hash } => crate::manifest::MetricRecord {
+                kind: "diagonal-secant".into(),
+                freeze_step: Some(at),
+                adapting: false,
+                dim,
+                hash: Some(hash),
+            },
+            MetricFreeze::Adapting { step: _, dim } => crate::manifest::MetricRecord {
+                kind: "diagonal-secant".into(),
+                freeze_step: None,
+                adapting: true,
+                dim,
+                hash: None,
+            },
+        }
     }
 
     fn step_inner<F>(
@@ -1123,6 +1220,87 @@ mod tests {
             d[0] < 0.2 && d[1] > 0.3 && d[1] > 4.0 * d[0],
             "the proposal-side estimate should see direction 0 as {a}× stiffer: d = {d:?}"
         );
+    }
+
+    /// R0.5: the adapt-then-freeze boundary is a recorded fact, not an
+    /// assumption, and the two ways to get a metric report differently.
+    #[test]
+    fn metric_freeze_records_where_adaptation_stops() {
+        let dev = Device::Cpu;
+        let sched = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let make = || {
+            SpherePcn::new(
+                Tensor::from_vec(vec![0.8f32, 0.6], vec![2], &dev).unwrap(),
+                1.0,
+                1.0,
+                sched,
+                1,
+                1.0,
+            )
+        };
+
+        // Isotropic: nothing to freeze.
+        assert_eq!(make().metric_freeze(), MetricFreeze::None);
+
+        // Installed: frozen at step 0, and the first step does not overwrite it
+        // (the bug this guards: `set_metric` used to leave warm-up running).
+        let mut installed = make();
+        installed.set_metric(vec![1.0, 4.0]);
+        match installed.metric_freeze() {
+            MetricFreeze::Installed { dim, .. } => assert_eq!(dim, 2),
+            other => panic!("installed metric reported as {other:?}"),
+        }
+        let target = |theta: &Tensor| {
+            let cell = theta.flatten_all()?.to_vec1::<f32>()?;
+            let (x, y) = (cell[0] as f64, cell[1] as f64);
+            Ok((
+                0.5 * (40.0 * x * x + y * y),
+                Tensor::from_vec(
+                    vec![(40.0 * x) as f32, y as f32],
+                    vec![2],
+                    &candle_core::Device::Cpu,
+                )?,
+            ))
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+        installed
+            .step_preconditioned(target, &mut rng)
+            .expect("step");
+        assert_eq!(
+            installed.precond.as_deref(),
+            Some(&[1.0, 4.0][..]),
+            "an installed metric must survive the first step"
+        );
+
+        // Learned: adapting during warm-up, frozen at `metric_warmup`.
+        let mut learned = make().with_preconditioner();
+        learned.metric_warmup = 3;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+        learned.step_preconditioned(target, &mut rng).expect("step");
+        match learned.metric_freeze() {
+            MetricFreeze::Adapting { step, dim } => {
+                assert_eq!(step, 1);
+                assert_eq!(dim, 2);
+            }
+            other => panic!("warm-up metric reported as {other:?}"),
+        }
+        for k in 1..3 {
+            learned.step_preconditioned(target, &mut rng).expect("step");
+            assert_eq!(learned.step_count, k + 1);
+        }
+        match learned.metric_freeze() {
+            MetricFreeze::Frozen { at, dim, hash } => {
+                assert_eq!((at, dim), (3, 2));
+                assert_eq!(learned.metric_record().freeze_step, Some(3));
+                assert_eq!(learned.metric_record().hash, Some(hash));
+                assert!(!learned.metric_record().adapting);
+            }
+            other => panic!("finished warm-up reported as {other:?}"),
+        }
     }
 
     /// The exponent identity the preconditioned ratio relies on, against a dense

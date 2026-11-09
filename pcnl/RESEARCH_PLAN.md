@@ -113,6 +113,12 @@ implementation or treat a command naming a proposed example as an available comm
    warm-up/thinning, evaluations, wall time, memory and nonfinite events. Saving draws is
    not exact resumption; resumption additionally needs RNG, loader and adaptation state.
 
+*Status (2026-11-09):* items 1–6 are implemented and measured — `docs/PCNL_STATUS.md`,
+"R0", (a)–(f). Item 4's residual sub-audit (cap-conditioned target, cyclical schedule) is
+still open and is named there; item 1's surrogate is labelled and its drift bias measured
+at 0.14 %, so the recorded anchors stand, but every gradient-level claim must name the
+normalisation form it used.
+
 **Acceptance:** finite-difference discrepancies are within documented scale/dtype tolerances;
 schedule reports agree with evaluated steps; frozen traces fail the reporting gate; each
 exact comparator agrees with a known low-dimensional target within Monte Carlo uncertainty.

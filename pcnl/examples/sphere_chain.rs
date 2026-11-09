@@ -122,7 +122,13 @@ const SEED: u64 = 20261020;
 
 /// One chain's contribution: `((accept %, BMA acc, BMA NLL), per-draw test
 /// losses, (acc at t = 0, 10, 100))`.
-type Cell = ((f64, f64, f64), Vec<f64>, (f64, f64, f64));
+type Cell = (
+    (f64, f64, f64),
+    Vec<f64>,
+    (f64, f64, f64),
+    // R0.5: where this chain's metric stopped adapting (None without one)
+    Option<pcnl::manifest::MetricRecord>,
+);
 /// `0.003` is the rung `curvature_probe` located: the filter needs
 /// `λN‖g‖σβ ≲ 2` at the solution's direction, and only β ≤ 0.003 satisfies it.
 /// Without it the grid never contains a cell that can move.
@@ -305,6 +311,7 @@ fn main() {
                         // per-draw test loss, for the cross-chain R̂
                         kept.iter().map(nll).collect::<Vec<f64>>(),
                         t0,
+                        precond.then(|| chain.metric_record()),
                     )
                 })
                 .collect();
@@ -337,6 +344,18 @@ fn main() {
             );
             if m > 1.0 {
                 println!("          {label:>6}  {m:.0} chains  {spread}  R̂(loss) = {rhat:.4}");
+            }
+            // R0.5: a preconditioned row is only an exact-π sample if the metric
+            // stopped moving before the kept window did.
+            if let Some(metric) = results.first().and_then(|r| r.3.as_ref()) {
+                let where_ = match metric.freeze_step {
+                    Some(k) => format!("frozen at step {k} (dim {})", metric.dim),
+                    None => format!(
+                        "still adapting at step {} — kept draws are warm-up",
+                        cfg.burn
+                    ),
+                };
+                println!("          {label:>6}  metric {} {where_}", metric.kind);
             }
         }
     }

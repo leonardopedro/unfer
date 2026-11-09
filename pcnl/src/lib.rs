@@ -27,6 +27,9 @@
 //! * [`diag`] — Phase 4's ESS and split-R̂.
 //! * [`experiment`] — Phases 0/3/4 as one deterministic measured run;
 //!   independent chains run in parallel under `rayon` (Phase 2).
+//! * [`manifest`] — R0.6's run manifest: code revision and dirty-diff identity,
+//!   data and anchor hashes, the evaluated schedule, the phase window and the
+//!   metric-freeze record, written beside the saved draws.
 //! * [`readout`] — §9.3 (M1/M4) of the ngpt research plan: proper scores
 //!   of the *chain* posterior predictive, the exact finite-`m` Brier
 //!   identity, and the leave-one-out reward baseline the RL arm needs.
@@ -43,6 +46,7 @@
 pub mod budget;
 pub mod diag;
 pub mod experiment;
+pub mod manifest;
 pub mod model;
 pub mod normalize;
 pub mod persist;

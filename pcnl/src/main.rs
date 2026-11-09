@@ -211,7 +211,19 @@ fn main() {
         cfg.shapes.flat_size()
     );
     let report = run_experiment(&cfg);
-    let text = report.render();
+    let mut text = report.render();
+    // R0.6: the manifest goes beside the draws it describes. `--save-dir` is
+    // what makes a run's numbers re-checkable later; without it the manifest
+    // would name trajectories that were never written.
+    if let Some(dir) = &cfg.save_dir {
+        match report.write_manifest(dir, "run") {
+            Ok(path) => {
+                eprintln!("manifest written to {}", path.display());
+                text.push_str(&format!("manifest: {}\n", path.display()));
+            }
+            Err(e) => eprintln!("manifest not written: {e}"),
+        }
+    }
     print!("{text}");
     if let Some(path) = out {
         std::fs::write(&path, &text).expect("write report");
