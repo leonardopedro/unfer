@@ -3007,6 +3007,9 @@ Reproduce:
 ```bash
 cargo run --release -p pcnl --example subspace_adaptation                    # ranks 1,2,4,8
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 1,2 --steps 4000 --beta 0.05
+# R2: diagonal and rotated arms at ranks 2 and 4 (the table above)
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 2,4 \
+  --steps 4000 --burn 500 --thin 5 --chains 4 --proposal curv,pilot,rotcurv,rotpilot
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3028,6 +3031,37 @@ The kernel side is small and exact (`src/target.rs`):
 * `DiagScale` — widths `w_i`, a multiplier `m`, `β_i = clamp(m·w_i, 1e-4, 1)`; Robbins–Monro
   on `log m` toward 50 % acceptance with step `0.3/(1+t)^0.6`, applied **during burn only**
   and frozen afterwards, so the kept window is a fixed kernel.
+
+A diagonal scale can only stretch along the coordinates, and the informed basis is a
+fine-tuning path's PCA, not the target's eigenbasis: a stiff direction that is a
+*combination* of the informed coordinates cannot get the small step it needs while its
+partners get a large one.  The rotated extension is the same pCN applied in an orthogonal
+basis:
+
+* `mh_pcn_z_rotated` — `w = Qz`, `w'_i = √(1−β_i²)·w_i + β_i·ξ_i`, `z' = Qᵀw'`, accepted
+  with the **unchanged** ratio `Φ(z) − Φ(z') + ½‖z'‖² − ½‖z‖²`.  This is exact for any
+  orthogonal `Q` because `N(0, I)` is invariant under it; equivalently it is
+  full-covariance preconditioning with `S = Qᵀ diag(β_i²) Q` and `(I−S) + S = I`.  The
+  kernel asserts `‖QᵀQ − I‖ ≤ 1e-6` before use (`O(r³)` against one full forward pass), so
+  a bad rotation is refused rather than silently sampling a different target.  A *block*
+  preconditioner is the special case where `Q` is the identity outside a block; at the
+  restricted target all `r` coordinates are in the block, so the code takes the full
+  rotation.
+* `curvature_hessian` — the full Hessian at `z` by central differences, `2r² + 1` forward
+  passes (≤ 129 at `r = 8`), symmetrised; the diagonal-only version costs `2r`.
+* `RotScale` — widths `1/√λ_i` from a Hessian and `√λ_i` from a covariance, in the
+  estimate's eigenbasis, with the identity eigen-decomposition a cyclic Jacobi
+  (`symmetric_eigen`, no new dependency).  The multiplier, its Robbins–Monro rule and the
+  freeze-after-burn are `DiagScale`'s, now shared (`adapt_log_multiplier`).  A
+  non-symmetric matrix is rejected, not symmetrised, because it is used as a change of
+  basis.
+
+The kernel tests pin the two things that could go wrong: with the identity rotation the
+kernel is **bitwise** equal to `mh_pcn_z_scaled` (accept flags, `z`, `Φ`), and on a
+correlated Gaussian with `H = [[50.5, 49.5], [49.5, 50.5]]` (eigenvalues 1 and 100 along
+`(1,±1)/√2`) the rotated chain recovers the full posterior `H⁻¹ = [[0.505, −0.495],
+[−0.495, 0.505]]`, correlation included, at ESS > 2 000 — acceptance alone would not prove
+the covariance is right.
 
 Two arms, neither of which adds a gradient evaluation:
 
@@ -3115,21 +3149,93 @@ evaluation and per second, the informed rank-1 cell improves from 0.27 ESS/s to 
 ESS/s (8×; the seconds there are noisy because cells shared two cores) and the random
 rank-1 cell from 0.07 to 4.1–6.7 ESS/s.
 
+### R2b — rotating the scale into the estimate's eigenbasis (same day)
+
+Same anchor, same 4 chains × 4 000 (burn 500, thin 5), all four arms in the **same
+process** so they share the anchor and the runtime.  The diagonal rows reproduce the
+earlier table exactly (rank-2 random `curv` ESS 1 481, `pilot` 59.3 %), which is the
+harness's determinism check; the rotated arms use their own stream offsets
+(`0x6_000`/`0x8_000`), so they are independent replicates rather than re-used draws.
+
+| rank | basis | arm | accept | ESS(Φ) | `R̂(Φ)` | ESS/1k evals | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | random | curv | 52.8 % | 1 481 | 1.002 | 92.5 | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 3.69 | 1.00 |
+| 2 | random | pilot | 59.3 % | 1 769 | 1.000 | 102.8 | 4.30 % | 0.000 | 1.0955 | 4.1499 | 0.325 | 0.0001 | 5.22 | 0.60–1.00 |
+| 2 | random | rotcurv | 51.7 % | 1 808 | 1.001 | 112.9 | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 3.64 | 1.00 |
+| 2 | random | rotpilot | 58.7 % | 1 249 | 1.000 | 72.6 | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 5.53 | 0.34–1.00 |
+| 2 | informed | curv | 0.1 % | 7 | 1.671 | 0.4 | 11.33 % | 0.501 | 1.0562 | 3.6196 | 0.268 | 0.0145 | 0.03 | 4.3e-3–1.00 |
+| 2 | informed | pilot | 44.5 % | **152** | **1.012** | **8.8** | 15.62 % | 0.046 | 0.9971 | 2.9123 | 0.272 | 0.0004 | 0.17 | 0.017–0.13 |
+| 2 | informed | rotcurv | 0.1 % | 6 | 1.947 | 0.4 | 11.33 % | 0.996 | 1.0577 | 3.6051 | 0.267 | 0.0196 | 0.03 | 4.2e-3–1.00 |
+| 2 | informed | rotpilot | 48.7 % | 29 | 1.096 | 1.7 | 15.62 % | 0.048 | 0.9974 | 2.9119 | 0.272 | 0.0010 | 0.15 | 0.016–0.13 |
+| 4 | random | curv | 51.5 % | 1 646 | 1.000 | 102.8 | 4.30 % | 0.000 | 1.0953 | 4.1480 | 0.325 | 0.0001 | 2.75 | 0.75–1.00 |
+| 4 | random | pilot | 52.4 % | 1 548 | 1.001 | 90.0 | 4.30 % | 0.000 | 1.0952 | 4.1480 | 0.325 | 0.0001 | 3.82 | 0.49–1.00 |
+| 4 | random | rotcurv | 55.2 % | 1 916 | 1.000 | 119.5 | 4.30 % | 0.000 | 1.0953 | 4.1482 | 0.325 | 0.0001 | 2.63 | 0.71–1.00 |
+| 4 | random | rotpilot | 56.8 % | 1 257 | 1.002 | 73.1 | 4.30 % | 0.000 | 1.0953 | 4.1481 | 0.325 | 0.0001 | 6.22 | 0.31–1.00 |
+| 4 | informed | curv | 0.1 % | 4 | 2.327 | 0.2 | 8.98 % | NaN | 1.0602 | 3.6282 | 0.290 | 0.0169 | 0.03 | 2.9e-3–1.00 |
+| 4 | informed | pilot | 50.4 % | **15** | **1.353** | **0.9** | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 0.17 | 0.012–0.13 |
+| 4 | informed | rotcurv | 0.0 % | 5 | 3.087 | 0.3 | 10.94 % | NaN | 1.0572 | 3.5249 | 0.277 | 0.0204 | 0.03 | 2.3e-3–1.00 |
+| 4 | informed | rotpilot | 50.1 % | 9 | 2.893 | 0.5 | 12.89 % | 0.296 | 0.9911 | 2.8739 | 0.251 | 0.0371 | 0.21 | 0.014–0.16 |
+
+**Result 6 — the rotation cannot rescue a point estimate that is flat where it is
+measured.**  Informed `rotcurv` behaves like `curv`: 0.1 % / 0.0 % acceptance, ESS 6 and 5,
+`R̂` 1.947 and 3.087, NLL 3.6051 and 3.5249 against the diagonal arms' 3.6196 and 3.6282 —
+all three numbers far from the converged 2.91.  The printed scales show why: `m = 0.03`
+with `β_i` still hitting the `1` cap, exactly the diagonal arm's signature.  The reported
+scales (β from 2.3e-3 to 1 at `m = 0.03`) put the informed Hessian's eigenvalues between
+roughly 1e-3 and 1.7e2: the rotation does *order* them, by five decades, but the `β ≤ 1`
+cap still binds across the whole flat end and one `m` still has to cover the rest.  The
+failure is in the magnitude of the estimate at a nearly-uniform anchor, and a change of
+basis cannot manufacture information the estimate did not have.
+
+**Result 7 — for the measured widths the rotation is worse, and only in mixing.**  The
+rotated pilot does not have an acceptance problem — 48.7 % vs 44.5 % at rank 2 and 50.1 %
+vs 50.4 % at rank 4 — and still has lower ESS at both ranks: 29 vs 152 at rank 2, 9 vs 15
+at rank 4, with `R̂` 1.096 vs 1.012 and 2.893 vs 1.353.  At rank 4 the rotated arm is not converged, so its
+NLL (2.8739) is not usable and its MCSE(NLL) 0.0371 is 34× the diagonal pilot's 0.0011;
+at rank 2, where both are usable, the predictive is unchanged (NLL 2.9119 vs 2.9123,
+inside the 0.0010 MCSE, accuracy 15.62 % both).  So the target is still right — as the
+exactness argument requires — and the cost is entirely diffusion: an accepted rotated
+step changes `Φ` less than an accepted diagonal step.  The `β_i` ranges are nearly
+identical (1.6e-2–0.13 vs 1.7e-2–0.13 at rank 2), which locates the problem in the
+*orientation*, not the widths: 150 correlated pilot draws estimate the marginal scales
+well enough, but the eigen*vectors* of a 2–4 dimensional sample covariance whose
+eigenvalues are close are much noisier, and the joint step is then spent along the pilot's
+least reliable mixture.  This is a hypothesis consistent with the data, not a measured
+decomposition; separating it needs a longer pilot or a shrinkage estimator, which this
+cycle did not run.
+
+**Result 8 — the controls say the same thing.**  On the random (prior-dominated) basis
+`rotcurv` is modestly better (1 808 vs 1 481 ESS at rank 2, 1 916 vs 1 646 at rank 4) and
+`rotpilot` modestly worse (1 249 vs 1 769, 1 257 vs 1 548), with the predictive identical
+to four decimals in every pair (NLL 4.1498 vs 4.1498, 4.1481 vs 4.1480).  Where the target
+is the prior, no rotation of it can matter, and none does; where it matters, the joint
+rescaling did not find a better proposal than one `β_i` per coordinate at these ranks.
+
+**Result 9 — what the rotated code establishes even though it did not help.**  The kernel
+is exact for any orthogonal `Q` (asserted every step), reduces to the diagonal kernel
+bitwise at the identity, and samples a *correlated* Gaussian's full covariance correctly
+(`H⁻¹` recovered to ±0.02 with ESS > 2 000).  The block form is the same code with `Q`
+block-diagonal; at the restricted target the block is the whole space, so this grid cannot
+distinguish block from full rotation.  The honest summary is that joint rescaling is
+implemented, verified, and **not** an improvement here: the rank-2 informed pilot is
+5× *worse* in ESS, and the curvature arm fails for a reason rotation cannot address.
+
 **(f) What R2 has not done.**  These are *restricted-target* results: the target is still
 `π_r` at fixed `σ = 0.35`, so this is the plan's first R2 half only — full-target informed
 proposals (split `v = Bz + B_perp q`, informed `z`, prior-preserving pCN on `q`, full
 likelihood, correct ratios) and the SG-bias comparisons are untouched.  The preconditioner
-is diagonal and cannot rotate; `pilot` measures width in the R1 metric (`σ`), so a badly
-chosen `σ` limits it from below; the pilot's bias direction is safe for acceptance but is
-not a posterior-width estimate with an error bar, and there is no adaptive-MCMC claim here
-because the pilot draws are discarded.  Neither arm is tested above rank 2, and `λ ≠ 1`
-remains open.
+is diagonal or orthogonal-rotated but still *linear*; `pilot` measures width in the R1
+metric (`σ`), so a badly chosen `σ` limits it from below; the pilot's bias direction is
+safe for acceptance but is not a posterior-width estimate with an error bar, and there is
+no adaptive-MCMC claim here because the pilot draws are discarded.  The rotated arms are
+tested at ranks 2 and 4 only, with one seed each; the ESS of a 300-step pilot covariance
+is itself noisy, and no shrinkage or longer pilot was tried.  `λ ≠ 1` remains open.
 
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 157 tests (116 unit + 7 comparators
+cargo test -p pcnl --locked                              # 168 tests (127 unit + 7 comparators
                                                          #  + 8 formal claims + 26 numerical)
                                                          # (debug build: ~40 min on 2 cores;
                                                          #  `--release` is ~6 min)
