@@ -203,6 +203,21 @@ cold registry cache: dependencies of other workspace members (for example
 `wasm-bindgen`, `ahash`) are not vendored yet. Run the online `cargo fetch
 --locked` once; the `--offline` test commands then work.
 
+**`rustfmt` is a separate package.** The cargo store path above ships no
+`cargo-fmt`, and no `rustup` is installed, so formatting comes from nixpkgs at
+the pinned version:
+
+```sh
+nix profile install 'nixpkgs#rustfmt'     # rustfmt-1.99.0; ~/.nix-profile/bin
+cargo fmt -p fock_sirk --check           # clean
+```
+
+The binary reports `rustfmt 1.10.0`, which is the formatter's own version, not
+the toolchain's. `cargo fmt --all --check` is **not** clean: 20 files in
+`logos`, `mm0web`, `prob_kernel`, `unfer_measure` and `unfer_taler` predate
+this and would need their own change, so a workspace-wide gate cannot be turned
+on as-is.
+
 **Cadabra2 needs its own Python.** `cadabra2-cli` is a wrapper that starts an
 embedded Python. When the host has a system Python of the same major version it
 resolves `/usr/lib/python3.14` instead of its bundled stdlib and aborts with
