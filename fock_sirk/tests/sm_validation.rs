@@ -789,14 +789,18 @@ fn sm_brst_ghosts_nilpotent() {
     worst = worst.max(w2);
     assert!(w2 < 1e-9, "Ω² on multi-ghost probe = {w2:.3e}");
 
-    // Ghost-free states are BRST-closed at the abelian level only if
-    // Gauss·c† annihilates them — here Ω needs a ghost leg, so Ω|phys⟩ = 0
-    // for fully ghost-free probes (nilpotency domain of the residual charge).
+    // Structural, NOT a Gauss-law statement: every term of Ω carries a ghost
+    // leg, and this builder writes that leg as `InnerFermionAnnihilate` (ψ† in
+    // the filled-sea encoding), which is zero on an empty-ghost reference. So
+    // Ω|phys⟩ = 0 here for every ghost-free probe by construction. Do not read
+    // it as confinement to a physical sector — with the empty-reference ladder
+    // (`FermionCreate`) the same charge measures the Gauss violation instead:
+    // `sm_full_hashimoto::sm_full_gauss_law_is_empty_in_the_recorded_window`.
     let phys = sm_probe(&[(0, 1)], &[]);
     let o_phys = omega.apply(&phys).norm();
     assert!(
         o_phys < 1e-12,
-        "Ω must annihilate ghost-free probes, got {o_phys:.3e}"
+        "Ω's ghost leg must annihilate a ghost-free probe, got {o_phys:.3e}"
     );
 
     eprintln!("sm_brst: 12 ghosts, worst ‖Ω²‖ = {worst:.3e}");

@@ -2624,11 +2624,20 @@ state already attains that smallest violation (`3.0051` against `sqrt(9)=3`).
 Consequently the gauge-fixing term $H+\lambda Q^\dagger Q$ cannot select a physical
 state here: it is the constant shift $\lambda\cdot 9$, measured as `9.0226`,
 `90.0697` and `900.089` for $\lambda=1,10,100$ (within 1% of the prediction). The
-structural reason is that $p=i(a^\dagger-a)/2$ has continuous spectrum on the
-oscillator, so no normalizable state is annihilated by a pure-momentum generator;
-a physical Gauss law needs the matter current that balances it. This is why the
-ghost-vacuum closure statement could not certify anything about Gauss's law, and
-it replaces that earlier reading.
+structural reason is that the generator is a field momentum, and
+$p=i(a^\dagger-a)/2$ has continuous spectrum on the oscillator: $G|\psi\rangle=0$
+has no normalizable solution at all. Note what this does *not* mean — the missing
+piece is not a matter current. Adding the charge density (a bounded bilinear) to
+$G$ leaves it a Fock operator with continuous spectrum and therefore still no
+kernel; the local constraint is not imposed on states but **solved**, e.g. in
+Coulomb gauge by eliminating the longitudinal mode against the charge, and the
+normalizable statement that survives is the integrated one (charge
+superselection). This dictionary quantizes the gauge fields `coord::g/w/b`
+(24+9+3 coordinates) with their canonical momenta and does neither, so its
+$Q$ measures the electric constraint only. That is the scope of this entry: the
+window has no state obeying it, and the gauge-fixing penalty can only shift
+the spectrum — neither a pass nor a Gauss-law certificate. This replaces the
+earlier ghost-vacuum reading, which could not speak about Gauss at all.
 
 **The interaction share of the window energy.** Each form contributes
 $w(\sum\text{monomials})^2$ in operator order, so splitting the ordered monomial
@@ -2685,7 +2694,9 @@ suite):
   blocks, `ym_brst_charge` pattern) plus the SU(3) cubic
   $f_{abc}\psi^\dagger_a\psi^\dagger_b\psi_c$ (book.tex:7089): all 12 ghosts
   appear; $\Omega^2=0$ on SU(3)/SU(2)/U(1) ghosted probes and a multi-ghost
-  probe ($\|\Omega^2\psi\|<10^{-9}$); $\Omega$ annihilates ghost-free probes.
+  probe ($\|\Omega^2\psi\|<10^{-9}$); $\Omega$ maps ghost-free probes to zero —
+  structural, since every term carries a ghost leg, and **not** a Gauss-law
+  statement (see the ladder caveat below).
 - **`sm_weak_boson_polarizations`** — full electroweak polarization budget
   $W^\pm(2\times3)+Z(3)+\gamma(2)=11$ modes (`sm_weak_polarization_table`):
   PDG masses $m_W=80.377$, $m_Z=91.1876$, $m_\gamma=0$; one longitudinal
@@ -2699,6 +2710,17 @@ the residual Gauss × ghost form (abelian nilpotency exact; the cubic SU(3)
 piece is emitted with the standard $f_{abc}$ generating set, Lean
 `ChapterGhostField` / `GaugeSymmetry` own the full nilpotency proof); PDG
 $W/Z$ masses are tree-level benchmarks.
+
+*Ladder caveat (2026-11-09).* `sm_brst_charge` writes its ghost leg as
+`InnerFermionAnnihilate`, which is $\psi^\dagger$ only in the filled-sea
+encoding (ghost states are holes, "annihilate" removes a hole). On an
+**empty**-ghost reference — the one the complete-implementation dictionary
+uses — that operator is zero on every state, so $\Omega|\psi\rangle=0$ is true
+of everything and certifies nothing. Read the annihilation of ghost-free probes
+in §5.24u as the structure of the charge, not as confinement to a physical
+sector; the same charge with `InnerLadder::FermionCreate` on the empty
+reference measures the Gauss violation instead (§5.24t, measured $3.005$ against
+$0$).
 
 ### 5.25 The assumption ledger: match / fail / non-claim per system
 

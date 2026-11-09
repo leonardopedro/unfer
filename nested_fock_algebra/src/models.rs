@@ -3541,6 +3541,16 @@ pub fn sm_weak_boson_hamiltonian() -> Hamiltonian {
 /// antisymmetric `(a,b)` pairs (book.tex:7089); its square vanishes by
 /// the antisymmetry of `f` and the Jacobi identity (Lean
 /// `ChapterGhostField.brst_charge_nilpotent` / `GaugeSymmetry` cubic note).
+///
+/// **The ghost ladder is reference-dependent.** `InnerFermionAnnihilate(ghost)`
+/// above *is* `ψ†` only in the filled-sea encoding this builder targets, where
+/// the ghost states are holes and "annihilate" removes a hole; on an
+/// empty-ghost reference the same operator is `None` for every state, so the
+/// whole charge acts as zero and `Ω|ψ⟩ = 0` carries no information. A
+/// calculation that wants `Ω|ψ⟩ = 0` to *mean* Gauss's law must use
+/// `InnerLadder::FermionCreate` for the ghost leg — see
+/// `fock_sirk/tests/sm_full_hashimoto.rs::sm_full_gauss_law_is_empty_in_the_recorded_window`,
+/// which measures the difference (`3.005` against `0`).
 pub fn sm_brst_charge() -> Hamiltonian {
     let ranges = SmModeBudget::standard().field_mode_ranges();
     let (su3_lo, su3_hi) = (ranges[0].1, ranges[0].2);

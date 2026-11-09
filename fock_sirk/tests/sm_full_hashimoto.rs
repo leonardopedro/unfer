@@ -534,10 +534,11 @@ fn gauss_generator(ghost: u32) -> InnerExpr {
 /// `InnerFermionAnnihilate`, which is the ghost *raise* in the filled-sea
 /// convention of `ym_brst_charge` and is therefore zero on a ghost-free state.
 /// The ghost reference here is the empty set, where the raise is
-/// `FermionCreate`; with that ladder `Q|psi> = 0` is exactly Gauss's law
-/// `G_g|psi> = 0` in every sector. This is the only version of the charge that
-/// can detect a constraint violation — with the vanishing ladder, `Q`
-/// annihilates every state of this dictionary.
+/// `FermionCreate`; with that ladder `Q|psi> = 0` is `G_g|psi> = 0` in every
+/// sector — the electric part of Gauss's law (`d_i Pi_i = 0`, the
+/// matter/current term absent). This is the only version of the charge that can
+/// detect a constraint violation: with the vanishing ladder, `Q` annihilates
+/// every state of this dictionary.
 fn brst_charge() -> InnerExpr {
     InnerExpr::Sum(
         (0..12u32)
@@ -618,15 +619,19 @@ fn dense_state(state: &NestedVector) -> DVector<C> {
 /// * the ground state violates the constraint (`|Q gs>|` is O(1)), so the
 ///   charge is not vacuous on it;
 /// * `P` is positive semidefinite, and its *smallest* eigenvalue is still
-///   positive, so the window contains no state obeying Gauss at all;
+///   positive, so the window contains no state obeying the electric constraint
+///   at all — the local constraint is solved in a gauge-fixed treatment, never
+///   imposed on Fock states, since no normalizable state annihilates a field
+///   momentum;
 /// * the ground state already attains that smallest violation;
 /// * consequently the gauge-fixing term `H + lambda P` cannot select a physical
 ///   state here: it shifts every energy by `lambda * gap` (verified to 1%).
 ///
-/// The structural reason is that `p = i(a^dagger - a)/2` has continuous
-/// spectrum on the oscillator, so no normalizable state is annihilated by the
-/// pure-momentum generator; a physical Gauss law must carry the matter current
-/// so the gauge-field momentum can be balanced. That is why the earlier
+/// The structural reason is that the generator is a field momentum, and
+/// `p = i(a^dagger - a)/2` has continuous spectrum on the oscillator, so
+/// `G|psi> = 0` has no normalizable solution. Adding the (bounded, bilinear)
+/// matter/current term would not change that; the local constraint is *solved*
+/// in a gauge-fixed treatment, not imposed on states. That is why the earlier
 /// ghost-vacuum statement could not say anything about Gauss's law.
 #[test]
 fn sm_full_gauss_law_is_empty_in_the_recorded_window() {

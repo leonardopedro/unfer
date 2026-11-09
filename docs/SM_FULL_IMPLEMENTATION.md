@@ -425,10 +425,16 @@ positive semidefinite with smallest eigenvalue `9.0`, so **no** state of the
 violation (`3.0051` against `sqrt(9) = 3`). The gauge-fixing term `H + λ Q†Q`
 therefore cannot select a physical state here: it is the constant shift `λ·9`,
 measured as `9.0226`, `90.0697`, `900.089` for `λ = 1, 10, 100` (within 1%). The
-reason is structural — `p = i(a† − a)/2` has continuous spectrum on the
-oscillator, so no normalizable state is annihilated by a pure-momentum generator;
-a physical Gauss law must include the matter current that balances it. This
-replaces the earlier ghost-vacuum reading, which could not speak about Gauss.
+reason is structural — the generator is a field momentum, and `p = i(a† − a)/2`
+has continuous spectrum on the oscillator, so `G|ψ> = 0` has no normalizable
+solution. That is not a missing matter-current term: adding the (bounded,
+bilinear) charge density leaves `G` a Fock operator with continuous spectrum and
+no kernel. The local constraint has to be *solved* — Coulomb gauge, eliminating
+the longitudinal mode against the charge — and the normalizable statement left is
+the integrated one, charge superselection. This dictionary carries the gauge
+fields (`coord::g/w/b`, 24+9+3 coordinates) with their canonical momenta but does
+neither, so its `Q` measures the electric constraint alone. This replaces the
+earlier ghost-vacuum reading, which could not speak about Gauss.
 
 **The interaction share of the window energy.** Splitting `H` over ordered
 monomial pairs by total degree is exact (checked on the seed to `1e-10`): the
