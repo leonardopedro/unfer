@@ -2866,11 +2866,108 @@ and the cyclical schedule are not).  The tables in this document still report th
 values are comparable across dates; the null tables, which are what certify them, are
 unchanged.
 
+## R1 — the restricted affine subspace (2026-11-09)
+
+The plan's R1 target is `θ(z) = θ_ref + C_half B z`, `z ~ N(0, I_r)`,
+`π_r(dz) ∝ exp(−λ·Σ_i ℓ_i(θ(z))) N(0, I_r)(dz)`.  This section covers the machinery
+(`pcnl/src/subspace.rs`, `pcnl/src/target.rs`, `examples/subspace_adaptation.rs`) and
+its first measured cells at ranks 1–2.  It does **not** claim anything about the ambient
+`P`-dimensional posterior: `π_r` is a different, smaller model, and the numbers below are
+about that model.
+
+**(a) What is validated, and how.**  `Basis` refuses a non-orthonormal `B` (two identical
+columns give `max |BᵀB − I| = 1`, rejected; the gate is `1e-5`), `Basis::random` is a
+seeded control with the same Gram check, `pca_basis` is power iteration + deflation on the
+snapshot matrix (no `P×P` covariance) and recovers a known 2-plane to `4e-5`, refusing a
+rank the path does not have (`Degenerate`) instead of emitting a zero column.
+`AffineSubspace::gradient_to_z` is checked against a central difference of `f(θ(z))`
+itself, so a transposed `B` or a dropped `C_half` fails the test rather than silently
+changing the temperature.
+
+**(b) A real bug, caught by quadrature.**  The first `mh_pcn_z` used
+`log α = Φ(z) − Φ(z')` with the prior inside `Φ`.  pCN's proposal is **not symmetric** in
+`z`, so that omits the proposal-density term and double-counts the quadratic part of the
+target: a unit Gaussian came out at variance **0.498**, and the rank-2 double well at
+`E[z²] = 0.730` against the quadrature value 0.852.  With the term written out,
+`log q(z|z') − log q(z'|z) = ½‖z'‖² − ½‖z‖²` (which visibly cancels the prior), the rank-2
+controlled target gives, at `β = 0.6`, 4 chains × 120 000 steps, thin 10:
+
+| quantity | measured | exact (Simpson, 20 000 points) |
+|---|---:|---:|
+| accept rate | 0.545 | — |
+| `E[z₁]` | −0.0075 | 0 |
+| `E[z₁²]` | 0.8531 | 0.8521 |
+| ESS(bulk, `z₁`) | 18 592 of 44 000 | — |
+
+Both `pcn_keeps_the_unit_gaussian_variance` and the quadrature test fail on the old form,
+so the correction is pinned by tests, not by a comment.
+
+**(c) The `λ` factor that would otherwise be silent.**  The plan's target sums the
+likelihood over the training set; the ambient experiment's `Φ` is the *mean* loss.  At the
+same nominal `λ = 1` these differ by `N = 512`, i.e. the ambient convention is this target
+at `λ = 1/N`.  Measured: with the mean form the posterior is prior-dominated (acceptance
+96–100 %, rank-1 informed NLL 3.34 against the prior's 3.40); with the sum form acceptance
+is 78–95 % and the informed rank-1 NLL is 2.62.  `SubspaceTarget` therefore uses the sum
+form and names the factor in its documentation (`subspace_target_uses_the_sum_form`).
+
+**(d) First transformer cells.**  `P = 4240`, `θ_ref` = Task-A momentum pretrain
+(loss 3.45 → 1.33), anchor on B: **7.03 % / NLL 3.4220** (chance is 11.1 % — the anchor is
+*below* chance, see (e)).  `λ = 1`, `σ = 0.35`, `β = 0.05`, 4 chains × 4 000 steps
+(burn 500, thin 5; 11 200 draws), `N_train = 512`, `N_test = 256`:
+
+| rank | basis | accept | ESS(Φ) | `R̂(Φ)` | ESS(loss) | `R̂(loss)` | BMA acc | NLL | ECE | MCSE(NLL) | s |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | random | 94.2 % | 13 | 1.338 | 6 | 1.731 | 7.03 % | 3.4019 | 0.283 | 0.0036 | 116 |
+| 1 | informed | 85.0 % | 102 | 1.034 | 16 | 1.141 | 20.31 % | 2.6233 | 0.166 | 0.0023 | 101 |
+| 2 | random | 94.6 % | 8 | 1.465 | 11 | 1.328 | 7.03 % | 3.4182 | 0.284 | 0.0005 | 102 |
+| 2 | informed | 78.3 % | 474 | 1.006 | 100 | 1.031 | 18.36 % | 2.6086 | 0.145 | 0.0006 | 102 |
+
+The informed basis is PCA of 32 Task-B momentum steps (lr 0.05) — **data reuse**, so its
+held-out numbers are optimistic by construction; the random control is what makes the
+comparison readable, and at both ranks the random basis is indistinguishable from the
+anchor (NLL 3.402 / 3.418 vs 3.422, accuracy identical), which is the control's job.
+The informed basis buys 0.80 nat and +13.3 accuracy points at rank 1, +11.3 at rank 2 —
+not monotone in rank, and at 0.39 % accuracy granularity (256 test examples) a 3-point
+difference is 8 examples.
+
+Mixing is the limit, and it is reported rather than hidden: rank-2 informed is the only
+cell that is converged (`R̂(Φ) = 1.006`, ESS 474 of 11 200); rank-1 informed is
+`R̂ = 1.034` with ESS 102; both random arms are **not converged** (`R̂` 1.34–1.47).  The
+random arms' non-convergence is itself expected — `Φ` is nearly flat in random directions,
+so a chain there wanders in the prior and its potential's ESS is small even at 95 %
+acceptance — which is why the table prints ESS of `Φ` *and* of the held-out loss, and why
+the run's BMA is quoted with its MCSE.  `β = 0.05` is not a tuned value: at `β = 0.5` the
+informed direction accepts 2.8–5.2 %, and at `β = 0.05` it accepts 78–85 %, which is the
+pCN scale-versus-target-width problem R2 exists to address (informed proposals or a
+justified per-direction metric).
+
+**(e) Comparability caveat, stated.**  The anchor used here is below chance on B (7.03 % vs
+11.1 %), because 1 500 momentum steps on 512 Task-A examples overfit (`P = 4240`): the
+ambient reports' anchor is ~12.5 % / NLL 2.21 on B at the same `N`.  So part of the
+restricted arms' gain is *undoing the anchor's bias*, not posterior quality, and these
+cells are not yet on the ambient experiment's anchor.  Fixing that is the next cell, not a
+reinterpretation of this one.
+
+**(f) What is not done.**  Brier score and predictive MCSE for accuracy; ranks 4–32; a
+Task-B-fitted anchor/basis arm with cross-fitting (the empirical-Bayes arm); ambient vs
+restricted at matched likelihood evaluations; `λ ≠ 1`; and the informed-basis construction
+the plan names besides trajectory PCA (prior-whitened Gauss–Newton/Fisher directions).  The
+programme's gate — "an informed basis must beat or explain its tie with a random basis,
+not just beat a failed ambient run" — is met for the negative control at ranks 1–2 and not
+yet for anything larger.
+
+Reproduce:
+
+```bash
+cargo run --release -p pcnl --example subspace_adaptation                    # ranks 1,2,4,8
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 1,2 --steps 4000 --beta 0.05
+```
+
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 146 tests (105 unit + 7 comparators
+cargo test -p pcnl --locked                              # 157 tests (116 unit + 7 comparators
                                                          #  + 8 formal claims + 26 numerical)
                                                          # (debug build: ~40 min on 2 cores;
                                                          #  `--release` is ~6 min)

@@ -30,6 +30,10 @@
 //! * [`manifest`] — R0.6's run manifest: code revision and dirty-diff identity,
 //!   data and anchor hashes, the evaluated schedule, the phase window and the
 //!   metric-freeze record, written beside the saved draws.
+//! * [`subspace`] — R1's validated affine chart `θ(z) = θ_ref + C_half B z`
+//!   (orthonormality gate, lift, chain-rule gradient).
+//! * [`target`] — R1's target identity on `z` and the exact MH-pCN kernel in
+//!   `z`, validated against quadrature on a rank-2 double well.
 //! * [`readout`] — §9.3 (M1/M4) of the ngpt research plan: proper scores
 //!   of the *chain* posterior predictive, the exact finite-`m` Brier
 //!   identity, and the leave-one-out reward baseline the RL arm needs.
@@ -54,4 +58,6 @@ pub mod radial;
 pub mod readout;
 pub mod sampler;
 pub mod sphere;
+pub mod subspace;
+pub mod target;
 pub mod task;

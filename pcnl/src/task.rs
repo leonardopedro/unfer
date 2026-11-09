@@ -57,6 +57,7 @@ impl Task {
     }
 }
 
+#[derive(Clone)]
 pub struct Dataset {
     pub k: usize,
     pub train_x: Tensor,
