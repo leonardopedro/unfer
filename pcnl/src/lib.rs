@@ -27,15 +27,30 @@
 //! * [`diag`] — Phase 4's ESS and split-R̂.
 //! * [`experiment`] — Phases 0/3/4 as one deterministic measured run;
 //!   independent chains run in parallel under `rayon` (Phase 2).
+//! * [`manifest`] — R0.6's run manifest: code revision and dirty-diff identity,
+//!   data and anchor hashes, the evaluated schedule, the phase window and the
+//!   metric-freeze record, written beside the saved draws.
 //! * [`readout`] — §9.3 (M1/M4) of the ngpt research plan: proper scores
 //!   of the *chain* posterior predictive, the exact finite-`m` Brier
 //!   identity, and the leave-one-out reward baseline the RL arm needs.
+//! * [`budget`] — the information–volume budget: the **exact** Haar cap-mass
+//!   law `½I_{sin²d}((m−1)/2, ½)` and the number of directions a finite data
+//!   set can localize (`m* = N·ΔL / ln(1/sin d)`).  This is the arithmetic
+//!   behind `docs/PCNL_STATUS.md`'s "π is prior-dominated", and it explains
+//!   the free-walk exponents (§6.5.9).
+//! * [`radial`] — the same inequality along the radius: Haar's log-derivative
+//!   `(P−2)·cot d` against `N·L′(d)`, and the exact mode equation
+//!   `N·L′(d)·tan d = P − 2` whose left side the sweep prints. §5's
+//!   "no mode anywhere on the sphere" is a comparison of those two numbers.
 
+pub mod budget;
 pub mod diag;
 pub mod experiment;
+pub mod manifest;
 pub mod model;
 pub mod normalize;
 pub mod persist;
+pub mod radial;
 pub mod readout;
 pub mod sampler;
 pub mod sphere;

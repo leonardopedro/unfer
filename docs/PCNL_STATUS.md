@@ -707,6 +707,11 @@ The first fact is where the solution lives:
 | `θ_A` | 4.30 % | 4.1523 | 94.0 (2.1 × shell) |
 | `θ_Adam` (Task B) | **49.22 %** | 1.3136 | **1272.6 (28.2 × shell)** |
 
+> **Both rows are stale — see the 2026-11-07 correction.**  They are the
+> pre-fix 2026-10-20 baselines, not a measurement of the current model; the
+> current values are `θ_A 13.67 % / 4.2124 / 124.9` and
+> `θ_Adam 55.08 % / 1.1367 / 1620.1`.
+
 and the second is what the kernel does with it (2 chains at `β₀ = 0.3`,
 10 000 steps; 1 chain at `β₀ = 0.03`, 2 000 steps):
 
@@ -1075,6 +1080,12 @@ sampling artefact — and every one of them scores the base rate 11.72 % with NL
 * volume from the 1 mrad cap to the shell: `10^{55 013}`,
 * likelihood against that shell: `10^{−831}`,
 * net: **`10^{54 000}` in favour of the shell.**
+
+> Corrected 2026-11-07: these four lines use the cosine-cap proxy
+> `(sin(d/2))^{P−1}`, which over-charges a cap by `(P−1)·ln 2 = 11 547` nats at
+> this `P`.  The exact Haar cap law gives `10^{50 014}` for the 1 mrad cap — the
+> same verdict, five thousand decades smaller.  (The correction does not rescue
+> the cone: the gap to the `10^{−831}` likelihood is still `10^{49 000}`.)
 
 The likelihood tilt is real — `N·(max L − min L) = 253` nats, and Haar
 self-normalized IS has `ESS = 1.00` of 2048, i.e. the weights are degenerate
@@ -1639,12 +1650,1230 @@ prior-dominated and neither a ramp nor a temperature can reach the
 informative set — what has to change is the step distribution, not the
 schedule.
 
+### The target's own conditionals, exactly — and why they are a tail (2026-11-07)
+
+The previous section left one thing unnamed: the 48–51 % numbers are estimates
+of `E[acc | d(u, u₀) ≤ r]`, and the chain that would sample that conditional
+walks *out* of the ball.  One example (`basin_posterior`, four arms) closes the
+question in stages, and the last stage closes it *against* the earlier readings:
+the exact conditionals are a tail of `π`, not its predictive — the target leaves
+99.3 % of the tangent space unconstrained, and the arithmetic says why.
+
+**1. A cap is the exact fix, and the wrong move.**  Restricting the **target** to
+the ball is the exact fix in principle (`sphere::restrict_to_cap`; the kernel is
+untouched and the ratio stays exact because `π = 0` outside), and it is the wrong
+move in `P = 16 672` in practice — measured, both radii:
+
+| run | target | accept | `d` reached | `R̂`(NLL) | per-draw acc / NLL | BMA acc / NLL |
+|---|---|---:|---:|---:|---|---|
+| `--cap` (= `r₁`) | `π ∩ {d ≤ 8.61e-4}` | **0.0 %** | 8.610e-4 after 1 step | ∞ | — | — |
+| `--cap 2.3e-3` | `π ∩ {d ≤ 2.3e-3}` | **0.1 %** | 2.266e-3 by `t ≈ 7` | ∞ | 46.5–48.4 % / 1.310–1.317 | 48.44 % / 1.3132 |
+
+Both runs pin to the cap boundary and stop.  The arithmetic is the geometry of
+§3.3 again: a step `r` from radius `d` lands at `d′² = d² + r² − 2dr·t` with
+`t = ⟨u, ŵ⟩`, so at the boundary `d = R` the move stays inside only when
+`t ≥ r/(2R)`; on `S^{P−1}`, `t` has sd `1/√P`, so the acceptance there is
+`Φ̄(r√P/(2R))` — `e^{−P/8}` at `R = r`, and 0.7 % at `R = 2.7 r` (which is the
+measured first-1000-step column).  The walk reaches `d = R` in `(R/r)² ≈ 7`
+steps because `d²` accumulates `r²` per step, and it never leaves.  No radius
+fixes this: inside a cap the Haar measure `(sin d)^{P−2} dd` puts essentially
+all of its volume **on the boundary**, so the boundary is exactly where the
+chain has to live.
+
+The number the pinned run reports is still worth having, because it is not a
+sample but a *point estimate that two independent methods agree on*: four
+boundary points give 48.44 % / NLL 1.3132, and the 128-probe self-normalized
+importance sample of §"Is 46.39 % the target's predictive?" gives 48.95 % /
+1.3132 at the same radius.  The conditional's predictive is 48.4–49.0 %; what
+the cap run cannot do is put an error bar on it (`R̂ = ∞` is the diagnostic
+saying so, and it is the one column that would have caught this without the
+distance column).
+
+**2. `sphere::latitude_jump` is the kernel that can live on the boundary.**  It
+rotates `u` about the axis `u₀`, so `⟨u₀, u⟩` is invariant to machine precision:
+the proposal is the uniform measure on the geodesic sphere of radius `r`
+*inside* the latitude, the reverse law is the same object at `u′`, and
+`log α = log π(u′) − log π(u)` with no Jacobian.  The cap never rejects a
+proposal, the radius column is constant by construction rather than by
+censoring, and the relaxation time along the shell is `(sin d₀ / r)²` steps —
+which is the knob `--step` exposes, because at `d₀ = 0.079` the default `r₁`
+needs 8 400 steps to cross the shell and a 3e-3 step needs 700.
+
+**3. Writing it found three defects and one test error.**  All are worth
+recording, because the first two look like kernel bugs and are, while the third
+looks like physics and is arithmetic:
+
+- **Projecting with `w − ⟨w,u⟩u − ⟨w,a⟩a` is not a projection.**  The two
+  directions are nearly dependent (`⟨a,u⟩ = c`), so subtracting both at once is
+  a Jacobi step whose error shrinks by `c²` per pass: at `c = 0.92` two passes
+  still leave a fifth of the component, the direction leaves the latitude, and
+  the chain walks off the sphere while `⟨a,u⟩` stays right.  Measured `|u|` =
+  1.12 after one step.  The span removed must be an *orthonormal* pair —
+  `{a, û}` with `û = (u − c·a)/sin d` — which makes one pass exact.
+- **The construction preserves `⟨a,u⟩` but not `|u|`, and the error
+  amplifies.**  With `û` taken as `(u − c·a)/sin d`, a rounding error `δ` in
+  `|u|` returns as `|û| = 1 + δ/sin²d`, the next proposal is `1 + δ·cot²d`, and
+  the growth is geometric: from `1e−16` to `O(1)` in ~50 steps.  Measured
+  `|u| = 3.07` at the worst kept draw.  Rebuilding the proposal from `c` and
+  the transverse *direction* (rather than its normalised sine) makes every
+  accepted state exactly unit and self-heals a bad input.
+
+  What this one cost is worth stating: the moment test did **not** catch it —
+  `E[u₂]` read 0.434 off-sphere against 0.445 on-sphere (the correct value is
+  0.429, so both are within one se).  The invariant had to be instrumented
+  directly (`|u|`, per kept draw).  A tolerance wide enough for mixing noise is
+  also wide enough to hide a broken manifold, so the two need separate columns.
+- **The anchor is only `f32`-unit, and `|a|` leaks into `|u|`.**  `u₀` is
+  `to_vec(&unit(&theta_Adam))`, so `|a| = 1 ± 5e-8`, not 1.  A kernel built as
+  `c·a + s·(…)` with `s = √(1−c²)` then gains `2c²(|a|² − 1)` in `|u|²` every
+  step: `|u|` walks up by `5e-8` per step until `⟨a,u⟩` reaches 1, `sin d` hits
+  0, and the chain freezes on the anchor with every later move rejected.  The
+  collapse time is `(1 − cos d₀)/(2|a|δ)` steps — `≈ 10³` at `d₀ = 8.61e-4`,
+  `≈ 10⁵` at `d₀ = 0.079` — which is why the tests at `d₀ ∈ {0.4, 1.0}` passed
+  and the two smallest radii did not: they read `d = 0`, `R̂ = ∞` and an
+  acceptance decaying as `1/t` (0.8 % at `d₀ = r₁`, 6.0 % at `2.3e-3`), which
+  from a distance looks like a chain that is simply rejecting.
+
+  The fix is to normalise both vectors *inside* the kernel and rebuild the
+  state as `c·â + s·(…)` with `c = ⟨u,â⟩/(|u||a|)`, so every accepted state is
+  exactly on the unit sphere and the invariant holds to rounding.  The
+  regression test is the pair `(|u|, ⟨â,u⟩)` at `d₀ = 8.61e-4` over 4 000
+  steps with an `f32`-unit anchor: the frozen-chain failure moves `⟨â,u⟩` by
+  `1 − cos d₀ = 3.7e-7`, the fixed kernel by `5e-16` per step with no
+  amplification.
+- **The test's closed form was one dimension wrong.**  At `P = 3` the latitude
+  is a **circle**, so the conditional law of a vMF target is the 2-D von Mises
+  (`I₁(z)/I₀(z)`), not the `S²` formula `coth z − 1/z`.  Writing the `S²` form
+  predicts 0.306 where the kernel gives 0.445 (closed form 0.429).  The
+  dimension that fixes the closed form is the dimension of the *conditioned*
+  space (`P − 2` for the direction), not of the sphere — the test now uses
+  `P = 4`, where the latitude is `S²` and the elementary form applies, and
+  asserts `E[u₁] = c` (pinned) alongside `E[u₂] = s·A(κ s/√2)`.
+
+**4. What the fixed kernel measures.**  `--arm latitude --d0 R` measures
+`E[acc | d = d₀]` exactly, for a radius chosen rather than reached.  All cells
+20 000–30 000 steps where noted, otherwise 10 000; burn 20 %, thinning 25–75:
+
+| `d₀` (rad) | step | accept | per-draw acc / NLL | BMA acc / NLL | `R̂`(NLL) | `R̂`(loss) |
+|---:|---:|---:|---|---:|---:|---:|
+| 8.61e-4 (`r₁`) | 4.30e-4 | 90.9 % | 48.80–48.93 % / 1.3135 | 47.66 % / 1.3133 | 0.997 | 0.998 |
+| 2.30e-3 (basin) | 1.15e-3 | 75.3 % | 49.01–49.15 % / 1.3128 | 46.48 % / 1.3124 | 1.002 | 1.003 |
+| 1.00e-2 | 3.00e-3 | 35.0 % | 47.30–47.54 % / 1.3093 | 48.44 % / 1.3045 | 1.003 | 1.021 |
+| 1.50e-2 | 3.00e-3 | 33.7 % | 46.21–47.38 % / 1.3151 | 48.44 % / 1.3090 | 1.008 | 1.010 |
+| 4.00e-2 (4 ch, 40 k, thin 400) | 3.00e-3 | 35.4 % | 43.04–44.12 % / 1.3648 | 44.92 % / 1.3506 | **1.003** | **1.005** |
+| 7.90e-2 (4 ch, 40 k, thin 400) | 3.00e-3 | 43.2 % | 36.48–37.40 % / 1.4583 | 42.97 % / 1.4349 | 1.050 | 1.069 |
+| anchor (`d₀ = 0`) | — | — | 49.22 % / 1.3136 | — | — | — |
+
+Five readings, in order of how much they change the document:
+
+1. **These are the first *converged* posterior numbers in the project.**  Every
+   earlier conditional (46.4 %, 48.8 %, 49.8 %) had `R̂ ≥ 1.5` or was an
+   importance-sampling estimate; these are exact-MH chains with `R̂(NLL) ≤ 1.01`
+   at every radius through 4e-2 and 1.05 at 7.9e-2, so the quantities are target
+   properties with error bars (see the null table in point 4 for what those last
+   two digits can and cannot certify).
+2. **The conditional predictive is flat at 46.5–48.4 % for `d₀ ≤ 10⁻² rad`, and
+   it agrees with the ball-IS sweep** (48.8–49.0 % at 2.3e-3, 48.4 % at 5e-3).
+   Two independent methods — self-normalized IS and an exact chain — now agree on
+   the same functional, which is the check the whole "conditional, not
+   predictive" reading needed.
+3. **At 1e-2 rad the conditional mean predicts *better* than the anchor**
+   (NLL 1.3045 against 1.3136).  The point estimate the whole study is anchored
+   at is not the best predictor even within a shell the target still has mass in.
+4. **Where it falls off: between 1.5e-2 and 4e-2 rad.**  Per-draw NLL by radius
+   is 1.3128 (2.3e-3), 1.3093 (1e-2), 1.3151 (1.5e-2), **1.3648 (4e-2)**, 1.4572
+   (7.9e-2) — flat to 1.5e-2 and then rising 0.05 nats by 4e-2 and 0.14 by 7.9e-2,
+   with accuracy 49 → 47 → 43 → 37 %.  The falloff is not a kernel artefact: it
+   is the conditional mean leaving the region where the data informs the
+   direction, and it coincides with `N·medΔL` crossing ~100–200 nats (78 at
+   2e-2, 220 at 4e-2).  Acceptance tracks the potential's transverse variation,
+   not the sphere: 91 % at `r₁`, 75 % at 2.7 `r₁`, 35 % at 10⁻², 36 % at 4e-2,
+   44 % at 7.9e-2 — the last rising again because the far shell is flat
+   (§6.5.6's "acceptance is a property of position").
+
+   **The outer two cells were re-run at a gap wide enough to test the thinning
+   story, and the story holds — for one of them.**  The first pass ran them
+   thinned at 50–75 steps while the shell's relaxation time along the latitude is
+   `(sin d₀/r)² = 178` steps at 4e-2 and `692` at 7.9e-2, i.e. the kept draws were
+   75–90 % correlated; `scripts/pcnl-rhat-null` turns that into a prediction for a
+   chain that does nothing wrong (stationary AR(1) with `ρ = exp(−thin/τ)`, the
+   example's own split formula, 3 000 replicates):
+
+   | cell | `τ` | thin | `ρ` | null `E[R̂]` | null 95 % | null 99 % | observed |
+   |---|---:|---:|---:|---:|---|---:|---:|
+   | 4e-2, 2 ch / 20 k | 178 | 50 | 0.755 | 1.019 | [0.998, 1.066] | 1.081 | 1.052 — inside |
+   | 4e-2, 4 ch / 40 k | 178 | **400** | 0.105 | 1.003 | [0.991, 1.023] | 1.029 | **1.003 — at the null's mean** |
+   | 7.9e-2, 2 ch / 30 k | 692 | 75 | 0.897 | 1.056 | [1.001, 1.183] | 1.229 | 1.140 — inside |
+   | 7.9e-2, 4 ch / 40 k | 692 | **400** | 0.561 | 1.033 | [0.998, 1.089] | 1.103 | 1.050 — inside |
+
+   So at 4e-2 the wide gap **settles it**: `R̂(NLL)` falls 1.052 → **1.003**,
+   exactly the null's expectation for the new thinning, while the BMA is
+   unchanged (44.92 % / 1.3506 against 44.92 % / 1.3519) — the old 1.052 was
+   thinning, and the cell is converged.  At 7.9e-2 the same treatment only gets
+   to 1.050, because `τ = 692` means `thin 400` still leaves `ρ = 0.56`; the null
+   for *that* thinning expects 1.033 with a 95 % band up to 1.089, so 1.050 is
+   again unindictable and again underdetermined.  Widening the gap further does
+   not help: 40 000 steps at `τ = 692` is only ~58 effectively independent draws
+   per chain, and at 58 draws the split-`R̂` cannot resolve better than ~1.05
+   whatever the thinning (`thin 1 200` leaves 26 draws per half, whose own null
+   spans [0.974, 1.093]).  The honest form of that row is "`R̂` 1.05, consistent
+   with stationarity but unable to certify it; settling it needs ~200 k steps,
+   not more thinning".
+
+   **The obvious cheaper lever — a wider jump radius — was tested and refuted.**
+   Since `τ = (sin d₀/r)²`, tripling `r` to `1e-2` should cut the relaxation to
+   62 steps.  It does not, because acceptance is the gate: on the same shell and
+   the same seed budget (4 chains, 40 k steps, thin 400)
+
+   | `r` (rad) | acceptance | `τ_eff = (sin d₀)²/(a·r²)` | BMA acc / NLL | `R̂`(NLL) / `R̂`(loss) | null for `τ_eff` |
+   |---:|---:|---:|---|---|---|
+   | 3e-3 | 43.2 % | 692 | 42.97 % / 1.4349 | 1.050 / 1.069 | E 1.033, 99 % 1.103 |
+   | 1e-2 | 2.0–2.7 % | **2 661** | 41.41 % / 1.4370 | 1.115 / 1.444 | E 1.161, 95 % [1.029, 1.372] |
+
+   Twenty times fewer moves accepted, so the *effective* diffusion step is
+   `r√a ≈ 1.5e-3` — smaller than the `3e-3` that already worked — and
+   `τ_eff = (sin d₀)²/(a·r²)` is 4× worse, not 11× better.  What the run reports
+   is exactly what that null expects: `R̂(NLL)` 1.115 sits *below* its mean of
+   1.161 and `R̂(loss)` 1.444 at its 99th percentile, i.e. no evidence of
+   disagreement between chains, only of a walk that barely moves.  Acceptance is
+   not even stationary over the run — 8.4 % over the first 2 000 steps, 2.0–
+   2.7 % over 40 000 — so a jump this wide is not a diffusive step on this shell
+   at all.  The radius has an optimum near where acceptance is ~40 %, and past
+   that the only lever left is steps: ~200 k at `r = 3e-3`, whose ~290
+   independent draws per chain would put the null's 95 % band inside ±0.02.  What the re-run *did* settle is the BMA, which is what the
+   row is quoted for: 4 chains average to **42.97 % / 1.4349** where the 2-chain
+   run gave 37.89 % / 1.4410 — the per-chain accuracies are the same (36.5–37.4 %
+   both times), so the 5-point gain is the averaging over four chains, and the
+   2-chain number was an under-averaged BMA rather than a property of the shell.
+   Every radius `d₀ ≤ 1.5e-2` remains cleanly converged.
+
+**5. Why the exact conditionals are a tail, not the predictive.**  Everything in
+(4) measures `E[· | d ≤ r]` or `E[· | d = r]`; what the document had never had is
+the law that says **which** `r`, or which directions, the posterior itself prefers.
+Both come from one inequality — the likelihood must pay for Haar volume, and it
+cannot — read once along the radius and once across the tangent space.
+
+*The radial coordinate.*  With Haar on `S^{P−1}`, geodesic polar coordinates give
+
+```text
+p(d) ∝ exp(−N·L(d)) · (sin d)^{P−2},      mode:  N·L′(d)·d = P − 2   (d ≪ 1)
+```
+
+and a log-log fit of the sweep's `N·medΔL` column gives `N·L ≈ c·d^β`, so
+`d* = ((P−2)/(cβ))^{1/β}` — printed by the example as `posterior scale`.
+
+**The fit is not the result: the fit is grid-dependent, and the grid decides.**
+Three sweeps of the *same* target over three ranges give
+
+| grid (rad) | `c` | `β` | `d*` |
+|---|---:|---:|---:|
+| 1e-4 – 1e-2 | 2 200 | 1.05 | 6.5 rad |
+| 1e-2 – 8e-2 | 40 840 | 1.63 | 0.43 rad |
+| 2e-2 – 4e-1 | 793 | 0.39 | 2.9 × 10⁴ rad |
+
+i.e. seven decades of answer from one function, because the local exponent moves
+from 0.4 to 1.6 across the range and the mode equation extrapolates it.  The
+quantity to quote is therefore the **measured inequality**, which needs no fit —
+the mode exists where `β·N·L(d)` reaches `P − 2 = 16 670`:
+
+| d (rad) | 1e-4 | 1e-3 | 1e-2 | 2e-2 | 4e-2 | 1e-1 | 2e-1 | 4e-1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N·medΔL` | 0.16 | 1.35 | 24.7 | 78 | 220 | **606** | 606 | 302 |
+| test acc | 49.2 % | 48.8 % | 46.8 % | 43.4 % | 31.3 % | 14.5 % | 16.8 % | 11.7 % |
+
+The largest value measured anywhere inside 0.4 rad is `606`; even with the
+steepest local `β = 1.6` that is `970` against `16 670`, **a factor 17 short**.  So
+the density is still rising at 0.4 rad, where the accuracy has already reached
+the base rate (11.7 %) — **there is no interior mode, and `π`'s predictive is the
+base rate.**
+
+**Extending the profile to the equator turns "inside 0.4 rad" into the whole
+sphere.**  One grid (`2e-2, 4e-2, 6e-2, 1e-1, … , 1.4, π/2`, one probe set so
+every `ΔL` is measured against the same minimum) measures `N·medΔL` *and* the
+left-hand side of the exact mode equation, `N·L′(d)·tan d`, which is what a mode
+needs to equal `P − 2` (the `d ≪ 1` form replaces `tan d` by `d`):
+
+| d (rad) | 2e-2 | 4e-2 | 6e-2 | 1e-1 | 2e-1 | 3e-1 | 4e-1 | 6e-1 | 1.0 | 1.4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N·medΔL` | 78 | 220 | **515** | **606** | 296 | 370 | 315 | 217 | 209 | 254 |
+| test acc | 43.4 % | 31.3 % | 27.3 % | 14.5 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % | 11.7 % |
+| `N·L′·tan d` | — | 282 | **888** | 227 | −627 | 229 | −235 | −333 | −47 | **1 444** |
+
+Two things happen out there.  `N·medΔL` peaks at `1e-1` rad and then *falls*:
+every row past `2e-1` is at the base rate (11.7 %) and the loss is flat, so the
+radial likelihood stops growing.  The ceiling is the base-rate gap
+`N·ΔL ≤ 512 × 3.73 ≈ 1 910`, which bounds this column — not the grid.  And the
+mode residual `N·L′·tan d` never comes near `P − 2 = 16 670`: its largest value
+in the informative band (`d ≤ 0.14` rad, where accuracy still beats the base
+rate) is `888` at `6e-2` rad, a factor **19** short; its largest value anywhere
+is `1 444` at `1.4` rad, and that is a finite-difference artefact — the *median*
+wanders `203.8 → 253.6` over `0.2` rad where the loss is flat, multiplied by
+`tan 1.4 = 5.8` — still a factor **11.5** short.  Since
+`d ln p/dd = (P−2)cot d − N·L′(d) > 0` is exactly `N·L′·tan d < P − 2`, the
+density **increases all the way to the equator**.  The mode is not just outside
+0.4 rad: it is nowhere on the sphere, and the mass that decides the predictive
+sits at `d ≈ π/2`, where the accuracy is the base rate.  That is now a
+measurement over the entire sphere rather than an extrapolation from the
+informative band.
+
+(The grid has one trap: a row must satisfy `d < π/2`, because `tan` changes sign
+just past the pole.  `1.5708` is past it, and its residual is the sign-flipped
+`−3.2 × 10⁵` — a row, not a result.  `pcnl::radial` pins that boundary: past the
+pole both `tan` and `cot` flip, so the residual goes negative and the volume
+weight starts *shrinking*, which is why the density peaks at `π/2` and falls.)
+The log-log fit on the same grid returns `β = 0.02`, `d* = 4 × 10¹⁵³` rad: the
+third grid in a row to give a different nonsense answer, and the reason the
+document quotes the inequality, not the fit.
+
+**The far rows are a weak instrument, so they were re-measured on a denser
+grid.**  A 128-probe sweep at `d ≳ 0.1` rad has ESS 1.0, so `N·medΔL` there is a
+median over directions the weights do not average.  Eleven rows spanning
+`0.1–0.4` rad (same probe budget) read
+`563, 614, 556, 538, 362, 606, 376, 380, 274, 204, 350` — a ±30 % scatter about
+~400 with no trend — and the residual column swings between `−1 602` and
+`+2 469` with no structure.  Two consequences, both going the same way:
+
+* the largest residual anywhere on the denser grid is **2 469** at `0.2` rad,
+  still a factor **6.8** short of `P − 2 = 16 670`.  The sparse grid's `1 444`
+  was therefore not an upper bound and not a mode: it was one draw from that
+  scatter.  What survives every grid is the inequality,
+  `N·L′(d)·tan d ≪ P − 2` on `0 ≤ d ≤ π/2`;
+* the log-log fit on this grid returns **`NaN`**, because `N·medΔL` is no longer
+  monotone in `d`.  Third grid, third different answer — and the first that is
+  not even a number, which is the clearest statement yet that the fit is not
+  describing the target.
+
+The accuracy column shows the same scatter: two rows (0.1 and 0.2 rad) read
+16.8 % where their neighbours read 11.7 %, at ESS 1.0 — probe-set noise, not
+target structure.  One by-product is worth flagging because it is easy to
+misread: on this grid the one-nat radius is `r₁ = 4.21e-3` rad rather than
+`8.61e-4`, both being the max-ESS width scaled by `1/√(N·E[ΔL])`.  `r₁` is a
+property of the grid, so no `r₁`-relative claim (`13.33 r₁`, `26.33 r₁`) should be
+read without the grid that produced it.  That is the sharp version of "prior-dominated": not a sampler
+failing to find a mode, but a target with no mode inside the range where the
+model is informative at all.  It also explains the free walk of the 10 k and
+50 k runs: `N·L′·d ≪ P − 2` over the whole reachable range, so there is no
+restoring force and `d` grows as `√t` without turning around.  (The `d*` figures
+the example prints remain useful where the grid brackets the mode — it does for
+the two smaller models below — but for this target the inequality is the claim.)
+
+**The same inequality makes a prediction: shrink `P` and the mode comes inside.**
+Same data, same `N = 512`, only the model width changed (`--shapes d,ff,layers`),
+each row refitting `c, β` on its own grid:
+
+| `P` | shapes | `c` | `β` | `d*` | `r₁` | anchor acc / NLL | best conditional in the grid |
+|---:|---|---:|---:|---:|---:|---|---|
+| 16 672 | 32,64,2 | 2 200 | 1.05 | 6.5 rad | 8.61e-4 | 49.22 % / 1.3136 | 49.22 % (anchor) |
+| 4 824 | 24,48,1 | 3 664 | 0.86 | 1.66 rad | 9.62e-5 | 33.59 % / 1.4626 | **37.75 %** / 1.4647 (1e-3) |
+| 2 192 | 16,32,1 | 10 971 | 1.14 | **0.217 rad** | 3.66e-4 | 26.17 % / 1.6651 | 26.17 % (anchor) |
+| 584 | 8,16,1 | 5 979 | 0.95 | **0.0905 rad** | 1.37e-4 | 20.70 % / 1.6499 | 28.52 % / 1.7223 (3e-3, ESS 1.0) |
+
+Three things hold and one does not.  **Held:** `d*` falls monotonically with `P`
+(6.5 → 1.66 → 0.22 → 0.09 rad), the interior-mode threshold is crossed between
+`P = 4 824` (`d* = 1.66 rad`, still outside the sphere's equator) and `P = 2 192`
+(`d* = 0.22 rad`, inside), and the two smallest models are the ones whose grid
+*brackets* the mode, so their `d*` is a measurement rather than an extrapolation.
+**Not held:** the naive form `d* ∝ P` (which assumes `c` is `P`-independent, as a
+unit tangent's directional derivative `|∇L|/√P` with `|∇L| ∝ √P` suggests).  Measured
+`c` grows 1.7× then 3× as `P` drops 3.5× and 2.2×, i.e. a smaller model is much
+more sensitive *per direction*, so `d*` falls faster than linearly: 6.5→0.22 is
+30× for a 7.6× drop in `P`.  The scaling law is therefore structural (there is a
+mode when `β·N·L(d) = P − 2`, and shrinking `P` finds it) but not parametric in
+`P` alone — `c(P)` has to be measured, and `c` grows as the model shrinks.
+
+One more reading from the same table: at `P = 4 824` the best conditional in the
+grid (37.75 % at 1e-3 rad) beats the anchor (33.59 %) by 4 points, while at
+`P = 16 672` no conditional beats the anchor at all until 4e-2, where it is 5
+points *below*.  That is the same fact as the mode: with fewer parameters the
+posterior's mass lies where the data has actually informed the direction.
+
+**The mode radius is not the informative radius — measured directly.**  `d*` is
+where the *density* peaks; it is not where the *model* still knows anything.  The
+two smallest models let that be checked rather than argued: run the latitude
+shell at each `d*` (`--no-sweep --chains 4`, 20 000 steps, burn 4 000, thin 50,
+`--step 0.05` and `0.02`, four chains so `R̂` is defined):
+
+| `P` | shell `d` | acceptance | per-chain acc | BMA acc / NLL | anchor acc / NLL | split `R̂` |
+|---:|---:|---:|---|---|---|---|
+| 2 192 | 0.217 rad | 0.6–1.7 % | 11.76 / 11.85 / 12.27 / 10.71 % | **11.72 % / 2.0932** | 26.17 % / 1.6651 | 2.44 / 3.29 |
+| 584 | 0.0905 rad | 0.5–0.7 % | 22.91 / 24.48 / 23.53 / 15.14 % | **24.22 % / 1.8075** | 20.70 % / 1.6499 | 7.18 / 7.26 |
+
+The `P = 2 192` answer is unambiguous: at the radius the first grid's fit called
+its mode, the shell's predictive is **exactly the base rate** (11.72 %), and every chain agrees — 11.7
+% is not a mixing accident, it is where the loss has gone flat.  So the mode sits
+*outside* the informative band for that model, and "the density peaks here" says
+nothing about accuracy.  The `P = 584` shell is the interesting middle case:
+accuracy rises 3.5 points over the anchor (24.22 % vs 20.70 %) while NLL worsens
+(1.8075 vs 1.6499) — the averaging is sharpening the vote without improving the
+calibration — and the split `R̂` of 7.2 says the four chains have *not* mixed:
+one of them sits at 15.14 % while the other three are at 22.9–24.5 %.  An
+acceptance of 0.5–0.7 % is the cause: at `β = 0.95` on a shell 0.09 rad out, the
+proposal almost never moves anywhere useful, so 20 k steps is a short walk and
+`R̂` is reporting it.  This is a **failure**, not a thinning artefact (contrast
+the `--thin 400` nulls below, where the same statistic at 1.05–1.14 is
+consistent with stationarity), and it means the `P = 584` row of the scaling
+table should be read as *a shell that is more accurate than its anchor but not
+certified*.
+
+Taken together: the inequality predicts where the mode goes as `P` shrinks, the
+small models confirm it, and the shells at `d*` show that landing on the mode
+buys nothing — at `P = 2 192` it is the base rate, and at `P = 584` it is a
+4-point accuracy gain carried by unmixed chains.  The quantity that decides the
+predictive is the mass-weighted loss over the whole sphere, not the location of
+the peak.
+
+**Where those models are informative, for comparison** (same sweep, grids ending
+at `2.2 × d*`):
+
+| `P` | 1e-4 | 3e-4 | 1e-3 | 3e-3 | 1e-2 | 3e-2 | 9e-2 | 2.2e-1 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 192 acc (ESS) | 26.17 (126) | 26.12 (114) | 25.09 (42) | 22.45 (3.5) | 25.00 (1.0) | 9.38 (1.0) | — | 11.72 (1.0) |
+| 584 acc (ESS) | 20.83 (123) | 20.76 (86) | 20.81 (5.7) | 28.52 (1.0) | 16.02 (1.0) | 13.28 (1.0) | 11.33 (1.0) | — |
+
+The first three columns are the instrument working (ESS 42–126): `P = 2 192`
+sits at its anchor's 26.2 % out to `1e-3` rad and `P = 584` at 20.8 %, i.e. both
+models are informative only inside `~10⁻³` rad.  Everything from `3e-3` out has
+**ESS 1.0** — one importance weight carries the estimate — so those accuracy
+figures (9.38 %, 28.52 %, 11.33 %) are single-probe numbers, not measurements,
+and they are exactly why the latitude chains exist: the sweep cannot say what
+lives at 0.09 rad, and the chain can.  Read that way the two instruments agree
+where both work (`≤ 1e-3` rad) and only the chain speaks beyond it.  The mode
+therefore lies outside the informative band under *either* grid: the fit's `d*`
+is 0.217 rad from the original grid and 0.52 rad from this one (`P = 2 192`),
+0.0905 and 0.0864 rad (`P = 584`) — grid-dependent as always, but every value is
+`10–50×` past the radius where accuracy is still above the base rate.
+
+The same equation fixes what would put the mode *inside*.  At `r = 2.3e-3` it
+asks for
+
+```text
+N·L′(2.3e-3) ≥ (P − 2)/2.3e-3 = 7.25 × 10⁶ nats/rad,
+```
+
+against the measured `1.10 × 10³` at `N = 512` — a shortfall of `6.6 × 10³`, i.e.
+`N ≈ 3.4 × 10⁶` examples.  **That figure is withdrawn in the next subsection**: it
+is a property of how far the anchor had converged, not of the target, and at
+*fixed* `N` it moves by a factor 55.  The inequality itself survives, because it
+is the outer rows — `d ≥ 10⁻²` rad — that carry the no-mode conclusion, and those
+are the rows the anchor control leaves alone.
+
+**Data scaling, measured instead of extrapolated.**  The `N ≈ 3.4e6` claim rests on
+one assumption, `N·L′ ∝ N`, taken from a single `N = 512` run.  Two experiments
+test it directly: change `N` at fixed anchor schedule, then change the anchor
+schedule at fixed `N`.
+
+The paired sweep first (`--n-train 512` vs `2048`, same five widths, same 128-probe
+stream, same `u_Adam` task):
+
+| `r` (rad) | `N·medΔL`, `N = 512` | `N·medΔL`, `N = 2048` | ratio | per-example `medΔL` 512 → 2048 |
+|---:|---:|---:|---:|---:|
+| 1.0e-3 | 1.55 | 19.20 | 12.4 | 0.0030 → 0.0094 |
+| 2.3e-3 | 3.40 | 39.95 | 11.8 | 0.0066 → 0.0195 |
+| 5.0e-3 | 4.97 | 79.09 | 15.9 | 0.0097 → 0.0386 |
+| 1.0e-2 | 17.28 | 160.05 | 9.3 | 0.034 → 0.078 |
+| 4.0e-2 | 229.75 | 895.33 | 3.9 | 0.449 → 0.437 |
+
+Four times the data buys `≈12–16×` the loss at small widths and `3.9×` at the
+outermost one, i.e. superlinear inside `5e-3` rad and linear outside `1e-2`.  But
+the anchor moved in the same step — train loss 1.2532 → 1.1887, test accuracy
+49.22 % → 44.92 % — so "more data" and "deeper anchor" are confounded in that
+column, and only the per-example column could have separated them.
+
+So hold `N = 512` and train the anchor 4× and 8× longer (`--adam-steps`, 4000 and
+8000, same widths, same probes):
+
+| anchor steps | train loss | test acc / NLL | 1e-3 | 2.3e-3 | 5e-3 | 1e-2 | 4e-2 |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 000 | 1.2532 | 49.22 % / 1.3136 | 1.55 | 3.40 | 4.97 | 17.28 | 229.75 |
+| 4 000 | 1.1136 | 50.00 % / 1.2125 | 14.39 | 38.62 | 133.37 | 253.74 | 460.77 |
+| 8 000 | 1.0962 | 57.81 % / 1.1804 | 44.62 | 136.87 | 351.87 | 526.72 | 290.86 |
+| *for comparison:* `N = 2048`, 1 000 steps | 1.1887 | 44.92 % / 1.2266 | 19.20 | 39.95 | 79.09 | 160.05 | 895.33 |
+
+At the basin radius `2.3e-3` the same 512 examples give 3.40, 38.62 and 136.87 for
+1 000, 4 000 and 8 000 anchor steps: **the 8 000-step anchor exceeds what 4× the
+data achieved**, and 4 000 steps lands on it (38.62 vs 39.95, 3 %).  The printed data
+requirement follows the anchor, not `N`:
+
+```text
+N = 512, adam 1 000  →  N ≈ 3.4 × 10⁶
+N = 512, adam 4 000  →  N ≈ 2.0 × 10⁵
+N = 512, adam 8 000  →  N ≈ 6.2 × 10⁴
+```
+
+That is a factor 55 at *identical* data, and a factor 1.4 between 4 000 and 8 000
+steps.  Since test accuracy is still rising at 57.81 %, none of these is the
+converged value — `6.2e4` is an upper bound that keeps falling with training.  The
+honest statement is therefore: **`N·L′` at small `d` is set by the anchor's
+convergence depth, so any data requirement computed from it is a statement about
+Adam, not about `π`.**  Withdrawing `3.4e6` is not a correction of the arithmetic;
+the arithmetic was right and the quantity it measured was the wrong one.
+
+What the control leaves intact is the outer range.  There `4×` data gives `3.9×`
+the loss — linear, as assumed — and 8× anchor training does not reproduce that
+(290.86, *below* the 4 000-step 460.77, so this row has `±2×` run-to-run scatter of
+its own).  The exact mode equation is evaluated on those rows, and across the three
+anchors its largest measured value is 283, 461 and 980 (in `N·maxΔL`) against
+`P − 2 = 16 670` — short by 17–60× every time.  The **no-interior-mode conclusion at
+`P = 16 672` stands on all three anchors**.  The fitted `d*` (1.06, 0.744 and 89.5
+rad) does not: the 89.5 is the fit degenerating when the last row drops below the
+one before it, and all three are grid-and-anchor artefacts of the same small-`d`
+columns, quoted only as "≫ the 2.3e-3 basin radius".
+
+**The one model that does grow an interior mode.**  The same `N` ladder at
+`P = 584` (`8,16,1`, seven widths, `N = 512 / 2 048 / 8 192`, 64 probes):
+
+| `r` | 1e-4 | 3e-4 | 1e-3 | 3e-3 | 1e-2 | 3e-2 | 9e-2 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| `N = 512` | 0.53 | 1.13 | 12.60 | 111.28 | 223.14 | 184.40 | 172.76 |
+| `N = 2 048` | 0.44 | 1.72 | 13.78 | 131.44 | 672.49 | 1 109.99 | 689.42 |
+| `N = 8 192` | 0.22 | 1.43 | 16.92 | 140.87 | 1 192.94 | 4 039.83 | 3 811.93 |
+| γ (8× `N`) | −0.38 | +0.11 | +0.14 | +0.11 | +0.80 | +1.32 | +1.32 |
+
+Three regimes, and the first one is a warning about the control: at `1e-4` the
+loss *falls* with `N` (`γ < 0`), so there the measurement is not the target's own
+curvature at all but noise in a ball narrower than the anchor's own basin.
+Between `3e-4` and `3e-3` the growth saturates (`γ ≈ 0.11` for 8× data) — this is
+the anchor-limited band, and it is why the `P = 16 672` number above could be moved
+by training alone.  Past `10⁻²` growth is superlinear (`γ = 0.80–1.32`).
+
+The consequence is the project's first interior mode: `N·maxΔL` reaches 160 → 773
+→ 4 272 against `P − 2 = 582`, and the fit's `d*` falls 0.228 → 0.0195 → 0.00857
+rad.  Two caveats kept that from being a certificate on its own.  First, **ESS is
+1.0 on every row from `1e-2` out**, so the crossing is carried by one importance
+weight per probe; the `P = 584` anchor control was reassuring (`1e-2` and `3e-2`
+move only ±5 %, 223→193 and 184→177, unlike the small-`d` rows) but it is a
+different statistic.  Second, `d* = 0.00857` rad sits *inside* the band where the
+sweep is blind, so only the latitude shell can check it.  So the chain was run.
+
+**The mode radius, sampled — and certified.**  Latitude shell at `d₀ = 0.00857`
+rad, `N = 8 192`, 4 chains, 20 000 steps, burn 4 000, thin 20, `r = 2e-3`:
+
+```text
+acceptance 0.5–0.8 %      per-chain acc 24.10 / 26.31 / 24.98 / 24.89 %
+per-chain NLL 1.6009 / 1.6006 / 1.6006 / 1.6006     BMA 24.61 % / 1.6005
+split-R̂(NLL) 1.0498   split-R̂(train L) 1.3654
+anchor (N = 8 192): 21.88 % / 1.5988      base rate 11.72 %
+```
+
+The null at the acceptance-corrected radius `r_eff = 2e-3·√0.0073 = 1.70e-4`
+(`τ = (sin d₀/r_eff)² = 2 541` steps, `ρ = e^{−20/2 541} = 0.992`, 3 000
+replicates) expects `E[R̂] = 1.328`, 95 % `[1.088, 1.715]`, 99 % 1.812.  The
+observed `R̂(NLL)` 1.0498 is **below the null's mean** — better mixed than a
+stationary AR(1) with that thinning — and `R̂(loss)` 1.3654 lands on the null's
+mean.  This is the first *converged* chain measurement in the project at a mode
+radius, and it certifies the sweep's extrapolation: the interior mode at
+`P = 584`, `N = 8 192` is real, not a single-probe artefact.
+
+What it is worth is the familiar answer.  At the density's peak the predictive is
+24.61 % / 1.6005 against the anchor's 21.88 % / 1.5988: **+2.7 points of accuracy
+and a NLL 0.0017 *worse*** — the peak of `p(d)` is not where calibration improves,
+which `P = 2 192` reached in its extreme form (base rate exactly) and this model
+reaches in a mild one.  Note also that the far 0.0905 rad shell reported a higher
+BMA accuracy, 44.92 %, on the same per-chain numbers (23.9–25.5 %): that gap is the
+averaging gain from *diversity* across a wide shell, not evidence that accuracy
+grows with radius.  The tight shell here holds near-identical draws, so its BMA
+is 24.61 % and buys nothing from averaging.  Thinned 20 and `R̂`-certified, the
+statement is: the mode buys accuracy over the anchor, buys 1.5 % in NLL at best,
+and the wide shell's 46 % belongs to the ensemble rather than to the posterior's
+peak.
+
+**The same protocol one rung down, `N = 2 048`.**  `d* = 0.0195` rad, 4 chains,
+20 000 steps, burn 4 000, thin 20, `r = 2e-3`, acceptance 0.9–1.2 %:
+
+```text
+per-chain acc 16.91 / 21.58 / 17.76 / 18.45 %   NLL 1.7869 / 1.7840 / 1.7869 / 1.7910
+BMA 19.53 % / 1.7838      anchor (N = 2 048): 22.66 % / 1.7467
+split-R̂(NLL) 1.3702   split-R̂(train L) 1.5759
+null at r_eff = 2.08e-4: E[R̂] 1.929, 95 % [1.266, 2.978]
+```
+
+Here the mode is **worse than its own anchor** on both metrics — −3.1 accuracy
+points and +0.037 NLL.  Its `R̂` is inside the null, but that null is loose
+(`τ = 8 788` steps, `ρ = 0.998`, 95 % spans 1.27–2.98), so the honest reading is
+"no evidence of non-convergence", not the certification the `N = 8 192` run
+earned.
+
+Pairing those two rows suggested a trend — the mode's gap to its anchor closing
+as `N` grows — and that reading does not survive the third rung.
+
+**A third rung, `N = 16 384`, and the anchor's learning rate.**  Extrapolating the
+ladder's fit (`d* ∝ N^−0.6`) predicted 3.76e-3 rad; the sweep at `N = 16 384`
+(64 probes, same protocol) put it at **3.02e-3**, so the inward motion continues
+(0.228 → 0.0195 → 0.00857 → 0.00302 rad).  Sampling that shell (4 chains, 20 k
+steps, burn 4 000, thin 10, `r = 1e-3`, acceptance 0.4–0.5 %):
+
+```text
+per-chain acc 22.98 / 23.91 / 24.39 / 24.26 %   NLL 1.6094 / 1.6099 / 1.6093 / 1.6096
+BMA 23.44 % / 1.6095      anchor (N = 16 384): 26.95 % / 1.6086
+split-R̂(NLL) 1.2825   split-R̂(train L) 1.3614
+null at r_eff = 6.7e-5: E[R̂] 1.272, 95 % [1.071, 1.602]  ->  inside, tight null
+```
+
+The NLL gap to the anchor is now 0.0009 — the smallest of the ladder — but the
+accuracy gap is **−3.5 points**, the wrong sign for the trend.  So the NLL part of
+the trend is real and the accuracy part is not: over three rungs the NLL gap falls
+monotonically (0.0371 → 0.0017 → 0.0009) while the accuracy gap goes −3.1 → +2.7 →
+−3.5.  With three rungs instead of two, "the mode buys accuracy" is withdrawn.
+
+Before drawing that conclusion, the anchors themselves have to be examined, and
+they do not hold up.  `adam` is full-batch with a **fixed** step `lr = 0.05` and no
+schedule, so the step is an inverse length, not a dimensionless constant:
+
+| `N` | steps | lr | train L | acc % | NLL |
+|---:|---:|---:|---:|---:|---:|
+| 2 048 | 1 000 | 0.05 | 1.7446 | 22.66 | 1.7467 |
+| 2 048 | 2 000 | 0.05 | 1.7476 | 20.70 | 1.7485 |
+| 2 048 | 2 000 | **0.005** | 1.7415 | **28.12** | **1.7318** |
+| 8 192 | 1 000 | 0.05 | 1.6058 | 21.88 | 1.5988 |
+| 8 192 | 8 000 | 0.05 | 1.6157 | 24.61 | 1.6089 |
+
+Doubling the steps at `N = 2 048` *raises* the train loss (1.7446 → 1.7476): the
+trajectory is oscillating around the minimum, not descending into it.  Ten times
+fewer `lr` at the same step count cuts it to 1.7415 and buys 7.4 accuracy points and
+0.017 NLL.  At `N = 8 192`, 8× the steps leaves train loss above where 1 000 steps
+had it.  This is consistent with the `P = 16 672`, `N = 512` control, where the same
+`lr` improved monotonically (1.2532 → 1.1136 → 1.0962): the default is calibrated to
+`N = 512` and stops being stable by `N = 2 048`.  `--adam-lr` now exists
+(`pcnl/examples/basin_posterior.rs`) to move it.
+
+The consequence is that **`d*` is a property of the anchor, not of the model**.  Two
+re-anchorings move it without moving the physics: `N = 2 048` gives 0.0195 →
+0.0130 rad as the anchor goes 22.66 → 28.12 %, and `N = 8 192` gives 0.00857 →
+0.00438 rad at a (itself not better-trained) 8 000-step anchor.  The interior mode's
+*existence* survives all of this; its *radius* moves by ×1.5–2.
+
+**The re-anchored `N = 2 048` rung, sampled.**  Sweeping with `--adam-lr 0.005
+--adam-steps 2000` puts `d* = 1.30e-2` and reports the predictive there as **11.72 % /
+2.1860 — the base rate**.  The chain at 1.30e-2 (same four-chain protocol, `r = 2e-3`,
+acceptance 0.6–0.9 %) says otherwise:
+
+```text
+per-chain acc 27.30 / 27.56 / 25.54 / 24.94 %   NLL 1.7807 / 1.7575 / 1.7604 / 1.7592
+BMA 29.30 % / 1.7611      anchor (2000 @ lr 0.005): 28.12 % / 1.7318
+split-R̂(NLL) 1.7862   null E[R̂] 1.659, 95 % [1.192, 2.405]  ->  inside, loose
+```
+
+So the chain finds 29.30 % where the sweep found the base rate: a **17.5-point
+disagreement**, because the 1e-2 row's ESS is 1.0.  That is the sharpest statement
+of the section's recurring theme — an ESS-1 row is not a noisy measurement, it is
+one probe, and it can be wrong by more than a base rate.  Every claim in this
+document that rests on an ESS-1 row (including "the predictive collapses to the base
+rate by 1e-2 rad" in the earlier sweeps) is provisional until a chain confirms it;
+here the chain refuted it.
+
+Against its own well-trained anchor the mode is +1.2 accuracy points and 0.029 NLL
+*worse* — so on the one rung with a defensible anchor, the mode is a wash on
+accuracy and a small loss on calibration.
+
+**The best-measured `N = 2 048` anchor, sampled.**  The 0.005 anchor above is
+well-trained but 0.008 nat above the best cell of the `lr` grid, so the rung was run
+once more against that one (1 000 steps at `lr = 0.0125`: train 1.7382, 31.25 %,
+1.7270).  There `r₁ = 1.02e-4` rad — not the stale 8.61e-4 the `--no-sweep` line
+prints — and `d* = 1.45e-2` rad.  The shell at 1.45e-2 (4 chains, 20 k steps, burn
+4 000, thin 20, `r = 2e-3`, acceptance 0.8–0.9 %):
+
+```text
+per-chain acc 27.76 / 28.01 / 25.89 / 25.76 %   NLL 1.7497 / 1.7490 / 1.7567 / 1.7486
+BMA 26.56 % / 1.7493      anchor: 31.25 % / 1.7270
+split-R̂(NLL) 1.6119   split-R̂(train L) 1.5784
+null at r_eff = 1.82e-4: E[R̂] 1.724, 95 % [1.209, 2.555], 99 % 2.772  ->  inside, loose
+```
+
+That is **−4.7 accuracy points and +0.022 NLL**, the largest accuracy deficit of the
+five rungs — and it is measured against the best anchor this `N` can reach, so it is
+the fairest row in the table, not the least fair.  The same run also settles the
+small-`d` claim for `N = 2 048`: its sweep rows 1e-4 → 31.28 % / 1.7271 and 3e-4 →
+31.38 % / 1.7278 now sit *on* the anchor's 31.25 % / 1.7270 (ΔNLL +0.0001 and
++0.0008, Δacc +0.03 and +0.13 points, the latter below one test example).  The
+0.001–0.004 nat gain the 0.005 anchor reported at those widths was therefore the
+anchor's own shortfall, drawn back out of `π` by a slightly wider draw; with an
+anchor that has no shortfall the gain disappears.  That is the cost argument for the
+small-`d` band evaporating, and it is the reason the `N = 8 192` small-`d` chain
+below is the decisive test rather than another sweep row.
+
+**Does `lr` scale with `N`?**  Two laws are worth testing on the cells above — `lr ∝
+1/N` (a full-batch step carrying a fixed displacement) and `lr ∝ 1/√N` (a fixed noise
+ball, what a stochastic step would give).  Applied to the best cell at `N = 2 048`
+(0.0125) they predict 0.003 and 0.006 at `N = 8 192`, and 0.0015 and 0.003 at
+`N = 16 384`.  Measured anchors (`u_Adam` train mean loss / test acc / test NLL):
+
+| `N` | `lr` @ steps | train L | acc % | NLL |
+|---:|---:|---:|---:|---:|
+| 2 048 | 0.05 @ 1000 | 1.7446 | 22.66 | 1.7467 |
+| 2 048 | 0.025 @ 1000 | 1.7426 | 22.27 | 1.7403 |
+| 2 048 | **0.0125 @ 1000** | **1.7382** | 31.25 | 1.7270 |
+| 2 048 | 0.006 @ 1000 | 1.7390 | **32.42** | **1.7144** |
+| 8 192 | **0.05 @ 1000** | **1.6058** | 21.88 | 1.5988 |
+| 8 192 | 0.05 @ 8000 | 1.6157 | **24.61** | 1.6089 |
+| 8 192 | 0.0125 @ 1000 | 1.6188 | 21.48 | 1.6107 |
+| 8 192 | 0.0125 @ 4000 | 1.6111 | 19.92 | 1.6042 |
+| 8 192 | 0.003 @ 2000 | 1.6915 | 21.09 | 1.6705 |
+| 16 384 | **0.05 @ 1000** | **1.6119** | 26.95 | 1.6086 |
+| 16 384 | 0.0125 @ 4000 | 1.6231 | 26.95 | 1.6204 |
+
+The `1/N` cell is tested at two `N`s and loses at both: 0.003 @ 2000 at `N = 8 192`
+is 0.086 nat worse than the default, and 0.0125 @ 4000 at `N = 16 384` (matched
+travel, 4× the steps) is 0.011 nat worse.  The `1/√N` cell (0.006) was not run at
+`N = 8 192`, but its neighbour 0.0125 is already 0.013 nat worse there, and at
+`N = 2 048` the ordering is the opposite: the default 0.05 is 0.006 nat *worse* than
+0.0125 and 0.019 NLL worse.  **The sign of the correction flips between `N = 2 048`
+and `N ≥ 8 192`, so no single exponent reproduces the best measured anchor at all
+three `N`s.**  Two reasons, both visible in the table: each `N` is a different
+training set (not a subsample), so these cells compare anchors under different
+landscapes; and `d*` moves ×1.5–2 under such changes, which is wider than the loss
+differences that separate the cells.
+
+What the grid does establish is the size of the anchor effect, and it is large: a 4×
+lower `lr` at fixed steps is −0.0064 nat and +8.6 points at `N = 2 048`, but +0.013
+nat and −0.4 points at `N = 8 192`.  Accuracy moves *oppositely* to train loss
+within a `N` (at `N = 2 048` the lowest-loss cell, 0.0125, is not the highest-accuracy
+one, 0.006; at `N = 8 192` the lowest-loss cell is the default and the highest-accuracy
+one is the 8 000-step default), which is the same train/test dissociation the mode
+shells show.  The default stays 0.05 — best of five cells at `N = 8 192`, best of two
+at `N = 16 384` — and the `u_Adam` line now prints `(lr, steps)` so every run states
+the anchor it was measured against (`pcnl/examples/basin_posterior.rs`).
+
+**The ladder as it now stands.**
+
+| `N` | `d*` | anchor acc / NLL | mode shell BMA | Δacc / ΔNLL | `R̂`(NLL) verdict |
+|---:|---:|---|---|---|---|
+| 2 048 | 0.0195 | 22.66 / 1.7467 | 19.53 / 1.7838 | −3.1 / +0.037 | inside, loose |
+| 2 048 | 0.0130 | 28.12 / 1.7318 | 29.30 / 1.7611 | +1.2 / +0.029 | inside, loose |
+| 2 048 | 0.0145 | 31.25 / 1.7270 | 26.56 / 1.7493 | −4.7 / +0.022 | inside, loose |
+| 8 192 | 0.00857 | 21.88 / 1.5988 | 24.61 / 1.6005 | +2.7 / +0.0017 | **below null mean** |
+| 16 384 | 0.00302 | 26.95 / 1.6086 | 23.44 / 1.6095 | −3.5 / +0.0009 | inside, tight |
+
+Read across, only one quantity is monotone: **the NLL gap closes with `N`**, from
+0.037 to under 0.001, i.e. the modal conditional's calibration converges onto the
+anchor's.  Accuracy does not follow a trend and changes sign twice, and the anchors
+are lr-limited to different degrees — and the best-anchored row (the third, at the
+best cell of its own `lr` grid) is the *worst* one on accuracy (−4.7), which removes
+"the anchor was undertrained" as the explanation for the negative rows.  The one clearly positive row,
+`N = 8 192` +2.7, is also measured against that `N`'s best anchor (1 000 steps at the
+default, 1.5988), so it is the row least exposed to the anchor explanation — and the
+only rung where the mode's accuracy win survives.
+
+**The small-`d` band, sampled with chains (`N = 8 192`).**  The sweep's 1e-4 and 3e-4
+rows at this `N` (24.19 % / 1.6076 and 25.48 % / 1.6082, against the 8 000-step
+anchor's 24.61 % / 1.6089) are the only place in any sweep where the predictive beats
+its own anchor on NLL.  Tested with chains at two jump radii, started at `u_Adam`
+(4 chains, 20 k steps, burn 4 000, thin 10, no cap, no latitude — a plain
+random-walk Metropolis from the anchor):
+
+| `r` | acceptance | `|d|` at end | growth exp. | per-chain acc | per-chain NLL | BMA acc / NLL | `R̂`(NLL) / (loss) |
+|---:|---|---:|---:|---|---|---|---|
+| 1.0e-5 | 86.6–87.8 % | 1.25–1.38e-3 | 0.484 | 23.61–25.13 % | 1.6092–1.6101 | 26.56 % / 1.6097 | 1.4336 / 1.7019 |
+| 3.0e-5 | 61.0–65.3 % | 3.07–3.55e-3 | 0.509 | 23.38–24.91 % | 1.6107–1.6117 | 26.56 % / 1.6109 | 1.1063 / 1.4548 |
+
+Two things happen, and neither is the sweep's story.  First, **the walk does not stay
+at the width it is given**: a fixed-radius jump of 1e-5 rad random-walks out to
+`√20000 × 1e-5 = 1.41e-3` rad in 20 k steps (measured 1.25–1.38e-3, growth exponent
+0.48, mean pairwise move angle 88.6° — free diffusion), and the 3e-5 walk reaches
+3.1–3.5e-3.  So "sampling the 1e-4 row" is not something a chain at these radii does;
+it visits an annulus two decades wider, where the mean train loss ends 0.0013 and
+0.0031 nat above the anchor (final `train L` 1.6170 / 1.6188 against 1.6157).  Second,
+**at the radii the chains actually reach the NLL is worse than the anchor's** (1.6097
+and 1.6109 against 1.6089) — the opposite sign to the sweep rows, and against the
+*better* 1 000-step anchor (1.5988) worse by 0.011.  Neither walk is converged
+radially (the growth exponent is still ½ and `R̂`(loss) is 1.45–1.70), so these are
+not certified numbers; what they establish is the direction, on four chains each.
+
+What does replicate is the **ensemble** gain: both runs report BMA 26.56 % from
+per-chain 23.4–25.1 %, i.e. +1.7 to +2.9 points of accuracy from averaging 800 draws
+spread over 1.3e-3–3.3e-3 rad — the same averaging gain the 0.0905 rad shell at
+`N = 8 192` showed (+23 points over its anchor) at 70× smaller radius.  What that
+gain is *worth* is the next block's question; NLL gains nothing from it here.  The
+sweep rows
+that motivated the test are IS probes at a radius the chain does not occupy: at 1e-4
+a 1e-4 jump has acceptance `e^{−17.6}` (that row's `N·medΔL`), so no chain of this
+length is ever there.
+
+**Does breadth pay?  Four shells at one `N` and one anchor (`N = 2 048`).**  The
+ladder's one positive number is an *accuracy* number, and the reading it invited was
+"ensemble spread buys accuracy": the 0.00857 rad shell at `N = 8 192` reported
++2.7 points over its anchor, and the 0.0905 rad shell there reported 44.92 % BMA over
+21.88 % (uncertified, and never reproduced).  Radius was never varied at fixed `N`
+and fixed anchor, so the reading was never tested.  It has now been, at `N = 2 048`
+with the best measured anchor (`lr 0.0125`, 1 000 steps: 31.25 % / 1.7270), four
+shells, 4 chains each, 10 k steps, burn 2 000, thin 10:
+
+| shell `d₀` | jump `r` | acceptance | BMA acc / NLL | per-chain acc | anchor | `R̂`(NLL) / (loss) | null |
+|---:|---:|---|---|---|---|---|---|
+| 3.0e-3 | 1e-3 | 0.5–0.8 % | 31.25 / 1.7352 | 29.72–32.24 | 31.25 / 1.7270 | 1.268 / 1.245 | E 1.356, 95 % [1.096, 1.777] |
+| 1.0e-2 | 2e-3 | 0.6–0.8 % | 28.12 / 1.7563 | 25.86–29.95 | " | 1.525 / 1.505 | E 1.753, 95 % [1.213, 2.623] |
+| 3.0e-2 | 3e-3 | 1.8–2.5 % | 23.83 / 1.7803 | 20.97–25.21 | " | 3.389 / 3.606 | E 2.022, 95–99 % |
+| 9.0e-2 | 1e-2 | 1.6–1.8 % | 21.09 / 1.8780 | 12.32–22.49 | " | 2.115 / 2.548 | E 1.988, 95 % [1.279, 3.112] |
+
+Every column is monotone in the radius, and in the direction *against* the reading:
+BMA accuracy falls 31.25 → 28.12 → 23.83 → 21.09 and NLL rises 1.7352 → 1.7563 →
+1.7803 → 1.8780.  The best shell is the smallest, and it only **ties** the anchor's
+accuracy (31.25) while losing 0.008 nat of NLL; nothing from 1e-2 outward reaches the
+anchor at all (−3.1, −7.4, −10.2 points).  All four `R̂` are inside their nulls, but
+that is a weak statement here: acceptance of 2 % at `d₀ = 3e-2` means τ ≈ 5 000 steps
+and 8 000 post-burn steps is 1.6 τ, so the two far shells are direction, not
+certificates — they are also the two that are furthest below the anchor, so the
+uncertainty cannot rescue the reading.
+
+What the shells *do* show is the ensemble repairing its own draws, which is a
+different claim from beating the anchor: at `d₀ = 9e-2` the worst chain is 12.32 %,
+the mean per-chain is 17.7 %, and the BMA is 21.09 % (+7.5 over the worst, +3.4 over
+the mean).  Spread makes averaging worth something; it does not make the average
+*good*.
+
+The step budget is not innocent in this reading — the same far shell at `N = 8 192`
+doubles its BMA accuracy between 20 k and 200 k steps (next block) — so read the four
+rows as "at 10 k steps", not as converged shells.  That caveat does not rescue the
+reading, because every row here is a *deficit* and longer runs move the two far ones in
+the direction that would make their per-chain numbers worse, not better.
+
+This is now the second `N` at which a fixed-radius ladder contradicts "breadth beats
+the mode", and the two ladders agree with each other.  The certified `N = 512` table
+above has 4e-2 → 44.92 % and 7.9e-2 → 42.97 % against an anchor of **49.22 %**, and
+the 200 k-step `N = 8 192` shell reaches 44.92 % against an anchor of **21.88 %**.
+So across three `N` the same protocol gives −4.3, −7.4 to −10.2 (four radii) and
++23.0 points: the `N = 8 192` wide shell is the outlier, and it is also the one
+whose `R̂` sits above its null and whose per-chain draws (23.9–25.5 %) sit *at* its
+anchor rather than below it — a different regime (far draws cost nothing per-draw at
+that anchor), not a better one.  Its 44.92 % is therefore not evidence that a shell
+buys accuracy; it is an uncertified anomaly that two other `N` reverse.
+
+**How much of the breadth reading is exploration?  (`N = 8 192`, one shell, two step
+budgets.)**  The 0.0905 rad shell's 44.92 % came from a 200 k-step run with 800 draws
+per chain.  The same cell (default anchor 21.88 % / 1.5988, `r = 3e-3`, `d₀ = 9.05e-2`)
+at 20 k steps, burn 4 000, thin 20 (400 draws per chain) gives:
+
+| steps / thin | per-chain acc | per-chain NLL | train L | BMA acc / NLL | `R̂`(NLL) / (loss) |
+|---|---|---|---|---|---|
+| 20 k / 20 | 23.86–24.79 % | 1.6088–1.6140 | 1.6123–1.6171 | 28.12 % / 1.6100 | 1.689 / 2.338 |
+| 200 k / 100 | 23.85–25.54 % | 1.7016–1.7320 | — | 44.92 % / 1.6999 | 1.24 / 1.80 |
+
+Per-chain accuracy barely moves (24.4 → 24.7 %) and per-chain NLL gets 0.09 *worse*,
+while the BMA gains 16.8 points.  That is the signature of coverage, not of the radius:
+at 20 k steps the four chains sit in the part of the shell nearest the mode direction
+(hence the better per-chain NLL), and at 200 k they have spread over the whole shell,
+where single draws predict worse but their errors cancel.  So the 44.92 % is an
+*exploration* effect that a 20 k budget does not reach, and the honest statement of
+where breadth pays is: at a fixed step budget, breadth costs accuracy against a
+certified anchor; with 10× the steps on a far shell, the ensemble can outvote its own
+per-draw deficit.  The four-shell ladder above is a 10 k-step ladder for exactly this
+reason, and its far two rows (2 % acceptance, τ ≈ 5 000 steps) are the least converged
+of the four.
+
+**Where a localized posterior is worth computing.**  Five rungs, three of them at
+`N = 2 048` under different anchors, put the answer somewhere narrower than the
+two-rung reading suggested:
+
+- The earlier guess — a threshold near `N ≈ 10P` above which localizing pays in
+  accuracy — is withdrawn.  Three of the five rungs put the mode *below* its anchor
+  in accuracy, including both of the best-anchored ones, and `lr` alone is worth 7.4
+  points at `N = 2 048`, which is larger than the one positive rung's +2.7.
+- What survives is one monotone fact: **the NLL gap closes with `N`** (+0.037 →
+  +0.0009) and never changes sign, so localizing at the peak of `p(d)` never buys
+  calibration, it only stops costing it.
+- And one robust negative: at `N = 2 048` and `16 384` a four-chain shell at the mode
+  **ties** the anchor at best (the +1.2 row is within one test example of a tie), and
+  the single accuracy win, `N = 8 192` +2.7, does not replicate one rung up.  The
+  anchor is what improves with data; the modal shell is a slightly worse copy of it.
+
+So the interior mode is not worth four chains at any `N` measured here.  The
+remaining candidate was the small-`d` end of the informative band, and the
+best-anchored `N = 2 048` run weakens it: the 1e-4 and 3e-4 widths there report
+31.28 % / 1.7271 and 31.38 % / 1.7278 against the anchor's 31.25 % / 1.7270, i.e.
+ties, where the same widths beat an undertrained 0.005 anchor by 0.001–0.004 nat.
+The apparent gain was the anchor's shortfall, not a property of `π`, and the chains
+below show the same collapse at `N = 8 192`: the walk that starts where those rows
+are reported ends up 0.0008–0.0020 nat *worse* than its anchor.
+
+Three things follow for where to compute, stated with the evidence each has:
+
+1. **Average over a band, but do not expect the average to beat the anchor.**
+   `bma_metrics` (`pcnl/src/experiment.rs`) is the mean softmax probability over
+   *every* kept draw, and per-chain acc (line 525 / 1100) is the mean single-draw
+   accuracy — so BMA-minus-per-chain is a measurable ensemble effect, not an
+   artefact of the reporting.  It is large where the draws disagree: the wide
+   0.0905 rad shell at `N = 8 192` reaches 44.92 % on per-chain 23.9–25.5 %, and at
+   `N = 2 048`, `d₀ = 9e-2`, 21.09 % on per-chain 12.32–22.49 %.  But the anchor
+   wins at both `N` where it is certified: 49.22 % against 44.92 % and 42.97 % at
+   `N = 512`, 31.25 % against 31.25 → 21.09 % at `N = 2 048`.  So a band buys
+   robustness against a single bad draw, not accuracy.
+2. **Do not spend the localization on NLL.**  Every mode-radius measurement here
+   lands at or slightly above its anchor's NLL (five rungs, +0.0009 to +0.037).  A
+   use case that needs calibrated probabilities gets nothing from the interior mode
+   and pays 16× per step to compute it.  The small-`d` band looked like the exception
+   and is not: at `N = 2 048` its NLL advantage over the anchor was 0.001–0.004 nat
+   against an undertrained anchor but 0.0001–0.0008 against the best one, and at
+   `N = 8 192` the chains that start in that band report 1.6097 / 1.6109 against the
+   anchor's 1.6089.  The band does not have a calibration gain of its own.
+3. **The compute is not the constraint until `N` is large.**  A certified shell at
+   `N = 8 192` costs ~35 min of one core — but the same protocol at 0.09 rad took
+   200 k steps because its relaxation time is 100× longer.  The expensive dimension
+   is the shell's radius relative to the jump, not the model.
+
+One cost note that constrains what can be measured next: the potential is the mean
+over the *whole* training set, so a chain step at `N = 8 192` costs 16× one at
+`N = 512`.  This shell was affordable only because a 0.0086 rad shell relaxes in
+`(sin d₀/r)² ≈ 18` steps, so 20 k steps is ~1 000 relaxation times; the same
+protocol at 0.09 rad needed 200 k.  Future `N`-ladders of shells should be priced
+in relaxation times, not steps.
+
+**The `P = 584` shell, out to 200 000 steps.**  The uncertified `d₀ = 0.0905` shell
+was rerun 10× longer (4 chains, burn 40 000, thin 100, 800 draws each) at two step
+sizes, against nulls computed at the acceptance-corrected radius
+`r_eff = r√(mean acceptance)`:
+
+| `r` | acceptance | per-chain acc | BMA acc / NLL | `R̂`(NLL) / `R̂`(loss) | null 95 % / 99 % |
+|---:|---|---|---|---|---|
+| 1.0e-2 | 0.3–1.9 % | 24.86 / 25.29 / 25.31 / 20.20 % | 43.75 % / 1.7215 | 2.80 / 3.91 | [1.021, 1.195] / 1.235 |
+| 3.0e-3 | 19.7–34.1 % | 23.85 / 25.54 / 22.38 / 22.97 % | 44.92 % / 1.6999 | 1.24 / 1.80 | [1.010, 1.096] / 1.113 |
+
+A 3× narrower step lifts acceptance from ~1 % to ~30 % and cuts `R̂`(NLL) from
+7.18 (at 20 k steps) to 1.24 — the walk-length diagnosis was correct.  It still
+sits above the 99 % null, so the shell is **not certified**: what remains is a
+level difference between chains (NLL 1.7016, 1.7230, 1.7320, 1.7294 — a spread of
+~1.5 standard errors per chain at 800 draws), which only longer chains narrow, not
+a different step.  The accuracy it reports (44.9 %) is 24 points above its anchor
+in the BMA sense and 3 points per-chain, so the *effect* survives the failure to
+certify it; the number does not deserve a confidence interval yet.
+
+Taken as a whole the cycle leaves the project's shape unchanged and its one
+quantitative scaling claim retired: accuracy at a fixed radius is real and
+anchor-relative, the mode sits outside the informative band at `P = 16 672` under
+any anchor, at `P = 584` it moves inside as `N` grows (now certified by a converged
+shell at 0.00857 rad, where the mode buys +2.7 accuracy points and no NLL, against
+−3.1 / +0.037 and −4.7 / +0.022 two rungs down at `N = 2 048`), and
+"how much data to localize" is not yet a measurable quantity — the instrument that
+would measure it has to hold the anchor fixed, which means training to convergence
+*before* the sweep, not sweeping with more data.
+
+*The tangent coordinate.*  The radial law says `d` never came in; the second
+question is how many **directions** the data bought, and it has the same answer
+because it is the same inequality.  Every "`π` is prior-dominated" sentence in
+§6.5.2–6.5.7 rests on one arithmetic claim — that a cap of angular radius `d` on
+`S^{P−1}` holds a fraction `≈ (sin(d/2))^{P−1}` of the sphere.  That is the
+measure of a **cosine** cap — right at `P = 3`, wrong everywhere else.
+`pcnl/src/budget.rs` carries the exact law instead,
+
+```text
+f_m(d) = ½ · I_{sin²d}((m−1)/2, ½),      d ≤ π/2,
+```
+
+with `I` the regularized incomplete beta, evaluated in log space (Lentz
+continued fraction) because `x^a` underflows outright at
+`m = 16 672, d = 10⁻³`.  Nine unit tests pin it: the three closed forms (`d/π`
+at `m = 2`, `sin²(d/2)` at `m = 3`, `(d − sin d cos d)/π` at `m = 4`),
+Monte-Carlo at `m = 5, 9, 23`, monotonicity in both arguments, the published
+configuration's five-figure cost, the inversion the budget is solved with, the
+nearest-of-`n` radius, and degenerate radii.
+
+The price is the point.  For large `m`,
+`−ln f_m(d) ≈ (m−1)·ln(1/sin d)`, so **directions cost nats linearly**, and a
+likelihood can pay at most `N·ΔL` of them:
+
+```text
+m* = N·ΔL / ln(1/sin d)        — how many directions the data can localize
+```
+
+`examples/dimension_budget` measures both sides at the reference configuration
+(`P = 16 672`, `N = 512`, seed 20261020, anchor `u_Adam`):
+
+**The geometry, validated.**  256 Haar draws, each at its distance from
+`u_Adam`: min 1.5508, p5 1.5580, median 1.5706, max 1.5934 rad.  The exact law
+predicts the nearest of 256 at **1.5502 rad** (0.04 % off), and 0.000 of 256
+inside 0.1 rad — measured 0.  The "1.0–1.6 rad" row quoted earlier in this
+document is a *bucket label*, not an observation: no Haar draw in this study
+has landed nearer than 1.55 rad ≈ 89°.
+
+**The purse.**  `N·ΔL` along eight random rays from the anchor (median; mean
+and max tell the same story, the spread is why every `m*` below is quoted with
+its best-ray value):
+
+| radius (rad) | `N·ΔL` median | max | held-out acc |
+|---:|---:|---:|---:|
+| 1.0e-3 | 0.27 | 0.51 | 55.08 % |
+| 2.3e-3 | 1.44 | 3.06 | 53.91 % |
+| 5.0e-3 | 6.80 | 13.67 | 51.95 % |
+| 1.0e-2 | 26.47 | 45.25 | 48.83 % |
+| 2.0e-2 | 108.53 | 131.66 | 40.23 % |
+| 4.0e-2 | 370.63 | 450.86 | 28.52 % |
+
+`N·ΔL` grows as `d^1.95` over the ladder — quadratic, which is what a smooth
+loss must give — and then saturates.  The informative set is a **level set**,
+bounded energetically, not a cone: the loss rises in every direction, so there
+is no ridge for a sampler to slide along.
+
+**The budget.**  `cost/dir` is `−ln sin d`; `m*` is the exact-law answer,
+and the last column is the same quantity on the friendliest ray.
+
+| radius | cost/dir | exact cap cost at `P = 16 672` | nats available | `m*` | best ray |
+|---:|---:|---:|---:|---:|---:|
+| 1.0e-3 | 6.91 | 115 165 | 0.27 | 2.0 | 2.0 |
+| 2.3e-3 | 6.07 | 101 280 | 1.44 | 2.0 | 2.0 |
+| 5.0e-3 | 5.30 | 88 334 | 6.80 | 2.5 | 3.5 |
+| 1.0e-2 | 4.61 | 76 779 | 26.47 | 6.5 | 10.5 |
+| 2.0e-2 | 3.91 | 65 224 | 108.53 | 28.5 | 33.5 |
+| 4.0e-2 | 3.22 | 53 672 | 370.63 | 115.5 | 140.5 |
+
+`m* = 2.0` is the module's floor — the budget is below the circle's own price,
+so those rows say "cannot pin even a plane", not "two directions".
+
+**Is this a fact about `P = 16 672`?**  Same data, same radius (0.04 rad),
+`N·ΔL = 370.63`, varying only the ambient dimension:
+
+| `P` | cap cost | `m*` | `m*/P` | verdict |
+|---:|---:|---:|---:|---|
+| 42 | 134.8 | 115.5 | 275 % | localizable |
+| 100 | 321.9 | 115.5 | 116 % | localizable |
+| 512 | 1 649 | 115.5 | 22.6 % | partly localizable |
+| 4 240 | 13 651 | 115.5 | 2.7 % | prior-dominated |
+| 16 672 | 53 672 | 115.5 | 0.69 % | prior-dominated |
+
+`m*` is identical at every `P` because the budget counts **nats, not
+parameters**.  What `P` moves is the *share* of the tangent space the posterior
+can reach — 0.69 % here.  Equivalently: the largest model whose 0.04-rad cap
+512 examples can still pin is `P ≈ 115`, and `P = 16 672` is 145× short.
+
+**What the proxy cost.**  The old formula's error is not noise but exactly
+`(P−1)·ln 2` in the large-`P` limit:
+
+| radius | exact | proxy | difference |
+|---:|---:|---:|---:|
+| 1.0e-3 | 115 165.0 | 126 714.6 | 11 549.7 |
+| 2.0e-2 | 65 224.2 | 76 773.1 | 11 548.8 |
+| 4.0e-2 | 53 672.1 | 65 218.4 | 11 546.3 |
+
+At `P = 16 672` that is 11 547 nats — 5 014 decades, against a six-figure
+margin, so **the prior-domination verdict never depended on it**.  But the
+*crossover* is a different matter: it lives at `m ≈ 10`, where a factor of
+`2^m` is the entire answer, which is why the exact law replaces the proxy in
+the module rather than beside it.  The old volume estimate (§6.4(ii): the
+equatorial shell outweighing a 1 mrad ball by `10^{54 000}`) is the same
+inequality seen from the volume side, and the exact law's figure for that ball
+is `10^{50 014}` (a fraction `10^{−5.0e4}` of `π`).  So the conditionals of (4)
+are a tail, not the predictive, however exactly they are sampled.
+
+**6. The verdict, and what it is not.**  At the radii where the fine-tune's
+held-out accuracy survives (0.01–0.02 rad, 48.8 %–40.2 %), the data can localize
+**7–29 directions out of 16 671**.  Three unrelated measurements agree on a
+single- to double-digit effective dimension:
+
+* this budget: `m* = 6.5` at 0.01 rad, 28.5 at 0.02 rad;
+* `subspace_bound`'s Hessian spectrum: the top 8 eigenvectors carry 72.8 % of
+  `Tr H` ⇒ rank ≈ 11;
+* the fixed-radius chain's free-walk growth exponent (0.509 of a diffusive
+  walk) and 89.7° pairwise displacement angles.
+
+The radial mode `d* = 6.5 rad` of (5) and the budget `m* = 6.5` share a digit and
+nothing else: the first is a radial position that does not exist, the second is
+how many tangent directions a 0.01-rad cap can be paid for.  What follows is that
+the sampler results are not a kernel defect.  At `P = 16 672` the **target**
+constrains 99.3 % of the tangent space not at all, and a pCN step spends its
+noise exactly there; no schedule, metric or guidance term changes that
+arithmetic, which is consistent with §6.5.6–6.5.8 having exhausted those levers.
+The open question is no longer the kernel but **which `m*`-dimensional
+conditioning to sample**: an informed rank-`m*` subspace (e.g. the Adam-on-B
+path's own Hessian block) is where the tempered target becomes samplable, and
+that is the next experiment.
+
+The whole section is two commands: the four `--arm latitude` runs of the
+reproduce block below, and `cargo run --release -p pcnl --example
+dimension_budget` (~3 min, wired into `./scripts/pcnl-reproduce budget` as the
+anchor-drift canary).
+
+> **Correction, same day: the §6.5.5 reference points are the *pre-fix* block's,
+> not a measurement.**  Rerunning `adam_start` (defaults, seed 20261020, 5
+> steps) prints
+> `θ_A 13.67 % / 4.2124 / ‖θ‖ 124.9 (2.8 × shell)` and
+> `θ_Adam 55.08 % / 1.1367 / ‖θ‖ 1620.1 (35.8 × shell)`.  The table above line
+> 707 records `θ_A 4.30 % / 4.1523 / 94.0 (2.1 ×)` and
+> `θ_Adam 49.22 % / 1.3136 / 1272.6 (28.2 ×)` — and those are *verbatim* the
+> `B baselines: before 4.3% (NLL 4.1523) … Adam-on-B 49.2% (NLL 1.3136)` line
+> of the 2026-10-20 block that this document's opening section declares
+> non-reproducible.  The 2026-11-05 section reused the stale pre-fix baselines
+> as its anchor instead of re-measuring them, and every table that quotes
+> `49.22 %` as its frozen start row — including the anchor rows of the latitude
+> and conditional tables above — inherits that.  Consequences: the anchor
+> sits **further** out than recorded (35.8 × shell, not 28.2 ×), and each
+> "46 % vs the anchor" comparison in §6.5.6–6.5.7 is ≈6 points low in its gap.
+> What does **not** move is any geometric quantity — radii, cap masses, `m*` —
+> because they are ratios at fixed data; the budget's verdict is unchanged in
+> kind and slightly stronger (a further-out anchor with the same `N·ΔL` buys
+> even fewer directions).
+>
+> One loose end, recorded rather than explained: the two examples score the
+> *same* point (direction `u_Adam`, radius 45.19) 0.02 nats apart — 1.1139 in
+> `dimension_budget`, 1.1367 in `adam_start` — while agreeing exactly on the
+> 55.08 % accuracy.  So the forward pass is exactly rank-invariant across a
+> rescale but only approximately value-invariant; `EPS = 1e-6` is too small to
+> account for 2 % of 1.14, and nothing in this section depends on which of the
+> two is quoted.
+
+## R0 — numerical and diagnostic trust (2026-11-08)
+
+`pcnl/RESEARCH_PLAN.md` gates every new inference result behind R0: the numerics have
+to be honest before another ladder is worth running.  Three items are done here, each
+with the measurement that licenses it.  The plan's own rule applies to the rest: nothing
+below changes a *forward* value, so the recorded anchors and tables stand; what changed
+is what the code reports about them.
+
+**(a) The normalisation's derivative (`RESEARCH_PLAN.md` R0.1).**  `normalize_fro`
+computes `W/(‖W‖_F + ε)` but reads `‖W‖_F` out with `to_scalar`, which detaches it from
+the graph: the backward pass sees a fixed rescaling and drops the `∂‖W‖/∂W` term.  That
+is now an explicit choice, `NormGrad::Stopped` (the historical form, still the default,
+because every number in this document was produced with it) versus `NormGrad::Exact`
+(via `normalize_fro_with`, `forward_norm`, `loss_and_grad_norm`).  Measurements:
+
+* the two agree on the **value** to f32 rounding, at scales 1e-3…40 (unit test);
+* the **exact** form matches a directional finite difference at θ-scales 1e-3, 1 and
+  50, along a generic direction, the global ray, and one block's ray — the last two are
+  what the old coordinate-wise check could not see;
+* the **stopped** form's gradient differs from the exact one by
+  `|Δg|/|g_e| = 1.4e-3` at `P = 3 232` (worst per-block residual of the identity
+  `g_e = g_s − (W·g_s)/(r(r+ε))·W` is 4.8e-6, and the largest radial share of a stopped
+  block gradient is 0.069).  The bias is small because the cosine loss is radially flat
+  (§6.5, `cosine_likelihood_is_flat_along_a_radial_ray`): the term it drops points where
+  the map barely responds.
+
+So: **the surrogate is labelled, not silently kept, and its drift bias is 0.1 %** — small
+enough that the recorded anchors are not wrong for a gradient reason, large enough that a
+*gradient-level* claim (drift, ⟨θ,∇Φ⟩ floors, SG-bias curves in R2) must say which form it
+used.  All reported chain results use MH ratios, which never touch the gradient, so none
+of them is affected either way.
+
+**(b) The schedule's floor (R0.2).**  `beta_at` clamps at `1e-6`, so the implemented
+sequence has **infinite** total mobility for every `κ`; the Robbins–Monro window
+(`Σβ² = ∞`, `Σβ⁴ < ∞`) is a statement about the unfloored power law.  Both laws are now
+named (`beta_at_unfloored`), the crossover is computed (`floor_crossover`, exact formula
+`((β₀/ε)^{1/κ} − 1)/γ`), and the answer is that it never binds in this project's runs:
+
+| schedule | `β₀` | `γ` | `κ` | floor binds at | longest run |
+|---|---:|---:|---:|---:|---:|
+| default | 0.3 | 1e-4 | 0.5 | 9.0e14 steps | 2e5 |
+| pre-2026-11-04 | 0.3 | 1e-4 | 0.55 | 9.1e13 steps | 2e5 |
+| `κ = 0.6` control | 0.3 | 1e-4 | 0.6 | 1.3e13 steps | 2e5 |
+
+`beta_at(step) == beta_at_unfloored(step)` bit-for-bit over 0…200 000 for both reported
+exponents (test `floor_crossover_is_where_the_laws_part_company`).  The freeze statements
+for `κ > 1/2` therefore describe the power law *and* the code, because the code is the
+power law over every horizon anyone has run.
+
+**(c) Frozen traces are failures, not good scores (R0.3).**  Before today `diag::ess`
+returned `N` for a constant chain (“every draw agrees”) and `gelman_rubin` returned
+`1.0` for two identically frozen chains (no between-chain and no within-chain
+variance).  Both are the two numbers a stuck chain must never get.  Now:
+
+* `movement(chains) -> Movement { chains, frozen, unique_max, nonfinite }` is the
+  evidence, and `is_frozen`/`is_degenerate` are the flags a report can gate on;
+* frozen → `NaN` from `ess`, `gelman_rubin`, `split_rhat_rank`, `ess_bulk`, `ess_tail`;
+* frozen at *different* values → `+inf` from `gelman_rubin` (a real disagreement, not a
+  missing one) and `NaN` from the rank statistics (their rank spread is finite by
+  construction, so a zero-variance within-chain term has no defined ratio);
+* any non-finite draw → `NaN` from all five, rather than a plausible-looking number;
+* the plan's gate statistics now exist: rank-normalised split `R̂`
+  (`split_rhat_rank`, bulk and folded combined, `Φ⁻¹` Blom scores) and `ess_bulk` /
+  `ess_tail` as in Vehtari et al. (2021) — validated against iid draws (bulk ESS within
+  half of the draw count, tail ESS above 100 of 4 000) and against AR(1) sticks
+  (bulk ESS < 20 % of 4 000).
+
+One real crash fell out of this: `experiment::median` sorted with
+`partial_cmp().unwrap()`, so a single frozen coordinate made the quick report panic.
+It now drops non-finite entries and returns `NaN` when none are left — an unavailable
+number instead of a crash.
+
+**(d) The tangent proposal's support (R0.4, in part).**  `SpherePcn::step_inner`
+proposes `u′ = exp_u v` with `‖v‖ = a`.  The exponential map is one-to-one only on the
+ball `a < π`; past it a proposal has several preimages, the closed-form pushforward
+`(sin a/a)^{P−2}` describes one of them, and the reverse transport divides by `sin a`,
+which is zero at `a = π`.  The proposal is now restricted to the ball: `a` is a length
+along the geodesic, so the reverse move is inside it too, every accepted move keeps the
+exact ratio, and an over-long proposal is a plain rejection.  The truncated Gaussian's
+normaliser differs from 1 by `exp(−π²/(2τ²))`, i.e. `exp(−3e3)` at the reported
+`τ = β/√P ≤ 0.04` — invisible.  Measured consequence, which is also a correction to an
+older claim: the warm-up test that used curvature `1e6` was learning a metric from
+proposals with `|m| ≈ 3.6e4 ≫ π`, i.e. from proposals that have no ratio at all.  With
+the ball enforced that cell proposes nothing, accepts nothing and learns nothing; the
+property the test exists for (the metric comes from proposals, not accepted states) is
+now checked at curvature 40, inside the ball.  The exact invariant-moment tests
+(`zero_likelihood_is_haar_on_the_circle`, `anisotropic_metric_is_exact_on_s2`,
+`restricted_metric_inverse_matches_the_dense_one`) are unchanged and still pass, so the
+restriction does not touch the regime the reported chains run in.
+
+**(e) The kept window, and where the metric froze (R0.5).**  Every chain in this document
+runs a *decaying* step size: `β_t = β₀(1 + γt)^{−κ}` never levels off, so no window of any
+run is a stationary chain, and `ESS`/`R̂` computed on the kept draws describe the annealing
+window and nothing beyond it.  The reports said that nowhere.  Now:
+
+* `experiment::Window::of(cfg, scheduler)` records `start, end, β_start, β_end, λ` and one
+  exact `stationary` bit, and every variant prints it under its diagnostics:
+  `window: kept t=200..400 of 400 steps (thin 4, 50 draws/chain, 2 chains) | beta
+  0.2739->0.2536 lambda 1.00 | NONSTATIONARY: the ESS/Rhat above describe this
+  decaying-step window, not a stationary chain` (`Config::quick()`, measured).
+* `stationary` is equality, not a tolerance: `β` identical at both ends of the window and
+  `λ` already at the full target.  Under the default `κ = 0.5`, `γ = 1e-3`, 10 000 steps /
+  burn 5 000, the kept window runs `β 0.1225 → 0.0905` — 26 % lower at its end — so the
+  default answer is `NONSTATIONARY` and 500 draws per chain, not 500 stationary draws.
+  Only `γ = 0` reaches `stationary`; a likelihood ramp that runs into the window keeps it
+  nonstationary even then, and the record shows the tempered `λ` at the window's start
+  (`window_separates_annealing_from_stationary_sampling`).
+* `experiment::phases()` emits `warmup`, `likelihood-ramp`, `kept` as separate records
+  (each with its own `λ`/`β` pair).  They overlap by design — a phase says what the kernel
+  was doing over a range, it does not partition the run.
+* Metric freeze: `SpherePcn::metric_freeze()` returns `None`, `Installed{dim,hash}`,
+  `Frozen{at,dim,hash}` or `Adapting{step,dim}`, and `metric_record()` is the manifest
+  form.  `examples/sphere_chain --precond` prints it under the cell (`metric
+  diagonal-secant frozen at step 200 (dim 4240)`), so a preconditioned number now says
+  whether its kept draws were drawn with the metric that was reported.
+* A real defect fell out of writing the freeze record: `set_metric` installed a metric but
+  left the warm-up flag on, so the first `step_preconditioned` replaced the installed `d`
+  with a one-proposal secant.  `set_metric` now freezes at step 0
+  (`metric_freeze_records_where_adaptation_stops` checks the installed `d` survives a
+  step).  The ambient experiment has no metric to freeze — its proposal is isotropic — and
+  records `"metric": {"kind": "isotropic"}` explicitly rather than omitting the field.
+
+**(f) The run manifest (R0.6).**  `pcnl/src/manifest.rs` writes `{stem}.manifest.json`
+beside the saved draws (`--save-dir`), hand-written JSON with a fixed key order and
+non-finite values as `null` (no new dependency).  One measured file, from
+`cargo run --release -p pcnl -- quick --save-dir /tmp/pcnl-r05`:
+
+```json
+{"tool":"pcnl","version":"0.1.0","created_unix":1794188928,
+ "code":{"revision":"8d397fad63ea","dirty_hash":11004078211542389397,"dirty_files":6},
+ "model":{"variant":"cosine/nGPT-lite | standard softmax","p":4240,"dtype":"f32",
+          "device":"cpu","normalization":"fro-stopped/v1"},
+ "data":{"task":"B","k":8,"n_train":128,"n_test":64,"seed":20261020,
+         "hash":5721120083230051558,"anchor_hash":3732154325063501809},
+ "target":{"lambda":1.0,"prior":"N(0, sigma^2 I)","anneal_steps":0},
+ "phases":[{"name":"warmup","start":0,"end":200,...},
+           {"name":"kept","start":200,"end":400,...,"stationary":false}],
+ "metric":{"kind":"isotropic","freeze_step":null,"adapting":false,"dim":0,"hash":null},
+ "work":{"forward_evals":102400,"backward_evals":102400,"wall_seconds":11.36,
+         "peak_mem_mb":12.7,"nonfinite_events":1}}
+```
+
+The hashes are FNV-1a 64: `data.hash` covers the four materialised index tensors (not the
+seed that made them, which two draws can coincide on), `anchor_hash` covers the frozen
+Task-A θ_A, `code.dirty_hash` covers the tracked diff.  **Limits, stated because a
+manifest that overclaims is worse than none:** it is an *identity*, not a resumption
+record — RNG, loader and adaptation states are not saved, so it cannot restart a run; a
+dirty hash names a diff that was present, not the binary that ran (that needs
+`build.rs`-stamped object hashes); `peak_mem_mb` is process-wide `VmHWM` and includes the
+pre-train.  Report text changed by one line per variant (`window:`), so older logs remain
+valid as data but no longer byte-match a re-render.
+
+What is *not* done yet from R0: the rest of the exact-proposal audit (the sphere and
+latitude conditionals are audited and moment-tested already; the cap-conditioned target
+and the cyclical schedule are not).  The tables in this document still report the raw
+`ess`/`gelman_rubin` from before the rank statistics existed, which is why their `R̂`
+values are comparable across dates; the null tables, which are what certify them, are
+unchanged.
+
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 106 tests (67 unit + 24 numerical
-                                                         #  + 8 formal claims + 7 comparators)
+cargo test -p pcnl --locked                              # 146 tests (105 unit + 7 comparators
+                                                         #  + 8 formal claims + 26 numerical)
+                                                         # (debug build: ~40 min on 2 cores;
+                                                         #  `--release` is ~6 min)
 # The report quoted above used kappa = 0.55 (the pre-2026-11-04 default):
 cargo run --release -p pcnl -- --kappa 0.55 --report-file out.txt --save-dir /tmp/traj
 # The corrected default is kappa = 0.5; the schedule's budget is in the report.
@@ -1653,6 +2882,19 @@ cargo run -p pcnl --example schedule_mobility            # the mobility/floor ta
 cargo run --release -p pcnl --example step_scale_control  # §6.5.2, reduced config
 cargo run --release -p pcnl --example step_scale_control -- --reference  # the table
 cargo run --release -p pcnl --example sphere_volume       # §6.4(ii)'s Haar volume
+# the 2026-11-07 target-conditioning ladder: exact shell conditionals, R̂ < 1.05
+for spec in "8.61e-4 4.3e-4" "2.3e-3 1.15e-3" "1e-2 3e-3" "7.9e-2 3e-3"; do
+  set -- $spec
+  cargo run --release -p pcnl --example basin_posterior -- \
+    10000 --no-sweep --chains 2 --arm latitude --d0 $1 --step $2
+done
+# the cap-freeze control (0.0 % / 0.1 % acceptance, R̂ = inf), the radial
+# profile out to 0.4 rad, and the data requirement (N ≈ 3.4e6) come from the
+# same example — see the `scale` stage of scripts/pcnl-reproduce for the
+# wide-grid, 4-chain and --shapes invocations:
+cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap
+cargo run --release -p pcnl --example basin_posterior -- 10000 --no-sweep --chains 4 --cap 2.3e-3
+cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell
 cargo run --release -p pcnl --example mh_standard_target  # §6.5.3, the exact target
 cargo run --release -p pcnl --example temperature_sweep   # §6.5.4(a), λ ladder
 cargo run --release -p pcnl --example overdispersion      # §6.5.4(b), per-draw vs BMA
@@ -1685,6 +2927,7 @@ cargo run --release -p pcnl --example basin_posterior -- 50000 --no-sweep --arm 
 cargo run --release -p pcnl --example sphere_chain -- 400 --precond --beta 0.003 --start adam --seeds 2 --chains 2  # the R̂
 cargo run --release -p pcnl --example sphere_chain -- 400 --precond --seeds 2  # the metric ladder
 cargo run --release -p pcnl --example sphere_chain -- 10000 --precond --beta 0.003 --start adam --seeds 2 --chains 2  # the 10k cell, R̂ 2.894 (~1 h 40 m)
+cargo run --release -p pcnl --example dimension_budget  # the exact cap law, the purse, m* (~3 min)
 ./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published

@@ -1,0 +1,167 @@
+# Full SM E1 component derivation and LaTeX export (Cadabra2 subprocess).
+# book.tex: Majorana spinors in the Standard Model. Independent collective
+# x/field/jet coordinates; all 163 bosons and 96 complex CAR coordinates.
+# Final H=dGamma(h): assemble all of h before its single outer enclosure.
+# D=d+i*g*T*A gives F=dA-dA-g*f*A*A. No Taylor or interaction truncation.
+# The exports are COMMUTING coefficient polynomials, not sorted CAR words.
+import re
+from fractions import Fraction
+
+I::ImaginaryI.
+
+def eps(a,b,c):
+    if len({a,b,c})<3: return 0
+    return 1 if (a,b,c) in [(0,1,2),(1,2,0),(2,0,1)] else -1
+
+def coord(kind,a=0,i=0,j=0):
+    return {"G":3+3*a+i,"dG":27+9*a+3*i+j,"W":99+3*a+i,
+        "dW":108+9*a+3*i+j,"B":135+i,"dB":138+3*i+j,
+        "H":147+a,"dH":151+3*a+i}[kind]
+
+def q(n): return "q_{"+str(n)+"}"
+def p(n): return "p_{"+str(n)+"}"
+def expression(terms): return Ex(" + ".join("("+t+")" for t in terms) if terms else "0")
+def reduce(ex):
+    distribute(ex); sort_product(ex); canonicalise(ex); collect_terms(ex)
+    return ex
+def checkzero(name,ex):
+    reduce(ex)
+    if str(ex)!="0": raise AssertionError(name+": "+str(ex))
+    print("SM_CHECK|"+name+"|0")
+
+# Independent conventional f table, checked against Rust's matrix-derived f.
+ftable={(0,1,2):"1",(0,3,6):"1/2",(0,4,5):"-1/2",
+    (1,3,5):"1/2",(1,4,6):"1/2",(2,3,4):"1/2",(2,5,6):"-1/2",
+    (3,4,7):"rtthree/2",(5,6,7):"rtthree/2"}
+def f3(a,b,c):
+    ordered=tuple(sorted((a,b,c)))
+    if len(set(ordered))!=3 or ordered not in ftable: return None
+    inversions=sum(x>y for k,x in enumerate((a,b,c)) for y in (a,b,c)[k+1:])
+    return ("-" if inversions%2 else "")+"("+ftable[ordered]+")"
+
+forms={}
+for group,colors,gauge in [("G",8,"gs"),("W",3,"gw"),("B",1,"0")]:
+    for a in range(colors):
+        for i in range(3):
+            terms=[]
+            for j in range(3):
+                for k in range(3):
+                    e=eps(i,j,k)
+                    if e==0: continue
+                    curl=q(coord("d"+group,a,k,j))+"-"+q(coord("d"+group,a,j,k))
+                    terms.append(str(Fraction(e,2))+"*("+curl+")")
+                    if group!="B":
+                        for b in range(colors):
+                            for d in range(colors):
+                                structure=f3(a,b,d) if group=="G" else (str(eps(a,b,d)) if eps(a,b,d) else None)
+                                if structure:
+                                    terms.append(str(Fraction(-e,2))+"*"+gauge+"*("+structure+")*"+q(coord(group,b,j))+"*"+q(coord(group,d,k)))
+            forms[f"mag{group}{a}{i}"]=reduce(expression(terms))
+
+# Realifications of i*tau_j/2 and i*Y_H; ordered Re,Im components.
+weak=[{(0,3):"-1/2",(1,2):"1/2",(2,1):"-1/2",(3,0):"1/2"},
+      {(0,2):"1/2",(1,3):"1/2",(2,0):"-1/2",(3,1):"-1/2"},
+      {(0,1):"-1/2",(1,0):"1/2",(2,3):"1/2",(3,2):"-1/2"}]
+hyper={(0,1):"-1/2",(1,0):"1/2",(2,3):"-1/2",(3,2):"1/2"}
+for a in range(4):
+    for i in range(3):
+        terms=[q(coord("dH",a,i))]
+        for b in range(4):
+            for k in range(3):
+                if (a,b) in weak[k]: terms.append("gw*("+weak[k][a,b]+")*"+q(coord("W",k,i))+"*"+q(coord("H",b)))
+            if (a,b) in hyper: terms.append("gy*("+hyper[a,b]+")*"+q(coord("B",0,i))+"*"+q(coord("H",b)))
+        forms[f"covH{a}{i}"]=reduce(expression(terms))
+forms["wall"]=reduce(expression([q(coord("H",a))+"*"+q(coord("H",a)) for a in range(4)]+["-vev*vev"]))
+assert len(forms)==49
+active=[coord("G",a,i) for a in range(8) for i in range(3)]+[coord("W",a,i) for a in range(3) for i in range(3)]+[coord("B",0,i) for i in range(3)]+[coord("H",a) for a in range(4)]
+assert len(set(active))==40
+
+# Derive the bosonic Legendre expression with all squares still factorized.
+kinetic=expression(["(1/2)*"+p(m)+"*"+p(m) for m in active])
+potential=expression([("lam/4" if name=="wall" else "1/2")+"*("+str(ex)+")*("+str(ex)+")" for name,ex in forms.items()])
+lagrangian=Ex("("+str(kinetic)+")-("+str(potential)+")")
+legendre=Ex("2*("+str(kinetic)+")-("+str(lagrangian)+")")
+direct=Ex("("+str(kinetic)+")+("+str(potential)+")")
+checkzero("bosonic_legendre",Ex("("+str(legendre)+")-("+str(direct)+")"))
+
+# Kinetic spin matrices are the actual book/ChapterCPTHamiltonian frame:
+# alpha_L=(-sigma1,+sigma3,+sigma2), alpha_R=-alpha_L.
+# Scalar spin/internal matrix elements; their coefficients commute. CAR order
+# is supplied by the exact Rust cdag_row*c_col construction after import.
+sigma=[{(0,1):"1",(1,0):"1"},{(0,1):"-I",(1,0):"I"},{(0,0):"1",(1,1):"-1"}]
+spin_sigma=[sigma[0],{pair:"-("+value+")" for pair,value in sigma[2].items()},
+    {pair:"-("+value+")" for pair,value in sigma[1].items()}]
+color=[{(0,1):"1/2",(1,0):"1/2"},{(0,1):"-I/2",(1,0):"I/2"},
+    {(0,0):"1/2",(1,1):"-1/2"},{(0,2):"1/2",(2,0):"1/2"},
+    {(0,2):"-I/2",(2,0):"I/2"},{(1,2):"1/2",(2,1):"1/2"},
+    {(1,2):"-I/2",(2,1):"I/2"},{(0,0):"1/(2*rtthree)",(1,1):"1/(2*rtthree)",(2,2):"-1/rtthree"}]
+species=[("u",0,3),("d",12,3),("n",24,1),("e",28,1)]
+mode=lambda g,offset,c,ch,s:32*g+offset+4*c+2*ch+s
+charges={(0,0):"1/6",(12,0):"1/6",(24,0):"-1/2",(28,0):"-1/2",
+    (0,1):"2/3",(12,1):"-1/3",(24,1):"0",(28,1):"-1"}
+matrix={}
+def add(row,col,term): matrix.setdefault((row,col),[]).append(term)
+for _,offset,ncolor in species:
+    for g in range(3):
+        for c in range(ncolor):
+            for ch in range(2):
+                for j in range(3):
+                    for (s,t),value in spin_sigma[j].items():
+                        alpha=("-" if ch==0 else "")+"("+value+")"
+                        row=mode(g,offset,c,ch,s);col=mode(g,offset,c,ch,t)
+                        add(row,col,alpha+"*"+p(j))
+                        if charges[offset,ch]!="0": add(row,col,alpha+"*gy*("+charges[offset,ch]+")*"+q(coord("B",0,j)))
+                        if ncolor==3:
+                            for a in range(8):
+                                for other in range(3):
+                                    if (c,other) in color[a]: add(row,mode(g,offset,other,ch,t),alpha+"*gs*("+color[a][c,other]+")*"+q(coord("G",a,j)))
+                        if ch==0:
+                            offsets=[0,12] if offset in [0,12] else [24,28]
+                            w=offsets.index(offset)
+                            for a in range(3):
+                                for v,target in enumerate(offsets):
+                                    if (w,v) in sigma[a]: add(row,mode(g,target,c,0,t),alpha+"*gw/2*("+sigma[a][w,v]+")*"+q(coord("W",a,j)))
+
+doublet=[q(147)+"/rttwo+I*"+q(148)+"/rttwo",q(149)+"/rttwo+I*"+q(150)+"/rttwo"]
+partner=[q(149)+"/rttwo-I*"+q(150)+"/rttwo","-"+q(147)+"/rttwo+I*"+q(148)+"/rttwo"]
+for name,right,lefts,ncolor,up in [("yu",0,[0,12],3,True),("yd",12,[0,12],3,False),
+    ("yn",24,[24,28],1,True),("ye",28,[24,28],1,False)]:
+    for gl in range(3):
+        for gr in range(3):
+            for c in range(ncolor):
+                for s in range(2):
+                    for w,left in enumerate(lefts):
+                        value=(partner if up else doublet)[w]
+                        row=mode(gl,left,c,0,s);col=mode(gr,right,c,1,s)
+                        add(row,col,f"{name}{gl}{gr}*("+value+")")
+                        add(col,row,f"c{name}{gl}{gr}*("+value.replace("I","(-I)")+")")
+matrix={pair:reduce(expression(terms)) for pair,terms in matrix.items()}
+matrix={pair:ex for pair,ex in matrix.items() if str(ex)!="0"}
+assert len(matrix)==1152
+
+# Hermiticity, charge/generation completeness and retained inner constant.
+conjugation=Ex("I -> -I, "+", ".join(f"{prefix}{g}{h} -> c{prefix}{g}{h}, c{prefix}{g}{h} -> {prefix}{g}{h}" for prefix in ["yu","yd","yn","ye"] for g in range(3) for h in range(3)))
+# Simultaneous conjugation via two passes prevents replacement cycles.
+rules1=Ex("I -> -I, "+", ".join(f"{prefix}{g}{h} -> temp{prefix}{g}{h}, c{prefix}{g}{h} -> {prefix}{g}{h}" for prefix in ["yu","yd","yn","ye"] for g in range(3) for h in range(3)))
+rules2=Ex(", ".join(f"temp{prefix}{g}{h} -> c{prefix}{g}{h}" for prefix in ["yu","yd","yn","ye"] for g in range(3) for h in range(3)))
+for (r,s),ex in matrix.items():
+    reverse=matrix[s,r].copy();substitute(reverse,rules1);substitute(reverse,rules2)
+    difference=Ex("("+str(ex)+")-("+str(reverse)+")")
+    reduce(difference)
+    if str(difference)!="0": raise AssertionError("matter Hermiticity: "+str((r,s))+" "+str(difference))
+print("SM_CHECK|matter_hermiticity_all_1152_entries|0")
+assert set(r for r,s in matrix)==set(range(96))
+print("SM_CHECK|all_96_matter_coordinates|0")
+
+def latex_export(ex):
+    text=ex._latex_().replace(r"\discretionary{}{}{}","").replace(r"\,"," ")
+    text=re.sub(r"\{(\d+)\s+\}",r"{\1}",text)
+    # mathhook requires explicit multiplication; only scalar coefficient
+    # polynomials cross this bridge. Every space between factors is a product.
+    text=re.sub(r"\s+", " ",text).strip()
+    text=re.sub(r"(?<=[}\w)])\s+(?=[\\\w(])", " * ",text)
+    return text
+for m in active: print("SM_LATEX|kin"+str(m)+"|"+latex_export(Ex(p(m))))
+for name,ex in forms.items(): print("SM_LATEX|"+name+"|"+latex_export(ex))
+for (r,s),ex in sorted(matrix.items()): print(f"SM_LATEX|matter{r}x{s}|"+latex_export(ex))
+print("SM_COMPLETE|163|40|49|96|1152")

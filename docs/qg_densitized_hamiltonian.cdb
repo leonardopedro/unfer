@@ -1,3 +1,19 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# Densitized base-kinetic comparison chart, not the QG record.
+# Algebraic absorption of 1/e does not prove ESA, a domain transfer or a gap.
+# The exact wall and coupled R^2 terms still need their separate transfer.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
 #
@@ -35,9 +51,9 @@
 #   (1/24e) P^2            -> (1/24) \tilde P^2
 # giving the FLAT hyperbolic operator in field space (constant coefficients):
 #   H_0 = (1/16) Delta_{\tilde S} - (1/24) d^2/dy^2
-# By Strichartz's theorem (1973) a flat d'Alembertian on L^2(R^N) with smooth
-# polynomial potentials is essentially self-adjoint (finite signal speed in
-# field space). Hence the transformed Hamiltonian is 100% ESA. The regular
+# The flat principal-part identity alone does not prove ESA of a full
+# Hamiltonian with arbitrary potentials. Coordinate ranges, boundary conditions,
+# graph cores and perturbation hypotheses require separate Lean proofs. The regular
 # remainder H_1 - \tilde V(\tilde e, d\tilde e) holds the 1/2 S·E + 1/3 P·E
 # terms (regular, no 1/e) and the -e(...) block, which becomes -y^2(...)
 # (regular, vanishing at e -> 0).

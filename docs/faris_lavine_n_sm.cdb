@@ -1,124 +1,41 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# SM/QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# SM comparison/inner derivation. General product Fourier checks
+# do not extend the NS/QG-only spatial-derivative elimination work order.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
-# MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
+# SM COMPARISON AUDIT (2026-11-09c; Cadabra2 2.5.14 executed)
+# Reference: book.tex and timepiece/SM_ESA_COMPLETION_PLAN.md.
+# The physical record is H_SM=dGamma(h_SM), all inner terms retained.
+# Hashimoto-SIRK physical tests must approximate that exact nested operator.
 #
-# Purpose: the Standard-Model counterpart of the Faris-Lavine comparison
-#   modules: h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa in the temporal
-#   (Weyl) gauge, with the non-abelian magnetic fields, the Higgs
-#   potential, the covariant derivatives, the CKM/PMNS-carrying Yukawa
-#   couplings, and the comparison operator N = N_0 + c_0 I (quartic in the
-#   non-abelian/Higgs fields, quadratic in derivatives and abelian pairs,
-#   plus the 3D oscillator per fermion).
-# Role in the program: the algebraic content of the three Faris-Lavine
-#   hypotheses IN FULL for the SM, including Higgs, quarks/CKM and
-#   leptons/PMNS. The Lean work order is section D6b-SM of
-#   ../timepiece/CONSOLIDATED_PLAN.md; this module is what that order means
-#   term by term.
-# Certified content: CHECK 1-28, exit 0, every check -> 0 (CHECK 9c is
-#   informational c_0-1): commutator shapes and orders (hypotheses ii/iii),
-#   domination/Young/Schwarz identities, Higgs assembly, CKM/PMNS
-#   biunitarity and row unitarity, Yukawa domination with mixing factors.
-# Honest boundaries: the Grassmann/CAR algebra and ghost sector, the
-#   spinor/Lorentz structure of h_Dirac, measured mixing parameters, and
-#   all Hilbert-space statements are NOT certified here — they are Lean's.
-#   See docs/VERIFY_SM_FARIS_LAVINE.md.
-# Improvement notes (goal alignment): the quartic+quadratic mix of N_0 is
-#   load-bearing (it is what terminates the commutator ladder) — any
-#   simplification of N_0 must re-run all 28 checks. Add new CHECKs for the
-#   infinitely-many-fermion-modes refinement when the Lean side states it.
+# IMPORTANT: legacy CHECK 1-28 compute scalar identities/commutator shapes
+# for an uncoupled quartic N_0. They DO NOT prove the full Faris-Lavine
+# hypotheses. First differential order does not imply domination by N_0;
+# CHECK 4a produces q^6, which is not bounded by a constant times q^4.
+# Lean replaced this failed comparison by smFlN=2 h_B+sum_active q^2+c.
+# New CHECK 31-33 verify scalar cancellation/linear-coupling templates for
+# that route; full-domain inequalities and full matter assembly remain Lean work.
+#
+# Legacy algebra/extraction handles remain for reproducibility. Read every
+# old "HYPOTHESIS" label as a historical candidate, not an established bound.
+# CKM/PMNS rows are matrix identities, not measured parameter proofs. The
+# manuscript has right-handed neutrinos without Majorana mass terms.
+# Finite CAR/BRST algebra does not prove a reducing physical Hilbert space.
+# The temporal-slice accounting rows retain their stated A_0=0 hypotheses.
+# Run: cadabra2-cli -q -n docs/faris_lavine_n_sm.cdb
+# Current scope and pending validation: docs/SM_HAMILTONIAN_AUDIT.md.
 # ======================================================================
-# The Standard Model single-particle operator h and its Faris-Lavine comparison N
-# on the nested Fock space (temporal / Weyl gauge A_0 = W_0 = B_0 = 0).
-#
-# This is the SM counterpart of `faris_lavine_n_ns.cdb` (Navier-Stokes) and
-# `faris_lavine_n_qg.cdb` (quantum gravity): it writes down the one-particle operator
-#
-#     h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa
-#
-# acting on the single-particle space of the collective configuration
-#     xi = ( x , {G^a_i, G^a_{i,j}}, {W^k_i, W^k_{i,j}}, {B_i, B_{i,j}},
-#              {phi_a, phi_{a,j}}, zeta_F )
-# (bosonic dimension D_B = 163; the discrete Grassmann coordinates zeta_F carry the ghosts and
-# three generations of Majorana fermions), together with the positive comparison operator
-#
-#     N = N_0 + c_0 I ,
-#     N_0 = sum_{a,i}  ( (pi^G_a,i)^2 + (G^a_i)^4 + sum_j (G^a_{i,j})^2 )
-#         + sum_{k,i}  ( (pi^W_k,i)^2 + (W^k_i)^4 + sum_j (W^k_{i,j})^2 )
-#         + sum_i      ( (pi^B_i)^2   + (B_i)^2     + sum_j (B_{i,j})^2 )
-#         + sum_a      ( (pi^phi_a)^2 + (phi_a)^4   + sum_j (phi_{a,j})^2 )
-#         + sum_m      Psi_m^dag ( -Delta_x + |x|^2 + 1 ) Psi_m ,
-#
-# and verifies the ALGEBRAIC CONTENT of the three Faris-Lavine hypotheses
-# (`FarisLavine.essentiallySelfAdjointOn_of_farisLavine`; Faris-Lavine 1974, Corollary 1.1):
-#
-#   (i)   +- h <= c_1 N                                   (relative domination)
-#   (ii)  |<psi,[h,N]psi>|        <= c_2 <psi,N psi>       (first commutator)
-#   (iii) |<psi,[N,[N,h]]psi>|    <= c_3 <psi,N^2 psi>     (second commutator, form sense)
-#
-# THE ONE STRUCTURAL FACT THIS MODULE IS BUILT ON.  The confinement in N is QUARTIC in the
-# non-abelian fields and the Higgs (G^4, W^4, phi^4) and QUADRATIC in the derivatives and in
-# the abelian field/momentum pairs.  This is what makes the commutator ladder terminate at the
-# right order: one commutation with N removes one power of (q,p) and lowers the degree, so
-# [h,N] is first order and is dominated by N (hypothesis (ii)), and the double commutator
-# [N,[N,h]] is quadratic in p and low degree in q, dominated by N^2 (hypothesis (iii)).
-# With a merely quadratic confinement the commutator would be first order but the *upper*
-# domination of h (cubic/quartic magnetic and Higgs terms) would fail; with a purely quartic
-# confinement no momentum pairing would be available.  The quartic-plus-quadratic mix is what
-# the checks below certify.
-#
-# WHAT A .cdb MODULE CANNOT CERTIFY.  A `.cdb` module is a symbolic engine on classical
-# expressions.  It certifies: the canonical-pair commutator shapes (by explicit
-# differentiation), the elementary domination/AM-GM identities, the sector coefficient
-# arithmetic, and the core side (that N_0 is a sum of positive confining operators, with the
-# oscillator/core factorisation for its quadratic part).  It does NOT certify: the Hilbert-space
-# statements (symmetry of h on C_c^inf, positivity of N as a form, N + 1 onto, the graph-core
-# approximation, existence of the Friedrichs extension), the Grassmann/fermion CAR algebra and
-# the ghost sector, the actual CAR/Fock lift, or the spinor/Lorentz structure of h_Dirac.  Those
-# are proved in Lean (the Faris-Lavine machinery in `BookProof.ChapterFarisLavineCore`,
-# `ChapterFarisLavineOnly`, the core-transfer / dGamma-ESA wave in
-# `ChapterSecondQuantizationCoreEsa`).  See `docs/VERIFY_FARIS_LAVINE_N.md`.
-#
-# PART D/E EXTENSION (2026-09-22): the Higgs sector, the CKM matrix, the quark
-# covariant derivative, AND the lepton sector (charged leptons + three right-handed
-# neutrinos, with the PMNS matrix as the lepton analogue of CKM) are now certified
-# in full inside the three hypotheses:
-#   CHECK 12  (W.tau)^2 = |W|^2                          — Higgs weak kinetic
-#   CHECK 13  3-sum Young for D_phi = d phi + g W.tau/2 phi + g' sigma3/2 B phi
-#   CHECK 14  W^4+phi^4-2W^2 phi^2 = (W^2-phi^2)^2        — |W|^2|phi|^2 into N_0
-#   CHECK 15  B^4+phi^4-2B^2 phi^2 = (B^2-phi^2)^2        — hypercharge cross-term
-#   CHECK 16  [h_H,N_H] first order with the FULL V(phi)   — hyp (ii), Higgs
-#   CHECK 17  Cabibbo V V^T = I (given c^2+s^2=1)          — CKM unitarity, 2x2
-#   CHECK 18  (V D)^T(V D) = D^2                           — biunitary M_u = U_L V^dag D U_R^dag
-#   CHECK 19  1-V11^2 = V12^2+V13^2                        — |V_ij| <= 1 from row unitarity
-#   CHECK 20  (v phi - F)^2 >= 0                           — Yukawa with CKM factor
-#   CHECK 21  (G^2-1)^2 >= 0                               — quark covariant D, color
-#   CHECK 22  [N,[N,h_H]] free of d^k X, k>=3              — hyp (iii), Higgs
-#   CHECK 23  c_1^H = 1/2 + C_kin + C_V finite             — hyp (i), Higgs assembly
-#   CHECK 24  4-sum Young for D = grad+G+W+B               — hyp (i), quark covariant D
-#   CHECK 25  PMNS U U^T = I (2x2 Pontecorvo form)         — lepton mixing unitarity
-#   CHECK 26  (U D)^T(U D) = D^2                           — biunitary M_nu / M_e
-#   CHECK 27  1-U11^2 = U12^2+U13^2                        — |U_ij| <= 1 (PMNS row)
-#   CHECK 28  (v_nu phi - F)^2 >= 0                        — Yukawa with PMNS factor
-#
-# LEPTON SECTOR (book.tex: "The lepton sector with three right handed neutrinos
-# is analogous in the absence of Majorana masses").  The Yukawa row is
-#   L_L^dag gamma^0 M_e phi e_R + L_L^dag gamma^0 (i sigma_2) M_nu phi nu_R + h.c.
-# with the biunitary decompositions
-#   M_e  = U_L^e diag(m_e,m_mu,m_tau) U_R^{e dag},
-#   M_nu = U_L^nu diag(m_1,m_2,m_3) U_R^{nu dag},
-# and the PMNS matrix U = U_L^{e dag} U_L^nu entering the neutrino Yukawa after
-# rotating to the charged-lepton mass basis.  CHECK 25-28 certify the PMNS
-# unitarity identities that the lepton/Yukawa domination estimates consume,
-# exactly as CHECK 17-20 do for CKM.  book.tex does not spell out U explicitly;
-# this module records the standard lepton analogue of its CKM structure.
-# Majorana masses / see-saw are OUT (book.tex works in their absence).
-#
-# Run: cadabra2-cli -q -n <this file>          (exit 0; every *_check → 0)
-# Formalized in: ../timepiece/Book/StandardModel.lean (tag "standard-model") - reader-facing chapter.
-#
-# GOTCHA (same engine as the sibling modules): a single-element property list `{c}::Commuting.`
-# aborts with "A list property cannot be assigned to a single object" — declare at least two
-# symbols together; and `@(name)` mis-resolves names whose stem before the first `_` is shorter
-# than four characters, so all names inserted with `@()` below avoid that pattern.
 
 \partial{#}::PartialDerivative.
 q::Depends(\partial{#}).
@@ -131,7 +48,8 @@ X::Depends(\partial{#}).
 # cross derivatives vanish.)
 drules = Ex(r"\partial_{1}{q} -> 1, \partial_{2}{d} -> 1, \partial_{1}{d} -> 0, \partial_{2}{q} -> 0, "
             r"\partial_{1 1}{q} -> 0, \partial_{1 1 1}{q} -> 0, \partial_{1 1 1 1}{q} -> 0, "
-            r"\partial_{2 2}{d} -> 0, \partial_{1}{gc} -> 0, \partial_{1 1}{gc} -> 0")
+            r"\partial_{2 2}{d} -> 0, \partial_{1}{gc} -> 0, \partial_{1 1}{gc} -> 0, "
+            r"\partial_{1}{c0} -> 0, \partial_{1 1}{c0} -> 0")
 
 def expand_derivs(ex, n):
 	"""Leibniz expansion of every nested partial derivative."""
@@ -139,7 +57,7 @@ def expand_derivs(ex, n):
 		product_rule(ex); distribute(ex); substitute(ex, drules, repeat=True); collect_terms(ex)
 
 # ============================================================================
-# PART A - THE THREE FARIS-LAVINE HYPOTHESES
+# PART A - LEGACY CANDIDATE IDENTITIES (NOT THE FARIS-LAVINE BOUNDS)
 # ============================================================================
 
 # ===== CHECK 1: the elementary canonical-pair commutators =====
@@ -161,8 +79,8 @@ print("CHECK 1b SM  [p^2,q^4] = -8 q^3 d - 12 q^2                   (0 = ok) :",
 #   [h1, N1] = -4 (1 - gc^2) q^3 d - 6 (1 - gc^2) q^2 ,
 # i.e. FIRST ORDER: the second-derivative term cancels.  (This is the shape the tree's
 # commutator lemmas claim: a constant plus symmetrised momentum-coordinate products, with the
-# potential entering only through its gradient.)  A first-order operator is dominated by N
-# (CHECK 4), which is hypothesis (ii).
+# potential entering only through its gradient.) First order alone does NOT
+# establish domination by N; the quartic candidate fails the required estimate.
 hN := (1/2) (-1) \partial_{1}{\partial_{1}{ (-\partial_{1}{\partial_{1}{X}} + q q q q X) }}
       + (1/2)(gc gc) q q q q (-\partial_{1}{\partial_{1}{X}} + q q q q X);
 Nh := -\partial_{1}{\partial_{1}{ ((-1/2)\partial_{1}{\partial_{1}{X}} + (1/2)(gc gc) q q q q X) }}
@@ -179,7 +97,7 @@ cd := -\partial_{2}{\partial_{2}{d d X}} + d d \partial_{2}{\partial_{2}{X}} + 4
 expand_derivs(cd, 6); collect_terms(cd)
 print("CHECK 2b SM  [p_d^2,d^2] = -4 d d_d - 2 (derivative coordinate) (0 = ok) :", cd)
 
-# ===== CHECK 3: HYPOTHESIS (iii) — the double commutator, dominated by N^2 =====
+# ===== CHECK 3: legacy double-commutator shape; no operator bound proved =====
 # The text's [p^2,[p^2,q^4]] = -12 q^2 p^2 + O(qp) (coefficient convention-dependent; the SHAPE
 # is what matters).  Here, by explicit differentiation:
 #   [p^2, A] X = 48 q^2 d^2 X + 96 q d X + 24 X        with A = [p^2, q^4] = -8 q^3 d - 12 q^2 .
@@ -190,15 +108,14 @@ p2A := -\partial_{1}{\partial_{1}{ @(Aop) }};
 Aofp2 := -8 q q q \partial_{1}{ (-\partial_{1}{\partial_{1}{X}}) } - 12 q q (-\partial_{1}{\partial_{1}{X}});
 com2 := @(p2A) - @(Aofp2) - (48 q q \partial_{1}{\partial_{1}{X}} + 96 q \partial_{1}{X} + 24 X);
 expand_derivs(com2, 8); sort_product(com2); canonicalise(com2); collect_terms(com2)
-print("CHECK 3  SM  [p^2,[p^2,q^4]] = 48 q^2 p^2 + 96 q p + 24     (0 = ok) :", com2)
+print("CHECK 3  SM  [p^2,[p^2,q^4]] = 48 q^2 d^2 + 96 q d + 24    (0 = ok) :", com2)
 
-# ===== CHECK 4: the AM-GM / Young identities that turn (ii) and (iii) into bounds =====
-# Hypothesis (ii): the first-order pieces q^3 d and the constant q^2 are dominated by
-# N1 = p^2 + q^4:  2 q^3 p <= q^6 + p^2  <= (q^4)^? — certified by the exact square identity
-#    q^6 + p^2 - 2 q^3 p = (q^3 - p)^2 >= 0 .
-# Hypothesis (iii): the double-commutator pieces q^2 p^2 are dominated by N1^2, whose expansion
-# contains p^4, 2 p^2 q^4 and q^8; certified by
-#    p^4 + q^4 - 2 p^2 q^2 = (p^2 - q^2)^2 >= 0 .
+# ===== CHECK 4: commuting-variable Young identities; failed comparison shortcut =====
+# q^6 + p^2 - 2 q^3 p = (q^3-p)^2 is an exact scalar identity.
+# It does NOT bound q^3 p by N1=p^2+q^4: q^6 is uncontrolled.
+# The second square is also a commuting-variable identity. Expanding an
+# operator square needs noncommuting order, domains and quadratic-form estimates;
+# these two printed zeros do not establish either Faris-Lavine bound.
 {psym, qsym}::Commuting.
 amgm_ii := (psym psym) + (qsym qsym qsym qsym qsym qsym) - 2 (qsym qsym qsym) psym;
 amgm_ii_fact := (qsym qsym qsym - psym) (qsym qsym qsym - psym);
@@ -218,7 +135,8 @@ print("CHECK 4b SM  p^4 + q^4 - 2 p^2 q^2 = (p^2-q^2)^2          (0 = ok) :", ch
 # with x = G_{,j} (the derivative coordinate) and G the field,
 #   |gs f x G^2| <= (1/2) x^2 + C gs^2 G^4 ,   because    (1/2) x^2 + (1/2) G^4 - x G^2
 #                                                     = (1/2)(x - G^2)^2 >= 0 ,
-# and G^4 is in N.  So no relative-boundedness hypothesis is needed — the confinement does it.
+# This supports a pointwise estimate for the old scalar model only; the live
+# comparison norm bound and flat gauge directions require separate operator proofs.
 {xc, Gc}::Commuting.
 young := (1/2)(xc xc) + (1/2)(Gc Gc Gc Gc) - xc (Gc Gc);
 young_fact := (1/2)(xc - Gc Gc)(xc - Gc Gc);
@@ -254,7 +172,9 @@ print("CHECK 7  SM  V(phi) + mu^4/(4lam) = (lam/4)(r2-mu^2/lam)^2 (0 = ok) :", c
 # The Yukawa terms are phi_a Psi^dag gamma^0 Psi, i.e. a scalar times a fermion bilinear; with
 # |phi| = phi and F = Psi^dag Psi >= 0 (the fermion number density),
 #   |phi F| <= (1/2)(phi^2 + F^2) ,
-# and phi^2, F^2 are dominated by the phi^4 / |x|^2 confining terms of N.  The identity:
+# the scalar identity below has no spinor matrix or domain content. In a finite
+# internal CAR representation use its proved operator norm; in an infinite-mode
+# representation establish the required energy/number bounds independently.
 {phi2sym, Fsym}::Commuting.
 yukawa := (1/2)(phi2sym phi2sym) + (1/2)(Fsym Fsym) - phi2sym Fsym;
 yukawa_fact := (1/2)(phi2sym - Fsym)(phi2sym - Fsym);
@@ -267,15 +187,16 @@ print("CHECK 8  SM  (1/2)phi^2 + (1/2)F^2 - phi F = (1/2)(phi-F)^2  (0 = ok) :",
 #  * the non-abelian/Higgs summands  p^2 + q^4  (quartic confinement), a sum of squares with
 #    integrand  (dX)^2 + q^4 X^2 >= 0 ;
 #  * the abelian summand  p^2 + q^2  (quadratic confinement), the oscillator p^2 + q^2, which
-#    factorises as a^dag a + 1 with a = d + q and has the ARITHMETIC spectrum 2(n+1):
+#    factorises as a^dag a + 1 with a = d + q and has spectrum 2n+1:
 #        (-d + q)(d + q) X = -d^2 X + q^2 X - X ,
 #    i.e.  p^2 + q^2 = a^dag a + 1,  [a,a^dag] = 2,  (a^dag a) X = (p^2 + q^2)X - X ;
 #  * the derivative summands  p_d^2 + d^2  (same oscillator), and the fermionic summand
 #    Psi^dag (-Delta_x + |x|^2 + 1) Psi (the 3D oscillator).
-# Sums of uncoupled positive operators of this kind are essentially self-adjoint on the
-# compactly supported smooth core C_c^inf (the quartic and quadratic confinements dominate), so
-# N qualifies as the Faris-Lavine comparison AND is itself ESA on that core — obligation (i) of
-# the plan's section D6b.
+# These historical candidate summands are not the live comparison. Their scalar
+# identities neither construct the physical matter space nor establish the norm
+# and commutator bounds for h. CHECK 9a/9b repeat a specified expression on both
+# sides; they are bookkeeping, not independent factorization/core proofs.
+# The actual smFlN ESA/core argument is in Lean; full matter extension is P3/P4.
 adag_aX := -\partial_{1}{\partial_{1}{X}} + q q X - X;
 osc := @(adag_aX) - (-\partial_{1}{\partial_{1}{X}} + q q X - X);
 distribute(osc); collect_terms(osc)
@@ -348,7 +269,7 @@ print("CHECK 11 SM  c_1 = 1/2 + C_A + C_H + C_D + C_Y (finite)      (0 = ok) :",
 
 # ============================================================================
 # PART D - THE HIGGS SECTOR, THE CKM MATRIX, AND THE QUARK COVARIANT DERIVATIVE
-# (full SM extension of the Faris-Lavine hypotheses; CHECK 12-24)
+# (legacy Higgs/mixing scalar and matrix identities; CHECK 12-24)
 # ============================================================================
 
 # ===== CHECK 12: the Pauli/weak generators square to |W|^2 =====
@@ -375,7 +296,8 @@ print("CHECK 12 SM  (W.tau)^2 = |W|^2 (Higgs covariant kinetic)    (0 = ok) :", 
 # ===== CHECK 13: |a+b+c|^2 <= 3(|a|^2+|b|^2+|c|^2) for D_i phi =====
 # 3(a^2+b^2+c^2) - (a+b+c)^2 = (a-b)^2+(b-c)^2+(c-a)^2 >= 0.
 # Splits the Higgs kinetic |partial phi + g W.tau/2 phi + g' sigma3/2 B phi|^2
-# into derivative, weak, and hypercharge pieces, each dominated by N.
+# into derivative, weak, and hypercharge pieces. A live comparison bound
+# requires the separately proved operator estimates; this scalar identity is insufficient.
 {aa, bb, cc}::Commuting.
 lhsKin := 3 (aa aa + bb bb + cc cc) - (aa + bb + cc)(aa + bb + cc);
 rhsKin := (aa - bb)(aa - bb) + (bb - cc)(bb - cc) + (cc - aa)(cc - aa);
@@ -642,15 +564,13 @@ distribute(chk28); sort_product(chk28); canonicalise(chk28); collect_terms(chk28
 print("CHECK 28 SM (v_nu phi - F)^2 Yukawa with PMNS factor       (0 = ok) :", chk28)
 
 # ============================================================================
-# PART E - THE ASSEMBLED FARIS-LAVINE HYPOTHESES, HIGGS/CKM/PMNS INCLUDED
+# PART E - HISTORICAL ASSEMBLY ATTEMPT; NOT AN ESA CERTIFICATE
 # ============================================================================
-# Hypothesis (i):  +-h <= c_1 N  with c_1 = 1/2 + C_A + C_H + C_D + C_Y,
-#   where C_H now includes CHECK 13-15 (covariant kinetic), CHECK 7 (V),
-#   C_Y includes CHECK 8 + CHECK 20 (CKM) + CHECK 28 (PMNS) — the lepton and
-#   quark Yukawa rows are dominated by the same AM-GM once |V_ij|, |U_ij| <= 1 —
-#   and C_D includes CHECK 21 + CHECK 24 (quark covariant D).  CHECK 11 + 23 assemble.
-# Hypothesis (ii): [h,N] first order — CHECK 2 (gauge), CHECK 16 (Higgs).
-# Hypothesis (iii): [N,[N,h]] quadratic in p — CHECK 3 (gauge), CHECK 22 (Higgs).
+# CHECK 11/23 only sum proposed constants; they prove no full operator norm bound.
+# CHECK 2/16 show first differential order; CHECK 3/22 show a derivative shape.
+# Neither shape supplies the required commutator estimate. CHECK 4's q^6 term
+# refutes the claimed shortcut for N_0. Use smFlN for the proved bosonic result
+# and P0-P4 for the full operator. Finite mixing identities do not repair this.
 # Mixing unitarity consumed by the Yukawa rows: CHECK 17-19 (CKM/quarks),
 # CHECK 25-27 (PMNS/leptons).  CHECK 25-28 are the exact lepton mirrors of
 # CHECK 17-20 (book.tex: the lepton sector with three right-handed neutrinos
@@ -666,7 +586,7 @@ print("ALL SM HIGGS/CKM/PMNS/QUARK/LEPTON CHECKS DONE")
 # [G_c, A_{0d}] bracket, f_{abc} A_{0a} ghost coupling), so the whole term
 # vanishes.  Hence h and N need no extra gauge-fixing/ghost summand: the
 # accounting of h = h_Gauge + h_Higgs + ... and N = N_0 + c_0 I is already
-# complete.
+# represented on that slice, without proving the legacy comparison estimate.
 #
 # QYM: the same identity holds for pure Yang-Mills (su(2)/su(3) instances of
 # bookGfTerm) — the Weyl gauge may work with spatial components only.
@@ -711,3 +631,32 @@ distribute(chk30c); sort_product(chk30c); canonicalise(chk30c); collect_terms(ch
 print("CHECK 30c SM non-abelian ghost-field summand at A_0 = 0     (0 = ok) :", chk30c)
 
 print("ALL SM ACCOUNTING IDENTITY CHECKS DONE (QYM spatial-only; QG non-ADM)")
+
+# PART G: actual comparison cancellation and linear-coupling templates.
+# These are scalar core identities; no physical terms are dropped.
+activepot := (1/2) gc*gc*q*q*q*q + (1/2) d*d.
+newhN := -(1/2) \partial_{1}{\partial_{1}{
+    -\partial_{1}{\partial_{1}{X}} + 2*@(activepot)*X + q*q*X + c0*X }}
+    + @(activepot)*(-\partial_{1}{\partial_{1}{X}} + 2*@(activepot)*X + q*q*X + c0*X).
+newNh := -\partial_{1}{\partial_{1}{ -(1/2)*\partial_{1}{\partial_{1}{X}} + @(activepot)*X }}
+    + (2*@(activepot) + q*q + c0)*(-(1/2)*\partial_{1}{\partial_{1}{X}} + @(activepot)*X).
+newcancel := @(newhN) - @(newNh) + 2*q*\partial_{1}{X} + X.
+expand_derivs(newcancel, 12)
+sort_product(newcancel)
+canonicalise(newcancel)
+collect_terms(newcancel)
+print("CHECK 31 SM N=2h+q^2+c cancels potential from [h,N] (expect 0):", newcancel)
+if str(newcancel) != "0":
+    raise AssertionError("SM live comparison cancellation mismatch")
+linearcomm := -q*\partial_{1}{\partial_{1}{X}} + \partial_{1}{\partial_{1}{q*X}} - 2*\partial_{1}{X}.
+expand_derivs(linearcomm, 6)
+collect_terms(linearcomm)
+print("CHECK 32 SM linear coordinate coupling [q,p^2] (expect 0):", linearcomm)
+if str(linearcomm) != "0":
+    raise AssertionError("SM linear coordinate comparison mismatch")
+spatialcomm := \partial_{1}{q*q*X} - q*q*\partial_{1}{X} - 2*q*X.
+expand_derivs(spatialcomm, 6)
+collect_terms(spatialcomm)
+print("CHECK 33 SM spatial derivative versus oscillator coordinate square (expect 0):", spatialcomm)
+if str(spatialcomm) != "0":
+    raise AssertionError("SM spatial comparison mismatch")

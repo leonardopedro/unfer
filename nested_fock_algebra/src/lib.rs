@@ -5,8 +5,10 @@
 //! superpositions, and a symbolic [`cas`] compiler that maps field-theoretic
 //! Hamiltonians (`qphi + pipi`, Yang–Mills, Navier–Stokes) onto sparse
 //! operator structures. The `latex` / `typst_math` modules parse
-//! LaTeX/Typst math into those operators. Quadratic ordering strips pure
-//! scalar (zero-point) terms so that `⟨0|H|0⟩ = 0`.
+//! LaTeX/Typst math into those operators. The legacy CAS strips inner scalars
+//! and contractions; it is a comparison convention, not the physical enclosure.
+//! [`exact_inner`] supplies ordered action on joint inner boson/fermion states,
+//! followed by a single `dGamma` lift, retaining all contractions and constants.
 //!
 //! State trajectories are represented with sparse `FxHashMap` structures to
 //! absorb the exponential branching of high-order terms without expanding
@@ -621,6 +623,10 @@ mod tests {
     }
 }
 
+/// Legacy polynomial of outer-space operators. Each `Inner*` letter already
+/// acts as a one-body lift; multiplying letters multiplies those lifts.
+/// For the lift of a completed inner product, use [`exact_inner`]. An empty
+/// operator word is outer identity, not the lift of inner identity.
 #[derive(Debug)]
 pub struct Hamiltonian {
     pub terms: Vec<(Complex64, Vec<Operator>)>,
@@ -656,6 +662,10 @@ impl Hamiltonian {
         final_state
     }
 }
+
+/// Ordered inner action and its outer enclosure; independent of legacy CAS semantics.
+pub mod exact_inner;
+pub mod sm_full;
 
 pub mod cas;
 pub use cas::{

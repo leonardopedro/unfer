@@ -1,46 +1,20 @@
-//! Numerical validation of the full Standard-Model gauge-fixed Hamiltonian.
+//! Algebraic construction checks for the nested-Fock SM operator and legacy diagnostics.
 //!
-//! Companion to the symbolic module `docs/sm_gauge_fixed_hamiltonian.cdb`
-//! (CHECK 1–12) and to `docs/VERIFY_SM_GAUGE_FIXED.md`; the Faris–Lavine
-//! comparison side is covered by `sm_validation.rs` and the module
-//! `docs/faris_lavine_n_sm.cdb`.  Every test is a numerical identity of the
-//! module's certified content, evaluated in f64 to the exact-arithmetic
-//! tolerance class of the guide §6.  No SIRK solve here — the algebraic
-//! structure of the assembled Hamiltonian, in the style of
-//! `ns_sm_qg_momentum_convolution_validation.rs`.
+//! Physical validation must use Hashimoto-SIRK on the COMPLETE inner operator and its
+//! outer dGamma enclosure, as specified in docs/SM_HAMILTONIAN_AUDIT.md (N1-N5).
+//! This file supplies necessary identity/negative-control oracles, not a replacement
+//! physical model, a full SM builder test, or an ESA/mass-gap proof.
 //!
-//! 1. `sm_gf_weyl_legendre_energy_positive` — CHECK 1: the Weyl-gauge
-//!    Legendre transform gives `H = ½π² + ½B²`; with a random field the
-//!    magnetic energy is non-negative and `H = π² − L` at `π = ∂₀A`.
+//! The corrected curl uses independent derivative coordinates of the SM record,
+//! with consistent direction/component/color indices. The additional matrix checks
+//! catch independent field/momentum modes, lost quartic contractions, and inner
+//! constants incorrectly removed to enforce an outer-vacuum rule. All finite
+//! cutoffs and normalization conventions are explicit. Legacy CHECK 8's Wick-ordered
+//! comparison has zero INNER vacuum expectation; actual outer annihilation follows
+//! from the final enclosure without deleting any inner term.
 //!
-//! 2. `sm_gf_magnetic_field_abelian_reduction` — CHECK 2–3: the magnetic
-//!    field `B_i = ½ε_{ijk}(∂_j A_k − ∂_k A_j + g f_{abc}A_jb A_kc)`
-//!    reduces to the curl `ε_{ijk}∂_j A_k` when `g = 0` — checked on a
-//!    random discrete field by explicit ε contraction.
-//!
-//! 3. `sm_gf_higgs_completed_square` — CHECK 4: `V = λ(x − μ²/2λ)² − μ⁴/4λ`
-//!    with `x = φ†φ`, numerically for random parameters.
-//!
-//! 4. `sm_gf_higgs_minimum_and_bound` — CHECK 5: `V'(μ²/2λ) = 0` and
-//!    `V ≥ −μ⁴/4λ` everywhere (the bounded Mexican hat).
-//!
-//! 5. `sm_gf_car_algebra_and_vacuum` — CHECK 7: `{ψ, ψ†} = 1` on the
-//!    2×2 (single-mode Jordan–Wigner) representation, and the normal-
-//!    ordered bilinear has zero vacuum expectation.
-//!
-//! 6. `sm_gf_bosonic_zero_point_strip` — CHECK 8: `(a†+a)² = a†a† + 2a†a
-//!    + aa + 1` as matrices on a truncated Fock space, and stripping the
-//!    scalar +1 makes `⟨0|H|0⟩ = 0` (the outer-vacuum ground doctrine).
-//!
-//! 7. `sm_gf_brst_abelian_limit_assembly` — CHECK 10: the BRST charge
-//!    `G = c^j D_jlμ π^μl + c^j f^l_jk A^k_μ π^μl + ½i f^l_jk c^j c^k b_l`
-//!    reduces to `c ∂ π` when the structure constants vanish — checked as
-//!    an identity of arrays, and the abelian charge squares to zero
-//!    (ghost anticommuting).
-//!
-//! 8. `sm_gf_symmetrization_factor_two` — CHECK 11: the anticommutator
-//!    `{π, V} = πV + Vπ` carries the factor 2 of the symmetrization
-//!    doctrine (S35 of the guide).
+//! Companion: docs/sm_gauge_fixed_hamiltonian.cdb. Changed/new symbolic checks await
+//! Cadabra execution; old transcripts do not validate changed expressions.
 
 use num_complex::Complex64;
 
@@ -69,61 +43,66 @@ fn sm_gf_weyl_legendre_energy_positive() {
 
 #[test]
 fn sm_gf_magnetic_field_abelian_reduction() {
-    // Discrete periodic grid, random A; B_i = eps_{ijk} d_j A_k + non-abelian.
-    // At g = 0 the second piece vanishes and B must equal the curl.
-    let n = 4usize;
-    let g = 0.0f64; // abelian limit (CHECK 3)
-    let f_abc = 0.37f64; // some structure-constant contraction value
-    // random field A[i][j][k][c]: position (i,j,k), color c
-    let mut a = vec![vec![vec![[0.0f64; 2]; n]; n]; n];
-    let mut seed = 1234567u64;
-    let mut next = move || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
+    // SM jet coordinates: derivative[direction][component][color], all independent.
+    // Use an SU(2) family; choosing f=-epsilon matches the book's weak sign.
+    let epsilon = |i: usize, j: usize, k: usize| -> f64 {
+        if i == j || j == k || i == k {
+            0.0
+        } else if (i, j, k) == (0, 1, 2) || (i, j, k) == (1, 2, 0) || (i, j, k) == (2, 0, 1) {
+            1.0
+        } else {
+            -1.0
+        }
     };
-    for ai in a.iter_mut() {
-        for aj in ai.iter_mut() {
-            for ak in aj.iter_mut() {
-                *ak = [next(), next()];
+    let field = [[0.7, -0.2, 0.4], [0.3, 0.8, -0.6], [-0.5, 0.1, 0.9]];
+    let mut derivative = [[[0.0; 3]; 3]; 3];
+    for (j, row) in derivative.iter_mut().enumerate() {
+        for (k, component) in row.iter_mut().enumerate() {
+            for (a, value) in component.iter_mut().enumerate() {
+                *value = 0.13 * (1 + 9 * j + 3 * k + a) as f64;
             }
         }
     }
-    // central differences on the periodic grid (unit spacing)
-    let d = |f: &Vec<Vec<Vec<[f64; 2]>>>, ix: usize, iy: usize, iz: usize, dir: usize, c: usize| {
-        let (ip, im) = match dir {
-            0 => ((ix + 1) % n, (ix + n - 1) % n),
-            1 => ((iy + 1) % n, (iy + n - 1) % n),
-            _ => ((iz + 1) % n, (iz + n - 1) % n),
-        };
-        match dir {
-            0 => (f[ip][iy][iz][c] - f[im][iy][iz][c]) / 2.0,
-            1 => (f[ix][ip][iz][c] - f[ix][im][iz][c]) / 2.0,
-            _ => (f[ix][iy][ip][c] - f[ix][iy][im][c]) / 2.0,
-        }
-    };
-    for ix in 0..n {
-        for iy in 0..n {
-            for iz in 0..n {
-                for c in 0..2 {
-                    // CHECK 2/3 content, scalar form of the epsilon identity:
-                    // ½(∂y Az − ∂z Ay) − ½(∂z Ay − ∂y Az) − (∂y Az − ∂z Ay) = 0
-                    // for any field values, and the g f A A term is killed by
-                    // g = 0 before it can contribute:
-                    let dy_az = d(&a, ix, iy, iz, 1, c);
-                    let dz_ay = d(&a, ix, iy, iz, 2, (c + 1) % 2);
-                    let b_def = 0.5 * (dy_az - dz_ay) - 0.5 * (dz_ay - dy_az);
-                    let b_curl = dy_az - dz_ay;
-                    let b_nonab = b_def + 0.5 * g * f_abc; // g = 0 kills the f-term
-                    assert!(
-                        (b_nonab - b_curl).abs() < 1e-13,
-                        "B must reduce to the curl at g = 0"
-                    );
+    let mut nonabelian_norm2 = 0.0;
+    for i in 0..3 {
+        for a in 0..3 {
+            let j_cyc = (i + 1) % 3;
+            let k_cyc = (i + 2) % 3;
+            let curl = derivative[j_cyc][k_cyc][a] - derivative[k_cyc][j_cyc][a];
+            let b_cyc = (a + 1) % 3;
+            let c_cyc = (a + 2) % 3;
+            let bracket_expected = -(field[j_cyc][b_cyc] * field[k_cyc][c_cyc]
+                - field[j_cyc][c_cyc] * field[k_cyc][b_cyc]);
+            let mut derivative_part = 0.0;
+            let mut bracket_part = 0.0;
+            for j in 0..3 {
+                for k in 0..3 {
+                    derivative_part +=
+                        0.5 * epsilon(i, j, k) * (derivative[j][k][a] - derivative[k][j][a]);
+                    for b in 0..3 {
+                        for c in 0..3 {
+                            bracket_part -= 0.5
+                                * epsilon(i, j, k)
+                                * epsilon(a, b, c)
+                                * field[j][b]
+                                * field[k][c];
+                        }
+                    }
                 }
             }
+            assert!((derivative_part - curl).abs() < 1e-13);
+            assert!((bracket_part - bracket_expected).abs() < 1e-13);
+            for g in [0.0, 0.7] {
+                let assembled = derivative_part + g * bracket_part;
+                assert!((assembled - curl - g * bracket_expected).abs() < 1e-13);
+            }
+            nonabelian_norm2 += bracket_part * bracket_part;
         }
     }
+    assert!(
+        nonabelian_norm2 > 0.1,
+        "the nonabelian control must be nonzero"
+    );
 }
 
 // ── 3. the Higgs completed square (CHECK 4) ────────────────────────────────
@@ -223,7 +202,7 @@ fn sm_gf_car_algebra_and_vacuum() {
     }
     assert!(
         psid_psi[0][0].norm() < 1e-14,
-        "⟨0|psi^dag psi|0⟩ must vanish (vacuum doctrine)"
+        "inner CAR vacuum expectation of psi^dag psi must vanish"
     );
 }
 
@@ -304,7 +283,7 @@ fn sm_gf_bosonic_zero_point_strip() {
     );
     // the stripped operator :u²: = a†a† + 2a†a + aa has zero vacuum
     // expectation — the compiler's pure-scalar drop is what makes
-    // ⟨0|H|0⟩ = 0:
+    // zero INNER expectation in that comparison:
     let stripped_vac = assembled[0][0];
     assert!(
         stripped_vac.norm() < 1e-12,
@@ -357,4 +336,143 @@ fn sm_gf_symmetrization_factor_two() {
         let sym = pi * v;
         assert!((bracket - 2.0 * sym).abs() < 1e-14, "{{pi, V}} = 2 sym");
     }
+}
+
+// Independent finite-matrix contracts for the replacement SM implementation.
+// These do not validate an unimplemented full 163-coordinate builder.
+type SmAuditMatrix = Vec<Vec<Complex64>>;
+
+fn sm_audit_mul(a: &SmAuditMatrix, b: &SmAuditMatrix) -> SmAuditMatrix {
+    let dim = a.len();
+    let mut out = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+    for i in 0..dim {
+        for j in 0..dim {
+            for k in 0..dim {
+                out[i][j] += a[i][k] * b[k][j];
+            }
+        }
+    }
+    out
+}
+
+fn sm_audit_sum(a: &SmAuditMatrix, b: &SmAuditMatrix, scale: Complex64) -> SmAuditMatrix {
+    let mut out = a.clone();
+    for i in 0..out.len() {
+        for j in 0..out.len() {
+            out[i][j] += scale * b[i][j];
+        }
+    }
+    out
+}
+
+fn sm_audit_ladders(dim: usize) -> (SmAuditMatrix, SmAuditMatrix) {
+    let mut ann = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+    let mut cre = ann.clone();
+    for n in 1..dim {
+        ann[n - 1][n] = Complex64::new((n as f64).sqrt(), 0.0);
+        cre[n][n - 1] = ann[n - 1][n];
+    }
+    (ann, cre)
+}
+
+#[test]
+fn sm_gf_canonical_pair_uses_one_mode_and_keeps_cutoff_defect() {
+    // q=(a†+a)/sqrt(2), p=i(a†-a)/sqrt(2), so [q,p]=i on interior states.
+    let dim = 7;
+    let (ann, cre) = sm_audit_ladders(dim);
+    let s = 1.0 / 2.0_f64.sqrt();
+    let mut q = sm_audit_sum(&cre, &ann, Complex64::new(1.0, 0.0));
+    let mut p = sm_audit_sum(&cre, &ann, Complex64::new(-1.0, 0.0));
+    for i in 0..dim {
+        for j in 0..dim {
+            q[i][j] *= s;
+            p[i][j] *= Complex64::new(0.0, s);
+        }
+    }
+    let comm = sm_audit_sum(
+        &sm_audit_mul(&q, &p),
+        &sm_audit_mul(&p, &q),
+        Complex64::new(-1.0, 0.0),
+    );
+    for i in 0..dim {
+        for j in 0..dim {
+            let expected = if i != j {
+                Complex64::new(0.0, 0.0)
+            } else if i == dim - 1 {
+                Complex64::new(0.0, -((dim - 1) as f64))
+            } else {
+                Complex64::new(0.0, 1.0)
+            };
+            assert!((comm[i][j] - expected).norm() < 1e-12);
+        }
+    }
+    // Negative control: q on factor 0 and p on factor 1 commute exactly.
+    // This is why independent field/momentum modes are not a canonical pair.
+    for i in 0..dim {
+        for j in 0..dim {
+            for k in 0..dim {
+                for l in 0..dim {
+                    let qp = q[i][j] * p[k][l];
+                    let pq = p[k][l] * q[i][j];
+                    assert!((qp - pq).norm() < 1e-14);
+                }
+            }
+        }
+    }
+    assert!((comm[0][0] - Complex64::new(0.0, 1.0)).norm() < 1e-14);
+}
+
+#[test]
+fn sm_gf_wick_quartic_changes_lower_degree_terms_not_just_a_constant() {
+    // Use padded ladders: four letters starting in levels <=3 never reach the cutoff.
+    // q here is the legacy unnormalized a†+a, to match its expression strings.
+    let dim = 9;
+    let (ann, cre) = sm_audit_ladders(dim);
+    let q = sm_audit_sum(&cre, &ann, Complex64::new(1.0, 0.0));
+    let q2 = sm_audit_mul(&q, &q);
+    let q4 = sm_audit_mul(&q2, &q2);
+    let aa = sm_audit_mul(&ann, &ann);
+    let cc = sm_audit_mul(&cre, &cre);
+    let ca = sm_audit_mul(&cre, &ann);
+    let wick2 = sm_audit_sum(
+        &sm_audit_sum(&cc, &ca, Complex64::new(2.0, 0.0)),
+        &aa,
+        Complex64::new(1.0, 0.0),
+    );
+    let mut wick4 = sm_audit_mul(&cc, &cc);
+    wick4 = sm_audit_sum(
+        &wick4,
+        &sm_audit_mul(&sm_audit_mul(&cc, &cre), &ann),
+        Complex64::new(4.0, 0.0),
+    );
+    wick4 = sm_audit_sum(&wick4, &sm_audit_mul(&cc, &aa), Complex64::new(6.0, 0.0));
+    wick4 = sm_audit_sum(
+        &wick4,
+        &sm_audit_mul(&cre, &sm_audit_mul(&aa, &ann)),
+        Complex64::new(4.0, 0.0),
+    );
+    wick4 = sm_audit_sum(&wick4, &sm_audit_mul(&aa, &aa), Complex64::new(1.0, 0.0));
+    for i in 0..4 {
+        for j in 0..4 {
+            let delta = if i == j { 3.0 } else { 0.0 };
+            let expected = 6.0 * wick2[i][j] + Complex64::new(delta, 0.0);
+            assert!((q4[i][j] - wick4[i][j] - expected).norm() < 1e-11);
+        }
+    }
+    assert!((q4[0][0] - wick4[0][0] - Complex64::new(3.0, 0.0)).norm() < 1e-12);
+    assert!((q4[1][1] - wick4[1][1] - Complex64::new(15.0, 0.0)).norm() < 1e-11);
+}
+
+#[test]
+fn sm_gf_scalar_shift_is_outer_number_term_not_vacuum_subtraction() {
+    // Finite diagonal one-particle reference with a retained positive inner constant.
+    let h = [0.5_f64, 1.5];
+    let shift = 0.7;
+    for (n0, n1) in [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1)] {
+        let energy = (n0 as f64) * h[0] + (n1 as f64) * h[1];
+        let shifted = (n0 as f64) * (h[0] + shift) + (n1 as f64) * (h[1] + shift);
+        assert!((shifted - energy - shift * ((n0 + n1) as f64)).abs() < 1e-14);
+    }
+    // The outer vacuum has energy zero even though the inner ground energy is 1/2.
+    assert!(h[0] > 0.0);
 }

@@ -15,10 +15,11 @@
 #
 # Stages, cheapest first (wall times are two-core measurements, release build):
 #
-#   test            86 tests                                    ~3 min
+#   test            117 tests (5 are `radial`'s)               ~30 min
 #   quick           the quick-config report                     ~20 s
 #   volume          §6.4(ii) Haar volume                        ~10 s
 #   mobility        §4.3 mobility/floor table                   ~1 min
+#   budget          the exact cap law + the dimension budget    ~3 min
 #   step-scale      §6.5.2 reduced config                       ~2 min
 #   step-scale-ref  §6.5.2 reference (θ_A, capped)              ~15 min
 #   mh-standard     §6.5.3 the standard stack under the filter  ~5 min
@@ -33,6 +34,20 @@
 #   adam-start      the Adam-solution start, both priors        ~25 min
 #   sphere          the Haar prior on directions, six cells     ~45 min
 #   cold-10k        §6.5.6(c) the 10 000-step ladder            ~2.7 h
+#   target-condition  §6.4–6.5 conditionals, exact: 4 radii +
+#                     the two cap-freeze controls + the radial law  ~60 min
+#   scale           the radial profile to the pole, the 4e-2 / 7.9e-2 cells
+#                   at 4 chains, and the P-scaling table (3 sizes)   ~60 min
+#   scale2          the profile's three follow-ups: the outer shells at
+#                   --thin 400, the small models' d* shells, and where
+#                   those small models are actually informative   ~90 min
+#   n-scaling       does the mode residual scale as N? (3 runs)  ~36 min
+#   mode-584        P = 584's mode radius, two rungs (0.00857/0.0195) ~45 min
+#   anchor-lr       lr vs N (7 anchor cells), two N = 2048 modes, and
+#                   the N = 8192 small-d band chain (~90 min)      ~3 h
+#   breadth         four shells at one N and one anchor            ~40 min
+#   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
+#   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
 # plus nothing long: it is the subset that fails fast when a change broke the
@@ -44,8 +59,9 @@ OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
   test quick volume mobility step-scale step-scale-ref mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
-  adam-start sphere curvature mode subspace basin basin-chains sphere-rep
-  sphere-ladder cold-10k
+  adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
+  sphere-ladder cold-10k target-condition scale scale2 n-scaling mode-584
+  anchor-lr breadth wide-radius rhat-null
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -134,6 +150,13 @@ run_stage() {
   subspace)
     cargo run --release -p pcnl --example subspace_bound
     ;;
+  budget)
+    # The anchor-drift canary: the exact cap law, the likelihood's purse and the
+    # dimension budget `m*` (2026-11-07).  It rebuilds the same Env every other
+    # stage does, so a change that moves `u_Adam` shows up here in three minutes
+    # rather than as a stale table a week later.
+    cargo run --release -p pcnl --example dimension_budget
+    ;;
   basin)
     # The target's own predictive: the 128-probe width sweep and the one-nat
     # radius it implies (~10 min).  The chains that go with it are separate
@@ -164,6 +187,199 @@ run_stage() {
     ;;
   cold-10k)
     ./scripts/pcnl-cold-10k
+    ;;
+  target-condition)
+    # 2026-11-07: the conditionals sampled instead of censored.  The cap arms
+    # are the control that shows why the latitude arm exists (0.0 % / 0.1 %
+    # acceptance, R̂ = ∞); the latitude ladder is converged (R̂ ≤ 1.04) and its
+    # four BMA numbers are the table in the status doc.  The last line prints
+    # the radial law: d* = 6.5 rad and N ≈ 3.4e6 for the basin.
+    cargo run --release -p pcnl --example basin_posterior -- \
+      10000 --no-sweep --chains 4 --cap
+    cargo run --release -p pcnl --example basin_posterior -- \
+      10000 --no-sweep --chains 4 --cap 2.3e-3
+    for spec in "8.61e-4 4.3e-4" "2.3e-3 1.15e-3" "1e-2 3e-3" "7.9e-2 3e-3"; do
+      set -- $spec
+      PCNL_PROGRESS=1 cargo run --release -p pcnl --example basin_posterior -- \
+        10000 --no-sweep --chains 2 --arm latitude --d0 "$1" --step "$2"
+    done
+    cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell
+    ;;
+  scale)
+    # The radial profile to the pole (the mode inequality), the two falloff
+    # cells at 4 chains, and the P-scaling table.  `--widths` replaces the
+    # default grid, `--shapes d,ff,layers` changes P.
+    #
+    # The profile grid must stop *short* of pi/2: `N·L'·tan d` is the exact mode
+    # residual, and tan flips sign just past the pole, so a 1.5708 row prints a
+    # sign-flipped artefact.  Use 1.5707 (2026-11-07: the whole-sphere grid's
+    # largest informative residual is 888 at 6e-2 vs P - 2 = 16 670).
+    for w in 1e-2,1.5e-2,2.5e-2,4e-2,6e-2,8e-2 \
+             2e-2,4e-2,6e-2,1e-1,2e-1,3e-1,4e-1,5e-1,6e-1,8e-1,1.0,1.2,1.4,1.5707; do
+      cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell --widths "$w"
+    done
+    cargo run --release -p pcnl --example basin_posterior -- \
+      10000 --no-sweep --chains 2 --arm latitude --d0 1.5e-2 --step 3e-3
+    cargo run --release -p pcnl --example basin_posterior -- \
+      20000 --no-sweep --chains 4 --arm latitude --d0 4e-2 --step 3e-3
+    cargo run --release -p pcnl --example basin_posterior -- \
+      30000 --no-sweep --chains 2 --arm latitude --d0 7.9e-2 --step 3e-3
+    for sh in 24,48,1 16,32,1 8,16,1; do
+      cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
+        --shapes "$sh" --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,1e-1
+    done
+    ;;
+  scale2)
+    # 2026-11-07: the three follow-ups the whole-sphere grid made possible.
+    #
+    # (a) The outer shells re-run with a thinning gap wide enough that R-hat
+    #     can separate thinning from mixing: 4 chains, 40 k steps, --thin 400
+    #     (~35 min each; `rhat-null` says what R-hat to expect if they are
+    #     stationary).  2026-11-07 at 4e-2: R-hat(NLL) 1.052 -> 1.003 and the
+    #     BMA is 44.92 % / 1.3506 against the old 44.92 % / 1.3519, so the old
+    #     cell's R-hat was thinning, exactly as its null predicted.
+    # (b) The small models' shells at their own mode radii d* = 0.217, 0.0905.
+    #     At P = 2192 the predictive is the base rate (no informative mass at
+    #     the mode); at P = 584 it is 3.5 points above its anchor but R-hat 7.2,
+    #     i.e. uncertified.  `--step` is set to the shell's own residual floor
+    #     (0.05 / 0.02 rad) so acceptance is not zero.
+    # (c) Where each small model is actually informative, for comparison with
+    #     (b): the same grid as the large model, truncated at 2*d*.
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 4e-2 --step 3e-3 --thin 400
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 7.9e-2 --step 3e-3 --thin 400
+    cargo run --release -p pcnl --example basin_posterior -- \
+      20000 --no-sweep --chains 4 --arm latitude --shapes 16,32,1 --d0 0.217 --step 0.05
+    cargo run --release -p pcnl --example basin_posterior -- \
+      20000 --no-sweep --chains 4 --arm latitude --shapes 8,16,1 --d0 0.0905 --step 0.02
+    cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
+      --shapes 16,32,1 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,1e-1,2.17e-1
+    cargo run --release -p pcnl --example basin_posterior -- 200 --chains 1 --arm shell \
+      --shapes 8,16,1 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,9.05e-2
+    ;;
+  rhat-null)
+    # What a stationary chain reports as split R-hat when its kept draws are
+    # still correlated: the null the outer-shell cells in the status doc are
+    # read against.  Pure Python, ~11 s.
+    ./scripts/pcnl-rhat-null
+    ;;
+  n-scaling)
+    # The data requirement ("N ≈ 3.4e6") was a one-point extrapolation of the
+    # sweep's `N·medΔL` column from N = 512.  Two knobs test the premise, and
+    # the probe directions are the same across runs, so the comparison is
+    # paired: `--n-train` (4x the dataset) and `--adam-steps` (how converged
+    # the anchor is — which is what the small-width column really measures).
+    # Measured: below 1e-3 rad the column moves 10-60x with the anchor, at
+    # 1e-2 and out it does not move at all.  ~12 min per run at 128 probes.
+    for extra in "" "--n-train 2048" "--adam-steps 8000"; do
+      cargo run --release -p pcnl --example basin_posterior -- 1 --probes 128 \
+        --widths 1e-3,2.3e-3,5e-3,1e-2,4e-2 $extra
+    done
+    ;;
+  mode-584)
+    # The chain at the *mode* radius rather than a basin one: P = 584, N = 8192,
+    # d* = 0.00857 rad from the N ladder.  The sweep cannot see that radius
+    # (ESS 1.0 from 1e-2 out), so the chain is the only instrument — and it
+    # converges: R-hat(NLL) 1.0498 sits below the null's mean of 1.328 at
+    # r_eff = 2e-3*sqrt(0.0073) = 1.70e-4.  The predictive there is
+    # 24.61 % / 1.6005 against an anchor of 21.88 % / 1.5988: +2.7 accuracy
+    # points, no NLL.  Read it against
+    # `./scripts/pcnl-rhat-null 8.57e-3 1.70e-4 20000 20 4 1.0498`.
+    # ~35 min, and the cost is the train set: a step at N = 8192 is 16x a step
+    # at N = 512, which is why this shell is priced in relaxation times
+    # (tau = (sin d0/r)^2 = 18 steps) rather than in steps.
+    #
+    # The second rung is the same protocol at N = 2048, d* = 0.0195, where the
+    # mode is *worse* than its anchor (19.53 % / 1.7838 vs 22.66 % / 1.7467):
+    # the pair is what makes the mode's value scale with N, from -3.1 points and
+    # +0.037 NLL to +2.7 points and +0.0017 NLL.  Its R-hat 1.3702 is inside a
+    # loose null (tau 8788, 95 % [1.266, 2.978]), not certified.
+    # `./scripts/pcnl-rhat-null 1.95e-2 2.08e-4 20000 20 4 1.3702`
+    for cell in "8192 8.57e-3" "2048 1.95e-2"; do
+      set -- $cell
+      cargo run --release -p pcnl --example basin_posterior -- \
+        20000 --shapes 8,16,1 --n-train "$1" --no-sweep --chains 4 \
+        --arm latitude --d0 "$2" --step 2e-3 --burn 4000 --thin 20
+    done
+    ;;
+  anchor-lr)
+    # The anchor protocol does not transfer across N.  `adam` is full-batch with a
+    # fixed step, so lr 0.05 is an inverse length: stable at N = 512 (where the
+    # P = 16672 control improved monotonically 1.2532 -> 1.1136 -> 1.0962), 0.006
+    # nat short of the best cell at N = 2048, and the best cell itself at N = 8192
+    # and 16384.  Neither lr ∝ 1/N nor lr ∝ 1/sqrt(N) reproduces the best anchor
+    # at all three N: at N = 8192 the 1/N cell (0.003) costs 0.086 nat and the
+    # 1/sqrt(N) neighbour (0.0125) 0.013, while at N = 2048 0.0125 is 0.006 nat
+    # *better* than 0.05.  ~5 min per cell.
+    for cell in "2048 2000 0.05" "2048 2000 0.005" "2048 1000 0.0125" \
+      "2048 1000 0.006" "8192 1000 0.0125" "8192 2000 0.003" \
+      "16384 4000 0.0125"; do
+      set -- $cell
+      cargo run --release -p pcnl --example basin_posterior -- 1 --no-sweep \
+        --shapes 8,16,1 --n-train "$1" --chains 1 --adam-steps "$2" --adam-lr "$3"
+    done
+    # Then the mode that anchor implies: the sweep puts d* at 1.30e-2 rad and
+    # claims the base rate there, because its 1e-2 row has ESS 1.0.  The chain
+    # refutes it by 17.5 points (29.30 % / 1.7611 against the anchor's
+    # 28.12 % / 1.7318) -- the sharpest illustration in the study of why an ESS-1
+    # row is one probe and not a measurement.
+    cargo run --release -p pcnl --example basin_posterior -- 1 --shapes 8,16,1 \
+      --n-train 2048 --probes 128 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,9e-2 \
+      --adam-steps 2000 --adam-lr 0.005
+    cargo run --release -p pcnl --example basin_posterior -- 20000 --shapes 8,16,1 \
+      --n-train 2048 --no-sweep --chains 4 --arm latitude --d0 1.3e-2 --step 2e-3 \
+      --burn 4000 --thin 20 --adam-steps 2000 --adam-lr 0.005
+    # The same rung against the *best* anchor this N reaches (1000 steps at
+    # lr 0.0125).  r1 = 1.02e-4 here, d* = 1.45e-2, and the shell is -4.7 accuracy
+    # points / +0.022 NLL -- the largest deficit of the ladder, measured against
+    # its fairest anchor.  Its 1e-4 and 3e-4 sweep rows land on the anchor's NLL
+    # (1.7271 / 1.7278 vs 1.7270), so the small-d band's "better NLL" claim was
+    # the undertrained anchor's shortfall, not a property of π.
+    # Null: ./scripts/pcnl-rhat-null 1.45e-2 1.82e-4 20000 20 4 1.6119
+    cargo run --release -p pcnl --example basin_posterior -- 1 --shapes 8,16,1 \
+      --n-train 2048 --probes 128 --widths 1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,9e-2 \
+      --adam-steps 1000 --adam-lr 0.0125
+    cargo run --release -p pcnl --example basin_posterior -- 20000 --shapes 8,16,1 \
+      --n-train 2048 --no-sweep --chains 4 --arm latitude --d0 1.45e-2 --step 2e-3 \
+      --burn 4000 --thin 20 --adam-steps 1000 --adam-lr 0.0125
+    # The small-d band at N = 8192, where the sweep's 1e-4 and 3e-4 rows are the only
+    # place it beats the anchor on NLL.  A fixed-radius walk from u_Adam does not stay
+    # at its width: 20 k steps at r = 1e-5 diffuse to ~1.3e-3 rad (exponent 0.48) and
+    # report NLL 1.6097 against the anchor's 1.6089, while BMA reaches 26.56 % from
+    # per-chain 23.6-25.1 % -- the ensemble gain, not a calibration gain.  --step 3e-5
+    # reaches 3.3e-3 rad and 1.6109.  ~90 min per radius.
+    cargo run --release -p pcnl --example basin_posterior -- 20000 --shapes 8,16,1 \
+      --n-train 8192 --no-sweep --chains 4 --adam-steps 8000 --step 1e-5 --thin 10
+    ;;
+  breadth)
+    # Does breadth pay?  Radius had never been varied at fixed N and fixed anchor;
+    # the ladder's one positive number is an accuracy number, and it invited
+    # "ensemble spread buys accuracy".  Four shells at N = 2048's best anchor (lr
+    # 0.0125, 1000 steps: 31.25 % / 1.7270), 4 chains, 10 k steps, burn 2 000,
+    # thin 10.  BMA accuracy falls 31.25 -> 28.12 -> 23.83 -> 21.09 and NLL rises
+    # 1.7352 -> 1.7563 -> 1.7803 -> 1.8780: the smallest shell only ties the anchor
+    # and from 1e-2 out nothing reaches it.  The certified N = 512 table has the
+    # same sign (4e-2 -> 44.92 %, 7.9e-2 -> 42.97 % against 49.22 %), so the
+    # N = 8192 wide shell's 44.92 % against 21.88 % is the outlier -- and it is
+    # also the uncertified one.  ~9 min per shell.
+    # Nulls: 3e-3 8.06e-5 | 1e-2 1.73e-4 | 3e-2 4.24e-4 | 9e-2 1.30e-3
+    for cell in "3e-3 1e-3" "1e-2 2e-3" "3e-2 3e-3" "9e-2 1e-2"; do
+      set -- $cell
+      cargo run --release -p pcnl --example basin_posterior -- 10000 --shapes 8,16,1 \
+        --n-train 2048 --no-sweep --chains 4 --arm latitude --d0 "$1" --step "$2" \
+        --thin 10 --adam-steps 1000 --adam-lr 0.0125
+    done
+    ;;
+  wide-radius)
+    # The falsified shortcut for the 7.9e-2 cell: tripling the jump radius
+    # (`tau = (sin d0/r)^2`) does not buy mixing, because acceptance falls from
+    # 43 % to 2.0-2.7 % — `tau_eff = (sin d0)^2/(a r^2)` goes 692 -> 2661.  Run
+    # it to see the negative result rather than take it on trust (~40 min);
+    # `./scripts/pcnl-rhat-null 7.9e-2 1.53e-3 40000 400 4 <Rhat>` is the null
+    # to read it against.
+    cargo run --release -p pcnl --example basin_posterior -- \
+      40000 --no-sweep --chains 4 --arm latitude --d0 7.9e-2 --step 1e-2 --thin 400
     ;;
   *)
     echo "unknown stage: $stage" >&2

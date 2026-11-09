@@ -85,6 +85,25 @@ fn materialize(task: Task, k: usize, n: usize, seed: u64) -> (Tensor, Tensor) {
 }
 
 impl Dataset {
+    /// R0.6 — FNV-1a 64 over the four index tensors, so a manifest identifies
+    /// the data that was *materialised* and not just the seed that made it.
+    /// Two runs whose seeds differ but whose draws coincide do exist at small
+    /// `N` over `K²` inputs; this hash makes that visible instead of arguable.
+    pub fn content_hash(&self) -> u64 {
+        let mut h = crate::manifest::Fnv::new();
+        for t in [&self.train_x, &self.train_y, &self.test_x, &self.test_y] {
+            let flat: Vec<u32> = t
+                .flatten_all()
+                .expect("flatten dataset")
+                .to_vec1()
+                .expect("dataset to vec");
+            for x in flat {
+                h.write(&x.to_le_bytes());
+            }
+        }
+        h.finish()
+    }
+
     pub fn new(task: Task, k: usize, n_train: usize, n_test: usize, seed: u64) -> Self {
         let (train_x, train_y) = materialize(task, k, n_train, seed);
         let (test_x, test_y) = materialize(task, k, n_test, seed.wrapping_add(1));

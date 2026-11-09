@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""The split-R-hat null for a chain that is *stationary* but thinned too finely.
+
+`docs/PCNL_STATUS.md` §5 quotes `R̂` on the outer latitude shells (4e-2 and
+7.9e-2 rad) and has to decide whether 1.05 / 1.14 means the chains disagree or
+means the kept draws are still correlated.  This script answers that without a
+judgement call: it draws stationary AR(1) chains with exactly the lag-1
+correlation the run's thinning implies, computes the same split `R̂` the example
+prints, and reports the distribution.  A `R̂` inside that distribution is not
+evidence of non-convergence.
+
+The shell's relaxation time along the latitude is
+
+    tau = (sin d0 / r)^2      steps      (r = the proposal's jump radius)
+
+so draws kept `thin` steps apart have `rho = exp(-thin / tau)`, and the run
+keeps `(steps - burn) / thin` of them per chain (burn = steps/5).
+
+    ./scripts/pcnl-rhat-null                     # the cells the doc quotes
+    ./scripts/pcnl-rhat-null D0 R1 STEPS THIN CHAINS OBSERVED
+    ./scripts/pcnl-rhat-null 4e-2 3e-3 40000 400 4 1.052
+
+Only the standard library; 3 000 replicate draws per cell (~3 s per cell).
+"""
+
+import math
+import random
+import sys
+
+REPS = 3000
+SEED = 5
+
+
+def rhat(seqs):
+    """The example's split formula: R̂ over 2*chains half-sequences."""
+    m = len(seqs)
+    n = len(seqs[0])
+    means = [sum(s) / n for s in seqs]
+    w = sum(sum((x - mu) ** 2 for x in s) for s, mu in zip(seqs, means))
+    w /= (n - 1) * m
+    gm = sum(means) / m
+    b = n * sum((mu - gm) ** 2 for mu in means) / (m - 1)
+    return math.sqrt(((n - 1) / n * w + b / n) / w)
+
+
+def ar1(rho, length, rng):
+    sd = math.sqrt(max(0.0, 1.0 - rho * rho))
+    x = rng.gauss(0.0, 1.0)
+    out = []
+    for _ in range(length):
+        x = rho * x + sd * rng.gauss(0.0, 1.0)
+        out.append(x)
+    return out
+
+
+def null(chains, kept, rho, rng):
+    half = kept // 2
+    vals = []
+    for _ in range(REPS):
+        seqs = []
+        for _ in range(chains):
+            c = ar1(rho, 2 * half, rng)
+            seqs.append(c[:half])
+            seqs.append(c[half:])
+        vals.append(rhat(seqs))
+    vals.sort()
+    return (
+        sum(vals) / len(vals),
+        vals[int(0.025 * len(vals))],
+        vals[int(0.975 * len(vals))],
+        vals[int(0.99 * len(vals))],
+    )
+
+
+def cell(name, d0, r1, steps, thin, chains, observed, rng):
+    tau = (math.sin(d0) / r1) ** 2
+    rho = math.exp(-thin / tau)
+    kept = (steps - steps // 5) // thin
+    e, lo, hi, p99 = null(chains, kept, rho, rng)
+    verdict = (
+        "ABOVE the 99 % null"
+        if observed > p99
+        else ("inside the null" if lo <= observed <= hi else "inside 95-99 %")
+    )
+    print(
+        f"{name:<26} d0={d0:<7.3g} tau={tau:>6.0f} thin={thin:<4} kept={kept:<4} "
+        f"rho={rho:.3f}  E[Rhat]={e:.3f}  95 %=[{lo:.3f},{hi:.3f}] "
+        f"99 %={p99:.3f}  observed {observed:.3f}  -> {verdict}"
+    )
+
+
+def main(argv):
+    rng = random.Random(SEED)
+    print(
+        "shell relaxation tau = (sin d0 / r)^2, rho = exp(-thin / tau), "
+        f"kept = (steps - steps/5)/thin, {REPS} replicates\n"
+    )
+    if len(argv) == 6:
+        d0, r1, steps, thin, chains, observed = (
+            float(argv[0]),
+            float(argv[1]),
+            int(argv[2]),
+            int(argv[3]),
+            int(argv[4]),
+            float(argv[5]),
+        )
+        cell("run", d0, r1, steps, thin, chains, observed, rng)
+        return 0
+    if argv:
+        print(__doc__.split("    ./scripts/pcnl-rhat-null")[0], file=sys.stderr)
+        return 2
+    # The four cells §5 reads: the two first-run estimates (thin = steps/400,
+    # 2 chains) and the 4-chain 40 k re-runs that were thinned to 400.
+    cell("4e-2 old (2ch, 20k)", 4e-2, 3e-3, 20000, 50, 2, 1.052, rng)
+    cell("7.9e-2 old (2ch, 30k)", 7.9e-2, 3e-3, 30000, 75, 2, 1.140, rng)
+    print()
+    cell("4e-2 new (4ch, 40k)", 4e-2, 3e-3, 40000, 400, 4, 1.052, rng)
+    cell("7.9e-2 new (4ch, 40k)", 7.9e-2, 3e-3, 40000, 400, 4, 1.140, rng)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

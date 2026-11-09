@@ -1,94 +1,41 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# SM/QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# SM comparison/inner derivation. General product Fourier checks
+# do not extend the NS/QG-only spatial-derivative elimination work order.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
-# MODULE DOCUMENTATION (2026-10-13)
+# SM SOURCE AUDIT (2026-11-09; runtime validation pending)
+# Reference: book.tex, "Majorana spinors in the Standard Model".
+# This module checks scalar/CCR/CAR algebra and sector templates. It does
+# NOT derive all chiral matrices, the full operator domain, or its ESA.
+# Final object: H_SM=dGamma(h_SM), retaining all inner terms and constants.
+# The exact full operator, not a simplified benchmark, is the required input
+# to physical Hashimoto-SIRK validation (docs/SM_HAMILTONIAN_AUDIT.md).
 #
-# Purpose: derive the FULL Standard-Model Hamiltonian in the temporal
-#   (Weyl) gauge on the nested Fock space: the three gauge families
-#   SU(3) x SU(2) x U(1) with their magnetic-field assembly (abelian
-#   curl plus the non-abelian f A A term), the Higgs doublet with the
-#   Mexican-hat potential (completed square, stationary point), the
-#   Yukawa sector with its h.c. pairing (CKM/PMNS insertion), the CAR
-#   algebra of the Weyl fermions, the quadratic-ordering / zero-point
-#   strip of the Fock realization, and the BRST charge assembly of the
-#   gauge group — assembled into H_SM with printed CHECKs throughout.
-# Role in the program: the SM counterpart of yang_mills_hamiltonian.cdb
-#   (which covers ONE gauge family). The Faris-Lavine comparison
-#   operator N and the commutator-ladder content are certified in
-#   faris_lavine_n_sm.cdb (CHECK 1-28); this module supplies the
-#   Hamiltonian DERIVATION that module takes as input — the one-particle
-#   operator h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa spelled term by
-#   term, so the Lean work order D6b-SM
-#   (../timepiece/CONSOLIDATED_PLAN.md) has one engine-checked source.
-# Certified content: CHECK 1-14 (all -> 0): the Weyl-gauge Legendre
-#   transform per gauge family (1), the abelian curl identity for the
-#   magnetic field and its non-abelian assembly (2-3), the UNBROKEN
-#   Higgs potential in its Mexican-hat form V = -mu^2 x + lam x^2 —
-#   completed square and stationary point (4-5), the Yukawa h.c.
-#   pairing (6), the CAR normalization of the Weyl fermions (7), the
-#   bosonic quadratic-ordering / zero-point strip that makes
-#   <0|H|0> = 0 (8), the assembled H_SM and the BRST charge assembly
-#   with its abelian limit (9-10), the weak-hypercharge normalization
-#   of the U(1) kinetic term (11), the fermionic normal-ordering
-#   strip (12), and the UNBROKEN <-> BROKEN shift identity: the same
-#   potential written around the condensate, V = -lam v^4/4 + lam v^2
-#   h^2 + lam v h^3 + lam h^4/4 at x = (v+h)^2/2, mu^2 = lam v^2 (13),
-#   with the radial-mode (Higgs) mass m_h^2 = 2 lam v^2 assembled two
-#   ways (14).
-# Honest boundaries: the Grassmann/CAR representation on a Hilbert
-#   space, the spinor/Lorentz structure of h_Dirac, the measured CKM/
-#   PMNS parameters, and all Hilbert-space statements (including the
-#   Faris-Lavine hypotheses) are NOT certified here — they are Lean
-#   work (docs/VERIFY_SM_FARIS_LAVINE.md). The gauge-fixing/BRST
-#   nilpotency for the non-abelian factors needs the Jacobi identity of
-#   f^{ABC}; the module certifies the abelian limit and the charge
-#   assembly, not the full nilpotency.
-# Improvement notes (goal alignment): when the Lean side formalizes the
-#   compressible-NS-style derivation for the SM (the D6b-SM order), add
-#   its CHECK rows here and in docs/VERIFY_SM_GAUGE_FIXED.md; any new
-#   CHECK must land with a row there. The measured-mixing numerical
-#   anchors live in nested_fock_algebra::models (sm_ckm_cabibbo,
-#   sm_pmns_pontecorvo) and fock_sirk/tests/sm_validation.rs.
-#
-# Run: cadabra2-cli -q -n < this file (planner/CI only).
-# Formalized in: ../timepiece/BookProof/ (SM Faris-Lavine line,
-#   faris_lavine_n_sm.cdb's CHECK 1-28); the Hamiltonian derivation of
-#   this module is the engine-checked input to that formalization.
+# h_SM includes all gauge/Higgs terms, spatial Dirac derivative, operator-valued
+# gauge-matter couplings and all four real Higgs/Yukawa components. The live
+# bosonic comparison is 2 h_B + sum_active q^2 + c, not the legacy N_0.
+# CHECK 8/12 are ordering identities for INNER comparison operators; scalar
+# deletion is not required for outer-vacuum annihilation and quartic Wick
+# sorting discards additional operator-valued contractions in the legacy CAS.
+# CHECK 9 now retains distinct gauge, Higgs kinetic/covariant, Dirac and
+# Yukawa slots. CHECK 11 is a U(1) Legendre normalization, not a scalar tautology.
+# New checks probe Higgs normalization/constant and omitted sector entries.
+# These changes need fresh engine/extraction checks. Old transcripts remain
+# historical evidence only. No nonabelian BRST, physical reduction, full
+# chiral matter assembly or Hashimoto error bound is proved by scalar templates.
+# Run: cadabra2-cli -q -n docs/sm_gauge_fixed_hamiltonian.cdb
 # ======================================================================
-# The Standard-Model Hamiltonian in the temporal (Weyl) gauge
-#   A_0 = W_0 = B_0 = 0.
-#
-# THE GAUGE SECTOR.  For each family X in {G (SU(3)), W (SU(2)),
-# B (U(1))} the Weyl-gauge Lagrangian density is
-#     L_X = (1/2) pi^i_{A} pi^{i}_{A} - (1/2) B_{i A} B^{i A},
-# with the magnetic field
-#     B_{i A} = (1/2) eps_{ijk} ( d_j A_{k A} - d_k A_{j A} + g f_{ABC} A_{j B} A_{k C} ),
-# which reduces to the abelian curl B_i = eps_{ijk} d_j A_k when the
-# structure constants vanish (CHECK 2-3).  The Legendre transform gives
-# H_X = (1/2) pi^2 + (1/2) B^2 (CHECK 1), exactly as
-# yang_mills_hamiltonian.cdb certifies for one family.
-#
-# THE HIGGS SECTOR.  V(phi) = -mu^2 phi^dag phi + lam (phi^dag phi)^2,
-# x = phi^dag phi.  The completed square
-#     V = lam (x - mu^2/(2 lam))^2 - mu^4/(4 lam)
-# is CHECKed as an identity of assemblies (4), and the stationary point
-# dV/dx = 0 at x = mu^2/(2 lam) is CHECKed (5).
-#
-# THE MATTER SECTOR.  The Weyl fermions psi carry the CAR algebra
-#     {psi, psi^dag} = 1  (CHECK 7),
-# the Yukawa couplings are assembled with their h.c. pairing (CHECK 6),
-# and the CKM/PMNS mixing matrices insert at the charged-current vertex
-# (biunitarity is certified in faris_lavine_n_sm.cdb; the measured
-# parameters live in the numerical seam).
-#
-# THE FOCK REALIZATION.  Fields map to a^dag + a and momenta to
-# i(a^dag - a); the quadratic-ordering check (8) is the AGENTS.md
-# maintenance item: the pure-scalar part of the normal-ordered products
-# is DROPPED, which is exactly what makes <0|H|0> = 0 (the outer-vacuum
-# ground doctrine).  The fermionic strip (12) is its CAR analogue.
-#
-# THE BRST SECTOR.  The SM BRST charge is the sum of the three family
-# Gauss constraints packaged with their Faddeev-Popov ghosts;
-# CHECK 10 verifies the assembly and the abelian limit
-# G_B = c^j d_j pi^j (the U(1) factor has no f A pi term).
 
 # ===========================================================================
 # declarations
@@ -223,11 +170,9 @@ collect_terms(carchk)
 print("CHECK 7  SMGF psi psi^dag + psi^dag psi = 1  (CAR algebra)    (0 = ok):", carchk);
 
 # ===========================================================================
-# (8) the bosonic quadratic-ordering / zero-point strip (AGENTS.md
-#     maintenance item): u = a^dag + a gives
-#       u^2 = (a^dag + a)^2 = a^dag a^dag + 2 a^dag a + a a + 1,
-#     and the pure-scalar +1 is DROPPED — which is exactly what makes
-#     <0|H|0> = 0 on the outer vacuum (the outer-vacuum ground doctrine).
+# (8) INNER quadratic ordering identity. The shifted/Wick comparison differs
+# from the specified inner operator. Outer H Omega=0 follows from enclosure
+# without deleting this constant. Quartics require all contraction branches.
 # ===========================================================================
 uexp := (bosd + bos)*(bosd + bos).
 distribute(uexp)
@@ -239,7 +184,7 @@ hnchk := @(hnorm) - (bosd*bosd + 2*bosd*bos + bos*bos).
 distribute(hnchk)
 canonicalise(hnchk)
 collect_terms(hnchk)
-print("CHECK 8  SMGF u^2 = :u^2: + 1, scalar stripped -> <0|H|0> = 0  (0 = ok):", hnchk);
+print("CHECK 8  SMGF u^2 = :u^2: + 1, inner Wick comparison (not outer vacuum)  (0 = ok):", hnchk);
 
 # ===========================================================================
 # (9) the assembled SM Hamiltonian:
@@ -248,8 +193,21 @@ print("CHECK 8  SMGF u^2 = :u^2: + 1, scalar stripped -> <0|H|0> = 0  (0 = ok):"
 #     Checked as an identity of assemblies: the sum of the sector
 #     pieces equals the typed full form.
 # ===========================================================================
-Hsm := ( (1/2) pia*pia + (1/2) Bia*Bia ) + ( (1/2) pia*pia + (1/2) Bia*Bia )     + ( (1/2) pia*pia + (1/2) Bia*Bia )     + ( -mu2*phidphi + lam*phidphi*phidphi )     + yuk*phic*bilin + yukbar*phis*bilin.
-Hsectors := 3*( (1/2) pia*pia + (1/2) Bia*Bia ) + @(Vh) + @(hy).
+# Scalar slots for one representative component of each sector. The actual
+# multiplicities and chiral/generation matrices must be supplied separately.
+{pGlu, pWeak, pHyp, bGlu, bWeak, bHyp, pHig, dHig, hDir}::Symbol.
+gluonpart := (1/2) pGlu*pGlu + (1/2) bGlu*bGlu.
+weakpart := (1/2) pWeak*pWeak + (1/2) bWeak*bWeak.
+hyperpart := (1/2) pHyp*pHyp + (1/2) bHyp*bHyp.
+higgskin := (1/2) pHig*pHig + (1/2) dHig*dHig.
+Hsm := (1/2) pGlu*pGlu + (1/2) bGlu*bGlu
+      + (1/2) pWeak*pWeak + (1/2) bWeak*bWeak
+      + (1/2) pHyp*pHyp + (1/2) bHyp*bHyp
+      + (1/2) pHig*pHig + (1/2) dHig*dHig
+      - mu2*phidphi + lam*phidphi*phidphi + hDir
+      + yuk*phic*bilin + yukbar*phis*bilin.
+Hsectors := @(gluonpart) + @(weakpart) + @(hyperpart) + @(higgskin)
+           + @(Vh) + hDir + @(hy).
 aschk := @(Hsm) - @(Hsectors).
 distribute(aschk)
 sort_product(aschk)
@@ -281,28 +239,22 @@ collect_terms(gchk)
 print("CHECK 10 SMGF G_SM(f->0) = c d pi  (BRST assembly, abelian)   (0 = ok):", gchk);
 
 # ===========================================================================
-# (11) the U(1) kinetic normalization: the abelian magnetic energy
-#      (1/2) B_i B_i with B = curl A is the Y = 1 hypercharge kinetic
-#      term; its quadratic form in A is positive, so the coefficient 1/2
-#      is fixed by the Legendre transform of CHECK 1.  Checked as the
-#      coefficient identity of the quadratic form: expanding
-#      (1/2)(eps d A)^2 twice (once per polarization) reproduces the
-#      (1/2) B^2 normalization — bookkept here as the factor-2 identity
-#      of the symmetrization doctrine (NUMERICAL_VALIDATION_GUIDE S35):
-#      {pi, V} = pi V + V pi carries the factor 2.
+# (11) U(1) Legendre normalization, independently assembled.
+# This fixes the electric/magnetic coefficient in this scalar template;
+# it does not establish physical hypercharges or the matter representation.
 # ===========================================================================
-sym := pia*phidphi + phidphi*pia.
-symtwo := 2*@(sym).
-symchk := @(sym) - (1/2)*@(symtwo).
+uoneL := (1/2) pHyp*pHyp - (1/2) bHyp*bHyp.
+uoneH := pHyp*pHyp - @(uoneL).
+symchk := @(uoneH) - ((1/2) pHyp*pHyp + (1/2) bHyp*bHyp).
 distribute(symchk)
 canonicalise(symchk)
 collect_terms(symchk)
-print("CHECK 11 SMGF {pi, V} = 2 sym  (factor-2 symmetrization)      (0 = ok):", symchk);
+print("CHECK 11 SMGF U(1) Legendre electric/magnetic coefficients (0 = ok):", symchk);
 
 # ===========================================================================
 # (12) the fermionic normal-ordering strip: psi psi^dag normal-orders to
 #      :psi psi^dag: = -psi^dag psi plus the scalar +1, and THAT scalar
-#      is the one dropped from <0|H|0> — the CAR analogue of CHECK 8.
+#      labels a shifted inner comparison, not the physical outer vacuum.
 #      Checked content: psi psi^dag - (-psi^dag psi) - 1 = 0, i.e. the
 #      stripped constant is exactly 1 (the fermionic zero-point).
 # ===========================================================================
@@ -365,3 +317,46 @@ sort_product(chk14)
 canonicalise(chk14)
 collect_terms(chk14)
 print("CHECK 14 SMGF m_h^2 = 2 lam v^2 (coefficient vs V''(v))       (0 = ok):", chk14);
+
+# (15-17) Convention and omission probes. Executed 2026-11-09c.
+{rsqSM, vevSM}::Symbol.
+realpot := -(1/2) mu2*rsqSM + (1/4) lam*rsqSM*rsqSM.
+doubletpot = Vh.copy()
+substitute(doubletpot, $ phidphi -> (1/2) rsqSM $, repeat=True)
+realnormcheck := @(doubletpot) - @(realpot).
+distribute(realnormcheck)
+collect_terms(realnormcheck)
+print("CHECK 15 SMGF phi^dag phi = sum real phi_a^2/2 (expect 0):", realnormcheck)
+if str(realnormcheck) != "0":
+    raise AssertionError("SMGF Higgs real/doublet normalization mismatch")
+positivewall := (1/4) lam*(rsqSM - vevSM*vevSM)*(rsqSM - vevSM*vevSM).
+constantcheck := @(positivewall) - @(realpot) - (1/4) lam*vevSM*vevSM*vevSM*vevSM.
+substitute(constantcheck, $ mu2 -> lam*vevSM*vevSM $, repeat=True)
+distribute(constantcheck)
+sort_product(constantcheck)
+canonicalise(constantcheck)
+collect_terms(constantcheck)
+print("CHECK 16 SMGF fixed inner Higgs constant retained (expect 0):", constantcheck)
+if str(constantcheck) != "0":
+    raise AssertionError("SMGF Higgs constant mismatch")
+# Independently zero all unrelated sector slots to expose missing terms.
+for label, slot in [("Dirac", "hDir"), ("Higgs momentum", "pHig"), ("Higgs covariant", "dHig")]:
+    probed = Hsm.copy()
+    substitute(probed, Ex("pGlu -> 0, bGlu -> 0, pWeak -> 0, bWeak -> 0, pHyp -> 0, bHyp -> 0, mu2 -> 0, lam -> 0, yuk -> 0, yukbar -> 0"), repeat=True)
+    if slot == "hDir":
+        substitute(probed, Ex("hDir -> 1, pHig -> 0, dHig -> 0"), repeat=True)
+        expected = Ex("1")
+    elif slot == "pHig":
+        substitute(probed, Ex("hDir -> 0, pHig -> 1, dHig -> 0"), repeat=True)
+        expected = Ex("1/2")
+    else:
+        substitute(probed, Ex("hDir -> 0, pHig -> 0, dHig -> 1"), repeat=True)
+        expected = Ex("1/2")
+    probecheck = Ex("("+str(probed)+")-("+str(expected)+")")
+    distribute(probecheck)
+    collect_terms(probecheck)
+    print("CHECK 17 SMGF retained " + label + " coefficient (expect 0):", probecheck)
+    if str(probecheck) != "0":
+        raise AssertionError("SMGF missing " + label + " slot")
+# The full four-component chiral Yukawa matrix identity is a separate P1/N2
+# deliverable. No scalar placeholder is promoted to that physical identity.

@@ -1,62 +1,20 @@
-//! Standard Model validation through the Hashimoto-SIRK approximation —
-//! analogous to `qed_validation.rs` / `qym_mass_gap.rs`.
+//! SM Hashimoto-SIRK test inventory and explicitly labeled legacy diagnostics.
 //!
-//! The SM one-particle operator `h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa`
-//! (book.tex; `docs/faris_lavine_n_sm.cdb` CHECK 1–28) is realized here in
-//! sector-wise / reduced mode budgets (full D_B = 163 is not SIRK-tractable).
-//! Each test pins an exact structure or published number:
+//! This suite does NOT yet validate the complete manuscript inner h_SM and outer
+//! H_SM=dGamma(h_SM). See docs/SM_HAMILTONIAN_AUDIT.md N1-N5 for that replacement
+//! work order. Physical acceptance requires the full nested operator, all retained
+//! interactions and controlled numerical cutoffs, not a scalar/decoupled substitute.
 //!
-//! 1. `sm_higgs_potential_nested_fock_structure` — Mexican-hat Higgs:
-//!    normal-ordered vacuum 0, Hermiticity, classical minima
-//!    `φ* = ±√(μ²/λ)` with `V(φ*) = −μ⁴/(4λ)`, and the quartic confinement
-//!    that keeps the truncated spectrum bounded below.
+//! Tests using sm_higgs_hamiltonian/sm_reduced_hamiltonian/sm_comparison_n retain
+//! historical noncanonical two-mode, contraction-dropping semantics. They remain
+//! reproducible regression diagnostics; none supplies full-SM or Lean operator
+//! identification, positivity, a continuum gap or EWSB. Structural/count/mixing/
+//! supplied-mass checks are ancillary oracles, not full-Hamiltonian SIRK tests.
+//! Test names are retained for existing documentation/extraction compatibility.
 //!
-//! 2. `sm_higgs_sirk_spectrum_bounded_below` — SIRK diagonalizes the Higgs
-//!    sector: projected H Hermitian, ground energy finite, and the lowest
-//!    Ritz values real and (after the allowed constant shift) non-negative —
-//!    the FL comparison-`N` positivity shadow at the numerical level.
-//!
-//! 3. `sm_yukawa_fermion_number_conservation` — `[H, N_f] = 0` exactly on
-//!    probes spanning the vacuum / one-Higgs / one-fermion / Yukawa-vertex
-//!    sectors (fermion number is a superselection charge of the Yukawa
-//!    Hamiltonian).
-//!
-//! 4. `sm_ckm_pmns_unitarity_and_biunitary` — CKM (Cabibbo) and PMNS
-//!    (Pontecorvo) matrices: `V V^T = I`, biunitarity `(VD)^T(VD) = D²`
-//!    (Yukawa mass matrices `M†M = D²`), and entrywise `|V_ij| ≤ 1`,
-//!    `|U_ij| ≤ 1` — numerical mirrors of Cadabra CHECK 17–19, 25–27.
-//!
-//! 5. `sm_reduced_gauge_higgs_structure` — combined gauge + Higgs + Yukawa
-//!    Hamiltonian: vacuum 0, Hermitian, all three sector term types present,
-//!    and fermion number still conserved.
-//!
-//! 6. `sm_unitary_evolution_energy_conservation` — restarted-Krylov time
-//!    evolution of a Higgs-sector state: norm (unitarity) and energy
-//!    `⟨H⟩` conserved.
-//!
-//! 7. `sm_comparison_n_structure_and_positivity` — Faris–Lavine comparison
-//!    `N = :π²: + :φ⁴:`: Hermitian, quartic field / quadratic momentum
-//!    structure, and positive Rayleigh quotient on low-excitation probes
-//!    (the structural half of `±h ≤ c₁N`; the full gauge+fermion `N` is
-//!    CHECK 1–24 in Cadabra).
-//!
-//! 8. `sm_outer_vacuum_annihilated_reduced` — outer enclosure of the reduced
-//!    SM one-particle operator annihilates the outer vacuum `|Ω⟩` (doctrine
-//!    clause 1 of §5.24s, extended to the SM sector).
-//!
-//! 9. `sm_db_163_mode_budget` — full collective-coordinate budget
-//!    `D_B = 3+96+36+12+16 = 163` and the 160 field-ladder modes.
-//!
-//! 10. `sm_full_free_field_structure` — free quadratic Hamiltonian on all
-//!     160 field-ladder modes: Hermitian, vacuum energy 0, correct term
-//!     count / mode span.
-//!
-//! 11. `sm_brst_ghosts_nilpotent` — 12 Faddeev–Popov ghosts (8+3+1) in
-//!     `Z_2^{D_F}`: Ω² = 0 on ghosted probes (Pauli + commuting Gauss).
-//!
-//! 12. `sm_weak_boson_polarizations` — full W±/Z/γ polarization budget
-//!     (3+3+3+2 = 11 modes): transverse degeneracy, mass gaps
-//!     `m_W ≈ 80.377`, `m_Z ≈ 91.1876`, `m_γ = 0`, and SIRK spectrum.
+//! Inner vacuum expectation zero is a legacy model convention. Actual outer
+//! annihilation follows from creation-left/annihilation-right enclosure while
+//! retaining every inner constant and interaction.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -202,14 +160,15 @@ fn sm_higgs_sirk_spectrum_bounded_below() {
     for &e in &ritz {
         assert!(e.is_finite(), "Ritz value must be finite, got {e}");
     }
-    // Ground (lowest Ritz) is a lower bound on the truncated spectrum and
-    // the spectrum is bounded below: E₀ > −1e6 (quartic confinement).
+    // Lowest Ritz value is upper variational information in the sampled subspace.
+    // The historical threshold below is only a numerical range sanity check;
+    // it proves neither semiboundedness nor a lower spectral enclosure.
     let e0 = *ritz
         .iter()
         .fold(&f64::INFINITY, |a, b| if b < a { b } else { a });
     assert!(
         e0 > -1.0e6,
-        "Higgs spectrum must be bounded below (quartic wall), E₀ = {e0}"
+        "legacy finite-window diagnostic exceeds its sanity range, E₀ = {e0}"
     );
 
     // Ground from SIRK matches the direct ground helper.
@@ -393,11 +352,22 @@ fn sm_reduced_gauge_higgs_structure() {
     // Yukawa vertex (boson + two fermion ops on one string).
     let has_gauge = h.terms.iter().any(|(_, ops)| {
         ops.len() >= 3
-            && ops
-                .iter()
-                .any(|o| matches!(o, Operator::InnerBosonCreate(_)))
+            && ops.iter().all(|o| {
+                matches!(
+                    o,
+                    Operator::InnerBosonCreate(0 | 1) | Operator::InnerBosonAnnihilate(0 | 1)
+                )
+            })
     });
-    let has_quartic = h.terms.iter().any(|(_, ops)| ops.len() >= 4);
+    let has_quartic = h.terms.iter().any(|(_, ops)| {
+        ops.len() >= 4
+            && ops.iter().all(|o| {
+                matches!(
+                    o,
+                    Operator::InnerBosonCreate(4) | Operator::InnerBosonAnnihilate(4)
+                )
+            })
+    });
     let has_yukawa = h.terms.iter().any(|(_, ops)| {
         ops.iter()
             .any(|o| matches!(o, Operator::InnerFermionCreate(_)))
@@ -492,7 +462,7 @@ fn sm_unitary_evolution_energy_conservation() {
     eprintln!("sm_unitary: ‖ψ‖ {n0:.6}→{n_t:.6}, ⟨H⟩ {e0:.6}→{e_t:.6}");
 }
 
-// ── 7. Faris–Lavine comparison N structure ──────────────────────────────────
+// ── 7. Historical quartic comparison structure ──────────────────────────────────
 
 #[test]
 fn sm_comparison_n_structure_and_positivity() {
@@ -554,14 +524,14 @@ fn sm_comparison_n_structure_and_positivity() {
 
     // On a two-quanton momentum state, ⟨N⟩ ≥ 0 (the :π²: number part
     // dominates the normal-ordered quartic's negative squeezing at low n —
-    // structural positivity of the FL comparison at the numerical level).
+    // a probe expectation of the legacy comparison, not a Faris-Lavine bound).
     let two_p = boson_background()
         .apply(&Operator::InnerBosonCreate(1))
         .apply(&Operator::InnerBosonCreate(1));
     let exp_n = QuantumState::inner_product(&n.apply(&two_p), &two_p).re;
     assert!(
         exp_n >= -1e-9,
-        "⟨N⟩ on |2⟩_π must be non-negative for FL comparison, got {exp_n}"
+        "legacy comparison probe expectation changed: {exp_n}"
     );
 
     eprintln!(

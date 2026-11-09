@@ -1,14 +1,30 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# Algebraic frame-determinant and formal symmetry kernels.
+# det(tilde e)=y^3 det(e) is not a coordinate-Jacobian theorem. The full
+# independent-coordinate Jacobian, measure, inverse, domains and core map
+# are required before claiming a unitary or ESA transfer for R^2 QG.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
 #
-# Purpose: certify that the densitized change of variables is UNITARY —
+# Purpose: compute candidate kernels for a densitized chart —
 #   three kernels: (1) Jacobian/measure det(tilde-e) = y^3 det(e) = y^5;
 #   (2) half-density (van Vleck) norm kernel y^5 * y^-5 = 1; (3) flat-
 #   operator Hermiticity (Lagrange) identity, a total-derivative boundary
 #   term vanishing on the physical Hilbert space.
-# Role in the program: the guarantee that the densitized route does not
-#   change the theory — the three kernels must all vanish for the QG ESA
-#   analysis to transfer between forms.
+# Role: comparison-chart algebra. These kernels are necessary bookkeeping,
+#   not sufficient to prove a unitary change of variables or ESA transfer.
 # Certified content: all three kernels -> 0 (the Lagrange kernel prints the
 #   non-negative remainder). Consumed by
 #   symbolic::tests::qg_densitized_change_of_variables_is_unitary.
@@ -38,11 +54,12 @@
 #        y = sqrt(e) = (det e_i^a)^{1/2},  \tilde e_i^a = sqrt(e) e_i^a
 #      is a diffeomorphism of field space. In 3D, the determinant scales as
 #        det(\tilde e) = y^3 det(e) = y^3 e = y^5   (since e = y^2).
-#      So the field-space measure transforms as D\tilde e = J De with
-#      J = y^5 (the Jacobian of the point transformation).
+#      This is the determinant of the FRAME matrix, not the determinant
+#      of the derivative of a map of independent field coordinates. The
+#      full coordinate Jacobian is not computed by the epsilon check below.
 #
 #  (2) HALF-DENSITY UNITARITY KERNEL: the unitary is implemented with the
-#      square-root Jacobian (van Vleck/metaplectic factor):
+#      square-root of a PROVED coordinate Jacobian; conditionally:
 #        (U psi)(\tilde e, y) = |J|^{-1/2} psi(e(\tilde e, y)).
 #      Norm preservation is the identity  J^{1/2} J^{-1/2} = 1, i.e.
 #        y^5 * y^{-5} = 1  ->  D\tilde e * (1/|J|) * |J| = De.
@@ -55,9 +72,10 @@
 #      spatial infinity, vanishing fall-off) the boundary term vanishes, so
 #      H0 is symmetric / formally self-adjoint -- the Strichartz hypothesis.
 #
-# The combination (1)+(2) makes the change of variables a UNITARY point
-# transformation; (3) makes the image H0 essentially self-adjoint. Hence the
-# densitized Hamiltonian is 100% ESA with unitary time-evolution.
+# The checks establish frame scaling, a candidate reciprocal-density
+# identity and formal symmetry. None proves a full coordinate Jacobian,
+# onto isometry, boundary/domain identification or essential self-adjointness.
+# In particular formal symmetry is weaker than ESA.
 #
 # Run: cadabra2-cli -q -n <this file>
 # Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity") - reader-facing chapter.

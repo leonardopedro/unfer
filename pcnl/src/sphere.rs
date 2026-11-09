@@ -99,11 +99,33 @@ pub struct SpherePcn {
     /// Steps during which the metric is estimated; frozen afterwards, which is
     /// what keeps the chain exactly `π`-invariant after warm-up.
     pub metric_warmup: usize,
+    /// Set by [`Self::set_metric`]: the metric came from the caller, not from
+    /// warm-up, and is reported as installed rather than "learned by step k".
+    pub metric_installed: bool,
 }
 
 /// `(accepted, log α)` — the second is worth recording: a chain that rejects
 /// everything still reports the same predictive it started with.
 pub type StepOutcome = (bool, f64);
+
+/// R0.5 — where adapt-then-freeze leaves a chain's metric.
+///
+/// The question a report has to answer is not "is there a metric" but whether
+/// the draws came from a **fixed** one. `Adapting` means the proposal was still
+/// changing under the trajectory, so those states are warm-up, not samples;
+/// `Frozen`/`Installed` name the step at which that stopped happening.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetricFreeze {
+    /// No metric: the isotropic proposal (also the state of a preconditioner
+    /// that finished warm-up without ever accumulating a usable secant).
+    None,
+    /// Installed by the caller and held fixed from step 0.
+    Installed { dim: usize, hash: u64 },
+    /// Estimated during warm-up and frozen at this step.
+    Frozen { at: usize, dim: usize, hash: u64 },
+    /// Warm-up still running at `step`: no sample yet comes from a fixed kernel.
+    Adapting { step: usize, dim: usize },
+}
 
 impl SpherePcn {
     pub fn new(
@@ -131,6 +153,7 @@ impl SpherePcn {
             abs_dg: Vec::new(),
             abs_disp: Vec::new(),
             metric_warmup: 200,
+            metric_installed: false,
         }
     }
 
@@ -196,6 +219,11 @@ impl SpherePcn {
     }
 
     /// Install a metric directly (tests, and experiments that hold `d` fixed).
+    ///
+    /// Installing **freezes**: `metric_warmup` is set to 0, so the next step
+    /// does not immediately overwrite the caller's metric with a one-proposal
+    /// secant. Without that, "installed" and "estimated" were the same state
+    /// and a caller's `d` survived exactly one step.
     pub fn set_metric(&mut self, d: Vec<f64>) {
         assert!(!d.is_empty(), "metric must not be empty");
         assert!(
@@ -204,6 +232,75 @@ impl SpherePcn {
         );
         self.precond = Some(d);
         self.precond_enabled = true;
+        self.metric_installed = true;
+        self.metric_warmup = 0;
+    }
+
+    /// R0.5 — record where the metric stopped adapting (see [`MetricFreeze`]).
+    pub fn metric_freeze(&self) -> MetricFreeze {
+        fn hash(d: &[f64]) -> u64 {
+            let mut h = crate::manifest::Fnv::new();
+            for x in d {
+                h.write(&x.to_le_bytes());
+            }
+            h.finish()
+        }
+        match &self.precond {
+            None if !self.precond_enabled => MetricFreeze::None,
+            // Enabled but never accumulated: isotropic until warm-up ends,
+            // then a frozen identity — which is `None`, not "learned".
+            None => {
+                if self.step_count < self.metric_warmup {
+                    MetricFreeze::Adapting {
+                        step: self.step_count,
+                        dim: 0,
+                    }
+                } else {
+                    MetricFreeze::None
+                }
+            }
+            Some(d) if self.metric_installed => MetricFreeze::Installed {
+                dim: d.len(),
+                hash: hash(d),
+            },
+            Some(d) if self.step_count < self.metric_warmup => MetricFreeze::Adapting {
+                step: self.step_count,
+                dim: d.len(),
+            },
+            Some(d) => MetricFreeze::Frozen {
+                at: self.metric_warmup,
+                dim: d.len(),
+                hash: hash(d),
+            },
+        }
+    }
+
+    /// The manifest form of [`Self::metric_freeze`].
+    pub fn metric_record(&self) -> crate::manifest::MetricRecord {
+        match self.metric_freeze() {
+            MetricFreeze::None => crate::manifest::MetricRecord::isotropic(),
+            MetricFreeze::Installed { dim, hash } => crate::manifest::MetricRecord {
+                kind: "installed-diagonal".into(),
+                freeze_step: Some(0),
+                adapting: false,
+                dim,
+                hash: Some(hash),
+            },
+            MetricFreeze::Frozen { at, dim, hash } => crate::manifest::MetricRecord {
+                kind: "diagonal-secant".into(),
+                freeze_step: Some(at),
+                adapting: false,
+                dim,
+                hash: Some(hash),
+            },
+            MetricFreeze::Adapting { step: _, dim } => crate::manifest::MetricRecord {
+                kind: "diagonal-secant".into(),
+                freeze_step: None,
+                adapting: true,
+                dim,
+                hash: None,
+            },
+        }
     }
 
     fn step_inner<F>(
@@ -266,6 +363,19 @@ impl SpherePcn {
 
         let v: Vec<f64> = (0..p).map(|i| e[i] + m0[i]).collect();
         let a = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        // R0.4 (2026-11-08): the exponential map is one-to-one only on the ball
+        // `‖v‖ < π`. Past it a proposal has several preimages, the closed-form
+        // pushforward `(sin a/a)^{P−2}` describes one of them, and
+        // `reverse_tangent_vec` divides by `sin a` (zero at `a = π`). Restrict
+        // the proposal to the ball: `a` is a length along the geodesic, so the
+        // reverse move is inside it too, every accepted move keeps the exact
+        // ratio, and an over-long proposal is simply a rejection. The truncated
+        // Gaussian's normaliser differs from 1 by `exp(−π²/(2τ²))`, which at the
+        // reported `τ = β/√P ≤ 0.04` is `exp(−3e3)` — invisible.
+        if !a.is_finite() || a >= std::f64::consts::PI {
+            self.step_count += 1;
+            return Ok((false, f64::NEG_INFINITY));
+        }
         let u_next = exp_map_vec(&u, &v, a);
         let u_next_t = Tensor::from_vec(
             u_next.iter().map(|x| *x as f32).collect(),
@@ -497,6 +607,159 @@ pub fn shell_jump(
     }
 }
 
+/// **A move at fixed geodesic radius from `anchor`.**  `u′` is `u` rotated
+/// about the axis `anchor` by `φ = r / sin d₀`, i.e. a uniform draw on the
+/// latitude sphere `{v : ⟨a,v⟩ = ⟨a,u⟩}` at ambient geodesic distance `r`.
+///
+/// **Why it exists.**  A jump whose direction is uniform can leave the cap a
+/// target is restricted to, and in `P` dimensions it leaves *almost always*
+/// once the chain is near the boundary: from `d = R` the fraction of steps that
+/// stay inside is `Φ̄(r√P/(2R))`, which is `e^{−P/8}` at `R ≈ r`.  Restricted
+/// targets therefore reach the boundary and freeze — `examples/basin_posterior
+/// --cap` measures 0.1 % acceptance and `R̂ = ∞` over 4 × 10 000 steps at
+/// `R = 2.3e-3 = 2.7 r₁` — and no radius fixes it, because in high dimension
+/// the cap's own Haar volume sits on its boundary.  A latitude move has
+/// `⟨a,u′⟩ = ⟨a,u⟩` to machine precision, so the cap never rejects and the run
+/// is spent on the conditional target `π(· | d(u,a) = d₀)`.
+///
+/// **It is symmetric**, so the ratio is the target's alone: the law is the
+/// uniform measure on the geodesic sphere of radius `r` *inside* the latitude,
+/// which is the same object at `u′` as at `u`, hence
+/// `log α = log π(u′) − log π(u)` with no Jacobian.
+///
+/// **The step is the ambient distance**, `r`, so callers compare it directly
+/// with `shell_jump`'s radius; the latitude sphere has radius `sin d₀` and the
+/// rotation angle is `φ = r/sin d₀`.  At the anchor itself (`d₀ = 0`) there is
+/// no latitude to move on and the move is rejected.
+///
+/// Returns `(proposal, accepted, log π(proposal))`.
+pub fn latitude_jump(
+    u: &[f64],
+    log_target_u: f64,
+    r: f64,
+    anchor: &[f64],
+    log_target: &dyn Fn(&[f64]) -> f64,
+    rng: &mut impl Rng,
+) -> (Vec<f64>, bool, f64) {
+    let p = u.len();
+    if anchor.len() != p || !r.is_finite() || !log_target_u.is_finite() {
+        return (u.to_vec(), false, log_target_u);
+    }
+    // Both vectors are normalised here, not by the caller.  The anchor is the
+    // *model's* direction and arrives from `f32` weights, so `|a| = 1 ± 5e-8`,
+    // and a kernel that mixes `⟨u,a⟩` into the state's norm then drifts:
+    // `|prop|² = c²|a|² + (1 − c²)` gains `2c²(|a|² − 1)` every step, so `|u|`
+    // walks up by ~5e-8 per step until `⟨a,u⟩` reaches 1, `sin d` hits 0 and the
+    // chain collapses onto the anchor with every later move rejected.  Measured
+    // in `basin_posterior --arm latitude`: at `d₀ = 8.61e-4` the run reached
+    // `d = 0` after ~1 000 steps and acceptance decayed as `1/t`, while at
+    // `d₀ = 0.079` it survived all 10 000 — the collapse arrives after
+    // `(1 − cos d₀)/(2|a|δ)` steps, i.e. ~10³ at 8.6e-4 and ~10⁵ at 0.079.
+    let an = (anchor.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    let un = (u.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    // `ok` rather than the comparison inside the `!`: a NaN fails either test.
+    let ok = an > 0.0 && un > 0.0;
+    if !ok {
+        return (u.to_vec(), false, log_target_u);
+    }
+    // the state, as a point of the unit sphere, written about the unit anchor
+    let c = (sdot(u, anchor) / (un * an)).clamp(-1.0, 1.0);
+    let s = (1.0 - c * c).max(0.0).sqrt();
+    let v: Vec<f64> = (0..p).map(|i| u[i] / un - c * anchor[i] / an).collect();
+    let m = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let ok = m > 1e-12 && s > 1e-12;
+    if !ok {
+        return (u.to_vec(), false, log_target_u);
+    }
+    let ub: Vec<f64> = v.iter().map(|x| x / m).collect();
+    let ab: Vec<f64> = anchor.iter().map(|x| x / an).collect();
+    // A uniform direction in the latitude's tangent space, {v : v ⊥ u, v ⊥ a},
+    // which has dimension P − 2.  The span removed is that of `{a, û}`, and
+    // those two are *orthonormal* (`û = (u − c·a)/s ⊥ a`), so one pass is an
+    // exact projection.  Subtracting `⟨w,u⟩u + ⟨w,a⟩a` in one pass — the
+    // obvious way — is Jacobi on a nearly dependent pair and only removes
+    // `1 − c²` of the component per pass; at `c = 0.92` two passes still leave a
+    // fifth of it, the direction leaves the latitude, and the chain walks off
+    // the sphere's `⟨a,u⟩ = const` surface while `|u|` grows (measured `|u|` =
+    // 1.12 after one step before this was fixed).
+    let raw: Vec<f64> = (0..p)
+        .map(|_| rng.sample::<f64, _>(StandardNormal))
+        .collect();
+    let (wa, wb) = (sdot(&raw, &ab), sdot(&raw, &ub));
+    let w: Vec<f64> = (0..p).map(|i| raw[i] - wa * ab[i] - wb * ub[i]).collect();
+    let n = w.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if !n.is_finite() || n <= 1e-12 {
+        return (u.to_vec(), false, log_target_u);
+    }
+    let phi = (r / s).min(std::f64::consts::PI);
+    let (cp, sp) = (phi.cos(), phi.sin() / n);
+    let prop: Vec<f64> = (0..p)
+        .map(|i| c * ab[i] + s * (cp * ub[i] + sp * w[i]))
+        .collect();
+    let log_prop = log_target(&prop);
+    let log_alpha = log_prop - log_target_u;
+    let take = log_alpha.is_finite() && (log_alpha >= 0.0 || rng.random::<f64>().ln() < log_alpha);
+    if take {
+        (prop, true, log_prop)
+    } else {
+        (u.to_vec(), false, log_target_u)
+    }
+}
+
+/// `log π` restricted to the cap of geodesic radius `radius` about `anchor`.
+///
+/// **The kernel needs nothing new.**  A restriction is a statement about the
+/// *target*, not about the proposal: where `π(u′) = 0` the MH ratio is `0`, so
+/// the move is rejected, and no state outside the cap is ever occupied, so the
+/// reverse density from it never has to be evaluated with a nonzero weight.
+/// The proposal still ranges over the whole geodesic sphere of radius `r` and
+/// its density is unchanged — `shell_jump`'s ratio stays the target's alone and
+/// remains exact for the restricted target.  The price is wasted proposals that
+/// leave the cap, which the acceptance column pays.
+///
+/// **Why the project needs it.**  The unrestricted target is prior-dominated at
+/// `P = 16 672`: Haar gives the equatorial shell `10^{54 000}` times the cone's
+/// mass, so the unrestricted chain walks out of the cone and its predictive is
+/// the base rate (`docs/PCNL_STATUS.md`, 2026-11-06).  Restricting the target is
+/// the only way to ask a question whose answer is a property of the target
+/// rather than of a transient: `E[· | d(u, anchor) ≤ radius]`.  That conditional
+/// is what the project's 48–51 % numbers have always been measuring.
+///
+/// Passing `f64::INFINITY` returns the target unchanged (the unrestricted
+/// case), so callers can wire one closure and vary only the radius.
+///
+/// **The radius must be several steps wide.**  Exactness does not depend on the
+/// step, but usability does.  From radius `d` a step `r` lands at
+/// `d′² = d² + r² − 2dr·t` with `t = ⟨u, ŵ⟩`, so at the boundary `d = R` the
+/// move stays inside only when `t ≥ r/(2R)`; on `S^{P−1}`, `t` concentrates
+/// with sd `1/√P`, and the acceptance there is `Φ̄(r√P/(2R))`.  At `R = r` and
+/// `P = 16 672` that is `e^{−P/8}`: the chain reaches the boundary in one step
+/// and freezes on it (`a_cap_must_be_several_steps_wide_or_the_chain_freezes`
+/// measures 0.0 % acceptance over 4 × 10 000 steps at `R = r₁`).  With a
+/// potential that grows in `d` the boundary is rarely reached, so `R ≳ 5r`
+/// keeps the whole run moving; the same rule is what makes the answering
+/// conditional tight enough not to just restate the headline.
+pub fn restrict_to_cap<'a, F>(
+    log_target: F,
+    anchor: &'a [f64],
+    radius: f64,
+) -> impl Fn(&[f64]) -> f64 + 'a
+where
+    F: Fn(&[f64]) -> f64 + 'a,
+{
+    move |u: &[f64]| {
+        if u.len() != anchor.len() {
+            return f64::NEG_INFINITY;
+        }
+        let c = sdot(u, anchor).clamp(-1.0, 1.0);
+        if c.acos() > radius {
+            f64::NEG_INFINITY
+        } else {
+            log_target(u)
+        }
+    }
+}
+
 fn reverse_tangent_vec(u: &[f64], v: &[f64], a: f64) -> Vec<f64> {
     if a < 1e-15 {
         return vec![0.0; u.len()];
@@ -556,7 +819,7 @@ pub fn drift_direction(g: &[f64], x: &[f64]) -> Vec<f64> {
 /// the `shell_jump` law.
 fn sample_vmf_tangent(u: &[f64], mu: &[f64], kappa: f64, rng: &mut impl Rng) -> Vec<f64> {
     let p = u.len();
-    if !(kappa > 0.0) || !kappa.is_finite() {
+    if !kappa.is_finite() || kappa <= 0.0 {
         return uniform_tangent(u, rng);
     }
     if p == 2 {
@@ -865,12 +1128,58 @@ mod tests {
     /// between *accepted* states, so on a chain that accepts nothing `Δg ≡ 0`,
     /// `d` collapsed to all-ones and the metric was inert on exactly the cells it
     /// exists for.  Measured along the proposal it is available regardless of
-    /// acceptance, so a frozen chain still learns the anisotropy.
+    /// acceptance.
+    ///
+    /// **Changed 2026-11-08 (R0.4).**  The old version of this test used a
+    /// curvature of 1e6, which makes the drift `|m| ≈ 3.6e4 ≫ π`: every proposal
+    /// left the injectivity ball, so the metric was being learned from proposals
+    /// that had no MH ratio at all.  With the ball now enforced (`step_inner`)
+    /// that regime proposes nothing, accepts nothing and learns nothing —
+    /// recorded in the first half below — and the property this test exists for
+    /// is checked inside the ball, where proposals do have a ratio.
     #[test]
-    fn warmup_learns_the_metric_even_when_nothing_is_accepted() {
+    fn warmup_learns_the_metric_from_proposals() {
         let dev = Device::Cpu;
-        // Two directions, curvatures 1e6 and 1: `0.5(a·u₁² + b·u₂²)` on S¹.
-        let (a, b) = (1e6f64, 1.0f64);
+        // First: outside the ball, nothing is proposed and nothing learned.
+        let stiff = SpherePcn::new(
+            Tensor::from_vec(vec![0.8f32, 0.6], vec![2], &dev).unwrap(),
+            1.0,
+            1.0,
+            SgPcnlScheduler {
+                beta_0: 0.3,
+                gamma: 0.0,
+                kappa: 0.5,
+            },
+            1,
+            1.0,
+        )
+        .with_preconditioner();
+        let big = move |theta: &Tensor| {
+            let cell = theta.flatten_all()?.to_vec1::<f32>()?;
+            let (x, y) = (cell[0] as f64, cell[1] as f64);
+            let g = Tensor::from_vec(
+                vec![(1e6 * x) as f32, y as f32],
+                vec![2],
+                &candle_core::Device::Cpu,
+            )?;
+            Ok((0.5 * (1e6 * x * x + y * y), g))
+        };
+        let mut stiff = stiff;
+        stiff.metric_warmup = 4;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..4 {
+            let (acc, log_alpha) = stiff.step_preconditioned(big, &mut rng).unwrap();
+            assert!(!acc);
+            assert_eq!(log_alpha, f64::NEG_INFINITY);
+        }
+        assert!(
+            stiff.precond.is_none(),
+            "proposals outside the injectivity ball must not feed the metric"
+        );
+
+        // Inside the ball: curvature 40 vs 1, proposals legal and mostly
+        // rejected, the metric still picks up the anisotropy.
+        let (a, b) = (40f64, 1.0f64);
         let target = move |theta: &Tensor| {
             let cell = theta.flatten_all()?.to_vec1::<f32>()?;
             let (x, y) = (cell[0] as f64, cell[1] as f64);
@@ -902,15 +1211,96 @@ mod tests {
                 .step_preconditioned(target, &mut rng)
                 .expect("preconditioned step");
         }
-        assert_eq!(
-            chain.accepted, 0,
-            "the point must be frozen for this test to mean anything"
+        assert!(
+            chain.accepted < chain.metric_warmup as usize,
+            "most proposals must be rejected for the proposal-side estimate to matter"
         );
         let d = chain.precond.clone().expect("a metric was estimated");
         assert!(
-            d[0] < 0.2 && d[1] > 1.5,
-            "frozen chain should still learn that direction 0 is stiff: d = {d:?}"
+            d[0] < 0.2 && d[1] > 0.3 && d[1] > 4.0 * d[0],
+            "the proposal-side estimate should see direction 0 as {a}× stiffer: d = {d:?}"
         );
+    }
+
+    /// R0.5: the adapt-then-freeze boundary is a recorded fact, not an
+    /// assumption, and the two ways to get a metric report differently.
+    #[test]
+    fn metric_freeze_records_where_adaptation_stops() {
+        let dev = Device::Cpu;
+        let sched = SgPcnlScheduler {
+            beta_0: 0.3,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let make = || {
+            SpherePcn::new(
+                Tensor::from_vec(vec![0.8f32, 0.6], vec![2], &dev).unwrap(),
+                1.0,
+                1.0,
+                sched,
+                1,
+                1.0,
+            )
+        };
+
+        // Isotropic: nothing to freeze.
+        assert_eq!(make().metric_freeze(), MetricFreeze::None);
+
+        // Installed: frozen at step 0, and the first step does not overwrite it
+        // (the bug this guards: `set_metric` used to leave warm-up running).
+        let mut installed = make();
+        installed.set_metric(vec![1.0, 4.0]);
+        match installed.metric_freeze() {
+            MetricFreeze::Installed { dim, .. } => assert_eq!(dim, 2),
+            other => panic!("installed metric reported as {other:?}"),
+        }
+        let target = |theta: &Tensor| {
+            let cell = theta.flatten_all()?.to_vec1::<f32>()?;
+            let (x, y) = (cell[0] as f64, cell[1] as f64);
+            Ok((
+                0.5 * (40.0 * x * x + y * y),
+                Tensor::from_vec(
+                    vec![(40.0 * x) as f32, y as f32],
+                    vec![2],
+                    &candle_core::Device::Cpu,
+                )?,
+            ))
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+        installed
+            .step_preconditioned(target, &mut rng)
+            .expect("step");
+        assert_eq!(
+            installed.precond.as_deref(),
+            Some(&[1.0, 4.0][..]),
+            "an installed metric must survive the first step"
+        );
+
+        // Learned: adapting during warm-up, frozen at `metric_warmup`.
+        let mut learned = make().with_preconditioner();
+        learned.metric_warmup = 3;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+        learned.step_preconditioned(target, &mut rng).expect("step");
+        match learned.metric_freeze() {
+            MetricFreeze::Adapting { step, dim } => {
+                assert_eq!(step, 1);
+                assert_eq!(dim, 2);
+            }
+            other => panic!("warm-up metric reported as {other:?}"),
+        }
+        for k in 1..3 {
+            learned.step_preconditioned(target, &mut rng).expect("step");
+            assert_eq!(learned.step_count, k + 1);
+        }
+        match learned.metric_freeze() {
+            MetricFreeze::Frozen { at, dim, hash } => {
+                assert_eq!((at, dim), (3, 2));
+                assert_eq!(learned.metric_record().freeze_step, Some(3));
+                assert_eq!(learned.metric_record().hash, Some(hash));
+                assert!(!learned.metric_record().adapting);
+            }
+            other => panic!("finished warm-up reported as {other:?}"),
+        }
     }
 
     /// The exponent identity the preconditioned ratio relies on, against a dense
@@ -1099,6 +1489,213 @@ mod tests {
         (kept, accepted as f64 / steps as f64)
     }
 
+    // ---- the fixed-latitude jump -----------------------------------------
+
+    /// How long to run a test chain: proposals, burn-in, thinning and seed.
+    /// Bundled so `latitude_chain` (which also needs the anchor) stays under
+    /// clippy's argument limit without touching the knobs themselves.
+    #[derive(Clone, Copy)]
+    struct Run {
+        steps: usize,
+        burn: usize,
+        thin: usize,
+        seed: u64,
+    }
+
+    /// [`Run::steps`] proposals of [`latitude_jump`] about `anchor`, every
+    /// `thin`-th draw kept after `burn`, plus the acceptance rate.
+    fn latitude_chain(
+        u0: Vec<f64>,
+        r: f64,
+        anchor: &[f64],
+        log_target: &dyn Fn(&[f64]) -> f64,
+        run: Run,
+    ) -> (Vec<Vec<f64>>, f64) {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(run.seed);
+        let mut u = u0;
+        let mut lu = log_target(&u);
+        let (mut accepted, mut kept) = (0usize, Vec::new());
+        for t in 0..run.steps {
+            let (next, take, ln) = latitude_jump(&u, lu, r, anchor, log_target, &mut rng);
+            if take {
+                u = next;
+                lu = ln;
+                accepted += 1;
+            }
+            if t >= run.burn && (t - run.burn).is_multiple_of(run.thin) {
+                kept.push(u.clone());
+            }
+        }
+        (kept, accepted as f64 / run.steps as f64)
+    }
+
+    /// **The move stays on the latitude and is uniform there.**  On a flat
+    /// target the conditional law is Haar on the latitude sphere, whose mean is
+    /// `⟨a,u⟩·a` exactly — one number, and it fails if the rotation leaks off
+    /// the latitude (a `cos φ` applied to the wrong component moves it by `O(r²)`,
+    /// which 4 batch-means se resolves).
+    ///
+    /// The cap arm is the point of the kernel: with `d₀ < cap` and a step that
+    /// would leave a *free* walk's cap after two moves, acceptance stays at 100 %
+    /// because `⟨a,u′⟩ = ⟨a,u⟩` — the restriction never rejects a latitude move.
+    #[test]
+    fn latitude_jump_stays_on_the_latitude() {
+        let p = 7usize;
+        let mut anchor = vec![0.0; p];
+        anchor[0] = 1.0;
+        let d0 = 0.4f64;
+        let mut start = vec![0.0; p];
+        start[0] = d0.cos();
+        start[1] = d0.sin();
+        let flat = |_: &[f64]| 0.0;
+        let run = Run {
+            steps: 20_000,
+            burn: 1_000,
+            thin: 5,
+            seed: 71,
+        };
+        let (kept, rate) = latitude_chain(start, 0.25, &anchor, &flat, run);
+        assert!(rate > 0.95, "a flat target must accept, got {rate}");
+        let c = d0.cos();
+        for u in &kept {
+            let cm = sdot(u, &anchor);
+            assert!((cm - c).abs() < 1e-12, "left the latitude: ⟨a,u⟩ = {cm}");
+        }
+        // the Haar mean of the latitude is c·a, so every other coordinate is 0
+        for i in 1..p {
+            let xs: Vec<f64> = kept.iter().map(|u| u[i]).collect();
+            let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+            let se = batch_means_se(&xs);
+            assert!(
+                mean.abs() < 4.0 * se.max(1e-4),
+                "latitude coordinate {i} has mean {mean} (se {se}), Haar says 0"
+            );
+        }
+        let xs: Vec<f64> = kept.iter().map(|u| u[0]).collect();
+        let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+        assert!(
+            (mean - c).abs() < 1e-3,
+            "E[u₁] = {mean}, the latitude pins {c}"
+        );
+    }
+
+    /// **Exactness against a closed form the ratio cannot fake.**  von
+    /// Mises–Fisher on `S³`, `π ∝ exp(κ⟨m,u⟩)`, conditioned on the latitude
+    /// `⟨a,u⟩ = c`: with `m = (a + ê₂)/√2` the latitude's mean direction is `ê₂`
+    /// and the conditional law is a von Mises–Fisher on the latitude sphere with
+    /// concentration `κ·s·|m_⊥| = κ·s/√2`, so
+    ///
+    /// ```text
+    /// E[u₂] = s·A(κ s/√2),   A(z) = coth z − 1/z
+    /// ```
+    ///
+    /// and `E[u₁] = c` (pinned).  A symmetric kernel whose reverse step differed
+    /// would move `E[u₂]` and leave `E[u₁]` alone — the pair is what separates
+    /// the two failures.
+    ///
+    /// `P = 4` is the smallest `P` where this is the elementary form: the
+    /// latitude there is `S²`, so the conditional law is a 3-dimensional vMF.
+    /// At `P = 3` the latitude is a *circle* and the same construction reads
+    /// `I₁(z)/I₀(z)` instead — writing `coth z − 1/z` there is a 0.14 error in
+    /// `E[u₂]` (0.306 against the measured 0.445) that looks exactly like a
+    /// broken kernel and is not one.  The `P` that fixes the closed form is the
+    /// dimension of the *conditioned* space, not of the sphere.
+    #[test]
+    fn latitude_jump_is_exact_conditioned_on_the_latitude() {
+        let kappa = 2.0f64;
+        let d0 = 1.0f64;
+        let (c, s) = (d0.cos(), d0.sin());
+        let anchor = [1.0, 0.0, 0.0, 0.0];
+        let start = vec![c, s, 0.0, 0.0];
+        let log_target = |u: &[f64]| {
+            let sq = std::f64::consts::FRAC_1_SQRT_2;
+            kappa * (sq * u[0] + sq * u[1])
+        };
+        let run = Run {
+            steps: 60_000,
+            burn: 1_000,
+            thin: 5,
+            seed: 72,
+        };
+        let (kept, rate) = latitude_chain(start, 0.2, &anchor, &log_target, run);
+        assert!(rate > 0.25, "acceptance {rate} too low to judge");
+        let z = kappa * s * std::f64::consts::FRAC_1_SQRT_2;
+        let theory = s * (1.0 / z.tanh() - 1.0 / z);
+        let xs: Vec<f64> = kept.iter().map(|u| u[1]).collect();
+        let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+        let se = batch_means_se(&xs);
+        assert!(
+            (mean - theory).abs() < 4.0 * se,
+            "E[u₂] = {mean}, the conditioned von Mises says {theory} (se {se}, accept {rate})"
+        );
+        let ys: Vec<f64> = kept.iter().map(|u| u[0]).collect();
+        let m1 = ys.iter().sum::<f64>() / ys.len() as f64;
+        assert!(
+            (m1 - c).abs() < 1e-12,
+            "E[u₁] = {m1}, the latitude pins {c}"
+        );
+    }
+
+    /// **A small latitude, and an anchor that is only `f32`-unit.**  The
+    /// stabilisation in [`latitude_jump`] is invisible at `d₀ = 0.4` and fatal at
+    /// `d₀ = 8.6e-4`: the model's direction arrives from `f32` weights, so
+    /// `|a| = 1 + 5e-8`, and a kernel that folds `|a|` into `|u|` gains
+    /// `2c²(|a|² − 1)` per step — `⟨a,u⟩` reaches 1 after
+    /// `(1 − cos d₀)/(2|a|δ) ≈ 10³` steps, `sin d` hits 0, and the chain freezes
+    /// on the anchor while the acceptance column decays as `1/t`.
+    ///
+    /// This is that failure at the radius the basin measurements use, with the
+    /// two invariants that must hold at every draw: `|u| = 1` and
+    /// `⟨â,u⟩ = cos d₀`.
+    #[test]
+    fn a_small_latitude_survives_a_non_unit_anchor() {
+        let p = 256usize;
+        let d0 = 8.61e-4f64;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(73);
+        let raw: Vec<f64> = (0..p).map(|_| rng.random::<f64>() - 0.5).collect();
+        let n0 = (raw.iter().map(|x| x * x).sum::<f64>()).sqrt();
+        // an `f32`-precise anchor: unit to 5e-8, not to 1e-16
+        let anchor: Vec<f64> = raw.iter().map(|x| (x / n0) * (1.0 + 5e-8)).collect();
+        let ab: Vec<f64> = anchor.iter().map(|x| x / (1.0 + 5e-8)).collect();
+        let t0: Vec<f64> = (0..p).map(|_| rng.random::<f64>() - 0.5).collect();
+        let ta = sdot(&t0, &ab);
+        let mut v: Vec<f64> = (0..p).map(|i| t0[i] - ta * ab[i]).collect();
+        let vn = (v.iter().map(|x| x * x).sum::<f64>()).sqrt();
+        for x in v.iter_mut() {
+            *x /= vn;
+        }
+        let mut u: Vec<f64> = (0..p).map(|i| d0.cos() * ab[i] + d0.sin() * v[i]).collect();
+        let flat = |_: &[f64]| 0.0;
+        let mut accepted = 0usize;
+        for _ in 0..4_000 {
+            let (nx, take, _) = latitude_jump(&u, 0.0, 0.5 * d0, &anchor, &flat, &mut rng);
+            if take {
+                u = nx;
+                accepted += 1;
+            }
+        }
+        assert!(
+            accepted > 3_900,
+            "a flat target must accept, got {accepted}"
+        );
+        let nu = (u.iter().map(|x| x * x).sum::<f64>()).sqrt();
+        let cu = sdot(&u, &ab);
+        assert!(
+            (nu - 1.0).abs() < 1e-12,
+            "|u| = {nu}, the move left the sphere"
+        );
+        // 1e-10, not 1e-16: the latitude drifts 5e-16 per step (rounding in
+        // `⟨â,u⟩`), which is `2e-12` over this run and `2e-9` rad — and, unlike
+        // the failure this test is for, it does not amplify.  The frozen-chain
+        // collapse moves `⟨â,u⟩` by `1 − cos d₀ = 3.7e-7`, seven orders above.
+        assert!(
+            (cu - d0.cos()).abs() < 1e-10,
+            "⟨â,u⟩ = {cu}, the latitude has moved from cos {:.12}",
+            d0.cos()
+        );
+        assert!(d0.cos().acos() <= d0 * 1.001, "sanity on the start");
+    }
+
     /// Batch-means standard error: consecutive draws are correlated, and an iid
     /// bar would reject a correct kernel (the same reason the pCN moment tests
     /// use it).
@@ -1152,6 +1749,53 @@ mod tests {
         );
     }
 
+    /// R0.4: a tangent proposal longer than π has several preimages on the
+    /// sphere, so it cannot be given a single-density MH ratio.  With
+    /// `σ/radius = 10` the step's `τ` is ~10 and `‖v‖ > π` immediately: the
+    /// chain must stand still and report a rejection, not a `sin a → 0` ratio.
+    /// The second half checks the guard is invisible at the reported `τ ≈ 0.04`.
+    #[test]
+    fn overlong_tangent_proposals_are_rejected_not_ratioed() {
+        let dev = Device::Cpu;
+        let sched = SgPcnlScheduler {
+            beta_0: 0.999,
+            gamma: 0.0,
+            kappa: 0.5,
+        };
+        let mut chain = SpherePcn::new(
+            Tensor::from_vec(vec![1.0f32, 0.0], vec![2], &dev).unwrap(),
+            1.0,
+            10.0, // σ/radius = 10 → τ ≈ 10 ≫ π on the first step
+            sched,
+            1,
+            1.0,
+        );
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        let before = chain.u.to_vec1::<f32>().unwrap();
+        let (acc, log_alpha) = chain.step(von_mises(2.0, 1.0, false), &mut rng).unwrap();
+        assert!(!acc, "an over-long proposal must not be accepted");
+        assert_eq!(log_alpha, f64::NEG_INFINITY);
+        assert_eq!(chain.u.to_vec1::<f32>().unwrap(), before, "state moved");
+
+        // Reported regime: the same call yields a finite ratio.
+        let mut ok = SpherePcn::new(
+            Tensor::from_vec(vec![1.0f32, 0.0], vec![2], &dev).unwrap(),
+            1.0,
+            1.0,
+            SgPcnlScheduler {
+                beta_0: 0.05,
+                ..sched
+            },
+            1,
+            1.0,
+        );
+        let (_, log_alpha) = ok.step(von_mises(2.0, 1.0, false), &mut rng).unwrap();
+        assert!(
+            log_alpha.is_finite(),
+            "τ = 0.05 is far inside the injectivity radius, got {log_alpha}"
+        );
+    }
+
     /// **An isotropic Gaussian in the tangent.**  Geodesic coordinates carry the
     /// Haar measure `(sin r)^{P−2} dr dΩ = (sin r / r)^{P−2} dv`, so a target
     /// that is `N(0, σ²I)` *in the chart* is
@@ -1199,6 +1843,96 @@ mod tests {
             "shell E[r²] = {mean}, N(0, σ²I) on R^{} says {theory} (batch-means se {se}, accept {rate})",
             p - 1
         );
+    }
+
+    /// **A restriction on the target, not on the proposal.**  On `S²` the Haar
+    /// measure is uniform in `cos θ`, where `θ` is the geodesic radius from the
+    /// anchor, so a flat target restricted to `θ ≤ d` has `E[cos θ] = (1 +
+    /// cos d)/2` in closed form — one number, no fitting.
+    ///
+    /// It pins both halves of the claim in [`restrict_to_cap`]: the cap is
+    /// enforced (every kept draw is inside), and the ratio is still exact (the
+    /// moment matches).  The two failure modes it separates are the ones that
+    /// look alike in an acceptance column: censoring the *proposal* (which is
+    /// also exact, but with a different law) and censoring the target while
+    /// keeping a wrong `(sin r)^{P−2}` volume factor.
+    #[test]
+    fn cap_restriction_is_haar_on_the_cap() {
+        let d = 0.8f64;
+        let anchor = vec![1.0, 0.0, 0.0];
+        let flat = restrict_to_cap(|_: &[f64]| 0.0, &anchor, d);
+        let (kept, rate) = shell_chain(anchor.clone(), 0.3, &flat, 60_000, 1_000, 5, 44);
+        assert!(rate > 0.25, "acceptance {rate} too low to judge");
+        assert!(
+            kept.iter()
+                .all(|u| u[0].clamp(-1.0, 1.0).acos() <= d + 1e-12),
+            "a kept draw left the cap"
+        );
+        let cosines: Vec<f64> = kept.iter().map(|u| u[0]).collect();
+        let mean = cosines.iter().sum::<f64>() / cosines.len() as f64;
+        let theory = 0.5 * (1.0 + d.cos());
+        let se = batch_means_se(&cosines);
+        assert!(
+            (mean - theory).abs() < 4.0 * se,
+            "capped shell E[cos θ] = {mean}, Haar on the cap says {theory} \
+             (batch-means se {se}, accept {rate})"
+        );
+    }
+
+    /// **The cap has to be several steps wide, or the chain stops.**  This is
+    /// the geometric condition under which [`restrict_to_cap`] is usable, and
+    /// the exactness argument cannot see it: the ratio is right at any radius,
+    /// but a chain sitting on the boundary stays inside only when the step's
+    /// inward component beats the sphere's curvature.  From radius `R` a step
+    /// `r` lands inside iff `⟨u, ŵ⟩ ≥ r/(2R)`, whose probability on `S^{P−1}`
+    /// is `Φ̄(r√P/(2R))` — so the ratio `R/r`, not the radius, is what decides
+    /// whether the run moves.
+    ///
+    /// Two flat targets on `S^{63}`, differing only in that ratio: at `R = r`
+    /// the chain takes one step, freezes on the boundary, and reports ~0
+    /// acceptance; at `R = 10r` it keeps moving.  `examples/basin_posterior
+    /// --cap` with the default `R = r₁` hit exactly the first arm (0.0 %
+    /// acceptance over 4 × 10 000 steps), which is what motivated this test.
+    #[test]
+    fn a_cap_must_be_several_steps_wide_or_the_chain_freezes() {
+        let p = 64;
+        let r = 0.05;
+        let mut anchor = vec![0.0; p];
+        anchor[0] = 1.0;
+
+        let tight_cap = restrict_to_cap(|_: &[f64]| 0.0, &anchor, r);
+        let (tight, tight_rate) = shell_chain(anchor.clone(), r, &tight_cap, 20_000, 1_000, 5, 9);
+        let roomy_cap = restrict_to_cap(|_: &[f64]| 0.0, &anchor, 10.0 * r);
+        let (roomy, roomy_rate) = shell_chain(anchor.clone(), r, &roomy_cap, 20_000, 1_000, 5, 9);
+
+        for (kept, radius) in [(&tight, r), (&roomy, 10.0 * r)] {
+            assert!(
+                kept.iter()
+                    .all(|u| u[0].clamp(-1.0, 1.0).acos() <= radius + 1e-12),
+                "a kept draw left the cap at R = {radius}"
+            );
+        }
+        assert!(
+            tight_rate < 0.01,
+            "cap = step should freeze the chain, acceptance {tight_rate}"
+        );
+        assert!(
+            roomy_rate > 0.1,
+            "cap = 10 steps should let it move, acceptance {roomy_rate}"
+        );
+    }
+
+    /// The unrestricted case must be bit-identical to the bare target, so a
+    /// caller can wire one closure and vary only the radius.
+    #[test]
+    fn an_infinite_cap_is_the_bare_target() {
+        let anchor = vec![0.6, 0.8];
+        let bare = |u: &[f64]| 1.25 * u[0] - 0.5 * u[1];
+        let capped = restrict_to_cap(bare, &anchor, f64::INFINITY);
+        for u in [[1.0, 0.0], [0.0, 1.0], [-0.6, -0.8], [0.6, 0.8]] {
+            assert_eq!(capped(&u), bare(&u));
+        }
+        assert!(restrict_to_cap(bare, &anchor, 0.1)(&[0.0, 1.0]).is_infinite());
     }
 
     /// The determinant identity the ratio relies on, checked against a dense

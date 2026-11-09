@@ -21,6 +21,9 @@
 //! tracking test in `sampler`.
 
 use crate::diag::{ess, gelman_rubin};
+use crate::manifest::{
+    CodeId, DataId, MetricRecord, ModelId, Phase, RunManifest, SamplerId, TargetId, WorkId,
+};
 use crate::model::{Shapes, Variant, init_flat};
 use crate::persist::save_chain_trajectory;
 use crate::sampler::{SgPcnlScheduler, SgPcnlState, norm};
@@ -210,6 +213,120 @@ impl Config {
     }
 }
 
+/// R0.5 — the kept window of one trace, and whether a stationary diagnostic
+/// may be read off it.
+///
+/// `stationary` is exact, not a tolerance: the step size must be identical at
+/// both ends of the window and the likelihood ramp must have finished before it
+/// began. The default `κ = 0.5` schedule decays over any window a run can
+/// reach, so the default answer is `false` — and that is the point. ESS and R̂
+/// over a decaying-step trace describe *that window*, not a stationary chain;
+/// the report now says so at every use.
+#[derive(Clone, Debug)]
+pub struct Window {
+    pub start: usize,
+    pub end: usize,
+    pub beta_start: f64,
+    pub beta_end: f64,
+    /// Target temperature at `start` (the ramp's value is fixed after it ends).
+    pub lambda: f64,
+    pub stationary: bool,
+}
+
+impl Window {
+    pub fn of(cfg: &Config, sched: &SgPcnlScheduler) -> Self {
+        let start = cfg.burn.min(cfg.steps);
+        let end = cfg.steps;
+        let beta_start = sched.beta_at(start);
+        let beta_end = sched.beta_at(end.saturating_sub(1).max(start));
+        let lambda = lambda_at(cfg, start);
+        let stationary =
+            cfg.cyclical_period == 0 && beta_start == beta_end && lambda == cfg.potential_scale;
+        Self {
+            start,
+            end,
+            beta_start,
+            beta_end,
+            lambda,
+            stationary,
+        }
+    }
+
+    /// One line, printed under every variant: which steps the diagnostics
+    /// above were computed on and what they are allowed to mean.
+    pub fn render(&self, thin: usize, chains: usize) -> String {
+        let draws = self
+            .end
+            .saturating_sub(self.start)
+            .checked_div(thin)
+            .unwrap_or(0);
+        let verdict = if self.stationary {
+            "stationary (constant target and step size)".to_string()
+        } else {
+            "NONSTATIONARY: the ESS/Rhat above describe this decaying-step window, \
+             not a stationary chain"
+                .to_string()
+        };
+        format!(
+            "  window: kept t={}..{} of {} steps (thin {thin}, {draws} draws/chain, {chains} chains) \
+             | beta {:.4}->{:.4} lambda {:.2} | {verdict}\n",
+            self.start, self.end, self.end, self.beta_start, self.beta_end, self.lambda
+        )
+    }
+}
+
+/// `λ_t` of the likelihood ramp: `λ·min(1, t/anneal)` (`SgPcnlState::lambda_at`).
+fn lambda_at(cfg: &Config, step: usize) -> f64 {
+    if cfg.anneal_steps == 0 {
+        return cfg.potential_scale;
+    }
+    cfg.potential_scale * (step as f64 / cfg.anneal_steps as f64).min(1.0)
+}
+
+/// R0.5 — warm-up, likelihood ramp and kept window as separate records.
+///
+/// The three overlap by design (the ramp usually starts with the warm-up), and
+/// that is why each carries its own `lambda`/`beta` pair: a phase is a fact
+/// about what the kernel was doing over that range, not a partition of the run.
+pub fn phases(cfg: &Config, sched: &SgPcnlScheduler) -> Vec<Phase> {
+    let mut out = Vec::with_capacity(3);
+    if cfg.burn > 0 && cfg.steps > 0 {
+        let end = cfg.burn.min(cfg.steps);
+        out.push(Phase {
+            name: "warmup".into(),
+            start: 0,
+            end,
+            lambda: lambda_at(cfg, end),
+            beta_start: sched.beta_at(0),
+            beta_end: sched.beta_at(end - 1),
+            stationary: false,
+        });
+    }
+    if cfg.anneal_steps > 0 && cfg.steps > 0 {
+        let end = cfg.anneal_steps.min(cfg.steps);
+        out.push(Phase {
+            name: "likelihood-ramp".into(),
+            start: 0,
+            end,
+            lambda: lambda_at(cfg, end),
+            beta_start: sched.beta_at(0),
+            beta_end: sched.beta_at(end - 1),
+            stationary: false,
+        });
+    }
+    let w = Window::of(cfg, sched);
+    out.push(Phase {
+        name: "kept".into(),
+        start: w.start,
+        end: w.end,
+        lambda: w.lambda,
+        beta_start: w.beta_start,
+        beta_end: w.beta_end,
+        stationary: w.stationary,
+    });
+    out
+}
+
 /// Everything the run measured, for one model variant.
 #[derive(Clone, Debug)]
 pub struct VariantReport {
@@ -288,6 +405,13 @@ pub struct VariantReport {
     pub rhat_loss: f64,
     pub rhat_coords_median: f64,
     pub rhat_coords_max: f64,
+    /// R0.5 — the steps the four diagnostics above were computed on, and
+    /// whether that window is a stationary chain (default: it is not).
+    pub window: Window,
+    /// R0.6 — hash of the frozen Task-A anchor `θ_A` this arm adapted from.
+    pub anchor_hash: u64,
+    /// R0.6 — hash of the materialised Task-B data the potential sums over.
+    pub data_hash: u64,
     pub bma_accuracy: f64,
     pub bma_nll: f64,
     /// Phase 4's Expected Calibration Error of the BMA predictive
@@ -304,9 +428,19 @@ pub struct VariantReport {
 pub struct Report {
     pub config: Config,
     pub variants: Vec<VariantReport>,
+    /// R0.6 — identity of the run: revision, data and anchor hashes, the
+    /// evaluated schedule, the phase window, cost and non-finite events.
+    pub manifest: RunManifest,
 }
 
 impl Report {
+    /// R0.6 — write `{dir}/{stem}.manifest.json`, the identity half of a saved
+    /// run. The `.safetensors` trajectories say *what* was kept; the manifest
+    /// says what the numbers are, without which they are not checkable.
+    pub fn write_manifest(&self, dir: &std::path::Path, stem: &str) -> std::io::Result<PathBuf> {
+        self.manifest.write(dir, stem)
+    }
+
     /// Multi-line, fully numeric rendering — the artifact the doc
     /// quotes and the snapshot test pins structurally.
     pub fn render(&self) -> String {
@@ -476,6 +610,10 @@ impl Report {
                 la = v.last_state_accuracy,
                 sec = v.seconds,
             ));
+            // R0.5: which steps the diagnostics above were computed on. Printed
+            // unconditionally — a decaying-step trace is the default, and its
+            // ESS/Rhat are not stationary-chain diagnostics.
+            s.push_str(&v.window.render(self.config.thin, self.config.chains));
             // §6.5.5's diagnostic, printed only when the target is not the
             // published one, so every λ = 1 render stays byte-identical.
             if self.config.potential_scale != 1.0 || self.config.anneal_steps > 0 {
@@ -534,12 +672,20 @@ impl Report {
     }
 }
 
+/// Median of the finite values; `NaN` when there are none.
+///
+/// Diagnostics now report `NaN` for frozen or non-finite traces
+/// (`diag::Movement`), so this must not be able to panic on them: a single
+/// stuck coordinate used to make every median `NaN`-poisoned *and* the sort
+/// fail, which turned "this coordinate never moved" into a crash in the quick
+/// report.  `total_cmp` orders NaN last, so the finite prefix is the input.
 fn median(xs: &mut [f64]) -> f64 {
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let n = xs.len();
+    xs.sort_by(|a, b| a.total_cmp(b));
+    let n = xs.iter().take_while(|x| x.is_finite()).count();
     if n == 0 {
-        f64::NAN
-    } else if n % 2 == 1 {
+        return f64::NAN;
+    }
+    if n % 2 == 1 {
         xs[n / 2]
     } else {
         0.5 * (xs[n / 2 - 1] + xs[n / 2])
@@ -706,9 +852,94 @@ pub fn run_experiment(cfg: &Config) -> Report {
     for variant in [Variant::Cosine, Variant::Standard] {
         variants.push(run_variant(cfg, variant, &data_a, &data_b, &theta0));
     }
+
+    // ---- R0.6: the run's identity, captured once beside the draws ------
+    let sched = SgPcnlScheduler {
+        beta_0: cfg.beta_0,
+        gamma: cfg.gamma,
+        kappa: cfg.kappa,
+    };
+    let mut manifest = RunManifest::new(
+        CodeId::capture(),
+        ModelId {
+            variant: variants
+                .iter()
+                .map(|v| v.variant)
+                .collect::<Vec<_>>()
+                .join(" | "),
+            p: cfg.shapes.flat_size(),
+            dtype: "f32".into(),
+            device: "cpu".into(),
+            // The forward/backward this crate evaluates: `fro-stopped` is the
+            // labelled surrogate from R0.1, not the exact normalised map.
+            normalization: "fro-stopped/v1".into(),
+        },
+        DataId {
+            task: format!("{:?}", cfg.task_b),
+            k: cfg.k,
+            n_train: cfg.n_train,
+            n_test: cfg.n_test,
+            seed: cfg.seed,
+            hash: data_b.content_hash(),
+            anchor_hash: variants.first().map(|v| v.anchor_hash),
+        },
+    );
+    manifest.target = TargetId {
+        lambda: cfg.potential_scale,
+        prior: if cfg.prior_center_at_a {
+            "N(theta_A, sigma^2 I)".into()
+        } else {
+            "N(0, sigma^2 I)".into()
+        },
+        anneal_steps: cfg.anneal_steps,
+    };
+    manifest.sampler = SamplerId {
+        kernel: "sg-pcnl-unadjusted + sgld + mh-pcnl".into(),
+        beta_0: cfg.beta_0,
+        gamma: cfg.gamma,
+        kappa: cfg.kappa,
+        beta_floor: SgPcnlScheduler::BETA_FLOOR,
+        sigma: cfg.sigma,
+        steps: cfg.steps,
+        burn: cfg.burn,
+        thin: cfg.thin,
+        chains: cfg.chains,
+        batch_size: cfg.batch_size,
+        cyclical_period: cfg.cyclical_period,
+    };
+    manifest.phases = phases(cfg, &sched);
+    // The ambient engine's proposal is isotropic: its covariances are the
+    // prior's `sigma^2 I`, so there is no adapted metric to freeze here. A
+    // sphere chain reports its own record through `SpherePcn::metric_record`.
+    manifest.metric = MetricRecord::isotropic();
+    // One potential evaluation (forward + backward on one batch) per step per
+    // chain per arm: SG-pCNL, SGLD, and MH-pCNL when enabled, for each variant.
+    let evals = variants.len() as u64
+        * (2 + u64::from(cfg.run_mh))
+        * cfg.steps as u64
+        * cfg.chains as u64
+        * cfg.batch_size as u64;
+    manifest.work = WorkId {
+        forward_evals: evals,
+        backward_evals: evals,
+        wall_seconds: variants
+            .iter()
+            .map(|v| {
+                v.seconds
+                    + if v.mh_seconds.is_finite() {
+                        v.mh_seconds
+                    } else {
+                        0.0
+                    }
+            })
+            .sum(),
+        peak_mem_mb: WorkId::peak_rss_mb(),
+        nonfinite_events: variants.iter().filter(|v| v.grad_nonfinite).count() as u64,
+    };
     Report {
         config: cfg.clone(),
         variants,
+        manifest,
     }
 }
 
@@ -1097,6 +1328,7 @@ fn run_variant(
     let radial_expected = cfg.sigma * (p_dim as f64).sqrt();
     let beta_start = scheduler.beta_at(0);
     let beta_end = scheduler.beta_at(cfg.steps.saturating_sub(1));
+    let window = Window::of(cfg, &scheduler);
 
     // ---- diagnostics (only over finite chains) ----------------------
     let (ess_loss, ess_med, rhat_loss, rhat_med, rhat_max) = if exploded {
@@ -1290,6 +1522,20 @@ fn run_variant(
         rhat_loss,
         rhat_coords_median: rhat_med,
         rhat_coords_max: rhat_max,
+        window,
+        anchor_hash: {
+            let mut h = crate::manifest::Fnv::new();
+            for x in theta_a
+                .flatten_all()
+                .expect("flatten anchor")
+                .to_vec1::<f32>()
+                .expect("anchor")
+            {
+                h.write(&x.to_le_bytes());
+            }
+            h.finish()
+        },
+        data_hash: data_b.content_hash(),
         bma_accuracy,
         bma_nll,
         bma_ece,
@@ -1474,6 +1720,98 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
     }
 
+    /// R0.5: the schedule decides whether a stationary diagnostic is allowed.
+    /// The default `κ = 0.5` schedule decays over any reachable kept window, so
+    /// the honest default answer is "this is an annealing trace"; only a fixed
+    /// step size with a finished ramp licenses the stationary reading.
+    #[test]
+    fn window_separates_annealing_from_stationary_sampling() {
+        let cfg = Config::default();
+        let sched = SgPcnlScheduler {
+            beta_0: cfg.beta_0,
+            gamma: cfg.gamma,
+            kappa: cfg.kappa,
+        };
+        let w = Window::of(&cfg, &sched);
+        assert_eq!(w.start, cfg.burn);
+        assert_eq!(w.end, cfg.steps);
+        assert!(!w.stationary, "decaying beta must not claim stationarity");
+        assert!(w.beta_end < w.beta_start);
+        assert_eq!(w.lambda, 1.0, "default target is the likelihood one");
+        let line = w.render(cfg.thin, cfg.chains);
+        assert!(line.contains("NONSTATIONARY"), "{line}");
+        assert!(
+            line.contains(&format!("kept t={}..{}", cfg.burn, cfg.steps)),
+            "{line}"
+        );
+
+        // Fixed step size, finished ramp: the one stationary case.
+        let fixed = Config {
+            gamma: 0.0,
+            ..Config::default()
+        };
+        let sched = SgPcnlScheduler {
+            beta_0: fixed.beta_0,
+            gamma: 0.0,
+            kappa: fixed.kappa,
+        };
+        let w = Window::of(&fixed, &sched);
+        assert!(w.stationary, "{w:?}");
+        assert!(
+            w.render(fixed.thin, fixed.chains)
+                .contains("stationary (constant target"),
+            "{w:?}"
+        );
+        let p = phases(&fixed, &sched);
+        let names: Vec<&str> = p.iter().map(|ph| ph.name.as_str()).collect();
+        assert_eq!(names, ["warmup", "kept"]);
+
+        // A ramp that runs into the kept window keeps it nonstationary even at
+        // a fixed step size, and the window records the tempered lambda.
+        let late = Config {
+            gamma: 0.0,
+            anneal_steps: fixed.burn + 100,
+            ..Config::default()
+        };
+        let w = Window::of(&late, &sched);
+        assert!(!w.stationary);
+        assert!(w.lambda < 1.0, "lambda at kept start = {}", w.lambda);
+        let p = phases(&late, &sched);
+        let names: Vec<&str> = p.iter().map(|ph| ph.name.as_str()).collect();
+        assert_eq!(names, ["warmup", "likelihood-ramp", "kept"]);
+    }
+
+    /// R0.6: the report carries a manifest that identifies the run — and the
+    /// rendered text carries R0.5's window line, not just the numbers.
+    #[test]
+    fn manifest_identifies_the_run() {
+        let cfg = Config::quick();
+        let report = run_experiment(&cfg);
+        let m = &report.manifest;
+        assert_ne!(m.code.revision, "unknown");
+        assert_eq!(m.tool, "pcnl");
+        assert_eq!(m.sampler.steps, cfg.steps);
+        assert_eq!(m.data.seed, cfg.seed);
+        assert_eq!(m.data.anchor_hash, Some(report.variants[0].anchor_hash));
+        assert_ne!(m.data.hash, 0);
+        assert_eq!(report.variants[0].data_hash, m.data.hash);
+        assert_eq!(m.metric.kind, "isotropic");
+        assert!(
+            m.phases.iter().any(|p| p.name == "kept" && !p.stationary),
+            "quick config keeps a decaying-step window"
+        );
+        assert_eq!(m.work.forward_evals, m.work.backward_evals);
+        assert!(m.work.forward_evals > 0);
+        let json = m.to_json();
+        assert!(json.contains(&format!("\"revision\": \"{}\"", m.code.revision)));
+        assert!(json.contains("\"phases\": [{\"name\": \"warmup\""));
+        let text = report.render();
+        assert!(
+            text.contains(&format!("window: kept t={}..{}", cfg.burn, cfg.steps)),
+            "missing window line:\n{text}"
+        );
+    }
+
     #[test]
     fn ece_measures_confidence_gap() {
         // Two samples, both predicted class 0 with confidence 0.9:
@@ -1504,6 +1842,8 @@ mod tests {
             "MH-pCNL (filtered)",
             "accept",
             "mobility",
+            "window: kept t=",
+            "NONSTATIONARY",
         ] {
             assert!(text.contains(needle), "missing {needle}:\n{text}");
         }

@@ -1,15 +1,31 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# Inner Weyl-gauge QYM derivation; H_final is h, not the outer H.
+# Retain the full magnetic square before enclosure. A two-mode builder is a
+# diagnostic reduction, and its inner reflection gap is not the absolute edge.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
 #
-# Purpose: derive the Weyl-gauge Yang-Mills Hamiltonian of record,
+# Purpose: derive the INNER Weyl-gauge Yang-Mills Hamiltonian,
 #   H_final = 1/2 pi^2 + 1/2 B^2, from the Legendre transform of
 #   L = 1/2 pi^2 - 1/2 B^2 (with F_0i = pi, 1/4 F_ij F^ij = 1/2 B^2),
 #   together with the BRST Gauss constraint G_y and the 3D epsilon identity.
-# Role in the program: this is the QYM mass-gap Hamiltonian of record. The
-#   nested-Fock realization `qcd_ym_hamiltonian(g)` in ../fock_sirk is this
-#   operator; every certified mass-gap band in docs/MASS_GAP_SPEC.md is a
-#   statement about it. Its reflection symmetry R: (A0,A1) -> (-A1,-A0) is
-#   what splits the certification into two pure sectors.
+# Role: the inner electric-plus-magnetic Legendre derivation. Its outer
+# enclosure defines the record only after the field/core identification.
+# The qcd_ym_hamiltonian(g) builder is a two-mode diagnostic reduction.
+# Reflection symmetry can separate its inner diagnostics, not by itself
+# establish an absolute positive physical one-particle edge.
 # Certified content: CHECK cells verify the Gauss constraint, the Legendre
 #   transform, and the epsilon identity numerically (each -> 0). Consumed by
 #   `prob_kernel::symbolic::tests::yang_mills_*` through the run's stdout
@@ -221,3 +237,26 @@ canonicalise(hcheck)
 collect_terms(hcheck)
 print("CHECK 1  YMH H_Weyl = 1/2 pi^2 + 1/2 B^2 (0 = ok):", hcheck);
 print("CHECK 2  YMH truncation guard len(H_final) / len(s2) / len(s3) (expect 2 / 6 / 6):", len(H_final), len(s2), len(s3));
+
+# Reflection check for the two-mode INNER diagnostic; no outer-gap claim.
+{uval, vval, gval}::Symbol.
+bdiag := uval - vval + (gval/2) uval vval.
+breflect := -vval + uval + (gval/2) vval uval.
+breflectdiff := (@(breflect))**2 - (@(bdiag))**2.
+distribute(breflectdiff)
+sort_product(breflectdiff)
+collect_terms(breflectdiff)
+print("CHECK 3 YMH two-mode magnetic reflection (expect 0; new, run pending):", breflectdiff)
+if str(breflectdiff) != "0":
+    raise AssertionError("YMH reflection changed the inner magnetic square")
+# Independent coefficient probe keeps the nonabelian cubic and quartic pieces.
+bsquare := (@(bdiag))**2.
+bsquaretarget := uval**2 - 2 uval vval + vval**2 + gval uval**2 vval
+                 - gval uval vval**2 + (gval**2/4) uval**2 vval**2.
+bexpanded := @(bsquare) - @(bsquaretarget).
+distribute(bexpanded)
+sort_product(bexpanded)
+collect_terms(bexpanded)
+print("CHECK 4 YMH full inner cubic/quartic expansion (expect 0; new, run pending):", bexpanded)
+if str(bexpanded) != "0":
+    raise AssertionError("YMH inner cubic/quartic terms were changed")

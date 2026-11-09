@@ -27,8 +27,10 @@
 use candle_core::{DType, Device, Tensor};
 use pcnl::diag::{ess, gelman_rubin};
 use pcnl::experiment::{Config, run_experiment};
-use pcnl::model::{Shapes, Variant, forward, init_flat, loss_and_grad, unflatten};
-use pcnl::normalize::{EPS, normalize_last};
+use pcnl::model::{
+    Shapes, Variant, forward, init_flat, loss_and_grad, loss_and_grad_norm, unflatten,
+};
+use pcnl::normalize::{EPS, NormGrad, normalize_last};
 use pcnl::sampler::{SgPcnlScheduler, SgPcnlState};
 use pcnl::task::{BatchLoader, Dataset, Task, momentum_sgd};
 use rand::{Rng, SeedableRng};
@@ -308,6 +310,186 @@ fn gradient_matches_central_finite_differences() {
 }
 
 // ---------------------------------------------------------------------
+// 4b. Directional FD against both normalisation conventions (R0.1)
+// ---------------------------------------------------------------------
+
+/// A fixed pseudo-random unit direction over `P` coordinates.
+fn unit_direction(p: usize, seed: u64) -> Vec<f32> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut v: Vec<f32> = (0..p).map(|_| rng.random_range(-1.0f32..1.0)).collect();
+    let n = v.iter().map(|x| (x * x) as f64).sum::<f64>().sqrt() as f32;
+    for x in &mut v {
+        *x /= n;
+    }
+    v
+}
+
+/// `d/dt L(θ + t d)` at `t = 0` for several directions and several *scales* of
+/// `θ`, checked against central finite differences, with the exact Jacobian.
+///
+/// This is the test the plan's R0.1 asks for and the one the earlier
+/// coordinate-wise check could not make: a coordinate probe never moves a whole
+/// block's norm, so the `∂‖W‖_F/∂W` term cancels against nothing and the
+/// stopped convention passes it by accident.  A direction that rescales a block
+/// exercises it directly.
+#[test]
+fn exact_gradient_matches_directional_finite_differences() {
+    let s = tiny();
+    let p = s.flat_size();
+    let tokens = Tensor::from_vec(vec![0u32, 1, 2, 0, 3, 4, 0, 5, 6], &[3, 3], dev()).unwrap();
+    let targets = Tensor::from_vec(vec![3u32, 5, 1], &[3], dev()).unwrap();
+    let base = init_flat(&s, 0.2, 3).to_vec1::<f32>().unwrap();
+
+    // Three kinds of direction: generic, the global ray, and one block's ray.
+    let embed_len = s.vocab * s.d;
+    let mut block = vec![0f32; p];
+    block[embed_len..embed_len + s.d * s.d]
+        .copy_from_slice(&base[embed_len..embed_len + s.d * s.d]);
+    let bn = block.iter().map(|x| (x * x) as f64).sum::<f64>().sqrt() as f32;
+    block.iter_mut().for_each(|x| *x /= bn);
+    let ray = {
+        let n = base.iter().map(|x| (x * x) as f64).sum::<f64>().sqrt() as f32;
+        base.iter().map(|x| x / n).collect::<Vec<f32>>()
+    };
+    let generic = unit_direction(p, 91);
+
+    for scale in [1e-3f32, 1.0, 50.0] {
+        let theta: Vec<f32> = base.iter().map(|x| x * scale).collect();
+        let th = Tensor::from_vec(theta.clone(), vec![p], dev()).unwrap();
+        let (l0, g) =
+            loss_and_grad_norm(&th, &s, Variant::Cosine, &tokens, &targets, NormGrad::Exact)
+                .unwrap();
+        assert!(l0.is_finite());
+        let gv = g.to_vec1::<f32>().unwrap();
+        for (name, d) in [
+            ("generic", &generic),
+            ("global ray", &ray),
+            ("block ray", &block),
+        ] {
+            let an: f64 = gv
+                .iter()
+                .zip(d.iter())
+                .map(|(a, b)| *a as f64 * *b as f64)
+                .sum();
+            let h = 2e-3 * scale as f64;
+            let shift = |sign: f64| {
+                let v: Vec<f32> = theta
+                    .iter()
+                    .zip(d.iter())
+                    .map(|(x, y)| (*x as f64 + sign * h * *y as f64) as f32)
+                    .collect();
+                let t = Tensor::from_vec(v, vec![p], dev()).unwrap();
+                let (l, _) =
+                    loss_and_grad_norm(&t, &s, Variant::Cosine, &tokens, &targets, NormGrad::Exact)
+                        .unwrap();
+                l
+            };
+            let fd = (shift(1.0) - shift(-1.0)) / (2.0 * h);
+            assert!(
+                (fd - an).abs() < 2e-3 + 2e-2 * an.abs(),
+                "scale {scale} {name}: fd {fd} vs exact autodiff {an}"
+            );
+        }
+    }
+}
+
+/// What the stopped convention adds, measured rather than asserted: the exact
+/// gradient is the stopped one minus its radial part, block by block,
+/// `g_e = g_s − (W·g_s)/(r(r+ε)) · W`.  The relative size of that term is the
+/// surrogate's bias, and it is *not* rounding: it is O(1) in the direction a
+/// gradient step takes.
+#[test]
+fn stopped_gradient_bias_is_the_radial_term() {
+    let s = Shapes {
+        vocab: 10, // Task A with k = 8 writes tokens up to 8
+        d: 16,
+        ff: 64,
+        layers: 1,
+    };
+    let p = s.flat_size();
+    let n = 64;
+    let data = Dataset::new(Task::A, 8, n, 8, 5);
+    let theta = init_flat(&s, 0.05, 21);
+    let (le, ge) = loss_and_grad_norm(
+        &theta,
+        &s,
+        Variant::Cosine,
+        &data.train_x,
+        &data.train_y,
+        NormGrad::Exact,
+    )
+    .unwrap();
+    let (ls, gs) = loss_and_grad_norm(
+        &theta,
+        &s,
+        Variant::Cosine,
+        &data.train_x,
+        &data.train_y,
+        NormGrad::Stopped,
+    )
+    .unwrap();
+    assert!((le - ls).abs() < 1e-5, "value differs: {le} vs {ls}");
+    let e = ge.to_vec1::<f32>().unwrap();
+    let t = gs.to_vec1::<f32>().unwrap();
+    let th = theta.to_vec1::<f32>().unwrap();
+
+    // per block: exact = stopped - radial(stopped), to f32 precision
+    let mut worst = 0f64;
+    let mut radial_share = 0f64;
+    for (start, len, shape) in s.layout() {
+        let w: Vec<f64> = th[start..start + len].iter().map(|x| *x as f64).collect();
+        let r = w.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if r < 1e-6 {
+            continue; // the ε-regularised map is linear here; see the FD test
+        }
+        let gsv: Vec<f64> = t[start..start + len].iter().map(|x| *x as f64).collect();
+        let gev: Vec<f64> = e[start..start + len].iter().map(|x| *x as f64).collect();
+        let wgs: f64 = w.iter().zip(gsv.iter()).map(|(a, b)| a * b).sum();
+        let c = wgs / (r * (r + EPS));
+        let mut num = 0f64;
+        let mut den = 0f64;
+        for i in 0..len {
+            let pred = gsv[i] - c * w[i];
+            num += (pred - gev[i]).powi(2);
+            den += gev[i].powi(2);
+        }
+        worst = worst.max((num / den.max(1e-30)).sqrt());
+        // how much of the stopped gradient points along the block's own ray
+        let rg = wgs / (r * gsv.iter().map(|x| x * x).sum::<f64>().sqrt());
+        radial_share = radial_share.max(rg.abs());
+        assert_eq!(*shape.last().unwrap() * shape[0], len);
+    }
+    assert!(
+        worst < 1e-4,
+        "g_e ≠ g_s − radial(g_s) per block: relative residual {worst}"
+    );
+    let ne: f64 = e.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+    let diff: f64 = (0..p)
+        .map(|i| (t[i] as f64 - e[i] as f64).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    // The measured bias: |g_s − g_e| / |g_e| = 1.0e-3 at this scale.  It is small
+    // because the likelihood gradient is nearly orthogonal to the weights (the
+    // cosine variant's loss is radially flat — `cosine_likelihood_is_flat_along_a_radial_ray`),
+    // so the term the surrogate keeps points where the map barely responds.  The
+    // assertion is two-sided on purpose: a *large* value would make the recorded
+    // anchors wrong for a gradient reason, and a *zero* value would mean this test
+    // stopped exercising the term.
+    assert!(
+        (1e-5..0.02).contains(&(diff / ne)),
+        "|Δg|/|g_e| = {:.3e}: outside the measured band (1e-5, 2e-2)",
+        diff / ne
+    );
+    println!(
+        "stopped-vs-exact: |Δg|/|g_e| = {:.4}, worst block residual {:.2e}, \
+         max radial share of a stopped block gradient {:.4}",
+        diff / ne,
+        worst,
+        radial_share
+    );
+}
+
+// ---------------------------------------------------------------------
 // 5. Mini-batch scaling: (N/B)·Σ ≡ N·mean, and per-example decomposition
 // ---------------------------------------------------------------------
 
@@ -422,12 +604,14 @@ fn causal_attention_ignores_future_positions() {
 
     for variant in [Variant::Cosine, Variant::Standard] {
         let tau = (s.d as f64).sqrt();
-        let out1 = pcnl::model::attention(&h, &slices.layers[0], variant, tau).unwrap();
+        let out1 =
+            pcnl::model::attention(&h, &slices.layers[0], variant, tau, NormGrad::Stopped).unwrap();
         let j = 2usize;
         let mut hv2 = hv.clone();
         hv2[j * d] += 0.7;
         let h2 = Tensor::from_vec(hv2, vec![b, t, d], dev()).unwrap();
-        let out2 = pcnl::model::attention(&h2, &slices.layers[0], variant, tau).unwrap();
+        let out2 = pcnl::model::attention(&h2, &slices.layers[0], variant, tau, NormGrad::Stopped)
+            .unwrap();
 
         let v1 = out1.flatten_all().unwrap().to_vec1::<f32>().unwrap();
         let v2 = out2.flatten_all().unwrap().to_vec1::<f32>().unwrap();
@@ -907,6 +1091,15 @@ fn experiment_is_bit_deterministic_across_reruns() {
         v.sgld_seconds = 0.0;
         v.mh_seconds = 0.0;
         v.saved_files.clear();
+    }
+    // R0.6's manifest is identity and cost metadata, not a draw: its timestamp,
+    // wall time and peak RSS legitimately differ between two runs of one seed.
+    // Everything else in it (revision, hashes, phases, eval counts) is
+    // seed-determined and stays in the comparison.
+    for r in [&mut r1, &mut r2] {
+        r.manifest.created_unix = 0;
+        r.manifest.work.wall_seconds = 0.0;
+        r.manifest.work.peak_mem_mb = None;
     }
     assert_eq!(
         format!("{r1:?}"),
