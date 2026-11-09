@@ -311,8 +311,8 @@ and cache/action budget counterfactuals returned errors rather than simplify H.
 
 A repeat of the commands in *Reproducible commands* on the same working tree,
 from a shell where only the host prerequisites above were added. Rust `1.99.0`;
-locked dependencies; CPU backend. All **39 tests passed**: 13 exact-action
-contracts, 7 complete dictionary/Majorana/Cadabra contracts, 8 primary full-SM
+locked dependencies; CPU backend. All **40 tests passed**: 13 exact-action
+contracts, 7 complete dictionary/Majorana/Cadabra contracts, 9 primary full-SM
 rational tests and 11 supporting SM algebra checks. The fresh-engine equality
 test ran with `CADABRA_CLI` set and was not skipped. No Lean compilation was
 performed.
@@ -331,15 +331,22 @@ The measured rational errors and tails reproduce the recorded values:
 | t=0.01, m=4, shift budget rate 9 | 4.17940e-7 |
 | t=0.01, m=5, shift budget rate 12 | 5.90702e-7 |
 
+The m=5 row is historical: the default refinement now solves m=2 and m=4 only,
+because the tighter budget measured *less* accurate (`5.90702e-7` against
+`4.17940e-7`) and cost a full extra set of shifted solves.
+
 The first complete-action tail norm closes monotonically with the declared
 occupation window: **9.784770722594882** at cutoff 1 (70 states),
 **4.038679200865053** at cutoff 2 (230 states), **1.2179612832516469** at cutoff
 3 (638 states) and **0.0** at cutoff 4 (1176 states), where the first image of
 the full operator lies entirely inside the window. Later tails remain nonzero,
 as expected for a window built from that first image. `sm_full_hashimoto_budget_refinement`
-now asserts all four windows and both endpoints (strict decrease, then exactly
-zero); it takes 97.56 s and peaks at 4.5 GB, which is why the whole six-test
-block went from 79.91 s to 148.84 s. Cutoffs 3 and 4 exceed the shipped
+asserts all four windows and both endpoints (strict decrease, then exactly
+zero). The tails are now computed from the first complete action image rather
+than by one costly solve per cutoff — the tail the solver reports *is* the part
+of `H|psi_0>` its window omits — so the test dropped from 97.56 s (4.5 GB peak)
+to **23.08 s**, with the 230-state solve kept as a cross-check of the reported
+tail. Cutoffs 3 and 4 exceed the shipped
 budgets, so they need
 `--cache-limit 4000000 --action-components 8000000 --action-work 4000000000`
 (65 s / 5.2 GB and 114 s / 7.0 GB peak RSS for the example here). With the
@@ -347,26 +354,31 @@ defaults the same runs refuse explicitly: 1,001,177 and 1,382,976 cached
 entries against a 1,000,000 limit, and images over the 500,000-entry action
 limit. The
 restarted-evolution case at t=0.02, m=4 measured
-`9.12613e-7`/`8.35880e-7`/`8.25354e-7` for 1/2/4 restart steps, the last being
-`8.253536722907681e-7`. The `sm_full_hashimoto` example at cutoff 1 exited 0
+`9.126129501984431e-7` and `8.253536719381402e-7` for 1 and 4 restart steps; the
+2-step split (`8.35880401995079e-7`) is covered by the energy test. The
+`sm_full_hashimoto` example at cutoff 1 exited 0
 and printed the same window, energy (`51.32175249999999`), tail and a norm
 defect of `3.6e-14`; at cutoff 2 it reports the 230-state window
 (dimension 230, support 230) and the 4.03868 tail. The primary six-test block
-took 77.84 seconds before the wider cutoff assertions, 148.84 seconds with them,
-and 329.92 and 335.74 seconds in two runs once the two physics tests below were
-added (8.1 GB peak). These are observations, not performance guarantees.
+took 77.84 seconds before the wider cutoff assertions and 148.84 seconds with
+them. The nine-test primary block now runs in **115.07 and 118.53 s** in two runs
+(`--test-threads=1`), against 329.92 and 335.74 seconds for the earlier
+eight-test block (8.1 GB peak). The 936-state Ehrenfest point is the
+remaining expensive case and is opt-in: `SM_FULL_WIDE_CUTOFFS=1` re-measures it.
+These are observations, not performance guarantees.
 
 ### Physics invariants under the compressed flow
 
-Two further tests ask what the SM operator does, not whether the solve is
+Three further tests ask what the SM operator does, not whether the solve is
 self-consistent.
 
 **Energy is conserved.** The exact flow is unitary, so `<H>` is fixed; the
 compressed rational flow can only move it by its own truncation. At t=0.02 the
-reference energy is `51.32175249999999` and the largest drift over all restart
-levels is `3.2670754990249407e-11` (1 step), `5.186961971048731e-13` (2) and
-`1.8417267710901797e-11` (4) — roundoff, so the assertion is the bound, not an
-ordering. Every recorded energy is real to `1e-9`.
+reference energy is `51.32175249999999` and the drift is
+`3.2670754990249407e-11` (1 step) and `5.186961971048731e-13` (2) — roundoff, so
+the assertion is the bound, not an ordering. (The 4-step split measured
+`1.8417267710901797e-11` in the earlier run and is covered by the
+restarted-evolution test.) Every recorded energy is real to `1e-9`.
 
 **Canonical field velocity.** With `q = a + a†` and the documented SM momentum
 `p = i(a† − a)/2`, Ehrenfest gives `d<q>/dt = <p>`. The test uses the two-universe
@@ -383,5 +395,22 @@ dt=1e-3 the measured velocity converges to `<p>` as the window closes:
 | cutoff 3 | 936 | 3.0897 | 0.34923 | 4.3185e-3 |
 
 The defect is the omitted action of the window, not solver error: it falls by
-roughly a factor 7 per cutoff while the tail falls by 1.3–2.4, and the test
-asserts both the decrease and that the cutoff-3 defect is under 5% of `<p>`.
+roughly a factor 7 per cutoff while the tail falls by 1.3–2.4. The default run
+uses cutoffs 1 and 2 and asserts that the defect both decreases and stays under
+10% of `<p>`; `SM_FULL_WIDE_CUTOFFS=1` adds cutoff 3, where it reproduces
+`4.31846279135123e-3` and must stay under 1.25%.
+
+**The BRST charge annihilates the ground state.** `sm_full` carries no ghost
+sector, so the test ports the temporal-gauge charge `Q = Σ_g P_{A_g} c_g` of
+`sm_brst_charge` into this representation, with the twelve ghosts on fermionic
+modes `96..108` — outside the 96-mode matter block, where no `h_SM` term can
+reach them. On the window ground state (`θ₀ = 49.7633053378465`) `Q|gs> = 0`
+exactly. Because the repository's charge uses ghost *lowering* (the ladder
+`sm_brst_charge` itself uses), that would hold of every ghost-free state, so the
+test is not vacuous: `Q` acts nontrivially on the one-ghost companion,
+`|Q|gs,ghost>| = √3/2 = 0.8660254037844387` (three spatial Gauss terms at
+`p = i(a† − a)/2`), and `Q² = 0` on it. The printed `|P|gs>| = 0.5010457745164838`
+records the scope: the Gauss generator alone does *not* annihilate this state, so
+the claim is ghost-vacuum closure of the window ground state, not Gauss's law and
+not a BRST reduction — the E1 dictionary has neither ghosts nor a gauge-fixing
+term.

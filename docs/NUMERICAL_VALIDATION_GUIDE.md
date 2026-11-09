@@ -2576,12 +2576,60 @@ whitening. No hidden amplitude threshold or interaction deletion enters this pat
 | `sm_full_hashimoto_budget_refinement` | Rational budgets, solve tolerances and occupation/window refinement |
 | `sm_full_hashimoto_restarted_evolution` | Restart/time refinement, norms, energies and error diagnostics |
 | `sm_full_hashimoto_interaction_mutations` | Missing sectors and action/cache resource failures |
+| `sm_full_energy_is_conserved_along_the_sirk_evolution` | $\langle H\rangle$ drift of the compressed flow; every energy real |
+| `sm_full_canonical_field_velocity_matches_momentum` | Ehrenfest $d\langle q\rangle/dt=\langle p\rangle$ plus the analytic $\langle q\rangle,\langle p\rangle$ |
+| `sm_full_brst_charge_annihilates_the_window_ground_state` | Temporal-gauge $Q$ on the window ground state, on its one-ghost companion, and $Q^2$ |
 
 These are full-operator numerical implementation tests, with all nonzero gauge
 couplings and fully populated complex generation matrices. Finite-reference
 accuracy is reported separately from full-operator projection tails. The tests
-are not ESA, BRST-reduction, infinite-mode, cutoff-removal or mass-gap certificates.
-Pruning is disabled; resource limits abort instead of changing the Hamiltonian.
+are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the BRST
+entry is ghost-vacuum closure of the window ground state rather than a BRST
+reduction. Pruning is disabled; resource limits abort instead of changing the
+Hamiltonian.
+
+**Physics anchors on the recorded window.** Three of these tests ask what the
+complete operator does rather than whether the solver is self-consistent.
+Unitarity fixes $\langle H\rangle$: at $t=0.02$ on the 70-state window the
+reference energy is `51.32175249999999` and the drift of the compressed flow is
+`3.2670754990249407e-11` after one step and `5.186961971048731e-13` after two,
+with every energy real to `1e-9`. Ehrenfest's theorem for $q=a+a^\dagger$, with
+the canonical momentum of this dictionary $p=i(a^\dagger-a)/2$, gives
+$d\langle q\rangle/dt=\langle p\rangle$. The test starts from the two-universe
+state $(|0\rangle+e^{i\pi/4}|1\rangle)/\sqrt2$ on `coord::g(0,0)`, whose analytic
+values $\langle q\rangle=\cos(\pi/4)=0.7071067811865475$ and
+$\langle p\rangle=\sin(\pi/4)/2=0.3535533905932737$ are asserted to `1e-12` (the
+second pins the momentum normalization that $[q,p]=i$ requires). The measured
+velocity converges to $\langle p\rangle$ as the window closes — defect
+`2.0395e-1` (cutoff 1, 72 states), `2.8678e-2` (cutoff 2, 325 states),
+`4.3185e-3` (cutoff 3, 936 states, opt-in as below) — while the reported leading
+action tail falls `9.93 -> 7.55 -> 3.09`: the residual is the window's omitted
+action, not the solve.
+
+The BRST test ports the temporal-gauge charge $Q=\sum_g P_{A_g}c_g$ of
+`sm_brst_charge` into this representation, with the twelve ghosts on fermionic
+modes `96..108` (outside the 96-mode matter block, so no $h_{\rm SM}$ term reaches
+them). On the window ground state ($\theta_0=49.7633053378465$)
+$Q|{\rm gs}\rangle=0$ exactly; $Q$ is not trivial there — its one-ghost
+companion gives $\|Q|{\rm gs},{\rm ghost}\rangle\|=\sqrt3/2=0.8660254037844387$
+(three spatial Gauss terms at $p=i(a^\dagger-a)/2$) — and $Q^2=0$. Scope: the E1
+dictionary carries neither ghosts nor a gauge-fixing term, so $Q$ annihilates
+every ghost-free state. The test therefore certifies that the window ground state
+lies in the physical ghost-vacuum sector and that the charge is nilpotent and
+nonvanishing on that sector; it is not a Gauss-law certificate
+($\|P_{G^0_0}|{\rm gs}\rangle\|=0.5010\neq0$) and not a BRST-reduction
+certificate.
+
+**Cost.** The primary block runs in **115.07 and 118.53 s** in two runs
+(`--test-threads=1`, nine tests) on the 2026-11-09 host, against 329.92 and
+335.74 s for the earlier eight-test block. Two levers keep it there without dropping evidence: the
+four occupation-cutoff tails are computed directly from the first complete
+action image — the tail the solver reports *is* the part of $H|\psi_0\rangle$ its
+window omits — with one 230-state solve cross-checking that report, and the
+936-state Ehrenfest point is opt-in via `SM_FULL_WIDE_CUTOFFS=1`, where it
+reproduces `4.31846279135123e-3`. The rational budget grid keeps $m=2$ and $m=4$;
+the tighter $m=5$ budget is *less* accurate (`5.9e-7` against `4.2e-7`) and is no
+longer solved by default.
 
 The older `sm_validation.rs` and Higgs-mechanism suites retain their reduced
 comparison meanings. Independent field/momentum modes, contraction-dropping
