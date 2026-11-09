@@ -241,8 +241,19 @@ without changing its predictive at all — a converged negative control. Curvatu
 (`curv`) fails on the informed direction (0.1 % acceptance, ESS 7, NLL 3.6072): at a
 nearly-uniform anchor the diagonal reads `β_i ≥ 1`, the cap binds, and the arm takes pCN's
 largest step into a steep region. The learned `β_i` span 0.017–0.13 within the rank-2
-informed arm, which is the part one scalar `β` cannot express. Open: full-target informed
-proposals, non-diagonal metrics, ranks 4+, and the SG-bias comparison.
+informed arm, which is the part one scalar `β` cannot express. The rotated extension
+(`mh_pcn_z_rotated`, `curvature_hessian`, `RotScale`) is in: exact for any orthogonal `Q`
+(identity rotation is bitwise the diagonal kernel; a correlated Gaussian's `H⁻¹` is
+recovered to ±0.02 at ESS > 2 000), with a block preconditioner as the special case of a
+block-diagonal `Q`. Measured at ranks 2 and 4 it is **not** an improvement: informed
+`rotpilot` falls from ESS 152 to 29 at rank 2 (`R̂` 1.012 → 1.096) with the predictive
+unchanged (NLL 2.9119 vs 2.9123), `rotcurv` fails like `curv` (`β_i` still clamps at 1,
+NLL 3.6051/3.5249), and on the random control the two rotated arms move ESS by less than a
+factor of 1.6 either way with the predictive identical to four decimals. The reported
+`β_i` ranges nearly match the diagonal arm's, which points at eigenvector noise from a
+150-draw pilot covariance rather than at the widths. Open: full-target informed proposals,
+a pilot long enough (or shrunk) to pin the eigenbasis, ranks 8+, and the SG-bias
+comparison.
 
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 

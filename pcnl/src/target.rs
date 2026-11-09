@@ -262,6 +262,92 @@ pub fn mh_pcn_z_scaled(
     }
 }
 
+/// Exact MH-pCN in `z` with a **rotated** per-direction proposal scale.
+///
+/// ```text
+/// w = Q z,   w'_i = √(1−β_i²) w_i + β_i ξ_i,   z' = Qᵀ w'
+/// log α = min(0, [Φ(z) − Φ(z')] + ½‖z'‖² − ½‖z‖²)
+/// ```
+///
+/// `rotation` is the orthogonal matrix `V` in row-major order, with column `i`
+/// the eigenvector of `betas[i]`; `Q = Vᵀ`.
+///
+/// This is the diagonal kernel of [`mh_pcn_z_scaled`] applied in a rotated
+/// basis, so it is exact for exactly the same reason.  `Q` is a deterministic
+/// bijection and an orthogonal matrix leaves the `N(0, I)` prior invariant
+/// (`QᵀQ = I`), so the proposal's density ratio is unchanged; a proof of the
+/// ratio itself is in that function's documentation.  Equivalently, this is
+/// full-covariance preconditioning with `S = Qᵀ diag(β_i²) Q`: the proposal is
+/// `z' = (I−S)^{1/2} z + S^{1/2} ξ`, and `(I−S) + S = I` is what preserves the
+/// prior.  A *block* preconditioner is the special case where `Q` is the
+/// identity outside the block, i.e. only some directions are mixed.
+///
+/// Why a rotation at all: a diagonal scale can only stretch along the
+/// coordinates.  When the stiff direction of a second-moment estimate is a
+/// combination (the informed basis is built from a fine-tuning path, so it is
+/// not the target's eigenbasis), every diagonal `H_ii` sees a mixture and no
+/// per-coordinate `β_i` is the right width for the direction that actually
+/// needs the small step.  Rotating into the estimate's eigenbasis lets those
+/// directions be rescaled jointly.
+///
+/// The rotation is checked for orthogonality here as well as in [`RotScale`]:
+/// a non-orthogonal `Q` would silently change the target, which is the one
+/// failure this module exists to prevent.  The check is `O(r³)` per step,
+/// against one full-data forward pass per step, so it is free in practice.
+pub fn mh_pcn_z_rotated(
+    phi: &dyn ZPotential,
+    z: &mut [f32],
+    phi_z: f64,
+    rotation: &[f64],
+    betas: &[f64],
+    rng: &mut impl Rng,
+) -> ZStep {
+    let r = z.len();
+    assert_eq!(r, phi.dim(), "z must have the target's dimension");
+    assert_eq!(rotation.len(), r * r, "rotation must be r x r");
+    assert_eq!(betas.len(), r, "one beta per eigen-direction");
+    assert!(
+        betas.iter().all(|&b| b > 0.0 && b <= 1.0),
+        "every beta must be in (0, 1]"
+    );
+    assert!(
+        is_orthogonal(rotation, r),
+        "rotation must be orthogonal to preserve the N(0, I) prior"
+    );
+    // w = Q z with Q = Vᵀ, i.e. w_i = Σ_j V[j][i] z[j].
+    let mut w: Vec<f64> = (0..r)
+        .map(|i| (0..r).map(|j| rotation[j * r + i] * f64::from(z[j])).sum())
+        .collect();
+    for (wi, &b) in w.iter_mut().zip(betas) {
+        *wi = (1.0 - b * b).sqrt() * *wi + b * normal(rng);
+    }
+    // z' = Qᵀ w = V w, i.e. z'_i = Σ_j V[i][j] w[j].
+    let proposal: Vec<f32> = (0..r)
+        .map(|i| (0..r).map(|j| rotation[i * r + j] * w[j]).sum::<f64>() as f32)
+        .collect();
+    let phi_new = phi.phi(&proposal);
+    // The prior term is the same as the diagonal kernel's: ‖z‖ is invariant
+    // under Q, so ½‖z'‖² − ½‖z‖² = ½‖w'‖² − ½‖w‖².
+    let log_q_ratio = prior_phi(&proposal) - prior_phi(z);
+    let log_alpha = phi_z - phi_new + log_q_ratio;
+    let u: f64 = rng.random();
+    let accept = log_alpha.is_finite() && log_alpha >= u.ln();
+    if accept {
+        z.copy_from_slice(&proposal);
+        ZStep {
+            accepted: true,
+            phi: phi_new,
+            proposed: phi_new,
+        }
+    } else {
+        ZStep {
+            accepted: false,
+            phi: phi_z,
+            proposed: phi_new,
+        }
+    }
+}
+
 /// Diagonal of the potential's Hessian at `z`, by central second differences
 /// with step `h`.
 ///
@@ -288,6 +374,53 @@ pub fn curvature_diag(phi: &dyn ZPotential, z: &[f32], h: f64) -> Vec<f64> {
         let fp = phi.phi(&plus);
         let fm = phi.phi(&minus);
         out.push((fp - 2.0 * base + fm) / (h * h));
+    }
+    out
+}
+
+/// The full Hessian of the potential at `z`, by central second differences with
+/// step `h`, row-major (`out[i * r + j] = ∂²Φ/∂z_i∂z_j`).
+///
+/// The diagonal costs `2r` evaluations; the off-diagonal entries use the
+/// four-point stencil and cost `2r(r−1)` more, `2r² + 1` in total.  At the ranks
+/// this project runs (`r ≤ 8`) that is at most 129 forward passes, against
+/// `steps ≈ 4000` per chain — the same trade as [`curvature_diag`], made once
+/// outside the chain.  It is a *local* quantity at the point it is called on;
+/// using it as a posterior precision is only as good as that point.
+///
+/// The result is symmetrised, and includes the prior's unit diagonal because
+/// `phi` is the full potential.
+pub fn curvature_hessian(phi: &dyn ZPotential, z: &[f32], h: f64) -> Vec<f64> {
+    assert!(h > 0.0, "finite-difference step must be positive");
+    let r = z.len();
+    let base = phi.phi(z);
+    let mut out = vec![0.0f64; r * r];
+    for i in 0..r {
+        for j in i..r {
+            let value = if i == j {
+                let mut plus = z.to_vec();
+                let mut minus = z.to_vec();
+                plus[i] += h as f32;
+                minus[i] -= h as f32;
+                (phi.phi(&plus) - 2.0 * base + phi.phi(&minus)) / (h * h)
+            } else {
+                let mut pp = z.to_vec();
+                let mut pm = z.to_vec();
+                let mut mp = z.to_vec();
+                let mut mm = z.to_vec();
+                pp[i] += h as f32;
+                pp[j] += h as f32;
+                pm[i] += h as f32;
+                pm[j] -= h as f32;
+                mp[i] -= h as f32;
+                mp[j] += h as f32;
+                mm[i] -= h as f32;
+                mm[j] -= h as f32;
+                (phi.phi(&pp) - phi.phi(&pm) - phi.phi(&mp) + phi.phi(&mm)) / (4.0 * h * h)
+            };
+            out[i * r + j] = value;
+            out[j * r + i] = value;
+        }
     }
     out
 }
@@ -361,10 +494,262 @@ impl DiagScale {
     /// Robbins–Monro on `log m`, with a decaying step so the multiplier
     /// converges instead of oscillating.  `t` counts adaptation steps from 0.
     pub fn adapt(&mut self, accepted: bool, t: usize) {
-        let step = 0.3 / (1.0 + t as f64).powf(0.6);
-        let a = f64::from(u8::from(accepted));
-        let log_m = (self.multiplier.ln() + step * (a - self.target_accept)).clamp(-7.0, 2.0);
-        self.multiplier = log_m.exp();
+        self.multiplier = adapt_log_multiplier(self.multiplier, accepted, t, self.target_accept);
+    }
+}
+
+/// One Robbins–Monro update of `log m`; shared by the diagonal and rotated
+/// scales so their warm-up behaves identically.
+fn adapt_log_multiplier(m: f64, accepted: bool, t: usize, target: f64) -> f64 {
+    let step = 0.3 / (1.0 + t as f64).powf(0.6);
+    let a = f64::from(u8::from(accepted));
+    (m.ln() + step * (a - target)).clamp(-7.0, 2.0).exp()
+}
+
+/// Why a symmetric eigendecomposition failed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EigenError {
+    BadLength { expected: usize, got: usize },
+    NotFinite,
+    NotSymmetric { row: usize, col: usize },
+    NoConvergence { sweeps: usize },
+}
+
+impl std::fmt::Display for EigenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EigenError::BadLength { expected, got } => {
+                write!(f, "expected {expected} entries, got {got}")
+            }
+            EigenError::NotFinite => write!(f, "matrix contains a non-finite value"),
+            EigenError::NotSymmetric { row, col } => write!(
+                f,
+                "entry ({row}, {col}) differs from its transpose: not symmetric"
+            ),
+            EigenError::NoConvergence { sweeps } => {
+                write!(f, "Jacobi sweeps did not converge in {sweeps}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EigenError {}
+
+/// Eigen-decomposition of a symmetric `r x r` matrix by cyclic Jacobi rotations.
+///
+/// Returns `(eigenvalues ascending, eigenvectors)`, the eigenvectors row-major
+/// with column `i` belonging to `eigenvalues[i]`.  Cyclic Jacobi is used rather
+/// than a general eigensolver because `r` is the subspace rank (at most 8 here):
+/// it is a few hundred flops, needs no dependency, and uses only orthogonal
+/// similarity transforms, so the returned vectors are orthogonal to working
+/// precision instead of merely "eigenvectors as computed".
+///
+/// A non-symmetric input is rejected rather than silently symmetrised: the
+/// callers use this to build a *change of basis*, and a matrix that is not the
+/// one they think it is would produce a plausible rotation of the wrong target.
+pub fn symmetric_eigen(a: &[f64], r: usize) -> Result<(Vec<f64>, Vec<f64>), EigenError> {
+    if r == 0 || a.len() != r * r {
+        return Err(EigenError::BadLength {
+            expected: r * r,
+            got: a.len(),
+        });
+    }
+    if a.iter().any(|x| !x.is_finite()) {
+        return Err(EigenError::NotFinite);
+    }
+    let scale = a.iter().map(|x| x.abs()).fold(0.0f64, f64::max).max(1.0);
+    for i in 0..r {
+        for j in 0..i {
+            if (a[i * r + j] - a[j * r + i]).abs() > 1e-10 * scale {
+                return Err(EigenError::NotSymmetric { row: i, col: j });
+            }
+        }
+    }
+    // Symmetric part: removes the last bits of asymmetry rather than trusting
+    // that the caller's matrix was exactly symmetric.
+    let mut m: Vec<f64> = (0..r * r)
+        .map(|k| 0.5 * (a[k] + a[(k % r) * r + k / r]))
+        .collect();
+    let mut v = vec![0.0f64; r * r];
+    for i in 0..r {
+        v[i * r + i] = 1.0;
+    }
+    const SWEEPS: usize = 64;
+    let mut converged = false;
+    for _ in 0..SWEEPS {
+        let mut off = 0.0f64;
+        for i in 0..r {
+            for j in 0..i {
+                off = off.max(m[i * r + j].abs());
+            }
+        }
+        if off <= 1e-13 * scale {
+            converged = true;
+            break;
+        }
+        for p in 0..r {
+            for q in (p + 1)..r {
+                let apq = m[p * r + q];
+                if apq == 0.0 {
+                    continue;
+                }
+                let theta = (m[q * r + q] - m[p * r + p]) / (2.0 * apq);
+                let t = if theta >= 0.0 {
+                    1.0 / (theta + (theta * theta + 1.0).sqrt())
+                } else {
+                    -1.0 / (-theta + (theta * theta + 1.0).sqrt())
+                };
+                let c = 1.0 / (t * t + 1.0).sqrt();
+                let s = t * c;
+                // m <- Jᵀ m J, two one-sided passes; v <- v J.
+                for k in 0..r {
+                    let (mkp, mkq) = (m[k * r + p], m[k * r + q]);
+                    m[k * r + p] = c * mkp - s * mkq;
+                    m[k * r + q] = s * mkp + c * mkq;
+                }
+                for k in 0..r {
+                    let (mpk, mqk) = (m[p * r + k], m[q * r + k]);
+                    m[p * r + k] = c * mpk - s * mqk;
+                    m[q * r + k] = s * mpk + c * mqk;
+                }
+                m[p * r + q] = 0.0;
+                m[q * r + p] = 0.0;
+                for k in 0..r {
+                    let (vkp, vkq) = (v[k * r + p], v[k * r + q]);
+                    v[k * r + p] = c * vkp - s * vkq;
+                    v[k * r + q] = s * vkp + c * vkq;
+                }
+            }
+        }
+    }
+    let mut off = 0.0f64;
+    for i in 0..r {
+        for j in 0..i {
+            off = off.max(m[i * r + j].abs());
+        }
+    }
+    if !converged && off > 1e-9 * scale {
+        return Err(EigenError::NoConvergence { sweeps: SWEEPS });
+    }
+    let mut order: Vec<usize> = (0..r).collect();
+    order.sort_by(|&i, &j| {
+        m[i * r + i]
+            .partial_cmp(&m[j * r + j])
+            .expect("entries are finite")
+    });
+    let values = order.iter().map(|&i| m[i * r + i]).collect();
+    let mut vectors = vec![0.0f64; r * r];
+    for (new, &old) in order.iter().enumerate() {
+        for i in 0..r {
+            vectors[i * r + new] = v[i * r + old];
+        }
+    }
+    Ok((values, vectors))
+}
+
+/// `max |VᵀV − I| ≤ 1e-6`: the preconditioner's `Q` must be orthogonal, and
+/// this is the check the kernel runs before using it.
+fn is_orthogonal(q: &[f64], r: usize) -> bool {
+    for i in 0..r {
+        for j in 0..r {
+            let dot: f64 = (0..r).map(|k| q[k * r + i] * q[k * r + j]).sum();
+            let want = if i == j { 1.0 } else { 0.0 };
+            if (dot - want).abs() > 1e-6 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// A **rotated** per-direction pCN scale: the diagonal proposal applied in the
+/// eigenbasis of a local second-moment estimate.
+///
+/// `width_i = 1/√λ_i` when the estimate is a Hessian (a precision) and
+/// `√λ_i` when it is a covariance, exactly as [`DiagScale::from_curvature`] and
+/// [`DiagScale::from_widths`] do one coordinate at a time.  The difference is
+/// that the `β_i` now apply to the estimate's *eigen-directions*, so a stiff
+/// direction that is a combination of the informed coordinates gets its own
+/// step instead of every coordinate paying for the mixture.  The multiplier `m`
+/// and its Robbins–Monro warm-up are identical to `DiagScale`'s, and the same
+/// rule applies: freeze it before the kept window, because an adapted kernel is
+/// not a fixed kernel.
+///
+/// The caveat of the diagonal arms carries over unchanged — `1/√H` at a
+/// stationary anchor describes the local bowl, not a displaced mode — and the
+/// eigensolver adds one of its own: a near-degenerate eigenvalue makes the
+/// corresponding eigenvector unstable, so a rotation estimated from a noisy
+/// covariance should be read as a conditioning aid, not as a reported quantity.
+/// It never changes the target: the kernel is exact for any orthogonal `Q` and
+/// any `β_i`.
+#[derive(Clone, Debug)]
+pub struct RotScale {
+    /// `r x r`, row-major; column `i` is the eigenvector of `width[i]`.
+    rotation: Vec<f64>,
+    width: Vec<f64>,
+    multiplier: f64,
+    /// Acceptance the multiplier is steered to; see [`DiagScale::target_accept`].
+    pub target_accept: f64,
+}
+
+impl RotScale {
+    /// Widths from a full Hessian: `1/√λ_i` in the Hessian's eigenbasis.
+    pub fn from_hessian(h: &[f64], r: usize) -> Result<Self, EigenError> {
+        let (values, rotation) = symmetric_eigen(h, r)?;
+        let width = values.iter().map(|&l| 1.0 / l.max(1e-8).sqrt()).collect();
+        Ok(Self {
+            rotation,
+            width,
+            multiplier: 1.0,
+            target_accept: 0.5,
+        })
+    }
+
+    /// Widths from a full covariance (measured, e.g. by a pilot chain):
+    /// `√λ_i` in its eigenbasis.  A measured covariance cannot be wider than the
+    /// region it sampled, so the widths are biased down — the safe direction for
+    /// acceptance, as with [`DiagScale::from_widths`].
+    pub fn from_covariance(c: &[f64], r: usize) -> Result<Self, EigenError> {
+        let (values, rotation) = symmetric_eigen(c, r)?;
+        let width = values
+            .iter()
+            .map(|&l| l.max(0.0).sqrt().max(1e-3))
+            .collect();
+        Ok(Self {
+            rotation,
+            width,
+            multiplier: 1.0,
+            target_accept: 0.5,
+        })
+    }
+
+    /// The orthogonal matrix `V` (row-major, column `i` = eigenvector `i`);
+    /// `Q = Vᵀ`.  Pass this to [`mh_pcn_z_rotated`].
+    pub fn rotation(&self) -> &[f64] {
+        &self.rotation
+    }
+
+    /// Eigen-widths before the multiplier: the estimate's marginal scales in
+    /// its own basis, for reports that want to see them.
+    pub fn widths(&self) -> &[f64] {
+        &self.width
+    }
+
+    pub fn multiplier(&self) -> f64 {
+        self.multiplier
+    }
+
+    /// Per-eigen-direction proposal scales, clipped to `[1e-4, 1]`.
+    pub fn betas(&self) -> Vec<f64> {
+        self.width
+            .iter()
+            .map(|&s| (self.multiplier * s).clamp(1e-4, 1.0))
+            .collect()
+    }
+
+    /// Robbins–Monro on `log m`; same rule as [`DiagScale::adapt`].
+    pub fn adapt(&mut self, accepted: bool, t: usize) {
+        self.multiplier = adapt_log_multiplier(self.multiplier, accepted, t, self.target_accept);
     }
 }
 
@@ -652,6 +1037,204 @@ mod tests {
             "narrow variance {var} (ESS {ess})"
         );
         assert!(ess > 2_000.0, "narrow ESS too low: {ess}");
+    }
+
+    /// A rotation of the identity must give the diagonal kernel bit for bit:
+    /// same normals in the same order, same ratio, same accept draw.  If the
+    /// two differ, the rotation bookkeeping is wrong, not the statistics.
+    #[test]
+    fn rotated_pcn_with_the_identity_rotation_equals_the_diagonal_kernel() {
+        let target = QuarticTarget::VALIDATION;
+        let identity = [1.0, 0.0, 0.0, 1.0];
+        let betas = [0.6f64, 0.3];
+        let mut rng_a = rand::rngs::StdRng::seed_from_u64(17);
+        let mut rng_b = rand::rngs::StdRng::seed_from_u64(17);
+        let mut za = [0.5f32, -0.5];
+        let mut zb = za;
+        let (mut pa, mut pb) = (target.phi(&za), target.phi(&zb));
+        let mut accepts = 0;
+        for _ in 0..2_000 {
+            let a = mh_pcn_z_scaled(&target, &mut za, pa, &betas, &mut rng_a);
+            let b = mh_pcn_z_rotated(&target, &mut zb, pb, &identity, &betas, &mut rng_b);
+            assert_eq!(a.accepted, b.accepted);
+            assert_eq!(za, zb);
+            assert_eq!(a.phi.to_bits(), b.phi.to_bits());
+            pa = a.phi;
+            pb = b.phi;
+            accepts += usize::from(a.accepted);
+        }
+        assert!(accepts > 100, "degenerate run: {accepts} accepts");
+    }
+
+    /// The point of a *rotation*: a Gaussian whose stiff direction is a
+    /// combination of the coordinates.  `H = [[50.5, 49.5], [49.5, 50.5]]` has
+    /// eigenvalues 1 and 100 along `(1,−1)/√2` and `(1,1)/√2`, so no diagonal
+    /// `β_i` can be the right width for both, and getting the width from `H_ii`
+    /// makes every coordinate pay for the mixture.  The eigenbasis recovers both
+    /// widths (1 and 0.1), and the chain must recover the full posterior
+    /// covariance `H⁻¹`, correlation included — a rotation applied to the wrong
+    /// basis would still be a valid kernel but would sample a different target.
+    #[test]
+    fn rotated_pcn_recovers_correlated_widths() {
+        struct Corr;
+        impl ZPotential for Corr {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32]) -> f64 {
+                let a = (f64::from(z[0]) + f64::from(z[1])) / std::f64::consts::SQRT_2;
+                let b = (f64::from(z[0]) - f64::from(z[1])) / std::f64::consts::SQRT_2;
+                0.5 * (100.0 * a * a + b * b)
+            }
+        }
+        let target = Corr;
+        let h = curvature_hessian(&target, &[0.0, 0.0], 1e-3);
+        assert!(
+            (h[0] - 50.5).abs() < 1e-2 && (h[1] - 49.5).abs() < 1e-2,
+            "Hessian {h:?}"
+        );
+        let scale = RotScale::from_hessian(&h, 2).expect("symmetric Hessian");
+        let betas = scale.betas();
+        assert!(
+            (betas[0] - 1.0).abs() < 1e-6 && (betas[1] - 0.1).abs() < 1e-6,
+            "eigenvalues 1 and 100 should give widths 1 and 0.1: {betas:?}"
+        );
+        let rotation = scale.rotation().to_vec();
+        let mut chains: Vec<Vec<f64>> = Vec::new();
+        let mut both: Vec<(f64, f64)> = Vec::new();
+        for seed in 0..2u64 {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(41 + seed);
+            let mut z = [0.3f32, 0.2];
+            let mut phi = target.phi(&z);
+            let mut kept = Vec::new();
+            for t in 0..40_000 {
+                let st = mh_pcn_z_rotated(&target, &mut z, phi, &rotation, &betas, &mut rng);
+                phi = st.phi;
+                if t >= 2_000 && t % 2 == 0 {
+                    kept.push(f64::from(z[0]));
+                    both.push((f64::from(z[0]), f64::from(z[1])));
+                }
+            }
+            chains.push(kept);
+        }
+        // H⁻¹ = [[0.505, −0.495], [−0.495, 0.505]].
+        let n = both.len() as f64;
+        let (mut m0, mut m1) = (0.0, 0.0);
+        for (a, b) in &both {
+            m0 += a;
+            m1 += b;
+        }
+        m0 /= n;
+        m1 /= n;
+        let (mut v0, mut v1, mut c01) = (0.0, 0.0, 0.0);
+        for (a, b) in &both {
+            v0 += (a - m0).powi(2);
+            v1 += (b - m1).powi(2);
+            c01 += (a - m0) * (b - m1);
+        }
+        v0 /= n - 1.0;
+        v1 /= n - 1.0;
+        c01 /= n - 1.0;
+        let ess = ess_bulk(&chains);
+        println!(
+            "rotated correlated: ESS {ess:.0}, Var(z0) {v0:.4}, Var(z1) {v1:.4}, Cov {c01:+.4}"
+        );
+        assert!(ess > 2_000.0, "ESS too low: {ess}");
+        assert!((v0 - 0.505).abs() < 0.02, "Var(z0) {v0}");
+        assert!((v1 - 0.505).abs() < 0.02, "Var(z1) {v1}");
+        assert!((c01 + 0.495).abs() < 0.02, "Cov {c01}");
+    }
+
+    /// A known decomposition must come back: eigenvalues in ascending order and
+    /// eigenvectors that actually diagonalise the input.  Built from Givens
+    /// rotations so the expected answer is exact rather than another routine's
+    /// output.
+    #[test]
+    fn symmetric_eigen_matches_a_known_decomposition() {
+        let (c1, s1) = (0.6f64, 0.8f64);
+        let (c2, s2) = (0.28f64, 0.96f64);
+        let q1 = [[c1, -s1, 0.0], [s1, c1, 0.0], [0.0, 0.0, 1.0]];
+        let q2 = [[1.0, 0.0, 0.0], [0.0, c2, -s2], [0.0, s2, c2]];
+        let mut v = [[0.0f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                v[i][j] = (0..3).map(|k| q1[i][k] * q2[k][j]).sum();
+            }
+        }
+        let lam = [0.25f64, 1.0, 100.0];
+        let mut a = [0.0f64; 9];
+        for i in 0..3 {
+            for j in 0..3 {
+                a[i * 3 + j] = (0..3).map(|k| v[i][k] * lam[k] * v[j][k]).sum();
+            }
+        }
+        let (values, vectors) = symmetric_eigen(&a, 3).expect("symmetric");
+        for (got, want) in values.iter().zip(&lam) {
+            assert!((got - want).abs() < 1e-9, "eigenvalues {values:?}");
+        }
+        assert!(is_orthogonal(&vectors, 3), "eigenvectors not orthogonal");
+        for i in 0..3 {
+            for j in 0..3 {
+                let rebuilt: f64 = (0..3)
+                    .map(|k| vectors[i * 3 + k] * values[k] * vectors[j * 3 + k])
+                    .sum();
+                assert!(
+                    (rebuilt - a[i * 3 + j]).abs() < 1e-8,
+                    "reconstruction at ({i},{j})"
+                );
+            }
+        }
+        // A non-symmetric input is rejected, not symmetrised.
+        let mut bad = a;
+        bad[1] += 0.5;
+        assert!(matches!(
+            symmetric_eigen(&bad, 3),
+            Err(EigenError::NotSymmetric { .. })
+        ));
+    }
+
+    /// The rotated multiplier follows the same feedback and clipping rules as
+    /// the diagonal one.
+    #[test]
+    fn rotated_scale_adapts_and_clips() {
+        // Covariance diag(4, 0.25); eigenvalues ascend, so widths (0.5, 2)
+        // and the betas clip to (0.5, 1).
+        let mut s = RotScale::from_covariance(&[4.0, 0.0, 0.0, 0.25], 2).expect("covariance");
+        let b0 = s.betas();
+        assert!(
+            (b0[0] - 0.5).abs() < 1e-9 && (b0[1] - 1.0).abs() < 1e-9,
+            "{b0:?}"
+        );
+        let before = s.multiplier();
+        for t in 0..50 {
+            s.adapt(true, t);
+        }
+        assert!(s.multiplier() > before, "accepts should raise m");
+        for t in 0..5_000 {
+            s.adapt(false, t);
+        }
+        assert!(s.betas().iter().all(|&b| (1e-4..=1.0).contains(&b)));
+    }
+
+    /// `curvature_hessian` must return the full precision matrix, not just its
+    /// diagonal: the off-diagonal entries are what a rotation uses.
+    #[test]
+    fn curvature_hessian_matches_a_gaussian_precision() {
+        struct Corr;
+        impl ZPotential for Corr {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32]) -> f64 {
+                let (x, y) = (f64::from(z[0]), f64::from(z[1]));
+                0.5 * (50.5 * x * x + 2.0 * 49.5 * x * y + 50.5 * y * y)
+            }
+        }
+        let h = curvature_hessian(&Corr, &[0.2, -0.3], 1e-3);
+        assert!((h[0] - 50.5).abs() < 1e-2, "{h:?}");
+        assert!((h[1] - 49.5).abs() < 1e-2, "{h:?}");
+        assert!((h[2] - 49.5).abs() < 1e-2, "{h:?}");
+        assert!((h[3] - 50.5).abs() < 1e-2, "{h:?}");
     }
 
     /// `curvature_diag` must return the precision it claims to: for a Gaussian

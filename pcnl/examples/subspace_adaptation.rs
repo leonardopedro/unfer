@@ -44,6 +44,14 @@
 //!   spread cannot exceed the region the pilot visited, so the width is biased
 //!   down (safe for acceptance) and the pilot is warmed by the very `β` under
 //!   test — both stated because the report's ESS depends on them.
+//! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
+//!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
+//!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
+//!   estimate's eigen-directions (`pcnl::target::mh_pcn_z_rotated`), so a stiff
+//!   direction that is a combination of the informed coordinates gets its own
+//!   step instead of every coordinate paying for the mixture.  Exact for the
+//!   same reason as the diagonal arm (`N(0, I)` is invariant under the
+//!   rotation), so only mixing can improve — never the target.
 //!
 //! `λ` is the target temperature (`SubspaceTarget` sums over the training set,
 //! so `λ = 1` is `exp(−Σ_i ℓ_i)`); `β` is a proposal scale, not a temperature.
@@ -63,10 +71,11 @@ use pcnl::experiment::{AnchorSetup, Config, anchor_hash, bma_detail, bma_metrics
 use pcnl::model::{Shapes, Variant};
 use pcnl::subspace::{AffineSubspace, Basis, pca_basis};
 use pcnl::target::{
-    DiagScale, SubspaceTarget, ZPotential, curvature_diag, mh_pcn_z, mh_pcn_z_scaled,
+    DiagScale, RotScale, SubspaceTarget, ZPotential, curvature_diag, curvature_hessian, mh_pcn_z,
+    mh_pcn_z_rotated, mh_pcn_z_scaled,
 };
 use pcnl::task::Dataset;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,6 +101,10 @@ enum Prop {
     Curv,
     /// `β_i = m·sd_i` from a pilot chain's own spread (R2).
     Pilot,
+    /// The full Hessian at the anchor, rescaled jointly in its eigenbasis.
+    RotCurv,
+    /// The pilot's full covariance, rescaled jointly in its eigenbasis.
+    RotPilot,
 }
 
 impl Prop {
@@ -100,6 +113,8 @@ impl Prop {
             Prop::Fixed => "fixed",
             Prop::Curv => "curv",
             Prop::Pilot => "pilot",
+            Prop::RotCurv => "rotcurv",
+            Prop::RotPilot => "rotpilot",
         }
     }
 
@@ -108,6 +123,53 @@ impl Prop {
             Prop::Fixed => 0,
             Prop::Curv => 0x2_000,
             Prop::Pilot => 0x4_000,
+            Prop::RotCurv => 0x6_000,
+            Prop::RotPilot => 0x8_000,
+        }
+    }
+}
+
+/// The per-direction proposal scale a cell uses: the diagonal one, or the same
+/// thing in an eigenbasis.  Both adapt and report the same way, so the chain
+/// loop does not branch on it.
+#[derive(Clone)]
+enum Scale {
+    Diag(DiagScale),
+    Rot(RotScale),
+}
+
+impl Scale {
+    fn step(
+        &self,
+        target: &SubspaceTarget,
+        z: &mut [f32],
+        phi: f64,
+        rng: &mut impl Rng,
+    ) -> pcnl::target::ZStep {
+        match self {
+            Scale::Diag(s) => mh_pcn_z_scaled(target, z, phi, &s.betas(), rng),
+            Scale::Rot(s) => mh_pcn_z_rotated(target, z, phi, s.rotation(), &s.betas(), rng),
+        }
+    }
+
+    fn adapt(&mut self, accepted: bool, t: usize) {
+        match self {
+            Scale::Diag(s) => s.adapt(accepted, t),
+            Scale::Rot(s) => s.adapt(accepted, t),
+        }
+    }
+
+    fn betas(&self) -> Vec<f64> {
+        match self {
+            Scale::Diag(s) => s.betas(),
+            Scale::Rot(s) => s.betas(),
+        }
+    }
+
+    fn multiplier(&self) -> f64 {
+        match self {
+            Scale::Diag(s) => s.multiplier(),
+            Scale::Rot(s) => s.multiplier(),
         }
     }
 }
@@ -204,6 +266,8 @@ impl Cfg {
                     "fixed" => Some(Prop::Fixed),
                     "curv" => Some(Prop::Curv),
                     "pilot" => Some(Prop::Pilot),
+                    "rotcurv" => Some(Prop::RotCurv),
+                    "rotpilot" => Some(Prop::RotPilot),
                     _ => None,
                 })
                 .collect();
@@ -314,6 +378,37 @@ fn fit_path(
     path
 }
 
+/// Full sample covariance (row-major, `ddof = 1`) of per-coordinate pilot
+/// columns that share their step index.  The rotation only needs the matrix to
+/// be symmetric; a pilot that never moved gives zero widths in `RotScale`,
+/// which the chain then reports as a stuck scale rather than hiding it.
+fn column_covariance(columns: &[Vec<f64>]) -> Vec<f64> {
+    let r = columns.len();
+    let n = columns.first().map(Vec::len).unwrap_or(0);
+    let mean: Vec<f64> = columns
+        .iter()
+        .map(|c| c.iter().sum::<f64>() / n as f64)
+        .collect();
+    let mut cov = vec![0.0; r * r];
+    for i in 0..r {
+        for j in i..r {
+            let c = if n < 2 {
+                f64::NAN
+            } else {
+                columns[i]
+                    .iter()
+                    .zip(&columns[j])
+                    .map(|(a, b)| (a - mean[i]) * (b - mean[j]))
+                    .sum::<f64>()
+                    / (n - 1) as f64
+            };
+            cov[i * r + j] = c;
+            cov[j * r + i] = c;
+        }
+    }
+    cov
+}
+
 /// Per-column sample standard deviation, `ddof = 1`; `NaN` for a column with
 /// fewer than two entries (a rank the pilot never varied).
 fn column_sd(kept: &[Vec<f64>]) -> Vec<f64> {
@@ -400,16 +495,25 @@ fn run_cell(
         *shapes,
         Variant::Cosine,
     );
-    // R2 `curv`: the shape of the proposal comes from the target's curvature at
-    // the anchor, once, outside the chain.  `2r` forward passes, not per-step
-    // work.  R2 `pilot` needs the chain's own stream, so it is built inside the
-    // chain loop below.
-    let seed_scale = (prop == Prop::Curv).then(|| {
-        let h = curvature_diag(&target, &vec![0.0f32; rank], cfg.curvature_h);
-        let mut s = DiagScale::from_curvature(&h);
-        s.target_accept = cfg.adapt_target;
-        s
-    });
+    // R2 `curv`/`rotcurv`: the shape of the proposal comes from the target's
+    // curvature at the anchor, once, outside the chain (`2r` or `2r² + 1`
+    // forward passes, not per-step work).  `pilot`/`rotpilot` need the chain's
+    // own stream, so they are built inside the chain loop below.
+    let seed_scale = match prop {
+        Prop::Curv => {
+            let h = curvature_diag(&target, &vec![0.0f32; rank], cfg.curvature_h);
+            let mut s = DiagScale::from_curvature(&h);
+            s.target_accept = cfg.adapt_target;
+            Some(Scale::Diag(s))
+        }
+        Prop::RotCurv => {
+            let h = curvature_hessian(&target, &vec![0.0f32; rank], cfg.curvature_h);
+            let mut s = RotScale::from_hessian(&h, rank).expect("Hessian is symmetric");
+            s.target_accept = cfg.adapt_target;
+            Some(Scale::Rot(s))
+        }
+        Prop::Fixed | Prop::Pilot | Prop::RotPilot => None,
+    };
     let starts = Instant::now();
     let mut per_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
     let mut phi_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
@@ -430,24 +534,31 @@ fn run_cell(
         let mut scale = seed_scale.clone();
         let mut z = vec![0.0f32; rank];
         let mut phi = target.phi(&z);
-        if prop == Prop::Pilot {
+        if matches!(prop, Prop::Pilot | Prop::RotPilot) {
             // A short chain at the R1 scale, from the same stream, and the
-            // per-coordinate spread of its second half: measured widths rather
-            // than curvature at a stationary point.  These draws are warm-up
-            // (they sit inside `burn`), and the chain continues from here.
-            let mut kept = vec![Vec::new(); rank];
+            // spread of its second half: measured widths rather than curvature
+            // at a stationary point.  These draws are warm-up (they sit inside
+            // `burn`), and the chain continues from here.
+            let mut columns = vec![Vec::new(); rank];
             for t in 0..cfg.pilot_steps {
                 let st = mh_pcn_z(&target, &mut z, phi, cfg.beta, &mut rng);
                 phi = st.phi;
                 if t >= cfg.pilot_steps / 2 {
-                    for (i, slot) in kept.iter_mut().enumerate() {
+                    for (i, slot) in columns.iter_mut().enumerate() {
                         slot.push(f64::from(z[i]));
                     }
                 }
             }
-            let mut s = DiagScale::from_widths(&column_sd(&kept));
-            s.target_accept = cfg.adapt_target;
-            scale = Some(s);
+            scale = Some(if prop == Prop::RotPilot {
+                let mut s = RotScale::from_covariance(&column_covariance(&columns), rank)
+                    .expect("pilot covariance is symmetric and finite");
+                s.target_accept = cfg.adapt_target;
+                Scale::Rot(s)
+            } else {
+                let mut s = DiagScale::from_widths(&column_sd(&columns));
+                s.target_accept = cfg.adapt_target;
+                Scale::Diag(s)
+            });
         }
         let mut losses = Vec::new();
         let mut phis = Vec::new();
@@ -456,8 +567,7 @@ fn run_cell(
             let st = match &mut scale {
                 None => mh_pcn_z(&target, &mut z, phi, cfg.beta, &mut rng),
                 Some(s) => {
-                    let betas = s.betas();
-                    let out = mh_pcn_z_scaled(&target, &mut z, phi, &betas, &mut rng);
+                    let out = s.step(&target, &mut z, phi, &mut rng);
                     // Adaptation is warm-up only; the kept window must see a
                     // fixed kernel or its draws are not a sample of π_r.
                     if t < cfg.burn {
@@ -554,9 +664,10 @@ fn main() {
         cfg.ranks, cfg.chains, cfg.steps, cfg.burn, cfg.thin, cfg.beta, cfg.lambda, cfg.sigma
     );
     println!(
-        "proposals: fixed = one beta; curv = beta_i from the curvature at the anchor; \
-         pilot = beta_i from {} pilot steps (second half) at beta {:.3}, multiplier m adapted \
-         during burn and frozen after it",
+        "proposals: fixed = one beta; curv = beta_i from the curvature diagonal at the anchor; \
+         pilot = beta_i from {} pilot steps (second half) at beta {:.3}; rotcurv/rotpilot = the \
+         same estimates' full eigenbasis (joint rescaling); multiplier m adapted during burn and \
+         frozen after it",
         cfg.pilot_steps, cfg.beta
     );
     println!(
