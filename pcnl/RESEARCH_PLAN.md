@@ -234,8 +234,9 @@ restricted target (`mh_pcn_z_scaled`, `curvature_diag`, `DiagScale` in `src/targ
 is bitwise equal to `mh_pcn_z` at equal `β_i` and reversible for any `β_i`, so the
 preconditioner cannot corrupt the target, only the mixing. Measured, ranks 1–2, ambient
 anchor: measured-width (`pilot`) proposals take the informed rank-1 cell from ESS 58 /
-`R̂` 1.055 to ESS 680 / `R̂` 1.004 (11× per evaluation) with the same predictive (NLL within
-0.0002 MCSE), and the random arm from ESS 21 / `R̂` 1.165 to ESS 1 245–1 899 / `R̂` 1.002
+`R̂` 1.055 to ESS 680 / `R̂` 1.004 (11× per evaluation) with the same predictive (NLL differs
+by 0.0046 at a 0.0002 MCSE, inside the fixed arm's 0.0040), and the random arm from ESS 21 /
+`R̂` 1.165 to ESS 1 245–1 899 / `R̂` 1.002
 without changing its predictive at all — a converged negative control. Curvature-at-anchor
 (`curv`) fails on the informed direction (0.1 % acceptance, ESS 7, NLL 3.6072): at a
 nearly-uniform anchor the diagonal reads `β_i ≥ 1`, the cap binds, and the arm takes pCN's

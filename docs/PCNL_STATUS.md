@@ -3094,9 +3094,10 @@ is why Result 3 is the one that matters.
 **Result 3 — measured widths fix the informed arm without moving its answer.**  Informed
 rank 1 goes from ESS 58 / `R̂` 1.055 to ESS 680 / `R̂` 1.004 (12× ESS, 11× per evaluation)
 with the same predictive: NLL 2.9508 vs 2.9462, accuracy 13.28 % vs 13.28 %, Brier 1.0124
-vs 1.0127.  The sharper statement is in the MCSE: the fixed arm's MCSE(NLL) is 0.0040 and
-the pilot arm's is 0.0002, so the two NLLs agree to 1/20 of the fixed arm's own
-uncertainty.  Rank 2 improves 31 → 152 ESS (`R̂` 1.098 → 1.012, accuracy 14.06 % →
+vs 1.0127.  The MCSEs say what that agreement is worth: the fixed arm's MCSE(NLL) is 0.0040
+and the pilot arm's is 0.0002, so the two estimates differ by 0.0046 — 1.2 σ of the fixed
+arm's own uncertainty — while the pilot's precision is 20× finer, which is what makes
+"unchanged" measurable rather than merely plausible.  Rank 2 improves 31 → 152 ESS (`R̂` 1.098 → 1.012, accuracy 14.06 % →
 15.62 %, inside MCSE(acc) 0.046) but is still not converged at 152 of 2 800 draws per
 chain.
 
