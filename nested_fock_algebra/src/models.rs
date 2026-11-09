@@ -3549,8 +3549,9 @@ pub fn sm_weak_boson_hamiltonian() -> Hamiltonian {
 /// whole charge acts as zero and `Ω|ψ⟩ = 0` carries no information. A
 /// calculation that wants `Ω|ψ⟩ = 0` to *mean* Gauss's law must use
 /// `InnerLadder::FermionCreate` for the ghost leg — see
-/// `fock_sirk/tests/sm_full_hashimoto.rs::sm_full_gauss_law_is_empty_in_the_recorded_window`,
-/// which measures the difference (`3.005` against `0`).
+/// `fock_sirk/tests/sm_full_hashimoto.rs::sm_full_gauss_law_measures_the_electric_zero_point`,
+/// which measures the difference (`3.005` against `0`) and what the floor of the
+/// squared charge then is (the electric zero-point, `9 = 12 * 3/4`).
 pub fn sm_brst_charge() -> Hamiltonian {
     let ranges = SmModeBudget::standard().field_mode_ranges();
     let (su3_lo, su3_hi) = (ranges[0].1, ranges[0].2);

@@ -2578,15 +2578,18 @@ whitening. No hidden amplitude threshold or interaction deletion enters this pat
 | `sm_full_hashimoto_interaction_mutations` | Missing sectors and action/cache resource failures |
 | `sm_full_energy_is_conserved_along_the_sirk_evolution` | $\langle H\rangle$ drift of the compressed flow; every energy real |
 | `sm_full_canonical_field_velocity_matches_momentum` | Ehrenfest $d\langle q\rangle/dt=\langle p\rangle$ plus the analytic $\langle q\rangle,\langle p\rangle$ |
-| `sm_full_gauss_law_is_empty_in_the_recorded_window` | Temporal-gauge $Q$, its nilpotency, the compressed $Q^\dagger Q$ spectrum and the gauge-fixing penalty |
+| `sm_full_gauss_law_measures_the_electric_zero_point` | Temporal-gauge $Q$, its nilpotency, the $Q^\dagger Q$ spectrum ($9$, $9.5$, $10$) and the zero-point reading of the gauge-fixing penalty |
+| `sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point` | $Q^\dagger Q=6\cdot\tfrac12\sum_g(\Pi_L^g)^2$, the exact longitudinal/transverse/Higgs split of the electric zero-point, and $H_C$ on the longitudinal vacuum |
+| `sm_full_fermion_number_superselected` | $[H,N]=0$ over five charge sectors, zero cross-sector matrix element, and $N=2$ on the window |
 | `sm_full_interaction_energy_is_a_nonzero_bounded_share` | Free/interaction split of $H$, the Higgs/quark share of the window energy |
 
 These are full-operator numerical implementation tests, with all nonzero gauge
 couplings and fully populated complex generation matrices. Finite-reference
 accuracy is reported separately from full-operator projection tails. The tests
 are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the
-gauge-sector entry reports that this window has no Gauss-invariant state rather
-than expounding a physical sector. Pruning is disabled; resource limits abort
+gauge-sector entries report the electric constraint's zero-point floor, the
+Coulomb elimination of the longitudinal mode and the charge superselection that
+survives, rather than expounding a physical sector. Pruning is disabled; resource limits abort
 instead of changing the Hamiltonian.
 
 **Physics anchors on the recorded window.** Three of these tests ask what the
@@ -2607,7 +2610,7 @@ velocity converges to $\langle p\rangle$ as the window closes — defect
 action tail falls `9.93 -> 7.55 -> 3.09`: the residual is the window's omitted
 action, not the solve.
 
-**Gauss's law is empty in the recorded window.** The BRST charge of this
+**Gauss's law measures the electric zero-point.** The BRST charge of this
 representation is $Q=\sum_g G_g c_g^\dagger$, with $G_g$ the three spatial gauge
 momenta of one temporal-gauge sector. The ladder matters: `sm_brst_charge` writes
 `InnerFermionAnnihilate`, which is the ghost *raise* in the filled-sea convention
@@ -2615,29 +2618,59 @@ of `ym_brst_charge` and is zero on a ghost-free state, so with it $Q$ annihilate
 every state of this dictionary and says nothing about Gauss. The ghost reference
 here is the empty set, where the raise is `FermionCreate`; with that ladder
 $Q|\psi\rangle=0$ *is* Gauss's law, and the test measures the verdict:
-$\|Q|{\rm gs}\rangle\|=3.005099133178078$ at $\theta_0=49.7633053378465$ — the
-window ground state violates the constraint — while $Q^2=0$ exactly and
-$\|Q{\rm gs}\|^2=\langle{\rm gs}|Q^\dagger Q|{\rm gs}\rangle$ to `1e-9`. The
-compressed $Q^\dagger Q$ is positive semidefinite with **smallest eigenvalue
-`9.0`**, so no state of the 70-state window obeys Gauss at all, and the ground
-state already attains that smallest violation (`3.0051` against `sqrt(9)=3`).
-Consequently the gauge-fixing term $H+\lambda Q^\dagger Q$ cannot select a physical
-state here: it is the constant shift $\lambda\cdot 9$, measured as `9.0226`,
-`90.0697` and `900.089` for $\lambda=1,10,100$ (within 1% of the prediction). The
-structural reason is that the generator is a field momentum, and
-$p=i(a^\dagger-a)/2$ has continuous spectrum on the oscillator: $G|\psi\rangle=0$
-has no normalizable solution at all. Note what this does *not* mean — the missing
-piece is not a matter current. Adding the charge density (a bounded bilinear) to
-$G$ leaves it a Fock operator with continuous spectrum and therefore still no
-kernel; the local constraint is not imposed on states but **solved**, e.g. in
-Coulomb gauge by eliminating the longitudinal mode against the charge, and the
-normalizable statement that survives is the integrated one (charge
-superselection). This dictionary quantizes the gauge fields `coord::g/w/b`
-(24+9+3 coordinates) with their canonical momenta and does neither, so its
-$Q$ measures the electric constraint only. That is the scope of this entry: the
-window has no state obeying it, and the gauge-fixing penalty can only shift
-the spectrum — neither a pass nor a Gauss-law certificate. This replaces the
-earlier ghost-vacuum reading, which could not speak about Gauss at all.
+$\|Q|{\rm gs}\rangle\|=3.005099133178078$ at $\theta_0=49.7633053378465$, while
+$Q^2=0$ exactly and $\|Q{\rm gs}\|^2=\langle{\rm gs}|Q^\dagger Q|{\rm gs}\rangle
+=9.030620800227668$ to `1e-9`.
+
+The compressed $Q^\dagger Q$ is positive semidefinite with floor
+$9.0=12\text{ sectors}\times3\text{ components}\times\tfrac14$ — the free
+electric zero-point of the gauge vacuum — and its spectrum takes exactly three
+values, `9`, `9.5`, `10`, with multiplicities `44/12/14`. It therefore *counts
+gauge quanta* on top of a constant, by half a quantum per excited component, and
+the floor is a zero-point rather than a constraint gap: $H+\lambda Q^\dagger Q$
+shifts every energy by $\lambda\cdot 9$ (measured `9.0226`, `90.0697`, `900.089`
+for $\lambda=1,10,100$, relative excess `2.5e-3`, `7.7e-4`, `9.9e-5`) and selects
+no state. $\langle{\rm gs}|Q^\dagger Q|{\rm gs}\rangle=9.0306$ is the ground
+state's small excited-component population above the floor, not a charge
+violation. The structural reason a normalizable $G|\psi\rangle=0$ does not exist
+is separate: the generator is a field momentum, and $p=i(a^\dagger-a)/2$ has
+continuous spectrum on the oscillator. Note what this does *not* mean — the
+missing piece is not a matter current. Adding the charge density (a bounded
+bilinear) to $G$ leaves it a Fock operator with continuous spectrum and therefore
+still no kernel; the local constraint is not imposed on states but **solved**, and
+this dictionary quantizes the gauge fields `coord::g/w/b` (24+9+3 coordinates)
+with their canonical momenta but carries neither ghost nor matter charge, so its
+$Q$ measures the electric constraint only.
+
+**Coulomb gauge: the eliminated mode is a constant on the longitudinal vacuum.**
+Solved is the operative word, and the next test does it. With
+$G_g=\sqrt3\,\Pi_L^g$ and $\Pi_L^g=\sum_i\Pi_i^g/\sqrt3$, the penalty is the
+longitudinal electric energy up to a factor, $Q^\dagger
+Q=6\cdot\tfrac12\sum_g(\Pi_L^g)^2$ (checked to `1e-12`) — which is why its floor
+is a zero-point and not a constraint functional. With $\rho=0$ the constraint
+determines $\Pi_L=0$, and the Coulomb-gauge Hamiltonian is
+$H_C=H-\tfrac12\sum_g(\Pi_L^g)^2$. The electric zero-point splits exactly:
+$12\cdot\tfrac18=1.5$ longitudinal $+12\cdot2\cdot\tfrac14\cdot\tfrac12=3$
+transverse $+4\cdot\tfrac18=0.5$ Higgs $=5=40\cdot\tfrac14$. On the
+44-dimensional $P=9$ eigenspace $\tfrac12\sum_g(\Pi_L^g)^2=1.5\cdot I$ to
+`1e-12`, so $H_C$ reproduces those window energies shifted by exactly
+`1.5000000000000782` (`49.85526760389873 -> 48.35526760389865`), and that
+restricted minimum lies above $\theta_0$ — the ground state is not in the
+longitudinal vacuum. Off that sector the elimination is not a constant: the ground
+state has $\langle\tfrac12\sum(\Pi_L)^2\rangle=1.5051034667046121$, so $H_C$
+gives it `48.258201871141885` rather than $\theta_0-1.5=48.2633053378465$. The
+same-energies statement holds exactly on the sector the gauge-fixed theory keeps,
+and fails by `5.1e-3` where it does not apply.
+
+**Charge superselection is the statement that survives, and it is an operator
+statement.** The recorded window is a single charge sector: all 70 states carry
+the seed's two matter fermions, so $N=2\cdot I$ there and no charge-variance
+assertion inside it could fail. The anchor is therefore off-window, on probes with
+$N=0,\dots,4$: $[H,N]$ vanishes with relative defect `9.059259100241536e-16`, and
+$H$ has zero matrix element between different sectors (20 ordered pairs, worst
+exactly `0.0`). This is what makes the fixed-charge truncation
+`project_occupation` exact rather than approximate, and it is the only gauge- and
+charge-sector claim this record supports.
 
 **The interaction share of the window energy.** Each form contributes
 $w(\sum\text{monomials})^2$ in operator order, so splitting the ordered monomial
@@ -2650,9 +2683,10 @@ Higgs/quark Yukawa block alone `-1.4425259347888656e-2` (**-0.029%**): present,
 nonzero and far from dominating, inside the truncated-reference scope of this
 section.
 
-**Cost.** The primary block runs in **112.70 s** (`--test-threads=1`, ten tests)
-on the 2026-11-09 host, against 329.92 and 335.74 s for the earlier eight-test
-block; the Gauss and interaction anchors cost `1.2` and `2.9` s. Two levers keep
+**Cost.** The primary block runs in **115.17 s** (`--test-threads=1`, twelve
+tests) on the 2026-11-09 host, against 329.92 and 335.74 s for the earlier
+eight-test block; the Gauss, Coulomb-gauge, superselection and interaction
+anchors cost `1.2`, `1.0`, `1.1` and `2.9` s. Two levers keep
 it there without dropping evidence: the four occupation-cutoff tails are computed
 directly from the first complete action image — the tail the solver reports *is*
 the part of $H|\psi_0\rangle$ its window omits — with one 230-state solve

@@ -603,7 +603,10 @@ fn sm_outer_vacuum_annihilated_reduced() {
     }
     let h_outer = Hamiltonian { terms };
 
-    // H|Ω⟩ = 0 identically.
+    // H|Ω⟩ = 0 *by construction*: every enclosed term ends in an outer
+    // annihilator, so this identity tests the convention, not the model. The
+    // content of an enclosure is the next check -- that the operator built from
+    // h_mat reproduces h's matrix elements on the one-quanton sector.
     let omega = QuantumState::vacuum();
     let h_omega = h_outer.apply(&omega);
     assert!(
@@ -612,18 +615,28 @@ fn sm_outer_vacuum_annihilated_reduced() {
         h_omega.norm()
     );
 
-    // On the one-quanton sector H acts as h (Hermitian).
-    let one0 = omega.apply(&Operator::OuterBosonCreate(inner_species(&[(0, 1)])));
-    let h_one = h_outer.apply(&one0);
-    let e_one = QuantumState::inner_product(&one0, &h_one).re;
+    let ones: Vec<QuantumState> = basis
+        .iter()
+        .map(|ei| omega.apply(&Operator::OuterBosonCreate(inner_species(ei))))
+        .collect();
+    let mut worst = 0.0f64;
+    for (j, one_j) in ones.iter().enumerate() {
+        let acted = h_outer.apply(one_j);
+        for (i, one_i) in ones.iter().enumerate() {
+            // ⟨one_i|H_outer|one_j⟩ = h_ij: the annihilator eats the created
+            // inner quantum and the creator reproduces the target.
+            worst = worst.max((QuantumState::inner_product(one_i, &acted) - h_mat[(i, j)]).norm());
+        }
+    }
     assert!(
-        e_one.is_finite(),
-        "one-quanton energy must be finite, got {e_one}"
+        worst < 1e-12,
+        "the outer enclosure must reproduce h's one-quanton matrix, worst {worst:.3e}"
     );
 
     eprintln!(
-        "sm_outer_vacuum: H|Ω‖ = {:.3e}, one-quanton ⟨H⟩ = {e_one:.6}",
-        h_omega.norm()
+        "sm_outer_vacuum: ‖H|Ω⟩‖ = {:.3e} (by construction), one-quanton matrix error = {worst:.3e} on {} states",
+        h_omega.norm(),
+        ones.len()
     );
 }
 
@@ -795,7 +808,7 @@ fn sm_brst_ghosts_nilpotent() {
     // Ω|phys⟩ = 0 here for every ghost-free probe by construction. Do not read
     // it as confinement to a physical sector — with the empty-reference ladder
     // (`FermionCreate`) the same charge measures the Gauss violation instead:
-    // `sm_full_hashimoto::sm_full_gauss_law_is_empty_in_the_recorded_window`.
+    // `sm_full_hashimoto::sm_full_gauss_law_measures_the_electric_zero_point`.
     let phys = sm_probe(&[(0, 1)], &[]);
     let o_phys = omega.apply(&phys).norm();
     assert!(

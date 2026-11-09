@@ -610,31 +610,34 @@ fn dense_state(state: &NestedVector) -> DVector<C> {
     )
 }
 
-/// Gauss's law under a real gauge-fixing term, in the recorded window.
+/// The Gauss charge of this representation, and what its square actually
+/// measures.
 ///
-/// The physical content of the charge is `Q|psi> = 0  <=>  G_g|psi> = 0`, with
-/// `P = Q^dagger Q` and `|Q psi|^2 = <psi|P|psi>`. The test measures the
-/// verdict where it can be measured — on the window's compressed `P`:
+/// The physical content would be `Q|psi> = 0  <=>  G_g|psi> = 0`, with
+/// `P = Q^dagger Q` and `|Q psi|^2 = <psi|P|psi>`. Measured on the compressed
+/// window, `P` is the free-field electric zero-point plus a counting operator:
 ///
-/// * the ground state violates the constraint (`|Q gs>|` is O(1)), so the
-///   charge is not vacuous on it;
-/// * `P` is positive semidefinite, and its *smallest* eigenvalue is still
-///   positive, so the window contains no state obeying the electric constraint
-///   at all — the local constraint is solved in a gauge-fixed treatment, never
-///   imposed on Fock states, since no normalizable state annihilates a field
-///   momentum;
-/// * the ground state already attains that smallest violation;
-/// * consequently the gauge-fixing term `H + lambda P` cannot select a physical
-///   state here: it shifts every energy by `lambda * gap` (verified to 1%).
+/// * `P`'s spectrum takes exactly three values, `9`, `9.5`, `10`, with
+///   multiplicities 44/12/14 — the gauge vacuum at `12 * (3 * 1/4) = 9` and
+///   half a quantum per excited gauge component;
+/// * the floor `9` is therefore a zero-point constant, not a constraint gap:
+///   `H + lambda P` shifts every energy by `lambda * 9` and selects no state,
+///   with the residual excess shrinking as `lambda` grows;
+/// * `|Q gs>|^2 = <gs|P|gs> = 9.0306` is the vacuum fluctuation of
+///   `sum_i Pi_i`, not a charge violation — the generator carries no matter
+///   term at all, so it cannot see one;
+/// * `Q^2 = 0` holds exactly (`Q^2 gs = 0`), which is a real property of the
+///   charge but says nothing about Gauss's law.
 ///
-/// The structural reason is that the generator is a field momentum, and
-/// `p = i(a^dagger - a)/2` has continuous spectrum on the oscillator, so
-/// `G|psi> = 0` has no normalizable solution. Adding the (bounded, bilinear)
-/// matter/current term would not change that; the local constraint is *solved*
-/// in a gauge-fixed treatment, not imposed on states. That is why the earlier
-/// ghost-vacuum statement could not say anything about Gauss's law.
+/// The analytic reason a normalizable `G|psi> = 0` does not exist is separate
+/// and unmeasured here: `p = i(a^dagger - a)/2` has continuous spectrum, so the
+/// constraint is *solved* in a gauge-fixed treatment (Coulomb gauge, where the
+/// longitudinal momentum is fixed by the charge) rather than imposed on Fock
+/// states. `sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point`
+/// measures the eliminated mode; `sm_full_fermion_number_superselected` measures
+/// the integrated statement that does survive.
 #[test]
-fn sm_full_gauss_law_is_empty_in_the_recorded_window() {
+fn sm_full_gauss_law_measures_the_electric_zero_point() {
     let (theta0, gs) = ground_state();
     assert!(
         (theta0 - 49.7633053378465).abs() < 1e-9,
@@ -644,9 +647,27 @@ fn sm_full_gauss_law_is_empty_in_the_recorded_window() {
     let penalty_matrix = window_matrix(&gauss_penalty());
     let penalty_spectrum = penalty_matrix.clone().symmetric_eigen();
     let gap = penalty_spectrum.eigenvalues.min();
+    let mut buckets = std::collections::BTreeMap::<i64, usize>::new();
+    for value in penalty_spectrum.eigenvalues.iter() {
+        *buckets.entry((value * 1e6).round() as i64).or_default() += 1;
+    }
+    // 9 = 12 sectors x 3 components x 1/4 (the free oscillator's <p^2>), i.e.
+    // the electric zero-point of the gauge vacuum, not a constraint gap.
     assert!(
-        gap >= -1e-9,
-        "Q^dagger Q must be positive semidefinite: min = {gap:e}"
+        (gap - 9.0).abs() < 1e-9,
+        "P's floor must be the gauge-vacuum zero-point 12*3/4 = 9: {gap:e}"
+    );
+    // The spectrum is 9, 9.5, 10 only: half a quantum per excited component.
+    assert_eq!(
+        buckets.keys().copied().collect::<Vec<_>>(),
+        vec![9_000_000, 9_500_000, 10_000_000],
+        "P must count gauge quanta on top of the zero-point: {buckets:?}"
+    );
+    let counts: Vec<usize> = buckets.values().copied().collect();
+    assert_eq!(
+        counts,
+        vec![44, 12, 14],
+        "occupancy classes moved: {buckets:?}"
     );
 
     let charged = charge.d_gamma(&gs, limits()).unwrap();
@@ -661,15 +682,11 @@ fn sm_full_gauss_law_is_empty_in_the_recorded_window() {
         "|Q gs>|^2 = {:e} but <gs|P|gs> = {penalty_expectation:e}",
         residual * residual
     );
-    // A physical state of the window would be a zero eigenvector of `P`.
+    // The violation the ground state shows is slightly *above* the zero-point
+    // floor, by its small population of excited gauge components.
     assert!(
-        gap > 1e-3,
-        "the window unexpectedly contains a Gauss-invariant state: {gap:e}"
-    );
-    assert!(
-        (residual - gap.sqrt()).abs() < 1e-2,
-        "the ground state should attain the smallest violation: {residual:e} vs {:e}",
-        gap.sqrt()
+        penalty_expectation > 9.0 && penalty_expectation < 9.5,
+        "the ground state should sit just above the zero-point: {penalty_expectation:e}"
     );
 
     let mut shifts = Vec::new();
@@ -681,28 +698,289 @@ fn sm_full_gauss_law_is_empty_in_the_recorded_window() {
             .iter()
             .copied()
             .fold(f64::INFINITY, f64::min);
-        // `P >= gap > 0` on the whole window, so the penalised ground state can
-        // at best reduce the violation to `gap`: the term is a constant shift.
-        let predicted = lambda * gap;
+        let predicted = lambda * 9.0;
         assert!(
             (energy - theta0 - predicted).abs() < 1e-2 * predicted,
-            "the penalty is not the constant shift lambda*gap at lambda={lambda}: {:e} vs {predicted:e}",
+            "the penalty is not the zero-point shift lambda*9 at lambda={lambda}: {:e} vs {predicted:e}",
             energy - theta0
         );
         eprintln!(
             "full_SM_gauss: lambda={lambda} dE={:e} predicted={predicted:e}",
             energy - theta0
         );
-        shifts.push(energy - theta0);
+        shifts.push((energy - theta0) / predicted - 1.0);
     }
+    // The relative excess over the zero-point is the truncation's, and it
+    // shrinks by roughly an order of magnitude per decade of lambda.
+    assert!(
+        shifts[1] < shifts[0] && shifts[2] < shifts[1],
+        "the relative excess over lambda*9 must shrink with lambda: {shifts:?}"
+    );
 
     assert!(
         nilpotent == 0.0,
         "the charge must be nilpotent: |Q^2 gs>| = {nilpotent:e}"
     );
     eprintln!(
-        "full_SM_gauss: theta0={theta0:e} |Q gs>={residual:e} gap={gap:e} P_min={:e} shifts={shifts:?}",
-        penalty_spectrum.eigenvalues.min()
+        "full_SM_gauss: theta0={theta0:e} |Q gs>={residual:e} floor={gap:e} rel_excess={shifts:?}"
+    );
+}
+
+/// Total matter fermion number `N = sum_{i < MATTER_MODES} a_i^dagger a_i`.
+fn fermion_number() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..MATTER_MODES)
+            .map(|mode| {
+                InnerExpr::Product(vec![
+                    InnerExpr::Ladder(InnerLadder::FermionCreate(mode)),
+                    InnerExpr::Ladder(InnerLadder::FermionAnnihilate(mode)),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// The longitudinal part of the electric energy,
+/// `(1/2) sum_g (Pi_L^g)^2` with `Pi_L^g = sum_i Pi_i^g / sqrt(3)`.
+///
+/// Since `G_g = sqrt(3) Pi_L^g`, this is `Q^dagger Q / 6`: the gauge-fixing
+/// penalty is the electric energy of the three-component zero mode, scaled by
+/// the `6 = 3 * 2` that `(sum_i Pi_i)^2` and the `1/2` contribute.
+fn longitudinal_energy() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..12u32)
+            .map(|ghost| {
+                let generator = gauss_generator(ghost);
+                InnerExpr::Product(vec![generator.clone(), generator])
+                    .scaled(C::new(1.0 / 6.0, 0.0))
+            })
+            .collect(),
+    )
+}
+
+fn window_expectation(state: &NestedVector, operator: &InnerExpr) -> f64 {
+    let dense = dense_state(state);
+    let matrix = window_matrix(operator);
+    (dense.adjoint() * matrix * &dense)[(0, 0)].re
+}
+
+/// Coulomb gauge: the longitudinal mode is solved for, not imposed.
+///
+/// Gauss's law `G_g = sum_i Pi_i^g + rho_g = 0` determines the longitudinal
+/// momentum; with the matter charge absent from this dictionary (`rho = 0`) the
+/// determination is `Pi_L = 0`, and Coulomb gauge removes the mode from the
+/// Hilbert space instead of asking a state to annihilate it. The energy it
+/// contributes is `(1/2) sum_g (Pi_L^g)^2`, so the Coulomb-gauge Hamiltonian is
+/// `H_C = H - (1/2) sum_g (Pi_L^g)^2`. Measured:
+///
+/// * `P = 6 * (1/2) sum_g (Pi_L^g)^2` — the gauge-fixing penalty *is* the
+///   longitudinal electric energy up to that factor, so its floor `9` is a
+///   zero-point and not a constraint functional;
+/// * the electric zero-point splits exactly as `12 * 1/8` longitudinal +
+///   `12 * 2 * 1/4 * 1/2` transverse + `4 * 1/8` Higgs `= 1.5 + 3 + 0.5 = 5`;
+/// * on the 44-dimensional longitudinal-vacuum sector (the `P = 9` eigenspace)
+///   the elimination is *exactly* the constant `1.5`, so `H_C` reproduces those
+///   window energies shifted by the longitudinal zero-point;
+/// * off that sector it is not a constant: the ground state sits at
+///   `1.5051 = 1.5 + 0.0051`, so the elimination moves its energy by more than
+///   the zero-point, and no identification of `H_C` with `H` holds for states
+///   the gauge-fixed theory does not contain.
+#[test]
+fn sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point() {
+    let seed_state = seed();
+    let n = reference().basis.len();
+    let penalty_matrix = window_matrix(&gauss_penalty());
+    let longitudinal = window_matrix(&longitudinal_energy());
+
+    // G_g = sqrt(3) Pi_L^g, so the penalty is the longitudinal energy times 6.
+    assert!(
+        (&penalty_matrix - &longitudinal * C::new(6.0, 0.0)).norm() < 1e-12,
+        "the Gauss penalty must be 6x the longitudinal electric energy"
+    );
+
+    // Zero-point accounting on the gauge vacuum.
+    let mut gauge = DMatrix::<C>::zeros(n, n);
+    let mut higgs = DMatrix::<C>::zeros(n, n);
+    for mode in coord::active() {
+        let momentum = InnerExpr::momentum(mode);
+        let square = InnerExpr::Product(vec![momentum.clone(), momentum]);
+        let term = window_matrix(&square) * C::new(0.5, 0.0);
+        if (147..151).contains(&mode) {
+            higgs += &term;
+        } else {
+            gauge += &term;
+        }
+    }
+    let transverse = &gauge - &longitudinal;
+    let seed_dense = dense_state(&seed_state);
+    let long_seed = window_expectation(&seed_state, &longitudinal_energy());
+    let trans_seed = (seed_dense.adjoint() * &transverse * &seed_dense)[(0, 0)].re;
+    let higgs_seed = (seed_dense.adjoint() * &higgs * &seed_dense)[(0, 0)].re;
+    eprintln!(
+        "full_SM_coulomb: long={long_seed} trans={trans_seed} higgs={higgs_seed} total={}",
+        long_seed + trans_seed + higgs_seed
+    );
+    for (measured, want, label) in [
+        (long_seed, 1.5, "longitudinal 12*(1/8)"),
+        (trans_seed, 3.0, "transverse 12*2*(1/8)"),
+        (higgs_seed, 0.5, "Higgs 4*(1/8)"),
+    ] {
+        assert!(
+            (measured - want).abs() < 1e-12,
+            "electric zero-point {label} must be {want}: {measured}"
+        );
+    }
+
+    // The 44-dimensional longitudinal-vacuum sector: elimination is a constant.
+    let spectrum = penalty_matrix.clone().symmetric_eigen();
+    let vacuum: Vec<usize> = spectrum
+        .eigenvalues
+        .iter()
+        .enumerate()
+        .filter(|(_, value)| (**value - 9.0).abs() < 1e-9)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(vacuum.len(), 44, "longitudinal-vacuum sector moved");
+    let mut basis = DMatrix::<C>::zeros(n, vacuum.len());
+    for (column, index) in vacuum.iter().enumerate() {
+        basis.set_column(column, &spectrum.eigenvectors.column(*index));
+    }
+    let restricted_long = basis.adjoint() * &longitudinal * &basis;
+    let want = DMatrix::<C>::identity(vacuum.len(), vacuum.len()) * C::new(1.5, 0.0);
+    assert!(
+        (&restricted_long - &want).norm() < 1e-12,
+        "on the longitudinal vacuum the eliminated energy must be the constant 1.5: {:e}",
+        (&restricted_long - &want).norm()
+    );
+    // Hence C-gauge energies on that sector are the window energies minus 1.5.
+    let restricted_h = basis.adjoint() * &reference().matrix * &basis;
+    let restricted_coulomb = basis.adjoint() * (&reference().matrix - &longitudinal) * &basis;
+    let eliminated = &restricted_h - &restricted_coulomb;
+    assert!(
+        (&eliminated - &want).norm() < 1e-12,
+        "H - H_C must be exactly 1.5 on the longitudinal vacuum: {:e}",
+        (&eliminated - &want).norm()
+    );
+    let lowest = restricted_h.clone().symmetric_eigen().eigenvalues.min();
+    let lowest_coulomb = restricted_coulomb.symmetric_eigen().eigenvalues.min();
+    assert!(
+        (lowest - lowest_coulomb - 1.5).abs() < 1e-12,
+        "the Coulomb-gauge spectrum must be the window spectrum shifted by 1.5: {lowest:e} vs {lowest_coulomb:e}"
+    );
+    eprintln!(
+        "full_SM_coulomb: gauge_vacuum_dim={} E={lowest:e} E_coulomb={lowest_coulomb:e} shift={:e}",
+        vacuum.len(),
+        lowest - lowest_coulomb
+    );
+
+    // Off that sector the elimination is not a constant.
+    let (theta0, gs) = ground_state();
+    let gs_long = window_expectation(&gs, &longitudinal_energy());
+    assert!(
+        gs_long > 1.5 + 1e-6 && gs_long < 1.5 + 1e-2,
+        "the ground state carries a small longitudinal excess: {gs_long:e}"
+    );
+    eprintln!(
+        "full_SM_coulomb: gs_long={gs_long:e} theta0={theta0:e} coulomb_energy={:e}",
+        theta0 - gs_long
+    );
+    assert!(
+        (theta0 - gs_long) < theta0 - 1.5 + 0.01,
+        "the elimination must lower the window energy by more than the zero-point here"
+    );
+}
+
+/// Charge superselection: `[H, N] = 0` and no matrix element between sectors.
+///
+/// The recorded window is a *single* charge sector — every one of its 70 states
+/// carries two matter fermions, so `N = 2 * I` there and no charge-variance
+/// statement can be made inside it. The anchor is therefore the operator
+/// statement, measured on probes in five sectors `N = 0..4`:
+///
+/// * `[H, N]` vanishes to rounding (relative defect `9.1e-16`);
+/// * every matrix element of `H` between different sectors vanishes exactly
+///   (20 ordered pairs, worst `0.0`), which is the superselection statement
+///   proper;
+/// * `N` is diagonal and constant on the window, so the fixed-charge
+///   truncation `project_occupation` cannot leak charge.
+#[test]
+fn sm_full_fermion_number_superselected() {
+    let number = fermion_number();
+    let number_matrix = window_matrix(&number);
+    let number_spectrum = number_matrix.clone().symmetric_eigen();
+    let mut histogram = std::collections::BTreeMap::<i64, usize>::new();
+    for value in number_spectrum.eigenvalues.iter() {
+        *histogram.entry(value.round() as i64).or_default() += 1;
+    }
+    assert_eq!(
+        histogram,
+        [(2, 70)].into_iter().collect(),
+        "the window must be one charge sector: {histogram:?}"
+    );
+    let commutation =
+        (&reference().matrix * &number_matrix - &number_matrix * &reference().matrix).norm();
+    assert!(
+        commutation < 1e-12,
+        "[H, N] must vanish on the window: {commutation:e}"
+    );
+
+    let pool: Vec<u32> = (0..6u32)
+        .map(|j| matter_mode(Species::Down, 0, j % 3, Chirality::Left, j / 3))
+        .collect();
+    let mut states = Vec::new();
+    let mut images = Vec::new();
+    for k in 0..5usize {
+        let mut modes: Vec<u32> = pool.iter().copied().take(k).collect();
+        modes.sort_unstable();
+        modes.dedup();
+        let inner = B::new([], modes.clone()).unwrap();
+        let state = NestedVector::from([(O::graded([(inner, 1)]).unwrap(), C::new(1.0, 0.0))]);
+        let applied = number.d_gamma(&state, limits()).unwrap();
+        let charge =
+            joint_inner_product(&state, &applied).re / joint_inner_product(&state, &state).re;
+        assert!(
+            (charge - modes.len() as f64).abs() < 1e-12,
+            "probe {k} should have N = {}: {charge}",
+            modes.len()
+        );
+        let image = h().d_gamma(&state, limits()).unwrap();
+        let left = h().d_gamma(&applied, limits()).unwrap();
+        let right = number.d_gamma(&image, limits()).unwrap();
+        let mut defect = left;
+        joint_axpy(&mut defect, &right, C::new(-1.0, 0.0), limits()).unwrap();
+        let relative = joint_norm(&defect) / joint_norm(&image);
+        assert!(
+            relative < 1e-12,
+            "[H, N] must vanish on the N = {} probe: {relative:e}",
+            modes.len()
+        );
+        states.push(state);
+        images.push((image, charge));
+    }
+    let mut worst = 0.0f64;
+    let mut pairs = 0usize;
+    for (i, (image, charge)) in images.iter().enumerate() {
+        for other in states.iter().enumerate() {
+            let (j, other) = other;
+            if i == j {
+                continue;
+            }
+            if (images[j].1 - charge).abs() < 1e-12 {
+                continue;
+            }
+            let element =
+                joint_inner_product(other, image).norm() / (joint_norm(image) * joint_norm(other));
+            worst = worst.max(element);
+            pairs += 1;
+        }
+    }
+    assert_eq!(pairs, 20, "cross-sector pair count moved");
+    assert!(
+        worst < 1e-12,
+        "H must not connect different charge sectors: worst {worst:e}"
+    );
+    eprintln!(
+        "full_SM_charge: sectors=0..4 window_N=2I comm={commutation:e} cross={worst:e} pairs={pairs}"
     );
 }
 

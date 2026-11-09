@@ -409,32 +409,62 @@ uses cutoffs 1 and 2 and asserts that the defect both decreases and stays under
 10% of `<p>`; `SM_FULL_WIDE_CUTOFFS=1` adds cutoff 3, where it reproduces
 `4.31846279135123e-3` and must stay under 1.25%.
 
-**The gauge sector has no physical state in this window.** `sm_full` carries no
-ghost sector, so the test ports the charge into this representation, with the
-twelve ghosts on fermionic modes `96..108` — outside the 96-mode matter block,
-where no `h_SM` term can reach them. The ladder is what decides the content:
-`sm_brst_charge` writes `InnerFermionAnnihilate`, the ghost *raise* of the
-filled-sea convention of `ym_brst_charge`, which is zero on a ghost-free state and
-therefore makes `Q|gs> = 0` trivial. The empty ghost reference of this dictionary
-uses `FermionCreate` as the raise, and then `Q|ψ> = 0` is exactly Gauss's law
-`G_g|ψ> = 0`. Measured: `|Q|gs>| = 3.005099133178078` at
-`θ₀ = 49.7633053378465` — the window ground state violates the constraint —
-`Q² = 0` exactly, and `|Q gs>|² = <gs|Q†Q|gs>` to `1e-9`. The compressed `Q†Q` is
-positive semidefinite with smallest eigenvalue `9.0`, so **no** state of the
-70-state window obeys Gauss, and the ground state already attains that smallest
-violation (`3.0051` against `sqrt(9) = 3`). The gauge-fixing term `H + λ Q†Q`
-therefore cannot select a physical state here: it is the constant shift `λ·9`,
-measured as `9.0226`, `90.0697`, `900.089` for `λ = 1, 10, 100` (within 1%). The
-reason is structural — the generator is a field momentum, and `p = i(a† − a)/2`
-has continuous spectrum on the oscillator, so `G|ψ> = 0` has no normalizable
-solution. That is not a missing matter-current term: adding the (bounded,
-bilinear) charge density leaves `G` a Fock operator with continuous spectrum and
-no kernel. The local constraint has to be *solved* — Coulomb gauge, eliminating
-the longitudinal mode against the charge — and the normalizable statement left is
-the integrated one, charge superselection. This dictionary carries the gauge
-fields (`coord::g/w/b`, 24+9+3 coordinates) with their canonical momenta but does
-neither, so its `Q` measures the electric constraint alone. This replaces the
-earlier ghost-vacuum reading, which could not speak about Gauss.
+**The gauge sector's floor is a zero-point, not a constraint gap.**
+`sm_full` carries no ghost sector, so the test ports the charge into this
+representation, with the twelve ghosts on fermionic modes `96..108` — outside
+the 96-mode matter block, where no `h_SM` term can reach them. The ladder is what
+decides the content: `sm_brst_charge` writes `InnerFermionAnnihilate`, the ghost
+*raise* of the filled-sea convention of `ym_brst_charge`, which is zero on a
+ghost-free state and therefore makes `Q|gs> = 0` trivial. The empty ghost
+reference of this dictionary uses `FermionCreate` as the raise, and then
+`Q|psi> = 0` is exactly Gauss's law `G_g|psi> = 0`. Measured: `|Q|gs>| =
+3.005099133178078` at `theta_0 = 49.7633053378465`, `Q^2 = 0` exactly, and
+`|Q gs>|^2 = <gs|Q^dagger Q|gs> = 9.030620800227668` to `1e-9`.
+
+The compressed `Q^dagger Q` is positive semidefinite with floor
+`9.0 = 12 sectors x 3 components x 1/4`, the free electric zero-point of the
+gauge vacuum, and its spectrum takes exactly three values — `9`, `9.5`, `10`,
+with multiplicities 44/12/14 — i.e. it *counts gauge quanta* on top of that
+constant, by half a quantum per excited component. So the floor is not a
+constraint gap: `H + lambda Q^dagger Q` shifts every energy by `lambda * 9`
+(measured `9.0226`, `90.0697`, `900.089` for `lambda = 1, 10, 100`, relative
+excess `2.5e-3`, `7.7e-4`, `9.9e-5`) and selects no state, and
+`<gs|Q^dagger Q|gs> = 9.0306` is the ground state's small population of excited
+gauge components above the floor, not a charge violation. The analytic reason a
+normalizable `G|psi> = 0` does not exist is separate: the generator is a field
+momentum, and `p = i(a^dagger - a)/2` has continuous spectrum. That is not a
+missing matter-current term — adding the (bounded, bilinear) charge density
+leaves `G` a Fock operator with continuous spectrum and no kernel. The local
+constraint has to be *solved*, and this dictionary, which carries the gauge
+fields (`coord::g/w/b`, 24+9+3 coordinates) with their canonical momenta but
+neither ghost nor matter charge, measures the electric constraint only. This
+replaces the earlier ghost-vacuum reading, which could not speak about Gauss,
+and the earlier reading of the floor as "no state obeys the constraint".
+
+**Coulomb gauge: the eliminated mode is a constant on the longitudinal
+vacuum.** `G_g = sqrt(3) Pi_L^g` with `Pi_L^g = sum_i Pi_i^g / sqrt(3)`, so
+`Q^dagger Q = 6 * (1/2) sum_g (Pi_L^g)^2` (checked to `1e-12`). With `rho = 0`
+the constraint determines `Pi_L = 0`, and the Coulomb-gauge Hamiltonian is
+`H_C = H - (1/2) sum_g (Pi_L^g)^2`. The electric zero-point splits exactly:
+`12 * 1/8 = 1.5` longitudinal + `12 * 2 * 1/4 * 1/2 = 3` transverse +
+`4 * 1/8 = 0.5` Higgs `= 5 = 40 * 1/4`. On the 44-dimensional `P = 9`
+eigenspace `(1/2) sum_g (Pi_L^g)^2 = 1.5 * I` to `1e-12`, so `H_C` reproduces
+those window energies shifted by exactly `1.5000000000000782`
+(`49.85526760389873 -> 48.35526760389865`), and that restricted minimum lying
+above `theta_0` confirms the ground state is not in the longitudinal vacuum.
+Off that sector the elimination is not a constant: the ground state has
+`<(1/2) sum (Pi_L)^2> = 1.5051034667046121`, so `H_C` gives it
+`48.258201871141885` rather than `theta_0 - 1.5 = 48.2633053378465`. The
+same-energies statement therefore holds exactly on the sector the gauge-fixed
+theory keeps, and fails by `5.1e-3` where it does not apply.
+
+**Charge superselection is an operator statement here.** The window is a single
+charge sector — all 70 states carry the seed's two matter fermions, `N = 2 * I` —
+so no charge-variance assertion inside it could fail. The anchor is therefore
+off-window, on probes with `N = 0..4`: `[H, N]` vanishes with relative defect
+`9.059259100241536e-16`, and `H` has zero matrix element between different
+sectors (20 ordered pairs, worst exactly `0.0`). This is what makes the
+fixed-charge truncation `project_occupation` exact rather than approximate.
 
 **The interaction share of the window energy.** Splitting `H` over ordered
 monomial pairs by total degree is exact (checked on the seed to `1e-10`): the
