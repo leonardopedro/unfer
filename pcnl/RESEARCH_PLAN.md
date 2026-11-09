@@ -270,6 +270,17 @@ prior scale, which is where the mixing gain would be — longer full-target chai
 long enough (or shrunk) to pin the rotated eigenbasis, ranks 8+, `λ ≠ 1` / `σ ≠ 0.35`, and
 the SG-bias comparison.
 
+The rank scaling of the pilot arm is now measured too (R2d, `π_r`, 4 × 4 000):
+ESS(pilot)/ESS(fixed) is 11.7× at rank 1, 4.9× at rank 2, **0.15×** at rank 4 and
+unresolvable at rank 8 (ESS 7 vs 6, `R̂` 1.289 vs 1.931, so neither window is a sample and
+the 0.31-NLL gap is not quoted). Dimension alone is not the cause: the random rank-8
+control still gains **31×** (28 → 872, `R̂` 1.001, predictive unchanged), and a 1 200-step
+pilot at informed rank 8 lifts ESS 6 → **24** and `R̂` 1.931 → 1.091. What binds is the
+pilot's 150 estimation draws spread over `r` coordinates — 150 at rank 1, 38 at rank 4, 19
+at rank 8 — so the 300-step default is a low-rank budget, and `rotpilot` at ranks 4/8 (ESS
+9 / 4) remains worse than the diagonal pilot at both. A pilot-length rule that grows with
+rank (150·`r`?) is the untested follow-up.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

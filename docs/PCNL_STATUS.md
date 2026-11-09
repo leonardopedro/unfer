@@ -3015,6 +3015,18 @@ cargo run --release -p pcnl --example subspace_adaptation -- --targets restricte
   --ranks 1,2,4 --basis informed --proposal fixed,pilot --chains 4 --steps 4000 --burn 500 --thin 5
 cargo run --release -p pcnl --example subspace_adaptation -- --targets restricted,full \
   --ranks 2 --basis random --proposal fixed,pilot --chains 4 --steps 4000 --burn 500 --thin 5
+# R2d: the pilot arm across ranks, and the controls that separate dimension from
+# pilot length (`--pilot` is the number of pilot steps, default 300; 1 200 = 150/rank at r=8)
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 1,2,4 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot,rotpilot
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis random --proposal fixed,pilot
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal rotpilot
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal pilot --pilot 1200
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3265,21 +3277,27 @@ is recorded because it is the failure mode these tests exist for.
 
 Ambient anchor (`4.30 % / 4.1523`, `0x52d503556818f1e0`), `P = 16 672`, `λ = 1`,
 `σ = 0.35`, `N = 512/256`, 4 chains × 4 000 steps, burn 500, thin 5 (2 000 draws per
-chain).  All sixteen cells ran in two processes off the same binary and anchor; `q acc/β_q`
+chain).  All sixteen cells share that budget.  The restricted half was first run at
+3 000 steps (2 000 draws per chain, `12 004`/`13 204` evaluations) and its rows in the
+first version of this table were labelled 4 000; it was rerun at the full budget and the
+rows below are the rerun's.  That rerun is also the determinism check across a third
+process: it reproduces R2's rank-1/2 rows and R2b's rank-4 pilot row exactly (ESS 58/680,
+31/152, 15; NLL 2.9462/2.9508, 2.9083/2.9123, 2.8658; `R̂` 1.055/1.004, 1.098/1.012,
+1.353), so the arm comparison is not a comparison of budgets.  `q acc/β_q`
 is the complement stage's acceptance at its frozen scale (`—` for `π_r`, which has no
 complement); `s` is wall time on the 2-core box where the two processes shared it, so it
 is a cost ratio, not a benchmark:
 
 | rank | basis | target | prop | z acc | q acc/β_q | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | evals | s |
 |---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | informed | `π_r` | fixed | 76.7 % | — | 22 | 1.097 | 13.28 % | 0.232 | 1.0127 | 2.9449 | 0.264 | 0.0056 | 12 004 | 256 |
-| 1 | informed | `π_r` | pilot | 47.1 % | — | 501 | 1.013 | 13.28 % | 0.082 | 1.0124 | 2.9508 | 0.266 | 0.0003 | 13 204 | 287 |
-| 2 | informed | `π_r` | fixed | 71.1 % | — | 14 | 1.157 | 14.06 % | 0.060 | 0.9972 | 2.9086 | 0.260 | 0.0087 | 12 004 | 266 |
-| 2 | informed | `π_r` | pilot | 44.6 % | — | 106 | 1.032 | 15.62 % | 0.047 | 0.9970 | 2.9120 | 0.272 | 0.0005 | 13 204 | 292 |
-| 4 | informed | `π_r` | fixed | 60.6 % | — | 80 | 1.033 | 12.89 % | 0.100 | 0.9928 | 2.8716 | 0.270 | 0.0046 | 12 004 | 269 |
-| 4 | informed | `π_r` | pilot | 50.7 % | — | 12 | 1.602 | 12.89 % | 0.414 | 0.9914 | 2.8654 | 0.269 | 0.0017 | 13 204 | 273 |
-| 2 | random | `π_r` | fixed | 98.5 % | — | 11 | 1.424 | 4.30 % | 0.000 | 1.0958 | 4.1508 | 0.325 | 0.0011 | 12 004 | 241 |
-| 2 | random | `π_r` | pilot | 59.5 % | — | **1 260** | **1.000** | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 13 204 | 262 |
+| 1 | informed | `π_r` | fixed | 76.7 % | — | 58 | 1.055 | 13.28 % | 0.187 | 1.0127 | 2.9462 | 0.264 | 0.0040 | 16 004 | 564 |
+| 1 | informed | `π_r` | pilot | 47.1 % | — | **680** | **1.004** | 13.28 % | 0.070 | 1.0124 | 2.9508 | 0.266 | 0.0002 | 17 204 | 556 |
+| 2 | informed | `π_r` | fixed | 71.8 % | — | 31 | 1.098 | 14.06 % | 0.049 | 0.9973 | 2.9083 | 0.261 | 0.0068 | 16 004 | 289 |
+| 2 | informed | `π_r` | pilot | 44.5 % | — | 152 | 1.012 | 15.62 % | 0.046 | 0.9971 | 2.9123 | 0.272 | 0.0004 | 17 204 | 304 |
+| 4 | informed | `π_r` | fixed | 60.6 % | — | 100 | 1.023 | 12.89 % | 0.089 | 0.9925 | 2.8699 | 0.270 | 0.0035 | 16 004 | 282 |
+| 4 | informed | `π_r` | pilot | 50.4 % | — | 15 | 1.353 | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 17 204 | 301 |
+| 2 | random | `π_r` | fixed | 98.5 % | — | 36 | 1.170 | 4.30 % | 0.000 | 1.0958 | 4.1508 | 0.325 | 0.0009 | 16 004 | 562 |
+| 2 | random | `π_r` | pilot | 59.3 % | — | **1 769** | **1.000** | 4.30 % | 0.000 | 1.0955 | 4.1499 | 0.325 | 0.0001 | 17 204 | 557 |
 | 1 | informed | `π_P` | fixed | 87.9 % | 21.9 %/0.08 | 8 | 1.602 | 19.14 % | 0.454 | 0.8674 | 1.9505 | 0.170 | 0.0700 | 24 004 | 524 |
 | 1 | informed | `π_P` | pilot | 49.2 % | 45.1 %/0.05 | 10 | 1.319 | 14.45 % | 0.958 | 0.8618 | 1.9163 | 0.173 | 0.0654 | 26 404 | 570 |
 | 2 | informed | `π_P` | fixed | 84.3 % | 24.5 %/0.08 | 8 | 1.467 | 20.31 % | 0.661 | 0.8396 | **1.8313** | 0.101 | 0.0704 | 24 004 | 483 |
@@ -3295,7 +3313,7 @@ matched cell.**  NLL 1.83–2.03 against 2.87–2.95, Brier 0.84–0.88 against 
 six informed `π_P` cells beat all six informed `π_r` cells, and the gaps (0.84–1.11 NLL,
 0.11–0.17 Brier) are 12–14× the largest NLL MCSE in either grid (0.0763) and 6–17× the
 largest Brier MCSE (0.0170).  The restricted arms were not
-broken by this test — rank 4 pilot has ESS 12 / `R̂` 1.602 and still lands at NLL 2.8654,
+broken by this test — rank 4 pilot has ESS 15 / `R̂` 1.353 and still lands at NLL 2.8658,
 within 0.09 of its rank-1 partner — so what bounds them is the restriction, not the rank
 or the mixing.  Accuracy moves much less (12.9–15.6 % vs 14.5–20.3 %, overlapping at
 MCSE 0.45–1.28); the gain is in the probability score, not in top-1.
@@ -3304,7 +3322,7 @@ MCSE 0.45–1.28); the gain is in the probability score, not in top-1.
 *random* rank-2 basis gives NLL 1.9740 / 2.0359, Brier 0.8648 / 0.8699, accuracy 16.80 /
 17.58 % — inside ~2 MCSE of the informed `π_P` cells at the same rank (NLL 1.8313–2.0299,
 Brier 0.8396–0.8834, accuracy 20.31 %).  On `π_r` the same control is the anchor itself
-(NLL 4.1498 / 4.1508, accuracy 4.30 %, `R̂` 1.000 at ESS 1 260).  So the informed PCA buys
+(NLL 4.1499 / 4.1508, accuracy 4.30 %, `R̂` 1.000 at ESS 1 769).  So the informed PCA buys
 a `z` step schedule in `π_P`, not the answer: the complement supplies the directions the
 basis misses, which is what a full-support kernel must do.  The consequence for R2's
 control design is that "informed beats random" is evidence about the *restricted* target
@@ -3321,8 +3339,10 @@ hand-set `β = 0.05`: the informed directions are shallow, which is consistent w
 finding that `curv` reads them as wider than the prior at this anchor.
 
 **Result 13 — cost and mixing, stated against the claim.**  `π_P` spends two `Φ`
-evaluations per step (24 004 / 26 404 against 12 004 / 13 204) and 1.6–1.9× the wall time
-(390–570 s against 241–292 s).  Its ESS(Φ) is 5–10 with `R̂` 1.32–3.35, against 12–501 for
+evaluations per step (24 004 / 26 404 against 16 004 / 17 204) and 0.7–2.0× the wall time
+(390–570 s against 282–564 s; the restricted cells' time depends strongly on rank because
+their basis changes size, and the two-process timings are not a benchmark).  Its ESS(Φ) is
+5–10 with `R̂` 1.32–3.35, against 15–680 for
 the restricted cells, so `MCSE(NLL)` is 0.065–0.076 rather than ~0.001.  ESS across
 targets is not a like-for-like efficiency number — the potentials differ in dimension and
 scale — but within `π_P` it is the binding limitation, and it means Result 10 is a claim
@@ -3370,6 +3390,100 @@ unvalidated.  Ranks 8+, `λ ≠ 1`, `σ ≠ 0.35`, and the SG-bias comparison re
 and its bias direction is safe for acceptance but is not a posterior-width estimate with an
 error bar.  There is no adaptive-MCMC claim: the adaptation freezes after burn and the
 pilot draws are discarded.
+
+### R2d — does the pilot's ESS gain survive more dimensions? (same day)
+
+R2's headline is one rank (ESS 58 → 680 at rank 1) and R2b adds the rank-2 gain (31 →
+152) — while its rank-4 pilot row (ESS 15) already sits below the rank-4 fixed arm that
+this section measures at ESS 100, i.e. a *loss*.  That makes the scaling a measured
+question rather than an extrapolation: the same 300-step pilot and the same fixed arm are run at
+ranks 1, 2, 4 and 8 on the informed basis at one budget, plus three probes that separate
+"more dimensions" from the two other explanations — a noisy width estimate, and
+prior-dominated directions.  The probes are a random rank-8 control, a 1 200-step pilot at
+rank 8, and `rotpilot` (R2b's eigenbasis form of the pilot widths) at ranks 4 and 8.
+
+4 chains × 4 000 steps, burn 500, thin 5 (2 000 draws per chain), ambient anchor
+(`4.30 % / 4.1523`, `0x52d503556818f1e0`), target `π_r`.  Ranks 1, 2 and 4 are one process
+`/tmp/pcnl_r2f_inf.txt`; rank 8 is `/tmp/pcnl_r2d_inf.txt`.  The rank-1/2 rows reproduce
+R2's table and the rank-4 rows reproduce R2b's pilot row exactly, so the rows are again a
+cross-process determinism check:
+
+| rank | prop | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` | evals | s |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | fixed | 76.7 % | 58 | 1.055 | 13.28 % | 0.187 | 1.0127 | 2.9462 | 0.264 | 0.0040 | — | 0.05 | 16 004 | 564 |
+| 1 | pilot | 47.1 % | **680** | **1.004** | 13.28 % | 0.070 | 1.0124 | 2.9508 | 0.266 | 0.0002 | 0.18 | 0.12–0.13 | 17 204 | 556 |
+| 2 | fixed | 71.8 % | 31 | 1.098 | 14.06 % | 0.049 | 0.9973 | 2.9083 | 0.261 | 0.0068 | — | 0.05 | 16 004 | 289 |
+| 2 | pilot | 44.5 % | 152 | 1.012 | 15.62 % | 0.046 | 0.9971 | 2.9123 | 0.272 | 0.0004 | 0.17 | 0.017–0.13 | 17 204 | 304 |
+| 4 | fixed | 60.6 % | 100 | 1.023 | 12.89 % | 0.089 | 0.9925 | 2.8699 | 0.270 | 0.0035 | — | 0.05 | 16 004 | 282 |
+| 4 | pilot | 50.4 % | 15 | 1.353 | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 0.17 | 0.012–0.13 | 17 204 | 301 |
+| 8 | fixed | 55.4 % | 7 | 1.289 | 10.94 % | 0.658 | 0.9485 | 2.4693 | 0.237 | 0.0527 | — | 0.05 | 16 004 | 230 |
+| 8 | pilot | 48.1 % | 6 | 1.931 | 14.06 % | 0.594 | 0.9768 | 2.7792 | 0.280 | 0.0164 | 0.20 | 0.013–0.12 | 17 204 | 225 |
+
+| rank | basis | prop | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` | evals | s |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | random | fixed | 96.2 % | 28 | 1.122 | 4.30 % | 0.000 | 1.0957 | 4.1468 | 0.325 | 0.0010 | — | 0.05 | 16 004 | 379 |
+| 8 | random | pilot | 46.3 % | **872** | **1.001** | 4.30 % | 0.000 | 1.0953 | 4.1442 | 0.325 | 0.0002 | 2.95 | 0.22–1.00 | 17 204 | 276 |
+| 8 | informed | pilot 1 200 | 47.8 % | 24 | 1.091 | 14.84 % | 0.246 | 0.9758 | 2.7990 | 0.239 | 0.0099 | 0.17 | 0.023–0.12 | 20 804 | 461 |
+| 4 | informed | rotpilot | 50.1 % | 9 | 2.893 | 12.89 % | 0.296 | 0.9911 | 2.8739 | 0.251 | 0.0371 | 0.21 | 0.014–0.16 | 17 204 | 578 |
+| 8 | informed | rotpilot | 43.3 % | 4 | 4.189 | 14.45 % | 0.468 | 0.9628 | 2.7668 | 0.240 | 0.0511 | 0.24 | 0.0085–0.17 | 17 204 | 379 |
+
+**Result 16 — the ESS gain decays with rank and is gone by rank 4.**  ESS(pilot)/ESS(fixed)
+is 680/58 = **11.7×** at rank 1, 152/31 = **4.9×** at rank 2, 100/15 = **0.15×** at rank 4
+and 7/6 = **0.86×** at rank 8.  The series is not monotone in `r` — rank 8 gains back most
+of what rank 4 lost — so "more dimensions" is not the whole story, and the rank-8 number
+is not a measured tie either (Result 17).  Where both cells are usable, at rank 4, the
+pilot's 6.7× ESS loss buys no measurable predictive gain: NLL 2.8658 vs 2.8699 (0.0041,
+1.1σ of the 0.0035 fixed-arm MCSE), Brier 0.9917 vs 0.9925 (0.0008, 1.0σ of 0.0005),
+accuracy 12.89 % both.  So the loss is diffusion, not bias — the same conclusion R2b
+reached for the rotated arm — but it is a real cost at these ranks.
+
+**Result 17 — rank 8 is unanswerable at 300 pilot steps, in both directions.**  The fixed
+arm has ESS 7 / `R̂` 1.289 and the pilot ESS 6 / `R̂` 1.931, so neither kept window is a
+sample of `π_r`.  Their predictives differ a lot — NLL 2.4693 vs 2.7792 (5.6σ on the stated
+MCSEs), Brier 0.9485 vs 0.9768 (4.9σ), accuracy 10.94 % vs 14.06 % — and that is exactly
+why the gap is not quoted: at `R̂` ≥ 1.29 the MCSEs describe within-chain noise, not the
+distance to the target.  What the cell does establish is negative: the rank-8 informed
+`π_r` predictive is not measurable at this budget by either proposal.
+
+**Result 18 — dimension alone does not defeat the pilot: the random rank-8 control gains
+31×.**  28 → **872** ESS with `R̂` 1.122 → 1.001, at `m = 2.95` and `β_i` 0.22–1.00, and
+the predictive is unchanged (NLL 4.1468 vs 4.1442, Brier 1.0957 vs 1.0953, accuracy
+4.30 % both; differences inside MCSE 0.0010 / 0.0002).  This is larger than the rank-1 and
+rank-2 informed gains, i.e. at 8 dimensions the proposal still does its job when the
+directions are prior-dominated and the estimated widths are near `β ≈ 1`.  Whatever breaks
+at informed rank 4/8 is therefore not the number of coordinates.
+
+**Result 19 — pilot length is the binding factor.**  At rank 8 informed, keeping everything
+else fixed and giving the pilot 1 200 steps instead of 300 (600 estimation draws instead of
+150) raises ESS from 6 to **24** — 4× the 300-step pilot and 3.4× the fixed arm — and pulls
+`R̂` from 1.931 to **1.091**, for 3 600 extra evaluations (20 804 vs 17 204, +21 %) and
+461 s.  The widths themselves barely move (`β_i` 0.013–0.12 → 0.023–0.12, `m` 0.20 →
+0.17), so the improvement is not a different scale but a less noisy one: the pilot's 150
+second-half draws are 150 per coordinate at rank 1, 38 at rank 4 and 19 at rank 8, and the
+informed directions at higher rank are estimated from too few draws to place the per-
+coordinate steps well.  The 1 200-step pilot's predictive does not move toward the fixed
+arm (NLL 2.7990 vs 2.7792, 1.0σ), so length fixes mixing without settling the rank-8
+predictive — consistent with Result 17's reading that the fixed arm at ESS 7 is not the
+reference either.
+
+**Result 20 — re-orienting the widths does not rescue them either.**  `rotpilot` at rank 4
+is ESS 9 / `R̂` 2.893 and at rank 8 ESS 4 / `R̂` 4.189, both worse than the diagonal pilot's
+15 / 1.353 and 6 / 1.931.  Combined with R2b's rank-2 result (29 vs 152), the eigenbasis
+form is worse at every rank where it has been run; the diagonal pilot is the better
+proposal, and neither the orientation nor the pilot's step count in the *rotation* is the
+lever — the length of the estimate is.
+
+**Result 21 — what this changes in R2's claim.**  R2's ESS gain is a rank-1/2 statement: it
+is 11.7× and 4.9× there, 0.15× at rank 4 and unresolvable at rank 8.  The mechanism is
+intact — the random rank-8 control gains 31×, and a longer pilot restores 4× at informed
+rank 8 — so the pilot is not rank-limited in principle, but its default budget (300 steps)
+is: the number of estimation draws per dimension falls as 150/`r`, and at `r = 8` the
+estimate is too noisy to place eight scales.  The cost rule the data supports is that pilot
+steps should grow with rank (≥ 1 200 at rank 8, i.e. 75 draws per dimension after the
+halving) rather than stay at 300; whether 150·`r` is the right rule, and whether a
+shrinkage estimator would beat extra draws, are untested here.  Tables, not the prose,
+should be updated if this is re-run: the `π_P` cells in R2c are unaffected (they use the
+full target and its own complement move).
 
 ## Reproduce / verify
 
