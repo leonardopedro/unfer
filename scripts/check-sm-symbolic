@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Re-run the SM Cadabra modules and check the complete LaTeX import fixture.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cadabra_cli="${CADABRA_CLI:-cadabra2-cli}"
+if ! command -v "$cadabra_cli" >/dev/null 2>&1; then
+    echo "Cadabra2 required: set CADABRA_CLI or run through nix-shell -p cadabra2" >&2
+    exit 69
+fi
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+export MPLCONFIGDIR="${MPLCONFIGDIR:-$work_dir/mpl}"
+"$cadabra_cli" -q -n "$repo_root/docs/sm_full_nested.cdb" > "$work_dir/full.latex"
+cmp "$repo_root/docs/fixtures/sm_full_cadabra.latex" "$work_dir/full.latex"
+for module in sm_gauge_fixed_hamiltonian faris_lavine_n_sm; do
+    "$cadabra_cli" -q -n "$repo_root/docs/$module.cdb" > "$work_dir/$module.log"
+    found=0
+    while IFS= read -r line; do
+        [[ "$line" == CHECK* ]] || continue
+        found=$((found+1))
+        # This historical row prints the unevaluated c0-1 side condition.
+        [[ "$line" == 'CHECK 9c SM'* ]] && continue
+        if [[ ! "$line" =~ :[[:space:]]*0$ ]]; then
+            echo "Nonzero symbolic check in $module: $line" >&2
+            exit 1
+        fi
+    done < "$work_dir/$module.log"
+    if (( found < 17 )); then
+        echo "Truncated SM check transcript: $module ($found rows)" >&2
+        exit 1
+    fi
+    echo "[ok] $module: $found CHECK rows (scope as documented)"
+done
+echo "[ok] full SM: 163 coordinates, 40 momenta, 49 forms, 96 CAR coordinates, 1152 matter entries; LaTeX fixture exact"

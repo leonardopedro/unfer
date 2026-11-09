@@ -1,0 +1,108 @@
+# ======================================================================
+# MODULE DOCUMENTATION (2026-11-08; new checks, execution pending)
+# Purpose: check the algebra of the OUTER lift H = dGamma(h), independently
+# of the inner QYM/QED/QG/NS derivations. One outer bosonic mode suffices
+# to detect the scalar-shift and false-multiplicativity mistakes.
+# Scope: formal CCR polynomial identities, not Hilbert-space domains,
+# positivity, essential self-adjointness or a physical mass-gap proof.
+# h and k below are scalar one-particle matrix entries, not inner fields.
+# Source: ../timepiece/CONSOLIDATED_PLAN.md, 2026-11-08f, S1/S6.
+# Run from unfer: cadabra2-cli -q -n docs/nested_fock_enclosure.cdb
+# No runtime result is claimed until the engine-equipped validation runs.
+# ======================================================================
+
+{ann, cre, ket}::NonCommuting.
+{hval, kval, cval, occ}::Symbol.
+
+# Keep creation LEFT and annihilation RIGHT. The ket symbol is a formal
+# vacuum column on the right, and the only vacuum rule used is ann ket = 0.
+lifted := hval cre ann.
+vacuum := @(lifted) ket.
+substitute(vacuum, $ ann ket -> 0 $, repeat=True)
+distribute(vacuum)
+collect_terms(vacuum)
+print("CHECK 1 ENC outer vacuum annihilation (expect 0):", vacuum)
+if str(vacuum) != "0":
+    raise AssertionError("ENC 1: outer vacuum is not annihilated")
+
+# A scalar shift of the INNER operator is c N_out, not c I_out.
+shifted := (hval + cval) cre ann.
+shiftdiff := @(shifted) - @(lifted) - cval cre ann.
+distribute(shiftdiff)
+collect_terms(shiftdiff)
+print("CHECK 2 ENC inner scalar shift gives c N_out (expect 0):", shiftdiff)
+if str(shiftdiff) != "0":
+    raise AssertionError("ENC 2: scalar-shift lift mismatch")
+
+# Composition keeps the cross-particle term. Apply the CCR, without
+# declaring ann and cre commuting or dropping the double-creation word.
+composed := hval cre ann kval cre ann.
+sort_product(composed)
+substitute(composed, $ ann cre -> 1 + cre ann $, repeat=True)
+distribute(composed)
+collect_terms(composed)
+productdiff := @(composed) - hval kval cre ann - hval kval cre cre ann ann.
+distribute(productdiff)
+collect_terms(productdiff)
+print("CHECK 3 ENC dGamma(h)dGamma(k) includes a two-body term (expect 0):", productdiff)
+if str(productdiff) != "0":
+    raise AssertionError("ENC 3: composition defect mismatch")
+
+# Independently evaluate the diagonal occupation model. At occupation 1
+# multiplicativity holds, but at occupation 2 the defect is 2 h k.
+occdefect := hval occ kval occ - hval kval occ.
+onecheck = occdefect.copy()
+substitute(onecheck, $ occ -> 1 $, repeat=True)
+distribute(onecheck)
+collect_terms(onecheck)
+print("CHECK 4 ENC composition on the one-particle restriction (expect 0):", onecheck)
+if str(onecheck) != "0":
+    raise AssertionError("ENC 4: one-particle restriction mismatch")
+twocheck = occdefect.copy()
+substitute(twocheck, $ occ -> 2 $, repeat=True)
+distribute(twocheck)
+twodiff := @(twocheck) - 2 hval kval.
+distribute(twodiff)
+collect_terms(twodiff)
+print("CHECK 5 ENC two-particle defect minus 2 h k (expect 0):", twodiff)
+if str(twodiff) != "0":
+    raise AssertionError("ENC 5: two-particle restriction mismatch")
+negative = twocheck.copy()
+substitute(negative, $ hval -> 1, kval -> 1 $, repeat=True)
+collect_terms(negative)
+print("CHECK 6 ENC false multiplicativity negative control (expect 2):", negative)
+if str(negative) != "2":
+    raise AssertionError("ENC 6: negative control was lost")
+
+# The same diagonal example distinguishes a zero vacuum from a ground:
+# for negative inner energy, occupation 2 has energy -2. This is an
+# obstruction example, not a claim that any sector's record h is negative.
+negativefloor := hval occ.
+substitute(negativefloor, $ hval -> -1, occ -> 2 $, repeat=True)
+collect_terms(negativefloor)
+print("CHECK 7 ENC zero vacuum need not be a ground (expect -2):", negativefloor)
+if str(negativefloor) != "-2":
+    raise AssertionError("ENC 7: negative-energy counterexample mismatch")
+
+# The one-mode lift is linear in h even if a selected matrix entry contains
+# an exact exponential. No Taylor substitution or removal of an interaction
+# entry is permitted. This scalar entry test does not model noncommuting
+# inner field/momentum operators or identify the full coupled QG Hamiltonian.
+{ampl, beta, field, kinentry, intentry}::Symbol.
+wallentry := ampl (1 - \exp(-beta field))**2.
+fullentry := kinentry + @(wallentry) + intentry.
+entrylift := (@(fullentry)) cre ann.
+entrydiff := @(entrylift) - kinentry cre ann - (@(wallentry)) cre ann - intentry cre ann.
+distribute(entrydiff)
+collect_terms(entrydiff)
+print("CHECK 8 ENC exact wall and interaction entries survive the lift (expect 0):", entrydiff)
+if str(entrydiff) != "0":
+    raise AssertionError("ENC 8: inner entry was changed by enclosure")
+# Pin the interaction's presence independently by extracting its coefficient.
+interactionprobe = fullentry.copy()
+substitute(interactionprobe, $ kinentry -> 0, ampl -> 0, intentry -> 1 $, repeat=True)
+distribute(interactionprobe)
+collect_terms(interactionprobe)
+print("CHECK 9 ENC retained interaction entry (expect 1):", interactionprobe)
+if str(interactionprobe) != "1":
+    raise AssertionError("ENC 9: interaction entry was deleted")
