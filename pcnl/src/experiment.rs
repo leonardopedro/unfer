@@ -778,46 +778,95 @@ fn radial_about(theta: &Tensor, center: Option<&Tensor>) -> f64 {
     }
 }
 
-/// Bayesian model averaging over one or more chains' thinned samples:
-/// returns `(accuracy %, NLL, ECE, K models used)`. One implementation
-/// shared by the SG-pCNL chains and the SGLD comparator, so the two
-/// numbers in the report are computed by the *same* code.
-pub fn bma_metrics(
+/// BMA metrics *and* the per-draw series behind them.
+///
+/// The four scalars are the ones the reports quote.  The `*_chain` series are
+/// per chain, per kept draw, of that draw's *own* readout — the linear
+/// functionals whose MCSE is `sd/√ESS`.  They are not the BMA scalars: BMA
+/// accuracy is the accuracy of the averaged distribution, a ratio of averages
+/// with no closed-form variance, so a `sd/√ESS` attached to it would be a
+/// different estimand's error bar wearing its name.  Quoting both, labelled, is
+/// the only honest option.
+pub struct BmaDetail {
+    /// Accuracy %, NLL, ECE, Brier of the averaged predictive distribution.
+    pub acc: f64,
+    pub nll: f64,
+    pub ece: f64,
+    pub brier: f64,
+    pub models: usize,
+    /// Single-draw accuracy % and Brier, `[chain][draw]`.
+    pub acc_chain: Vec<Vec<f64>>,
+    pub brier_chain: Vec<Vec<f64>>,
+}
+
+/// Bayesian model averaging over one or more chains' thinned samples, with the
+/// per-draw series a predictive MCSE needs. One implementation shared by the
+/// SG-pCNL chains and the SGLD comparator, so the two numbers in the report are
+/// computed by the *same* code.
+pub fn bma_detail(
     chains: &[Vec<Tensor>],
     shapes: &Shapes,
     variant: Variant,
     data: &Dataset,
-) -> (f64, f64, f64, usize) {
+) -> BmaDetail {
     let n_test = data.test_y.dim(0).expect("n_test");
     let vocab = shapes.vocab;
+    let targets = data.test_y.to_vec1::<u32>().expect("targets");
     let mut prob_sum = vec![0.0f64; n_test * vocab];
+    let mut acc_chain: Vec<Vec<f64>> = chains.iter().map(|_| Vec::new()).collect();
+    let mut brier_chain: Vec<Vec<f64>> = chains.iter().map(|_| Vec::new()).collect();
     let mut k_models = 0usize;
-    for sample in chains.iter().flatten() {
-        if radial(sample).is_finite()
-            && let Ok(logits) = crate::model::forward(sample, shapes, variant, &data.test_x)
-            && let Ok(rows) = logits.to_vec2::<f32>()
-        {
-            for (i, row) in rows.iter().enumerate() {
-                let p = softmax_rows(&row.iter().map(|x| *x as f64).collect::<Vec<_>>());
-                for (v, pv) in p.into_iter().enumerate() {
-                    prob_sum[i * vocab + v] += pv;
+    for (ci, chain) in chains.iter().enumerate() {
+        for sample in chain {
+            if radial(sample).is_finite()
+                && let Ok(logits) = crate::model::forward(sample, shapes, variant, &data.test_x)
+                && let Ok(rows) = logits.to_vec2::<f32>()
+            {
+                let mut hits = 0usize;
+                let mut brier = 0.0f64;
+                for (i, row) in rows.iter().enumerate() {
+                    let p = softmax_rows(&row.iter().map(|x| *x as f64).collect::<Vec<_>>());
+                    let t = targets[i] as usize;
+                    // Strictly proper, the same `readout::brier` the readout
+                    // table scores: Σ_v (p_v − 1[y])².
+                    brier += crate::readout::brier(&p, t);
+                    if p.iter()
+                        .enumerate()
+                        .max_by(|a, b| a.1.total_cmp(b.1))
+                        .is_some_and(|(v, _)| v == t)
+                    {
+                        hits += 1;
+                    }
+                    for (v, pv) in p.into_iter().enumerate() {
+                        prob_sum[i * vocab + v] += pv;
+                    }
                 }
+                acc_chain[ci].push(100.0 * hits as f64 / targets.len() as f64);
+                brier_chain[ci].push(brier / targets.len() as f64);
+                k_models += 1;
             }
-            k_models += 1;
         }
     }
     if k_models == 0 {
-        return (f64::NAN, f64::NAN, f64::NAN, 0);
+        return BmaDetail {
+            acc: f64::NAN,
+            nll: f64::NAN,
+            ece: f64::NAN,
+            brier: f64::NAN,
+            models: 0,
+            acc_chain,
+            brier_chain,
+        };
     }
     let avg: Vec<f64> = prob_sum.iter().map(|x| x / k_models as f64).collect();
-    let targets = data.test_y.to_vec1::<u32>().expect("targets");
     let mut hits = 0usize;
     let mut nll = 0.0f64;
+    let mut brier = 0.0f64;
     for (i, &t) in targets.iter().enumerate() {
+        let row = &avg[i * vocab..(i + 1) * vocab];
         let mut best = 0usize;
         let mut best_p = -1.0f64;
-        for v in 0..vocab {
-            let p = avg[i * vocab + v];
+        for (v, &p) in row.iter().enumerate() {
             if p > best_p {
                 best_p = p;
                 best = v;
@@ -826,31 +875,114 @@ pub fn bma_metrics(
         if best as u32 == t {
             hits += 1;
         }
-        nll -= (avg[i * vocab + t as usize] + 1e-12).ln();
+        nll -= (row[t as usize] + 1e-12).ln();
+        brier += crate::readout::brier(row, t as usize);
     }
-    (
-        100.0 * hits as f64 / targets.len() as f64,
-        nll / targets.len() as f64,
-        expected_calibration_error(&avg, vocab, &targets, 10),
-        k_models,
-    )
+    BmaDetail {
+        acc: 100.0 * hits as f64 / targets.len() as f64,
+        nll: nll / targets.len() as f64,
+        ece: expected_calibration_error(&avg, vocab, &targets, 10),
+        brier: brier / targets.len() as f64,
+        models: k_models,
+        acc_chain,
+        brier_chain,
+    }
+}
+
+/// `(accuracy %, NLL, ECE, K models used)` — [`bma_detail`] without the series.
+pub fn bma_metrics(
+    chains: &[Vec<Tensor>],
+    shapes: &Shapes,
+    variant: Variant,
+    data: &Dataset,
+) -> (f64, f64, f64, usize) {
+    let d = bma_detail(chains, shapes, variant, data);
+    (d.acc, d.nll, d.ece, d.models)
 }
 
 /// Full run: per variant — Task-A pre-train, baselines, unadjusted
+/// FNV-1a over a parameter vector's little-endian bytes — the identity
+/// `VariantReport::anchor_hash` and `DataId::anchor_hash` publish.
+pub fn anchor_hash(theta: &Tensor) -> u64 {
+    let mut h = crate::manifest::Fnv::new();
+    for x in theta
+        .flatten_all()
+        .expect("flatten anchor")
+        .to_vec1::<f32>()
+        .expect("anchor")
+    {
+        h.write(&x.to_le_bytes());
+    }
+    h.finish()
+}
+
+/// The frozen objects the ambient report adapts from: `D_A`, `D_B`, `θ₀` and
+/// the Task-A pre-train that produces `θ_A`.
+///
+/// They exist as one struct because an arm that claims to *match* the ambient
+/// anchor has to reproduce all four, and re-deriving the seeds in a second
+/// place is exactly how those two runs drift apart.  R1's subspace example did
+/// that: it built `D_B` from `seed` instead of `seed + 1` and used the
+/// quick-config shapes, so its "anchor" was a different model at a different
+/// point (7.0 % on B where the ambient anchor scores ~12.5 %), and no number in
+/// its table could be read beside an ambient one.
+pub struct AnchorSetup {
+    pub data_a: Dataset,
+    pub data_b: Dataset,
+    pub theta0: Tensor,
+}
+
+impl AnchorSetup {
+    pub fn new(cfg: &Config) -> Self {
+        Self {
+            data_a: Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, cfg.seed),
+            // Task B gets its own draw: sharing `seed` with Task A would make
+            // the two datasets correlated in a way the ambient report never
+            // has, and its `DataId::seed` records `cfg.seed` for both.
+            data_b: Dataset::new(
+                cfg.task_b,
+                cfg.k,
+                cfg.n_train,
+                cfg.n_test,
+                cfg.seed.wrapping_add(1),
+            ),
+            theta0: init_flat(&cfg.shapes, cfg.init_std, cfg.seed.wrapping_add(2)),
+        }
+    }
+
+    /// Phase 3's pre-train: heavy-ball SGD at `pretrain_lr` on Task A, or Adam
+    /// when the config asks for the stable optimizer.  Returns `(θ_A, trace)`.
+    pub fn pretrain(&self, cfg: &Config, variant: Variant) -> (Tensor, Vec<f64>) {
+        if cfg.pretrain_adam {
+            adam(
+                &self.data_a,
+                &cfg.shapes,
+                variant,
+                self.theta0.clone(),
+                cfg.pretrain_steps,
+                cfg.adam_lr,
+            )
+        } else {
+            momentum_sgd(
+                &self.data_a,
+                &cfg.shapes,
+                variant,
+                self.theta0.clone(),
+                cfg.pretrain_steps,
+                cfg.pretrain_lr,
+                0.9,
+            )
+        }
+    }
+}
+
 /// SG-pCNL chains on Task B, diagnostics, BMA.
 pub fn run_experiment(cfg: &Config) -> Report {
-    let data_a = Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, cfg.seed);
-    let data_b = Dataset::new(
-        cfg.task_b,
-        cfg.k,
-        cfg.n_train,
-        cfg.n_test,
-        cfg.seed.wrapping_add(1),
-    );
-    let theta0 = init_flat(&cfg.shapes, cfg.init_std, cfg.seed.wrapping_add(2));
+    let setup = AnchorSetup::new(cfg);
+    let data_b = &setup.data_b;
     let mut variants = Vec::new();
     for variant in [Variant::Cosine, Variant::Standard] {
-        variants.push(run_variant(cfg, variant, &data_a, &data_b, &theta0));
+        variants.push(run_variant(cfg, variant, &setup));
     }
 
     // ---- R0.6: the run's identity, captured once beside the draws ------
@@ -1106,13 +1238,8 @@ fn run_chain(
     }
 }
 
-fn run_variant(
-    cfg: &Config,
-    variant: Variant,
-    data_a: &Dataset,
-    data_b: &Dataset,
-    theta0: &Tensor,
-) -> VariantReport {
+fn run_variant(cfg: &Config, variant: Variant, setup: &AnchorSetup) -> VariantReport {
+    let (data_a, data_b) = (&setup.data_a, &setup.data_b);
     let start = std::time::Instant::now();
     let shapes = &cfg.shapes;
     let p_dim = shapes.flat_size();
@@ -1125,26 +1252,7 @@ fn run_variant(
     // Default: the plan's heavy-ball SGD.  `pretrain_adam` swaps in the
     // tuned optimizer so that a variant whose SGD pre-train diverges can
     // still be compared on the *sampler* rather than on the pre-train.
-    let (theta_a, trace_a) = if cfg.pretrain_adam {
-        adam(
-            data_a,
-            shapes,
-            variant,
-            theta0.clone(),
-            cfg.pretrain_steps,
-            cfg.adam_lr,
-        )
-    } else {
-        momentum_sgd(
-            data_a,
-            shapes,
-            variant,
-            theta0.clone(),
-            cfg.pretrain_steps,
-            cfg.pretrain_lr,
-            0.9,
-        )
-    };
+    let (theta_a, trace_a) = setup.pretrain(cfg, variant);
     let acc_a = data_a.accuracy(&theta_a, shapes, variant).expect("acc A");
     let loss_a_first = trace_a[0];
     let loss_a_last = *trace_a.last().unwrap();
@@ -1523,18 +1631,7 @@ fn run_variant(
         rhat_coords_median: rhat_med,
         rhat_coords_max: rhat_max,
         window,
-        anchor_hash: {
-            let mut h = crate::manifest::Fnv::new();
-            for x in theta_a
-                .flatten_all()
-                .expect("flatten anchor")
-                .to_vec1::<f32>()
-                .expect("anchor")
-            {
-                h.write(&x.to_le_bytes());
-            }
-            h.finish()
-        },
+        anchor_hash: anchor_hash(&theta_a),
         data_hash: data_b.content_hash(),
         bma_accuracy,
         bma_nll,
@@ -1550,6 +1647,71 @@ fn run_variant(
 mod tests {
     use super::*;
 
+    /// The anchor's identity is `(D_A, D_B, θ₀, pre-train)`; a second caller
+    /// that re-derives any of them gets a different `θ_A` and a table that
+    /// cannot be compared with the ambient one (which is what happened before
+    /// this struct existed).  The seed offsets are asserted, not assumed.
+    #[test]
+    fn anchor_setup_uses_the_ambient_seeds() {
+        let cfg = Config::quick();
+        let s = AnchorSetup::new(&cfg);
+        let a = Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, cfg.seed);
+        let b = Dataset::new(
+            cfg.task_b,
+            cfg.k,
+            cfg.n_train,
+            cfg.n_test,
+            cfg.seed.wrapping_add(1),
+        );
+        assert_eq!(s.data_a.content_hash(), a.content_hash());
+        assert_eq!(s.data_b.content_hash(), b.content_hash());
+        assert_ne!(
+            s.data_a.content_hash(),
+            s.data_b.content_hash(),
+            "Task A and Task B must not share a draw"
+        );
+        let (t1, trace1) = s.pretrain(&cfg, Variant::Cosine);
+        let (t2, trace2) = s.pretrain(&cfg, Variant::Cosine);
+        assert_eq!(anchor_hash(&t1), anchor_hash(&t2));
+        assert_ne!(anchor_hash(&t1), 0);
+        assert_eq!(
+            trace1.last().unwrap().to_bits(),
+            trace2.last().unwrap().to_bits()
+        );
+    }
+
+    /// The Brier column is the strictly proper score of the averaged predictive
+    /// distribution, and the per-draw series are that draw's own score — with
+    /// identical draws the two coincide, which pins both definitions.
+    #[test]
+    fn bma_detail_scores_match_on_identical_draws() {
+        // `vocab = k + 1`: the BOS token is 0 and the labels are `1..=k`.
+        let shapes = Shapes {
+            vocab: 6,
+            d: 4,
+            ff: 8,
+            layers: 1,
+        };
+        let data = Dataset::new(Task::A, 5, 8, 6, 3);
+        let theta = init_flat(&shapes, 0.1, 4);
+        let d = bma_detail(
+            &[vec![theta.clone()], vec![theta]],
+            &shapes,
+            Variant::Cosine,
+            &data,
+        );
+        assert_eq!(d.models, 2);
+        assert_eq!(d.acc_chain.len(), 2);
+        assert_eq!(d.acc_chain[0].len(), 1);
+        for d2 in [&d.acc_chain[1], &d.brier_chain[1]] {
+            assert_eq!(d2.len(), 1);
+        }
+        assert!((d.brier - d.brier_chain[0][0]).abs() < 1e-12, "{}", d.brier);
+        assert!((d.acc - d.acc_chain[0][0]).abs() < 1e-9);
+        assert!((0.0..=2.0).contains(&d.brier), "Brier out of range");
+        assert!(d.nll.is_finite() && d.ece.is_finite());
+    }
+
     #[test]
     fn quick_experiment_reports_sane_numbers() {
         let mut cfg = Config::quick();
@@ -1559,6 +1721,11 @@ mod tests {
         let report = run_experiment(&cfg);
         let text = report.render();
         assert_eq!(report.variants.len(), 2);
+        // Every arm the report publishes adapted from the *shared* anchor, so a
+        // second caller (`examples/subspace_adaptation.rs`) that builds its own
+        // through `AnchorSetup` gets the same identity and a comparable table.
+        let shared = AnchorSetup::new(&cfg).pretrain(&cfg, Variant::Cosine).0;
+        assert_eq!(report.variants[0].anchor_hash, anchor_hash(&shared));
         for v in &report.variants {
             // baselines and pre-training are valid regardless of what
             // the unadjusted chain did

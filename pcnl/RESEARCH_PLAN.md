@@ -175,12 +175,18 @@ assumptions must be checked for this target. It does not guarantee useful transf
 
 *Status (2026-11-09):* the chart (`src/subspace.rs`), the exact MH-pCN kernel in `z` with
 its quadrature check (`src/target.rs`) and `examples/subspace_adaptation.rs` are in — see
-`docs/PCNL_STATUS.md` "R1". Measured at ranks 1–2 against a seeded random control: the
-informed (Task-B trajectory PCA) basis gains 0.80 nat over the anchor and the control gains
-nothing, but only the rank-2 informed cell is converged (`R̂ = 1.006`); the others need
-`β ≈ 0.05` to move, which is R2's scale problem. Open: Brier score, ranks 4–32, the
-cross-fitted empirical-Bayes arm, ambient-vs-restricted budget parity, and an anchor that
-isn't below chance on B.
+`docs/PCNL_STATUS.md` "R1". The cells now run on the **ambient anchor** through shared
+code: `experiment::AnchorSetup`/`anchor_hash` are used by both the ambient run and the
+example, and a test asserts the hash, so the two tables are on the same `θ_ref`
+(`0x52d503556818f1e0`, 4.30 % / NLL 4.1523 on B). Measured at ranks 1–2 with 4 chains ×
+4 000 steps: the informed (Task-B trajectory PCA) basis gains 1.21–1.24 nat over the anchor
+and the random control gains nothing (identical accuracy, NLL within 0.001) — but the
+anchor is *below chance* (12.5 %) and worse than the uniform predictor (`ln 8 = 2.0794`), so
+most of that gain is undoing the anchor's bias; the best restricted predictive (rank-2
+informed, 14.06 % / 2.9083) is at the base rate with a miscalibrated tail. No cell is
+converged at `β = 0.05`, which is R2's scale problem. Brier and the predictive MCSE are now
+reported. Open: ranks 4–32, the cross-fitted empirical-Bayes arm, ambient-vs-restricted
+budget parity, and an anchor that isn't below chance on B.
 
 **Acceptance:** known-target posterior means/covariances and predictive integrals agree;
 random and informed rank controls use identical target scale, baseline and budgets; report
@@ -221,6 +227,21 @@ controls change; gains are reported as ESS or predictive precision per likelihoo
 evaluation and per second. Require useful accuracy of the reference target before spending
 on a more scalable approximate sampler. No new “dimension independent” claim without
 holding the underlying statistical target/discretization family meaningfully comparable.
+
+*Status (2026-11-09):* the first half of R2 is in — per-direction pCN scales on the
+restricted target (`mh_pcn_z_scaled`, `curvature_diag`, `DiagScale` in `src/target.rs`,
+`--proposal fixed,curv,pilot` in the example; see `docs/PCNL_STATUS.md` "R2"). The kernel
+is bitwise equal to `mh_pcn_z` at equal `β_i` and reversible for any `β_i`, so the
+preconditioner cannot corrupt the target, only the mixing. Measured, ranks 1–2, ambient
+anchor: measured-width (`pilot`) proposals take the informed rank-1 cell from ESS 58 /
+`R̂` 1.055 to ESS 680 / `R̂` 1.004 (11× per evaluation) with the same predictive (NLL within
+0.0002 MCSE), and the random arm from ESS 21 / `R̂` 1.165 to ESS 1 245–1 899 / `R̂` 1.002
+without changing its predictive at all — a converged negative control. Curvature-at-anchor
+(`curv`) fails on the informed direction (0.1 % acceptance, ESS 7, NLL 3.6072): at a
+nearly-uniform anchor the diagonal reads `β_i ≥ 1`, the cap binds, and the arm takes pCN's
+largest step into a steep region. The learned `β_i` span 0.017–0.13 within the rank-2
+informed arm, which is the part one scalar `β` cannot express. Open: full-target informed
+proposals, non-diagonal metrics, ranks 4+, and the SG-bias comparison.
 
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 

@@ -195,6 +195,179 @@ pub fn mh_pcn_z(
     }
 }
 
+/// Exact MH-pCN in `z` with a **per-direction** proposal scale.
+///
+/// ```text
+/// z'_i = √(1−β_i²) z_i + β_i ξ_i,        ξ_i ~ N(0, 1)
+/// log α = min(0, [Φ(z) − Φ(z')] + ½‖z'‖² − ½‖z‖²)
+/// ```
+///
+/// The point of allowing `β_i` to differ is that the interesting restraint here
+/// is anisotropic: in the informed basis a few directions carry the data and
+/// are pinned to a narrow posterior, while the rest are still prior-width.  One
+/// scalar `β` has to be small enough for the stiffest direction, which is why
+/// the informed rank-1/2 cells needed `β = 0.05` (acceptance 78–85 %, ESS of
+/// `Φ` ≈ 100) — the flat directions were being moved at the stiff direction's
+/// step size.
+///
+/// Exactness is not sacrificed: each coordinate's kernel is the 1-D pCN kernel,
+/// which is reversible with respect to `N(0, 1)` because `a_i² + β_i² = 1`.  The
+/// density ratio also keeps its simple form, coordinate by coordinate:
+///
+/// ```text
+/// q(z_i|z'_i) − q(z'_i|z_i) = [(z'_i − a_i z_i)² − (z_i − a_i z'_i)²]/(2β_i²)
+///                          = (1 − a_i²)(z_i² − z'_i²)/(2β_i²) = (z_i² − z'_i²)/2
+/// ```
+///
+/// so the sum over coordinates is `½‖z'‖² − ½‖z‖²`, identical to the uniform
+/// kernel.  A diagonal preconditioner therefore costs nothing in the ratio and
+/// cannot silently change the target — which is exactly why it is worth trying
+/// before a proposal whose density is harder to get right.
+pub fn mh_pcn_z_scaled(
+    phi: &dyn ZPotential,
+    z: &mut [f32],
+    phi_z: f64,
+    betas: &[f64],
+    rng: &mut impl Rng,
+) -> ZStep {
+    assert_eq!(z.len(), phi.dim(), "z must have the target's dimension");
+    assert_eq!(betas.len(), z.len(), "one beta per coordinate");
+    assert!(
+        betas.iter().all(|&b| b > 0.0 && b <= 1.0),
+        "every beta must be in (0, 1]"
+    );
+    let proposal: Vec<f32> = z
+        .iter()
+        .zip(betas)
+        .map(|(&zi, &b)| (((1.0 - b * b).sqrt() * f64::from(zi)) + b * normal(rng)) as f32)
+        .collect();
+    let phi_new = phi.phi(&proposal);
+    let log_q_ratio = prior_phi(&proposal) - prior_phi(z);
+    let log_alpha = phi_z - phi_new + log_q_ratio;
+    let u: f64 = rng.random();
+    let accept = log_alpha.is_finite() && log_alpha >= u.ln();
+    if accept {
+        z.copy_from_slice(&proposal);
+        ZStep {
+            accepted: true,
+            phi: phi_new,
+            proposed: phi_new,
+        }
+    } else {
+        ZStep {
+            accepted: false,
+            phi: phi_z,
+            proposed: phi_new,
+        }
+    }
+}
+
+/// Diagonal of the potential's Hessian at `z`, by central second differences
+/// with step `h`.
+///
+/// `phi` is the full potential (prior included), so entry `i` is the target's
+/// precision along direction `i`, `1 + λN·∂²ℓ/∂z_i²`, and `1/√H_ii` is that
+/// direction's posterior width in units of the prior's.  Two forward passes per
+/// coordinate is the price of not assuming a curvature model; on a restricted
+/// rank this is `2r` evaluations against thousands of chain steps, and the
+/// report quotes the step so a reader can judge the truncation.
+///
+/// It is a *local* quantity at the point it is called on and a *diagonal* one:
+/// it cannot see rotation between directions, and a target whose curvature
+/// changes with `z` is only approximated.  That is a limitation of the
+/// preconditioner, not of the kernel — the kernel stays exact for any `β_i`.
+pub fn curvature_diag(phi: &dyn ZPotential, z: &[f32], h: f64) -> Vec<f64> {
+    assert!(h > 0.0, "finite-difference step must be positive");
+    let base = phi.phi(z);
+    let mut out = Vec::with_capacity(z.len());
+    for i in 0..z.len() {
+        let mut plus = z.to_vec();
+        let mut minus = z.to_vec();
+        plus[i] += h as f32;
+        minus[i] -= h as f32;
+        let fp = phi.phi(&plus);
+        let fm = phi.phi(&minus);
+        out.push((fp - 2.0 * base + fm) / (h * h));
+    }
+    out
+}
+
+/// Per-direction pCN scales derived from a curvature diagonal, with one global
+/// multiplier adapted during warm-up.
+///
+/// `width_i = 1/√H_ii` is the direction's posterior width; `β_i = m·width_i`
+/// starts at the width itself (`m = 1`) and the multiplier follows a
+/// Robbins–Monro rule on the *joint* acceptance rate, so the shape of the
+/// proposal comes from the target and only its overall size comes from
+/// feedback.  The multiplier must be frozen before the kept window: an adapted
+/// kernel is not a fixed kernel, and its draws are only a sample of `π` when the
+/// adaptation has stopped.
+#[derive(Clone, Debug)]
+pub struct DiagScale {
+    width: Vec<f64>,
+    multiplier: f64,
+    /// Acceptance the multiplier is steered to.  0.5 is the usual pCN choice
+    /// for a target not far from the prior; it is a tuning target here, not a
+    /// claim of optimality.
+    pub target_accept: f64,
+}
+
+impl DiagScale {
+    /// Widths from a curvature diagonal: `1/√H_ii`.
+    ///
+    /// This is only as good as the point it is evaluated at.  On a *stationary*
+    /// anchor (`θ_ref` is a pre-train endpoint, so `∇ℓ ≈ 0` there) the curvature
+    /// describes the local bowl, not the posterior: in a direction along which
+    /// the likelihood minimum is far from the anchor, small curvature at the
+    /// anchor means "the slope is slowly changing here", not "the posterior is
+    /// wide".  Measured (`docs/PCNL_STATUS.md` §R2): rank-1 informed with
+    /// curvature widths gave 0.1 % acceptance and ESS 7, because `1/√H` came out
+    /// at least 50× the prior width, every `β_i` was clamped at the `β ≤ 1` cap,
+    /// and each proposal landed where the data has no mass.  Use
+    /// [`DiagScale::from_widths`] with a pilot chain's spread instead when the
+    /// mode is displaced — or, better, both, and let the report show which is
+    /// which.
+    pub fn from_curvature(h: &[f64]) -> Self {
+        let w: Vec<f64> = h.iter().map(|&x| 1.0 / x.max(1e-8).sqrt()).collect();
+        Self::from_widths(&w)
+    }
+
+    /// Widths measured, not assumed: per-coordinate spread of a pilot chain.
+    /// A pilot cannot be wider than the region it visited, so this is a lower
+    /// bound on the posterior's width and `m` is free to grow; the estimate is
+    /// biased *down*, which is the safe direction for acceptance.
+    pub fn from_widths(widths: &[f64]) -> Self {
+        Self {
+            width: widths.iter().map(|&w| w.max(1e-3)).collect(),
+            multiplier: 1.0,
+            target_accept: 0.5,
+        }
+    }
+
+    pub fn multiplier(&self) -> f64 {
+        self.multiplier
+    }
+
+    /// The proposal scales, clipped to `[1e-4, 1]`.  `β ≤ 1` is pCN's limit
+    /// (beyond it the shrink factor is imaginary); the lower clip only stops a
+    /// numerical zero from freezing a coordinate outright.
+    pub fn betas(&self) -> Vec<f64> {
+        self.width
+            .iter()
+            .map(|&s| (self.multiplier * s).clamp(1e-4, 1.0))
+            .collect()
+    }
+
+    /// Robbins–Monro on `log m`, with a decaying step so the multiplier
+    /// converges instead of oscillating.  `t` counts adaptation steps from 0.
+    pub fn adapt(&mut self, accepted: bool, t: usize) {
+        let step = 0.3 / (1.0 + t as f64).powf(0.6);
+        let a = f64::from(u8::from(accepted));
+        let log_m = (self.multiplier.ln() + step * (a - self.target_accept)).clamp(-7.0, 2.0);
+        self.multiplier = log_m.exp();
+    }
+}
+
 fn normal<R: Rng + ?Sized>(rng: &mut R) -> f64 {
     let u1 = 1.0 - rng.random::<f64>();
     let u2 = rng.random::<f64>();
@@ -402,6 +575,134 @@ mod tests {
             .expect("loss");
         assert!((lik - lambda * 16.0 * mean).abs() < 1e-6 * lik.abs().max(1.0));
         assert!((prior - 0.045).abs() < 1e-6, "prior {prior}");
+    }
+
+    /// A diagonal preconditioner must be *exactly* the uniform kernel when the
+    /// scales coincide: same proposal, same ratio, same uniform draw, so a
+    /// divergence here is a bug in the ratio rather than in the statistics.
+    /// Bitwise equality is deliberately required — the two functions draw their
+    /// normals and the accept uniform in the same order.
+    #[test]
+    fn scaled_pcn_equals_the_uniform_kernel_at_equal_betas() {
+        let target = QuarticTarget::VALIDATION;
+        let mut rng_a = rand::rngs::StdRng::seed_from_u64(7);
+        let mut rng_b = rand::rngs::StdRng::seed_from_u64(7);
+        let mut za = [0.5f32, -0.5];
+        let mut zb = za;
+        let (mut pa, mut pb) = (target.phi(&za), target.phi(&zb));
+        let mut accepts = 0;
+        for _ in 0..2_000 {
+            let a = mh_pcn_z(&target, &mut za, pa, 0.6, &mut rng_a);
+            let b = mh_pcn_z_scaled(&target, &mut zb, pb, &[0.6, 0.6], &mut rng_b);
+            assert_eq!(a.accepted, b.accepted);
+            assert_eq!(za, zb);
+            assert_eq!(a.phi.to_bits(), b.phi.to_bits());
+            pa = a.phi;
+            pb = b.phi;
+            accepts += usize::from(a.accepted);
+        }
+        assert!(accepts > 100, "degenerate run: {accepts} accepts");
+    }
+
+    /// The reason for per-direction scales: a target whose two coordinates
+    /// differ in width by 10×.  One scalar β has to be small enough for the
+    /// narrow coordinate, so the wide one barely moves; a width-derived β per
+    /// coordinate recovers both variances.  The kernel is exact for either —
+    /// this test is about mixing, and it fails if the widths are ignored.
+    #[test]
+    fn scaled_pcn_recovers_anisotropic_widths() {
+        struct Aniso;
+        impl ZPotential for Aniso {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32]) -> f64 {
+                0.5 * 100.0 * f64::from(z[0]) * f64::from(z[0])
+                    + 0.5 * f64::from(z[1]) * f64::from(z[1])
+            }
+        }
+        let target = Aniso;
+        let scale = DiagScale::from_curvature(&curvature_diag(&target, &[0.0, 0.0], 1e-3));
+        let betas = scale.betas();
+        assert!(
+            (betas[0] - 0.1).abs() < 1e-6 && (betas[1] - 1.0).abs() < 1e-6,
+            "widths should be (0.1, 1.0): {betas:?}"
+        );
+        let mut chains: Vec<Vec<f64>> = Vec::new();
+        for seed in 0..2u64 {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(31 + seed);
+            let mut z = [0.2f32, -0.3];
+            let mut phi = target.phi(&z);
+            let mut kept = Vec::new();
+            for t in 0..60_000 {
+                let st = mh_pcn_z_scaled(&target, &mut z, phi, &betas, &mut rng);
+                phi = st.phi;
+                if t >= 2_000 && t % 2 == 0 {
+                    kept.push(f64::from(z[0]));
+                }
+            }
+            chains.push(kept);
+        }
+        let all: Vec<f64> = chains.iter().flatten().copied().collect();
+        let mean = all.iter().sum::<f64>() / all.len() as f64;
+        let var = all.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / all.len() as f64;
+        let ess = ess_bulk(&chains);
+        assert!(
+            (var - 0.01).abs() < 0.0015,
+            "narrow variance {var} (ESS {ess})"
+        );
+        assert!(ess > 2_000.0, "narrow ESS too low: {ess}");
+    }
+
+    /// `curvature_diag` must return the precision it claims to: for a Gaussian
+    /// potential `Φ = ½p z²` that is `p`, including the prior's unit
+    /// contribution when `p` is the full potential.
+    #[test]
+    fn curvature_diag_matches_a_gaussian_precision() {
+        struct Gauss2;
+        impl ZPotential for Gauss2 {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32]) -> f64 {
+                0.5 * 100.0 * f64::from(z[0]) * f64::from(z[0])
+                    + 0.5 * f64::from(z[1]) * f64::from(z[1])
+            }
+        }
+        let h = curvature_diag(&Gauss2, &[0.3, -0.2], 1e-3);
+        assert!((h[0] - 100.0).abs() < 0.01, "{h:?}");
+        assert!((h[1] - 1.0).abs() < 0.01, "{h:?}");
+        // A flat potential has zero curvature, so a caller that forgets the
+        // prior sees a different number than `SubspaceTarget` (which includes
+        // it): the convention is stated, not assumed.
+        let flat = curvature_diag(
+            &QuarticTarget {
+                a: 0.0,
+                c: 0.0,
+                m: 1.0,
+            },
+            &[0.0, 0.0],
+            1e-3,
+        );
+        assert!(flat[0].abs() < 1e-6 && flat[1].abs() < 1e-6, "{flat:?}");
+    }
+
+    /// The multiplier's feedback direction: accepts raise it, rejects lower it,
+    /// and the scales it produces stay inside pCN's `(0, 1]`.
+    #[test]
+    fn diag_scale_adapts_and_clips() {
+        let mut s = DiagScale::from_curvature(&[1e6, 0.0]);
+        let b0 = s.betas();
+        assert!(b0[0] > 1e-4 && b0[0] <= 1.0 && b0[1] == 1.0, "{b0:?}");
+        let before = s.multiplier();
+        for t in 0..50 {
+            s.adapt(true, t);
+        }
+        assert!(s.multiplier() > before, "accepts should raise m");
+        for t in 0..5_000 {
+            s.adapt(false, t);
+        }
+        assert!(s.betas()[1] <= 1.0 && s.betas()[0] >= 1e-4);
     }
 
     /// A proposal with a non-finite potential must be rejected, not accepted by

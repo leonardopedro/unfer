@@ -2910,48 +2910,94 @@ at `λ = 1/N`.  Measured: with the mean form the posterior is prior-dominated (a
 is 78–95 % and the informed rank-1 NLL is 2.62.  `SubspaceTarget` therefore uses the sum
 form and names the factor in its documentation (`subspace_target_uses_the_sum_form`).
 
-**(d) First transformer cells.**  `P = 4240`, `θ_ref` = Task-A momentum pretrain
-(loss 3.45 → 1.33), anchor on B: **7.03 % / NLL 3.4220** (chance is 11.1 % — the anchor is
-*below* chance, see (e)).  `λ = 1`, `σ = 0.35`, `β = 0.05`, 4 chains × 4 000 steps
-(burn 500, thin 5; 11 200 draws), `N_train = 512`, `N_test = 256`:
+**(d) First transformer cells, on the ambient anchor.**  `P = 16 672` (the ambient
+shapes `vocab 9, d 32, ff 64, layers 2`), `θ_ref` = the ambient `AnchorSetup`: Task-A
+momentum pretrain, seed 20261020, 1 500 steps at lr 0.6, loss 5.0673 → 1.1812.  That
+anchor scores **4.30 % / NLL 4.1523** on B (`anchor hash 0x52d503556818f1e0`,
+`data hash 0xba104db4f677b2ec`), which is the same anchor the ambient experiment's
+`run.manifest.json` records — `AnchorSetup`/`anchor_hash` are now shared code, and
+`quick_experiment_reports_sane_numbers` asserts the equality, so "same anchor" is a
+checkable claim rather than a description.  `λ = 1`, `σ = 0.35`, `β = 0.05`, 4 chains ×
+4 000 steps (burn 500, thin 5; 2 800 draws per chain, 11 200 total), `N_train = 512`,
+`N_test = 256`, 16 004 `Φ` evaluations, ~285 s per cell:
 
-| rank | basis | accept | ESS(Φ) | `R̂(Φ)` | ESS(loss) | `R̂(loss)` | BMA acc | NLL | ECE | MCSE(NLL) | s |
-|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | random | 94.2 % | 13 | 1.338 | 6 | 1.731 | 7.03 % | 3.4019 | 0.283 | 0.0036 | 116 |
-| 1 | informed | 85.0 % | 102 | 1.034 | 16 | 1.141 | 20.31 % | 2.6233 | 0.166 | 0.0023 | 101 |
-| 2 | random | 94.6 % | 8 | 1.465 | 11 | 1.328 | 7.03 % | 3.4182 | 0.284 | 0.0005 | 102 |
-| 2 | informed | 78.3 % | 474 | 1.006 | 100 | 1.031 | 18.36 % | 2.6086 | 0.145 | 0.0006 | 102 |
+| rank | basis | accept | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | MCSE(Brier) | NLL | ECE | MCSE(NLL) | s |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | random | 98.0 % | 21 | 1.165 | 4.30 % | 0.000 | 1.0960 | 0.0000 | 4.1516 | 0.325 | 0.0004 | 286 |
+| 1 | informed | 76.7 % | 58 | 1.055 | 13.28 % | 0.187 | 1.0127 | 0.0006 | 2.9462 | 0.264 | 0.0040 | 284 |
+| 2 | random | 98.5 % | 36 | 1.170 | 4.30 % | 0.000 | 1.0958 | 0.0002 | 4.1508 | 0.325 | 0.0009 | 287 |
+| 2 | informed | 71.8 % | 31 | 1.098 | 14.06 % | 0.049 | 0.9973 | 0.0006 | 2.9083 | 0.261 | 0.0068 | 280 |
 
 The informed basis is PCA of 32 Task-B momentum steps (lr 0.05) — **data reuse**, so its
 held-out numbers are optimistic by construction; the random control is what makes the
 comparison readable, and at both ranks the random basis is indistinguishable from the
-anchor (NLL 3.402 / 3.418 vs 3.422, accuracy identical), which is the control's job.
-The informed basis buys 0.80 nat and +13.3 accuracy points at rank 1, +11.3 at rank 2 —
-not monotone in rank, and at 0.39 % accuracy granularity (256 test examples) a 3-point
-difference is 8 examples.
+anchor (NLL 4.1516 / 4.1508 vs 4.1523, Brier 1.0960 / 1.0958, accuracy identical), which
+is the control's job.  The informed basis buys 1.21 nat and +9.0 accuracy points at rank 1,
+1.24 nat and +9.8 at rank 2 — now *increasing* in rank, and the ordering is within the
+0.39 % accuracy granularity of 256 test examples (a 0.8-point difference is 2 examples).
 
-Mixing is the limit, and it is reported rather than hidden: rank-2 informed is the only
-cell that is converged (`R̂(Φ) = 1.006`, ESS 474 of 11 200); rank-1 informed is
-`R̂ = 1.034` with ESS 102; both random arms are **not converged** (`R̂` 1.34–1.47).  The
-random arms' non-convergence is itself expected — `Φ` is nearly flat in random directions,
-so a chain there wanders in the prior and its potential's ESS is small even at 95 %
-acceptance — which is why the table prints ESS of `Φ` *and* of the held-out loss, and why
-the run's BMA is quoted with its MCSE.  `β = 0.05` is not a tuned value: at `β = 0.5` the
-informed direction accepts 2.8–5.2 %, and at `β = 0.05` it accepts 78–85 %, which is the
-pCN scale-versus-target-width problem R2 exists to address (informed proposals or a
-justified per-direction metric).
+Two things the ambient anchor changes, both negative and both published:
 
-**(e) Comparability caveat, stated.**  The anchor used here is below chance on B (7.03 % vs
-11.1 %), because 1 500 momentum steps on 512 Task-A examples overfit (`P = 4240`): the
-ambient reports' anchor is ~12.5 % / NLL 2.21 on B at the same `N`.  So part of the
-restricted arms' gain is *undoing the anchor's bias*, not posterior quality, and these
-cells are not yet on the ambient experiment's anchor.  Fixing that is the next cell, not a
-reinterpretation of this one.
+* the anchor is **below chance and worse than the uniform predictor**.  Chance is 12.5 %
+  (`1/8`); the uniform predictor has NLL `ln 8 = 2.0794` and Brier `1 − 1/8 = 0.875`.
+  The anchor's 4.30 % / 4.1523 / 1.0960 is worse on all three, i.e. 1 500 momentum steps
+  on 512 Task-A examples produce a model that is confidently wrong on B.  At the quick
+  shapes `P = 4240` the same recipe gives 7.03 % / 3.4220 — the larger model overfits the
+  same data harder, which is why the ambient anchor is the worse one to start from.
+* consequently the informed arms' gain is still largely *undoing the anchor's bias*: rank-2
+  informed at 14.06 % / NLL 2.9083 / Brier 0.9973 is one accuracy point above chance and
+  0.83 nat worse than the uniform predictor.  The R1 target's posterior predictive on B is
+  at the base rate with a miscalibrated tail — the plan's negative target outcome.  For
+  scale, the ambient experiment's BMA is 11.7 % / 2.1863 / ECE 0.1798 (10 000 unadjusted
+  steps, K = 2 000, *conditioned on the cone* — see the note at the top of this document):
+  the restricted arm is 2.3 accuracy points higher (MCSE 0.049) and 0.72 nat **worse** in
+  NLL, i.e. restriction bought a base-rate accuracy bump and no calibration.  That is not
+  the matched-budget comparison the plan asks for (the evaluation counts differ by 3×), and
+  it is quoted as a pointer, not as a win.
 
-**(f) What is not done.**  Brier score and predictive MCSE for accuracy; ranks 4–32; a
-Task-B-fitted anchor/basis arm with cross-fitting (the empirical-Bayes arm); ambient vs
-restricted at matched likelihood evaluations; `λ ≠ 1`; and the informed-basis construction
-the plan names besides trajectory PCA (prior-whitened Gauss–Newton/Fisher directions).  The
+Mixing is the limit, and it is reported rather than hidden: no cell is converged
+(`R̂(Φ)` 1.055–1.170; rank-1 informed ESS(Φ) 58 of 2 800 per chain).  The random arms are
+the worst — `Φ` is nearly flat in random directions, so a chain there wanders in the prior
+and its potential's ESS is small even at 98 % acceptance — which is why R2's
+preconditioning is measured next (it takes the rank-1 random arm from ESS 21 / `R̂` 1.165
+to ESS 1 899 / `R̂` 1.002 without moving the predictive at all; §R2).  `β = 0.05` is not a
+tuned value: at `β = 0.5` the informed direction accepts 2.8–5.2 %, and at `β = 0.05` it
+accepts 72–77 %.
+
+**(d′) The superseded quick-shape cells.**  Kept because they were the first published
+cells and the difference is informative, not because they are comparable.  `P = 4 240`
+(quick shapes), anchor 7.03 % / 3.4220, `Dataset::new(Task::B, …, seed)` instead of the
+ambient `seed + 1`, 11 200 draws, s = 101–116:
+
+| rank | basis | accept | ESS(Φ) | `R̂(Φ)` | ESS(loss) | `R̂(loss)` | BMA acc | NLL | ECE | MCSE(NLL) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | random | 94.2 % | 13 | 1.338 | 6 | 1.731 | 7.03 % | 3.4019 | 0.283 | 0.0036 |
+| 1 | informed | 85.0 % | 102 | 1.034 | 16 | 1.141 | 20.31 % | 2.6233 | 0.166 | 0.0023 |
+| 2 | random | 94.6 % | 8 | 1.465 | 11 | 1.328 | 7.03 % | 3.4182 | 0.284 | 0.0005 |
+| 2 | informed | 78.3 % | 474 | 1.006 | 100 | 1.031 | 18.36 % | 2.6086 | 0.145 | 0.0006 |
+
+The rank-1 informed arm looks better here (20.31 % / 2.6233) than on the ambient anchor
+(13.28 % / 2.9462) only because its anchor starts 1.4× higher on B; the *gain* over the
+anchor is smaller at the quick shapes (0.80 nat) than at the ambient ones (1.21 nat).  The
+earlier text of this section said "chance is 11.1 %" — that is `1/9`, the vocabulary size,
+not the label count; chance is 12.5 %.
+
+**(e) Comparability resolved.**  The earlier version of this section said "the ambient
+reports' anchor is ~12.5 % / NLL 2.21 on B at the same `N`" and used it to excuse the
+quick-shape anchor.  Both halves of that sentence were wrong: 12.5 % is *chance*, and 2.079
+is the *uniform predictor's* NLL.  The ambient anchor scores 4.30 % / 4.1523 — below chance
+and worse than uniform, `P = 16 672` overfitting 512 examples harder than `P = 4 240` did.
+The cells above are now on that anchor, by shared code and a hash assertion, so the
+restricted and ambient numbers are finally on one anchor; the caveat that remains is the
+data reuse in the informed basis, not the anchor.
+
+**(f) What is not done.**  Ranks 4–32; a Task-B-fitted anchor/basis arm with cross-fitting
+(the empirical-Bayes arm); ambient vs restricted at matched likelihood evaluations;
+`λ ≠ 1`; and the informed-basis construction the plan names besides trajectory PCA
+(prior-whitened Gauss–Newton/Fisher directions).  Brier and the predictive MCSE are now in
+the table: MCSE(acc) and MCSE(Brier) are `sd/√ESS` over the pooled draws' *single-draw*
+score (`bma_detail`), not the MCSE of the BMA ratio-of-averages — the two differ, and
+quoting the first as if it were the second would understate the BMA's variance.  The
 programme's gate — "an informed basis must beat or explain its tie with a random basis,
 not just beat a failed ambient run" — is met for the negative control at ranks 1–2 and not
 yet for anything larger.
@@ -2962,6 +3008,121 @@ Reproduce:
 cargo run --release -p pcnl --example subspace_adaptation                    # ranks 1,2,4,8
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 1,2 --steps 4000 --beta 0.05
 ```
+
+## R2 — per-direction scales for the `z` chain (2026-11-09)
+
+R1's limit was that one `β` had to serve every direction: rank-1 informed accepts 77 % at
+`β = 0.05` and 2.8–5.2 % at `β = 0.5`, while ESS(Φ) stayed at 21–58. R2 asks whether the
+scale can be *derived* per direction instead of hand-set, holding the target fixed.
+
+The kernel side is small and exact (`src/target.rs`):
+
+* `mh_pcn_z_scaled` — pCN with per-coordinate `β_i`, `z'_i = √(1−β_i²)·z_i + β_i·ξ_i` and
+  `log α = Φ(z) − Φ(z') + ½‖z'‖² − ½‖z‖²`.  The quadratic term is the one R1's bug fix
+  derived, and at equal `β_i` the kernel is bitwise identical to `mh_pcn_z`
+  (`scaled_pcn_equals_the_uniform_kernel_at_equal_betas`), so this changes the proposal
+  only, never the target.  Reversibility is per coordinate, so the chain is exact for any
+  `β_i ∈ (0, 1]` — the preconditioner does not have to be right to stay correct.
+* `curvature_diag(φ, z, h)` — central second differences of the *full* potential,
+  `H_ii = 1 + λN·∂²ℓ/∂z_i²`, two forward passes per coordinate, no `P×P` matrix.
+* `DiagScale` — widths `w_i`, a multiplier `m`, `β_i = clamp(m·w_i, 1e-4, 1)`; Robbins–Monro
+  on `log m` toward 50 % acceptance with step `0.3/(1+t)^0.6`, applied **during burn only**
+  and frozen afterwards, so the kept window is a fixed kernel.
+
+Two arms, neither of which adds a gradient evaluation:
+
+* `curv` — `w_i = 1/√H_ii` at the anchor `z = 0`, computed once per cell (`2r` forward
+  passes).
+* `pilot` — 300 steps of the ordinary `mh_pcn_z` at `β = 0.05` from the chain's own
+  stream, then `w_i` = per-coordinate sd over the *second half* of that pilot; the pilot's
+  draws are discarded and the chain continues from where it ended.  These steps sit inside
+  `burn`, so nothing about the kept window is adaptive.  A pilot cannot visit a wider
+  region than its kernel allows, so `w_i` is biased *down* — the safe direction for
+  acceptance, since `m` may grow — but the estimate is warmed by the very hand-set `β`
+  under test, which is the arm's self-reference.
+
+All cells: ambient anchor (4.30 % / 4.1523, `0x52d503556818f1e0`), `P = 16 672`, `λ = 1`,
+`σ = 0.35`, `N = 512/256`, 4 chains × 4 000 steps, burn 500, thin 5 (2 800 draws per
+chain).  Each arm gets its own RNG stream offset, so arms are independent replicates
+rather than re-used draws.  `m` is the mean over chains, `β_i` the range over chains ×
+coordinates, `ESS/1k evals` = ESS(Φ) per 1 000 `Φ` evaluations, which removes wall-clock
+noise (the cells ran on a 2-core box, partly concurrently):
+
+| rank | basis | arm | accept | ESS(Φ) | `R̂(Φ)` | ESS/1k evals | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | random | fixed | 98.0 % | 21 | 1.165 | 1.3 | 4.30 % | 0.000 | 1.0960 | 4.1516 | 0.325 | 0.0004 | — | 0.05 |
+| 1 | random | curv | 51.9 % | **1 899** | **1.002** | **118.6** | 4.30 % | 0.000 | 1.0959 | 4.1507 | 0.325 | 0.0000 | 3.23 | 0.92–1.00 |
+| 1 | random | pilot | 50.0 % | 1 245 | 1.004 | 72.4 | 4.30 % | 0.000 | 1.0959 | 4.1507 | 0.325 | 0.0000 | 5.74 | 0.90–1.00 |
+| 1 | informed | fixed | 76.7 % | 58 | 1.055 | 3.6 | 13.28 % | 0.187 | 1.0127 | 2.9462 | 0.264 | 0.0040 | — | 0.05 |
+| 1 | informed | curv | 0.1 % | 7 | 1.637 | 0.4 | 11.33 % | 0.247 | 1.0595 | 3.6072 | 0.267 | 0.0218 | 0.02 | 1.00 |
+| 1 | informed | pilot | 47.1 % | **680** | **1.004** | **39.5** | 13.28 % | 0.070 | 1.0124 | 2.9508 | 0.266 | 0.0002 | 0.18 | 0.12–0.13 |
+| 2 | random | fixed | 98.5 % | 36 | 1.170 | 2.3 | 4.30 % | 0.000 | 1.0958 | 4.1508 | 0.325 | 0.0009 | — | 0.05 |
+| 2 | random | curv | 52.8 % | 1 481 | 1.002 | 92.5 | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 3.69 | 1.00 |
+| 2 | random | pilot | 59.3 % | **1 769** | **1.000** | **102.8** | 4.30 % | 0.000 | 1.0955 | 4.1499 | 0.325 | 0.0001 | 5.22 | 0.60–1.00 |
+| 2 | informed | fixed | 71.8 % | 31 | 1.098 | 1.9 | 14.06 % | 0.049 | 0.9973 | 2.9083 | 0.261 | 0.0068 | — | 0.05 |
+| 2 | informed | curv | 0.1 % | 7 | 1.671 | 0.4 | 11.33 % | 0.501 | 1.0562 | 3.6196 | 0.268 | 0.0145 | 0.03 | 4.3e-3–1.00 |
+| 2 | informed | pilot | 44.5 % | 152 | 1.012 | 8.8 | 15.62 % | 0.046 | 0.9971 | 2.9123 | 0.272 | 0.0004 | 0.17 | 0.017–0.13 |
+
+**Result 1 — curvature at the anchor is the wrong preconditioner where the mode is
+displaced, and the failure is bias, not just slowness.**  Informed rank 1 with `curv`
+accepts 0.1 %, ESS(Φ) 7, `R̂` 1.637, and its predictive *degrades* against the plain fixed
+arm: NLL 3.6072 vs 2.9462, accuracy 11.33 % vs 13.28 % (below chance).  With seven
+effective draws that number is not an estimate of `π_r`, which is the point — a
+preconditioner that is wrong by two orders of magnitude produces a confidently wrong
+answer, not merely a slow one.  The mechanism is visible in the printed scales: `β_i =
+1.00` for every coordinate at `m = 0.02`, i.e. `m·w_i ≥ 1` everywhere, so the `β ≤ 1` cap
+binds and the arm runs pCN's *largest possible* step and rejects 99.9 % of it.  In other
+words `1/√H_ii` at the anchor says "the posterior is wider than the prior" in every
+informed direction — at 4.30 % accuracy on B the model's output there is nearly uniform,
+so the Task-B cross-entropy is locally flat.  Local flatness at a stationary but
+unrepresentative point is not posterior width: these directions are flat *here* and steep
+one prior-width away.  A second detail: once every `β_i` is clamped, Robbins–Monro's
+multiplications no longer change the proposal, so `m` drifted to 0.02 while acceptance
+stayed at 0.1 % — the adaptation loop is uninformative after saturation, and the report
+shows the clamp rather than hiding it.
+
+**Result 2 — on the random (prior-dominated) directions, better mixing changes nothing.**
+Rank 1 random goes from ESS 21 / `R̂` 1.165 to ESS 1 899 / `R̂` 1.002 (`curv`) and 1 245 /
+1.004 (`pilot`), a 50–90× gain in ESS per evaluation, and the predictive is identical to
+four decimals (NLL 4.1507 vs 4.1516, accuracy 4.30 %, Brier 1.0959 vs 1.0960).  Rank 2
+behaves the same (36 → 1 481 / 1 769).  This is the control R1 needed: the random
+subspace really is prior-dominated, and a *converged* chain there agrees with the
+unconverged one, so R1's random-arm error bars were honest about a flat direction rather
+than hiding a bias.  It also means the mixing fix alone cannot improve the answer, which
+is why Result 3 is the one that matters.
+
+**Result 3 — measured widths fix the informed arm without moving its answer.**  Informed
+rank 1 goes from ESS 58 / `R̂` 1.055 to ESS 680 / `R̂` 1.004 (12× ESS, 11× per evaluation)
+with the same predictive: NLL 2.9508 vs 2.9462, accuracy 13.28 % vs 13.28 %, Brier 1.0124
+vs 1.0127.  The sharper statement is in the MCSE: the fixed arm's MCSE(NLL) is 0.0040 and
+the pilot arm's is 0.0002, so the two NLLs agree to 1/20 of the fixed arm's own
+uncertainty.  Rank 2 improves 31 → 152 ESS (`R̂` 1.098 → 1.012, accuracy 14.06 % →
+15.62 %, inside MCSE(acc) 0.046) but is still not converged at 152 of 2 800 draws per
+chain.
+
+**Result 4 — the scale the arms find is not one number.**  The pilot's `β_i` are
+0.12–0.13 at rank-1 informed (≈2.5× the hand-set 0.05), 0.017–0.13 at rank-2 informed (an
+8× spread *within* one arm), and 0.60–1.00 at rank-2 random (≈12–20× the hand-set value).
+The within-arm spread is exactly what a single `β` cannot represent, and the random-arm
+values explain why `β = 0.05` wasted R1's budget there: the useful step in those
+directions was near pCN's maximum, so R1 was taking 1/20 of a step and calling it
+acceptance (98 %).
+
+**Result 5 — cost.**  The pilot arm spends 1 200 extra `Φ` evaluations (300 steps × 4
+chains, +7.5 % of 16 004) and no extra gradients; `curv` spends `2r` evaluations.  Per
+evaluation and per second, the informed rank-1 cell improves from 0.27 ESS/s to 2.24
+ESS/s (8×; the seconds there are noisy because cells shared two cores) and the random
+rank-1 cell from 0.07 to 4.1–6.7 ESS/s.
+
+**(f) What R2 has not done.**  These are *restricted-target* results: the target is still
+`π_r` at fixed `σ = 0.35`, so this is the plan's first R2 half only — full-target informed
+proposals (split `v = Bz + B_perp q`, informed `z`, prior-preserving pCN on `q`, full
+likelihood, correct ratios) and the SG-bias comparisons are untouched.  The preconditioner
+is diagonal and cannot rotate; `pilot` measures width in the R1 metric (`σ`), so a badly
+chosen `σ` limits it from below; the pilot's bias direction is safe for acceptance but is
+not a posterior-width estimate with an error bar, and there is no adaptive-MCMC claim here
+because the pilot draws are discarded.  Neither arm is tested above rank 2, and `λ ≠ 1`
+remains open.
 
 ## Reproduce / verify
 
