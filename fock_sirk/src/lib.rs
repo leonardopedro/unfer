@@ -21,6 +21,7 @@ pub mod device;
 pub mod evolve;
 pub mod forward_sirk;
 pub mod linalg;
+pub mod joint_sirk;
 pub mod mass_gap_spec;
 // M5: Kani harnesses for the pure mass-gap core. `cargo kani` sets the
 // `kani` cfg and verifies lib targets only (its CLI has no `--tests`), so

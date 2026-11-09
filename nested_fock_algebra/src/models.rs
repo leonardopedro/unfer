@@ -3161,7 +3161,13 @@ pub fn oscillator_displaced(omega: f64, g: f64) -> Hamiltonian {
 }
 
 // ─────────────────────────────────────────────
-// Standard Model (SM) — Hashimoto-SIRK numerical realizations.
+// Standard Model (SM) — legacy comparisons and structural oracles.
+// Full physical Hashimoto-SIRK validation is the work order in
+// docs/SM_HAMILTONIAN_AUDIT.md N1-N5. These reduced builders are NOT the
+// complete Lean/manuscript inner h_SM or its joint-state outer dGamma lift.
+// In particular, separate field/momentum modes commute, and the legacy CAS
+// path drops non-scalar contractions. Retain the API for reproducibility;
+// do not infer physical equivalence from matching term counts or SIRK traces.
 //
 // Reduced / sector-wise realizations of the SM one-particle operator
 // h = h_Gauge + h_Higgs + h_Dirac + h_Yukawa (book.tex; VERIFY_SM_FARIS_LAVINE).
@@ -3176,8 +3182,9 @@ pub fn oscillator_displaced(omega: f64, g: f64) -> Hamiltonian {
 
 /// Symbolic source of truth for the SM Higgs sector (Mexican-hat potential):
 /// `H = :½π²: + V(φ)` with `V = −½μ²:φ²: + ¼λ:φ⁴:` (reduced real component
-/// of the complex doublet). CAS normal-orders and strips the zero-point so
-/// `⟨0|H|0⟩ = 0` — the nested-Fock vacuum rule.
+/// of the complex doublet). LEGACY COMPARISON: field and kinetic terms act on
+/// independent modes, and CAS drops contractions. Zero inner expectation is
+/// not the physical outer-vacuum rule. See docs/SM_HAMILTONIAN_AUDIT.md.
 pub fn sm_higgs_expression(mu2: f64, lambda: f64) -> String {
     let phi = "(c_0 + a_0)";
     let h_kin = "(c_1 * a_1) - (1/2)*(c_1*c_1 + a_1*a_1)";
@@ -3243,10 +3250,11 @@ pub fn sm_fermion_number(n_modes: usize) -> Hamiltonian {
     Hamiltonian { terms }
 }
 
-/// Faris–Lavine comparison operator for the Higgs sector (reduced):
-/// `N = :π²: + :φ⁴:` — quadratic in momentum, quartic in field. Structure
-/// pin for the FL `N₀ + c₀I` comparison (`faris_lavine_n_sm.cdb`); the full
-/// SM `N` (gauge quartics + fermionic oscillator) lives in the Cadabra module.
+/// Historical reduced quartic comparison `:π²:+:φ⁴:` on independent modes.
+/// This is NOT the live Faris-Lavine comparison. The Lean bosonic proof uses
+/// `smFlN = 2 h_B + sum_active q² + c`; the uncoupled quartic comparison does
+/// not supply the required commutator bound. No positivity/ESA inference is
+/// made from a few probe expectations of this legacy operator.
 pub fn sm_comparison_n() -> Hamiltonian {
     // :π²: = 2·(:½π²:) form: 2c*a − (c²+a²) on mode 1;
     // :φ⁴: via CAS on mode 0.

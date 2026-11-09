@@ -1,3 +1,19 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# QG comparison/core algebra, not the complete R^2 record by itself.
+# Retain the full vielbein operator, exact exponential and coupling;
+# chart/comparison identities require domains and an intertwining map.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-05)
 #

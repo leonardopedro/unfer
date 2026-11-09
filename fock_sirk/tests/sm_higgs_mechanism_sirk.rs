@@ -1,46 +1,16 @@
-//! Hashimoto-SIRK dynamics of the Higgs mechanism in the nested Fock space.
+//! Historical single-real-field Hashimoto-SIRK comparison dynamics.
 //!
-//! Companion to `docs/sm_gauge_fixed_hamiltonian.cdb` CHECK 13–14 (the
-//! unbroken ↔ broken shift identity and `m_h² = 2λv²`) and CHECK 4–5 (the
-//! UNBROKEN Mexican-hat potential `V = −½μ²φ² + ¼λφ⁴` in its exact form).
-//! The question these tests answer: does the Hashimoto-SIRK evolution of the
-//! nested-Fock Higgs Hamiltonian produce numerical results that MIMIC THE
-//! HIGGS MECHANISM — do gauge-invariant initial and final states behave like
-//! the broken (condensate) states?
+//! The sm_higgs_hamiltonian builder uses independent field/momentum modes and
+//! legacy contraction-dropping ordering. This suite is NOT full nested-SM
+//! validation, a canonical radial quantization, or a proof of gauge invariance
+//! or EWSB. A whole-line coherent state does not become comparison by
+//! calling its coordinate radial. A physical radial reduction would require
+//! the correct measure, constraints, operator/domain and an identification map.
 //!
-//! The gauge-invariant content of the reduced Higgs sector is the radial
-//! (gauge-invariant) field `φ†φ = φ²/2` and its quanta: every state here is
-//! built from the radial mode alone (modes 0 = φ, 1 = π_φ of
-//! `sm_higgs_hamiltonian`), so initial and final states are gauge-invariant
-//! by construction.  The broken-state mimicry is the displaced condensate:
-//! a coherent state of the radial mode centered at `⟨φ⟩ = v + δ` with
-//! `v = √(μ²/λ)` the minimum of the UNBROKEN potential.
-//!
-//! 1. `sm_higgs_mechanism_condensate_mimics_broken_vacuum` — the displaced
-//!    condensate, evolved under the unbroken Mexican-hat Hamiltonian with
-//!    `evolve_restarted` (the SIRK/Hashimoto evolution), stays near the
-//!    broken minimum: `⟨φ⟩` never collapses to the symmetric point 0, the
-//!    gauge-invariant `⟨φ†φ⟩` stays within 25% of its condensate value
-//!    `xd₀ = ⟨φ⟩₀²/2 + ½` (the reduced realization's coherent condensate
-//!    carries the intrinsic spread `Δφ² = 1`), and norm + energy are
-//!    conserved (unitarity of the nested-Fock evolution).
-//!
-//! 2. `sm_higgs_mechanism_radial_mass_from_oscillation` — the condensate
-//!    oscillates around the minimum at the radial-mode (Higgs) mass
-//!    `m_h = √(2λ)·v`: `⟨φ(t)⟩` is sampled on a time grid under SIRK
-//!    evolution and the frequency extracted by a least-squares grid scan
-//!    against `c + A cos ωt + B sin ωt`.  The measured `ω` must agree with
-//!    `m_h`, and `m_h² = 2λv²` is cross-checked against the numerical
-//!    curvature `V''(v)` of `sm_higgs_classical_potential` (the module's
-//!    CHECK 14, both assembly routes).
-//!
-//! 3. `sm_higgs_mechanism_gauge_invariant_in_out_states` — the initial and
-//!    final states are the SAME gauge-invariant (radial-only) condensate
-//!    state up to the dynamical phase: after one oscillation period the
-//!    state returns to the condensate with fidelity `|⟨ψ(T)|ψ(0)⟩|` close
-//!    to 1 — the state that "mimics the broken state" is preserved by the
-//!    dynamics.  The gauge-invariant observable `⟨φ†φ⟩` is compared on the
-//!    two ends and must agree.
+//! Historical names/assertions remain reproducible comparison diagnostics.
+//! Full-SM numerical acceptance must instead use Hashimoto-SIRK on the complete
+//! identified inner operator and its actual joint-state outer enclosure; see
+//! docs/SM_HAMILTONIAN_AUDIT.md N1-N5 and timepiece/SM_ESA_COMPLETION_PLAN.md.
 
 use fock_sirk::device::best_device;
 use fock_sirk::{SirkOpts, evolve_restarted};
@@ -63,7 +33,7 @@ fn opts() -> SirkOpts {
 }
 
 /// One empty bosonic universe (so inner boson ops can act), the outer-vacuum
-/// ground doctrine.
+/// comparison background (not the outer vacuum).
 fn boson_background() -> QuantumState {
     QuantumState::vacuum().apply(&Operator::OuterBosonCreate(
         nested_fock_algebra::InnerBosonicState::vacuum(),
@@ -71,7 +41,7 @@ fn boson_background() -> QuantumState {
 }
 
 /// Radial-mode coherent state |α⟩ = e^{−α²/2} Σ_n (α^n/n!) (a†)^n |0⟩ on
-/// mode 0 (the gauge-invariant radial Higgs field), truncated at `n_max`.
+/// mode 0 (the legacy real comparison field), truncated at `n_max`.
 /// For real α: ⟨φ⟩ = ⟨a†+a⟩ = 2α.
 fn coherent_radial(alpha: f64, n_max: usize) -> QuantumState {
     let vac = boson_background();
@@ -100,7 +70,7 @@ fn phi_expectation(psi: &QuantumState) -> f64 {
     QuantumState::inner_product(&up, psi).re / QuantumState::inner_product(psi, psi).re
 }
 
-/// Gauge-invariant observable ⟨φ†φ⟩ = ⟨φ²/2⟩ = ⟨(a†+a)²⟩/2 on mode 0.
+/// Comparison observable ⟨φ†φ⟩ = ⟨φ²/2⟩ = ⟨(a†+a)²⟩/2 on mode 0.
 fn phi_dag_phi_expectation(psi: &QuantumState) -> f64 {
     let mut u = psi.apply(&Operator::InnerBosonCreate(0));
     u.scale_and_add(
@@ -141,7 +111,7 @@ fn sm_higgs_mechanism_condensate_mimics_broken_vacuum() {
     );
     let e0 = energy_expectation(&h, &psi0);
 
-    // Gauge-invariant condensate content: ⟨φ†φ⟩ = ⟨φ⟩²/2 + ½·Δφ², and the
+    // Scalar comparison condensate content: ⟨φ†φ⟩ = ⟨φ⟩²/2 + ½·Δφ², and the
     // coherent state has Δφ² = 1 exactly — pin the sharp identity at t = 0.
     let xd0 = phi_dag_phi_expectation(&psi0);
     assert!(
@@ -178,8 +148,8 @@ fn sm_higgs_mechanism_condensate_mimics_broken_vacuum() {
             phi_t > 0.5 * v,
             "condensate must stay near the broken minimum at t={t}: ⟨φ⟩={phi_t}"
         );
-        // gauge-invariant ⟨φ†φ⟩ stays within 25% of its condensate value —
-        // the gauge-invariant content of the broken-like state does not
+        // comparison ⟨φ†φ⟩ stays within 25% of its condensate value —
+        // the comparison content of the broken-like state does not
         // deplete (measured orbit stays within ~10%):
         let xd_t = phi_dag_phi_expectation(&psi_t);
         assert!(
@@ -284,7 +254,7 @@ fn sm_higgs_mechanism_radial_mass_from_oscillation() {
     );
 }
 
-// ── 3. gauge-invariant in/out states return to the condensate ──────────────
+// ── 3. comparison in/out states return to the condensate ──────────────
 
 #[test]
 fn sm_higgs_mechanism_gauge_invariant_in_out_states() {
@@ -294,7 +264,7 @@ fn sm_higgs_mechanism_gauge_invariant_in_out_states() {
     let m_h = (2.0 * lambda).sqrt() * v;
     let period = 2.0 * std::f64::consts::PI / m_h;
 
-    // gauge-invariant (radial-only) condensate — the state that mimics the
+    // comparison (radial-only) condensate — the state that mimics the
     // broken vacuum:
     let delta = 0.1 * v;
     let psi0 = coherent_radial((v + delta) / 2.0, 14);
@@ -306,7 +276,7 @@ fn sm_higgs_mechanism_gauge_invariant_in_out_states() {
     let xt = phi_dag_phi_expectation(&psi_t);
     assert!(
         (xt - x0).abs() < 0.25 * x0.abs().max(1.0),
-        "gauge-invariant ⟨φ†φ⟩ must return to its initial value after one \
+        "comparison ⟨φ†φ⟩ must return to its initial value after one \
          period: in={x0}, out={xt}"
     );
     // the fidelity |⟨ψ(T)|ψ(0)⟩| is large: the condensate state is

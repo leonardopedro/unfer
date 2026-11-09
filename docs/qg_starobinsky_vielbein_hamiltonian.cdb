@@ -1,3 +1,21 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# Jordan-frame R^2 vielbein inner derivation with auxiliary psi.
+# H_final_st is an inner chart expression. Preserve its psi dependence and
+# interactions. A full Einstein-frame record additionally needs a canonical
+# transfer, exact exponential wall and coupled vielbein terms; no Taylor model
+# or isolated scalaron fiber establishes that identification.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
 #
@@ -5,7 +23,7 @@
 #   polymomentum -> Legendre -> H) to R + alpha R^2 in the VIELBEIN: the
 #   metric 3+1 split only fits special foliations, so the vielbein is the
 #   fundamental field and local Lorentz freedom stays explicit.
-# Role in the program: the general-space-time QG record. H_final_st =
+# Role: Jordan-frame inner R^2 vielbein derivation. H_final_st =
 #   (M^2/2) psi * (book.tex 8190) + U(psi) e: the base TEGR Hamiltonian
 #   scaled by the scalaron field plus the potential density. The base limit
 #   check (alpha -> 0) recovers the base module — a generalization, not a
@@ -85,28 +103,19 @@
 #               TEGR Hamiltonian (M²/2)·(book.tex 8190) — the new module is a
 #               genuine generalization, not a different theory.
 #
-# DENSITIZED-VARIABLES COMPATIBILITY. The R² content enters ONLY through the
-# scalaron field ψ and the potential U(ψ); it never enters the kinetic
-# (second-order) part, which remains exactly the base TEGR kinetic
-# (1/16e)S² − (1/24e)P². Hence the densitized change of variables of
-# docs/qg_densitized_hamiltonian.cdb — y = √e, e-tilde = √e·e, S = y·S-tilde,
-# P = y·P-tilde — absorbs the 1/e denominators into the CONSTANT coefficients
-# (1/16, −1/24) unchanged, giving the flat field-space d'Alembertian
-# H0 = (1/16)Δ_S-tilde − (1/24)d²/dy² (the Strichartz/finite-speed ESA input;
-# see BookProof/ChapterQuantumGravityDensitized and
-# BookProof/ChapterScalaronDensitizedTransfer). After the conformal rescaling
-# to the Einstein frame the scalaron carries the exponential potential
-# V(φ) = (M⁴/16α)(1 − e^{−√(2/3)φ/M})² — smooth and non-negative, the
-# potential whose ESA on the compactly supported smooth core is PROVED in
-# BookProof/ChapterScalaronCoreEsa (starobinskyV_essentiallySelfAdjoint,
-# scalaronFullPotential_essentiallySelfAdjoint) and
-# BookProof/ChapterScalaronWallEsa (starobinskyWall_esa, −d²/dφ² + V, no
-# growth hypothesis). The numerical realization (qg_starobinsky_vielbein_
-# hamiltonian in nested_fock_algebra/src/models.rs) is the quadratic
-# truncation m·N_ψ, m² = M²/(12α) = V″(0), of that potential — a special case
-# of the proved statements. The Jordan-frame form above still needs the
-# conformal rescaling (ψ enters the kinetic) before the flat-coefficient
-# argument applies; that is the standard f(R) → Einstein-frame chain.
+# FRAME/DOMAIN BOUNDARY. The auxiliary psi multiplies the Jordan-frame
+# gravitational kinetic expression as well as contributing U(psi)e. It must
+# not be silently removed when applying a densitized or flat comparison.
+# The Einstein-frame exact wall is
+# V(phi) = (M^4/(16 alpha)) (1-exp(-sqrt(2/3)phi/M))^2.
+# Its scalar-potential identities are in qg_starobinsky_einstein_frame.cdb;
+# they alone do not prove a canonical transformation of all momenta, retained
+# interactions, operator ordering and graph cores. The numerical
+# qg_starobinsky_vielbein_hamiltonian is a quadratic comparison, and its
+# _full sibling retains the exponential in a scalaron fiber but omits some
+# coupled base-gravity terms. The full R^2 record retains BOTH wall and
+# vielbein interactions. A scalaron ESA result does not identify that joint
+# operator or prove its mass gap. No Taylor expansion is used in the record.
 # Run: cadabra2-cli -q -n <this file>
 # Formalized in: ../timepiece/Book/DiffeomorphismsGravity.lean (tag "diffeomorphisms-gravity"), Starobinsky.lean (tag "starobinsky-scalaron") - reader-facing chapter.
 #

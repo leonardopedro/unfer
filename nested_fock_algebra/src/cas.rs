@@ -1,3 +1,8 @@
+//! Legacy symbolic compiler for comparison models. Compilation strips inner
+//! scalars/contractions and sorts inner words; it is not an exact CCR/CAR path.
+//! Use [`crate::exact_inner`] for ordered joint inner action enclosed once by
+//! outer creation/annihilation. Existing compiler semantics are preserved.
+
 use crate::{Hamiltonian, InnerBosonicState, InnerFermionicState, Operator};
 use num_complex::Complex64;
 use quantrs2_symengine_pure::{expr::Expression, parser::parse};

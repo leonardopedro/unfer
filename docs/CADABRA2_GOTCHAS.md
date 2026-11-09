@@ -165,6 +165,14 @@ factors (φ⁴ takes ~11 s; six factors hang). The memoized `distribute_bounded`
 
 ---
 
+## Current operator-scope audit
+
+The [nested-Fock enclosure audit](VERIFY_NESTED_FOCK_ENCLOSURE.md) fixes the
+inner/outer and QG chart interpretation of the modules. Its new checks await
+execution; this is not a replacement for historical engine transcripts.
+Frame-matrix determinant scaling alone is not a field-coordinate Jacobian
+or a unitary/ESA proof.
+
 ## Module index
 
 Each `.cdb` module has a **MODULE DOCUMENTATION** header giving its purpose, its

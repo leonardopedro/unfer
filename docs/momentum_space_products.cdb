@@ -1,3 +1,20 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# Commuting inner-field Fourier bookkeeping.
+# Quartic in inner amplitudes remains quartic after grouping into composites;
+# the physical outer H stays dGamma(h). This module does not prove a new
+# outer pair-sector interpretation or multiplicativity of dGamma.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # =====================================================================
 # MODULE DOCUMENTATION (2026-10-14)
 #
@@ -14,11 +31,8 @@
 # Role in the program: the commutative (c-number) bookkeeping engine behind
 #   the Fourier-elimination strategy (docs/ns_qg_fourier_elimination.cdb,
 #   the sibling module: jet elimination u_{i,j} -> i k_j u_i) and behind the
-#   outer-Fock reading of the same identity: because the nested
-#   construction has ONE outer Fock system, pair composites a(p)a(Q-p) at
-#   different momentum points are operators on that same space, and the
-#   quartic same-point interaction is a quadratic form in them (the
-#   two-particle sector, dGamma of the two-body kernel).
+#   inner-field composite bookkeeping. The final physical outer operator
+#   is dGamma(h), not a four-outer-ladder vertex or dGamma of a pair kernel.
 # Certified content (all CHECK rows at their advertised values):
 #   1-2   the product-to-convolution theorem on a three-mode grid (sizes
 #         pinned: the pointwise product expands to 9 monomials, collects
@@ -41,10 +55,9 @@
 #         negative control for the S47 sign convention.
 # Improvement notes: this module is c-number bookkeeping ONLY — no ladder
 #   operators, no normal ordering, no commutators.  The operator statement
-#   (the quartic outer-Fock interaction as a quadratic form in pair
-#   composites) lives in Lean (ChapterFockCubicQuarticStability carries the
-#   mode-diagonal quartic; ChapterNsAdvectionConvolution the advection
-#   convolution) and in the reader-facing page
+#   requires an inner operator/domain/ordering theorem. The mode-diagonal
+#   toolbox and the advection convolution theorem do not supply an arbitrary
+#   kernel identity. The reader-facing account is
 #   ../test/mathematical-foundations/momentum-space-products.md.
 # Naming notes (cf. docs/CADABRA2_GOTCHAS.md): symbols carry no digits,
 #   handles inserted inside expressions use @(...), rule lists are spelled
@@ -60,7 +73,7 @@
 # Formalized in: ../timepiece/BookProof/ChapterNsAdvectionConvolution.lean (product -> convolution,
 #   derivative as symbol), ../timepiece/Book/FourierElimination.lean (tag "fourier-elimination" —
 #   the elimination these products serve).  The composite pairing of CHECK 7-9 is CAS bookkeeping
-#   at the c-number level; its operator form is stated (not proved) in
+#   at the c-number level; inner-to-outer interpretation is explained in
 #   ../test/mathematical-foundations/momentum-space-products.md.
 #
 # What this module is for.  The plan of record writes products of fields —
@@ -128,7 +141,7 @@ fldx := um*Em + uo*Eo + up*Ep.
 # the momentum table: E_a E_b -> E_{a+b} for every pair on the toy grid
 # (both factor orders are listed, so the rule fires regardless of sorting).
 # Every product below carries exactly two E factors (one per mode factor),
-# so a single rule application normal-orders the momentum conservation.
+# so a single rule application collects momentum-conserving coefficients.
 
 sq1 := @(fldx)*@(fldx).
 distribute(sq1)

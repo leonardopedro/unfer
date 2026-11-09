@@ -1,3 +1,19 @@
+# FINAL-HAMILTONIAN CONTRACT (2026-11-08; source audit, not a new run)
+# QYM/QED/QG/NS: H = dGamma(h) = sum h_ij Cdag(e_i) A(e_j),
+# creation LEFT, outer annihilation RIGHT. Keep all inner interactions in h.
+# QG record: R^2 vielbein/TEGR, full exponential, no Taylor approximation.
+# Spatial-derivative products use momentum convolution for NS/QG ONLY.
+# H Omega = 0 is structural; ground status needs h >= 0. A gap above the
+# unique outer vacuum needs an absolute h >= m I, m > 0, on the entire inner space.
+# dGamma(h+c I) = H+c N_out; a chosen shift changes the occupied sectors.
+# dGamma(B^2) generally differs from dGamma(B)^2 (cross-particle terms).
+# Symbolic checks do not discharge physical identification or operator domains.
+# NS comparison/core algebra, distinct from the full record h_sp.
+# Identify each inner component and domain before applying the outer ESA
+# lift; a signed KvN comparison is not the positive final Hamiltonian.
+# See docs/VERIFY_NESTED_FOCK_ENCLOSURE.md for scope and pending checks.
+# Existing expression handles and stdout markers retain their extraction role.
+
 # ======================================================================
 # MODULE DOCUMENTATION (2026-10-04 — comment-only header; no algebra changed)
 #
@@ -45,7 +61,7 @@
 # The valid comparison for the NS *Hamiltonian* leg is instead the Leray energy
 # N_E = 1 + |u|^2 (BookProof.NsKoopman.nsEnergyOp, commForm_kvn_energy_bound,
 # nsKoopman_esa_of_energy_comparison); see `docs/ns_kvn_equation.cdb` CHECK 4-6.
-# The Navier-Stokes Hamiltonian proper is the Koopman-von Neumann / Liouville generator of the
+# The mainstream NS dynamics generator is the Koopman-von Neumann / Liouville operator of the
 # FULL residual, which carries the pressure gradient q_i = d_i p (and the external force f_i) as
 # well as the advection and the viscosity,
 #     H_NS = pi^i ( u_j u_{i,j} + q_i - nu u_{i,jj} ) + h.c.
@@ -55,7 +71,7 @@
 # `BookProof.NsKoopman.kvnPoly` / `nsKoopmanOp`).  It is *not* bounded below and it reproduces the
 # Navier-Stokes equations through i[H_NS, u_k] = 2 F_k,
 # F_k = u_j u_{k,j} + q_k - nu u_{k,jj} + f_k.  That statement - the one that identifies the NS
-# Hamiltonian - is verified in `docs/ns_kvn_equation.cdb` CHECK 1 (commutator) and CHECK 8
+# dynamics generator - is verified in `docs/ns_kvn_equation.cdb` CHECK 1 (commutator) and CHECK 8
 # (pressure/constraint); this module verifies only the comparison-side algebra for the auxiliary
 # operator.
 #

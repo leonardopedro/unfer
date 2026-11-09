@@ -1,5 +1,17 @@
 # Cadabra module review — `docs/*.cdb`
 
+> **SM execution, 2026-11-09c:** [the current implementation](SM_FULL_IMPLEMENTATION.md)
+> supplies the complete E1 dictionary and actual Cadabra LaTeX import. The new
+> full module and the older SM templates were executed; the fixture is exact.
+> The [SM audit](SM_HAMILTONIAN_AUDIT.md) supersedes old full-ESA/FL readings.
+> Symbolic equalities support identification and do not prove operator domains.
+
+> **2026-11-08 source-scope update:** read [the enclosure audit](VERIFY_NESTED_FOCK_ENCLOSURE.md)
+> before interpreting historical CHECK results. It distinguishes inner derivations,
+> physical outer lifting, exact-wall QG fibers and full coupled R² vielbein operators.
+> New enclosure and magnetic-polynomial checks await an engine-equipped run.
+
+
 **Review date:** 2026-10-13 (updated 2026-10-14 — see *Update* below; scope grew from 19 to
 21 `.cdb` modules). **Scope:** all 19 `.cdb` modules under `docs/`,
 the Rust pipeline that consumes them (`prob_kernel/src/symbolic.rs`), and the

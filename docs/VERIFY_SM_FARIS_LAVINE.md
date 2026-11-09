@@ -1,4 +1,26 @@
-# Verification: the Standard Model Hamiltonian in nested Fock space and its Faris–Lavine `N`
+# SM comparison symbolic verification: current scope and historical record
+
+2026-11-09c. Cadabra2 2.5.14 executed the current module successfully: 49 CHECK
+rows. All zero identities reduce to zero; CHECK 9c prints the side condition
+`c0-1`, which requires the separately stated `c0>=1` hypothesis.
+
+CHECK 31–33 now execute the live `N=2h+q²+c` cancellation and linear/spatial
+commutator templates. Their missing constant-derivative rules were repaired.
+This does not revive the failed uncoupled quartic comparison, nor discharge
+full-domain norm/form bounds. Use the actual Lean bosonic `smFlN` and the
+full comparison work order for the complete matter operator.
+
+The full component derivation/export and joint numerical pipeline are separate:
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md).
+`bash scripts/check-sm-symbolic` reruns this module and checks the complete export.
+No Lean compilation or new ESA proof is claimed.
+
+## Historical record (earlier source and superseded interpretation)
+
+The narrative/transcripts below are retained as historical evidence. Interpret
+old statements that the three Faris–Lavine hypotheses were certified as scalar
+algebra only; first differential order and an AM–GM identity do not establish
+the required operator estimates.
 
 Evidence base for `docs/faris_lavine_n_sm.cdb` — the Standard Model counterpart of
 `docs/faris_lavine_n_ns.cdb` (Navier–Stokes) and `docs/faris_lavine_n_qg.cdb` (quantum gravity).
