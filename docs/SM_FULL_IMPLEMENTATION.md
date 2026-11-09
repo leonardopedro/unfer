@@ -311,8 +311,8 @@ and cache/action budget counterfactuals returned errors rather than simplify H.
 
 A repeat of the commands in *Reproducible commands* on the same working tree,
 from a shell where only the host prerequisites above were added. Rust `1.99.0`;
-locked dependencies; CPU backend. All **40 tests passed**: 13 exact-action
-contracts, 7 complete dictionary/Majorana/Cadabra contracts, 9 primary full-SM
+locked dependencies; CPU backend. All **41 tests passed**: 13 exact-action
+contracts, 7 complete dictionary/Majorana/Cadabra contracts, 10 primary full-SM
 rational tests and 11 supporting SM algebra checks. The fresh-engine equality
 test ran with `CADABRA_CLI` set and was not skipped. No Lean compilation was
 performed.
@@ -349,7 +349,9 @@ to **23.08 s**, with the 230-state solve kept as a cross-check of the reported
 tail. Cutoffs 3 and 4 exceed the shipped
 budgets, so they need
 `--cache-limit 4000000 --action-components 8000000 --action-work 4000000000`
-(65 s / 5.2 GB and 114 s / 7.0 GB peak RSS for the example here). With the
+(fresh measurements of the example: 23.31 s / 2.19 GB at cutoff 2, 65.77 s /
+5.19 GB at cutoff 3 and 111.72 s / 7.01 GB at cutoff 4, all with the raised
+budgets). With the
 defaults the same runs refuse explicitly: 1,001,177 and 1,382,976 cached
 entries against a 1,000,000 limit, and images over the 500,000-entry action
 limit. The
@@ -361,11 +363,18 @@ and printed the same window, energy (`51.32175249999999`), tail and a norm
 defect of `3.6e-14`; at cutoff 2 it reports the 230-state window
 (dimension 230, support 230) and the 4.03868 tail. The primary six-test block
 took 77.84 seconds before the wider cutoff assertions and 148.84 seconds with
-them. The nine-test primary block now runs in **115.07 and 118.53 s** in two runs
-(`--test-threads=1`), against 329.92 and 335.74 seconds for the earlier
-eight-test block (8.1 GB peak). The 936-state Ehrenfest point is the
-remaining expensive case and is opt-in: `SM_FULL_WIDE_CUTOFFS=1` re-measures it.
-These are observations, not performance guarantees.
+them. The ten-test primary block now runs in **112.70 s** (`--test-threads=1`),
+against 329.92 and 335.74 seconds for the earlier eight-test block (8.1 GB
+peak); the budget-refinement cross-check now uses a single shifted solve. The
+936-state Ehrenfest point is the remaining expensive case and is opt-in:
+`SM_FULL_WIDE_CUTOFFS=1` re-measures it, taking the block to 234.36 s, so the
+point costs about 122 s.
+
+A full wide-tier sweep (`SM_FULL_WIDE_CUTOFFS=1 ./scripts/run-sm-full-validation`)
+exited 0 in 7:39.52 with a peak RSS of 8.10 GB, all 41 tests green and the
+cutoff 2/3/4 tails reproduced exactly (`4.038679200865053` /
+`1.2179612832516469` / `0.0` on dimensions 230 / 638 / 1176). These are
+observations, not performance guarantees.
 
 ### Physics invariants under the compressed flow
 
@@ -400,17 +409,32 @@ uses cutoffs 1 and 2 and asserts that the defect both decreases and stays under
 10% of `<p>`; `SM_FULL_WIDE_CUTOFFS=1` adds cutoff 3, where it reproduces
 `4.31846279135123e-3` and must stay under 1.25%.
 
-**The BRST charge annihilates the ground state.** `sm_full` carries no ghost
-sector, so the test ports the temporal-gauge charge `Q = Σ_g P_{A_g} c_g` of
-`sm_brst_charge` into this representation, with the twelve ghosts on fermionic
-modes `96..108` — outside the 96-mode matter block, where no `h_SM` term can
-reach them. On the window ground state (`θ₀ = 49.7633053378465`) `Q|gs> = 0`
-exactly. Because the repository's charge uses ghost *lowering* (the ladder
-`sm_brst_charge` itself uses), that would hold of every ghost-free state, so the
-test is not vacuous: `Q` acts nontrivially on the one-ghost companion,
-`|Q|gs,ghost>| = √3/2 = 0.8660254037844387` (three spatial Gauss terms at
-`p = i(a† − a)/2`), and `Q² = 0` on it. The printed `|P|gs>| = 0.5010457745164838`
-records the scope: the Gauss generator alone does *not* annihilate this state, so
-the claim is ghost-vacuum closure of the window ground state, not Gauss's law and
-not a BRST reduction — the E1 dictionary has neither ghosts nor a gauge-fixing
-term.
+**The gauge sector has no physical state in this window.** `sm_full` carries no
+ghost sector, so the test ports the charge into this representation, with the
+twelve ghosts on fermionic modes `96..108` — outside the 96-mode matter block,
+where no `h_SM` term can reach them. The ladder is what decides the content:
+`sm_brst_charge` writes `InnerFermionAnnihilate`, the ghost *raise* of the
+filled-sea convention of `ym_brst_charge`, which is zero on a ghost-free state and
+therefore makes `Q|gs> = 0` trivial. The empty ghost reference of this dictionary
+uses `FermionCreate` as the raise, and then `Q|ψ> = 0` is exactly Gauss's law
+`G_g|ψ> = 0`. Measured: `|Q|gs>| = 3.005099133178078` at
+`θ₀ = 49.7633053378465` — the window ground state violates the constraint —
+`Q² = 0` exactly, and `|Q gs>|² = <gs|Q†Q|gs>` to `1e-9`. The compressed `Q†Q` is
+positive semidefinite with smallest eigenvalue `9.0`, so **no** state of the
+70-state window obeys Gauss, and the ground state already attains that smallest
+violation (`3.0051` against `sqrt(9) = 3`). The gauge-fixing term `H + λ Q†Q`
+therefore cannot select a physical state here: it is the constant shift `λ·9`,
+measured as `9.0226`, `90.0697`, `900.089` for `λ = 1, 10, 100` (within 1%). The
+reason is structural — `p = i(a† − a)/2` has continuous spectrum on the
+oscillator, so no normalizable state is annihilated by a pure-momentum generator;
+a physical Gauss law must include the matter current that balances it. This
+replaces the earlier ghost-vacuum reading, which could not speak about Gauss.
+
+**The interaction share of the window energy.** Splitting `H` over ordered
+monomial pairs by total degree is exact (checked on the seed to `1e-10`): the
+free part is degree ≤ 2, including the canonical `½P²`, and the interaction part
+is degree ≥ 3, which contains every gauge–matter and Yukawa coupling. On the
+window ground state `E = 49.7633053378465` the interactions contribute
+`2.8394046237857826` (**+5.706%**) and the Higgs/quark Yukawa block alone
+`-1.4425259347888656e-2` (**-0.029%**): present, nonzero and bounded well below
+the free part, within this section's finite-reference scope.

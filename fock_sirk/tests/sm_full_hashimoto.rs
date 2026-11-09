@@ -398,7 +398,8 @@ fn sm_full_hashimoto_budget_refinement() {
         },
         ..Default::default()
     };
-    let solve = solve_joint_sirk(h(), &seed(), &shifts(2, 9.0), &opts).unwrap();
+    // One shift is enough: the reported tail belongs to the first Krylov vector.
+    let solve = solve_joint_sirk(h(), &seed(), &shifts(1, 9.0), &opts).unwrap();
     assert_eq!(solve.registry.len(), 230, "cutoff-2 window moved");
     assert!(
         (solve.projected_action_tail_norms[0] - direct).abs() <= 1e-12 * direct,

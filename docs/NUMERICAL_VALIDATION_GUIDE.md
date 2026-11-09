@@ -2578,15 +2578,16 @@ whitening. No hidden amplitude threshold or interaction deletion enters this pat
 | `sm_full_hashimoto_interaction_mutations` | Missing sectors and action/cache resource failures |
 | `sm_full_energy_is_conserved_along_the_sirk_evolution` | $\langle H\rangle$ drift of the compressed flow; every energy real |
 | `sm_full_canonical_field_velocity_matches_momentum` | Ehrenfest $d\langle q\rangle/dt=\langle p\rangle$ plus the analytic $\langle q\rangle,\langle p\rangle$ |
-| `sm_full_brst_charge_annihilates_the_window_ground_state` | Temporal-gauge $Q$ on the window ground state, on its one-ghost companion, and $Q^2$ |
+| `sm_full_gauss_law_is_empty_in_the_recorded_window` | Temporal-gauge $Q$, its nilpotency, the compressed $Q^\dagger Q$ spectrum and the gauge-fixing penalty |
+| `sm_full_interaction_energy_is_a_nonzero_bounded_share` | Free/interaction split of $H$, the Higgs/quark share of the window energy |
 
 These are full-operator numerical implementation tests, with all nonzero gauge
 couplings and fully populated complex generation matrices. Finite-reference
 accuracy is reported separately from full-operator projection tails. The tests
-are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the BRST
-entry is ghost-vacuum closure of the window ground state rather than a BRST
-reduction. Pruning is disabled; resource limits abort instead of changing the
-Hamiltonian.
+are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the
+gauge-sector entry reports that this window has no Gauss-invariant state rather
+than expounding a physical sector. Pruning is disabled; resource limits abort
+instead of changing the Hamiltonian.
 
 **Physics anchors on the recorded window.** Three of these tests ask what the
 complete operator does rather than whether the solver is self-consistent.
@@ -2606,28 +2607,52 @@ velocity converges to $\langle p\rangle$ as the window closes — defect
 action tail falls `9.93 -> 7.55 -> 3.09`: the residual is the window's omitted
 action, not the solve.
 
-The BRST test ports the temporal-gauge charge $Q=\sum_g P_{A_g}c_g$ of
-`sm_brst_charge` into this representation, with the twelve ghosts on fermionic
-modes `96..108` (outside the 96-mode matter block, so no $h_{\rm SM}$ term reaches
-them). On the window ground state ($\theta_0=49.7633053378465$)
-$Q|{\rm gs}\rangle=0$ exactly; $Q$ is not trivial there — its one-ghost
-companion gives $\|Q|{\rm gs},{\rm ghost}\rangle\|=\sqrt3/2=0.8660254037844387$
-(three spatial Gauss terms at $p=i(a^\dagger-a)/2$) — and $Q^2=0$. Scope: the E1
-dictionary carries neither ghosts nor a gauge-fixing term, so $Q$ annihilates
-every ghost-free state. The test therefore certifies that the window ground state
-lies in the physical ghost-vacuum sector and that the charge is nilpotent and
-nonvanishing on that sector; it is not a Gauss-law certificate
-($\|P_{G^0_0}|{\rm gs}\rangle\|=0.5010\neq0$) and not a BRST-reduction
-certificate.
+**Gauss's law is empty in the recorded window.** The BRST charge of this
+representation is $Q=\sum_g G_g c_g^\dagger$, with $G_g$ the three spatial gauge
+momenta of one temporal-gauge sector. The ladder matters: `sm_brst_charge` writes
+`InnerFermionAnnihilate`, which is the ghost *raise* in the filled-sea convention
+of `ym_brst_charge` and is zero on a ghost-free state, so with it $Q$ annihilates
+every state of this dictionary and says nothing about Gauss. The ghost reference
+here is the empty set, where the raise is `FermionCreate`; with that ladder
+$Q|\psi\rangle=0$ *is* Gauss's law, and the test measures the verdict:
+$\|Q|{\rm gs}\rangle\|=3.005099133178078$ at $\theta_0=49.7633053378465$ — the
+window ground state violates the constraint — while $Q^2=0$ exactly and
+$\|Q{\rm gs}\|^2=\langle{\rm gs}|Q^\dagger Q|{\rm gs}\rangle$ to `1e-9`. The
+compressed $Q^\dagger Q$ is positive semidefinite with **smallest eigenvalue
+`9.0`**, so no state of the 70-state window obeys Gauss at all, and the ground
+state already attains that smallest violation (`3.0051` against `sqrt(9)=3`).
+Consequently the gauge-fixing term $H+\lambda Q^\dagger Q$ cannot select a physical
+state here: it is the constant shift $\lambda\cdot 9$, measured as `9.0226`,
+`90.0697` and `900.089` for $\lambda=1,10,100$ (within 1% of the prediction). The
+structural reason is that $p=i(a^\dagger-a)/2$ has continuous spectrum on the
+oscillator, so no normalizable state is annihilated by a pure-momentum generator;
+a physical Gauss law needs the matter current that balances it. This is why the
+ghost-vacuum closure statement could not certify anything about Gauss's law, and
+it replaces that earlier reading.
 
-**Cost.** The primary block runs in **115.07 and 118.53 s** in two runs
-(`--test-threads=1`, nine tests) on the 2026-11-09 host, against 329.92 and
-335.74 s for the earlier eight-test block. Two levers keep it there without dropping evidence: the
-four occupation-cutoff tails are computed directly from the first complete
-action image — the tail the solver reports *is* the part of $H|\psi_0\rangle$ its
-window omits — with one 230-state solve cross-checking that report, and the
+**The interaction share of the window energy.** Each form contributes
+$w(\sum\text{monomials})^2$ in operator order, so splitting the ordered monomial
+pairs by total degree reproduces $H$ exactly (checked on the seed to `1e-10`) and
+separates the free part (degree $\le 2$, including the canonical $\tfrac12P^2$)
+from the interaction part (degree $\ge 3$, which contains every gauge–matter and
+Yukawa coupling). On the window ground state $\langle H\rangle=49.7633053378465$,
+where the interactions contribute `2.8394046237857826` (**+5.706%**) and the
+Higgs/quark Yukawa block alone `-1.4425259347888656e-2` (**-0.029%**): present,
+nonzero and far from dominating, inside the truncated-reference scope of this
+section.
+
+**Cost.** The primary block runs in **112.70 s** (`--test-threads=1`, ten tests)
+on the 2026-11-09 host, against 329.92 and 335.74 s for the earlier eight-test
+block; the Gauss and interaction anchors cost `1.2` and `2.9` s. Two levers keep
+it there without dropping evidence: the four occupation-cutoff tails are computed
+directly from the first complete action image — the tail the solver reports *is*
+the part of $H|\psi_0\rangle$ its window omits — with one 230-state solve
+cross-checking that report, and the
 936-state Ehrenfest point is opt-in via `SM_FULL_WIDE_CUTOFFS=1`, where it
-reproduces `4.31846279135123e-3`. The rational budget grid keeps $m=2$ and $m=4$;
+reproduces `4.31846279135123e-3` and takes the block to 234.36 s. The wide tier
+end to end exited 0 in **7:39.52** at a peak of **8.10 GB**, with the example
+measured at 23.31 s / 2.19 GB (cutoff 2), 65.77 s / 5.19 GB (cutoff 3) and
+111.72 s / 7.01 GB (cutoff 4). The rational budget grid keeps $m=2$ and $m=4$;
 the tighter $m=5$ budget is *less* accurate (`5.9e-7` against `4.2e-7`) and is no
 longer solved by default.
 
