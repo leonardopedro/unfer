@@ -386,7 +386,10 @@ fn sm_full_hashimoto_budget_refinement() {
     // The window now covers the first complete image: the leading tail closes
     // monotonically to exactly zero, while the omitted-support norms above
     // remain nonzero for the later Krylov vectors (reported, not asserted).
-    assert!(supports == [70, 230, 638, 1176], "windows grew: {supports:?}");
+    assert!(
+        supports == [70, 230, 638, 1176],
+        "windows grew: {supports:?}"
+    );
     assert!(
         tails[0] > tails[1] && tails[1] > tails[2],
         "leading tail must shrink with the window: {tails:?}"
