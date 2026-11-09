@@ -311,8 +311,8 @@ and cache/action budget counterfactuals returned errors rather than simplify H.
 
 A repeat of the commands in *Reproducible commands* on the same working tree,
 from a shell where only the host prerequisites above were added. Rust `1.99.0`;
-locked dependencies; CPU backend. All **37 tests passed**: 13 exact-action
-contracts, 7 complete dictionary/Majorana/Cadabra contracts, 6 primary full-SM
+locked dependencies; CPU backend. All **39 tests passed**: 13 exact-action
+contracts, 7 complete dictionary/Majorana/Cadabra contracts, 8 primary full-SM
 rational tests and 11 supporting SM algebra checks. The fresh-engine equality
 test ran with `CADABRA_CLI` set and was not skipped. No Lean compilation was
 performed.
@@ -352,6 +352,36 @@ restarted-evolution case at t=0.02, m=4 measured
 and printed the same window, energy (`51.32175249999999`), tail and a norm
 defect of `3.6e-14`; at cutoff 2 it reports the 230-state window
 (dimension 230, support 230) and the 4.03868 tail. The primary six-test block
-took 77.84 seconds before the wider cutoff assertions and 148.84 seconds with
-them, consistent with the 80.79 seconds above and likewise not a performance
-guarantee.
+took 77.84 seconds before the wider cutoff assertions, 148.84 seconds with them,
+and 329.92 and 335.74 seconds in two runs once the two physics tests below were
+added (8.1 GB peak). These are observations, not performance guarantees.
+
+### Physics invariants under the compressed flow
+
+Two further tests ask what the SM operator does, not whether the solve is
+self-consistent.
+
+**Energy is conserved.** The exact flow is unitary, so `<H>` is fixed; the
+compressed rational flow can only move it by its own truncation. At t=0.02 the
+reference energy is `51.32175249999999` and the largest drift over all restart
+levels is `3.2670754990249407e-11` (1 step), `5.186961971048731e-13` (2) and
+`1.8417267710901797e-11` (4) — roundoff, so the assertion is the bound, not an
+ordering. Every recorded energy is real to `1e-9`.
+
+**Canonical field velocity.** With `q = a + a†` and the documented SM momentum
+`p = i(a† − a)/2`, Ehrenfest gives `d<q>/dt = <p>`. The test uses the two-universe
+state `(|0> + e^{iπ/4}|1>)/√2` on `coord::g(0,0)` with the same quark/lepton
+pair, whose analytic values are `<q> = cos(π/4) = 0.7071067811865475` and
+`<p> = sin(π/4)/2 = 0.3535533905932737` — the second pins the momentum
+normalization that `[q,p] = i` depends on, and both are asserted to `1e-12`. At
+dt=1e-3 the measured velocity converges to `<p>` as the window closes:
+
+| Window | States | Leading tail | `d<q>/dt` | Defect vs `<p>` |
+|---|---:|---:|---:|---:|
+| cutoff 1 | 72 | 9.9275 | 0.55751 | 2.0395e-1 |
+| cutoff 2 | 325 | 7.5488 | 0.32488 | 2.8678e-2 |
+| cutoff 3 | 936 | 3.0897 | 0.34923 | 4.3185e-3 |
+
+The defect is the omitted action of the window, not solver error: it falls by
+roughly a factor 7 per cutoff while the tail falls by 1.3–2.4, and the test
+asserts both the decrease and that the cutoff-3 defect is under 5% of `<p>`.

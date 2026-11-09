@@ -458,6 +458,139 @@ fn sm_full_hashimoto_restarted_evolution() {
     assert!(errors[2] < 1e-6);
 }
 
+/// A state with definite field content: the same quark/lepton pair in two
+/// universes whose gauge coordinate carries zero and one boson with relative
+/// phase `e^{i pi/4}`. For `q = a + a†` and `p = i(a† - a)` that gives
+/// `<q> = cos(pi/4)` and `<p> = -sin(pi/4)`, so both are nonzero.
+fn bosonic_seed() -> NestedVector {
+    let fermions = [
+        matter_mode(Species::Up, 0, 0, Chirality::Left, 0),
+        matter_mode(Species::Neutrino, 0, 0, Chirality::Left, 0),
+    ];
+    let empty = B::new([], fermions).unwrap();
+    let filled = B::new([(coord::g(0, 0), 1)], fermions).unwrap();
+    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let phase = C::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+    NestedVector::from([
+        (O::graded([(empty, 1)]).unwrap(), C::new(half, 0.0)),
+        (O::graded([(filled, 1)]).unwrap(), C::new(half, 0.0) * phase),
+    ])
+}
+
+/// `<psi|O|psi>` for a nested-Fock state and an exact inner operator.
+fn expectation(state: &NestedVector, observable: &InnerExpr) -> C {
+    let applied = observable.d_gamma(state, limits()).unwrap();
+    joint_inner_product(state, &applied) / joint_inner_product(state, state)
+}
+
+/// Energy is the one quantity a closed system must conserve exactly: the exact
+/// flow is unitary, so `<H>` is fixed. The compressed rational flow can only
+/// move it by its own truncation, which is what makes the drift a physical
+/// accuracy measure rather than an algebraic one.
+#[test]
+fn sm_full_energy_is_conserved_along_the_sirk_evolution() {
+    let time = 0.02;
+    let initial = h().d_gamma(&seed(), limits()).unwrap();
+    let reference_energy =
+        joint_inner_product(&seed(), &initial) / joint_inner_product(&seed(), &seed());
+    assert!(
+        reference_energy.im.abs() < 1e-10,
+        "a Hermitian operator must give a real energy: {reference_energy}"
+    );
+    let mut drifts = Vec::new();
+    for steps in [1usize, 2, 4] {
+        let result =
+            evolve_restarted_joint(h(), &seed(), time, steps, &shifts(4, 9.0), &options()).unwrap();
+        let energies: Vec<f64> = result.energies.iter().map(|e| e.re).collect();
+        assert!(
+            result.energies.iter().all(|e| e.im.abs() < 1e-9),
+            "energies must stay real: {:?}",
+            result.energies
+        );
+        let drift = energies
+            .iter()
+            .map(|e| (e - reference_energy.re).abs())
+            .fold(0.0f64, f64::max);
+        eprintln!(
+            "full_SM_energy: steps={steps} reference={:e} drift={drift:e} energies={energies:?}",
+            reference_energy.re
+        );
+        drifts.push(drift);
+    }
+    // The drift is roundoff-level for every restart count, so ordering it would
+    // only measure noise; the physical claim is the bound.
+    assert!(
+        drifts.iter().all(|d| *d < 1e-9),
+        "energy drifted beyond roundoff: {drifts:?}"
+    );
+}
+
+/// Canonical structure of the nested Fock lift: with `q = a + a†` and
+/// `p = i(a† - a)` (`[q, p] = i`), Ehrenfest gives `d<q>/dt = <p>`. A state
+/// with bosonic content is evolved by SIRK and the finite-difference field
+/// velocity is compared with the independently computed momentum.
+#[test]
+fn sm_full_canonical_field_velocity_matches_momentum() {
+    let coordinate = InnerExpr::coordinate(coord::g(0, 0));
+    let momentum = InnerExpr::momentum(coord::g(0, 0));
+    let start = bosonic_seed();
+    let image = h().d_gamma(&start, limits()).unwrap();
+    let q0 = expectation(&start, &coordinate).re;
+    let p0 = expectation(&start, &momentum).re;
+    eprintln!("full_SM_ehrenfest: q0={q0:e} p0={p0:e}");
+    // Analytic values for this state: <q> = cos(pi/4) and, with the SM
+    // convention p = i(a† - a)/2, <p> = sin(pi/4)/2. The second pins the
+    // momentum normalization, which [q, p] = i depends on.
+    let eighth = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(
+        (q0 - eighth).abs() < 1e-12,
+        "<q> must be cos(pi/4) = {eighth:e}, got {q0:e}"
+    );
+    assert!(
+        (p0 - 0.5 * eighth).abs() < 1e-12,
+        "<p> must be sin(pi/4)/2 = {:e}, got {p0:e}",
+        0.5 * eighth
+    );
+    let dt = 1e-3;
+    let mut defects = Vec::new();
+    for cutoff in [1u64, 2, 3] {
+        let mut window: BTreeSet<_> = project_occupation(&image, cutoff).0.into_keys().collect();
+        window.extend(start.keys().cloned());
+        let opts = JointSirkOptions {
+            action_limits: ActionLimits {
+                max_components: 8_000_000,
+                max_work: 4_000_000_000,
+            },
+            occupation_cutoff: Some(cutoff),
+            basis_window: Some(window),
+            max_cached_components: 4_000_000,
+            method: JointKrylovMethod::ShiftInvert {
+                relative_tolerance: 2e-11,
+                max_iterations: 32,
+            },
+            ..Default::default()
+        };
+        let evolved = evolve_restarted_joint(h(), &start, dt, 1, &shifts(4, 9.0), &opts).unwrap();
+        let velocity = (expectation(&evolved.state, &coordinate).re - q0) / dt;
+        let defect = (velocity - p0).abs();
+        eprintln!(
+            "full_SM_ehrenfest: cutoff={cutoff} window={} tail={:e} d<q>/dt={velocity:e} <p>={p0:e} defect={defect:e}",
+            opts.basis_window.as_ref().unwrap().len(),
+            evolved.action_tail_norms[0][0]
+        );
+        defects.push(defect);
+    }
+    assert!(
+        defects[2] < defects[0],
+        "the canonical velocity must converge as the window closes: {defects:?}"
+    );
+    assert!(
+        defects[2] < 5e-2 * p0.abs(),
+        "<q> still moves at the wrong rate: defect {:e} against |<p>| = {p0:e}",
+        defects[2]
+    );
+}
+
 #[test]
 fn sm_full_hashimoto_interaction_mutations() {
     let original = h().d_gamma(&seed(), limits()).unwrap();
