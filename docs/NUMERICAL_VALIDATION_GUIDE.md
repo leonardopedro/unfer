@@ -2580,6 +2580,7 @@ whitening. No hidden amplitude threshold or interaction deletion enters this pat
 | `sm_full_canonical_field_velocity_matches_momentum` | Ehrenfest $d\langle q\rangle/dt=\langle p\rangle$ plus the analytic $\langle q\rangle,\langle p\rangle$ |
 | `sm_full_gauss_law_measures_the_electric_zero_point` | Temporal-gauge $Q$, its nilpotency, the $Q^\dagger Q$ spectrum ($9$, $9.5$, $10$) and the zero-point reading of the gauge-fixing penalty |
 | `sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point` | $Q^\dagger Q=6\cdot\tfrac12\sum_g(\Pi_L^g)^2$, the exact longitudinal/transverse/Higgs split of the electric zero-point, and $H_C$ on the longitudinal vacuum |
+| `sm_full_gauss_with_matter_charge_is_content_sensitive` | $\rho^a$'s exact window values in the four diagonal sectors, the content-sensitive penalty spectrum, and the gauge algebra on the density |
 | `sm_full_fermion_number_superselected` | $[H,N]=0$ over five charge sectors, zero cross-sector matrix element, and $N=2$ on the window |
 | `sm_full_interaction_energy_is_a_nonzero_bounded_share` | Free/interaction split of $H$, the Higgs/quark share of the window energy |
 
@@ -2588,8 +2589,9 @@ couplings and fully populated complex generation matrices. Finite-reference
 accuracy is reported separately from full-operator projection tails. The tests
 are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the
 gauge-sector entries report the electric constraint's zero-point floor, the
-Coulomb elimination of the longitudinal mode and the charge superselection that
-survives, rather than expounding a physical sector. Pruning is disabled; resource limits abort
+matter density's effect on it, the Coulomb elimination of the longitudinal mode
+and the charge superselection that survives, rather than expounding a physical
+sector. Pruning is disabled; resource limits abort
 instead of changing the Hamiltonian.
 
 **Physics anchors on the recorded window.** Three of these tests ask what the
@@ -2621,6 +2623,33 @@ $Q|\psi\rangle=0$ *is* Gauss's law, and the test measures the verdict:
 $\|Q|{\rm gs}\rangle\|=3.005099133178078$ at $\theta_0=49.7633053378465$, while
 $Q^2=0$ exactly and $\|Q{\rm gs}\|^2=\langle{\rm gs}|Q^\dagger Q|{\rm gs}\rangle
 =9.030620800227668$ to `1e-9`.
+
+That is the *electric* constraint. The other half is `-g_a rho^a` with
+`rho^a = psi^dagger T^a psi`, and the window is not matter-frozen: it holds 23
+distinct matter contents with `N = 2`, so the density is a genuine operator.
+`sm_full_gauss_with_matter_charge_is_content_sensitive` adds it, with the
+generator matrices and couplings of the Hamiltonian's own covariant derivative.
+On the window `rho^a` is diagonal in all twelve sectors and non-vanishing only
+in the four that act diagonally on definite matter content — colour `T^3` and
+`T^8`, weak `T^3`, hypercharge — with the dictionary's values exactly:
+`0.3*{-1/2,0,1/2}`, `0.3*{-1/\sqrt3,1/(2\sqrt3)}`, `0.2*{0,1/2,1}`,
+`0.15*{-5/6,-1/3,1/6}`. The eight off-diagonal generators compress to exactly
+zero, i.e. the window is not closed under gauge rotations.
+
+The constraint then changes character rather than shifting by a constant. The
+penalty floor drops from `9` to `8.937718492951`, *below* the electric
+zero-point, its spectrum spreads from three values to ten (multiplicities
+1/1/2/4/4/9/10/12/12/15), and the ground state's violation rises from
+`9.030620800228` to `9.232585715293` (`\|Q|{\rm gs}\rangle\|` from `3.005` to
+`3.038517025671`). A lower floor with a higher ground state is what a
+content-sensitive functional looks like: the least-violating state is no longer
+the gauge vacuum. `\|Q{\rm gs}\|^2=\langle{\rm gs}|P|{\rm gs}\rangle` still
+holds to `1e-12`. Nilpotency does *not*: with one ghost mode per sector and no
+antighost or cubic term, `\|Q^2{\rm gs}\|=0.139204403714`. What is checked
+instead is the algebra the matter term brings,
+`[rho^0,rho^1]=0.045i=i g_s^2/2` and `[rho^8,rho^9]=0.04i=i g_w^2` on the
+seed, with `[rho^2,rho^{10}]=0` for the two Cartan directions; the cubic ghost
+is what would cancel `[G_g,G_h]=i g_{gh}f^{ghk}\rho_k`.
 
 The compressed $Q^\dagger Q$ is positive semidefinite with floor
 $9.0=12\text{ sectors}\times3\text{ components}\times\tfrac14$ — the free
@@ -2683,10 +2712,10 @@ Higgs/quark Yukawa block alone `-1.4425259347888656e-2` (**-0.029%**): present,
 nonzero and far from dominating, inside the truncated-reference scope of this
 section.
 
-**Cost.** The primary block runs in **115.17 s** (`--test-threads=1`, twelve
+**Cost.** The primary block runs in **113.85 s** (`--test-threads=1`, thirteen
 tests) on the 2026-11-09 host, against 329.92 and 335.74 s for the earlier
-eight-test block; the Gauss, Coulomb-gauge, superselection and interaction
-anchors cost `1.2`, `1.0`, `1.1` and `2.9` s. Two levers keep
+eight-test block; the Gauss, matter-density, Coulomb-gauge, superselection and
+interaction anchors cost `1.2`, `1.8`, `1.0`, `1.1` and `2.9` s. Two levers keep
 it there without dropping evidence: the four occupation-cutoff tails are computed
 directly from the first complete action image — the tail the solver reports *is*
 the part of $H|\psi_0\rangle$ its window omits — with one 230-state solve

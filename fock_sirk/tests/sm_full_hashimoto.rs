@@ -535,10 +535,12 @@ fn gauss_generator(ghost: u32) -> InnerExpr {
 /// convention of `ym_brst_charge` and is therefore zero on a ghost-free state.
 /// The ghost reference here is the empty set, where the raise is
 /// `FermionCreate`; with that ladder `Q|psi> = 0` is `G_g|psi> = 0` in every
-/// sector — the electric part of Gauss's law (`d_i Pi_i = 0`, the
-/// matter/current term absent). This is the only version of the charge that can
-/// detect a constraint violation: with the vanishing ladder, `Q` annihilates
-/// every state of this dictionary.
+/// sector — the *electric* part of Gauss's law (`d_i Pi_i = 0`, the matter
+/// density absent). This is the only version of the charge that can detect a
+/// constraint violation: with the vanishing ladder, `Q` annihilates every state
+/// of this dictionary. The matter half is added by `brst_charge_with_matter`,
+/// and it changes what the penalty measures —
+/// `sm_full_gauss_with_matter_charge_is_content_sensitive`.
 fn brst_charge() -> InnerExpr {
     InnerExpr::Sum(
         (0..12u32)
@@ -726,6 +728,137 @@ fn sm_full_gauss_law_measures_the_electric_zero_point() {
     );
 }
 
+/// Matter charge density `g_a rho^a = psi^dagger (g_a T^a) psi` of one gauge
+/// sector, with the same generator matrices and coupling the covariant
+/// derivative of `SmHamiltonian::build_matter` uses:
+///
+/// * colour `a < 8`: `gs * T^a` on the triplet modes (`T^a = lambda^a/2`);
+/// * weak `8..=10`: `gw * sigma^a/2` on the left doublets only;
+/// * hypercharge `11`: `gy * Y` on every mode.
+///
+/// Gauss's law is `(D_i E_i)^a = g_a rho^a`, so this is the term the electric
+/// generator `sum_i Pi_i^a` is missing.
+fn matter_charge(ghost: u32) -> InnerExpr {
+    let parameters = &model().parameters;
+    let mut pairs: Vec<(u32, u32, C)> = Vec::new();
+    match ghost {
+        0..=7 => {
+            let generators = su3_generators();
+            let t = generators[ghost as usize];
+            for species in [Species::Up, Species::Down] {
+                for generation in 0..3 {
+                    for ch in [Chirality::Left, Chirality::Right] {
+                        for spin in 0..2 {
+                            for row in 0..3u32 {
+                                for col in 0..3u32 {
+                                    pairs.push((
+                                        matter_mode(species, generation, row, ch, spin),
+                                        matter_mode(species, generation, col, ch, spin),
+                                        t[row as usize][col as usize] * C::new(parameters.gs, 0.0),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        8..=10 => {
+            let a = ghost - 8;
+            for (doublet, colors) in [
+                ([Species::Up, Species::Down], 3u32),
+                ([Species::Neutrino, Species::Electron], 1),
+            ] {
+                for generation in 0..3 {
+                    for color in 0..colors {
+                        for spin in 0..2 {
+                            for (index, row) in doublet.iter().copied().enumerate() {
+                                for (k, col) in doublet.iter().copied().enumerate() {
+                                    pairs.push((
+                                        matter_mode(row, generation, color, Chirality::Left, spin),
+                                        matter_mode(col, generation, color, Chirality::Left, spin),
+                                        pauli(a)[index][k] * C::new(0.5 * parameters.gw, 0.0),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            for species in [
+                Species::Up,
+                Species::Down,
+                Species::Neutrino,
+                Species::Electron,
+            ] {
+                for generation in 0..3 {
+                    for ch in [Chirality::Left, Chirality::Right] {
+                        for color in 0..species.colors() {
+                            for spin in 0..2 {
+                                let mode = matter_mode(species, generation, color, ch, spin);
+                                pairs.push((
+                                    mode,
+                                    mode,
+                                    C::new(parameters.gy * species.hypercharge(ch), 0.0),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    InnerExpr::Sum(
+        pairs
+            .into_iter()
+            .filter(|(_, _, c)| *c != C::new(0.0, 0.0))
+            .map(|(row, col, c)| {
+                InnerExpr::Product(vec![
+                    InnerExpr::Scalar(c),
+                    InnerExpr::Ladder(InnerLadder::FermionCreate(row)),
+                    InnerExpr::Ladder(InnerLadder::FermionAnnihilate(col)),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// Full Gauss generator `G_g = sum_i Pi_i^g - g_a rho^a`.
+fn gauss_generator_with_matter(ghost: u32) -> InnerExpr {
+    InnerExpr::Sum(vec![
+        gauss_generator(ghost),
+        matter_charge(ghost).scaled(C::new(-1.0, 0.0)),
+    ])
+}
+
+/// `Q^dagger Q` for the charge built from `gauss_generator_with_matter`.
+fn gauss_penalty_with_matter() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..12u32)
+            .map(|ghost| {
+                let generator = gauss_generator_with_matter(ghost);
+                InnerExpr::Product(vec![generator.clone(), generator])
+            })
+            .collect(),
+    )
+}
+
+/// The charge `Q = sum_g G_g c_g^dagger` with the matter density included.
+fn brst_charge_with_matter() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..12u32)
+            .map(|ghost| {
+                InnerExpr::Product(vec![
+                    gauss_generator_with_matter(ghost),
+                    InnerExpr::Ladder(InnerLadder::FermionCreate(MATTER_MODES + ghost)),
+                ])
+            })
+            .collect(),
+    )
+}
+
 /// Total matter fermion number `N = sum_{i < MATTER_MODES} a_i^dagger a_i`.
 fn fermion_number() -> InnerExpr {
     InnerExpr::Sum(
@@ -762,6 +895,241 @@ fn window_expectation(state: &NestedVector, operator: &InnerExpr) -> f64 {
     let dense = dense_state(state);
     let matrix = window_matrix(operator);
     (dense.adjoint() * matrix * &dense)[(0, 0)].re
+}
+
+/// Gauss's law with the matter charge density in it.
+///
+/// The electric generator `sum_i Pi_i^g` of the test above is one half of
+/// `G_g = (D_i E_i)^g - g_a rho^a`; the window carries matter, so the missing
+/// half is not a constant. Adding it (`matter_charge`, built from the same
+/// generator matrices and couplings as `SmHamiltonian::build_matter`) is
+/// only a small change in the operator and a large one in what the constraint
+/// measures: it is a charge-sensitive penalty, not the zero-point counter.
+///
+/// Measured on the recorded window:
+///
+/// * `rho^a` is diagonal in the window basis in all twelve sectors, and
+///   non-vanishing only for the four that act diagonally on definite matter
+///   content — the two colour Cartan generators, the weak `T^3` and
+///   hypercharge. The eight off-diagonal generators compress to exactly zero:
+///   the window is not closed under the gauge rotations, so it cannot see a
+///   colour/isospin coherence it does not contain;
+/// * the surviving values are the dictionary's own: `g_s {1/2, -1/2, 0}`,
+///   `g_s {1/(2 sqrt 3), -1/sqrt 3}`, `g_w {0, 1/2, 1}`, `g_y {1/6, -1/3, -5/6}`,
+///   so the coupling and the `T^a = lambda^a/2`, `sigma^a/2`, `Y` normalisation
+///   are the ones the Hamiltonian's covariant derivative uses;
+/// * the penalty's floor drops from `9` (the electric zero-point) to `8.9377`,
+///   below it, and its spectrum spreads from three values to ten: the minimum
+///   has moved to a different matter content, so the penalty now selects;
+/// * the ground state's violation nonetheless *rises*, from `9.0306` to
+///   `9.2326` (`|Q gs>|` from `3.005` to `3.0385`): the two facts are not
+///   contradictory — a lower floor with a higher ground state is exactly what a
+///   content-sensitive functional looks like;
+/// * `|Q gs>|^2 = <gs|P|gs>` still holds to `1e-12` when `P` is built at
+///   operator level, so the ghost construction and the field penalty agree;
+/// * the gauge algebra closes on the density: `[rho^0, rho^1] = i g_s^2 T^3`
+///   and `[rho^8, rho^9] = i g_w^2 T^3` on the seed, the off-diagonal pairs
+///   reflecting the coefficients the dictionary assigns them.
+///
+/// What this does *not* establish: nilpotency of `Q`. With one ghost mode per
+/// sector and no antighost or cubic ghost term, `Q^2` is not zero here
+/// (`|Q^2 gs>| = 0.139`); the matter term makes that visible instead of hiding
+/// it behind an abelianised generator, and the missing piece is the ghost
+/// cubic that cancels `[G_g, G_h]`. The penalty, which is `[Q, Q^dagger]/2`-like,
+/// is unaffected by that gap.
+#[test]
+fn sm_full_gauss_with_matter_charge_is_content_sensitive() {
+    let window = &reference().basis;
+    let (theta0, gs_state) = ground_state();
+    let parameters = &model().parameters;
+
+    // The density, sector by sector: diagonal, and diagonal *values*.
+    let mut charged = Vec::new();
+    for ghost in 0..12u32 {
+        let matrix = window_matrix(&matter_charge(ghost));
+        let off_diagonal = &matrix - DMatrix::from_diagonal(&matrix.diagonal().into());
+        assert!(
+            off_diagonal.norm() < 1e-12,
+            "rho^{ghost} is not diagonal on the window: {:e}",
+            off_diagonal.norm()
+        );
+        let mut values: Vec<f64> = matrix.diagonal().iter().map(|c| c.re).collect();
+        values.sort_by(f64::total_cmp);
+        values.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+        eprintln!("full_SM_matter: ghost={ghost} values={values:?}");
+        if values.iter().any(|v| v.abs() > 1e-12) {
+            charged.push((ghost, values));
+        }
+    }
+    // Only the four generators that are diagonal on definite matter content
+    // survive the compression: T^3 and T^8 of colour, T^3 of weak isospin, Y.
+    assert_eq!(
+        charged.iter().map(|(g, _)| *g).collect::<Vec<_>>(),
+        vec![2, 7, 10, 11],
+        "the window's charged sectors moved: {charged:?}"
+    );
+    // The other eight are not merely traceless on the window: they vanish on
+    // it, i.e. it contains no colour or isospin coherence for them to rotate.
+    for ghost in [0u32, 1, 3, 4, 5, 6, 8, 9] {
+        assert!(
+            window_matrix(&matter_charge(ghost)).norm() < 1e-12,
+            "rho^{ghost} must vanish on a window with definite matter content"
+        );
+    }
+    let close = |values: &[f64], want: &[f64]| {
+        values.len() == want.len() && values.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-12)
+    };
+    let third = 1.0 / 3f64.sqrt();
+    assert!(
+        close(
+            &charged[0].1,
+            &[-0.5 * parameters.gs, 0.0, 0.5 * parameters.gs]
+        ),
+        "colour T^3 values: {:?}",
+        charged[0].1
+    );
+    assert!(
+        close(
+            &charged[1].1,
+            &[-third * parameters.gs, 0.5 * third * parameters.gs]
+        ),
+        "colour T^8 values: {:?}",
+        charged[1].1
+    );
+    assert!(
+        close(&charged[2].1, &[0.0, 0.5 * parameters.gw, parameters.gw]),
+        "weak T^3 values: {:?}",
+        charged[2].1
+    );
+    assert!(
+        close(
+            &charged[3].1,
+            &[
+                -5.0 * parameters.gy / 6.0,
+                -parameters.gy / 3.0,
+                parameters.gy / 6.0,
+            ]
+        ),
+        "hypercharge values: {:?}",
+        charged[3].1
+    );
+
+    // The penalty at operator level: the square must be built from the full
+    // generator, not by squaring a compression.
+    let penalty = window_matrix(&gauss_penalty_with_matter());
+    let spectrum = penalty.clone().symmetric_eigen();
+    let floor = spectrum.eigenvalues.min();
+    let mut buckets = std::collections::BTreeMap::<i64, usize>::new();
+    for value in spectrum.eigenvalues.iter() {
+        *buckets.entry((value * 1e4).round() as i64).or_default() += 1;
+    }
+    assert!(
+        buckets.values().sum::<usize>() == window.len(),
+        "the penalty must stay on the window: {buckets:?}"
+    );
+    // 8.9377, below the electric zero-point of 9: the least-violating window
+    // state is no longer the gauge vacuum.
+    assert!(
+        (floor - 8.937_718_492_951).abs() < 1e-9,
+        "the matter-sensitive floor moved: {floor:.12}"
+    );
+    assert_eq!(
+        buckets.len(),
+        10,
+        "the matter-sensitive penalty must spread the spectrum: {buckets:?}"
+    );
+    let mut counts: Vec<usize> = buckets.values().copied().collect();
+    counts.sort_unstable();
+    assert_eq!(
+        counts,
+        vec![1, 1, 2, 4, 4, 9, 10, 12, 12, 15],
+        "the penalty's occupancy classes moved: {buckets:?}"
+    );
+    let dense = dense_state(&gs_state);
+    let with_matter = (dense.adjoint() * &penalty * &dense)[(0, 0)].re;
+    let electric = window_expectation(&gs_state, &gauss_penalty());
+    assert!(
+        (electric - 9.030_620_800_228).abs() < 1e-9,
+        "the electric ground-state penalty moved: {electric:.12}"
+    );
+    assert!(
+        (with_matter - 9.232_585_715_293).abs() < 1e-9,
+        "the matter ground-state penalty moved: {with_matter:.12}"
+    );
+    assert!(
+        with_matter > electric,
+        "the ground state's penalty must rise with the matter term: {with_matter:e} vs {electric:e}"
+    );
+
+    // The charge built from the same generators: the ghost construction and the
+    // field penalty must still agree.
+    let charge = brst_charge_with_matter();
+    let applied = charge.d_gamma(&gs_state, limits()).unwrap();
+    let residual = joint_norm(&applied);
+    assert!(
+        (residual * residual - with_matter).abs() < 1e-9,
+        "|Q gs>|^2 = {:e} but <gs|P|gs> = {with_matter:e}",
+        residual * residual
+    );
+    // And it is not nilpotent: one ghost mode per sector cannot cancel
+    // [G_g, G_h] without the cubic ghost term.
+    let nilpotent = joint_norm(&charge.d_gamma(&applied, limits()).unwrap());
+    assert!(
+        nilpotent > 1e-6,
+        "this charge has no cubic term, so Q^2 must not vanish: {nilpotent:e}"
+    );
+
+    // The gauge algebra closes on the density itself: the coefficient is the
+    // coupling squared, times 1/2 for the two doublets that carry it.
+    let inner = B::new(
+        [],
+        [
+            matter_mode(Species::Up, 0, 0, Chirality::Left, 0),
+            matter_mode(Species::Neutrino, 0, 0, Chirality::Left, 0),
+        ],
+    )
+    .unwrap();
+    let probe = NestedVector::from([(O::graded([(inner, 1)]).unwrap(), C::new(1.0, 0.0))]);
+    let commutator = |a: u32, b: u32| {
+        // Composition is right to left, so `forward` is rho^a after rho^b.
+        let forward = matter_charge(a).d_gamma(
+            &matter_charge(b).d_gamma(&probe, limits()).unwrap(),
+            limits(),
+        );
+        let backward = matter_charge(b).d_gamma(
+            &matter_charge(a).d_gamma(&probe, limits()).unwrap(),
+            limits(),
+        );
+        let mut difference = forward.unwrap();
+        joint_axpy(
+            &mut difference,
+            &backward.unwrap(),
+            C::new(-1.0, 0.0),
+            limits(),
+        )
+        .unwrap();
+        joint_inner_product(&probe, &difference) / joint_inner_product(&probe, &probe)
+    };
+    let colour_algebra = commutator(0, 1);
+    let weak_algebra = commutator(8, 9);
+    eprintln!("full_SM_matter: [rho0,rho1]={colour_algebra:?} [rho8,rho9]={weak_algebra:?}");
+    assert!(
+        (colour_algebra - C::new(0.0, parameters.gs * parameters.gs * 0.5)).norm() < 1e-12,
+        "colour algebra: {colour_algebra:?}"
+    );
+    assert!(
+        (weak_algebra - C::new(0.0, parameters.gw * parameters.gw)).norm() < 1e-12,
+        "weak algebra: {weak_algebra:?}"
+    );
+    // The two Cartan directions commute, so no mixed sector can contribute.
+    assert!(
+        commutator(2, 10).norm() < 1e-12,
+        "T^3 of colour and of weak isospin must commute"
+    );
+
+    eprintln!(
+        "full_SM_matter: theta0={theta0:.12} floor={floor:.12} with_matter={with_matter:.12} electric={electric:.12} residual={residual:.12} nilpotent={nilpotent:.12}"
+    );
 }
 
 /// Coulomb gauge: the longitudinal mode is solved for, not imposed.

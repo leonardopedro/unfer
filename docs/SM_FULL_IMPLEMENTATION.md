@@ -432,14 +432,45 @@ excess `2.5e-3`, `7.7e-4`, `9.9e-5`) and selects no state, and
 `<gs|Q^dagger Q|gs> = 9.0306` is the ground state's small population of excited
 gauge components above the floor, not a charge violation. The analytic reason a
 normalizable `G|psi> = 0` does not exist is separate: the generator is a field
-momentum, and `p = i(a^dagger - a)/2` has continuous spectrum. That is not a
-missing matter-current term — adding the (bounded, bilinear) charge density
-leaves `G` a Fock operator with continuous spectrum and no kernel. The local
-constraint has to be *solved*, and this dictionary, which carries the gauge
-fields (`coord::g/w/b`, 24+9+3 coordinates) with their canonical momenta but
-neither ghost nor matter charge, measures the electric constraint only. This
-replaces the earlier ghost-vacuum reading, which could not speak about Gauss,
-and the earlier reading of the floor as "no state obeys the constraint".
+momentum, and `p = i(a^dagger - a)/2` has continuous spectrum, so the local
+constraint has to be *solved* rather than imposed on a Fock state. This replaces
+the earlier ghost-vacuum reading, which could not speak about Gauss, and the
+earlier reading of the floor as "no state obeys the constraint".
+
+**Gauss's law with the matter density is content-sensitive.**
+`sm_full_gauss_with_matter_charge_is_content_sensitive` adds the other half of
+the constraint, `G_g = sum_i Pi_i^g - g_a rho^a` with
+`rho^a = psi^dagger T^a psi`, built from the same generator matrices and
+couplings the covariant derivative of `build_matter` uses (`gs` with
+`lambda^a/2`, `gw` with `sigma^a/2`, `gy` with `Y`). On the 70-state window the
+density is diagonal in all twelve sectors, and non-vanishing only in the four
+that act diagonally on definite matter content, with the dictionary's own
+values: `0.3 * {-1/2, 0, 1/2}` (colour `T^3`),
+`0.3 * {-1/sqrt3, 1/(2 sqrt3)}` (colour `T^8`), `0.2 * {0, 1/2, 1}` (weak
+`T^3`) and `0.15 * {-5/6, -1/3, 1/6}` (hypercharge). The eight off-diagonal
+generators compress to exactly zero: the window is not closed under gauge
+rotations, so it carries no colour or isospin coherence for them to act on —
+a truncation fact the electric-only reading could not see either.
+
+The consequence is not a constant shift. The penalty's floor drops from `9`
+(the electric zero-point) to `8.937718492951`, *below* it, and its spectrum
+spreads from three values to ten (multiplicities 1/1/2/4/4/9/10/12/12/15): the
+least-violating window state is no longer the gauge vacuum, so the penalty now
+selects. The ground state's violation nonetheless rises, from `9.030620800228`
+to `9.232585715293` (`|Q gs>` from `3.005` to `3.038517025671`) — a lower floor
+with a higher ground state is what a charge-sensitive functional looks like —
+and `|Q gs>|^2 = <gs|P|gs>` still holds to `1e-12` when `P` is built at
+operator level.
+
+What this does not establish is nilpotency of `Q`. With one ghost mode per
+sector and no antighost or cubic ghost term, `Q^2` is not zero here
+(`|Q^2 gs> = 0.139204403714`); the matter term makes that visible instead of
+hiding it behind an abelianised generator. The gauge algebra on the density
+itself is checked instead, since that is what the matter term brings:
+`[rho^0, rho^1] = 0.045i = i gs^2/2` and `[rho^8, rho^9] = 0.04i = i gw^2` on
+the seed (one quark and one lepton doublet member in the `+1/2` slot each), and
+`[rho^2, rho^10] = 0` for the two Cartan directions. The missing cubic ghost is
+what would cancel `[G_g, G_h] = i g_{gh} f^{ghk} rho_k`.
 
 **Coulomb gauge: the eliminated mode is a constant on the longitudinal
 vacuum.** `G_g = sqrt(3) Pi_L^g` with `Pi_L^g = sum_i Pi_i^g / sqrt(3)`, so
