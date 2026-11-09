@@ -13,11 +13,18 @@ fn main() -> Result<()> {
     let mut steps = 1usize;
     let mut krylov = 4usize;
     let mut cutoff = 1u64;
+    // Cached component entries scale with the window squared; larger occupation
+    // cutoffs need an explicit budget rather than a silently smaller operator.
+    let mut cache_limit = JointSirkOptions::default().max_cached_components;
+    // Single-action limits as well: wider occupation cutoffs build larger
+    // images, and both bounds must be raised explicitly rather than truncated.
+    let mut action_components = 500_000usize;
+    let mut action_work = 500_000_000usize;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--help" {
             println!(
-                "Full SM E1 joint Hashimoto: --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1"
+                "Full SM E1 joint Hashimoto: --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1 [--cache-limit N] [--action-components N] [--action-work N]"
             );
             return Ok(());
         }
@@ -27,6 +34,9 @@ fn main() -> Result<()> {
             "--steps" => steps = value.parse()?,
             "--krylov" => krylov = value.parse()?,
             "--occupation-cutoff" => cutoff = value.parse()?,
+            "--cache-limit" => cache_limit = value.parse()?,
+            "--action-components" => action_components = value.parse()?,
+            "--action-work" => action_work = value.parse()?,
             _ => bail!("unknown option {arg}"),
         }
     }
@@ -61,8 +71,8 @@ fn main() -> Result<()> {
     .map_err(anyhow::Error::msg)?;
     let h = model.expression();
     let limits = ActionLimits {
-        max_components: 500_000,
-        max_work: 500_000_000,
+        max_components: action_components,
+        max_work: action_work,
     };
     let inner = B::new(
         [],
@@ -83,6 +93,7 @@ fn main() -> Result<()> {
         action_limits: limits,
         basis_window: Some(window),
         occupation_cutoff: Some(cutoff),
+        max_cached_components: cache_limit,
         ..Default::default()
     };
     let dt = time / steps as f64;
