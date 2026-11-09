@@ -173,6 +173,15 @@ The motivation for distinguishing informed directions from the Gaussian compleme
 the [DILI construction](https://arxiv.org/abs/1411.3688), whose Gaussian-reference
 assumptions must be checked for this target. It does not guarantee useful transformer BMA.
 
+*Status (2026-11-09):* the chart (`src/subspace.rs`), the exact MH-pCN kernel in `z` with
+its quadrature check (`src/target.rs`) and `examples/subspace_adaptation.rs` are in — see
+`docs/PCNL_STATUS.md` "R1". Measured at ranks 1–2 against a seeded random control: the
+informed (Task-B trajectory PCA) basis gains 0.80 nat over the anchor and the control gains
+nothing, but only the rank-2 informed cell is converged (`R̂ = 1.006`); the others need
+`β ≈ 0.05` to move, which is R2's scale problem. Open: Brier score, ranks 4–32, the
+cross-fitted empirical-Bayes arm, ambient-vs-restricted budget parity, and an anchor that
+isn't below chance on B.
+
 **Acceptance:** known-target posterior means/covariances and predictive integrals agree;
 random and informed rank controls use identical target scale, baseline and budgets; report
 accuracy, NLL, Brier, predictive MCSE and mixing for every rank. An informed basis must
