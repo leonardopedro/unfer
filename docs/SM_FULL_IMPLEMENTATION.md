@@ -489,6 +489,25 @@ Off that sector the elimination is not a constant: the ground state has
 same-energies statement therefore holds exactly on the sector the gauge-fixed
 theory keeps, and fails by `5.1e-3` where it does not apply.
 
+**The physical band is all 44 states, and it is a block, not a spectrum of the
+theory.** The same test now resolves the whole sector rather than its minimum.
+`H_C` shifts every one of the 44 energies by `1.5` (worst `1.35e-13`); the band's
+floor is `49.85526760389873`, which sits `0.09196226605223` *above*
+`theta_0 = 49.7633053378465` — the interacting ground state buys that `0.092` by
+carrying a longitudinal excess of `1.5051 > 1.5`; the band's width is
+`3.0218401376237907` and its lowest excitation is `1.4664848961` with
+multiplicity 4, followed by 1.738019/1.738985/1.900696/1.916485 x5/2.197540/
+2.256485 x5/2.361189/2.374360 (x23)/3.021840. Two measurements stop this from
+being read as the theory's transverse spectrum. `H` does not preserve the
+sector: `|(1-P) H P| = 0.6234981956669964`, so Coulomb gauge cannot be imposed by
+restricting states — the longitudinal mode has to be eliminated from the
+operator, which is exactly what `H_C` does, and the block is the right object
+only because of that construction. And the transverse zero point is not fixed on
+the band: `(1/2) sum_T p^2 - 3` has norm `3.984344362627306` across the sector
+(the Higgs analogue `1.224744871391589 = sqrt(3/2)`), so the spacings are not a
+free transverse ladder. The seed's exact `3.0` for the transverse part is a seed
+expectation, not a sector constant.
+
 **Charge superselection is an operator statement here.** The window is a single
 charge sector — all 70 states carry the seed's two matter fermions, `N = 2 * I` —
 so no charge-variance assertion inside it could fail. The anchor is therefore

@@ -2691,6 +2691,25 @@ gives it `48.258201871141885` rather than $\theta_0-1.5=48.2633053378465$. The
 same-energies statement holds exactly on the sector the gauge-fixed theory keeps,
 and fails by `5.1e-3` where it does not apply.
 
+**The whole 44-state band, and why it is a block.** The same test resolves the
+sector completely rather than at its minimum. $H_C$ shifts every one of the 44
+energies by `1.5` (worst `1.35e-13`, so the identity is not a statement about
+the lowest level alone); the band's floor `49.85526760389873` lies
+`0.09196226605223` *above* $\theta_0=49.7633053378465$ — the ground state buys
+that `0.092` with a longitudinal excess of `1.5051 > 1.5`; the band's width is
+`3.0218401376237907`, and its splitting from the floor is `1.4664848961` (x4),
+`1.738019`, `1.738985`, `1.900696`, `1.916485` (x5), `2.197540`, `2.256485`
+(x5), `2.361189`, `2.374360` (x23), `3.021840`. Two further measurements stop
+that band from being read as the theory's transverse spectrum. First, $H$ does
+not preserve the sector: $\|(1-P)HP\|=0.6234981956669964$, so Coulomb gauge
+cannot be imposed by *restricting states* — the longitudinal mode has to be
+eliminated from the operator, which is what $H_C$ does, and the block is the
+right object only through that construction. Second, the transverse zero point
+is not fixed on the band: $\|\tfrac12\sum_T p^2-3\|=3.984344362627306$ across
+the sector (the Higgs analogue is `1.224744871391589` $=\sqrt{3/2}$), so the
+spacings are not a free transverse ladder. The seed's exact `3.0` is a seed
+expectation, not a sector constant.
+
 **Charge superselection is the statement that survives, and it is an operator
 statement.** The recorded window is a single charge sector: all 70 states carry
 the seed's two matter fermions, so $N=2\cdot I$ there and no charge-variance
@@ -2712,7 +2731,7 @@ Higgs/quark Yukawa block alone `-1.4425259347888656e-2` (**-0.029%**): present,
 nonzero and far from dominating, inside the truncated-reference scope of this
 section.
 
-**Cost.** The primary block runs in **113.85 s** (`--test-threads=1`, thirteen
+**Cost.** The primary block runs in **113.62 s** (`--test-threads=1`, thirteen
 tests) on the 2026-11-09 host, against 329.92 and 335.74 s for the earlier
 eight-test block; the Gauss, matter-density, Coulomb-gauge, superselection and
 interaction anchors cost `1.2`, `1.8`, `1.0`, `1.1` and `2.9` s. Two levers keep

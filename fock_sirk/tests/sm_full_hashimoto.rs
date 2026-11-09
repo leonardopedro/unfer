@@ -1153,6 +1153,17 @@ fn sm_full_gauss_with_matter_charge_is_content_sensitive() {
 ///   `1.5051 = 1.5 + 0.0051`, so the elimination moves its energy by more than
 ///   the zero-point, and no identification of `H_C` with `H` holds for states
 ///   the gauge-fixed theory does not contain.
+///
+/// The physical band is all 44 states, not the sector's minimum: `H_C` shifts
+/// every one of the 44 energies by `1.5` (worst `1.4e-13`), the band's floor
+/// `49.85526760389873` sits `0.0920` *above* `theta_0 = 49.7633053378465`, its
+/// width is `3.0218` and its first excitation is `1.4665` x4. Two caveats make
+/// that band a block rather than a spectrum of the theory: `H` does not
+/// preserve the sector (`|(1-P) H P| = 0.6235`), so Coulomb gauge cannot be
+/// imposed by restricting states — the mode has to be eliminated from the
+/// operator, which is what `H_C` does — and the transverse zero point is not
+/// fixed on the band (its spread is `3.98`), so the band's spacings are not a
+/// free transverse ladder. The seed's exact `3.0` is a seed expectation.
 #[test]
 fn sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point() {
     let seed_state = seed();
@@ -1230,7 +1241,11 @@ fn sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point() {
         (&eliminated - &want).norm()
     );
     let lowest = restricted_h.clone().symmetric_eigen().eigenvalues.min();
-    let lowest_coulomb = restricted_coulomb.symmetric_eigen().eigenvalues.min();
+    let lowest_coulomb = restricted_coulomb
+        .clone()
+        .symmetric_eigen()
+        .eigenvalues
+        .min();
     assert!(
         (lowest - lowest_coulomb - 1.5).abs() < 1e-12,
         "the Coulomb-gauge spectrum must be the window spectrum shifted by 1.5: {lowest:e} vs {lowest_coulomb:e}"
@@ -1239,6 +1254,114 @@ fn sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point() {
         "full_SM_coulomb: gauge_vacuum_dim={} E={lowest:e} E_coulomb={lowest_coulomb:e} shift={:e}",
         vacuum.len(),
         lowest - lowest_coulomb
+    );
+
+    // The physical band: the sector's whole 44-state spectrum, not just its
+    // minimum, and it is a physical spectrum only if H preserves the sector.
+    let projector = &basis * basis.adjoint();
+    let complement = DMatrix::<C>::identity(n, n) - &projector;
+    let leak = (&complement * &reference().matrix * &projector).norm();
+    let transverse_part = &gauge - &longitudinal - &higgs;
+    let restricted_transverse = basis.adjoint() * &transverse_part * &basis;
+    let three = DMatrix::<C>::identity(vacuum.len(), vacuum.len()) * C::new(3.0, 0.0);
+    let restricted_higgs = basis.adjoint() * &higgs * &basis;
+    let half = DMatrix::<C>::identity(vacuum.len(), vacuum.len()) * C::new(0.5, 0.0);
+    let transverse_spread = (&restricted_transverse - &three).norm();
+    let higgs_spread = (&restricted_higgs - &half).norm();
+    // 0.6235: the interacting H does not preserve the sector, so "Coulomb
+    // gauge" cannot be a restriction of states — the longitudinal mode has to
+    // be eliminated from the operator, which is what H_C does.
+    assert!(
+        (leak - 0.623_498_195_666_996_4).abs() < 1e-9,
+        "the sector's leak under H moved: {leak:.12}"
+    );
+    // Nor is the transverse content fixed on the sector: the electric part is
+    // the constant P/6 = 1.5, but the rest of the gauge zero point is not, so
+    // the band is not a free transverse ladder. The seed's 3.0 is a seed
+    // expectation and stays one.
+    assert!(
+        transverse_spread > 1.0,
+        "the transverse zero point must vary across the sector: {transverse_spread:e}"
+    );
+    let mut sector_spectrum: Vec<f64> = restricted_h
+        .clone()
+        .symmetric_eigen()
+        .eigenvalues
+        .iter()
+        .copied()
+        .collect();
+    let mut coulomb_spectrum: Vec<f64> = restricted_coulomb
+        .clone()
+        .symmetric_eigen()
+        .eigenvalues
+        .iter()
+        .copied()
+        .collect();
+    sector_spectrum.sort_by(f64::total_cmp);
+    coulomb_spectrum.sort_by(f64::total_cmp);
+    // Every one of the 44 energies, not only the minimum.
+    let shift_worst = (0..vacuum.len())
+        .map(|i| (sector_spectrum[i] - coulomb_spectrum[i] - 1.5).abs())
+        .fold(0.0, f64::max);
+    assert!(
+        shift_worst < 1e-9,
+        "the whole Coulomb spectrum must be the band shifted by 1.5: {shift_worst:e}"
+    );
+    assert!(
+        (sector_spectrum[0] - 49.855_267_603_898_73).abs() < 1e-9,
+        "the band's floor moved: {sector_spectrum:.12?}"
+    );
+    let (theta0, _) = ground_state();
+    // The interacting ground state lies *below* the whole band, by 0.0920: it
+    // pays a longitudinal excess of 1.5051 > 1.5 to get there.
+    assert!(
+        (sector_spectrum[0] - theta0 - 0.091_962_266_052_23).abs() < 1e-9,
+        "the band must sit 0.0920 above theta_0: {:e} vs {theta0:e}",
+        sector_spectrum[0]
+    );
+    let mut bands = std::collections::BTreeMap::<i64, usize>::new();
+    for value in sector_spectrum.iter() {
+        *bands
+            .entry(((value - sector_spectrum[0]) * 1e6).round() as i64)
+            .or_default() += 1;
+    }
+    let bands: Vec<(f64, usize)> = bands
+        .into_iter()
+        .map(|(key, count)| (key as f64 / 1e6, count))
+        .collect();
+    let want = vec![
+        (0.0, 1),
+        (1.466_485, 4),
+        (1.738_019, 1),
+        (1.738_985, 1),
+        (1.900_696, 1),
+        (1.916_485, 5),
+        (2.197_540, 1),
+        (2.256_485, 5),
+        (2.361_189, 1),
+        (2.374_360, 23),
+        (3.021_840, 1),
+    ];
+    assert_eq!(
+        bands.len(),
+        want.len(),
+        "the band's splitting moved: {bands:?}"
+    );
+    for ((gap, count), (want_gap, want_count)) in bands.iter().zip(&want) {
+        assert!(
+            (gap - want_gap).abs() < 1e-6 && count == want_count,
+            "band {gap} x{count} vs {want_gap} x{want_count}"
+        );
+    }
+    assert!(
+        (sector_spectrum[vacuum.len() - 1] - sector_spectrum[0] - 3.021_840_137_623_790_7).abs()
+            < 1e-9,
+        "the band's width moved"
+    );
+    eprintln!(
+        "full_SM_coulomb: band floor={:.12} width={:.12} gap1=1.466484896101 x4 leak={leak:.12} transverse_spread={transverse_spread:.12} higgs_spread={higgs_spread:.12}",
+        sector_spectrum[0],
+        sector_spectrum[vacuum.len() - 1] - sector_spectrum[0]
     );
 
     // Off that sector the elimination is not a constant.
