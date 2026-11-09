@@ -3010,6 +3010,11 @@ cargo run --release -p pcnl --example subspace_adaptation -- --ranks 1,2 --steps
 # R2: diagonal and rotated arms at ranks 2 and 4 (the table above)
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 2,4 \
   --steps 4000 --burn 500 --thin 5 --chains 4 --proposal curv,pilot,rotcurv,rotpilot
+# R2c: full target vs restricted, informed ranks 1,2,4 plus the rank-2 random control
+cargo run --release -p pcnl --example subspace_adaptation -- --targets restricted,full \
+  --ranks 1,2,4 --basis informed --proposal fixed,pilot --chains 4 --steps 4000 --burn 500 --thin 5
+cargo run --release -p pcnl --example subspace_adaptation -- --targets restricted,full \
+  --ranks 2 --basis random --proposal fixed,pilot --chains 4 --steps 4000 --burn 500 --thin 5
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3220,22 +3225,157 @@ distinguish block from full rotation.  The honest summary is that joint rescalin
 implemented, verified, and **not** an improvement here: the rank-2 informed pilot is
 5× *worse* in ESS, and the curvature arm fails for a reason rotation cannot address.
 
-**(f) What R2 has not done.**  These are *restricted-target* results: the target is still
-`π_r` at fixed `σ = 0.35`, so this is the plan's first R2 half only — full-target informed
-proposals (split `v = Bz + B_perp q`, informed `z`, prior-preserving pCN on `q`, full
-likelihood, correct ratios) and the SG-bias comparisons are untouched.  The preconditioner
-is diagonal or orthogonal-rotated but still *linear*; `pilot` measures width in the R1
-metric (`σ`), so a badly chosen `σ` limits it from below; the pilot's bias direction is
-safe for acceptance but is not a posterior-width estimate with an error bar, and there is
-no adaptive-MCMC claim here because the pilot draws are discarded.  The rotated arms are
-tested at ranks 2 and 4 only, with one seed each; the ESS of a 300-step pilot covariance
-is itself noisy, and no shrinkage or longer pilot was tried.  `λ ≠ 1` remains open.
+### R2c — the full target: a `B`/`B_perp` split with the full likelihood (same day)
+
+R2 and R2b sample `π_r`, a rank-`r` model.  The ambient target is not that model: it is
+`π_P ∝ N(0, I_P)(v)·exp(−λN·mean_loss(θ_ref + σv))` over all `P = 16 672` whitened
+coordinates, the same potential `task::mh_pcnl_chain`'s exact drift-free arm uses.  R2c
+keeps the informed basis and drops the restriction: the basis proposes, it no longer
+defines the support.
+
+* `FullTarget` (`src/target.rs`) wraps the existing `phi_parts`, so this is the ambient
+target rather than a second derivation of it.  A point is `v = Bz + w` with
+`w ⊥ span(B)`: `AffineSubspace::complement` returns `Π = I − BBᵀ`, and `lift`/`lift_tensor`
+map `(z, w)` to `θ = θ_ref + σv`.  The prior term is `½‖v‖²` over all `P` coordinates.
+* `mh_pcn_z_full` — the informed move with the **full** potential,
+  `z' = √(1−β²)·z + β·ξ`, `log α = Φ(v) − Φ(v') + ½‖v'‖² − ½‖v‖²`.  Exact for any
+  `β ∈ (0, 1]` for the same reason as R2's diagonal kernel: the target enters only
+  through `Φ`, and the proposal is prior-preserving by construction.
+* `mh_pcn_w_full` — the complement move, `w' = √(1−β_q²)·w + β_q·Πξ`, same ratio.  `w`
+  starts at 0 and the *driving noise* is projected, not the proposal; projecting `w'`
+  would make the proposal a non-Gaussian with a different density and break the ratio.  A
+  small numerical leak remains (`‖Πw − w‖/‖w‖ ≈ 1e-7` over a run) because the projection
+  is applied once per step rather than re-orthogonalised.
+* One step is `z` then `w`.  Each stage is `π_P`-invariant on its own (it is pCN on a
+  block with the other block fixed, scored with the full likelihood), so the composition
+  is too, and the two acceptances are separate adaptation signals.  `β_q` is a scalar
+  adapted with `adapt_beta` — `DiagScale`'s Robbins–Monro on `log m`, re-used — toward
+  `cfg.adapt_target = 0.5` during burn only, then frozen, so the kept window is one fixed
+  kernel.
+
+Two tests carry the exactness argument, because acceptance rates cannot: with a potential
+that does not depend on `w`, the `z` stage is **bitwise** R2's diagonal kernel
+(`full_z_move_with_a_w_blind_target_equals_the_diagonal_kernel`), and on the coupled
+Gaussian `Φ(v) = ½vᵀHv` with `B = e₀` (`v = (z, w₁)`), `H = [[1.6, −0.4], [−0.4, 1.6]]`,
+the two-stage kernel recovers `Σ = [[0.6, −0.4], [−0.4, 0.6]]` at ESS > 2 000, off-diagonal
+included (`two_stage_full_kernel_samples_the_coupled_gaussian`).  The first draft of that
+test read `w[0]`, which is identically zero under `B = e₀`, and reported `Var(z) = 0.334`
+with a healthy 33 % acceptance: the kernel was right and the test's index was wrong.  This
+is recorded because it is the failure mode these tests exist for.
+
+Ambient anchor (`4.30 % / 4.1523`, `0x52d503556818f1e0`), `P = 16 672`, `λ = 1`,
+`σ = 0.35`, `N = 512/256`, 4 chains × 4 000 steps, burn 500, thin 5 (2 000 draws per
+chain).  All sixteen cells ran in two processes off the same binary and anchor; `q acc/β_q`
+is the complement stage's acceptance at its frozen scale (`—` for `π_r`, which has no
+complement); `s` is wall time on the 2-core box where the two processes shared it, so it
+is a cost ratio, not a benchmark:
+
+| rank | basis | target | prop | z acc | q acc/β_q | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | evals | s |
+|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | informed | `π_r` | fixed | 76.7 % | — | 22 | 1.097 | 13.28 % | 0.232 | 1.0127 | 2.9449 | 0.264 | 0.0056 | 12 004 | 256 |
+| 1 | informed | `π_r` | pilot | 47.1 % | — | 501 | 1.013 | 13.28 % | 0.082 | 1.0124 | 2.9508 | 0.266 | 0.0003 | 13 204 | 287 |
+| 2 | informed | `π_r` | fixed | 71.1 % | — | 14 | 1.157 | 14.06 % | 0.060 | 0.9972 | 2.9086 | 0.260 | 0.0087 | 12 004 | 266 |
+| 2 | informed | `π_r` | pilot | 44.6 % | — | 106 | 1.032 | 15.62 % | 0.047 | 0.9970 | 2.9120 | 0.272 | 0.0005 | 13 204 | 292 |
+| 4 | informed | `π_r` | fixed | 60.6 % | — | 80 | 1.033 | 12.89 % | 0.100 | 0.9928 | 2.8716 | 0.270 | 0.0046 | 12 004 | 269 |
+| 4 | informed | `π_r` | pilot | 50.7 % | — | 12 | 1.602 | 12.89 % | 0.414 | 0.9914 | 2.8654 | 0.269 | 0.0017 | 13 204 | 273 |
+| 2 | random | `π_r` | fixed | 98.5 % | — | 11 | 1.424 | 4.30 % | 0.000 | 1.0958 | 4.1508 | 0.325 | 0.0011 | 12 004 | 241 |
+| 2 | random | `π_r` | pilot | 59.5 % | — | **1 260** | **1.000** | 4.30 % | 0.000 | 1.0955 | 4.1498 | 0.325 | 0.0001 | 13 204 | 262 |
+| 1 | informed | `π_P` | fixed | 87.9 % | 21.9 %/0.08 | 8 | 1.602 | 19.14 % | 0.454 | 0.8674 | 1.9505 | 0.170 | 0.0700 | 24 004 | 524 |
+| 1 | informed | `π_P` | pilot | 49.2 % | 45.1 %/0.05 | 10 | 1.319 | 14.45 % | 0.958 | 0.8618 | 1.9163 | 0.173 | 0.0654 | 26 404 | 570 |
+| 2 | informed | `π_P` | fixed | 84.3 % | 24.5 %/0.08 | 8 | 1.467 | 20.31 % | 0.661 | 0.8396 | **1.8313** | 0.101 | 0.0704 | 24 004 | 483 |
+| 2 | informed | `π_P` | pilot | 51.2 % | 43.9 %/0.05 | 7 | 1.620 | 20.31 % | 0.674 | 0.8834 | 2.0299 | 0.125 | 0.0684 | 26 404 | 509 |
+| 4 | informed | `π_P` | fixed | 76.5 % | 27.0 %/0.08 | 6 | 1.847 | 14.84 % | 1.126 | 0.8764 | 1.9565 | 0.172 | 0.0763 | 24 004 | 390 |
+| 4 | informed | `π_P` | pilot | 47.8 % | 41.9 %/0.05 | 5 | 3.350 | 14.45 % | 1.284 | 0.8552 | 1.9261 | 0.171 | 0.0646 | 26 404 | 422 |
+| 2 | random | `π_P` | fixed | 99.2 % | 28.1 %/0.08 | 6 | 1.748 | 16.80 % | 1.506 | 0.8648 | 1.9740 | 0.145 | 0.0724 | 24 004 | 390 |
+| 2 | random | `π_P` | pilot | 79.1 % | 40.7 %/0.05 | 6 | 1.796 | 17.58 % | 1.270 | 0.8699 | 2.0359 | 0.155 | 0.0659 | 26 404 | 423 |
+
+**Result 10 — the full target's predictive is better than the restricted model's at every
+matched cell.**  NLL 1.83–2.03 against 2.87–2.95, Brier 0.84–0.88 against 0.99–1.01, ECE
+0.10–0.17 against 0.26–0.27 (the anchor's own predictive is 4.1523 / 1.0960 / 0.325).  All
+six informed `π_P` cells beat all six informed `π_r` cells, and the gaps (0.84–1.11 NLL,
+0.11–0.17 Brier) are 12–14× the largest NLL MCSE in either grid (0.0763) and 6–17× the
+largest Brier MCSE (0.0170).  The restricted arms were not
+broken by this test — rank 4 pilot has ESS 12 / `R̂` 1.602 and still lands at NLL 2.8654,
+within 0.09 of its rank-1 partner — so what bounds them is the restriction, not the rank
+or the mixing.  Accuracy moves much less (12.9–15.6 % vs 14.5–20.3 %, overlapping at
+MCSE 0.45–1.28); the gain is in the probability score, not in top-1.
+
+**Result 11 — with the full target the informed basis stops mattering.**  `π_P` on a
+*random* rank-2 basis gives NLL 1.9740 / 2.0359, Brier 0.8648 / 0.8699, accuracy 16.80 /
+17.58 % — inside ~2 MCSE of the informed `π_P` cells at the same rank (NLL 1.8313–2.0299,
+Brier 0.8396–0.8834, accuracy 20.31 %).  On `π_r` the same control is the anchor itself
+(NLL 4.1498 / 4.1508, accuracy 4.30 %, `R̂` 1.000 at ESS 1 260).  So the informed PCA buys
+a `z` step schedule in `π_P`, not the answer: the complement supplies the directions the
+basis misses, which is what a full-support kernel must do.  The consequence for R2's
+control design is that "informed beats random" is evidence about the *restricted* target
+only; for `π_P` a random basis is not a weaker arm and should not be read as one.
+
+**Result 12 — the complement is data-constrained, and the adaptation says so.**  The `w`
+stage starts at `β_q = 0.5` and is adapted down during burn in every cell: it freezes at
+0.08 in the fixed-`z` cells (acceptance 21.9–28.1 %) and at 0.05 in the pilot cells
+(acceptance 40.7–45.1 %, which get 300 extra adapting steps from the pilot).  The
+complement's conditional is therefore far narrower than the prior along these directions —
+a pCN at prior scale would be proposing into a likelihood wall — and the scalar `β_q` finds
+that scale without a Hessian.  The `z` stage, by contrast, accepts 76.5–87.9 % at the
+hand-set `β = 0.05`: the informed directions are shallow, which is consistent with R2's
+finding that `curv` reads them as wider than the prior at this anchor.
+
+**Result 13 — cost and mixing, stated against the claim.**  `π_P` spends two `Φ`
+evaluations per step (24 004 / 26 404 against 12 004 / 13 204) and 1.6–1.9× the wall time
+(390–570 s against 241–292 s).  Its ESS(Φ) is 5–10 with `R̂` 1.32–3.35, against 12–501 for
+the restricted cells, so `MCSE(NLL)` is 0.065–0.076 rather than ~0.001.  ESS across
+targets is not a like-for-like efficiency number — the potentials differ in dimension and
+scale — but within `π_P` it is the binding limitation, and it means Result 10 is a claim
+about a 0.9-NLL *gap*, not about the full target's NLL to two decimals.  The `π_P`
+accuracy column is correspondingly noisy (MCSE 0.45–1.51): its ranking across ranks and
+proposals is not resolvable at this budget, and is not used.
+
+**Result 14 — tripling one cell's budget moves the predictive by about one MCSE, and
+`Φ`'s mixing not at all.**  Informed rank-2 fixed at 12 000 steps (burn 1 000, thin 5,
+8 800 draws, 96 004 evaluations, 1 752 s) gives NLL 1.7559 (MCSE 0.0315), Brier 0.8232
+(0.0101), accuracy 21.48 %, ECE 0.092 — against the 4 000-step cell's 1.8313 (0.0704) /
+0.8396 (0.0138) / 20.31 % / 0.101.  The NLL difference is 0.075, ≈1.1× the shorter run's
+own MCSE, and the Brier difference 0.016 is ≈1.2× its MCSE, so the two runs are consistent;
+if anything the longer chain scores *better*, which means the 4 000-step grid does not
+flatter `π_P`.  Mixing inside the potential is what does not improve: ESS(Φ) 10 against 8,
+`R̂` 1.293 against 1.467, `β_q` 0.06 against 0.08 (twice the burn).  An ESS that grows by
+25 % when the chain triples in length is not an equilibrium sample — the effective count is
+set by one slow collective mode of the complement, not by the number of steps — so the
+`π_P` cells are best read as transient averages that have settled in their *predictive*
+while still relaxing in `Φ`.  Length, not more chains, is what would pin the absolute
+numbers, and the complement proposal is the lever that would make length affordable: a
+scalar pCN decorrelates `Φ` at ≈0.1 per 1 000 evaluations even after adaptation, which is
+the measured reason Result 12's narrow conditional is not the whole story.
+
+**Result 15 — this changes the plan's reading, in the target's favour.**  R2 said that if
+the ambient posterior predicts the base rate, accurately sampling it is a negative result
+about the target rather than about the kernel.  That is not what happened here: sampled
+properly, `π_P` has the best probability score of anything measured in R2 (Brier
+0.84–0.88, NLL 1.83–2.03, and 0.8232 / 1.7559 in the 12 000-step cell) against the
+restricted model's 0.99–1.01 / 2.87–2.95 and the
+anchor's 1.096 / 4.15, while accuracy stays at 15–20 %.  So R1/R2's "is the restriction the
+limit?" question is answered *yes* at `σ = 0.35`, `λ = 1`, `N = 512`: the restricted-model
+predictive was the artifact, and the ambient posterior is not merely defensible, it scores
+better.  Nothing here establishes a base-rate claim, and the low ESS means the absolute
+numbers should be re-measured before being quoted as posterior summaries.
+
+**(f) What R2 has not done.**  `π_P` at 4 000 steps has ESS(Φ) 5–10 and `R̂` up to 3.35, so
+the full-target *absolute* predictives are not converged, even though the 0.9-NLL gap is
+far outside their error bars; Result 14 is one cell, not a systematic convergence study.
+The complement proposal is still a scalar pCN: nothing here tests per-coordinate or
+Hessian-informed `β_q`, which Result 12 suggests is where the gain would be, and the
+curvature/rotated arms are not implemented for `π_P` because the split-potential Hessian is
+unvalidated.  Ranks 8+, `λ ≠ 1`, `σ ≠ 0.35`, and the SG-bias comparison remain untouched;
+`pilot` still measures width in the R1 metric, so a badly chosen `σ` limits it from below,
+and its bias direction is safe for acceptance but is not a posterior-width estimate with an
+error bar.  There is no adaptive-MCMC claim: the adaptation freezes after burn and the
+pilot draws are discarded.
 
 ## Reproduce / verify
 
 ```bash
 cd unfer
-cargo test -p pcnl --locked                              # 168 tests (127 unit + 7 comparators
+cargo test -p pcnl --locked                              # 171 tests (130 unit + 7 comparators
                                                          #  + 8 formal claims + 26 numerical)
                                                          # (debug build: ~40 min on 2 cores;
                                                          #  `--release` is ~6 min)

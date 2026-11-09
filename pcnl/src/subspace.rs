@@ -314,6 +314,24 @@ impl AffineSubspace {
         Tensor::from_vec(flat, vec![self.p()], &Device::Cpu)
     }
 
+    /// `out = (I − BBᵀ) v`, the component of `v` orthogonal to `span(B)`.
+    ///
+    /// Used to draw the complement noise of the full-target proposal: the
+    /// projected noise is Gaussian on the complement with covariance the
+    /// identity there, which is what makes the second stage a pCN kernel on
+    /// `N(0, I_{P−r})` rather than a move that leaks back into `B`.
+    pub fn complement(&self, v: &[f32], out: &mut [f32]) {
+        assert_eq!(v.len(), self.p(), "complement: v must have p entries");
+        assert_eq!(out.len(), self.p(), "complement: out must have p entries");
+        let mut coords = vec![0.0f32; self.dim()];
+        self.basis.project(v, &mut coords);
+        let mut along = vec![0.0f32; self.p()];
+        self.basis.apply(&coords, &mut along);
+        for i in 0..self.p() {
+            out[i] = v[i] - along[i];
+        }
+    }
+
     /// The chain rule `dΦ/dz = Bᵀ C_halfᵀ ∇_θ Φ`.  Getting this wrong is the
     /// classic subspace error (it silently samples a different temperature),
     /// hence `projected_gradient_matches_finite_differences`.
@@ -617,6 +635,44 @@ mod tests {
             pca_basis(&snapshots[..1], 1, 1),
             Err(SubspaceError::BadLength { .. })
         ));
+    }
+
+    #[test]
+    fn complement_is_orthogonal_to_the_basis_and_keeps_a_pure_complement() {
+        let p = 11;
+        let r = 3;
+        let basis = Basis::random(p, r, 21).expect("basis");
+        let sub = AffineSubspace::isotropic(vec![0.0; p], basis, 1.0).expect("subspace");
+        let v: Vec<f32> = (0..p).map(|i| (i as f32 * 0.71).cos()).collect();
+        let mut perp = vec![0.0f32; p];
+        sub.complement(&v, &mut perp);
+        // Bᵀ(I−BBᵀ)v = 0, and projecting again changes nothing.
+        let mut coords = vec![0.0f32; r];
+        sub.basis().project(&perp, &mut coords);
+        for j in 0..r {
+            assert!(coords[j].abs() < 1e-5, "B^T v_perp[{j}] = {}", coords[j]);
+        }
+        let mut twice = vec![0.0f32; p];
+        sub.complement(&perp, &mut twice);
+        for i in 0..p {
+            assert!(
+                (twice[i] - perp[i]).abs() < 1e-6,
+                "projector not idempotent at {i}"
+            );
+        }
+        // (I−BBᵀ)(Bz + w) = w for w in the complement.
+        let z = [0.3f32, -1.1, 0.4];
+        let mut bz = vec![0.0f32; p];
+        sub.basis().apply(&z, &mut bz);
+        let mixed: Vec<f32> = bz.iter().zip(&perp).map(|(a, b)| a + b).collect();
+        let mut back = vec![0.0f32; p];
+        sub.complement(&mixed, &mut back);
+        for i in 0..p {
+            assert!(
+                (back[i] - perp[i]).abs() < 1e-5,
+                "complement of Bz+w at {i}"
+            );
+        }
     }
 
     #[test]

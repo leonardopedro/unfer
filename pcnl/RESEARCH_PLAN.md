@@ -251,9 +251,24 @@ unchanged (NLL 2.9119 vs 2.9123), `rotcurv` fails like `curv` (`β_i` still clam
 NLL 3.6051/3.5249), and on the random control the two rotated arms move ESS by less than a
 factor of 1.6 either way with the predictive identical to four decimals. The reported
 `β_i` ranges nearly match the diagonal arm's, which points at eigenvector noise from a
-150-draw pilot covariance rather than at the widths. Open: full-target informed proposals,
-a pilot long enough (or shrunk) to pin the eigenbasis, ranks 8+, and the SG-bias
-comparison.
+150-draw pilot covariance rather than at the widths. The full-target half is now in too
+(`FullTarget`, `mh_pcn_z_full`, `mh_pcn_w_full`, `adapt_beta` in `src/target.rs`,
+`--targets restricted,full` in the example): `π_P ∝ N(0,I_P)(v)·exp(−λN·mean_loss)` with
+`v = Bz + w`, `w ⊥ span(B)`, an informed `z` move and a projected-complement `w` move,
+each scored with the full likelihood and each `π_P`-invariant, with `β_q` adapted during
+burn and frozen. Exactness is tested two ways: a `w`-blind potential makes the `z` stage
+bitwise the diagonal kernel, and the coupled Gaussian's `Σ = [[0.6,−0.4],[−0.4,0.6]]` is
+recovered at ESS > 2 000. Measured at ranks 1, 2, 4 plus a rank-2 random control (4 ×
+4 000, ambient): `π_P` gives NLL 1.83–2.03 / Brier 0.84–0.88 against `π_r`'s 2.87–2.95 /
+0.99–1.01, and the *random* basis does just as well on `π_P` (1.97–2.04 / 0.865–0.870)
+where it collapses to the anchor on `π_r` (NLL 4.15). So the restriction, not the rank or
+the mixing, was the limit, and with full support the informed basis is a `z` jump schedule
+only. Cost: two evaluations per step; ESS(Φ) 5–10 and `R̂` up to 3.35, so the ~0.9-NLL gap
+(12–20× the MCSE) is the measured claim and the absolute NLL is not converged. Open:
+per-coordinate or Hessian-informed `β_q` — the adaptation lands at 0.05–0.08, far below
+prior scale, which is where the mixing gain would be — longer full-target chains, a pilot
+long enough (or shrunk) to pin the rotated eigenbasis, ranks 8+, `λ ≠ 1` / `σ ≠ 0.35`, and
+the SG-bias comparison.
 
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 

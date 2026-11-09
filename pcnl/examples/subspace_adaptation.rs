@@ -71,8 +71,9 @@ use pcnl::experiment::{AnchorSetup, Config, anchor_hash, bma_detail, bma_metrics
 use pcnl::model::{Shapes, Variant};
 use pcnl::subspace::{AffineSubspace, Basis, pca_basis};
 use pcnl::target::{
-    DiagScale, RotScale, SubspaceTarget, ZPotential, curvature_diag, curvature_hessian, mh_pcn_z,
-    mh_pcn_z_rotated, mh_pcn_z_scaled,
+    DiagScale, FullPotential, FullTarget, RotScale, SubspaceTarget, ZPotential, adapt_beta,
+    curvature_diag, curvature_hessian, mh_pcn_w_full, mh_pcn_z, mh_pcn_z_full, mh_pcn_z_rotated,
+    mh_pcn_z_scaled,
 };
 use pcnl::task::Dataset;
 use rand::{Rng, SeedableRng};
@@ -89,6 +90,25 @@ impl Kind {
         match self {
             Kind::Random => "random",
             Kind::Informed => "informed",
+        }
+    }
+}
+
+/// Which target the chain samples: the rank-`r` restriction, or the full
+/// `P`-dimensional posterior in the `B`/complement split.  These are different
+/// targets, so their predictive numbers answer different questions and share a
+/// table only to make the comparison visible.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetKind {
+    Restricted,
+    Full,
+}
+
+impl TargetKind {
+    fn label(&self) -> &'static str {
+        match self {
+            TargetKind::Restricted => "pi_r",
+            TargetKind::Full => "pi_P",
         }
     }
 }
@@ -202,6 +222,12 @@ struct Cfg {
     /// second half is used, so the pilot has to be long enough for the first
     /// half to be a warm-up.
     pilot_steps: usize,
+    /// Targets to sample; `full` adds the `pi_P` split chain (two stages per
+    /// step, so twice the potential evaluations).
+    targets: Vec<TargetKind>,
+    /// Starting scale of the complement stage; adapted during burn toward
+    /// `adapt_target` and frozen after it.
+    beta_q: f64,
 }
 
 impl Default for Cfg {
@@ -228,6 +254,11 @@ impl Default for Cfg {
             adapt_target: 0.5,
             curvature_h: 0.01,
             pilot_steps: 300,
+            targets: vec![TargetKind::Restricted],
+            // The complement is prior-dominated in the intended use, where a
+            // step near pCN's maximum is the right proposal; the Robbins–Monro
+            // adaptation corrects this start if it is wrong.
+            beta_q: 0.5,
         }
     }
 }
@@ -274,6 +305,22 @@ impl Cfg {
         }
         if let Some(v) = flag("--pilot").and_then(|v| v.parse().ok()) {
             cfg.pilot_steps = v;
+        }
+        if let Some(v) = flag("--targets") {
+            let parsed: Vec<TargetKind> = v
+                .split(',')
+                .filter_map(|x| match x.trim() {
+                    "restricted" => Some(TargetKind::Restricted),
+                    "full" => Some(TargetKind::Full),
+                    _ => None,
+                })
+                .collect();
+            if !parsed.is_empty() {
+                cfg.targets = parsed;
+            }
+        }
+        if let Some(v) = flag("--beta-q").and_then(|v| v.parse().ok()) {
+            cfg.beta_q = v;
         }
         if let Some(v) = flag("--shapes") {
             cfg.quick = v.trim() == "quick";
@@ -450,9 +497,14 @@ fn mcse(series: &[Vec<f64>]) -> (f64, f64) {
 
 struct CellLine {
     rank: usize,
+    target: TargetKind,
     kind: Kind,
     prop: Prop,
     accept: f64,
+    /// Acceptance of the complement stage (`pi_P` only; `NaN` for `pi_r`).
+    accept_q: f64,
+    /// Mean frozen complement scale (`pi_P` only; `NaN` for `pi_r`).
+    beta_q: f64,
     /// ESS/Rhat of the *potential* — the state variable, not a functional of it.
     ess_phi: f64,
     rhat_phi: f64,
@@ -622,9 +674,182 @@ fn run_cell(
     };
     CellLine {
         rank,
+        target: TargetKind::Restricted,
         kind,
         prop,
         accept: accepted as f64 / total.max(1) as f64,
+        accept_q: f64::NAN,
+        beta_q: f64::NAN,
+        ess_phi,
+        rhat_phi: gelman_rubin(&phi_chain),
+        acc: detail.acc,
+        nll: detail.nll,
+        ece: detail.ece,
+        brier: detail.brier,
+        acc_mcse,
+        brier_mcse,
+        nll_mcse,
+        multiplier,
+        beta_range,
+        models: detail.models,
+        evals: target.evaluations(),
+        seconds: starts.elapsed().as_secs_f64(),
+    }
+}
+
+/// The same chain on the **full** target `π_P`, sampled in the `B`/complement
+/// split: one informed `z` move and one complement `w` move per step, each an
+/// exact MH kernel for its conditional (so the sweep is invariant for `π_P`).
+///
+/// The `pilot` widths are measured here too, but on this target: the pilot runs
+/// the same two-stage sweep for `pilot_steps` and takes the spread of the
+/// second half of `z`, while `β_q` is adapted alongside.  The `curv*` proposals
+/// are not offered for `π_P` — a Hessian of the *split* potential at `w = 0` is
+/// a different object from the restricted one and has not been validated, so
+/// the example refuses it rather than presenting an unmeasured estimator.
+#[allow(clippy::too_many_arguments)]
+fn run_full_cell(
+    cfg: &Cfg,
+    shapes: &Shapes,
+    data_b: &Dataset,
+    ref_flat: &[f32],
+    rank: usize,
+    kind: Kind,
+    prop: Prop,
+    basis: Basis,
+) -> CellLine {
+    assert!(
+        matches!(prop, Prop::Fixed | Prop::Pilot),
+        "pi_P supports the fixed and pilot proposals, not {}",
+        prop.label()
+    );
+    let subspace =
+        AffineSubspace::isotropic(ref_flat.to_vec(), basis, cfg.sigma).expect("validated subspace");
+    let p = subspace.p();
+    let target = FullTarget::new(
+        subspace,
+        cfg.lambda,
+        data_b.clone(),
+        *shapes,
+        Variant::Cosine,
+    );
+    let fixed_betas = vec![cfg.beta; rank];
+    let starts = Instant::now();
+    let mut per_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
+    let mut phi_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
+    let mut kept: Vec<Vec<Tensor>> = Vec::with_capacity(cfg.chains);
+    let (mut accepted_z, mut accepted_w, mut total) = (0usize, 0usize, 0usize);
+    let mut multipliers = Vec::with_capacity(cfg.chains);
+    let mut frozen_betas: Vec<f64> = Vec::new();
+    let mut frozen_q: Vec<f64> = Vec::with_capacity(cfg.chains);
+    for c in 0..cfg.chains {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(
+            cfg.seed
+                ^ ((rank as u64) << 24)
+                ^ if kind == Kind::Informed { 0x1_000 } else { 0 }
+                ^ prop.seed_offset()
+                // Distinct from the restricted arm's stream: the targets differ,
+                // so sharing draws would only invite reading a difference that
+                // is not there.
+                ^ 0xa_0000
+                ^ (c as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15),
+        );
+        let mut z = vec![0.0f32; rank];
+        // `w = 0` is in the complement, and the projected noise keeps it there.
+        let mut w = vec![0.0f32; p];
+        let mut phi = target.phi(&z, &w);
+        let mut beta_q = cfg.beta_q;
+        let mut scale: Option<Scale> = None;
+        if prop == Prop::Pilot {
+            let mut columns = vec![Vec::new(); rank];
+            for t in 0..cfg.pilot_steps {
+                let st = mh_pcn_z_full(&target, &mut z, &w, phi, &fixed_betas, &mut rng);
+                phi = st.phi;
+                let sq = mh_pcn_w_full(&target, &z, &mut w, phi, beta_q, &mut rng);
+                phi = sq.phi;
+                beta_q = adapt_beta(beta_q, sq.accepted, t, cfg.adapt_target);
+                if t >= cfg.pilot_steps / 2 {
+                    for (i, slot) in columns.iter_mut().enumerate() {
+                        slot.push(f64::from(z[i]));
+                    }
+                }
+            }
+            let mut s = DiagScale::from_widths(&column_sd(&columns));
+            s.target_accept = cfg.adapt_target;
+            scale = Some(Scale::Diag(s));
+        }
+        let mut losses = Vec::new();
+        let mut phis = Vec::new();
+        let mut draws = Vec::new();
+        for t in 0..cfg.steps {
+            let zs = match &mut scale {
+                None => mh_pcn_z_full(&target, &mut z, &w, phi, &fixed_betas, &mut rng),
+                Some(s) => {
+                    let out = mh_pcn_z_full(&target, &mut z, &w, phi, &s.betas(), &mut rng);
+                    if t < cfg.burn {
+                        s.adapt(out.accepted, t);
+                    }
+                    out
+                }
+            };
+            phi = zs.phi;
+            let ws = mh_pcn_w_full(&target, &z, &mut w, phi, beta_q, &mut rng);
+            phi = ws.phi;
+            if t < cfg.burn {
+                beta_q = adapt_beta(beta_q, ws.accepted, t, cfg.adapt_target);
+            }
+            if t >= cfg.burn {
+                total += 1;
+                accepted_z += usize::from(zs.accepted);
+                accepted_w += usize::from(ws.accepted);
+                if (t - cfg.burn).is_multiple_of(cfg.thin) {
+                    let theta = target
+                        .lift_tensor(&z, &w)
+                        .expect("lifting a validated split");
+                    let loss = data_b
+                        .nll(&theta, shapes, Variant::Cosine)
+                        .unwrap_or(f64::NAN);
+                    losses.push(loss);
+                    phis.push(phi);
+                    draws.push(theta);
+                }
+            }
+        }
+        if let Some(s) = &scale {
+            multipliers.push(s.multiplier());
+            frozen_betas.extend(s.betas());
+        }
+        frozen_q.push(beta_q);
+        per_chain.push(losses);
+        phi_chain.push(phis);
+        kept.push(draws);
+    }
+    let detail = bma_detail(&kept, shapes, Variant::Cosine, data_b);
+    let ess_phi = ess_bulk(&phi_chain);
+    let (_, nll_mcse) = mcse(&per_chain);
+    let (_, acc_mcse) = mcse(&detail.acc_chain);
+    let (_, brier_mcse) = mcse(&detail.brier_chain);
+    let multiplier = if multipliers.is_empty() {
+        f64::NAN
+    } else {
+        multipliers.iter().sum::<f64>() / multipliers.len() as f64
+    };
+    let beta_range = if frozen_betas.is_empty() {
+        (cfg.beta, cfg.beta)
+    } else {
+        (
+            frozen_betas.iter().copied().fold(f64::INFINITY, f64::min),
+            frozen_betas.iter().copied().fold(0.0, f64::max),
+        )
+    };
+    CellLine {
+        rank,
+        target: TargetKind::Full,
+        kind,
+        prop,
+        accept: accepted_z as f64 / total.max(1) as f64,
+        accept_q: accepted_w as f64 / total.max(1) as f64,
+        beta_q: frozen_q.iter().sum::<f64>() / frozen_q.len().max(1) as f64,
         ess_phi,
         rhat_phi: gelman_rubin(&phi_chain),
         acc: detail.acc,
@@ -671,6 +896,18 @@ fn main() {
         cfg.pilot_steps, cfg.beta
     );
     println!(
+        "targets: {}. pi_r = the rank-r restriction (one potential per step). pi_P = the full \
+         P-dimensional posterior in the B/complement split: informed z then projected complement \
+         w, both scored with the full likelihood (two potentials per step, full supports fixed \
+         and pilot only); q start beta {:.2}",
+        cfg.targets
+            .iter()
+            .map(|t| t.label())
+            .collect::<Vec<_>>()
+            .join(","),
+        cfg.beta_q
+    );
+    println!(
         "P = {p}, N_train = {}, N_test = {}. anchor = Task-A pretrain \
          (loss {:.4} -> {:.4}); on B: {:.2}% / NLL {:.4} (no adaptation)",
         cfg.n_train,
@@ -708,12 +945,14 @@ fn main() {
         path_last.unwrap_or(f32::NAN)
     );
     println!(
-        "\n{:>4}  {:>8}  {:>5}  {:>7}  {:>7}  {:>6}  {:>7}  {:>8}  {:>8}  {:>7}  {:>8}  \
-         {:>9}  {:>6}  {:>6}  {:>13}  {:>6}  {:>8}  {:>6}",
+        "\n{:>4}  {:>6}  {:>8}  {:>5}  {:>7}  {:>13}  {:>7}  {:>6}  {:>7}  {:>8}  {:>8}  \
+         {:>7}  {:>8}  {:>9}  {:>6}  {:>6}  {:>13}  {:>6}  {:>8}  {:>6}",
         "rank",
+        "target",
         "basis",
         "prop",
         "accept",
+        "q acc/beta",
         "ESS(Phi)",
         "Rhat",
         "BMA acc",
@@ -743,46 +982,70 @@ fn main() {
                     continue;
                 }
             };
-            for &prop in &cfg.proposals {
-                let line = run_cell(
-                    &cfg,
-                    &shapes,
-                    &data_b,
-                    &ref_flat,
-                    rank,
-                    kind,
-                    prop,
-                    basis.clone(),
-                );
-                let range = if line.prop == Prop::Fixed {
-                    format!("{:.2}", cfg.beta)
-                } else {
-                    format!("{:.1e}..{:.2}", line.beta_range.0, line.beta_range.1)
-                };
-                println!(
-                    "{:>4}  {:>8}  {:>5}  {:>6.1}%  {:>7.0}  {:>6.3}  {:>7.2}%  {:>8.3}  \
-                     {:>8.4}  {:>7.4}  {:>9.4}  {:>6.3}  {:>6.4}  {:>6.2}  {:>13}  {:>6}  \
-                     {:>8}  {:>6.1}",
-                    line.rank,
-                    line.kind.label(),
-                    line.prop.label(),
-                    100.0 * line.accept,
-                    line.ess_phi,
-                    line.rhat_phi,
-                    line.acc,
-                    line.acc_mcse,
-                    line.brier,
-                    line.brier_mcse,
-                    line.nll,
-                    line.ece,
-                    line.nll_mcse,
-                    line.multiplier,
-                    range,
-                    line.models,
-                    line.evals,
-                    line.seconds
-                );
-                lines.push(line);
+            for &target in &cfg.targets {
+                for &prop in &cfg.proposals {
+                    if target == TargetKind::Full && !matches!(prop, Prop::Fixed | Prop::Pilot) {
+                        continue;
+                    }
+                    let line = match target {
+                        TargetKind::Restricted => run_cell(
+                            &cfg,
+                            &shapes,
+                            &data_b,
+                            &ref_flat,
+                            rank,
+                            kind,
+                            prop,
+                            basis.clone(),
+                        ),
+                        TargetKind::Full => run_full_cell(
+                            &cfg,
+                            &shapes,
+                            &data_b,
+                            &ref_flat,
+                            rank,
+                            kind,
+                            prop,
+                            basis.clone(),
+                        ),
+                    };
+                    let range = if line.prop == Prop::Fixed {
+                        format!("{:.2}", cfg.beta)
+                    } else {
+                        format!("{:.1e}..{:.2}", line.beta_range.0, line.beta_range.1)
+                    };
+                    let q = if line.accept_q.is_finite() {
+                        format!("{:.1}%/{:.2}", 100.0 * line.accept_q, line.beta_q)
+                    } else {
+                        "-".to_string()
+                    };
+                    println!(
+                        "{:>4}  {:>6}  {:>8}  {:>5}  {:>6.1}%  {:>13}  {:>7.0}  {:>6.3}  \
+                         {:>7.2}%  {:>8.3}  {:>8.4}  {:>7.4}  {:>9.4}  {:>6.3}  {:>6.4}  \
+                         {:>6.2}  {:>13}  {:>6}  {:>8}  {:>6.1}",
+                        line.rank,
+                        line.target.label(),
+                        line.kind.label(),
+                        line.prop.label(),
+                        100.0 * line.accept,
+                        q,
+                        line.ess_phi,
+                        line.rhat_phi,
+                        line.acc,
+                        line.acc_mcse,
+                        line.brier,
+                        line.brier_mcse,
+                        line.nll,
+                        line.ece,
+                        line.nll_mcse,
+                        line.multiplier,
+                        range,
+                        line.models,
+                        line.evals,
+                        line.seconds
+                    );
+                    lines.push(line);
+                }
             }
         }
     }
@@ -791,10 +1054,15 @@ fn main() {
         "\nreading: these chains are stationary (fixed target, fixed beta after burn), so \
          ESS/Rhat are stationary-chain diagnostics — unlike the ambient decaying-step traces.  \
          The target is pi_r, the rank-r-restricted model, not the ambient posterior: a good BMA \
-         here is evidence about that restriction, not about full-dimensional inference.  \
-         Compare 'informed' against 'random' at the same rank and proposal: the control decides \
-         whether the path's directions carried anything.  MCSE(acc)/MCSE(B) are the sd/sqrt(ESS) \
-         of the mean single-draw accuracy/Brier, not of the BMA ratio-of-averages."
+         here is evidence about that restriction, not about full-dimensional inference.  The \
+         pi_P rows answer the other half: same basis and proposal, but the full likelihood and \
+         a complement move, so their predictives are a sample of the full P-dimensional \
+         posterior (up to chain error) and are directly comparable with the ambient run's, not \
+         with pi_r's.  Compare 'informed' against 'random' at the same rank, target and \
+         proposal: the control decides whether the path's directions carried anything.  MCSE(acc)/ \
+         MCSE(B) are the sd/sqrt(ESS) of the mean single-draw accuracy/Brier, not of the BMA \
+         ratio-of-averages; pi_P spends two evaluations per step, so its 'evals' column is twice \
+         its step count."
     );
     let _ = lines;
 }

@@ -23,6 +23,7 @@
 use crate::model::{Shapes, Variant};
 use crate::subspace::AffineSubspace;
 use crate::task::Dataset;
+use candle_core::{Device, Tensor};
 use rand::Rng;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -126,6 +127,150 @@ impl ZPotential for SubspaceTarget {
         self.evals.fetch_add(1, Ordering::Relaxed);
         let (lik, prior) = self.phi_parts(z);
         lik + prior
+    }
+}
+
+/// A target on the ambient `P`-dimensional space, split as `v = Bz + w` with
+/// `w` in the orthogonal complement of `span(B)`.
+///
+/// This is the interface the full-target kernels need and no more: values, a
+/// dimension for the informed block, and the projector that keeps the
+/// complement move in the complement.  In particular there is no gradient —
+/// the same reason [`ZPotential`] has none, so an unadjusted kernel cannot be
+/// built here by accident.
+pub trait FullPotential {
+    /// Informed dimension `r` (`B` has `r` columns).
+    fn dim(&self) -> usize;
+    /// Ambient dimension `P`.
+    fn p(&self) -> usize;
+    /// `Φ(z, w)`; `z` is in `B`-coordinates, `w` is an ambient vector.
+    fn phi(&self, z: &[f32], w: &[f32]) -> f64;
+    /// `out = (I − BBᵀ) v` — the component of `v` orthogonal to the basis.
+    fn complement(&self, v: &[f32], out: &mut [f32]);
+}
+
+/// The **full** target, not the restricted one:
+///
+/// ```text
+/// v = B z + w,   z ∈ R^r,   w ⊥ span(B)
+/// θ = θ_ref + C_half v
+/// Φ(z, w) = λ · N · mean_loss(θ) + ½‖z‖² + ½‖w‖²
+/// ```
+///
+/// With `w ⊥ Bz` the prior term is `½‖v‖²`, so this is the same
+/// `π_P ∝ N(0,I_P)(v) exp(−λN L(θ_ref + C_half v))` that `task::mh_pcnl_chain`
+/// filters (its exact/drift-free arm), just represented in the split that lets
+/// the informed block and the complement be proposed separately.  The split is
+/// a bijection because `w` is constrained to the complement; `Bz` and `w` are
+/// orthogonal, so the Gaussian factorises into `N(0, I_r) × N(0, I_{P−r})` and
+/// each stage's pCN ratio is unchanged.
+///
+/// It is a *different target* from [`SubspaceTarget`] at the same `λ` and `σ`:
+/// the restricted one integrates the likelihood over `r` directions only, while
+/// this one carries all `P`.  Comparing their predictives is the R2 question;
+/// nothing here claims the full posterior predicts better.
+pub struct FullTarget {
+    subspace: AffineSubspace,
+    lambda: f64,
+    data: Dataset,
+    shapes: Shapes,
+    variant: Variant,
+    n_train: usize,
+    evals: AtomicU64,
+}
+
+impl FullTarget {
+    pub fn new(
+        subspace: AffineSubspace,
+        lambda: f64,
+        data: Dataset,
+        shapes: Shapes,
+        variant: Variant,
+    ) -> Self {
+        let n_train = data.train_y.dim(0).unwrap_or(0);
+        Self {
+            subspace,
+            lambda,
+            data,
+            shapes,
+            variant,
+            n_train,
+            evals: AtomicU64::new(0),
+        }
+    }
+
+    pub fn n_train(&self) -> usize {
+        self.n_train
+    }
+
+    pub fn subspace(&self) -> &AffineSubspace {
+        &self.subspace
+    }
+
+    pub fn evaluations(&self) -> u64 {
+        self.evals.load(Ordering::Relaxed)
+    }
+
+    /// `θ_ref + C_half (Bz + w)`.
+    pub fn lift(&self, z: &[f32], w: &[f32]) -> Vec<f32> {
+        let p = self.subspace.p();
+        assert_eq!(z.len(), self.subspace.dim(), "z must have r entries");
+        assert_eq!(w.len(), p, "w must have P entries");
+        let mut v = vec![0.0f32; p];
+        self.subspace.basis().apply(z, &mut v);
+        for (vi, wi) in v.iter_mut().zip(w) {
+            *vi += *wi;
+        }
+        for ((o, a), s) in v
+            .iter_mut()
+            .zip(self.subspace.theta_ref())
+            .zip(self.subspace.scale())
+        {
+            *o = a + s * *o;
+        }
+        v
+    }
+
+    pub fn lift_tensor(&self, z: &[f32], w: &[f32]) -> candle_core::Result<Tensor> {
+        Tensor::from_vec(self.lift(z, w), vec![self.subspace.p()], &Device::Cpu)
+    }
+
+    /// `(λN·mean_loss, ½‖z‖² + ½‖w‖²)`.
+    pub fn phi_parts(&self, z: &[f32], w: &[f32]) -> (f64, f64) {
+        let theta = match self.lift_tensor(z, w) {
+            Ok(t) => t,
+            Err(_) => return (f64::INFINITY, prior_phi(z) + prior_phi(w)),
+        };
+        let mean_loss = self
+            .data
+            .train_loss(&theta, &self.shapes, self.variant)
+            .ok()
+            .filter(|l| l.is_finite())
+            .unwrap_or(f64::INFINITY);
+        (
+            self.lambda * self.n_train as f64 * mean_loss,
+            prior_phi(z) + prior_phi(w),
+        )
+    }
+}
+
+impl FullPotential for FullTarget {
+    fn dim(&self) -> usize {
+        self.subspace.dim()
+    }
+
+    fn p(&self) -> usize {
+        self.subspace.p()
+    }
+
+    fn phi(&self, z: &[f32], w: &[f32]) -> f64 {
+        self.evals.fetch_add(1, Ordering::Relaxed);
+        let (lik, prior) = self.phi_parts(z, w);
+        lik + prior
+    }
+
+    fn complement(&self, v: &[f32], out: &mut [f32]) {
+        self.subspace.complement(v, out);
     }
 }
 
@@ -257,6 +402,134 @@ pub fn mh_pcn_z_scaled(
         ZStep {
             accepted: false,
             phi: phi_z,
+            proposed: phi_new,
+        }
+    }
+}
+
+/// One **informed** MH-pCN move on the full target, holding `w` fixed.
+///
+/// This is the first stage of the split sweep: `z'` is proposed exactly as in
+/// [`mh_pcn_z_scaled`], but the target value is `Φ(z', w)`, the *full* potential
+/// at the current complement, and the acceptance ratio is the usual
+/// `Φ(z,w) − Φ(z',w) + ½‖z'‖² − ½‖z‖²`.  Holding `w` fixed makes this an exact
+/// MH kernel for the conditional `π(z | w)`, so a sweep of this move followed by
+/// [`mh_pcn_w_full`] is invariant for the joint target — the two stages are a
+/// Metropolis-within-Gibbs sweep, not a single joint proposal.
+///
+/// The two-stage form is deliberate.  A joint `(z', w')` proposal would need
+/// only one potential evaluation per step, but its acceptance would mix the
+/// informed and complement scales, so neither `β_i` nor `β_q` could be adapted
+/// on a clean signal; here each stage's acceptance means what it says, and a
+/// report can show them separately.  The cost is two evaluations per step,
+/// which the reports divide by.
+pub fn mh_pcn_z_full(
+    phi: &dyn FullPotential,
+    z: &mut [f32],
+    w: &[f32],
+    phi_z: f64,
+    betas: &[f64],
+    rng: &mut impl Rng,
+) -> ZStep {
+    assert_eq!(z.len(), phi.dim(), "z must have the informed dimension");
+    assert_eq!(w.len(), phi.p(), "w must have the ambient dimension");
+    assert_eq!(betas.len(), z.len(), "one beta per informed coordinate");
+    assert!(
+        betas.iter().all(|&b| b > 0.0 && b <= 1.0),
+        "every beta must be in (0, 1]"
+    );
+    let proposal: Vec<f32> = z
+        .iter()
+        .zip(betas)
+        .map(|(&zi, &b)| (((1.0 - b * b).sqrt() * f64::from(zi)) + b * normal(rng)) as f32)
+        .collect();
+    let phi_new = phi.phi(&proposal, w);
+    let log_q_ratio = prior_phi(&proposal) - prior_phi(z);
+    let log_alpha = phi_z - phi_new + log_q_ratio;
+    let u: f64 = rng.random();
+    let accept = log_alpha.is_finite() && log_alpha >= u.ln();
+    if accept {
+        z.copy_from_slice(&proposal);
+        ZStep {
+            accepted: true,
+            phi: phi_new,
+            proposed: phi_new,
+        }
+    } else {
+        ZStep {
+            accepted: false,
+            phi: phi_z,
+            proposed: phi_new,
+        }
+    }
+}
+
+/// What one complement (`w`) MH-pCN step did.
+#[derive(Clone, Copy, Debug)]
+pub struct WStep {
+    pub accepted: bool,
+    /// `Φ(z, w)` after the step.
+    pub phi: f64,
+    pub proposed: f64,
+}
+
+/// One **complement** MH-pCN move on the full target, holding `z` fixed.
+///
+/// ```text
+/// w' = √(1−β²) w + β Πξ,        ξ ~ N(0, I_P),  Π = I − BBᵀ
+/// log α = Φ(z,w) − Φ(z,w') + ½‖w'‖² − ½‖w‖²
+/// ```
+///
+/// `Πξ` is Gaussian on the complement with covariance `Π`, which restricted to
+/// the `P−r` complement coordinates is the identity — so in those coordinates
+/// this is the ordinary pCN kernel and `½‖w'‖² − ½‖w‖²` is its exact proposal
+/// ratio.  Projecting the noise (rather than the proposal) is what keeps `w` in
+/// the complement: `w` starts at zero and every subsequent `w` is a linear
+/// combination of projected noise, so it never acquires a `B` component beyond
+/// rounding (`~1e-7` after thousands of steps).  Projecting the *proposal*
+/// instead would be a nonlinear map applied after the proposal and would break
+/// the simple density ratio.
+///
+/// `β` is a single scalar: the complement is prior-dominated in the intended
+/// use, where one isotropic step is the right proposal and a per-direction
+/// scale would be fitting noise.  Adapting it on this stage's own acceptance is
+/// sound because the stage is an exact kernel by itself.
+pub fn mh_pcn_w_full(
+    phi: &dyn FullPotential,
+    z: &[f32],
+    w: &mut [f32],
+    phi_w: f64,
+    beta: f64,
+    rng: &mut impl Rng,
+) -> WStep {
+    assert_eq!(z.len(), phi.dim(), "z must have the informed dimension");
+    assert_eq!(w.len(), phi.p(), "w must have the ambient dimension");
+    assert!(beta > 0.0 && beta <= 1.0, "beta must be in (0, 1]");
+    let shrink = (1.0 - beta * beta).sqrt();
+    let noise: Vec<f32> = (0..w.len()).map(|_| normal(rng) as f32).collect();
+    let mut projected = vec![0.0f32; w.len()];
+    phi.complement(&noise, &mut projected);
+    let proposal: Vec<f32> = w
+        .iter()
+        .zip(&projected)
+        .map(|(&wi, &xi)| (shrink * f64::from(wi) + beta * f64::from(xi)) as f32)
+        .collect();
+    let phi_new = phi.phi(z, &proposal);
+    let log_q_ratio = prior_phi(&proposal) - prior_phi(w);
+    let log_alpha = phi_w - phi_new + log_q_ratio;
+    let u: f64 = rng.random();
+    let accept = log_alpha.is_finite() && log_alpha >= u.ln();
+    if accept {
+        w.copy_from_slice(&proposal);
+        WStep {
+            accepted: true,
+            phi: phi_new,
+            proposed: phi_new,
+        }
+    } else {
+        WStep {
+            accepted: false,
+            phi: phi_w,
             proposed: phi_new,
         }
     }
@@ -496,6 +769,13 @@ impl DiagScale {
     pub fn adapt(&mut self, accepted: bool, t: usize) {
         self.multiplier = adapt_log_multiplier(self.multiplier, accepted, t, self.target_accept);
     }
+}
+
+/// One Robbins–Monro update of a **scalar** pCN scale, clipped to `(0, 1]`.
+/// Same feedback and rate as the per-direction multipliers, for a proposal with
+/// a single `β` such as the full-target complement stage.
+pub fn adapt_beta(beta: f64, accepted: bool, t: usize, target: f64) -> f64 {
+    adapt_log_multiplier(beta, accepted, t, target).clamp(1e-4, 1.0)
 }
 
 /// One Robbins–Monro update of `log m`; shared by the diagonal and rotated
@@ -1214,6 +1494,10 @@ mod tests {
             s.adapt(false, t);
         }
         assert!(s.betas().iter().all(|&b| (1e-4..=1.0).contains(&b)));
+        // The scalar rule the full-target complement stage uses.
+        assert!(adapt_beta(0.5, true, 0, 0.5) > 0.5);
+        assert!(adapt_beta(0.5, false, 0, 0.5) < 0.5);
+        assert_eq!(adapt_beta(1.0, true, 0, 0.5), 1.0);
     }
 
     /// `curvature_hessian` must return the full precision matrix, not just its
@@ -1316,5 +1600,135 @@ mod tests {
         }
         assert_eq!(accepted, 0, "infinite proposal was accepted");
         assert_eq!(z[0], 0.0);
+    }
+
+    /// A target that ignores `w` must give the split kernel's `z` move *bit for
+    /// bit* the same chain as the restricted diagonal kernel: same normals in
+    /// the same order, same ratio, same accept draw.  This is the split
+    /// bookkeeping's version of the identity-rotation test.
+    #[test]
+    fn full_z_move_with_a_w_blind_target_equals_the_diagonal_kernel() {
+        struct Blinded;
+        impl ZPotential for Blinded {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32]) -> f64 {
+                QuarticTarget::VALIDATION.phi(z)
+            }
+        }
+        impl FullPotential for Blinded {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn p(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32], _w: &[f32]) -> f64 {
+                QuarticTarget::VALIDATION.phi(z)
+            }
+            fn complement(&self, _v: &[f32], out: &mut [f32]) {
+                out.fill(0.0);
+            }
+        }
+        let target = Blinded;
+        let betas = [0.6f64, 0.3];
+        let w = [0.0f32, 0.0];
+        let mut rng_a = rand::rngs::StdRng::seed_from_u64(23);
+        let mut rng_b = rand::rngs::StdRng::seed_from_u64(23);
+        let mut za = [0.5f32, -0.5];
+        let mut zb = za;
+        let (mut pa, mut pb) = (
+            ZPotential::phi(&target, &za),
+            FullPotential::phi(&target, &zb, &w),
+        );
+        let mut accepts = 0;
+        for _ in 0..2_000 {
+            let a = mh_pcn_z_scaled(&target, &mut za, pa, &betas, &mut rng_a);
+            let b = mh_pcn_z_full(&target, &mut zb, &w, pb, &betas, &mut rng_b);
+            assert_eq!(a.accepted, b.accepted);
+            assert_eq!(za, zb);
+            assert_eq!(a.phi.to_bits(), b.phi.to_bits());
+            pa = a.phi;
+            pb = b.phi;
+            accepts += usize::from(a.accepted);
+        }
+        assert!(accepts > 100, "degenerate run: {accepts} accepts");
+    }
+
+    /// The two-stage sweep must sample the **joint** law, not just any
+    /// distribution on the split.  Take a 2-D Gaussian whose precision couples
+    /// `z` and the single complement coordinate, `Φ = ½‖v‖² + ½κ(⟨v,u⟩)²` with
+    /// `u = (1,1)/√2`, so the exact posterior is
+    /// `Σ = (I + κuuᵀ)⁻¹ = [[0.6, −0.4], [−0.4, 0.6]]` at `κ = 4`.  A `w` move
+    /// with a wrongly projected noise, or a `z` ratio that ignores the coupling,
+    /// changes these entries.
+    #[test]
+    fn two_stage_full_kernel_samples_the_coupled_gaussian() {
+        struct Coupled;
+        impl FullPotential for Coupled {
+            fn dim(&self) -> usize {
+                1
+            }
+            fn p(&self) -> usize {
+                2
+            }
+            fn phi(&self, z: &[f32], w: &[f32]) -> f64 {
+                // The complement of `B = e0` is the *second* coordinate; `w[0]`
+                // is identically zero and reading it would silently decouple
+                // the two blocks (the first version of this test did).
+                let v = [f64::from(z[0]), f64::from(w[1])];
+                let u = (v[0] + v[1]) / std::f64::consts::SQRT_2;
+                0.5 * (v[0] * v[0] + v[1] * v[1]) + 2.0 * u * u
+            }
+            fn complement(&self, v: &[f32], out: &mut [f32]) {
+                // B = e0: keep the second coordinate.
+                out[0] = 0.0;
+                out[1] = v[1];
+            }
+        }
+        let target = Coupled;
+        let mut zs: Vec<Vec<f64>> = Vec::new();
+        let mut pairs: Vec<(f64, f64)> = Vec::new();
+        for seed in 0..2u64 {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(77 + seed);
+            let mut z = [0.4f32];
+            let mut w = [0.0f32, -0.3];
+            let mut phi = target.phi(&z, &w);
+            let mut kept = Vec::new();
+            for t in 0..60_000 {
+                let st = mh_pcn_z_full(&target, &mut z, &w, phi, &[0.5], &mut rng);
+                phi = st.phi;
+                let sq = mh_pcn_w_full(&target, &z, &mut w, phi, 0.7, &mut rng);
+                phi = sq.phi;
+                if t >= 2_000 && t % 2 == 0 {
+                    kept.push(f64::from(z[0]));
+                    pairs.push((f64::from(z[0]), f64::from(w[1])));
+                }
+            }
+            zs.push(kept);
+        }
+        let n = pairs.len() as f64;
+        let m0 = pairs.iter().map(|p| p.0).sum::<f64>() / n;
+        let m1 = pairs.iter().map(|p| p.1).sum::<f64>() / n;
+        let (mut v0, mut v1, mut c01) = (0.0, 0.0, 0.0);
+        for (a, b) in &pairs {
+            v0 += (a - m0).powi(2);
+            v1 += (b - m1).powi(2);
+            c01 += (a - m0) * (b - m1);
+        }
+        v0 /= n - 1.0;
+        v1 /= n - 1.0;
+        c01 /= n - 1.0;
+        let ess = ess_bulk(&zs);
+        println!(
+            "split sweep: ESS {ess:.0}, mean ({m0:+.3}, {m1:+.3}), \
+             cov [[{v0:.3}, {c01:+.3}], [{c01:+.3}, {v1:.3}]]"
+        );
+        assert!(ess > 2_000.0, "ESS too low: {ess}");
+        assert!(m0.abs() < 0.03 && m1.abs() < 0.03, "means ({m0}, {m1})");
+        assert!((v0 - 0.6).abs() < 0.03, "Var(z) {v0}");
+        assert!((v1 - 0.6).abs() < 0.03, "Var(w) {v1}");
+        assert!((c01 + 0.4).abs() < 0.03, "Cov {c01}");
     }
 }
