@@ -253,7 +253,11 @@ is never truncated to fit.
 
 `scripts/run-sm-full-validation` applies the host prerequisites above and runs
 this whole section end to end (symbolic export and CHECK rows, both test suites,
-then the JSON driver).
+then the JSON driver). It records the engine CLI and `PYTHONHOME` it settled on
+in `target/tmp/cadabra-env` and reuses that record instead of re-probing every
+store Python; delete the file, or set `SM_FULL_CADABRA_ENV`, to override it.
+`SM_FULL_WIDE_CUTOFFS=1` additionally prints the cutoff 2-4 JSON tails, which
+need the raised budgets above and peak near 7 GB.
 
 
 ## Executed validation (2026-11-09c)
@@ -317,17 +321,22 @@ occupation window: **9.784770722594882** at cutoff 1 (70 states),
 **4.038679200865053** at cutoff 2 (230 states), **1.2179612832516469** at cutoff
 3 (638 states) and **0.0** at cutoff 4 (1176 states), where the first image of
 the full operator lies entirely inside the window. Later tails remain nonzero,
-as expected for a window built from that first image. Cutoffs 3 and 4 exceed the
-shipped budgets, so they were measured with
+as expected for a window built from that first image. `sm_full_hashimoto_budget_refinement`
+now asserts all four windows and both endpoints (strict decrease, then exactly
+zero); it takes 97.56 s and peaks at 4.5 GB, which is why the whole six-test
+block went from 79.91 s to 148.84 s. Cutoffs 3 and 4 exceed the shipped
+budgets, so they need
 `--cache-limit 4000000 --action-components 8000000 --action-work 4000000000`
-(65 s / 5.2 GB and 114 s / 7.0 GB peak RSS here). With the defaults the same
-runs refuse explicitly: 1,001,177 and 1,382,976 cached entries against a
-1,000,000 limit, and images over the 500,000-entry action limit. The
+(65 s / 5.2 GB and 114 s / 7.0 GB peak RSS for the example here). With the
+defaults the same runs refuse explicitly: 1,001,177 and 1,382,976 cached
+entries against a 1,000,000 limit, and images over the 500,000-entry action
+limit. The
 restarted-evolution case at t=0.02, m=4 measured
 `9.12613e-7`/`8.35880e-7`/`8.25354e-7` for 1/2/4 restart steps, the last being
 `8.253536722907681e-7`. The `sm_full_hashimoto` example at cutoff 1 exited 0
 and printed the same window, energy (`51.32175249999999`), tail and a norm
 defect of `3.6e-14`; at cutoff 2 it reports the 230-state window
 (dimension 230, support 230) and the 4.03868 tail. The primary six-test block
-took 77.84 seconds here, consistent with the 80.79 seconds above and likewise
-not a performance guarantee.
+took 77.84 seconds before the wider cutoff assertions and 148.84 seconds with
+them, consistent with the 80.79 seconds above and likewise not a performance
+guarantee.

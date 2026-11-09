@@ -39,12 +39,21 @@ export PATH
 echo "cargo $(cargo --version | awk '{print $2}'), $(rustc --version)"
 
 step "host prerequisites: Cadabra2 engine"
+# The working CLI + PYTHONHOME pair is recorded, because finding it means
+# probing every Nix Python. A record is reused unless it is missing, stale, or
+# fails the module probe below.
+record="${SM_FULL_CADABRA_ENV:-$repo_root/target/tmp/cadabra-env}"
+if [[ -z ${CADABRA_CLI:-} && -r $record ]]; then
+    # shellcheck disable=SC1090
+    . "$record"
+    echo "reused engine record: $record"
+fi
 if [[ -n "${CADABRA_CLI:-}" ]]; then
     cli=$CADABRA_CLI
 elif command -v cadabra2-cli >/dev/null 2>&1; then
-    cli=cadabra2-cli
+    cli=$(command -v cadabra2-cli)
 elif prepend_store_bin "/nix/store/*-cadabra2-*/bin/cadabra2-cli"; then
-    cli=cadabra2-cli
+    cli=$(command -v cadabra2-cli)
 else
     echo "Cadabra2 required: set CADABRA_CLI or run through nix-shell -p cadabra2" >&2
     exit 69
@@ -83,8 +92,14 @@ if ! engine_ok; then
     exit 69
 fi
 export CADABRA_CLI="$cli"
+mkdir -p "$(dirname "$record")"
+{
+    printf 'CADABRA_CLI=%q\n' "$cli"
+    [[ -z ${PYTHONHOME:-} ]] || printf 'PYTHONHOME=%q\n' "$PYTHONHOME"
+} > "$record"
 engine_version="$("$cli" --version 2>&1 | sed -n 1p || true)"
 echo "engine: ${engine_version}${PYTHONHOME:+ (PYTHONHOME=$PYTHONHOME)}"
+echo "recorded: $record"
 
 step "cargo fetch --locked"
 cargo fetch --locked
@@ -106,3 +121,27 @@ cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto 
     --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1 > "$json"
 sed -n '/"full_action_tail_norms"/,/^  \]/p' "$json"
 echo "[ok] JSON driver completed; expand with --occupation-cutoff 2 for the 230-state window"
+
+# Wider windows need the raised budgets recorded in the doc and peak around 7 GB,
+# so they are opt-in rather than part of the default sweep.
+if [[ ${SM_FULL_WIDE_CUTOFFS:-0} == 1 ]]; then
+    step "sm_full_hashimoto example: occupation cutoffs 2-4 (wide windows)"
+    for c in 2 3 4; do
+        wide="$(mktemp)"
+        cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto -- \
+            --time 0.01 --steps 1 --krylov 4 --occupation-cutoff "$c" \
+            --cache-limit 4000000 --action-components 8000000 --action-work 4000000000 \
+            > "$wide"
+        printf 'cutoff %s: ' "$c"
+        python3 - "$wide" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1]))
+projection = record["numerical_projection"]
+print(
+    f"dimension {projection['dimension']}, "
+    f"leading full-action tail {record['full_action_tail_norms'][0][0]!r}"
+)
+PY
+        rm -f "$wide"
+    done
+fi

@@ -310,6 +310,10 @@ fn sm_full_hashimoto_ritz_residual_enclosure() {
     assert!((&generator - &solve.function_generator).norm() < 1e-5);
 }
 
+/// Leading complete-action tail at occupation cutoff 3 (638-state window),
+/// measured on 2026-11-09; cutoff 4 encloses the first image and gives 0.
+const CUTOFF3_TAIL: f64 = 1.2179612832516469;
+
 #[test]
 fn sm_full_hashimoto_budget_refinement() {
     let time = 0.01;
@@ -337,8 +341,17 @@ fn sm_full_hashimoto_budget_refinement() {
     assert!(errors[1] <= errors[0] + 1e-9);
     assert!(errors[2] < 1e-6);
     // Independent occupation budgets preserve the complete operator. They
-    // report discarded action, rather than silently zeroing interactions.
-    for cutoff in [1, 2] {
+    // report discarded action, rather than silently zeroing interactions. The
+    // wider windows need raised budgets, since the cached images grow with the
+    // window; the shipped defaults refuse them explicitly (see the doc).
+    let mut tails = Vec::new();
+    let mut supports = Vec::new();
+    for (cutoff, cached, components, work) in [
+        (1u64, 1_000_000usize, 500_000usize, 500_000_000usize),
+        (2, 1_000_000, 500_000, 500_000_000),
+        (3, 4_000_000, 8_000_000, 4_000_000_000),
+        (4, 4_000_000, 8_000_000, 4_000_000_000),
+    ] {
         let first_image = h().d_gamma(&seed(), limits()).unwrap();
         let mut window: BTreeSet<_> = project_occupation(&first_image, cutoff)
             .0
@@ -346,9 +359,13 @@ fn sm_full_hashimoto_budget_refinement() {
             .collect();
         window.extend(seed().into_keys());
         let opts = JointSirkOptions {
-            action_limits: limits(),
+            action_limits: ActionLimits {
+                max_components: components,
+                max_work: work,
+            },
             occupation_cutoff: Some(cutoff),
             basis_window: Some(window),
+            max_cached_components: cached,
             method: JointKrylovMethod::ShiftInvert {
                 relative_tolerance: 1e-8,
                 max_iterations: 32,
@@ -356,13 +373,33 @@ fn sm_full_hashimoto_budget_refinement() {
             ..Default::default()
         };
         let solve = solve_joint_sirk(h(), &seed(), &shifts(2, 9.0), &opts).unwrap();
-        assert!(solve.projected_action_tail_norms[0] > 0.0);
+        let tail = solve.projected_action_tail_norms[0];
+        assert!(tail.is_finite() && tail >= 0.0);
         eprintln!(
             "full_SM_occupation: cutoff={cutoff} support={} tail={:?}",
             solve.registry.len(),
             solve.projected_action_tail_norms
         );
+        supports.push(solve.registry.len());
+        tails.push(tail);
     }
+    // The window now covers the first complete image: the leading tail closes
+    // monotonically to exactly zero, while the omitted-support norms above
+    // remain nonzero for the later Krylov vectors (reported, not asserted).
+    assert!(supports == [70, 230, 638, 1176], "windows grew: {supports:?}");
+    assert!(
+        tails[0] > tails[1] && tails[1] > tails[2],
+        "leading tail must shrink with the window: {tails:?}"
+    );
+    assert_eq!(
+        tails[3], 0.0,
+        "cutoff 4 must enclose the first image exactly: {tails:?}"
+    );
+    assert!(
+        (tails[2] - CUTOFF3_TAIL).abs() < 1e-6 * CUTOFF3_TAIL,
+        "cutoff-3 leading tail moved: {} vs {CUTOFF3_TAIL}",
+        tails[2]
+    );
 }
 
 #[test]
