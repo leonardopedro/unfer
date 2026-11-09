@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Apply the host prerequisites from docs/SM_FULL_IMPLEMENTATION.md and run every
+# reproducible command end to end: Cadabra2 export + CHECK rows, the two Rust
+# test suites, and the JSON driver. Set CADABRA_CLI to override engine lookup.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+pin="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+step() { printf '\n=== %s ===\n' "$*"; }
+
+# Prepend the directory holding the first store path matching the pattern.
+prepend_store_bin() {
+    local pattern=$1 candidate
+    shopt -s nullglob
+    for candidate in $pattern; do
+        [[ -x "$candidate" ]] || continue
+        PATH="$(dirname "$candidate"):$PATH"
+        shopt -u nullglob
+        return 0
+    done
+    shopt -u nullglob
+    return 1
+}
+
+step "host prerequisites: toolchain"
+if ! command -v cargo >/dev/null 2>&1; then
+    prepend_store_bin "/nix/store/*-cargo-${pin:-*}/bin/cargo" \
+        || prepend_store_bin "/nix/store/*-cargo-*/bin/cargo" \
+        || { echo "cargo not found: install Rust ${pin:-} or put it on PATH" >&2; exit 69; }
+fi
+command -v rustc >/dev/null 2>&1 \
+    || prepend_store_bin "/nix/store/*-rustc-wrapper-*/bin/rustc" \
+    || { echo "rustc not found: install Rust ${pin:-} or put it on PATH" >&2; exit 69; }
+command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
+    || prepend_store_bin "/nix/store/*-gcc-wrapper-*/bin/cc" \
+    || { echo "no C linker found: put cc, gcc or clang on PATH" >&2; exit 69; }
+export PATH
+echo "cargo $(cargo --version | awk '{print $2}'), $(rustc --version)"
+
+step "host prerequisites: Cadabra2 engine"
+if [[ -n "${CADABRA_CLI:-}" ]]; then
+    cli=$CADABRA_CLI
+elif command -v cadabra2-cli >/dev/null 2>&1; then
+    cli=cadabra2-cli
+elif prepend_store_bin "/nix/store/*-cadabra2-*/bin/cadabra2-cli"; then
+    cli=cadabra2-cli
+else
+    echo "Cadabra2 required: set CADABRA_CLI or run through nix-shell -p cadabra2" >&2
+    exit 69
+fi
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${TMPDIR:-/tmp}/sm-full-mpl}"
+mkdir -p "$MPLCONFIGDIR"
+# `--version` succeeds even when the engine cannot run a module, so probe with a
+# trivial one. The wrapper resolves the host's system Python when that shadows
+# the bundled stdlib and then aborts on '_struct'; retry against a Nix Python.
+probe="$(mktemp)"
+json=""
+trap 'rm -f "$probe" ${json:+"$json"}' EXIT
+printf 'print("cadabra-ok");\n' > "$probe"
+# Capture before matching: grep -q would close the pipe early and pipefail
+# would then report the engine's SIGPIPE, not the verdict.
+engine_ok() {
+    local out
+    out="$("$cli" -q -n "$probe" 2>/dev/null || true)"
+    [[ $out == *cadabra-ok* ]]
+}
+if ! engine_ok; then
+    out=""
+    shopt -s nullglob
+    for py in /nix/store/*-python3-*/; do
+        [[ -x "${py}bin/python3" ]] || continue
+        out="$(PYTHONHOME="${py%/}" "$cli" -q -n "$probe" 2>/dev/null || true)"
+        if [[ $out == *cadabra-ok* ]]; then
+            export PYTHONHOME="${py%/}"
+            break
+        fi
+    done
+    shopt -u nullglob
+fi
+if ! engine_ok; then
+    echo "Cadabra2 engine failed to start: check CADABRA_CLI and PYTHONHOME" >&2
+    exit 69
+fi
+export CADABRA_CLI="$cli"
+engine_version="$("$cli" --version 2>&1 | sed -n 1p || true)"
+echo "engine: ${engine_version}${PYTHONHOME:+ (PYTHONHOME=$PYTHONHOME)}"
+
+step "cargo fetch --locked"
+cargo fetch --locked
+
+step "scripts/check-sm-symbolic"
+./scripts/check-sm-symbolic
+
+step "nested_fock_algebra: exact_inner_contract + sm_full_contract"
+cargo test --locked --offline --release -p nested_fock_algebra --features latex \
+    --test exact_inner_contract --test sm_full_contract -- --test-threads=1
+
+step "fock_sirk: sm_full_hashimoto + sm_gauge_fixed_validation"
+cargo test --locked --offline --release -p fock_sirk \
+    --test sm_full_hashimoto --test sm_gauge_fixed_validation -- --test-threads=1
+
+step "sm_full_hashimoto example (occupation cutoff 1)"
+json="$(mktemp)"
+cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto -- \
+    --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1 > "$json"
+sed -n '/"full_action_tail_norms"/,/^  \]/p' "$json"
+echo "[ok] JSON driver completed; expand with --occupation-cutoff 2 for the 230-state window"

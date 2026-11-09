@@ -182,6 +182,52 @@ cargo test --locked --offline --release -p nested_fock_algebra --features latex 
 cargo test --locked --offline --release -p fock_sirk --test sm_full_hashimoto --test sm_gauge_fixed_validation -- --test-threads=1
 ```
 
+### Host prerequisites
+
+Three conditions are not satisfied by a bare shell on this host and must be
+handled before the commands above behave as written.
+
+**Toolchain on `PATH`.** `cargo`, `rustc` and a C linker are not installed
+globally; the pinned toolchain is taken from the Nix store and prepended. The
+versions match `rust-toolchain.toml`:
+
+```sh
+export PATH=/nix/store/c4svgcgjzph9cy4r1fbq5hh9g55krv5r-rustc-wrapper-1.99.0/bin:\
+/nix/store/fbw7w7blbj5yvxz4fz2gc0ihm898lwgq-cargo-1.99.0/bin:\
+/nix/store/6gj4dzcv6gaxh5raqyrq7jmy605qaj3z-gcc-wrapper-16.2.0/bin:$PATH
+cargo --version   # cargo 1.99.0 (5f94df478 2026-08-27)
+```
+
+**One online fetch first.** `cargo fetch --locked --offline` cannot succeed on a
+cold registry cache: dependencies of other workspace members (for example
+`wasm-bindgen`, `ahash`) are not vendored yet. Run the online `cargo fetch
+--locked` once; the `--offline` test commands then work.
+
+**Cadabra2 needs its own Python.** `cadabra2-cli` is a wrapper that starts an
+embedded Python. When the host has a system Python of the same major version it
+resolves `/usr/lib/python3.14` instead of its bundled stdlib and aborts with
+`ModuleNotFoundError: No module named '_struct'` (exit 134, core dumped). Point
+it at the Nix Python rather than exporting into the caller's shell, and let
+`CADABRA_CLI` name the wrapper:
+
+```sh
+cat > target/tmp/cadabra2-cli <<'EOF'
+#!/usr/bin/env bash
+export PYTHONHOME=/nix/store/lq2fsnmg0q3y0vlxn91w8s8wvj1m6fld-python3-3.14.8
+export MPLCONFIGDIR=/tmp/mplcfg
+exec /nix/store/6qy19bwzbzvxk24sa10wgdxvs6160izd-cadabra2-2.5.14-p1/bin/cadabra2-cli "$@"
+EOF
+chmod +x target/tmp/cadabra2-cli
+export CADABRA_CLI=$PWD/target/tmp/cadabra2-cli
+target/tmp/cadabra2-cli -q -n docs/sm_full_nested.cdb | cmp - docs/fixtures/sm_full_cadabra.latex
+```
+
+`nix-shell -p cadabra2` has no shell environment on this host; the same package
+was realized with `nix build --no-link 'nixpkgs#cadabra2'`, a binary-cache
+substitution of `cadabra2-2.5.14-p1` (no source build). The engine's version
+banner prints `2.5.15 private` even at that store path; the export is still
+byte-identical to the fixture.
+
 Set `CADABRA_CLI` to the engine path for the fresh-engine/fixture equality test;
 without that variable the test explicitly reports an engine-check skip. The
 operator/fixture import tests still run. `scripts/check-sm-symbolic` regenerates
@@ -197,7 +243,17 @@ cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto 
 ```
 
 Its illustrative parameter instance is not a measured-mass calibration; every
-physical interaction remains in the applied operator.
+physical interaction remains in the applied operator. Wider occupation cutoffs
+need explicit resource budgets, because the cached window grows quadratically:
+`--cache-limit` (cached operator entries, default 1,000,000),
+`--action-components` (entries in one complete image, default 500,000) and
+`--action-work` (accumulated image entries per action, default 500,000,000).
+Exceeding any of them is an explicit error naming the requirement; the operator
+is never truncated to fit.
+
+`scripts/run-sm-full-validation` applies the host prerequisites above and runs
+this whole section end to end (symbolic export and CHECK rows, both test suites,
+then the JSON driver).
 
 
 ## Executed validation (2026-11-09c)
@@ -231,3 +287,47 @@ checks the paper's function compression separately from the Ritz Hamiltonian.
 The cache-enabled six-test run with graded outer states took 80.79 seconds in this environment;
 this is one observed run, not a performance guarantee. No pruning was enabled,
 and cache/action budget counterfactuals returned errors rather than simplify H.
+
+## Executed validation (2026-11-09, host re-run)
+
+A repeat of the commands in *Reproducible commands* on the same working tree,
+from a shell where only the host prerequisites above were added. Rust `1.99.0`;
+locked dependencies; CPU backend. All **37 tests passed**: 13 exact-action
+contracts, 7 complete dictionary/Majorana/Cadabra contracts, 6 primary full-SM
+rational tests and 11 supporting SM algebra checks. The fresh-engine equality
+test ran with `CADABRA_CLI` set and was not skipped. No Lean compilation was
+performed.
+
+Symbolic side: `docs/sm_full_nested.cdb` regenerated the export byte-identically
+(1245 lines, `cmp` clean), and `scripts/check-sm-symbolic` reported 19
+`sm_gauge_fixed_hamiltonian` CHECK rows, 49 `faris_lavine_n_sm` CHECK rows, and
+the full-SM inventory (163 coordinates, 40 momenta, 49 forms, 96 CAR
+coordinates, 1152 matter entries) exactly.
+
+The measured rational errors and tails reproduce the recorded values:
+
+| Configuration | Measured state error |
+|---|---:|
+| t=0.01, m=2, shift budget rate 8 | 9.15134e-5 |
+| t=0.01, m=4, shift budget rate 9 | 4.17940e-7 |
+| t=0.01, m=5, shift budget rate 12 | 5.90702e-7 |
+
+The first complete-action tail norm closes monotonically with the declared
+occupation window: **9.784770722594882** at cutoff 1 (70 states),
+**4.038679200865053** at cutoff 2 (230 states), **1.2179612832516469** at cutoff
+3 (638 states) and **0.0** at cutoff 4 (1176 states), where the first image of
+the full operator lies entirely inside the window. Later tails remain nonzero,
+as expected for a window built from that first image. Cutoffs 3 and 4 exceed the
+shipped budgets, so they were measured with
+`--cache-limit 4000000 --action-components 8000000 --action-work 4000000000`
+(65 s / 5.2 GB and 114 s / 7.0 GB peak RSS here). With the defaults the same
+runs refuse explicitly: 1,001,177 and 1,382,976 cached entries against a
+1,000,000 limit, and images over the 500,000-entry action limit. The
+restarted-evolution case at t=0.02, m=4 measured
+`9.12613e-7`/`8.35880e-7`/`8.25354e-7` for 1/2/4 restart steps, the last being
+`8.253536722907681e-7`. The `sm_full_hashimoto` example at cutoff 1 exited 0
+and printed the same window, energy (`51.32175249999999`), tail and a norm
+defect of `3.6e-14`; at cutoff 2 it reports the 230-state window
+(dimension 230, support 230) and the 4.03868 tail. The primary six-test block
+took 77.84 seconds here, consistent with the 80.79 seconds above and likewise
+not a performance guarantee.
