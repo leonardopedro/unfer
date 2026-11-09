@@ -515,63 +515,76 @@ fn expectation(state: &NestedVector, observable: &InnerExpr) -> C {
     joint_inner_product(state, &applied) / joint_inner_product(state, state)
 }
 
-/// One residual Gauss generator times the ghost ladder, `P_A c_g`, with the
-/// ghost placed on the first fermionic mode past the 96-mode matter block.
-fn gauss_ghost_term(mode: u32, ghost: u32) -> InnerExpr {
-    InnerExpr::Product(vec![
-        InnerExpr::momentum(mode),
-        InnerExpr::Ladder(InnerLadder::FermionAnnihilate(MATTER_MODES + ghost)),
-    ])
+/// Gauss generator of one temporal-gauge ghost sector: the sum of the three
+/// spatial gauge momenta of that sector, the `P` blocks of
+/// `models::sm_brst_charge`.
+fn gauss_generator(ghost: u32) -> InnerExpr {
+    let spatial = |i: u32| match ghost {
+        0..=7 => coord::g(ghost, i),
+        8..=10 => coord::w(ghost - 8, i),
+        _ => coord::b(i),
+    };
+    InnerExpr::Sum((0..3).map(|i| InnerExpr::momentum(spatial(i))).collect())
 }
 
-/// Temporal-gauge BRST charge `Q = sum_g P_{A_g} c_g` of
-/// `models::sm_brst_charge`, ported to the E1 representation: the twelve
-/// ghosts (`SM_GHOST_COUNT`) sit on fermionic modes `96..108`, which the
-/// 96x96 matter matrix cannot reach, so they are free exactly as in the
-/// gauge-fixed construction. The overall scale of `P` is irrelevant to which
-/// states `Q` annihilates, so the documented `p = i(a† - a)/2` is used.
-fn brst_charge() -> InnerExpr {
-    let mut terms = Vec::with_capacity(48);
-    for a in 0..8u32 {
-        for i in 0..3 {
-            terms.push(gauss_ghost_term(coord::g(a, i), a));
-        }
-    }
-    for a in 0..3u32 {
-        for i in 0..3 {
-            terms.push(gauss_ghost_term(coord::w(a, i), 8 + a));
-        }
-    }
-    for i in 0..3u32 {
-        terms.push(gauss_ghost_term(coord::b(i), 11));
-    }
-    InnerExpr::Sum(terms)
-}
-
-/// The same matter content with the first ghost mode occupied.
-fn with_ghost(inner: &B) -> B {
-    let mut fermions = inner.fermions().clone();
-    fermions.insert(MATTER_MODES);
-    B::new(inner.bosons().clone(), fermions).unwrap()
-}
-
-/// The BRST charge annihilates the recorded window's ground state.
+/// BRST charge `Q = sum_g G_g c_g^dagger` of this representation.
 ///
-/// Scope: this is closure of the temporal-gauge ghost vacuum, not Gauss's law.
-/// The E1 dictionary carries no ghosts and no gauge-fixing term, so
-/// `Q|psi> = 0` holds for every ghost-free state; what the test establishes is
-/// that the window's ground state lies in that physical sector, and that `Q`
-/// is not the zero operator there (it maps the one-ghost companion to a
-/// nonzero state) and is nilpotent on it.
-#[test]
-fn sm_full_brst_charge_annihilates_the_window_ground_state() {
+/// `models::sm_brst_charge` writes its ghost ladder as
+/// `InnerFermionAnnihilate`, which is the ghost *raise* in the filled-sea
+/// convention of `ym_brst_charge` and is therefore zero on a ghost-free state.
+/// The ghost reference here is the empty set, where the raise is
+/// `FermionCreate`; with that ladder `Q|psi> = 0` is exactly Gauss's law
+/// `G_g|psi> = 0` in every sector. This is the only version of the charge that
+/// can detect a constraint violation — with the vanishing ladder, `Q`
+/// annihilates every state of this dictionary.
+fn brst_charge() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..12u32)
+            .map(|ghost| {
+                InnerExpr::Product(vec![
+                    gauss_generator(ghost),
+                    InnerExpr::Ladder(InnerLadder::FermionCreate(MATTER_MODES + ghost)),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// `Q^dagger Q = sum_g G_g^2`: the gauge-fixing penalty, and the measure of the
+/// Gauss residual through `|Q psi|^2 = <psi|P|psi>`.
+fn gauss_penalty() -> InnerExpr {
+    InnerExpr::Sum(
+        (0..12u32)
+            .map(|ghost| {
+                let generator = gauss_generator(ghost);
+                InnerExpr::Product(vec![generator.clone(), generator])
+            })
+            .collect(),
+    )
+}
+
+/// Compression of `operator` to the recorded window.
+fn window_matrix(operator: &InnerExpr) -> DMatrix<C> {
     let reference = reference();
-    assert_eq!(
-        reference.basis.len(),
-        70,
-        "the recorded window is the 70-state compression"
-    );
-    let spectrum = reference.matrix.clone().symmetric_eigen();
+    let n = reference.basis.len();
+    let mut matrix = DMatrix::<C>::zeros(n, n);
+    for (j, basis) in reference.basis.iter().enumerate() {
+        let image = operator
+            .d_gamma(
+                &NestedVector::from([(basis.clone(), C::new(1.0, 0.0))]),
+                limits(),
+            )
+            .unwrap();
+        for (i, target) in reference.basis.iter().enumerate() {
+            matrix[(i, j)] = image.get(target).copied().unwrap_or_default();
+        }
+    }
+    matrix
+}
+
+/// Lowest eigenpair of the compressed window.
+fn ground_state() -> (f64, NestedVector) {
+    let spectrum = reference().matrix.clone().symmetric_eigen();
     let index = spectrum
         .eigenvalues
         .iter()
@@ -579,59 +592,242 @@ fn sm_full_brst_charge_annihilates_the_window_ground_state() {
         .min_by(|a, b| a.1.total_cmp(b.1))
         .unwrap()
         .0;
-    let theta = spectrum.eigenvalues[index];
-    // The recorded window ground energy; if the window moves, the charge test
-    // would be asking about a different state.
+    (
+        spectrum.eigenvalues[index],
+        vector_from_dense(&spectrum.eigenvectors.column(index).into_owned()),
+    )
+}
+
+fn dense_state(state: &NestedVector) -> DVector<C> {
+    DVector::from_iterator(
+        reference().basis.len(),
+        reference()
+            .basis
+            .iter()
+            .map(|basis| state.get(basis).copied().unwrap_or_default()),
+    )
+}
+
+/// Gauss's law under a real gauge-fixing term, in the recorded window.
+///
+/// The physical content of the charge is `Q|psi> = 0  <=>  G_g|psi> = 0`, with
+/// `P = Q^dagger Q` and `|Q psi|^2 = <psi|P|psi>`. The test measures the
+/// verdict where it can be measured — on the window's compressed `P`:
+///
+/// * the ground state violates the constraint (`|Q gs>|` is O(1)), so the
+///   charge is not vacuous on it;
+/// * `P` is positive semidefinite, and its *smallest* eigenvalue is still
+///   positive, so the window contains no state obeying Gauss at all;
+/// * the ground state already attains that smallest violation;
+/// * consequently the gauge-fixing term `H + lambda P` cannot select a physical
+///   state here: it shifts every energy by `lambda * gap` (verified to 1%).
+///
+/// The structural reason is that `p = i(a^dagger - a)/2` has continuous
+/// spectrum on the oscillator, so no normalizable state is annihilated by the
+/// pure-momentum generator; a physical Gauss law must carry the matter current
+/// so the gauge-field momentum can be balanced. That is why the earlier
+/// ghost-vacuum statement could not say anything about Gauss's law.
+#[test]
+fn sm_full_gauss_law_is_empty_in_the_recorded_window() {
+    let (theta0, gs) = ground_state();
     assert!(
-        (theta - 49.7633053378465).abs() < 1e-9,
-        "the window ground energy moved: {theta:e}"
+        (theta0 - 49.7633053378465).abs() < 1e-9,
+        "the window ground energy moved: {theta0:e}"
     );
-    let ground_state = vector_from_dense(&spectrum.eigenvectors.column(index).into_owned());
-    assert!((joint_norm(&ground_state) - 1.0).abs() < 1e-10);
-
     let charge = brst_charge();
-    let annihilated = charge.d_gamma(&ground_state, limits()).unwrap();
-    let surviving = joint_norm(&annihilated);
+    let penalty_matrix = window_matrix(&gauss_penalty());
+    let penalty_spectrum = penalty_matrix.clone().symmetric_eigen();
+    let gap = penalty_spectrum.eigenvalues.min();
+    assert!(
+        gap >= -1e-9,
+        "Q^dagger Q must be positive semidefinite: min = {gap:e}"
+    );
 
-    // Control: the same matter content with one ghost occupied must not be
-    // annihilated, otherwise `Q|gs> = 0` would only measure that `Q` is zero.
-    let inner = seed().keys().next().unwrap().inner_occupations()[0]
-        .0
-        .clone();
-    let ghosted = NestedVector::from([(
-        O::graded([(with_ghost(&inner), 1)]).unwrap(),
-        C::new(1.0, 0.0),
-    )]);
-    let charged = charge.d_gamma(&ghosted, limits()).unwrap();
-    let charged_norm = joint_norm(&charged);
+    let charged = charge.d_gamma(&gs, limits()).unwrap();
+    let residual = joint_norm(&charged);
     let nilpotent = joint_norm(&charge.d_gamma(&charged, limits()).unwrap());
+    let gs_dense = dense_state(&gs);
+    let penalty_expectation = (gs_dense.adjoint() * &penalty_matrix * &gs_dense)[(0, 0)].re;
+    // |Q psi|^2 = <psi|Q^dagger Q|psi>, so the ghost construction and the
+    // field-only penalty must agree.
+    assert!(
+        (residual * residual - penalty_expectation).abs() < 1e-9,
+        "|Q gs>|^2 = {:e} but <gs|P|gs> = {penalty_expectation:e}",
+        residual * residual
+    );
+    // A physical state of the window would be a zero eigenvector of `P`.
+    assert!(
+        gap > 1e-3,
+        "the window unexpectedly contains a Gauss-invariant state: {gap:e}"
+    );
+    assert!(
+        (residual - gap.sqrt()).abs() < 1e-2,
+        "the ground state should attain the smallest violation: {residual:e} vs {:e}",
+        gap.sqrt()
+    );
 
-    // Diagnostic: the Gauss generator itself is not zero on the state, so the
-    // annihilation above is ghost-vacuum closure, not a Gauss constraint.
-    let gauss = joint_norm(
-        &InnerExpr::momentum(coord::g(0, 0))
-            .d_gamma(&ground_state, limits())
-            .unwrap(),
+    let mut shifts = Vec::new();
+    for lambda in [1.0, 10.0, 100.0] {
+        let shifted = &reference().matrix + &penalty_matrix * C::new(lambda, 0.0);
+        let spectrum = shifted.symmetric_eigen();
+        let energy = spectrum
+            .eigenvalues
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        // `P >= gap > 0` on the whole window, so the penalised ground state can
+        // at best reduce the violation to `gap`: the term is a constant shift.
+        let predicted = lambda * gap;
+        assert!(
+            (energy - theta0 - predicted).abs() < 1e-2 * predicted,
+            "the penalty is not the constant shift lambda*gap at lambda={lambda}: {:e} vs {predicted:e}",
+            energy - theta0
+        );
+        eprintln!(
+            "full_SM_gauss: lambda={lambda} dE={:e} predicted={predicted:e}",
+            energy - theta0
+        );
+        shifts.push(energy - theta0);
+    }
+
+    assert!(
+        nilpotent == 0.0,
+        "the charge must be nilpotent: |Q^2 gs>| = {nilpotent:e}"
     );
     eprintln!(
-        "full_SM_brst: window={} theta0={theta:e} |Q gs>={surviving:e} |Q gs,ghost>={charged_norm:e} |Q^2 gs,ghost>={nilpotent:e} |P gs>={gauss:e}",
-        reference.basis.len()
+        "full_SM_gauss: theta0={theta0:e} |Q gs>={residual:e} gap={gap:e} P_min={:e} shifts={shifts:?}",
+        penalty_spectrum.eigenvalues.min()
+    );
+}
+
+/// One monomial of a form polynomial, in the word order `expression()` uses.
+fn monomial_expression(word: &[Variable], coefficient: C) -> InnerExpr {
+    let mut factors = vec![InnerExpr::Scalar(coefficient)];
+    factors.extend(word.iter().map(|variable| match variable {
+        Variable::Q(mode) => InnerExpr::coordinate(*mode),
+        Variable::P(mode) => InnerExpr::momentum(*mode),
+    }));
+    InnerExpr::Product(factors)
+}
+
+/// The model's free part (bosonic products of total degree at most two), its
+/// interaction part (everything of degree three or more, including every
+/// gauge-matter and Yukawa coupling), and the Higgs/Yukawa block alone.
+///
+/// A form contributes `w * (sum of monomials)^2` in operator order: the second
+/// factor is applied first and each monomial's variables in word order.
+/// Splitting that ordered pair sum by `degree(left) + degree(right)` reproduces
+/// `H` exactly — the bosonic factors are not assumed to commute.
+fn model_split() -> (InnerExpr, InnerExpr, InnerExpr) {
+    let model = model();
+    // `bosonic_expression` also carries the canonical kinetic `P^2 / 2`.
+    let mut free: Vec<InnerExpr> = coord::active()
+        .into_iter()
+        .map(|mode| {
+            InnerExpr::Product(vec![InnerExpr::momentum(mode), InnerExpr::momentum(mode)])
+                .scaled(C::new(0.5, 0.0))
+        })
+        .collect();
+    let mut interaction = Vec::new();
+    for form in &model.forms {
+        let weight = C::new(form.weight, 0.0);
+        let monomials: Vec<(usize, InnerExpr)> = form
+            .polynomial
+            .terms
+            .iter()
+            .map(|(word, &coefficient)| (word.len(), monomial_expression(word, coefficient)))
+            .collect();
+        for (left_degree, left) in &monomials {
+            for (right_degree, right) in &monomials {
+                let term = InnerExpr::Product(vec![left.clone(), right.clone()]).scaled(weight);
+                if left_degree + right_degree <= 2 {
+                    free.push(term);
+                } else {
+                    interaction.push(term);
+                }
+            }
+        }
+    }
+    let mut yukawa = Vec::new();
+    for (&variable, matrix) in &model.matter {
+        let coefficient = match variable {
+            Variable::Q(mode) => InnerExpr::coordinate(mode),
+            Variable::P(mode) => InnerExpr::momentum(mode),
+        };
+        let term = InnerExpr::Product(vec![coefficient, matrix_bilinear(matrix)]);
+        // Every matter entry is interaction; the Higgs/Yukawa ones are also
+        // collected separately, so `free + interaction` stays complete.
+        match variable {
+            Variable::Q(mode) if (coord::phi(0)..=coord::phi(3)).contains(&mode) => {
+                yukawa.push(term.clone());
+                interaction.push(term);
+            }
+            _ => interaction.push(term),
+        }
+    }
+    (
+        InnerExpr::Sum(free),
+        InnerExpr::Sum(interaction),
+        InnerExpr::Sum(yukawa),
+    )
+}
+
+/// The interaction share of the window energy.
+///
+/// Every bosonic form squares a polynomial, so the parts separate by total
+/// degree: `(P0 + P1 + P2)^2 = P0^2 + 2P0P1 + (2P0P2 + P1^2) + 2P1P2 + P2^2`,
+/// of which the last two are the quartic gauge/Higgs self-couplings. Every
+/// matter entry is one boson times a fermion bilinear, so all of them are
+/// interactions. The split is checked against `H` on the seed exactly, and the
+/// ground state then has to show the coupling present and bounded.
+#[test]
+fn sm_full_interaction_energy_is_a_nonzero_bounded_share() {
+    let (free, interaction, yukawa) = model_split();
+    let mut residual = h().d_gamma(&seed(), limits()).unwrap();
+    let free_image = free.d_gamma(&seed(), limits()).unwrap();
+    let interaction_image = interaction.d_gamma(&seed(), limits()).unwrap();
+    joint_axpy(&mut residual, &free_image, C::new(-1.0, 0.0), limits()).unwrap();
+    joint_axpy(
+        &mut residual,
+        &interaction_image,
+        C::new(-1.0, 0.0),
+        limits(),
+    )
+    .unwrap();
+    assert!(
+        joint_norm(&residual) < 1e-10,
+        "the degree split does not reproduce H: {:e}",
+        joint_norm(&residual)
     );
 
-    assert_eq!(
-        surviving, 0.0,
-        "Q did not annihilate the window ground state"
-    );
-    // The seed has no gauge bosons, so each of ghost 0's three spatial Gauss
-    // terms contributes i/2 on |1> from p = i(a† - a)/2: the norm is √3/2.
-    // A wrong momentum normalization would not reproduce this value.
+    let (theta0, gs) = ground_state();
+    let energy = expectation(&gs, h()).re;
+    let interaction_energy = expectation(&gs, &interaction).re;
+    let yukawa_energy = expectation(&gs, &yukawa).re;
     assert!(
-        (charged_norm - 3f64.sqrt() / 2.0).abs() < 1e-12,
-        "Q must act as √3/2 on the one-ghost companion, got {charged_norm:e}"
+        (energy - theta0).abs() < 1e-10,
+        "the ground state is not an eigenstate: {energy:e} vs {theta0:e}"
     );
     assert!(
-        nilpotent < 1e-12,
-        "the charge must be nilpotent: |Q^2| = {nilpotent:e}"
+        yukawa_energy.abs() > 1e-6,
+        "the Higgs/quark coupling contributes nothing: {yukawa_energy:e}"
+    );
+    assert!(
+        yukawa_energy.abs() < 0.25 * energy.abs(),
+        "the Higgs/quark coupling dominates the window energy: {yukawa_energy:e} of {energy:e}"
+    );
+    assert!(
+        interaction_energy.abs() > yukawa_energy.abs(),
+        "the full interaction share must exceed its Higgs/quark part"
+    );
+    assert!(
+        interaction_energy.abs() < 0.9 * energy.abs(),
+        "the interactions dominate the window energy: {interaction_energy:e} of {energy:e}"
+    );
+    eprintln!(
+        "full_SM_interaction: E={energy:e} interaction={interaction_energy:e} ({:+.3}%) yukawa={yukawa_energy:e} ({:+.3}%)",
+        100.0 * interaction_energy / energy,
+        100.0 * yukawa_energy / energy
     );
 }
 
