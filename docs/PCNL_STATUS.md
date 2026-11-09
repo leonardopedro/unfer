@@ -2420,6 +2420,12 @@ the mean per-chain is 17.7 %, and the BMA is 21.09 % (+7.5 over the worst, +3.4 
 the mean).  Spread makes averaging worth something; it does not make the average
 *good*.
 
+The step budget is not innocent in this reading — the same far shell at `N = 8 192`
+doubles its BMA accuracy between 20 k and 200 k steps (next block) — so read the four
+rows as "at 10 k steps", not as converged shells.  That caveat does not rescue the
+reading, because every row here is a *deficit* and longer runs move the two far ones in
+the direction that would make their per-chain numbers worse, not better.
+
 This is now the second `N` at which a fixed-radius ladder contradicts "breadth beats
 the mode", and the two ladders agree with each other.  The certified `N = 512` table
 above has 4e-2 → 44.92 % and 7.9e-2 → 42.97 % against an anchor of **49.22 %**, and
@@ -2430,6 +2436,28 @@ whose `R̂` sits above its null and whose per-chain draws (23.9–25.5 %) sit *a
 anchor rather than below it — a different regime (far draws cost nothing per-draw at
 that anchor), not a better one.  Its 44.92 % is therefore not evidence that a shell
 buys accuracy; it is an uncertified anomaly that two other `N` reverse.
+
+**How much of the breadth reading is exploration?  (`N = 8 192`, one shell, two step
+budgets.)**  The 0.0905 rad shell's 44.92 % came from a 200 k-step run with 800 draws
+per chain.  The same cell (default anchor 21.88 % / 1.5988, `r = 3e-3`, `d₀ = 9.05e-2`)
+at 20 k steps, burn 4 000, thin 20 (400 draws per chain) gives:
+
+| steps / thin | per-chain acc | per-chain NLL | train L | BMA acc / NLL | `R̂`(NLL) / (loss) |
+|---|---|---|---|---|---|
+| 20 k / 20 | 23.86–24.79 % | 1.6088–1.6140 | 1.6123–1.6171 | 28.12 % / 1.6100 | 1.689 / 2.338 |
+| 200 k / 100 | 23.85–25.54 % | 1.7016–1.7320 | — | 44.92 % / 1.6999 | 1.24 / 1.80 |
+
+Per-chain accuracy barely moves (24.4 → 24.7 %) and per-chain NLL gets 0.09 *worse*,
+while the BMA gains 16.8 points.  That is the signature of coverage, not of the radius:
+at 20 k steps the four chains sit in the part of the shell nearest the mode direction
+(hence the better per-chain NLL), and at 200 k they have spread over the whole shell,
+where single draws predict worse but their errors cancel.  So the 44.92 % is an
+*exploration* effect that a 20 k budget does not reach, and the honest statement of
+where breadth pays is: at a fixed step budget, breadth costs accuracy against a
+certified anchor; with 10× the steps on a far shell, the ensemble can outvote its own
+per-draw deficit.  The four-shell ladder above is a 10 k-step ladder for exactly this
+reason, and its far two rows (2 % acceptance, τ ≈ 5 000 steps) are the least converged
+of the four.
 
 **Where a localized posterior is worth computing.**  Five rungs, three of them at
 `N = 2 048` under different anchors, put the answer somewhere narrower than the
@@ -2678,6 +2706,104 @@ anchor-drift canary).
 > rescale but only approximately value-invariant; `EPS = 1e-6` is too small to
 > account for 2 % of 1.14, and nothing in this section depends on which of the
 > two is quoted.
+
+## R0 — numerical and diagnostic trust (2026-11-08)
+
+`pcnl/RESEARCH_PLAN.md` gates every new inference result behind R0: the numerics have
+to be honest before another ladder is worth running.  Three items are done here, each
+with the measurement that licenses it.  The plan's own rule applies to the rest: nothing
+below changes a *forward* value, so the recorded anchors and tables stand; what changed
+is what the code reports about them.
+
+**(a) The normalisation's derivative (`RESEARCH_PLAN.md` R0.1).**  `normalize_fro`
+computes `W/(‖W‖_F + ε)` but reads `‖W‖_F` out with `to_scalar`, which detaches it from
+the graph: the backward pass sees a fixed rescaling and drops the `∂‖W‖/∂W` term.  That
+is now an explicit choice, `NormGrad::Stopped` (the historical form, still the default,
+because every number in this document was produced with it) versus `NormGrad::Exact`
+(via `normalize_fro_with`, `forward_norm`, `loss_and_grad_norm`).  Measurements:
+
+* the two agree on the **value** to f32 rounding, at scales 1e-3…40 (unit test);
+* the **exact** form matches a directional finite difference at θ-scales 1e-3, 1 and
+  50, along a generic direction, the global ray, and one block's ray — the last two are
+  what the old coordinate-wise check could not see;
+* the **stopped** form's gradient differs from the exact one by
+  `|Δg|/|g_e| = 1.4e-3` at `P = 3 232` (worst per-block residual of the identity
+  `g_e = g_s − (W·g_s)/(r(r+ε))·W` is 4.8e-6, and the largest radial share of a stopped
+  block gradient is 0.069).  The bias is small because the cosine loss is radially flat
+  (§6.5, `cosine_likelihood_is_flat_along_a_radial_ray`): the term it drops points where
+  the map barely responds.
+
+So: **the surrogate is labelled, not silently kept, and its drift bias is 0.1 %** — small
+enough that the recorded anchors are not wrong for a gradient reason, large enough that a
+*gradient-level* claim (drift, ⟨θ,∇Φ⟩ floors, SG-bias curves in R2) must say which form it
+used.  All reported chain results use MH ratios, which never touch the gradient, so none
+of them is affected either way.
+
+**(b) The schedule's floor (R0.2).**  `beta_at` clamps at `1e-6`, so the implemented
+sequence has **infinite** total mobility for every `κ`; the Robbins–Monro window
+(`Σβ² = ∞`, `Σβ⁴ < ∞`) is a statement about the unfloored power law.  Both laws are now
+named (`beta_at_unfloored`), the crossover is computed (`floor_crossover`, exact formula
+`((β₀/ε)^{1/κ} − 1)/γ`), and the answer is that it never binds in this project's runs:
+
+| schedule | `β₀` | `γ` | `κ` | floor binds at | longest run |
+|---|---:|---:|---:|---:|---:|
+| default | 0.3 | 1e-4 | 0.5 | 9.0e14 steps | 2e5 |
+| pre-2026-11-04 | 0.3 | 1e-4 | 0.55 | 9.1e13 steps | 2e5 |
+| `κ = 0.6` control | 0.3 | 1e-4 | 0.6 | 1.3e13 steps | 2e5 |
+
+`beta_at(step) == beta_at_unfloored(step)` bit-for-bit over 0…200 000 for both reported
+exponents (test `floor_crossover_is_where_the_laws_part_company`).  The freeze statements
+for `κ > 1/2` therefore describe the power law *and* the code, because the code is the
+power law over every horizon anyone has run.
+
+**(c) Frozen traces are failures, not good scores (R0.3).**  Before today `diag::ess`
+returned `N` for a constant chain (“every draw agrees”) and `gelman_rubin` returned
+`1.0` for two identically frozen chains (no between-chain and no within-chain
+variance).  Both are the two numbers a stuck chain must never get.  Now:
+
+* `movement(chains) -> Movement { chains, frozen, unique_max, nonfinite }` is the
+  evidence, and `is_frozen`/`is_degenerate` are the flags a report can gate on;
+* frozen → `NaN` from `ess`, `gelman_rubin`, `split_rhat_rank`, `ess_bulk`, `ess_tail`;
+* frozen at *different* values → `+inf` from `gelman_rubin` (a real disagreement, not a
+  missing one) and `NaN` from the rank statistics (their rank spread is finite by
+  construction, so a zero-variance within-chain term has no defined ratio);
+* any non-finite draw → `NaN` from all five, rather than a plausible-looking number;
+* the plan's gate statistics now exist: rank-normalised split `R̂`
+  (`split_rhat_rank`, bulk and folded combined, `Φ⁻¹` Blom scores) and `ess_bulk` /
+  `ess_tail` as in Vehtari et al. (2021) — validated against iid draws (bulk ESS within
+  half of the draw count, tail ESS above 100 of 4 000) and against AR(1) sticks
+  (bulk ESS < 20 % of 4 000).
+
+One real crash fell out of this: `experiment::median` sorted with
+`partial_cmp().unwrap()`, so a single frozen coordinate made the quick report panic.
+It now drops non-finite entries and returns `NaN` when none are left — an unavailable
+number instead of a crash.
+
+**(d) The tangent proposal's support (R0.4, in part).**  `SpherePcn::step_inner`
+proposes `u′ = exp_u v` with `‖v‖ = a`.  The exponential map is one-to-one only on the
+ball `a < π`; past it a proposal has several preimages, the closed-form pushforward
+`(sin a/a)^{P−2}` describes one of them, and the reverse transport divides by `sin a`,
+which is zero at `a = π`.  The proposal is now restricted to the ball: `a` is a length
+along the geodesic, so the reverse move is inside it too, every accepted move keeps the
+exact ratio, and an over-long proposal is a plain rejection.  The truncated Gaussian's
+normaliser differs from 1 by `exp(−π²/(2τ²))`, i.e. `exp(−3e3)` at the reported
+`τ = β/√P ≤ 0.04` — invisible.  Measured consequence, which is also a correction to an
+older claim: the warm-up test that used curvature `1e6` was learning a metric from
+proposals with `|m| ≈ 3.6e4 ≫ π`, i.e. from proposals that have no ratio at all.  With
+the ball enforced that cell proposes nothing, accepts nothing and learns nothing; the
+property the test exists for (the metric comes from proposals, not accepted states) is
+now checked at curvature 40, inside the ball.  The exact invariant-moment tests
+(`zero_likelihood_is_haar_on_the_circle`, `anisotropic_metric_is_exact_on_s2`,
+`restricted_metric_inverse_matches_the_dense_one`) are unchanged and still pass, so the
+restriction does not touch the regime the reported chains run in.
+
+What is *not* done yet from R0: the rest of the exact-proposal audit (the sphere and
+latitude conditionals are audited and moment-tested already; the cap-conditioned target
+and the cyclical schedule are not), the metric-freeze record (R0.5), and the run
+manifest (R0.6).  The tables in this document still report the raw
+`ess`/`gelman_rubin` from before the rank statistics existed, which is why their `R̂`
+values are comparable across dates; the null tables, which are what certify them, are
+unchanged.
 
 ## Reproduce / verify
 
