@@ -135,11 +135,16 @@ fn su2_glueball_mass_ratio() {
     let m_glue = e_excited - e_ground;
     let e_odd = sirk_ground(&h, &one_flux(), 4);
     let sigma = e_odd - e_ground;
-    if sigma > 0.01 {
-        let ratio = m_glue / sigma.sqrt();
-        eprintln!("su2_glueball_mass_ratio: m_glue={m_glue:.4}, √σ={sigma:.4}, ratio={ratio:.3}");
-        assert!(ratio > 0.1, "ratio must be positive: {ratio:.3}");
-    }
+    // This used to be `if sigma > 0.01 { ... }`: a skip, not a test.  The
+    // precondition is asserted now, so a model change that makes σ
+    // unresolvable fails loudly instead of turning the test into a no-op.
+    assert!(
+        sigma > 0.01,
+        "the string tension must be resolved for m_glue/√σ to mean anything: σ = {sigma:.4}"
+    );
+    let ratio = m_glue / sigma.sqrt();
+    eprintln!("su2_glueball_mass_ratio: m_glue={m_glue:.4}, √σ={sigma:.4}, ratio={ratio:.3}");
+    assert!(ratio > 0.1, "ratio must be positive: {ratio:.3}");
 }
 
 #[test]

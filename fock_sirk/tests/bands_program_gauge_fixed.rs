@@ -28,6 +28,24 @@
 //! (`cargo test -p fock_sirk --release`, the CI profile): **6 passed /
 //! 3.57s** (~602×). The debug numbers are recorded so the cost of running
 //! the default profile is known before anyone starts one — ~36 min in debug.
+//!
+//! ## Audit note (2026-11-10): the envelope tier certifies nothing here
+//!
+//! The Theorem 4.1 envelope is rigorous but, on these models, astronomically
+//! loose — measured half-widths of the intervals the tests build from
+//! `BandParams::band`: **1.3e5** (QYM g=0 nesting), **5.5e15** (QYM ±g
+//! symmetry), **2.0e4** (QG scalaron gap), **1.1e4** (NS decay), **1.1e4**
+//! (Casimir). Any two numbers in reach lie inside those bars, so a
+//! "contains the analytic value" / "the intervals overlap" assertion against
+//! this tier **cannot fail** and is not evidence.  Per S43 the sharp tier is
+//! the Rayleigh–Ritz residual certificate, which is what
+//! `qg_graviton_scalaron_certified_disjoint` uses (intervals `[0.9, 0.9]` and
+//! `[1.054751, 1.054751]`, genuinely disjoint).  The envelope rows are kept
+//! **as the reported a-priori ceiling only**; the envelope-only containment
+//! assertions of tests 1–4 are recorded as an open item (a sound per-Ritz-pair
+//! residual radius is `rel_res·‖Hψ‖`, and `ForwardSirkResult` does not expose
+//! `‖Hψ‖` for an individual Ritz vector yet — adding that accessor is the
+//! follow-up that lets those tests assert on the sharp tier).
 
 mod hashimoto_support;
 
@@ -164,10 +182,24 @@ fn qed_casimir_cavity_band_dispersion() {
                 .iter()
                 .map(|v| (v - w).abs())
                 .fold(f64::INFINITY, f64::min);
-            worst = worst.max(dist.min(d_theta * 2.0));
+            worst = worst.max(dist);
             assert!(
                 dist <= d_theta,
-                "Casimir level {w:.4} outside certified radius {d_theta:.3e} at m={m}: {ritz:?}"
+                "Casimir level {w:.4} outside the a-priori radius {d_theta:.3e} at m={m}: {ritz:?}"
+            );
+            // The envelope above is ~1e4 wide and cannot fail; this is the
+            // assertion with content — the Ritz values reproduce nπ/d to the
+            // measured accuracy of the solve (1.4e-9 at m=6, 1.4e-10 at m=8;
+            // tolerance is 1e-6, four decades of margin).
+            let nearest = ritz
+                .iter()
+                .copied()
+                .min_by(|a, b| (a - w).abs().partial_cmp(&(b - w).abs()).unwrap())
+                .expect("non-empty Ritz set");
+            assert!(
+                dist < 1e-6,
+                "Casimir level {w:.9} must be reproduced by the Ritz values to 1e-6; \
+                 nearest is {nearest:.9} (distance {dist:.3e}) at m={m}"
             );
         }
         println!("  {m:<3} {worst:.3e}   {:.3e}", b.hi);

@@ -301,6 +301,50 @@ fn sm_gf_brst_abelian_limit_assembly() {
     // and G = c D π (the U(1) Gauss constraint).  Checked as an identity of
     // scalars with random ghost/field content, then the nilpotency of the
     // abelian charge through the Grassmann ghost (c² = 0).
+    // Nilpotency needs an actual Grassmann generator: the previous form
+    // asserted `0.0.abs() < 1e-15` — a literal constant that holds for every
+    // conceivable model — and the f → 0 reduction was arithmetic (`0.0 * x`).
+    // Here the ghost is a nilpotent matrix and the charge is a tensor product,
+    // so G² is a real matrix product.
+    let zero = Complex64::new(0.0, 0.0);
+    let mut c = vec![vec![zero; 2]; 2];
+    c[0][1] = Complex64::new(1.0, 0.0); // c = |0><1|, so c² = 0
+    let c_sq = sm_audit_mul(&c, &c);
+    for row in &c_sq {
+        for z in row {
+            assert!(z.norm() < 1e-15, "c² must vanish");
+        }
+    }
+
+    // Two distinct ghosts: c¹c² ≠ 0 and {c¹,c²} = 0.  This is why the
+    // nonabelian term ½ i f c¹c² b cannot be dropped the way c¹c¹ can.
+    // The second ghost carries the fermionic sign `(−1)^N`, so the two
+    // generators anticommute: c₁ = c⊗1, c₂ = σ_z⊗c with cσ_z = −σ_z c.
+    let id = sm_audit_identity(2);
+    let mut sigma_z = sm_audit_identity(2);
+    sigma_z[1][1] = Complex64::new(-1.0, 0.0);
+    let c1 = sm_audit_kron(&c, &id);
+    let c2 = sm_audit_kron(&sigma_z, &c);
+    let c1c2 = sm_audit_mul(&c1, &c2);
+    let c2c1 = sm_audit_mul(&c2, &c1);
+    let max_12 = c1c2
+        .iter()
+        .flatten()
+        .map(|z| z.norm())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        max_12 > 0.9,
+        "two distinct ghosts must not annihilate each other (c¹c² = {max_12:.3e})"
+    );
+    let anticommutator = sm_audit_sum(&c1c2, &c2c1, Complex64::new(1.0, 0.0));
+    for row in &anticommutator {
+        for z in row {
+            assert!(z.norm() < 1e-15, "{{c¹,c²}} must vanish");
+        }
+    }
+
+    // G = c ⊗ X for arbitrary X: G² = c² ⊗ X² = 0 — nilpotent for ANY field
+    // content, not a statement about the particular scalars chosen.
     let mut seed = 987654321u64;
     let mut next = move || {
         seed = seed
@@ -308,33 +352,131 @@ fn sm_gf_brst_abelian_limit_assembly() {
             .wrapping_add(1442695040888963407);
         ((seed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
     };
+    let mut max_g2 = 0.0_f64;
     for _ in 0..32 {
-        let (c, dpi, api, c2, b) = (next(), next(), next(), next(), next());
-        let f = 0.0f64; // the abelian limit (structure constants vanish)
-        let g = c * dpi + c * f * api + 0.5 * f * c2 * b;
-        assert!(
-            (g - c * dpi).abs() < 1e-14,
-            "G(f=0) must reduce to the abelian c d pi"
-        );
-        // the abelian charge squares to zero through the Grassmann ghost:
-        // G = c X with G² = c X c X = −c c X X = 0:
-        let ghost_square = 0.0f64; // c*c = 0 by anticommuting
-        assert!(ghost_square.abs() < 1e-15, "G_abelian^2 = 0 (nilpotent)");
+        let x = vec![
+            vec![
+                Complex64::new(next(), next()),
+                Complex64::new(next(), next()),
+            ],
+            vec![
+                Complex64::new(next(), next()),
+                Complex64::new(next(), next()),
+            ],
+        ];
+        let g = sm_audit_kron(&c, &x);
+        let g2 = sm_audit_mul(&g, &g);
+        for row in &g2 {
+            for z in row {
+                max_g2 = max_g2.max(z.norm());
+            }
+        }
     }
+    assert!(
+        max_g2 < 1e-14,
+        "G = c⊗X must be nilpotent for every X (max |G²| = {max_g2:.3e})"
+    );
+
+    // Control: a COMMUTING "ghost" (an ordinary number) is not nilpotent —
+    // the nilpotency comes from the anticommutation, not from the arithmetic.
+    let cs = 1.3_f64;
+    let x = vec![
+        vec![Complex64::new(0.7, 0.0), Complex64::new(0.2, 0.0)],
+        vec![Complex64::new(-0.4, 0.0), Complex64::new(0.9, 0.0)],
+    ];
+    let mut g_sc = x.clone();
+    for row in g_sc.iter_mut() {
+        for z in row.iter_mut() {
+            *z *= cs;
+        }
+    }
+    let g_sc2 = sm_audit_mul(&g_sc, &g_sc);
+    let max_sc = g_sc2
+        .iter()
+        .flatten()
+        .map(|z| z.norm())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        max_sc > 0.1,
+        "a commuting ghost must NOT square to zero (got {max_sc:.3e}) — otherwise \
+         the nilpotency test above is vacuous"
+    );
 }
 
 // ── 8. the symmetrization carries the factor 2 (CHECK 11) ──────────────────
 
 #[test]
 fn sm_gf_symmetrization_factor_two() {
-    // {pi, V} = pi V + V pi; the S35 doctrine: the symmetrized product
-    // carries the factor 2 (u = a†+a, pi = i(a†−a) maps the bracket to
-    // 2i(...)).  Numeric identity on random observables:
-    for _ in 0..16 {
-        let (pi, v) = (0.31f64, -0.77f64);
-        let bracket = pi * v + v * pi;
-        let sym = pi * v;
-        assert!((bracket - 2.0 * sym).abs() < 1e-14, "{{pi, V}} = 2 sym");
+    // {π, V} = πV + Vπ; the S35 doctrine is that the symmetrization carries
+    // the factor 2 (u = a†+a, π = i(a†−a)).  This used to be checked on two
+    // ordinary f64s, where `πV = Vπ` by commutativity, so `{π,V} = 2πV` was an
+    // identity of arithmetic — exactly the property that fails here.
+    // Checked on MATRICES: ½{π,u} is the Weyl symmetric part, and it differs
+    // from the plain product πu by ½[π,u] ≠ 0.
+    let dim = 5;
+    let (a, ad) = sm_audit_ladders(dim);
+    let i = Complex64::new(0.0, 1.0);
+    let u = sm_audit_sum(&ad, &a, Complex64::new(1.0, 0.0));
+    let mut pi = sm_audit_sum(&ad, &a, Complex64::new(-1.0, 0.0));
+    for row in pi.iter_mut() {
+        for z in row.iter_mut() {
+            *z *= i;
+        }
+    }
+    let up = sm_audit_mul(&u, &pi);
+    let pu = sm_audit_mul(&pi, &u);
+    let bracket = sm_audit_sum(&up, &pu, Complex64::new(1.0, 0.0));
+    let mut half = bracket.clone();
+    for row in half.iter_mut() {
+        for z in row.iter_mut() {
+            *z *= 0.5;
+        }
+    }
+    // ½{π,u} = i(a†² − a²), an exact matrix identity.
+    let mut expected = sm_audit_sum(
+        &sm_audit_mul(&ad, &ad),
+        &sm_audit_mul(&a, &a),
+        Complex64::new(-1.0, 0.0),
+    );
+    for row in expected.iter_mut() {
+        for z in row.iter_mut() {
+            *z *= i;
+        }
+    }
+    for i in 0..dim {
+        for j in 0..dim {
+            assert!(
+                (half[i][j] - expected[i][j]).norm() < 1e-12,
+                "½{{π,u}} must equal i(a†²−a²) at ({i},{j})"
+            );
+        }
+    }
+    // The factor 2 is not a convention: πu itself is NOT the symmetric
+    // product, the difference being ½[π,u] = −i on the interior.
+    let mut max_dev = 0.0_f64;
+    for i in 0..dim - 1 {
+        for j in 0..dim - 1 {
+            max_dev = max_dev.max((up[i][j] - half[i][j]).norm());
+        }
+    }
+    assert!(
+        max_dev > 0.5,
+        "πu must differ from ½{{π,u}} by the commutator (measured {max_dev:.3e}); \
+         a zero means the symmetrization is being checked on commuting objects"
+    );
+    // and the sum identity holds matrix-wise: ½{π,u} + ½[π,u] = πu.
+    let commutator = sm_audit_sum(&up, &pu, Complex64::new(-1.0, 0.0));
+    let mut half_comm = commutator.clone();
+    for row in half_comm.iter_mut() {
+        for z in row.iter_mut() {
+            *z *= 0.5;
+        }
+    }
+    let rebuilt = sm_audit_sum(&half, &half_comm, Complex64::new(1.0, 0.0));
+    for i in 0..dim {
+        for j in 0..dim {
+            assert!((rebuilt[i][j] - up[i][j]).norm() < 1e-12);
+        }
     }
 }
 
@@ -360,6 +502,31 @@ fn sm_audit_sum(a: &SmAuditMatrix, b: &SmAuditMatrix, scale: Complex64) -> SmAud
     for i in 0..out.len() {
         for j in 0..out.len() {
             out[i][j] += scale * b[i][j];
+        }
+    }
+    out
+}
+
+fn sm_audit_identity(dim: usize) -> SmAuditMatrix {
+    let mut m = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+    for i in 0..dim {
+        m[i][i] = Complex64::new(1.0, 0.0);
+    }
+    m
+}
+
+/// Kronecker product `a ⊗ b` — needed to build operators on two INDEPENDENT
+/// modes (a single mode's `q` and `p` are matrices, not numbers).
+fn sm_audit_kron(a: &SmAuditMatrix, b: &SmAuditMatrix) -> SmAuditMatrix {
+    let (na, nb) = (a.len(), b.len());
+    let mut out = vec![vec![Complex64::new(0.0, 0.0); na * nb]; na * nb];
+    for i in 0..na {
+        for j in 0..na {
+            for k in 0..nb {
+                for l in 0..nb {
+                    out[i * nb + k][j * nb + l] = a[i][j] * b[k][l];
+                }
+            }
         }
     }
     out
@@ -406,19 +573,33 @@ fn sm_gf_canonical_pair_uses_one_mode_and_keeps_cutoff_defect() {
             assert!((comm[i][j] - expected).norm() < 1e-12);
         }
     }
-    // Negative control: q on factor 0 and p on factor 1 commute exactly.
-    // This is why independent field/momentum modes are not a canonical pair.
-    for i in 0..dim {
-        for j in 0..dim {
-            for k in 0..dim {
-                for l in 0..dim {
-                    let qp = q[i][j] * p[k][l];
-                    let pq = p[k][l] * q[i][j];
-                    assert!((qp - pq).norm() < 1e-14);
-                }
-            }
-        }
-    }
+    // Negative control, as a TENSOR PRODUCT: q on factor 0 and p on factor 1
+    // commute exactly.  The previous form multiplied scalar entries,
+    // `q[i][j]·p[k][l] − p[k][l]·q[i][j]`, which is identically zero for
+    // complex numbers and could not fail whatever the modes were.  This is
+    // why independent field/momentum modes are not a canonical pair.
+    let id = sm_audit_identity(dim);
+    let q_on_0 = sm_audit_kron(&q, &id);
+    let p_on_1 = sm_audit_kron(&id, &p);
+    let comm_tp = sm_audit_sum(
+        &sm_audit_mul(&q_on_0, &p_on_1),
+        &sm_audit_mul(&p_on_1, &q_on_0),
+        Complex64::new(-1.0, 0.0),
+    );
+    let max_tp = comm_tp
+        .iter()
+        .flatten()
+        .map(|z| z.norm())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        max_tp < 1e-12,
+        "q⊗1 and 1⊗p must commute exactly (max entry {max_tp:.3e})"
+    );
+    // ... while the same-mode pair does not, so the control has content.
+    assert!(
+        comm[0][0].norm() > 1e-9,
+        "the single-mode commutator must be nonzero for the contrast to hold"
+    );
     assert!((comm[0][0] - Complex64::new(0.0, 1.0)).norm() < 1e-14);
 }
 
