@@ -1677,10 +1677,17 @@ Observables measured from the UNITARY FLOW rather than spectra:
   ($A$ cancels: $Pw = w - c^\dagger c\,w$), and `project_ghost_free` computes
   it exactly in $O(\mathrm{len}\,w)$ — asserted here: $\Omega(Pw) = 0$
   identically, $P^2 = P$, and the ghost-carrying probe projects to exactly
-  zero. **Limitation**: the structural path assumes each bosonic co-factor
-  $A_k$ has trivial kernel, true for this charge ($\sum p_m$) and for NS
-  ($\sqrt2 x_j$) but not checkable in general, which is why it is not wired
-  into `project_physical`.
+  zero. The precondition — each bosonic co-factor $A_g$ injective — is now
+  **checked** per charge rather than assumed (`cofactor_is_injective`): it is
+  proved for a constant plus a Hermitian (or anti-Hermitian) degree-1 ladder
+  combination, which is by a metaplectic rotation a constant plus a multiple
+  of one quadrature $x$, and $c + \mu x$ has no $L^2$ kernel. Both charges that
+  need the path pass ($\sum_m \pi_m$ for YM, the real $\sum_k A_{jk}u_k$ for
+  NS); a co-factor *with* a kernel — a bare $a$, or $a^\dagger a$ — is declined
+  and the caller keeps the numeric path. Measured by the unit test: $Q = a_0
+  c_9$ annihilates the ghost-carrying $|{\rm vac}\rangle\otimes|g\rangle$, and
+  the structural path correctly refuses it instead of silently deleting a
+  state that lies in $\ker Q$.
 
 - **`qed_jc_total_excitation_superselected`** — computes: $N_{\rm tot} =
   a^\dagger a + e^\dagger e$ commutes with the detuned JC Hamiltonian; mean
@@ -1750,11 +1757,22 @@ Six certifications:
   successive intervals intersect. They do **not** nest: the $m=9$ zero rung
   carries a $7.3\times10^{-8}$ residual, so its interval is wider — the old
   "next as $m$ grows" claim was an artifact of the envelope.
-- **`qym_g0_spectrum_certified_nesting`** — abelian QYM low rungs: sharp
-  intervals overlap across depths AND the widths shrink ($1.104\to0.929$,
-  $2.306\to1.907$, $3.620\to2.954$; the bare $:\pi^2:$ kinetic reaches an
-  unbounded ladder, so only the three lowest rungs are in the resolved
-  window and each carries its own width).
+- **`qym_g0_bottom_is_the_proven_square_sum_not_a_rung`** — abelian QYM at
+  $g=0$ has **no lowest eigenvalue**. $H+2 = \tfrac12 X^2 + \tfrac12\pi_2^2 +
+  \tfrac12\pi_3^2$ with $X = A_0 - A_1$, checked on all 81 product states with
+  occupations $\le 2$ per mode (max deviation `0.0`; for a degree-2 polynomial
+  those matrix elements pin every coefficient, so this is complete). Each
+  square is of an unbounded self-adjoint operator, so $\mathrm{spec}(H+2) =
+  [0,\infty)$ and the bottom $-2$ is a **limit point, not an eigenvalue**:
+  $X$ and each $\pi_m$ are injective, so no unit vector has $\langle S\rangle =
+  0$ (measured $\min\|S\psi\| = 2.0$ on the same family). Measured: every Ritz
+  value stays above $-2$ and the lowest descends $-1.354\to-1.546\to-1.649$ at
+  $m = 6,9,12$, while its residual width stays $O(1)$ ($1.104\to0.929\to0.819$)
+  — there is no level for it to converge to. This replaces the former
+  `qym_g0_spectrum_certified_nesting`, which asserted three "rungs", their
+  overlap and their shrinking widths: on a dense spectrum Parlett's interval
+  contains *a* spectral point and nothing more, so "the same rung at every
+  depth" was not a well-defined object.
 - **`qym_gpairs_symmetry_certified_overlap`** — the $A^1\to-A^1$ symmetry,
   asserted exactly as the operator identity $H(-g) = \Pi H(g)\Pi$ with
   $\Pi = (-1)^{n_0+n_1}$ (max deviation `0.0` over 18 product states). The
@@ -1764,9 +1782,22 @@ Six certifications:
   agreement *to the width*, not the symmetry.
 - **`ns_decay_amplitude_certified_interval`** — NS laminar amplitude after
   one e-folding: there is no sharp *state*-error certificate, so this is an
-  accuracy bar with its measured values ($5.45\times10^{-2}$ at $m=10$,
-  $2.31\times10^{-2}$ at $m=12$, $9.95\times10^{-3}$ at $m=14$; the paper
-  ladder needs $m < N/h = 16$) against a $6\times10^{-2}$ tolerance.
+  accuracy bar with its measured values ($5.453\times10^{-2}$ at $m=10$,
+  $2.313\times10^{-2}$ at $m=12$, $9.954\times10^{-3}$ at $m=14$; the paper
+  ladder needs $m < N/h = 16$) against a $6\times10^{-2}$ tolerance, plus the
+  convergence assertion that the error shrinks strictly with depth.
+  A defect (leakage) bound was implemented, measured and **removed as
+  vacuous**: $\|\psi(t)-v(t)\| \le \eta\,|t|\,\|\psi_0\|$ with $\eta =
+  \|(1-WW^\dagger)HW\|_F = 1.023\times10^{1}$ at $m=10$ gives a bound of
+  $1.4\times10^{1}$ against a measured $|\Delta| = 5.45\times10^{-2}$. The
+  reason is structural: this generator is a dilation/squeeze with continuous
+  spectrum, so no Krylov span is nearly invariant — every basis vector leaks
+  $O(1)$ — and the three-digit accuracy of the amplitude comes from
+  cancellation between the leaks, which an invariance-based bound cannot see.
+  (The trial also measured $\|W^\dagger G W - I\|$ growing $1.9\times10^{-7}\to
+  8.6\times10^{-6}$ with depth, i.e. the deep rational-Krylov Gram is
+  ill-conditioned; that number is the accuracy of any Gram-assembled
+  residual at this rank.)
 - **`qg_graviton_scalaron_certified_disjoint`** — same-$k$ graviton vs
   scalaron levels: DISJOINT sharp intervals ($\omega_{\rm grav} = 0.9$,
   $\omega_{\rm scal} = 1.054751$, widths at the roundoff floor) — the

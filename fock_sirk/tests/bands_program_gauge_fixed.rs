@@ -15,9 +15,11 @@
 //! 1. `qg_scalaron_gap_certified_contains_analytic` — the k→0 scalaron gap:
 //!    analytic m(α) inside the sharp gap interval at every depth (widths
 //!    2.7e-15 and 7.3e-8), and successive intervals intersect.
-//! 2. `qym_g0_spectrum_certified_nesting` — abelian QYM low rungs: sharp
-//!    intervals of successive depths overlap AND shrink with depth (widths
-//!    1.10→0.93, 2.31→1.91, 3.62→2.95).
+//! 2. `qym_g0_bottom_is_the_proven_square_sum_not_a_rung` — abelian QYM at
+//!    `g = 0` has **no** lowest eigenvalue: `H + 2 = ½X² + ½π₂² + ½π₃²` exactly
+//!    (checked on 81 product states, deviation 0), so the bottom is `−2`, not
+//!    attained, and the Ritz values descend towards it (−1.354, −1.546, −1.649
+//!    at m = 6, 9, 12) while their residual widths stay O(1).
 //! 3. `qym_gpairs_symmetry_certified_overlap` — the A¹→−A¹ symmetry, as an
 //!    **exact operator identity** `H(−g) = Π H(g) Π` at the operator level
 //!    (deviation 0), with the sharp spectra at ±g overlapping to the
@@ -56,9 +58,14 @@
 //!
 //! * "certified intervals nest with depth" (QG scalaron): the sharp widths are
 //!   2.7e-15 at m=6 and 7.3e-8 at m=9 — the zero rung's residual grows with
-//!   depth, so the m=9 interval is *wider*. Only intersection is asserted. (The
-//!   QYM g=0 case does shrink — 1.104→0.929, 2.306→1.907, 3.620→2.954 — and
-//!   there the shrink is asserted.)
+//!   depth, so the m=9 interval is *wider*. Only intersection is asserted.
+//! * the QYM `g = 0` "three lowest rungs" (2026-11-10, second pass): they are
+//!   not eigenvalues. `H + 2` is a sum of three squares of unbounded
+//!   self-adjoint operators, so its spectrum is `[0, ∞)` and the bottom is a
+//!   limit point; the widths 1.104→0.929→0.819 shrink but can never resolve a
+//!   level, and "the same rung at every depth" is not a well-defined object.
+//!   That test is replaced by `qym_g0_bottom_is_the_proven_square_sum_not_a_rung`,
+//!   which proves the bottom symbolically and asserts the descent.
 //! * Casimir sharp containment: the residual certificate bounds `|θ − λ|` for
 //!   the *truncated* operator the solve applied. Several rungs are exact
 //!   eigenpairs of it (residual 0, δ = 1.0e-13) while their Ritz value still
@@ -253,9 +260,107 @@ fn qed_casimir_cavity_band_dispersion() {
     }
 }
 
+/// The sum-of-squares form of the abelian `g = 0` Hamiltonian:
+/// `H + 2 = ½X² + ½π₂² + ½π₃²`, with `X = A₀ − A₁` and `π_m = i(a†_m − a_m)`,
+/// built in the model's own word convention (`vec![left, right]` is
+/// `left·right`, the right factor applied first).
+fn g0_square_sum() -> Hamiltonian {
+    use Operator::{InnerBosonAnnihilate as A, InnerBosonCreate as C};
+    // X = c₀ + a₀ − c₁ − a₁.
+    let x = [(1.0, C(0u32)), (1.0, A(0)), (-1.0, C(1)), (-1.0, A(1))];
+    let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for (ci, li) in &x {
+        for (cj, rj) in &x {
+            terms.push((
+                Complex64::new(0.5 * ci * cj, 0.0),
+                vec![li.clone(), rj.clone()],
+            ));
+        }
+    }
+    // ½π² = ½(−c² + ca + ac − a²) — the `ac` word is what carries the `+½`
+    // zero-point, which is why no explicit constant appears.
+    for m in [2u32, 3] {
+        terms.push((Complex64::new(-0.5, 0.0), vec![C(m), C(m)]));
+        terms.push((Complex64::new(0.5, 0.0), vec![C(m), A(m)]));
+        terms.push((Complex64::new(0.5, 0.0), vec![A(m), C(m)]));
+        terms.push((Complex64::new(-0.5, 0.0), vec![A(m), A(m)]));
+    }
+    Hamiltonian { terms }
+}
+
+/// The abelian `g = 0` spectrum has **no lowest eigenvalue**: its bottom is
+/// `−2`, proved by `H + 2 = ½X² + ½π₂² + ½π₃²`.
+///
+/// This test replaced a `qym_g0_spectrum_certified_nesting` claim that asserted
+/// three "rungs", their overlap across depths and their shrinking residual
+/// widths. Those rungs are not eigenvalues of anything: `½X²` and `½π_m²` are
+/// squares of unbounded self-adjoint operators with spectrum `[0, ∞)`, so the
+/// spectrum of `H + 2` is `[0, ∞)` with the bottom *unattained*, and a Ritz
+/// value can approach it forever without any residual going to zero. The
+/// residual certificates at this tier were therefore intervals containing *a*
+/// spectral point (true, and unfalsifiable on a dense spectrum) rather than
+/// brackets on a level.
+///
+/// What is asserted instead is stronger and can fail:
+/// * the square-sum identity itself, on every product state with occupations
+///   `≤ 2` per mode — a *complete* check for a degree-2 polynomial, since the
+///   coefficients of every degree-≤2 word are pinned by those matrix elements;
+/// * `½X² + ½π₂² + ½π₃²` has no zero eigenvector on that family (measured
+///   `min ‖Sψ‖ = 2.0`), so the bottom `−2` is not attained — `X` and each `π_m`
+///   are injective (a nonzero Hermitian degree-1 form has no `L²` kernel);
+/// * every certified Ritz value stays above `−2`, and the lowest one descends
+///   monotonically towards it with depth (measured `−1.354`, `−1.546`, `−1.649`
+///   at `m = 6, 9, 12`).
 #[test]
-fn qym_g0_spectrum_certified_nesting() {
+fn qym_g0_bottom_is_the_proven_square_sum_not_a_rung() {
     let h = qcd_ym_hamiltonian(0.0);
+    let sq = g0_square_sum();
+
+    // ── The identity, on a spanning family ──
+    let mut states = Vec::new();
+    for n0 in 0..=2u32 {
+        for n1 in 0..=2u32 {
+            for n2 in 0..=2u32 {
+                for n3 in 0..=2u32 {
+                    let mut inner = InnerBosonicState::vacuum();
+                    for (mode, n) in [(0u32, n0), (1, n1), (2, n2), (3, n3)] {
+                        if n > 0 {
+                            inner.modes.insert(mode, n);
+                        }
+                    }
+                    states.push(QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner)));
+                }
+            }
+        }
+    }
+    println!("— QYM abelian g=0: the bottom is −2, from H + 2 = ½X² + ½π₂² + ½π₃²");
+    let mut worst_identity = 0.0_f64;
+    let mut min_s = f64::INFINITY;
+    for psi in &states {
+        let mut lhs = h.apply(psi);
+        lhs.scale_and_add(psi, Complex64::new(2.0, 0.0));
+        let rhs = sq.apply(psi);
+        let mut diff = lhs;
+        diff.scale_and_add(&rhs, Complex64::new(-1.0, 0.0));
+        worst_identity = worst_identity.max(diff.norm());
+        min_s = min_s.min(QuantumState::inner_product(psi, &sq.apply(psi)).re);
+    }
+    println!(
+        "    max ‖(H+2)ψ − Sψ‖ = {worst_identity:.3e} over {} product states; \
+         min ‖Sψ‖ = {:.3e}",
+        states.len(),
+        min_s
+    );
+    assert!(
+        worst_identity < 1e-12,
+        "H + 2 must equal ½X² + ½π₂² + ½π₃² exactly; worst deviation {worst_identity:.3e}"
+    );
+    assert!(
+        min_s > 0.0,
+        "the bottom of ½X² + ½π₂² + ½π₃² must not be attained on the family, got {min_s:.3e}"
+    );
+
+    // ── The numerical side: approach, never an eigenvalue ──
     let bp = BandParams {
         big_n: 8.0,
         h: 0.5,
@@ -266,47 +371,42 @@ fn qym_g0_spectrum_certified_nesting() {
         &empty_vacuum().apply(&Operator::InnerBosonCreate(0)),
         Complex64::new(1.0, 0.0),
     );
-
-    println!("— QYM abelian g=0 low spectrum, sharp tier");
-    let mut prev: Vec<(f64, f64, f64)> = Vec::new(); // (lo, hi, width)
-    for m in [6_usize, 9] {
+    let mut prev_theta0: Option<f64> = None;
+    for m in [6_usize, 9, 12] {
         let res = h.solve(&psi0, &bp, m);
-        // The bare :π²: kinetic reaches an unbounded ladder, so only the three
-        // lowest rungs are in the resolved window; each carries its own
-        // residual width, which is what makes the window observable at all.
-        let mut c = certified_ritz_values(&res);
-        c.truncate(3);
-        assert_eq!(c.len(), 3, "three rungs needed, got {}", c.len());
-        let mut cur: Vec<(f64, f64, f64)> = Vec::with_capacity(3);
-        for (i, x) in c.iter().enumerate() {
-            print_cert(&format!("θ_{i} (m={m})"), x);
-            cur.push((x.lo, x.hi, x.delta()));
+        let c = certified_ritz_values(&res);
+        assert!(
+            !c.is_empty(),
+            "a non-empty certified set is needed at m={m}"
+        );
+        for x in c.iter() {
+            assert!(
+                x.value >= -2.0 - 1e-6,
+                "every Ritz value must lie above the proven bottom −2: θ = {:.9} at m={m}",
+                x.value
+            );
         }
+        let theta0 = c[0].value;
         println!(
-            "    Theorem 4.1 ceiling at m={m}: {:.3e}",
+            "  m={m:<3} θ₀ = {theta0:.9}   δ₀ = {:.3e}   next θ = {:.6}   \
+             Theorem 4.1 ceiling {:.3e}",
+            c[0].delta(),
+            c.get(1).map(|x| x.value).unwrap_or(f64::NAN),
             envelope_ceiling(&res, &bp, m, psi0.norm())
         );
-        if !prev.is_empty() {
-            for (i, &(lo, hi, width)) in cur.iter().enumerate() {
-                let (plo, phi, pwidth) = prev[i];
-                // Each interval contains an eigenvalue, so overlap across depths
-                // is evidence for the same rung; the widths are O(1) against
-                // shifts of O(0.2)…O(4), so this can fail.
-                assert!(
-                    lo <= phi && plo <= hi,
-                    "θ_{i} successive sharp windows must overlap: \
-                     [{plo:.6},{phi:.6}] vs [{lo:.6},{hi:.6}]"
-                );
-                // Deeper Krylov ⇒ tighter residual certificate: the real
-                // content of "certified nesting" at this tier.
-                assert!(
-                    width < pwidth,
-                    "θ_{i} residual width must shrink with depth: {pwidth:.3e} (m-1) vs {width:.3e}"
-                );
-            }
+        if let Some(pt) = prev_theta0 {
+            assert!(
+                theta0 < pt,
+                "the lowest Ritz value must descend towards the bottom: {pt:.9} (m−3) vs \
+                 {theta0:.9}"
+            );
         }
-        prev = cur;
+        prev_theta0 = Some(theta0);
     }
+    println!(
+        "    bottom −2 is a limit point, not an eigenvalue: the δ₀ column stays O(1) \
+         because there is no level to converge to"
+    );
 }
 
 /// `Π = (−1)^{n₀+n₁}` — the A¹ → −A¹ parity on the two magnetic modes of
@@ -448,12 +548,23 @@ fn ns_decay_amplitude_certified_interval() {
     println!("— NS laminar amplitude after one e-folding: analytic {analytic:.6}");
     // There is no sharp *state*-error certificate (the Rayleigh–Ritz bound is
     // about eigenvalues, not about the propagated vector), so this test is an
-    // accuracy bar with its measured values recorded — 5.45e-2 at m=10,
-    // 4.79e-2 at m=12, 9.95e-3 at m=14 — and the Theorem 4.1 envelope is
+    // accuracy bar with its measured values recorded — 5.453e-2 at m=10,
+    // 2.313e-2 at m=12, 9.954e-3 at m=14 — and the Theorem 4.1 envelope is
     // printed as the (loose) ceiling. The 6e-2 tolerance is what the
     // measurement supports; it is not a certificate. `m < N/h = 16` is the
     // paper ladder's admissibility bound (γ_j = N − h j > 0).
+    //
+    // A defect (leakage) bound was tried instead of the bar and **measured to be
+    // vacuous**: `‖ψ(t) − v(t)‖ ≤ η|t|‖ψ₀‖` with `η = ‖(1−WW†)HW‖_F` gives
+    // `η = 1.023e1`, `‖ψ₀‖ = 1.414` at m=10, i.e. a bound of `1.4e1` against a
+    // measured `|Δ| = 5.45e-2`. That is structural, not an implementation
+    // shortfall: this generator is a dilation/squeeze (continuous spectrum), so
+    // no Krylov span is nearly invariant — every basis vector leaks O(1) — and
+    // the 3-digit accuracy of the amplitude comes from cancellation between the
+    // leaks, which no invariance-based bound can see. Recorded here so nobody
+    // re-derives it.
     let bar = 6e-2;
+    let mut prev_err: Option<f64> = None;
     for m in [10_usize, 12, 14] {
         let res = h.solve(&psi0, &bp, m);
         let coeffs = res.time_evolve(bp.t);
@@ -465,12 +576,19 @@ fn ns_decay_amplitude_certified_interval() {
             (ut - analytic).abs(),
             envelope_ceiling(&res, &bp, m, psi0.norm())
         );
+        let err = (ut - analytic).abs();
         assert!(
-            (ut - analytic).abs() <= bar,
-            "NS decay amplitude at m={m} is {ut:.9}, {:.3e} from the analytic \
-             {analytic:.9} — outside the measured accuracy bar {bar:.1e}",
-            (ut - analytic).abs()
+            err <= bar,
+            "NS decay amplitude at m={m} is {ut:.9}, {err:.3e} from the analytic \
+             {analytic:.9} — outside the measured accuracy bar {bar:.1e}"
         );
+        if let Some(pe) = prev_err {
+            assert!(
+                err < pe,
+                "the laminar error must shrink with depth: {pe:.3e} (m−2) vs {err:.3e}"
+            );
+        }
+        prev_err = Some(err);
     }
 }
 

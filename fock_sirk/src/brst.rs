@@ -66,11 +66,14 @@
 //! is unrepresentable. `A⁻¹c_g w` is a smeared state spread over the whole
 //! oscillator ladder; extending the truncation only moves the plateau.
 //! [`project_ghost_free`] exploits the cancellation directly and is exact and
-//! `O(len(w))` for this class of charge.
+//! `O(len(w))` for this class of charge. Its one precondition — that each
+//! bosonic co-factor be injective — is **checked** per charge
+//! (`cofactor_is_injective`), not assumed; a co-factor with a kernel is
+//! declined and the caller keeps the numeric path.
 
 use nested_fock_algebra::{Hamiltonian, Operator, QuantumState};
 use num_complex::Complex64;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::linalg::SirkError;
 
@@ -78,19 +81,77 @@ fn norm(s: &QuantumState) -> f64 {
     QuantumState::inner_product(s, s).re.max(0.0).sqrt()
 }
 
-/// The ghost modes an *inner* ghost-lowering charge annihilates.
+/// Is the bosonic co-factor built from `terms` **injective**?
+///
+/// `terms` is the collection of `(coeff, ladders)` that belong to one ghost
+/// mode; this decides `ker A = {0}` for
+///
+/// ```text
+///   A = c·1 + Σ_m (α_m a_m + β_m a†_m)
+/// ```
+///
+/// by a *sufficient* criterion, returning `false` ("not proved") rather than
+/// guessing for anything outside it:
+///
+/// * every term is a constant or a **single** inner boson ladder — a product of
+///   two or more is declined (degree ≥ 2 is not decided here);
+/// * if the whole degree-1 part cancels, `A = c·1` is injective iff `c ≠ 0`;
+/// * otherwise `A` must be Hermitian (`β_m = ᾱ_m`) or anti-Hermitian
+///   (`β_m = −ᾱ_m`). Such an `A` is, by a metaplectic (Bogoliubov) rotation of
+///   the modes, a constant plus a multiple of one quadrature `x`; multiplying
+///   by `c + μx` has no square-integrable kernel, so `ker A = {0}`.
+///
+/// The two charges that need the structural projector pass: YM's
+/// `Σ_m i(a†_m − a_m) = Σ_m π_m` (Hermitian) and NS's `Σ_k A_{jk} u_k` with
+/// real `A` (Hermitian). A co-factor that is *not* covered — e.g. a bare
+/// annihilation `a`, whose kernel is the vacuum — is declined, which is the
+/// whole point: the previous version of this function assumed the condition.
+fn cofactor_is_injective(terms: &[(Complex64, Vec<Operator>)]) -> bool {
+    let mut constant = Complex64::new(0.0, 0.0);
+    let mut ann: BTreeMap<u32, Complex64> = BTreeMap::new();
+    let mut cre: BTreeMap<u32, Complex64> = BTreeMap::new();
+    for (coeff, ops) in terms {
+        match ops.as_slice() {
+            [] => constant += coeff,
+            [Operator::InnerBosonAnnihilate(m)] => {
+                *ann.entry(*m).or_insert(Complex64::new(0.0, 0.0)) += coeff
+            }
+            [Operator::InnerBosonCreate(m)] => {
+                *cre.entry(*m).or_insert(Complex64::new(0.0, 0.0)) += coeff
+            }
+            _ => return false,
+        }
+    }
+    if ann.is_empty() && cre.is_empty() {
+        return constant != Complex64::new(0.0, 0.0);
+    }
+    // Hermitian, anti-Hermitian, or not decided.
+    let mut hermitian = true;
+    let mut anti = true;
+    for m in ann.keys().chain(cre.keys()) {
+        let a = ann.get(m).copied().unwrap_or(Complex64::new(0.0, 0.0));
+        let b = cre.get(m).copied().unwrap_or(Complex64::new(0.0, 0.0));
+        hermitian &= (b - a.conj()).norm() <= 1e-12 * (1.0 + b.norm() + a.norm());
+        anti &= (b + a.conj()).norm() <= 1e-12 * (1.0 + b.norm() + a.norm());
+    }
+    hermitian || anti
+}
+
+/// The ghost modes an *inner* ghost-lowering charge annihilates, provided every
+/// co-factor is *proved* injective.
 ///
 /// Returns `Some({g_k})` when every term of `q` is `A_k · c_{g_k}` — a product
 /// of inner boson ladders followed by one inner ghost annihilation, with no
-/// fermion anywhere else in the term — and `None` otherwise. For such a charge
-/// `Q = Σ_k A_k c_{g_k}` with `A_k` bosonic, so `c_{g_k}` annihilates every
-/// state carrying no fermion in the returned set.
+/// fermion anywhere else in the term — and the per-mode co-factor
+/// `A_g = Σ_{k: g_k = g} A_k` is injective ([`cofactor_is_injective`]). For
+/// such a charge `Q = Σ_k A_k c_{g_k}` with `A_k` bosonic, so `c_{g_k}`
+/// annihilates every state carrying no fermion in the returned set.
 fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
-    let mut modes = BTreeSet::new();
     if q.terms.is_empty() {
         return None;
     }
-    for (_, ops) in &q.terms {
+    let mut cofactors: BTreeMap<u32, Vec<(Complex64, Vec<Operator>)>> = BTreeMap::new();
+    for (coeff, ops) in &q.terms {
         let (last, bosonic) = ops.split_last()?;
         let Operator::InnerFermionAnnihilate(g) = last else {
             return None;
@@ -103,9 +164,16 @@ fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
                 _ => return None,
             }
         }
-        modes.insert(*g);
+        cofactors
+            .entry(*g)
+            .or_default()
+            .push((*coeff, bosonic.to_vec()));
     }
-    Some(modes)
+    // The lemma needs each co-factor injective; check it instead of assuming it.
+    if !cofactors.values().all(|terms| cofactor_is_injective(terms)) {
+        return None;
+    }
+    Some(cofactors.into_keys().collect())
 }
 
 /// Exact orthogonal projection onto `ker Q` for a ghost-lowering charge
@@ -123,15 +191,16 @@ fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
 ///   (hence `w` is ghost-free) **provided `A_g` has trivial kernel**.
 /// * `P` is diagonal in the Fock basis, hence self-adjoint and idempotent.
 ///
-/// For the two charges that need it the kernel condition holds trivially in
-/// the continuum: `A = Σ_m p_m` (YM) and `A_j = √2 x_j` (NS) have spectrum all
-/// of `ℝ` with no eigenvalue, so neither has a normalizable kernel vector.
-/// When an `A_k` *does* have a kernel, the returned state is still in `ker Q`
-/// but is not the closest point to `w` — this is the only unverified
-/// precondition, and it is why the function is not wired into
-/// [`project_physical`].
+/// The injectivity of `A_g` is **checked**, not assumed: [`ghost_lowering_modes`]
+/// proves it for a co-factor that is a constant plus a Hermitian (or
+/// anti-Hermitian) degree-1 ladder combination — which covers both charges
+/// that need this path, YM's `Σ_m π_m` and NS's real `Σ_k A_{jk} u_k` —
+/// and declines anything else. A co-factor *with* a kernel (a bare `a`, say)
+/// therefore returns `None` rather than a state that sits in `ker Q` but is
+/// not the closest point to `w`.
 ///
-/// Returns `None` if `q` does not have the ghost-lowering shape.
+/// Returns `None` if `q` does not have the ghost-lowering shape, or if a
+/// co-factor's injectivity cannot be established.
 pub fn project_ghost_free(w: &QuantumState, q: &Hamiltonian) -> Option<QuantumState> {
     let modes = ghost_lowering_modes(q)?;
     let mut out = QuantumState::zero();
@@ -478,5 +547,73 @@ mod tests {
             )],
         };
         assert!(project_ghost_free(&QuantumState::vacuum(), &q_create).is_none());
+    }
+
+    #[test]
+    fn structural_projection_declines_a_cofactor_with_a_kernel() {
+        // `Q = a_0 c_9` has the ghost-lowering *shape* but its co-factor is not
+        // injective: `a_0` annihilates the bosonic vacuum. Since `c_9` maps the
+        // ghost sector to the empty-fermion sector, `Q` annihilates the state
+        // `|vac>_bos ⊗ |ghost>_9` even though it carries the ghost. The
+        // Fock-diagonal filter would delete it, i.e. return a state in ker Q
+        // that is not the closest point to `w` — exactly the failure the
+        // kernel condition guards.
+        let q = Hamiltonian {
+            terms: vec![(
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(0),
+                    Operator::InnerFermionAnnihilate(9),
+                ],
+            )],
+        };
+        let ghostly = universe(None, Some(9));
+        assert!(
+            norm(&q.apply(&ghostly)) == 0.0,
+            "|vac>_bos ⊗ |g> is in ker Q (‖Qw‖ = {:.3e}) — that is why the shape \
+             alone is not enough",
+            norm(&q.apply(&ghostly))
+        );
+        assert!(
+            project_ghost_free(&ghostly, &q).is_none(),
+            "a non-injective co-factor must be declined, not silently filtered"
+        );
+        // Degree ≥ 2 is outside the decided class (e.g. `a†a`, kernel |0>).
+        let q_deg2 = Hamiltonian {
+            terms: vec![(
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(0),
+                    Operator::InnerBosonAnnihilate(0),
+                    Operator::InnerFermionAnnihilate(9),
+                ],
+            )],
+        };
+        assert!(project_ghost_free(&ghostly, &q_deg2).is_none());
+        // A *Hermitian* degree-1 co-factor with a constant offset is decided:
+        // `(1 + u_0) c_9` is injective (`1 + x` has no L² kernel).
+        let q_affine = Hamiltonian {
+            terms: vec![
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![Operator::InnerFermionAnnihilate(9)],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::InnerBosonCreate(0),
+                        Operator::InnerFermionAnnihilate(9),
+                    ],
+                ),
+                (
+                    Complex64::new(1.0, 0.0),
+                    vec![
+                        Operator::InnerBosonAnnihilate(0),
+                        Operator::InnerFermionAnnihilate(9),
+                    ],
+                ),
+            ],
+        };
+        assert!(project_ghost_free(&ghostly, &q_affine).is_some());
     }
 }
