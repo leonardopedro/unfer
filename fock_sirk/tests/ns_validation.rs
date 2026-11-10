@@ -717,15 +717,19 @@ fn ns_brst_projection_physical_subspace() {
     //       BRST-closed (gauge-invariant), the AGENTS.md requirement that
     //       physics Hamiltonians commute with the BRST charge.
     //
-    // The orthogonal projector onto ker Ω itself (`project_physical`, CG on
-    // ΩΩ†) is exercised in `brst.rs`'s own unit tests.  For the full NS charge
-    // it is not tractable: the solve is badly conditioned (the CG–Lanczos
-    // tridiagonal at 60 steps gives λ_min = 2.6903157703890995e-1,
-    // λ_max = 4.48262998977765e2, so κ(ΩΩ†) ≥ 1.67e3) and the residual is
-    // still 2.33e-2 after 50 iterations — 200 iterations do not finish in
-    // minutes, because each step grows the state.  So the tractable, exact
-    // assertions here are the algebraic nilpotency and BRST closure of the
-    // charge.
+    // (c) The orthogonal projector onto ker Ω — asserted here, and NOT via
+    //     the normal equations.  CG on ΩΩ† does not converge for this charge at
+    //     any budget (measured trajectory in `fock_sirk::brst`'s module docs:
+    //     ‖Ω(Pw)‖ 1.388 → 0.306 over 115 iterations while the iterate's support
+    //     grows 3 → 9861 components — algebraic, not geometric, decay).  The
+    //     reason is structural, not numerical: Ω = A·c with A = Σ_j u_{j,j},
+    //     so ΩΩ† = −A²⊗P₀ and the solve chases z = −A⁻¹c w, a state spread
+    //     over the whole oscillator ladder (A = √2 x_j has spectrum ℝ, no
+    //     eigenvalue, hence no Fock-space representation of A⁻¹), while the
+    //     *answer* Pw = w − c†c w has A cancelled out.
+    //     `project_ghost_free` exploits the cancellation: exact, O(len w).
+    //     Asserted below: Ω(Pw) = 0 identically, P² = P, P returns exactly the
+    //     ghost-free part, and the CG route on the same state does not converge.
     let brst = navier_stokes_brst();
 
     // Ghost-carrying probes: a bosonic universe with diagonal-derivative
@@ -843,10 +847,50 @@ fn ns_brst_projection_physical_subspace() {
          ‖Ωψ₀‖ = {omega0:.3e} → ‖Ωψ(t)‖ = {omega_t:.3e}"
     );
 
+    // (d) The projector itself, on the full NS charge. A mixed state — a
+    //     ghost-free derivative-field mode plus a ghost-carrying probe — is
+    //     projected exactly onto ker Ω.
+    let physical_part = ns_state(0, 1);
+    let mut mixed = physical_part.clone();
+    mixed.scale_and_add(&probes[0], Complex64::new(0.5, 0.0));
+    assert!(
+        brst.apply(&mixed).norm() > 1e-6,
+        "the mixed state must be off ker Ω"
+    );
+    let projected = fock_sirk::brst::project_ghost_free(&mixed, &brst)
+        .expect("navier_stokes_brst is ghost-lowering: Ω = Σ_j u_{j,j} c_j");
+    assert!(
+        brst.apply(&projected).norm() == 0.0,
+        "Ω(Pw) must vanish identically, got {:.3e}",
+        brst.apply(&projected).norm()
+    );
+    let mut diff = projected.clone();
+    diff.scale_and_add(&physical_part, Complex64::new(-1.0, 0.0));
+    assert!(
+        diff.norm() == 0.0,
+        "P must return exactly the ghost-free part, got residual {:.3e}",
+        diff.norm()
+    );
+    // Idempotence, exactly (P is diagonal in the Fock basis).
+    let twice = fock_sirk::brst::project_ghost_free(&projected, &brst).unwrap();
+    let mut idem = twice.clone();
+    idem.scale_and_add(&projected, Complex64::new(-1.0, 0.0));
+    assert!(idem.norm() == 0.0, "P² = P must hold exactly");
+    // And the route this replaces does not converge on the same state — the
+    // limitation is recorded as a measurement, not as a claim about budget.
+    assert!(
+        matches!(
+            fock_sirk::brst::project_physical(&mixed, &brst, 1e-10, 50),
+            Err(fock_sirk::linalg::SirkError::BrstNotConverged { .. })
+        ),
+        "CG on ΩΩ† is expected to stall on the unbounded Gauss generator"
+    );
+
     eprintln!(
         "ns_brst_projection: Ω² = 0 (nilpotent) on {n_probes} ghost probes; \
          [H,Ω] = 0 and [H_f,Ω] = 0 (BRST-closed); the bare flow grows the divergence \
-         ‖Ωψ‖ {omega0:.3e} → {omega_t:.3e}",
+         ‖Ωψ‖ {omega0:.3e} → {omega_t:.3e}; structural projector gives Ω(Pw) = 0 \
+         exactly on the full charge",
         n_probes = probes.len()
     );
 }
@@ -880,9 +924,9 @@ fn ns_brst_projection_invariance_physical_flow() {
     // (The projector's genuine action on unphysical directions is exercised in
     // `brst.rs`'s own unit tests on a tractable charge and, for the full QG
     // operator, in `qg3d_full_operator_is_brst_closed_under_the_promoted_x_e`;
-    // the interacting NS charge is documented in
-    // `ns_brst_projection_physical_subspace` as ill-conditioned rather than
-    // model-unsolvable.  The non-vacuity of the
+    // for the full NS charge `ns_brst_projection_physical_subspace` now
+    // projects through the ghost-lowering structure (`project_ghost_free`),
+    // exactly and without a solve.  The non-vacuity of the
     // NS constraint itself is the nilpotency/closure checks below plus the
     // Ω-growth of the bare flow already asserted in test 7.)
     let h = navier_stokes_hamiltonian(1e-3);

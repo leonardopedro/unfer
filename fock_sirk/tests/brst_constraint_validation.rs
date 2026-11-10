@@ -155,12 +155,15 @@ fn qym_abelian_brst_nilpotent_and_invariant() {
 ///
 /// * on the ghost-free flow `Q` is exactly zero and the projection is the
 ///   identity to the last bit (`‖Pw − w‖ = 0`);
-/// * on a ghost-carrying state `‖Q w‖ = 2.0` but the projected solve does not
-///   converge — `BrstNotConverged { residual: 0.39040823231178456 }` at the
-///   configured tolerance and 50 iterations. `Q Q†` is singular on the
-///   subspace that carries the charge, so the projector is *untested where it
-///   would act*; that is a limitation of the switch, not a statement about
-///   gauge invariance.
+/// * on a ghost-carrying state `‖Q w‖ = 2.0` the *normal-equation* route does
+///   not converge — `BrstNotConverged { residual: 0.39040823231178456 }` at the
+///   configured tolerance and 50 iterations, and no budget fixes it: `Q = A·c`
+///   with `A = Σ_m p_m` (total momentum), so `QQ† = −A²⊗P₀` has continuous
+///   spectrum and the solve chases `A⁻¹c w`, which has no Fock-space
+///   representation (measured trajectory in `fock_sirk::brst`).
+/// * on the same state `project_ghost_free` projects **exactly** — the `A⁻¹`
+///   cancels, `Q(Pw) = 0` identically — which is what makes the projector
+///   testable where it acts.
 #[test]
 fn qym_brst_projection_is_identity_on_ker_q() {
     let h = qcd_ym_hamiltonian(0.0);
@@ -238,6 +241,20 @@ fn qym_brst_projection_is_identity_on_ker_q() {
         }
         Err(other) => panic!("unexpected projection error: {other:?}"),
     }
+
+    // The structural route on the same ghost-carrying state: exact, no solve.
+    let structural = fock_sirk::brst::project_ghost_free(&ghost, &omega)
+        .expect("Ω = Σ_m i(a†_m − a_m)c₉ is ghost-lowering");
+    assert!(
+        omega.apply(&structural).norm() == 0.0,
+        "Ω(Pw) must vanish identically, got {:e}",
+        omega.apply(&structural).norm()
+    );
+    assert!(
+        structural.is_empty(),
+        "the probe is entirely ghost-carrying, so its projection is exactly zero"
+    );
+    eprintln!("brst: structural projection of the ghosted probe is exactly 0");
 }
 
 #[test]

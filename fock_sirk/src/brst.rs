@@ -14,29 +14,63 @@
 //!
 //! # Conditioning (measured 2026-11-10)
 //!
-//! CG runs on the normal equations, so its iteration count tracks `κ(Q)²` and
-//! its residual is *exactly* the projection's physical residual:
+//! CG runs on the normal equations, so its residual is *exactly* the
+//! projection's physical residual:
 //!
 //! ```text
 //!   QQ†z − Qw = −Q(w − Q†z) = −Q(Pw),
 //! ```
 //!
-//! i.e. the `tol` the caller passes bounds `‖Q(Pw)‖` directly. A charge that
-//! fails to close is **not** singular — `b = Qw ∈ im Q = range(QQ†)` always —
-//! it is merely badly conditioned. Measured on the QG probe that used
-//! to fail (`Ω = (a†₂ + a₂)c₉`, `qg3d_full_hamiltonian(3)`): the CG–Lanczos
-//! tridiagonal at 60 steps has `λ_min = 1.648430476329554e-1`,
-//! `λ_max = 4.444237534453834e2` (`κ(QQ†) ≥ 2.696e3`), and the residual decays
-//! as CG theory predicts for that κ — `0.390` after 50 iterations, `9.12e-2`
-//! after 60. LSQR on `min ‖Q†z − w‖` (same `z`, no squaring of the condition
-//! number) reaches `5.27e-2` in the same 60 steps: a constant-factor gain, not
-//! a cure. The *promoted* charge `Ω = X·c₉`, `X = Σ x[ie][je]C†(e_i)A(e_j)`,
-//! converges on the same problem in **one** iteration, so the budget failure
-//! is a property of the charge supplied rather than of the solver: `max_iter`
-//! must be sized to the sequence's `κ`, not held fixed at 50.
+//! i.e. the `tol` the caller passes bounds `‖Q(Pw)‖` directly. There are two
+//! regimes, and they are not the same phenomenon.
+//!
+//! ## Charges with finite conditioning
+//!
+//! The QG probe that used to fail (`Ω = (a†₂ + a₂)c₉`, a single outer ladder
+//! pair) has a CG–Lanczos tridiagonal at 60 steps with `λ_min =
+//! 1.648430476329554e-1`, `λ_max = 4.444237534453834e2`, and its residual
+//! decays as CG theory predicts for that κ (`0.390` after 50 iterations,
+//! `9.12e-2` after 60) — a budget problem, cured by supplying the closing
+//! charge. The *promoted* charge `Ω = X·c₉`,
+//! `X = Σ x[ie][je]C†(e_i)A(e_j)`, converges on the same problem in **one**
+//! iteration.
+//!
+//! ## Charges built from an unbounded Gauss generator
+//!
+//! The abelian YM and NS charges (`Ω = Σ_m i(a†_m − a_m)c_g`, `Ω = Σ_j
+//! u_{j,j}c_j`) do **not** converge, and no `max_iter` fixes them. Instrumented
+//! CG on `Ω|ψ⟩` for the one-ghost probe of `brst_constraint_validation.rs`
+//! (`‖Ωw‖ = 2.0`), residual `‖Ω(Pw)‖`:
+//!
+//! ```text
+//!   it    0      5     10     50     80     115
+//!   ‖r‖  1.388  0.777 0.631  0.388  0.338  0.306      (4.75 s at 115)
+//!   |z|    3     48    143   2548   5549   9861 components
+//! ```
+//!
+//! The decay is algebraic (ratio `0.79` for `2.3×` the iterations), not
+//! geometric, and the iterate's support grows without bound — the signature of
+//! a normal equation whose solution is not in the truncated Fock space, not of
+//! a large finite κ. The structure explains it exactly. Write the charge as
+//! `Q = A·c_g` with `A = Σ_m i(a†_m − a_m)`; then `A = Σ_m p_m` is the **total
+//! momentum**, whose spectrum is all of `ℝ` with no eigenvalue, and
+//!
+//! ```text
+//!   QQ† = −A² ⊗ P₀,   P₀ = c_g c_g†  (the ghost-free projector),
+//!   z    = −A⁻¹ c_g w   ⇒   A⁻¹ c_g w  is in L² but not in any Fock
+//!                            truncation (A's spectrum is continuous),
+//!   Pw   = w − Q†z = w − c_g†c_g w = P₀w        (A cancels),
+//! ```
+//!
+//! so the **answer is trivial** while the intermediate the CG solve is chasing
+//! is unrepresentable. `A⁻¹c_g w` is a smeared state spread over the whole
+//! oscillator ladder; extending the truncation only moves the plateau.
+//! [`project_ghost_free`] exploits the cancellation directly and is exact and
+//! `O(len(w))` for this class of charge.
 
-use nested_fock_algebra::{Hamiltonian, QuantumState};
+use nested_fock_algebra::{Hamiltonian, Operator, QuantumState};
 use num_complex::Complex64;
+use std::collections::BTreeSet;
 
 use crate::linalg::SirkError;
 
@@ -44,10 +78,81 @@ fn norm(s: &QuantumState) -> f64 {
     QuantumState::inner_product(s, s).re.max(0.0).sqrt()
 }
 
+/// The ghost modes an *inner* ghost-lowering charge annihilates.
+///
+/// Returns `Some({g_k})` when every term of `q` is `A_k · c_{g_k}` — a product
+/// of inner boson ladders followed by one inner ghost annihilation, with no
+/// fermion anywhere else in the term — and `None` otherwise. For such a charge
+/// `Q = Σ_k A_k c_{g_k}` with `A_k` bosonic, so `c_{g_k}` annihilates every
+/// state carrying no fermion in the returned set.
+fn ghost_lowering_modes(q: &Hamiltonian) -> Option<BTreeSet<u32>> {
+    let mut modes = BTreeSet::new();
+    if q.terms.is_empty() {
+        return None;
+    }
+    for (_, ops) in &q.terms {
+        let (last, bosonic) = ops.split_last()?;
+        let Operator::InnerFermionAnnihilate(g) = last else {
+            return None;
+        };
+        // Everything else must be a *bosonic* inner ladder: a fermionic or an
+        // outer factor would break `[A_k, c_g] = 0` / the sector argument.
+        for op in bosonic {
+            match op {
+                Operator::InnerBosonCreate(_) | Operator::InnerBosonAnnihilate(_) => {}
+                _ => return None,
+            }
+        }
+        modes.insert(*g);
+    }
+    Some(modes)
+}
+
+/// Exact orthogonal projection onto `ker Q` for a ghost-lowering charge
+/// (`Q = Σ_k A_k c_{g_k}`, see [`ghost_lowering_modes`]).
+///
+/// `P w` deletes every Fock component whose inner state carries a fermion in
+/// one of `Q`'s ghost modes. That is exact, needs no solve, and is the
+/// projection the CG path cannot reach:
+///
+/// * **`ran P ⊆ ker Q`** — `c_g` annihilates a state with no `g`, so
+///   `Q(Pw) = 0` identically, whatever the `A_k` are.
+/// * **`ker Q ⊆ ran P`** — write `w = Σ_G w_G` by ghost number; `Q` raises it
+///   by one, so `Qw = 0` requires `Σ_k A_k c_{g_k} w_G = 0` for every `G ≥ 1`.
+///   In the one-ghost sector `g` this reads `A_g b_g w = 0`, so `b_g w = 0`
+///   (hence `w` is ghost-free) **provided `A_g` has trivial kernel**.
+/// * `P` is diagonal in the Fock basis, hence self-adjoint and idempotent.
+///
+/// For the two charges that need it the kernel condition holds trivially in
+/// the continuum: `A = Σ_m p_m` (YM) and `A_j = √2 x_j` (NS) have spectrum all
+/// of `ℝ` with no eigenvalue, so neither has a normalizable kernel vector.
+/// When an `A_k` *does* have a kernel, the returned state is still in `ker Q`
+/// but is not the closest point to `w` — this is the only unverified
+/// precondition, and it is why the function is not wired into
+/// [`project_physical`].
+///
+/// Returns `None` if `q` does not have the ghost-lowering shape.
+pub fn project_ghost_free(w: &QuantumState, q: &Hamiltonian) -> Option<QuantumState> {
+    let modes = ghost_lowering_modes(q)?;
+    let mut out = QuantumState::zero();
+    for (state, amp) in &w.components {
+        let carries_ghost = state
+            .fermionic
+            .iter()
+            .any(|f| f.modes.iter().any(|m| modes.contains(m)));
+        if !carries_ghost {
+            out.components.insert(state.clone(), *amp);
+        }
+    }
+    Some(out)
+}
+
 /// Project `w` onto the physical subspace `ker Q` along `im Q†`.
 ///
 /// `q` is the BRST charge `Q`. Returns [`SirkError::BrstNotConverged`] if the
-/// inner CG solve does not reach `tol` within `max_iter` iterations.
+/// inner CG solve does not reach `tol` within `max_iter` iterations; for an
+/// unbounded Gauss generator that is the expected outcome at every budget —
+/// see the module docs and [`project_ghost_free`].
 pub fn project_physical(
     w: &QuantumState,
     q: &Hamiltonian,
@@ -265,5 +370,113 @@ mod tests {
             "the structured charge must be nilpotent: Q²w = {:.3e}",
             norm(&q.apply(&q.apply(&w)))
         );
+    }
+
+    /// The abelian Gauss charge `Q = Σ_m i(a†_m − a_m)c_g`: a ghost-lowering
+    /// charge whose bosonic factor is the *unbounded* total momentum. CG cannot
+    /// project it (the module docs' trajectory), while the structural
+    /// projector is exact and `O(len(w))`.
+    fn gauss_charge(ghost: u32) -> Hamiltonian {
+        let mut terms = Vec::new();
+        for mode in [0u32, 1] {
+            terms.push((
+                Complex64::new(0.0, 1.0),
+                vec![
+                    Operator::InnerBosonCreate(mode),
+                    Operator::InnerFermionAnnihilate(ghost),
+                ],
+            ));
+            terms.push((
+                Complex64::new(0.0, -1.0),
+                vec![
+                    Operator::InnerBosonAnnihilate(mode),
+                    Operator::InnerFermionAnnihilate(ghost),
+                ],
+            ));
+        }
+        Hamiltonian { terms }
+    }
+
+    fn universe(boson: Option<u32>, ghost: Option<u32>) -> QuantumState {
+        let mut inner = InnerBosonicState::vacuum();
+        if let Some(m) = boson {
+            inner.modes.insert(m, 1);
+        }
+        let s = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
+        match ghost {
+            Some(g) => s.apply(&Operator::OuterFermionCreate(InnerFermionicState {
+                modes: BTreeSet::from([g]),
+            })),
+            None => s,
+        }
+    }
+
+    #[test]
+    fn structural_projection_is_exact_where_cg_diverges() {
+        let q = gauss_charge(9);
+        let physical = universe(Some(1), None);
+        let ghostly = universe(Some(1), Some(9));
+        let w = combine(
+            &physical,
+            Complex64::new(0.6, 0.0),
+            &ghostly,
+            Complex64::new(0.8, 0.0),
+        );
+
+        // The CG route does not converge — at any budget (see module docs).
+        assert!(
+            matches!(
+                project_physical(&w, &q, 1e-10, 50),
+                Err(SirkError::BrstNotConverged { .. })
+            ),
+            "CG is expected to stall on an unbounded Gauss generator"
+        );
+
+        let pw = project_ghost_free(&w, &q).expect("ghost-lowering shape");
+        assert!(
+            norm(&q.apply(&pw)) == 0.0,
+            "Q(Pw) must vanish exactly: {:.3e}",
+            norm(&q.apply(&pw))
+        );
+        // P is the Fock-diagonal ghost projector, so it is self-adjoint and
+        // idempotent exactly.
+        let ppw = project_ghost_free(&pw, &q).unwrap();
+        assert!(norm(&ppw) >= 0.0);
+        let mut diff = ppw.clone();
+        diff.scale_and_add(&pw, Complex64::new(-1.0, 0.0));
+        assert!(norm(&diff) == 0.0, "P must be idempotent exactly");
+        // And it returns the physical part, not just *some* element of ker Q.
+        let mut resid = pw.clone();
+        resid.scale_and_add(&physical, Complex64::new(-0.6, 0.0));
+        assert!(
+            norm(&resid) == 0.0,
+            "P(0.6·phys + 0.8·ghost) must be 0.6·phys: {:.3e}",
+            norm(&resid)
+        );
+    }
+
+    #[test]
+    fn structural_projection_declines_a_charge_it_does_not_recognise() {
+        // The rank-one outer-fermion charge of the tests above is not
+        // ghost-lowering (its fermionic factor is *outer*), so the structural
+        // path must decline rather than guess — `project_physical` handles it.
+        let (q, _, _) = ghost_setup();
+        assert!(
+            project_ghost_free(&QuantumState::vacuum(), &q).is_none(),
+            "a charge outside the ghost-lowering shape must be rejected"
+        );
+        // A charge with a *creation* factor is likewise not projected onto its
+        // annihilator's kernel: c† raises ghost number, so `c†` alone does not
+        // define a ghost-free kernel.
+        let q_create = Hamiltonian {
+            terms: vec![(
+                Complex64::new(1.0, 0.0),
+                vec![
+                    Operator::InnerBosonCreate(0),
+                    Operator::InnerFermionCreate(9),
+                ],
+            )],
+        };
+        assert!(project_ghost_free(&QuantumState::vacuum(), &q_create).is_none());
     }
 }
