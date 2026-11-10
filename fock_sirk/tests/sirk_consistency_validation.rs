@@ -248,3 +248,92 @@ fn resolved_set_frame_stable() {
         "unit-norm frame must certify at least as many rungs"
     );
 }
+
+/// **The shift sequence does not change the Krylov subspace**, so it cannot
+/// change a Ritz value or a certified width.
+///
+/// The forward recurrence is `w_k = (H − z_k) w_{k−1}`, hence
+/// `span{w_0..w_{k−1}} = span{ψ₀, Hψ₀, …, H^{k−1}ψ₀}` for *any* shift
+/// sequence — the `(H − z_k)` factors are polynomial in `H`, so the basis is
+/// reparametrized, not redirected. The Galerkin projection onto that subspace
+/// is therefore shift-independent, and so is every `θ` and `δ` derived from
+/// it. This is asserted here because it is easy to *assume* the opposite: the
+/// paper's `q(z) = Π(1 + h j z)` denominator suggests the shifts do rational
+/// filtering, and a 2026-11-10 mass-gap study spent a g-scan on the belief
+/// that shift design could shrink the certified width. It cannot — only `m`
+/// and the start state can.
+///
+/// Measured (`qcd_ym_hamiltonian(1.0)`, vacuum start, `m = 10`): six designs
+/// — the auto imaginary ladder `i(1 + 0.2j)`, a compressed `i(0.2 + 0.2j)`, a
+/// widened `i(3 + j)`, shifts at the ground `−3 ± 0.5j`, and a real ladder
+/// `−6 + 0.6j + 0.4i` — return `θ₀ = −1.450523`, `δ = 3.159e0` identically.
+#[test]
+fn shift_sequence_cannot_move_the_krylov_subspace() {
+    use nested_fock_algebra::qcd_ym_hamiltonian;
+    let h = qcd_ym_hamiltonian(1.0);
+    let m = 10usize;
+    let designs: Vec<(&str, Vec<Complex64>)> = vec![
+        ("auto imaginary ladder", shifts(m)),
+        (
+            "compressed imaginary",
+            (0..m)
+                .map(|j| Complex64::new(0.0, 0.2 + 0.2 * j as f64))
+                .collect(),
+        ),
+        (
+            "widened imaginary",
+            (0..m)
+                .map(|j| Complex64::new(0.0, 3.0 + j as f64))
+                .collect(),
+        ),
+        (
+            "at the ground",
+            (0..m)
+                .map(|j| Complex64::new(-3.0, 0.5 + 0.2 * j as f64))
+                .collect(),
+        ),
+        (
+            "real ladder",
+            (0..m)
+                .map(|j| Complex64::new(-6.0 + 0.6 * j as f64, 0.4))
+                .collect(),
+        ),
+    ];
+
+    let mut reference: Option<(f64, f64, usize)> = None;
+    for (label, sh) in &designs {
+        let res =
+            solve_forward_sirk_with_opts(&h, &empty_vacuum(), sh, &best_device(), None, &mk(true))
+                .expect("solve must complete");
+        let cert = fock_sirk::certified_ground_state(&res).expect("ground certificate");
+        println!(
+            "  {label:<22} θ₀ = {:.9}  δ = {:.6e}  rank = {}",
+            cert.value,
+            cert.delta(),
+            res.rank
+        );
+        match reference {
+            None => reference = Some((cert.value, cert.delta(), res.rank)),
+            Some((theta0, delta0, rank0)) => {
+                assert_eq!(res.rank, rank0, "{label}: rank must not depend on shifts");
+                // Not 1e-12: the two runs use different basis vectors, so the
+                // Gram is a different (equally valid) representation and the
+                // last digits differ. Measured agreement: 10+ digits.
+                assert!(
+                    (cert.value - theta0).abs() < 1e-8,
+                    "{label}: θ₀ = {:.9} vs reference {:.9} — the shift sequence \
+                     must not move the Ritz value",
+                    cert.value,
+                    theta0
+                );
+                assert!(
+                    (cert.delta() - delta0).abs() < 1e-6 * (1.0 + delta0),
+                    "{label}: δ = {:.6e} vs reference {:.6e} — the shift sequence \
+                     must not move the certified width",
+                    cert.delta(),
+                    delta0
+                );
+            }
+        }
+    }
+}

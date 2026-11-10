@@ -2423,6 +2423,32 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   certificates carrying $\theta$ and $\delta$, one assembly carrying gap and
   $\delta$) — the nanoda re-verification seam.
 
+**No coupling certifies it** (measured sweep, 2026-11-10; full table in
+`docs/MASS_GAP_SPEC.md` §6a). The interval is `[gap ± δ]`, so a stronger
+coupling could in principle grow the gap past the width — it does not: `lo`
+$= -8.01, -27.70, -61.99, -107.3, -210.4, -361.1, -783.4$ at
+$g = 1, 2, 3, 4, 6, 8, 12$, i.e. $lo \approx -6.9 g^2$ against an exact gap
+$\approx 0.09\,g^{3.8}$. Three further measurements say why this is the wrong
+lever:
+
+* the interval's **centre is negative at every coupling** ($\theta^o_0 <
+  \theta^e_0$ although $E_1 > E_0$): the assembly differences two separately
+  unconverged sector Ritz values, and the even (vacuum-start) one is the worse
+  of the two;
+* **depth does not fix it**: at $g=1$, $m = 12 \to 20$ moves $\delta^e$
+  $3.35 \to 4.09$ and $lo$ $-8.01 \to -9.92$;
+* **shift design cannot fix it**: `w_k = (H − z_k)w_{k−1}` spans
+  $\{\psi_0, H\psi_0, \dots\}$ for *any* shift sequence, so $\theta$ and
+  $\delta$ are shift-independent — five very different designs return
+  $\theta_0 = -1.450523$, $\delta = 3.159$, pinned by
+  `sirk_consistency_validation::shift_sequence_cannot_move_the_krylov_subspace`.
+
+A pair-squeezed even-sector start lowers $\theta^e_0$ ($-1.531 \to -1.742$ at
+$\alpha = 1$) but raises $\delta^e$ ($3.35 \to 4.27$), so $lo$ worsens. The
+ground residual stays $O(1)$ at every depth tried, consistent with there being
+no normalizable ground before truncation — the same continuum situation as the
+$g=0$ case in §5.22 — and the SIRK solve has no `N` knob to truncate at.
+
 ### 5.24o Direct SIRK drive of the project's Hamiltonians — `sirk_hamiltonian_drive.rs`
 
 The purest form of the program's numerics: every test runs the

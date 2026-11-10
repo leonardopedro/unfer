@@ -152,6 +152,51 @@ which is exactly what the emitted `"certified_positive":false` reports. The
 suite pins that non-resolution (and the fact that the window also contains the
 lattice value `g²/2`, so it cannot separate the two models); the departure from
 `g²/2` is established by the exact `N ≤ 8` diagonalization, not by the window.
+
+### 6a. Is a larger coupling enough? No — measured (2026-11-10)
+
+The interval is `[gap ± δ]`, so the natural hope is that a stronger coupling
+grows the gap past the width. It does not: `|lo|` grows faster.
+
+| `g` | θᵒ₀ | θᵉ₀ | measured gap | δᵒ+δᵉ | `lo` |
+|---|---|---|---|---|---|
+| 1 | −2.103 | −1.531 | −0.571 | 7.44 | −8.01 |
+| 2 | −4.633 | −2.352 | −2.281 | 25.5 | −27.70 |
+| 3 | −8.952 | −4.621 | −4.330 | 57.7 | −61.99 |
+| 4 | −14.484 | −8.289 | −6.195 | 101.1 | −107.3 |
+| 6 | −24.330 | −15.787 | −8.543 | 201.9 | −210.4 |
+| 8 | −39.757 | −28.701 | −11.06 | 350.0 | −361.1 |
+| 12 | −82.940 | −65.918 | −17.02 | 766.4 | −783.4 |
+
+(`m = 12` for `g ≤ 4`, `m = 10` for `g ≥ 6`: beyond that the odd sector exceeds
+a 2×10⁶-component budget.) `lo ≈ −6.9g²` while the exact truncated gap grows
+like `≈ 0.09 g^{3.8}`, so the two curves would cross near `g ≈ 11` — out of
+reach, and the wrong thing to aim at, because:
+
+* **the interval's centre is negative at every coupling** (`θᵒ₀ < θᵉ₀` although
+  `E₁ > E₀`). The T6 assembly differences two *separately unconverged* sector
+  Ritz values; the even (vacuum-start) one sits `1.2` above `E₀` at `g = 1`
+  against the odd one's `0.55` above `E₁`. So `lo > 0` needs a resolved sector
+  ground first, and no coupling supplies one;
+* **depth does not supply one either**: at `g = 1`, `m = 12 → 20` moves
+  `δᵉ` `3.35 → 4.09` and `lo` `−8.01 → −9.92` — the width grows with depth;
+* **shift design cannot help, structurally**: `w_k = (H − z_k)w_{k−1}` spans
+  `{ψ₀, Hψ₀, …}` for *any* shift sequence, so every `θ` and `δ` is
+  shift-independent. Five very different designs (imaginary ladders of three
+  scales, shifts at the ground, a real ladder) return `θ₀ = −1.450523`,
+  `δ = 3.159e0` — pinned by
+  `sirk_consistency_validation::shift_sequence_cannot_move_the_krylov_subspace`;
+* **a better even-sector start does not help**: `|Ω⟩ + α|1,1⟩` (the guide's
+  pair-squeezed ground) at `g = 1, m = 12` moves `θᵉ₀` `−1.531 → −1.742`
+  (`α = 1`) but `δᵉ` `3.35 → 4.27`, so `lo` worsens `−8.01 → −8.72`.
+
+What this leaves: the ground residual stays `O(1)` at every `m` tried, which is
+consistent with there being **no normalizable ground before truncation** — the
+same continuum phenomenon as the `g = 0` case (`qcd_ym_hamiltonian(0)` has
+bottom `−2`, a limit point; see the guide §5.22). The `N ≤ 8` gap of `0.0912`
+is a truncation statement, and the SIRK solve has no `N` knob (`max_components`
+bounds memory, not the inner occupation ceiling). Certifying a gap therefore
+needs a truncation-controlled solve, not a larger coupling.
 (the pinned Lean4 T6 instance in `../timepiece/GapCertificate/` remains the
 historical lattice instantiation; regenerating it for the gauge-fixed numbers
 is an LLM-Lean4-specialist item).
