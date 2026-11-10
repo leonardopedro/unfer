@@ -447,6 +447,65 @@ pub fn solve_forward_sirk_with_opts(
     )
 }
 
+/// The compressed matvec `u ↦ P_N H P_N u` — the operator a
+/// truncation-controlled solve steps with.
+///
+/// `P_N` ([`QuantumState::restrict_inner`]) drops every component whose total
+/// inner occupation exceeds `ceiling`, so the result is a genuine
+/// self-adjoint operator on a finite-dimensional space, and its spectrum does
+/// have a lowest eigenvalue even where `H`'s does not. That is the point: on the
+/// gauge-fixed QYM the unbounded solve has no normalizable ground (bottom `−2`
+/// is a limit point at `g = 0`), which is why its certificate can never resolve
+/// anything, while `H_N`'s gap is the truncation's own.
+///
+/// Both sides are compressed, so the map is self-adjoint by construction; a
+/// one-sided `P_N` would silently produce a non-Hermitian operator.
+pub fn truncated_matvec<'a>(
+    hamiltonian: &'a Hamiltonian,
+    ceiling: u32,
+) -> impl Fn(&QuantumState) -> QuantumState + 'a {
+    move |state| {
+        let restricted = state.restrict_inner(ceiling);
+        hamiltonian.apply(&restricted).restrict_inner(ceiling)
+    }
+}
+
+/// Truncation-controlled SIRK: solve `w_k = (P_N H P_N − z_k I) w_{k−1}` on the
+/// inner-occupation-truncated space, i.e. the rational Krylov method applied to
+/// the bounded `H_N` rather than to the unbounded `H`.
+///
+/// The start is projected first (`v_0.restrict_inner(ceiling)`), so a start
+/// carrying mass above the ceiling is truncated rather than rejected; the
+/// returned [`ForwardSirkResult`] is then a spectral statement about `H_N`
+/// alone. Read the gap it produces as a property of the truncation: at `g = 0`
+/// the compressed free theory is gapped by discreteness, so a positive
+/// certificate there says nothing about the continuum
+/// (`docs/MASS_GAP_SPEC.md` §6b).
+///
+/// A `brst_charge` is applied inside the solver and is **not** compressed by
+/// this function: the result is a statement about `P_N H P_N` only when the
+/// charge preserves `range(P_N)` (any occupation-preserving charge does);
+/// otherwise the composite map mixes in the charge's own projection.
+pub fn solve_forward_sirk_truncated(
+    hamiltonian: &Hamiltonian,
+    v_0: &QuantumState,
+    shifts: &[Complex64],
+    device: &Device,
+    brst_charge: Option<&Hamiltonian>,
+    opts: &SirkOpts,
+    ceiling: u32,
+) -> Result<ForwardSirkResult, SirkError> {
+    let start = v_0.restrict_inner(ceiling);
+    solve_forward_sirk_with_matvec(
+        truncated_matvec(hamiltonian, ceiling),
+        &start,
+        shifts,
+        device,
+        brst_charge,
+        opts,
+    )
+}
+
 /// Like [`solve_forward_sirk_with_opts`] but takes a custom matvec
 /// closure `F: Fn(&QuantumState) -> QuantumState` that computes
 /// `H |state⟩` (the Hamiltonian application, not the shifted one).

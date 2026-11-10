@@ -59,8 +59,22 @@ anchors=(
   "certified_width("
   "backward_error_const("
   "parlett_bound("
-  # The T6 statement itself.
+  # The T6 statement itself, and the 2026-11-10 conditionality: the line above
+  # is only a bound when the odd solve resolved the odd sector's ground. The
+  # specialist bundle must not carry the unconditional reading, so the
+  # qualifying wording is an anchor of its own.
   "λ₁(H_m) − λ₀(H_m) ≥ θᵒ₀ − θᵉ₀ − (δᵒ + δᵉ)"
+  # The 2026-11-10 correction: the line above is a bound only when the odd
+  # solve resolved the odd sector's ground, and that hypothesis is not
+  # witnessed by any width term. The bundle must carry the correction, not the
+  # unconditional reading.
+  "exclusion witness"
+  "Kato–Temple"
+  "temple_lower_bound"
+  "λ₁ ≥ θ − r²/(β − θ)"
+  "θ < β ≤ λ₂"
+  "certify_spectrum"
+  "second_eigenvalue_lower_bound"
   "certified_gap_lower_bound("
   "gap_interval("
   "interval_contains("

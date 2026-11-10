@@ -48,8 +48,8 @@
 //!    (`ChapterSirkCertifiedGap`); the `certified_positive` flag truthfully
 //!    reflects `lo > 0` of the emitted numbers.
 //! 4. `the_certified_gap_lower_bound_needs_the_sector_ground` — SIRK driven on
-//!    the *bounded* `P_N H P_N` (via `solve_forward_sirk_with_matvec`, since
-//!    the solver has no inner-occupation knob), cross-checked against the
+//!    the *bounded* `P_N H P_N` (via `solve_forward_sirk_truncated`),
+//!    cross-checked against the
 //!    exact parity-resolved spectrum. Establishes two things the T6 assembly
 //!    depends on: `lo > 0` is reachable and is a property of the finite basis
 //!    (it holds at the gapless control `g = 0`), and `lo` can exceed the true
@@ -67,8 +67,9 @@
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{
-    SirkOpts, certified_mass_gap, certified_ritz_values, emit_gap_certificate_ndjson,
-    solve_forward_sirk_with_matvec, solve_forward_sirk_with_opts,
+    SirkOpts, certified_mass_gap, certified_ritz_values, certify_spectrum,
+    emit_gap_certificate_ndjson, solve_forward_sirk_truncated, solve_forward_sirk_with_opts,
+    truncated_matvec,
 };
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
@@ -372,35 +373,14 @@ fn qcd_mass_gap_certificate_ndjson() {
 // Truncation control, and what the T6 step actually needs
 // ---------------------------------------------------------------------------
 //
-// The SIRK solve has no inner-occupation knob, so the campaign's `N` axis is a
-// dense-diagonalization cross-check and the certified gap is assembled from two
-// *unbounded*-operator solves. `solve_forward_sirk_with_matvec` supplies the
-// missing knob from outside: the closure applies `P_N H P_N`, and since the
-// start and every iterate live in `V_N`, `P_N` acts as the identity on the
-// state SIRK subtracts, so the operator the loop steps with is exactly the
-// bounded `H_N`. That makes the two experiments below possible on a *bounded*
-// operator, where an exact parity-resolved spectrum exists to compare against.
-
-/// Total inner occupation of an outer component — the truncation quantum number.
-fn occupation(s: &OuterState) -> u32 {
-    let bosons: u32 = s
-        .bosonic
-        .iter()
-        .map(|(inner, &count)| count * inner.modes.values().sum::<u32>())
-        .sum();
-    bosons + s.fermionic.len() as u32
-}
-
-/// `P_N`: keep the components with total inner occupation `≤ n`.
-fn restrict_n(state: &QuantumState, n: u32) -> QuantumState {
-    let mut out = QuantumState::zero();
-    for (k, v) in &state.components {
-        if occupation(k) <= n {
-            out.components.insert(k.clone(), *v);
-        }
-    }
-    out
-}
+// The campaign's `N` axis is a dense-diagonalization cross-check, and the
+// certified gap it assembles comes from two *unbounded*-operator solves.
+// `solve_forward_sirk_truncated` is the supported truncation-controlled entry
+// point: it applies `P_N H P_N` on both sides, and since the start and every
+// iterate live in `V_N`, `P_N` acts as the identity on the state SIRK subtracts,
+// so the operator the loop steps with is exactly the bounded `H_N`. That makes
+// the experiments below possible on a *bounded* operator, where an exact
+// parity-resolved spectrum exists to compare against.
 
 /// The QYM reflection `R|n₀,n₁,n₂,n₃⟩ = (−1)^(n₀+n₁)|n₁,n₀,n₂,n₃⟩`.
 fn apply_reflection(s: &QuantumState) -> QuantumState {
@@ -502,10 +482,8 @@ fn truncated_spectrum(h: &Hamiltonian, n_max: u32) -> Vec<(f64, f64, QuantumStat
 /// whitened matrix (which carries the collapsed-chain asymmetry noted in
 /// `solve_truncated`).
 fn assert_operator_self_adjoint(h: &Hamiltonian, n: u32, states: &[QuantumState]) {
-    let applied: Vec<QuantumState> = states
-        .iter()
-        .map(|s| restrict_n(&h.apply(&restrict_n(s, n)), n))
-        .collect();
+    let compress = truncated_matvec(h, n);
+    let applied: Vec<QuantumState> = states.iter().map(&compress).collect();
     for (j, a) in applied.iter().enumerate() {
         for (k, b) in states.iter().enumerate() {
             let lhs = QuantumState::inner_product(b, a);
@@ -518,6 +496,43 @@ fn assert_operator_self_adjoint(h: &Hamiltonian, n: u32, states: &[QuantumState]
     }
 }
 
+/// The reflection-parity block of `H_N` as an explicit real matrix.
+///
+/// `R` commutes with `H`, so each parity parity subspace is `H`-invariant and the
+/// block is the operator itself restricted to it — no leakage to project away.
+/// This is the explicit finite matrix an exclusion certificate can be built on.
+fn truncated_parity_block(h: &Hamiltonian, n_max: u32, even: bool) -> DMatrix<f64> {
+    let mut basis = Vec::new();
+    for n0 in 0..=n_max {
+        for n1 in 0..=n_max - n0 {
+            for n2 in 0..=n_max - n0 - n1 {
+                for n3 in 0..=n_max - n0 - n1 - n2 {
+                    let parity = (n0 + n1) % 2 == 0;
+                    if parity != even {
+                        continue;
+                    }
+                    let mut occ = Vec::new();
+                    for (mode, count) in [(0, n0), (1, n1), (2, n2), (3, n3)] {
+                        if count > 0 {
+                            occ.push((mode, count));
+                        }
+                    }
+                    basis.push(fock_state(&occ));
+                }
+            }
+        }
+    }
+    let n = basis.len();
+    let mut mat = DMatrix::<f64>::zeros(n, n);
+    for (j, s) in basis.iter().enumerate() {
+        let hs = h.apply(s);
+        for (i, t) in basis.iter().enumerate() {
+            mat[(i, j)] = QuantumState::inner_product(t, &hs).re;
+        }
+    }
+    mat
+}
+
 /// One SIRK solve of the bounded `P_N H P_N` at Krylov order `m`.
 fn solve_truncated(
     h: &Hamiltonian,
@@ -525,15 +540,8 @@ fn solve_truncated(
     m: usize,
     n: u32,
 ) -> fock_sirk::ForwardSirkResult {
-    let res = solve_forward_sirk_with_matvec(
-        |s: &QuantumState| restrict_n(&h.apply(&restrict_n(s, n)), n),
-        start,
-        &shifts(m),
-        &best_device(),
-        None,
-        &opts(),
-    )
-    .expect("truncated solve must complete");
+    let res = solve_forward_sirk_truncated(h, start, &shifts(m), &best_device(), None, &opts(), n)
+        .expect("truncated solve must complete");
     // NOTE: `assert_hermitian` is deliberately not applied here. `h_proj` is
     // assembled from the step identity `⟨ŵ_j|H|ŵ_k⟩ = (σ_{k+1}/σ_k)G_{j,k+1} +
     // z_k G_{j,k}` rather than from explicit `H` applications, so when the
@@ -595,6 +603,7 @@ fn the_certified_gap_lower_bound_needs_the_sector_ground() {
     // (1) The in-sector start: the hypothesis holds and T6 is a bound.
     let res_even = solve_truncated(&h, &empty_vacuum(), 14, n);
     let res_odd = solve_truncated(&h, &r_odd_start(), 14, n);
+    let ce = certified_ritz_values(&res_even);
     let co = certified_ritz_values(&res_odd);
     let in_sector = certified_mass_gap(&res_even, &res_odd).expect("assembly");
     assert!(
@@ -653,5 +662,59 @@ fn the_certified_gap_lower_bound_needs_the_sector_ground() {
         "the T6 expression then EXCEEDS the true gap: lo = {} vs gap = {exact_gap} — `lo > 0` \
          is not a proof, and no residual term can detect this",
         stuck.lo
+    );
+
+    // (3) With an exclusion witness the bound becomes valid: Kato–Temple.
+    //
+    // The witness is `λ₂` for the odd sector, obtained from a certified
+    // spectrum of the explicit odd block: every computed eigenpair's Parlett
+    // interval is grouped into disjoint clusters, and since an n x n matrix has
+    // n eigenvalues and every interval holds at least one, each cluster holds
+    // exactly its own count. That turns the second cluster's lower edge into a
+    // rigorous λ₂ bound — the thing a residual cannot produce.
+    let odd_block = truncated_parity_block(&h, n, false);
+    let certified_spectrum = certify_spectrum(&odd_block).expect("the odd block is certifiable");
+    let beta = certified_spectrum
+        .second_eigenvalue_lower_bound()
+        .expect("λ₂ lower bound from the certificate");
+    assert!(
+        beta > lambda_odd,
+        "the λ₂ witness must sit above the odd ground: β = {beta}, λ₁ = {lambda_odd}"
+    );
+
+    let temple = fock_sirk::mass_gap_spec::certified_gap_lower_bound_with_exclusion(
+        co[0].value,
+        co[0].residual,
+        beta,
+        ce[0].value,
+    )
+    .expect("Temple's hypothesis must hold for the in-sector solve");
+    assert!(temple > 0.0, "the certified gap must be positive: {temple}");
+    assert!(
+        temple <= exact_gap + 1e-9,
+        "Temple's bound must stay below the exact gap: {temple} vs {exact_gap}"
+    );
+    assert!(
+        temple >= in_sector.lo,
+        "r²/(β−θ) must sharpen the Parlett-width assembly: Temple {temple} vs lo {}",
+        in_sector.lo
+    );
+    // And the same witness refuses the stuck solve: its θ sits at λ₂, so
+    // θ + r < β ≤ λ₂ fails and Temple's inequality does not apply. Without the
+    // guard this is exactly the case that would return a "bound" above λ₁.
+    assert!(
+        fock_sirk::mass_gap_spec::certified_gap_lower_bound_with_exclusion(
+            cs[0].value,
+            cs[0].residual,
+            beta,
+            ce[0].value
+        )
+        .is_none(),
+        "the exclusion form must decline when the residual ball reaches λ₂"
+    );
+    eprintln!(
+        "certified gap (Temple, g=0, N<=6, m=14): {temple:.9} vs exact {exact_gap:.9}; \
+         Parlett-width lo {:.9}; θᵒ₀ = {:.9} rᵒ = {:.3e} β = {beta:.9}",
+        in_sector.lo, co[0].value, co[0].residual
     );
 }

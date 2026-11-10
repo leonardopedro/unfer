@@ -2118,4 +2118,92 @@ mod algebra_tests {
             "QCD pair-production must contain a 3-operator vertex term"
         );
     }
+
+    // ── Inner-occupation truncation P_N ─────────────────────────────
+    //
+    // `restrict_inner` is the projector the truncation-controlled solve
+    // (`fock_sirk::solve_forward_sirk_truncated`) compresses H with. Three
+    // properties are load-bearing: it is a projector (P² = P), it is
+    // self-adjoint (⟨a|P b⟩ = ⟨P a|b⟩), and it cuts exactly on the total inner
+    // occupation — not on the outer boson number, which is the trap the
+    // components' shape invites (an outer state is a map of inner universes, so
+    // "how much is in this component" is a sum over that map, weighted by the
+    // outer multiplicity).
+    #[test]
+    fn restrict_inner_is_the_occupation_projector() {
+        let vac =
+            QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()));
+        let one = vac.apply(&Operator::InnerBosonCreate(0));
+        let two = one.apply(&Operator::InnerBosonCreate(0));
+        let two_other_mode = one.apply(&Operator::InnerBosonCreate(1));
+        // A two-universe component: |1_0> ⊗ |2_0> — occupation 3, not 1 and not 2.
+        let stacked = two.apply(&Operator::OuterBosonCreate(InnerBosonicState {
+            modes: [(0u32, 1u32)].into_iter().collect(),
+        }));
+
+        let mixed = {
+            let mut s = vac.clone();
+            for (other, c) in [
+                (one.clone(), 0.5),
+                (two.clone(), 0.25),
+                (two_other_mode.clone(), 0.125),
+                (stacked.clone(), 1.0),
+            ] {
+                s.scale_and_add(&other, Complex64::new(c, 0.0));
+            }
+            s
+        };
+
+        // Occupations: vac 0, one 1, two 2, two_other_mode 2, stacked 3.
+        assert_eq!(
+            vac.components.keys().next().unwrap().inner_occupation(),
+            0,
+            "the empty inner universe has occupation 0"
+        );
+        assert_eq!(two.components.keys().next().unwrap().inner_occupation(), 2);
+        assert_eq!(
+            stacked.components.keys().next().unwrap().inner_occupation(),
+            3,
+            "occupation sums over the inner universes inside a component"
+        );
+
+        let p1 = mixed.restrict_inner(1);
+        assert_eq!(p1.components.len(), 2, "vac + one survive P_1");
+        assert_eq!(
+            p1.restrict_inner(1).components.len(),
+            2,
+            "P_N is idempotent"
+        );
+
+        let p2 = mixed.restrict_inner(2);
+        assert_eq!(
+            p2.components.len(),
+            4,
+            "everything except the stacked component"
+        );
+        assert!(
+            !p2.components
+                .contains_key(stacked.components.keys().next().unwrap()),
+            "the occupation-3 component must be cut by P_2"
+        );
+
+        // Self-adjointness of the projector on the surviving pair.
+        let a = p2.clone();
+        let b = mixed.clone();
+        let lhs = QuantumState::inner_product(&b, &a); // ⟨b|P a⟩
+        let rhs = QuantumState::inner_product(&a, &b); // ⟨P b|a⟩ (P = P†)
+        assert!(
+            (lhs - rhs).norm() < 1e-15,
+            "P_N must be self-adjoint: {lhs} vs {rhs}"
+        );
+
+        // And the ceiling is monotone: P_0 ⊂ P_1 ⊂ P_2.
+        let p0 = mixed.restrict_inner(0);
+        assert_eq!(
+            p0.components.len(),
+            1,
+            "only the empty universe survives P_0"
+        );
+        assert_eq!(mixed.restrict_inner(9).components.len(), 5, "P_9 keeps all");
+    }
 }

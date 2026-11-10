@@ -2421,9 +2421,9 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   certificates carrying $\theta$ and $\delta$, one assembly carrying gap and
   $\delta$) — the nanoda re-verification seam.
 - **`the_certified_gap_lower_bound_needs_the_sector_ground`** — computes: SIRK
-  driven on the **bounded** $P_N H P_N$ (supplied through
-  `solve_forward_sirk_with_matvec`, since the solver has no inner-occupation
-  knob) and the exact parity-resolved spectrum of that truncation. *Asserts*:
+  driven on the **bounded** $P_N H P_N$ through the truncation-controlled entry
+  point (`QuantumState::restrict_inner` + `solve_forward_sirk_truncated`) and
+  the exact parity-resolved spectrum of that truncation. *Asserts*:
   the projected operator is self-adjoint ($10^{-12}$); at the gapless control
   $g = 0$, $N \le 6$, $m = 14$ both sector solves isolate their grounds and
   $lo = +0.189913 > 0$ against an exact gap of $0.189928$ — so positivity is a
@@ -2438,6 +2438,19 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   stated as conditional on that ground resolution (`mass_gap_spec`
   precondition 3, `certificate.rs` `GapCertificate::lo`); full table and the
   orientation caveat in `docs/MASS_GAP_SPEC.md` §6b.
+- **Exclusion + Kato–Temple** (`certificate::certify_spectrum`,
+  `mass_gap_spec::temple_lower_bound`, `certified_gap_lower_bound_with_exclusion`)
+  — the way to *get* that witness. For an explicit finite matrix the Parlett
+  intervals of all `n` eigenpairs are merged into disjoint clusters; `n`
+  eigenvalues in `n` intervals makes each cluster's count exact, so its lower
+  edge is rigorous and `second_eigenvalue_lower_bound()` is a `λ₂` bound (`None`
+  for a degenerate ground). Temple then turns one Ritz pair into
+  `λ₁ ≥ θ − r²/(β − θ)`, valid under `θ < β ≤ λ₂` and `r < β − θ`. Measured on
+  the truncated gauge-fixed QYM (`g = 0`, `N ≤ 6`, `m = 14`): certified gap
+  `0.189927960` against an exact `0.189927963`, versus `0.189913148` from the
+  Parlett-width assembly — a *valid* positive gap for `H_N`, and only for
+  `H_N` (the witness is an explicit dense matrix, so this cannot reach the
+  continuum). See `docs/MASS_GAP_SPEC.md` §6c.
 
 **No coupling certifies it** (measured sweep, 2026-11-10; full table in
 `docs/MASS_GAP_SPEC.md` §6a). The interval is `[gap ± δ]`, so a stronger

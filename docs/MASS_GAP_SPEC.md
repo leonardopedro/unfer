@@ -203,12 +203,14 @@ is an LLM-Lean4-specialist item).
 
 ### 6b. The truncation control, and why `lo > 0` is not a proof (2026-11-10)
 
-§6a concluded that a truncation-controlled solve is what is missing. The solver
-needs no change for it: `solve_forward_sirk_with_matvec` takes the matvec, so
-a caller passes `P_N H P_N` (drop every component whose total inner occupation
-exceeds `N`). Because the start and every iterate live in `V_N`, `P_N` acts as
-the identity on the state SIRK subtracts from `H u`, so the operator the loop
-steps with is exactly the bounded `H_N`. On a bounded operator an exact
+§6a concluded that a truncation-controlled solve is what is missing. It is now
+a supported API: `QuantumState::restrict_inner(ceiling)` is the projector
+`P_N` (drop every component whose total inner occupation exceeds `N`),
+`fock_sirk::truncated_matvec` is the compressed `P_N H P_N`, and
+`fock_sirk::solve_forward_sirk_truncated` runs SIRK on it (projecting the start
+first). Because the start and every iterate live in `V_N`, `P_N` acts as the
+identity on the state SIRK subtracts from `H u`, so the operator the loop steps
+with is exactly the bounded `H_N`. On a bounded operator an exact
 parity-resolved spectrum exists (dense diagonalization; `R|n₀n₁n₂n₃⟩ =
 (−1)^{n₀+n₁}|n₁n₀n₂n₃⟩`, eigenvectors classified by `⟨ψ|Rψ⟩ = ±1`), so the
 certificate can finally be compared against truth. All numbers below are from
@@ -271,6 +273,62 @@ Two caveats for anyone reading the campaign fixtures:
   That is an assembly property of the collapsed chain, not of `P_N H P_N`
   (checked self-adjoint to `1e-12`), but it sets the accuracy of `θ` on such
   solves and hence the resolution of any bound comparison made there.
+
+### 6c. A valid bound: exclusion + Kato–Temple (2026-11-10)
+
+§6b left two gaps: the projector was caller-side, and there was no way to
+witness a sector ground. Both are now library API.
+
+* `QuantumState::restrict_inner(ceiling)` — the projector `P_N` (unit-tested for
+  idempotence, self-adjointness and exactness of the occupation cut, including a
+  two-universe component where the total is neither universe's count).
+  `fock_sirk::truncated_matvec` compresses on both sides and
+  `fock_sirk::solve_forward_sirk_truncated` runs SIRK on `H_N` (projecting the
+  start first).
+* `certificate::certify_spectrum` — the **exclusion witness**. For an explicit
+  `n × n` Hermitian matrix it puts a Parlett interval around every computed
+  eigenpair and merges touching intervals into disjoint clusters. Since the
+  matrix has `n` eigenvalues and every interval holds at least one, each cluster
+  holds exactly its own multiplicity; so a cluster's lower edge is rigorous, and
+  `second_eigenvalue_lower_bound()` is a rigorous `λ₂` bound (`None` for a
+  degenerate ground, where `λ₂ = λ₁` and no witness exists).
+* `mass_gap_spec::temple_lower_bound(θ, r, β)` — the Kato–Temple inequality
+
+  ```text
+    λ₁ ≥ θ − r²/(β − θ),        valid when θ < β ≤ λ₂ and r < β − θ,
+  ```
+
+  and `certified_gap_lower_bound_with_exclusion(θᵒ₀, rᵒ, β, θᵉ₀)`, which is the
+  gap statement *done right*: `λ₁ − λ₀ ≥ temple − θᵉ₀`, the even side needing no
+  hypothesis at all (Rayleigh gives `λ₀ ≤ θᵉ₀`). Note what disappears from the
+  assembly: both sector residuals as *widths* — one is replaced by `r²/γ` and
+  the other is not needed.
+
+Measured on `H_N` at `g = 0`, `N ≤ 6`, `m = 14` (the in-sector odd solve):
+
+| quantity | value |
+|---|---|
+| `θᵒ₀` | −1.114923508 |
+| `rᵒ` | 4.586e-7 |
+| `β` (certified `λ₂` bound, odd block) | −0.778457120 |
+| **Temple gap** `temple − θᵉ₀` | **0.189927960** |
+| exact sector gap | 0.189927963 |
+| Parlett-width `lo` (§6b's expression) | 0.189913148 |
+
+So `H_N` now has a *valid* certified positive gap — 3e-9 below the exact gap,
+where the old expression was `1.5e-5` below it because it charged `δᵉ`. Per
+sector, Temple's slack is `6.3e-13` against Parlett's `4.6e-7`.
+
+The guard is not a formality: in the two-level model the condition `r < β − θ`
+holds exactly when the start has `α² > 1/2` ground overlap, so it *is* a ground-
+resolution witness — and it refuses the §6b counterexample (θ at the second
+level) rather than returning a "bound" above `λ₁`.
+
+What this does **not** do: it certifies the truncation. The witness is a dense
+`n × n` matrix (`n = 80` for the odd block at `N ≤ 6`, `202` at `N ≤ 8`), which
+is available only at small `N`; production truncations are far past dense
+diagonalization, and the unbounded `H` still has no lowest eigenvalue for any of
+this to bound. The continuum mass gap remains unproven.
 
 The correction to T6's statement has **not** yet reached the specialist bundle
 (`../timepiece/unfer_contracts/`, a sibling repository).

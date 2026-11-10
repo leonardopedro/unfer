@@ -98,6 +98,23 @@ impl OuterState {
             fermionic: BTreeSet::new(),
         }
     }
+
+    /// Total inner occupation of this outer component: the sum over every
+    /// enclosed inner universe of its bosonic mode occupations, weighted by
+    /// the outer multiplicity, plus one per enclosed inner fermion.
+    ///
+    /// This is the quantum number the truncation `P_N` cuts on. `H` is not
+    /// block-diagonal in it (the pair terms move occupation by two), so it is
+    /// not a conserved charge — it bounds each component's cost, which is what
+    /// makes a truncated solve finite.
+    pub fn inner_occupation(&self) -> u32 {
+        let bosons: u32 = self
+            .bosonic
+            .iter()
+            .map(|(inner, &count)| count * inner.modes.values().sum::<u32>())
+            .sum();
+        bosons + self.fermionic.len() as u32
+    }
 }
 
 // Serde helper: FxHashMap<OuterState, Complex64> has non-string keys and Complex64
@@ -221,6 +238,30 @@ impl QuantumState {
         });
         entries.truncate(k);
         self.components = entries.into_iter().collect();
+    }
+
+    /// The inner-occupation projector `P_N`: keep the components whose total
+    /// inner occupation is `≤ ceiling`, drop the rest.
+    ///
+    /// `P_N` is an orthogonal projector (`P_N = P_N† = P_N²`), so the
+    /// compressed operator `H_N = P_N H P_N` is self-adjoint on the truncated
+    /// space, and a Krylov sequence started in `range(P_N)` never leaves it.
+    /// Compressing on both sides of the matvec is therefore the supported way
+    /// to run a truncation-controlled solve: see
+    /// [`fock_sirk::solve_forward_sirk_truncated`].
+    ///
+    /// Dropping mass changes the norm — this is a projection, not a
+    /// renormalization; callers that need a unit vector rescale afterwards.
+    pub fn restrict_inner(&self, ceiling: u32) -> QuantumState {
+        let mut out = QuantumState {
+            components: FxHashMap::default(),
+        };
+        for (state, amplitude) in &self.components {
+            if state.inner_occupation() <= ceiling {
+                out.components.insert(state.clone(), *amplitude);
+            }
+        }
+        out
     }
 
     pub fn create_boson(&self, idx: u32) -> Self {

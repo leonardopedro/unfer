@@ -198,6 +198,133 @@ impl GapCertificate {
     }
 }
 
+/// One cluster of a certified spectrum: a closed interval that is proven to
+/// contain exactly `multiplicity` eigenvalues of the matrix (counted with
+/// multiplicity) and no others.
+#[derive(Debug, Clone, Copy)]
+pub struct SpectrumCluster {
+    pub lo: f64,
+    pub hi: f64,
+    pub multiplicity: usize,
+}
+
+/// A certified spectrum of an explicit finite Hermitian matrix — the
+/// **exclusion witness** [`crate::mass_gap_spec::temple_lower_bound`] needs.
+///
+/// Parlett's bound says every computed eigenpair encloses *some* eigenvalue;
+/// that alone cannot name an eigenvalue. What completes the argument is
+/// counting: an `n × n` Hermitian matrix has `n` eigenvalues (with
+/// multiplicity), each of the `n` Parlett intervals contains at least one, and
+/// if the intervals are grouped into **disjoint** clusters then each cluster
+/// contains exactly as many eigenvalues as it has members — otherwise the total
+/// would exceed `n`. So a cluster's lower edge is a rigorous lower bound on the
+/// eigenvalue(s) it encloses, and the second cluster's lower edge is a rigorous
+/// bound on `λ₂`.
+///
+/// This is what a residual cannot do on its own, and it is only available for an
+/// explicit finite matrix — i.e. for a truncated operator, never for the
+/// unbounded `H`.
+pub struct SpectrumCertificate {
+    /// Clusters, ascending, pairwise disjoint by construction.
+    pub clusters: Vec<SpectrumCluster>,
+    /// Dimension of the matrix, `Σ multiplicity`.
+    pub dimension: usize,
+}
+
+impl SpectrumCertificate {
+    /// Rigorous lower bound for the `k`-th eigenvalue (1-indexed, counting
+    /// multiplicity), or `None` if `k` exceeds the dimension.
+    pub fn eigenvalue_lower_bound(&self, k: usize) -> Option<f64> {
+        let mut seen = 0;
+        for cluster in &self.clusters {
+            seen += cluster.multiplicity;
+            if k <= seen {
+                return Some(cluster.lo);
+            }
+        }
+        None
+    }
+
+    /// Rigorous lower bound for the second eigenvalue `λ₂` — the exclusion
+    /// witness Temple's inequality needs. `None` when the ground is degenerate
+    /// (then `λ₂ = λ₁` and no `β` above `θ` can exist), or when the matrix has
+    /// fewer than two eigenvalues.
+    pub fn second_eigenvalue_lower_bound(&self) -> Option<f64> {
+        let ground = self.clusters.first()?;
+        if ground.multiplicity != 1 {
+            return None;
+        }
+        let second = self.clusters.get(1)?;
+        Some(second.lo)
+    }
+}
+
+/// Certify the whole spectrum of an explicit `n × n` Hermitian matrix.
+///
+/// Each computed eigenpair contributes the Parlett interval
+/// `[θ − δ, θ + δ]`, `δ = ‖Av − θv‖ + c(n)·u·‖A‖ + 4u·max(|θ|, 1)`; intervals
+/// that touch are merged into one cluster, so the returned clusters are
+/// disjoint and each is proven to contain exactly its own multiplicities (see
+/// [`SpectrumCertificate`]). Returns `None` for an empty matrix or a
+/// degenerate/complex spectrum (`symmetric_eigen` on a non-Hermitian matrix).
+pub fn certify_spectrum(matrix: &DMatrix<f64>) -> Option<SpectrumCertificate> {
+    let n = matrix.nrows();
+    if n == 0 || matrix.ncols() != n {
+        return None;
+    }
+    let eig = matrix.clone().symmetric_eigen();
+    if !eig.eigenvalues.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let norm = eig
+        .eigenvalues
+        .iter()
+        .map(|v| v.abs())
+        .fold(0.0_f64, f64::max);
+    let roundoff = backward_error_const(n) * UNIT_ROUNDOFF * norm.max(1.0);
+    let mut intervals: Vec<(f64, f64)> = Vec::with_capacity(n);
+    for i in 0..n {
+        let theta = eig.eigenvalues[i];
+        let v = eig.eigenvectors.column(i);
+        let residual = {
+            let mut acc = 0.0_f64;
+            for j in 0..n {
+                let row_times_v: f64 = (0..n).map(|k| matrix[(j, k)] * v[k]).sum();
+                let r = row_times_v - theta * v[j];
+                acc += r * r;
+            }
+            acc.sqrt()
+        };
+        let enclosure = 4.0 * UNIT_ROUNDOFF * theta.abs().max(1.0);
+        let delta = residual + roundoff + enclosure;
+        intervals.push((theta - delta, theta + delta));
+    }
+    intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let mut clusters: Vec<SpectrumCluster> = Vec::with_capacity(n);
+    for (lo, hi) in intervals {
+        match clusters.last_mut() {
+            Some(last) if lo <= last.hi => {
+                last.hi = last.hi.max(hi);
+                last.multiplicity += 1;
+            }
+            _ => clusters.push(SpectrumCluster {
+                lo,
+                hi,
+                multiplicity: 1,
+            }),
+        }
+    }
+    debug_assert_eq!(
+        clusters.iter().map(|c| c.multiplicity).sum::<usize>(),
+        n,
+        "pigeonhole: the clusters must account for every eigenvalue"
+    );
+    Some(SpectrumCertificate {
+        clusters,
+        dimension: n,
+    })
+}
+
 /// Assemble the T6 gap expression from two sector solves.
 ///
 /// This is arithmetic on the two lowest certified Ritz values: it does **not**
@@ -632,5 +759,47 @@ mod tests {
         let out = emit_physical_gap_ndjson_with(&row, |line| seen.push(line.to_string()));
         assert_eq!(seen.len(), 1);
         assert_eq!(out.trim_end(), seen[0]);
+    }
+
+    #[test]
+    fn certify_spectrum_names_the_second_eigenvalue() {
+        // [[2,1],[1,2]] has eigenvalues 1 and 3, both simple. The certificate
+        // must place them in two disjoint clusters, which is what licenses
+        // reading the second cluster's lower edge as a λ₂ bound.
+        let mut a = DMatrix::<f64>::zeros(2, 2);
+        a[(0, 0)] = 2.0;
+        a[(0, 1)] = 1.0;
+        a[(1, 0)] = 1.0;
+        a[(1, 1)] = 2.0;
+        let cert = certify_spectrum(&a).expect("certifiable");
+        assert_eq!(
+            cert.clusters.len(),
+            2,
+            "two simple eigenvalues ⇒ two clusters"
+        );
+        assert_eq!(cert.dimension, 2);
+        let first = cert.eigenvalue_lower_bound(1).unwrap();
+        let second = cert.second_eigenvalue_lower_bound().unwrap();
+        assert!(first <= 1.0 + 1e-12, "λ₁ = 1 ≥ {first} must hold");
+        assert!(first > 1.0 - 1e-9, "the bound should be tight, got {first}");
+        assert!(second <= 3.0 + 1e-12, "λ₂ = 3 ≥ {second} must hold");
+        assert!(
+            second > 3.0 - 1e-9,
+            "the bound should be tight, got {second}"
+        );
+
+        // A degenerate ground (λ₁ = λ₂ = 1) must refuse: no β above θ can be
+        // at or below λ₂, so there is no exclusion witness to offer.
+        let mut d = DMatrix::<f64>::zeros(3, 3);
+        d[(0, 0)] = 1.0;
+        d[(1, 1)] = 1.0;
+        d[(2, 2)] = 2.0;
+        let deg = certify_spectrum(&d).expect("certifiable");
+        assert_eq!(deg.clusters.len(), 2);
+        assert_eq!(deg.clusters[0].multiplicity, 2, "the ground is twofold");
+        assert!(
+            deg.second_eigenvalue_lower_bound().is_none(),
+            "a degenerate ground has λ₂ = λ₁ and no witness"
+        );
     }
 }

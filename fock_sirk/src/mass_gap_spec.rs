@@ -71,6 +71,15 @@
 //!    solve's subspace is not orthogonal to that ground and `m` is deep
 //!    enough to resolve it. Nothing in `‖r‖`, the roundoff term or `h_O`
 //!    witnesses this — see the module header's measured counterexample.
+//!
+//!    It *is* obtainable, from an exclusion argument instead of a residual:
+//!    [`crate::certificate::certify_spectrum`] gives rigorous per-cluster
+//!    intervals for an explicit finite matrix (pigeonhole on the Parlett
+//!    intervals), hence a rigorous `β ≤ λ₂`, and [`temple_lower_bound`] then
+//!    converts one Ritz pair into a one-sided ground bound `θ − r²/(β − θ)`.
+//!    That is the valid form of the gap statement
+//!    ([`certified_gap_lower_bound_with_exclusion`]), and it applies to a
+//!    truncated operator — an explicit matrix — never to the unbounded `H`.
 //! 4. **Enclosure**: `δˢ` is a genuine upper bound of `|θˢ − λˢ|` for the
 //!    eigenvalue `λˢ` *matched* to the Ritz pair — the residual term is
 //!    measured (T2), the roundoff term is a theorem about the
@@ -165,6 +174,63 @@ pub fn gap_interval(theta_o: f64, theta_e: f64, delta_o: f64, delta_e: f64) -> (
     let gap = theta_o - theta_e;
     let width = delta_o + delta_e;
     (gap - width, gap + width)
+}
+
+/// Kato–Temple lower bound for the lowest eigenvalue of a bounded self-adjoint
+/// operator, from one Ritz pair plus an **exclusion witness**.
+///
+/// ```text
+///   λ₁ ≥ θ − r² / (β − θ),        valid when  θ < β ≤ λ₂  and  r < β − θ,
+/// ```
+///
+/// with `θ = ⟨ψ,Aψ⟩`, `r = ‖Aψ − θψ‖` and `β` a number known to sit at or below
+/// the second eigenvalue `λ₂` — i.e. a proof that nothing in `(θ, β)` is in the
+/// spectrum. That witness is what Parlett's bound cannot supply and what
+/// precondition 2 of the module contract lacks; obtain it from a certified
+/// spectrum of an explicit finite matrix ([`crate::certificate::certify_spectrum`],
+/// which returns rigorous per-cluster intervals via a pigeonhole argument).
+///
+/// Why this is worth the witness: `r²/γ` with `γ = β − θ` is quadratically
+/// smaller than Parlett's `r`, so a converged pair gets a nearly exact
+/// one-sided bound. Measured on the truncated gauge-fixed QYM (`g = 0`,
+/// `N ≤ 6`, odd sector, `m = 14`): `θᵒ₀ = −1.114923508`, `rᵒ = 4.586e-7`,
+/// `β = −0.778457120` → `λ₁ ≥ −1.1149235086`, i.e. Temple's slack is `6.3e-13`
+/// where Parlett's two-sided width is `4.6e-7`, seven orders worse. Correctness
+/// demands the witness: the guard `r < β − θ` is also what rejects a chain that
+/// converged to the *second* level (`α² ≤ 1/2` in the two-level model, where
+/// `θ + r ≥ λ₂`), which is exactly the case a residual cannot detect.
+///
+/// Returns `None` when the hypothesis is not met — no witness (`β ≤ θ`), or the
+/// residual ball reaches `β` (`r ≥ β − θ`), in which case Temple's inequality
+/// gives nothing and the caller must keep Parlett's two-sided enclosure.
+pub fn temple_lower_bound(theta: f64, residual: f64, beta: f64) -> Option<f64> {
+    debug_assert!(residual >= 0.0, "Temple residual must be non-negative");
+    let gap_to_second = beta - theta;
+    if !(gap_to_second > 0.0) || residual >= gap_to_second {
+        return None;
+    }
+    Some(theta - residual * residual / gap_to_second)
+}
+
+/// The T6 gap lower bound **with** an exclusion witness — the valid form of
+/// [`certified_gap_lower_bound`].
+///
+/// ```text
+///   λ₁(H_N) − λ₀(H_N) ≥ temple(θᵒ₀, rᵒ, β) − θᵉ₀,
+/// ```
+///
+/// The odd side needs an exclusion witness `β ≤ λ₂` (see
+/// [`temple_lower_bound`]); the even side needs none at all, because
+/// Rayleigh–Ritz gives `λ₀ ≤ θᵉ₀` unconditionally. Note what dropped out: the
+/// even sector's residual width `δᵉ` does not appear, and neither does the odd
+/// sector's, replaced by `r²/γ`. Returns `None` when the witness fails.
+pub fn certified_gap_lower_bound_with_exclusion(
+    theta_o: f64,
+    residual_o: f64,
+    beta_o: f64,
+    theta_e: f64,
+) -> Option<f64> {
+    temple_lower_bound(theta_o, residual_o, beta_o).map(|lambda_1_lower| lambda_1_lower - theta_e)
 }
 
 /// The stopping rule of §3.3: the certificate **would** prove a mass gap for
@@ -291,5 +357,45 @@ mod tests {
         assert!(!parities_disjoint(0.5, 1e-8));
         assert!(even_sector_is_vacuum(1e-9, 1e-6));
         assert!(!even_sector_is_vacuum(0.5, 1e-6));
+    }
+
+    #[test]
+    fn temple_bound_needs_the_exclusion_witness() {
+        // A = diag(1, 3), so λ₁ = 1 and λ₂ = 3. Take ψ = (1, ε)/‖·‖: a Ritz
+        // vector near the ground with θ > λ₁ and a residual r.
+        let (l1, l2) = (1.0_f64, 3.0_f64);
+        let eps = 0.1_f64;
+        let norm = (1.0 + eps * eps).sqrt();
+        let (a0, a1) = (1.0 / norm, eps / norm);
+        let theta = a0 * a0 * l1 + a1 * a1 * l2;
+        let r2 = a0 * a0 * (l1 - theta).powi(2) + a1 * a1 * (l2 - theta).powi(2);
+        let r = r2.sqrt();
+        assert!(
+            (r * r - (theta - l1) * (l2 - theta)).abs() < 1e-12,
+            "two-level identity r² = (θ−λ₁)(λ₂−θ): {r2} vs {}",
+            (theta - l1) * (l2 - theta)
+        );
+
+        // With the witness β = λ₂ the bound is below the true ground and far
+        // sharper than Parlett's θ − r.
+        let bound = temple_lower_bound(theta, r, l2).expect("Temple applies");
+        assert!(bound <= l1 + 1e-12, "λ₁ ≥ {bound} must hold for λ₁ = {l1}");
+        assert!(
+            bound > theta - r,
+            "r²/(β−θ) must beat Parlett's r: {bound} vs {}",
+            theta - r
+        );
+
+        // No witness above θ → the inequality does not apply.
+        assert!(
+            temple_lower_bound(theta, r, theta - 1.0).is_none(),
+            "β ≤ θ gives no bound"
+        );
+        // Residual ball reaching β → also no bound (this is the guard that
+        // rejects a chain converged to an excited level).
+        assert!(
+            temple_lower_bound(theta, r, theta + 0.5 * r).is_none(),
+            "r ≥ β − θ gives no bound"
+        );
     }
 }
