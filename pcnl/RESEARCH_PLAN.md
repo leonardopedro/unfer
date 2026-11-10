@@ -309,6 +309,24 @@ only same-seed rows are comparable. The open follow-up is a replicate-averaged w
 independent pilots, or averaging the pilot's own half-samples) to attack the noise without
 collapsing the spread.
 
+R2g implemented that follow-up as `--pilot-reps n` (n independent pilots restarted at the
+anchor, widths averaged per coordinate as a geometric mean in log space, budget
+`pilot_steps × n`; `n = 1` verified bitwise identical to the old estimator) and it is
+**negative**. At rank 4 the 2-replicate average moves ESS 15→14 (default seed), 97→128
+(seed 7), 70→140 (seed 8): a real gain on two seeds and nothing on the one where the raw
+pilot collapses. At rank 8 it is flat or worse (6→5, 12→7, 5→6). The equal-budget control
+says why: at rank 4 default seed a single **600-step** pilot gives 221 while two averaged
+300-step pilots give 14, i.e. the pilot's error is **bias** (each 300-step pilot explores
+the same narrow patch and its narrow width vector is a stable estimate of a biased
+quantity), not the variance averaging can remove. So the next estimator attempt must be a
+*scale* correction — inflate the pilot widths by a constant or estimate them from a longer
+pilot — not more pilots. R2g also extended the shrinkage ladder to rank 16: fixed 5 /
+`s = 1` 5 / `s = 0.5` 6 / `s = 0` 7 ESS with `R̂` 1.828 / 2.490 / 1.545 / 1.440, so the
+direction holds but the gain over fixed falls from 3.8× (rank 4) and 22× (rank 8) to 1.4×,
+and the fixed arm itself is at `R̂` 1.83 — rank 16 is below the experiment's resolution
+floor and no claim about shrinkage above rank 8 should be made without more chains or an
+exactness check there.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

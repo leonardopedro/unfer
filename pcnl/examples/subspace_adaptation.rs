@@ -48,6 +48,10 @@
 //!   (`s = 1` raw, `s = 0` one isotropic scale); at 300 steps that recovers the
 //!   rank-4 loss (ESS 15 → 399) and is the best rank-8 proposal measured
 //!   (6 → 154 at `s = 0`), while `s = 0.5` at rank 8 is worse than either end.
+//!   `--pilot-reps n` runs `n` independent pilots of `pilot_steps` each (each
+//!   restarted at the anchor, same stream) and uses the per-coordinate
+//!   geometric mean of their widths, which only reduces the estimator's spread:
+//!   `n = 1` is the estimator above, bitwise.
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -232,6 +236,12 @@ struct Cfg {
     /// the per-coordinate differences are mostly noise; this measures how much
     /// of the mixing gain needs them.
     pilot_shrink: f64,
+    /// Number of independent pilots (`pilot` proposal) whose widths are averaged
+    /// in log space.  Each replicate is a fresh chain from the anchor of
+    /// `pilot_steps` steps, so the total pilot cost is `pilot_steps ×
+    /// pilot_reps`; averaging reduces the width estimator's variance without
+    /// biasing it, unlike shrinkage (which trades bias for variance).
+    pilot_reps: usize,
     /// Targets to sample; `full` adds the `pi_P` split chain (two stages per
     /// step, so twice the potential evaluations).
     targets: Vec<TargetKind>,
@@ -265,6 +275,7 @@ impl Default for Cfg {
             curvature_h: 0.01,
             pilot_steps: 300,
             pilot_shrink: 1.0,
+            pilot_reps: 1,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -319,6 +330,9 @@ impl Cfg {
         }
         if let Some(v) = flag("--pilot-shrink").and_then(|v| v.parse().ok()) {
             cfg.pilot_shrink = v;
+        }
+        if let Some(v) = flag("--pilot-reps").and_then(|v| v.parse::<usize>().ok()) {
+            cfg.pilot_reps = v.max(1);
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -485,6 +499,20 @@ fn column_sd(kept: &[Vec<f64>]) -> Vec<f64> {
         .collect()
 }
 
+/// Per-coordinate geometric mean of replicate width vectors.  Widths are scale
+/// parameters, so independent estimates combine in log space; with one
+/// replicate this returns that replicate untouched, keeping `--pilot-reps 1`
+/// bitwise identical to the single-pilot estimator.
+fn mean_log_widths(reps: &[Vec<f64>]) -> Vec<f64> {
+    if reps.len() == 1 {
+        return reps[0].clone();
+    }
+    let n = reps.len() as f64;
+    (0..reps[0].len())
+        .map(|i| (reps.iter().map(|r| r[i].ln()).sum::<f64>() / n).exp())
+        .collect()
+}
+
 /// `(mean, MCSE)` of a linear functional of the chain, `sd/√ESS` over the
 /// pooled draws.  `sd/√draws` would be the number for independent draws and is
 /// wrong here by whatever factor the autocorrelation gives.
@@ -605,23 +633,45 @@ fn run_cell(
             // spread of its second half: measured widths rather than curvature
             // at a stationary point.  These draws are warm-up (they sit inside
             // `burn`), and the chain continues from here.
-            let mut columns = vec![Vec::new(); rank];
-            for t in 0..cfg.pilot_steps {
-                let st = mh_pcn_z(&target, &mut z, phi, cfg.beta, &mut rng);
-                phi = st.phi;
-                if t >= cfg.pilot_steps / 2 {
-                    for (i, slot) in columns.iter_mut().enumerate() {
-                        slot.push(f64::from(z[i]));
+            assert!(
+                prop != Prop::RotPilot || cfg.pilot_reps == 1,
+                "--pilot-reps applies to the diagonal pilot, not rotpilot (there is no \
+                 log-space mean of covariance matrices here)"
+            );
+            let mut replicate_widths: Vec<Vec<f64>> = Vec::with_capacity(cfg.pilot_reps);
+            let mut last_columns: Vec<Vec<f64>> = Vec::new();
+            for rep in 0..cfg.pilot_reps {
+                // Replicate 0 starts from the anchor exactly as the single-pilot
+                // code did (z is zero and phi is the anchor potential), so it
+                // must not re-evaluate the potential; later replicates restart
+                // there on the same stream.
+                if rep > 0 {
+                    z.fill(0.0);
+                    phi = target.phi(&z);
+                }
+                let mut columns = vec![Vec::new(); rank];
+                for t in 0..cfg.pilot_steps {
+                    let st = mh_pcn_z(&target, &mut z, phi, cfg.beta, &mut rng);
+                    phi = st.phi;
+                    if t >= cfg.pilot_steps / 2 {
+                        for (i, slot) in columns.iter_mut().enumerate() {
+                            slot.push(f64::from(z[i]));
+                        }
                     }
                 }
+                replicate_widths.push(column_sd(&columns));
+                last_columns = columns;
             }
             scale = Some(if prop == Prop::RotPilot {
-                let mut s = RotScale::from_covariance(&column_covariance(&columns), rank)
+                let mut s = RotScale::from_covariance(&column_covariance(&last_columns), rank)
                     .expect("pilot covariance is symmetric and finite");
                 s.target_accept = cfg.adapt_target;
                 Scale::Rot(s)
             } else {
-                let mut s = DiagScale::from_widths_shrunk(&column_sd(&columns), cfg.pilot_shrink);
+                let mut s = DiagScale::from_widths_shrunk(
+                    &mean_log_widths(&replicate_widths),
+                    cfg.pilot_shrink,
+                );
                 s.target_accept = cfg.adapt_target;
                 Scale::Diag(s)
             });
@@ -775,20 +825,36 @@ fn run_full_cell(
         let mut beta_q = cfg.beta_q;
         let mut scale: Option<Scale> = None;
         if prop == Prop::Pilot {
-            let mut columns = vec![Vec::new(); rank];
-            for t in 0..cfg.pilot_steps {
-                let st = mh_pcn_z_full(&target, &mut z, &w, phi, &fixed_betas, &mut rng);
-                phi = st.phi;
-                let sq = mh_pcn_w_full(&target, &z, &mut w, phi, beta_q, &mut rng);
-                phi = sq.phi;
-                beta_q = adapt_beta(beta_q, sq.accepted, t, cfg.adapt_target);
-                if t >= cfg.pilot_steps / 2 {
-                    for (i, slot) in columns.iter_mut().enumerate() {
-                        slot.push(f64::from(z[i]));
+            let mut replicate_widths: Vec<Vec<f64>> = Vec::with_capacity(cfg.pilot_reps);
+            for rep in 0..cfg.pilot_reps {
+                // Restart the replicate at the anchor: same semantics as the
+                // restricted-target pilot above, including the no-op on
+                // replicate 0 (it is already at the anchor).
+                if rep > 0 {
+                    z.fill(0.0);
+                    w.fill(0.0);
+                    phi = target.phi(&z, &w);
+                    beta_q = cfg.beta_q;
+                }
+                let mut columns = vec![Vec::new(); rank];
+                for t in 0..cfg.pilot_steps {
+                    let st = mh_pcn_z_full(&target, &mut z, &w, phi, &fixed_betas, &mut rng);
+                    phi = st.phi;
+                    let sq = mh_pcn_w_full(&target, &z, &mut w, phi, beta_q, &mut rng);
+                    phi = sq.phi;
+                    beta_q = adapt_beta(beta_q, sq.accepted, t, cfg.adapt_target);
+                    if t >= cfg.pilot_steps / 2 {
+                        for (i, slot) in columns.iter_mut().enumerate() {
+                            slot.push(f64::from(z[i]));
+                        }
                     }
                 }
+                replicate_widths.push(column_sd(&columns));
             }
-            let mut s = DiagScale::from_widths_shrunk(&column_sd(&columns), cfg.pilot_shrink);
+            let mut s = DiagScale::from_widths_shrunk(
+                &mean_log_widths(&replicate_widths),
+                cfg.pilot_shrink,
+            );
             s.target_accept = cfg.adapt_target;
             scale = Some(Scale::Diag(s));
         }
@@ -909,6 +975,16 @@ fn main() {
          frozen after it",
         cfg.pilot_steps, cfg.beta
     );
+    if cfg.pilot_reps > 1 {
+        println!(
+            "pilot widths: geometric mean over {} independent {}-step pilots × {} steps \
+             each ({} potential evaluations, same stream, each restarted at the anchor)",
+            cfg.pilot_reps,
+            cfg.pilot_steps,
+            cfg.pilot_reps,
+            cfg.pilot_steps * cfg.pilot_reps
+        );
+    }
     if cfg.pilot_shrink < 1.0 {
         println!(
             "pilot widths: log-spread shrunk toward the geometric mean by s = {:.2} \

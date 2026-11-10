@@ -3054,6 +3054,28 @@ for s in 1 0.5 0.0; do
 done
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
   --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --seed 8 --pilot-shrink 0.5
+# R2g: `--pilot-reps n` = n independent pilots of `--pilot` steps each, averaged in log
+# space (total pilot evals = pilot * reps).  `--pilot-reps 1` is the old estimator.
+for r in 4 8; do for sd in 20261020 7 8; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot 300 --pilot-reps 2 --seed $sd
+done; done
+for r in 4 8; do   # equal-budget single 600-step pilot
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot 600 --seed 7
+done
+for r in 4 8; do   # the seed-8 single-pilot baselines
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --seed 8
+done
+for s in 1 0.5 0.0; do   # shrinkage above rank 8
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot-shrink $s
+done
+# the `--pilot-reps 1` bitwise check (old vs new binary, same reduced config):
+cargo run --release -p pcnl --example subspace_adaptation -- --shapes quick --ranks 2 \
+  --steps 600 --burn 100 --thin 5 --chains 2 --basis informed --proposal fixed,pilot --seed 3
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3707,6 +3729,104 @@ and the worst cell in the whole series.  The rule this leaves: **shrinkage is a 
 reduction, so it must be validated by its variance** — a one-cell improvement at rank 8 is
 what a lucky width vector looks like, and the run that reports it should report at least
 three seeds.
+
+### R2g — averaged pilot widths, and shrinkage above rank 8 (same day)
+
+R2e/R2f left two open items.  First, the proposal widths come from **one** 300-step pilot,
+so a bad width vector could be estimator *variance* that independent pilots would average
+away.  Second, shrinkage had only been measured at ranks 4 and 8, so "isotropic wins
+everywhere" was an extrapolation to rank 16, not a measurement.
+
+`--pilot-reps n` now runs `n` independent pilots of `pilot_steps` each — every replicate is
+restarted at the anchor `z = 0`, `w = 0` on the same RNG stream — and combines the widths
+per coordinate by geometric mean in log space; the total pilot budget is
+`pilot_steps × pilot_reps`.  `--pilot-reps 1` is bitwise identical to the old estimator:
+the new binary and a pre-change binary were run on the same reduced config
+(`--shapes quick --ranks 2 --steps 600 --burn 100 --thin 5 --chains 2 --seed 3`) and all 19
+numeric columns agree, eval count and ESS included.  (The first version of the change did
+not: it re-evaluated the anchor potential at the top of every replicate, adding `chains`
+evals to the run — 18 408 vs 18 404 for a 2-chain config.  The replicate loop now skips
+that re-evaluation on replicate 0, which is what "bitwise identical" is checking.)
+
+Thirteen cells, 146 min on 2 cores, every process `EXIT 0`.  Protocol and ambient anchor as
+R2e/R2f; the equal-budget baseline for a 300 × 2 pair (600 pilot evals) is a single 600-step
+raw pilot, which is a different thing from two 300-step pilots and is why columns (B) exist.
+
+| rank | seed | pilot | `s` | reps | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` | evals | sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 20261020 | 300 | 1 | 2 | 52.2 % | 14 | 1.412 | 12.89 % | 0.455 | 0.9913 | 2.8654 | 0.269 | 0.0018 | 0.17 | 0.012–0.13 | 18 408 | 321 |
+| 4 | 7 | 300 | 1 | 2 | 48.6 % | **128** | 1.034 | 17.58 % | 0.085 | 0.9050 | 2.6085 | 0.212 | 0.0011 | 0.20 | 0.016–0.14 | 18 408 | 316 |
+| 4 | 8 | 300 | 1 | 2 | 46.9 % | **140** | 1.069 | 24.22 % | 0.059 | 0.8177 | 2.1322 | 0.155 | 0.0007 | 0.20 | 0.021–0.13 | 18 408 | 318 |
+| 4 | 7 | 600 | 1 | 1 | 48.2 % | 99 | 1.038 | 17.58 % | 0.079 | 0.9050 | 2.6081 | 0.212 | 0.0021 | 0.13 | 0.011–0.14 | 18 404 | 244 |
+| 8 | 20261020 | 300 | 1 | 2 | 45.8 % | 5 | **4.002** | 14.06 % | 0.384 | 0.9741 | 2.7682 | 0.280 | 0.0167 | 0.20 | 0.016–0.13 | 18 408 | 320 |
+| 8 | 7 | 300 | 1 | 2 | 42.9 % | 7 | 1.358 | 22.27 % | 0.325 | 0.8743 | 2.5041 | 0.166 | 0.0059 | 0.19 | 0.017–0.13 | 18 408 | 319 |
+| 8 | 8 | 300 | 1 | 2 | 44.8 % | 6 | 1.777 | 25.78 % | 0.541 | 0.8146 | 2.0094 | 0.158 | 0.0085 | 0.21 | 0.021–0.10 | 18 408 | 321 |
+| 8 | 7 | 600 | 1 | 1 | 42.5 % | 7 | 1.303 | 22.27 % | 0.557 | 0.8756 | 2.5019 | 0.162 | 0.0075 | 0.14 | 0.0095–0.13 | 18 404 | 237 |
+| 4 | 8 | 300 | 1 | 1 | 50.7 % | 70 | 1.060 | 24.22 % | 0.068 | 0.8177 | 2.1319 | 0.155 | 0.0003 | 0.16 | 0.018–0.12 | 17 204 | 228 |
+| 8 | 8 | 300 | 1 | 1 | 47.0 % | 5 | **2.761** | 25.00 % | 0.300 | 0.8086 | 1.9976 | 0.148 | 0.0100 | 0.18 | 0.012–0.10 | 17 204 | 301 |
+| 16 | 20261020 | fixed | — | — | 49.5 % | 5 | 1.828 | 16.02 % | 1.101 | 0.9135 | 2.3154 | 0.215 | 0.0718 | — | 0.05 | 16 004 | 285 |
+| 16 | 20261020 | 300 | 1 | 1 | 45.4 % | 5 | **2.490** | 15.23 % | 0.551 | 0.9450 | 2.5566 | 0.237 | 0.0558 | 0.18 | 0.012–0.12 | 17 204 | 302 |
+| 16 | 20261020 | 300 | 0.5 | 1 | 40.2 % | 6 | 1.545 | 19.53 % | 0.907 | 0.9172 | 2.4973 | 0.208 | 0.0368 | 0.28 | 0.031–0.11 | 17 204 | 232 |
+| 16 | 20261020 | 300 | 0 | 1 | 38.6 % | 7 | 1.440 | 19.53 % | 1.044 | 0.9125 | 2.4632 | 0.194 | 0.0354 | 0.35 | 0.053–0.07 | 17 204 | 234 |
+| 4 | 20261020 | 300 | 1 | 1 | 50.4 % | 15 | 1.353 | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 0.17 | 0.012–0.13 | 17 204 | 301 |
+| 4 | 7 | 300 | 1 | 1 | 48.6 % | 97 | 1.062 | 17.58 % | 0.085 | 0.9054 | 2.6092 | 0.212 | 0.0022 | 0.22 | 0.014–0.14 | 17 204 | 233 |
+| 8 | 20261020 | 300 | 1 | 1 | 48.1 % | 6 | 1.931 | 14.06 % | 0.594 | 0.9768 | 2.7792 | 0.280 | 0.0164 | 0.20 | 0.013–0.12 | 17 204 | 225 |
+| 8 | 7 | 300 | 1 | 1 | 41.8 % | 12 | 1.164 | 22.27 % | 0.275 | 0.8741 | 2.5055 | 0.167 | 0.0052 | 0.19 | 0.018–0.12 | 17 204 | 227 |
+
+(The last four rows are the R2f cells the new rows pair with; they are repeated so every
+comparison above can be read off one table.  Rows 11–14 are group (D), the rank-16 ladder.)
+
+**Result 32 — averaging independent pilots does not fix the raw pilot at rank 4, and does
+nothing at rank 8.**  Rank 4, three seeds, ESS fixed/raw/2-rep: 100/15/**14** at the default
+seed, 84/97/**128** at seed 7, 9/70/**140** at seed 8.  So a 2-replicate average is a real
+improvement on two of three seeds — 1.3× and 2.0× the single pilot — and *no* improvement
+exactly on the seed where the raw pilot already fails catastrophically (14 vs 15, and `R̂`
+1.412 vs 1.353, both against fixed `R̂` 1.023).  Rank 8 is flat or worse, 6/6/**5**, 12/**7**,
+5/**6**.  Neither four pilots' worth of averaging nor a doubled budget is on the table here:
+two pilots is what "the estimator has variance" predicts to help, and it helps least where
+it matters most.
+
+**Result 33 — the pilot's error is bias, not variance; that is why R2e's lottery has a
+mechanism.**  At equal total cost the three rank-4 cells order themselves
+**single 600-step pilot 221 > two averaged 300-step pilots 14** at the default seed (R2e
+measured the 221), while at seed 7 the same pair is 99 vs 128 — so neither budget shape
+dominates, and the spread *between* the two estimators at the same cost (14 vs 221) is the
+same size as the spread between seeds.  The one variable that explains both facts is how far
+the pilot chain itself travels: a 600-step pilot explores more of the target and reports a
+wider (less wrong) width vector, whereas two 300-step pilots each explore the same narrow
+patch and their geometric mean is a stable estimate of a **biased** quantity.  Averaging
+reduces variance; the failure mode is not variance, so the result is what R2f's width
+lottery already looked like from outside.  The prediction this makes is testable and
+negative for the averaging idea: a *scale* correction (multiply the pilot widths by a
+constant > 1, or estimate them from a longer pilot) should fix the default-seed collapse;
+more pilots at the same length should not, and do not.
+
+**Result 34 — shrinkage still points the right way at rank 16, but the effect has collapsed
+into the resolution floor, so "isotropic wins everywhere" is retracted as a claim.**  The
+rank-16 ladder is fixed 5 / `s = 1` **5** / `s = 0.5` **6** / `s = 0` **7** ESS, with `R̂`
+1.828 / 2.490 / 1.545 / 1.440: the ordering is monotone in `s` except that `s = 1` is the
+worst cell in the ladder, which is the same qualitative story as ranks 4 and 8.  But the
+*sizes* are not comparable — ESS gain over fixed is 3.8× at rank 4 (383/100), 22× at rank 8
+(154/7) and **1.4×** at rank 16 (7/5) — and at rank 16 the fixed arm itself has `R̂` 1.828,
+i.e. the chains do not mix even with the *known* proposal, on 4 chains × 2 800 draws in a
+16-dimensional subspace.  At that point a 5-vs-7 ESS difference with `R̂` MCSE of this size
+is not a measurement of shrinkage; the honest statement is that shrinkage **does not hurt**
+at rank 16 and marginally improves `R̂`, and that the label-selection win does survive
+(BMA accuracy 16.02 % → 19.53 %, the `s = 0.5` and `s = 0` cells tying) while the NLL
+worsens 2.3154 → 2.4632 exactly as at rank 4/8 (Result 30).  Rank 16 needs a different
+experiment (more chains, longer runs, or an exactness check at that rank) before it can say
+anything about the estimator.
+
+**Result 35 — the housekeeping decision, and the revised recommendation.**  The unrelated
+`cargo fmt` churn (20 files across `logos`, `mm0web`, `prob_kernel`, `unfer_measure`,
+`unfer_taler` — 397 insertions / 188 deletions that survive `git diff -w`) was **reverted**
+rather than committed: it is reproducible with `cargo fmt --all` at any time, `HEAD` is
+already not fmt-clean in those crates (`cargo fmt --all --check` reports diffs there before
+any change), and mixing it into a pcnl commit would bury the one real change and collide
+with the concurrent commits those crates receive.  The recommendation that survives R2g:
+`--pilot-shrink` on, `s = 0.5` at rank 4 and `s = 0` at rank 8 (the two measured optima),
+`--pilot-reps` left off (it is available and verified, but not a fix), and *no* claim about
+ranks above 8 until the comparison there is above the resolution floor.
 
 ## Reproduce / verify
 
