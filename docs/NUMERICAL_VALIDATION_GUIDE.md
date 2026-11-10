@@ -2451,6 +2451,23 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   Parlett-width assembly — a *valid* positive gap for `H_N`, and only for
   `H_N` (the witness is an explicit dense matrix, so this cannot reach the
   continuum). See `docs/MASS_GAP_SPEC.md` §6c.
+- **The campaign under that certificate**
+  (`fock_sirk/tests/mass_gap_exclusion_campaign.rs`) certifies **3 of 10** grid
+  rows (`g ∈ {0,0.5,1,2,3}`, `N ∈ {6,8}`, `m = 12`) — and the two `g = 0` rows
+  are the control, certifying a positive gap on a theory with no continuum gap.
+  The bottleneck on `g > 0` is *not* the exclusion but the even-side Rayleigh
+  quotient (`θᵉ₀` sits `9e-3…2.3` above `λ₀(even)` at `m = 12`); the two refused
+  rows fail the `rᵒ < β − θᵒ₀` guard honestly. The matvec-only λ₂ bound
+  (`certificate::DiagonalExclusion`, `β = d₂ − ‖V‖_F`) is sound but **useless**
+  here: `−552.8` against `θᵒ₀ = −2.825` at `N ≤ 12` (`n = 1820`), because a
+  `λ₂` bound is an eigenvalue *count* and `‖V‖_F ~ √n`. Scratch the truncation
+  hierarchy as a shortcut too: min–max makes `λ₂(H_N) ≤ λ₂(H_{N'})`, so a
+  shallower truncation bounds `λ₂` from **above**. Two traps to keep in mind:
+  `(n₀+n₁)` parity is **not** the reflection sector (its eigenvectors are the
+  ±pair combinations, and at `g > 0` the three-operator terms break that parity
+  entirely), and a leak check must be formed as an explicit residual —
+  subtracting `Σdot²` from `‖Hu‖²` reports a spurious `2e-8` leak on an exactly
+  invariant sector. → `docs/MASS_GAP_SPEC.md` §6d.
 
 **No coupling certifies it** (measured sweep, 2026-11-10; full table in
 `docs/MASS_GAP_SPEC.md` §6a). The interval is `[gap ± δ]`, so a stronger

@@ -325,6 +325,257 @@ pub fn certify_spectrum(matrix: &DMatrix<f64>) -> Option<SpectrumCertificate> {
     })
 }
 
+// ── Sparse exclusion: a λ₂ lower bound without dense diagonalization ───────
+
+/// A **sound** lower bound on `λ₂` computed from matvecs only — the sparse
+/// counterpart of [`SpectrumCertificate::second_eigenvalue_lower_bound`].
+///
+/// The dense witness counts eigenvalues; a matvec-only method cannot count, so
+/// the count has to come from structure. The structure used here is the
+/// diagonal split: write `H = D + V` with `D` the diagonal, `V` the rest. Weyl's
+/// inequality in the form `λ_i(H) ≥ λ_i(D) − ‖V‖₂` turns the count into a
+/// diagonal comparison:
+///
+/// ```text
+///   #{λ(H) < β} ≤ #{D_ii < β + ‖V‖₂},
+/// ```
+///
+/// so `β = d₂ − ‖V‖₂` (with `d₂` the second-smallest diagonal entry) excludes
+/// everything but one eigenvalue below `β`, i.e. `λ₂(H) ≥ β`. The norm is
+/// bounded by the Frobenius norm of the off-diagonal part, which is exact and
+/// cheap: `‖H‖_F² = Σ_i ‖H e_i‖²` and `‖D‖_F² = Σ_i H_ii²` give
+/// `‖V‖_F² = ‖H‖_F² − ‖D‖_F²`, so `n` matvecs suffice for any `n`.
+///
+/// **This is honest but weak, and measured so** (`docs/MASS_GAP_SPEC.md` §6d):
+/// `‖V‖_F` grows like `√n` while a spectral gap does not, so the bound collapses
+/// as the truncation deepens. It is the price of the count — see
+/// [`lanczos_ritz`] for why matvecs alone cannot do better.
+pub struct DiagonalExclusion {
+    /// The diagonal `H_ii`, ascending.
+    pub diagonal: Vec<f64>,
+    /// `‖H − diag(H)‖_F`, rounded up by its accumulated summation error.
+    pub offdiagonal_frobenius: f64,
+}
+
+impl DiagonalExclusion {
+    /// Measure the split from matvecs alone. `matvec` applies `H` to a dense
+    /// vector of length `n`; `e_i ↦ H e_i` is applied once per basis element.
+    pub fn from_matvec(matvec: &dyn Fn(&[f64]) -> Vec<f64>, n: usize) -> Option<Self> {
+        if n == 0 {
+            return None;
+        }
+        let mut diagonal = Vec::with_capacity(n);
+        let mut frobenius_sq = 0.0_f64;
+        let mut basis = vec![0.0_f64; n];
+        for i in 0..n {
+            basis[i] = 1.0;
+            let column = matvec(&basis);
+            basis[i] = 0.0;
+            if column.len() != n || !column.iter().all(|x| x.is_finite()) {
+                return None;
+            }
+            diagonal.push(column[i]);
+            frobenius_sq += column.iter().map(|x| x * x).sum::<f64>();
+        }
+        let diagonal_sq: f64 = diagonal.iter().map(|x| x * x).sum();
+        // `frobenius_sq` is a sum of `n²` non-negative products, so its error is
+        // bounded by `n·u·frobenius_sq`; round the difference up, never down.
+        let slack = (n as f64) * UNIT_ROUNDOFF * frobenius_sq;
+        let offdiagonal_sq = (frobenius_sq - diagonal_sq + slack).max(0.0);
+        diagonal.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Some(Self {
+            diagonal,
+            offdiagonal_frobenius: offdiagonal_sq.sqrt(),
+        })
+    }
+
+    /// Rigorous `β ≤ λ₂` — `None` when the matrix has fewer than two rows.
+    ///
+    /// The diagonal's smallest entry may be repeated: Weyl holds with
+    /// multiplicity, so `β` stays valid, and it is [`crate::mass_gap_spec::temple_lower_bound`]
+    /// that refuses a `β` which does not clear `θ`.
+    pub fn second_eigenvalue_lower_bound(&self) -> Option<f64> {
+        self.diagonal
+            .get(1)
+            .map(|d2| d2 - self.offdiagonal_frobenius)
+    }
+}
+
+/// A Ritz computation by Lanczos with full reorthogonalization — matvec-only,
+/// so it reaches truncations where the dense witness cannot.
+///
+/// `H V_m = V_m T_m + β_m v_{m+1} e_m^*` gives, for the `i`-th eigenpair
+/// `(θ_i, y_i)` of the tridiagonal `T_m`, the residual `|β_m·y_i[m−1]|`; that is
+/// [`crate::mass_gap_spec::parlett_bound`]'s input and hence a certified
+/// interval for *some* eigenvalue of `H`.
+///
+/// **What this cannot do** is name one. A Ritz value bounds `λ_i` from *above*
+/// (`θ_i ≥ λ_i`, Rayleigh–Ritz), and its interval contains *some* eigenvalue;
+/// excluding the ground from `(β, ∞)` is an eigenvalue *count*, which no
+/// matvec-only method produces. So a gap certificate needs
+/// [`DiagonalExclusion`] (weak, any `n`) or [`certify_spectrum`] (tight, dense)
+/// beside it — never this alone.
+pub struct LanczosRitz {
+    /// Steps actually taken (stops early on breakdown).
+    pub steps: usize,
+    /// Ritz values of `T_m`, ascending.
+    pub values: Vec<f64>,
+    /// `‖H y_i − θ_i y_i‖` from the Lanczos relation, matching `values`.
+    pub residuals: Vec<f64>,
+    /// Max deviation of the stored basis from orthonormality — the measured
+    /// quality of the reorthogonalization, not an assumption.
+    pub orthogonality: f64,
+    /// Step index at which the Krylov space became invariant, if it did.
+    pub breakdown: Option<usize>,
+}
+
+impl LanczosRitz {
+    /// The lowest Ritz pair `(θ, ‖r‖)` — the input Temple takes.
+    pub fn ground(&self) -> Option<(f64, f64)> {
+        Some((*self.values.first()?, *self.residuals.first()?))
+    }
+
+    /// Certified two-sided intervals `[θ − δ, θ + δ]`, each containing *some*
+    /// eigenvalue (`c(n)` uses the number of steps, the matrix genuinely
+    /// diagonalized).
+    pub fn intervals(&self) -> Vec<(f64, f64)> {
+        let m = self.steps.max(1);
+        let norm = self.values.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+        self.values
+            .iter()
+            .zip(&self.residuals)
+            .map(|(&theta, &r)| {
+                let delta = crate::mass_gap_spec::certified_width(r, m, norm.max(1.0), theta);
+                (theta - delta, theta + delta)
+            })
+            .collect()
+    }
+}
+
+/// Run `steps` Lanczos steps with two passes of full reorthogonalization.
+///
+/// Returns `None` for an empty or zero start vector, a non-finite iterate, or
+/// `steps == 0`. A Krylov space that becomes invariant before `steps` is
+/// reported in [`LanczosRitz::breakdown`] rather than silently padded.
+pub fn lanczos_ritz(
+    matvec: &dyn Fn(&[f64]) -> Vec<f64>,
+    n: usize,
+    start: &[f64],
+    steps: usize,
+) -> Option<LanczosRitz> {
+    if n == 0 || steps == 0 || start.len() != n {
+        return None;
+    }
+    let start_norm = start.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if !(start_norm > 0.0) {
+        return None;
+    }
+    // Arnoldi with two-pass modified Gram–Schmidt. `columns[j] = H v_j` is kept
+    // so that both the projection `Vᵀ H V` and every residual come from the
+    // same columns — no extra matvecs, and no reliance on the three-term
+    // recurrence holding numerically.
+    let mut basis: Vec<Vec<f64>> = Vec::with_capacity(steps + 1);
+    basis.push(start.iter().map(|x| x / start_norm).collect());
+    let mut columns: Vec<Vec<f64>> = Vec::with_capacity(steps);
+    let mut breakdown = None;
+
+    for j in 0..steps {
+        let column = matvec(&basis[j]);
+        if column.len() != n || !column.iter().all(|x| x.is_finite()) {
+            return None;
+        }
+        columns.push(column.clone());
+        let mut w = column;
+        // Two passes: the second sweeps up the orthogonality the first leaves
+        // behind, which is what makes the measured defect ~1e-15 instead of the
+        // classical ~1e-8.
+        for _ in 0..2 {
+            for v in basis.iter() {
+                let h: f64 = v.iter().zip(&w).map(|(a, b)| a * b).sum();
+                for (wi, vi) in w.iter_mut().zip(v.iter()) {
+                    *wi -= h * vi;
+                }
+            }
+        }
+        let beta = w.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let scale = basis[j]
+            .iter()
+            .zip(&columns[j])
+            .map(|(a, b)| a * b)
+            .sum::<f64>()
+            .abs()
+            .max(1.0);
+        if beta <= 16.0 * UNIT_ROUNDOFF * scale {
+            breakdown = Some(j);
+            break;
+        }
+        basis.push(w.iter().map(|x| x / beta).collect());
+    }
+
+    let m = columns.len();
+    // `T = Vᵀ H V` from the stored columns. It is symmetric in exact arithmetic;
+    // the average of the two off-diagonal halves is what gets diagonalized, so
+    // the matrix handed to `symmetric_eigen` is Hermitian by construction.
+    let mut t = DMatrix::<f64>::zeros(m, m);
+    for (a, va) in basis.iter().take(m).enumerate() {
+        for (b, column) in columns.iter().enumerate() {
+            let h: f64 = va.iter().zip(column).map(|(x, y)| x * y).sum();
+            t[(a, b)] = h;
+        }
+    }
+    for a in 0..m {
+        for b in a + 1..m {
+            let mean = 0.5 * (t[(a, b)] + t[(b, a)]);
+            t[(a, b)] = mean;
+            t[(b, a)] = mean;
+        }
+    }
+    let eig = t.symmetric_eigen();
+    let mut order: Vec<usize> = (0..m).collect();
+    order.sort_by(|&a, &b| eig.eigenvalues[a].partial_cmp(&eig.eigenvalues[b]).unwrap());
+    let mut values = Vec::with_capacity(m);
+    let mut residuals = Vec::with_capacity(m);
+    for &i in &order {
+        let theta = eig.eigenvalues[i];
+        values.push(theta);
+        // ‖H (V y) − θ (V y)‖, with `H(V y) = Σ_j y_j · column_j` — the same
+        // columns the projection used.
+        let mut residual_sq = 0.0_f64;
+        for row in 0..n {
+            let hv_y: f64 = columns
+                .iter()
+                .enumerate()
+                .map(|(j, c)| eig.eigenvectors[(j, i)] * c[row])
+                .sum();
+            let vy: f64 = basis
+                .iter()
+                .take(m)
+                .enumerate()
+                .map(|(j, v)| eig.eigenvectors[(j, i)] * v[row])
+                .sum();
+            residual_sq += (hv_y - theta * vy) * (hv_y - theta * vy);
+        }
+        residuals.push(residual_sq.sqrt());
+    }
+    // Gram defect, measured explicitly rather than assumed: this is the number
+    // that says whether the two-sided reorthogonalization worked.
+    let mut orthogonality: f64 = 0.0;
+    for a in 0..basis.len() {
+        for b in 0..basis.len() {
+            let dot: f64 = basis[a].iter().zip(&basis[b]).map(|(x, y)| x * y).sum();
+            let target = if a == b { 1.0 } else { 0.0 };
+            orthogonality = orthogonality.max((dot - target).abs());
+        }
+    }
+    Some(LanczosRitz {
+        steps: m,
+        values,
+        residuals,
+        orthogonality,
+        breakdown,
+    })
+}
+
 /// Assemble the T6 gap expression from two sector solves.
 ///
 /// This is arithmetic on the two lowest certified Ritz values: it does **not**
@@ -800,6 +1051,159 @@ mod tests {
         assert!(
             deg.second_eigenvalue_lower_bound().is_none(),
             "a degenerate ground has λ₂ = λ₁ and no witness"
+        );
+    }
+
+    fn matvec_of(a: &DMatrix<f64>) -> impl Fn(&[f64]) -> Vec<f64> {
+        let a = a.clone();
+        move |x: &[f64]| {
+            (0..a.nrows())
+                .map(|i| (0..a.ncols()).map(|j| a[(i, j)] * x[j]).sum())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn diagonal_exclusion_certifies_a_dominant_diagonal_and_refuses_a_wide_one() {
+        // A diagonal-dominant matrix: the count below β is honest and tight
+        // enough for Temple.
+        let mut a = DMatrix::<f64>::zeros(4, 4);
+        for i in 0..4 {
+            a[(i, i)] = (i + 1) as f64;
+        }
+        a[(0, 1)] = 0.05;
+        a[(1, 0)] = 0.05;
+        let mv = matvec_of(&a);
+        let exclusion = DiagonalExclusion::from_matvec(&mv, 4).expect("measurable");
+        let beta = exclusion.second_eigenvalue_lower_bound().expect("n = 4");
+        let exact = a.clone().symmetric_eigen();
+        let lambda_2 = {
+            let mut v: Vec<f64> = exact.eigenvalues.iter().cloned().collect();
+            v.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            v[1]
+        };
+        assert!(
+            beta <= lambda_2 + 1e-12,
+            "the Weyl bound must not exceed λ₂ = {lambda_2}, got {beta}"
+        );
+        // Soundness alone is cheap — vacuity is not allowed here: the bound has
+        // to clear λ₁ (≈ 0.9994) for Temple to say anything.
+        assert!(
+            beta > 1.0 - 0.01,
+            "the bound must track λ₂ here, got {beta}"
+        );
+        let theta = exact
+            .eigenvalues
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
+        let temple = crate::mass_gap_spec::temple_lower_bound(theta, 0.0, beta)
+            .expect("β clears θ, so Temple applies");
+        assert!(temple <= lambda_2 + 1e-12);
+
+        // The same route on a matrix whose off-diagonal carries the same
+        // weight as the diagonal: β falls below θ and Temple must refuse.
+        let mut wide = DMatrix::<f64>::zeros(4, 4);
+        for i in 0..4 {
+            for j in 0..4 {
+                wide[(i, j)] = if i == j { 3.0 } else { 1.0 };
+            }
+        }
+        let mv_wide = matvec_of(&wide);
+        let wide_exclusion = DiagonalExclusion::from_matvec(&mv_wide, 4).expect("measurable");
+        let beta_wide = wide_exclusion
+            .second_eigenvalue_lower_bound()
+            .expect("n = 4");
+        let theta_wide = wide
+            .clone()
+            .symmetric_eigen()
+            .eigenvalues
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            beta_wide <= theta_wide,
+            "expected the diagonal split to collapse (β = {beta_wide} ≤ θ = {theta_wide})"
+        );
+        assert!(
+            crate::mass_gap_spec::temple_lower_bound(theta_wide, 0.0, beta_wide).is_none(),
+            "Temple must refuse a β at or below θ rather than return a bound"
+        );
+    }
+
+    #[test]
+    fn lanczos_ritz_is_orthonormal_and_bounds_the_spectrum_from_above() {
+        let mut a = DMatrix::<f64>::zeros(6, 6);
+        for i in 0..6 {
+            a[(i, i)] = (i + 1) as f64;
+            if i + 1 < 6 {
+                a[(i, i + 1)] = 0.3;
+                a[(i + 1, i)] = 0.3;
+            }
+        }
+        let mv = matvec_of(&a);
+        let start = vec![1.0; 6];
+        let ritz = lanczos_ritz(&mv, 6, &start, 4).expect("four steps must run");
+        assert_eq!(ritz.steps, 4);
+        assert_eq!(ritz.values.len(), 4);
+        assert!(
+            ritz.orthogonality < 1e-12,
+            "two passes of full reorthogonalization must hold orthonormality, got {}",
+            ritz.orthogonality
+        );
+        assert!(
+            ritz.breakdown.is_none(),
+            "6 distinct levels, 4 steps: no breakdown"
+        );
+        let exact = {
+            let e = a.clone().symmetric_eigen();
+            let mut v: Vec<f64> = e.eigenvalues.iter().cloned().collect();
+            v.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            v
+        };
+        for (i, &theta) in ritz.values.iter().enumerate() {
+            assert!(
+                theta >= exact[i] - 1e-12,
+                "Rayleigh–Ritz: θ_{i} = {theta} must be ≥ λ_{i} = {}",
+                exact[i]
+            );
+        }
+        for (lo, hi) in ritz.intervals() {
+            assert!(
+                exact.iter().any(|&l| (lo..=hi).contains(&l)),
+                "each Parlett interval must contain some eigenvalue: [{lo}, {hi}]"
+            );
+        }
+    }
+
+    #[test]
+    fn lanczos_reports_the_subspace_ground_not_the_spectral_ground() {
+        // The matvec-only form of the audit's finding: a chain orthogonal to the
+        // ground converges to the *second* level with a tiny residual. Here the
+        // start is exactly e₂ of a diagonal matrix, so the Krylov space never
+        // sees λ₁ = 1 and the lowest Ritz value is λ₂ = 2 with zero residual.
+        let mut d = DMatrix::<f64>::zeros(4, 4);
+        for i in 0..4 {
+            d[(i, i)] = (i + 1) as f64;
+        }
+        let mv = matvec_of(&d);
+        let start = vec![0.0, 1.0, 1e-3, 0.0];
+        let ritz = lanczos_ritz(&mv, 4, &start, 3).expect("three steps must run");
+        let (theta, residual) = ritz.ground().expect("non-empty");
+        assert!(
+            (theta - 2.0).abs() < 1e-4,
+            "the chain must converge to λ₂ = 2, got {theta}"
+        );
+        assert!(
+            residual < 1e-9,
+            "and it must look converged while doing it, residual = {residual}"
+        );
+        // So a residual cannot certify a ground: it has to be paired with an
+        // exclusion witness, and even a correct β = λ₂ passes Temple only if θ
+        // is below it — here θ sits *at* β, which the guard rejects.
+        assert!(
+            crate::mass_gap_spec::temple_lower_bound(theta, residual, 2.0).is_none(),
+            "θ at β must be refused, not turned into a bound"
         );
     }
 }

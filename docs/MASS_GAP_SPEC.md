@@ -330,6 +330,86 @@ is available only at small `N`; production truncations are far past dense
 diagonalization, and the unbounded `H` still has no lowest eigenvalue for any of
 this to bound. The continuum mass gap remains unproven.
 
+### 6d. The campaign re-run under the exclusion certificate (2026-11-10)
+
+`fock_sirk/tests/mass_gap_exclusion_campaign.rs` runs the campaign grid
+(`g ∈ {0, 0.5, 1, 2, 3}`, `N ∈ {6, 8}`, `m = 12`) through the §6c assembly, with
+the odd sector's λ₂ witness from `certify_spectrum` on an explicitly built
+sector. Every bound is checked against the exact spectrum of the same `H_N`.
+
+| `g` | `N≤` | `θᵒ₀` | `rᵒ` | `θᵉ₀` | λ₀(even) | certified | exact |
+|---|---|---|---|---|---|---|---|
+| 0 | 6 | −1.114923508 | 5.5e-7 | — | — | **0.189924633** | 0.189927963 |
+| 0 | 8 | −1.304848142 | 5.4e-3 | — | — | **0.122250754** | 0.122434177 |
+| 0.5 | 6 | −1.290797126 | 1.4e-1 | −1.333866597 | −1.343008908 | −0.044087815 | 0.035042125 |
+| 0.5 | 8 | −1.484935965 | 2.5e-1 | — | — | *refused* | — |
+| 1 | 6 | −1.916799544 | 2.1e-1 | −1.654344005 | −2.024960357 | −0.337475258 | 0.091073200 |
+| 1 | 8 | −2.347584372 | 8.5e-1 | — | — | *refused* | 0.091161224 |
+| 2 | 6 | −4.356582224 | 2.4e-1 | — | — | **0.281770542** | 0.850113842 |
+| 2 | 8 | −7.450580584 | 1.8 | — | −6.511130065 | −3.555041727 | — |
+| 3 | 6 | −9.231412965 | 2.3e-1 | −8.296452899 | −9.214246967 | −0.960755924 | — |
+| 3 | 8 | −14.163516377 | 2.8 | −11.288046902 | −13.610338101 | −4.471890878 | — |
+
+Only 3 of 10 rows certify, and the two `g = 0` rows are the **control**: they
+certify a positive gap on a theory with no continuum gap, which is the sharpest
+statement of what a truncation certificate can and cannot mean.
+
+Two facts about the failure modes are worth more than the count:
+
+* **The exclusion is not the bottleneck on `g > 0`.** Where the row is
+  valid-but-not-positive, the loss is the even side: `θᵉ₀` sits `9e-3 … 2.3` above
+  the even sector's ground (the `g = 1, N ≤ 6` row is 0.37 above it), because a
+  vacuum-start solve at `m = 12` has not converged on the squeezed ground while
+  its Rayleigh quotient is still a valid upper bound. This is the cheapest thing
+  to improve: the even side needs no witness, only a better `θᵉ₀`.
+* **Where the row is refused, it is refused honestly.** `g = 0.5, N ≤ 8` and
+  `g = 1, N ≤ 8` have `rᵒ` comparable to `β − θᵒ₀`, so Temple's hypothesis fails
+  and the assembly returns `None` rather than a number.
+
+#### The sparse route does not rescue large truncations
+
+`certificate::DiagonalExclusion` is the matvec-only λ₂ bound: `H = D + V`,
+`λ_i(H) ≥ λ_i(D) − ‖V‖₂`, so `β = d₂ − ‖V‖_F` excludes everything but one
+eigenvalue below `β`. It is sound at any `n` (`n` matvecs) and measured:
+
+| `N≤` | `n` | `θᵒ₀` (Lanczos, 12 steps) | `β` (diagonal split) | verdict |
+|---|---|---|---|---|
+| 12 | 1820 | −2.825023865 | **−552.784** | refused |
+
+`‖V‖_F` grows like `√n` against a gap of order `10⁻¹`, so by `N = 12` the bound
+is 550 below the ground. At the rows where it can be compared (`N ≤ 6`, `8`) it
+is 25–275 below the dense witness's `β`, and the test asserts the ordering.
+
+**Why no matvec-only method will do better.** A rigorous lower bound on `λ₂` is
+an *eigenvalue count*: it says "exactly one eigenvalue lies below `β`."
+Residuals cannot produce a count (they place *some* eigenvalue in an interval),
+and matvecs cannot see the rest of the spectrum at all. The dense witness gets
+the count from completeness — `n` intervals, `n` eigenvalues, disjoint clusters —
+which is why it costs `O(n³)`. The one structural shortcut that suggests itself,
+the truncation hierarchy, points the wrong way: `P_{N'} ⊆ P_N` and min–max make
+compressions *raise* eigenvalues, so `λ₂(H_N) ≤ λ₂(H_{N'})` — a shallower
+truncation bounds `λ₂` from **above**, never below (the test prints this
+direction explicitly so it cannot be mistaken for a witness).
+
+#### A trap this run exposed: `(n₀+n₁)` parity is not the reflection sector
+
+The first version of the sweep classified states by `(n₀+n₁) % 2` and
+certified `0.322254` at `g = 2, N ≤ 6` against a true gap of `0.044450` — a
+soundness violation the exact check caught. The cause is not the certificate:
+`R` flips modes 0↔1 times `(−1)^(n₀+n₁)`, so for `n₀ ≠ n₁` its eigenvectors are
+the ± *combinations* `(|n₀,n₁⟩ ± (−1)^(n₀+n₁)|n₁,n₀⟩)/√2`, not the states
+themselves. Worse, at `g > 0` the `(n₀+n₁)` parity is not even `H`-invariant,
+because `B²` carries the three-operator products `A₀²A₁`, `A₀A₁²`.
+
+The corrected construction pairs each `R`-orbit and asserts
+`‖(I − P_sector) H u‖ < 1e-9‖Hu‖` for every sector vector, so a non-invariant
+sector cannot pass silently. With it the numbers reproduce the independently
+measured parity-resolved spectrum (e.g. `λ_odd = −2.652468280` at `g = 1,
+N ≤ 8`). The `g = 0`-only helper in `qcd_mass_gap_certified.rs` is unaffected —
+at `g = 0` the products are even, so that block *is* `H`-invariant, and it is a
+superset of the odd sector, which is the right direction for a `λ₂` lower bound
+(`λ₂(superset) ≤ λ₂(sector)`).
+
 The correction to T6's statement has **not** yet reached the specialist bundle
 (`../timepiece/unfer_contracts/`, a sibling repository).
 `scripts/check-mass-gap-spec-parity` compares operative claims only, and this
