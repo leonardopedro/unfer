@@ -3027,6 +3027,21 @@ cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4
   --burn 500 --thin 5 --chains 4 --basis informed --proposal rotpilot
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
   --burn 500 --thin 5 --chains 4 --basis informed --proposal pilot --pilot 1200
+# R2e: pilot length (rank 8 at 2 400 = 300/rank, rank 4 at 600 = 150/rank) and the
+# log-width shrinkage ladder (`--pilot-shrink`: 1 = raw pilot, 0 = isotropic at the
+# pilot's geometric mean; default 1).  Every cell is one process, 4 chains.
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot 600
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot 2400
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot 600
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot 1200
+for r in 4 8; do for s in 0.5 0.0; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot-shrink $s
+done; done
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3480,10 +3495,116 @@ rank 8 — so the pilot is not rank-limited in principle, but its default budget
 is: the number of estimation draws per dimension falls as 150/`r`, and at `r = 8` the
 estimate is too noisy to place eight scales.  The cost rule the data supports is that pilot
 steps should grow with rank (≥ 1 200 at rank 8, i.e. 75 draws per dimension after the
-halving) rather than stay at 300; whether 150·`r` is the right rule, and whether a
-shrinkage estimator would beat extra draws, are untested here.  Tables, not the prose,
+halving) rather than stay at 300; R2e tests both halves of that sentence and finds the
+constant is not 150 but that shrinkage removes the need for length at all.  Tables, not the prose,
 should be updated if this is re-run: the `π_P` cells in R2c are unaffected (they use the
 full target and its own complement move).
+
+### R2e — pilot length vs width shrinkage (same day)
+
+R2d left two follow-ups: whether the rule should be 150·`r` pilot steps (1 200 at rank 8),
+and whether the rank-4 loss is the *magnitude* of the pilot widths or their *noise*.  This
+section answers both at once, because they are the same budget question.  Length is probed
+at rank 8 (600, 2 400) and rank 4 (600, 1 200); noise is probed with a shrinkage estimator
+that leaves the 300-step pilot alone and only damps its per-coordinate spread:
+`log w_i ← mean(log w) + s·(log w_i − mean(log w))`, so `s = 1` is the raw pilot (bitwise),
+`s = 0` is isotropic at the pilot's geometric mean, and every `s` leaves the kernel
+`β_i`-reversible and the target untouched.  The geometric-mean form is deliberate: it
+preserves the overall step size and varies only the spread across coordinates, which is
+what separates "wrong scale" from "noisy scale".
+
+4 chains × 4 000 steps, burn 500, thin 5, informed basis, target `π_r`, ambient anchor
+(`4.30 %` base, `4.1523`, `0x52d503556818f1e0`), one process per cell (8 cells, 1.6 h on 2
+cores).  Shrinkage cells use the default 300-step pilot, so all of their extra cost over
+fixed is 1 200 evaluations; the length cells cost `4 · pilot` more.
+
+| rank | pilot steps | `s` | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` | evals | sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | fixed | — | 60.6 % | 100 | 1.023 | 12.89 % | 0.089 | 0.9925 | 2.8699 | 0.270 | 0.0035 | — | 0.05 | 16 004 | 280 |
+| 4 | 300 (R2d) | 1 | 50.4 % | 15 | 1.353 | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 0.17 | 0.012–0.13 | 17 204 | 301 |
+| 4 | 600 | 1 | 48.4 % | **221** | 1.016 | 12.89 % | 0.145 | 0.9925 | 2.8669 | 0.271 | 0.0005 | 0.12 | 0.017–0.13 | 18 404 | 318 |
+| 4 | 1 200 | 1 | 50.3 % | **245** | 1.021 | 12.89 % | 0.080 | 0.9923 | 2.8668 | 0.270 | 0.0005 | 0.30 | 0.026–0.12 | 20 804 | 358 |
+| 4 | 300 | 0.5 | 47.9 % | **399** | 1.012 | 12.89 % | 0.081 | 0.9924 | 2.8669 | 0.270 | 0.0005 | 0.27 | 0.035–0.11 | 17 204 | 291 |
+| 4 | 300 | 0.0 | 46.5 % | **383** | 1.010 | 12.89 % | 0.057 | 0.9922 | 2.8662 | 0.270 | 0.0005 | 0.33 | 0.069–0.08 | 17 204 | 299 |
+| 8 | fixed | — | 55.4 % | 7 | 1.289 | 10.94 % | 0.658 | 0.9485 | 2.4693 | 0.237 | 0.0527 | — | 0.05 | 16 004 | 281 |
+| 8 | 300 (R2d) | 1 | 48.1 % | 6 | 1.931 | 14.06 % | 0.594 | 0.9768 | 2.7792 | 0.280 | 0.0164 | 0.20 | 0.013–0.12 | 17 204 | 225 |
+| 8 | 600 | 1 | 46.7 % | 13 | 1.225 | 14.84 % | 0.187 | 0.9792 | 2.8219 | 0.252 | 0.0077 | 0.15 | 0.018–0.13 | 18 404 | 246 |
+| 8 | 1 200 (R2d) | 1 | 47.8 % | 24 | 1.091 | 14.84 % | 0.246 | 0.9758 | 2.7990 | 0.239 | 0.0099 | 0.17 | 0.023–0.12 | 20 804 | 461 |
+| 8 | 2 400 | 1 | 47.6 % | **137** | 1.040 | 14.84 % | 0.126 | 0.9751 | 2.8025 | 0.238 | 0.0058 | 0.29 | 0.037–0.13 | 25 604 | 321 |
+| 8 | 300 | 0.5 | 47.1 % | 7 | **2.164** | 14.84 % | 0.355 | 0.9727 | 2.7425 | 0.262 | 0.0160 | 0.29 | 0.035–0.11 | 17 204 | 299 |
+| 8 | 300 | 0.0 | 48.7 % | **154** | **1.010** | 14.84 % | 0.277 | 0.9780 | 2.8105 | 0.253 | 0.0087 | 0.34 | 0.064–0.07 | 17 204 | 231 |
+
+Every `fixed` row reproduces R2d's fixed row bitwise (rank 4: 60.6 % / 12.89 % / 0.9925 /
+2.8699; rank 8: 55.4 % / 10.94 % / 0.9485 / 2.4693), and the `300 / s = 1` rows reproduce
+R2d's pilot rows, so the eight cells are eight independent determinism checks.
+
+**Result 22 — the ESS gain is monotone in pilot length, but 150·`r` is not the knee at
+rank 8.**  Rank 8 informed goes 6 → 13 → 24 → **137** at 300 / 600 / 1 200 / 2 400 steps
+(`R̂` 1.931 → 1.225 → 1.091 → **1.040**), so R2d's length mechanism is confirmed over a 4×
+range of budgets.  The increments are not proportional: 300 → 1 200 (4× the draws) buys
+4×, but 1 200 → 2 400 (2× more) buys 5.7×.  The curve is convex in log-budget, so there is
+no single "enough" point at this budget — 150·`r` = 1 200 sits on the steep part, and the
+first cell that clears `R̂` < 1.05 is 2 400 (300·`r`).  Verified at rank 4 that the rule is
+not too *small* there: 600 steps (150·`r`) takes ESS 15 → **221** and `R̂` 1.353 → 1.016,
+and 1 200 adds only 245.  So rank 4's knee is at or below 150·`r`, rank 8's is at 300·`r`:
+the per-rank constant is not 150, and it rises with `r`.
+
+**Result 23 — at rank 4 the pilot's loss is width noise, not width magnitude.**  The
+shrinkage ladder at the *same* 300-step pilot is 15 (`s = 1`) → **399** (`s = 0.5`) →
+**383** (`s = 0`), with `R̂` 1.353 → 1.012 → 1.010.  Three things follow.  (i) The damage is
+essentially all in the spread across the four coordinates: damping it recovers R2d's loss
+and then some — the best rank-4 cell in either section is a pilot cell at 399 vs the fixed
+arm's 100, a **4.0×** gain.  (ii) *Extra length and shrinkage are substitutes*: 300 shrunk
+draws (399, 17 204 evals) beat 600 (221) and 1 200 (245) raw draws at 18 404 and 20 804,
+so the noise is worth more than 4× the draws — the pilot's problem at rank 4 is that 75
+second-half draws per coordinate give a per-coordinate width noisier than the width is
+informative.  (iii) `s = 0.5` and `s = 0` are indistinguishable here (399 vs 383, `R̂`
+1.012 vs 1.010, identical NLL to 7e-4), so at rank 4 the per-coordinate information
+surviving 75 draws is worth nothing over a single common scale: the honest summary is
+"one scale, 300 draws" not "four scales, 75 draws each".
+
+**Result 24 — at rank 8 isotropic is the best proposal measured, and partial shrinkage is
+the worst.**  `s = 0` gives ESS **154** / `R̂` **1.010** — 22× the fixed arm, 6.4× the raw
+300-step pilot, and better than 2 400 raw draws (137 / 1.040) at 17 204 evals instead of
+25 604, i.e. at 67 % of the cost and a third of the wall time (231 s vs 321 s).  But
+`s = 0.5` is the worst cell in the table: ESS 7, `R̂` **2.164** — worse than no shrinkage
+at all (1.931 earlier, 1.225 at 600 steps).  The response in `s` is therefore non-monotone
+at rank 8, and the intermediate point is not near either end (a linear interpolation of ESS
+between 6 and 154 would give ~80; the measured value is 7).  One cell cannot separate a
+mechanism from pilot-draw luck — the widths differ run to run because `--seed` moves the
+pilot stream, and this is the only cell where a repeat is the obvious next probe — but the
+negative is usable now: **partial shrinkage is not a safe interpolation**, and if shrinkage
+is turned on at rank 8 it should be taken to the isotropic end.  Note also that `s = 0`
+puts `β_i` at 0.064–0.07 while `s = 0.5` spans 0.035–0.11: the intermediate case is the
+only one whose largest step is ~3× its smallest, and the scale mismatch is what the
+rank-8 chain cannot absorb.
+
+**Result 25 — none of this moves the predictive.**  Across all six rank-4 pilot cells, NLL
+is 2.8658–2.8669 (spread 0.0011, well inside the fixed arm's 0.0035 MCSE), Brier
+0.9917–0.9925, accuracy 12.89 % in every cell, ECE 0.269–0.271.  Across the six rank-8
+pilot cells, NLL 2.7425–2.8219 and BMA accuracy 14.06–14.84 % (`s = 0`: 14.84 %), while ESS
+spans 6 to 154 — a **25×** range in mixing with no trend in the predictive.  This is R2d's
+diffusion-not-bias reading, now established over the whole ESS range rather than at one
+cell: the pilot's ESS loss at rank 4 and its noise at rank 8 cost only within-chain
+variance.  The rank-8 pilot NLL (2.74–2.82) is still worse than the fixed arm's 2.4693, and
+that gap remains unquoted — the fixed arm has `R̂` 1.289, so Result 17 applies unchanged.
+
+**Result 26 — what to actually run.**  `--pilot-shrink 0` is the proposal to use at both
+ranks tested: rank 4 ESS 383 vs 100 (fixed) and rank 8 ESS 154 vs 7, with `R̂` ≤ 1.010 in
+both and no predictive cost; it needs no extra pilot steps at all.  Length should be treated
+as the fallback for callers who must keep raw widths (the flag defaults to `s = 1` precisely
+so the published R2/R2b/R2c/R2d tables stay reproducible): with raw widths, rank 8 needs
+≥ 2 400 steps (300·`r`), not the 1 200 that 150·`r` gives.  Two things are deliberately not
+claimed.  First, the default is not changed, because R2d's headline numbers were measured at
+`s = 1` and a default switch would silently move every table in this document.  Second,
+`s = 0` beating `s = 1` does not say the widths are useless in general — the random rank-8
+control's widths sit near `β ≈ 1`, where shrinkage is a no-op — only that 75 draws per
+coordinate at rank 4 and 19 at rank 8 are not enough to place per-coordinate scales, and
+that at informal rank 8 the single isotropic scale at the pilot's geometric mean is the one
+that fits.  The untested follow-up this leaves is `s` with a *replicate-averaged* width
+(averaging the pilot's own half-sample estimates, or two independent pilots), which would
+attack the same noise without collapsing the spread, and a `--seed` sweep at `s = 0.5`,
+rank 8 to see whether Result 24's non-monotonicity survives a different pilot stream.
 
 ## Reproduce / verify
 

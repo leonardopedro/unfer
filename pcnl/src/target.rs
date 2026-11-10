@@ -750,6 +750,41 @@ impl DiagScale {
         }
     }
 
+    /// The same measured widths with their *log*-spread shrunk toward the
+    /// geometric mean: `log w_i ← mean(log w) + s·(log w_i − mean(log w))`.
+    ///
+    /// The pilot splits `150·pilot/300` draws over `r` coordinates, so at rank 8
+    /// each width is a 19-draw standard deviation and the spread across `i` is
+    /// mostly estimation noise.  Shrinking shrinks the *differences* between
+    /// coordinates while keeping the overall scale (the geometric mean is
+    /// preserved exactly), so `s = 1` is [`DiagScale::from_widths`] and `s = 0`
+    /// is one isotropic width at the pilot's geometric mean.  This is a one-
+    /// parameter interpolation for measuring how much of the mixing gain needs
+    /// per-coordinate widths at all; the kernel is unchanged, so exactness for
+    /// every `s` follows from `β_i`-reversibility, not from this estimator.
+    pub fn from_widths_shrunk(widths: &[f64], shrink: f64) -> Self {
+        let base = Self::from_widths(widths);
+        let s = if shrink.is_finite() {
+            shrink.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        if s >= 1.0 || base.width.is_empty() {
+            return base;
+        }
+        let n = base.width.len() as f64;
+        let log_mean = base.width.iter().map(|w| w.ln()).sum::<f64>() / n;
+        Self {
+            width: base
+                .width
+                .iter()
+                .map(|w| (log_mean + s * (w.ln() - log_mean)).exp())
+                .collect(),
+            multiplier: 1.0,
+            target_accept: 0.5,
+        }
+    }
+
     pub fn multiplier(&self) -> f64 {
         self.multiplier
     }
@@ -1158,6 +1193,7 @@ mod tests {
             (m2 - m2_exact).abs() < 5.0 * se_m2,
             "E[z1^2] {m2} vs exact {m2_exact} (se {se_m2})"
         );
+
         // The bimodality must survive: a chain that collapsed to one well would
         // still match the mean (symmetry) but not the second moment, which is
         // why both are checked.  A hint for readers of failures:
@@ -1170,6 +1206,46 @@ mod tests {
             all.len()
         );
         assert!(rate > 0.2 && rate < 0.99, "accept rate {rate}");
+    }
+
+    /// Shrinkage is a monotone interpolation that leaves the *overall* scale
+    /// alone: `s = 1` reproduces the measured widths bitwise, `s = 0` collapses
+    /// every coordinate onto their geometric mean, and the geometric mean is
+    /// invariant in between.  A silently reversed or non-monotone knob would
+    /// make the rank-4/8 rows unreadable, so pin the endpoints and one interior
+    /// value.
+    #[test]
+    fn width_shrinkage_keeps_scale_and_moves_monotonically() {
+        let widths = [0.02, 0.05, 0.13, 0.4];
+        let raw = DiagScale::from_widths(&widths);
+        let same = DiagScale::from_widths_shrunk(&widths, 1.0);
+        assert_eq!(raw.width, same.width, "s = 1 must be the raw estimate");
+
+        let full = DiagScale::from_widths_shrunk(&widths, 0.0);
+        let gmean = widths.iter().map(|w| w.ln()).sum::<f64>() / widths.len() as f64;
+        let gmean = gmean.exp();
+        for w in &full.width {
+            assert!(
+                (w - gmean).abs() < 1e-12,
+                "s = 0 must be isotropic at {gmean}"
+            );
+        }
+
+        for s in [0.25, 0.5, 0.75] {
+            let shrunk = DiagScale::from_widths_shrunk(&widths, s);
+            // Overall scale preserved…
+            let g = (shrunk.width.iter().map(|w| w.ln()).sum::<f64>() / shrunk.width.len() as f64)
+                .exp();
+            assert!(
+                (g - gmean).abs() < 1e-12,
+                "s = {s} moved the geometric mean"
+            );
+            // …and the spread decreases with more shrinkage.
+            for (i, w) in widths.iter().enumerate() {
+                let expected = gmean * (w / gmean).powf(s);
+                assert!((shrunk.width[i] - expected).abs() < 1e-12);
+            }
+        }
     }
 
     /// The proposal's prior reversibility, isolated: `N(0, 1)` must be invariant

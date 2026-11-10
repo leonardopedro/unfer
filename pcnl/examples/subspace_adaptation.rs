@@ -44,6 +44,10 @@
 //!   spread cannot exceed the region the pilot visited, so the width is biased
 //!   down (safe for acceptance) and the pilot is warmed by the very `β` under
 //!   test — both stated because the report's ESS depends on them.
+//!   `--pilot-shrink s` damps the log-widths toward their geometric mean
+//!   (`s = 1` raw, `s = 0` one isotropic scale); at 300 steps that recovers the
+//!   rank-4 loss (ESS 15 → 399) and is the best rank-8 proposal measured
+//!   (6 → 154 at `s = 0`), while `s = 0.5` at rank 8 is worse than either end.
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -222,6 +226,12 @@ struct Cfg {
     /// second half is used, so the pilot has to be long enough for the first
     /// half to be a warm-up.
     pilot_steps: usize,
+    /// Shrink the pilot's log-width spread toward its geometric mean before
+    /// using it: `1` is the raw estimate, `0` is one isotropic width.  The
+    /// pilot has `150·pilot_steps/300` draws per coordinate, so at higher rank
+    /// the per-coordinate differences are mostly noise; this measures how much
+    /// of the mixing gain needs them.
+    pilot_shrink: f64,
     /// Targets to sample; `full` adds the `pi_P` split chain (two stages per
     /// step, so twice the potential evaluations).
     targets: Vec<TargetKind>,
@@ -254,6 +264,7 @@ impl Default for Cfg {
             adapt_target: 0.5,
             curvature_h: 0.01,
             pilot_steps: 300,
+            pilot_shrink: 1.0,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -305,6 +316,9 @@ impl Cfg {
         }
         if let Some(v) = flag("--pilot").and_then(|v| v.parse().ok()) {
             cfg.pilot_steps = v;
+        }
+        if let Some(v) = flag("--pilot-shrink").and_then(|v| v.parse().ok()) {
+            cfg.pilot_shrink = v;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -607,7 +621,7 @@ fn run_cell(
                 s.target_accept = cfg.adapt_target;
                 Scale::Rot(s)
             } else {
-                let mut s = DiagScale::from_widths(&column_sd(&columns));
+                let mut s = DiagScale::from_widths_shrunk(&column_sd(&columns), cfg.pilot_shrink);
                 s.target_accept = cfg.adapt_target;
                 Scale::Diag(s)
             });
@@ -774,7 +788,7 @@ fn run_full_cell(
                     }
                 }
             }
-            let mut s = DiagScale::from_widths(&column_sd(&columns));
+            let mut s = DiagScale::from_widths_shrunk(&column_sd(&columns), cfg.pilot_shrink);
             s.target_accept = cfg.adapt_target;
             scale = Some(Scale::Diag(s));
         }
@@ -895,6 +909,13 @@ fn main() {
          frozen after it",
         cfg.pilot_steps, cfg.beta
     );
+    if cfg.pilot_shrink < 1.0 {
+        println!(
+            "pilot widths: log-spread shrunk toward the geometric mean by s = {:.2} \
+             (1 = raw pilot, 0 = isotropic at the pilot's geometric mean)",
+            cfg.pilot_shrink
+        );
+    }
     println!(
         "targets: {}. pi_r = the rank-r restriction (one potential per step). pi_P = the full \
          P-dimensional posterior in the B/complement split: informed z then projected complement \

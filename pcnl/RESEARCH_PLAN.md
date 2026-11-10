@@ -278,8 +278,22 @@ control still gains **31×** (28 → 872, `R̂` 1.001, predictive unchanged), an
 pilot at informed rank 8 lifts ESS 6 → **24** and `R̂` 1.931 → 1.091. What binds is the
 pilot's 150 estimation draws spread over `r` coordinates — 150 at rank 1, 38 at rank 4, 19
 at rank 8 — so the 300-step default is a low-rank budget, and `rotpilot` at ranks 4/8 (ESS
-9 / 4) remains worse than the diagonal pilot at both. A pilot-length rule that grows with
-rank (150·`r`?) is the untested follow-up.
+9 / 4) remains worse than the diagonal pilot at both. The length rule is not 150·`r`: rank
+8 needs 2 400 steps (300·`r`, ESS 6 → 13 → 24 → **137** at 300/600/1 200/2 400) to reach
+`R̂` < 1.05, while at rank 4 600 is already past the knee (ESS 15 → 221).
+
+R2e measured the width question directly with `DiagScale::from_widths_shrunk`
+(`--pilot-shrink s`: `log w_i ← mean(log w) + s·(log w_i − mean(log w))`, exact for every
+`s`, `s = 1` bitwise the raw pilot). At the unchanged 300-step pilot, rank 4 goes
+15 → **399** (`s = 0.5`) → **383** (`s = 0`), so its loss is width *noise*, not magnitude,
+and 300 shrunk draws beat 1 200 raw ones (245). At rank 8 `s = 0` gives ESS **154** / `R̂`
+**1.010** — better than 2 400 raw draws at 67 % of the cost — while `s = 0.5` is the worst
+cell measured (7 / **2.164**), so partial shrinkage is not a safe interpolation and one
+`--seed` sweep should check whether that non-monotonicity is a mechanism or pilot luck.
+The predictive is flat across all twelve cells (rank-4 NLL 2.8658–2.8699, rank-8 pilot
+2.7425–2.8219, rank-4 BMA 12.89 % everywhere), i.e. the effect is diffusion, not bias. The
+open follow-up is a replicate-averaged width (two independent pilots, or averaging the
+pilot's own half-samples) to attack the noise without collapsing the spread.
 
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
