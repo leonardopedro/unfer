@@ -311,10 +311,16 @@ pub fn mass_gap_from_sectors(even: &ForwardSirkResult, odd: &ForwardSirkResult) 
 /// The inner normal-ordering reference `⟨0|h|0⟩ = 0` does not identify the
 /// inner spectral minimizer when pair terms are present. Those squeezed inner
 /// levels are not the full-theory ground: the outer enclosure makes the outer
-/// vacuum exact. The certified statement here is the *enclosure* of the
-/// one-particle sector edge by
-/// the sector-ground-difference interval, not a strict `lo > 0` stopping
-/// rule (see `tests/qym_mass_gap.rs`, `tests/qcd_mass_gap_certified.rs`).
+/// vacuum exact. The statement here is the sector-ground-difference *estimate*
+/// with explicit widths, not a strict `lo > 0` stopping rule (see
+/// `tests/qym_mass_gap.rs`, `tests/qcd_mass_gap_certified.rs`).
+///
+/// Not enforced (and not enforceable here): **ground resolution** — the odd
+/// solve must have resolved the odd sector's ground for `lo` to be a lower
+/// bound at all. A Krylov chain orthogonal to that ground converges to an
+/// excited odd level with a tiny residual and the assembly then returns `lo`
+/// above the true gap (measured, `g = 0`, `N ≤ 6`: `+0.526380` against
+/// `0.189928`). See `mass_gap_spec` precondition 3.
 ///
 /// Returns `None` if either solve fails or has rank 0. In release builds the
 /// precondition witness degrades to documentation (debug-only assert).

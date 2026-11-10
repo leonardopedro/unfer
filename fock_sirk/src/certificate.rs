@@ -26,13 +26,20 @@
 //!
 //! The f64 arithmetic itself **never enters the statement**: the certificate
 //! is a theorem about the *exact* operator applied to *enclosures*.  The
-//! cross-sector assembly ([`certified_mass_gap`]) is the T6 certified-gap
-//! theorem of §3.4: with `θᵒ₀, θᵉ₀` the computed lowest Ritz values of the
-//! odd/even sectors of `H_m` and certified widths `δᵒ, δᵉ`,
+//! cross-sector assembly ([`certified_mass_gap`]) is the T6 gap statement of
+//! §3.4: with `θᵒ₀, θᵉ₀` the computed lowest Ritz values of the odd/even
+//! sectors of `H_m` and widths `δᵒ, δᵉ`,
 //!
 //! ```text
 //!   λ₁(H_m) − λ₀(H_m) ≥ θᵒ₀ − θᵉ₀ − (δᵒ + δᵉ),                 (T6)
 //! ```
+//!
+//! **conditional on `θᵒ₀` lying within `δᵒ` of the odd sector's ground** — a
+//! hypothesis that no term of the certificate witnesses (2026-11-10 audit:
+//! a residual measures "converged", not "lowest"). The even side needs no
+//! hypothesis, Rayleigh–Ritz giving `λ₀ ≤ θᵉ₀` outright. Treat the assembly
+//! as an estimate with explicit widths; [`GapCertificate::lo`] carries the
+//! counterexample and `mass_gap_spec` the theory.
 //!
 //! and the emitter ([`emit_gap_certificate_ndjson`]) serializes the
 //! certificates (parity labels, θ, δ) as the data consumed by the Lean4
@@ -133,18 +140,28 @@ pub fn certified_ground_state(res: &ForwardSirkResult) -> Option<Certificate> {
 /// The certified cross-sector mass gap (T6, §3.4).
 ///
 /// With `θᵒ₀, θᵉ₀` the lowest certified Ritz values of the odd/even solves,
-/// the certified statement is
+/// the T6 statement is
 ///
 /// ```text
 ///   λ₁(H_m) − λ₀(H_m) ≥ θᵒ₀ − θᵉ₀ − (δᵒ + δᵉ) =: lo,
 /// ```
 ///
-/// i.e. `lo > 0` is a **proof** that the truncated Hamiltonian has a mass
-/// gap (with the finite-`m` and finite-precision widths explicit).  The
-/// interval `[lo, hi]` bounds the exact gap of `H_m`; the analytic
-/// strong-coupling value `g²/2` may sit outside it by the `O(g⁴)` magnetic
-/// correction — that deviation is deliberately *not* part of the
-/// certificate.
+/// **Conditional on the sector grounds being resolved** (2026-11-10 audit).
+/// The even side needs no hypothesis — Rayleigh–Ritz gives `λ₀ ≤ θᵉ₀`. The
+/// odd side does: `δᵒ` bounds the distance from `θᵒ₀` to *some* eigenvalue of
+/// the odd sector (Parlett), and nothing in the certificate says which. A
+/// Krylov start orthogonal to the odd ground keeps its chain orthogonal to
+/// it, so the solve converges to the odd *second* level with `δᵒ → 0`; the
+/// assembly then returns `lo` above the true gap — measured `+0.526380`
+/// against `0.189928` at `g = 0`, `N ≤ 6`, `m = 14`, overlap `7.5e-16`
+/// (`tests/qcd_mass_gap_certified.rs`,
+/// `the_certified_gap_lower_bound_needs_the_sector_ground`). So `lo > 0` is
+/// not a proof of a mass gap; it is the estimate "this solve's low window
+/// admits a positive signed difference, with widths", and a positive value
+/// is an alarm to check sector-ground resolution, not the witness for it.
+/// The analytic strong-coupling value `g²/2` may sit outside `[lo, hi]` by
+/// the `O(g⁴)` magnetic correction — that deviation is deliberately *not*
+/// part of the certificate.
 pub struct GapCertificate {
     /// Certified interval for the even-sector ground state.
     pub even: Certificate,
@@ -152,9 +169,12 @@ pub struct GapCertificate {
     pub odd: Certificate,
     /// Computed gap `θᵒ₀ − θᵉ₀`.
     pub gap: f64,
-    /// Certified lower bound of `λ₁(H_m) − λ₀(H_m)` (the T6 statement).
+    /// The T6 lower-bound expression `θᵒ₀ − θᵉ₀ − (δᵒ + δᵉ)`. A genuine
+    /// lower bound on `λ₁(H_m) − λ₀(H_m)` only when the odd solve resolved the
+    /// odd sector ground; otherwise an estimate that can exceed the gap.
     pub lo: f64,
-    /// Certified upper bound `θᵒ₀ − θᵉ₀ + (δᵒ + δᵉ)`.
+    /// The T6 upper-bound expression `θᵒ₀ − θᵉ₀ + (δᵒ + δᵉ)`, carrying the
+    /// same conditional reading as [`GapCertificate::lo`].
     pub hi: f64,
 }
 
@@ -178,7 +198,12 @@ impl GapCertificate {
     }
 }
 
-/// Assemble the T6 certified mass gap from two sector solves.
+/// Assemble the T6 gap expression from two sector solves.
+///
+/// This is arithmetic on the two lowest certified Ritz values: it does **not**
+/// verify that either solve resolved its sector ground (see
+/// [`GapCertificate::lo`]). Callers that need a bound must supply that
+/// witness themselves.
 pub fn certified_mass_gap(
     even: &ForwardSirkResult,
     odd: &ForwardSirkResult,

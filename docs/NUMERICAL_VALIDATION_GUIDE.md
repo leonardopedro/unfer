@@ -2417,11 +2417,27 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   (0.0911 / 0.0912 at $g=1$; 0.850 / 1.244 at $g=2$). *Asserts*: containment at
   every (g, N); that the window **also contains the lattice value $g^2/2$**, so
   it cannot distinguish the two models; and the departure itself from the dense
-  diagonalization ($|0.0912-0.5| = 0.41$ at $g=1$, $|1.244-2| = 0.76$ at $g=2$).
-- **`qcd_mass_gap_certificate_ndjson`** — computes:
-  `emit_gap_certificate_ndjson` emits three valid JSON lines (two Ritz
+  diagonalization ($|0.0912-0.5| = 0.41$ at $g=1$, $|1.244-2| = 0.76$ at $g=2$).- **`qcd_mass_gap_certificate_ndjson`** — computes:  `emit_gap_certificate_ndjson` emits three valid JSON lines (two Ritz
   certificates carrying $\theta$ and $\delta$, one assembly carrying gap and
   $\delta$) — the nanoda re-verification seam.
+- **`the_certified_gap_lower_bound_needs_the_sector_ground`** — computes: SIRK
+  driven on the **bounded** $P_N H P_N$ (supplied through
+  `solve_forward_sirk_with_matvec`, since the solver has no inner-occupation
+  knob) and the exact parity-resolved spectrum of that truncation. *Asserts*:
+  the projected operator is self-adjoint ($10^{-12}$); at the gapless control
+  $g = 0$, $N \le 6$, $m = 14$ both sector solves isolate their grounds and
+  $lo = +0.189913 > 0$ against an exact gap of $0.189928$ — so positivity is a
+  property of the **finite basis**, reachable at $g = 0$, and never evidence of
+  a continuum gap; and with the odd start orthogonal to that sector's ground
+  (overlap $7.5\times10^{-16}$) the solve converges ($\delta^o = 1.2\times10^{-7}$)
+  to the odd *second* level and the assembly returns $lo = +0.526380$ against a
+  true gap of $0.189928$. The second half is the measured counterexample to
+  treating $lo > 0$ as a proof: Parlett's bound places *some* eigenvalue within
+  $\delta$, not the lowest, so $\delta$ measures "converged", not "lowest" —
+  a rigorous lower bound on a minimum needs an exclusion argument. T6 is now
+  stated as conditional on that ground resolution (`mass_gap_spec`
+  precondition 3, `certificate.rs` `GapCertificate::lo`); full table and the
+  orientation caveat in `docs/MASS_GAP_SPEC.md` §6b.
 
 **No coupling certifies it** (measured sweep, 2026-11-10; full table in
 `docs/MASS_GAP_SPEC.md` §6a). The interval is `[gap ± δ]`, so a stronger

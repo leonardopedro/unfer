@@ -47,6 +47,15 @@
 //!    NDJSON with the sector labels, θ, δ consumed by the Lean4 T6 instance
 //!    (`ChapterSirkCertifiedGap`); the `certified_positive` flag truthfully
 //!    reflects `lo > 0` of the emitted numbers.
+//! 4. `the_certified_gap_lower_bound_needs_the_sector_ground` — SIRK driven on
+//!    the *bounded* `P_N H P_N` (via `solve_forward_sirk_with_matvec`, since
+//!    the solver has no inner-occupation knob), cross-checked against the
+//!    exact parity-resolved spectrum. Establishes two things the T6 assembly
+//!    depends on: `lo > 0` is reachable and is a property of the finite basis
+//!    (it holds at the gapless control `g = 0`), and `lo` can exceed the true
+//!    gap when a sector solve has not resolved that sector's ground, with no
+//!    term of the certificate able to see the difference (a residual measures
+//!    "converged", not "lowest").
 //!
 //! ## Measured runtimes (M4, 2026-10-07)
 //!
@@ -59,13 +68,14 @@ use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::{
     SirkOpts, certified_mass_gap, certified_ritz_values, emit_gap_certificate_ndjson,
-    solve_forward_sirk_with_opts,
+    solve_forward_sirk_with_matvec, solve_forward_sirk_with_opts,
 };
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
-    Hamiltonian, InnerBosonicState, Operator, QuantumState, qcd_ym_hamiltonian,
+    Hamiltonian, InnerBosonicState, Operator, OuterState, QuantumState, qcd_ym_hamiltonian,
 };
 use num_complex::Complex64;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn shifts(m: usize) -> Vec<Complex64> {
     shifts_for_range((0, m))
@@ -356,4 +366,292 @@ fn qcd_mass_gap_certificate_ndjson() {
         "T6 certified_positive must truthfully reflect lo > 0"
     );
     eprintln!("qcd_mass_gap_certificate_ndjson: emitted\n{ndjson}");
+}
+
+// ---------------------------------------------------------------------------
+// Truncation control, and what the T6 step actually needs
+// ---------------------------------------------------------------------------
+//
+// The SIRK solve has no inner-occupation knob, so the campaign's `N` axis is a
+// dense-diagonalization cross-check and the certified gap is assembled from two
+// *unbounded*-operator solves. `solve_forward_sirk_with_matvec` supplies the
+// missing knob from outside: the closure applies `P_N H P_N`, and since the
+// start and every iterate live in `V_N`, `P_N` acts as the identity on the
+// state SIRK subtracts, so the operator the loop steps with is exactly the
+// bounded `H_N`. That makes the two experiments below possible on a *bounded*
+// operator, where an exact parity-resolved spectrum exists to compare against.
+
+/// Total inner occupation of an outer component — the truncation quantum number.
+fn occupation(s: &OuterState) -> u32 {
+    let bosons: u32 = s
+        .bosonic
+        .iter()
+        .map(|(inner, &count)| count * inner.modes.values().sum::<u32>())
+        .sum();
+    bosons + s.fermionic.len() as u32
+}
+
+/// `P_N`: keep the components with total inner occupation `≤ n`.
+fn restrict_n(state: &QuantumState, n: u32) -> QuantumState {
+    let mut out = QuantumState::zero();
+    for (k, v) in &state.components {
+        if occupation(k) <= n {
+            out.components.insert(k.clone(), *v);
+        }
+    }
+    out
+}
+
+/// The QYM reflection `R|n₀,n₁,n₂,n₃⟩ = (−1)^(n₀+n₁)|n₁,n₀,n₂,n₃⟩`.
+fn apply_reflection(s: &QuantumState) -> QuantumState {
+    let mut out = QuantumState::zero();
+    for (outer, amp) in &s.components {
+        for (inner, mult) in &outer.bosonic {
+            let n0 = inner.modes.get(&0).copied().unwrap_or(0);
+            let n1 = inner.modes.get(&1).copied().unwrap_or(0);
+            let mut flipped = InnerBosonicState::vacuum();
+            for (mode, n) in &inner.modes {
+                let target = match *mode {
+                    0 => 1,
+                    1 => 0,
+                    other => other,
+                };
+                if *n > 0 {
+                    flipped.modes.insert(target, *n);
+                }
+            }
+            let phase = if (n0 + n1) * mult % 2 == 0 { 1.0 } else { -1.0 };
+            out.components.insert(
+                OuterState {
+                    bosonic: BTreeMap::from([(flipped, *mult)]),
+                    fermionic: BTreeSet::new(),
+                },
+                *amp * Complex64::new(phase, 0.0),
+            );
+        }
+    }
+    out
+}
+
+/// Ascending `(λ, R-parity, eigenvector)` of the truncated `H_N`, parity read
+/// off exactly: `R` maps each (single-component, unit-amplitude) basis state to
+/// `±` another, so `⟨ψ|Rψ⟩ = ±1` for a non-degenerate eigenvector.
+fn truncated_spectrum(h: &Hamiltonian, n_max: u32) -> Vec<(f64, f64, QuantumState)> {
+    let mut basis = Vec::new();
+    for n0 in 0..=n_max {
+        for n1 in 0..=n_max - n0 {
+            for n2 in 0..=n_max - n0 - n1 {
+                for n3 in 0..=n_max - n0 - n1 - n2 {
+                    let mut occ = Vec::new();
+                    for (mode, count) in [(0, n0), (1, n1), (2, n2), (3, n3)] {
+                        if count > 0 {
+                            occ.push((mode, count));
+                        }
+                    }
+                    basis.push(fock_state(&occ));
+                }
+            }
+        }
+    }
+    let n = basis.len();
+    let mut mat = DMatrix::<Complex64>::zeros(n, n);
+    for (j, s) in basis.iter().enumerate() {
+        let hs = h.apply(s);
+        for (i, t) in basis.iter().enumerate() {
+            mat[(i, j)] = QuantumState::inner_product(t, &hs);
+        }
+    }
+    let mut index = std::collections::HashMap::new();
+    for (i, s) in basis.iter().enumerate() {
+        index.insert(s.components.keys().next().unwrap().clone(), i);
+    }
+    let mut perm = Vec::with_capacity(n);
+    for s in basis.iter() {
+        let rs = apply_reflection(s);
+        let (key, amp) = rs
+            .components
+            .iter()
+            .next()
+            .expect("R image is a basis state");
+        perm.push((index[key], amp.re));
+    }
+    let eig = mat.symmetric_eigen();
+    let mut rows = Vec::new();
+    for idx in 0..n {
+        let mut parity = Complex64::new(0.0, 0.0);
+        for (j, &(sigma, sign)) in perm.iter().enumerate() {
+            parity += eig.eigenvectors[(sigma, idx)].conj()
+                * eig.eigenvectors[(j, idx)]
+                * Complex64::new(sign, 0.0);
+        }
+        let mut vec = QuantumState::zero();
+        for (j, s) in basis.iter().enumerate() {
+            let c = eig.eigenvectors[(j, idx)];
+            if c.norm_sqr() > 0.0 {
+                vec.scale_and_add(s, c);
+            }
+        }
+        rows.push((eig.eigenvalues[idx], parity.re.signum(), vec));
+    }
+    rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    rows
+}
+
+/// `P_N H P_N` must be self-adjoint as an operator — the property the
+/// projector construction rests on, checked on states rather than through the
+/// whitened matrix (which carries the collapsed-chain asymmetry noted in
+/// `solve_truncated`).
+fn assert_operator_self_adjoint(h: &Hamiltonian, n: u32, states: &[QuantumState]) {
+    let applied: Vec<QuantumState> = states
+        .iter()
+        .map(|s| restrict_n(&h.apply(&restrict_n(s, n)), n))
+        .collect();
+    for (j, a) in applied.iter().enumerate() {
+        for (k, b) in states.iter().enumerate() {
+            let lhs = QuantumState::inner_product(b, a);
+            let rhs = QuantumState::inner_product(&states[j], &applied[k]).conj();
+            assert!(
+                (lhs - rhs).norm() < 1e-12,
+                "P_N H P_N must be self-adjoint: ⟨{k}|H|{j}⟩ = {lhs} vs ⟨{j}|H|{k}⟩* = {rhs}"
+            );
+        }
+    }
+}
+
+/// One SIRK solve of the bounded `P_N H P_N` at Krylov order `m`.
+fn solve_truncated(
+    h: &Hamiltonian,
+    start: &QuantumState,
+    m: usize,
+    n: u32,
+) -> fock_sirk::ForwardSirkResult {
+    let res = solve_forward_sirk_with_matvec(
+        |s: &QuantumState| restrict_n(&h.apply(&restrict_n(s, n)), n),
+        start,
+        &shifts(m),
+        &best_device(),
+        None,
+        &opts(),
+    )
+    .expect("truncated solve must complete");
+    // NOTE: `assert_hermitian` is deliberately not applied here. `h_proj` is
+    // assembled from the step identity `⟨ŵ_j|H|ŵ_k⟩ = (σ_{k+1}/σ_k)G_{j,k+1} +
+    // z_k G_{j,k}` rather than from explicit `H` applications, so when the
+    // truncated chain collapses (rank 10 of `m+1 = 15` at `m = 14`, `g = 0`)
+    // that matrix departs from Hermitian by a measured `2.5e-4`. That is a
+    // property of the collapsed-chain assembly, not of `P_N H P_N`:
+    // `assert_operator_self_adjoint` checks the operator itself, exactly, on
+    // the states the test uses.
+    res
+}
+
+/// The two facts the T6 assembly needs, measured on a bounded operator.
+///
+/// (1) **The knob is the truncation, not the coupling.** With `P_N H P_N` the
+///     T6 expression is *positive at `g = 0`* — `lo = +0.189913` against a true
+///     gap of `0.189928`. The gapless control certifies positivity because a
+///     finite occupation basis has a discrete spectrum: `lo > 0` is therefore a
+///     statement about `H_N`, never about the theory. That is the answer to
+///     "find a coupling large enough" — no coupling is needed, and `g = 0`
+///     already does it, which is what shows the lever was the wrong one.
+///
+/// (2) **`lo > 0` can be wrong.** T6 needs the odd solve to have resolved the
+///     odd sector's *ground*, and no term of the certificate witnesses that.
+///     Start the odd chain orthogonal to that ground (overlap `7.5e-16`): the
+///     whole space stays orthogonal to it, the lowest Ritz value converges to
+///     the odd *second* level with a residual `1.2e-7`, and the assembly
+///     returns `lo = +0.526380` against a true gap of `0.189928`. Preconditions
+///     as documented (lowest Ritz value per sector, disjoint sectors, residual
+///     widths) are all satisfied, so the excess is not a bug in the arithmetic:
+///     the residual measures "converged", not "lowest".
+#[test]
+fn the_certified_gap_lower_bound_needs_the_sector_ground() {
+    let g = 0.0;
+    let n = 6u32;
+    let h = qcd_ym_hamiltonian(g);
+    let spectrum = truncated_spectrum(&h, n);
+
+    let lambda_even = spectrum
+        .iter()
+        .find(|(_, parity, _)| *parity > 0.0)
+        .map(|(value, _, _)| *value)
+        .expect("an R-even level");
+    let odd: Vec<&(f64, f64, QuantumState)> = spectrum
+        .iter()
+        .filter(|(_, parity, _)| *parity < 0.0)
+        .collect();
+    let lambda_odd = odd[0].0;
+    let second_odd = odd[1].0;
+    let exact_gap = lambda_odd - lambda_even;
+    assert!(
+        exact_gap > 0.1,
+        "the truncated theory is gapped at g = 0 by construction (finite basis): {exact_gap}"
+    );
+
+    // The projector is applied on both sides; check the bounded operator is
+    // self-adjoint before trusting a Krylov spectrum of it.
+    assert_operator_self_adjoint(&h, n, &[empty_vacuum(), r_odd_start()]);
+
+    // (1) The in-sector start: the hypothesis holds and T6 is a bound.
+    let res_even = solve_truncated(&h, &empty_vacuum(), 14, n);
+    let res_odd = solve_truncated(&h, &r_odd_start(), 14, n);
+    let co = certified_ritz_values(&res_odd);
+    let in_sector = certified_mass_gap(&res_even, &res_odd).expect("assembly");
+    assert!(
+        (co[0].value - lambda_odd).abs() <= co[0].delta(),
+        "the in-sector odd solve must isolate the odd ground: θᵒ₀ = {}, λ_odd = {lambda_odd}, δᵒ = {}",
+        co[0].value,
+        co[0].delta()
+    );
+    // Tolerance: the collapsed-chain `h_proj` asymmetry measured above (2.5e-4)
+    // is the accuracy of θ on this solve, so a bound check at 1e-3 is the
+    // honest resolution of this comparison (the expression is in fact tight to
+    // 1.5e-5 here).
+    assert!(
+        in_sector.lo <= exact_gap + 1e-3,
+        "with the sector ground resolved the T6 expression is a bound: lo = {} must not \
+         exceed the exact gap {exact_gap}",
+        in_sector.lo
+    );
+    assert!(
+        in_sector.lo > 0.0,
+        "on the bounded H_N the T6 expression is positive at the GAPLESS control g = 0 \
+         (lo = {}); positivity here is a property of the finite basis, not of the theory",
+        in_sector.lo
+    );
+
+    // (2) A start orthogonal to the odd ground: still "converged", wrong level.
+    let overlap = QuantumState::inner_product(&odd[0].2, &odd[1].2);
+    let mut start = odd[1].2.clone();
+    start.scale_and_add(&odd[0].2, -overlap);
+    let norm = start.norm();
+    start.scale_and_add(&start.clone(), Complex64::new(1.0 / norm - 1.0, 0.0));
+    assert!(
+        QuantumState::inner_product(&odd[0].2, &start).norm() < 1e-12,
+        "the start must be orthogonal to the odd ground"
+    );
+
+    let res_stuck = solve_truncated(&h, &start, 14, n);
+    let cs = certified_ritz_values(&res_stuck);
+    let stuck = certified_mass_gap(&res_even, &res_stuck).expect("assembly");
+    assert!(
+        cs[0].delta() < 1e-4,
+        "the stuck solve is CONVERGED in the residual sense (δᵒ = {})",
+        cs[0].delta()
+    );
+    assert!(
+        (cs[0].value - second_odd).abs() < 1e-4,
+        "it converges to the odd SECOND level: θᵒ₀ = {}, λ₂(odd) = {second_odd}",
+        cs[0].value
+    );
+    assert!(
+        (second_odd - lambda_odd).abs() > 0.3,
+        "the level it found must be far above the ground: λ₂ = {second_odd}, λ₁ = {lambda_odd}"
+    );
+    assert!(
+        stuck.lo > exact_gap + 0.3,
+        "the T6 expression then EXCEEDS the true gap: lo = {} vs gap = {exact_gap} — `lo > 0` \
+         is not a proof, and no residual term can detect this",
+        stuck.lo
+    );
 }

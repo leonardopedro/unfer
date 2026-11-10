@@ -139,7 +139,7 @@ parameter separating gapped from gapless.
 
 ## 6. Certified table (gauge-fixed)
 
-`fock_sirk/tests/qcd_mass_gap_certified.rs` (3 tests) instantiates the T6
+`fock_sirk/tests/qcd_mass_gap_certified.rs` (4 tests) instantiates the T6
 assembly on the gauge-fixed H: the certified window `[lo, hi]` encloses the
 exact truncated gap `E₁ − E₀` for `g ∈ {1, 2}` across truncations, and the
 NDJSON emitter produces well-formed sector certificates whose
@@ -200,3 +200,80 @@ needs a truncation-controlled solve, not a larger coupling.
 (the pinned Lean4 T6 instance in `../timepiece/GapCertificate/` remains the
 historical lattice instantiation; regenerating it for the gauge-fixed numbers
 is an LLM-Lean4-specialist item).
+
+### 6b. The truncation control, and why `lo > 0` is not a proof (2026-11-10)
+
+§6a concluded that a truncation-controlled solve is what is missing. The solver
+needs no change for it: `solve_forward_sirk_with_matvec` takes the matvec, so
+a caller passes `P_N H P_N` (drop every component whose total inner occupation
+exceeds `N`). Because the start and every iterate live in `V_N`, `P_N` acts as
+the identity on the state SIRK subtracts from `H u`, so the operator the loop
+steps with is exactly the bounded `H_N`. On a bounded operator an exact
+parity-resolved spectrum exists (dense diagonalization; `R|n₀n₁n₂n₃⟩ =
+(−1)^{n₀+n₁}|n₁n₀n₂n₃⟩`, eigenvectors classified by `⟨ψ|Rψ⟩ = ±1`), so the
+certificate can finally be compared against truth. All numbers below are from
+`the_certified_gap_lower_bound_needs_the_sector_ground` (`m = 14`, `N ≤ 6`) and
+the dense spectrum at `N ≤ 8`, `m = 12`; `P_N H P_N` is checked self-adjoint to
+`1e-12` on the states used.
+
+**Answer to §6a's question: no coupling is needed — `g = 0` already does it.**
+
+| `g` | `N` | λ_even | λ_odd | λ_odd−λ_even | θᵉ₀ | θᵒ₀ | `lo` |
+|---|---|---|---|---|---|---|---|
+| 0 | 6 | −1.304851 | −1.114924 | **+0.189928** | −1.304851 | −1.114924 | **+0.189913** |
+| 0 | 8 | −1.427286 | −1.304851 | +0.122434 | −1.427251 | −1.304848 | +0.104776 |
+| 0.5 | 8 | −1.545551 | −1.576009 | −0.030458 | −1.462674 | −1.484936 | −0.430261 |
+| 1 | 8 | −2.743630 | −2.652468 | +0.091161 | −1.802710 | −2.347584 | −2.346919 |
+| 2 | 8 | −6.511130 | −7.754777 | −1.243647 | −5.064921 | −7.450581 | −6.748513 |
+
+The `g = 0` row is the point. At `N ≤ 6` both sector solves isolate their
+grounds exactly (`θᵉ₀ = λ_even`, `θᵒ₀ = λ_odd` to `1e-6`) and the T6 expression
+is **positive, +0.189913, on the gapless control** — the free theory truncated
+to a finite occupation basis. So `lo > 0` is a statement about `H_N` and never
+about the continuum: the finite basis has a discrete spectrum whether or not the
+theory does. (Consistent with §5: the truncated `g = 0` gap *shrinks* with depth,
+0.336 → 0.190 → 0.122, so positivity is available at every `N` while the number
+it certifies tends to zero.)
+
+**Two reasons `lo` is not even a bound.**
+
+1. *Its step needs an unstated hypothesis.* `lo` uses `λ₁ ≥ θᵒ₀ − δᵒ`, which
+   holds only if `θᵒ₀` is within `δᵒ` of the odd sector's **ground**. Parlett's
+   bound places *some* eigenvalue within `δᵒ`; it does not say which, and a
+   Krylov start orthogonal to the ground keeps its whole chain orthogonal to it.
+   Measured at `g = 0`, `N ≤ 6`, `m = 14`, odd start orthogonalized against the
+   odd ground (overlap `7.5e-16`): `θᵒ₀ = −0.778457`, i.e. the odd *second*
+   level (`λ₂`), with `δᵒ = 1.2e-7` — *more* converged than the in-sector solve —
+   and the assembly returns `lo = +0.526380` against a true gap of `0.189928`.
+   Every documented precondition holds; the conclusion is wrong by `0.34`. A
+   residual measures "converged", not "lowest"; a rigorous lower bound on a
+   *minimum* needs an exclusion argument (an eigenvalue count, or a
+   Kato–Temple-type gap), because variation gives upper bounds on minima only.
+   `certificate.rs` and `mass_gap_spec.rs` now state this hypothesis
+   (precondition 3) and label the assembly an estimate.
+2. *Its orientation is fixed, and the sector order flips.* `lo` is
+   `θᵒ₀ − θᵉ₀ − δ`, so it can only be positive when the odd sector sits *above*
+   the even one. At `g = 0.5, N ≤ 8` the truncated split is `0.0305` in
+   magnitude but the odd ground is the *lower* one (`λ_odd − λ_even =
+   −0.030458`), and at `g = 2, N ≤ 8` the crossing is large (`−1.243647`,
+   the known ground flip). No amount of coupling or depth fixes an orientation
+   at those truncations.
+
+Two caveats for anyone reading the campaign fixtures:
+
+* `mass_gap_campaign`'s `exact_gap_at_n` column is `E₁ − E₀` of the **full**
+  truncated spectrum, not the sector gap. Where the sectors cross it is the
+  absolute split with a flipped sign: at `g = 2, N ≤ 8` it reads `+1.243647`
+  while the parity-resolved sector gap is `−1.243647`. Read it as `|gap|` there.
+* when a truncated Krylov chain collapses (rank `10` of `m+1 = 15` at `m = 14`,
+  `g = 0`), `h_proj` — assembled from the step identity rather than from
+  explicit `H` applications — departs from Hermitian by a measured `2.5e-4`.
+  That is an assembly property of the collapsed chain, not of `P_N H P_N`
+  (checked self-adjoint to `1e-12`), but it sets the accuracy of `θ` on such
+  solves and hence the resolution of any bound comparison made there.
+
+The correction to T6's statement has **not** yet reached the specialist bundle
+(`../timepiece/unfer_contracts/`, a sibling repository).
+`scripts/check-mass-gap-spec-parity` compares operative claims only, and this
+wording is not one of them, so the bundle keeps the unconditional reading until
+someone mirrors §6b there by hand.

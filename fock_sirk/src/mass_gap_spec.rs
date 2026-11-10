@@ -24,6 +24,36 @@
 //! diagonalized, and `h_Oˢ = 4u·max(|θ|, 1)` the directed-rounding enclosure
 //! of the measured value.
 //!
+//! ## Status: an ESTIMATE, not a positivity certificate (2026-11-10 audit)
+//!
+//! The inequality above is **false as stated** without the hypothesis in
+//! precondition 3, which no term of the certificate can check. Parlett's
+//! bound places *some* eigenvalue of the sector within `δˢ` of `θˢ₀`; it does
+//! not say the eigenvalue is the sector's ground. A Krylov start orthogonal to
+//! the ground keeps its whole chain orthogonal to it, so the solve converges to
+//! an *excited* sector level with `δˢ → 0` — the residual measures
+//! "converged", not "lowest". Measured on the truncated gauge-fixed QYM
+//! (`g = 0`, total inner occupation `N ≤ 6`, `m = 14`, odd start built exactly
+//! orthogonal to the odd ground, overlap `7.5e-16`):
+//!
+//! ```text
+//!   θᵉ₀ = −1.304851  (sector ground −1.304851, δᵉ = 1.4e-5)
+//!   θᵒ₀ = −0.778457  (sector ground −1.114924, δᵒ = 1.2e-7)
+//!   assembles lo = +0.526380   against a true sector gap of 0.189928
+//! ```
+//!
+//! Every stated precondition holds and `lo` exceeds the gap by 0.34, so `lo`
+//! is not a lower bound and [`gap_certified_positive`] is not a proof. What
+//! the assembly *is*: the signed difference of two Ritz values with explicit
+//! widths, useful as an estimate and as a self-consistency check — which is
+//! why the guides record `lo ≤ 0` at every reachable coupling rather than a
+//! certified mass gap, and why a row flipping to `lo > 0` must be checked
+//! against a resolved sector ground (`tests/qcd_mass_gap_certified.rs`,
+//! `the_certified_gap_lower_bound_needs_the_sector_ground`). A rigorous
+//! lower bound on the *lowest* eigenvalue needs an exclusion argument (an
+//! eigenvalue count or a Kato–Temple-type gap), not a residual: variation
+//! gives upper bounds on minima only.
+//!
 //! Preconditions of the theorem (each documented where it is enforced):
 //!
 //! 1. **Sector purity**: for the gauge-fixed QYM Hamiltonian the sector
@@ -33,11 +63,20 @@
 //!    Occupation parity and lattice Hamiltonians are comparison-only and are
 //!    not inputs to this mass-gap contract.
 //! 2. **Ground selection**: `θˢ₀` is the *lowest* Ritz value of sector `s`
-//!    (the solve returns the sorted spectrum).
-//! 3. **Enclosure**: `δˢ` is a genuine upper bound of `|θˢ − λˢ|` — the
-//!    residual term is measured (T2), the roundoff term is a theorem about
-//!    the eigendecomposition (T1/T3), the enclosure term is directed
-//!    rounding (T5). See [`certified_width`].
+//!    (the solve returns the sorted spectrum). This selects the lowest value
+//!    **of the solve's own subspace**, which is not the sector ground unless
+//!    precondition 3 holds.
+//! 3. **Ground resolution** (the hypothesis, and it is *not* checkable from
+//!    the certificate): `θˢ₀` is within `δˢ` of the sector ground, i.e. the
+//!    solve's subspace is not orthogonal to that ground and `m` is deep
+//!    enough to resolve it. Nothing in `‖r‖`, the roundoff term or `h_O`
+//!    witnesses this — see the module header's measured counterexample.
+//! 4. **Enclosure**: `δˢ` is a genuine upper bound of `|θˢ − λˢ|` for the
+//!    eigenvalue `λˢ` *matched* to the Ritz pair — the residual term is
+//!    measured (T2), the roundoff term is a theorem about the
+//!    eigendecomposition (T1/T3), the enclosure term is directed rounding
+//!    (T5). See [`certified_width`]. Matching to the ground is precondition
+//!    3, not this one.
 
 /// Double-precision unit roundoff `u = 2⁻⁵³`. Single source of truth is
 /// `certificate::UNIT_ROUNDOFF`; this mirrors it so the pure core stays
@@ -105,8 +144,17 @@ pub fn interval_contains(value: f64, delta: f64, x: f64) -> bool {
 /// ```
 ///
 /// Preconditions: `θᵉ₀` (resp. `θᵒ₀`) is the lowest Ritz value of the
-/// even (odd) parity sector, and the sectors are disjoint ([`parities_disjoint`]).
-/// Postcondition: `lo` is a lower bound of the spectral gap of `H_m`.
+/// even (odd) parity sector, the sectors are disjoint
+/// ([`parities_disjoint`]), and — the hypothesis that makes the returned
+/// value a *bound* — `θᵒ₀` lies within `δᵒ` of the **odd sector's ground**
+/// (precondition 3 of the module contract).
+///
+/// Postcondition, **only under that hypothesis**: `lo` is a lower bound of the
+/// spectral gap of `H_m`. Without it the expression is an estimate: with
+/// `θᵒ₀` converged to the odd sector's *second* level and `δᵒ` correspondingly
+/// tiny, `lo` comes out *above* the true gap (measured +0.526380 against
+/// 0.189928 at `g = 0`, `N ≤ 6`); the even side is safe by Rayleigh–Ritz
+/// alone (`λ₀ ≤ θᵉ₀` unconditionally), the odd side is not.
 pub fn certified_gap_lower_bound(theta_o: f64, theta_e: f64, delta_o: f64, delta_e: f64) -> f64 {
     theta_o - theta_e - (delta_o + delta_e)
 }
@@ -119,10 +167,15 @@ pub fn gap_interval(theta_o: f64, theta_e: f64, delta_o: f64, delta_e: f64) -> (
     (gap - width, gap + width)
 }
 
-/// The stopping rule of §3.3: the certificate proves a mass gap for `H_m`
-/// exactly when the certified lower bound is strictly positive. When this
-/// predicate is true the truncated Hamiltonian has a proof-carrying gap
-/// `≥ lo`; when false the certificate claims nothing.
+/// The stopping rule of §3.3: the certificate **would** prove a mass gap for
+/// `H_m` when the lower bound is strictly positive — *provided* the sector
+/// grounds are resolved (precondition 3 of the module contract).
+///
+/// This predicate must not be read as a proof on its own: `lo > 0` is
+/// reachable while `lo` exceeds the true gap, because a Krylov solve reports
+/// the lowest Ritz value of its own subspace and a residual cannot tell a
+/// ground from an excited level. Treat it as an alarm that now needs a
+/// ground-resolution witness, not as the witness.
 pub fn gap_certified_positive(lo: f64) -> bool {
     lo > 0.0
 }
