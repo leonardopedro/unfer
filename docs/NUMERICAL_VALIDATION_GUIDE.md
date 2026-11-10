@@ -688,7 +688,16 @@ $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 > projector onto ker Ω riding along (`Some(&brst)`) resolves the SAME Ritz
 > spectrum and the SAME conserved derivative-field `⟨u_{0,0}⟩` as the bare
 > solve: the fixing is BRST-exact, zero impact on physical expectation
-> values.  (Scope: in the **formal** theory the NS derivative variables
+> values.  The projector itself is now exercised on the full NS charge:
+> `Ω = Σ_j u_{j,j} c_j` is ghost-lowering, so the orthogonal projection is
+> `P w = w − c†c w` and `project_ghost_free` computes it exactly
+> (`Ω(Pw) = 0` identically, `P² = P`, measured on a mixed state).  The CG
+> route is not usable here and no budget fixes it: `ΩΩ† = −A²⊗P₀` with
+> `A = Σ_j √2 x_j` having continuous spectrum, so the solve chases
+> `A⁻¹c w`, which has no Fock-space representation, while `A` cancels from
+> the answer.  Measured trajectory: `‖Ω(Pw)‖` 1.388 → 0.306 over 115
+> iterations with the iterate's support growing 3 → 9861 components.
+> (Scope: in the **formal** theory the NS derivative variables
 > `u_{i,j}` are not gauge-fixed but eliminated by the spatial Fourier
 > substitution, with the advection becoming a momentum-space convolution
 > (`ChapterNsAdvectionConvolution`); this projection is a numerical
@@ -1144,10 +1153,15 @@ the Hamiltonian.
 - **`ns_brst_projection_physical_subspace`** — computes: the BRST divergence
   constraint $\Omega = \sum_j u_{j,j}\,c_j$: nilpotency $\Omega^2 = 0$
   (first-class), gauge invariance $[H,\Omega] = [H_f,\Omega] = 0$
-  (BRST-closed NS and fiber Hamiltonians), and the non-invariance of the
+  (BRST-closed NS and fiber Hamiltonians), the non-invariance of the
   physical subspace under the bare flow (Ω-content of an unphysical
   ghost-carrying state grows) — the reason the projector rides along in the
-  solve.
+  solve — and now the **projection itself** on the full charge:
+  `project_ghost_free` returns exactly the ghost-free part
+  ($\Omega(Pw) = 0$ identically, $P^2 = P$, residual `0.0` against the
+  expected state), while `project_physical`'s CG route on the same state
+  returns `BrstNotConverged` — the unbounded Gauss generator, not a budget
+  (see §5.19).
 
 ### 5.8 Precision QED constants — `qed_precision.rs`
 
@@ -1651,11 +1665,22 @@ Observables measured from the UNITARY FLOW rather than spectra:
   short-circuits and returns its input bit-for-bit ($\|Pw - w\| = 0$); the
   projected and unprojected solves agree because the switch never fires, which
   is plumbing, not a theorem. Off $\ker Q$ — a ghost-carrying state with
-  $\|Qw\| = 2.0$ — the projected solve does **not** converge:
+  $\|Qw\| = 2.0$ — the *normal-equation* solve does **not** converge:
   `BrstNotConverged { residual: 0.3904082323117846 }` at `brst_tol = 1e-10`
-  and 50 CG iterations, because $QQ^\dagger$ is singular on the subspace that
-  carries the charge. **Limitation**: the projector is untested where it would
-  act, and nothing here certifies gauge invariance of a ghost-carrying flow.
+  and 50 CG iterations. That is not a singularity and not a budget: instrumented
+  CG gives $\|Q(Pw)\|$ falling $1.388 \to 0.306$ over 115 iterations (algebraic,
+  not geometric) while the iterate's support grows $3 \to 9861$ components, and
+  the structure explains it — $\Omega = A\cdot c$ with $A = \sum_m i(a^\dagger_m
+  - a_m) = \sum_m p_m$ the total momentum, so $\Omega\Omega^\dagger = -A^2
+  \otimes P_0$ has continuous spectrum and the solve chases $A^{-1}c\,w$, which
+  has no Fock-space representation. The projector's **answer** is trivial
+  ($A$ cancels: $Pw = w - c^\dagger c\,w$), and `project_ghost_free` computes
+  it exactly in $O(\mathrm{len}\,w)$ — asserted here: $\Omega(Pw) = 0$
+  identically, $P^2 = P$, and the ghost-carrying probe projects to exactly
+  zero. **Limitation**: the structural path assumes each bosonic co-factor
+  $A_k$ has trivial kernel, true for this charge ($\sum p_m$) and for NS
+  ($\sqrt2 x_j$) but not checkable in general, which is why it is not wired
+  into `project_physical`.
 
 - **`qed_jc_total_excitation_superselected`** — computes: $N_{\rm tot} =
   a^\dagger a + e^\dagger e$ commutes with the detuned JC Hamiltonian; mean
@@ -1709,34 +1734,49 @@ Observables measured from the UNITARY FLOW rather than spectra:
 
 ### 5.22 Certified numerics — `bands_program_gauge_fixed.rs`
 
-Theorem 4.1 bands promoted from validation tool to DELIVERABLE: propagated
-through Cauchy–Schwarz ($|\langle O\rangle_{\rm SIRK} - \langle
-O\rangle_{\rm exact}| \le 2\|O\|\cdot\text{band}\cdot\|v\|$), every
-program-sector observable acquires a rigorous ERROR BAR — no closed-form
-reference needed. Six certifications:
+Theorem 4.1 bands promoted from validation tool to DELIVERABLE, with the two
+tiers kept apart (S43). The **envelope** (Cauchy–Schwarz, $|\langle O\rangle_{\rm
+SIRK} - \langle O\rangle_{\rm exact}| \le 2\|O\|\cdot\text{band}\cdot\|v\|$) is
+rigorous but its half-widths on these models are $1.1\times10^4$ to
+$5.5\times10^{15}$: nothing in reach can fall outside it, so it is **printed**
+in every test as the a-priori ceiling and carries no assertion. The **sharp**
+tier is the Rayleigh–Ritz residual certificate ($|\theta-\lambda| \le \|r\|$,
+Parlett, from `certified_ritz_values`), and every assertion now sits there.
+Six certifications:
 
 - **`qg_scalaron_gap_certified_contains_analytic`** — the $k\to0$ scalaron
-  gap: analytic $m(\alpha)$ inside the certified interval at every depth;
-  intervals NEST as $m$ grows.
-- **`qym_g0_spectrum_certified_nesting`** — abelian QYM low rungs: certified
-  intervals shrink with depth and nest (the residual-restricted certification
-  window — the bare $:\pi^2:$ kinetic reaches an unbounded ladder, so raw
-  diameters are meaningless).
-- **`qym_gpairs_symmetry_certified_overlap`** — spectra at $\pm g$: pairwise
-  certified-interval OVERLAP certifies the $A^1\to-A^1$ spectral symmetry from
-  numerics alone.
+  gap: analytic $m(\alpha)$ inside the sharp gap interval at every depth
+  (widths $2.7\times10^{-15}$ at $m=6$, $7.3\times10^{-8}$ at $m=9$), and
+  successive intervals intersect. They do **not** nest: the $m=9$ zero rung
+  carries a $7.3\times10^{-8}$ residual, so its interval is wider — the old
+  "next as $m$ grows" claim was an artifact of the envelope.
+- **`qym_g0_spectrum_certified_nesting`** — abelian QYM low rungs: sharp
+  intervals overlap across depths AND the widths shrink ($1.104\to0.929$,
+  $2.306\to1.907$, $3.620\to2.954$; the bare $:\pi^2:$ kinetic reaches an
+  unbounded ladder, so only the three lowest rungs are in the resolved
+  window and each carries its own width).
+- **`qym_gpairs_symmetry_certified_overlap`** — the $A^1\to-A^1$ symmetry,
+  asserted exactly as the operator identity $H(-g) = \Pi H(g)\Pi$ with
+  $\Pi = (-1)^{n_0+n_1}$ (max deviation `0.0` over 18 product states). The
+  sharp-spectrum overlap is kept only as a numerical corollary, with its
+  strength stated: the certificate width is $3.3$–$11$ while the $\pm g$ rung
+  differences are $2.0\times10^{-2}$–$8.8\times10^{-1}$, so it certifies
+  agreement *to the width*, not the symmetry.
 - **`ns_decay_amplitude_certified_interval`** — NS laminar amplitude after
-  one e-folding: certified bar around the measured value; the analytic
-  $e^{-1}u_0$ sits inside.
+  one e-folding: there is no sharp *state*-error certificate, so this is an
+  accuracy bar with its measured values ($5.45\times10^{-2}$ at $m=10$,
+  $2.31\times10^{-2}$ at $m=12$, $9.95\times10^{-3}$ at $m=14$; the paper
+  ladder needs $m < N/h = 16$) against a $6\times10^{-2}$ tolerance.
 - **`qg_graviton_scalaron_certified_disjoint`** — same-$k$ graviton vs
-  scalaron levels: DISJOINT certified intervals — the massive/massless speed
-  split established by rigorous bound alone. Sharpness comes from
-  Rayleigh–Ritz RESIDUAL certificates ($|\theta-\lambda| \le \|r\|$,
-  Parlett); the Theorem 4.1 envelope is the conservative a-priori ceiling.
+  scalaron levels: DISJOINT sharp intervals ($\omega_{\rm grav} = 0.9$,
+  $\omega_{\rm scal} = 1.054751$, widths at the roundoff floor) — the
+  massive/massless speed split established by the residual bound alone.
 - **`qed_casimir_cavity_band_dispersion`** — Casimir cavity $\omega_n =
-  n\pi/d$: exact diagonal reference + band tables (the fourth bounded model);
-  levels inside their certified radii, with paper-shift low-rung
-  convergence-from-above documented.
+  n\pi/d$: reproduced to $2.99\times10^{-9}$ ($m=6$) and $1.40\times10^{-10}$
+  ($m=8$). Not a containment claim: several rungs are *exact* eigenpairs of
+  the truncated operator (residual $0$, $\delta = 1.0\times10^{-13}$) while
+  still differing from $n\pi/d$ by $3\times10^{-9}$, so that residue is the
+  model truncation and Parlett's bound cannot cover it.
 
 ### 5.23 Compiler-route equivalence — `cdb_hamiltonian_match.rs`, `latex_cas_hamiltonian_match.rs`
 

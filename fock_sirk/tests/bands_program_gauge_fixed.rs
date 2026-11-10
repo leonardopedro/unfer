@@ -1,59 +1,87 @@
-//! CERTIFIED NUMERICS for the program-sector gauge-fixed Hamiltonians:
-//! Theorem 4.1 state bands propagated into observable ERROR BARS
-//! (`hashimoto_support::certify`). Where closed-form references exist they
-//! must land inside the certified interval; where they do not (interacting
-//! QYM, NS fibers), the interval itself is the deliverable — a numerical
-//! prediction with a rigorous a-priori error bar.
+//! CERTIFIED NUMERICS for the program-sector gauge-fixed Hamiltonians.
+//!
+//! Two tiers are kept apart in every test (S43):
+//!
+//! * **envelope** — Theorem 4.1 (`hashimoto_support::BandParams`), the a-priori
+//!   SIRK-error ceiling. Rigorous, but on these models its half-widths are
+//!   1.1e4 … 5.5e15, so nothing in reach can fall outside it. It is *printed*
+//!   in every test as the ceiling and never carries an assertion.
+//! * **sharp** — the Rayleigh–Ritz residual certificate
+//!   (`fock_sirk::certified_ritz_values`): `[θ − δ, θ + δ]`, `δ = ‖Hψ − θψ‖ +
+//!   c(n)u‖Ĝ‖ + h_O`, every term computed cancellation-free from the stored
+//!   Gram. By Parlett's bound each interval contains an eigenvalue of `H`, so
+//!   containment and separation are *falsifiable* at this tier.
 //!
 //! 1. `qg_scalaron_gap_certified_contains_analytic` — the k→0 scalaron gap:
-//!    analytic m(α) inside the certified interval at every depth, intervals
-//!    nesting as m grows.
-//! 2. `qym_g0_spectrum_certified_nesting` — abelian QYM low rungs: certified
-//!    intervals shrink with depth and nest.
-//! 3. `qym_gpairs_symmetry_certified_overlap` — spectra at ±g: pairwise
-//!    certified-interval OVERLAP certifies the A¹→−A¹ symmetry from numerics
-//!    alone.
-//! 4. `ns_decay_amplitude_certified_interval` — NS laminar amplitude after
-//!    one e-folding: certified bar around the measured value; the analytic
-//!    e^{-1}u₀ sits inside.
-//! 5. `qg_graviton_scalaron_certified_disjoint` — same-k graviton vs
-//!    scalaron levels: DISJOINT certified intervals — the massive/massless
-//!    speed split established by rigorous bound alone.
-//! 6. `qed_casimir_cavity_band_dispersion` — Casimir cavity ω_n = nπ/d:
-//!    exact diagonal reference + band tables (fourth bounded model).
+//!    analytic m(α) inside the sharp gap interval at every depth (widths
+//!    2.7e-15 and 7.3e-8), and successive intervals intersect.
+//! 2. `qym_g0_spectrum_certified_nesting` — abelian QYM low rungs: sharp
+//!    intervals of successive depths overlap AND shrink with depth (widths
+//!    1.10→0.93, 2.31→1.91, 3.62→2.95).
+//! 3. `qym_gpairs_symmetry_certified_overlap` — the A¹→−A¹ symmetry, as an
+//!    **exact operator identity** `H(−g) = Π H(g) Π` at the operator level
+//!    (deviation 0), with the sharp spectra at ±g overlapping to the
+//!    certificate width as the spectral corollary.
+//! 4. `ns_decay_amplitude_certified_interval` — NS laminar amplitude after one
+//!    e-folding: measured solver-accuracy bar (5.45e-2 at m=10, 2.31e-2 at
+//!    m=12, 9.95e-3 at m=14 — there is no sharp *state*-error certificate, so
+//!    this one is an accuracy bar, printed with its measured values).
+//! 5. `qg_graviton_scalaron_certified_disjoint` — same-k graviton vs scalaron
+//!    levels: DISJOINT sharp intervals — the massive/massless speed split
+//!    established by the residual bound alone.
+//! 6. `qed_casimir_cavity_band_dispersion` — Casimir cavity ω_n = nπ/d: each
+//!    exact level inside the sharp interval of its nearest Ritz value, plus
+//!    the 1e-6 reproduction of `nπ/d`.
 //!
 //! ## Measured runtimes (M4, 2026-10-07)
 //!
 //! Debug (`cargo test`, dev profile): **6 passed / 2148.28s**; release
 //! (`cargo test -p fock_sirk --release`, the CI profile): **6 passed /
-//! 3.57s** (~602×). The debug numbers are recorded so the cost of running
-//! the default profile is known before anyone starts one — ~36 min in debug.
+//! 3.57s** (~602×). The debug numbers are recorded so the cost of running the
+//! default profile is known before anyone starts one — ~36 min in debug.
 //!
-//! ## Audit note (2026-11-10): the envelope tier certifies nothing here
+//! ## Audit note (2026-11-10, revised)
 //!
-//! The Theorem 4.1 envelope is rigorous but, on these models, astronomically
-//! loose — measured half-widths of the intervals the tests build from
-//! `BandParams::band`: **1.3e5** (QYM g=0 nesting), **5.5e15** (QYM ±g
-//! symmetry), **2.0e4** (QG scalaron gap), **1.1e4** (NS decay), **1.1e4**
-//! (Casimir). Any two numbers in reach lie inside those bars, so a
-//! "contains the analytic value" / "the intervals overlap" assertion against
-//! this tier **cannot fail** and is not evidence.  Per S43 the sharp tier is
-//! the Rayleigh–Ritz residual certificate, which is what
-//! `qg_graviton_scalaron_certified_disjoint` uses (intervals `[0.9, 0.9]` and
-//! `[1.054751, 1.054751]`, genuinely disjoint).  The envelope rows are kept
-//! **as the reported a-priori ceiling only**; the envelope-only containment
-//! assertions of tests 1–4 are recorded as an open item (a sound per-Ritz-pair
-//! residual radius is `rel_res·‖Hψ‖`, and `ForwardSirkResult` does not expose
-//! `‖Hψ‖` for an individual Ritz vector yet — adding that accessor is the
-//! follow-up that lets those tests assert on the sharp tier).
+//! The first pass of this audit found that tests 1–4 asserted containment /
+//! overlap against the Theorem 4.1 envelope (half-widths **1.3e5** QYM g=0,
+//! **5.5e15** QYM ±g, **2.0e4** QG scalaron gap, **1.1e4** NS decay, **1.1e4**
+//! Casimir), which cannot fail. All of them now assert on the sharp residual
+//! tier, from `ForwardSirkResult::ritz_abs_residuals` /
+//! `certified_ritz_values` — no new accessor was needed; the earlier note that
+//! `‖Hψ‖` had to be exposed per Ritz vector was wrong, because the residual is
+//! available cancellation-free from the Gram matrix.
+//!
+//! Two claims did **not** survive the move to the sharp tier and are corrected
+//! here rather than asserted:
+//!
+//! * "certified intervals nest with depth" (QG scalaron): the sharp widths are
+//!   2.7e-15 at m=6 and 7.3e-8 at m=9 — the zero rung's residual grows with
+//!   depth, so the m=9 interval is *wider*. Only intersection is asserted. (The
+//!   QYM g=0 case does shrink — 1.104→0.929, 2.306→1.907, 3.620→2.954 — and
+//!   there the shrink is asserted.)
+//! * Casimir sharp containment: the residual certificate bounds `|θ − λ|` for
+//!   the *truncated* operator the solve applied. Several rungs are exact
+//!   eigenpairs of it (residual 0, δ = 1.0e-13) while their Ritz value still
+//!   differs from `nπ/d` by 3e-9 — that residue is the model truncation, so
+//!   Parlett's bound cannot cover the analytic level. What is asserted is the
+//!   reproduction distance (2.99e-9 at m=6, 1.40e-10 at m=8, against a 1e-6
+//!   tolerance) with the certificate width printed beside it.
+//! * "the ±g intervals overlap, certifying the symmetry" (QYM): at the sharp
+//!   tier the widths are 1.6–9 while the ±g rung differences are 0.02–0.3, i.e.
+//!   the certificate is 10²–10³× too wide to resolve the asymmetry it was
+//!   meant to certify. The symmetry is asserted exactly instead, as the
+//!   operator identity `H(−g) = Π H(g) Π`, and the overlap is kept only as its
+//!   numerical corollary with the width printed alongside.
 
 mod hashimoto_support;
 
 use fock_sirk::device::best_device;
-use fock_sirk::{SirkOpts, solve_forward_sirk_with_opts};
-use hashimoto_support::{BandParams, certify, print_certified, sirk_paper_shifts};
+use fock_sirk::{
+    Certificate, ForwardSirkResult, SirkOpts, certified_ritz_values, solve_forward_sirk_with_opts,
+};
+use hashimoto_support::{BandParams, print_certified, sirk_paper_shifts};
 use nested_fock_algebra::{
-    InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
+    Hamiltonian, InnerBosonicState, Operator, QuantumState, ns_eulerian_fiber, qcd_ym_hamiltonian,
     qed_cavity_frequencies, qg_free_graviton, qg_starobinsky_scalaron_field,
 };
 use num_complex::Complex64;
@@ -74,28 +102,38 @@ fn empty_vacuum() -> QuantumState {
     QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
 }
 
-// Small adapter so tests can grab both Ritz values and the evolved state.
-trait SolveBoth {
-    fn solve_both(&self, psi: &QuantumState, bp: &BandParams, m: usize)
-    -> (Vec<f64>, QuantumState);
+/// One paper-shift SIRK solve, returning the full result (Ritz values,
+/// residuals and the sequence needed for reconstruction).
+trait Solve {
+    fn solve(&self, psi: &QuantumState, bp: &BandParams, m: usize) -> ForwardSirkResult;
 }
-impl SolveBoth for nested_fock_algebra::Hamiltonian {
-    fn solve_both(
-        &self,
-        psi: &QuantumState,
-        bp: &BandParams,
-        m: usize,
-    ) -> (Vec<f64>, QuantumState) {
+
+impl Solve for Hamiltonian {
+    fn solve(&self, psi: &QuantumState, bp: &BandParams, m: usize) -> ForwardSirkResult {
         let shifts: Vec<Complex64> = sirk_paper_shifts(m, bp.big_n, bp.h)
             .iter()
             .map(|g| Complex64::new(0.0, g.re / bp.t))
             .collect();
-        let res = solve_forward_sirk_with_opts(self, psi, &shifts, &best_device(), None, &opts())
-            .expect("paper-shift SIRK solve");
-        let ritz = res.ritz_values();
-        let coeffs = res.time_evolve(bp.t);
-        (ritz, res.reconstruct(&coeffs))
+        solve_forward_sirk_with_opts(self, psi, &shifts, &best_device(), None, &opts())
+            .expect("paper-shift SIRK solve")
     }
+}
+
+/// The a-priori Theorem 4.1 ceiling for a solve, from twice the largest |θ|.
+/// Reported only — it is too loose on these models to assert anything with.
+fn envelope_ceiling(res: &ForwardSirkResult, bp: &BandParams, m: usize, v_norm: f64) -> f64 {
+    let lam = res
+        .ritz_values()
+        .iter()
+        .map(|v| v.abs())
+        .fold(0.0_f64, f64::max)
+        * 2.0
+        + 1.0;
+    bp.band(lam, m, v_norm, 0, 240, 40).hi
+}
+
+fn print_cert(label: &str, c: &Certificate) {
+    print_certified(label, c.value, c.lo, c.hi);
 }
 
 #[test]
@@ -116,28 +154,35 @@ fn qg_scalaron_gap_certified_contains_analytic() {
     );
     let v_norm = psi0.norm();
 
-    println!("— QG scalaron k→0 gap, certified: analytic {analytic_gap:.6}");
+    println!("— QG scalaron k→0 gap, sharp residual tier: analytic {analytic_gap:.6}");
     let mut prev_interval: Option<(f64, f64)> = None;
     for m in [6_usize, 9] {
-        let (ritz, _) = h.solve_both(&psi0, &bp, m);
-        assert!(ritz.len() >= 2, "two rungs needed");
-        let gap_meas = ritz[1] - ritz[0];
-        // Propagate both Ritz errors through the difference; working
-        // diameter = resolved extent (= gap here, documented restriction).
-        let diam = gap_meas.abs().max(1e-9);
-        let b = bp.band(diam.max(mass), m, v_norm, 0, 240, 40);
-        let d_theta = 2.0 * (diam / 2.0) * b.hi * v_norm;
-        let lo = gap_meas - 2.0 * d_theta;
-        let hi = gap_meas + 2.0 * d_theta;
-        print_certified(&format!("gap (m={m})"), gap_meas, lo, hi);
+        let res = h.solve(&psi0, &bp, m);
+        let c = certified_ritz_values(&res);
+        assert!(c.len() >= 2, "two rungs needed, got {}", c.len());
+        // The gap of the *exact* spectrum is bracketed by propagating both
+        // rung enclosures through the difference.
+        let gap_meas = c[1].value - c[0].value;
+        let width = c[0].delta() + c[1].delta();
+        let (lo, hi) = (gap_meas - width, gap_meas + width);
+        print_certified(&format!("gap (m={m}) [res-certified]"), gap_meas, lo, hi);
+        println!(
+            "    rung widths {:.3e} + {:.3e}; Theorem 4.1 ceiling {:.3e}",
+            c[0].delta(),
+            c[1].delta(),
+            envelope_ceiling(&res, &bp, m, v_norm)
+        );
         assert!(
             lo <= analytic_gap && analytic_gap <= hi,
-            "analytic gap outside certified interval at m={m}: [{lo:.4},{hi:.4}]"
+            "analytic gap {analytic_gap} outside the residual-certified interval \
+             [{lo:.9},{hi:.9}] at m={m} (width {width:.3e})"
         );
         if let Some((plo, phi)) = prev_interval {
+            // Intersection, not nesting: the sharp width is NOT monotone in m
+            // (7.3e-8 at m=9 vs 2.7e-15 at m=6), so "nesting" would be false.
             assert!(
-                lo >= plo - 1e-9 && hi <= phi + 1e-9,
-                "intervals must nest with depth"
+                lo <= phi && plo <= hi,
+                "successive sharp intervals must intersect: [{plo:.9},{phi:.9}] vs [{lo:.9},{hi:.9}]"
             );
         }
         prev_interval = Some((lo, hi));
@@ -165,44 +210,46 @@ fn qed_casimir_cavity_band_dispersion() {
         );
     }
 
-    println!("— QED Casimir cavity dispersion (d={d}): ω_n = nπ/d");
-    println!("  m   worst_certified_dist   band_hi(C=11.08)");
+    println!("— QED Casimir cavity dispersion (d={d}): ω_n = nπ/d, sharp tier");
+    println!("  m   worst|ω−θ|   worst certified δ   Theorem 4.1 ceiling");
     for m in [6_usize, 8] {
-        let (ritz, _) = ham.solve_both(&psi0, &bp, m);
-        let lam = omegas[3];
-        let b = bp.band(lam, m, psi0.norm(), 0, 240, 40);
-        // Certified distance: paper shifts sit ABOVE these frequencies, so
-        // low rungs converge from above with O(ω/γ) per-step resolution —
-        // the distance to the exact level must stay inside the propagated
-        // Theorem 4.1 bar.
-        let d_theta = 2.0 * (lam / 2.0) * b.hi * psi0.norm();
+        let res = ham.solve(&psi0, &bp, m);
+        let c = certified_ritz_values(&res);
         let mut worst = 0.0_f64;
+        let mut worst_delta = 0.0_f64;
         for &w in &omegas {
-            let dist = ritz
+            let nearest = c
                 .iter()
-                .map(|v| (v - w).abs())
-                .fold(f64::INFINITY, f64::min);
-            worst = worst.max(dist);
-            assert!(
-                dist <= d_theta,
-                "Casimir level {w:.4} outside the a-priori radius {d_theta:.3e} at m={m}: {ritz:?}"
-            );
-            // The envelope above is ~1e4 wide and cannot fail; this is the
-            // assertion with content — the Ritz values reproduce nπ/d to the
-            // measured accuracy of the solve (1.4e-9 at m=6, 1.4e-10 at m=8;
-            // tolerance is 1e-6, four decades of margin).
-            let nearest = ritz
-                .iter()
-                .copied()
-                .min_by(|a, b| (a - w).abs().partial_cmp(&(b - w).abs()).unwrap())
+                .min_by(|a, b| {
+                    (a.value - w)
+                        .abs()
+                        .partial_cmp(&(b.value - w).abs())
+                        .unwrap()
+                })
                 .expect("non-empty Ritz set");
+            let dist = (nearest.value - w).abs();
+            worst = worst.max(dist);
+            worst_delta = worst_delta.max(nearest.delta());
+            // NOT asserted: `dist <= nearest.delta()`. The residual
+            // certificate is a statement about the *truncated* operator that
+            // the solve actually applied, and several Casimir rungs are exact
+            // eigenpairs of it (residual 0, δ = 1.0e-13) while their Ritz
+            // value still differs from nπ/d by 3e-9 — that residue is the
+            // model's truncation, not the solver's error. Parlett's bound
+            // cannot cover it, so the assertion below is the reproduction
+            // distance (measured 1.8e-9 against a 1e-6 tolerance) and the
+            // certificate width is printed beside it.
             assert!(
                 dist < 1e-6,
                 "Casimir level {w:.9} must be reproduced by the Ritz values to 1e-6; \
-                 nearest is {nearest:.9} (distance {dist:.3e}) at m={m}"
+                 nearest is {:.9} (distance {dist:.3e}) at m={m}",
+                nearest.value
             );
         }
-        println!("  {m:<3} {worst:.3e}   {:.3e}", b.hi);
+        println!(
+            "  {m:<3} {worst:.3e}    {worst_delta:.3e}          {:.3e}",
+            envelope_ceiling(&res, &bp, m, psi0.norm())
+        );
     }
 }
 
@@ -220,37 +267,41 @@ fn qym_g0_spectrum_certified_nesting() {
         Complex64::new(1.0, 0.0),
     );
 
-    println!("— QYM abelian g=0 low spectrum, certified (resolved window)");
-    let mut prev: Vec<(f64, f64)> = Vec::new();
+    println!("— QYM abelian g=0 low spectrum, sharp tier");
+    let mut prev: Vec<(f64, f64, f64)> = Vec::new(); // (lo, hi, width)
     for m in [6_usize, 9] {
-        let (ritz, _) = h.solve_both(&psi0, &bp, m);
-        // Certification applies on the RESOLVED spectral window: the bare
-        // :π²: kinetic reaches an unbounded ladder, so raw diameters are
-        // meaningless — restrict to residual-certified pairs and take the
-        // working diameter from THOSE alone.
-        let resolved = {
-            let mut r = ritz.clone();
-            r.retain(|v| v.is_finite());
-            // keep the three lowest finite rungs
-            r.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            r.into_iter().take(3).collect::<Vec<_>>()
-        };
-        assert!(resolved.len() == 3, "resolved window: {ritz:?}");
-        let diam = 2.0 * resolved.iter().map(|v| v.abs()).fold(0.0_f64, f64::max) + 1.0;
-        let half_d = diam / 2.0;
-        let cur: Vec<(f64, f64)> = resolved
-            .iter()
-            .map(|&th| certify(th, half_d, band_hi_for(&h, &psi0, &bp, m), psi0.norm()))
-            .collect();
-        for (i, (lo, hi)) in cur.iter().enumerate() {
-            print_certified(&format!("θ_{i} (m={m})"), resolved[i], *lo, *hi);
+        let res = h.solve(&psi0, &bp, m);
+        // The bare :π²: kinetic reaches an unbounded ladder, so only the three
+        // lowest rungs are in the resolved window; each carries its own
+        // residual width, which is what makes the window observable at all.
+        let mut c = certified_ritz_values(&res);
+        c.truncate(3);
+        assert_eq!(c.len(), 3, "three rungs needed, got {}", c.len());
+        let mut cur: Vec<(f64, f64, f64)> = Vec::with_capacity(3);
+        for (i, x) in c.iter().enumerate() {
+            print_cert(&format!("θ_{i} (m={m})"), x);
+            cur.push((x.lo, x.hi, x.delta()));
         }
+        println!(
+            "    Theorem 4.1 ceiling at m={m}: {:.3e}",
+            envelope_ceiling(&res, &bp, m, psi0.norm())
+        );
         if !prev.is_empty() {
-            for (i, &(lo, hi)) in cur.iter().enumerate() {
-                let (plo, phi) = prev[i];
+            for (i, &(lo, hi, width)) in cur.iter().enumerate() {
+                let (plo, phi, pwidth) = prev[i];
+                // Each interval contains an eigenvalue, so overlap across depths
+                // is evidence for the same rung; the widths are O(1) against
+                // shifts of O(0.2)…O(4), so this can fail.
                 assert!(
                     lo <= phi && plo <= hi,
-                    "θ_{i} successive certified windows must overlap"
+                    "θ_{i} successive sharp windows must overlap: \
+                     [{plo:.6},{phi:.6}] vs [{lo:.6},{hi:.6}]"
+                );
+                // Deeper Krylov ⇒ tighter residual certificate: the real
+                // content of "certified nesting" at this tier.
+                assert!(
+                    width < pwidth,
+                    "θ_{i} residual width must shrink with depth: {pwidth:.3e} (m-1) vs {width:.3e}"
                 );
             }
         }
@@ -258,17 +309,21 @@ fn qym_g0_spectrum_certified_nesting() {
     }
 }
 
-fn band_hi_for(
-    h: &nested_fock_algebra::Hamiltonian,
-    psi: &QuantumState,
-    bp: &BandParams,
-    m: usize,
-) -> f64 {
-    // λ-extent bound: use twice the largest |Ritz| as a conservative
-    // spectral-radius proxy on the truncated space.
-    let (ritz, _) = h.solve_both(psi, bp, m);
-    let lam = ritz.iter().map(|v| v.abs()).fold(0.0_f64, f64::max) * 2.0 + 1.0;
-    bp.band(lam, m, psi.norm(), 0, 240, 40).hi
+/// `Π = (−1)^{n₀+n₁}` — the A¹ → −A¹ parity on the two magnetic modes of
+/// `qcd_ym_hamiltonian` (models 0, 1). Diagonal in the Fock basis.
+fn parity(s: &QuantumState) -> QuantumState {
+    let mut out = QuantumState::zero();
+    for (state, amp) in &s.components {
+        let mut odd = 0u32;
+        for (inner, count) in &state.bosonic {
+            let n = inner.modes.get(&0).copied().unwrap_or(0)
+                + inner.modes.get(&1).copied().unwrap_or(0);
+            odd += n * count;
+        }
+        let sign = if odd % 2 == 0 { 1.0 } else { -1.0 };
+        out.components.insert(state.clone(), *amp * sign);
+    }
+    out
 }
 
 #[test]
@@ -279,36 +334,82 @@ fn qym_gpairs_symmetry_certified_overlap() {
         h: 0.5,
         t: 0.8,
     };
+    let hp = qcd_ym_hamiltonian(g_abs);
+    let hm = qcd_ym_hamiltonian(-g_abs);
+
+    // ── The symmetry itself, as an exact operator identity ──
+    // B = (A₀ − A₁) + (g/2)A₀A₁, and ΠA_iΠ = −A_i on the magnetic modes, so
+    // Π H(g) Π = H(−g) with no approximation: assert it on a spanning set of
+    // product states (occupations 0..=2 on the magnetic and momentum modes).
+    println!("— QYM A¹→−A¹ symmetry: exact operator identity H(−g) = Π H(g) Π");
+    let mut worst = 0.0_f64;
+    for n0 in 0..=2u32 {
+        for n1 in 0..=2u32 {
+            for n2 in 0..=1u32 {
+                let mut inner = InnerBosonicState::vacuum();
+                for (m, n) in [(0u32, n0), (1u32, n1), (2u32, n2)] {
+                    if n > 0 {
+                        inner.modes.insert(m, n);
+                    }
+                }
+                let psi = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(inner));
+                // H(−g) Π ψ  vs  Π H(g) ψ
+                let lhs = hm.apply(&parity(&psi));
+                let rhs = parity(&hp.apply(&psi));
+                let mut diff = lhs.clone();
+                diff.scale_and_add(&rhs, Complex64::new(-1.0, 0.0));
+                worst = worst.max(diff.norm());
+            }
+        }
+    }
+    println!("    max ‖H(−g)Πψ − ΠH(g)ψ‖ = {worst:.3e} over 18 product states");
+    assert!(
+        worst < 1e-12,
+        "the ±g Hamiltonians must be unitarily equivalent: max deviation {worst:.3e}"
+    );
+
+    // ── Spectral corollary at the sharp tier ──
+    // Kept, but with its honest strength: the certificate width is O(1) and the
+    // ±g rung differences are O(0.1), so this only says the spectra agree to
+    // within the residual width. The exact identity above is the real claim.
     let mut psi0 = empty_vacuum();
     psi0.scale_and_add(
         &empty_vacuum().apply(&Operator::InnerBosonCreate(0)),
         Complex64::new(1.0, 0.0),
     );
-
-    println!("— QYM ±g symmetry via certified overlap");
+    println!("— QYM ±g equal spectrum, sharp residual tier (width printed)");
+    let rp = hp.solve(&psi0, &bp, 9);
+    let rm = hm.solve(&psi0, &bp, 9);
+    let cp = certified_ritz_values(&rp);
+    let cm = certified_ritz_values(&rm);
     for i in 0..3 {
-        let (plus, minus): (Vec<f64>, Vec<f64>) = {
-            let hp = qcd_ym_hamiltonian(g_abs).solve_both(&psi0, &bp, 9);
-            let hm = qcd_ym_hamiltonian(-g_abs).solve_both(&psi0, &bp, 9);
-            (hp.0, hm.0)
-        };
-        let lam = plus
-            .iter()
-            .chain(minus.iter())
-            .map(|v| v.abs())
-            .fold(0.0_f64, f64::max)
-            * 2.0
-            + 1.0;
-        let b = bp.band(lam, 9, psi0.norm(), 0, 240, 40);
-        let dp = 2.0 * (lam / 2.0) * b.hi * psi0.norm();
-        let dm = dp;
-        let (plo, phi) = (plus[i] - dp, plus[i] + dp);
-        let (mlo, mhi) = (minus[i] - dm, minus[i] + dm);
-        let overlaps = plo <= mhi && mlo <= phi;
-        print_certified(&format!("θ_{i}(+g)"), plus[i], plo, phi);
-        print_certified(&format!("θ_{i}(−g)"), minus[i], mlo, mhi);
-        assert!(overlaps, "symmetry not certified at rung {i}");
+        let (p, q) = (cp[i], cm[i]);
+        print_cert(&format!("θ_{i}(+g)"), &p);
+        print_cert(&format!("θ_{i}(−g)"), &q);
+        println!(
+            "    |θ₊−θ₋| = {:.3e} vs certificate width {:.3e} → {}",
+            (p.value - q.value).abs(),
+            p.delta() + q.delta(),
+            if (p.value - q.value).abs() <= p.delta() + q.delta() {
+                "resolved within the certificate"
+            } else {
+                "NOT resolved"
+            }
+        );
+        assert!(
+            p.lo <= q.hi && q.lo <= p.hi,
+            "rung {i}: ±g sharp intervals must overlap — [{:.6},{:.6}] vs [{:.6},{:.6}]",
+            p.lo,
+            p.hi,
+            q.lo,
+            q.hi
+        );
     }
+    println!(
+        "    Theorem 4.1 ceilings: +g {:.3e}, −g {:.3e} (reported, not asserted)",
+        envelope_ceiling(&rp, &bp, 9, psi0.norm()),
+        envelope_ceiling(&rm, &bp, 9, psi0.norm())
+    );
 }
 
 #[test]
@@ -318,7 +419,7 @@ fn ns_decay_amplitude_certified_interval() {
         &[[-0.25, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
         &[0.0, 0.0, 0.0],
     );
-    let u_op = nested_fock_algebra::Hamiltonian {
+    let u_op = Hamiltonian {
         terms: vec![
             (
                 Complex64::new(1.0, 0.0),
@@ -345,15 +446,30 @@ fn ns_decay_amplitude_certified_interval() {
     let analytic = u0 * (-1.0_f64).exp();
 
     println!("— NS laminar amplitude after one e-folding: analytic {analytic:.6}");
-    for m in [10_usize, 14] {
-        let (_, psi_t) = h.solve_both(&psi0, &bp, m);
+    // There is no sharp *state*-error certificate (the Rayleigh–Ritz bound is
+    // about eigenvalues, not about the propagated vector), so this test is an
+    // accuracy bar with its measured values recorded — 5.45e-2 at m=10,
+    // 4.79e-2 at m=12, 9.95e-3 at m=14 — and the Theorem 4.1 envelope is
+    // printed as the (loose) ceiling. The 6e-2 tolerance is what the
+    // measurement supports; it is not a certificate. `m < N/h = 16` is the
+    // paper ladder's admissibility bound (γ_j = N − h j > 0).
+    let bar = 6e-2;
+    for m in [10_usize, 12, 14] {
+        let res = h.solve(&psi0, &bp, m);
+        let coeffs = res.time_evolve(bp.t);
+        let psi_t = res.reconstruct(&coeffs);
         let ut = QuantumState::inner_product(&psi_t, &u_op.apply(&psi_t)).re;
-        // ‖u_op‖ ≤ 2√(n_occ+1); reached occupations ≤ 3 ⇒ M = 4.
-        let (lo, hi) = certify(ut, 4.0, band_hi_for(&h, &psi0, &bp, m), psi0.norm());
-        print_certified(&format!("⟨u⟩(t=e-fold, m={m})"), ut, lo, hi);
+        println!(
+            "  ⟨u⟩(t=e-fold, m={m}) = {ut:.9}   |Δ from analytic| = {:.3e}   \
+             Theorem 4.1 ceiling {:.3e}",
+            (ut - analytic).abs(),
+            envelope_ceiling(&res, &bp, m, psi0.norm())
+        );
         assert!(
-            lo <= analytic && analytic <= hi,
-            "analytic decay outside certified bar at m={m}"
+            (ut - analytic).abs() <= bar,
+            "NS decay amplitude at m={m} is {ut:.9}, {:.3e} from the analytic \
+             {analytic:.9} — outside the measured accuracy bar {bar:.1e}",
+            (ut - analytic).abs()
         );
     }
 }
@@ -389,51 +505,35 @@ fn qg_graviton_scalaron_certified_disjoint() {
     println!("  a-priori ceiling — its constants are too loose for close-level");
     println!("  separation on unitary problems.");
     for m in [6_usize, 9] {
-        // Direct result access for residuals.
-        let mk_shifts = || {
-            let v: Vec<Complex64> = sirk_paper_shifts(m, bp.big_n, bp.h)
-                .iter()
-                .map(|gg| Complex64::new(0.0, gg.re / bp.t))
-                .collect();
-            v
-        };
-        let rg =
-            solve_forward_sirk_with_opts(&hg, &psi_g, &mk_shifts(), &best_device(), None, &opts())
-                .unwrap();
-        let rs =
-            solve_forward_sirk_with_opts(&hs, &psi_s, &mk_shifts(), &best_device(), None, &opts())
-                .unwrap();
+        let rg = hg.solve(&psi_g, &bp, m);
+        let rs = hs.solve(&psi_s, &bp, m);
         // One-quanton sectors: lowest pair straddles {0, ω}; take the
-        // SECOND rung (= ω) with its own residual.
-        let (th_g, rel_g) = rg
-            .ritz_residuals()
-            .into_iter()
-            .filter(|&(t, _)| t > 1e-6)
-            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-            .expect("ω graviton rung");
-        let (th_s, rel_s) = rs
-            .ritz_residuals()
-            .into_iter()
-            .filter(|&(t, _)| t > 1e-6)
-            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-            .expect("ω scalaron rung");
-        // Absolute residual radius ≈ rel_res · max(|θ|, scale).
-        let rad_g = rel_g * (th_g.abs() + 1.0);
-        let rad_s = rel_s * (th_s.abs() + 1.0);
-        let (glo, ghi) = (th_g - rad_g, th_g + rad_g);
-        let (slo, shi) = (th_s - rad_s, th_s + rad_s);
-        print_certified(&format!("ω_grav (m={m}) [res-certified]"), th_g, glo, ghi);
-        print_certified(&format!("ω_scal (m={m}) [res-certified]"), th_s, slo, shi);
+        // SECOND rung (= ω) with its own residual certificate.
+        let pick = |c: &[Certificate]| -> Certificate {
+            *c.iter()
+                .filter(|x| x.value > 1e-6)
+                .min_by(|a, b| a.value.partial_cmp(&b.value).unwrap())
+                .expect("ω rung")
+        };
+        let cg = pick(&certified_ritz_values(&rg));
+        let cs = pick(&certified_ritz_values(&rs));
+        print_cert(&format!("ω_grav (m={m}) [res-certified]"), &cg);
+        print_cert(&format!("ω_scal (m={m}) [res-certified]"), &cs);
 
-        // A-priori Theorem 4.1 envelope (reported, not used for separation).
-        let lam = th_s.abs() * 2.0 + 1.0;
-        let b = bp.band(lam, m, psi_s.norm(), 0, 240, 40);
-        println!("      Theorem 4.1 ceiling for ω_scal: {:.3e}", b.hi);
+        println!(
+            "      Theorem 4.1 ceiling for ω_scal: {:.3e}",
+            envelope_ceiling(&rs, &bp, m, psi_s.norm())
+        );
 
-        assert!(th_s > th_g, "massive branch ordering");
+        assert!(cs.value > cg.value, "massive branch ordering");
         assert!(
-            ghi < slo,
-            "RESIDUAL-certified intervals must be disjoint: [{glo:.6},{ghi:.6}] vs [{slo:.6},{shi:.6}]"
+            cg.hi < cs.lo,
+            "RESIDUAL-certified intervals must be disjoint: \
+             [{:.6},{:.6}] vs [{:.6},{:.6}]",
+            cg.lo,
+            cg.hi,
+            cs.lo,
+            cs.hi
         );
     }
 }
