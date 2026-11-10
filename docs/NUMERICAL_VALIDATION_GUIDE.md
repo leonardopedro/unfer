@@ -2505,15 +2505,38 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `O(n³)` is no longer anywhere on the certification path. `β` must be probed
   over a ladder of margins: a `1e-9` margin leaves one pivot undecidable at the
   last index, since the shift is then that close to an eigenvalue.
-  **What stops it is the error bound, not fill.** Past `N ≤ 16` the count refuses
-  (RCM decides to `N ≤ 18` at `n = 3300`, nested dissection to `N ≤ 16`; both
-  refuse at `N ≤ 20, 22`), and the refusal is not resource pressure: the fill is
-  `7.8 %` of `n` and the smallest pivot taken is `0.56`. The bound on accumulated
-  error runs away because each step's relative uncertainty is charged against the
-  next divisor, where Wilkinson's bound for the same factorization is linear in
-  the operation count. Nested dissection (`certificate::Ordering`) cuts the fill
-  by 6–27 % where both decide but reaches *less* far, so it is a trade, not a
-  free win. Scratch the
+  **The bound, not the matrix, used to stop it — and that was an arithmetic
+  bug (2026-11-10c).** The same elimination in plain `f64`, with no bounds at
+  all, decides every size to `N ≤ 22`: smallest pivot `6.162, 7.147, 7.491` at
+  `N ≤ 18, 20, 22`, one count below `β` each time, matching the dense count. The
+  interval version refused because one `f64` per entry lets each step charge
+  `u ≈ 1.1e-16` of its own value, and the elimination multiplies that charge
+  along the fill: traced per step the pivots stayed in `10…38`, multipliers below
+  `0.6`, no value above `1e2`, while the tracked error went `1e-14 → 1e-6 →
+  1.96e3` and reached `4.1e16` at `N ≤ 22`. `certificate::Bounded` now carries
+  its value as an unevaluated sum of two `f64`s (`hi + lo`, renormalized through
+  `two_sum`/`quick_two_sum`/`two_prod` via `fma`), folding in only the
+  `8u²·|value|` its renormalization can leave, so one step injects `u² ≈ 1.2e-32`
+  instead of `u`; the interval bookkeeping and the refusal rule are unchanged,
+  and the extra flops are invisible (`BTreeMap` insertion into the fill
+  dominates: 1.95 s at `N ≤ 22` against 2.16 s before). The same trace now ends
+  at `7.6e-15` against pivots of `10…38`, the worst bound-to-pivot ratio in the
+  grid is `4.7e-10`, and **nothing in the campaign grid refuses**: both orderings
+  decide through `N ≤ 24` (`n = 9464`, fill 534 RCM / 485 ND). The `#[ignore]`d
+  reach test goes further: `N ≤ 26` (`n = 12740`, fill 652, 12.4 s) and
+  `N ≤ 28` (`n = 16800`, fill 798, 33.2 s RCM / 9.9 s ND) both decide, with
+  RCM's bound still six decades below its pivots — the wall was pushed past
+  `N ≤ 28`, and time, not the bound, is what binds first. Nested dissection
+  (`certificate::Ordering`) cuts the fill by 6–27 % on the grid and is 2–2.5×
+  faster at the top, with no reach gained or lost; past the grid its fill
+  advantage vanishes (652 vs 653 at `N ≤ 26`), which is why fill is asserted only
+  on the campaign's sizes. The permutation check on that ordering is a
+  `debug_assert`, and it hid a real bug until this round: the recursive cut
+  dropped the component it had just walked (`60 of 80` vertices at `N ≤ 6`), so
+  every earlier nested-dissection number was measured on a truncated matrix and
+  its `N ≤ 16` refusal was an artifact. The fix orders that component with the
+  others, and `nested_dissection_orders_every_vertex_of_a_split_graph` now checks
+  the permutation in release. Scratch the
   truncation hierarchy as a shortcut too: min–max makes
   `λ₂(H_N) ≤ λ₂(H_{N'})`, so a shallower truncation bounds `λ₂` from **above**.
   Two traps to keep in mind:

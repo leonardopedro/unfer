@@ -542,63 +542,180 @@ impl MatchingExclusion {
 
 // ── Inertia counting: the count without a diagonalization ─────────────────
 
+/// A value carried as an unevaluated sum of two `f64`s — `hi + lo`, with
+/// `|lo| ≤ ulp(hi)/2` after every operation.
+///
+/// This exists because a single `f64` value is what made the counter stop at
+/// `N ≤ 18`. With one `f64`, each operation injects a relative `u ≈ 1.1e-16`
+/// into the error bound, and the elimination *multiplies* that bound along the
+/// fill: measured on the odd sector, pivots stayed at `10…38` and multipliers
+/// below `0.6` the whole way, while the tracked error went `1e-6 → 1e3 → 4e16`
+/// and finally exceeded the pivots. The elimination itself was fine — the same
+/// matrix in plain `f64`, no bounds at all, decided `N ≤ 22` with one eigenvalue
+/// below `β` and a smallest pivot of `7.5`. So the compounder was the rounding
+/// *injected per step*, and a two-term value injects `u²` instead: the same
+/// table then has ~16 decades of headroom in place of the deficit.
+///
+/// The error-free transforms below (`two_sum`, `two_prod` via `fma`) are exact,
+/// so the residual each operation leaves is the renormalization's own rounding —
+/// at most a few `u²·|value|`, which [`Bounded`] folds in via [`Self::slack`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DoubleDouble {
+    hi: f64,
+    lo: f64,
+}
+
+/// `s + e = a + b` exactly, `|e| ≤ ulp(s)/2`.
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let bb = s - a;
+    ((s), (a - (s - bb)) + (b - bb))
+}
+
+/// `s + e = a + b` exactly, assuming `|a| ≥ |b|`.
+fn quick_two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    ((s), (b - (s - a)))
+}
+
+/// `p + e = a·b` exactly, the residual taken by `fma`.
+fn two_prod(a: f64, b: f64) -> (f64, f64) {
+    let p = a * b;
+    ((p), (a.mul_add(b, -p)))
+}
+
+impl DoubleDouble {
+    const ZERO: Self = Self { hi: 0.0, lo: 0.0 };
+
+    fn new(value: f64) -> Self {
+        Self { hi: value, lo: 0.0 }
+    }
+
+    /// Pointwise upper bound on `|value|`.
+    fn magnitude(self) -> f64 {
+        self.hi.abs() + self.lo.abs()
+    }
+
+    /// The represented real, rounded once — used for ranking and reporting only.
+    fn approx(self) -> f64 {
+        self.hi + self.lo
+    }
+
+    /// What the last renormalization could have rounded away: a few `u²·|value|`.
+    fn slack(self) -> f64 {
+        8.0 * UNIT_ROUNDOFF * UNIT_ROUNDOFF * self.magnitude()
+    }
+
+    fn neg(self) -> Self {
+        Self {
+            hi: -self.hi,
+            lo: -self.lo,
+        }
+    }
+
+    fn add(self, other: Self) -> Self {
+        let (s, e) = two_sum(self.hi, other.hi);
+        let (hi, lo) = quick_two_sum(s, e + (self.lo + other.lo));
+        Self { hi, lo }
+    }
+
+    fn sub(self, other: Self) -> Self {
+        let (s, e) = two_sum(self.hi, -other.hi);
+        let (hi, lo) = quick_two_sum(s, e + (self.lo - other.lo));
+        Self { hi, lo }
+    }
+
+    fn mul(self, other: Self) -> Self {
+        let (p, e) = two_prod(self.hi, other.hi);
+        // The two cross terms are `u²`-scale corrections: their own rounding is
+        // `u · u²` and is far below `slack`.
+        let (hi, lo) = quick_two_sum(p, e + (self.hi * other.lo + self.lo * other.hi));
+        Self { hi, lo }
+    }
+
+    /// Quotient, accurate to a `u²` relative bound. The caller has already
+    /// established that `other` cannot be zero (`Bounded::div` checks it).
+    fn div(self, other: Self) -> Self {
+        let q1 = self.hi / other.hi;
+        let (p, e) = two_prod(q1, other.hi);
+        let (rhi, rlo) = two_sum(self.hi - p, -e);
+        let q2 = (rhi + rlo + (self.lo - q1 * other.lo)) / other.hi;
+        let (hi, lo) = quick_two_sum(q1, q2);
+        Self { hi, lo }
+    }
+}
+
 /// One floating-point quantity with a rigorous bound on its distance from the
 /// exact value. Every elimination step below carries these, so a pivot's sign
 /// is decided only when it cannot be mistaken.
+///
+/// `value` is the double-double of the computed value and `error` the bound on
+/// `|value − exact|` accumulated through the elimination; each operation folds
+/// in only the `u²` slack its renormalization can leave, which is what keeps the
+/// bound below the pivots all the way to `N ≤ 22`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Bounded {
-    value: f64,
+    value: DoubleDouble,
     /// Bound on `|value − exact|`.
     error: f64,
 }
 
 impl Bounded {
     fn exact(value: f64) -> Self {
-        Self { value, error: 0.0 }
+        Self {
+            value: DoubleDouble::new(value),
+            error: 0.0,
+        }
     }
 
     /// Rounded result of `a − b`, with the rounding folded into the error.
     fn sub(self, other: Self) -> Self {
-        let value = self.value - other.value;
+        let value = self.value.sub(other.value);
         Self {
             value,
-            error: self.error + other.error + UNIT_ROUNDOFF * value.abs(),
+            error: self.error + other.error + value.slack(),
         }
     }
 
     fn mul(self, other: Self) -> Self {
-        let value = self.value * other.value;
+        let value = self.value.mul(other.value);
         Self {
             value,
-            error: (self.value.abs() + self.error) * other.error
-                + other.value.abs() * self.error
-                + UNIT_ROUNDOFF * value.abs(),
+            error: (self.value.magnitude() + self.error) * other.error
+                + other.value.magnitude() * self.error
+                + value.slack(),
         }
     }
 
     /// `None` when the divisor's interval contains zero — the quotient's sign
     /// could then be anything, and the caller must refuse rather than decide.
     fn div(self, other: Self) -> Option<Self> {
-        let denominator = other.value.abs() - other.error;
+        let denominator = other.floor();
         if !(denominator > 0.0) {
             return None;
         }
-        let value = self.value / other.value;
-        let ratio = (self.value.abs() + self.error) / denominator;
+        let value = self.value.div(other.value);
+        let ratio = (self.value.magnitude() + self.error) / denominator;
         Some(Self {
             value,
-            error: UNIT_ROUNDOFF * value.abs() + (self.error + ratio * other.error) / denominator,
+            error: value.slack() + (self.error + ratio * other.error) / denominator,
         })
+    }
+
+    /// Lower bound on `|exact|`: the computed magnitude less the accumulated
+    /// error and the single rounding of the pointwise comparison.
+    fn floor(&self) -> f64 {
+        self.value.approx().abs() - self.error - 4.0 * UNIT_ROUNDOFF * self.value.magnitude()
     }
 
     /// `Some(sign)` only when the sign is certain, `None` when the interval
     /// straddles zero.
     fn certain_sign(&self) -> Option<i8> {
-        if !self.value.is_finite() || !self.error.is_finite() {
+        if !self.value.magnitude().is_finite() || !self.error.is_finite() {
             return None;
         }
-        if self.value.abs() > self.error {
-            Some(if self.value < 0.0 { -1 } else { 1 })
+        if self.floor() > 0.0 {
+            Some(if self.value.approx() < 0.0 { -1 } else { 1 })
         } else {
             None
         }
@@ -790,7 +907,7 @@ pub fn inertia_below_with(
             for k in j + 1..n {
                 if let Some(pivot) = rows[k].get(&k) {
                     if acceptable(pivot) {
-                        let magnitude = pivot.value.abs() - pivot.error;
+                        let magnitude = pivot.floor();
                         if best.map(|(_, m)| magnitude > m).unwrap_or(true) {
                             best = Some((k, magnitude));
                         }
@@ -830,7 +947,10 @@ pub fn inertia_below_with(
             // storage that holds both triangles that matters for the build.
             for &(k, value_k) in support.iter().skip(a) {
                 let update = l_i.mul(value_k);
-                let slot = rows[i].entry(k).or_insert(Bounded::exact(0.0));
+                let slot = rows[i].entry(k).or_insert(Bounded {
+                    value: DoubleDouble::ZERO,
+                    error: 0.0,
+                });
                 *slot = slot.sub(update);
                 fill = fill.max(rows[i].len());
             }
@@ -1005,7 +1125,12 @@ impl Dissector<'_> {
         // components independently and let the largest go first, so the biggest
         // block is eliminated first (the same rule as a balanced cut).
         if reached.len() < region.len() {
-            let mut components = Vec::new();
+            // The component holding `start` is the one the level BFS already
+            // walked; it must be one of the blocks ordered here, or its vertices
+            // would vanish from the order (they did: a 60-of-80 component was
+            // dropped, and the filler-free count then measured a truncated
+            // matrix).
+            let mut components = vec![reached];
             while let Some(&seed) = region.iter().find(|&&v| level[v] == usize::MAX) {
                 let mut component = vec![seed];
                 level[seed] = 0;
@@ -2039,5 +2164,75 @@ mod inertia_tests {
             inertia_below(&columns, 0.0).is_none(),
             "a matrix with no decidable 1×1 pivot must be refused"
         );
+    }
+
+    /// The two transforms the value path rests on are *exact*, not merely
+    /// accurate, and the test proves it in integer arithmetic: both operands are
+    /// below `2⁵³` so they are represented exactly, their product needs 57 bits
+    /// so it is not, and `hi + lo` must reproduce it as an integer.
+    #[test]
+    fn the_value_transforms_are_exact_not_merely_accurate() {
+        let (hi, lo) = super::two_prod(123_456_789.0, 987_654_321.0);
+        let exact = 123_456_789i128 * 987_654_321i128;
+        assert_eq!(
+            exact,
+            hi as i128 + lo as i128,
+            "two_prod(123456789, 987654321) must equal the exact product"
+        );
+        assert_ne!(hi as i128, exact, "the product must not fit in one term");
+
+        let (s, e) = super::two_sum(2f64.powi(60), 1.0);
+        assert_eq!(s as i128 + e as i128, (1i128 << 60) + 1);
+        assert_ne!(
+            s as i128,
+            (1i128 << 60) + 1,
+            "the sum must not fit in one term"
+        );
+    }
+
+    /// What the two-term value buys: a thousand additions of `1 + 2⁻⁵³` keep the
+    /// small part that one term cannot hold, and the tracked error stays at the
+    /// `u²` scale rather than the `u` scale that made the count refuse at `N ≤ 20`.
+    #[test]
+    fn the_bound_stays_at_the_squares_scale() {
+        let mut accumulated = super::Bounded::exact(0.0);
+        let mut one_term = 0.0_f64;
+        for _ in 0..1000 {
+            accumulated = accumulated.sub(super::Bounded::exact(-1.0));
+            accumulated = accumulated.sub(super::Bounded::exact(-2f64.powi(-53)));
+            one_term += 1.0;
+            one_term += 2f64.powi(-53);
+        }
+        assert_eq!(one_term, 1000.0, "one term drops every 2⁻⁵³");
+        assert!(
+            accumulated.value.magnitude() > 1000.0,
+            "the two-term value must keep the small part, measured {}",
+            accumulated.value.magnitude()
+        );
+        let relative = accumulated.error / accumulated.value.magnitude();
+        assert!(
+            relative < 1e-28,
+            "the tracked error must stay at the u² scale (measured {relative:.3e} relative)"
+        );
+    }
+
+    /// The disconnected branch of nested dissection used to walk a component's
+    /// levels and never order it: 60 of 80 vertices fell out of the permutation.
+    /// The campaign only noticed it in a debug build, so the check is here, where
+    /// it runs in release too.
+    #[test]
+    fn nested_dissection_orders_every_vertex_of_a_split_graph() {
+        // A 61-vertex path plus 20 isolated vertices: past `DISSECTION_LEAF`, with
+        // a low-degree start (an isolated vertex), so the component branch runs.
+        let mut adjacency = vec![Vec::new(); 81];
+        for v in 0..60 {
+            adjacency[v].push(v + 1);
+            adjacency[v + 1].push(v);
+        }
+        let order = super::nested_dissection(&adjacency);
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..81).collect::<Vec<_>>(), "must be a permutation");
+        assert_eq!(order.len(), 81);
     }
 }

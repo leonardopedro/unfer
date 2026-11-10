@@ -638,7 +638,7 @@ Two limits, both measured rather than smoothed over:
   consistent with the non-monotonicity above (at `g = 1` the odd ground is lower
   at `N = 10, 14, 16` and higher at `6, 8, 12`).
 
-##### Where it stops, and which limit stops it (`N ≤ 22`)
+##### Where it stopped, and why it was the arithmetic (`N ≤ 22`, 2026-11-10c)
 
 The counter was driven past its working range to find out what fails first. Odd
 sector at `g = 1`, `β = θ₀ + 0.5`, both orderings on the same matrix
@@ -650,44 +650,75 @@ sector at `g = 1`, `β = θ₀ + 0.5`, both orderings on the same matrix
 | 8 | 200 | 33 | 31 | 0.00 | 0.00 |
 | 10 | 420 | 58 | 52 | 0.00 | 0.00 |
 | 12 | 784 | 93 | 68 | 0.01 | 0.00 |
-| 14 | 1344 | 138 | 108 | 0.02 | 0.01 |
-| 16 | 2160 | 192 | 172 | 0.08 | 0.04 |
-| 18 | 3300 | 258 | **refused** | 0.24 | 0.21 |
-| 20 | 4840 | **refused** | **refused** | 0.72 | 1.50 |
-| 22 | 6864 | **refused** | **refused** | 2.16 | 1.22 |
+| 14 | 1344 | 138 | 108 | 0.03 | 0.01 |
+| 16 | 2160 | 192 | 172 | 0.09 | 0.05 |
+| 18 | 3300 | 258 | 226 | 0.27 | 0.15 |
+| 20 | 4840 | 337 | 315 | 0.76 | 0.37 |
+| 22 | 6864 | 429 | 395 | 1.95 | 0.99 |
+| 24 | 9464 | 534 | 485 | 4.75 | 2.24 |
 
-RCM decides through `N ≤ 18`, nested dissection through `N ≤ 16`; the count is
-the same wherever both decide (checked, not assumed). (The bracket table above
-reports the fill as the maximum over *both* sectors, hence 223 at `N ≤ 16`; this
-one is the odd sector alone at a different `β`.)
+**The matrix was never the problem.** The same elimination in plain `f64`, with
+no bounds at all, decided every one of these sizes: at `N ≤ 18, 20, 22` the
+smallest pivot was `6.162, 7.147, 7.491` and the largest row entry `2.6e2, 1.8e2,
+8.2e1` — no near-singular pivot anywhere, and one eigenvalue below `β` at each
+size, matching the dense count. What failed was the *bound*. Traced per step at
+`N ≤ 20`, the pivots stayed in `10…38`, every multiplier below `0.6`, and no
+stored value above `1e2`; the tracked error alone went `1e-14 → 1e-6` (j≈3250)
+`→ 1.96e3` (j≈3750), and at `N ≤ 22` reached `4.1e16` by j = 6250. Each step was
+allowed to inject `u ≈ 1.1e-16` of its own value, and the elimination multiplies
+that charge along the fill — the classical bound grows linearly in the operation
+count, this one compounded.
 
-**Fill is not the limit.** At the largest decided size the fill is 258 on
-`n = 3300` — 7.8 % of the dimension — and the whole elimination takes 0.24 s.
-The run does not stop for memory, ordering quality or time.
+**The fix is arithmetic, not ordering.** [`certificate::Bounded`] now carries its
+value as an *unevaluated sum of two `f64`s* — `hi + lo`, renormalized after every
+operation through the exact transforms (`two_sum`, `quick_two_sum`, and `two_prod`
+via `fma`). `add`/`sub`/`mul`/`div` are the double-double versions; each folds in
+only the `8u²·|value|` its own renormalization can leave, so one operation injects
+`u² ≈ 1.2e-32` instead of `u`. The interval bookkeeping and the decision rule are
+untouched: the count still refuses unless `|centre| − error` has a definite sign.
+The same trace at `N ≤ 22` now ends with a tracked error of `7.6e-15` against
+pivots of `10…38`, and the largest bound-to-pivot ratio anywhere in the grid is
+`4.7e-10` (RCM) — the count is no longer near its limit.
 
-**The error bound is the limit, and it is the bound that is pessimistic, not the
-matrix.** At the first refusal the elimination had taken a smallest pivot of
-0.56 and the 99 surviving diagonals held values in `[14, 58]` against
-accumulated errors up to `3.3e3`; at `N ≤ 22` the last 10 diagonals held values
-in `[2.5, 29]` against a max error of `4.2e2`, with a smallest pivot of 0.96.
-No pivot was anywhere near singular, and no eigenvalue sat near `β`. The bound
-grows because each step's relative uncertainty is charged against the next
-step's divisor — worst-case compounding, where the classical Wilkinson bound for
-the same factorization grows only linearly in the operation count. Refusing is
-the correct output of a bound that has lost all its slack, and the honest reading
-is `N ≤ 18` for RCM, not `N = 22`.
+The extra arithmetic is invisible in the timings: the elimination is dominated by
+`BTreeMap` insertion into the fill, not by the per-entry flops, so `N ≤ 22` costs
+`1.95 s` where the one-term value cost `2.16 s`.
 
-One thing that did **not** move the wall is recorded so it is not retried
-blindly: pivoting on relative accuracy (`error/|value|`) instead of magnitude
-leaves the refusal at the same size — the runaway is in the bound's compounding,
-not in the pivot choice. Symmetric equilibration is *untried*; it is the obvious
-next thing to test, and this paragraph does not claim either way.
+**Nothing in this grid refuses any more, and the next limit is time.**
+`the_count_reaches_past_the_grid` (same measurement, same assertions, `#[ignore]`d
+because the two truncations cost ~50 s) reaches
 
-**Ordering: smaller fill, not more reach.** Nested dissection cuts the fill by
-6–27 % wherever both decide, and that is all it buys: its smaller fill does
-*not* mean a smaller error, and it refuses at `N ≤ 18` where RCM still decides.
-The two are a genuine trade rather than a strict improvement, which is why the
-ordering is a parameter and the fill is reported back on every count.
+| `N≤` | `n` | fill RCM | secs RCM | fill ND | secs ND | bound/pivot, RCM |
+|---|---|---|---|---|---|---|
+| 26 | 12740 | 652 | 12.4 | 653 | 4.7 | 1.6e-9 |
+| 28 | 16800 | 798 | 33.2 | 793 | 9.9 | 1.2e-6 |
+
+with both orderings still counting the same inertia. At `N ≤ 28` the fill is
+798 on `n = 16800` (4.8 %), so memory is not close to binding either; what grows
+is the elimination's own `fill²` work (33 s for RCM). The remaining headroom is
+visible in that last column and shrinking — RCM's bound is six decades below its
+pivots at `N ≤ 28` — so the honest statement is that the wall was pushed from
+`N ≤ 18` to beyond `N ≤ 28`, not that it was removed.
+
+**Ordering: smaller fill, and now no reach lost with it.** Nested dissection cuts
+the fill by 6–27 % wherever the grid decides (18→16, 93→68, 258→226, 534→485) and
+is 2–2.5× faster at the top of the grid, which is why it is the parameter it is.
+It no longer buys reach or costs reach: the two orderings decide at every size in
+the grid. Past the grid the fill advantage disappears (652 vs 653 at `N ≤ 26`,
+798 vs 793 at `N ≤ 28`) — which is why the fill comparison is asserted only on
+the campaign's own sizes, and the reach test asserts only that both still decide
+with the same count.
+
+**A bug the reach test found, recorded because it had been measuring the wrong
+matrix.** The nested-dissection permutation check is a `debug_assert`, so release
+runs never saw that the recursive cut *dropped the component it had just walked*:
+`60 of 80` vertices fell out of the order already at `N ≤ 6` (the disconnected
+branch ordered every component except the level-BFS one). Every nested-dissection
+fill in the previous revision of this section was therefore measured on a
+mangled matrix, and its `N ≤ 16` refusal was an artifact. The fix orders the
+walked component with the others, and
+`nested_dissection_orders_every_vertex_of_a_split_graph` now checks the
+permutation in release, where the campaign runs.
 
 **Why no matvec-only method will do better.** A rigorous lower bound on `λ₂` is
 an *eigenvalue count*: it says "exactly one eigenvalue lies below `β`."

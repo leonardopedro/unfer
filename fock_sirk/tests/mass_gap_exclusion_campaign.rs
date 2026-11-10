@@ -1409,7 +1409,7 @@ fn nested_dissection_cuts_the_fill_of_the_inertia_count() {
         Option<fock_sirk::InertiaCount>,
         Option<fock_sirk::InertiaCount>,
     )> = Vec::new();
-    for n_max in [6u32, 8, 10, 12, 14, 16, 18, 20, 22] {
+    for n_max in [6u32, 8, 10, 12, 14, 16, 18, 20, 22, 24] {
         let h = qcd_ym_hamiltonian(g);
         let trunc = Truncated::build(&h, n_max);
         let odd_sector = trunc.sector(false);
@@ -1496,17 +1496,22 @@ fn nested_dissection_cuts_the_fill_of_the_inertia_count() {
     let rcm_wall = last_decided(2);
     let nd_wall = last_decided(3);
     println!("last size that decides: RCM N <= {rcm_wall}, nested dissection N <= {nd_wall}");
+    // Measured walls, and the reason the assertion is now on the grid's own
+    // boundary: with a one-term value the bound compounded `u ≈ 1e-16` per step
+    // and both orderings refused (RCM at 20, nested dissection at 18). A
+    // two-term value injects `u²` instead, so nothing in this grid refuses any
+    // more — the count's reach is past the largest truncation the campaign
+    // builds, and what limits it next is time (`the_count_reaches_past_the_grid`).
     assert_eq!(
         (rcm_wall, nd_wall),
-        (18, 16),
+        (24, 24),
         "the measured walls moved: RCM decides through N <= {rcm_wall}, nested dissection through \
-         N <= {nd_wall} (were 18 and 16)"
+         N <= {nd_wall} (were 18 and 16 with a one-term value; the grid ends at 24)"
     );
 
-    // (3) *Why* it stops: not fill. At the largest decided size the fill is a
-    // small fraction of `n`, and at the first refusal the fill is still small —
-    // the elimination runs out of decidable pivots, which is an error-bound
-    // limit, not a memory or time one.
+    // (3) Fill is not what binds: at the largest size the fill is a few percent
+    // of `n`, so the elimination is nowhere near a memory limit — the cost that
+    // does grow is the elimination's own `fill²` work.
     let largest = rows
         .iter()
         .filter(|r| decided(&r.2))
@@ -1522,9 +1527,61 @@ fn nested_dissection_cuts_the_fill_of_the_inertia_count() {
     assert!(
         fill * 4 < largest.1,
         "the measured fill ({fill}) on n = {} must stay well under a quarter of the matrix — if \
-         it does not, the refusal at the next size is a fill effect and this explanation is wrong",
+         it does not, the wall is a fill effect and this explanation is wrong",
         largest.1
     );
+}
+
+/// The same comparison one grid step past the campaign's own: the point of the
+/// two-term value is that the bound no longer decides the reach. `#[ignore]`d
+/// only because the two truncations cost ~50 s together; the assertions are the
+/// same ones the campaign applies, so a regression here is a real refusal.
+#[test]
+#[ignore = "~50 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
+fn the_count_reaches_past_the_grid() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let g = 1.0;
+    println!("g = {g}: inertia count past the campaign grid, odd sector, β = θ₀ + 0.5");
+    println!(
+        "{:>3} {:>6} {:>9} {:>8} {:>9} {:>8}",
+        "N", "n", "fill RCM", "secs", "fill ND", "secs"
+    );
+    for n_max in [26u32, 28] {
+        let h = qcd_ym_hamiltonian(g);
+        let trunc = Truncated::build(&h, n_max);
+        let odd_sector = trunc.sector(false);
+        let odd_columns = sector_columns(&trunc, &odd_sector);
+        let n = odd_columns.len();
+        let odd_mv = trunc.sector_matvec(&odd_sector);
+        let start = trunc.coordinates(&odd_sector, &r_odd_start()).0;
+        let ritz = lanczos_ritz(&odd_mv, n, &start, 60.min(n)).expect("Lanczos");
+        let (theta, _) = ritz.ground().expect("non-empty");
+        let beta = theta + 0.5;
+
+        let clock = Instant::now();
+        let rcm = inertia_below_with(&odd_columns, beta, Ordering::ReverseCuthillMckee)
+            .expect("RCM must decide here — a refusal is the wall moving back");
+        let secs_rcm = clock.elapsed().as_secs_f64();
+        let clock = Instant::now();
+        let nd = inertia_below_with(&odd_columns, beta, Ordering::NestedDissection)
+            .expect("nested dissection must decide here");
+        let secs_nd = clock.elapsed().as_secs_f64();
+        println!(
+            "{n_max:>3} {n:>6} {:>9} {secs_rcm:>8.2} {:>9} {secs_nd:>8.2}",
+            rcm.fill, nd.fill
+        );
+        assert_eq!(
+            (rcm.below, rcm.pivots),
+            (nd.below, nd.pivots),
+            "N <= {n_max}: both orderings must count the same inertia"
+        );
+        assert!(
+            rcm.below >= 1,
+            "N <= {n_max}: β sits above the ground, so the count cannot be 0"
+        );
+    }
 }
 
 /// The gap of `H_N` bracketed from both sides with **no diagonalization**: a
