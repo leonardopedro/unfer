@@ -580,8 +580,9 @@ next subsection.
 `D` is exactly the number of eigenvalues below `β`. Every entry carries a bound
 on its distance from the exact value, and a pivot's sign is used only when
 `|value| > error` — so the count is rigorous in floating point or it refuses. The
-elimination is sparse, with an RCM ordering and 1×1 symmetric pivoting (a
-permutation preserves inertia), at `O(fill)` cost.
+elimination is sparse, with a selectable fill-reducing ordering
+(`Ordering::ReverseCuthillMckee` or `Ordering::NestedDissection`) and 1×1
+symmetric pivoting (a permutation preserves inertia), at `O(fill)` cost.
 
 The bracket the campaign builds from it has no diagonalization anywhere:
 `temple(θᵒ₀, rᵒ, β_odd) − θᵉ₀ ≤ λ₁(odd) − λ₀(even) ≤ θᵒ₀ − temple(θᵉ₀, rᵉ, β_even)`,
@@ -603,6 +604,20 @@ can still run (`N ≤ 10`) the bracket equals the exact gap. The fill grows to 2
 nowhere near the dimension, so the elimination — not the count — is the cheap
 part.
 
+**And the campaign's own rows now run on it.** The 15-cell grid no longer calls
+`certify_spectrum` at all: `β` comes from a bisection on the count — start at
+`θ + r` (Temple's own ball), grow geometrically until the count says `λ₂` has
+been passed, then 30 bisection steps to the largest deciding `β`, which is the
+one that minimises Temple's `r²/(β − θ)`. The verdicts are *identical* to the
+dense-`β` run, to the printed digits: SIRK `m = 12` 4 certified / 5 valid-but-
+not-positive / 6 refused, Lanczos 60 10 / 5 / 0, and `+5` in the exchanged
+orientation — **15 of 15**. The bounds themselves are unchanged (`0.085613388`,
+`0.036341228`, `1.221834608`, …), which is the check that the count produced the
+same `λ₂` the diagonalization did rather than merely a usable one. `O(n³)` is
+therefore not on the certification path anywhere on this grid; the dense
+spectrum survives in the test only as the *oracle* every bound is checked
+against.
+
 Two limits, both measured rather than smoothed over:
 
 * **The margin matters.** With `β` a hair (`1e-9`) above `θ` the shifted matrix
@@ -622,6 +637,57 @@ Two limits, both measured rather than smoothed over:
   nothing about the continuum, and the crossing pattern at `N = 14, 16` is
   consistent with the non-monotonicity above (at `g = 1` the odd ground is lower
   at `N = 10, 14, 16` and higher at `6, 8, 12`).
+
+##### Where it stops, and which limit stops it (`N ≤ 22`)
+
+The counter was driven past its working range to find out what fails first. Odd
+sector at `g = 1`, `β = θ₀ + 0.5`, both orderings on the same matrix
+(`nested_dissection_cuts_the_fill_of_the_inertia_count`):
+
+| `N≤` | `n` | fill RCM | fill ND | secs RCM | secs ND |
+|---|---|---|---|---|---|
+| 6 | 80 | 18 | 16 | 0.00 | 0.00 |
+| 8 | 200 | 33 | 31 | 0.00 | 0.00 |
+| 10 | 420 | 58 | 52 | 0.00 | 0.00 |
+| 12 | 784 | 93 | 68 | 0.01 | 0.00 |
+| 14 | 1344 | 138 | 108 | 0.02 | 0.01 |
+| 16 | 2160 | 192 | 172 | 0.08 | 0.04 |
+| 18 | 3300 | 258 | **refused** | 0.24 | 0.21 |
+| 20 | 4840 | **refused** | **refused** | 0.72 | 1.50 |
+| 22 | 6864 | **refused** | **refused** | 2.16 | 1.22 |
+
+RCM decides through `N ≤ 18`, nested dissection through `N ≤ 16`; the count is
+the same wherever both decide (checked, not assumed). (The bracket table above
+reports the fill as the maximum over *both* sectors, hence 223 at `N ≤ 16`; this
+one is the odd sector alone at a different `β`.)
+
+**Fill is not the limit.** At the largest decided size the fill is 258 on
+`n = 3300` — 7.8 % of the dimension — and the whole elimination takes 0.24 s.
+The run does not stop for memory, ordering quality or time.
+
+**The error bound is the limit, and it is the bound that is pessimistic, not the
+matrix.** At the first refusal the elimination had taken a smallest pivot of
+0.56 and the 99 surviving diagonals held values in `[14, 58]` against
+accumulated errors up to `3.3e3`; at `N ≤ 22` the last 10 diagonals held values
+in `[2.5, 29]` against a max error of `4.2e2`, with a smallest pivot of 0.96.
+No pivot was anywhere near singular, and no eigenvalue sat near `β`. The bound
+grows because each step's relative uncertainty is charged against the next
+step's divisor — worst-case compounding, where the classical Wilkinson bound for
+the same factorization grows only linearly in the operation count. Refusing is
+the correct output of a bound that has lost all its slack, and the honest reading
+is `N ≤ 18` for RCM, not `N = 22`.
+
+One thing that did **not** move the wall is recorded so it is not retried
+blindly: pivoting on relative accuracy (`error/|value|`) instead of magnitude
+leaves the refusal at the same size — the runaway is in the bound's compounding,
+not in the pivot choice. Symmetric equilibration is *untried*; it is the obvious
+next thing to test, and this paragraph does not claim either way.
+
+**Ordering: smaller fill, not more reach.** Nested dissection cuts the fill by
+6–27 % wherever both decide, and that is all it buys: its smaller fill does
+*not* mean a smaller error, and it refuses at `N ≤ 18` where RCM still decides.
+The two are a genuine trade rather than a strict improvement, which is why the
+ordering is a parameter and the fill is reported back on every count.
 
 **Why no matvec-only method will do better.** A rigorous lower bound on `λ₂` is
 an *eigenvalue count*: it says "exactly one eigenvalue lies below `β`."

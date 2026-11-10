@@ -2452,26 +2452,29 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `H_N` (the witness is an explicit dense matrix, so this cannot reach the
   continuum). See `docs/MASS_GAP_SPEC.md` §6c.
 - **The campaign under that certificate**
-  (`fock_sirk/tests/mass_gap_exclusion_campaign.rs`) certifies **3 of 10** grid
-  rows (`g ∈ {0,0.5,1,2,3}`, `N ∈ {6,8}`, `m = 12`) when fed the truncated SIRK
-  solve, and **6 of 10** when the identical certificate is fed matvec-only
-  Lanczos on the same `H_N` (`certificate::lanczos_ritz`, 40 steps, same sector
-  starts) — the two `g = 0` rows are the control, certifying a positive gap on a
-  theory with no continuum gap. In the Lanczos column every bound equals the
+  (`fock_sirk/tests/mass_gap_exclusion_campaign.rs`) certifies **4 of 15** grid
+  rows (`g ∈ {0,0.5,1,2,3}`, `N ∈ {6,8,10}`, `m = 12`) when fed the truncated SIRK
+  solve, and **10 of 15** when the identical certificate is fed matvec-only
+  Lanczos on the same `H_N` (`certificate::lanczos_ritz`, 60 steps, same sector
+  starts) — the three `g = 0` rows are the control, certifying a positive gap on a
+  theory with no continuum gap. (The 60-step count is not cosmetic: at 40 the
+  even residual was `8.5e-7` at `N ≤ 10`, which broke last-digit agreement with
+  the exact gap — `0.036340485` against `0.036341228`.) In the Lanczos column every bound equals the
   exact truncated gap to the last printed digit (`r²/(β−θ) = O(1e-14)`), so the
   remaining slack is gone rather than merely small. The SIRK rows lose on the
   even-side Rayleigh quotient (`θᵉ₀` sits `9e-3…2.3` above `λ₀(even)` at
   `m = 12`), and **depth does not fix it**: the excess is `3.71e-1 → 3.97e-1 →
   3.99e-1` at `m = 12, 24, 40` with the residual flat at `8e-1`, because the
   forward chain's span stops growing (the `rank 10 of m+1 = 15` collapse). The
-  four remaining rows are **not** a convergence problem: the odd ground sits
+  five remaining rows are **not** a convergence problem: the odd ground sits
   *below* the even one inside `H_N` there, so `θᵒ₀ − θᵉ₀` is the negative of the
   truncated gap to machine precision and T6's orientation (odd above even) does
   not hold at all. Temple's inequality is sector-local, so the same assembly with
   the sectors **exchanged** (`temple(θᵉ₀, rᵉ, β_even) − θᵒ₀`, the odd side then
   needing no witness at all, since `λ₁(odd) ≤ θᵒ₀` is Rayleigh–Ritz) certifies
-  `λ₀(even) − λ₁(odd)` in exactly those cells: **4 more rows**, each equal to the
-  exact gap to the last printed digit, so **10 of 10** grid cells carry a
+  `λ₀(even) − λ₁(odd)` in exactly those cells: **5 more rows**, each equal to the
+  exact gap to the last printed digit (`0.030457603`, `1.243646566`,
+  `0.022040554`, `0.956255682`, …), so **15 of 15** grid cells carry a
   certified gap and the sector that owns the ground is reported with it (asserted
   per cell that no odd level lies between the two grounds, which is what makes
   the bound the gap of `H_N` rather than a separation of two ground states). The
@@ -2494,9 +2497,23 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   campaign brackets the gap with no dense step at all — at `g = 1` the count is
   decided for every sector through `N ≤ 16` (`n = 2160`) in `≤ 0.97 s` (fill 223),
   the bracket closes to all printed digits, and at `N ≤ 10` it equals the exact
-  gap (`0.091073200`, `0.091161224`, `−0.273337089`). `β` must be probed over a
-  ladder of margins: a `1e-9` margin leaves one pivot undecidable at the last
-  index, since the shift is then that close to an eigenvalue. Scratch the
+  gap (`0.091073200`, `0.091161224`, `−0.273337089`). The campaign's own 15 rows
+  now run on it rather than on `certify_spectrum`: `β` is a bisection on the
+  count (start at `θ + r`, grow until the count passes ``λ₂``, then 30 bisections
+  to the largest deciding `β`), and the verdicts come out **identical**
+  (4/5/6, 10/5/0, `+5` = 15/15) with the same bounds to the printed digits — so
+  `O(n³)` is no longer anywhere on the certification path. `β` must be probed
+  over a ladder of margins: a `1e-9` margin leaves one pivot undecidable at the
+  last index, since the shift is then that close to an eigenvalue.
+  **What stops it is the error bound, not fill.** Past `N ≤ 16` the count refuses
+  (RCM decides to `N ≤ 18` at `n = 3300`, nested dissection to `N ≤ 16`; both
+  refuse at `N ≤ 20, 22`), and the refusal is not resource pressure: the fill is
+  `7.8 %` of `n` and the smallest pivot taken is `0.56`. The bound on accumulated
+  error runs away because each step's relative uncertainty is charged against the
+  next divisor, where Wilkinson's bound for the same factorization is linear in
+  the operation count. Nested dissection (`certificate::Ordering`) cuts the fill
+  by 6–27 % where both decide but reaches *less* far, so it is a trade, not a
+  free win. Scratch the
   truncation hierarchy as a shortcut too: min–max makes
   `λ₂(H_N) ≤ λ₂(H_{N'})`, so a shallower truncation bounds `λ₂` from **above**.
   Two traps to keep in mind:

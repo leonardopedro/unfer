@@ -618,14 +618,12 @@ impl Bounded {
 /// (`None`) instead of guessing. The elimination is sparse and one-shot, so the
 /// cost is `O(fill)` rather than `O(n³)`.
 ///
-/// Fills in, like any elimination without a good ordering — this uses a
-/// breadth-first (RCM-reversed) ordering, which is cheap and kept the largest row
-/// map at 223 on a 2160-dimensional sector (measured, `docs/MASS_GAP_SPEC.md`
-/// §6d). It is not nested dissection, and the fill is reported so a caller can
-/// see the price. Pivoting is 1×1 with a symmetric exchange (a permutation
-/// preserves inertia): a zero or near-zero diagonal is swapped for a larger one
-/// instead of aborting, and a matrix with no decidable 1×1 pivot at all (a
-/// `[[0,1],[1,0]]` block) is refused rather than guessed.
+/// Fills in, like any elimination without a good ordering, so the ordering is a
+/// parameter ([`Ordering`]) and the fill it costs is reported back. Pivoting is
+/// 1×1 with a symmetric exchange (a permutation preserves inertia): a zero or
+/// near-zero diagonal is swapped for a larger one instead of aborting, and a
+/// matrix with no decidable 1×1 pivot at all (a `[[0,1],[1,0]]` block) is refused
+/// rather than guessed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InertiaCount {
     /// Number of eigenvalues of `H` strictly below `β`.
@@ -636,6 +634,26 @@ pub struct InertiaCount {
     pub fill: usize,
     /// Symmetric pivots exchanged to keep the elimination manageable.
     pub swaps: usize,
+    /// The ordering the elimination actually ran under.
+    pub ordering: Ordering,
+}
+
+/// The fill-reducing ordering applied before the elimination.
+///
+/// Both are graph orderings of the same matrix — the inertia is identical under
+/// either, which is what makes them comparable by fill and time alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ordering {
+    /// Reverse Cuthill–McKee: breadth-first numbering, then reversed. Cheap to
+    /// compute and bandwidth-reducing, but it is a *band* ordering: the fill it
+    /// leaves grows with the square root of the separator width.
+    #[default]
+    ReverseCuthillMckee,
+    /// Nested dissection by recursive level-set bisection: split the graph at a
+    /// BFS level, order both halves, eliminate the level last. The separators are
+    /// small and disappear last, which is the ordering fill is theoretically
+    /// cheapest under.
+    NestedDissection,
 }
 
 impl InertiaCount {
@@ -665,6 +683,18 @@ impl InertiaCount {
 /// running error bound exceeds every remaining pivot is refused (>128 pivots
 /// deep here only at the last index, and only for the smallest margins).
 pub fn inertia_below(columns: &[Vec<(usize, f64)>], beta: f64) -> Option<InertiaCount> {
+    inertia_below_with(columns, beta, Ordering::default())
+}
+
+/// [`inertia_below`] under a chosen [`Ordering`] — the same count, different
+/// fill. The ordering changes nothing about the answer (a permutation preserves
+/// inertia and every entry keeps its error bound), so the two are exactly
+/// comparable and a caller can trade one for the other per matrix.
+pub fn inertia_below_with(
+    columns: &[Vec<(usize, f64)>],
+    beta: f64,
+    ordering: Ordering,
+) -> Option<InertiaCount> {
     let n = columns.len();
     if n == 0 || columns.iter().any(|c| c.iter().any(|&(i, _)| i >= n)) {
         return None;
@@ -680,7 +710,10 @@ pub fn inertia_below(columns: &[Vec<(usize, f64)>], beta: f64) -> Option<Inertia
             }
         }
     }
-    let order = reverse_cuthill_mckee(&adjacency);
+    let order = match ordering {
+        Ordering::ReverseCuthillMckee => reverse_cuthill_mckee(&adjacency),
+        Ordering::NestedDissection => nested_dissection(&adjacency),
+    };
     debug_assert_eq!(
         {
             let mut sorted = order.clone();
@@ -809,6 +842,7 @@ pub fn inertia_below(columns: &[Vec<(usize, f64)>], beta: f64) -> Option<Inertia
         pivots: n,
         fill,
         swaps,
+        ordering,
     })
 }
 
@@ -868,6 +902,182 @@ fn reverse_cuthill_mckee(adjacency: &[Vec<usize>]) -> Vec<usize> {
     }
     order.reverse();
     order
+}
+
+/// Nested dissection by recursive level-set bisection.
+///
+/// A true minimum-degree or vertex-separator ordering is an optimisation problem;
+/// this takes the cheap approximation that keeps the nesting property: pick a
+/// pseudo-peripheral start, label the connected component by BFS level, and cut
+/// at the level whose two sides are the most balanced. The cut level is a
+/// separator (every path between the sides crosses it), so ordering both sides
+/// first and the separator last keeps the separator's fill in one block instead
+/// of spreading it over the whole matrix. A disconnected set has no separator at
+/// all and is ordered component by component.
+///
+/// Leaves of at most [`DISSECTION_LEAF`] vertices are finished by ascending
+/// degree — a minimum-degree step small enough to be free.
+fn nested_dissection(adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let mut dissector = Dissector {
+        adjacency,
+        stamp: vec![0; adjacency.len()],
+        generation: 0,
+        order: Vec::with_capacity(adjacency.len()),
+    };
+    let all: Vec<usize> = (0..adjacency.len()).collect();
+    dissector.visit(&all);
+    debug_assert_eq!(
+        {
+            let mut sorted = dissector.order.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            sorted.len()
+        },
+        adjacency.len(),
+        "nested dissection must return a permutation"
+    );
+    dissector.order
+}
+
+/// Below this many vertices a region is ordered by degree instead of cut again:
+/// the recursion stops paying for itself once a separator is a large fraction of
+/// the region, and every extra level costs a BFS over the subgraph.
+const DISSECTION_LEAF: usize = 64;
+
+struct Dissector<'a> {
+    adjacency: &'a [Vec<usize>],
+    /// Membership marks: `stamp[v] == generation` means `v` is in the region
+    /// currently being cut. One array reused across the recursion, so marking a
+    /// region costs its own size rather than `n`.
+    stamp: Vec<u32>,
+    generation: u32,
+    order: Vec<usize>,
+}
+
+impl Dissector<'_> {
+    fn mark(&mut self, region: &[usize]) {
+        self.generation += 1;
+        for &v in region {
+            self.stamp[v] = self.generation;
+        }
+    }
+
+    fn contains(&self, v: usize) -> bool {
+        self.stamp[v] == self.generation
+    }
+
+    fn visit(&mut self, region: &[usize]) {
+        if region.len() <= DISSECTION_LEAF {
+            let mut leaf = region.to_vec();
+            leaf.sort_by_key(|&v| self.adjacency[v].len());
+            self.order.extend(leaf);
+            return;
+        }
+        self.mark(region);
+
+        // BFS from the least-connected vertex of the region, recording the level
+        // of each vertex reached.
+        let start = *region
+            .iter()
+            .min_by_key(|&&v| self.adjacency[v].len())
+            .expect("non-empty region");
+        let mut level: Vec<usize> = vec![usize::MAX; self.adjacency.len()];
+        let mut reached = vec![start];
+        level[start] = 0;
+        let mut frontier = vec![start];
+        let mut depth = 0usize;
+        while !frontier.is_empty() {
+            depth += 1;
+            let mut next = Vec::new();
+            for &v in &frontier {
+                for &w in &self.adjacency[v] {
+                    if self.contains(w) && level[w] == usize::MAX {
+                        level[w] = depth;
+                        next.push(w);
+                    }
+                }
+            }
+            reached.extend_from_slice(&next);
+            frontier = next;
+        }
+
+        // A component the BFS did not reach is a separate block: order the
+        // components independently and let the largest go first, so the biggest
+        // block is eliminated first (the same rule as a balanced cut).
+        if reached.len() < region.len() {
+            let mut components = Vec::new();
+            while let Some(&seed) = region.iter().find(|&&v| level[v] == usize::MAX) {
+                let mut component = vec![seed];
+                level[seed] = 0;
+                let mut frontier = vec![seed];
+                while !frontier.is_empty() {
+                    let mut next = Vec::new();
+                    for &v in &frontier {
+                        for &w in &self.adjacency[v] {
+                            if self.contains(w) && level[w] == usize::MAX {
+                                level[w] = 0;
+                                component.push(w);
+                                next.push(w);
+                            }
+                        }
+                    }
+                    frontier = next;
+                }
+                components.push(component);
+            }
+            components.sort_by_key(|c| std::cmp::Reverse(c.len()));
+            for component in components {
+                self.visit(&component);
+            }
+            return;
+        }
+
+        // Cut at the level that balances the two sides. `depth` is one past the
+        // last level; the ends (level 0 and the last level) are never cut
+        // because they leave an empty side.
+        let mut per_level = vec![0usize; depth + 1];
+        for &v in region {
+            per_level[level[v]] += 1;
+        }
+        let mut best: Option<(usize, usize)> = None;
+        let mut left = 0usize;
+        for cut in 1..depth {
+            left += per_level[cut - 1];
+            let right: usize = per_level.iter().skip(cut + 1).sum();
+            if per_level[cut] == region.len() || left == 0 || right == 0 {
+                continue;
+            }
+            let imbalance = left.abs_diff(right);
+            if best.map(|(_, b)| imbalance < b).unwrap_or(true) {
+                best = Some((cut, imbalance));
+            }
+        }
+
+        let Some((cut, _)) = best else {
+            // No level split is available (a complete graph reaches everything in
+            // one step): fall back to ascending degree, the same rule as a leaf.
+            let mut flat = region.to_vec();
+            flat.sort_by_key(|&v| self.adjacency[v].len());
+            self.order.extend(flat);
+            return;
+        };
+
+        let lower: Vec<usize> = region.iter().copied().filter(|&v| level[v] < cut).collect();
+        let upper: Vec<usize> = region.iter().copied().filter(|&v| level[v] > cut).collect();
+        let separator: Vec<usize> = region
+            .iter()
+            .copied()
+            .filter(|&v| level[v] == cut)
+            .collect();
+        // Both sides first (the region mark is re-established by each `visit`),
+        // then the separator — it is the last thing eliminated, which is the
+        // whole point of the nesting.
+        self.visit(&lower);
+        self.visit(&upper);
+        let mut separator = separator;
+        separator.sort_by_key(|&v| self.adjacency[v].len());
+        self.order.extend(separator);
+    }
 }
 
 /// A Ritz computation by Lanczos with full reorthogonalization — matvec-only,
@@ -1746,6 +1956,77 @@ mod inertia_tests {
         assert!(
             decided >= 100,
             "the counter must decide on this corpus, not refuse it ({decided} decided)"
+        );
+    }
+
+    /// The ordering is a permutation, so it may change the fill and nothing
+    /// else. This is checked directly rather than argued: the same matrix is
+    /// counted under both orderings and the counts must be identical — a
+    /// nested-dissection bug that dropped or duplicated a vertex would show up
+    /// here as a count off by one, which is exactly how two earlier defects in
+    /// this function were caught.
+    #[test]
+    fn both_orderings_count_the_same_eigenvalues() {
+        use super::{Ordering, inertia_below_with};
+        use nalgebra::DMatrix;
+        let mut state: u64 = 987654321;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        let mut compared = 0usize;
+        for trial in 0..6 {
+            // Banded, so the two orderings actually differ: a dense matrix has
+            // no structure to dissect and would test nothing.
+            let n = 24 + 8 * trial;
+            let band = 3 + trial % 3;
+            let mut a = DMatrix::<f64>::zeros(n, n);
+            for i in 0..n {
+                a[(i, i)] = 4.0 + next();
+                for d in 1..=band {
+                    if i + d < n {
+                        let v = next();
+                        a[(i, i + d)] = v;
+                        a[(i + d, i)] = v;
+                    }
+                }
+            }
+            let columns: Vec<Vec<(usize, f64)>> = (0..n)
+                .map(|j| {
+                    (0..n)
+                        .filter(|&i| a[(i, j)] != 0.0)
+                        .map(|i| (i, a[(i, j)]))
+                        .collect()
+                })
+                .collect();
+            let spec = a.clone().symmetric_eigen().eigenvalues;
+            for k in 0..4 {
+                let beta = -1.0 + k as f64;
+                let rcm = inertia_below_with(&columns, beta, Ordering::ReverseCuthillMckee);
+                let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection);
+                let want = spec.iter().filter(|&&v| v < beta).count();
+                if let (Some(rcm), Some(nd)) = (rcm, nd) {
+                    compared += 1;
+                    assert_eq!(
+                        rcm.below, nd.below,
+                        "trial {trial} n={n} beta={beta}: RCM counts {} and nested dissection {} — \
+                         the ordering must not change the inertia",
+                        rcm.below, nd.below
+                    );
+                    assert_eq!(rcm.below, want, "trial {trial} n={n} beta={beta}");
+                    assert_eq!(
+                        (rcm.pivots, nd.pivots),
+                        (n, n),
+                        "both eliminations must run to completion"
+                    );
+                }
+            }
+        }
+        assert!(
+            compared >= 12,
+            "the comparison must actually decide ({compared} pairs decided)"
         );
     }
 

@@ -34,10 +34,10 @@ pub mod tensor_state;
 
 pub use certificate::{
     Certificate, DiagonalExclusion, GapCertificate, InertiaCount, LanczosRitz, MatchingExclusion,
-    PhysicalGapCertificate, SpectrumCertificate, SpectrumCluster, certified_ground_state,
+    Ordering, PhysicalGapCertificate, SpectrumCertificate, SpectrumCluster, certified_ground_state,
     certified_mass_gap, certified_ritz_values, certify_spectrum, emit_gap_certificate_ndjson,
     emit_gap_certificate_ndjson_with, emit_physical_gap_ndjson, emit_physical_gap_ndjson_with,
-    emit_ritz_bands_ndjson, inertia_below, lanczos_ritz,
+    emit_ritz_bands_ndjson, inertia_below, inertia_below_with, lanczos_ritz,
 };
 pub use device::best_device;
 pub use evolve::evolve_restarted;

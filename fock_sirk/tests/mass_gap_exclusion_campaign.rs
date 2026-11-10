@@ -11,16 +11,21 @@
 //!   λ₁ − λ₀ ≥ temple(θᵒ₀, rᵒ, β) − θᵉ₀,   temple: λ₁ ≥ θ − r²/(β − θ)
 //! ```
 //!
-//! — on each cell of the grid, with `β ≤ λ₂` supplied two ways so the two can be
-//! compared on the same rows:
+//! — on each cell of the grid, with `β ≤ λ₂` supplied by a **sparse inertia
+//! count** ([`inertia_below`]): `H_N − βI` is eliminated and Sylvester's law of
+//! inertia decides how many eigenvalues lie below `β`, so a bisection on `β`
+//! brackets `λ₂` from below without a single diagonalization. The count is
+//! monotone in `β`, which is what makes the bisection valid; the bound it
+//! returns is the largest deciding `β`, so Temple's `r²/(β − θ)` penalty is as
+//! small as the bracket allows.
 //!
-//! * **dense** — [`certify_spectrum`] on the odd block: `n` Parlett intervals
-//!   merged into disjoint clusters, so each cluster's count is exact and the
-//!   second cluster's lower edge is a rigorous `λ₂` bound. Costs `O(n³)`.
-//! * **sparse** — [`DiagonalExclusion`]: Weyl's `λ_i(H) ≥ λ_i(diag H) − ‖V‖₂`
-//!   with `‖V‖_F` measured from matvecs. `O(n)` matvecs at any `n`, but the
-//!   bound decays like `√n` against a fixed gap, so it is expected to be far
-//!   weaker (`the_sparse_witness_is_sound_but_does_not_certify` pins that).
+//! Two weaker witnesses are still measured beside it, for contrast rather than
+//! for certification: [`DiagonalExclusion`] (Weyl on the diagonal, `O(n)`
+//! matvecs, decays like `√n` against a fixed gap —
+//! `the_sparse_witness_is_sound_but_does_not_certify` pins that it does not
+//! fire) and the dense [`certify_spectrum`] count, which is no longer on the
+//! certification path at all. The exact spectrum below is a *test oracle* — it
+//! checks every bound; it supplies none of them.
 //!
 //! and with the Ritz pair `(θ, r)` supplied two ways as well ([`Solver`]): the
 //! forward truncated SIRK solve of §6d, and matvec-only Lanczos on the same
@@ -56,7 +61,7 @@ use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::mass_gap_spec::certified_gap_lower_bound_with_exclusion;
 use fock_sirk::{
-    DiagonalExclusion, MatchingExclusion, SirkOpts, certified_ground_state, certify_spectrum,
+    DiagonalExclusion, MatchingExclusion, SirkOpts, certified_ground_state, inertia_below,
     lanczos_ritz, solve_forward_sirk_truncated,
 };
 use nalgebra::DMatrix;
@@ -450,11 +455,9 @@ struct Cell {
     lambda_odd_2: f64,
     lambda_even_1: f64,
     lambda_even_2: f64,
-    beta_dense: Option<f64>,
-    /// The same witness for the *even* block — what the swapped orientation
-    /// needs, and the only extra work it costs.
-    beta_even_dense: Option<f64>,
-    beta_sparse: Option<f64>,
+    /// The matvec-only witness, kept for contrast: it is sound and far weaker,
+    /// and having both on the same row is what shows the count is what fires.
+    beta_exclusion: Option<f64>,
     exact_gap: Option<f64>,
     /// `λ₀(even) − λ₁(odd)`, present exactly when the odd ground is the lower
     /// of the two — the gap the swapped orientation certifies.
@@ -480,9 +483,12 @@ struct CertifiedRow {
     residual_even: f64,
     lambda_even_1: f64,
     lambda_even_2: f64,
-    beta_dense: Option<f64>,
-    beta_even_dense: Option<f64>,
-    beta_sparse: Option<f64>,
+    /// `λ₂` witness for each sector, from the sparse count (one per row: the
+    /// bracket depends on the Ritz pair's residual, so it cannot be a property
+    /// of the cell alone).
+    beta_inertia: Option<f64>,
+    beta_even_inertia: Option<f64>,
+    beta_exclusion: Option<f64>,
     certified: Option<f64>,
     certified_swapped: Option<f64>,
     exact_gap: Option<f64>,
@@ -491,6 +497,7 @@ struct CertifiedRow {
 }
 
 impl Cell {
+    #[allow(clippy::too_many_arguments)]
     fn row(
         &self,
         solver: Solver,
@@ -498,6 +505,8 @@ impl Cell {
         residual_odd: f64,
         theta_even: f64,
         residual_even: f64,
+        beta_inertia: Option<f64>,
+        beta_even_inertia: Option<f64>,
     ) -> CertifiedRow {
         CertifiedRow {
             solver,
@@ -512,16 +521,16 @@ impl Cell {
             residual_even,
             lambda_even_1: self.lambda_even_1,
             lambda_even_2: self.lambda_even_2,
-            beta_dense: self.beta_dense,
-            beta_even_dense: self.beta_even_dense,
-            beta_sparse: self.beta_sparse,
-            certified: self.beta_dense.and_then(|beta| {
+            beta_inertia,
+            beta_even_inertia,
+            beta_exclusion: self.beta_exclusion,
+            certified: beta_inertia.and_then(|beta| {
                 certified_gap_lower_bound_with_exclusion(theta_odd, residual_odd, beta, theta_even)
             }),
             // The mirror image: Temple on the even sector bounds `λ₀(even)`
             // from below, and the odd side enters only through `λ₁(odd) ≤ θᵒ₀`,
             // which is Rayleigh–Ritz and needs no witness at all.
-            certified_swapped: self.beta_even_dense.and_then(|beta| {
+            certified_swapped: beta_even_inertia.and_then(|beta| {
                 certified_gap_lower_bound_with_exclusion(theta_even, residual_even, beta, theta_odd)
             }),
             exact_gap: self.exact_gap,
@@ -589,18 +598,80 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 None
             };
 
-            // Dense witness: a `λ₂` bound from the exact eigenvalue count.
-            let beta_dense =
-                certify_spectrum(&odd_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
-            // The even block's own `λ₂` witness: one more certification pass on
-            // the same `H_N`, and the entire cost of the swapped orientation.
-            let beta_even_dense =
-                certify_spectrum(&even_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
+            // The sparse sector matrices — the input to the inertia count, built
+            // from the same columns the solves use. No diagonalization.
+            let odd_columns = sector_columns(&trunc, &odd_sector);
+            let even_columns = sector_columns(&trunc, &even_sector);
+            // A `λ₂` witness for one sector from a Ritz pair: bisect the count.
+            //
+            // `β` must clear the residual ball (`θ + r < β`, Temple's own
+            // hypothesis) and the count `#{λ < β} = 1` is exactly `β ≤ λ₂`. The
+            // count is monotone in `β`, so the largest deciding `β` below `λ₂`
+            // is reachable by bisection and is the one that minimises Temple's
+            // `r²/(β − θ)` penalty. A `β` whose pivots cannot be decided ends
+            // the search with `None` — refused, not guessed.
+            let witness = |columns: &[Vec<(usize, f64)>], theta: f64, residual: f64| {
+                let count_at = |beta: f64| inertia_below(columns, beta).map(|c| c.below);
+                let scale = theta.abs().max(1.0);
+                // `θ + r < β` is Temple's own hypothesis; a converged row has
+                // `r ~ 1e-14`, so the first margin is what keeps the left end
+                // out of the residual ball without landing on an eigenvalue.
+                let ball = theta + residual * (1.0 + 1e-6);
+                // An undecidable count is a property of *this* shift, not of the
+                // sector: `β` within ~1e-8 of an eigenvalue leaves a pivot whose
+                // sign cannot be decided. So a refusal is retried at a coarser
+                // margin rather than ending the search.
+                let mut base = None;
+                for margin in [1e-8, 1e-6, 1e-4, 1e-2, 1e-1, 1.0] {
+                    match count_at(ball + margin * scale) {
+                        Some(1) => {
+                            base = Some(ball + margin * scale);
+                            break;
+                        }
+                        // Two or more below: this shift is already past `λ₂`, and
+                        // every larger margin is worse.
+                        Some(_) => break,
+                        None => continue,
+                    }
+                }
+                let base = base?;
+                // Grow until the count says `λ₂` has been passed, then bisect
+                // back down: the largest deciding `β` is the one that minimises
+                // Temple's `r²/(β − θ)` penalty.
+                let mut high = base;
+                let mut step = 1e-4 * scale;
+                let limit = 1e8 * scale;
+                loop {
+                    high += step;
+                    match count_at(high) {
+                        Some(1) | None => {
+                            step *= 4.0;
+                            if step > limit {
+                                return None;
+                            }
+                        }
+                        Some(_) => break,
+                    }
+                }
+                let (mut best, mut high) = (base, high);
+                for _ in 0..30 {
+                    let mid = 0.5 * (best + high);
+                    match count_at(mid) {
+                        Some(1) => best = mid,
+                        Some(_) => high = mid,
+                        // Undecidable this close to `λ₂`: keep the last decided
+                        // `β`, which is still a valid witness.
+                        None => break,
+                    }
+                }
+                Some(best)
+            };
             // The same quantity from matvecs only, kept for the comparison the
             // sibling test pins.
             let odd_dense_matvec = dense_matvec(&odd_block);
-            let beta_sparse = DiagonalExclusion::from_matvec(&odd_dense_matvec, odd_block.nrows())
-                .and_then(|exclusion| exclusion.second_eigenvalue_lower_bound());
+            let beta_exclusion =
+                DiagonalExclusion::from_matvec(&odd_dense_matvec, odd_block.nrows())
+                    .and_then(|exclusion| exclusion.second_eigenvalue_lower_bound());
 
             let cell = Cell {
                 g,
@@ -610,9 +681,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 lambda_odd_2: odd_spectrum[1],
                 lambda_even_1: even_spectrum[0],
                 lambda_even_2: even_spectrum[1],
-                beta_dense,
-                beta_even_dense,
-                beta_sparse,
+                beta_exclusion,
                 exact_gap,
                 exact_gap_swapped,
                 leak: trunc.leak,
@@ -647,6 +716,8 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 odd_cert.residual,
                 even_cert.value,
                 even_cert.residual,
+                witness(&odd_columns, odd_cert.value, odd_cert.residual),
+                witness(&even_columns, even_cert.value, even_cert.residual),
             ));
 
             // Route 2 — matvec-only Lanczos on the same `H_N`. The starts are
@@ -682,6 +753,8 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 residual_odd,
                 theta_even,
                 residual_even,
+                witness(&odd_columns, theta_odd, residual_odd),
+                witness(&even_columns, theta_even, residual_even),
             ));
         }
     }
@@ -700,8 +773,8 @@ fn exclusion_certificate_over_the_campaign_grid() {
             "θᵉ₀",
             "λ₁ odd",
             "λ₂ odd",
-            "β dense",
-            "β sparse",
+            "β inertia",
+            "β excl",
             "certified",
             "exact"
         );
@@ -721,8 +794,8 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 row.theta_even,
                 row.lambda_odd_1,
                 row.lambda_odd_2,
-                row.beta_dense.unwrap_or(f64::NAN),
-                row.beta_sparse.unwrap_or(f64::NAN),
+                row.beta_inertia.unwrap_or(f64::NAN),
+                row.beta_exclusion.unwrap_or(f64::NAN),
                 row.certified
                     .map(|v| format!("{v:.9}"))
                     .unwrap_or_else(|| "refused".to_string()),
@@ -749,7 +822,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
             row.theta_even,
             row.residual_even,
             row.lambda_even_2,
-            row.beta_even_dense.unwrap_or(f64::NAN),
+            row.beta_even_inertia.unwrap_or(f64::NAN),
             row.certified_swapped
                 .map(|v| format!("{v:.9}"))
                 .unwrap_or_else(|| "refused".to_string()),
@@ -763,24 +836,26 @@ fn exclusion_certificate_over_the_campaign_grid() {
     // failure arrives with its own numbers beside it.
     for row in &rows {
         let label = format!("{} g = {}, N <= {}", row.solver.label(), row.g, row.n_max);
-        if let Some(beta) = row.beta_dense {
+        if let Some(beta) = row.beta_inertia {
+            // The count said "one eigenvalue below β", so β may not exceed the
+            // exact λ₂ — this is the assertion that the count is right rather
+            // than plausible.
             assert!(
                 beta <= row.lambda_odd_2 + 1e-9,
-                "{label}: dense β = {beta} exceeds the exact λ₂ = {}",
+                "{label}: inertia β = {beta} exceeds the exact λ₂ = {}",
                 row.lambda_odd_2
             );
+            assert!(
+                beta > row.theta_odd,
+                "{label}: the witness {beta} must sit above θᵒ₀ = {} for Temple to apply",
+                row.theta_odd
+            );
         }
-        if let Some(beta) = row.beta_sparse {
+        if let Some(beta) = row.beta_exclusion {
             assert!(
                 beta <= row.lambda_odd_2 + 1e-9,
-                "{label}: sparse β = {beta} exceeds the exact λ₂ = {}",
+                "{label}: exclusion β = {beta} exceeds the exact λ₂ = {}",
                 row.lambda_odd_2
-            );
-        }
-        if let (Some(beta_s), Some(beta_d)) = (row.beta_sparse, row.beta_dense) {
-            assert!(
-                beta_s <= beta_d + 1e-9,
-                "{label}: the sparse witness must not beat the dense one ({beta_s} > {beta_d})"
             );
         }
         if let (Some(lo), Some(exact)) = (row.certified, row.exact_gap) {
@@ -793,7 +868,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
         // a `λ₂(even)` bound, and its bound may not exceed the exact swapped
         // gap. When it produces a number, `θᵉ₀ < β ≤ λ₂(even)` must hold, which
         // is exactly Temple's `θ ∈ [λ₁, λ₂)` hypothesis for the even sector.
-        if let Some(beta) = row.beta_even_dense {
+        if let Some(beta) = row.beta_even_inertia {
             assert!(
                 beta <= row.lambda_even_2 + 1e-9,
                 "{label}: even β = {beta} exceeds the exact λ₂(even) = {}",
@@ -855,7 +930,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 ),
                 Verdict::Refused => format!(
                     "refused — β = {:.9} vs θᵒ₀ = {:.9}, rᵒ = {:.3e} (residual ball reaches λ₂)",
-                    row.beta_dense.unwrap_or(f64::NAN),
+                    row.beta_inertia.unwrap_or(f64::NAN),
                     row.theta_odd,
                     row.residual_odd,
                 ),
@@ -1012,7 +1087,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
                  λ₂(even) = {})",
                 row.g,
                 row.n_max,
-                row.beta_even_dense,
+                row.beta_even_inertia,
                 row.theta_even,
                 row.residual_even,
                 row.lambda_even_2
@@ -1311,6 +1386,147 @@ fn sector_columns(trunc: &Truncated, sector: &[Vec<(usize, f64)>]) -> Vec<Vec<(u
     columns
 }
 
+/// Fill-reducing ordering versus bandwidth-reducing ordering, on the same
+/// matrices, out to the size where the elimination stops being cheap.
+///
+/// The count is invariant under both (a permutation preserves inertia), so the
+/// comparison is purely fill and wall time — and the count cannot be used to pick
+/// a winner by accident, because it is checked to agree first.
+#[test]
+fn nested_dissection_cuts_the_fill_of_the_inertia_count() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let g = 1.0;
+    println!("g = {g}: inertia count under RCM vs nested dissection, odd sector, β = θ₀ + 0.5");
+    println!(
+        "{:>3} {:>6} {:>10} {:>10} {:>9} {:>9}",
+        "N", "n", "fill RCM", "fill ND", "secs RCM", "secs ND"
+    );
+    let mut rows: Vec<(
+        u32,
+        usize,
+        Option<fock_sirk::InertiaCount>,
+        Option<fock_sirk::InertiaCount>,
+    )> = Vec::new();
+    for n_max in [6u32, 8, 10, 12, 14, 16, 18, 20, 22] {
+        let h = qcd_ym_hamiltonian(g);
+        let trunc = Truncated::build(&h, n_max);
+        let odd_sector = trunc.sector(false);
+        let odd_columns = sector_columns(&trunc, &odd_sector);
+        let n = odd_columns.len();
+
+        // A shift above the ground by half a unit: the count is then ≥ 1 on both
+        // orderings, and large enough that no pivot sits near the boundary — the
+        // comparison is about fill, not about a marginal sign.
+        let odd_mv = trunc.sector_matvec(&odd_sector);
+        let start = trunc.coordinates(&odd_sector, &r_odd_start()).0;
+        let ritz = lanczos_ritz(&odd_mv, n, &start, 60.min(n)).expect("Lanczos");
+        let (theta, _) = ritz.ground().expect("non-empty");
+        let beta = theta + 0.5;
+
+        let clock = Instant::now();
+        let rcm = inertia_below_with(&odd_columns, beta, Ordering::ReverseCuthillMckee);
+        let secs_rcm = clock.elapsed().as_secs_f64();
+        let clock = Instant::now();
+        let nd = inertia_below_with(&odd_columns, beta, Ordering::NestedDissection);
+        let secs_nd = clock.elapsed().as_secs_f64();
+
+        // The count is only comparable where both decide — and each ordering
+        // stops at its own size, so the refusal is recorded rather than skipped.
+        let label = |r: &Option<fock_sirk::InertiaCount>| match r {
+            Some(c) => format!("{:>10}", c.fill),
+            None => format!("{:>10}", "refused"),
+        };
+        println!(
+            "{n_max:>3} {n:>6} {} {} {secs_rcm:>9.2} {secs_nd:>9.2}",
+            label(&rcm),
+            label(&nd)
+        );
+        rows.push((n_max, n, rcm, nd));
+    }
+
+    let decided = |r: &Option<fock_sirk::InertiaCount>| r.is_some();
+    // (1) Where both decide, the answer is the same count and nested dissection
+    // has the smaller fill. If either half ever fails, the comparison in the
+    // docs is wrong and has to be rewritten, not the assertion relaxed.
+    let both: Vec<_> = rows
+        .iter()
+        .filter(|r| decided(&r.2) && decided(&r.3))
+        .collect();
+    assert!(
+        both.len() >= 6,
+        "at least six sizes must be decided by both orderings, measured {}",
+        both.len()
+    );
+    for (n_max, _, rcm, nd) in &both {
+        let (rcm, nd) = (rcm.as_ref().unwrap(), nd.as_ref().unwrap());
+        assert_eq!(
+            (rcm.below, rcm.pivots),
+            (nd.below, nd.pivots),
+            "N <= {n_max}: RCM counts {} below β in {} pivots, nested dissection {} in {} — the \
+             ordering must not change the inertia",
+            rcm.below,
+            rcm.pivots,
+            nd.below,
+            nd.pivots
+        );
+        assert!(
+            nd.fill < rcm.fill,
+            "N <= {n_max}: nested dissection's fill ({}) must stay below RCM's ({}), which is the \
+             whole reason to pay for the recursion",
+            nd.fill,
+            rcm.fill
+        );
+    }
+
+    // (2) The wall, per ordering: the last size that decides and the first that
+    // does not. These are measurements of the error bound's reach, so a change
+    // in either direction is a change in what can be claimed.
+    let last_decided = |col: usize| -> u32 {
+        rows.iter()
+            .filter(|r| {
+                let c = if col == 2 { &r.2 } else { &r.3 };
+                decided(c)
+            })
+            .map(|r| r.0)
+            .max()
+            .expect("some size decides")
+    };
+    let rcm_wall = last_decided(2);
+    let nd_wall = last_decided(3);
+    println!("last size that decides: RCM N <= {rcm_wall}, nested dissection N <= {nd_wall}");
+    assert_eq!(
+        (rcm_wall, nd_wall),
+        (18, 16),
+        "the measured walls moved: RCM decides through N <= {rcm_wall}, nested dissection through \
+         N <= {nd_wall} (were 18 and 16)"
+    );
+
+    // (3) *Why* it stops: not fill. At the largest decided size the fill is a
+    // small fraction of `n`, and at the first refusal the fill is still small —
+    // the elimination runs out of decidable pivots, which is an error-bound
+    // limit, not a memory or time one.
+    let largest = rows
+        .iter()
+        .filter(|r| decided(&r.2))
+        .max_by_key(|r| r.1)
+        .expect("a decided row");
+    let fill = largest.2.as_ref().unwrap().fill;
+    println!(
+        "at N <= {}, n = {}: fill {fill} ({:.2}% of n), so fill is not the binding limit",
+        largest.0,
+        largest.1,
+        100.0 * fill as f64 / largest.1 as f64
+    );
+    assert!(
+        fill * 4 < largest.1,
+        "the measured fill ({fill}) on n = {} must stay well under a quarter of the matrix — if \
+         it does not, the refusal at the next size is a fill effect and this explanation is wrong",
+        largest.1
+    );
+}
+
 /// The gap of `H_N` bracketed from both sides with **no diagonalization**: a
 /// sparse inertia count supplies each sector's `λ₂` witness, and the two Temple
 /// bounds turn the Ritz pairs into `[lower, upper]`. This is what the dense route
@@ -1375,7 +1591,7 @@ fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
         // sign cannot be decided (measured at `N ≤ 14`). Any margin that decides
         // with a count of one is a valid witness; a margin that overshoots `λ₂`
         // decides with a count of two and is rejected by the caller below.
-        let mut probe = |columns: &[Vec<(usize, f64)>], theta: f64| {
+        let probe = |columns: &[Vec<(usize, f64)>], theta: f64| {
             let mut found = None;
             for margin in [1e-9, 1e-7, 1e-5, 1e-3, 1e-2] {
                 let beta = theta + margin * theta.abs().max(1.0);
