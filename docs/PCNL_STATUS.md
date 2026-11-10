@@ -3108,8 +3108,25 @@ cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 
   --burn 500 --thin 5 --chains 8 --basis informed --proposal fixed      # ~23 min
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 8000 \
   --burn 500 --thin 5 --chains 8 --basis informed --proposal fixed --seed 7  # ~23 min
-# the six shape-estimator tests (fast, no sampling):
+# R2k: `--proposal laplace` — curvature at the target's mode (Adam on the exact
+# gradient of Φ, printed per cell with its convergence check).  s = 0.5 is the
+# rank-4 recommendation; rank 8 is the negative control:
+for r in 4 8; do for s in 1 0.5; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --proposal fixed,laplace --pilot-shrink $s          # ~18 min each (4 min is the mode)
+done; done
+for s in 1 0.5; do   # rank-4 seed-7 replication, with its own isotropic baseline
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --proposal fixed,laplace --pilot-shrink $s --seed 7
+done
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+  --pilot-shrink 0 --seed 7                             # that baseline (ESS 152)
+# the six shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
+cargo test -p pcnl --lib --release subspace_target_gradient
 # the `--pilot-reps 1` / `--pilot-scale 1` bitwise check (old vs new binary, same reduced config):
 cargo run --release -p pcnl --example subspace_adaptation -- --shapes quick --ranks 2 \
   --steps 600 --burn 100 --thin 5 --chains 2 --basis informed --proposal fixed,pilot --seed 3
@@ -4066,7 +4083,86 @@ better-behaved in the ambient runs), an exact or independent sampler at rank 16 
 ground truth, or a smaller `λ`/larger subspace where the geometry is less stiff.  None of
 these is an estimator question, which is why this cycle stops asking them of the pilot.
 
-### Recommendation (state after R2j: what to set, and how well each row is supported)
+### R2k — curvature at the target's mode: the first shape to beat isotropic, at rank 4 only (same day)
+
+R2i closed the pilot as a shape source and left one: a shape that is *derived* from the
+target rather than from a walk.  The existing `curv` arm is not that shape — it takes the
+Hessian at the anchor, which is a stationary point of the training loss, so `1/√H` there
+describes a bowl the posterior has left (R2: 0.1 % acceptance, ESS 7 at rank 1).  `laplace`
+fixes the *point*: it finds a mode of `Φ` by Adam on `∇Φ` from the anchor (with the prior in
+both the value and the gradient), checks the gradient against `--mode-tol` before deriving
+any width, and then takes `β_i = m/√H_ii` there — the Laplace approximation to the
+posterior's spread.  The chain still starts at the anchor, so only the proposal's shape
+differs from every earlier arm.
+
+Finding the mode needed a gradient that is a real derivative of `Φ`, and that was the first
+result: `pcnl::model::forward` defaults to `NormGrad::Stopped`, which freezes the Frobenius
+denominators, so `loss_and_grad`'s gradient is **not** the derivative of the loss value —
+measured at ~**1 021×** on the example's two-layer model (analytic `−1 469` vs a finite
+difference `−1.44` along the same direction).  `SubspaceTarget::grad_phi` therefore uses
+`NormGrad::Exact`, and the new `subspace_target_gradient_matches_finite_differences` test
+pins the two together (it fails by 1.5 % on two of four coordinates with `Stopped`).  A mode
+search on the stopped gradient descends a different function than the chain samples; nothing
+in the earlier results depended on it, but a `laplace` arm would have silently done so.
+
+The mode search converges: 1157 Adam steps at rank 4 (φ 2160.35 → 1602.06, `‖∇Φ‖∞`
+5.4e1 → 9.9e-4) and 1132 at rank 8 (φ → 1604.91, 9.8e-4), both printed with the cell.  Cells:
+four at the default seed (ranks 4 and 8 × `s` ∈ {1, 0.5}), plus a rank-4 seed-7 triple with
+its own isotropic baseline (table below).
+
+| rank | seed | shape | `s` | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | Brier | NLL | `m` | `β_i` |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 4 | 20261020 | none (isotropic) | 0 | 46.5 % | 383 | 1.010 | 12.89 % | 0.9922 | 2.8662 | 0.33 | 0.069–0.08 |
+| 4 | 20261020 | pilot (raw) | 1 | 50.4 % | 15 | 1.353 | 12.89 % | 0.9917 | 2.8658 | 0.17 | 0.012–0.13 |
+| 4 | 20261020 | **laplace at mode** | 1 | 45.8 % | **554** | 1.010 | 12.89 % | 0.9923 | 2.8660 | 0.54 | 0.036–0.13 |
+| 4 | 20261020 | **laplace at mode** | 0.5 | 46.3 % | **587** | 1.012 | 12.89 % | 0.9923 | 2.8658 | 0.62 | 0.053–0.10 |
+| 8 | 20261020 | none (isotropic) | 0 | 48.7 % | **154** | 1.010 | 14.84 % | 0.9780 | 2.8105 | 0.34 | 0.064–0.07 |
+| 8 | 20261020 | laplace at mode | 1 | 42.9 % | 8 | **1.559** | 14.84 % | 0.9708 | 2.5191 | 0.45 | 0.038–0.12 |
+| 8 | 20261020 | laplace at mode | 0.5 | 45.5 % | 7 | **4.446** | 13.67 % | 0.9480 | 2.4127 | 0.50 | 0.054–0.11 |
+| 4 | 7 | none (isotropic) | 0 | 47.5 % | 152 | 1.025 | 17.58 % | 0.9048 | 2.6068 | 0.38 | 0.064–0.07 |
+| 4 | 7 | **laplace at mode** | 1 | 46.9 % | **287** | 1.017 | 17.58 % | 0.9049 | 2.6078 | 0.38 | 0.019–0.14 |
+| 4 | 7 | **laplace at mode** | 0.5 | 48.0 % | **373** | 1.009 | 17.58 % | 0.9049 | 2.6082 | 0.49 | 0.041–0.11 |
+
+**Result 45 — at rank 4 the target's own curvature is the first shape to beat isotropic, at
+both seeds, by 1.45–2.45×.**  At the default seed ESS is 554 (`s = 1`) and 587 (`s = 0.5`)
+against the isotropic 383; at seed 7 it is 287 and 373 against 152.  `R̂` is 1.009–1.017
+against 1.010–1.025 and the predictives are unchanged within a seed (BMA 12.89 % / 17.58 %
+identical, NLL within 0.0014), so this is a mixing gain and not a readout artifact.  The
+seed-7 isotropic cell also reproduces R2f's rank-4 `s = 0` value exactly (152), which is the
+control that says the two runs are comparable at all.  Every earlier shape failed here by 20× or more
+(raw pilot 15, pooled 16–17, EB 17), which is the point: the failure was never "the pilot is
+short", it was "the shape was measured where the posterior is not".  The mode search is the
+only difference in the estimator — the widths are `1/√H_ii` at a point where `∇Φ` vanishes,
+which is exactly the Laplace approximation, and the anchor it replaces is a stationary point
+of a *different* function.
+
+**Result 47 — `s = 0.5` is the rank-4 setting for the Laplace shape, and the ranking against
+isotropic does not depend on the seed.**  Partial shrinkage wins at both seeds (587 vs 554;
+373 vs 287), so the Laplace diagonal is a good shape that is still worth damping by half —
+the same direction R2e found for the pilot at rank 4 (`s = 0.5` at 399 vs `s = 0` at 383),
+now with a much larger effect.  What this cycle recommends: `--proposal laplace
+--pilot-shrink 0.5` at rank 4, unchanged isotropic `--pilot-shrink 0` at ranks 8 and above,
+and the pilot arm retired as a width source at every rank.  The cost is honest: the mode
+search is ~1 150 full-batch backward passes, about 4 min on 2 cores, once per cell — against
+a pilot's 600 forward passes, so it is affordable exactly because it is done once per rank
+rather than per chain.
+
+**Result 46 — the same shape is worse than the fixed arm at rank 8, and the rank dependence is
+the finding.**  ESS 8 (`s = 1`, `R̂` 1.559) and 7 (`s = 0.5`, `R̂` 4.446) against isotropic 154
+and fixed 7: at rank 8 the Laplace diagonal is no better than a single `β`.  This is not the
+budget or the search — the rank-8 mode converged to the same tolerance as the rank-4 one and
+to almost the same potential (1604.91 vs 1602.06, i.e. the rank-8 restriction contains an
+equally good optimum).  What differs is what the diagonal describes: near a mode, `1/√H_ii`
+is the *local* width, and a rank-8 restriction contains directions along which the posterior
+is much wider than the local Hessian (the same distinction R2 drew for the anchor, now at a
+point where the curvature is at least the right *kind* of quantity).  A shape that is right
+at rank 4 and 20× wrong at rank 8 is informative about the target, not about the estimator:
+it says the rank-8 posterior's mass is not in the mode's immediate bowl, and that a diagonal
+Laplace surrogate degrades with rank.  The NLL/ECE difference in those two rows (2.5191/
+2.4127 vs 2.8105, ECE 0.173 vs 0.253 at the same 14.84 % accuracy) is a property of *where*
+the stalled chains sat, not a better predictive — accuracy is identical and `R̂` is 1.56–4.45.
+
+### Recommendation (state after R2k: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4074,13 +4170,16 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| `--pilot-shrink s`, rank 4 | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | load-bearing |
+| proposal at rank 4 | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152) | R2k, two seeds; every pilot-derived shape is 20× worse there | load-bearing |
+| `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
 | `--pilot-shrink s`, rank ≥ 16 | no claim | R2g ladder is monotone but every cell is at the ESS floor | **withdrawn** |
 | `--pilot-reps n` | `1` (off) | R2g: 14/128/140 at rank 4, 5/7/6 at rank 8 — no fix where it matters | null |
 | `--pilot-scale c` | `1` (off) | R2h: warm-up absorbs the scale (`m` halves at `c = 2`), ESS/predictives unchanged; `c = 4` leaves warm-up off-target | null |
 | `--pilot-ebayes`, or any pooled shape | off (`s` alone) | R2i: weighted and unweighted pooled shapes both land at the single-pilot ESS (17/16 vs 15, 8/6 vs 6), below isotropic at three rank/seed pairs | null |
 | pilot shape vs no shape | no shape: `s = 0` | R2h/R2i: every pilot-derived shape loses 5–20× in ESS; the shape is reproducible across replicates, so this is not a noise problem | load-bearing |
+| proposal at rank 8 | isotropic `s = 0` (154); **not** `laplace` (8 / 7, `R̂` 1.56–4.45) | R2k: the Laplace diagonal is right at rank 4 and 20× wrong at rank 8 | load-bearing |
+| `--mode-steps` / `--mode-tol` | 2 000 / 1e-3 (the search printed with each cell must say `converged`) | R2k: rank-4 and rank-8 searches converge in 1 157 / 1 132 steps; the gradient must be `NormGrad::Exact` | load-bearing |
 | which proposal at ranks 4–8 | `pilot` with the `s` above, not `curv` | R2: curvature at a stationary anchor gave 0.1 % acceptance and ESS 7 | load-bearing |
 | any rank-16 shrinkage claim | none: the rank is not resolvable, and the ladder is withdrawn | R2j: the fixed (proposal-independent) arm has ESS 5–14 and `R̂` 1.30–1.91 even at 8 chains × 8 000; the same kernel at two seeds moves BMA by 5.9 points, more than the ladder's 3.5 | **not resolvable** |
 

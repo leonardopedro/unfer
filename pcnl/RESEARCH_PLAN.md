@@ -365,6 +365,26 @@ so the ladder is withdrawn as a measurement, "no claim above rank 8" stands, and
 result would need a target-level change (a shorter-autocorrelation functional, an exact
 reference, or a less stiff subspace), not more draws or a better estimator.
 
+R2k then ran R2i's remaining shape source: curvature at the target's **mode** rather than at
+the anchor, which is a stationary point of the training loss and not of the posterior.
+`--proposal laplace` finds the mode by Adam on the exact gradient of `Φ` (mode found in
+1 157/1 132 steps at ranks 4/8, gradient 5.4e1 → 9.9e-4, printed with every cell) and takes
+`β_i = m/√H_ii` there. Two findings. First, `loss_and_grad`'s gradient is **not** the
+derivative of the loss value: `forward` defaults to `NormGrad::Stopped`, which freezes the
+Frobenius denominators, and the gap is ~1 021× on the example's model, so
+`SubspaceTarget::grad_phi` uses `NormGrad::Exact` and a new test pins it against finite
+differences. Second, and unlike every pilot-derived shape, this shape **beats isotropic**:
+rank-4 ESS 554 (`s = 1`) and 587 (`s = 0.5`) at the default seed, 287 and 373 at seed 7,
+against isotropic 383 and 152 — with identical BMA accuracy and `R̂` 1.009–1.017. Partial
+shrinkage wins at both seeds, so the recommendation is `laplace` with `--pilot-shrink 0.5` at
+rank 4. At rank 8 the same estimator collapses to ESS 8/7 (`R̂` 1.56–4.45) against isotropic
+154 and fixed 7, even though the rank-8 mode converges to an equally good potential
+(1604.91 vs 1602.06): the diagonal Laplace width is a *local* quantity, and a rank-8
+restriction contains directions whose posterior is much wider than the mode's Hessian. The
+next question is therefore about rank and non-Gaussianity, not about more shape sources —
+whether the rank-4 win survives a different seed set, a different anchor, or `λ ≠ 1`, and
+whether a full-covariance Laplace (the `rot` kernel) behaves the same way at rank 8.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

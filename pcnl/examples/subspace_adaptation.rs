@@ -58,6 +58,15 @@
 //!   `--pilot-ebayes` (with `--pilot-reps n ≥ 2`) shrinks *per coordinate* by
 //!   how well the replicates agree (`τ²/(τ² + sd²/n)`), so a shape the pilot
 //!   reproduces survives and a shape it does not is pulled to isotropic.
+//! * `laplace` — `β_i = m/√H_ii` with the curvature taken at the **target's
+//!   mode**, found by Adam on the exact gradient of `Φ` (`--mode-steps`,
+//!   `--mode-lr`, `--mode-tol`; the search prints whether it converged, because
+//!   widths from a point that is not a mode look plausible and are wrong).  The
+//!   chain still starts at the anchor; only the proposal's shape differs.  This
+//!   is the one shape in the file that is not derived from a walk, and the
+//!   gradient is the *exact* one: `forward`'s default `NormGrad::Stopped` keeps
+//!   the normalising denominators fixed and is ~1 000× off as a derivative of
+//!   the loss on a two-layer model.
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -139,6 +148,14 @@ enum Prop {
     RotCurv,
     /// The pilot's full covariance, rescaled jointly in its eigenbasis.
     RotPilot,
+    /// `β_i = m/√H_ii` from the curvature at the target's **mode** rather than
+    /// at the anchor (R2k).  The anchor is a stationary point of the *training
+    /// loss*, so `1/√H` there describes a bowl the posterior has left; at a
+    /// mode of `π_r` the same diagonal is the Laplace approximation to the
+    /// posterior's spread, which is the only shape here that is derived from
+    /// the target rather than from a walk.  The chain still starts at the
+    /// anchor, so only the proposal differs.
+    Laplace,
 }
 
 impl Prop {
@@ -149,6 +166,7 @@ impl Prop {
             Prop::Pilot => "pilot",
             Prop::RotCurv => "rotcurv",
             Prop::RotPilot => "rotpilot",
+            Prop::Laplace => "laplace",
         }
     }
 
@@ -159,6 +177,7 @@ impl Prop {
             Prop::Pilot => 0x4_000,
             Prop::RotCurv => 0x6_000,
             Prop::RotPilot => 0x8_000,
+            Prop::Laplace => 0xa_000,
         }
     }
 }
@@ -253,6 +272,16 @@ struct Cfg {
     /// biased low; `c > 1` tests whether that downward bias, rather than the
     /// per-coordinate spread, is what costs the raw proposal its mixing.
     pilot_scale: f64,
+    /// Adam steps used to find the target's mode for the `laplace` arm.  The
+    /// search is outside the chain (`--mode-steps` × one full-batch backward
+    /// pass), and its result is checked against `--mode-tol` before any width is
+    /// derived from it: a width vector from a point that is not a mode is a
+    /// plausible-looking wrong answer.
+    mode_steps: usize,
+    /// Adam learning rate for that search.
+    mode_lr: f64,
+    /// `‖∇Φ‖∞` at which the mode search stops early.
+    mode_tol: f64,
     /// Per-coordinate empirical-Bayes shrinkage of the replicate shape: each
     /// coordinate's log-width deviation is shrunk by how well the replicates
     /// agree on it (`τ²/(τ² + sd²/n)`), instead of the same `s` everywhere.
@@ -295,6 +324,9 @@ impl Default for Cfg {
             pilot_reps: 1,
             pilot_scale: 1.0,
             pilot_eb: false,
+            mode_steps: 2000,
+            mode_lr: 0.05,
+            mode_tol: 1e-3,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -340,6 +372,7 @@ impl Cfg {
                     "pilot" => Some(Prop::Pilot),
                     "rotcurv" => Some(Prop::RotCurv),
                     "rotpilot" => Some(Prop::RotPilot),
+                    "laplace" => Some(Prop::Laplace),
                     _ => None,
                 })
                 .collect();
@@ -358,6 +391,15 @@ impl Cfg {
         }
         if args.iter().any(|a| a == "--pilot-ebayes") {
             cfg.pilot_eb = true;
+        }
+        if let Some(v) = flag("--mode-steps").and_then(|v| v.parse().ok()) {
+            cfg.mode_steps = v;
+        }
+        if let Some(v) = flag("--mode-lr").and_then(|v| v.parse().ok()) {
+            cfg.mode_lr = v;
+        }
+        if let Some(v) = flag("--mode-tol").and_then(|v| v.parse().ok()) {
+            cfg.mode_tol = v;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -624,6 +666,71 @@ fn mcse(series: &[Vec<f64>]) -> (f64, f64) {
     (mean, se)
 }
 
+/// Adam on `∇Φ` from the anchor, for the `laplace` arm.
+///
+/// Adam rather than plain descent because `z`'s coordinates differ in scale by
+/// orders of magnitude along the informed directions (that is the whole reason
+/// per-coordinate proposals exist), and the per-coordinate normalisation is what
+/// makes 400 full-batch steps enough.  The returned string is printed with the
+/// cell so the mode is auditable: the potential it starts and ends at, the
+/// gradient it ends with, and whether it hit `--mode-tol`.
+fn find_mode(target: &SubspaceTarget, rank: usize, cfg: &Cfg) -> (Vec<f32>, String) {
+    let lr = cfg.mode_lr;
+    let (b1, b2, eps) = (0.9f64, 0.999f64, 1e-8f64);
+    let mut z = vec![0.0f32; rank];
+    let mut m = vec![0.0f64; rank];
+    let mut v = vec![0.0f64; rank];
+    let phi_start = target.phi(&z);
+    let mut grad = target.grad_phi(&z).unwrap_or_else(|| vec![0.0; rank]);
+    let first_norm = grad.iter().fold(0.0f64, |a, g| a.max(f64::from(g.abs())));
+    let (mut used, mut converged) = (0usize, false);
+    for t in 1..=cfg.mode_steps {
+        let norm = grad.iter().fold(0.0f64, |a, g| a.max(f64::from(g.abs())));
+        if norm <= cfg.mode_tol {
+            converged = true;
+            break;
+        }
+        // Adam's step is ~`lr` in coordinate units, so a constant rate leaves the
+        // iterate oscillating around the mode with that amplitude and the
+        // gradient never reaches `--mode-tol`.  The rate decays as `1/√(1 + t/200)`
+        // so the check can actually be met instead of being papered over.
+        let lr_t = lr / (1.0 + t as f64 / 200.0).sqrt();
+        for i in 0..rank {
+            let g = f64::from(grad[i]);
+            m[i] = b1 * m[i] + (1.0 - b1) * g;
+            v[i] = b2 * v[i] + (1.0 - b2) * g * g;
+            let mh = m[i] / (1.0 - b1.powi(t as i32));
+            let vh = v[i] / (1.0 - b2.powi(t as i32));
+            z[i] -= (lr_t * mh / (vh.sqrt() + eps)) as f32;
+        }
+        used = t;
+        grad = match target.grad_phi(&z) {
+            Some(g) => g,
+            None => break,
+        };
+        if !grad.iter().all(|g| g.is_finite()) {
+            break;
+        }
+    }
+    let phi_mode = target.phi(&z);
+    let norm_end = grad.iter().fold(0.0f64, |a, g| a.max(f64::from(g.abs())));
+    let status = if converged {
+        "converged"
+    } else if norm_end > cfg.mode_tol {
+        "NOT converged"
+    } else {
+        "stopped"
+    };
+    (
+        z,
+        format!(
+            "mode: Adam {used}×{lr} from the anchor, φ {phi_start:.4} → {phi_mode:.4}, \
+             |∇Φ|∞ {first_norm:.2e} → {norm_end:.2e} ({status}, tol {:.0e})",
+            cfg.mode_tol
+        ),
+    )
+}
+
 struct CellLine {
     rank: usize,
     target: TargetKind,
@@ -693,8 +800,18 @@ fn run_cell(
             s.target_accept = cfg.adapt_target;
             Some(Scale::Rot(s))
         }
+        Prop::Laplace => {
+            let (z_mode, info) = find_mode(&target, rank, cfg);
+            println!("  laplace[{rank}] {info}");
+            let h = curvature_diag(&target, &z_mode, cfg.curvature_h);
+            let widths: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+            let mut s = DiagScale::from_widths_shrunk(&widths, cfg.pilot_shrink);
+            s.target_accept = cfg.adapt_target;
+            Some(Scale::Diag(s))
+        }
         Prop::Fixed | Prop::Pilot | Prop::RotPilot => None,
     };
+
     let starts = Instant::now();
     let mut per_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
     let mut phi_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);

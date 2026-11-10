@@ -21,6 +21,7 @@
 //! a proposal scale here, not a temperature: `λ` changes the target.
 
 use crate::model::{Shapes, Variant};
+use crate::normalize::NormGrad;
 use crate::subspace::AffineSubspace;
 use crate::task::Dataset;
 use candle_core::{Device, Tensor};
@@ -110,6 +111,48 @@ impl SubspaceTarget {
             .filter(|l| l.is_finite())
             .unwrap_or(f64::INFINITY);
         (self.lambda * self.n_train as f64 * mean_loss, prior_phi(z))
+    }
+
+    /// `∇_z Φ(z)` for `Φ = λ·N·mean_loss(θ(z)) + ½‖z‖²`, by the chain rule
+    /// `dΦ/dz = λ·Bᵀ C_halfᵀ ∇_θ ℓ_sum`, plus the prior's `z`.
+    ///
+    /// This exists so a *mode* of the target can be found — the point where the
+    /// Laplace widths `1/√H_ii` mean the posterior's spread rather than the
+    /// spread of the training loss's local bowl.  It is deliberately not part of
+    /// [`ZPotential`]: the kernels must not be able to become unadjusted by
+    /// accident (see [`FullTarget`]), so gradients are opt-in here.  `None` when
+    /// the model or the backward pass fails, matching `phi`'s
+    /// `INFINITY` contract.
+    /// The derivative is taken with [`NormGrad::Exact`], not the `Stopped`
+    /// convention `forward` defaults to.  `Stopped` keeps the normalising
+    /// denominators constant, so it is deliberately *not* the derivative of
+    /// `phi`'s value — measured here at ~1 000× on a two-layer model, because
+    /// each layer's Frobenius normalisation contributes its own `1/‖W‖` to the
+    /// gap.  A mode search driven by the stopped gradient descends a different
+    /// function than the one the chain samples, which is exactly the class of
+    /// quiet error this file's `subspace_target_gradient_matches_finite_
+    /// differences` test exists to catch.
+    pub fn grad_phi(&self, z: &[f32]) -> Option<Vec<f32>> {
+        let theta = self.subspace.lift_tensor(z).ok()?;
+        let (loss, mean_grad) = crate::model::loss_and_grad_norm(
+            &theta,
+            &self.shapes,
+            self.variant,
+            &self.data.train_x,
+            &self.data.train_y,
+            NormGrad::Exact,
+        )
+        .ok()?;
+        if !loss.is_finite() {
+            return None;
+        }
+        let scaled = mean_grad.affine(self.n_train as f64, 0.0).ok()?;
+        let g_theta = scaled.flatten_all().ok()?.to_vec1::<f32>().ok()?;
+        let mut g = self.subspace.gradient_to_z(&g_theta);
+        for (gi, zi) in g.iter_mut().zip(z.iter()) {
+            *gi = (self.lambda * f64::from(*gi) + f64::from(*zi)) as f32;
+        }
+        Some(g)
     }
 }
 
@@ -1316,6 +1359,50 @@ mod tests {
             .expect("loss");
         assert!((lik - lambda * 16.0 * mean).abs() < 1e-6 * lik.abs().max(1.0));
         assert!((prior - 0.045).abs() < 1e-6, "prior {prior}");
+    }
+
+    /// `grad_phi` must be the gradient of `phi`, or a mode search on it finds a
+    /// point that is not the target's mode and every width derived from that
+    /// point is a wrong-but-plausible number.  Central differences at two
+    /// distinct `z`, with the prior's contribution present in both.
+    #[test]
+    fn subspace_target_gradient_matches_finite_differences() {
+        use crate::model::{Shapes, Variant, init_flat};
+        use crate::subspace::{AffineSubspace, Basis};
+        use crate::task::{Dataset, Task};
+
+        let shapes = Shapes {
+            vocab: 6,
+            d: 4,
+            ff: 8,
+            layers: 1,
+        };
+        let p = shapes.flat_size();
+        let data = Dataset::new(Task::A, 5, 32, 8, 1);
+        let anchor = init_flat(&shapes, 0.1, 2)
+            .flatten_all()
+            .expect("flat")
+            .to_vec1::<f32>()
+            .expect("vec");
+        let basis = Basis::random(p, 2, 3).expect("basis");
+        let sub = AffineSubspace::isotropic(anchor, basis, 0.35).expect("subspace");
+        let target = SubspaceTarget::new(sub, 0.5, data, shapes, Variant::Cosine);
+        for z0 in [[0.3f32, -0.2], [-0.7, 0.9]] {
+            let g = target.grad_phi(&z0).expect("gradient");
+            let h = 1e-3f32;
+            for i in 0..2 {
+                let mut plus = z0;
+                let mut minus = z0;
+                plus[i] += h;
+                minus[i] -= h;
+                let fd = (target.phi(&plus) - target.phi(&minus)) / (2.0 * f64::from(h));
+                let got = f64::from(g[i]);
+                assert!(
+                    (got - fd).abs() <= 1e-2 * fd.abs().max(1.0),
+                    "z = {z0:?}, coord {i}: analytic {got}, finite difference {fd}"
+                );
+            }
+        }
     }
 
     /// A diagonal preconditioner must be *exactly* the uniform kernel when the
