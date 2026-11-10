@@ -639,19 +639,31 @@ $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 > closure alone. The numbers here remain statements about their labeled
 > numerical models, not a gap theorem for the full physical record.
 >
-> **BRST gauge-fixing consequence (Numerical).** The promoted
-> derivative-variable sector `e` (mode 2 — the 64 `idxDE` derivative
-> coordinates) enters `qg3d_full_hamiltonian` only through its **position**
-> operator (the `S·E` / `P·E` / torsion blocks contain `x̂_e`, never a `p_e`
-> — no momentum on that mode), so `x̂_e` is a constant of the motion and the
-> BRST charge `Ω = x̂_e·c₉` is nilpotent (`Ω² = 0`, first-class) with the
-> full operator BRST-closed (`[H, Ω] = 0`).  Test
-> `qg3d_full_operator_brst_projection_invariance` verifies exactly this and
-> — the projection-invariance consequence — that the orthogonal projection
-> onto ker Ω (mid-sequence, `Some(&brst)`) leaves the solved Ritz spectrum
-> and `⟨x̂_e⟩(t)` unchanged vs. the unprojected solve: the fixing is
-> BRST-exact, zero impact on physical observables (`int_L_gf_eq_zero_physical`,
-> the full-operator numerical analogue of `s_gaugeField_eq_c`).
+> **BRST gauge fixing on the full QG operator — NOT closed (2026-11-10
+> audit).** The documented premise was that the promoted derivative-variable
+> sector `e` (mode 2 — the 64 `idxDE` derivative coordinates) enters
+> `qg3d_full_hamiltonian` only through its **position** operator, never a
+> `p_e`, so that `x̂_e` would be a constant of the motion and `Ω = x̂_e·c₉`
+> would be BRST-closed.  **The premise does not hold for this builder.**  The
+> charge is nilpotent (`Ω² = 0`, first-class, on ghost-carrying probes with
+> `‖Ωψ‖ = √3`), but `[H, Ω]` does not vanish: `‖[H,Ω]ψ‖ = 3.237154099925839`
+> on the one-mode probe and `9.633924433998846` on the three-mode probe.
+> Measured independently, `‖[H,x̂_e]ψ‖ = 3.237154099925839` with `x̂_e` as an
+> inner ladder and `2.3308440963283874` with the outer-consistent
+> `OuterBosonCreate/Annihilate({2:1})`, so this is not a choice of
+> representative.  The earlier check asserted `i⟨p|[H,Ω]|p⟩ = 0`, which is
+> zero in **every** state regardless of the commutator (`Ω` carries the ghost
+> lowering, `H` conserves ghost number, so the expectation pairs orthogonal
+> sectors) — the failure was invisible until it was measured as a norm.
+> Consequently the projection-invariance consequence does **not** follow: on a
+> ghost-free start `Ω|ψ₀⟩ = 0`, `project_physical` returns its input on the
+> `‖Ωw‖ < tol` short-circuit, and the projected and bare solves agree because
+> the projector never fires (test
+> `qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close`).
+> `⟨x̂_e⟩` is `0` at `t = 0` and `0` at `t = 0.25` on that superposition — by
+> symmetry of the state, not by conservation.  **Open**: establishing
+> `[H, Ω] = 0` for the full QG operator requires the gauge-fixed form of the
+> builder (or the correct constraint for the `e` sector).
 >
 > **BRST gauge-fixing consequence (Numerical) — Navier–Stokes parallel.**
 > The same projection-invariance statement holds for the FULL NS operator:
@@ -1611,14 +1623,29 @@ Observables measured from the UNITARY FLOW rather than spectra:
 ### 5.19 Constraints & superselection — `brst_constraint_validation.rs`
 
 - **`qym_abelian_brst_nilpotent_and_invariant`** — computes: the first abelian
-  YM BRST charge in the repo, $\Omega = P\cdot b^\dagger_{\rm ghost}$:
-  $\Omega^2 = 0$ (nilpotent by Pauli), $[H(g=0), \Omega] = 0$ ($P$ commutes,
-  ghosts free).
+  YM BRST charge in the repo, $\Omega = P\cdot b_{\rm ghost}$ (the ghost
+  *lowering*; the raise only under a filled-sea convention, so $\Omega$
+  vanishes identically on ghost-free states by construction), on ghost-carrying
+  probes: $\Omega^2 = 0$ (nilpotent by Pauli), and $[H(g=0), \Omega] = 0$ as
+  an **operator** — $\|H\Omega\psi\| = 4.472135955$, $\|\Omega H\psi\| =
+  4.472135955$, $\|[H,\Omega]\psi\| = 0$ — because $B = A_0 - A_1$ is the
+  difference and $P = \sum \Pi$ the sum of the two momenta, so
+  $[B, P] = i - i = 0$. The earlier form of this check was
+  $i\langle\psi|[H,\Omega]|\psi\rangle$, which is zero for every state
+  regardless of the commutator ($\Omega$ flips ghost number, $H$ conserves
+  it), so it could not fail.
 
-- **`qym_brst_projection_identity_on_physical_flow`** — computes: ghost-free
-  start — solves with and without mid-sequence projection agree on resolved
-  spectra AND on $\langle P\rangle$ to solver accuracy (the theorem, YM
-  edition): mid-sequence projection is an identity on physical flows.
+- **`qym_brst_projection_is_identity_on_ker_q`** — computes: what the
+  mid-sequence projection actually does. On the ghost-free flow
+  $Q = P\cdot b$ is *exactly* zero ($\|Qw\| = 0$), so `project_physical`
+  short-circuits and returns its input bit-for-bit ($\|Pw - w\| = 0$); the
+  projected and unprojected solves agree because the switch never fires, which
+  is plumbing, not a theorem. Off $\ker Q$ — a ghost-carrying state with
+  $\|Qw\| = 2.0$ — the projected solve does **not** converge:
+  `BrstNotConverged { residual: 0.3904082323117846 }` at `brst_tol = 1e-10`
+  and 50 CG iterations, because $QQ^\dagger$ is singular on the subspace that
+  carries the charge. **Limitation**: the projector is untested where it would
+  act, and nothing here certifies gauge invariance of a ghost-carrying flow.
 
 - **`qed_jc_total_excitation_superselected`** — computes: $N_{\rm tot} =
   a^\dagger a + e^\dagger e$ commutes with the detuned JC Hamiltonian; mean
@@ -1626,11 +1653,16 @@ Observables measured from the UNITARY FLOW rather than spectra:
   BETWEEN subsystems only) while the quantum shuttles between cavity and
   atom.
 
-- **`qg_densitized_beat_predicted_by_spectrum`** — computes: the densitized
-  model's Bogoliubov blocks are diagonalized to opposite-sign number
-  operators ($+1/16$ vs $-1/24$); the solved Ritz splitting $\Delta E$
-  predicts a transfer-coherence zero at $t = \pi/(2\Delta E)$; the flow
-  confirms it (spectroscopy → dynamics closure).
+- **`qg_densitized_two_level_beat_matches_analytic_splitting`** — computes, on
+  a **two-level comparison model** (`c_s = 1/16`, `c_y = -1/24` hand-entered;
+  `qg_densitized_kinetic` is not solved here): each sector's Ritz value
+  reproduces the closed form, the splitting is therefore exactly
+  $5/48$, and `evolve_restarted` puts the transfer-coherence node where that
+  splitting requires ($t^* = \pi/(2\Delta E) = 15.0796$, coherence $0.0000$
+  against $2.0$ at $t = 0$). Formerly titled "beat predicted by spectrum" —
+  on two levels the node follows from *any* splitting, so this is solver
+  self-consistency, not a physical prediction. A mapping from
+  `qg_densitized_kinetic` onto these two number operators is not established.
 
 ### 5.20 Action→spectrum chains — `qg_action_predictions_validation.rs`
 

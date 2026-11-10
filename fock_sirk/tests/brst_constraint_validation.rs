@@ -4,17 +4,22 @@
 //! and a QG densitized-model beat whose period is PREDICTED by the
 //! independently solved Ritz spectrum (spectroscopy → dynamics closure).
 //!
-//! 1. `qym_abelian_brst_nilpotent_and_invariant` — Ω = P·c_ghost:
-//!    Ω²=0 (Pauli), [H(g=0), Ω]=0 (P commutes, ghosts free).
-//! 2. `qym_brst_projection_identity_on_physical_flow` — ghost-free start:
-//!    solves with and without mid-sequence projection agree on resolved
-//!    spectra AND on ⟨P⟩ to solver accuracy (the theorem, YM edition).
+//! 1. `qym_abelian_brst_nilpotent_and_invariant` — Ω = P·b_ghost:
+//!    Ω²=0 (Pauli, on probes that carry Ω-content), and [H(g=0), Ω]=0 at
+//!    operator level because B = A_0 − A_1 is the difference and P = Σ Π the
+//!    sum of the two modes' momenta, so [B, P] = i − i = 0.
+//! 2. `qym_brst_projection_is_identity_on_ker_q` — the mid-sequence projection
+//!    is exactly the identity on the ghost-free flow (which is all ker Q here,
+//!    since Ω = P·b annihilates every ghost-free state by construction), and
+//!    it does not converge on the ghost-carrying states where it would act.
 //! 3. `qed_jc_total_excitation_superselected` — N_tot = a†a + e†e commutes
 //!    with the detuned JC Hamiltonian; mean AND variance of N_tot are flow
 //!    constants (Rabi exchange moves quanta BETWEEN subsystems only).
-//! 4. `qg_densitized_beat_predicted_by_spectrum` — 𝒮/y sector superposition;
-//!    the solved Ritz splitting ΔE predicts a transfer-coherence zero at
-//!    t = π/(2ΔE); the flow confirms it (solver→dynamics consistency).
+//! 4. `qg_densitized_two_level_beat_matches_analytic_splitting` — a
+//!    TWO-LEVEL COMPARISON MODEL (hand-entered 1/16, −1/24; the densitized
+//!    builder is not solved): each sector's Ritz value reproduces the closed
+//!    form, so the splitting is exactly 5/48 and the flow's coherence node sits
+//!    at π/(2ΔE). Solver self-consistency, not a physical prediction.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -44,25 +49,14 @@ fn empty_vacuum() -> QuantumState {
     QuantumState::vacuum().apply(&Operator::OuterBosonCreate(InnerBosonicState::vacuum()))
 }
 
-fn ym_total_momentum() -> nested_fock_algebra::Hamiltonian {
-    let mut t: Vec<(Complex64, Vec<Operator>)> = Vec::new();
-    for mode in [0u32, 1] {
-        t.push((
-            Complex64::new(0.0, 1.0),
-            vec![Operator::InnerBosonCreate(mode)],
-        ));
-        t.push((
-            Complex64::new(0.0, -1.0),
-            vec![Operator::InnerBosonAnnihilate(mode)],
-        ));
-    }
-    nested_fock_algebra::Hamiltonian { terms: t }
-}
-
 const GHOST: u32 = 9;
 
-/// Ω = P · b†_ghost — fermionic raise of the ghost times the Gauss generator.
-/// Nilpotent by Pauli ({b†,b†}=0); [H, Ω] = [H,P]·b† = 0 at g=0.
+/// Ω = P · b_ghost — the Gauss generator times the ghost *lowering*, which is
+/// the raise only in the filled-sea convention of `ym_brst_charge`. On the
+/// empty reference of this file it is the annihilation, so Ω is identically
+/// zero on every ghost-free state — by construction, not as a physical
+/// statement. Only ghost-carrying probes carry Ω-content. Nilpotent by Pauli
+/// (`b² = 0`); `[H, Ω] = [H, P]·b = 0` at g = 0.
 fn ym_brst_charge() -> nested_fock_algebra::Hamiltonian {
     let mut terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
     for mode in [0u32, 1] {
@@ -114,24 +108,63 @@ fn qym_abelian_brst_nilpotent_and_invariant() {
         );
     }
 
-    // Invariance: i[H, Ω] vanishes on physical and ghosted probes alike.
-    let mut phys = empty_vacuum();
-    phys = phys.apply(&Operator::InnerBosonCreate(0));
-    for psi in [phys, ghosted(1)] {
-        let hp = h.apply(&omega.apply(&psi));
-        let ph = omega.apply(&h.apply(&psi));
-        let mut comm = hp;
-        comm.scale_and_add(&ph, Complex64::new(-1.0, 0.0));
-        let lhs = Complex64::new(0.0, 1.0) * QuantumState::inner_product(&psi, &comm);
-        assert!(lhs.norm() < 1e-9, "[H, Ω] must vanish, got {lhs:?}");
+    // Invariance, as an operator statement. The earlier form of this check was
+    // `i<psi|[H, Omega]|psi>`, which is zero for *every* state here whatever
+    // the commutator does: Omega = P·b flips the ghost number and H conserves
+    // it, so the inner product pairs orthogonal sectors. The vector norm is
+    // the check that can fail.
+    for psi in [ghosted(0), ghosted(1)] {
+        let applied = omega.apply(&psi);
+        let mut difference = h.apply(&applied);
+        difference.scale_and_add(&omega.apply(&h.apply(&psi)), Complex64::new(-1.0, 0.0));
+        assert!(
+            difference.norm() < 1e-9,
+            "[H, Omega] must vanish as an operator, got {:e}",
+            difference.norm()
+        );
+        eprintln!(
+            "brst: |psi|={:e} |Omega psi|={:e} |H Omega psi|={:e} |[H,Omega] psi|={:e}",
+            psi.norm(),
+            applied.norm(),
+            h.apply(&applied).norm(),
+            difference.norm()
+        );
     }
+
+    // And the ghost-free sector is Omega's kernel by construction: P·b kills a
+    // state with no ghost, so `Omega|phys> = 0` says nothing about Gauss.
+    let mut phys = empty_vacuum().apply(&Operator::InnerBosonCreate(0));
+    phys.scale_and_add(
+        &empty_vacuum().apply(&Operator::InnerBosonCreate(1)),
+        Complex64::new(0.6, 0.0),
+    );
+    assert!(
+        omega.apply(&phys).norm() == 0.0,
+        "P·b must annihilate a ghost-free state identically"
+    );
 }
 
+/// What the mid-sequence projection actually does on this flow.
+///
+/// `project_physical` returns its input unchanged whenever `‖Q w‖` is below
+/// tolerance, and here `Q = P·b_ghost` annihilates every ghost-free state
+/// identically. The earlier version of this test compared projected and
+/// unprojected solves from a ghost-free start and called the agreement a
+/// theorem; it is the projector's own short-circuit, so it cannot fail. What
+/// can fail is measured instead:
+///
+/// * on the ghost-free flow `Q` is exactly zero and the projection is the
+///   identity to the last bit (`‖Pw − w‖ = 0`);
+/// * on a ghost-carrying state `‖Q w‖ = 2.0` but the projected solve does not
+///   converge — `BrstNotConverged { residual: 0.39040823231178456 }` at the
+///   configured tolerance and 50 iterations. `Q Q†` is singular on the
+///   subspace that carries the charge, so the projector is *untested where it
+///   would act*; that is a limitation of the switch, not a statement about
+///   gauge invariance.
 #[test]
-fn qym_brst_projection_identity_on_physical_flow() {
+fn qym_brst_projection_is_identity_on_ker_q() {
     let h = qcd_ym_hamiltonian(0.0);
     let omega = ym_brst_charge();
-    let p_op = ym_total_momentum();
 
     let mut psi0 = empty_vacuum();
     psi0 = psi0.apply(&Operator::InnerBosonCreate(0));
@@ -140,10 +173,27 @@ fn qym_brst_projection_identity_on_physical_flow() {
         Complex64::new(0.6, 0.0),
     );
 
+    // The identity on ker Q, measured rather than assumed.
+    assert!(
+        omega.apply(&psi0).norm() == 0.0,
+        "the ghost-free start must be in ker Q exactly"
+    );
+    let projected =
+        fock_sirk::brst::project_physical(&psi0, &omega, mk(true).brst_tol, 50).unwrap();
+    let mut difference = projected.clone();
+    difference.scale_and_add(&psi0, Complex64::new(-1.0, 0.0));
+    assert!(
+        difference.norm() == 0.0,
+        "the projection must be the identity on ker Q, got {:e}",
+        difference.norm()
+    );
+
+    // Which is why the solver-level agreement is plumbing, not physics: with
+    // the switch on, nothing in the Krylov sequence is ever touched.
     let plain =
         solve_forward_sirk_with_opts(&h, &psi0, &shifts(8), &best_device(), None, &mk(true))
             .unwrap();
-    let projected = solve_forward_sirk_with_opts(
+    let with_projection = solve_forward_sirk_with_opts(
         &h,
         &psi0,
         &shifts(8),
@@ -152,31 +202,42 @@ fn qym_brst_projection_identity_on_physical_flow() {
         &mk(true),
     )
     .unwrap();
-
-    // Identical resolved spectra.
     let a = plain.resolved_ritz_values(5e-3);
-    let b = projected.resolved_ritz_values(5e-3);
+    let b = with_projection.resolved_ritz_values(5e-3);
     assert_eq!(a.len(), b.len(), "resolved sets {a:?} vs {b:?}");
     for (x, y) in a.iter().zip(b.iter()) {
-        assert!((x - y).abs() < 1e-7, "{x} vs {y}");
+        assert!((x - y).abs() < 1e-9, "{x} vs {y}");
     }
 
-    // And the same Gauss content after evolution.
-    let ta = evolve_restarted(&h, &psi0, 0.25, 2, 8, &best_device(), None, &mk(true)).unwrap();
-    let tb = evolve_restarted(
-        &h,
-        &psi0,
-        0.25,
-        2,
-        8,
-        &best_device(),
-        Some(&omega),
-        &mk(true),
-    )
-    .unwrap();
-    let pa = QuantumState::inner_product(&ta, &p_op.apply(&ta));
-    let pb = QuantumState::inner_product(&tb, &p_op.apply(&tb));
-    assert!((pa - pb).norm() < 1e-7, "⟨P⟩ {pa} vs {pb}");
+    // Off ker Q the projector is exercised for the first time — and fails.
+    let ghost = ghosted(1);
+    let charge = omega.apply(&ghost).norm();
+    assert!(
+        (charge - 2.0).abs() < 1e-12,
+        "the ghosted probe must carry Q-content: {charge:e}"
+    );
+    match fock_sirk::brst::project_physical(&ghost, &omega, mk(true).brst_tol, 50) {
+        Ok(projected) => {
+            let mut residual = omega.apply(&projected);
+            residual.scale_and_add(&omega.apply(&ghost), Complex64::new(-1.0, 0.0));
+            eprintln!(
+                "brst: projected a ghosted state, |Q proj|={:e}",
+                omega.apply(&projected).norm()
+            );
+            assert!(
+                omega.apply(&projected).norm() <= mk(true).brst_tol,
+                "if the projection succeeds it must land in ker Q"
+            );
+        }
+        Err(fock_sirk::linalg::SirkError::BrstNotConverged { residual }) => {
+            eprintln!("brst: projection off ker Q does not converge, residual={residual:e}");
+            assert!(
+                (residual - 0.390_408_232_311_784_56).abs() < 1e-9,
+                "the projector's residual off ker Q moved: {residual:e}"
+            );
+        }
+        Err(other) => panic!("unexpected projection error: {other:?}"),
+    }
 }
 
 #[test]
@@ -208,13 +269,16 @@ fn qed_jc_total_excitation_superselected() {
     let mut psi0 = empty_vacuum();
     psi0 = psi0.apply(&Operator::InnerBosonCreate(0));
 
-    // Static commutator check first.
-    let hn = h.apply(&n_tot.apply(&psi0));
-    let nh = n_tot.apply(&h.apply(&psi0));
-    let mut comm = hn;
-    comm.scale_and_add(&nh, Complex64::new(-1.0, 0.0));
-    let lhs = Complex64::new(0.0, 1.0) * QuantumState::inner_product(&psi0, &comm);
-    assert!(lhs.norm() < 1e-9, "[H, N_tot] must vanish");
+    // Static commutator check first, as a vector norm rather than the single
+    // expectation `i<psi|[H,N]|psi>` — the expectation cannot see a component
+    // of [H,N]|psi> that is orthogonal to psi.
+    let mut comm = h.apply(&n_tot.apply(&psi0));
+    comm.scale_and_add(&n_tot.apply(&h.apply(&psi0)), Complex64::new(-1.0, 0.0));
+    assert!(
+        comm.norm() < 1e-9,
+        "[H, N_tot] must vanish, got {:e}",
+        comm.norm()
+    );
 
     // Flow conservation of both moments (the Rabi exchange moves the quantum
     // between cavity and atom; it cannot create or destroy excitation).
@@ -234,8 +298,20 @@ fn qed_jc_total_excitation_superselected() {
     }
 }
 
+/// A TWO-LEVEL COMPARISON MODEL, not the densitized builder.
+///
+/// `c_s = 1/16` and `c_y = −1/24` are hand-entered here; `qg_densitized_kinetic`
+/// is not solved in this test. On a two-level Hamiltonian the node of the
+/// transfer coherence is `π/(2ΔE)` for *any* splitting, so "the spectrum
+/// predicts the beat" was never a physical prediction — it is the standard
+/// two-level identity. What is worth asserting, and is asserted below, is that
+/// each sector's Ritz value reproduces the closed form (`1/16`, `−1/24`), that
+/// their difference is therefore exactly `5/48`, and that the flow puts the
+/// coherence node where that splitting says it must. A mapping from
+/// `qg_densitized_kinetic` to these two number operators is not established
+/// here.
 #[test]
-fn qg_densitized_beat_predicted_by_spectrum() {
+fn qg_densitized_two_level_beat_matches_analytic_splitting() {
     // The densitized blocks are BOGOLIUBOV (squeezed) forms — their raw
     // ladders are unbounded, so a sector "energy" is not ritz[0]. We use the
     // DIAGONALIZED blocks instead: opposite-sign number operators carrying
@@ -275,8 +351,16 @@ fn qg_densitized_beat_predicted_by_spectrum() {
         solve_forward_sirk_with_opts(&h, &y_state, &shifts(7), &best_device(), None, &mk(true))
             .unwrap()
             .ritz_values()[0];
+    assert!(
+        (es - c_s).abs() < 1e-10 && (ey - c_y).abs() < 1e-10,
+        "sector Ritz values must reproduce the entered coefficients: {es} vs {c_s}, {ey} vs {c_y}"
+    );
     let d_e = (es - ey).abs();
-    assert!(d_e > 1e-3, "sectors must be spectrally split: {es} vs {ey}");
+    assert!(
+        (d_e - (c_s - c_y).abs()).abs() < 1e-10,
+        "the splitting must be |1/16 + 1/24| = 5/48 = {:.12}, got {d_e:.12}",
+        (c_s - c_y).abs()
+    );
 
     // Transfer operator |S><y| + h.c. measures the coherence.
     let mut s_inner = InnerBosonicState::vacuum();
@@ -313,11 +397,8 @@ fn qg_densitized_beat_predicted_by_spectrum() {
         evolve_restarted(&h, &psi0, t_star, 2, 10, &best_device(), None, &mk(true)).unwrap();
     let c_star = coh(&s_star);
     assert!(
-        c0_check(psi0.clone(), &transfer) > 0.9 && c_star.abs() < 0.15,
-        "beat must node at t*=π/(2ΔE)={t_star:.4}: c={c_star:.4}"
+        coh(&psi0) > 0.9 && c_star.abs() < 0.15,
+        "beat must node at t*=π/(2ΔE)={t_star:.4}: c0={:.6}, c={c_star:.4}",
+        coh(&psi0)
     );
-}
-
-fn c0_check(psi: QuantumState, transfer: &nested_fock_algebra::Hamiltonian) -> f64 {
-    QuantumState::inner_product(&psi, &transfer.apply(&psi)).re
 }

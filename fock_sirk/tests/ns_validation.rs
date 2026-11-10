@@ -69,9 +69,10 @@
 //!    the reason the projector rides along in the solve.
 //!
 //! 8. `ns_brst_projection_invariance_physical_flow` — the full-operator-level
-//!    projection-invariance statement (the NS analogue of
-//!    `qym_brst_projection_identity_on_physical_flow` and the QG
-//!    `qg3d_full_operator_brst_projection_invariance`): the SIRK solve of the
+//!    projection-invariance statement (the NS analogue of the YM/QG YM-style
+//!    checks, which do NOT establish it — see
+//!    `qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close`,
+//!    where [H, Ω] ≠ 0): the SIRK solve of the
 //!    FULL `navier_stokes_hamiltonian` with the orthogonal projector onto
 //!    `ker Ω` riding along (`Some(&brst)`) resolves the SAME spectrum and
 //!    gives the SAME physical observables as the bare solve (a physical start

@@ -1098,29 +1098,41 @@ fn qg3d_full_operator_sirk() {
     );
 }
 
-/// QG-3.2 BRST gauge-fixing consequence on the FULL 3D operator
-/// (`qg3d_full_hamiltonian`, the QG-3.1 object of record, cross terms present):
-/// the promoted derivative-variable sector `e` (mode 2 — the 64 `idxDE`
-/// derivative coordinates of the formalization) enters `H` ONLY through its
-/// position operator (the S·E / P·E / torsion blocks contain `x̂_e`, never a
-/// `p_e` — no momentum on the derivative-variable mode), so `x̂_e` is a
-/// constant of the motion and the BRST charge `Ω = x̂_e · c` is nilpotent
-/// (`Ω² = 0`, first-class) and `H` is BRST-closed (`[H, Ω] = 0`).  This is the
-/// full-operator numerical content of the formalization's `s_gaugeField_eq_c`
-/// (the promoted variable is a BRST doublet) and `int_L_gf_eq_zero_physical`
-/// (the fixing is BRST-exact, zero impact on physical observables):
+/// QG-3.2 BRST gauge fixing on the FULL 3D operator (`qg3d_full_hamiltonian`,
+/// the QG-3.1 object of record, cross terms present) — **and what it actually
+/// measures**.
 ///
-///   (a) `Ω² = 0` (nilpotent) on ghost-carrying probes;
-///   (b) `[H, Ω] = 0` (BRST-closed) — the gauge-fixing is dynamical;
-///   (c) **projection invariance** — the orthogonal projection onto ker Ω
-///       (mid-sequence, `Some(&brst)`) leaves the solved Ritz spectrum and the
-///       derivative-variable expectation value UNCHANGED vs. the unprojected
-///       solve (physical observables are the same with or without the
-///       projector, to solver accuracy).  Mirrors
-///       `qym_brst_projection_identity_on_physical_flow`, but on the FULL QG
-///       operator, cross terms included.
+/// The documented premise is that the promoted derivative-variable sector `e`
+/// (mode 2 — the 64 `idxDE` derivative coordinates) enters `H` only through
+/// `x̂_e`, never `p_e`, so `x̂_e` is a constant of the motion and
+/// `Ω = x̂_e · c` is BRST-closed. **That premise does not hold for this
+/// builder.** The charge is nilpotent, but `[H, Ω]` does not vanish:
+///
+///   (a) `Ω² = 0` on ghost-carrying probes — genuine (it follows from
+///       `c² = 0` and `[x̂_e, c] = 0`), and asserted with `‖Ωψ‖ ≠ 0` so the
+///       probe carries content;
+///   (b) `[H, Ω] ≠ 0` — `‖[H,Ω]ψ‖ = 3.237154099925839` on the one-mode probe
+///       and larger on the three-mode one. Measured independently, `x̂_e` as an
+///       inner ladder gives `‖[H,x̂_e]ψ‖ = 3.237154099925839`, and the
+///       outer-consistent reading `OuterBosonCreate/Annihilate({2:1})` gives
+///       `‖[H,x̂_e]ψ‖ = 2.3308440963283874`; both are nonzero, so this is not a
+///       matter of choosing the right representative of `x̂_e`. The previous
+///       form of this check was `i⟨p|[H,Ω]|p⟩`, which is zero in *every* state
+///       regardless of the commutator (Ω flips ghost number, `H` conserves
+///       it), so the failure was invisible;
+///   (c) the projection is the identity along a ghost-free flow — `Ω` kills
+///       the start, `project_physical` short-circuits on `‖Ωw‖ < tol`, and the
+///       two solves agree because the projector never fires. That is the
+///       projector's own early return, not evidence that the fixing has zero
+///       impact on physical observables.
+///
+/// **Limitation**: BRST closure of the full QG operator under `Ω = x̂_e·c₉` is
+/// NOT established, and the projection-invariance consequence cannot be
+/// inferred from this flow. The NS parallel
+/// (`ns_brst_projection_invariance_physical_flow`) does verify
+/// `‖[H,Ω]ψ‖ < 1e-8` as a norm and is unaffected.
 #[test]
-fn qg3d_full_operator_brst_projection_invariance() {
+fn qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close() {
     use nested_fock_algebra::InnerFermionicState;
     use std::collections::BTreeSet;
 
@@ -1176,18 +1188,33 @@ fn qg3d_full_operator_brst_projection_invariance() {
 
     // (b) BRST-closure [H, Ω] = 0: the derivative-variable position x̂_e is a
     //     constant of the motion (no p_e in H), so the fixing is dynamical.
+    //     Measured as a vector norm, not as `i⟨p|[H,Ω]|p⟩`: Ω carries the ghost
+    //     lowering, H conserves ghost number, so that expectation pairs
+    //     orthogonal sectors and vanishes in every state whatever [H,Ω] does.
     for p in [
         ghost_probe(&[(2, 1)]),
         ghost_probe(&[(2, 1), (0, 1), (1, 1), (3, 1)]),
     ] {
-        let hp = h.apply(&omega.apply(&p));
-        let ph = omega.apply(&h.apply(&p));
-        let mut comm = hp;
-        comm.scale_and_add(&ph, Complex64::new(-1.0, 0.0));
-        let lhs = Complex64::new(0.0, 1.0) * QuantumState::inner_product(&p, &comm);
+        let mut comm = h.apply(&omega.apply(&p));
+        comm.scale_and_add(&omega.apply(&h.apply(&p)), Complex64::new(-1.0, 0.0));
+        eprintln!(
+            "qg brst: |Ωψ|={:e} |HΩψ|={:e} |[H,Ω]ψ|={:e}",
+            omega.apply(&p).norm(),
+            h.apply(&omega.apply(&p)).norm(),
+            comm.norm()
+        );
+        // NOT closed. This block used to assert `i⟨p|[H,Ω]|p⟩ = 0`, which is
+        // zero for every state here whatever the commutator does: Ω carries the
+        // ghost lowering and H conserves ghost number, so the expectation pairs
+        // orthogonal sectors. Measured as a norm the commutator does not
+        // vanish, so the documented "x̂_e is a constant of the motion / the full
+        // operator is BRST-closed" premise does not hold for this builder. The
+        // larger probe uses mode 0 as well, hence its larger norm.
         assert!(
-            lhs.norm() < 1e-9,
-            "[H, Ω] must vanish (BRST-closed full operator), got {lhs:?}"
+            comm.norm() > 1.0,
+            "[H, Ω] is expected NOT to vanish on the full QG operator; a zero here \
+             means the builder changed and the recorded finding is stale (got {:e})",
+            comm.norm()
         );
     }
 
@@ -1232,8 +1259,8 @@ fn qg3d_full_operator_brst_projection_invariance() {
         );
     }
     // The BRST-projected and the bare flows give the SAME derivative-variable
-    // value ⟨x̂_e⟩(t) after unitary evolution (physical observables unchanged by
-    // the fixing) — mirrors `qym_brst_projection_identity_on_physical_flow`.
+    // value ⟨x̂_e⟩(t) — because the projector is the identity on this flow
+    // (Ω|base> = 0), not because the fixing has no physical effect.
     let x_op = Hamiltonian {
         terms: vec![
             (
@@ -1258,14 +1285,9 @@ fn qg3d_full_operator_brst_projection_invariance() {
         (xa - xb).abs() < 1e-7,
         "⟨x̂_e⟩ must be unchanged by BRST projection: bare {xa} vs projected {xb}"
     );
-    assert!(
-        (xa - x0).abs() < 1e-7,
-        "⟨x̂_e⟩ is a constant of the motion (no p_e in H): {x0} → {xa}"
-    );
-
     eprintln!(
-        "qg3d_full_operator_brst_projection_invariance: Ω² = 0 (nilpotent) on ghost probes; \
-         [H, Ω] = 0 (BRST-closed); bare and BRST-projected flows share the \
-         resolved spectrum and ⟨x̂_e⟩ = {xb} (physical observables unchanged)",
+        "qg3d: Ω² = 0 (nilpotent) on ghost probes; [H, Ω] ≠ 0 (not closed); \
+         bare and BRST-projected flows share the resolved spectrum and \
+         ⟨x̂_e⟩: {x0} → {xa} (projector inert, not evidence of a physical fix)",
     );
 }
