@@ -342,6 +342,29 @@ experiment is a shape question, not a width question: a curvature shape evaluate
 curvature means something, or a shape pooled robustly across replicates, against isotropic
 `s = 0` at ranks 4 and 8. `--pilot-scale` stays in the example as a verified null.
 
+R2i ran the pooled half of that: `--pilot-ebayes` fits a one-way random-effects model to
+three replicated pilots' log widths and keeps the fraction `τ²/(τ² + sd_i²/n)` of each
+coordinate's deviation, with an unweighted three-pilot pool as the control. The pooled shape
+loses at every rank, seed and strength — ESS `s = 0 / 0.5 / 1` is 383/362/17 at rank 4,
+154/64/8 at rank 8 and 20/16/7 at rank 8/seed 7, monotone in the amount of shape retained
+with the optimum at none — and the weighting is not what fails: weighted and unweighted
+pools land at the single-pilot ESS (17 vs 16 vs 15, 8 vs 6 vs 6), so the replicates agree
+about the shape and the shape is *wrong* rather than noisy. That closes the pilot arm: every
+pilot-derived shape measured loses to discarding it, and the only untested shape source is
+a non-pilot one — curvature at a point where `∇ℓ ≠ 0`, so the Hessian describes local
+stiffness instead of a stationary bowl. Until that is run, "shrink the pilot" means `s = 0`.
+
+R2j then closed the rank-16 question that R2g and R2h had both parked: before running
+another rank-16 arm, does the fixed (proposal-independent) arm become measurable with more
+chains and more steps? It does not. ESS(Φ) per 1 000 kept draws is 0.45 / 0.16 / 0.56 / 0.48
+across 11 200–49 600 draws and 4–8 chains — an integrated autocorrelation time of about
+2 000 draws at every budget — and the same kernel at two seeds gives `R̂` 1.302 vs 1.906,
+BMA accuracy 17.58 % vs 23.44 % and NLL 2.1226 vs 2.0576. That same-kernel seed spread
+exceeds the BMA step (3.5 points) that R2g's rank-16 shrinkage ladder was asked to resolve,
+so the ladder is withdrawn as a measurement, "no claim above rank 8" stands, and a rank-16
+result would need a target-level change (a shorter-autocorrelation functional, an exact
+reference, or a less stiff subspace), not more draws or a better estimator.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

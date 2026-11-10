@@ -3084,6 +3084,32 @@ for c in 1 4; do   # the rank-8 seed-7 pair (no s = 0 cell existed at that seed)
     --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
     --pilot-shrink 0 --pilot-scale $c --seed 7
 done
+# R2i: `--pilot-ebayes` = per-coordinate reliability weights on the pooled shape
+# (needs `--pilot-reps >= 2`); `--pilot-shrink` still multiplies on top:
+for r in 4 8; do for s in 1 0.5; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot 300 --pilot-reps 3 --pilot-ebayes --pilot-shrink $s
+done; done
+for s in 1 0.5; do   # the rank-8 seed-7 pair
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot 300 --pilot-reps 3 --pilot-ebayes --pilot-shrink $s --seed 7
+done
+for r in 4 8; do   # control: the same 3 pilots pooled with no reliability weights
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot 300 --pilot-reps 3 --pilot-shrink 1
+done
+# R2j: is rank 16 resolvable?  Fixed arm only — no pilot, no estimator:
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 16000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed      # ~20 min
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 8000 \
+  --burn 500 --thin 5 --chains 8 --basis informed --proposal fixed      # ~23 min
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 8000 \
+  --burn 500 --thin 5 --chains 8 --basis informed --proposal fixed --seed 7  # ~23 min
+# the six shape-estimator tests (fast, no sampling):
+cargo test -p pcnl --example subspace_adaptation
 # the `--pilot-reps 1` / `--pilot-scale 1` bitwise check (old vs new binary, same reduced config):
 cargo run --release -p pcnl --example subspace_adaptation -- --shapes quick --ranks 2 \
   --steps 600 --burn 100 --thin 5 --chains 2 --basis informed --proposal fixed,pilot --seed 3
@@ -3923,6 +3949,149 @@ the next question: not "how wide?" but "whose shape?" — a shape estimated at a
 the curvature means something (the anchor `∇ℓ ≈ 0` is the reason the curvature diagonal
 already failed at rank 1), or a robust shape pooled across replicates, compared against
 isotropic `s = 0` at the two ranks where that baseline is above the floor (4 and 8).
+
+### R2i — a pooled shape does not beat isotropic, and the shape is reproducible, not noisy (same day)
+
+R2h left one question: if the pilot's contribution is the width *shape*, whose shape should it
+be?  A single 300-step pilot's shape is estimated from a short walk, so the natural fix is to
+pool several pilots — and to pool them *smartly*, shrinking each coordinate by how well the
+replicates agree, so a shape the pilot reproduces survives and a shape it does not is pulled
+back to isotropic.  `--pilot-ebayes` (with `--pilot-reps n ≥ 2`) is that estimator: it fits a
+one-way random-effects model to the replicated log widths, estimates the between-coordinate
+shape variance `τ² = var(d) − mean(sd_i²/n)`, and keeps the fraction `τ²/(τ² + sd_i²/n)` of
+coordinate `i`'s deviation `d_i` (the global `--pilot-shrink s` still multiplies on top).
+Six unit tests pin what is algebraically checkable — isotropic at `s = 0`, the plain estimate
+when the replicates agree exactly, *more* keeping for an agreeing coordinate than a
+disagreeing one, fallback below two replicates, shape invariance under a uniform scale, and
+the identity defaults.
+
+Eight cells, 106 min, all `EXIT 0`.  Controls at the same pilot budget: the pooled
+geometric mean of the same three pilots *without* the weights (`pool3`), and the previously
+measured single-pilot and isotropic cells at the same seed.
+
+| rank | seed | shape source | `s` | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | Brier | NLL | `m` | evals |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 20261020 | none (isotropic) | 0 | 46.5 % | **383** | 1.010 | 12.89 % | 0.9922 | 2.8662 | 0.33 | 17 204 |
+| 4 | 20261020 | 3 pooled, EB weights | 0.5 | 49.0 % | 362 | 1.020 | 12.89 % | 0.9925 | 2.8671 | 0.28 | 19 612 |
+| 4 | 20261020 | 3 pooled, no weights | 1 | 52.7 % | 16 | 1.258 | 12.89 % | 0.9918 | 2.8661 | 0.17 | 19 612 |
+| 4 | 20261020 | 3 pooled, EB weights | 1 | 52.7 % | 17 | 1.252 | 12.89 % | 0.9918 | 2.8660 | 0.17 | 19 612 |
+| 4 | 20261020 | 1 pilot (R2e) | 1 | 50.4 % | 15 | 1.353 | 12.89 % | 0.9917 | 2.8658 | 0.17 | 17 204 |
+| 8 | 20261020 | none (isotropic) | 0 | 48.7 % | **154** | 1.010 | 14.84 % | 0.9780 | 2.8105 | 0.34 | 17 204 |
+| 8 | 20261020 | 3 pooled, EB weights | 0.5 | 50.1 % | 64 | 1.062 | 14.84 % | 0.9774 | 2.8143 | 0.29 | 19 612 |
+| 8 | 20261020 | 3 pooled, EB weights | 1 | 50.1 % | 8 | 1.404 | 14.84 % | 0.9798 | 2.8235 | 0.21 | 19 612 |
+| 8 | 20261020 | 3 pooled, no weights | 1 | 51.0 % | 6 | 1.625 | 14.06 % | 0.9802 | 2.8256 | 0.19 | 19 612 |
+| 8 | 20261020 | 1 pilot (R2e) | 1 | 48.1 % | 6 | 1.931 | 14.06 % | 0.9768 | 2.7792 | 0.20 | 17 204 |
+| 8 | 7 | none (isotropic) | 0 | 35.2 % | **20** | 1.121 | 21.88 % | 0.8699 | 2.4862 | 0.30 | 17 204 |
+| 8 | 7 | 3 pooled, EB weights | 0.5 | 40.6 % | 16 | 1.139 | 23.05 % | 0.8700 | 2.4874 | 0.25 | 19 612 |
+| 8 | 7 | 3 pooled, EB weights | 1 | 43.1 % | 7 | 1.398 | 22.27 % | 0.8733 | 2.5004 | 0.19 | 19 612 |
+
+**Result 39 — no pooled shape beats isotropic at any rank, seed or strength.**  ESS at
+`s = 0 / 0.5 / 1` is 383 / 362 / 17 at rank 4, 154 / 64 / 8 at rank 8 and 20 / 16 / 7 at
+rank 8 seed 7: monotone in the amount of shape retained, and the optimum is the end that
+retains none.  Partial retention recovers most of the ESS, which is what `s = 0.5` already
+did, but it never *exceeds* the isotropic cell, and the three seed-7/seed-20261020 pairs
+agree on the sign.  The predictives do not separate the arms either (BMA accuracy identical
+within a seed; NLL 2.8660 vs 2.8662 at rank 4, 2.8235 vs 2.8105 at rank 8), so this is a
+mixing result, not an accuracy result — consistent with R2e/R2f's reading that the width
+scaling is about how the proposal moves, and the readout does what it does either way.
+
+**Result 40 — the reliability weighting is not what fails: the shape itself is
+reproducible and wrong.**  At the same 900-eval pilot budget, the weighted and unweighted
+pooled shapes are indistinguishable (17 vs 16 at rank 4, 8 vs 6 at rank 8, and both match
+the *single*-pilot 15/6 within this estimator's noise), while the coarse `s = 0.5` pull —
+which shrinks every coordinate, agreeing or not — recovers 362 and 64.  So per-coordinate
+agreement weights have little to act on: the replicates agree about the shape to within a
+fraction of what separates it from isotropic, i.e. the width pattern is a **stable property
+of the pilot's walk**, not sampling noise.  That also explains R2g's null for replicate
+averaging in the same terms: averaging and weighting both reduce variance in a quantity
+whose problem is not variance.  Since the pooled shape is reproducible and still loses to a
+single isotropic width by 5–20×, the pilot's per-coordinate spread is describing the geometry
+of the region the pilot visited, which is not the geometry the target's mixing needs — the
+same diagnosis R2 gave for the anchor curvature diagonal, one estimator over.
+
+**Result 41 — what this closes.**  The pilot arm's answer is now complete on its own terms:
+shape *is* what the pilot contributes (R2h), and every pilot-derived shape measured — raw,
+shrunk at 0.5, averaged over 2 or 3 replicates, reliability-weighted — loses to discarding
+it.  The recommendation is `s = 0` wherever it has been measured above the floor (0.5 at
+rank 4 is the one exception, from R2e, and it is a 1.04× effect: 399 vs 383), with
+`--pilot-reps` and `--pilot-scale` at their defaults and `--pilot-ebayes` unused.  The one
+untested shape source is a **non-pilot** one: curvature at a point where `∇ℓ ≠ 0` makes the
+Hessian describe local stiffness rather than a stationary bowl.  That is a different
+experiment (it needs a point, not a longer walk), and until it is run, "shrink the pilot"
+means `s = 0`.
+
+### R2j — rank 16 is not resolvable at any budget tried, so no rank-16 comparison is a measurement
+
+R2g's rank-16 ladder and R2h's rank-16 rows all sat at ESS ≤ 9 with `R̂` 1.32–1.49, which is
+why neither was allowed to support a claim.  Before spending more rank-16 cells on
+estimators, this asks whether the *rank* is measurable at all: the fixed arm uses one `β`
+for every coordinate and does not depend on any pilot, so its diagnostics are a property of
+the target and the harness, not of an estimator.  Three cells, 47 min, `EXIT 0`; the 4-chain
+baseline is R2g's own rank-16 fixed cell.
+
+| chains | steps/chain | kept draws | ESS(Φ) | `R̂(Φ)` | BMA acc | NLL | MCSE(NLL) | seed |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 4 000 | 11 200 | 5 | 1.828 | 16.02 % | 2.3154 | 0.0718 | 20261020 |
+| 4 | 16 000 | 49 600 | 8 | 1.440 | 18.75 % | 2.2555 | 0.0439 | 20261020 |
+| 8 | 8 000 | 24 800 | 14 | 1.302 | 17.58 % | 2.1226 | 0.0405 | 20261020 |
+| 8 | 8 000 | 24 800 | 12 | 1.906 | 23.44 % | 2.0576 | 0.0433 | 7 |
+
+**Result 42 — the budget does not buy resolution; the target's autocorrelation time does.**
+ESS(Φ) per 1 000 kept draws is 0.45, 0.16, 0.56 (and 0.48 at seed 7) — flat to within the
+estimator's own instability, i.e. an integrated autocorrelation time of roughly 2 000 draws
+*at every budget*.  Quadrupling the length from 11 200 to 49 600 draws moves ESS 5 → 8 and
+`R̂` 1.828 → 1.440, and eight chains at 24 800 draws give ESS 14 / `R̂` 1.302.  In other
+words the limit is neither chain count (8 chains barely beat 4 at comparable length) nor
+length in a range anyone will run: reaching `R̂ < 1.05` from `R̂ − 1 ≈ 0.3` at this
+`ESS` needs roughly another two orders of magnitude of draws, i.e. hours per cell for a
+dial that is already a verified null at ranks 4 and 8.
+
+**Result 43 — the *irreproducibility* is larger than the effects the ladder was measuring.**
+The same fixed kernel at the same 8 × 3 100 budget, differing only in seed, gives `R̂` 1.302
+vs 1.906, BMA accuracy 17.58 % vs 23.44 % (5.9 points) and NLL 2.1226 vs 2.0576 (0.065, about
+1.6 pooled MCSEs).  R2g's rank-16 shrinkage ladder separates BMA accuracy by 3.5 points
+(16.02 → 19.53 %) and NLL by 0.148 — so the BMA step is *smaller than the same-kernel seed
+spread*, and `R̂` ordering across the ladder (1.828 / 2.490 / 1.545 / 1.440) is the same size
+as the seed spread (1.302 / 1.906).  Result 34's "rank 16 does not hurt" and "marginally
+improves `R̂`" are therefore withdrawn as measurements: what rank 16 supports is only that
+the chain is slow there, which is a statement about the `16`-dimensional subspace geometry
+(and the same diagnosis as the ambient run's radial–angular split), not about the estimator.
+
+**Result 44 — what this rules out, and the one rank-16 experiment that would survive.**
+Any further rank-16 arm comparison at this budget is uninterpretable, so the ladder is closed
+there, and the recommendation table carries "no claim above rank 8" rather than a softened
+version of the earlier one.  A rank-16 result would need a target-level change, not more
+draws: a functional with a shorter autocorrelation than Φ (the loss is already much
+better-behaved in the ambient runs), an exact or independent sampler at rank 16 for a
+ground truth, or a smaller `λ`/larger subspace where the geometry is less stiff.  None of
+these is an estimator question, which is why this cycle stops asking them of the pilot.
+
+### Recommendation (state after R2j: what to set, and how well each row is supported)
+
+The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
+bearing" means the row is a measurement that changed a decision; "null" means the dial was
+implemented, verified and found not to matter, so it should stay off rather than be tuned.
+
+| Question | Setting | Evidence | Status |
+|---|---|---|---|
+| `--pilot-shrink s`, rank 4 | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | load-bearing |
+| `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
+| `--pilot-shrink s`, rank ≥ 16 | no claim | R2g ladder is monotone but every cell is at the ESS floor | **withdrawn** |
+| `--pilot-reps n` | `1` (off) | R2g: 14/128/140 at rank 4, 5/7/6 at rank 8 — no fix where it matters | null |
+| `--pilot-scale c` | `1` (off) | R2h: warm-up absorbs the scale (`m` halves at `c = 2`), ESS/predictives unchanged; `c = 4` leaves warm-up off-target | null |
+| `--pilot-ebayes`, or any pooled shape | off (`s` alone) | R2i: weighted and unweighted pooled shapes both land at the single-pilot ESS (17/16 vs 15, 8/6 vs 6), below isotropic at three rank/seed pairs | null |
+| pilot shape vs no shape | no shape: `s = 0` | R2h/R2i: every pilot-derived shape loses 5–20× in ESS; the shape is reproducible across replicates, so this is not a noise problem | load-bearing |
+| which proposal at ranks 4–8 | `pilot` with the `s` above, not `curv` | R2: curvature at a stationary anchor gave 0.1 % acceptance and ESS 7 | load-bearing |
+| any rank-16 shrinkage claim | none: the rank is not resolvable, and the ladder is withdrawn | R2j: the fixed (proposal-independent) arm has ESS 5–14 and `R̂` 1.30–1.91 even at 8 chains × 8 000; the same kernel at two seeds moves BMA by 5.9 points, more than the ladder's 3.5 | **not resolvable** |
+
+What is *testable* rather than measured is pinned by `cargo test -p pcnl --example
+subspace_adaptation`: the shipped defaults are the identity path (`--pilot-reps 1`,
+`--pilot-shrink 1`, `--pilot-scale 1`, no `--pilot-ebayes`), the pooled-shape estimator is
+isotropic at `s = 0`, it reproduces the plain estimate when the replicates agree, it shrinks
+disagreeing coordinates harder than agreeing ones, it falls back to the single-pilot
+estimator below two replicates, and a uniform scale provably leaves the width *shape*
+unchanged — the algebra that makes the R2h cell a null.  The ESS/NLL rows above are
+measurements, not test assertions, and are regenerable from the commands below.
 
 ## Reproduce / verify
 

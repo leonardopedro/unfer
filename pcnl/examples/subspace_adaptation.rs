@@ -53,7 +53,11 @@
 //!   geometric mean of their widths, which only reduces the estimator's spread:
 //!   `n = 1` is the estimator above, bitwise.  `--pilot-scale c` multiplies
 //!   the widths by `c` after shrinkage, testing the *bias* half of the short
-//!   pilot's error (the pilot cannot report a spread it never walked).
+//!   pilot's error (the pilot cannot report a spread it never walked); it is a
+//!   verified null, because the warm-up multiplier absorbs a uniform scale.
+//!   `--pilot-ebayes` (with `--pilot-reps n ≥ 2`) shrinks *per coordinate* by
+//!   how well the replicates agree (`τ²/(τ² + sd²/n)`), so a shape the pilot
+//!   reproduces survives and a shape it does not is pulled to isotropic.
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -249,6 +253,12 @@ struct Cfg {
     /// biased low; `c > 1` tests whether that downward bias, rather than the
     /// per-coordinate spread, is what costs the raw proposal its mixing.
     pilot_scale: f64,
+    /// Per-coordinate empirical-Bayes shrinkage of the replicate shape: each
+    /// coordinate's log-width deviation is shrunk by how well the replicates
+    /// agree on it (`τ²/(τ² + sd²/n)`), instead of the same `s` everywhere.
+    /// Needs `--pilot-reps ≥ 2`; the width *size* it produces is absorbed by the
+    /// warm-up multiplier anyway (R2h), so this only changes the shape.
+    pilot_eb: bool,
     /// Targets to sample; `full` adds the `pi_P` split chain (two stages per
     /// step, so twice the potential evaluations).
     targets: Vec<TargetKind>,
@@ -284,6 +294,7 @@ impl Default for Cfg {
             pilot_shrink: 1.0,
             pilot_reps: 1,
             pilot_scale: 1.0,
+            pilot_eb: false,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -344,6 +355,9 @@ impl Cfg {
         }
         if let Some(v) = flag("--pilot-scale").and_then(|v| v.parse().ok()) {
             cfg.pilot_scale = v;
+        }
+        if args.iter().any(|a| a == "--pilot-ebayes") {
+            cfg.pilot_eb = true;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -510,10 +524,6 @@ fn column_sd(kept: &[Vec<f64>]) -> Vec<f64> {
         .collect()
 }
 
-/// Per-coordinate geometric mean of replicate width vectors.  Widths are scale
-/// parameters, so independent estimates combine in log space; with one
-/// replicate this returns that replicate untouched, keeping `--pilot-reps 1`
-/// bitwise identical to the single-pilot estimator.
 /// Uniform inflation of a width vector.  `c == 1` returns the vector untouched,
 /// which keeps every existing table reproducible.
 fn scale_widths(widths: &[f64], c: f64) -> Vec<f64> {
@@ -523,6 +533,10 @@ fn scale_widths(widths: &[f64], c: f64) -> Vec<f64> {
     widths.iter().map(|w| w * c).collect()
 }
 
+/// Per-coordinate geometric mean of replicate width vectors.  Widths are scale
+/// parameters, so independent estimates combine in log space; with one
+/// replicate this returns that replicate untouched, keeping `--pilot-reps 1`
+/// bitwise identical to the single-pilot estimator.
 fn mean_log_widths(reps: &[Vec<f64>]) -> Vec<f64> {
     if reps.len() == 1 {
         return reps[0].clone();
@@ -530,6 +544,59 @@ fn mean_log_widths(reps: &[Vec<f64>]) -> Vec<f64> {
     let n = reps.len() as f64;
     (0..reps[0].len())
         .map(|i| (reps.iter().map(|r| r[i].ln()).sum::<f64>() / n).exp())
+        .collect()
+}
+
+/// Pooled width **shape** with per-coordinate reliability weights.
+///
+/// The replicates give, per coordinate, a mean log width and the variance
+/// `v_i/n` of that mean.  Writing the pooled log widths as `L + d_i` (shape
+/// `d_i`, centred on the geometric mean `L`), the question this estimator asks
+/// is which of those `d_i` are real: a coordinate the replicates agree on has a
+/// small `v_i/n` and keeps its deviation; one they disagree on is pulled back
+/// to the isotropic value.  That is a one-way random-effects model, so the
+/// between-coordinate shape variance `τ²` is estimated by `var(d) − mean(v_i/n)`
+/// (floored at 0), and each coordinate keeps the fraction `τ²/(τ² + v_i/n)` of
+/// its deviation — full weight when the pilot reproduces it, none when it is
+/// noise.  The global `--pilot-shrink s` still multiplies on top, so `s = 0` is
+/// isotropic and `s = 1` is the unshrunk pooled shape.
+///
+/// With `τ² = 0` (all the shape is disagreement) this returns the isotropic
+/// vector, which is what makes it comparable with `s = 0` on the same cells.
+fn ebayes_widths(reps: &[Vec<f64>], shrink: f64) -> Vec<f64> {
+    let n = reps.len() as f64;
+    let dim = reps[0].len();
+    if n < 2.0 || dim < 2 {
+        return mean_log_widths(reps);
+    }
+    let logs: Vec<Vec<f64>> = reps
+        .iter()
+        .map(|w| w.iter().map(|x| x.ln()).collect())
+        .collect();
+    let mean: Vec<f64> = (0..dim)
+        .map(|i| logs.iter().map(|l| l[i]).sum::<f64>() / n)
+        .collect();
+    // Variance of each coordinate's pooled mean, `v_i / n`.
+    let noise: Vec<f64> = (0..dim)
+        .map(|i| {
+            let v = logs.iter().map(|l| (l[i] - mean[i]).powi(2)).sum::<f64>() / (n - 1.0);
+            v / n
+        })
+        .collect();
+    let level = mean.iter().sum::<f64>() / dim as f64;
+    let d: Vec<f64> = mean.iter().map(|m| m - level).collect();
+    let shape_var = d.iter().map(|x| x * x).sum::<f64>() / (dim as f64 - 1.0);
+    let noise_mean = noise.iter().sum::<f64>() / dim as f64;
+    let tau2 = (shape_var - noise_mean).max(0.0);
+    (0..dim)
+        .map(|i| {
+            let keep = if tau2 > 0.0 {
+                tau2 / (tau2 + noise[i])
+            } else {
+                0.0
+            };
+            (level + shrink * keep * d[i]).exp()
+        })
         .collect()
 }
 
@@ -688,10 +755,23 @@ fn run_cell(
                 s.target_accept = cfg.adapt_target;
                 Scale::Rot(s)
             } else {
-                let mut s = DiagScale::from_widths_shrunk(
-                    &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
-                    cfg.pilot_shrink,
-                );
+                // The empirical-Bayes shape is already shrunk per coordinate,
+                // so it goes through `from_widths_shrunk` with `s = 1`; the
+                // plain path keeps its two dials exactly as before.
+                let mut s = if cfg.pilot_eb {
+                    DiagScale::from_widths_shrunk(
+                        &scale_widths(
+                            &ebayes_widths(&replicate_widths, cfg.pilot_shrink),
+                            cfg.pilot_scale,
+                        ),
+                        1.0,
+                    )
+                } else {
+                    DiagScale::from_widths_shrunk(
+                        &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
+                        cfg.pilot_shrink,
+                    )
+                };
                 s.target_accept = cfg.adapt_target;
                 Scale::Diag(s)
             });
@@ -871,10 +951,20 @@ fn run_full_cell(
                 }
                 replicate_widths.push(column_sd(&columns));
             }
-            let mut s = DiagScale::from_widths_shrunk(
-                &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
-                cfg.pilot_shrink,
-            );
+            let mut s = if cfg.pilot_eb {
+                DiagScale::from_widths_shrunk(
+                    &scale_widths(
+                        &ebayes_widths(&replicate_widths, cfg.pilot_shrink),
+                        cfg.pilot_scale,
+                    ),
+                    1.0,
+                )
+            } else {
+                DiagScale::from_widths_shrunk(
+                    &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
+                    cfg.pilot_shrink,
+                )
+            };
             s.target_accept = cfg.adapt_target;
             scale = Some(Scale::Diag(s));
         }
@@ -1010,6 +1100,14 @@ fn main() {
             "pilot widths: log-spread shrunk toward the geometric mean by s = {:.2} \
              (1 = raw pilot, 0 = isotropic at the pilot's geometric mean)",
             cfg.pilot_shrink
+        );
+    }
+    if cfg.pilot_eb {
+        println!(
+            "pilot widths: empirical-Bayes shape from {} replicates — each coordinate keeps \
+             τ²/(τ² + sd²/n) of its log-width deviation (s = {:.2} on top); fewer than two \
+             replicates falls back to the plain estimator",
+            cfg.pilot_reps, cfg.pilot_shrink
         );
     }
     if cfg.pilot_scale != 1.0 {
@@ -1189,4 +1287,91 @@ fn main() {
          its step count."
     );
     let _ = lines;
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// Replicates that agree exactly carry no measurement noise, so every
+    /// coordinate keeps its full deviation and the pooled shape is the shape.
+    #[test]
+    fn agreeing_replicates_reproduce_the_shape() {
+        let w = vec![1.0, 2.0, 3.0, 4.0];
+        let reps = vec![w.clone(), w.clone(), w.clone()];
+        let got = ebayes_widths(&reps, 1.0);
+        let plain = mean_log_widths(&reps);
+        for (a, b) in got.iter().zip(plain.iter()) {
+            assert!((a - b).abs() <= 1e-12 * b.abs(), "{a} vs {b}");
+        }
+    }
+
+    /// With `s = 0` the estimator is isotropic whatever the replicates say, at
+    /// the pooled geometric mean — the exact baseline it is compared against.
+    #[test]
+    fn zero_shrink_is_isotropic() {
+        let reps = vec![vec![1.0, 4.0, 2.0], vec![3.0, 1.0, 5.0]];
+        let got = ebayes_widths(&reps, 0.0);
+        let mean = mean_log_widths(&reps);
+        let level = (mean[0] * mean[1] * mean[2]).powf(1.0 / 3.0);
+        for g in &got {
+            assert!((g - level).abs() <= 1e-12 * level, "{g} vs {level}");
+        }
+    }
+
+    /// The point of the estimator: a coordinate the replicates agree on keeps
+    /// its deviation, one they disagree on is pulled in, and a pooled shape
+    /// with real between-coordinate spread is shrunk less than `s` alone would.
+    #[test]
+    fn disagreement_is_shrunk_not_agreement() {
+        // Coordinate 3 is 1.0 in one replicate and 4.0 in the other; the rest
+        // agree to within 1 %.
+        let reps = vec![vec![1.0, 2.0, 3.0, 1.0], vec![1.01, 2.02, 3.03, 4.0]];
+        let mean = mean_log_widths(&reps);
+        let got = ebayes_widths(&reps, 1.0);
+        let level = (mean[0] * mean[1] * mean[2] * mean[3]).powf(0.25);
+        let keep = |i: usize| (got[i] / level).ln() / (mean[i] / level).ln();
+        assert!(keep(0) > 0.9, "agreeing coordinate kept only {}", keep(0));
+        assert!(keep(3) < 0.5, "disagreeing coordinate kept {}", keep(3));
+    }
+
+    /// The algebra behind R2h's null: a uniform inflation leaves the *shape*
+    /// `w_i / geomean(w)` unchanged, so any kernel that fixes its own overall
+    /// scale cannot see `c`.  This is what makes `--pilot-scale` a dial with no
+    /// shape content; the measurement (the multiplier halves) is in R2h.
+    #[test]
+    fn uniform_scale_does_not_change_the_shape() {
+        let w = vec![0.5, 1.0, 2.0, 4.0];
+        let shape = |v: &[f64]| {
+            let level = v.iter().map(|x| x.ln()).sum::<f64>() / v.len() as f64;
+            v.iter().map(|x| x.ln() - level).collect::<Vec<f64>>()
+        };
+        let base = shape(&w);
+        for c in [0.5, 2.0, 4.0] {
+            for (a, b) in shape(&scale_widths(&w, c)).iter().zip(base.iter()) {
+                assert!((a - b).abs() < 1e-12, "c = {c} changed the shape");
+            }
+        }
+    }
+
+    /// The shipped defaults are the identity path, so the recommendation table's
+    /// "off" rows and every historical table are the same code path.
+    #[test]
+    fn recommended_defaults_are_the_identity() {
+        let cfg = Cfg::default();
+        assert_eq!(cfg.pilot_reps, 1);
+        assert_eq!(cfg.pilot_shrink, 1.0);
+        assert_eq!(cfg.pilot_scale, 1.0);
+        assert!(!cfg.pilot_eb);
+    }
+
+    /// Fewer than two replicates has no between-replicate variance to estimate,
+    /// so the flag must fall back to the single-pilot estimator rather than
+    /// silently producing an isotropic vector.
+    #[test]
+    fn one_replicate_falls_back_to_the_plain_estimator() {
+        let w = vec![0.5, 1.5, 2.5];
+        let reps = vec![w.clone()];
+        assert_eq!(ebayes_widths(&reps, 1.0), w);
+    }
 }
