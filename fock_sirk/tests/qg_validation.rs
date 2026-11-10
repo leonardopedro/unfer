@@ -1099,169 +1099,164 @@ fn qg3d_full_operator_sirk() {
 }
 
 /// QG-3.2 BRST gauge fixing on the FULL 3D operator (`qg3d_full_hamiltonian`,
-/// the QG-3.1 object of record, cross terms present) — **and what it actually
-/// measures**.
+/// the QG-3.1 object of record, cross terms present).
 ///
-/// The documented premise is that the promoted derivative-variable sector `e`
-/// (mode 2 — the 64 `idxDE` derivative coordinates) enters `H` only through
-/// `x̂_e`, never `p_e`, so `x̂_e` is a constant of the motion and
-/// `Ω = x̂_e · c` is BRST-closed. **That premise does not hold for this
-/// builder.** The charge is nilpotent, but `[H, Ω]` does not vanish:
+/// **The promoted derivative variable has to be second-quantized.** `X` is the
+/// one-particle position of the `e` coordinate (mode 2 — the promoted
+/// derivative variables) enclosed *the same way the builder encloses `H`*:
 ///
-///   (a) `Ω² = 0` on ghost-carrying probes — genuine (it follows from
-///       `c² = 0` and `[x̂_e, c] = 0`), and asserted with `‖Ωψ‖ ≠ 0` so the
-///       probe carries content;
-///   (b) `[H, Ω] ≠ 0` — `‖[H,Ω]ψ‖ = 3.237154099925839` on the one-mode probe
-///       and larger on the three-mode one. Measured independently, `x̂_e` as an
-///       inner ladder gives `‖[H,x̂_e]ψ‖ = 3.237154099925839`, and the
-///       outer-consistent reading `OuterBosonCreate/Annihilate({2:1})` gives
-///       `‖[H,x̂_e]ψ‖ = 2.3308440963283874`; both are nonzero, so this is not a
-///       matter of choosing the right representative of `x̂_e`. The previous
-///       form of this check was `i⟨p|[H,Ω]|p⟩`, which is zero in *every* state
-///       regardless of the commutator (Ω flips ghost number, `H` conserves
-///       it), so the failure was invisible;
-///   (c) the projection is the identity along a ghost-free flow — `Ω` kills
-///       the start, `project_physical` short-circuits on `‖Ωw‖ < tol`, and the
-///       two solves agree because the projector never fires. That is the
-///       projector's own early return, not evidence that the fixing has zero
-///       impact on physical observables.
+/// ```text
+///   H = Σ h[i][j] C†(e_i) A(e_j),    X = Σ x[ie][je] C†(e_i) A(e_j).
+/// ```
 ///
-/// **Limitation**: BRST closure of the full QG operator under `Ω = x̂_e·c₉` is
-/// NOT established, and the projection-invariance consequence cannot be
-/// inferred from this flow. The NS parallel
-/// (`ns_brst_projection_invariance_physical_flow`) does verify
-/// `‖[H,Ω]ψ‖ < 1e-8` as a norm and is unaffected.
+/// `h` depends on the `e` index only through the position matrix `xc` (there is
+/// no `p_e`), so `[h, x_e ⊗ 1] = 0` as one-particle matrices and therefore
+/// `[H, X] = 0` exactly — measured `‖[H,X]ψ‖ = 0.0` on all three probes.
+///
+/// The 2026-11-10 audit declared this operator *not* closed; that reading came
+/// from two representatives that are **not** `X`:
+///
+/// - `InnerBosonCreate(2) + a₂` is a *top-level* inner ladder. It acts on the
+///   empty-universe level of the nesting, not on the `e` coordinate inside each
+///   outer sector: `‖[H,·]ψ‖ = 3.237154099925839`, `3.2945662334618`,
+///   `9.633924433998846` on the three probes.
+/// - a single outer ladder pair `C†({2:1})A(vac) + h.c.` reproduces only the
+///   `(0,1)` matrix element of `X`: `1.37286766478055` on the one-mode probe,
+///   and `0` on probes where that one step cannot change the `e`-occupation.
+///
+/// With `Ω = X·c₉`: `Ω² = 0`, `‖Ωψ‖ = √(3/2) ≠ 0` and `[H, Ω] = 0`, so the
+/// charge is nilpotent, closed and non-trivial. The orthogonal projector then
+/// genuinely fires: on `0.6·|physical⟩ + 0.8·|ghost⟩` it returns exactly
+/// `0.6·|physical⟩` with `‖Ω(Pw)‖ = 0`, in one CG iteration on the
+/// normal-equation solve `QQ†z = Qw` (well conditioned for this charge — see
+/// `fock_sirk::brst` for the conditioning discussion).
 #[test]
-fn qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close() {
+fn qg3d_full_operator_is_brst_closed_under_the_promoted_x_e() {
+    use fock_sirk::brst::project_physical;
     use nested_fock_algebra::InnerFermionicState;
     use std::collections::BTreeSet;
 
-    let h = qg3d_full_hamiltonian(3);
-    // Ω = x̂_e · c₉ with x̂_e = a†₂ + a₂ (mode 2 = e) and c₉ a fermion ghost.
-    let omega = Hamiltonian {
-        terms: vec![
-            (
-                Complex64::new(1.0, 0.0),
-                vec![
-                    Operator::InnerBosonCreate(2),
-                    Operator::InnerFermionAnnihilate(9),
-                ],
-            ),
-            (
-                Complex64::new(1.0, 0.0),
-                vec![
-                    Operator::InnerBosonAnnihilate(2),
-                    Operator::InnerFermionAnnihilate(9),
-                ],
-            ),
-        ],
-    };
+    let l = 3u32;
+    let ls = l as usize;
+    let h = qg3d_full_hamiltonian(l);
 
-    // A ghost-carrying probe: derivative-variable content (mode 2) plus the
-    // ghost c₉, so Ω|ψ⟩ ≠ 0.
-    let ghost_probe = |occ: &[(u32, u32)]| -> QuantumState {
-        let mut bos = InnerBosonicState::vacuum();
-        for &(m, n) in occ {
-            bos.modes.insert(m, n);
-        }
-        QuantumState::vacuum()
-            .apply(&Operator::OuterBosonCreate(bos))
-            .apply(&Operator::OuterFermionCreate(InnerFermionicState {
-                modes: BTreeSet::from([9]),
-            }))
-    };
-
-    // (a) Nilpotency Ω² = 0 (first-class derivative-variable constraint).
-    for p in [
-        ghost_probe(&[(2, 1)]),
-        ghost_probe(&[(2, 1), (0, 1)]),
-        ghost_probe(&[(2, 1), (0, 1), (3, 1)]),
-    ] {
-        assert!(omega.apply(&p).norm() > 1e-9, "probe must carry Ω-content");
-        let twice = omega.apply(&omega.apply(&p));
-        assert!(
-            twice.norm() < 1e-9,
-            "Ω² must be nilpotent (Pauli), got {:.3e}",
-            twice.norm()
-        );
-    }
-
-    // (b) BRST-closure [H, Ω] = 0: the derivative-variable position x̂_e is a
-    //     constant of the motion (no p_e in H), so the fixing is dynamical.
-    //     Measured as a vector norm, not as `i⟨p|[H,Ω]|p⟩`: Ω carries the ghost
-    //     lowering, H conserves ghost number, so that expectation pairs
-    //     orthogonal sectors and vanishes in every state whatever [H,Ω] does.
-    for p in [
-        ghost_probe(&[(2, 1)]),
-        ghost_probe(&[(2, 1), (0, 1), (1, 1), (3, 1)]),
-    ] {
-        let mut comm = h.apply(&omega.apply(&p));
-        comm.scale_and_add(&omega.apply(&h.apply(&p)), Complex64::new(-1.0, 0.0));
-        eprintln!(
-            "qg brst: |Ωψ|={:e} |HΩψ|={:e} |[H,Ω]ψ|={:e}",
-            omega.apply(&p).norm(),
-            h.apply(&omega.apply(&p)).norm(),
-            comm.norm()
-        );
-        // NOT closed. This block used to assert `i⟨p|[H,Ω]|p⟩ = 0`, which is
-        // zero for every state here whatever the commutator does: Ω carries the
-        // ghost lowering and H conserves ghost number, so the expectation pairs
-        // orthogonal sectors. Measured as a norm the commutator does not
-        // vanish, so the documented "x̂_e is a constant of the motion / the full
-        // operator is BRST-closed" premise does not hold for this builder. The
-        // larger probe uses mode 0 as well, hence its larger norm.
-        assert!(
-            comm.norm() > 1.0,
-            "[H, Ω] is expected NOT to vanish on the full QG operator; a zero here \
-             means the builder changed and the recorded finding is stale (got {:e})",
-            comm.norm()
-        );
-    }
-
-    // (c) Projection invariance: a physical (ghost-free) superposition in the
-    //     derivative-variable sector — the SIRK solve with the orthogonal
-    //     projection onto ker Ω riding along must give the SAME resolved Ritz
-    //     spectrum and the SAME derivative-variable value as the unprojected
-    //     solve (physical observables unchanged by the fixing).
-    let mut base = QuantumState::vacuum();
-    base = base.apply(&Operator::OuterBosonCreate({
+    // Vacuum modes are omitted, never recorded as `{mode: 0}`.
+    let sector = |occ: &[(u32, u32)]| -> InnerBosonicState {
         let mut s = InnerBosonicState::vacuum();
-        s.modes.insert(2, 1);
+        for &(m, n) in occ {
+            if n > 0 {
+                s.modes.insert(m, n);
+            }
+        }
         s
-    }));
-    base.scale_and_add(
-        &QuantumState::vacuum().apply(&Operator::OuterBosonCreate({
-            let mut s = InnerBosonicState::vacuum();
-            s.modes.insert(0, 1);
-            s
-        })),
-        Complex64::new(0.6, 0.0),
-    );
-    let opts = SirkOpts {
-        prune_eps: 1e-12,
-        max_components: Some(1_000_000),
-        brst_tol: 1e-10,
-        adaptive: false,
-        unit_norm_steps: true,
     };
-    let plain = solve_forward_sirk_with_opts(&h, &base, &shifts(10), &best_device(), None, &opts)
-        .expect("plain solve");
-    let projected =
-        solve_forward_sirk_with_opts(&h, &base, &shifts(10), &best_device(), Some(&omega), &opts)
-            .expect("BRST-projected solve");
-    let a = plain.ritz_values();
-    let b = projected.ritz_values();
-    assert_eq!(a.len(), b.len(), "resolved sets {a:?} vs {b:?}");
-    for (x, y) in a.iter().zip(b.iter()) {
+    let ghost = InnerFermionicState {
+        modes: BTreeSet::from([9]),
+    };
+    let probe = |occ: &[(u32, u32)], with_ghost: bool| -> QuantumState {
+        let mut st = QuantumState::vacuum().apply(&Operator::OuterBosonCreate(sector(occ)));
+        if with_ghost {
+            st = st.apply(&Operator::OuterFermionCreate(ghost.clone()));
+        }
+        st
+    };
+
+    // X = Σ x[ie][je] C†(sector ie) A(sector je) — the promoted e-position.
+    let mut x_terms: Vec<(Complex64, Vec<Operator>)> = Vec::new();
+    for n in 0..ls - 1 {
+        let a = ((n + 1) as f64 / 2.0).sqrt();
+        for (ie, je) in [(n, n + 1), (n + 1, n)] {
+            for ns in 0..ls {
+                for ny in 0..ls {
+                    for nt in 0..ls {
+                        let occ_i = [
+                            (0u32, ns as u32),
+                            (1, ny as u32),
+                            (2, ie as u32),
+                            (3, nt as u32),
+                        ];
+                        let occ_j = [
+                            (0u32, ns as u32),
+                            (1, ny as u32),
+                            (2, je as u32),
+                            (3, nt as u32),
+                        ];
+                        x_terms.push((
+                            Complex64::new(a, 0.0),
+                            vec![
+                                Operator::OuterBosonCreate(sector(&occ_i)),
+                                Operator::OuterBosonAnnihilate(sector(&occ_j)),
+                            ],
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let x = Hamiltonian { terms: x_terms };
+    // Ω = X · c₉; `X` is outer-bosonic and `c₉` inner-fermionic, they commute,
+    // so Ω² = X² c₉² = 0.
+    let omega = Hamiltonian {
+        terms: x
+            .terms
+            .iter()
+            .map(|(c, ops)| {
+                let mut o = ops.clone();
+                o.push(Operator::InnerFermionAnnihilate(9));
+                (*c, o)
+            })
+            .collect(),
+    };
+
+    // A cross-sector superposition as well: the closure is a statement about
+    // the one-particle matrices, so it must hold off the sector-diagonal too.
+    let mut superposition = QuantumState::zero();
+    superposition.scale_and_add(&probe(&[(2, 1)], true), Complex64::new(1.0, 0.0));
+    superposition.scale_and_add(&probe(&[(0, 1), (1, 1)], true), Complex64::new(0.7, 0.0));
+    superposition.scale_and_add(&probe(&[(2, 2), (3, 1)], true), Complex64::new(-0.4, 0.0));
+    let probes = [
+        probe(&[(2, 1)], true),
+        probe(&[(2, 1), (0, 1)], true),
+        probe(&[(2, 1), (0, 1), (1, 1), (3, 1)], true),
+        superposition,
+    ];
+
+    let comm = |op: &Hamiltonian, p: &QuantumState| -> f64 {
+        let mut c = h.apply(&op.apply(p));
+        c.scale_and_add(&op.apply(&h.apply(p)), Complex64::new(-1.0, 0.0));
+        c.norm()
+    };
+
+    for (i, p) in probes.iter().enumerate() {
+        assert!(x.apply(p).norm() > 1e-9, "probe {i} must carry x̂_e content");
+        let cx = comm(&x, p);
         assert!(
-            (x - y).abs() < 1e-7,
-            "plain vs BRST-projected Ritz must coincide: {x} vs {y}"
+            cx < 1e-10,
+            "x̂_e must be a constant of the motion (probe {i}): ‖[H,X]ψ‖ = {cx:e}"
+        );
+        let op = omega.apply(p);
+        assert!(
+            op.norm() > 1e-9,
+            "probe {i} must carry Ω-content: ‖Ωψ‖ = {:e}",
+            op.norm()
+        );
+        let opp = omega.apply(&op);
+        assert!(
+            opp.norm() < 1e-12,
+            "Ω² must vanish (probe {i}): ‖Ω²ψ‖ = {:e}",
+            opp.norm()
+        );
+        let co = comm(&omega, p);
+        assert!(
+            co < 1e-10,
+            "the charge must be BRST-closed (probe {i}): ‖[H,Ω]ψ‖ = {co:e}"
         );
     }
-    // The BRST-projected and the bare flows give the SAME derivative-variable
-    // value ⟨x̂_e⟩(t) — because the projector is the identity on this flow
-    // (Ω|base> = 0), not because the fixing has no physical effect.
-    let x_op = Hamiltonian {
+
+    // The representatives the 2026-11-10 audit used do NOT close; that is what
+    // made the operator look un-fixable. Kept as a recorded measurement so a
+    // builder change that alters it is noticed.
+    let inner_ladder = Hamiltonian {
         terms: vec![
             (
                 Complex64::new(1.0, 0.0),
@@ -1273,21 +1268,47 @@ fn qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close() {
             ),
         ],
     };
-    let x0 = QuantumState::inner_product(&base, &x_op.apply(&base)).re;
-    let ta = fock_sirk::evolve_restarted(&h, &base, 0.25, 2, 10, &best_device(), None, &opts)
-        .expect("bare flow");
-    let tb =
-        fock_sirk::evolve_restarted(&h, &base, 0.25, 2, 10, &best_device(), Some(&omega), &opts)
-            .expect("BRST-projected flow");
-    let xa = QuantumState::inner_product(&ta, &x_op.apply(&ta)).re;
-    let xb = QuantumState::inner_product(&tb, &x_op.apply(&tb)).re;
+    let inner_comm = comm(&inner_ladder, &probes[0]);
     assert!(
-        (xa - xb).abs() < 1e-7,
-        "⟨x̂_e⟩ must be unchanged by BRST projection: bare {xa} vs projected {xb}"
+        inner_comm > 1.0,
+        "the top-level inner ladder is not the promoted x̂_e and must not \
+         commute with H (got {inner_comm:e}); a zero here means the nesting \
+         changed and the recorded finding is stale"
     );
+
+    // The projector now genuinely fires off ker Ω, on a mixed state.
+    let physical = probe(&[(2, 1)], false);
+    let mut mixed = QuantumState::zero();
+    mixed.scale_and_add(&physical, Complex64::new(0.6, 0.0));
+    mixed.scale_and_add(&probes[0], Complex64::new(0.8, 0.0));
+    let projected = project_physical(&mixed, &omega, 1e-10, 50)
+        .expect("normal-equation solve must converge for a closed charge in 50 CG steps");
+    let mut diff = projected.clone();
+    diff.scale_and_add(&physical, Complex64::new(-0.6, 0.0));
+    assert!(
+        diff.norm() < 1e-10,
+        "P(0.6·phys + 0.8·ghost) must equal 0.6·phys: residual {:.3e}",
+        diff.norm()
+    );
+    assert!(
+        omega.apply(&projected).norm() < 1e-10,
+        "Ω(Pw) must vanish: {:.3e}",
+        omega.apply(&projected).norm()
+    );
+
+    // On ghost-free data the short-circuit still applies (that part of the
+    // earlier reading was correct — it is just not evidence of anything).
+    let inert = project_physical(&physical, &omega, 1e-10, 50).expect("ghost-free projection");
+    let mut same = inert.clone();
+    same.scale_and_add(&physical, Complex64::new(-1.0, 0.0));
+    assert!(
+        same.norm() < 1e-12,
+        "a ghost-free state is already in ker Ω and must be returned unchanged"
+    );
+
     eprintln!(
-        "qg3d: Ω² = 0 (nilpotent) on ghost probes; [H, Ω] ≠ 0 (not closed); \
-         bare and BRST-projected flows share the resolved spectrum and \
-         ⟨x̂_e⟩: {x0} → {xa} (projector inert, not evidence of a physical fix)",
+        "qg3d: promoted x̂_e closes ([H,X]=0 exactly, Ω²=0, ‖Ωψ‖=√(3/2)); the \
+         inner-ladder representative does not (‖[H,·]ψ‖={inner_comm:.6}); \
+         P(0.6 phys + 0.8 ghost) = 0.6 phys, ‖Ω(Pw)‖=0 in ≤50 CG steps"
     );
 }

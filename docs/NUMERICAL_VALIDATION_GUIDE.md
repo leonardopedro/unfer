@@ -639,31 +639,41 @@ $1/16$, two-graviton $2/16$); spectrum bounded below with positive gaps (the
 > closure alone. The numbers here remain statements about their labeled
 > numerical models, not a gap theorem for the full physical record.
 >
-> **BRST gauge fixing on the full QG operator — NOT closed (2026-11-10
-> audit).** The documented premise was that the promoted derivative-variable
+> **BRST gauge fixing on the full QG operator — closed under the promoted
+> `x̂_e` (2026-11-10 audit; corrected the same day).** The premise the
+> builder does satisfy is the documented one: the promoted derivative-variable
 > sector `e` (mode 2 — the 64 `idxDE` derivative coordinates) enters
-> `qg3d_full_hamiltonian` only through its **position** operator, never a
-> `p_e`, so that `x̂_e` would be a constant of the motion and `Ω = x̂_e·c₉`
-> would be BRST-closed.  **The premise does not hold for this builder.**  The
-> charge is nilpotent (`Ω² = 0`, first-class, on ghost-carrying probes with
-> `‖Ωψ‖ = √3`), but `[H, Ω]` does not vanish: `‖[H,Ω]ψ‖ = 3.237154099925839`
-> on the one-mode probe and `9.633924433998846` on the three-mode probe.
-> Measured independently, `‖[H,x̂_e]ψ‖ = 3.237154099925839` with `x̂_e` as an
-> inner ladder and `2.3308440963283874` with the outer-consistent
-> `OuterBosonCreate/Annihilate({2:1})`, so this is not a choice of
-> representative.  The earlier check asserted `i⟨p|[H,Ω]|p⟩ = 0`, which is
-> zero in **every** state regardless of the commutator (`Ω` carries the ghost
-> lowering, `H` conserves ghost number, so the expectation pairs orthogonal
-> sectors) — the failure was invisible until it was measured as a norm.
-> Consequently the projection-invariance consequence does **not** follow: on a
-> ghost-free start `Ω|ψ₀⟩ = 0`, `project_physical` returns its input on the
-> `‖Ωw‖ < tol` short-circuit, and the projected and bare solves agree because
-> the projector never fires (test
-> `qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close`).
-> `⟨x̂_e⟩` is `0` at `t = 0` and `0` at `t = 0.25` on that superposition — by
-> symmetry of the state, not by conservation.  **Open**: establishing
-> `[H, Ω] = 0` for the full QG operator requires the gauge-fixed form of the
-> builder (or the correct constraint for the `e` sector).
+> `qg3d_full_hamiltonian` only through its **position**, never a `p_e`.  The
+> operator is a *second-quantized* one-particle matrix, so `x̂_e` must be
+> promoted the same way:
+>
+> ```text
+>   H = Σ h[i][j] C†(e_i) A(e_j),    X = Σ x[ie][je] C†(e_i) A(e_j).
+> ```
+>
+> Because `h` is a function of the one-particle position matrix `x_e` alone,
+> `[h, x_e ⊗ 1] = 0`, hence `[H, X] = 0` exactly — measured `‖[H,X]ψ‖ = 0.0`
+> (bit-exact) on three sector-diagonal probes and on a cross-sector
+> superposition.  With `Ω = X·c₉`: `Ω² = 0`, `‖Ωψ‖ = √(3/2)`,
+> `‖[H,Ω]ψ‖ = 0`, so the charge is nilpotent, closed and non-trivial, and the
+> orthogonal projector genuinely fires from an off-`ker Ω` start:
+> `P(0.6|phys⟩ + 0.8|ghost⟩) = 0.6|phys⟩` with `‖Ω(Pw)‖ = 0`, in one CG step
+> (test `qg3d_full_operator_is_brst_closed_under_the_promoted_x_e`).
+>
+> The audit's first reading — "not closed" — came from two operators that are
+> **not** `X`, and both are now recorded in the test as counter-measurements:
+> the top-level `InnerBosonCreate(2) + a₂`, which acts on the empty-universe
+> level of the nesting rather than on the `e` coordinate inside each outer
+> sector (`‖[H,·]ψ‖ = 3.237154099925839`, `3.2945662334618`,
+> `9.633924433998846`), and a single outer ladder pair
+> `C†({2:1})A(vac) + h.c.`, which reproduces only the `(0,1)` matrix element
+> of `X` (`1.37286766478055` on the one-mode probe, `0` where that step cannot
+> change the `e`-occupation).  The original check asserted
+> `i⟨p|[H,Ω]|p⟩ = 0`, which is zero in **every** state whatever the
+> commutator (`Ω` carries the ghost lowering and `H` conserves ghost number,
+> so the expectation pairs orthogonal sectors) — it could not have detected
+> either the closure or the failure, so the whole reading hung on which
+> representative was plugged in.
 >
 > **BRST gauge-fixing consequence (Numerical) — Navier–Stokes parallel.**
 > The same projection-invariance statement holds for the FULL NS operator:

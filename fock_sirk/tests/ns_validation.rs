@@ -69,10 +69,9 @@
 //!    the reason the projector rides along in the solve.
 //!
 //! 8. `ns_brst_projection_invariance_physical_flow` — the full-operator-level
-//!    projection-invariance statement (the NS analogue of the YM/QG YM-style
-//!    checks, which do NOT establish it — see
-//!    `qg3d_full_operator_projection_is_inert_and_the_charge_does_not_close`,
-//!    where [H, Ω] ≠ 0): the SIRK solve of the
+//!    projection-invariance statement (the QG analogue closes too, under the
+//!    *promoted* `x̂_e` — see
+//!    `qg3d_full_operator_is_brst_closed_under_the_promoted_x_e`): the SIRK solve of the
 //!    FULL `navier_stokes_hamiltonian` with the orthogonal projector onto
 //!    `ker Ω` riding along (`Some(&brst)`) resolves the SAME spectrum and
 //!    gives the SAME physical observables as the bare solve (a physical start
@@ -81,7 +80,8 @@
 //!    physical expectation values).  Krylov depth m=4 (the tractable depth for
 //!    the 168-term full NS operator, matching tests 4–5); the projector's
 //!    genuine action on unphysical directions is exercised in `brst.rs`'s own
-//!    unit tests (the interacting-charge CG stall is documented in test 7).
+//!    unit tests (the interacting-charge conditioning limit is documented in
+//!    test 7).
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -718,10 +718,14 @@ fn ns_brst_projection_physical_subspace() {
     //       physics Hamiltonians commute with the BRST charge.
     //
     // The orthogonal projector onto ker Ω itself (`project_physical`, CG on
-    // ΩΩ†) is exercised in `brst.rs`'s own unit tests; for the *interacting*
-    // NS charge the CG solve on the full ΩΩ† stalls (the operator expands the
-    // state every iteration), so the tractable, exact assertions here are the
-    // algebraic nilpotency and BRST-closure of the charge.
+    // ΩΩ†) is exercised in `brst.rs`'s own unit tests.  For the full NS charge
+    // it is not tractable: the solve is badly conditioned (the CG–Lanczos
+    // tridiagonal at 60 steps gives λ_min = 2.6903157703890995e-1,
+    // λ_max = 4.48262998977765e2, so κ(ΩΩ†) ≥ 1.67e3) and the residual is
+    // still 2.33e-2 after 50 iterations — 200 iterations do not finish in
+    // minutes, because each step grows the state.  So the tractable, exact
+    // assertions here are the algebraic nilpotency and BRST closure of the
+    // charge.
     let brst = navier_stokes_brst();
 
     // Ghost-carrying probes: a bosonic universe with diagonal-derivative
@@ -873,10 +877,12 @@ fn ns_brst_projection_invariance_physical_flow() {
     //       matvec at depth 4 already spans ~2×10⁵ components and ~20 s per
     //       step), so the solve depth matches tests 4–5.
     //
-    // (The projector's genuine action on unphysical directions — CG on the
-    // interacting charge ΩΩ† expands the state every iteration, the documented
-    // stall of `ns_brst_projection_physical_subspace` — is exercised in
-    // `brst.rs`'s own unit tests on a tractable charge; the non-vacuity of the
+    // (The projector's genuine action on unphysical directions is exercised in
+    // `brst.rs`'s own unit tests on a tractable charge and, for the full QG
+    // operator, in `qg3d_full_operator_is_brst_closed_under_the_promoted_x_e`;
+    // the interacting NS charge is documented in
+    // `ns_brst_projection_physical_subspace` as ill-conditioned rather than
+    // model-unsolvable.  The non-vacuity of the
     // NS constraint itself is the nilpotency/closure checks below plus the
     // Ω-growth of the bare flow already asserted in test 7.)
     let h = navier_stokes_hamiltonian(1e-3);
