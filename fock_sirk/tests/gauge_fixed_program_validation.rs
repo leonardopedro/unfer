@@ -336,14 +336,14 @@ fn qym_gauss_law_conserved_by_flow() {
         if let Some(m) = extra {
             psi = psi.apply(&Operator::InnerBosonCreate(m));
         }
-        let hp = h.apply(&p_op.apply(&psi));
-        let ph = p_op.apply(&h.apply(&psi));
-        let mut comm = hp;
-        comm.scale_and_add(&ph, Complex64::new(-1.0, 0.0));
-        let lhs = Complex64::new(0.0, 1.0) * QuantumState::inner_product(&psi, &comm);
+        // The vector norm, not the expectation `i⟨ψ|[H,P]|ψ⟩`: the latter is
+        // blind to any component of the commutator orthogonal to ψ.
+        let mut comm = h.apply(&p_op.apply(&psi));
+        comm.scale_and_add(&p_op.apply(&h.apply(&psi)), Complex64::new(-1.0, 0.0));
         assert!(
-            lhs.norm() < 1e-9,
-            "[H, P] must vanish (residual gauge invariance)"
+            comm.norm() < 1e-9,
+            "[H, P] must vanish (residual gauge invariance), got {:e}",
+            comm.norm()
         );
     }
 
