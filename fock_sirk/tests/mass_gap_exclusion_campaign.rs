@@ -96,9 +96,17 @@ fn fock_state(occ: &[(u32, u32)]) -> QuantumState {
             s = s.apply(&Operator::InnerBosonCreate(m));
         }
     }
+    // The creation chain returns `√(n!)` times the normalized state (`a†` does
+    // not carry `1/√(n+1)` here), so the amplitudes are divided out directly.
+    // The `scale_and_add(1/‖ψ‖ − 1)` this used to do rounds its coefficient to
+    // exactly `−1` once `‖ψ‖ ≥ 2⁵³` — occupation 30, `√(30!) ≈ 1.6e16` — and
+    // annihilates the state, which capped every `N` this harness could build at
+    // 30 without anything saying so.
     let norm = s.norm();
-    if (norm - 1.0).abs() > 1e-12 {
-        s.scale_and_add(&s.clone(), Complex64::new(1.0 / norm - 1.0, 0.0));
+    if norm > 0.0 && (norm - 1.0).abs() > 1e-12 {
+        for value in s.components.values_mut() {
+            *value /= norm;
+        }
     }
     s
 }
@@ -160,7 +168,15 @@ impl Truncated {
         }
         let mut index = HashMap::new();
         for (i, s) in basis.iter().enumerate() {
-            index.insert(s.components.keys().next().unwrap().clone(), i);
+            match s.components.keys().next() {
+                Some(key) => index.insert(key.clone(), i),
+                None => panic!(
+                    "empty state at i = {i} of {} (n_max = {n_max}), norm = {}, components = {}",
+                    basis.len(),
+                    s.norm(),
+                    s.components.len()
+                ),
+            };
         }
         let mut columns = Vec::with_capacity(basis.len());
         let mut leak = 0.0_f64;
@@ -1532,12 +1548,15 @@ fn nested_dissection_cuts_the_fill_of_the_inertia_count() {
     );
 }
 
-/// The same comparison one grid step past the campaign's own: the point of the
-/// two-term value is that the bound no longer decides the reach. `#[ignore]`d
-/// only because the two truncations cost ~50 s together; the assertions are the
-/// same ones the campaign applies, so a regression here is a real refusal.
+/// The same comparison past the campaign's own grid: the point of the two-term
+/// value is that the bound no longer decides the reach, and every size here is
+/// decided by both orderings with `worst_ratio` far below 1 (measured: `1.6e-9`
+/// RCM / `1.2e-22` ND at `N ≤ 26`, `2.0e-2` RCM / `2.9e-19` ND at `N ≤ 30`).
+/// `#[ignore]`d only because the three truncations cost ~170 s together; the
+/// assertions are the same ones the campaign applies, so a regression here is a
+/// real refusal.
 #[test]
-#[ignore = "~50 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
+#[ignore = "~170 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
 fn the_count_reaches_past_the_grid() {
     use fock_sirk::{Ordering, inertia_below_with};
     use std::time::Instant;
@@ -1545,10 +1564,10 @@ fn the_count_reaches_past_the_grid() {
     let g = 1.0;
     println!("g = {g}: inertia count past the campaign grid, odd sector, β = θ₀ + 0.5");
     println!(
-        "{:>3} {:>6} {:>9} {:>8} {:>9} {:>8}",
-        "N", "n", "fill RCM", "secs", "fill ND", "secs"
+        "{:>3} {:>6} {:>7} {:>9} {:>7} {:>7} {:>9} {:>7}",
+        "N", "n", "fillRCM", "ratio", "secs", "fillND", "ratio", "secs"
     );
-    for n_max in [26u32, 28] {
+    for n_max in [26u32, 28, 30] {
         let h = qcd_ym_hamiltonian(g);
         let trunc = Truncated::build(&h, n_max);
         let odd_sector = trunc.sector(false);
@@ -1569,8 +1588,19 @@ fn the_count_reaches_past_the_grid() {
             .expect("nested dissection must decide here");
         let secs_nd = clock.elapsed().as_secs_f64();
         println!(
-            "{n_max:>3} {n:>6} {:>9} {secs_rcm:>8.2} {:>9} {secs_nd:>8.2}",
-            rcm.fill, nd.fill
+            "{n_max:>3} {n:>6} {:>7} {:>9.2e} {secs_rcm:>7.2} {:>7} {:>9.2e} {secs_nd:>7.2}",
+            rcm.fill, rcm.worst_ratio, nd.fill, nd.worst_ratio
+        );
+        // The point of the two-term value: even at the last size RCM decides,
+        // its bound is an order of magnitude below its pivots, and nested
+        // dissection's is fifteen decades below — so a refusal here would be a
+        // regression, not the wall. `N ≤ 32` is where RCM does refuse
+        // (`the_count_refuses_past_the_reach`).
+        assert!(
+            rcm.worst_ratio < 1e-1 && nd.worst_ratio < 1e-6,
+            "N <= {n_max}: worst ratios {} (RCM) / {} (ND) must leave decades of headroom",
+            rcm.worst_ratio,
+            nd.worst_ratio
         );
         assert_eq!(
             (rcm.below, rcm.pivots),
@@ -1584,10 +1614,84 @@ fn the_count_reaches_past_the_grid() {
     }
 }
 
+/// Where the reach actually ends, and on what: the count is refused when the
+/// running bound outgrows the remaining pivots, not when the clock runs out.
+/// Measured (`docs/MASS_GAP_SPEC.md` §6d): nested dissection decides `N ≤ 32`
+/// (`n = 27,744`, 38 s, ratio `7.7e-17`) and refuses `N ≤ 34` after 725 pivots
+/// of margin, where the trailing block's own relative error has reached `1e15`;
+/// RCM refuses `N ≤ 32` after 217 s, having decided `N ≤ 30` with `worst_ratio`
+/// `2.0e-2` (two decades in two steps). `#[ignore]`d because pinning a wall this
+/// far out costs ~340 s.
+#[test]
+#[ignore = "~340 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
+fn the_count_refuses_past_the_reach() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let g = 1.0;
+    let count_at = |n_max: u32| {
+        let h = qcd_ym_hamiltonian(g);
+        let trunc = Truncated::build(&h, n_max);
+        let odd_sector = trunc.sector(false);
+        let odd_columns = sector_columns(&trunc, &odd_sector);
+        let n = odd_columns.len();
+        let odd_mv = trunc.sector_matvec(&odd_sector);
+        let start = trunc.coordinates(&odd_sector, &r_odd_start()).0;
+        let ritz = lanczos_ritz(&odd_mv, n, &start, 60.min(n)).expect("Lanczos");
+        let (theta, _) = ritz.ground().expect("non-empty");
+        let beta = theta + 0.5;
+        (n, odd_columns, beta)
+    };
+
+    // The last size nested dissection still decides.
+    let (n, columns, beta) = count_at(32);
+    let clock = Instant::now();
+    let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection)
+        .expect("nested dissection must still decide N <= 32 — the wall moved back");
+    println!(
+        "N <= 32, n = {n}: ND decides, fill {}, ratio {:.2e}, {:.1} s",
+        nd.fill,
+        nd.worst_ratio,
+        clock.elapsed().as_secs_f64()
+    );
+
+    // The wall under RCM: `N ≤ 30` was the last size it decided.
+    let clock = Instant::now();
+    let rcm = inertia_below_with(&columns, beta, Ordering::ReverseCuthillMckee);
+    println!(
+        "N <= 32: RCM {} after {:.1} s",
+        if rcm.is_some() { "decided" } else { "refused" },
+        clock.elapsed().as_secs_f64()
+    );
+    assert!(
+        rcm.is_none(),
+        "§6d records RCM refusing at N <= 32 (it last decided N <= 30, ratio 2.0e-2): it decided, \
+         so the wall and that section are stale"
+    );
+
+    // And where nested dissection itself stops: one step past its reach.
+    let (n, columns, beta) = count_at(34);
+    let clock = Instant::now();
+    let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection);
+    println!(
+        "N <= 34, n = {n}: ND {} after {:.1} s",
+        if nd.is_some() { "decided" } else { "refused" },
+        clock.elapsed().as_secs_f64()
+    );
+    assert!(
+        nd.is_none(),
+        "§6d records the count refusing at N <= 34 under either ordering: it decided, so the \
+         reach is further out and that section is stale"
+    );
+}
+
 /// The gap of `H_N` bracketed from both sides with **no diagonalization**: a
 /// sparse inertia count supplies each sector's `λ₂` witness, and the two Temple
 /// bounds turn the Ritz pairs into `[lower, upper]`. This is what the dense route
-/// spends `O(n³)` to produce, and the only step that needed the count.
+/// spends `O(n³)` to produce, and the only step that needed the count. The grid
+/// run to `N ≤ 20` — past the `N ≤ 16` the one-term value could carry, and to
+/// where the Ritz ground is already resolved well enough for the bracket to
+/// close.
 #[test]
 fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
     use fock_sirk::inertia_below;
@@ -1599,7 +1703,7 @@ fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
         "{:>3} {:>6} {:>7} {:>9} {:>12} {:>12} {:>12} {:>10} {:>8}",
         "N", "n", "fill", "count(β)", "lower", "upper", "exact", "secs", "verdict"
     );
-    for n_max in [6u32, 8, 10, 12, 14, 16] {
+    for n_max in [6u32, 8, 10, 12, 14, 16, 18, 20] {
         let h = qcd_ym_hamiltonian(g);
         let trunc = Truncated::build(&h, n_max);
         let clock = Instant::now();
@@ -1648,19 +1752,26 @@ fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
         // sign cannot be decided (measured at `N ≤ 14`). Any margin that decides
         // with a count of one is a valid witness; a margin that overshoots `λ₂`
         // decides with a count of two and is rejected by the caller below.
-        let probe = |columns: &[Vec<(usize, f64)>], theta: f64| {
+        let probe = |columns: &[Vec<(usize, f64)>], theta: f64, residual: f64| {
             let mut found = None;
-            for margin in [1e-9, 1e-7, 1e-5, 1e-3, 1e-2] {
+            for margin in [1e-9, 1e-7, 1e-5, 1e-3, 1e-2, 1e-1] {
                 let beta = theta + margin * theta.abs().max(1.0);
                 if let Some(count) = inertia_below(columns, beta) {
                     found = Some((beta, count));
-                    break;
+                    // Temple also needs `r < β − θ`, so a margin that decides the
+                    // count but not that is passed over rather than reported as a
+                    // refusal the next rung fixes. Measured at `N ≤ 20`, where the
+                    // `1e-2` rung decides (`count = 1`) with a residual above the
+                    // margin and `1e-1` carries both conditions.
+                    if count.below == 1 && residual < beta - theta {
+                        break;
+                    }
                 }
             }
             found
         };
-        let odd_probe = probe(&odd_columns, theta_odd);
-        let even_probe = probe(&even_columns, theta_even);
+        let odd_probe = probe(&odd_columns, theta_odd, residual_odd);
+        let even_probe = probe(&even_columns, theta_even, residual_even);
         let (beta_odd, odd_count) = match odd_probe {
             Some((beta, count)) => (beta, Some(count)),
             None => (f64::NAN, None),

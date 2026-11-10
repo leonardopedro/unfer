@@ -553,8 +553,10 @@ impl MatchingExclusion {
 /// and finally exceeded the pivots. The elimination itself was fine — the same
 /// matrix in plain `f64`, no bounds at all, decided `N ≤ 22` with one eigenvalue
 /// below `β` and a smallest pivot of `7.5`. So the compounder was the rounding
-/// *injected per step*, and a two-term value injects `u²` instead: the same
-/// table then has ~16 decades of headroom in place of the deficit.
+/// *injected per step*, and a two-term value injects `u²` instead: the tracked
+/// error at `N ≤ 22` is `7.6e-15` against pivots of `10…38` (`worst_ratio`
+/// `~2e-16`) instead of a deficit, and the count then runs to `N ≤ 32` at
+/// `worst_ratio` `7.7e-17` before the same failure returns at `N ≤ 34`.
 ///
 /// The error-free transforms below (`two_sum`, `two_prod` via `fma`) are exact,
 /// so the residual each operation leaves is the renormalization's own rounding —
@@ -652,7 +654,7 @@ impl DoubleDouble {
 /// `value` is the double-double of the computed value and `error` the bound on
 /// `|value − exact|` accumulated through the elimination; each operation folds
 /// in only the `u²` slack its renormalization can leave, which is what keeps the
-/// bound below the pivots all the way to `N ≤ 22`.
+/// bound below the pivots out to `N ≤ 32` (`worst_ratio` `7.7e-17` there).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Bounded {
     value: DoubleDouble,
@@ -708,6 +710,19 @@ impl Bounded {
         self.value.approx().abs() - self.error - 4.0 * UNIT_ROUNDOFF * self.value.magnitude()
     }
 
+    /// `error / |value|` — the fraction of the pivot's magnitude the running
+    /// bound has consumed. The refusal rule is this reaching 1, so it is the
+    /// headroom the count has left, measured independently of how large the
+    /// pivot itself happens to be.
+    fn relative_error(&self) -> f64 {
+        let magnitude = self.value.magnitude();
+        if magnitude == 0.0 {
+            f64::INFINITY
+        } else {
+            self.error / magnitude
+        }
+    }
+
     /// `Some(sign)` only when the sign is certain, `None` when the interval
     /// straddles zero.
     fn certain_sign(&self) -> Option<i8> {
@@ -741,7 +756,7 @@ impl Bounded {
 /// near-zero diagonal is swapped for a larger one instead of aborting, and a
 /// matrix with no decidable 1×1 pivot at all (a `[[0,1],[1,0]]` block) is refused
 /// rather than guessed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InertiaCount {
     /// Number of eigenvalues of `H` strictly below `β`.
     pub below: usize,
@@ -751,6 +766,12 @@ pub struct InertiaCount {
     pub fill: usize,
     /// Symmetric pivots exchanged to keep the elimination manageable.
     pub swaps: usize,
+    /// Largest `error / |pivot|` over the pivots the elimination decided. The
+    /// refusal rule is this ratio reaching 1, so `1 − worst_ratio` is the
+    /// headroom the bound has left at this size — the quantity that says how
+    /// much further the count could be pushed, independent of the pivots'
+    /// absolute size.
+    pub worst_ratio: f64,
     /// The ordering the elimination actually ran under.
     pub ordering: Ordering,
 }
@@ -791,14 +812,18 @@ impl InertiaCount {
 /// than rejected.
 ///
 /// **Measured** (`docs/MASS_GAP_SPEC.md` §6d): on the truncated gauge-fixed QYM
-/// at `g = 1` this decides the count of every sector up to `N ≤ 16`
-/// (`n = 2160`) in under a second, and the resulting gap bracket agrees with the
-/// exact spectrum to the last printed digit wherever the dense route can reach
-/// (`N ≤ 10`). Two failure modes are real and are reported instead of hidden: a
-/// shift `β` within `~1e-9` of an eigenvalue leaves one pivot's sign undecidable
-/// (so callers should probe a ladder of margins), and an elimination stage whose
-/// running error bound exceeds every remaining pivot is refused (>128 pivots
-/// deep here only at the last index, and only for the smallest margins).
+/// at `g = 1` the odd sector's count is decided through `N ≤ 32` under
+/// [`Ordering::NestedDissection`] (`n = 27,744`, 38 s, worst ratio `7.7e-17`)
+/// and through `N ≤ 30` under [`Ordering::ReverseCuthillMckee`] (`N ≤ 32`
+/// refuses, `N ≤ 34` refuses under either); the resulting gap bracket agrees
+/// with the exact spectrum wherever the dense route can reach (`N ≤ 10`). Two
+/// failure modes are real and are reported instead of hidden: a shift `β` within
+/// `~1e-9` of an eigenvalue leaves one pivot's sign undecidable (so callers
+/// should probe a ladder of margins), and an elimination whose running error
+/// bound outgrows the remaining pivots is refused — that is what ends the reach,
+/// and it ends it in the last few hundred rows rather than at one turn of `N`
+/// (`N ≤ 34` fails 725 pivots from the end). `worst_ratio` reports how close a
+/// successful count came to it.
 pub fn inertia_below(columns: &[Vec<(usize, f64)>], beta: f64) -> Option<InertiaCount> {
     inertia_below_with(columns, beta, Ordering::default())
 }
@@ -894,6 +919,7 @@ pub fn inertia_below_with(
     let mut negative = 0usize;
     let mut fill = 0usize;
     let mut swaps = 0usize;
+    let mut worst_ratio = 0.0_f64;
     for j in 0..n {
         // Pivot selection *within* the trailing submatrix. A symmetric
         // permutation preserves the eigenvalues, so swapping the row and its
@@ -919,6 +945,7 @@ pub fn inertia_below_with(
             swaps += 1;
         }
         let pivot = rows[j].remove(&j)?;
+        worst_ratio = worst_ratio.max(pivot.relative_error());
         let sign = pivot.certain_sign()?;
         if sign < 0 {
             negative += 1;
@@ -962,6 +989,7 @@ pub fn inertia_below_with(
         pivots: n,
         fill,
         swaps,
+        worst_ratio,
         ordering,
     })
 }

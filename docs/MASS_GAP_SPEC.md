@@ -638,7 +638,7 @@ Two limits, both measured rather than smoothed over:
   consistent with the non-monotonicity above (at `g = 1` the odd ground is lower
   at `N = 10, 14, 16` and higher at `6, 8, 12`).
 
-##### Where it stopped, and why it was the arithmetic (`N ≤ 22`, 2026-11-10c)
+##### Where it stopped, and why it was the arithmetic (`N ≤ 32`, 2026-11-10d)
 
 The counter was driven past its working range to find out what fails first. Odd
 sector at `g = 1`, `β = θ₀ + 0.5`, both orderings on the same matrix
@@ -684,30 +684,66 @@ The extra arithmetic is invisible in the timings: the elimination is dominated b
 `BTreeMap` insertion into the fill, not by the per-entry flops, so `N ≤ 22` costs
 `1.95 s` where the one-term value cost `2.16 s`.
 
-**Nothing in this grid refuses any more, and the next limit is time.**
-`the_count_reaches_past_the_grid` (same measurement, same assertions, `#[ignore]`d
-because the two truncations cost ~50 s) reaches
+**Nothing in this grid refuses any more, and the reach is the same bound, far
+out.** `the_count_reaches_past_the_grid` (same measurement, same assertions,
+`#[ignore]`d because the three truncations cost ~170 s) reaches
 
-| `N≤` | `n` | fill RCM | secs RCM | fill ND | secs ND | bound/pivot, RCM |
-|---|---|---|---|---|---|---|
-| 26 | 12740 | 652 | 12.4 | 653 | 4.7 | 1.6e-9 |
-| 28 | 16800 | 798 | 33.2 | 793 | 9.9 | 1.2e-6 |
+| `N≤` | `n` | fill RCM | secs RCM | bound/pivot RCM | fill ND | secs ND | bound/pivot ND |
+|---|---|---|---|---|---|---|---|
+| 26 | 12740 | 652 | 12.0 | 1.6e-9 | 653 | 4.6 | 1.2e-22 |
+| 28 | 16800 | 798 | 32.9 | 1.2e-6 | 793 | 9.6 | 3.5e-21 |
+| 30 | 21760 | 961 | 85.5 | 2.0e-2 | 927 | 19.3 | 2.9e-19 |
 
-with both orderings still counting the same inertia. At `N ≤ 28` the fill is
-798 on `n = 16800` (4.8 %), so memory is not close to binding either; what grows
-is the elimination's own `fill²` work (33 s for RCM). The remaining headroom is
-visible in that last column and shrinking — RCM's bound is six decades below its
-pivots at `N ≤ 28` — so the honest statement is that the wall was pushed from
-`N ≤ 18` to beyond `N ≤ 28`, not that it was removed.
+with both orderings still counting the same inertia, and
+`the_count_refuses_past_the_reach` (also `#[ignore]`d, ~340 s) pins where it
+stops:
 
-**Ordering: smaller fill, and now no reach lost with it.** Nested dissection cuts
-the fill by 6–27 % wherever the grid decides (18→16, 93→68, 258→226, 534→485) and
-is 2–2.5× faster at the top of the grid, which is why it is the parameter it is.
-It no longer buys reach or costs reach: the two orderings decide at every size in
-the grid. Past the grid the fill advantage disappears (652 vs 653 at `N ≤ 26`,
-798 vs 793 at `N ≤ 28`) — which is why the fill comparison is asserted only on
-the campaign's own sizes, and the reach test asserts only that both still decide
-with the same count.
+| `N≤` | `n` | RCM | ND |
+|---|---|---|---|
+| 32 | 27744 | **refused** (218 s) | decides, fill 1096, 38.2 s, ratio 7.7e-17 |
+| 34 | 34884 | refused | **refused** (84 s) |
+| 36 | 43320 | refused | refused (329 s) |
+
+So the last deciding sizes are `N ≤ 30` (RCM) and `N ≤ 32` (nested dissection),
+and the refusals are still the *bound*, not the clock: at `N ≤ 34` nested
+dissection gives up 725 pivots from the end, where a trace of the trailing block
+shows relative errors from `0` (median `3.3e5`) to `1e15` — the last dense
+separator's own elimination, not one small pivot. RCM's ratio climbs from
+`2.0e-2` at `N ≤ 30` to past one at `N ≤ 32`; nested dissection's sits at
+`7.7e-17` at `N ≤ 32` and collapses between there and `34`, which is why the two
+orderings now have different walls. (`N ≤ 30` was first measured at `3.7e-4` on
+a basis that the harness bug below had left unnormalized — the fixed value is
+`2.0e-2`, and every number above is from runs after that fix.) The honest statement is that the wall was
+pushed from `N ≤ 18` to `N ≤ 32`, and that what ends it is the same accumulated
+rounding the two-term value made negligible at the grid's sizes.
+
+**Symmetric equilibration buys none of it.** `D(H − βI)D` with `D = diag(2ᵏ)`,
+`k` halving each diagonal's exponent, is an exact congruence — every multiplication
+is by a power of two, so the inertia and the error model carry over unchanged and
+the count must come out identical — so it is the one preconditioning that costs
+nothing to try. Measured (`N ≤ 24…30`, both orderings, count unchanged at every
+size): the bound-to-pivot ratios are *identical* to the printed digits (RCM
+`4.689e-10 → 4.689e-10` at `N ≤ 24`, `1.248e-6 → 1.248e-6` at `N ≤ 28`; nested
+dissection `5.333e-21 → 5.333e-21`, `3.523e-21 → 3.523e-21`). The growth is in
+the update chain's own rounding, not in the scaling of the matrix, so no diagonal
+preconditioning reaches it.
+
+**A harness bug worth recording.** Reaching past `N ≤ 30` first failed in the
+*basis builder*, not the count: `fock_state` normalized by
+`scale_and_add(1/‖ψ‖ − 1)`, and the creation chain's `‖ψ‖ = √(n!)` passes `2⁵³`
+at occupation 30 (`√(30!) ≈ 1.6e16`), where that coefficient rounds to exactly
+`−1` and annihilates the state. Occupations `≥ 30` produced empty states, which
+silently capped every `N` this harness could build at 30. The amplitudes are now
+divided out directly; nothing above `N ≤ 28` could be measured before that.
+
+**Ordering: smaller fill, and now a longer reach.** Nested dissection cuts the
+fill by 6–27 % wherever the grid decides (18→16, 93→68, 258→226, 534→485) and is
+2–2.5× faster at the top of the grid, which is why it is the parameter it is.
+Past the grid the fill advantage fades (652 vs 653 at `N ≤ 26`, 798 vs 793 at
+`N ≤ 28`, 961 vs 927 at `N ≤ 30`) — which is why the fill comparison is asserted
+only on the campaign's own sizes — but the *bound* advantage does not fade: it is
+what lets nested dissection decide two sizes further than RCM, so the reach test
+asserts both orderings decide with the same count wherever they both decide.
 
 **A bug the reach test found, recorded because it had been measuring the wrong
 matrix.** The nested-dissection permutation check is a `debug_assert`, so release

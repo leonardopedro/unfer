@@ -2495,9 +2495,13 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   eliminates the sparse `H − βI` under Sylvester's law of inertia, using each
   pivot's sign only when a running error bound cannot mistake it, and the
   campaign brackets the gap with no dense step at all — at `g = 1` the count is
-  decided for every sector through `N ≤ 16` (`n = 2160`) in `≤ 0.97 s` (fill 223),
-  the bracket closes to all printed digits, and at `N ≤ 10` it equals the exact
-  gap (`0.091073200`, `0.091161224`, `−0.273337089`). The campaign's own 15 rows
+  decided for every sector through `N ≤ 20` (`n = 4840`, fill 379, `4.0 s`), the
+  bracket closes to all printed digits, and at `N ≤ 10` it equals the exact gap
+  (`0.091073200`, `0.091161224`, `−0.273337089`). The rows past the old `N ≤ 16`
+  cut now read: `N ≤ 18` **certifies** (`0.144512829`, `1.3 s`) and `N ≤ 20` is
+  *not positive* (`−0.134821665`) — the odd ground sits above the even one in
+  that truncation, the same orientation crossing the `N ≤ 10` row shows, reported
+  as a verdict rather than as a refusal. The campaign's own 15 rows
   now run on it rather than on `certify_spectrum`: `β` is a bisection on the
   count (start at `θ + r`, grow until the count passes ``λ₂``, then 30 bisections
   to the largest deciding `β`), and the verdicts come out **identical**
@@ -2523,14 +2527,29 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   at `7.6e-15` against pivots of `10…38`, the worst bound-to-pivot ratio in the
   grid is `4.7e-10`, and **nothing in the campaign grid refuses**: both orderings
   decide through `N ≤ 24` (`n = 9464`, fill 534 RCM / 485 ND). The `#[ignore]`d
-  reach test goes further: `N ≤ 26` (`n = 12740`, fill 652, 12.4 s) and
-  `N ≤ 28` (`n = 16800`, fill 798, 33.2 s RCM / 9.9 s ND) both decide, with
-  RCM's bound still six decades below its pivots — the wall was pushed past
-  `N ≤ 28`, and time, not the bound, is what binds first. Nested dissection
-  (`certificate::Ordering`) cuts the fill by 6–27 % on the grid and is 2–2.5×
-  faster at the top, with no reach gained or lost; past the grid its fill
-  advantage vanishes (652 vs 653 at `N ≤ 26`), which is why fill is asserted only
-  on the campaign's sizes. The permutation check on that ordering is a
+  reach and wall tests go further (2026-11-10d): `N ≤ 26 / 28 / 30`
+  (`n = 21760`, fill 961 RCM / 927 ND) all decide under both orderings, with
+  RCM at `bound/pivot = 1.6e-9 / 1.2e-6 / 2.0e-2` there and nested dissection at
+  `1.2e-22 / 3.5e-21 / 2.9e-19`; nested dissection decides `N ≤ 32`
+  (`n = 27744`, fill 1096, 38 s, `7.7e-17`), RCM **refuses** `N ≤ 32` after 218 s
+  (last deciding size 30), and both refuse `N ≤ 34`. The refusal is still the
+  bound, not the clock: at `N ≤ 34` nested dissection gives up 725 pivots from
+  the end, where the trailing dense separator's own relative errors run from `0`
+  (median `3.3e5`) to `1e15`. So the reach now differs by ordering
+  (`30` RCM / `32` ND), and what ends it is the same accumulated rounding the
+  two-term value made negligible at the grid's sizes. Symmetric power-of-two
+  equilibration of `H − βI` (`D = diag(2ᵏ)`, an exact congruence, count
+  unchanged at every size) is a measured **no-op**: the ratios come out identical
+  to the printed digits (`4.689e-10 → 4.689e-10` at `N ≤ 24`, `1.248e-6 →
+  1.248e-6` at `N ≤ 28`), so the growth is in the update chain's rounding, not in
+  the matrix's scaling. Reaching past `N ≤ 30` first failed in the *harness*:
+  `fock_state` normalized by `scale_and_add(1/‖ψ‖ − 1)`, whose coefficient rounds
+  to `−1` once `‖ψ‖ = √(n!) ≥ 2⁵³` (occupation 30), silently capping every `N`
+  this harness could build at 30; the amplitudes are divided out directly now.
+  Nested dissection (`certificate::Ordering`) cuts the fill by 6–27 % on the grid
+  and is 2–2.5× faster at the top, and it buys two sizes of reach; past the grid
+  its fill advantage fades (652 vs 653 at `N ≤ 26`, 961 vs 927 at `N ≤ 30`),
+  which is why fill is asserted only on the campaign's sizes. The permutation check on that ordering is a
   `debug_assert`, and it hid a real bug until this round: the recursive cut
   dropped the component it had just walked (`60 of 80` vertices at `N ≤ 6`), so
   every earlier nested-dissection number was measured on a truncated matrix and
