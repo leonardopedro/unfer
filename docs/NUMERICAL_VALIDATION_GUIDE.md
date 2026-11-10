@@ -2391,16 +2391,33 @@ gravity:
 The proof-carrying half of the gauge-fixed formalization (replaces the
 lattice-era Richardson/certified-table tests, superseded):
 
+**What this suite does not establish** (2026-11-10 audit): the interval is
+$14.88$ wide at $g=1$ ($\delta^o = 4.088$, $\delta^e = 3.350$) and $50.8$ wide at
+$g=2$, against gaps of $0.0912$ and $1.244$. So $lo = -8.009 < 0$ — the T6
+statement itself is **out of reach** here, and the emitter's own
+`"certified_positive":false` says so. Two assertions that the earlier version
+of this suite carried could not fail: "the certified window contains the exact
+gap" (a 7.4-half-width window contains everything near zero) and
+`contains_measured()` (true by construction — the width *is* the sum of the
+sector widths, as the library's own doc says). They are replaced by the
+assembly identity, an explicit non-resolution pin, and the dense computation.
+
 - **`qcd_mass_gap_certified_enclosure`** — computes: the two R-sector SIRK
-  solves (m = 12) at $g=1$ assemble into the certified T6 interval
+  solves (m = 12) at $g=1$ assemble into the T6 interval
   $[\theta^o_0-\theta^e_0 \pm (\delta^o+\delta^e)] = [-8.009, 6.866]$,
-  which encloses the exact truncated gap $E_1-E_0 = 0.0912$; the measured
-  gap lies inside its own certified interval. *Asserts*: enclosure;
-  positivity of the exact gap.
-- **`qcd_mass_gap_certified_window_contains_exact_gap`** — computes: the
-  certified window contains the exact truncated gap across the truncation
-  family (N ≤ 6 and N ≤ 8) for $g \in \{1, 2\}$ (0.0911 / 0.0912 at $g=1$;
-  0.850 / 1.244 at $g=2$). *Asserts*: containment at every (g, N) pair.
+  which encloses the exact truncated gap $E_1-E_0 = 0.0912$. *Asserts*: the
+  enclosure in both directions; the assembly identity $hi-lo = 2(\delta^o+\delta^e)$
+  and $gap = \theta^o_0-\theta^e_0$ (a dropped term or swapped sector fails
+  here); positivity of the exact gap; and the **non-resolution**
+  ($\delta^o+\delta^e = 7.438 > 0.0912$, hence $lo \le 0$), pinned so the
+  enclosure is never read as a certified gap — if it ever fails, the suite
+  must assert `lo > 0` instead.
+- **`qcd_mass_gap_window_cannot_resolve_the_gauge_fixed_gap`** — computes: the
+  window across the truncation family (N ≤ 6, N ≤ 8) for $g \in \{1, 2\}$
+  (0.0911 / 0.0912 at $g=1$; 0.850 / 1.244 at $g=2$). *Asserts*: containment at
+  every (g, N); that the window **also contains the lattice value $g^2/2$**, so
+  it cannot distinguish the two models; and the departure itself from the dense
+  diagonalization ($|0.0912-0.5| = 0.41$ at $g=1$, $|1.244-2| = 0.76$ at $g=2$).
 - **`qcd_mass_gap_certificate_ndjson`** — computes:
   `emit_gap_certificate_ndjson` emits three valid JSON lines (two Ritz
   certificates carrying $\theta$ and $\delta$, one assembly carrying gap and

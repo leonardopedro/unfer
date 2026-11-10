@@ -143,7 +143,15 @@ parameter separating gapped from gapless.
 assembly on the gauge-fixed H: the certified window `[lo, hi]` encloses the
 exact truncated gap `E₁ − E₀` for `g ∈ {1, 2}` across truncations, and the
 NDJSON emitter produces well-formed sector certificates whose
-`certified_positive` flag truthfully reflects `lo > 0` of the emitted numbers
+`certified_positive` flag truthfully reflects `lo > 0` of the emitted numbers.
+
+The window is a valid **enclosure, not a resolution**: at `m = 12` it is
+`14.88` wide at `g = 1` (`δᵒ+δᵉ = 7.438`) against a gap of `0.0912`, so
+`lo = −8.009 < 0` and the T6 statement is not reachable at this Krylov order —
+which is exactly what the emitted `"certified_positive":false` reports. The
+suite pins that non-resolution (and the fact that the window also contains the
+lattice value `g²/2`, so it cannot separate the two models); the departure from
+`g²/2` is established by the exact `N ≤ 8` diagonalization, not by the window.
 (the pinned Lean4 T6 instance in `../timepiece/GapCertificate/` remains the
 historical lattice instantiation; regenerating it for the gauge-fixed numbers
 is an LLM-Lean4-specialist item).

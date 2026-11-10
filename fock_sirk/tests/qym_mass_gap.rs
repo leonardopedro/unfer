@@ -670,7 +670,18 @@ fn qym_gauge_fixed_certified_enclosure_of_exact_gap() {
         let res_even = solve_sector(&h, &empty_vacuum(), 12);
         let res_odd = solve_sector(&h, &r_odd_start(), 12);
         let gap = certified_mass_gap(&res_even, &res_odd).expect("certified mass gap");
-        assert!(gap.contains_measured(), "measured gap inside its interval");
+        // `contains_measured()` is true by construction (the width IS the sum
+        // of the sector widths); the assembly identity below is the check that
+        // can actually fail.
+        assert!(
+            ((gap.hi - gap.lo) - 2.0 * (gap.odd.delta() + gap.even.delta())).abs() <= 1e-12
+                && (gap.gap - (gap.odd.value - gap.even.value)).abs() <= 1e-12,
+            "g={g}: T6 assembly must be θᵒ−θᵉ ± (δᵒ+δᵉ): [{}, {}] vs gap {} and δ {}",
+            gap.lo,
+            gap.hi,
+            gap.gap,
+            gap.odd.delta() + gap.even.delta()
+        );
         assert!(
             gap.lo - 1e-9 <= exact_gap && exact_gap <= gap.hi + 1e-9,
             "g={g}: certified interval [{:.6}, {:.6}] must enclose the exact truncated \
@@ -719,7 +730,13 @@ fn qym_gauge_fixed_proof_facing_seam_agrees_manual_assembly() {
         manual.lo,
         manual.hi
     );
-    assert!(via_seam.contains_measured());
+    // Assembly identity, not `contains_measured()` (true by construction).
+    assert!(
+        ((via_seam.hi - via_seam.lo) - 2.0 * (via_seam.odd.delta() + via_seam.even.delta())).abs()
+            <= 1e-12
+            && (via_seam.gap - (via_seam.odd.value - via_seam.even.value)).abs() <= 1e-12,
+        "seam assembly must be θᵒ−θᵉ ± (δᵒ+δᵉ)"
+    );
 
     // The spec predicates used by the seam are individually true here: the
     // certified lower bound of the sector-ground difference, the disjointness

@@ -327,22 +327,30 @@ fn ns_lagrangian_sirk_certified_ritz_bands() {
         certs.len()
     );
 
-    // Every band has positive width and contains its own measured value
-    // (the invariant consumers assert), and the ground band contains the
-    // analytic displaced level `3ω/2 − ½|f|²`.
+    // A band always has `δ ≥ 0` and always contains its own value (δ is the
+    // sum of a residual, a roundoff term and an enclosure, and `lo/hi` are
+    // `value ∓ δ`), so asserting either is asserting the constructor. What is
+    // worth asserting is that the band is narrow enough to say something: the
+    // ground band must resolve its own level to `δ < 5e-2` (measured 2.89e-2);
+    // if this fails the certificate has stopped being informative, whatever
+    // `contains` says.
     for (k, c) in certs.iter().enumerate() {
         assert!(
-            c.delta() >= 0.0,
-            "band {k}: δ must be non-negative, got {:.3e}",
-            c.delta()
-        );
-        assert!(
-            c.contains(c.value),
-            "band {k}: must contain its measured value {}",
+            c.value.is_finite(),
+            "band {k}: value must be finite, got {}",
             c.value
         );
-        assert!(c.value.is_finite(), "band {k}: value must be finite");
+        assert!(
+            c.delta().is_finite(),
+            "band {k}: δ must be finite, got {:.3e}",
+            c.delta()
+        );
     }
+    assert!(
+        certs[0].delta() < 5e-2,
+        "the ground band must be informative: δ = {:.3e} (measured 2.89e-2)",
+        certs[0].delta()
+    );
     let analytic_ground = 1.5 * w - shift;
     let g = &certs[0];
     assert!(

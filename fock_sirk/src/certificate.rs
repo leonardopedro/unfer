@@ -160,8 +160,19 @@ pub struct GapCertificate {
 
 impl GapCertificate {
     /// Does the certified interval `[lo, hi]` contain the measured gap `θᵒ₀ − θᵉ₀`?
-    /// (Trivially true by construction — the width is the sum of the sector
-    /// widths — but asserted as an invariant by consumers.)
+    ///
+    /// **This is true by construction** and is not a check: `lo = gap − δ`,
+    /// `hi = gap + δ` with `δ = δᵒ + δᵉ ≥ 0`, so the containment follows from
+    /// the arithmetic, not from the solve. A suite that asserts it has asserted
+    /// the constructor. What *is* worth asserting at a gap-assembly site:
+    ///
+    /// * the assembly identity `hi − lo = δᵒ + δᵉ` and `gap = θᵒ₀ − θᵉ₀`
+    ///   (catches a dropped term, a swapped sector or a sign slip);
+    /// * the T6 statement itself, `lo > 0`;
+    /// * resolution — `δᵒ + δᵉ` small against the gap — or, when the widths
+    ///   exceed the gap (the measured situation at `m = 12` on the gauge-fixed
+    ///   QYM, `δ = 7.438` against `0.0912`), an explicit pin that `lo ≤ 0`, so
+    ///   an enclosure is never read as a certified mass gap.
     pub fn contains_measured(&self) -> bool {
         self.lo <= self.gap && self.gap <= self.hi
     }

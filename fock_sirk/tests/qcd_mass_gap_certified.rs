@@ -12,15 +12,37 @@
 //! (`fock_sirk::certified_mass_gap`) gives the certified enclosure of the
 //! sector-ground difference.
 //!
+//! ## What the certificate does and does not establish (2026-11-10 audit)
+//!
+//! The T6 interval at `m = 12` is **7.438 wide at `g = 1` and 50.8 wide at
+//! `g = 2`** (`δᵒ = 4.088`, `δᵉ = 3.350`), against gaps of `0.0912` and
+//! `1.244`. Two consequences the earlier version of this file did not state:
+//!
+//! * `lo > 0` — the actual mass-gap statement — **is not reachable here**
+//!   (`lo = −8.009` at `g = 1`), which is why the emitter's own
+//!   `"certified_positive":false` is truthful. The suite asserts the
+//!   *enclosure* (a valid bound in both directions, which can fail if the
+//!   assembly is wrong) and explicitly pins the non-resolution, so it cannot
+//!   silently read as a certified gap. `qym_mass_gap.rs` and
+//!   `mass_gap_campaign.rs` cover the same object with the same honesty; the
+//!   campaign is where "which rows actually certify" is recorded.
+//! * "the certified window contains the exact gap" and its sibling "the
+//!   measured gap lies inside its own interval" (`contains_measured`) are
+//!   statements that cannot fail: a 7.4-wide window contains everything near
+//!   zero, and `contains(value)` follows from `δ ≥ 0` by construction (the
+//!   library says so itself). They are replaced below by the assembly
+//!   identity, by the non-resolution pin, and by the dense-diagonalization
+//!   claim the window was meant to support.
+//!
 //! 1. `qcd_mass_gap_certified_enclosure` — the certified interval encloses
 //!    the EXACT truncated spectral gap `E₁ − E₀` of the gauge-fixed H
-//!    (cross-checked against the exact `N ≤ 8` diagonalization), and that
-//!    gap is positive — the truncated Hamiltonian is gapped.
-//! 2. `qcd_mass_gap_certified_window_contains_exact_gap` — the certified
-//!    window contains the exact truncated gap across the truncation family
-//!    (the honest "window contains the physics" statement; the gauge-fixed
-//!    gap is `≈ 0.09` at `g = 1` — NOT the lattice's `g²/2`, which is an
-//!    electric-lattice statement the continuum gauge-fixed H does not make).
+//!    (cross-checked against the exact `N ≤ 8` diagonalization), the gap is
+//!    positive, and the certificate does **not** resolve it (width ≫ gap).
+//! 2. `qcd_mass_gap_window_cannot_resolve_the_gauge_fixed_gap` — the window
+//!    contains the exact gap *and* the lattice value `g²/2`, i.e. it cannot
+//!    distinguish them; the departure is asserted from the dense
+//!    diagonalization instead (the gauge-fixed gap is `≈ 0.09` at `g = 1`, NOT
+//!    `g²/2 = 0.5`).
 //! 3. `qcd_mass_gap_certificate_ndjson` — the emitter output is well-formed
 //!    NDJSON with the sector labels, θ, δ consumed by the Lean4 T6 instance
 //!    (`ChapterSirkCertifiedGap`); the `certified_positive` flag truthfully
@@ -193,30 +215,62 @@ fn qcd_mass_gap_certified_enclosure() {
         exact_gap > 0.05,
         "the truncated gauge-fixed H must be gapped at g=1: E₁−E₀ = {exact_gap:.6}"
     );
-    // The measured gap lies inside its own certified interval.
+    // The assembly identity — a real check of `certified_mass_gap`, unlike
+    // `contains_measured()` (true by construction: the width IS the sum of the
+    // sector widths). A dropped term, a swapped sector or a sign slip fails here.
+    let width = gap.odd.delta() + gap.even.delta();
     assert!(
-        gap.contains_measured(),
-        "measured gap must lie inside its certified interval"
+        ((gap.hi - gap.lo) - 2.0 * width).abs() <= 1e-12,
+        "T6 interval must be twice the two sector widths: hi−lo = {:.6}, 2(δᵒ+δᵉ) = {:.6}",
+        gap.hi - gap.lo,
+        2.0 * width
+    );
+    assert!(
+        (gap.gap - (gap.odd.value - gap.even.value)).abs() <= 1e-12,
+        "the assembled gap must be θᵒ − θᵉ: {} vs {}",
+        gap.gap,
+        gap.odd.value - gap.even.value
+    );
+    // Non-resolution, pinned: the certificate is an enclosure, not a mass-gap
+    // proof. `lo > 0` stays out of reach while δ ≫ gap (measured 7.438 vs
+    // 0.0912). If this assertion ever fails the certificate has become sharp
+    // enough to certify positivity, and the test must assert `gap.lo > 0`
+    // instead of recording its absence.
+    assert!(
+        width > exact_gap,
+        "the m=12 certificate must still be wider than the gap it encloses \
+         (δ = {width:.4}, gap = {exact_gap:.4}); if it now resolves the gap, \
+         assert lo > 0 — do not relax this line"
+    );
+    assert!(
+        gap.lo <= 0.0,
+        "with δ = {width:.4} against a gap of {exact_gap:.4} the T6 lower bound cannot be \
+         positive; got lo = {:.6}",
+        gap.lo
     );
 }
 
 #[test]
-fn qcd_mass_gap_certified_window_contains_exact_gap() {
-    // The certified window from the SIRK sector solves contains the exact
+fn qcd_mass_gap_window_cannot_resolve_the_gauge_fixed_gap() {
+    // The certified window from the SIRK sector solves encloses the exact
     // truncated spectral gap E₁ − E₀ across the truncation family (N ≤ 6 and
-    // N ≤ 8), for g ∈ {1, 2}. This replaces the lattice's "window contains
-    // g²/2": the gauge-fixed H's gap is its own (≈ 0.09 at g = 1, growing
-    // with g), not the electric-lattice value.
+    // N ≤ 8), for g ∈ {1, 2} — but it is far too wide to *decide* anything:
+    // it also contains the lattice-era value g²/2, so "the window contains the
+    // gauge-fixed gap" cannot be the evidence that the gauge-fixed gap is not
+    // g²/2. That departure is asserted from the dense diagonalization, which
+    // is where it actually lives.
     for &g in &[1.0_f64, 2.0] {
         let h = qcd_ym_hamiltonian(g);
         let res_even = solve_sector(&h, &empty_vacuum(), 12);
         let res_odd = solve_sector(&h, &r_odd_start(), 12);
         let gap = certified_mass_gap(&res_even, &res_odd).expect("certified mass gap");
+        let width = gap.odd.delta() + gap.even.delta();
+        let g_sq_over_2 = 0.5 * g * g;
         for n in [6u32, 8] {
             let (_, _, exact_gap) = exact_gap(&h, n);
             println!(
                 "g = {g}, N ≤ {n}: exact gap E₁−E₀ = {exact_gap:.6}, certified window \
-                 [{:.6}, {:.6}]",
+                 [{:.6}, {:.6}] (width {width:.4}), lattice g²/2 = {g_sq_over_2}",
                 gap.lo, gap.hi
             );
             assert!(
@@ -227,7 +281,26 @@ fn qcd_mass_gap_certified_window_contains_exact_gap() {
                 gap.hi
             );
         }
-        assert!(gap.contains_measured(), "measured gap inside its interval");
+        // The window does NOT resolve the lattice value either — pinned so the
+        // claim cannot be overstated. If this ever fails, the certificate has
+        // sharpened enough to *separate* the two models, which is a stronger
+        // and different result: assert the exclusion instead.
+        assert!(
+            gap.lo <= g_sq_over_2 && g_sq_over_2 <= gap.hi,
+            "g={g}: the certified window [{:.6}, {:.6}] must still contain the \
+             lattice value g²/2 = {g_sq_over_2} — with δ = {width:.4} it cannot \
+             exclude it, so the window cannot evidence the departure",
+            gap.lo,
+            gap.hi
+        );
+        // The departure itself, from the dense diagonalization: real, and
+        // falsifiable (gauge-fixed gap 0.091 vs 0.5 at g=1; 1.244 vs 2 at g=2).
+        let (_, _, exact_gap_g) = exact_gap(&h, 8);
+        assert!(
+            (exact_gap_g - g_sq_over_2).abs() > 0.3,
+            "g={g}: the gauge-fixed gap {exact_gap_g:.6} must depart from the \
+             lattice value g²/2 = {g_sq_over_2} — the electric-lattice reading "
+        );
     }
 }
 
