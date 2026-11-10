@@ -3042,6 +3042,18 @@ for r in 4 8; do for s in 0.5 0.0; do
   cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
     --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot-shrink $s
 done; done
+# R2f: the same ladder on other pilot streams (`--seed` moves the pilot and the chains;
+# default 20261020).  Each extra seed is the same 4 cells for whichever rank is in question.
+for s in 1 0.5 0.0; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --seed 7 --pilot-shrink $s
+done
+for s in 1 0.5 0.0; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --seed 7 --pilot-shrink $s
+done
+cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+  --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --seed 8 --pilot-shrink 0.5
 ```
 
 ## R2 — per-direction scales for the `z` chain (2026-11-09)
@@ -3563,8 +3575,10 @@ informative.  (iii) `s = 0.5` and `s = 0` are indistinguishable here (399 vs 383
 surviving 75 draws is worth nothing over a single common scale: the honest summary is
 "one scale, 300 draws" not "four scales, 75 draws each".
 
-**Result 24 — at rank 8 isotropic is the best proposal measured, and partial shrinkage is
-the worst.**  `s = 0` gives ESS **154** / `R̂` **1.010** — 22× the fixed arm, 6.4× the raw
+**Result 24 — at rank 8, on this seed, isotropic is the best proposal measured and partial
+shrinkage is the worst.**  (R2f repeats this cell on other seeds and does not find either
+ordering; read the numbers below as the default seed's, not as the rank's.)  `s = 0` gives
+ESS **154** / `R̂` **1.010** — 22× the fixed arm, 6.4× the raw
 300-step pilot, and better than 2 400 raw draws (137 / 1.040) at 17 204 evals instead of
 25 604, i.e. at 67 % of the cost and a third of the wall time (231 s vs 321 s).  But
 `s = 0.5` is the worst cell in the table: ESS 7, `R̂` **2.164** — worse than no shrinkage
@@ -3591,7 +3605,9 @@ that gap remains unquoted — the fixed arm has `R̂` 1.289, so Result 17 applie
 
 **Result 26 — what to actually run.**  `--pilot-shrink 0` is the proposal to use at both
 ranks tested: rank 4 ESS 383 vs 100 (fixed) and rank 8 ESS 154 vs 7, with `R̂` ≤ 1.010 in
-both and no predictive cost; it needs no extra pilot steps at all.  Length should be treated
+both and no predictive cost; it needs no extra pilot steps at all.  (R2f revises the
+magnitudes: the rank-4 gain is 2.6–3.1× on two seeds rather than 4×, and the rank-8
+advantage is 2.2–22× with `s = 0.5` unstable rather than uniformly bad.)  Length should be treated
 as the fallback for callers who must keep raw widths (the flag defaults to `s = 1` precisely
 so the published R2/R2b/R2c/R2d tables stay reproducible): with raw widths, rank 8 needs
 ≥ 2 400 steps (300·`r`), not the 1 200 that 150·`r` gives.  Two things are deliberately not
@@ -3603,13 +3619,100 @@ coordinate at rank 4 and 19 at rank 8 are not enough to place per-coordinate sca
 that at informal rank 8 the single isotropic scale at the pilot's geometric mean is the one
 that fits.  The untested follow-up this leaves is `s` with a *replicate-averaged* width
 (averaging the pilot's own half-sample estimates, or two independent pilots), which would
-attack the same noise without collapsing the spread, and a `--seed` sweep at `s = 0.5`,
-rank 8 to see whether Result 24's non-monotonicity survives a different pilot stream.
+attack the same noise without collapsing the spread.  The `--seed` sweep this leaves open
+was run immediately after (R2f below) and answers it: the non-monotonicity does not
+replicate.
+
+### R2f — the shrinkage gain across seeds (same day)
+
+R2e ended on one cell with no explanation (rank 8, `s = 0.5`: ESS 7, `R̂` 2.164, worse than
+either end) and one number standing on a single pilot stream (rank 4 raw 15 → shrunk 399).
+Both are `--seed` questions: `--seed` moves the pilot stream and the chain streams together,
+so a repeat at another seed is the only way to separate a mechanism from a lucky width
+vector.  Four rank-8 cells at seed 7 (fixed, `s = 1`, `0.5`, `0`) plus a fifth `s = 0.5` cell
+at seed 8 chase the anomaly; three rank-4 cells at seed 7 (fixed comes free with `s = 1`)
+chase the magnitude.  Same protocol as R2e otherwise (4 chains × 4 000 steps, burn 500,
+thin 5, informed basis, `π_r`, ambient anchor); 7 cells, 2.2 h on 2 cores, every process
+`EXIT 0`.  Seed 20261020 is the default used by R2/R2b/R2c/R2d/R2e and the first four rows
+below are the ones already quoted there.
+
+| rank | seed | pilot steps | `s` | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | `β_i` | evals | sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 20261020 | fixed | — | 60.6 % | 100 | 1.023 | 12.89 % | 0.089 | 0.9925 | 2.8699 | 0.270 | 0.0035 | — | 0.05 | 16 004 | 280 |
+| 4 | 20261020 | 300 | 1 | 50.4 % | 15 | 1.353 | 12.89 % | 0.429 | 0.9917 | 2.8658 | 0.269 | 0.0011 | 0.17 | 0.012–0.13 | 17 204 | 301 |
+| 4 | 20261020 | 300 | 0.5 | 47.9 % | **399** | 1.012 | 12.89 % | 0.081 | 0.9924 | 2.8669 | 0.270 | 0.0005 | 0.27 | 0.035–0.11 | 17 204 | 291 |
+| 4 | 20261020 | 300 | 0.0 | 46.5 % | **383** | 1.010 | 12.89 % | 0.057 | 0.9922 | 2.8662 | 0.270 | 0.0005 | 0.33 | 0.069–0.08 | 17 204 | 299 |
+| 4 | 7 | fixed | — | 58.1 % | 84 | 1.036 | 19.53 % | 0.142 | 0.9054 | 2.6168 | 0.194 | 0.0042 | — | 0.05 | 16 004 | 281 |
+| 4 | 7 | 300 | 1 | 48.6 % | 97 | 1.062 | 17.58 % | 0.085 | 0.9054 | 2.6092 | 0.212 | 0.0022 | 0.22 | 0.014–0.14 | 17 204 | 233 |
+| 4 | 7 | 300 | 0.5 | 47.1 % | **264** | 1.014 | 17.58 % | 0.057 | 0.9050 | 2.6092 | 0.212 | 0.0013 | 0.33 | 0.037–0.12 | 17 204 | 300 |
+| 4 | 7 | 300 | 0.0 | 47.5 % | **152** | 1.025 | 17.58 % | 0.067 | 0.9048 | 2.6068 | 0.212 | 0.0016 | 0.38 | 0.064–0.07 | 17 204 | 226 |
+| 8 | 20261020 | fixed | — | 55.4 % | 7 | 1.289 | 10.94 % | 0.658 | 0.9485 | 2.4693 | 0.237 | 0.0527 | — | 0.05 | 16 004 | 281 |
+| 8 | 20261020 | 300 | 1 | 48.1 % | 6 | 1.931 | 14.06 % | 0.594 | 0.9768 | 2.7792 | 0.280 | 0.0164 | 0.20 | 0.013–0.12 | 17 204 | 225 |
+| 8 | 20261020 | 300 | 0.5 | 47.1 % | 7 | **2.164** | 14.84 % | 0.355 | 0.9727 | 2.7425 | 0.262 | 0.0160 | 0.29 | 0.035–0.11 | 17 204 | 299 |
+| 8 | 20261020 | 300 | 0.0 | 48.7 % | **154** | **1.010** | 14.84 % | 0.277 | 0.9780 | 2.8105 | 0.253 | 0.0087 | 0.34 | 0.064–0.07 | 17 204 | 231 |
+| 8 | 7 | fixed | — | 41.0 % | 9 | 1.156 | 20.70 % | 0.601 | 0.8719 | 2.4896 | 0.173 | 0.0241 | — | 0.05 | 16 004 | 275 |
+| 8 | 7 | 300 | 1 | 41.8 % | 12 | 1.164 | 22.27 % | 0.275 | 0.8741 | 2.5055 | 0.167 | 0.0052 | 0.19 | 0.018–0.12 | 17 204 | 227 |
+| 8 | 7 | 300 | 0.5 | 38.6 % | **20** | 1.112 | 21.88 % | 0.306 | 0.8702 | 2.4895 | 0.167 | 0.0056 | 0.25 | 0.031–0.09 | 17 204 | 295 |
+| 8 | 7 | 300 | 0.0 | 35.2 % | **20** | 1.121 | 21.88 % | 0.319 | 0.8699 | 2.4895 | 0.166 | 0.0100 | 0.30 | 0.052–0.06 | 17 204 | 223 |
+| 8 | 8 | fixed | — | 50.6 % | 7 | 1.336 | 28.91 % | 0.351 | 0.8096 | 1.9958 | 0.108 | 0.0225 | — | 0.05 | 16 004 | 274 |
+| 8 | 8 | 300 | 0.5 | 47.3 % | 6 | **3.560** | 31.25 % | 0.199 | 0.8081 | 1.9813 | 0.114 | 0.0066 | 0.24 | 0.026–0.08 | 17 204 | 227 |
+
+**Result 27 — at rank 4 the gain replicates and its magnitude does not.**  Seed 7 reproduces
+the *ordering* of R2e exactly: `s = 0.5` is the best cell (264 vs 399 at the default seed),
+`s = 0` second (152 vs 383), raw last (97 vs 15), and shrinkage beats the fixed arm at both
+seeds (264 vs 84, 399 vs 100 — 3.1× and 4.0×).  What does not replicate is the size of the
+raw pilot's loss: at 300 steps it is ESS 15 on one stream and 97 on another, and 97 is
+*better* than the fixed arm's 84.  So R2d's and R2e's "the raw pilot is 6.7× worse at rank
+4" is one unlucky width vector, not a property of a 300-step pilot at rank 4.  The robust
+statement is the one that survives both seeds: **raw widths at 300 steps are a lottery that
+shrinkage removes** — the shrunk cells never fall below 152 while the raw cell spans 15–97.
+
+**Result 28 — the rank-8 non-monotonicity does not replicate, and `s = 0.5` is unstable
+rather than systematically bad.**  At seed 7 the ladder is 9 (fixed) / 12 (raw) / **20**
+(`s = 0.5`) / **20** (`s = 0`) — `s = 0.5` ties the best cell and beats raw, the opposite of
+R2e Result 24.  But the extra `s = 0.5` cell at seed 8 gives ESS 6 with `R̂` **3.560**, the
+worst diagnostic anywhere in R2/R2b/R2c/R2d/R2e/R2f (R2e's "worst" 2.164 is mild next to
+it).  So the intermediate point is not systematically bad: it is *bimodal* — occasionally
+the best proposal, occasionally a chain that has not mixed.  At 19 pilot draws per
+coordinate a single bad width vector can stop the rank-8 chain outright, and what the sweep
+measures is that variance, not a mean.  This also retracts the mechanistic reading in
+Result 24 ("the scale mismatch is what the rank-8 chain cannot absorb"): seed 7 has the same
+`β_i` spread 0.031–0.09 for `s = 0.5` and mixes to 20.
+
+**Result 29 — the rank-8 isotropic advantage is real but 10× smaller off the default
+seed.**  `s = 0` gives 154 vs fixed 7 at the default seed but 20 vs 9 at seed 7; raw gives
+6 vs 12.  Shrinkage helps at both seeds — 20 > 12 > 9, 154 > 7 ≥ 6 — so the direction is
+the one robust thing in the rank-8 table.  But "beats 2 400 raw pilot steps (137) at 67 %
+of the cost", the headline of Result 24, is a default-seed statement: on seed 7 the same
+cell is 20 against a fixed arm of 9, entirely inside the ±1–2 ESS scale of the fixed arm
+itself.  Rank-8 conclusions need ≥ 3 seeds and a reported spread before they mean anything.
+
+**Result 30 — the predictives are seed-dominated, so no cross-seed predictive comparison
+is valid.**  Rank-4 fixed NLL is 2.8699 at the default seed and **2.6168** at seed 7 — 0.25
+apart, more than 3× every within-seed difference in R2e taken together (≤ 0.08), and BMA
+accuracy moves 12.89 % → 19.53 % while ECE moves 0.270 → 0.194.  Within each seed R2e
+Result 25 holds again: at seed 7 the rank-4 pilot cells span NLL 2.6068–2.6092 across an
+ESS range of 97–264, and every rank-8 pilot cell sits at 2.4895–2.5055 against a fixed arm
+of 2.4896.  So the predictive is flat in ESS *within* a seed and dominated *by* the seed:
+the pilot's mixing problem is a within-chain-variance problem and stays one, but any table
+row is only comparable to rows with the same `--seed`.
+
+**Result 31 — revised recommendation.**  `--pilot-shrink` stays on, and at rank 4 the
+measured best is `s = 0.5` on both seeds (264, 399) with `s = 0` close behind (152, 383) —
+the one claim in R2e whose ordering survived replication.  At rank 8 the flag is defensible
+only with several seeds and the spread reported; a single rank-8 cell with shrinkage is not
+evidence of anything, and `s = 0.5` there is "not safe" for a different reason than Result
+24 gave: not that it is systematically worse, but that it is a coin flip between the best
+and the worst cell in the whole series.  The rule this leaves: **shrinkage is a variance
+reduction, so it must be validated by its variance** — a one-cell improvement at rank 8 is
+what a lucky width vector looks like, and the run that reports it should report at least
+three seeds.
 
 ## Reproduce / verify
 
 ```bash
 cd unfer
+cargo test -p pcnl --lib --release                       # 131 unit tests, ~36 s after build
 cargo test -p pcnl --locked                              # 171 tests (130 unit + 7 comparators
                                                          #  + 8 formal claims + 26 numerical)
                                                          # (debug build: ~40 min on 2 cores;

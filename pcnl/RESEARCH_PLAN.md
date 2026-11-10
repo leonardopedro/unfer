@@ -291,9 +291,23 @@ and 300 shrunk draws beat 1 200 raw ones (245). At rank 8 `s = 0` gives ESS **15
 cell measured (7 / **2.164**), so partial shrinkage is not a safe interpolation and one
 `--seed` sweep should check whether that non-monotonicity is a mechanism or pilot luck.
 The predictive is flat across all twelve cells (rank-4 NLL 2.8658–2.8699, rank-8 pilot
-2.7425–2.8219, rank-4 BMA 12.89 % everywhere), i.e. the effect is diffusion, not bias. The
-open follow-up is a replicate-averaged width (two independent pilots, or averaging the
-pilot's own half-samples) to attack the noise without collapsing the spread.
+2.7425–2.8219, rank-4 BMA 12.89 % everywhere), i.e. the effect is diffusion, not bias.
+
+R2f ran that seed sweep (rank 8 at seeds 7 and 8, rank 4 at seed 7) and the size of both
+headline numbers was seed luck. At rank 4 the *ordering* replicates — `s = 0.5` best at both
+seeds (399 / **264**), `s = 0` next (383 / 152), raw last — but the raw cell is ESS 15 on one
+stream and 97 (better than the fixed arm's 84) on another, so "the 300-step pilot is 6.7×
+worse at rank 4" is one width vector, and what is robust is that shrinkage removes the
+lottery (shrunk ≥ 152, raw 15–97). At rank 8 the non-monotonicity does not replicate: seed 7
+gives 9 fixed / 12 raw / 20 (`s = 0.5`) / 20 (`s = 0`), and a fifth cell at seed 8 with
+`s = 0.5` gives ESS 6 at `R̂` **3.560** — the intermediate point is not systematically bad
+but bimodal, i.e. a coin flip between best and worst at 19 draws per coordinate. So
+`--pilot-shrink` should be reported with ≥ 3 seeds and their spread, and rank-8 shrinkage
+is a variance reduction that must be validated by its variance. Predictives are flat within
+a seed and dominated across seeds (rank-4 fixed NLL 2.6168 at seed 7 vs 2.8699 default), so
+only same-seed rows are comparable. The open follow-up is a replicate-averaged width (two
+independent pilots, or averaging the pilot's own half-samples) to attack the noise without
+collapsing the spread.
 
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
