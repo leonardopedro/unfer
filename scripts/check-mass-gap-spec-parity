@@ -79,6 +79,20 @@ anchors=(
   "gap_interval("
   "interval_contains("
   "gap_certified_positive("
+  # §6d (2026-11-10b): the campaign verdicts and the traps behind them. The
+  # specialist's Lean4 instance must not read "3 of 10" or "lo > 0" off the
+  # SIRK rows and call it a gap, and must not build a reflection sector from an
+  # occupation parity — both are soundness-relevant, not prose.
+  "6 of 10 rows certify"
+  "negative of the truncated gap"
+  "T6's orientation (odd above even)"
+  "does not fix it"
+  "lanczos_ritz"
+  "the even side needs no witness"
+  # Single-quoted: a backtick inside double quotes would open a command
+  # substitution and the gate itself would fail to parse.
+  '(n₀+n₁)` parity is not the reflection sector'
+  "truncated_parity_block"
   # The exact Z₂ reflection and its sector split.
   "R: (A₀,A₁) → (−A₁,−A₀)"
   "v_o = (a†₀ + a†₁)|Ω⟩/√2"

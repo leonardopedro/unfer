@@ -2453,11 +2453,23 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   continuum). See `docs/MASS_GAP_SPEC.md` §6c.
 - **The campaign under that certificate**
   (`fock_sirk/tests/mass_gap_exclusion_campaign.rs`) certifies **3 of 10** grid
-  rows (`g ∈ {0,0.5,1,2,3}`, `N ∈ {6,8}`, `m = 12`) — and the two `g = 0` rows
-  are the control, certifying a positive gap on a theory with no continuum gap.
-  The bottleneck on `g > 0` is *not* the exclusion but the even-side Rayleigh
-  quotient (`θᵉ₀` sits `9e-3…2.3` above `λ₀(even)` at `m = 12`); the two refused
-  rows fail the `rᵒ < β − θᵒ₀` guard honestly. The matvec-only λ₂ bound
+  rows (`g ∈ {0,0.5,1,2,3}`, `N ∈ {6,8}`, `m = 12`) when fed the truncated SIRK
+  solve, and **6 of 10** when the identical certificate is fed matvec-only
+  Lanczos on the same `H_N` (`certificate::lanczos_ritz`, 40 steps, same sector
+  starts) — the two `g = 0` rows are the control, certifying a positive gap on a
+  theory with no continuum gap. In the Lanczos column every bound equals the
+  exact truncated gap to the last printed digit (`r²/(β−θ) = O(1e-14)`), so the
+  remaining slack is gone rather than merely small. The SIRK rows lose on the
+  even-side Rayleigh quotient (`θᵉ₀` sits `9e-3…2.3` above `λ₀(even)` at
+  `m = 12`), and **depth does not fix it**: the excess is `3.71e-1 → 3.97e-1 →
+  3.99e-1` at `m = 12, 24, 40` with the residual flat at `8e-1`, because the
+  forward chain's span stops growing (the `rank 10 of m+1 = 15` collapse). The
+  four remaining rows are **not** a convergence problem: the odd ground sits
+  *below* the even one inside `H_N` there, so `θᵒ₀ − θᵉ₀` is the negative of the
+  truncated gap to machine precision and T6's orientation (odd above even) does
+  not hold at all — 6 is the ceiling on this grid, and the test asserts that the
+  certified count equals the number of correctly oriented cells. The matvec-only
+  `λ₂` bound
   (`certificate::DiagonalExclusion`, `β = d₂ − ‖V‖_F`) is sound but **useless**
   here: `−552.8` against `θᵒ₀ = −2.825` at `N ≤ 12` (`n = 1820`), because a
   `λ₂` bound is an eigenvalue *count* and `‖V‖_F ~ √n`. Scratch the truncation
@@ -2467,7 +2479,11 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   ±pair combinations, and at `g > 0` the three-operator terms break that parity
   entirely), and a leak check must be formed as an explicit residual —
   subtracting `Σdot²` from `‖Hu‖²` reports a spurious `2e-8` leak on an exactly
-  invariant sector. → `docs/MASS_GAP_SPEC.md` §6d.
+  invariant sector. The `g = 0`-only `truncated_parity_block` helper now takes
+  the coupling, refuses `g ≠ 0` (pinned by a `#[should_panic]` test) and measures
+  its own `H`-invariance (`‖(1−P) H P‖_F < 1e-10`), so it cannot be reused as a
+  reflection sector where the three-operator terms break that parity.
+  → `docs/MASS_GAP_SPEC.md` §6d.
 
 **No coupling certifies it** (measured sweep, 2026-11-10; full table in
 `docs/MASS_GAP_SPEC.md` §6a). The interval is `[gap ± δ]`, so a stronger

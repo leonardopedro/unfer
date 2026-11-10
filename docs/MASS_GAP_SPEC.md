@@ -339,14 +339,14 @@ sector. Every bound is checked against the exact spectrum of the same `H_N`.
 
 | `g` | `N≤` | `θᵒ₀` | `rᵒ` | `θᵉ₀` | λ₀(even) | certified | exact |
 |---|---|---|---|---|---|---|---|
-| 0 | 6 | −1.114923508 | 5.5e-7 | — | — | **0.189924633** | 0.189927963 |
-| 0 | 8 | −1.304848142 | 5.4e-3 | — | — | **0.122250754** | 0.122434177 |
+| 0 | 6 | −1.114923508 | 5.5e-7 | −1.304848142 | −1.304851471 | **0.189924633** | 0.189927963 |
+| 0 | 8 | −1.304848142 | 5.4e-3 | −1.427251240 | −1.427285648 | **0.122250754** | 0.122434177 |
 | 0.5 | 6 | −1.290797126 | 1.4e-1 | −1.333866597 | −1.343008908 | −0.044087815 | 0.035042125 |
-| 0.5 | 8 | −1.484935965 | 2.5e-1 | — | — | *refused* | — |
+| 0.5 | 8 | −1.484935965 | 2.5e-1 | −1.462673600 | −1.545550924 | *refused* | — |
 | 1 | 6 | −1.916799544 | 2.1e-1 | −1.654344005 | −2.024960357 | −0.337475258 | 0.091073200 |
-| 1 | 8 | −2.347584372 | 8.5e-1 | — | — | *refused* | 0.091161224 |
-| 2 | 6 | −4.356582224 | 2.4e-1 | — | — | **0.281770542** | 0.850113842 |
-| 2 | 8 | −7.450580584 | 1.8 | — | −6.511130065 | −3.555041727 | — |
+| 1 | 8 | −2.347584372 | 8.5e-1 | −1.802710254 | −2.743629504 | *refused* | 0.091161224 |
+| 2 | 6 | −4.356582224 | 2.4e-1 | −4.694324172 | −5.217666264 | **0.281770542** | 0.850113842 |
+| 2 | 8 | −7.450580584 | 1.8 | −5.064921303 | −6.511130065 | −3.555041727 | — |
 | 3 | 6 | −9.231412965 | 2.3e-1 | −8.296452899 | −9.214246967 | −0.960755924 | — |
 | 3 | 8 | −14.163516377 | 2.8 | −11.288046902 | −13.610338101 | −4.471890878 | — |
 
@@ -361,10 +361,62 @@ Two facts about the failure modes are worth more than the count:
   the even sector's ground (the `g = 1, N ≤ 6` row is 0.37 above it), because a
   vacuum-start solve at `m = 12` has not converged on the squeezed ground while
   its Rayleigh quotient is still a valid upper bound. This is the cheapest thing
-  to improve: the even side needs no witness, only a better `θᵉ₀`.
+  to improve — the even side needs no witness, only a better `θᵉ₀` — and doing
+  it is measured next: **6 of 10** rows then certify.
 * **Where the row is refused, it is refused honestly.** `g = 0.5, N ≤ 8` and
   `g = 1, N ≤ 8` have `rᵒ` comparable to `β − θᵒ₀`, so Temple's hypothesis fails
   and the assembly returns `None` rather than a number.
+
+#### The solve, not the witness, was the limit (2026-11-10b)
+
+`θᵉ₀` is consumed only as an upper bound on `λ₀`, so the solve that produces it
+carries no hypothesis. Replacing the stagnating truncated SIRK chain with
+matvec-only Lanczos on the *same* `H_N` (`certificate::lanczos_ritz`, 40 steps,
+same sector starts, containment residual asserted) changes nothing about
+validity and everything about the verdicts:
+
+| `g` | `N≤` | `θᵉ₀` (excess over λ₀(even)) | `θᵒ₀` | `rᵒ` | certified | exact |
+|---|---|---|---|---|---|---|
+| 0 | 6 | −1.114923508 (0) | −1.114923508 | 2.0e-15 | **0.189927963** | 0.189927963 |
+| 0 | 8 | −1.304851471 (0) | −1.304851471 | 7.3e-15 | **0.122434177** | 0.122434177 |
+| 0.5 | 6 | −1.343008908 (0) | −1.307966783 | 5.4e-15 | **0.035042125** | 0.035042125 |
+| 1 | 6 | −2.024960357 (0) | −1.933887157 | 1.5e-14 | **0.091073200** | 0.091073200 |
+| 1 | 8 | −2.743629504 (0) | −2.652468280 | 1.6e-14 | **0.091161224** | 0.091161224 |
+| 2 | 6 | −5.217666264 (0) | −4.367552423 | 2.2e-14 | **0.850113842** | 0.850113842 |
+
+**6 of 10 rows certify, up from 3, and every bound is the exact gap to the last
+printed digit** — with both sector grounds resolved, the only slack left is
+Temple's `r²/(β − θ)`, which is `O(1e-14)`.
+
+The other four rows are not a convergence problem. They are the cells where the
+odd ground sits *below* the even one inside `H_N`, so `θᵒ₀ − θᵉ₀` is the
+**negative of the truncated gap**, to machine precision:
+
+| `g` | `N≤` | λ₀(even) | λ₁(odd) | `H_N` gap (even − odd) | T6 bound |
+|---|---|---|---|---|---|
+| 0.5 | 8 | −1.545550924 | −1.576008527 | 0.030457603 | −0.030457603 |
+| 2 | 8 | −6.511130065 | −7.754776632 | 1.243646566 | −1.243646566 |
+| 3 | 6 | −9.214246967 | −9.236287521 | 0.022040554 | −0.022040554 |
+| 3 | 8 | −13.610338101 | −14.566593782 | 0.956255682 | −0.956255682 |
+
+T6's orientation (odd above even) does not hold in those cells at all, and no
+amount of accuracy can make the expression positive there. **6 is the ceiling on
+this grid**, and the test asserts both halves of that: every cell whose truncated
+ordering matches T6's certifies, and the certified count equals the number of
+such cells.
+
+Two findings worth keeping:
+
+* **The truncated chain stagnates, and `m` does not fix it.** At `g = 1, N ≤ 6`
+the even excess is `3.71e-1` at `m = 12`, `3.97e-1` at `m = 24` and `3.99e-1` at
+`m = 40`, with the residual flat at `~8e-1`: the chain's span stops growing (the
+`rank 10 of m+1 = 15` collapse already recorded in `qcd_mass_gap_certified.rs`),
+so extra shifts buy nothing. This is a property of the forward truncated solve as
+used here, not of the certificate — the SIRK rows remain *valid*, merely loose.
+* **Lanczos belongs on the even side** precisely because it needs no witness:
+40 matvecs reach `rᵒ ≤ 3e-11` at every cell (usually `1e-14`), where 40 SIRK
+steps leave `~8e-1`. The odd side is where the witness is needed, and the odd
+side was already converging under SIRK at these sizes.
 
 #### The sparse route does not rescue large truncations
 
@@ -405,13 +457,21 @@ The corrected construction pairs each `R`-orbit and asserts
 `‖(I − P_sector) H u‖ < 1e-9‖Hu‖` for every sector vector, so a non-invariant
 sector cannot pass silently. With it the numbers reproduce the independently
 measured parity-resolved spectrum (e.g. `λ_odd = −2.652468280` at `g = 1,
-N ≤ 8`). The `g = 0`-only helper in `qcd_mass_gap_certified.rs` is unaffected —
-at `g = 0` the products are even, so that block *is* `H`-invariant, and it is a
-superset of the odd sector, which is the right direction for a `λ₂` lower bound
-(`λ₂(superset) ≤ λ₂(sector)`).
+N ≤ 8`). The `g = 0`-only helper `truncated_parity_block` in
+`qcd_mass_gap_certified.rs` is unaffected — at `g = 0` the products are even, so
+that block *is* `H`-invariant and coincides with the odd sector.
 
-The correction to T6's statement has **not** yet reached the specialist bundle
-(`../timepiece/unfer_contracts/`, a sibling repository).
-`scripts/check-mass-gap-spec-parity` compares operative claims only, and this
-wording is not one of them, so the bundle keeps the unconditional reading until
-someone mirrors §6b there by hand.
+It now **refuses** to run at `g ≠ 0`: its signature takes the coupling, a
+`#[should_panic]` test pins the refusal, and the `H`-invariance of the block it
+returns is measured (`‖(1−P) H P‖_F < 1e-10`) rather than assumed — so the guard
+is a property of the matrix, not a caller convention. Without it, reusing the
+helper at `g > 0` would hand a certificate a `β` that is not a `λ₂` witness,
+which is exactly how this run's `0.322254` violation would have entered as a
+"result".
+
+§6a–§6d are mirrored into the specialist bundle
+(`../timepiece/unfer_contracts/MASS_GAP_SPEC.md`, §6a and §6b there), and
+`scripts/check-mass-gap-spec-parity` anchors the operative claims of both —
+including the conditionality of T6, the Temple form, the campaign verdicts and
+the parity trap — so the bundle can no longer drift back to the unconditional
+reading unnoticed.

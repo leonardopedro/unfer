@@ -496,12 +496,33 @@ fn assert_operator_self_adjoint(h: &Hamiltonian, n: u32, states: &[QuantumState]
     }
 }
 
-/// The reflection-parity block of `H_N` as an explicit real matrix.
+/// The `(n₀+n₁)`-parity block of `H_N` as an explicit real matrix — **valid only
+/// at `g = 0`**.
 ///
-/// `R` commutes with `H`, so each parity parity subspace is `H`-invariant and the
-/// block is the operator itself restricted to it — no leakage to project away.
-/// This is the explicit finite matrix an exclusion certificate can be built on.
-fn truncated_parity_block(h: &Hamiltonian, n_max: u32, even: bool) -> DMatrix<f64> {
+/// At `g = 0` this block *is* a reflection sector: `R` commutes with
+/// `H = ½π² + ½(A₀−A₁)²`, which is quadratic, so both the reflection parity and
+/// the `(n₀+n₁)` parity are preserved, and the block is the operator itself
+/// restricted to an invariant subspace — no leakage to project away.
+///
+/// **At `g > 0` that is false.** `B²` then carries the three-operator products
+/// `A₀²A₁` and `A₀A₁²`, which change `(n₀+n₁)` parity, so a `(n₀+n₁)%2` filter is
+/// neither an `R` sector nor an `H`-invariant subspace, and every eigenvalue read
+/// off such a block would be meaningless — a `λ₂` read from it is not a witness,
+/// and using it would turn a refused certificate into a wrong one (measured in
+/// `mass_gap_exclusion_campaign.rs`: at `g = 2, N ≤ 6` the parity-filtered
+/// "sector" certified `0.322254` against a true gap of `0.044450`).
+///
+/// So the coupling is an argument rather than an assumption. `g != 0` panics
+/// instead of returning a silently wrong block, and the `H`-invariance of the
+/// result is *measured* below, so the guard is a property of the built matrix
+/// and not merely a caller convention.
+fn truncated_parity_block(h: &Hamiltonian, n_max: u32, even: bool, g: f64) -> DMatrix<f64> {
+    assert!(
+        g == 0.0,
+        "truncated_parity_block is only valid at g = 0: at g > 0 the (n₀+n₁) parity filter is \
+         not a reflection sector (B²'s A₀²A₁ / A₀A₁² flip that parity), so the block is not \
+         H-invariant and its spectrum is not a λ₂ witness — got g = {g}"
+    );
     let mut basis = Vec::new();
     for n0 in 0..=n_max {
         for n1 in 0..=n_max - n0 {
@@ -524,12 +545,34 @@ fn truncated_parity_block(h: &Hamiltonian, n_max: u32, even: bool) -> DMatrix<f6
     }
     let n = basis.len();
     let mut mat = DMatrix::<f64>::zeros(n, n);
+    let mut leak = 0.0_f64;
     for (j, s) in basis.iter().enumerate() {
         let hs = h.apply(s);
         for (i, t) in basis.iter().enumerate() {
             mat[(i, j)] = QuantumState::inner_product(t, &hs).re;
         }
+        // The invariance is measured, not assumed: every component of `H s` whose
+        // `(n₀+n₁)` parity is the other one is weight the block above silently
+        // dropped, and any such weight would make its eigenvalues the wrong
+        // operator's. `dΓ` acts on the `mult`-fold symmetric power, so the
+        // occupation's parity is `(n₀+n₁)·mult`.
+        for (outer, amp) in hs.components.iter() {
+            for (inner, mult) in outer.bosonic.iter() {
+                let n0 = inner.modes.get(&0).copied().unwrap_or(0);
+                let n1 = inner.modes.get(&1).copied().unwrap_or(0);
+                let is_even = ((n0 + n1) * mult) % 2 == 0;
+                if is_even != even {
+                    leak += amp.norm_sqr() * (*mult as f64);
+                }
+            }
+        }
     }
+    assert!(
+        leak < 1e-10,
+        "the (n₀+n₁) parity block must be H-invariant at g = 0: measured ‖(1−P) H P‖_F = \
+         {leak:e} — a nonzero leak means this is not a reflection sector, so its λ₂ is not a \
+         witness"
+    );
     mat
 }
 
@@ -672,7 +715,7 @@ fn the_certified_gap_lower_bound_needs_the_sector_ground() {
     // n eigenvalues and every interval holds at least one, each cluster holds
     // exactly its own count. That turns the second cluster's lower edge into a
     // rigorous λ₂ bound — the thing a residual cannot produce.
-    let odd_block = truncated_parity_block(&h, n, false);
+    let odd_block = truncated_parity_block(&h, n, false, g);
     let certified_spectrum = certify_spectrum(&odd_block).expect("the odd block is certifiable");
     let beta = certified_spectrum
         .second_eigenvalue_lower_bound()
@@ -717,4 +760,15 @@ fn the_certified_gap_lower_bound_needs_the_sector_ground() {
          Parlett-width lo {:.9}; θᵒ₀ = {:.9} rᵒ = {:.3e} β = {beta:.9}",
         in_sector.lo, co[0].value, co[0].residual
     );
+}
+
+/// The `g > 0` guard on `truncated_parity_block` is real: a caller that reaches
+/// for the parity block as if it were a reflection sector at nonzero coupling is
+/// refused rather than handed a block whose spectrum is not a `λ₂` witness.
+#[test]
+#[should_panic(expected = "only valid at g = 0")]
+fn the_parity_block_refuses_a_nonzero_coupling() {
+    let g = 1.0;
+    let h = qcd_ym_hamiltonian(g);
+    let _ = truncated_parity_block(&h, 6, false, g);
 }

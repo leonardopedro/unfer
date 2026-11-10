@@ -11,16 +11,27 @@
 //!   λ₁ − λ₀ ≥ temple(θᵒ₀, rᵒ, β) − θᵉ₀,   temple: λ₁ ≥ θ − r²/(β − θ)
 //! ```
 //!
-//! — with `β ≤ λ₂` supplied two ways, so the two can be compared on the same
-//! rows:
+//! — on each cell of the grid, with `β ≤ λ₂` supplied two ways so the two can be
+//! compared on the same rows:
 //!
-//! * **dense** — [`certify_spectrum`] on the parity block: `n` Parlett intervals
+//! * **dense** — [`certify_spectrum`] on the odd block: `n` Parlett intervals
 //!   merged into disjoint clusters, so each cluster's count is exact and the
 //!   second cluster's lower edge is a rigorous `λ₂` bound. Costs `O(n³)`.
 //! * **sparse** — [`DiagonalExclusion`]: Weyl's `λ_i(H) ≥ λ_i(diag H) − ‖V‖₂`
 //!   with `‖V‖_F` measured from matvecs. `O(n)` matvecs at any `n`, but the
 //!   bound decays like `√n` against a fixed gap, so it is expected to be far
 //!   weaker (`the_sparse_witness_is_sound_but_does_not_certify` pins that).
+//!
+//! and with the Ritz pair `(θ, r)` supplied two ways as well ([`Solver`]): the
+//! forward truncated SIRK solve of §6d, and matvec-only Lanczos on the same
+//! `H_N`. The certificate is identical; only the solve changes, and it is the
+//! solve — not the witness — that decides most of these verdicts. `θᵉ₀` is
+//! consumed only as an upper bound on `λ₀`, so the even side needs no witness at
+//! all, just a value close enough to `λ₀` to leave room for the odd side.
+//!
+//! A cell where the odd ground sits *below* the even one inside `H_N` has no gap
+//! in T6's orientation (the expression is the negative of its gap), and such a
+//! cell is reported as crossing rather than as a failure of the certificate.
 //!
 //! **What the rows mean.** These are `H_N` rows: `P_N H P_N` on the truncated
 //! inner-occupation basis. A certified positive gap here is a statement about
@@ -194,6 +205,59 @@ impl Truncated {
         }
     }
 
+    /// `x ↦ P_sector H_N x` in sector coordinates — the same operator the dense
+    /// [`Truncated::sector_matrix`] represents, reached with matvecs only.
+    fn sector_matvec<'a>(
+        &'a self,
+        sector: &'a [Vec<(usize, f64)>],
+    ) -> impl Fn(&[f64]) -> Vec<f64> + 'a {
+        let full = self.matvec();
+        move |x: &[f64]| {
+            let mut v = vec![0.0_f64; self.dim()];
+            for (b, u) in sector.iter().enumerate() {
+                if x[b] == 0.0 {
+                    continue;
+                }
+                for &(i, coef) in u {
+                    v[i] += x[b] * coef;
+                }
+            }
+            let y = full(&v);
+            sector
+                .iter()
+                .map(|u| u.iter().map(|&(i, coef)| coef * y[i]).sum())
+                .collect()
+        }
+    }
+
+    /// Coordinates of a state in `sector`, with the containment residual
+    /// alongside: a start carrying weight outside the sector would silently
+    /// solve a different problem, so the caller asserts on the second element.
+    fn coordinates(&self, sector: &[Vec<(usize, f64)>], state: &QuantumState) -> (Vec<f64>, f64) {
+        let v: Vec<f64> = self
+            .basis
+            .iter()
+            .map(|s| QuantumState::inner_product(s, state).re)
+            .collect();
+        let coords: Vec<f64> = sector
+            .iter()
+            .map(|u| u.iter().map(|&(i, coef)| coef * v[i]).sum())
+            .collect();
+        let mut recon = vec![0.0_f64; self.dim()];
+        for (b, u) in sector.iter().enumerate() {
+            for &(i, coef) in u {
+                recon[i] += coords[b] * coef;
+            }
+        }
+        let residual = v
+            .iter()
+            .zip(&recon)
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt();
+        (coords, residual)
+    }
+
     /// Orthonormal basis of one reflection sector, as sparse combinations of the
     /// full-basis indices.
     ///
@@ -330,12 +394,64 @@ fn dense_matvec(a: &DMatrix<f64>) -> impl Fn(&[f64]) -> Vec<f64> {
     }
 }
 
+/// The two solves put into the same certificate.
+///
+/// A Temple step only requires two things of its Ritz pair: `θ` is a Rayleigh
+/// quotient of the sector (`θ ≥ λ₁`, true of any Ritz value) and the residual is
+/// small enough that `θ + r < β`. Neither needs SIRK. On the *truncated*
+/// operator the forward SIRK chain collapses (`rank 10 of m+1 = 15` at `g = 0`,
+/// recorded in `qcd_mass_gap_certified.rs`), so its Ritz value stalls above
+/// `λ₀` and does not improve with `m` — measured at `g = 1, N ≤ 6`: the even
+/// excess is `3.71e-1` at `m = 12` and `3.99e-1` at `m = 40`, with the residual
+/// flat at `~8e-1`. Lanczos on the same operator reaches machine precision in
+/// 40 matvecs. That difference, not the certificate, is what moves the verdicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Solver {
+    /// `solve_forward_sirk_truncated` at `m = 12` — the §6d baseline.
+    SirkM12,
+    /// Matvec-only Lanczos on the same `H_N`, [`CONVERGED_STEPS`] steps.
+    Lanczos40,
+}
+
+impl Solver {
+    const ALL: [Solver; 2] = [Solver::SirkM12, Solver::Lanczos40];
+
+    fn label(self) -> &'static str {
+        match self {
+            Solver::SirkM12 => "SIRK m=12",
+            Solver::Lanczos40 => "Lanczos 40",
+        }
+    }
+}
+
+/// Lanczos steps for the converged route — comfortably above the sector
+/// dimensions on this grid (`≤ 200`), so the ground converges rather than
+/// merely acquiring a small residual: measured `r ≤ 3e-3` at the worst cell and
+/// `≤ 3e-11` at most.
+const CONVERGED_STEPS: usize = 40;
+
+/// Everything a row needs that is a property of the *cell* rather than of the
+/// solve, so both routes are compared on identical exact references.
+struct Cell {
+    g: f64,
+    n_max: u32,
+    dim: usize,
+    lambda_odd_1: f64,
+    lambda_odd_2: f64,
+    lambda_even_1: f64,
+    beta_dense: Option<f64>,
+    beta_sparse: Option<f64>,
+    exact_gap: Option<f64>,
+    leak: f64,
+}
+
 /// One measured campaign row.
 ///
 /// The exact columns are present so a refused or violated bound can be
 /// attributed: which of Temple's hypotheses failed (`θᵒ₀ ∈ [λ₁, λ₂)`, `β ≤ λ₂`,
 /// `θᵉ₀ ≥ λ₀(even)`) is visible in the row itself rather than inferred later.
 struct CertifiedRow {
+    solver: Solver,
     g: f64,
     n_max: u32,
     dim: usize,
@@ -350,6 +466,36 @@ struct CertifiedRow {
     certified: Option<f64>,
     exact_gap: Option<f64>,
     leak: f64,
+}
+
+impl Cell {
+    fn row(
+        &self,
+        solver: Solver,
+        theta_odd: f64,
+        residual_odd: f64,
+        theta_even: f64,
+    ) -> CertifiedRow {
+        CertifiedRow {
+            solver,
+            g: self.g,
+            n_max: self.n_max,
+            dim: self.dim,
+            theta_odd,
+            residual_odd,
+            lambda_odd_1: self.lambda_odd_1,
+            lambda_odd_2: self.lambda_odd_2,
+            theta_even,
+            lambda_even_1: self.lambda_even_1,
+            beta_dense: self.beta_dense,
+            beta_sparse: self.beta_sparse,
+            certified: self.beta_dense.and_then(|beta| {
+                certified_gap_lower_bound_with_exclusion(theta_odd, residual_odd, beta, theta_even)
+            }),
+            exact_gap: self.exact_gap,
+            leak: self.leak,
+        }
+    }
 }
 
 /// Why a row did or did not certify — the distinction that matters, because the
@@ -379,16 +525,54 @@ impl Verdict {
 fn exclusion_certificate_over_the_campaign_grid() {
     let m = 12;
     let mut rows = Vec::new();
+    let mut crossing = 0usize;
 
     for g in [0.0, 0.5, 1.0, 2.0, 3.0] {
         let h = qcd_ym_hamiltonian(g);
         for n_max in [6u32, 8] {
             let trunc = Truncated::build(&h, n_max);
+            let even_sector = trunc.sector(true);
+            let odd_sector = trunc.sector(false);
             let even_block = trunc.sector_matrix(true);
             let odd_block = trunc.sector_matrix(false);
 
-            // The solves the certificate consumes: the odd one supplies the
-            // Ritz pair, the even one the upper bound on λ₀.
+            let even_spectrum = ascending_spectrum(&even_block);
+            let odd_spectrum = ascending_spectrum(&odd_block);
+            // The T6 expression is `λ(odd) − λ(even)`, so it is *the* gap only
+            // while the odd ground sits below the even one. Where the ordering
+            // flips inside `H_N` the cell has no gap in this orientation, and
+            // `None` here is what stops such a row from being read as a failure
+            // of the certificate.
+            let exact_gap = if even_spectrum[0] < odd_spectrum[0] {
+                Some(odd_spectrum[0] - even_spectrum[0])
+            } else {
+                crossing += 1;
+                None
+            };
+
+            // Dense witness: a `λ₂` bound from the exact eigenvalue count.
+            let beta_dense =
+                certify_spectrum(&odd_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
+            // The same quantity from matvecs only, kept for the comparison the
+            // sibling test pins.
+            let odd_dense_matvec = dense_matvec(&odd_block);
+            let beta_sparse = DiagonalExclusion::from_matvec(&odd_dense_matvec, odd_block.nrows())
+                .and_then(|exclusion| exclusion.second_eigenvalue_lower_bound());
+
+            let cell = Cell {
+                g,
+                n_max,
+                dim: odd_block.nrows(),
+                lambda_odd_1: odd_spectrum[0],
+                lambda_odd_2: odd_spectrum[1],
+                lambda_even_1: even_spectrum[0],
+                beta_dense,
+                beta_sparse,
+                exact_gap,
+                leak: trunc.leak,
+            };
+
+            // Route 1 — the §6d baseline: forward truncated SIRK.
             let odd_solve = solve_forward_sirk_truncated(
                 &h,
                 &r_odd_start(),
@@ -411,93 +595,94 @@ fn exclusion_certificate_over_the_campaign_grid() {
             .expect("truncated even solve");
             let odd_cert = certified_ground_state(&odd_solve).expect("odd certificate");
             let even_cert = certified_ground_state(&even_solve).expect("even certificate");
+            rows.push(cell.row(
+                Solver::SirkM12,
+                odd_cert.value,
+                odd_cert.residual,
+                even_cert.value,
+            ));
 
-            // Dense witness: a λ₂ bound for the odd sector, from the exact count.
-            let beta_dense =
-                certify_spectrum(&odd_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
-            // Sparse witness: the same quantity from matvecs only.
-            let odd_matvec = dense_matvec(&odd_block);
-            let beta_sparse = DiagonalExclusion::from_matvec(&odd_matvec, odd_block.nrows())
-                .and_then(|exclusion| exclusion.second_eigenvalue_lower_bound());
-
-            let certified = beta_dense.and_then(|beta| {
-                certified_gap_lower_bound_with_exclusion(
-                    odd_cert.value,
-                    odd_cert.residual,
-                    beta,
-                    even_cert.value,
-                )
-            });
-
-            // Exact parity-resolved gap of the same H_N: the ground must be the
-            // even sector's for the cross-sector difference to be *the* gap.
-            let even_spectrum = ascending_spectrum(&even_block);
-            let odd_spectrum = ascending_spectrum(&odd_block);
-            let exact_gap = if even_spectrum[0] < odd_spectrum[0] {
-                Some(odd_spectrum[0] - even_spectrum[0])
-            } else {
-                None
-            };
-
-            rows.push(CertifiedRow {
-                g,
-                n_max,
-                dim: odd_block.nrows(),
-                theta_odd: odd_cert.value,
-                residual_odd: odd_cert.residual,
-                lambda_odd_1: odd_spectrum[0],
-                lambda_odd_2: odd_spectrum[1],
-                theta_even: even_cert.value,
-                lambda_even_1: even_spectrum[0],
-                beta_dense,
-                beta_sparse,
-                certified,
-                exact_gap,
-                leak: trunc.leak,
-            });
+            // Route 2 — matvec-only Lanczos on the same `H_N`. The starts are
+            // the same states, projected into sector coordinates, with the
+            // containment residual asserted so the route cannot be running on a
+            // start that leaks out of its sector.
+            let odd_start = trunc.coordinates(&odd_sector, &r_odd_start());
+            let even_start = trunc.coordinates(&even_sector, &empty_vacuum());
+            assert!(
+                odd_start.1 < 1e-9 && even_start.1 < 1e-9,
+                "the sector starts must lie inside their sectors: R-odd leak {:.2e}, vacuum leak {:.2e}",
+                odd_start.1,
+                even_start.1
+            );
+            let odd_mv = trunc.sector_matvec(&odd_sector);
+            let even_mv = trunc.sector_matvec(&even_sector);
+            let odd_ritz = lanczos_ritz(&odd_mv, odd_sector.len(), &odd_start.0, CONVERGED_STEPS)
+                .expect("odd Lanczos");
+            let even_ritz =
+                lanczos_ritz(&even_mv, even_sector.len(), &even_start.0, CONVERGED_STEPS)
+                    .expect("even Lanczos");
+            assert!(
+                odd_ritz.orthogonality < 1e-10 && even_ritz.orthogonality < 1e-10,
+                "the Lanczos bases must be orthonormal at g = {g}, N <= {n_max}: {:.1e} / {:.1e}",
+                odd_ritz.orthogonality,
+                even_ritz.orthogonality
+            );
+            let (theta_odd, residual_odd) = odd_ritz.ground().expect("non-empty");
+            let (theta_even, _) = even_ritz.ground().expect("non-empty");
+            rows.push(cell.row(Solver::Lanczos40, theta_odd, residual_odd, theta_even));
         }
     }
 
-    println!(
-        "{:>4} {:>3} {:>4} {:>12} {:>10} {:>12} {:>12} {:>12} {:>12} {:>10} {:>10}",
-        "g",
-        "N",
-        "dim",
-        "θᵒ₀",
-        "rᵒ",
-        "λ₁ odd",
-        "λ₂ odd",
-        "β dense",
-        "β sparse",
-        "certified",
-        "exact"
-    );
-    for row in &rows {
-        println!(
-            "{:>4} {:>3} {:>4} {:>12.9} {:>10.1e} {:>12.9} {:>12.9} {:>12.9} {:>12.3} \
-             {:>12} {:>10}",
-            row.g,
-            row.n_max,
-            row.dim,
-            row.theta_odd,
-            row.residual_odd,
-            row.lambda_odd_1,
-            row.lambda_odd_2,
-            row.beta_dense.unwrap_or(f64::NAN),
-            row.beta_sparse.unwrap_or(f64::NAN),
-            row.certified
-                .map(|v| format!("{v:.9}"))
-                .unwrap_or_else(|| "refused".to_string()),
-            row.exact_gap
-                .map(|v| format!("{v:.9}"))
-                .unwrap_or_else(|| "—".to_string()),
+    let header = |solver: Solver| {
+        println!("\n{} — {}", solver.label(), "H_N rows, m = 12");
+        println!(            "{:>4} {:>3} {:>4} {:>5} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} \
+             {:>10}",
+            "g",
+            "N",
+            "dim",
+            "leak",
+            "θᵒ₀",
+            "rᵒ",
+            "θᵉ₀",
+            "λ₁ odd",
+            "λ₂ odd",
+            "β dense",
+            "β sparse",
+            "certified",
+            "exact"
         );
+    };
+    for solver in Solver::ALL {
+        header(solver);
+        for row in rows.iter().filter(|r| r.solver == solver) {
+            println!(
+                "{:>4} {:>3} {:>4} {:>5.0e} {:>12.9} {:>9.1e} {:>12.9} {:>12.9} {:>12.9} \
+                 {:>12.9} {:>12.3} {:>12} {:>10}",
+                row.g,
+                row.n_max,
+                row.dim,
+                row.leak,
+                row.theta_odd,
+                row.residual_odd,
+                row.theta_even,
+                row.lambda_odd_1,
+                row.lambda_odd_2,
+                row.beta_dense.unwrap_or(f64::NAN),
+                row.beta_sparse.unwrap_or(f64::NAN),
+                row.certified
+                    .map(|v| format!("{v:.9}"))
+                    .unwrap_or_else(|| "refused".to_string()),
+                row.exact_gap
+                    .map(|v| format!("{v:.9}"))
+                    .unwrap_or_else(|| "—".to_string()),
+            );
+        }
     }
 
-    // Soundness, checked row by row **after** the table is printed, so a failure
-    // arrives with its own numbers beside it.
+    // Soundness, checked row by row **after** the tables are printed, so a
+    // failure arrives with its own numbers beside it.
     for row in &rows {
-        let label = format!("g = {}, N <= {}", row.g, row.n_max);
+        let label = format!("{} g = {}, N <= {}", row.solver.label(), row.g, row.n_max);
         if let Some(beta) = row.beta_dense {
             assert!(
                 beta <= row.lambda_odd_2 + 1e-9,
@@ -524,69 +709,141 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 "{label}: certified bound {lo} exceeds the exact gap {exact}"
             );
         }
+        // Rayleigh–Ritz, both sides: any Ritz value is at or above its sector's
+        // ground, and the even side is consumed only as an upper bound on `λ₀`
+        // — which is why the even side needs no witness at all, only a value
+        // that is close enough to be useful.
+        assert!(
+            row.theta_odd >= row.lambda_odd_1 - 1e-8,
+            "{label}: θᵒ₀ = {} must not sit below the odd ground {}",
+            row.theta_odd,
+            row.lambda_odd_1
+        );
+        assert!(
+            row.theta_even >= row.lambda_even_1 - 1e-8,
+            "{label}: θᵉ₀ = {} must not sit below the even ground {}",
+            row.theta_even,
+            row.lambda_even_1
+        );
     }
 
-    println!("\nverdicts:");
-    for row in &rows {
-        let verdict = Verdict::of(row.certified);
-        let why = match verdict {
-            Verdict::Certified => format!(
-                "certified {:.9} (exact {:.9})",
-                row.certified.unwrap(),
-                row.exact_gap.unwrap_or(f64::NAN)
-            ),
-            Verdict::NotPositive => format!(
-                "bound {:.9} ≤ 0 — the even-side Rayleigh quotient θᵉ₀ = {:.9} sits {:.3e} \
-                 above λ₀(even) = {:.9}",
-                row.certified.unwrap(),
-                row.theta_even,
-                row.theta_even - row.lambda_even_1,
-                row.lambda_even_1
-            ),
-            Verdict::Refused => format!(
-                "refused — β = {:.9} vs θᵒ₀ = {:.9}, rᵒ = {:.3e} (residual ball reaches λ₂)",
-                row.beta_dense.unwrap_or(f64::NAN),
-                row.theta_odd,
-                row.residual_odd
-            ),
+    for solver in Solver::ALL {
+        println!("\n{} verdicts:", solver.label());
+        for row in rows.iter().filter(|r| r.solver == solver) {
+            let verdict = Verdict::of(row.certified);
+            let why = match verdict {
+                Verdict::Certified => format!(
+                    "certified {:.9} (exact {:.9})",
+                    row.certified.unwrap(),
+                    row.exact_gap.unwrap_or(f64::NAN)
+                ),
+                Verdict::NotPositive => format!(
+                    "bound {:.9} ≤ 0 — even side θᵉ₀ = {:.9} sits {:+.3e} from λ₀(even) = {:.9}, \
+                     odd side θᵒ₀ = {:.9} sits {:+.3e} from λ₁(odd) = {:.9}",
+                    row.certified.unwrap(),
+                    row.theta_even,
+                    row.theta_even - row.lambda_even_1,
+                    row.lambda_even_1,
+                    row.theta_odd,
+                    row.theta_odd - row.lambda_odd_1,
+                    row.lambda_odd_1
+                ),
+                Verdict::Refused => format!(
+                    "refused — β = {:.9} vs θᵒ₀ = {:.9}, rᵒ = {:.3e} (residual ball reaches λ₂)",
+                    row.beta_dense.unwrap_or(f64::NAN),
+                    row.theta_odd,
+                    row.residual_odd,
+                ),
+            };
+            println!("  g = {}, N <= {}: {why}", row.g, row.n_max);
+        }
+    }
+
+    let tally = |solver: Solver| {
+        let of = |v: Verdict| {
+            rows.iter()
+                .filter(|r| r.solver == solver && Verdict::of(r.certified) == v)
+                .count()
         };
-        println!("  g = {}, N <= {}: {why}", row.g, row.n_max);
+        (
+            of(Verdict::Certified),
+            of(Verdict::NotPositive),
+            of(Verdict::Refused),
+        )
+    };
+    println!();
+    println!(
+        "cells with the odd ground BELOW the even one inside H_N (T6's expression is then the \
+         negative of their gap): {crossing}"
+    );
+    for solver in Solver::ALL {
+        let (c, n, r) = tally(solver);
+        println!(
+            "{}: {c} certified, {n} valid-but-not-positive, {r} refused (of {})",
+            solver.label(),
+            rows.len() / Solver::ALL.len()
+        );
     }
 
-    let certified: Vec<&CertifiedRow> = rows
-        .iter()
-        .filter(|r| r.certified.map(|v| v > 0.0).unwrap_or(false))
-        .collect();
-    let tally = |v: Verdict| {
+    // Every certified row must have an exact reference it was checked against.
+    assert!(
         rows.iter()
-            .filter(|r| Verdict::of(r.certified) == v)
-            .count()
-    };
-    println!(
-        "rows: {} certified, {} valid-but-not-positive, {} refused (of {})",
-        certified.len(),
-        tally(Verdict::NotPositive),
-        tally(Verdict::Refused),
-        rows.len()
+            .filter(|r| r.certified.map(|v| v > 0.0).unwrap_or(false))
+            .all(|r| r.exact_gap.is_some()),
+        "a certified row must have an exact reference to have been checked against"
     );
-    for row in &certified {
-        println!(
-            "  g = {}, N <= {}: {:.9} (exact {:.9})",
+    assert!(
+        tally(Solver::SirkM12).0 > 0,
+        "the dense witness must certify somewhere on the SIRK grid — every row refusing would \
+         mean the certificate stopped working, not that the gap vanished"
+    );
+
+    // **The measured unlock.** With both sector grounds resolved, exactly the
+    // cells whose truncated ordering is T6's own certify: `θᵒ₀ = λ₁(odd)` and
+    // `θᵉ₀ = λ₀(even)` leave only Temple's `r²/(β−θ)` slack, which at these
+    // residuals is `O(1e-14)`. Everything else on the grid is *not* a
+    // convergence problem — `crossing` cells have the odd ground below the even
+    // one inside `H_N`, so T6's expression is the negative of their gap and no
+    // amount of accuracy can make it positive.
+    let oriented: Vec<&CertifiedRow> = rows
+        .iter()
+        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap.is_some())
+        .collect();
+    assert!(
+        !oriented.is_empty(),
+        "the grid must contain cells whose truncated ordering matches T6's"
+    );
+    for row in &oriented {
+        let lo = row.certified.unwrap_or_else(|| {
+            panic!(
+                "g = {}, N <= {}: Temple refused a converged solve",
+                row.g, row.n_max
+            )
+        });
+        assert!(
+            lo > 0.0,
+            "with both sector grounds resolved the bound must be positive at g = {}, N <= {}: \
+             lo = {lo}, exact {:.9}",
             row.g,
             row.n_max,
-            row.certified.unwrap(),
             row.exact_gap.unwrap()
         );
     }
+    let (sirk_certified, _, _) = tally(Solver::SirkM12);
+    let (converged_certified, _, _) = tally(Solver::Lanczos40);
     assert!(
-        certified.iter().all(|r| r.exact_gap.is_some()),
-        "a certified row must have an exact reference to have been checked against"
+        converged_certified > sirk_certified,
+        "the converged route must certify strictly more rows than the m=12 baseline \
+         ({converged_certified} vs {sirk_certified})"
     );
-
-    assert!(
-        !certified.is_empty(),
-        "the dense witness must certify somewhere on this grid — every row refusing would \
-         mean the certificate stopped working, not that the gap vanished"
+    assert_eq!(
+        converged_certified,
+        oriented.len(),
+        "on this grid the converged route certifies exactly the oriented cells ({converged_certified} \
+         vs {}), all {} crossing cells aside — a difference would mean convergence, not \
+         orientation, is the remaining limit",
+        oriented.len(),
+        crossing
     );
 }
 
