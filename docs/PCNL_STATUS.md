@@ -3073,7 +3073,18 @@ for s in 1 0.5 0.0; do   # shrinkage above rank 8
   cargo run --release -p pcnl --example subspace_adaptation -- --ranks 16 --steps 4000 \
     --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot --pilot-shrink $s
 done
-# the `--pilot-reps 1` bitwise check (old vs new binary, same reduced config):
+# R2h: `--pilot-scale c` multiplies the widths by c after shrinkage (`c = 1` = unchanged):
+for r in 16 8 4; do for c in 2 4; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot-shrink 0 --pilot-scale $c
+done; done
+for c in 1 4; do   # the rank-8 seed-7 pair (no s = 0 cell existed at that seed)
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 8 --steps 4000 \
+    --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
+    --pilot-shrink 0 --pilot-scale $c --seed 7
+done
+# the `--pilot-reps 1` / `--pilot-scale 1` bitwise check (old vs new binary, same reduced config):
 cargo run --release -p pcnl --example subspace_adaptation -- --shapes quick --ranks 2 \
   --steps 600 --burn 100 --thin 5 --chains 2 --basis informed --proposal fixed,pilot --seed 3
 ```
@@ -3801,6 +3812,10 @@ negative for the averaging idea: a *scale* correction (multiply the pilot widths
 constant > 1, or estimate them from a longer pilot) should fix the default-seed collapse;
 more pilots at the same length should not, and do not.
 
+*R2h runs that prediction and retracts this mechanism: the pilot's overall scale is absorbed
+by the warm-up multiplier, so what survives into the kept window is only the width
+**shape** — see Result 36 and Result 38 below.*
+
 **Result 34 — shrinkage still points the right way at rank 16, but the effect has collapsed
 into the resolution floor, so "isotropic wins everywhere" is retracted as a claim.**  The
 rank-16 ladder is fixed 5 / `s = 1` **5** / `s = 0.5` **6** / `s = 0` **7** ESS, with `R̂`
@@ -3827,6 +3842,87 @@ with the concurrent commits those crates receive.  The recommendation that survi
 `--pilot-shrink` on, `s = 0.5` at rank 4 and `s = 0` at rank 8 (the two measured optima),
 `--pilot-reps` left off (it is available and verified, but not a fix), and *no* claim about
 ranks above 8 until the comparison there is above the resolution floor.
+
+### R2h — the scale dial: uniform inflation is absorbed by warm-up (same day)
+
+R2g's Result 33 made a testable prediction: if the pilot's failure is that it reports widths
+that are too *narrow* (bias), then multiplying the whole width vector by a constant `c > 1`
+should rescue the default-seed collapse at rank 4.  `--pilot-scale c` is that dial.  It
+multiplies every width by `c` after shrinkage and before `DiagScale::from_widths_shrunk`, so
+with `--pilot-shrink 0` it is the only free parameter, and `c = 1` reproduces the earlier
+tables bitwise (re-checked on the reduced config against the R2g binary: all 19 numeric
+columns and the 1 802-eval count agree).
+
+The prediction fails, and the reason is already in the kernel.  The pilot supplies a
+*shape*; the proposal's overall size is not the pilot's to set.  `DiagScale` starts at
+multiplier `m = 1` and Robbins–Monro-steers `m` on the joint acceptance rate through the
+500-step burn, and only `m · width_i` reaches the kept window — its own doc comment says
+"the shape of the proposal comes from the target and only its overall size comes from
+feedback".  A uniform inflation of all widths is therefore, up to the finite-length
+transient, the same kernel with `m → m / c`.  The `m` column measures exactly that.  Eight
+cells, 111 min on 2 cores, every process `EXIT 0`: the six-cell default-seed grid (ranks
+16/8/4 × `c` ∈ {2, 4}) plus a seed-7 pair at rank 8 (`c = 1` and `c = 4`) to separate a
+warm-up effect from this estimator's seed noise.
+
+| rank | seed | `c` | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | MCSE(acc) | Brier | NLL | ECE | MCSE(NLL) | `m` | evals | sec |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 20261020 | 1 | 38.6 % | 7 | 1.440 | 19.53 % | 1.044 | 0.9125 | 2.4632 | 0.194 | 0.0354 | 0.35 | 17 204 | 234 |
+| 16 | 20261020 | 2 | 38.0 % | 7 | 1.486 | 19.53 % | 1.007 | 0.9103 | 2.4620 | 0.177 | 0.0338 | **0.17** | 17 204 | 229 |
+| 16 | 20261020 | 4 | 33.2 % | 9 | 1.321 | 19.53 % | 0.628 | 0.9131 | 2.5182 | 0.196 | 0.0316 | **0.10** | 17 204 | 308 |
+| 8 | 20261020 | 1 | 48.7 % | 154 | 1.010 | 14.84 % | 0.277 | 0.9780 | 2.8105 | 0.253 | 0.0087 | 0.34 | 17 204 | 231 |
+| 8 | 20261020 | 2 | 46.3 % | 139 | 1.005 | 14.84 % | 0.331 | 0.9774 | 2.8091 | 0.251 | 0.0092 | **0.18** | 17 204 | 228 |
+| 8 | 20261020 | 4 | 40.6 % | 32 | 1.075 | 14.84 % | 0.144 | 0.9766 | 2.8033 | 0.248 | 0.0102 | **0.10** | 17 204 | 228 |
+| 8 | 7 | 1 | 35.2 % | 20 | 1.121 | 21.88 % | 0.319 | 0.8699 | 2.4862 | 0.166 | 0.0100 | 0.30 | 17 204 | 302 |
+| 8 | 7 | 4 | 32.2 % | 14 | 1.374 | 21.88 % | 0.491 | 0.8703 | 2.4833 | 0.164 | 0.0159 | **0.08** | 17 204 | 302 |
+| 4 | 20261020 | 1 | 46.5 % | 383 | 1.010 | 12.89 % | 0.057 | 0.9922 | 2.8662 | 0.270 | 0.0005 | 0.33 | 17 204 | 299 |
+| 4 | 20261020 | 2 | 44.4 % | 350 | 1.019 | 12.89 % | 0.059 | 0.9923 | 2.8667 | 0.270 | 0.0005 | **0.17** | 17 204 | 296 |
+| 4 | 20261020 | 4 | 41.7 % | 416 | 1.015 | 12.89 % | 0.044 | 0.9923 | 2.8666 | 0.270 | 0.0005 | **0.09** | 17 204 | 225 |
+
+(`c = 1` rows are the R2e/R2g `--pilot-shrink 0` cells, repeated for one-table comparison;
+rank 8/seed 7 `c = 1` is new because R2g had no `s = 0` cell at that seed.  All rows share the
+protocol of R2e–R2g and the default 600-step pilot; ESS is at the resolution floor for every
+rank-16 cell, so those three rows are not a measurement of `c`.)
+
+**Result 36 — `c = 2` is absorbed almost exactly and changes nothing measurable at any
+rank.**  The multiplier halves: 0.35 → **0.17** at rank 16, 0.34 → **0.18** at rank 8,
+0.33 → **0.17** at rank 4, i.e. within 3–6 % of the `m / 2` that exact absorption predicts.
+With the size re-normalised, ESS is the `c = 1` value within noise at all three ranks
+(7/7, 154/139, 383/350) and so are the predictives: NLL 2.4632 → 2.4620, 2.8105 → 2.8091,
+2.8662 → 2.8667, BMA accuracy identical in every pair (19.53 / 14.84 / 12.89 %), Brier
+moving in the fourth decimal.  Run to run the acceptance feedback does to a uniform scale
+exactly what the posterior would have done anyway.
+
+**Result 37 — `c = 4` is absorbed only partly, and the residue is a worse warm-up, not a
+better proposal.**  Now `m` lands 7–18 % *above* the absorbed value (0.35/4 = 0.0875 →
+0.10; 0.34/4 = 0.085 → 0.10; 0.33/4 = 0.0825 → 0.09; 0.30/4 = 0.075 → 0.08) but four times
+the starting width, so the frozen kernel is left 5–20 % larger than the `c = 1` kernel and
+its acceptance is correspondingly lower (48.7 → 40.6 %, 35.2 → 32.2 %, 46.5 → 41.7 %,
+38.6 → 33.2 %).  ESS at rank 8 falls in both seeds measured (154 → 32, 20 → 14) and `R̂`
+worsens in both (1.010 → 1.075, 1.121 → 1.374); at rank 4 ESS rises 383 → 416 and `R̂` is
+flat (1.010 → 1.015); at rank 16 nothing is resolvable.  No cell improves on its own `c = 1`
+baseline, and the rank-8 default-seed drop (154 → 32) is *inside* the seed spread of this
+estimator at that rank (20 vs 154 for `c = 1` at seeds 7 and 20261020) — so the honest
+statement is that `c > 1` never helps and the frozen kernel from an overshooting warm-up is
+consistently a little off-target, which is a property of the Robbins–Monro transient, not of
+pCN.  Correcting the short pilot's scale is not reachable through this dial: the dial is
+undone before the kept window.
+
+**Result 38 — R2g's Result 33 mechanism is retracted; the width lottery is a *shape*lottery.**  Result 33 attributed R2e's 600-step-vs-two-300-step gap (ESS 221 vs 14 at rank
+4) to a pilot that reports widths that are too narrow, and predicted that a scale correction
+would fix it.  Result 36 refutes the mechanism directly: the overall size never reaches the
+kept window because the burn-in multiplier sets it.  What the pilot does contribute is the
+*pattern* of relative widths across coordinates, and that is what R2e/R2f's ESS spread (9 to
+100 at rank 4 across seeds, 20 to 154 at rank 8) actually measures — a 600-step pilot and
+two 300-step pilots differ in shape, not just in size.  This also explains, without a second
+hypothesis, why shrinking to `s = 0` is the winner everywhere it was measured: `s = 0`
+discards the pilot's shape entirely and hands both shape and size to a mechanism that is
+self-correcting (isotropic plus acceptance feedback), and no pilot-shaped proposal beat it.
+The recommendation is unchanged from R2g (shrink on; `s = 0.5` at rank 4, `s = 0` at rank 8;
+`--pilot-reps` and `--pilot-scale` available and verified but not fixes).  What changes is
+the next question: not "how wide?" but "whose shape?" — a shape estimated at a point where
+the curvature means something (the anchor `∇ℓ ≈ 0` is the reason the curvature diagonal
+already failed at rank 1), or a robust shape pooled across replicates, compared against
+isotropic `s = 0` at the two ranks where that baseline is above the floor (4 and 8).
 
 ## Reproduce / verify
 

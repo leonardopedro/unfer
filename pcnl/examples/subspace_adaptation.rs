@@ -51,7 +51,9 @@
 //!   `--pilot-reps n` runs `n` independent pilots of `pilot_steps` each (each
 //!   restarted at the anchor, same stream) and uses the per-coordinate
 //!   geometric mean of their widths, which only reduces the estimator's spread:
-//!   `n = 1` is the estimator above, bitwise.
+//!   `n = 1` is the estimator above, bitwise.  `--pilot-scale c` multiplies
+//!   the widths by `c` after shrinkage, testing the *bias* half of the short
+//!   pilot's error (the pilot cannot report a spread it never walked).
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -242,6 +244,11 @@ struct Cfg {
     /// pilot_reps`; averaging reduces the width estimator's variance without
     /// biasing it, unlike shrinkage (which trades bias for variance).
     pilot_reps: usize,
+    /// Multiplicative scale applied to the pilot widths after shrinkage.  The
+    /// pilot measures the spread of a region it has walked, so its widths are
+    /// biased low; `c > 1` tests whether that downward bias, rather than the
+    /// per-coordinate spread, is what costs the raw proposal its mixing.
+    pilot_scale: f64,
     /// Targets to sample; `full` adds the `pi_P` split chain (two stages per
     /// step, so twice the potential evaluations).
     targets: Vec<TargetKind>,
@@ -276,6 +283,7 @@ impl Default for Cfg {
             pilot_steps: 300,
             pilot_shrink: 1.0,
             pilot_reps: 1,
+            pilot_scale: 1.0,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -333,6 +341,9 @@ impl Cfg {
         }
         if let Some(v) = flag("--pilot-reps").and_then(|v| v.parse::<usize>().ok()) {
             cfg.pilot_reps = v.max(1);
+        }
+        if let Some(v) = flag("--pilot-scale").and_then(|v| v.parse().ok()) {
+            cfg.pilot_scale = v;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -503,6 +514,15 @@ fn column_sd(kept: &[Vec<f64>]) -> Vec<f64> {
 /// parameters, so independent estimates combine in log space; with one
 /// replicate this returns that replicate untouched, keeping `--pilot-reps 1`
 /// bitwise identical to the single-pilot estimator.
+/// Uniform inflation of a width vector.  `c == 1` returns the vector untouched,
+/// which keeps every existing table reproducible.
+fn scale_widths(widths: &[f64], c: f64) -> Vec<f64> {
+    if c == 1.0 {
+        return widths.to_vec();
+    }
+    widths.iter().map(|w| w * c).collect()
+}
+
 fn mean_log_widths(reps: &[Vec<f64>]) -> Vec<f64> {
     if reps.len() == 1 {
         return reps[0].clone();
@@ -669,7 +689,7 @@ fn run_cell(
                 Scale::Rot(s)
             } else {
                 let mut s = DiagScale::from_widths_shrunk(
-                    &mean_log_widths(&replicate_widths),
+                    &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
                     cfg.pilot_shrink,
                 );
                 s.target_accept = cfg.adapt_target;
@@ -852,7 +872,7 @@ fn run_full_cell(
                 replicate_widths.push(column_sd(&columns));
             }
             let mut s = DiagScale::from_widths_shrunk(
-                &mean_log_widths(&replicate_widths),
+                &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
                 cfg.pilot_shrink,
             );
             s.target_accept = cfg.adapt_target;
@@ -990,6 +1010,13 @@ fn main() {
             "pilot widths: log-spread shrunk toward the geometric mean by s = {:.2} \
              (1 = raw pilot, 0 = isotropic at the pilot's geometric mean)",
             cfg.pilot_shrink
+        );
+    }
+    if cfg.pilot_scale != 1.0 {
+        println!(
+            "pilot widths: uniformly inflated by c = {:.2} after shrinkage \
+             (bias correction for a short pilot's narrow spread)",
+            cfg.pilot_scale
         );
     }
     println!(

@@ -327,6 +327,21 @@ and the fixed arm itself is at `R̂` 1.83 — rank 16 is below the experiment's 
 floor and no claim about shrinkage above rank 8 should be made without more chains or an
 exactness check there.
 
+R2h then ran R2g's own predicted follow-up — a uniform scale correction, `--pilot-scale c`,
+which multiplies the shrunk widths by `c > 1` before `DiagScale` — and the prediction fails
+in a way that retracts R2g's mechanism. Because `DiagScale` adapts a scalar multiplier on
+the joint acceptance rate during burn, and only `m · width_i` reaches the kept window, a
+uniform inflation is absorbed: `m` halves to within 3–6 % at `c = 2`, and ESS and every
+predictive are unchanged at ranks 4, 8 and 16 (7/7, 154/139, 383/350). At `c = 4` the
+absorption is imperfect (7–18 % high), the frozen kernel is left slightly off-target, and
+no cell improves; the rank-8 default-seed drop (154 → 32) is inside that rank's seed spread
+(20 at seed 7). So the pilot's contribution is the relative width **shape**, never its
+overall size — which is why `s = 0` (shape discarded, size from feedback) wins, and why the
+600-step-vs-two-300-step gap is a shape difference rather than a width bias. The next
+experiment is a shape question, not a width question: a curvature shape evaluated where the
+curvature means something, or a shape pooled robustly across replicates, against isotropic
+`s = 0` at ranks 4 and 8. `--pilot-scale` stays in the example as a verified null.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
