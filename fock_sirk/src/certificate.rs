@@ -401,6 +401,143 @@ impl DiagonalExclusion {
     }
 }
 
+// ── The matching split: the same count, with slack that does not grow in n ──
+
+/// A `λ₂` lower bound from a **matching decomposition** of the sparsity graph —
+/// the tightest count-free witness this crate can build from matvecs.
+///
+/// [`DiagonalExclusion`] throws the whole off-diagonal part into a single norm
+/// term, `‖V‖_F ≈ √n · (entry scale)`, so its slack grows with the truncation.
+/// Colouring the sparsity graph removes that growth. The off-diagonal nonzeros
+/// are partitioned into **matchings** `V = Σ_c V_c` — classes in which no row or
+/// column carries two entries, which greedy edge colouring always achieves with
+/// `C ≤ max_row_degree` classes. Each `V_c` is then a disjoint union of `2×2`
+/// blocks `[[0, v], [v, 0]]`, so its smallest eigenvalue is known in closed
+/// form: `λ_min(V_c) = −max |v|` over the class. Weyl's inequality applied class
+/// by class, `λ_i(A + B) ≥ λ_i(A) + λ_min(B)`, gives
+///
+/// ```text
+///   λ₂(H) ≥ d₂ − Σ_c max_{e ∈ c} |H_e|,      d₂ = second-smallest diagonal entry.
+/// ```
+///
+/// **Measured: a change in growth, not in magnitude, and still not a witness**
+/// (`docs/MASS_GAP_SPEC.md` §6d). The split trades the Frobenius norm's
+/// `√(#edges)` for `#classes`, which grows like the graph's degree:
+///
+/// | `N ≤` | classes | colouring slack | `‖V‖_F` |
+/// |---|---|---|---|
+/// | 6 | 13 | 42.7 | 34.5 |
+/// | 8 | 17 | 92.6 | 86.4 |
+/// | 12 | 28 | 313.5 | 553.8 |
+///
+/// So it is *looser* than one Frobenius term at the small sizes — charging the
+/// largest entry of each class beats charging the `l2` norm only once the graph
+/// is dense enough — and 1.8× tighter by `N ≤ 12`. Neither is remotely inside
+/// the window the certificate needs: `d₂ = 1` on this operator while
+/// `θ ≈ −2.8 … −1.9`, so the entire off-diagonal budget is `d₂ − θ < 4`, i.e. a
+/// Weyl split would have to charge less than four unit entries in total — while
+/// any matching decomposition charges at least one entry per class, and the
+/// degree is 13–28. That is why no splitting bound can be a witness here, no
+/// matter how the split is chosen, and why the count is the real content of
+/// [`certify_spectrum`] — which pays `O(n³)` for it.
+pub struct MatchingExclusion {
+    /// The diagonal `H_ii`, ascending.
+    pub diagonal: Vec<f64>,
+    /// One entry per colour class: `max |H_e|` over that class's edges, i.e.
+    /// `−λ_min(V_c)` rounded up.
+    pub class_widths: Vec<f64>,
+    /// `‖H − diag(H)‖_F`, kept only for the comparison with the diagonal split.
+    pub offdiagonal_frobenius: f64,
+}
+
+impl MatchingExclusion {
+    /// Measure the split from matvecs alone (`e_i ↦ H e_i`, once per basis
+    /// element). Returns `None` for an empty matrix, a column of the wrong
+    /// length, or a non-finite entry.
+    pub fn from_matvec(matvec: &dyn Fn(&[f64]) -> Vec<f64>, n: usize) -> Option<Self> {
+        if n == 0 {
+            return None;
+        }
+        let mut diagonal = Vec::with_capacity(n);
+        let mut frobenius_sq = 0.0_f64;
+        let mut edges: Vec<(usize, usize, f64)> = Vec::new();
+        let mut basis = vec![0.0_f64; n];
+        for j in 0..n {
+            basis[j] = 1.0;
+            let column = matvec(&basis);
+            basis[j] = 0.0;
+            if column.len() != n || !column.iter().all(|x| x.is_finite()) {
+                return None;
+            }
+            diagonal.push(column[j]);
+            frobenius_sq += column.iter().map(|x| x * x).sum::<f64>();
+            for (i, &v) in column.iter().enumerate() {
+                // One entry per unordered pair: a symmetric matrix would
+                // otherwise colour every edge twice, which is harmless for
+                // soundness but would halve the classes' widths for free.
+                if i < j && v != 0.0 {
+                    edges.push((i, j, v));
+                }
+            }
+        }
+
+        // Greedy edge colouring: the smallest colour unused at both endpoints.
+        // Because `V_c` must be a matching, sharing a *vertex* is what forbids a
+        // colour — sharing nothing else does.
+        edges.sort_by_key(|&(i, j, _)| (i, j));
+        let mut used: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut class_of: Vec<u32> = Vec::with_capacity(edges.len());
+        let mut class_count = 0usize;
+        for &(i, j, _) in edges.iter() {
+            let mut colour = 0usize;
+            while used[i].contains(&(colour as u32)) || used[j].contains(&(colour as u32)) {
+                colour += 1;
+            }
+            used[i].push(colour as u32);
+            used[j].push(colour as u32);
+            class_count = class_count.max(colour + 1);
+            class_of.push(colour as u32);
+        }
+        // Each class width is rounded *up*, so the Weyl sum below is a bound
+        // rather than an estimate.
+        let mut class_widths = vec![0.0_f64; class_count];
+        for (e, &(_, _, v)) in edges.iter().enumerate() {
+            let c = class_of[e] as usize;
+            class_widths[c] = class_widths[c].max(v.abs() * (1.0 + 4.0 * UNIT_ROUNDOFF));
+        }
+
+        let diagonal_sq: f64 = diagonal.iter().map(|x| x * x).sum();
+        let slack = (n as f64) * UNIT_ROUNDOFF * frobenius_sq;
+        let offdiagonal_sq = (frobenius_sq - diagonal_sq + slack).max(0.0);
+        diagonal.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Some(Self {
+            diagonal,
+            class_widths,
+            offdiagonal_frobenius: offdiagonal_sq.sqrt(),
+        })
+    }
+
+    /// Number of classes the colouring needed — the measured degree-like slack
+    /// driver, and `None`-free: an edgeless off-diagonal part has zero classes.
+    pub fn class_count(&self) -> usize {
+        self.class_widths.len()
+    }
+
+    /// Rigorous `β ≤ λ₂` — `None` when the matrix has fewer than two rows.
+    ///
+    /// The diagonal's smallest entry may be repeated; Weyl holds with
+    /// multiplicity, so `β` stays valid and it is
+    /// [`crate::mass_gap_spec::temple_lower_bound`] that refuses a `β` which
+    /// does not clear `θ`.
+    pub fn second_eigenvalue_lower_bound(&self) -> Option<f64> {
+        let d2 = *self.diagonal.get(1)?;
+        let width: f64 = self.class_widths.iter().sum();
+        // `Σ` of at most `n` non-negative terms: round the total up too.
+        let rounding = (self.class_widths.len() as f64 + 1.0) * UNIT_ROUNDOFF * width.max(1.0);
+        Some(d2 - width - rounding)
+    }
+}
+
 /// A Ritz computation by Lanczos with full reorthogonalization — matvec-only,
 /// so it reaches truncations where the dense witness cannot.
 ///
@@ -413,8 +550,8 @@ impl DiagonalExclusion {
 /// (`θ_i ≥ λ_i`, Rayleigh–Ritz), and its interval contains *some* eigenvalue;
 /// excluding the ground from `(β, ∞)` is an eigenvalue *count*, which no
 /// matvec-only method produces. So a gap certificate needs
-/// [`DiagonalExclusion`] (weak, any `n`) or [`certify_spectrum`] (tight, dense)
-/// beside it — never this alone.
+/// [`DiagonalExclusion`] or [`MatchingExclusion`] (weak, any `n`) or
+/// [`certify_spectrum`] (tight, dense) beside it — never this alone.
 pub struct LanczosRitz {
     /// Steps actually taken (stops early on breakdown).
     pub steps: usize,

@@ -93,6 +93,23 @@ anchors=(
   # substitution and the gate itself would fail to parse.
   '(n₀+n₁)` parity is not the reflection sector'
   "truncated_parity_block"
+  # §6d (2026-11-10c): the exchanged orientation. The bundle previously read
+  # "6 is the ceiling on this grid", which the swap falsifies — the specialist
+  # must know that T6 is sector-local and that a crossing cell is certifiable
+  # with the roles reversed, not a dead row.
+  # ("sector-local" carries emphasis marks in both copies, so the anchor takes
+  # the clause that follows them.)
+  "and nothing in it prefers"
+  "temple(θᵉ₀, rᵉ, β_even) − θᵒ₀"
+  "10 of 10 grid cells now carry a certified gap"
+  "certified⇄"
+  # §6d (2026-11-10c): the count-free witness family, measured and closed. A
+  # stale "a sparse λ₂ witness is just harder" reading would send the
+  # specialist after a bound that cannot exist on this operator.
+  "MatchingExclusion"
+  "d₂ − Σ_c max |H_e|"
+  "d₂ − θ < 4"
+  "inertia of a sparse factorization of"
   # The exact Z₂ reflection and its sector split.
   "R: (A₀,A₁) → (−A₁,−A₀)"
   "v_o = (a†₀ + a†₁)|Ω⟩/√2"

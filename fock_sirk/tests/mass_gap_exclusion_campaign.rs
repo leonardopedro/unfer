@@ -30,8 +30,14 @@
 //! all, just a value close enough to `λ₀` to leave room for the odd side.
 //!
 //! A cell where the odd ground sits *below* the even one inside `H_N` has no gap
-//! in T6's orientation (the expression is the negative of its gap), and such a
-//! cell is reported as crossing rather than as a failure of the certificate.
+//! in T6's orientation (the expression is the negative of its gap). Those cells
+//! are not left uncertified: Temple's inequality is sector-local, so the same
+//! assembly runs again with the sectors **swapped** — the even side templed
+//! against its own `β ≤ λ₂(even)` witness, the odd side consumed only as the
+//! Rayleigh–Ritz upper bound `λ₁(odd) ≤ θᵒ₀` — and certifies
+//! `λ₀(even) − λ₁(odd)`, which is positive exactly there. The two orientations
+//! are complements, so every cell on the grid carries a certificate of the gap
+//! it actually has, and the parity of the ground is reported rather than hidden.
 //!
 //! **What the rows mean.** These are `H_N` rows: `P_N H P_N` on the truncated
 //! inner-occupation basis. A certified positive gap here is a statement about
@@ -46,8 +52,8 @@ use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
 use fock_sirk::mass_gap_spec::certified_gap_lower_bound_with_exclusion;
 use fock_sirk::{
-    DiagonalExclusion, SirkOpts, certified_ground_state, certify_spectrum, lanczos_ritz,
-    solve_forward_sirk_truncated,
+    DiagonalExclusion, MatchingExclusion, SirkOpts, certified_ground_state, certify_spectrum,
+    lanczos_ritz, solve_forward_sirk_truncated,
 };
 use nalgebra::DMatrix;
 use nested_fock_algebra::{
@@ -439,9 +445,16 @@ struct Cell {
     lambda_odd_1: f64,
     lambda_odd_2: f64,
     lambda_even_1: f64,
+    lambda_even_2: f64,
     beta_dense: Option<f64>,
+    /// The same witness for the *even* block — what the swapped orientation
+    /// needs, and the only extra work it costs.
+    beta_even_dense: Option<f64>,
     beta_sparse: Option<f64>,
     exact_gap: Option<f64>,
+    /// `λ₀(even) − λ₁(odd)`, present exactly when the odd ground is the lower
+    /// of the two — the gap the swapped orientation certifies.
+    exact_gap_swapped: Option<f64>,
     leak: f64,
 }
 
@@ -460,11 +473,16 @@ struct CertifiedRow {
     lambda_odd_1: f64,
     lambda_odd_2: f64,
     theta_even: f64,
+    residual_even: f64,
     lambda_even_1: f64,
+    lambda_even_2: f64,
     beta_dense: Option<f64>,
+    beta_even_dense: Option<f64>,
     beta_sparse: Option<f64>,
     certified: Option<f64>,
+    certified_swapped: Option<f64>,
     exact_gap: Option<f64>,
+    exact_gap_swapped: Option<f64>,
     leak: f64,
 }
 
@@ -475,6 +493,7 @@ impl Cell {
         theta_odd: f64,
         residual_odd: f64,
         theta_even: f64,
+        residual_even: f64,
     ) -> CertifiedRow {
         CertifiedRow {
             solver,
@@ -486,13 +505,23 @@ impl Cell {
             lambda_odd_1: self.lambda_odd_1,
             lambda_odd_2: self.lambda_odd_2,
             theta_even,
+            residual_even,
             lambda_even_1: self.lambda_even_1,
+            lambda_even_2: self.lambda_even_2,
             beta_dense: self.beta_dense,
+            beta_even_dense: self.beta_even_dense,
             beta_sparse: self.beta_sparse,
             certified: self.beta_dense.and_then(|beta| {
                 certified_gap_lower_bound_with_exclusion(theta_odd, residual_odd, beta, theta_even)
             }),
+            // The mirror image: Temple on the even sector bounds `λ₀(even)`
+            // from below, and the odd side enters only through `λ₁(odd) ≤ θᵒ₀`,
+            // which is Rayleigh–Ritz and needs no witness at all.
+            certified_swapped: self.beta_even_dense.and_then(|beta| {
+                certified_gap_lower_bound_with_exclusion(theta_even, residual_even, beta, theta_odd)
+            }),
             exact_gap: self.exact_gap,
+            exact_gap_swapped: self.exact_gap_swapped,
             leak: self.leak,
         }
     }
@@ -549,10 +578,20 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 crossing += 1;
                 None
             };
+            // The other orientation, live exactly where the first is not.
+            let exact_gap_swapped = if even_spectrum[0] > odd_spectrum[0] {
+                Some(even_spectrum[0] - odd_spectrum[0])
+            } else {
+                None
+            };
 
             // Dense witness: a `λ₂` bound from the exact eigenvalue count.
             let beta_dense =
                 certify_spectrum(&odd_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
+            // The even block's own `λ₂` witness: one more certification pass on
+            // the same `H_N`, and the entire cost of the swapped orientation.
+            let beta_even_dense =
+                certify_spectrum(&even_block).and_then(|cert| cert.second_eigenvalue_lower_bound());
             // The same quantity from matvecs only, kept for the comparison the
             // sibling test pins.
             let odd_dense_matvec = dense_matvec(&odd_block);
@@ -566,9 +605,12 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 lambda_odd_1: odd_spectrum[0],
                 lambda_odd_2: odd_spectrum[1],
                 lambda_even_1: even_spectrum[0],
+                lambda_even_2: even_spectrum[1],
                 beta_dense,
+                beta_even_dense,
                 beta_sparse,
                 exact_gap,
+                exact_gap_swapped,
                 leak: trunc.leak,
             };
 
@@ -600,6 +642,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 odd_cert.value,
                 odd_cert.residual,
                 even_cert.value,
+                even_cert.residual,
             ));
 
             // Route 2 — matvec-only Lanczos on the same `H_N`. The starts are
@@ -628,14 +671,21 @@ fn exclusion_certificate_over_the_campaign_grid() {
                 even_ritz.orthogonality
             );
             let (theta_odd, residual_odd) = odd_ritz.ground().expect("non-empty");
-            let (theta_even, _) = even_ritz.ground().expect("non-empty");
-            rows.push(cell.row(Solver::Lanczos40, theta_odd, residual_odd, theta_even));
+            let (theta_even, residual_even) = even_ritz.ground().expect("non-empty");
+            rows.push(cell.row(
+                Solver::Lanczos40,
+                theta_odd,
+                residual_odd,
+                theta_even,
+                residual_even,
+            ));
         }
     }
 
     let header = |solver: Solver| {
         println!("\n{} — {}", solver.label(), "H_N rows, m = 12");
-        println!(            "{:>4} {:>3} {:>4} {:>5} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} \
+        println!(
+            "{:>4} {:>3} {:>4} {:>5} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} \
              {:>10}",
             "g",
             "N",
@@ -679,6 +729,32 @@ fn exclusion_certificate_over_the_campaign_grid() {
         }
     }
 
+    // The swapped orientation: the even side templed against its own `λ₂`
+    // witness, the odd side plain. This is the table the crossing cells appear
+    // in, side by side with the gap they actually have.
+    println!("\nswapped — even side templed, odd side plain (Lanczos 40)");
+    println!(
+        "{:>4} {:>3} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12}",
+        "g", "N", "θᵉ₀", "rᵉ", "λ₂ even", "β even", "certified⇄", "exact⇄"
+    );
+    for row in rows.iter().filter(|r| r.solver == Solver::Lanczos40) {
+        println!(
+            "{:>4} {:>3} {:>12.9} {:>9.1e} {:>12.9} {:>12.9} {:>12} {:>12}",
+            row.g,
+            row.n_max,
+            row.theta_even,
+            row.residual_even,
+            row.lambda_even_2,
+            row.beta_even_dense.unwrap_or(f64::NAN),
+            row.certified_swapped
+                .map(|v| format!("{v:.9}"))
+                .unwrap_or_else(|| "refused".to_string()),
+            row.exact_gap_swapped
+                .map(|v| format!("{v:.9}"))
+                .unwrap_or_else(|| "—".to_string()),
+        );
+    }
+
     // Soundness, checked row by row **after** the tables are printed, so a
     // failure arrives with its own numbers beside it.
     for row in &rows {
@@ -707,6 +783,31 @@ fn exclusion_certificate_over_the_campaign_grid() {
             assert!(
                 lo <= exact + 1e-9,
                 "{label}: certified bound {lo} exceeds the exact gap {exact}"
+            );
+        }
+        // The swapped orientation is held to the same standard: its witness is
+        // a `λ₂(even)` bound, and its bound may not exceed the exact swapped
+        // gap. When it produces a number, `θᵉ₀ < β ≤ λ₂(even)` must hold, which
+        // is exactly Temple's `θ ∈ [λ₁, λ₂)` hypothesis for the even sector.
+        if let Some(beta) = row.beta_even_dense {
+            assert!(
+                beta <= row.lambda_even_2 + 1e-9,
+                "{label}: even β = {beta} exceeds the exact λ₂(even) = {}",
+                row.lambda_even_2
+            );
+        }
+        if row.certified_swapped.is_some() {
+            assert!(
+                row.theta_even < row.lambda_even_2 + 1e-9,
+                "{label}: swapped certificate with θᵉ₀ = {} at or above λ₂(even) = {}",
+                row.theta_even,
+                row.lambda_even_2
+            );
+        }
+        if let (Some(lo), Some(exact)) = (row.certified_swapped, row.exact_gap_swapped) {
+            assert!(
+                lo <= exact + 1e-9,
+                "{label}: swapped bound {lo} exceeds the exact swapped gap {exact}"
             );
         }
         // Rayleigh–Ritz, both sides: any Ritz value is at or above its sector's
@@ -845,6 +946,92 @@ fn exclusion_certificate_over_the_campaign_grid() {
         oriented.len(),
         crossing
     );
+
+    // **The swapped orientation is the complement, not a second chance on the
+    // same cells.** Where the odd ground is the lower one, the same assembly
+    // with the sectors exchanged must certify the gap those cells actually have
+    // — and in T6's own cells it must certify nothing, because there the gap has
+    // the other sign.
+    let swapped_oriented: Vec<&CertifiedRow> = rows
+        .iter()
+        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap_swapped.is_some())
+        .collect();
+    assert_eq!(
+        swapped_oriented.len(),
+        crossing,
+        "the swapped orientation must be live on exactly the {} crossing cells",
+        crossing
+    );
+    assert!(
+        !swapped_oriented.is_empty(),
+        "every cell refusing in both orientations would mean the assembly stopped working"
+    );
+    for row in &swapped_oriented {
+        // What makes the swapped bound a statement about the *global* gap rather
+        // than about two sector grounds: no odd level lies between them, so
+        // `λ₁(odd)` and `λ₀(even)` really are the two lowest levels of `H_N`.
+        // (The even sector's own second level is above its ground by definition.)
+        assert!(
+            row.lambda_odd_2 > row.lambda_even_1,
+            "g = {}, N <= {}: λ₂(odd) = {} is not above λ₀(even) = {} — the swapped bound \
+             would then separate two ground states with a level in between, and could not be \
+             read as the gap of H_N",
+            row.g,
+            row.n_max,
+            row.lambda_odd_2,
+            row.lambda_even_1
+        );
+        let lo = row.certified_swapped.unwrap_or_else(|| {
+            panic!(
+                "g = {}, N <= {}: the even side refused (β = {:?}, θᵉ₀ = {}, rᵉ = {:.3e}, \
+                 λ₂(even) = {})",
+                row.g,
+                row.n_max,
+                row.beta_even_dense,
+                row.theta_even,
+                row.residual_even,
+                row.lambda_even_2
+            )
+        });
+        assert!(
+            lo > 0.0,
+            "swapped bound at g = {}, N <= {} must be positive: lo = {lo}, exact {:.9}",
+            row.g,
+            row.n_max,
+            row.exact_gap_swapped.unwrap()
+        );
+    }
+    for row in rows
+        .iter()
+        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap.is_some())
+    {
+        assert_ne!(
+            Verdict::of(row.certified_swapped),
+            Verdict::Certified,
+            "g = {}, N <= {}: the swapped orientation must not certify in T6's own cells \
+             (a positive swapped bound there would exceed the exact negative gap {:.9})",
+            row.g,
+            row.n_max,
+            row.exact_gap.unwrap()
+        );
+    }
+    let swapped_certified = swapped_oriented
+        .iter()
+        .filter(|r| Verdict::of(r.certified_swapped) == Verdict::Certified)
+        .count();
+    assert_eq!(
+        converged_certified + swapped_certified,
+        rows.len() / Solver::ALL.len(),
+        "every cell must carry a certified gap in one orientation or the other \
+         ({converged_certified} + {swapped_certified} of {})",
+        rows.len() / Solver::ALL.len()
+    );
+    println!(
+        "\nwith the sectors swapped: {swapped_certified} more certified, so {}/{} cells carry a \
+         certified gap in one orientation or the other",
+        converged_certified + swapped_certified,
+        rows.len() / Solver::ALL.len()
+    );
 }
 
 /// The sparse witness is sound at a truncation the dense one cannot reach — and
@@ -913,5 +1100,151 @@ fn the_sparse_witness_is_sound_but_does_not_certify() {
     println!(
         "sparse verdict: refused (β = {beta:.3} ≤ θ = {theta:.3}; the dense route would need \
          O(n³) at n = {n})"
+    );
+}
+
+/// The count-free witness measured against the window it has to fit.
+///
+/// Colouring the sparsity graph into matchings replaces the Frobenius split's
+/// `√(#edges)` with `#classes`, so the slack becomes degree-bounded instead of
+/// `√n`-bounded. That is a change in *growth*, not in magnitude, and this test
+/// records both halves on rows where the exact `λ₂` exists (so the bound is
+/// checked, not merely argued) and on the row the dense route cannot reach.
+#[test]
+fn the_matching_split_does_not_reach_the_window() {
+    let g = 1.0;
+    // The smallest size, kept for the growth comparison below.
+    let mut small: Option<(f64, f64)> = None;
+    println!("g = {g}: matching split on the odd sector, where λ₂ is known");
+    println!(
+        "{:>3} {:>5} {:>10} {:>6} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}",
+        "N", "n", "d₂", "class", "‖V‖_F", "colour slack", "β colour", "β diagonal", "θ", "λ₂ exact"
+    );
+    // Rows where the exact λ₂ exists, so the new bound is *checked* sound rather
+    // than only argued sound.
+    for n_max in [6u32, 8] {
+        let h = qcd_ym_hamiltonian(g);
+        let trunc = Truncated::build(&h, n_max);
+        let odd_block = trunc.sector_matrix(false);
+        let spectrum = ascending_spectrum(&odd_block);
+        let n = odd_block.nrows();
+        let mv = dense_matvec(&odd_block);
+        let matching = MatchingExclusion::from_matvec(&mv, n).expect("measurable");
+        let beta_colour = matching.second_eigenvalue_lower_bound().expect("n >= 2");
+        let beta_diagonal = DiagonalExclusion::from_matvec(&mv, n)
+            .and_then(|e| e.second_eigenvalue_lower_bound())
+            .expect("n >= 2");
+        let slack: f64 = matching.class_widths.iter().sum();
+        println!(
+            "{n_max:>3} {n:>5} {:>10.6} {:>6} {:>11.3} {:>11.3} {:>11.6} {:>11.3} {:>11.6} \
+             {:>11.6}",
+            matching.diagonal[1],
+            matching.class_count(),
+            matching.offdiagonal_frobenius,
+            slack,
+            beta_colour,
+            beta_diagonal,
+            spectrum[0],
+            spectrum[1]
+        );
+        assert!(
+            beta_colour <= spectrum[1] + 1e-9,
+            "N <= {n_max}: β_colour = {beta_colour} exceeds the exact λ₂ = {} — the matching \
+             split is not sound",
+            spectrum[1]
+        );
+        // Whether the colouring beats the single Frobenius term is measured, not
+        // assumed: it trades `√(#edges)` for `#classes`, and which of the two is
+        // smaller depends on how dense the coupling graph is at this size.
+        println!(
+            "  N <= {n_max}: β colour − β diagonal = {:+.3} (positive = the colouring is tighter)",
+            beta_colour - beta_diagonal
+        );
+        if n_max == 6 {
+            small = Some((matching.offdiagonal_frobenius, slack));
+        }
+    }
+
+    // The row the dense route cannot reach: no sector reduction, so the witness
+    // is the only thing standing between this size and a certificate.
+    let n_max = 12u32;
+    let h = qcd_ym_hamiltonian(g);
+    let trunc = Truncated::build(&h, n_max);
+    let n = trunc.dim();
+    let matvec = trunc.matvec();
+    let matching = MatchingExclusion::from_matvec(&matvec, n).expect("measurable");
+    let beta_colour = matching.second_eigenvalue_lower_bound().expect("n >= 2");
+    let beta_diagonal = DiagonalExclusion::from_matvec(&matvec, n)
+        .and_then(|e| e.second_eigenvalue_lower_bound())
+        .expect("n >= 2");
+    let start = trunc
+        .basis
+        .iter()
+        .map(|s| QuantumState::inner_product(s, &r_odd_start()).re)
+        .collect::<Vec<f64>>();
+    let ritz = lanczos_ritz(&matvec, n, &start, 12).expect("twelve Lanczos steps");
+    let (theta, _residual) = ritz.ground().expect("non-empty");
+    let slack: f64 = matching.class_widths.iter().sum();
+    let admissible = matching.diagonal[1] - theta;
+    println!(
+        "{n_max:>3} {n:>5} {:>10.6} {:>6} {:>11.3} {:>11.3} {:>11.6} {:>11.3} {:>11.6} {:>11}",
+        matching.diagonal[1],
+        matching.class_count(),
+        matching.offdiagonal_frobenius,
+        slack,
+        beta_colour,
+        beta_diagonal,
+        theta,
+        "—"
+    );
+    println!(
+        "N <= {n_max}: the certificate needs the slack inside d₂ − θ = {admissible:.3}, and the \
+         colouring delivers {slack:.1} in {} classes — flat in N where ‖V‖_F is {:.0}. ",
+        matching.class_count(),
+        matching.offdiagonal_frobenius
+    );
+    assert!(
+        beta_colour <= theta,
+        "β_colour = {beta_colour} now clears θ = {theta} at N <= {n_max}: the count-free route \
+         certifies there, so the negative result this test records no longer holds"
+    );
+    assert!(
+        certified_gap_lower_bound_with_exclusion(theta, _residual, beta_colour, theta).is_none(),
+        "Temple must refuse a β at or below θ rather than return a bound"
+    );
+    assert!(
+        slack > admissible,
+        "the colouring's slack ({slack}) must still exceed the whole admissible budget d₂ − θ = \
+         {admissible}; if it does not, the certificate is one bound away from firing and this \
+         negative result has to be re-measured"
+    );
+    // **The growth result.** At the smallest size the colouring is *looser* than
+    // one Frobenius term (it charges the largest entry of each of ~13 classes
+    // instead of the `l2` norm of ~600 edges); by `N ≤ 12` it is tighter, and
+    // the gap between them widens with `n` because `‖V‖_F` grows like `√(#edges)`
+    // while the class count grows like the graph's degree. Both directions are
+    // pinned so the trade cannot be reported as a win without its price.
+    let (frobenius_small, slack_small) = small.expect("N <= 6 row");
+    assert!(
+        slack_small > frobenius_small,
+        "at N <= 6 the colouring ({slack_small}) is expected to be looser than ‖V‖_F \
+         ({frobenius_small}); a tighter colouring would mean the graph is already sparse enough \
+         for the matchings to pay off"
+    );
+    assert!(
+        slack < matching.offdiagonal_frobenius,
+        "at N <= {n_max} the colouring ({slack}) must be tighter than ‖V‖_F ({}), which is the \
+         whole reason to pay for the colouring",
+        matching.offdiagonal_frobenius
+    );
+    // The slack is degree-bounded, so it is at worst the whole off-diagonal
+    // Frobenius norm (never worse than the diagonal split) and — the point of
+    // the colouring — it grows far more slowly than `√n` does. Both halves are
+    // pinned so this test cannot rot into printing.
+    assert!(
+        slack <= matching.offdiagonal_frobenius,
+        "the colour slack ({slack}) must not exceed ‖V‖_F ({}) — that would make the split \
+         strictly worse than the diagonal one",
+        matching.offdiagonal_frobenius
     );
 }

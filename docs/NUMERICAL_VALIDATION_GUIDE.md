@@ -2467,12 +2467,28 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   four remaining rows are **not** a convergence problem: the odd ground sits
   *below* the even one inside `H_N` there, so `θᵒ₀ − θᵉ₀` is the negative of the
   truncated gap to machine precision and T6's orientation (odd above even) does
-  not hold at all — 6 is the ceiling on this grid, and the test asserts that the
-  certified count equals the number of correctly oriented cells. The matvec-only
-  `λ₂` bound
-  (`certificate::DiagonalExclusion`, `β = d₂ − ‖V‖_F`) is sound but **useless**
-  here: `−552.8` against `θᵒ₀ = −2.825` at `N ≤ 12` (`n = 1820`), because a
-  `λ₂` bound is an eigenvalue *count* and `‖V‖_F ~ √n`. Scratch the truncation
+  not hold at all. Temple's inequality is sector-local, so the same assembly with
+  the sectors **exchanged** (`temple(θᵉ₀, rᵉ, β_even) − θᵒ₀`, the odd side then
+  needing no witness at all, since `λ₁(odd) ≤ θᵒ₀` is Rayleigh–Ritz) certifies
+  `λ₀(even) − λ₁(odd)` in exactly those cells: **4 more rows**, each equal to the
+  exact gap to the last printed digit, so **10 of 10** grid cells carry a
+  certified gap and the sector that owns the ground is reported with it (asserted
+  per cell that no odd level lies between the two grounds, which is what makes
+  the bound the gap of `H_N` rather than a separation of two ground states). The
+  tests pin each half: an orientation certifies exactly the cells whose ordering
+  matches it, and the two counts sum to the grid. The matvec-only `λ₂` bounds are
+  sound but **useless** here: `β = d₂ − ‖V‖_F`
+  (`certificate::DiagonalExclusion`) gives `−552.8` against `θᵒ₀ = −2.825` at
+  `N ≤ 12` (`n = 1820`), and the tightest count-free variant
+  (`certificate::MatchingExclusion`, an edge-coloured matching split whose slack
+  is degree-bounded rather than `√n`) gives `−312.5` there and `−41.7` / `−91.6`
+  at `N ≤ 6` / `8` — *looser* than the Frobenius split at small `n`, 1.8× tighter
+  by `N ≤ 12`, and never within an order of magnitude of the window
+  `β ∈ (θ, λ₂]`. The reason is structural: `d₂ = 1` while `θ ≈ −2.8 … −1.9`, so
+  the whole off-diagonal budget is `d₂ − θ < 4`, and any splitting bound charges
+  at least one entry per class against a degree of 13–28. A `λ₂` bound is an
+  eigenvalue *count*, and no choice of split substitutes for one — the untried
+  route is inertia of a sparse factorization of `H − βI`. Scratch the truncation
   hierarchy as a shortcut too: min–max makes `λ₂(H_N) ≤ λ₂(H_{N'})`, so a
   shallower truncation bounds `λ₂` from **above**. Two traps to keep in mind:
   `(n₀+n₁)` parity is **not** the reflection sector (its eigenvectors are the
