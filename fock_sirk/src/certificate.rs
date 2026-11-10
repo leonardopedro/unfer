@@ -49,6 +49,7 @@
 use nalgebra::DMatrix;
 use nested_fock_algebra::{Hamiltonian, QuantumState};
 use num_complex::Complex64;
+use std::collections::BTreeMap;
 
 use crate::forward_sirk::ForwardSirkResult;
 
@@ -438,8 +439,9 @@ impl DiagonalExclusion {
 /// Weyl split would have to charge less than four unit entries in total — while
 /// any matching decomposition charges at least one entry per class, and the
 /// degree is 13–28. That is why no splitting bound can be a witness here, no
-/// matter how the split is chosen, and why the count is the real content of
-/// [`certify_spectrum`] — which pays `O(n³)` for it.
+/// matter how the split is chosen: the count is the real content of the
+/// witness, and [`inertia_below`] is the way to get it without paying
+/// `O(n³)`.
 pub struct MatchingExclusion {
     /// The diagonal `H_ii`, ascending.
     pub diagonal: Vec<f64>,
@@ -538,6 +540,336 @@ impl MatchingExclusion {
     }
 }
 
+// ── Inertia counting: the count without a diagonalization ─────────────────
+
+/// One floating-point quantity with a rigorous bound on its distance from the
+/// exact value. Every elimination step below carries these, so a pivot's sign
+/// is decided only when it cannot be mistaken.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Bounded {
+    value: f64,
+    /// Bound on `|value − exact|`.
+    error: f64,
+}
+
+impl Bounded {
+    fn exact(value: f64) -> Self {
+        Self { value, error: 0.0 }
+    }
+
+    /// Rounded result of `a − b`, with the rounding folded into the error.
+    fn sub(self, other: Self) -> Self {
+        let value = self.value - other.value;
+        Self {
+            value,
+            error: self.error + other.error + UNIT_ROUNDOFF * value.abs(),
+        }
+    }
+
+    fn mul(self, other: Self) -> Self {
+        let value = self.value * other.value;
+        Self {
+            value,
+            error: (self.value.abs() + self.error) * other.error
+                + other.value.abs() * self.error
+                + UNIT_ROUNDOFF * value.abs(),
+        }
+    }
+
+    /// `None` when the divisor's interval contains zero — the quotient's sign
+    /// could then be anything, and the caller must refuse rather than decide.
+    fn div(self, other: Self) -> Option<Self> {
+        let denominator = other.value.abs() - other.error;
+        if !(denominator > 0.0) {
+            return None;
+        }
+        let value = self.value / other.value;
+        let ratio = (self.value.abs() + self.error) / denominator;
+        Some(Self {
+            value,
+            error: UNIT_ROUNDOFF * value.abs() + (self.error + ratio * other.error) / denominator,
+        })
+    }
+
+    /// `Some(sign)` only when the sign is certain, `None` when the interval
+    /// straddles zero.
+    fn certain_sign(&self) -> Option<i8> {
+        if !self.value.is_finite() || !self.error.is_finite() {
+            return None;
+        }
+        if self.value.abs() > self.error {
+            Some(if self.value < 0.0 { -1 } else { 1 })
+        } else {
+            None
+        }
+    }
+}
+
+/// The inertia of `H − βI`, counted by a sparse symmetric elimination — the
+/// `λ₂` witness that does not need a diagonalization.
+///
+/// `certify_spectrum` gets its count from completeness: `n` Parlett intervals,
+/// `n` eigenvalues, disjoint clusters. This gets the same count from
+/// **Sylvester's law of inertia**: `H − βI = L D Lᵀ` with `L` unit triangular,
+/// so the number of negative pivots of `D` is exactly the number of eigenvalues
+/// of `H` below `β`. What makes it rigorous in floating point is the error
+/// carried alongside every entry: a pivot's sign is used only when
+/// `|value| > error`, and a pivot whose interval contains zero aborts the count
+/// (`None`) instead of guessing. The elimination is sparse and one-shot, so the
+/// cost is `O(fill)` rather than `O(n³)`.
+///
+/// Fills in, like any elimination without a good ordering — this uses a
+/// breadth-first (RCM-reversed) ordering, which is cheap and kept the largest row
+/// map at 223 on a 2160-dimensional sector (measured, `docs/MASS_GAP_SPEC.md`
+/// §6d). It is not nested dissection, and the fill is reported so a caller can
+/// see the price. Pivoting is 1×1 with a symmetric exchange (a permutation
+/// preserves inertia): a zero or near-zero diagonal is swapped for a larger one
+/// instead of aborting, and a matrix with no decidable 1×1 pivot at all (a
+/// `[[0,1],[1,0]]` block) is refused rather than guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InertiaCount {
+    /// Number of eigenvalues of `H` strictly below `β`.
+    pub below: usize,
+    /// Pivots eliminated (always the matrix dimension when the count succeeded).
+    pub pivots: usize,
+    /// Size of the largest row map during the elimination — the measured fill.
+    pub fill: usize,
+    /// Symmetric pivots exchanged to keep the elimination manageable.
+    pub swaps: usize,
+}
+
+impl InertiaCount {
+    /// Rigorous `β ≤ λ₂` exactly when the count says "exactly one eigenvalue
+    /// below `β`". `None` otherwise: zero eigenvalues below means the Ritz
+    /// value is not the ground, two or more means `β` is above `λ₂`.
+    pub fn second_eigenvalue_lower_bound(&self, beta: f64) -> Option<f64> {
+        (self.below == 1).then_some(beta)
+    }
+}
+
+/// Count the eigenvalues of `H` below `beta` by eliminating the sparse
+/// `H − βI`, or return `None` when any pivot's sign cannot be decided.
+///
+/// `columns[j]` lists the nonzeros of column `j` of the Hermitian matrix, as
+/// `(row, value)` pairs. Callers pass a genuinely Hermitian matrix (these are
+/// built that way); an asymmetric input would be silently symmetrized rather
+/// than rejected.
+///
+/// **Measured** (`docs/MASS_GAP_SPEC.md` §6d): on the truncated gauge-fixed QYM
+/// at `g = 1` this decides the count of every sector up to `N ≤ 16`
+/// (`n = 2160`) in under a second, and the resulting gap bracket agrees with the
+/// exact spectrum to the last printed digit wherever the dense route can reach
+/// (`N ≤ 10`). Two failure modes are real and are reported instead of hidden: a
+/// shift `β` within `~1e-9` of an eigenvalue leaves one pivot's sign undecidable
+/// (so callers should probe a ladder of margins), and an elimination stage whose
+/// running error bound exceeds every remaining pivot is refused (>128 pivots
+/// deep here only at the last index, and only for the smallest margins).
+pub fn inertia_below(columns: &[Vec<(usize, f64)>], beta: f64) -> Option<InertiaCount> {
+    let n = columns.len();
+    if n == 0 || columns.iter().any(|c| c.iter().any(|&(i, _)| i >= n)) {
+        return None;
+    }
+
+    // Adjacency for the ordering only (values play no part in it).
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (j, column) in columns.iter().enumerate() {
+        for &(i, v) in column {
+            if i != j && v != 0.0 {
+                adjacency[j].push(i);
+                adjacency[i].push(j);
+            }
+        }
+    }
+    let order = reverse_cuthill_mckee(&adjacency);
+    debug_assert_eq!(
+        {
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            sorted.len()
+        },
+        n,
+        "the ordering must be a permutation"
+    );
+    // `order[new] = old`, and `position[old] = new`.
+    let mut position = vec![0usize; n];
+    for (new, &old) in order.iter().enumerate() {
+        position[old] = new;
+    }
+
+    // `H − βI` in the new numbering, stored **in full** (both triangles), with
+    // error bounds. Storing only one triangle is half the memory and twice the
+    // bookkeeping: the fill created by an update lands in whichever triangle
+    // the pair happens to fall in, and getting that wrong silently changes the
+    // matrix (measured — it broke this counter on the odd sector before the
+    // storage was doubled). The full symmetric form costs a factor two and is
+    // checkable at a glance.
+    let mut rows: Vec<BTreeMap<usize, Bounded>> = vec![BTreeMap::new(); n];
+    // Diagonals are collected separately and shifted once, at the end: they are
+    // `H_ii − β`, and a diagonal the input leaves structurally zero is `−β`,
+    // not absent.
+    let mut diagonal = vec![0.0_f64; n];
+    for (old_col, column) in columns.iter().enumerate() {
+        for &(old_row, value) in column {
+            if old_row == old_col {
+                diagonal[position[old_row]] = value;
+                continue;
+            }
+            if value == 0.0 {
+                continue;
+            }
+            let row = position[old_row];
+            let col = position[old_col];
+            // A symmetric matrix contributes each off-diagonal pair twice (once
+            // from each column); keep the larger error rather than overwrite.
+            rows[row]
+                .entry(col)
+                .and_modify(|e| e.error = e.error.max(0.0))
+                .or_insert(Bounded::exact(value));
+            rows[col]
+                .entry(row)
+                .and_modify(|e| e.error = e.error.max(0.0))
+                .or_insert(Bounded::exact(value));
+        }
+    }
+    // The shift goes on **every** diagonal, including the ones the input leaves
+    // structurally zero: `H − βI` has `−β` there. Skipping those rows (as an
+    // earlier version did, by zero-filtering the entries) leaves part of the
+    // matrix unshifted and the count wrong — measured on the odd sector at
+    // `N ≤ 6`, where most diagonal entries are zero.
+    for i in 0..n {
+        rows[i].insert(i, Bounded::exact(diagonal[i]).sub(Bounded::exact(beta)));
+    }
+
+    let mut negative = 0usize;
+    let mut fill = 0usize;
+    let mut swaps = 0usize;
+    for j in 0..n {
+        // Pivot selection *within* the trailing submatrix. A symmetric
+        // permutation preserves the eigenvalues, so swapping the row and its
+        // column labels to bring a larger diagonal entry into place is free —
+        // and without it a zero or near-zero pivot aborts the count on a
+        // perfectly ordinary matrix (measured: the odd sector at `N ≤ 6`).
+        let acceptable = |pivot: &Bounded| pivot.certain_sign().is_some();
+        let current = rows[j].get(&j).copied();
+        if !current.map(|p| acceptable(&p)).unwrap_or(false) {
+            let mut best: Option<(usize, f64)> = None;
+            for k in j + 1..n {
+                if let Some(pivot) = rows[k].get(&k) {
+                    if acceptable(pivot) {
+                        let magnitude = pivot.value.abs() - pivot.error;
+                        if best.map(|(_, m)| magnitude > m).unwrap_or(true) {
+                            best = Some((k, magnitude));
+                        }
+                    }
+                }
+            }
+            let (k, _) = best?;
+            swap_trailing(&mut rows, j, k);
+            swaps += 1;
+        }
+        let pivot = rows[j].remove(&j)?;
+        let sign = pivot.certain_sign()?;
+        if sign < 0 {
+            negative += 1;
+        }
+
+        // Support of row `j` (both triangles are stored, so this is also the
+        // support of column `j`), without the pivot itself.
+        let support: Vec<(usize, Bounded)> = rows[j]
+            .iter()
+            .map(|(&k, &value)| (k, value))
+            .filter(|&(k, _)| k > j)
+            .collect();
+        rows[j].clear();
+        fill = fill.max(support.len() + 1);
+        if support.is_empty() {
+            continue;
+        }
+
+        // `A[j+1.., j+1..] -= l l\u1d40 d_j`, applied to both triangles.
+        for (a, &(i, value_i)) in support.iter().enumerate() {
+            let Some(l_i) = value_i.div(pivot) else {
+                return None;
+            };
+            // Only the upper half is ever read again (row `i` is read as a
+            // pivot row later), so the mirrored half is left stale — it is the
+            // storage that holds both triangles that matters for the build.
+            for &(k, value_k) in support.iter().skip(a) {
+                let update = l_i.mul(value_k);
+                let slot = rows[i].entry(k).or_insert(Bounded::exact(0.0));
+                *slot = slot.sub(update);
+                fill = fill.max(rows[i].len());
+            }
+        }
+    }
+
+    Some(InertiaCount {
+        below: negative,
+        pivots: n,
+        fill,
+        swaps,
+    })
+}
+
+/// Exchange indices `j` and `k` of the *trailing* submatrix: rows `j` and `k`
+/// swap places, and so do the column labels `j`/`k` in every remaining row.
+/// Rows before `j` are already eliminated (diagonal only) and are untouched.
+fn swap_trailing(rows: &mut [BTreeMap<usize, Bounded>], j: usize, k: usize) {
+    rows.swap(j, k);
+    for row in rows.iter_mut().skip(j) {
+        let at_j = row.remove(&j);
+        let at_k = row.remove(&k);
+        if let Some(value) = at_k {
+            row.insert(j, value);
+        }
+        if let Some(value) = at_j {
+            row.insert(k, value);
+        }
+    }
+}
+
+/// Reverse Cuthill–McKee on a symmetric graph: breadth-first from a
+/// lowest-degree vertex, then reversed numbering. Cheapest ordering that
+/// meaningfully reduces the bandwidth of a local-interaction graph.
+fn reverse_cuthill_mckee(adjacency: &[Vec<usize>]) -> Vec<usize> {
+    let n = adjacency.len();
+    let degree: Vec<usize> = adjacency.iter().map(|a| a.len()).collect();
+    let mut visited = vec![false; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    // Start from the least-connected vertex, the standard pseudo-peripheral pick.
+    let mut start = (0..n).min_by_key(|&v| degree[v]).unwrap_or(0);
+    loop {
+        visited[start] = true;
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(v) = queue.pop_front() {
+            order.push(v);
+            let mut neighbours: Vec<usize> = adjacency[v]
+                .iter()
+                .copied()
+                .filter(|&w| !visited[w])
+                .collect();
+            neighbours.sort_by_key(|&w| degree[w]);
+            neighbours.dedup();
+            for w in neighbours {
+                if !visited[w] {
+                    visited[w] = true;
+                    queue.push_back(w);
+                }
+            }
+        }
+        match (0..n).find(|&v| !visited[v]) {
+            // Disconnected graph: restart in the next component. Nothing in
+            // this module is disconnected, but dropping vertices silently would
+            // be worse than a second pass.
+            Some(disconnected) => start = disconnected,
+            None => break,
+        }
+    }
+    order.reverse();
+    order
+}
+
 /// A Ritz computation by Lanczos with full reorthogonalization — matvec-only,
 /// so it reaches truncations where the dense witness cannot.
 ///
@@ -549,9 +881,10 @@ impl MatchingExclusion {
 /// **What this cannot do** is name one. A Ritz value bounds `λ_i` from *above*
 /// (`θ_i ≥ λ_i`, Rayleigh–Ritz), and its interval contains *some* eigenvalue;
 /// excluding the ground from `(β, ∞)` is an eigenvalue *count*, which no
-/// matvec-only method produces. So a gap certificate needs
-/// [`DiagonalExclusion`] or [`MatchingExclusion`] (weak, any `n`) or
-/// [`certify_spectrum`] (tight, dense) beside it — never this alone.
+/// matvec-only method produces. So a gap certificate needs a count beside it —
+/// [`certify_spectrum`] (dense, `O(n³)`) or [`inertia_below`] (sparse
+/// elimination) — and never this alone. [`DiagonalExclusion`] and
+/// [`MatchingExclusion`] are the matvec-only family, measured too weak here.
 pub struct LanczosRitz {
     /// Steps actually taken (stops early on breakdown).
     pub steps: usize,
@@ -1341,6 +1674,89 @@ mod tests {
         assert!(
             crate::mass_gap_spec::temple_lower_bound(theta, residual, 2.0).is_none(),
             "θ at β must be refused, not turned into a bound"
+        );
+    }
+}
+
+#[cfg(test)]
+mod inertia_tests {
+    use super::inertia_below;
+
+    /// Deterministic pseudo-random symmetric matrices, counted against a dense
+    /// eigendecomposition. Three regimes are exercised that each broke an
+    /// earlier version of the counter: dense random entries, congruent scaling
+    /// across nine orders of magnitude, and structurally-zero diagonals (where
+    /// the `−β` shift is easiest to drop).
+    #[test]
+    fn the_sparse_count_matches_dense_eigendecomposition() {
+        use nalgebra::DMatrix;
+        let mut state: u64 = 12345;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64 / (1u64 << 53) as f64) * 4.0 - 2.0
+        };
+        let mut decided = 0usize;
+        for trial in 0..20 {
+            let n = 5 + (trial % 9);
+            let mut a = DMatrix::<f64>::zeros(n, n);
+            for i in 0..n {
+                for j in 0..=i {
+                    let v = if i == j { next() * 2.0 } else { next() };
+                    a[(i, j)] = v;
+                    a[(j, i)] = v;
+                }
+            }
+            if trial >= 10 {
+                let scales: Vec<f64> = (0..n).map(|i| 10f64.powi(((i % 7) as i32) - 3)).collect();
+                for i in 0..n {
+                    for j in 0..n {
+                        a[(i, j)] *= scales[i] * scales[j];
+                    }
+                }
+            }
+            if trial % 3 == 0 {
+                for i in (0..n).step_by(3) {
+                    a[(i, i)] = 0.0;
+                }
+            }
+            let columns: Vec<Vec<(usize, f64)>> = (0..n)
+                .map(|j| {
+                    (0..n)
+                        .filter(|&i| a[(i, j)] != 0.0)
+                        .map(|i| (i, a[(i, j)]))
+                        .collect()
+                })
+                .collect();
+            let spec = a.clone().symmetric_eigen().eigenvalues;
+            for k in 0..6 {
+                let beta = -3.0 + k as f64;
+                let want = spec.iter().filter(|&&v| v < beta).count();
+                if let Some(got) = inertia_below(&columns, beta) {
+                    decided += 1;
+                    assert_eq!(
+                        got.below, want,
+                        "trial {trial} n={n} beta={beta}: counted {} below, dense says {want}",
+                        got.below
+                    );
+                }
+            }
+        }
+        assert!(
+            decided >= 100,
+            "the counter must decide on this corpus, not refuse it ({decided} decided)"
+        );
+    }
+
+    /// A 2×2 matrix shifted to `[[0,1],[1,0]]` has no 1×1 pivot at all: the
+    /// counter must refuse rather than guess a sign.
+    #[test]
+    fn the_sparse_count_refuses_a_pivot_that_is_not_there() {
+        let columns = vec![vec![(0, 0.0), (1, 1.0)], vec![(0, 1.0), (1, 0.0)]];
+        assert!(
+            inertia_below(&columns, 0.0).is_none(),
+            "a matrix with no decidable 1×1 pivot must be refused"
         );
     }
 }

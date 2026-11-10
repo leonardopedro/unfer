@@ -2487,10 +2487,19 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `β ∈ (θ, λ₂]`. The reason is structural: `d₂ = 1` while `θ ≈ −2.8 … −1.9`, so
   the whole off-diagonal budget is `d₂ − θ < 4`, and any splitting bound charges
   at least one entry per class against a degree of 13–28. A `λ₂` bound is an
-  eigenvalue *count*, and no choice of split substitutes for one — the untried
-  route is inertia of a sparse factorization of `H − βI`. Scratch the truncation
-  hierarchy as a shortcut too: min–max makes `λ₂(H_N) ≤ λ₂(H_{N'})`, so a
-  shallower truncation bounds `λ₂` from **above**. Two traps to keep in mind:
+  eigenvalue *count*, and no choice of split substitutes for one. The count
+  itself is reachable without a diagonalization: `certificate::inertia_below`
+  eliminates the sparse `H − βI` under Sylvester's law of inertia, using each
+  pivot's sign only when a running error bound cannot mistake it, and the
+  campaign brackets the gap with no dense step at all — at `g = 1` the count is
+  decided for every sector through `N ≤ 16` (`n = 2160`) in `≤ 0.97 s` (fill 223),
+  the bracket closes to all printed digits, and at `N ≤ 10` it equals the exact
+  gap (`0.091073200`, `0.091161224`, `−0.273337089`). `β` must be probed over a
+  ladder of margins: a `1e-9` margin leaves one pivot undecidable at the last
+  index, since the shift is then that close to an eigenvalue. Scratch the
+  truncation hierarchy as a shortcut too: min–max makes
+  `λ₂(H_N) ≤ λ₂(H_{N'})`, so a shallower truncation bounds `λ₂` from **above**.
+  Two traps to keep in mind:
   `(n₀+n₁)` parity is **not** the reflection sector (its eigenvectors are the
   ±pair combinations, and at `g > 0` the three-operator terms break that parity
   entirely), and a leak check must be formed as an explicit residual —
@@ -2498,7 +2507,11 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   invariant sector. The `g = 0`-only `truncated_parity_block` helper now takes
   the coupling, refuses `g ≠ 0` (pinned by a `#[should_panic]` test) and measures
   its own `H`-invariance (`‖(1−P) H P‖_F < 1e-10`), so it cannot be reused as a
-  reflection sector where the three-operator terms break that parity.
+  reflection sector where the three-operator terms break that parity. The
+  crossing set is **not monotone in `N`** (`g = 2` crosses at `N ≤ 8` and not at
+  `N ≤ 10`; `g = 1` the other way round), so a crossing cell is an oscillation
+  of the truncation, not a size that a deeper `N` repairs — and the parity of
+  the truncated ground must not be read as the vacuum's.
   → `docs/MASS_GAP_SPEC.md` §6d.
 
 **No coupling certifies it** (measured sweep, 2026-11-10; full table in

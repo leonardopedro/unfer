@@ -29,9 +29,13 @@
 //! consumed only as an upper bound on `λ₀`, so the even side needs no witness at
 //! all, just a value close enough to `λ₀` to leave room for the odd side.
 //!
-//! A cell where the odd ground sits *below* the even one inside `H_N` has no gap
-//! in T6's orientation (the expression is the negative of its gap). Those cells
-//! are not left uncertified: Temple's inequality is sector-local, so the same
+//! The grid runs `N ∈ {6, 8, 10}`. A cell where the odd ground sits *below* the
+//! even one inside `H_N` has no gap in T6's orientation (the expression is the
+//! negative of its gap), and the set of such cells is **not monotone in `N`**
+//! (`g = 2` crosses at `N ≤ 8` and not at `N ≤ 10`; `g = 1` the other way round),
+//! so a crossing is an oscillation of the truncation, not a sign that a deeper
+//! `N` will cure it. Those cells are not left uncertified: Temple's inequality is
+//! sector-local, so the same
 //! assembly runs again with the sectors **swapped** — the even side templed
 //! against its own `β ≤ λ₂(even)` witness, the odd side consumed only as the
 //! Rayleigh–Ritz upper bound `λ₁(odd) ≤ θᵒ₀` — and certifies
@@ -410,22 +414,22 @@ fn dense_matvec(a: &DMatrix<f64>) -> impl Fn(&[f64]) -> Vec<f64> {
 /// `λ₀` and does not improve with `m` — measured at `g = 1, N ≤ 6`: the even
 /// excess is `3.71e-1` at `m = 12` and `3.99e-1` at `m = 40`, with the residual
 /// flat at `~8e-1`. Lanczos on the same operator reaches machine precision in
-/// 40 matvecs. That difference, not the certificate, is what moves the verdicts.
+/// 60 matvecs. That difference, not the certificate, is what moves the verdicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Solver {
     /// `solve_forward_sirk_truncated` at `m = 12` — the §6d baseline.
     SirkM12,
     /// Matvec-only Lanczos on the same `H_N`, [`CONVERGED_STEPS`] steps.
-    Lanczos40,
+    Lanczos60,
 }
 
 impl Solver {
-    const ALL: [Solver; 2] = [Solver::SirkM12, Solver::Lanczos40];
+    const ALL: [Solver; 2] = [Solver::SirkM12, Solver::Lanczos60];
 
     fn label(self) -> &'static str {
         match self {
             Solver::SirkM12 => "SIRK m=12",
-            Solver::Lanczos40 => "Lanczos 40",
+            Solver::Lanczos60 => "Lanczos 60",
         }
     }
 }
@@ -434,7 +438,7 @@ impl Solver {
 /// dimensions on this grid (`≤ 200`), so the ground converges rather than
 /// merely acquiring a small residual: measured `r ≤ 3e-3` at the worst cell and
 /// `≤ 3e-11` at most.
-const CONVERGED_STEPS: usize = 40;
+const CONVERGED_STEPS: usize = 60;
 
 /// Everything a row needs that is a property of the *cell* rather than of the
 /// solve, so both routes are compared on identical exact references.
@@ -558,7 +562,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
 
     for g in [0.0, 0.5, 1.0, 2.0, 3.0] {
         let h = qcd_ym_hamiltonian(g);
-        for n_max in [6u32, 8] {
+        for n_max in [6u32, 8, 10] {
             let trunc = Truncated::build(&h, n_max);
             let even_sector = trunc.sector(true);
             let odd_sector = trunc.sector(false);
@@ -673,7 +677,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
             let (theta_odd, residual_odd) = odd_ritz.ground().expect("non-empty");
             let (theta_even, residual_even) = even_ritz.ground().expect("non-empty");
             rows.push(cell.row(
-                Solver::Lanczos40,
+                Solver::Lanczos60,
                 theta_odd,
                 residual_odd,
                 theta_even,
@@ -732,12 +736,12 @@ fn exclusion_certificate_over_the_campaign_grid() {
     // The swapped orientation: the even side templed against its own `λ₂`
     // witness, the odd side plain. This is the table the crossing cells appear
     // in, side by side with the gap they actually have.
-    println!("\nswapped — even side templed, odd side plain (Lanczos 40)");
+    println!("\nswapped — even side templed, odd side plain (Lanczos 60)");
     println!(
         "{:>4} {:>3} {:>12} {:>9} {:>12} {:>12} {:>12} {:>12}",
         "g", "N", "θᵉ₀", "rᵉ", "λ₂ even", "β even", "certified⇄", "exact⇄"
     );
-    for row in rows.iter().filter(|r| r.solver == Solver::Lanczos40) {
+    for row in rows.iter().filter(|r| r.solver == Solver::Lanczos60) {
         println!(
             "{:>4} {:>3} {:>12.9} {:>9.1e} {:>12.9} {:>12.9} {:>12} {:>12}",
             row.g,
@@ -872,10 +876,31 @@ fn exclusion_certificate_over_the_campaign_grid() {
             of(Verdict::Refused),
         )
     };
+    // The crossing set, pinned because it is *not* a monotone function of `N`:
+    // `g = 2` crosses at `N <= 8` and not at `N <= 10`; `g = 1` does not cross at
+    // `N <= 8` and does at `N <= 10`. So a crossing is an oscillation of the
+    // truncation rather than a sign that a deeper `N` will cure it, and the pin
+    // is what keeps that finding from being quietly re-derived later.
+    let crossing_cells: Vec<(f64, u32)> = rows
+        .iter()
+        .filter(|r| r.solver == Solver::Lanczos60 && r.exact_gap.is_none())
+        .map(|r| (r.g, r.n_max))
+        .collect();
+    assert_eq!(
+        crossing_cells,
+        vec![(0.5, 8), (1.0, 10), (2.0, 8), (3.0, 6), (3.0, 8)],
+        "the crossing cells must be exactly the measured set; a change that moves them means \
+         the non-monotonicity finding has to be re-measured"
+    );
+
     println!();
     println!(
         "cells with the odd ground BELOW the even one inside H_N (T6's expression is then the \
          negative of their gap): {crossing}"
+    );
+    println!(
+        "  {crossing_cells:?} — non-monotone in N, so the truncated ground's parity is not \
+         settling with depth"
     );
     for solver in Solver::ALL {
         let (c, n, r) = tally(solver);
@@ -908,7 +933,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
     // amount of accuracy can make it positive.
     let oriented: Vec<&CertifiedRow> = rows
         .iter()
-        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap.is_some())
+        .filter(|r| r.solver == Solver::Lanczos60 && r.exact_gap.is_some())
         .collect();
     assert!(
         !oriented.is_empty(),
@@ -931,7 +956,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
         );
     }
     let (sirk_certified, _, _) = tally(Solver::SirkM12);
-    let (converged_certified, _, _) = tally(Solver::Lanczos40);
+    let (converged_certified, _, _) = tally(Solver::Lanczos60);
     assert!(
         converged_certified > sirk_certified,
         "the converged route must certify strictly more rows than the m=12 baseline \
@@ -954,7 +979,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
     // the other sign.
     let swapped_oriented: Vec<&CertifiedRow> = rows
         .iter()
-        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap_swapped.is_some())
+        .filter(|r| r.solver == Solver::Lanczos60 && r.exact_gap_swapped.is_some())
         .collect();
     assert_eq!(
         swapped_oriented.len(),
@@ -1003,7 +1028,7 @@ fn exclusion_certificate_over_the_campaign_grid() {
     }
     for row in rows
         .iter()
-        .filter(|r| r.solver == Solver::Lanczos40 && r.exact_gap.is_some())
+        .filter(|r| r.solver == Solver::Lanczos60 && r.exact_gap.is_some())
     {
         assert_ne!(
             Verdict::of(row.certified_swapped),
@@ -1247,4 +1272,197 @@ fn the_matching_split_does_not_reach_the_window() {
          strictly worse than the diagonal one",
         matching.offdiagonal_frobenius
     );
+}
+
+/// The odd/even sector of `H_N` as a sparse matrix, built from the full sparse
+/// columns — the input the inertia counter needs, and the only linear algebra
+/// here that is not a matvec.
+fn sector_columns(trunc: &Truncated, sector: &[Vec<(usize, f64)>]) -> Vec<Vec<(usize, f64)>> {
+    let n_full = trunc.dim();
+    // Which sector vectors each full basis state participates in. The sector
+    // basis is orthonormal with at most two states per vector, so this is the
+    // exact inverse map.
+    let mut members: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n_full];
+    for (b, u) in sector.iter().enumerate() {
+        for &(j, c) in u {
+            members[j].push((b, c));
+        }
+    }
+    let mut columns = Vec::with_capacity(sector.len());
+    for u in sector.iter() {
+        // z = H_N u, then column b of `Uᵀ H U` is `Uᵀ z`.
+        let mut z: HashMap<usize, f64> = HashMap::new();
+        for &(i, c) in u {
+            for &(j, v) in &trunc.columns[i] {
+                *z.entry(j).or_insert(0.0) += c * v;
+            }
+        }
+        let mut acc: HashMap<usize, f64> = HashMap::new();
+        for (&j, &zj) in z.iter() {
+            for &(b, c) in &members[j] {
+                *acc.entry(b).or_insert(0.0) += c * zj;
+            }
+        }
+        let mut column: Vec<(usize, f64)> =
+            acc.into_iter().filter(|&(_, v)| v.abs() > 1e-14).collect();
+        column.sort_by_key(|&(i, _)| i);
+        columns.push(column);
+    }
+    columns
+}
+
+/// The gap of `H_N` bracketed from both sides with **no diagonalization**: a
+/// sparse inertia count supplies each sector's `λ₂` witness, and the two Temple
+/// bounds turn the Ritz pairs into `[lower, upper]`. This is what the dense route
+/// spends `O(n³)` to produce, and the only step that needed the count.
+#[test]
+fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
+    use fock_sirk::inertia_below;
+    use std::time::Instant;
+
+    let g = 1.0;
+    println!("g = {g}: sparse inertia of H_N − βI, both sectors, bracket vs exact");
+    println!(
+        "{:>3} {:>6} {:>7} {:>9} {:>12} {:>12} {:>12} {:>10} {:>8}",
+        "N", "n", "fill", "count(β)", "lower", "upper", "exact", "secs", "verdict"
+    );
+    for n_max in [6u32, 8, 10, 12, 14, 16] {
+        let h = qcd_ym_hamiltonian(g);
+        let trunc = Truncated::build(&h, n_max);
+        let clock = Instant::now();
+        let odd_sector = trunc.sector(false);
+        let even_sector = trunc.sector(true);
+        let odd_columns = sector_columns(&trunc, &odd_sector);
+        let even_columns = sector_columns(&trunc, &even_sector);
+        let n = odd_columns.len();
+
+        if n_max <= 10 {
+            // The sparse sector matrix must be the dense one, entry for entry,
+            // and symmetric: everything downstream assumes both.
+            let dense = trunc.sector_matrix(false);
+            for (j, column) in odd_columns.iter().enumerate() {
+                for &(i, v) in column {
+                    assert!(
+                        (v - dense[(i, j)]).abs() < 1e-12,
+                        "sector column ({i},{j}) = {v} vs dense {}",
+                        dense[(i, j)]
+                    );
+                    assert!(
+                        odd_columns[i]
+                            .iter()
+                            .any(|&(jj, vv)| jj == j && (vv - v).abs() < 1e-12),
+                        "sector matrix is not symmetric at ({i},{j})"
+                    );
+                }
+            }
+        }
+
+        let odd_mv = trunc.sector_matvec(&odd_sector);
+        let even_mv = trunc.sector_matvec(&even_sector);
+        let odd_start = trunc.coordinates(&odd_sector, &r_odd_start()).0;
+        let even_start = trunc.coordinates(&even_sector, &empty_vacuum()).0;
+        let steps = 120.min(n);
+        let odd_ritz = lanczos_ritz(&odd_mv, n, &odd_start, steps).expect("odd Lanczos");
+        let even_ritz =
+            lanczos_ritz(&even_mv, even_columns.len(), &even_start, steps).expect("even Lanczos");
+        let (theta_odd, residual_odd) = odd_ritz.ground().expect("non-empty");
+        let (theta_even, residual_even) = even_ritz.ground().expect("non-empty");
+
+        // `β` sits above `θ`, and the count then says "exactly one eigenvalue
+        // below β" iff `β ≤ λ₂`, which is Temple's witness. The margin is a
+        // ladder rather than a hair: at a margin of `1e-9` the shifted matrix has
+        // an eigenvalue `1e-9` from `β`, so one elimination pivot is tiny and its
+        // sign cannot be decided (measured at `N ≤ 14`). Any margin that decides
+        // with a count of one is a valid witness; a margin that overshoots `λ₂`
+        // decides with a count of two and is rejected by the caller below.
+        let mut probe = |columns: &[Vec<(usize, f64)>], theta: f64| {
+            let mut found = None;
+            for margin in [1e-9, 1e-7, 1e-5, 1e-3, 1e-2] {
+                let beta = theta + margin * theta.abs().max(1.0);
+                if let Some(count) = inertia_below(columns, beta) {
+                    found = Some((beta, count));
+                    break;
+                }
+            }
+            found
+        };
+        let odd_probe = probe(&odd_columns, theta_odd);
+        let even_probe = probe(&even_columns, theta_even);
+        let (beta_odd, odd_count) = match odd_probe {
+            Some((beta, count)) => (beta, Some(count)),
+            None => (f64::NAN, None),
+        };
+        let (beta_even, even_count) = match even_probe {
+            Some((beta, count)) => (beta, Some(count)),
+            None => (f64::NAN, None),
+        };
+
+        let mut verdict = "pivot undecided";
+        let mut lower = f64::NAN;
+        let mut upper = f64::NAN;
+        let mut fill = 0usize;
+        let mut count = "—".to_string();
+        if let (Some(odd), Some(even)) = (odd_count, even_count) {
+            fill = odd.fill.max(even.fill);
+            count = format!("{}/{}", odd.below, even.below);
+            let temple_odd =
+                fock_sirk::mass_gap_spec::temple_lower_bound(theta_odd, residual_odd, beta_odd);
+            let temple_even =
+                fock_sirk::mass_gap_spec::temple_lower_bound(theta_even, residual_even, beta_even);
+            // `temple(odd) − θᵉ₀ ≤ λ₁(odd) − λ₀(even) ≤ θᵒ₀ − temple(even)`: both
+            // Temple bounds are sector-local, so this needs no orientation
+            // assumption and holds whether or not the even state is lower.
+            if let (Some(to), Some(te)) = (temple_odd, temple_even) {
+                lower = to - theta_even;
+                upper = theta_odd - te;
+                verdict = if lower > 0.0 {
+                    "CERTIFIED"
+                } else {
+                    "not positive"
+                };
+            } else {
+                verdict = "Temple refused";
+            }
+        }
+        let secs = clock.elapsed().as_secs_f64();
+
+        let exact = if n_max <= 10 {
+            let odd_spectrum = ascending_spectrum(&trunc.sector_matrix(false));
+            let even_spectrum = ascending_spectrum(&trunc.sector_matrix(true));
+            Some(odd_spectrum[0] - even_spectrum[0])
+        } else {
+            None
+        };
+        println!(
+            "{n_max:>3} {n:>6} {fill:>7} {count:>9} {lower:>12.9} {upper:>12.9} {:>12} {secs:>10.2} \
+             {verdict}",
+            exact
+                .map(|v| format!("{v:.9}"))
+                .unwrap_or_else(|| "—".to_string())
+        );
+
+        if let Some(exact) = exact {
+            assert!(
+                lower <= exact + 1e-9 && exact <= upper + 1e-9,
+                "N <= {n_max}: the bracket [{lower}, {upper}] does not contain the exact gap \
+                 {exact} — a bound or the count is wrong"
+            );
+            // The count itself, at three shifts, against the exact spectrum of
+            // the same sector: the one place the inertia route can be wrong and
+            // still look right.
+            let odd_spectrum = ascending_spectrum(&trunc.sector_matrix(false));
+            for beta in [theta_odd - 0.5, beta_odd, theta_odd + 0.5] {
+                let Some(measured) = inertia_below(&odd_columns, beta) else {
+                    continue;
+                };
+                let exact_below = odd_spectrum.iter().filter(|&&v| v < beta).count();
+                assert_eq!(
+                    measured.below, exact_below,
+                    "N <= {n_max}, β = {beta}: the inertia count says {} below β, the exact \
+                     spectrum says {exact_below}",
+                    measured.below
+                );
+            }
+        }
+    }
 }

@@ -333,9 +333,10 @@ this to bound. The continuum mass gap remains unproven.
 ### 6d. The campaign re-run under the exclusion certificate (2026-11-10)
 
 `fock_sirk/tests/mass_gap_exclusion_campaign.rs` runs the campaign grid
-(`g ∈ {0, 0.5, 1, 2, 3}`, `N ∈ {6, 8}`, `m = 12`) through the §6c assembly, with
-the odd sector's λ₂ witness from `certify_spectrum` on an explicitly built
-sector. Every bound is checked against the exact spectrum of the same `H_N`.
+(`g ∈ {0, 0.5, 1, 2, 3}`, `N ∈ {6, 8}`, `m = 12` — widened to `N ≤ 10` below)
+through the §6c assembly, with the odd sector's λ₂ witness from
+`certify_spectrum` on an explicitly built sector. Every bound is checked against
+the exact spectrum of the same `H_N`.
 
 | `g` | `N≤` | `θᵒ₀` | `rᵒ` | `θᵉ₀` | λ₀(even) | certified | exact |
 |---|---|---|---|---|---|---|---|
@@ -354,7 +355,8 @@ Only 3 of 10 rows certify, and the two `g = 0` rows are the **control**: they
 certify a positive gap on a theory with no continuum gap, which is the sharpest
 statement of what a truncation certificate can and cannot mean.
 
-Two facts about the failure modes are worth more than the count:
+Two facts about the failure modes are worth more than the count (both were
+confirmed at `N ≤ 10` in the widened grid below):
 
 * **The exclusion is not the bottleneck on `g > 0`.** Where the row is
   valid-but-not-positive, the loss is the even side: `θᵉ₀` sits `9e-3 … 2.3` above
@@ -371,39 +373,47 @@ Two facts about the failure modes are worth more than the count:
 
 `θᵉ₀` is consumed only as an upper bound on `λ₀`, so the solve that produces it
 carries no hypothesis. Replacing the stagnating truncated SIRK chain with
-matvec-only Lanczos on the *same* `H_N` (`certificate::lanczos_ritz`, 40 steps,
+matvec-only Lanczos on the *same* `H_N` (`certificate::lanczos_ritz`, 60 steps,
 same sector starts, containment residual asserted) changes nothing about
-validity and everything about the verdicts:
+validity and everything about the verdicts. On the cells whose ordering is T6's
+own:
 
 | `g` | `N≤` | `θᵉ₀` (excess over λ₀(even)) | `θᵒ₀` | `rᵒ` | certified | exact |
 |---|---|---|---|---|---|---|
 | 0 | 6 | −1.114923508 (0) | −1.114923508 | 2.0e-15 | **0.189927963** | 0.189927963 |
 | 0 | 8 | −1.304851471 (0) | −1.304851471 | 7.3e-15 | **0.122434177** | 0.122434177 |
+| 0 | 10 | −1.512899036 (0) | −1.427285648 | 1.1e-14 | **0.085613388** | 0.085613388 |
 | 0.5 | 6 | −1.343008908 (0) | −1.307966783 | 5.4e-15 | **0.035042125** | 0.035042125 |
+| 0.5 | 10 | −1.835640721 (0) | −1.799299493 | 2.8e-11 | **0.036341228** | 0.036341228 |
 | 1 | 6 | −2.024960357 (0) | −1.933887157 | 1.5e-14 | **0.091073200** | 0.091073200 |
-| 1 | 8 | −2.743629504 (0) | −2.652468280 | 1.6e-14 | **0.091161224** | 0.091161224 |
+| 1 | 8 | −2.743629504 (0) | −2.652468280 | 2.6e-14 | **0.091161224** | 0.091161224 |
 | 2 | 6 | −5.217666264 (0) | −4.367552423 | 2.2e-14 | **0.850113842** | 0.850113842 |
+| 2 | 10 | −10.244687197 (0) | −9.022852588 | 7.3e-14 | **1.221834608** | 1.221834608 |
+| 3 | 10 | −20.121348034 (0) | −18.543774653 | 1.2e-13 | **1.577573381** | 1.577573381 |
 
-**6 of 10 rows certify, up from 3, and every bound is the exact gap to the last
-printed digit** — with both sector grounds resolved, the only slack left is
-Temple's `r²/(β − θ)`, which is `O(1e-14)`.
+**Every one of these bounds is the exact gap to the last printed digit** — with
+both sector grounds resolved, the only slack left is Temple's `r²/(β − θ)`,
+which is `O(1e-14)` — and the count goes 3 of 10 rows (SIRK) → 6 of 10
+(Lanczos, `N ≤ 8`) → **10 of 15** on the widened grid, with the other 5 cells
+certified in the exchanged orientation below, for **15 of 15**.
 
-The other four rows are not a convergence problem. They are the cells where the
+The remaining rows are not a convergence problem. They are the cells where the
 odd ground sits *below* the even one inside `H_N`, so `θᵒ₀ − θᵉ₀` is the
 **negative of the truncated gap**, to machine precision:
 
 | `g` | `N≤` | λ₀(even) | λ₁(odd) | `H_N` gap (even − odd) | T6 bound |
 |---|---|---|---|---|---|
 | 0.5 | 8 | −1.545550924 | −1.576008527 | 0.030457603 | −0.030457603 |
+| 1 | 10 | −3.340446626 | −3.613783714 | 0.273337089 | −0.273337089 |
 | 2 | 8 | −6.511130065 | −7.754776632 | 1.243646566 | −1.243646566 |
 | 3 | 6 | −9.214246967 | −9.236287521 | 0.022040554 | −0.022040554 |
 | 3 | 8 | −13.610338101 | −14.566593782 | 0.956255682 | −0.956255682 |
 
 T6's orientation (odd above even) does not hold in those cells at all, and no
-amount of accuracy can make the expression positive there. **6 is the ceiling on
-this grid**, and the test asserts both halves of that: every cell whose truncated
-ordering matches T6's certifies, and the certified count equals the number of
-such cells.
+amount of accuracy can make the expression positive there. The test asserts both
+halves of that: every cell whose truncated ordering matches T6's certifies, and
+the certified count equals the number of such cells — so the orientation, not
+convergence, is the limit on those rows.
 
 Two findings worth keeping:
 
@@ -414,9 +424,16 @@ the even excess is `3.71e-1` at `m = 12`, `3.97e-1` at `m = 24` and `3.99e-1` at
 so extra shifts buy nothing. This is a property of the forward truncated solve as
 used here, not of the certificate — the SIRK rows remain *valid*, merely loose.
 * **Lanczos belongs on the even side** precisely because it needs no witness:
-40 matvecs reach `rᵒ ≤ 3e-11` at every cell (usually `1e-14`), where 40 SIRK
-steps leave `~8e-1`. The odd side is where the witness is needed, and the odd
-side was already converging under SIRK at these sizes.
+60 matvecs reach `rᵒ ≤ 3e-11` at every cell (`≤ 1.2e-13` on all but one), where
+40 SIRK steps leave `~8e-1`. The odd side is where the witness is needed, and
+the odd side was already converging under SIRK at these sizes.
+
+At `N ≤ 10` the same 40 steps are no longer enough: the even-side residual rises
+to `8.5e-7` and the bounds stop agreeing with the exact gaps to the last digit
+(`0.036340485` against `0.036341228`). Raising the cap to 60 restores
+last-digit agreement at every cell, which is why the constant is 60 and the
+route is labelled accordingly — the cost is 20 matvecs, and the alternative was
+weaker bounds dressed as the same claim.
 
 #### The other orientation: the same theorem, the sectors exchanged (2026-11-10c)
 
@@ -437,13 +454,14 @@ even block, for `β_even ≤ λ₂(even)`:
 
 | `g` | `N≤` | `θᵉ₀` | `rᵉ` | `λ₂(even)` | `β(even)` | certified⇄ | exact⇄ |
 |---|---|---|---|---|---|---|---|
-| 0.5 | 8 | −1.545550924 | 6.6e-6 | −1.445385952 | −1.445386066 | **0.030457603** | 0.030457603 |
-| 2 | 8 | −6.511130065 | 2.8e-10 | −5.396349662 | −5.396350050 | **1.243646566** | 1.243646566 |
-| 3 | 6 | −9.214246967 | 3.2e-14 | −5.126287367 | −5.126287397 | **0.022040554** | 0.022040554 |
-| 3 | 8 | −13.610338101 | 1.3e-11 | −11.921429604 | −11.921430269 | **0.956255682** | 0.956255682 |
+| 0.5 | 8 | −1.545550924 | 1.7e-14 | −1.445385952 | −1.445386066 | **0.030457603** | 0.030457603 |
+| 1 | 10 | −3.340446626 | 6.7e-11 | −2.614147195 | −2.614149342 | **0.273337089** | 0.273337089 |
+| 2 | 8 | −6.511130065 | 5.1e-14 | −5.396349662 | −5.396350050 | **1.243646566** | 1.243646566 |
+| 3 | 6 | −9.214246967 | 3.6e-14 | −5.126287367 | −5.126287397 | **0.022040554** | 0.022040554 |
+| 3 | 8 | −13.610338101 | 8.8e-14 | −11.921429604 | −11.921430269 | **0.956255682** | 0.956255682 |
 
-All four crossing cells certify, each bound equal to the exact gap to the last
-printed digit, so **10 of 10 grid cells now carry a certified gap** — with the
+All five crossing cells certify, each bound equal to the exact gap to the last
+printed digit, so **15 of 15 grid cells now carry a certified gap** — with the
 sector that owns the ground reported beside it instead of assumed. In T6's own
 cells the swapped bound is instead exactly the negative of the same number
 (`−0.189927963` at `g = 0, N ≤ 6`), so the two orientations are complements; the
@@ -452,16 +470,58 @@ matches it, and that the two counts sum to the grid.
 
 Two things this does **not** say.
 
-* It is not ten rows of one theorem. The statement differs by cell —
+* It is not fifteen rows of one theorem. The statement differs by cell —
   `λ₁(odd) − λ₀(even)` where the even state is lower, `λ₀(even) − λ₁(odd)` where
-  the odd one is — so the paper's gap is certified on 6 cells and the exchanged
-  one on 4.
+  the odd one is — so the paper's gap is certified on 10 cells and the exchanged
+  one on 5.
 * In a crossing cell the bound is the gap of `H_N` only because no odd level
   lies between the two grounds. That is asserted per cell (`λ₂(odd) >
   λ₀(even)`), which is what makes the two sector grounds the two lowest levels
-  of the truncation. A truncated ground that is *odd* is precisely the finite-`N`
-  artifact the physical reading has to flag: the continuum vacuum is even, so a
-  crossing cell says `N` is too small, not that the theory has no gap.
+  of the truncation. What a crossing cell means for the vacuum is a separate
+  question, and the widened grid answers it in a way the `N ≤ 8` grid could not
+  — see the next subsection.
+
+#### What a crossing cell does *not* say: the ground parity is not monotone in N
+
+It is tempting to read a crossing cell as "`N` is too small: the truncated ground
+is odd, push `N` and the even state becomes the ground again". The widened grid
+refutes that reading. Taking all fifteen cells, the crossings sit at:
+
+| `g` | `N≤ 6` | `N≤ 8` | `N≤ 10` |
+|---|---|---|---|
+| 0 | — | — | — |
+| 0.5 | — | **crossing** | — |
+| 1 | — | — | **crossing** |
+| 2 | — | **crossing** | — |
+| 3 | **crossing** | **crossing** | — |
+
+The crossing set moves *non-monotonically*: `g = 2` crosses at `N ≤ 8` and not at
+`N ≤ 10`; `g = 1` does not cross at `N ≤ 8` but does at `N ≤ 10`; `g = 3` crosses
+at 6 and 8 and not at 10. So the parity of the truncated ground is not settling
+with depth — it is an oscillation of the truncation itself, of the same order as
+the energy differences involved (`0.022 … 1.24`).
+
+What follows, and what does not:
+
+* **The certificate is unaffected.** Each row still states the gap it has, in
+the orientation that holds, and every bound is still checked against the exact
+spectrum. Non-monotonicity costs no soundness.
+* **The vacuum's parity cannot be read off a truncation.** A cell where the odd
+state is lower is not evidence of an odd vacuum, and a cell where it is not is
+not evidence of an even one: the same `g` gives both answers at different `N`.
+  Only the sector-local statements survive, which is precisely why the
+  certificate is phrased sector-locally.
+* **Which sizes are unusable for the paper's statement**: on this grid, the 5
+  cells above cannot support `λ₁(odd) − λ₀(even) > 0` at any accuracy — they are
+  `(g, N) = (0.5, 8), (1, 10), (2, 8), (3, 6), (3, 8)`. In particular the whole
+  `g = 3` low-`N` range is unusable in T6's orientation, and `g = 1` becomes
+  unusable exactly when the truncation is deep enough for the odd sector to drop
+  below the even one (`N ≤ 10`).
+* **The `g = 0` column is the control and it never crosses**: at `g = 0` the
+  even ground is the lower one at every `N`, while every interacting column
+  crosses somewhere. Whatever moves the odd sector, it is turned on by `g`; the
+  measurements here locate the crossings but do not attribute them, and the test
+  asserts only the measured pattern.
 
 #### The sparse route does not rescue large truncations
 
@@ -475,7 +535,9 @@ eigenvalue below `β`. It is sound at any `n` (`n` matvecs) and measured:
 
 `‖V‖_F` grows like `√n` against a gap of order `10⁻¹`, so by `N = 12` the bound
 is 550 below the ground. At the rows where it can be compared (`N ≤ 6`, `8`) it
-is 25–275 below the dense witness's `β`, and the test asserts the ordering.
+is 25–275 below the dense witness's `β`, and the test asserts the ordering. The
+count-free family is closed there; the *count* is reachable cheaply, which is
+what `certificate::inertia_below` shows in the subsection after the next one.
 
 #### One count-free bound measured, and why the family cannot reach the window
 
@@ -505,13 +567,61 @@ least one entry per class against a degree of 13–28. Making the charge smaller
 means fewer, larger classes — which needs `λ_min` of a large block, i.e. the
 eigenvalue problem again.
 
-So the measured answer to "is there a `λ₂` witness that avoids the dense
-`O(n³)`?" is **not in the splitting family, at any `N`** on this operator (the
-campaign's assertions on the diagonal split, the matching split and the
-`(θ, λ₂]` window are what hold that in place). What would work is the count
-obtained *without* a full diagonalization — inertia of a sparse factorization of
-`H − βI` — which this campaign has not tried; it is the next experiment, not a
-variant of this one.
+So the measured answer to "is there a `λ₂` witness in the splitting family?" is
+**no, at any `N`** on this operator (the campaign's assertions on the diagonal
+split, the matching split and the `(θ, λ₂]` window are what hold that in place).
+The count itself, obtained without a dense diagonalization, does exist — see the
+next subsection.
+
+#### The count without a diagonalization (2026-11-10d)
+
+`certificate::inertia_below` gets the count from **Sylvester's law of inertia**:
+`H − βI = L D Lᵀ` with `L` unit triangular, so the number of negative pivots of
+`D` is exactly the number of eigenvalues below `β`. Every entry carries a bound
+on its distance from the exact value, and a pivot's sign is used only when
+`|value| > error` — so the count is rigorous in floating point or it refuses. The
+elimination is sparse, with an RCM ordering and 1×1 symmetric pivoting (a
+permutation preserves inertia), at `O(fill)` cost.
+
+The bracket the campaign builds from it has no diagonalization anywhere:
+`temple(θᵒ₀, rᵒ, β_odd) − θᵉ₀ ≤ λ₁(odd) − λ₀(even) ≤ θᵒ₀ − temple(θᵉ₀, rᵉ, β_even)`,
+which needs no orientation assumption:
+
+| `N≤` | sector `n` | fill | count(β) | lower | upper | exact | secs |
+|---|---|---|---|---|---|---|---|
+| 6 | 80 | 27 | 1/1 | 0.091073200 | 0.091073200 | 0.091073200 | 0.00 |
+| 8 | 200 | 49 | 1/1 | 0.091161224 | 0.091161224 | 0.091161224 | 0.02 |
+| 10 | 420 | 78 | 1/1 | −0.273337089 | −0.273337089 | −0.273337089 | 0.07 |
+| 12 | 784 | 116 | 1/1 | 0.273346184 | 0.273346184 | — | 0.15 |
+| 14 | 1344 | 164 | 1/1 | −0.112820857 | −0.112820857 | — | 0.36 |
+| 16 | 2160 | 223 | 1/1 | −0.060551502 | −0.060551502 | — | 0.97 |
+
+**This is the answer to "is the dense `O(n³)` the price of the witness?": no.**
+The count is decided at every size through `N ≤ 16` (`n = 2160`) in under a
+second, the bracket closes to all printed digits, and wherever the dense route
+can still run (`N ≤ 10`) the bracket equals the exact gap. The fill grows to 223,
+nowhere near the dimension, so the elimination — not the count — is the cheap
+part.
+
+Two limits, both measured rather than smoothed over:
+
+* **The margin matters.** With `β` a hair (`1e-9`) above `θ` the shifted matrix
+  has an eigenvalue that close to `β`, one elimination pivot is `~1e-4` against
+  an error of `~5e-4`, and the sign is undecidable at the *last* index — where
+  there is no tail left to pivot into. The campaign therefore probes a ladder of
+  margins (`1e-9 … 1e-2`) and takes the first decided count; any margin whose
+  count comes out as one is a valid witness, and one that overshoots `λ₂` comes
+  out as two and is rejected rather than used.
+* **The count is per sector, and consistency is checked by the bracket itself.**
+  `inertia_below` is validated against the exact spectrum at `N ≤ 10` at three
+  shifts per sector, and on a corpus of random symmetric matrices in three
+  regimes that each broke an earlier version — including congruent scaling over
+  nine orders of magnitude and structurally-zero diagonals, where the `−β` shift
+  was silently dropped once and made the count wrong by exactly one.
+* **What this does not license.** It certifies `H_N`'s gap at `N ≤ 16`; it says
+  nothing about the continuum, and the crossing pattern at `N = 14, 16` is
+  consistent with the non-monotonicity above (at `g = 1` the odd ground is lower
+  at `N = 10, 14, 16` and higher at `6, 8, 12`).
 
 **Why no matvec-only method will do better.** A rigorous lower bound on `λ₂` is
 an *eigenvalue count*: it says "exactly one eigenvalue lies below `β`."
