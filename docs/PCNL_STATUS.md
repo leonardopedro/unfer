@@ -3194,6 +3194,18 @@ for r in 4 8; do
     --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
     --width-report --proposal fixed,pilot --pilot-shrink 0
 done
+# R2o: eight anchors on ONE data split.  `--anchor-seed` re-draws only the Gaussian
+# shift; D_A, D_B, θ₀, the basis draw seed and the test set stay on `--seed`.
+for f in 0.05 0.10 0.20 0.30; do
+  for k in 1 2; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --anchor-seed $k --proposal fixed,pilot --pilot-shrink 0
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --anchor-seed $k --proposal fixed,laplace --pilot-shrink 0.5
+  done
+done
 # the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
@@ -4472,6 +4484,12 @@ pretrain anchor is evidently not the best prior mean for Task B at the default s
 improvement is a property of the model, not of the sampler.  Two seeds are enough to refute
 monotonicity, not enough to characterise the function.
 
+**Corrected by R2o (below).**  With the data split held fixed and two jitter *directions* per
+magnitude, this trend does not reproduce: the per-magnitude means are 14.46 / 13.67 / 16.60 /
+13.47 %, the within-magnitude gaps reach 6.6 points, and eight anchors span 11.72–19.92 %.  The
+cause here is that `--seed 7` moves the data with the anchor; the lever is the draw, not the
+jitter magnitude.  Read Results 56–57 as a description of the cells they measured.
+
 **Result 57 — ESS is not a dose–response in the jitter; it collapses in isolated cells.**  Default
 seed, ESS at f = 0 / 0.05 / 0.10 / 0.20 / 0.30: `fixed` 100 / 142 / 165 / 130 / **9**;
 `pilot` 383 / 607 / **7** / 93 / **17**; `laplace` 587 / 651 / 378 / 403 / **51**.  R2m treated the
@@ -4489,7 +4507,9 @@ the other side: f = 0.05 is the *best* cell in the sweep for every arm at the de
 with `laplace` ahead in **7 of 9** and behind at f = 0.20 and f = 0.30 at seed 7 (301 vs 322,
 45 vs 99).  The 54× at f = 0.10 is mostly a `pilot` collapse (ESS 7) rather than a `laplace`
 improvement — 378 is the *lowest* `laplace` value in that column — so "the gain grows with jitter"
-is exactly the reading this sweep rules out.  The recommendation keeps `laplace` at rank 4,
+is exactly the reading this sweep rules out.  *(R2o, below, holds the data split fixed and puts the
+controlled `laplace` gain at median 1.19× and geomean 1.42× over eight anchors, with either arm able
+to collapse; the range below stands, the 2.4× does not.)*  The recommendation keeps `laplace` at rank 4,
 `λ ≤ 1` (7/9 cells, 2.4× geomean), but the honest number to quote is the range **0.45–54×**, not
 any single cell, and the arm is not uniformly better.
 
@@ -4531,7 +4551,85 @@ statement about the informed subspace's target, not about the curvature estimate
 largest lever on BMA accuracy (+5.1 points at the default seed, sign seed-dependent) and a lottery
 on ESS (9–651 across the sweep) — keep it at 0 and report ESS only with its cell's `R̂`".
 
-### Recommendation (state after R2n: what to set, and how well each row is supported)
+### R2o — the draw, not the magnitude: eight anchors on one data split
+
+R2n closed on the one thing its own seed axis could not do: separate the anchor's effect on the
+*model* from its effect on the *sampler*.  Its two seeds moved the anchor, the Task-B data split,
+the informed basis and the test set together, so a 5-point accuracy trend could be read as an
+effect of jitter magnitude, of seed, or of one lucky reference point.  `--anchor-seed k` re-draws
+**only** the Gaussian shift (`θ_ref ← θ_ref + N(0, (f·rms θ)²)`), leaving `D_A`, `D_B`, `θ₀`, the
+basis draw seed and the test split on `--seed 20261020`.  Two directions (`k = 1, 2`) × four
+magnitudes, three arms each — 8 anchors, 16 invocations.  Every cell prints the same data hash
+`0xba104db4f677b2ec`, so all eight are measured on one dataset, one basis draw and one test set;
+the `f = 0` row is R2m/R2n's base cell, unchanged by construction.
+
+| `f` | `k` | anchor hash | `‖θ_ref‖` | anchor on B (acc / NLL) | fixed ESS / acc | pilot ESS / acc | laplace ESS / acc |
+|---:|---:|---|---:|---|---|---|---|
+| 0 | — | — (R2m/R2n base) | 94.030 | 4.3 % / 4.1523 | 100 / 12.89 % | 383 / 12.89 % | 587 / 12.89 % |
+| 0.05 | 1 | `0x9d61a881cfe5f80a` | 94.121 | 4.30 % / 4.1558 | 54 / 16.41 % | 299 / 16.41 % | 221 / 16.41 % |
+| 0.05 | 2 | `0x3747d89bb4bf1560` | 94.162 | 4.30 % / 4.1624 | **9** / 15.62 % | 106 / 12.50 % | **8** / 16.80 % |
+| 0.10 | 1 | `0xe2fc3614e299a55c` | 94.449 | 1.17 % / 4.1497 | 39 / 13.28 % | 344 / 13.28 % | 406 / 13.28 % |
+| 0.10 | 2 | `0x7077028c1dc4ab00` | 94.530 | 4.30 % / 4.1749 | 58 / 15.23 % | 232 / 14.06 % | 268 / 14.06 % |
+| 0.20 | 1 | `0x4d303395608db542` | 95.803 | 3.52 % / 4.1401 | 31 / **19.92 %** | 194 / **19.92 %** | 380 / **19.92 %** |
+| 0.20 | 2 | `0xa169bca3b9ff0042` | 95.958 | 1.17 % / 4.2673 | 25 / 13.28 % | **16** / 13.28 % | 401 / 12.50 % |
+| 0.30 | 1 | `0x30dfc5777a134b11` | 98.051 | 4.69 % / 4.1767 | 16 / 14.45 % | 38 / 13.28 % | 141 / 13.28 % |
+| 0.30 | 2 | `0xb9ee7b106a3a98c1` | 98.275 | 6.25 % / 4.3687 | 75 / 11.72 % | 283 / 13.67 % | 337 / 13.67 % |
+
+Pilot `R̂`: 1.017, 1.044, 1.008, 1.023, 1.010, **1.742**, 1.094, 1.009.  Laplace `R̂`: 1.023,
+**1.689**, 1.011, 1.011, 1.016, 1.015, 1.017, 1.006.  Acceptance stays 37–51 % for the adaptive
+arms throughout.
+
+**Result 61 — at one data split the anchor draw alone moves BMA accuracy by 8.2 points, more than
+R2n's whole magnitude trend.**  Across the eight draws the BMA accuracy ranges **11.72 %–19.92 %**
+(all arms); on the pilot arm alone **12.50 %–19.92 %**, mean **14.55 %**, sd **2.56 points** over
+8 draws.  R2n's monotone 12.89 → 17.97 % trend (+5.08) does not survive: the per-magnitude means
+over the two directions are 14.46 / 13.67 / 16.60 / 13.47 %, **not monotone**, and the within-
+magnitude gaps are as large as the whole trend — 3.91 points at `f = 0.05` (16.41 vs 12.50) and
+**6.64 points at f = 0.20** (19.92 vs 13.28), against 0.78 and 0.39 at `f = 0.10` and `0.30`.  R2n's
+Result 56 is therefore **downgraded to a property of its two draws**: jitter magnitude is not the
+lever, the specific displaced anchor is.  What this run cannot do is estimate the distribution —
+two directions per magnitude is a range, not a variance.
+
+**Result 62 — the higher-accuracy anchors are not the ones that are better on Task B.**  At
+`f = 0.05` the two anchors have *identical* unadapted Task-B accuracy (4.30 %, NLL 4.1558 vs
+4.1624) and give 16.41 % and 12.50 % BMA — and the best BMA cell of the sweep (19.92 %, `f = 0.20`,
+`k = 1`) comes from an anchor at 3.52 %, while the highest anchor accuracy (6.25 %) gives 13.67 %.
+So the effect is not "a better prior mean predicts better": the same anchor quality with the same
+data and test set lands four points apart.  The remaining candidate is the informed subspace —
+the PCA path is computed *from* the shifted anchor, so the basis moves with the draw even though
+its seed does not (Result 65).
+
+**Result 63 — the ESS lottery is the draw too.**  With data fixed, ESS still spans 9–75 (`fixed`),
+16–344 (`pilot`) and 8–406 (`laplace`) across the eight anchors, and at `f = 0.20` alone the pilot
+arm gives 194 (`k = 1`) against **16** (`k = 2`).  Conversely `f = 0.30`, which collapsed all three
+arms in R2n (ESS 9 / 17 / 51 with `fixed` `R̂` 1.437), is unremarkable here on both draws (16 / 38 /
+141 and 75 / 283 / 337).  So R2n's Result 57 — "jitter is a lottery on the shape of the target" —
+is correctly observed and wrongly attributed: the lottery is over anchors, and the jitter magnitude
+merely changes which anchors you get.  The `f = 0.20`, `k = 2` cell reproduces the rank-8 signature
+found in Result 59: **`R̂` 1.742 at 49.9 % acceptance**, a mixing failure at ordinary acceptance,
+not a proposal that is too narrow.  The laplace arm collapses separately at `f = 0.05`, `k = 2`
+(ESS 8, `R̂` 1.689, 37.4 % acc) on the same anchor where the pilot arm reaches 106 — so at a fixed
+anchor the two adaptive arms can also disagree, which is the reverse of R2n's "all arms in a cell
+agree to ≤0.8 point": here one cell spans 15.62 / 12.50 / 16.80 % (**4.3 points across arms**).
+
+**Result 64 — the rank-4 `laplace` advantage shrinks to a median 1.19× under this control.**
+`laplace / pilot` ESS on the eight draws: 0.74, **0.08**, 1.18, 1.16, 1.96, **25.1**, 3.70, 1.19 —
+median **1.19×**, geometric mean **1.42×**, range 0.08–25×.  The 25× is the pilot's collapse at
+`f = 0.20`, `k = 2` (16 → 401), and the 0.08 is the laplace's own collapse at `f = 0.05`, `k = 2`
+(106 → 8).  R2n's 2.43× geomean (9 cells) and R2k's 5.9× (one cell) are therefore both optimistic:
+the arm is better *most* of the time and by a modest factor, and either arm can fail on a given
+anchor.  `laplace` at rank 4 stays the recommendation, quoted as median 1.19× (geomean 1.42×),
+not as a 2–6× win.
+
+**Result 65 — what this still does not separate, and the next run.**  `--anchor-seed` holds `D_A`,
+`D_B`, `θ₀` and the basis draw seed fixed, but the informed basis is the PCA of a 32-step Task-B
+momentum path *starting at `θ_ref`*, so the basis vectors move with the anchor.  The measured
+spread is thus "anchor → (prior mean + informed basis)" jointly — the pipeline the published rows
+actually use — not the prior mean alone.  Separating those two requires computing the basis from a
+fixed anchor (e.g. the ambient `θ_ref`) and jittering only the sampling reference, which is one
+flag (`--basis-anchor`) and one repeat of this grid.
+
+### Recommendation (state after R2o: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4539,11 +4637,11 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor, where the isotropic arm collapses) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9× | load-bearing |
+| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor; **median 1.19×**, geomean 1.42× over 8 controlled anchors, 0.08–25×) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9× | load-bearing |
 | proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
 | `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
 | `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
-| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves BMA accuracy 12.89 % → 14.45–15.23 %. R2n sweeps 21 cells: accuracy 12.89 → 17.97 % at the default seed (+5.1 points) but non-monotone at seed 7, and ESS is a lottery (9–651) with isolated collapses at f = 0.10 and 0.30 | **open — largest lever on the answer, and a lottery on ESS** |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone | **open — the lever is the draw, not the magnitude** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |

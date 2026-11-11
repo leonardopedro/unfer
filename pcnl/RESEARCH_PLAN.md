@@ -443,6 +443,27 @@ narrow proposal. The rank-8 recommendation (isotropic) stands with a corrected r
 anchor stays open, and what it needs next is a sweep of `θ_ref` at a *fixed* seed and basis so
 that the anchor's effect on the model can be separated from its effect on the sampler.
 
+R2o did that, and it retracts R2n's reading of the trend. A new `--anchor-seed k` re-draws only
+the Gaussian shift, leaving `D_A`, `D_B`, `θ₀`, the basis draw seed and the test set on
+`--seed 20261020`; two directions × four magnitudes give eight anchors on one data split (all
+printing data hash `0xba104db4f677b2ec`). At fixed data the anchor draw alone moves BMA
+accuracy over **11.72–19.92 %** (pilot arm 12.50–19.92, mean 14.55, sd 2.56 over 8 draws) —
+8.2 points, against R2n's 5.08-point trend. The per-magnitude means (14.46 / 13.67 / 16.60 /
+13.47 %) are not monotone and the within-magnitude gaps (3.91 at f = 0.05, **6.64 at f = 0.20**)
+are as large as the trend, so jitter magnitude is not the lever: the specific displaced anchor
+is. Nor is it a better prior mean — two anchors with identical unadapted Task-B accuracy
+(4.30 %) give 16.41 % and 12.50 %, and the best BMA cell comes from a 3.52 % anchor. ESS shows
+the same thing: at fixed data it spans 8–406, f = 0.20 alone gives 194 vs 16, and the f = 0.30
+magnitude that collapsed all three arms in R2n is unremarkable on both controlled draws. One
+controlled cell reproduces the rank-8 signature found in R2n: `R̂` 1.742 at 49.9 % acceptance.
+The rank-4 `laplace` advantage also shrinks under the control — median 1.19×, geomean 1.42×,
+range 0.08–25× over the eight anchors, with the 25× being the pilot's collapse and the 0.08 the
+laplace's own — so R2k's 5.9× and R2n's 2.43× are both draw-optimistic. Limitation: the
+informed basis is PCA of a Task-B path from `θ_ref`, so `--anchor-seed` holds the data and the
+basis *seed* but not the basis *vectors*; the next cell needs `--basis-anchor` (compute the
+basis at the ambient anchor, jitter only the sampling reference) to split the prior mean from
+the subspace.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
