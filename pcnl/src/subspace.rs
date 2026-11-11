@@ -649,14 +649,14 @@ mod tests {
         // Bᵀ(I−BBᵀ)v = 0, and projecting again changes nothing.
         let mut coords = vec![0.0f32; r];
         sub.basis().project(&perp, &mut coords);
-        for j in 0..r {
-            assert!(coords[j].abs() < 1e-5, "B^T v_perp[{j}] = {}", coords[j]);
+        for (j, c) in coords.iter().enumerate() {
+            assert!(c.abs() < 1e-5, "B^T v_perp[{j}] = {c}");
         }
         let mut twice = vec![0.0f32; p];
         sub.complement(&perp, &mut twice);
-        for i in 0..p {
+        for (i, t) in twice.iter().enumerate() {
             assert!(
-                (twice[i] - perp[i]).abs() < 1e-6,
+                (t - perp[i]).abs() < 1e-6,
                 "projector not idempotent at {i}"
             );
         }
