@@ -401,6 +401,23 @@ recommendation stands as `laplace --pilot-shrink 0.5` at rank 4 for `λ ≤ 1`, 
 only a shifted `θ_ref` can answer, and whether a mode-centred proposal that also carries the
 approach (a tempered or annealed reference) can keep the rank-8 gain.
 
+R2m ran all three of those, and retracted one of R2l's claims. Shifting the anchor by 10 % of
+its rms (`--anchor-jitter`, hash printed) leaves the rank-4 win at 2.3× (378 vs `fixed` 165)
+instead of the ambient 5.9× (587 vs 100), and collapses the isotropic baseline off-anchor
+(ESS 7, `R̂` 10.18), so the effect is real but its *size* is one anchor's. The tempered
+reference failed in every parametrization: curvature at `τ · z_mode` is a mild compromise at
+rank 4 (428 against the mode's 587) and **invalid** at rank 8, where 1 of 8 coordinates has
+`H_ii ≤ 0`, the width floor makes a `1e4`-scale coordinate, and the chain reports 0.6 %
+acceptance, ESS 5, `R̂` 17.96 — `1/√H_ii` presupposes positive curvature and interior points of
+`Φ` are saddles. Log-space *width* blends avoid that trap but not the outcome: (anchor, mode)
+is catastrophic at both ranks (5 / 6, the anchor half carrying `H ≈ 0` widths of `1e4`), and
+(pilot, mode) is below its own isotropic baseline everywhere (rank 4: 383 → 352 → 271; rank 8:
+154 → 85 → 108). Finally the second seed flips the `λ = 2` sign (+31 %, 172 → 226, with a
+search that hit the 2 000-step cap), so that half of R2l is **withdrawn**: `λ = 2` is
+unresolved, `λ ∈ {0.5, 1}` is positive at both seeds. The largest lever found so far is not a
+proposal dial at all — the anchor moves BMA accuracy 12.89 % → 14.45–15.23 % while every
+proposal dial in R2c–R2m moves it ≤ 0.5 points — so varying `θ_ref` systematically is R2n.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

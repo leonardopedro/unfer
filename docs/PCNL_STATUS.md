@@ -3139,7 +3139,44 @@ for r in 4 8; do
     --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
     --proposal fixed,rotlaplace                          # 112 / 6 vs diagonal 587 / 8
 done
-# the six shape-estimator tests (fast, no sampling) and the gradient contract:
+# R2m: the anchor shift, the interior-point curvature (`--laplace-tau`) and the two
+# log-width blends.  Each `fixed` row is the control; `pilot`/`laplace` are the arms:
+for f in 0 0.1; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --anchor-jitter $f --proposal fixed,pilot --pilot-shrink 0   # 383 vs 7 (R̂ 10.18)
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --anchor-jitter $f --proposal fixed,laplace --pilot-shrink 0.5  # 587 vs 378
+done
+for r in 4 8; do   # τ = 0.5: 428 (0/4 non-positive H_ii) vs ESS 5 / R̂ 17.96 (1/8)
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --laplace-tau 0.5 --proposal fixed,laplace --pilot-shrink 0.5
+done
+for mix in 0.5 0.85; do   # anchor/mode widths: 5 / 254 at rank 4, 6 / 6 at rank 8
+  for r in 4 8; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --laplace-mix $mix --proposal fixed,laplace --pilot-shrink 0.5
+  done
+done
+for mix in 0.25 0.5; do   # pilot/mode widths: 352 / 271 at rank 4, 85 / 108 at rank 8
+  for r in 4 8; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --pilot-mix $mix --proposal fixed,pilot --pilot-shrink 0
+  done
+done
+# the seed-7 λ sweep (two seeds per λ; λ = 2's mode search hits the 2 000-step cap):
+for lam in 0.5 2; do
+  for prop in "fixed,pilot --pilot-shrink 0" "fixed,laplace --pilot-shrink 0.5"; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --lambda $lam --seed 7 --proposal $prop
+  done
+done
+# the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
 # the `--pilot-reps 1` / `--pilot-scale 1` bitwise check (old vs new binary, same reduced config):
@@ -4246,7 +4283,116 @@ Practical upshot for the table below: `laplace` with `--pilot-shrink 0.5` stays 
 setting *for `λ ≤ 1`*, with `λ = 2` a measured exception, and `rotlaplace` stays available but
 unrecommended (it is the control that rules out the off-diagonal explanation).
 
-### Recommendation (state after R2l: what to set, and how well each row is supported)
+### R2m — the anchor is not the lever, tempering the reference does not cover the approach, and the `λ = 2` reversal does not replicate (same day)
+
+Three followups from R2l, run as one cycle because they share a code change.  Two new knobs
+were added to `subspace_adaptation` and pinned by the defaults (`--laplace-tau 1`,
+`--laplace-mix 0`, `--pilot-mix 0`, `--anchor-jitter 0`), and the no-flag cell `r8_p0`
+reproduced R2e's ambient rank 8 exactly (`fixed` ESS 7 / `R̂` 1.289, `pilot s = 0` 154 /
+1.010), so the flags are inert where they default.
+
+* `--anchor-jitter f` shifts the reference by `N(0, (f · rms θ)²)` in flat space, seeded from
+  `cfg.seed ^ 0xa11c_e000`, and prints the new anchor hash.  At `f = 0.10` the anchor's rms is
+  0.7282, the shift's sd 0.0728, `‖θ_ref‖` 94.030 → 94.475, hash `0xed77c41cbcc0b510`.
+* `--laplace-tau τ` reads the curvature at `τ · z_mode` instead of the mode — `τ = 1` is
+  R2k's path, `τ = 0` the anchor — and now counts non-positive `H_ii` per rank.
+* `--laplace-mix τ` and `--pilot-mix τ` are log-space *width* blends (`w_i = a_i^(1−τ) b_i^τ`)
+  of (anchor, mode) and (pilot, mode) respectively: the versions of "temper the reference"
+  that stay positive when the Hessian at the interpolation point does not.
+
+| rank | `λ` | seed | shape | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | Brier | NLL | `m` | `β_i` |
+|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|
+| 4 | 1.0 | 20261020 | none (`fixed`) | 60.6 % | 100 | 1.023 | 12.89 % | 0.9925 | 2.8699 | — | 0.05 |
+| 4 | 1.0 | 20261020 | isotropic (pilot `s = 0`) | 46.5 % | **383** | 1.010 | 12.89 % | 0.9922 | 2.8662 | 0.33 | 0.069–0.08 |
+| 4 | 1.0 | 20261020 | laplace at mode (R2k, `s = 0.5`) | 46.3 % | **587** | 1.012 | 12.89 % | 0.9923 | 2.8658 | 0.62 | 0.053–0.10 |
+| 4 | 1.0 | 20261020 | laplace at `τ = 0.5`, `s = 0.5` | 45.2 % | 428 | 1.013 | 12.89 % | 0.9923 | 2.8667 | 0.50 | 0.065–0.09 |
+| 4 | 1.0 | 20261020 | laplace, anchor/mode mix 0.50 | 22.7 % | 5 | 1.916 | 15.62 % | 0.9925 | 2.8857 | 0.04 | 0.009–0.25 |
+| 4 | 1.0 | 20261020 | laplace, anchor/mode mix 0.85 | 43.5 % | 254 | 1.021 | 12.89 % | 0.9921 | 2.8665 | 0.31 | 0.036–0.15 |
+| 4 | 1.0 | 20261020 | pilot, pilot/mode mix 0.25 | 48.0 % | 352 | 1.017 | 12.89 % | 0.9924 | 2.8668 | 0.37 | 0.068–0.07 |
+| 4 | 1.0 | 20261020 | pilot, pilot/mode mix 0.50 | 49.0 % | 271 | 1.030 | 12.89 % | 0.9923 | 2.8667 | 0.43 | 0.064–0.07 |
+| 4 | 1.0 | 20261020 | **anchor shifted** (`f = 0.10`), none | 64.4 % | 165 | 1.018 | 14.45 % | 0.9810 | 2.9506 | — | 0.05 |
+| 4 | 1.0 | 20261020 | **anchor shifted**, isotropic | 50.5 % | **7** | **10.183** | 15.23 % | 0.9727 | 2.8793 | 0.33 | 0.074–0.09 |
+| 4 | 1.0 | 20261020 | **anchor shifted**, laplace at mode | 48.6 % | **378** | 1.019 | 15.23 % | 0.9800 | 2.9474 | 0.63 | 0.059–0.10 |
+| 8 | 1.0 | 20261020 | none (`fixed`) | 55.4 % | 7 | 1.289 | 10.94 % | 0.9485 | 2.4693 | — | 0.05 |
+| 8 | 1.0 | 20261020 | isotropic (pilot `s = 0`) | 48.7 % | **154** | 1.010 | 14.84 % | 0.9780 | 2.8105 | 0.34 | 0.064–0.07 |
+| 8 | 1.0 | 20261020 | laplace at `τ = 0.5` (`H_ii ≤ 0`: 1/8) | 0.6 % | 5 | **17.963** | 8.98 % | 1.0168 | 3.2116 | 0.05 | 0.0065–1.00 |
+| 8 | 1.0 | 20261020 | laplace, anchor/mode mix 0.50 | 1.8 % | 6 | 1.366 | 12.89 % | 0.9742 | 2.5248 | 0.03 | 0.020–0.48 |
+| 8 | 1.0 | 20261020 | laplace, anchor/mode mix 0.85 | 42.3 % | 6 | 2.560 | 13.67 % | 0.9494 | 2.4202 | 0.17 | 0.034–0.13 |
+| 8 | 1.0 | 20261020 | pilot, pilot/mode mix 0.25 | 46.8 % | 85 | 1.038 | 14.84 % | 0.9776 | 2.8073 | 0.38 | 0.070–0.07 |
+| 8 | 1.0 | 20261020 | pilot, pilot/mode mix 0.50 | 47.4 % | 108 | 1.025 | 14.84 % | 0.9782 | 2.8137 | 0.41 | 0.067–0.07 |
+| 4 | 0.5 | 7 | none (`fixed`) | 67.7 % | 93 | 1.040 | 19.53 % | 0.9106 | 2.6561 | — | 0.05 |
+| 4 | 0.5 | 7 | isotropic (pilot `s = 0`) | 49.9 % | 233 | 1.009 | 19.53 % | 0.9092 | 2.6449 | 0.47 | 0.085–0.09 |
+| 4 | 0.5 | 7 | laplace at mode, `s = 0.5` | 47.6 % | **336** | 1.005 | 19.53 % | 0.9089 | 2.6436 | 0.47 | 0.054–0.13 |
+| 4 | 2.0 | 7 | none (`fixed`) | 46.3 % | 77 | 1.037 | 18.75 % | 0.9038 | 2.5880 | — | 0.05 |
+| 4 | 2.0 | 7 | isotropic (pilot `s = 0`) | 46.5 % | 172 | 1.012 | 16.41 % | 0.9009 | 2.5310 | 0.30 | 0.052–0.06 |
+| 4 | 2.0 | 7 | laplace at mode, `s = 0.5` (**search not converged**) | 47.8 % | **226** | 1.017 | 18.75 % | 0.9022 | 2.5486 | 0.53 | 0.031–0.09 |
+
+Every mode search converged to `‖∇Φ‖∞ ≈ 9.8e-4` except the seed-7, `λ = 2` one, which hit the
+2 000-step cap at 1.28e-2 and is flagged in the table rather than treated as a mode.
+
+**Result 51 — the rank-4 Laplace win survives a shifted anchor, at half its ambient size.**
+Moving the reference by 10 % of its own rms (the anchor is the one input R2k and R2l never
+varied) leaves the win in place: `laplace` 378 against `fixed` 165, 2.3×, with the mode 1 630
+Adam steps from the new anchor (φ 2158.8044 → 1629.2518) and `m` landing at 0.63, the same
+as at the ambient anchor.  What does *not* survive is the *size*: at the ambient anchor the
+ratio is 5.9× (587 / 100), and 2.3× here.  So the effect is not an artefact of one lucky
+reference point, but its magnitude is anchor-dependent, and quoting 5.9× as "the" rank-4 gain
+would be quoting one anchor.  The isotropic arm is what breaks off-anchor: `pilot s = 0`
+collapses to ESS 7 with `R̂` 10.183 and `m` 0.33 — its widths are measured from a start now
+0.475 away in `‖θ‖` from where the subspace's good directions live — so the shifted-anchor
+cells are compared against `fixed`, and the honest summary is "the shape still helps by 2.3×
+where the baseline is available at all".
+
+**Result 52 — an interior point of `Φ` can have `H_ii ≤ 0`, and at rank 8 that destroys the
+chain.**  Reading curvature at `τ = 0.5` gives 0/4 non-positive `H_ii` at rank 4, where it is a
+mild *compromise*: ESS 428 against the isotropic 383 (+12 %) and the mode's 587 (−27 %), i.e.
+tempering the reference at rank 4 trades away part of the win and adds nothing.  At rank 8 the
+same τ samples **1 non-positive `H_ii` out of 8**: that coordinate's width becomes `1/√1e-8 =
+10⁴`, the multiplier adapts down to 0.05, and the cell reports z acceptance 0.6 %, ESS 5,
+`R̂` 17.963, β up to 1.00, Brier 1.0168 and NLL 3.2116 — worse than the mode arm it was meant
+to improve on (8) and worse than `fixed` on every predictive.  This is not an inefficiency, it
+is an invalid estimator: `1/√H_ii` presupposes a positive-definite curvature, an interior point
+of `Φ` is a saddle along some directions, and the rank-8 subspace is where such a direction is
+actually sampled.  A future tempered-reference arm must blend *widths*, not Hessians.
+
+**Result 53 — blending widths only helps when the anchor half is removed, and then it is still
+worse than the mode arm.**  The anchor/mode blend at 0.5 is catastrophic at both ranks — ESS 5
+with `R̂` 1.916 at rank 4, 6 with `R̂` 1.366 at rank 8 — because the anchor's curvature diagonal
+contains `H ≈ 0` directions whose widths are `1e4` (mean over coordinates) and `2.24e4` at rank 8,
+so half of the blend is a proposal 10⁴× too wide in one coordinate; R2's `curv` failure is
+exactly what the anchor half inherits.  Moving to 0.85 recovers rank 4 to 254 (above `fixed`'s
+100, below the mode's 587) and leaves rank 8 at 6.  The pilot/mode blend is the fair version,
+since both endpoints are measured widths: at rank 8 it gives 154 → 85 (τ = 0.25) → 108
+(τ = 0.50), all at `R̂` ≈ 1.03, and at rank 4 it gives 383 → 352 → 271.  Every mixed cell is
+below its own isotropic baseline.  So "temper the reference so the mode-centred widths also
+cover the approach" is answered negatively in all four parametrizations tried: the mode arm's
+advantage is not a linear-in-log-width quantity that can be dialled part of the way, and at rank
+8 no shape built from these ingredients beats isotropic.
+
+**Result 54 — R2l's `λ = 2` reversal is seed noise, and its recommendation row is withdrawn.**
+At seed 7, `λ = 2` gives `laplace` 226 against the isotropic 172 — a **+31 % gain**, the opposite
+sign to the default seed's −6.6 % (376 → 351) — while the other `λ` cells agree between seeds
+(`λ = 0.5`: 233 → 336, +44 %, against the default seed's +22.5 %; `λ = 1`: 152 → 373, +145 %,
+against +53 %).  The seed-7 cell must also carry the caveat that its mode search did not
+converge (2 000 steps, 1.28e-2), so its 226 is from a near-mode and is weaker evidence than the
+converged cells on either side.  Two seeds cannot settle a sign, but they do settle the *claim*:
+R2l's "the win reverses at `λ = 2`" was a single cell, and the honest statement is that `λ = 2`
+is unresolved — the gain is positive at both seeds for `λ ∈ {0.5, 1}` and of seed-dependent sign
+at `λ = 2`.  The recommendation row is downgraded accordingly rather than left standing.
+
+**Result 55 — the anchor moves the answer more than any proposal dial does.**  The jittered
+anchor changes BMA accuracy from 12.89 % to 14.45–15.23 % at rank 4 — 1.6–2.3 points — and it
+changes *every* arm at that anchor together (`fixed` 14.45 %, `pilot` and `laplace` 15.23 %),
+which is the signature of a different subspace rather than a different sampler: the anchor
+feeds the informed basis, and `--anchor-jitter` moves the directions, not just the start.  Every
+proposal dial in R2c–R2m together moves BMA accuracy by at most 0.5 points inside one anchor
+(12.89 % in every rank-4, `λ = 1` cell here, including the two cells with ESS 5 and ESS 271).
+That inverts the emphasis of this document: the proposal is the thing that decides whether the
+chain mixes, and the *anchor* is the thing that decides what the chain is reporting on.  R2n
+should vary the anchor systematically — more seeds, more magnitudes — because it is the largest
+lever found so far on the published answer, and R2k/R2l's 587 was measured at exactly one.
+
+### Recommendation (state after R2m: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4254,8 +4400,11 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`) | R2k, two seeds; R2l adds the `λ = 0.5` cell; every pilot-derived shape is 20× worse there | load-bearing |
-| proposal at rank 4, `λ = 2` | isotropic `s = 0` (**376**); `laplace` is 351 | R2l: the mode is 1 508 Adam steps from the anchor and the widths describe a region the chain reaches late | load-bearing |
+| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor, where the isotropic arm collapses) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9× | load-bearing |
+| proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
+| `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
+| `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves BMA accuracy 12.89 % → 14.45–15.23 % (1.6–2.3 points) while every proposal dial moves it ≤ 0.5 | **open — largest lever found** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |

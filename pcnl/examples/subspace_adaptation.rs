@@ -66,7 +66,17 @@
 //!   is the one shape in the file that is not derived from a walk, and the
 //!   gradient is the *exact* one: `forward`'s default `NormGrad::Stopped` keeps
 //!   the normalising denominators fixed and is ~1 000× off as a derivative of
-//!   the loss on a two-layer model.
+//!   the loss on a two-layer model.  `--laplace-tau τ` evaluates the curvature at
+//!   `τ·z_mode` instead of at the mode (`τ = 0` is the anchor, `τ = 1` the mode):
+//!   the mode's widths describe where the chain is going, the anchor's where it
+//!   starts, and τ in between interpolates.  `--anchor-jitter f` replaces the
+//!   pretrained anchor by `θ_ref + N(0, (f·rms θ)²)`, drawn from the cell's seed
+//!   and printed with the new hash — the anchor is the one input of every arm in
+//!   this file that R2k/R2l never varied.  `--laplace-mix τ` and `--pilot-mix τ`
+//!   are the two "cover the approach" arms: log-space blends of widths, built
+//!   from (anchor, mode) and (pilot, mode) respectively.  The anchor/mode blend
+//!   fails on the anchor's flat directions (`|w| ≈ 2e4`), which is why the
+//!   pilot/mode one is the one worth running.
 //! * `rotcurv` / `rotpilot` — the same two estimates, but as a **full matrix**:
 //!   the Hessian at the anchor (`curvature_hessian`) or the pilot's full
 //!   covariance, whose eigenbasis is the rotation.  The `β_i` then apply to the
@@ -291,6 +301,33 @@ struct Cfg {
     mode_lr: f64,
     /// `‖∇Φ‖∞` at which the mode search stops early.
     mode_tol: f64,
+    /// Where along the anchor→mode segment the `laplace` arm reads its curvature:
+    /// `1` is the mode (R2k/R2l), `0` the anchor.  The mode's widths describe the
+    /// region the chain is heading for, the anchor's the region it starts in (and
+    /// the anchor is a stationary point of the *training loss*, R2: 0.1 %
+    /// acceptance); an interior `τ` is the compromise R2l's `λ = 2` reversal asked
+    /// for.
+    laplace_tau: f64,
+    /// Geometric interpolation of the *widths* between the anchor's curvature
+    /// diagonal (`0`) and the mode's (`1`), in log space: `w_i = w_anchor,i^(1−τ)
+    /// · w_mode,i^τ`.  This is the arm that can cover the approach while keeping
+    /// the mode's shape ordering, and unlike `--laplace-tau` it is defined at
+    /// every τ: an interior point of `Φ` can have a negative `H_ii` (R2m measured
+    /// one at rank 8, τ = 0.5), where `1/√H_ii` is meaningless, while the two
+    /// endpoints are modes or the anchor.
+    laplace_mix: f64,
+    /// Blend the pilot's measured widths (`0`) toward the mode's curvature widths
+    /// (`1`) in log space, per chain, after the pilot and before the chain: the
+    /// pilot sees the *approach* and the mode sees the *destination*, and this is
+    /// the only mix whose two endpoints are both proper, finite widths (the
+    /// anchor's curvature diagonal is not — its flat directions are `1/√H` of
+    /// `H ≈ 0`, `|w| ≈ 2e4` in R2m).  `0` is the R2 pilot arm.
+    pilot_mix: f64,
+    /// Relative Gaussian shift applied to the pretrained anchor before anything
+    /// else: `θ_ref ← θ_ref + N(0, (f·rms θ_ref)²)`, in flat parameter space,
+    /// drawn from `--seed` so the cell is reproducible.  `0` keeps the ambient
+    /// anchor (and is bitwise the R2k/R2l path).
+    anchor_jitter: f64,
     /// Per-coordinate empirical-Bayes shrinkage of the replicate shape: each
     /// coordinate's log-width deviation is shrunk by how well the replicates
     /// agree on it (`τ²/(τ² + sd²/n)`), instead of the same `s` everywhere.
@@ -336,6 +373,10 @@ impl Default for Cfg {
             mode_steps: 2000,
             mode_lr: 0.05,
             mode_tol: 1e-3,
+            laplace_tau: 1.0,
+            laplace_mix: 0.0,
+            pilot_mix: 0.0,
+            anchor_jitter: 0.0,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -410,6 +451,18 @@ impl Cfg {
         }
         if let Some(v) = flag("--mode-tol").and_then(|v| v.parse().ok()) {
             cfg.mode_tol = v;
+        }
+        if let Some(v) = flag("--laplace-tau").and_then(|v| v.parse().ok()) {
+            cfg.laplace_tau = v;
+        }
+        if let Some(v) = flag("--laplace-mix").and_then(|v| v.parse().ok()) {
+            cfg.laplace_mix = v;
+        }
+        if let Some(v) = flag("--pilot-mix").and_then(|v| v.parse().ok()) {
+            cfg.pilot_mix = v;
+        }
+        if let Some(v) = flag("--anchor-jitter").and_then(|v| v.parse().ok()) {
+            cfg.anchor_jitter = v;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -596,6 +649,23 @@ fn mean_log_widths(reps: &[Vec<f64>]) -> Vec<f64> {
     let n = reps.len() as f64;
     (0..reps[0].len())
         .map(|i| (reps.iter().map(|r| r[i].ln()).sum::<f64>() / n).exp())
+        .collect()
+}
+
+/// Blend two width vectors geometrically, `w_i = a_i^(1−τ) · b_i^τ`, i.e. a
+/// straight line in log space.
+///
+/// This is the "cover the approach" lever: `τ = 0` is the first endpoint, `τ = 1`
+/// the second, and every intermediate value is a positive, finite width as long
+/// as both endpoints are (which is why the blends here are built from the pilot
+/// and the mode, never from the anchor's curvature, whose flat directions are
+/// `1/√H` of `H ≈ 0`).  `τ` is clamped to `[0, 1]`.
+fn blend_log_widths(a: &[f64], b: &[f64], tau: f64) -> Vec<f64> {
+    assert_eq!(a.len(), b.len(), "blend needs matching ranks");
+    let t = tau.clamp(0.0, 1.0);
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| ((1.0 - t) * x.ln() + t * y.ln()).exp())
         .collect()
 }
 
@@ -813,8 +883,47 @@ fn run_cell(
         Prop::Laplace => {
             let (z_mode, info) = find_mode(&target, rank, cfg);
             println!("  laplace[{rank}] {info}");
-            let h = curvature_diag(&target, &z_mode, cfg.curvature_h);
-            let widths: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+            // Where the widths are read.  At `tau = 1` this is the mode and the
+            // cell is R2k's; below it the curvature comes from a point on the
+            // anchor→mode segment, which is closer to the region the chain
+            // actually occupies early on.  Interior points are not stationary,
+            // so a coordinate's `H_ii` can be non-positive; that is printed
+            // rather than hidden, and the floor below is the same one the mode
+            // path uses.
+            let tau = cfg.laplace_tau;
+            let z_at: Vec<f32> = z_mode
+                .iter()
+                .map(|x| (tau * f64::from(*x)) as f32)
+                .collect();
+            let h = curvature_diag(&target, &z_at, cfg.curvature_h);
+            let nonpos = h.iter().filter(|v| **v <= 0.0).count();
+            let norm = |z: &[f32]| z.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
+            println!(
+                "  laplace[{rank}] widths at τ = {tau:.2} of the anchor→mode segment \
+                 (|z| {:.4} of {:.4}, φ {:.4}), non-positive H_ii {nonpos}/{rank}",
+                norm(&z_at),
+                norm(&z_mode),
+                target.phi(&z_at)
+            );
+            let mut widths: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+            // R2m: the tempered variant.  Interpolate in log-width space toward
+            // the anchor's curvature, so the proposal is widened along the
+            // directions where the posterior is broad near `z = 0` and keeps the
+            // mode's *ordering*.  Valid at every τ (both endpoints are proper
+            // curvatures), unlike evaluating `H` at an interior point.
+            let mix = cfg.laplace_mix;
+            if mix > 0.0 {
+                let ha = curvature_diag(&target, &vec![0.0f32; rank], cfg.curvature_h);
+                let wa: Vec<f64> = ha.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+                let anchor_norm = wa.iter().map(|w| w * w).sum::<f64>().sqrt();
+                let w = blend_log_widths(&wa, &widths, mix);
+                println!(
+                    "  laplace[{rank}] widths = mix {mix:.2} of anchor→mode in log space \
+                     (|w| {anchor_norm:.4} → {:.4})",
+                    w.iter().map(|w| w * w).sum::<f64>().sqrt()
+                );
+                widths = w;
+            }
             let mut s = DiagScale::from_widths_shrunk(&widths, cfg.pilot_shrink);
             s.target_accept = cfg.adapt_target;
             Some(Scale::Diag(s))
@@ -839,6 +948,25 @@ fn run_cell(
             Some(Scale::Rot(s))
         }
         Prop::Fixed | Prop::Pilot | Prop::RotPilot => None,
+    };
+
+    // R2m: the pilot/mode blend needs the mode's widths before the chain loop
+    // (the pilot runs inside it, per chain).  Both endpoints are positive and
+    // finite, so this mix is defined at every τ — unlike `--laplace-tau`, whose
+    // interior points can have `H_ii ≤ 0`.
+    let mode_widths_for_mix: Option<Vec<f64>> = if prop == Prop::Pilot && cfg.pilot_mix > 0.0 {
+        let (z_mode, info) = find_mode(&target, rank, cfg);
+        println!("  pilot-mix[{rank}] {info}");
+        let h = curvature_diag(&target, &z_mode, cfg.curvature_h);
+        let w: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+        println!(
+            "  pilot-mix[{rank}] τ = {:.2} pilot→mode in log-width space, |w_mode| {:.4}",
+            cfg.pilot_mix,
+            w.iter().map(|x| x * x).sum::<f64>().sqrt()
+        );
+        Some(w)
+    } else {
+        None
     };
 
     let starts = Instant::now();
@@ -904,20 +1032,16 @@ fn run_cell(
                 // The empirical-Bayes shape is already shrunk per coordinate,
                 // so it goes through `from_widths_shrunk` with `s = 1`; the
                 // plain path keeps its two dials exactly as before.
-                let mut s = if cfg.pilot_eb {
-                    DiagScale::from_widths_shrunk(
-                        &scale_widths(
-                            &ebayes_widths(&replicate_widths, cfg.pilot_shrink),
-                            cfg.pilot_scale,
-                        ),
-                        1.0,
-                    )
+                let (w_raw, shrink) = if cfg.pilot_eb {
+                    (ebayes_widths(&replicate_widths, cfg.pilot_shrink), 1.0)
                 } else {
-                    DiagScale::from_widths_shrunk(
-                        &scale_widths(&mean_log_widths(&replicate_widths), cfg.pilot_scale),
-                        cfg.pilot_shrink,
-                    )
+                    (mean_log_widths(&replicate_widths), cfg.pilot_shrink)
                 };
+                let mut w = scale_widths(&w_raw, cfg.pilot_scale);
+                if let Some(mw) = &mode_widths_for_mix {
+                    w = blend_log_widths(&w, mw, cfg.pilot_mix);
+                }
+                let mut s = DiagScale::from_widths_shrunk(&w, shrink);
                 s.target_accept = cfg.adapt_target;
                 Scale::Diag(s)
             });
@@ -1209,7 +1333,32 @@ fn main() {
     let shapes = ec.shapes;
     let p = shapes.flat_size();
     let setup = AnchorSetup::new(&ec);
-    let (theta_ref, trace_a) = setup.pretrain(&ec, Variant::Cosine);
+    let (mut theta_ref, trace_a) = setup.pretrain(&ec, Variant::Cosine);
+    // R2m: shift the anchor.  Every arm in this file reads its shape or its start
+    // from `z = 0 ↔ θ_ref`, and R2k/R2l only ever varied the *shape*; this is the
+    // one input they held fixed.  The shift is relative to the anchor's own rms,
+    // so it means the same thing at d 16 and d 32, and it is drawn from `--seed`
+    // so a cell is reproducible.  Everything downstream — the informed basis, the
+    // pilot, the mode search — sees the shifted anchor, which is the point.
+    if cfg.anchor_jitter > 0.0 {
+        let l2 = |t: &Tensor| -> f64 { flat(t).iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() };
+        let rms = (l2(&theta_ref) / p as f64).sqrt();
+        let before = l2(&theta_ref).sqrt();
+        let sd = cfg.anchor_jitter * rms;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(cfg.seed ^ 0xa11c_e000);
+        let normal = rand_distr::StandardNormal;
+        let noise: Vec<f32> = (0..p)
+            .map(|_| rng.sample::<f32, _>(normal) * sd as f32)
+            .collect();
+        theta_ref = (&theta_ref
+            + &Tensor::from_vec(noise, vec![p], theta_ref.device()).expect("jitter tensor"))
+            .expect("anchor + jitter");
+        println!(
+            "anchor shifted: jitter {:.2} × rms (rms {rms:.4}, sd {sd:.4}), |θ| {before:.3} → {:.3}",
+            cfg.anchor_jitter,
+            l2(&theta_ref).sqrt()
+        );
+    }
     let ref_flat = flat(&theta_ref);
     let data_b = setup.data_b.clone();
     let (base_acc, base_nll, _, _) = bma_metrics(
@@ -1463,6 +1612,37 @@ mod shape_tests {
         for g in &got {
             assert!((g - level).abs() <= 1e-12 * level, "{g} vs {level}");
         }
+    }
+
+    /// The tempered-reference blend: the endpoints are returned untouched, the
+    /// midpoint is the geometric mean, and a positive pair stays positive — the
+    /// property that makes this mix usable where `H` at an interior point is not
+    /// (R2m measured `H_ii ≤ 0` at rank 8, `τ = 0.5`).
+    #[test]
+    fn width_blend_hits_its_endpoints() {
+        let a = vec![2.0, 0.5, 8.0];
+        let b = vec![0.5, 4.0, 2.0];
+        // `exp(ln x)` is not bit-identical to `x`, so the endpoints are compared
+        // to a relative tolerance rather than exactly.
+        let close = |got: &[f64], want: &[f64]| {
+            for (g, w) in got.iter().zip(want) {
+                assert!((g - w).abs() <= 1e-15 * w.abs(), "{g} vs {w}");
+            }
+        };
+        close(&blend_log_widths(&a, &b, 0.0), &a);
+        close(&blend_log_widths(&a, &b, 1.0), &b);
+        let mid = blend_log_widths(&a, &b, 0.5);
+        for i in 0..a.len() {
+            let want = (a[i] * b[i]).sqrt();
+            assert!(
+                (mid[i] - want).abs() <= 1e-12 * want,
+                "{} vs {want}",
+                mid[i]
+            );
+            assert!(mid[i] > 0.0);
+        }
+        // Out-of-range τ is clamped, not extrapolated into a sign change.
+        close(&blend_log_widths(&a, &b, 2.0), &b);
     }
 
     /// The point of the estimator: a coordinate the replicates agree on keeps
