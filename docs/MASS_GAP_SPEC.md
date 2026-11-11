@@ -778,6 +778,23 @@ Every row here is test-backed rather than a one-off probe: each test asserts
 `below == 1`, `bound/pivot < 1`, and that the fill keeps growing with the
 sector (`1960 → 2080 → 2309 → 2675` from `N ≤ 38` to `44`).
 
+#### Where the elimination's time goes (profiled, 2026-11-11)
+
+`inertia_below_with` was instrumented (env `SIRK_PROFILE`) on the `N ≤ 44` odd
+row (`n = 93104`, nested dissection). The two phases before the numeric
+elimination are free: ordering `0.1 s`, full-symmetric `BTreeMap` build `0.2 s`.
+All ~1040 s is the left-looking elimination. It is **not** a trailing dense
+block: the widest row (`2675`) is already reached at `15 %` of the pivots, and
+the per-band time (5 % of pivots) oscillates between `23 s` and `131 s` with a
+mean row length between `440` and `866` for the rest of the factor — the fill is
+broadly distributed, not concentrated in a late separator. So the realistic
+levers are the pivot-update data structure (`BTreeMap` entry traffic in the
+inner `s²/2` loop) and the `DoubleDouble` arithmetic it wraps, not ordering or
+build; replacing the ordering buys nothing (it already costs `0.1 s`) and a
+different ordering (AMD/METIS) is the next thing worth measuring, not a
+diagonal preconditioner (§6d, "Symmetric equilibration buys none of it"). The
+instrumentation was removed after the run; it is not in the tree.
+
 The even block (`Truncated::sector(true)`, start = vacuum + `|1,1⟩` — both `R`-fixed
 with sign `+1`, leak `1.6e-16`, so the whole start lies in the block), also under
 its **own** converged `β` rather than the odd sector's:
