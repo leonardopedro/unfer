@@ -2199,3 +2199,133 @@ fn the_inertia_count_brackets_the_gap_without_diagonalizing() {
         }
     }
 }
+
+/// The odd block still decides one shell past `38`, at the same `β = θ₀ + 0.5`
+/// read off a residual below `1e-9`.
+///
+/// `N ≤ 40` is `n = 64680` and the count costs ~380 s, so this is the last row
+/// of the ladder that can be run at all on this harness — `N ≤ 42` is ~1.6×
+/// again in both time and fill. The row is here so the reach reported in §6d is
+/// test-backed rather than a one-off probe: `below == 1` and `fill` past the
+/// `N ≤ 38` row are both asserted.
+///
+/// `#[ignore]`d for cost (~430 s).
+#[test]
+#[ignore = "~430 s: N <= 40 odd, converged Lanczos + one count"]
+fn the_converged_shift_reaches_40_in_the_odd_block() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    let trunc = Truncated::build(&h, 40);
+    let sector = trunc.sector(false);
+    let columns = sector_columns(&trunc, &sector);
+    let matvec = trunc.sector_matvec(&sector);
+    let (start, leak) = trunc.coordinates(&sector, &r_odd_start());
+    assert!(
+        leak < 1e-12,
+        "the start must lie in the odd sector, leaked {leak:e}"
+    );
+    let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
+    assert!(
+        residual < 1e-9,
+        "the Ritz pair must be converged before β is read off it, residual {residual:e}"
+    );
+    let clock = Instant::now();
+    let count = inertia_below_with(&columns, theta + 0.5, Ordering::NestedDissection)
+        .unwrap_or_else(|| {
+            panic!(
+                "nested dissection refuses N <= 40 at the converged β, where §6d records it \
+                 deciding — the section is stale"
+            )
+        });
+    println!(
+        "odd N <= 40: n={} θ₀={theta:.6} resid={residual:.2e} steps={steps} below={} \
+         fill={} ratio={:.2e} secs={:.1}",
+        columns.len(),
+        count.below,
+        count.fill,
+        count.worst_ratio,
+        clock.elapsed().as_secs_f64()
+    );
+    assert_eq!(
+        count.below, 1,
+        "at N <= 40 the odd block must have exactly one level below β = θ₀ + 0.5 \
+         (below = {}), or this is a reach measurement and not a λ₂ witness",
+        count.below
+    );
+    assert!(
+        count.worst_ratio < 1.0,
+        "a decided count has bound/pivot below one, got {:e}",
+        count.worst_ratio
+    );
+    assert!(
+        count.fill > 1494,
+        "fill must keep growing with the sector (N <= 36 filled 1494), got {}",
+        count.fill
+    );
+}
+
+/// One more shell: the odd block still decides at `N ≤ 42`.
+///
+/// This is the top of the measured ladder (`n = 77924`, 620 s for the count
+/// alone). The count is *not* near its refusal: `bound/pivot` is `5.0e-14`,
+/// eleven orders of magnitude of headroom, so what stops the ladder here is the
+/// clock (each shell is ~1.6× the last) and the fill (2309 rows), not the bound.
+///
+/// `#[ignore]`d for cost (~690 s).
+#[test]
+#[ignore = "~690 s: N <= 42 odd, converged Lanczos + one count"]
+fn the_converged_shift_reaches_42_in_the_odd_block() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    let trunc = Truncated::build(&h, 42);
+    let sector = trunc.sector(false);
+    let columns = sector_columns(&trunc, &sector);
+    let matvec = trunc.sector_matvec(&sector);
+    let (start, leak) = trunc.coordinates(&sector, &r_odd_start());
+    assert!(
+        leak < 1e-12,
+        "the start must lie in the odd sector, leaked {leak:e}"
+    );
+    let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
+    assert!(
+        residual < 1e-9,
+        "the Ritz pair must be converged before β is read off it, residual {residual:e}"
+    );
+    let clock = Instant::now();
+    let count = inertia_below_with(&columns, theta + 0.5, Ordering::NestedDissection)
+        .unwrap_or_else(|| {
+            panic!(
+                "nested dissection refuses N <= 42 at the converged β, where §6d records it \
+                 deciding — the section is stale"
+            )
+        });
+    println!(
+        "odd N <= 42: n={} θ₀={theta:.6} resid={residual:.2e} steps={steps} below={} \
+         fill={} ratio={:.2e} secs={:.1}",
+        columns.len(),
+        count.below,
+        count.fill,
+        count.worst_ratio,
+        clock.elapsed().as_secs_f64()
+    );
+    assert_eq!(
+        count.below, 1,
+        "at N <= 42 the odd block must have exactly one level below β = θ₀ + 0.5 \
+         (below = {}), or this is a reach measurement and not a λ₂ witness",
+        count.below
+    );
+    assert!(
+        count.worst_ratio < 1.0,
+        "a decided count has bound/pivot below one, got {:e}",
+        count.worst_ratio
+    );
+    assert!(
+        count.fill > 2080,
+        "fill must keep growing with the sector (N <= 40 filled 2080), got {}",
+        count.fill
+    );
+}
