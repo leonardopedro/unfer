@@ -638,7 +638,7 @@ Two limits, both measured rather than smoothed over:
   consistent with the non-monotonicity above (at `g = 1` the odd ground is lower
   at `N = 10, 14, 16` and higher at `6, 8, 12`).
 
-##### Where it stopped, and why it was the arithmetic (`N ≤ 32`, 2026-11-10d)
+##### Where it stopped, and why it was the arithmetic (`N ≤ 33`, 2026-11-11)
 
 The counter was driven past its working range to find out what fails first. Odd
 sector at `g = 1`, `β = θ₀ + 0.5`, both orderings on the same matrix
@@ -694,28 +694,51 @@ out.** `the_count_reaches_past_the_grid` (same measurement, same assertions,
 | 28 | 16800 | 798 | 32.9 | 1.2e-6 | 793 | 9.6 | 3.5e-21 |
 | 30 | 21760 | 961 | 85.5 | 2.0e-2 | 927 | 19.3 | 2.9e-19 |
 
-with both orderings still counting the same inertia, and
-`the_count_refuses_past_the_reach` (also `#[ignore]`d, ~340 s) pins where it
+with both orderings still counting the same inertia (`below == 1` at every one
+of them, under either ordering — so this table *is* a `λ₂` witness), and
+`the_count_refuses_past_the_reach` (also `#[ignore]`d, ~400 s) pins where it
 stops:
 
 | `N≤` | `n` | RCM | ND |
 |---|---|---|---|
-| 32 | 27744 | **refused** (218 s) | decides, fill 1096, 38.2 s, ratio 7.7e-17 |
-| 34 | 34884 | refused | **refused** (84 s) |
+| 32 | 27744 | **refused** (216 s) | decides, fill 1096, 39 s, ratio 7.7e-17, `below 3` |
+| 33 | 31161 | — | decides, fill 1212, 52 s, ratio 8.0e-13, `below 4` |
+| 34 | 34884 | refused | **refused** (85 s) |
 | 36 | 43320 | refused | refused (329 s) |
 
-So the last deciding sizes are `N ≤ 30` (RCM) and `N ≤ 32` (nested dissection),
+So the last deciding sizes are `N ≤ 30` (RCM) and `N ≤ 33` (nested dissection),
 and the refusals are still the *bound*, not the clock: at `N ≤ 34` nested
-dissection gives up 725 pivots from the end, where a trace of the trailing block
+dissection gives up 725 pivots from the end, at the same index (`j = 34159`)
+whether or not block pivots are available, where a trace of the trailing block
 shows relative errors from `0` (median `3.3e5`) to `1e15` — the last dense
 separator's own elimination, not one small pivot. RCM's ratio climbs from
 `2.0e-2` at `N ≤ 30` to past one at `N ≤ 32`; nested dissection's sits at
 `7.7e-17` at `N ≤ 32` and collapses between there and `34`, which is why the two
 orderings now have different walls. (`N ≤ 30` was first measured at `3.7e-4` on
 a basis that the harness bug below had left unnormalized — the fixed value is
-`2.0e-2`, and every number above is from runs after that fix.) The honest statement is that the wall was
-pushed from `N ≤ 18` to `N ≤ 32`, and that what ends it is the same accumulated
-rounding the two-term value made negligible at the grid's sizes.
+`2.0e-2`, and every number above is from runs after that fix.)
+
+**Two ranges, not one.** `below == 1` through `N ≤ 30`, so that is where the
+count certifies the gap; at `N ≤ 32, 33` it still *decides* but reports three and
+four eigenvalues below `β` — the 60-step Ritz value is no longer tight enough for
+`θ₀ + 0.5` to separate `λ₁` from `λ₂`, so those sizes measure the counter's
+numerical reach, not a gap. The honest statement is that the reach was pushed
+from `N ≤ 18` to `N ≤ 33` and the witness range to `N ≤ 30`, and that what ends
+the reach is the same accumulated rounding the two-term value made negligible at
+the grid's sizes.
+
+**2×2 block pivots: right, and not the lever.** The counter now falls back to a
+`2×2` block pivot when no diagonal in the trailing block has a decidable sign —
+a coupled pair can have a decidable determinant while neither diagonal does, and
+its inertia follows from `det` and the trace (`[[ε,1],[1,−ε]]` is the smallest
+case; `[[0,1],[1,0]]` used to be refused outright and is now counted as one
+negative). Both the block decision and the block Schur update are tested
+(`the_sparse_count_decides_a_coupled_pair_with_no_decidable_diagonal`,
+`the_block_update_reaches_the_trailing_rows`). It does **not** move the wall:
+asked at `N ≤ 34`, the pair search finds no determinantal sign either, and the
+refusal still lands on index `34159` — by that point every entry of the trailing
+block has an interval containing zero, so products of them are undecidable too.
+The wall is the whole block's condition, not the diagonals' availability.
 
 **Symmetric equilibration buys none of it.** `D(H − βI)D` with `D = diag(2ᵏ)`,
 `k` halving each diagonal's exponent, is an exact congruence — every multiplication

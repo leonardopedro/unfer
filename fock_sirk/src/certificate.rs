@@ -670,6 +670,15 @@ impl Bounded {
         }
     }
 
+    /// Rounded result of `a + b`, with the rounding folded into the error.
+    fn add(self, other: Self) -> Self {
+        let value = self.value.add(other.value);
+        Self {
+            value,
+            error: self.error + other.error + value.slack(),
+        }
+    }
+
     /// Rounded result of `a − b`, with the rounding folded into the error.
     fn sub(self, other: Self) -> Self {
         let value = self.value.sub(other.value);
@@ -753,9 +762,12 @@ impl Bounded {
 /// Fills in, like any elimination without a good ordering, so the ordering is a
 /// parameter ([`Ordering`]) and the fill it costs is reported back. Pivoting is
 /// 1×1 with a symmetric exchange (a permutation preserves inertia): a zero or
-/// near-zero diagonal is swapped for a larger one instead of aborting, and a
-/// matrix with no decidable 1×1 pivot at all (a `[[0,1],[1,0]]` block) is refused
-/// rather than guessed.
+/// near-zero diagonal is swapped for a larger one instead of aborting. When no
+/// diagonal in the trailing block has a decidable sign, a 2×2 block pivot is
+/// tried instead — a coupled pair can have a decidable determinant while neither
+/// diagonal does (`[[ε, 1], [1, −ε]]` is the smallest case), and its inertia
+/// follows from the determinant and the trace. A trailing block with neither is
+/// refused rather than guessed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InertiaCount {
     /// Number of eigenvalues of `H` strictly below `β`.
@@ -812,11 +824,13 @@ impl InertiaCount {
 /// than rejected.
 ///
 /// **Measured** (`docs/MASS_GAP_SPEC.md` §6d): on the truncated gauge-fixed QYM
-/// at `g = 1` the odd sector's count is decided through `N ≤ 32` under
-/// [`Ordering::NestedDissection`] (`n = 27,744`, 38 s, worst ratio `7.7e-17`)
+/// at `g = 1` the odd sector's count is decided through `N ≤ 33` under
+/// [`Ordering::NestedDissection`] (`n = 31,161`, 52 s, worst ratio `8.0e-13`)
 /// and through `N ≤ 30` under [`Ordering::ReverseCuthillMckee`] (`N ≤ 32`
-/// refuses, `N ≤ 34` refuses under either); the resulting gap bracket agrees
-/// with the exact spectrum wherever the dense route can reach (`N ≤ 10`). Two
+/// refuses, `N ≤ 34` refuses under either); `below == 1` only through `N ≤ 30`,
+/// so that is the range where the count is a `λ₂` witness rather than a count.
+/// The resulting gap bracket agrees with the exact spectrum wherever the dense
+/// route can reach (`N ≤ 10`). Two
 /// failure modes are real and are reported instead of hidden: a shift `β` within
 /// `~1e-9` of an eigenvalue leaves one pivot's sign undecidable (so callers
 /// should probe a ladder of margins), and an elimination whose running error
@@ -920,7 +934,8 @@ pub fn inertia_below_with(
     let mut fill = 0usize;
     let mut swaps = 0usize;
     let mut worst_ratio = 0.0_f64;
-    for j in 0..n {
+    let mut j = 0usize;
+    while j < n {
         // Pivot selection *within* the trailing submatrix. A symmetric
         // permutation preserves the eigenvalues, so swapping the row and its
         // column labels to bring a larger diagonal entry into place is free —
@@ -928,6 +943,7 @@ pub fn inertia_below_with(
         // perfectly ordinary matrix (measured: the odd sector at `N ≤ 6`).
         let acceptable = |pivot: &Bounded| pivot.certain_sign().is_some();
         let current = rows[j].get(&j).copied();
+        let mut block = 1usize;
         if !current.map(|p| acceptable(&p)).unwrap_or(false) {
             let mut best: Option<(usize, f64)> = None;
             for k in j + 1..n {
@@ -940,10 +956,113 @@ pub fn inertia_below_with(
                     }
                 }
             }
-            let (k, _) = best?;
-            swap_trailing(&mut rows, j, k);
-            swaps += 1;
+            match best {
+                Some((k, _)) => {
+                    swap_trailing(&mut rows, j, k);
+                    swaps += 1;
+                }
+                // No decidable 1×1 pivot anywhere in the trailing block. That
+                // is not always a dead end: a *coupled* pair can have a
+                // decidable determinant while neither diagonal has a decidable
+                // sign (`[[ε, 1], [1, −ε]]` is the smallest case), and its
+                // inertia follows from the determinant and the trace. This is
+                // what ends the reach otherwise — the last dense separator's
+                // rows become individually undecidable a few hundred pivots
+                // from the end.
+                None => block = 2,
+            }
         }
+
+        if block == 2 {
+            // The pair with the largest coupling: its determinant is the
+            // quantity most likely to be decidable, and the larger `|b|` is the
+            // more likely it is to be so.
+            let mut chosen: Option<(usize, f64)> = None;
+            for k in j + 1..n {
+                if let Some((_, _, b, _)) = block_pivot(&rows, j, k) {
+                    let magnitude = b.value.magnitude();
+                    if chosen.map(|(_, m)| magnitude > m).unwrap_or(true) {
+                        chosen = Some((k, magnitude));
+                    }
+                }
+            }
+            let (k, _) = chosen?;
+            if k != j + 1 {
+                relabel_columns(&mut rows, j, j + 1, k);
+                swaps += 1;
+            }
+
+            let a = rows[j].remove(&j)?;
+            let b = rows[j].remove(&(j + 1))?;
+            let d = rows[j + 1].remove(&(j + 1))?;
+            rows[j + 1].remove(&j);
+            let det = a.mul(d).sub(b.mul(b));
+            let sign = det.certain_sign()?;
+            if sign < 0 {
+                // Opposite signs: exactly one negative eigenvalue.
+                negative += 1;
+            } else {
+                let trace = a.add(d);
+                match trace.certain_sign() {
+                    // Same sign, and it is the trace's: both negative.
+                    Some(sign) => {
+                        if sign < 0 {
+                            negative += 2;
+                        }
+                    }
+                    None => return None,
+                }
+            }
+            worst_ratio = worst_ratio
+                .max(a.relative_error())
+                .max(b.relative_error())
+                .max(d.relative_error())
+                .max(det.relative_error());
+
+            // `A₂₂ -= W P⁻¹ Wᵀ` with `P = [[a, b], [b, d]]`, applied to the
+            // upper triangle only, exactly as the 1×1 update is. `W`'s entries
+            // are read from the pivot rows *before* they are cleared: rows below
+            // the diagonal are deliberately left stale by the updates, so they
+            // must never be read back.
+            let zero = Bounded {
+                value: DoubleDouble::ZERO,
+                error: 0.0,
+            };
+            let mut weights: Vec<(usize, Bounded, Bounded)> = Vec::new();
+            for k in j + 2..n {
+                let left = rows[j].get(&k).copied();
+                let right = rows[j + 1].get(&k).copied();
+                if left.is_some() || right.is_some() {
+                    weights.push((k, left.unwrap_or(zero), right.unwrap_or(zero)));
+                }
+            }
+            rows[j].clear();
+            rows[j + 1].clear();
+            fill = fill.max(weights.len() + 2);
+
+            // `P⁻¹ = [[d, −b], [−b, a]] / det`; so for `w = (w₁, w₂)`,
+            // `u = (d w₁ − b w₂)/det` and `v = (a w₂ − b w₁)/det`.
+            let mut coefficients: Vec<(Bounded, Bounded)> = Vec::with_capacity(weights.len());
+            for &(_, w1, w2) in weights.iter() {
+                let u = w1.mul(d).sub(w2.mul(b)).div(det)?;
+                let v = w2.mul(a).sub(w1.mul(b)).div(det)?;
+                coefficients.push((u, v));
+            }
+            for index in 0..weights.len() {
+                let i = weights[index].0;
+                let (u_i, v_i) = coefficients[index];
+                for position in index..weights.len() {
+                    let (m, w1, w2) = weights[position];
+                    let update = u_i.mul(w1).add(v_i.mul(w2));
+                    let slot = rows[i].entry(m).or_insert(zero);
+                    *slot = slot.sub(update);
+                    fill = fill.max(rows[i].len());
+                }
+            }
+            j += 2;
+            continue;
+        }
+
         let pivot = rows[j].remove(&j)?;
         worst_ratio = worst_ratio.max(pivot.relative_error());
         let sign = pivot.certain_sign()?;
@@ -961,6 +1080,7 @@ pub fn inertia_below_with(
         rows[j].clear();
         fill = fill.max(support.len() + 1);
         if support.is_empty() {
+            j += 1;
             continue;
         }
 
@@ -982,6 +1102,7 @@ pub fn inertia_below_with(
                 fill = fill.max(rows[i].len());
             }
         }
+        j += 1;
     }
 
     Some(InertiaCount {
@@ -999,16 +1120,44 @@ pub fn inertia_below_with(
 /// Rows before `j` are already eliminated (diagonal only) and are untouched.
 fn swap_trailing(rows: &mut [BTreeMap<usize, Bounded>], j: usize, k: usize) {
     rows.swap(j, k);
-    for row in rows.iter_mut().skip(j) {
-        let at_j = row.remove(&j);
-        let at_k = row.remove(&k);
-        if let Some(value) = at_k {
-            row.insert(j, value);
+    relabel_columns(rows, j, j, k);
+}
+
+/// Exchange the *labels* `p` and `q` in every row from `start` on, without
+/// exchanging any rows — what a block pivot needs when it pulls `k` next to `j`
+/// but keeps both pivot rows in place.
+fn relabel_columns(rows: &mut [BTreeMap<usize, Bounded>], start: usize, p: usize, q: usize) {
+    for row in rows.iter_mut().skip(start) {
+        let at_p = row.remove(&p);
+        let at_q = row.remove(&q);
+        if let Some(value) = at_q {
+            row.insert(p, value);
         }
-        if let Some(value) = at_j {
-            row.insert(k, value);
+        if let Some(value) = at_p {
+            row.insert(q, value);
         }
     }
+}
+
+/// The 2×2 block at trailing indices `(j, k)` of `H − βI` and its determinant's
+/// decidable sign — `None` when that sign is not decidable, which is the whole
+/// question a block pivot exists to answer. `b` is the coupling; a pair whose
+/// coupling is structurally absent has a determinant `a·d` and cannot decide
+/// anything the two diagonals did not already.
+fn block_pivot(
+    rows: &[BTreeMap<usize, Bounded>],
+    j: usize,
+    k: usize,
+) -> Option<(Bounded, Bounded, Bounded, i8)> {
+    let a = *rows[j].get(&j)?;
+    let d = *rows[k].get(&k)?;
+    let b = rows[j].get(&k).copied().unwrap_or(Bounded {
+        value: DoubleDouble::ZERO,
+        error: 0.0,
+    });
+    let determinant = a.mul(d).sub(b.mul(b));
+    let sign = determinant.certain_sign()?;
+    Some((a, d, b, sign))
 }
 
 /// Reverse Cuthill–McKee on a symmetric graph: breadth-first from a
@@ -2183,14 +2332,43 @@ mod inertia_tests {
         );
     }
 
-    /// A 2×2 matrix shifted to `[[0,1],[1,0]]` has no 1×1 pivot at all: the
-    /// counter must refuse rather than guess a sign.
+    /// `[[0,1],[1,0]]` has no decidable 1×1 pivot at all, but its determinant is
+    /// `−1`: the block pivot must decide, and count the one eigenvalue below `0`.
     #[test]
-    fn the_sparse_count_refuses_a_pivot_that_is_not_there() {
+    fn the_sparse_count_decides_a_coupled_pair_with_no_decidable_diagonal() {
         let columns = vec![vec![(0, 0.0), (1, 1.0)], vec![(0, 1.0), (1, 0.0)]];
+        let count = inertia_below(&columns, 0.0).expect("the block determinant decides this");
+        assert_eq!(
+            count.below, 1,
+            "eigenvalues are ±1, so exactly one is below 0"
+        );
+        assert_eq!(count.pivots, 2);
+    }
+
+    /// The block update must reach the *remaining* rows, not just decide the
+    /// pair: `[[0,1,1],[1,0,1],[1,1,0]]` has eigenvalues `2, −1, −1`. After the
+    /// 2×2 block at `(0,1)` the trailing diagonal shrinks from `0` to `−2`, and
+    /// only then is there a decidable 1×1 pivot left to finish the count.
+    #[test]
+    fn the_block_update_reaches_the_trailing_rows() {
+        let columns = vec![
+            vec![(0, 0.0), (1, 1.0), (2, 1.0)],
+            vec![(0, 1.0), (1, 0.0), (2, 1.0)],
+            vec![(0, 1.0), (1, 1.0), (2, 0.0)],
+        ];
+        let count = inertia_below(&columns, 0.0).expect("the block must decide");
+        assert_eq!(count.below, 2, "eigenvalues 2, −1, −1 put two below 0");
+        assert_eq!(count.pivots, 3);
+    }
+
+    /// A block whose determinant is exactly zero still says nothing about its
+    /// eigenvalues: the counter must refuse rather than guess.
+    #[test]
+    fn the_sparse_count_refuses_a_block_with_no_decidable_determinant() {
+        let zero = vec![vec![(0, 0.0)], vec![(1, 0.0)]];
         assert!(
-            inertia_below(&columns, 0.0).is_none(),
-            "a matrix with no decidable 1×1 pivot must be refused"
+            inertia_below(&zero, 0.0).is_none(),
+            "a matrix whose only block has zero determinant must be refused"
         );
     }
 

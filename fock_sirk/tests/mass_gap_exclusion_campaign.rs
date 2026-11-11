@@ -1564,8 +1564,8 @@ fn the_count_reaches_past_the_grid() {
     let g = 1.0;
     println!("g = {g}: inertia count past the campaign grid, odd sector, β = θ₀ + 0.5");
     println!(
-        "{:>3} {:>6} {:>7} {:>9} {:>7} {:>7} {:>9} {:>7}",
-        "N", "n", "fillRCM", "ratio", "secs", "fillND", "ratio", "secs"
+        "{:>3} {:>6} {:>7} {:>7} {:>9} {:>7} {:>7} {:>9} {:>7}",
+        "N", "n", "below", "fillRCM", "ratio", "secs", "fillND", "ratio", "secs"
     );
     for n_max in [26u32, 28, 30] {
         let h = qcd_ym_hamiltonian(g);
@@ -1588,8 +1588,8 @@ fn the_count_reaches_past_the_grid() {
             .expect("nested dissection must decide here");
         let secs_nd = clock.elapsed().as_secs_f64();
         println!(
-            "{n_max:>3} {n:>6} {:>7} {:>9.2e} {secs_rcm:>7.2} {:>7} {:>9.2e} {secs_nd:>7.2}",
-            rcm.fill, rcm.worst_ratio, nd.fill, nd.worst_ratio
+            "{n_max:>3} {n:>6} {:>7} {:>7} {:>9.2e} {secs_rcm:>7.2} {:>7} {:>9.2e} {secs_nd:>7.2}",
+            rcm.below, rcm.fill, rcm.worst_ratio, nd.fill, nd.worst_ratio
         );
         // The point of the two-term value: even at the last size RCM decides,
         // its bound is an order of magnitude below its pivots, and nested
@@ -1616,14 +1616,16 @@ fn the_count_reaches_past_the_grid() {
 
 /// Where the reach actually ends, and on what: the count is refused when the
 /// running bound outgrows the remaining pivots, not when the clock runs out.
-/// Measured (`docs/MASS_GAP_SPEC.md` §6d): nested dissection decides `N ≤ 32`
-/// (`n = 27,744`, 38 s, ratio `7.7e-17`) and refuses `N ≤ 34` after 725 pivots
-/// of margin, where the trailing block's own relative error has reached `1e15`;
-/// RCM refuses `N ≤ 32` after 217 s, having decided `N ≤ 30` with `worst_ratio`
-/// `2.0e-2` (two decades in two steps). `#[ignore]`d because pinning a wall this
-/// far out costs ~340 s.
+/// Measured (`docs/MASS_GAP_SPEC.md` §6d): nested dissection decides `N ≤ 33`
+/// (`n = 31,161`, 51 s) and refuses `N ≤ 34` after 725 pivots of margin, where
+/// the trailing block's own relative error has reached `1e15`; RCM refuses
+/// `N ≤ 32` after 213 s, having decided `N ≤ 30` with `worst_ratio` `2.0e-2` (two
+/// decades in two steps). The last step before the wall is inside it: at
+/// `N ≤ 34` no 1×1 pivot *and* no 2×2 block determinant in the trailing block
+/// is decidable any more, so the block pivot cannot rescue it either.
+/// `#[ignore]`d because pinning a wall this far out costs ~420 s.
 #[test]
-#[ignore = "~340 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
+#[ignore = "~420 s: run with `cargo test --release -p fock_sirk --test mass_gap_exclusion_campaign -- --ignored`"]
 fn the_count_refuses_past_the_reach() {
     use fock_sirk::{Ordering, inertia_below_with};
     use std::time::Instant;
@@ -1649,7 +1651,8 @@ fn the_count_refuses_past_the_reach() {
     let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection)
         .expect("nested dissection must still decide N <= 32 — the wall moved back");
     println!(
-        "N <= 32, n = {n}: ND decides, fill {}, ratio {:.2e}, {:.1} s",
+        "N <= 32, n = {n}: ND decides below {}, fill {}, ratio {:.2e}, {:.1} s",
+        nd.below,
         nd.fill,
         nd.worst_ratio,
         clock.elapsed().as_secs_f64()
@@ -1668,6 +1671,26 @@ fn the_count_refuses_past_the_reach() {
         "§6d records RCM refusing at N <= 32 (it last decided N <= 30, ratio 2.0e-2): it decided, \
          so the wall and that section are stale"
     );
+
+    // The last step nested dissection takes: `N ≤ 33` also decides, so the
+    // wall is localized to the single step between 33 and 34.
+    let (n, columns, beta) = count_at(33);
+    let clock = Instant::now();
+    let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection)
+        .expect("nested dissection must decide N <= 33 — the wall moved back");
+    println!(
+        "N <= 33, n = {n}: ND decides below {}, fill {}, ratio {:.2e}, {:.1} s",
+        nd.below,
+        nd.fill,
+        nd.worst_ratio,
+        clock.elapsed().as_secs_f64()
+    ); // `below` is *not* pinned to one here: measured four at this truncation, so
+    // the 60-step Ritz value is far enough above `λ₁` that `θ₀ + 0.5` no longer
+    // separates `λ₁` from `λ₂`. The count is still a valid count — every pivot's
+    // sign was decided — but it is a reach measurement, not a `λ₂` witness. The
+    // campaign's bracket grid pins `below == 1` where the Ritz value is
+    // converged (`N ≤ 20`).
+    assert!(nd.below >= 1, "β must still sit above the ground state");
 
     // And where nested dissection itself stops: one step past its reach.
     let (n, columns, beta) = count_at(34);
