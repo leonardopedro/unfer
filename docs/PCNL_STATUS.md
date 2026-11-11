@@ -3124,6 +3124,21 @@ done
 cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 --steps 4000 \
   --burn 500 --thin 5 --chains 4 --basis informed --proposal fixed,pilot \
   --pilot-shrink 0 --seed 7                             # that baseline (ESS 152)
+# R2l: the λ boundary (each λ needs its own isotropic baseline), and the full-
+# covariance control at the same mode (`rotlaplace` prints its β eigen-range):
+for lam in 0.5 2; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed --lambda $lam \
+    --proposal fixed,laplace --pilot-shrink 0.5          # 419 vs 351, ESS(Φ)
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed --lambda $lam \
+    --proposal fixed,pilot --pilot-shrink 0              # the isotropic baselines 342 / 376
+done
+for r in 4 8; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --proposal fixed,rotlaplace                          # 112 / 6 vs diagonal 587 / 8
+done
 # the six shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
@@ -4162,7 +4177,76 @@ Laplace surrogate degrades with rank.  The NLL/ECE difference in those two rows 
 2.4127 vs 2.8105, ECE 0.173 vs 0.253 at the same 14.84 % accuracy) is a property of *where*
 the stalled chains sat, not a better predictive — accuracy is identical and `R̂` is 1.56–4.45.
 
-### Recommendation (state after R2k: what to set, and how well each row is supported)
+### R2l — the Laplace win has a `λ` boundary, and the full covariance is worse than the diagonal (same day)
+
+R2k left two questions it could not answer from its own cells: was the rank-4 win tied to
+`λ = 1`, and was the rank-8 collapse a property of *truncating* the mode's Hessian to its
+diagonal?  This cycle answers both.  `λ` is the likelihood's weight in `Φ = λNL + ½‖z‖²`, so
+changing it moves every isotropic baseline too: each `λ` cell carries its own `pilot` `s = 0`
+run, which R2e/R2i established as the strongest isotropic arm (383 at rank 4, `λ = 1`).
+
+The second question needed one new arm, `rotlaplace`: the same mode search, the same
+converged point, the full finite-difference Hessian there instead of its diagonal, rescaled
+jointly in the eigenbasis.  It differs from `laplace` only in the off-diagonal curvature, and
+it prints the proposal's β eigen-range, so a cell where that range is nearly flat is known to
+be the diagonal arm and not to be evidence about rotation.
+
+| rank | `λ` | shape | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | Brier | NLL | ECE | `m` | `β_i` |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 4 | 0.5 | none (fixed `β = 0.05`) | 69.2 % | 97 | 1.038 | 12.89 % | 0.9956 | 2.8944 | 0.253 | — | 0.05 |
+| 4 | 0.5 | isotropic (pilot `s = 0`) | 47.9 % | 342 | 1.008 | 12.89 % | 0.9962 | 2.8869 | 0.255 | 0.39 | 0.088–0.10 |
+| 4 | 0.5 | **laplace at mode**, `s = 0.5` | 44.2 % | **419** | 1.011 | 12.89 % | 0.9956 | 2.8857 | 0.254 | 0.58 | 0.072–0.13 |
+| 4 | 1.0 | isotropic (pilot `s = 0`, R2e) | 46.5 % | 383 | 1.010 | 12.89 % | 0.9922 | 2.8662 | 0.270 | 0.33 | 0.069–0.08 |
+| 4 | 1.0 | laplace at mode, `s = 0.5` (R2k) | 46.3 % | 587 | 1.012 | 12.89 % | 0.9923 | 2.8658 | 0.270 | 0.62 | 0.053–0.10 |
+| 4 | 2.0 | none (fixed `β = 0.05`) | 49.8 % | 109 | 1.020 | 12.89 % | 0.9905 | 2.8630 | 0.270 | — | 0.05 |
+| 4 | 2.0 | isotropic (pilot `s = 0`) | 44.6 % | **376** | 1.018 | 12.89 % | 0.9901 | 2.8617 | 0.270 | 0.27 | 0.056–0.06 |
+| 4 | 2.0 | laplace at mode, `s = 0.5` | 50.4 % | 351 | 1.016 | 12.89 % | 0.9899 | 2.8615 | 0.275 | 0.64 | 0.039–0.07 |
+| 4 | 1.0 | **rotlaplace at mode** | 48.7 % | 112 | 1.036 | 12.89 % | 0.9913 | 2.8665 | 0.269 | 0.38 | 0.022–0.16 |
+| 8 | 1.0 | none (fixed `β = 0.05`) | 55.4 % | 7 | 1.289 | 10.94 % | 0.9485 | 2.4693 | 0.237 | — | 0.05 |
+| 8 | 1.0 | rotlaplace at mode | 49.2 % | 6 | **2.042** | 12.50 % | 0.9398 | 2.3449 | 0.220 | 0.27 | 0.015–0.14 |
+
+The two rotlaplace runs print their mode search and eigen-range: rank 4 converges in 1 157
+steps to the same `φ` as `laplace` (1602.0562, `‖∇Φ‖∞` 9.95e-4) with β eigen-range
+[0.0606, 0.3967], ratio 6.5; rank 8 in 1 132 steps to 1604.9141 (9.83e-4), ratio 7.6.  So the
+rotation is not degenerate in either cell — a difference from `laplace` is structure, not a
+flat direction being labelled arbitrarily.
+
+**Result 48 — the rank-4 Laplace win survives `λ < 1`, shrinks, and reverses at `λ = 2`.**
+Against the best isotropic arm the gain is +53 % at `λ = 1` (383 → 587), +22.5 % at `λ = 0.5`
+(342 → 419) and −6.6 % at `λ = 2` (376 → 351).  The sign change is the finding, and the mode
+displacement explains it: the search needs 926 Adam steps at `λ = 0.5` (φ 1080.18 → 822.49) and
+1 508 at `λ = 2` (φ 4320.71 → 3155.79) against 1 157 at `λ = 1`, and `λ = 2` also puts the
+mode twice as far in `φ` units from the anchor.  The chain still starts at `z = 0`, so a
+shape tuned to the far mode is a shape the chain cannot yet use: the pilot's widths are
+measured *along the approach* and stay useful there, while the mode's diagonal describes a
+region the chain reaches late.  This is R2k's rank-8 mechanism — width from a point the chain
+has not reached — appearing at fixed rank as `λ` grows, and it is why the same arm can win at
+rank 4, `λ ≤ 1` and lose at rank 4, `λ = 2`.  A `λ`-dependent recommendation that ignored this
+would be overfitting one row of this table.
+
+**Result 49 — the full covariance at the mode is worse than the diagonal, at both ranks.**
+At rank 4 `rotlaplace` gives ESS 112 against `laplace`'s 587 and the fixed arm's 100; at rank 8
+it gives 6 against the diagonal's 8 and the isotropic 154.  Its adapted multiplier says the
+same thing without the chain: `m` settles at 0.38 (rank 4) and 0.27 (rank 8), i.e. the warm-up
+had to shrink a proposal whose *shape* was already too wide, while the diagonal's `m` sits at
+0.62.  An orthogonal rotation cannot change the target, so this is purely a proposal-efficiency
+result: the mode's off-diagonal curvature is not the posterior's covariance, and rotating into
+it costs more than the diagonal it replaces.  That retires "the rank-8 collapse is because we
+threw away the off-diagonal" as an explanation — the rank-8 failure is the *point*, not the
+parametrization, and it is the same failure at rank 4 once the mode is far enough away.
+
+**Result 50 — the predictives are insensitive to all of this, again.**  Every rank-4 `λ` row
+has BMA accuracy 12.89 % and NLL 2.860–2.894; rotlaplace's rank-8 row reports 12.50 % accuracy
+and the *best* NLL (2.3449) at the *worst* `R̂` (2.042).  As in R2k, the low NLL of a stalled
+chain is where it sat, not a better predictive: ESS and `R̂` move by two orders of magnitude
+while the BMA answer does not move at all.  No recommendation in this document rests on a
+predictive difference.
+
+Practical upshot for the table below: `laplace` with `--pilot-shrink 0.5` stays the rank-4
+setting *for `λ ≤ 1`*, with `λ = 2` a measured exception, and `rotlaplace` stays available but
+unrecommended (it is the control that rules out the off-diagonal explanation).
+
+### Recommendation (state after R2l: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4170,7 +4254,9 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| proposal at rank 4 | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152) | R2k, two seeds; every pilot-derived shape is 20× worse there | load-bearing |
+| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`) | R2k, two seeds; R2l adds the `λ = 0.5` cell; every pilot-derived shape is 20× worse there | load-bearing |
+| proposal at rank 4, `λ = 2` | isotropic `s = 0` (**376**); `laplace` is 351 | R2l: the mode is 1 508 Adam steps from the anchor and the widths describe a region the chain reaches late | load-bearing |
+| full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
 | `--pilot-shrink s`, rank ≥ 16 | no claim | R2g ladder is monotone but every cell is at the ESS floor | **withdrawn** |
@@ -4179,7 +4265,7 @@ implemented, verified and found not to matter, so it should stay off rather than
 | `--pilot-ebayes`, or any pooled shape | off (`s` alone) | R2i: weighted and unweighted pooled shapes both land at the single-pilot ESS (17/16 vs 15, 8/6 vs 6), below isotropic at three rank/seed pairs | null |
 | pilot shape vs no shape | no shape: `s = 0` | R2h/R2i: every pilot-derived shape loses 5–20× in ESS; the shape is reproducible across replicates, so this is not a noise problem | load-bearing |
 | proposal at rank 8 | isotropic `s = 0` (154); **not** `laplace` (8 / 7, `R̂` 1.56–4.45) | R2k: the Laplace diagonal is right at rank 4 and 20× wrong at rank 8 | load-bearing |
-| `--mode-steps` / `--mode-tol` | 2 000 / 1e-3 (the search printed with each cell must say `converged`) | R2k: rank-4 and rank-8 searches converge in 1 157 / 1 132 steps; the gradient must be `NormGrad::Exact` | load-bearing |
+| `--mode-steps` / `--mode-tol` | 2 000 / 1e-3 (the search printed with each cell must say `converged`) | R2k: rank-4 and rank-8 searches converge in 1 157 / 1 132 steps; the gradient must be `NormGrad::Exact`. R2l: `λ = 2` needs 1 508, so 2 000 is the floor, not slack | load-bearing |
 | which proposal at ranks 4–8 | `pilot` with the `s` above, not `curv` | R2: curvature at a stationary anchor gave 0.1 % acceptance and ESS 7 | load-bearing |
 | any rank-16 shrinkage claim | none: the rank is not resolvable, and the ladder is withdrawn | R2j: the fixed (proposal-independent) arm has ESS 5–14 and `R̂` 1.30–1.91 even at 8 chains × 8 000; the same kernel at two seeds moves BMA by 5.9 points, more than the ladder's 3.5 | **not resolvable** |
 

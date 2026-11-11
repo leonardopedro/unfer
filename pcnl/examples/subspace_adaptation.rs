@@ -156,6 +156,13 @@ enum Prop {
     /// the target rather than from a walk.  The chain still starts at the
     /// anchor, so only the proposal differs.
     Laplace,
+    /// The full Hessian at the target's mode, rescaled jointly in its
+    /// eigenbasis (R2l).  Same mode search as [`Prop::Laplace`]; the difference
+    /// is whether the curvature's *off-diagonal* structure matters.  At rank 4
+    /// the diagonal version beat isotropic and at rank 8 it did not, and this
+    /// arm separates "the mode's Hessian is the wrong scale" from "its rotation
+    /// is what a diagonal proposal throws away".
+    RotLaplace,
 }
 
 impl Prop {
@@ -167,6 +174,7 @@ impl Prop {
             Prop::RotCurv => "rotcurv",
             Prop::RotPilot => "rotpilot",
             Prop::Laplace => "laplace",
+            Prop::RotLaplace => "rotlaplace",
         }
     }
 
@@ -178,6 +186,7 @@ impl Prop {
             Prop::RotCurv => 0x6_000,
             Prop::RotPilot => 0x8_000,
             Prop::Laplace => 0xa_000,
+            Prop::RotLaplace => 0xc_000,
         }
     }
 }
@@ -373,6 +382,7 @@ impl Cfg {
                     "rotcurv" => Some(Prop::RotCurv),
                     "rotpilot" => Some(Prop::RotPilot),
                     "laplace" => Some(Prop::Laplace),
+                    "rotlaplace" => Some(Prop::RotLaplace),
                     _ => None,
                 })
                 .collect();
@@ -808,6 +818,25 @@ fn run_cell(
             let mut s = DiagScale::from_widths_shrunk(&widths, cfg.pilot_shrink);
             s.target_accept = cfg.adapt_target;
             Some(Scale::Diag(s))
+        }
+        Prop::RotLaplace => {
+            let (z_mode, info) = find_mode(&target, rank, cfg);
+            println!("  rotlaplace[{rank}] {info}");
+            let h = curvature_hessian(&target, &z_mode, cfg.curvature_h);
+            let mut s = RotScale::from_hessian(&h, rank).expect("Hessian is symmetric");
+            // Eigenvalue spread is the audit for this arm: if the curvature at
+            // the mode is nearly isotropic, this arm *is* the diagonal one and a
+            // difference between them is noise, not structure.
+            let betas = s.betas();
+            let (lo, hi) = betas
+                .iter()
+                .fold((f64::INFINITY, 0.0f64), |(a, b), x| (a.min(*x), b.max(*x)));
+            println!(
+                "  rotlaplace[{rank}] β eigen-range [{lo:.4}, {hi:.4}], ratio {:.3}",
+                hi / lo
+            );
+            s.target_accept = cfg.adapt_target;
+            Some(Scale::Rot(s))
         }
         Prop::Fixed | Prop::Pilot | Prop::RotPilot => None,
     };

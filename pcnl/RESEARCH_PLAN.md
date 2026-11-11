@@ -385,6 +385,22 @@ next question is therefore about rank and non-Gaussianity, not about more shape 
 whether the rank-4 win survives a different seed set, a different anchor, or `λ ≠ 1`, and
 whether a full-covariance Laplace (the `rot` kernel) behaves the same way at rank 8.
 
+R2l answered the `λ` and full-covariance halves of that. `λ` moves the isotropic baselines,
+so each cell carries its own `pilot s = 0` run: the gain over the best isotropic arm is
++53 % at `λ = 1` (383 → 587), +22.5 % at `λ = 0.5` (342 → 419) and **−6.6 % at `λ = 2`**
+(376 → 351). The sign change is explained by mode displacement — the search needs 926 steps
+at `λ = 0.5`, 1 508 at `λ = 2` — i.e. R2k's rank-8 mechanism at fixed rank: a shape tuned to
+a mode the chain reaches late is no use while it is still approaching. For the covariance
+question, R2l added `rotlaplace` (the same converged mode, the full Hessian there, β
+eigen-range 6.5/7.6 so the rotation is not degenerate): ESS 112 at rank 4 against the
+diagonal's 587, and 6 at rank 8 against the diagonal's 8 and isotropic 154. The full
+covariance is therefore *worse* than its diagonal, with `m` adapted down to 0.27–0.38 to say
+so, which retires "the rank-8 collapse is the discarded off-diagonal" as an explanation. The
+recommendation stands as `laplace --pilot-shrink 0.5` at rank 4 for `λ ≤ 1`, isotropic at
+`λ = 2`, and isotropic at ranks 8 and above; the outstanding question is the *anchor*, which
+only a shifted `θ_ref` can answer, and whether a mode-centred proposal that also carries the
+approach (a tempered or annealed reference) can keep the rank-8 gain.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
