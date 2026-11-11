@@ -464,6 +464,20 @@ basis *seed* but not the basis *vectors*; the next cell needs `--basis-anchor` (
 basis at the ambient anchor, jitter only the sampling reference) to split the prior mean from
 the subspace.
 
+R2p ran that split. `--basis-anchor` builds the informed PCA path at the ambient anchor, so all
+eight cells share one restricted model (identical basis line, `94.030 -> 93.784`) and differ only
+in the prior mean. Pinning the basis **fixes the mixing**: pilot ESS geomean 2.95×, median
+213 → 428, minimum 16 → 229, max `R̂` 1.742 → 1.036, and the proposal-independent arm improves
+identically (median 38 → 125) — so R2o's collapses were bad *targets* created by a moving
+subspace, not bad samplers. It does **not** fix the accuracy spread: 6.64–17.58 % (range 10.94,
+sd 3.16, versus 7.42 / 2.56 in R2o), still non-monotone in `f`, and the new low cell is worst on
+Brier and NLL too, i.e. a real model effect. With one basis the two arms agree in 6/8 cells (max
+gap 2.35 vs 4.30) and accuracy tracks the proper scores at both extremes. Mean accuracy drops
+0.9 points against R2o (13.67 vs 14.55 %), which quantifies the data-reuse optimism of the
+anchor-coupled basis. Open after R2p: the `laplace` arm was not re-run under the control (8 more
+cells), a second pinned basis would test whether the accuracy attribution is basis-specific, and
+two directions per magnitude still give a range rather than a variance.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
