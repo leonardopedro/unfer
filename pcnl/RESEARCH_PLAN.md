@@ -418,6 +418,31 @@ unresolved, `λ ∈ {0.5, 1}` is positive at both seeds. The largest lever found
 proposal dial at all — the anchor moves BMA accuracy 12.89 % → 14.45–15.23 % while every
 proposal dial in R2c–R2m moves it ≤ 0.5 points — so varying `θ_ref` systematically is R2n.
 
+R2n swept it: `--anchor-jitter f` for f ∈ {0.05, 0.10, 0.20, 0.30} × two seeds, rank 4,
+`λ = 1`, three arms per cell (21 runs), and added `--width-report` to settle the rank-8
+width question — which it did by refuting it. BMA accuracy does track the jitter at the
+default seed and monotonically so, 12.89 % → 14.45 % → 14.45 % → 16.02 % → 17.97 % (+5.1
+points from f = 0 to 0.30), but not at seed 7 (16.80 / 18.75 / 16.02 / 16.80 for `fixed`),
+so the anchor is confirmed as the largest lever on the *answer* and its direction is not a
+law: it displaces the prior mean, hence the model, and Task-A's pretrain anchor is evidently
+not Task B's best. ESS meanwhile is a lottery rather than a dose–response — at the default
+seed `pilot` gives 383 / 607 / 7 / 93 / 17 across f = 0 / 0.05 / 0.10 / 0.20 / 0.30 (f = 0.30
+collapses all three arms to 9 / 17 / 51 with `R̂` 1.44 for `fixed`), so R2m's f = 0.10
+collapse is one draw from a long left tail and f = 0.05 is the sweep's best cell for every
+arm. The rank-4 `laplace` gain is real on average — 1.53× / 1.07× / 54× / 4.33× / 3.00× at
+the default seed, geomean 2.43× over nine cells, ahead in 7 of 9 and behind at the two
+seed-7 cells with f ≥ 0.20 — and unrelated to anchor distance; the 54× is a pilot collapse,
+not a laplace improvement. Finally the widths: the rank-8 mode vector is
+`[0.2351, 0.2033, 0.1046, 0.0925, 0.1686, 0.1190, 0.0983, 0.2435]` (norm 0.4771) against rank
+4's `[0.2276, 0.1151, 0.0915, 0.0693]` (0.2797), i.e. *broader* in norm and *less* spread
+(2.5× vs 3.3×), with β 0.054–0.11 vs 0.059–0.10. No ~100× tightening exists at the mode; the
+only such span is R2m's rank-8 `τ = 0.5` cell (β 0.0065–1.00), produced by the `H_ii` floor.
+Rank 8 is instead hypersensitive to *spread*: uniform β 0.05 → ESS 7, uniform 0.065 → 154,
+the mode's 2× spread → 7 at 45.5 % acceptance and `R̂` 4.45, which is a mixing failure, not a
+narrow proposal. The rank-8 recommendation (isotropic) stands with a corrected reason; the
+anchor stays open, and what it needs next is a sweep of `θ_ref` at a *fixed* seed and basis so
+that the anchor's effect on the model can be separated from its effect on the sampler.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

@@ -340,6 +340,11 @@ struct Cfg {
     /// Starting scale of the complement stage; adapted during burn toward
     /// `adapt_target` and frozen after it.
     beta_q: f64,
+    /// Print the full per-coordinate width vector(s) a cell actually uses
+    /// (`--pilot` prints its own and, for comparison, the mode's curvature
+    /// widths; `--proposal laplace` prints the widths at its reading point).
+    /// Diagnostics only: nothing in the kernel reads it.
+    width_report: bool,
 }
 
 impl Default for Cfg {
@@ -382,6 +387,7 @@ impl Default for Cfg {
             // step near pCN's maximum is the right proposal; the Robbins–Monro
             // adaptation corrects this start if it is wrong.
             beta_q: 0.5,
+            width_report: false,
         }
     }
 }
@@ -463,6 +469,9 @@ impl Cfg {
         }
         if let Some(v) = flag("--anchor-jitter").and_then(|v| v.parse().ok()) {
             cfg.anchor_jitter = v;
+        }
+        if args.iter().any(|a| a == "--width-report") {
+            cfg.width_report = true;
         }
         if let Some(v) = flag("--targets") {
             let parsed: Vec<TargetKind> = v
@@ -924,6 +933,9 @@ fn run_cell(
                 );
                 widths = w;
             }
+            if cfg.width_report {
+                println!("  width-report laplace[{rank}] = {widths:.4?}");
+            }
             let mut s = DiagScale::from_widths_shrunk(&widths, cfg.pilot_shrink);
             s.target_accept = cfg.adapt_target;
             Some(Scale::Diag(s))
@@ -954,20 +966,24 @@ fn run_cell(
     // (the pilot runs inside it, per chain).  Both endpoints are positive and
     // finite, so this mix is defined at every τ — unlike `--laplace-tau`, whose
     // interior points can have `H_ii ≤ 0`.
-    let mode_widths_for_mix: Option<Vec<f64>> = if prop == Prop::Pilot && cfg.pilot_mix > 0.0 {
-        let (z_mode, info) = find_mode(&target, rank, cfg);
-        println!("  pilot-mix[{rank}] {info}");
-        let h = curvature_diag(&target, &z_mode, cfg.curvature_h);
-        let w: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
-        println!(
-            "  pilot-mix[{rank}] τ = {:.2} pilot→mode in log-width space, |w_mode| {:.4}",
-            cfg.pilot_mix,
-            w.iter().map(|x| x * x).sum::<f64>().sqrt()
-        );
-        Some(w)
-    } else {
-        None
-    };
+    let mode_widths_for_mix: Option<Vec<f64>> =
+        if prop == Prop::Pilot && (cfg.pilot_mix > 0.0 || cfg.width_report) {
+            let (z_mode, info) = find_mode(&target, rank, cfg);
+            println!("  pilot-mix[{rank}] {info}");
+            let h = curvature_diag(&target, &z_mode, cfg.curvature_h);
+            let w: Vec<f64> = h.iter().map(|v| 1.0 / v.max(1e-8).sqrt()).collect();
+            println!(
+                "  pilot-mix[{rank}] τ = {:.2} pilot→mode in log-width space, |w_mode| {:.4}",
+                cfg.pilot_mix,
+                w.iter().map(|x| x * x).sum::<f64>().sqrt()
+            );
+            if cfg.width_report {
+                println!("  width-report mode[{rank}] = {w:.4?}");
+            }
+            Some(w)
+        } else {
+            None
+        };
 
     let starts = Instant::now();
     let mut per_chain: Vec<Vec<f64>> = Vec::with_capacity(cfg.chains);
@@ -1040,6 +1056,9 @@ fn run_cell(
                 let mut w = scale_widths(&w_raw, cfg.pilot_scale);
                 if let Some(mw) = &mode_widths_for_mix {
                     w = blend_log_widths(&w, mw, cfg.pilot_mix);
+                }
+                if cfg.width_report && c == 0 {
+                    println!("  width-report pilot[{rank}] = {w:.4?}");
                 }
                 let mut s = DiagScale::from_widths_shrunk(&w, shrink);
                 s.target_accept = cfg.adapt_target;
@@ -1689,6 +1708,7 @@ mod shape_tests {
         assert_eq!(cfg.pilot_shrink, 1.0);
         assert_eq!(cfg.pilot_scale, 1.0);
         assert!(!cfg.pilot_eb);
+        assert!(!cfg.width_report);
     }
 
     /// Fewer than two replicates has no between-replicate variance to estimate,

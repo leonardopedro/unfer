@@ -2400,9 +2400,9 @@ shells, 4 chains each, 10 k steps, burn 2 000, thin 10:
 | shell `d₀` | jump `r` | acceptance | BMA acc / NLL | per-chain acc | anchor | `R̂`(NLL) / (loss) | null |
 |---:|---:|---|---|---|---|---|---|
 | 3.0e-3 | 1e-3 | 0.5–0.8 % | 31.25 / 1.7352 | 29.72–32.24 | 31.25 / 1.7270 | 1.268 / 1.245 | E 1.356, 95 % [1.096, 1.777] |
-| 1.0e-2 | 2e-3 | 0.6–0.8 % | 28.12 / 1.7563 | 25.86–29.95 | " | 1.525 / 1.505 | E 1.753, 95 % [1.213, 2.623] |
-| 3.0e-2 | 3e-3 | 1.8–2.5 % | 23.83 / 1.7803 | 20.97–25.21 | " | 3.389 / 3.606 | E 2.022, 95–99 % |
-| 9.0e-2 | 1e-2 | 1.6–1.8 % | 21.09 / 1.8780 | 12.32–22.49 | " | 2.115 / 2.548 | E 1.988, 95 % [1.279, 3.112] |
+| 1.0e-2 | 2e-3 | 0.6–0.8 % | 28.12 / 1.7563 | 25.86–29.95 | — | 1.525 / 1.505 | E 1.753, 95 % [1.213, 2.623] |
+| 3.0e-2 | 3e-3 | 1.8–2.5 % | 23.83 / 1.7803 | 20.97–25.21 | — | 3.389 / 3.606 | E 2.022, 95–99 % |
+| 9.0e-2 | 1e-2 | 1.6–1.8 % | 21.09 / 1.8780 | 12.32–22.49 | — | 2.115 / 2.548 | E 1.988, 95 % [1.279, 3.112] |
 
 Every column is monotone in the radius, and in the direction *against* the reading:
 BMA accuracy falls 31.25 → 28.12 → 23.83 → 21.09 and NLL rises 1.7352 → 1.7563 →
@@ -3175,6 +3175,24 @@ for lam in 0.5 2; do
       --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
       --lambda $lam --seed 7 --proposal $prop
   done
+done
+# R2n: the anchor × seed sweep (rank 4, λ = 1, two arms per invocation plus `fixed`):
+for f in 0.05 0.10 0.20 0.30; do
+  for s in 20261020 7; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --seed $s --proposal fixed,pilot --pilot-shrink 0
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --seed $s --proposal fixed,laplace --pilot-shrink 0.5
+  done
+done
+# the width vectors behind Result 59 (prints `width-report pilot|mode[rank] = [...]`);
+# the same cells reproduce 100 / 383 at rank 4 and 7 / 154 at rank 8:
+for r in 4 8; do
+  cargo run --release -p pcnl --example subspace_adaptation -- --ranks $r \
+    --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+    --width-report --proposal fixed,pilot --pilot-shrink 0
 done
 # the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
@@ -4392,7 +4410,128 @@ chain mixes, and the *anchor* is the thing that decides what the chain is report
 should vary the anchor systematically — more seeds, more magnitudes — because it is the largest
 lever found so far on the published answer, and R2k/R2l's 587 was measured at exactly one.
 
-### Recommendation (state after R2m: what to set, and how well each row is supported)
+### R2n — the anchor sweep: BMA accuracy tracks the anchor, ESS does not track it monotonically, and the rank-8 widths are not 100× tighter (same day)
+
+Two questions, one grid.  R2m's Result 55 asked for the anchor to be swept systematically — it is
+the largest lever found on the published answer — and a second question arrived with it: the
+rank-8 `laplace` collapse was being explained as "the rank-8 mode's curvature widths are ~100×
+tighter than rank 4's".  A new `--width-report` flag prints the per-coordinate width vectors (the
+pilot's own, the mode's curvature widths, and `laplace`'s at its reading point), so the second
+question is answered by measurement rather than by inference.
+
+The grid is rank 4, `λ = 1`, informed basis, `--anchor-jitter f` for
+f ∈ {0.05, 0.10, 0.20, 0.30} × seeds {20261020, 7}, three arms per cell — `fixed` (β = 0.05),
+`pilot --pilot-shrink 0`, `laplace --pilot-shrink 0.5` at the mode.  The `f = 0` rows are R2m's
+base cell, kept for the trend.  Protocol: 4 000 steps, burn 500, thin 5, 4 chains, P = 16 672,
+N_train 512, N_test 256, σ = 0.35 — 21 new runs.
+
+The seed axis is **not** a clean re-draw of one anchor: `--seed 7` changes the Task-A pretrain
+(anchor rms 0.7282 → 0.9200, `‖θ_ref‖` 94.030 → 118.788) as well as the data split
+(`0xba104db4f677b2ec` → `0xe059cf933e1a92b0`), so seed moves the anchor, the informed basis and
+the test set together.
+
+| `f` | seed | anchor shift | arm | z acc | ESS(Φ) | `R̂(Φ)` | BMA acc | Brier | NLL | `m` |
+|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 (R2m) | 20261020 | — | `fixed` | 60.6 % | 100 | 1.023 | 12.89 % | 0.9925 | 2.8699 | — |
+| 0 (R2m) | 20261020 | — | `pilot s = 0` | 46.5 % | 383 | 1.010 | 12.89 % | 0.9922 | 2.8662 | 0.33 |
+| 0 (R2m) | 20261020 | — | `laplace s = 0.5` | 46.3 % | **587** | 1.012 | 12.89 % | 0.9923 | 2.8658 | 0.62 |
+| 0.05 | 20261020 | sd 0.0364, `‖θ‖` → 94.135, `0x6147…` | `fixed` | 70.9 % | 142 | 1.016 | 14.45 % | 0.9953 | 2.9623 | — |
+| 0.05 | 20261020 | — | `pilot s = 0` | 50.3 % | 607 | 1.017 | 14.45 % | 0.9955 | 2.9619 | 0.40 |
+| 0.05 | 20261020 | — | `laplace s = 0.5` | 48.8 % | **651** | 1.006 | 14.45 % | 0.9952 | 2.9614 | 0.60 |
+| 0.05 | 7 | sd 0.0460, `‖θ‖` → 118.893, `0xe057…` | `fixed` | 56.3 % | 80 | 1.042 | 16.80 % | 0.9176 | 2.6236 | — |
+| 0.05 | 7 | — | `pilot s = 0` | 47.0 % | 314 | 1.008 | 16.41 % | 0.9181 | 2.6182 | 0.34 |
+| 0.05 | 7 | — | `laplace s = 0.5` | 49.3 % | **511** | 1.003 | 16.41 % | 0.9181 | 2.6195 | 0.61 |
+| 0.10 | 20261020 | sd 0.0728, `‖θ‖` → 94.475, `0xed77…` | `fixed` | 64.4 % | 165 | 1.018 | 14.45 % | 0.9810 | 2.9506 | — |
+| 0.10 | 20261020 | — | `pilot s = 0` | 50.5 % | **7** | **10.183** | 15.23 % | 0.9727 | 2.8793 | 0.33 |
+| 0.10 | 20261020 | — | `laplace s = 0.5` | 48.6 % | 378 | 1.019 | 15.23 % | 0.9800 | 2.9474 | 0.63 |
+| 0.10 | 7 | sd 0.0920, `‖θ‖` → 119.293, `0xa5bb…` | `fixed` | 57.6 % | 41 | 1.049 | 18.75 % | 0.9175 | 2.6084 | — |
+| 0.10 | 7 | — | `pilot s = 0` | 47.8 % | 172 | 1.021 | 18.36 % | 0.9174 | 2.5956 | 0.35 |
+| 0.10 | 7 | — | `laplace s = 0.5` | 49.7 % | **409** | 1.012 | 16.41 % | 0.9181 | 2.6032 | 0.56 |
+| 0.20 | 20261020 | sd 0.1456, `‖θ‖` → 95.846, `0x1890…` | `fixed` | 68.0 % | 130 | 1.025 | 16.02 % | 0.9848 | 2.8540 | — |
+| 0.20 | 20261020 | — | `pilot s = 0` | 49.8 % | 93 | 1.063 | 15.23 % | 0.9808 | 2.8335 | 0.39 |
+| 0.20 | 20261020 | — | `laplace s = 0.5` | 46.4 % | **403** | 1.011 | 16.02 % | 0.9829 | 2.8497 | 0.57 |
+| 0.20 | 7 | sd 0.1840, `‖θ‖` → 120.963, `0xf78f…` | `fixed` | 63.3 % | 57 | 1.041 | 16.02 % | 0.9015 | 2.5329 | — |
+| 0.20 | 7 | — | `pilot s = 0` | 51.2 % | 322 | 1.007 | 17.97 % | 0.8996 | 2.5134 | 0.45 |
+| 0.20 | 7 | — | `laplace s = 0.5` | 48.8 % | 301 | 1.007 | 19.14 % | 0.8999 | 2.5144 | 0.43 |
+| 0.30 | 20261020 | sd 0.2185, `‖θ‖` → 98.106, `0xb2c7…` | `fixed` | 66.9 % | **9** | 1.437 | 17.97 % | 0.9505 | 2.6675 | — |
+| 0.30 | 20261020 | — | `pilot s = 0` | 44.6 % | 17 | 1.088 | 14.45 % | 0.9504 | 2.6528 | 0.39 |
+| 0.30 | 20261020 | — | `laplace s = 0.5` | 39.5 % | 51 | 1.090 | 17.97 % | 0.9487 | 2.6643 | 0.48 |
+| 0.30 | 7 | sd 0.2760, `‖θ‖` → 123.751, `0xedca…` | `fixed` | 63.9 % | 91 | 1.031 | 16.80 % | 0.8889 | 2.3966 | — |
+| 0.30 | 7 | — | `pilot s = 0` | 50.6 % | 99 | 1.028 | 21.48 % | 0.8817 | 2.3759 | 0.42 |
+| 0.30 | 7 | — | `laplace s = 0.5` | 50.8 % | 45 | 1.046 | 16.80 % | 0.8860 | 2.3863 | 0.54 |
+
+**Result 56 — BMA accuracy follows the anchor, and at the default seed it rises monotonically with
+the jitter.**  `12.89 % (f = 0) → 14.45 % (0.05) → 14.45 % (0.10) → 16.02 % (0.20) → 17.97 %
+(0.30)`, i.e. **+5.08 points**, while no proposal dial in R2c–R2m moved it by more than 0.5 inside
+one anchor.  At seed 7 the same axis is flat-to-noisy rather than monotone (`fixed`: 16.80 / 18.75 /
+16.02 / 16.80; `pilot`: 16.41 / 18.36 / 17.97 / 21.48; `laplace`: 16.41 / 16.41 / 19.14 / 16.80).
+So Result 55's "the anchor is the largest lever" survives and its direction does not generalise:
+`--anchor-jitter` displaces the prior mean, so the *restricted model's predictive* changes, and
+which way it moves depends on where the displaced anchor lands relative to Task B — Task-A's
+pretrain anchor is evidently not the best prior mean for Task B at the default seed, and the
+improvement is a property of the model, not of the sampler.  Two seeds are enough to refute
+monotonicity, not enough to characterise the function.
+
+**Result 57 — ESS is not a dose–response in the jitter; it collapses in isolated cells.**  Default
+seed, ESS at f = 0 / 0.05 / 0.10 / 0.20 / 0.30: `fixed` 100 / 142 / 165 / 130 / **9**;
+`pilot` 383 / 607 / **7** / 93 / **17**; `laplace` 587 / 651 / 378 / 403 / **51**.  R2m treated the
+f = 0.10 `pilot` collapse (ESS 7, `R̂` 10.183) as a notable anomaly; f = 0.30 is worse for *all
+three* arms (9 / 17 / 51, `fixed` `R̂` 1.437) and f = 0.20 is nearly as bad for `pilot` (93), while
+seed 7 at the same f gives 41 / 172 / 409 and 91 / 99 / 45.  Jitter is therefore a lottery on the
+shape of the target at the perturbed reference, not a smooth degradation, and any single jittered
+cell — R2m's included — is one draw from a Long-left-tailed distribution.  The same table read from
+the other side: f = 0.05 is the *best* cell in the sweep for every arm at the default seed
+(142 / 607 / 651, above the unjittered 100 / 383 / 587).
+
+**Result 58 — the rank-4 `laplace` gain is real on average and unrelated to the anchor distance.**
+`laplace / pilot` ESS: **1.53×** (f = 0), **1.07× / 1.63×** (0.05), **54.0× / 2.38×** (0.10),
+**4.33× / 0.93×** (0.20), **3.00× / 0.45×** (0.30) — geometric mean **2.43×** over the nine cells,
+with `laplace` ahead in **7 of 9** and behind at f = 0.20 and f = 0.30 at seed 7 (301 vs 322,
+45 vs 99).  The 54× at f = 0.10 is mostly a `pilot` collapse (ESS 7) rather than a `laplace`
+improvement — 378 is the *lowest* `laplace` value in that column — so "the gain grows with jitter"
+is exactly the reading this sweep rules out.  The recommendation keeps `laplace` at rank 4,
+`λ ≤ 1` (7/9 cells, 2.4× geomean), but the honest number to quote is the range **0.45–54×**, not
+any single cell, and the arm is not uniformly better.
+
+**Result 59 — the rank-8 widths are not ~100× tighter than rank 4's, and cannot be the cause of
+the rank-8 collapse.**  `--width-report` on the same cells that produce the published rows (they
+reproduce exactly: rank 4 `fixed` 100 / `pilot` 383, rank 8 `fixed` 7 / `pilot` 154):
+
+| rank | shape | width vector (per coordinate) | `‖w‖` | max/min |
+|---:|---|---|---:|---:|
+| 4 | mode (curvature) | 0.2276, 0.1151, 0.0915, 0.0693 | 0.2797 | 3.3× |
+| 4 | pilot `s = 0` | 0.6013, 0.0912, 0.2224, 0.2275 | — | 6.6× |
+| 8 | mode (curvature) | 0.2351, 0.2033, 0.1046, 0.0925, 0.1686, 0.1190, 0.0983, 0.2435 | 0.4771 | 2.5× |
+| 8 | pilot `s = 0` | 0.3039, 0.1724, 0.1979, 0.0888, 0.1605, 0.3251, 0.2939, 0.1000 | — | 3.7× |
+
+The rank-8 mode widths are **1.7× larger** in norm and **less** spread than rank 4's, and the
+resulting `β` ranges are nearly identical (5.4e-2–0.11 vs 5.9e-2–0.10, `m` 0.50 vs 0.63).  The
+only ~100× width spread anywhere in this record is R2m's rank-8 `τ = 0.5` cell (`β` 6.5e-3–1.00, a
+154× span), and that comes from the `max(H_ii, 1e-8)` clip applied to its single non-positive
+curvature — the `10⁴` width Result 52 describes — not from the mode.  Stated at the level it was
+asserted, "the rank-8 mode's curvature widths are ~100× tighter than rank 4's" is **false**.
+
+What does distinguish rank 8 is sensitivity to the *shape*, not the *scale*: uniform β = 0.05 →
+ESS 7 (`R̂` 1.289); uniform β ≈ 0.065 (pilot, `s = 0`) → 154; a 2× per-coordinate spread
+(0.054–0.11 at the mode) → 7 with 45.5 % acceptance and `R̂` **4.446**.  At rank 4 the same 1.7×
+spread (0.059–0.10) gives 587.  The rank-8 failure signature is `R̂` 4.446 at 45.5 % acceptance —
+chains that disagree by more than their own noise on a target they accept nearly half the time —
+i.e. slow traversal of directions a point-curvature shape misrepresents, not a proposal that is too
+narrow (that is R2m's `τ = 0.5` cell, at 0.6 % acceptance, `R̂` 17.96).  Limitation, stated: `ESS(Φ)`
+is one scalar over the potential and the kernel prints no per-coordinate autocorrelation, so this
+pins the cause to "shape/spread sensitivity, not width magnitude" without naming the coordinate
+responsible.
+
+**Result 60 — the rank-8 recommendation stands, its stated reason changes.**  The row "proposal at
+rank 8: isotropic `s = 0`, not `laplace`" is unchanged (154 against 7/8), but the justification is
+no longer "the diagonal is 20× wrong there": the diagonal's *scale* is right (β within 2× of the
+pilot's, widths the same order and less spread), and the arm still collapses — which makes rank 8 a
+statement about the informed subspace's target, not about the curvature estimate.  The
+`--anchor-jitter` row also moves: it stays **open**, now with 21 cells instead of 1, and reads "the
+largest lever on BMA accuracy (+5.1 points at the default seed, sign seed-dependent) and a lottery
+on ESS (9–651 across the sweep) — keep it at 0 and report ESS only with its cell's `R̂`".
+
+### Recommendation (state after R2n: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4404,7 +4543,7 @@ implemented, verified and found not to matter, so it should stay off rather than
 | proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
 | `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
 | `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
-| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves BMA accuracy 12.89 % → 14.45–15.23 % (1.6–2.3 points) while every proposal dial moves it ≤ 0.5 | **open — largest lever found** |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves BMA accuracy 12.89 % → 14.45–15.23 %. R2n sweeps 21 cells: accuracy 12.89 → 17.97 % at the default seed (+5.1 points) but non-monotone at seed 7, and ESS is a lottery (9–651) with isolated collapses at f = 0.10 and 0.30 | **open — largest lever on the answer, and a lottery on ESS** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
@@ -4413,7 +4552,7 @@ implemented, verified and found not to matter, so it should stay off rather than
 | `--pilot-scale c` | `1` (off) | R2h: warm-up absorbs the scale (`m` halves at `c = 2`), ESS/predictives unchanged; `c = 4` leaves warm-up off-target | null |
 | `--pilot-ebayes`, or any pooled shape | off (`s` alone) | R2i: weighted and unweighted pooled shapes both land at the single-pilot ESS (17/16 vs 15, 8/6 vs 6), below isotropic at three rank/seed pairs | null |
 | pilot shape vs no shape | no shape: `s = 0` | R2h/R2i: every pilot-derived shape loses 5–20× in ESS; the shape is reproducible across replicates, so this is not a noise problem | load-bearing |
-| proposal at rank 8 | isotropic `s = 0` (154); **not** `laplace` (8 / 7, `R̂` 1.56–4.45) | R2k: the Laplace diagonal is right at rank 4 and 20× wrong at rank 8 | load-bearing |
+| proposal at rank 8 | isotropic `s = 0` (154); **not** `laplace` (8 / 7, `R̂` 1.56–4.45) | R2k: the diagonal is right at rank 4 and fails at rank 8. R2n's `--width-report` corrects the reason: the rank-8 mode's widths are the same order (norm 0.4771 vs 0.2797, 2.5× vs 3.3× spread, β 0.054–0.11 vs 0.059–0.10), so the collapse is mixing (`R̂` 4.446 at 45.5 % acc), not a too-narrow proposal | load-bearing |
 | `--mode-steps` / `--mode-tol` | 2 000 / 1e-3 (the search printed with each cell must say `converged`) | R2k: rank-4 and rank-8 searches converge in 1 157 / 1 132 steps; the gradient must be `NormGrad::Exact`. R2l: `λ = 2` needs 1 508, so 2 000 is the floor, not slack | load-bearing |
 | which proposal at ranks 4–8 | `pilot` with the `s` above, not `curv` | R2: curvature at a stationary anchor gave 0.1 % acceptance and ESS 7 | load-bearing |
 | any rank-16 shrinkage claim | none: the rank is not resolvable, and the ladder is withdrawn | R2j: the fixed (proposal-independent) arm has ESS 5–14 and `R̂` 1.30–1.91 even at 8 chains × 8 000; the same kernel at two seeds moves BMA by 5.9 points, more than the ladder's 3.5 | **not resolvable** |
