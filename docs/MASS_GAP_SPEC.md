@@ -751,14 +751,19 @@ converge on these blocks — the residual is `0.05` (odd `N ≤ 20`), `0.58` (ev
 `N ≤ 20`) and `2.60` (odd `N ≤ 30`). So `θ₀` is a *loose* upper bound on `λ₁`:
 `−11.8546` against the converged `−13.6716` at `N ≤ 34`, and the count was asked
 to factor `H + 11.35·I`, sitting `1.8` above the ground instead of `0.5`.
-240 steps takes the residual to `1e-12`–`1e-9` everywhere below, and every size
-that refused now decides. Odd sector, nested dissection, its own converged `β`
-(`the_converged_shift_decides_where_the_loose_one_refused`, `#[ignore]`d, ~420 s):
+Converging on a residual instead of a budget takes it to `1e-12`–`1e-9` everywhere
+below (320 steps by doubling at `N ≤ 34`–`38`; far fewer at `N ≤ 20`), and every
+size that refused now decides. Odd sector, nested dissection, its own converged `β`
+(`the_converged_shift_decides_where_the_loose_one_refused`,
+`the_converged_shift_reaches_38_in_both_blocks`, both `#[ignore]`d; ~700 s and
+~620 s because each converges the Ritz pair first):
 
-| `N≤` | `n` | `θ₀` | resid | below | bound/pivot | secs |
-|---|---|---|---|---|---|---|
-| 34 | 34884 | −13.671622 | 1.4e-12 | 1 | 3.8e-19 | 68 |
-| 36 | 43320 | −14.555276 | 2.8e-11 | 1 | 8.0e-18 | 126 |
+| `N≤` | `n` | `θ₀` | resid | steps | below | bound/pivot | secs |
+|---|---|---|---|---|---|---|---|
+| 34 | 34884 | −13.671622 | 9.0e-13 | 320 | 1 | 3.8e-19 | 70 |
+| 36 | 43320 | −14.555276 | 1.2e-12 | 320 | 1 | 8.0e-18 | 129 |
+| 38 | 53200 | −15.447014 | 1.4e-12 | 320 | 1 | 2.0e-17 | 230 |
+| 40 | 64680 | −16.341870 | 1.9e-12 | 320 | 1 | 8.8e-17 | 394 |
 
 The even block (`Truncated::sector(true)`, start = vacuum + `|1,1⟩` — both `R`-fixed
 with sign `+1`, leak `1.6e-16`, so the whole start lies in the block), also under
@@ -771,15 +776,24 @@ its **own** converged `β` rather than the odd sector's:
 | 32 | 31161 | 1198 | 5.4e-19 | 51 | 1 |
 | 34 | 38931 | 1396 | 4.7e-19 | 94 | 1 |
 | 36 | 48070 | 1604 | 5.2e-15 | 172 | 1 |
+| 38 | 58730 | 1960 | 9.1e-18 | 295 | 1 |
 
-At `N ≤ 20` the even `θ₀ = −7.512462` and at `N ≤ 36` it is `−14.557060`
-(residual `8.4e-10`) — the same 240-step convergence, in the second block. Four corrections
-follow.
+At `N ≤ 20` the even `θ₀ = −7.512462` and at `N ≤ 38` it is `−15.447425`
+(residual `1.5e-12`, 320 steps) — the same convergence, in the second block, and
+near-degenerate with the odd block's `−15.447014`: the two grounds sit `4.1e-4`
+apart, so each block holds one level below its own `β` and neither supplies the
+other's witness. Four corrections follow.
 
 First, **the reach is not `N ≤ 33`**: nested dissection decides `N ≤ 36` in both
-blocks, at ratios `1e-15`–`1e-18`, tighter than any row of the old wall table.
-`N ≤ 38` has not been run, so the boundary is currently unmeasured rather than
-known.
+blocks, and the ladder keeps going — `N ≤ 38` in both, `N ≤ 40` in the odd one —
+without the ratio drifting: it stays in `1e-15`–`1e-19` all the way. The
+boundary is past `40` and still unlocated: each shell costs about `1.6×` the
+last (`70 → 129 → 230 → 387 s`) and the fill grows about `1.6×` with it, so the
+wall is now set by the clock and the memory of the fill, not by the bound
+(`N ≤ 42` has not been run). Note that the `N ≤ 38` and `N ≤ 40` rows needed
+**more** than the 240 steps the section used to call converged — at 240 the
+residual is `1.8e-8` there — which is why the tests now double until the
+residual is below `1e-9` and print the count.
 
 Second, **the witness range is not `N ≤ 30`**: every row above reports `below == 1`,
 i.e. `θ₀ + 0.5 ∈ (λ₁, λ₂]`, which is a genuine `λ₂` witness in the odd block *and*
@@ -793,15 +807,26 @@ why the *same* even matrix refuses at `N ≤ 36` in 562 s at the odd `β` and de
 in 172 s at its own. The old `below 3 / 4` readings at `N ≤ 32, 33` are the same
 effect from the other side.
 
-Fourth, **the ordering split survives it**: RCM at `N ≤ 34` still refuses at the
-converged `β` after 422 s, and the even block at `N ≤ 30` decides under RCM only at
-ratio `1.8e-2` against nested dissection's `5.3e-18`. So nested dissection's
-advantage is not an artifact of the loose shift, while the size wall was.
+Fourth, **the ordering split survives it, and it is now pinned rather than
+bracketed**: RCM at `N ≤ 32` *decides* at its converged `β` (fill 1141,
+`θ₀ = −12.777793`, residual `7.6e-13` in 320 steps, ratio `2.6e-2`, 198 s — the
+largest ratio this file produces, but still below one, so it is a valid witness)
+and at `N ≤ 34` it refuses (422 s), while nested dissection decides `40`. So nested dissection's advantage is not an artifact of
+the loose shift — it is roughly six shells of reach — while the size wall that
+the old table attributed to `N` was.
 
-The campaign's default tests pin both halves: `the_even_block_certifies_a_witness_in_its_own_sector`
-(`N ≤ 20`) asserts that the 60-step residual there is `> 1e-3`, that 240 steps bring
-it under `1e-9` with a tighter `θ`, and that both orderings then return `below == 1`
-with bound/pivot `< 1`.
+**`β` is now derived from a residual, not a step budget.** The campaign's
+threshold had been "240 Lanczos steps" — a budget that undershoots at `N ≤ 38`
+(residual `1.8e-8`, i.e. a `β` still far above `λ₁` at the level this section
+cares about) and overshoots at `N ≤ 20` (converged in a tenth of it). The tests
+now call `converged_ground`, which doubles `min(40, n)` steps until the Ritz
+*residual* is below `1e-9` and fails rather than falling back to a looser value
+if Krylov space runs out, so what `β` is read off is a stated tolerance and
+every printed row carries the step count it took. The default test asserts the
+two halves together: `the_even_block_certifies_a_witness_in_its_own_sector`
+(`N ≤ 20`) pins that 60 steps leaves the residual `> 1e-3`, that the converged run
+*needs* more than 60 steps and lands below `1e-9` with a tighter `θ`, and that
+both orderings then return `below == 1` with bound/pivot `< 1`.
 
 **Symmetric equilibration buys none of it.** `D(H − βI)D` with `D = diag(2ᵏ)`,
 `k` halving each diagonal's exponent, is an exact congruence — every multiplication

@@ -1708,32 +1708,76 @@ fn the_count_refuses_past_the_reach() {
     );
 }
 
+/// The ground Ritz pair from *as many Lanczos steps as the residual needs*.
+///
+/// Every `β` in this file is `θ₀ + 0.5`, so what the count is handed depends on
+/// how well `θ₀` approximates `λ₁` — and `lanczos_ritz(...).ground()`'s second
+/// return value *is* the residual, not an error bar. A fixed step budget is
+/// therefore the wrong input: 60 steps leaves the odd `N ≤ 30` residual at `2.6`
+/// and pins `β` `1.8` above the ground (§6d, *the wall was the shift*), while
+/// 240 steps overshoots on a block that converges in 90. Steps double from
+/// `min(40, n)` until the residual is under `tol`; running out of Krylov space
+/// is a failure, not a fallback to a looser `β`.
+fn converged_ground<F: Fn(&[f64]) -> Vec<f64>>(
+    matvec: &F,
+    n: usize,
+    start: &[f64],
+    tol: f64,
+) -> (f64, f64, usize) {
+    let mut steps = 40.min(n);
+    loop {
+        let ritz = lanczos_ritz(matvec, n, start, steps).expect("Lanczos");
+        let (theta, residual) = ritz.ground().expect("non-empty spectrum");
+        if residual < tol {
+            return (theta, residual, steps);
+        }
+        let next = (2 * steps).min(n);
+        assert!(
+            next > steps,
+            "the ground did not reach residual {tol:e} in {steps} of {n} steps (last residual \
+             {residual:e}) — β would be read off an unconverged Ritz value"
+        );
+        steps = next;
+    }
+}
+
 /// The reach, measured at a **converged** `β` instead of the loose 60-step one.
 ///
 /// §6d's wall table used `β = θ₀ + 0.5` with `θ₀` from 60 Lanczos steps, and on
 /// these blocks that Ritz value is a *loose* upper bound on `λ₁`: `−11.8546`
 /// against the converged `−13.6716` at `N ≤ 34`, so the shifted matrix the count
 /// was asked to factor was `H + 11.35·I`, not `H + 13.17·I`. Re-running the same
-/// sizes with `β` from 240 steps decides all of them, with bound-to-pivot ratios
-/// `1e-18`–`1e-19` — tighter than any row of the old table. The wall was the
-/// shift, not the block, and the boundary is now past everything measured here.
+/// sizes against a `β` whose residual is under `1e-9` decides all of them, with
+/// bound-to-pivot ratios `1e-17`–`1e-19` — tighter than any row of the old
+/// table. The wall was the shift, not the block.
 ///
-/// `#[ignore]`d for cost (~470 s: two truncations at `N ≤ 34 / 36`, each with a
-/// 240-step Lanczos, plus the even block at `N ≤ 36`).
+/// The RCM row is the ordering claim: `N ≤ 32` **decides** under RCM at the
+/// converged shift (`ratio 2.6e-2`, the largest in the file) while `N ≤ 34`
+/// refuses under it (`zz`-free measurement, 422 s), so the ordering gap is
+/// bracketed `32 / 34` rather than being an artifact of the loose `β` that made
+/// RCM look like it stopped at `30`.
+///
+/// `#[ignore]`d for cost (~590 s: four sectors, a residual-threshold Lanczos and
+/// one count each).
 #[test]
-#[ignore = "~470 s: N <= 34 / 36 with a 240-step Lanczos each"]
+#[ignore = "~590 s: four sectors at N <= 32 / 34 / 36, converged Lanczos + one count each"]
 fn the_converged_shift_decides_where_the_loose_one_refused() {
     use fock_sirk::{Ordering, inertia_below_with};
     use std::time::Instant;
 
     let h = qcd_ym_hamiltonian(1.0);
-    let rows: [(u32, bool); 3] = [(34, false), (36, false), (36, true)];
-    println!("g = 1, β = θ₀ + 0.5 with θ₀ from 240 Lanczos steps, nested dissection");
+    let rows: [(u32, bool, Ordering); 4] = [
+        (32, false, Ordering::ReverseCuthillMckee),
+        (34, false, Ordering::NestedDissection),
+        (36, false, Ordering::NestedDissection),
+        (36, true, Ordering::NestedDissection),
+    ];
+    println!("g = 1, β = θ₀ + 0.5 with θ₀ converged to residual < 1e-9");
     println!(
-        "{:>3} {:>5} {:>6} {:>10} {:>12} {:>7} {:>9} {:>7}",
-        "N", "block", "n", "θ₀", "resid", "below", "ratio", "secs"
+        "{:>3} {:>5} {:>4} {:>6} {:>10} {:>10} {:>6} {:>7} {:>9} {:>7}",
+        "N", "block", "ord", "n", "θ₀", "resid", "steps", "below", "ratio", "secs"
     );
-    for (n_max, even) in rows {
+    for (n_max, even, order) in rows {
         let trunc = Truncated::build(&h, n_max);
         let sector = trunc.sector(even);
         let columns = sector_columns(&trunc, &sector);
@@ -1749,25 +1793,26 @@ fn the_converged_shift_decides_where_the_loose_one_refused() {
             leak < 1e-12,
             "the start must lie in its sector, leaked {leak:e}"
         );
-        let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
-        let (theta, residual) = ritz.ground().expect("non-empty");
-        assert!(
-            residual < 1e-8,
-            "240 steps must resolve the ground here, residual {residual:e}"
-        );
+        let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
         let beta = theta + 0.5;
         let clock = Instant::now();
-        let count = inertia_below_with(&columns, beta, Ordering::NestedDissection);
+        let count = inertia_below_with(&columns, beta, order);
         let secs = clock.elapsed().as_secs_f64();
         let count = count.unwrap_or_else(|| {
             panic!(
-                "nested dissection refuses N <= {n_max} at the converged β — that is the \
-                 opposite of what §6d records, and the section is stale"
+                "N <= {n_max} ({} block, {order:?}) refuses at the converged β — that is the \
+                 opposite of what §6d records, and the section is stale",
+                if even { "even" } else { "odd" }
             )
         });
         println!(
-            "{n_max:>3} {:>5} {:>6} {theta:>10.6} {residual:>12.2e} {:>7} {:>9.2e} {secs:>7.1}",
+            "{n_max:>3} {:>5} {:>4} {:>6} {theta:>10.6} {residual:>10.2e} {steps:>6} {:>7} {:>9.2e} {secs:>7.1}",
             if even { "even" } else { "odd" },
+            if order == Ordering::NestedDissection {
+                "ND"
+            } else {
+                "RCM"
+            },
             columns.len(),
             count.below,
             count.worst_ratio
@@ -1775,8 +1820,74 @@ fn the_converged_shift_decides_where_the_loose_one_refused() {
         assert_eq!(
             count.below,
             1,
-            "at N <= {n_max} ({} block) exactly one level must sit below β = θ₀ + 0.5 \
-             (below = {})",
+            "at N <= {n_max} ({} block, {order:?}) exactly one level must sit below \
+             β = θ₀ + 0.5 (below = {})",
+            if even { "even" } else { "odd" },
+            count.below
+        );
+    }
+}
+
+/// The converged-shift witness at `N ≤ 38`, both reflection blocks.
+///
+/// The odd `N ≤ 40` row was measured but is **not** pinned here: `n = 64680`,
+/// fill 2080, ratio `8.8e-17`, 387 s — adding it would double this test's cost
+/// for one more data point, and the growth from `36 → 38 → 40` is uniform, so a
+/// regression that moved the wall two shells in would still fail this test.
+///
+/// `#[ignore]`d for cost (~590 s: two truncations at `N ≤ 38`, a
+/// residual-threshold Lanczos and one count each).
+#[test]
+#[ignore = "~590 s: N <= 38 in both blocks, converged Lanczos + one count each"]
+fn the_converged_shift_reaches_38_in_both_blocks() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    println!("g = 1, N ≤ 38, β = θ₀ + 0.5 (residual < 1e-9), nested dissection");
+    println!(
+        "{:>5} {:>6} {:>10} {:>10} {:>6} {:>7} {:>9} {:>7}",
+        "block", "n", "θ₀", "resid", "steps", "below", "ratio", "secs"
+    );
+    for even in [false, true] {
+        let trunc = Truncated::build(&h, 38);
+        let sector = trunc.sector(even);
+        let columns = sector_columns(&trunc, &sector);
+        let matvec = trunc.sector_matvec(&sector);
+        let (start, leak) = if even {
+            let mut state = fock_state(&[(0, 1), (1, 1)]);
+            state.scale_and_add(&fock_state(&[]), Complex64::new(1.0, 0.0));
+            trunc.coordinates(&sector, &state)
+        } else {
+            trunc.coordinates(&sector, &r_odd_start())
+        };
+        assert!(
+            leak < 1e-12,
+            "the start must lie in its sector, leaked {leak:e}"
+        );
+        let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
+        let clock = Instant::now();
+        let count = inertia_below_with(&columns, theta + 0.5, Ordering::NestedDissection)
+            .unwrap_or_else(|| {
+                panic!(
+                    "nested dissection refuses N <= 38 ({} block) at the converged β, \
+                     where §6d records it deciding — the section is stale",
+                    if even { "even" } else { "odd" }
+                )
+            });
+        println!(
+            "{:>5} {:>6} {theta:>10.6} {residual:>10.2e} {steps:>6} {:>7} {:>9.2e} {:>7.1}",
+            if even { "even" } else { "odd" },
+            columns.len(),
+            count.below,
+            count.worst_ratio,
+            clock.elapsed().as_secs_f64()
+        );
+        assert_eq!(
+            count.below,
+            1,
+            "at N <= 38 the {} block must have exactly one level below β = θ₀ + 0.5 \
+             (below = {}), or this is a reach measurement and not a λ₂ witness",
             if even { "even" } else { "odd" },
             count.below
         );
@@ -1822,11 +1933,14 @@ fn the_even_block_certifies_a_witness_in_its_own_sector() {
          now converges in 60, this test is no longer the evidence that the step count matters"
     );
 
-    let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
-    let (theta, residual) = ritz.ground().expect("non-empty");
+    // The converged value is defined by the residual, not by a step budget: the
+    // helper doubles until it is under `1e-9`, and must *need* more than the 60
+    // steps the campaign used to use — otherwise this test's premise is gone.
+    let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
     assert!(
-        residual < 1e-9,
-        "240 steps must resolve the even ground, residual {residual:e}"
+        steps > 60,
+        "the even ground reached residual {residual:e} in {steps} steps, i.e. within the 60 \
+         the campaign used as a budget — the step-count claim in §6d would need restating"
     );
     assert!(
         theta < theta_short,
@@ -1865,21 +1979,21 @@ fn the_even_block_certifies_a_witness_in_its_own_sector() {
 
 /// The same witness past the odd block's wall, `N ≤ 30 / 32 / 34`.
 ///
-/// `#[ignore]`d for cost (~320 s: three truncations, each with a 240-step
-/// Lanczos and one nested-dissection count). Under its **own** `β` the even
-/// block keeps `below == 1` at every size, which is what makes it a witness
-/// range four shells beyond the odd one's `N ≤ 30`.
+/// `#[ignore]`d for cost (~320 s: three truncations, each with a
+/// residual-threshold Lanczos and one nested-dissection count). Under its
+/// **own** `β` the even block keeps `below == 1` at every size, which is what
+/// makes it a witness range four shells beyond the odd one's `N ≤ 30`.
 #[test]
-#[ignore = "~320 s: three truncations, a 240-step Lanczos and one count each"]
+#[ignore = "~320 s: three truncations, a converged Lanczos and one count each"]
 fn the_even_block_witnesses_past_the_odd_reach() {
     use fock_sirk::{Ordering, inertia_below_with};
     use std::time::Instant;
 
     let h = qcd_ym_hamiltonian(1.0);
-    println!("g = 1, even block, β = θ₀ + 0.5 (θ₀ from 240 Lanczos steps)");
+    println!("g = 1, even block, β = θ₀ + 0.5 (θ₀ converged to residual < 1e-9)");
     println!(
-        "{:>3} {:>6} {:>10} {:>12} {:>7} {:>9} {:>7}",
-        "N", "n", "θ₀", "resid", "below", "ratio", "secs"
+        "{:>3} {:>6} {:>10} {:>12} {:>6} {:>7} {:>9} {:>7}",
+        "N", "n", "θ₀", "resid", "steps", "below", "ratio", "secs"
     );
     for n_max in [30u32, 32, 34] {
         let trunc = Truncated::build(&h, n_max);
@@ -1894,8 +2008,7 @@ fn the_even_block_witnesses_past_the_odd_reach() {
             "even start must lie in the sector, leaked {leak:e}"
         );
 
-        let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
-        let (theta, residual) = ritz.ground().expect("non-empty");
+        let (theta, residual, stages) = converged_ground(&matvec, columns.len(), &start, 1e-9);
         let beta = theta + 0.5;
         let clock = Instant::now();
         let count = inertia_below_with(&columns, beta, Ordering::NestedDissection);
@@ -1907,7 +2020,7 @@ fn the_even_block_witnesses_past_the_odd_reach() {
             )
         });
         println!(
-            "{n_max:>3} {:>6} {theta:>10.6} {residual:>12.2e} {:>7} {:>9.2e} {secs:>7.1}",
+            "{n_max:>3} {:>6} {theta:>10.6} {residual:>12.2e} {stages:>6} {:>7} {:>9.2e} {secs:>7.1}",
             columns.len(),
             count.below,
             count.worst_ratio

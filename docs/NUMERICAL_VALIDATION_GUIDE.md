@@ -2559,21 +2559,34 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `N ≤ 20`, `0.58` even `N ≤ 20`, `2.60` odd `N ≤ 30`), so `θ₀` was a loose
   upper bound on `λ₁` (`−11.8546` against the converged `−13.6716` at `N ≤ 34`)
   and the count was asked to factor `H + 11.35·I`, `1.8` above the ground rather
-  than `0.5`. At 240 steps (residual `1e-12`–`1e-9`) every one of those sizes
-  decides with `below == 1` — odd `N ≤ 34` (fill 1298, 68 s, `3.8e-19`), odd
-  `N ≤ 36` (`n = 43320`, fill 1494, 126 s, `8.0e-18`), even `N ≤ 36`
-  (`n = 48070`, fill 1604, 172 s, `5.2e-15`), the even block under its **own**
-  `β` reporting `below == 1` from `N ≤ 20` (`n = 5786`, `θ₀ = −7.512462`, fill
-  358) up. So the reach is at least `36` in both blocks and the boundary is
-  unmeasured (`N ≤ 38` not run), the certified-witness range is at least `36`
-  rather than `30`, and the `562 s` even refusal was that matrix at the *odd*
-  threshold. The ordering split survives the correction: RCM still refuses
-  `N ≤ 34` at the converged `β` after 422 s, and the even block at `N ≤ 30`
-  decides under RCM only at ratio `1.8e-2` against nested dissection's `5.3e-18`.
-  `the_converged_shift_decides_where_the_loose_one_refused` (`#[ignore]`d, ~420 s)
-  pins the odd rows, and `the_even_block_certifies_a_witness_in_its_own_sector`
-  (`N ≤ 20`) pins that 60 steps leaves the residual above `1e-3` there while 240
-  brings it under `1e-9` with a tighter `θ`.
+  than `0.5`. Doubling the step count until the Ritz *residual* is below `1e-9`
+  (`converged_ground`, which asserts rather than falling back to a looser value)
+  every one of those sizes decides with `below == 1` — odd `N ≤ 34` (fill 1298,
+  `9.0e-13`, 70 s, `3.8e-19`), odd `N ≤ 36` (`n = 43320`, fill 1494, 129 s,
+  `8.0e-18`), even `N ≤ 36` (`n = 48070`, fill 1604, 172 s, `5.2e-15`), odd
+  `N ≤ 38` (`n = 53200`, `θ₀ = −15.447014`, 320 steps, 230 s, `2.0e-17`), even
+  `N ≤ 38` (`n = 58730`, `θ₀ = −15.447425`, 295 s, `9.1e-18` — near-degenerate
+  with the odd ground, the two `4.1e-4` apart) and odd `N ≤ 40` (`n = 64680`,
+  `θ₀ = −16.341870`, 394 s, `8.8e-17`); the even block under its **own** `β`
+  reports `below == 1` from `N ≤ 20` (`n = 5786`, `θ₀ = −7.512462`, fill 358)
+  up. So the reach is at least `40` in the odd block and `38` in the even one,
+  the certified-witness range is at least that rather than `30`, and the `562 s`
+  even refusal was that matrix at the *odd* threshold. Each extra shell costs
+  about `1.6×` in both time and fill (`70 → 129 → 230 → 394 s`), so `N ≤ 42` is
+  left unrun rather than unwalled. The ordering split survives the correction
+  and is now **pinned rather than bracketed**: RCM decides `N ≤ 32` at its own
+  converged `β` (fill 1141, `θ₀ = −12.777793`, residual `7.6e-13` in 320 steps,
+  ratio `2.6e-2`, 198 s — the largest ratio in the campaign, but still below
+  one, so a valid witness) and refuses `N ≤ 34` after 422 s, while nested
+  dissection decides `40`; the even block at `N ≤ 30` decides under RCM only at
+  ratio `1.8e-2` against nested dissection's `5.3e-18`.
+  `the_converged_shift_decides_where_the_loose_one_refused` (`#[ignore]`d, 707 s,
+  rows 32 RCM / 34 / 36 odd / 36 even) and
+  `the_converged_shift_reaches_38_in_both_blocks` (623 s) pin the rows above
+  (both print their step count), and
+  `the_even_block_certifies_a_witness_in_its_own_sector` (`N ≤ 20`) pins that 60
+  steps leaves the residual above `1e-3` there, that the threshold needs more
+  than 60 steps, and that it then lands under `1e-9` with a tighter `θ`.
   Nested dissection (`certificate::Ordering`) cuts the fill by 6–27 % on the grid
   and is 2–2.5× faster at the top, and it buys two sizes of reach; past the grid
   its fill advantage fades (652 vs 653 at `N ≤ 26`, 961 vs 927 at `N ≤ 30`),
