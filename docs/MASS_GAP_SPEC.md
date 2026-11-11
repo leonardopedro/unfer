@@ -757,8 +757,10 @@ size that refused now decides. Odd sector, nested dissection, its own converged 
 (`the_converged_shift_decides_where_the_loose_one_refused`,
 `the_converged_shift_reaches_38_in_both_blocks` and
 `the_converged_shift_reaches_40_in_the_odd_block` and
-`the_converged_shift_reaches_42_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
-454 / 689 s, because each converges the Ritz pair first):
+`the_converged_shift_reaches_42_in_the_odd_block` and
+`the_converged_shift_reaches_44_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
+454 / 689 / 1061 s, because each converges the Ritz pair first; the even rows come
+from `the_even_block_reaches_42_in_its_own_sector`, 1413 s for both):
 
 | `N≤` | `n` | `θ₀` | resid | steps | below | bound/pivot | secs |
 |---|---|---|---|---|---|---|---|
@@ -767,10 +769,11 @@ size that refused now decides. Odd sector, nested dissection, its own converged 
 | 38 | 53200 | −15.447014 | 1.4e-12 | 320 | 1 | 2.0e-17 | 230 |
 | 40 | 64680 | −16.341870 | 1.9e-12 | 320 | 1 | 8.8e-17 | 394 |
 | 42 | 77924 | −17.237774 | 1.7e-12 | 320 | 1 | 5.0e-14 | 620 |
+| 44 | 93104 | −18.138131 | 2.6e-12 | 320 | 1 | 1.5e-14 | 978 |
 
 Every row here is test-backed rather than a one-off probe: each test asserts
 `below == 1`, `bound/pivot < 1`, and that the fill keeps growing with the
-sector (`1960 → 2080 → 2309` from `N ≤ 38` to `42`).
+sector (`1960 → 2080 → 2309 → 2675` from `N ≤ 38` to `44`).
 
 The even block (`Truncated::sector(true)`, start = vacuum + `|1,1⟩` — both `R`-fixed
 with sign `+1`, leak `1.6e-16`, so the whole start lies in the block), also under
@@ -784,30 +787,37 @@ its **own** converged `β` rather than the odd sector's:
 | 34 | 38931 | 1396 | 4.7e-19 | 94 | 1 |
 | 36 | 48070 | 1604 | 5.2e-15 | 172 | 1 |
 | 38 | 58730 | 1960 | 9.1e-18 | 295 | 1 |
+| 40 | 71071 | 2218 | 6.4e-17 | 479 | 1 |
+| 42 | 85261 | 2460 | 1.3e-14 | 795 | 1 |
 
-At `N ≤ 20` the even `θ₀ = −7.512462` and at `N ≤ 38` it is `−15.447425`
-(residual `1.5e-12`, 320 steps) — the same convergence, in the second block, and
-near-degenerate with the odd block's `−15.447014`: the two grounds sit `4.1e-4`
-apart, so each block holds one level below its own `β` and neither supplies the
-other's witness. Four corrections follow.
+At `N ≤ 20` the even `θ₀ = −7.512462`, at `N ≤ 38` it is `−15.447425`
+(residual `1.5e-12`, 320 steps), at `N ≤ 40` `−16.340801` and at `N ≤ 42`
+`−17.238757` — the same convergence, in the second block, and near-degenerate
+with the odd block's values: the two grounds sit `4.1e-4` apart at `N ≤ 38`,
+`1.1e-3` at `40` (even above odd) and `9.8e-4` at `42` (even below odd), so each
+block holds one level below its own `β` and neither supplies the other's
+witness. Four corrections follow.
 
-First, **the reach is not `N ≤ 33`**: nested dissection decides `N ≤ 38` in both
-blocks and `N ≤ 42` in the odd one, without the ratio drifting — it stays in
-`1e-15`–`1e-19` all the way, and `N ≤ 42` reports `5.0e-14`, *eleven orders* of
-headroom below the refusal rule. **So the ladder has not stopped.** What has
-grown is the price: the count alone goes `70 → 129 → 230 → 394 → 620 s` (about
-`1.6×` a shell) while the fill goes `1960 → 2080 → 2309` from `N ≤ 38` to `42`,
-so the wall is the clock and the elimination's memory, not the bound. `N ≤ 44`
-is the next shell (~`n = 94000`, ~`1000 s`, fill ~`2700`) and has not been run;
-the odd `N ≤ 42` row already takes `689 s` including its converged Lanczos, and
-`N ≤ 20`–`42` together are the only sizes this harness runs at all. Note that
+First, **the reach is not `N ≤ 33`**: nested dissection decides `N ≤ 42` in both
+blocks, without the ratio drifting — it stays in
+`1e-15`–`1e-19` all the way — `N ≤ 44` reports `1.5e-14`, *fourteen orders* of
+headroom below the refusal rule. **So the ladder has not stopped; it has become
+expensive.** In the odd block the count alone goes
+`70 → 129 → 230 → 394 → 620 → 978 s` (about `1.6×` a shell) while the fill goes
+`1960 → 2080 → 2309 → 2675` from `N ≤ 38` to `44`; in the even block the same
+curve runs `295 → 479 → 795 s` with fill `1960 → 2218 → 2460`, so both blocks
+stop at `42`/`44` for cost, not for correctness: the next odd shell is ~`1600 s`
+for the count and ~`1700 s` including its converged Lanczos, and nothing about
+the certificate suggests it would refuse. `N ≤ 46` (odd) and `N ≤ 44` (even) have
+not been run; `N ≤ 20`–`44` are the sizes this harness runs at all. Note that
 the `N ≤ 38` and up rows needed **more** than the 240 steps the section used to
 call converged — at 240 the residual is `1.8e-8` there — which is why the tests
 now double until the residual is below `1e-9` and print the count.
 
 Second, **the witness range is not `N ≤ 30`**: every row above reports `below == 1`,
 i.e. `θ₀ + 0.5 ∈ (λ₁, λ₂]`, which is a genuine `λ₂` witness in the odd block *and*
-in the even block under its own threshold. The earlier even table — run at the odd
+in the even block under its own threshold, up to `N ≤ 42` in both blocks (the even
+`42` row reports `1.3e-14`). The earlier even table — run at the odd
 sector's `β` — was not a witness (`below 3` at `N ≤ 30`), and that is a statement
 about the threshold, not about the block.
 
@@ -821,10 +831,13 @@ Fourth, **the ordering split survives it, and it is now pinned rather than
 bracketed**: RCM at `N ≤ 32` *decides* at its converged `β` (fill 1141,
 `θ₀ = −12.777793`, residual `7.6e-13` in 320 steps, ratio `2.6e-2`, 198 s — the
 largest ratio this file produces, but still below one, so it is a valid witness)
-and at `N ≤ 34` it refuses — re-measured through the same residual-threshold
-harness after this section changed (`θ₀ = −13.671622`, residual `9.0e-13`, 320
-steps, `REFUSED` after 430 s), so the split is a property of the ordering at a
-converged `β`, not of the loose shift — while nested dissection decides `42`. So nested dissection's advantage is not an artifact of
+and at `N ≤ 34` it refuses — asserted by
+`the_converged_shift_does_not_rescue_rcm_at_34`, which hands RCM the same
+`θ₀ = −13.671622` (residual `9.0e-13`, 320 steps) the nested-dissection row uses
+and requires `None` back, so the split is a property of the ordering at a
+converged `β` and not of the loose shift — while nested dissection decides `44`.
+RCM's own reach is therefore bracketed to `(32, 34]`: it decides `32` and
+refuses `34` at the same converged threshold. So nested dissection's advantage is not an artifact of
 the loose shift — it is roughly six shells of reach — while the size wall that
 the old table attributed to `N` was.
 

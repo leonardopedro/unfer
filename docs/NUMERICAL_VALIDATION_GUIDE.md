@@ -2567,29 +2567,40 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `N ≤ 38` (`n = 53200`, `θ₀ = −15.447014`, 320 steps, 230 s, `2.0e-17`), even
   `N ≤ 38` (`n = 58730`, `θ₀ = −15.447425`, 295 s, `9.1e-18` — near-degenerate
   with the odd ground, the two `4.1e-4` apart), odd `N ≤ 40` (`n = 64680`,
-  `θ₀ = −16.341870`, 394 s, fill 2080, `8.8e-17`) and odd `N ≤ 42`
-  (`n = 77924`, `θ₀ = −17.237774`, 620 s, fill 2309, `5.0e-14`); the even block
-  under its **own** `β` reports `below == 1` from `N ≤ 20` (`n = 5786`,
-  `θ₀ = −7.512462`, fill 358) up. So the reach is at least `42` in the odd block
-  and `38` in the even one — **the ladder has not stopped**; `N ≤ 42` still has
-  eleven orders of headroom to the refusal rule — and the certified-witness
+  `θ₀ = −16.341870`, 394 s, fill 2080, `8.8e-17`), odd `N ≤ 42`
+  (`n = 77924`, `θ₀ = −17.237774`, 620 s, fill 2309, `5.0e-14`) and odd
+  `N ≤ 44` (`n = 93104`, `θ₀ = −18.138131`, 978 s, fill 2675, `1.5e-14`); the
+  even block under its **own** `β` reports `below == 1` from `N ≤ 20`
+  (`n = 5786`, `θ₀ = −7.512462`, fill 358) up through `N ≤ 40` (`n = 71071`,
+  fill 2218, 479 s, `6.4e-17`) and `N ≤ 42` (`n = 85261`, fill 2460, 795 s,
+  `1.3e-14`). So the reach is at least `42` in both blocks and `44` in the odd
+  one — **the ladder has not stopped, it has become expensive**: `N ≤ 44` still
+  has fourteen orders of headroom to the refusal rule — and the certified-witness
   range is at least that rather than `30`. The `562 s` even refusal was that
-  matrix at the *odd* threshold. What grows is the price: the count alone goes
-  `70 → 129 → 230 → 394 → 620 s` (~1.6× a shell) with fill `1960 → 2080 → 2309`,
-  so `N ≤ 44` (~`94000`, ~`1000 s`) is left unrun rather than unwalled. The ordering split survives the correction
+  matrix at the *odd* threshold. What grows is the price: in the odd block the
+  count alone goes `70 → 129 → 230 → 394 → 620 → 978 s` (~1.6× a shell) with fill
+  `1960 → 2080 → 2309 → 2675`, the even curve runs `295 → 479 → 795 s` with fill
+  `1960 → 2218 → 2460`, so `N ≤ 46` (~`1600 s`) is left unrun rather than
+  unwalled. The ordering split survives the correction
   and is now **pinned rather than bracketed**: RCM decides `N ≤ 32` at its own
   converged `β` (fill 1141, `θ₀ = −12.777793`, residual `7.6e-13` in 320 steps,
   ratio `2.6e-2`, 198 s — the largest ratio in the campaign, but still below
-  one, so a valid witness) and refuses `N ≤ 34` — re-measured through the same
-  harness (`θ₀ = −13.671622`, residual `9.0e-13`, `REFUSED` after 430 s) — while
-  nested dissection decides `42`; the even block at `N ≤ 30` decides under RCM
-  only at ratio `1.8e-2` against nested dissection's `5.3e-18`.
+  one, so a valid witness) and refuses `N ≤ 34` — asserted by
+  `the_converged_shift_does_not_rescue_rcm_at_34`, which hands RCM the same
+  `θ₀ = −13.671622` (residual `9.0e-13`) and requires `None` back — while nested
+  dissection decides `44`; so RCM's reach is bracketed to `(32, 34]` and the
+  even block at `N ≤ 30` decides under RCM only at ratio `1.8e-2` against nested
+  dissection's `5.3e-18`.
   `the_converged_shift_decides_where_the_loose_one_refused` (`#[ignore]`d, 707 s,
   rows 32 RCM / 34 / 36 odd / 36 even),
   `the_converged_shift_reaches_38_in_both_blocks` (623 s),
-  `the_converged_shift_reaches_40_in_the_odd_block` (454 s) and
-  `the_converged_shift_reaches_42_in_the_odd_block` (689 s) pin the rows above
-  (all print their step count), and
+  `the_converged_shift_reaches_40_in_the_odd_block` (454 s),
+  `the_converged_shift_reaches_42_in_the_odd_block` (689 s) and
+  `the_converged_shift_reaches_44_in_the_odd_block` (1061 s) pin the odd rows
+  above (all print their step count),
+  `the_even_block_reaches_42_in_its_own_sector` (1413 s for both) pins the even
+  `40`/`42` rows,
+  `the_converged_shift_does_not_rescue_rcm_at_34` (461 s) pins the refusal, and
   `the_even_block_certifies_a_witness_in_its_own_sector` (`N ≤ 20`) pins that 60
   steps leaves the residual above `1e-3` there, that the threshold needs more
   than 60 steps, and that it then lands under `1e-9` with a tighter `θ`.
