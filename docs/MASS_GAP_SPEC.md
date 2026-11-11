@@ -706,8 +706,8 @@ stops:
 | 34 | 34884 | refused | **refused** (85 s) |
 | 36 | 43320 | refused | refused (329 s) |
 
-So the last deciding sizes are `N ≤ 30` (RCM) and `N ≤ 33` (nested dissection),
-and the refusals are still the *bound*, not the clock: at `N ≤ 34` nested
+At that `β` the last deciding sizes are `N ≤ 30` (RCM) and `N ≤ 33` (nested
+dissection), and the refusals are still the *bound*, not the clock: at `N ≤ 34` nested
 dissection gives up 725 pivots from the end, at the same index (`j = 34159`)
 whether or not block pivots are available, where a trace of the trailing block
 shows relative errors from `0` (median `3.3e5`) to `1e15` — the last dense
@@ -716,16 +716,20 @@ separator's own elimination, not one small pivot. RCM's ratio climbs from
 `7.7e-17` at `N ≤ 32` and collapses between there and `34`, which is why the two
 orderings now have different walls. (`N ≤ 30` was first measured at `3.7e-4` on
 a basis that the harness bug below had left unnormalized — the fixed value is
-`2.0e-2`, and every number above is from runs after that fix.)
+`2.0e-2`, and every number above is from runs after that fix.) Every row here
+used `β = θ₀ + 0.5` with `θ₀` from 60 Lanczos steps, which on these blocks is
+an *unconverged* upper bound on `λ₁` — so the refusals above are properties of
+that shifted matrix, not of `N` and not of the block. *The wall was the shift*
+below re-measures them with a converged `β` and moves all of them out.
 
-**Two ranges, not one.** `below == 1` through `N ≤ 30`, so that is where the
-count certifies the gap; at `N ≤ 32, 33` it still *decides* but reports three and
-four eigenvalues below `β` — the 60-step Ritz value is no longer tight enough for
-`θ₀ + 0.5` to separate `λ₁` from `λ₂`, so those sizes measure the counter's
-numerical reach, not a gap. The honest statement is that the reach was pushed
-from `N ≤ 18` to `N ≤ 33` and the witness range to `N ≤ 30`, and that what ends
-the reach is the same accumulated rounding the two-term value made negligible at
-the grid's sizes.
+**Two ranges, not one — at that `β`.** `below == 1` through `N ≤ 30`, so at the
+campaign's own threshold that is where the count certifies the gap; at
+`N ≤ 32, 33` it still *decides* but reports three and four eigenvalues below `β`,
+because the 60-step Ritz value put `β` above `λ₂` as well as above `λ₁` — those
+rows measure the counter's numerical reach, not a gap. With `θ₀` converged both
+ranges move out together (`the wall was the shift` below): at `1e-12`–`1e-9`
+residual the count decides `N ≤ 36` and reports `below == 1` there, in both
+blocks.
 
 **2×2 block pivots: right, and not the lever.** The counter now falls back to a
 `2×2` block pivot when no diagonal in the trailing block has a decidable sign —
@@ -734,31 +738,70 @@ its inertia follows from `det` and the trace (`[[ε,1],[1,−ε]]` is the smalle
 case; `[[0,1],[1,0]]` used to be refused outright and is now counted as one
 negative). Both the block decision and the block Schur update are tested
 (`the_sparse_count_decides_a_coupled_pair_with_no_decidable_diagonal`,
-`the_block_update_reaches_the_trailing_rows`). It does **not** move the wall:
-asked at `N ≤ 34`, the pair search finds no determinantal sign either, and the
-refusal still lands on index `34159` — by that point every entry of the trailing
+`the_block_update_reaches_the_trailing_rows`). It did **not** move the wall:
+asked at `N ≤ 34` at the campaign's loose `β`, the pair search finds no
+determinantal sign either, and the refusal still landed on index `34159` — by that point every entry of the trailing
 block has an interval containing zero, so products of them are undecidable too.
 The wall is the whole block's condition, not the diagonals' availability.
 
-**The even sector's wall is one shell further out (2026-11-11).** The same
-truncation has a second `H`-invariant block (`Truncated::sector(true)`); run
-against the *same* `β`, nested dissection only:
+**The wall was the shift, not the block (2026-11-11).** The refusals above share
+one input that had never been checked: `β = θ₀ + 0.5` with `θ₀` from 60 Lanczos
+steps. `lanczos_ritz(...).ground()` returns `(θ, residual)`, and 60 steps does not
+converge on these blocks — the residual is `0.05` (odd `N ≤ 20`), `0.58` (even
+`N ≤ 20`) and `2.60` (odd `N ≤ 30`). So `θ₀` is a *loose* upper bound on `λ₁`:
+`−11.8546` against the converged `−13.6716` at `N ≤ 34`, and the count was asked
+to factor `H + 11.35·I`, sitting `1.8` above the ground instead of `0.5`.
+240 steps takes the residual to `1e-12`–`1e-9` everywhere below, and every size
+that refused now decides. Odd sector, nested dissection, its own converged `β`
+(`the_converged_shift_decides_where_the_loose_one_refused`, `#[ignore]`d, ~420 s):
 
-| `N≤` | `n` | ND |
-|---|---|---|
-| 30 | 24616 | decides, fill 1019, 29 s, ratio 1.4e-19, `below 1` |
-| 32 | 31161 | decides, fill 1198, 52 s, ratio 2.6e-17, `below 3` |
-| 34 | 38931 | decides, fill 1396, 93 s, ratio 7.2e-4, `below 7` |
-| 36 | 48070 | **refused** (562 s) |
+| `N≤` | `n` | `θ₀` | resid | below | bound/pivot | secs |
+|---|---|---|---|---|---|---|
+| 34 | 34884 | −13.671622 | 1.4e-12 | 1 | 3.8e-19 | 68 |
+| 36 | 43320 | −14.555276 | 2.8e-11 | 1 | 8.0e-18 | 126 |
 
-So the even block decides one shell beyond the odd one (`34` where the odd block
-stops at `33`) and refuses one shell beyond (`36`). Two things follow. `β` was
-taken from the odd sector's Ritz value rather than the even block's own, so
-`below` here counts even levels under the odd threshold and is not an even-sector
-gap witness — this table measures the counter, not a gap. And the wall is not a
-function of `n`: the even block at `N ≤ 34` is the *larger* matrix (`38931`
-against `34884`) and decides where the odd block refuses, so what ends the reach
-is each matrix's own trailing condition, not its dimension.
+The even block (`Truncated::sector(true)`, start = vacuum + `|1,1⟩` — both `R`-fixed
+with sign `+1`, leak `1.6e-16`, so the whole start lies in the block), also under
+its **own** converged `β` rather than the odd sector's:
+
+| `N≤` | `n` | fill | bound/pivot | secs | below |
+|---|---|---|---|---|---|
+| 20 | 5786 | 358 (RCM 379) | 2.1e-23 (RCM 1.8e-13) | <1 | 1 |
+| 30 | 24616 | 1019 (RCM 1044) | 5.3e-18 (RCM 1.8e-2) | 29 | 1 |
+| 32 | 31161 | 1198 | 5.4e-19 | 51 | 1 |
+| 34 | 38931 | 1396 | 4.7e-19 | 94 | 1 |
+| 36 | 48070 | 1604 | 5.2e-15 | 172 | 1 |
+
+At `N ≤ 20` the even `θ₀ = −7.512462` and at `N ≤ 36` it is `−14.557060`
+(residual `8.4e-10`) — the same 240-step convergence, in the second block. Four corrections
+follow.
+
+First, **the reach is not `N ≤ 33`**: nested dissection decides `N ≤ 36` in both
+blocks, at ratios `1e-15`–`1e-18`, tighter than any row of the old wall table.
+`N ≤ 38` has not been run, so the boundary is currently unmeasured rather than
+known.
+
+Second, **the witness range is not `N ≤ 30`**: every row above reports `below == 1`,
+i.e. `θ₀ + 0.5 ∈ (λ₁, λ₂]`, which is a genuine `λ₂` witness in the odd block *and*
+in the even block under its own threshold. The earlier even table — run at the odd
+sector's `β` — was not a witness (`below 3` at `N ≤ 30`), and that is a statement
+about the threshold, not about the block.
+
+Third, **the refusals were the shifted matrix**: `H − βI` with `β` `1.8` above the
+ground is worse conditioned for the elimination than one `0.5` above it, which is
+why the *same* even matrix refuses at `N ≤ 36` in 562 s at the odd `β` and decides
+in 172 s at its own. The old `below 3 / 4` readings at `N ≤ 32, 33` are the same
+effect from the other side.
+
+Fourth, **the ordering split survives it**: RCM at `N ≤ 34` still refuses at the
+converged `β` after 422 s, and the even block at `N ≤ 30` decides under RCM only at
+ratio `1.8e-2` against nested dissection's `5.3e-18`. So nested dissection's
+advantage is not an artifact of the loose shift, while the size wall was.
+
+The campaign's default tests pin both halves: `the_even_block_certifies_a_witness_in_its_own_sector`
+(`N ≤ 20`) asserts that the 60-step residual there is `> 1e-3`, that 240 steps bring
+it under `1e-9` with a tighter `θ`, and that both orderings then return `below == 1`
+with bound/pivot `< 1`.
 
 **Symmetric equilibration buys none of it.** `D(H − βI)D` with `D = diag(2ᵏ)`,
 `k` halving each diagonal's exponent, is an exact congruence — every multiplication

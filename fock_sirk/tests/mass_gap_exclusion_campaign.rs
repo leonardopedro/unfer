@@ -1708,6 +1708,219 @@ fn the_count_refuses_past_the_reach() {
     );
 }
 
+/// The reach, measured at a **converged** `β` instead of the loose 60-step one.
+///
+/// §6d's wall table used `β = θ₀ + 0.5` with `θ₀` from 60 Lanczos steps, and on
+/// these blocks that Ritz value is a *loose* upper bound on `λ₁`: `−11.8546`
+/// against the converged `−13.6716` at `N ≤ 34`, so the shifted matrix the count
+/// was asked to factor was `H + 11.35·I`, not `H + 13.17·I`. Re-running the same
+/// sizes with `β` from 240 steps decides all of them, with bound-to-pivot ratios
+/// `1e-18`–`1e-19` — tighter than any row of the old table. The wall was the
+/// shift, not the block, and the boundary is now past everything measured here.
+///
+/// `#[ignore]`d for cost (~470 s: two truncations at `N ≤ 34 / 36`, each with a
+/// 240-step Lanczos, plus the even block at `N ≤ 36`).
+#[test]
+#[ignore = "~470 s: N <= 34 / 36 with a 240-step Lanczos each"]
+fn the_converged_shift_decides_where_the_loose_one_refused() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    let rows: [(u32, bool); 3] = [(34, false), (36, false), (36, true)];
+    println!("g = 1, β = θ₀ + 0.5 with θ₀ from 240 Lanczos steps, nested dissection");
+    println!(
+        "{:>3} {:>5} {:>6} {:>10} {:>12} {:>7} {:>9} {:>7}",
+        "N", "block", "n", "θ₀", "resid", "below", "ratio", "secs"
+    );
+    for (n_max, even) in rows {
+        let trunc = Truncated::build(&h, n_max);
+        let sector = trunc.sector(even);
+        let columns = sector_columns(&trunc, &sector);
+        let matvec = trunc.sector_matvec(&sector);
+        let (start, leak) = if even {
+            let mut state = fock_state(&[(0, 1), (1, 1)]);
+            state.scale_and_add(&fock_state(&[]), Complex64::new(1.0, 0.0));
+            trunc.coordinates(&sector, &state)
+        } else {
+            trunc.coordinates(&sector, &r_odd_start())
+        };
+        assert!(
+            leak < 1e-12,
+            "the start must lie in its sector, leaked {leak:e}"
+        );
+        let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
+        let (theta, residual) = ritz.ground().expect("non-empty");
+        assert!(
+            residual < 1e-8,
+            "240 steps must resolve the ground here, residual {residual:e}"
+        );
+        let beta = theta + 0.5;
+        let clock = Instant::now();
+        let count = inertia_below_with(&columns, beta, Ordering::NestedDissection);
+        let secs = clock.elapsed().as_secs_f64();
+        let count = count.unwrap_or_else(|| {
+            panic!(
+                "nested dissection refuses N <= {n_max} at the converged β — that is the \
+                 opposite of what §6d records, and the section is stale"
+            )
+        });
+        println!(
+            "{n_max:>3} {:>5} {:>6} {theta:>10.6} {residual:>12.2e} {:>7} {:>9.2e} {secs:>7.1}",
+            if even { "even" } else { "odd" },
+            columns.len(),
+            count.below,
+            count.worst_ratio
+        );
+        assert_eq!(
+            count.below,
+            1,
+            "at N <= {n_max} ({} block) exactly one level must sit below β = θ₀ + 0.5 \
+             (below = {})",
+            if even { "even" } else { "odd" },
+            count.below
+        );
+    }
+}
+
+/// An **even-sector** `λ₂` witness, and the step count it costs.
+///
+/// The odd block's 60-step Ritz pair is what the campaign's `β = θ₀ + 0.5` was
+/// read off, and it is deliberately loose there (residual `2.6` at `N ≤ 30`) —
+/// the count still decides because `β` only has to land in `(λ₁, λ₂]`. The even
+/// block cannot be run that way: at 60 steps its residual is `5.8e-1`, the Ritz
+/// value is still `−7.5013` against the converged `−7.5125`, and the same
+/// `+0.5` lands above `λ₂`, so the count reports three eigenvalues below `β`
+/// instead of one and is **not** a witness. Both halves are asserted here, so
+/// the step count cannot be quietly reduced to the odd block's.
+#[test]
+fn the_even_block_certifies_a_witness_in_its_own_sector() {
+    use fock_sirk::{Ordering, inertia_below_with};
+
+    let h = qcd_ym_hamiltonian(1.0);
+    let trunc = Truncated::build(&h, 20);
+    let even_sector = trunc.sector(true);
+    let columns = sector_columns(&trunc, &even_sector);
+    let matvec = trunc.sector_matvec(&even_sector);
+
+    // A start inside the even sector: the vacuum and `|1,1⟩` are both `R`-fixed
+    // with sign `+1`. The residual from `coordinates` is checked first — a start
+    // carrying weight outside the sector would silently solve another problem.
+    let mut state = fock_state(&[(0, 1), (1, 1)]);
+    state.scale_and_add(&fock_state(&[]), Complex64::new(1.0, 0.0));
+    let (start, residual) = trunc.coordinates(&even_sector, &state);
+    assert!(
+        residual < 1e-12,
+        "the even start must lie in the even sector, leaked {residual:e}"
+    );
+
+    let short = lanczos_ritz(&matvec, columns.len(), &start, 60).expect("Lanczos");
+    let (theta_short, residual_short) = short.ground().expect("non-empty");
+    assert!(
+        residual_short > 1e-3,
+        "60 steps used to leave the even ground unresolved (residual {residual_short:e}); if it \
+         now converges in 60, this test is no longer the evidence that the step count matters"
+    );
+
+    let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
+    let (theta, residual) = ritz.ground().expect("non-empty");
+    assert!(
+        residual < 1e-9,
+        "240 steps must resolve the even ground, residual {residual:e}"
+    );
+    assert!(
+        theta < theta_short,
+        "a tighter Ritz value is a smaller one: {theta} against {theta_short}"
+    );
+
+    let beta = theta + 0.5;
+    let rcm = inertia_below_with(&columns, beta, Ordering::ReverseCuthillMckee)
+        .expect("RCM must decide at N <= 20");
+    let nd = inertia_below_with(&columns, beta, Ordering::NestedDissection)
+        .expect("nested dissection must decide at N <= 20");
+    println!(
+        "even block, N <= 20: n = {}, θ₀ = {theta:.9}, below {}/{} (RCM/ND), fill {}/{}",
+        columns.len(),
+        rcm.below,
+        nd.below,
+        rcm.fill,
+        nd.fill
+    );
+    for (name, count) in [("RCM", &rcm), ("ND", &nd)] {
+        assert_eq!(
+            count.below, 1,
+            "{name} must find exactly one eigenvalue below β = θ₀ + 0.5 — more than one and the \
+             count is a reach measurement, not a λ₂ witness (below = {})",
+            count.below
+        );
+    }
+    for (name, count) in [("RCM", &rcm), ("ND", &nd)] {
+        assert!(
+            count.worst_ratio < 1.0,
+            "{name} must decide without the bound reaching the pivot, ratio {:.2e}",
+            count.worst_ratio
+        );
+    }
+}
+
+/// The same witness past the odd block's wall, `N ≤ 30 / 32 / 34`.
+///
+/// `#[ignore]`d for cost (~320 s: three truncations, each with a 240-step
+/// Lanczos and one nested-dissection count). Under its **own** `β` the even
+/// block keeps `below == 1` at every size, which is what makes it a witness
+/// range four shells beyond the odd one's `N ≤ 30`.
+#[test]
+#[ignore = "~320 s: three truncations, a 240-step Lanczos and one count each"]
+fn the_even_block_witnesses_past_the_odd_reach() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    println!("g = 1, even block, β = θ₀ + 0.5 (θ₀ from 240 Lanczos steps)");
+    println!(
+        "{:>3} {:>6} {:>10} {:>12} {:>7} {:>9} {:>7}",
+        "N", "n", "θ₀", "resid", "below", "ratio", "secs"
+    );
+    for n_max in [30u32, 32, 34] {
+        let trunc = Truncated::build(&h, n_max);
+        let sector = trunc.sector(true);
+        let columns = sector_columns(&trunc, &sector);
+        let matvec = trunc.sector_matvec(&sector);
+        let mut state = fock_state(&[(0, 1), (1, 1)]);
+        state.scale_and_add(&fock_state(&[]), Complex64::new(1.0, 0.0));
+        let (start, leak) = trunc.coordinates(&sector, &state);
+        assert!(
+            leak < 1e-12,
+            "even start must lie in the sector, leaked {leak:e}"
+        );
+
+        let ritz = lanczos_ritz(&matvec, columns.len(), &start, 240).expect("Lanczos");
+        let (theta, residual) = ritz.ground().expect("non-empty");
+        let beta = theta + 0.5;
+        let clock = Instant::now();
+        let count = inertia_below_with(&columns, beta, Ordering::NestedDissection);
+        let secs = clock.elapsed().as_secs_f64();
+        let count = count.unwrap_or_else(|| {
+            panic!(
+                "nested dissection refuses the even block at N <= {n_max} — §6d records it \
+                 deciding here, so the wall has moved"
+            )
+        });
+        println!(
+            "{n_max:>3} {:>6} {theta:>10.6} {residual:>12.2e} {:>7} {:>9.2e} {secs:>7.1}",
+            columns.len(),
+            count.below,
+            count.worst_ratio
+        );
+        assert_eq!(
+            count.below, 1,
+            "at N <= {n_max} the even block must have exactly one level below β = θ₀ + 0.5 \
+             (below = {}), or this table is a reach measurement and not a witness",
+            count.below
+        );
+    }
+}
+
 /// The gap of `H_N` bracketed from both sides with **no diagonalization**: a
 /// sparse inertia count supplies each sector's `λ₂` witness, and the two Temple
 /// bounds turn the Ritz pairs into `[lower, upper]`. This is what the dense route

@@ -2546,24 +2546,34 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   `fock_state` normalized by `scale_and_add(1/‖ψ‖ − 1)`, whose coefficient rounds
   to `−1` once `‖ψ‖ = √(n!) ≥ 2⁵³` (occupation 30), silently capping every `N`
   this harness could build at 30; the amplitudes are divided out directly now.
-  The two ranges are distinct: `below == 1` only through `N ≤ 30`, so that is
-  the certified-witness range; at `N ≤ 32 / 33` the count still decides but
-  reports three and four eigenvalues below `β`, because the 60-step Ritz value
-  no longer separates `λ₁` from `λ₂` there. A `2×2` block-pivot fallback (used
-  when no diagonal in the trailing block has a decidable sign, with its inertia
-  from `det` and the trace) now counts `[[0,1],[1,0]]` instead of refusing, but
-  it does **not** move the wall: at `N ≤ 34` no determinantal sign is decidable
-  either and the refusal still lands on the same index `34159`. The even
-  reflection block (`Truncated::sector(true)`, 2026-11-11) is the one case
-  measured where the wall is not the odd block's: against the same `β`, nested
-  dissection still decides `N ≤ 30 / 32 / 34` (`n = 24616 / 31161 / 38931`, fill
-  1019 / 1198 / 1396, 29 / 52 / 93 s, ratio `1.4e-19 / 2.6e-17 / 7.2e-4`) and
-  refuses `N ≤ 36` after 562 s — one shell past the odd block's `33 / 34`
-  boundary. Since `β` came from the odd sector's Ritz value, the `below` counts
-  there (`1 / 3 / 7`) are not an even-sector gap witness; what the table
-  measures is the counter, and it shows the wall tracking each matrix's trailing
-  condition rather than its dimension — the `N ≤ 34` even matrix is the larger
-  one (`38931` against `34884`) and decides where the odd one refuses.
+  The two ranges are distinct *at that threshold*: `below == 1` only through
+  `N ≤ 30`; at `N ≤ 32 / 33` the count still decides but reports three and four
+  eigenvalues below `β`, because the 60-step Ritz value put `β` above `λ₂` as
+  well as above `λ₁`. A `2×2` block-pivot fallback (used when no diagonal in the
+  trailing block has a decidable sign, with its inertia from `det` and the trace)
+  now counts `[[0,1],[1,0]]` instead of refusing, but it did **not** move the
+  wall: at `N ≤ 34` at the loose `β` no determinantal sign was decidable either
+  and the refusal still landed on the same index `34159`. **The wall was the
+  shift, not the block (2026-11-11)**: every refusal above used `β = θ₀ + 0.5`
+  from 60 Lanczos steps, and 60 steps is unconverged here (residual `0.05` odd
+  `N ≤ 20`, `0.58` even `N ≤ 20`, `2.60` odd `N ≤ 30`), so `θ₀` was a loose
+  upper bound on `λ₁` (`−11.8546` against the converged `−13.6716` at `N ≤ 34`)
+  and the count was asked to factor `H + 11.35·I`, `1.8` above the ground rather
+  than `0.5`. At 240 steps (residual `1e-12`–`1e-9`) every one of those sizes
+  decides with `below == 1` — odd `N ≤ 34` (fill 1298, 68 s, `3.8e-19`), odd
+  `N ≤ 36` (`n = 43320`, fill 1494, 126 s, `8.0e-18`), even `N ≤ 36`
+  (`n = 48070`, fill 1604, 172 s, `5.2e-15`), the even block under its **own**
+  `β` reporting `below == 1` from `N ≤ 20` (`n = 5786`, `θ₀ = −7.512462`, fill
+  358) up. So the reach is at least `36` in both blocks and the boundary is
+  unmeasured (`N ≤ 38` not run), the certified-witness range is at least `36`
+  rather than `30`, and the `562 s` even refusal was that matrix at the *odd*
+  threshold. The ordering split survives the correction: RCM still refuses
+  `N ≤ 34` at the converged `β` after 422 s, and the even block at `N ≤ 30`
+  decides under RCM only at ratio `1.8e-2` against nested dissection's `5.3e-18`.
+  `the_converged_shift_decides_where_the_loose_one_refused` (`#[ignore]`d, ~420 s)
+  pins the odd rows, and `the_even_block_certifies_a_witness_in_its_own_sector`
+  (`N ≤ 20`) pins that 60 steps leaves the residual above `1e-3` there while 240
+  brings it under `1e-9` with a tighter `θ`.
   Nested dissection (`certificate::Ordering`) cuts the fill by 6–27 % on the grid
   and is 2–2.5× faster at the top, and it buys two sizes of reach; past the grid
   its fill advantage fades (652 vs 653 at `N ≤ 26`, 961 vs 927 at `N ≤ 30`),
