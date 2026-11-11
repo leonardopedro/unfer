@@ -740,6 +740,26 @@ refusal still lands on index `34159` — by that point every entry of the traili
 block has an interval containing zero, so products of them are undecidable too.
 The wall is the whole block's condition, not the diagonals' availability.
 
+**The even sector's wall is one shell further out (2026-11-11).** The same
+truncation has a second `H`-invariant block (`Truncated::sector(true)`); run
+against the *same* `β`, nested dissection only:
+
+| `N≤` | `n` | ND |
+|---|---|---|
+| 30 | 24616 | decides, fill 1019, 29 s, ratio 1.4e-19, `below 1` |
+| 32 | 31161 | decides, fill 1198, 52 s, ratio 2.6e-17, `below 3` |
+| 34 | 38931 | decides, fill 1396, 93 s, ratio 7.2e-4, `below 7` |
+| 36 | 48070 | **refused** (562 s) |
+
+So the even block decides one shell beyond the odd one (`34` where the odd block
+stops at `33`) and refuses one shell beyond (`36`). Two things follow. `β` was
+taken from the odd sector's Ritz value rather than the even block's own, so
+`below` here counts even levels under the odd threshold and is not an even-sector
+gap witness — this table measures the counter, not a gap. And the wall is not a
+function of `n`: the even block at `N ≤ 34` is the *larger* matrix (`38931`
+against `34884`) and decides where the odd block refuses, so what ends the reach
+is each matrix's own trailing condition, not its dimension.
+
 **Symmetric equilibration buys none of it.** `D(H − βI)D` with `D = diag(2ᵏ)`,
 `k` halving each diagonal's exponent, is an exact congruence — every multiplication
 is by a power of two, so the inertia and the error model carry over unchanged and

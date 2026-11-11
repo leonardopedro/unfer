@@ -2553,7 +2553,17 @@ assembly identity, an explicit non-resolution pin, and the dense computation.
   when no diagonal in the trailing block has a decidable sign, with its inertia
   from `det` and the trace) now counts `[[0,1],[1,0]]` instead of refusing, but
   it does **not** move the wall: at `N ≤ 34` no determinantal sign is decidable
-  either and the refusal still lands on the same index `34159`.
+  either and the refusal still lands on the same index `34159`. The even
+  reflection block (`Truncated::sector(true)`, 2026-11-11) is the one case
+  measured where the wall is not the odd block's: against the same `β`, nested
+  dissection still decides `N ≤ 30 / 32 / 34` (`n = 24616 / 31161 / 38931`, fill
+  1019 / 1198 / 1396, 29 / 52 / 93 s, ratio `1.4e-19 / 2.6e-17 / 7.2e-4`) and
+  refuses `N ≤ 36` after 562 s — one shell past the odd block's `33 / 34`
+  boundary. Since `β` came from the odd sector's Ritz value, the `below` counts
+  there (`1 / 3 / 7`) are not an even-sector gap witness; what the table
+  measures is the counter, and it shows the wall tracking each matrix's trailing
+  condition rather than its dimension — the `N ≤ 34` even matrix is the larger
+  one (`38931` against `34884`) and decides where the odd one refuses.
   Nested dissection (`certificate::Ordering`) cuts the fill by 6–27 % on the grid
   and is 2–2.5× faster at the top, and it buys two sizes of reach; past the grid
   its fill advantage fades (652 vs 653 at `N ≤ 26`, 961 vs 927 at `N ≤ 30`),
