@@ -3216,6 +3216,15 @@ for f in 0.05 0.10 0.20 0.30; do
       --proposal fixed,pilot --pilot-shrink 0
   done
 done
+# R2q: the same pinned basis and anchors, laplace arm (the `fixed` rows reproduce R2p exactly):
+for f in 0.05 0.10 0.20 0.30; do
+  for k in 1 2; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --anchor-seed $k --basis-anchor \
+      --proposal fixed,laplace --pilot-shrink 0.5
+  done
+done
 # the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
@@ -4696,7 +4705,63 @@ is conditional on this basis (a second pinned basis would test that).  And R2o's
 (19.92 %) did not reproduce here (best 17.58 %), so the draw that looked best in R2o was a
 basis+prior coincidence.
 
-### Recommendation (state after R2p: what to set, and how well each row is supported)
+### R2q — the laplace arm under one basis: the median gain is the target, the tail was the basis
+
+R2p's open cell, run: the same eight anchors, basis pinned at the ambient anchor
+(`--basis-anchor`), `--proposal fixed,laplace --pilot-shrink 0.5`.  Protocol identical to R2p
+(`--ranks 4 --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed`, `λ = 1`, data hash
+`0xba104db4f677b2ec`, identical basis line `94.030 -> 93.784`), so every cell here is the R2p
+target with the proposal swapped for the one R2o used.  Comparability is checked by the `fixed`
+rows: they reproduce R2p's **115 / 130 / 126 / 166 / 133 / 154 / 67 / 56** ESS and every accuracy
+and `R̂` exactly.
+
+| `f` | `k` | R2p pilot ESS / acc | R2o laplace ESS / acc (basis moving) | **R2q laplace** ESS / `R̂` / acc | laplace Brier / NLL | laplace ÷ pinned pilot |
+|---:|---:|---|---|---|---|---|
+| 0.05 | 1 | 425 / 15.23 % | 221 / 16.41 % | 464 / 1.007 / 15.23 % | 0.9992 / 2.9082 | 1.09× |
+| 0.05 | 2 | 463 / 13.67 % | 8 / 16.80 % | 574 / 1.009 / 13.67 % | 0.9903 / 2.8684 | 1.24× |
+| 0.10 | 1 | 522 / 15.23 % | 406 / 13.28 % | 503 / 1.006 / 17.58 % | 1.0029 / 2.9631 | 0.96× |
+| 0.10 | 2 | 430 / 17.58 % | 268 / 14.06 % | 504 / 1.010 / 17.58 % | 0.9919 / 2.8907 | 1.17× |
+| 0.20 | 1 | 540 / 13.28 % | 380 / 19.92 % | 432 / 1.009 / 13.28 % | 1.0086 / 3.0612 | 0.80× |
+| 0.20 | 2 | 362 / 13.67 % | 401 / 12.50 % | 617 / 1.002 / 13.67 % | 1.0090 / 2.9922 | 1.70× |
+| 0.30 | 1 | 233 / 14.06 % | 141 / 13.28 % | 368 / 1.004 / 14.06 % | 1.0268 / 3.1562 | 1.58× |
+| 0.30 | 2 | 229 / 6.64 % | 337 / 13.67 % | 276 / 1.009 / 6.64 % | 1.0435 / 3.1688 | 1.21× |
+
+**Result 70 — the median 1.19× is not basis-driven; the geomean was.**  Against R2p's pinned pilot
+arm the laplace gains are 1.09, 1.24, 0.96, 1.17, 0.80, 1.70, 1.58, 1.21 — median **1.189×**,
+geomean **1.188×**, **6/8** wins, every ratio inside **[0.80, 1.70]**.  R2o's moving-basis laplace
+ratios on the same eight anchors were median **1.186×** but geomean **1.42×**, range
+**[0.075, 25.06]**.  So the *typical* cell advantage is unchanged by pinning — it is a property of
+the rank-4 target's curvature at its mode (`m` 0.53–0.64, `β_i` 5.4e-2–0.13) — while the two
+spectacular R2o cells were artifacts of the moving basis: there pilot collapsed to ESS 16 and 38,
+and under the pin the same anchors give 362 and 233, so laplace is only 1.70× and 1.58×.
+
+**Result 71 — under one basis laplace is uniformly, predictably better than isotropic.**  Against
+the pinned `fixed` arm (56–166) the ratios are 4.03, 4.42, 3.99, 3.04, 3.25, 4.01, 5.49, 4.93 —
+geomean **4.08×**, minimum **3.04×**, no loss in eight cells (R2o: geomean 5.85× but range
+0.89–16.0× with one loss).  Laplace ESS is 276–617, mean **467**, sd **110** (R2o: 8–401, mean 270,
+sd 141); acceptance sits in a 2.2-point band, **45.4–47.6 %** (R2o: 37.4–48.5 %).  All eight mode
+searches converged in **982–1382** of 2 000 steps with `H_ii ≥ 0` in **4/4** coordinates.  The pin
+that stabilised the pilot stabilises the mode's width vector too.
+
+**Result 72 — no accuracy price, and ESS stops tracking accuracy.**  Laplace BMA accuracy equals
+the pinned pilot's in **7/8** cells; the one difference is at `f = 0.10, k = 1` (17.58 vs 15.23 %,
++2.35 points) and favours laplace.  Means 13.96 vs 13.67 %, sd 3.42 vs 3.16; per-`f` laplace means
+**14.45 / 17.58 / 13.47 / 10.35 %** keep the non-monotone shape R2o and R2p both found.  The worst
+cell reproduces exactly (6.64 %, Brier 1.0435, NLL 3.1688) — and is the cell where laplace beats
+isotropic by the most (4.93×): a better sampler cannot recover a bad prior mean.  ESS varies only
+2.2× across the eight anchors (CV 23 %) while accuracy spans 6.64–17.58 %, so accuracy can no longer
+be read off the mixing diagnostic.
+
+**Result 73 — what this settles and what it does not.**  Settled: `laplace` at the mode is
+load-bearing on the controlled basis as well (geomean 4.08× over isotropic, ≥ 3.0× in every cell),
+and its support should be quoted as **median 1.19× / geomean 1.19× / 0.80–1.70 per cell** against
+the pilot arm, not R2o's 1.42× geomean, which was carried by two collapses.  Not settled: this is
+still one pinned basis, so whether the 6.64 % cell is a property of the prior mean or of this
+basis is open (a second pinned basis would separate them); two anchors per magnitude still give a
+range, not a variance; and neither `rotlaplace` nor `--laplace-tau` was re-run under the pin — both
+remain retired on R2l/R2m grounds rather than on a control.
+
+### Recommendation (state after R2q: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4704,11 +4769,11 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor; **median 1.19×**, geomean 1.42× over 8 controlled anchors, 0.08–25×) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9× | load-bearing |
+| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor; **3.04–4.93×** vs isotropic, geomean **4.08×**, on the eight pinned-basis anchors; **median 1.19×** / geomean **1.19×** / 0.80–1.70× vs that basis's pilot arm — R2o's moving-basis geomean 1.42× was carried by two pilot collapses) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9×; R2q repeats it with the basis pinned | load-bearing |
 | proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
 | `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
 | `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
-| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16) | **open, attributed: ESS ← subspace, accuracy ← prior mean** |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16). R2q runs the `laplace` arm under the same pin: its per-cell gain over the pinned pilot arm is 0.80–1.70× (median 1.19×, geomean 1.19×, 6/8 wins) and 3.04–4.93× over isotropic in every cell, so the typical proposal gain is the target, while the accuracy spread (unchanged, 7/8 cells identical) is the prior mean | **open, attributed: ESS ← subspace, accuracy ← prior mean** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |

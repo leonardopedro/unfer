@@ -478,6 +478,23 @@ anchor-coupled basis. Open after R2p: the `laplace` arm was not re-run under the
 cells), a second pinned basis would test whether the accuracy attribution is basis-specific, and
 two directions per magnitude still give a range rather than a variance.
 
+R2q closed the laplace half: the same eight anchors and the same pinned basis, proposal
+`fixed,laplace --pilot-shrink 0.5`. The `fixed` rows reproduce R2p's ESS and accuracies exactly,
+so the table is one target with the proposal swapped. Against the pinned pilot arm the laplace
+gains are 1.09, 1.24, 0.96, 1.17, 0.80, 1.70, 1.58, 1.21 (median **1.189×**, geomean **1.188×**,
+6/8 wins, every ratio in [0.80, 1.70]) — the *median* is identical to R2o's **1.186×**, but R2o's
+geomean **1.42×** and 0.075–25.06× range are gone. The two spectacular R2o cells were pilot
+collapses created by the moving basis (ESS 16 and 38); under the pin the same anchors give 362 and
+233, so laplace is only 1.70× and 1.58×. So the typical laplace advantage is a property of the
+rank-4 target's curvature at its mode, and the tail was the basis. Against the pinned isotropic
+arm laplace is 3.04–4.93× (geomean 4.08×) in all eight cells, with no accuracy cost (7/8 cells
+identical, mean 13.96 vs 13.67 %), all mode searches converged in 982–1382 steps, and
+`H_ii ≥ 0` in 4/4 coordinates. Laplace ESS now varies only 2.2× across anchors (276–617, sd 110)
+while accuracy still spans 6.64–17.58 %, so the sampler no longer tracks accuracy at all. Remaining
+open: one pinned basis only (would the 6.64 % cell move under another?), two anchors per magnitude
+still yield a range rather than a variance, and `rotlaplace` / `--laplace-tau` are retired on
+R2l/R2m grounds without ever being re-run under the pin.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical
