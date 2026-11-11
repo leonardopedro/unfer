@@ -758,9 +758,11 @@ size that refused now decides. Odd sector, nested dissection, its own converged 
 `the_converged_shift_reaches_38_in_both_blocks` and
 `the_converged_shift_reaches_40_in_the_odd_block` and
 `the_converged_shift_reaches_42_in_the_odd_block` and
-`the_converged_shift_reaches_44_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
-454 / 689 / 1061 s, because each converges the Ritz pair first; the even rows come
-from `the_even_block_reaches_42_in_its_own_sector`, 1413 s for both):
+`the_converged_shift_reaches_44_in_the_odd_block` and
+`the_converged_shift_reaches_46_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
+454 / 689 / 1061 / 1715 s, because each converges the Ritz pair first; the even
+rows come from `the_even_block_reaches_42_in_its_own_sector` and
+`the_even_block_reaches_44_in_its_own_sector`, 1413 / 1323 s for both):
 
 | `N≤` | `n` | `θ₀` | resid | steps | below | bound/pivot | secs |
 |---|---|---|---|---|---|---|---|
@@ -770,6 +772,7 @@ from `the_even_block_reaches_42_in_its_own_sector`, 1413 s for both):
 | 40 | 64680 | −16.341870 | 1.9e-12 | 320 | 1 | 8.8e-17 | 394 |
 | 42 | 77924 | −17.237774 | 1.7e-12 | 320 | 1 | 5.0e-14 | 620 |
 | 44 | 93104 | −18.138131 | 2.6e-12 | 320 | 1 | 1.5e-14 | 978 |
+| 46 | 110400 | −19.039563 | 2.7e-12 | 320 | 1 | 5.8e-14 | 1552 |
 
 Every row here is test-backed rather than a one-off probe: each test asserts
 `below == 1`, `bound/pivot < 1`, and that the fill keeps growing with the
@@ -789,10 +792,11 @@ its **own** converged `β` rather than the odd sector's:
 | 38 | 58730 | 1960 | 9.1e-18 | 295 | 1 |
 | 40 | 71071 | 2218 | 6.4e-17 | 479 | 1 |
 | 42 | 85261 | 2460 | 1.3e-14 | 795 | 1 |
+| 44 | 101476 | 2958 | 8.4e-15 | 1214 | 1 |
 
 At `N ≤ 20` the even `θ₀ = −7.512462`, at `N ≤ 38` it is `−15.447425`
-(residual `1.5e-12`, 320 steps), at `N ≤ 40` `−16.340801` and at `N ≤ 42`
-`−17.238757` — the same convergence, in the second block, and near-degenerate
+(residual `1.5e-12`, 320 steps), at `N ≤ 40` `−16.340801`, at `N ≤ 42` `−17.238757` and at `N ≤ 44`
+`−18.137463` — the same convergence, in the second block, and near-degenerate
 with the odd block's values: the two grounds sit `4.1e-4` apart at `N ≤ 38`,
 `1.1e-3` at `40` (even above odd) and `9.8e-4` at `42` (even below odd), so each
 block holds one level below its own `β` and neither supplies the other's
@@ -808,8 +812,11 @@ expensive.** In the odd block the count alone goes
 curve runs `295 → 479 → 795 s` with fill `1960 → 2218 → 2460`, so both blocks
 stop at `42`/`44` for cost, not for correctness: the next odd shell is ~`1600 s`
 for the count and ~`1700 s` including its converged Lanczos, and nothing about
-the certificate suggests it would refuse. `N ≤ 46` (odd) and `N ≤ 44` (even) have
-not been run; `N ≤ 20`–`44` are the sizes this harness runs at all. Note that
+the certificate suggests it would refuse. `N ≤ 46` (odd) and `N ≤ 44` (even) are now run and decide as well (below == 1,
+bound/pivot `5.8e-14` / `8.4e-15`, fill 3120 / 2958); the ladder is priced, not
+walled — the next odd shell is ~`1600 s` for the count, and the harness's working
+range is set by wall time. `N ≤ 20`–`46` (odd) / `20`–`44` (even) are the sizes
+this harness runs at all. Note that
 the `N ≤ 38` and up rows needed **more** than the 240 steps the section used to
 call converged — at 240 the residual is `1.8e-8` there — which is why the tests
 now double until the residual is below `1e-9` and print the count.
