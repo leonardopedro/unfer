@@ -511,6 +511,24 @@ a coarse discrete average; the proper scores do not (NLL mean **3.59** vs 2.96, 
 R2r: one pin seed and one magnitude (1.0 rms) — a *near* pinned basis would separate "pinned" from
 "near" — and the already-pinned `--basis random` arm was not re-run as the stronger contrast.
 
+R2s replaced the two-directions-per-magnitude design with **six** (`--anchor-seed 1..6`, the first
+two being R2p's cells, verified by re-running `f = 0.05, k = 1` to the same ESS, `R̂`, accuracies,
+Brier and NLL), so the accuracy spread can be a variance rather than a range. Within-magnitude sd
+is **0.94 / 2.39 / 1.66 / 3.35** points against per-`f` means of 13.41 / 13.80 / 12.44 / 10.22 %:
+**69 %** of the total variance is inside a magnitude (within MS 5.14, between component 1.72,
+`F(3,20) = 3.00`, `p = 0.055`). Cell `MCSE(acc)` is 0.019–0.099, so the direction spread is 20–50×
+the Monte Carlo error and is a property of the prior mean, not the sampler. Variances are
+inhomogeneous and grow with `f` (Brown–Forsythe `F(3,20) = 4.10`, `p = 0.020`; 0.89 / 5.71 / 2.76 /
+11.19), and `f = 0.30` splits 6.64/6.64/8.59 vs 12.11/13.28/14.06, so the loss is directional
+rather than a smooth penalty on distance: the mean shift from `f = 0.05` to `f = 0.30` is only 3.19
+points (Welch `p = 0.067`). 23 of 24 cells still mix (`R̂ ≤ 1.031`); one (`f = 0.30, k = 5`, ESS 9,
+`R̂` 1.461) is a mixing failure even under the ambient pin, i.e. ~1 in 24 directions. So R2p's
+"the spread is the prior mean" holds only in the sense of the mean's *location*, and its `f = 0.30,
+k = 2` worst cell is now a tie with `k = 3`. Open after R2s: which geometric property of the
+direction predicts the loss (projection into the rank-4 basis, or predictive-logit spread — neither
+recorded); whether the same direction reproduces under another basis or data split; and the
+`laplace` arm has still only been swept at two directions per magnitude.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

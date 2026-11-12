@@ -3236,6 +3236,16 @@ for f in 0.05 0.10 0.20 0.30; do
       --proposal fixed,pilot --pilot-shrink 0
   done
 done
+# R2s: six directions per magnitude on the ambient pin (`k = 1, 2` are R2p's cells and
+# reproduce exactly; only `k = 3..6` were run in R2s, 24 cells in total):
+for f in 0.05 0.10 0.20 0.30; do
+  for k in 1 2 3 4 5 6; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --anchor-seed $k --basis-anchor \
+      --proposal fixed,pilot --pilot-shrink 0
+  done
+done
 # the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
@@ -4714,7 +4724,9 @@ further cells at ~17 min each), so whether R2o's median 1.19× laplace advantage
 ambient anchor is one of infinitely many pinned bases, so "the accuracy spread is the prior mean"
 is conditional on this basis (a second pinned basis would test that).  And R2o's accuracy ceiling
 (19.92 %) did not reproduce here (best 17.58 %), so the draw that looked best in R2o was a
-basis+prior coincidence.
+basis+prior coincidence.  *(R2s, below, closes the range-vs-variance cell: with six directions per
+magnitude the spread is 69 % within-magnitude, i.e. the prior mean's **direction** rather than its
+distance, and Result 67's phrasing is too strong in that respect.)*
 
 ### R2q — the laplace arm under one basis: the median gain is the target, the tail was the basis
 
@@ -4835,7 +4847,112 @@ separate "pinned" from "near" — the already-pinned `--basis random` arm was no
 stronger contrast, and the laplace arm was not repeated under this basis (it would test whether
 median 1.19× is a mode-curvature property or another ambient-basis effect).
 
-### Recommendation (state after R2r: what to set, and how well each row is supported)
+### R2s — six anchor directions per magnitude: the accuracy spread is the direction, not the magnitude
+
+R2p and R2r both reported the accuracy spread as a **range over two directions per magnitude**, and
+both read it as a prior-mean effect.  Two draws cannot separate "how far the anchor moved" from
+"which way it moved", so this repeats the ambient-pinned sweep at **six independent directions per
+magnitude** (`--anchor-seed 1..6`), 24 cells on one basis and one data hash.  The first two seeds at
+every magnitude are R2p's own cells; comparability was checked rather than assumed by re-running
+`f = 0.05, k = 1`, which reproduces R2p exactly (fixed 115 / 1.021 / 15.23 %, pilot 425 / 1.014 /
+15.23 %, Brier 0.9996, NLL 2.9090, same basis line and anchor shift).  So only 16 cells are new
+(`k = 3..6`), run 06:17–08:39 at ~15 min each on two concurrent streams.  Protocol otherwise
+unchanged: `--ranks 4 --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed --basis-anchor
+--proposal fixed,pilot --pilot-shrink 0`, `λ = 1`, `σ = 0.35`, `β = 0.05`, data hash
+`0xba104db4f677b2ec`, basis `94.030 -> 93.784` in every cell.
+
+| `f` | `k` | pilot ESS | `R̂` | BMA acc | MCSE(acc) | Brier | NLL |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.05 | 1 | 425 | 1.014 | 15.23 % | 0.038 | 0.9996 | 2.9090 |
+| 0.05 | 2 | 463 | 1.008 | 13.67 % | 0.050 | 0.9908 | 2.8694 |
+| 0.05 | 3 | 358 | 1.013 | 12.89 % | 0.066 | 0.9918 | 2.8608 |
+| 0.05 | 4 | 365 | 1.009 | 12.89 % | 0.038 | 0.9899 | 2.8603 |
+| 0.05 | 5 | 265 | 1.031 | 12.89 % | 0.048 | 0.9944 | 2.8739 |
+| 0.05 | 6 | 339 | 1.027 | 12.89 % | 0.040 | 0.9934 | 2.8816 |
+| 0.10 | 1 | 522 | 1.008 | 15.23 % | 0.068 | 1.0032 | 2.9640 |
+| 0.10 | 2 | 430 | 1.005 | 17.58 % | 0.047 | 0.9923 | 2.8914 |
+| 0.10 | 3 | 301 | 1.024 | 12.89 % | 0.019 | 0.9946 | 2.8698 |
+| 0.10 | 4 | 403 | 1.013 | 13.67 % | 0.037 | 0.9904 | 2.8635 |
+| 0.10 | 5 | 274 | 1.021 | 12.89 % | 0.043 | 0.9965 | 2.8859 |
+| 0.10 | 6 | 330 | 1.010 | 10.55 % | 0.058 | 0.9963 | 2.9070 |
+| 0.20 | 1 | 540 | 1.006 | 13.28 % | 0.047 | 1.0090 | 3.0616 |
+| 0.20 | 2 | 362 | 1.016 | 13.67 % | 0.056 | 1.0094 | 2.9929 |
+| 0.20 | 3 | 502 | 1.015 | 13.67 % | 0.037 | 1.0252 | 2.9634 |
+| 0.20 | 4 | 312 | 1.015 | **9.38 %** | 0.071 | 1.0005 | 2.8984 |
+| 0.20 | 5 | 301 | 1.012 | 11.72 % | 0.044 | 1.0056 | 2.9228 |
+| 0.20 | 6 | 391 | 1.012 | 12.89 % | 0.039 | 1.0079 | 2.9916 |
+| 0.30 | 1 | 233 | 1.019 | 14.06 % | 0.053 | 1.0277 | 3.1579 |
+| 0.30 | 2 | 229 | 1.017 | **6.64 %** | 0.099 | 1.0439 | 3.1682 |
+| 0.30 | 3 | 233 | 1.001 | **6.64 %** | 0.053 | 1.0821 | 3.1368 |
+| 0.30 | 4 | 267 | 1.010 | 12.11 % | 0.059 | 1.0214 | 2.9771 |
+| 0.30 | 5 | **9** | **1.461** | 8.59 % | **0.473** | 1.0167 | 2.9011 |
+| 0.30 | 6 | 96 | 1.028 | 13.28 % | **0.336** | 1.0332 | 3.1403 |
+
+| `f` | n | mean acc | sd (95 % CI) | var | median | span | rms MCSE |
+|---:|---:|---:|---|---:|---:|---:|---:|
+| 0.05 | 6 | 13.41 % | **0.94** (0.59–2.32) | 0.89 | 12.89 | 2.34 | 0.048 |
+| 0.10 | 6 | 13.80 % | **2.39** (1.49–5.86) | 5.71 | 13.28 | 7.03 | 0.048 |
+| 0.20 | 6 | 12.44 % | **1.66** (1.04–4.08) | 2.76 | 13.09 | 4.29 | 0.050 |
+| 0.30 | 6 | 10.22 % | **3.35** (2.09–8.21) | 11.19 | 10.35 | 7.42 | 0.243 |
+| all | 24 | 12.47 % | 2.55 | 6.51 | 12.89 | 10.94 | — |
+
+The sd intervals are the `χ²` interval on 5 df; the `f = 0.30` rms MCSE is inflated by the one
+broken cell below.  Excluding that cell: `f = 0.30` n = 5, mean 10.55, sd 3.63; all 23 cells mean
+**12.64**, sd **2.46**.
+
+**Result 78 — direction, not magnitude, is the dominant variance component.**  The per-magnitude
+accuracies are 12.89/12.89/12.89/12.89/13.67/15.23, then 10.55/12.89/12.89/13.67/15.23/17.58, then
+9.38/11.72/12.89/13.28/13.67/13.67, then 6.64/6.64/8.59/12.11/13.28/14.06: within-magnitude sd
+**0.94 / 2.39 / 1.66 / 3.35** points against per-`f` mean differences of 13.41 / 13.80 / 12.44 /
+10.22 %.  A one-way decomposition puts **69 % of the total variance inside a magnitude** (within
+MS 5.14 vs a between-magnitude component of 1.72, `F(3,20) = 3.00`, `p = 0.055`) — so the magnitude
+effect is a ~3-point shift that this design cannot resolve, while the direction effect is
+established at every magnitude.  R2p's sd 3.16 and R2r's 3.34 were therefore **mostly the
+within-magnitude spread, not a magnitude trend**: the right summary of this family is "at fixed
+`f`, accuracy varies across directions with sd 1–3.4 points", and the only sound way to report it
+is a variance (or sd), not the 2-draw range R2p and R2r quoted.
+
+**Result 79 — the spread is model, not Monte Carlo.**  Per-cell `MCSE(acc)` is **0.019–0.099**
+(0.473 only in the broken cell), rms 0.048–0.050 per magnitude, so the direction sd is **20–50× the
+Monte Carlo error** at `f ≤ 0.20`.  All 24 cells share the basis, the data hash and the rank-4
+restriction, so the differences are the prior mean itself.  The readout is quantised at `1/256`
+(0.39 points): 12 distinct values appear, with **seven** cells at exactly 12.89 %, which is why
+`f = 0.05` shows an sd of 0.94 with a median equal to its mode.
+
+**Result 80 — the variance grows with jitter even though the mean does not move much.**
+Brown–Forsythe on the four groups gives `F(3,20) = 4.10`, `p = 0.020`: variances 0.89 / 5.71 / 2.76 /
+11.19 are **not** homogeneous, and the trend is upward.  At `f = 0.30` the six cells split into
+6.64/6.64/8.59 versus 12.11/13.28/14.06 — a bimodal look, roughly "two thirds of directions are
+unharmed, one third lands where the rank-4 posterior mean predicts poorly".  The *mean* shift from
+`f = 0.05` to `f = 0.30` is 3.19 points, Welch `t = 2.25` on 5.8 df, `p = 0.067` — borderline, and
+weaker evidence than the variance result.  R2o/R2p/R2q's "per-`f` means are not monotone" survives
+(13.41 < 13.80 > 12.44 > 10.22), but with 6 draws the downward step at `f = 0.30` is large enough
+that a monotone-decline reading is also defensible; two directions could not tell these apart.
+
+**Result 81 — the ambient pin does not guarantee mixing on every direction.**  23 of 24 cells sit at
+`R̂ ≤ 1.031`; the exception is `f = 0.30, k = 5` (ESS **9**, `R̂` **1.461**, `MCSE(acc)` 0.473), so
+even under the sane basis about **1 in 24** anchor directions produces a badly mixed chain, and its
+8.59 % is chain error rather than a model reading.  `f = 0.30, k = 6` is not far off (ESS 96, `R̂`
+1.028, MCSE 0.336).  The proper scores degrade with `f`, mean and spread both monotone
+(Brier 0.9933 / 0.9956 / 1.0096 / 1.0375; NLL 2.876 / 2.897 / 2.972 / 3.080, sd 0.018 → 0.113), so
+the accuracy *improvement* at mid magnitudes is not a calibration improvement — accuracy and NLL
+correlate **−0.34** across the 24 cells.
+
+**Result 82 — what this settles and what it does not.**  Settled: at one basis, one data split and
+six directions per magnitude, the accuracy scatter is a **direction** effect with sd 0.9–3.4 points
+(69 % of the variance), the magnitude effect on the mean is ≈ 3 points and not significant at
+`n = 6`, and the direction scatter is 20–50× the Monte Carlo error — so R2p's "the accuracy spread
+is the prior mean" should be read as "the location of the prior mean at fixed rms", not as a trend
+in the jitter size, and R2r's "the worst anchor is `f = 0.30, k = 2`" is now a **tie** (6.64 % at
+`k = 2` and `k = 3`) with a third cell at 8.59 %.  Not settled: which geometric property of the
+direction predicts the loss (the shift's projection into the rank-4 basis, or the spread of the
+resulting predictive logits, would be the candidates — neither was recorded); whether the
+6.64 directions reproduce at another data split or under R2r's second basis (the same direction has
+never been run twice under a different basis or split); whether the `f = 0.30` bimodality is a
+threshold or a mixture; and the `laplace` arm was still not swept over directions, so its median
+1.19× rests on two per magnitude.
+
+### Recommendation (state after R2s: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4847,7 +4964,7 @@ implemented, verified and found not to matter, so it should stay off rather than
 | proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
 | `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
 | `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
-| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16). R2q runs the `laplace` arm under the same pin: its per-cell gain over the pinned pilot arm is 0.80–1.70× (median 1.19×, geomean 1.19×, 6/8 wins) and 3.04–4.93× over isotropic in every cell, so the typical proposal gain is the target, while the accuracy spread (unchanged, 7/8 cells identical) is the prior mean. R2r pins a *second*, non-ambient basis (`--basis-anchor-seed 1`): accuracy keeps its spread (sd 3.34, span 9.77, worst cell the same `f = 0.30, k = 2` anchor) but ESS collapses 6.6× (mean 60.6, `R̂` to 16.0) and NLL degrades 0.63 nats — so the accuracy attribution survives, the ESS gain was the **ambient** basis, and proper scores must be gated on `R̂`/ESS | **open, attributed: accuracy ← prior mean; ESS ← the ambient basis specifically** |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16). R2q runs the `laplace` arm under the same pin: its per-cell gain over the pinned pilot arm is 0.80–1.70× (median 1.19×, geomean 1.19×, 6/8 wins) and 3.04–4.93× over isotropic in every cell, so the typical proposal gain is the target, while the accuracy spread (unchanged, 7/8 cells identical) is the prior mean. R2r pins a *second*, non-ambient basis (`--basis-anchor-seed 1`): accuracy keeps its spread (sd 3.34, span 9.77, worst cell the same `f = 0.30, k = 2` anchor) but ESS collapses 6.6× (mean 60.6, `R̂` to 16.0) and NLL degrades 0.63 nats — so the accuracy attribution survives, the ESS gain was the **ambient** basis, and proper scores must be gated on `R̂`/ESS. R2s sweeps **six** directions per magnitude under the ambient pin: within-magnitude sd **0.94 / 2.39 / 1.66 / 3.35** points is **69 %** of the total variance, the per-`f` means (13.41 / 13.80 / 12.44 / 10.22 %) differ at only `F(3,20) = 3.00`, `p = 0.055`, the direction scatter is 20–50× the cell MCSE, and the variance grows with `f` (Brown–Forsythe `p = 0.020`) even though the mean barely moves — so the spread is the **direction** of the prior-mean shift, and it must be quoted as an sd, not a 2-draw range | **open, attributed: accuracy ← the direction of the prior-mean shift at fixed rms (sd 0.9–3.4 points); ESS ← the ambient basis specifically** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
