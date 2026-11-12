@@ -250,8 +250,9 @@ impl DtBatch {
     /// Flattened indices of `(b, t)` state slots whose step is real, and the
     /// action ids those steps predict.  Shared by the loss and any per-step
     /// readout, so a readout cannot disagree with the loss about which steps
-    /// count.
-    fn scored_steps(&self) -> Result<(Vec<u32>, Vec<u32>)> {
+    /// count.  Public for exactly that reason: `policy_readout` selects steps
+    /// through this function rather than re-deriving the `3t + 1` rule.
+    pub fn scored_steps(&self) -> Result<(Vec<u32>, Vec<u32>)> {
         let (b, t) = self.mask.dims2()?;
         let slots = 3 * t;
         let m = self.mask.flatten_all()?.to_vec1::<f32>()?;
@@ -501,15 +502,9 @@ impl Potential for DtPotential {
             .unwrap_or(f64::INFINITY)
     }
 
-    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor> {
-        let (loss, grad) = dt_loss_and_grad(
-            theta,
-            &self.shapes,
-            self.variant,
-            &self.batch,
-            NormGrad::Exact,
-        )
-        .ok()?;
+    fn mean_grad_with(&self, theta: &Tensor, norm: NormGrad) -> Option<Tensor> {
+        let (loss, grad) =
+            dt_loss_and_grad(theta, &self.shapes, self.variant, &self.batch, norm).ok()?;
         if !loss.is_finite() {
             return None;
         }

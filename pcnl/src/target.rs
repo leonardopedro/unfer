@@ -67,8 +67,20 @@ pub trait Potential {
     /// Mean loss per term at `θ`; `+∞` where the model cannot produce a finite
     /// loss, so a divergent proposal is a rejection.
     fn mean_loss(&self, theta: &Tensor) -> f64;
-    /// `∇_θ mean_loss(θ)` under the implementation's own derivative convention.
-    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor>;
+    /// `∇_θ mean_loss(θ)` under this potential's default derivative convention
+    /// (the exact one, matching a finite difference of [`Self::mean_loss`]).
+    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor> {
+        self.mean_grad_with(theta, NormGrad::Exact)
+    }
+    /// The same gradient with the convention stated by the caller.
+    ///
+    /// The convention belongs to the *caller* and not to the likelihood: the
+    /// recorded R0–R2 anchors were pre-trained with `Stopped` (`momentum_sgd`
+    /// through `loss_and_grad`), while finite-difference checks need `Exact`.
+    /// Baking one into the impl is how a generic pre-train silently produces a
+    /// different anchor from the historical one — so the generic optimizer in
+    /// `experiment::PotentialAnchor` passes it explicitly.
+    fn mean_grad_with(&self, theta: &Tensor, norm: NormGrad) -> Option<Tensor>;
     /// Short identity for logs and manifests (`"classifier"`, `"dt-softmax"`).
     fn label(&self) -> &'static str;
 }
@@ -124,14 +136,14 @@ impl Potential for ClassifierPotential {
             .unwrap_or(f64::INFINITY)
     }
 
-    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor> {
+    fn mean_grad_with(&self, theta: &Tensor, norm: NormGrad) -> Option<Tensor> {
         let (loss, mean_grad) = crate::model::loss_and_grad_norm(
             theta,
             &self.shapes,
             self.variant,
             &self.data.train_x,
             &self.data.train_y,
-            NormGrad::Exact,
+            norm,
         )
         .ok()?;
         if !loss.is_finite() {

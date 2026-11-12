@@ -25,9 +25,11 @@ use crate::manifest::{
     CodeId, DataId, MetricRecord, ModelId, Phase, RunManifest, SamplerId, TargetId, WorkId,
 };
 use crate::model::{Shapes, Variant, init_flat};
+use crate::normalize::NormGrad;
 use crate::persist::save_chain_trajectory;
 use crate::sampler::{SgPcnlScheduler, SgPcnlState, norm};
-use crate::task::{BatchLoader, Dataset, Task, adam, momentum_sgd, sgld_chain};
+use crate::target::{ClassifierPotential, Potential};
+use crate::task::{BatchLoader, Dataset, PRETRAIN_CLIP, Task, adam, momentum_sgd, sgld_chain};
 use candle_core::Tensor;
 use rand::{Rng, SeedableRng};
 use std::path::PathBuf;
@@ -932,21 +934,126 @@ pub struct AnchorSetup {
     pub theta0: Tensor,
 }
 
+/// The three seed offsets an anchor is defined by, in one place.
+///
+/// They are a function and not three call sites because the anchor's identity
+/// is the triple: an arm that re-derives `seed + 1` inline is one refactor away
+/// from drawing `D_B` from `seed`, which is the mistake `AnchorSetup`'s own
+/// doc records.  `PotentialAnchor` uses this too, so the DT anchor cannot drift
+/// from the classifier's seeds.
+pub fn anchor_seeds(seed: u64) -> (u64, u64, u64) {
+    (seed, seed.wrapping_add(1), seed.wrapping_add(2))
+}
+
+/// The frozen objects an anchor needs, for **any** potential: the two draws,
+/// the start point, and a pre-train that does not care which likelihood it is
+/// descending on.
+///
+/// `AnchorSetup` is the classifier-typed form of this — it carries `Dataset`s
+/// because every ambient path (`run_variant`, `bma`, the SGLD twin) takes them
+/// concretely.  This type is what the DT arm uses: `AnchorSetup`'s seeds, its
+/// `anchor_hash`, and its clip/momentum/trace contract, with
+/// `policy_model::DtPotential` in place of the classifier.  Duplicating the
+/// seeds or the update rule there instead would produce an anchor that is not
+/// comparable with the ambient one while looking like it is.
+///
+/// The optimizer is *not* the potential's business, and neither is the
+/// derivative convention: [`Self::pretrain`] takes a [`NormGrad`] and the
+/// caller states it.  Historically that convention is `Stopped` (see
+/// `task::momentum_sgd`), which is why the equivalence test below passes
+/// `NormGrad::Stopped` — a generic pre-train that silently used `Exact` would
+/// move the anchor by a different amount and no table would show it.
+pub struct PotentialAnchor<P: Potential> {
+    pub data_a: P,
+    pub data_b: P,
+    pub theta0: Tensor,
+}
+
+impl<P: Potential> PotentialAnchor<P> {
+    pub fn new(data_a: P, data_b: P, theta0: Tensor) -> Self {
+        Self {
+            data_a,
+            data_b,
+            theta0,
+        }
+    }
+
+    /// Heavy-ball SGD with the ambient contract: `v ← μ·v − lr·g`, `θ ← θ + v`,
+    /// gradient clipped to [`PRETRAIN_CLIP`], loss trace kept, a non-finite loss
+    /// ends the run and the trace is left as the evidence.
+    ///
+    /// This is [`momentum_sgd`] with the likelihood replaced, so an arm cannot
+    /// “pre-train” by a different rule and still call its anchor ambient.  The
+    /// test below pins it bitwise against `momentum_sgd` on the classifier.
+    pub fn pretrain(
+        &self,
+        steps: usize,
+        lr: f64,
+        momentum: f64,
+        norm: NormGrad,
+    ) -> (Tensor, Vec<f64>) {
+        let mut theta = self.theta0.clone();
+        let mut vel =
+            Tensor::zeros(theta.dims(), candle_core::DType::F32, theta.device()).expect("cpu");
+        let mut trace = Vec::with_capacity(steps);
+        for _ in 0..steps {
+            let loss = self.data_a.mean_loss(&theta);
+            trace.push(loss);
+            if !loss.is_finite() {
+                break;
+            }
+            let Some(grad) = self.data_a.mean_grad_with(&theta, norm) else {
+                break;
+            };
+            let g_norm = grad
+                .sqr()
+                .and_then(|s| s.sum_all())
+                .and_then(|s| s.sqrt())
+                .and_then(|s| s.to_scalar::<f32>())
+                .map(|v| v as f64)
+                .unwrap_or(f64::NAN);
+            let grad = if g_norm.is_finite() && g_norm > PRETRAIN_CLIP {
+                grad.affine(PRETRAIN_CLIP / g_norm, 0.0).expect("clip")
+            } else {
+                grad
+            };
+            vel = (vel.affine(momentum, 0.0).expect("v") - grad.affine(lr, 0.0).expect("g"))
+                .expect("v'");
+            theta = (&theta + &vel).expect("theta'");
+        }
+        (theta, trace)
+    }
+
+    /// [`anchor_hash`] of the pre-trained point — the same function the ambient
+    /// report publishes, not a second hash for a second model.
+    pub fn pretrained_hash(&self, steps: usize, lr: f64, momentum: f64, norm: NormGrad) -> u64 {
+        let (theta, _) = self.pretrain(steps, lr, momentum, norm);
+        anchor_hash(&theta)
+    }
+}
+
+impl PotentialAnchor<ClassifierPotential> {
+    /// The classifier anchor as a potential (the pre-train half of
+    /// [`AnchorSetup`]).
+    pub fn classifier(setup: AnchorSetup, shapes: Shapes, variant: Variant) -> Self {
+        Self::new(
+            ClassifierPotential::new(setup.data_a, shapes, variant),
+            ClassifierPotential::new(setup.data_b, shapes, variant),
+            setup.theta0,
+        )
+    }
+}
+
 impl AnchorSetup {
     pub fn new(cfg: &Config) -> Self {
+        let (seed_a, seed_b, seed_theta) = anchor_seeds(cfg.seed);
         Self {
-            data_a: Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, cfg.seed),
+            data_a: Dataset::new(Task::A, cfg.k, cfg.n_train, cfg.n_test, seed_a),
             // Task B gets its own draw: sharing `seed` with Task A would make
             // the two datasets correlated in a way the ambient report never
             // has, and its `DataId::seed` records `cfg.seed` for both.
-            data_b: Dataset::new(
-                cfg.task_b,
-                cfg.k,
-                cfg.n_train,
-                cfg.n_test,
-                cfg.seed.wrapping_add(1),
-            ),
-            theta0: init_flat(&cfg.shapes, cfg.init_std, cfg.seed.wrapping_add(2)),
+            data_b: Dataset::new(cfg.task_b, cfg.k, cfg.n_train, cfg.n_test, seed_b),
+            theta0: init_flat(&cfg.shapes, cfg.init_std, seed_theta),
         }
     }
 
@@ -1677,6 +1784,61 @@ mod tests {
         assert_eq!(
             trace1.last().unwrap().to_bits(),
             trace2.last().unwrap().to_bits()
+        );
+    }
+
+    /// The generic pre-train *is* the ambient one, not a lookalike: same
+    /// samples, same clip, same momentum, and — because the caller states it —
+    /// the same derivative convention.  The check is bitwise on `θ` and on the
+    /// loss trace, so `PotentialAnchor` can be said to reproduce the anchor
+    /// rather than to approximate it.
+    #[test]
+    fn potential_anchor_reproduces_momentum_sgd_bitwise() {
+        let cfg = Config::quick();
+        let setup = AnchorSetup::new(&cfg);
+        let generic =
+            PotentialAnchor::classifier(AnchorSetup::new(&cfg), cfg.shapes, Variant::Cosine);
+        let (steps, lr, momentum) = (3, cfg.pretrain_lr, 0.9);
+        let (sgd, trace_sgd) = momentum_sgd(
+            &setup.data_a,
+            &cfg.shapes,
+            Variant::Cosine,
+            setup.theta0.clone(),
+            steps,
+            lr,
+            momentum,
+        );
+        let (potential, trace_pot) = generic.pretrain(steps, lr, momentum, NormGrad::Stopped);
+        assert_eq!(
+            anchor_hash(&sgd),
+            anchor_hash(&potential),
+            "the generic pre-train moved the anchor"
+        );
+        assert_eq!(trace_sgd.len(), trace_pot.len());
+        for (a, b) in trace_sgd.iter().zip(trace_pot.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits(), "loss traces differ: {a} vs {b}");
+        }
+        // The published hash helper is the same function, not a second one.
+        assert_eq!(
+            generic.pretrained_hash(steps, lr, momentum, NormGrad::Stopped),
+            anchor_hash(&sgd)
+        );
+    }
+
+    /// And the convention matters: `Exact` is a different anchor, which is why
+    /// it is a parameter and not a default baked into the trait.
+    #[test]
+    fn potential_anchor_convention_changes_the_anchor() {
+        let cfg = Config::quick();
+        let generic =
+            PotentialAnchor::classifier(AnchorSetup::new(&cfg), cfg.shapes, Variant::Cosine);
+        let opts = (2, cfg.pretrain_lr, 0.9);
+        let exact = generic.pretrain(opts.0, opts.1, opts.2, NormGrad::Exact);
+        let stopped = generic.pretrain(opts.0, opts.1, opts.2, NormGrad::Stopped);
+        assert_ne!(
+            anchor_hash(&exact.0),
+            anchor_hash(&stopped.0),
+            "Exact and Stopped produced the same anchor"
         );
     }
 

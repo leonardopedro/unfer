@@ -56,6 +56,7 @@ pub mod model;
 pub mod normalize;
 pub mod persist;
 pub mod policy_model;
+pub mod policy_readout;
 pub mod radial;
 pub mod readout;
 pub mod sampler;

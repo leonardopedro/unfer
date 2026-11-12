@@ -802,8 +802,27 @@ effects.
 (value iteration, refinement gap, behaviour corpora, trajectory splits, DT tokenisation).
 `DtSpec::bin` is `[rtg_lo, 0]`-clipped and `mdp::MdpSolution::optimal_value` is the interpolated
 Bellman optimum rather than `interp(V_0)`, because the two differ by ~0.12 out of a −1.99 return
-off-grid and only the first matches the policy that is rolled out. Items 4–6 and every cell in
-R7.4–R7.5 are still open; nothing here is evidence, so no ledger row is owed yet.
+off-grid and only the first matches the policy that is rolled out.
+
+Items 4–5 exist too, and they are the readout rather than a result: `policy_readout` has
+per-step proper scores under all three `Rule`s (its log column equals `dt_loss` to 1e-5 on the same
+batch, pinned by `dt_step_scores_equals_dt_loss`), max-probability calibration with per-bin counts,
+and arm-level return readouts with paired MCSEs. Two negative results are pinned rather than
+hidden: max-prob ECE is *not* a proper score (its own doc says so, and the overconfidence test
+asserts the ECE identity instead of a direction), and on this MDP the common-random-numbers pairing
+buys almost nothing — the arms' trajectories diverge, so the measured covariance is near zero
+(paired SE 1.31 vs independent 1.25 at the default arms), which is why variance reduction is
+tested on controlled synthetic data and only *published* for the MDP.
+
+Item 6 is now measured (`examples/dt_gradient_gap`, seed 7, 480 parameters, 96 transitions):
+under `Variant::Standard` the Exact and Stopped derivatives are the same tensor
+(`‖g_e‖/‖g_s‖ = 1.0000`, no Frobenius normalisation in the forward pass), while under
+`Variant::Cosine` the exact gradient matches a central difference to 7.4e-6–6e-4 at `h = 1e-2`
+across `‖θ‖` of 0.22 / 2.18 / 21.8 and the stopped gradient is off by 2.2e-2–4.0e-2 in the same
+direction — with gradient norms agreeing to four digits (ratio 0.9997–0.9999). The gap is a
+rotation of the update, not a rescaling: a norm check would have declared the conventions
+identical. Every cell in R7.4–R7.5 is still open; nothing here is evidence, so no ledger row is
+owed yet.
 
 ### R7.4 First measured cell (no new dials)
 
