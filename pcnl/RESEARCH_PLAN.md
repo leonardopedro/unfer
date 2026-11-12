@@ -1,7 +1,8 @@
 # pcnl research and development plan
 
 Date: 2026-11-08. Implementation inspected at unfer commit
-`5b4b79c77f8c35bb4039ab1c755733621b5cd68f`.
+`5b4b79c77f8c35bb4039ab1c755733621b5cd68f`. Revised 2026-11-12: added R7, the
+decision-transformer application track, and its milestones; the R0–R2 record is unchanged.
 
 ## Objective and reading order
 
@@ -14,6 +15,13 @@ The first research bet is **adaptation in a likelihood-informed parameter subspa
 followed by a full-target sampler with different proposals inside and outside that subspace.
 Do not start another ambient step-size/temperature ladder as the default next experiment.
 The accumulated negative results make target specification and verification the next gates.
+
+The application this plan now works toward is **a small decision transformer (DT) whose output
+is an action distribution** (R7): offline trajectories, return-to-go conditioning, and a policy
+as the posterior predictive. Only the potential and the readout change; the prior, the affine
+subspace chart and the pCN kernel carry over. R7 is gated on R0's gradient/diagnostic checks and
+R3's proper-score readout, not on R5–R6, and it is the first target here whose predictive *is*
+the object that gets scored: a distribution rather than a label.
 
 This file is the forward work order for `pcnl`; it supersedes the unexecuted priorities of
 [the original implementation plan](../docs/plan_bayes_ngpt.md) as a reading guide only.
@@ -64,11 +72,15 @@ solutions to the new milestones.
 | Geometry accounting | `src/budget.rs`, `src/radial.rs` | Rank hypotheses and cap costs |
 | Prediction scores | `src/readout.rs` | BMA, proper-score and reward estimators |
 | Experiments | `src/task.rs`, `src/experiment.rs` | Shared tasks and baselines |
+| Sequence policy model | proposed `src/policy_model.rs` | DT forward, per-step action distributions, own `layout` |
+| Decision task | proposed `src/mdp.rs` | Synthetic MDP, behavior corpus, exact and rollout returns |
+| Policy readout | `src/readout.rs` (discrete actions), proposed extension | Per-step proper scores plus return-level readout |
+| Potential abstraction | `src/target.rs` | `SubspaceTarget` generalized over a potential trait |
 | Diagnostics | `src/diag.rs` | Stationarity and Monte Carlo uncertainty |
 | Saved draws | `src/persist.rs` | Trajectories plus run metadata |
 | Reproduction | `../scripts/pcnl-reproduce` | Named evidence stages |
 
-Proposed new modules below do not yet exist. Do not count the research plan as an
+Modules marked *proposed* do not yet exist. Do not count the research plan as an
 implementation or treat a command naming a proposed example as an available command.
 
 ## R0 — establish numerical and experimental trust before new inference
@@ -565,6 +577,12 @@ claimed score gain survives a strong calibrated point baseline with a reported i
 If a usable target's chain readout loses to that baseline at equal cost on three seeds,
 record the negative result and stop RL integrations pending a new hypothesis.
 
+R7 consumes this section directly rather than restating it: a DT step score is the same
+`Rule` applied with `y` the observed action, `Enumerated`/`mean_dist` give the per-step
+predictive and its covariance term, and the correlated-Brier inflation formula above is the
+correct correction for steps inside one trajectory. Accuracy stays a utility; for a
+continuous action head it does not exist at all, and the score *is* the report.
+
 ## R4 — add a learnable structured task before external model scaling
 
 Keep modular arithmetic as a regression fixture, including Task B = A and label-shift
@@ -585,6 +603,12 @@ a general theorem about standard attention or transformer Bayesian adaptation.
 and minibatch scaling, and one deterministic benchmark fixture. Measure acquisition,
 retention on Task A, calibration and task-B accuracy. GPU/checkpoint work needs a separately
 budgeted experiment; it is not needed for R0–R3.
+
+R7 is where the "tiny sequence task" above becomes concrete, and it exposes a limit of the
+current data model rather than a missing fixture: `Dataset` is a flat list of `(tokens, label)`
+pairs drawn from `K^2` inputs, with no trajectory axis, no per-example length and no
+split-by-group. A DT corpus needs all three, so R7's task contract (R7.4) is the input to this
+milestone and not a duplicate of it.
 
 ## R5 — gated extensions of ngpt §9
 
@@ -648,6 +672,195 @@ to validate this statistical crate. A proposed bridge to those topics needs its 
 operator/domain statement; do not infer it from a Lipschitz/noise theorem. MM0 export or
 nanoda checking is a separate proof-artifact task, not evidence of sampler stationarity.
 
+## R7 — decision transformers: the predictive is a policy (application track)
+
+**Hypothesis.** A posterior over a small DT's weights yields a predictive action distribution
+`p̄(a | o, g)` that is better calibrated and lower-NLL than a tuned point DT at matched
+likelihood-evaluation cost, and the induced policy — sampling from `p̄` or decoding with the
+averaged distribution — retains the behaviour policy's return without giving up more than its
+return MCSE. Both halves are measured; neither is assumed from the classification results.
+
+**Status: none of this is measured.** No DT model, task or cell exists; every code path named
+in R7.3 is proposed or an extension of an existing one. Do not cite R0–R2 numbers as DT
+evidence, and do not add DT rows to `PCNL_STATUS.md` until a cell has run.
+
+### R7.0 What the accumulated record says about this direction (review)
+
+Three measured results constrain the DT design more than any new proposal idea:
+
+1. **The prior mean, not the proposal, moves the answer.** R2n–R2s: 69 % of the accuracy
+   variance sits *within* a jitter magnitude, variance grows with magnitude while means differ
+   only at `p = 0.055`, the single failure in 24 directions is a mixing failure under the
+   ambient pin, and 1.19× is the median `laplace` gain over the pinned pilot arm (R2q). For a DT
+   the prior mean is a *behaviour corpus* and a pretraining split, so the first DT experiment
+   must vary that axis (R7.4's adaptation corpus), not the preconditioner.
+2. **The restriction, not the mixing, was the limit.** R2's `π_r` cells lose ~0.9 NLL to the
+   full target `π_P` and the random basis does equally well on `π_P`. A DT's informative
+   directions plausibly live in the action head and the return-to-go embedding, not in the
+   trunk, so a rank-4 restriction over the whole flat vector is the most likely way to destroy
+   the model. Declare the basis target (head-only, trunk-only, all-blocks) before the sweep.
+3. **Proposal gains are target-specific and do not transfer.** `laplace` at rank 4 beat
+   isotropic in all eight pinned cells yet collapsed at rank 8 (R2k), off-anchor (R2m) and
+   failed for the full covariance (R2l); a non-ambient pinned basis degraded ESS 6.6× with the
+   scores nearly unchanged (R2r). Inheriting `laplace` as the DT default would be an untested
+   transplant, and the DT adds blocks (head, RTG embedding, layer norms) whose curvature
+   differs by orders of magnitude from the trunk's.
+
+### R7.1 The target
+
+For trajectory `j` of length `T_j` with observations `o_{j,t}`, actions `a_{j,t}` and
+return-to-go `g_{j,t} = Σ_{k≥t} r_{j,k}`:
+
+```text
+theta(z)  = theta_ref + C_half B z
+theta_ref  = anchor fitted on corpus A (pretrain); adaptation data = corpus B, split by trajectory
+Phi(θ)    = λ Σ_j Σ_{t=1..T_j} −log p_θ(a_{j,t} | o_{j,≤t}, a_{j,<t}, g_{j,≤t})
+π_r(dz)   ∝ exp[−Phi(θ(z))] N(0, I_r)(dz)
+```
+
+The kernel, prior, chart and dimension budget are R1's, unchanged. What has to be declared
+because the classification target never forced it:
+
+* **The likelihood is behaviour cloning, not optimality.** `g` is a covariate copied from the
+  data; `p_θ(a | o, g)` is trained to reproduce the actions that *were* taken at that return
+  level. A posterior over `θ` is a posterior over a calibrated behavioural model of the corpus.
+  No claim about the optimal policy follows, and "return-conditioned" is not a likelihood for
+  "this action is optimal at return `g`".
+* **What `N` counts.** `Φ` sums per transition, but the independent unit is the trajectory.
+  Report trajectories, mean `T`, total transitions, and the ratio of `Φ`'s spread over prior
+  draws to the classifier cells' — a 10^4-transition corpus with `P ≈ 2·10^4` is far stiffer
+  than `N_train = 512`, so `λ = 1` is a different effective concentration here and must be
+  stated rather than inherited.
+* **Per-step distribution family.** Discrete actions reuse `model.rs`'s categorical
+  cross-entropy exactly, so `readout.rs::Rule` applies per step. A Gaussian head `(μ, log σ)`
+  needs a declared floor on `σ` and a check that no prior or posterior draw has a non-finite or
+  degenerate per-step NLL; an unbounded optimum in the output parameters is a target defect
+  that a sampler cannot fix, and it breaks the coherence between `Phi`, the BMA and the ESS
+  diagnostic before any mixing claim is made.
+* **One posterior or one per return level.** A single posterior over the mixed corpus and a
+  stratified posterior per `g`-bin are different models; BMA over the first is not the
+  conditional predictive for a target return. Every cell names which one it is.
+
+### R7.2 Why the predictive is not the answer
+
+`p̄(a | o, g) = ∫ p(a | o, g, θ) Π(dθ)` is a distribution, and a DT decodes a policy from it. Two
+non-identities matter:
+
+```text
+E[return | π̄]  ≠  E_{θ~Π}[ E[return | π_θ] ]        (return is a functional of whole trajectories)
+sample from p̄  ≠  decode with p̄                            (a per-step draw vs a mean action)
+```
+
+Averaging over posterior states changes the state distribution each subsequent decision is made
+in, so the BMA's Brier/NLL advantage (a per-step statement) does not imply a return advantage.
+Report four readouts separately and never merge them: per-step action NLL/Brier/ECE of `p̄`;
+return of a policy sampled from `p̄`; return of the averaged-distribution decoder; return of a
+single posterior state (the point readout). Their differences are decision effects, not score
+effects.
+
+### R7.3 Development, in order
+
+1. **`Potential` trait in `src/target.rs`.** `SubspaceTarget` is currently typed to
+   `(Dataset, Shapes, Variant)`, so no other likelihood can sit under the subspace machinery.
+   Extract `log_phi(θ)`, `grad_phi(θ)` and `n_terms`, make `SubspaceTarget` generic over it, and
+   keep the classification impl as a thin wrapper. Test: the trait path reproduces the existing
+   pinned-cell potential **bitwise** at a fixed `θ` and data hash, so R0–R2 evidence is not
+   disturbed by the refactor.
+2. **`src/policy_model.rs`.** Causal DT forward over tokenized `(g, o, a)` with a padding mask,
+   returning per-step logits (or `(μ, log σ)`) and a summed per-step NLL with both `NormGrad`
+   conventions. Own `Shapes`/`layout`/`flat_size` with the new blocks (RTG-bin embedding,
+   position, action head, optional `σ` head, LN affine), so `unflatten`, `init_flat` and
+   `anchor_hash` keep working. Shapes are an initial grid, not budget-derived: `d = 32`,
+   `ff = 64`, 2 layers, ≤ 8 RTG bins, ≤ 10 actions, `T ≤ 16` gives `P ≈ 1.7·10^4`, the same
+   order as the classification cells so the sampler budgets carry over. `Variant::Standard`
+   first (the anchor-comparable baseline); the cosine variant is a second arm with its own
+   formal-claims tests, not a default.
+3. **`src/mdp.rs`.** One synthetic MDP with an exactly computable optimum: 2-D linear-Gaussian
+   dynamics, 5 discrete actions, horizon 16, 4 RTG bins, a behaviour policy with declared
+   exploration (`ε = 0.2`), 96 train / 32 dev / 32 test *trajectories*. The exact optimal
+   return comes from value iteration (or the LQR solution); the behaviour policy's return is the
+   second reference. Splits are by trajectory seed; a step-level split leaks across time.
+4. **`src/policy_readout.rs`.** Per-step scores (reusing `readout.rs` for discrete actions),
+   ECE of `p̄`'s max probability, and the return-level readout: `K` rollouts of a policy sampled
+   from `p̄`, `K` of the averaged decoder, paired differences against each baseline with their
+   own MCSE. Return MCSE is reported next to every return number.
+5. **`examples/dt_adaptation.rs`.** Same CLI as `subspace_adaptation` (`--anchor-*`,
+   `--basis-anchor*`, `--proposal`, `--pilot-shrink`, `--targets`) plus `--traj`, `--horizon`,
+   `--rtg-bins`, `--head softmax|gauss`, so every measured arm is a flag rather than a fork.
+   `experiment::AnchorSetup` is classifier-typed (`data_a`, `data_b`, `theta0`); parameterize it
+   on the potential and pretrain step rather than duplicating it, so the anchor hash keeps its
+   one implementation and the DT anchor is comparable across cells.
+6. **R0 checks for the new model, before any adaptation cell:** directional finite differences
+   on the DT at ≥ 3 norm scales; the `Exact` vs `Stopped` gap measured (R2k found 1 021× on the
+   classifier, and a DT's normalised blocks will differ); mask invariance (a padded batch equals
+   the unpadded sequence within tolerance); Gaussian-head density integrates to 1 per action
+   dimension; the minibatch scaling identity per *sequence*, not per token.
+
+### R7.4 First measured cell (no new dials)
+
+The smallest cell that can falsify the hypothesis. Protocol otherwise R2q's, so the sampler
+columns are comparable with the classification tables even though the potential is not:
+
+| Item | Value |
+|---|---|
+| Model | `d = 32`, `ff = 64`, 2 layers, 5 actions, 4 RTG bins, `T = 16` |
+| Anchor | DT pretrained on the Task-A corpus, anchor hash printed |
+| Adaptation corpus | same MDP, **different behaviour policy** |
+| Rank / λ / prior | 4 / 1.0 / `N(0, σ²)` with the existing σ = 0.35 |
+| Basis | informed, pinned at the ambient anchor (`--basis-anchor`) |
+| Proposals | `fixed,pilot --pilot-shrink 0` and `laplace --pilot-shrink 0.5` |
+| Chains | 4 × 4 000, burn 500, thin 5 (screening: 1 × 1 000 at 2 seeds) |
+| Baselines | point DT (Adam, same budget); temperature-scaled point DT tuned on dev; 4-member ensemble at matched likelihood evaluations; behaviour policy; exact optimum |
+| Readouts | per-step NLL, Brier, top-1 action match, ECE; return of sampled and averaged policies, with MCSE; ESS/R̂ on mean step NLL |
+
+Budget: the existing CPU-minute caps stay (30 min screening, 4 h promoted), and each cell also
+records transition-forwards so cells of different `T` are comparable. A cell is 4 × 4 000 × 2
+evaluations × 8 sequences × 16 steps ≈ 8·10^6 transition-forwards at full-target cost; screen at
+1 chain × 1 000 steps ≈ 2.5·10^5 and promote only cells whose paired difference is already
+larger than the screening MCSE.
+
+### R7.5 Acceptance and falsifiers
+
+* **Positive:** `p̄`'s held-out action NLL beats the temperature-tuned point DT by more than 2×
+  the paired MCSE on ≥ 3 trajectory seeds, at `R̂ ≤ 1.01` and ESS ≥ 400 on mean step NLL, with the
+  sampled and averaged policy returns each within the point baseline's return MCSE. Report the
+  per-step and return halves separately even when both pass.
+* **Negative:** if the per-step score ties or loses to the calibrated point baseline at matched
+  likelihood evaluations, record it and stop the DT adaptation arm pending a *target* hypothesis
+  (a different corpus, basis target or restriction), not a new sampler knob.
+* **Calibration-only:** if per-step scores improve and both rollout returns do not (beyond their
+  MCSE), that is the claim — better next-action distributions, no decision improvement.
+* **Sampling gate:** a DT cell failing R̂/ESS is reported as a target/mixing limit with no score
+  quoted as a posterior result, exactly as R2r's non-ambient pin was.
+* **Target defect:** any degenerate or non-finite per-step NLL among prior or posterior draws
+  invalidates that head's target; fix the parametrisation before running chains.
+* **Not claimed:** D4RL-style returns (only the synthetic MDP's return is exact here); a posterior
+  over optimality; transfer of R2k's rank-4 `laplace` win before the DT's own rank sweep; anything
+  about GPU-scale checkpoints, which need the separate checkpoint surface below.
+
+### R7.6 Open questions this section deliberately leaves
+
+* **Basis target.** Head-only, RTG-embedding-only, trunk-only or all-blocks informed directions,
+  against a random control at matched rank. R2's `π_r`/`π_P` result says the restriction is what
+  costs; the DT's block structure is where that cost is most likely to be visible.
+* **Block preconditioning.** The per-layer blocks of `RotScale` were never the winning arm for the
+  classifier (R2l), but a DT's head block and trunk block differ in curvature by far more than
+  the classifier's coordinates do, so a block-diagonal `β` is a live arm here and not a retread.
+* **Correlated step scores.** Within-trajectory correlation deflates the effective number of
+  scored steps; R3's `Γ_k` formula is the correction, and the DT is the first target where it is
+  not optional. Whether the deflation behaves like R2j's ~2 000-draw autocorrelation is measurable
+  from the same chains.
+* **Continuous actions.** Gaussian head with a `σ` floor, a quantile head, or two-hot binning;
+  separately budgeted, after the discrete cell.
+* **Joint vs stratified return posterior**, and whether a stratified one is any better than
+  conditioning at decode time (which is what the DT already does).
+* **Anchor as behaviour policy.** R2n–R2s measured an anchor drawn as a Gaussian shift. A DT
+  anchor is a corpus, and the analogue of "anchor direction" is which behaviour policy and which
+  return distribution it was fitted on — the axis to sweep first, per R7.0 item 1.
+* **Checkpoint surface.** Loading a real (non-toy) DT needs a declared layout/dtype hash and a
+  manifest entry; GPU and checkpoint reproduction stay blocked on their own dependencies and are
+  not part of the first cell.
+
 ## Milestones, budgets and stop rules
 
 Roles denote ownership to assign, not agents spawned by this planning task.
@@ -661,6 +874,8 @@ Roles denote ownership to assign, not agents spawned by this planning task.
 | M4: structured task | M0, then M2–M3 | model/data | 1–2 weeks | Data contract and paired report |
 | M5: external branch | M3–M4 | integration | scoped later | Falsifiable branch result |
 | M6: Lean bridges | M0–M3 | formalization | scoped later | Compiled hypothesis audit |
+| M7: DT policy target | M0, M3; R4 data contract | inference/model | 2–3 weeks | Synthetic MDP + per-step scores + return MCSE |
+| M8: DT return posterior | M7 | research | scoped later | Joint-vs-stratified comparison |
 
 Timeboxes are planning estimates; hardware and research failures can change them.
 For M2 use ranks 4/8/16/32, three task regimes and three paired seeds as a screening grid;
@@ -683,6 +898,13 @@ cannot match calibrated point utility (revisit the model/prior before SG enginee
 or approximate sampling cannot meet precision per compute (retain the exact small-model
 result). A well-sampled weak posterior is a target failure; a useful frozen trajectory
 is not a sampling success. Publish negative and inconclusive cells alongside positive ones.
+
+For R7 specifically: stop the DT arm if the per-step proper score loses to the calibrated
+point DT at matched evaluations (R7.5); do not spend on return-level comparisons until the
+per-step score passes a sampling gate, because a return difference from a mixing failure is
+uninterpretable; and do not convert a per-step score win into a decision claim without the
+rollout readout and its MCSE. M7 runs after M0 and M3 regardless of M4–M6's progress, since
+its dependencies are the kernel checks and the readout, not the external branches.
 
 ## Reproduction and definition of done
 
@@ -709,6 +931,9 @@ Every reported table must be regenerable from those artifacts and identify its a
 The core plan is complete when R0–R4 deliver an audited target/kernel distinction, exact
 small-model references, a tested informed-subspace comparison, a quantified SG bias budget,
 and a properly calibrated readout study on a learnable task, whether the primary research
-hypothesis succeeds or fails. Record the result in `../docs/PCNL_STATUS.md` and update the
-discussion only after results exist. External branches, billion-parameter scaling and
+hypothesis succeeds or fails. R7 is the application deliverable and is complete when one
+synthetic MDP has a measured per-step score table *and* a rollout-return table from the same
+chains, with the negative or inconclusive cells published beside the positive ones; the
+checkpoint/GPU arm is a separate follow-on. Record the result in `../docs/PCNL_STATUS.md` and
+update the discussion only after results exist. External branches, billion-parameter scaling and
 infinite-dimensional convergence are separate follow-on projects.
