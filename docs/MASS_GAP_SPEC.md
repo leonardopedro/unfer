@@ -758,10 +758,11 @@ size that refused now decides. Odd sector, nested dissection, its own converged 
 `the_converged_shift_reaches_38_in_both_blocks` and
 `the_converged_shift_reaches_40_in_the_odd_block` and
 `the_converged_shift_reaches_42_in_the_odd_block` and
-`the_converged_shift_reaches_44_in_the_odd_block` and
-`the_converged_shift_reaches_46_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
-454 / 689 / 1061 / 1715 s, because each converges the Ritz pair first; the even
-rows come from `the_even_block_reaches_42_in_its_own_sector` and
+`the_converged_shift_reaches_44_in_the_odd_block`,
+`the_converged_shift_reaches_46_in_the_odd_block` and
+`the_converged_shift_reaches_48_in_the_odd_block`, all `#[ignore]`d; 707 / 623 /
+454 / 689 / 1061 / 1715 / 2532 s, because each converges the Ritz pair first; the
+even rows come from `the_even_block_reaches_42_in_its_own_sector` and
 `the_even_block_reaches_44_in_its_own_sector`, 1413 / 1323 s for both):
 
 | `N≤` | `n` | `θ₀` | resid | steps | below | bound/pivot | secs |
@@ -773,10 +774,11 @@ rows come from `the_even_block_reaches_42_in_its_own_sector` and
 | 42 | 77924 | −17.237774 | 1.7e-12 | 320 | 1 | 5.0e-14 | 620 |
 | 44 | 93104 | −18.138131 | 2.6e-12 | 320 | 1 | 1.5e-14 | 978 |
 | 46 | 110400 | −19.039563 | 2.7e-12 | 320 | 1 | 5.8e-14 | 1552 |
+| 48 | 130000 | −19.944042 | 3.1e-11 | 320 | 1 | 5.9e-14 | 2390 |
 
 Every row here is test-backed rather than a one-off probe: each test asserts
 `below == 1`, `bound/pivot < 1`, and that the fill keeps growing with the
-sector (`1960 → 2080 → 2309 → 2675` from `N ≤ 38` to `44`).
+sector (`1960 → 2080 → 2309 → 2675 → 3120 → 3458` from `N ≤ 38` to `48`).
 
 #### Where the elimination's time goes (profiled, 2026-11-11)
 
@@ -794,6 +796,15 @@ build; replacing the ordering buys nothing (it already costs `0.1 s`) and a
 different ordering (AMD/METIS) is the next thing worth measuring, not a
 diagonal preconditioner (§6d, "Symmetric equilibration buys none of it"). The
 instrumentation was removed after the run; it is not in the tree.
+
+The `N ≤ 48` row profiles the same way: `n = 130000`, fill `3458`, `2390 s` of
+elimination, and its `bound/pivot` comes out `5.9e-14` against `N ≤ 46`'s
+`5.8e-14`. The ratio is **flat across the last two shells** while the price
+climbs — `1552 → 2390 s` — so the numerical headroom is not being spent as the
+sector grows; what grows is only the number of pivot updates. That is the
+strongest available statement that the ladder is priced, not walled: a
+refusal-rule failure would show up as a drifting ratio long before it showed up
+as a wall-clock limit.
 
 The even block (`Truncated::sector(true)`, start = vacuum + `|1,1⟩` — both `R`-fixed
 with sign `+1`, leak `1.6e-16`, so the whole start lies in the block), also under
@@ -822,18 +833,20 @@ witness. Four corrections follow.
 First, **the reach is not `N ≤ 33`**: nested dissection decides `N ≤ 42` in both
 blocks, without the ratio drifting — it stays in
 `1e-15`–`1e-19` all the way — `N ≤ 44` reports `1.5e-14`, *fourteen orders* of
-headroom below the refusal rule. **So the ladder has not stopped; it has become
+headroom below the refusal rule — and `N ≤ 48` reports `5.9e-14`, so the ratio
+is *flat* while the price climbs. **So the ladder has not stopped; it has become
 expensive.** In the odd block the count alone goes
-`70 → 129 → 230 → 394 → 620 → 978 s` (about `1.6×` a shell) while the fill goes
-`1960 → 2080 → 2309 → 2675` from `N ≤ 38` to `44`; in the even block the same
-curve runs `295 → 479 → 795 s` with fill `1960 → 2218 → 2460`, so both blocks
-stop at `42`/`44` for cost, not for correctness: the next odd shell is ~`1600 s`
-for the count and ~`1700 s` including its converged Lanczos, and nothing about
-the certificate suggests it would refuse. `N ≤ 46` (odd) and `N ≤ 44` (even) are now run and decide as well (below == 1,
-bound/pivot `5.8e-14` / `8.4e-15`, fill 3120 / 2958); the ladder is priced, not
-walled — the next odd shell is ~`1600 s` for the count, and the harness's working
-range is set by wall time. `N ≤ 20`–`46` (odd) / `20`–`44` (even) are the sizes
-this harness runs at all. Note that
+`70 → 129 → 230 → 394 → 620 → 978 → 1552 → 2390 s` (about `1.6×` a shell) while
+the fill goes `1960 → 2080 → 2309 → 2675 → 3120 → 3458` from `N ≤ 38` to `48`;
+in the even block the same curve runs `295 → 479 → 795 → 1214 s` with fill
+`1960 → 2218 → 2460 → 2958`, so both blocks stop at `48`/`44` for cost, not for
+correctness: the next odd shell is ~`3800 s` for the count, and nothing about
+the certificate suggests it would refuse. `N ≤ 46` and `N ≤ 48` (odd) and
+`N ≤ 44` (even) are now run and decide as well (below == 1, bound/pivot
+`5.8e-14` / `5.9e-14` / `8.4e-15`, fill 3120 / 3458 / 2958); the ladder is
+priced, not walled — the next odd shell is ~`2400 s` for the count, and the
+harness's working range is set by wall time. `N ≤ 20`–`48` (odd) / `20`–`44`
+(even) are the sizes this harness runs at all. Note that
 the `N ≤ 38` and up rows needed **more** than the 240 steps the section used to
 call converged — at 240 the residual is `1.8e-8` there — which is why the tests
 now double until the residual is below `1e-9` and print the count.

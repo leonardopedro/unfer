@@ -2638,3 +2638,69 @@ fn the_even_block_reaches_44_in_its_own_sector() {
         count.fill
     );
 }
+
+/// The odd reflection block still decides at `N ≤ 48` — one shell past the
+/// `N ≤ 46` row, at the block's own converged `β`.
+///
+/// `n = 130000` and the count alone costs `~2390 s` (`~2530 s` with the
+/// converged Lanczos). `bound/pivot` is `5.9e-14` — the same fourteen orders
+/// of headroom the `N ≤ 46` row had (`5.8e-14`), so the reach is priced by
+/// wall time and not limited by the refusal rule: the bound-to-pivot ratio is
+/// flat across the last two shells while the price keeps climbing.
+///
+/// `#[ignore]`d for cost (~2530 s).
+#[test]
+#[ignore = "~2530 s: N <= 48 odd sector, converged Lanczos + one count"]
+fn the_converged_shift_reaches_48_in_the_odd_block() {
+    use fock_sirk::{Ordering, inertia_below_with};
+    use std::time::Instant;
+
+    let h = qcd_ym_hamiltonian(1.0);
+    let trunc = Truncated::build(&h, 48);
+    let sector = trunc.sector(false);
+    let columns = sector_columns(&trunc, &sector);
+    let matvec = trunc.sector_matvec(&sector);
+    let (start, leak) = trunc.coordinates(&sector, &r_odd_start());
+    assert!(
+        leak < 1e-12,
+        "the start must lie in the odd sector, leaked {leak:e}"
+    );
+    let (theta, residual, steps) = converged_ground(&matvec, columns.len(), &start, 1e-9);
+    assert!(
+        residual < 1e-9,
+        "the Ritz pair must be converged before β is read off it, residual {residual:e}"
+    );
+    let clock = Instant::now();
+    let count = inertia_below_with(&columns, theta + 0.5, Ordering::NestedDissection)
+        .unwrap_or_else(|| {
+            panic!(
+                "nested dissection refuses N <= 48 at the converged β, where §6d records it \
+                 deciding — the section is stale"
+            )
+        });
+    println!(
+        "odd N <= 48: n={} θ₀={theta:.6} resid={residual:.2e} steps={steps} below={} \
+         fill={} ratio={:.2e} secs={:.1}",
+        columns.len(),
+        count.below,
+        count.fill,
+        count.worst_ratio,
+        clock.elapsed().as_secs_f64()
+    );
+    assert_eq!(
+        count.below, 1,
+        "at N <= 48 the odd block must have exactly one level below β = θ₀ + 0.5 \
+         (below = {}), or this is a reach measurement and not a λ₂ witness",
+        count.below
+    );
+    assert!(
+        count.worst_ratio < 1.0,
+        "a decided count has bound/pivot below one, got {:e}",
+        count.worst_ratio
+    );
+    assert!(
+        count.fill > 3120,
+        "fill must keep growing with the sector (N <= 46 filled 3120), got {}",
+        count.fill
+    );
+}
