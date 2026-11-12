@@ -38,27 +38,135 @@ pub trait ZPotential {
     fn phi(&self, z: &[f32]) -> f64;
 }
 
-/// The restricted target over the full training set, evaluated through the
-/// model.  `phi` returns `+∞` where the model cannot produce a finite loss, so
-/// a divergent proposal is a rejection rather than a `NaN` ratio.
-pub struct SubspaceTarget {
-    subspace: AffineSubspace,
-    lambda: f64,
+/// The likelihood seam under a subspace target.
+///
+/// `SubspaceTarget` used to be typed to the classification [`Dataset`], which
+/// meant no other likelihood could sit under the subspace chart, the exact pCN
+/// kernel, the curvature/Laplace machinery or the diagnostics.  A decision
+/// transformer's per-step action NLL is such a likelihood, and so is any
+/// masked-sequence or regression target: the subspace method does not care
+/// where `ℓ` comes from, only that `ℓ(θ)` and `∇ℓ(θ)` agree.  This trait is
+/// that seam and nothing more.
+///
+/// The sum-form scaling stays in [`SubspaceTarget`]: an implementation reports
+/// its **mean** term loss and its **number** of terms, and the target forms
+/// `λ · n_terms · mean_loss`.  That keeps the temperature convention
+/// (`λ = 1` ⇒ likelihood `exp(−Σ_i ℓ_i)`) in one place instead of one place per
+/// potential, which is how two potentials end up not comparable.
+///
+/// `mean_grad` must be the gradient of `mean_loss` *as implemented*, not of a
+/// cheaper surrogate: the mode search and every Laplace width are derived from
+/// it.  The classifier implementation uses [`NormGrad::Exact`] for exactly this
+/// reason — the `Stopped` convention's gap was measured at ~1 000× on a
+/// two-layer model (see [`SubspaceTarget::grad_phi`]).  `None` means "no finite
+/// gradient here", matching `mean_loss`'s `+∞`, and both are a rejection rather
+/// than a `NaN` in the kernel.
+pub trait Potential {
+    /// `N` in the sum-form likelihood — independent terms, not parameter count.
+    fn n_terms(&self) -> usize;
+    /// Mean loss per term at `θ`; `+∞` where the model cannot produce a finite
+    /// loss, so a divergent proposal is a rejection.
+    fn mean_loss(&self, theta: &Tensor) -> f64;
+    /// `∇_θ mean_loss(θ)` under the implementation's own derivative convention.
+    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor>;
+    /// Short identity for logs and manifests (`"classifier"`, `"dt-softmax"`).
+    fn label(&self) -> &'static str;
+}
+
+/// The classification likelihood: mean cross-entropy over `data.train_x/y`.
+///
+/// This is the potential every recorded R0–R2 cell was run on.  It stays a
+/// separate type from [`SubspaceTarget`] so the generic target can carry other
+/// likelihoods without the classification path acquiring a branch — and so
+/// `SubspaceTarget::new`'s signature (and therefore every existing call site)
+/// is unchanged.
+pub struct ClassifierPotential {
     data: Dataset,
     shapes: Shapes,
     variant: Variant,
-    /// `N` in the sum-form likelihood.  `Dataset::train_loss` is the *mean*
-    /// cross-entropy, so the sum the plan specifies is `N` times it: at `λ = 1`
-    /// this target is the likelihood `exp(−Σ_i ℓ_i)`, whereas the ambient
-    /// experiment's `Φ` is the mean loss, i.e. this target at `λ = 1/N`.  That
-    /// factor is the difference between a prior-dominated posterior and a
-    /// data-determined one, so it is named here rather than left to a caller's
-    /// convention.
     n_train: usize,
+}
+
+impl ClassifierPotential {
+    pub fn new(data: Dataset, shapes: Shapes, variant: Variant) -> Self {
+        let n_train = data.train_y.dim(0).unwrap_or(0);
+        Self {
+            data,
+            shapes,
+            variant,
+            n_train,
+        }
+    }
+
+    pub fn data(&self) -> &Dataset {
+        &self.data
+    }
+
+    pub fn shapes(&self) -> &Shapes {
+        &self.shapes
+    }
+
+    pub fn variant(&self) -> Variant {
+        self.variant
+    }
+}
+
+impl Potential for ClassifierPotential {
+    fn n_terms(&self) -> usize {
+        self.n_train
+    }
+
+    fn mean_loss(&self, theta: &Tensor) -> f64 {
+        self.data
+            .train_loss(theta, &self.shapes, self.variant)
+            .ok()
+            .filter(|l| l.is_finite())
+            .unwrap_or(f64::INFINITY)
+    }
+
+    fn mean_grad(&self, theta: &Tensor) -> Option<Tensor> {
+        let (loss, mean_grad) = crate::model::loss_and_grad_norm(
+            theta,
+            &self.shapes,
+            self.variant,
+            &self.data.train_x,
+            &self.data.train_y,
+            NormGrad::Exact,
+        )
+        .ok()?;
+        if !loss.is_finite() {
+            return None;
+        }
+        Some(mean_grad)
+    }
+
+    fn label(&self) -> &'static str {
+        "classifier"
+    }
+}
+
+/// The restricted target over the full training set, evaluated through a
+/// [`Potential`].  `phi` returns `+∞` where the potential reports a non-finite
+/// loss, so a divergent proposal is a rejection rather than a `NaN` ratio.
+///
+/// The default type parameter keeps the classification target spellable as
+/// `SubspaceTarget`, which is what every existing call site and fixture does;
+/// another likelihood is `SubspaceTarget<policy_model::DtPotential>` behind the
+/// same kernel and the same `Φ` algebra.
+pub struct SubspaceTarget<P: Potential = ClassifierPotential> {
+    subspace: AffineSubspace,
+    lambda: f64,
+    potential: P,
     evals: AtomicU64,
 }
 
-impl SubspaceTarget {
+impl SubspaceTarget<ClassifierPotential> {
+    /// The classification target: `Φ(z) = λ·N·mean_loss(θ(z)) + ½‖z‖²`.
+    ///
+    /// `N` in the sum-form likelihood is `data.train_y`'s length.  That factor
+    /// is the difference between a prior-dominated posterior and a
+    /// data-determined one, so it is read from the data here rather than left
+    /// to a caller's convention.
     pub fn new(
         subspace: AffineSubspace,
         lambda: f64,
@@ -66,20 +174,48 @@ impl SubspaceTarget {
         shapes: Shapes,
         variant: Variant,
     ) -> Self {
-        let n_train = data.train_y.dim(0).unwrap_or(0);
+        Self::with_potential(
+            subspace,
+            lambda,
+            ClassifierPotential::new(data, shapes, variant),
+        )
+    }
+
+    /// The Data the classification potential sums over (fixtures and
+    /// `AnchorSetup` reach through this).
+    pub fn data(&self) -> &Dataset {
+        self.potential.data()
+    }
+
+    pub fn shapes(&self) -> &Shapes {
+        self.potential.shapes()
+    }
+
+    pub fn variant(&self) -> Variant {
+        self.potential.variant()
+    }
+}
+
+impl<P: Potential> SubspaceTarget<P> {
+    /// Any potential behind the same chart, `λ`, and kernel.
+    pub fn with_potential(subspace: AffineSubspace, lambda: f64, potential: P) -> Self {
         Self {
             subspace,
             lambda,
-            data,
-            shapes,
-            variant,
-            n_train,
+            potential,
             evals: AtomicU64::new(0),
         }
     }
 
+    /// `N` — the number of summed likelihood terms.
+    pub fn n_terms(&self) -> usize {
+        self.potential.n_terms()
+    }
+
+    /// `n_terms` under its classification name, kept so recorded cells and
+    /// their fixtures read the same way they always did.
     pub fn n_train(&self) -> usize {
-        self.n_train
+        self.potential.n_terms()
     }
 
     pub fn lambda(&self) -> f64 {
@@ -88,6 +224,10 @@ impl SubspaceTarget {
 
     pub fn subspace(&self) -> &AffineSubspace {
         &self.subspace
+    }
+
+    pub fn potential(&self) -> &P {
+        &self.potential
     }
 
     /// Number of full-data forward passes this target has answered.  The
@@ -104,13 +244,11 @@ impl SubspaceTarget {
             Ok(t) => t,
             Err(_) => return (f64::INFINITY, prior_phi(z)),
         };
-        let mean_loss = self
-            .data
-            .train_loss(&theta, &self.shapes, self.variant)
-            .ok()
-            .filter(|l| l.is_finite())
-            .unwrap_or(f64::INFINITY);
-        (self.lambda * self.n_train as f64 * mean_loss, prior_phi(z))
+        let mean_loss = self.potential.mean_loss(&theta);
+        (
+            self.lambda * self.potential.n_terms() as f64 * mean_loss,
+            prior_phi(z),
+        )
     }
 
     /// `∇_z Φ(z)` for `Φ = λ·N·mean_loss(θ(z)) + ½‖z‖²`, by the chain rule
@@ -134,19 +272,10 @@ impl SubspaceTarget {
     /// differences` test exists to catch.
     pub fn grad_phi(&self, z: &[f32]) -> Option<Vec<f32>> {
         let theta = self.subspace.lift_tensor(z).ok()?;
-        let (loss, mean_grad) = crate::model::loss_and_grad_norm(
-            &theta,
-            &self.shapes,
-            self.variant,
-            &self.data.train_x,
-            &self.data.train_y,
-            NormGrad::Exact,
-        )
-        .ok()?;
-        if !loss.is_finite() {
-            return None;
-        }
-        let scaled = mean_grad.affine(self.n_train as f64, 0.0).ok()?;
+        let mean_grad = self.potential.mean_grad(&theta)?;
+        let scaled = mean_grad
+            .affine(self.potential.n_terms() as f64, 0.0)
+            .ok()?;
         let g_theta = scaled.flatten_all().ok()?.to_vec1::<f32>().ok()?;
         let mut g = self.subspace.gradient_to_z(&g_theta);
         for (gi, zi) in g.iter_mut().zip(z.iter()) {
@@ -161,7 +290,7 @@ pub fn prior_phi(z: &[f32]) -> f64 {
     0.5 * z.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>()
 }
 
-impl ZPotential for SubspaceTarget {
+impl<P: Potential> ZPotential for SubspaceTarget<P> {
     fn dim(&self) -> usize {
         self.subspace.dim()
     }
@@ -1359,6 +1488,99 @@ mod tests {
             .expect("loss");
         assert!((lik - lambda * 16.0 * mean).abs() < 1e-6 * lik.abs().max(1.0));
         assert!((prior - 0.045).abs() < 1e-6, "prior {prior}");
+    }
+
+    /// The `Potential` seam must not move the target it was cut out of, and at
+    /// the **ambient** data, not a toy one: `Dataset::new(Task::B, 8, 512, 256,
+    /// 20261021)` is `AnchorSetup`'s `D_B` for `Config::default()` (seed
+    /// 20261020, Task B drawn at `seed + 1`), whose hash the R2 ledger quotes as
+    /// `0xba104db4f677b2ec`.
+    ///
+    /// The comparison is bitwise against the formula written out here through
+    /// `Dataset::train_loss` / `loss_and_grad_norm` — the code path the
+    /// pre-seam implementation used — and not against a second call into the
+    /// generic path, which would only prove the wrapper calls itself.  A last-
+    /// bit change in `Φ` moves every Laplace width and every acceptance ratio
+    /// derived from it, so "close enough" would be the wrong test: R2q's
+    /// numbers are comparable to new cells only if this is the same function.
+    #[test]
+    fn potential_seam_is_bitwise_at_the_ambient_data_hash() {
+        use crate::model::{Shapes, Variant, init_flat};
+        use crate::subspace::{AffineSubspace, Basis};
+        use crate::task::{Dataset, Task};
+
+        let shapes = Shapes {
+            vocab: 9,
+            d: 32,
+            ff: 64,
+            layers: 2,
+        };
+        let data = Dataset::new(Task::B, 8, 512, 256, 20261021);
+        assert_eq!(
+            data.content_hash(),
+            0xba104db4f677b2ec,
+            "ambient D_B hash moved: the reference data in this test is not the \
+             data the R2 cells summed over"
+        );
+        assert_eq!(shapes.flat_size(), 16_672, "ambient P moved");
+
+        let p = shapes.flat_size();
+        let anchor = init_flat(&shapes, 0.1, 20261020u64.wrapping_add(2))
+            .flatten_all()
+            .expect("flat")
+            .to_vec1::<f32>()
+            .expect("vec");
+        let basis = Basis::random(p, 4, 7).expect("basis");
+        let sub = AffineSubspace::isotropic(anchor, basis, 0.35).expect("subspace");
+        let lambda = 1.0f64;
+        let target =
+            SubspaceTarget::new(sub.clone(), lambda, data.clone(), shapes, Variant::Cosine);
+        assert_eq!(target.n_terms(), 512);
+        assert_eq!(target.n_train(), 512);
+        assert_eq!(target.potential().label(), "classifier");
+
+        for z in [[0.0f32; 4], [0.3, -0.2, 0.1, -0.4]] {
+            // The pre-seam arithmetic, written out: λ · N · mean_loss + ½‖z‖².
+            let theta = sub.lift_tensor(&z).expect("theta");
+            let mean = data
+                .train_loss(&theta, &shapes, Variant::Cosine)
+                .expect("loss");
+            let (lik, prior) = target.phi_parts(&z);
+            assert_eq!(
+                lik.to_bits(),
+                (lambda * 512.0 * mean).to_bits(),
+                "lik z={z:?}"
+            );
+            assert_eq!(prior.to_bits(), prior_phi(&z).to_bits(), "prior z={z:?}");
+            assert_eq!(target.phi(&z).to_bits(), (lik + prior).to_bits());
+
+            // `dΦ/dz = λ·BᵀC_halfᵀ(∇_θ ℓ_sum) + z`, with ℓ_sum = N·mean.
+            let (loss, mean_grad) = crate::model::loss_and_grad_norm(
+                &theta,
+                &shapes,
+                Variant::Cosine,
+                &data.train_x,
+                &data.train_y,
+                NormGrad::Exact,
+            )
+            .expect("grad");
+            assert!(loss.is_finite());
+            let g_theta = mean_grad
+                .affine(512.0, 0.0)
+                .expect("scale")
+                .flatten_all()
+                .expect("flat")
+                .to_vec1::<f32>()
+                .expect("vec");
+            let mut want = sub.gradient_to_z(&g_theta);
+            for (gi, zi) in want.iter_mut().zip(z.iter()) {
+                *gi = (lambda * f64::from(*gi) + f64::from(*zi)) as f32;
+            }
+            let got = target.grad_phi(&z).expect("grad_phi");
+            let got_bits: Vec<u32> = got.iter().map(|v| v.to_bits()).collect();
+            let want_bits: Vec<u32> = want.iter().map(|v| v.to_bits()).collect();
+            assert_eq!(got_bits, want_bits, "gradient bits moved at z={z:?}");
+        }
     }
 
     /// `grad_phi` must be the gradient of `phi`, or a mode search on it finds a

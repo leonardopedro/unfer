@@ -72,8 +72,8 @@ solutions to the new milestones.
 | Geometry accounting | `src/budget.rs`, `src/radial.rs` | Rank hypotheses and cap costs |
 | Prediction scores | `src/readout.rs` | BMA, proper-score and reward estimators |
 | Experiments | `src/task.rs`, `src/experiment.rs` | Shared tasks and baselines |
-| Sequence policy model | proposed `src/policy_model.rs` | DT forward, per-step action distributions, own `layout` |
-| Decision task | proposed `src/mdp.rs` | Synthetic MDP, behavior corpus, exact and rollout returns |
+| Sequence policy model | `src/policy_model.rs` | DT forward, per-step action distributions, own `layout` |
+| Decision task | `src/mdp.rs` | Synthetic MDP, behavior corpus, exact and rollout returns |
 | Policy readout | `src/readout.rs` (discrete actions), proposed extension | Per-step proper scores plus return-level readout |
 | Potential abstraction | `src/target.rs` | `SubspaceTarget` generalized over a potential trait |
 | Diagnostics | `src/diag.rs` | Stationarity and Monte Carlo uncertainty |
@@ -795,6 +795,15 @@ effects.
    classifier, and a DT's normalised blocks will differ); mask invariance (a padded batch equals
    the unpadded sequence within tolerance); Gaussian-head density integrates to 1 per action
    dimension; the minibatch scaling identity per *sequence*, not per token.
+
+**Status (2026-11-12).** Items 1–3 exist as code with unit tests: `Potential` /
+`ClassifierPotential` with a bitwise seam test at the ambient `D_B` hash (`0xba104db4f677b2ec`),
+`policy_model` (layout, causal forward, per-step logits, summed NLL, `DtPotential`), and `mdp`
+(value iteration, refinement gap, behaviour corpora, trajectory splits, DT tokenisation).
+`DtSpec::bin` is `[rtg_lo, 0]`-clipped and `mdp::MdpSolution::optimal_value` is the interpolated
+Bellman optimum rather than `interp(V_0)`, because the two differ by ~0.12 out of a −1.99 return
+off-grid and only the first matches the policy that is rolled out. Items 4–6 and every cell in
+R7.4–R7.5 are still open; nothing here is evidence, so no ledger row is owed yet.
 
 ### R7.4 First measured cell (no new dials)
 
