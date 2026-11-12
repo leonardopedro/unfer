@@ -495,6 +495,22 @@ open: one pinned basis only (would the 6.64 % cell move under another?), two anc
 still yield a range rather than a variance, and `rotlaplace` / `--laplace-tau` are retired on
 R2l/R2m grounds without ever being re-run under the pin.
 
+R2r built that second pin: `--basis-anchor-seed 1` starts the informed PCA path at an
+independently drawn anchor one anchor-rms from ambient (`|θ| 132.394`, basis anchor hash
+`0xfe9ad411b8756ef7`, path `132.394 -> 132.789` in all eight cells, versus R2p's
+`94.030 -> 93.784`), so the eight experimental anchors again share one basis that is *not* the
+ambient one. The accuracy attribution survives: mean 13.77 % (R2p 13.67), sd **3.34** (3.16),
+span **9.77** points (10.94), and the worst cell is the same anchor (`f = 0.30, k = 2`: 8.98 vs
+6.64 %). The mixing attribution does **not**: pilot ESS falls to 24 / 46 / 141 / 7 / 154 / 6 /
+101 / 6 (mean **60.6** vs 400.5, **6.6×** lower), with `R̂` 1.715 / 14.777 / 16.048 in three cells
+and ≥ 1.04 in four, and the `fixed` arm is frozen at ESS 5–12. So pinning removes basis *drift* but
+does not by itself give a good preconditioner — R2p's ESS gain was the **ambient** basis, which sits
+in the target's typical set. The accuracies stay put while the geometry degrades because accuracy is
+a coarse discrete average; the proper scores do not (NLL mean **3.59** vs 2.96, 0.63 nats, at ESS
+6–154), so R3's readouts must be gated on `R̂`/ESS rather than compared across bases. Open after
+R2r: one pin seed and one magnitude (1.0 rms) — a *near* pinned basis would separate "pinned" from
+"near" — and the already-pinned `--basis random` arm was not re-run as the stronger contrast.
+
 ## R3 — proper-score readouts and decision quality (ngpt workstream A)
 
 Reuse [readout.rs](src/readout.rs) and `examples/readout_compare.rs`. Keep the empirical

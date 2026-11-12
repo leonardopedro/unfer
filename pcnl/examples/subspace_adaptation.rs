@@ -76,7 +76,10 @@
 //!   this file that R2k/R2l never varied.  The informed basis is PCA of a path
 //!   that *starts* at `θ_ref`, so it moves with the shift even when the shift's
 //!   seed is pinned; `--basis-anchor` builds that path from the ambient anchor
-//!   instead, leaving the prior mean as the only thing the jitter moves (R2p).  `--laplace-mix τ` and `--pilot-mix τ`
+//!   instead, leaving the prior mean as the only thing the jitter moves (R2p).
+//!   `--basis-anchor-seed s` pins a *second* basis instead: the path starts at an
+//!   independently drawn anchor one rms away from ambient, so every cell still
+//!   shares one basis but not the model's own reference (R2q).  `--laplace-mix τ` and `--pilot-mix τ`
 //!   are the two "cover the approach" arms: log-space blends of widths, built
 //!   from (anchor, mode) and (pilot, mode) respectively.  The anchor/mode blend
 //!   fails on the anchor's flat directions (`|w| ≈ 2e4`), which is why the
@@ -348,6 +351,15 @@ struct Cfg {
     /// prior mean as the only thing `--anchor-jitter` moves, which is what R2p
     /// needs to attribute R2o.  No effect without `--anchor-jitter`.
     basis_anchor: bool,
+    /// Pin the informed basis to an **independent** anchor instead of the ambient
+    /// one: the path anchor is `ambient + N(0, rms²)` drawn from this seed, i.e.
+    /// one anchor-rms away, the same shift law `--anchor-jitter` uses at
+    /// `f = 1`.  A second pinned basis for R2p's attribution: the eight
+    /// experimental anchors still share one basis, but it is not the ambient
+    /// basis, so if the accuracy spread is a prior-mean effect it must reappear
+    /// here.  Wins over `--basis-anchor` when both are given.  No effect without
+    /// `--anchor-jitter`.
+    basis_anchor_seed: Option<u64>,
     /// Per-coordinate empirical-Bayes shrinkage of the replicate shape: each
     /// coordinate's log-width deviation is shrunk by how well the replicates
     /// agree on it (`τ²/(τ² + sd²/n)`), instead of the same `s` everywhere.
@@ -404,6 +416,7 @@ impl Default for Cfg {
             anchor_jitter: 0.0,
             anchor_seed: None,
             basis_anchor: false,
+            basis_anchor_seed: None,
             targets: vec![TargetKind::Restricted],
             // The complement is prior-dominated in the intended use, where a
             // step near pCN's maximum is the right proposal; the Robbins–Monro
@@ -497,6 +510,9 @@ impl Cfg {
         }
         if args.iter().any(|a| a == "--basis-anchor") {
             cfg.basis_anchor = true;
+        }
+        if let Some(v) = flag("--basis-anchor-seed").and_then(|v| v.parse().ok()) {
+            cfg.basis_anchor_seed = Some(v);
         }
         if args.iter().any(|a| a == "--width-report") {
             cfg.width_report = true;
@@ -1510,10 +1526,35 @@ fn main() {
             flat(&ambient_ref).iter().map(|x| x * x).sum::<f32>().sqrt()
         );
     }
-    let path_anchor = if cfg.basis_anchor {
-        &ambient_ref
-    } else {
-        &theta_ref
+    // R2q: a second pinned basis.  Same shift law as `--anchor-jitter`, drawn from
+    // `--basis-anchor-seed` at a fixed one anchor-rms, so the eight experimental
+    // anchors still share one basis — but not the ambient one R2p used.
+    const PIN_JITTER: f64 = 1.0;
+    let basis_pin = cfg.basis_anchor_seed.map(|s| {
+        let l2 = |t: &Tensor| -> f64 { flat(t).iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() };
+        let rms = (l2(&ambient_ref) / p as f64).sqrt();
+        let sd = PIN_JITTER * rms;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(s ^ 0xb451_5000);
+        let normal = rand_distr::StandardNormal;
+        let noise: Vec<f32> = (0..p)
+            .map(|_| rng.sample::<f32, _>(normal) * sd as f32)
+            .collect();
+        let jitter = Tensor::from_vec(noise, vec![p], ambient_ref.device()).expect("pin tensor");
+        (&ambient_ref + &jitter).expect("ambient anchor + pin jitter")
+    });
+    if let (Some(seed), Some(pin)) = (cfg.basis_anchor_seed, basis_pin.as_ref()) {
+        println!(
+            "basis anchor: pinned to an independent anchor draw at {PIN_JITTER:.2} × rms from \
+             ambient (|θ| {:.3}, basis anchor hash {:#018x}, basis-anchor-seed {seed}) — the \
+             informed basis is the same on every `--anchor-seed` and is not the ambient basis",
+            flat(pin).iter().map(|x| x * x).sum::<f32>().sqrt(),
+            anchor_hash(pin)
+        );
+    }
+    let path_anchor: &Tensor = match (&basis_pin, cfg.basis_anchor) {
+        (Some(pin), _) => pin,
+        (None, true) => &ambient_ref,
+        (None, false) => &theta_ref,
     };
     let path = fit_path(&data_b, &shapes, path_anchor, cfg.path_steps, 0.05);
     let path_first = path
@@ -1760,6 +1801,7 @@ mod shape_tests {
         assert!(!cfg.width_report);
         assert!(cfg.anchor_seed.is_none());
         assert!(!cfg.basis_anchor);
+        assert!(cfg.basis_anchor_seed.is_none());
     }
 
     /// Fewer than two replicates has no between-replicate variance to estimate,

@@ -3225,6 +3225,17 @@ for f in 0.05 0.10 0.20 0.30; do
       --proposal fixed,laplace --pilot-shrink 0.5
   done
 done
+# R2r: a second pinned basis — the informed path starts at an independently drawn
+# anchor one anchor-rms from ambient (`|θ| 132.394`, basis anchor hash
+# 0xfe9ad411b8756ef7 in all eight cells), so the basis is shared but is not the ambient one:
+for f in 0.05 0.10 0.20 0.30; do
+  for k in 1 2; do
+    cargo run --release -p pcnl --example subspace_adaptation -- --ranks 4 \
+      --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed \
+      --anchor-jitter $f --anchor-seed $k --basis-anchor-seed 1 \
+      --proposal fixed,pilot --pilot-shrink 0
+  done
+done
 # the seven shape-estimator tests (fast, no sampling) and the gradient contract:
 cargo test -p pcnl --example subspace_adaptation
 cargo test -p pcnl --lib --release subspace_target_gradient
@@ -4761,7 +4772,70 @@ basis is open (a second pinned basis would separate them); two anchors per magni
 range, not a variance; and neither `rotlaplace` nor `--laplace-tau` was re-run under the pin — both
 remain retired on R2l/R2m grounds rather than on a control.
 
-### Recommendation (state after R2q: what to set, and how well each row is supported)
+### R2r — a second pinned basis: the accuracy spread is the prior mean, the mixing gain was the ambient basis
+
+R2q's open cell, run: a basis pinned to something that is **not** the ambient anchor.  The new
+`--basis-anchor-seed 1` draws one anchor from the law `--anchor-jitter` uses at `f = 1`
+(`ambient + N(0, rms²)`, fixed magnitude) and builds the informed PCA path from it; the draw depends
+only on the seed, so all eight cells share one basis but not the model's own reference point.
+Verified in every cell: `|θ|` **132.394**, basis anchor hash `0xfe9ad411b8756ef7`, basis line
+`132.394 -> 132.789` — the same in all eight, and not R2p's `94.030 -> 93.784`.  Protocol otherwise
+R2p's (`--ranks 4 --steps 4000 --burn 500 --thin 5 --chains 4 --basis informed`, `λ = 1`,
+`--proposal fixed,pilot --pilot-shrink 0`, data hash `0xba104db4f677b2ec`).
+
+| `f` | `k` | pilot ESS / `R̂` / acc | pilot Brier / NLL | `fixed` ESS / `R̂` / acc | R2p pilot ESS / acc |
+|---:|---:|---|---|---|---|
+| 0.05 | 1 | 24 / 1.098 / 18.75 % | 1.0177 / 3.7575 | 7 / 1.347 / 12.11 % | 425 / 15.23 % |
+| 0.05 | 2 | 46 / 1.043 / 13.28 % | 1.0177 / 3.7222 | 5 / 2.218 / 13.28 % | 463 / 13.67 % |
+| 0.10 | 1 | 141 / 1.033 / 15.23 % | 1.0186 / 3.7803 | 11 / 1.231 / 12.11 % | 522 / 15.23 % |
+| 0.10 | 2 | 7 / 16.048 / 11.33 % | 1.0047 / 3.4932 | 5 / 2.783 / 10.94 % | 430 / 17.58 % |
+| 0.20 | 1 | 154 / 1.050 / 12.11 % | 1.0139 / 3.6856 | 12 / 1.126 / 14.45 % | 540 / 13.28 % |
+| 0.20 | 2 | 6 / 14.777 / 12.50 % | 1.0092 / 3.4317 | 6 / 2.137 / 12.11 % | 362 / 13.67 % |
+| 0.30 | 1 | 101 / 1.027 / 17.97 % | 1.0171 / 3.5098 | 12 / 1.217 / 11.33 % | 233 / 14.06 % |
+| 0.30 | 2 | 6 / 1.715 / 8.98 % | 1.0102 / 3.3576 | 6 / 2.505 / 11.33 % | 229 / 6.64 % |
+
+**Result 74 — pinning is not what fixed the mixing; the ambient basis was.**  Under the second pin
+the pilot arm's ESS is 24 / 46 / 141 / 7 / 154 / 6 / 101 / 6 — mean **60.6**, sd 62.3 — against
+R2p's 229–540 (mean 400.5, sd 118.7): **6.6× lower**, per-cell ratios 17.7×, 10.1×, 3.7×, 61.4×,
+3.5×, 60.3×, 2.3×, 38.2×.  Three cells carry `R̂` **1.715 / 14.777 / 16.048** (R2p's maximum was
+1.036) and four sit at `R̂ ≥ 1.04`; acceptance is still 40.3–49.3 %, so this is a target-geometry
+problem, not a step-size one.  The proposal-independent arm degrades with it (ESS 5–12, `R̂`
+1.126–2.783).  So R2p's ESS result attributes to the **ambient** basis: an anchor inside the
+target's typical set is a good preconditioner because it is near the density, not because it is
+pinned.  Pinning removes basis *drift*, which is what the attribution needed, and nothing more.
+
+**Result 75 — the accuracy spread survives, and so does the worst anchor.**  BMA accuracy is
+18.75 / 13.28 / 15.23 / 11.33 / 12.11 / 12.50 / 17.97 / 8.98 %: mean **13.77** (R2p 13.67), sd
+**3.34** (3.16), span **9.77** points (10.94).  The **worst cell is the same anchor**
+(`f = 0.30, k = 2`: 8.98 vs 6.64 %), and the best moves to `f = 0.05, k = 1` (18.75 vs 17.58 % at
+`f = 0.10, k = 2`); the per-`f` means are **16.02 / 13.28 / 12.31 / 13.48 %** against R2p's
+14.45 / 16.41 / 13.47 / 10.35 %, non-monotone in both.  Rank agreement across the eight anchors is
+Spearman **0.40** (ESS ranks agree at **0.69**), so the *size* of the spread is a prior-mean
+property that reappears under an unrelated basis, while *which* anchor wins is partly basis-
+specific at two draws per magnitude.  In particular the 6.64 % cell is not an artifact of the
+ambient basis: its anchor is worst under both.
+
+**Result 76 — accuracy is robust to this collapse; the proper scores are not.**  Accuracy barely
+moves (mean 13.67 → 13.77) while ESS falls 6.6×, because it is a coarse discrete mean over four
+chains.  Brier is flat (mean 1.013, 1.0047–1.0186, versus R2p pilot 1.007) but **NLL is 3.59 on
+average (3.36–3.78) against R2p's 2.96 (2.87–3.17)** — a 0.63-nat gap on the *same* target.  That
+gap is chain error, not a different `pi_r`: at ESS 6–154 with `R̂` up to 16 the ensemble average is
+a poor estimate of the predictive, and NLL, being a log-area functional, inherits it far more than
+the accuracy fraction does.  Consequence for R3: proper-score comparisons across bases/settings
+must be gated on `R̂`/ESS (publish the diagnostic next to every cell), or they will report mixing
+failures as calibration failures.
+
+**Result 77 — what this settles and what it does not.**  Settled: the accuracy-spread attribution
+holds under a second, independent basis, so it is the prior mean and not the subspace; the ESS
+attribution sharpens to the ambient basis specifically, so R2p's "pinning removes the collapses"
+should be read as "the ambient anchor removes the collapses — a preconditioner must sit where the
+posterior lives"; and accuracy is a robust readout for anchor studies where proper scores are not.
+Not settled: one pin seed at one magnitude (1.0 rms) — a *near* ambient-anchored pin would
+separate "pinned" from "near" — the already-pinned `--basis random` arm was not re-run as the
+stronger contrast, and the laplace arm was not repeated under this basis (it would test whether
+median 1.19× is a mode-curvature property or another ambient-basis effect).
+
+### Recommendation (state after R2r: what to set, and how well each row is supported)
 
 The per-R-proposal recommendation, one table so it is not scattered across results.  "Load-
 bearing" means the row is a measurement that changed a decision; "null" means the dial was
@@ -4769,11 +4843,11 @@ implemented, verified and found not to matter, so it should stay off rather than
 
 | Question | Setting | Evidence | Status |
 |---|---|---|---|
-| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor; **3.04–4.93×** vs isotropic, geomean **4.08×**, on the eight pinned-basis anchors; **median 1.19×** / geomean **1.19×** / 0.80–1.70× vs that basis's pilot arm — R2o's moving-basis geomean 1.42× was carried by two pilot collapses) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9×; R2q repeats it with the basis pinned | load-bearing |
+| proposal at rank 4, `λ ≤ 1` | `laplace` at the target's mode, `--pilot-shrink 0.5` (**587 / 373** vs isotropic 383 / 152; **419** vs 342 at `λ = 0.5`; **378** vs 165 at a 10 %-jittered anchor; **3.04–4.93×** vs isotropic, geomean **4.08×**, on the eight pinned-basis anchors; **median 1.19×** / geomean **1.19×** / 0.80–1.70× vs that basis's pilot arm — R2o's moving-basis geomean 1.42× was carried by two pilot collapses) | R2k, two seeds; R2l adds the `λ = 0.5` cell; R2m shows the win survives an anchor shift at 2.3× rather than 5.9×; R2q repeats it with the basis pinned. R2r does not re-run it under the second pin (that basis mixes at ESS 6–154, so its proper scores would measure mixing, not the proposal) | load-bearing |
 | proposal at rank 4, `λ = 2` | no recommendation: the sign is seed-dependent (default seed 376 vs 351, **−6.6 %**; seed 7 172 vs 226, **+31 %**, and that mode search did not converge) | R2l's single cell; R2m retracts the `λ = 2` half of it | **withdrawn** |
 | `--laplace-tau τ < 1` (curvature at an interior point) | `1` (the mode).  Rank 4 `τ = 0.5` is 428 against the mode's 587 and the isotropic 383; rank 8 has `H_ii ≤ 0` in 1/8 coordinates and collapses (0.6 % acc, ESS 5, `R̂` 17.96) | R2m: `1/√H_ii` is undefined at a saddle, and interior points of `Φ` are saddles | load-bearing |
 | `--laplace-mix` / `--pilot-mix` (log-width blends) | `0` (off — use one endpoint or the other).  All eight mixed cells at or below their isotropic baseline: 5/254/352/271 at rank 4, 6/6/85/108 at rank 8 | R2m: the anchor half carries `H ≈ 0` widths of `1e4`; the pilot/mode blend only tightens the proposal | null (implemented, verified, harmful) |
-| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16). R2q runs the `laplace` arm under the same pin: its per-cell gain over the pinned pilot arm is 0.80–1.70× (median 1.19×, geomean 1.19×, 6/8 wins) and 3.04–4.93× over isotropic in every cell, so the typical proposal gain is the target, while the accuracy spread (unchanged, 7/8 cells identical) is the prior mean | **open, attributed: ESS ← subspace, accuracy ← prior mean** |
+| `--anchor-jitter` (and the anchor generally) | `0` for comparability with R2k/R2l; treat the anchor as **the** sensitivity to characterise, not a nuisance to jitter | R2m: `f = 0.10` moves accuracy 12.89 % → 14.45–15.23 %. R2n: 21 cells, 12.89 → 17.97 % at the default seed. R2o kills the trend reading: at one data split, 8 anchors span **11.72–19.92 %** accuracy and 8–406 ESS, within-magnitude gaps reach 6.6 points, and the magnitude means are not monotone; R2p pins the basis (`--basis-anchor`) and splits it: pinning removes the mixing collapses (pilot ESS geomean 2.95×, min 16 → 229, max `R̂` 1.742 → 1.036) but **not** the accuracy spread (6.64–17.58 %, sd 3.16). R2q runs the `laplace` arm under the same pin: its per-cell gain over the pinned pilot arm is 0.80–1.70× (median 1.19×, geomean 1.19×, 6/8 wins) and 3.04–4.93× over isotropic in every cell, so the typical proposal gain is the target, while the accuracy spread (unchanged, 7/8 cells identical) is the prior mean. R2r pins a *second*, non-ambient basis (`--basis-anchor-seed 1`): accuracy keeps its spread (sd 3.34, span 9.77, worst cell the same `f = 0.30, k = 2` anchor) but ESS collapses 6.6× (mean 60.6, `R̂` to 16.0) and NLL degrades 0.63 nats — so the accuracy attribution survives, the ESS gain was the **ambient** basis, and proper scores must be gated on `R̂`/ESS | **open, attributed: accuracy ← prior mean; ESS ← the ambient basis specifically** |
 | full covariance at the mode (`rotlaplace`) | off (diagonal `laplace` only): 112 vs 587 at rank 4, 6 vs 8 at rank 8 | R2l: the off-diagonal curvature is not the posterior's covariance; `m` shrinks to 0.27–0.38 | load-bearing |
 | `--pilot-shrink s`, rank 4, pilot arm (retired) | `0` or `0.5` — they tie (383 vs **399**) | R2e; R2i adds `s = 0` at 383 and pooled shapes at 362/17 | superseded by `laplace` |
 | `--pilot-shrink s`, rank 8 | `0` (raw 6 → **154**) | R2e, R2f; `s = 0.5` is worse than either end (64/16 with pooling) | load-bearing |
