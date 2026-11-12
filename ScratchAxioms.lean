@@ -1,0 +1,12 @@
+import BookProof.Qym.ChapterYangMillsFieldStrengthSplit
+
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueball_isCompl
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballAlt_finrank
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballTraceless_finrank
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueball_isCompl_trace
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballAct_mem_symm
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballAct_mem_alt
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballAltEquiv
+#print axioms BookProof.YangMillsFieldStrengthSplit.glueballAltMap_intertwines
+#print axioms BookProof.YangMillsFieldStrengthSplit.mesonSymmMap_intertwines
+#print axioms BookProof.YangMillsFieldStrengthSplit.mesonSymm_glueball_iso
