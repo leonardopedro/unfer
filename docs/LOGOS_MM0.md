@@ -189,6 +189,10 @@ ask/claims options:
   --llm          ask the LLM for hint terms (needs `--features llm-http`)
   --mehler       use the Kopperman/Mehler tail-determination theory
                  (a `theory: mehler` section in a claims file does the same)
+  --kernel-certificate FILE.mm0
+                 decide `theory: kernel` lines by citing that kernel certificate
+  --kernel-obligations FILE.json
+                 read this sidecar instead of the one the certificate pins
 
 exit codes: 0 yes (true/proved), 2 no (refuted), 1 unproved or error
 ```
@@ -201,6 +205,43 @@ true: two plus three equals five
 false: is two plus three six?
 proved: for all x: x plus zero equals x
 unproved: for all x, y: x plus y equals y plus x
+```
+
+A `theory:` line changes the target for the claims below it: `base`,
+`mehler`, or `kernel`.
+
+## Kernel content: deciding by citation
+
+`theory: kernel` switches to [`kernel`](../logos/src/mm0/kernel.rs), whose
+subject is a **symbolic kernel certificate** — the artifacts the unfer kernel's
+prover emits (`australVM/mm0/<stem>_certificate.mm0`). Those theorems state a
+numerical scheme's obligations as polynomial identities over the state's
+components (`numFlux u u = flux u`, `delta l r + delta r l = 0`, …), which is
+content the arithmetic fragment cannot express: they range over state vectors
+rather than over numbers.
+
+The verdict is a **citation**, not a fresh proof. A sentence is lowered to the
+same polynomials the certificate used (by expanding the kernel's definitions
+from the obligations sidecar), and it is `proved` when some theorem of that
+certificate states exactly the same identity up to a renaming of the
+variables — including its hypothesis, so `delta l r = 0 when l = r` cites the
+uniform-state theorem while `delta l r = 0` does not. Nothing here invents a
+proof term: the cited theorem is true because `mm0-rs` + `mm0-c` accepted the
+certificate, which the gate re-runs.
+
+The citation is *pinned*: the certificate's `-- Source:` line carries the
+sha256 of the obligations file it was emitted from, and a sidecar that does not
+hash to it is refused rather than believed. What the fragment will not do is
+refute: "not an identity" is not "false", and turning one into the other would
+be a semantic claim about the numeric domain that this layer has no proof of, so
+those sentences come back `unproved` with the reason. `true:`/`false:` are
+accordingly not part of this fragment.
+
+```text
+theory: kernel
+proved: for all u: numerical flux of u and u agrees with flux of u
+proved: delta of l and r equals zero when l equals r
+unproved: the scheme is second order accurate
 ```
 
 ## The LLM seam
@@ -467,6 +508,9 @@ the gate (a corpus that cannot say "I do not know" passes vacuously):
 | mm0-rs + mm0-c accept proof and refutation | `logos/tests/mm0.rs` |
 | a **tampered** certificate is rejected | `logos/tests/mm0.rs`, `scripts/logos2mm0` |
 | the corpus reaches its expected verdicts | `unfer/logos/mm0/claims.txt` + `australVM/scripts/logos2mm0` |
+| kernel fragment: parsing, citation, hypothesis sensitivity, refusals | `logos/src/mm0/kernel.rs` (`#[cfg(test)]`) |
+| kernel corpus cites the certificate's four obligations, and keeps the accuracy line unproved | `unfer/logos/mm0/claims.txt` (`theory: kernel`) + `australVM/scripts/logos2mm0` |
+| a kernel certificate whose pinned sidecar digest drifted is refused | `logos/src/mm0/kernel.rs`, `australVM/scripts/logos2mm0` |
 | existing MM0 theorems, rewritten in the CNL, reach theirs | `unfer/logos/mm0/upstream.txt` + `australVM/scripts/logos2mm0` |
 | Kopperman fragment: formation checks, verdicts, obvious/calculational layers, lexicon coverage | `logos/tests/kopperman.rs` |
 | Kopperman LLM catalogue matches the theory and the goal format; proposals are judged | `logos/tests/kopperman.rs` (the deferred-proxy half needs `llm-http`) |
