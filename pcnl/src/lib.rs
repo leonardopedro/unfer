@@ -49,6 +49,7 @@
 
 pub mod budget;
 pub mod diag;
+pub mod dt_arm;
 pub mod experiment;
 pub mod manifest;
 pub mod mdp;

@@ -821,8 +821,27 @@ under `Variant::Standard` the Exact and Stopped derivatives are the same tensor
 across `‖θ‖` of 0.22 / 2.18 / 21.8 and the stopped gradient is off by 2.2e-2–4.0e-2 in the same
 direction — with gradient norms agreeing to four digits (ratio 0.9997–0.9999). The gap is a
 rotation of the update, not a rescaling: a norm check would have declared the conventions
-identical. Every cell in R7.4–R7.5 is still open; nothing here is evidence, so no ledger row is
-owed yet.
+identical.
+
+**The readout half of R7.4 now exists and has run (`examples/dt_cell`, seed 11).** `dt_arm::DtCell`
+assembles the ambient pieces — the `PotentialAnchor` anchor (hash `79f9638aa261e3e5`), two behaviour
+policies over the same MDP, unadjusted SG-pCNL chains at the full DT target — and reports the three
+columns R7.4 asks for: per-step NLL/Brier/spherical, max-prob calibration with per-bin counts, and
+paired returns for behaviour, anchor(sample, argmax), `p̄`(sample, argmax) and the exact optimum.
+Measured on test (128 transitions): anchor NLL 1.5925 / Brier 0.7858 / top-1 0.344 / ECE 0.215 vs
+`p̄` 1.1056 / 0.5434 / 0.680 / 0.177. Returns at `x0 = [1, 0.5]`, 96 rollouts: behaviour −6.09 ±
+0.34, anchor-sample −3.64 ± 0.13, anchor-argmax −2.54 ± 0.03, `p̄`-sample −7.37 ± 0.49, optimum
+−2.42 ± 0.02; paired vs behaviour +2.45 ± 0.34, +3.55 ± 0.34, −1.28 ± 0.52 (resolved) and
++0.47 ± 0.33 (within noise) for `p̄`-argmax.
+
+That is the plan's **calibration-only** branch: the predictive improves every per-step score and
+top-1 match while its sampled return is *worse* than the behaviour policy's. The same run shows why:
+`P = 17 408` and `σ√P = 46.2` against a reached radius of 49.4, so the full-target draws span the
+entire prior shell and `p̄` averages over policies that differ far more than the likelihood does.
+R7.4's rank-4 restriction is what makes `σ = 0.35` a meaningful posterior width. The Adam point DT,
+the temperature-tuned baseline, the matched-evaluation ensemble and the informed basis are still
+missing, so this is readout wiring plus a screening observation — not the R7.4 comparison, and every
+cell in R7.4–R7.5 remains open with no ledger row owed.
 
 ### R7.4 First measured cell (no new dials)
 

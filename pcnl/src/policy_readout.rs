@@ -306,9 +306,23 @@ pub fn max_prob_calibration(probs: &[Vec<f64>], targets: &[usize], bins: usize) 
 
 // -------------------------------------------------------- return readout
 
-/// An action distribution as a function of `(timestep, state)`. A DT readout
-/// supplies one of these; the MDP is what turns it into a return.
-pub type ActionDist = dyn Fn(usize, [f32; 2]) -> Vec<f64>;
+/// What a policy knows when it has to act in a rollout.
+///
+/// `states` has `t + 1` entries (`states[t] == state`, `states[0]` the start)
+/// and `actions` the `t` actions already taken, which is exactly the input a
+/// decision transformer conditions on at step `t`: `(g_t, s_t, a_<t)` with no
+/// future.  A stateless arm ignores the history; a DT arm cannot, and passing
+/// `(t, x)` alone would have forced the DT to carry hidden state across
+/// rollouts — the bug this type exists to prevent.
+pub struct Context<'a> {
+    pub t: usize,
+    pub state: [f32; 2],
+    pub states: &'a [[f32; 2]],
+    pub actions: &'a [usize],
+}
+
+/// An action distribution over the environment's actions, given the context.
+pub type ActionDist = dyn Fn(&Context) -> Vec<f64>;
 
 /// How an arm turns a distribution into an action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -465,9 +479,16 @@ pub fn readout(
             .collect();
         for (ai, arm) in arms.iter().enumerate() {
             let mut x = x0;
+            let mut states = vec![x0];
+            let mut acts: Vec<usize> = Vec::with_capacity(env.horizon);
             let mut total = 0.0f64;
             for t in 0..env.horizon {
-                let dist = (arm.dist)(t, x);
+                let dist = (arm.dist)(&Context {
+                    t,
+                    state: x,
+                    states: &states,
+                    actions: &acts,
+                });
                 assert_eq!(
                     dist.len(),
                     env.actions.len(),
@@ -481,7 +502,9 @@ pub fn readout(
                     Decode::Argmax => argmax(&dist),
                 };
                 total += f64::from(env.reward(x, a));
+                acts.push(a);
                 x = env.step(x, a, noises[t]);
+                states.push(x);
             }
             returns[ai].push(total);
         }
@@ -521,21 +544,21 @@ pub fn readout(
 
 /// A uniform-random arm: the honest floor, and the baseline every learned
 /// policy should beat before any of its numbers mean anything.
-pub fn uniform_arm(env: &MdpEnv) -> impl Fn(usize, [f32; 2]) -> Vec<f64> + use<> {
+pub fn uniform_arm(env: &MdpEnv) -> impl Fn(&Context) -> Vec<f64> + use<> {
     let k = env.actions.len();
-    move |_, _| vec![1.0 / k as f64; k]
+    move |_| vec![1.0 / k as f64; k]
 }
 
 /// A deterministic one-hot arm over `vocab` actions that always takes
 /// `action`.  `vocab` is explicit because a distribution whose arity does not
 /// match the environment is a bug the readout has to reject, not silently
 /// extend.
-pub fn constant_arm(vocab: usize, action: usize) -> impl Fn(usize, [f32; 2]) -> Vec<f64> + use<> {
+pub fn constant_arm(vocab: usize, action: usize) -> impl Fn(&Context) -> Vec<f64> + use<> {
     assert!(
         action < vocab,
         "action {action} outside a {vocab}-action arm"
     );
-    move |_, _| {
+    move |_| {
         let mut d = vec![0.0f64; vocab];
         d[action] = 1.0;
         d

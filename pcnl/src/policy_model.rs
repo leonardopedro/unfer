@@ -368,6 +368,92 @@ pub fn dt_probs(
     candle_nn::ops::softmax(&logits, D::Minus1)
 }
 
+/// The DT's action distribution at step `t` of a single rollout.
+///
+/// `states` has `t + 1` entries (`states[t]` is the state the policy is acting
+/// in), `actions` the `t` actions already taken, and `rtgs` the `t + 1`
+/// conditioning bins (indices from [`crate::mdp::DtSpec::bin`], not raw
+/// returns, because the embedding table's rows are bins).  Per-step bins and
+/// not one value: a training sequence's return-to-go falls as the step index
+/// rises, so a rollout that conditioned on a constant bin at every step would
+/// be asking a row the corpus never visited.
+///
+/// Only the accumulated prefix is fed in. The forward pass is causal, so row
+/// `3t + 1` here is the same row the loss scores at step `t` on a training
+/// sequence with the same prefix — which is what lets a rollout be read out by
+/// the same functions as the training batch instead of by a second, subtly
+/// different inference path.
+///
+/// The action slot at step `t` is a placeholder: the prediction at `3t + 1` is
+/// the distribution *over* `a_t`, so no action at `t` may be visible to it.
+///
+/// The sequence is always evaluated at the model's full `max_len`, with the
+/// real prefix masked in and zeros after it.  That is not padding for
+/// convenience: the attention denominator's length changes with the batch
+/// shape, so a shorter sequence would give a row that agrees only to a few
+/// digits (the same row computed with a different number of `−∞` keys and a
+/// different matmul shape).  At fixed length the future slots cannot reach row
+/// `3t + 1` at all — causal masking sends them `−∞` — and the row is the one a
+/// training batch produces, which `dt_act_is_the_row_the_loss_scores` checks.
+pub fn dt_act(
+    theta: &Tensor,
+    shapes: &DtShapes,
+    variant: Variant,
+    rtgs: &[u32],
+    states: &[[f32; 2]],
+    actions: &[u32],
+) -> Result<Vec<f64>> {
+    let t = actions.len();
+    if rtgs.len() != t + 1 {
+        return Err(candle_core::Error::Msg(format!(
+            "dt_act: {} rtg bins for {t} actions (expected {})",
+            rtgs.len(),
+            t + 1
+        )));
+    }
+    if states.len() != t + 1 {
+        return Err(candle_core::Error::Msg(format!(
+            "dt_act: {} states for {t} actions (expected {})",
+            states.len(),
+            t + 1
+        )));
+    }
+    if t + 1 > shapes.max_len {
+        return Err(candle_core::Error::Msg(format!(
+            "dt_act: step {t} outside a {}-timestep model",
+            shapes.max_len
+        )));
+    }
+    let dev = theta.device();
+    let n = shapes.max_len;
+    let mut rtg_all = vec![rtgs[0]; n];
+    rtg_all[..rtgs.len()].copy_from_slice(rtgs);
+    let mut st = vec![0.0f32; n * 2];
+    let mut acts = vec![0u32; n];
+    let mut mask = vec![0.0f32; n];
+    for (i, s) in states.iter().enumerate() {
+        st[2 * i] = s[0];
+        st[2 * i + 1] = s[1];
+        mask[i] = 1.0;
+    }
+    for (i, &a) in actions.iter().enumerate() {
+        acts[i] = a;
+    }
+    let batch = DtBatch::new(
+        Tensor::from_vec(rtg_all, (1, n), dev)?,
+        Tensor::from_vec(st, (1, n, 2), dev)?,
+        Tensor::from_vec(acts, (1, n), dev)?,
+        Tensor::from_vec(mask, (1, n), dev)?,
+    )?;
+    let probs = dt_probs(theta, shapes, variant, &batch)?;
+    let row = probs
+        .reshape((3 * n, shapes.action_vocab))?
+        .narrow(0, 3 * t + 1, 1)?
+        .flatten_all()?
+        .to_vec1::<f32>()?;
+    Ok(row.into_iter().map(f64::from).collect())
+}
+
 /// Mean per-transition NLL, forward only — the value half of the target.
 ///
 /// Uses the historical `Stopped` convention through [`dt_forward`], matching
