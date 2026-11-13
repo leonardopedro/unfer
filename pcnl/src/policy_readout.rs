@@ -40,7 +40,7 @@
 
 use crate::mdp::MdpEnv;
 use crate::model::Variant;
-use crate::policy_model::{DtBatch, DtShapes, dt_loss, dt_probs};
+use crate::policy_model::{DtBatch, DtShapes, dt_loss, dt_probs_at};
 use crate::readout::{Rule, normalize};
 use candle_core::{Result, Tensor};
 use rand::{Rng, SeedableRng};
@@ -72,6 +72,17 @@ pub struct StepScores {
 }
 
 impl StepScores {
+    /// One rule's per-step losses, in batch order — the pairing key for a
+    /// two-model comparison ([`paired_delta`]).
+    pub fn per_step(&self, rule: Rule) -> &[f64] {
+        &self
+            .by_rule
+            .iter()
+            .find(|s| s.rule == rule)
+            .unwrap_or_else(|| panic!("{} was not scored", rule.name()))
+            .per_step
+    }
+
     /// The mean score under one rule. Panics if the rule was not scored — a
     /// silent `0.0` for a missing column is how a report grows a fake zero.
     pub fn mean(&self, rule: Rule) -> f64 {
@@ -87,6 +98,27 @@ impl StepScores {
 ///
 /// An empty input is an error, not a zero: `n = 0` with `mean = 0` reads as a
 /// perfect score in any table that sorts by loss.
+/// Paired difference of two models' per-step losses, `a - b`, and its
+/// standard error over the scored steps.
+///
+/// Returns `(mean, se, n)`. The two models must be scored on the same batch in
+/// the same order — that is the whole point, since the unpaired SE of a
+/// difference of means is what makes a real 0.01-nat effect look like noise.
+///
+/// `se` treats steps as independent. Steps inside one trajectory are not (R3's
+/// `Γ_k`), so this is the *optimistic* error: a difference that is not resolved
+/// here is not resolved at all.
+pub fn paired_delta(a: &StepScores, b: &StepScores, rule: Rule) -> (f64, f64, usize) {
+    let (x, y) = (a.per_step(rule), b.per_step(rule));
+    assert_eq!(x.len(), y.len(), "paired_delta: same batch, same order");
+    let n = x.len();
+    assert!(n > 1, "paired_delta: needs a variance");
+    let d: Vec<f64> = x.iter().zip(y).map(|(u, v)| u - v).collect();
+    let mean = d.iter().sum::<f64>() / n as f64;
+    let var = d.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0);
+    (mean, (var / n as f64).sqrt(), n)
+}
+
 pub fn score_steps(probs: &[Vec<f64>], targets: &[usize]) -> StepScores {
     assert_eq!(probs.len(), targets.len(), "one target per distribution");
     assert!(!probs.is_empty(), "no steps to score");
@@ -144,7 +176,21 @@ pub fn dt_step_distributions(
     variant: Variant,
     batch: &DtBatch,
 ) -> Result<Vec<Vec<f64>>> {
-    let probs = dt_probs(theta, shapes, variant, batch)?;
+    dt_step_distributions_at(theta, shapes, variant, batch, 1.0)
+}
+
+/// [`dt_step_distributions`] with a head temperature (`T = 1` bitwise the
+/// un-temperature-scaled version).  R7.4's temperature-scaled point baseline
+/// needs the scored rows of `softmax(logits / T)`; gathering them here keeps
+/// the scored-step contract in one place instead of a second index walk.
+pub fn dt_step_distributions_at(
+    theta: &Tensor,
+    shapes: &DtShapes,
+    variant: Variant,
+    batch: &DtBatch,
+    temperature: f64,
+) -> Result<Vec<Vec<f64>>> {
+    let probs = dt_probs_at(theta, shapes, variant, batch, temperature)?;
     let (b, t) = batch.mask.dims2()?;
     let (idx, _) = batch.scored_steps()?;
     let flat = probs.reshape((b * 3 * t, shapes.action_vocab))?;

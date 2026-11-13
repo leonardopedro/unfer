@@ -37,11 +37,13 @@
 //! the full target this cell is prior-dominated and must not be quoted as the
 //! R7.4 comparison.
 //!
-//! What is deliberately absent: the rank-4 informed basis and `--basis-anchor`
-//! pin (that needs the affine-subspace surface), the Adam point baseline, the
-//! ensemble and the temperature tuning.  A `DtCell` therefore reports *anchor
-//! vs posterior* and says so; it must not be quoted as the R7.4 comparison
-//! until those baselines exist.  The readout half is complete: per-step proper
+//! What this module deliberately lacks: the rank-4 informed basis, the Adam
+//! point baseline, the ensemble and the temperature tuning.  A `DtCell`
+//! therefore reports *anchor vs posterior* and says so.  Those pieces live in
+//! [`crate::dt_subspace`] (`examples/dt_subspace`), which is where the measured
+//! R7.4 cell is; its promoted rows are in `docs/PCNL_STATUS.md` §R7.4 and are
+//! **not** comparable with the full-target rows above, because the target is a
+//! rank-4 restriction.  The readout half here is complete: per-step proper
 //! scores under all three rules, max-probability calibration with per-bin
 //! counts, and paired return readouts with MCSEs for the behaviour policy, the
 //! sampled and averaged policies, and the exact optimum.
@@ -126,22 +128,39 @@ impl DtCell {
     /// The R7.4 shapes (`d = 32`, `ff = 64`, 2 layers, 5 actions, 4 RTG bins,
     /// `T = 16`) and two behaviour policies over the same MDP.
     pub fn new(seed: u64) -> Self {
-        let env = MdpEnv::default();
-        let spec = DtSpec::default();
-        let shapes = env.dt_shapes(spec.rtg_bins, 32, 64, 2);
         // Anchor: near-greedy feedback, little exploration.  Adaptation: weak
         // feedback, heavy exploration — a different behaviour policy, not a
         // different environment.
-        let anchor_policy = BehaviourPolicy {
-            feedback: 1.0,
-            epsilon: 0.1,
+        Self::with_policies(
             seed,
-        };
-        let adapt_policy = BehaviourPolicy {
-            feedback: 0.3,
-            epsilon: 0.3,
-            seed: seed ^ 0xa11ce,
-        };
+            BehaviourPolicy {
+                feedback: 1.0,
+                epsilon: 0.1,
+                seed,
+            },
+            BehaviourPolicy {
+                feedback: 0.3,
+                epsilon: 0.3,
+                seed: seed ^ 0xa11ce,
+            },
+        )
+    }
+
+    /// [`DtCell::new`] with the two behaviour policies named by the caller.
+    ///
+    /// This is R7.6's "anchor as behaviour policy" axis: the *anchor* corpus —
+    /// hence the prior mean, the informed basis built from it, and the target's
+    /// centre — comes from `anchor_policy`, while the adaptation corpora come
+    /// from `adapt_policy`.  Only the anchor side is meant to be swept; the
+    /// adaptation target is the thing being predicted and must stay fixed.
+    pub fn with_policies(
+        seed: u64,
+        anchor_policy: BehaviourPolicy,
+        adapt_policy: BehaviourPolicy,
+    ) -> Self {
+        let env = MdpEnv::default();
+        let spec = DtSpec::default();
+        let shapes = env.dt_shapes(spec.rtg_bins, 32, 64, 2);
         let (anchor_train, anchor_dev, _) = Corpus::splits(&env, anchor_policy, (48, 8, 8), seed);
         let (adapt_train, adapt_dev, adapt_test) =
             Corpus::splits(&env, adapt_policy, (48, 8, 8), seed.wrapping_add(7));
@@ -587,6 +606,56 @@ pub const ARM_NAMES: [&str; 6] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_policies_reproduces_new_and_moves_only_the_anchor_corpus() {
+        // R7.6's anchor axis must not quietly change the adaptation target:
+        // the default call is bitwise `new`, and a moved anchor policy moves
+        // only the anchor corpora.
+        let base = DtCell::new(11);
+        let same = DtCell::with_policies(
+            11,
+            BehaviourPolicy {
+                feedback: 1.0,
+                epsilon: 0.1,
+                seed: 11,
+            },
+            BehaviourPolicy {
+                feedback: 0.3,
+                epsilon: 0.3,
+                seed: 11 ^ 0xa11ce,
+            },
+        );
+        assert_eq!(
+            base.anchor_train.content_hash(),
+            same.anchor_train.content_hash()
+        );
+        assert_eq!(
+            base.adapt_test.content_hash(),
+            same.adapt_test.content_hash()
+        );
+        let moved = DtCell::with_policies(
+            11,
+            BehaviourPolicy {
+                feedback: 0.3,
+                epsilon: 0.1,
+                seed: 11,
+            },
+            BehaviourPolicy {
+                feedback: 0.3,
+                epsilon: 0.3,
+                seed: 11 ^ 0xa11ce,
+            },
+        );
+        assert_ne!(
+            base.anchor_train.content_hash(),
+            moved.anchor_train.content_hash()
+        );
+        assert_eq!(
+            base.adapt_train.content_hash(),
+            moved.adapt_train.content_hash()
+        );
+    }
 
     #[test]
     fn dt_act_is_the_row_the_loss_scores() {

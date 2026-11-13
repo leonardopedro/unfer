@@ -4987,6 +4987,338 @@ estimator below two replicates, and a uniform scale provably leaves the width *s
 unchanged — the algebra that makes the R2h cell a null.  The ESS/NLL rows above are
 measurements, not test assertions, and are regenerable from the commands below.
 
+## R7 — decision transformers: the rank-4 adaptation cell (2026-11-13)
+
+R7.4's first measured cell, and R7.5's verdict on it: the DT adaptation arm is **stopped** on the
+negative branch, because the posterior-averaged policy `p̄` does not beat a temperature-tuned point
+DT on held-out action NLL at any of three seeds.  The cell is `pcnl/src/dt_subspace.rs` and
+`examples/dt_subspace`; the ambient-target readout of R7.3 (`dt_arm::DtCell`, `examples/dt_cell`)
+is untouched and its numbers above stand as readout wiring, not as this comparison.
+
+**The cell.**  Same MDP, model and corpus as R7.3's `DtCell` (rank 4, `λ = 1`, `σ = 0.35`, model
+`d = 32`, `ff = 64`, 2 layers, 5 actions, 4 RTG bins, `T = 16`, `P = 17 408`), but the target is the
+*adaptation* corpus (768 train / 128 dev / 128 test transitions, drawn by `DtCell::new`, **not** the
+96/32/32 of R7.4's protocol table — `DtCell`'s splits are the ambient ones and changing them would
+change every hash quoted above).  The informed basis is a rank-4 PCA over a ladder of short
+full-batch momentum paths started at the anchor and pinned there; a single path is one-dimensional
+and `pca_basis` returns `Degenerate { component: 1 }`, which is why the ladder exists.  The random
+control is `--bases random`, same rank, its own seed.  The point baseline is Adam on the same
+corpus, selected on dev over `lr ∈ {0.001, 0.003, 0.01}` with dev checks every 25 steps — untuned
+Adam overfits this corpus, so the point arm is the best dev-selected run, and its budget is split
+across the three learning rates, making it cost-matched to a single chain.  Temperature is tuned on
+dev over `{0.5, 0.75, 1, 1.5, 2, 3}`.  The ensemble is four members at a quarter of the budget each.
+
+**Result 83 — screening at `1 × 1 000` is not a measurement here, so it is reported as direction
+only.**  Thin 10 over a 500-step burn leaves 50 draws; across seeds 7/8/9 the informed arms reach ESS
+1.4 / 4.9 / 1.4 (`fixed`) and 11.4 / 5.7 / 29.1 (`pilot`), `laplace` 1.6 / NaN / NaN, and the
+random control 1.4–40.0 — all far under the 400 gate.  Test NLL, with the point baseline and the matched-evaluation ensemble:
+
+| seed | point | ensemble | informed `fixed` | informed `pilot` | informed `laplace` | random `pilot` |
+|---|---|---|---|---|---|---|
+| 7 | 0.9340 | 1.0431 | 0.9660 | 0.9440 | 0.9525 | 1.5179 |
+| 8 | 1.0924 | 1.0386 | 1.1200 | 1.1114 | 1.1666 | 1.5610 |
+| 9 | 1.2197 | 1.2380 | 1.2934 | 1.2815 | 1.3800 | 1.6288 |
+
+Two things this *does* establish, because they are gap-sized rather than 0.02-nat-sized: the
+informed basis beats the random control by 0.35–0.57 nats on every seed (a basis result, as R7.0
+item 2 predicted — the restriction, not the sampler, decides), and the `pilot` proposal beats
+`fixed` on every seed (0.022 / 0.009 / 0.012 nats).  The screening rank order is exactly the
+promoted one, but none of the screening rows is quotable as a posterior result; every gate column
+reads `—`.
+
+**Result 84 — `laplace` collapses at rank 4 in the DT target, so R2k's classifier win does not
+transfer.**  Six cells (three seeds × two bases) at `--laplace-shrink 0.5`:
+
+| seed / basis | accept | ESS | mode | `H_ii ≤ 0` | test NLL |
+|---|---|---|---|---|---|
+| 7 informed | 0.734 | 1.5 | 1 500 steps (**cap**) | 0/4 | 0.9466 |
+| 8 informed | 0.004 | 2.3 | 1 500 (**cap**) | 4/4 | 1.2035 |
+| 9 informed | 0.000 | NaN | 1 500 (**cap**) | 2/4 | 1.3530 |
+| 7 random | 0.092 | 22.4 | 142 (converged) | 4/4, `β` 1.0 | 1.5174 |
+| 8 random | 0.184 | 39.6 | 119 (converged) | 3/4, `β` 1.0 | 1.5632 |
+| 9 random | 0.344 | 16.4 | 128 (converged) | 2/4, `β` 1.0 | 1.6316 |
+
+The informed mode search runs into its cap with `φ` still falling (1 219 → 874, `max|∇|` 116 →
+0.016) — the anchor is far from the mode in a 17 408-dimensional space, and the DT's likelihood is
+much flatter there than the classifier's, so the diagonal curvature at the stopped point is not
+the posterior's.  In the random basis the mode converges but 2–4 of 4 coordinates have `H_ii ≤ 0`
+and `β` clamps to 1, which makes the proposal an isotropic one.  Either way the arm is a
+**proposer defect at this target**, recorded as such and carrying no score.  This closes the
+question R7.5's "not claimed" list left open: the rank-4 `laplace` win is target-specific.
+
+**Result 85 — the promoted informed `pilot` cell passes the sampling gates; `fixed` does not.**
+4 chains × 6 000 steps, burn 500, thin 5 (4 400 kept), 6 000 point evaluations, 192 rollouts:
+
+| seed | proposal | accept | ESS(Φ) | `R̂` | gate |
+|---|---|---|---|---|---|
+| 7 | fixed | 0.819 | 142.4 | 1.023 | fail |
+| 7 | pilot | 0.289 | **590.9** | **1.004** | **pass** |
+| 8 | fixed | 0.826 | 89.7 | 1.045 | fail |
+| 8 | pilot | 0.305 | **792.4** | **1.003** | **pass** |
+| 9 | fixed | 0.821 | 121.0 | 1.014 | fail |
+| 9 | pilot | 0.266 | **858.8** | **1.002** | **pass** |
+
+The 4 000-step budget of the protocol table was not enough: pilot ESS there was 335.3 / 377.1 / 537.1,
+below the 400 floor at two of three seeds, so the cell was extended to 6 000 (+175 s per cell).
+The gap between `fixed` and `pilot` is the whole difference between a converged and an unconverged
+row, and it is stable across seeds — as in R2, the `fixed` proposal is the one that fails.
+
+**Result 86 — the paired test: `p̄` ties the calibrated point baseline on NLL at all three seeds,
+and wins the strictly proper rules on one.**  Paired per-step difference, `p̄(pilot) − point-temp`
+on the same 128 test steps (positive = `p̄` worse):
+
+| seed | NLL | Brier | spherical |
+|---|---|---|---|
+| 7 | +0.0079 ± 0.0182 (+0.4σ) | +0.0066 ± 0.0108 (+0.6σ) | +0.0079 ± 0.0073 (+1.1σ) |
+| 8 | −0.0171 ± 0.0455 (−0.4σ) | **−0.0543 ± 0.0150 (−3.6σ)** | **−0.0319 ± 0.0081 (−4.0σ)** |
+| 9 | +0.0814 ± 0.0563 (+1.4σ) | +0.0023 ± 0.0204 (+0.1σ) | −0.0023 ± 0.0129 (−0.2σ) |
+
+Unpaired test NLL / top-1 / ECE: seed 7 point 0.9340 / 0.719 / 0.1324 vs `p̄` 0.9420 / 0.719 /
+0.1479; seed 8 point-temp 1.1273 / 0.641 / 0.1602 vs `p̄` 1.1102 / 0.672 / 0.0991; seed 9
+point-temp 1.2037 / 0.609 / 0.1070 vs `p̄` 1.2852 / 0.594 / 0.1042.  The anchor starts at 1.52 /
+1.57 / 1.64 and the ensemble at 1.37 / 1.26 / 1.52 on test.
+
+That is a **tie on the primary criterion** wherever it is not a loss: no seed reaches 2σ on NLL in
+either direction.  Seed 8 is the informative one — `p̄` is better calibrated (Brier and spherical
+both past 3.5σ, ECE 0.099 vs 0.160) while its NLL is indistinguishable from the tempered point
+model's.  A cooled model and a posterior average can agree on log-loss and disagree on the proper
+rules when the mass sits on different steps; this cell cannot separate those two explanations, and
+nothing here licenses the stronger reading that `p̄`'s calibration is the mechanism.
+
+**Result 87 — the return half is inconsistent across seeds and does not rescue the arm.**
+192 rollouts at `x0 = [1, 0.5]`, paired against the behaviour policy (`±` is the paired MCSE):
+
+| arm | seed 7 | seed 8 | seed 9 |
+|---|---|---|---|
+| behaviour | −5.9483 ± 0.2079 | −5.7080 ± 0.2521 | −6.0906 ± 0.2435 |
+| anchor-sample | −3.3552 ± 0.0801 | −3.8675 ± 0.1034 | −3.9080 ± 0.1103 |
+| anchor-argmax | −2.4515 ± 0.0191 | −2.5163 ± 0.0201 | −2.4882 ± 0.0193 |
+| point-sample | −8.1501 ± 0.3407 | −11.5433 ± 0.7306 | −14.2354 ± 0.7710 |
+| point-argmax | −9.6159 ± 0.1411 | −3.8016 ± 0.0754 | −7.9654 ± 0.1612 |
+| `p̄`-sample | −7.8071 ± 0.3173 | −6.4616 ± 0.2747 | −7.3448 ± 0.2901 |
+| `p̄`-argmax | −7.4954 ± 0.0829 | −6.5290 ± 0.0990 | −5.5447 ± 0.0802 |
+| optimal | −2.3431 ± 0.0165 | −2.3530 ± 0.0172 | −2.3697 ± 0.0160 |
+
+Paired vs behaviour: `p̄`-argmax **+0.5458 ± 0.2454** on seed 9 and **−0.8210 ± 0.2674** on seed 8
+(both resolved, of opposite sign), `p̄`-sample −1.8588 ± 0.3135 / −0.7536 ± 0.2693 on seeds 7/8
+(seed 9 −1.2542 ± 0.3238 — resolved worse on all three).  The only arm that beats behaviour on
+every seed is the *anchor* (untrained on the adaptation corpus), and the exact optimum is 2.35–
+2.37: the adaptation corpus is not where the return lives.  The averaged policy's returns are
+therefore reported and **not** used: the plan's "calibration-only" branch needs both samples and
+averages to move, and here one moves and the other does not.
+
+**Result 88 — verdict: R7.5's negative branch.**  None of the three seeds reaches a 2×MCSE NLL
+advantage, two of three are point estimates in the wrong direction, and a tie counts as not
+positive by the acceptance text.  Per the plan: record the cell, **stop the DT adaptation arm**
+pending a *target* hypothesis (a different corpus, basis target or restriction), not a new sampler
+knob.  What would be a target hypothesis is already spelled out in R7.6 — head-only vs
+trunk-only bases, and the anchor-as-behaviour-policy axis — and none of it is a proposal change.
+
+### The basis target: head-only, trunk-only, and their matched controls (R7.6 item 1, same day)
+
+The first of R7.6's open questions.  `--bases head,trunk` restrict the *informed* path PCA to one
+parameter block (the untied head `w_out [D, A]`, or everything before it), and
+`--bases head-random,trunk-random` are their controls: a rank-4 random basis drawn **inside the same
+block**, so the pair differs only in which vectors inside the block are used.  Matching the control
+to the block matters — a full-space random basis has support the block basis cannot have.  4 chains
+× 6 000 steps, thin 5, seeds 7/8/9, informed `pilot`, same adaptation corpus and baselines as above
+(the `informed` rows reproduce Results 85–86 exactly, so the table is one run):
+
+| seed | arm | test NLL | Brier | spherical | top-1 | ECE | ESS(Φ) | `R̂` |
+|---|---|---|---|---|---|---|---|---|
+| 7 | informed | **0.9420** | 0.4636 | 0.2665 | 0.719 | 0.148 | 590.9 | 1.004 |
+| 7 | trunk | 0.9509 | 0.4608 | 0.2659 | 0.695 | 0.103 | 788.6 | 1.005 |
+| 7 | head | 1.1253 | 0.5608 | 0.3332 | 0.633 | 0.179 | 543.0 | 1.008 |
+| 7 | trunk-random | 1.5170 | 0.8210 | 0.5362 | 0.281 | 0.282 | 1081.8 | 1.000 |
+| 7 | head-random | 1.4671 | 0.7822 | 0.5061 | 0.289 | 0.263 | 753.1 | 1.001 |
+| 8 | informed | **1.1102** | 0.4979 | 0.2979 | 0.672 | 0.099 | 792.4 | 1.003 |
+| 8 | head | 1.1386 | 0.5351 | 0.3239 | 0.672 | 0.125 | 657.4 | 1.002 |
+| 8 | trunk | 1.1517 | 0.5000 | 0.2995 | 0.664 | 0.083 | 1019.2 | 1.002 |
+| 8 | head-random | 1.4652 | 0.7065 | 0.4562 | 0.422 | 0.145 | **236.4** | 1.008 |
+| 8 | trunk-random | 1.5643 | 0.7530 | 0.4848 | 0.414 | 0.204 | 910.2 | 1.004 |
+| 9 | informed | **1.2852** | 0.5924 | 0.3595 | 0.594 | 0.104 | 858.8 | 1.002 |
+| 9 | head | 1.3000 | 0.6125 | 0.3739 | 0.625 | 0.159 | 573.9 | 1.008 |
+| 9 | trunk | 1.3549 | 0.5872 | 0.3553 | 0.617 | 0.085 | 902.4 | 1.003 |
+| 9 | head-random | 1.5962 | 0.7562 | 0.4916 | 0.367 | 0.173 | **318.2** | **1.012** |
+| 9 | trunk-random | 1.6207 | 0.7613 | 0.4966 | 0.359 | 0.192 | 584.0 | 1.009 |
+
+The two bold gate cells (`head-random`, ESS 236.4 at seed 8 and 318.2 with `R̂` 1.012 at seed 9) are
+reported as gate failures, not scores; every informed/block arm passes (ESS 543–1019, `R̂` ≤ 1.008).
+
+**Result 89 — no block restriction beats the full-space informed basis, and the head alone is the
+worst informed arm on two of three seeds.**  NLL cost of *not* using the whole path, `block −
+informed`: seed 7 `+0.1833` (head), `+0.0089` (trunk); seed 8 `+0.0284`, `+0.0415`; seed 9 `+0.0148`,
+`+0.0697`.  Trunk-only is within 0.007–0.070 nats of the full basis — the trunk carries essentially
+all of it — while head-only costs 0.18 nats at seed 7 and is never better.  Paired against the
+point-temp baseline (log NLL): head `+0.1913 ± 0.0478` (**4.0σ worse**) / `+0.0113 ± 0.0405` /
+`+0.0963 ± 0.0492` (2.0σ worse); trunk `+0.0169 ± 0.0299` / `+0.0244 ± 0.0596` /
+`+0.1512 ± 0.0785` (1.9σ worse at seed 9).  So the block axis is not a dial to turn: the rank-4
+question R7.0 item 2 raised ("the restriction is the cost") is decided in the **trunk**, and the head
+adds nothing at rank 4 — a head-only basis is a worse prior than the whole path, not a cheaper one.
+
+**Result 90 — the informed-vs-control gap survives the block matching, and it is the largest effect
+in the table.**  Block informed vs its own in-block control: seed 7 `−0.059` (head) / `−0.566`
+(trunk); seed 8 `−0.327` / `−0.413`; seed 9 `−0.296` / `−0.266` nats.  Six of six informed arms beat
+their matched random control by 0.27–0.57 nats, so the gain is the *directions* and not the
+coordinates they live in — a control drawn in the wrong space would have left this open.  The
+trunk control also mixes best of any cell (ESS 584–1082) and is the worst predictor, which is the
+same "mixing is not accuracy" dissociation R2r recorded.
+
+### The RTG table alone is not a basis target (R7.6, same day)
+
+The last block named in R7.6's question is the return-conditioning table `e_rtg [G, D]` — 128 of the
+17 408 coordinates at `G = 4, D = 32`.  `Block::Rtg` spans it from `DtShapes::layout` (not from
+`rtg_bins * d`), and it is a *sub-block* of the trunk rather than a third partition, which the basis
+test now asserts.  Same cell, same protocol, `--bases rtg,rtg-random`:
+
+| seed | point-temp | full-space informed | `rtg` | `rtg-random` | informed − control (in block) | ESS (`rtg` / control) | `R̂` |
+|---|---|---|---|---|---|---|---|
+| 7 | 0.9340 | 0.9420 | 1.4819 | 1.5062 | +0.0243 | 1258.2 / 1625.8 | 1.004 |
+| 8 | 1.1273 | 1.1102 | 1.5459 | 1.5650 | +0.0191 | 1798.7 / 1879.5 | 1.002 |
+| 9 | 1.2037 | 1.2852 | 1.6248 | 1.6349 | +0.0101 | 1526.1 / 1508.3 | 1.001 |
+
+**Result 94 — the RTG table carries essentially none of the informed directions.**  Restricting to it
+costs +0.540 / +0.436 / +0.340 nats against the full-space informed basis and leaves the posterior
++0.42 / +0.42 / +0.55 nats behind the point baseline (paired +7.0σ / +5.3σ / +4.9σ, all three
+significantly *worse*).  Its informed-over-control gap is +0.010…+0.024 nats, against +0.342
+(head) and +0.566 (trunk) at the same rank and seeds — a factor of 20–50 smaller.  So the ordering
+from Results 89–90 sharpens: the informed content is in the trunk and, within the trunk, not in the
+return-embedding table; a rank-4 chart drawn from `e_rtg` alone is barely distinguishable from a
+random one.  That is consistent with R7's own reading of a DT — the return is the *conditioning*
+input, not where the learned policy lives — and it means the remaining candidate inside the trunk is
+the state encoder plus the transformer blocks, which the block decomposition cannot isolate further
+without splitting the per-layer products.
+
+**Result 95 — all four cells pass the gates** (ESS 1 258–1 880, `R̂` ≤ 1.004), and both controls have
+*more* ESS than their informed counterparts here (1 626 vs 1 258 at seed 7), so this is a score
+comparison and not a mixing artefact.  Also note the RTG path norm is small (1.057 → 1.130 of the
+anchor's 14.70): the block's own fine-tuning motion is a tiny part of the full path, which is the
+mechanical reason its principal directions are weak.
+
+### The anchor as behaviour policy (R7.6, last item, same day)
+
+R7.6's other named axis: a DT anchor is a corpus, so the analogue of R2n–R2s's "anchor direction" is
+the **behaviour policy the anchor corpus was drawn from**.  `DtCell::with_policies` (new) names the
+two policies separately; `--anchor-feedback/--anchor-epsilon` sweep the anchor side only.  The
+adaptation corpora and the target never move, and the point baseline adapts from each anchor (so
+the comparison is anchored, as R7.4 specifies).  4 × 6 000, thin 5, informed `pilot`, seeds 7/8/9:
+
+| anchor policy | seed | anchor NLL | point-temp NLL | `p̄` NLL | paired `p̄ − point` (log) | ESS(Φ) | `R̂` |
+|---|---|---|---|---|---|---|---|
+| 1.0 / 0.1 (default) | 7 | 1.5240 | 0.9340 | 0.9420 | +0.0079 ± 0.0182 (+0.4σ) | 590.9 | 1.004 |
+| | 8 | 1.5693 | 1.1273 | 1.1102 | −0.0171 ± 0.0455 (−0.4σ) | 792.4 | 1.003 |
+| | 9 | 1.6371 | 1.2037 | 1.2852 | +0.0814 ± 0.0563 (+1.4σ) | 858.8 | 1.002 |
+| 0.3 / 0.1 (weak) | 7 | **0.9356** | 0.9419 | 0.9413 | −0.0006 ± 0.0265 (−0.0σ) | 815.4 | 1.002 |
+| | 8 | **1.1820** | 1.1242 | 1.0766 | −0.0477 ± 0.0282 (−1.7σ) | 549.9 | 1.005 |
+| | 9 | **1.3772** | 1.2491 | 1.2560 | +0.0069 ± 0.0474 (+0.1σ) | 527.4 | 1.006 |
+| 2.0 / 0.1 (sharp) | 7 | 2.2897 | 0.9365 | 0.9369 | +0.0004 ± 0.0325 (+0.0σ) | 786.9 | 1.003 |
+| | 8 | 2.0754 | 1.1231 | 1.1076 | −0.0155 ± 0.0445 (−0.3σ) | 630.0 | 1.006 |
+| | 9 | 2.0711 | 1.1993 | 1.2825 | +0.0832 ± 0.0513 (+1.6σ) | 605.0 | 1.007 |
+| 1.0 / 0.3 (noisy) | 7 | 1.5057 | 0.9799 | 0.9466 | −0.0333 ± 0.0321 (−1.0σ) | 828.2 | 1.006 |
+| | 8 | 1.4760 | 1.0802 | 1.0949 | +0.0146 ± 0.0408 (+0.4σ) | 814.9 | 1.004 |
+| | 9 | 1.5510 | 1.2042 | 1.2648 | +0.0606 ± 0.0398 (+1.5σ) | 896.3 | 1.001 |
+
+**Result 91 — the axis moves the prior mean by up to 1.35 nats and the posterior by 0.034.**  The
+anchor's own held-out NLL spans 0.9356–2.2897 at seed 7 (1.354 nats), 1.1820–2.0754 at seed 8
+(0.893), 1.3772–2.0711 at seed 9 (0.694), so "which behaviour policy the anchor was fitted on" is a
+first-order property of the prior mean.  `p̄` over the same twelve cells spans 0.9369–0.9466 (0.010),
+1.0766–1.1102 (0.034) and 1.2560–1.2852 (0.029): an order of magnitude smaller, and roughly the
+size of one cell's MCSE.  At rank 4 with 128 adaptation transitions the likelihood term dominates
+the prior, so a badly mis-specified anchor is corrected rather than inherited — the opposite of
+what R2n–R2s measured for the *classifier's* accuracy, where the prior mean was the accuracy.
+
+**Result 92 — the best anchor is the one drawn from the adaptation behaviour, and matching is what
+matters, not quality.**  The weak-feedback anchor (feedback 0.3, the same feedback the adaptation
+corpus uses) is the best prior mean at all three seeds, 0.59 / 0.39 / 0.26 nats below the default
+near-greedy one, while the sharp anchor (feedback 2.0 — a *better* policy in return terms) is the
+worst by 0.69–0.77 nats.  So this is a corpus-match effect, not an anchor-quality effect; note that
+the anchor's pretrain loss cannot see it, because each anchor is pretrained on its own corpus
+(1.599–1.627 → 0.636–1.127 across the four).
+
+**Result 93 — no anchor policy produces R7.5's positive verdict.**  The paired NLL against each
+policy's own point baseline is +0.4σ / −0.4σ / +1.4σ (default), −0.0σ / −1.7σ / +0.1σ (weak),
++0.0σ / −0.3σ / +1.6σ (sharp), −1.0σ / +0.4σ / +1.5σ (noisy).  The best single cell is seed 8
+under the weak anchor at −1.7σ, with Brier −2.6σ and spherical −2.5σ — a genuine improvement in the
+proper rules, but on **one** seed and under 2σ, so it is neither the ≥3-seed 2×MCSE requirement of
+R7.5 nor enough to reopen the arm.  All twelve cells pass the sampling gates (ESS 527–896, `R̂` ≤
+1.007), so these are scores and not gate failures.  Every policy differs from the default by less
+than 0.035 nats in `p̄`: the R7.4 deficit is **not** an anchor-corpus artefact, which was the most
+plausible remaining "target hypothesis" for it.
+
+### Does the weak-anchor proper-rule win replicate? (R7.6, same day)
+
+Result 93's best cell was seed 8 under the weak anchor (−1.7σ in log NLL, −2.6σ Brier, −2.5σ
+spherical).  A single seed at <2σ is not a result, so the same cell was run on three fresh seeds
+(10/11/12), with the **default** anchor run on the same fresh seeds as the control — six seeds per
+policy, 4 × 6 000, thin 5, informed `pilot`, `--rollouts 2`:
+
+| anchor | seed | anchor NLL | point-temp | `p̄` | paired log | paired Brier | paired spherical | ESS(Φ) | `R̂` |
+|---|---|---|---|---|---|---|---|---|---|
+| weak 0.3/0.1 | 7 | 0.9356 | 0.9419 | 0.9413 | −0.0006 ± 0.0265 | +0.0034 ± 0.0137 | −0.0010 ± 0.0108 | 815.4 | 1.002 |
+| | 8 | 1.1820 | 1.1242 | 1.0766 | −0.0477 ± 0.0282 | −0.0364 ± 0.0138 | −0.0229 ± 0.0090 | 549.9 | 1.005 |
+| | 9 | 1.3772 | 1.2491 | 1.2560 | +0.0069 ± 0.0474 | −0.0281 ± 0.0187 | −0.0219 ± 0.0111 | 527.4 | 1.006 |
+| | 10 | 1.4554 | 1.3481 | 1.3394 | −0.0088 ± 0.0402 | −0.0333 ± 0.0167 | −0.0280 ± 0.0111 | 703.4 | 1.008 |
+| | 11 | 1.1520 | 1.0960 | 1.0703 | −0.0257 ± 0.0349 | −0.0251 ± 0.0177 | −0.0181 ± 0.0121 | 514.1 | 1.004 |
+| | 12 | 1.0433 | 1.0050 | 1.0030 | −0.0019 ± 0.0365 | −0.0086 ± 0.0198 | −0.0054 ± 0.0121 | 686.8 | **1.012** |
+| default 1.0/0.1 | 7 | 1.5240 | 0.9340 | 0.9420 | +0.0079 ± 0.0182 | +0.0066 ± 0.0108 | +0.0079 ± 0.0073 | 590.9 | 1.004 |
+| | 8 | 1.5693 | 1.1273 | 1.1102 | −0.0171 ± 0.0455 | −0.0543 ± 0.0150 | −0.0319 ± 0.0081 | 792.4 | 1.003 |
+| | 9 | 1.6371 | 1.2037 | 1.2852 | +0.0814 ± 0.0563 | +0.0023 ± 0.0204 | −0.0023 ± 0.0129 | 858.8 | 1.002 |
+| | 10 | 1.7238 | 1.3466 | 1.3848 | +0.0383 ± 0.0247 | −0.0060 ± 0.0122 | −0.0041 ± 0.0090 | 708.0 | 1.005 |
+| | 11 | 1.5925 | 1.1002 | 1.1148 | +0.0147 ± 0.0272 | −0.0138 ± 0.0115 | −0.0143 ± 0.0080 | 682.6 | 1.002 |
+| | 12 | 1.4522 | 0.9900 | 0.9970 | +0.0070 ± 0.0228 | +0.0002 ± 0.0116 | +0.0006 ± 0.0073 | 716.7 | 1.009 |
+
+**Result 96 — the log-NLL win does not replicate; the proper-rule win does.**  Pooled over the six
+seeds (mean of the per-seed paired deltas ± the standard error of that mean), the weak anchor gives
+log **−0.0130 ± 0.0083 (−1.6σ)**, Brier **−0.0214 ± 0.0063 (−3.4σ)** and spherical **−0.0162 ±
+0.0044 (−3.7σ)**; the default anchor gives **+0.0220 ± 0.0139 (+1.6σ)**, −0.0108 ± 0.0092 (−1.2σ)
+and −0.0073 ± 0.0057 (−1.3σ).  So seed 8's log-NLL margin was the favourable tail of a distribution
+centred at −0.013 nats, which is *not* the >2×MCSE win R7.5 asks for; but the Brier and spherical
+improvements are reproducible: five of six weak-anchor seeds are negative on both, the two fresh
+seeds 10 and 11 are individually ≥2σ in Brier, and the pooled significance survives dropping the
+one cell that fails the gate (Brier −3.4σ, spherical −4.0σ).  The weak-minus-default difference is
+−0.035 ± 0.016 in log (−2.1σ) and −0.011 ± 0.011 in Brier, so the anchor policy *is* doing something
+real — just not something that shows up as a likelihood win.
+
+**Result 97 — that is R7.5's calibration-only branch, and the arm stays closed.**  Per-step
+probabilities are better under the weak anchor (lower Brier and spherical loss, i.e. better
+calibrated at the same decisions), while the NLL — the score R7.5's positive verdict is written
+against — ties or loses.  The honest reading is that the anchor corpus buys better-calibrated
+mixtures of a *wrong* ordering, not a better ordering; nothing here changes the R7.5 verdict.  One
+cell, seed 12 under the weak anchor, misses the `R̂ ≤ 1.01` gate at 1.012 (ESS 686.8 passes), and is
+reported as a gate failure rather than a score, though the pooled numbers hold without it.
+
+**What this settles.**  The rank-4 restricted DT posterior is *samplable*: informed `pilot` reaches
+ESS 591–859 at `R̂ ≤ 1.004`, so a score can be quoted at all.  The informed basis is worth
+0.35–0.57 nats over a matched random control, consistently.  The `laplace` proposal that carries
+the classifier at rank 4 does not work at this target (mode search capped far from a mode, 2–4/4
+non-positive curvature), which is a target-specificity result about R2k, not a contradiction of it.
+And the posterior-averaged policy, at the best rank and λ the plan chose, is **not better than a
+temperature-tuned point model on next-action NLL**.  The basis target is not a way out: the
+informed basis's content is in the trunk, head-only is worse on 2/3 seeds and never better, and
+trunk-only lands within 0.07 nats of the full basis without beating it (Results 89–90).  Nor is the
+anchor corpus: moving the anchor's behaviour policy across a 0.94–2.29 NLL range moves `p̄` byat most 0.034 nats and never reaches the 2σ bar (Results 91–93) — so the R7.4 deficit is not an
+anchor-mismatch artefact.  Nor is the block inside the trunk: the RTG table alone costs +0.34…+0.54
+nats and is 4.9–7.0σ worse than the point baseline, with an informed-over-control gap 20–50× smaller
+(Results 94–95).
+
+**What this does not settle.**  Whether a basis target other than the trunk does better (R7.6's
+first item; not run) — the informed-over-random gap says the basis matters, not that this basis is
+the best one.  Whether the NLL tie at seed 8 with a 3.6–4.0σ proper-rule win is a real calibration
+effect: one seed is not a design.  Whether the return inconsistency (seed 8 vs 9) is the decoder's
+64-of-4-400-draw subsample or the policies themselves — the rollout decoder was declared and
+fixed at 64 draws because the full average is `rollouts × horizon × 4 400` forwards, and it was
+not varied.  And correlate step scores are still uncorrected (R7.6, R3's `Γ_k`), so every paired
+MCSE above is within-step-independent by assumption.
+
+**Defects recorded.**  (i) `examples/dt_subspace` panicked in `policy_readout` on `--rollouts 0`
+and `--rollouts 1` (an MCSE needs more than one rollout); it now asserts `--rollouts >= 2` up
+front.  (ii) The corpus splits are `DtCell`'s 768/128/128, not R7.4's protocol 96/32/32; changing
+them changes the ambient anchor, so the protocol table's row was not followed and this is stated
+rather than patched.  (iii) The promoted budget is 4 × 6 000, not 4 × 4 000 (Result 85).  (iv)
+`--laplace-shrink` is a separate dial from `--pilot-shrink`: the first laplace screening at
+`--pilot-shrink 0` was silently a mode-scaled *isotropic* proposal, which is why the arm was
+re-run at 0.5 and why the shared dial was split.
+
 ## Reproduce / verify
 
 ```bash
@@ -5050,6 +5382,37 @@ cargo run --release -p pcnl --example sphere_chain -- 400 --precond --beta 0.003
 cargo run --release -p pcnl --example sphere_chain -- 400 --precond --seeds 2  # the metric ladder
 cargo run --release -p pcnl --example sphere_chain -- 10000 --precond --beta 0.003 --start adam --seeds 2 --chains 2  # the 10k cell, R̂ 2.894 (~1 h 40 m)
 cargo run --release -p pcnl --example dimension_budget  # the exact cap law, the purse, m* (~3 min)
+# R7.4's rank-4 DT adaptation cell (~10 min per seed at 4 x 6000).
+cargo run --release -p pcnl --example dt_subspace -- \
+    --seeds 7,8,9 --bases informed,random --steps 1000 --burn 500 --thin 10 \
+    --pilot-steps 300 --evals 300                     # screening; ESS 1-40, directional only
+cargo run --release -p pcnl --example dt_subspace -- \
+    --seeds 7,8,9 --chains 4 --steps 6000 --burn 500 --thin 5 --bases informed \
+    --proposals fixed,pilot --evals 6000 --rollouts 192  # the promoted table and the paired delta
+cargo run --release -p pcnl --example dt_subspace -- \
+    --seeds 7,8,9 --bases informed,random --proposals laplace --steps 1000 --burn 500 \
+    --thin 10 --pilot-steps 300 --evals 300 --rollouts 2  # the laplace collapse, Results 84
+cargo run --release -p pcnl --example dt_subspace -- \
+    --seeds 7,8,9 --chains 4 --steps 6000 --burn 500 --thin 5 \
+    --bases informed,head,trunk,head-random,trunk-random --proposals pilot \
+    --evals 6000 --rollouts 2                          # R7.6's basis target, Results 89-90
+for spec in "0.3 0.1" "2.0 0.1" "1.0 0.3"; do set -- $spec; \
+  cargo run --release -p pcnl --example dt_subspace -- \
+    --seeds 7,8,9 --chains 4 --steps 6000 --burn 500 --thin 5 --bases informed \
+    --proposals pilot --evals 6000 --rollouts 2 --anchor-feedback "$1" --anchor-epsilon "$2"; done
+                                                       # R7.6's anchor axis, Results 91-93
+cargo run --release -p pcnl --example dt_subspace -- \
+  --seeds 7,8,9 --chains 4 --steps 6000 --burn 500 --thin 5 --bases rtg,rtg-random \
+  --proposals pilot --evals 6000 --rollouts 2                   # R7.6's RTG block, Results 94-95
+cargo run --release -p pcnl --example dt_subspace -- \
+  --seeds 7,8,9 --chains 4 --steps 6000 --burn 500 --thin 5 --bases informed \
+  --proposals pilot --evals 6000 --rollouts 2 --anchor-feedback 0.3 --anchor-epsilon 0.1
+cargo run --release -p pcnl --example dt_subspace -- \
+  --seeds 10,11,12 --chains 4 --steps 6000 --burn 500 --thin 5 --bases informed \
+  --proposals pilot --evals 6000 --rollouts 2 --anchor-feedback 0.3 --anchor-epsilon 0.1
+cargo run --release -p pcnl --example dt_subspace -- \
+  --seeds 10,11,12 --chains 4 --steps 6000 --burn 500 --thin 5 --bases informed \
+  --proposals pilot --evals 6000 --rollouts 2                   # weak-anchor replication, Results 96-97
 ./scripts/pcnl-cold-10k                                   # §6.5.6(c), the 10k-step table
 cargo run --release -p pcnl -- quick --no-mh --lambda 16  # §6.5.5's cold ladder
 cargo run --release -p pcnl -- --steps 1000 --chains 2 --no-mh --lambda 4  # published

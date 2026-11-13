@@ -1081,19 +1081,28 @@ mod tests {
         let s = tiny();
         let data = Dataset::new(Task::A, 8, 128, 64, 9);
         let theta0 = init_flat(&s, 0.1, 4);
-        // 600 steps, not the 150 this budget had before 2026-10-21b:
-        // normalizing V and O (the fix `tests/formal_claims.rs`
-        // forced — plan §2, Lean M4's ‖W_v‖,‖W_o‖ ≤ 1 hypotheses)
-        // removes the two radial gauge directions the raw weights
-        // offered and shrinks the attention sublayer's per-layer
-        // magnitude, so the *same* claims (≥50% loss reduction,
-        // acc > 30% vs 12.5% chance) need a larger budget. Measured:
-        // 200→15.6%, 400→26.6%, 600→32.8%, 900→39.1%.
-        let (theta, trace) = momentum_sgd(&data, &s, Variant::Cosine, theta0, 600, 0.5, 0.9);
+        // 1 500 steps (2026-11-13), and the threshold is 40 %, not 30 %.
+        //
+        // Normalizing V and O (the fix `tests/formal_claims.rs` forced — plan
+        // §2, Lean M4's ‖W_v‖,‖W_o‖ ≤ 1 hypotheses) removed two radial gauge
+        // directions and shrank the attention sublayer, so this claim needs a
+        // larger budget than the 150 steps it had before 2026-10-21b.  The
+        // 600-step budget that replaced it was **too short to assert on**: this
+        // trajectory is chaotic at the float level, so a recorded single-seed
+        // accuracy is not reproducible across builds.  Measured on this tree
+        // (seed-4 init, `tiny()`, task A, 8/128/64/9): the ladder is
+        // 200→14.1 %, 400→25.0 %, 600→26.6 %, 900→31.3 %, 1 500→45.3 %, and at
+        // 600 steps a 0.1 % change of `lr` or `momentum` moves the accuracy
+        // between 21.9 % and 50.0 % (`lr × 0.999` alone gives 32.8 %).  The
+        // earlier "600→32.8 %" was one draw of that spread, which is why a
+        // threshold of 30 there failed at 26.56 % on an unchanged forward pass.
+        // At 1 500 steps the same five perturbations span 45.3–62.5 %, so 40 %
+        // is a real floor rather than a knife edge.
+        let (theta, trace) = momentum_sgd(&data, &s, Variant::Cosine, theta0, 1_500, 0.5, 0.9);
         let first = trace[0];
         let last = *trace.last().unwrap();
         assert!(last < 0.5 * first, "loss {first} -> {last}");
         let acc = data.accuracy(&theta, &s, Variant::Cosine).unwrap();
-        assert!(acc > 30.0, "accuracy after pre-training {acc}%"); // chance is 12.5%
+        assert!(acc > 40.0, "accuracy after pre-training {acc}%"); // chance is 12.5%
     }
 }

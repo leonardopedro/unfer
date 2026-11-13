@@ -866,6 +866,27 @@ evaluations × 8 sequences × 16 steps ≈ 8·10^6 transition-forwards at full-t
 1 chain × 1 000 steps ≈ 2.5·10^5 and promote only cells whose paired difference is already
 larger than the screening MCSE.
 
+**Status (2026-11-13): the cell has run and lands on R7.5's negative branch.**  Implemented as
+`pcnl/src/dt_subspace.rs` + `examples/dt_subspace` (the ambient `dt_arm`/`dt_cell` readout is
+unchanged).  Deviations to read first: the corpus is `DtCell`'s 768/128/128 transitions, not the
+96/32/32 in the table above (changing the split changes the ambient anchor); screening at `1 ×
+1 000` reaches ESS 1.4–40 and is directional only, so the promoted cell was run at 4 × **6 000**
+(pilot ESS 335.3 / 377.1 / 537.1 at 4 000).  Promoted, seeds 7/8/9: informed `pilot` passes every gate (ESS
+590.9 / 792.4 / 858.8, `R̂` 1.004 / 1.003 / 1.002), informed `fixed` fails all three (142.4 / 89.7 /
+121.0, `R̂` 1.014–1.045).  Paired test NLL against the dev-temperature-tuned point DT: **+0.0079 ±
+0.0182, −0.0171 ± 0.0455, +0.0814 ± 0.0563** — a tie at all three seeds, no seed past 2σ either
+way; Brier and spherical favour `p̄` at seed 8 only (−3.6σ, −4.0σ).  The informed basis does beat
+the matched random control by 0.35–0.57 nats, and `pilot` beats `fixed` by 0.009–0.022 nats
+at screening and by the whole ESS gap at promotion, so the
+mixing story is intact while the accuracy claim is not.  `laplace` at rank 4 (the R2k winner on the
+classifier) collapses at this target — mode search capped with `φ` still falling, 2–4 of 4
+coordinates with `H_ii ≤ 0`, ESS 1.5–2.3 informed — so it is recorded as a proposer defect and the
+"transfer of R2k's rank-4 `laplace` win" question is answered *no*.  Returns are seed-inconsistent
+(`p̄`-argmax +0.55 ± 0.25 vs behaviour on seed 9, −0.82 ± 0.27 on seed 8) and are not used.  Per
+R7.5 the DT adaptation arm stops here pending a *target* hypothesis (R7.6's basis target or
+anchor-as-behaviour-policy axes, not a sampler knob).  Tables, gates, defect list and the exact
+commands: `docs/PCNL_STATUS.md` §R7.
+
 ### R7.5 Acceptance and falsifiers
 
 * **Positive:** `p̄`'s held-out action NLL beats the temperature-tuned point DT by more than 2×
@@ -889,7 +910,21 @@ larger than the screening MCSE.
 
 * **Basis target.** Head-only, RTG-embedding-only, trunk-only or all-blocks informed directions,
   against a random control at matched rank. R2's `π_r`/`π_P` result says the restriction is what
-  costs; the DT's block structure is where that cost is most likely to be visible.
+  costs; the DT's block structure is where that cost is most likely to be visible.  **Measured
+  (2026-11-13, `--bases head,trunk,head-random,trunk-random`, 4 × 6 000, seeds 7/8/9):** no block
+  restriction beats the full-space informed basis.  NLL cost vs informed is `+0.183 / +0.028 /
+  +0.015` for head-only and `+0.009 / +0.042 / +0.070` for trunk-only, so the informed content sits
+  in the **trunk** and the head adds nothing at rank 4 (head-only is 4.0σ worse than the point
+  baseline at seed 7, never better on any seed).  The informed-over-control gap survives the block
+  matching — six of six block informed arms beat an in-block random control by 0.27–0.57 nats — so
+  the gain is the directions, not the coordinates.  Two in-block controls fail the sampling gate
+  (ESS 236 / 318), which is reported as a gate failure, not a score.  The **RTG table alone**
+  (`Block::Rtg`, 128 coordinates) is not a basis target: it costs +0.540 / +0.436 / +0.340 nats
+  against the full-space informed basis, is +4.9…+7.0σ worse than the point baseline, and its
+  informed-over-control gap is only +0.010…+0.024 nats against +0.342 (head) and +0.566 (trunk) —
+  so the content is in the trunk and not in the return embedding, which leaves the state encoder
+  and the per-layer products as the only untested part of the trunk.  Detail:
+  `docs/PCNL_STATUS.md` `## R7`, Results 89–95.
 * **Block preconditioning.** The per-layer blocks of `RotScale` were never the winning arm for the
   classifier (R2l), but a DT's head block and trunk block differ in curvature by far more than
   the classifier's coordinates do, so a block-diagonal `β` is a live arm here and not a retread.
@@ -903,7 +938,21 @@ larger than the screening MCSE.
   conditioning at decode time (which is what the DT already does).
 * **Anchor as behaviour policy.** R2n–R2s measured an anchor drawn as a Gaussian shift. A DT
   anchor is a corpus, and the analogue of "anchor direction" is which behaviour policy and which
-  return distribution it was fitted on — the axis to sweep first, per R7.0 item 1.
+  return distribution it was fitted on — the axis to sweep first, per R7.0 item 1.  **Measured
+  (2026-11-13, `--anchor-feedback/--anchor-epsilon`, 4 × 6 000, seeds 7/8/9):** the axis is first
+  order for the prior mean (anchor NLL 0.936–2.290, a 0.69–1.35-nat span across policies) and a
+  null for the posterior (`p̄` spans 0.010–0.034 nats; every policy within MCSE of the default).
+  The best anchor is the one drawn from the *adaptation* behaviour's own feedback (0.3), 0.26–0.59
+  nats below the default — a corpus-match effect, not a quality one, since the sharper policy is the
+  worst anchor.  No policy reaches R7.5's 2σ bar (best cell: seed 8, −1.7σ, Brier −2.6σ), so this
+  axis does not reopen the arm.  Detail: `docs/PCNL_STATUS.md` `## R7`, Results 91–93.
+  **Replication (fresh seeds 10/11/12, with the default anchor as control, six seeds per policy):**
+  the seed-8 log-NLL win does **not** replicate — pooled over six seeds the weak anchor gives
+  log −0.0130 ± 0.0083 (−1.6σ) versus +0.0220 ± 0.0139 (+1.6σ) for the default — but the
+  **proper-rule** improvement does: Brier −0.0214 ± 0.0063 (−3.4σ) and spherical −0.0162 ± 0.0044
+  (−3.7σ), holding without the one cell that fails `R̂` (seed 12, 1.012).  That is R7.5's
+  calibration-only branch: better next-action distributions, no likelihood win, so the arm stays
+  closed.  Detail: Results 96–97.
 * **Checkpoint surface.** Loading a real (non-toy) DT needs a declared layout/dtype hash and a
   manifest entry; GPU and checkpoint reproduction stay blocked on their own dependencies and are
   not part of the first cell.

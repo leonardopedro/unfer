@@ -364,8 +364,35 @@ pub fn dt_probs(
     variant: Variant,
     batch: &DtBatch,
 ) -> Result<Tensor> {
+    dt_probs_at(theta, shapes, variant, batch, 1.0)
+}
+
+/// [`dt_probs`] with a **temperature** on the head's logits:
+/// `softmax(logits / T)`.  `T = 1` is bitwise [`dt_probs`].
+///
+/// This exists for R7.4's *temperature-scaled point DT* baseline and for
+/// nothing else: temperature scales a predictive's confidence without moving
+/// the parameters, so it is a calibration baseline, not a target.  Tuning `T`
+/// on development data and then evaluating on test is the standard procedure;
+/// tuning `T` on the evaluation split would fit the score it reports.
+pub fn dt_probs_at(
+    theta: &Tensor,
+    shapes: &DtShapes,
+    variant: Variant,
+    batch: &DtBatch,
+    temperature: f64,
+) -> Result<Tensor> {
+    assert!(
+        temperature.is_finite() && temperature > 0.0,
+        "dt_probs_at: temperature must be finite and > 0, got {temperature}"
+    );
     let logits = dt_forward(theta, shapes, variant, batch, NormGrad::Stopped)?;
-    candle_nn::ops::softmax(&logits, D::Minus1)
+    if temperature == 1.0 {
+        candle_nn::ops::softmax(&logits, D::Minus1)
+    } else {
+        let scaled = (logits / temperature)?;
+        candle_nn::ops::softmax(&scaled, D::Minus1)
+    }
 }
 
 /// The DT's action distribution at step `t` of a single rollout.
@@ -402,6 +429,20 @@ pub fn dt_act(
     rtgs: &[u32],
     states: &[[f32; 2]],
     actions: &[u32],
+) -> Result<Vec<f64>> {
+    dt_act_at(theta, shapes, variant, rtgs, states, actions, 1.0)
+}
+
+/// [`dt_act`] with a temperature on the head's logits (`T = 1` bitwise
+/// [`dt_act`]).  Same row, same masking; only the softmax temperature changes.
+pub fn dt_act_at(
+    theta: &Tensor,
+    shapes: &DtShapes,
+    variant: Variant,
+    rtgs: &[u32],
+    states: &[[f32; 2]],
+    actions: &[u32],
+    temperature: f64,
 ) -> Result<Vec<f64>> {
     let t = actions.len();
     if rtgs.len() != t + 1 {
@@ -445,7 +486,7 @@ pub fn dt_act(
         Tensor::from_vec(acts, (1, n), dev)?,
         Tensor::from_vec(mask, (1, n), dev)?,
     )?;
-    let probs = dt_probs(theta, shapes, variant, &batch)?;
+    let probs = dt_probs_at(theta, shapes, variant, &batch, temperature)?;
     let row = probs
         .reshape((3 * n, shapes.action_vocab))?
         .narrow(0, 3 * t + 1, 1)?
