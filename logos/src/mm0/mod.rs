@@ -31,6 +31,7 @@ pub mod bridge;
 pub mod cnl;
 pub mod dk;
 pub mod emit;
+pub mod kernel;
 pub mod kop;
 pub mod proof;
 
@@ -83,6 +84,10 @@ ask options:
   --llm              ask the LLM for hint terms (needs the `llm-http` feature)
   --mehler           use the Kopperman/Mehler tail-determination theory
                      (theory: mehler sections in a claims file do the same)
+  --kernel-certificate FILE.mm0
+                     decide `theory: kernel` claim lines by citing that kernel
+                     certificate (--kernel-obligations FILE.json overrides the
+                     sidecar its `-- Source:` header pins)
 
 exit codes: 0 yes (true / proved), 2 no (refuted), 1 unproved or error";
 
@@ -368,27 +373,39 @@ fn write_certificate(dir: &str, cert: &Certificate) -> Result<Option<(PathBuf, P
 
 // ── the fixture runner ──────────────────────────────────────────────────────
 
+/// Which fragment a `theory:` directive selected for the lines below it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TheorySel {
+    Base,
+    Mehler,
+    /// Sentences about a symbolic kernel certificate: what the `theory: kernel`
+    /// lines in `claims.txt` state. Decided by citation, so they need a
+    /// certificate to cite (`--kernel-certificate`), and are skipped with a note
+    /// when there is none.
+    Kernel,
+}
+
 /// One line of a claims file: `true: …`, `false: …`, `proved: …`, or a bare
 /// sentence (which must not be refuted — the default expectation is "yes").
-/// `mehler` is the `theory:` directive in force at that line: `None` means
-/// no directive has been seen (the `--mehler` flag decides), `Some(b)` the
+/// `theory` is the `theory:` directive in force at that line: `None` means
+/// no directive has been seen (the `--mehler` flag decides), `Some(sel)` the
 /// directive has fixed it.
 struct Expected {
     line: usize,
     sentence: String,
     want: Option<Verdict>,
-    mehler: Option<bool>,
+    theory: Option<TheorySel>,
 }
 
 fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
     let mut out = Vec::new();
-    let mut current: Option<bool> = None;
+    let mut current: Option<TheorySel> = None;
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (want, sentence, mehler) = match line.split_once(':') {
+        let (want, sentence, theory) = match line.split_once(':') {
             Some((tag, rest)) if matches!(tag.trim(), "true" | "false" | "proved" | "unproved") => {
                 let want = match tag.trim() {
                     "true" => Verdict::True,
@@ -398,21 +415,26 @@ fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
                 };
                 (Some(want), rest.trim().to_string(), current)
             }
-            // `theory: base` / `theory: mehler` switches the target theory for
-            // every claim below it — the fixture says which theory each claim
-            // expects, so one file (and one gate run) covers both.
+            // `theory: base` / `theory: mehler` / `theory: kernel` switches the
+            // target theory for every claim below it — the fixture says which
+            // theory each claim expects, so one file (and one gate run) covers
+            // all three.
             Some((tag, rest)) if tag.trim() == "theory" => match rest.trim() {
                 "base" => {
-                    current = Some(false);
+                    current = Some(TheorySel::Base);
                     continue;
                 }
                 "mehler" => {
-                    current = Some(true);
+                    current = Some(TheorySel::Mehler);
+                    continue;
+                }
+                "kernel" => {
+                    current = Some(TheorySel::Kernel);
                     continue;
                 }
                 other => {
                     return Err(format!(
-                        "line {}: unknown theory `{other}` (base | mehler)",
+                        "line {}: unknown theory `{other}` (base | mehler | kernel)",
                         i + 1
                     ));
                 }
@@ -425,10 +447,37 @@ fn parse_fixture(text: &str) -> Result<Vec<Expected>, String> {
             line: i + 1,
             sentence,
             want,
-            mehler,
+            theory,
         });
     }
     Ok(out)
+}
+
+/// What one line of a corpus produced: a certificate of one of the proof-
+/// producing fragments, or a citation from a kernel certificate.
+///
+/// The kernel case is deliberately not an `emit::Certificate`: it has no proof
+/// term of its own to show, and dressing a citation up as one would say more
+/// than the artifact does.
+enum Outcome {
+    Math(emit::Certificate),
+    Kernel(kernel::Citation),
+}
+
+impl Outcome {
+    fn verdict(&self) -> &Verdict {
+        match self {
+            Outcome::Math(c) => &c.verdict,
+            Outcome::Kernel(c) => &c.verdict,
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        match self {
+            Outcome::Math(c) => c.to_json(),
+            Outcome::Kernel(c) => c.to_json(),
+        }
+    }
 }
 
 fn cmd_claims(args: &[String]) -> i32 {
@@ -437,7 +486,8 @@ fn cmd_claims(args: &[String]) -> i32 {
         .find(|a| !a.starts_with("--") && !is_flag_value(args, a))
     else {
         eprintln!(
-            "usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json] [--mehler]\n\n{USAGE}"
+            "usage: logos mm0 claims <FILE> [--out DIR] [--verify] [--json] [--mehler]\n\
+             \x20      [--kernel-certificate FILE.mm0 [--kernel-obligations FILE.json]]\n\n{USAGE}"
         );
         return UNKNOWN;
     };
@@ -462,35 +512,78 @@ fn cmd_claims(args: &[String]) -> i32 {
     // The theory for claims no `theory:` directive fixes.
     let default_mehler = has_flag(args, "--mehler");
 
+    // A kernel certificate, when the run was given one. Kernel claims are
+    // decided by citing it, so without it they are skipped with a note rather
+    // than failed: the corpus lives in this repo, the certificate lives in the
+    // kernel's repo, and a checkout that has only the former is not wrong.
+    let kernel_theory = match flag_value(args, "--kernel-certificate") {
+        Some(path) => {
+            let obl = flag_value(args, "--kernel-obligations");
+            match kernel::Theory::load(Path::new(&path), obl.as_deref().map(Path::new)) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    eprintln!("--kernel-certificate: {e}");
+                    return UNKNOWN;
+                }
+            }
+        }
+        None => None,
+    };
+    let mut skipped_kernel = 0usize;
+
     let mut failures = 0usize;
     let mut results = Vec::new();
     for case in cases {
-        let cert = match parse_claim(&case.sentence) {
-            Ok(Parsed::Arith(claim)) => emit::certify(&claim, &[]),
-            Ok(Parsed::Kop(claim)) => {
-                let theory = if case.mehler.unwrap_or(default_mehler) {
-                    kop::Theory::Mehler
-                } else {
-                    kop::Theory::Base
+        let outcome = match case.theory {
+            Some(TheorySel::Kernel) => match &kernel_theory {
+                Some(t) => match t.decide(&case.sentence) {
+                    Ok(c) => Outcome::Kernel(c),
+                    Err(e) => {
+                        eprintln!("line {}: {e}", case.line);
+                        failures += 1;
+                        continue;
+                    }
+                },
+                None => {
+                    skipped_kernel += 1;
+                    continue;
+                }
+            },
+            sel => {
+                let cert = match parse_claim(&case.sentence) {
+                    Ok(Parsed::Arith(claim)) => emit::certify(&claim, &[]),
+                    Ok(Parsed::Kop(claim)) => {
+                        let theory = match sel {
+                            Some(TheorySel::Mehler) => kop::Theory::Mehler,
+                            Some(TheorySel::Base) => kop::Theory::Base,
+                            _ => {
+                                if default_mehler {
+                                    kop::Theory::Mehler
+                                } else {
+                                    kop::Theory::Base
+                                }
+                            }
+                        };
+                        kop::certify_in(&claim, &[], theory)
+                    }
+                    Err(e) => {
+                        eprintln!("line {}: {e}", case.line);
+                        failures += 1;
+                        continue;
+                    }
                 };
-                kop::certify_in(&claim, &[], theory)
-            }
-            Err(e) => {
-                eprintln!("line {}: {e}", case.line);
-                failures += 1;
-                continue;
-            }
-        };
-        let cert = match cert {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("line {}: {e}", case.line);
-                failures += 1;
-                continue;
+                match cert {
+                    Ok(c) => Outcome::Math(c),
+                    Err(e) => {
+                        eprintln!("line {}: {e}", case.line);
+                        failures += 1;
+                        continue;
+                    }
+                }
             }
         };
-        let written = match &out_dir {
-            Some(dir) => match write_certificate(dir, &cert) {
+        let written = match (&out_dir, &outcome) {
+            (Some(dir), Outcome::Math(cert)) => match write_certificate(dir, cert) {
                 Ok(w) => w,
                 Err(e) => {
                     eprintln!("line {}: {e}", case.line);
@@ -498,7 +591,7 @@ fn cmd_claims(args: &[String]) -> i32 {
                     continue;
                 }
             },
-            None => None,
+            _ => None,
         };
         // Only a real certificate is checked: an unproved claim wrote a `.goal`
         // file, which is a request for a proof, not a proof.
@@ -514,7 +607,7 @@ fn cmd_claims(args: &[String]) -> i32 {
             _ => None,
         };
 
-        let got = cert.verdict.clone();
+        let got = outcome.verdict().clone();
         let ok = match &case.want {
             Some(Verdict::True) => matches!(got, Verdict::True | Verdict::Proved),
             Some(Verdict::Proved) => matches!(got, Verdict::Proved),
@@ -532,14 +625,20 @@ fn cmd_claims(args: &[String]) -> i32 {
                 case.sentence
             );
         }
-        results.push((case.line, case.sentence, cert, verified));
+        results.push((case.line, case.sentence, outcome, verified));
+    }
+    if skipped_kernel > 0 {
+        eprintln!(
+            "{skipped_kernel} kernel claim(s) skipped: pass --kernel-certificate \
+             <mm0/<stem>_certificate.mm0> to decide them"
+        );
     }
 
     if as_json {
         let rows: Vec<serde_json::Value> = results
             .iter()
-            .map(|(line, sentence, cert, verified)| {
-                let mut v = cert.to_json();
+            .map(|(line, sentence, outcome, verified)| {
+                let mut v = outcome.json();
                 v["line"] = serde_json::json!(line);
                 v["sentence"] = serde_json::json!(sentence);
                 v["verified"] = serde_json::json!(verified.is_some());
@@ -551,13 +650,34 @@ fn cmd_claims(args: &[String]) -> i32 {
             serde_json::json!({ "claims": rows, "failures": failures })
         );
     } else {
-        for (_, sentence, cert, verified) in &results {
+        for (_, sentence, outcome, verified) in &results {
+            let detail = match outcome {
+                Outcome::Math(_) => {
+                    if verified.is_some() {
+                        "mm0 ok".to_string()
+                    } else {
+                        "-".to_string()
+                    }
+                }
+                Outcome::Kernel(c) => match &c.cited {
+                    Some(name) => format!("cited: {name}"),
+                    None => "-".to_string(),
+                },
+            };
             println!(
                 "{:<8} {}  [{}]",
-                cert.verdict.label(),
+                outcome.verdict().label(),
                 sentence,
-                if verified.is_some() { "mm0 ok" } else { "-" }
+                detail
             );
+            // A kernel sentence that is not proved says why: identities the
+            // certificate does not state and sentences it cannot state are the
+            // two things a reader of this corpus needs told apart.
+            if let Outcome::Kernel(k) = outcome {
+                if let Verdict::Unproved(why) = &k.verdict {
+                    println!("         {why}");
+                }
+            }
         }
         println!(
             "\n{} claim(s), {failures} failure(s)",

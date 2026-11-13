@@ -97,3 +97,45 @@ proved: for all a: (a plus zero) equals a
 # emitter does not guess. The expectation is "no verdict", so a future change
 # that starts proving it must do so by adding a real rule to the theory.
 unproved: for all x, y: x plus y equals y plus x
+
+# ── kernel content: sentences about a numerical scheme, decided by citation ──
+# `theory: kernel` switches to the fragment whose subject is a *symbolic kernel
+# certificate* — the artifacts the unfer kernel's prover emits
+# (`australVM/mm0/<stem>_certificate.mm0`), whose theorems state a scheme's
+# obligations as polynomial identities over the state's components.
+#
+# The verdict is a citation, not a new proof: a sentence is `proved` when some
+# theorem of that certificate states exactly the same identity, up to renaming
+# the variables. Nothing here invents a proof term, and the certificate is only
+# citable when the obligations sidecar it pins (`-- Source: … sha256 …`) is the
+# one being read — so a drifted sidecar is refused rather than believed.
+#
+# These lines need `--kernel-certificate <path>`; without it the fragment is
+# skipped with a note (this repo does not contain the certificate).
+# `australVM/scripts/logos2mm0` always passes it, and checks the three verdict
+# shapes below: cited, cited-under-hypothesis, and honestly unproved.
+theory: kernel
+
+# consistency — the numerical flux degenerates to the physical flux on a
+# uniform state. `numerical flux` is the two-word spelling of `numFlux`; the
+# equality word `agrees with` is admitted for this sentence's sake.
+proved: for all u: numerical flux of u and u agrees with flux of u
+
+# symmetry — the two-point operator is antisymmetric in its arguments
+proved: for all l, r: delta of l and r plus delta of r and l equals zero
+
+# conservation — the residuals telescope to zero around a periodic cycle
+proved: for all a, b, c: delta of a and b plus delta of b and c plus delta of c and a equals zero
+
+# the uniform interface: the one obligation with a hypothesis. The hypothesis
+# is part of the identity (the certificate proves the statement on the locus
+# `l = r`), so the `when` clause is what makes this sentence the theorem's.
+proved: delta of l and r equals zero when l equals r
+
+# ── the honest negative for this fragment ────────────────────────────────────
+# A true property of the scheme that is not an identity over its state
+# polynomials: order of accuracy is a statement about truncation error, not
+# about ℤ[x⃗]. Nothing in the certificate states it, and the fragment does not
+# dress a quality up as a theorem — the expectation is "no verdict", so this
+# line starts failing the day something starts pretending otherwise.
+unproved: the scheme is second order accurate
