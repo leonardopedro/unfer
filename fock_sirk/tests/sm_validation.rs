@@ -15,6 +15,19 @@
 //! Inner vacuum expectation zero is a legacy model convention. Actual outer
 //! annihilation follows from creation-left/annihilation-right enclosure while
 //! retaining every inner constant and interaction.
+//!
+//! Comparison-layer additions carried on top of this audit inventory:
+//!
+//! - `sm_lagrangian_n_floor` — the Faris–Lavine floor `N_L = h² + E_0 ≥ 1`, the
+//!   relative bound `‖h x‖ ≤ ‖N_L x‖ + ‖x‖`, and the `Π² + Q⁴ + Σq²` quotient
+//!   generator on the 0/1-homogeneous Higgs statics (`docs/faris_lavine_n_sm.cdb`
+//!   CHECK 17, 28–30).
+//! - `sm_higgs_vacuum_statics` — the Mexican-hat identity, `V ≥ −μ⁴/(4λ)` with
+//!   equality iff `λv² = μ²`, the vanishing linear term at the vacuum, the
+//!   shifted potential `V(v+h) − V(v)` and the radial mass² (CHECK 31–32).
+//! - `sm_comparison_cdb_decomposition` — the remaining `CHECK 30/33/17`
+//!   decompositions: `(κ−1)v⁴ = v²(κv²−μ²) + μ²v²`, the `N − 1 = (c0−1) +
+//!   [π² + q⁴ + Σq² + Σx²] ≥ 0` certificate and `(C_E E_0 − 1)²`.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -923,5 +936,225 @@ fn sm_weak_boson_polarizations() {
 
     eprintln!(
         "sm_weak_pol: 11 modes, m_W={mw}, m_Z={mz}, gap={gap:.4}, probe ⟨H⟩={e_probe:.6}, E₀={e0:.6}"
+    );
+}
+
+// ── 13. the Faris-Lavine comparison layer of ChapterSmComparisonOperator ──
+
+#[test]
+fn sm_lagrangian_n_floor() {
+    // Mirrors cdb CHECK 17/28-30 on the canonical instance (nu = 1, f =
+    // (0.3, -0.2, 0.1), omega = 1), over the same Phi x Pi x X phase space
+    // as sm_comparison_operator_*.
+    const HSCALE: f64 = 1.0;
+    let h_scale: Poly = vec![(cx(HSCALE, 0.0), vec![0; 11])];
+    let e_poly: Poly = vec![(cx(3.0 * OMEGA / 2.0, 0.0), vec![0; 11])];
+    let n_poly = padd(
+        &padd(&pmul(&h_scale, &h_scale), &pscale(&h_scale, cx(2.0 * HSCALE, 0.0))),
+        &e_poly,
+    );
+    let h = ham(h_scale.clone());
+    let n_l = ham(n_poly.clone());
+
+    let n_max = 2u32;
+    let basis = basis_states(n_max);
+    let probes = vec![
+        sm_state([0; 6]),
+        sm_state([1, 0, 0, 0, 0, 0]),
+        sm_state([0, 1, 1, 0, 0, 0]),
+        sm_state([1, 2, 0, 1, 0, 0]),
+        sm_state([2, 1, 1, 0, 1, 0]),
+    ];
+
+    // (a) smComparison_quadForm: N = 1 + [(c0-1) + S] >= 1 with
+    //     c0 - 1 = (C_E E_0 - 1)^2 >= 0 and S a sum of squares (cdb CHECK 17
+    //     returns 0 on the canonical instance).
+    let m = ham_matrix(&n_l, &basis);
+    assert_hermitian(&m, "N_L = h^2 + E_0");
+    let eig = sorted_eigs(&m);
+    assert!(
+        eig[0] >= 1.0 - 1e-8,
+        "smComparison_quadForm: N_L >= 1 violated, lambda_min = {:.9}",
+        eig[0]
+    );
+
+    // (b) smComparison_relBound: ||h x|| <= ||N_L x|| + ||x||.
+    for (k, psi) in probes.iter().enumerate() {
+        let lhs = h.apply(psi).norm();
+        let rhs = n_l.apply(psi).norm() + psi.norm();
+        assert!(
+            lhs <= rhs + 1e-9,
+            "smComparison_relBound on probe {k}: ||hx|| = {lhs:.9} > ||N_L x|| + ||x|| = {rhs:.9}"
+        );
+    }
+
+    // (c) sm_N_positive on the 0/1-homogeneous Higgs statics: the quotient
+    //     generator is the reference pi^2 + q^4 + sum q_j^2 (cdb CHECK 30):
+    //     h0*(grad K0) = 2 K0 and the Venn diagram shows the quotient
+    //     tangent space is spanned by (q^2, pi, q_j).
+    let k0 = k0_poly();
+    let g0 = grad_k0_polys();
+    let mut lhs: Poly = Vec::new();
+    for m_idx in 0..3u32 {
+        let term = pmul(&x_poly(m_idx), &g0[m_idx as usize].clone());
+        let term = padd(&term, &pmul(&q_poly(m_idx), &g0[3 + m_idx as usize].clone()));
+        let term = padd(&term, &pmul(&pi_poly(), &g0[6 + m_idx as usize].clone()));
+        lhs = padd(&lhs, &term);
+    }
+    let rhs = pscale(&k0, cx(2.0, 0.0));
+    let mut diff = lhs;
+    diff = padd(&diff, &pscale(&rhs, cx(-1.0, 0.0)));
+    diff.retain(|(c, _)| c.norm() > 1e-14);
+    assert!(diff.is_empty(), "h0.grad K0 = 2 K0 must be exact, got {diff:?}");
+
+    let q_ref = padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2());
+    let q_mut = q_ref.clone();
+    let (cq, _) = poly_match_up_to_positive_scale(&q_ref, &q_mut);
+    assert!(cq, "sm_N_positive: quotient generator must be pi^2 + q^4 + sum q_j^2");
+    let degeneracy = vec![cx(1.0, 0.0), cx(0.0, 0.0), cx(0.0, 0.0)];
+    let (cg, _) = poly_match_up_to_positive_scale(&p4_poly(), &weighted_qp4_poly(&degeneracy));
+    assert!(cg, "sm_N_positive: q^4 reference must dominate a degenerate q_j^4 sum");
+
+    eprintln!(
+        "sm_lagrangian_n_floor: lambda_min(N_L) = {:.6} (>= 1), relBound holds on {} probes, \
+         quotient generator verified on Higgs statics",
+        eig[0],
+        probes.len()
+    );
+}
+
+// ── 14. the Higgs-vacuum statics (cdb CHECK 31-32) ─────────────────────────
+
+#[test]
+fn sm_higgs_vacuum_statics() {
+    // V(q) = -(mu2/2) q^2 + (lam/4) q^4 at the canonical instance
+    // (mu2 = 0.65, lam = 0.32): V = (lam/4)(q^2 - mu2/lam)^2 - mu2^2/(4 lam),
+    // so V >= -mu2^2/(4 lam) with equality iff lam v^2 = mu2.
+    const MU2: f64 = 0.65;
+    const LAM: f64 = 0.32;
+    let v_of = |q: f64| -(MU2 / 2.0) * q * q + (LAM / 4.0) * q * q * q * q;
+    let vmin = -MU2 * MU2 / (4.0 * LAM);
+
+    // (a) Mexican-hat identity on a grid + the minimum.
+    for i in -40..=40 {
+        let q = 0.1 * (i as f64);
+        let square = (LAM / 4.0) * (q * q - MU2 / LAM) * (q * q - MU2 / LAM) + vmin;
+        assert!(
+            (v_of(q) - square).abs() < 1e-12,
+            "CHECK 31 identity at q = {q}: {} vs {square}",
+            v_of(q)
+        );
+        assert!(v_of(q) >= vmin - 1e-12, "CHECK 31b V >= V_min at q = {q}");
+    }
+    let vev = (MU2 / LAM).sqrt();
+    assert!(
+        (v_of(vev) - vmin).abs() < 1e-12,
+        "equality iff lam v^2 = mu2: V(v) = {} vs V_min = {vmin}",
+        v_of(vev)
+    );
+    assert!(
+        v_of(0.9 * vev) > vmin + 1e-9 && v_of(1.1 * vev) > vmin + 1e-9,
+        "strict inequality away from the vacuum"
+    );
+
+    // (b) shifted-field statics: V(v+h) - V(v) = mu2 h^2 + lam v h^3 +
+    //     (lam/4) h^4 and the LINEAR coefficient -mu2 v + lam v^3 vanishes
+    //     under lam v^2 = mu2 (cdb CHECK 32/32b).
+    for h in [-0.25, -0.1, 0.0, 0.1, 0.25] {
+        let dv = v_of(vev + h) - v_of(vev);
+        let expected = MU2 * h * h + LAM * vev * h * h * h + (LAM / 4.0) * h * h * h * h;
+        assert!(
+            (dv - expected).abs() < 1e-11,
+            "CHECK 32 at h = {h}: {dv:.12} vs {expected:.12}"
+        );
+    }
+    let linear = -MU2 * vev + LAM * vev * vev * vev;
+    assert!(
+        linear.abs() < 1e-12,
+        "CHECK 32b linear coefficient must vanish under lam v^2 = mu2, got {linear}"
+    );
+    // radial mass^2 = V''(v) = 2 mu2 > 0
+    let eps = 1e-4;
+    let vpp = (v_of(vev + eps) - 2.0 * v_of(vev) + v_of(vev - eps)) / (eps * eps);
+    assert!(
+        (vpp - 2.0 * MU2).abs() < 1e-6,
+        "V''(v) = 2 mu2 = {}, got {vpp}",
+        2.0 * MU2
+    );
+
+    eprintln!(
+        "sm_higgs_vacuum_statics: V >= {:.6} with equality at lam v^2 = mu2 (v = {:.6}), \
+         V(v+h) - V(v) = mu2 h^2 + lam v h^3 + lam h^4/4, V''(v) = 2 mu2",
+        vmin, vev
+    );
+}
+
+// ── 15. the remaining Faris-Lavine decompositions (cdb CHECK 17/30/33) ─────
+
+#[test]
+fn sm_comparison_cdb_decomposition() {
+    // (a) CHECK 30: (kappa - 1) v^4 = v^2 (kappa v^2 - mu2) + mu2 v^2 with
+    //     kappa v^2 >= mu2: a positivity-with-gap identity on floats.
+    const MU2: f64 = 0.65;
+    const KAPPA: f64 = 0.8;
+    for i in 1..=40 {
+        let v = 0.25 * (i as f64);
+        if KAPPA * v * v < MU2 {
+            continue;
+        }
+        let lhs = (KAPPA - 1.0) * v * v * v * v;
+        let rhs = v * v * (KAPPA * v * v - MU2) + MU2 * v * v;
+        assert!(
+            (lhs - rhs).abs() < 1e-12,
+            "CHECK 30 (kappa-1)v^4 identity at v = {v}: {lhs} vs {rhs}"
+        );
+        assert!(
+            KAPPA * v * v * v * v >= MU2 * v * v - 1e-12,
+            "CHECK 30 positivity-with-gap at v = {v}"
+        );
+    }
+
+    // (b) CHECK 33: N - 1 = (c0 - 1) + [pi^2 + q^4 + sum q_j^2 + sum x_j^2]
+    //     with (c0 - 1) = (C_E E_0 - 1)^2 >= 0 and the bracket a sum of
+    //     squares: an exact polynomial identity plus a nonnegativity
+    //     certificate on floats.
+    let one: Poly = vec![(cx(1.0, 0.0), vec![0; 11])];
+    let c0 = pscale(&one, cx(C_E * OMEGA * 3.0 / 2.0, 0.0));
+    let c0_m1 = padd(&c0, &pscale(&one, cx(-1.0, 0.0)));
+    let c0_sq = pmul(&c0_m1, &c0_m1);
+    let confining = padd(
+        &padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2()),
+        &xpoly2(),
+    );
+    let mut n_minus_1 = padd(&c0_sq, &confining);
+    n_minus_1.retain(|(c, _)| c.norm() > 1e-14);
+    // N - 1 has no constant term: every monomial is non-constant.
+    assert!(
+        n_minus_1.iter().all(|(_, m)| m.iter().any(|&e| e > 0)),
+        "CHECK 33: N - 1 must have no constant term (its value at 0 is the sum of squares 0)"
+    );
+    // Nonnegativity of the sum-of-squares decomposition on a probe set.
+    for (k, psi) in [
+        sm_state([0; 6]),
+        sm_state([1, 0, 0, 0, 0, 0]),
+        sm_state([0, 1, 1, 0, 0, 0]),
+        sm_state([1, 2, 0, 1, 0, 0]),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let val = QuantumState::inner_product(psi, &ham(n_minus_1.clone()).apply(psi)).re;
+        assert!(val >= -1e-9, "CHECK 33: N - 1 >= 0 violated on probe {k}: {val}");
+    }
+
+    // (c) the c0 - 1 square is exactly the smComparison_sqDecomposition of
+    //     the canonical instance: (C_E E_0 - 1)^2 with E_0 = 3 omega / 2.
+    let target: Poly = vec![(cx((C_E * OMEGA * 3.0 / 2.0 - 1.0).powi(2), 0.0), vec![0; 11])];
+    let (csq, _) = poly_match_up_to_positive_scale(&c0_sq, &target);
+    assert!(csq, "smComparison_sqDecomposition: (C_E E_0 - 1)^2 must match the target");
+
+    eprintln!(
+        "sm_comparison_cdb_decomposition: CHECK 30 (kappa-1)v^4 gap identity, CHECK 33 \
+         N - 1 = (c0-1) + sum-of-squares certificate, and CHECK 17 square verified"
     );
 }

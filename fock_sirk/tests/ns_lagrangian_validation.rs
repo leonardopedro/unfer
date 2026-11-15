@@ -107,6 +107,19 @@
 //!    localizing onto `volumePoly = 0` as `κ` grows (the exact-energy
 //!    decomposition `E = ⟨osc⟩ + κ⟨volumePoly²⟩`), and unitary SIRK evolution
 //!    of the constrained Hamiltonian.
+//!
+//! 6. `ns_lagrangian_comparison_floor_relbound_commutator` — the
+//!    Faris–Lavine **comparison layer** `N_L = H_L² + E` of the 2026-09-25
+//!    wave (`NsLagrangianDetFL.lagComparison_*`): the floor `N_L ≥ 1`
+//!    (`lagComparison_quadForm_ge`), the relative bound `‖H_L x‖ ≤ ‖N_L x‖ +
+//!    ‖x‖` (`lagComparison_relBound`), and the first-order comparison
+//!    commutator `i[H_L, N_L] = i[H_L, E] = 2ν Σ f_j Q_j`
+//!    (`lagComparison_commForm`; symbolic twin: the `CHECK 17–19` section of
+//!    `../unfer/docs/ns_lagrangian_hamiltonian.cdb`).
+//! 7. `ns_lagrangian_penalty_hashimoto_selection` — the Hashimoto selection
+//!    battery (resolvent identity, the `1/|Im γ|` bound, spectral recovery)
+//!    on the **constrained** operator `H_κ = ½ΣP² + νΣQ² + κ·vol²`, the
+//!    `V_κ` penalty family of `NsLagrangianDetFL`.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -1158,5 +1171,189 @@ fn ns_lagrangian_volume_constraint_penalty() {
          E₀(κ) = {ground_e:?} monotone, ⟨vol²⟩₀ {:.6} → {:.6} (κ=100), \
          decomposition and SIRK conservation hold",
         ground_vol2[0], ground_vol2[2]
+    );
+}
+
+// ── 6. the Faris-Lavine comparison layer N_L = h^2 + E ─────────────────────
+
+#[test]
+fn ns_lagrangian_comparison_floor_relbound_commutator() {
+    let h_poly = padd(&lag_osc_poly(), &lag_drift_poly(&FORCE));
+    let e_poly = lag_osc_poly();
+    let n_poly = padd(&pmul(&h_poly, &h_poly), &e_poly);
+    let h = ham(h_poly.clone());
+    let n_l = ham(n_poly.clone());
+
+    let n_max = 2u32;
+    let basis = basis_states(n_max);
+    let probes = vec![
+        lag_state([0, 0, 0]),
+        lag_state([1, 0, 0]),
+        lag_state([0, 1, 1]),
+        lag_state([1, 2, 0]),
+        lag_state([2, 1, 1]),
+    ];
+
+    // (a) `lagComparison_quadForm_ge` — N_L >= 1.  E = omega (N + 3/2) is at
+    //     least 3 omega/2 = 1.5 at the package instance (omega = 1), and
+    //     h^2 >= 0 as a form (h self-adjoint), so every eigenvalue of the
+    //     truncated N_L is >= 1.
+    let m = ham_matrix(&n_l, &basis);
+    assert_hermitian(&m, "N_L = h^2 + E");
+    let eig = sorted_eigs(&m);
+    assert!(
+        eig[0] >= 1.0 - 1e-8,
+        "lagComparison_quadForm_ge: N_L >= 1 violated, lambda_min = {:.9}",
+        eig[0]
+    );
+
+    // (b) `lagComparison_relBound` — ||h x|| <= ||N_L x|| + ||x||.  From
+    //     <x, h^2 x> = ||h x||^2 <= <x, N_L x> <= ||N_L x|| ||x|| and AM-GM.
+    for (k, psi) in probes.iter().enumerate() {
+        let lhs = h.apply(psi).norm();
+        let rhs = n_l.apply(psi).norm() + psi.norm();
+        assert!(
+            lhs <= rhs + 1e-9,
+            "lagComparison_relBound on probe {k}: ||hx|| = {lhs:.9} > ||N_L x|| + ||x|| = {rhs:.9}"
+        );
+    }
+
+    // (c) `lagComparison_commForm` — i[h, N_L] = i[h, E] exactly (the h^2
+    //     part commutes away), and the comparison commutator is FIRST ORDER:
+    //     i[h, E] = 2 nu sum_j f_j Q_j at the canonical instance.
+    let zero1 = pscale(&pmul(&n_poly, &h_poly), cx(-1.0, 0.0));
+    let comm_nl = ham(pscale(&padd(&pmul(&h_poly, &n_poly), &zero1), cx(0.0, 1.0)));
+    let zero2 = pscale(&pmul(&e_poly, &h_poly), cx(-1.0, 0.0));
+    let comm_e = ham(pscale(&padd(&pmul(&h_poly, &e_poly), &zero2), cx(0.0, 1.0)));
+    let mut expected: Poly = Vec::new();
+    for m_idx in 0..3u32 {
+        expected = padd(
+            &expected,
+            &pscale(&q_poly(m_idx), cx(2.0 * NU * FORCE[m_idx as usize], 0.0)),
+        );
+    }
+    let expected_h = ham(expected);
+    for (k, psi) in probes.iter().enumerate() {
+        let mut d1 = comm_nl.apply(psi);
+        d1.scale_and_add(&comm_e.apply(psi), cx(-1.0, 0.0));
+        assert!(
+            d1.norm() < 1e-8,
+            "i[h,N_L] = i[h,E] on probe {k}: residual {:.3e}",
+            d1.norm()
+        );
+        let mut d2 = comm_e.apply(psi);
+        d2.scale_and_add(&expected_h.apply(psi), cx(-1.0, 0.0));
+        assert!(
+            d2.norm() < 1e-8,
+            "i[h,E] = 2 nu sum f.Q on probe {k}: residual {:.3e}",
+            d2.norm()
+        );
+    }
+
+    eprintln!(
+        "ns_lagrangian_comparison: lambda_min(N_L) = {:.6} (>= 1), relBound and \
+         first-order commForm i[h,N_L] = i[h,E] = 2 nu sum f.Q hold on {} probes",
+        eig[0],
+        probes.len()
+    );
+}
+
+// ── 7. Hashimoto selection on the constrained (penalty) operator ───────────
+
+#[test]
+fn ns_lagrangian_penalty_hashimoto_selection() {
+    // The selection battery of test 3 on the V_kappa-constrained operator
+    // H_kappa = 1/2 sum P^2 + nu sum Q^2 + kappa vol^2 (the penalty family of
+    // NsLagrangianDetFL; cdb CHECK 16): Hermitian projection, PSD Ritz
+    // values (H_kappa is a sum of squares), and the resolvent identity / 1/|Im
+    // gamma| bound / spectral recovery of ChapterHashimotoComplexShifts.
+    let vol = volume_poly_chain();
+    let kap = 10.0;
+    let mut p = lag_osc_poly();
+    p = padd(&p, &pscale(&pmul(&vol, &vol), cx(kap, 0.0)));
+    let hk = ham(p);
+
+    let mut start = lag_state([0, 0, 0]);
+    start.scale_and_add(&lag_state([1, 0, 0]), cx(0.5, 0.0));
+    let start = {
+        let n = start.norm();
+        let mut s = QuantumState::zero();
+        s.scale_and_add(&start, cx(1.0 / n, 0.0));
+        s
+    };
+
+    // cost guard + unit-norm frame as in the kappa = 10 solve of test 5.
+    let opts_c = SirkOpts {
+        prune_eps: 1e-12,
+        max_components: Some(4_000),
+        brst_tol: 1e-10,
+        adaptive: true,
+        unit_norm_steps: true,
+    };
+    let cons_shifts: Vec<Complex64> =
+        (0..4).map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2)).collect();
+    let res = solve_forward_sirk_with_opts(&hk, &start, &cons_shifts, &best_device(), None, &opts_c)
+        .expect("penalty-constrained SIRK solve");
+    assert_hermitian(&res.h_proj, "penalty projected Hamiltonian");
+    let ritz = res.ritz_values();
+    assert!(ritz.iter().all(|r| r.is_finite()), "Ritz values must be finite");
+    assert!(
+        ritz[0] >= -1e-6,
+        "H_kappa is a sum of squares: Ritz must be PSD, got {}",
+        ritz[0]
+    );
+
+    // The Hashimoto battery on the projected matrix (exact facts about any
+    // Hermitian A, mirroring ChapterHashimotoComplexShifts).
+    let a = res.h_proj.clone();
+    let n = a.nrows();
+    assert!(n >= 2, "projected penalty matrix must be >= 2x2, got {n}");
+    let eig = a.clone().symmetric_eigen();
+    let lambdas: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
+    let eigvecs = eig.eigenvectors;
+    for s in [0.5, 1.0, 2.0] {
+        let gamma = Complex64::new(0.0, s);
+        let gi = DMatrix::<Complex64>::identity(n, n) * gamma;
+        let r = (gi.clone() - a.clone())
+            .try_inverse()
+            .expect("(gamma I - A) must be invertible for Im gamma != 0");
+        let mut id = DMatrix::<Complex64>::identity(n, n);
+        id -= &((gi.clone() - a.clone()) * r.clone());
+        assert!(
+            id.norm() < 1e-10,
+            "penalty resolvent identity: ||.|| = {:.2e}",
+            id.norm()
+        );
+        let norm_r = r.clone().svd(true, true).singular_values[0];
+        assert!(
+            norm_r <= 1.0 / s + 1e-9,
+            "penalty ||(gamma I - A)^-1|| = {norm_r:.6} must be <= 1/|Im gamma| = {}",
+            1.0 / s
+        );
+        for (j, vj_col) in eigvecs.column_iter().enumerate() {
+            let vj = vj_col.into_owned();
+            let mu = 1.0 / (gamma - Complex64::new(lambdas[j], 0.0));
+            let mut residual = &r * &vj;
+            residual -= &(vj * mu);
+            assert!(
+                residual.norm() < 1e-8,
+                "penalty R v_j = 1/(gamma - lambda_j) v_j: {:.2e}",
+                residual.norm()
+            );
+            let recovered = (gamma - (1.0 / mu)).re;
+            assert!(
+                (recovered - lambdas[j]).abs() < 1e-8,
+                "penalty spectrum recovery: {recovered:.8} vs {}",
+                lambdas[j]
+            );
+        }
+    }
+
+    eprintln!(
+        "ns_lagrangian_penalty_hashimoto: kappa = 10, {}x{} projection, Ritz[0] = {:.6}, \
+         resolvent identity/bound/recovery hold at gamma = i*0.5, i*1, i*2",
+        n,
+        n,
+        ritz[0]
     );
 }

@@ -93,6 +93,13 @@
 #      d<P>/dt = -2 nu <Q> at frequency omega (CHECK 14), the enclosure's number
 #      conservation and lift identity (CHECK 15), and the sextic degree of the penalty
 #      form V_kappa (CHECK 16).
+#   F  the Faris-Lavine comparison layer  N_L = H_L^2 + E  of the 2026-09-25 wave
+#      (ChapterNsLagrangianDetFarisLavine, NsLagrangianDetFL): the ENERGY identity
+#      lagFlux_eq -- the penalty gradient is a gradient force and does no net work
+#      (CHECK 17); the LIOUVILLE identity lagDiv_eq, div = -nu sum_j |k_j|^2
+#      (CHECK 18); and the FIRST-ORDER comparison commutator lagComparison_commForm,
+#      i[h, N_L] = i[h, E] = 2 nu sum_j f_j Q_j at the canonical instance (CHECK 19),
+#      the algebraic content behind |<x, i[H_L,N_L] x>| <= 2 nu Lambda <x, N_L x>.
 #
 # Engine conventions (learned from the engine, cf. docs/VERIFY_QG_DENSITIZED.md and
 # ../AGENTS.md): scalar names are declared ::Symbol, ladder names ::NonCommuting, no
@@ -415,6 +422,47 @@ chk16 := @(volk3) - (@(deth) * t*t*t - 1) * (@(deth) * t*t*t - 1);
 tidy(chk16); collect_terms(chk16);
 print("CHECK 16 NSLAG (det(tF) - 1)^2 = (t^3 det F - 1)^2    (0 = ok):", chk16);
 
+# ===========================================================================
+# F. the Faris-Lavine comparison layer N_L = H_L^2 + E (2026-09-25 wave)
+# ===========================================================================
+print("== F. the Faris-Lavine comparison N_L = H_L^2 + E (NsLagrangianDetFL) ==");
+print("     (lagFlux_eq / lagDiv_eq / lagComparison_commForm; E = 1 + 1/2 |v|^2 + V_kappa,");
+print("      H_L = 1/2 sum (pi F + F pi), N_L = H_L^2 + E >= 1 (lagComparison_quadForm_ge))");
+
+{gra, grb, grc}::Symbol.
+
+# CHECK 17 (lagFlux_eq): the ENERGY IDENTITY along the Lagrangian flow
+#   xidot_j = v_j,  vdot_j = -nu lam_j v_j - g_j   (lagDrift; g_j = dV/dxi_j),
+#   E = 1 + 1/2 sum v_j^2 + V_kappa:
+#   sum_j [v_j g_j + (-nu lam_j v_j - g_j) v_j] = -nu sum_j lam_j v_j^2 = lagFlux.
+# The penalty gradient g_j CANCELS pairwise -- the incompressibility force does
+# no net work (the engine declares the partials as symbols; the identity is the
+# cancellation itself).
+l2 := lla*lla + llb*llb + llc*llc;
+chk17 := va*gra + vb*grb + vc*grc          + (-nu*@(l2)*va - gra)*va + (-nu*@(l2)*vb - grb)*vb + (-nu*@(l2)*vc - grc)*vc          + nu*@(l2)*(va*va + vb*vb + vc*vc);
+tidy(chk17); canonicalise(chk17); collect_terms(chk17);
+print("CHECK 17 NSLAG lagFlux_eq: penalty gradient does no net work (0 = ok):", chk17);
+
+# CHECK 18 (lagDiv_eq): the LIOUVILLE IDENTITY.  The divergence of lagDrift:
+# the displacement rows contribute 0 (xidot = v carries no xi), the velocity
+# rows contribute -nu lam_j each (the penalty gradient carries no v), so
+#   div = -nu (lam_a + lam_b + lam_c) = -nu sum_j |k_j|^2,  a CONSTANT.
+chk18 := (0 + 0 + 0) + (-nu*lla*lla) + (-nu*llb*llb) + (-nu*llc*llc)          - (-(lla*lla + llb*llb + llc*llc)*nu);
+tidy(chk18); canonicalise(chk18); collect_terms(chk18);
+print("CHECK 18 NSLAG lagDiv_eq: div = -nu sum |k_j|^2 (0 = ok):", chk18);
+
+# CHECK 19 (lagComparison_commForm): the comparison commutator is FIRST ORDER.
+# With N_L = h^2 + E the h^2 part commutes away:  i[h, N_L] = i[h, E].
+# At the canonical instance (omega = 1, nu = 1/2; E = Eo = 1/2 sum P^2 +
+# 1/2 sum Q^2, h = Eo + sum f.P as in CHECK 14) the ladder algebra gives
+#   i[h, Eo] = 2 nu sum_j f_j Q_j = sum_j f_j Q_j,
+# exactly the linear form the bound |<x, i[H_L,N_L] x>| <= 2 nu Lambda <x,N_L x>
+# is proved on (lagComparison_commForm_bound).
+Eo := 1/2*@(Pa)*@(Pa) + 1/2*@(Qa)*@(Qa) + 1/2*@(Pb)*@(Pb) + 1/2*@(Qb)*@(Qb) + 1/2*@(Pc)*@(Pc) + 1/2*@(Qc)*@(Qc);
+chk19 := I * (@(Hh)*@(Eo) - @(Eo)*@(Hh)) - (fa*@(Qa) + fb*@(Qb) + fc*@(Qc));
+norder(chk19);
+print("CHECK 19 NSLAG i[h,N_L] = i[h,E] = sum f.Q  (first order, 0 = ok):", chk19);
+
 print("== summary ==");
 print("Eulerian  H = sum_i {pi_i, A_i}, A_i = sum_j u_j u_{i,j} + q_i - nu u_{i,jj}, div u = 0");
 print("  -> transported constraint (CHECK 3-5):   det F - 1 = 0");
@@ -424,3 +472,6 @@ print("  -> one-parcel h (CHECK 11-14):           1/2 sum P^2 + nu sum Q^2 + sum
 print("     [P,Q] = -i,  1/2 P^2 + nu Q^2 = omega (N + 3/2),  Heisenberg at omega = sqrt(2 nu)");
 print("  -> final Hamiltonian (CHECK 15):         H = dGamma(h), creation left, annihilation");
 print("     right, number conserving; penalty rides as V_kappa (CHECK 16, sextic)");
+print("  -> Faris-Lavine comparison (CHECK 17-19): N_L = H_L^2 + E >= 1;");
+print("     lagFlux_eq (gradient does no work), lagDiv_eq (div = -nu sum |k|^2),");
+print("     i[h,N_L] = i[h,E] = 2 nu sum f.Q -- first order, dominated by N_L");
