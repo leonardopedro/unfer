@@ -1,5 +1,13 @@
 # Plan: unfer as a Modular Probability Kernel (australVM modules + velysterm UI)
 
+**Full-SM implementation/research work order (2026-11-15):**
+[SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md), N6–N14, coordinates the existing complete
+E1 operator, Mehler representation, joint rational SIRK solver and numerical evidence
+with [timepiece SM0–SM9](../../timepiece/SM_ESA_COMPLETION_PLAN.md). Use its acceptance
+criteria for full-action error certificates, actual constraints and controlled cutoff
+experiments. This scoped extension does not change the historical UI/kernel stages below
+and does not claim a new build, test pass or completed physical/continuum SM theorem.
+
 > **Executor note:** This plan is written to be executed stage-by-stage by a smaller LLM. Each stage has a goal, exact files, key signatures, and acceptance commands. Do not skip acceptance steps. Do stages in order unless noted. All paths abbreviate `$ROOT = /media/leo/e7ed9d6f-5f0a-4e19-a74e-83424bc154ba`.
 
 ## North star (the system we are building)

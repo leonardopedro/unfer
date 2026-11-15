@@ -1,11 +1,21 @@
 # Standard-Model operator audit and current implementation state
 
-2026-11-09c. The executable E1 term assembly and joint-state rational integration
-are now implemented. This supersedes the earlier N1–N4 implementation-status
-paragraphs; the Lean completion work order remains P0–P8 in
+2026-11-15 source/planning review. Complete E1 term assembly and joint rational
+integration are implemented; the dated execution records remain in
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md). No fresh build, symbolic run,
+numerical pass or proof replay is claimed by this revision.
+
+The active numerical/research order is [SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md),
+**N6–N14**. The proof counterpart is **SM0–SM9** in
 [SM_ESA_COMPLETION_PLAN.md](../../timepiece/SM_ESA_COMPLETION_PLAN.md).
-The detailed current operator, Majorana dictionary, symbolic import, solver
-formula and commands are in [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md).
+This supersedes the old forward P0–P8/N0–N5 ordering, not its actual results.
+
+The Lean potential self-bound and its kinetic-control consequences are proved. Remaining
+work binds the complete physical coefficient/coordinate dictionary, 43-direction comparison
+graph core, quadratic-form commutator, physical constraints/metric and graded closure to
+that same operator. The numerical algorithm also needs its actual joint-action/GMRES/
+compressed-resolvent/Padé/rounding bridge; an abstract theorem or pure SIRK translation
+is not that end-to-end proof. Separate unreduced E1, physical E1 and the E2 field limit.
 
 ## 1. Object of record
 
@@ -26,15 +36,15 @@ color, chiral/spin component and right-handed neutrino is present; no Majorana
 mass term is added. Spatial Dirac derivatives act at fixed independent collective
 coordinates. NS/QG jet elimination is not used to change this SM realization.
 
-## 2. Implementation packets
+## 2. Implemented foundation N0–N5 and remaining proof scope
 
 | Packet | Current numerical implementation | Remaining proof boundary |
 |---|---|---|
 | N0 audit/labels | Legacy scopes corrected; scalar-template checks repaired and executed | Symbolic identities do not establish domains/ESA |
 | N1 canonical action/bosons | `exact_inner.rs` plus full bosonic forms in `sm_full.rs`; same-mode CCR, exact ordered action and retained constants | Lean named-coordinate and physical normalization intertwining |
 | N2 matter dictionary | All 96 CAR coordinates; source Majorana spin frame; full spatial/gauge coupling; all four complex generation/Yukawa matrices and h.c. | Formal reality/chirality, realification and operator assembly on the common core |
-| N3 comparison/enclosure | Correct scalar comparison expression; single outer lift on joint symmetric/antisymmetric and parity-graded sectors | Comparison inequalities/ESA and physical reduction/graded statistics |
-| N4 Hashimoto integration | Joint registry, actual resolvents, bounded-resolvent function compression, full residuals/tails, restarted evolution and six full-operator tests | Full-operator cutoff removal, roundoff certification and the paper's analytic error hypotheses |
+| N3 comparison/enclosure | Correct scalar comparison expression; single outer lift on joint symmetric/antisymmetric and parity-graded sectors | Full 43-direction graph/core and matrix form transfer; physical reduction/graded statistics |
+| N4 Hashimoto integration | Joint registry, actual resolvents, bounded-resolvent function compression, full residuals/tails, restarted evolution and 13 source-declared joint-SM tests | Full-operator cutoff removal, roundoff certification and the paper's analytic error hypotheses |
 | N5 publication | Source/export fixture, symbolic gate, commands and scoped theory/numerical documentation | Future proof/certificate promotion only after the corresponding checks |
 
 No production legacy operator has been silently changed. The new full-SM path
@@ -50,7 +60,7 @@ These findings remain relevant to callers of the legacy APIs:
 |---|---|---|
 | F1 independent field/momentum modes | Old Higgs/reduced builders | Comparison models; use same-mode canonical operators for E1 |
 | F2 contractions and CAR swap signs discarded | Legacy CAS normal ordering | Use ordered joint action; a quartic loses operator terms as well as constants |
-| F3 obsolete uncoupled quartic comparison | `sm_comparison_n` and old symbolic prose | Use the actual bosonic `smFlN`/full comparison, with new analytic bounds still required |
+| F3 obsolete uncoupled quartic comparison | `sm_comparison_n` and old symbolic prose | Use the actual bosonic `smFlN`/full comparison, reusing the proved self-bound, with full-operator transfer still required |
 | F4 incomplete scalar assembly/tautological normalization | Old SMGF CHECK 9/11 | Repaired template checks; the complete chiral dictionary is the new full module |
 | F5 unsupported radial/gauge interpretation | Scalar Higgs-mechanism comparisons | No full-SM EWSB or radial-reduction claim |
 | F6 Ritz threshold mistaken for lower bound | Old finite-window tests | Variational upper/residual information only |
@@ -81,10 +91,18 @@ reorthogonalized after Gram whitening to avoid coordinate cancellation.
 Full Ritz and shifted-solve residuals include outside-window contributions.
 Restart diagnostics retain norms, energies and solve/function/projection error
 data. No finite result is promoted to a mass gap, EWSB, continuum construction,
-physical BRST theorem or full SM ESA proof. E2 infinite inner matter modes and
-P5 physical/graded-statistics identification remain separate proof work.
+physical BRST theorem or full SM ESA proof. SM4/SM5 physical/graded-statistics
+identification and SM8 infinite inner-mode/field limits remain separate proof work.
+The new N6–N14 packets price finite-map error, tails and actual physical constraints.
 
-## 5. Symbolic execution record
+The electric-only and matter-density charge probes are not the full joint charge; the
+44-state longitudinal band leaks under H. Its Coulomb subtraction is a labeled comparison
+until an operator/constraint/physical-representation equivalence is proved. Matter fermion
+number is not the full electromagnetic charge. Ghost grading and an admissible physical
+Krein metric must be distinguished before a no-ghost conclusion; see N10 and SM1.
+Historical numerical values remain valid within their original finite-window scope.
+
+## 5. Historical symbolic execution record
 
 Cadabra2 2.5.14 was actually run. The complete module's Legendre, all-entry
 Hermiticity and 96-coordinate coverage checks pass, and its fresh LaTeX output

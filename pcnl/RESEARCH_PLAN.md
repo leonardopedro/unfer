@@ -1,6 +1,197 @@
 # pcnl research and development plan
 
-Date: 2026-11-08. Implementation inspected at unfer commit
+## Required application track R9: small Edge0 architecture with RLCD (2026-11-15)
+
+**Reinforcement learning for calibrated decisions is required** in this track. The
+Mammoth-1 reference supplies a supervised comparator. Execute the new specification in
+[EDGE0_RLCD_PLAN.md](EDGE0_RLCD_PLAN.md) through E0–E7 of
+[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This is the active application research order;
+R8 below remains the mathematical/sampler order, and R7's negative results and stop
+remain valid. No new implementation, run, theorem or measured improvement is claimed.
+
+### R9.0 Hypothesis and architecture
+
+Test whether a small grouped latent-MoE architecture, adapted from the local
+[Edge0 source](../../Edge0/docs/models/edge0-145b.md), can learn useful typed probability
+outputs through explicit RLCD at a controlled research budget. The checkout is
+`../../Edge0`, not `../../Edge-0`; pin commit `7b60076`. Start with width 64, 4 blocks,
+8 routed experts, top-2 plus one shared expert, 2 D/U groups and latent width 32.
+Use ordinary small attention as an explicit adaptation, not a claim to reproduce the
+large model. Keep state encoding question-independent and process questions independently.
+The full tensor count must stay below one million parameters in the initial prototype.
+
+Do not confuse deterministic expert routing with a stochastic decision policy. Add a
+separate four-path categorical policy `a_phi(r|state,question)` and typed conditional
+readouts `u_theta`. Return the exact marginal `p=sum_r a_phi(r) u_theta(r)` for Bernoulli,
+named Choice and ordinal Score outputs. These per-question marginals do not define a
+joint law of correlated questions. A joint-world/conditional-factor model is required
+when a workflow needs one. Reference models motivate the interface, not inherited speed,
+calibration, language capability or training guarantees.
+
+### R9.1 Required RLCD and its first falsifier
+
+Minimize expected Brier loss of the returned marginal using a **reinforcement-learning
+update of the four-path policy**, alongside direct readout gradients. Sample four iid
+paths and use the unbiased pairwise Brier estimator in EDGE0_RLCD_PLAN §4. Include the
+score-function gradient of the sampling law; baseline subtraction needs conditional
+independence from that sample and detached baseline gradients. Exact enumeration of all
+256 path tuples must recover the exact marginal's gradient for policy, heads and shared
+parameters. This gate distinguishes actual RLCD from supervised readout updates renamed RL.
+
+CE+Brier supervision is the mandatory strong comparator and optional shared warm start.
+An exact-marginal Brier-gradient arm controls for the objective itself; frozen-policy
+proper-score and correctness-reward RL arms identify policy learning and reward choice.
+Compare the exact-marginal objective with single-path and finite-sampled-average
+objectives explicitly; their disagreement terms differ. Preserve version-specific attribution: OpenJev-RLCD's current PRDO v2 uses a
+per-rationale objective with direct readout gradients in its main arm. Our mixture-policy
+REINFORCE construction is a new proposal requiring independent checks.
+
+### R9.2 Controlled learning experiment and decisions
+
+Use enumeratable synthetic worlds with known nondegenerate outcome laws, repeated/noisy
+observations, binary/choice/ordinal questions and explicit utility tables. Split at the
+world/template level before producing questions or labels. Separate development,
+calibration and final test worlds; record an OOD family. Empty/invalid schemas and
+nonfinite probabilities are explicit failures, not uniform fallback successes.
+
+The first campaign is bounded in EDGE0_RLCD_PLAN §5: one sub-million-parameter model,
+5 paired seeds, fixed 2048/256/256/512 world splits, at most 2000 optimizer updates per
+arm and a hardware wall-time cap fixed before execution. Brier excess over known truth
+is primary; report NLL, ordinal score, raw/calibrated controls, utility/regret and
+reliability/coverage separately. Cluster uncertainty by world and replicate across seeds.
+Cost includes all training paths and the four-path inference marginal. A negative RLCD
+comparison is retained; change architecture/data/metric only as a new declared experiment.
+
+### R9.3 pCNL integration and theory handoff
+
+First use the existing generic target seam for a frozen-encoder/policy, head-only chart.
+Evaluate the latent marginal exactly inside the likelihood. Stochastic log-likelihoods,
+RL rewards and sampled-path Brier estimators are not exact MH likelihood evaluations.
+Only a justified extended-state construction or a priced kernel approximation can relax
+this constraint. The optional outer posterior over parameters is separate from the four
+latent paths; R8/Q0–Q7 and D0–D7 apply to its actual target/kernel/error budgets.
+
+The Lean specialist first proves finite simplex/mixture closure, proper-score identities,
+U-statistic expectation, score-function/baseline identities and utility-regret control.
+Names in the new plan are proposed theorem tasks, not existing declarations. Global
+neural convergence, calibration and posterior rates still require their missing bridges.
+Do not compile in this planning wave. No operator/Fock interpretation is a prerequisite
+for the required RLCD training experiment.
+
+## Active programme: theoretical certificates with implementation checks (2026-11-15)
+
+For sampler/theory work, this section supersedes the **forward ordering** of older R0–R7
+tasks while preserving their measured records and stopping decisions. The mathematical counterpart is
+[timepiece/pcnl.md](../../timepiece/pcnl.md), **Q0–Q7**; executable implementation packets
+are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md), **D0–D7**. This source/planning review
+performs no Rust or Lean compilation, numerical run or new measurement.
+
+The research aim is to establish useful properties in increasing scope: proper targets,
+correct ideal MH kernels, a first explicit mixing certificate, controlled approximation
+bias, informative dimension scaling, and independently evaluated predictive/decision quality.
+A rate certificate for an exact reference sampler is not a rate for unadjusted SG-pCNL;
+a statistical accuracy theorem is not a promise that BMA beats a point model.
+
+### R8.0 Current state to reuse
+
+The generic `Potential` / `SubspaceTarget<P>` seam, restricted-chart MH-pCN, scaled and
+rotated proposals, classifier full-target block kernels, `policy_model`, `mdp`,
+`policy_readout`, `dt_arm` and `dt_subspace` are present. Do not reimplement them from the
+old “proposed” descriptions. `src/target.rs` uses a total Gibbs potential including the
+Gaussian prior; its MH functions include the compensating proposal-density term.
+The source-level tests and historical cells are evidence to reuse, with their actual
+revision/normalization scope, not fresh passes claimed by this revision.
+
+[PCNL_STATUS.md](../docs/PCNL_STATUS.md), R7 and its later follow-ups, already records
+DT comparisons and a stopped restricted rank-4 arm: the next-action-NLL success criterion
+was not established, and later weak-anchor proper-score improvements do not meet it.
+It also records step-independent score uncertainty as an unresolved limitation. Keep
+these outcomes. Fix uncertainty and policy approximation before proposing another
+application promotion; do not erase a negative result with a newly chosen metric.
+
+### R8.1 First theorem: a proper target and a prior-refresh reference
+
+Use likelihood potential `Ψ=λ n_terms mean_loss`, total potential `J=Ψ+‖z‖²/2`,
+and the declared Gaussian reference `μ0`. Prove `0<Z=∫exp(-Ψ)dμ0<∞`; categorical
+nonnegative NLL at `λ≥0` gives the upper bound, with positivity requiring a positive-prior
+set of finite loss. Other likelihoods need their own integrable bound.
+
+The short first rate theorem is independence MH with proposal `μ0`. If
+`0≤L=exp(-Ψ)≤M` and `Z>0`, its acceptance gives `K_ind(x,·)≥(Z/M)π(·)` on target
+support. A fixed mixture with a same-target invariant local MH kernel has coefficient
+`c=ω Z/M`, `ω>0`. Prove the resulting TV and centred-`L²` contraction before adding
+more difficult transformer-specific hypotheses. `mh_pcn_z(beta=1)` is the existing
+restricted-chart primitive; a random mixture wrapper and a certified evidence lower
+bound are **new development**, not existing sampler guarantees.
+
+A useful first witness is `Z≥μ0(A)exp(-b)>0` for a verified region with `Ψ≤b`.
+Use tiny-chart quadrature with tail enclosures or an analytic likelihood/ball estimate.
+An estimated evidence or local favorable ray is not a rigorous lower bound. Publish
+both the positive certificate and its practical rate; it may be too small to be useful.
+Increasing complement dimension only preserves this bound if `Z/M` stays bounded below.
+
+### R8.2 Two dimension claims, two different experiments
+
+First prove and test a factorized reference `Ψ(z,w)=Ψ_r(z)`: the informed target and
+independent Gaussian complement have a simultaneous product-kernel absolute gap
+`min(γ_r,1-ρ)`, independent of complement dimension. Freeze rank, likelihood, proposal
+and observable while varying complement dimension; report per-step cost separately.
+This is the controlled theorem the project can aim to complete first.
+
+Then study coupled targets. Full-target block MH updates may each be reversible, but
+their deterministic composition need not be. Either analyze its actual multi-step
+contraction or add a separately labeled random-scan/lazy reference. Conditional gap and
+approximate variance-factorization bounds are possible sufficient inputs; they must be
+proved uniformly in the conditioned coordinates and dimension. Local Hessian eigenvalues,
+a rank budget heuristic and stable loss ESS cannot supply those inputs.
+
+[The pCN gap paper](https://arxiv.org/abs/1112.1392) and
+[DILI](https://arxiv.org/abs/1411.3688) provide candidate assumptions and constructions;
+copy their actual hypotheses into the claim ledger before applying them. They do not
+establish a theorem for this arbitrary neural target by analogy.
+
+### R8.3 Reduction, approximation and uncertainty are priced separately
+
+A frozen complement is a new slice model, not a full-support approximation to the ambient
+posterior. Keep it separate from a ridge likelihood `Lbar(z)=E_w L(z,w)` with a Gaussian
+complement. The latter retains the correct informed marginal but needs a complement-error
+bound. [Certified dimension reduction](https://arxiv.org/abs/1807.03712) suggests a
+conditional-inequality/neglected-gradient route; verify its assumptions and sample-error
+control rather than substitute one empirical Fisher spectrum. Retain random-basis and
+full-target controls, and cross-fit data-selected anchors/bases.
+
+For the approximate SG branch, prove the Gaussian AR stability/bias canaries in the
+formal plan, then bound the actual gradient, discretization and numerical defects in a
+common metric. A nonzero step floor leaves a fixed-step regime. Exact mini-batch MH would
+need a justified construction; an unbiased log-loss estimate is insufficient. The current
+`f32` proposal casts also need a rounding-to-statistical-error bridge: ideal real-MH
+invariance is not literal detailed balance of rounded Gaussian cells.
+
+A final predictive certificate must distinguish target/restriction error, kernel bias,
+burn-in and correlated finite-sample uncertainty. For stationary absolute gap `γ`, the
+reference observable mean-square bound is `(2-γ) Var(F)/(N γ)`; prove any nonstationary
+correction used by an actual run. In DT reports separately handle parameter-chain
+correlation, dependence within held-out trajectories and rollout noise. Action-score
+benefits do not guarantee return benefits. Per-history policy approximation can feed a
+finite-horizon return bound; a finite off-policy score table alone cannot supply its
+uniform premise. Test the rollout decoder's posterior-draw subsampling separately.
+
+### R8.4 Promotion gates and order
+
+Execute **D0 → D1 → D2 → D3 → D4**, then D5 for existing application uncertainty;
+D6's spectral computation is optional and D7 verifies the completed evidence packets.
+The first promotion requires a nonconstant-likelihood reference certificate with explicit
+normalization, rate and error/cost tolerances. The second requires the same certificate
+with fixed informed rank and a growing independent complement. Coupled-transformer
+claims require their remaining estimates; negative or inconclusive assumptions stay visible.
+
+An application claim additionally needs the prespecified proper-score/return criterion
+against matched-cost tuned baselines with independent data/seed replication. Do not
+reopen the stopped R7 branch merely because reference-model theory improves. No new
+global neural gap, dimension-free runtime, posterior optimality or policy optimality is
+claimed by this work order. Existing R0–R7 records below remain the experimental detail.
+
+Historical baseline: 2026-11-08. Implementation inspected at unfer commit
 `5b4b79c77f8c35bb4039ab1c755733621b5cd68f`. Revised 2026-11-12: added R7, the
 decision-transformer application track, and its milestones; the R0–R2 record is unchanged.
 
@@ -74,8 +265,8 @@ solutions to the new milestones.
 | Experiments | `src/task.rs`, `src/experiment.rs` | Shared tasks and baselines |
 | Sequence policy model | `src/policy_model.rs` | DT forward, per-step action distributions, own `layout` |
 | Decision task | `src/mdp.rs` | Synthetic MDP, behavior corpus, exact and rollout returns |
-| Policy readout | `src/readout.rs` (discrete actions), proposed extension | Per-step proper scores plus return-level readout |
-| Potential abstraction | `src/target.rs` | `SubspaceTarget` generalized over a potential trait |
+| Policy readout | `src/policy_readout.rs`, reusing `src/readout.rs` | Trajectory uncertainty and posterior-average policy error |
+| Potential abstraction | `src/target.rs` | Existing `SubspaceTarget<P: Potential>` target/gradient contract |
 | Diagnostics | `src/diag.rs` | Stationarity and Monte Carlo uncertainty |
 | Saved draws | `src/persist.rs` | Trajectories plus run metadata |
 | Reproduction | `../scripts/pcnl-reproduce` | Named evidence stages |
@@ -680,9 +871,13 @@ likelihood-evaluation cost, and the induced policy — sampling from `p̄` or de
 averaged distribution — retains the behaviour policy's return without giving up more than its
 return MCSE. Both halves are measured; neither is assumed from the classification results.
 
-**Status: none of this is measured.** No DT model, task or cell exists; every code path named
-in R7.3 is proposed or an extension of an existing one. Do not cite R0–R2 numbers as DT
-evidence, and do not add DT rows to `PCNL_STATUS.md` until a cell has run.
+**Current status (source review, 2026-11-15): implemented and measured within the recorded
+cells.** R7.3's model, potential and readout paths exist, as do `dt_arm` and `dt_subspace`.
+`PCNL_STATUS.md` records the R7 rank-4 comparison and subsequent basis/anchor follow-ups.
+The NLL promotion criterion was not established and that application branch remains stopped;
+proper-score-only observations have their own scope. R7.3–R7.6 below retain their dated
+protocol/development history; use active R8 and development D5 for the remaining uncertainty
+and decoder work. This review itself reruns no cell.
 
 ### R7.0 What the accumulated record says about this direction (review)
 
@@ -759,6 +954,10 @@ single posterior state (the point readout). Their differences are decision effec
 effects.
 
 ### R7.3 Development, in order
+
+**Historical protocol:** the implementation/status paragraphs later in this section and
+`PCNL_STATUS.md` supersede the “currently typed”, “proposed” and “still missing” language
+in the original task list. Reuse the landed code. Active follow-up is R8/D0–D7.
 
 1. **`Potential` trait in `src/target.rs`.** `SubspaceTarget` is currently typed to
    `(Dataset, Shapes, Variant)`, so no other likelihood can sit under the subspace machinery.

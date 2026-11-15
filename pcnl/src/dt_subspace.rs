@@ -39,8 +39,9 @@ use crate::manifest::Fnv;
 use crate::mdp::{Corpus, MdpEnv};
 use crate::policy_model::{DtPotential, dt_act_at, dt_loss_and_grad, init_flat};
 use crate::policy_readout::{
-    Arm, Calibration, Context, Decode, ReturnReadout, StepScores, dt_step_distributions_at,
-    max_prob_calibration, readout, score_steps,
+    Arm, ArmReturns, Calibration, Context, Decode, PairedDiff, ReturnReadout, StepScores,
+    dt_step_distributions_at, max_prob_calibration, mean_mcse, paired, readout, sample_at,
+    score_steps,
 };
 use crate::readout::Rule;
 use crate::subspace::{AffineSubspace, Basis, pca_basis};
@@ -1078,6 +1079,167 @@ pub fn subsample_draws(draws: &[Tensor], max: usize) -> Vec<Tensor> {
     }
     let stride = draws.len().div_ceil(max);
     draws.iter().step_by(stride).take(max).cloned().collect()
+}
+
+/// One declared draw-count's rollout audit (D5's policy-approximation check).
+#[derive(Clone, Debug)]
+pub struct DrawSubsetAudit {
+    pub requested: usize,
+    pub used: usize,
+    /// Per-step BMA, sampled: the current `pbar-sample` arm.
+    pub bma_sample: ArmReturns,
+    /// Per-step BMA, argmax: the deterministic averaged decoder.
+    pub bma_argmax: ArmReturns,
+    /// One posterior draw held for a whole episode, then sampled.
+    pub episode_draw: ArmReturns,
+    pub argmax_vs_sample: PairedDiff,
+    pub episode_vs_bma: PairedDiff,
+}
+
+/// Nested draw-count audit at fixed histories and a common environment seed.
+#[derive(Clone, Debug)]
+#[allow(clippy::type_complexity)]
+pub struct DrawAudit {
+    /// Ascending draw counts, each re-scored on the *same* rollouts and seed.
+    pub subsets: Vec<DrawSubsetAudit>,
+    /// The largest declared draw count, against which the others are paired.
+    pub baseline_used: usize,
+    /// `(requested, paired difference vs baseline)` for the BMA sample arm.
+    pub subset_vs_full_bma: Vec<(usize, PairedDiff)>,
+    /// The same for the once-per-episode draw arm.
+    pub subset_vs_full_episode: Vec<(usize, PairedDiff)>,
+}
+
+/// Audit the finite rollout draw subset against successively larger averages.
+///
+/// `DEVELOPMENT_PLAN.md` D5: "Audit the finite draw subset used in rollout
+/// decoding against a full/successively larger posterior average at fixed
+/// histories and common environment seeds. Name per-step BMA sampling, argmax
+/// decoding and a once-per-episode posterior draw separately." This runs exactly
+/// those three decoders at each declared count. Every subset uses the same
+/// rollout seed, so the environment's uniform and noise streams are shared; the
+/// episode-draw arm uses the draw `episode % used`, a declared cyclic schedule
+/// rather than a hidden extra random source. A difference here estimates the
+/// *decoder* error at this fixed draw set. It is not a TV/KL statement about the
+/// continuous posterior, and it does not test chain convergence.
+pub fn audit_posterior_draws(
+    env: &MdpEnv,
+    cell: &DtCell,
+    anchor: Tensor,
+    draws: &[Tensor],
+    subsets: &[usize],
+    rollouts: usize,
+    seed: u64,
+) -> DrawAudit {
+    assert!(rollouts > 1, "an MCSE needs more than one rollout");
+    assert!(!subsets.is_empty(), "declare at least one draw count");
+    assert!(
+        subsets.windows(2).all(|w| w[0] < w[1]),
+        "subsets must be ascending so the last is the full declared average"
+    );
+    let target = cell.rtg_conditioning();
+    let mut audited = Vec::with_capacity(subsets.len());
+    for &max in subsets {
+        let used = subsample_draws(draws, max);
+        let arms = ReturnArms {
+            behaviour: cell.adapt_train.clone(),
+            anchor: anchor.clone(),
+            point: anchor.clone(),
+            draws: used.clone(),
+            ensemble: vec![anchor.clone()],
+            temperature: 1.0,
+        };
+        let ret = return_readout(env, cell, &arms, rollouts, seed);
+        let bma_sample = ret.arm("pbar-sample").clone();
+        let bma_argmax = ret.arm("pbar-argmax").clone();
+        let episode_returns = episode_draw_returns(env, cell, &used, target, rollouts, seed);
+        let (episode_mean, episode_mcse) = mean_mcse(&episode_returns);
+        let episode_draw = ArmReturns {
+            name: "episode-draw".to_string(),
+            returns: episode_returns,
+            mean: episode_mean,
+            mcse: episode_mcse,
+        };
+        audited.push(DrawSubsetAudit {
+            requested: max,
+            used: used.len(),
+            argmax_vs_sample: paired(&bma_argmax.returns, &bma_sample.returns),
+            episode_vs_bma: paired(&episode_draw.returns, &bma_sample.returns),
+            bma_sample,
+            bma_argmax,
+            episode_draw,
+        });
+    }
+    let baseline = audited.last().expect("audited is non-empty");
+    let baseline_used = baseline.used;
+    let mut subset_vs_full_bma = Vec::new();
+    let mut subset_vs_full_episode = Vec::new();
+    for row in &audited {
+        subset_vs_full_bma.push((
+            row.requested,
+            paired(&row.bma_sample.returns, &baseline.bma_sample.returns),
+        ));
+        subset_vs_full_episode.push((
+            row.requested,
+            paired(&row.episode_draw.returns, &baseline.episode_draw.returns),
+        ));
+    }
+    DrawAudit {
+        subsets: audited,
+        baseline_used,
+        subset_vs_full_bma,
+        subset_vs_full_episode,
+    }
+}
+
+/// One posterior draw held for an entire episode, then sampled per step.
+///
+/// The draw is selected by `episode % draws.len()` and the environment consumes
+/// exactly the uniforms/noise sequence [`readout`] uses, so the arm is paired
+/// with the BMA arms at the same seed without a second random source.
+fn episode_draw_returns(
+    env: &MdpEnv,
+    cell: &DtCell,
+    draws: &[Tensor],
+    target: f32,
+    rollouts: usize,
+    seed: u64,
+) -> Vec<f64> {
+    use rand::Rng;
+    use rand_distr::StandardNormal;
+    assert!(!draws.is_empty(), "episode_draw_returns needs a draw");
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut out = Vec::with_capacity(rollouts);
+    for episode in 0..rollouts {
+        let uniforms: Vec<f64> = (0..env.horizon).map(|_| rng.random::<f64>()).collect();
+        let noises: Vec<[f32; 2]> = (0..env.horizon)
+            .map(|_| {
+                let n0: f32 = rng.sample(StandardNormal);
+                let n1: f32 = rng.sample(StandardNormal);
+                [env.noise * n0, env.noise * n1]
+            })
+            .collect();
+        let policy = dt_policy_at(env, cell, draws[episode % draws.len()].clone(), target, 1.0);
+        let mut x = START;
+        let mut states = vec![x];
+        let mut acts: Vec<usize> = Vec::with_capacity(env.horizon);
+        let mut total = 0.0f64;
+        for t in 0..env.horizon {
+            let dist = policy(&Context {
+                t,
+                state: x,
+                states: &states,
+                actions: &acts,
+            });
+            let a = sample_at(&dist, uniforms[t]);
+            total += f64::from(env.reward(x, a));
+            acts.push(a);
+            x = env.step(x, a, noises[t]);
+            states.push(x);
+        }
+        out.push(total);
+    }
+    out
 }
 
 pub fn return_readout(

@@ -107,7 +107,9 @@ impl StepScores {
 ///
 /// `se` treats steps as independent. Steps inside one trajectory are not (R3's
 /// `Γ_k`), so this is the *optimistic* error: a difference that is not resolved
-/// here is not resolved at all.
+/// here is not resolved at all. Use [`trajectory_clustered_delta`] whenever the
+/// step→trajectory map is known; this function is kept as the historical
+/// estimator and as the `n = clusters` special case.
 pub fn paired_delta(a: &StepScores, b: &StepScores, rule: Rule) -> (f64, f64, usize) {
     let (x, y) = (a.per_step(rule), b.per_step(rule));
     assert_eq!(x.len(), y.len(), "paired_delta: same batch, same order");
@@ -117,6 +119,96 @@ pub fn paired_delta(a: &StepScores, b: &StepScores, rule: Rule) -> (f64, f64, us
     let mean = d.iter().sum::<f64>() / n as f64;
     let var = d.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0);
     (mean, (var / n as f64).sqrt(), n)
+}
+
+/// A paired, **trajectory-clustered** difference of two arms' per-step losses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrajectoryDelta {
+    /// Mean paired difference `a − b` over all scored steps.
+    pub mean: f64,
+    /// Cluster-robust standard error of that mean.
+    pub se: f64,
+    pub steps: usize,
+    pub trajectories: usize,
+    /// Largest number of scored steps in one trajectory.
+    pub max_trajectory_len: usize,
+}
+
+impl TrajectoryDelta {
+    /// `mean ± z·se`, the interval the D5 report quotes.
+    pub fn interval(&self, z: f64) -> (f64, f64) {
+        (self.mean - z * self.se, self.mean + z * self.se)
+    }
+
+    /// A contrast is resolved only when the interval excludes zero.
+    pub fn resolves(&self, z: f64) -> bool {
+        let (lo, hi) = self.interval(z);
+        lo > 0.0 || hi < 0.0
+    }
+}
+
+/// Paired difference of two arms' per-step losses with a **trajectory-clustered**
+/// standard error.
+///
+/// `DEVELOPMENT_PLAN.md` D5: the step-independent SE in [`paired_delta`] treats
+/// steps from one trajectory as independent draws. They are not — they share the
+/// policy's parameter draw, the environment seed and the reward noise — so a
+/// real small effect can look resolved. This estimator uses the step's trajectory
+/// id as the cluster and the CR1 small-sample correction:
+///
+/// ```text
+/// d_i = a_i − b_i,  d̄ = (1/n) Σ d_i,  u_g = Σ_{i∈g} (d_i − d̄)
+/// Var(d̄) = [Σ_g u_g² / n²] · G/(G−1)
+/// ```
+///
+/// With one step per trajectory this is numerically identical to
+/// [`paired_delta`]; with correlated steps inside a cluster it is larger, which
+/// is the direction the missing dependence must move it. It remains a
+/// *frequentist* uncertainty over trajectories; it does not substitute for the
+/// separate parameter-chain correlation reported by the diagnostics.
+pub fn trajectory_clustered_delta(
+    a: &StepScores,
+    b: &StepScores,
+    rule: Rule,
+    trajectory: &[usize],
+) -> TrajectoryDelta {
+    let (x, y) = (a.per_step(rule), b.per_step(rule));
+    assert_eq!(
+        x.len(),
+        y.len(),
+        "trajectory_clustered_delta: same batch, same order"
+    );
+    assert_eq!(
+        trajectory.len(),
+        x.len(),
+        "one trajectory id per scored step"
+    );
+    let n = x.len();
+    assert!(n > 1, "trajectory_clustered_delta: needs a variance");
+    let d: Vec<f64> = x.iter().zip(y).map(|(u, v)| u - v).collect();
+    let mean = d.iter().sum::<f64>() / n as f64;
+    let mut clusters: std::collections::BTreeMap<usize, (f64, usize)> =
+        std::collections::BTreeMap::new();
+    for (i, &g) in trajectory.iter().enumerate() {
+        let entry = clusters.entry(g).or_insert((0.0, 0));
+        entry.0 += d[i] - mean;
+        entry.1 += 1;
+    }
+    let g = clusters.len();
+    assert!(
+        g > 1,
+        "at least two trajectories are needed for a clustered SE"
+    );
+    let max_trajectory_len = clusters.values().map(|(_, k)| *k).max().unwrap_or(1);
+    let ss: f64 = clusters.values().map(|(u, _)| u * u).sum();
+    let var = ss / (n as f64 * n as f64) * g as f64 / (g as f64 - 1.0);
+    TrajectoryDelta {
+        mean,
+        se: var.sqrt(),
+        steps: n,
+        trajectories: g,
+        max_trajectory_len,
+    }
 }
 
 pub fn score_steps(probs: &[Vec<f64>], targets: &[usize]) -> StepScores {
@@ -472,7 +564,7 @@ pub fn paired(a: &[f64], b: &[f64]) -> PairedDiff {
 /// same `u` through two different distributions gives two actions that are
 /// equal wherever the distributions agree, which is the coupling the return
 /// readout needs.
-fn sample_at(dist: &[f64], u: f64) -> usize {
+pub(crate) fn sample_at(dist: &[f64], u: f64) -> usize {
     let p = normalize(dist);
     let mut acc = 0.0f64;
     for (k, &pk) in p.iter().enumerate() {
@@ -484,7 +576,7 @@ fn sample_at(dist: &[f64], u: f64) -> usize {
     p.len() - 1
 }
 
-fn argmax(dist: &[f64]) -> usize {
+pub(crate) fn argmax(dist: &[f64]) -> usize {
     dist.iter()
         .enumerate()
         .fold((0usize, f64::NEG_INFINITY), |(bi, bv), (k, &v)| {

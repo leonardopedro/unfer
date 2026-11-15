@@ -111,9 +111,11 @@ step "nested_fock_algebra: exact_inner_contract + sm_full_contract"
 cargo test --locked --offline --release -p nested_fock_algebra --features latex \
     --test exact_inner_contract --test sm_full_contract -- --test-threads=1
 
-step "fock_sirk: sm_full_hashimoto + sm_gauge_fixed_validation"
+step "fock_sirk: sm_full_hashimoto + sm_gauge_fixed_validation + N7/N8"
 cargo test --locked --offline --release -p fock_sirk \
-    --test sm_full_hashimoto --test sm_gauge_fixed_validation -- --test-threads=1
+    --test sm_full_hashimoto --test sm_gauge_fixed_validation \
+    --test sm_named_dictionary --test sm_defect --test sm_constraints \
+    --test sm_joint_constraints -- --test-threads=1
 
 step "sm_full_hashimoto example (occupation cutoff 1)"
 json="$(mktemp)"

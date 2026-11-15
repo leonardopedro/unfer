@@ -17,7 +17,9 @@ nalgebra = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-serde_json = { workspace = true }
+# `float_roundtrip` keeps checked-fixture parameters bit-identical when parsed.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2 = "0.10"
 rustc-hash = { workspace = true }
 
 candle-core = { workspace = true }

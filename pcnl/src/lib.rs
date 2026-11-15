@@ -42,23 +42,58 @@
 //!   set can localize (`m* = N·ΔL / ln(1/sin d)`).  This is the arithmetic
 //!   behind `docs/PCNL_STATUS.md`'s "π is prior-dominated", and it explains
 //!   the free-walk exponents (§6.5.9).
+//! * [`edge0_world`] — E0 of the R9 track: finite synthetic worlds with an
+//!   exact conditional-outcome oracle, disjoint split manifests, declared
+//!   utilities and the *joint* (not product-of-marginals) law.
+//! * [`edge0_model`] — E1: the small grouped latent-MoE decision model, its
+//!   typed Noul/Choice/Score heads, parameter census and state cache key.
+//! * [`edge0_rlcd`] — E2: the four-path policy, exact deployed marginal, the
+//!   Brier U-statistic and its score-function/direct gradient identities.
+//! * [`edge0_campaign`] — E3/E4 mechanics: shared warm start, CE+Brier and
+//!   RLCD arms, exact-marginal control, frozen policy, paired world-clustered
+//!   evaluation. Reduced-budget by default — not the declared R9 campaign.
+//! * [`edge0_potential`] — E5: the frozen-encoder head chart as a pCNL
+//!   [`target::Potential`], using the exact latent marginal as its likelihood.
+//! * [`certificate`] — R8/D0–D1: the claim record, target/kernel identity and
+//!   the evidence/minorization certificate `c = ω Z_lo/M`.
+//! * [`dim_benchmark`] — R8/D2: the product target `π_r ⊗ N(0, I_n)` and the
+//!   dimension-free product-kernel gap.
+//! * [`linear_gaussian`] — R8/D4: the coupled linear-Gaussian benchmark with
+//!   analytic slice, informed marginal, complement conditional and predictive.
+//! * [`approx_pricing`] — R8/D3: exact Euler–Langevin Gaussian canaries (bias,
+//!   stability limit, gradient-noise inflation) and the declared error budget.
+//! * [`operator_cert`] — R8/D6: the Gaussian canary's full-space L² spectral
+//!   certificate, and the scoped missing estimate for the DT operator.
 //! * [`radial`] — the same inequality along the radius: Haar's log-derivative
 //!   `(P−2)·cot d` against `N·L′(d)`, and the exact mode equation
 //!   `N·L′(d)·tan d = P − 2` whose left side the sweep prints. §5's
 //!   "no mode anywhere on the sphere" is a comparison of those two numbers.
 
+pub mod approx_pricing;
 pub mod budget;
+pub mod certificate;
+pub mod chart_lipschitz;
 pub mod diag;
+pub mod dim_benchmark;
 pub mod dt_arm;
 pub mod dt_subspace;
+pub mod edge0_campaign;
+pub mod edge0_model;
+pub mod edge0_potential;
+pub mod edge0_rlcd;
+pub mod edge0_world;
+pub mod evidence_enclosure;
 pub mod experiment;
+pub mod linear_gaussian;
 pub mod manifest;
 pub mod mdp;
 pub mod model;
 pub mod normalize;
+pub mod operator_cert;
 pub mod persist;
 pub mod policy_model;
 pub mod policy_readout;
+pub mod r9_report;
 pub mod radial;
 pub mod readout;
 pub mod sampler;
