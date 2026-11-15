@@ -197,11 +197,13 @@ full-H conditional bound and proven rounding enclosure in different fields.
 stable; the first-image tail follows the window, not rank; the N8 defect bound is
 not monotone in rank. A separate scoped Mehler feasibility cell (`sm_mehler_widths`)
 measured exact squeeze tails: only one mode at `ell=1.25` reaches `1e-8` at
-`C=12`; the 40/163-mode tails at `C=12` are `1.76e-4`/`1.29e-1`. A follow-up
-one-mode SIRK cell (`sm_mehler_sirk`) transformed both H and the wide squeezed
-state, verified energy to `7.8e-9`, and measured window `70 -> 76`, N8 defect
-`1.3987e-1 -> 1.3969e-1`, and elapsed `3.78 -> 4.15 s`: no equal-tolerance
-speedup. See
+`C=12`; the 40/163-mode tails at `C=12` are `1.76e-4`/`1.29e-1`. Follow-up
+SIRK cells (`sm_mehler_sirk`) transformed both H and the wide squeezed state.
+The one-mode cell verified energy to `7.8e-9` and measured window `70 -> 76`,
+N8 defect `1.3987e-1 -> 1.3969e-1`, elapsed `3.78 -> 4.15 s`. The two-mode
+cell (`g(0,0)`, `g(1,1)`, product tail `6.03e-10`) measured window `70 -> 97`,
+defect `1.3987e-1 -> 1.3963e-1`, elapsed `3.78 -> 6.14 s`: the cost gap persists
+and widens. See
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n9-bounded-pilot-2026-11-15-four-cells).
 
 Begin with the complete operator and existing seed. Reuse the old 70/230-state references;
@@ -301,9 +303,10 @@ A 100% quench at `t=.01` gave `-9.5e-5`/`6.4e-6` against `0.6849`, and at
 `t=.5` gave `-0.150`/`1.1e-2` against `34.25`. No cell resolved; null and
 electron-Yukawa spectator controls are `0.0`. A further state-preparation search
 (up-only, up+down, seed+gluon, seed+Higgs, seed x squeezed gauge, window ground
-state, depth-2 window, rank 4) left every budget at `0.56..0.69`; the defect is
-a property of the operator/window, not the matter content. Depth 3 is refused by
-the cache budget. The raw 10% quench-energy difference `0.6804` exceeds the
+state, depth-2 window, rank 4) left every budget at `0.56..0.69`; squeezing
+`ell=0.65..3.0` and coherent displacements `0.1..2.0` left a floor of
+`~1.396e-1`. The defect is a property of the operator/window, not the matter or
+bosonic preparation. Depth 3 is refused by the cache budget. The raw 10% quench-energy difference `0.6804` exceeds the
 state budget but is not a bounded observable. The cell is inconclusive rather
 than a promoted response; see
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n11-response-pilot-2026-11-15-unresolved).
