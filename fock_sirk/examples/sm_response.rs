@@ -128,7 +128,11 @@ fn prepared(name: &str) -> NestedVector {
         }
         "seed_squeezed" => {
             let mode = coord::g(0, 0);
-            let r = 1.25_f64.ln();
+            let ell: f64 = std::env::var("SM_RESPONSE_ELL")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1.25);
+            let r = ell.ln();
             let t = r.tanh();
             let mut coeff = 1.0 / r.cosh().sqrt();
             out = NestedVector::new();
@@ -138,6 +142,14 @@ fn prepared(name: &str) -> NestedVector {
                 let mf = (m + 1) as f64;
                 coeff *= t * ((2.0 * mf - 1.0) * 2.0 * mf).sqrt() / (2.0 * mf);
             }
+        }
+        "seed_displaced" => {
+            let amp: f64 = std::env::var("SM_RESPONSE_DISP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.5);
+            let inner = B::new([(coord::g(0, 0), 1)], fermions()).unwrap();
+            out.insert(O::graded([(inner, 1)]).unwrap(), C::new(amp, 0.0));
         }
         other => panic!("unknown SM_RESPONSE_STATE {other}"),
     }
@@ -243,6 +255,18 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.05);
     let base = run(0.0, 0.0, time);
+    if std::env::var("SM_RESPONSE_BASE_ONLY").is_ok() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "experiment": "N11 base-state defect scan",
+                "state": std::env::var("SM_RESPONSE_STATE").unwrap_or_else(|_| "seed".into()),
+                "base": base,
+            }))
+            .unwrap()
+        );
+        return;
+    }
     let plus = run(dgs, 0.0, time);
     let minus = run(-dgs, 0.0, time);
     let null = run(0.0, 0.0, time);

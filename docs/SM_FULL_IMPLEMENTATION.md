@@ -136,8 +136,8 @@ operator/state/basis hashes, and refuses a status promotion to `certified`.
 - Tests, all passed: `exact_inner_contract` 13, `sm_full_contract` 7,
   `sm_full_hashimoto` 13, `sm_gauge_fixed_validation` 11,
   `sm_named_dictionary` 4, `sm_defect` 2, `sm_constraints` 2,
-  `sm_joint_constraints` 4. Total **56** fresh passes (rerun after the jet,
-  equal-tolerance Mehler/SIRK and response-scan work).
+  `sm_joint_constraints` 5. Total **57** fresh passes (rerun after the electric
+  closure correction, the two-mode Mehler/SIRK cell and the response search).
 - The cutoff-1 JSON driver completed; the first-image tail remained
   `9.784770722594882`.
 
@@ -308,9 +308,14 @@ stayed at `d ~ 1.39e-1`.
 
 The window ground state is an approximate eigenvector of the compressed
 operator, but its full-action defect is still `1.40e-1`; the Krylov column
-defect is not removed by state preparation. Depth 3 exceeds the declared cache
-budget (`1,032,256` components against `1,000,000`), so it is refused rather
-than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
+defect is not removed by state preparation. A second scan varied the bosonic
+preparation: squeezing `g(0,0)` at `ell=0.65, 0.8, 1.0, 1.25, 1.6, 2.0, 3.0`
+gave `1.3964e-1, 1.3970e-1, 1.3992e-1, 1.4058e-1, 1.4319e-1, 1.4951e-1,
+1.6161e-1`; coherent displacements `0.1, 0.5, 1.0, 2.0` gave
+`1.3990e-1, 1.4037e-1, 1.4102e-1, 1.4156e-1`. The floor is `~1.396e-1`, so the
+defect is preparation-independent at this cell. Depth 3 exceeds the declared
+cache budget (`1,032,256` components against `1,000,000`), so it is refused
+rather than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
 larger than the state budget `0.5657`, but energy is an unbounded operator: the
 N8 state error maps to an energy error with a factor `||H||`, so this is **not**
 a resolved bounded observable and is not promoted. **No resolved N11 channel
