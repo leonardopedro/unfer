@@ -231,24 +231,27 @@ is not closed under it, and the induced tail dominates. The first feasibility
 cell did not run SIRK; the follow-up one-mode cell does.
 
 `fock_sirk/examples/sm_mehler_sirk.rs` now performs the equal-tolerance solve
-for that admissible one-mode cell. The mode is `g(0,0)`, `ell=1.25`, total
-occupation cutoff 12 (exact squeezed tail `1.29e-10`), `t=.01`, one restart,
-rank 2, the same shift rule and action limits. The wide squeezed vacuum uses
-`q=ell(a+a^dagger)` and the inverse operator map `q->q/ell`, `p->ell p`; both
-the state and `H` are transformed. The unchanged energy is the unitarity check.
+for a **two-mode** product cell. The modes are `g(0,0)` and `g(1,1)`, `ell=1.25`,
+total occupation cutoff 12 (exact discarded product tail `6.03e-10`), `t=.01`,
+one restart, rank 2, the same shift rule and action limits. The wide squeezed
+vacuum uses `q=ell(a+a^dagger)` and the inverse operator map `q->q/ell`,
+`p->ell p` for both modes; both the state and `H` are transformed. The unchanged
+energy is the unitarity check. The earlier one-mode cell is retained as the
+first row of the table.
 
-| run | window | initial comps | N8 defect | defect Frobenius | leakage | first action tail | energy | n_up | elapsed |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| baseline | 70 | 1 | 1.398688e-1 | 13.986883 | 4.44e-16 | 9.784771 | 51.32175258 | 0.99990752 | 3.78 s |
-| squeezed | 76 | 7 | 1.396948e-1 | 13.969477 | 9.00e-16 | 9.785928 | 51.32175259 | 0.99990990 | 4.15 s |
+| cell | run | window | initial comps | N8 defect | defect Frobenius | leakage | first action tail | energy | n_up | elapsed |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| one mode | baseline | 70 | 1 | 1.398688e-1 | 13.986883 | 4.44e-16 | 9.784771 | 51.32175258 | 0.99990752 | 3.78 s |
+| one mode | squeezed | 76 | 7 | 1.396948e-1 | 13.969477 | 9.00e-16 | 9.785928 | 51.32175259 | 0.99990990 | 4.15 s |
+| two modes | baseline | 70 | 1 | 1.398688e-1 | 13.986883 | 4.44e-16 | 9.784771 | 51.32175258 | 0.99990752 | 3.78 s |
+| two modes | squeezed | 97 | 28 | 1.396284e-1 | 13.962835 | 7.87e-16 | 9.786590 | 51.32175269 | 0.99991213 | 6.14 s |
 
-The energy agrees to `7.8e-9`, so the two representations are unitarily
-consistent. The squeezed cell does **not** reduce work: its window is six states
-larger and it takes ~10% longer. The N8 defect is marginally lower (0.2%), not
-a representation improvement. The fermion occupation changes by `2.4e-6` between
-the two runs, the same order as the N11 response, so this cell does not by
-itself validate an observable comparison at that sensitivity. This is a
-one-mode finite result, not a 40/163-mode speedup, and no E2 theorem is implied.
+The two-mode energy agrees to `1.1e-7` (relative `2e-9`), consistent with the
+`6.03e-10` discarded tail. The cost gap **persists and widens**: the window grows
+by 27 states, elapsed time by 62%, and the N8 defect is only 0.17% lower. The
+fermion occupation shifts by `4.6e-6`, again the order of the N11 response. This
+is a two-mode finite result, not a 40/163-mode speedup, and no E2 theorem is
+implied.
 
 ## N11 response pilot (2026-11-15, unresolved)
 
@@ -285,6 +288,33 @@ budget is 34.25 and the largest response is 0.15. Null controls remain exactly
 zero; the electron-Yukawa spectator remains zero. **No resolved N11 channel was
 found** in these declared cells. The inconclusive channels are recorded rather
 than replaced with a free/scalar surrogate.
+
+A lower-defect **state-preparation** search then tested whether the budget can
+be reduced at the same `t=.01`, `gs*1.05` cell. The full-action defect is a
+property of the operator/window, not of the matter content: every preparation
+stayed at `d ~ 1.39e-1`.
+
+| preparation | base defect | plus defect | N8 budget | `n_up` response | resolved? |
+|---|---:|---:|---:|---:|---|
+| seed (default) | 1.398688e-1 | 1.413678e-1 | 0.56247 | -3.2909e-6 | no |
+| up only | 1.390649e-1 | 1.406080e-1 | 0.55935 | -3.3579e-6 | no |
+| up + down | 1.401500e-1 | 1.417042e-1 | 0.56371 | -3.3433e-6 | no |
+| seed + gluon | 1.398955e-1 | 1.413961e-1 | 0.56258 | -3.2592e-6 | no |
+| seed + Higgs | 1.398859e-1 | 1.413849e-1 | 0.56254 | -3.2573e-6 | no |
+| seed x squeezed gauge | 1.405809e-1 | 1.422800e-1 | 0.56572 | -3.4716e-6 | no |
+| window ground state | 1.400040e-1 | 1.418032e-1 | 0.56361 | -2.2225e-7 | no |
+| depth-2 window | 1.398688e-1 | 1.413678e-1 | 0.56247 | -3.2909e-6 | no |
+| rank 4 | 1.718758e-1 | 1.737881e-1 | 0.69133 | -3.3819e-6 | no |
+
+The window ground state is an approximate eigenvector of the compressed
+operator, but its full-action defect is still `1.40e-1`; the Krylov column
+defect is not removed by state preparation. Depth 3 exceeds the declared cache
+budget (`1,032,256` components against `1,000,000`), so it is refused rather
+than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
+larger than the state budget `0.5657`, but energy is an unbounded operator: the
+N8 state error maps to an energy error with a factor `||H||`, so this is **not**
+a resolved bounded observable and is not promoted. **No resolved N11 channel
+was found.**
 
 ## Implementation baseline and historical measurements
 

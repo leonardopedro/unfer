@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# N6 replayable baseline cell for the complete SM E1 operator.
+#
+# Records, into target/sm-baseline/<git-rev>-<dirty-hash>/:
+#   result.json      the example's verified result manifest + numerical output
+#   inventory.txt    the tests *declared* by each suite (cargo --list; not a run)
+#   provenance.txt   git revision/status, rustc/cargo versions, engine state
+#   run.log          stdout/stderr of the baseline cell
+#
+# This script does NOT run the full validation sweep. It executes the one
+# cutoff-1 baseline cell and lists the suite inventory, so a "measured" result
+# is never confused with a historical pass. Set SM_BASELINE_OUT to override the
+# destination.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+step() { printf '\n=== %s ===\n' "$*"; }
+
+command -v cargo >/dev/null 2>&1 || {
+    echo "cargo not found: put the pinned toolchain on PATH" >&2
+    exit 69
+}
+
+revision="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+status="$(git status --porcelain 2>/dev/null || true)"
+diff="$(git diff HEAD 2>/dev/null || true)"
+dirty=0
+[[ -z "$status" ]] || dirty=1
+dirty_hash="$(printf '%s\n%s\n' "$status" "$diff" | sha256sum | cut -d' ' -f1)"
+out="${SM_BASELINE_OUT:-$repo_root/target/sm-baseline/${revision:0:12}-${dirty_hash:0:12}}"
+mkdir -p "$out"
+
+step "provenance"
+{
+    echo "git_revision=$revision"
+    echo "dirty=$dirty"
+    echo "dirty_manifest_sha256=$dirty_hash"
+    echo "cargo=$(cargo --version)"
+    echo "rustc=$(rustc --version 2>/dev/null || echo unknown)"
+    if [[ -n "${CADABRA_CLI:-}" ]]; then
+        echo "cadabra_cli=$CADABRA_CLI"
+        echo "cadabra_version=$("$CADABRA_CLI" --version 2>&1 | sed -n 1p || true)"
+    else
+        echo "cadabra_cli=unset (example uses the checked LaTeX fixture; live-engine test will skip)"
+    fi
+    echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} | tee "$out/provenance.txt"
+
+step "suite inventory (declared tests, not a run)"
+{
+    for suite in \
+        "nested_fock_algebra:exact_inner_contract" \
+        "nested_fock_algebra:sm_full_contract" \
+        "fock_sirk:sm_full_hashimoto" \
+        "fock_sirk:sm_gauge_fixed_validation" \
+        "fock_sirk:sm_named_dictionary" \
+        "fock_sirk:sm_defect" \
+        "fock_sirk:sm_constraints" \
+        "fock_sirk:sm_joint_constraints"; do
+        package="${suite%%:*}"
+        test="${suite##*:}"
+        printf '\n## %s --test %s\n' "$package" "$test"
+        features=()
+        [[ $package == nested_fock_algebra ]] && features=(--features latex)
+        cargo test --locked --offline --release -p "$package" "${features[@]}" \
+            --test "$test" -- --list 2>/dev/null \
+            | sed -n 's/: test$//p' || echo "(suite failed to list)"
+    done
+} | tee "$out/inventory.txt"
+
+step "baseline cell: sm_full_hashimoto cutoff 1"
+cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto -- \
+    --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1 \
+    > "$out/result.json" 2> "$out/run.log"
+
+python3 - "$out/result.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1]))
+manifest = record["result_manifest"]
+projection = record["numerical_projection"]
+print(
+    f"status={manifest['status']} endpoint={manifest['endpoint']} "
+    f"dimension={projection['dimension']} rank={manifest['solver']['rank']} "
+    f"artifact_sha256={manifest['artifact_sha256'][:16]}…"
+)
+print(f"deterministic_result_sha256={manifest['claims']['deterministic_result_sha256']}")
+PY
+
+step "written"
+echo "baseline cell: $out/result.json"
+echo "inventory:     $out/inventory.txt"
+echo "provenance:    $out/provenance.txt"
