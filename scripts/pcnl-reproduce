@@ -17,6 +17,11 @@
 #
 #   test            117 tests (5 are `radial`'s)               ~30 min
 #   quick           the quick-config report                     ~20 s
+#   d-track         the D3–D6/E5 targeted gates (34 tests)       ~40 s
+#   edge0-campaign  E3/E4 reduced-budget mechanics               ~5 s
+#   r9-campaign     declared R9: 5 seeds, 2000 updates/arm        ~15–20 min
+#   r9-secondary    R9 weighted Brier / temperature / RPS / regret
+#                   from the campaign's exported predictions      ~5 s (needs r9-campaign)
 #   volume          §6.4(ii) Haar volume                        ~10 s
 #   mobility        §4.3 mobility/floor table                   ~1 min
 #   budget          the exact cap law + the dimension budget    ~3 min
@@ -57,7 +62,8 @@ cd "$(dirname "$0")/.."
 
 OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
-  test quick volume mobility step-scale step-scale-ref mh-standard
+  test quick d-track edge0-campaign r9-campaign r9-secondary volume mobility step-scale step-scale-ref
+  mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
   sphere-ladder cold-10k target-condition scale scale2 n-scaling mode-584
@@ -85,6 +91,39 @@ run_stage() {
     ;;
   quick)
     cargo run --release -p pcnl -- quick --report-file "$log"
+    ;;
+  d-track)
+    # The D-track gates the status doc's R9 section quotes: D3 pricing, D4
+    # reduction, D5 clustered SE and draw audit, D6 canary certificate, E5
+    # head-chart chain, plus the E0–E2 edge0_rlcd and R8 certificate suites.
+    # Debug build on purpose -- these are exact small fixtures, not campaigns.
+    cargo test -p pcnl --test edge0_rlcd --test r8_certificates --test d_track
+    ;;
+  edge0-campaign)
+    # E3/E4 reduced-budget mechanics (60 updates/arm, 16 test worlds).  Not the
+    # declared R9 campaign; a negative contrast is printed unedited.
+    cargo run -p pcnl --example edge0_campaign
+    ;;
+  r9-campaign)
+    # The declared campaign, not the mechanics run: fixed 2048/256/256/512
+    # world manifests, 5 paired seeds, 32 worlds per update, <= 2000 updates
+    # per arm, and a wall cap declared before execution.  ~15-20 min.  The
+    # NDJSON artifact (per-seed rows + summary) lands next to the stage log.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-4500}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_campaign.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-secondary)
+    # Re-scores the stored per-question predictions: weighted Brier,
+    # dev-fitted temperature scaling, ordinal RPS and decision regret.  Never
+    # retrains, so it is cheap; it needs the r9-campaign artifacts in $OUT.
+    cargo run --release -p pcnl --example r9_secondary -- \
+      "${R9_PRED_IN:-$OUT/r9_predictions.ndjson}" \
+      "${R9_SECONDARY_OUT:-$OUT/r9_secondary.ndjson}"
     ;;
   volume)
     cargo run --release -p pcnl --example sphere_volume

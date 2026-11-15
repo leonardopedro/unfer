@@ -90,6 +90,59 @@
 
 ---
 
+## Reading the new Lean certificates (source audit, 2026-11-15)
+
+The new proof inventory is in `timepiece/BookProof/HAMILTONIAN_SCOPE.md` and
+the 2026-11-15 entry of `timepiece/CONSOLIDATED_PLAN.md`. This editorial update
+runs no tests or Lean build. Existing numbers below retain their finite-model
+and historical test scope.
+
+`ChapterResolventTransfer` reflects a justified inner resolvent to
+$A'=\gamma^{-1}I-(h+\gamma)^{-1}$, with edge
+$\lambda(e)=e/[\gamma(e+\gamma)]$. Temple's band
+$[\theta-\varepsilon^2/(b-\theta),\theta]$ needs spectral separation and
+$\theta<b$. Setting $b$ to the bottom edge is impossible for a unit trial
+vector by Rayleigh–Ritz. The newer route uses a higher, second-edge level and
+a form bound on the compression to the complementary subspace. A small
+in-window residual supplies neither that separation nor a full-space tail bound.
+
+With $\theta_m\le b-\delta$, $\delta>0$, and a proved full-space residual bound
+$\varepsilon_m\le Cr^m$, $0<r<1$, the new theorem certifies width at most
+$\eta>0$ from the sufficient natural order
+$\lceil\log(\sqrt{\delta\eta}/C)/\log r\rceil$. The worked two-dimensional
+example has sharp separation $1/6$ and exact order `1` at
+`C=2/25`, `r=1/2`, `δ=1/10`, `η=1/50`. Its sequence becomes an exact
+bottom eigenvector from order one; it is not measured QYM convergence.
+Unified certificate rows carry scale `1` for an inner solve difference and
+`γ²` for the reflected one-sided transfer. A two-sided energy difference
+requires the extra energy upper bounds in `gap_interval_of_reflected_bands`.
+
+For QYM the degree-compatible Gram–Schmidt/Hermite basis bridge is now proved.
+The weighted row/column gates hold; the commutator gate still needs an actual
+QYM coefficient analysis. The exact quartic entry and its gate obstruction
+are model results until that identification and non-cancellation are proved.
+Neither a gate obstruction nor an inner difference replaces the absolute
+whole-inner-space lower bound needed for the outer-vacuum gap.
+
+For NS/QG, a same-momentum derivative symbol does not account for a full
+spatial product: retain every convolution leg and cross-mode term inside $h$.
+The new NS box-grid proof identifies aliasing component by component on the
+dual lattice. Its reconstruction assumes commensurate distinguishable labels
+and constant residual data. Finite circular DFT and cutoff Galerkin sums need
+separate normalization and aliasing conventions. These are not continuum
+limits or new ESA proofs. QG keeps the full R² vielbein wall and interactions;
+base-gravity and scalaron-only builders remain comparisons until jointly
+identified with that operator on a common core.
+
+The SM ghost-remainder and positive banded-covariance proofs are also separate
+from numerical acceptance of a complete physical theory. A quartet still
+needs a compatible metric positive on physical representatives. A positive
+covariance kernel still needs a consistent law, reflection positivity and a
+physical transfer-generator identification. No new empirical prediction or
+physical mass-gap theorem is asserted by those source additions.
+
+---
+
 ## 1. Why validate against published physics?
 
 A quantum-field-theory numerics stack can be internally consistent and still
@@ -264,7 +317,7 @@ E4:7.3e-3, ...
 | `qed_jaynes_cummings` | $\omega a^\dagger a + \omega_0 \sigma^\dagger\sigma + g(a\sigma^\dagger + a^\dagger\sigma)$ | vacuum-Rabi splitting $2g$, collapse–revival at $t_R = 2\pi\sqrt{\bar n+1}/g$ |
 | `oscillator_beamsplitter` | $\omega(N_0+N_1)+J(a_0^\dagger a_1 + a_1^\dagger a_0)$ | sector spectrum $\{\omega-J, \omega+J\}$; swap $P=\sin^2(Jt)$ |
 | `oscillator_displaced` | $\omega N + g(a^\dagger+a)$ | coherent displacement, $E_n = \omega n - g^2/\omega$ |
-| `qcd_ym_hamiltonian` / `.cdb` | $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$, $B=(A_0-A_1)+\tfrac12 g A_0 A_1$ | Cadabra-derived Yang–Mills Hamiltonian, bounded-below spectrum |
+| `qcd_ym_hamiltonian` / `.cdb` | $h = \tfrac12\pi^2 + \tfrac12 B^2$, $B=(A_0-A_1)+\tfrac12 g A_0 A_1$ | Cadabra-derived Yang–Mills Hamiltonian, bounded-below spectrum |
 | `yang_mills_lattice` | Kogut–Susskind-inspired **comparison** lattice (NOT the Cadabra-derived gauge-fixed QYM — see `qcd_ym_hamiltonian`) | lattice strong-coupling gap $\approx g^2/2$ — a benchmark for the SIRK machinery, NOT a Millennium-positivity claim for this project's model |
 | `qg_free_graviton` | $\sum c\|k\| N_k$ | GW speed $= c$ (GW170817 constraint) |
 | `qg_starobinsky_*` | scalaron $\sum m N + \tfrac12\sum g^2$, $m^2=M^2/12\alpha$ — the **quadratic / small-field** realization; the record QG(R²) operator is the vielbein form with the **full exponential** Einstein-frame wall (no Taylor truncation) and the interaction terms (nine-component `qgElimFullModes` in Lean; the legacy base-gravity builder is a separate diagnostic), see §5.3 | massive dispersion, ESA/boundedness of $R^2$ gravity — for the full wall and couplings, the plan-of-record note of §5.6 applies |
@@ -301,7 +354,7 @@ positive sum-of-squares $H_{\rm sp} = H_{\rm visc} + H_{\rm advect}$ of
 by the spatial Fourier substitution — the advection becoming a momentum-space
 convolution — not fixed by a gauge symmetry); QG(R²) the
 scalar sector $\tfrac12\pi^2 + \tfrac12(\nabla\phi)^2 + V(\phi)$ with the
-scalaron mass $m^2 = M^2/12\alpha$; QYM $H_{\rm final} = \tfrac12\pi^2 +
+scalaron mass $m^2 = M^2/12\alpha$; QYM $h = \tfrac12\pi^2 +
 \tfrac12 B^2$ with $B$ a genuine function of $A$; QED the $U(1)$
 specialization. The compiler-route suites (§5.23) verify the numerical
 builders ARE these Hamiltonians — term-by-term for QYM/NS, structurally for
@@ -529,9 +582,11 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   *Asserts*: $10^{-6}$ (exact class).
 
 - **`qcd_mass_gap_sirk`** — computes: the contrast between the massless free
-  gluon ($E \to 0$ as $k\to 0$) and the confined Cadabra-derived 3D
-  gauge-fixed QYM Hamiltonian `qcd_ym_hamiltonian(g)` ($H_{\rm final} =
-  \tfrac12\pi^2 + \tfrac12 B^2$ in the nested Fock space), which is GAPPED:
+  gluon ($E \to 0$ as $k\to 0$) and the finite Cadabra-derived gauge-fixed
+  inner QYM diagnostic `qcd_ym_hamiltonian(g)` (kinetic plus magnetic square,
+  with its compiler ordering/constant convention recorded). The final physical
+  shape is $H_{\rm final}=d\Gamma(h)$; the diagnostic resolves inner
+  excitation differences:
   its SIRK R-reflection sector solves (R-even vacuum start, R-odd
   one-quantum start, unit-norm frame, $m=12$) give Rayleigh–Ritz upper
   bounds consistent with the exact truncated levels $E_1-E_0 = 0.091$ at
@@ -544,14 +599,16 @@ annihilation listed before the electron, else $H\ne H^\dagger$).
   which missed the gap because a vacuum-start Krylov cannot resolve the
   R-odd first excitation. The $B^2$ pair terms lower the INNER one-particle
   reference below its unshifted zero — $E_0 = -2.74$ at $g=1$ on N ≤ 8 —
-  while the shifted outer-enclosed Hamiltonian still has the outer vacuum as
-  its exact ground.)
+  while any shifted outer-ground test concerns its explicitly chosen shift.
+  Such a shift changes occupied sectors by $cN_{out}$ and supplies no absolute
+  lower bound for the unshifted record.)
 
 - **`qcd_ym_hamiltonian_outer_fock_sirk`** — computes: the structural facts
-  of the Cadabra2-derived $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$,
-  $B = (A_0-A_1) + \tfrac12 g A_0 A_1$ (built through the CAS compiler,
-  inner operators): $\langle 0|H|0\rangle = 0$ and a bounded-below spectrum
-  with positive excitation gaps (Millennium-Prize positivity). *Method*:
+  of the CAS inner diagnostic $h = \tfrac12\pi^2 + \tfrac12 B^2$,
+  $B = (A_0-A_1) + \tfrac12 g A_0 A_1$, under that compiler's scalar
+  convention: zero inner reference expectation and resolved finite excitation
+  differences. The final outer operator is $H_{\rm final}=d\Gamma(h)$;
+  its zero vacuum energy follows from enclosure independently of this test. *Method*:
   direct vacuum expectation + SIRK Ritz values ($m=8$) from the inner vacuum.
   *Setup*: $g=0.5$. *Asserts*: $|\langle 0|H|0\rangle| < 10^{-9}$; projected
   Hamiltonian Hermitian; $\ge 3$ resolved levels; $\lambda_0 > -10$;
@@ -593,8 +650,9 @@ scalaron wall $V(\varphi) = (M^4/16\alpha)(1-e^{-\sqrt{2/3}\varphi/M})^2$ —
 scalaron–vielbein interaction terms, all inside $h$; in Lean that is the
 nine-component eliminated operator (`qgElimFullModes`, ESA proved as
 `qgElimFull_esa_farisLavine` / `starobinsky_qgElimFull_esa`), and in the twin
-it is the full-operator enclosure `qg3d_full_hamiltonian` (the Full-operator
-doctrine below). Two *scalar-fiber* realizations are used where their smaller
+the legacy base-gravity builder `qg3d_full_hamiltonian` is a separately labeled
+diagnostic until its full R² wall/coupling and domain transfer are established.
+Two *scalar-fiber* realizations are used where their smaller
 content suffices, and both are comparison models rather than the record:
 `qg_starobinsky_vielbein_hamiltonian`, the enclosure of the quadratic
 $h = h_{\rm TEGR}\oplus(m)$ — the TEGR one-particle kinetic
@@ -615,7 +673,7 @@ included, may live *inside* $h$ (in the one-particle matrix elements
 $\langle e_i, h e_j\rangle$), with NO 3-/4-particle vertices at the outer
 level — which is exactly why the record operator can carry the full wall and
 the interaction terms without any outer vertex. The one-particle spectrum of
-the full $h$ is the Schr\"odinger spectrum of
+the isolated exact-wall scalaron fiber is the Schrödinger spectrum of
 $\tfrac12\pi^2 + V(\hat\varphi)$ (essential self-adjointness proved at first
 quantization in BookProof — `starobinskyWall_esa`,
 `starobinskyV_essentiallySelfAdjoint` on the compactly supported smooth core). Consequences
@@ -1283,7 +1341,7 @@ second quantization is exactly `qed_free_photon`.
 
 - **`qym_abelian_two_mode_two_photon_sector_exact_quadratic_form`** —
   computes: the two-mode abelian gauge-fixed Hamiltonian
-  `qcd_ym_hamiltonian(0)` (Cadabra-derived $H_{\rm final} = \tfrac12\pi^2 +
+  `qcd_ym_hamiltonian(0)` (Cadabra-derived $h = \tfrac12\pi^2 +
   \tfrac12 B^2$, $B = A_0 - A_1$) is exactly the quadratic boson form
   $N_0+N_1 + \tfrac12(a^{\dagger 2}+a^2 \text{ per field mode}) -
   (a_0^\dagger a_1^\dagger + a_0^\dagger a_1 + a_1^\dagger a_0 + a_0 a_1) +
@@ -1541,7 +1599,7 @@ The exactly-solvable models that pin the SIRK machinery itself.
 
 - **`sirk_displaced_oscillator_exact_shift`** — computes: the displaced
   oscillator realized as the **Cadabra-derived QED gauge-fixed sector**
-  (`docs/yang_mills_hamiltonian.cdb`, abelian $H_{\rm final} = \tfrac12\pi^2
+  (`docs/yang_mills_hamiltonian.cdb`, abelian $h = \tfrac12\pi^2
   + \tfrac12 B^2$ with the static-charge $A\cdot J$ coupling,
   `qed_static_charge_interaction`): $H = kN + g(B^\dagger+B)$ has the exact
   spectrum $E_n = kn - g^2/k$; the SIRK ground energy is $-g^2/k$ and every
@@ -1820,7 +1878,7 @@ output), per the user directive that the term-matching tests flow through the
 LaTeX→Fock compiler:
 
 - **`qym_su3_terms_match_cdb_h_final`** — the full SU(3) builder verified
-  term-by-term against the expansion of $H_{\rm final} = \tfrac12\pi^2 +
+  term-by-term against the expansion of $h = \tfrac12\pi^2 +
   \tfrac12 B^2$, $B = \varepsilon(\partial A + \tfrac12 g f A A)$: quadratic
   $-1/2$, cubic $-(g/2)\varepsilon f$ (from $-L\cdot NL$), quartic
   $-(g^2/8)\varepsilon\varepsilon' ff'$ (from $-\tfrac12 NL^2$), with the
@@ -1921,21 +1979,32 @@ mass-gap deliverable).
 
 Executes the observable of `MASS_GAP_CERTIFIED.md` §3.3–§3.5 (see also
 `docs/MASS_GAP_SPEC.md`) on the **Cadabra-derived 3D gauge-fixed QYM
-Hamiltonian `qcd_ym_hamiltonian(g)`** ($H_{\rm final} = \tfrac12\pi^2 +
-\tfrac12 B^2$ in the nested Fock space — the formalization object is the
-gauge-fixed H, NOT the `yang_mills_lattice` builder). The exact Z₂ symmetry
+inner diagnostic `qcd_ym_hamiltonian(g)`**, with kinetic plus magnetic
+square and the compiler's recorded ordering/constant convention. The final
+outer Hamiltonian is $H_{\rm final}=d\Gamma(h)$; the object to identify is
+the complete gauge-fixed inner operator, not `yang_mills_lattice`. The exact Z₂ symmetry
 is the reflection R: $(A_0,A_1)\to(-A_1,-A_0)$ (exact for ALL $g$ — the
-lattice's occupation parity is not a symmetry at $g>0$), and the mass gap
-lives BETWEEN the R-sectors: the gap $= \theta^o_0(m) - \theta^e_0(m)$
+lattice's occupation parity is not a symmetry at $g>0$). The measured
+**signed inner inter-reflection difference**, in the resolved window, is
+$\theta^o_0(m) - \theta^e_0(m)$
 with the certified interval $[\theta^o_0-\theta^e_0-(\delta^o+\delta^e),
 \theta^o_0-\theta^e_0+(\delta^o+\delta^e)]$. All solves run the
-SIRK-Hashimoto algorithm (unit-norm frame, `--release`). 10 tests:
+SIRK-Hashimoto algorithm (unit-norm frame, `--release`). This signed
+sector difference is an excitation gap only after the sector ordering and the
+first-excitation identification have been established in that window. It is
+not the absolute floor of the inner operator. The negative inner floors below
+belong to the diagnostic scalar convention; a positive sum of unmodified
+operator squares could not have such a floor. Preserve and identify the exact
+inner constants before transferring any numerical statement to the record.
+10 tests:
 
 - **`qym_gauge_fixed_hamiltonian_nested_fock_structure`** — computes:
-  normal ordering ($\langle 0|H|0\rangle = 0$), Hermiticity
+  the diagnostic's inner scalar-ordering convention
+  ($\langle 0|h|0\rangle = 0$), Hermiticity
   ($\|H-H^\dagger\| < 10^{-9}$), the pair coupling $\langle
   \mathrm{vac}|H|1,1\rangle = -1$ at $g=0$, and the appearance of genuine
-  3-/4-operator non-abelian terms at $g>0$ (B a genuine function of A).
+  3-/4-operator nonabelian terms **inside** $h$ at $g>0$. These are
+  not outer 3-/4-particle vertices; the full magnetic square precedes enclosure.
 - **`qym_gauge_fixed_reflection_symmetry_sector_purity`** — computes:
   $[H,R] = 0$ to $10^{-16}$ for $g \in \{0,1,2\}$ and the R-even/R-odd SIRK
   chains are disjoint (max mutual overlap $10^{-16} < 10^{-8}$) — §3.3 item
@@ -1997,8 +2066,8 @@ contract (precondition/postcondition/identity); `certified_mass_gap_parity`
 solves (R-even vacuum start, R-odd one-quantum start) on the gauge-fixed H,
 enforces the checkable preconditions at runtime (`debug_assert`: sector
 purity via the chain-overlap witness — the lattice-era “even ground =
-vacuum” precondition is dropped: the gauge-fixed R-even ground is the
-pair-squeezed vacuum, not the Fock vacuum), and assembles the T6
+vacuum” precondition is dropped: the gauge-fixed R-even inner reference is
+pair-squeezed and is not the empty outer Fock vacuum), and assembles the T6
 certificate. `docs/MASS_GAP_SPEC.md` is the spec of record:
 code → math mapping, the theorem statement, the three width terms, andthe numerically-pinned claims (the measured gap values and certified
 windows).
@@ -2738,7 +2807,7 @@ solve is exact and the assertions are to solver precision:
 - **`qed_kerr_chi_zero_is_free_photon_sector`** — at $\chi = 0$ the Kerr
   cavity is the Cadabra-derived abelian QED sector itself: both builders
   (`qed_kerr_cavity(ω, 0)` and `qed_free_photon(ω)`, the U(1) reduction of
-  $H_{\rm final} = \tfrac12\pi^2 + \tfrac12 B^2$) give the identical photon
+  $h = \tfrac12\pi^2 + \tfrac12 B^2$) give the identical photon
   ladder $\{n\omega\}$.  *Asserts*: $|E_{\rm Kerr} - E_{\rm photon}| < 10^{-9}$.
 
 ### 5.24p′ Driven sector & blockade statistics — `qed_blockade_statistics.rs`
@@ -2918,6 +2987,20 @@ operators are never presented as standalone full-theory Hamiltonians.
 
 ### 5.24t Full Standard Model through joint rational SIRK — `sm_full_hashimoto.rs`
 
+**Current work order (2026-11-15):** [SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md), N6–N14,
+and [the proof plan](../../timepiece/SM_ESA_COMPLETION_PLAN.md), SM0–SM9. The implemented
+complete E1 operator and rational method are the baseline. Next work is an identified
+physical/Mehler dictionary, full-action defect/rounding certificates, controlled basis/cutoff
+studies and the actual joint physical constraint. Historical 37/41-test sweeps do not
+establish a current passing total: source now declares 13 exact-action, 7 dictionary and
+13 primary joint-SM tests, plus supporting suites. This update runs none of them.
+
+The electric-only and matter-density Q probes are not the full joint BRST charge; the
+44-state longitudinal band leaks under H. A Coulomb block/penalty spectrum is diagnostic
+until the physical constraint reduction is derived. Total matter fermion number is distinct
+from electromagnetic charge. Keep these scopes when interpreting the recorded values;
+small finite-matrix errors and zero first-image tails do not certify unbounded full flow.
+
 The complete independent-coordinate inner operator is implemented in
 `nested_fock_algebra/src/sm_full.rs` and enclosed once on the joint inner
 boson–fermion basis. It retains all 163 bosonic coordinates, 40 field momenta,
@@ -2950,10 +3033,10 @@ whitening. No hidden amplitude threshold or interaction deletion enters this pat
 | `sm_full_hashimoto_interaction_mutations` | Missing sectors and action/cache resource failures |
 | `sm_full_energy_is_conserved_along_the_sirk_evolution` | $\langle H\rangle$ drift of the compressed flow; every energy real |
 | `sm_full_canonical_field_velocity_matches_momentum` | Ehrenfest $d\langle q\rangle/dt=\langle p\rangle$ plus the analytic $\langle q\rangle,\langle p\rangle$ |
-| `sm_full_gauss_law_measures_the_electric_zero_point` | Temporal-gauge $Q$, its nilpotency, the $Q^\dagger Q$ spectrum ($9$, $9.5$, $10$) and the zero-point reading of the gauge-fixing penalty |
+| `sm_full_gauss_law_measures_the_electric_zero_point` | Electric-only probe $Q$, its nilpotency, the $Q^\dagger Q$ spectrum ($9$, $9.5$, $10$) and the zero-point reading of the gauge-fixing penalty |
 | `sm_full_coulomb_gauge_eliminates_the_longitudinal_zero_point` | $Q^\dagger Q=6\cdot\tfrac12\sum_g(\Pi_L^g)^2$, the exact longitudinal/transverse/Higgs split of the electric zero-point, and $H_C$ on the longitudinal vacuum |
 | `sm_full_gauss_with_matter_charge_is_content_sensitive` | $\rho^a$'s exact window values in the four diagonal sectors, the content-sensitive penalty spectrum, and the gauge algebra on the density |
-| `sm_full_fermion_number_superselected` | $[H,N]=0$ over five charge sectors, zero cross-sector matrix element, and $N=2$ on the window |
+| `sm_full_fermion_number_superselected` | $[H,N]=0$ over five matter-number sectors, zero cross-sector matrix element, and $N=2$ on the window |
 | `sm_full_interaction_energy_is_a_nonzero_bounded_share` | Free/interaction split of $H$, the Higgs/quark share of the window energy |
 
 These are full-operator numerical implementation tests, with all nonzero gauge
@@ -2962,7 +3045,7 @@ accuracy is reported separately from full-operator projection tails. The tests
 are not ESA, infinite-mode, cutoff-removal or mass-gap certificates, and the
 gauge-sector entries report the electric constraint's zero-point floor, the
 matter density's effect on it, the Coulomb elimination of the longitudinal mode
-and the charge superselection that survives, rather than expounding a physical
+and the matter-number superselection that survives, without constructing a physical
 sector. Pruning is disabled; resource limits abort
 instead of changing the Hamiltonian.
 

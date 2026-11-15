@@ -5428,3 +5428,452 @@ commands above as named stages, one log each under `--out` (default
 stage stopping the run — `--list` names them, `--all` is the ~4–6 h full set,
 and the default subset is the fast gate.  The 2026-10-20 block went stale
 because a quoted run had no one-command path back to it; this is that path.
+The 2026-11-15 R9/d-track rows below are reached with
+`./scripts/pcnl-reproduce d-track edge0-campaign r9-campaign` (the first two
+are ~45 s; `r9-campaign` is the declared 15–20 min run); they are not in the
+default subset.
+
+## R9 — small Edge0 architecture with RLCD: executed mechanics (2026-11-15)
+
+This section records what was **executed**, not what was planned. The R9
+specification (`pcnl/EDGE0_RLCD_PLAN.md`, `pcnl/RESEARCH_PLAN.md` §R9) and the
+implementation packets (`pcnl/DEVELOPMENT_PLAN.md` E0–E7, D0–D7) remain the
+forward work order; the entries below are the packets whose code and checks now
+exist. The stopped R7 DT arm above and the separate R8 sampler-theorem scope are
+unchanged.
+
+### Implemented and gated
+
+| packet | artifact | gate |
+|---|---|---|
+| E0 | `pcnl/src/edge0_world.rs` — finite hypothesis worlds, exact conditional law, joint law, disjoint train/dev/calibration/test manifest, declared utilities | `oracle_matches_independent_enumeration`, `more_observations_never_raise_conditional_entropy`, `correlated_questions_are_not_a_product_of_marginals`, `manifest_splits_are_disjoint_and_ids_precede_questions`, `utility_decisions_and_regret_bound` |
+| E1 | `pcnl/src/edge0_model.rs` — grouped latent D/U MoE, deterministic top-2 routing + shared expert, question-independent state encoder, packed/separate question attention, four-path policy, Noul/Choice/Score heads, parameter census, `StateCacheKey` | `parameter_census_is_complete_and_below_one_million`, `typed_outputs_are_finite_normalized_and_schema_failures_surface`, `packed_and_separate_questions_agree`, `question_order_and_choice_permutation_equivariance`, `ordinal_level_order_is_a_stochastic_order`, `dense_soft_routing_matches_top_k_when_every_expert_is_selected`, `state_cache_key_covers_weights_and_inference_settings` |
+| E2 | `pcnl/src/edge0_rlcd.rs` — exact four-path marginal, Brier U-statistic, exhaustive estimator expectation, REINFORCE/direct identities, independent `FiniteFixture` | `u_statistic_expectation_equals_marginal_brier`, `estimator_gradient_equals_exact_and_finite_difference_gradients`, `model_estimator_gradient_matches_exact_marginal_gradient` (candle autodiff over all 256 path tuples), `correctness_reward_is_not_a_proper_scoring_rule` |
+| E3/E4 (mechanics) | `pcnl/src/edge0_campaign.rs`, `pcnl/examples/edge0_campaign.rs` — shared supervised warm start, CE+Brier comparator, exact-marginal Brier control, RLCD arm, frozen-policy arm, world-clustered paired contrast | `campaign_arms_execute_and_report_finite_endpoints` |
+| E5 (adapter) | `pcnl/src/edge0_potential.rs` — frozen-encoder head chart as `target::Potential`; exact latent-marginal NLL; frozen parameters get exactly zero gradient | `head_chart_exposes_the_exact_likelihood_and_freezes_upstream_parameters` |
+| D0 | `pcnl/src/certificate.rs` — target/kernel/claim identities | `d0_matched_configurations_agree_and_changes_are_identified` |
+| D1 (constants) | same — `Z_lo = a·exp(−b)`, `c = ω·Z_lo/M`, TV bound, analytic Gaussian evidence | `d1_certificate_has_positive_contracting_constants` |
+| D1 (witness enclosure) | `pcnl/src/evidence_enclosure.rs` — rank-1/2 clamped-logistic witness; evidence evaluated in outward-rounded interval arithmetic (`Iv`, reduced Taylor `exp`), midpoint error `(2R)^d·d·h²/24·sup|g''|`, Mills-ratio tail, box ceiling and positive `c` | `d1_witness_evidence_enclosure_contains_the_analytic_value`, `d1_witness_predictive_enclosure_contains_the_chain_estimate`, `d1_interval_arithmetic_encloses_exp_and_the_evidence_is_certified` |
+| D2 | `pcnl/src/dim_benchmark.rs` — `π_r ⊗ N(0,I_n)`, product gap `min(γ_r, 1−ρ)` | `d2_product_gap_is_independent_of_complement_dimension`, `d2_negative_control_with_shrinking_beta_does_not_inherit_the_constant` |
+| D3 (canaries) | `pcnl/src/approx_pricing.rs` — exact Euler–Langevin Gaussian variance bias `1/(1−hλ/2)`, stability `h<2/λ`, independent gradient-noise inflation, declared error budget with open items | `d3_euler_langevin_canaries_match_closed_forms` (analytic formulas vs simulated chains) |
+| D4 (benchmark) | `pcnl/src/linear_gaussian.rs` — coupled `y\|z,w ~ N(z+bᵀw,σ²)`: analytic slice, informed marginal, complement conditional, joint predictive; reduction error separated from sampler error | `d4_coupled_benchmark_separates_reduction_error_from_sampler_error` (including a Monte Carlo check of the joint predictive) |
+| D5 (uncertainty) | `pcnl/src/policy_readout.rs::trajectory_clustered_delta` — CR1 trajectory-clustered paired SE, reducing exactly to `paired_delta` on singleton clusters | `d5_trajectory_clustered_delta_repairs_step_independence` |
+| D5 (draw audit) | `pcnl/src/dt_subspace.rs::audit_posterior_draws` — nested draw counts at one rollout seed, naming per-step BMA sampling, argmax and once-per-episode posterior draw separately | `d5_draw_subset_audit_compares_the_three_decoders_at_fixed_histories` |
+| D6 (canary certificate) | `pcnl/src/operator_cert.rs` — full-space `L²(N(0,v))` spectral certificate for the stable Gaussian canary (`0<a<1`, eigenvalues `a^k`, gap `1−a`, certified tail); plus the **scoped missing estimate** for the DT operator (tail, coupling, projection, arithmetic all absent) | `d6_canary_certificate_is_full_space_and_the_dt_scope_stays_open` |
+| E5 (chain) | `SubspaceTarget<Edge0Potential>` with a one-column head chart, exact MH-pCN in `z` | `e5_head_chart_runs_an_exact_mh_pcn_chain` |
+| E5 (reference record) | `pcnl/src/edge0_potential.rs::HeadChartReference` — D0 target/kernel identities and claim record, joint `β=1` prior-refresh primitive, sound clamp certificate `c = ω·exp(−λN·ln(1/floor))` (reported as vacuous at realistic `λN`), exact chi-square prior mass of a ball | `e5_reference_record_is_identified_and_its_rate_is_honest` |
+| E5 (quadrature) | `head_chart_quadrature_1d` — one-column head-chart evidence and posterior-averaged predictive, coarse/fine grid gap, Gaussian tail bound, plug-in comparison | `e5_single_question_chart_matches_quadrature_reference` |
+
+Commands actually run (2026-11-15):
+
+```text
+cargo test -p pcnl --test edge0_rlcd --test r8_certificates --test d_track
+# 19 + 4 + 11 = 34 tests passed, 0 failed
+cargo run -p pcnl --example edge0_campaign
+# reduced-budget mechanics: 4 arms, paired RLCD−supervised +0.01632 ± 0.00870
+R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_WALL_CAP=4500 \
+  R9_OUT=target/r9_campaign.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+# declared campaign: 5/5 seeds, 920.5 s, 3,840,000 arm passes,
+# across-seed RLCD−supervised +0.00223 ± 0.00184 (95 % t, df=4)
+```
+
+### D7 evidence record for the executed D/E packets
+
+The plan's required fields, with **absent** measurements labelled as absent
+rather than filled from expectation. Wall time is the test binary's own reported
+duration (single-threaded targeted run); max RSS is the whole `cargo test`
+process from `/usr/bin/time -M`, not an isolated allocator measurement.
+
+| packet | assumptions / theorem | source, precision | observable, tolerance | error components | cost | verdict |
+|---|---|---|---|---|---|---|
+| D3 | Euler–Langevin Gaussian invariant law; exact variance recursion `v_{k+1}=a²v_k+2h+h²σ_g²` | `approx_pricing.rs`, `f64` | stationary variance vs 40k-step simulation, 5–6 % MC | discretisation bias and gradient-noise inflation separated; **no** uniform perturbation bound | 2 × 40 000 steps; test 0.09 s; RSS 369 MB | closed forms match; outside `h<2/λ` the variance is infinite and is reported so |
+| D4 | linear-Gaussian joint prior and likelihood; slice is a restricted model | `linear_gaussian.rs`, `f64` | predictive mean within 0.01 and variance within 2 % of 60k joint-posterior draws | reduction error `|Δmean|+|Δvar|` reported separately from sampler MC; no finite TV/KL to the ambient law | 60k draws; part of the 6-test run | separation holds; factorized predictive is measurably wrong |
+| D5 (SE) | CR1 cluster-robust variance with trajectory ids | `policy_readout.rs`, `f64` | clustered SE vs step-independent on a 200-step, 20-trajectory fixture | parameter-chain, data-seed and rollout variability are **not** folded into this SE; they stay separate | no campaign re-run | clustered SE > 1.5× naive; singleton clusters reproduce `paired_delta` exactly |
+| D5 (draw audit) | common rollout seed, declared cyclic episode-draw schedule | `dt_subspace.rs`, `f32` model / `f64` returns | three decoders at 2 and 4 draws, 8 rollouts, `DtCell` seed 5 | decoder-subset error only; **not** chain convergence and **not** TV to a continuous posterior | 6k draws; test 38.00 s; RSS 60 MB | all three arms finite and paired; no success claim, values are diagnostic |
+| D6 | Gaussian canary with `0<a<1`; detailed balance and Hermite spectrum | `operator_cert.rs`, `f64` | invariance residual ≤ 1e-12·(1+v); tail bound exact | arithmetic is `f64`; the full DT operator has **none** of the four D6 bounds | test 0.00 s | canary certified; DT scope explicitly uncertified |
+| E5 (chain) | exact MH-pCN on a one-column head chart | `edge0_potential.rs` + `target.rs`, `f32` | 120 steps, finite φ, ≥1 acceptance | no evidence bound, no posterior-average protocol | 120 evaluations | chain executes; no posterior claim |
+| D1 (witness) | rank-2 `Z = ∫σ(x)σ(−y)φφ = 1/4` exactly; rank-1 evidence and predictive enclosed | `evidence_enclosure.rs`, `f64` intervals; `exp` from a reduced 26-term Taylor series | analytic `1/4` inside the interval sum at `R=4, m=256` and `m=512`; `exp_enclose` brackets libm on `[-32,60]`; 60k-step chain estimate `0.7075` inside its predictive enclosure; certificate `c ≈ 1.6e-4` | evidence **and** predictive numerator are both outward-rounded `Iv` arithmetic (no `1e-10` envelope any more; `rounding_envelope == 0.0` is asserted); the only remaining declared uncertainty is `NODE_UNCERTAINTY = 1e-12`, applied to the witness node values the caller supplies; tail is the union-bound Mills estimate, loose for small boxes; rank-2 box error is loose | 3 D1 tests 8.94 s | evidence and the predictive numerator are theorem-grade in rounding, truncation and tail **relative to** the supplied node values; positive `c` published with its impractical rate |
+| E5 (quadrature) | one-column head chart, exact MH-pCN; no proved `sup|Ψ'|` for the neural likelihood | `edge0_potential.rs`, `f32` model / `f64` quadrature | coarse/fine (`m=128/256`) evidence gap `< 5 %`; Gaussian tail `< 1e-8`; 900-step posterior mean within `0.08` of the quadrature predictive; `head_chart_enclosure_1d` returns a certified `[lo, hi]` at 512/1024 cells for a policy-head direction | truncation is now **bounded** only where the chart direction moves `policy_w`/`policy_b` alone: then `p(z) = Σ a_r u_r` is a convex combination of the frozen path distributions, so `\|(log p)'\| ≤ D = max d_r − min d_r` and `\|(log p)''\| ≤ 2D²` (no probability floor involved); other directions, and any direction touching the input layer, return `None` | test 1.45 s (enclosure test at 512/1024 cells; the enclosure brackets the reference evidence and predictive, and the finer grid does not widen it) | reference quadrature plus a genuine enclosure on the restricted (policy-head) chart; the neural chart as a whole still has no proved bound |
+| E5 (reference) | D0 identities + D1 mixture constant; `Ψ` bounded by the target's own NLL floor | `edge0_potential.rs`, `f64` constants over `f32` model | chi-square prior mass vs `erf`, `1−e^{−x}`, `1−e^{−x}(1+x)` within 1e-12; `c < 1e-60` at `λ=8` | no verified likelihood sup on a ball; the clamp ceiling is sound but exponential in `λN`; no rounding certificate | test 2.00 s | identity and honest negative rate; the ball certificate contracts only when the caller supplies a verified ceiling |
+
+Promotion decision: **none, and it stands after the declared campaign**. The
+stopped R7 application stays stopped. On the declared 5-seed campaign RLCD's
+paired Brier excess is worse than the supervised comparator with a 95 % interval
+that excludes zero (`[+0.00039, +0.00407]`), which the plan treats as a stop
+condition, and the reduced-budget mechanics agree in sign. The distribution and
+gradient results are retained; no application or architecture promotion follows
+from these rows.
+
+### E3/E4 reduced-budget mechanics output (verbatim)
+
+This is **not** the declared R9 campaign: `CampaignConfig::default` runs
+`[24, 8, 8, 16]` worlds, 30 shared warm-start updates and 60 updates per arm on
+the `tiny` configuration (`P = 1620`), single seed. It demonstrates that the
+arms execute and that the endpoint is computed; it does not test the R9
+hypothesis. A negative contrast is retained as produced.
+
+```text
+R9 E3/E4 — REDUCED-BUDGET MECHANICS (not the declared campaign)
+model: P=1620 routed-active=64 | worlds train/dev/cal/test = [24, 8, 8, 16] | updates/arm=60 | batch=4 worlds | seed=20261115
+warm start: 30 shared supervised updates | world manifest hash 0x6f856f7cbdbd69b3
+
+arm                              Brier excess        NLL    pol-ent   path-ent     passes
+supervised CE+Brier                   0.16932    0.97069    1.35449    0.84023        240
+exact-marginal Brier control          0.17390    0.97094    1.35031    0.85511        240
+RLCD (required)                       0.18565    0.97784    1.12527    0.85085        240
+frozen-policy readout                 0.17555    0.97228    1.34569    0.85450        240
+
+paired RLCD − supervised (world-clustered): +0.01632 ± 0.00870
+```
+
+Reading: at this budget RLCD is **worse** than the supervised comparator on the
+primary endpoint. The plan predeclares that an inconclusive or worse contrast
+ends promotion; nothing here is promoted. The analytic gradient gate (E2) passes
+before this number is interpreted, which is the order the plan requires.
+
+### Declared 5-seed R9 campaign (executed 2026-11-15)
+
+The plan's bounded first campaign, run in release with the wall-time cap
+declared **before** execution. Fixed data seed `20261115` gives one world
+manifest for all five paired training seeds (manifest hash
+`0xb0c4112e5addfc93`, identical in every row). Training seeds `9001`–`9005`
+vary initialisation and path streams only.
+
+```text
+R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_WALL_CAP=4500 \
+  R9_OUT=target/r9_campaign.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+Configuration and cost, as executed: `tiny` model (`P = 1620`, 64 routed-active),
+worlds 2048/256/256/512, three typed questions per world, batch of **32 worlds
+with all their questions**, 2000 updates per arm, 30 shared supervised warm-start
+updates, all four arms. 768 000 arm passes per seed (192 000 per arm),
+3 840 000 arm passes total, plus 2 880 shared warm-start passes per seed
+(14 400 total) that the arm counter does not include. Evaluation adds 9 216
+forward passes per seed (four arm evaluations and two paired per-world passes
+over 1 536 test questions); those are derived from the fixed split, not
+instrumented in the artifact. 920.5 s summed seed wall time out of the 4500 s
+cap; peak RSS 15.9 MB; 5/5 seeds completed.
+
+| seed | init seed | RLCD − supervised | world-clustered SE | wall |
+|---|---|---|---|---|
+| 0 | 9001 | +0.00113 | 0.00059 | 185.9 s |
+| 1 | 9002 | +0.00369 | 0.00081 | 185.4 s |
+| 2 | 9003 | +0.00398 | 0.00081 | 184.2 s |
+| 3 | 9004 | +0.00150 | 0.00066 | 181.6 s |
+| 4 | 9005 | +0.00086 | 0.00059 | 183.4 s |
+
+Across seeds: **+0.00223 ± 0.00184** (mean, 95 % `t` on df = 4; SE of the mean
+0.00066). The interval `[+0.00039, +0.00407]` excludes zero, so the prespecified
+read is *worse*, not inconclusive: RLCD is worse than the supervised comparator
+at this cost. Mean test Brier excess: supervised 0.12697, RLCD 0.12921; mean
+NLL: 0.95593 versus 0.96257. The per-seed rows and summary are in the NDJSON
+artifact; the summary row records `mean_diff`, `half95`, `total_passes` and
+`cap_s`.
+
+**Limitations of this execution.** The primary endpoint is the unweighted mean
+per-question Brier excess, not the plan's fixed per-type weighting; the
+calibration split was not used for abstention; and only the four existing arms
+ran (no per-path proper-score or correctness-reward RL arm). Those are open reporting/experiment
+items, not silent successes. The secondary endpoints that *were* computed are
+reported next.
+
+### R9 secondary endpoints (computed from the stored predictions)
+
+The primary artifact carried only per-seed aggregates, so per-question
+marginals were exported by `examples/r9_campaign.rs` (`R9_PRED_OUT`) and the
+campaign was re-executed with the same declared configuration; the primary
+contrast reproduced exactly (**+0.00223 ± 0.00184**, per-seed contrasts
+identical, 941.9 s of the 4500 s cap, 5/5 seeds). Artifacts:
+`target/r9_predictions.ndjson` (46 080 rows = 5 seeds × 4 arms × 2 304
+questions, of which 768 dev, 768 calibration and 1 536 test per seed/arm; each
+split is balanced at 1/3 per question type) and `target/r9_secondary.ndjson`.
+The primary rerun wrote `target/r9_campaign_secondary.ndjson` so the first run's
+file was not overwritten. A later export added the calibration split
+(`target/r9_predictions_cal.ndjson`, 61 440 rows, with
+`target/r9_campaign_cal.ndjson` and `target/r9_secondary_cal.ndjson`) so the
+abstention threshold could be selected on data that is neither trained nor
+scored on; the numbers below use that artifact.
+`examples/r9_secondary.rs` then evaluates the endpoints without retraining:
+
+```text
+cargo run --release -p pcnl --example r9_secondary -- \
+  target/r9_predictions_cal.ndjson target/r9_secondary_cal.ndjson
+```
+
+Definitions, all declared before the run: weighted Brier excess uses fixed
+per-type weights 1/3 each (the balanced design makes it equal the unweighted
+mean: dev per-type means 0.13337/0.06751/0.17948 for `noul`/`choice`/`score`
+average to 0.12679, the unweighted dev mean); the ordinal score is the
+ranked probability score
+`Σ_{i<J−1}(Σ_{j≤i}(p_j−t_j))²/(J−1)` on `Score` questions; the temperature is
+fitted on the **dev** split by a fixed grid 0.50–3.50 in steps of 0.05, ties to
+the smaller value; regret is `u(truth, a*) − u(truth, a)` with the declared
+`UtilityTable` and `a* = argmax` expected utility, bounded by `2·TV`.
+
+| arm | weighted Brier | raw NLL | fitted T (range) | scaled Brier | scaled NLL | ordinal RPS | regret |
+|---|---|---|---|---|---|---|---|
+| RLCD (required) | 0.12921 | 0.96257 | 1.25–1.55 | 0.12822 | 0.96090 | 0.07860 | 0.01454 |
+| exact-marginal Brier control | 0.12795 | 0.96021 | 1.30–1.40 | 0.12780 | 0.95987 | 0.07781 | 0.01454 |
+| frozen-policy readout | 0.12792 | 0.96008 | 1.35–1.40 | 0.12781 | 0.95980 | 0.07777 | 0.01454 |
+| supervised CE+Brier | 0.12697 | 0.95593 | 0.85–0.90 | 0.12755 | 0.95637 | 0.07815 | 0.01454 |
+
+Paired `RLCD − supervised` across the five seeds (mean, 95 % `t`, df = 4;
+negative favours RLCD):
+
+| endpoint | difference | 95 % half-width | SE |
+|---|---|---|---|
+| weighted Brier | +0.002232 | 0.001843 | 0.000664 |
+| raw NLL | +0.006640 | 0.003545 | 0.001277 |
+| scaled Brier | +0.000665 | 0.000872 | 0.000314 |
+| scaled NLL | +0.004532 | 0.002034 | 0.000733 |
+| ordinal RPS | +0.000453 | 0.001130 | 0.000407 |
+| decision regret | 0.000000 | 0.000000 | 0.000000 |
+
+Every proper-score endpoint points the same way as the primary one. The
+weighted Brier interval excludes zero (worse); the scaled Brier and ordinal RPS
+intervals contain zero, so those two are **inconclusive** rather than worse.
+RLCD's fitted temperature is much larger (≈1.4 versus ≈0.87): after temperature
+scaling most of its Brier gap closes, which says its probabilities are
+systematically over-sharp rather than ordered worse.
+
+Decision regret is degenerate: all four arms choose the same action on every
+question, so regret is the constant mean `0.01454` and the arm difference is
+exactly zero. The declared `2·TV` bound holds on every test row (0 violations in
+all 30 720 test predictions), but its mean is `≈0.462` — much looser than the realised
+regret, because it bounds the action gap for an *arbitrary* truth. Utility is
+therefore not evidence for or against RLCD at this budget; the plan's
+"success claims cannot come from correctness-only rewards" condition is
+unaffected, but the decision endpoint has no power here.
+
+**Reliability (top-label, test, 20 fixed bins of 0.05 on confidence).** Every
+arm is under-confident in the bins it uses (gap = accuracy − confidence is
+negative almost everywhere), and confidence never exceeds ≈0.58, so bins above
+0.6 are empty. Pooled across seeds:
+
+| arm | ECE | MCE | non-empty bins (conf / acc) |
+|---|---|---|---|
+| RLCD (required) | 0.0263 | 0.0450 | 0.342/0.330, 0.422/0.377, 0.451/0.425, 0.541/0.531, 0.564/0.531 |
+| exact-marginal Brier control | 0.0216 | 0.0476 | 0.342/0.322, 0.397/0.417, 0.404/0.374, 0.547/0.533, 0.550/0.503 |
+| frozen-policy readout | 0.0186 | 0.0209 | 0.342/0.322, 0.398/0.378, 0.402/0.383, 0.548/0.531 |
+| supervised CE+Brier | 0.0257 | 0.1252 | 0.344/0.296, 0.380/0.397, 0.420/0.401, 0.459/0.333 |
+
+Paired RLCD − supervised ECE is **−0.00028 ± 0.01717** (inconclusive), so RLCD's
+worse Brier is *not* explained by worse top-label calibration; the supervised
+arm has the worst single-bin gap (MCE 0.125).
+
+**Per-type reliability.** The miscalibration is concentrated in `Score`, not in
+the binary questions. Test rows, pooled over seeds (`n = 2 560` per cell):
+
+| arm | type | ECE | MCE | mean conf | acc |
+|---|---|---|---|---|---|
+| RLCD | noul | 0.0237 | 0.0329 | 0.5549 | 0.5312 |
+| RLCD | choice | 0.0117 | 0.0117 | 0.3417 | 0.3301 |
+| RLCD | score | 0.0434 | 0.0450 | 0.4243 | 0.3809 |
+| exact-marginal control | noul | 0.0162 | 0.0476 | 0.5475 | 0.5312 |
+| exact-marginal control | choice | 0.0195 | 0.0195 | 0.3417 | 0.3223 |
+| exact-marginal control | score | 0.0291 | 0.0309 | 0.4033 | 0.3809 |
+| frozen-policy readout | noul | 0.0162 | 0.0162 | 0.5475 | 0.5312 |
+| frozen-policy readout | choice | 0.0196 | 0.0196 | 0.3419 | 0.3223 |
+| frozen-policy readout | score | 0.0200 | 0.0209 | 0.4008 | 0.3809 |
+| supervised | noul | 0.0192 | 0.0303 | 0.5504 | 0.5312 |
+| supervised | choice | 0.0473 | 0.0611 | 0.3691 | 0.3656 |
+| supervised | score | 0.0314 | 0.2310 | 0.4028 | 0.3809 |
+
+So RLCD's worst type is `Score` (ECE 0.0434), but its `Score` calibration is
+still better than supervised's (MCE 0.231 for `Score`); supervised's worst
+type by ECE is `Choice` (0.0473). All arms are over-confident on `Score`
+(mean confidence 0.40–0.42 against accuracy 0.381).
+
+**Coverage vs abstention, with the calibration split.** Declared rule: abstain
+when `max p < τ`; τ is selected on the **calibration** split (256 worlds, never
+used for training, temperature or evaluation) as the grid point (0.00–0.90,
+step 0.01) with the highest selective accuracy there, ties to the lower τ, then
+applied unchanged to test. Calibration rows were added to the export and the
+campaign re-run for this (`target/r9_predictions_cal.ndjson`,
+`target/r9_campaign_cal.ndjson`); primary contrasts again reproduced exactly.
+Selected τ per seed: RLCD 0.4, 0.5, 0.6, 0.6, 0.4. Paired test contrasts:
+coverage **+0.18203 ± 0.13674**, selective accuracy **−0.00229 ± 0.05390** —
+both inconclusive, and the coverage contrast remains partly a per-arm threshold
+effect because τ is chosen per arm/seed.
+
+A second declared rule picks τ on calibration as the **highest coverage whose
+calibration risk is at most 0.55** (ties to the lower τ). On test (per-seed
+means), that buys much more coverage at a slightly higher risk than the
+accuracy-maximizing rule:
+
+| arm | accuracy-max τ: cov / selAcc | risk ≤ 0.55 τ: cov / risk |
+|---|---|---|
+| RLCD | 0.241 / 0.508 | 0.667 / 0.544 |
+| exact-marginal control | 0.280 / 0.517 | 0.667 / 0.544 |
+| frozen-policy readout | 0.333 / 0.531 | 0.667 / 0.544 |
+| supervised | 0.059 / 0.510 | 0.860 / 0.552 |
+
+Supervised's risk-cap rule answers 86 % of test questions; the others answer
+two thirds. The rule never breaches the cap on test by construction of the
+calibration choice, not by evaluation on test.
+
+Risk-coverage curve on test, pooled (coverage/risk = error rate among answered):
+
+| τ | RLCD | control | frozen | supervised |
+|---|---|---|---|---|
+| ≤ 0.30 | 1.000/0.586 | 1.000/0.589 | 1.000/0.589 | 1.000/0.574 |
+| 0.35 | 0.667/0.544 | 0.667/0.544 | 0.667/0.544 | 0.855/0.552 |
+| 0.40 | 0.667/0.544 | 0.611/0.540 | 0.537/0.525 | 0.534/0.521 |
+| 0.45 | 0.362/0.477 | 0.333/0.469 | 0.333/0.469 | 0.363/0.485 |
+| 0.50 | 0.333/0.469 | 0.333/0.469 | 0.333/0.469 | 0.333/0.469 |
+| 0.55 | 0.200/0.469 | 0.023/0.497 | 0.000/— | 0.164/0.473 |
+| ≥ 0.60 | 0.000/— | 0.000/— | 0.000/— | 0.000/— |
+
+The curve is monotone only in the weak sense that coverage falls; risk barely
+improves (0.586 → 0.469) and never reaches the withholding regime a useful
+selective classifier needs. By type at the selected τ, almost all coverage is
+`noul`: RLCD covers 0.720 of `noul` (selective accuracy 0.522), 0.002 of
+`score`, and 0.000 of `choice`; the frozen readout covers every `noul` at 0.531.
+`choice` confidences sit near 0.34, below every selected τ, so that type is
+always abstained on. These are the honest shapes; the calibration split fixes
+the selection protocol, not the model's discriminative power.
+
+**Per-type risk-coverage.** The flat aggregate curve is `choice` plus `score`:
+
+* `choice` — RLCD risk is 0.670 at full coverage and never improves; coverage
+  reaches 0 only because every confidence is below τ, not because abstention
+  filters errors. Control/frozen behave the same (risk 0.678), supervised gets
+  risk 0.575 at 0.585 coverage before falling to zero by τ = 0.45.
+* `score` — risk 0.619 at full coverage; at τ = 0.45 RLCD answers 8.6 % at risk
+  0.575, i.e. abstention buys 0.044 risk for 91 % coverage.
+* `noul` — the only useful trade: risk 0.469 at full coverage, still 0.469 (RLCD)
+  with 60 % coverage at τ = 0.55, while control keeps 7 % and frozen 0 %.
+
+So the Score miscalibration is visible in the curve as the type where risk barely
+falls as coverage is bought, and `noul` is the only type where selective
+prediction does anything.
+
+The per-type curves are also written to the artifact as
+`{"kind":"r9-risk-coverage","arm":…,"qkind":…,"tau":…,"coverage":…,"risk":…}`
+rows (240 rows for 4 arms × 3 types × 20 τ), so downstream tools do not have to
+scrape the printed table.
+
+The arithmetic behind these tables lives in `pcnl/src/r9_report.rs` and is
+pinned by nine unit tests on synthetic fixtures: fixed bin edges
+(`0.81 → bin 16`, `0.41 → bin 8`), a hand-computed ECE of `0.37` and MCE of
+`0.42`, empty-bin reporting, NaN-confidence skipping, full-vs-answered
+denominators, the `risk = 1 − selective accuracy` identity, the threshold tie
+rule (`Some(0.81)`, not `0.9`, because every τ in `(0.80, 0.90]` answers the
+same rows), and the coverage-target rule (an impossible risk cap returns
+`None`; a cap already met at full coverage keeps τ = 0). The example is a thin
+wrapper over that module.
+
+### Head-stage interval-dual prototype (new, head-only)
+
+`pcnl/src/chart_lipschitz.rs` is the first half of the encoder chart bound: a
+forward pass carrying `<value interval, derivative interval>` through the Edge0
+**head stage** (policy softmax, path embeddings, Noul/Choice/Score heads,
+ordered thresholds, the 1.5 ordinal link). The model now exposes
+`PathOutput::rep` so the same pass can be driven by an encoder-produced dual
+instead of a constant.
+
+What it certifies today: `head_stage_psi_bound` returns a bound on
+`sup |dΨ/dz|` over the chart box, and `head_stage_probability_interval` returns
+the value interval, for directions supported on `policy_w`, `policy_b`,
+`path_embed`, `noul_w`, `noul_b`, `score_w`, `score_thresholds`. Anything that
+moves `rep` (encoder, embeddings, attention, MoE) still returns `None`.
+
+Containment is checked against the real model, not against its own arithmetic:
+
+| test | what it pins |
+|---|---|
+| `dual_arithmetic_matches_closed_forms` | sigmoid/exp/product interval and derivative rules |
+| `head_stage_probability_interval_contains_the_model` | value interval brackets `p(z)` at 11 grid points, for four train samples covering all three question types, for directions on `score_w`, `noul_w`, `policy_w`, `score_thresholds` |
+| `head_stage_psi_bound_contains_finite_differences` | the bound contains central differences of the single-sample `−log p_label` at 9 points per sample, and the largest measured derivative exceeds `1e-3` so the test is not vacuous |
+| `encoder_directions_are_refused_by_the_prototype` | a direction touching every slot returns `None` |
+
+Bugs the containment test caught during this work, all fixed: `policy_w` is
+stored `[d, paths]` (flat index `j·paths + r`), thresholds are stored with the
+config's `max_levels−1` row stride (not the question's `levels−1`), and the
+threshold block must be offset per path. Four tests pass in 0.16 s.
+
+The remaining half is the encoder dual: LayerNorm, masked softmax attention,
+SwiGLU and routed MoE with the top-k selection over-bounded by
+max-over-experts. Until that exists, the E5 enclosure still refuses encoder
+directions.
+
+**World-clustered SE.** The prediction rows already carry their `world` id
+(dev 2048–2303, test 2560–3071, 3 questions each), so the paired difference is
+now also clustered: questions are paired by `(world, qid)`, each world
+contributes its mean difference, and the SE is the across-world SD over
+`sqrt(512)`. Per-seed clustered SEs of the weighted-Brier contrast are
+0.000595, 0.000806, 0.000812, 0.000661, 0.000586 — matching the primary
+artifact's world-clustered SEs to `1e-5`. The clustered SE of the across-seed
+mean is 0.000313 for weighted Brier and 0.001013 for raw NLL; the quoted
+±0.001843 half-width remains the seed-level `t` interval, as in the primary
+endpoint. Nothing here is a cluster bootstrap.
+
+Not computed and not claimed: per-path proper-score and correctness-reward
+arms, an abstention objective other than "maximize selective accuracy on
+calibration", and the Lean4 lemmas.
+
+### Not executed (and therefore not claimed)
+
+- **E3/E4 reporting beyond the computed table.** The declared campaign ran
+  (above) and its weighted Brier, temperature-scaled baselines, ordinal score
+  and utility/regret are computed from the stored predictions, together with
+  top-label reliability and coverage vs abstention. The calibration split as an
+  abstention set and the extra control arms (per-path proper score,
+  correctness-reward RL) are still not computed. No further seed, width or
+  architecture search was run.
+- **E6 (Lean4).** No finite probability/decision lemma was handed to, or
+  elaborated by, the Lean specialist. Proposed identifiers in the plan remain
+  proposals.
+- **E7.** Only the mechanics above exist; there is no R9 archive of positive,
+  negative or inconclusive *training* comparisons beyond this row.
+- **E5 posterior results.** The adapter, a one-column exact MH-pCN chain, the
+  D0 identities/claim record and the `β=1` prior-refresh primitive now exist.
+  What does **not**: the reference mixture was never run as a chain, and there
+  is no posterior-average gradient protocol. A **single-question** head-chart
+  quadrature and predictive comparison now exist, and `head_chart_enclosure_1d`
+  turns the quadrature into a certified interval — but **only** for charts
+  whose direction moves `policy_w`/`policy_b`, where the path distributions are
+  constant in `z`; it declares a `1e-6` `f32` bridge on the frozen head inputs
+  and computes at 512 cells (the test also checks 1024). **Not implemented:**
+  directions supported on encoder/input weights. Those need a certified
+  layer-wise Jacobian product through the LayerNorm → attention → routed-MoE
+  stack (with the discrete top-k selection over-bounded by a max-over-experts
+  argument). That bound was neither derived nor tested here, and the
+  interval-dual forward-pass prototype that would carry it was not completed, so
+  `None` is returned and the quadrature for such directions stays a reference
+  estimate. The only evidence bound is the sound but vacuous clamp one
+  (`c ≈ 0`); no verified ball ceiling for this network exists. The value and
+  gradient now share `NLL_FLOOR` (they disagreed at `1e-12` vs `1e-6`), so the
+  "exact mean-NLL gradient" claim holds at saturation too — but no gradient
+  check at a saturated head was added.
+  The D1 witness **evidence and predictive numerator** are now both
+  outward-rounded interval arithmetic with explicit Taylor remainders and no
+  libm assumption (`rounding_envelope == 0.0`); the surviving declared input is
+  `NODE_UNCERTAINTY = 1e-12` on supplied node values. Its rank-2 box error is
+  conservative, and the Mills union bound denies a certificate to boxes smaller
+  than that bound. Nothing here certifies the neural chart's evidence.
+- **D5 historical cells.** The repository stores no R7 draw tensors or cell
+  artifacts, so the corrected uncertainty and draw-audit fields could not be
+  added to the *same* historical cells without re-running their chains. Those
+  numbers still carry the step-independent SE; the new estimator is gated on a
+  synthetic fixture, not on reproduced R7 evidence.
+- **D6 (DT operator).** Only the Gaussian canary has a full-space certificate.
+  The DT invariant-law operator's retained-block tail, coupling, projection and
+  `f32` spectral bounds are all absent and are recorded as such in
+  `operator_cert::missing_dt_estimate`.
+- **D7 (Lean).** No Lean module or axiom audit was run for these packets; the
+  D7 table above covers only the executed Rust checks.
+- **D7 (reproduction, narrower than it sounds).** The stages
+  (`./scripts/pcnl-reproduce d-track`, `edge0-campaign`, `r9-campaign` and
+  `r9-secondary`) exist and were run, and they regenerate the 34 test results,
+  the four-arm mechanics table, the declared campaign and its secondary
+  endpoints from the exported predictions. They do **not** regenerate the
+  timings, memory figures or the per-packet verdicts in the D7 table — those
+  were measured by hand and a rerun can move them; nor do they cover any Lean
+  or DT-cell claim. `d-track` uses the debug profile, so its wall times are not
+  comparable to the release numbers quoted elsewhere; `r9-campaign` is release
+  and took 920.5 s of seed wall time inside the 4500 s cap.
+- **E6/E7 (repeated for clarity).** No Lean4 elaboration and no full R9 archive.

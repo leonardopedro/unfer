@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# N9 bounded pilot: fixed operator/state, two declared windows, ranks 2 and 4,
+# one common shift rule. Four cells, not an eight-cell sweep.
+#
+# Default caps are used for the 70-state window. The 230-state window uses the
+# already documented wide-tier caps, declared here before execution. A host
+# memory guard or an engine refusal ends that cell and is recorded as a result.
+set -euo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+out="${SM_N9_OUT:-$repo_root/target/sm-n9-pilot}"
+mkdir -p "$out"
+summary="$out/summary.tsv"
+: > "$summary"
+printf 'cell\tcutoff\trequested_rank\tdimension\tactual_rank\tdefect_bound\tleakage\tdefect_frobenius\tfirst_tail\tenergy_re\telapsed_s\tpeak_rss_kb\tstatus\n' >> "$summary"
+
+mem_available_gb() {
+    awk '/MemAvailable:/ {printf "%.0f", $2/1024/1024}' /proc/meminfo
+}
+
+run_cell() {
+    local cutoff=$1 rank=$2 wide=$3
+    local cell="c${cutoff}_m${rank}"
+    local json="$out/$cell.json" log="$out/$cell.log"
+    local -a args=(--time 0.01 --steps 1 --krylov "$rank" --occupation-cutoff "$cutoff")
+    if [[ $wide == 1 ]]; then
+        if (( $(mem_available_gb) < 6 )); then
+            printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\trefused_host_memory_cap\n' \
+                "$cell" "$cutoff" "$rank" >> "$summary"
+            echo "[skip] $cell: host memory below 6 GB"
+            return
+        fi
+        args+=(--cache-limit 4000000 --action-components 8000000 --action-work 4000000000)
+    fi
+    echo "[run] $cell ${args[*]}"
+    if cargo run --locked --offline --release -p fock_sirk --example sm_full_hashimoto -- \
+        "${args[@]}" > "$json" 2> "$log"; then
+        python3 - "$cell" "$cutoff" "$rank" "$json" >> "$summary" <<'PY'
+import json, sys
+cell, cutoff, rank, path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+r = json.load(open(path))
+m = r["result_manifest"]
+d = m["defect_certificate"]["fields"]
+p = r["numerical_projection"]
+print("\t".join(str(x) for x in [
+    cell, cutoff, rank, p["dimension"], m["solver"]["rank"],
+    f"{d['evolution_bound']:.6e}", f"{d['initial_leakage']:.6e}",
+    f"{d['defect_frobenius']:.6e}", f"{r['full_action_tail_norms'][0][0]:.6e}",
+    f"{r['energies'][0][0]:.12e}", f"{m['environment']['elapsed_seconds']:.3f}",
+    m["environment"]["peak_rss_kb"], "measured",
+]))
+PY
+    else
+        printf '%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\trefused_or_failed\n' \
+            "$cell" "$cutoff" "$rank" >> "$summary"
+        echo "[refused/failed] $cell; tail of $log:"
+        tail -3 "$log" || true
+    fi
+    rm -f "$json" "$log"
+}
+
+step() { printf '\n=== %s ===\n' "$*"; }
+step "host"
+echo "available memory: $(mem_available_gb) GB; cores: $(nproc)"
+echo "fixed state/time: example seed, t=0.01, steps=1, shift rule dt*(rank+5), spacing=dt"
+step "cells"
+run_cell 1 2 0
+run_cell 1 4 0
+run_cell 2 2 1
+run_cell 2 4 1
+step "summary"
+column -t -s $'\t' "$summary" || cat "$summary"
+echo
+echo "written: $summary"
+echo "Scope: finite-window measured cells; defect bound is conditional and arithmetic is not enclosed."

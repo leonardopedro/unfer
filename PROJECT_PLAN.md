@@ -1,5 +1,14 @@
 # PROJECT_PLAN.md — Five-Repo Review & Improvement Plan
 
+**Current full-SM research (2026-11-15):**
+[SM_RESEARCH_PLAN.md](docs/SM_RESEARCH_PLAN.md), N6–N14, governs numerical evidence and
+research on the complete nested-Fock/Mehler/SIRK operator. It coordinates with the
+[Lean specialist plan](../timepiece/SM_ESA_COMPLETION_PLAN.md), SM0–SM9. The implemented
+E1 builder/solver is reused; physical reduction, certified full-flow errors and E2 limits
+retain their own open tasks. The historical “all phases done” below concerns A–D of the
+2026-08-23 federation review, not completion of this SM programme. No compilation or
+numerical replay is part of this plan update.
+
 > Deep review of the five sibling repositories as a **single project**:
 > `unfer`, `australVM`, `velysterm`, `timepiece`, `dynamic-arctic`.
 > Principle: **improve and reuse existing features before creating new ones.**

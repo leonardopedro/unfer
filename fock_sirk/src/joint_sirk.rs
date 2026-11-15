@@ -813,6 +813,10 @@ where
 #[derive(Debug)]
 pub struct JointEvolution {
     pub state: NestedVector,
+    /// N8 finite-map defect bound per restart step, using the same returned
+    /// basis, generator and full `H V` images as the evolution. Point f64
+    /// estimates; the interval enclosure is separate (`sm_defect`).
+    pub defect_certificates: Vec<crate::sm_defect::DefectTerms>,
     pub norms: Vec<f64>,
     pub action_tail_norms: Vec<Vec<f64>>,
     pub energies: Vec<C>,
@@ -849,9 +853,18 @@ pub fn evolve_restarted_joint(
     let mut shift_bounds = Vec::new();
     let mut function_bounds = Vec::new();
     let mut orthogonality = Vec::new();
+    let mut defects = Vec::new();
+    let step_time = total_time / steps as f64;
     for _ in 0..steps {
         let solve = solve_joint_sirk(h, &state, shifts, options)?;
-        state = solve.reconstruct(&solve.time_evolve(total_time / steps as f64)?)?;
+        defects.push(crate::sm_defect::defect_terms(
+            &solve.orthonormal_basis,
+            &solve.orthonormal_images,
+            &solve.function_generator,
+            &state,
+            step_time,
+        ));
+        state = solve.reconstruct(&solve.time_evolve(step_time)?)?;
         norms.push(joint_norm(&state));
         let norm = *norms.last().unwrap();
         if norm == 0.0 {
@@ -869,6 +882,7 @@ pub fn evolve_restarted_joint(
     }
     Ok(JointEvolution {
         state,
+        defect_certificates: defects,
         norms,
         action_tail_norms: tails,
         energies,

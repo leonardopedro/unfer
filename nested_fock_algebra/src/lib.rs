@@ -706,6 +706,7 @@ impl Hamiltonian {
 
 /// Ordered inner action and its outer enclosure; independent of legacy CAS semantics.
 pub mod exact_inner;
+pub mod sm_constraints;
 pub mod sm_full;
 
 pub mod cas;
