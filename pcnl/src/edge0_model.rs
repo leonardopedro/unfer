@@ -34,6 +34,21 @@ use crate::manifest::Fnv;
 use candle_core::{D, Device, Result, Tensor};
 use candle_nn::ops::{sigmoid, silu, softmax};
 
+/// Which state path the model adds to every question representation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatePath {
+    /// `state_rep · W_s`: the learned full-rank projection (the deployed path).
+    #[default]
+    Full,
+    /// The full projection scaled elementwise by `sigmoid(state_rep · W_g)`.
+    Gate,
+    /// `(state_rep · U) · V` with `U: [d, r]` and `V: [r, d]`. `r = d/2` makes
+    /// `U` and `V` together exactly as large as the full projection, so the
+    /// low-rank variant has the same parameter count and the same layout size
+    /// at the state slot — every later slot keeps its offset.
+    LowRank,
+}
+
 /// The R9 first configuration (`RESEARCH_PLAN.md` §R9.0): width 64, 4 state
 /// blocks, 8 routed experts in 2 D/U groups, latent width 32, top-2 plus one
 /// shared expert, four latent paths. Total parameters stay below one million.
@@ -54,6 +69,9 @@ pub struct Edge0Config {
     pub max_state_tokens: usize,
     pub max_question_tokens: usize,
     pub max_levels: usize,
+    /// State-path variant; `Full` is the deployed path, the others are
+    /// declared experiment variants.
+    pub state_path: StatePath,
 }
 
 impl Default for Edge0Config {
@@ -74,6 +92,7 @@ impl Default for Edge0Config {
             max_state_tokens: 32,
             max_question_tokens: 8,
             max_levels: 5,
+            state_path: StatePath::Full,
         }
     }
 }
@@ -99,7 +118,15 @@ impl Edge0Config {
             max_state_tokens: 8,
             max_question_tokens: 4,
             max_levels: 4,
+            state_path: StatePath::Full,
         }
+    }
+
+    /// Bottleneck width of [`StatePath::LowRank`]. `d/2` keeps
+    /// `d·r + r·d = d²`, so the variant is parameter-for-parameter comparable
+    /// with the full projection.
+    pub fn state_rank(&self) -> usize {
+        (self.d / 2).max(1)
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
@@ -139,6 +166,13 @@ impl Edge0Config {
         push("state_pos", vec![self.max_state_tokens, d]);
         push("question_pos", vec![self.max_question_tokens, d]);
         push("path_embed", vec![self.paths, d]);
+        match self.state_path {
+            StatePath::Full | StatePath::Gate => push("state_proj", vec![d, d]),
+            StatePath::LowRank => {
+                push("state_down", vec![d, self.state_rank()]);
+                push("state_up", vec![self.state_rank(), d]);
+            }
+        }
         for _ in 0..self.state_blocks {
             push("state_attn_wq", vec![d, d]);
             push("state_attn_wk", vec![d, d]);
@@ -166,6 +200,12 @@ impl Edge0Config {
         push("noul_b", vec![self.paths]);
         push("score_w", vec![self.paths, d]);
         push("score_thresholds", vec![self.paths, self.max_levels - 1]);
+        // Appended last on purpose: every slot above keeps its offset, so a
+        // paired run initialises the shared parameters exactly as the
+        // learned-projection and raw-addition runs did.
+        if self.state_path == StatePath::Gate {
+            push("state_gate", vec![d, d]);
+        }
         out
     }
 
@@ -199,6 +239,12 @@ pub struct Edge0Slices {
     pub state_pos: Tensor,
     pub question_pos: Tensor,
     pub path_embed: Tensor,
+    /// `[d, d]` — projects the pooled state representation into the space added
+    /// to every question representation (`Full`/`Gate`).
+    pub state_proj: Option<Tensor>,
+    /// `[d, r]` and `[r, d]` — the low-rank factorization (`LowRank`).
+    pub state_down: Option<Tensor>,
+    pub state_up: Option<Tensor>,
     pub state: Vec<StateSlices>,
     pub question: Vec<QuestionSlices>,
     pub policy_w: Tensor,
@@ -207,6 +253,9 @@ pub struct Edge0Slices {
     pub noul_b: Tensor,
     pub score_w: Tensor,
     pub thresholds: Tensor,
+    /// `[d, d]` — a state-dependent gate on the projected state: the addition
+    /// is `sigmoid(state_rep · state_gate) ⊙ (state_rep · state_proj)` (`Gate`).
+    pub state_gate: Option<Tensor>,
 }
 
 pub struct StateSlices {
@@ -244,6 +293,10 @@ impl Edge0Slices {
         let state_pos = next();
         let question_pos = next();
         let path_embed = next();
+        let (state_proj, state_down, state_up) = match config.state_path {
+            StatePath::LowRank => (None, Some(next()), Some(next())),
+            StatePath::Full | StatePath::Gate => (Some(next()), None, None),
+        };
         let mut state = Vec::with_capacity(config.state_blocks);
         for _ in 0..config.state_blocks {
             state.push(StateSlices {
@@ -277,12 +330,20 @@ impl Edge0Slices {
         let noul_b = next();
         let score_w = next();
         let thresholds = next();
+        let state_gate = if config.state_path == StatePath::Gate {
+            Some(next())
+        } else {
+            None
+        };
         debug_assert!(it.next().is_none());
         Ok(Self {
             embed,
             state_pos,
             question_pos,
             path_embed,
+            state_proj,
+            state_down,
+            state_up,
             state,
             question,
             policy_w,
@@ -291,6 +352,7 @@ impl Edge0Slices {
             noul_b,
             score_w,
             thresholds,
+            state_gate,
         })
     }
 }
@@ -598,9 +660,39 @@ pub fn forward_with(
     let s = Edge0Slices::from_theta(theta, config)?;
     let state_rep = encode_state_with(&s, config, input.state, routing)?;
     let q_reps = encode_questions(&s, config, input)?;
+    // Map the pooled state into the question space once, then add it to every
+    // question rep. The state path is a learned slot, so the model can suppress
+    // or reshape the pooled state instead of only adding it; the declared
+    // variants replace that path with a gated projection or a low-rank
+    // factorization.
+    let state_add = match config.state_path {
+        StatePath::Full => state_rep
+            .unsqueeze(0)?
+            .broadcast_matmul(s.state_proj.as_ref().expect("full state projection"))?
+            .squeeze(0)?,
+        StatePath::Gate => {
+            let projected = state_rep
+                .unsqueeze(0)?
+                .broadcast_matmul(s.state_proj.as_ref().expect("gated state projection"))?
+                .squeeze(0)?;
+            let gate_logits = state_rep
+                .unsqueeze(0)?
+                .broadcast_matmul(s.state_gate.as_ref().expect("state gate"))?
+                .squeeze(0)?;
+            projected.mul(&sigmoid(&gate_logits)?)?
+        }
+        StatePath::LowRank => {
+            let down = state_rep
+                .unsqueeze(0)?
+                .broadcast_matmul(s.state_down.as_ref().expect("low-rank down"))?;
+            down.broadcast_matmul(s.state_up.as_ref().expect("low-rank up"))?
+                .squeeze(0)?
+        }
+    };
     let mut per_question = Vec::with_capacity(q_reps.len());
     for (q, rep) in input.questions.iter().zip(&q_reps) {
-        per_question.push(heads(&s, config, q, rep)?);
+        let rep = rep.add(&state_add)?;
+        per_question.push(heads(&s, config, q, &rep)?);
     }
     Ok(ModelOutput {
         per_question,

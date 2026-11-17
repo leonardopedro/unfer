@@ -20,8 +20,18 @@
 #   d-track         the D3–D6/E5 targeted gates (34 tests)       ~40 s
 #   edge0-campaign  E3/E4 reduced-budget mechanics               ~5 s
 #   r9-campaign     declared R9: 5 seeds, 2000 updates/arm        ~15–20 min
+#   r9-campaign-6   the same length with all six arms (current
+#                   model, so it includes the state_rep wiring)   ~50 min
+#   r9-state-rep    the 200-update state_rep wiring budget         ~9 min
+#   r9-state-rep-full  the 2000-update state_rep wiring budget     ~2 h
+#   r9-state-proj   the 200-update learned-projection budget       ~10 min
+#   r9-state-proj-full  the same projection at 2000 updates        ~1.4 h
+#   r9-state-gate   the state-dependent gate at 2000 updates       ~1.4 h
+#   r9-state-lowrank  the rank-4 state projection at 2000 updates   ~1.4 h
 #   r9-secondary    R9 weighted Brier / temperature / RPS / regret
 #                   from the campaign's exported predictions      ~5 s (needs r9-campaign)
+#   r9-secondary-proj-full  the same scores for the 2000-update
+#                   learned-projection predictions                 ~5 s (needs r9-state-proj-full)
 #   volume          §6.4(ii) Haar volume                        ~10 s
 #   mobility        §4.3 mobility/floor table                   ~1 min
 #   budget          the exact cap law + the dimension budget    ~3 min
@@ -62,7 +72,7 @@ cd "$(dirname "$0")/.."
 
 OUT="${OUT:-/tmp/pcnl-reproduce}"
 ALL_STAGES=(
-  test quick d-track edge0-campaign r9-campaign r9-secondary volume mobility step-scale step-scale-ref
+  test quick d-track edge0-campaign r9-campaign r9-campaign-6 r9-state-rep r9-state-rep-full r9-state-proj r9-state-proj-full r9-state-gate r9-state-lowrank r9-secondary r9-secondary-proj-full volume mobility step-scale step-scale-ref
   mh-standard
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
@@ -117,6 +127,76 @@ run_stage() {
       R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_predictions.ndjson}" \
       cargo run --release -p pcnl --example r9_campaign
     ;;
+  r9-campaign-6)
+    # The declared 2048/256/256/512 split and 2000-update length with all six
+    # arms.  The model now consumes `state_rep`, so this stage reproduces the
+    # current (wired) model, not the earlier pre-wiring `r9_full6` table; the
+    # status doc keeps that distinction explicit.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-3600}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_full6.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_full6_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-state-rep)
+    # The reduced wiring budget: six arms, 200 updates, same five seeds and
+    # fixed data seed as the control run.  Emits its own artifacts so it never
+    # overwrites the control or full-length ones.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-200}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-1200}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_state_rep.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_state_rep_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-state-rep-full)
+    # The 2000-update wiring budget, with the longer cap that the measured
+    # per-arm-update cost requires.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-6000}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_full6_state_rep.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_full6_state_rep_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-state-proj)
+    # The learned `state_proj` hypothesis: same reduced budget as r9-state-rep,
+    # but `rep + state_rep · W_s` with `W_s` trained.  Separate artifacts, so a
+    # comparison to the raw-addition run pairs by seed without overwriting it.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-200}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-1800}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_state_proj.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_state_proj_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-state-proj-full)
+    # The learned projection at the declared campaign length, with its own
+    # artifacts so it pairs by seed against r9-state-rep-full (raw addition)
+    # and r9-campaign-6 / r9_full6 (unwired) without overwriting either.
+    R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-7200}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_full6_state_proj.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_full6_state_proj_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
   r9-secondary)
     # Re-scores the stored per-question predictions: weighted Brier,
     # dev-fitted temperature scaling, ordinal RPS and decision regret.  Never
@@ -124,6 +204,46 @@ run_stage() {
     cargo run --release -p pcnl --example r9_secondary -- \
       "${R9_PRED_IN:-$OUT/r9_predictions.ndjson}" \
       "${R9_SECONDARY_OUT:-$OUT/r9_secondary.ndjson}"
+    ;;
+  r9-state-gate)
+    # The state-dependent gate on the projected state at the declared campaign
+    # length.  Own artifacts so it pairs by seed against r9-state-proj-full
+    # (full projection), r9-state-rep-full (raw addition) and r9-campaign-6
+    # (unwired).
+    R9_STATE_PATH=gate \
+      R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-7200}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_full6_state_gate.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_full6_state_gate_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-state-lowrank)
+    # The rank-4 (d/2) state projection at the declared campaign length. Same
+    # parameter count and slot offsets as the full projection, so it pairs by
+    # seed against r9-state-proj-full, r9-state-gate, r9-state-rep-full and
+    # r9-campaign-6.
+    R9_STATE_PATH=lowrank \
+      R9_SEEDS="${R9_SEEDS:-5}" \
+      R9_UPDATES="${R9_UPDATES:-2000}" \
+      R9_WARM_START="${R9_WARM_START:-30}" \
+      R9_BATCH_WORLDS="${R9_BATCH_WORLDS:-32}" \
+      R9_WALL_CAP="${R9_WALL_CAP:-7200}" \
+      R9_DATA_SEED="${R9_DATA_SEED:-20261115}" \
+      R9_OUT="${R9_OUT:-$OUT/r9_full6_state_lowrank.ndjson}" \
+      R9_PRED_OUT="${R9_PRED_OUT:-$OUT/r9_full6_state_lowrank_predictions.ndjson}" \
+      cargo run --release -p pcnl --example r9_campaign
+    ;;
+  r9-secondary-proj-full)
+    # The same endpoint set for the 2000-update learned-projection run, from
+    # its stored predictions.  Its own output so the control's
+    # `r9_secondary.ndjson` is never overwritten.
+    cargo run --release -p pcnl --example r9_secondary -- \
+      "${R9_PRED_IN:-$OUT/r9_full6_state_proj_predictions.ndjson}" \
+      "${R9_SECONDARY_OUT:-$OUT/r9_full6_state_proj_secondary.ndjson}"
     ;;
   volume)
     cargo run --release -p pcnl --example sphere_volume
