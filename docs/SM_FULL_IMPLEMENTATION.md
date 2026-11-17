@@ -13,7 +13,7 @@ performed by this planning update.
 The old 37/41-test counts below describe dated runs. Current source declares 13 exact-action,
 7 full-dictionary and 13 primary joint-SM tests, plus supporting suites; no current passing
 total is inferred from that inventory. Measured finite-reference errors, full-action tails
-and a rigorously enclosed full-flow bound are different result fields. N8 proposes the
+and a proposed rigorously enclosed full-flow bound are different result fields. N8 proposes the
 full-action defect `D=iVG-HV` certificate for the implemented rational generator.
 
 The current scope interpretation supersedes any physical-sector reading of the historical
@@ -121,10 +121,13 @@ cancellation estimate; it is labeled `conditionally-bounded`, and the identified
 self-adjoint `H`, physical reduction and Padé/rounding enclosure remain open.
 
 The independent finite fixture is a 4x4 Hermitian `H`, a 4x2 isometry and
-`G=V*HV`; its interval arithmetic rounds add/sub/mul/square/sqrt/exp outward and
-its spectral growth uses a directed Gershgorin bound on the returned `f64`
-Hermitian part. The returned `G` itself and the Padé flow are not enclosed, so
-the certificate remains conditional. The reader
+`G=V*HV`; its interval arithmetic rounds add/sub/mul/square/sqrt/exp outward,
+it encloses `HV` and `G` from the declared `H` and `V`, and its spectral growth
+uses a directed Gershgorin bound on the enclosed Hermitian part. The Padé flow
+remains unenclosed and the matrix-specific defect bound remains underived, so
+the certificate remains conditional; the Duhamel representation, integral bound
+and skew-adjoint flow bound are separately kernel-verified, but identifying
+`A = iH` for the actual matrix and the physical reduction remain open. The reader
 rejects missing, negative, nonfinite or zero-time budgets and mismatched
 operator/state/basis hashes, and refuses a status promotion to `certified`.
 
@@ -148,9 +151,14 @@ operator/state/basis hashes, and refuses a status promotion to `certified`.
 - The cutoff-1 JSON driver completed; the first-image tail remained
   `9.784770722594882`.
 
-The wide cutoff 2–4 tier (`SM_FULL_WIDE_CUTOFFS=1`) was **not** run. The sweep
-proves these suites pass on this tree/engine; it does not prove cutoff removal,
-physical reduction, interval enclosure of the solver, or any E2 claim.
+The opt-in wide cutoff 2–4 tier was run separately with
+`SM_FULL_WIDE_CUTOFFS=1` and exited 0. The three windows measured dimension
+230 / 638 / 1176 with leading full-action tails `4.038679200865053` /
+`1.2179612832516469` / `0.0`; the 13-test Hashimoto block took 306.27 s. These
+are observations on this tree, not cutoff-removal or performance guarantees.
+The sweep proves these suites pass on this tree/engine; it does not prove
+cutoff removal, physical reduction, interval enclosure of the solver, or any E2
+claim.
 
 ## N10 joint constraint dictionary (2026-11-15)
 
@@ -197,9 +205,37 @@ projected window.
   images close: matter worst `1.3844e-14`, gauge-occupied worst `1.4669e-13`
   (both `G_0`), at f64 roundoff scale. This is still a finite-image identity,
   not a physical cohomology statement.
+- **Bridge.** `fock_sirk/src/sm_constraints_bridge.rs::finite_constraint_bridge`
+  emits `docs/fixtures/sm_constraints_bridge.json` and binds the measured
+  residuals: 144 gauge-vacuum commutators (`5.5511e-17`), 64 gauge-occupied
+  SU(3) commutators (`4.4409e-16`), 18 BRST images with `Q^2 = 0` (f64 zero),
+  and 24 direct `[H,G_a]` images (`1.4669e-13`). It is `measured`, not
+  `certified`, and `artifact.quotient_map` remains deliberately `null`: no
+  field-level physical quotient or representative map is constructed.
+- **Finite CE quotient.** `fock_sirk/src/sm_brst_quotient.rs` constructs the
+  Chevalley–Eilenberg cochain complex of the twelve-generator gauge algebra in
+  its adjoint representation, truncated at ghost degree three, and binds it as
+  `artifact.finite_ce_quotient` in the same bridge. The cochain dimensions are
+  `[12, 144, 792, 2640]`, the differential ranks `[11, 132, 660]`, the measured
+  `Q^2` residual `6.66e-16`, the representation-closure residual `4.71e-16`, and
+  the cohomology dimensions `[1, 1, 0]` (degrees 0..2). Harmonic representatives
+  come from an SVD at tolerance `1e-9`, so these are measurements, not interval
+  enclosures. This is a finite adjoint CE quotient, **not** the field-theoretic
+  BRST complex.
+- **Field-level truncation audit.** The ghost-only restriction of the joint
+  charge is finite at ghost degree ≤3 and computes Lie-algebra homology, not
+  physical BRST cohomology. A direct probe of the full field-level
+  `brst_charge` shows that it removes one ghost and preserves the remaining
+  occupation, so the total-occupation filtration is `Q`-invariant (it maps
+  `N ≤ M` into `N ≤ M-1`). A finite field-level complex therefore exists; the
+  full Fock matrix at a fixed window and its cohomology have not yet been bound.
+  The finite adjoint CE quotient remains the rigorous finite algebraic quotient;
+  the field-level BRST complex is open but is not excluded by the cutoff.
 
 This is a finite-representation identity on the declared images, not a proof of
-physical BRST cohomology. The earlier `6.18e-1`/`4.95e-1` values were the
+physical BRST cohomology. The finite adjoint CE quotient is an actual finite
+quotient construction, but it does not identify the complete E1 operator's
+physical Hilbert space. The earlier `6.18e-1`/`4.95e-1` values were the
 three-colour/extra-coupling defect, not an electric-sector completion; the
 naive `sum_i p_dG,ii` trace was rejected for the independent-jet reason above.
 The earlier electric-only, matter-density (`||Q^2 psi|| ~ .1392044`) and 44-state
@@ -445,20 +481,51 @@ SM Hamiltonian, multi-mode CAR, physical sectors, a cutoff or a continuum.
 existing certificate reader. It binds the 4x4 Hermitian `H`, the 4x2 isometry `V`,
 the normalized seed, the point certificate and the interval terms. At `t = 0.2` the
 measured map error is `0.7546019867800926`, below the reported interval upper endpoint
-`1.0710554738382394`; the test recomputes both rather than trusting the fixture.
+`1.07105547383824`; the test recomputes both rather than trusting the fixture.
 
 The status is deliberately `conditionally-bounded`, not `certified`. The record
 carries `rounding.directed: true` with scope `add/sub/mul/square/sqrt/exp in
-interval_terms; Gershgorin row sums`. Endpoint arithmetic uses
-`next_down`/`next_up`, and `lambda_max(Re G)` is now bounded by directed
-Gershgorin row sums (`spectral_growth = [0, 1.4000000000000006]`,
-`spectral_growth_directed: true`). The overall bound is still diagnostic: the
-returned `f64` `G` itself is not enclosed (`spectral_input_enclosed: false`), and
-the measured error uses nalgebra's Padé exponential without a Padé-error
-enclosure (`pade_exponential_directed: false`). The theorem is not formalized.
+interval_terms; enclosed HV and V*HV; Gershgorin row sums`. Endpoint arithmetic
+uses `next_down`/`next_up`; `HV` and `G = V*HV` are enclosed from the declared
+`H` and `V` (`full_images_enclosed: true`, `spectral_input_enclosed: true`); and
+`lambda_max(Re G)` is bounded by directed Gershgorin row sums
+(`spectral_growth = [0, 1.4000000000000035]`). The overall bound remains
+`conditionally-bounded` because the matrix-specific defect bound is not derived
+from the matrix hypotheses and no physical reduction is identified. The measured error separately uses nalgebra's
+Padé exponential without a Padé-error enclosure
+(`pade_exponential_directed: false`), so it is a diagnostic witness rather than
+a certified one.
+
+The separate Lean theorem `BookProof.Sm.ChapterSmDefect.finite_map_endpoint`
+checks the 16-decimal endpoint arithmetic
+(`5*10^32*measured <= 5*10^32*leakage + defect*seed*flow`) and nanoda replays the
+273-declaration export. It does **not** prove variation of constants, the norm estimate, or the
+exponential bound. The separate analytic theorem below proves the Duhamel
+representation and its integral bound; `theorem.proof_status` stays `not-run`
+for the bridge's matrix-specific statement, and `finite_endpoint_proof` carries
+the endpoint scope.
 `fock_sirk/tests/sm_defect_bridge.rs` checks regeneration, `verify_bridge`,
-`verify_certificate`, the measured-versus-bound inequality, and rejects mutation
-or `certified` promotion.
+`verify_certificate`, the measured-versus-bound inequality, the endpoint proof
+hash, and rejects mutation or `certified` promotion.
+
+`fock_sirk/lean/SmDefectAnalytic.lean` now formalizes the missing
+variation-of-constants step. `duhamel_representation` proves, in a Banach
+algebra, that `u' = -A u + b` implies
+`u t = exp(-t A) u 0 + ∫ s in 0..t, exp(-(t-s)A) b s`. The theorem
+`norm_duhamel_representation_le` combines that identity with
+`norm_duhamel_integral_le` to prove the N8 shape
+`||u t|| <= leakage + t*defect*seed*exp(omega*t)`. The remaining analytic input
+is the contractive flow bound `||exp(-(t-s)A)|| <= 1`; `norm_exp_neg_smul_skew`
+discharges it for every skew-adjoint `A` (`star A = -A`) because the exponential
+is unitary, and `norm_duhamel_representation_le_of_skew` packages the resulting
+bound. For the actual N8 matrix `A = iH`, the remaining step is identifying that
+generator and the physical reduction. The Mathlib dependency is a non-default
+`SmDefectAnalytic` target, so the endpoint build stays independent. The gzip
+fixture is replayed by decompressing it, checking the raw sha256
+`83e3571e…14ed31`, and running nanoda, which verifies **38,336 declarations**.
+The N8 bridge keeps `theorem.proof_status: not-run` for its matrix-specific
+statement and records this kernel-verified conditional theorem separately as
+`analytic_defect_proof`.
 
 ### Artifact references
 
@@ -467,7 +534,12 @@ or `certified` promotion.
 | `fock_sirk/lean/SmCar.lean` | `7899f4ae4af4902da1c9d695d96bb07587d48bd9f5bcaccbbf3eeb46661efdaf` | six finite CAR theorems |
 | `docs/fixtures/sm_car_proof.ndjson` | `63ef7a554198a5bf9eb04b73c2c9e61950b97689c9265eb4327e0cccdf17c1e5` | nanoda payload, 187 declarations |
 | `docs/fixtures/sm_car_bridge.json` | `9bed343105004bfe3e5f380fb0a9b9275ab96786a0e9b72c52affb6e25a7eadc` | bridge file; record digest `766142f3…b7f43797` |
-| `docs/fixtures/sm_defect_bridge.json` | `ed038127c7f5434394e68fb6fdd4374748be2efa1781a9d138f05f3cc0c53bae` | bridge file; record digest `cadfbb0f…711bb2a7` |
+| `fock_sirk/lean/SmDefect.lean` | `ef1df79e448dbdfcb116902b7bb62157c65448d4b1c78be4967063e694d98342` | N8 finite endpoint theorem |
+| `docs/fixtures/sm_defect_proof.ndjson` | `1c7bc930eef88f85e9f743db32ffcace60ce2c2ad3cf08bdb8cc9e6bb1cc7261` | nanoda payload, 273 declarations |
+| `fock_sirk/lean/SmDefectAnalytic.lean` | `7d88770da2da8a6190e8f5db1a317ec0758e7ab965b085f058b74471521a857e` | N8 Duhamel + skew-adjoint flow bound (Mathlib) |
+| `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
+| `docs/fixtures/sm_defect_bridge.json` | `51168b8180327ac9f05d17e008bd45713fb5804e59898c9096eadbb15dbbd09b` | bridge file; record digest `3107e646…cc75ff` |
+| `docs/fixtures/sm_constraints_bridge.json` | `cc8f5504f7d6a28f184ed6326b19b1c416cb6d1635f5b006c7ced5d2358e6aa1` | N10 finite constraint + finite CE bridge; record digest `80e3ad0c…4b2f51` |
 
 ### N6–N14 disposition
 
@@ -475,9 +547,9 @@ or `certified` promotion.
 |---|---|---|
 | N6 | `measured` | replayable baseline; not a numerical/physical certificate |
 | N7 | `source-present` | named dictionary, no action-agreement theorem |
-| N8 | `conditionally-bounded` | directed arithmetic/Gershgorin bound; returned `G` and Padé flow not enclosed |
+| N8 | `conditionally-bounded` | enclosed `HV`/`V*HV` + Gershgorin bound; Duhamel representation, integral bound and skew-adjoint flow bound kernel-verified; identifying `A = iH` for the actual matrix, physical reduction and Padé witness open |
 | N9 | `measured` / negative feasibility | 70/230-state cells and Mehler tails; no 40/163-mode speedup |
-| N10 | `measured` finite-image identity | constraint closure, not physical BRST cohomology |
+| N10 | `measured` finite-image identity + finite adjoint CE | constraint closure and finite CE quotient `[1,1,0]`; no field-level BRST cohomology |
 | N11 | inconclusive, closed | uniform N8 window defect blocks the response |
 | N12 | negative cutoff-artifact result | fixed-`G4` matching is not cutoff-stable |
 | N13 | `certified` finite CAR record | one mode, two states; no SM operator claim |
@@ -513,21 +585,50 @@ cd ../..
 cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
   docs/fixtures/sm_car_proof.ndjson
 
-# Finite CAR fixture and N8 defect bridge
+# N8 finite endpoint arithmetic proof (273 declarations, nanoda replay)
+cd fock_sirk/lean
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake build
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake env \
+  /tmp/lean4export/.lake/build/bin/lean4export SmDefect -- \
+  BookProof.Sm.ChapterSmDefect.finite_map_endpoint \
+  > ../../docs/fixtures/sm_defect_proof.ndjson
+cd ../..
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+  docs/fixtures/sm_defect_proof.ndjson
+
+# N8 Duhamel + skew-adjoint proof (Mathlib; 38,336 declarations, gzip fixture)
+cd fock_sirk/lean
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake build SmDefectAnalytic
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake env \
+  /tmp/lean4export/.lake/build/bin/lean4export SmDefectAnalytic -- \
+  BookProof.Sm.ChapterSmDefectAnalytic.norm_duhamel_representation_le_of_skew \
+  | gzip -9 -n > ../../docs/fixtures/sm_defect_analytic_proof.ndjson.gz
+cd ../..
+gzip -dc docs/fixtures/sm_defect_analytic_proof.ndjson.gz > /tmp/sm_defect_analytic.ndjson
+sha256sum /tmp/sm_defect_analytic.ndjson  # 83e3571e...14ed31
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+  /tmp/sm_defect_analytic.ndjson
+
+# Finite CAR fixture, N8 defect bridge and N10 constraint bridge
 cargo run --locked --offline --release -q -p fock_sirk --example sm_car_bridge \
   > docs/fixtures/sm_car_bridge.json
 cargo run --locked --offline --release -q -p fock_sirk --example sm_defect_bridge \
   > docs/fixtures/sm_defect_bridge.json
+cargo run --locked --offline --release -q -p fock_sirk --example sm_constraints_bridge \
+  > docs/fixtures/sm_constraints_bridge.json
 cargo test --locked --offline --release -q -p fock_sirk \
-  --test sm_car_bridge --test sm_defect --test sm_defect_bridge
+  --test sm_car_bridge --test sm_defect --test sm_defect_bridge \
+  --test sm_constraints_bridge
 
 # Full default gate (includes the nanoda replay step)
 scripts/run-sm-full-validation
 ```
 
-Fresh default sweep `target/sm-full-sweep21.log`: **exit 0, 64 test-result passes,
-0 failures**, including 3 CAR-bridge tests, 3 defect-bridge tests, 19 gauge-fixed
-CHECK rows, 54 Faris–Lavine CHECK rows, and the nanoda replay. The N12 assertions
+Fresh default sweep `target/sm-full-check.log`: **exit 0, 69 test-result passes,
+0 failures**, including 3 CAR-bridge tests, 4 defect-bridge tests, 4 N10
+constraint/CE-bridge tests, 19 gauge-fixed CHECK rows, 54 Faris–Lavine CHECK
+rows, and all three nanoda replays (187, 273 and 38,336 declarations). The N12
+assertions
 still pass unchanged: fixed embedding exact, running
 `lambda = 0.050000000 .. 0.049769124`, `G4` residual `6.76e-11`, fixed-`lambda` cutoff
 spread `2.70`, and the cutoff-6 high branch still shifted. These remain measured or
@@ -909,10 +1010,10 @@ peak); the budget-refinement cross-check now uses a single shifted solve. The
 point costs about 122 s.
 
 A full wide-tier sweep (`SM_FULL_WIDE_CUTOFFS=1 ./scripts/run-sm-full-validation`)
-exited 0 in 7:39.52 with a peak RSS of 8.10 GB, all 41 tests green and the
-cutoff 2/3/4 tails reproduced exactly (`4.038679200865053` /
-`1.2179612832516469` / `0.0` on dimensions 230 / 638 / 1176). These are
-observations, not performance guarantees.
+exited 0 on this tree with all 67 test-result passes green, and the cutoff 2/3/4
+tails reproduced exactly (`4.038679200865053` / `1.2179612832516469` / `0.0` on
+dimensions 230 / 638 / 1176); the 13-test Hashimoto block took 306.27 s. These
+are observations, not performance guarantees.
 
 ### Physics invariants under the compressed flow
 

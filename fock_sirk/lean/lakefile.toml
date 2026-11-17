@@ -1,5 +1,16 @@
 name = "sm_car"
-defaultTargets = ["SmCar"]
+defaultTargets = ["SmCar", "SmDefect"]
 
 [[lean_lib]]
 name = "SmCar"
+
+[[lean_lib]]
+name = "SmDefect"
+
+[[lean_lib]]
+name = "SmDefectAnalytic"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "v4.28.0"

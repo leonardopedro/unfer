@@ -153,13 +153,22 @@ bound on the returned solve and the cutoff-1 cell reports
 `leakage=2.41e-8`, `||D||_F=17.19`, `bound=0.1719` at `t=.01`, labeled
 `conditionally-bounded`. A 4x4 endpoint fixture reports the direct map error and
 the reader rejects invalid/mismatched certificates. Its arithmetic endpoints now
-use directed `f64` rounding (`next_down`/`next_up`), and `lambda_max(Re G)` is
-bounded by directed Gershgorin row sums on the returned Hermitian part. The
-returned `f64` `G` itself and the measured Padé flow are not enclosed, so
-`evolution_bound.hi` remains diagnostic, not a certified enclosure. The
-2026-11-16 bridge `docs/fixtures/sm_defect_bridge.json` binds the actual fixture,
-certificate and measured error, and records `rounding.directed: true` with those
-`G`/Padé gaps left explicit. See
+use directed `f64` rounding (`next_down`/`next_up`), `HV` and `G=V*HV` are
+enclosed from the declared `H` and `V`, and `lambda_max(Re G)` is bounded by
+directed Gershgorin row sums on the enclosed Hermitian part. The
+Duhamel representation and integral bound are kernel-verified in
+`SmDefectAnalytic.lean` (Mathlib): for `u' = -A u + b`,
+`u t = exp(-tA)u0 + ∫ exp(-(t-s)A)b s`, and the N8-shaped bound follows from an
+initial bound and a source bound. The flow bound `||exp(-(t-s)A)|| <= 1` is
+proved for every skew-adjoint `A` via unitarity. Identifying `A = iH` for the
+actual matrix and the physical reduction remain open; `evolution_bound.hi`
+therefore stays `conditionally-bounded`. The separately measured Padé flow is a diagnostic
+witness. The 2026-11-16 bridge
+`docs/fixtures/sm_defect_bridge.json` binds the actual fixture, certificate and
+measured error, and records `rounding.directed: true` plus the kernel-verified
+conditional analytic payload. The separate
+`BookProof.Sm.ChapterSmDefect.finite_map_endpoint` theorem is kernel-verified by
+nanoda but checks only the finite endpoint arithmetic. See
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n8-finite-map-defect-bridge-is-conditionally-bounded).
 
 SM6 proposes an immediately useful finite-map theorem. With isometric V, reduced G,
@@ -263,9 +272,16 @@ checked directly on matter and gauge-occupied images, closing at `1.4e-14`
 (matter) and `1.5e-13` (gauge, `G_0`); this covers the generators that a
 single-ghost `[H,Q]` image can hide. No `d_i E_i` trace or jet kinetic term is
 needed: with independent jets the trace commutes with `A E`. The metric/ghost
-parity counterexample remains in `fock_sirk/tests/sm_constraints.rs`. Physical
-cohomology and the representative/quotient map remain **unimplemented**. See
-[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n10-consistency-record-2026-11-15-scoped).
+parity counterexample remains in `fock_sirk/tests/sm_constraints.rs`. A finite
+adjoint Chevalley–Eilenberg quotient is implemented in
+`fock_sirk/src/sm_brst_quotient.rs`: cochain dimensions `[12,144,792,2640]`,
+ranks `[11,132,660]`, `Q^2` residual `6.66e-16`, and cohomology dimensions
+`[1,1,0]`. Field-level physical cohomology and the representative/quotient map
+remain **unimplemented**. The proof-facing bridge
+`docs/fixtures/sm_constraints_bridge.json` is `measured`: it binds the finite
+residuals above, embeds the finite CE quotient, and keeps the field-level
+`quotient_map: null`. See
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n10-joint-constraint-dictionary-2026-11-15).
 
 The present electric-only and electric-plus-matter-density tests are diagnostic probes,
 not a complete joint BRST construction. The recorded matter-density probe has
@@ -520,12 +536,15 @@ and actual-charge design before physical-sector interpretations. Execute the bou
 pilot, then a selected **N11** observable if its representation/error requirements hold.
 N13 supports these packets throughout; N12 is the separately budgeted field-theory track.
 
-*Executed 2026-11-16:* the baseline runner
+*Executed 2026-11-17:* the baseline runner
 [run-sm-full-validation](../scripts/run-sm-full-validation) was run on this tree.
-`target/sm-full-sweep21.log` exited 0 with **64 test-result passes, 0 failures**,
-including the 19 gauge-fixed and 54 Faris–Lavine CHECK rows, the CAR/defect bridge
-suites, the N12 assertions, and the nanoda replay of the 187-declaration CAR payload.
-The wide cutoff tier remains opt-in and was not run. The consolidated record is
+`target/sm-full-check.log` exited 0 with **69 test-result passes, 0 failures**,
+including the 19 gauge-fixed and 54 Faris–Lavine CHECK rows, the CAR/defect/N10
+bridge suites, the N12 assertions, and all three nanoda replays (187-declaration
+CAR, 273-declaration N8 endpoint and 38,336-declaration N8 Duhamel payloads).
+The opt-in wide cutoff tier was run separately and exited 0; it measured
+230/638/1176-state windows with leading tails `4.038679200865053` /
+`1.2179612832516469` / `0.0`. The consolidated record is
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n13n14-consolidated-execution-record-2026-11-16-this-working-tree).
 
 Record each completed experiment in the implementation ledger with exact manifest/artifact

@@ -1,4 +1,15 @@
 {
+  "analytic_defect_proof": {
+    "checker": "nanoda_lib via prob_kernel::verify::verify_export",
+    "compressed_payload_sha256": "ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445",
+    "declarations": 38336,
+    "lean_name": "BookProof.Sm.ChapterSmDefectAnalytic.norm_duhamel_representation_le_of_skew",
+    "payload": "docs/fixtures/sm_defect_analytic_proof.ndjson.gz",
+    "payload_sha256": "83e3571ed458dff72b086934d57724be3b4763f47d58a07439b401c0d714ed31",
+    "proof_status": "kernel-verified",
+    "scope": "Duhamel representation and skew-adjoint flow bound formalized; identifying A = iH for the actual declared matrix and the physical reduction are open",
+    "statement": "for u' = -A u + b with star A = -A, u t = exp(-t A) u 0 + integral exp(-(t-s)A) b s, and ||u t|| <= leakage + t*defect*seed*exp(omega*t) when ||exp(-t A) u 0|| <= leakage and ||b s|| <= defect*seed*exp(omega*t)"
+  },
   "artifact": {
     "certificate": {
       "assumptions": [
@@ -25,18 +36,150 @@
       "status": "conditionally-bounded",
       "theorem": "||exp(-itH)psi - V exp(tG)V*psi|| <= leakage + t ||D|| ||V*psi|| exp(omega_+ t)"
     },
+    "full_images_enclosure": [
+      [
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.7000000000000006,
+            "lo": 0.6999999999999993
+          }
+        },
+        {
+          "im": {
+            "hi": -0.29999999999999966,
+            "lo": -0.3000000000000003
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.20000000000000018,
+            "lo": 0.19999999999999984
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        }
+      ],
+      [
+        {
+          "im": {
+            "hi": 0.30000000000000027,
+            "lo": 0.2999999999999997
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 1.1000000000000012,
+            "lo": 1.099999999999999
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.15000000000000013,
+            "lo": 0.14999999999999986
+          }
+        }
+      ]
+    ],
+    "generator_enclosure": [
+      [
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 0.7000000000000013,
+            "lo": 0.6999999999999986
+          }
+        },
+        {
+          "im": {
+            "hi": 0.3000000000000006,
+            "lo": 0.2999999999999994
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        }
+      ],
+      [
+        {
+          "im": {
+            "hi": -0.2999999999999994,
+            "lo": -0.3000000000000006
+          },
+          "re": {
+            "hi": 0.0,
+            "lo": 0.0
+          }
+        },
+        {
+          "im": {
+            "hi": 0.0,
+            "lo": 0.0
+          },
+          "re": {
+            "hi": 1.1000000000000023,
+            "lo": 1.0999999999999979
+          }
+        }
+      ]
+    ],
     "interval_terms": {
       "defect_frobenius": {
-        "hi": 1.9551214796017173,
-        "lo": 1.9551214796017173
+        "hi": 1.9551214796017202,
+        "lo": 1.9551214796017202
       },
       "evolution_bound": {
-        "hi": 1.0710554738382394,
-        "lo": 1.0710554738382385
+        "hi": 1.07105547383824,
+        "lo": 1.0710554738382394
       },
       "flow_growth": {
-        "hi": 1.3231298123374373,
-        "lo": 1.3231298123374373
+        "hi": 1.3231298123374382,
+        "lo": 1.3231298123374382
       },
       "initial_leakage": {
         "hi": 0.7032108464077437,
@@ -47,7 +190,7 @@
         "lo": 0.7109813678954653
       },
       "spectral_growth": {
-        "hi": 1.4000000000000006,
+        "hi": 1.4000000000000035,
         "lo": 0.0
       },
       "time": {
@@ -59,25 +202,36 @@
     "measured_within_interval_hi": true,
     "rounding": {
       "directed": true,
+      "full_images_enclosed": true,
       "mode": "f64-directed-endpoints",
-      "note": "endpoint arithmetic rounds outward and lambda_max(Re G) is Gershgorin-bounded, but the returned f64 G itself is not enclosed and the measured flow uses Pade, so evolution_bound.hi remains diagnostic, not certified",
+      "note": "endpoint arithmetic rounds outward, HV and V*HV are enclosed from the declared H and V, and lambda_max(Re G) is Gershgorin-bounded; the Duhamel representation, integral bound and skew-adjoint flow bound are kernel-verified, but identifying A = iH for the actual declared matrix and the physical reduction remain open, so evolution_bound.hi is a directed bound for the finite fixture, not a physical certificate; the measured map error separately uses Pade without an error enclosure",
       "pade_exponential_directed": false,
-      "scope": "add/sub/mul/square/sqrt/exp in interval_terms; Gershgorin row sums",
+      "scope": "add/sub/mul/square/sqrt/exp in interval_terms; enclosed HV and V*HV; Gershgorin row sums",
       "spectral_growth_directed": true,
-      "spectral_growth_scope": "Gershgorin upper bound on the returned f64 Hermitian part",
-      "spectral_input_enclosed": false
+      "spectral_growth_scope": "Gershgorin upper bound on the enclosed Hermitian part of V*HV",
+      "spectral_input_enclosed": true
     },
     "time": 0.2
   },
-  "artifact_sha256": "cadfbb0fc169332961d91d5bba438f753517c9c42bb2f44779dd4e08711bb2a7",
+  "artifact_sha256": "3107e64655e91dc72f1c2613fb858d7778e375781a9b22b3104b01ca17cc75ff",
   "claim_id": "n8_finite_map_defect",
   "endpoint": "N8-finite-map",
+  "finite_endpoint_proof": {
+    "checker": "nanoda_lib via prob_kernel::verify::verify_export",
+    "declarations": 273,
+    "lean_name": "BookProof.Sm.ChapterSmDefect.finite_map_endpoint",
+    "payload": "docs/fixtures/sm_defect_proof.ndjson",
+    "payload_sha256": "1c7bc930eef88f85e9f743db32ffcace60ce2c2ad3cf08bdb8cc9e6bb1cc7261",
+    "proof_status": "kernel-verified",
+    "scope": "finite endpoint arithmetic only; the Duhamel/flow theorem is separate",
+    "statement": "5*10^32*measured <= 5*10^32*leakage + defect*seed*flow for the declared 16-decimal N8 endpoint rationals"
+  },
   "hypotheses": [
     "H is the declared finite 4x4 Hermitian matrix; its hash is bound under operator.identity_sha256.",
     "V is the declared 4x2 isometry and G = V* H V; its hash is bound under state.identity_sha256.",
     "The bound's exponential is exact; the measured map error uses nalgebra's Pade exp and is a check, not an enclosure.",
-    "interval_terms uses directed f64 endpoints and a Gershgorin spectral bound; the returned f64 G and the Pade flow are not enclosed, so its hi endpoint is diagnostic, not a certified enclosure.",
-    "No proof assistant has formalized the finite-map defect inequality."
+    "interval_terms uses directed f64 endpoints, encloses HV and G = V*HV from the declared H and V, and applies a Gershgorin spectral bound; its hi endpoint is a directed bound for the finite fixture, not a physical reduction certificate.",
+    "The endpoint Lean proof checks only the finite arithmetic; the analytic Lean proof derives the Duhamel representation, the integral bound, and the skew-adjoint flow bound, leaving only the identification A = iH for the actual declared matrix and the physical reduction."
   ],
   "not_claimed": [
     "No SM cell, physical-sector reduction, cutoff or continuum claim.",
@@ -102,7 +256,7 @@
   "theorem": {
     "lean_name": "Analytic.SmDefect.finite_map",
     "proof_status": "not-run",
-    "remaining": "The inequality is analytic, but it is not formalized in Lean. Interval arithmetic and the Gershgorin spectral bound have directed endpoints, but the returned f64 G itself is not enclosed and the measured map error uses nalgebra's Pade exponential; neither is enclosed.",
+    "remaining": "The Duhamel representation and the N8 bound are kernel-verified for a skew-adjoint generator A, including the flow bound ||exp((-r)A)|| = 1. Identifying A = iH for the actual declared matrix and the physical reduction remain open; the measured map error separately uses nalgebra's Pade exponential without an error enclosure.",
     "statement": "||exp(-itH) psi - V exp(tG) V* psi|| <= leakage + t ||D|| ||V* psi|| exp(omega_+ t)"
   }
 }

@@ -116,11 +116,30 @@ cargo test --locked --offline --release -p fock_sirk \
     --test sm_full_hashimoto --test sm_gauge_fixed_validation \
     --test sm_named_dictionary --test sm_car_bridge --test sm_defect \
     --test sm_defect_bridge --test sm_constraints --test sm_joint_constraints \
+    --test sm_constraints_bridge \
     -- --test-threads=1
 
 step "N13 CAR proof: pinned lean4export payload replayed by nanoda"
 cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
     docs/fixtures/sm_car_proof.ndjson
+
+step "N8 finite endpoint proof: pinned lean4export payload replayed by nanoda"
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    docs/fixtures/sm_defect_proof.ndjson
+
+step "N8 analytic defect proof: gzip payload replayed by nanoda"
+analytic="$(mktemp --suffix=.ndjson)"
+trap 'rm -f "$probe" ${json:+"$json"} "$analytic"' EXIT
+gzip -dc docs/fixtures/sm_defect_analytic_proof.ndjson.gz > "$analytic"
+analytic_sha="$(sha256sum "$analytic" | awk '{print $1}')"
+expected_sha="83e3571ed458dff72b086934d57724be3b4763f47d58a07439b401c0d714ed31"
+if [[ $analytic_sha != "$expected_sha" ]]; then
+    echo "analytic payload digest mismatch: $analytic_sha (expected $expected_sha)" >&2
+    exit 65
+fi
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    "$analytic"
+rm -f "$analytic"
 
 step "fock_sirk: N12 finite-mode pilot"
 n12="$(mktemp)"

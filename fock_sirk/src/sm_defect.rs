@@ -11,14 +11,16 @@
 //!
 //! where `omega_+ = max(0, lambda_max(Re G))` covers the returned inexact
 //! generator. The `f64` path is a measured estimate. [`interval_terms`] repeats
-//! it with directed `f64` endpoints and a Gershgorin bound on the returned
-//! Hermitian part, but the returned `G` itself is not enclosed and the measured
-//! flow uses nalgebra's Padé exponential. Its `hi` endpoint is therefore a
-//! diagnostic bound, not a certified enclosure. Neither path is an unconditional
-//! physical-SM certificate: the self-adjoint operator, the physical reduction,
-//! the solver's `G` and the GMRES/Padé bridge remain assumptions.
+//! it with directed `f64` endpoints, encloses `G = V* H V` from the declared
+//! `H` and `V`, and applies a Gershgorin bound to the enclosed Hermitian part.
+//! Its `hi` endpoint is therefore a directed bound on the declared finite
+//! matrices, but still not a certified enclosure of a physical reduction. The
+//! separately measured map error uses nalgebra's Padé exponential and is only a
+//! diagnostic witness. Neither path is an unconditional physical-SM certificate:
+//! the self-adjoint operator, the physical reduction, and the matrix-specific
+//! defect bound remain assumptions.
 
-use crate::sm_bridge::{bind_artifact, canonical_json_sha256};
+use crate::sm_bridge::{bind_artifact, canonical_json_sha256, sha256_hex};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::NestedVector;
 use num_complex::Complex64 as C;
@@ -26,6 +28,8 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 pub const DEFECT_SCHEMA: &str = "sm-defect-certificate/v1";
+
+const SM_DEFECT_PROOF: &[u8] = include_bytes!("../../docs/fixtures/sm_defect_proof.ndjson");
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Interval {
@@ -382,12 +386,85 @@ pub struct IntervalTerms {
     pub evolution_bound: Interval,
 }
 
-/// Gershgorin upper bound on `lambda_max(Re G)` for the returned floating `G`.
-/// Each row disc is evaluated with directed complex magnitudes; the maximum
-/// row upper endpoint bounds every eigenvalue of the computed Hermitian part.
-/// This does not enclose the solver's `G` itself, only the Hermitian matrix
-/// assembled from its returned `f64` entries.
-fn hermitian_growth_upper(generator: &[Vec<C>]) -> Interval {
+fn abs_upper(interval: Interval) -> f64 {
+    interval.lo.abs().max(interval.hi.abs())
+}
+
+fn zero_interval() -> ComplexInterval {
+    ComplexInterval::point(C::new(0.0, 0.0))
+}
+
+fn complex_conj(value: ComplexInterval) -> ComplexInterval {
+    ComplexInterval {
+        re: value.re,
+        im: value.im.neg(),
+    }
+}
+
+fn interval_matmul(
+    left: &[Vec<ComplexInterval>],
+    right: &[Vec<ComplexInterval>],
+) -> Vec<Vec<ComplexInterval>> {
+    assert!(!left.is_empty());
+    assert_eq!(left[0].len(), right.len());
+    let columns = right.first().map_or(0, Vec::len);
+    let mut product = vec![vec![zero_interval(); columns]; left.len()];
+    for (row, output) in product.iter_mut().enumerate() {
+        for (column, entry) in output.iter_mut().enumerate() {
+            let mut sum = zero_interval();
+            for (inner, factor) in left[row].iter().enumerate() {
+                sum = sum.add(factor.mul(right[inner][column]));
+            }
+            *entry = sum;
+        }
+    }
+    product
+}
+
+fn interval_dense(matrix: &DMatrix<C>) -> Vec<Vec<ComplexInterval>> {
+    (0..matrix.nrows())
+        .map(|row| {
+            (0..matrix.ncols())
+                .map(|column| ComplexInterval::point(matrix[(row, column)]))
+                .collect()
+        })
+        .collect()
+}
+
+fn interval_adjoint(matrix: &[Vec<ComplexInterval>]) -> Vec<Vec<ComplexInterval>> {
+    (0..matrix[0].len())
+        .map(|row| {
+            (0..matrix.len())
+                .map(|column| complex_conj(matrix[column][row]))
+                .collect()
+        })
+        .collect()
+}
+
+/// Enclose the columns of `H V` from the exact declared `f64` matrices, in the
+/// same column-per-basis-vector layout as [`interval_terms`]. Every add and
+/// multiply rounds outward, so each endpoint bounds the exact real-arithmetic
+/// product for the declared input data.
+pub fn full_images_enclosure(h: &DMatrix<C>, v: &DMatrix<C>) -> Vec<Vec<ComplexInterval>> {
+    let product = interval_matmul(&interval_dense(h), &interval_dense(v));
+    (0..product[0].len())
+        .map(|column| (0..product.len()).map(|row| product[row][column]).collect())
+        .collect()
+}
+
+/// Enclose `G = V* H V` from the exact declared `f64` matrices. Every add and
+/// multiply rounds outward, so each endpoint bounds the exact real-arithmetic
+/// product for the declared input data.
+pub fn reduced_generator_enclosure(h: &DMatrix<C>, v: &DMatrix<C>) -> Vec<Vec<ComplexInterval>> {
+    let v = interval_dense(v);
+    let hv = interval_matmul(&interval_dense(h), &v);
+    interval_matmul(&interval_adjoint(&v), &hv)
+}
+
+/// Gershgorin upper bound on `lambda_max(Re G)` for an enclosed `G`. Each row
+/// disc uses directed complex magnitudes; the maximum row upper endpoint bounds
+/// every eigenvalue of every matrix in the interval family.
+fn hermitian_growth_upper(generator: &[Vec<ComplexInterval>]) -> Interval {
     let n = generator.len();
     let half = Interval::point(0.5);
     let mut bound = 0.0_f64;
@@ -397,29 +474,22 @@ fn hermitian_growth_upper(generator: &[Vec<C>]) -> Interval {
             if row == column {
                 continue;
             }
-            let re = Interval::point(generator[row][column].re)
-                .add(Interval::point(generator[column][row].re))
+            // Re G[row][column] = (G[row][column] + conj G[column][row]) / 2.
+            let re = generator[row][column]
+                .re
+                .add(generator[column][row].re)
                 .mul(half);
-            let im = Interval::point(generator[row][column].im)
-                .sub(Interval::point(generator[column][row].im))
+            let im = generator[row][column]
+                .im
+                .sub(generator[column][row].im)
                 .mul(half);
-            let modulus = add_up(
-                Interval {
-                    lo: re.lo.abs().max(re.hi.abs()),
-                    hi: re.lo.abs().max(re.hi.abs()),
-                }
-                .square_upper(),
-                Interval {
-                    lo: im.lo.abs().max(im.hi.abs()),
-                    hi: im.lo.abs().max(im.hi.abs()),
-                }
-                .square_upper(),
-            )
-            .sqrt();
+            let re_abs = abs_upper(re);
+            let im_abs = abs_upper(im);
+            let modulus = add_up(mul_up(re_abs, re_abs), mul_up(im_abs, im_abs)).sqrt();
             radius = add_up(radius, up(modulus));
         }
-        let center = generator[row][row].re;
-        bound = bound.max(add_up(center, radius));
+        // The diagonal of the Hermitian part is Re G[row][row].
+        bound = bound.max(add_up(generator[row][row].re.hi, radius));
     }
     Interval {
         lo: 0.0,
@@ -438,15 +508,17 @@ fn ci_norm_square(sum: &mut Interval, z: ComplexInterval) {
 ///
 /// Addition, subtraction, multiplication, square and sqrt round outward with
 /// `next_down`/`next_up`; `exp` also rounds its upper endpoint outward. The
-/// inputs are exact `f64` data. The spectral growth is a directed Gershgorin
-/// bound on the Hermitian matrix assembled from the returned `G`, not an
-/// enclosure of the solver's `G`; the result is therefore still a diagnostic
-/// bound rather than a certified interval certificate. The caller owns the
-/// theorem and solve/flow hypotheses.
+/// basis and state are exact `f64` data; `full_images` and `generator` must
+/// enclose `H V` and `V* H V` from the declared `H` and `V` (see
+/// [`full_images_enclosure`] and [`reduced_generator_enclosure`]). The spectral
+/// growth is a directed Gershgorin bound on the enclosed Hermitian part. The
+/// result is a directed bound for the declared finite matrices, not a physical
+/// reduction certificate. The measured map error separately uses Padé without
+/// an error enclosure. The caller owns the theorem hypotheses.
 pub fn interval_terms(
     basis: &[Vec<C>],
-    full_images: &[Vec<C>],
-    generator: &[Vec<C>],
+    full_images: &[Vec<ComplexInterval>],
+    generator: &[Vec<ComplexInterval>],
     state: &[C],
     time: f64,
 ) -> IntervalTerms {
@@ -457,7 +529,7 @@ pub fn interval_terms(
         slice.iter().copied().map(ComplexInterval::point).collect()
     };
     let basis: Vec<Vec<ComplexInterval>> = basis.iter().map(|v| to_vec(v)).collect();
-    let images: Vec<Vec<ComplexInterval>> = full_images.iter().map(|v| to_vec(v)).collect();
+    let images = full_images.to_vec();
     let state: Vec<ComplexInterval> = to_vec(state);
     let zero = ComplexInterval::point(C::new(0.0, 0.0));
     // coefficients c_j = <v_j, psi>
@@ -495,7 +567,11 @@ pub fn interval_terms(
     for column in 0..rank {
         let mut d: Vec<ComplexInterval> = vec![zero; state.len()];
         for (row, v) in basis.iter().enumerate() {
-            let factor = ComplexInterval::point(C::i() * generator[row][column]);
+            let value = generator[row][column];
+            let factor = ComplexInterval {
+                re: value.im.neg(),
+                im: value.re,
+            };
             for (out, x) in d.iter_mut().zip(v) {
                 *out = out.add(x.mul(factor));
             }
@@ -585,14 +661,16 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
     let basis: Vec<Vec<C>> = (0..2)
         .map(|column| (0..4).map(|row| v[(row, column)]).collect())
         .collect();
-    let images: Vec<Vec<C>> = (0..2)
-        .map(|column| (0..4).map(|row| (&h * &v).column(column)[row]).collect())
-        .collect();
     let state: Vec<C> = psi.iter().copied().collect();
-    let generator_columns: Vec<Vec<C>> = (0..2)
-        .map(|column| (0..2).map(|row| generator[(row, column)]).collect())
-        .collect();
-    let interval = interval_terms(&basis, &images, &generator_columns, &state, time);
+    let images_enclosure = full_images_enclosure(&h, &v);
+    let generator_enclosure = reduced_generator_enclosure(&h, &v);
+    let interval = interval_terms(
+        &basis,
+        &images_enclosure,
+        &generator_enclosure,
+        &state,
+        time,
+    );
     // Dense point terms for the same fixture (the SM cell uses `defect_terms`).
     let coefficients = v.adjoint() * &psi;
     let projected = &v * &coefficients;
@@ -661,13 +739,37 @@ fn interval_json(interval: Interval) -> Value {
     json!({"lo": interval.lo, "hi": interval.hi})
 }
 
+fn interval_matrix_json(matrix: &[Vec<ComplexInterval>]) -> Value {
+    Value::Array(
+        matrix
+            .iter()
+            .map(|row| {
+                Value::Array(
+                    row.iter()
+                        .map(|value| {
+                            json!({
+                                "re": interval_json(value.re),
+                                "im": interval_json(value.im),
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
 /// N8 proof-facing record: binds the actual finite fixture, the certificate
 /// reader's terms and the measured map error. The record is deliberately
-/// `conditionally-bounded`; interval arithmetic and the Gershgorin spectral
-/// bound are directed, but the returned `G` itself and the Padé flow are not
-/// enclosed, and no proof assistant has formalized the defect inequality.
+/// `conditionally-bounded`; interval arithmetic encloses `HV` and `G`, the
+/// spectral bound is directed, and nanoda checks the finite endpoint
+/// arithmetic. The Duhamel representation, its integral bound and the
+/// skew-adjoint flow bound are kernel-verified; identifying `A = iH` for the
+/// actual declared matrix and the physical reduction remain open.
 pub fn finite_fixture_bridge(time: f64) -> Value {
     let (h, v, psi) = finite_fixture_inputs();
+    let full_images_enclosure = full_images_enclosure(&h, &v);
+    let generator_enclosure = reduced_generator_enclosure(&h, &v);
     let (terms, interval, measured) = finite_fixture(time);
     let hashes = CertificateHashes {
         operator: canonical_json_sha256(&json!({"h": dense_json(&h)})),
@@ -693,6 +795,8 @@ pub fn finite_fixture_bridge(time: f64) -> Value {
         "artifact": {
             "time": time,
             "certificate": certificate,
+            "full_images_enclosure": interval_matrix_json(&full_images_enclosure),
+            "generator_enclosure": interval_matrix_json(&generator_enclosure),
             "interval_terms": {
                 "initial_leakage": interval_json(interval.initial_leakage),
                 "defect_frobenius": interval_json(interval.defect_frobenius),
@@ -707,26 +811,48 @@ pub fn finite_fixture_bridge(time: f64) -> Value {
             "rounding": {
                 "mode": "f64-directed-endpoints",
                 "directed": true,
-                "scope": "add/sub/mul/square/sqrt/exp in interval_terms; Gershgorin row sums",
+                "scope": "add/sub/mul/square/sqrt/exp in interval_terms; enclosed HV and V*HV; Gershgorin row sums",
                 "spectral_growth_directed": true,
-                "spectral_growth_scope": "Gershgorin upper bound on the returned f64 Hermitian part",
-                "spectral_input_enclosed": false,
+                "spectral_growth_scope": "Gershgorin upper bound on the enclosed Hermitian part of V*HV",
+                "spectral_input_enclosed": true,
+                "full_images_enclosed": true,
                 "pade_exponential_directed": false,
-                "note": "endpoint arithmetic rounds outward and lambda_max(Re G) is Gershgorin-bounded, but the returned f64 G itself is not enclosed and the measured flow uses Pade, so evolution_bound.hi remains diagnostic, not certified",
+                "note": "endpoint arithmetic rounds outward, HV and V*HV are enclosed from the declared H and V, and lambda_max(Re G) is Gershgorin-bounded; the Duhamel representation, integral bound and skew-adjoint flow bound are kernel-verified, but identifying A = iH for the actual declared matrix and the physical reduction remain open, so evolution_bound.hi is a directed bound for the finite fixture, not a physical certificate; the measured map error separately uses Pade without an error enclosure",
             },
         },
         "theorem": {
             "lean_name": "Analytic.SmDefect.finite_map",
             "statement": "||exp(-itH) psi - V exp(tG) V* psi|| <= leakage + t ||D|| ||V* psi|| exp(omega_+ t)",
             "proof_status": "not-run",
-            "remaining": "The inequality is analytic, but it is not formalized in Lean. Interval arithmetic and the Gershgorin spectral bound have directed endpoints, but the returned f64 G itself is not enclosed and the measured map error uses nalgebra's Pade exponential; neither is enclosed.",
+            "remaining": "The Duhamel representation and the N8 bound are kernel-verified for a skew-adjoint generator A, including the flow bound ||exp((-r)A)|| = 1. Identifying A = iH for the actual declared matrix and the physical reduction remain open; the measured map error separately uses nalgebra's Pade exponential without an error enclosure.",
+        },
+        "finite_endpoint_proof": {
+            "lean_name": "BookProof.Sm.ChapterSmDefect.finite_map_endpoint",
+            "statement": "5*10^32*measured <= 5*10^32*leakage + defect*seed*flow for the declared 16-decimal N8 endpoint rationals",
+            "proof_status": "kernel-verified",
+            "checker": "nanoda_lib via prob_kernel::verify::verify_export",
+            "payload": "docs/fixtures/sm_defect_proof.ndjson",
+            "payload_sha256": sha256_hex(SM_DEFECT_PROOF),
+            "declarations": 273,
+            "scope": "finite endpoint arithmetic only; the Duhamel/flow theorem is separate",
+        },
+        "analytic_defect_proof": {
+            "lean_name": "BookProof.Sm.ChapterSmDefectAnalytic.norm_duhamel_representation_le_of_skew",
+            "statement": "for u' = -A u + b with star A = -A, u t = exp(-t A) u 0 + integral exp(-(t-s)A) b s, and ||u t|| <= leakage + t*defect*seed*exp(omega*t) when ||exp(-t A) u 0|| <= leakage and ||b s|| <= defect*seed*exp(omega*t)",
+            "proof_status": "kernel-verified",
+            "checker": "nanoda_lib via prob_kernel::verify::verify_export",
+            "payload": "docs/fixtures/sm_defect_analytic_proof.ndjson.gz",
+            "compressed_payload_sha256": "ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445",
+            "payload_sha256": "83e3571ed458dff72b086934d57724be3b4763f47d58a07439b401c0d714ed31",
+            "declarations": 38336,
+            "scope": "Duhamel representation and skew-adjoint flow bound formalized; identifying A = iH for the actual declared matrix and the physical reduction are open",
         },
         "hypotheses": [
             "H is the declared finite 4x4 Hermitian matrix; its hash is bound under operator.identity_sha256.",
             "V is the declared 4x2 isometry and G = V* H V; its hash is bound under state.identity_sha256.",
             "The bound's exponential is exact; the measured map error uses nalgebra's Pade exp and is a check, not an enclosure.",
-            "interval_terms uses directed f64 endpoints and a Gershgorin spectral bound; the returned f64 G and the Pade flow are not enclosed, so its hi endpoint is diagnostic, not a certified enclosure.",
-            "No proof assistant has formalized the finite-map defect inequality.",
+            "interval_terms uses directed f64 endpoints, encloses HV and G = V*HV from the declared H and V, and applies a Gershgorin spectral bound; its hi endpoint is a directed bound for the finite fixture, not a physical reduction certificate.",
+            "The endpoint Lean proof checks only the finite arithmetic; the analytic Lean proof derives the Duhamel representation, the integral bound, and the skew-adjoint flow bound, leaving only the identification A = iH for the actual declared matrix and the physical reduction.",
         ],
         "not_claimed": [
             "No SM cell, physical-sector reduction, cutoff or continuum claim.",
