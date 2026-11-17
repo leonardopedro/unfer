@@ -1,0 +1,145 @@
+{
+  "artifact": {
+    "brst_nilpotency": {
+      "images": 18,
+      "tolerance": 2e-9,
+      "worst_residual": 0.0
+    },
+    "finite_ce_quotient": {
+      "artifact": {
+        "cochain_dimensions": [
+          12,
+          144,
+          792,
+          2640
+        ],
+        "cohomology_dimensions": [
+          1,
+          1,
+          0
+        ],
+        "differential_ranks": [
+          11,
+          132,
+          660
+        ],
+        "field_level_quotient": false,
+        "finite_quotient": true,
+        "harmonic_representatives": {
+          "basis_sha256": "d921b13955eae437efcf2b2fd8fb6f10b3f2df3a1d979628267a5479e6607ef7",
+          "degree_0": 1,
+          "degree_1": 1,
+          "degree_2": 0
+        },
+        "q_squared_residual": 6.661338147750939e-16,
+        "quotient_map": {
+          "degrees": [
+            0,
+            1,
+            2
+          ],
+          "dimensions": [
+            1,
+            1,
+            0
+          ],
+          "kind": "harmonic representatives (ker Q ∩ ker Q*)",
+          "representative_basis_sha256": "d921b13955eae437efcf2b2fd8fb6f10b3f2df3a1d979628267a5479e6607ef7"
+        },
+        "representation_closure_residual": 4.710277376051325e-16,
+        "tolerance": 1e-9
+      },
+      "claim_id": "n10_finite_adjoint_ce_quotient",
+      "construction": "Chevalley-Eilenberg cochain complex of the twelve-generator gauge algebra in its adjoint representation",
+      "hypotheses": [
+        "The complex uses the twelve homogeneous gauge generators and the bare structure constants.",
+        "The coefficient module is the adjoint representation, not the complete matter/Higgs Fock space.",
+        "Cochains are truncated at ghost degree three; degrees 0..2 are reported.",
+        "Ranks and harmonic bases are SVD measurements with tolerance 1e-9, not interval enclosures."
+      ],
+      "not_claimed": [
+        "No field-theoretic BRST cohomology or gauge-invariant Hilbert space.",
+        "No representative map for the complete E1 operator; the bridge keeps that quotient_map null.",
+        "No anomaly, infinite-mode, cutoff or continuum statement."
+      ],
+      "operator": {
+        "generators": 12,
+        "identity_sha256": "0d57207737ddf3e70dc57f495f90cbe1ec26cd4e729d72f0a3e386d8d2594cc9",
+        "max_cochain_degree": 3,
+        "name": "finite adjoint CE differential Q",
+        "representation_dimension": 12
+      },
+      "schema": "sm-finite-brst-quotient/v1",
+      "status": "measured",
+      "theorem": {
+        "lean_name": "Analytic.SmConstraints.finite_adjoint_ce",
+        "proof_status": "not-run",
+        "remaining": "Q^2 is measured on the finite complex; the field-theoretic BRST complex, its inner product completion and the physical quotient remain open.",
+        "statement": "Q^2 = 0 on the finite adjoint CE complex and H^k = ker Q_k / im Q_{k-1}"
+      }
+    },
+    "finite_dictionary": true,
+    "gauss_commutator_gauge_occupied": {
+      "pairs": 64,
+      "tolerance": 2e-9,
+      "worst_pair": [
+        0,
+        1
+      ],
+      "worst_residual": 4.440892098500626e-16
+    },
+    "gauss_commutator_gauge_vacuum": {
+      "pairs": 144,
+      "tolerance": 2e-9,
+      "worst_pair": [
+        5,
+        6
+      ],
+      "worst_residual": 5.551115123125783e-17
+    },
+    "hamiltonian_gauss_commutator": {
+      "images": 24,
+      "tolerance": 2e-9,
+      "worst_residual": 1.4669222755248563e-13
+    },
+    "quotient_map": null,
+    "quotient_note": "No field-level physical quotient or BRST cohomology is constructed; the finite adjoint Chevalley-Eilenberg quotient is bound separately under finite_ce_quotient, while these are finite-image residual checks only."
+  },
+  "artifact_sha256": "80e3ad0c7f48773f33807608cac0b7fd2e5426c686fa673241d54d95354b2f51",
+  "claim_id": "n10_finite_constraint_dictionary",
+  "endpoint": "N10-finite-dictionary",
+  "hypotheses": [
+    "The twelve generators use all eight SU(3) colours, the three SU(2) generators and U(1)_Y with bare structure constants.",
+    "Ghosts are the twelve modes at GHOST_BASE..GHOST_BASE+12; the joint charge is Q = sum c_a G_a - (i/2) f_abc c_a c_b b_a.",
+    "Residuals are f64 finite-image operator norms; they are not interval enclosures or continuum claims.",
+    "The Hamiltonian is the complete E1 Cadabra-derived operator, not a projected window."
+  ],
+  "not_claimed": [
+    "No physical BRST cohomology or gauge-invariant Hilbert space.",
+    "No representative/quotient map; quotient_map is deliberately null.",
+    "No anomaly, infinite-mode, cutoff or continuum statement.",
+    "No certified interval enclosure of the measured residuals."
+  ],
+  "operator": {
+    "identity_sha256": "ac031e03eb3230a79de1c52dca4bad97c561da4275e6d7d9f37d6d8931efe99d",
+    "name": "twelve homogeneous SU(3)xSU(2)xU(1) Gauss generators and joint BRST charge",
+    "source": "nested_fock_algebra::sm_constraints"
+  },
+  "schema": "sm-proof-bridge/v1",
+  "state": {
+    "basis": [
+      "gauge_vacuum_matter_seed",
+      "two_gauge_quanta",
+      "one_ghost_images"
+    ],
+    "identity_sha256": "bb054f79902bc9a8f3a1c02a8a4c2f736ba3b04d9124ff88ff1d3cb88acf8dcf",
+    "note": "finite images only; no field-level representative/quotient map is bound (the finite adjoint CE quotient is separate)"
+  },
+  "status": "measured",
+  "theorem": {
+    "lean_name": "Analytic.SmConstraints.finite_dictionary",
+    "proof_status": "not-run",
+    "remaining": "The finite identities are measured in the complete E1 operator. The nested finite adjoint CE quotient is constructed separately, but no Lean theorem binds these finite identities. A direct probe shows the joint charge removes one ghost and preserves the remaining occupation, so the total-occupation filtration is Q-invariant and a finite field-level complex is constructible; that full Fock matrix and its cohomology are not yet bound. The field-level quotient/cohomology and anomaly analysis remain open.",
+    "statement": "sum_a c_a G_a and the joint Q close on the declared finite images, and Q^2 = 0 there"
+  }
+}
