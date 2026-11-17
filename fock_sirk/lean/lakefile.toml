@@ -1,0 +1,5 @@
+name = "sm_car"
+defaultTargets = ["SmCar"]
+
+[[lean_lib]]
+name = "SmCar"

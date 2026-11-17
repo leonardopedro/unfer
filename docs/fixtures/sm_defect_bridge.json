@@ -1,0 +1,108 @@
+{
+  "artifact": {
+    "certificate": {
+      "assumptions": [
+        "V is isometric in the declared joint inner product",
+        "H is the identified self-adjoint realization (SM3/SM5 open)",
+        "G is the returned reduced generator; omega_+ covers its Hermitian part",
+        "the finite exponential is approximate; Padé/rounding are not enclosed here"
+      ],
+      "fields": {
+        "defect_frobenius": 1.9551214796017153,
+        "evolution_bound": 1.060938397590336,
+        "flow_growth": 1.2867388901951293,
+        "initial_leakage": 0.7032108464077431,
+        "reduced_growth": 1.2605551275463989,
+        "seed_norm": 0.7109813678954643,
+        "time": 0.2
+      },
+      "hashes": {
+        "basis": "c263fa362e301c0fe7277d65a85e48503e64fbfbf0af8cda7c8ecfff0bbffa87",
+        "operator": "e60b5ccaf051fceb89d652c24b7ee96c7f994c006da7bc6e4e36581eaf92e9d3",
+        "state": "69c994e8ea4e08af80b98983af62f68111cca9c37119f6fbeabed4148a6973c4"
+      },
+      "schema": "sm-defect-certificate/v1",
+      "status": "conditionally-bounded",
+      "theorem": "||exp(-itH)psi - V exp(tG)V*psi|| <= leakage + t ||D|| ||V*psi|| exp(omega_+ t)"
+    },
+    "interval_terms": {
+      "defect_frobenius": {
+        "hi": 1.9551214796017173,
+        "lo": 1.9551214796017173
+      },
+      "evolution_bound": {
+        "hi": 1.0710554738382394,
+        "lo": 1.0710554738382385
+      },
+      "flow_growth": {
+        "hi": 1.3231298123374373,
+        "lo": 1.3231298123374373
+      },
+      "initial_leakage": {
+        "hi": 0.7032108464077437,
+        "lo": 0.7032108464077437
+      },
+      "seed_norm": {
+        "hi": 0.7109813678954653,
+        "lo": 0.7109813678954653
+      },
+      "spectral_growth": {
+        "hi": 1.4000000000000006,
+        "lo": 0.0
+      },
+      "time": {
+        "hi": 0.2,
+        "lo": 0.2
+      }
+    },
+    "measured_map_error": 0.7546019867800926,
+    "measured_within_interval_hi": true,
+    "rounding": {
+      "directed": true,
+      "mode": "f64-directed-endpoints",
+      "note": "endpoint arithmetic rounds outward and lambda_max(Re G) is Gershgorin-bounded, but the returned f64 G itself is not enclosed and the measured flow uses Pade, so evolution_bound.hi remains diagnostic, not certified",
+      "pade_exponential_directed": false,
+      "scope": "add/sub/mul/square/sqrt/exp in interval_terms; Gershgorin row sums",
+      "spectral_growth_directed": true,
+      "spectral_growth_scope": "Gershgorin upper bound on the returned f64 Hermitian part",
+      "spectral_input_enclosed": false
+    },
+    "time": 0.2
+  },
+  "artifact_sha256": "cadfbb0fc169332961d91d5bba438f753517c9c42bb2f44779dd4e08711bb2a7",
+  "claim_id": "n8_finite_map_defect",
+  "endpoint": "N8-finite-map",
+  "hypotheses": [
+    "H is the declared finite 4x4 Hermitian matrix; its hash is bound under operator.identity_sha256.",
+    "V is the declared 4x2 isometry and G = V* H V; its hash is bound under state.identity_sha256.",
+    "The bound's exponential is exact; the measured map error uses nalgebra's Pade exp and is a check, not an enclosure.",
+    "interval_terms uses directed f64 endpoints and a Gershgorin spectral bound; the returned f64 G and the Pade flow are not enclosed, so its hi endpoint is diagnostic, not a certified enclosure.",
+    "No proof assistant has formalized the finite-map defect inequality."
+  ],
+  "not_claimed": [
+    "No SM cell, physical-sector reduction, cutoff or continuum claim.",
+    "No certified f64 enclosure and no Padé-error enclosure.",
+    "No resolution of the N11 response and no promotion of N12."
+  ],
+  "operator": {
+    "identity_sha256": "e60b5ccaf051fceb89d652c24b7ee96c7f994c006da7bc6e4e36581eaf92e9d3",
+    "name": "finite 4x4 Hermitian H with 4x2 isometric V",
+    "source": "fock_sirk::sm_defect::finite_fixture_inputs"
+  },
+  "schema": "sm-proof-bridge/v1",
+  "state": {
+    "basis": [
+      "v_0",
+      "v_1"
+    ],
+    "identity_sha256": "69c994e8ea4e08af80b98983af62f68111cca9c37119f6fbeabed4148a6973c4",
+    "note": "psi is the normalized declared state vector; the isometry hash is bound under the embedded certificate hashes.basis"
+  },
+  "status": "conditionally-bounded",
+  "theorem": {
+    "lean_name": "Analytic.SmDefect.finite_map",
+    "proof_status": "not-run",
+    "remaining": "The inequality is analytic, but it is not formalized in Lean. Interval arithmetic and the Gershgorin spectral bound have directed endpoints, but the returned f64 G itself is not enclosed and the measured map error uses nalgebra's Pade exponential; neither is enclosed.",
+    "statement": "||exp(-itH) psi - V exp(tG) V* psi|| <= leakage + t ||D|| ||V* psi|| exp(omega_+ t)"
+  }
+}

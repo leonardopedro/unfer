@@ -1,0 +1,146 @@
+{
+  "artifact": {
+    "exactness": "operator algebra is exact; this is not a floating-point enclosure",
+    "field": "integer Gaussian entries; imaginary part is always zero",
+    "matrices": {
+      "annihilate": [
+        [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ]
+      ],
+      "create": [
+        [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ]
+      ],
+      "number": [
+        [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      ],
+      "parity": [
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0
+          ],
+          [
+            -1,
+            0
+          ]
+        ]
+      ]
+    }
+  },
+  "artifact_sha256": "766142f3c2d3a8ebbe20ebef13d2a5f92a59943e05c4f28e899bbfc6b7f43797",
+  "claim_id": "one_mode_fermion_car",
+  "endpoint": "E1-unreduced",
+  "hypotheses": [
+    "One fermionic mode, occupation truncated to n in {0,1}; this is the exact CAR Fock space of that mode.",
+    "The operator is the ordered nested_fock_algebra InnerExpr action, not a normal-ordered or scalar-stripped rewrite.",
+    "Matrix entries are the actual image coefficients in the declared two-state basis."
+  ],
+  "not_claimed": [
+    "No multi-mode CAR or graded outer-statistics claim.",
+    "No SM Hamiltonian, physical-state or continuum claim.",
+    "No identification of the Lean Mat2 model with the full InnerExpr algebra beyond the six checked finite identities."
+  ],
+  "operator": {
+    "identity_sha256": "f5a05232b6227a357a37b9ea3b1a89762076cd7030064c1a7e510c48cd4e9def",
+    "name": "ordered one-mode CAR ladders from nested_fock_algebra::exact_inner",
+    "source": "nested_fock_algebra::exact_inner::InnerLadder::FermionCreate/FermionAnnihilate"
+  },
+  "proof": {
+    "checker": "nanoda_lib 0.4.13 via prob_kernel::verify::verify_export",
+    "declarations_checked": 187,
+    "exporter": "lean4export 3.1.0",
+    "lean_githash": "7e01a1bf5c70fc6167d49c345d3bf80596e9a79b",
+    "lean_version": "4.28.0",
+    "payload": "docs/fixtures/sm_car_proof.ndjson",
+    "payload_sha256": "63ef7a554198a5bf9eb04b73c2c9e61950b97689c9265eb4327e0cccdf17c1e5"
+  },
+  "schema": "sm-proof-bridge/v1",
+  "state": {
+    "basis": [
+      "fermion_n0",
+      "fermion_n1"
+    ],
+    "identity_sha256": "d95e39f58b178f5719d7b19072c7e9aefdf9f25a8e39f9fc72788dde8331c6bb",
+    "note": "all two fermionic occupations; vacuum is the inner vacuum"
+  },
+  "status": "certified",
+  "theorem": {
+    "lean_name": "BookProof.Sm.ChapterSmCar.one_mode_anticommutator",
+    "proof_status": "kernel-verified",
+    "remaining": "The Lean definitions are bound to this artifact by the shared integer matrices and the Rust re-derivation; no formal proof connects the Lean Mat2 structure to nested_fock_algebra definitionally.",
+    "source": "fock_sirk/lean/SmCar.lean",
+    "statement": "a * adag + adag * a = 1",
+    "supporting_statements": [
+      "a * a = 0",
+      "adag * adag = 0",
+      "parity * a * parity = -a",
+      "adag * a = number"
+    ]
+  }
+}
