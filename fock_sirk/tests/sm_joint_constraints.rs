@@ -251,6 +251,41 @@ fn electric_sector_algebra_closes_with_bare_structure_constants() {
     assert!(worst < 2e-9, "electric SU(3) algebra residual {worst:e}");
 }
 
+/// `[H,Q]=0` on a ghost image only probes the ghost-annihilated components of
+/// the twelve generators. Check each full Gauss generator directly on a matter
+/// state and on the gauge-occupied state; this is still a finite-image identity,
+/// not a physical-cohomology theorem.
+#[test]
+fn hamiltonian_commutes_with_each_gauss_generator() {
+    let g = gauge_dictionary(&parameters());
+    let mut worst = 0.0f64;
+    let mut worst_pair = (0usize, 0usize);
+    let mut checked = 0usize;
+    for (label, state) in [("matter", seed()), ("gauge", with_gauge())] {
+        for a in 0..GENERATORS {
+            let hg = apply(h(), &apply(&g[a], &state));
+            let gh = apply(&g[a], &apply(h(), &state));
+            let mut residual = hg;
+            joint_axpy(&mut residual, &gh, C::new(-1.0, 0.0), limits()).unwrap();
+            let r = norm(&residual);
+            eprintln!("joint_gauss: [{label}] [H,G_{a}] residual {r:e}");
+            if r > worst {
+                worst = r;
+                worst_pair = (a, if label == "matter" { 0 } else { 1 });
+            }
+            checked += 1;
+        }
+    }
+    eprintln!(
+        "joint_gauss: {checked} direct [H,G] images, worst pair {:?} residual {worst:e}",
+        worst_pair
+    );
+    assert!(
+        worst < 2e-9,
+        "direct [H,G] residual {worst:e} exceeds finite-representation tolerance"
+    );
+}
+
 #[test]
 fn joint_brst_charge_is_nilpotent_on_ghost_images() {
     let q = brst_charge(&parameters());

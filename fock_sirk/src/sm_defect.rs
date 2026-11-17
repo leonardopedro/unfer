@@ -10,11 +10,15 @@
 //! ```
 //!
 //! where `omega_+ = max(0, lambda_max(Re G))` covers the returned inexact
-//! generator. The `f64` path is a measured estimate. [`interval_certificate`]
-//! repeats it with outward-rounded intervals for a finite fixture. Neither is an
-//! unconditional physical-SM certificate: the self-adjoint operator, the
-//! physical reduction and the GMRES/Padé/rounding bridge remain assumptions.
+//! generator. The `f64` path is a measured estimate. [`interval_terms`] repeats
+//! it with directed `f64` endpoints and a Gershgorin bound on the returned
+//! Hermitian part, but the returned `G` itself is not enclosed and the measured
+//! flow uses nalgebra's Padé exponential. Its `hi` endpoint is therefore a
+//! diagnostic bound, not a certified enclosure. Neither path is an unconditional
+//! physical-SM certificate: the self-adjoint operator, the physical reduction,
+//! the solver's `G` and the GMRES/Padé bridge remain assumptions.
 
+use crate::sm_bridge::{bind_artifact, canonical_json_sha256};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::NestedVector;
 use num_complex::Complex64 as C;
@@ -29,6 +33,33 @@ pub struct Interval {
     pub hi: f64,
 }
 
+/// Round down, but keep an exact zero exact. Without the zero case, summing
+/// nonnegative terms would make a lower endpoint `-denorm_min`, which reads as a
+/// negative leakage or norm.
+fn down(x: f64) -> f64 {
+    if x == 0.0 { 0.0 } else { x.next_down() }
+}
+
+fn up(x: f64) -> f64 {
+    if x == 0.0 { 0.0 } else { x.next_up() }
+}
+
+fn add_down(a: f64, b: f64) -> f64 {
+    down(a + b)
+}
+
+fn add_up(a: f64, b: f64) -> f64 {
+    up(a + b)
+}
+
+fn mul_down(a: f64, b: f64) -> f64 {
+    down(a * b)
+}
+
+fn mul_up(a: f64, b: f64) -> f64 {
+    up(a * b)
+}
+
 impl Interval {
     pub fn point(x: f64) -> Self {
         assert!(x.is_finite(), "interval endpoints must be finite");
@@ -36,14 +67,14 @@ impl Interval {
     }
     pub fn add(self, other: Self) -> Self {
         Self {
-            lo: self.lo + other.lo,
-            hi: self.hi + other.hi,
+            lo: add_down(self.lo, other.lo),
+            hi: add_up(self.hi, other.hi),
         }
     }
     pub fn sub(self, other: Self) -> Self {
         Self {
-            lo: self.lo - other.hi,
-            hi: self.hi - other.lo,
+            lo: down(self.lo - other.hi),
+            hi: up(self.hi - other.lo),
         }
     }
     pub fn neg(self) -> Self {
@@ -53,25 +84,31 @@ impl Interval {
         }
     }
     pub fn mul(self, other: Self) -> Self {
-        let products = [
-            self.lo * other.lo,
-            self.lo * other.hi,
-            self.hi * other.lo,
-            self.hi * other.hi,
+        let lower = [
+            mul_down(self.lo, other.lo),
+            mul_down(self.lo, other.hi),
+            mul_down(self.hi, other.lo),
+            mul_down(self.hi, other.hi),
+        ];
+        let upper = [
+            mul_up(self.lo, other.lo),
+            mul_up(self.lo, other.hi),
+            mul_up(self.hi, other.lo),
+            mul_up(self.hi, other.hi),
         ];
         Self {
-            lo: products.iter().copied().fold(f64::INFINITY, f64::min),
-            hi: products.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            lo: lower.iter().copied().fold(f64::INFINITY, f64::min),
+            hi: upper.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         }
     }
     pub fn square_upper(self) -> f64 {
-        (self.lo * self.lo).max(self.hi * self.hi)
+        mul_up(self.lo, self.lo).max(mul_up(self.hi, self.hi))
     }
     pub fn sqrt_upper(self) -> f64 {
-        self.hi.max(0.0).sqrt()
+        up(self.hi.max(0.0).sqrt())
     }
     pub fn exp_upper(self) -> f64 {
-        self.hi.exp()
+        up(self.hi.exp())
     }
     pub fn max0(self) -> f64 {
         self.hi.max(0.0)
@@ -117,7 +154,7 @@ impl ComplexInterval {
         self.mul(Self::point(factor))
     }
     pub fn norm_square_upper(self) -> f64 {
-        self.re.square_upper() + self.im.square_upper()
+        add_up(self.re.square_upper(), self.im.square_upper())
     }
 }
 
@@ -127,6 +164,17 @@ impl ComplexInterval {
 pub struct DefectTerms {
     pub initial_leakage: f64,
     pub defect_frobenius: f64,
+    /// `||D c||` for the projected seed coefficients, rather than the
+    /// worst-case full-column Frobenius norm. This is a diagnostic; the
+    /// certified bound still uses `defect_frobenius`.
+    pub defect_seed_action: f64,
+    /// Upper bound on `sup_{0<=s<=time} ||D exp(sG) c||`, from a grid plus a
+    /// Lipschitz correction using `||D G||_F ||c|| exp(omega_+ time)`.
+    pub defect_action_envelope: f64,
+    /// `leakage + time * defect_action_envelope`: the state-dependent
+    /// alternative to `evolution_bound`. Point f64; exact `exp`/`G` remain
+    /// assumptions, so this is not a certified enclosure.
+    pub state_weighted_bound: f64,
     pub seed_norm: f64,
     pub reduced_growth: f64,
     pub flow_growth: f64,
@@ -139,6 +187,9 @@ impl DefectTerms {
         json!({
             "initial_leakage": self.initial_leakage,
             "defect_frobenius": self.defect_frobenius,
+            "defect_seed_action": self.defect_seed_action,
+            "defect_action_envelope": self.defect_action_envelope,
+            "state_weighted_bound": self.state_weighted_bound,
             "seed_norm": self.seed_norm,
             "reduced_growth": self.reduced_growth,
             "flow_growth": self.flow_growth,
@@ -173,7 +224,65 @@ fn inner(a: &NestedVector, b: &NestedVector) -> C {
         .sum()
 }
 
+/// Apply `D = i V G - H V` to a reduced coefficient vector, returning the
+/// full-space defect vector. This is the state-dependent object behind the
+/// integral bound; [`defect_frobenius`] is its worst case over the reduced
+/// coordinate directions.
+pub fn defect_action(
+    basis: &[NestedVector],
+    full_images: &[NestedVector],
+    generator: &DMatrix<C>,
+    coefficients: &[C],
+) -> NestedVector {
+    let rank = basis.len();
+    assert_eq!(full_images.len(), rank);
+    assert_eq!(coefficients.len(), rank);
+    assert_eq!(generator.nrows(), rank);
+    assert_eq!(generator.ncols(), rank);
+    let mut d = NestedVector::new();
+    for column in 0..rank {
+        for row in 0..rank {
+            let factor = C::i() * generator[(row, column)] * coefficients[column];
+            add_scaled(&mut d, &basis[row], factor);
+        }
+        add_scaled(&mut d, &full_images[column], -coefficients[column]);
+    }
+    d
+}
+
 /// `D = i V G - H V` column by column, with the full (unprojected) `H V`.
+/// Grid/Lipschitz upper bound on `sup_s ||D exp(sG) c||` for `s in [0, time]`.
+/// The grid resolves the actual defect trajectory; the derivative bound uses
+/// `||D G||_F ||c|| exp(omega_+ time)`.
+fn defect_action_envelope(
+    basis: &[NestedVector],
+    full_images: &[NestedVector],
+    generator: &DMatrix<C>,
+    coefficients: &[C],
+    time: f64,
+) -> f64 {
+    const GRID: usize = 8;
+    let rank = coefficients.len();
+    let seed = DVector::from_iterator(rank, coefficients.iter().copied());
+    let growth = reduced_growth(generator).max(0.0);
+    let flow = (growth * time).exp();
+    let mut dg_square = 0.0;
+    for column in 0..rank {
+        let generated = generator.column(column).into_owned();
+        let action = defect_action(basis, full_images, generator, generated.as_slice());
+        dg_square += joint_norm(&action).powi(2);
+    }
+    let lipschitz = dg_square.sqrt() * seed.norm() * flow;
+    let mut maximum = 0.0f64;
+    for index in 0..=GRID {
+        let s = time * index as f64 / GRID as f64;
+        let evolved = (generator * C::new(s, 0.0)).exp() * &seed;
+        let action = defect_action(basis, full_images, generator, evolved.as_slice());
+        maximum = maximum.max(joint_norm(&action));
+    }
+    maximum + time / GRID as f64 * lipschitz
+}
+
 pub fn defect_frobenius(
     basis: &[NestedVector],
     full_images: &[NestedVector],
@@ -234,11 +343,22 @@ pub fn defect_terms(
         .sum::<f64>()
         .sqrt();
     let defect = defect_frobenius(basis, full_images, generator);
+    let seed_action = joint_norm(&defect_action(
+        basis,
+        full_images,
+        generator,
+        coefficients.as_slice(),
+    ));
+    let action_envelope =
+        defect_action_envelope(basis, full_images, generator, coefficients.as_slice(), time);
     let growth = reduced_growth(generator).max(0.0);
     let flow = (growth * time).exp();
     DefectTerms {
         initial_leakage: leakage,
         defect_frobenius: defect,
+        defect_seed_action: seed_action,
+        defect_action_envelope: action_envelope,
+        state_weighted_bound: leakage + time * action_envelope,
         seed_norm: seed,
         reduced_growth: growth,
         flow_growth: flow,
@@ -256,18 +376,73 @@ pub struct IntervalTerms {
     pub initial_leakage: Interval,
     pub defect_frobenius: Interval,
     pub seed_norm: Interval,
+    pub spectral_growth: Interval,
     pub flow_growth: Interval,
     pub time: Interval,
     pub evolution_bound: Interval,
 }
 
-fn ci_norm_square(sum: &mut Interval, z: ComplexInterval) {
-    *sum = sum.add(Interval::point(z.norm_square_upper()));
+/// Gershgorin upper bound on `lambda_max(Re G)` for the returned floating `G`.
+/// Each row disc is evaluated with directed complex magnitudes; the maximum
+/// row upper endpoint bounds every eigenvalue of the computed Hermitian part.
+/// This does not enclose the solver's `G` itself, only the Hermitian matrix
+/// assembled from its returned `f64` entries.
+fn hermitian_growth_upper(generator: &[Vec<C>]) -> Interval {
+    let n = generator.len();
+    let half = Interval::point(0.5);
+    let mut bound = 0.0_f64;
+    for row in 0..n {
+        let mut radius = 0.0_f64;
+        for column in 0..n {
+            if row == column {
+                continue;
+            }
+            let re = Interval::point(generator[row][column].re)
+                .add(Interval::point(generator[column][row].re))
+                .mul(half);
+            let im = Interval::point(generator[row][column].im)
+                .sub(Interval::point(generator[column][row].im))
+                .mul(half);
+            let modulus = add_up(
+                Interval {
+                    lo: re.lo.abs().max(re.hi.abs()),
+                    hi: re.lo.abs().max(re.hi.abs()),
+                }
+                .square_upper(),
+                Interval {
+                    lo: im.lo.abs().max(im.hi.abs()),
+                    hi: im.lo.abs().max(im.hi.abs()),
+                }
+                .square_upper(),
+            )
+            .sqrt();
+            radius = add_up(radius, up(modulus));
+        }
+        let center = generator[row][row].re;
+        bound = bound.max(add_up(center, radius));
+    }
+    Interval {
+        lo: 0.0,
+        hi: bound.max(0.0),
+    }
 }
 
-/// Outward-rounded repetition of [`defect_terms`] with point f64 inputs.
-/// Every operation rounds outward; transcendental `exp`/`sqrt` use the upper
-/// endpoint. The caller still owns the theorem hypotheses.
+fn ci_norm_square(sum: &mut Interval, z: ComplexInterval) {
+    *sum = sum.add(Interval {
+        lo: 0.0,
+        hi: z.norm_square_upper(),
+    });
+}
+
+/// `f64` directed-endpoint repetition of [`defect_terms`].
+///
+/// Addition, subtraction, multiplication, square and sqrt round outward with
+/// `next_down`/`next_up`; `exp` also rounds its upper endpoint outward. The
+/// inputs are exact `f64` data. The spectral growth is a directed Gershgorin
+/// bound on the Hermitian matrix assembled from the returned `G`, not an
+/// enclosure of the solver's `G`; the result is therefore still a diagnostic
+/// bound rather than a certified interval certificate. The caller owns the
+/// theorem and solve/flow hypotheses.
 pub fn interval_terms(
     basis: &[Vec<C>],
     full_images: &[Vec<C>],
@@ -333,18 +508,8 @@ pub fn interval_terms(
         }
     }
     let defect_frobenius = Interval::point(defect_square.sqrt_upper());
-    // Hermitian part eigenvalues in f64; its upper endpoint is the enclosure.
-    let dense = DMatrix::from_fn(rank, rank, |r, c| generator[r][c]);
-    let symmetric = (dense.clone() + dense.adjoint()) * C::new(0.5, 0.0);
-    let growth = symmetric
-        .symmetric_eigen()
-        .eigenvalues
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max)
-        .max(0.0);
-    let flow_value = (growth * time).exp();
-    let flow_growth = Interval::point(flow_value);
+    let spectral_growth = hermitian_growth_upper(generator);
+    let flow_growth = Interval::point(spectral_growth.mul(Interval::point(time)).exp_upper());
     let evolution_bound = initial_leakage.add(
         Interval::point(time)
             .mul(defect_frobenius)
@@ -355,16 +520,16 @@ pub fn interval_terms(
         initial_leakage,
         defect_frobenius,
         seed_norm,
+        spectral_growth,
         flow_growth,
         time: Interval::point(time),
         evolution_bound,
     }
 }
 
-/// A small independent finite fixture: a 4x4 Hermitian H, a 4x2 isometry and
-/// `G = V* H V`. Returns point terms, interval terms and the directly measured
-/// map error (the direct value is a check, not an enclosure).
-pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
+/// The actual dense inputs of the finite N8 fixture, so a bridge record can
+/// bind their hashes instead of restating duplicate matrices.
+pub fn finite_fixture_inputs() -> (DMatrix<C>, DMatrix<C>, DVector<C>) {
     let h = DMatrix::from_row_slice(
         4,
         4,
@@ -401,7 +566,6 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
             C::new(0.0, 0.0),
         ],
     );
-    let generator = v.adjoint() * &h * &v;
     let psi = DVector::from_vec(vec![
         C::new(0.5, 0.1),
         C::new(0.2, -0.4),
@@ -409,6 +573,15 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
         C::new(0.0, 0.3),
     ]);
     let psi = psi.map(|x| x / psi.norm());
+    (h, v, psi)
+}
+
+/// A small independent finite fixture: a 4x4 Hermitian H, a 4x2 isometry and
+/// `G = V* H V`. Returns point terms, interval terms and the directly measured
+/// map error (the direct value is a check, not an enclosure).
+pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
+    let (h, v, psi) = finite_fixture_inputs();
+    let generator = v.adjoint() * &h * &v;
     let basis: Vec<Vec<C>> = (0..2)
         .map(|column| (0..4).map(|row| v[(row, column)]).collect())
         .collect();
@@ -426,6 +599,7 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
     let leakage = (&psi - &projected).norm();
     let seed = coefficients.norm();
     let mut defect_square = 0.0;
+    let mut action = DVector::<C>::zeros(4);
     for column in 0..2 {
         let mut d = DVector::<C>::zeros(4);
         for row in 0..2 {
@@ -433,13 +607,18 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
         }
         d -= (&h * &v).column(column).into_owned();
         defect_square += d.norm_squared();
+        action += d * coefficients[column];
     }
     let defect = defect_square.sqrt();
+    let seed_action = action.norm();
     let growth = reduced_growth(&generator).max(0.0);
     let flow = (growth * time).exp();
     let terms = DefectTerms {
         initial_leakage: leakage,
         defect_frobenius: defect,
+        defect_seed_action: seed_action,
+        defect_action_envelope: defect * seed * flow,
+        state_weighted_bound: leakage + time * defect * seed * flow,
         seed_norm: seed,
         reduced_growth: growth,
         flow_growth: flow,
@@ -450,6 +629,111 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
     let compressed = &v * (&generator * C::new(time, 0.0)).exp() * (&v.adjoint() * &psi);
     let measured = (&exact - &compressed).norm();
     (terms, interval, measured)
+}
+
+fn dense_json(matrix: &DMatrix<C>) -> Value {
+    Value::Array(
+        (0..matrix.nrows())
+            .map(|row| {
+                Value::Array(
+                    (0..matrix.ncols())
+                        .map(|column| {
+                            let value = matrix[(row, column)];
+                            json!([value.re, value.im])
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn vector_json(vector: &DVector<C>) -> Value {
+    Value::Array(
+        vector
+            .iter()
+            .map(|value| json!([value.re, value.im]))
+            .collect(),
+    )
+}
+
+fn interval_json(interval: Interval) -> Value {
+    json!({"lo": interval.lo, "hi": interval.hi})
+}
+
+/// N8 proof-facing record: binds the actual finite fixture, the certificate
+/// reader's terms and the measured map error. The record is deliberately
+/// `conditionally-bounded`; interval arithmetic and the Gershgorin spectral
+/// bound are directed, but the returned `G` itself and the Padé flow are not
+/// enclosed, and no proof assistant has formalized the defect inequality.
+pub fn finite_fixture_bridge(time: f64) -> Value {
+    let (h, v, psi) = finite_fixture_inputs();
+    let (terms, interval, measured) = finite_fixture(time);
+    let hashes = CertificateHashes {
+        operator: canonical_json_sha256(&json!({"h": dense_json(&h)})),
+        state: canonical_json_sha256(&json!({"psi": vector_json(&psi)})),
+        basis: canonical_json_sha256(&json!({"v": dense_json(&v)})),
+    };
+    let certificate = certificate_json(&terms, &hashes);
+    bind_artifact(json!({
+        "schema": crate::sm_bridge::BRIDGE_SCHEMA,
+        "claim_id": "n8_finite_map_defect",
+        "status": "conditionally-bounded",
+        "endpoint": "N8-finite-map",
+        "operator": {
+            "name": "finite 4x4 Hermitian H with 4x2 isometric V",
+            "identity_sha256": hashes.operator,
+            "source": "fock_sirk::sm_defect::finite_fixture_inputs",
+        },
+        "state": {
+            "basis": ["v_0", "v_1"],
+            "identity_sha256": hashes.state,
+            "note": "psi is the normalized declared state vector; the isometry hash is bound under the embedded certificate hashes.basis",
+        },
+        "artifact": {
+            "time": time,
+            "certificate": certificate,
+            "interval_terms": {
+                "initial_leakage": interval_json(interval.initial_leakage),
+                "defect_frobenius": interval_json(interval.defect_frobenius),
+                "seed_norm": interval_json(interval.seed_norm),
+                "spectral_growth": interval_json(interval.spectral_growth),
+                "flow_growth": interval_json(interval.flow_growth),
+                "time": interval_json(interval.time),
+                "evolution_bound": interval_json(interval.evolution_bound),
+            },
+            "measured_map_error": measured,
+            "measured_within_interval_hi": measured <= interval.evolution_bound.hi,
+            "rounding": {
+                "mode": "f64-directed-endpoints",
+                "directed": true,
+                "scope": "add/sub/mul/square/sqrt/exp in interval_terms; Gershgorin row sums",
+                "spectral_growth_directed": true,
+                "spectral_growth_scope": "Gershgorin upper bound on the returned f64 Hermitian part",
+                "spectral_input_enclosed": false,
+                "pade_exponential_directed": false,
+                "note": "endpoint arithmetic rounds outward and lambda_max(Re G) is Gershgorin-bounded, but the returned f64 G itself is not enclosed and the measured flow uses Pade, so evolution_bound.hi remains diagnostic, not certified",
+            },
+        },
+        "theorem": {
+            "lean_name": "Analytic.SmDefect.finite_map",
+            "statement": "||exp(-itH) psi - V exp(tG) V* psi|| <= leakage + t ||D|| ||V* psi|| exp(omega_+ t)",
+            "proof_status": "not-run",
+            "remaining": "The inequality is analytic, but it is not formalized in Lean. Interval arithmetic and the Gershgorin spectral bound have directed endpoints, but the returned f64 G itself is not enclosed and the measured map error uses nalgebra's Pade exponential; neither is enclosed.",
+        },
+        "hypotheses": [
+            "H is the declared finite 4x4 Hermitian matrix; its hash is bound under operator.identity_sha256.",
+            "V is the declared 4x2 isometry and G = V* H V; its hash is bound under state.identity_sha256.",
+            "The bound's exponential is exact; the measured map error uses nalgebra's Pade exp and is a check, not an enclosure.",
+            "interval_terms uses directed f64 endpoints and a Gershgorin spectral bound; the returned f64 G and the Pade flow are not enclosed, so its hi endpoint is diagnostic, not a certified enclosure.",
+            "No proof assistant has formalized the finite-map defect inequality.",
+        ],
+        "not_claimed": [
+            "No SM cell, physical-sector reduction, cutoff or continuum claim.",
+            "No certified f64 enclosure and no Padé-error enclosure.",
+            "No resolution of the N11 response and no promotion of N12.",
+        ],
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -151,9 +151,16 @@ bridges. Fixed-background Higgs, scalar radial, free-field and six-mode models s
 *Executed 2026-11-15:* `fock_sirk/src/sm_defect.rs` implements the `D=iVG-HV`
 bound on the returned solve and the cutoff-1 cell reports
 `leakage=2.41e-8`, `||D||_F=17.19`, `bound=0.1719` at `t=.01`, labeled
-`conditionally-bounded`. A 4x4 interval fixture encloses the direct map error and
-the reader rejects invalid/mismatched certificates. See
-[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n8-execution-record-2026-11-15-this-working-tree).
+`conditionally-bounded`. A 4x4 endpoint fixture reports the direct map error and
+the reader rejects invalid/mismatched certificates. Its arithmetic endpoints now
+use directed `f64` rounding (`next_down`/`next_up`), and `lambda_max(Re G)` is
+bounded by directed Gershgorin row sums on the returned Hermitian part. The
+returned `f64` `G` itself and the measured Padé flow are not enclosed, so
+`evolution_bound.hi` remains diagnostic, not a certified enclosure. The
+2026-11-16 bridge `docs/fixtures/sm_defect_bridge.json` binds the actual fixture,
+certificate and measured error, and records `rounding.directed: true` with those
+`G`/Padé gaps left explicit. See
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n8-finite-map-defect-bridge-is-conditionally-bounded).
 
 SM6 proposes an immediately useful finite-map theorem. With isometric V, reduced G,
 columns `HV` in the domain of the identified self-adjoint H, set `D=iVG-HV`. Then
@@ -251,7 +258,10 @@ on `dG,dW,dphi`. The earlier nonabelian obstruction was a dictionary error: the
 SU(3) electric term looped only three of the eight colours and carried an extra
 `g` relative to the bare matter current. With all eight colours and bare
 structure constants, `[H,Q]` closes on the tested images at `6e-15..1e-14`
-(SU(3)/SU(2)) and `7e-15` (U(1)). No `d_i E_i` trace or jet kinetic term is
+(SU(3)/SU(2)) and `7e-15` (U(1)). The twelve `[H,G_a]` commutators were also
+checked directly on matter and gauge-occupied images, closing at `1.4e-14`
+(matter) and `1.5e-13` (gauge, `G_0`); this covers the generators that a
+single-ghost `[H,Q]` image can hide. No `d_i E_i` trace or jet kinetic term is
 needed: with independent jets the trace commutes with `A E`. The metric/ghost
 parity counterexample remains in `fock_sirk/tests/sm_constraints.rs`. Physical
 cohomology and the representative/quotient map remain **unimplemented**. See
@@ -305,8 +315,19 @@ electron-Yukawa spectator controls are `0.0`. A further state-preparation search
 (up-only, up+down, seed+gluon, seed+Higgs, seed x squeezed gauge, window ground
 state, depth-2 window, rank 4) left every budget at `0.56..0.69`; squeezing
 `ell=0.65..3.0` and coherent displacements `0.1..2.0` left a floor of
-`~1.396e-1`. The defect is a property of the operator/window, not the matter or
-bosonic preparation. Depth 3 is refused by the cache budget. The raw 10% quench-energy difference `0.6804` exceeds the
+`~1.396e-1`. Residual-ranked window enrichment raised it (`1.4366e-1`) and full
+support needs `6.6e9` components; rank 1 gives the lowest floor, `9.88e-2`.
+The defect is a property of the returned operator/basis, not the matter or
+bosonic preparation. Rank 2–4 give `n_up = -3.4716e-6, -3.4176e-6,
+-3.4084e-6`; rank 1 is degenerate (`2.2e-16`). Splitting the interval into
+1/2/4 restart steps gives `-3.47164e-6, -3.47180e-6, -3.47187e-6` at the same
+total N8 budget `0.56572`. The signal is step-stable to `~2e-10`; extending rank
+to 6 plateaus it (`-3.38177e-6` vs `-3.3819e-6` at the default seed;
+`-3.40735e-6` vs `-3.4084e-6` squeezed), and rank 8 is inadmissible under the
+`7t` Hashimoto shift budget (`count < budget/spacing`, so rank<=6). The bound
+remains `~1.6e5` times the signal. A state-dependent
+defect norm gives `9.8286` against the full-column `14.0581` at rank 2, so the
+norm choice is not the obstacle. Depth 3 is refused by the cache budget. The raw 10% quench-energy difference `0.6804` exceeds the
 state budget but is not a bounded observable. The cell is inconclusive rather
 than a promoted response; see
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n11-response-pilot-2026-11-15-unresolved).
@@ -357,6 +378,97 @@ Renormalized convergence, anomaly/constraint compatibility and distributional pr
 need their own analytic proofs. An explicit cutoff-effective endpoint is a valid outcome;
 it must remain labeled when all-scale uniformity is unresolved.
 
+*Pilot started 2026-11-16:* `fock_sirk/examples/sm_finite_mode.rs` defines a
+compatible scalar bosonic family: modes `k=0..M-1` with fixed dispersion
+`omega_k=sqrt(m^2+k^2)`, `H0=sum omega_k N_k`, and
+`V=lambda sum_{k<4}(phi_k)^4` supported on the first four modes (matrix-ordered
+on a total-occupation cutoff of 4). Refinement appends one free vacuum mode.
+Coherent and squeezed-vacuum families have nonzero amplitudes only on those four
+modes. At `M=4..8` (70..495 basis states), the embedded `H`, `N` and smeared
+field agree to `1.8e-15`; coherent `N=2.2363e-2`, `E=6.4463e-1`,
+`<phi>=3.7272e-1`, variance `1.5530`, and squeezed variance `2.1658` are constant
+to `~1e-16`. The support mass fraction falls from `1` to `0.9820`, while the
+support graph (four modes, six edges) is unchanged. This fixed-coupling family
+is exact by construction, not a continuum result: the low-mode couplings are
+held fixed and the appended modes are free.
+
+A cutoff-dependent extension now runs in the same example. Every mode up to
+the cutoff interacts, `V_M = lambda_M sum_{k<M}(phi_k)^4`, and `lambda_M` is set
+by the renormalization condition that the ground-state connected four-point
+function of the fixed smeared field, `G4 = <(delta phi_s)^4> -
+3<(delta phi_s)^2>^2`, equals its reference value at `M=4, lambda=0.05`
+(`G4_ref = -3.0364376e-2`). Matching is by bisection, choosing the root closest
+to the previous cutoff's coupling because the truncated `G4(lambda)` is not
+monotone. At `M=4..8` the trajectory is `lambda_M =
+0.0500000, 0.0498665, 0.0497924, 0.0497599, 0.0497691` (spread `2.4e-4`) and
+the worst condition residual is `6.8e-11`. The first-four-mode coherent field
+mean (`0.372720`), number, and squeezed variance (`2.16579`) remain constant to
+`~1e-16`; the coherent energy rises from `0.6446` to `1.2390` because the added
+interacting vacua contribute to the unnormal-ordered energy. The running
+Hamiltonian is not embedded exactly (deviation `0.148`--`0.150`), as it should
+not be: the appended modes carry interactions. This is a declared finite-mode
+normalization, not an identification with a 4d field-theory scheme, and no
+continuum conclusion follows from five stable low-mode observables.
+
+A second normalization was run as a scheme check, holding `V_M` and the states
+fixed but halving the smearing scale. Its reference value is
+`G4_ref' = -3.5362226e-2`, and the resulting trajectory is
+`0.0500000, 0.0502295, 0.0504822, 0.0507473, 0.0510269`, moving opposite to the
+first trajectory; the largest coupling difference is `1.26e-3` (`2.5%`). The
+condition is met to `8.5e-11`. The fixed-state number is identical by
+construction, while the vacuum-dominated coherent energy differs by up to
+`3.1e-2`. This is a robustness check, not a second theory: it shows the
+coupling trajectory is smearing-normalization dependent and does not establish
+scheme independence.
+
+Scanning for *all* positive roots sharpens that caveat. At every cutoff `M=5..8`
+the four-point condition has two roots: a low branch
+`0.0009948, 0.0009931, 0.0009913, 0.0009896` (spread `5.2e-6`) and the reported
+branch `0.0498665, 0.0497924, 0.0497599, 0.0497691` (spread `1.1e-4`), with
+minimum separation `4.9e-2`. The alternate smearing shows the same two-branch
+structure (low branch `~1.25e-3`, high branch `~5.0e-2`). Holding the coherent
+state fixed, the low branch gives energies `0.0331, 0.0360, 0.0390, 0.0419` at
+`M=5..8`, against `0.7926, 0.9408, 1.0895, 1.2390` on the reported branch: the
+branch choice changes the energy by up to `1.197`, far more than the trajectory's
+own variation. Within the cutoff-4 truncation, the normalization condition fixes
+a **branch**, not `lambda_M`: the trajectory is a declared continuation nearest
+the previous cutoff, and neither branch is selected by the physics.
+
+The two-root structure is nevertheless not robust. Repeating the matching at
+other total-occupation cutoffs gives:
+
+| cutoff | roots at `M=5..8` |
+|---|---|
+| 2 | none at 5--7; `0.3143` at 8 |
+| 3 | `0.002903, 0.002883, 0.002863, 0.002844` |
+| 4 | two roots (the table above) |
+| 5 | one root at `M=5..7`: `0.001172, 0.001170, 0.001168` |
+| 6 | two roots at `M=5..6`: `0.001213` and `0.1619`, `0.001213` and `0.1618` |
+
+At cutoffs 3 and 5 there is a single root, and the surviving low root moves by a
+factor of about `2.5` between them; cutoff 2 does not satisfy the condition at
+all for `M=5..7`. At cutoff 6 a second root reappears, but near `1.62e-1`, not
+near the cutoff-4 branch at `5.0e-2`. Both the root count and the high-root
+location therefore depend on the occupation truncation, and even the low root
+is not cutoff-stable. The two-root ambiguity and the reported running
+trajectory are artifacts of the cutoff-4 truncation, not regulator-independent
+features. The cutoff-6 scan stops at `M=6` and the cutoff-5 scan at `M=7`
+because those cells dominate the dense matching cost.
+
+Evaluating `G4` at fixed `lambda=0.05`, without matching, isolates the cause. At fixed
+mode count the value changes drastically with the cutoff: cutoff 3 gives about
+`-1.11` to `-1.31`, cutoff 4 `-0.03036` to `-0.02805`, cutoff 5 `-0.119` to
+`-0.125`, and cutoff 6 `-0.177` to `-0.187`. The largest same-mode spread is
+about `2.7`; even inside cutoff 4, adding four modes moves `G4` by `2.3e-3`.
+The matching root therefore compensates a cutoff-dependent basis drift rather
+than identifying a renormalized coupling. This is a stronger negative than the
+root-count scan alone.
+
+The pilot is now a hard gate in `scripts/run-sm-full-validation`; it checks the fixed-family
+embedding/spreads, the running four-point residual, the nonzero coupling
+trajectory, the cutoff dependence of the branch count and high-root location,
+and the absence of continuum/cutoff-uniform claims.
+
 **Acceptance:** a defined family and a finite observable/estimate investigation with the
 missing cutoff-uniform theorem stated. No positive continuum conclusion from rank growth,
 first-image closure or a few stable eigenvalue spacings.
@@ -376,9 +488,30 @@ checks; changing the Hamiltonian, state, field labels or physical projection mus
 the claim. Keep ideal arithmetic proof, code refinement and floating execution enclosure
 as distinct rows; “Aeneas ran” cannot stand in for a joint-solver proof.
 
+**Implemented artifact (2026-11-16):** `fock_sirk/src/sm_bridge.rs` defines the
+`sm-proof-bridge/v1` record: operator and state identities, exact artifact matrices,
+Lean theorem name/statement, proof status, hypotheses and explicit non-claims. The
+first record is `docs/fixtures/sm_car_bridge.json`, generated from the ordered
+`InnerExpr` action on the two-state one-mode fermion basis. It binds
+`a * adag + adag * a = 1`, `a * a = 0`, `adag * adag = 0`,
+`parity * a * parity = -a` and `adag * a = number`; the test suite re-derives every
+matrix from the actual action and checks the identities in exact integer arithmetic.
+The verifier rejects an unbound mutation and refuses to let `status: certified`
+stand without a claimed kernel proof. The finite 2x2 integer obligation is now in
+`fock_sirk/lean/SmCar.lean` and was exported with Lean 4.28.0 (`7e01a1bf`) and
+lean4export 3.1.0 to `docs/fixtures/sm_car_proof.ndjson` (243,234 bytes, 187
+declarations). `prob_kernel`'s `verify_export` example replayed it through nanoda
+and printed `nanoda: verified ... (187 decls)`; the payload hash
+is bound in the bridge, whose status is now `certified` with
+`proof_status: kernel-verified`. The remaining scope gap is explicit: the Lean
+`Mat2` definitions and the Rust `InnerExpr` matrices are linked by the shared
+artifact and a separate exact re-derivation, not by a definitional refinement
+proof. This certifies the six finite identities, not the SM Hamiltonian.
+
 **Acceptance:** at least one fully scoped fixture-to-theorem bridge with remaining physical
-or cutoff hypotheses exposed. All exported proof/nanoda claims require an actual later
-specialist run; nothing is exported or reverified by writing this plan.
+or cutoff hypotheses exposed. The finite CAR export has now been replayed by nanoda
+(187 declarations); any new proof/nanoda claim still requires its own actual run, and
+writing a plan or a bridge record is not a verification.
 
 ## N14 — execute, report and stop at the evidence boundary
 
@@ -387,11 +520,13 @@ and actual-charge design before physical-sector interpretations. Execute the bou
 pilot, then a selected **N11** observable if its representation/error requirements hold.
 N13 supports these packets throughout; N12 is the separately budgeted field-theory track.
 
-The baseline runner is [run-sm-full-validation](../scripts/run-sm-full-validation).
-It fetches/builds Rust and executes Cadabra/tests/examples, so it is a future execution
-step, **not a documentation check and not run in this planning wave**. Use targeted
-changed-function tests first, then its default suite; the wide tier is explicit. Capture
-engine/feature skips and the exact test list. A stale cache or source-only count is not a pass.
+*Executed 2026-11-16:* the baseline runner
+[run-sm-full-validation](../scripts/run-sm-full-validation) was run on this tree.
+`target/sm-full-sweep21.log` exited 0 with **64 test-result passes, 0 failures**,
+including the 19 gauge-fixed and 54 Faris–Lavine CHECK rows, the CAR/defect bridge
+suites, the N12 assertions, and the nanoda replay of the 187-declaration CAR payload.
+The wide cutoff tier remains opt-in and was not run. The consolidated record is
+[SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n13n14-consolidated-execution-record-2026-11-16-this-working-tree).
 
 Record each completed experiment in the implementation ledger with exact manifest/artifact
 references. Preserve old cells and explain changed interpretation, operator or estimator.

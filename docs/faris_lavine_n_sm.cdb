@@ -645,16 +645,16 @@ print("CHECK 30c SM non-abelian ghost-field summand at A_0 = 0     (0 = ok) :", 
 # CHECK 31 (higgsV_sq_form): the Mexican hat COMPLETES THE SQUARE.
 #   V = -(mu2/2) q^2 + (lam/4) q^4 = (lam/4)(q^2 - mu2/lam)^2 - mu2^2/(4 lam),
 # so V >= -mu2^2/(4 lam) (higgsV_ge_min) with equality iff q^2 = mu2/lam.
-hvsq := (-(mu2/2)*q*q + (lam/4)*q*q*q*q)          - ((lam/4)*(q*q - mu2*(lam)**(-1))*(q*q - mu2*(lam)**(-1)) - mu2*mu2*(4*lam)**(-1))
+hvsq := (-(mu2/2)*q*q + (lam/4)*q*q*q*q)          - ((lam/4)*(q*q - mu2*(lam)**(-1))*(q*q - mu2*(lam)**(-1)) - mu2*mu2*(4*lam)**(-1));
 distribute(hvsq)
 substitute(hvsq, $ lam (lam)**(-1) -> 1 $, repeat=True)
 substitute(hvsq, $ (lam)**(-1) lam -> 1 $, repeat=True)
-distribute(hvsq); collect_terms(hvsq)
+distribute(hvsq); sort_product(hvsq); collect_terms(hvsq)
 print("CHECK 31 SM  V - [(lam/4)(q^2-mu2/lam)^2 - mu2^2/(4 lam)]   (0 = ok) :", hvsq)
-hvmin := (-(mu2/2)*vvev*vvev + (lam/4)*vvev*vvev*vvev*vvev) + mu2*mu2*(4*lam)**(-1)
+hvmin := (-(mu2/2)*vvev*vvev + (lam/4)*vvev*vvev*vvev*vvev) + mu2*mu2*(4*lam)**(-1);
 substitute(hvmin, Ex(r"lam*vvev*vvev -> mu2"), repeat=True)
 substitute(hvmin, Ex(r"mu2*vvev*vvev -> mu2*mu2*(lam)**(-1)"), repeat=True)
-distribute(hvmin); collect_terms(hvmin)
+distribute(hvmin); sort_product(hvmin); collect_terms(hvmin)
 print("CHECK 31b SM V(vev) + mu2^2/(4 lam) at lam vev^2 = mu2      (0 = ok) :", hvmin)
 
 # CHECK 32 (higgs_radial): the shifted-field statics of phi = vev + hshi.
@@ -662,22 +662,22 @@ print("CHECK 31b SM V(vev) + mu2^2/(4 lam) at lam vev^2 = mu2      (0 = ok) :", 
 #   V(vev+h) - V(vev) = mu2 h^2 + lam vev h^3 + (lam/4) h^4,
 # so the radial mass^2 is 2 mu2 > 0 (quadratic coefficient mu2 in this
 # normalisation, from V''(vev) = 2 mu2).
-dvu := (-(mu2/2)*(vvev+hshi)*(vvev+hshi) + (lam/4)*(vvev+hshi)*(vvev+hshi)*(vvev+hshi)*(vvev+hshi))          - (-(mu2/2)*vvev*vvev + (lam/4)*vvev*vvev*vvev*vvev)          - (mu2*hshi*hshi + lam*vvev*hshi*hshi*hshi + (lam/4)*hshi*hshi*hshi*hshi)
+dvu := (-(mu2/2)*(vvev+hshi)*(vvev+hshi) + (lam/4)*(vvev+hshi)*(vvev+hshi)*(vvev+hshi)*(vvev+hshi))          - (-(mu2/2)*vvev*vvev + (lam/4)*vvev*vvev*vvev*vvev)          - (mu2*hshi*hshi + lam*vvev*hshi*hshi*hshi + (lam/4)*hshi*hshi*hshi*hshi);
 distribute(dvu)
 substitute(dvu, Ex(r"lam*vvev*vvev -> mu2"), repeat=True)
-distribute(dvu); collect_terms(dvu)
+distribute(dvu); sort_product(dvu); collect_terms(dvu)
 print("CHECK 32 SM  V(vev+h)-V(vev) - (mu2 h^2 + lam vev h^3 + lam h^4/4) (0 = ok) :", dvu)
-hvlin := -mu2*vvev + lam*vvev*vvev*vvev
+hvlin := -mu2*vvev + lam*vvev*vvev*vvev;
 substitute(hvlin, Ex(r"lam*vvev*vvev -> mu2"), repeat=True)
-distribute(hvlin); collect_terms(hvlin)
+distribute(hvlin); sort_product(hvlin); collect_terms(hvlin)
 print("CHECK 32b SM linear coefficient of V(vev+h) vanishes       (0 = ok) :", hvlin)
 
 # CHECK 33 (smComparison_quadForm / sm_N_positive): one confining summand of
 # N_0 is  pi^2 + q^4 + sum_j q_j^2  (a sum of squares), so
 #   N - 1 = (c0 - 1) + [pi^2 + q^4 + sum_j q_j^2]  >= 0   for c0 >= 1,
 # the algebraic content of "N >= 1" that the Faris-Lavine criterion consumes.
-ncmp := (piq*piq + q*q*q*q + xj1*xj1 + xj2*xj2 + c0)          - (1 + (c0 - 1) + piq*piq + q*q*q*q + xj1*xj1 + xj2*xj2)
-distribute(ncmp); collect_terms(ncmp)
+ncmp := (piq*piq + q*q*q*q + xj1*xj1 + xj2*xj2 + c0)          - (1 + (c0 - 1) + piq*piq + q*q*q*q + xj1*xj1 + xj2*xj2);
+distribute(ncmp); sort_product(ncmp); collect_terms(ncmp)
 print("CHECK 33 SM  (N summand + c0) - (1 + (c0-1) + squares)    (0 = ok) :", ncmp)
 
 print("ALL SM ACCOUNTING IDENTITY CHECKS DONE (QYM spatial-only; QG non-ADM)")

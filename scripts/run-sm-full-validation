@@ -114,8 +114,71 @@ cargo test --locked --offline --release -p nested_fock_algebra --features latex 
 step "fock_sirk: sm_full_hashimoto + sm_gauge_fixed_validation + N7/N8"
 cargo test --locked --offline --release -p fock_sirk \
     --test sm_full_hashimoto --test sm_gauge_fixed_validation \
-    --test sm_named_dictionary --test sm_defect --test sm_constraints \
-    --test sm_joint_constraints -- --test-threads=1
+    --test sm_named_dictionary --test sm_car_bridge --test sm_defect \
+    --test sm_defect_bridge --test sm_constraints --test sm_joint_constraints \
+    -- --test-threads=1
+
+step "N13 CAR proof: pinned lean4export payload replayed by nanoda"
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    docs/fixtures/sm_car_proof.ndjson
+
+step "fock_sirk: N12 finite-mode pilot"
+n12="$(mktemp)"
+cargo run --locked --offline --release -p fock_sirk --example sm_finite_mode > "$n12"
+python3 - "$n12" <<'PY'
+import json
+import sys
+
+record = json.load(open(sys.argv[1]))
+fixed = record["stability"]
+running = record["running_stability"]
+scheme = record["scheme_dependence"]
+branch = record["branch_ambiguity"]
+claims = record["claims"]
+assert len(record["cells"]) == 5, "fixed family must cover M=4..8"
+assert len(record["running_cells"]) == 5, "running family must cover M=4..8"
+assert fixed["worst_embedding_deviation"] < 1e-12, fixed
+assert fixed["coherent_number_spread"] < 1e-12, fixed
+assert fixed["coherent_field_mean_spread"] < 1e-12, fixed
+assert fixed["squeezed_field_variance_spread"] < 1e-12, fixed
+assert running["worst_g4_residual"] < 1e-8, running
+assert 0.0 < running["lambda_spread"] < 1e-2, running
+assert running["worst_hamiltonian_embedding_deviation"] > 1e-6, running
+assert scheme["worst_g4_residual"] < 1e-8, scheme
+assert 0.0 < scheme["max_lambda_difference"] < 1e-2, scheme
+assert branch["root_counts"] and min(branch["root_counts"]) >= 2, branch
+assert branch["min_separation"] > 1e-3, branch
+assert branch["low_branch_spread"] < 1e-3 and branch["high_branch_spread"] < 1e-3, branch
+assert branch["max_coherent_energy_difference"] > 1e-3, branch
+occupation = record["occupation_sensitivity"]
+assert occupation["cutoff_4_matches_main"] is True, occupation
+fixed = record["fixed_coupling_sensitivity"]
+assert fixed["cutoff_dependent"] is True, fixed
+assert fixed["max_cutoff_spread"] > 5e-2, fixed
+assert fixed["cutoff_4_mode_drift"] > 1e-3, fixed
+assert occupation["cutoff_6_two_roots"] is True, occupation
+assert occupation["cutoff_6_high_branch_shift"] is True, occupation
+assert claims["fixed_embedding_exact"] is True
+assert claims["running_coupling_trajectory"] is True
+assert claims["renormalization_condition_satisfied"] is True
+assert claims["smearing_normalization_dependent"] is True
+assert claims["matching_branch_not_unique"] is True
+assert claims["branch_structure_cutoff_specific"] is True
+assert claims["continuum_limit"] is False
+assert claims["cutoff_uniform_theorem"] is False
+lambdas = [cell["lambda"] for cell in record["running_cells"]]
+print(
+    "[ok] N12 fixed embedding exact, running lambda "
+    f"{lambdas[0]:.9f}..{lambdas[-1]:.9f}, "
+    f"G4 residual {running['worst_g4_residual']:.2e}, "
+    f"smearing shift {scheme['max_lambda_difference']:.2e}, "
+    f"matching branches {branch['root_counts']} sep {branch['min_separation']:.2e}, "
+    f"branch energy gap {branch['max_coherent_energy_difference']:.2e}, "
+    f"cutoff-6 high branch shifted: {occupation['cutoff_6_high_branch_shift']}, "
+    f"fixed-lambda G4 spread {fixed['max_cutoff_spread']:.2e}"
+)
+PY
+rm -f "$n12"
 
 step "sm_full_hashimoto example (occupation cutoff 1)"
 json="$(mktemp)"

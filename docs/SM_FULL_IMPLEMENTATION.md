@@ -121,9 +121,11 @@ cancellation estimate; it is labeled `conditionally-bounded`, and the identified
 self-adjoint `H`, physical reduction and Padé/rounding enclosure remain open.
 
 The independent finite fixture is a 4x4 Hermitian `H`, a 4x2 isometry and
-`G=V*HV`; the interval version rounds every operation outward (`sqrt`/`exp` upper
-endpoints) and is tested against the directly measured map error. The certificate
-reader rejects missing, negative, nonfinite or zero-time budgets and mismatched
+`G=V*HV`; its interval arithmetic rounds add/sub/mul/square/sqrt/exp outward and
+its spectral growth uses a directed Gershgorin bound on the returned `f64`
+Hermitian part. The returned `G` itself and the Padé flow are not enclosed, so
+the certificate remains conditional. The reader
+rejects missing, negative, nonfinite or zero-time budgets and mismatched
 operator/state/basis hashes, and refuses a status promotion to `certified`.
 
 ## Full sweep (2026-11-15, this working tree)
@@ -131,13 +133,18 @@ operator/state/basis hashes, and refuses a status promotion to `certified`.
 `./scripts/run-sm-full-validation` completed with exit 0 under Cadabra2
 `2.5.15 private` (recorded `PYTHONHOME`), with the default (non-wide) tier:
 
-- `scripts/check-sm-symbolic`: gauge-fixed 19 CHECK rows and SM comparison 49
+- `scripts/check-sm-symbolic`: gauge-fixed 19 CHECK rows and SM comparison 54
   CHECK rows pass; full SM count 163/40/49/96/1152 and the LaTeX fixture is exact.
+  The previous 49-row transcript stopped silently at CHECK 30c: the CHECK 31–33
+  `.cdb` assignments lacked the trailing `;` required by this engine, so five
+  rows were never executed. Adding the separators and `sort_product` before
+  `collect_terms` executes CHECK 31/31b/32/32b/33 and all five return zero.
 - Tests, all passed: `exact_inner_contract` 13, `sm_full_contract` 7,
   `sm_full_hashimoto` 13, `sm_gauge_fixed_validation` 11,
   `sm_named_dictionary` 4, `sm_defect` 2, `sm_constraints` 2,
-  `sm_joint_constraints` 5. Total **57** fresh passes (rerun after the electric
-  closure correction, the two-mode Mehler/SIRK cell and the response search).
+  `sm_joint_constraints` 6. Total **58** fresh passes (rerun after the electric
+  closure correction, the two-mode Mehler/SIRK cell, the response search, the
+  state-dependent defect diagnostic and the direct `[H,G_a]` checks).
 - The cutoff-1 JSON driver completed; the first-image tail remained
   `9.784770722594882`.
 
@@ -183,6 +190,13 @@ projected window.
   ghost 0 (SU(3)) `8.65e-15`, ghost 2 `6.39e-15`, ghost 8 (SU(2)) `9.55e-15`,
   ghost 11 (U(1)) `7.22e-15`. The jet part is `0` for the SU(3)/SU(2) images and
   `2.5e-16` for U(1); all are at the f64 roundoff scale.
+- **Direct generator commutators.** `[H,Q]=0` on a single-ghost image only probes
+  the components annihilated by `c_a`; the new
+  `hamiltonian_commutes_with_each_gauss_generator` test applies all twelve
+  `G_a` directly on both a matter state and the gauge-occupied state. All 24
+  images close: matter worst `1.3844e-14`, gauge-occupied worst `1.4669e-13`
+  (both `G_0`), at f64 roundoff scale. This is still a finite-image identity,
+  not a physical cohomology statement.
 
 This is a finite-representation identity on the declared images, not a proof of
 physical BRST cohomology. The earlier `6.18e-1`/`4.95e-1` values were the
@@ -313,13 +327,211 @@ preparation: squeezing `g(0,0)` at `ell=0.65, 0.8, 1.0, 1.25, 1.6, 2.0, 3.0`
 gave `1.3964e-1, 1.3970e-1, 1.3992e-1, 1.4058e-1, 1.4319e-1, 1.4951e-1,
 1.6161e-1`; coherent displacements `0.1, 0.5, 1.0, 2.0` gave
 `1.3990e-1, 1.4037e-1, 1.4102e-1, 1.4156e-1`. The floor is `~1.396e-1`, so the
-defect is preparation-independent at this cell. Depth 3 exceeds the declared
-cache budget (`1,032,256` components against `1,000,000`), so it is refused
-rather than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
+defect is preparation-independent at this cell. Residual-ranked window
+enrichment was also tried: adding the top 200 omitted `H V` amplitudes raised
+the defect to `1.4366e-1` (new basis columns carry their own full-action error),
+and full support requests `6.6e9` components. Rank 1 lowers the floor to
+`9.88e-2`, still four orders above the `~1e-5` scale needed to resolve `n_up`.
+
+A rank/step convergence check separates a basis artifact from a loose
+certificate. At fixed `ell=1.25`, rank 1 gives `n_up` response `2.2e-16` (the
+one-vector basis cannot represent the change), while ranks 2, 3, 4 give
+`-3.4716e-6, -3.4176e-6, -3.4084e-6` and budgets `0.5657, 0.7186, 0.8492`.
+With rank 2, splitting the same interval into 1, 2, 4 restart steps gives
+`-3.47164e-6, -3.47180e-6, -3.47187e-6`, with total N8 budget `0.56572` in
+all three cases. Extending the rank series to 6 confirms the plateau: at the
+default seed rank 6 gives `-3.38177e-6` against rank 4's `-3.3819e-6` (budget
+`0.69133` in both), and on the squeezed base rank 6 gives `-3.40735e-6` against
+rank 4's `-3.4084e-6`, with the budget moving from `0.8492` to `0.8471`. Rank 8
+cannot be tested under the declared `7t` shift budget: `hashimoto_unitary_shifts`
+requires `count < budget/spacing`, so the maximum admissible rank is 6. All
+five cells are also asserted to share one basis window, and the JSON records its
+digest: `4a7024d9273c6379` (70 states) at the default seed and
+`ac08356d42e44c9f` (76 states) for the squeezed base. The digest covers the
+sorted basis keys, so a base/quench window mismatch is a hard driver failure,
+not an unflagged mixed-basis comparison. The example now sums every restart-step bound; using only the
+last step undercounted `steps>1` (the last-step values are `0.1406, 0.0703,
+0.0351`). Its JSON also records the actual `steps`, `rank` and shift rule
+rather than a hard-coded single step, so the step/rank scans are self-describing. The response is therefore stable to `~2e-10` under step splitting and
+about 2% from rank 2 to rank 4, but the N8 bound remains `~1.6e5` times the
+signal. It is a reproducible measured signal, not a resolved or certified
+observable.
+
+An adjoint-weighted (centered) observable bound was also tested. For Hermitian
+`O`, the exact-vs-approximate expectation error is
+`|<delta|O|psi>| <= 2 eps ||(O - <O>)psi|| + eps^2`, so the state error is
+weighted by the observable's centered dual action. At rank 4 on the default
+seed, `||(O-<O>)psi||` is `9.6500e-3` (base) and `9.8236e-3` (plus), giving a
+two-cell budget of `6.6475e-2` against the plain `6.9133e-1`. The weighting is
+`~10.4x` tighter but still `~2.0e4x` the `-3.3819e-6` signal, so it does not
+close N11. The driver records this as `n8_adjoint_two_sided_budget` and
+`within_adjoint_budget`.
+
+A state-dependent diagnostic (`defect_seed_action`) was added to test whether
+the full-column norm is the source of the looseness. At rank 2 it gives
+`||D c|| = 9.8286` against `||D||_F = 14.0581`; the projected seed excites a
+substantially smaller defect direction.
+
+That diagnostic was then integrated into the adjoint bound. `DefectTerms` now
+carries `defect_action_envelope`, a grid-plus-Lipschitz upper bound on
+`sup_{0<=s<=t} ||D exp(sG)c||` (the derivative bound uses
+`||D G||_F ||c|| exp(omega_+ t)`), and `state_weighted_bound = leakage + t *
+envelope`, which replaces `||D||_F ||c|| exp(omega_+ t)` by the actual defect
+trajectory. At rank 4 on the default seed the per-cell state-weighted errors
+are `0.1089` (base) and `0.1102` (plus) against plain N8 errors `0.1719` and
+`0.1738`; the two-cell defect-weighted adjoint budget is `2.8270e-2`, versus
+`6.6475e-2` for the centered N8 adjoint bound and `6.9133e-1` plain. It is
+`0.425x` the centered budget but still `8.36e3x` the `-3.3819e-6` response, so
+it also does not close N11. This is a point estimate: exact `exp`, the returned
+`G`, and floating arithmetic remain assumptions. The obstruction is still the
+basis window, not only the defect norm choice.
+
+Depth 3 exceeds the declared cache budget (`1,032,256` components against
+`1,000,000`), so it is refused rather than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
 larger than the state budget `0.5657`, but energy is an unbounded operator: the
 N8 state error maps to an energy error with a factor `||H||`, so this is **not**
 a resolved bounded observable and is not promoted. **No resolved N11 channel
 was found.**
+
+**N11 disposition (2026-11-16):** closed as an inconclusive finite-window
+result for this campaign. The response is stable under restart splitting and
+rank 2–6, and the controls are exact zeros, so the remaining gap is the uniform
+N8 window defect, not the solver or the state. Further rank, step, preparation
+or enrichment scans cannot close a `~1.6e5` factor; a later attempt needs either
+a representation whose window defect is small for this observable or a sharper
+observable-specific (adjoint/dual) bound. This is not a physical-SM prediction.
+
+## N13/N14 consolidated execution record (2026-11-16, this working tree)
+
+This is the N14 stop-at-the-evidence-boundary report. It records what ran, what is
+only conditionally bound, and what remains unproved. No finite-window result below is
+promoted to continuum or physical-SM status.
+
+### N13: finite CAR bridge is now kernel-verified
+
+`fock_sirk/src/sm_bridge.rs` defines `sm-proof-bridge/v1`: endpoint, operator and
+state identities, artifact digest, Lean theorem name/statement, proof status,
+hypotheses and explicit non-claims. It rejects a mutated artifact digest, `certified`
+without `kernel-verified`, and `kernel-verified` without a proof payload. The reader
+binds records; it does not itself run Lean or nanoda.
+
+`docs/fixtures/sm_car_bridge.json` is generated by
+`fock_sirk/examples/sm_car_bridge.rs` from the ordered
+`nested_fock_algebra::exact_inner` action on the two-state one-mode fermion basis. It
+contains the actual integer matrices for `a`, `adag`, `number = adag * a` and
+`parity = 1 - 2 number`, and binds `a*adag + adag*a = 1`, `a^2 = 0`,
+`(adag)^2 = 0`, `parity*a*parity = -a`, `adag*a = number` and `parity^2 = 1`.
+
+`fock_sirk/lean/SmCar.lean` states those identities over an explicit 2x2 integer
+matrix type using only `decide`/`rfl` proofs. Lean 4.28.0 at commit `7e01a1bf` and
+lean4export 3.1.0 produced `docs/fixtures/sm_car_proof.ndjson` (243,234 bytes, 187
+declarations). `prob_kernel`'s nanoda path accepted it:
+
+```text
+nanoda: verified docs/fixtures/sm_car_proof.ndjson (243234 bytes, 187 decls)
+```
+
+The record is therefore `certified` with `proof_status: kernel-verified`, and the
+payload sha256 is bound in the record. The remaining gap is explicit: the Lean `Mat2`
+definitions and the Rust `InnerExpr` matrices are linked by the shared artifact plus a
+separate exact re-derivation in `fock_sirk/tests/sm_car_bridge.rs`, not by a formal
+refinement proof. This certifies six finite identities; it says nothing about the
+SM Hamiltonian, multi-mode CAR, physical sectors, a cutoff or a continuum.
+
+### N8: finite-map defect bridge is conditionally bounded
+
+`fock_sirk/src/sm_defect.rs::finite_fixture_bridge(0.2)` emits
+`docs/fixtures/sm_defect_bridge.json` from the actual `finite_fixture` call and the
+existing certificate reader. It binds the 4x4 Hermitian `H`, the 4x2 isometry `V`,
+the normalized seed, the point certificate and the interval terms. At `t = 0.2` the
+measured map error is `0.7546019867800926`, below the reported interval upper endpoint
+`1.0710554738382394`; the test recomputes both rather than trusting the fixture.
+
+The status is deliberately `conditionally-bounded`, not `certified`. The record
+carries `rounding.directed: true` with scope `add/sub/mul/square/sqrt/exp in
+interval_terms; Gershgorin row sums`. Endpoint arithmetic uses
+`next_down`/`next_up`, and `lambda_max(Re G)` is now bounded by directed
+Gershgorin row sums (`spectral_growth = [0, 1.4000000000000006]`,
+`spectral_growth_directed: true`). The overall bound is still diagnostic: the
+returned `f64` `G` itself is not enclosed (`spectral_input_enclosed: false`), and
+the measured error uses nalgebra's Padé exponential without a Padé-error
+enclosure (`pade_exponential_directed: false`). The theorem is not formalized.
+`fock_sirk/tests/sm_defect_bridge.rs` checks regeneration, `verify_bridge`,
+`verify_certificate`, the measured-versus-bound inequality, and rejects mutation
+or `certified` promotion.
+
+### Artifact references
+
+| artifact | sha256 | use |
+|---|---|---|
+| `fock_sirk/lean/SmCar.lean` | `7899f4ae4af4902da1c9d695d96bb07587d48bd9f5bcaccbbf3eeb46661efdaf` | six finite CAR theorems |
+| `docs/fixtures/sm_car_proof.ndjson` | `63ef7a554198a5bf9eb04b73c2c9e61950b97689c9265eb4327e0cccdf17c1e5` | nanoda payload, 187 declarations |
+| `docs/fixtures/sm_car_bridge.json` | `9bed343105004bfe3e5f380fb0a9b9275ab96786a0e9b72c52affb6e25a7eadc` | bridge file; record digest `766142f3…b7f43797` |
+| `docs/fixtures/sm_defect_bridge.json` | `ed038127c7f5434394e68fb6fdd4374748be2efa1781a9d138f05f3cc0c53bae` | bridge file; record digest `cadfbb0f…711bb2a7` |
+
+### N6–N14 disposition
+
+| packet | evidence status | boundary |
+|---|---|---|
+| N6 | `measured` | replayable baseline; not a numerical/physical certificate |
+| N7 | `source-present` | named dictionary, no action-agreement theorem |
+| N8 | `conditionally-bounded` | directed arithmetic/Gershgorin bound; returned `G` and Padé flow not enclosed |
+| N9 | `measured` / negative feasibility | 70/230-state cells and Mehler tails; no 40/163-mode speedup |
+| N10 | `measured` finite-image identity | constraint closure, not physical BRST cohomology |
+| N11 | inconclusive, closed | uniform N8 window defect blocks the response |
+| N12 | negative cutoff-artifact result | fixed-`G4` matching is not cutoff-stable |
+| N13 | `certified` finite CAR record | one mode, two states; no SM operator claim |
+| N14 | this report | commands and artifacts below |
+
+### Exact reproduction commands
+
+The Lean toolchain and exporter are intentionally not project dependencies. They were
+fetched under `/tmp`; the checked-in `fock_sirk/lean/lean-toolchain` pins 4.28.0.
+
+```bash
+# One-time toolchain setup; both stay outside the repository.
+curl -sSL https://github.com/leanprover/lean4/releases/download/v4.28.0/\
+  lean-4.28.0-linux_aarch64.tar.zst -o /tmp/lean-arm.tar.zst
+mkdir -p /tmp/lean4-4.28.0
+tar --zstd -xf /tmp/lean-arm.tar.zst -C /tmp/lean4-4.28.0 --strip-components=1
+git clone --depth 1 https://github.com/leanprover/lean4export /tmp/lean4export
+cd /tmp/lean4export && PATH=/tmp/lean4-4.28.0/bin:$PATH lake build && cd - >/dev/null
+
+# Lean source and export (toolchain at /tmp/lean4-4.28.0, exporter at /tmp/lean4export)
+cd fock_sirk/lean
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake build
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake env \
+  /tmp/lean4export/.lake/build/bin/lean4export SmCar -- \
+  BookProof.Sm.ChapterSmCar.one_mode_anticommutator \
+  BookProof.Sm.ChapterSmCar.annihilator_square \
+  BookProof.Sm.ChapterSmCar.creator_square \
+  BookProof.Sm.ChapterSmCar.parity_conjugation \
+  BookProof.Sm.ChapterSmCar.number_is_adag_a \
+  BookProof.Sm.ChapterSmCar.parity_square \
+  > ../../docs/fixtures/sm_car_proof.ndjson
+cd ../..
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+  docs/fixtures/sm_car_proof.ndjson
+
+# Finite CAR fixture and N8 defect bridge
+cargo run --locked --offline --release -q -p fock_sirk --example sm_car_bridge \
+  > docs/fixtures/sm_car_bridge.json
+cargo run --locked --offline --release -q -p fock_sirk --example sm_defect_bridge \
+  > docs/fixtures/sm_defect_bridge.json
+cargo test --locked --offline --release -q -p fock_sirk \
+  --test sm_car_bridge --test sm_defect --test sm_defect_bridge
+
+# Full default gate (includes the nanoda replay step)
+scripts/run-sm-full-validation
+```
+
+Fresh default sweep `target/sm-full-sweep21.log`: **exit 0, 64 test-result passes,
+0 failures**, including 3 CAR-bridge tests, 3 defect-bridge tests, 19 gauge-fixed
+CHECK rows, 54 Faris–Lavine CHECK rows, and the nanoda replay. The N12 assertions
+still pass unchanged: fixed embedding exact, running
+`lambda = 0.050000000 .. 0.049769124`, `G4` residual `6.76e-11`, fixed-`lambda` cutoff
+spread `2.70`, and the cutoff-6 high branch still shifted. These remain measured or
+conditionally-bounded rows, not promotions.
 
 ## Implementation baseline and historical measurements
 

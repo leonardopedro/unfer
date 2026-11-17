@@ -1,14 +1,18 @@
 # SM comparison symbolic verification: current scope and historical record
 
-2026-11-09c. Cadabra2 2.5.14 executed the current module successfully: 49 CHECK
-rows. All zero identities reduce to zero; CHECK 9c prints the side condition
-`c0-1`, which requires the separately stated `c0>=1` hypothesis.
+2026-11-09c. Cadabra2 2.5.14 executed the then-current module: 49 CHECK rows.
+All zero identities reduced to zero; CHECK 9c prints the side condition `c0-1`,
+which requires the separately stated `c0>=1` hypothesis.
 
-CHECK 31–33 now execute the live `N=2h+q²+c` cancellation and linear/spatial
-commutator templates. Their missing constant-derivative rules were repaired.
-This does not revive the failed uncoupled quartic comparison, nor discharge
-full-domain norm/form bounds. Use the actual Lean bosonic `smFlN` and the
-full comparison work order for the complete matter operator.
+2026-11-16 correction. The 49-row count was truncated: CHECK 31–33 assignments
+lacked the trailing `;` this engine requires, so parsing stopped silently at
+CHECK 30c and five rows never ran. Adding the separators and `sort_product`
+before `collect_terms` now executes CHECK 31/31b/32/32b/33; all return zero and
+the module reports **54 CHECK rows**. The earlier statement that CHECK 31–33
+already executed was incorrect. This does not revive the failed uncoupled
+quartic comparison, nor discharge full-domain norm/form bounds. Use the actual
+Lean bosonic `smFlN` and the full comparison work order for the complete matter
+operator.
 
 The full component derivation/export and joint numerical pipeline are separate:
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md).

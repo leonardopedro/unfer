@@ -1,5 +1,6 @@
 //! N11 scoped response observable: the final occupation of the seed up-quark
-//! mode after one full-operator restart step, for a gauge-coupling quench.
+//! mode after a full-operator restarted solve (one step by default), for a
+//! gauge-coupling quench.
 //!
 //! Fixed operator family, fixed state, fixed time `t=0.01` and one admissible
 //! shift rule. The N8 defect bound is carried separately from the finite window
@@ -13,6 +14,8 @@ use nested_fock_algebra::exact_inner::{
 use nested_fock_algebra::sm_full::*;
 use num_complex::Complex64 as C;
 use std::collections::BTreeSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 fn parameters() -> SmParameters {
     let matrix = |scale: f64| {
@@ -177,6 +180,38 @@ fn gauge_occupation() -> InnerExpr {
     ])
 }
 
+/// Deterministic digest of the finite basis window. The window is a sorted
+/// `BTreeSet`, so hashing each basis element in order identifies the basis
+/// independently of how it was assembled.
+fn window_digest(window: &BTreeSet<O>) -> String {
+    let mut hasher = DefaultHasher::new();
+    window.len().hash(&mut hasher);
+    for basis in window {
+        format!("{basis:?}").hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// Norm of the centered adjoint action `(O - <O>) psi`. This is the
+/// state-dual weight multiplying the first-order state error in the
+/// observable expansion; it is small when the observable is nearly sharp.
+fn centered_action(state: &NestedVector, applied: &NestedVector, mean: f64) -> f64 {
+    let norm = joint_norm(state);
+    if norm == 0.0 {
+        return 0.0;
+    }
+    let mut centered = applied.clone();
+    for amplitude in centered.values_mut() {
+        *amplitude /= norm;
+    }
+    for (basis, amplitude) in state {
+        let target = centered.entry(basis.clone()).or_default();
+        *target -= (*amplitude / norm) * mean;
+    }
+    centered.retain(|_, amplitude| *amplitude != C::new(0.0, 0.0));
+    joint_norm(&centered)
+}
+
 fn run(delta_gs: f64, delta_ye: f64, time: f64) -> serde_json::Value {
     let mut p = parameters();
     p.gs *= 1.0 + delta_gs;
@@ -205,6 +240,17 @@ fn run(delta_gs: f64, delta_ye: f64, time: f64) -> serde_json::Value {
             break;
         }
     }
+    let rank: usize = std::env::var("SM_RESPONSE_RANK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2)
+        .max(1);
+    let steps: usize = std::env::var("SM_RESPONSE_STEPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    let shifts = hashimoto_unitary_shifts(time, time * 7.0, time, rank).unwrap();
     let options = JointSirkOptions {
         action_limits: limits(),
         basis_window: Some(window.clone()),
@@ -214,29 +260,56 @@ fn run(delta_gs: f64, delta_ye: f64, time: f64) -> serde_json::Value {
         },
         ..Default::default()
     };
-    let rank: usize = std::env::var("SM_RESPONSE_RANK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(2)
-        .max(1);
-    let shifts = hashimoto_unitary_shifts(time, time * 7.0, time, rank).unwrap();
-    let result = evolve_restarted_joint(&h, &initial, time, 1, &shifts, &options).unwrap();
+    let result = evolve_restarted_joint(&h, &initial, time, steps, &shifts, &options).unwrap();
     let norm = joint_norm(&result.state);
     let applied = occupation().d_gamma(&result.state, limits()).unwrap();
     let obs = (joint_inner_product(&result.state, &applied) / (norm * norm)).re;
     let applied_g = gauge_occupation().d_gamma(&result.state, limits()).unwrap();
     let obs_g = (joint_inner_product(&result.state, &applied_g) / (norm * norm)).re;
+    let centered = centered_action(&result.state, &applied, obs);
+    let centered_g = centered_action(&result.state, &applied_g, obs_g);
     let defect = result.defect_certificates.last().unwrap();
+    // Each restart step carries its own N8 bound. The total is additive for
+    // this finite-map estimate; using only the last step undercounts when
+    // `steps > 1`.
+    let n8_total: f64 = result
+        .defect_certificates
+        .iter()
+        .map(|terms| terms.evolution_bound)
+        .sum();
+    // State-dependent alternative: use the actual `D exp(sG)c` envelope rather
+    // than the worst-case `||D||_F ||c|| exp(omega t)`.
+    let state_weighted_total: f64 = result
+        .defect_certificates
+        .iter()
+        .map(|terms| terms.state_weighted_bound)
+        .sum();
+    let defect_action_envelope_total: f64 = result
+        .defect_certificates
+        .iter()
+        .map(|terms| terms.defect_action_envelope)
+        .sum();
     serde_json::json!({
         "delta_gs": delta_gs,
         "delta_ye": delta_ye,
+        "steps": steps,
+        "rank": rank,
+        "window_digest": window_digest(&window),
         "window_dimension": window.len(),
         "observable_n_up": obs,
         "observable_n_g": obs_g,
+        "observable_centered_action": centered,
+        "gauge_observable_centered_action": centered_g,
         "final_norm": norm,
         "energy_re": result.energies.last().unwrap().re,
-        "n8_evolution_bound": defect.evolution_bound,
+        "n8_evolution_bound": n8_total,
+        "state_weighted_bound": state_weighted_total,
+        "defect_action_envelope_total": defect_action_envelope_total,
+        "last_step_n8_bound": defect.evolution_bound,
+        "last_step_state_weighted_bound": defect.state_weighted_bound,
         "defect_frobenius": defect.defect_frobenius,
+        "defect_seed_action": defect.defect_seed_action,
+        "defect_action_envelope": defect.defect_action_envelope,
         "initial_leakage": defect.initial_leakage,
         "action_tail_norms": result.action_tail_norms.last().unwrap(),
         "shift_solve_error_bounds": result.shift_solve_error_bounds.last().unwrap(),
@@ -269,30 +342,81 @@ fn main() {
     }
     let plus = run(dgs, 0.0, time);
     let minus = run(-dgs, 0.0, time);
-    let null = run(0.0, 0.0, time);
+    let null_cell = run(0.0, 0.0, time);
     let spectator = run(0.0, 0.05, time);
+    let digest = |v: &serde_json::Value| {
+        v["window_digest"]
+            .as_str()
+            .expect("every cell must carry a window digest")
+            .to_owned()
+    };
+    let base_digest = digest(&base);
+    let common_window = [&plus, &minus, &null_cell, &spectator]
+        .iter()
+        .all(|cell| digest(cell) == base_digest);
+    assert!(
+        common_window,
+        "N11 cells must share one basis window: base {base_digest}, plus {}, minus {}, null {}, spectator {}",
+        digest(&plus),
+        digest(&minus),
+        digest(&null_cell),
+        digest(&spectator)
+    );
     let o = |v: &serde_json::Value| v["observable_n_up"].as_f64().unwrap();
     let og = |v: &serde_json::Value| v["observable_n_g"].as_f64().unwrap();
     let d = |v: &serde_json::Value| v["n8_evolution_bound"].as_f64().unwrap();
+    let centered = |v: &serde_json::Value| v["observable_centered_action"].as_f64().unwrap();
     let response = o(&plus) - o(&base);
     let budget = 2.0 * (d(&plus) + d(&base));
-    let null_response = o(&null) - o(&base);
+    // Per cell, |<O>_exact - <O>_approx| <= 2 eps ||(O-<O>)psi|| + eps^2.
+    // The response is a difference of two cells, so the two bounds add.
+    let adjoint_cell = |v: &serde_json::Value| {
+        let eps = d(v);
+        2.0 * eps * centered(v) + eps * eps
+    };
+    let adjoint_budget = adjoint_cell(&plus) + adjoint_cell(&base);
+    let state_weighted = |v: &serde_json::Value| v["state_weighted_bound"].as_f64().unwrap();
+    let defect_adjoint_cell = |v: &serde_json::Value| {
+        let eps = state_weighted(v);
+        2.0 * eps * centered(v) + eps * eps
+    };
+    let defect_adjoint_budget = defect_adjoint_cell(&plus) + defect_adjoint_cell(&base);
+    assert!(
+        defect_adjoint_budget.is_finite() && defect_adjoint_budget >= 0.0,
+        "defect-weighted adjoint budget is not finite"
+    );
+    let null_response = o(&null_cell) - o(&base);
     let spectator_response = o(&spectator) - o(&base);
     let gauge_response = og(&plus) - og(&base);
-    let gauge_null = og(&null) - og(&base);
+    let gauge_null = og(&null_cell) - og(&base);
     let out = serde_json::json!({
         "experiment": "N11 full-interaction response of the seed up-quark occupation",
         "operator": "complete native E1 SmHamiltonian (163 coordinates, 96 CAR modes)",
         "time": time,
-        "steps": 1,
+        "steps": base["steps"].clone(),
+        "rank": base["rank"].clone(),
         "delta_gs": dgs,
-        "shift_rule": "hashimoto_unitary_shifts(t, budget=7t, spacing=t, rank=2)",
-        "cells": {"base": base, "plus_gs": plus, "minus_gs": minus, "null": null, "spectator_ye": spectator},
+        "window": {
+            "digest": base_digest,
+            "common_across_cells": common_window,
+        },
+        "shift_rule": format!(
+            "hashimoto_unitary_shifts(t, budget=7t, spacing=t, rank={})",
+            base["rank"].as_u64().unwrap_or(0)
+        ),
+        "cells": {"base": base, "plus_gs": plus, "minus_gs": minus, "null": null_cell, "spectator_ye": spectator},
         "response": {
             "definition": format!("n_up(gs*(1+{dgs})) - n_up(gs)"),
             "value": response,
             "n8_two_sided_budget": budget,
             "within_budget": response.abs() <= budget,
+            "n8_adjoint_two_sided_budget": adjoint_budget,
+            "within_adjoint_budget": response.abs() <= adjoint_budget,
+            "defect_weighted_adjoint_two_sided_budget": defect_adjoint_budget,
+            "within_defect_weighted_adjoint_budget": response.abs() <= defect_adjoint_budget,
+            "defect_weighted_to_n8_adjoint_ratio": defect_adjoint_budget / adjoint_budget,
+            "defect_weighted_budget_to_signal": defect_adjoint_budget / response.abs(),
+            "defect_weighted_status": "state-dependent estimate: grid plus Lipschitz envelope of D exp(sG)c; exact exp/G and floating arithmetic remain assumptions",
             "antisymmetry": o(&plus) + o(&minus) - 2.0*o(&base),
             "null_control": null_response,
             "spectator_control": spectator_response,

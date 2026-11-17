@@ -30,6 +30,7 @@ pub mod mass_gap_spec;
 #[cfg(kani)]
 mod mass_gap_kani;
 pub mod registry;
+pub mod sm_bridge;
 pub mod sm_defect;
 pub mod sm_manifest;
 pub mod tensor_state;
