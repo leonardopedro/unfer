@@ -5766,39 +5766,67 @@ same rows), and the coverage-target rule (an impossible risk cap returns
 `None`; a cap already met at full coverage keeps τ = 0). The example is a thin
 wrapper over that module.
 
-### Head-stage interval-dual prototype (new, head-only)
+### Interval-dual forward pass (head **and** encoder, second order)
 
-`pcnl/src/chart_lipschitz.rs` is the first half of the encoder chart bound: a
-forward pass carrying `<value interval, derivative interval>` through the Edge0
-**head stage** (policy softmax, path embeddings, Noul/Choice/Score heads,
-ordered thresholds, the 1.5 ordinal link). The model now exposes
-`PathOutput::rep` so the same pass can be driven by an encoder-produced dual
-instead of a constant.
+`pcnl/src/chart_lipschitz.rs` carries `<value, first derivative, second
+derivative>` intervals through the Edge0 **head stage** (policy softmax, path
+embeddings, Noul/Choice/Score heads, ordered thresholds, the 1.5 ordinal link)
+and through the **encoder stage**: LayerNorm → masked softmax attention →
+grouped latent MoE / SwiGLU for the state tokens → packed question attention/FFN
+→ per-question mean. The model exposes `PathOutput::rep`, so the head equations
+were already written against a `rep` dual. The second derivative is what the
+midpoint quadrature error needs, and it is why `head_chart_enclosure_1d` can now
+certify encoder directions.
 
 What it certifies today: `head_stage_psi_bound` returns a bound on
 `sup |dΨ/dz|` over the chart box, and `head_stage_probability_interval` returns
-the value interval, for directions supported on `policy_w`, `policy_b`,
-`path_embed`, `noul_w`, `noul_b`, `score_w`, `score_thresholds`. Anything that
-moves `rep` (encoder, embeddings, attention, MoE) still returns `None`.
+the value interval, for **any** parameter slot — embeddings, state/question
+positions, attention, router, latent experts, shared expert, question FFN and
+the heads.
+
+Discrete routing is over-bounded rather than assumed fixed. The routed output
+is a convex combination `Σ_e g_e f_e` with `Σ_e g_e = 1`, so its value lies in
+`[min_e f_e, max_e f_e]` for any selected set. Its derivative is
+`Σ_e g_e f_e' + Σ_e g_e' f_e`, bounded component-wise by
+`max_e |f_e'| + ½(Σ_k |l_k'|) max_e |f_e|`, using
+`Σ_e |∂g_e/∂l_k| = 2g_k(1−g_k) ≤ ½`. Its second derivative adds
+`max_e |f_e''| + (Σ_k |l_k'|) max_e |f_e'| + (3E² max|l'|² + ½ max|l''|) max_e |f_e|`
+(from `|∂²g_e/∂l_j∂l_k| ≤ 3g_e`). All three bounds hold for any top-k set,
+including one that changes inside the box, so the tie rule is not a certificate
+assumption.
 
 Containment is checked against the real model, not against its own arithmetic:
 
 | test | what it pins |
 |---|---|
-| `dual_arithmetic_matches_closed_forms` | sigmoid/exp/product interval and derivative rules |
-| `head_stage_probability_interval_contains_the_model` | value interval brackets `p(z)` at 11 grid points, for four train samples covering all three question types, for directions on `score_w`, `noul_w`, `policy_w`, `score_thresholds` |
+| `dual_arithmetic_matches_closed_forms` | sigmoid/exp/product/sqrt interval and derivative rules |
+| `head_stage_probability_interval_contains_the_model` | value interval brackets `p(z)` at 11 grid points, four train samples covering all three question types, directions on `score_w`, `noul_w`, `policy_w`, `score_thresholds` |
 | `head_stage_psi_bound_contains_finite_differences` | the bound contains central differences of the single-sample `−log p_label` at 9 points per sample, and the largest measured derivative exceeds `1e-3` so the test is not vacuous |
-| `encoder_directions_are_refused_by_the_prototype` | a direction touching every slot returns `None` |
+| `encoder_directions_are_certified_by_the_dual_pass` | value intervals bracket `p(z)` for directions on `embed`, `question_attn_wq`, `question_w1`, `path_embed` at a narrow box (`R = 0.02`) |
+| `encoder_psi_bound_contains_finite_differences` | the `question_w1` bound contains central differences at 9 points per sample, with a nonzero measured derivative |
+| `state_encoder_dual_contains_the_model` | the state-encoder dual (LayerNorm, masked attention, routed MoE + shared SwiGLU) brackets `encode_state` values and its derivative brackets central differences, for an `moe_router` direction |
+| `second_order_bounds_contain_finite_differences` | for a `question_w1` direction, `chart_derivative_bounds` contains central-difference `Ψ'`, `Ψ''`, `p'` and `p''` at five points per sample |
+| `encoder_chart_enclosure_brackets_the_quadrature` | `head_chart_enclosure_1d` on a full-chart, one-sample `question_w1` direction brackets both the evidence and the predictive from `head_chart_quadrature_1d` |
 
-Bugs the containment test caught during this work, all fixed: `policy_w` is
-stored `[d, paths]` (flat index `j·paths + r`), thresholds are stored with the
-config's `max_levels−1` row stride (not the question's `levels−1`), and the
-threshold block must be offset per path. Four tests pass in 0.16 s.
+Eight tests pass in 0.83 s. Bugs the containment tests caught earlier, all
+fixed: `policy_w` is stored `[d, paths]` (flat index `j·paths + r`), thresholds
+use the config's `max_levels−1` row stride (not the question's `levels−1`),
+and the threshold block is offset per path.
 
-The remaining half is the encoder dual: LayerNorm, masked softmax attention,
-SwiGLU and routed MoE with the top-k selection over-bounded by
-max-over-experts. Until that exists, the E5 enclosure still refuses encoder
-directions.
+`head_chart_enclosure_1d` now takes two paths: the analytic policy-only bound
+when the direction moves only `policy_w`/`policy_b`, and the second-order dual
+bound otherwise, where `(sup|Ψ'|, sup|Ψ''|)` and `(sup|p'|, sup|p''|)` come from
+`chart_derivative_bounds` and the midpoint nodes are evaluated by
+`chart_label_probability_at`/`chart_psi_at`. The general path costs
+`(n_samples + 1)·cells` interval-dual forwards, so it is much more expensive
+than the policy path; it refuses a box whose evidence lower bound is not
+positive or whose marginal touches the floor.
+
+**One honest limit remains.** The deployed `edge0_model::forward` pools
+`state_rep` but the question blocks read the shared state *tokens* directly, so
+a direction supported only on state-encoder weights has zero effect on the
+marginal; the state pass is certified against `encode_state` itself, not
+through the marginal.
 
 **World-clustered SE.** The prediction rows already carry their `world` id
 (dev 2048–2303, test 2560–3071, 3 questions each), so the paired difference is
@@ -5815,6 +5843,638 @@ Not computed and not claimed: per-path proper-score and correctness-reward
 arms, an abstention objective other than "maximize selective accuracy on
 calibration", and the Lean4 lemmas.
 
+### R9 control-arm budget (declared 2026-11-15, before execution)
+
+The declared R9 campaign above ran four arms and stopped promotion. The two
+remaining controls named by `EDGE0_RLCD_PLAN.md` §4 are now implemented in
+`edge0_campaign::Arm` — `PerPath` (each sampled path's own readout scored by
+Brier against the label, policy not differentiated) and `CorrectnessReward`
+(`−R Σ log a_phi(r_i)` with `R = 1[argmax u_theta(.|r_i) = y]`, a deliberately
+non-proper reward). This is a **new, separate budget**, not a rerun of the
+promotion campaign and not an after-the-fact metric on its seeds.
+
+Declared before running:
+
+- 5 paired seed indices `0..4` (`init_seed = 9001 + k`), one frozen data seed
+  `20261115`, and the same declared world manifest 2048/256/256/512 and frozen
+test partition as the R9 campaign, so the rows are comparable but are the
+  control budget's own run;
+- 6 arms (`supervised`, `exact-marginal`, `RLCD`, `frozen-policy`, `per-path`,
+  `correctness-reward`), 200 optimizer updates per arm, batches of 32 worlds
+  (all their questions), shared supervised warm start of 30 updates;
+- hardware wall-time cap **1200 s**, checked between seeds; no extra seed,
+  width or architecture search;
+- endpoint: each arm's test Brier excess and NLL, plus the unchanged paired
+  world-clustered `RLCD − supervised` contrast. The two new arms are
+  descriptive controls: they are not used to retune RLCD or to promote it.
+
+```text
+R9_SEEDS=5 R9_UPDATES=200 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=1200 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_controls.ndjson \
+  R9_PRED_OUT=target/r9_controls_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-15).** All 5 declared seeds completed inside the cap: 5/5,
+330.6 s wall, 310.1 s summed seed time, 18 MB peak RSS, 576 000
+forward/backward passes. Artifacts: `target/r9_controls.ndjson` (one valid JSON
+row per seed, now carrying all six arms) and
+`target/r9_controls_predictions.ndjson` (23 MB of dev/calibration/test
+marginals).
+
+Five-seed means (test split, known-law outcomes):
+
+| arm | Brier excess | NLL | paired vs supervised (mean, 95 % `t`, df=4) |
+|---|---:|---:|---|
+| supervised CE+Brier | 0.12801 | 0.96047 | — |
+| exact-marginal Brier control | 0.12787 | 0.96003 | −0.00014 [−0.00023, −0.00004] |
+| RLCD (required) | 0.12788 | 0.96001 | −0.00013 [−0.00028, +0.00002] (inconclusive) |
+| frozen-policy readout | 0.12781 | 0.95989 | −0.00020 [−0.00029, −0.00011] |
+| **per-path proper score** | 0.13214 | 0.96658 | **+0.00413 [+0.00260, +0.00565]** |
+| **correctness-reward RL** | 0.13033 | 0.96424 | **+0.00232 [+0.00067, +0.00396]** |
+
+Per-seed `RLCD − supervised` world-clustered contrasts: +0.00007±0.00008,
+−0.00015±0.00009, −0.00021±0.00025, −0.00013±0.00008, −0.00025±0.00013; the
+across-seed mean is −0.00013 ± 0.00015 (95 % `t`), i.e. **inconclusive at this
+reduced control budget**. The declared 2000-update campaign above remains the
+promotion decision (worse with an interval excluding zero); this run is a
+different budget and does not revise it.
+
+Reading: both missing controls are clearly worse than supervised training on the
+same warm start, data and 200-update budget. The per-path proper score is the
+worst arm (its own path distributions are individually over-confident relative to
+the marginal objective), and the correctness-only reward is also worse, which is
+what a non-proper reward should produce once the labels are noisy. The frozen
+policy and the exact-marginal control are slightly *better* than the supervised
+comparator at this shorter budget and RLCD is statistically
+indistinguishable from it. No architecture or training promotion follows.
+
+#### Secondary endpoints of the two controls (from `target/r9_controls_predictions.ndjson`)
+
+The existing evaluator (`examples/r9_secondary.rs`) was run on the control
+artifact; it reads no live model. Five-seed means over the test split:
+
+| arm | wBrier | raw NLL | ordinal RPS | ECE | MCE | utility regret | `2·TV` bound | τ (cal) | cov | sel. acc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| supervised | 0.12801 | 0.96047 | 0.07784 | 0.0178 | 0.0261 | 0.01454 | 0.46358 | 0.41 | 0.333 | 0.5312 |
+| RLCD | 0.12788 | 0.96001 | 0.07778 | 0.0139 | 0.0218 | 0.01454 | 0.46234 | 0.41 | 0.333 | 0.5312 |
+| exact-marginal | 0.12788 | 0.96003 | 0.07779 | 0.0149 | 0.0223 | 0.01454 | 0.46254 | 0.41 | 0.333 | 0.5312 |
+| frozen-policy | 0.12781 | 0.95989 | 0.07773 | 0.0138 | 0.0187 | 0.01454 | 0.46216 | 0.40 | 0.333 | 0.5312 |
+| **per-path** | 0.13214 | 0.96658 | 0.08354 | 0.0218 | 0.0447 | 0.01454 | 0.46541 | 0.38 | 0.333 | 0.5312 |
+| **correctness-reward** | 0.13033 | 0.96424 | 0.07956 | 0.0167 | 0.0262 | 0.01454 | 0.46943 | 0.38 | 0.333 | 0.5312 |
+
+Reading, labelled by endpoint family:
+
+- **Calibration is not proper and does not rescue either control.** The per-path
+  arm is the worst calibrated (ECE 0.0218, MCE 0.0447); correctness-reward has a
+  slightly lower top-label ECE than supervised (0.0167 vs 0.0178) but a slightly
+  higher MCE and a clearly worse Brier/NLL/RPS. That is exactly the failure mode
+  the evaluator warns about: an arm can sharpen the bins it gets right while
+  losing proper score.
+- **Ordinal score agrees with the proper scores.** On `Score` questions the
+  ranked probability score is 0.08354 for per-path and 0.07956 for
+  correctness-reward, against 0.07784 supervised and 0.07778 RLCD. Neither
+  control improves the ordinal ranking of levels.
+- **Full-answer decision utility is identical because every arm takes the same
+  action.** All six arms have mean regret 0.01454 with the `2·TV` bound around
+  0.4636 and zero bound violations. The reason is visible in the artifact: under
+  the declared utility tables every test question gets the same
+  utility-optimal action from every arm (for the `Score` head the action is
+  always level 2, and the two other heads collapse likewise). The probability
+  differences therefore never change a full-answer decision. This is consistent
+  with the already-recorded observation that `state_rep` is computed but not
+  consumed by the question blocks; it means this artifact cannot rank the arms
+  on decision quality, only on scoring rules.
+- **The only decision-level difference is abstention.** The
+  calibration-selected rule (maximise selective accuracy) picks τ≈0.38–0.41 and
+  answers one third of the test questions for every arm, with the same selective
+  accuracy 0.5312. Under the declared risk cap 0.55 the per-path arm answers
+  less (coverage 0.333, risk 0.4688) than supervised (coverage 0.667, risk
+  0.5439); correctness-reward sits at 0.600/0.5289. That is a coverage/risk
+  trade-off, not a gain in per-question utility.
+
+Artifact: `target/r9_controls_secondary.ndjson` (RLCD−supervised summaries)
+beside the console tables in the run log.
+
+One implementation bug surfaced and was fixed during this run: the seed-row
+writer in `examples/r9_campaign.rs` emitted literal newlines and indentation
+inside the JSON string, so seed rows were not valid JSON. The writer now emits
+one line per row; the artifact above comes from a rerun of the same declared
+budget with the same seeds and data seed (wall times differ only by measurement).
+
+### R9 six-arm full-length budget (declared 2026-11-15, before execution)
+
+The reduced control budget above ran 200 updates per arm. This second new
+budget runs the **declared 2000-update length** with all six arms in the same
+run, so the two controls can be compared at the cost the original campaign
+declared rather than only at the reduced length. It is a separate budget: it
+does not replace or extend the stopped four-arm R9 campaign, and its result
+does not change that campaign's stop decision.
+
+Declared before running:
+
+- same frozen world manifest 2048/256/256/512, fixed data seed `20261115`,
+  five paired seed indices `0..4` (`init_seed = 9001 + k`);
+- six arms, **2000 updates per arm**, batches of 32 worlds with all their
+  questions, 30 shared supervised warm-start updates;
+- hardware wall-time cap **3600 s** (checked between seeds; derived from the
+  measured 62 s per seed at 200 updates × 6 arms, which scales to about 620 s
+  per seed at 2000 updates; 3600 s covers five seeds plus margin). No seed or
+  width search, no extra runs;
+- endpoint: unchanged world-clustered paired `RLCD − supervised` test Brier
+  excess; the four other arms are reported descriptively. No promotion is made
+  from this budget.
+
+```text
+R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=3600 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_full6.ndjson \
+  R9_PRED_OUT=target/r9_full6_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-15).** 5/5 seeds, 2958.1 s of the 3600 s cap, 5 760 000
+forward/backward passes, 18 MB peak RSS. Artifacts:
+`target/r9_full6.ndjson`, `target/r9_full6_predictions.ndjson`.
+
+| arm | Brier excess | NLL | paired vs supervised (mean, 95 % `t`, df=4) |
+|---|---:|---:|---|
+| supervised CE+Brier | 0.12697 | 0.95593 | — |
+| RLCD (required) | 0.12907 | 0.96205 | +0.00210 [+0.00063, +0.00356] |
+| exact-marginal | 0.12795 | 0.96021 | +0.00097 [+0.00072, +0.00123] |
+| frozen-policy | 0.12792 | 0.96008 | +0.00094 [+0.00068, +0.00120] |
+| **per-path** | 0.12866 | 0.96131 | +0.00169 [−0.00038, +0.00375] (inconclusive) |
+| **correctness-reward** | 0.16920 | 1.13583 | +0.04222 [−0.00456, +0.08900] (dominated by seed variance) |
+
+Per-seed `RLCD − supervised` contrasts: +0.00353±0.00085, +0.00233±0.00068,
++0.00273±0.00107, +0.00139±0.00062, +0.00050±0.00063. The upshot at the declared
+2000-update length is **not** the reduced-budget one: RLCD is now clearly worse
+than supervised, while per-path's disadvantage shrinks to statistical
+indistinguishability (its 200-update gap was +0.00413 with a CI excluding 0).
+Correctness-reward is still the worst arm and its mean is dominated by
+instability: its NLL is 1.1358 against 0.9559 supervised, and its paired
+interval is wide enough to be inconclusive on five seeds. No arm is promoted.
+
+### `state_rep` consumed by the question blocks (declared 2026-11-15, before execution)
+
+The reduced control budget's secondary analysis showed that all six arms take
+the same utility-optimal action on every test question, consistent with
+`state_rep` being computed and never read. The wiring change is now in the
+model: after the packed question blocks, every question rep becomes
+`rep + state_rep` before the heads (`edge0_model::forward_with`), and the
+certified encoder dual mirrors it by pooling the state-encoder dual and adding
+it to each question rep (`chart_lipschitz::dual_encode_questions`). No new
+parameters are introduced; the parameter census and every shape are unchanged.
+
+Hypothesis, declared before running: consuming the pooled state representation
+will move the deployed marginal on state-encoder directions (checked by
+`state_rep_is_consumed_by_the_marginal`) and, at the reduced control budget, will
+change test Brier/NLL and the utility-optimal actions relative to the matched
+unwired control run (`target/r9_controls.ndjson`, same seeds/data/budget).
+
+Budget (separate from both campaigns above):
+
+- 5 paired seeds `0..4` (`init_seed = 9001 + k`), data seed `20261115`, the same
+  2048/256/256/512 manifest and frozen test partition;
+- six arms, 200 updates per arm, 32-world batches with all questions, 30 shared
+  supervised warm-start updates;
+- hardware wall-time cap **1200 s**, checked between seeds; no extra seed or
+  architecture search;
+- endpoint: per-arm test Brier excess/NLL and the paired `RLCD − supervised`
+  contrast, plus a paired arm-by-arm comparison against the unwired control
+  artifact to isolate the wiring effect. No promotion is made from this budget.
+
+```text
+R9_SEEDS=5 R9_UPDATES=200 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=1200 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_state_rep.ndjson \
+  R9_PRED_OUT=target/r9_state_rep_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-15).** 5/5 seeds, 531.7 s of the 1200 s cap, 576 000
+passes, 24 MB peak RSS. Artifacts: `target/r9_state_rep.ndjson`,
+`target/r9_state_rep_predictions.ndjson`.
+
+| arm | Brier excess | NLL | wiring − unwired (paired, 95 % `t`) |
+|---|---:|---:|---|
+| supervised | 0.12804 | 0.96052 | +0.00003 [−0.00001, +0.00006] |
+| RLCD | 0.12805 | 0.96036 | +0.00017 [−0.00023, +0.00058] |
+| exact-marginal | 0.12791 | 0.96008 | +0.00004 [+0.00001, +0.00007] |
+| frozen-policy | 0.12785 | 0.95993 | +0.00004 [+0.00001, +0.00007] |
+| per-path | 0.13216 | 0.96660 | +0.00002 [−0.00015, +0.00019] |
+| correctness-reward | 0.13035 | 0.96430 | +0.00002 [−0.00048, +0.00050] |
+
+Paired `RLCD − supervised` in this run: +0.00001 ± 0.00038, inconclusive. Per-seed
+contrasts: +0.00030±0.00015, −0.00023±0.00010, −0.00004±0.00035,
+−0.00032±0.00020, +0.00035±0.00013.
+
+Reading:
+
+- **The wiring is causally active but numerically small.** Compared with the
+  matched unwired control run, the maximum per-question probability change is
+  0.030 (mean 0.0027) and the utility-optimal action agreement across arms drops
+  from 100 % to 66.7 % of test questions (one third of questions now get
+  different actions from different arms). So `state_rep` is genuinely consumed
+  and reaches the decisions.
+- **It does not improve the proper scores.** Every arm's Brier/NLL is within
+  ±0.0005 of the unwired run, and most paired intervals contain zero; the two
+  nominally positive intervals are +0.00004. The hypothesis of a scoring gain
+  from the pooled state at this budget is rejected; no promotion.
+- **The arm ordering is unchanged.** supervised ≈ exact-marginal ≈ frozen <
+  RLCD ≈ per-path < correctness-reward, matching the unwired reduced-budget run.
+
+Verification of the wiring itself: `chart_lipschitz` 9/9 (including the new
+`state_rep_is_consumed_by_the_marginal` and the encoder enclosure),
+`d_track` 11/11, `edge0_rlcd` 19/19, `rustfmt --check` clean on the changed
+Rust files.
+
+### `state_rep` at the declared 2000-update length (declared 2026-11-15, before execution)
+
+The 200-update wiring run above showed the pooled state reaches the decisions but
+moves proper scores by at most ~1e-4. This budget asks the remaining question:
+does the wiring matter at the **declared 2000-update length**, where the unwired
+run separated the arms (RLCD worse, per-path indistinguishable)?
+
+Declared before running:
+
+- same frozen manifest 2048/256/256/512, fixed data seed `20261115`, five paired
+  seeds `0..4` (`init_seed = 9001 + k`);
+- six arms, **2000 updates per arm**, 32-world batches with all questions, 30
+  shared supervised warm-start updates;
+- hardware wall-time cap **6000 s**, checked between seeds. The estimate comes
+  from the measured 200-update wiring run (531.7 s for 5 seeds × 6 arms × 200
+  updates = 6000 arm-updates, i.e. ~0.089 s per arm-update), which scales to
+  ~5320 s at 2000 updates. No seed or width search;
+- endpoint: the same world-clustered paired `RLCD − supervised` test Brier
+  excess, plus a paired per-arm comparison against the unwired full-length run
+  (`target/r9_full6.ndjson`, same seeds/data/budget) to isolate the wiring
+effect at 2000 updates. No promotion is made from this budget.
+
+```text
+R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=6000 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_full6_state_rep.ndjson \
+  R9_PRED_OUT=target/r9_full6_state_rep_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-16).** 5/5 seeds, 5676.3 s of the 6000 s cap, 5 760 000
+passes, 24 MB peak RSS. Artifacts: `target/r9_full6_state_rep.ndjson`,
+`target/r9_full6_state_rep_predictions.ndjson`.
+
+| arm | Brier excess | NLL | wiring − unwired (paired, 95 % `t`) |
+|---|---:|---:|---|
+| supervised | 0.12724 | 0.95646 | +0.00027 [+0.00014, +0.00039] |
+| RLCD | 0.12959 | 0.96305 | +0.00052 [−0.00057, +0.00160] |
+| exact-marginal | 0.12762 | 0.95896 | −0.00033 [−0.00074, +0.00008] |
+| frozen-policy | 0.12751 | 0.95828 | −0.00041 [−0.00088, +0.00006] |
+| per-path | 0.12836 | 0.96052 | −0.00030 [−0.00073, +0.00013] |
+| correctness-reward | 0.17741 | 1.15318 | +0.00822 [−0.00401, +0.02045] |
+
+Paired `RLCD − supervised`: +0.00235 ± 0.00124, interval excluding no improvement
+(RLCD worse). Per-seed contrasts: +0.00222±0.00070, +0.00274±0.00067,
++0.00379±0.00099, +0.00186±0.00064, +0.00112±0.00052.
+
+Reading: at 2000 updates the raw addition is not a free gain. It makes
+supervised slightly worse (a significant +0.00027), leaves RLCD's disadvantage
+unchanged, and moves the other arms by ≤0.0004 in either direction. The
+arm ordering is the same as the unwired run (RLCD worse than supervised,
+per-path close, correctness-reward worst). No promotion; the learned-projection
+hypothesis below asks whether a trained gate can do better than forcing the
+pooled state in.
+
+### Learned `state_proj` instead of the raw addition (declared 2026-11-16, before execution)
+
+The raw `rep + state_rep` wiring moved decisions but not proper scores. This
+hypothesis replaces it with a learned `d × d` projection: every question rep
+becomes `rep + state_rep · W_s`, with `W_s` a new parameter slot (`state_proj`)
+initialised like the other weights and trained by the same arms. The chart dual
+mirrors the projection (`state_pool · W_s`), and the parameter census grows by
+`d² = 64` at the campaign's `tiny` width (`d = 8`; still below one million).
+
+Hypothesis, declared before running: the learned projection will improve test
+Brier/NLL relative to the raw-addition run at the same reduced budget, because
+the model can reshape or suppress the pooled state instead of only adding it.
+This is a **new budget**, not a rerun of the addition budget (`target/r9_state_rep.ndjson`)
+or the unwired control (`target/r9_controls.ndjson`).
+
+Budget:
+
+- 5 paired seeds `0..4` (`init_seed = 9001 + k`), data seed `20261115`, the same
+  2048/256/256/512 manifest and frozen test partition;
+- six arms, 200 updates per arm, 32-world batches with all questions, 30 shared
+  supervised warm-start updates;
+- hardware wall-time cap **1800 s**, checked between seeds (the extra `d²`
+  parameter slot is small; the cap allows for it plus margin);
+- endpoint: per-arm test Brier excess/NLL, the paired `RLCD − supervised`
+  contrast, and paired arm-by-arm differences against the addition and unwired
+  artifacts. No promotion.
+
+```text
+R9_SEEDS=5 R9_UPDATES=200 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=1800 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_state_proj.ndjson \
+  R9_PRED_OUT=target/r9_state_proj_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-16).** 5/5 seeds, 538.2 s of the 1800 s cap, 576 000 passes,
+25 MB peak RSS. Artifacts: `target/r9_state_proj.ndjson`,
+`target/r9_state_proj_predictions.ndjson`.
+
+| arm | Brier excess | NLL | projection − raw addition (paired, 95 % `t`) |
+|---|---:|---:|---|
+| supervised | 0.12801 | 0.96045 | −0.00003 [−0.00012, +0.00006] |
+| RLCD | 0.12806 | 0.96042 | +0.00001 [−0.00041, +0.00043] |
+| exact-marginal | 0.12787 | 0.96001 | −0.00004 [−0.00013, +0.00005] |
+| frozen-policy | 0.12780 | 0.95986 | −0.00004 [−0.00012, +0.00004] |
+| per-path | 0.13070 | 0.96440 | −0.00146 [−0.00598, +0.00306] |
+| correctness-reward | 0.12958 | 0.96304 | −0.00077 [−0.00352, +0.00198] |
+
+Paired `RLCD − supervised` in this budget: +0.00005 ± 0.00051, inconclusive. The
+learned projection is statistically indistinguishable from the raw addition for
+every arm (the largest point change is per-path's −0.00146, whose interval
+contains zero and both signs). This rejects the declared hypothesis of a scoring
+gain from the trained gate at the reduced budget; no promotion. The extra
+`d² = 64` parameters also make each seed slightly slower (≈103 s vs ≈100 s),
+but remain inside the cap.
+
+### Learned `state_proj` at the declared 2000-update length (declared 2026-11-16, before execution)
+
+The reduced-budget projection test rejected its hypothesis, but the raw
+addition itself only became significantly harmful to supervised at the
+2000-update length, so the projection has not been tested where the wiring
+actually costs score. This budget reruns the learned projection at the
+declared campaign length; it is a **new budget**, not a rerun of the 200-update
+projection budget (`target/r9_state_proj.ndjson`), the raw-addition full run
+(`target/r9_full6_state_rep.ndjson`) or the unwired full run
+(`target/r9_full6.ndjson`).
+
+Hypothesis, declared before running: at 2000 updates the trained `d × d`
+projection (`rep + state_rep · W_s`) will score better than the raw addition
+for at least the supervised arm, because the model can suppress or reshape the
+pooled state where the fixed addition actively hurts; no arm is expected to
+beat the unwired control. Decision rule: a paired 95 % `t` interval on
+`projection − raw addition` per arm that excludes zero in the improving
+direction for supervised, with the arm ordering otherwise unchanged.
+
+Budget:
+
+- 5 paired seeds `0..4` (`init_seed = 9001 + k`), data seed `20261115`, the same
+  2048/256/256/512 manifest and frozen test partition as every R9 run above;
+- six arms, 2000 updates per arm, 32-world batches with all questions, 30 shared
+  supervised warm-start updates;
+- hardware wall-time cap **7200 s**, checked between seeds (the measured
+  raw-addition full run took 5676.3 s of its 6000 s cap; the projection's ≈1.3 %
+  per-seed overhead puts the expected total near 5750 s);
+- endpoint: per-arm test Brier excess/NLL and paired arm-by-arm differences
+  against the raw-addition and unwired full-length artifacts. No promotion.
+
+```text
+R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=7200 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_full6_state_proj.ndjson \
+  R9_PRED_OUT=target/r9_full6_state_proj_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed (2026-11-16).** 5/5 seeds, 4901.6 s of the 7200 s cap (4879.6 s
+summed seed wall time), 5 760 000 forward/backward passes, 24–25 MB peak RSS.
+Artifacts: `target/r9_full6_state_proj.ndjson`,
+`target/r9_full6_state_proj_predictions.ndjson`, stage log
+`target/r9-state-proj-full.txt`. Wall time came in *below* the raw-addition
+full run's 5653.4 s despite the extra `d²` parameters; the earlier ≈1.3 %
+per-seed overhead was machine noise, not a projection cost.
+
+| arm | Brier excess | NLL | projection − raw addition (paired, 95 % `t`) |
+|---|---:|---:|---|
+| supervised | 0.12692 | 0.95602 | −0.00032 [−0.00057, −0.00006] |
+| RLCD | 0.12800 | 0.96041 | −0.00159 [−0.00274, −0.00044] |
+| exact-marginal | 0.12790 | 0.96010 | +0.00028 [−0.00011, +0.00068] |
+| frozen-policy | 0.12788 | 0.95993 | +0.00038 [−0.00010, +0.00085] |
+| per-path | 0.12788 | 0.96013 | −0.00048 [−0.00215, +0.00118] |
+| correctness-reward | 0.17655 | 1.10058 | −0.00087 [−0.06454, +0.06280] |
+
+The declared decision rule is met: for supervised the paired interval
+excludes zero in the improving direction (−0.00032 [−0.00057, −0.00006]),
+and RLCD improves even more (−0.00159 [−0.00274, −0.00044]); the other four
+arms are statistically unchanged, with exact-marginal and frozen-policy
+slightly *worse* in point estimate but not significantly so. Within this run
+`RLCD − supervised` remains +0.00107 ± 0.00056 (per seed +0.00168, +0.00133,
++0.00069, +0.00107, +0.00061), so RLCD is still worse than supervised, but its
+penalty is roughly halved from the raw addition's +0.00235 ± 0.00124.
+
+Against the unwired full run, supervised is indistinguishable
+(−0.00005 [−0.00037, +0.00027]) and RLCD is now *better* than the unwired
+control (−0.00107 [−0.00194, −0.00020]); the raw addition had made RLCD worse
+by +0.00235. So the trained projection recovers the RLCD loss the fixed
+addition introduced and does not reproduce the supervised cost at 2000
+updates. Per the declared rule there is still no promotion: RLCD loses to
+supervised in the same run, and the ordering (supervised best; per-path,
+frozen and exact tied; RLCD next; correctness-reward worst) is unchanged. The
+remaining question is whether a *smaller* or gated projection can also remove
+RLCD's residual gap rather than only returning it to the unwired level.
+
+**Secondary endpoints (2026-11-16).** Re-scored from the stored predictions with
+`r9_secondary`, artifacts `target/r9_full6_state_proj_secondary.ndjson` and
+log `target/r9-secondary-proj-full.txt` (reproduced by the
+`r9-secondary-proj-full` stage; never retrains):
+
+| arm | ECE | MCE | RPS | scaled Brier | regret | cov@cal τ | sel. acc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| supervised | 0.0262 | 0.0871 | 0.07811 | 0.12756 | 0.01454 | 0.098 | 0.515 |
+| RLCD | 0.0150 | 0.0417 | 0.07795 | 0.12780 | 0.01454 | 0.286 | 0.514 |
+| exact-marginal | 0.0197 | 0.0293 | 0.07779 | 0.12776 | 0.01454 | 0.280 | 0.534 |
+| frozen-policy | 0.0185 | 0.0255 | 0.07775 | 0.12778 | 0.01454 | 0.280 | 0.534 |
+| per-path | 0.0191 | 0.0605 | 0.07778 | 0.12774 | 0.01454 | 0.274 | 0.523 |
+| correctness-reward | 0.0943 | 0.3864 | 0.11690 | 0.13614 | 0.01454 | 0.667 | 0.456 |
+
+Paired `RLCD − supervised`: scaled Brier +0.00024 ± 0.00026 (not significant),
+scaled NLL +0.00347 ± 0.00060, ordinal RPS −0.00017 ± 0.00049 (not
+significant), decision regret exactly 0, top-label ECE −0.0072 ± 0.0153 (not
+significant), selective accuracy −0.0009 ± 0.0738, coverage at risk τ
+−0.1801 ± 0.0376 and risk at that τ −0.00695 ± 0.00210; no regret-bound
+violations. Reading: dev-fitted temperature scaling removes RLCD's raw-Brier
+deficit (0.12780 vs 0.12756, interval containing zero), and the ordinal score
+and decision regret are identical, so the residual gap is almost entirely
+calibration plus a coverage/abstention trade-off, not different full-answer
+decisions — the same conclusion the raw-addition control's secondary analysis
+reached. This reinforces the no-promotion decision.
+
+### State-dependent gate on the projected state at 2000 updates (declared 2026-11-16, before execution)
+
+The full projection recovered most of RLCD's deficit but left it
++0.00107 ± 0.00056 worse than supervised in the same run. This budget replaces
+the fixed addition with a state-dependent, per-dimension gate:
+`rep + sigmoid(state_rep · W_g) ⊙ (state_rep · W_s)`, with `W_g` a new `[d, d]`
+slot. `W_g` is appended **last** in the layout so every existing parameter keeps
+its offset and a paired seed initialises all shared parameters exactly as in
+the learned-projection run; only the new slot's draws are new. The chart dual
+mirrors the gate with the same product rule (`sigmoid(state_pool · W_g) ⊙
+(state_pool · W_s)`); `state_gate_is_consumed_by_the_marginal` pins that a
+direction supported only on the gate moves the deployed marginal, and
+`state_gate` is included in the encoder-containment directions. The census
+grows by `d² = 64` over the projection run at the campaign's `tiny` width
+(`d = 8`; `P = 1620` → `1684`; still below one million).
+
+Hypothesis, declared before running: letting the model suppress the state
+addition per dimension where it hurts will shrink the within-run
+`RLCD − supervised` Brier gap below the projection run's +0.00107, because
+RLCD can gate off the pooled state instead of being forced to consume it.
+Decision rule: the paired 95 % `t` interval on the within-run
+`RLCD − supervised` contrast has an upper bound below +0.00107 (ideally
+including zero), and supervised does not regress significantly against the
+projection run (paired interval on `gate − projection` for supervised
+containing zero or favouring the gate). This is a **new budget**, not a rerun
+of the projection budget (`target/r9_full6_state_proj.ndjson`) or of the
+unwired/additions runs.
+
+Budget:
+
+- 5 paired seeds `0..4` (`init_seed = 9001 + k`), data seed `20261115`, the same
+  2048/256/256/512 manifest and frozen test partition;
+- six arms, 2000 updates per arm, 32-world batches with all questions, 30 shared
+  supervised warm-start updates;
+- hardware wall-time cap **7200 s**, checked between seeds (the projection run
+  used 4901.6 s; the gate's `d²` slot is the same size as the projection's and
+  expected to cost the same order);
+- endpoint: per-arm test Brier excess/NLL, the within-run `RLCD − supervised`
+  contrast, and paired arm-by-arm differences against the projection,
+  raw-addition and unwired full-length artifacts. No promotion.
+
+```text
+R9_STATE_PATH=gate \
+  R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=7200 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_full6_state_gate.ndjson \
+  R9_PRED_OUT=target/r9_full6_state_gate_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
+**Executed 2026-11-16 (stage `r9-state-gate`).** 5/5 seeds within the cap:
+5826.3 s summed seed wall time (cap 7200 s; per seed 1147.5, 1158.1, 1173.7,
+1169.4, 1177.6 s), 5,760,000 forward/backward passes, 24.4–25.4 MB RSS, one
+world hash across seeds. Mean test Brier excess / NLL:
+
+| arm | Brier | NLL |
+|---|---|---|
+| supervised CE+Brier | 0.12693 | 0.95602 |
+| RLCD (required) | 0.12789 | 0.96013 |
+| exact-marginal control | 0.12791 | 0.96009 |
+| frozen-policy readout | 0.12788 | 0.95993 |
+| per-path proper score | 0.12788 | 0.96013 |
+| correctness-reward RL | 0.17044 | 1.07226 |
+
+The declared decision rule is **not met**. The within-run `RLCD − supervised`
+contrast is **+0.00096 ± 0.00020** (paired 95 % `t` over five seed differences;
+per-seed differences 0.00099, 0.00106, 0.00067, 0.00101, 0.00106). Its upper
+bound, +0.00116, is not below the predeclared +0.00107, and it does not include
+zero. Against the projection run the change is indistinguishable from noise:
+`gate − projection` is −0.00011 [−0.00064, +0.00041] for RLCD and +0.00000
+[−0.00001, +0.00001] for supervised; exact-marginal, frozen-policy and
+per-path are unchanged to 1e-5, and correctness-reward is −0.00611
+[−0.01747, +0.00525]. Against raw addition the gate still helps
+(supervised −0.00031 [−0.00057, −0.00006]; RLCD −0.00170 [−0.00291, −0.00049]),
+and against the unwired full run it is −0.00005 [−0.00037, +0.00027] for
+supervised and −0.00118 [−0.00250, +0.00013] for RLCD.
+
+Diagnosis: the gate is close to a learned *scalar* on the state path. A gate
+that starts at `sigmoid(0) = 0.5` and is optimised by the same loss as
+`state_proj` is redundant with rescaling that projection — the two are not
+separately identified — so it barely changes the solution. The small RLCD
+improvement cannot be separated from the projection's own noise, and the
+declared gap target is missed. Recorded as a negative result; no promotion, and
+no rerun at another seed/data draw under this budget.
+
+**Secondary endpoints (2026-11-16).** Re-scored from the stored predictions with
+`r9_secondary`, artifact `target/r9_full6_state_gate_secondary.ndjson`, log
+`target/r9-secondary-gate.txt` (never retrains):
+
+```text
+cargo run --release -p pcnl --example r9_secondary -- \
+  target/r9_full6_state_gate_predictions.ndjson \
+  target/r9_full6_state_gate_secondary.ndjson
+```
+
+| arm | ECE | MCE | RPS | scaled Brier | regret | cov@cal τ | sel. acc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| supervised | 0.0238 | 0.0873 | 0.07812 | 0.12757 | 0.01454 | 0.145 | 0.507 |
+| RLCD | 0.0137 | 0.1475 | 0.07786 | 0.12775 | 0.01454 | 0.255 | 0.512 |
+| exact-marginal | 0.0193 | 0.0414 | 0.07779 | 0.12776 | 0.01454 | 0.273 | 0.527 |
+| frozen-policy | 0.0185 | 0.0309 | 0.07775 | 0.12778 | 0.01454 | 0.280 | 0.534 |
+| per-path | 0.0194 | 0.0420 | 0.07778 | 0.12775 | 0.01454 | 0.273 | 0.527 |
+| correctness-reward | 0.0863 | 0.3671 | 0.11112 | 0.13458 | 0.01454 | 0.667 | 0.450 |
+
+Paired `RLCD − supervised`: weighted Brier +0.00096 ± 0.00020, raw NLL
++0.00412 ± 0.00072, scaled Brier +0.00019 ± 0.00024 (not significant), scaled
+NLL +0.00331 ± 0.00068, ordinal RPS −0.00026 ± 0.00029 (not significant),
+decision regret exactly 0, top-label ECE −0.0061 ± 0.0122 (not significant),
+selective accuracy +0.0053 ± 0.0735 (not significant), coverage at calibration
+τ +0.1095 ± 0.2845 (not significant), coverage at risk τ −0.1751 ± 0.0439 and
+risk at that τ −0.00684 ± 0.00470; no regret-bound violations. This is the same
+pattern as the projection run's secondary analysis: dev-fitted temperature
+scaling removes the raw-Brier deficit (0.12775 vs 0.12757, interval containing
+zero), while the ordinal score and decision regret are identical, so the
+residual gap is calibration plus a coverage/abstention trade-off rather than
+different full-answer decisions. The gate does not change that reading.
+
+### Low-rank state projection at 2000 updates (declared 2026-11-16, before execution)
+
+The gate was redundant with `state_proj`'s own scale. This budget tests a
+capacity restriction that is not redundant with the full projection: the
+`[d, d]` state slot is replaced by a factorization `rep + (state_rep · U) · V`
+with `U: [d, r]`, `V: [r, d]` and `r = d/2`. At the campaign's `tiny` width that
+is `r = 4`, so the state slot still holds `d·r + r·d = d² = 64` entries: the
+parameter **count is identical** to the full projection (`P = 1684`), every
+other slot keeps its offset, and a paired seed initialises every shared
+parameter exactly as the projection, gate and raw-addition runs did. No slot is
+inert — every entry of `U` and `V` multiplies into the addition. The chart dual
+mirrors the factorization (`(state_pool · U) · V`) with the same product rule;
+`low_rank_state_projection_is_consumed_by_the_marginal` pins that directions on
+both factors move the deployed marginal and that the parameter count matches the
+full projection, and `state_down`/`state_up` are added to the encoder
+containment directions. `R9_STATE_PATH=lowrank` selects the variant; the
+deployed default remains `full`, so earlier budgets still reproduce.
+
+Hypothesis, declared before running: if the state contribution only needs ≤4 of
+the 8 available directions, the low-rank path matches the projection's
+supervised score and may reduce the within-run `RLCD − supervised` gap, because
+the rank constraint stops the RLCD arm spending capacity on state directions
+that do not generalise. If the state path genuinely needs more rank, supervised
+will regress and the restriction is rejected.
+
+Decision rule, declared before running: (a) **non-inferiority** — the paired
+95 % `t` interval on `lowrank − projection` for supervised Brier has an upper
+bound at or below +0.0002 (the projection's own run-to-run variation is of that
+order); and (b) **gap target** — the paired interval on the within-run
+`RLCD − supervised` contrast has an upper bound below +0.00107 (the projection
+run's gap) and ideally includes zero. Both are reported whatever they say; no
+promotion either way.
+
+Budget:
+
+- 5 paired seeds `0..4` (`init_seed = 9001 + k`), data seed `20261115`, the same
+  2048/256/256/512 manifest and frozen test partition;
+- six arms, 2000 updates per arm, 32-world batches with all questions, 30 shared
+  supervised warm-start updates;
+- hardware wall-time cap **7200 s**, checked between seeds (the state slot has
+  the same size as the projection's; the projection run used 4901.6 s and the
+  gate 5826.3 s);
+- endpoint: per-arm test Brier excess/NLL, the within-run `RLCD − supervised`
+  contrast, and paired arm-by-arm differences against the projection, gate,
+  raw-addition and unwired full-length artifacts. No promotion.
+
+```text
+R9_STATE_PATH=lowrank \
+  R9_SEEDS=5 R9_UPDATES=2000 R9_WARM_START=30 R9_BATCH_WORLDS=32 \
+  R9_WALL_CAP=7200 R9_DATA_SEED=20261115 \
+  R9_OUT=target/r9_full6_state_lowrank.ndjson \
+  R9_PRED_OUT=target/r9_full6_state_lowrank_predictions.ndjson \
+  cargo run --release -p pcnl --example r9_campaign
+```
+
 ### Not executed (and therefore not claimed)
 
 - **E3/E4 reporting beyond the computed table.** The declared campaign ran
@@ -5822,7 +6482,8 @@ calibration", and the Lean4 lemmas.
   and utility/regret are computed from the stored predictions, together with
   top-label reliability and coverage vs abstention. The calibration split as an
   abstention set and the extra control arms (per-path proper score,
-  correctness-reward RL) are still not computed. No further seed, width or
+  correctness-reward RL) are now computed in the control and full-length
+  sections above, at their declared budgets. No further seed, width or
   architecture search was run.
 - **E6 (Lean4).** No finite probability/decision lemma was handed to, or
   elaborated by, the Lean specialist. Proposed identifiers in the plan remain
@@ -5837,15 +6498,24 @@ calibration", and the Lean4 lemmas.
   turns the quadrature into a certified interval — but **only** for charts
   whose direction moves `policy_w`/`policy_b`, where the path distributions are
   constant in `z`; it declares a `1e-6` `f32` bridge on the frozen head inputs
-  and computes at 512 cells (the test also checks 1024). **Not implemented:**
-  directions supported on encoder/input weights. Those need a certified
-  layer-wise Jacobian product through the LayerNorm → attention → routed-MoE
-  stack (with the discrete top-k selection over-bounded by a max-over-experts
-  argument). That bound was neither derived nor tested here, and the
-  interval-dual forward-pass prototype that would carry it was not completed, so
-  `None` is returned and the quadrature for such directions stays a reference
-  estimate. The only evidence bound is the sound but vacuous clamp one
-  (`c ≈ 0`); no verified ball ceiling for this network exists. The value and
+  and computes at 512 cells (the test also checks 1024). The second-order
+  interval-dual pass now covers encoder directions through LayerNorm →
+  attention → routed MoE (routing over-bounded by the convex-combination
+  argument above), and `head_chart_enclosure_1d` uses it for any non-policy
+  direction: `sup|Ψ'|`, `sup|Ψ''|`, `sup|p'|` and `sup|p''|` are certified over
+  the box and the nodes are dual-pass evaluations. A direction supported only
+  on state-encoder weights now reaches the marginal because `forward` projects
+  the pooled `state_rep` through `state_proj` and adds it to every question rep,
+  and the dual pass mirrors that (`state_rep_is_consumed_by_the_marginal`); the
+  raw-addition and learned-projection variants both leave proper scores
+  statistically unchanged at the reduced budget; at 2000 updates the raw
+  addition hurts supervised significantly, while the learned projection
+  improves supervised and RLCD against the raw addition and leaves the other
+  arms unchanged; the state-dependent gate on that projection is
+  indistinguishable from it and does not close the RLCD–supervised gap. The
+  only evidence bound for a *ball* around the
+  whole network remains the sound but vacuous clamp one (`c ≈ 0`); this chart
+  enclosure is a one-dimensional box certificate, not a ball ceiling. The value and
   gradient now share `NLL_FLOOR` (they disagreed at `1e-12` vs `1e-6`), so the
   "exact mean-NLL gradient" claim holds at saturation too — but no gradient
   check at a saturated head was added.
@@ -5867,13 +6537,19 @@ calibration", and the Lean4 lemmas.
 - **D7 (Lean).** No Lean module or axiom audit was run for these packets; the
   D7 table above covers only the executed Rust checks.
 - **D7 (reproduction, narrower than it sounds).** The stages
-  (`./scripts/pcnl-reproduce d-track`, `edge0-campaign`, `r9-campaign` and
-  `r9-secondary`) exist and were run, and they regenerate the 34 test results,
-  the four-arm mechanics table, the declared campaign and its secondary
+  (`./scripts/pcnl-reproduce d-track`, `edge0-campaign`, `r9-campaign`,
+  `r9-secondary`, plus `r9-state-rep-full`, `r9-state-proj-full`,
+  `r9-state-gate`, `r9-secondary-proj-full`) exist and were run, and they
+  regenerate the 34 test results,
+  the six-arm mechanics table, the declared campaign and its secondary
   endpoints from the exported predictions. They do **not** regenerate the
   timings, memory figures or the per-packet verdicts in the D7 table — those
   were measured by hand and a rerun can move them; nor do they cover any Lean
   or DT-cell claim. `d-track` uses the debug profile, so its wall times are not
-  comparable to the release numbers quoted elsewhere; `r9-campaign` is release
-  and took 920.5 s of seed wall time inside the 4500 s cap.
+  comparable to the release numbers quoted elsewhere; the original four-arm
+  `r9-campaign` is release and took 920.5 s of seed wall time inside its 4500 s
+  cap. The later six-arm budgets above were invoked directly with their own
+  env-declared budgets (2000-update run: 2958.1 s inside 3600 s; 200-update
+  control and `state_rep` runs: 330.6 s and 531.7 s inside 1200 s), not by the
+  script stage.
 - **E6/E7 (repeated for clarity).** No Lean4 elaboration and no full R9 archive.

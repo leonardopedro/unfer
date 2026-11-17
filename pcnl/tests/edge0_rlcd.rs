@@ -801,7 +801,7 @@ fn campaign_arms_execute_and_report_finite_endpoints() {
     cfg.warm_start = 2;
     cfg.batch_worlds = 2;
     let report = run(&cfg).unwrap();
-    assert_eq!(report.arms.len(), 4);
+    assert_eq!(report.arms.len(), 6);
     assert!(report.arms.iter().any(|a| a.arm == Arm::Rlcd));
     assert!(report.arms.iter().any(|a| a.arm == Arm::Supervised));
     for arm in &report.arms {

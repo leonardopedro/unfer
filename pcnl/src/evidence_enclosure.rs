@@ -514,6 +514,19 @@ impl Iv {
             hi: ln_enclose(self.hi).hi,
         }
     }
+
+    /// `sqrt` on a nonnegative interval; monotone, endpoint enclosures. The
+    /// endpoints are widened outward like every other operation.
+    pub fn sqrt(self) -> Self {
+        assert!(
+            self.lo >= 0.0,
+            "interval square root of a negative lower bound"
+        );
+        Self {
+            lo: next_down(self.lo.sqrt()),
+            hi: next_up(self.hi.sqrt()),
+        }
+    }
 }
 
 /// Enclosure of `e^x` for `|x| ≤ 60`, independent of the platform libm.
@@ -573,10 +586,11 @@ pub fn ln_enclose(x: f64) -> Iv {
     }
     // The next omitted term is `y^(2N+1)/(2N+1)`; the remaining positive
     // series is below `y^(2N+1)/((2N+1)(1−y²))`, and `y ≤ 1/3`.
-    let remainder = 2.0
-        * (1.0f64 / 3.0).powi((2 * N) as i32)
-        / ((2 * N + 1) as f64 * (1.0 - 1.0 / 9.0));
-    let ln_m = sum.mul(&Iv::point(2.0)).add(&Iv::span(-remainder, remainder));
+    let remainder =
+        2.0 * (1.0f64 / 3.0).powi((2 * N) as i32) / ((2 * N + 1) as f64 * (1.0 - 1.0 / 9.0));
+    let ln_m = sum
+        .mul(&Iv::point(2.0))
+        .add(&Iv::span(-remainder, remainder));
     ln_m.add(&Iv::point(k as f64).mul(&LN2))
 }
 
@@ -634,5 +648,3 @@ fn sigmoid(x: f64) -> f64 {
         e / (1.0 + e)
     }
 }
-
-

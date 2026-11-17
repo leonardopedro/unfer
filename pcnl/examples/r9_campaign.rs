@@ -8,7 +8,9 @@
 //!
 //! Declared split: 2048/256/256/512 worlds (train/dev/calibration/test), 32
 //! worlds per update with all their questions, at most 2000 updates per arm,
-//! four arms, and five paired training seeds over **one** frozen world manifest
+//! six arms (the four original plus the per-path proper-score and
+//! correctness-reward controls), and five paired training seeds over **one**
+//! frozen world manifest
 //! (`R9_DATA_SEED`, default `20261115`). The cap is consulted between seeds:
 //! a seed either runs to its declared budget or is not started, and the count of
 //! started/completed seeds is printed and written. No extra seed or width search
@@ -24,7 +26,7 @@
 use pcnl::edge0_campaign::{
     Arm, BatchUnit, CampaignConfig, CampaignReport, build_samples, predictions, run,
 };
-use pcnl::edge0_model::Edge0Config;
+use pcnl::edge0_model::{Edge0Config, StatePath};
 use pcnl::edge0_world::Split;
 use std::io::Write;
 use std::time::Instant;
@@ -94,6 +96,18 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(2026_11_15);
+    // Declared state-path variant (`full`, `gate`, `lowrank`); the default is
+    // the deployed full projection so every earlier budget still reproduces.
+    let state_path = match std::env::var("R9_STATE_PATH")
+        .unwrap_or_else(|_| "full".into())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "full" => StatePath::Full,
+        "gate" => StatePath::Gate,
+        "lowrank" | "low-rank" => StatePath::LowRank,
+        other => panic!("unknown R9_STATE_PATH {other:?} (want full|gate|lowrank)"),
+    };
     let out_path = std::env::var("R9_OUT").unwrap_or_else(|_| "target/r9_campaign.ndjson".into());
     let pred_path = std::env::var("R9_PRED_OUT")
         .unwrap_or_else(|_| "target/r9_predictions.ndjson".into());
@@ -114,6 +128,14 @@ fn main() {
         "paired training seeds: {seeds} over fixed data seed {data_seed} | \
          hardware wall-time cap: {cap} s (declared now, checked between seeds)"
     );
+    println!(
+        "state path: {state_path:?} | params P = {}",
+        {
+            let mut model = Edge0Config::tiny();
+            model.state_path = state_path;
+            model.flat_size()
+        }
+    );
     println!("artifact: {out_path}");
     println!("predictions: {pred_path}");
     println!();
@@ -129,7 +151,11 @@ fn main() {
             break;
         }
         let cfg = CampaignConfig {
-            model: Edge0Config::tiny(),
+            model: {
+                let mut model = Edge0Config::tiny();
+                model.state_path = state_path;
+                model
+            },
             seed: 9_001 + k as u64,
             data_seed: Some(data_seed),
             batch_unit: BatchUnit::Worlds,
@@ -223,16 +249,15 @@ fn main() {
         {
             let _ = writeln!(
                 f,
-                "{{\"kind\":\"r9-seed\",\"seed_index\":{k},\"init_seed\":{},\"data_seed\":{data_seed},\
-                 \"worlds\":{:?},\"updates\":{updates},\"warm_start\":{warm},\
-                 \"batch_worlds\":{batch_worlds},\"batch_unit\":\"worlds\",\
-                 \"wall_s\":{secs:.3},\"maxrss_kb\":{rss},\"passes\":{passes},\
-                 \"rlcd\":{},\"supervised\":{},\"brier_diff\":{diff:.8},\"brier_se\":{se:.8},\
-                 \"world_hash\":\"0x{:x}\"}}",
+                "{{\"kind\":\"r9-seed\",\"seed_index\":{k},\"init_seed\":{},\"data_seed\":{data_seed},\"worlds\":{:?},\"updates\":{updates},\"warm_start\":{warm},\"batch_worlds\":{batch_worlds},\"batch_unit\":\"worlds\",\"wall_s\":{secs:.3},\"maxrss_kb\":{rss},\"passes\":{passes},\"rlcd\":{},\"supervised\":{},\"exact_marginal\":{},\"frozen_policy\":{},\"per_path\":{},\"correctness_reward\":{},\"brier_diff\":{diff:.8},\"brier_se\":{se:.8},\"world_hash\":\"0x{:x}\"}}",
                 cfg.seed,
                 DECLARED_WORLDS,
                 arm_row(&rep, Arm::Rlcd),
                 arm_row(&rep, Arm::Supervised),
+                arm_row(&rep, Arm::ExactMarginal),
+                arm_row(&rep, Arm::FrozenPolicy),
+                arm_row(&rep, Arm::PerPath),
+                arm_row(&rep, Arm::CorrectnessReward),
                 rep.world_hash
             );
         }

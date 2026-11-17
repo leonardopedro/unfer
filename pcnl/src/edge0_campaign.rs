@@ -4,8 +4,9 @@
 //! a common optional supervised warm start, the mandatory CE+Brier comparator,
 //! the same-objective exact-marginal control, the required RLCD arm (a genuine
 //! score-function update of the four-path policy), a frozen-policy readout arm,
-//! world-split evaluation against the known outcome law, route diagnostics and
-//! a world-clustered paired contrast.
+//! the per-path proper-score and correctness-reward controls, world-split
+//! evaluation against the known outcome law, route diagnostics and a
+//! world-clustered paired contrast.
 //!
 //! **It is not the declared R9 campaign.** `EDGE0_RLCD_PLAN.md` §5 specifies
 //! 5 paired seeds, 2048/256/256/512 worlds and up to 2000 optimizer updates;
@@ -103,14 +104,22 @@ pub enum Arm {
     Rlcd,
     /// Frozen policy, direct readout updates only.
     FrozenPolicy,
+    /// Per-path proper score: sampled paths, each path's readout scored against
+    /// the label. No marginal mixing and no policy-gradient term.
+    PerPath,
+    /// Correctness-reward policy gradient: sampled paths rewarded by whether
+    /// their own argmax is the label. A deliberately non-proper reward control.
+    CorrectnessReward,
 }
 
 impl Arm {
-    pub const ALL: [Arm; 4] = [
+    pub const ALL: [Arm; 6] = [
         Arm::Supervised,
         Arm::ExactMarginal,
         Arm::Rlcd,
         Arm::FrozenPolicy,
+        Arm::PerPath,
+        Arm::CorrectnessReward,
     ];
 
     pub fn label(self) -> &'static str {
@@ -119,6 +128,8 @@ impl Arm {
             Arm::ExactMarginal => "exact-marginal Brier control",
             Arm::Rlcd => "RLCD (required)",
             Arm::FrozenPolicy => "frozen-policy readout",
+            Arm::PerPath => "per-path proper score",
+            Arm::CorrectnessReward => "correctness-reward RL",
         }
     }
 }
@@ -315,8 +326,8 @@ fn brier_of_frozen(q: &crate::edge0_model::PathOutput, y: usize) -> Result<Tenso
     m.sub(&eye)?.sqr()?.sum_all()
 }
 
-/// RLCD's sampled-path loss for one example.
-fn rlcd_loss(q: &crate::edge0_model::PathOutput, y: usize, rng: &mut StdRng) -> Result<Tensor> {
+/// `m = PATHS` conditionally independent path draws from `a_phi(. | s,q)`.
+fn sample_paths(q: &crate::edge0_model::PathOutput, rng: &mut StdRng) -> Result<Vec<usize>> {
     let a = q.policy_vec()?;
     let mut tuple = Vec::with_capacity(PATHS);
     for _ in 0..PATHS {
@@ -331,6 +342,66 @@ fn rlcd_loss(q: &crate::edge0_model::PathOutput, y: usize, rng: &mut StdRng) -> 
         }
         tuple.push(chosen);
     }
+    Ok(tuple)
+}
+
+fn vector_brier(p: &Tensor, y: usize) -> Result<Tensor> {
+    let k = p.dim(0)?;
+    let eye = Tensor::from_vec(
+        (0..k)
+            .map(|i| if i == y { 1.0f32 } else { 0.0 })
+            .collect::<Vec<_>>(),
+        vec![k],
+        p.device(),
+    )?;
+    p.sub(&eye)?.sqr()?.sum_all()
+}
+
+/// Per-path proper score: every sampled path's own readout is scored against
+/// the label and averaged. The policy is not differentiated.
+fn per_path_loss(q: &crate::edge0_model::PathOutput, y: usize, rng: &mut StdRng) -> Result<Tensor> {
+    let tuple = sample_paths(q, rng)?;
+    let mut losses = Vec::with_capacity(tuple.len());
+    for r in tuple {
+        losses.push(vector_brier(&q.path_probs[r], y)?);
+    }
+    mean_loss(&losses)
+}
+
+/// Correctness-reward REINFORCE: `-R Σ_i log a_phi(r_i)` with
+/// `R_i = 1[argmax u_theta(.|r_i) = y]`. The reward is read off the readout
+/// and is **not** a proper scoring rule; this arm exists to show what the RL
+/// term does when the reward is correctness rather than a proper score.
+fn correctness_reward_loss(
+    q: &crate::edge0_model::PathOutput,
+    y: usize,
+    rng: &mut StdRng,
+) -> Result<Tensor> {
+    let tuple = sample_paths(q, rng)?;
+    let logp = candle_nn::ops::log_softmax(&q.policy_logits, 0)?;
+    let mut total = q.policy_logits.sum_all()?.affine(0.0, 0.0)?;
+    for &r in &tuple {
+        let vals = q.path_probs[r].to_vec1::<f32>()?;
+        let mut best = 0usize;
+        for (i, v) in vals.iter().enumerate() {
+            if *v > vals[best] {
+                best = i;
+            }
+        }
+        if best == y {
+            let term = logp
+                .narrow(0, r, 1)?
+                .squeeze(0)?
+                .affine(-1.0 / PATHS as f64, 0.0)?;
+            total = total.add(&term)?;
+        }
+    }
+    Ok(total)
+}
+
+/// RLCD's sampled-path loss for one example.
+fn rlcd_loss(q: &crate::edge0_model::PathOutput, y: usize, rng: &mut StdRng) -> Result<Tensor> {
+    let tuple = sample_paths(q, rng)?;
     let d = q.policy.device();
     let mut sum_y = Tensor::zeros(1, DType::F32, d)?.squeeze(0)?;
     for &r in &tuple {
@@ -381,6 +452,8 @@ fn batch_gradient(
             Arm::ExactMarginal => brier_of(q, s.label)?,
             Arm::Rlcd => rlcd_loss(q, s.label, rng)?,
             Arm::FrozenPolicy => brier_of_frozen(q, s.label)?,
+            Arm::PerPath => per_path_loss(q, s.label, rng)?,
+            Arm::CorrectnessReward => correctness_reward_loss(q, s.label, rng)?,
         };
         losses.push(loss);
     }

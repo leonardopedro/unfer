@@ -27,9 +27,10 @@
 use crate::certificate::{
     Certificate, ClaimRecord, KernelIdentity, TargetIdentity, VerifiedRegion,
 };
+use crate::chart_lipschitz::{chart_derivative_bounds, chart_label_probability_at, chart_psi_at};
 use crate::edge0_campaign::Sample;
-use crate::evidence_enclosure::Iv;
 use crate::edge0_model::{Edge0Config, ModelInput, forward};
+use crate::evidence_enclosure::Iv;
 use crate::manifest::Fnv;
 use crate::normalize::NormGrad;
 use crate::target::{Potential, SubspaceTarget, ZPotential, ZStep};
@@ -460,13 +461,13 @@ pub const HEAD_CHART_F32_BRIDGE: f64 = 1e-6;
 /// A certified evidence/predictive enclosure for a one-dimensional head chart.
 ///
 /// Unlike [`ChartQuadrature`] this is not a reference estimate: `Psi'` and
-/// `Psi''` along the chart are bounded analytically from the softmax mixing of
-/// the frozen path probabilities, so the midpoint truncation error and the
-/// Gaussian tail are explicit. The bound is only available when the chart
-/// direction moves `policy_w`/`policy_b`; the path distributions `u_r` are then
-/// constant in `z` and the label marginal is `sum_r softmax(L_r + z d_r) u_r`.
-/// Any other direction (a `noul`/`score` head, or the encoder) returns `None`
-/// rather than an unproved bound.
+/// `Psi''` along the chart are bounded, so the midpoint truncation error and the
+/// Gaussian tail are explicit. Policy-only directions (`policy_w`/`policy_b`)
+/// use the analytic bound from the softmax mixing of the frozen path
+/// distributions. Every other direction — the other heads and the encoder
+/// (embeddings, attention, MoE, question blocks) — uses the second-order
+/// interval-dual pass over the box; it returns `None` when that pass cannot
+/// certify a marginal (floor, guarded range), never an unproved bound.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChartEnclosure {
     pub evidence_lo: f64,
@@ -520,9 +521,12 @@ fn softmax_iv(logits: &[Iv]) -> Vec<Iv> {
 }
 
 /// Certified enclosure of `Z0 = int e^{-Psi} phi dz` and the posterior-averaged
-/// label probability on a one-column head chart. `sample` selects the label
-/// whose predictive is enclosed. `None` for a chart that is not 1-D or whose
-/// direction leaves the policy head.
+/// label probability on a one-column chart. `sample` selects the label whose
+/// predictive is enclosed. Policy-only directions use the analytic softmax
+/// bound; every other direction uses the second-order interval-dual pass, so
+/// the encoder chart is included. `None` for a chart that is not 1-D, or when
+/// the selected direction cannot certify a positive evidence lower bound or a
+/// marginal above the floor.
 pub fn head_chart_enclosure_1d(
     target: &SubspaceTarget<Edge0Potential>,
     radius: f64,
@@ -558,12 +562,9 @@ pub fn head_chart_enclosure_1d(
             }
         }
     }
-    if dir
-        .iter()
-        .enumerate()
-        .any(|(i, d)| *d != 0.0 && !allowed[i])
-    {
-        return Ok(None);
+    let policy_only = dir.iter().enumerate().all(|(i, d)| *d == 0.0 || allowed[i]);
+    if !policy_only {
+        return encoder_chart_enclosure(target, radius, cells, sample);
     }
 
     let bridge = HEAD_CHART_F32_BRIDGE;
@@ -626,20 +627,21 @@ pub fn head_chart_enclosure_1d(
     let phi_max = INV_SQRT_2PI_CHART;
     let g2 = (psi_q + 1.0 + (psi_p + radius) * (psi_p + radius)) * phi_max.hi;
     // Predictive weight p(z): |p'| <= D p <= D, |p''| <= 3 D^2.
-    let p2 = g2 + 2.0 * dmax_all * (psi_p + radius) * phi_max.hi
+    let p2 = g2
+        + 2.0 * dmax_all * (psi_p + radius) * phi_max.hi
         + (3.0 * dmax_all * dmax_all) * phi_max.hi;
     let vol = 2.0 * radius;
     let quad_err = vol * h * h / 24.0 * g2;
     let pred_err = vol * h * h / 24.0 * p2;
-    let node_err = (psi_p + radius) * phi_max.hi * crate::evidence_enclosure::NODE_UNCERTAINTY * vol;
+    let node_err =
+        (psi_p + radius) * phi_max.hi * crate::evidence_enclosure::NODE_UNCERTAINTY * vol;
 
     let p_at = |c: &Consts, z: Iv| -> Iv {
-        let logits: Vec<Iv> = c
-            .l0
-            .iter()
-            .zip(&c.d)
-            .map(|(l, d)| widened(*l, bridge).add(&widened(*d, bridge).mul(&z)))
-            .collect();
+        let logits: Vec<Iv> =
+            c.l0.iter()
+                .zip(&c.d)
+                .map(|(l, d)| widened(*l, bridge).add(&widened(*d, bridge).mul(&z)))
+                .collect();
         let a = softmax_iv(&logits);
         let mut p = Iv::point(0.0);
         for (ar, u) in a.iter().zip(&c.u) {
@@ -683,6 +685,90 @@ pub fn head_chart_enclosure_1d(
     let pr_lo = ((pred_mid.lo - pred_err - node_err) / ev_hi).clamp(0.0, 1.0);
     let pr_hi = ((pred_mid.hi + pred_err + node_err + tail) / ev_lo).clamp(0.0, 1.0);
 
+    Ok(Some(ChartEnclosure {
+        evidence_lo: ev_lo,
+        evidence_hi: ev_hi,
+        predictive_lo: pr_lo,
+        predictive_hi: pr_hi,
+        tail_upper: tail,
+        quadrature_error: quad_err + node_err,
+        psi_prime_sup: psi_p,
+        psi_second_sup: psi_q,
+        f32_bridge: bridge,
+        radius,
+        cells,
+    }))
+}
+
+/// The general-direction enclosure: same midpoint/tail/rounding structure as
+/// the policy-only path, but `(sup|Ψ'|, sup|Ψ''|)` and `(sup|p'|, sup|p''|)`
+/// come from the second-order interval-dual pass over the whole box, and the
+/// node values come from that pass evaluated at each node.
+///
+/// It is only reachable when the direction leaves the policy head; the caller
+/// has already checked that. Cost is `(n_samples + 1) · cells` interval-dual
+/// forwards, so the general chart is much more expensive than the analytic
+/// policy path.
+fn encoder_chart_enclosure(
+    target: &SubspaceTarget<Edge0Potential>,
+    radius: f64,
+    cells: usize,
+    sample: usize,
+) -> Result<Option<ChartEnclosure>> {
+    let bounds = match chart_derivative_bounds(target, radius, sample)? {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+    let bridge = HEAD_CHART_F32_BRIDGE;
+    let psi_p = bounds.psi_prime_sup + bridge;
+    let psi_q = bounds.psi_second_sup + bridge;
+    let p_p = bounds.p_prime_sup + bridge;
+    let p_q = bounds.p_second_sup + bridge;
+
+    let h = 2.0 * radius / cells as f64;
+    let phi_max = INV_SQRT_2PI_CHART;
+    let g2 = (psi_q + 1.0 + (psi_p + radius) * (psi_p + radius)) * phi_max.hi;
+    // (p g)'' = p''g + 2p'g' + p g'', with |g'| ≤ (psi_p + R)·φ.
+    let p2 = g2 + 2.0 * p_p * (psi_p + radius) * phi_max.hi + p_q * phi_max.hi;
+    let vol = 2.0 * radius;
+    let quad_err = vol * h * h / 24.0 * g2;
+    let pred_err = vol * h * h / 24.0 * p2;
+    let node_err =
+        (psi_p + radius) * phi_max.hi * crate::evidence_enclosure::NODE_UNCERTAINTY * vol;
+    let mut evidence_mid = Iv::point(0.0);
+    let mut pred_mid = Iv::point(0.0);
+    for i in 0..cells {
+        let z = -radius + (i as f64 + 0.5) * h;
+        let psi = match chart_psi_at(target, z)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let g = psi
+            .neg()
+            .exp()
+            .mul(&phi_max)
+            .mul(&Iv::point(-0.5 * z * z).exp());
+        let p = match chart_label_probability_at(target, z, sample)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let p = Iv::span(p.lo.clamp(0.0, 1.0), p.hi.clamp(0.0, 1.0));
+        evidence_mid = evidence_mid.add(&g);
+        pred_mid = pred_mid.add(&p.mul(&g));
+    }
+    evidence_mid = evidence_mid.mul(&Iv::point(h));
+    pred_mid = pred_mid.mul(&Iv::point(h));
+
+    let r = radius;
+    let pdf = (-0.5 * r * r).exp() / (2.0 * std::f64::consts::PI).sqrt();
+    let tail = (2.0 * pdf / r).min(1.0);
+    let ev_lo = (evidence_mid.lo - quad_err - node_err).max(0.0);
+    let ev_hi = evidence_mid.hi + quad_err + node_err + tail;
+    if !(ev_lo > 0.0 && ev_hi.is_finite()) {
+        return Ok(None);
+    }
+    let pr_lo = ((pred_mid.lo - pred_err - node_err) / ev_hi).clamp(0.0, 1.0);
+    let pr_hi = ((pred_mid.hi + pred_err + node_err + tail) / ev_lo).clamp(0.0, 1.0);
     Ok(Some(ChartEnclosure {
         evidence_lo: ev_lo,
         evidence_hi: ev_hi,
