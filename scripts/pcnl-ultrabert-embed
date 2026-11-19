@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Regenerate the frozen UltraBERT AG News embedding fixture.
+
+Requires torch, transformers, safetensors and the model's remote code.  A
+CPU-only environment is enough:
+
+    uv run --python 3.12 \
+      --with torch --with transformers --with safetensors \
+      scripts/pcnl-ultrabert-embed
+
+The model weights (~604 MB) are downloaded from the pinned revision.  The
+fixture is intentionally small (240 train / 120 test rows) so the pCNL head
+example remains cheap; it is a controlled text-classification probe, not an
+MTEB evaluation.
+"""
+
+import csv
+import hashlib
+import io
+import json
+import random
+import urllib.request
+from pathlib import Path
+
+import torch
+from safetensors.torch import save_file
+from transformers import AutoModel, AutoTokenizer
+
+MODEL = "dmis-lab/UltraBERT-Embed-150M"
+REVISION = "b06b36724c5417a1ec1b7863dd4fa542b74e4899"
+DATA_URL = (
+    "https://raw.githubusercontent.com/mhjabreel/CharCnn_Keras/master/"
+    "data/ag_news_csv/test.csv"
+)
+SEED = 20261118
+PER_CLASS_TRAIN = 60
+PER_CLASS_TEST = 30
+MAX_LENGTH = 96
+
+
+def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    out = root / "docs/fixtures/ultrabert_agnews_embeddings.safetensors"
+    manifest = root / "docs/fixtures/ultrabert_agnews_embeddings.json"
+
+    with urllib.request.urlopen(DATA_URL) as response:
+        text = response.read().decode("utf-8")
+    rows = []
+    for label, title, description in csv.reader(io.StringIO(text)):
+        clean = (title.strip() + " " + description.strip()).replace("\\", " ")
+        rows.append((int(label) - 1, clean))
+
+    rng = random.Random(SEED)
+    seen = set()
+    by_class = [[] for _ in range(4)]
+    for label, clean in rows:
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        by_class[label].append(clean)
+
+    train, test = [], []
+    for label in range(4):
+        rng.shuffle(by_class[label])
+        train += [(label, t) for t in by_class[label][:PER_CLASS_TRAIN]]
+        test += [(label, t) for t in by_class[label][PER_CLASS_TRAIN:PER_CLASS_TRAIN + PER_CLASS_TEST]]
+    rng.shuffle(train)
+    rng.shuffle(test)
+    examples = train + test
+    labels = [y for y, _ in examples]
+    split = [0] * len(train) + [1] * len(test)
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, revision=REVISION, trust_remote_code=True)
+    model = AutoModel.from_pretrained(
+        MODEL, revision=REVISION, trust_remote_code=True, dtype=torch.float32
+    ).eval()
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, len(examples), 24):
+            batch = [t for _, t in examples[start:start + 24]]
+            enc = tokenizer(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=MAX_LENGTH,
+                return_tensors="pt",
+            )
+            # The model card declares CLS pooling and L2-normalised output.
+            h = model(**enc).last_hidden_state[:, 0]
+            chunks.append(torch.nn.functional.normalize(h, dim=-1))
+    embeddings = torch.cat(chunks).to(torch.float32)
+    assert embeddings.shape == (len(examples), 768)
+
+    save_file(
+        {
+            "embeddings": embeddings,
+            "labels": torch.tensor(labels, dtype=torch.int64),
+            "split": torch.tensor(split, dtype=torch.uint8),
+        },
+        str(out),
+    )
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    manifest.write_text(
+        json.dumps(
+            {
+                "model": MODEL,
+                "revision": REVISION,
+                "hidden_size": 768,
+                "pooling": "CLS token, L2-normalized",
+                "max_length": MAX_LENGTH,
+                "dataset": "AG News test.csv (mhjabreel/CharCnn_Keras mirror)",
+                "selection": f"{PER_CLASS_TRAIN} train + {PER_CLASS_TEST} test per class, deduplicated, seed {SEED}",
+                "n_train": len(train),
+                "n_test": len(test),
+                "n_classes": 4,
+                "labels": ["World", "Sports", "Business", "Sci/Tech"],
+                "artifact_sha256": digest,
+                "split_seed": SEED,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote {out} ({digest})")
+
+
+if __name__ == "__main__":
+    main()

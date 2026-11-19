@@ -1,0 +1,20 @@
+{
+  "model": "dmis-lab/UltraBERT-Embed-150M",
+  "revision": "b06b36724c5417a1ec1b7863dd4fa542b74e4899",
+  "hidden_size": 768,
+  "pooling": "CLS token, L2-normalized",
+  "max_length": 96,
+  "dataset": "AG News test.csv (mhjabreel/CharCnn_Keras mirror)",
+  "selection": "60 train + 30 test per class, deduplicated, seed 20261118",
+  "n_train": 240,
+  "n_test": 120,
+  "n_classes": 4,
+  "labels": [
+    "World",
+    "Sports",
+    "Business",
+    "Sci/Tech"
+  ],
+  "artifact_sha256": "8fca923d12360482c0914bfa3ada1c50121d7c6fcdcc65cf0a8618ad5ead3745",
+  "split_seed": 20261118
+}
