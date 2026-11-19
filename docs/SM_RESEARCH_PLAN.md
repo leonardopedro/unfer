@@ -160,9 +160,16 @@ Duhamel representation and integral bound are kernel-verified in
 `SmDefectAnalytic.lean` (Mathlib): for `u' = -A u + b`,
 `u t = exp(-tA)u0 + ∫ exp(-(t-s)A)b s`, and the N8-shaped bound follows from an
 initial bound and a source bound. The flow bound `||exp(-(t-s)A)|| <= 1` is
-proved for every skew-adjoint `A` via unitarity. Identifying `A = iH` for the
-actual matrix and the physical reduction remain open; `evolution_bound.hi`
-therefore stays `conditionally-bounded`. The separately measured Padé flow is a diagnostic
+proved for every skew-adjoint `A` via unitarity. `SmDefectSkew.lean` proves
+`A = iH` skew-adjoint for the declared finite fixture (its exact rational `H`
+is Hermitian), and its exported payload
+`docs/fixtures/sm_defect_skew_proof.ndjson.gz` is replayed by nanoda (7,540
+declarations). `docs/fixtures/sm_defect_bridge.json` binds that result under
+`matrix_skew_proof` as a kernel-verified Lean theorem, and its
+`fixture_provenance` test parses the exact rational `H` cells from the Lean
+source and compares them entrywise with `finite_fixture_inputs`; identifying the
+physical reduction remains open, so `evolution_bound.hi` stays
+`conditionally-bounded`. The separately measured Padé flow is a diagnostic
 witness. The 2026-11-16 bridge
 `docs/fixtures/sm_defect_bridge.json` binds the actual fixture, certificate and
 measured error, and records `rounding.directed: true` plus the kernel-verified
@@ -276,11 +283,41 @@ parity counterexample remains in `fock_sirk/tests/sm_constraints.rs`. A finite
 adjoint Chevalley–Eilenberg quotient is implemented in
 `fock_sirk/src/sm_brst_quotient.rs`: cochain dimensions `[12,144,792,2640]`,
 ranks `[11,132,660]`, `Q^2` residual `6.66e-16`, and cohomology dimensions
-`[1,1,0]`. Field-level physical cohomology and the representative/quotient map
-remain **unimplemented**. The proof-facing bridge
-`docs/fixtures/sm_constraints_bridge.json` is `measured`: it binds the finite
-residuals above, embeds the finite CE quotient, and keeps the field-level
-`quotient_map: null`. See
+`[1,1,0]`. A finite field-level occupation window is implemented in
+`fock_sirk/src/sm_brst_fock.rs`: the `N <= 2` window now includes all 96
+complex matter fermion modes, the bosonic gauge-Higgs sector and the twelve
+ghosts. It has 11,067 states, `Q^2` residual `0.0`, differential rank 138,
+block ranks `[0, 138]`, and cohomology dimensions `[1, 10, 10780]` (total
+10,791) with `closed`, `graded` and `matter_graded` all true. Splitting by
+matter number gives state dimensions `[1419, 5088, 4560]` and cohomology
+`[[1, 4, 1318], [0, 6, 4902], [0, 0, 4560]]`; the six `H^1` states at matter
+number one are gauge-singlet right-handed neutrinos. Most of `H^2` is the
+top-degree truncation boundary. Finite harmonic representatives are exposed as
+a hash-bound quotient map: `H^0` vacuum, `H^1` left nullspace of `Q_2`, and
+`H^2` RREF free-column nullspace of `Q_2`. The Lean theorem
+`BookProof.SmBrstQuotient.finiteWindow_matter_finrank` binds `q_1 o q_2 = 0`
+and the measured block ranks `0/138` to these dimensions, conditionally on the
+measured rank hypotheses; the 11,067-dimensional matrix itself is not
+formalized. The matter window excludes derivative jets. A separate
+jet-inclusive window adds all 120 independent derivative-jet coordinates and
+measures 36,207 states, `Q^2 = 0`, differential rank 249, block ranks
+`[0, 249]`, jet block ranks `[138, 111, 0]`, and cohomology
+`[1, 19, 35689]` (total 35,709); `H^1` is 10 matter-window states plus 9
+jet-sector states. The joint charge preserves jet number, so `Q_2` is measured
+blockwise in `(jet, matter)`. These jets are independent E1 fields, not
+constrained spatial derivatives. The Lean theorem
+`BookProof.SmBrstQuotient.finiteWindow_jet_finrank` binds the measured
+dimensions and ranks to `[1, 19, 35689]`, and
+`BookProof.SmBrstQuotient.jetWindowCharge_sq` formalizes the block-matrix
+`Q * Q = 0` identity. Both are in the nanoda-verified payload
+`docs/fixtures/sm_brst_jet_window_proof.ndjson.gz` (22,097 declarations), so
+the record is `kernel-verified conditional`; the concrete matrix remains
+measured, not formalized. No continuum claim is made.
+The proof-facing bridge `docs/fixtures/sm_constraints_bridge.json` is
+`measured`: it binds the finite residuals above, embeds the finite CE
+quotient, the matter Fock window (including its finite quotient map) and the
+jet-inclusive window, and keeps the continuum `quotient_map: null`; the jet
+window is also pinned separately in `docs/fixtures/sm_brst_jet_window.json`. See
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n10-joint-constraint-dictionary-2026-11-15).
 
 The present electric-only and electric-plus-matter-density tests are diagnostic probes,
@@ -536,15 +573,20 @@ and actual-charge design before physical-sector interpretations. Execute the bou
 pilot, then a selected **N11** observable if its representation/error requirements hold.
 N13 supports these packets throughout; N12 is the separately budgeted field-theory track.
 
-*Executed 2026-11-17:* the baseline runner
+*Executed 2026-11-18:* the baseline runner
 [run-sm-full-validation](../scripts/run-sm-full-validation) was run on this tree.
-`target/sm-full-check.log` exited 0 with **69 test-result passes, 0 failures**,
+`target/sm-full-check.log` exited 0 with **73 test-result passes, 0 failures**,
 including the 19 gauge-fixed and 54 Faris–Lavine CHECK rows, the CAR/defect/N10
-bridge suites, the N12 assertions, and all three nanoda replays (187-declaration
-CAR, 273-declaration N8 endpoint and 38,336-declaration N8 Duhamel payloads).
+bridge and jet-window suites, the N12 assertions, and all six nanoda replays
+(187-declaration
+CAR, 273-declaration N8 endpoint, 38,336-declaration N8 Duhamel,
+7,540-declaration N8 matrix-skew, 20,241-declaration N10 matter-window and
+22,097-declaration N10 jet-window payloads).
 The opt-in wide cutoff tier was run separately and exited 0; it measured
 230/638/1176-state windows with leading tails `4.038679200865053` /
-`1.2179612832516469` / `0.0`. The consolidated record is
+`1.2179612832516469` / `0.0`. A direct recheck on 2026-11-18 reproduced those
+tails and measured 40.07 / 93.93 / 148.81 s at 2.09 / 4.95 / 6.68 GiB peak RSS.
+The consolidated record is
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md#n13n14-consolidated-execution-record-2026-11-16-this-working-tree).
 
 Record each completed experiment in the implementation ledger with exact manifest/artifact

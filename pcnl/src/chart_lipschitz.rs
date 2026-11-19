@@ -392,8 +392,7 @@ fn build_dual_weights(cfg: &crate::edge0_model::Edge0Config, flat: &[Dual]) -> D
         + cfg.paths * (cfg.max_levels - 1);
     // `state_gate` is appended after the head slots in the layout, so the
     // shared parameters above keep their offsets.
-    let state_gate = (cfg.state_path == crate::edge0_model::StatePath::Gate)
-        .then(|| take!(d * d));
+    let state_gate = (cfg.state_path == crate::edge0_model::StatePath::Gate).then(|| take!(d * d));
     debug_assert_eq!(at, flat.len(), "dual weights consume the layout");
     DualWeights {
         embed,

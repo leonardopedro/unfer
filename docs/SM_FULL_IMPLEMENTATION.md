@@ -156,6 +156,18 @@ The opt-in wide cutoff 2–4 tier was run separately with
 230 / 638 / 1176 with leading full-action tails `4.038679200865053` /
 `1.2179612832516469` / `0.0`; the 13-test Hashimoto block took 306.27 s. These
 are observations on this tree, not cutoff-removal or performance guarantees.
+
+A fresh direct recheck of the three wide cells on 2026-11-18, using the same
+raised budgets, reproduced the tails exactly and measured:
+
+| cutoff | dimension | leading full-action tail | elapsed | peak RSS |
+|---:|---:|---:|---:|---:|
+| 2 | 230 | `4.038679200865053` | 40.07 s | 2.09 GiB |
+| 3 | 638 | `1.2179612832516469` | 93.93 s | 4.95 GiB |
+| 4 | 1176 | `0.0` | 148.81 s | 6.68 GiB |
+
+These are single deterministic cells, not performance samples; the zero tail at
+cutoff 4 still means only that the first image lies inside that window.
 The sweep proves these suites pass on this tree/engine; it does not prove
 cutoff removal, physical reduction, interval enclosure of the solver, or any E2
 claim.
@@ -227,10 +239,52 @@ projected window.
   physical BRST cohomology. A direct probe of the full field-level
   `brst_charge` shows that it removes one ghost and preserves the remaining
   occupation, so the total-occupation filtration is `Q`-invariant (it maps
-  `N ≤ M` into `N ≤ M-1`). A finite field-level complex therefore exists; the
-  full Fock matrix at a fixed window and its cohomology have not yet been bound.
-  The finite adjoint CE quotient remains the rigorous finite algebraic quotient;
-  the field-level BRST complex is open but is not excluded by the cutoff.
+  `N ≤ M` into `N ≤ M-1`). The matter window is bound under
+  `artifact.finite_fock_brst_window`: all 96 complex matter fermion modes, the
+  bosonic gauge–Higgs sector and the twelve ghosts, with derivative jets
+  excluded. It has 11,067 states, occupation dimensions `[1, 148, 10918]`,
+  `Q²` residual `0.0`, differential rank 138 with block ranks `[0, 138]`, and
+  cohomology dimensions `[1, 10, 10780]` (total 10,791), with `closed: true`,
+  `graded: true` and `matter_graded: true`; the matter grading is checked on
+  every BRST image rather than inferred from a block-rank sum. The formula is
+  `dim H^n = dim C^n - rank Q_n - rank Q_(n+1)`; an earlier
+  `states - rank Q = 1,371` count was the kernel of `Q`, not its cohomology.
+  Splitting by matter number gives state dimensions `[1419, 5088, 4560]` and
+  cohomology `[[1, 4, 1318], [0, 6, 4902], [0, 0, 4560]]`; the six `H¹` states
+  at matter number one are the gauge-singlet right-handed neutrinos
+  (`gauge_singlet_kernel_dimension: 6`). Most of `H²` is the top-degree
+  truncation boundary, not a physical spectrum. Finite harmonic representatives
+  are exposed as a hash-bound quotient map: `H⁰` is the vacuum, `H¹` is the
+  left nullspace of `Q₂`, and `H²` is the RREF free-column nullspace of `Q₂`
+  (with its pivot columns recorded). The Lean theorem
+  `BookProof.SmBrstQuotient.finiteWindow_matter_finrank` binds `q₁ ∘ q₂ = 0`
+  and the measured block ranks `0/138` to `[1, 10, 10780]`; it is conditional
+  on the measured rank hypotheses and does not formalize the 11,067-dimensional
+  matrix.
+- **Jet-inclusive window.** `finite_fock_brst_jet_window` adds all 120
+  independent derivative-jet coordinates (`dG` 72, `dW` 27, `dB` 9, `dphi`
+  12) and emits `docs/fixtures/sm_brst_jet_window.json`. The joint charge
+  preserves jet number, so `Q₂` is measured blockwise in `(jet, matter)`:
+  36,207 states, occupation dimensions `[1, 268, 35,938]`, jet-state dimensions
+  `[11,067, 17,880, 7,260]`, `Q²` residual `0.0`, differential rank 249,
+  block ranks `[0, 249]`, and cohomology `[1, 19, 35,689]` (total 35,709),
+  with `closed`, `graded`, `matter_graded` and `jet_graded` all true. The
+  jet block ranks are `[138, 111, 0]`; `H¹` splits as 10 matter-window states
+  plus 9 jet-sector states. The 120 jet coordinates are independent E1 fields,
+  not constrained spatial derivatives. The Lean theorem
+  `BookProof.SmBrstQuotient.finiteWindow_jet_finrank` binds the measured
+  dimensions `1/268/35938` and ranks `0/249` to `[1, 19, 35689]`, and
+  `BookProof.SmBrstQuotient.jetWindowCharge_sq` formalizes the block-matrix
+  identity `Q * Q = 0` when `q₁ * q₂ = 0`. Both are in the exported payload
+  `docs/fixtures/sm_brst_jet_window_proof.ndjson.gz` (22,097 declarations),
+  rechecked by nanoda, so the record's `proof_status` is
+  `kernel-verified conditional`. The concrete 36,207-state matrix and its
+  measured `q_squared_residual` are not formalized. The jet record is embedded
+  in the main bridge as `artifact.finite_fock_brst_jet_window` as well as
+  emitted separately. The finite adjoint CE quotient remains separate; the
+  continuum physical quotient, physical jet interpretation and anomaly
+  analysis remain
+  open.
 
 This is a finite-representation identity on the declared images, not a proof of
 physical BRST cohomology. The finite adjoint CE quotient is an actual finite
@@ -518,14 +572,25 @@ algebra, that `u' = -A u + b` implies
 is the contractive flow bound `||exp(-(t-s)A)|| <= 1`; `norm_exp_neg_smul_skew`
 discharges it for every skew-adjoint `A` (`star A = -A`) because the exponential
 is unitary, and `norm_duhamel_representation_le_of_skew` packages the resulting
-bound. For the actual N8 matrix `A = iH`, the remaining step is identifying that
-generator and the physical reduction. The Mathlib dependency is a non-default
-`SmDefectAnalytic` target, so the endpoint build stays independent. The gzip
-fixture is replayed by decompressing it, checking the raw sha256
-`83e3571e…14ed31`, and running nanoda, which verifies **38,336 declarations**.
-The N8 bridge keeps `theorem.proof_status: not-run` for its matrix-specific
-statement and records this kernel-verified conditional theorem separately as
-`analytic_defect_proof`.
+bound. `fock_sirk/lean/SmDefectSkew.lean` now closes the matrix-specific
+identification for the declared finite fixture: its exact rational `H` is
+proved Hermitian (`H_hermitian`) and `A = i·H` is proved skew-adjoint
+(`A_skew`, `Aᴴ = -A`). The remaining N8 gap is identifying the physical
+reduction with this fixture, not the finite skew-adjointness. The Mathlib
+dependency is a non-default `SmDefectAnalytic`/`SmDefectSkew` target, so the
+endpoint build stays independent. Its exported gzip fixture
+`docs/fixtures/sm_defect_skew_proof.ndjson.gz` is replayed by decompressing it,
+checking the raw sha256 `498ae454…db528cc`, and running nanoda, which verifies
+**7,540 declarations**. The analytic gzip fixture is replayed the same way,
+checking the raw sha256 `83e3571e…14ed31` and verifying **38,336 declarations**.
+The N8 bridge keeps `theorem.proof_status: not-run` for its numerical
+matrix-specific statement, records the kernel-verified conditional analytic
+theorem separately as `analytic_defect_proof`, and binds the kernel-verified
+identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
+`fixture_provenance` field is checked by
+`lean_matrix_matches_rust_fixture_provenance`, which parses the exact rational
+`H` cells out of `SmDefectSkew.lean` and compares every entry with
+`finite_fixture_inputs`; changing either side fails the test.
 
 ### Artifact references
 
@@ -537,9 +602,17 @@ statement and records this kernel-verified conditional theorem separately as
 | `fock_sirk/lean/SmDefect.lean` | `ef1df79e448dbdfcb116902b7bb62157c65448d4b1c78be4967063e694d98342` | N8 finite endpoint theorem |
 | `docs/fixtures/sm_defect_proof.ndjson` | `1c7bc930eef88f85e9f743db32ffcace60ce2c2ad3cf08bdb8cc9e6bb1cc7261` | nanoda payload, 273 declarations |
 | `fock_sirk/lean/SmDefectAnalytic.lean` | `7d88770da2da8a6190e8f5db1a317ec0758e7ab965b085f058b74471521a857e` | N8 Duhamel + skew-adjoint flow bound (Mathlib) |
+| `fock_sirk/lean/SmDefectSkew.lean` | `acc3dfc49fad2760020f33617e2ff72e3d74b999a4643046ae6efd2d149afc53` | N8 finite fixture: `H` Hermitian, `A = iH` skew-adjoint (Mathlib) |
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
-| `docs/fixtures/sm_defect_bridge.json` | `51168b8180327ac9f05d17e008bd45713fb5804e59898c9096eadbb15dbbd09b` | bridge file; record digest `3107e646…cc75ff` |
-| `docs/fixtures/sm_constraints_bridge.json` | `cc8f5504f7d6a28f184ed6326b19b1c416cb6d1635f5b006c7ced5d2358e6aa1` | N10 finite constraint + finite CE bridge; record digest `80e3ad0c…4b2f51` |
+| `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
+| `docs/fixtures/sm_defect_bridge.json` | `916d0536a78509444a1964f91d4da078d130f03ba73c4f6850e50471ac81ba2d` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `1f49e3b5…c96353d8` |
+| `fock_sirk/src/sm_brst_fock.rs` | `9651f9a92451d1399b7945849bb9736554e03e9a6e3c4ad1ce109f09d4500dee` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients |
+| `docs/fixtures/sm_constraints_bridge.json` | `5b5030dbf007f6083f057d3ec58afd7b4725f2ef50ff5957ffb8278f7b278c68` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `977bfca9…2e231cb` |
+| `docs/fixtures/sm_brst_jet_window.json` | `b9da23547f6046b04d10ebc37c64c3f764b10f8463ec261fedab04a090425052` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |
+| `fock_sirk/tests/sm_brst_jet_window.rs` | `92c923d12f70ed07f81e25170c4f87e8785ab8bcdcfedc8958f0ff9233b9e704` | pins the jet fixture and its verified payload |
+| `../timepiece/BookProof/Sm/ChapterSmBrstQuotient.lean` | `bff21dc424b11e32b6425759d0cfa866060820aa717d3ec785b6491abb169165` | finite-window dimensions plus the jet block-matrix `Q² = 0` identity |
+| `docs/fixtures/sm_brst_finite_window_proof.ndjson.gz` | `e25d796a16b99689a23bb756324ec261ba08f3ccbf8a6026d7de814b810d7ffa` | gzip nanoda payload; raw sha256 `bedf7935…a881664a`; 20,241 declarations |
+| `docs/fixtures/sm_brst_jet_window_proof.ndjson.gz` | `fcd22f8950e4066787a570dd263c3d921439b203e9098b4aa64211e9048c5fe5` | gzip nanoda payload; raw sha256 `66ea3e84…bf462e20`; 22,097 declarations |
 
 ### N6–N14 disposition
 
@@ -547,9 +620,9 @@ statement and records this kernel-verified conditional theorem separately as
 |---|---|---|
 | N6 | `measured` | replayable baseline; not a numerical/physical certificate |
 | N7 | `source-present` | named dictionary, no action-agreement theorem |
-| N8 | `conditionally-bounded` | enclosed `HV`/`V*HV` + Gershgorin bound; Duhamel representation, integral bound and skew-adjoint flow bound kernel-verified; identifying `A = iH` for the actual matrix, physical reduction and Padé witness open |
+| N8 | `conditionally-bounded` | enclosed `HV`/`V*HV` + Gershgorin bound; Duhamel representation, integral bound and skew-adjoint flow bound kernel-verified; `A = iH` skew-adjointness for the declared finite matrix kernel-verified in `SmDefectSkew` (7,540 declarations); physical reduction and Padé witness open |
 | N9 | `measured` / negative feasibility | 70/230-state cells and Mehler tails; no 40/163-mode speedup |
-| N10 | `measured` finite-image identity + finite adjoint CE | constraint closure and finite CE quotient `[1,1,0]`; no field-level BRST cohomology |
+| N10 | `measured` finite-image identity + finite adjoint CE + finite Fock windows | constraint closure, finite CE quotient `[1,1,0]`, a matter window with `Q² = 0`, block ranks `[0,138]`, cohomology `[1,10,10780]` and a Lean-bound harmonic quotient, plus a jet-inclusive window (`36,207` states) with block ranks `[0,249]`, cohomology `[1,19,35,689]`, a nanoda-verified dimension theorem and block-matrix `Q² = 0` theorem; no continuum physical quotient |
 | N11 | inconclusive, closed | uniform N8 window defect blocks the response |
 | N12 | negative cutoff-artifact result | fixed-`G4` matching is not cutoff-stable |
 | N13 | `certified` finite CAR record | one mode, two states; no SM operator claim |
@@ -609,6 +682,22 @@ sha256sum /tmp/sm_defect_analytic.ndjson  # 83e3571e...14ed31
 cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
   /tmp/sm_defect_analytic.ndjson
 
+# N8 matrix-specific skew-adjointness (Mathlib; 7,540 declarations, gzip fixture)
+cd fock_sirk/lean
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake build SmDefectSkew
+PATH=/tmp/lean4-4.28.0/bin:$PATH lake env \
+  /tmp/lean4export/.lake/build/bin/lean4export SmDefectSkew -- \
+  BookProof.Sm.ChapterSmDefectSkew.A_skew \
+  BookProof.Sm.ChapterSmDefectSkew.H_hermitian \
+  > /tmp/sm_defect_skew.ndjson
+sha256sum /tmp/sm_defect_skew.ndjson  # 498ae454...db528cc
+gzip -9 -n -c /tmp/sm_defect_skew.ndjson \
+  > ../../docs/fixtures/sm_defect_skew_proof.ndjson.gz
+cd ../..
+gzip -dc docs/fixtures/sm_defect_skew_proof.ndjson.gz > /tmp/sm_defect_skew.ndjson
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+  /tmp/sm_defect_skew.ndjson
+
 # Finite CAR fixture, N8 defect bridge and N10 constraint bridge
 cargo run --locked --offline --release -q -p fock_sirk --example sm_car_bridge \
   > docs/fixtures/sm_car_bridge.json
@@ -618,16 +707,17 @@ cargo run --locked --offline --release -q -p fock_sirk --example sm_constraints_
   > docs/fixtures/sm_constraints_bridge.json
 cargo test --locked --offline --release -q -p fock_sirk \
   --test sm_car_bridge --test sm_defect --test sm_defect_bridge \
-  --test sm_constraints_bridge
+  --test sm_constraints_bridge --test sm_brst_jet_window
 
 # Full default gate (includes the nanoda replay step)
 scripts/run-sm-full-validation
 ```
 
-Fresh default sweep `target/sm-full-check.log`: **exit 0, 69 test-result passes,
-0 failures**, including 3 CAR-bridge tests, 4 defect-bridge tests, 4 N10
-constraint/CE-bridge tests, 19 gauge-fixed CHECK rows, 54 Faris–Lavine CHECK
-rows, and all three nanoda replays (187, 273 and 38,336 declarations). The N12
+Fresh default sweep `target/sm-full-check.log`: **exit 0, 73 test-result passes,
+0 failures**, including 3 CAR-bridge tests, 5 defect-bridge tests, 7 N10
+constraint/CE/Fock-bridge/jet-window tests, 19 gauge-fixed CHECK rows, 54
+Faris–Lavine CHECK rows, and all six nanoda replays (187, 273, 38,336,
+20,241, 22,097 and 7,540 declarations). The N12
 assertions
 still pass unchanged: fixed embedding exact, running
 `lambda = 0.050000000 .. 0.049769124`, `G4` residual `6.76e-11`, fixed-`lambda` cutoff

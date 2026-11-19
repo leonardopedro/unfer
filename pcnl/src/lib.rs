@@ -62,6 +62,12 @@
 //!   analytic slice, informed marginal, complement conditional and predictive.
 //! * [`approx_pricing`] — R8/D3: exact Euler–Langevin Gaussian canaries (bias,
 //!   stability limit, gradient-noise inflation) and the declared error budget.
+//! * [`text_head`] — a frozen external text-embedding table (UltraBERT) plus a
+//!   trainable softmax head as a [`target::Potential`].  Only the head is in
+//!   the posterior; the 150M encoder is fixed data.
+//! * [`continual`] — the sequential-Bayes seam: a diagonal Gaussian fitted to
+//!   posterior particles becomes the next round's pCN prior.  Its approximation
+//!   is the diagonal summary, not the exact kernel.
 //! * [`operator_cert`] — R8/D6: the Gaussian canary's full-space L² spectral
 //!   certificate, and the scoped missing estimate for the DT operator.
 //! * [`radial`] — the same inequality along the radius: Haar's log-derivative
@@ -73,6 +79,7 @@ pub mod approx_pricing;
 pub mod budget;
 pub mod certificate;
 pub mod chart_lipschitz;
+pub mod continual;
 pub mod diag;
 pub mod dim_benchmark;
 pub mod dt_arm;
@@ -101,3 +108,4 @@ pub mod sphere;
 pub mod subspace;
 pub mod target;
 pub mod task;
+pub mod text_head;

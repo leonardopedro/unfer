@@ -1201,6 +1201,186 @@ uninterpretable; and do not convert a per-step score win into a decision claim w
 rollout readout and its MCSE. M7 runs after M0 and M3 regardless of M4–M6's progress, since
 its dependencies are the kernel checks and the readout, not the external branches.
 
+## R10 — frozen external encoder + calibrated MLP posterior (2026-11-18)
+
+**Hypothesis.** A 150M text encoder can be fixed as a feature map, and the
+posterior over a small multi-layer head on its outputs can supply the
+uncertainty the point head lacks.  The encoder is not in the target; every
+hidden and output weight of the head is.  The second hypothesis is that a
+proper-score (Brier/RLCD) target makes the posterior predictive better
+calibrated than the ordinary NLL target.
+
+**Implementation.** `src/text_head.rs` loads a safetensors table
+(`embeddings [N,768]`, `labels [N]`, `split [N]`).  `MlpHeadPotential` is a
+multi-layer perceptron `768 → 32 → 16 → 4` with `tanh` hidden activations and
+`P = 25 204` free weights/biases; no head layer is frozen.  `LossKind::Nll` is
+the ordinary categorical likelihood.  `LossKind::Brier` uses
+`Σ_c (p_c − y_c)²` — the RLCD proper score on one-hot labels — as the negative
+log target, giving a **generalized Bayes** posterior (not a literal likelihood)
+whose risk is minimized at the calibrated probability.  The example trains the
+anchor with NLL by default and samples the target with Brier
+(`--posterior-loss brier`); `--posterior-loss nll` is the identical-head
+control.  No linear head is part of the model or the CLI.
+
+`examples/ultrabert_head_pcnl.rs` fits the head by Adam, builds an informed PCA
+basis from that path (and a seeded random-basis control), and runs exact MH-pCN
+through either the restricted chart or `PotentialFullTarget`, which carries the
+projected complement and therefore every head weight.  The full-target stage
+uses the existing `mh_pcn_z_full` + `mh_pcn_w_full` Metropolis-within-Gibbs
+pair.  ECE is the 10-bin top-label expected calibration error from
+`experiment::expected_calibration_error`.
+
+**Frozen artifact.** `dmis-lab/UltraBERT-Embed-150M` at revision
+`b06b36724c5417a1ec1b7863dd4fa542b74e4899`; CLS pooling, L2-normalised, max 96
+tokens.  `scripts/pcnl-ultrabert-embed` regenerates the fixture; its manifest is
+`docs/fixtures/ultrabert_agnews_embeddings.json`, and the artifact sha256 is
+`8fca923d12360482c0914bfa3ada1c50121d7c6fcdcc65cf0a8618ad5ead3745`.  The data
+are a deduplicated 240-train / 120-test AG News probe (60/30 per class), not an
+MTEB evaluation.
+
+**Measured (default command, 2026-11-18): Brier target.**  Data-scarce arm: 8
+of 60 training rows per class (`N_train=32`), `λ=1`, prior
+`N(θ_map, 0.5²I)`, 4 chains × 3 600 steps, burn 1 200, thin 4, full
+`P=25 204` head target:
+
+| basis | rank | accept z / w | BMA acc | BMA NLL | BMA Brier | BMA ECE | mean draw acc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| informed | 8 | 98.3 / 95.3 % | 73.33 % | 0.7842 | 0.3995 | **0.0784** | 67.60 % |
+| random | 8 | 99.8 / 95.1 % | 73.33 % | 0.7869 | 0.3995 | **0.0789** | 67.61 % |
+| informed | 16 | 97.6 / 95.5 % | 73.33 % | 0.7821 | 0.3998 | 0.0957 | 67.64 % |
+| random | 16 | 99.8 / 95.4 % | 73.33 % | 0.7825 | 0.3997 | 0.0956 | 67.62 % |
+| informed | 32 | 97.7 / 95.5 % | 73.33 % | 0.7845 | 0.4010 | 0.0990 | 67.66 % |
+| random | 32 | 99.7 / 95.6 % | 73.33 % | 0.7805 | 0.4003 | 0.0973 | 67.62 % |
+
+The MAP MLP is 72.50 % accuracy, NLL 1.9535, Brier 0.5113 and ECE 0.2462: a
+severe overconfidence failure on 32 training rows.  Posterior averaging improves
+the paired NLL by `−1.17 ± 0.23` and Brier by `−0.11 ± 0.032` over 120 test rows,
+and cuts ECE to 0.078–0.099.  The mean individual draw is only 67.6 %, so the
+BMA recovers the point model's accuracy from a much weaker ensemble and
+calibrates the probabilities.  The NLL contrast is about 5σ and the Brier contrast about 3.5σ.
+
+A four-subset recheck at rank 8 (same sampler seed, `--subset-seed`
+20261118–21) shows the calibration effect is not one draw: MAP top-label ECE
+ranged **0.139–0.313**, BMA ECE **0.052–0.130**, MAP NLL 1.00–2.74 and BMA NLL
+0.50–0.97; accuracy moved from 65.0–83.3 % to 65.8–84.2 %.  This is
+training-subset variation on one fixed test set, not independent test splits.
+
+**NLL-target control (same MLP, same anchor).**  `--posterior-loss nll` gives
+BMA ECE 0.082–0.102 and Brier 0.4004–0.4020: the calibration improvement over
+the MAP is reproduced by posterior averaging, and this sample does **not**
+separate the Brier target from the NLL target.  The Brier target is the
+declared calibrated target, but no claim that it beats NLL is made here.  The
+informed and random bases differ by <0.001 in every score, as expected because
+the full target is the same weight space and the basis only chooses a sweep
+split.
+
+**Full-data MLP (240 training rows, 2026-11-18).**  The same `768 → 32 → 16 →
+4` head, full `P=25 204` target, no calibration split.  The MAP is 83.33 %,
+NLL 1.3230, Brier 0.3158, ECE 0.1624.  BMA rank 8–32 is 83.33–85.00 %,
+NLL 0.5338–0.5479, Brier 0.2299–0.2318, ECE **0.0515–0.0746**; paired
+improvements are `dNLL −0.775…−0.789 ± 0.202…0.206` and
+`dBrier −0.084…−0.086 ± 0.029`.  Posterior averaging therefore still
+calibrates at 240 rows, though the MAP is already less overconfident than at
+32 rows and the accuracy gain is at most one row.
+
+**Held-out calibration split with noisy labels.**  `--cal-per-class 4` holds
+out 4 of 60 training rows per class (16 total) and keeps 224 for the fit; the
+fit rows use NLL and the held-out rows use Brier, with `--label-noise 0.2`
+flipping each calibration label to a different class with probability 0.2
+(3/16 flipped at seed 20261118).  All test metrics remain on the clean test
+labels.  The MAP on the 224 fit rows is 83.33 %, NLL 1.0938, Brier 0.2809,
+ECE 0.1425.  BMA rank 8–32 is 85.83–87.50 %, NLL 0.4289–0.4459, Brier
+0.2155–0.2196, ECE **0.0664–0.0846**; paired `dNLL −0.648…−0.665 ± 0.186…0.191`
+and `dBrier −0.061…−0.065 ± 0.024`.  The noisy held-out split does not
+break clean-test calibration and raises BMA accuracy, but its BMA ECE is
+slightly *worse* than the plain full-data target (0.052–0.075); the fit set
+and sampler seed also differ, so this is not an isolated estimate of the
+label-noise effect.
+
+**Width/depth comparison (full data, rank 8, same sampler budget).**  The
+baseline `32,16` is the best calibrated of the three:
+
+| hidden | P | MAP acc / NLL / Brier / ECE | BMA acc | BMA NLL | BMA Brier | BMA ECE |
+|---|---:|---|---:|---:|---:|---:|
+| `32,16` | 25 204 | 83.33 / 1.3230 / 0.3158 / 0.1624 | 85.00 % | 0.5469 | 0.2308 | **0.0629** |
+| `64,32` | 51 428 | 80.83 / 1.7526 / 0.3413 / 0.1762 | 84.17–85.00 % | 0.6342–0.6458 | 0.2672–0.2703 | 0.1108–0.1177 |
+| `32,16,8` | 25 308 | 82.50 / 1.5962 / 0.3495 / 0.1842 | 78.33–79.17 % | 0.7110–0.7114 | 0.2755–0.2763 | 0.1029–0.1053 |
+
+Widening or deepening degrades both accuracy and calibration at this data
+size; the two-hidden-layer model is retained.  These are single-split results
+(120 clean test rows), not a model-selection study.
+
+**Scope.**  The encoder is frozen, the head is a two-hidden-layer MLP, the data
+are one AG News split, and the target is a Brier Gibbs posterior rather than a
+true likelihood.  Acceptance is high and `β→1`; `ESS(Φ)` is near the kept-draw
+ceiling, so the chain is iid-like in many flat directions rather than a
+narrowly converged posterior.  ECE is a top-label diagnostic, not a complete
+calibration certificate.  No benchmark, encoder-posterior or decision claim
+follows.  Next: repeat the full-data and calibration-split cells over seeds and
+independent test splits, and compare against a tuned L_2/early-stopped MLP.
+
+## R11 — sequential Bayesian continual learning (2026-11-18)
+
+**Target.**  The frozen-encoder head is updated by the Bayes recursion
+
+```text
+π_t(θ) ∝ π_{t-1}(θ) · exp(−λ N_t · mean Brier_t(θ)).
+```
+
+`π_{t-1}` is summarised from its pCNL particles by the diagonal Gaussian
+`N(μ, diag(σ²))`; `θ = μ + σ ⊙ (Bz + w)` turns that prior back into
+`N(0, I_r) × N(0, I_{P−r})`, so `PotentialFullTarget` samples the new posterior
+with the unchanged exact kernel.  The approximation is the diagonal prior, not
+the kernel.  `pcnl::continual::DiagonalPosterior` implements the summary.  The
+same random basis is held for the whole stream: redrawing it each round would
+re-express the carried prior through a different chart.
+
+**Data stream.**  AG News classes are visited as
+`[0,1] → [2,3] → [0,1] → [2,3]`; every test metric covers all four classes.
+The `continual` arm carries the fitted prior; `independent` resets it to
+`N(0, 0.5² I)` each round.  Both use the same basis, Brier target, 4 chains ×
+2 400 steps (800 burn, thin 4), rank 8, and seeds.
+
+**Why replay.**  Strict no-replay recursion was tested at the same budget:
+carried parameters were not enough for class-disjoint rounds (mean forgetting
+90.6 pp).  The delivered learner adds replay rows per seen class to the
+likelihood; this is an approximation to the historical likelihood, retained
+because the diagonal prior alone discards too much old-class information.  It
+is not exact Bayes over the full history and is labelled as Bayesian replay.
+`--replay-per-class 60` is the full clean training split at this fixture;
+smaller values are the fixed-memory operating point.
+
+**Measured (final round, clean 120-row test split, fixed basis).**
+
+| replay / class | arm | acc | NLL | Brier | ECE | mean forgetting |
+|---:|---|---:|---:|---:|---:|---:|
+| 0 | continual | 39.17 % | 1.8169 | 0.8386 | 0.2448 | 90.56 pp |
+| 30 | independent | **82.50 %** | 0.7849 | 0.4096 | 0.3183 | 46.11 pp |
+| 30 | continual | 80.83 % | 0.6053 | 0.3107 | 0.1779 | 30.56 pp |
+| 60 | independent | 80.00 % | 0.6992 | 0.3597 | 0.2362 | 11.11 pp |
+| 60 | continual | 80.00 % | **0.5517** | **0.2951** | **0.0901** | **5.56 pp** |
+
+Forgetting is the mean per-class drop over each adjacent disjoint class switch.
+At the full replay budget the carried prior does not change accuracy, but it
+halves mean forgetting (11.11 → 5.56 pp) and substantially improves NLL, Brier
+and ECE.  At the half-memory budget it lowers forgetting by 15.6 pp while
+final accuracy is essentially unchanged.  Per-class final accuracy at the full
+budget is `83/90/80/67 %` (continual) versus `80/97/83/60 %` (independent), so
+the gain is not uniform.
+
+**Limits.**  One split, one seed, four rounds; the diagonal summary ignores
+posterior correlations; replay double-counts old rows already represented in
+the prior; Brier makes this a generalized Bayes target; the encoder remains
+frozen.  No benchmark or decision claim follows.
+
+Command:
+
+```bash
+cargo run --release -p pcnl --example ultrabert_continual_pcnl
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 30
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 0 --arm continual
+```
+
 ## Reproduction and definition of done
 
 Run existing commands from the **unfer repository root**. The script stage list is the

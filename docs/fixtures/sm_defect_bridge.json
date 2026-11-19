@@ -7,7 +7,7 @@
     "payload": "docs/fixtures/sm_defect_analytic_proof.ndjson.gz",
     "payload_sha256": "83e3571ed458dff72b086934d57724be3b4763f47d58a07439b401c0d714ed31",
     "proof_status": "kernel-verified",
-    "scope": "Duhamel representation and skew-adjoint flow bound formalized; identifying A = iH for the actual declared matrix and the physical reduction are open",
+    "scope": "Duhamel representation and skew-adjoint flow bound formalized; the physical reduction is open",
     "statement": "for u' = -A u + b with star A = -A, u t = exp(-t A) u 0 + integral exp(-(t-s)A) b s, and ||u t|| <= leakage + t*defect*seed*exp(omega*t) when ||exp(-t A) u 0|| <= leakage and ||b s|| <= defect*seed*exp(omega*t)"
   },
   "artifact": {
@@ -204,7 +204,7 @@
       "directed": true,
       "full_images_enclosed": true,
       "mode": "f64-directed-endpoints",
-      "note": "endpoint arithmetic rounds outward, HV and V*HV are enclosed from the declared H and V, and lambda_max(Re G) is Gershgorin-bounded; the Duhamel representation, integral bound and skew-adjoint flow bound are kernel-verified, but identifying A = iH for the actual declared matrix and the physical reduction remain open, so evolution_bound.hi is a directed bound for the finite fixture, not a physical certificate; the measured map error separately uses Pade without an error enclosure",
+      "note": "endpoint arithmetic rounds outward, HV and V*HV are enclosed from the declared H and V, and lambda_max(Re G) is Gershgorin-bounded; the Duhamel representation, integral bound and skew-adjoint flow bound are kernel-verified, and A = iH is kernel-verified for the declared finite fixture by SmDefectSkew; the physical reduction remains open, so evolution_bound.hi is a directed bound for the finite fixture, not a physical certificate; the measured map error separately uses Pade without an error enclosure",
       "pade_exponential_directed": false,
       "scope": "add/sub/mul/square/sqrt/exp in interval_terms; enclosed HV and V*HV; Gershgorin row sums",
       "spectral_growth_directed": true,
@@ -213,7 +213,7 @@
     },
     "time": 0.2
   },
-  "artifact_sha256": "3107e64655e91dc72f1c2613fb858d7778e375781a9b22b3104b01ca17cc75ff",
+  "artifact_sha256": "1f49e3b53eed6cae9061e853b45f9cce7a282d039e61aecc66517183c96353d8",
   "claim_id": "n8_finite_map_defect",
   "endpoint": "N8-finite-map",
   "finite_endpoint_proof": {
@@ -231,8 +231,27 @@
     "V is the declared 4x2 isometry and G = V* H V; its hash is bound under state.identity_sha256.",
     "The bound's exponential is exact; the measured map error uses nalgebra's Pade exp and is a check, not an enclosure.",
     "interval_terms uses directed f64 endpoints, encloses HV and G = V*HV from the declared H and V, and applies a Gershgorin spectral bound; its hi endpoint is a directed bound for the finite fixture, not a physical reduction certificate.",
-    "The endpoint Lean proof checks only the finite arithmetic; the analytic Lean proof derives the Duhamel representation, the integral bound, and the skew-adjoint flow bound, leaving only the identification A = iH for the actual declared matrix and the physical reduction."
+    "The endpoint Lean proof checks only the finite arithmetic; the analytic Lean proof derives the Duhamel representation, the integral bound, and the skew-adjoint flow bound; the nanoda-verified `SmDefectSkew` payload identifies A = iH for the declared finite matrix and leaves the physical reduction open."
   ],
+  "matrix_skew_proof": {
+    "checker": "nanoda_lib via prob_kernel::verify::verify_export",
+    "compressed_payload_sha256": "eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa",
+    "declarations": 7540,
+    "fixture_provenance": {
+      "check": "fock_sirk/tests/sm_defect_bridge.rs::lean_matrix_matches_rust_fixture_provenance",
+      "note": "the H cells are parsed from the Lean source as exact rationals and compared entrywise with finite_fixture_inputs",
+      "status": "test-checked"
+    },
+    "hermitian_name": "BookProof.Sm.ChapterSmDefectSkew.H_hermitian",
+    "lean_name": "BookProof.Sm.ChapterSmDefectSkew.A_skew",
+    "payload": "docs/fixtures/sm_defect_skew_proof.ndjson.gz",
+    "payload_sha256": "498ae454792caafc7fb4150fb1cfb7a9ecf336d6a3b84d2ee9dcf9f80db528cc",
+    "proof_status": "kernel-verified",
+    "scope": "the declared finite fixture only; the physical reduction remains open",
+    "source": "fock_sirk/lean/SmDefectSkew.lean",
+    "source_sha256": "acc3dfc49fad2760020f33617e2ff72e3d74b999a4643046ae6efd2d149afc53",
+    "statement": "the declared exact-rational 4x4 fixture H is Hermitian and A = i*H satisfies A^H = -A"
+  },
   "not_claimed": [
     "No SM cell, physical-sector reduction, cutoff or continuum claim.",
     "No certified f64 enclosure and no Padé-error enclosure.",
@@ -256,7 +275,7 @@
   "theorem": {
     "lean_name": "Analytic.SmDefect.finite_map",
     "proof_status": "not-run",
-    "remaining": "The Duhamel representation and the N8 bound are kernel-verified for a skew-adjoint generator A, including the flow bound ||exp((-r)A)|| = 1. Identifying A = iH for the actual declared matrix and the physical reduction remain open; the measured map error separately uses nalgebra's Pade exponential without an error enclosure.",
+    "remaining": "The Duhamel representation and the N8 bound are kernel-verified for a skew-adjoint generator A, including the flow bound ||exp((-r)A)|| = 1. `BookProof.Sm.ChapterSmDefectSkew.A_skew` proves A = iH is skew-adjoint for the declared finite fixture and its exported payload is nanoda-verified; the physical reduction remains open, and the measured map error separately uses nalgebra's Pade exponential without an error enclosure.",
     "statement": "||exp(-itH) psi - V exp(tG) V* psi|| <= leakage + t ||D|| ||V* psi|| exp(omega_+ t)"
   }
 }

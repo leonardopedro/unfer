@@ -6,14 +6,59 @@
 //! but the Padé witness is not enclosed, so the overall status must stay
 //! `conditionally-bounded`.
 
-use fock_sirk::sm_bridge::{BridgeError, bind_artifact, sha256_hex, verify_bridge};
+use fock_sirk::sm_bridge::{bind_artifact, sha256_hex, verify_bridge, BridgeError};
 use fock_sirk::sm_defect::{
-    CertificateHashes, Interval, finite_fixture, finite_fixture_bridge, finite_fixture_inputs,
-    full_images_enclosure, reduced_generator_enclosure, reduced_growth, verify_certificate,
+    finite_fixture, finite_fixture_bridge, finite_fixture_inputs, full_images_enclosure,
+    reduced_generator_enclosure, reduced_growth, verify_certificate, CertificateHashes, Interval,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const FIXTURE: &str = include_str!("../../docs/fixtures/sm_defect_bridge.json");
+const LEAN_SOURCE: &str = include_str!("../lean/SmDefectSkew.lean");
+
+/// Parse the exact rational H cells from `SmDefectSkew.lean`.
+fn lean_matrix() -> Vec<Vec<(i64, i64, bool)>> {
+    let after_def = LEAN_SOURCE
+        .split_once("def H")
+        .expect("SmDefectSkew.lean must define H")
+        .1;
+    let start = after_def.find("!![").expect("H must use matrix notation") + 3;
+    let end = after_def[start..]
+        .find(']')
+        .expect("H matrix notation must close")
+        + start;
+    let matrix = &after_def[start..end];
+
+    matrix
+        .split(';')
+        .map(|row| row.split(',').map(parse_lean_cell).collect())
+        .collect()
+}
+
+fn parse_lean_cell(cell: &str) -> (i64, i64, bool) {
+    let mut cell = cell.trim();
+    let imaginary = match cell.strip_suffix("* Complex.I") {
+        Some(rest) => {
+            cell = rest.trim();
+            true
+        }
+        None => false,
+    };
+    let cell = cell
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(cell)
+        .split(':')
+        .next()
+        .unwrap()
+        .trim();
+    let (numerator, denominator) = cell.split_once('/').map_or((cell, "1"), |(n, d)| (n, d));
+    (
+        numerator.trim().parse().unwrap(),
+        denominator.trim().parse().unwrap(),
+        imaginary,
+    )
+}
 
 #[test]
 fn fixture_is_regenerated_from_the_actual_finite_fixture() {
@@ -32,12 +77,10 @@ fn fixture_is_regenerated_from_the_actual_finite_fixture() {
         pinned["finite_endpoint_proof"]["payload_sha256"],
         sha256_hex(include_bytes!("../../docs/fixtures/sm_defect_proof.ndjson"))
     );
-    assert!(
-        pinned["theorem"]["remaining"]
-            .as_str()
-            .unwrap()
-            .contains("open")
-    );
+    assert!(pinned["theorem"]["remaining"]
+        .as_str()
+        .unwrap()
+        .contains("open"));
     let analytic = &pinned["analytic_defect_proof"];
     assert_eq!(analytic["proof_status"], "kernel-verified");
     assert_eq!(analytic["declarations"], 38336);
@@ -47,6 +90,21 @@ fn fixture_is_regenerated_from_the_actual_finite_fixture() {
             "../../docs/fixtures/sm_defect_analytic_proof.ndjson.gz"
         ))
     );
+    let skew = &pinned["matrix_skew_proof"];
+    assert_eq!(skew["lean_name"], "BookProof.Sm.ChapterSmDefectSkew.A_skew");
+    assert_eq!(skew["proof_status"], "kernel-verified");
+    assert_eq!(skew["declarations"], 7540);
+    assert_eq!(
+        skew["compressed_payload_sha256"],
+        sha256_hex(include_bytes!(
+            "../../docs/fixtures/sm_defect_skew_proof.ndjson.gz"
+        ))
+    );
+    assert_eq!(
+        skew["source_sha256"],
+        sha256_hex(include_bytes!("../lean/SmDefectSkew.lean"))
+    );
+    assert_eq!(skew["fixture_provenance"]["status"], "test-checked");
     assert_eq!(pinned["artifact"]["rounding"]["directed"], true);
     assert_eq!(
         pinned["artifact"]["rounding"]["spectral_growth_directed"],
@@ -77,6 +135,36 @@ fn fixture_is_regenerated_from_the_actual_finite_fixture() {
         basis: certificate["hashes"]["basis"].as_str().unwrap().into(),
     };
     verify_certificate(certificate, &hashes).unwrap();
+}
+
+#[test]
+fn lean_matrix_matches_rust_fixture_provenance() {
+    let (rust, _, _) = finite_fixture_inputs();
+    let lean = lean_matrix();
+    assert_eq!(lean.len(), rust.nrows(), "Lean H row count");
+    for (row, cells) in lean.iter().enumerate() {
+        assert_eq!(
+            cells.len(),
+            rust.ncols(),
+            "Lean H column count in row {row}"
+        );
+        for (column, &(numerator, denominator, imaginary)) in cells.iter().enumerate() {
+            assert_ne!(denominator, 0, "zero denominator at H[{row},{column}]");
+            let expected = numerator as f64 / denominator as f64;
+            let value = rust[(row, column)];
+            let (actual, expected) = if imaginary {
+                (value.im, expected)
+            } else {
+                (value.re, expected)
+            };
+            assert_eq!(
+                actual, expected,
+                "H[{row},{column}] differs: Lean {numerator}/{denominator} ({imaginary}) vs {:?}",
+                value
+            );
+        }
+    }
+    assert_eq!(LEAN_SOURCE.matches("def H").count(), 1);
 }
 
 #[test]

@@ -9,7 +9,8 @@
 //! fixture can be regenerated and bound as one artifact.
 
 use crate::joint_sirk::{joint_axpy, joint_norm};
-use crate::sm_bridge::{BRIDGE_SCHEMA, bind_artifact, canonical_json_sha256};
+use crate::sm_bridge::{bind_artifact, canonical_json_sha256, BRIDGE_SCHEMA};
+use crate::sm_brst_fock::{finite_fock_brst_jet_window, finite_fock_brst_window};
 use crate::sm_brst_quotient::finite_brst_quotient;
 use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, JointInnerBasis as B, JointOuterBasis as O, NestedVector,
@@ -17,7 +18,7 @@ use nested_fock_algebra::exact_inner::{
 use nested_fock_algebra::sm_constraints::*;
 use nested_fock_algebra::sm_full::*;
 use num_complex::Complex64 as C;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::OnceLock;
 
 fn parameters() -> SmParameters {
@@ -255,14 +256,16 @@ pub fn finite_constraint_bridge() -> Value {
             },
             "finite_dictionary": true,
             "finite_ce_quotient": finite_brst_quotient(),
+            "finite_fock_brst_window": finite_fock_brst_window(),
+            "finite_fock_brst_jet_window": finite_fock_brst_jet_window(),
             "quotient_map": null,
-            "quotient_note": "No field-level physical quotient or BRST cohomology is constructed; the finite adjoint Chevalley-Eilenberg quotient is bound separately under finite_ce_quotient, while these are finite-image residual checks only.",
+            "quotient_note": "The finite adjoint Chevalley-Eilenberg quotient and the finite field-level occupation windows, including their harmonic representatives, are bound separately under finite_ce_quotient, finite_fock_brst_window and the jet-inclusive N10 record; the top-level quotient_map stays null because no continuum physical quotient is constructed, and the remaining entries are finite-image residual checks only.",
         },
         "theorem": {
             "lean_name": "Analytic.SmConstraints.finite_dictionary",
             "statement": "sum_a c_a G_a and the joint Q close on the declared finite images, and Q^2 = 0 there",
             "proof_status": "not-run",
-            "remaining": "The finite identities are measured in the complete E1 operator. The nested finite adjoint CE quotient is constructed separately, but no Lean theorem binds these finite identities. A direct probe shows the joint charge removes one ghost and preserves the remaining occupation, so the total-occupation filtration is Q-invariant and a finite field-level complex is constructible; that full Fock matrix and its cohomology are not yet bound. The field-level quotient/cohomology and anomaly analysis remain open.",
+            "remaining": "The finite identities are measured in the complete E1 operator. The nested finite adjoint CE quotient and a finite field-level occupation window are constructed separately. The matter-extended window is closed and graded under Q, has Q^2 = 0, block ranks [0, 138] and cohomology dimensions [1, 10, 10780]; the Lean theorem `BookProof.SmBrstQuotient.finiteWindow_matter_finrank` binds q1 o q2 = 0 and those measured block ranks to the dimensions, conditionally on the measured rank hypotheses. The 36,207-state jet-inclusive window adds all 120 independent derivative-jet coordinates, is block-graded by jet and matter number, and measures block ranks [0, 249] and cohomology [1, 19, 35689]; `BookProof.SmBrstQuotient.finiteWindow_jet_finrank` binds the same conditional rank-to-dimension implication at those values, and `BookProof.SmBrstQuotient.jetWindowCharge_sq` formalizes the block-matrix Q^2 = 0 identity there. Both jet theorems are bound in a nanoda-verified payload; neither concrete 36,207-state matrix is formalized, and the continuum physical quotient and anomaly analysis remain open.",
         },
         "hypotheses": [
             "The twelve generators use all eight SU(3) colours, the three SU(2) generators and U(1)_Y with bare structure constants.",
@@ -272,7 +275,7 @@ pub fn finite_constraint_bridge() -> Value {
         ],
         "not_claimed": [
             "No physical BRST cohomology or gauge-invariant Hilbert space.",
-            "No representative/quotient map; quotient_map is deliberately null.",
+            "No continuum representative/quotient map; the top-level quotient_map is deliberately null, while finite_fock_brst_window carries a finite harmonic map.",
             "No anomaly, infinite-mode, cutoff or continuum statement.",
             "No certified interval enclosure of the measured residuals.",
         ],

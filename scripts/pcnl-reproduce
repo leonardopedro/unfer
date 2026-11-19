@@ -63,6 +63,8 @@
 #   breadth         four shells at one N and one anchor            ~40 min
 #   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
 #   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
+#   ultrabert-head  R10 frozen UltraBERT + full MLP posterior     ~150 s
+#   ultrabert-continual  R11 carried-prior MLP with replay          ~160 s
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
 # plus nothing long: it is the subset that fails fast when a change broke the
@@ -77,7 +79,7 @@ ALL_STAGES=(
   temperature overdispersion anneal cold-1k stepdist mh-cold radius report
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
   sphere-ladder cold-10k target-condition scale scale2 n-scaling mode-584
-  anchor-lr breadth wide-radius rhat-null
+  anchor-lr breadth wide-radius rhat-null ultrabert-head ultrabert-continual
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -422,6 +424,12 @@ run_stage() {
     # still correlated: the null the outer-shell cells in the status doc are
     # read against.  Pure Python, ~11 s.
     ./scripts/pcnl-rhat-null
+    ;;
+  ultrabert-head)
+    cargo run --release -p pcnl --example ultrabert_head_pcnl
+    ;;
+  ultrabert-continual)
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl
     ;;
   n-scaling)
     # The data requirement ("N ≈ 3.4e6") was a one-point extrapolation of the

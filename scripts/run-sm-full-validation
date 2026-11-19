@@ -116,7 +116,7 @@ cargo test --locked --offline --release -p fock_sirk \
     --test sm_full_hashimoto --test sm_gauge_fixed_validation \
     --test sm_named_dictionary --test sm_car_bridge --test sm_defect \
     --test sm_defect_bridge --test sm_constraints --test sm_joint_constraints \
-    --test sm_constraints_bridge \
+    --test sm_constraints_bridge --test sm_brst_jet_window \
     -- --test-threads=1
 
 step "N13 CAR proof: pinned lean4export payload replayed by nanoda"
@@ -127,9 +127,25 @@ step "N8 finite endpoint proof: pinned lean4export payload replayed by nanoda"
 cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
     docs/fixtures/sm_defect_proof.ndjson
 
-step "N8 analytic defect proof: gzip payload replayed by nanoda"
 analytic="$(mktemp --suffix=.ndjson)"
-trap 'rm -f "$probe" ${json:+"$json"} "$analytic"' EXIT
+window_proof="$(mktemp --suffix=.ndjson)"
+jet_proof="$(mktemp --suffix=.ndjson)"
+skew_proof="$(mktemp --suffix=.ndjson)"
+trap 'rm -f "$probe" ${json:+"$json"} "$analytic" ${window_proof:+"$window_proof"} ${jet_proof:+"$jet_proof"} ${skew_proof:+"$skew_proof"}' EXIT
+
+step "N8 matrix skew proof: gzip payload replayed by nanoda"
+gzip -dc docs/fixtures/sm_defect_skew_proof.ndjson.gz > "$skew_proof"
+skew_sha="$(sha256sum "$skew_proof" | awk '{print $1}')"
+expected_skew_sha="498ae454792caafc7fb4150fb1cfb7a9ecf336d6a3b84d2ee9dcf9f80db528cc"
+if [[ $skew_sha != "$expected_skew_sha" ]]; then
+    echo "matrix-skew payload digest mismatch: $skew_sha (expected $expected_skew_sha)" >&2
+    exit 65
+fi
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    "$skew_proof"
+rm -f "$skew_proof"
+
+step "N8 analytic defect proof: gzip payload replayed by nanoda"
 gzip -dc docs/fixtures/sm_defect_analytic_proof.ndjson.gz > "$analytic"
 analytic_sha="$(sha256sum "$analytic" | awk '{print $1}')"
 expected_sha="83e3571ed458dff72b086934d57724be3b4763f47d58a07439b401c0d714ed31"
@@ -140,6 +156,30 @@ fi
 cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
     "$analytic"
 rm -f "$analytic"
+
+step "N10 finite BRST window proof: gzip payload replayed by nanoda"
+gzip -dc docs/fixtures/sm_brst_finite_window_proof.ndjson.gz > "$window_proof"
+window_sha="$(sha256sum "$window_proof" | awk '{print $1}')"
+expected_window_sha="bedf7935645a691ed994869474b8e38409f7541ad314fa1c6c86255ca881664a"
+if [[ $window_sha != "$expected_window_sha" ]]; then
+    echo "finite-window payload digest mismatch: $window_sha (expected $expected_window_sha)" >&2
+    exit 65
+fi
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    "$window_proof"
+rm -f "$window_proof"
+
+step "N10 jet-window proof: gzip payload replayed by nanoda"
+gzip -dc docs/fixtures/sm_brst_jet_window_proof.ndjson.gz > "$jet_proof"
+jet_sha="$(sha256sum "$jet_proof" | awk '{print $1}')"
+expected_jet_sha="66ea3e84d009e03c9d34f86d7783def11f46f0c9600d6cc094320f1abf462e20"
+if [[ $jet_sha != "$expected_jet_sha" ]]; then
+    echo "jet-window payload digest mismatch: $jet_sha (expected $expected_jet_sha)" >&2
+    exit 65
+fi
+cargo run --locked --offline --release -q -p prob_kernel --example verify_export -- \
+    "$jet_proof"
+rm -f "$jet_proof"
 
 step "fock_sirk: N12 finite-mode pilot"
 n12="$(mktemp)"

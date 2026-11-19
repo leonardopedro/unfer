@@ -6553,3 +6553,108 @@ R9_STATE_PATH=lowrank \
   control and `state_rep` runs: 330.6 s and 531.7 s inside 1200 s), not by the
   script stage.
 - **E6/E7 (repeated for clarity).** No Lean4 elaboration and no full R9 archive.
+
+## R10 — frozen UltraBERT + calibrated MLP head (2026-11-18)
+
+A new external-encoder probe fixes `dmis-lab/UltraBERT-Embed-150M`
+(revision `b06b367…`, CLS/L2-normalised, 768-d) and samples the complete
+multi-layer head on its embeddings.  The head is `768 → 32 → 16 → 4` with
+`tanh` hidden activations (`P = 25 204` weights/biases, no frozen head layer).
+The target is
+`Φ(z,w)=λN·mean L(θ_map+σ(Bz+w))+½‖z‖²+½‖w‖²`; the full kernel uses
+`mh_pcn_z_full` then `mh_pcn_w_full`, so every head weight is in the posterior
+while the 150M encoder is fixed data.  The fixture
+(`docs/fixtures/ultrabert_agnews_embeddings.safetensors`, sha256
+`8fca923d…`) contains 240 train / 120 test AG News rows, 60/30 per class.
+
+`L` is selectable.  `nll` is the ordinary categorical likelihood.  `brier` is
+the RLCD proper score `Σ_c (p_c−y_c)²` on one-hot labels, used as a
+**generalized** Bayes target; it is strictly proper and minimized at the
+calibrated probability.  The default trains the anchor with NLL and samples
+with Brier; `--posterior-loss nll` is the identical-head control.
+
+Measured with the low-data arm (8 rows per class, `N_train=32`, `λ=1`,
+`σ=0.5`, 4 × 3 600 steps, burn 1 200, thin 4, full head):
+
+| basis | rank | accept z / w | BMA acc | BMA NLL | BMA Brier | BMA ECE | mean draw acc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| informed | 8 | 98.3 / 95.3 % | 73.33 % | 0.7842 | 0.3995 | **0.0784** | 67.60 % |
+| random | 8 | 99.8 / 95.1 % | 73.33 % | 0.7869 | 0.3995 | **0.0789** | 67.61 % |
+| informed | 16 | 97.6 / 95.5 % | 73.33 % | 0.7821 | 0.3998 | 0.0957 | 67.64 % |
+| random | 16 | 99.8 / 95.4 % | 73.33 % | 0.7825 | 0.3997 | 0.0956 | 67.62 % |
+| informed | 32 | 97.7 / 95.5 % | 73.33 % | 0.7845 | 0.4010 | 0.0990 | 67.66 % |
+| random | 32 | 99.7 / 95.6 % | 73.33 % | 0.7805 | 0.4003 | 0.0973 | 67.62 % |
+
+The MAP MLP is 72.50 % / 1.9535 / 0.5113 with ECE 0.2462 — a severe
+overconfidence failure on 32 training rows.  Posterior averaging improves the
+paired NLL by `−1.17 ± 0.23` and Brier by `−0.11 ± 0.032` over the 120 test
+rows, and cuts top-label ECE to 0.078–0.099.  The mean individual draw is
+67.6 %, so BMA recovers the point model's accuracy from a weaker ensemble.
+A four-subset recheck at rank 8 (same sampler seed, `--subset-seed`
+20261118–21) shows the calibration effect is not one draw: MAP top-label ECE
+ranged **0.139–0.313**, BMA ECE **0.052–0.130**, MAP NLL 1.00–2.74 and BMA NLL
+0.50–0.97; accuracy moved from 65.0–83.3 % to 65.8–84.2 %.  This is
+training-subset variation on one fixed test set, not independent test splits.
+
+The only head is the MLP; no linear head is exposed.  The NLL-target
+control gives ECE 0.082–0.102 and Brier 0.4004–0.4020: this
+sample does not separate the Brier target from NLL, so the calibration gain is
+attributed to posterior averaging, not proven to the loss.  Informed vs random
+bases differ by <0.001 because the full target is the same weight space.
+
+**Full-data MLP.**  At 240 training rows the MAP is 83.33 % / NLL 1.3230 /
+Brier 0.3158 / ECE 0.1624.  BMA rank 8–32 is 83.33–85.00 %, NLL
+0.5338–0.5479, Brier 0.2299–0.2318 and ECE **0.0515–0.0746**, with paired
+`dNLL −0.775…−0.789 ± 0.202…0.206` and `dBrier −0.084…−0.086 ± 0.029`.
+Posterior averaging still calibrates at full data, but the accuracy gain over
+the MAP is at most one test row.
+
+**Held-out noisy calibration split.**  `--cal-per-class 4 --label-noise 0.2`
+held out 16 rows (4 per class), kept 224 for the NLL fit, and flipped 3/16
+calibration labels.  Brier on those held-out rows is added to the posterior
+target; test metrics stay on clean labels.  BMA rank 8–32: accuracy
+85.83–87.50 %, NLL 0.4289–0.4459, Brier 0.2155–0.2196, ECE **0.0664–0.0846**.
+This does not break clean-test calibration or accuracy, but its ECE is slightly
+worse than the plain full-data target (0.052–0.075); the fit set and seed also
+differ, so it is not an isolated noise effect.
+
+**Width/depth.**  Full data, rank 8: baseline `32,16` gives BMA ECE 0.0629 and
+accuracy 85.00 %; wider `64,32` (P=51 428) gives ECE 0.1108–0.1177 and accuracy
+84.17–85.00 %; deeper `32,16,8` (P=25 308) gives ECE 0.1029–0.1053 and accuracy
+78.33–79.17 %.  Both alternatives degrade accuracy and calibration at this data
+size, so `32,16` is retained.
+
+Acceptance is high with `β→1` and `ESS(Φ)` near its kept-draw ceiling, so these
+chains are iid-like in many flat directions rather than narrowly converged.
+The encoder is frozen, the head is one MLP, and one AG News split was used; no
+benchmark, encoder-posterior or decision claim follows.  ECE is a top-label
+diagnostic, not a full calibration certificate.  The calibration and width/depth
+cells are single-split, 120-test-row comparisons.  Regenerate the fixture with
+`scripts/pcnl-ultrabert-embed`; run
+`cargo run --release -p pcnl --example ultrabert_head_pcnl`.
+
+## R11 — continual Bayesian MLP head (2026-11-18)
+
+The head posterior is carried across class-disjoint rounds with the recursion
+`π_t ∝ π_{t-1} · exp(−λN_t mean Brier_t)`.  `DiagonalPosterior` fits the
+previous particles to `N(μ, diag(σ²))`; the exact full-target kernel then
+samples the new posterior.  A fixed basis is held across the stream.  Replay
+rows per seen class are included because strict no-replay carried priors were
+insufficient (90.56 pp mean forgetting).
+
+At the end of `[0,1] → [2,3] → [0,1] → [2,3]`, 4 chains × 2 400 steps,
+rank 8, clean 120-row test, full 60-row-per-class replay:
+
+| arm | acc | NLL | Brier | ECE | mean forgetting |
+|---|---:|---:|---:|---:|---:|
+| reset prior + replay | 80.00 % | 0.6992 | 0.3597 | 0.2362 | 11.11 pp |
+| carried prior + replay | 80.00 % | **0.5517** | **0.2951** | **0.0901** | **5.56 pp** |
+
+At half memory (30 replay rows per class), the carried prior lowers forgetting
+from 46.11 pp to 30.56 pp and final ECE from 0.3183 to 0.1779, with 80.83 %
+versus 82.50 % accuracy.  The gain is therefore stability and calibration, not
+uniform accuracy.
+
+The diagonal prior ignores correlations and replay approximates (and
+double-counts) old data, so this is not exact Bayes over the full history.
+One split and one seed; no benchmark or decision claim follows.

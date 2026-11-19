@@ -60,11 +60,7 @@ pub fn top_label(probs: &[f64]) -> (usize, f64) {
         .iter()
         .enumerate()
         .fold((0usize, f64::NEG_INFINITY), |(ti, tv), (j, v)| {
-            if *v > tv {
-                (j, *v)
-            } else {
-                (ti, tv)
-            }
+            if *v > tv { (j, *v) } else { (ti, tv) }
         })
 }
 
@@ -125,14 +121,24 @@ pub fn selective(conf: &[f64], correct: &[bool], tau: f64) -> (f64, f64) {
     if answered == 0 {
         return (0.0, f64::NAN);
     }
-    (answered as f64 / finite as f64, right as f64 / answered as f64)
+    (
+        answered as f64 / finite as f64,
+        right as f64 / answered as f64,
+    )
 }
 
 /// `(coverage, risk)` with `risk = 1 − selective accuracy`; `NaN` risk when
 /// nothing is answered.
 pub fn risk_coverage(conf: &[f64], correct: &[bool], tau: f64) -> (f64, f64) {
     let (coverage, accuracy) = selective(conf, correct, tau);
-    (coverage, if coverage == 0.0 { f64::NAN } else { 1.0 - accuracy })
+    (
+        coverage,
+        if coverage == 0.0 {
+            f64::NAN
+        } else {
+            1.0 - accuracy
+        },
+    )
 }
 
 /// Coverage-target rule: the grid point with the **highest coverage** whose
@@ -174,7 +180,10 @@ mod tests {
     use super::*;
 
     fn pairs(rows: &[(f64, bool)]) -> (Vec<f64>, Vec<bool>) {
-        (rows.iter().map(|r| r.0).collect(), rows.iter().map(|r| r.1).collect())
+        (
+            rows.iter().map(|r| r.0).collect(),
+            rows.iter().map(|r| r.1).collect(),
+        )
     }
 
     #[test]
@@ -203,12 +212,7 @@ mod tests {
     #[test]
     fn reliability_matches_a_hand_computed_fixture() {
         // Two rows in [0.8,0.85) (one right), two in [0.4,0.45) (both wrong).
-        let (conf, correct) = pairs(&[
-            (0.81, true),
-            (0.83, false),
-            (0.41, false),
-            (0.43, false),
-        ]);
+        let (conf, correct) = pairs(&[(0.81, true), (0.83, false), (0.41, false), (0.43, false)]);
         let (bins, ece, mce) = reliability(&conf, &correct);
         let hi = bins[16].clone(); // 16/20 = 0.80
         let lo = bins[8].clone(); // 8/20 = 0.40

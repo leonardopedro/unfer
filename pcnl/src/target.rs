@@ -458,6 +458,104 @@ impl FullPotential for FullTarget {
     }
 }
 
+/// The same full-target split as [`FullTarget`], but over any [`Potential`].
+///
+/// `FullTarget` is typed to the classifier because it was written for the
+/// R1/R2 comparison.  A frozen encoder's softmax head is a different
+/// likelihood with the same `P`-dimensional chart, and the full-target kernels
+/// are not classifier-specific, so this wrapper carries the generic potential
+/// without changing the classifier's recorded call sites.
+pub struct PotentialFullTarget<P: Potential> {
+    subspace: AffineSubspace,
+    lambda: f64,
+    potential: P,
+    evals: AtomicU64,
+}
+
+impl<P: Potential> PotentialFullTarget<P> {
+    pub fn new(subspace: AffineSubspace, lambda: f64, potential: P) -> Self {
+        Self {
+            subspace,
+            lambda,
+            potential,
+            evals: AtomicU64::new(0),
+        }
+    }
+
+    pub fn n_train(&self) -> usize {
+        self.potential.n_terms()
+    }
+
+    pub fn subspace(&self) -> &AffineSubspace {
+        &self.subspace
+    }
+
+    pub fn potential(&self) -> &P {
+        &self.potential
+    }
+
+    pub fn evaluations(&self) -> u64 {
+        self.evals.load(Ordering::Relaxed)
+    }
+
+    /// `θ_ref + C_half (Bz + w)`.
+    pub fn lift(&self, z: &[f32], w: &[f32]) -> Vec<f32> {
+        let p = self.subspace.p();
+        assert_eq!(z.len(), self.subspace.dim(), "z must have r entries");
+        assert_eq!(w.len(), p, "w must have P entries");
+        let mut v = vec![0.0f32; p];
+        self.subspace.basis().apply(z, &mut v);
+        for (vi, wi) in v.iter_mut().zip(w) {
+            *vi += *wi;
+        }
+        for ((o, a), s) in v
+            .iter_mut()
+            .zip(self.subspace.theta_ref())
+            .zip(self.subspace.scale())
+        {
+            *o = a + s * *o;
+        }
+        v
+    }
+
+    pub fn lift_tensor(&self, z: &[f32], w: &[f32]) -> candle_core::Result<Tensor> {
+        Tensor::from_vec(self.lift(z, w), vec![self.subspace.p()], &Device::Cpu)
+    }
+
+    /// `(λN·mean_loss, ½‖z‖² + ½‖w‖²)`.
+    pub fn phi_parts(&self, z: &[f32], w: &[f32]) -> (f64, f64) {
+        let theta = match self.lift_tensor(z, w) {
+            Ok(t) => t,
+            Err(_) => return (f64::INFINITY, prior_phi(z) + prior_phi(w)),
+        };
+        let mean_loss = self.potential.mean_loss(&theta);
+        (
+            self.lambda * self.potential.n_terms() as f64 * mean_loss,
+            prior_phi(z) + prior_phi(w),
+        )
+    }
+}
+
+impl<P: Potential> FullPotential for PotentialFullTarget<P> {
+    fn dim(&self) -> usize {
+        self.subspace.dim()
+    }
+
+    fn p(&self) -> usize {
+        self.subspace.p()
+    }
+
+    fn phi(&self, z: &[f32], w: &[f32]) -> f64 {
+        self.evals.fetch_add(1, Ordering::Relaxed);
+        let (lik, prior) = self.phi_parts(z, w);
+        lik + prior
+    }
+
+    fn complement(&self, v: &[f32], out: &mut [f32]) {
+        self.subspace.complement(v, out);
+    }
+}
+
 /// What one MH-pCN step in `z` did.
 #[derive(Clone, Copy, Debug)]
 pub struct ZStep {
