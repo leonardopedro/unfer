@@ -1,0 +1,20 @@
+{
+  "model": "dmis-lab/UltraBERT-Embed-150M",
+  "revision": "b06b36724c5417a1ec1b7863dd4fa542b74e4899",
+  "hidden_size": 768,
+  "pooling": "CLS token, L2-normalized",
+  "max_length": 96,
+  "dataset": "20 Newsgroups, four categories, headers/footers/quotes removed",
+  "selection": "60 train + 30 test per class, deduplicated, seed 20261119",
+  "n_train": 240,
+  "n_test": 120,
+  "n_classes": 4,
+  "labels": [
+    "comp.graphics",
+    "rec.sport.baseball",
+    "sci.space",
+    "talk.politics.guns"
+  ],
+  "artifact_sha256": "0ee406f1e0f86fd27293d100a2177cff3e312a6a904b5d46b40b0ca789004e11",
+  "split_seed": 20261119
+}

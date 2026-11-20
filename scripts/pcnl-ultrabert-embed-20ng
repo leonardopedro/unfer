@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Regenerate the frozen UltraBERT 20 Newsgroups embedding fixture.
+
+This is the second-dataset check for the pCNL text head.  Four categories are
+used so the existing four-class example applies unchanged.  Headers, footers
+and quoted text are removed by scikit-learn's loader; that prevents the
+newsgroup name in the header from trivialising the task.
+
+Requires torch, transformers, safetensors and scikit-learn.  A CPU-only
+environment is enough:
+
+    uv run --python 3.12 \
+      --with torch --with transformers --with safetensors \
+      --with scikit-learn scripts/pcnl-ultrabert-embed-20ng
+
+The model weights (~604 MB) are downloaded from the pinned revision.  The
+fixture is intentionally small (240 train / 120 test rows), matching the AG
+News probe, so the pCNL head example remains cheap.
+"""
+
+import hashlib
+import json
+import random
+from pathlib import Path
+
+import torch
+from safetensors.torch import save_file
+from sklearn.datasets import fetch_20newsgroups
+from transformers import AutoModel, AutoTokenizer
+
+MODEL = "dmis-lab/UltraBERT-Embed-150M"
+REVISION = "b06b36724c5417a1ec1b7863dd4fa542b74e4899"
+CATEGORIES = [
+    "comp.graphics",
+    "rec.sport.baseball",
+    "sci.space",
+    "talk.politics.guns",
+]
+SEED = 20261119
+PER_CLASS_TRAIN = 60
+PER_CLASS_TEST = 30
+MAX_LENGTH = 96
+
+
+def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    out = root / "docs/fixtures/ultrabert_20ng4_embeddings.safetensors"
+    manifest = root / "docs/fixtures/ultrabert_20ng4_embeddings.json"
+    cache = root / "target/pcnl-20newsgroups"
+
+    data = fetch_20newsgroups(
+        data_home=str(cache),
+        subset="all",
+        categories=CATEGORIES,
+        remove=("headers", "footers", "quotes"),
+    )
+    rows = []
+    for label, text in zip(data.target, data.data):
+        clean = " ".join(text.split())
+        if clean:
+            rows.append((int(label), clean))
+
+    rng = random.Random(SEED)
+    seen = set()
+    by_class = [[] for _ in CATEGORIES]
+    for label, clean in rows:
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        by_class[label].append(clean)
+
+    train, test = [], []
+    for label in range(len(CATEGORIES)):
+        rng.shuffle(by_class[label])
+        if len(by_class[label]) < PER_CLASS_TRAIN + PER_CLASS_TEST:
+            raise RuntimeError(
+                f"class {CATEGORIES[label]} has only {len(by_class[label])} unique rows"
+            )
+        train += [(label, t) for t in by_class[label][:PER_CLASS_TRAIN]]
+        test += [
+            (label, t)
+            for t in by_class[label][
+                PER_CLASS_TRAIN : PER_CLASS_TRAIN + PER_CLASS_TEST
+            ]
+        ]
+    rng.shuffle(train)
+    rng.shuffle(test)
+    examples = train + test
+    labels = [y for y, _ in examples]
+    split = [0] * len(train) + [1] * len(test)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL, revision=REVISION, trust_remote_code=True
+    )
+    model = AutoModel.from_pretrained(
+        MODEL, revision=REVISION, trust_remote_code=True, dtype=torch.float32
+    ).eval()
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, len(examples), 24):
+            batch = [t for _, t in examples[start : start + 24]]
+            enc = tokenizer(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=MAX_LENGTH,
+                return_tensors="pt",
+            )
+            # The model card declares CLS pooling and L2-normalised output.
+            h = model(**enc).last_hidden_state[:, 0]
+            chunks.append(torch.nn.functional.normalize(h, dim=-1))
+    embeddings = torch.cat(chunks).to(torch.float32)
+    assert embeddings.shape == (len(examples), 768)
+
+    save_file(
+        {
+            "embeddings": embeddings,
+            "labels": torch.tensor(labels, dtype=torch.int64),
+            "split": torch.tensor(split, dtype=torch.uint8),
+        },
+        str(out),
+    )
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    manifest.write_text(
+        json.dumps(
+            {
+                "model": MODEL,
+                "revision": REVISION,
+                "hidden_size": 768,
+                "pooling": "CLS token, L2-normalized",
+                "max_length": MAX_LENGTH,
+                "dataset": "20 Newsgroups, four categories, headers/footers/quotes removed",
+                "selection": f"{PER_CLASS_TRAIN} train + {PER_CLASS_TEST} test per class, deduplicated, seed {SEED}",
+                "n_train": len(train),
+                "n_test": len(test),
+                "n_classes": len(CATEGORIES),
+                "labels": CATEGORIES,
+                "artifact_sha256": digest,
+                "split_seed": SEED,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote {out} ({digest})")
+
+
+if __name__ == "__main__":
+    main()
