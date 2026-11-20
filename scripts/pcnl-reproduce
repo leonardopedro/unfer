@@ -64,7 +64,11 @@
 #   wide-radius     the refuted wider-jump shortcut at 7.9e-2      ~40 min
 #   rhat-null       what a stationary thinned chain reports as R-hat ~20 s
 #   ultrabert-head  R10 frozen UltraBERT + full MLP posterior     ~150 s
-#   ultrabert-continual  R11 carried-prior MLP with replay          ~160 s
+#   ultrabert-continual  R11 carried-prior MLP with replay          ~140 s
+#   ultrabert-20ng  R11 second fixture, canonical + five resplits  ~15 min
+#   ultrabert-20ng-seeds  calibrated joint, five model seeds        ~6 min
+#   ultrabert-symmetric  same held-out rows for both arms and both
+#                   fixtures                                         ~25 min
 #
 # The default set is `test quick volume mobility step-scale overdispersion`
 # plus nothing long: it is the subset that fails fast when a change broke the
@@ -80,6 +84,7 @@ ALL_STAGES=(
   adam-start sphere curvature mode subspace budget basin basin-chains sphere-rep
   sphere-ladder cold-10k target-condition scale scale2 n-scaling mode-584
   anchor-lr breadth wide-radius rhat-null ultrabert-head ultrabert-continual
+  ultrabert-20ng ultrabert-20ng-seeds ultrabert-symmetric
 )
 DEFAULT_STAGES=(test quick volume mobility step-scale overdispersion)
 
@@ -430,6 +435,60 @@ run_stage() {
     ;;
   ultrabert-continual)
     cargo run --release -p pcnl --example ultrabert_continual_pcnl
+    ;;
+  ultrabert-20ng)
+    # R11 second fixture: the canonical split, then the five alternate
+    # stratified test splits used by the 20 Newsgroups table.  Both arms are
+    # run on every split; the joint arm uses the same 38 400-proposal budget
+    # as four sequential rounds and fits its temperature on 10 held-out
+    # training rows per class.
+    local fixture="docs/fixtures/ultrabert_20ng4_embeddings.safetensors"
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+      --fixture "$fixture"
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+      --fixture "$fixture" --tasks '0,1,2,3' --arm independent \
+      --steps 9600 --burn 3200 --thin 16 --calibrate-joint 10
+    for split_seed in 1 2 3 4 5; do
+      cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture "$fixture" --resplit-test-per-class 30 \
+        --split-seed "$split_seed"
+      cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture "$fixture" --resplit-test-per-class 30 \
+        --split-seed "$split_seed" --tasks '0,1,2,3' --arm independent \
+        --steps 9600 --burn 3200 --thin 16 --calibrate-joint 10
+    done
+    ;;
+  ultrabert-20ng-seeds)
+    # The canonical 20 Newsgroups split with five model seeds, all at the
+    # calibrated-joint budget.  The split seed is fixed, so the spread is
+    # model/proposal variance rather than split variance.
+    for seed in 20261118 20261119 20261120 20261121 20261122; do
+      cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --seed "$seed" --tasks '0,1,2,3' --arm independent \
+        --steps 9600 --burn 3200 --thin 16 --calibrate-joint 10
+    done
+    ;;
+  ultrabert-symmetric)
+    # Same held-out rows for both arms: 10 training rows per class are removed
+    # before either arm trains, and the temperature for both is fitted on
+    # exactly those rows.  Run on both fixtures so the AG News claim that
+    # motivated the protocol is checked alongside the second dataset.  The
+    # sequential arm gets its four usual class rounds; the joint arm gets one
+    # all-class round at the matched proposal budget.
+    for fixture in \
+      docs/fixtures/ultrabert_agnews_embeddings.safetensors \
+      docs/fixtures/ultrabert_20ng4_embeddings.safetensors; do
+      for split_seed in 1 2 3 4 5; do
+        cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+          --fixture "$fixture" --resplit-test-per-class 30 \
+          --split-seed "$split_seed" --heldout-calibration 10 --arm continual
+        cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+          --fixture "$fixture" --resplit-test-per-class 30 \
+          --split-seed "$split_seed" --tasks '0,1,2,3' --arm independent \
+          --steps 9600 --burn 3200 --thin 16 --heldout-calibration 10
+      done
+    done
     ;;
   n-scaling)
     # The data requirement ("N ≈ 3.4e6") was a one-point extrapolation of the

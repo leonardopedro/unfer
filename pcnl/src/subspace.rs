@@ -10,10 +10,11 @@
 //! with the wrong units.  Both are checked here and tested against finite
 //! differences.
 //!
-//! `C_half` is diagonal (`scale[i]` on coordinate `i`), which is the only case
-//! the reported priors use: `σ·I` for the isotropic prior.  A full covariance
-//! factor would need a `P×P` triangular solve per lift for no measured reason,
-//! so it is not offered and cannot be silently mis-specified.
+//! The standard `C_half` is diagonal (`scale[i]` on coordinate `i`), which is
+//! the isotropic prior and the diagonal continual summary.  [`AffineSubspace::low_rank`]
+//! offers a low-rank-plus-isotropic factor `B diag(col_scale) z + noise·w`; a
+//! full `P×P` triangular factor is still not offered, because it would need a
+//! `P×P` solve per lift and no reported run uses one.
 
 use candle_core::{Device, Tensor};
 use rand::{Rng, SeedableRng};
@@ -232,11 +233,18 @@ fn gaussian<R: Rng + ?Sized>(rng: &mut R) -> f64 {
 }
 
 /// The affine chart `θ(z) = θ_ref + C_half B z`, with `C_half = diag(scale)`.
+///
+/// A second constructor, [`Self::low_rank`], replaces the ambient diagonal
+/// factor with `B diag(col_scale) z + noise · w` on the full split.  That is a
+/// low-rank-plus-isotropic prior `B diag(col_scale²) Bᵀ + noise² P_⊥`: it keeps
+/// the correlations inside the informed block and leaves an isotropic residual
+/// in the complement.  The standard constructor stays exactly what it was.
 #[derive(Clone, Debug)]
 pub struct AffineSubspace {
     theta_ref: Vec<f32>,
     basis: Basis,
     scale: Vec<f32>,
+    col_scale: Option<Vec<f32>>,
 }
 
 impl AffineSubspace {
@@ -268,6 +276,63 @@ impl AffineSubspace {
             theta_ref,
             basis,
             scale,
+            col_scale: None,
+        })
+    }
+
+    /// A low-rank-plus-isotropic chart:
+    ///
+    /// ```text
+    /// θ(z, w) = θ_ref + B diag(col_scale) z + noise · w,   w ⊥ span(B).
+    /// ```
+    ///
+    /// Under `z, w ~ N(0, I)` the prior covariance is
+    /// `B diag(col_scale²) Bᵀ + noise² P_⊥`, where `P_⊥ = I − BBᵀ`.  The lift is
+    /// linear and the complement stays orthogonal, so the exact full-target
+    /// kernel is unchanged; only the chart's factor is different.
+    pub fn low_rank(
+        theta_ref: Vec<f32>,
+        basis: Basis,
+        col_scale: Vec<f32>,
+        noise: f32,
+    ) -> Result<Self, SubspaceError> {
+        let p = basis.p();
+        let r = basis.dim();
+        if theta_ref.len() != p {
+            return Err(SubspaceError::BadLength {
+                what: "theta_ref",
+                expected: p,
+                got: theta_ref.len(),
+            });
+        }
+        if theta_ref.iter().any(|x| !x.is_finite()) {
+            return Err(SubspaceError::NonFinite("theta_ref"));
+        }
+        if col_scale.len() != r {
+            return Err(SubspaceError::BadLength {
+                what: "C_half column scale",
+                expected: r,
+                got: col_scale.len(),
+            });
+        }
+        for (i, &s) in col_scale.iter().enumerate() {
+            if !s.is_finite() || s <= 0.0 {
+                return Err(SubspaceError::BadScale { index: i, value: s });
+            }
+        }
+        if !noise.is_finite() || noise <= 0.0 {
+            return Err(SubspaceError::BadScale {
+                index: p,
+                value: noise,
+            });
+        }
+        Ok(Self {
+            theta_ref,
+            basis,
+            // Kept for accessors that ask for the ambient residual width.  The
+            // low-rank path uses `noise` through `col_scale`, not this vector.
+            scale: vec![noise; p],
+            col_scale: Some(col_scale),
         })
     }
 
@@ -289,8 +354,15 @@ impl AffineSubspace {
         &self.theta_ref
     }
 
+    /// The ambient diagonal factor.  For a low-rank chart this is the
+    /// isotropic residual width repeated `p` times; use [`Self::col_scale`]
+    /// for the informed block.
     pub fn scale(&self) -> &[f32] {
         &self.scale
+    }
+
+    pub fn col_scale(&self) -> Option<&[f32]> {
+        self.col_scale.as_deref()
     }
 
     pub fn basis(&self) -> &Basis {
@@ -299,10 +371,55 @@ impl AffineSubspace {
 
     /// `θ_ref + C_half B z`.  `z` is the only thing a chain stores.
     pub fn lift(&self, z: &[f32]) -> Vec<f32> {
+        assert_eq!(z.len(), self.dim(), "B z: z must have r entries");
         let mut out = vec![0.0f32; self.p()];
-        self.basis.apply(z, &mut out);
-        for ((o, a), s) in out.iter_mut().zip(&self.theta_ref).zip(&self.scale) {
-            *o = a + s * *o;
+        if let Some(cs) = &self.col_scale {
+            for (j, &zj) in z.iter().enumerate() {
+                let w = cs[j] * zj;
+                let col = self.basis.col(j);
+                for i in 0..self.p() {
+                    out[i] += col[i] * w;
+                }
+            }
+            for (o, a) in out.iter_mut().zip(&self.theta_ref) {
+                *o += a;
+            }
+        } else {
+            self.basis.apply(z, &mut out);
+            for ((o, a), s) in out.iter_mut().zip(&self.theta_ref).zip(&self.scale) {
+                *o = a + s * *o;
+            }
+        }
+        out
+    }
+
+    /// `θ_ref + C_half (Bz + w)` for the full-target split.  For the standard
+    /// chart this is the old ambient-diagonal lift; for the low-rank chart the
+    /// informed block is scaled by column and the complement by `noise`.
+    pub fn lift_full(&self, z: &[f32], w: &[f32]) -> Vec<f32> {
+        assert_eq!(z.len(), self.dim(), "z must have r entries");
+        assert_eq!(w.len(), self.p(), "w must have p entries");
+        let mut out = vec![0.0f32; self.p()];
+        if let Some(cs) = &self.col_scale {
+            for (j, &zj) in z.iter().enumerate() {
+                let a = cs[j] * zj;
+                let col = self.basis.col(j);
+                for i in 0..self.p() {
+                    out[i] += col[i] * a;
+                }
+            }
+            let noise = self.scale[0];
+            for ((o, a), wi) in out.iter_mut().zip(&self.theta_ref).zip(w) {
+                *o += a + noise * wi;
+            }
+        } else {
+            self.basis.apply(z, &mut out);
+            for (o, wi) in out.iter_mut().zip(w) {
+                *o += wi;
+            }
+            for ((o, a), s) in out.iter_mut().zip(&self.theta_ref).zip(&self.scale) {
+                *o = a + s * *o;
+            }
         }
         out
     }
@@ -337,9 +454,16 @@ impl AffineSubspace {
     /// hence `projected_gradient_matches_finite_differences`.
     pub fn gradient_to_z(&self, g_theta: &[f32]) -> Vec<f32> {
         assert_eq!(g_theta.len(), self.p(), "gradient must have p entries");
-        let scaled: Vec<f32> = (0..self.p()).map(|i| self.scale[i] * g_theta[i]).collect();
         let mut out = vec![0.0f32; self.dim()];
-        self.basis.project(&scaled, &mut out);
+        if let Some(cs) = &self.col_scale {
+            self.basis.project(g_theta, &mut out);
+            for (o, s) in out.iter_mut().zip(cs) {
+                *o *= s;
+            }
+        } else {
+            let scaled: Vec<f32> = (0..self.p()).map(|i| self.scale[i] * g_theta[i]).collect();
+            self.basis.project(&scaled, &mut out);
+        }
         out
     }
 
@@ -589,6 +713,52 @@ mod tests {
                 "coord {j}: analytic {} vs FD {fd}",
                 dz[j]
             );
+        }
+    }
+
+    #[test]
+    fn low_rank_gradient_and_full_lift_match_the_chart() {
+        let p = 6;
+        let r = 2;
+        let basis = Basis::random(p, r, 13).expect("basis");
+        let anchor: Vec<f32> = vec![0.2, -0.1, 0.4, 0.0, -0.5, 0.3];
+        let col_scale = vec![0.3f32, 1.1];
+        let noise = 0.7f32;
+        let sub = AffineSubspace::low_rank(anchor.clone(), basis, col_scale.clone(), noise)
+            .expect("low-rank chart");
+        let z = [0.6f32, -1.2];
+        let theta = sub.lift(&z);
+
+        // f(θ) = ½‖θ‖²; dz_j = col_scale[j] · (Bᵀ θ)_j.
+        let dz = sub.gradient_to_z(&theta);
+        let h = 1e-4f32;
+        for j in 0..r {
+            let mut zp = z;
+            let mut zm = z;
+            zp[j] += h;
+            zm[j] -= h;
+            let f = |z: &[f32]| {
+                let t = sub.lift(z);
+                0.5 * t.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>()
+            };
+            let fd = (f(&zp) - f(&zm)) / (2.0 * f64::from(h));
+            assert!(
+                (f64::from(dz[j]) - fd).abs() < 1e-3 * fd.abs().max(1.0),
+                "low-rank coord {j}: analytic {} vs FD {fd}",
+                dz[j]
+            );
+        }
+
+        // A pure complement move is the isotropic residual added to the lift.
+        let mut w = vec![0.0f32; p];
+        sub.complement(
+            &(0..p).map(|i| (i as f32 * 0.37).sin()).collect::<Vec<_>>(),
+            &mut w,
+        );
+        let full = sub.lift_full(&z, &w);
+        for i in 0..p {
+            let want = theta[i] + noise * w[i];
+            assert!((full[i] - want).abs() < 1e-5, "full lift at {i}");
         }
     }
 

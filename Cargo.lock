@@ -3379,6 +3379,8 @@ dependencies = [
  "rand_distr 0.5.1",
  "rayon",
  "safetensors",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

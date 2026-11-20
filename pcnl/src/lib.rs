@@ -103,6 +103,7 @@ pub mod policy_readout;
 pub mod r9_report;
 pub mod radial;
 pub mod readout;
+pub mod rotation_head;
 pub mod sampler;
 pub mod sphere;
 pub mod subspace;

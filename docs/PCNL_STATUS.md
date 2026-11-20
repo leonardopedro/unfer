@@ -6633,28 +6633,221 @@ cells are single-split, 120-test-row comparisons.  Regenerate the fixture with
 `scripts/pcnl-ultrabert-embed`; run
 `cargo run --release -p pcnl --example ultrabert_head_pcnl`.
 
-## R11 — continual Bayesian MLP head (2026-11-18)
+## R11 — continual Bayesian MLP head (2026-11-19)
 
 The head posterior is carried across class-disjoint rounds with the recursion
 `π_t ∝ π_{t-1} · exp(−λN_t mean Brier_t)`.  `DiagonalPosterior` fits the
 previous particles to `N(μ, diag(σ²))`; the exact full-target kernel then
-samples the new posterior.  A fixed basis is held across the stream.  Replay
-rows per seen class are included because strict no-replay carried priors were
-insufficient (90.56 pp mean forgetting).
+samples the new posterior.  The diagonal summary holds one random basis across
+the stream.  Class-balanced replay rows per seen class are included because
+strict no-replay carried priors were insufficient (90.56 pp mean forgetting).
 
 At the end of `[0,1] → [2,3] → [0,1] → [2,3]`, 4 chains × 2 400 steps,
-rank 8, clean 120-row test, full 60-row-per-class replay:
+rank 8, clean 120-row test, 30 replay rows per class with class-balanced
+likelihood weights (the delivered default, canonical seed 20261118):
 
 | arm | acc | NLL | Brier | ECE | mean forgetting |
 |---|---:|---:|---:|---:|---:|
-| reset prior + replay | 80.00 % | 0.6992 | 0.3597 | 0.2362 | 11.11 pp |
-| carried prior + replay | 80.00 % | **0.5517** | **0.2951** | **0.0901** | **5.56 pp** |
+| reset prior + replay | 80.83 % | 0.7671 | 0.3988 | 0.2992 | 5.00 pp |
+| carried prior + replay | 80.83 % | **0.6372** | **0.3290** | **0.1717** | 5.56 pp |
 
-At half memory (30 replay rows per class), the carried prior lowers forgetting
-from 46.11 pp to 30.56 pp and final ECE from 0.3183 to 0.1779, with 80.83 %
-versus 82.50 % accuracy.  The gain is therefore stability and calibration, not
-uniform accuracy.
+Seed sweep, mean (sample standard deviation):
+
+| replay / class | arm | seeds | acc | NLL | Brier | ECE | mean forgetting |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 30 | reset | 5 | 80.50 (2.98) | 0.7740 (0.0215) | 0.4005 (0.0114) | 0.2934 (0.0353) | 5.89 (3.65) |
+| 30 | carried | 5 | 83.67 (3.31) | **0.6131 (0.0157)** | **0.3155 (0.0099)** | **0.2024 (0.0442)** | 3.11 (1.78) |
+| 60 | reset | 3 | 82.50 (2.21) | 0.7014 (0.0180) | 0.3596 (0.0128) | 0.2619 (0.0294) | 2.96 (1.39) |
+| 60 | carried | 3 | 82.50 (2.21) | **0.5467 (0.0199)** | **0.2866 (0.0174)** | **0.1222 (0.0138)** | 3.33 (1.67) |
+
+Class balancing is the retention win: the carried prior alone at 30 unbalanced
+rows still forgot 30.56 pp, versus 5.56 pp balanced.  The robust carried-prior
+gain is calibration — NLL, Brier and ECE are lower in every seed at 30 and
+across three seeds at 60.  Accuracy is not resolved by the sweep: the 30-row
+mean advantage is +3.17 pp with standard deviations of 3.31 and 2.98, and at
+60 the means are identical.  Forgetting also overlaps (30: 3.11 vs 5.89 pp;
+60: 3.33 vs 2.96 pp), so there is no resolved retention advantage from
+carrying the prior once replay and balancing are on.  The 30-row default is
+the fixed-memory operating point; 60 is the calibration arm.
+
+Five alternate stratified splits (`--resplit-test-per-class 30 --split-seed
+1..5`, model seed fixed, 30 rows/class) reproduce the calibration effect:
+
+| arm | splits | acc | NLL | Brier | ECE | mean forgetting |
+|---|---:|---:|---:|---:|---:|---:|
+| reset prior | 5 | 77.50 (5.84) | 0.8223 (0.0462) | 0.4299 (0.0289) | 0.2693 (0.0641) | 3.89 (2.12) |
+| carried prior | 5 | 76.33 (6.52) | **0.6714 (0.1030)** | **0.3515 (0.0571)** | **0.1519 (0.0553)** | 3.22 (1.90) |
+
+The resplits overlap, so these are split-sensitivity checks, not independent
+samples.  The carried prior again has lower NLL, Brier and ECE in every split.
+Accuracy is 1.17 pp lower on average (sd 6.52 vs 5.84 pp) and forgetting
+0.67 pp lower with overlapping ranges, so neither is resolved.  Calibration is
+the only carried-prior advantage that survives both seed and split resampling.
+
+A single all-class posterior with the same total proposal budget (38,400
+proposals: `--tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200
+--thin 16`) is the reference for what sequential updating costs:
+
+| posterior | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| joint, all classes at once | **82.50 (5.17)** | 0.7622 (0.0342) | 0.3902 (0.0229) | 0.3131 (0.0423) |
+| sequential carried | 76.33 (6.52) | **0.6714 (0.1030)** | **0.3515 (0.0571)** | **0.1519 (0.0553)** |
+
+The raw joint posterior is more accurate in every split (mean +6.17 pp, range
+3.3–9.2 pp) but has worse probability forecasts.  That reverses with post-hoc
+temperature scaling.  `--calibrate-joint 10` holds out 10 training rows per
+class, fits the joint on 50 per class, fits one temperature on the held-out
+training NLL, and applies it to the test probabilities; test labels are unused.
+
+| joint variant | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| raw, 50 train/class | 83.00 (5.79) | 0.8334 (0.0376) | 0.4326 (0.0234) | 0.3547 (0.0552) |
+| temperature-scaled, 50 train + 10 cal/class | **83.00 (5.79)** | **0.4860 (0.1615)** | **0.2582 (0.0798)** | **0.0983 (0.0387)** |
+| sequential carried, 60 train/class + replay | 76.33 (6.52) | 0.6714 (0.1030) | 0.3515 (0.0571) | 0.1519 (0.0553) |
+
+The fitted temperature was 0.17–0.30, so BMA is under-confident; accuracy is
+unchanged by scaling, while NLL, Brier and ECE fall in every split.  In this
+data-asymmetric table, the calibrated joint beats sequential carried on all
+four metrics in every split.  The earlier claim that sequential produced the better forecast applies only to
+the uncalibrated joint.  That comparison is not data-matched: the joint gives
+up 40 training rows for calibration and the sequential arm gets no post-hoc
+fit.  The symmetric protocol removes both asymmetries: `--heldout-calibration
+10` withholds the same 10 rows/class before either arm trains, both fit on 50
+rows/class, and both temperatures use the same held-out rows.  Over the five
+resplits:
+
+| arm | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| sequential carried, raw | 77.33 (5.99) | 0.6740 (0.0602) | 0.3547 (0.0397) | 0.1625 (0.0478) |
+| sequential carried, temperature | 77.33 (5.99) | 0.6288 (0.0902) | 0.3288 (0.0533) | 0.1005 (0.0504) |
+| joint, raw | **83.00 (5.79)** | 0.8334 (0.0376) | 0.4326 (0.0234) | 0.3547 (0.0552) |
+| joint, temperature | **83.00 (5.79)** | **0.4860 (0.1615)** | **0.2582 (0.0798)** | **0.0983 (0.0387)** |
+
+The calibrated joint is more accurate in all five splits (+5.67 (2.24) pp) and
+has lower Brier in all five.  NLL is lower in four of five (split 1 is 0.026
+higher).  ECE is lower in only two of five and is essentially tied on average
+(0.098 versus 0.101), so the earlier all-four-metrics claim does not survive
+the symmetric protocol; part of that ECE advantage came from leaving the
+sequential posterior uncalibrated.  Temperature scaling is stable for the
+joint here: NLL, Brier and ECE fall in every split.
+
+A rank check at the canonical split (one seed) raised the carried prior from
+rank 8 to 16, 32 and 64; final accuracy was 79.17, 80.83 and 75.00 % versus
+80.83 % at rank 8, with calibration in the same band.  Rank is not the
+limiting factor, so the default remains 8.
+
+The λ/replay grid (canonical split, continual arm) is:
+
+| λ | replay | acc | NLL | Brier | ECE | forgetting |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.5 | 15 | 77.50 | 1.0309 | 0.5535 | 0.3909 | 6.67 |
+| 0.5 | 30 | 85.00 | 0.8941 | 0.4713 | 0.4081 | 1.67 |
+| 0.5 | 45 | 81.67 | 0.7515 | 0.3862 | 0.2997 | 2.22 |
+| 1.0 | 15 | 75.83 | 0.7199 | 0.3797 | 0.1908 | 10.00 |
+| 1.0 | 30 | 80.83 | 0.6372 | 0.3290 | 0.1717 | 5.56 |
+| 1.0 | 45 | 80.00 | 0.5551 | 0.2978 | 0.1238 | -1.11 |
+| 2.0 | 15 | 79.17 | 0.6043 | 0.3134 | 0.0859 | 18.89 |
+| 2.0 | 30 | 75.83 | 0.6137 | 0.3321 | 0.0700 | 7.78 |
+| 2.0 | 45 | **86.67** | **0.5133** | **0.2591** | **0.1291** | 3.33 |
+
+λ=2/replay=45 was validated over five seeds: 82.33 (2.60) %, NLL 0.5410
+(0.0313), Brier 0.2775 (0.0166), ECE 0.0776 (0.0327), forgetting 4.67 (3.16)
+pp, versus the default's 83.67 (3.31) %, 0.6131 (0.0157), 0.3155 (0.0099),
+0.2024 (0.0442), 3.11 (1.78) pp.  Over five splits it is 78.17 (4.39) %,
+0.5885 (0.0697), 0.3110 (0.0507), 0.0679 (0.0396), 3.55 (1.78) pp versus the
+default's 76.33 (6.52) %, 0.6714 (0.1030), 0.3515 (0.0571), 0.1519 (0.0553),
+3.22 (1.90) pp.  Calibration improves under both resamplings; accuracy and
+forgetting do not resolve.  It uses 45 replay rows/class, so it is a
+calibration-oriented alternative, not the new default.
 
 The diagonal prior ignores correlations and replay approximates (and
 double-counts) old data, so this is not exact Bayes over the full history.
-One split and one seed; no benchmark or decision claim follows.
+A low-rank-plus-isotropic summary (`LowRankPosterior`, opt-in via `--prior
+lowrank`) was measured but not adopted: at 30 balanced replay rows it matches
+the diagonal forgetting (5.00 vs 5.56 pp) but costs 12.5 pp canonical-seed
+accuracy (80.83 → 68.33 %).  At 60 it is 0.83 pp above the canonical-seed
+diagonal with −5.00 pp forgetting, but both differences are single-seed and
+inside the diagonal's seed spread; calibration is worse (NLL 0.6307, Brier
+0.3097, ECE 0.1491 versus 0.5326, 0.2897, 0.1065).
+Strict no-replay low-rank still forgot 91.11 pp, so the shared head under
+disjoint likelihoods is the limiting factor, not the missing correlations alone.
+
+The second-dataset check uses four 20 Newsgroups categories
+(`comp.graphics`, `rec.sport.baseball`, `sci.space`, `talk.politics.guns`),
+60 train + 30 test per class, with headers, footers and quoted text removed so
+the category name cannot leak from the header.  Over five resplits:
+
+| five resplits | acc | NLL | Brier | ECE | mean forgetting |
+|---|---:|---:|---:|---:|---:|
+| sequential carried | 87.00 (1.63) | 0.4440 (0.0267) | 0.2202 (0.0130) | 0.1444 (0.0106) | 1.00 (3.80) pp |
+| joint, temperature-scaled | **88.17 (3.61)** | **0.3223 (0.0643)** | **0.1676 (0.0343)** | **0.0606 (0.0174)** | n/a |
+
+In that data-asymmetric table the calibrated joint has lower NLL, Brier and
+ECE in all five splits (`T = 0.187–0.354`), so the calibration advantage
+reproduces on a second corpus.  Accuracy is higher in three splits, equal in one, and 4.17 pp lower in
+one, averaging +1.17 (3.42) pp; in that data-asymmetric table the AG News
+accuracy advantage does not uniformly generalize.
+
+Five model seeds on the canonical 20 Newsgroups split, at the same
+calibrated-joint budget:
+
+| seeds | acc | NLL | Brier | ECE |
+|---:|---:|---:|---:|---:|
+| 5 | **89.17 (1.32)** | 0.2839 (0.0296) | 0.1478 (0.0131) | 0.0500 (0.0100) |
+
+Accuracy ranged from 87.50 % to 90.83 % (sd 1.32 pp), with `T = 0.303–0.371`.
+This is model/proposal variance at a fixed split, not split variance.
+
+A symmetric held-out comparison removes the earlier data asymmetry:
+`--heldout-calibration 10` withholds 10 training rows per class before either
+arm trains, so both fit on 50 rows/class and both temperatures use the same
+held-out rows.  Over five resplits:
+
+| arm | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| sequential carried, raw | 86.50 (3.84) | 0.4721 (0.0593) | 0.2295 (0.0358) | 0.1553 (0.0382) |
+| sequential carried, temperature | 86.50 (3.84) | 0.4683 (0.1572) | 0.2104 (0.0513) | **0.0849 (0.0282)** |
+| joint, raw | 88.83 (2.61) | 0.6371 (0.0318) | 0.3048 (0.0208) | 0.3271 (0.0300) |
+| joint, temperature | **88.83 (2.61)** | **0.3064 (0.0911)** | **0.1526 (0.0365)** | **0.0591 (0.0201)** |
+
+The calibrated joint is more accurate in all five splits (+2.33 (2.07) pp) and
+has lower NLL and Brier in all five.  The earlier mixed 20 Newsgroups accuracy
+(three wins, one tie, one loss) came from the data asymmetry: with both arms on
+50 rows/class the joint is ahead in every split.  ECE is lower in four and
+0.004 higher in the fifth.  For the sequential arm, temperature scaling lowers ECE in every
+split but worsens NLL in two of five; its mean NLL is unchanged and its spread
+more than doubles.  The fitted temperature is therefore not a free improvement
+for every posterior at this calibration-set size, but the joint's NLL and
+Brier advantage survives the symmetric protocol.
+
+Two fixtures; the diagonal summary has five seeds at 30 rows, three at 60, and five overlapping resplits on AG News, plus five resplits and a five-seed canonical sweep on 20 Newsgroups.  Seed and split variance are characterized separately, not over a full seed × split grid; the joint tables use one model seed per split.  The low-rank arm and unbalanced controls are single-seed.  The 20 Newsgroups task is a four-class subset, not the full 20-class problem, and both fixtures are controlled probes rather than benchmarks.  No benchmark or decision claim follows.
+
+## R12 — signed rotation head (reference core, 2026-11-19)
+
+`pcnl::rotation_head` implements the signed-state half of R12.  A
+`768 → … → K(K−1)/2` tanh trunk emits the angles of a fixed ordered product of
+real plane rotations; `ψ = U_θ(e)b₀` is therefore normalized for every input,
+and the state exposes signed amplitudes rather than softmax probabilities.
+`prepare`, `apply`, `tensor`, `projective measure`, basis/draw validation and
+the Bayesian predictive mixture are present.  Evidence is an append-only
+prefix with stable IDs: an identical retry is a no-op, conflicting reuse is an
+error, and `BornPotential` evaluates the unweighted sum of `−2 log |ψ_y|`
+through the existing `Potential` seam.  `mh_pcn_full_step` implements the exact
+full-space kernel with the plan's drift and covariance, including the reverse
+proposal density.
+
+Focused checks (13 tests): the two-state composition oracle where equal
+measurements separate after `R(π/4)`, the projective-measurement control,
+overall-sign invariance, identity and product order, tensor indexing and
+marginals, empty-text/basis/draw rejection, evidence idempotence and conflict
+detection, finite-difference Born gradients, exact-zero loss divergence, and a
+30 000-step Gaussian canary that recovers the expected posterior mean.  Run:
+
+```bash
+cargo test --locked --offline -p pcnl --lib rotation_head
+```
+
+This is a reference core, not a completed R12 delivery.  Durable
+checkpoint/resumption, a fixture single-step comparison, and the learned
+sequence experiment have not been run; no text accuracy, calibration or
+learned-interference claim follows.

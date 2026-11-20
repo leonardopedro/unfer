@@ -1,11 +1,198 @@
 # pcnl research and development plan
 
+## R12 — active delivery plan for continual decisions from English text (2026-11-19)
+
+Given English text and a selected draw of the decision head, `predict` returns a
+**normalized real wave-function** in an ordered outcome basis. A second decision
+model can act directly on this state. `measure` reads out named probabilities
+$p_k=\psi_k^2$ in that basis. Every categorical distribution has a real unit-vector
+representative, so a single measurement retains the existing decision semantics.
+Relative signs carry information that a later operation can reveal. `update` learns
+the head from measured outcomes using Bayes' rule and pCNL. Keep one fixed basis
+per model, starting with the existing four-class fixtures.
+
+**Starting point.** R10 supplies the frozen UltraBERT features, the
+`768 → 32 → 16 → K` head, categorical NLL and per-draw softmax. R11 supplies the
+continual comparison and predictive averaging. Its diagonal carry with zero
+replay lost 90.56 percentage points on the canonical AG News forgetting measure.
+In the symmetric 20 Newsgroups comparison, mean calibrated NLL was 0.3064 for
+the joint fit and 0.4683 for the sequential fit. This motivates measuring the
+distance to a joint fit at **every prefix**. The continual example consumes a
+labelled tensor fixture, uses drift-free MH-pCN on a Brier target, and fits a
+Gaussian to the draws. Class revisits select the same training rows again.
+Replay appends a fresh subset each round, so its per-class setting limits each
+addition and storage can grow across visits.
+
+**Work order.** The [original nGPT plan](../docs/plan_bayes_ngpt.md) supplies the
+SG-pCNL derivation and schedule. The [development plan](DEVELOPMENT_PLAN.md)
+supplies target and diagnostic checks. The [Edge0/RLCD plan](EDGE0_RLCD_PLAN.md)
+specifies the R9 reinforcement experiment. The following milestones use the
+existing text head's hidden layers and can proceed independently of those architecture experiments.
+
+1. **Prepare, compose and measure.** Extract the encoder invocation in
+   `scripts/pcnl-ultrabert-embed` into a shared fixture and live-text adapter.
+   Keep the R10 model and tokenizer revision, eval mode, 96-token truncation, CLS
+   pooling, L2 normalization and 768-dimensional output. Use the head's tanh layers
+   to map the embedding $e$ to angles for a fixed ordered product of real plane
+   rotations $U_\theta(e)$. For the first $K$-outcome model use one angle per
+   coordinate pair ($K(K-1)/2$, six for the fixtures). Record pair order, rotation
+   convention and basis labels in the model. This parametrization preserves norm
+   for any input state and supplies signed amplitudes without a division by a
+   possibly zero output norm. The existing softmax head remains a baseline.
+
+   | Operation | Contract for one posterior draw |
+   |---|---|
+   | `predict(text, draw)` | Prepare $\psi=U_\theta(e)b_0$ from the declared first unit basis vector $b_0$. Return signed amplitudes, basis ID, checkpoint and draw ID. |
+   | `apply(text, state, draw)` | Return $U_\theta(e)\psi$ in the declared output basis. Applying A then B gives $U_B(e_B)U_A(e_A)b_0$. Use the same rule for repeated applications of A. |
+   | `tensor(a,b)` | For separately prepared registers return $a\otimes b$ in the ordered pair basis, with amplitude $a_i b_j$ at $(i,j)$. |
+   | `measure(state)` | Return the squares of the amplitudes. A workflow that observes an intermediate outcome $j$ continues from its basis vector $b_j$ for a projective measurement in this basis. |
+
+   Sequential multiplication requires matching dimension **and ordered basis**.
+   Require an explicit basis map when label orders differ. A prepared vector
+   specifies only one column of its operator, so expose the action on arbitrary
+   unit states through `apply`. Test embedding parity with the fixture encoder,
+   finite signed output, unit norm after a sequence, identity and product order,
+   tensor indexing and marginals, and invariance of all measured predictions
+   to an overall sign. Reject incompatible bases, invalid states and empty text.
+
+   **Posterior contract.** Select a retained draw (a prior draw at round zero)
+   for a pure-state prediction. Compose the whole sequence within that draw,
+   then square and average over draws for the Bayesian predictive probabilities.
+   Reuse the same parameters for repeated calls to the same uncertain head in
+   one sequence. Pair distinct heads by joint posterior draw when trained jointly;
+   sample them independently only under an explicit factorized posterior.
+   The ensemble describes a mixture $\rho=S^{-1}\sum_s\psi_s\psi_s^\mathsf T$.
+   Its diagonal gives the measured predictive. A normalized mean amplitude or
+   square root of that diagonal generally changes subsequent composed predictions.
+   Keep the draw ensemble available to callers that need further composition.
+
+2. **Count each labelled observation once.** Start with the fixed prior
+   $\pi_0=N(0,0.5^2 I)$. Give each event a stable ID, embedding and observed
+   class. Store the preparation, ordered text/model applications and measurement
+   basis for each observed outcome. A single-step label uses
+   $p_\theta(y_i\mid e_i)=[U_\theta(e_i)b_0]_{y_i}^2$. For a sequence, $e_i$
+   below denotes the recorded inputs and the likelihood uses the final composed
+   state's squared amplitude. For a new batch $D_t$ the update is
+
+   $$
+   \pi_t(\theta) \propto \pi_{t-1}(\theta)\prod_{i\in D_t}p_\theta(y_i\mid e_i)
+   \propto \pi_0(\theta)\prod_{i\in D_{1:t}}p_\theta(y_i\mid e_i).
+   $$
+
+   Implement the right-hand side first. Append new events to a durable evidence
+   store, initialize chains from the preceding checkpoint, and evaluate the **sum
+   of unweighted Born NLL** over the unique prefix using a new `Potential` for
+   the rotation head. Keep the per-event loss $-2\log|\psi_{y_i}|$ and its
+   gradient consistent. An exact zero gives zero likelihood. Start chains at
+   finite-density draws and reject proposals with zero target density. Test
+   near-zero amplitudes and finite-difference gradients away from nodes. This reference incurs storage and
+   per-step evaluation cost growing with history. An identical retry is a no-op,
+   conflicting reuse of an ID is an error, and distinct observations may share
+   text. Verify at fixed weights that partitioning and permuting the same events
+   preserve the log target and that the negative-log increment equals the new
+   batch's summed NLL.
+
+3. **Sample the full head with pCNL.** Adapt the full-batch adjusted path in
+   `src/task.rs` (`MhOptions::exact`, `pcn_proposal_log_ratio`) to the text
+   `Potential` interface. With $U$ the prefix NLL sum, use Gaussian proposal mean
+   $\sqrt{1-\beta^2}\,\theta-(\beta^2\sigma^2/2)\nabla U(\theta)$ and covariance
+   $\beta^2\sigma^2 I$. Include the full log posterior difference and reverse-minus-
+   forward proposal log density in the MH ratio. Freeze tuning after warmup.
+   Check the drift by finite differences, the ratio against direct log densities
+   and posterior moments on the linear-Gaussian reference. Check per-class
+   single-step and composed predictions on a one-angle head against quadrature. Keep
+   R11's drift-free MH-pCN as a same-target control. Evaluate unadjusted mini-batch
+   SG-pCNL after quantifying its predictive bias and cost against the adjusted run.
+
+4. **Deliver one resumable loop.** Expose initialization, raw-text prediction
+   and labelled batch update through a library and thin CLI. Commit the evidence
+   prefix and matching sampler checkpoint as one version. Persist encoder identity,
+   basis, rotation layout, linked model versions, target settings, event IDs, chain and RNG states and
+   retained predictive draws. Reuse `src/persist.rs` for trajectory tensors. The
+   end-to-end test predicts before revealing a label, updates, reopens the model,
+   and reproduces signed amplitudes for a fixed draw, composed measurement probabilities
+   and the next seeded update. Exercise a
+   duplicate delivery and an interrupted commit at the update boundary.
+
+5. **Measure learning and retention.** On AG News and the four-class 20 Newsgroups
+   fixture, reserve disjoint fit, calibration and final evaluation IDs. Partition
+   fit IDs into fresh batches for mixed-class, class-disjoint and class-revisit
+   streams. Score each incoming batch **before** revealing labels, then measure
+   old- and new-class performance on fixed probes. Compare carried chains with
+   a fresh joint NLL fit at each identical prefix, a current-batch-only reset and
+   a tuned point head. Keep the R11 Brier/Gaussian replay arm as a labelled
+   generalized-Bayes comparison. Report raw predictive scores first. Fit any
+   optional temperature using only calibration labels available by that round.
+   Pair arms by stream and seed. Report prequential NLL and Brier, per-class
+   forgetting, reliability and decision cost under a prespecified utility table.
+   Record update time, gradient evaluations, history bytes, predictive Monte
+   Carlo standard errors, ESS and split R-hat.
+
+   Before final evaluation, fix budgets, seeds, predictive agreement tolerance
+   and minimum meaningful proper-score gain on development data. Require
+   agreement with the independent joint reference within tolerance accounting for
+   Monte Carlo error, plus a paired prequential gain over reset whose confidence
+   interval clears the declared minimum, before claiming useful carry. Apply the
+   mixing gates in “Milestones, budgets and stop rules”. Report failed precision
+   as inconclusive and publish old-class losses even when aggregate scores improve.
+
+6. **Verify what composition adds.** Single-step text labels constrain the squared
+   entries of the prepared column. They leave its relative signs and the action on
+   other input states underdetermined. Keep AG News and 20 Newsgroups as single-step
+   checks. Include the positive square root of the softmax baseline as a control
+   whose one-step Born probabilities agree with that baseline by construction.
+
+   Use a two-outcome oracle. Prepare $(1,1)/\sqrt2$ and $(1,-1)/\sqrt2$ from two
+   text inputs. Both measure as $(1/2,1/2)$. Apply the same rotation by $\pi/4$
+   to each with the convention $R(a)_{1,:}=(\cos a,-\sin a)$. The resulting
+   probabilities are $(0,1)$ and $(1,0)$. Measuring and discarding the intermediate
+   outcome instead gives $(1/2,1/2)$ in both cases. Also verify that applying
+   $R(\pi/4)$ twice to $(1,0)$ yields final probabilities $(0,1)$.
+
+   Then hide the oracle angles and stream labelled **sequences** with final
+   outcomes generated from the composed Born law. Include different heads, shared
+   heads applied twice, and basis-state preparations that exercise the other
+   columns. Hold out text instances and sequences before fitting. Compare held-out
+   sequence NLL and Brier against the oracle and a classical transition baseline
+   propagating squared matrix entries at each stage. Include a single-step-only
+   training ablation. Evaluate posterior predictive recovery on held-out sequences
+   with the precision gates above. Claim learned interference only when composed
+   evidence resolves the difference from the intermediate-measurement control.
+
+**Bounded-history follow-up.** After establishing the reference, test a fixed
+storage budget. Use the carried diagonal or low-rank summary with fresh evidence
+only. For a replay variant reserve a capped set of unique exemplars, summarize
+only evidence outside that set, and move an evicted exemplar into the summary
+once. Track which factor accounts for each observation in the audit experiment.
+Price the approximation against the same-prefix reference in predictive error,
+forgetting, bytes and latency as history grows. Promote a bounded variant only
+within prespecified quality and resource budgets.
+
+**Delivery gate.** R12 is complete when the English predict/update/restart test
+and target/kernel checks pass, the signed composition oracle passes, and a paired
+report records the single-step and learned-sequence results with their uncertainty. Publish commands, manifests, budgets and results in
+[PCNL_STATUS.md](../docs/PCNL_STATUS.md). R10–R11 below contain the measured
+baseline. The R12 milestones are proposed.
+
+**Status (2026-11-19).** The reference core for milestones 1–2 and the exact
+full-space kernel of milestone 3 is implemented in `src/rotation_head.rs`.
+It provides the ordered plane-rotation head, signed `prepare`/`apply`/`tensor`
+states, projective `measure`, basis and draw checks, the append-only evidence
+prefix, the unweighted Born-NLL `Potential`, and `mh_pcn_full_step` with the
+full posterior and proposal-density ratio.  The composition oracle, sign
+invariance, tensor marginals, identity/product order, evidence idempotence and
+conflict checks, finite-difference gradients, and a full-space Gaussian
+posterior canary pass (13 focused tests).  Persistence/resumption (milestone 4),
+a fixture single-step report and paired sequence experiment (milestones 5–6),
+and the delivery-gate measurements remain open; this status makes no R12 text
+accuracy or learned-interference claim.
+
 ## Required application track R9: small Edge0 architecture with RLCD (2026-11-15)
 
 **Reinforcement learning for calibrated decisions is required** in this track. The
 Mammoth-1 reference supplies a supervised comparator. Execute the new specification in
 [EDGE0_RLCD_PLAN.md](EDGE0_RLCD_PLAN.md) through E0–E7 of
-[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This is the active application research order;
+[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This is the work order within R9;
 R8 below remains the mathematical/sampler order, and R7's negative results and stop
 remain valid. No new implementation, run, theorem or measured improvement is claimed.
 
@@ -207,7 +394,7 @@ followed by a full-target sampler with different proposals inside and outside th
 Do not start another ambient step-size/temperature ladder as the default next experiment.
 The accumulated negative results make target specification and verification the next gates.
 
-The application this plan now works toward is **a small decision transformer (DT) whose output
+The earlier R7 application studied here is **a small decision transformer (DT) whose output
 is an action distribution** (R7): offline trajectories, return-to-go conditioning, and a policy
 as the posterior predictive. Only the potential and the readout change; the prior, the affine
 subspace chart and the pCN kernel carry over. R7 is gated on R0's gradient/diagnostic checks and
@@ -1319,7 +1506,7 @@ calibration certificate.  No benchmark, encoder-posterior or decision claim
 follows.  Next: repeat the full-data and calibration-split cells over seeds and
 independent test splits, and compare against a tuned L_2/early-stopped MLP.
 
-## R11 — sequential Bayesian continual learning (2026-11-18)
+## R11 — sequential Bayesian continual learning (2026-11-19)
 
 **Target.**  The frozen-encoder head is updated by the Bayes recursion
 
@@ -1327,58 +1514,369 @@ independent test splits, and compare against a tuned L_2/early-stopped MLP.
 π_t(θ) ∝ π_{t-1}(θ) · exp(−λ N_t · mean Brier_t(θ)).
 ```
 
-`π_{t-1}` is summarised from its pCNL particles by the diagonal Gaussian
-`N(μ, diag(σ²))`; `θ = μ + σ ⊙ (Bz + w)` turns that prior back into
-`N(0, I_r) × N(0, I_{P−r})`, so `PotentialFullTarget` samples the new posterior
-with the unchanged exact kernel.  The approximation is the diagonal prior, not
-the kernel.  `pcnl::continual::DiagonalPosterior` implements the summary.  The
-same random basis is held for the whole stream: redrawing it each round would
-re-express the carried prior through a different chart.
+`π_{t-1}` is summarised from its pCNL particles by a fitted Gaussian.  The
+default is the diagonal `N(μ, diag(σ²))`; `θ = μ + σ ⊙ (Bz + w)` turns that
+prior back into `N(0, I_r) × N(0, I_{P−r})`, so `PotentialFullTarget` samples
+the new posterior with the unchanged exact kernel.  The approximation is the
+prior summary, not the kernel.  `pcnl::continual::DiagonalPosterior` implements
+the default.  The same random basis is held for the whole stream: redrawing it
+each round would re-express the carried prior through a different chart.
 
 **Data stream.**  AG News classes are visited as
 `[0,1] → [2,3] → [0,1] → [2,3]`; every test metric covers all four classes.
 The `continual` arm carries the fitted prior; `independent` resets it to
-`N(0, 0.5² I)` each round.  Both use the same basis, Brier target, 4 chains ×
-2 400 steps (800 burn, thin 4), rank 8, and seeds.
+`N(0, 0.5² I)` each round.  Both use the same Brier target, 4 chains × 2 400
+steps (800 burn, thin 4), rank 8, and seeds.  The diagonal arm holds one random
+basis; the low-rank arm uses the PCA basis of the previous particles.
 
 **Why replay.**  Strict no-replay recursion was tested at the same budget:
 carried parameters were not enough for class-disjoint rounds (mean forgetting
 90.6 pp).  The delivered learner adds replay rows per seen class to the
 likelihood; this is an approximation to the historical likelihood, retained
-because the diagonal prior alone discards too much old-class information.  It
+because the carried prior alone discards too much old-class information.  It
 is not exact Bayes over the full history and is labelled as Bayesian replay.
 `--replay-per-class 60` is the full clean training split at this fixture;
-smaller values are the fixed-memory operating point.
+smaller values reduce the rows added each round (see R12 for growth on revisits).
 
-**Measured (final round, clean 120-row test split, fixed basis).**
+**Measured (canonical seed 20261118, final round, clean 120-row test split).**
+
+Replay rows are weighted so every present class carries the same total
+likelihood weight; the weights sum to the row count, so `λ · N · mean_loss`
+keeps its temperature.  Without that step the current classes have twice the
+rows of the replayed classes at round four and the likelihood itself favours
+them.
+
+| replay / class | class-balanced | arm | acc | NLL | Brier | ECE | mean forgetting |
+|---:|:---:|---|---:|---:|---:|---:|---:|
+| 0 | — | continual | 39.17 % | 1.8169 | 0.8386 | 0.2448 | 90.56 pp |
+| 30 | no | independent | 82.50 % | 0.7849 | 0.4096 | 0.3183 | 46.11 pp |
+| 30 | no | continual | 80.83 % | 0.6053 | 0.3107 | 0.1779 | 30.56 pp |
+| 30 | yes | independent | 80.83 % | 0.7671 | 0.3988 | 0.2992 | 5.00 pp |
+| 30 | yes | continual | 80.83 % | 0.6372 | 0.3290 | 0.1717 | 5.56 pp |
+| 60 | yes | independent | 80.00 % | 0.6992 | 0.3597 | 0.2362 | 1.67 pp |
+| 60 | yes | continual | 81.67 % | 0.5326 | 0.2897 | 0.1065 | 3.33 pp |
+
+Forgetting is the mean per-class drop over each adjacent disjoint class switch;
+a negative value means later accuracy was higher than the earlier measurement.
+These are the reproducible single-seed numbers, not a variance estimate.
+
+**Seed sweep (diagonal summary, same budget).**
+
+| replay / class | arm | seeds | acc | NLL | Brier | ECE | mean forgetting |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 30 | independent | 5 | 80.50 (2.98) | 0.7740 (0.0215) | 0.4005 (0.0114) | 0.2934 (0.0353) | 5.89 (3.65) |
+| 30 | continual | 5 | 83.67 (3.31) | **0.6131 (0.0157)** | **0.3155 (0.0099)** | **0.2024 (0.0442)** | 3.11 (1.78) |
+| 60 | independent | 3 | 82.50 (2.21) | 0.7014 (0.0180) | 0.3596 (0.0128) | 0.2619 (0.0294) | 2.96 (1.39) |
+| 60 | continual | 3 | 82.50 (2.21) | **0.5467 (0.0199)** | **0.2866 (0.0174)** | **0.1222 (0.0138)** | 3.33 (1.67) |
+
+Values are mean (sample standard deviation) over seeds 20261118–20261122 at
+30 and 20261118–20261120 at 60.
+
+Class balancing is the large retention effect: at the canonical seed it takes
+mean forgetting from 30.56 pp to 5.56 pp for the carried prior and from
+46.11 pp to 5.00 pp for the reset control.  That is well outside the observed
+seed spread, although balancing itself was not swept separately.
+
+The carried prior's robust gain is calibration.  At 30 rows it lowers mean NLL
+from 0.774 to 0.613, Brier from 0.401 to 0.316, and ECE from 0.293 to 0.202;
+it was better on all three in every one of the five seeds.  At 60 rows it
+lowers NLL from 0.701 to 0.547, Brier from 0.360 to 0.287, and ECE from 0.262
+to 0.122 across three seeds.  The earlier single-seed accuracy advantage at 30
+does not survive the sweep: the 30-row mean difference is +3.17 pp with
+standard deviations of 3.31 and 2.98, and at 60 the means are identical
+(82.50 %).  Nor is there a resolved forgetting advantage once replay and
+balancing are on: the 30-row means are 3.11 versus 5.89 pp with overlapping
+ranges, and the 60-row means are 3.33 versus 2.96 pp.  The delivered default
+is 30 rows per class with class balancing; 60 is the calibration arm.  Neither
+is an accuracy or no-forgetting claim.
+
+**Split sweep (five alternate partitions, 30 replay rows/class).**
+
+`EmbeddingTable::resplit` pools all 360 fixture rows and repartitions them into
+60 train + 30 test rows per class.  With the model seed fixed at 20261118 and
+split seeds 1–5:
+
+| arm | splits | acc | NLL | Brier | ECE | mean forgetting |
+|---|---:|---:|---:|---:|---:|---:|
+| reset prior | 5 | 77.50 (5.84) | 0.8223 (0.0462) | 0.4299 (0.0289) | 0.2693 (0.0641) | 3.89 (2.12) |
+| carried prior | 5 | 76.33 (6.52) | **0.6714 (0.1030)** | **0.3515 (0.0571)** | **0.1519 (0.0553)** | 3.22 (1.90) |
+
+The alternate splits overlap, so this measures split sensitivity rather than
+five independent samples.  The calibration result replicates: the carried
+prior has lower NLL, Brier and ECE in every split.  Accuracy is 1.17 pp lower
+on average (standard deviations 6.52 and 5.84 pp), and forgetting is 0.67 pp
+lower with overlapping ranges (3.22 versus 3.89 pp), so neither is a resolved
+effect.  Across both seed and split resampling, calibration is the only
+carried-prior advantage that survives.
+
+**Joint baseline and post-hoc calibration.**
+
+A single posterior over all four classes is the natural reference for what the
+sequential updates cost.  Run it as one round with all classes and four times
+the per-round sampler budget:
+
+```bash
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+    --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16
+```
+
+That is 38,400 proposals, matching four sequential rounds of 2,400.  Raw
+results over the same five resplits, with all 240 training rows:
+
+| posterior | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| joint, all classes at once | **82.50 (5.17)** | 0.7622 (0.0342) | 0.3902 (0.0229) | 0.3131 (0.0423) |
+| sequential carried | 76.33 (6.52) | **0.6714 (0.1030)** | **0.3515 (0.0571)** | **0.1519 (0.0553)** |
+
+The raw joint posterior is more accurate in all five splits, by 3.3–9.2 pp
+(mean 6.17 pp), but its probability forecasts are worse.
+
+That reverses after post-hoc temperature scaling.  `--calibrate-joint 10`
+holds out 10 training rows per class, fits the joint posterior on the remaining
+50 per class, fits one temperature `T` on the held-out training NLL, and
+applies it to the test probabilities.  Test labels are never used.
+
+```bash
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+    --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16 \
+    --calibrate-joint 10
+```
+
+| joint variant | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| raw, 50 train/class | 83.00 (5.79) | 0.8334 (0.0376) | 0.4326 (0.0234) | 0.3547 (0.0552) |
+| temperature-scaled, 50 train + 10 cal/class | **83.00 (5.79)** | **0.4860 (0.1615)** | **0.2582 (0.0798)** | **0.0983 (0.0387)** |
+| sequential carried, 60 train/class + replay | 76.33 (6.52) | 0.6714 (0.1030) | 0.3515 (0.0571) | 0.1519 (0.0553) |
+
+The fitted `T` was 0.17–0.30: the BMA probabilities are under-confident, and
+sharpening changes no argmax, so accuracy is identical before and after.
+Calibration lowers NLL, Brier and ECE in every split, and in this
+data-asymmetric table the calibrated joint beats the sequential carried
+posterior on all four metrics in every split.
+The earlier conclusion that sequential updating produced the better forecast
+holds only against the uncalibrated joint.
+
+That AG News comparison is not data-matched: the joint arm gives up 40
+training rows for its calibration fit while the sequential arm uses all 240
+plus replay, and the sequential arm has no post-hoc temperature fit.  The
+symmetric protocol removes both asymmetries with `--heldout-calibration 10`:
+the same 10 rows/class are withheld before either arm trains, both fit on 50
+rows/class, and both temperatures use the same held-out rows.  Over the five
+resplits:
+
+| arm | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| sequential carried, raw | 77.33 (5.99) | 0.6740 (0.0602) | 0.3547 (0.0397) | 0.1625 (0.0478) |
+| sequential carried, temperature | 77.33 (5.99) | 0.6288 (0.0902) | 0.3288 (0.0533) | 0.1005 (0.0504) |
+| joint, raw | **83.00 (5.79)** | 0.8334 (0.0376) | 0.4326 (0.0234) | 0.3547 (0.0552) |
+| joint, temperature | **83.00 (5.79)** | **0.4860 (0.1615)** | **0.2582 (0.0798)** | **0.0983 (0.0387)** |
+
+The calibrated joint is more accurate in all five splits (+5.67 (2.24) pp) and
+has lower Brier in all five.  NLL is lower in four of five (split 1 is 0.026
+higher).  ECE is lower in only two of five and is essentially tied on average
+(0.098 versus 0.101), so the earlier "all four metrics in every split" claim
+does not survive the symmetric protocol.  Part of that ECE advantage came from
+leaving the sequential posterior uncalibrated.  Temperature scaling itself is
+stable for the joint here: NLL, Brier and ECE fall in every split.
+
+**Rank check (canonical split, one seed).**  Raising the carried prior's rank
+from 8 to 16, 32 or 64 did not improve final accuracy (79.17, 80.83 and
+75.00 %, versus 80.83 % at rank 8), and calibration stayed in the same band.
+The rank cap is not what blocks an accuracy gain, so the default stays at 8.
+
+**λ / replay sweep.**  Canonical split and seed, continual arm, nine cells
+(`--lambda {0.5,1,2} --replay-per-class {15,30,45}`):
+
+| λ | replay | acc | NLL | Brier | ECE | forgetting |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.5 | 15 | 77.50 | 1.0309 | 0.5535 | 0.3909 | 6.67 |
+| 0.5 | 30 | 85.00 | 0.8941 | 0.4713 | 0.4081 | 1.67 |
+| 0.5 | 45 | 81.67 | 0.7515 | 0.3862 | 0.2997 | 2.22 |
+| 1.0 | 15 | 75.83 | 0.7199 | 0.3797 | 0.1908 | 10.00 |
+| 1.0 | 30 | 80.83 | 0.6372 | 0.3290 | 0.1717 | 5.56 |
+| 1.0 | 45 | 80.00 | 0.5551 | 0.2978 | 0.1238 | -1.11 |
+| 2.0 | 15 | 79.17 | 0.6043 | 0.3134 | 0.0859 | 18.89 |
+| 2.0 | 30 | 75.83 | 0.6137 | 0.3321 | 0.0700 | 7.78 |
+| 2.0 | 45 | **86.67** | **0.5133** | **0.2591** | **0.1291** | 3.33 |
+
+The apparent winner was validated out of sample rather than adopted from this
+single cell.  λ=2/replay=45 over five seeds is 82.33 (2.60) % acc, NLL 0.5410
+(0.0313), Brier 0.2775 (0.0166), ECE 0.0776 (0.0327), forgetting 4.67 (3.16)
+pp; the λ=1/replay=30 default is 83.67 (3.31) %, 0.6131 (0.0157), 0.3155
+(0.0099), 0.2024 (0.0442), 3.11 (1.78) pp.  Over the five alternate splits,
+λ=2/replay=45 is 78.17 (4.39) %, 0.5885 (0.0697), 0.3110 (0.0507), 0.0679
+(0.0396), 3.55 (1.78) pp, versus the default's 76.33 (6.52) %, 0.6714 (0.1030),
+0.3515 (0.0571), 0.1519 (0.0553), 3.22 (1.90) pp.
+
+The robust difference is calibration: λ=2/replay=45 lowers NLL, Brier and ECE
+against the default under both resamplings, with ECE roughly halved.  Accuracy
+does not resolve (1.3 pp lower over seeds, 1.8 pp higher over splits), and
+forgetting is not improved.  It also uses 45 replay rows per class instead of
+30.  It is a calibration-oriented alternative, not a replacement default.
+
+**Low-rank summary (opt-in, not adopted).**  `pcnl::continual::LowRankPosterior`
+fits the top `rank` principal directions with their own widths plus an
+isotropic residual, giving `B diag(s²) Bᵀ + d² P_⊥` instead of a diagonal prior.
+The full-target chart supports it through `AffineSubspace::low_rank`; the
+kernel is unchanged.  It did not improve the operating point:
 
 | replay / class | arm | acc | NLL | Brier | ECE | mean forgetting |
 |---:|---|---:|---:|---:|---:|---:|
-| 0 | continual | 39.17 % | 1.8169 | 0.8386 | 0.2448 | 90.56 pp |
-| 30 | independent | **82.50 %** | 0.7849 | 0.4096 | 0.3183 | 46.11 pp |
-| 30 | continual | 80.83 % | 0.6053 | 0.3107 | 0.1779 | 30.56 pp |
-| 60 | independent | 80.00 % | 0.6992 | 0.3597 | 0.2362 | 11.11 pp |
-| 60 | continual | 80.00 % | **0.5517** | **0.2951** | **0.0901** | **5.56 pp** |
+| 0 | continual | 40.83 % | 1.4124 | 0.7390 | 0.2338 | 91.11 pp |
+| 30 | continual | 68.33 % | 0.8074 | 0.4232 | 0.0743 | 5.00 pp |
+| 60 | continual | 82.50 % | 0.6307 | 0.3097 | 0.1491 | -5.00 pp |
 
-Forgetting is the mean per-class drop over each adjacent disjoint class switch.
-At the full replay budget the carried prior does not change accuracy, but it
-halves mean forgetting (11.11 → 5.56 pp) and substantially improves NLL, Brier
-and ECE.  At the half-memory budget it lowers forgetting by 15.6 pp while
-final accuracy is essentially unchanged.  Per-class final accuracy at the full
-budget is `83/90/80/67 %` (continual) versus `80/97/83/60 %` (independent), so
-the gain is not uniform.
+At 30 balanced replay rows it matches the diagonal summary's 5.00–5.56 pp
+forgetting but costs 12.5 pp canonical-seed accuracy.  At 60 it is 0.83 pp
+above the canonical-seed diagonal and its mean forgetting is −5.00 pp versus
+3.33 pp, but both are single-seed differences inside the diagonal's observed
+seed spread.  Its calibration is worse (NLL 0.6307 vs 0.5326, Brier 0.3097 vs
+0.2897, ECE 0.1491 vs 0.1065).  Strict no-replay low-rank still forgets
+91.11 pp, so the shared head under disjoint likelihoods — not the missing
+correlations alone — is the limiting factor.  The diagonal summary remains the
+default.  The low-rank arm has not been seed-swept.
 
-**Limits.**  One split, one seed, four rounds; the diagonal summary ignores
-posterior correlations; replay double-counts old rows already represented in
-the prior; Brier makes this a generalized Bayes target; the encoder remains
-frozen.  No benchmark or decision claim follows.
+**Second text dataset (20 Newsgroups).**  The same loop was repeated on a
+second frozen UltraBERT fixture built from four 20 Newsgroups categories
+(`comp.graphics`, `rec.sport.baseball`, `sci.space`, `talk.politics.guns`),
+60 train and 30 test rows per class.  Headers, footers and quoted text are
+removed so the newsgroup name cannot leak from the header.  This is a
+different corpus and label set, not a relabelling of AG News.
+
+```bash
+uv run --python 3.12 --with torch --with transformers --with safetensors \
+  --with scikit-learn scripts/pcnl-ultrabert-embed-20ng
+```
+
+| five resplits | acc | NLL | Brier | ECE | mean forgetting |
+|---|---:|---:|---:|---:|---:|
+| sequential carried | 87.00 (1.63) | 0.4440 (0.0267) | 0.2202 (0.0130) | 0.1444 (0.0106) | 1.00 (3.80) pp |
+| joint, temperature-scaled | **88.17 (3.61)** | **0.3223 (0.0643)** | **0.1676 (0.0343)** | **0.0606 (0.0174)** | n/a |
+
+In that data-asymmetric table the calibrated joint has lower NLL, Brier and
+ECE in all five splits, with fitted `T = 0.187–0.354`; ECE falls from 0.144 to
+0.061 on average.  Accuracy is
+not a uniform win: the joint is higher in three splits, equal in one, and
+4.17 pp lower in one, averaging +1.17 (3.42) pp.  The calibration advantage
+therefore reproduces on a second corpus; in that data-asymmetric table the AG
+News accuracy advantage does not.  The second fixture has only 90 rows per
+class and its joint posterior is more variable than on AG News.
+
+**20 Newsgroups seed sweep.**  Five model seeds on the canonical 20 Newsgroups
+split, at the same calibrated-joint budget:
+
+| seeds | acc | NLL | Brier | ECE |
+|---:|---:|---:|---:|---:|
+| 5 | **89.17 (1.32)** | 0.2839 (0.0296) | 0.1478 (0.0131) | 0.0500 (0.0100) |
+
+Accuracy ranged from 87.50 % to 90.83 % (sd 1.32 pp), and `T` from 0.303 to
+0.371.  This is model/proposal variance at one fixed split, not split
+variance; the five-resplit mean above (88.17 (3.61) %) uses a different
+resampling axis and is not paired with these rows.
+
+**Symmetric held-out comparison.**  `--heldout-calibration 10` removes the same
+10 training rows per class before either arm trains.  Both arms therefore fit
+on 50 rows per class, and both temperatures are fitted on exactly those 10
+held-out rows.  Over five resplits:
+
+| arm | acc | NLL | Brier | ECE |
+|---|---:|---:|---:|---:|
+| sequential carried, raw | 86.50 (3.84) | 0.4721 (0.0593) | 0.2295 (0.0358) | 0.1553 (0.0382) |
+| sequential carried, temperature | 86.50 (3.84) | 0.4683 (0.1572) | 0.2104 (0.0513) | **0.0849 (0.0282)** |
+| joint, raw | 88.83 (2.61) | 0.6371 (0.0318) | 0.3048 (0.0208) | 0.3271 (0.0300) |
+| joint, temperature | **88.83 (2.61)** | **0.3064 (0.0911)** | **0.1526 (0.0365)** | **0.0591 (0.0201)** |
+
+The calibrated joint is more accurate in all five splits (+2.33 (2.07) pp) and
+has lower NLL and Brier in all five.  The earlier mixed 20 Newsgroups accuracy
+(three wins, one tie, one loss) came from the data asymmetry: with both arms on
+50 rows/class the joint is ahead in every split.  ECE is lower in four splits
+and 0.004 higher in the fifth.  Temperature scaling leaves accuracy unchanged,
+as it must.
+For the sequential arm it lowers ECE in every split but worsens NLL in two of
+five; its mean NLL is unchanged (0.4721 versus 0.4683) and its NLL spread more
+than doubles.  A 40-row calibration set is noisy enough that the fitted
+temperature is not a free improvement for every posterior.  The joint's lower
+NLL and Brier survive that noise.  This removes the earlier data asymmetry; it
+does not make the temperature fit independent of the test set.
+
+**Limits.**  Two fixtures and four rounds; the diagonal summary was swept over
+five seeds at 30 rows, three at 60, and five overlapping resplits on AG News,
+plus five resplits and a five-seed canonical sweep on 20 Newsgroups.  Seed and
+split variance are characterized separately, not over a full seed × split grid.
+The five-resplit joint tables use one model seed per split; the symmetric
+tables use one model seed per split as well.  The low-rank arm and the unbalanced
+controls were not swept.  Both summaries
+are Gaussian approximations (the default ignores correlations, the low-rank arm
+keeps only the top directions); replay double-counts old rows already
+represented in the prior; Brier makes this a generalized Bayes target; the
+encoder remains frozen.  The 20 Newsgroups categories are a four-class subset,
+not the full 20-class task, and both fixtures are controlled probes rather than
+benchmarks.  No benchmark or decision claim follows.
 
 Command:
 
 ```bash
 cargo run --release -p pcnl --example ultrabert_continual_pcnl
-cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 30
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+    --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 60
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 30 --class-balance false
 cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --replay-per-class 0 --arm continual
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --prior lowrank --replay-per-class 30
+for seed in 20261118 20261119 20261120 20261121 20261122; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- --seed "$seed"
+done
+for split_seed in 1 2 3 4 5; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --resplit-test-per-class 30 --split-seed "$split_seed"
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --resplit-test-per-class 30 --split-seed "$split_seed" \
+        --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16 \
+        --calibrate-joint 10
+done
+for seed in 20261118 20261119 20261120 20261121 20261122; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --seed "$seed" --tasks '0,1,2,3' --arm independent \
+        --steps 9600 --burn 3200 --thin 16 --calibrate-joint 10
+done
+for split_seed in 1 2 3 4 5; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --resplit-test-per-class 30 --split-seed "$split_seed" \
+        --heldout-calibration 10 --arm continual
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --fixture docs/fixtures/ultrabert_20ng4_embeddings.safetensors \
+        --resplit-test-per-class 30 --split-seed "$split_seed" \
+        --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16 \
+        --heldout-calibration 10
+done
+for split_seed in 1 2 3 4 5; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --resplit-test-per-class 30 --split-seed "$split_seed"
+done
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+    --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16
+cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+    --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16 \
+    --calibrate-joint 10
+for split_seed in 1 2 3 4 5; do
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --resplit-test-per-class 30 --split-seed "$split_seed" \
+        --heldout-calibration 10 --arm continual
+    cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+        --resplit-test-per-class 30 --split-seed "$split_seed" \
+        --tasks '0,1,2,3' --arm independent --steps 9600 --burn 3200 --thin 16 \
+        --heldout-calibration 10
+done
+for lam in 0.5 1 2; do
+    for rep in 15 30 45; do
+        cargo run --release -p pcnl --example ultrabert_continual_pcnl -- \
+            --arm continual --lambda "$lam" --replay-per-class "$rep"
+    done
+done
 ```
 
 ## Reproduction and definition of done
@@ -1406,7 +1904,7 @@ Every reported table must be regenerable from those artifacts and identify its a
 The core plan is complete when R0–R4 deliver an audited target/kernel distinction, exact
 small-model references, a tested informed-subspace comparison, a quantified SG bias budget,
 and a properly calibrated readout study on a learnable task, whether the primary research
-hypothesis succeeds or fails. R7 is the application deliverable and is complete when one
+hypothesis succeeds or fails. The R7 research deliverable is complete when one
 synthetic MDP has a measured per-step score table *and* a rollout-return table from the same
 chains, with the negative or inconclusive cells published beside the positive ones; the
 checkpoint/GPU arm is a separate follow-on. Record the result in `../docs/PCNL_STATUS.md` and

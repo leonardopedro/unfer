@@ -22,6 +22,11 @@
 //! Freezing the encoder is a *different* posterior from one that integrates its
 //! weights, and the reports say so.
 //!
+//! [`MlpHeadPotential::with_class_weights`] reweights rows so each present class
+//! contributes the same total likelihood weight.  It is used by continual replay,
+//! where the current classes otherwise have more rows than the replayed ones;
+//! the weights sum to the row count, so the Bayes temperature is unchanged.
+//!
 //! The fixture format is one safetensors file with:
 //!
 //! * `embeddings` `[N, D]` f32 — fixed, finite encoder outputs;
@@ -614,6 +619,10 @@ pub struct MlpHeadPotential {
     loss: LossKind,
     x: Vec<f32>,
     y: Vec<u32>,
+    /// Optional per-row likelihood weights.  `with_class_weights` fills this
+    /// so every present class contributes the same total weight; `None` is the
+    /// ordinary unweighted mean over rows.
+    weights: Option<Vec<f32>>,
 }
 
 impl MlpHeadPotential {
@@ -641,7 +650,37 @@ impl MlpHeadPotential {
             loss,
             x: table.train_x.clone(),
             y: table.train_y.clone(),
+            weights: None,
         })
+    }
+
+    /// Reweight the rows so each present class carries `n / n_present` total
+    /// weight.  The weights sum to `n`, so `n_terms()` and the Bayes
+    /// temperature `λ · N · mean_loss` keep their meaning; only the relative
+    /// class contributions change.  A class absent from this table gets no
+    /// weight, which is what replay has at the start of the stream.
+    pub fn with_class_weights(mut self) -> Self {
+        let mut counts = vec![0usize; self.classes];
+        for &t in &self.y {
+            counts[t as usize] += 1;
+        }
+        let present = counts.iter().filter(|&&c| c > 0).count();
+        if present == 0 {
+            return self;
+        }
+        let n = self.y.len() as f32;
+        let per_class = n / present as f32;
+        self.weights = Some(
+            self.y
+                .iter()
+                .map(|&t| per_class / counts[t as usize] as f32)
+                .collect(),
+        );
+        self
+    }
+
+    pub fn class_weights(&self) -> Option<&[f32]> {
+        self.weights.as_deref()
     }
 
     pub fn loss(&self) -> LossKind {
@@ -682,6 +721,20 @@ impl MlpHeadPotential {
             .map_err(|e| EmbeddingError::Candle(e.to_string()))
     }
 
+    fn weighted_mean(&self, per_row: &Tensor) -> candle_core::Result<Tensor> {
+        match &self.weights {
+            Some(w) => {
+                let wt = Tensor::from_vec(w.clone(), w.len(), &Device::Cpu)?;
+                let sum = w.iter().sum::<f32>().max(f32::MIN_POSITIVE) as f64;
+                per_row
+                    .broadcast_mul(&wt)?
+                    .sum_all()?
+                    .affine(1.0 / sum, 0.0)
+            }
+            None => per_row.mean_all(),
+        }
+    }
+
     fn objective(
         &self,
         logits: &Tensor,
@@ -689,14 +742,16 @@ impl MlpHeadPotential {
         onehot: &Tensor,
     ) -> candle_core::Result<Tensor> {
         match self.loss {
-            LossKind::Nll => candle_nn::loss::cross_entropy(logits, y),
+            LossKind::Nll if self.weights.is_none() => candle_nn::loss::cross_entropy(logits, y),
+            LossKind::Nll => {
+                let p = candle_nn::ops::softmax(logits, D::Minus1)?;
+                let per_row = p.log()?.broadcast_mul(onehot)?.sum(D::Minus1)?;
+                self.weighted_mean(&per_row)?.affine(-1.0, 0.0)
+            }
             LossKind::Brier => {
                 let p = candle_nn::ops::softmax(logits, D::Minus1)?;
-                let n = self.y.len().max(1) as f64;
-                p.broadcast_sub(onehot)?
-                    .sqr()?
-                    .sum_all()?
-                    .affine(1.0 / n, 0.0)
+                let per_row = p.broadcast_sub(onehot)?.sqr()?.sum(D::Minus1)?;
+                self.weighted_mean(&per_row)
             }
         }
     }
@@ -986,6 +1041,57 @@ mod tests {
             assert!(
                 (fd - g[i] as f64).abs() < 3e-4,
                 "coord {i}: {fd} vs {}",
+                g[i]
+            );
+        }
+    }
+
+    #[test]
+    fn class_weights_equalize_present_classes_and_keep_the_gradient() {
+        let t = EmbeddingTable::from_rows(
+            2,
+            2,
+            &[
+                (vec![1.0, 0.0], 0, false),
+                (vec![0.9, 0.1], 0, false),
+                (vec![0.0, 1.0], 1, false),
+                (vec![1.0, 0.0], 0, true),
+            ],
+        )
+        .unwrap();
+        let pot = MlpHeadPotential::new_with_loss(&t, &[3], LossKind::Brier)
+            .unwrap()
+            .with_class_weights();
+        let w = pot.class_weights().unwrap();
+        assert_eq!(w.len(), 3);
+        assert!((w[0] - 0.75).abs() < 1e-6);
+        assert!((w[1] - 0.75).abs() < 1e-6);
+        assert!((w[2] - 1.5).abs() < 1e-6);
+        assert!((w.iter().sum::<f32>() - 3.0).abs() < 1e-6);
+        assert!((w[0] + w[1] - w[2]).abs() < 1e-6);
+
+        let mut theta = vec![0.02f32; pot.flat_size()];
+        for (i, v) in theta.iter_mut().enumerate() {
+            *v = 0.02 * (i as f32 * 0.31).sin();
+        }
+        let tensor = Tensor::from_vec(theta.clone(), &[theta.len()], &Device::Cpu).unwrap();
+        let g = pot
+            .mean_grad_with(&tensor, NormGrad::Exact)
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+        let h = 1e-3f32;
+        for i in [0usize, 7, pot.flat_size() - 1] {
+            let mut plus = theta.clone();
+            let mut minus = theta.clone();
+            plus[i] += h;
+            minus[i] -= h;
+            let lp = pot.mean_loss(&Tensor::from_vec(plus, &[theta.len()], &Device::Cpu).unwrap());
+            let lm = pot.mean_loss(&Tensor::from_vec(minus, &[theta.len()], &Device::Cpu).unwrap());
+            let fd = (lp - lm) / (2.0 * h as f64);
+            assert!(
+                (fd - g[i] as f64).abs() < 3e-4,
+                "weighted coord {i}: {fd} vs {}",
                 g[i]
             );
         }

@@ -12,3 +12,5 @@ rand = { workspace = true }
 rand_distr = { workspace = true }
 rayon = { workspace = true }
 safetensors = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

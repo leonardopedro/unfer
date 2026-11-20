@@ -397,22 +397,8 @@ impl FullTarget {
 
     /// `θ_ref + C_half (Bz + w)`.
     pub fn lift(&self, z: &[f32], w: &[f32]) -> Vec<f32> {
-        let p = self.subspace.p();
         assert_eq!(z.len(), self.subspace.dim(), "z must have r entries");
-        assert_eq!(w.len(), p, "w must have P entries");
-        let mut v = vec![0.0f32; p];
-        self.subspace.basis().apply(z, &mut v);
-        for (vi, wi) in v.iter_mut().zip(w) {
-            *vi += *wi;
-        }
-        for ((o, a), s) in v
-            .iter_mut()
-            .zip(self.subspace.theta_ref())
-            .zip(self.subspace.scale())
-        {
-            *o = a + s * *o;
-        }
-        v
+        self.subspace.lift_full(z, w)
     }
 
     pub fn lift_tensor(&self, z: &[f32], w: &[f32]) -> candle_core::Result<Tensor> {
@@ -500,22 +486,8 @@ impl<P: Potential> PotentialFullTarget<P> {
 
     /// `θ_ref + C_half (Bz + w)`.
     pub fn lift(&self, z: &[f32], w: &[f32]) -> Vec<f32> {
-        let p = self.subspace.p();
         assert_eq!(z.len(), self.subspace.dim(), "z must have r entries");
-        assert_eq!(w.len(), p, "w must have P entries");
-        let mut v = vec![0.0f32; p];
-        self.subspace.basis().apply(z, &mut v);
-        for (vi, wi) in v.iter_mut().zip(w) {
-            *vi += *wi;
-        }
-        for ((o, a), s) in v
-            .iter_mut()
-            .zip(self.subspace.theta_ref())
-            .zip(self.subspace.scale())
-        {
-            *o = a + s * *o;
-        }
-        v
+        self.subspace.lift_full(z, w)
     }
 
     pub fn lift_tensor(&self, z: &[f32], w: &[f32]) -> candle_core::Result<Tensor> {
