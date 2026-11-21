@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use unfer_protocol::ChunkRef;
 
 use crate::chunk::{Chunker, verify_chunk};
-use crate::crypto::{DataKeypair, decrypt_chunk, derive_aes_key, encrypt_chunk};
+use crate::crypto::{derive_aes_key, open_object, seal_object, DataKeypair, SealedObject};
 use crate::magnet::{build_magnet_uri, content_cid_from_chunks};
 
 /// A stored `.cell` archive's content-plane addressing metadata.
@@ -63,28 +63,22 @@ pub fn is_content_cid(cid: &str) -> bool {
 
 /// Encrypt a stored cell for transport, mirroring `DataPublisher`: each chunk is AES-256-GCM
 /// encrypted under a key derived from the content keypair's X25519 handshake (self-DH, the
-/// crate's per-content symmetric-key convention). Returns the per-chunk ciphertexts; the
+/// crate's per-content symmetric-key convention) *and* a fresh per-object identifier, so
+/// repeated calls with one keypair never reuse a chunk nonce. The returned [`SealedObject`]
+/// carries the identity, version and length the chunks are authenticated against; the
 /// recipient uses the same keypair convention via [`decrypt_stored_cell`].
-pub fn encrypt_stored_cell(keypair: &DataKeypair, cell: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+pub fn encrypt_stored_cell(keypair: &DataKeypair, cell: &[u8]) -> Result<SealedObject, String> {
     let aes_key = derive_aes_key(&keypair.shared_secret(keypair.public_key()));
-    let mut ciphertexts = Vec::new();
-    for (idx, plain) in Chunker::default().chunk(cell) {
-        ciphertexts.push(encrypt_chunk(&aes_key, idx, &plain)?);
-    }
-    Ok(ciphertexts)
+    seal_object(&aes_key, 0, cell)
 }
 
 /// Reassemble + decrypt a stored cell (the inverse of [`encrypt_stored_cell`]).
 pub fn decrypt_stored_cell(
     keypair: &DataKeypair,
-    ciphertexts: &[Vec<u8>],
+    sealed: &SealedObject,
 ) -> Result<Vec<u8>, String> {
     let aes_key = derive_aes_key(&keypair.shared_secret(keypair.public_key()));
-    let mut out = Vec::new();
-    for (i, ct) in ciphertexts.iter().enumerate() {
-        out.extend_from_slice(&decrypt_chunk(&aes_key, i as u32, ct)?);
-    }
-    Ok(out)
+    open_object(&aes_key, 0, sealed)
 }
 
 // ── Blueprint registry (S20, F19) ─────────────────────────────────────
@@ -339,18 +333,45 @@ mod tests {
         let cell = sample_cell();
         let recipient = DataKeypair::generate();
 
-        let ciphertexts = encrypt_stored_cell(&recipient, &cell).unwrap();
+        let sealed = encrypt_stored_cell(&recipient, &cell).unwrap();
         assert_ne!(
-            ciphertexts.iter().flatten().cloned().collect::<Vec<u8>>(),
+            sealed.chunks.iter().flatten().cloned().collect::<Vec<u8>>(),
             cell
         );
 
-        let plain = decrypt_stored_cell(&recipient, &ciphertexts).unwrap();
+        let plain = decrypt_stored_cell(&recipient, &sealed).unwrap();
         assert_eq!(plain, cell);
 
         // The reassembled plaintext is still addressable by the same CID.
         let restored = store_cell(&plain);
         assert_eq!(restored.cid, store_cell(&cell).cid);
+    }
+
+    /// D02 witness: repeated use of one `DataKeypair` must not repeat a chunk
+    /// nonce, so two seals of the same cell differ in their ciphertext.
+    #[test]
+    fn repeated_use_of_one_keypair_does_not_repeat_a_nonce() {
+        let cell = sample_cell();
+        let recipient = DataKeypair::generate();
+        let first = encrypt_stored_cell(&recipient, &cell).unwrap();
+        let second = encrypt_stored_cell(&recipient, &cell).unwrap();
+        assert_ne!(first.object_id, second.object_id);
+        assert_ne!(first.chunks[0], second.chunks[0]);
+        assert_eq!(decrypt_stored_cell(&recipient, &first).unwrap(), cell);
+        assert_eq!(decrypt_stored_cell(&recipient, &second).unwrap(), cell);
+    }
+
+    /// A body moved onto another seal under the *same* keypair is refused, so
+    /// the object identity — not just the key — is doing the binding.
+    #[test]
+    fn stored_cell_body_cannot_be_spliced() {
+        let recipient = DataKeypair::generate();
+        let a = encrypt_stored_cell(&recipient, b"first cell body").unwrap();
+        let b = encrypt_stored_cell(&recipient, b"second cell body").unwrap();
+        let mut spliced = a.clone();
+        spliced.chunks = b.chunks.clone();
+        assert!(decrypt_stored_cell(&recipient, &spliced).is_err());
+        assert!(decrypt_stored_cell(&recipient, &a).is_ok());
     }
 }
 

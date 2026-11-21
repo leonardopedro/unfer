@@ -2,7 +2,7 @@ use unfer_consensus::{ConsensusNode, Keypair};
 use unfer_protocol::{ChunkRef, ConsensusTransaction, ContentOp, ContentRef, Diagnostic};
 
 use crate::chunk::{Chunker, compute_cid};
-use crate::crypto::{DataKeypair, derive_aes_key, encrypt_chunk};
+use crate::crypto::{content_object_id, derive_aes_key, DataKeypair, ObjectKey};
 use crate::magnet::{build_magnet_uri, content_cid_from_chunks};
 
 pub struct DataPublisher<'a> {
@@ -35,18 +35,34 @@ impl<'a> DataPublisher<'a> {
         let data_kp = DataKeypair::generate();
         let aes_key = derive_aes_key(&data_kp.shared_secret(data_kp.public_key()));
 
+        // Content-addressed object identity: the identifier is derived from the
+        // plaintext digest, so a recipient that later holds the plaintext needs
+        // no out-of-band salt and two different payloads never share a key and
+        // chunk nonce.
         let chunks = self.chunker.chunk(data);
+        let chunk_count = u32::try_from(chunks.len()).map_err(|_| {
+            Diagnostic::new(
+                unfer_protocol::Code::INTERNAL,
+                "chunk count exceeds the u32 counter".to_string(),
+                unfer_protocol::Severity::Error,
+            )
+        })?;
+        let object = ObjectKey::from_parts(&aes_key, content_object_id(data));
+        let object_len = data.len() as u64;
+
         let mut chunk_refs = Vec::with_capacity(chunks.len());
         let mut chunk_cids = Vec::with_capacity(chunks.len());
 
         for (index, plaintext) in &chunks {
-            let ciphertext = encrypt_chunk(&aes_key, *index, plaintext).map_err(|e| {
-                Diagnostic::new(
-                    unfer_protocol::Code::INTERNAL,
-                    format!("chunk encryption failed: {e}"),
-                    unfer_protocol::Severity::Error,
-                )
-            })?;
+            let ciphertext = object
+                .seal_chunk(0, object_len, chunk_count, *index, plaintext)
+                .map_err(|e| {
+                    Diagnostic::new(
+                        unfer_protocol::Code::INTERNAL,
+                        format!("chunk encryption failed: {e}"),
+                        unfer_protocol::Severity::Error,
+                    )
+                })?;
             let cid = compute_cid(&ciphertext);
             chunk_cids.push(cid.clone());
             chunk_refs.push(ChunkRef {

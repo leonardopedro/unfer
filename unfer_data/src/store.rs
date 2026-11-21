@@ -15,8 +15,7 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 use crate::blueprint::{CellRef, store_cell};
-use crate::chunk::Chunker;
-use crate::crypto::{decrypt_chunk, encrypt_chunk};
+use crate::crypto::{open_object, seal_object, SealedObject};
 
 /// Domain separator for epoch-key derivation.
 const EPOCH_DOMAIN: &[u8] = b"unfer-cell-epoch-v1\0";
@@ -28,11 +27,22 @@ pub struct KeyRing {
     retain_depth: u64,
 }
 
-/// Ciphertext plus the epoch that encrypted it.
+/// A sealed cell plus the epoch that encrypted it.
+///
+/// The ciphertext alone is no longer the envelope: the object identity, format
+/// version and length the chunks are authenticated against travel with it, so a
+/// cell's chunks cannot be re-attached to another cell's metadata. `chunks` is
+/// exposed for callers that store or ship the body; `object` carries the rest.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellEnvelope {
     pub epoch: u64,
-    pub chunks: Vec<Vec<u8>>,
+    pub object: SealedObject,
+}
+
+impl CellEnvelope {
+    pub fn chunks(&self) -> &[Vec<u8>] {
+        &self.object.chunks
+    }
 }
 
 impl KeyRing {
@@ -74,17 +84,16 @@ impl KeyRing {
     }
 
     /// Encrypt `cell` under the current epoch.
+    ///
+    /// Every envelope gets its own object identifier, derived into the key, so
+    /// two cells written in one epoch do not share a key and chunk nonce.
     pub fn encrypt_envelope(&self, cell: &[u8]) -> Result<CellEnvelope, String> {
         let key = self
             .epoch_key(self.current)
             .ok_or("current epoch key unavailable")?;
-        let mut chunks = Vec::new();
-        for (idx, plain) in Chunker::default().chunk(cell) {
-            chunks.push(encrypt_chunk(&key, idx, &plain)?);
-        }
         Ok(CellEnvelope {
             epoch: self.current,
-            chunks,
+            object: seal_object(&key, self.current, cell)?,
         })
     }
 
@@ -93,11 +102,7 @@ impl KeyRing {
         let key = self
             .epoch_key(env.epoch)
             .ok_or(format!("cell epoch {} retired beyond retention", env.epoch))?;
-        let mut out = Vec::new();
-        for (i, ct) in env.chunks.iter().enumerate() {
-            out.extend_from_slice(&decrypt_chunk(&key, i as u32, ct)?);
-        }
-        Ok(out)
+        open_object(&key, env.epoch, &env.object)
     }
 }
 
@@ -301,9 +306,38 @@ mod tests {
         assert_eq!(e1.epoch, 1);
 
         // New ciphertext under a different key; both still decrypt.
-        assert_ne!(e1.chunks, e0.chunks);
+        assert_ne!(e1.chunks(), e0.chunks());
         assert_eq!(ring.decrypt_envelope(&e0).unwrap(), cell);
         assert_eq!(ring.decrypt_envelope(&e1).unwrap(), cell);
+    }
+
+    /// D02 witness: two envelopes written in one epoch, with the same plaintext
+    /// and the same epoch key, must not share a chunk nonce.
+    #[test]
+    fn two_envelopes_in_one_epoch_do_not_share_a_nonce() {
+        let ring = KeyRing::from_random();
+        let cell = sample_cell(4);
+        let a = ring.encrypt_envelope(&cell).unwrap();
+        let b = ring.encrypt_envelope(&cell).unwrap();
+        assert_eq!(a.epoch, b.epoch);
+        assert_ne!(a.object.object_id, b.object.object_id);
+        assert_ne!(a.chunks()[0], b.chunks()[0]);
+        assert_eq!(ring.decrypt_envelope(&a).unwrap(), cell);
+        assert_eq!(ring.decrypt_envelope(&b).unwrap(), cell);
+    }
+
+    /// Re-attaching another cell's body to this cell's metadata is refused even
+    /// though both cells have the same length and the same epoch key.
+    #[test]
+    fn envelope_body_cannot_be_moved_to_another_object() {
+        let ring = KeyRing::from_random();
+        let a = ring.encrypt_envelope(&sample_cell(4)).unwrap();
+        let b = ring.encrypt_envelope(&sample_cell(5)).unwrap();
+        let mut spliced = a.clone();
+        spliced.object.chunks = b.object.chunks.clone();
+        assert!(ring.decrypt_envelope(&spliced).is_err());
+        assert_eq!(ring.decrypt_envelope(&a).unwrap(), sample_cell(4));
+        assert_eq!(ring.decrypt_envelope(&b).unwrap(), sample_cell(5));
     }
 
     #[test]
