@@ -16,16 +16,52 @@
 //! assert_eq!(&pubkey[..4], &[7u8; 4]);
 //! ```
 
+use std::time::Duration;
+
 use unfer_consensus::{ConsensusNode, Keypair};
-use unfer_protocol::{ConsensusTransaction, DidDocument, IdentityOp, IdentityOpKind};
+use unfer_protocol::submission::{ReceiptState, SubmissionId};
+use unfer_protocol::{ConsensusTransaction, DidDocument, Diagnostic, IdentityOp, IdentityOpKind};
+
+/// How long a lifecycle call waits for its transaction to be committed and
+/// applied before reporting an unknown outcome (D05). A local engine settles
+/// immediately; a network engine may not have committed yet, and that is
+/// reported, never reported as success.
+pub const DID_SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct DidManager<'a> {
     node: &'a mut ConsensusNode,
+    settle_timeout: Duration,
 }
 
 impl<'a> DidManager<'a> {
     pub fn new(node: &'a mut ConsensusNode) -> Self {
-        Self { node }
+        Self {
+            node,
+            settle_timeout: DID_SETTLE_TIMEOUT,
+        }
+    }
+
+    /// Override the settlement wait (tests use a short deadline).
+    pub fn with_settle_timeout(mut self, timeout: Duration) -> Self {
+        self.settle_timeout = timeout;
+        self
+    }
+
+    /// D05: a lifecycle call is complete only once its entry is committed *and*
+    /// applied. A refusal is the entry's typed outcome; a deadline is an unknown
+    /// outcome, not a creation and not a refusal.
+    fn settle(&mut self, id: SubmissionId) -> Result<(), Diagnostic> {
+        let receipt = self.node.settle(id, self.settle_timeout);
+        match receipt.state {
+            ReceiptState::Committed(_) => Ok(()),
+            _ => Err(receipt.failure().unwrap_or_else(|| {
+                Diagnostic::new(
+                    unfer_protocol::Code::UNKNOWN_OUTCOME,
+                    "the identity transaction did not report an outcome",
+                    unfer_protocol::Severity::Error,
+                )
+            })),
+        }
     }
 
     pub fn create_did(
@@ -43,8 +79,8 @@ impl<'a> DidManager<'a> {
             service_endpoint,
         });
         unfer_consensus::sign_transaction(&mut tx, keypair);
-        self.node.submit(tx)?;
-        self.node.sync()?;
+        let id = self.node.submit_tracked(tx)?;
+        self.settle(id)?;
         Ok(did)
     }
 
@@ -71,9 +107,8 @@ impl<'a> DidManager<'a> {
             service_endpoint,
         });
         unfer_consensus::sign_transaction(&mut tx, keypair);
-        self.node.submit(tx)?;
-        self.node.sync()?;
-        Ok(())
+        let id = self.node.submit_tracked(tx)?;
+        self.settle(id)
     }
 
     pub fn revoke_did(&mut self, keypair: &Keypair) -> Result<(), unfer_protocol::Diagnostic> {
@@ -95,9 +130,8 @@ impl<'a> DidManager<'a> {
             service_endpoint: None,
         });
         unfer_consensus::sign_transaction(&mut tx, keypair);
-        self.node.submit(tx)?;
-        self.node.sync()?;
-        Ok(())
+        let id = self.node.submit_tracked(tx)?;
+        self.settle(id)
     }
 
     pub fn resolve(&self, did: &str) -> Option<DidDocument> {
@@ -203,6 +237,53 @@ mod tests {
         let did = did_from_pubkey(&kp.public_key());
         let recovered = pubkey_from_did(&did).unwrap();
         assert_eq!(kp.public_key(), recovered);
+    }
+
+    /// A network engine that accepts submissions and never commits them: the
+    /// submission is durable, its outcome is simply not known yet.
+    struct NeverCommits {
+        next: std::sync::atomic::AtomicU64,
+    }
+
+    impl unfer_consensus::ConsensusEngine for NeverCommits {
+        fn submit(
+            &self,
+            _tx: ConsensusTransaction,
+        ) -> Result<u64, Diagnostic> {
+            Ok(self
+                .next
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        }
+
+        fn get_log(&self, _from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
+            Vec::new()
+        }
+
+        fn current_seq(&self) -> u64 {
+            0
+        }
+
+        fn receipt(&self, _id: SubmissionId) -> ReceiptState {
+            ReceiptState::Pending
+        }
+    }
+
+    #[test]
+    fn pending_creation_is_not_reported_as_created() {
+        let engine = NeverCommits {
+            next: std::sync::atomic::AtomicU64::new(1),
+        };
+        let mut node = ConsensusNode::new(Box::new(engine));
+        let kp = Keypair::generate();
+        let err = {
+            let mut mgr =
+                DidManager::new(&mut node).with_settle_timeout(Duration::from_millis(20));
+            mgr.create_did(&kp, None).unwrap_err()
+        };
+        // Not created, and not a refusal either: the outcome is unknown here.
+        assert_eq!(err.code, unfer_protocol::Code::UNKNOWN_OUTCOME);
+        assert_eq!(node.applied_seq(), 0);
+        assert!(DidManager::new(&mut node).resolve(&kp.did()).is_none());
     }
 
     #[test]

@@ -1,6 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
 
 use prob_kernel::Session;
+use unfer_protocol::submission::{
+    HaltReason, Receipt, ReceiptState, Refusal, Slot, SubmissionId, SyncReport, UnknownReason,
+    Watermark,
+};
 use unfer_protocol::{
     AgentRequest, Code, ConsensusTransaction, ContentRef, Diagnostic, MarketOpKind, MathBondState,
     ModelSpec, Severity,
@@ -26,6 +31,14 @@ pub struct ConsensusNode {
     idempotency: IdempotencyStore,
     next_model_id: u64,
     applied_seq: u64,
+    /// D05: the stable outcome of every committed entry the domain refused,
+    /// keyed by the slot it occupied. A refusal is part of the applied history:
+    /// it advanced the watermark, so it is recorded rather than re-tried.
+    refusals: BTreeMap<u64, Refusal>,
+    /// D05: set when the committed history itself is unusable (a gap or a
+    /// backwards slot). A halted node applies nothing further until restarted
+    /// onto a coherent history, so it cannot silently skip entries.
+    halted: Option<HaltReason>,
 }
 
 impl ConsensusNode {
@@ -43,6 +56,8 @@ impl ConsensusNode {
             idempotency: IdempotencyStore::new(),
             next_model_id: 1,
             applied_seq: 0,
+            refusals: BTreeMap::new(),
+            halted: None,
         }
     }
 
@@ -60,31 +75,140 @@ impl ConsensusNode {
         self.certs = CertificateLedger::new(authority);
     }
 
+    /// Adapter for callers that only need the receipt id (D05 keeps the local
+    /// call shape). Prefer [`ConsensusNode::submit_tracked`] when the caller
+    /// will ask what happened: the returned number is a submission id, and on
+    /// a network engine it is not the slot the entry lands in.
     pub fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
-        // A threshold mint authority signs with an Arctic aggregate signature
-        // (Ristretto point + scalar, 64 bytes), not the single-key Ed25519 the
-        // generic path checks — route those through the ledger's threshold
-        // verification instead.
-        if let ConsensusTransaction::CertificateOp(op) = &tx {
-            if self.certs.is_threshold_authority() {
-                self.certs.verify_threshold_mint(&tx)?;
-                return self.engine.submit(tx);
-            }
-            let _ = op;
-        }
-        crate::signing::verify_transaction(&tx)?;
-        self.engine.submit(tx)
+        self.submit_tracked(tx).map(|id| id.0)
     }
 
-    pub fn sync(&mut self) -> Result<u64, Diagnostic> {
-        let log = self.engine.get_log(self.applied_seq + 1);
-        let mut applied = 0u64;
-        for (seq, tx) in log {
-            self.apply_transaction(seq, &tx)?;
-            self.applied_seq = seq;
-            applied += 1;
+    pub fn submit_tracked(&self, tx: ConsensusTransaction) -> Result<SubmissionId, Diagnostic> {
+        self.verify_ingress(&tx)?;
+        self.engine.submit(tx).map(SubmissionId)
+    }
+
+    /// A threshold mint authority signs with an Arctic aggregate signature
+    /// (Ristretto point + scalar, 64 bytes), not the single-key Ed25519 the
+    /// generic path checks — route those through the ledger's threshold
+    /// verification instead. Used at ingress *and* on replay, so a committed
+    /// entry is checked by every node rather than only by its submitter.
+    fn verify_ingress(&self, tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
+        if let ConsensusTransaction::CertificateOp(_) = tx {
+            if self.certs.is_threshold_authority() {
+                return self.certs.verify_threshold_mint(tx);
+            }
         }
-        Ok(applied)
+        crate::signing::verify_transaction(tx)
+    }
+
+    /// Apply every committed entry after the watermark. Returns how many
+    /// entries were applied; a domain refusal does **not** appear here as an
+    /// error (see [`ConsensusNode::sync_report`]), and only a halt does.
+    pub fn sync(&mut self) -> Result<u64, Diagnostic> {
+        self.sync_report().map(|report| report.entries)
+    }
+
+    /// D05: apply the committed prefix, distinguishing the two failure kinds.
+    ///
+    /// * A **domain refusal** is a property of the entry: it is recorded as a
+    ///   [`Refusal`] against its slot and the slot advances, so one bad entry
+    ///   does not wedge the good entries committed behind it.
+    /// * A **halt** is a property of the history: a gap or a backwards slot
+    ///   means this node cannot know what it missed, so it stops, remembers why,
+    ///   and refuses to apply anything else.
+    pub fn sync_report(&mut self) -> Result<SyncReport, Diagnostic> {
+        if let Some(halt) = &self.halted {
+            return Err(halt.diagnostic());
+        }
+        let log = self.engine.get_log(self.applied_seq + 1);
+        let mut report = SyncReport::default();
+        for (seq, tx) in log {
+            let expected = self.applied_seq + 1;
+            let halt = if seq > expected {
+                Some(HaltReason::Gap {
+                    expected: Slot(expected),
+                    found: Slot(seq),
+                })
+            } else if seq < expected {
+                Some(HaltReason::OutOfOrder {
+                    applied: Watermark(self.applied_seq),
+                    found: Slot(seq),
+                })
+            } else {
+                None
+            };
+            if let Some(halt) = halt {
+                let diagnostic = halt.diagnostic();
+                self.halted = Some(halt);
+                return Err(diagnostic);
+            }
+            if let Err(refusal) = self.apply_committed(seq, &tx) {
+                report.refusals.push((Slot(seq), refusal.clone()));
+                self.refusals.insert(seq, refusal);
+            }
+            self.applied_seq = seq;
+            report.entries += 1;
+        }
+        report.watermark = Watermark(self.applied_seq);
+        Ok(report)
+    }
+
+    /// Re-verify a committed entry and apply it. The signature check is
+    /// repeated here on purpose: ingress verification only covers what *this*
+    /// node submitted, and every node must independently refuse a tampered
+    /// entry that arrives through the log.
+    fn apply_committed(&mut self, seq: u64, tx: &ConsensusTransaction) -> Result<(), Refusal> {
+        if let Err(diagnostic) = self.verify_ingress(tx) {
+            return Err(Refusal::from(diagnostic));
+        }
+        self.apply_transaction(seq, tx)
+            .map_err(Refusal::from)
+    }
+
+    /// D05: wait (bounded) for a submission to be committed **and applied**,
+    /// then report the settled outcome. `Committed` means the entry is in this
+    /// node's state; a refusal comes back as [`ReceiptState::Refused`], and a
+    /// deadline as [`UnknownReason::TimedOut`] -- never as success.
+    pub fn settle(&mut self, id: SubmissionId, timeout: Duration) -> Receipt {
+        let receipt = self.engine.wait(id, timeout);
+        let slot = match receipt.state {
+            ReceiptState::Committed(slot) => slot,
+            _ => return receipt,
+        };
+        if self.applied_seq < slot.0 && self.sync_through(slot).is_err() {
+            return Receipt::unknown(id, UnknownReason::Halted);
+        }
+        if let Some(refusal) = self.refusals.get(&slot.0) {
+            return Receipt {
+                id,
+                state: ReceiptState::Refused {
+                    slot,
+                    refusal: refusal.clone(),
+                },
+            };
+        }
+        if self.applied_seq >= slot.0 {
+            receipt
+        } else {
+            Receipt::unknown(id, UnknownReason::Halted)
+        }
+    }
+
+    /// Apply until `slot` is inside the watermark. Stops early when the engine
+    /// has nothing more committed: a later `settle`/`sync` picks it up.
+    fn sync_through(&mut self, slot: Slot) -> Result<(), Diagnostic> {
+        while self.applied_seq < slot.0 {
+            if let Some(halt) = &self.halted {
+                return Err(halt.diagnostic());
+            }
+            let before = self.applied_seq;
+            self.sync()?;
+            if self.applied_seq == before {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn apply_transaction(&mut self, seq: u64, tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
@@ -199,6 +323,21 @@ impl ConsensusNode {
             }
         }
         Ok(())
+    }
+
+    /// D05: the highest slot applied contiguously to this node's state.
+    pub fn watermark(&self) -> Watermark {
+        Watermark(self.applied_seq)
+    }
+
+    /// D05: the stable outcome recorded for a refused slot, if any.
+    pub fn refusal(&self, slot: Slot) -> Option<&Refusal> {
+        self.refusals.get(&slot.0)
+    }
+
+    /// D05: why this node stopped applying, if it did.
+    pub fn halted(&self) -> Option<&HaltReason> {
+        self.halted.as_ref()
     }
 
     /// H7: retention prune on a schedule — drop idempotency guards committed
@@ -598,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_certificate_op_rejected_before_log() {
+    fn refused_certificate_op_advances_the_slot_with_a_typed_outcome() {
         use unfer_protocol::{CertificateOp, CertificateOpKind};
 
         let engine = LocalConsensus::new();
@@ -617,12 +756,22 @@ mod tests {
             signature: [0u8; 64],
         });
         crate::signing::sign_transaction(&mut mint, &alice);
-        // Signature is valid, so it reaches the log; application fails on sync
-        // with UK-7001 (mint not authorized).
+        // Signature is valid, so it reaches the log; application refuses it with
+        // UK-7001 (mint not authorized).
         let seq = node.submit(mint).unwrap();
         assert_eq!(seq, 1);
-        let err = node.sync().unwrap_err();
-        assert_eq!(err.code, Code::CERT_MINT_NOT_AUTHORIZED);
+        // D05: the refusal is a stable outcome at that slot, not a sync error.
+        // Reporting it as an error would stop the prefix at a domain rejection
+        // and wedge every good entry committed behind it.
+        let report = node.sync_report().unwrap();
+        assert_eq!(report.entries, 1);
+        assert_eq!(report.watermark, Watermark(1));
+        assert_eq!(report.refusals.len(), 1);
+        assert_eq!(report.refusals[0].0, Slot(1));
+        assert_eq!(report.refusals[0].1.code, Code::CERT_MINT_NOT_AUTHORIZED);
+        let refusal = node.refusal(Slot(1)).expect("a refusal is recorded");
+        assert_eq!(refusal.code, Code::CERT_MINT_NOT_AUTHORIZED);
+        assert_eq!(node.certs().total_supply(), 0, "the refusal minted nothing");
     }
 
     #[test]
@@ -1182,8 +1331,11 @@ mod tests {
             signature: [0u8; 64],
         });
         sign_and_submit(&node, &mut forged, &creator);
-        let err = node.sync().unwrap_err();
-        assert_eq!(err.code, Code::MARKET_NOT_RESOLVED);
+        // D05: refused at its slot with a typed outcome; the slot still advances
+        // so the entries behind it are not held hostage by the forgery.
+        let report = node.sync_report().unwrap();
+        assert_eq!(report.refusals.len(), 1);
+        assert_eq!(report.refusals[0].1.code, Code::MARKET_NOT_RESOLVED);
         assert!(
             !node.market().pool(&pool_id).unwrap().pool.resolved,
             "the forged resolution must not touch the pool"
@@ -1253,8 +1405,266 @@ mod tests {
             signature: [0u8; 64],
         });
         sign_and_submit(&node2, &mut forged2, &creator2);
-        let err = node2.sync().unwrap_err();
-        assert_eq!(err.code, Code::MARKET_UNKNOWN_OUTCOME);
+        let report = node2.sync_report().unwrap();
+        assert_eq!(report.refusals.len(), 1);
+        assert_eq!(report.refusals[0].1.code, Code::MARKET_UNKNOWN_OUTCOME);
         assert!(!node2.market().pool(&pool_id2).unwrap().pool.resolved);
+    }
+
+    // ── D05: submission / commitment / application ──────────────────────
+
+    /// A committed log served verbatim, so a test can put entries into the
+    /// history that this node never submitted: a gap, a backwards slot, or a
+    /// payload whose signature was stripped.
+    struct ScriptedLog {
+        log: std::sync::Mutex<Vec<(u64, ConsensusTransaction)>>,
+    }
+
+    impl ScriptedLog {
+        fn new() -> Self {
+            Self {
+                log: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn push_after(&self, tx: ConsensusTransaction) -> u64 {
+            let mut log = self.log.lock().unwrap();
+            let seq = log.last().map(|(s, _)| s + 1).unwrap_or(1);
+            log.push((seq, tx));
+            seq
+        }
+
+        /// Append at an explicit slot, leaving the slots before it missing.
+        fn push_at(&self, seq: u64, tx: ConsensusTransaction) {
+            self.log.lock().unwrap().push((seq, tx));
+        }
+    }
+
+    impl ConsensusEngine for ScriptedLog {
+        fn submit(&self, tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
+            Ok(self.push_after(tx))
+        }
+
+        fn get_log(&self, from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
+            let mut log = self
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(seq, _)| *seq >= from_seq)
+                .cloned()
+                .collect::<Vec<_>>();
+            log.sort_by_key(|(seq, _)| *seq);
+            log
+        }
+
+        fn current_seq(&self) -> u64 {
+            self.log
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(seq, _)| *seq)
+                .max()
+                .unwrap_or(0)
+        }
+    }
+
+    fn signed_mint(
+        authority: &Keypair,
+        owner: &str,
+        amount: u64,
+        blinding: [u8; 32],
+        seq: u64,
+    ) -> ConsensusTransaction {
+        use unfer_protocol::{CertificateOp, CertificateOpKind};
+        let mut mint = ConsensusTransaction::CertificateOp(CertificateOp {
+            did: authority.did(),
+            kind: CertificateOpKind::Mint {
+                amount,
+                owner: owner.to_string(),
+                blinding,
+                source: None,
+            },
+            seq,
+            signature: [0u8; 64],
+        });
+        crate::signing::sign_transaction(&mut mint, authority);
+        mint
+    }
+
+    #[test]
+    fn a_refused_entry_between_two_good_ones_does_not_wedge_the_suffix() {
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(LocalConsensus::new()),
+            MintAuthority::Only(authority.did()),
+        );
+
+        // 1: authorized mint of 100 to alice.
+        node.submit(signed_mint(&authority, &alice.did(), 100, [1u8; 32], 1))
+            .unwrap();
+        // 2: bob mints to himself -- a valid signature and a refused operation.
+        node.submit(signed_mint(&bob, &bob.did(), 500, [2u8; 32], 1))
+            .unwrap();
+        // 3: authorized mint of 50 to alice, behind the bad entry.
+        node.submit(signed_mint(&authority, &alice.did(), 50, [3u8; 32], 2))
+            .unwrap();
+
+        let report = node.sync_report().unwrap();
+        assert_eq!(report.entries, 3, "the refused slot still counted");
+        assert_eq!(report.watermark, Watermark(3));
+        assert_eq!(node.watermark(), Watermark(3));
+        assert_eq!(report.refusals.len(), 1);
+        assert_eq!(report.refusals[0].0, Slot(2));
+        assert_eq!(report.refusals[0].1.code, Code::CERT_MINT_NOT_AUTHORIZED);
+
+        // The good suffix applied; the refused entry left nothing behind.
+        assert_eq!(node.certs().total_supply(), 150);
+        assert!(node
+            .certs()
+            .utxo(&crate::certs::commit_coin(100, &alice.did(), &[1u8; 32]))
+            .is_some());
+        assert!(node
+            .certs()
+            .utxo(&crate::certs::commit_coin(50, &alice.did(), &[3u8; 32]))
+            .is_some());
+        assert!(node
+            .certs()
+            .utxo(&crate::certs::commit_coin(500, &bob.did(), &[2u8; 32]))
+            .is_none());
+    }
+
+    #[test]
+    fn a_refused_entry_leaves_the_ledger_fingerprint_unchanged() {
+        let authority = Keypair::generate();
+        let bob = Keypair::generate();
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(LocalConsensus::new()),
+            MintAuthority::Only(authority.did()),
+        );
+        node.submit(signed_mint(&authority, &bob.did(), 100, [1u8; 32], 1))
+            .unwrap();
+        node.sync().unwrap();
+        let before = format!("{:?}", node.certs());
+
+        node.submit(signed_mint(&bob, &bob.did(), 500, [2u8; 32], 2))
+            .unwrap();
+        let report = node.sync_report().unwrap();
+        assert_eq!(report.refusals.len(), 1);
+
+        // Whole-ledger fingerprint: the refusal is a property of the entry, so
+        // it cannot have touched the state at all (D04's comparison, reused).
+        assert_eq!(format!("{:?}", node.certs()), before);
+        assert_eq!(node.certs().total_supply(), 100);
+    }
+
+    #[test]
+    fn a_gap_in_committed_history_halts_without_applying_anything_past_it() {
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let log = ScriptedLog::new();
+        log.push_at(1, signed_mint(&authority, &alice.did(), 100, [1u8; 32], 1));
+        // Slot 2 is missing entirely; the next entry was committed at 3.
+        log.push_at(3, signed_mint(&authority, &alice.did(), 50, [2u8; 32], 2));
+
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(log),
+            MintAuthority::Only(authority.did()),
+        );
+        let err = node.sync().unwrap_err();
+        assert_eq!(err.code, Code::UNKNOWN_OUTCOME);
+        assert_eq!(
+            node.halted(),
+            Some(&HaltReason::Gap {
+                expected: Slot(2),
+                found: Slot(3),
+            })
+        );
+        // The coherent prefix applied; nothing past the gap did.
+        assert_eq!(node.watermark(), Watermark(1));
+        assert_eq!(node.certs().total_supply(), 100);
+
+        // A halted node does not skip the gap on the next attempt either.
+        assert!(node.sync().is_err());
+        assert_eq!(node.watermark(), Watermark(1));
+        assert_eq!(node.certs().total_supply(), 100);
+    }
+
+    #[test]
+    fn a_tampered_entry_is_refused_on_replay() {
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let mut mint = signed_mint(&authority, &alice.did(), 100, [1u8; 32], 1);
+        // Tamper after signing: the submitter never saw this, the log did.
+        if let ConsensusTransaction::CertificateOp(op) = &mut mint {
+            op.signature[0] ^= 0xff;
+        }
+        let log = ScriptedLog::new();
+        log.push_at(1, mint);
+
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(log),
+            MintAuthority::Only(authority.did()),
+        );
+        let report = node.sync_report().unwrap();
+        assert_eq!(report.refusals.len(), 1);
+        assert_eq!(report.refusals[0].1.code, Code::INVALID_SIGNATURE);
+        assert_eq!(node.watermark(), Watermark(1));
+        assert_eq!(node.certs().total_supply(), 0);
+    }
+
+    #[test]
+    fn settle_applies_the_entry_it_reports_as_committed() {
+        let authority = Keypair::generate();
+        let alice = Keypair::generate();
+        let mut node = ConsensusNode::with_mint_authority(
+            Box::new(LocalConsensus::new()),
+            MintAuthority::Only(authority.did()),
+        );
+        let id = node
+            .submit_tracked(signed_mint(&authority, &alice.did(), 100, [1u8; 32], 1))
+            .unwrap();
+        // Before settlement the entry is committed but not applied by this node.
+        assert_eq!(node.applied_seq(), 0);
+        let receipt = node.settle(id, Duration::from_millis(50));
+        assert!(receipt.is_committed());
+        assert_eq!(receipt.slot(), Some(Slot(id.0)));
+        assert_eq!(
+            node.certs().total_supply(),
+            100,
+            "a Committed receipt must mean the state already reflects it"
+        );
+    }
+
+    #[test]
+    fn settle_reports_a_refusal_rather_than_committed() {
+        let alice = Keypair::generate();
+        // Minting is disabled, so this committed entry is refused at slot 1.
+        let mut node = ConsensusNode::new(Box::new(LocalConsensus::new()));
+        let id = node
+            .submit_tracked(signed_mint(&alice, &alice.did(), 100, [1u8; 32], 1))
+            .unwrap();
+        let receipt = node.settle(id, Duration::from_millis(50));
+        assert!(!receipt.is_committed());
+        assert_eq!(
+            receipt.refusal().map(|r| r.code),
+            Some(Code::CERT_MINT_NOT_AUTHORIZED)
+        );
+        assert_eq!(receipt.slot(), Some(Slot(1)));
+        assert_eq!(node.certs().total_supply(), 0);
+    }
+
+    #[test]
+    fn a_receipt_bounded_wait_reports_unknown_not_success() {
+        // A local engine that has no record of the id cannot claim success.
+        let mut node = ConsensusNode::new(Box::new(LocalConsensus::new()));
+        let receipt = node.settle(SubmissionId(7), Duration::from_millis(10));
+        assert!(!receipt.is_committed());
+        assert_eq!(
+            receipt.failure().map(|d| d.code),
+            Some(Code::UNKNOWN_OUTCOME)
+        );
     }
 }
