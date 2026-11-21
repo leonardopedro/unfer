@@ -265,8 +265,14 @@ impl CertificateLedger {
         self.spent.contains(&nullifier_for(coin_id))
     }
 
+    /// Total unspent value. Saturating, because this is an audit view: `sum()`
+    /// panicked on overflow once two maximum-value mints existed (found by D04's
+    /// refusal fingerprint), and a reporting accessor must not panic on state
+    /// the ledger itself accepted.
     pub fn total_supply(&self) -> u64 {
-        self.utxos.values().map(|c| c.amount).sum()
+        self.utxos
+            .values()
+            .fold(0u64, |acc, c| acc.saturating_add(c.amount))
     }
 
     /// All unspent coins currently owned by `owner_did` — an audit view of a
@@ -500,17 +506,30 @@ impl CertificateLedger {
         if inputs.is_empty() {
             return Err(self.diag(Code::CERT_NONEXISTENT_INPUT, "burn requires an input"));
         }
+        // 1. Validate every input before touching state. A burn that fails on
+        // its second input must leave the first one unspent; mutating inside
+        // the validation loop is what made this non-atomic.
         let mut burned: u64 = 0;
+        let mut seen_inputs: HashSet<Nullifier> = HashSet::with_capacity(inputs.len());
         for input in inputs {
             let null = nullifier_for(&input.coin_id);
             if self.spent.contains(&null) {
                 return Err(self.diag(Code::CERT_DOUBLE_SPEND, "nullifier already spent"));
             }
+            if !seen_inputs.insert(null) {
+                return Err(self.diag(
+                    Code::CERT_DOUBLE_SPEND,
+                    format!("input nullifier {:?} listed twice", null),
+                ));
+            }
             let coin = self.spend_input(input, spender)?;
             burned = burned
                 .checked_add(coin.amount)
                 .ok_or_else(|| self.diag(Code::CERT_AMOUNT_MISMATCH, "burn sum overflow"))?;
-            self.spent.insert(null);
+        }
+        // 2. Commit.
+        for input in inputs {
+            self.spent.insert(nullifier_for(&input.coin_id));
             self.utxos.remove(&input.coin_id.0);
             self.smt.remove(&input.coin_id.0);
         }
@@ -726,6 +745,111 @@ mod tests {
         assert_eq!(burned, 700);
         assert!(l.utxo(&id).is_none());
         assert_eq!(l.total_supply(), 0);
+    }
+
+    /// Whole-ledger fingerprint: a refusal must be a state no-op, so every
+    /// comparison below covers UTXOs, the spent set, the SMT root, supply and
+    /// the serialized coin records, not just the field the caller looked at.
+    fn fingerprint(l: &CertificateLedger) -> String {
+        let mut ids: Vec<String> = l.utxos.keys().map(|id| hex::encode(id)).collect();
+        ids.sort();
+        let coins: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                let bytes = hex::decode(id).expect("cert id is hex");
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                match l.utxo(&CertId(key)) {
+                    Some(c) => format!(
+                        "{}:{}:{}:{}",
+                        id,
+                        c.amount,
+                        c.owner,
+                        hex::encode(c.blinding)
+                    ),
+                    None => format!("{id}:absent"),
+                }
+            })
+            .collect();
+        let spent: Vec<String> = {
+            let mut s: Vec<String> = l
+                .spent
+                .iter()
+                .map(|n| hex::encode(n.0))
+                .collect();
+            s.sort();
+            s
+        };
+        format!(
+            "root={} supply={} unspent={} coins=[{}] spent=[{}]",
+            hex::encode(l.root()),
+            l.total_supply(),
+            l.unspent_count(),
+            coins.join(","),
+            spent.join(",")
+        )
+    }
+
+    #[test]
+    fn burn_refusal_preserves_state() {
+        let alice = "did:unfer:alice";
+        let bob = "did:unfer:bob";
+
+        // (a) valid first input, nonexistent second.
+        let mut l = ledger();
+        let a = l.apply_mint(&auth(), 500, alice, &[1u8; 32], 1).unwrap();
+        let ghost = commit_coin(500, alice, &[9u8; 32]);
+        let before = fingerprint(&l);
+        let err = l
+            .apply_burn(alice, &[coinref(a, 500, alice), coinref(ghost, 500, alice)], 2)
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_NONEXISTENT_INPUT);
+        assert_eq!(fingerprint(&l), before, "first input must stay unspent");
+        assert!(l.utxo(&a).is_some());
+        assert!(!l.is_spent(&a));
+
+        // (b) the same input listed twice.
+        let before = fingerprint(&l);
+        let err = l
+            .apply_burn(alice, &[coinref(a, 500, alice), coinref(a, 500, alice)], 2)
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_DOUBLE_SPEND);
+        assert_eq!(fingerprint(&l), before);
+
+        // (c) foreign-owned input in the second position.
+        let b = l.apply_mint(&auth(), 500, bob, &[2u8; 32], 3).unwrap();
+        let before = fingerprint(&l);
+        let err = l
+            .apply_burn(alice, &[coinref(a, 500, alice), coinref(b, 500, bob)], 4)
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_OWNER_MISMATCH);
+        assert_eq!(fingerprint(&l), before);
+
+        // (d) sum overflow: two coins whose amounts cannot be added.
+        let mut l = ledger();
+        let big1 = l
+            .apply_mint(&auth(), u64::MAX, alice, &[3u8; 32], 5)
+            .unwrap();
+        let big2 = l
+            .apply_mint(&auth(), u64::MAX, alice, &[4u8; 32], 6)
+            .unwrap();
+        let before = fingerprint(&l);
+        let err = l
+            .apply_burn(
+                alice,
+                &[coinref(big1, u64::MAX, alice), coinref(big2, u64::MAX, alice)],
+                7,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, Code::CERT_AMOUNT_MISMATCH);
+        assert_eq!(fingerprint(&l), before);
+
+        // The succeeding case still works and preserves conservation.
+        let mut l = ledger();
+        let c = l.apply_mint(&auth(), 300, alice, &[5u8; 32], 8).unwrap();
+        assert_eq!(l.apply_burn(alice, &[coinref(c, 300, alice)], 9).unwrap(), 300);
+        assert_eq!(l.total_supply(), 0);
+        assert!(l.is_spent(&c));
     }
 
     #[test]

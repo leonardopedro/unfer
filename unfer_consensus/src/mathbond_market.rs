@@ -905,6 +905,63 @@ mod tests {
         .unwrap();
     }
 
+    /// D04 audit: refused liquidity operations leave the pool untouched, so a
+    /// partial reserve update can never survive a refusal.
+    #[test]
+    fn refusal_preserves_state() {
+        let mut l = MarketLedger::new();
+        open_pool(&mut l);
+        l.apply_op(
+            "did:unfer:lp",
+            &MarketOpKind::AddLiquidity {
+                pool_id: pool_id(),
+                amount: 10000,
+            },
+            2,
+        )
+        .unwrap();
+        let before = format!("{l:?}");
+
+        // More shares than the LP holds.
+        assert!(l
+            .apply_op(
+                "did:unfer:lp",
+                &MarketOpKind::RemoveLiquidity {
+                    pool_id: pool_id(),
+                    shares: 10001,
+                },
+                3,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // Zero deposit.
+        assert!(l
+            .apply_op(
+                "did:unfer:lp",
+                &MarketOpKind::AddLiquidity {
+                    pool_id: pool_id(),
+                    amount: 0,
+                },
+                4,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // An invented pool id.
+        assert!(l
+            .apply_op(
+                "did:unfer:lp",
+                &MarketOpKind::AddLiquidity {
+                    pool_id: PoolId([9u8; 32]),
+                    amount: 10,
+                },
+                5,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+    }
+
     #[test]
     fn open_and_add_liquidity() {
         let mut l = MarketLedger::new();

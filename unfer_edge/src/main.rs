@@ -216,18 +216,26 @@ impl ProxyHttp for UnferGateway {
                 }
             };
             // Mint/promise/revoke routes carry the operation's payload; invoke
-            // carries a CapCall. The caller is the request's principal-less
-            // identity for now; minted capabilities are owned by the admin
-            // principal (S22 seam, `UNFER_ADMIN_PRINCIPAL`).
+            // carries a CapCall.
             //
             // A9 (documented gap, deliberately not papered over): there is NO
-            // session authentication here — *every* `/api/cap/*` request is
-            // attributed to the admin principal, because the wire carries no
-            // caller identity to attribute it to. The compensating control is
-            // the loopback default for `listen` (config.rs KEYS): the socket
-            // is the trust boundary until a real authenticated session lands.
-            // Until then, treat `UNFER_LISTEN=0.0.0.0` as handing out the
-            // capability authority to the network.
+            // session authentication here, so every `/api/cap/*` request is
+            // attributed to the admin principal — the wire carries no caller
+            // identity to attribute it to. D03 narrows that gap instead of
+            // pretending it closed: the capability surface now refuses any
+            // request whose peer is not loopback, so a deployment that sets
+            // `UNFER_LISTEN=0.0.0.0` no longer hands the capability authority
+            // to the network. Per-session principals still require the S22 auth
+            // seam; until it lands, loopback is the trust boundary and the
+            // registry's owner checks are what keep one local principal out of
+            // another's capabilities.
+            let peer = session
+                .client_addr()
+                .and_then(|addr| addr.as_inet().map(|inet| inet.ip()));
+            if !capability_peer_allowed(peer) {
+                let body = b"{\"error\":\"capability RPC is loopback-only until sessions are authenticated\"}";
+                return write_json(session, 403u16, body).await.map(|_| true);
+            }
             let caller = admin::admin_principal();
             let (status, body): (u16, Vec<u8>) = match path.as_str() {
                 "/api/cap/mint" => match serde_json::from_slice::<caprpc::MintReq>(&raw) {
@@ -246,7 +254,8 @@ impl ProxyHttp for UnferGateway {
                 },
                 "/api/cap/promise" => match serde_json::from_slice::<caprpc::PromiseReq>(&raw) {
                     Ok(req) => {
-                        let p = caprpc::new_promise(&req.endpoint);
+                        let grants: Vec<&str> = req.grants.iter().map(|s| s.as_str()).collect();
+                        let p = caprpc::new_promise(&caller, &req.endpoint, &grants);
                         (
                             200u16,
                             serde_json::json!({
@@ -265,12 +274,18 @@ impl ProxyHttp for UnferGateway {
                 "/api/cap/resolve" => match serde_json::from_slice::<caprpc::ResolveReq>(&raw) {
                     Ok(req) => {
                         let grants: Vec<&str> = req.grants.iter().map(|s| s.as_str()).collect();
-                        let ok =
-                            caprpc::resolve_promise(&caller, req.cap_id, &req.endpoint, &grants);
-                        (
-                            200u16,
-                            serde_json::json!({ "ok": ok }).to_string().into_bytes(),
-                        )
+                        match caprpc::resolve_promise(&caller, req.cap_id, &req.endpoint, &grants) {
+                            Ok(cap) => (
+                                200u16,
+                                serde_json::to_vec(&caprpc::cap_stub(&cap)).unwrap_or_default(),
+                            ),
+                            Err(error) => (
+                                403u16,
+                                serde_json::json!({ "ok": false, "error": error })
+                                    .to_string()
+                                    .into_bytes(),
+                            ),
+                        }
                     }
                     Err(e) => (
                         400u16,
@@ -279,9 +294,10 @@ impl ProxyHttp for UnferGateway {
                 },
                 "/api/cap/revoke" => match serde_json::from_slice::<caprpc::RevokeReq>(&raw) {
                     Ok(req) => {
-                        let ok = caprpc::revoke(req.cap_id);
+                        let ok = caprpc::revoke(&caller, req.cap_id);
+                        let status = if ok { 200u16 } else { 403u16 };
                         (
-                            200u16,
+                            status,
                             serde_json::json!({ "ok": ok }).to_string().into_bytes(),
                         )
                     }
@@ -676,6 +692,17 @@ pub fn ingest_body(raw: &[u8]) -> (u16, Vec<u8>) {
     }
 }
 
+/// Whether a peer may reach `/api/cap/*` at all.
+///
+/// D03: capability RPC is attributed to the admin principal because the edge has
+/// no authenticated sessions yet (A9). That makes the socket the trust boundary,
+/// so a non-loopback peer is refused outright instead of quietly receiving the
+/// admin principal's authority. An unknown peer address is refused too: absence
+/// of evidence is not evidence of loopback.
+pub fn capability_peer_allowed(peer: Option<std::net::IpAddr>) -> bool {
+    peer.map(|ip| ip.is_loopback()).unwrap_or(false)
+}
+
 /// Decide how to handle a request, or `None` if the method is wrong for a path
 /// that does exist (the caller then answers 405).
 pub fn route(method: &str, path: &str, query: Option<&str>) -> Option<EarlyRoute> {
@@ -970,6 +997,20 @@ mod early_route_tests {
             Some(EarlyRoute::Metrics { prometheus: true })
         );
         assert_eq!(route("POST", "/metrics", None), None);
+    }
+
+    /// D03: the capability surface accepts loopback peers only, and an unknown
+    /// peer is refused rather than assumed local.
+    #[test]
+    fn capability_surface_is_loopback_only() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        assert!(capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::LOCALHOST))));
+        assert!(capability_peer_allowed(Some(IpAddr::V6(Ipv6Addr::LOCALHOST))));
+        assert!(!capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::new(
+            10, 0, 0, 7
+        )))));
+        assert!(!capability_peer_allowed(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED))));
+        assert!(!capability_peer_allowed(None));
     }
 
     #[test]

@@ -43,6 +43,13 @@ pub struct PendingCapability {
     pub id: u64,
     /// The id of the call this promise chains from (for traceability).
     pub from_call: u64,
+    /// The principal that allocated the promise. Only this principal may
+    /// resolve or cancel it, so a guessed id is not an authority.
+    pub owner: String,
+    /// The grants the promise may resolve to. Resolution may narrow this set
+    /// but never widen it, so a pipeline cannot escalate authority.
+    #[serde(default)]
+    pub grants: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -68,6 +75,10 @@ pub struct MintReq {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromiseReq {
     pub endpoint: String,
+    /// Grants the promise may later resolve to (a subset of the caller's own
+    /// authority on that endpoint). Empty means the promise resolves to none.
+    #[serde(default)]
+    pub grants: Vec<String>,
 }
 
 /// HTTP body for `POST /api/cap/resolve`: turn a pending promise id into a real
@@ -153,51 +164,101 @@ pub fn mint(owner: &str, endpoint: &str, grants: &[&str]) -> Capability {
     cap
 }
 
-/// Resolve a pipeline promise: the capability `id` becomes a real capability on
-/// `endpoint` for `owner`. Used when a call returns a capability stub.
-pub fn resolve_promise(owner: &str, id: u64, endpoint: &str, grants: &[&str]) -> bool {
+/// Resolve a pipeline promise into a real capability.
+///
+/// Resolution requires the id to be an **existing** promise owned by the
+/// caller, once, on the promise's own endpoint, and with grants bounded by the
+/// promise's. Anything else is refused: an invented id, a foreign id, a second
+/// resolution, an endpoint swap or a grant escalation would each hand out
+/// authority the caller never had.
+pub fn resolve_promise(
+    caller: &str,
+    id: u64,
+    endpoint: &str,
+    grants: &[&str],
+) -> Result<Capability, String> {
     let mut g = registry();
-    if g.caps.contains_key(&id) {
-        return false;
+    let pending = match g.pending.get(&id) {
+        Some(p) => p.clone(),
+        None => {
+            return Err(format!(
+                "capability {id} is not a pending promise held by {caller}"
+            ));
+        }
+    };
+    if pending.owner != caller {
+        return Err(format!(
+            "promise {id} was allocated by '{}', not '{caller}'",
+            pending.owner
+        ));
     }
+    if pending.endpoint != endpoint {
+        return Err(format!(
+            "promise {id} is bound to endpoint '{}', not '{endpoint}'",
+            pending.endpoint
+        ));
+    }
+    for grant in grants {
+        if !pending.grants.contains(*grant) {
+            return Err(format!(
+                "grant '{grant}' was not allocated to promise {id}"
+            ));
+        }
+    }
+    // Consume the promise: a second resolution has nothing left to resolve.
+    g.pending.remove(&id);
+    let cap = Capability {
+        endpoint: endpoint.to_string(),
+        id,
+        grants: grants.iter().map(|s| s.to_string()).collect(),
+    };
     g.caps.insert(
         id,
         CapRecord {
-            owner: owner.to_string(),
+            owner: caller.to_string(),
             endpoint: endpoint.to_string(),
-            grants: grants.iter().map(|s| s.to_string()).collect(),
+            grants: cap.grants.clone(),
             revoked: false,
         },
     );
-    true
+    Ok(cap)
 }
 
-/// Register a not-yet-resolved pipeline promise (eager capability id).
-pub fn new_promise(endpoint: &str) -> PendingCapability {
+/// Register a not-yet-resolved pipeline promise (eager capability id), owned by
+/// `owner` and bounded to `grants`.
+pub fn new_promise(owner: &str, endpoint: &str, grants: &[&str]) -> PendingCapability {
     let id = CAP_ID.fetch_add(1, Ordering::SeqCst);
     let call = CALL_SEQ.fetch_add(1, Ordering::SeqCst);
     let p = PendingCapability {
         endpoint: endpoint.to_string(),
         id,
         from_call: call,
+        owner: owner.to_string(),
+        grants: grants.iter().map(|s| s.to_string()).collect(),
     };
     let mut g = registry();
     g.pending.insert(id, p.clone());
     p
 }
 
-/// Revoke a capability id. A revoked id is refused on any subsequent call.
-pub fn revoke(id: u64) -> bool {
+/// Revoke a capability id, or cancel a pending promise. Only the principal that
+/// minted or allocated the id may revoke it, so a guessed id is not an authority
+/// over someone else's capability. A revoked id is refused on any later call.
+pub fn revoke(caller: &str, id: u64) -> bool {
     let mut g = registry();
-    match g.caps.get_mut(&id) {
-        Some(rec) => {
-            rec.revoked = true;
+    if let Some(rec) = g.caps.get_mut(&id) {
+        if rec.owner != caller {
+            return false;
+        }
+        rec.revoked = true;
+        return true;
+    }
+    match g.pending.get(&id) {
+        Some(p) if p.owner == caller => {
+            g.pending.remove(&id);
             true
         }
-        None => {
-            g.pending.remove(&id);
-            false
-        }
+        _ => false,
     }
 }
 
@@ -372,7 +433,7 @@ mod tests {
         let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
         reset();
         let cap = mint("alice", "svc", &["echo"]);
-        assert!(revoke(cap.id));
+        assert!(revoke("alice", cap.id));
         let r = invoke(
             "alice",
             &CapCall {
@@ -419,10 +480,10 @@ mod tests {
     fn promise_is_eager_and_resolvable() {
         let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
         reset();
-        let p = new_promise("svc");
+        let p = new_promise("alice", "svc", &["echo"]);
         // The id is assigned eagerly (pipelining): a call may reference it before
         // the producing call resolves. Resolve it into a real capability.
-        assert!(resolve_promise("alice", p.id, "svc", &["echo"]));
+        assert!(resolve_promise("alice", p.id, "svc", &["echo"]).is_ok());
         let r = invoke(
             "alice",
             &CapCall {
@@ -469,7 +530,7 @@ mod tests {
         );
         assert!(!denied.ok, "ungranted method must be refused");
         // Revoked id is refused.
-        assert!(revoke(cap.id));
+        assert!(revoke("operator", cap.id));
         let revoked = invoke(
             "operator",
             &CapCall {
@@ -486,6 +547,86 @@ mod tests {
             revoked.error.unwrap_or_default().contains("revoked"),
             "revoke should surface in the reason"
         );
+        reset();
+    }
+
+    /// D03: a guessed promise id is not an authority — only an existing promise
+    /// can be resolved, and only once.
+    #[test]
+    fn invented_or_reused_promise_id_is_refused() {
+        let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
+        reset();
+        assert!(resolve_promise("alice", 999_999, "svc", &["echo"]).is_err());
+
+        let p = new_promise("alice", "svc", &["echo"]);
+        assert!(resolve_promise("alice", p.id, "svc", &["echo"]).is_ok());
+        let second = resolve_promise("alice", p.id, "svc", &["echo"]);
+        assert!(second.is_err(), "a promise resolves exactly once");
+        reset();
+    }
+
+    /// D03: another principal cannot resolve, invoke or revoke A's capability,
+    /// even holding the exact id.
+    #[test]
+    fn another_principal_holds_no_authority_over_a_capability() {
+        let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
+        reset();
+        let cap = mint("alice", "svc", &["echo"]);
+        let p = new_promise("alice", "svc", &["echo"]);
+
+        let stolen = resolve_promise("bob", p.id, "svc", &["echo"]);
+        assert!(stolen.is_err(), "foreign resolve must be refused");
+        assert!(!revoke("bob", cap.id), "foreign revoke must be refused");
+
+        let invoked = invoke(
+            "bob",
+            &CapCall {
+                cap_id: cap.id,
+                method: "echo".into(),
+                args: serde_json::Value::Null,
+            },
+        );
+        assert!(!invoked.ok);
+
+        // Alice's capability is untouched by the attempts.
+        let alice = invoke(
+            "alice",
+            &CapCall {
+                cap_id: cap.id,
+                method: "echo".into(),
+                args: serde_json::json!(1),
+            },
+        );
+        assert!(alice.ok, "{alice:?}");
+        assert!(resolve_promise("alice", p.id, "svc", &["echo"]).is_ok());
+        reset();
+    }
+
+    /// D03: resolution cannot widen the promise's grants or move its endpoint.
+    #[test]
+    fn resolution_cannot_escalate_grants_or_swap_endpoint() {
+        let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
+        reset();
+        let p = new_promise("alice", "svc", &["echo"]);
+        let escalated = resolve_promise("alice", p.id, "svc", &["echo", "admin"]);
+        assert!(escalated.is_err(), "grant escalation must be refused");
+        let moved = resolve_promise("alice", p.id, "other-svc", &["echo"]);
+        assert!(moved.is_err(), "endpoint swap must be refused");
+        // The refusals did not consume the promise.
+        let ok = resolve_promise("alice", p.id, "svc", &["echo"]);
+        assert!(ok.is_ok(), "{ok:?}");
+        reset();
+    }
+
+    /// D03: revoking a promise (its parent authority) cancels it, so a later
+    /// resolve finds nothing.
+    #[test]
+    fn revoked_promise_cannot_be_resolved() {
+        let _g = CAPRPC_TESTS_LOCK.lock().unwrap();
+        reset();
+        let p = new_promise("alice", "svc", &["echo"]);
+        assert!(revoke("alice", p.id));
+        assert!(resolve_promise("alice", p.id, "svc", &["echo"]).is_err());
         reset();
     }
 }
