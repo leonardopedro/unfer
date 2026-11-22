@@ -1,0 +1,267 @@
+# Run: cadabra2-cli -q -n docs/phi4_mehler.cdb
+# Canonical unit-width Mehler coordinates, ordered actions on polynomials times the Gaussian.
+# SymPy handles exact scalar derivatives; Cadabra independently expands the two-site vertex.
+import json
+import sympy as sp
+
+def check(name, expr):
+    result = sp.simplify(expr)
+    if result != 0:
+        raise AssertionError(name + ": " + str(result))
+    print("PHI4_CHECK|" + name + "|0")
+
+# Each deliberate mutation must change an observable exact value.
+controls = {}
+def distinguish(name, correct, mutant, at):
+    difference = sp.simplify((correct-mutant).subs(at))
+    assert difference.is_zero is False, name
+    controls[name] = str(difference)
+    print("PHI4_CONTROL|" + name + "|" + str(difference))
+
+q = sp.Symbol("q",real=True)
+v, lam, a = sp.symbols("v lam a", positive=True, real=True)
+x, y, u, w, p, speed = sp.symbols("x y u w p speed", real=True)
+def potential(field):
+    return lam * (field**2 - v**2)**2 / 4
+
+# Local unit-volume independent jets j1,j2,j3; the single active momentum belongs to q.
+jets = sp.symbols("j1:4", real=True)
+jet_energy = sum(j**2 for j in jets)/2 + potential(q)
+lag = speed**2/2 - jet_energy
+canonical = sp.diff(lag, speed)
+check("jet-canonical-momentum", canonical - speed)
+check("jet-legendre", (p*speed - lag).subs(speed, p) - (p**2/2 + jet_energy))
+
+# Momentum from the site action with cell volume a^3, before canonical rescaling.
+cell_lag = a**3 * (speed**2/2 - potential(q))
+density_p = sp.diff(cell_lag, speed)
+check("site-canonical-momentum", density_p - a**3*speed)
+check("site-legendre", ((density_p*speed-cell_lag).subs(speed, p/a**sp.Rational(3,2))
+    .subs(q,x/a**sp.Rational(3,2))) - p**2/2 - lam*(x**2-a**3*v**2)**2/(4*a**3))
+check("constant", potential(0) - lam*v**4/4)
+check("shifted-wall", potential(v+x) - (lam*v**2*x**2+lam*v*x**3+lam*x**4/4))
+left, right = sp.symbols("left right")
+local = ((x-left)**2 + (right-x)**2)/(2*a**2) + lam*(x**2-a**3*v**2)**2/(4*a**3)
+check("site-force", -sp.diff(local,x) - ((left+right-2*x)/a**2-lam*x*(x**2/a**3-v**2)))
+
+# Orthogonal two-site Fourier coordinates. Two positive-direction links wrap to each other.
+mixed := (u+w)*(u+w)*(u+w)*(u+w)/4 + (u-w)*(u-w)*(u-w)*(u-w)/4.
+distribute(mixed)
+sort_product(mixed)
+collect_terms(mixed)
+assert len(mixed) == 3
+expected := (u*u*u*u + 6*u*u*w*w + w*w*w*w)/2.
+vertexdiff := @(mixed) - @(expected).
+distribute(vertexdiff)
+sort_product(vertexdiff)
+collect_terms(vertexdiff)
+if str(vertexdiff) != "0":
+    raise AssertionError("two-site quartic: " + str(vertexdiff))
+print("PHI4_CHECK|cadabra-mixed-vertex|0")
+sites = [(u+w)/sp.sqrt(2), (u-w)/sp.sqrt(2)]
+links = sum((sites[(i+1)%2]-sites[i])**2 for i in range(2))/(2*a**2)
+check("link-eigenvalue", links - (4/a**2)*w**2/2)
+distinguish("missing-mixed-vertex", sum(s**4 for s in sites), (u**4+w**4)/2, {u:1,w:1})
+wrong_links = sum((sites[(i+1)%2]+sites[i])**2 for i in range(2))/(2*a**2)
+distinguish("wrong-link-sign", links, wrong_links, {a:1,u:sp.sqrt(2),w:0})
+distinguish("missing-energy-constant", potential(q), potential(q)-lam*v**4/4, {lam:1,v:1,q:0})
+
+# Verify all ordered momentum tuples on a four-site ring, including its self-conjugate modes.
+from itertools import product
+for ks in product(range(4), repeat=4):
+    vertex = sum(sp.I**(site*sum(ks)) for site in range(4))/16
+    assert vertex == (sp.Rational(1,4) if sum(ks)%4 == 0 else 0)
+print("PHI4_CHECK|four-site-ordered-vertices-256|0")
+
+# Polynomial realization of b and b† in one Mehler coordinate.
+def annihilate(f):
+    return sp.diff(f,x)
+def create(f):
+    return sp.expand(x*f-annihilate(f))
+def position(f):
+    return sp.expand(create(f)+annihilate(f))
+def momentum(f):
+    return sp.I*(create(f)-annihilate(f))/2
+def power(op, f, n):
+    for _ in range(n):
+        f = op(f)
+    return f
+def normal_power(f, n):
+    return sum(sp.binomial(n,k)*power(create,power(annihilate,f,n-k),k) for k in range(n+1))
+def unit_action(f):
+    return sp.expand(momentum(momentum(f))/2 + (x**2-1)**2*f/4)
+
+f = sp.Function("f")(x)
+check("ccr",position(momentum(f))-momentum(position(f))-sp.I*f)
+check("ordered-quartic",power(position,f,4)-normal_power(f,4)-6*normal_power(f,2)-3*f)
+check("parity",unit_action(f.subs(x,-x))-unit_action(f).subs(x,-x))
+distinguish("missing-double-contraction", power(position,1,4),
+            normal_power(1,4)+6*normal_power(1,2), {x:0})
+
+# Decompose h He_n in unnormalized probabilists' Hermites. Squared normalized column entries
+# equal coeff^2 * m!/n!, without floating square roots. This uses the whole polynomial action.
+def column(n):
+    poly = unit_action(sp.hermite_prob(n,x))
+    coeff = {}
+    for m in range(n+4,-1,-1):
+        c = sp.expand(poly).coeff(x,m)
+        if c != 0:
+            coeff[m] = c
+            poly -= c*sp.hermite_prob(m,x)
+    assert sp.expand(poly) == 0
+    return coeff
+vac = column(0)
+odd = column(1)
+assert vac == {0:sp.Rational(5,8),2:sp.Rational(7,8),4:sp.Rational(1,4)}
+assert odd == {1:sp.Rational(23,8),3:sp.Rational(15,8),5:sp.Rational(1,4)}
+print("PHI4_CHECK|even-and-odd-columns|0")
+# At cutoff zero (P Q P)^4=0 while the vacuum expectation of Q^4 is 3.
+check("window-exit-and-return", sp.integrate(x**4*sp.exp(-x**2/2),
+      (x,-sp.oo,sp.oo))/sp.sqrt(2*sp.pi)-3)
+
+# Apply C†_i A_j in the unnormalized outer monomial representation (annihilation = derivative).
+y0,y2,y4 = sp.symbols("y0 y2 y4")
+image = vac[0]*y0 + vac[2]*y2 + vac[4]*y4
+for n in range(3):
+    check("outer-column-"+str(n), image*sp.diff(y0**n,y0) -
+          (0 if n == 0 else n*y0**(n-1)*image))
+    check("outer-shift-"+str(n), y0*sp.diff(y0**n,y0)-n*y0**n)
+check("lift-product-cross-term",y0*sp.diff(y0*sp.diff(y0**2,y0),y0)
+      -y0*sp.diff(y0**2,y0)-2*y0**2)
+
+# Actual compressed resolvent for the one-dimensional vacuum window, unit-width one site.
+gamma = sp.symbols("gamma",positive=True)
+reduced_resolvent = 1/(gamma+sp.I*vac[0])
+generator = sp.simplify(gamma-1/reduced_resolvent)
+check("rank-one-hashimoto-generator",generator+sp.I*sp.Rational(5,8))
+variance = sum(c**2*sp.factorial(m) for m,c in vac.items() if m != 0)
+check("full-action-defect-squared",variance-sp.Rational(97,32))
+
+# A nontrivial rational compression. Work in the even two-site window (00,20,02).
+# The Hermite Gram matrix supplies the physical metric in these unnormalized coordinates.
+window = [(0,0),(2,0),(0,2)]
+def herm2(i,j):
+    return sp.hermite_prob(i,u)*sp.hermite_prob(j,w)
+modes = [(i,n-i) for n in range(7) for i in range(n+1)]
+sitewall = sum(potential(s) for s in sites).subs({lam:1,v:1})
+def two_site_column(i,j):
+    f = herm2(i,j)
+    kinetic = 0
+    for coord in (u,w):
+        df = sp.diff(f,coord)-coord*f/2
+        kinetic -= (sp.diff(df,coord)-coord*df/2)/2
+    poly = sp.Poly(kinetic+(links.subs(a,1)+sitewall)*f,u,w)
+    coeffs = {}
+    for pair in reversed(modes):
+        coeff = poly.coeff_monomial(pair)
+        if coeff:
+            coeffs[pair] = coeff
+            poly -= sp.Poly(coeff*herm2(*pair),u,w)
+    assert poly.is_zero
+    return coeffs
+cols = [two_site_column(*pair) for pair in window]
+def rows(basis):
+    return sp.Matrix([[col.get(pair,0) for col in cols] for pair in basis])
+def gram(basis):
+    return sp.diag(*(sp.factorial(i)*sp.factorial(j) for i,j in basis))
+hwin = rows(window)
+metric = gram(window)
+assert metric*hwin == hwin.T*metric
+seed = sp.eye(3)[:,0]
+first = (5*sp.eye(3)+sp.I*hwin).inv()*seed
+basis = seed.row_join(first)
+def clean(mat):
+    return mat.applyfunc(sp.cancel)
+metric2 = clean(basis.H*metric*basis)
+dual = clean(metric2.inv()*basis.H*metric)
+assert clean(dual*basis) == sp.eye(2)
+bounded = clean(dual*(3*sp.eye(3)+sp.I*hwin).inv()*basis)
+reduced = clean(3*sp.eye(2)-bounded.inv())
+assert clean(reduced+sp.I*dual*hwin*basis) != sp.zeros(2)
+# Resolvent leakage gives the exact dissipation in the physical reduced metric.
+# For Z=R V B^-1 we have V+ Z=I and (3I+i hwin)Z=V B^-1.
+zlift = clean((3*sp.eye(3)+sp.I*hwin).inv()*basis*bounded.inv())
+leak = clean(zlift-basis)
+assert clean(reduced.H*metric2+metric2*reduced + 6*leak.H*metric*leak) == sp.zeros(2)
+print("PHI4_CHECK|two-site-forward-contractivity|0")
+embed = sp.Matrix([[int(pair == state) for state in window] for pair in modes])
+defect = clean(sp.I*embed*basis*reduced-rows(modes)*basis)
+defect_sq = clean(defect.H*gram(modes)*defect)
+# Coordinate-independent Hilbert-Schmidt norm of the full defect (squared).
+frobenius_sq = sp.cancel(sp.trace(metric2.inv()*defect_sq))
+outside = [pair for pair in modes if pair not in window]
+first_tail_sq = (rows(outside)[:,0].T*gram(outside)*rows(outside)[:,0])[0]
+assert frobenius_sq > 0 and first_tail_sq > 0
+print("PHI4_CHECK|two-site-rational-compression-and-full-defect|0")
+
+# Orthogonally split the full residual into a rational-compression error within
+# the window and the discarded occupation rows. Use the same trajectory for both.
+inside = clean(embed*embed.T*defect)
+outside_defect = clean(defect-inside)
+inside_gram = clean(inside.H*gram(modes)*inside)
+outside_gram = clean(outside_defect.H*gram(modes)*outside_defect)
+assert clean(inside_gram+outside_gram) == defect_sq
+def trace_physical(g):
+    return sp.cancel(sp.trace(metric2.inv()*g))
+split = {"inside":inside_gram, "outside":outside_gram}
+check("two-site-defect-orthogonal-split", trace_physical(inside_gram)
+      + trace_physical(outside_gram)-frobenius_sq)
+
+# Certify a short-time return interval against the full two-site evolution.
+# Norms use the retained Gram metric; the defect uses every output occupation.
+seed2 = sp.Matrix([1,0])
+def norm_sq(vect, weight):
+    return sp.cancel((vect.H*weight*vect)[0])
+velocity = clean(reduced*seed2)
+acceleration = clean(reduced*velocity)
+v_full = clean(basis*velocity)
+transverse = clean(v_full-seed*(seed.H*metric*v_full)[0])
+rates_sq = {
+    "initial_defect":defect_sq[0,0], "defect_hs":frobenius_sq,
+    "speed":norm_sq(velocity,metric2), "acceleration":norm_sq(acceleration,metric2),
+    "transverse_speed":norm_sq(transverse,metric)}
+Q = sp.Rational
+assert rates_sq["initial_defect"] <= Q(178,100)**2
+assert rates_sq["defect_hs"] <= Q(1602,100)**2 and rates_sq["speed"] <= Q(529,100)**2
+assert rates_sq["acceleration"] <= Q(8851,100)**2
+assert rates_sq["transverse_speed"] >= Q(417,100)**2
+t = Q(1,100)
+state_error = Q(178,100)*t + Q(1602,100)*Q(529,100)*t**2/2
+transverse_floor = Q(417,100)*t - Q(8851,100)*t**2/2 - state_error
+assert transverse_floor >= Q(3,200)
+seed_residual = rows(modes)[:,0] - embed*seed*hwin[0,0]
+variance2 = norm_sq(seed_residual,gram(modes))
+check("two-site-full-seed-variance",variance2-Q(337,16))
+return_lo = 1-variance2*t**2
+return_hi = 1-Q(3,200)**2
+assert 0 < return_lo < return_hi < 1
+print("PHI4_CHECK|two-site-return-interval-arithmetic|0")
+
+def exact_text(expr):
+    return str(sp.expand(expr))
+fixture = {
+    "schema":"phi4-mehler-exact/v1", "mutation_differences":controls, "basis":"He_n (unnormalized); norm^2=n!",
+    "jet_inner":"p^2/2 + sum_j jet_j^2/2 + lam*(q^2-v^2)^2/4",
+    "grid":[2,1,1], "boundary":"periodic positive links", "energy_zero":"square retained",
+    "commuting_coefficients":{
+        "wall_density":exact_text(potential(q)), "two_site_gradient":exact_text(links),
+        "two_site_wall":exact_text(sum(lam*(s**2-a**3*v**2)**2/(4*a**3) for s in sites))},
+    "unit_cell_columns":{str(n):{str(m):str(c) for m,c in col.items()}
+                         for n,col in [(0,vac),(1,odd)]},
+    "two_site_sirk":{"parameters":"a=lam=v=1", "window":window, "shifts":[5,3],
+        "rank":2, "forward_contractive":True,
+        "defect_split":{k:{"initial_squared":str(g[0,0]),"hs_squared":str(trace_physical(g))}
+                        for k,g in split.items()},
+        "short_time":{"t":str(t), "squared_rates":{k:str(v) for k,v in rates_sq.items()},
+            "state_error_upper":str(state_error), "transverse_norm_lower":str(transverse_floor),
+            "return_probability_interval":[str(return_lo),str(return_hi)]}, "metric":"Hermite factorial weights",
+        "window_gram_diagonal":[str(metric[i,i]) for i in range(3)],
+        "full_columns":[{"input":pair, "outputs":[[i,j,str(c)] for (i,j),c in sorted(col.items())]}
+                        for pair,col in zip(window,cols)],
+        "basis":"seed,(5I+iPHP)^-1 seed",
+        "generator":[[str(reduced[i,j]) for j in range(2)] for i in range(2)],
+        "full_defect_hilbert_schmidt_squared":str(frobenius_sq),
+        "seed_action_outside_window_squared":str(first_tail_sq)},
+    "rank_one":{"shift":"gamma>0","seed":"one outer excitation in He_0","generator":str(generator),
+                "full_defect_squared":str(variance)}}
+print("PHI4_FIXTURE|" + json.dumps(fixture,sort_keys=True))

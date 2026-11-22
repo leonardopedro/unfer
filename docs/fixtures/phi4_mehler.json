@@ -1,0 +1,245 @@
+{
+  "basis": "He_n (unnormalized); norm^2=n!",
+  "boundary": "periodic positive links",
+  "commuting_coefficients": {
+    "two_site_gradient": "2*w**2/a**2",
+    "two_site_wall": "a**3*lam*v**4/2 - lam*u**2*v**2/2 - lam*v**2*w**2/2 + lam*u**4/(8*a**3) + 3*lam*u**2*w**2/(4*a**3) + lam*w**4/(8*a**3)",
+    "wall_density": "lam*q**4/4 - lam*q**2*v**2/2 + lam*v**4/4"
+  },
+  "energy_zero": "square retained",
+  "grid": [
+    2,
+    1,
+    1
+  ],
+  "jet_inner": "p^2/2 + sum_j jet_j^2/2 + lam*(q^2-v^2)^2/4",
+  "mutation_differences": {
+    "missing-double-contraction": "3",
+    "missing-energy-constant": "1/4",
+    "missing-mixed-vertex": "3",
+    "wrong-link-sign": "-4"
+  },
+  "rank_one": {
+    "full_defect_squared": "97/32",
+    "generator": "-5*I/8",
+    "seed": "one outer excitation in He_0",
+    "shift": "gamma>0"
+  },
+  "schema": "phi4-mehler-exact/v1",
+  "two_site_sirk": {
+    "basis": "seed,(5I+iPHP)^-1 seed",
+    "defect_split": {
+      "inside": {
+        "hs_squared": "608593260375654076576/194751370804702245921",
+        "initial_squared": "64208153658128/387678327400657"
+      },
+      "outside": {
+        "hs_squared": "508924037/2009412",
+        "initial_squared": "3"
+      }
+    },
+    "forward_contractive": true,
+    "full_columns": [
+      {
+        "input": [
+          0,
+          0
+        ],
+        "outputs": [
+          [
+            0,
+            0,
+            "13/4"
+          ],
+          [
+            0,
+            2,
+            "23/8"
+          ],
+          [
+            0,
+            4,
+            "1/8"
+          ],
+          [
+            2,
+            0,
+            "7/8"
+          ],
+          [
+            2,
+            2,
+            "3/4"
+          ],
+          [
+            4,
+            0,
+            "1/8"
+          ]
+        ]
+      },
+      {
+        "input": [
+          2,
+          0
+        ],
+        "outputs": [
+          [
+            0,
+            0,
+            "7/4"
+          ],
+          [
+            0,
+            2,
+            "3/2"
+          ],
+          [
+            2,
+            0,
+            "37/4"
+          ],
+          [
+            2,
+            2,
+            "47/8"
+          ],
+          [
+            2,
+            4,
+            "1/8"
+          ],
+          [
+            4,
+            0,
+            "15/8"
+          ],
+          [
+            4,
+            2,
+            "3/4"
+          ],
+          [
+            6,
+            0,
+            "1/8"
+          ]
+        ]
+      },
+      {
+        "input": [
+          0,
+          2
+        ],
+        "outputs": [
+          [
+            0,
+            0,
+            "23/4"
+          ],
+          [
+            0,
+            2,
+            "69/4"
+          ],
+          [
+            0,
+            4,
+            "31/8"
+          ],
+          [
+            0,
+            6,
+            "1/8"
+          ],
+          [
+            2,
+            0,
+            "3/2"
+          ],
+          [
+            2,
+            2,
+            "31/8"
+          ],
+          [
+            2,
+            4,
+            "3/4"
+          ],
+          [
+            4,
+            2,
+            "1/8"
+          ]
+        ]
+      }
+    ],
+    "full_defect_hilbert_schmidt_squared": "66577730826550897732871/259668494406269661228",
+    "generator": [
+      [
+        "-1975087311464981/387678327400657 - 7803020777077170*I/387678327400657",
+        "-1"
+      ],
+      [
+        "-36582638530574935/3101426619205256 + 39094647255223290*I/387678327400657",
+        "5"
+      ]
+    ],
+    "metric": "Hermite factorial weights",
+    "parameters": "a=lam=v=1",
+    "rank": 2,
+    "seed_action_outside_window_squared": "3",
+    "shifts": [
+      5,
+      3
+    ],
+    "short_time": {
+      "return_probability_interval": [
+        "159663/160000",
+        "39991/40000"
+      ],
+      "squared_rates": {
+        "acceleration": "75339036499256870978268144523520649/9618847074314944005261058025536",
+        "defect_hs": "66577730826550897732871/259668494406269661228",
+        "initial_defect": "1227243135860099/387678327400657",
+        "speed": "86475734973080181/3101426619205256",
+        "transverse_speed": "108061083758287089/6202853238410512"
+      },
+      "state_error_upper": "2203729/100000000",
+      "t": "1/100",
+      "transverse_norm_lower": "1523721/100000000"
+    },
+    "window": [
+      [
+        0,
+        0
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        0,
+        2
+      ]
+    ],
+    "window_gram_diagonal": [
+      "1",
+      "2",
+      "2"
+    ]
+  },
+  "unit_cell_columns": {
+    "0": {
+      "0": "5/8",
+      "2": "7/8",
+      "4": "1/4"
+    },
+    "1": {
+      "1": "23/8",
+      "3": "15/8",
+      "5": "1/4"
+    }
+  }
+}
