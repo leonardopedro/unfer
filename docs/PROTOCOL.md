@@ -1603,6 +1603,10 @@ Every invocation is audited in the worker (bounded trail).
 | UK-4912 | KernelLangDenied           | Error  | mathed `\kernel`: the segment's language is not in the worker's language allowlist (`MATHED_KERNEL_LANGS`, default empty = deny everything). |
 | UK-4913 | KernelFailed               | Error  | mathed `\kernel`: the kernel execution failed — module launch failure, timeout, unparseable output, or a kernel-side error output (details in the message). |
 | UK-5000 | Internal                 | Fatal    | An internal invariant was violated; this is a bug.                    |
+| UK-5011 | StorageFailed            | Error    | A durable write the transition depends on failed (I/O error, full disk, read-only store). The node halts rather than recording a domain verdict it cannot justify. |
+| UK-8101 | RequestConflict          | Error    | The same durable request id was retried with different bytes; one id names one action, so neither version is applied. |
+| UK-8102 | RequestBelowRetention    | Error    | The request id is at or below the retained admission floor; the server cannot distinguish a retry from a first delivery and refuses rather than applying it twice. |
+| UK-8103 | RequestQuota             | Error    | Admission is at capacity and no client has acknowledged a retention floor. Backpressure, not a verdict on the request. |
 | UK-6001 | ConsensusNotReady        | Error    | The consensus state machine is not initialized.                      |
 | UK-6002 | DuplicateTransaction     | Error    | A transaction with the same sequence number was already applied.     |
 | UK-6003 | InvalidSignature         | Error    | The Ed25519 signature on a transaction failed verification.          |

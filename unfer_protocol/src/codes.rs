@@ -352,10 +352,43 @@ impl Code {
     /// in the offer (the coin is the payment for this exact attribution).
     pub const ATTRIBUTION_FEE_MISMATCH: Code = Code(7512);
 
+    /// D06: the same request id was retried with different bytes. One id names
+    /// one action, so neither version is applied and the conflict is reported
+    /// to the caller instead.
+    pub const REQUEST_CONFLICT: Code = Code(8101);
+
+    /// D06: the request id is at or below the retained admission floor. The
+    /// server no longer remembers the request, so it cannot tell a retry from a
+    /// first delivery and refuses rather than applying it a second time.
+    pub const REQUEST_BELOW_RETENTION: Code = Code(8102);
+
+    /// D06: admission is at capacity and no client has acknowledged a retention
+    /// floor. This is backpressure, not a verdict on the request.
+    pub const REQUEST_QUOTA: Code = Code(8103);
+
     pub const INTERNAL: Code = Code(5000);
+
+    /// D07: a durable write the transition depends on failed (I/O error, full
+    /// disk, a read-only store). The node cannot promise the transition is
+    /// recorded, so this is never a verdict on the entry: an applying node must
+    /// halt rather than advance past an entry it could not make durable.
+    pub const STORAGE_FAILED: Code = Code(5011);
 
     pub fn raw(self) -> u32 {
         self.0
+    }
+
+    /// Whether this code reports a failure of **this node** — its storage, its
+    /// memory budget, an interrupted durable checkpoint — rather than a verdict
+    /// on the entry being applied.
+    ///
+    /// The distinction decides what an applying node may do next: a domain
+    /// verdict is a stable property of the entry (record it, advance the slot),
+    /// while an infrastructure failure may say nothing at all about the entry
+    /// (record a halt, apply nothing further). Classification is by code family
+    /// so that a new domain code cannot silently be treated as infrastructure.
+    pub fn is_infrastructure(self) -> bool {
+        matches!(self.0, 1010 | 1011 | 3002 | 5000 | 5011)
     }
 }
 
@@ -653,6 +686,11 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             "An internal invariant was violated; this is a bug, not a user error.",
         ),
         (
+            5011,
+            "StorageFailed",
+            "A durable write the transition depends on failed. The state may not match the committed prefix, so the node halts instead of reporting a domain verdict.",
+        ),
+        (
             6001,
             "ConsensusNotReady",
             "The consensus node has not yet synced to the latest committed sequence.",
@@ -942,6 +980,21 @@ pub fn all() -> &'static [(u32, &'static str, &'static str)] {
             "AttributionFeeMismatch",
             "The escrowed fee e-coin's face value does not match the negotiated fee.",
         ),
+        (
+            8101,
+            "RequestConflict",
+            "The same request id was retried with different bytes; one id names one action, so neither version is applied.",
+        ),
+        (
+            8102,
+            "RequestBelowRetention",
+            "The request id is at or below the retained admission floor; the server cannot tell a retry from a first delivery, so it refuses.",
+        ),
+        (
+            8103,
+            "RequestQuota",
+            "Admission is at capacity and no retention floor has been acknowledged; retry after the client acknowledges its settled requests.",
+        ),
     ]
 }
 
@@ -1039,6 +1092,28 @@ impl std::fmt::Display for Diagnostic {
 mod tests {
     use super::*;
     use crate::codes_consts::CONSTS;
+
+    #[test]
+    fn infrastructure_codes_are_the_node_failure_family() {
+        for code in [
+            Code::UNKNOWN_OUTCOME,
+            Code::DURABLE_NOT_CONFIGURED,
+            Code::OUT_OF_MEMORY_BUDGET,
+            Code::INTERNAL,
+            Code::STORAGE_FAILED,
+        ] {
+            assert!(code.is_infrastructure(), "{code} is a node failure");
+        }
+        for code in [
+            Code::BAD_JSON,
+            Code::CALL_DENIED,
+            Code::INVALID_SIGNATURE,
+            Code::CERT_AMOUNT_MISMATCH,
+            Code::MARKET_UNKNOWN_POOL,
+        ] {
+            assert!(!code.is_infrastructure(), "{code} is a verdict on the entry");
+        }
+    }
 
     #[test]
     fn every_code_constant_has_a_row_in_the_table() {

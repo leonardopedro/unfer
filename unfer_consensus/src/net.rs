@@ -21,7 +21,7 @@ use std::fs;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rust_quepaxa::network::{
@@ -104,27 +104,70 @@ impl LedgerFile {
         }
     }
 
-    /// Atomic (`write` + `rename`) persistence. Errors are propagated to the
-    /// caller instead of being swallowed: a failed snapshot write means the
-    /// committed log is not durable, which `NetConsensus::submit` must report.
+    /// D07 crash protocol: write the temporary file, **fsync it**, rename, then
+    /// fsync the parent directory.
+    ///
+    /// Without the first fsync a crash can leave the renamed file empty or
+    /// truncated (the rename is durable, its contents are not); without the
+    /// second the rename itself can be lost. Errors are propagated rather than
+    /// swallowed: a snapshot that is not durable is a commit the caller must not
+    /// report as durable.
     fn save(&self, snapshot: &LedgerSnapshot) -> Result<(), String> {
+        use std::io::Write;
         let bytes = serde_json::to_vec(snapshot)
             .map_err(|error| format!("ledger snapshot encode failed: {error}"))?;
+        let parent = self.path.parent().unwrap_or(Path::new("."));
         let temporary = self.path.with_extension("ledger.tmp");
-        fs::create_dir_all(self.path.parent().unwrap_or(Path::new("."))).map_err(|error| {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create ledger dir {}: {error}", parent.display()))?;
+        let mut file = fs::File::create(&temporary)
+            .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("could not fsync {}: {error}", temporary.display()))?;
+        drop(file);
+        fs::rename(&temporary, &self.path).map_err(|error| {
             format!(
-                "could not create ledger dir {}: {error}",
-                self.path.parent().unwrap_or(Path::new(".")).display()
+                "ledger snapshot publish failed for {}: {error}",
+                self.path.display()
             )
         })?;
-        fs::write(&temporary, &bytes)
-            .and_then(|()| fs::rename(&temporary, &self.path))
-            .map_err(|error| {
-                format!(
-                    "ledger snapshot write failed for {}: {error}",
-                    self.path.display()
-                )
-            })
+        // The rename is a directory entry: fsync the directory so the new name
+        // survives a power loss.
+        if let Ok(directory) = fs::File::open(parent) {
+            directory.sync_all().map_err(|error| {
+                format!("could not fsync ledger dir {}: {error}", parent.display())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// D07: everything the replicated ledger decides, behind **one** lock.
+///
+/// The committed bank, the queued payloads and the submission-id map used to be
+/// read under separate locks when persisting, so a crash could publish a
+/// snapshot assembled from two different instants — for example a payload
+/// already removed from `pending` and not yet in `bank`, which was a lost
+/// transaction that looked like a clean snapshot. One lock makes the snapshot a
+/// state that actually existed.
+#[derive(Debug, Clone, Default)]
+struct LedgerState {
+    bank: Vec<ConsensusTransaction>,
+    pending: BTreeMap<u64, ConsensusTransaction>,
+    committed_ids: BTreeMap<u64, u64>,
+}
+
+impl LedgerState {
+    fn snapshot(&self, next_id: u64, next_request_id: u64) -> LedgerSnapshot {
+        LedgerSnapshot {
+            bank: self.bank.clone(),
+            pending: self.pending.clone(),
+            committed_ids: self.committed_ids.clone(),
+            next_id,
+            next_request_id,
+        }
     }
 }
 
@@ -132,9 +175,7 @@ impl LedgerFile {
 /// the ordered committed log, and progress bookkeeping for the pump task.
 #[derive(Clone)]
 pub struct SharedLedger {
-    bank: Arc<RwLock<Vec<ConsensusTransaction>>>,
-    pending: Arc<Mutex<BTreeMap<u64, ConsensusTransaction>>>,
-    committed_ids: Arc<RwLock<BTreeMap<u64, u64>>>,
+    state: Arc<Mutex<LedgerState>>,
     next_id: Arc<AtomicU64>,
     request_seq: Arc<AtomicU64>,
     committed_tx: watch::Sender<u64>,
@@ -144,9 +185,10 @@ pub struct SharedLedger {
 
 impl std::fmt::Debug for SharedLedger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = self.state.lock().unwrap();
         f.debug_struct("SharedLedger")
-            .field("committed", &self.committed())
-            .field("pending", &self.pending.lock().unwrap().len())
+            .field("committed", &state.bank.len())
+            .field("pending", &state.pending.len())
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
             .field("with_file", &self.file.is_some())
             .finish()
@@ -168,9 +210,11 @@ impl SharedLedger {
         };
         let (committed_tx, _) = watch::channel(loaded.bank.len() as u64);
         let ledger = Self {
-            bank: Arc::new(RwLock::new(loaded.bank)),
-            pending: Arc::new(Mutex::new(loaded.pending)),
-            committed_ids: Arc::new(RwLock::new(loaded.committed_ids)),
+            state: Arc::new(Mutex::new(LedgerState {
+                bank: loaded.bank,
+                pending: loaded.pending,
+                committed_ids: loaded.committed_ids,
+            })),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
             request_seq: Arc::new(AtomicU64::new(loaded.next_request_id)),
             committed_tx,
@@ -180,9 +224,10 @@ impl SharedLedger {
         // Re-enqueue anything still queued so the pump re-proposes it after a
         // restart, then persist the reconciled view.
         let outstanding = ledger
-            .pending
+            .state
             .lock()
             .unwrap()
+            .pending
             .keys()
             .copied()
             .collect::<Vec<_>>();
@@ -198,8 +243,11 @@ impl SharedLedger {
     /// before it is acknowledged, so a durable submission survives a crash.
     fn allocate(&self, tx: ConsensusTransaction) -> Result<u64, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.pending.lock().unwrap().insert(id, tx);
-        self.persist()?;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.pending.insert(id, tx);
+            self.persist_state(&state)?;
+        }
         let _ = self.submitted.send(id);
         Ok(id)
     }
@@ -211,31 +259,31 @@ impl SharedLedger {
     /// nothing: the payload is still pending, and a restart (or the surviving
     /// peer) re-applies it exactly once.
     fn append(&self, ids: Vec<u64>) -> Result<(), String> {
-        let mut appended = Vec::new();
+        let committed;
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut state = self.state.lock().unwrap();
+            let mut appended = Vec::new();
             for id in ids {
-                if let Some(tx) = pending.remove(&id) {
+                if let Some(tx) = state.pending.remove(&id) {
                     appended.push((id, tx));
                 }
             }
+            if appended.is_empty() {
+                return Ok(());
+            }
+            for (id, tx) in appended {
+                state.bank.push(tx);
+                // D05: record id -> slot as each payload enters the bank, so the
+                // receipt answers with the position the payload landed at rather
+                // than the id it was reserved under.
+                let slot = state.bank.len() as u64;
+                state.committed_ids.insert(id, slot);
+            }
+            committed = state.bank.len() as u64;
+            // The decision is acknowledged only once one coherent snapshot of
+            // the new state is durable.
+            self.persist_state(&state)?;
         }
-        if appended.is_empty() {
-            return Ok(());
-        }
-        let mut bank = self.bank.write().unwrap();
-        // D05: record id -> slot as each payload enters the bank, so the receipt
-        // answers with the position the payload actually landed at rather than
-        // the id it was reserved under.
-        let mut slots = self.committed_ids.write().unwrap();
-        for (id, tx) in appended {
-            bank.push(tx);
-            slots.insert(id, bank.len() as u64);
-        }
-        let committed = bank.len() as u64;
-        drop(slots);
-        drop(bank);
-        self.persist()?;
         let _ = self.committed_tx.send(committed);
         Ok(())
     }
@@ -244,28 +292,32 @@ impl SharedLedger {
     /// from the durable map, still-queued ids from the pending store, and
     /// anything else is not known here -- never "refused".
     fn receipt(&self, id: u64) -> ReceiptState {
-        if let Some(slot) = self.committed_ids.read().unwrap().get(&id) {
+        let state = self.state.lock().unwrap();
+        if let Some(slot) = state.committed_ids.get(&id) {
             return ReceiptState::Committed(Slot(*slot));
         }
-        if self.pending.lock().unwrap().contains_key(&id) {
+        if state.pending.contains_key(&id) {
             return ReceiptState::Pending;
         }
         ReceiptState::Unknown(UnknownReason::Unsubmitted)
     }
 
     fn persist(&self) -> Result<(), String> {
-        if let Some(file) = &self.file {
-            let snapshot = LedgerSnapshot {
-                bank: self.bank.read().unwrap().clone(),
-                pending: self.pending.lock().unwrap().clone(),
-                committed_ids: self.committed_ids.read().unwrap().clone(),
-                next_id: self.next_id.load(Ordering::Relaxed),
-                next_request_id: self.request_seq.load(Ordering::Relaxed),
-            };
-            file.save(&snapshot)
-        } else {
-            Ok(())
-        }
+        let state = self.state.lock().unwrap();
+        self.persist_state(&state)
+    }
+
+    /// Persist one coherent snapshot. The caller holds the state lock, so the
+    /// bytes written are a state the ledger actually had, not a blend of two.
+    fn persist_state(&self, state: &LedgerState) -> Result<(), String> {
+        let Some(file) = &self.file else {
+            return Ok(());
+        };
+        let snapshot = state.snapshot(
+            self.next_id.load(Ordering::Relaxed),
+            self.request_seq.load(Ordering::Relaxed),
+        );
+        file.save(&snapshot)
     }
 
     /// Claim the next submission request id (monotonic across restarts).
@@ -275,13 +327,15 @@ impl SharedLedger {
 
     /// Number of transactions committed so far.
     pub fn committed(&self) -> u64 {
-        self.bank.read().unwrap().len() as u64
+        self.state.lock().unwrap().bank.len() as u64
     }
 
     /// Committed prefix in `(1-based_seq, tx)` form, from `from_seq` onward.
     pub fn committed_since(&self, from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
-        let bank = self.bank.read().unwrap();
-        bank.iter()
+        let state = self.state.lock().unwrap();
+        state
+            .bank
+            .iter()
             .enumerate()
             .filter(|(i, _)| *i as u64 >= from_seq.saturating_sub(1))
             .map(|(i, tx)| (i as u64 + 1, tx.clone()))
@@ -619,8 +673,8 @@ impl NetworkCluster {
     /// Convention marker: queued-but-uncommitted submissions carry a provisional
     /// seq reserved at submit time.
     pub fn pending_seq(&self) -> u64 {
-        self.ledger.bank.read().unwrap().len() as u64
-            + self.ledger.pending.lock().unwrap().len() as u64
+        let state = self.ledger.state.lock().unwrap();
+        state.bank.len() as u64 + state.pending.len() as u64
     }
 
     /// Gracefully stop every node and the pump. Ports are released once each
@@ -676,7 +730,7 @@ mod tests {
         ledger.append(vec![id]).expect("persist");
 
         assert_eq!(ledger.committed(), 1, "no double-apply");
-        assert!(ledger.pending.lock().unwrap().is_empty());
+        assert!(ledger.state.lock().unwrap().pending.is_empty());
     }
 
     #[test]
@@ -688,7 +742,7 @@ mod tests {
         // must still be pending so the surviving peer (or a restart) can move
         // it into the bank exactly once.
         assert!(
-            ledger.pending.lock().unwrap().contains_key(&id),
+            ledger.state.lock().unwrap().pending.contains_key(&id),
             "decided-but-unapplied value stays pending"
         );
         ledger.append(vec![id]).expect("persist");
@@ -721,7 +775,7 @@ mod tests {
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
         let ledger = SharedLedger::new(submitted, file).expect("reload");
         assert_eq!(ledger.committed(), 1, "committed log reloaded");
-        assert!(ledger.pending.lock().unwrap().contains_key(&in_flight));
+        assert!(ledger.state.lock().unwrap().pending.contains_key(&in_flight));
         ledger.append(vec![in_flight]).expect("persist");
         assert_eq!(ledger.committed(), 2);
         drop(ledger);
@@ -730,7 +784,7 @@ mod tests {
         let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
         let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir))).expect("reload");
         assert_eq!(ledger.committed(), 2);
-        assert!(ledger.pending.lock().unwrap().is_empty());
+        assert!(ledger.state.lock().unwrap().pending.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -22,6 +22,7 @@ pub mod mathbond_market;
 pub mod net;
 pub mod node;
 pub mod signing;
+pub mod storage;
 
 pub use attribution::{AttributionLedger, CreditState, badge_id, credit_id};
 pub use auction::AuctionLedger;
@@ -35,4 +36,7 @@ pub use lease::LeaderLease;
 pub use mathbond::MathBondLedger;
 pub use mathbond_market::MarketLedger;
 pub use node::ConsensusNode;
-pub use signing::{Keypair, sign_transaction, verify_transaction};
+pub use signing::{sign_transaction, verify_transaction, Keypair};
+pub use storage::{
+    JournalRecord, Recovery, RequestRecord, StorageError, TransitionLog, TransitionRecord,
+};

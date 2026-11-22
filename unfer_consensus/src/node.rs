@@ -14,8 +14,41 @@ use unfer_protocol::{
 use crate::auction::AuctionLedger;
 use crate::certs::{CertificateLedger, MintAuthority};
 use crate::engine::ConsensusEngine;
-use crate::idempotency::{IdempotencyStore, transaction_key};
+use crate::idempotency::{
+    transaction_key, AdmissionBook, AdmittedOutcome, IdempotencyStore, RequestId,
+};
 use crate::identity::IdentityRegistry;
+use crate::storage::{
+    DedupUpdate, JournalRecord, RecordedOutcome, RequestRecord, StorageError, TransitionLog,
+    TransitionRecord,
+};
+
+/// What one committed entry did to this node's state (D05/D07).
+#[derive(Debug, Clone)]
+enum ApplyFailure {
+    /// The entry is invalid as a matter of policy. This is a stable verdict,
+    /// recorded against the slot, and the slot still advances.
+    Refused(Refusal),
+    /// This node failed to evaluate or durably record the entry, so no verdict
+    /// exists. The slot does not advance and the node stops applying.
+    Halt(HaltReason),
+}
+
+impl ApplyFailure {
+    /// Classify by code family rather than by call site: an infrastructure code
+    /// means "this node could not tell", so it can never be recorded as a
+    /// refusal of the entry.
+    fn from(seq: u64, diagnostic: Diagnostic) -> Self {
+        if diagnostic.code.is_infrastructure() {
+            ApplyFailure::Halt(HaltReason::Failed {
+                slot: Slot(seq),
+                refusal: Refusal::from(diagnostic),
+            })
+        } else {
+            ApplyFailure::Refused(Refusal::from(diagnostic))
+        }
+    }
+}
 
 pub struct ConsensusNode {
     engine: Box<dyn ConsensusEngine>,
@@ -39,6 +72,22 @@ pub struct ConsensusNode {
     /// backwards slot). A halted node applies nothing further until restarted
     /// onto a coherent history, so it cannot silently skip entries.
     halted: Option<HaltReason>,
+    /// D06: which durable request ids this node has admitted, bound to the
+    /// bytes they carried, with a bounded retained window per client.
+    admissions: AdmissionBook,
+    /// D06: the request a submission was admitted under, so a settled
+    /// submission can be reported back to the book.
+    request_of: HashMap<u64, RequestId>,
+    /// D07: one durable log for transitions and request bindings. `None` means
+    /// the node is in-memory only, which is stated rather than implied.
+    journal: Option<TransitionLog>,
+    /// D07: transitions recovered from the journal that the engine log has not
+    /// yet been replayed over. Each is compared, never applied twice.
+    replay: Vec<TransitionRecord>,
+    replay_next: usize,
+    /// D07: the last journal failure, so a caller can tell the state the node
+    /// reports from the state it could promise.
+    journal_error: Option<String>,
 }
 
 impl ConsensusNode {
@@ -58,7 +107,60 @@ impl ConsensusNode {
             applied_seq: 0,
             refusals: BTreeMap::new(),
             halted: None,
+            admissions: AdmissionBook::default(),
+            request_of: HashMap::new(),
+            journal: None,
+            replay: Vec::new(),
+            replay_next: 0,
+            journal_error: None,
         }
+    }
+
+    /// D07: open a node over a durable transition log.
+    ///
+    /// The journal is recovered first (a torn tail is discarded, corruption is
+    /// refused), request bindings are rehydrated into the admission book, and
+    /// the recovered transitions become a comparison script: the caller's next
+    /// `sync()` replays the engine log and every already-recorded slot must
+    /// produce the outcome the journal says it did. A mismatch is a mismatched
+    /// checkpoint and halts the node rather than merging two histories.
+    pub fn open(
+        engine: Box<dyn ConsensusEngine>,
+        path: impl Into<std::path::PathBuf>,
+    ) -> Result<(Self, crate::storage::Recovery), StorageError> {
+        let (log, recovery) = TransitionLog::open(path)?;
+        let mut node = Self::new(engine);
+        node.journal = Some(log);
+        for record in &recovery.records {
+            if let JournalRecord::Request(request) = record {
+                node.admissions
+                    .record(&request.id, request.submission, request.digest);
+                node.admissions
+                    .settle(&request.id, request.outcome.clone());
+                node.request_of
+                    .insert(request.submission.0, request.id.clone());
+            }
+        }
+        node.replay = recovery
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                JournalRecord::Transition(transition) => Some(transition.clone()),
+                JournalRecord::Request(_) => None,
+            })
+            .collect();
+        Ok((node, recovery))
+    }
+
+    /// D07: whether this node writes a durable transition log.
+    pub fn is_durable(&self) -> bool {
+        self.journal.is_some()
+    }
+
+    /// D07: the most recent journal failure, if the node had to report a result
+    /// it could not make durable.
+    pub fn journal_error(&self) -> Option<&str> {
+        self.journal_error.as_deref()
     }
 
     /// Constructor with a configured certificate mint authority (ReFi exchange).
@@ -86,6 +188,93 @@ impl ConsensusNode {
     pub fn submit_tracked(&self, tx: ConsensusTransaction) -> Result<SubmissionId, Diagnostic> {
         self.verify_ingress(&tx)?;
         self.engine.submit(tx).map(SubmissionId)
+    }
+
+    /// D06: submit under the caller's own durable request id.
+    ///
+    /// This is the admission point. The id is checked against what this node
+    /// recorded for it, so a retry after a timeout replays the settled result
+    /// instead of submitting a second action:
+    ///
+    /// * first sight -> submit, and record the admission;
+    /// * same id, same bytes -> the recorded submission (or its rejection);
+    /// * same id, different bytes -> UK-8101, nothing applied;
+    /// * at or below the retained floor -> UK-8102, since a forgotten request
+    ///   cannot be distinguished from a first delivery;
+    /// * book full, no acknowledged floor -> UK-8103 (backpressure).
+    ///
+    /// The book is in memory in D06 and is rebuilt by replaying the log; making
+    /// it survive a crash in the same transition as the applied state is D07.
+    pub fn submit_request(
+        &mut self,
+        id: &RequestId,
+        tx: ConsensusTransaction,
+    ) -> Result<SubmissionId, Diagnostic> {
+        let digest = crate::idempotency::payload_digest(&tx)?;
+        match self.admissions.admit(id, digest) {
+            crate::idempotency::AdmissionVerdict::Fresh => {
+                let submission = self.submit_tracked(tx)?;
+                self.admissions.record(id, submission, digest);
+                self.request_of.insert(submission.0, id.clone());
+                Ok(submission)
+            }
+            crate::idempotency::AdmissionVerdict::Duplicate(
+                AdmittedOutcome::Pending { submission },
+            )
+            | crate::idempotency::AdmissionVerdict::Duplicate(AdmittedOutcome::Accepted {
+                submission,
+                ..
+            }) => Ok(submission),
+            crate::idempotency::AdmissionVerdict::Duplicate(AdmittedOutcome::Rejected(refusal)) => {
+                Err(refusal.diagnostic())
+            }
+            crate::idempotency::AdmissionVerdict::Conflict { admitted, offered } => {
+                Err(Diagnostic::new(
+                    Code::REQUEST_CONFLICT,
+                    format!(
+                        "request {} was already admitted for {} and cannot be retried with {}: \
+                         one request id names one action",
+                        id.label(),
+                        hex::encode(admitted),
+                        hex::encode(offered)
+                    ),
+                    Severity::Error,
+                ))
+            }
+            crate::idempotency::AdmissionVerdict::BelowRetention { floor } => {
+                Err(Diagnostic::new(
+                    Code::REQUEST_BELOW_RETENTION,
+                    format!(
+                        "request {} is at or below the retained floor {floor}: this node can no \
+                         longer tell a retry from a first delivery, so it refuses rather than \
+                         applying the action twice",
+                        id.label()
+                    ),
+                    Severity::Error,
+                ))
+            }
+            crate::idempotency::AdmissionVerdict::AtCapacity { capacity } => {
+                Err(Diagnostic::new(
+                    Code::REQUEST_QUOTA,
+                    format!(
+                        "admission is at capacity ({capacity} retained requests) and no client \
+                         has acknowledged a retention floor; acknowledge settled requests and retry"
+                    ),
+                    Severity::Error,
+                ))
+            }
+        }
+    }
+
+    /// D06: the book (test/QA surface for retention and quota).
+    pub fn admissions(&self) -> &AdmissionBook {
+        &self.admissions
+    }
+
+    /// D06: acknowledge every request of this client at or below `through`, so
+    /// the retained window can shrink. Returns how many records were dropped.
+    pub fn acknowledge_requests(&mut self, id: &RequestId, through: u64) -> usize {
+        self.admissions.acknowledge(id, through)
     }
 
     /// A threshold mint authority signs with an Arctic aggregate signature
@@ -143,7 +332,51 @@ impl ConsensusNode {
                 self.halted = Some(halt);
                 return Err(diagnostic);
             }
-            if let Err(refusal) = self.apply_committed(seq, &tx) {
+            let refused = match self.apply_committed(seq, &tx) {
+                Ok(()) => None,
+                Err(ApplyFailure::Refused(refusal)) => Some(refusal),
+                Err(ApplyFailure::Halt(halt)) => {
+                    // D07: a failure of *this node* (storage, budget) is not a
+                    // verdict on the entry. The slot was not applied, so the
+                    // watermark stops before it and nothing after it applies.
+                    let diagnostic = halt.diagnostic();
+                    self.halted = Some(halt);
+                    return Err(diagnostic);
+                }
+            };
+            // D07: the transition is durable before the watermark moves, and a
+            // slot the journal already recorded must reproduce its outcome.
+            let digest = crate::idempotency::payload_digest(&tx).map_err(|diagnostic| {
+                let halt = HaltReason::Failed {
+                    slot: Slot(seq),
+                    refusal: Refusal::from(diagnostic),
+                };
+                let rendered = halt.diagnostic();
+                self.halted = Some(halt);
+                rendered
+            })?;
+            let outcome = match &refused {
+                None => RecordedOutcome::Applied,
+                Some(refusal) => RecordedOutcome::refused(refusal.code, &refusal.message),
+            };
+            let dedup = match &refused {
+                None => transaction_key(&tx).map(|key| DedupUpdate { key, slot: seq }),
+                Some(_) => None,
+            };
+            if let Err(error) = self.persist_transition(seq, digest, &outcome, dedup) {
+                let halt = HaltReason::Failed {
+                    slot: Slot(seq),
+                    refusal: Refusal::new(
+                        Code::STORAGE_FAILED,
+                        format!("could not record slot {seq} durably: {error}"),
+                    ),
+                };
+                let diagnostic = halt.diagnostic();
+                self.journal_error = Some(error.to_string());
+                self.halted = Some(halt);
+                return Err(diagnostic);
+            }
+            if let Some(refusal) = refused {
                 report.refusals.push((Slot(seq), refusal.clone()));
                 self.refusals.insert(seq, refusal);
             }
@@ -154,16 +387,77 @@ impl ConsensusNode {
         Ok(report)
     }
 
+    /// D07: make one transition durable. During recovery replay a slot the
+    /// journal already recorded is **compared** instead of written again; a
+    /// mismatch (different command bytes or a different decision) is a
+    /// mismatched checkpoint and is reported as corruption rather than merged.
+    fn persist_transition(
+        &mut self,
+        seq: u64,
+        digest: [u8; 32],
+        outcome: &RecordedOutcome,
+        dedup: Option<DedupUpdate>,
+    ) -> Result<(), StorageError> {
+        if let Some(record) = self.replay.get(self.replay_next) {
+            if record.slot == seq {
+                self.replay_next += 1;
+                if record.command_digest != digest {
+                    return Err(StorageError::Corrupt {
+                        offset: 0,
+                        reason: format!(
+                            "slot {seq}: the journal recorded command {} but the engine log has {}",
+                            hex::encode(record.command_digest),
+                            hex::encode(digest)
+                        ),
+                    });
+                }
+                if record.outcome != *outcome {
+                    return Err(StorageError::Corrupt {
+                        offset: 0,
+                        reason: format!(
+                            "slot {seq}: the journal recorded {:?}, replay produced {outcome:?}",
+                            record.outcome
+                        ),
+                    });
+                }
+                return Ok(());
+            }
+            if record.slot < seq {
+                return Err(StorageError::Corrupt {
+                    offset: 0,
+                    reason: format!(
+                        "slot {seq}: the journal is missing slot {}, which the engine log skipped",
+                        record.slot
+                    ),
+                });
+            }
+        }
+        let Some(journal) = self.journal.as_mut() else {
+            return Ok(());
+        };
+        journal.append(&JournalRecord::Transition(TransitionRecord {
+            slot: seq,
+            state_version: seq,
+            command_digest: digest,
+            outcome: outcome.clone(),
+            dedup,
+        }))
+    }
+
     /// Re-verify a committed entry and apply it. The signature check is
     /// repeated here on purpose: ingress verification only covers what *this*
     /// node submitted, and every node must independently refuse a tampered
     /// entry that arrives through the log.
-    fn apply_committed(&mut self, seq: u64, tx: &ConsensusTransaction) -> Result<(), Refusal> {
+    fn apply_committed(
+        &mut self,
+        seq: u64,
+        tx: &ConsensusTransaction,
+    ) -> Result<(), ApplyFailure> {
         if let Err(diagnostic) = self.verify_ingress(tx) {
-            return Err(Refusal::from(diagnostic));
+            return Err(ApplyFailure::from(seq, diagnostic));
         }
         self.apply_transaction(seq, tx)
-            .map_err(Refusal::from)
+            .map_err(|diagnostic| ApplyFailure::from(seq, diagnostic))
     }
 
     /// D05: wait (bounded) for a submission to be committed **and applied**,
@@ -171,6 +465,59 @@ impl ConsensusNode {
     /// node's state; a refusal comes back as [`ReceiptState::Refused`], and a
     /// deadline as [`UnknownReason::TimedOut`] -- never as success.
     pub fn settle(&mut self, id: SubmissionId, timeout: Duration) -> Receipt {
+        let receipt = self.resolve(id, timeout);
+        // D07: the request binding is made durable *before* the caller is told
+        // the outcome, because that binding is what lets a retry be answered
+        // after a restart. If it cannot be recorded, the honest answer is
+        // "applied, but not recorded" -- never a refusal, and never a silent
+        // claim that a retry will be recognised.
+        if let Err(error) = self.remember_settled(&receipt) {
+            self.journal_error = Some(error.to_string());
+            return Receipt::unknown(receipt.id, UnknownReason::Unrecorded);
+        }
+        receipt
+    }
+
+    /// D06/D07: feed a settled outcome back to the admission book and the
+    /// durable log, so a retry under the same request id replays it instead of
+    /// submitting again. A pending or timed-out submission stays pending: it
+    /// may still commit.
+    fn remember_settled(&mut self, receipt: &Receipt) -> Result<(), StorageError> {
+        let Some(request) = self.request_of.get(&receipt.id.0).cloned() else {
+            return Ok(());
+        };
+        let outcome = match &receipt.state {
+            ReceiptState::Committed(slot) => AdmittedOutcome::Accepted {
+                submission: receipt.id,
+                slot: *slot,
+            },
+            ReceiptState::Refused { refusal, .. } => {
+                AdmittedOutcome::Rejected(refusal.clone())
+            }
+            ReceiptState::Pending | ReceiptState::Unknown(_) => return Ok(()),
+        };
+        if self.admissions.admission(&request).map(|a| &a.outcome) == Some(&outcome) {
+            return Ok(()); // a repeated settle of an already-recorded request
+        }
+        let digest = self
+            .admissions
+            .admission(&request)
+            .map(|admission| admission.digest)
+            .unwrap_or([0u8; 32]);
+        if let Some(journal) = self.journal.as_mut() {
+            journal.append(&JournalRecord::Request(RequestRecord {
+                id: request.clone(),
+                digest,
+                submission: receipt.id,
+                outcome: outcome.clone(),
+                slot: receipt.slot().map(|slot| slot.0),
+            }))?;
+        }
+        self.admissions.settle(&request, outcome);
+        Ok(())
+    }
+
+    fn resolve(&mut self, id: SubmissionId, timeout: Duration) -> Receipt {
         let receipt = self.engine.wait(id, timeout);
         let slot = match receipt.state {
             ReceiptState::Committed(slot) => slot,
@@ -1666,5 +2013,217 @@ mod tests {
             receipt.failure().map(|d| d.code),
             Some(Code::UNKNOWN_OUTCOME)
         );
+    }
+
+    fn journal_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join(format!(
+                "unfer-node-{}-{}-{name}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+            .join("node.log")
+    }
+
+    #[test]
+    fn a_recorded_transition_survives_a_restart_and_is_compared_not_reapplied() {
+        let authority = Keypair::generate();
+        let path = journal_path("restart");
+        let mints = [
+            signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1),
+            signed_mint(&authority, "did:unfer:bob", 50, [2u8; 32], 2),
+        ];
+
+        {
+            let (mut node, recovery) =
+                ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+            assert!(recovery.records.is_empty());
+            node.set_mint_authority(MintAuthority::Only(authority.did()));
+            node.engine.submit(mints[0].clone()).unwrap();
+            node.engine.submit(mints[1].clone()).unwrap();
+            assert_eq!(node.sync().unwrap(), 2);
+            assert!(node.is_durable());
+        }
+
+        // Restart: a fresh engine carries the same committed entries, and the
+        // recovered journal is a comparison script rather than a re-apply plan.
+        let (mut node, recovery) =
+            ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+        assert_eq!(recovery.last_slot, Some(2));
+        node.set_mint_authority(MintAuthority::Only(authority.did()));
+        for mint in &mints {
+            node.engine.submit(mint.clone()).unwrap();
+        }
+        assert_eq!(node.sync().unwrap(), 2);
+        assert_eq!(
+            node.watermark(),
+            Watermark(2),
+            "replay reached the recorded watermark"
+        );
+        assert_eq!(node.certs.total_supply(), 150, "state was rebuilt by replay");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_mismatched_journal_halts_instead_of_merging_two_histories() {
+        let authority = Keypair::generate();
+        let path = journal_path("mismatch");
+        let recorded = signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1);
+        {
+            let (mut node, _) =
+                ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+            node.set_mint_authority(MintAuthority::Only(authority.did()));
+            node.engine.submit(recorded.clone()).unwrap();
+            node.sync().unwrap();
+        }
+
+        let different = signed_mint(&authority, "did:unfer:bob", 7, [9u8; 32], 1);
+        let (mut node, _) = ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+        node.set_mint_authority(MintAuthority::Only(authority.did()));
+        node.engine.submit(different).unwrap();
+        let error = node.sync().expect_err("a mismatched checkpoint is refused");
+        assert_eq!(error.code, Code::UNKNOWN_OUTCOME);
+        match node.halted() {
+            Some(HaltReason::Failed { slot, refusal }) => {
+                assert_eq!(*slot, Slot(1));
+                assert_eq!(refusal.code, Code::STORAGE_FAILED);
+                assert!(refusal.message.contains("journal recorded"));
+            }
+            other => panic!("a mismatched journal must halt, got {other:?}"),
+        }
+        assert_eq!(node.watermark(), Watermark(0));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_torn_transition_write_halts_at_that_slot() {
+        let authority = Keypair::generate();
+        let path = journal_path("torn");
+        let (mut node, _) = ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+        node.set_mint_authority(MintAuthority::Only(authority.did()));
+        node.engine
+            .submit(signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1))
+            .unwrap();
+        node.journal.as_mut().unwrap().inject(crate::storage::FaultPoint::HalfWrite);
+        let error = node.sync().expect_err("an unrecorded transition is not a success");
+        assert_eq!(error.code, Code::UNKNOWN_OUTCOME);
+        match node.halted() {
+            Some(HaltReason::Failed { slot, refusal }) => {
+                assert_eq!(*slot, Slot(1));
+                assert_eq!(refusal.code, Code::STORAGE_FAILED);
+            }
+            other => panic!("a torn transition write must halt, got {other:?}"),
+        }
+        assert_eq!(
+            node.watermark(),
+            Watermark(0),
+            "the watermark must not pass an unrecorded transition"
+        );
+        assert!(node.journal_error().is_some());
+        // The next sync also refuses: a halted node does not skip history.
+        assert!(node.sync().is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_acknowledged_request_result_survives_a_restart() {
+        let authority = Keypair::generate();
+        let path = journal_path("request");
+        let request = RequestId::new("federation-main", "did:unfer:alice", 1, 1);
+        let tx = signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1);
+
+        let submission = {
+            let (mut node, _) =
+                ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+            node.set_mint_authority(MintAuthority::Only(authority.did()));
+            let submission = node.submit_request(&request, tx.clone()).unwrap();
+            let settled = node.settle(submission, Duration::from_millis(100));
+            assert!(settled.is_committed());
+            submission
+        };
+
+        let (mut node, recovery) =
+            ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+        assert!(
+            recovery
+                .records
+                .iter()
+                .any(|record| matches!(record, JournalRecord::Request(_))),
+            "the request binding is in the durable log"
+        );
+        node.set_mint_authority(MintAuthority::Only(authority.did()));
+        node.engine.submit(tx.clone()).unwrap();
+        node.sync().unwrap();
+
+        let retried = node
+            .submit_request(&request, tx)
+            .expect("the recovered book answers the retry");
+        assert_eq!(retried, submission, "the retry reuses the recorded submission");
+        let receipt = node.settle(retried, Duration::from_millis(100));
+        assert_eq!(receipt.slot(), Some(Slot(1)));
+        assert_eq!(
+            node.watermark(),
+            Watermark(1),
+            "the retry did not append a second entry"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_unrecordable_request_result_is_reported_as_unrecorded_not_refused() {
+        let authority = Keypair::generate();
+        let path = journal_path("unrecorded");
+        let (mut node, _) = ConsensusNode::open(Box::new(LocalConsensus::new()), &path).unwrap();
+        node.set_mint_authority(MintAuthority::Only(authority.did()));
+        let request = RequestId::new("federation-main", "did:unfer:alice", 1, 1);
+        let submission = node
+            .submit_request(
+                &request,
+                signed_mint(&authority, "did:unfer:bob", 100, [1u8; 32], 1),
+            )
+            .unwrap();
+        // Record the transition first, so the injected failure hits the
+        // *request binding* write and not the application transition itself.
+        assert_eq!(node.sync().unwrap(), 1);
+        node.journal.as_mut().unwrap().inject(crate::storage::FaultPoint::BeforeWrite);
+        let receipt = node.settle(submission, Duration::from_millis(100));
+        assert_eq!(
+            receipt.state,
+            ReceiptState::Unknown(UnknownReason::Unrecorded),
+            "an applied but unrecorded result is never reported as a refusal"
+        );
+        assert!(node.journal_error().is_some());
+        assert!(
+            node.halted().is_none(),
+            "a missing client binding is not a reason to stop applying history"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_storage_failure_is_a_halt_and_a_domain_error_is_a_refusal() {
+        // D07: the two failure kinds are decided by code family, so a durable
+        // write failing inside application can never be filed as a stable
+        // verdict on the entry it was applying.
+        match ApplyFailure::from(
+            3,
+            Diagnostic::new(Code::STORAGE_FAILED, "disk full", Severity::Error),
+        ) {
+            ApplyFailure::Halt(HaltReason::Failed { slot, refusal }) => {
+                assert_eq!(slot, Slot(3));
+                assert_eq!(refusal.code, Code::STORAGE_FAILED);
+            }
+            other => panic!("a storage failure must halt, got {other:?}"),
+        }
+        match ApplyFailure::from(
+            3,
+            Diagnostic::new(Code::CERT_AMOUNT_MISMATCH, "bad", Severity::Error),
+        ) {
+            ApplyFailure::Refused(refusal) => assert_eq!(refusal.code, Code::CERT_AMOUNT_MISMATCH),
+            other => panic!("a domain error must be refused, got {other:?}"),
+        }
     }
 }

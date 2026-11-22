@@ -94,6 +94,10 @@ pub enum UnknownReason {
     /// The node stopped applying (a gap or corrupt history) before reaching
     /// this submission, so its outcome cannot be read from this node.
     Halted,
+    /// The node applied the submission but could not make the result durable
+    /// (D07). The effect happened; what is missing is the memory a retry needs,
+    /// so the caller must verify rather than assume it did not happen.
+    Unrecorded,
 }
 
 impl UnknownReason {
@@ -106,6 +110,10 @@ impl UnknownReason {
             UnknownReason::Unsubmitted => "the engine has no record of this submission id",
             UnknownReason::Halted => {
                 "this node halted on an unusable committed history and cannot report an outcome"
+            }
+            UnknownReason::Unrecorded => {
+                "the submission was applied but its result could not be recorded durably; \
+                 verify the effect before retrying it under the same request id"
             }
         };
         Diagnostic::new(Code::UNKNOWN_OUTCOME, text, Severity::Error)
@@ -200,6 +208,12 @@ pub enum HaltReason {
     /// The log went backwards or repeated a slot after the watermark had moved
     /// past it; either way the local view is inconsistent.
     OutOfOrder { applied: Watermark, found: Slot },
+    /// The entry was neither applied nor refused: this node could not evaluate
+    /// or durably record it (storage failure, exhausted budget, interrupted
+    /// checkpoint — [`Code::is_infrastructure`]). The state may not match the
+    /// committed prefix, so nothing after this slot is applied either; the
+    /// refusal text is kept only to say *why* the node stopped.
+    Failed { slot: Slot, refusal: Refusal },
 }
 
 impl HaltReason {
@@ -212,6 +226,11 @@ impl HaltReason {
             HaltReason::OutOfOrder { applied, found } => format!(
                 "committed history went backwards: watermark is {}, found slot {}",
                 applied.0, found.0
+            ),
+            HaltReason::Failed { slot, refusal } => format!(
+                "could not apply slot {} ({}: {}); the node halted so its state \
+                 cannot drift from the committed prefix",
+                slot.0, refusal.code, refusal.message
             ),
         };
         Diagnostic::new(Code::UNKNOWN_OUTCOME, text, Severity::Fatal)
@@ -272,6 +291,13 @@ mod tests {
             Code::CERT_MINT_NOT_AUTHORIZED
         );
 
+        // An unrecorded outcome is not a refusal either: the effect happened.
+        let unrecorded = Receipt::unknown(SubmissionId(9), UnknownReason::Unrecorded);
+        assert_eq!(
+            unrecorded.failure().unwrap().code,
+            Code::UNKNOWN_OUTCOME
+        );
+
         // A timeout is not a refusal: the transaction may still commit.
         let unknown = Receipt::unknown(SubmissionId(3), UnknownReason::TimedOut);
         assert!(!unknown.is_committed());
@@ -279,6 +305,27 @@ mod tests {
         assert_eq!(unknown.failure().unwrap().code, Code::UNKNOWN_OUTCOME);
         assert!(unknown.is_settled());
         assert!(!Receipt::pending(SubmissionId(4)).is_settled());
+    }
+
+    #[test]
+    fn a_failed_halt_says_what_stopped_the_node() {
+        let halt = HaltReason::Failed {
+            slot: Slot(7),
+            refusal: Refusal::new(Code::STORAGE_FAILED, "disk full"),
+        };
+        let diagnostic = halt.diagnostic();
+        assert_eq!(diagnostic.code, Code::UNKNOWN_OUTCOME);
+        assert_eq!(diagnostic.severity, Severity::Fatal);
+        assert!(
+            diagnostic.message.contains("slot 7") && diagnostic.message.contains("UK-5011"),
+            "the halt must name the slot and the cause: {}",
+            diagnostic.message
+        );
+        // A failed halt is not a refusal of the entry, and it is not a gap.
+        assert_ne!(halt, HaltReason::Gap {
+            expected: Slot(7),
+            found: Slot(7)
+        });
     }
 
     #[test]
