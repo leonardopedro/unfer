@@ -263,7 +263,33 @@ impl ConsensusNode {
                     Severity::Error,
                 ))
             }
+            crate::idempotency::AdmissionVerdict::IncarnationsExhausted { limit, known } => {
+                Err(Diagnostic::new(
+                    Code::REQUEST_QUOTA,
+                    format!(
+                        "principal {} already holds {known} live incarnations (limit {limit}): \
+                         a new incarnation would start a fresh retention window, so it is refused \
+                         until one is retired",
+                        id.principal
+                    ),
+                    Severity::Error,
+                ))
+            }
         }
+    }
+
+    /// D06 follow-up: declare an incarnation finished so its principal regains
+    /// incarnation headroom. The client must never retry a request under a
+    /// retired incarnation, because its floor is gone with the window.
+    pub fn retire_incarnation(&mut self, deployment: &str, principal: &str, incarnation: u64) -> bool {
+        let retired = self
+            .admissions
+            .retire_incarnation(deployment, principal, incarnation);
+        if retired {
+            self.request_of
+                .retain(|_, id| id.incarnation != incarnation || id.principal != principal);
+        }
+        retired
     }
 
     /// D06: the book (test/QA surface for retention and quota).

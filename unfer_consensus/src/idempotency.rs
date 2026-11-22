@@ -248,15 +248,33 @@ pub enum AdmissionVerdict {
     BelowRetention { floor: u64 },
     /// The book is full and no client has acknowledged a floor: backpressure.
     AtCapacity { capacity: usize },
+    /// This principal already holds the maximum number of live incarnations.
+    /// A client that keeps inventing incarnations would otherwise cost one
+    /// window each, forever: a window outlives its records because the retained
+    /// floor is the only thing that makes a forgotten id safe to refuse.
+    IncarnationsExhausted { limit: usize, known: usize },
 }
 
 /// Per-(deployment, principal, incarnation) retention window.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ClientWindow {
+    /// The window's own identity, repeated from the map key so the per-principal
+    /// incarnation count does not have to reparse a JSON key.
+    #[serde(default)]
+    identity: ScopeIdentity,
     /// Every sequence at or below this value has been forgotten; a request in
     /// that range is refused rather than applied a second time.
     retained_floor: u64,
     entries: BTreeMap<u64, Admission>,
+}
+
+/// The three fields a retention window is keyed by. `Default` exists only so a
+/// record written before this field existed still deserializes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ScopeIdentity {
+    deployment: String,
+    principal: String,
+    incarnation: u64,
 }
 
 /// Server-side admission record: which requests this node has seen, bound to the
@@ -267,11 +285,37 @@ pub struct AdmissionBook {
     capacity: usize,
     #[serde(skip)]
     admitted: usize,
+    /// How many retention windows (one per client incarnation) may exist at
+    /// once, across all principals. Counted separately from `capacity` because
+    /// an empty window still costs memory and, more importantly, still *means*
+    /// something: it carries the floor below which retries are refused.
+    #[serde(default = "default_max_scopes")]
+    max_scopes: usize,
+    /// How many live incarnations one (deployment, principal) may hold. This is
+    /// the bound that stops a client from manufacturing fresh sequence spaces:
+    /// each new incarnation is a fresh admission namespace, so without a limit
+    /// the per-request capacity could be bypassed indefinitely.
+    #[serde(default = "default_max_incarnations")]
+    max_incarnations: usize,
 }
 
 /// Default admission capacity. A full book answers [`AdmissionVerdict::AtCapacity`]
 /// rather than evicting a record a client may still retry.
 pub const DEFAULT_ADMISSION_CAPACITY: usize = 4096;
+
+/// Default number of retention windows (client incarnations) the book tracks.
+pub const DEFAULT_ADMISSION_SCOPES: usize = 64;
+
+/// Default number of live incarnations per (deployment, principal).
+pub const DEFAULT_INCARNATIONS_PER_PRINCIPAL: usize = 4;
+
+fn default_max_scopes() -> usize {
+    DEFAULT_ADMISSION_SCOPES
+}
+
+fn default_max_incarnations() -> usize {
+    DEFAULT_INCARNATIONS_PER_PRINCIPAL
+}
 
 impl Default for AdmissionBook {
     fn default() -> Self {
@@ -285,6 +329,50 @@ impl AdmissionBook {
             clients: BTreeMap::new(),
             capacity: capacity.max(1),
             admitted: 0,
+            max_scopes: DEFAULT_ADMISSION_SCOPES,
+            max_incarnations: DEFAULT_INCARNATIONS_PER_PRINCIPAL,
+        }
+    }
+
+    /// Override the incarnation bounds (operator policy, or a small value in a
+    /// test). Both are floored at 1: a book that admits nobody is not a policy.
+    pub fn with_incarnation_limits(
+        mut self,
+        max_scopes: usize,
+        max_incarnations: usize,
+    ) -> Self {
+        self.max_scopes = max_scopes.max(1);
+        self.max_incarnations = max_incarnations.max(1);
+        self
+    }
+
+    /// Live incarnations held by this (deployment, principal).
+    pub fn incarnations(&self, deployment: &str, principal: &str) -> usize {
+        self.clients
+            .values()
+            .filter(|w| {
+                w.identity.deployment == deployment && w.identity.principal == principal
+            })
+            .count()
+    }
+
+    /// Retire an incarnation: the client declares this run finished and will
+    /// never retry a request under it. Frees the window (and its floor), which
+    /// is the only way a principal regains incarnation headroom. Returns whether
+    /// a window was released.
+    pub fn retire_incarnation(
+        &mut self,
+        deployment: &str,
+        principal: &str,
+        incarnation: u64,
+    ) -> bool {
+        let key = RequestId::new(deployment, principal, incarnation, 0).scope();
+        match self.clients.remove(&key) {
+            Some(window) => {
+                self.admitted = self.admitted.saturating_sub(window.entries.len());
+                true
+            }
+            None => false,
         }
     }
 
@@ -315,12 +403,35 @@ impl AdmissionBook {
                 capacity: self.capacity,
             };
         }
+        // A brand-new window costs memory even when it holds no records, so the
+        // scope count is its own bound. One principal cannot buy headroom from
+        // another by exhausting the global scope budget: the per-principal
+        // incarnation limit is checked first, and it is the smaller number.
+        let known = self.incarnations(&id.deployment, &id.principal);
+        if window.is_none() && known >= self.max_incarnations {
+            return AdmissionVerdict::IncarnationsExhausted {
+                limit: self.max_incarnations,
+                known,
+            };
+        }
+        if window.is_none() && self.clients.len() >= self.max_scopes {
+            return AdmissionVerdict::AtCapacity {
+                capacity: self.max_scopes,
+            };
+        }
         AdmissionVerdict::Fresh
     }
 
     /// Record a freshly submitted request as pending.
     pub fn record(&mut self, id: &RequestId, submission: SubmissionId, digest: [u8; 32]) {
         let window = self.clients.entry(id.scope()).or_default();
+        if window.identity.principal.is_empty() {
+            window.identity = ScopeIdentity {
+                deployment: id.deployment.clone(),
+                principal: id.principal.clone(),
+                incarnation: id.incarnation,
+            };
+        }
         if !window.entries.contains_key(&id.sequence) {
             self.admitted += 1;
         }
@@ -717,6 +828,65 @@ mod tests {
             "a reused sequence in a fresh incarnation is a different request"
         );
         assert!(book.admission(&first).is_some());
+    }
+
+    #[test]
+    fn a_client_cannot_exhaust_memory_by_inventing_incarnations() {
+        let mut book = AdmissionBook::default().with_incarnation_limits(64, 2);
+        for incarnation in 1..=2 {
+            book.record(
+                &RequestId::new("f", "did:unfer:alice", incarnation, 1),
+                SubmissionId(incarnation),
+                [1u8; 32],
+            );
+        }
+        // A fresh incarnation is a fresh admission namespace, so without a bound
+        // the record capacity could be bypassed one incarnation at a time.
+        assert_eq!(
+            book.admit(&RequestId::new("f", "did:unfer:alice", 3, 1), [9u8; 32]),
+            AdmissionVerdict::IncarnationsExhausted {
+                limit: 2,
+                known: 2,
+            }
+        );
+        // Retiring a finished run is the only way to regain headroom, and it is
+        // the client's declaration: it must never retry under a retired
+        // incarnation, whose floor goes with the window.
+        assert!(book.retire_incarnation("f", "did:unfer:alice", 1));
+        assert!(!book.retire_incarnation("f", "did:unfer:alice", 1));
+        assert_eq!(
+            book.admit(&RequestId::new("f", "did:unfer:alice", 3, 1), [9u8; 32]),
+            AdmissionVerdict::Fresh
+        );
+        // Another principal is unaffected: one client cannot spend another's
+        // incarnation budget.
+        assert_eq!(
+            book.admit(&RequestId::new("f", "did:unfer:bob", 1, 1), [1u8; 32]),
+            AdmissionVerdict::Fresh
+        );
+        // Admission is a verdict, not a reservation: incarnation 3's window
+        // exists only once the request it was admitted for is recorded.
+        assert_eq!(book.incarnations("f", "did:unfer:alice"), 1);
+    }
+
+    #[test]
+    fn the_scope_budget_is_counted_separately_from_open_records() {
+        // Records for one incarnation are bounded by `capacity`; the *empty*
+        // windows a client invents are bounded by `max_scopes`. A book that
+        // counted only records would grow one map entry per invented window.
+        let mut book = AdmissionBook::new(1024).with_incarnation_limits(2, 8);
+        book.record(&RequestId::new("f", "did:unfer:alice", 1, 1), SubmissionId(1), [1u8; 32]);
+        book.record(&RequestId::new("f", "did:unfer:bob", 1, 1), SubmissionId(2), [1u8; 32]);
+        assert_eq!(
+            book.admit(&RequestId::new("f", "did:unfer:carol", 1, 1), [1u8; 32]),
+            AdmissionVerdict::AtCapacity { capacity: 2 }
+        );
+        // Retiring one window frees exactly one scope.
+        assert!(book.retire_incarnation("f", "did:unfer:bob", 1));
+        assert_eq!(
+            book.admit(&RequestId::new("f", "did:unfer:carol", 1, 1), [1u8; 32]),
+            AdmissionVerdict::Fresh
+        );
     }
 
     #[test]
