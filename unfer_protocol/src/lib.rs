@@ -30,6 +30,7 @@ pub mod ops;
 pub mod posture;
 pub mod preset;
 pub mod skills;
+pub mod submission;
 pub mod summarize;
 pub mod symbols;
 pub mod types;
@@ -47,6 +48,7 @@ pub use ops::*;
 pub use posture::*;
 pub use preset::*;
 pub use skills::*;
+pub use submission::*;
 pub use symbols::*;
 pub use types::*;
 

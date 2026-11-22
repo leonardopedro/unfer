@@ -38,6 +38,7 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
@@ -55,6 +56,13 @@ const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 pub struct LedgerSnapshot {
     bank: Vec<ConsensusTransaction>,
     pending: BTreeMap<u64, ConsensusTransaction>,
+    /// D05: submission id -> committed slot. This is what lets a receipt survive
+    /// a restart: the id a caller received is not the position it landed at, so
+    /// without this map a restarted node could not answer "what happened to my
+    /// submission?". `serde(default)` reads a snapshot written before the map
+    /// existed (its committed entries simply have no receipt).
+    #[serde(default)]
+    committed_ids: BTreeMap<u64, u64>,
     next_id: u64,
     /// Monotonic pump request counter; survives restarts so request ids never
     /// collide with entries already in a durable submission journal.
@@ -126,6 +134,7 @@ impl LedgerFile {
 pub struct SharedLedger {
     bank: Arc<RwLock<Vec<ConsensusTransaction>>>,
     pending: Arc<Mutex<BTreeMap<u64, ConsensusTransaction>>>,
+    committed_ids: Arc<RwLock<BTreeMap<u64, u64>>>,
     next_id: Arc<AtomicU64>,
     request_seq: Arc<AtomicU64>,
     committed_tx: watch::Sender<u64>,
@@ -161,6 +170,7 @@ impl SharedLedger {
         let ledger = Self {
             bank: Arc::new(RwLock::new(loaded.bank)),
             pending: Arc::new(Mutex::new(loaded.pending)),
+            committed_ids: Arc::new(RwLock::new(loaded.committed_ids)),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
             request_seq: Arc::new(AtomicU64::new(loaded.next_request_id)),
             committed_tx,
@@ -206,7 +216,7 @@ impl SharedLedger {
             let mut pending = self.pending.lock().unwrap();
             for id in ids {
                 if let Some(tx) = pending.remove(&id) {
-                    appended.push(tx);
+                    appended.push((id, tx));
                 }
             }
         }
@@ -214,12 +224,33 @@ impl SharedLedger {
             return Ok(());
         }
         let mut bank = self.bank.write().unwrap();
-        bank.extend(appended);
+        // D05: record id -> slot as each payload enters the bank, so the receipt
+        // answers with the position the payload actually landed at rather than
+        // the id it was reserved under.
+        let mut slots = self.committed_ids.write().unwrap();
+        for (id, tx) in appended {
+            bank.push(tx);
+            slots.insert(id, bank.len() as u64);
+        }
         let committed = bank.len() as u64;
+        drop(slots);
         drop(bank);
         self.persist()?;
         let _ = self.committed_tx.send(committed);
         Ok(())
+    }
+
+    /// D05: what this ledger knows about a submission id. Committed slots come
+    /// from the durable map, still-queued ids from the pending store, and
+    /// anything else is not known here -- never "refused".
+    fn receipt(&self, id: u64) -> ReceiptState {
+        if let Some(slot) = self.committed_ids.read().unwrap().get(&id) {
+            return ReceiptState::Committed(Slot(*slot));
+        }
+        if self.pending.lock().unwrap().contains_key(&id) {
+            return ReceiptState::Pending;
+        }
+        ReceiptState::Unknown(UnknownReason::Unsubmitted)
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -227,6 +258,7 @@ impl SharedLedger {
             let snapshot = LedgerSnapshot {
                 bank: self.bank.read().unwrap().clone(),
                 pending: self.pending.lock().unwrap().clone(),
+                committed_ids: self.committed_ids.read().unwrap().clone(),
                 next_id: self.next_id.load(Ordering::Relaxed),
                 next_request_id: self.request_seq.load(Ordering::Relaxed),
             };
@@ -293,6 +325,10 @@ impl ConsensusEngine for NetConsensus {
 
     fn current_seq(&self) -> u64 {
         self.ledger.committed()
+    }
+
+    fn receipt(&self, id: SubmissionId) -> ReceiptState {
+        self.ledger.receipt(id.0)
     }
 }
 

@@ -150,6 +150,37 @@ pub fn verify_arctic_threshold(
     arctic::arctic_core::verify(&group_pk, &msg, &(r_point, z))
 }
 
+/// Verify an `IdentityOp` against a caller-supplied key instead of the key the
+/// operation carries.
+///
+/// `verify_transaction` has to trust `op.signing_key` for identity ops because
+/// it has no state; that is fine at ingress, where the DID is unknown, and wrong
+/// at the ordered application point, where the DID already has an authority.
+/// The registry calls this with the *stored* key so an update or revoke signed
+/// by an attacker's key cannot be authenticated by that same key.
+pub fn verify_identity_op_as(
+    op: &unfer_protocol::IdentityOp,
+    pubkey: [u8; 32],
+) -> Result<(), Diagnostic> {
+    let tx = ConsensusTransaction::IdentityOp(op.clone());
+    let msg = canonical_bytes(&tx);
+    let verifying_key = VerifyingKey::from_bytes(&pubkey).map_err(|_| {
+        Diagnostic::new(
+            Code::INVALID_SIGNATURE,
+            "invalid ed25519 public key",
+            Severity::Error,
+        )
+    })?;
+    let signature = ed25519_dalek::Signature::from_bytes(&op.signature);
+    verifying_key.verify(&msg, &signature).map_err(|_| {
+        Diagnostic::new(
+            Code::INVALID_SIGNATURE,
+            "ed25519 signature verification failed",
+            Severity::Error,
+        )
+    })
+}
+
 pub fn verify_transaction(tx: &ConsensusTransaction) -> Result<(), Diagnostic> {
     let msg = canonical_bytes(tx);
     let sig = tx.signature();

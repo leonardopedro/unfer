@@ -1,8 +1,6 @@
 use unfer_consensus::{ConsensusNode, Keypair, LocalConsensus};
-use unfer_data::crypto::derive_aes_key;
-use unfer_data::{
-    Chunker, DataKeypair, DataPublisher, compute_cid, decrypt_chunk, encrypt_chunk, verify_chunk,
-};
+use unfer_data::crypto::{content_object_id, derive_aes_key, ObjectKey};
+use unfer_data::{compute_cid, verify_chunk, Chunker, DataKeypair, DataPublisher};
 use unfer_identity::DidManager;
 
 fn make_node() -> ConsensusNode {
@@ -60,11 +58,17 @@ fn data_plane_encrypt_chunk_reassemble_decrypt_roundtrip() {
     let chunks = chunker.chunk(&plaintext);
     assert_eq!(chunks.len(), 11);
 
+    let object = ObjectKey::from_parts(&aes_key, content_object_id(&plaintext));
+    let object_len = plaintext.len() as u64;
+    let chunk_count = chunks.len() as u32;
+
     let mut ciphertexts = Vec::new();
     let mut chunk_cids = Vec::new();
 
     for (index, chunk_data) in &chunks {
-        let ct = encrypt_chunk(&aes_key, *index, chunk_data).unwrap();
+        let ct = object
+            .seal_chunk(0, object_len, chunk_count, *index, chunk_data)
+            .unwrap();
         let cid = compute_cid(&ct);
         assert!(verify_chunk(&ct, &cid));
         chunk_cids.push(cid);
@@ -73,7 +77,9 @@ fn data_plane_encrypt_chunk_reassemble_decrypt_roundtrip() {
 
     let mut reassembled = Vec::new();
     for (index, ct) in &ciphertexts {
-        let pt = decrypt_chunk(&aes_key, *index, ct).unwrap();
+        let pt = object
+            .open_chunk(0, object_len, chunk_count, *index, ct)
+            .unwrap();
         reassembled.extend_from_slice(&pt);
     }
 
@@ -81,15 +87,20 @@ fn data_plane_encrypt_chunk_reassemble_decrypt_roundtrip() {
 
     for (index, ct) in &ciphertexts {
         assert!(
-            decrypt_chunk(&aes_key, index + 1, ct).is_err(),
+            object
+                .open_chunk(0, object_len, chunk_count, index + 1, ct)
+                .is_err(),
             "wrong chunk index must fail authentication"
         );
     }
 
     let wrong_kp = DataKeypair::generate();
     let wrong_key = derive_aes_key(&wrong_kp.shared_secret(wrong_kp.public_key()));
+    let wrong_object = ObjectKey::from_parts(&wrong_key, content_object_id(&plaintext));
     assert!(
-        decrypt_chunk(&wrong_key, 0, &ciphertexts[0].1).is_err(),
+        wrong_object
+            .open_chunk(0, object_len, chunk_count, 0, &ciphertexts[0].1)
+            .is_err(),
         "wrong key must fail authentication"
     );
 }

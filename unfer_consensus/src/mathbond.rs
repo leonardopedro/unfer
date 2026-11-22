@@ -570,6 +570,62 @@ mod tests {
         compute_bond_id(&trigger(), sponsor(), 10000, 500, 1000, researcher())
     }
 
+    /// D04 audit: refused investments and an unknown bond id are state no-ops.
+    #[test]
+    fn refusal_preserves_state() {
+        let mut l = MathBondLedger::new();
+        let id = issue_bond(&mut l);
+        l.apply_op(
+            investor(),
+            &MathBondOpKind::Invest {
+                bond_id: id,
+                amount: 2500,
+            },
+            2,
+        )
+        .unwrap();
+        let before = format!("{l:?}");
+
+        // Zero amount.
+        assert!(l
+            .apply_op(
+                investor(),
+                &MathBondOpKind::Invest {
+                    bond_id: id,
+                    amount: 0,
+                },
+                3,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // Overfunding past the principal.
+        assert!(l
+            .apply_op(
+                investor(),
+                &MathBondOpKind::Invest {
+                    bond_id: id,
+                    amount: 9000,
+                },
+                4,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // A bond id that was never issued.
+        assert!(l
+            .apply_op(
+                investor(),
+                &MathBondOpKind::Invest {
+                    bond_id: MathBondId([7u8; 32]),
+                    amount: 100,
+                },
+                5,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+    }
+
     #[test]
     fn issue_and_invest_lifecycle() {
         let mut l = MathBondLedger::new();

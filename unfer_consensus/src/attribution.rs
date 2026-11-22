@@ -462,6 +462,74 @@ mod tests {
         }
     }
 
+    /// D04 audit: a refused approve/revoke/offer is a state no-op.
+    #[test]
+    fn refusal_preserves_state() {
+        let mut ledger = AttributionLedger::new();
+        let adidas = "did:unfer:adidas";
+        let kanye = "did:unfer:kanye";
+        let shoe = item("Yeezy Boost 350 V2", 1);
+        let sketch = item("Kanye's 2015 sketch", 2);
+        ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::RegisterItem { item: shoe.clone() },
+                1,
+            )
+            .unwrap();
+        ledger
+            .apply_op(
+                kanye,
+                &AttributionOpKind::RegisterItem {
+                    item: sketch.clone(),
+                },
+                2,
+            )
+            .unwrap();
+        let id = credit_id(&offer(&shoe, &sketch, 5000, true), adidas, kanye);
+        ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&shoe, &sketch, 5000, true),
+                },
+                3,
+            )
+            .unwrap();
+        let before = format!("{ledger:?}");
+
+        // The offerer is not the author, so it cannot approve its own offer.
+        assert!(ledger
+            .apply_op(adidas, &AttributionOpKind::Approve { credit_id: id }, 4)
+            .is_err());
+        assert_eq!(format!("{ledger:?}"), before);
+
+        // An invented credit id.
+        assert!(ledger
+            .apply_op(
+                kanye,
+                &AttributionOpKind::Approve {
+                    credit_id: AttributionCreditId([7u8; 32]),
+                },
+                5,
+            )
+            .is_err());
+        assert_eq!(format!("{ledger:?}"), before);
+
+        // An offer whose derived item nobody registered.
+        let unknown = item("unregistered", 9);
+        assert!(ledger
+            .apply_op(
+                adidas,
+                &AttributionOpKind::OfferAttribution {
+                    offer: offer(&unknown, &sketch, 100, false),
+                },
+                6,
+            )
+            .is_err());
+        assert_eq!(format!("{ledger:?}"), before);
+    }
+
     #[test]
     fn full_lifecycle_offer_approve_badge_revoke() {
         let mut ledger = AttributionLedger::new();

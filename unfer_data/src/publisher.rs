@@ -1,13 +1,21 @@
+use std::time::Duration;
+
 use unfer_consensus::{ConsensusNode, Keypair};
+use unfer_protocol::submission::ReceiptState;
 use unfer_protocol::{ChunkRef, ConsensusTransaction, ContentOp, ContentRef, Diagnostic};
 
 use crate::chunk::{Chunker, compute_cid};
-use crate::crypto::{DataKeypair, derive_aes_key, encrypt_chunk};
+use crate::crypto::{content_object_id, derive_aes_key, DataKeypair, ObjectKey};
 use crate::magnet::{build_magnet_uri, content_cid_from_chunks};
+
+/// How long `publish` waits for its content entry to be committed and applied
+/// before reporting an unknown outcome (D05).
+pub const PUBLISH_SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct DataPublisher<'a> {
     node: &'a mut ConsensusNode,
     chunker: Chunker,
+    settle_timeout: Duration,
 }
 
 impl<'a> DataPublisher<'a> {
@@ -15,6 +23,7 @@ impl<'a> DataPublisher<'a> {
         Self {
             node,
             chunker: Chunker::default(),
+            settle_timeout: PUBLISH_SETTLE_TIMEOUT,
         }
     }
 
@@ -22,7 +31,14 @@ impl<'a> DataPublisher<'a> {
         Self {
             node,
             chunker: Chunker::new(chunk_size),
+            settle_timeout: PUBLISH_SETTLE_TIMEOUT,
         }
+    }
+
+    /// Override the settlement wait (tests use a short deadline).
+    pub fn with_settle_timeout(mut self, timeout: Duration) -> Self {
+        self.settle_timeout = timeout;
+        self
     }
 
     pub fn publish(
@@ -35,18 +51,34 @@ impl<'a> DataPublisher<'a> {
         let data_kp = DataKeypair::generate();
         let aes_key = derive_aes_key(&data_kp.shared_secret(data_kp.public_key()));
 
+        // Content-addressed object identity: the identifier is derived from the
+        // plaintext digest, so a recipient that later holds the plaintext needs
+        // no out-of-band salt and two different payloads never share a key and
+        // chunk nonce.
         let chunks = self.chunker.chunk(data);
+        let chunk_count = u32::try_from(chunks.len()).map_err(|_| {
+            Diagnostic::new(
+                unfer_protocol::Code::INTERNAL,
+                "chunk count exceeds the u32 counter".to_string(),
+                unfer_protocol::Severity::Error,
+            )
+        })?;
+        let object = ObjectKey::from_parts(&aes_key, content_object_id(data));
+        let object_len = data.len() as u64;
+
         let mut chunk_refs = Vec::with_capacity(chunks.len());
         let mut chunk_cids = Vec::with_capacity(chunks.len());
 
         for (index, plaintext) in &chunks {
-            let ciphertext = encrypt_chunk(&aes_key, *index, plaintext).map_err(|e| {
-                Diagnostic::new(
-                    unfer_protocol::Code::INTERNAL,
-                    format!("chunk encryption failed: {e}"),
-                    unfer_protocol::Severity::Error,
-                )
-            })?;
+            let ciphertext = object
+                .seal_chunk(0, object_len, chunk_count, *index, plaintext)
+                .map_err(|e| {
+                    Diagnostic::new(
+                        unfer_protocol::Code::INTERNAL,
+                        format!("chunk encryption failed: {e}"),
+                        unfer_protocol::Severity::Error,
+                    )
+                })?;
             let cid = compute_cid(&ciphertext);
             chunk_cids.push(cid.clone());
             chunk_refs.push(ChunkRef {
@@ -74,10 +106,21 @@ impl<'a> DataPublisher<'a> {
             signature: [0u8; 64],
         });
         unfer_consensus::sign_transaction(&mut tx, did_keypair);
-        self.node.submit(tx)?;
-        self.node.sync()?;
-
-        Ok(content_ref)
+        let id = self.node.submit_tracked(tx)?;
+        // D05: the caller gets a ContentRef only after the entry is applied, so
+        // a published reference is resolvable here. A refusal is returned as its
+        // typed diagnostic, and a deadline as UK-1010 rather than as success.
+        let receipt = self.node.settle(id, self.settle_timeout);
+        match receipt.state {
+            ReceiptState::Committed(_) => Ok(content_ref),
+            _ => Err(receipt.failure().unwrap_or_else(|| {
+                Diagnostic::new(
+                    unfer_protocol::Code::UNKNOWN_OUTCOME,
+                    "the content transaction did not report an outcome",
+                    unfer_protocol::Severity::Error,
+                )
+            })),
+        }
     }
 
     pub fn resolve(&self, cid: &str) -> Option<&ContentRef> {
@@ -220,5 +263,49 @@ mod tests {
         let cids: Vec<&str> = content_ref.chunks.iter().map(|c| c.cid.as_str()).collect();
         let unique: std::collections::HashSet<&str> = cids.iter().copied().collect();
         assert_eq!(cids.len(), unique.len(), "chunk CIDs must be unique");
+    }
+
+    /// A network engine that accepts submissions and never commits them.
+    struct NeverCommits {
+        next: std::sync::atomic::AtomicU64,
+    }
+
+    impl unfer_consensus::ConsensusEngine for NeverCommits {
+        fn submit(&self, _tx: ConsensusTransaction) -> Result<u64, Diagnostic> {
+            Ok(self
+                .next
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        }
+
+        fn get_log(&self, _from_seq: u64) -> Vec<(u64, ConsensusTransaction)> {
+            Vec::new()
+        }
+
+        fn current_seq(&self) -> u64 {
+            0
+        }
+
+        fn receipt(
+            &self,
+            _id: unfer_protocol::submission::SubmissionId,
+        ) -> unfer_protocol::submission::ReceiptState {
+            unfer_protocol::submission::ReceiptState::Pending
+        }
+    }
+
+    #[test]
+    fn publication_is_not_reported_before_application() {
+        let engine = NeverCommits {
+            next: std::sync::atomic::AtomicU64::new(1),
+        };
+        let mut node = ConsensusNode::new(Box::new(engine));
+        let kp = Keypair::generate();
+        let err = DataPublisher::new(&mut node)
+            .with_settle_timeout(Duration::from_millis(20))
+            .publish(&kp, b"not yet committed", "text/plain", None)
+            .unwrap_err();
+        // The receipt was reserved but never committed: UK-1010, not a ContentRef.
+        assert_eq!(err.code, unfer_protocol::Code::UNKNOWN_OUTCOME);
+        assert_eq!(node.applied_seq(), 0, "nothing was applied");
     }
 }

@@ -323,6 +323,69 @@ mod tests {
         }
     }
 
+    /// D04 audit: a refused bid or close must leave the whole ledger unchanged.
+    /// The fingerprint is the ledger's own `Debug` view, so a partial mutation
+    /// anywhere — including a push the error path forgot to undo — shows up.
+    #[test]
+    fn refusal_preserves_state() {
+        let mut l = AuctionLedger::new();
+        let seller = "did:unfer:seller";
+        let alice = "did:unfer:alice";
+        l.apply_op(
+            seller,
+            &AuctionOpKind::Open {
+                lot: lot(seller, 5, 1),
+            },
+            1,
+        )
+        .unwrap();
+        l.apply_op(
+            alice,
+            &AuctionOpKind::Bid {
+                lot_id: AuctionId([1u8; 32]),
+                price_per_unit: 7,
+                quantity: 10,
+            },
+            2,
+        )
+        .unwrap();
+        let before = format!("{l:?}");
+
+        // Below the floor.
+        assert!(l
+            .apply_op(
+                alice,
+                &AuctionOpKind::Bid {
+                    lot_id: AuctionId([1u8; 32]),
+                    price_per_unit: 1,
+                    quantity: 10,
+                },
+                3,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // The seller bidding on its own lot.
+        assert!(l
+            .apply_op(
+                seller,
+                &AuctionOpKind::Bid {
+                    lot_id: AuctionId([1u8; 32]),
+                    price_per_unit: 9,
+                    quantity: 10,
+                },
+                4,
+            )
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+
+        // Closing an invented lot id.
+        assert!(l
+            .apply_op(alice, &AuctionOpKind::Close { lot_id: AuctionId([9u8; 32]) }, 5)
+            .is_err());
+        assert_eq!(format!("{l:?}"), before);
+    }
+
     #[test]
     fn unified_auction_picks_highest_price() {
         let mut l = AuctionLedger::new();
