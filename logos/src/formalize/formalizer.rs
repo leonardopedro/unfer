@@ -1216,7 +1216,11 @@ mod tests {
                 ..FormalizeOptions::default()
             },
         );
-        assert!(with.content.contains("Previously formalized steps"), "{}", with.content);
+        assert!(
+            with.content.contains("Previously formalized steps"),
+            "{}",
+            with.content
+        );
         assert!(with.content.contains("deadbeef"), "{}", with.content);
 
         let without = build_user_turn(&n, &[], &FormalizeOptions::default());

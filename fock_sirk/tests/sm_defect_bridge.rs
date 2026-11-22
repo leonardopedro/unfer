@@ -6,12 +6,12 @@
 //! but the Padé witness is not enclosed, so the overall status must stay
 //! `conditionally-bounded`.
 
-use fock_sirk::sm_bridge::{bind_artifact, sha256_hex, verify_bridge, BridgeError};
+use fock_sirk::sm_bridge::{BridgeError, bind_artifact, sha256_hex, verify_bridge};
 use fock_sirk::sm_defect::{
-    finite_fixture, finite_fixture_bridge, finite_fixture_inputs, full_images_enclosure,
-    reduced_generator_enclosure, reduced_growth, verify_certificate, CertificateHashes, Interval,
+    CertificateHashes, Interval, finite_fixture, finite_fixture_bridge, finite_fixture_inputs,
+    full_images_enclosure, reduced_generator_enclosure, reduced_growth, verify_certificate,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../docs/fixtures/sm_defect_bridge.json");
 const LEAN_SOURCE: &str = include_str!("../lean/SmDefectSkew.lean");
@@ -77,10 +77,12 @@ fn fixture_is_regenerated_from_the_actual_finite_fixture() {
         pinned["finite_endpoint_proof"]["payload_sha256"],
         sha256_hex(include_bytes!("../../docs/fixtures/sm_defect_proof.ndjson"))
     );
-    assert!(pinned["theorem"]["remaining"]
-        .as_str()
-        .unwrap()
-        .contains("open"));
+    assert!(
+        pinned["theorem"]["remaining"]
+            .as_str()
+            .unwrap()
+            .contains("open")
+    );
     let analytic = &pinned["analytic_defect_proof"];
     assert_eq!(analytic["proof_status"], "kernel-verified");
     assert_eq!(analytic["declarations"], 38336);

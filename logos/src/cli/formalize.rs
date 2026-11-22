@@ -26,6 +26,8 @@
 
 use crate::dagviz::{self, escape};
 use crate::formalize::completer::{self, CompleteOptions, CompleteReport};
+#[cfg(feature = "llm-http")]
+use crate::formalize::embed::HttpEmbedder;
 use crate::formalize::embed::{Embedder, HashingEmbedder};
 use crate::formalize::formalizer::{self, CnlFormalization, DomainLexicon, FormalizeOptions};
 use crate::formalize::graph::{self, Validated};
@@ -34,8 +36,6 @@ use crate::formalize::index::IndexParams;
 use crate::formalize::llm::{LlmClient, LlmConfig, Transport};
 use crate::formalize::memory::{self, LemmaStore};
 use crate::formalize::score::{self, Aggregation, LogosScore};
-#[cfg(feature = "llm-http")]
-use crate::formalize::embed::HttpEmbedder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -383,9 +383,7 @@ pub fn run_pipeline<T: Transport>(
             None if opts.no_verify => {
                 formalizer::formalize_node(&node, &deps, llm, lexicon, &node_opts)
             }
-            None => {
-                formalizer::formalize_node_verified(&node, &deps, llm, lexicon, &node_opts)
-            }
+            None => formalizer::formalize_node_verified(&node, &deps, llm, lexicon, &node_opts),
         };
 
         match result {
@@ -596,9 +594,11 @@ impl RetrievalCtx {
 #[cfg(feature = "llm-http")]
 fn build_embedder(opts: &RetrievalOptions) -> Result<Box<dyn Embedder>, PipelineError> {
     Ok(match (&opts.embed_url, opts.embed_dims) {
-        (Some(url), dims) => {
-            Box::new(HttpEmbedder::new(url.clone(), opts.embed_model.clone(), dims))
-        }
+        (Some(url), dims) => Box::new(HttpEmbedder::new(
+            url.clone(),
+            opts.embed_model.clone(),
+            dims,
+        )),
         (None, 0) => Box::new(HashingEmbedder::default()),
         (None, dims) => Box::new(HashingEmbedder::new(dims)),
     })
@@ -687,7 +687,6 @@ pub fn dag_html(report: &PipelineReport, graph: &Validated) -> String {
         })
         .collect();
     let svg = dagviz::svg(&boxes, &dagviz::Canvas::default());
-
 
     let legend = "<p class=\"legend\">\
 <span class=\"sw ok\"></span> formalized &amp; uniquely reduced \
@@ -905,9 +904,9 @@ fn run_inner(args: &[String]) -> Result<i32, PipelineError> {
         opts.retrieval.embed_model = m;
     }
     if let Some(d) = env("UNFER_EMBED_DIMS") {
-        opts.retrieval.embed_dims = d.parse().map_err(|_| {
-            PipelineError::Input(format!("UNFER_EMBED_DIMS {d} is not a number"))
-        })?;
+        opts.retrieval.embed_dims = d
+            .parse()
+            .map_err(|_| PipelineError::Input(format!("UNFER_EMBED_DIMS {d} is not a number")))?;
     }
     opts.retrieval.xerj_url = env("UNFER_XERJ_URL");
     if let Some(x) = env("UNFER_XERJ_INDEX") {
@@ -1624,9 +1623,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.retrieval.mode, RetrievalMode::Lexical);
-        assert_eq!(report.retrieval.embedder, None, "no model claimed when none ran");
+        assert_eq!(
+            report.retrieval.embedder, None,
+            "no model claimed when none ran"
+        );
         assert_eq!(report.retrieval.xerj, None);
-        assert_eq!(report.retrieval.examples, 0, "an empty store serves nothing");
+        assert_eq!(
+            report.retrieval.examples, 0,
+            "an empty store serves nothing"
+        );
     }
 
     #[test]
@@ -1656,7 +1661,8 @@ mod tests {
             r#"{"evaluation": ["Perfectly match"], "feedback": ["ok"]}"#,
         )]);
         let mut store = seeded_store();
-        let (report, _) = run_pipeline(&euler_json(), &mut llm, &hybrid_opts(), &mut store).unwrap();
+        let (report, _) =
+            run_pipeline(&euler_json(), &mut llm, &hybrid_opts(), &mut store).unwrap();
         assert!(
             report.retrieval.examples > 0,
             "nodes asked the model with a non-empty store: {:?}",

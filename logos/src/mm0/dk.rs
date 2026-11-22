@@ -317,7 +317,10 @@ impl Lexer {
 }
 
 fn is_punct(t: &str) -> bool {
-    matches!(t, "(" | ")" | "[" | "]" | ":" | "." | "," | "->" | "-->" | ":=")
+    matches!(
+        t,
+        "(" | ")" | "[" | "]" | ":" | "." | "," | "->" | "-->" | ":="
+    )
 }
 
 /// Split into tokens: identifiers, punctuation, and comments `(; … ;)` removed.
@@ -381,9 +384,7 @@ fn tokenize(src: &str) -> Vec<String> {
             }
             _ if c.is_alphanumeric() || c == '_' || c == '\'' => {
                 let start = i;
-                while i < cs.len()
-                    && (cs[i].is_alphanumeric() || cs[i] == '_' || cs[i] == '\'')
-                {
+                while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '_' || cs[i] == '\'') {
                     i += 1;
                 }
                 out.push(cs[start..i].iter().collect());
@@ -454,7 +455,7 @@ fn parse_file(src: &str) -> Result<DkFile, String> {
             other => {
                 return Err(format!(
                     "unexpected `{other}` at the top level: this front end reads `symbol`, `rule`, `thm`, `def`, `type` and `injective`"
-                ))
+                ));
             }
         }
     }
@@ -679,7 +680,9 @@ fn binder_text(names: &[String]) -> Vec<String> {
 pub fn translate(src: &str) -> Result<Translation, String> {
     let file = parse_file(src)?;
     if file.rules.is_empty() && file.theorems.is_empty() {
-        return Err("the file states no `rule` and no `thm`, so there is nothing to translate".into());
+        return Err(
+            "the file states no `rule` and no `thm`, so there is nothing to translate".into(),
+        );
     }
 
     let mut mm0 = String::from(THEORY);
@@ -843,7 +846,10 @@ thm times_zero : (x : nat) -> eq times(x, zero) zero := refl.
         // `theorem` in the .mm0 — the shape mm0-c reads.
         assert!(t.mm1.contains("pub theorem dk_rule_1"));
         assert!(t.mm1.contains("pub theorem dk_plus_zero_right"));
-        assert!(t.mm0.contains("theorem dk_plus_zero_right (v_x: Term): $ teq (tadd v_x tz) v_x $;"));
+        assert!(
+            t.mm0
+                .contains("theorem dk_plus_zero_right (v_x: Term): $ teq (tadd v_x tz) v_x $;")
+        );
         assert!(t.mm1.contains("= '(add_z);"), "{}", t.mm1);
         // The Peano spelling, not the net one: a dk term *is* a Peano term, so no
         // emitted claim mentions the DeltaNet agent layer. (The theory text does,
@@ -868,7 +874,10 @@ rule plus(x, succ(y)) --> succ(plus(x, y)).
 thm comm : x : nat -> y : nat -> eq plus(x, y) plus(y, x) := refl.
 "#;
         let err = translate(src).expect_err("commutativity is not a conversion");
-        assert!(err.contains("do not convert to a common normal form"), "{err}");
+        assert!(
+            err.contains("do not convert to a common normal form"),
+            "{err}"
+        );
         assert!(err.contains("induction"), "{err}");
     }
 

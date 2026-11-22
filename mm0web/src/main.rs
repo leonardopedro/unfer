@@ -89,19 +89,22 @@ fn main() {
         let embedder = env("MM0WEB_EMBED_URL").map(|url| {
             Arc::new(CurlEmbedder::new(EmbedConfig {
                 url,
-                model: env("MM0WEB_EMBED_MODEL")
-                    .unwrap_or_else(|| "embeddinggemma-2".to_string()),
-                dims: env("MM0WEB_EMBED_DIMS").and_then(|v| v.parse().ok()).unwrap_or(0),
+                model: env("MM0WEB_EMBED_MODEL").unwrap_or_else(|| "embeddinggemma-2".to_string()),
+                dims: env("MM0WEB_EMBED_DIMS")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
                 key: env("MM0WEB_EMBED_KEY"),
-            }))
-                as Arc<dyn logos::formalize::embed::Embedder>
+            })) as Arc<dyn logos::formalize::embed::Embedder>
         });
         let xerj = env("MM0WEB_XERJ_URL").map(|base| XerjEndpoint {
             base,
-            index: env("MM0WEB_XERJ_INDEX")
-                .unwrap_or_else(|| "declarations".to_string()),
+            index: env("MM0WEB_XERJ_INDEX").unwrap_or_else(|| "declarations".to_string()),
         });
-        web::SearchConfig { embedder, xerj, cache: Default::default() }
+        web::SearchConfig {
+            embedder,
+            xerj,
+            cache: Default::default(),
+        }
     };
 
     let zenodo = ZenodoConfig {

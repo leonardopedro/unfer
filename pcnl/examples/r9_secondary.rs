@@ -224,16 +224,17 @@ fn clustered_diff(a: &[&Pred], b: &[&Pred], f: fn(&Pred) -> f64) -> Option<(f64,
             e.1 += 1;
         }
     }
-    let per_world: Vec<f64> = by_world
-        .values()
-        .map(|(sum, n)| sum / *n as f64)
-        .collect();
+    let per_world: Vec<f64> = by_world.values().map(|(sum, n)| sum / *n as f64).collect();
     let w = per_world.len();
     if w < 2 {
         return None;
     }
     let mean = per_world.iter().sum::<f64>() / w as f64;
-    let var = per_world.iter().map(|d| (d - mean) * (d - mean)).sum::<f64>() / (w - 1) as f64;
+    let var = per_world
+        .iter()
+        .map(|d| (d - mean) * (d - mean))
+        .sum::<f64>()
+        / (w - 1) as f64;
     Some((mean, (var / w as f64).sqrt(), w))
 }
 
@@ -256,7 +257,11 @@ fn fit_temperature(dev: &[&Pred]) -> f64 {
 }
 
 /// Fixed per-type weights, declared here rather than fitted.
-const TYPE_WEIGHTS: [(&str, f64); 3] = [("noul", 1.0 / 3.0), ("choice", 1.0 / 3.0), ("score", 1.0 / 3.0)];
+const TYPE_WEIGHTS: [(&str, f64); 3] = [
+    ("noul", 1.0 / 3.0),
+    ("choice", 1.0 / 3.0),
+    ("score", 1.0 / 3.0),
+];
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Endpoints {
@@ -308,7 +313,9 @@ fn endpoints(rows: &[&Pred], t: f64, tau: Option<f64>, tau_risk: Option<f64>) ->
     let n = e.questions.max(1) as f64;
     e.weighted_brier = TYPE_WEIGHTS
         .iter()
-        .map(|(kind, w)| w * (*by_type.get(kind).unwrap_or(&0.0) / *by_type_n.get(kind).unwrap_or(&1) as f64))
+        .map(|(kind, w)| {
+            w * (*by_type.get(kind).unwrap_or(&0.0) / *by_type_n.get(kind).unwrap_or(&1) as f64)
+        })
         .sum();
     e.raw_nll /= n;
     e.scaled_brier /= n;
@@ -375,9 +382,7 @@ fn main() {
     );
     println!(
         "per-type weights (fixed): noul {:.3}, choice {:.3}, score {:.3}; temperature grid 0.50..3.50 on dev\n",
-        TYPE_WEIGHTS[0].1,
-        TYPE_WEIGHTS[1].1,
-        TYPE_WEIGHTS[2].1
+        TYPE_WEIGHTS[0].1, TYPE_WEIGHTS[1].1, TYPE_WEIGHTS[2].1
     );
 
     // arm -> seed -> endpoints
@@ -580,9 +585,7 @@ fn main() {
                     .collect();
                 let cal: Vec<&Pred> = rows
                     .iter()
-                    .filter(|p| {
-                        p.seed == seed && &p.arm == arm && p.split == "Calibration"
-                    })
+                    .filter(|p| p.seed == seed && &p.arm == arm && p.split == "Calibration")
                     .collect();
                 let dev: Vec<&Pred> = rows
                     .iter()
@@ -617,9 +620,7 @@ fn main() {
     println!();
 
     for kind in ["noul", "choice", "score"] {
-        println!(
-            "== risk-coverage, {kind} (test, pooled over seeds; `coverage/risk` per arm) =="
-        );
+        println!("== risk-coverage, {kind} (test, pooled over seeds; `coverage/risk` per arm) ==");
         print!("  tau |");
         for arm in &arms {
             print!(" {:^15} |", arm);

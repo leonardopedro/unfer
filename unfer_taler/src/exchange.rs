@@ -982,10 +982,7 @@ mod tests {
     #[test]
     fn snapshot_round_trips_and_keeps_pending_wires_actionable() {
         let treasury = Keypair::from_bytes(&[7u8; 32]);
-        let mut ex = TalerExchange::new(
-            treasury.clone(),
-            Box::new(SimulatedWireGateway::new()),
-        );
+        let mut ex = TalerExchange::new(treasury.clone(), Box::new(SimulatedWireGateway::new()));
         ex.issue_denomination(100, u64::MAX);
         ex.issue_denomination(500, 1_000);
         let alice = Keypair::generate();
@@ -1037,12 +1034,8 @@ mod tests {
         // A snapshot restored under a different treasury is refused.
         let other = Keypair::from_bytes(&[9u8; 32]);
         assert!(
-            TalerExchange::from_snapshot(
-                other,
-                Box::new(SimulatedWireGateway::new()),
-                &snap
-            )
-            .is_err()
+            TalerExchange::from_snapshot(other, Box::new(SimulatedWireGateway::new()), &snap)
+                .is_err()
         );
     }
 

@@ -39,7 +39,7 @@
 //! reports exactly what was recomputed, so the trade is measurable rather
 //! than asserted.
 
-use crate::formalize::embed::{l2_normalize, Embedder, EmbedError, Embedding};
+use crate::formalize::embed::{EmbedError, Embedder, Embedding, l2_normalize};
 use serde::{Deserialize, Serialize};
 
 /// Why a query or build could not run against an index.
@@ -203,7 +203,11 @@ impl RecomputeIndex {
         }
 
         if vectors.len() != n {
-            return Err(EmbedError::Count { want: n, got: vectors.len() }.into());
+            return Err(EmbedError::Count {
+                want: n,
+                got: vectors.len(),
+            }
+            .into());
         }
         for v in &mut vectors {
             l2_normalize(v);
@@ -285,7 +289,11 @@ impl RecomputeIndex {
         let existing = embedder.embed_batch(&self.texts_())?;
         let mut existing: Vec<Vec<f32>> = existing;
         if existing.len() != idx {
-            return Err(EmbedError::Count { want: idx, got: existing.len() }.into());
+            return Err(EmbedError::Count {
+                want: idx,
+                got: existing.len(),
+            }
+            .into());
         }
         for v in &mut existing {
             l2_normalize(v);
@@ -381,7 +389,11 @@ impl RecomputeIndex {
             let texts: Vec<&str> = batch.iter().map(|&i| self.texts[i].as_str()).collect();
             let vectors = embedder.embed_batch(&texts)?;
             if vectors.len() != batch.len() {
-                return Err(EmbedError::Count { want: batch.len(), got: vectors.len() }.into());
+                return Err(EmbedError::Count {
+                    want: batch.len(),
+                    got: vectors.len(),
+                }
+                .into());
             }
             stats.recomputed += batch.len();
             stats.hops += 1;
@@ -407,7 +419,10 @@ impl RecomputeIndex {
         });
         scored.truncate(k);
         Ok((
-            scored.into_iter().map(|(idx, score)| Hit { idx, score }).collect(),
+            scored
+                .into_iter()
+                .map(|(idx, score)| Hit { idx, score })
+                .collect(),
             stats,
         ))
     }
@@ -508,7 +523,14 @@ mod tests {
     /// Six topics, five phrasings each — a corpus small enough to reason
     /// about, large enough for a graph to matter.
     fn corpus() -> Vec<String> {
-        let topics = ["zero", "successor", "addition", "multiplication", "parity", "order"];
+        let topics = [
+            "zero",
+            "successor",
+            "addition",
+            "multiplication",
+            "parity",
+            "order",
+        ];
         let mut out = Vec::new();
         for t in topics {
             for i in 0..5 {
@@ -519,11 +541,18 @@ mod tests {
     }
 
     fn topic_of(text: &str) -> &str {
-        ["zero", "successor", "addition", "multiplication", "parity", "order"]
-            .iter()
-            .find(|t| text.contains(**t))
-            .copied()
-            .unwrap()
+        [
+            "zero",
+            "successor",
+            "addition",
+            "multiplication",
+            "parity",
+            "order",
+        ]
+        .iter()
+        .find(|t| text.contains(**t))
+        .copied()
+        .unwrap()
     }
 
     #[test]
@@ -592,7 +621,10 @@ mod tests {
         for i in 0..270 {
             texts.push(format!("lemma variant {i} about addition machinery"));
         }
-        let params = IndexParams { recompute_budget: 64, ..Default::default() };
+        let params = IndexParams {
+            recompute_budget: 64,
+            ..Default::default()
+        };
         let idx = RecomputeIndex::build(&e, texts, params).unwrap();
         let (_, stats) = idx.search(&e, "theorem about addition step", 10).unwrap();
         assert!(
@@ -652,7 +684,11 @@ mod tests {
 
         let other_dim = HashingEmbedder::new(128);
         match idx.search(&other_dim, "x", 3) {
-            Err(IndexError::Mismatch { stored_dims: 384, got_dims: 128, .. }) => {}
+            Err(IndexError::Mismatch {
+                stored_dims: 384,
+                got_dims: 128,
+                ..
+            }) => {}
             other => panic!("expected Mismatch, got {other:?}"),
         }
     }
@@ -661,7 +697,8 @@ mod tests {
     fn insert_keeps_the_index_consistent() {
         let e = HashingEmbedder::default();
         let mut idx = RecomputeIndex::build(&e, corpus(), IndexParams::default()).unwrap();
-        idx.insert(&e, "theorem about parity from a later insert".to_string()).unwrap();
+        idx.insert(&e, "theorem about parity from a later insert".to_string())
+            .unwrap();
         assert_eq!(idx.len(), 31);
 
         // Query with the inserted text itself: finding it at rank 1 proves
@@ -671,7 +708,9 @@ mod tests {
             .search(&e, "theorem about parity from a later insert", 5)
             .unwrap();
         assert!(
-            hits.first().map(|h| idx.texts()[h.idx].contains("later insert")).unwrap_or(false),
+            hits.first()
+                .map(|h| idx.texts()[h.idx].contains("later insert"))
+                .unwrap_or(false),
             "the inserted text is reachable and ranks first for its own query"
         );
 

@@ -1290,13 +1290,18 @@ fn ns_lagrangian_penalty_hashimoto_selection() {
         adaptive: true,
         unit_norm_steps: true,
     };
-    let cons_shifts: Vec<Complex64> =
-        (0..4).map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2)).collect();
-    let res = solve_forward_sirk_with_opts(&hk, &start, &cons_shifts, &best_device(), None, &opts_c)
-        .expect("penalty-constrained SIRK solve");
+    let cons_shifts: Vec<Complex64> = (0..4)
+        .map(|j| Complex64::new(0.0, 1.0 + (j as f64) * 0.2))
+        .collect();
+    let res =
+        solve_forward_sirk_with_opts(&hk, &start, &cons_shifts, &best_device(), None, &opts_c)
+            .expect("penalty-constrained SIRK solve");
     assert_hermitian(&res.h_proj, "penalty projected Hamiltonian");
     let ritz = res.ritz_values();
-    assert!(ritz.iter().all(|r| r.is_finite()), "Ritz values must be finite");
+    assert!(
+        ritz.iter().all(|r| r.is_finite()),
+        "Ritz values must be finite"
+    );
     assert!(
         ritz[0] >= -1e-6,
         "H_kappa is a sum of squares: Ritz must be PSD, got {}",
@@ -1352,8 +1357,6 @@ fn ns_lagrangian_penalty_hashimoto_selection() {
     eprintln!(
         "ns_lagrangian_penalty_hashimoto: kappa = 10, {}x{} projection, Ritz[0] = {:.6}, \
          resolvent identity/bound/recovery hold at gamma = i*0.5, i*1, i*2",
-        n,
-        n,
-        ritz[0]
+        n, n, ritz[0]
     );
 }

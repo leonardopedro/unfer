@@ -202,12 +202,20 @@ fn verify_at_path(
     }))
     .err();
 
-    let skipped_count = if trusted.is_some() { n_declars - checked } else { 0 };
+    let skipped_count = if trusted.is_some() {
+        n_declars - checked
+    } else {
+        0
+    };
     // Without a trusted base the kernel sees the whole export, which is what
     // `declarations_checked` has always meant (and what the pinned-fixture tests
     // assert). With one it means what this run actually examined — reporting the
     // export's size there would overstate the claim.
-    let reported_checked = if trusted.is_some() { checked.max(1) } else { n_declars };
+    let reported_checked = if trusted.is_some() {
+        checked.max(1)
+    } else {
+        n_declars
+    };
 
     match panic_payload {
         None => Ok(TrustOutcome {

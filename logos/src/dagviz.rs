@@ -247,7 +247,10 @@ mod tests {
         assert!(html.contains("Love(john, mary)"), "body lines are drawn");
         assert!(html.contains("score 1.00"), "badges are drawn");
         assert!(html.contains("#a4262c"), "stroke and accent survive");
-        assert!(html.contains("marker-end=\"url(#arrow)\""), "edges are arrows");
+        assert!(
+            html.contains("marker-end=\"url(#arrow)\""),
+            "edges are arrows"
+        );
 
         let mut hostile = BoxView::new(0, "<b>&", "#8a8f98");
         hostile.lines = vec!["<script>".to_string()];
@@ -281,6 +284,9 @@ mod tests {
         let t = truncate(&long, 10);
         assert_eq!(t.chars().count(), 10);
         assert!(t.ends_with('…'));
-        assert_eq!(escape("<script>alert(1)</script>"), "&lt;script&gt;alert(1)&lt;/script&gt;");
+        assert_eq!(
+            escape("<script>alert(1)</script>"),
+            "&lt;script&gt;alert(1)&lt;/script&gt;"
+        );
     }
 }

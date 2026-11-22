@@ -5,7 +5,7 @@
 //! are conditional dimension and block-Q² implications, not a continuum result.
 
 use fock_sirk::sm_brst_fock::finite_fock_brst_jet_window;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../docs/fixtures/sm_brst_jet_window.json");
 

@@ -2987,6 +2987,15 @@ operators are never presented as standalone full-theory Hamiltonians.
 
 ### 5.24t Full Standard Model through joint rational SIRK — `sm_full_hashimoto.rs`
 
+The standalone scalar uses continuous field and independent jet coordinates. Its
+unit-width Gaussian at λ = v = 1 has analytic mean 17/8 and variance 145/32.
+The separate periodic lattice comparison has a Lean one-site return bound and
+an analytic two-site interval [0.99789375, 0.999775] at t = 0.01. Rust includes
+a three-mode compressed evolution test for that lattice. An error-enclosed rational
+trajectory for the continuous-coordinate scalar remains open.
+[Scalar Cadabra2 derivation](PHI4_ANALYTIC_PLAN.md) ·
+[Scalar Hashimoto experiments](PHI4_NUMERICAL_PLAN.md).
+
 **Current work order (2026-11-15):** [SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md), N6–N14,
 and [the proof plan](../../timepiece/SM_ESA_COMPLETION_PLAN.md), SM0–SM9. The implemented
 complete E1 operator and rational method are the baseline. Next work is an identified

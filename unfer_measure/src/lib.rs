@@ -66,7 +66,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// `{"args":[…],"env":{…}}`, compact, env keys sorted (BTreeMap order).
-pub fn canonical_config(args: &[String], env: &std::collections::BTreeMap<String, String>) -> Vec<u8> {
+pub fn canonical_config(
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+) -> Vec<u8> {
     let mut out = String::from("{\"args\":[");
     for (i, a) in args.iter().enumerate() {
         if i > 0 {
@@ -143,7 +146,9 @@ fn selected_env(identity: &Identity) -> Result<std::collections::BTreeMap<String
                         env.insert(k.to_string(), v);
                     }
                     Err(_) => {
-                        return Err(format!("declared config key {k} is not in this process's environment"))
+                        return Err(format!(
+                            "declared config key {k} is not in this process's environment"
+                        ));
                     }
                 }
             }
@@ -166,7 +171,8 @@ impl Bundle {
     /// the config view described above. Under svcmux every non-binary field
     /// comes from the supervisor's bookkeeping; standalone, from `identity`.
     pub fn for_service(identity: &Identity) -> Result<Bundle, String> {
-        let exe = std::fs::read("/proc/self/exe").map_err(|e| format!("read /proc/self/exe: {e}"))?;
+        let exe =
+            std::fs::read("/proc/self/exe").map_err(|e| format!("read /proc/self/exe: {e}"))?;
         let path = std::fs::read_link("/proc/self/exe")
             .map_err(|e| format!("readlink /proc/self/exe: {e}"))?
             .to_string_lossy()

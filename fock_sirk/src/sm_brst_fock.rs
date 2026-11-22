@@ -13,14 +13,14 @@
 //! physical-sector identification.
 
 use crate::sm_bridge::canonical_json_sha256;
-use nalgebra::{linalg::SVD, DMatrix};
+use nalgebra::{DMatrix, linalg::SVD};
 use nested_fock_algebra::exact_inner::{
     ActionLimits, InnerExpr, JointInnerBasis as B, JointOuterBasis as O, NestedVector,
 };
 use nested_fock_algebra::sm_constraints::*;
 use nested_fock_algebra::sm_full::*;
 use num_complex::Complex64 as C;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const WINDOW: u32 = 2;

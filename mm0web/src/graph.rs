@@ -37,7 +37,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::http::escape_html;
 use logos::dagviz;
@@ -62,8 +62,24 @@ fn plural(n: usize) -> &'static str {
 /// made. Only what this parser recognises as a statement head or a `pub`/
 /// `import` marker — everything else in the submission is a name.
 const KEYWORDS: &[&str] = &[
-    "sort", "provable", "strict", "term", "axiom", "def", "theorem", "macro", "pub", "import",
-    "delimiter", "prefix", "infixl", "infixr", "statement", "notation", "coercion", "local",
+    "sort",
+    "provable",
+    "strict",
+    "term",
+    "axiom",
+    "def",
+    "theorem",
+    "macro",
+    "pub",
+    "import",
+    "delimiter",
+    "prefix",
+    "infixl",
+    "infixr",
+    "statement",
+    "notation",
+    "coercion",
+    "local",
     "hypothesis",
 ];
 
@@ -562,9 +578,7 @@ impl Graph {
         let faults: Vec<Value> = self
             .faults
             .iter()
-            .map(|f| {
-                json!({"kind": f.kind.as_str(), "node": f.node, "detail": f.detail})
-            })
+            .map(|f| json!({"kind": f.kind.as_str(), "node": f.node, "detail": f.detail}))
             .collect();
         let by_kind: serde_json::Map<String, Value> = self
             .counts_by_kind()
@@ -629,7 +643,11 @@ impl Graph {
             if self.variables.is_empty() {
                 String::new()
             } else {
-                format!(" · {} bound variable{}", self.variables.len(), plural(self.variables.len()))
+                format!(
+                    " · {} bound variable{}",
+                    self.variables.len(),
+                    plural(self.variables.len())
+                )
             },
             if kinds.is_empty() {
                 " (nothing declared — the graph is read from the submission's \
@@ -680,10 +698,7 @@ impl Graph {
             let info = self.faults.len() - severe;
             let heading = match (severe, info) {
                 (0, 0) => String::new(),
-                (0, n) => format!(
-                    "{n} undeclared name{} — listed as information:",
-                    plural(n)
-                ),
+                (0, n) => format!("{n} undeclared name{} — listed as information:", plural(n)),
                 (n, 0) => format!("{n} structural fault{}:", plural(n)),
                 (f, n) => format!(
                     "{f} structural fault{} and {n} undeclared name{} — the \
@@ -710,10 +725,7 @@ impl Graph {
                 .map(String::as_str)
                 .collect();
             let more = if self.unused.len() > MAX_UNUSED_LISTED {
-                format!(
-                    " and {} more",
-                    self.unused.len() - MAX_UNUSED_LISTED
-                )
+                format!(" and {} more", self.unused.len() - MAX_UNUSED_LISTED)
             } else {
                 String::new()
             };
@@ -1189,8 +1201,8 @@ pub theorem t_trace: $ run st0 trace $ = '(run_cons run_nil);
         assert_eq!(
             names,
             [
-                "Prop", "St", "L", "st0", "tl_nil", "tl_cons", "run", "run_nil",
-                "run_cons", "trace", "t_trace"
+                "Prop", "St", "L", "st0", "tl_nil", "tl_cons", "run", "run_nil", "run_cons",
+                "trace", "t_trace"
             ]
         );
         let kinds: Vec<Kind> = g.decls.iter().map(|d| d.kind).collect();
@@ -1270,7 +1282,8 @@ provable sort Prop;\ndef a: Prop = $ b $;\nterm b: Prop;\n";
         assert!(g.faults[0].detail.contains("mystery"));
         assert!(g.faults[0].detail.contains("neither file declares"));
 
-        let with_import = "import \"metamath/set.mm0\";\nprovable sort Prop;\ndef a: Prop = $ mystery $;\n";
+        let with_import =
+            "import \"metamath/set.mm0\";\nprovable sort Prop;\ndef a: Prop = $ mystery $;\n";
         let g = Graph::build(with_import, "");
         assert_eq!(g.imports, vec!["metamath/set.mm0".to_string()]);
         assert_eq!(g.faults[0].kind, FaultKind::External);
@@ -1462,7 +1475,12 @@ term a: Prop; -- outer -- inner\n";
     #[test]
     fn an_accepted_submission_reports_undeclared_names_without_calling_them_defects() {
         let g = Graph::build("", "strict provable sort wff;\npub theorem t: $ ghost $;\n");
-        assert_eq!(g.fault_count(), 1, "unaccepted, it is a hint: {:?}", g.faults);
+        assert_eq!(
+            g.fault_count(),
+            1,
+            "unaccepted, it is a hint: {:?}",
+            g.faults
+        );
 
         let g = g.accepted();
         assert_eq!(
@@ -1495,8 +1513,9 @@ term a: Prop; -- outer -- inner\n";
     /// this service reports every structural fault at once and lets an unused
     /// declaration stand, because an mm0 development may end in a theorem
     /// nothing else needs.
-    fn oracle(g: &Graph) -> Result<logos::formalize::graph::Validated, logos::formalize::graph::GraphError>
-    {
+    fn oracle(
+        g: &Graph,
+    ) -> Result<logos::formalize::graph::Validated, logos::formalize::graph::GraphError> {
         use logos::formalize::graph::{GraphNode, check_dag};
         let nodes = g
             .decls

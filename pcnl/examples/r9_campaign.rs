@@ -109,8 +109,8 @@ fn main() {
         other => panic!("unknown R9_STATE_PATH {other:?} (want full|gate|lowrank)"),
     };
     let out_path = std::env::var("R9_OUT").unwrap_or_else(|_| "target/r9_campaign.ndjson".into());
-    let pred_path = std::env::var("R9_PRED_OUT")
-        .unwrap_or_else(|_| "target/r9_predictions.ndjson".into());
+    let pred_path =
+        std::env::var("R9_PRED_OUT").unwrap_or_else(|_| "target/r9_predictions.ndjson".into());
     // Fresh prediction file per run: the secondary-endpoint evaluator reads one
     // campaign's complete dev/test prediction set, never a mix of runs.
     if let Some(parent) = std::path::Path::new(&pred_path).parent() {
@@ -128,14 +128,11 @@ fn main() {
         "paired training seeds: {seeds} over fixed data seed {data_seed} | \
          hardware wall-time cap: {cap} s (declared now, checked between seeds)"
     );
-    println!(
-        "state path: {state_path:?} | params P = {}",
-        {
-            let mut model = Edge0Config::tiny();
-            model.state_path = state_path;
-            model.flat_size()
-        }
-    );
+    println!("state path: {state_path:?} | params P = {}", {
+        let mut model = Edge0Config::tiny();
+        model.state_path = state_path;
+        model.flat_size()
+    });
     println!("artifact: {out_path}");
     println!("predictions: {pred_path}");
     println!();

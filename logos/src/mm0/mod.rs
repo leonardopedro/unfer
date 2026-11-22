@@ -119,10 +119,7 @@ fn cmd_dk(args: &[String]) -> i32 {
             }
             println!("thm:     {} translated", translated.theorems.len());
             for thm in &translated.theorems {
-                println!(
-                    "  {:<20} {}  = '{} ",
-                    thm.name, thm.statement, thm.proof
-                );
+                println!("  {:<20} {}  = '{} ", thm.name, thm.statement, thm.proof);
             }
             println!(
                 "mm0:     ok{} ({})",

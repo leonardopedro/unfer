@@ -1357,13 +1357,16 @@ mod tests {
     fn informed_basis_is_orthonormal_and_rank_limited() {
         let cell = pretrained(6);
         let anchor = cell.anchor.clone().unwrap();
-        let line = informed_line(&cell, &anchor, 3, 40, 0.05, 11).unwrap();
+        // The path only has to span more than `rank` directions; 3 steps across
+        // the 6 rates gives 19 points, while a 40-step path makes this unoptimized
+        // test spend minutes in exact-gradient evaluations for no extra check.
+        let line = informed_line(&cell, &anchor, 3, 3, 0.05, 11).unwrap();
         assert_eq!(line.rank, 3);
         assert!(line.basis.gram_error() < crate::subspace::ORTHONORMAL_TOL);
         assert_eq!(line.basis.p(), cell.shapes.flat_size());
         assert!(line.path_end.is_finite() && line.path_start.is_finite());
         // Same seed, same basis; a different seed moves it.
-        let again = informed_line(&cell, &anchor, 3, 40, 0.05, 11).unwrap();
+        let again = informed_line(&cell, &anchor, 3, 3, 0.05, 11).unwrap();
         assert_eq!(line.hash, again.hash);
     }
 
@@ -1389,7 +1392,12 @@ mod tests {
             (Block::Trunk, (ts, tl)),
             (Block::Rtg, (rs, rl)),
         ] {
-            let line = informed_line_in(&cell, &anchor, 3, 24, 0.05, 11, Some(block)).unwrap();
+            // Same reason as `informed_basis_is_orthonormal_and_rank_limited`:
+            // 3 steps preserve more than rank 3 without a multi-minute sweep.
+            // The RTG table is the exception: its path directions are collinear
+            // enough that 3 steps still leaves direction 2 with no variance.
+            let steps = if block == Block::Rtg { 8 } else { 3 };
+            let line = informed_line_in(&cell, &anchor, 3, steps, 0.05, 11, Some(block)).unwrap();
             assert!(line.basis.gram_error() < crate::subspace::ORTHONORMAL_TOL);
             assert_eq!(line.basis.p(), p);
             for (i, &x) in line.basis.columns().iter().enumerate() {
@@ -1410,7 +1418,7 @@ mod tests {
             // restricted cell cannot be mistaken for a full-space result.
             assert_ne!(
                 line.hash,
-                informed_line(&cell, &anchor, 3, 24, 0.05, 11).unwrap().hash
+                informed_line(&cell, &anchor, 3, 3, 0.05, 11).unwrap().hash
             );
         }
         assert!(BasisKind::Head.is_informed() && !BasisKind::HeadRandom.is_informed());

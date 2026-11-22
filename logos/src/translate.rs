@@ -244,7 +244,9 @@ fn rename_free(term: &CoreIR, from: &str, to: &str) -> CoreIR {
                 }
             }
             CoreIR::Lit(_) => t.clone(),
-            CoreIR::Con(tag, args) => CoreIR::Con(*tag, args.iter().map(|a| go(a, from, to)).collect()),
+            CoreIR::Con(tag, args) => {
+                CoreIR::Con(*tag, args.iter().map(|a| go(a, from, to)).collect())
+            }
             CoreIR::Prim(op, args) => {
                 CoreIR::Prim(*op, args.iter().map(|a| go(a, from, to)).collect())
             }
@@ -260,11 +262,17 @@ fn rename_free(term: &CoreIR, from: &str, to: &str) -> CoreIR {
             CoreIR::Let(id, v, body) => CoreIR::Let(
                 id.clone(),
                 Box::new(go(v, from, to)),
-                Box::new(if id == from { *body.clone() } else { go(body, from, to) }),
+                Box::new(if id == from {
+                    *body.clone()
+                } else {
+                    go(body, from, to)
+                }),
             ),
             CoreIR::Match(s, arms) => CoreIR::Match(
                 Box::new(go(s, from, to)),
-                arms.iter().map(|(p, b)| (p.clone(), go(b, from, to))).collect(),
+                arms.iter()
+                    .map(|(p, b)| (p.clone(), go(b, from, to)))
+                    .collect(),
             ),
             CoreIR::Fold(f, i, l) => CoreIR::Fold(
                 Box::new(go(f, from, to)),
@@ -391,10 +399,7 @@ fn subst(term: &CoreIR, name: &str, arg: &CoreIR, counter: &mut usize) -> CoreIR
                 *counter += 1;
                 let fresh = format!("{p}__b{counter}");
                 let renamed = rename_free(body, p, &fresh);
-                return CoreIR::Lam(
-                    fresh,
-                    Box::new(subst(&renamed, name, arg, counter)),
-                );
+                return CoreIR::Lam(fresh, Box::new(subst(&renamed, name, arg, counter)));
             }
             CoreIR::Lam(p.clone(), Box::new(subst(body, name, arg, counter)))
         }
@@ -415,7 +420,11 @@ fn subst(term: &CoreIR, name: &str, arg: &CoreIR, counter: &mut usize) -> CoreIR
                     Box::new(subst(&renamed, name, arg, counter)),
                 );
             }
-            CoreIR::Let(p.clone(), Box::new(v2), Box::new(subst(body, name, arg, counter)))
+            CoreIR::Let(
+                p.clone(),
+                Box::new(v2),
+                Box::new(subst(body, name, arg, counter)),
+            )
         }
         CoreIR::Match(s, arms) => CoreIR::Match(
             Box::new(subst(s, name, arg, counter)),

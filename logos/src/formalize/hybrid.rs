@@ -30,8 +30,8 @@ use crate::formalize::embed::Embedder;
 #[cfg(feature = "llm-http")]
 use crate::formalize::embed::percent_encode;
 use crate::formalize::graph::GraphNode;
-use crate::formalize::index::{IndexParams, IndexError, RecomputeIndex};
-use crate::formalize::memory::{retrieve_lexical, Lemma, LemmaStore, Retrieved};
+use crate::formalize::index::{IndexError, IndexParams, RecomputeIndex};
+use crate::formalize::memory::{Lemma, LemmaStore, Retrieved, retrieve_lexical};
 use std::collections::HashMap;
 
 /// The fusion constant: ES/xerj's default `rrf.k`. Large enough that ranks
@@ -68,7 +68,10 @@ pub fn rrf_fuse(arms: &[(&str, Vec<usize>)], rrf_k: usize) -> Vec<Fused> {
         for (pos, &id) in ranked.iter().enumerate() {
             let entry = acc.entry(id).or_default();
             entry.0 += 1.0 / (rrf_k + pos + 1) as f64;
-            entry.1.push(ArmRank { arm: (*name).to_string(), rank: pos + 1 });
+            entry.1.push(ArmRank {
+                arm: (*name).to_string(),
+                rank: pos + 1,
+            });
         }
     }
     let mut out: Vec<Fused> = acc
@@ -130,7 +133,10 @@ impl LemmaIndex {
         lemmas.sort_by(|a, b| a.unf_hash.cmp(&b.unf_hash));
         let ids: Vec<String> = lemmas.iter().map(|l| l.unf_hash.clone()).collect();
         let texts: Vec<String> = lemmas.iter().map(|l| index_text(l)).collect();
-        Ok(LemmaIndex { index: RecomputeIndex::build(embedder, texts, params)?, ids })
+        Ok(LemmaIndex {
+            index: RecomputeIndex::build(embedder, texts, params)?,
+            ids,
+        })
     }
 
     /// Index one new lemma (idempotent — a shared lemma indexes once).
@@ -247,7 +253,11 @@ pub fn retrieve_hybrid(
             if let Some(&c) = cosine.get(&f.idx) {
                 because.push_str(&format!(", cos {c:.3} via {}", embedder.id()));
             }
-            Some(Retrieved { lemma: lemma.clone(), score: f.score, because })
+            Some(Retrieved {
+                lemma: lemma.clone(),
+                score: f.score,
+                because,
+            })
         })
         .collect()
 }
@@ -277,7 +287,10 @@ pub struct XerjNode {
 
 impl XerjNode {
     pub fn new(base: impl Into<String>, index: impl Into<String>) -> Self {
-        XerjNode { base: base.into(), index: index.into() }
+        XerjNode {
+            base: base.into(),
+            index: index.into(),
+        }
     }
 
     pub fn index(&self) -> &str {
@@ -379,15 +392,16 @@ pub fn xerj_bulk_export(store: &LemmaStore) -> String {
 mod tests {
     use super::*;
     use crate::formalize::embed::HashingEmbedder;
-    use crate::formalize::formalizer::{base_lexicon, verify_cnl};    use crate::formalize::memory::Provenance;
+    use crate::formalize::formalizer::{base_lexicon, verify_cnl};
+    use crate::formalize::memory::Provenance;
 
     fn node(id: &str, statement: &str) -> GraphNode {
         GraphNode::new(id, "quote", statement, Vec::<String>::new())
     }
 
     fn formal(cnl: &str) -> crate::formalize::formalizer::CnlFormalization {
-        let r = verify_cnl(cnl, &base_lexicon())
-            .unwrap_or_else(|e| panic!("{cnl} should verify: {e}"));
+        let r =
+            verify_cnl(cnl, &base_lexicon()).unwrap_or_else(|e| panic!("{cnl} should verify: {e}"));
         r.into_formalization(1)
     }
 
@@ -422,7 +436,11 @@ mod tests {
         let fused = rrf_fuse(&[("lexical", vec![0, 1]), ("semantic", vec![0])], RRF_K);
         assert_eq!(fused[0].idx, 0);
         let expected_a = 1.0 / 61.0 + 1.0 / 61.0;
-        assert!((fused[0].score - expected_a).abs() < 1e-12, "{}", fused[0].score);
+        assert!(
+            (fused[0].score - expected_a).abs() < 1e-12,
+            "{}",
+            fused[0].score
+        );
         assert_eq!(fused[0].arms.len(), 2);
         assert_eq!(fused[1].idx, 1);
         let expected_b = 1.0 / 62.0;

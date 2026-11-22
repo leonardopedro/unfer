@@ -24,7 +24,7 @@ use crate::sm_bridge::{bind_artifact, canonical_json_sha256, sha256_hex};
 use nalgebra::{DMatrix, DVector};
 use nested_fock_algebra::exact_inner::NestedVector;
 use num_complex::Complex64 as C;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 pub const DEFECT_SCHEMA: &str = "sm-defect-certificate/v1";
@@ -41,19 +41,11 @@ pub struct Interval {
 /// nonnegative terms would make a lower endpoint `-denorm_min`, which reads as a
 /// negative leakage or norm.
 fn down(x: f64) -> f64 {
-    if x == 0.0 {
-        0.0
-    } else {
-        x.next_down()
-    }
+    if x == 0.0 { 0.0 } else { x.next_down() }
 }
 
 fn up(x: f64) -> f64 {
-    if x == 0.0 {
-        0.0
-    } else {
-        x.next_up()
-    }
+    if x == 0.0 { 0.0 } else { x.next_up() }
 }
 
 fn add_down(a: f64, b: f64) -> f64 {

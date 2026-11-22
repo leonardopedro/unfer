@@ -231,11 +231,13 @@ fn hints_are_judged_not_believed() {
     // believed. A hallucinated term must be rejected by mm0-rs and named in
     // the unproved reason, so a caller can see what was tried.
     let claim = Claim::parse("for all x, y: x plus y equals y plus x").expect("parses");
-    let cert = emit::certify(&claim, &["(bogus_one v_x)".into()])
-        .expect("certifies (as unproved)");
+    let cert = emit::certify(&claim, &["(bogus_one v_x)".into()]).expect("certifies (as unproved)");
     match &cert.verdict {
         Verdict::Unproved(reason) => {
-            assert!(reason.contains("(bogus_one v_x)"), "hint not reported: {reason}");
+            assert!(
+                reason.contains("(bogus_one v_x)"),
+                "hint not reported: {reason}"
+            );
             // the theory's own rules were offered first
             assert!(reason.contains("(add_s)"), "rules not offered: {reason}");
         }
@@ -293,9 +295,7 @@ fn the_deferred_proxy_carries_model_proposals_into_judgment() {
         }
     }
     let state = tempfile::tempdir().expect("scratch state dir");
-    let slurp = |name: &str| {
-        std::fs::read_to_string(state.path().join(name)).unwrap_or_default()
-    };
+    let slurp = |name: &str| std::fs::read_to_string(state.path().join(name)).unwrap_or_default();
     // Claim a loopback port and release it: unique per run, so parallel tests
     // cannot collide on the default port.
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -336,7 +336,10 @@ fn the_deferred_proxy_carries_model_proposals_into_judgment() {
     kids.0.push(
         Command::new(env!("CARGO_BIN_EXE_logos"))
             .args([
-                "mm0", "ask", "for all x, y: x times y equals y times x", "--llm",
+                "mm0",
+                "ask",
+                "for all x, y: x times y equals y times x",
+                "--llm",
             ])
             .env("OPENAI_BASE_URL", format!("http://127.0.0.1:{port}/v1"))
             .env("OPENAI_API_KEY", "deferred-proxy-test")
@@ -362,14 +365,11 @@ fn the_deferred_proxy_carries_model_proposals_into_judgment() {
         )
     });
     assert!(
-        request.contains("You are helping close a goal")
-            && request.contains("logos_math"),
+        request.contains("You are helping close a goal") && request.contains("logos_math"),
         "the system prompt went out: {request}"
     );
     assert!(
-        request.contains(
-            "teq (tapp (tapp tprim_mul v_x) v_y) (tapp (tapp tprim_mul v_y) v_x)"
-        ),
+        request.contains("teq (tapp (tapp tprim_mul v_x) v_y) (tapp (tapp tprim_mul v_y) v_x)"),
         "the goal went out: {request}"
     );
 

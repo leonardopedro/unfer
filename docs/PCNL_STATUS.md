@@ -6822,7 +6822,7 @@ Brier advantage survives the symmetric protocol.
 
 Two fixtures; the diagonal summary has five seeds at 30 rows, three at 60, and five overlapping resplits on AG News, plus five resplits and a five-seed canonical sweep on 20 Newsgroups.  Seed and split variance are characterized separately, not over a full seed × split grid; the joint tables use one model seed per split.  The low-rank arm and unbalanced controls are single-seed.  The 20 Newsgroups task is a four-class subset, not the full 20-class problem, and both fixtures are controlled probes rather than benchmarks.  No benchmark or decision claim follows.
 
-## R12 — signed rotation head (reference core, 2026-11-19)
+## R12 — signed rotation head (delivered probe, 2026-11-20)
 
 `pcnl::rotation_head` implements the signed-state half of R12.  A
 `768 → … → K(K−1)/2` tanh trunk emits the angles of a fixed ordered product of
@@ -6836,18 +6836,656 @@ through the existing `Potential` seam.  `mh_pcn_full_step` implements the exact
 full-space kernel with the plan's drift and covariance, including the reverse
 proposal density.
 
-Focused checks (13 tests): the two-state composition oracle where equal
+`RotationSession` persists the dimension, basis, layout, model version,
+evidence prefix, target settings, chain state and serializable RNG state in a
+single JSON checkpoint written via temp-file + sync + rename.  `save`/`load`
+reopens bit-identically, stale `.tmp` files are ignored.  Warm-start sets an
+explicit chain start; `prior_theta` supplies a deterministic working-scale
+draw.  `predict_sequence` composes the whole sequence per posterior draw and then averages squared
+amplitudes, so it is not a product of per-step marginals.  The thin
+`src/bin/rotation.rs` CLI exposes init/update/predict/show.
+
+Focused checks (20 tests): cross-chain retention/provenance, the two-state composition oracle where equal
 measurements separate after `R(π/4)`, the projective-measurement control,
 overall-sign invariance, identity and product order, tensor indexing and
 marginals, empty-text/basis/draw rejection, evidence idempotence and conflict
-detection, finite-difference Born gradients, exact-zero loss divergence, and a
-30 000-step Gaussian canary that recovers the expected posterior mean.  Run:
+detection, finite-difference Born gradients, exact-zero loss divergence,
+checkpoint reopen, and the isotropic, normalized and centered anisotropic
+Gaussian canaries, plus the anchor-RMS scale estimate.  `pcnl/tests/rotation_cli.rs`
+covers init/update/predict/show and the restart.  Run:
 
 ```bash
-cargo test --locked --offline -p pcnl --lib rotation_head
+cargo test --offline -p pcnl --lib rotation_head
+cargo test --offline -p pcnl --test rotation_cli
+cargo test --offline -p pcnl --lib
 ```
 
-This is a reference core, not a completed R12 delivery.  Durable
-checkpoint/resumption, a fixture single-step comparison, and the learned
-sequence experiment have not been run; no text accuracy, calibration or
-learned-interference claim follows.
+The full library suite passes **233/233 in 286.5 s** (after the cross-chain
+retention and independent-start diagnostics).  The two `dt_subspace`
+basis checks that previously exceeded ten minutes were exact-gradient path
+sweeps in an unoptimized build; their path lengths are now bounded (3 steps for
+the PCA/head/trunk checks, 8 for the collinear RTG block), preserving the
+orthonormality and block-support assertions without the multi-minute cost.
+
+**Normalized prior.**  The raw-weight `N(0,0.5²I)` prior is replaced by a
+per-layer normalized prior.  A weight matrix with fan-in `n` is divided by
+`√n` before the Gaussian penalty, so its prior variance is `σ²n` in raw
+coordinates; biases are unscaled.  The pCN proposal covariance is diagonal in
+the same coordinates, keeping the MH kernel exact.  Chain initialisation uses
+the working scale `σ`, not the much wider raw prior draw, because a 768-wide
+input layer would otherwise start saturated.
+
+**Measured probe.**  The probe still uses the smallest tanh head (`hidden=[1]`),
+20 fit/class, 10 calibration/class, Adam pretraining, beta=0.01, 250 steps,
+50 burn, 2 chains and 10 retained draws.  Five seeds (20261118–20261122) give
+(mean ± sd):
+
+| fixture | arm | acc % | NLL | Brier | ECE |
+|---|---|---|---|---|---|
+| AG News | raw Born | 46.3 ± 13.2 | 1.812 ± 0.489 | 0.788 ± 0.189 | 0.269 ± 0.103 |
+| AG News | temperature | 46.3 ± 13.2 | 1.221 ± 0.166 | 0.658 ± 0.094 | 0.070 ± 0.046 |
+| AG News | softmax control | 48.2 ± 3.2 | 2.291 ± 0.540 | 0.732 ± 0.094 | 0.238 ± 0.109 |
+| 20NG | raw Born | 44.2 ± 16.6 | 1.853 ± 0.832 | 0.796 ± 0.295 | 0.316 ± 0.164 |
+| 20NG | temperature | 44.2 ± 16.6 | 1.177 ± 0.254 | 0.627 ± 0.139 | 0.109 ± 0.032 |
+| 20NG | softmax control | 55.7 ± 5.8 | 1.578 ± 0.317 | 0.593 ± 0.045 | 0.149 ± 0.031 |
+
+Temperature fitting uses a grid over [0.04, 8]; it lowers NLL and ECE but is
+monotone and cannot change accuracy.  Against the superseded raw-weight prior,
+AG NLL improves from 1.995 ± 0.509 to 1.812 ± 0.489 with accuracy flat
+(45.8 → 46.3 %); 20NG accuracy falls (47.8 → 44.2 %) with NLL flat
+(1.828 → 1.853).  The normalized prior does not rescue the single-step arm.
+
+**Empirical-Bayes anchor prior.**  The prior center is the Adam-pretrained head
+and its scalar scale is estimated from the anchor's RMS in normalized head
+coordinates, `sigma = rms(theta / prior_scales)` (0.125–0.244 in these runs).
+The centered pCN kernel is exact; `centered_pcn_recovers_a_shifted_gaussian_posterior`
+is the canary.  Five seeds (20261118–20261122) give:
+
+| fixture | arm | acc % | NLL | Brier | ECE |
+|---|---|---|---|---|---|
+| AG News | anchor raw | 42.3 ± 10.3 | 1.796 ± 0.389 | 0.806 ± 0.156 | 0.297 ± 0.079 |
+| AG News | anchor temperature | 42.3 ± 10.3 | 1.231 ± 0.148 | 0.661 ± 0.086 | 0.057 ± 0.030 |
+| 20NG | anchor raw | 43.0 ± 15.9 | 1.726 ± 0.531 | 0.794 ± 0.232 | 0.302 ± 0.098 |
+| 20NG | anchor temperature | 43.0 ± 15.9 | 1.195 ± 0.246 | 0.637 ± 0.134 | 0.113 ± 0.026 |
+
+NLL improves modestly against the zero-centered normalized prior (AG
+1.812 → 1.796; 20NG 1.853 → 1.726), but accuracy falls (AG 46.3 → 42.3 %;
+20NG 44.2 → 43.0 %).  Proposal acceptance is high (336–496 of 500), so the
+failure is not a chain stuck at its start.  The softmax control still wins
+accuracy on both fixtures and NLL on 20NG (1.578 vs 1.726); on AG the anchor
+arm has lower NLL (1.796 vs 2.291) but lower accuracy (42.3 vs 48.2 %).
+
+On the length-2 sequence arm (60 train / 24 test sequences, 800 Adam steps,
+200 sampler steps, seeds 20261118–20261120), the oracle scores 61.1 ± 6.4 % on
+AG and 70.8 ± 8.3 % on 20NG.  Learned composition scores 23.6 ± 8.7 % and
+38.9 ± 12.7 %; the single-step ablation scores 30.6 ± 4.8 % and 30.6 ± 9.6 %;
+the classical squared-transition baseline scores 30.6 ± 6.4 % and
+33.3 ± 16.7 %.  The AG arm is worse than both controls.  The 20NG arm is above
+its ablation but the paired differences (+25.0, 0.0, 0.0 points) and the
+classical baseline variance do not establish learned interference.  Under the
+anchor prior the learned arm falls to 19.4 ± 10.5 % on AG and 30.6 ± 8.7 % on
+20NG, while the ablation scores 25.0 ± 15.0 % and 43.1 ± 31.3 % and the
+classical baseline 27.8 ± 19.2 % and 44.4 ± 33.7 %.  No text-accuracy or
+learned-interference claim follows.  The normalized prior removes layer-width
+domination but does not fix the arm; the empirical-Bayes anchor prior lowers
+NLL without improving accuracy, and the sequence result gets worse.
+
+**Held-out width/representation sweep (2026-11-20).**  Four widths
+(`hidden=[1]`, `[4]`, `[8]`, `[16]`) and two input representations (`raw` and
+fit-standardized embeddings), five paired seeds, same fit/test split as the
+probe: 20 fit rows/class, 20 validation rows/class excluded from the
+likelihood, and the 30-row/class test split.  Standardization uses fit-row means and standard
+deviations only.  Width is selected by mean validation NLL across seeds; test
+is not used for selection.  The softmax control is trained by NLL at the same
+widths.
+
+| fixture | representation | arm | width | test acc % | test NLL | test Brier | test ECE | validation NLL |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| AG News | raw | signed rotation | 8 | 29.83 ± 5.38 | 1.6467 ± 0.0998 | 0.8409 ± 0.0441 | 0.2298 ± 0.0440 | 1.6598 ± 0.1296 |
+| AG News | raw | softmax control | 16 | 84.67 ± 1.27 | 0.7317 ± 0.1540 | 0.2730 ± 0.0274 | 0.1293 ± 0.0247 | 0.6844 ± 0.1880 |
+| AG News | standardized | signed rotation | 1 | 30.67 ± 8.44 | 1.4774 ± 0.0804 | 0.7682 ± 0.0449 | 0.0642 ± 0.0483 | 1.4290 ± 0.0728 |
+| AG News | standardized | softmax control | 16 | 81.67 ± 1.56 | 1.0528 ± 0.2494 | 0.3240 ± 0.0276 | 0.1460 ± 0.0111 | 1.1044 ± 0.1276 |
+| 20NG | raw | signed rotation | 4 | 38.00 ± 9.44 | 1.5141 ± 0.0997 | 0.7713 ± 0.0488 | 0.1799 ± 0.0619 | 1.5577 ± 0.1430 |
+| 20NG | raw | softmax control | 16 | 89.83 ± 1.60 | 0.4284 ± 0.0632 | 0.1648 ± 0.0242 | 0.0691 ± 0.0138 | 0.4766 ± 0.1161 |
+| 20NG | standardized | signed rotation | 1 | 34.00 ± 6.75 | 1.4317 ± 0.0446 | 0.7435 ± 0.0307 | 0.0602 ± 0.0330 | 1.4128 ± 0.0692 |
+| 20NG | standardized | softmax control | 8 | 87.83 ± 2.92 | 0.6504 ± 0.0824 | 0.2025 ± 0.0378 | 0.0866 ± 0.0184 | 0.6131 ± 0.1499 |
+
+Raw rotation accepted 381/500 proposals on AG at width 8 and 382/500 on 20NG at
+width 4.  Standardized rotation accepted only 9/500 and 4/500 at `beta=0.01`,
+so those rows are a near-frozen chain at the Adam start, not a sampled
+posterior, and are ineligible for selection at that step size.  Width selection
+is unstable: per-seed validation minima chose `{4:2, 8:2, 1:1}` for AG raw
+rotation and `{4:2, 1:2, 8:1}` for 20NG.  Selecting per seed gives
+39.0 ± 13.7 % / NLL 1.547 ± 0.270 on AG and 45.0 ± 13.6 % / 1.363 ± 0.196 on
+20NG; softmax gives 84.8 ± 2.2 % / 0.734 and 90.0 ± 1.8 % / 0.426.
+Standardization lowers softmax NLL and Brier on both fixtures (paired `dNLL`
+−0.322 ± 0.145 and −0.263 ± 0.115; `dBrier` −0.065 ± 0.034 and −0.045 ± 0.048),
+but does not rescue the rotation arm.  No width or representation cell tested
+makes the signed head competitive on these probes.  This is a negative result
+for this angle parametrization at this sampler budget, not for signed states in
+general; the next test needs a representation that actually mixes at the same
+settings, not more widths.
+
+**Step-size, centering and tuned-baseline follow-up (2026-11-20).**  The
+follow-up tests fit-centering without variance scaling, a
+representation-specific pCN step, and an approximately parameter-matched
+softmax baseline tuned on validation.  All runs keep the same split, five
+paired seeds and the same sampler budget.
+
+*Centering.*  The `centered` arm subtracts the fit-row mean but does not divide
+by the standard deviation.  Its selected widths are the same as raw (AG width
+8, 20NG width 4).  It mixes at the selected widths, but it does not improve the
+proper scores:
+
+| fixture | representation | width | accepted/500 | validation NLL | test NLL | test acc % |
+|---|---|---:|---:|---:|---:|---:|
+| AG News | raw | 8 | 381.2 ± 35.1 | 1.6598 ± 0.1296 | 1.6467 ± 0.0998 | 29.83 ± 5.38 |
+| AG News | centered | 8 | 394.6 ± 39.9 | 1.6596 ± 0.1233 | 1.6988 ± 0.1118 | 26.33 ± 4.84 |
+| 20NG | raw | 4 | 382.4 ± 29.5 | 1.5577 ± 0.1430 | 1.5141 ± 0.0997 | 38.00 ± 9.44 |
+| 20NG | centered | 4 | 394.2 ± 12.3 | 1.5991 ± 0.1525 | 1.4999 ± 0.1287 | 36.50 ± 5.60 |
+
+The AG validation NLL is indistinguishable from raw; 20NG is worse.  Centering
+changes the acceptance rate, not the ranking.
+
+*Representation-specific step size.*  At width 1, `beta=0.01` was too large for
+both representations, and especially for standardized inputs:
+
+| fixture | representation | beta | accepted/500 | validation NLL |
+|---|---|---:|---:|---:|
+| AG News | raw | 0.005 | 365.0 ± 76.8 | 1.7646 ± 0.2979 |
+| AG News | raw | 0.010 | 72.6 ± 91.5 | 1.9373 ± 0.4057 |
+| AG News | standardized | 0.0025 | 262.0 ± 64.3 | 1.4299 ± 0.0730 |
+| AG News | standardized | 0.005 | 72.6 ± 61.2 | 1.4486 ± 0.0550 |
+| AG News | standardized | 0.010 | 9.0 ± 13.6 | 1.4290 ± 0.0728 |
+| 20NG | raw | 0.005 | 367.6 ± 69.5 | 1.6900 ± 0.3943 |
+| 20NG | raw | 0.010 | 82.4 ± 103.4 | 1.7746 ± 0.7063 |
+| 20NG | standardized | 0.0025 | 248.4 ± 48.2 | 1.3590 ± 0.0464 |
+| 20NG | standardized | 0.005 | 45.0 ± 24.5 | 1.3860 ± 0.0612 |
+| 20NG | standardized | 0.010 | 4.0 ± 8.9 | 1.4128 ± 0.0692 |
+
+So the earlier “near-frozen” label for standardized width 1 describes the
+`beta=0.01` cell, not the representation.  At `beta=0.0025` it is a sampled
+posterior (about 248–262/500 accepted) and its NLL improves.  Lowering beta
+also partly unfreezes standardized widths 4 and 8 (about 57–60 and 31–34
+accepted), but their validation NLL remains 2.05–2.44, far worse than the
+width-1 value of 1.36–1.43.  The width failure is therefore not only a step-size
+failure; the wider standardized parameterisation still fits worse.
+
+The best standardized rotation cell is width 1 at `beta=0.0025`: AG test
+28.50 ± 6.60 % / NLL 1.4275 ± 0.0339, 20NG 33.66 ± 8.01 % / 1.3445 ± 0.0700.
+That is a better NLL than the best raw selected-width cell (AG width 8 at
+`beta=0.01`, 29.83 ± 5.38 % / 1.6467 ± 0.0998; 20NG width 4 at `beta=0.005`,
+38.33 ± 4.57 % / 1.5270 ± 0.1396), but lower accuracy in both cases.  It is a
+calibration improvement, not an accuracy rescue.
+
+*Tuned matched-width softmax.*  `--softmax-tune` selects L2 weight decay from
+`{0, 1e-4, 1e-3}` and early-stops on calibration NLL, evaluating every 100
+steps with patience 4.  The grid selected a nonzero penalty in 110/120 cells
+(67 at `1e-3`, 43 at `1e-4`) and early-stopped between 100 and 3,000 steps
+(83/120 at or below 600).  The output prints both flat parameter counts:
+781/777 at width 1, 3,106/3,096 at width 4, 6,206/6,188 at width 8, and
+12,406/12,372 at width 16, i.e. within 0.5 % of each other rather than exactly
+equal.  At the selected widths:
+
+| fixture | representation | width | rotation acc % | rotation NLL | tuned softmax acc % | tuned softmax NLL | params rot/soft |
+|---|---|---:|---:|---:|---:|---:|---:|
+| AG News | raw | 8 | 29.83 ± 5.38 | 1.6467 ± 0.0998 | 85.00 ± 1.67 | 0.4691 ± 0.0707 | 6,206/6,188 |
+| AG News | centered | 8 | 26.33 ± 4.84 | 1.6988 ± 0.1118 | 84.67 ± 2.09 | 0.4640 ± 0.0727 | 6,206/6,188 |
+| AG News | standardized | 1 | 28.50 ± 6.60 | 1.4275 ± 0.0339 | 46.50 ± 5.76 | 1.0163 ± 0.1017 | 781/777 |
+| 20NG | raw | 4 | 38.33 ± 4.57 | 1.5270 ± 0.1396 | 89.83 ± 1.81 | 0.2810 ± 0.0166 | 3,106/3,096 |
+| 20NG | centered | 4 | 36.50 ± 5.60 | 1.4999 ± 0.1287 | 90.00 ± 2.04 | 0.2792 ± 0.0169 | 3,106/3,096 |
+| 20NG | standardized | 1 | 33.66 ± 8.01 | 1.3445 ± 0.0700 | 48.67 ± 5.61 | 0.8940 ± 0.0693 | 781/777 |
+
+Rotation rows use the best tested beta for that representation/width (raw at
+0.01 for AG width 8 and 0.005 for 20NG width 4; centered at 0.01; standardized
+width 1 at 0.0025); softmax is trained on the fit rows and tuned only on
+calibration rows.  The tuned baseline still wins every matched-width comparison.
+At width 16 it also improves on the prior fixed-3,000-step softmax control:
+AG raw NLL 0.4655 vs 0.7317, 20NG raw 0.2730 vs 0.4284.  The correction to the
+earlier table is that standardized width 1 has a usable posterior and a better
+NLL than raw rotation at a smaller step; it does not make the signed arm
+competitive with the tuned softmax baseline.
+
+**Prior-centre and rotation-pretrain follow-up (2026-11-20).**  Two
+asymmetries remained after the tuned-baseline comparison.  The zero-angle prior
+is the identity, so its Gaussian mass sits on a one-hot outcome-0 state rather
+than a class-balanced one, and the rotation head used a fixed 1,000-step Adam
+pretrain while the tuned softmax early-stopped on calibration rows.
+`--uniform-prior` centres the angle prior on the class-balanced state
+`(1/√K, …, 1/√K)` (all weights zero and the first `K−1` canonical angles set;
+the example asserts the prepared state), and `--rotation-tune` early-stops the
+rotation pretrain on calibration Born NLL, evaluating every 100 steps with
+patience 4.  Training uses fit rows only and selection uses calibration rows
+only; test rows are never read.  The grid is the same four selected cells (AG
+raw width 8 at `beta=0.01`, AG standardized width 1 at `0.0025`, 20NG raw width
+4 at `0.005`, 20NG standardized width 1 at `0.0025`), the four
+fixed/tuned × zero/uniform arms, and the five paired seeds, with the softmax
+control disabled (`--softmax-pretrain 0`).  All 80 cells completed.
+
+| cell | base acc % / NLL | early-stop | uniform prior | uniform + early | early step |
+|---|---:|---:|---:|---:|---:|
+| AG raw w8 | 29.83 / 1.647 | 28.00 / 1.715 (+0.07) | 30.83 / 1.712 (+0.07) | 29.00 / 1.670 (+0.02) | 280 ± 349 |
+| AG std w1 | 28.50 / 1.427 | 28.83 / 1.410 (−0.01) | 30.50 / 1.500 (+0.07) | 29.83 / 1.430 (0.00) | 340 ± 195 |
+| 20NG raw w4 | 38.33 / 1.527 | 39.50 / 1.460 (−0.07) | 37.33 / 1.540 (+0.02) | 39.33 / 1.530 (+0.01) | 120 ± 45 |
+| 20NG std w1 | 33.66 / 1.344 | 33.00 / 1.360 (+0.01) | 32.66 / 1.380 (+0.04) | 32.00 / 1.400 (+0.05) | 520 ± 444 |
+
+Parentheses are the paired mean `ΔNLL` against the base cell over the five
+seeds; a negative value is better.  The uniform prior is worse on mean NLL in
+all four cells (+0.02 to +0.07) and moves accuracy by −1.00 to +2.00 points;
+its class balance does not fix the arm.  Early stopping is the only arm with a
+negative mean `ΔNLL` on two cells, but both are within seed scatter (AG std
+−0.01 ± 0.06, 3/5 seeds; 20NG raw −0.07 ± 0.12, 3/5), and it is worse on the
+other two (AG raw +0.07 ± 0.19; 20NG std +0.01 ± 0.02, 0/5 seeds).  The
+selected step is unstable (120 ± 45 to 520 ± 444; validation NLL often prefers
+the full 1,000 steps), so the fixed pretrain is not the asymmetry that explains
+the gap.  Acceptance stays 212–478/500, so no arm is frozen.  The tuned
+softmax still wins every selected cell; neither intervention changes the
+negative conclusion.  The draws in this grid were retained chain-by-chain and
+therefore came from chain 0 only; the cross-chain rerun below supersedes the
+absolute numbers (the ranking is unchanged).
+
+**Cross-chain retention and mixing audit (2026-11-20).**  The earlier R12 grids
+asked for 10 retained draws from 2 chains, but `update` appended each chain's
+thinned trace and then truncated to `draws`, so every published MCMC number was
+ten draws from chain 0.  `update` now allocates the total draw quota across
+chains, spreads each chain's quota over its post-burn trace, and records
+`(chain, step)` provenance; pre-update prior draws report an unavailable
+provenance.  A regression test covers the 2-chain/6-draw allocation, and the
+checkpoint round-trip preserves the provenance.  The four selected cells were
+rerun for all four prior/pretrain arms and five paired seeds; all 80 cells
+completed.
+
+| cell | arm | acc % | NLL | Brier | draw-NLL mean | split R̂ |
+|---|---|---:|---:|---:|---:|---:|
+| AG raw w8 | base | 27.67 ± 3.20 | 1.4281 ± 0.0837 | 0.7710 | 2.4597 | 1.202 |
+| AG raw w8 | early-stop | 31.17 ± 4.59 | 1.4038 ± 0.0606 | 0.7571 | 2.4407 | 1.381 |
+| AG raw w8 | uniform | 29.00 ± 4.58 | 1.4934 ± 0.0672 | 0.7863 | 2.5027 | 0.935 |
+| AG raw w8 | uniform + early | 26.00 ± 3.08 | 1.4537 ± 0.0427 | 0.7814 | 2.4681 | 1.505 |
+| AG std w1 | base | 28.84 ± 7.25 | 1.3797 ± 0.0741 | 0.7484 | 1.5119 | 1.123 |
+| AG std w1 | early-stop | 30.17 ± 6.86 | 1.3876 ± 0.0723 | 0.7481 | 1.4624 | 1.776 |
+| AG std w1 | uniform | 29.83 ± 4.62 | 1.4371 ± 0.1207 | 0.7523 | 1.6043 | 2.769 |
+| AG std w1 | uniform + early | 27.00 ± 4.88 | 1.4079 ± 0.0818 | 0.7573 | 1.4766 | 2.752 |
+| 20NG raw w4 | base | 37.83 ± 4.81 | 1.3109 ± 0.1081 | 0.7173 | 2.1681 | 1.981 |
+| 20NG raw w4 | early-stop | 37.00 ± 6.78 | 1.2876 ± 0.1049 | 0.7048 | 2.0854 | 1.223 |
+| 20NG raw w4 | uniform | 41.00 ± 3.79 | 1.2922 ± 0.0686 | 0.6945 | 2.1143 | 1.322 |
+| 20NG raw w4 | uniform + early | 40.17 ± 4.18 | 1.2793 ± 0.0676 | 0.6865 | 2.0833 | 1.340 |
+| 20NG std w1 | base | 33.33 ± 7.97 | 1.3324 ± 0.0782 | 0.7230 | 1.4268 | 1.401 |
+| 20NG std w1 | early-stop | 33.17 ± 8.59 | 1.3437 ± 0.0740 | 0.7302 | 1.4258 | 1.628 |
+| 20NG std w1 | uniform | 33.17 ± 3.97 | 1.3693 ± 0.0561 | 0.7396 | 1.4447 | 1.316 |
+| 20NG std w1 | uniform + early | 31.83 ± 3.61 | 1.3771 ± 0.0292 | 0.7436 | 1.4342 | 1.307 |
+
+`draw-NLL mean` averages the test NLL of each individual draw before the
+Bayesian mixture; it is not the predictive NLL.  `split R̂` is computed from
+the per-chain sequences of that draw-level NLL (five draws per chain), so it is
+a coarse chain-disagreement diagnostic, not a parameter-space convergence
+certificate.  Paired mean `ΔNLL` against the base cell (negative is better):
+
+| cell | early-stop | uniform | uniform + early |
+|---|---:|---:|---:|
+| AG raw w8 | −0.0243 ± 0.0814 (2/5) | +0.0653 ± 0.1201 (1/5) | +0.0256 ± 0.1096 (1/5) |
+| AG std w1 | +0.0079 ± 0.0270 (3/5) | +0.0574 ± 0.1042 (2/5) | +0.0282 ± 0.0661 (1/5) |
+| 20NG raw w4 | −0.0233 ± 0.0681 (2/5) | −0.0186 ± 0.1621 (3/5) | −0.0315 ± 0.1647 (3/5) |
+| 20NG std w1 | +0.0113 ± 0.0116 (0/5) | +0.0369 ± 0.0716 (2/5) | +0.0447 ± 0.0568 (1/5) |
+
+Cross-chain retention materially changes the absolute scores.  The base cells
+move from AG raw 1.6467 to 1.4281, AG standardized 1.4275 to 1.3797, 20NG raw
+1.5270 to 1.3109, and 20NG standardized 1.3445 to 1.3324.  The old chain-0-only
+readout was pessimistic about NLL, not optimistic; accuracy is similar or
+slightly lower.  The arm conclusions do not change: early stopping improves the
+mean on AG raw and 20NG raw but only in 2/5 seeds, is flat on AG standardized,
+and is worse in every seed on 20NG standardized.  The uniform prior is worse on
+three of four cells, with a non-replicated 20NG-raw gain inside seed scatter.
+No arm is promoted.
+
+The more important result is that the corrected ensembles still do not mix:
+mean split R̂ exceeds 1.05 in fifteen of sixteen rows and reaches 2.77, with
+single-seed values of 6.94 and 7.72.  Ten retained draws (five per chain), 250
+steps per chain and a shared Adam warm start are too few for differences of
+this size.  The proper scores above are therefore descriptive, not converged
+posterior estimates; the tuned softmax comparison is unaffected and still wins
+every selected cell.
+
+**Budget escalation and parameter-space mixing (2026-11-20).**  The R̂ warning
+was tested rather than assumed.  The four base cells were rerun at 1,000 steps,
+burn 200, two chains and 40 retained draws (20 per chain), on the same five
+seeds.  All 20 cells completed.
+
+| cell | acc % | NLL | Brier | draw-NLL | predictive R̂ | param R̂ median | param >1.05 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AG raw w8 | 31.17 ± 6.68 | 1.3586 ± 0.0571 | 0.7401 | 2.4460 | 1.078 ± 0.076 | 2.005 ± 0.018 | 98.0% |
+| AG std w1 | 30.16 ± 8.36 | 1.3600 ± 0.0805 | 0.7380 | 1.5067 | 1.365 ± 0.490 | 2.110 ± 0.032 | 98.1% |
+| 20NG raw w4 | 38.67 ± 6.14 | 1.2994 ± 0.1020 | 0.7036 | 2.2325 | 1.206 ± 0.218 | 2.047 ± 0.016 | 98.3% |
+| 20NG std w1 | 36.50 ± 7.78 | 1.3091 ± 0.0935 | 0.7132 | 1.4098 | 1.364 ± 0.353 | 2.047 ± 0.057 | 98.2% |
+
+Paired `ΔNLL` against the 250-step base (negative is better): AG raw
+−0.0695 ± 0.0595, AG standardized −0.0197 ± 0.0198, 20NG raw −0.0115 ± 0.1128,
+20NG standardized −0.0233 ± 0.0247.  Every base NLL improves, and accuracy rises
+in all four cells, but predictive R̂ remains above 1.05 in all four means.  The
+parameter-wise R̂ is worse: its median is about 2.0 and roughly 98% of finite
+coordinates exceed 1.05 in every cell, including the 781-parameter standardized
+heads.  This is not merely a width effect; the rotation head is weakly
+identified, or has rotational gauge directions, and we did not prove which.
+Neither diagnostic certifies a converged posterior at this budget.
+
+A single seed was then run at 8,000 steps (burn 1,600, same 20 draws per chain):
+
+| cell | acc % | NLL | predictive R̂ | param R̂ median |
+|---|---:|---:|---:|---:|
+| AG raw w8 | 36.67 | 1.3487 | 0.968 | 1.911 |
+| AG std w1 | 30.83 | 1.3388 | 0.950 | 1.940 |
+| 20NG raw w4 | 55.00 | 1.0511 | 1.340 | 2.010 |
+| 20NG std w1 | 28.33 | 1.3598 | 1.313 | 1.890 |
+
+Only the two AG cells reach predictive R̂ below 1.05; the 20NG cells do not,
+and parameter R̂ stays near 1.9 everywhere.  This is one paired seed, so it is a
+counterexample to "more steps always suffices", not a convergence result.
+
+A finer step-size sweep located the rejection cliff and showed that 1,000-step
+acceptance is dominated by an initial transient.  On the AG raw seed-18 cell at
+1,000 steps, `beta=0.012` accepted 1,475/2,000 proposals (predictive R̂ 1.015,
+parameter median 1.961), `beta=0.015` accepted 1,103 (1.084, 1.844), and
+`beta=0.02` accepted 281 (1.392, 1.447).  `beta=0.03`, 0.1 and 0.3 still
+rejected every proposal.  At `beta=0.02` acceptance was only 14% over the first
+1,000 steps but 38.5% at 2,000, 47.3% at 4,000 and 48.6% at 8,000, so the chain
+escapes a stiff start rather than sampling efficiently from the outset.
+
+Longer runs did not converge.  At 8,000 steps `beta=0.015` accepted
+11,166/16,000 (NLL 1.3685, predictive R̂ 1.043, parameter median 1.806);
+`beta=0.02` accepted 7,780 (NLL 1.3517, predictive 1.222, parameter 1.701);
+`beta=0.01` remained the best predictive cell (NLL 1.3487, predictive 0.968,
+parameter 1.911).  Raising burn from 1,600 to 4,000 was worse for both
+`beta=0.01` (predictive 1.091, parameter 2.376) and `beta=0.02` (1.227, 2.065),
+so the failure is not a short burn-in.  Retaining 100 draws per chain instead of
+20 left parameter R̂ at 1.998 (rank-normalised 1.787) while predictive R̂ was
+0.997, so 40 draws were not the cause.  Rank-normalised parameter R̂ was 1.735
+at `beta=0.01` and 1.604 at `beta=0.02`, confirming the raw statistic is not
+merely a heavy-tail artefact.  The experiment now prints `param_rank_rhat`
+alongside `param_rhat`.
+
+Two independent-start rescues also failed.  Starting each chain at an
+independent Gaussian perturbation of the anchor gave 0/2,000 accepted proposals
+at spread 0.05 and 0.25 (chains froze at their starts), while spread 0.01 kept
+1,676/2,000 accepted but raised predictive R̂ from 1.188 to 1.651.  The tiny
+accepted step is load bearing; it cannot be replaced by a larger one without a
+better proposal.
+
+R12 score comparisons are therefore frozen at the 250-step table, with the
+1,000-step table reported only as a budget-sensitivity check.  No arm or cell is
+promoted.  The tuned softmax control is unchanged and still dominates.  Before
+another prior or architecture sweep, either use a preconditioned/adaptive
+proposal (or a reduced, identifiable parameterization) or set a predictive-R̂
+gate and run long enough to pass it; adding steps alone is not sufficient.
+
+**Diagonal preconditioner and linear angle head (2026-11-21).**  Both fixes named
+above were implemented and measured on the same four selected cells, seed
+20261118, 80 fit / 80 calibration / 120 test rows, 2 chains, 40 retained draws,
+the same Adam pretrain and the same 8,000 steps (burn 1,600, 16,000 proposals).
+The first is a per-coordinate pCN proposal: `beta_i` is frozen from a cloned
+pilot session's pooled within-chain sample variance,
+`beta_i = fraction * sd_i / (sigma * prior_scale_i)`, clipped to `[1e-4, 1]`.
+The pilot has its own clone and does not advance the production chains or RNG,
+and equal betas recover the scalar kernel exactly (kernel/config tests pass
+25/25).  The second is a linear angle head (`--linear-head`): no hidden layer,
+so hidden-unit sign flips and permutations are absent by construction.
+
+Scalar and pilot (fraction 0.1) at 8,000 steps; predictive R̂ is printed with
+its draw-NLL MCSE in parentheses.
+
+| cell | arm | acc % | NLL | predictive R̂ (MCSE) | param R̂ median | rank R̂ median | accepted |
+|---|---|---:|---:|---:|---:|---:|---:|
+| AG raw w8 | scalar | 36.67 | 1.3487 | 0.968 (0.035) | 1.911 | — | 14,018/16,000 |
+| AG raw w8 | pilot 0.1 | 32.50 | 1.3062 | 1.043 (0.036) | 1.816 | 1.678 | 11,400/16,000 |
+| AG std w1 | scalar | 30.83 | 1.3388 | 0.950 (0.011) | 1.940 | 1.758 | 7,856/16,000 |
+| AG std w1 | pilot 0.1 | 25.83 | 1.3523 | 1.014 (0.008) | 2.038 | 1.810 | 8,926/16,000 |
+| 20NG raw w4 | scalar | 55.00 | 1.0511 | 1.340 (0.030) | 2.010 | 1.791 | 15,523/16,000 |
+| 20NG raw w4 | pilot 0.1 | 50.00 | 1.1542 | 1.291 (0.045) | 1.808 | 1.671 | 12,527/16,000 |
+| 20NG std w1 | scalar | 28.33 | 1.3598 | 1.313 (0.012) | 1.890 | 1.756 | 7,678/16,000 |
+| 20NG std w1 | pilot 0.1 | 30.00 | 1.3835 | 0.967 (0.007) | 2.137 | 1.828 | 13,937/16,000 |
+
+The per-coordinate kernel lowers the parameter R̂ median by about 0.10 on the
+two raw cells, but raises it on both standardized cells.  It lowers predictive
+R̂ only on 20NG standardized, and there the point NLL is worse (1.3835 vs
+1.3598).  No cell passes both predictive R̂ < 1.05 and parameter R̂ < 1.05.
+Acceptance is not monotone in the frozen step size: the standardized cells now
+accept more proposals yet mix no better.  The pilot fraction was selected on AG
+raw alone: 0.5 froze every chain (0/16,000 accepted, NLL 2.1511), 0.05 gave
+predictive 1.004 but parameter 1.948 and rank 1.753 with worse NLL 1.3872, and
+0.1 was used unchanged on the other three cells.  This is one pilot setting and
+one seed, not a tuned preconditioner.
+
+Linear angle head at the same budget.  For the standardized cells the scalar
+tuned beta accepted 0/16,000, so the linear head was rerun at `beta=1e-4`; that
+is a proposal re-tune and is labelled as such, not a same-kernel comparison.
+
+| cell | beta | params | accepted | acc % | NLL | predictive R̂ (MCSE) | param R̂ median | rank R̂ median |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| AG raw | 0.01 | 4,614 | 10,604/16,000 | 25.00 | 1.4345 | 0.977 (0.040) | 1.949 | 1.760 |
+| AG std | 1e-4 | 4,614 | 15,743/16,000 | 28.33 | 1.4647 | 1.063 (0.035) | 2.074 | 1.821 |
+| 20NG raw | 0.005 | 4,614 | 14,872/16,000 | 16.67 | 1.5034 | 1.003 (0.039) | 2.044 | 1.807 |
+| 20NG std | 1e-4 | 4,614 | 15,722/16,000 | 26.67 | 1.4656 | 0.981 (0.040) | 2.016 | 1.803 |
+
+The linear head is a clear regression: every NLL is worse than its hidden-head
+scalar baseline (AG raw 1.4345 vs 1.3487, AG std 1.4647 vs 1.3388, 20NG raw
+1.5034 vs 1.0511, 20NG std 1.4656 vs 1.3598), and 20NG raw falls to 16.67%
+accuracy.  It mixes (14,872–15,743 accepted where retuned) but parameter R̂ stays
+near 2.0 and rank R̂ near 1.80.  Removing hidden-unit sign and permutation gauges
+therefore does not fix the parameter-space failure in this configuration; the
+non-identification is not mainly that gauge.  For the standardized cells the
+linear head also has more parameters (4,614 vs 781), so this is a reduced
+*architecture*, not a reduced parameter count.
+
+Budget gate at 32,000 steps (burn 6,400, 2 chains, 40 draws, 64,000 proposals).
+The predictive-R̂ gate is 1.05.
+
+| cell | acc % | NLL | predictive R̂ (MCSE) | param R̂ median | rank R̂ median | accepted | gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 20NG raw | 69.17 | 0.9171 | 1.489 (0.041) | 1.913 | 1.745 | 60,706/64,000 | fail |
+| 20NG std | 23.33 | 1.6242 | 1.018 (0.030) | 2.500 | 1.992 | 110/64,000 | fail |
+
+The 20NG raw point score improves sharply with budget (NLL 1.0511 → 0.9171,
+accuracy 55% → 69.17%), but predictive R̂ rises from 1.340 to 1.489 and
+parameter R̂ is unchanged, so the better fit is not a convergence result.  The
+standardized cell degrades: acceptance collapses from 7,678/16,000 at 8,000
+steps to 110/64,000, NLL worsens to 1.6242 and parameter R̂ rises to 2.500.
+Neither cell passes the gate, and this is one seed.  The budget-sensitivity
+check therefore closes negatively for both 20NG cells.
+
+**Four-chain control (2026-11-21).**  The parameter-R̂ values above use two
+chains, the minimum for the statistic, so both 20NG cells were rerun at 8,000
+steps with four chains and 80 retained draws (20 per chain), same seed, beta and
+pretrain.  The 32,000 proposals are the same total budget as the two-chain run.
+
+| cell | acc % | NLL | predictive R̂ (MCSE) | param R̂ median | rank R̂ median | param >1.05 | accepted |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 20NG raw | 60.83 | 1.0247 | 1.188 (0.020) | 2.409 | 2.056 | 99.9% | 31,050/32,000 |
+| 20NG std | 29.17 | 1.3586 | 1.131 (0.008) | 2.238 | 1.971 | 100.0% | 15,126/32,000 |
+
+The failure is not a two-chain estimator artifact.  Against the paired two-chain
+rows, the predictive R̂ improves somewhat (raw 1.340 → 1.188, standardized
+1.313 → 1.131) but still fails the 1.05 gate, while the parameter and rank
+medians rise (raw 2.010 → 2.409 and 1.791 → 2.056; standardized 1.890 → 2.238
+and 1.756 → 1.971).  With four chains, 100% of the standardized head's 781
+coordinates and 99.9% of the raw head's 3,106 coordinates exceed 1.05.  A broad
+parameter-space disagreement is therefore present under the standard chain
+count, not just under a fragile two-chain estimate.
+
+**Gradient-informed sampler (2026-11-21).**  `SessionConfig::sampler = Mala`
+adds an exact preconditioned MALA kernel beside pCN.  In normalized prior
+coordinates `u_i=(θ_i−c_i)/(σ s_i)` the proposal is
+`u' = u − (τ²/2)∇Φ(u) + τ ξ`, with the exact Born gradient and the full
+reverse-density MH ratio.  The step `τ` (`--mala-step`) was selected only by
+short acceptance pilots, never by test NLL: on standardized 1,500-step runs,
+`τ=0.002` gave 50% acceptance (0.001 gave 86%); on raw, 0.020 gave 44% at 1,500
+steps (0.024 gave essentially none).  The matched 8,000-step runs then used the
+same seed, split, pretrain and 2-chain/40-draw budget as the pCN rows.
+
+| cell | kernel | step | acc % | NLL | predictive R̂ (MCSE) | param R̂ | rank R̂ | accepted |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 20NG std | pCN | 0.0025 | 47.99 | 1.3598 | 1.313 (0.012) | 1.890 | 1.756 | 7,678/16,000 |
+| 20NG std | MALA | 0.002 | 59.48 | 1.3904 | 1.530 (0.010) | 2.034 | 1.794 | 9,517/16,000 |
+| 20NG raw | pCN | 0.005 | 97.02 | 1.0511 | 1.340 (0.030) | 2.010 | 1.791 | 15,523/16,000 |
+| 20NG raw | MALA | 0.020 | 71.62 | 1.0560 | 1.224 (0.052) | 1.676 | 1.581 | 11,459/16,000 |
+
+Gradient information does not rescue either cell.  Standardized MALA has healthy
+acceptance but a worse predictive R̂ and NLL than pCN; raw MALA lowers the
+parameter and rank R̂ but is slightly worse on NLL and still far above the 1.05
+gate.  The raw MALA acceptance also rose from 44% in the pilot to 71.6% in the
+8,000-step run, so that pilot did not fix a stationary acceptance rate.
+
+**Posterior-geometry diagnostic (2026-11-21).**  `RotationSession::posterior_geometry`
+reports, per coordinate: within-chain posterior sd divided by the prior sd; a
+flat flag (`≥0.5`, prior-dominated), an identified flag (`≤0.1`); and the
+largest pairwise chain-mean difference divided by the pooled within-chain sd, a
+standardized separation with a `>2` flag.  The point is to distinguish chain
+disagreement on tightly identified coordinates (a shifted or multimodal mode)
+from broad drift along weakly identified ones.  It is descriptive and does not
+replace R̂.
+
+| cell | kernel | sd/prior median | flat frac | identified frac | separation median | separated frac | separated / flat | separated / identified |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 20NG std | pCN | 0.054 | 0.000 | 0.986 | 1.564 | 0.392 | — | 0.392 |
+| 20NG std | MALA | 0.048 | 0.000 | 0.985 | 1.629 | 0.406 | — | 0.406 |
+| 20NG raw | pCN | 0.149 | 0.000 | 0.084 | 1.789 | 0.446 | — | 0.565 |
+| 20NG raw | MALA | 0.476 | 0.420 | 0.000 | 1.308 | 0.305 | 0.243 | — |
+
+On standardized, ~99% of coordinates are identified and ~40% of those are
+separated by more than two within-chain sds under both kernels; this is not a
+flat-direction story and MALA does not reduce it.  Raw pCN has almost no flat
+coordinates and 56.5% of identified coordinates are separated.  Raw MALA is the
+outlier: it leaves a broad, prior-dominated posterior (42% flat, median
+sd/prior 0.48), so its lower R̂ reflects a broader ensemble, not a better-resolved
+mode.  Separation can also arise from within-chain drift, so these columns are
+diagnostic rather than a convergence verdict.
+
+**Prediction-space chain distance (2026-11-21).**  Parameter separation only
+matters if it changes decisions.  For each chain the experiment now averages its
+retained draws' test distributions over rows, and reports the total-variation
+distance `0.5 * Σ_k |p_a(k) − p_b(k)|` for every chain pair (`prediction_chains`).
+This is a descriptive chain-mean distance; it can hide row-level differences
+that cancel.
+
+| cell | chains | TV mean | TV max | separated / identified |
+|---|---:|---:|---:|---:|
+| 20NG std | 2 | 0.0928 | 0.0928 | 0.392 |
+| 20NG std | 4 | 0.0991 | 0.1253 | 0.829 |
+| 20NG raw | 2 | 0.0328 | 0.0328 | 0.565 |
+| 20NG raw | 4 | 0.0336 | 0.0474 | 0.870 |
+
+The standardized disagreement survives in the average predictions: four chains
+differ by about 10 percentage points total variation (maximum 12.5), and 82.9%
+of identified coordinates are separated.  For a four-class report that is a
+material predictive difference, so this is not merely a hidden-unit sign gauge
+or a parameterization artifact.  Raw's two-chain pooled distance was only 3.3
+points; the four-chain control below shows that this pooled number can be
+misleading.  These are one seed and one budget; the columns carry no sampling
+interval and are not a convergence certificate.
+
+The pooled distance could still hide either a coherent block switching sides or
+a diffuse shift that partially cancels across rows.  The four-chain runs
+therefore also average each chain within every row and true class
+(`prediction_rows`, `prediction_classes`).  Row-level pairwise TV for
+standardized averages 0.1468 (maximum 0.3356); 77.8% of row pairs exceed 0.10,
+and at least two chains disagree on the top label in all 120/120 test rows.  Its
+per-true-class mean TVs are `[0.0865, 0.1317, 0.1019, 0.1085]` (mean 0.1072):
+every class is affected, not one confused label.  This is a pervasively
+different decision map, not a hidden-unit permutation.
+
+The raw four-chain control overturns the pooled reading.  Its pooled TV is only
+0.0336 (maximum 0.0474), but row-level TV averages 0.3476 (maximum 0.8688),
+96.3% of row pairs exceed 0.10, the top labels differ in 109/120 rows, and the
+per-true-class TVs are `[0.0851, 0.0988, 0.0997, 0.0980]` (mean 0.0954).  Raw's
+small pooled distance is cancellation between rows, not predictive agreement;
+its row-level disagreement is larger than standardized's.  Pooled chain-mean TV
+must not be used as evidence of predictive consensus.  All these means are
+descriptive, use chain-averaged predictions, and carry no uncertainty interval.
+
+**Does row disagreement track errors? (2026-11-21).**  For each test row the
+experiment correlates its mean pairwise chain TV with the pooled prediction's
+NLL.  This is descriptive, not a validated error detector.
+
+| run | Pearson | Spearman | rows |
+|---|---:|---:|---:|
+| 8k pCN, seed 20261118 | 0.066 | 0.099 | 120 |
+| 8k PT, seed 20261118 | 0.164 | 0.116 | 120 |
+| 8k pCN, seed 20261119 | 0.302 | 0.206 | 120 |
+| 8k PT, seed 20261119 | 0.278 | 0.368 | 120 |
+| 32k pilot, seed 20261118 | 0.144 | 0.236 | 120 |
+
+The correlation is weak-to-moderate and seed-dependent: Pearson ranges from
+0.066 to 0.302 and Spearman from 0.099 to 0.368.  Rows where chains disagree
+more are somewhat more likely to have a worse pooled NLL, but the relationship
+is not stable enough to treat row TV as an error predictor; it remains a spread
+diagnostic.  Per-chain scores also reverse across seeds: at seed 20261118 pCN
+scores `acc=[0.292, 0.233]`, `nll=[1.347, 1.410]` against PT
+`acc=[0.358, 0.408]`, `nll=[1.347, 1.316]`, but at seed 20261119 pCN scores
+`acc=[0.458, 0.450]`, `nll=[1.164, 1.207]` against PT
+`acc=[0.408, 0.383]`, `nll=[1.228, 1.248]`.  The tail `acc=[0.258, 0.275]`,
+`nll=[1.357, 1.401]` is the 32k pilot.
+
+**Parallel tempering (2026-11-21).**  `Sampler::ParallelTempering` pairs each
+cold chain (`T = 1`) with a tempered power posterior (prior fixed, likelihood
+scaled by `1/T`), attempts an adjacent-pair replica exchange after every sweep,
+and retains only cold chains.  The 8k standardized cell used four chains with
+`T = [1, 2, 1, 2]` and 80 draws (40 per cold chain), same seed, burn and beta;
+the matched pCN baseline used two chains and 80 draws.
+
+| seed | arm | acc % | NLL | predictive R̂ | param R̂ | pooled TV | row TV | top-label disagree |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20261118 | pCN | 26.67 | 1.3580 | 1.350 | 1.922 | 0.0930 | 0.1480 | 99/120 |
+| 20261118 | PT | 38.33 | 1.3157 | 1.080 | 2.024 | 0.0516 | 0.1226 | 42/120 |
+| 20261119 | pCN | 50.00 | 1.1455 | 1.012 | 2.054 | 0.0599 | 0.1985 | 41/120 |
+| 20261119 | PT | 45.00 | 1.1906 | 1.041 | 1.819 | 0.0853 | 0.2047 | 52/120 |
+
+On seed 20261118, tempering cuts pooled TV by 45% and top-label disagreement
+by 58%, and both cold chains score better than either pCN chain.  That advantage
+does not replicate.  On seed 20261119, pCN has the lower NLL (1.1455 vs 1.1906),
+the higher accuracy (50% vs 45%), slightly lower row TV (0.1985 vs 0.2047) and
+fewer label disagreements (41 vs 52); PT improves only parameter R̂ (1.819 vs
+2.054).  Across the two paired seeds the mean NLL delta is +0.0014 (PT minus
+pCN) and the mean row-TV delta is −0.0096, but both changes have opposite signs
+by seed, so no stable point-prediction or row-disagreement benefit is established.
+Both arms remain far above the parameter-R̂ gate.  Seed 20261119 also shows that
+a predictive-R̂ pass is not sufficient: pCN reaches 1.012 there while parameter
+R̂ is 2.054.  PT remains a diagnostic control, not a convergence remedy; this is
+two seeds at one budget, not a general claim.
+
+The PT report now carries `swap_attempts` and `swap_accepted`.  Rerunning both
+PT cells with that instrumentation reproduced every score above exactly.  Seed
+20261118 accepted 2,129/16,000 exchanges (13.3%, one cold exchange per ~7.5
+sweeps); seed 20261119 accepted 1,939/16,000 (12.1%, per ~8.3 sweeps).  Both runs
+therefore exchanged replicas actively and at similar rates, so the seed reversal
+is not explained by one run failing to swap.  The rate is low enough to call the
+1↔2 ladder a weak mixer, but no acceptance threshold was preregistered and this
+is a diagnostic, not a convergence claim.
+
+**Pilot preconditioning at 32k (2026-11-21).**  The 20NG standardized cell was
+rerun at 32,000 steps (burn 6,400, 2 chains, 40 draws) with a 0.1-fraction pilot
+that froze per-coordinate betas `min=0.000324 median=0.000919 max=0.002885`.
+
+| run | NLL | predictive R̂ (MCSE) | param R̂ | rank R̂ | accepted |
+|---|---:|---:|---:|---:|---:|
+| scalar β=0.0025 | 1.6242 | 1.018 (0.030) | 2.500 | 1.992 | 110/64,000 |
+| pilot betas | 1.3690 | 1.152 (0.007) | 2.125 | 1.826 | 57,523/64,000 |
+
+The pilot prevents the acceptance collapse (89.9% versus 0.17%) and improves
+NLL and both parameter statistics, but predictive R̂ moves the wrong way and all
+three gates still fail.  The rerun reproduces the earlier score exactly and now
+also records geometry (`sd_norm=0.0555`, identified 89.1%, separation median
+1.937, separated/identified 0.491) and row disagreement: pooled TV 0.0824, row
+TV 0.1097 (maximum 0.2604), top-label disagreement 79/120, class-TV mean 0.0824.
+Against the 8k pCN baseline (row TV 0.1480, 99/120) this lowers disagreement,
+but does not remove it; the comparison changes budget, preconditioner and
+retained draws per chain (20 versus 40), so it is not a clean budget effect.
+It is one seed, and 32k remains a sensitivity/gate check, not a new frozen R12
+score.
+
+Reproduce a budget cell with
+
+```bash
+cargo run --offline --release -p pcnl --example rotation_experiment -- \
+  --fixture docs/fixtures/ultrabert_agnews_embeddings.safetensors --mode single \
+  --seed 20261118 --fit-per-class 20 --cal-per-class 20 --hidden 8 \
+  --representation raw --beta 0.01 \
+  --steps 1000 --burn 200 --chains 2 --draws 40 \
+  --pretrain 1000 --pretrain-lr 0.01 --softmax-pretrain 0
+```

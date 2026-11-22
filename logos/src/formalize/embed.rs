@@ -317,7 +317,10 @@ impl Embedder for HttpEmbedder {
             .and_then(|d| d.as_array())
             .ok_or_else(|| EmbedError::Malformed("no `data` array".into()))?;
         if data.len() != texts.len() {
-            return Err(EmbedError::Count { want: texts.len(), got: data.len() });
+            return Err(EmbedError::Count {
+                want: texts.len(),
+                got: data.len(),
+            });
         }
 
         // OpenAI's schema carries `index`; entries may arrive out of order,
@@ -325,7 +328,10 @@ impl Embedder for HttpEmbedder {
         // wrong text — the worst possible failure, because it still ranks.
         let mut indexed: Vec<(usize, Embedding)> = Vec::with_capacity(data.len());
         for (position, entry) in data.iter().enumerate() {
-            let idx = entry.get("index").and_then(|i| i.as_u64()).map(|i| i as usize);
+            let idx = entry
+                .get("index")
+                .and_then(|i| i.as_u64())
+                .map(|i| i as usize);
             let vec = entry
                 .get("embedding")
                 .and_then(|e| e.as_array())
@@ -401,7 +407,10 @@ mod tests {
         let t = mrl_truncate(v.clone(), 4);
         assert_eq!(t.len(), 4);
         let t_norm: f32 = t.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((t_norm - 1.0).abs() < 1e-5, "truncated vector re-normalized");
+        assert!(
+            (t_norm - 1.0).abs() < 1e-5,
+            "truncated vector re-normalized"
+        );
 
         let keep = mrl_truncate(v.clone(), 0);
         assert_eq!(keep, v, "dims=0 keeps the vector");
@@ -480,10 +489,17 @@ mod tests {
                 .with_key("test-key");
             let out = e.embed_batch(&["alpha", "beta"]).unwrap();
             let request = captured.join().unwrap();
-            assert!(request.starts_with("POST /embeddings HTTP/1.1"), "{request}");
+            assert!(
+                request.starts_with("POST /embeddings HTTP/1.1"),
+                "{request}"
+            );
             assert!(request.contains("alpha") && request.contains("beta"));
             assert!(request.contains("embeddinggemma-2"));
-            assert!(request.to_ascii_lowercase().contains("authorization: bearer test-key"));
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-key")
+            );
             assert_eq!(out.len(), 2);
             assert_eq!(out[0], vec![1.0, 0.0, 0.0, 0.0], "index 0 first");
             assert_eq!(out[1], vec![0.0, 1.0, 0.0, 0.0], "index 1 second");
@@ -497,7 +513,10 @@ mod tests {
             let out = e.embed_one("x").unwrap();
             assert_eq!(out.len(), 2, "MRL truncation applied client-side");
             let request = captured.join().unwrap();
-            assert!(request.contains("\"dimensions\":2"), "also asked the server");
+            assert!(
+                request.contains("\"dimensions\":2"),
+                "also asked the server"
+            );
             let norm: f32 = out.iter().map(|x| x * x).sum::<f32>().sqrt();
             assert!((norm - 1.0).abs() < 1e-5, "renormalized after truncation");
         }

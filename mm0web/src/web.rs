@@ -16,14 +16,14 @@ use crate::audit::Audit;
 use crate::checker::{self, CheckerConfig};
 use crate::graph::Graph;
 use crate::http::{self, Request};
-use logos::formalize::embed::{percent_encode, Embedder};
-use logos::formalize::hybrid::{rrf_fuse, RRF_K};
-use logos::formalize::index::RecomputeIndex;
 use crate::publisher::{Publisher, QueueError};
 use crate::store::{
     self, Index, STATE_PUBLISH_FAILED, STATE_PUBLISHED, STATE_QUEUED, STATE_VERIFIED, StoreConfig,
     Zenodo, slug,
 };
+use logos::formalize::embed::{Embedder, percent_encode};
+use logos::formalize::hybrid::{RRF_K, rrf_fuse};
+use logos::formalize::index::RecomputeIndex;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -240,7 +240,7 @@ fn attestation(req: &Request, cfg: &Config) -> Response {
                 "text/plain; charset=utf-8".to_string(),
                 format!("attestation requires ?nonce=<challenge> (1..{MAX_NONCE} bytes)\n")
                     .into_bytes(),
-            )
+            );
         }
     };
     let state = cfg.store.state_dir.to_string_lossy().into_owned();
@@ -257,14 +257,18 @@ fn attestation(req: &Request, cfg: &Config) -> Response {
                 500,
                 "text/plain; charset=utf-8".to_string(),
                 format!("measurement failed: {e}\n").into_bytes(),
-            )
+            );
         }
     };
     let binding = unfer_measure::attestation_binding(&bundle.bundle, &nonce);
     let mut body = serde_json::to_value(&bundle).unwrap_or(serde_json::Value::Null);
     body["nonce"] = serde_json::json!(nonce);
     body["binding"] = serde_json::json!(binding);
-    (200, "application/json".to_string(), body.to_string().into_bytes())
+    (
+        200,
+        "application/json".to_string(),
+        body.to_string().into_bytes(),
+    )
 }
 
 fn healthz(cfg: &Config) -> Response {
@@ -409,7 +413,10 @@ fn verify_or_publish(
                 json!({"accepted": true, "stage": outcome.stage, "log": outcome.log}),
             )
         } else {
-            html(200, render_result("Accepted", &outcome.log, None, graph_ref))
+            html(
+                200,
+                render_result("Accepted", &outcome.log, None, graph_ref),
+            )
         };
     }
 
@@ -481,7 +488,8 @@ fn verify_or_publish(
             "{id}\nverified and stored locally, but ZENODO_API_KEY is not set, \
              so nothing was published\n\n{}",
             outcome.log
-        );        return if req.wants_json() {
+        );
+        return if req.wants_json() {
             json(
                 502,
                 json!({"accepted": true, "published": false, "proof": id,
@@ -751,7 +759,11 @@ fn get_graph(req: &Request, cfg: &Config, as_json: bool) -> Response {
                 json!({"error": "no such proof", "project": project, "id": id}),
             )
         } else {
-            (404, "text/plain; charset=utf-8".to_string(), msg.into_bytes())
+            (
+                404,
+                "text/plain; charset=utf-8".to_string(),
+                msg.into_bytes(),
+            )
         };
     };
     let g = Graph::build(&p.mm0, &p.mm1).accepted();
@@ -834,7 +846,10 @@ impl std::fmt::Debug for SearchConfig {
         f.debug_struct("SearchConfig")
             .field(
                 "embedder",
-                &self.embedder.as_ref().map(|e| format!("{}@{}", e.id(), e.dims())),
+                &self
+                    .embedder
+                    .as_ref()
+                    .map(|e| format!("{}@{}", e.id(), e.dims())),
             )
             .field("xerj", &self.xerj)
             .field("cache", &self.cache)
@@ -859,7 +874,10 @@ impl Hit {
     /// The declaration's identity, in the shape a xerj bulk load uses as
     /// `_id` — so the arm's `_id`s map straight back onto corpus rows.
     fn key(&self) -> String {
-        format!("{}/{}/{}@{}", self.project, self.proof, self.decl, self.line)
+        format!(
+            "{}/{}/{}@{}",
+            self.project, self.proof, self.decl, self.line
+        )
     }
 
     /// What gets embedded: name and statement together, the same composite
@@ -957,11 +975,7 @@ impl SearchOutcome {
 /// Returns `(hits, why-unavailable)`. An unconfigured embedder is not an
 /// unavailable arm — it is a service with one arm, which is the default
 /// and needs no apology.
-fn semantic_arm(
-    cfg: &Config,
-    rows: &[Hit],
-    query: &str,
-) -> (Vec<(usize, f32)>, Option<String>) {
+fn semantic_arm(cfg: &Config, rows: &[Hit], query: &str) -> (Vec<(usize, f32)>, Option<String>) {
     let Some(embedder) = cfg.search.embedder.as_ref() else {
         return (Vec::new(), None);
     };
@@ -986,14 +1000,25 @@ fn semantic_arm(
     if cache.fingerprint != Some(fp) {
         let texts: Vec<String> = rows.iter().map(Hit::text).collect();
         *cache = match build_index(embedder.as_ref(), &texts) {
-            Ok(index) => IndexCache { fingerprint: Some(fp), index: Some(index), error: None },
-            Err(reason) => IndexCache { fingerprint: Some(fp), index: None, error: Some(reason) },
+            Ok(index) => IndexCache {
+                fingerprint: Some(fp),
+                index: Some(index),
+                error: None,
+            },
+            Err(reason) => IndexCache {
+                fingerprint: Some(fp),
+                index: None,
+                error: Some(reason),
+            },
         };
     }
     let Some(index) = cache.index.as_ref() else {
         return (
             Vec::new(),
-            cache.error.clone().or_else(|| Some("the index is not built".to_string())),
+            cache
+                .error
+                .clone()
+                .or_else(|| Some("the index is not built".to_string())),
         );
     };
     match index.search(embedder.as_ref(), query, SEARCH_LIMIT) {
@@ -1057,7 +1082,10 @@ fn xerj_arm(cfg: &Config, query: &str, size: usize) -> (Vec<String>, Option<Stri
                 Ok(v) => v,
                 Err(e) => return (Vec::new(), Some(format!("node reply is not JSON: {e}"))),
             };
-            let Some(hits) = value.get("hits").and_then(|h| h.get("hits")).and_then(|h| h.as_array())
+            let Some(hits) = value
+                .get("hits")
+                .and_then(|h| h.get("hits"))
+                .and_then(|h| h.as_array())
             else {
                 return (Vec::new(), Some("node reply has no hits.hits".to_string()));
             };
@@ -1130,7 +1158,11 @@ fn search(cfg: &Config, query: &str) -> SearchOutcome {
         }
     }
 
-    for (name, list) in [("substring", &substring), ("semantic", &semantic), ("xerj", &xerj)] {
+    for (name, list) in [
+        ("substring", &substring),
+        ("semantic", &semantic),
+        ("xerj", &xerj),
+    ] {
         if !list.is_empty() {
             outcome.answering.insert(name, list.len());
         }
@@ -1153,7 +1185,11 @@ fn search(cfg: &Config, query: &str) -> SearchOutcome {
             // An arm appears here only if it ranked this row, i.e. only if
             // it answered — `answering` and `because` cannot disagree.
             let arms = f.arms.iter().map(|a| a.arm.clone()).collect();
-            Some(ScoredHit { hit, arms, rrf: f.score })
+            Some(ScoredHit {
+                hit,
+                arms,
+                rrf: f.score,
+            })
         })
         .collect();
     outcome
@@ -1171,9 +1207,12 @@ fn get_search(req: &Request, cfg: &Config, as_json: bool) -> Response {
     let q = q.trim().to_string();
     if q.is_empty() {
         return if as_json {
-            json(200, json!({"query": "", "count": 0, "results": [],
+            json(
+                200,
+                json!({"query": "", "count": 0, "results": [],
                 "corpus": 0, "arms": {}, "unavailable": {},
-                "fusion": "none", "embedder": null}))
+                "fusion": "none", "embedder": null}),
+            )
         } else {
             html(200, search_page("", &SearchOutcome::default()))
         };
@@ -1573,7 +1612,11 @@ mod tests {
         h.update(v["bundle"].as_str().unwrap().as_bytes());
         h.update([0]);
         h.update(b"challenge-1");
-        assert_eq!(v["binding"], hex::encode(h.finalize()), "nonce binds digest");
+        assert_eq!(
+            v["binding"],
+            hex::encode(h.finalize()),
+            "nonce binds digest"
+        );
         // No nonce, no statement: an unbound answer would replay trivially.
         assert_eq!(handle(&req("GET", "/attestation", ""), &cfg, &rl).0, 400);
     }
@@ -1775,15 +1818,17 @@ mod tests {
         let body = String::from_utf8_lossy(&page.2);
         assert!(body.contains("<svg"), "the figure is on the page");
         assert!(body.contains("dependency graph"));
-        assert!(!body.contains("<script"), "no JavaScript, as everywhere here");
-        assert!(body.contains("/proof?project=unfer"), "it links back: {body}");
+        assert!(
+            !body.contains("<script"),
+            "no JavaScript, as everywhere here"
+        );
+        assert!(
+            body.contains("/proof?project=unfer"),
+            "it links back: {body}"
+        );
 
         let raw = handle(
-            &req(
-                "GET",
-                &format!("/api/v1/graph?project=unfer&id={id}"),
-                "",
-            ),
+            &req("GET", &format!("/api/v1/graph?project=unfer&id={id}"), ""),
             &cfg,
             &rl,
         );
@@ -1832,8 +1877,7 @@ mod tests {
 
         // Stats: the same counters, summed over every stored proof.
         let v: serde_json::Value =
-            serde_json::from_slice(&handle(&req("GET", "/api/v1/stats", ""), &cfg, &rl).2)
-                .unwrap();
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/stats", ""), &cfg, &rl).2).unwrap();
         assert_eq!(v["proofs"], 1, "{v}");
         assert_eq!(v["graph"]["declarations"], 1, "{v}");
         assert_eq!(v["states"]["published"], 1, "{v}");
@@ -1936,10 +1980,9 @@ mod tests {
 
         // Both arms answer "prop": the reply says rrf, and the hit says
         // which arms ranked it.
-        let v: serde_json::Value = serde_json::from_slice(
-            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2)
+                .unwrap();
         assert_eq!(v["fusion"], "rrf", "{v}");
         assert!(
             v["arms"]["substring"].as_u64().unwrap_or(0) >= 1
@@ -1970,10 +2013,9 @@ mod tests {
             base: "http://127.0.0.1:1".to_string(),
             index: "declarations".to_string(),
         });
-        let v: serde_json::Value = serde_json::from_slice(
-            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2)
+                .unwrap();
         assert_eq!(v["count"], 1, "substring still answers: {v}");
         assert!(
             v["unavailable"].get("xerj").is_some(),
@@ -1984,11 +2026,11 @@ mod tests {
         // A node that answers: its ranked _id joins the fusion. The id is
         // the one `search-bulk` hands out, so the test reads it back from
         // the live corpus rather than hard-coding a line number.
-        let bulk = String::from_utf8_lossy(
-            &handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl).2,
-        )
-        .into_owned();
-        let first_doc: serde_json::Value = serde_json::from_str(bulk.lines().nth(1).unwrap()).unwrap();
+        let bulk =
+            String::from_utf8_lossy(&handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl).2)
+                .into_owned();
+        let first_doc: serde_json::Value =
+            serde_json::from_str(bulk.lines().nth(1).unwrap()).unwrap();
         let key = format!(
             "{}/{}/{}@{}",
             first_doc["project"].as_str().unwrap(),
@@ -1999,9 +2041,7 @@ mod tests {
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let reply = format!(
-            "{{\"hits\":{{\"hits\":[{{\"_id\":\"{key}\"}}]}}}}"
-        );
+        let reply = format!("{{\"hits\":{{\"hits\":[{{\"_id\":\"{key}\"}}]}}}}");
         let seen = std::sync::Arc::new(Mutex::new(String::new()));
         let seen_in_thread = seen.clone();
         let server = std::thread::spawn(move || {
@@ -2035,13 +2075,15 @@ mod tests {
             index: "declarations".to_string(),
         });
 
-        let v: serde_json::Value = serde_json::from_slice(
-            &handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2,
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&handle(&req("GET", "/api/v1/search?q=prop", ""), &cfg, &rl).2)
+                .unwrap();
         server.join().unwrap();
         let request = seen.lock().unwrap().clone();
-        assert!(request.starts_with("GET /declarations/_search?q=prop&size=50"), "{request}");
+        assert!(
+            request.starts_with("GET /declarations/_search?q=prop&size=50"),
+            "{request}"
+        );
         assert_eq!(v["count"], 1, "{v}");
         assert_eq!(v["arms"]["xerj"], 1, "{v}");
         assert_eq!(v["arms"]["substring"], 1, "{v}");
@@ -2055,7 +2097,8 @@ mod tests {
     #[test]
     fn the_bulk_export_is_loadable_ndjson_with_the_ids_the_arm_reads_back() {
         let (cfg, _id) = queued_cfg("bulkexport", STATE_PUBLISHED);
-        let (status, ctype, body) = handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero());
+        let (status, ctype, body) =
+            handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero());
         assert_eq!(status, 200);
         assert!(ctype.starts_with("application/x-ndjson"), "{ctype}");
         let text = String::from_utf8(body).unwrap();
@@ -2087,10 +2130,9 @@ mod tests {
             );
         }
         // Deterministic: two exports diff clean.
-        let again = String::from_utf8(
-            handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero()).2,
-        )
-        .unwrap();
+        let again =
+            String::from_utf8(handle(&req("GET", "/api/v1/search-bulk", ""), &cfg, &rl_zero()).2)
+                .unwrap();
         assert_eq!(text, again);
         let _ = std::fs::remove_dir_all(&cfg.store.state_dir);
     }

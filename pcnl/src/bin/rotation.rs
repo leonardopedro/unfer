@@ -10,9 +10,7 @@
 //!
 //! The encoder is external: `--embedding` accepts an already prepared vector.
 
-use pcnl::rotation_head::{
-    HeadSpec, RotationHead, RotationSession, SessionConfig, TextInput,
-};
+use pcnl::rotation_head::{HeadSpec, RotationHead, RotationSession, SessionConfig, TextInput};
 use pcnl::text_head::{EmbeddingTable, Split};
 use std::path::{Path, PathBuf};
 
@@ -34,7 +32,9 @@ fn default_fixture() -> PathBuf {
 }
 
 fn load_fixture(args: &[String]) -> Result<EmbeddingTable, String> {
-    let path = flag(args, "--fixture").map(PathBuf::from).unwrap_or_else(default_fixture);
+    let path = flag(args, "--fixture")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_fixture);
     EmbeddingTable::load(&path).map_err(|e| e.to_string())
 }
 
@@ -66,6 +66,11 @@ fn init(args: &[String]) -> Result<(), String> {
         chains: number(args, "--chains", 4usize),
         draws: number(args, "--draws", 40usize),
         seed: number(args, "--seed", 20261118u64),
+        prior_mean: Vec::new(),
+        proposal_betas: Vec::new(),
+        sampler: pcnl::rotation_head::Sampler::Pcn,
+        mala_step: 0.01,
+        temperatures: Vec::new(),
     };
     let session = RotationSession::new(head, config).map_err(|e| e.to_string())?;
     session.save(Path::new(&state)).map_err(|e| e.to_string())?;
@@ -75,8 +80,7 @@ fn init(args: &[String]) -> Result<(), String> {
 
 fn update(args: &[String]) -> Result<(), String> {
     let state = flag(args, "--state").ok_or("update needs --state PATH")?;
-    let mut session =
-        RotationSession::load(Path::new(&state)).map_err(|e| e.to_string())?;
+    let mut session = RotationSession::load(Path::new(&state)).map_err(|e| e.to_string())?;
     let table = load_fixture(args)?;
     let per_class = number(args, "--per-class", 8usize);
     let dim = table.dim();
@@ -109,16 +113,20 @@ fn update(args: &[String]) -> Result<(), String> {
     let report = session.update().map_err(|e| e.to_string())?;
     session.save(Path::new(&state)).map_err(|e| e.to_string())?;
     println!(
-        "updated {state} checkpoint={} added={added} proposals={} accepted={} retained={}",
-        report.checkpoint, report.proposals, report.accepted, report.retained_draws
+        "updated {state} checkpoint={} added={added} proposals={} accepted={} retained={} swap_attempts={} swap_accepted={}",
+        report.checkpoint,
+        report.proposals,
+        report.accepted,
+        report.retained_draws,
+        report.swap_attempts,
+        report.swap_accepted
     );
     Ok(())
 }
 
 fn predict(args: &[String]) -> Result<(), String> {
     let state = flag(args, "--state").ok_or("predict needs --state PATH")?;
-    let mut session =
-        RotationSession::load(Path::new(&state)).map_err(|e| e.to_string())?;
+    let mut session = RotationSession::load(Path::new(&state)).map_err(|e| e.to_string())?;
     let (text, embedding) = if let Some(raw) = flag(args, "--embedding") {
         let values = raw
             .split(',')
@@ -147,8 +155,8 @@ fn predict(args: &[String]) -> Result<(), String> {
             x[row * dim..(row + 1) * dim].to_vec(),
         )
     };
-    let input = TextInput::new(&text, &embedding, session.head().dim())
-        .map_err(|e| e.to_string())?;
+    let input =
+        TextInput::new(&text, &embedding, session.head().dim()).map_err(|e| e.to_string())?;
     let prediction = session.predict(&input).map_err(|e| e.to_string())?;
     println!(
         "checkpoint={} draw={} basis={:?}",
@@ -189,7 +197,11 @@ fn show(args: &[String]) -> Result<(), String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("");
-    let rest = if args.is_empty() { &args[..] } else { &args[1..] };
+    let rest = if args.is_empty() {
+        &args[..]
+    } else {
+        &args[1..]
+    };
     let result = match command {
         "init" => init(rest),
         "update" => update(rest),

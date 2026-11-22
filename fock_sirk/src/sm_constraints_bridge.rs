@@ -9,7 +9,7 @@
 //! fixture can be regenerated and bound as one artifact.
 
 use crate::joint_sirk::{joint_axpy, joint_norm};
-use crate::sm_bridge::{bind_artifact, canonical_json_sha256, BRIDGE_SCHEMA};
+use crate::sm_bridge::{BRIDGE_SCHEMA, bind_artifact, canonical_json_sha256};
 use crate::sm_brst_fock::{finite_fock_brst_jet_window, finite_fock_brst_window};
 use crate::sm_brst_quotient::finite_brst_quotient;
 use nested_fock_algebra::exact_inner::{
@@ -18,7 +18,7 @@ use nested_fock_algebra::exact_inner::{
 use nested_fock_algebra::sm_constraints::*;
 use nested_fock_algebra::sm_full::*;
 use num_complex::Complex64 as C;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 fn parameters() -> SmParameters {

@@ -12,7 +12,7 @@
 //! the JSON, a note on the page). The substring arm always answers.
 
 use crate::http;
-use logos::formalize::embed::{mrl_truncate, Embedder, EmbedError};
+use logos::formalize::embed::{EmbedError, Embedder, mrl_truncate};
 use serde_json::json;
 
 /// Where and how to embed. `MM0WEB_EMBED_URL` etc. — see `main.rs`.
@@ -57,7 +57,10 @@ impl Embedder for CurlEmbedder {
         self.cfg.dims
     }
 
-    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<logos::formalize::embed::Embedding>, EmbedError> {
+    fn embed_batch(
+        &self,
+        texts: &[&str],
+    ) -> Result<Vec<logos::formalize::embed::Embedding>, EmbedError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -96,7 +99,10 @@ impl Embedder for CurlEmbedder {
             .and_then(|d| d.as_array())
             .ok_or_else(|| EmbedError::Malformed("no `data` array".into()))?;
         if data.len() != texts.len() {
-            return Err(EmbedError::Count { want: texts.len(), got: data.len() });
+            return Err(EmbedError::Count {
+                want: texts.len(),
+                got: data.len(),
+            });
         }
 
         // Honour `index` when present: entries may arrive out of order and
@@ -104,7 +110,10 @@ impl Embedder for CurlEmbedder {
         // a failure that still ranks, which is the worst kind.
         let mut indexed: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
         for (position, entry) in data.iter().enumerate() {
-            let idx = entry.get("index").and_then(|i| i.as_u64()).map(|i| i as usize);
+            let idx = entry
+                .get("index")
+                .and_then(|i| i.as_u64())
+                .map(|i| i as usize);
             let vec = entry
                 .get("embedding")
                 .and_then(|e| e.as_array())
@@ -192,9 +201,20 @@ mod tests {
         });
         let out = e.embed_batch(&["alpha", "beta"]).unwrap();
         let request = captured.join().unwrap();
-        assert!(request.starts_with("POST /embeddings HTTP/1.1"), "{request}");
-        assert!(request.contains("authorization: Bearer secret") || request.contains("Authorization: Bearer secret"), "{request}");
-        assert!(request.contains("embeddinggemma-2") && request.contains("alpha") && request.contains("beta"));
+        assert!(
+            request.starts_with("POST /embeddings HTTP/1.1"),
+            "{request}"
+        );
+        assert!(
+            request.contains("authorization: Bearer secret")
+                || request.contains("Authorization: Bearer secret"),
+            "{request}"
+        );
+        assert!(
+            request.contains("embeddinggemma-2")
+                && request.contains("alpha")
+                && request.contains("beta")
+        );
         assert_eq!(out[0], vec![1.0, 0.0, 0.0, 0.0], "index 0 first");
         assert_eq!(out[1], vec![0.0, 1.0, 0.0, 0.0], "index 1 second");
     }
@@ -214,8 +234,14 @@ mod tests {
         let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 1e-5, "renormalized after truncation");
         let request = captured.join().unwrap();
-        assert!(request.contains("\"dimensions\":2"), "also asked the server: {request}");
-        assert!(!request.to_ascii_lowercase().contains("authorization"), "no empty Authorization header");
+        assert!(
+            request.contains("\"dimensions\":2"),
+            "also asked the server: {request}"
+        );
+        assert!(
+            !request.to_ascii_lowercase().contains("authorization"),
+            "no empty Authorization header"
+        );
     }
 
     #[test]
@@ -228,7 +254,9 @@ mod tests {
             key: None,
         });
         match e.embed_one("x") {
-            Err(EmbedError::Status { code: 404, body }) => assert!(body.contains("no such model"), "{body}"),
+            Err(EmbedError::Status { code: 404, body }) => {
+                assert!(body.contains("no such model"), "{body}")
+            }
             other => panic!("expected Status(404), got {other:?}"),
         }
     }

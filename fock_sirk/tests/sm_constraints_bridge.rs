@@ -3,9 +3,9 @@
 //! The fixture is measured data, not a kernel proof and not a physical quotient.
 //! It must keep `quotient_map: null` and stay below the finite-image tolerance.
 
-use fock_sirk::sm_bridge::{verify_bridge, BridgeError};
+use fock_sirk::sm_bridge::{BridgeError, verify_bridge};
 use fock_sirk::sm_constraints_bridge::finite_constraint_bridge;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../docs/fixtures/sm_constraints_bridge.json");
 

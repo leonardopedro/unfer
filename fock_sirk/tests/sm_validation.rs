@@ -950,7 +950,10 @@ fn sm_lagrangian_n_floor() {
     let h_scale: Poly = vec![(cx(HSCALE, 0.0), vec![0; 11])];
     let e_poly: Poly = vec![(cx(3.0 * OMEGA / 2.0, 0.0), vec![0; 11])];
     let n_poly = padd(
-        &padd(&pmul(&h_scale, &h_scale), &pscale(&h_scale, cx(2.0 * HSCALE, 0.0))),
+        &padd(
+            &pmul(&h_scale, &h_scale),
+            &pscale(&h_scale, cx(2.0 * HSCALE, 0.0)),
+        ),
         &e_poly,
     );
     let h = ham(h_scale.clone());
@@ -997,7 +1000,10 @@ fn sm_lagrangian_n_floor() {
     let mut lhs: Poly = Vec::new();
     for m_idx in 0..3u32 {
         let term = pmul(&x_poly(m_idx), &g0[m_idx as usize].clone());
-        let term = padd(&term, &pmul(&q_poly(m_idx), &g0[3 + m_idx as usize].clone()));
+        let term = padd(
+            &term,
+            &pmul(&q_poly(m_idx), &g0[3 + m_idx as usize].clone()),
+        );
         let term = padd(&term, &pmul(&pi_poly(), &g0[6 + m_idx as usize].clone()));
         lhs = padd(&lhs, &term);
     }
@@ -1005,15 +1011,24 @@ fn sm_lagrangian_n_floor() {
     let mut diff = lhs;
     diff = padd(&diff, &pscale(&rhs, cx(-1.0, 0.0)));
     diff.retain(|(c, _)| c.norm() > 1e-14);
-    assert!(diff.is_empty(), "h0.grad K0 = 2 K0 must be exact, got {diff:?}");
+    assert!(
+        diff.is_empty(),
+        "h0.grad K0 = 2 K0 must be exact, got {diff:?}"
+    );
 
     let q_ref = padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2());
     let q_mut = q_ref.clone();
     let (cq, _) = poly_match_up_to_positive_scale(&q_ref, &q_mut);
-    assert!(cq, "sm_N_positive: quotient generator must be pi^2 + q^4 + sum q_j^2");
+    assert!(
+        cq,
+        "sm_N_positive: quotient generator must be pi^2 + q^4 + sum q_j^2"
+    );
     let degeneracy = vec![cx(1.0, 0.0), cx(0.0, 0.0), cx(0.0, 0.0)];
     let (cg, _) = poly_match_up_to_positive_scale(&p4_poly(), &weighted_qp4_poly(&degeneracy));
-    assert!(cg, "sm_N_positive: q^4 reference must dominate a degenerate q_j^4 sum");
+    assert!(
+        cg,
+        "sm_N_positive: q^4 reference must dominate a degenerate q_j^4 sum"
+    );
 
     eprintln!(
         "sm_lagrangian_n_floor: lambda_min(N_L) = {:.6} (>= 1), relBound holds on {} probes, \
@@ -1144,14 +1159,23 @@ fn sm_comparison_cdb_decomposition() {
     .enumerate()
     {
         let val = QuantumState::inner_product(psi, &ham(n_minus_1.clone()).apply(psi)).re;
-        assert!(val >= -1e-9, "CHECK 33: N - 1 >= 0 violated on probe {k}: {val}");
+        assert!(
+            val >= -1e-9,
+            "CHECK 33: N - 1 >= 0 violated on probe {k}: {val}"
+        );
     }
 
     // (c) the c0 - 1 square is exactly the smComparison_sqDecomposition of
     //     the canonical instance: (C_E E_0 - 1)^2 with E_0 = 3 omega / 2.
-    let target: Poly = vec![(cx((C_E * OMEGA * 3.0 / 2.0 - 1.0).powi(2), 0.0), vec![0; 11])];
+    let target: Poly = vec![(
+        cx((C_E * OMEGA * 3.0 / 2.0 - 1.0).powi(2), 0.0),
+        vec![0; 11],
+    )];
     let (csq, _) = poly_match_up_to_positive_scale(&c0_sq, &target);
-    assert!(csq, "smComparison_sqDecomposition: (C_E E_0 - 1)^2 must match the target");
+    assert!(
+        csq,
+        "smComparison_sqDecomposition: (C_E E_0 - 1)^2 must match the target"
+    );
 
     eprintln!(
         "sm_comparison_cdb_decomposition: CHECK 30 (kappa-1)v^4 gap identity, CHECK 33 \

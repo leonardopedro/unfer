@@ -136,7 +136,10 @@ fn main() -> ExitCode {
             let checked = outcome.report.declarations_checked;
             let skipped = outcome.skipped;
             if skipped == 0 {
-                println!("nanoda: verified {path} ({} bytes, {checked} decls)", bytes.len());
+                println!(
+                    "nanoda: verified {path} ({} bytes, {checked} decls)",
+                    bytes.len()
+                );
             } else {
                 println!(
                     "nanoda: verified {path} ({} bytes, {checked} decls, {skipped} skipped as trusted base)",
