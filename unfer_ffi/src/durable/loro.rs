@@ -1,8 +1,12 @@
 //! The preferred H4 store: a single Loro document with one `LoroList` per
 //! stream. Records are appended as JSON strings; `flush()` commits the doc and
-//! persists a snapshot to disk atomically (write-tmp-then-rename). Frontier is
-//! the Loro version-vector encoding, so a second process can detect an
-//! interrupted flush and fork at a known frontier.
+//! persists a snapshot to disk with `write-tmp` + `fsync` + `rename` +
+//! directory `fsync`, so a renamed snapshot is also a durable one (a bare
+//! rename without the first fsync can publish an empty file after a power
+//! loss). This is process-crash *and* power-loss durability for the snapshot
+//! file itself; it is not a transaction spanning other files. Frontier is the
+//! Loro version-vector encoding, so a second process can detect an interrupted
+//! flush and fork at a known frontier.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -109,8 +113,18 @@ impl LoroDurableStore {
             .map_err(|e| DurableError::Io(format!("mkdir {}: {e}", dir.display())))?;
         let path = snapshot_path(dir);
         let tmp = dir.join("snapshot.bin.tmp");
-        std::fs::write(&tmp, &snapshot)
-            .map_err(|e| DurableError::Io(format!("write {}: {e}", tmp.display())))?;
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&tmp)
+                .map_err(|e| DurableError::Io(format!("create {}: {e}", tmp.display())))?;
+            file.write_all(&snapshot)
+                .map_err(|e| DurableError::Io(format!("write {}: {e}", tmp.display())))?;
+            // The snapshot must be on stable storage before its name is
+            // published, or a crash can leave the new name pointing at an
+            // empty file.
+            file.sync_all()
+                .map_err(|e| DurableError::Io(format!("fsync {}: {e}", tmp.display())))?;
+        }
         std::fs::rename(&tmp, &path).map_err(|e| {
             DurableError::Io(format!(
                 "rename {} -> {}: {e}",
@@ -118,6 +132,12 @@ impl LoroDurableStore {
                 path.display()
             ))
         })?;
+        // Publishing is a directory entry; make that durable too.
+        if let Ok(directory) = std::fs::File::open(dir) {
+            directory
+                .sync_all()
+                .map_err(|e| DurableError::Io(format!("fsync {}: {e}", dir.display())))?;
+        }
         Ok(())
     }
 }
