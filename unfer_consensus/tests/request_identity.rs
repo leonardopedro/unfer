@@ -31,6 +31,10 @@ fn request(sequence: u64) -> RequestId {
     RequestId::new("federation-main", "did:unfer:alice", 1, sequence)
 }
 
+fn request_in(incarnation: u64, sequence: u64) -> RequestId {
+    RequestId::new("federation-main", "did:unfer:alice", incarnation, sequence)
+}
+
 fn authorized_node(authority: &Keypair) -> ConsensusNode {
     ConsensusNode::with_mint_authority(
         Box::new(LocalConsensus::new()),
@@ -154,4 +158,52 @@ fn a_request_below_the_acknowledged_floor_is_refused_after_restart_of_retention(
     );
     // The retained window still answers for a request it remembers.
     assert!(node.admissions().admission(&request(3)).is_some());
+}
+
+#[test]
+fn a_client_that_invents_incarnations_is_bounded_and_can_retire_a_run() {
+    // Every incarnation is a fresh sequence space, so a client that starts a
+    // new one per request would otherwise never reuse an id and could grow the
+    // node's admission memory with empty retention windows forever. The bound
+    // is per principal, and headroom comes back only when the client retires a
+    // run it promises never to retry.
+    let authority = Keypair::generate();
+    let mut node = authorized_node(&authority);
+    let limit = unfer_consensus::idempotency::DEFAULT_INCARNATIONS_PER_PRINCIPAL;
+
+    for incarnation in 1..=(limit as u64) {
+        let tx = mint_tx(&authority, "did:unfer:bob", 10, incarnation);
+        let submission = node.submit_request(&request_in(incarnation, 1), tx).unwrap();
+        node.settle(submission, Duration::from_millis(100));
+    }
+    assert_eq!(
+        node.admissions().incarnations("federation-main", "did:unfer:alice"),
+        limit
+    );
+
+    let overflow = mint_tx(&authority, "did:unfer:bob", 10, 99);
+    let error = node
+        .submit_request(&request_in(limit as u64 + 1, 1), overflow.clone())
+        .expect_err("a new incarnation beyond the limit must be refused");
+    assert_eq!(error.code, Code::REQUEST_QUOTA);
+    assert!(error.message.contains("incarnations"), "got: {}", error.message);
+    assert_eq!(
+        node.watermark(),
+        Watermark(limit as u64),
+        "the refused incarnation applied nothing"
+    );
+
+    // Another principal is not spending this one's budget.
+    let other = RequestId::new("federation-main", "did:unfer:mallory", 1, 1);
+    let other_tx = mint_tx(&authority, "did:unfer:bob", 10, 50);
+    assert!(node.submit_request(&other, other_tx).is_ok());
+
+    // Retiring the first run frees exactly one incarnation.
+    assert!(node.retire_incarnation("federation-main", "did:unfer:alice", 1));
+    assert!(!node.retire_incarnation("federation-main", "did:unfer:alice", 1));
+    let accepted = node
+        .submit_request(&request_in(limit as u64 + 1, 1), overflow)
+        .expect("a retired incarnation leaves room for a new one");
+    node.settle(accepted, Duration::from_millis(100));
+    assert_eq!(node.watermark(), Watermark(limit as u64 + 2));
 }
