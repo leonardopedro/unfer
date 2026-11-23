@@ -1,0 +1,225 @@
+# First-jet constraint and Hamiltonian evolution on the nested Mehler core
+#
+# Source: timepiece/book.tex, "Crucially, due to the Bianchi identity ...",
+# BOTH displayed rows. Fourier convention: test/mathematical-foundations/
+# momentum-space-products.md. Run from unfer with
+#   cadabra2-cli -q -n docs/jet_constraint_bianchi_fourier.cdb
+# A complete replay ends with JET_BIANCHI_FOURIER_OK.
+#
+# Read K = i D_x = -p_(0) phi^(1)(x) + i partial_x, as printed in the book.
+# Use [A,B]=AB-BA and the manuscript's [p_(j),phi^(k)] = +i delta_j^k.
+# h denotes the complete INNER one-particle Hamiltonian. H = dGamma(h).
+# On a common invariant test core, for X = phi^(0) and separately X = p_(1):
+#
+#   dGamma([[K,X],h]) = -dGamma([K,[h,X]])       provided [K,h]=0 there.
+#
+# This is Jacobi (the operator-algebra Bianchi identity). Evolution by the
+# commutator with h then respects taking the derivative represented by [K,.].
+# It is the compatibility needed to use first-order jet constraints in an
+# evolution equation, including when auxiliary fields encode higher jets.
+# Algebra on a core alone does not establish preservation by the closed
+# unitary group, the existence of physical states, or [K,h]=0 for a particular h.
+
+{Kop, Hamil, Phi, Pjet, Pzero, Jhat{#}, Hhat{#}}::NonCommuting.
+kap := Kop.
+ham := Hamil.
+field := Phi.
+pjet := Pjet.
+
+def bracket(left, right):
+    return Ex("@(left) @(right) - @(right) @(left)")
+
+def expanded(expr):
+    result = expr.copy()
+    distribute(result)
+    collect_terms(result)
+    return result
+
+def zero(label, expr):
+    result = expanded(expr)
+    if str(result) != "0":
+        raise AssertionError(label + ": " + str(result))
+    print("PASS", label)
+
+# 1. Coordinate-space ordered words. Retain the obstruction until the last step.
+commutes := Hamil Kop -> Kop Hamil.
+for label, probe in (("phi^(0)", field), ("p_(1)", pjet)):
+    lhs = bracket(bracket(kap, probe), ham)
+    reverse = bracket(kap, bracket(ham, probe))
+    rhs := -@(reverse).
+    defect = expanded(lhs - rhs)
+    if len(defect) != 4:
+        raise AssertionError("lost the four ordered words in the commutation obstruction")
+    zero(label + " Jacobi with obstruction", defect - bracket(bracket(kap, ham), probe))
+    substitute(defect, commutes, repeat=True)
+    zero(label + " manuscript equality assuming [K,h]=0", defect)
+    print("COORDINATE (assuming [K,h]=0)", label, "LHS =", expanded(lhs), "RHS =", expanded(rhs))
+
+# 2. Spatial Fourier transform on R (in d dimensions, use component x and d^d u).
+# F f(k) = integral exp(-2 pi i k x) f(x) dx. All k,l,u are continuous.
+# Mehler fibres contain the independent real field and jet coordinates.
+# On Schwartz packets tensor polynomial-Gaussians use kernels weakly:
+# (A B)(k,l) = integral A(k,u) B(u,l) du. h(k,l) may be non-diagonal.
+# A local operator-valued coefficient J(x)=phi^(1)(x) has kernel Jhat(k-l).
+# A homogeneous independent jet Q1 has kernel Q1 delta(k-l). If a model
+# identifies J with a spatial derivative of F, Jhat(q)=2 pi i q Fhat(q);
+# this identification is extra data, especially when retaining its conjugate p_(1).
+# The differential part i partial_x contributes -2 pi k times the identity.
+#
+# These executable expressions give K acting on a packet and the differentiated
+# product. The weight on the differentiated leg is q, the transfer k-l. p_(0)
+# acts in the field fibre and stays on the left of the jet multiplication.
+ii::ImaginaryI.
+action := -Pzero \int{Jhat(q) wave(k-q)}{q} - 2 \pi k wave(k).
+gradterm := 2 \pi ii q Fhat(q) wave(k-q).
+derivleg := \int{@(gradterm)}{q}.
+print("FOURIER K on packet =", action._latex_())
+print("FOURIER derivative coefficient on packet, when J=partial_x F =", derivleg._latex_())
+
+def constraint_kernel(outgoing, incoming):
+    return Ex(r"-Pzero Jhat(" + outgoing + "-" + incoming + r") - 2 \pi "
+              + outgoing + r" \delta(" + outgoing + "-" + incoming + ")")
+
+ku = constraint_kernel("k", "u")
+ul = constraint_kernel("u", "l")
+hku := Hhat(k,u).
+hul := Hhat(u,l).
+
+# Both probes are homogeneous fibre operators X delta(k-l). Carrying out
+# their delta integrals leaves one continuous intermediate momentum in each row.
+# Preserve operator order, including that of the fibre-valued kernel Hhat.
+def integral_u(integrand):
+    return Ex(r"\int{@(integrand)}{u}")
+
+def outer(matrix):
+    # a,b run over an orthonormal basis of the whole one-particle space (spatial
+    # packet and internal occupations). Entry_a^b{M} denotes <e_a,M e_b>.
+    # For a momentum kernel this entry pairs with packets at k AND l, integrating
+    # both variables: integral dk dl <e_a(k),M(k,l)e_b(l)> in the Mehler fibre.
+    # This pairing gives smeared creation and annihilation operators.
+    # Repeated a,b in this contraction are summed over the packet-mode basis.
+    return Ex(r"Cdag^{a} Entry_{a}^{b}{@(matrix)} Ann_{b}")
+
+for label, probe in (("phi^(0)", field), ("p_(1)", pjet)):
+    left = bracket(ku, probe) * hul - hku * bracket(ul, probe)
+    right = bracket(hku, probe) * ul - ku * bracket(hul, probe)
+    obstruction = bracket(ku * hul - hku * ul, probe)
+    zero(label + " ordered Fourier kernel Jacobi integrand", left - right - obstruction)
+    # Only the integral of ku*hul - hku*ul vanishes under the commutation
+    # hypothesis. Imposing commutation at each intermediate u would be stronger.
+    lifted_left = outer(integral_u(left))
+    lifted_right = outer(integral_u(right))
+    equation := @(lifted_left) = @(lifted_right).
+    print("MOMENTUM + OUTER (assuming [K,h]=0)", label, equation._latex_())
+
+# 3. Continuous Fourier cross-check. Let the independent jet be y1 and take
+# J(x) = y1 + f'(x), with f = exp(2 pi i t x) for this linear coefficient
+# check. Real profiles follow by combining conjugate characters. For a packet
+# g, F(fg)(k)=ghat(k-t). There is no sampling or wraparound. Test on an
+# asymmetric Schwartz packet; differentiate f and g separately. Compare the
+# resulting shifted derivative with the transform of the coordinate product
+# rule. t is an arbitrary real frequency. Pzero is independent of x.
+import sympy as sp
+k, t, y, z = sp.symbols("k t y z", real=True)
+tau = 2 * sp.pi
+def packet(freq):
+    return (1 + freq) * sp.exp(-sp.pi * freq**2)
+
+def check(label, actual, expected):
+    if sp.expand(actual - expected) != 0:
+        raise AssertionError(label + ": " + str(actual - expected))
+    print("PASS", label)
+
+# Apply the same executable convolution integrand used in section 2 to a
+# delta coefficient at t. Integration translates the other factor by t.
+# Pair the delta measure with the remaining integrand by evaluation at q=t.
+character = gradterm.copy()
+substitute(character, $ Fhat(q) -> 1 $)
+substitute(character, $ q -> t $)
+expected := 2 \pi ii t wave(k-t).
+zero("differentiated Fourier leg and transfer k-t", character - expected)
+shifted = packet(k-t)
+check("Leibniz on a continuous modulated packet",
+      sp.I*tau*t*shifted + sp.I*tau*(k-t)*shifted, sp.I*tau*k*shifted)
+if shifted.subs({k: 0, t: 1}) == packet(k+t).subs({k: 0, t: 1}):
+    raise AssertionError("reversing the Fourier transfer escaped the packet check")
+
+# Test the actual kernel constructor as well. With J(x)=z exp(2 pi i t x),
+# Jhat(k-l)=z delta(k-l-t): pair the transfer term at l=k-t and the identity
+# term at l=k. The independent coordinate-space action gives the target below.
+kl = constraint_kernel("k", "l")
+incoming := wave(l).
+transfer = kl * incoming
+substitute(transfer, $ Jhat(k-l) -> Zjet, \delta(k-l) -> 0 $, repeat=True)
+substitute(transfer, $ l -> k-t $)
+diagonal = kl * incoming
+substitute(diagonal, $ Jhat(k-l) -> 0, \delta(k-l) -> 1 $, repeat=True)
+substitute(diagonal, $ l -> k $)
+direct := -Pzero Zjet wave(k-t) - 2 \pi k wave(k).
+zero("constraint kernel on continuous packet, both terms", transfer + diagonal - direct)
+
+# 4. Mehler realization. Inner core: P(y,z) exp(-(y^2+z^2)/4) times a
+# spatial Schwartz packet, with y=phi^(0), z=the independent first jet.
+# On polynomial factors b=d/dy, bdag=y-d/dy; companion formulas hold in z.
+# Q=bdag+b, p=(i/2)(b-bdag) realizes the book sign. In the frequently used
+# [Q,p_std]=+i convention p_book=-p_std. These ladders are INNER operators.
+def lower(v, coord):
+    return sp.diff(v, coord)
+
+def raise_mode(v, coord):
+    return coord*v - lower(v, coord)
+
+def momentum(v, coord):
+    return sp.I*(lower(v, coord) - raise_mode(v, coord))/2
+
+# Probe both commutators on an arbitrary polynomial factor via a symbolic
+# smooth function. J=z here; no replacement of the independent jet by iq phi.
+v = sp.Function("v")(k,y,z)
+def constraint(v):
+    return -momentum(z*v, y) - tau*k*v
+
+check("[p_(0),phi^(0)] = +i", momentum(y*v,y) - y*momentum(v,y), sp.I*v)
+check("[K,phi^(0)] = -i phi^(1)", constraint(y*v) - y*constraint(v), -sp.I*z*v)
+check("[K,p_(1)] = +i p_(0)", constraint(momentum(v,z)) - momentum(constraint(v),z),
+      sp.I*momentum(v,y))
+
+# Nontrivial commuting example. Simultaneous symmetric dilations of y,z
+# commute with z p_(0). This particular h is only an algebraic witness.
+def dilation(w, coord):
+    return (coord*momentum(w, coord) + momentum(coord*w, coord))/2
+
+def example_h(w):
+    return dilation(w, y) + dilation(w, z)
+
+def action_bracket(op, other):
+    return lambda w: op(other(w)) - other(op(w))
+
+check("simultaneous dilation preserves K", action_bracket(constraint, example_h)(v), 0)
+for label, probe, target in (("field", lambda w: y*w, -z*v),
+                             ("jet momentum", lambda w: momentum(w,z), -momentum(v,y))):
+    lhs = action_bracket(action_bracket(constraint, probe), example_h)(v)
+    rhs = -action_bracket(constraint, action_bracket(example_h, probe))(v)
+    check(label + " nonzero LHS on Mehler core", lhs, target)
+    check(label + " nonzero RHS on Mehler core", rhs, target)
+
+# Keeping only the y dilation breaks [K,h]=0. The manuscript field row then
+# has an explicit discrepancy z*v, also obtained from its Jacobi obstruction.
+single_h = lambda w: dilation(w, y)
+position = lambda w: y*w
+lhs = action_bracket(action_bracket(constraint, position), single_h)(v)
+reverse = action_bracket(constraint, action_bracket(single_h, position))(v)
+check("non-preserving Hamiltonian leaves z times the seed", lhs + reverse, z*v)
+
+# 5. Outer lift. On the algebraic finite-particle core the commutator of
+# lifts is the lift of the bracket: the two-particle terms cancel by CCR.
+# The label deltas below are Kronecker deltas for orthonormal packet modes.
+{Ci, Cm, Aj, An}::NonCommuting.
+bilinear := Ci Aj Cm An - Cm An Ci Aj.
+substitute(bilinear, $ Aj Cm -> djm + Cm Aj, An Ci -> dni + Ci An $)
+distribute(bilinear)
+substitute(bilinear, $ Cm Ci -> Ci Cm, An Aj -> Aj An $, repeat=True)
+sort_product(bilinear)
+wanted := djm Ci An - dni Cm Aj.
+sort_product(wanted)
+zero("outer bilinear bracket and cancellation of cross-particle terms", bilinear - wanted)
+print("JET_BIANCHI_FOURIER_OK")
