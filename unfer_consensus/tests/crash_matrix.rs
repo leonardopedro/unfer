@@ -568,13 +568,18 @@ mod processes {
             &format!("replica3={behind} survivors={survivors}"),
         );
 
-        // Restart it onto the same directory and let the cluster decide once
-        // more: the rejoining replica must end with the *whole* log, which is
-        // only possible if it recovered what its snapshot did hold and was then
-        // told the decisions it missed.
+        // Restart it onto the same directory. The cluster stays idle — nothing
+        // is submitted — and the replica must still be pushed the two decisions
+        // it missed: that is what separates a catch-up from a wait.
         nodes[2] = fixture.spawn(2);
         let recovered = digest(&fixture.configs[2]);
         note("process/slow-replica-recovered", &format!("replica3={recovered}"));
+        let pushed = wait_at_least(&fixture.configs[2], 3);
+        assert_eq!(
+            pushed, survivors,
+            "an idle cluster must push the missed decisions to the rejoined replica"
+        );
+        note("process/slow-replica-idle-catch-up", &format!("replica3={pushed}"));
         // It converges when the cluster next decides, not before: the measured
         // limit D11 names, restated here as part of the recovery matrix.
         let fourth = fixture.submit(0, 4, &transaction(4));

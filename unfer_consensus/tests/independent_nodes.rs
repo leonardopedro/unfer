@@ -118,19 +118,29 @@ fn three_processes_commit_identically_and_one_catches_up_after_a_kill() {
     let restarted = fixture.spawn(2);
     nodes[2] = restarted;
 
-    // The rejoining replica is behind by one commit. Decide once more and check
-    // that it converges on the survivors' full log — not just on the new slot.
+    // The rejoining replica is behind by one commit, and the cluster is idle:
+    // nothing new is decided here. Its peers push what it missed, so it catches
+    // up on the strength of the log alone (`CATCH_UP_INTERVAL` in `net.rs`).
+    let caught_up = wait_digest(&fixture.configs[0], 3);
+    let replayed = wait_digest(&fixture.configs[2], 3);
+    assert_eq!(
+        replayed, caught_up,
+        "an idle cluster must push the missed decision, not wait for a new one"
+    );
+    eprintln!("caught up while idle: {replayed}");
+
+    // A new decision still reaches every replica, including the rejoined one.
     let fourth = fixture.submit(0, 4, &transaction(4));
     assert!(fourth.0, "submit after the restart failed: {}", fourth.2);
-    let caught_up = wait_digest(&fixture.configs[0], 4);
-    assert_eq!(wait_digest(&fixture.configs[1], 4), caught_up);
-    eprintln!("survivors: {caught_up}; rejoined: {}", digest(&fixture.configs[2]));
+    let fourth_digest = wait_digest(&fixture.configs[0], 4);
+    assert_eq!(wait_digest(&fixture.configs[1], 4), fourth_digest);
+    eprintln!("survivors: {fourth_digest}; rejoined: {}", digest(&fixture.configs[2]));
     assert_eq!(
         wait_digest(&fixture.configs[2], 4),
-        caught_up,
+        fourth_digest,
         "the restarted node must converge on the same log, not just the new slot"
     );
-    assert_eq!(committed(&caught_up), 4);
+    assert_eq!(committed(&fourth_digest), 4);
 
     fixture.clean(&mut nodes);
 }

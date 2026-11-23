@@ -30,13 +30,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rust_quepaxa::network::{
-    DeduplicatingSubmissionHandler, DeploymentId, FileSubmissionJournal, MutualTlsConfigs,
-    NetworkConsensusHandler, NetworkMetrics, NetworkNodeServer, PeerIdentity,
-    PostcardRecorderCodec, PostcardRuntimeCodec, TlsIdentity, TlsRecorderClient, TlsSubmitClient,
+    AsyncRecorderClient, DeduplicatingSubmissionHandler, DeploymentId, FileSubmissionJournal,
+    MutualTlsConfigs, NetworkConsensusHandler, NetworkMetrics, NetworkNodeServer, PeerIdentity,
+    PostcardRecorderCodec, PostcardRuntimeCodec, Submission, SubmissionHandler, SubmissionOutcome,
+    TlsIdentity, TlsRecorderClient, TlsSubmitClient,
 };
 use rust_quepaxa::{
     AllowAllAvailability, Decision, DurableRecorderCore, FileRecorderStore, FileRuntimeStore,
-    LaneId, RecorderConfig, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, StateMachine,
+    LaneId, RecorderConfig, ReplicaConfig, ReplicaId, ReplicaRuntimeConfig, SlotIndex, StateMachine,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -56,6 +57,16 @@ pub const LEDGER_TX_SCHEMA: u16 = 1;
 
 const LIVE_NODES: usize = 2;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
+
+/// How often a replica offers its log to a peer that is behind. An idle cluster
+/// has no new decision to carry the offer, which is why this is a timer: a
+/// rejoining replica is caught up because its peers look, not because something
+/// else happened.
+const CATCH_UP_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Decisions per push. Bounded so one catch-up frame stays well inside the
+/// transport's frame limit, whatever the size of the log behind it.
+const CATCH_UP_BATCH: u64 = 256;
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1086,6 +1097,148 @@ async fn wait_committed(ledger: &SharedLedger, at_least: u64) {
     }
 }
 
+/// The submission handler the server owns, shared with the catch-up task.
+///
+/// The task needs the runtime's decision log to push it to a peer, and the
+/// server needs the handler to accept submissions. One `Arc` serves both, so the
+/// task reads the decisions the replica actually decided instead of a copy that
+/// could disagree with it.
+struct SharedSubmissionHandler<H>(Arc<H>);
+
+impl<H> SubmissionHandler<ReplicatedValue> for SharedSubmissionHandler<H>
+where
+    H: SubmissionHandler<ReplicatedValue>,
+{
+    fn submit(
+        &self,
+        submission: Submission<ReplicatedValue>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = rust_quepaxa::Result<SubmissionOutcome<ReplicatedValue>>,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.0.submit(submission)
+    }
+
+    fn receive_decisions(
+        &self,
+        decisions: Vec<Decision<ReplicatedValue>>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = rust_quepaxa::Result<()>> + Send + '_>,
+    > {
+        self.0.receive_decisions(decisions)
+    }
+}
+
+/// Push the decisions a peer is missing, without waiting for a new one.
+///
+/// This is the answer to the gap D11/D13 recorded: a replica that rejoins an
+/// idle cluster used to learn nothing until the cluster next decided. Its peers
+/// now probe it every [`CATCH_UP_INTERVAL`], find the frontier by status, and
+/// send the decisions behind it through the transport's own
+/// `InformDecisions` request, which the peer's recorder and state machine apply
+/// in slot order exactly as they would a live decision.
+async fn catch_up_loop<V, C, S, E>(
+    self_id: ReplicaId,
+    peers: Vec<C>,
+    runtime: Arc<NetworkConsensusHandler<V, C, S, E>>,
+    ledger: SharedLedger,
+    shutdown: CancellationToken,
+) where
+    V: Clone + Ord + Send + Sync + 'static,
+    C: AsyncRecorderClient<V> + Send + Sync + 'static,
+    S: rust_quepaxa::RuntimeStateStore<V> + Send + 'static,
+    E: StateMachine<V> + Send + 'static,
+{
+    let mut known: BTreeMap<ReplicaId, u64> = BTreeMap::new();
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(CATCH_UP_INTERVAL) => {}
+        }
+        let head = ledger.committed();
+        if head == 0 {
+            continue;
+        }
+        for peer in &peers {
+            let peer_id = AsyncRecorderClient::id(peer);
+            if peer_id == self_id {
+                continue;
+            }
+            let floor = known.get(&peer_id).copied().unwrap_or(0);
+            if floor >= head {
+                continue;
+            }
+            let held = highest_held(peer, floor, head).await;
+            if held < head && held > floor {
+                known.insert(peer_id, held);
+            }
+            let mut from = held + 1;
+            while from <= head {
+                let to = (from + CATCH_UP_BATCH - 1).min(head);
+                let mut batch = Vec::with_capacity((to - from + 1) as usize);
+                for slot in from..=to {
+                    match runtime.decision(SlotIndex::new(slot)).await {
+                        Some(decision) => batch.push(decision),
+                        // The peer's frontier is ahead of what this replica can
+                        // produce: stop rather than send a hole.
+                        None => break,
+                    }
+                }
+                if batch.is_empty() {
+                    break;
+                }
+                let sent = batch.len() as u64;
+                if peer.inform_decisions(batch).await.is_err() {
+                    // The peer is down or refusing; the next tick tries again.
+                    break;
+                }
+                known.insert(peer_id, from + sent - 1);
+                from += sent;
+            }
+            if from > head {
+                known.insert(peer_id, head);
+            }
+        }
+    }
+}
+
+/// The highest slot `peer` holds, between `floor` (already known) and `head`.
+///
+/// A status probe answers "does this recorder have this slot", so the frontier is
+/// found by binary search rather than by replaying the log: a peer behind by one
+/// slot costs the same probes as a peer behind by a million.
+async fn highest_held<V, C>(peer: &C, floor: u64, head: u64) -> u64
+where
+    V: Clone + Ord + Send + Sync + 'static,
+    C: AsyncRecorderClient<V> + Send + Sync + 'static,
+{
+    let has = |slot: u64| {
+        let fut = peer.status(SlotIndex::new(slot));
+        async move { matches!(fut.await, Ok(Some(_))) }
+    };
+    let mut lo = floor.min(head);
+    let mut hi = head;
+    if has(head).await {
+        return head;
+    }
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if mid > lo && has(mid).await {
+            lo = mid;
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+        if hi <= lo {
+            break;
+        }
+    }
+    lo
+}
+
 /// Start one replica of `config`'s deployment over `ledger`.
 ///
 /// This is the single startup path: a standalone process owns `ledger` through
@@ -1149,7 +1302,7 @@ async fn start_replica(
     .map_err(|error| format!("replica {} schedules: {error}", config.replica.get()))?;
     let consensus = NetworkConsensusHandler::new(
         runtime_config,
-        recorder_clients,
+        recorder_clients.clone(),
         FileRuntimeStore::new(
             node_dir.join("runtime.snapshot"),
             PostcardRuntimeCodec::default(),
@@ -1168,8 +1321,11 @@ async fn start_replica(
     })?
     // D10: the gap filler is a value, not a reserved integer.
     .with_noop_value(ReplicatedValue::Noop);
+    // The catch-up task reads this replica's decisions from the same runtime the
+    // server applies them with, so both share one handler.
+    let consensus = Arc::new(consensus);
     let submissions = DeduplicatingSubmissionHandler::new(
-        consensus,
+        SharedSubmissionHandler(Arc::clone(&consensus)),
         FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)
             .map_err(|error| {
                 format!(
@@ -1222,6 +1378,16 @@ async fn start_replica(
             eprintln!("quepaxa node {replica_label} stopped: {error}");
         }
     });
+    // D11 follow-up: a rejoining replica is pushed what it missed instead of
+    // waiting for the cluster to decide something new.
+    let catch_up = catch_up_loop(
+        config.replica,
+        recorder_clients,
+        Arc::clone(&consensus),
+        ledger.clone(),
+        shutdown.clone(),
+    );
+    tokio::spawn(catch_up);
     Ok(RunningNode {
         replica_id: config.replica,
         address,
