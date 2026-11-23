@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Check live UltraBERT embeddings against a frozen pCNL fixture row.
+
+This is the encoder half of live/fixture parity.  The R13 vector head consumes
+the same 768-dimensional vector in both paths, so a matching embedding plus the
+deterministic checkpoint forward gives the same vector prediction.
+
+The check skips with exit status 2 when torch, transformers, safetensors or the
+pinned weights are unavailable.  Point ``HF_HOME`` at a cache containing the
+pinned revision to run it offline.
+
+    python3 scripts/pcnl-ultrabert-parity --row 0
+    python3 scripts/pcnl-ultrabert-parity --text "the passage text" --row 0
+"""
+
+import argparse
+import csv
+import io
+import json
+import random
+import sys
+import urllib.request
+from pathlib import Path
+
+
+def _require_dependencies():
+    missing = []
+    for name in ("torch", "transformers", "safetensors"):
+        try:
+            __import__(name)
+        except ImportError:
+            missing.append(name)
+    if missing:
+        print(
+            "SKIP: live encoder unavailable (missing "
+            + ", ".join(missing)
+            + "); install torch, transformers and safetensors, or set HF_HOME "
+            "to a cache with the pinned revision",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
+def _agnews_text(row, seed):
+    url = (
+        "https://raw.githubusercontent.com/mhjabreel/CharCnn_Keras/master/"
+        "data/ag_news_csv/test.csv"
+    )
+    with urllib.request.urlopen(url) as response:
+        text = response.read().decode("utf-8")
+    rows = []
+    for label, title, description in csv.reader(io.StringIO(text)):
+        clean = (title.strip() + " " + description.strip()).replace("\\", " ")
+        rows.append((int(label) - 1, clean))
+    seen = set()
+    by_class = [[] for _ in range(4)]
+    for label, clean in rows:
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        by_class[label].append(clean)
+    rng = random.Random(seed)
+    train, test = [], []
+    for label in range(4):
+        rng.shuffle(by_class[label])
+        train += [(label, t) for t in by_class[label][:60]]
+        test += [(label, t) for t in by_class[label][60:90]]
+    rng.shuffle(train)
+    rng.shuffle(test)
+    examples = train + test
+    return examples[row][1]
+
+
+def _twentynews_text(row, manifest):
+    from sklearn.datasets import fetch_20newsgroups
+
+    categories = manifest["labels"]
+    root = Path(__file__).resolve().parents[1]
+    data = fetch_20newsgroups(
+        data_home=str(root / "target/pcnl-20newsgroups"),
+        subset="all",
+        categories=categories,
+        remove=("headers", "footers", "quotes"),
+    )
+    rows = []
+    for label, text in zip(data.target, data.data):
+        clean = " ".join(text.split())
+        if clean:
+            rows.append((int(label), clean))
+    seen = set()
+    by_class = [[] for _ in categories]
+    for label, clean in rows:
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        by_class[label].append(clean)
+    per_train = manifest["n_train"] // len(categories)
+    per_test = manifest["n_test"] // len(categories)
+    rng = random.Random(manifest["split_seed"])
+    train, test = [], []
+    for label in range(len(categories)):
+        rng.shuffle(by_class[label])
+        train += [(label, t) for t in by_class[label][:per_train]]
+        test += [(label, t) for t in by_class[label][per_train : per_train + per_test]]
+    rng.shuffle(train)
+    rng.shuffle(test)
+    examples = train + test
+    return examples[row][1]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    root = Path(__file__).resolve().parents[1]
+    parser.add_argument(
+        "--fixture",
+        type=Path,
+        default=root / "docs/fixtures/ultrabert_20ng4_embeddings.safetensors",
+    )
+    parser.add_argument("--row", type=int, default=0)
+    parser.add_argument("--text", help="passage at --row; skips dataset lookup")
+    parser.add_argument("--atol", type=float, default=1e-5)
+    args = parser.parse_args()
+    _require_dependencies()
+
+    import numpy as np
+    from safetensors.torch import load_file
+
+    from pcnl_ultrabert_adapter import MODEL, REVISION, encode_texts
+
+    manifest_path = args.fixture.with_suffix(".json")
+    manifest = json.loads(manifest_path.read_text())
+    tensors = load_file(str(args.fixture))
+    embeddings = tensors["embeddings"].float().numpy()
+    if not 0 <= args.row < len(embeddings):
+        parser.error(f"--row {args.row} outside fixture size {len(embeddings)}")
+
+    if args.text is not None:
+        text = args.text
+    elif "agnews" in args.fixture.name:
+        text = _agnews_text(args.row, manifest["split_seed"])
+    else:
+        text = _twentynews_text(args.row, manifest)
+
+    live = encode_texts([text])[0].detach().cpu().float().numpy()
+    fixture = embeddings[args.row]
+    diff = np.abs(live - fixture)
+    max_abs = float(diff.max())
+    cosine = float(
+        np.dot(live, fixture) / (np.linalg.norm(live) * np.linalg.norm(fixture))
+    )
+    norm_delta = abs(float(np.linalg.norm(live)) - float(np.linalg.norm(fixture)))
+    passed = max_abs <= args.atol and cosine >= 1.0 - args.atol and norm_delta <= args.atol
+    print(
+        "live_fixture_embedding_parity "
+        f"model={MODEL} revision={REVISION} fixture={args.fixture} row={args.row} "
+        f"max_abs={max_abs:.3e} cosine={cosine:.12f} l2_norm_delta={norm_delta:.3e} "
+        f"atol={args.atol:.1e} status={'PASS' if passed else 'FAIL'} "
+        f"fixture_sha256={manifest['artifact_sha256']}"
+    )
+    if not passed:
+        print(
+            "embedding mismatch: check model revision, eval mode, 96-token "
+            "truncation, CLS pooling and L2 normalization",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
