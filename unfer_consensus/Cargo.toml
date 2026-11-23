@@ -29,6 +29,16 @@ rust-quepaxa = { version = "0.1", optional = true }
 proptest = { workspace = true }
 rcgen = { version = "0.13", features = ["crypto", "ring"], default-features = false }
 
+[[bin]]
+# D11: one consensus replica per process; needs the TLS transport.
+name = "unfer_node"
+required-features = ["network"]
+
 [[test]]
 name = "phase6_testnet"
+required-features = ["network"]
+
+# D11: three independent node processes, no shared state.
+[[test]]
+name = "independent_nodes"
 required-features = ["network"]

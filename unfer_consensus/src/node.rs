@@ -163,6 +163,48 @@ impl ConsensusNode {
         self.journal_error.as_deref()
     }
 
+    /// Whether this node's state may be read as a statement about the committed
+    /// history.
+    ///
+    /// A halted node applied an entry to its in-memory ledgers before it could
+    /// make that application durable, so its accessors describe an evaluation,
+    /// not a state (`D12`/`D13`). Readers that serve state to a caller must ask
+    /// this first and pass the error on: the honest answer is never the memory.
+    /// `settle` and `sync` already refuse, because they go through the watermark;
+    /// this is for the plain accessors (`content`, `certs`, `identity`, …), which
+    /// cannot refuse on their own without changing their signatures.
+    pub fn servable(&self) -> Result<(), Diagnostic> {
+        if let Some(halt) = &self.halted {
+            return Err(halt.diagnostic());
+        }
+        if let Some(error) = &self.journal_error {
+            return Err(Diagnostic::new(
+                Code::STORAGE_FAILED,
+                format!(
+                    "the last applied slot could not be recorded durably ({error}); this \
+                     node's in-memory state is an evaluation, not a durable state"
+                ),
+                Severity::Error,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Test seam for the deterministic scheduler (plan D12): make this node's
+    /// next journal append fail at `fault`. Returns `false` when the node has no
+    /// journal, because then there is no write to fail and a caller that assumed
+    /// one would be testing nothing.
+    #[doc(hidden)]
+    pub fn inject_storage_fault(&mut self, fault: crate::storage::FaultPoint) -> bool {
+        match self.journal.as_mut() {
+            Some(journal) => {
+                journal.inject(fault);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Constructor with a configured certificate mint authority (ReFi exchange).
     pub fn with_mint_authority(engine: Box<dyn ConsensusEngine>, authority: MintAuthority) -> Self {
         let mut node = Self::new(engine);
