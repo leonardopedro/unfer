@@ -1,12 +1,17 @@
 //! Phase 6 testnet: `ConsensusNode` running on a real QuePaxa cluster.
 //!
 //! The `network` feature wires `rust-quepaxa`'s mutually-authenticated TLS
-//! transport. The value being agreed on is a `u64` transaction id; the payload
-//! (`ConsensusTransaction`) travels in a shared pending store and is applied by
-//! a [`LedgerStateMachine`] when its id is committed. Every live node executes
-//! the same committed decisions in order, so each peer's [`ConsensusNode`]
-//! (built over a [`NetConsensus`] engine) reproduces the identical certificate
-//! root.
+//! transport. The value being agreed on is a `ReplicatedValue` that carries its
+//! own bytes (see [`encode_ledger_value`]), and a [`LedgerStateMachine`] applies
+//! each committed decision from that value. Every live node executes the same
+//! committed decisions in order, so each peer's [`ConsensusNode`] (built over a
+//! [`NetConsensus`] engine) reproduces the identical certificate root.
+//!
+//! D11 splits the two roles the module used to serve at once. A process is
+//! started from a validated [`NodeConfig`] and owns exactly one replica's state
+//! ([`start_node`] / [`RunningNode`]); [`NetworkCluster`] is the in-process
+//! test harness that starts two of those replicas plus a local submission pump
+//! over one shared state directory.
 //!
 //! Node state is durable: recorder snapshots, runtime snapshots, the submission
 //! journal, and the replicated ledger are written to `<state_dir>` and survive a
@@ -50,7 +55,6 @@ use crate::engine::ConsensusEngine;
 pub const LEDGER_TX_SCHEMA: u16 = 1;
 
 const LIVE_NODES: usize = 2;
-const CLIENT_NODES: usize = 1;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 
 /// Durable ledger snapshot: the committed bank plus this node's outbox.
@@ -187,7 +191,10 @@ pub struct SharedLedger {
     next_id: Arc<AtomicU64>,
     request_seq: Arc<AtomicU64>,
     committed_tx: watch::Sender<u64>,
-    submitted: mpsc::UnboundedSender<(u64, ReplicatedValue)>,
+    /// The local submission pump, when this ledger has one. A standalone node
+    /// process has none: submissions reach it over TLS as complete values, so
+    /// the ledger is only the application target (D11).
+    submitted: Option<mpsc::UnboundedSender<(u64, ReplicatedValue)>>,
     file: Option<LedgerFile>,
 }
 
@@ -254,8 +261,16 @@ impl std::fmt::Debug for SharedLedger {
 }
 
 impl SharedLedger {
+    /// D11: open a ledger that only applies committed decisions. A standalone
+    /// node process submits nothing itself — its clients send whole values over
+    /// TLS — so `allocate` refuses instead of queueing into a pump that is not
+    /// there.
+    pub fn open(state_dir: &Path) -> Result<Self, String> {
+        Self::new(None, Some(LedgerFile::new(state_dir)))
+    }
+
     fn new(
-        submitted: mpsc::UnboundedSender<(u64, ReplicatedValue)>,
+        submitted: Option<mpsc::UnboundedSender<(u64, ReplicatedValue)>>,
         file: Option<LedgerFile>,
     ) -> Result<Self, String> {
         // A missing ledger file is a fresh cluster (`Ok(default)`); a corrupt
@@ -292,8 +307,8 @@ impl SharedLedger {
             .map(|(id, tx)| (*id, tx.clone()))
             .collect::<Vec<_>>();
         for (id, tx) in outstanding {
-            if let Ok(value) = encode_ledger_value(id, &tx) {
-                let _ = ledger.submitted.send((id, value));
+            if let (Some(pump), Ok(value)) = (&ledger.submitted, encode_ledger_value(id, &tx)) {
+                let _ = pump.send((id, value));
             }
         }
         ledger.persist()?;
@@ -305,6 +320,13 @@ impl SharedLedger {
     /// the cluster. The outbox entry is what makes the submission durable
     /// before it is acknowledged; the **value** is what makes it replicable.
     fn allocate(&self, tx: ConsensusTransaction) -> Result<u64, String> {
+        let Some(pump) = &self.submitted else {
+            return Err(
+                "this ledger has no submission pump; submit through the node's TLS "
+                    .to_owned()
+                    + "endpoint instead of proposing locally",
+            );
+        };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let value = encode_ledger_value(id, &tx)?;
         {
@@ -312,7 +334,7 @@ impl SharedLedger {
             state.outbox.insert(id, tx);
             self.persist_state(&state)?;
         }
-        let _ = self.submitted.send((id, value));
+        let _ = pump.send((id, value));
         Ok(id)
     }
 
@@ -479,31 +501,800 @@ impl StateMachine<ReplicatedValue> for LedgerStateMachine {
     }
 }
 
-/// A running QuePaxa node: a loopback TLS server owning one replica's recorder
-/// core, runtime, and consensus handler.
-pub struct ClusterNode {
-    pub replica_id: ReplicaId,
+// ── D11: one replica per process ─────────────────────────────────────────────
+//
+// Everything below is what a *process* is started with. `NetworkCluster` still
+// exists as a fast in-process harness, but it is now built out of these pieces
+// instead of owning a private copy of the startup logic.
+
+/// One member of a deployment: its replica id, the address it listens on and
+/// the TLS identity peers authenticate it by.
+#[derive(Debug, Clone)]
+pub struct MemberConfig {
+    pub replica: ReplicaId,
     pub address: SocketAddr,
+    pub identity: TlsIdentity,
+}
+
+/// A client identity a deployment accepts submissions from. Clients never
+/// listen; they present this certificate when they connect.
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub client_id: [u8; 16],
+    pub identity: TlsIdentity,
+}
+
+/// The deployment every process of a consensus run shares: the deployment id,
+/// the lane, every replica's address and identity, and the accepted clients.
+///
+/// D11: this is the whole trust boundary a process is started with, and it is
+/// validated before anything is bound or written. A malformed deployment — id
+/// zero, a duplicate replica id or address, a certificate shared by two roles,
+/// a non-consecutive member list — is refused with a named error instead of
+/// half a cluster coming up.
+#[derive(Debug, Clone)]
+pub struct DeploymentConfig {
+    pub deployment: DeploymentId,
+    pub lane: LaneId,
+    pub members: Vec<MemberConfig>,
+    pub clients: Vec<ClientConfig>,
+}
+
+/// The JSON a `DeploymentConfig` is read from. Certificates are DER, hex
+/// encoded, so a fixture is one self-contained file and two processes never
+/// have to agree on a path (which is what "no shared payload files" means).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeploymentFile {
+    /// The 128-bit deployment id, as a decimal string so the full width is
+    /// explicit rather than left to a float.
+    deployment: String,
+    lane: u64,
+    members: Vec<MemberFile>,
+    #[serde(default)]
+    clients: Vec<ClientFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MemberFile {
+    replica: u64,
+    address: String,
+    certificate_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClientFile {
+    client_id_hex: String,
+    certificate_hex: String,
+}
+
+/// One process's own config: which replica it is, where its private state
+/// lives, and the deployment it belongs to.
+#[derive(Debug, Clone)]
+pub struct NodeConfig {
+    pub deployment: DeploymentConfig,
+    pub replica: ReplicaId,
+    /// This process's private state: recorder/runtime snapshots, the submission
+    /// journal and the replicated ledger. It is locked for the process's
+    /// lifetime, so a second process pointed at it fails instead of silently
+    /// sharing an application store.
+    pub state_dir: PathBuf,
+    /// This replica's TLS identity (certificate chain + PKCS#8 key).
+    pub identity: TlsIdentity,
+    pub rpc_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NodeFile {
+    replica: u64,
+    state_dir: String,
+    certificate_hex: String,
+    key_hex: String,
+    #[serde(default = "default_rpc_timeout_ms")]
+    rpc_timeout_ms: u64,
+    deployment: DeploymentFile,
+}
+
+/// A client process's config: the deployment, which client it is, and its TLS
+/// identity. Used by the `submit` command, which is a client, not a node.
+#[derive(Debug, Clone)]
+pub struct SubmitConfig {
+    pub deployment: DeploymentConfig,
+    pub client_id: [u8; 16],
+    pub identity: TlsIdentity,
+    pub rpc_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SubmitFile {
+    client_id_hex: String,
+    certificate_hex: String,
+    key_hex: String,
+    #[serde(default = "default_rpc_timeout_ms")]
+    rpc_timeout_ms: u64,
+    deployment: DeploymentFile,
+}
+
+fn default_rpc_timeout_ms() -> u64 {
+    DEFAULT_RPC_TIMEOUT_MS
+}
+
+const DEFAULT_RPC_TIMEOUT_MS: u64 = 30_000;
+
+fn hex_bytes(field: &str, value: &str) -> Result<Vec<u8>, String> {
+    let bytes = hex::decode(value.trim())
+        .map_err(|error| format!("{field} is not hex: {error}"))?;
+    if bytes.is_empty() {
+        return Err(format!("{field} is empty"));
+    }
+    Ok(bytes)
+}
+
+fn parse_address(field: &str, value: &str) -> Result<SocketAddr, String> {
+    value
+        .parse()
+        .map_err(|error| format!("{field} `{value}` is not a socket address: {error}"))
+}
+
+impl DeploymentConfig {
+    fn from_file(file: &DeploymentFile) -> Result<Self, String> {
+        let deployment: u128 = file
+            .deployment
+            .trim()
+            .parse()
+            .map_err(|error| format!("deployment id is not a u128: {error}"))?;
+        let members = file
+            .members
+            .iter()
+            .map(|member| {
+                Ok(MemberConfig {
+                    replica: ReplicaId::new(member.replica),
+                    address: parse_address("member address", &member.address)?,
+                    identity: TlsIdentity {
+                        certificate_chain_der: vec![hex_bytes(
+                            "member certificate_hex",
+                            &member.certificate_hex,
+                        )?],
+                        private_key_pkcs8_der: Vec::new(),
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let clients = file
+            .clients
+            .iter()
+            .map(|client| {
+                let raw = hex_bytes("client_id_hex", &client.client_id_hex)?;
+                let client_id: [u8; 16] = raw.as_slice().try_into().map_err(|_| {
+                    format!(
+                        "client_id_hex is {} byte(s), not the 16 a client id is",
+                        raw.len()
+                    )
+                })?;
+                Ok(ClientConfig {
+                    client_id,
+                    identity: TlsIdentity {
+                        certificate_chain_der: vec![hex_bytes(
+                            "client certificate_hex",
+                            &client.certificate_hex,
+                        )?],
+                        private_key_pkcs8_der: Vec::new(),
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            deployment: DeploymentId::from_u128(deployment),
+            lane: LaneId::new(file.lane),
+            members,
+            clients,
+        })
+    }
+
+    /// D11: refuse a deployment that cannot be one deployment. Every rule here
+    /// exists because violating it produces a cluster that binds, answers, and
+    /// then disagrees with itself.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.deployment.0 == [0u8; 16] {
+            return Err("deployment id must not be zero".to_owned());
+        }
+        if self.members.len() < 2 {
+            return Err(format!(
+                "a deployment needs at least two members, not {}",
+                self.members.len()
+            ));
+        }
+        let mut addresses = BTreeMap::new();
+        let mut certificates = BTreeMap::new();
+        for (index, member) in self.members.iter().enumerate() {
+            // The recorder and runtime address slots by member order, so a
+            // member list that is not `1..=n` duplicates or skips a slot.
+            let expected = index as u64 + 1;
+            if member.replica.get() != expected {
+                return Err(format!(
+                    "members must be replicas 1..=n in order; position {index} holds replica {}",
+                    member.replica.get()
+                ));
+            }
+            if let Some(other) = addresses.insert(member.address, member.replica) {
+                return Err(format!(
+                    "replicas {} and {} both listen on {}",
+                    other.get(),
+                    member.replica.get(),
+                    member.address
+                ));
+            }
+            let certificate = member
+                .identity
+                .certificate_chain_der
+                .first()
+                .ok_or_else(|| format!("replica {} has no certificate", member.replica.get()))?;
+            if let Some(other) = certificates.insert(certificate.clone(), format!("replica {}", member.replica.get())) {
+                return Err(format!(
+                    "replica {} presents the same certificate as {other}",
+                    member.replica.get()
+                ));
+            }
+        }
+        let mut client_ids = BTreeMap::new();
+        for client in &self.clients {
+            if client.client_id == [0u8; 16] {
+                return Err("a client id must not be zero".to_owned());
+            }
+            if client.identity.certificate_chain_der.is_empty() {
+                return Err("a client has no certificate".to_owned());
+            }
+            if let Some(other) = client_ids.insert(client.client_id, ()) {
+                let _ = other;
+                return Err(format!(
+                    "client {} is declared twice",
+                    hex::encode(client.client_id)
+                ));
+            }
+            let certificate = client.identity.certificate_chain_der[0].clone();
+            if let Some(other) = certificates.get(&certificate) {
+                return Err(format!(
+                    "client {} presents the certificate of {other}",
+                    hex::encode(client.client_id)
+                ));
+            }
+            certificates.insert(certificate, format!("client {}", hex::encode(client.client_id)));
+        }
+        Ok(())
+    }
+
+    fn member(&self, replica: ReplicaId) -> Result<&MemberConfig, String> {
+        self.members
+            .iter()
+            .find(|member| member.replica == replica)
+            .ok_or_else(|| format!("replica {} is not a member of this deployment", replica.get()))
+    }
+
+    fn index_of(&self, replica: ReplicaId) -> Result<usize, String> {
+        self.members
+            .iter()
+            .position(|member| member.replica == replica)
+            .ok_or_else(|| format!("replica {} is not a member of this deployment", replica.get()))
+    }
+
+    /// Every certificate this deployment trusts, in one deterministic order.
+    fn roots(&self) -> Vec<Vec<u8>> {
+        let mut roots = self
+            .members
+            .iter()
+            .filter_map(|member| member.identity.certificate_chain_der.first().cloned())
+            .collect::<Vec<_>>();
+        roots.extend(
+            self.clients
+                .iter()
+                .filter_map(|client| client.identity.certificate_chain_der.first().cloned()),
+        );
+        roots
+    }
+
+    /// The certificate → sender map the node server authenticates peers with.
+    fn peer_registry(&self) -> BTreeMap<Vec<u8>, PeerIdentity> {
+        self.members
+            .iter()
+            .filter_map(|member| {
+                member
+                    .identity
+                    .certificate_chain_der
+                    .first()
+                    .map(|certificate| (certificate.clone(), PeerIdentity::Replica(member.replica)))
+            })
+            .chain(self.clients.iter().filter_map(|client| {
+                client
+                    .identity
+                    .certificate_chain_der
+                    .first()
+                    .map(|certificate| (certificate.clone(), PeerIdentity::Client(client.client_id)))
+            }))
+            .collect()
+    }
+
+    /// The mutual-TLS configuration for **one** identity in this deployment:
+    /// the server config this node presents and the client config it uses to
+    /// reach the other members. Only the node's own key material is needed —
+    /// peers are authenticated by the certificates `roots()` trusts, and a
+    /// deployment file never carries another member's private key.
+    fn node_tls(&self, identity: &TlsIdentity) -> Result<MutualTlsConfigs, String> {
+        MutualTlsConfigs::new(identity, self.roots())
+            .map_err(|error| format!("node TLS setup failed: {error}"))
+    }
+}
+
+impl NodeConfig {
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        let file: NodeFile =
+            serde_json::from_str(text).map_err(|error| format!("node config is not valid JSON: {error}"))?;
+        let deployment = DeploymentConfig::from_file(&file.deployment)?;
+        let config = Self {
+            replica: ReplicaId::new(file.replica),
+            state_dir: PathBuf::from(file.state_dir.trim()),
+            identity: TlsIdentity {
+                certificate_chain_der: vec![hex_bytes("certificate_hex", &file.certificate_hex)?],
+                private_key_pkcs8_der: hex_bytes("key_hex", &file.key_hex)?,
+            },
+            rpc_timeout: Duration::from_millis(file.rpc_timeout_ms),
+            deployment,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        Self::from_json(&text)
+            .map_err(|error| format!("{} is not a usable node config: {error}", path.display()))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.deployment.validate()?;
+        let member = self.deployment.member(self.replica)?;
+        if self.identity.certificate_chain_der.is_empty() {
+            return Err("this node has no certificate".to_owned());
+        }
+        if self.identity.private_key_pkcs8_der.is_empty() {
+            return Err("this node has no private key".to_owned());
+        }
+        if member.identity.certificate_chain_der[0] != self.identity.certificate_chain_der[0] {
+            return Err(format!(
+                "this node's certificate is not replica {}'s certificate in the deployment",
+                self.replica.get()
+            ));
+        }
+        if self.state_dir.as_os_str().is_empty() {
+            return Err("state_dir is empty".to_owned());
+        }
+        if !self.state_dir.is_absolute() {
+            return Err(format!(
+                "state_dir {} must be absolute, so two processes cannot resolve it differently",
+                self.state_dir.display()
+            ));
+        }
+        if self.rpc_timeout.is_zero() {
+            return Err("rpc_timeout_ms must be non-zero".to_owned());
+        }
+        Ok(())
+    }
+}
+
+impl SubmitConfig {
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        let file: SubmitFile = serde_json::from_str(text)
+            .map_err(|error| format!("client config is not valid JSON: {error}"))?;
+        let raw = hex_bytes("client_id_hex", &file.client_id_hex)?;
+        let client_id: [u8; 16] = raw.as_slice().try_into().map_err(|_| {
+            format!(
+                "client_id_hex is {} byte(s), not the 16 a client id is",
+                raw.len()
+            )
+        })?;
+        let config = Self {
+            deployment: DeploymentConfig::from_file(&file.deployment)?,
+            client_id,
+            identity: TlsIdentity {
+                certificate_chain_der: vec![hex_bytes("certificate_hex", &file.certificate_hex)?],
+                private_key_pkcs8_der: hex_bytes("key_hex", &file.key_hex)?,
+            },
+            rpc_timeout: Duration::from_millis(file.rpc_timeout_ms),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        Self::from_json(&text)
+            .map_err(|error| format!("{} is not a usable client config: {error}", path.display()))
+    }
+
+    /// A client is only usable against a deployment that declares it: an
+    /// undeclared client is refused here rather than after a TLS handshake.
+    pub fn validate(&self) -> Result<(), String> {
+        self.deployment.validate()?;
+        if self.identity.private_key_pkcs8_der.is_empty() {
+            return Err("this client has no private key".to_owned());
+        }
+        let declared = self
+            .deployment
+            .clients
+            .iter()
+            .find(|client| client.client_id == self.client_id)
+            .ok_or_else(|| {
+                format!(
+                    "client {} is not declared by this deployment",
+                    hex::encode(self.client_id)
+                )
+            })?;
+        if declared.identity.certificate_chain_der[0] != self.identity.certificate_chain_der[0] {
+            return Err(format!(
+                "client {} presents a certificate the deployment does not declare for it",
+                hex::encode(self.client_id)
+            ));
+        }
+        Ok(())
+    }
+
+    /// The deployment's mutual-TLS client config for this client's own identity.
+    pub fn tls(&self) -> Result<MutualTlsConfigs, String> {
+        MutualTlsConfigs::new(&self.identity, self.deployment.roots())
+            .map_err(|error| format!("client TLS setup failed: {error}"))
+    }
+}
+
+/// An exclusive claim on a node's state directory, held for the process's
+/// lifetime.
+///
+/// D11 asks that no two nodes share an application store. A state directory is
+/// the store here, so the claim is an advisory lock on `<state_dir>/node.lock`
+/// (released by the kernel when the process dies, including on a crash — which
+/// is why it is a lock and not a lock *file*). A second process pointed at the
+/// same directory fails at startup instead of racing the first one's writes.
+pub struct StateDirLock {
+    directory: PathBuf,
+    file: fs::File,
+}
+
+impl StateDirLock {
+    pub fn acquire(directory: &Path) -> Result<Self, String> {
+        fs::create_dir_all(directory).map_err(|error| {
+            format!(
+                "could not create state dir {}: {error}",
+                directory.display()
+            )
+        })?;
+        let path = directory.join("node.lock");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+        file.try_lock().map_err(|_| {
+            format!(
+                "state dir {} is locked by another node process; a node owns its \
+                 application store exclusively",
+                directory.display()
+            )
+        })?;
+        Ok(Self {
+            directory: directory.to_path_buf(),
+            file,
+        })
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+impl Drop for StateDirLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+impl std::fmt::Debug for StateDirLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateDirLock")
+            .field("directory", &self.directory)
+            .finish()
+    }
+}
+
+/// A running replica: its TLS server task, the ledger it applies decisions to,
+/// and (for a standalone process) the exclusive claim on its state directory.
+pub struct RunningNode {
+    pub replica_id: ReplicaId,
+    /// The address the server actually bound. A config may ask for port 0 and
+    /// learn the port here.
+    pub address: SocketAddr,
+    pub ledger: SharedLedger,
+    /// `Some` for a standalone process ([`start_node`]), `None` for the
+    /// in-process harness, whose replicas share one directory by construction.
+    pub state_dir: Option<StateDirLock>,
     shutdown: CancellationToken,
     handle: tokio::task::JoinHandle<()>,
 }
 
-impl ClusterNode {
+impl RunningNode {
     pub async fn shutdown(self) {
         self.shutdown.cancel();
         let _ = self.handle.await;
+    }
+
+    /// The canonical digest of the log this replica has applied.
+    pub fn digest(&self) -> String {
+        state_digest(&self.ledger)
+    }
+
+    pub async fn wait_committed(&self, at_least: u64) {
+        wait_committed(&self.ledger, at_least).await
+    }
+}
+
+/// D11: a digest two independent processes must agree on. It covers the
+/// `(1-based slot, canonical transaction hash)` pairs in order, so two replicas
+/// that applied the same decisions in the same order agree, and any divergence
+/// — a missing commit, a reordered one, a different payload — does not.
+pub fn state_digest(ledger: &SharedLedger) -> String {
+    digest_of(ledger.committed_since(1).iter().map(|(slot, tx)| (*slot, tx)))
+}
+
+/// The same digest, read straight from a state directory's durable ledger.
+///
+/// This takes no lock and writes nothing, so it answers "what has this node
+/// applied?" about a running node — a process that opened the ledger the way
+/// [`SharedLedger::open`] does would re-propose from the outbox and rewrite the
+/// snapshot, which is exactly the shared write D11 rules out.
+pub fn state_dir_digest(directory: &Path) -> Result<String, String> {
+    let snapshot = LedgerFile::new(directory).load()?;
+    Ok(digest_of(
+        snapshot
+            .bank
+            .iter()
+            .enumerate()
+            .map(|(index, tx)| (index as u64 + 1, tx)),
+    ))
+}
+
+fn digest_of<'a>(entries: impl Iterator<Item = (u64, &'a ConsensusTransaction)>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut count = 0u64;
+    for (slot, tx) in entries {
+        hasher.update(slot.to_be_bytes());
+        hasher.update(crate::signing::canonical_bytes(tx));
+        count = slot;
+    }
+    format!("{count}:{}", hex::encode(hasher.finalize()))
+}
+
+async fn wait_committed(ledger: &SharedLedger, at_least: u64) {
+    let mut rx = ledger.subscribe();
+    loop {
+        if *rx.borrow() >= at_least {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Start one replica of `config`'s deployment over `ledger`.
+///
+/// This is the single startup path: a standalone process owns `ledger` through
+/// [`SharedLedger::open`] and passes a [`StateDirLock`]; the in-process harness
+/// passes one ledger shared by its replicas. Nothing else differs, so the fast
+/// harness exercises the same server, recorder and state machine the processes
+/// run.
+async fn start_replica(
+    config: &NodeConfig,
+    ledger: SharedLedger,
+    state_dir: Option<StateDirLock>,
+    metrics: Arc<NetworkMetrics>,
+) -> Result<RunningNode, String> {
+    let deployment = &config.deployment;
+    let index = deployment.index_of(config.replica)?;
+    let tls = deployment.node_tls(&config.identity)?;
+    let peers = deployment.peer_registry();
+    let members = deployment
+        .members
+        .iter()
+        .map(|member| member.replica)
+        .collect::<Vec<_>>();
+    let node_dir = config.state_dir.join(format!("node-{}", config.replica.get()));
+    fs::create_dir_all(&node_dir).map_err(|error| {
+        format!(
+            "could not create node state dir {}: {error}",
+            node_dir.display()
+        )
+    })?;
+
+    let recorder_clients = deployment
+        .members
+        .iter()
+        .map(|recorder| {
+            TlsRecorderClient::new(
+                config.replica,
+                recorder.replica,
+                deployment.deployment,
+                recorder.address,
+                "localhost",
+                recorder.identity.certificate_chain_der[0].clone(),
+                tls.client.clone(),
+                Arc::clone(&metrics),
+            )
+        })
+        .collect::<Vec<_>>();
+    let runtime_config = ReplicaRuntimeConfig::new(
+        config.replica,
+        deployment.lane,
+        members.clone(),
+        1,
+        ReplicaConfig {
+            pipeline_len: 4,
+            ..ReplicaConfig::default()
+        },
+        64,
+        Duration::ZERO,
+    )
+    .map_err(|error| format!("replica {} runtime config: {error}", config.replica.get()))?
+    .with_auto_schedules()
+    .map_err(|error| format!("replica {} schedules: {error}", config.replica.get()))?;
+    let consensus = NetworkConsensusHandler::new(
+        runtime_config,
+        recorder_clients,
+        FileRuntimeStore::new(
+            node_dir.join("runtime.snapshot"),
+            PostcardRuntimeCodec::default(),
+        ),
+        LedgerStateMachine {
+            ledger: ledger.clone(),
+        },
+        Arc::clone(&metrics),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "replica {} could not start its consensus handler: {error}",
+            config.replica.get()
+        )
+    })?
+    // D10: the gap filler is a value, not a reserved integer.
+    .with_noop_value(ReplicatedValue::Noop);
+    let submissions = DeduplicatingSubmissionHandler::new(
+        consensus,
+        FileSubmissionJournal::open(node_dir.join("submission-journal.bin"), MAX_JOURNAL_BYTES)
+            .map_err(|error| {
+                format!(
+                    "replica {} submission journal: {error}",
+                    config.replica.get()
+                )
+            })?,
+    );
+    let recorder = DurableRecorderCore::new(
+        RecorderConfig::new(config.replica, members.clone(), 1)
+            .map_err(|error| format!("replica {} recorder config: {error}", config.replica.get()))?,
+        Arc::new(AllowAllAvailability),
+        FileRecorderStore::new(
+            node_dir.join("recorder.snapshot"),
+            PostcardRecorderCodec::default(),
+        ),
+    )
+    .map_err(|error| {
+        format!(
+            "replica {} recorder store: {error}",
+            config.replica.get()
+        )
+    })?;
+    let server = NetworkNodeServer::bind(
+        deployment.members[index].address,
+        deployment.deployment,
+        tls.server.clone(),
+        peers,
+        recorder,
+        submissions,
+        Arc::clone(&metrics),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "replica {} could not bind {}: {error}",
+            config.replica.get(),
+            deployment.members[index].address
+        )
+    })?;
+    let address = server
+        .local_addr()
+        .map_err(|error| format!("replica {} bound address: {error}", config.replica.get()))?;
+
+    let shutdown = CancellationToken::new();
+    let inner = shutdown.clone();
+    let replica_label = config.replica.get();
+    let handle = tokio::spawn(async move {
+        if let Err(error) = server.run(inner).await {
+            eprintln!("quepaxa node {replica_label} stopped: {error}");
+        }
+    });
+    Ok(RunningNode {
+        replica_id: config.replica,
+        address,
+        ledger,
+        state_dir,
+        shutdown,
+        handle,
+    })
+}
+
+/// Start a standalone replica process from a validated [`NodeConfig`].
+///
+/// The process owns its state directory (through [`StateDirLock`]), its ledger
+/// and its server; nothing is shared with another process except the
+/// deployment description it was configured with.
+pub async fn start_node(config: NodeConfig) -> Result<RunningNode, String> {
+    config.validate()?;
+    let lock = StateDirLock::acquire(&config.state_dir)?;
+    let ledger = SharedLedger::open(&config.state_dir)?;
+    let metrics = Arc::new(NetworkMetrics::default());
+    start_replica(&config, ledger, Some(lock), metrics).await
+}
+
+/// A [`TlsSubmitClient`] for `config` pointed at `address`. A client is not a
+/// node: it proposes complete values to a replica and holds no state.
+pub fn submit_client(
+    config: &SubmitConfig,
+    address: SocketAddr,
+) -> Result<TlsSubmitClient, String> {
+    let tls = config.tls()?;
+    Ok(TlsSubmitClient::new(
+        config.client_id,
+        config.deployment.deployment,
+        address,
+        "localhost",
+        config
+            .deployment
+            .member_address_certificate(address)?,
+        tls.client.clone(),
+        Arc::new(NetworkMetrics::default()),
+    )
+    .with_rpc_timeout(config.rpc_timeout))
+}
+
+impl DeploymentConfig {
+    /// The certificate a client expects from `address` before it connects: the
+    /// deployment declares exactly one, so an address that does not belong to a
+    /// member is refused instead of being handed some other peer's identity.
+    fn member_address_certificate(&self, address: SocketAddr) -> Result<Vec<u8>, String> {
+        self.members
+            .iter()
+            .find(|member| member.address == address)
+            .and_then(|member| member.identity.certificate_chain_der.first().cloned())
+            .ok_or_else(|| format!("no member of this deployment listens on {address}"))
     }
 }
 
 /// A 2-live-of-3 QuePaxa cluster on loopback addresses, plus the client pump
 /// that proposes locally-submitted transactions and the shared ledger they
 /// land in. All consensus state is durable under `<state_dir>`.
+///
+/// D11: this is the fast in-process harness, not a deployment. It starts two of
+/// [`start_replica`]'s replicas over **one** shared ledger and state directory,
+/// which a real deployment never does (there each process owns its own); the
+/// harness keeps it because it makes the failure modes it tests reproducible in
+/// a single test binary.
 pub struct NetworkCluster {
     pub ledger: SharedLedger,
-    pub nodes: Vec<ClusterNode>,
+    pub nodes: Vec<RunningNode>,
     /// Socket addresses of all three replicas (including the offline third
     /// member), needed to resume the cluster on the same ports.
     pub addresses: Vec<SocketAddr>,
+    deployment: DeploymentConfig,
     pump: tokio::task::JoinHandle<()>,
 }
 
@@ -543,151 +1334,90 @@ impl NetworkCluster {
         Self::build(identities, state_dir, addresses).await
     }
 
+    /// The deployment the harness runs: three replicas from `identities[0..3]`
+    /// and one accepted client from `identities[3]`.
+    fn deployment(
+        identities: Vec<TlsIdentity>,
+        addresses: Vec<SocketAddr>,
+    ) -> Result<DeploymentConfig, String> {
+        if identities.len() != 4 || addresses.len() != 3 {
+            return Err(format!(
+                "the harness needs 4 identities and 3 addresses, not {} and {}",
+                identities.len(),
+                addresses.len()
+            ));
+        }
+        Ok(DeploymentConfig {
+            deployment: DeploymentId::from_u128(1),
+            lane: LaneId::new(1),
+            members: identities[..3]
+                .iter()
+                .zip(&addresses)
+                .enumerate()
+                .map(|(index, (identity, address))| MemberConfig {
+                    replica: ReplicaId::new(index as u64 + 1),
+                    address: *address,
+                    identity: identity.clone(),
+                })
+                .collect(),
+            clients: vec![ClientConfig {
+                client_id: HARNESS_CLIENT_ID,
+                identity: identities[3].clone(),
+            }],
+        })
+    }
+
     async fn build(
         identities: Vec<TlsIdentity>,
         state_dir: &Path,
         addresses: Vec<SocketAddr>,
     ) -> rust_quepaxa::Result<Self> {
-        let deployment = DeploymentId::from_u128(1);
-        let members = (1..=3).map(ReplicaId::new).collect::<Vec<_>>();
-        let client_id = [42u8; 16];
-
-        let roots = identities
-            .iter()
-            .map(|identity| identity.certificate_chain_der[0].clone())
-            .collect::<Vec<_>>();
-        let tls = identities
-            .iter()
-            .map(|identity| MutualTlsConfigs::new(identity, roots.clone()))
-            .collect::<rust_quepaxa::Result<Vec<_>>>()?;
-
-        let peers = members
-            .iter()
-            .enumerate()
-            .map(|(index, replica)| {
-                (
-                    identities[index].certificate_chain_der[0].clone(),
-                    PeerIdentity::Replica(*replica),
-                )
-            })
-            .chain([(
-                identities[3].certificate_chain_der[0].clone(),
-                PeerIdentity::Client(client_id),
-            )])
-            .collect::<BTreeMap<_, _>>();
-
+        let deployment =
+            Self::deployment(identities.clone(), addresses.clone()).map_err(storage_error)?;
+        deployment.validate().map_err(storage_error)?;
         let metrics = Arc::new(NetworkMetrics::default());
         let (submitted_tx, submitted_rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger =
-            SharedLedger::new(submitted_tx, Some(LedgerFile::new(state_dir))).map_err(|error| {
+        let ledger = SharedLedger::new(Some(submitted_tx), Some(LedgerFile::new(state_dir)))
+            .map_err(|error| {
                 rust_quepaxa::QuePaxaError::StorageError(format!(
                     "could not load the durable ledger: {error}"
                 ))
             })?;
 
         let mut nodes = Vec::new();
-        for index in 0..LIVE_NODES {
-            let node_dir = state_dir.join(format!("node-{}", members[index].get()));
-            fs::create_dir_all(&node_dir).map_err(|error| {
-                rust_quepaxa::QuePaxaError::StorageError(format!(
-                    "could not create node state dir {}: {error}",
-                    node_dir.display()
-                ))
-            })?;
-
-            let recorder_clients = members
-                .iter()
-                .enumerate()
-                .map(|(target, recorder)| {
-                    TlsRecorderClient::new(
-                        members[index],
-                        *recorder,
-                        deployment,
-                        addresses[target],
-                        "localhost",
-                        identities[target].certificate_chain_der[0].clone(),
-                        Arc::clone(&tls[index].client),
-                        Arc::clone(&metrics),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let runtime_config = ReplicaRuntimeConfig::new(
-                members[index],
-                LaneId::new(1),
-                members.clone(),
-                1,
-                ReplicaConfig {
-                    pipeline_len: 4,
-                    ..ReplicaConfig::default()
-                },
-                64,
-                Duration::ZERO,
-            )?
-            .with_auto_schedules()?;
-            let consensus = NetworkConsensusHandler::new(
-                runtime_config,
-                recorder_clients,
-                FileRuntimeStore::new(
-                    node_dir.join("runtime.snapshot"),
-                    PostcardRuntimeCodec::default(),
-                ),
-                LedgerStateMachine {
-                    ledger: ledger.clone(),
-                },
+        for member in deployment.members.iter().take(LIVE_NODES) {
+            let config = NodeConfig {
+                deployment: deployment.clone(),
+                replica: member.replica,
+                state_dir: state_dir.to_path_buf(),
+                identity: member.identity.clone(),
+                rpc_timeout: Duration::from_millis(DEFAULT_RPC_TIMEOUT_MS),
+            };
+            let node = start_replica(
+                &config,
+                ledger.clone(),
+                None,
                 Arc::clone(&metrics),
             )
-            .await?
-            // D10: the gap filler is a value, not a reserved integer.
-            .with_noop_value(ReplicatedValue::Noop);
-            let submissions = DeduplicatingSubmissionHandler::new(
-                consensus,
-                FileSubmissionJournal::open(
-                    node_dir.join("submission-journal.bin"),
-                    MAX_JOURNAL_BYTES,
-                )?,
-            );
-            let recorder = DurableRecorderCore::new(
-                RecorderConfig::new(members[index], members.clone(), 1)?,
-                Arc::new(AllowAllAvailability),
-                FileRecorderStore::new(
-                    node_dir.join("recorder.snapshot"),
-                    PostcardRecorderCodec::default(),
-                ),
-            )?;
-            let server = NetworkNodeServer::bind(
-                addresses[index],
-                deployment,
-                Arc::clone(&tls[index].server),
-                peers.clone(),
-                recorder,
-                submissions,
-                Arc::clone(&metrics),
-            )
-            .await?;
-
-            let shutdown = CancellationToken::new();
-            let inner = shutdown.clone();
-            let replica_label = members[index].get();
-            let handle = tokio::spawn(async move {
-                if let Err(error) = server.run(inner).await {
-                    eprintln!("quepaxa node {replica_label} stopped: {error}");
-                }
-            });
-            nodes.push(ClusterNode {
-                replica_id: members[index],
-                address: addresses[index],
-                shutdown,
-                handle,
-            });
+            .await
+            .map_err(storage_error)?;
+            nodes.push(node);
         }
 
+        let client = deployment
+            .clients
+            .first()
+            .ok_or_else(|| storage_error("the harness deployment declares no client".to_owned()))?;
+        let tls = MutualTlsConfigs::new(&client.identity, deployment.roots()).map_err(|error| {
+            rust_quepaxa::QuePaxaError::TransportError(format!("client TLS setup failed: {error}"))
+        })?;
         let submit_client = TlsSubmitClient::new(
-            client_id,
-            deployment,
+            client.client_id,
+            deployment.deployment,
             addresses[0],
             "localhost",
-            identities[0].certificate_chain_der[0].clone(),
-            Arc::clone(&tls[tls.len() - CLIENT_NODES].client),
+            deployment.members[0].identity.certificate_chain_der[0].clone(),
+            tls.client.clone(),
             Arc::clone(&metrics),
         )
         .with_rpc_timeout(Duration::from_secs(30));
@@ -718,6 +1448,7 @@ impl NetworkCluster {
             ledger,
             nodes,
             addresses,
+            deployment,
             pump,
         })
     }
@@ -729,15 +1460,7 @@ impl NetworkCluster {
 
     /// Block until at least `at_least` transactions are committed.
     pub async fn wait_committed(&self, at_least: u64) {
-        let mut rx = self.ledger.subscribe();
-        loop {
-            if *rx.borrow() >= at_least {
-                return;
-            }
-            if rx.changed().await.is_err() {
-                return;
-            }
-        }
+        wait_committed(&self.ledger, at_least).await
     }
 
     /// Convention marker: queued-but-uncommitted submissions carry a provisional
@@ -745,6 +1468,12 @@ impl NetworkCluster {
     pub fn pending_seq(&self) -> u64 {
         let state = self.ledger.state.lock().unwrap();
         state.bank.len() as u64 + state.outbox.len() as u64
+    }
+
+    /// The deployment the harness runs (its members, addresses and client), so
+    /// a test can start an independent process against the same trust boundary.
+    pub fn deployment_config(&self) -> &DeploymentConfig {
+        &self.deployment
     }
 
     /// Gracefully stop every node and the pump. Ports are released once each
@@ -767,6 +1496,13 @@ impl Drop for NetworkCluster {
     }
 }
 
+fn storage_error(message: String) -> rust_quepaxa::QuePaxaError {
+    rust_quepaxa::QuePaxaError::StorageError(message)
+}
+
+/// The client id the in-process harness submits under.
+const HARNESS_CLIENT_ID: [u8; 16] = [42u8; 16];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,9 +1521,114 @@ mod tests {
         })
     }
 
+    // ── D11: the configuration a process is started from ──────────────────
+
+    /// A JSON deployment with `members` replicas, `clients` one client, and the
+    /// first node's key material attached.
+    fn node_json(deployment: &str, members: &[(u64, &str)], state_dir: &str) -> String {
+        use rcgen::{CertifiedKey, generate_simple_self_signed};
+        let mut certificates = Vec::new();
+        let mut keys = Vec::new();
+        for _ in members {
+            let CertifiedKey { cert, key_pair } =
+                generate_simple_self_signed(["localhost".to_owned()]).unwrap();
+            certificates.push(hex::encode(cert.der()));
+            keys.push(hex::encode(key_pair.serialize_der()));
+        }
+        let CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(["localhost".to_owned()]).unwrap();
+        let client_certificate = hex::encode(cert.der());
+        let _ = key_pair;
+        let members_json = members
+            .iter()
+            .zip(&certificates)
+            .map(|((replica, address), certificate)| {
+                format!(
+                    "{{\"replica\":{replica},\"address\":\"{address}\",\"certificate_hex\":\"{certificate}\"}}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"replica\":{},\"state_dir\":\"{state_dir}\",\"certificate_hex\":\"{}\",\"key_hex\":\"{}\",\
+             \"deployment\":{{\"deployment\":\"{deployment}\",\"lane\":1,\"members\":[{members_json}],\
+             \"clients\":[{{\"client_id_hex\":\"{}\",\"certificate_hex\":\"{client_certificate}\"}}]}}}}",
+            members.first().map(|(replica, _)| *replica).unwrap_or(1),
+            certificates.first().cloned().unwrap_or_default(),
+            keys.first().cloned().unwrap_or_default(),
+            "07".repeat(16),
+        )
+    }
+
+    #[test]
+    fn a_zero_deployment_id_is_refused() {
+        let text = node_json("0", &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17002")], "/tmp/d11");
+        let error = NodeConfig::from_json(&text).unwrap_err();
+        assert!(error.contains("deployment id must not be zero"), "{error}");
+    }
+
+    #[test]
+    fn members_must_be_consecutive_replicas_from_one() {
+        let text = node_json(
+            "1",
+            &[(1, "127.0.0.1:17001"), (3, "127.0.0.1:17002")],
+            "/tmp/d11",
+        );
+        let error = NodeConfig::from_json(&text).unwrap_err();
+        assert!(error.contains("replicas 1..=n in order"), "{error}");
+    }
+
+    #[test]
+    fn two_replicas_cannot_share_an_address() {
+        let text = node_json(
+            "1",
+            &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17001")],
+            "/tmp/d11",
+        );
+        let error = NodeConfig::from_json(&text).unwrap_err();
+        assert!(error.contains("both listen on"), "{error}");
+    }
+
+    #[test]
+    fn a_state_dir_must_be_absolute_and_exclusive() {
+        let relative = node_json(
+            "1",
+            &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17002")],
+            "node-1",
+        );
+        let error = NodeConfig::from_json(&relative).unwrap_err();
+        assert!(error.contains("must be absolute"), "{error}");
+
+        // A directory locked by a live process cannot be claimed again, which is
+        // what stops two nodes from sharing one application store.
+        let dir = std::env::temp_dir().join(format!("unfer-d11-lock-{}", std::process::id()));
+        let _first = StateDirLock::acquire(&dir).expect("first claim");
+        let error = StateDirLock::acquire(&dir).unwrap_err();
+        assert!(error.contains("locked by another node process"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_undeclared_client_is_refused() {
+        let text = node_json(
+            "1",
+            &[(1, "127.0.0.1:17001"), (2, "127.0.0.1:17002")],
+            "/tmp/d11",
+        );
+        let node: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let deployment = node.get("deployment").unwrap().clone();
+        let submit = format!(
+            "{{\"client_id_hex\":\"{}\",\"certificate_hex\":\"{}\",\"key_hex\":\"00\",\"deployment\":{deployment}}}",
+            "08".repeat(16),
+            node.get("certificate_hex").unwrap().as_str().unwrap(),
+        );
+        let error = SubmitConfig::from_json(&submit).unwrap_err();
+        assert!(error.contains("is not declared by this deployment"), "{error}");
+    }
+
     fn mem_ledger() -> SharedLedger {
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        SharedLedger::new(submitted, None).expect("in-memory ledger cannot fail")
+        SharedLedger::new(Some(submitted), None).expect("in-memory ledger cannot fail")
     }
 
     #[test]
@@ -895,7 +1736,7 @@ mod tests {
 
         // Phase 1: one committed, one still queued in the outbox.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(submitted, file.clone()).expect("fresh ledger");
+        let ledger = SharedLedger::new(Some(submitted), file.clone()).expect("fresh ledger");
         let first = tx(1);
         let second = tx(2);
         let applied = ledger.allocate(first.clone()).expect("durable reserve");
@@ -908,7 +1749,7 @@ mod tests {
         // Phase 2: "crash" and reload. Committed work is in the bank; the
         // queued submission is still in the outbox and is re-proposed.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(submitted, file).expect("reload");
+        let ledger = SharedLedger::new(Some(submitted), file).expect("reload");
         assert_eq!(ledger.committed(), 1, "committed log reloaded");
         assert!(ledger.state.lock().unwrap().outbox.contains_key(&in_flight));
         ledger
@@ -919,7 +1760,7 @@ mod tests {
 
         // Phase 3: reload once more; everything is in the bank now.
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
-        let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir))).expect("reload");
+        let ledger = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir))).expect("reload");
         assert_eq!(ledger.committed(), 2);
         assert!(ledger.state.lock().unwrap().outbox.is_empty());
 
@@ -947,7 +1788,7 @@ mod tests {
         let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         // A corrupt durable ledger must propagate as an error, never silently
         // reset the committed log to empty (the old `unwrap_or_default` path).
-        let error = SharedLedger::new(submitted, Some(LedgerFile::new(&dir)))
+        let error = SharedLedger::new(Some(submitted), Some(LedgerFile::new(&dir)))
             .expect_err("corrupt ledger must not load");
 
         let _ = std::fs::remove_dir_all(&dir);
