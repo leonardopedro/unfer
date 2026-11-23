@@ -163,6 +163,21 @@ impl ConsensusNode {
         self.journal_error.as_deref()
     }
 
+    /// Test seam for the deterministic scheduler (plan D12): make this node's
+    /// next journal append fail at `fault`. Returns `false` when the node has no
+    /// journal, because then there is no write to fail and a caller that assumed
+    /// one would be testing nothing.
+    #[doc(hidden)]
+    pub fn inject_storage_fault(&mut self, fault: crate::storage::FaultPoint) -> bool {
+        match self.journal.as_mut() {
+            Some(journal) => {
+                journal.inject(fault);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Constructor with a configured certificate mint authority (ReFi exchange).
     pub fn with_mint_authority(engine: Box<dyn ConsensusEngine>, authority: MintAuthority) -> Self {
         let mut node = Self::new(engine);
