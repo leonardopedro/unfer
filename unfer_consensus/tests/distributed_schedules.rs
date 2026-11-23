@@ -132,8 +132,14 @@ fn the_domain_applies_and_refuses_as_specified() {
 fn a_bounded_exhaustive_search_finds_no_violation() {
     let root = temp_root("explore");
     let alphabet = sim::fixed_alphabet();
+    let started = std::time::Instant::now();
     let report = sim::explore(19, &root, &alphabet, 4);
-    println!("bounded search: {}", report.render());
+    let elapsed = started.elapsed();
+    println!(
+        "bounded search: {} elapsed_ms={}",
+        report.render(),
+        elapsed.as_millis()
+    );
     assert!(
         report.counterexample.is_none(),
         "a bounded search found a violation: {}",
@@ -141,7 +147,43 @@ fn a_bounded_exhaustive_search_finds_no_violation() {
     );
     assert!(report.leaves > 0, "the search executed no leaf schedule");
     assert!(report.prefixes > report.leaves, "the search never branched");
-    save("bounded-search.txt", &format!("{}\n", report.render()));
+    save(
+        "bounded-search.txt",
+        &format!("{}\n", report.render()),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The same domain one level deeper. It is `#[ignore]`d because it is a long
+/// run, not because it is optional evidence: the recorded numbers in
+/// `EXECUTION.md` come from exactly this test, and it is run whenever the bounds
+/// are reported.
+///
+///     cargo test -p unfer_consensus --features network --test distributed_schedules \
+///         -- --ignored a_deep_search
+#[test]
+#[ignore = "minutes of wall clock: run it when the D12 bounds are reported"]
+fn a_deep_search_to_depth_five_finds_no_violation() {
+    let root = temp_root("explore-deep");
+    let alphabet = sim::fixed_alphabet();
+    let started = std::time::Instant::now();
+    let report = sim::explore(19, &root, &alphabet, 5);
+    let elapsed = started.elapsed();
+    println!(
+        "deep search: {} elapsed_ms={}",
+        report.render(),
+        elapsed.as_millis()
+    );
+    assert!(
+        report.counterexample.is_none(),
+        "the deep search found a violation: {}",
+        report.render()
+    );
+    assert!(report.leaves > 0, "the deep search executed no leaf schedule");
+    save(
+        "bounded-search-depth5.txt",
+        &format!("{}\n", report.render()),
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

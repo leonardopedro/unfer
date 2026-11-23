@@ -336,8 +336,14 @@ pub enum Request {
 }
 
 impl Request {
-    /// The two requests the explored domain schedules.
-    pub const EXPLORED: [Request; 2] = [Request::AuthorizedMint, Request::UnauthorizedMint];
+    /// The requests the explored domain schedules: an applied mint, a refused
+    /// mint, and an identity create. Three kinds rather than two so the search
+    /// mixes a refusal, an unguarded apply and a guarded one in the same log.
+    pub const EXPLORED: [Request; 3] = [
+        Request::AuthorizedMint,
+        Request::UnauthorizedMint,
+        Request::IdentityCreate,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -1052,7 +1058,7 @@ fn mint(keypair: &Keypair, amount: u64, seq: u64) -> CertificateOp {
 // ---------------------------------------------------------------------------
 
 /// The fixed action alphabet of the explored domain: two clients, three nodes,
-/// two requests.
+/// three request kinds.
 ///
 /// It is deliberately small and fixed. A larger alphabet does not find a
 /// different *kind* of bug in a bounded search, it just costs exponentially more
@@ -1069,6 +1075,11 @@ pub fn fixed_alphabet() -> Vec<Action> {
             client: 1,
             replica: 1,
             request: Request::UnauthorizedMint,
+        },
+        Action::Admit {
+            client: 0,
+            replica: 2,
+            request: Request::IdentityCreate,
         },
         Action::Retry {
             client: 0,
