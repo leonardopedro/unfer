@@ -343,7 +343,13 @@ impl SharedLedger {
         {
             let mut state = self.state.lock().unwrap();
             state.outbox.insert(id, tx);
-            self.persist_state(&state)?;
+            if let Err(error) = self.persist_state(&state) {
+                // A reservation the ledger could not make durable is not kept:
+                // leaving it in memory would let it commit later, under an id the
+                // caller was told had failed.
+                state.outbox.remove(&id);
+                return Err(error);
+            }
         }
         let _ = pump.send((id, value));
         Ok(id)
@@ -359,23 +365,34 @@ impl SharedLedger {
     /// re-applying the same decision (a retry, or the second replica on the same
     /// ledger) is a no-op because the id is already committed.
     fn append(&self, values: Vec<ReplicatedValue>) -> Result<(), String> {
+        // Decode before touching state: a malformed value must not leave the
+        // outbox half-edited.
+        let mut decoded = Vec::with_capacity(values.len());
+        for value in &values {
+            if let Some((id, tx)) = decode_ledger_value(value)? {
+                decoded.push((id, tx));
+            }
+        }
         let committed;
         {
             let mut state = self.state.lock().unwrap();
+            let bank_len = state.bank.len();
             let mut appended = Vec::new();
-            for value in &values {
-                if let Some((id, tx)) = decode_ledger_value(value)? {
-                    // Already committed: the same decision delivered twice adds
-                    // nothing. Its outbox entry is gone either way.
-                    state.outbox.remove(&id);
-                    if !state.committed_ids.contains_key(&id) {
-                        appended.push((id, tx));
-                    }
+            let mut removed = Vec::new();
+            for (id, tx) in decoded {
+                // Already committed: the same decision delivered twice adds
+                // nothing. Its outbox entry is gone either way.
+                if let Some(previous) = state.outbox.remove(&id) {
+                    removed.push((id, previous));
+                }
+                if !state.committed_ids.contains_key(&id) {
+                    appended.push((id, tx));
                 }
             }
             if appended.is_empty() && values.is_empty() {
                 return Ok(());
             }
+            let mut inserted = Vec::new();
             for (id, tx) in &appended {
                 state.bank.push(tx.clone());
                 // D05: record id -> slot as each payload enters the bank, so the
@@ -383,11 +400,25 @@ impl SharedLedger {
                 // than the id it was reserved under.
                 let slot = state.bank.len() as u64;
                 state.committed_ids.insert(*id, slot);
+                inserted.push(*id);
             }
             committed = state.bank.len() as u64;
             // The decision is acknowledged only once one coherent snapshot of
-            // the new state is durable.
-            self.persist_state(&state)?;
+            // the new state is durable. If it cannot be written, the in-memory
+            // state is rolled back to the durable prefix: a slot this ledger
+            // could not persist must not be served by `committed`, `receipt` or
+            // `state_digest`, which is the same rule the journaled node enforces
+            // by halting instead of advancing its watermark.
+            if let Err(error) = self.persist_state(&state) {
+                state.bank.truncate(bank_len);
+                for id in inserted {
+                    state.committed_ids.remove(&id);
+                }
+                for (id, tx) in removed {
+                    state.outbox.insert(id, tx);
+                }
+                return Err(error);
+            }
         }
         let _ = self.committed_tx.send(committed);
         Ok(())
@@ -1685,6 +1716,88 @@ mod tests {
             seq: label,
             service_endpoint: None,
         })
+    }
+
+    // ── The ledger serves only what it made durable ───────────────────────
+
+    /// D12's halted-node observation, in the other applying path: a decision the
+    /// ledger could not persist must not be readable through `committed`,
+    /// `receipt` or `committed_since`.
+    #[test]
+    fn a_decision_that_cannot_be_persisted_is_not_served() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-fence-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ledger = SharedLedger::open(&dir).unwrap();
+        let value = encode_ledger_value(7, &tx(1)).unwrap();
+
+        let original = std::fs::metadata(&dir).unwrap().permissions();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let refused = ledger.append(vec![value.clone()]);
+        let error = match refused {
+            Ok(()) => {
+                std::fs::set_permissions(&dir, original).unwrap();
+                let _ = std::fs::remove_dir_all(&dir);
+                panic!("a read-only state directory must refuse the snapshot");
+            }
+            Err(error) => error,
+        };
+
+        assert_eq!(ledger.committed(), 0, "the bank must not keep the slot");
+        assert!(ledger.committed_since(1).is_empty());
+        assert_eq!(
+            ledger.receipt(7),
+            ReceiptState::Unknown(UnknownReason::Unsubmitted),
+            "an unwritten slot must not answer as committed"
+        );
+        assert!(
+            !error.is_empty(),
+            "the refusal must say why it could not persist"
+        );
+
+        // Given the directory back, the same decision commits exactly once.
+        std::fs::set_permissions(&dir, original).unwrap();
+        ledger.append(vec![value]).expect("the retry must persist");
+        assert_eq!(ledger.committed(), 1);
+        assert_eq!(ledger.receipt(7), ReceiptState::Committed(Slot(1)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reservation that could not be persisted is not kept: otherwise a client
+    /// that was told the submission failed could have it commit later.
+    #[test]
+    fn a_reservation_that_cannot_be_persisted_is_not_kept() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-ledger-reserve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (pump, _receiver) = mpsc::unbounded_channel();
+        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let original = std::fs::metadata(&dir).unwrap().permissions();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let reserved = ledger.allocate(tx(1));
+        let id_was_refused = reserved.is_err();
+        std::fs::set_permissions(&dir, original).unwrap();
+        assert!(id_was_refused, "an unwritable state dir must refuse the reservation");
+        assert_eq!(ledger.committed(), 0);
+        // Nothing is left queued that a later write could pick up.
+        assert_eq!(ledger.receipt(1), ReceiptState::Unknown(UnknownReason::Unsubmitted));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── D11: the configuration a process is started from ──────────────────
