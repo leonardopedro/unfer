@@ -26,10 +26,9 @@ from pathlib import Path
 import torch
 from safetensors.torch import save_file
 from sklearn.datasets import fetch_20newsgroups
-from transformers import AutoModel, AutoTokenizer
 
-MODEL = "dmis-lab/UltraBERT-Embed-150M"
-REVISION = "b06b36724c5417a1ec1b7863dd4fa542b74e4899"
+from pcnl_ultrabert_adapter import MAX_LENGTH, MODEL, REVISION, encode_texts
+
 CATEGORIES = [
     "comp.graphics",
     "rec.sport.baseball",
@@ -39,7 +38,6 @@ CATEGORIES = [
 SEED = 20261119
 PER_CLASS_TRAIN = 60
 PER_CLASS_TEST = 30
-MAX_LENGTH = 96
 
 
 def main() -> None:
@@ -90,27 +88,7 @@ def main() -> None:
     labels = [y for y, _ in examples]
     split = [0] * len(train) + [1] * len(test)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        MODEL, revision=REVISION, trust_remote_code=True
-    )
-    model = AutoModel.from_pretrained(
-        MODEL, revision=REVISION, trust_remote_code=True, dtype=torch.float32
-    ).eval()
-    chunks = []
-    with torch.no_grad():
-        for start in range(0, len(examples), 24):
-            batch = [t for _, t in examples[start : start + 24]]
-            enc = tokenizer(
-                batch,
-                padding=True,
-                truncation=True,
-                max_length=MAX_LENGTH,
-                return_tensors="pt",
-            )
-            # The model card declares CLS pooling and L2-normalised output.
-            h = model(**enc).last_hidden_state[:, 0]
-            chunks.append(torch.nn.functional.normalize(h, dim=-1))
-    embeddings = torch.cat(chunks).to(torch.float32)
+    embeddings = encode_texts([t for _, t in examples])
     assert embeddings.shape == (len(examples), 768)
 
     save_file(

@@ -7489,3 +7489,193 @@ cargo run --offline --release -p pcnl --example rotation_experiment -- \
   --steps 1000 --burn 200 --chains 2 --draws 40 \
   --pretrain 1000 --pretrain-lr 0.01 --softmax-pretrain 0
 ```
+
+## R13 first vector-head execution (2026-11-22)
+
+The R13 vector model (`src/vector_model.rs`) and synthetic-regression example
+(`examples/vector_regression.rs`) implement the four-position, four-block head,
+the full-data Gaussian regression potential, the exact CN/prior-refresh mixture
+and a JSON checkpoint round-trip. This is a pipeline check, not a text result.
+
+On the frozen 20 Newsgroups embeddings (240 train / 120 test, `768 → 4×16 → 2`,
+fixed synthetic teacher, observation noise 0.05), 300 full-batch Adam steps
+reached train RMSE 0.000286 and test RMSE 0.099276. The reopened checkpoint
+predicted `[-1.6128643, -0.82934713]` exactly.
+
+The first sampler setting (`ρ=0.99`, prior scale 0.05) accepted 0/397 CN moves;
+the prior covariance was much wider than the 240-row posterior. With
+`ρ=0.9999`, prior scale 0.01, it accepted 224/398 CN moves and 0/2 refreshes,
+retaining 20 draws. Draw-mean test RMSE was 0.101129. Parameter-only 90%
+intervals covered 14/240 coordinates; noise-augmented predictive intervals
+covered 142/240. Coverage therefore fails and must not be reported as calibrated.
+
+### Known-target recovery (2026-11-22)
+
+`examples/known_target.rs` runs the production CN/refresh kernel behind the
+`EnergyTarget` seam on a one-dimensional target,
+`0.75·N(−2,1) + 0.25·N(2,1)`, with four chains started at `[-6,-3,3,6]`.  With
+50,000 steps, 10,000 burn, thin 5 and 8,000 retained draws per chain, the pooled
+left-basin mass was `0.73378` against the analytic `0.73862` (error `−0.00484`,
+Monte-Carlo SE `0.01304`); the pooled mean was `−0.97689` against `−1`, and the
+central 90% interval was `[−3.50191, +2.87135]`.  Rank-normalized R̂ was
+`1.00344` on the coordinate and `1.00547` on the basin indicator; bulk ESS was
+`1504.8` and `1148.5`, so both gate rows pass.  Tail ESS was `3838.2` on the
+coordinate but `NaN` on the binary indicator, so the tail gate is not reported
+as passing for that indicator.
+
+### Four-chain vector diagnostic (2026-11-22)
+
+Four jitter-separated warm starts (`jitter=0.01`) of the synthetic vector
+posterior were run for 1,000 steps each with 250 burn and 200 retained draws.
+At `ρ=0.999`, prior scale 0.01, CN acceptance was 82, 89, 86 and 102 of ~1,000
+per chain.  Rank-normalized R̂ was **2.69621** and minimum bulk ESS **4.7**
+(tail ESS 9.3), so the four-chain gate **fails**.  At `ρ=0.9999` the analogous
+run accepted 538, 523, 564 and 544 moves but gave R̂ **2.74392** and minimum
+bulk ESS **4.6**.  A 300-step probe of the same starts put the per-chain
+first-row draw means within about 0.04 of one another, so the failure is slow
+mixing in 57,378 parameters rather than distinct modes.  The prefixes are too short for the observed autocorrelation
+(250 burn against an integration time of hundreds of steps), and the 800 pooled
+draws cannot reach 400 effective draws.  These are measured failures, not a
+promotion result.  Draw-mean test RMSE was 0.100267, parameter 90% coverage
+0.2542 and noise-augmented predictive coverage 0.6000.
+
+### Gradient scaling and the dimension wall (2026-11-22)
+
+The `EnergyTarget` adapter for `VectorRegression` reported the energy scaled by
+`λ·n` but returned the **unscaled** mean-loss gradient, so the CN drift was
+`240×` too small at `n = 240`.  The gradient is now scaled identically.  After
+the fix, 300-step single-chain probes accepted 261/295 CN moves at `ρ=0.9999`,
+13/290 at `ρ=0.999` and 0/299 at `ρ=0.99`; before the fix the four-chain
+`ρ=0.999` run accepted 82–102 of ~1,000 per chain.
+
+A two-chain 5,000-step run (1,250 burn, 3,750 draws per chain) at `ρ=0.9999`
+then accepted 4,620 and 4,608 CN moves but still gave rank R̂ `1.927–2.216` and
+per-observable bulk ESS `2.5–4.9` (tail `10–47`).  At 92% acceptance that is an
+integrated autocorrelation time of a few thousand steps, so bulk ESS 400 would
+require about `10⁶` evaluations per chain.  The failure is a property of the
+transition kernel's dimension scaling, not of the objective or the run length.
+
+A pilot-preconditioned diagonal proposal does not remove the wall.  At
+`ρ=0.99` the kernel's shrunk mean moves every coordinate by 1% of its value per
+step, far beyond the local posterior step, so proposals are rejected: `0/2,981`
+for a 34-coordinate readout-only run (pilot 400 steps, `var/prior` p50
+`6.2e−3`, inflate `0.5`) and `0/1,984` for the first full-dimension chain
+(pilot inflate `2.0`).  With an exact posterior covariance the CN kernel's ESS
+per step is about `acc·(1−ρ)/2` with `log acc ≈ −6(1−ρ)d`, maximized near
+`1/(12·e·d)` — roughly `1e−3` per step at `d=34`.
+
+`ReadoutTarget` and `--readout-only` sample only the 34 affine-readout
+coordinates with the backbone frozen at its Adam point estimate.  This is an
+explicitly conditional target, not the 57,378-parameter posterior.  Four chains
+of 3,000 steps (750 burn, thin 2, 1,125 draws each) at `ρ=0.9999` with a
+400-step pilot covariance accepted 70/2,971, 71/2,966, 84/2,979 and 83/2,968 CN
+moves (0 prior refreshes), with rank R̂ max **3.53012** and minimum bulk ESS
+**4.4** (tail 8.3): the gate still **fails**.  Draw-mean test RMSE was
+0.099114, parameter 90% coverage 0.0292 (7/240), predictive coverage 0.6125
+(147/240).
+
+### Exact readout-conditional posterior (2026-11-23)
+
+The readout-conditional target is linear-Gaussian.  With design `Φ`, noise
+variance `s²`, prior scale `λ` and prior covariance `c`, the precision is
+`A = (λ/s²)ΦᵀΦ + diag(1/c)` and the posterior is `N(m, A⁻¹)`;
+`ReadoutTarget::exact_posterior` forms it by Cholesky and `--proposal exact`
+uses it in the CN kernel.  On the fitted Adam backbone the target gradient at
+`m` has RMS `8.673e−4` (the Gaussian self-consistency check).  The
+posterior-to-prior variance ratio is `p10 7.719e−2`, `p50 1.852e−1`,
+`p90 3.320e−1`; the two bias coordinates of `m` are `−1.487` and `−0.730`
+against a prior standard deviation of `0.05`, i.e. the posterior lies 15–30
+prior-σ from the origin.  This last fact is why a prior-referenced kernel
+fails here.
+
+With reference mean zero the CN proposal is `N(ρθ, (1−ρ²)c)`, centred ~30
+prior-σ from the posterior: a 200-step scan from the exact draw accepted
+`0/199` at `ρ=0.5` and `ρ=0.9`, `2/199` at `ρ=0.99`.  A
+**posterior-referenced** variant (`run_chain_with_posterior_reference`)
+replaces the reference with `m` and the prior pull with the full target
+gradient, `mean = m + ρ(θ−m) − ((1−ρ²)/2)·A⁻¹∇U` with covariance
+`(1−ρ²)A⁻¹`.  It removes the prior-mean mismatch but remains under-dispersed:
+from a tail draw it accepted `0–2/199` at `ρ ≤ 0.9` and `102/199` at
+`ρ=0.99`.  A real dense-kernel defect was found and fixed in this work: the
+quadratic form is `δᵀAδ = ‖Lᵀδ‖²` over the columns of the Cholesky factor
+(`L Lᵀ = A`), not `‖Lδ‖²`.
+
+Starting all chains at the analytic mean (`--init mean`, new) with `ρ=0.5`
+gave CN acceptance `1281/2975`, `1155/2971`, `1221/2962` and `1180/2970`
+(~40%), matching the exact-covariance prediction.  Four chains of 3,000 steps
+with all post-burn draws retained (thin 1, 2,250 draws each) still gave rank R̂
+max **1.02163** and minimum bulk ESS **254.9** (tail 37.8): five of eight
+observables cleared ESS 400, `gate=false`.  Thinning to 225 draws had given
+the same ESS (`223.5 → 254.9`), so this is the independence-proposal ceiling —
+rejected tail proposals freeze the state — not a run-length problem.
+
+### CN dimension-sweep scaling (2026-11-23)
+
+`examples/cn_dimension_sweep.rs` samples `N(0, I_d)` with a diagonal proposal
+or the exact covariance `I_d` and reports acceptance and ESS per step.  At
+`ρ=0.99`, 4,000 steps:
+
+| `d` | 2 | 6 | 18 | 34 | 66 | 130 | 256 |
+|---|---|---|---|---|---|---|---|
+| exact-proposal ESS/step | 0.466 | 0.402 | 0.267 | 0.197 | 0.131 | 0.069 | 0.019 |
+| exact-proposal acceptance | 0.769 | 0.703 | 0.521 | 0.452 | 0.371 | 0.284 | 0.163 |
+| diagonal best ESS/step | 0.0179 | 0.0101 | 0.0044 | 0.0023 | 0.0017 | 0.0011 | 0.0006 |
+
+Reproduce with `--steps 4000 --dims 2,6,18,34,66,130,256 --rhos 0.99` (add
+`--exact-proposal` for the exact rows; the exact covariance of `N(0, I_d)` is
+`I_d`).  The exact column decays roughly as
+`1/d`, consistent with the `acc·(1−ρ)/2` estimate and with the observed
+`d=34` ceiling.
+
+### HMC with the exact metric passes the four-chain gate (2026-11-23)
+
+A diagonal-mass HMC collapsed its step size (`eps_frozen ≈ 5e−5`) because the
+readout posterior is strongly correlated across coordinates; dual averaging
+tunes a step size, not a mis-scaled metric.  The exact metric is the posterior
+**precision**: in whitened coordinates `u = Lᵀ(θ−m)` (`L Lᵀ = A`) the Gaussian
+target is exactly standard normal.  `run_hmc_chain_whitened` therefore uses
+unit mass, `N(0, I)` momenta and the transformed force `Gᵀ∇U` with `G = L⁻ᵀ`,
+while every MH ratio is still computed with the full target in `θ`.
+
+Four chains, `--init mean --kernel hmc --hmc-mass exact --hmc-leapfrog 4`,
+1,000 steps, 250 burn, thin 1 (750 draws per chain): dual averaging settled at
+`ε = 0.587–0.638` with mean acceptance `0.835–0.856`.  Rank R̂ max **1.00935**
+(all eight observables `≤ 1.00935`), minimum bulk ESS **3000.0** (the cap of
+four chains × 750 draws), minimum tail ESS **906.4**, `gate=true` under the
+declared definition `4_chains_rank_rhat<1.01_bulk_ess>=400`.  Draw-mean test
+RMSE was `0.105302`, parameter 90% coverage `0.1583` (38/240) and predictive
+coverage `0.5875` (141/240); coverage is still not nominal.  The passing target
+is the **readout-conditional 34-coordinate** posterior with a frozen backbone,
+on fixture embeddings, warm-started at the analytic mean: this validates the
+HMC kernel, not the full-parameter posterior or calibration.
+
+### Live/fixture encoder parity (2026-11-22)
+
+`scripts/pcnl_ultrabert_adapter.py` now owns the pinned model revision, 96-token
+truncation, CLS pooling and L2 normalization shared by both fixture generators
+and `scripts/pcnl-ultrabert-parity`.  The parity script reconstructs the fixture
+text for a requested row (or accepts `--text`), encodes it live and reports
+max-abs, cosine and L2-norm differences against the frozen vector.  In this
+environment it exits `2` with `SKIP: live encoder unavailable (missing torch,
+transformers, safetensors)`, so parity is **not** claimed as passed.  The R13
+head consumes the same vector in both paths; prediction parity still needs a
+run where the encoder dependencies and the pinned weights are present.
+
+The continual stream remains open. The synthetic-target and warm-started
+limits are part of this result, not footnotes.
+
+```bash
+cargo run --offline --release -p pcnl --example vector_regression -- \
+  --readout-only --init mean --kernel hmc --hmc-mass exact \
+  --hmc-leapfrog 4 --steps 1000 --thin 1 --draws 750 --chains 4
+
+cargo run --offline --release -p pcnl --example vector_regression -- \
+  --readout-only --init mean --proposal exact --kernel cn --rho 0.5 \
+  --steps 3000 --thin 1 --draws 2250 --chains 4
+
+cargo run --offline --release -p pcnl --example cn_dimension_sweep -- \
+  --steps 4000 --dims 2,6,18,34,66,130,256 --rhos 0.99 --exact-proposal
+
+cargo run --offline --release -p pcnl --example known_target
+python3 scripts/pcnl-ultrabert-parity --row 0
+```
