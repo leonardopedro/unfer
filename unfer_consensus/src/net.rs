@@ -38,24 +38,32 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use unfer_protocol::distributed::{Command, ReplicatedValue};
 use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason};
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
 
-/// Value id QuePaxa uses to fill gaps in the committed prefix; the state
-/// machine treats it as a no-op.
-pub const NOOP_VALUE: u64 = u64::MAX;
+/// D10: the schema a replicated ledger submission is read under. A command
+/// under any other schema is refused by name rather than applied as a
+/// neighbour.
+pub const LEDGER_TX_SCHEMA: u16 = 1;
 
 const LIVE_NODES: usize = 2;
 const CLIENT_NODES: usize = 1;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 
-/// Durable ledger snapshot: the committed bank plus everything still queued.
+/// Durable ledger snapshot: the committed bank plus this node's outbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LedgerSnapshot {
     bank: Vec<ConsensusTransaction>,
-    pending: BTreeMap<u64, ConsensusTransaction>,
+    /// D10: the local outbox — submissions this node has accepted and not yet
+    /// seen committed. It is **not** how a committed value's payload is found:
+    /// the value carries its own bytes, so a peer that never held this entry
+    /// still applies the work. Renamed from `pending`; `alias` keeps reading a
+    /// pre-D10 snapshot, whose entries are re-proposed on load.
+    #[serde(default, alias = "pending")]
+    outbox: BTreeMap<u64, ConsensusTransaction>,
     /// D05: submission id -> committed slot. This is what lets a receipt survive
     /// a restart: the id a caller received is not the position it landed at, so
     /// without this map a restarted node could not answer "what happened to my
@@ -146,16 +154,16 @@ impl LedgerFile {
 
 /// D07: everything the replicated ledger decides, behind **one** lock.
 ///
-/// The committed bank, the queued payloads and the submission-id map used to be
-/// read under separate locks when persisting, so a crash could publish a
-/// snapshot assembled from two different instants — for example a payload
-/// already removed from `pending` and not yet in `bank`, which was a lost
-/// transaction that looked like a clean snapshot. One lock makes the snapshot a
-/// state that actually existed.
+/// The committed bank, the outbox and the submission-id map used to be read
+/// under separate locks when persisting, so a crash could publish a snapshot
+/// assembled from two different instants — for example a payload already
+/// removed from the outbox and not yet in `bank`, which was a lost transaction
+/// that looked like a clean snapshot. One lock makes the snapshot a state that
+/// actually existed.
 #[derive(Debug, Clone, Default)]
 struct LedgerState {
     bank: Vec<ConsensusTransaction>,
-    pending: BTreeMap<u64, ConsensusTransaction>,
+    outbox: BTreeMap<u64, ConsensusTransaction>,
     committed_ids: BTreeMap<u64, u64>,
 }
 
@@ -163,7 +171,7 @@ impl LedgerState {
     fn snapshot(&self, next_id: u64, next_request_id: u64) -> LedgerSnapshot {
         LedgerSnapshot {
             bank: self.bank.clone(),
-            pending: self.pending.clone(),
+            outbox: self.outbox.clone(),
             committed_ids: self.committed_ids.clone(),
             next_id,
             next_request_id,
@@ -171,16 +179,66 @@ impl LedgerState {
     }
 }
 
-/// The replicated outcome: a durable pending store of submitted transactions,
-/// the ordered committed log, and progress bookkeeping for the pump task.
+/// The replicated outcome: the ordered committed log, this node's outbox and
+/// progress bookkeeping for the pump task.
 #[derive(Clone)]
 pub struct SharedLedger {
     state: Arc<Mutex<LedgerState>>,
     next_id: Arc<AtomicU64>,
     request_seq: Arc<AtomicU64>,
     committed_tx: watch::Sender<u64>,
-    submitted: mpsc::UnboundedSender<u64>,
+    submitted: mpsc::UnboundedSender<(u64, ReplicatedValue)>,
     file: Option<LedgerFile>,
+}
+
+/// D10: the value a submission becomes. The reservation id lives **inside**
+/// the payload, ahead of the canonical transaction bytes, so a decision is
+/// self-describing: the state machine needs no map to know which submission it
+/// applied, and a replica that never queued the transaction can still apply it.
+///
+/// Payload layout: `id(u64 BE) | serde_json(ConsensusTransaction)`. The JSON is
+/// the same canonical rendering `signing::canonical_bytes` hashes.
+pub fn encode_ledger_value(id: u64, tx: &ConsensusTransaction) -> Result<ReplicatedValue, String> {
+    let json = serde_json::to_vec(tx)
+        .map_err(|error| format!("could not encode transaction {id}: {error}"))?;
+    let mut payload = Vec::with_capacity(8 + json.len());
+    payload.extend_from_slice(&id.to_be_bytes());
+    payload.extend_from_slice(&json);
+    Command::new(LEDGER_TX_SCHEMA, payload)
+        .map(ReplicatedValue::Command)
+        .map_err(|error| format!("could not frame transaction {id}: {error}"))
+}
+
+/// The inverse of [`encode_ledger_value`]. A no-op decision yields `None`; an
+/// unknown schema, a short payload or undecodable bytes are errors — a
+/// committed value this node cannot read is a refusal it must report, never a
+/// slot it silently skips.
+pub fn decode_ledger_value(
+    value: &ReplicatedValue,
+) -> Result<Option<(u64, ConsensusTransaction)>, String> {
+    let ReplicatedValue::Command(command) = value else {
+        return Ok(None);
+    };
+    if command.schema() != LEDGER_TX_SCHEMA {
+        return Err(format!(
+            "committed value has schema {}, not {LEDGER_TX_SCHEMA}",
+            command.schema()
+        ));
+    }
+    let payload = command.payload();
+    if payload.len() < 8 {
+        return Err(format!(
+            "committed value payload is {} byte(s), shorter than its id",
+            payload.len()
+        ));
+    }
+    let (id_bytes, json) = payload.split_at(8);
+    let mut raw = [0u8; 8];
+    raw.copy_from_slice(id_bytes);
+    let id = u64::from_be_bytes(raw);
+    let tx = serde_json::from_slice(json)
+        .map_err(|error| format!("committed value {id} does not decode: {error}"))?;
+    Ok(Some((id, tx)))
 }
 
 impl std::fmt::Debug for SharedLedger {
@@ -188,7 +246,7 @@ impl std::fmt::Debug for SharedLedger {
         let state = self.state.lock().unwrap();
         f.debug_struct("SharedLedger")
             .field("committed", &state.bank.len())
-            .field("pending", &state.pending.len())
+            .field("outbox", &state.outbox.len())
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
             .field("with_file", &self.file.is_some())
             .finish()
@@ -197,7 +255,7 @@ impl std::fmt::Debug for SharedLedger {
 
 impl SharedLedger {
     fn new(
-        submitted: mpsc::UnboundedSender<u64>,
+        submitted: mpsc::UnboundedSender<(u64, ReplicatedValue)>,
         file: Option<LedgerFile>,
     ) -> Result<Self, String> {
         // A missing ledger file is a fresh cluster (`Ok(default)`); a corrupt
@@ -212,7 +270,7 @@ impl SharedLedger {
         let ledger = Self {
             state: Arc::new(Mutex::new(LedgerState {
                 bank: loaded.bank,
-                pending: loaded.pending,
+                outbox: loaded.outbox,
                 committed_ids: loaded.committed_ids,
             })),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
@@ -221,63 +279,77 @@ impl SharedLedger {
             submitted,
             file,
         };
-        // Re-enqueue anything still queued so the pump re-proposes it after a
-        // restart, then persist the reconciled view.
+        // Re-enqueue anything still in the outbox so the pump re-proposes it
+        // after a restart, then persist the reconciled view. A pre-D10 snapshot
+        // reaches this path too (its `pending` map is read as the outbox), so
+        // queued work is re-proposed rather than dropped.
         let outstanding = ledger
             .state
             .lock()
             .unwrap()
-            .pending
-            .keys()
-            .copied()
+            .outbox
+            .iter()
+            .map(|(id, tx)| (*id, tx.clone()))
             .collect::<Vec<_>>();
-        for id in outstanding {
-            let _ = ledger.submitted.send(id);
+        for (id, tx) in outstanding {
+            if let Ok(value) = encode_ledger_value(id, &tx) {
+                let _ = ledger.submitted.send((id, value));
+            }
         }
         ledger.persist()?;
         Ok(ledger)
     }
 
-    /// Reserve a unique id for a submitted transaction and enqueue it for the
-    /// pump task to propose to the cluster. The reserved payload is persisted
-    /// before it is acknowledged, so a durable submission survives a crash.
+    /// Reserve a unique id for a submitted transaction, persist it in this
+    /// node's outbox, and hand the framed value to the pump task to propose to
+    /// the cluster. The outbox entry is what makes the submission durable
+    /// before it is acknowledged; the **value** is what makes it replicable.
     fn allocate(&self, tx: ConsensusTransaction) -> Result<u64, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let value = encode_ledger_value(id, &tx)?;
         {
             let mut state = self.state.lock().unwrap();
-            state.pending.insert(id, tx);
+            state.outbox.insert(id, tx);
             self.persist_state(&state)?;
         }
-        let _ = self.submitted.send(id);
+        let _ = self.submitted.send((id, value));
         Ok(id)
     }
 
-    /// Apply a batch of committed value ids in decision order. Fetching from
-    /// the pending store, extending the bank, and persisting happen under one
-    /// lock hold, so exactly one replica moves each payload into the bank and a
-    /// node that dies after reading a decision but before applying it loses
-    /// nothing: the payload is still pending, and a restart (or the surviving
-    /// peer) re-applies it exactly once.
-    fn append(&self, ids: Vec<u64>) -> Result<(), String> {
+    /// Apply a batch of committed values in decision order.
+    ///
+    /// D10: the transaction is read **from the decision value**, not from a
+    /// shared payload map, so a replica that never queued the submission still
+    /// applies it and a restarted node does not depend on a map that only the
+    /// submitting node had. Extending the bank and persisting happen under one
+    /// lock hold, so the durable snapshot is a state that actually existed, and
+    /// re-applying the same decision (a retry, or the second replica on the same
+    /// ledger) is a no-op because the id is already committed.
+    fn append(&self, values: Vec<ReplicatedValue>) -> Result<(), String> {
         let committed;
         {
             let mut state = self.state.lock().unwrap();
             let mut appended = Vec::new();
-            for id in ids {
-                if let Some(tx) = state.pending.remove(&id) {
-                    appended.push((id, tx));
+            for value in &values {
+                if let Some((id, tx)) = decode_ledger_value(value)? {
+                    // Already committed: the same decision delivered twice adds
+                    // nothing. Its outbox entry is gone either way.
+                    state.outbox.remove(&id);
+                    if !state.committed_ids.contains_key(&id) {
+                        appended.push((id, tx));
+                    }
                 }
             }
-            if appended.is_empty() {
+            if appended.is_empty() && values.is_empty() {
                 return Ok(());
             }
-            for (id, tx) in appended {
-                state.bank.push(tx);
+            for (id, tx) in &appended {
+                state.bank.push(tx.clone());
                 // D05: record id -> slot as each payload enters the bank, so the
                 // receipt answers with the position the payload landed at rather
                 // than the id it was reserved under.
                 let slot = state.bank.len() as u64;
-                state.committed_ids.insert(id, slot);
+                state.committed_ids.insert(*id, slot);
             }
             committed = state.bank.len() as u64;
             // The decision is acknowledged only once one coherent snapshot of
@@ -296,7 +368,7 @@ impl SharedLedger {
         if let Some(slot) = state.committed_ids.get(&id) {
             return ReceiptState::Committed(Slot(*slot));
         }
-        if state.pending.contains_key(&id) {
+        if state.outbox.contains_key(&id) {
             return ReceiptState::Pending;
         }
         ReceiptState::Unknown(UnknownReason::Unsubmitted)
@@ -392,22 +464,18 @@ pub struct LedgerStateMachine {
     ledger: SharedLedger,
 }
 
-impl StateMachine<u64> for LedgerStateMachine {
-    fn execute(&mut self, decision: &Decision<u64>) -> rust_quepaxa::Result<()> {
-        if decision.value_ids == [NOOP_VALUE] {
-            return Ok(());
-        }
-        let ids = decision
-            .value_ids
-            .iter()
-            .copied()
-            .filter(|id| *id != NOOP_VALUE)
-            .collect::<Vec<_>>();
-        self.ledger.append(ids).map_err(|error| {
-            rust_quepaxa::QuePaxaError::StorageError(format!(
-                "could not persist committed decision: {error}"
-            ))
-        })
+impl StateMachine<ReplicatedValue> for LedgerStateMachine {
+    fn execute(&mut self, decision: &Decision<ReplicatedValue>) -> rust_quepaxa::Result<()> {
+        // A gap-filler value is the explicit `Noop` variant, decided by the
+        // runtime through `with_noop_value`; it commits a slot and changes no
+        // state.
+        self.ledger
+            .append(decision.value_ids.clone())
+            .map_err(|error| {
+                rust_quepaxa::QuePaxaError::StorageError(format!(
+                    "could not persist committed decision: {error}"
+                ))
+            })
     }
 }
 
@@ -509,7 +577,7 @@ impl NetworkCluster {
             .collect::<BTreeMap<_, _>>();
 
         let metrics = Arc::new(NetworkMetrics::default());
-        let (submitted_tx, submitted_rx) = mpsc::unbounded_channel::<u64>();
+        let (submitted_tx, submitted_rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         let ledger =
             SharedLedger::new(submitted_tx, Some(LedgerFile::new(state_dir))).map_err(|error| {
                 rust_quepaxa::QuePaxaError::StorageError(format!(
@@ -569,7 +637,8 @@ impl NetworkCluster {
                 Arc::clone(&metrics),
             )
             .await?
-            .with_noop_value(NOOP_VALUE);
+            // D10: the gap filler is a value, not a reserved integer.
+            .with_noop_value(ReplicatedValue::Noop);
             let submissions = DeduplicatingSubmissionHandler::new(
                 consensus,
                 FileSubmissionJournal::open(
@@ -626,14 +695,15 @@ impl NetworkCluster {
         let pump_ledger = ledger.clone();
         let pump = tokio::spawn(async move {
             let mut messages = submitted_rx;
-            while let Some(id) = messages.recv().await {
+            while let Some((id, value)) = messages.recv().await {
                 // A failed RPC (e.g. a slow first TLS handshake) is retried;
                 // each attempt claims a fresh request id so a durable journal
-                // entry can never collide, and the payload stays in the pending
-                // store until it commits.
+                // entry can never collide, and the value already carries the
+                // payload, so nothing has to survive in a local map for the
+                // commit to be applicable.
                 loop {
                     let request_id = pump_ledger.next_request_id();
-                    match submit_client.submit(request_id, vec![id]).await {
+                    match submit_client.submit(request_id, vec![value.clone()]).await {
                         Ok(_) => break,
                         Err(error) => {
                             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -674,7 +744,7 @@ impl NetworkCluster {
     /// seq reserved at submit time.
     pub fn pending_seq(&self) -> u64 {
         let state = self.ledger.state.lock().unwrap();
-        state.bank.len() as u64 + state.pending.len() as u64
+        state.bank.len() as u64 + state.outbox.len() as u64
     }
 
     /// Gracefully stop every node and the pump. Ports are released once each
@@ -716,43 +786,104 @@ mod tests {
     }
 
     fn mem_ledger() -> SharedLedger {
-        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         SharedLedger::new(submitted, None).expect("in-memory ledger cannot fail")
     }
 
     #[test]
     fn append_is_idempotent_across_replicas_sharing_one_ledger() {
         let ledger = mem_ledger();
-        let id = ledger.allocate(tx(1)).expect("durable reserve");
+        let transaction = tx(1);
+        let id = ledger.allocate(transaction.clone()).expect("durable reserve");
+        let value = encode_ledger_value(id, &transaction).unwrap();
 
         // Both live nodes see the same decision and both apply it.
-        ledger.append(vec![id]).expect("persist");
-        ledger.append(vec![id]).expect("persist");
+        ledger.append(vec![value.clone()]).expect("persist");
+        ledger.append(vec![value]).expect("persist");
 
         assert_eq!(ledger.committed(), 1, "no double-apply");
-        assert!(ledger.state.lock().unwrap().pending.is_empty());
+        assert!(ledger.state.lock().unwrap().outbox.is_empty());
     }
 
+    /// D10's whole point: the value carries the payload, so a ledger that never
+    /// saw the submission applies it exactly once.
     #[test]
-    fn decided_but_unapplied_value_survives_until_one_replica_applies() {
-        let ledger = mem_ledger();
-        let id = ledger.allocate(tx(1)).expect("durable reserve");
+    fn a_committed_value_applies_on_a_ledger_that_never_queued_it() {
+        let submitting = mem_ledger();
+        let transaction = tx(7);
+        let id = submitting
+            .allocate(transaction.clone())
+            .expect("durable reserve");
+        let value = encode_ledger_value(id, &transaction).unwrap();
 
-        // A node reads the decision but dies before applying it; the payload
-        // must still be pending so the surviving peer (or a restart) can move
-        // it into the bank exactly once.
-        assert!(
-            ledger.state.lock().unwrap().pending.contains_key(&id),
-            "decided-but-unapplied value stays pending"
+        // The value is the only carrier: it decodes without the outbox.
+        assert_eq!(decode_ledger_value(&value).unwrap(), Some((id, transaction)));
+
+        // A different node's ledger: no outbox entry, no payload map entry.
+        let peer = mem_ledger();
+        assert!(peer.state.lock().unwrap().outbox.is_empty());
+        peer.append(vec![value.clone()]).expect("apply from the value alone");
+        assert_eq!(peer.committed(), 1);
+        assert_eq!(peer.committed_since(1).len(), 1, "the payload is in the bank");
+        assert_eq!(
+            peer.receipt(id),
+            ReceiptState::Committed(Slot(1)),
+            "the id inside the value is what the receipt answers"
         );
-        ledger.append(vec![id]).expect("persist");
+        // And re-delivering the same decision changes nothing.
+        peer.append(vec![value]).expect("persist");
+        assert_eq!(peer.committed(), 1);
+    }
+
+    /// The outbox is a local durability device only: it is drained by the
+    /// decision that carries the same id, and never read to apply a value.
+    #[test]
+    fn the_outbox_is_drained_by_the_decision_and_is_not_needed_to_apply_it() {
+        let ledger = mem_ledger();
+        let transaction = tx(3);
+        let id = ledger.allocate(transaction.clone()).expect("durable reserve");
+        assert_eq!(ledger.receipt(id), ReceiptState::Pending);
+
+        let value = encode_ledger_value(id, &transaction).unwrap();
+        // Drop the outbox entry by hand: applying must still work, because the
+        // id comes from the value, not from the map.
+        ledger.state.lock().unwrap().outbox.remove(&id);
+        ledger.append(vec![value]).expect("persist");
         assert_eq!(ledger.committed(), 1);
-        ledger.append(vec![id]).expect("persist");
-        assert_eq!(ledger.committed(), 1, "re-applying the same id is a no-op");
+        assert_eq!(ledger.receipt(id), ReceiptState::Committed(Slot(1)));
     }
 
     #[test]
-    fn ledger_file_round_trips_committed_and_pending_state() {
+    fn a_value_of_an_unknown_schema_or_undecodable_payload_is_refused() {
+        let ledger = mem_ledger();
+        let foreign = ReplicatedValue::Command(Command::new(999, vec![1, 2, 3]).unwrap());
+        let error = ledger.append(vec![foreign]).expect_err("unknown schema");
+        assert!(error.contains("schema 999"), "got: {error}");
+        assert_eq!(ledger.committed(), 0, "a refused value commits nothing");
+
+        let short = ReplicatedValue::Command(Command::new(LEDGER_TX_SCHEMA, vec![0, 1]).unwrap());
+        let error = ledger.append(vec![short]).expect_err("short payload");
+        assert!(error.contains("shorter than its id"), "got: {error}");
+
+        let mut payload = 5u64.to_be_bytes().to_vec();
+        payload.extend_from_slice(b"{ not a transaction");
+        let broken = ReplicatedValue::Command(Command::new(LEDGER_TX_SCHEMA, payload).unwrap());
+        let error = ledger.append(vec![broken]).expect_err("undecodable");
+        assert!(error.contains("does not decode"), "got: {error}");
+        assert_eq!(ledger.committed(), 0);
+    }
+
+    #[test]
+    fn a_noop_decision_commits_nothing_and_is_not_an_error() {
+        let ledger = mem_ledger();
+        ledger.append(vec![ReplicatedValue::Noop]).expect("no-op");
+        assert_eq!(ledger.committed(), 0);
+        assert_eq!(encode_ledger_value(0, &tx(1)).unwrap().encode().unwrap()[6], 1);
+        assert!(decode_ledger_value(&ReplicatedValue::Noop).unwrap().is_none());
+    }
+
+    #[test]
+    fn ledger_file_round_trips_committed_and_queued_state() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -762,29 +893,35 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = Some(LedgerFile::new(&dir));
 
-        // Phase 1: one committed, one decided-but-unapplied.
-        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        // Phase 1: one committed, one still queued in the outbox.
+        let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         let ledger = SharedLedger::new(submitted, file.clone()).expect("fresh ledger");
-        let applied = ledger.allocate(tx(1)).expect("durable reserve");
-        let in_flight = ledger.allocate(tx(2)).expect("durable reserve");
-        ledger.append(vec![applied]).expect("persist");
+        let first = tx(1);
+        let second = tx(2);
+        let applied = ledger.allocate(first.clone()).expect("durable reserve");
+        let in_flight = ledger.allocate(second.clone()).expect("durable reserve");
+        ledger
+            .append(vec![encode_ledger_value(applied, &first).unwrap()])
+            .expect("persist");
         drop(ledger);
 
         // Phase 2: "crash" and reload. Committed work is in the bank; the
-        // in-flight value is still pending and gets re-proposed.
-        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        // queued submission is still in the outbox and is re-proposed.
+        let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         let ledger = SharedLedger::new(submitted, file).expect("reload");
         assert_eq!(ledger.committed(), 1, "committed log reloaded");
-        assert!(ledger.state.lock().unwrap().pending.contains_key(&in_flight));
-        ledger.append(vec![in_flight]).expect("persist");
+        assert!(ledger.state.lock().unwrap().outbox.contains_key(&in_flight));
+        ledger
+            .append(vec![encode_ledger_value(in_flight, &second).unwrap()])
+            .expect("persist");
         assert_eq!(ledger.committed(), 2);
         drop(ledger);
 
         // Phase 3: reload once more; everything is in the bank now.
-        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         let ledger = SharedLedger::new(submitted, Some(LedgerFile::new(&dir))).expect("reload");
         assert_eq!(ledger.committed(), 2);
-        assert!(ledger.state.lock().unwrap().pending.is_empty());
+        assert!(ledger.state.lock().unwrap().outbox.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -807,7 +944,7 @@ mod tests {
         );
         std::fs::write(ledger_file.path, b"{ not valid ledger json").unwrap();
 
-        let (submitted, _rx) = mpsc::unbounded_channel::<u64>();
+        let (submitted, _rx) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
         // A corrupt durable ledger must propagate as an error, never silently
         // reset the committed log to empty (the old `unwrap_or_default` path).
         let error = SharedLedger::new(submitted, Some(LedgerFile::new(&dir)))

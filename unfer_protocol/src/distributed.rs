@@ -63,7 +63,12 @@ const KIND_NOOP: u8 = 0;
 const KIND_COMMAND: u8 = 1;
 
 /// A replicated value: an explicit no-op, or one bounded command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Ord` is derived because QuePaxa keys its runtime snapshots and dedupe sets
+/// on the value, and `serde` because those snapshots are postcard-encoded. The
+/// canonical bytes above are the *wire* form; the snapshot form is the
+/// dependency's, and neither is a hash of the other.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum ReplicatedValue {
     /// The value QuePaxa writes into a slot that carries no command (a gap
     /// filler). It is a variant on purpose: no integer is reserved for it, so a
@@ -78,10 +83,37 @@ pub enum ReplicatedValue {
 /// The payload is opaque here — schema semantics belong to the application that
 /// owns the schema — but its length is bounded by [`MAX_COMMAND_BYTES`] at
 /// construction and at decode time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(into = "CommandRepr", try_from = "CommandRepr")]
 pub struct Command {
     schema: u16,
     payload: Vec<u8>,
+}
+
+/// The snapshot form of a [`Command`]: the same two fields, but deserializing
+/// goes through [`Command::new`], so a snapshot cannot smuggle in a schema 0 or
+/// a payload past the bound.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CommandRepr {
+    schema: u16,
+    payload: Vec<u8>,
+}
+
+impl From<Command> for CommandRepr {
+    fn from(command: Command) -> Self {
+        Self {
+            schema: command.schema,
+            payload: command.payload,
+        }
+    }
+}
+
+impl TryFrom<CommandRepr> for Command {
+    type Error = WireError;
+
+    fn try_from(repr: CommandRepr) -> Result<Self, WireError> {
+        Command::new(repr.schema, repr.payload)
+    }
 }
 
 impl Command {
