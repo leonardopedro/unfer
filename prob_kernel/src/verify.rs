@@ -138,6 +138,7 @@ fn verify_at_path(
         pp_output_path: None,
         pp_to_stdout: false,
         num_threads: 1,
+        stack_size_bytes: 32 * 1024 * 1024,
         print_success_message: false,
         print_axioms: false,
         unsafe_permit_all_axioms: false,
