@@ -110,3 +110,4 @@ pub mod subspace;
 pub mod target;
 pub mod task;
 pub mod text_head;
+pub mod vector_model;

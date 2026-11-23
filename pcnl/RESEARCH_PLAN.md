@@ -1,6 +1,425 @@
 # pcnl research and development plan
 
-## R12 — continual Bayesian learning of signed decision states from English text (updated 2026-11-20)
+## R13 — active plan for objective-based continual learning with numerical-vector outputs (2026-11-22)
+
+**Deliverable.** Given English text and one retained parameter draw, return
+$f_\theta(x)\in\mathbb R^q$ in named coordinates with application-defined units.
+Negative values, zero, and magnitudes above one are valid. A caller may also request
+a posterior mean vector or coordinate intervals over draws. The probability
+distribution that pCNL approximates lives on the trainable parameters. Pushing its
+draws through the transformer gives uncertainty about its vector prediction.
+R13 governs new implementation and acceptance. R0–R12 below are the research record.
+
+### What the current checkout provides
+
+| Existing work | What carries forward |
+|---|---|
+| `src/model.rs` has configurable transformer blocks, a flat parameter layout and an exact-gradient option. Its public forward takes token IDs and ends in a vocabulary readout. The UltraBERT scripts produce frozen 768-dimensional CLS vectors. | Connect the fixed English encoder to trainable transformer blocks and an affine numerical readout. The rotation CLI presently reads fixtures or caller-supplied embeddings. |
+| `src/target.rs::Potential` exposes term count, mean loss and gradient. `src/rotation_head.rs` has full-data MH transitions, checkpointed chains/RNGs, retained chain/step provenance, pilot preconditioning and replica exchange. | Reuse these mechanics with an objective-specific target and checkpoint version. The rotation likelihood, state payload and reported categorical metrics belong to R12. |
+| The Nov 21 20 Newsgroups rotation pilot accepted 57,523 of 64,000 proposals across two chains, yet reported predictive R-hat 1.152 and parameter R-hat 2.125. The effect of tempering on predictive scores reversed between two seeds. | Measure agreement per input, parameter projection and mode. Iteration and acceptance counts alone give no finite-run accuracy guarantee. [Measured runs](../docs/PCNL_STATUS.md) |
+| `src/edge0_potential.rs::prior_refresh_step` already implements an independent Gaussian refresh on a restricted chart. The original nGPT work also has an unadjusted mini-batch sampler. | Lift the refresh to the entire declared parameter space. Keep full-data adjusted pCNL as the reference before evaluating mini-batch bias. [Development plan](DEVELOPMENT_PLAN.md) · [Original sampler plan](../docs/plan_bayes_ngpt.md) |
+| `task::sgld_chain` injects Gaussian noise in the token-classifier experiment. Its `BatchLoader` samples uniformly without replacement within each batch. | Reuse the batch and noise plumbing for the vector objective. At nonunit `potential_scale` the old routine scales both the data drift and the injected variance while keeping the prior contraction fixed. R13 needs an explicit likelihood-only temperature as specified below. [Classifier sampler](src/task.rs) |
+
+### 1. Expose a four-layer transformer with a raw vector readout
+
+Share the encoder adapter between fixture generation, prediction and update. Pin
+`dmis-lab/UltraBERT-Embed-150M` and its tokenizer at revision
+`b06b36724c5417a1ec1b7863dd4fa542b74e4899`, with eval mode, 96-token truncation,
+CLS pooling and L2-normalized input features. For a small first design, linearly
+project each fixed embedding into four ordered feature vectors of width 16, reshape
+to a length-four sequence, and use the existing attention/MLP block four times with
+**four distinct sets of trainable weights**. The four positions are learned features
+of the passage. This also avoids the degenerate attention weights of a length-one
+input. Feed the final position to an untied affine readout of width $q$. Sample
+the projection, all four blocks and the readout jointly. Fix the vector schema
+before training. Verify live/fixture parity, the gradient of a coordinate in each
+block, and a round-trip prediction with negative and non-unit outputs.
+
+### 2. Make the training objective the sampling contract
+
+Let $D_t$ be the newly arrived events, $J_t(\theta)$ the data objective for the
+unique prefix through round $t$, and $P_0=N(m,C)$ a fixed proper Gaussian prior.
+For an additive loss, use $J_t=\sum_{i\in D_{1:t}}\ell(f_\theta(x_i),y_i)$.
+The optimizer and sampler must call the same objective with a documented reduction.
+If `Potential` returns a mean, multiply by its term count exactly once. Define
+
+$$
+\widetilde L_t(\theta)=\exp[-\lambda J_t(\theta)],\qquad
+\pi_t(d\theta)=Z_t^{-1}\widetilde L_t(\theta)P_0(d\theta).
+$$
+
+Only log differences enter MH. Require $0<Z_t<\infty$ (e.g. a finite,
+lower-bounded objective under a proper prior). Keep the Gaussian penalty in the
+prior once. For fixed-scale Gaussian observations the first executable case is
+$\ell=\|y-f_\theta(x)\|^2/(2s^2)$, $\lambda=1$. This gives ordinary Bayes,
+with the parameter-independent normalizer cancelling. A general application loss
+defines a Gibbs posterior whose concentration depends on the declared $\lambda$.
+If a noise parameter is learned, keep its parameter-dependent normalization in
+the objective. Version the loss, scale, reduction and prior in the checkpoint.
+[Bissiri, Holmes & Walker](https://arxiv.org/abs/1306.6430)
+
+For continual updates multiply the previous target by
+$\exp[-\lambda(J_t-J_{t-1})]$. For additive losses the increment uses just the
+new events. For a coupled objective evaluate the actual prefix difference. The
+first implementation carries forward chain positions, recomputes the full-prefix
+target and gradient, and publishes draws only for a committed prefix. An identical
+event-ID retry preserves the checkpoint and RNG positions. Reject conflicting reuse.
+Test partition/order equivalence for additive data and deterministic resume.
+
+### 3. Mix local pCNL with occasional random restarts
+
+Write $U=\lambda J_t$. Freeze $0<\rho<1$ after warmup. The Crank–Nicolson
+Langevin proposal for the Gaussian reference has mean
+$g(\theta)=m+\rho(\theta-m)-(1-\rho)C\nabla U(\theta)$ and covariance
+$(1-\rho^2)C$. Accept using the full log posterior difference plus
+$\log q(\theta\mid\theta')-\log q(\theta'\mid\theta)$ with the same full-prefix
+data at both ends. The existing centered rotation kernel includes the prior
+gradient in its drift as well as shrinkage. Give the specified proposal its own
+identity and check its forward and reverse densities at the actual endpoints.
+At constant data objective it reduces to prior-preserving pCN with unit
+acceptance in exact arithmetic. [Cotter et al.](https://arxiv.org/abs/1202.0709)
+
+Before each transition, flip a state-independent Bernoulli coin. With probability
+$1-r$ take the local step. With probability $r$ propose an **entirely fresh**
+$\theta'\sim P_0$, accepting with $\min(1,\exp[U(\theta)-U(\theta')])$.
+A rejection retains the current state and counts as a chain step. Both kernels
+preserve the same prefix posterior, so their fixed mixture preserves it too.
+Start the pilot at $r=0.01$ and compare with $r=0$ at matched objective/gradient
+cost. Log attempts, acceptances, cross-mode moves and dwell times by chain.
+Concentrated likelihoods can make prior jumps rare. If the mixture misses
+material modes, test the existing tempering strategy at equal cost or use a
+frozen independence proposal with its full Hastings correction. For unconditional
+random reinitialization, launch a separately identified exploratory chain with
+fresh warmup. Pool only after checking equilibration and mode weights. Forced
+resets interleaved with retained draws would bias those weights.
+
+### 4. Verify distribution recovery before claiming text performance
+
+1. **Known targets.** Check posterior moments on the linear-Gaussian reference.
+   Then use a one-dimensional two-mode target with known unequal basin masses
+   (e.g. a 75:25 Gaussian mixture with well-separated means and equal variances).
+   Derive $U=-\log(\pi/P_0)$ and compute reference half-line masses from the mixture
+   CDF. Start chains in opposite basins. Compare local-only and restart-enabled
+   estimates of masses, transitions, means and vector expectations against
+   quadrature with autocorrelation-aware uncertainty. This checks whether the
+   sampler gives regions their proper mass, including broad and narrow regions.
+2. **English stream.** Until an application supplies its vector schema and
+   objective, use a reproducible synthetic regression task on the fixed English
+   embeddings. Generate signed, non-unit numeric targets with a fixed teacher and
+   known observation noise. Mark results as synthetic. Split by document ID, score
+   incoming vectors before revealing targets, then compare each warm-started prefix
+   with a fresh joint fit, a current-batch-only reset and a point-trained transformer
+   using the same objective. Report held-out objective, per-coordinate RMSE, past
+   task retention, predictive intervals with the stated noise model, time and bytes.
+3. **Release evidence.** Save the target and model manifest, event prefix, seeds,
+   proposal settings and per-chain draws. Predeclare budgets and error tolerances
+   on development data. Require agreement with the known-target references within
+   tolerance including Monte Carlo uncertainty. Use at least four dispersed
+   chains for promotion, rank-normalized split R-hat below 1.01 and bulk/tail ESS
+   of at least 400 on declared projections, mode indicators and per-input vector
+   observables. Report an unresolved mode or a failed precision gate explicitly.
+   On real high-dimensional targets these checks support estimates of specified
+   observables in explored regions. They cannot certify that every mode was found.
+
+### 5. Test whether stopping at a slowdown improves a restart ensemble
+
+Use explicit likelihood temperatures $\pi_T(d\theta)\propto
+\exp[-U(\theta)/T]P_0(d\theta)$, where $U=\lambda J_t$. Hold the prior, prefix,
+loss units and $\lambda$ fixed throughout each comparison. The nominal target is
+$T=1$. At another temperature use $U/T$ consistently in the local drift, target
+ratio and prior-refresh acceptance. In replica exchange record the whole ladder
+and retain the replica at the temperature being estimated. Hot auxiliary chains
+can improve travel while preserving the nominal marginal. In the R12 two-seed
+8k study both ladders accepted swaps (13.3% and 12.1%), but the predictive NLL
+improvement reversed by seed. Those runs concern a signed classifier.
+[Measured R12 runs](../docs/PCNL_STATUS.md)
+
+**Basin-mass check.** The target weight of a specified basin $B$ is proportional
+to $\int_B e^{-U/T}\,dP_0$. A broad region can outweigh a deeper minimum.
+For an exact arithmetic control take two regions of constant energy with prior
+masses in the ratio 9:1, giving the broader region one extra unit of energy.
+Its posterior odds are $9e^{-1/T}$, so it wins at $T=1$ and loses at $T=0.25$.
+For the differentiable two-mode sampler test in §4, add an unequal-width
+variant, define basin boundaries before sampling, and integrate the tempered
+density afresh at every temperature. Compare analytic or quadrature mass with
+the fraction of retained stationary draws per basin, including repeats after
+rejection. Count optimizer endpoint frequencies separately. A deeper, narrower
+network's preference for high-mass basins is an experimental hypothesis.
+
+**Paired stopping experiment (proposed).** At a fixed evidence prefix, use
+the same random starts, minibatch order and optimizer settings for both checkpoints
+on each trajectory. As an initial knee rule, record full fit loss every 50 updates
+and stop at the first three consecutive intervals with fractional decrease below
+1% (divide by the absolute preceding loss floored at a declared epsilon). Flag
+loss increases separately, require a decreasing trend over the window, and record
+a missing knee at the cap. Continue the same trajectory to a preregistered
+tighter plateau or budget cap at constant learning rate. Add a paired long-run
+control with a declared learning-rate decay. Freeze both schedules and the
+stopping rule on development data. Save the
+vector predictions from both points. Compare individual fits, equal-weight
+ensembles at equal start count, and ensembles at equal total gradient cost,
+allowing the knee arm to spend saved work on extra starts. Report starts, missed
+knees, endpoint frequencies, per-input vector spread, held-out objective/RMSE,
+old-task retention and paired uncertainty across seeds and documents. Include
+capped runs at their last checkpoint even when a knee was never detected.
+
+On the same prefixes compare with the adjusted R13 sampler at $T=1$ and a small
+prespecified likelihood-temperature grid (pilot $T=0.25,1,2$). Keep the §3
+random MH refresh active and its rate fixed for this comparison. Knee checkpoints
+can also initialize independent pCNL chains with fresh warmup. Estimate posterior
+vector means from retained draws and report ESS/MCSE and occupancy at each
+temperature. If the knee ensemble improves held-out predictions while its mode
+frequencies disagree with the reference, report an optimizer-ensemble gain.
+If the colder target improves predictions across held-out splits after passing
+mixing gates, report a temperature effect for that objective and prior. Neither
+test assigns a temperature to an optimizer iteration. The manuscript gives the
+basin derivation and the distinction from full-posterior tempering.
+[Manuscript discussion](../../test/unfer/ngpt.md) · [Wenzel et al.](https://proceedings.mlr.press/v119/wenzel20a.html)
+
+### 6. Measure what SGD samples and what PAC-Bayes bounds
+
+**Sampling check.** For density $p_0$ of the Gaussian prior, write
+$F_T=U/T-\log p_0$. Compare ordinary minibatch SGD, explicit-noise SGLD and
+the §3 adjusted pCNL reference. For identity mobility the SGLD step is
+$\theta'=\theta-h\widehat{\nabla F_T}+\sqrt{2h}\,\xi$ with an independent
+standard Gaussian $\xi$. Scale the batch **mean** data gradient by $\lambda N/T$
+for the additive objective on $N$ events, then add $C^{-1}(\theta-m)$ once.
+Test step-size bias on the Gaussian reference and mode occupancy on the two-basin
+reference at the declared $T$. Decreasing $h$ refines this discretization.
+Changing $T$ changes the target. [Welling & Teh](https://icml.cc/2011/papers/398_icmlpaper.pdf)
+
+For plain SGD record loss units, learning rate, actual batch size and batch
+sampling law. First use a quadratic with equal curvature and unequal gradient
+noise in two directions, as derived in the manuscript. At each text-run knee
+and in subsequent fixed-length windows, measure the batch-gradient covariance in
+fixed projections at the checkpoint, drift in the window means, autocorrelation
+and disagreement between independent starts. Compare with pCNL on the same
+observables. Report a slowdown as an optimization result even if the local
+covariance or mode weights fail the sampling checks. [SGD diffusion analysis](https://jmlr.org/papers/v18/17-214.html)
+
+**Generalization check.** Use a prespecified i.i.d. document experiment with a
+data-independent Gaussian prior $P_0$. Choose the per-document score
+$b=\min(1,\|f_\theta(x)-y\|^2/(q a^2))$ with coordinate scales fixed in advance
+and $a>0$ in the resulting units. Continue to train on the original objective
+and report RMSE in task units. For the knee and late arms construct an explicit
+equal-weight mixture $Q$ of full-support diagonal Gaussians around their
+checkpoints. Measure empirical risk **under perturbation**, using fresh
+independent draws from the fixed mixture. Upper-bound mixture KL by the mean
+analytic component KL to $P_0$. Report empirical risk, its one-sided Monte
+Carlo allowance, KL, number of independent documents and the PAC-Bayes upper
+risk bound from the manuscript. Split the confidence budget between data and
+Monte Carlo error and across repeated reports as needed. Record vacuous bounds.
+A point ensemble, a smoothed randomized predictor and a distilled student
+each get their own evaluation. On shifted or adaptively collected streams
+report prequential errors. The i.i.d. bound applies to its declared population.
+[Maurer, Theorem 5](https://arxiv.org/pdf/cs/0411099) · [Dziugaite & Roy](https://arxiv.org/abs/1703.11008)
+
+### 7. Compare the cost of serving one vector model
+
+| Candidate | Construction and comparison |
+|---|---|
+| One long fit | Train with the §5 decay schedule. Score the final vector predictor and record training cost and single-pass latency. |
+| SWA within one run | Continue SGD beyond the knee at a fixed learning rate. Predeclare the window and spacing, and average its $K$ parameter vectors online. Compare the last iterate, SWA and the output average of those same snapshots on identical passages. Measure the objective along sampled straight-line interpolations and at the actual mean weights. |
+| Ensemble across starts | Average raw vectors from $M$ independent knee checkpoints. Also test one SWA model per start, charging the extra post-knee updates. Count distinct prediction patterns and use the actual teacher count even if several starts give similar functions. |
+| Distilled student | For one committed evidence prefix cache the teacher's mean vector on training or unlabeled transfer passages available at that prefix. Fit one four-block student by squared vector discrepancy. Run this separately for the restart ensemble and for retained draws from well-diagnosed pCNL chains. Measure teacher–student error and ground-truth error on unseen passages and old tasks. |
+
+If direct merging of independent runs is investigated, first check a
+function-preserving hidden-unit permutation, then compare the unaligned and
+aligned interpolation losses, merged outputs and inference costs. Keep a
+label-trained student with the same architecture and initialization as the
+distillation control. [Git Re-Basin](https://arxiv.org/abs/2209.04836)
+
+Freeze the aggregate training budget, candidate start counts and a tolerable
+increase in held-out error relative to the teacher on development data. Charge full-loss knee checks,
+extra snapshots, teacher forwards and student fitting. At inference share the
+frozen English embedding, then measure head evaluations, memory and end-to-end
+latency on the same hardware and batch size. Compare held-out error differences
+with paired uncertainty at equal training cost. Promote a single-pass model
+when the upper confidence limit on its paired error increase is within tolerance and it
+meets the serving budget. Keep the evidence and pCNL chain state for the next
+Bayesian update. Keep teacher targets outside the evidence log. If a serving
+application also needs uncertainty, fit and validate a separate per-coordinate
+spread estimate against retained draws and check interval coverage under the
+declared observation-noise model. The decision readout remains a numerical vector.
+[SWA](https://arxiv.org/abs/1803.05407) · [Ensemble distillation](https://arxiv.org/abs/1503.02531)
+
+R13 is delivered when a raw-English predict/update/reopen run reproduces the
+vector for a saved draw, the four-block and objective checks pass, and the
+known-target and stream reports quantify posterior accuracy and restart behavior.
+The SGD, PAC-Bayes and compression comparisons are proposed follow-ups to that
+reference. Their results determine which predictor to serve and which claims the
+evidence supports.
+
+### First execution record (2026-11-22)
+
+`src/vector_model.rs` now implements the four-position, four-block vector head,
+its flat layout and layer-scaled prior, the full-data Gaussian regression
+[`Potential`](src/target.rs), and the exact CN/prior-refresh mixture.
+`examples/vector_regression.rs` loads the frozen 20 Newsgroups embeddings,
+derives signed two-coordinate targets from a fixed synthetic teacher, runs
+full-batch Adam and the sampler, and writes/reopens a JSON checkpoint.
+
+Measured pilot (`240` train / `120` test rows, `768 → 4×16 → 2`, teacher seed
+`20261122`, observation noise `0.05`, 300 Adam steps): train RMSE `0.000286`,
+test RMSE `0.099276`; the checkpoint round-trip is bitwise exact and predicts
+`[-1.6128643, -0.82934713]` on the first test row.  At `ρ = 0.99` and prior
+scale `0.05`, the CN sampler accepted `0/397` local moves: the prior covariance
+is far wider than this 240-row posterior.  At `ρ = 0.9999` and prior scale
+`0.01` it accepted `224/398` CN moves and `0/2` prior refreshes, retaining 20
+draws; the draw-mean test RMSE was `0.101129`.  Parameter-only 90% intervals
+covered `14/240` coordinates and noise-augmented predictive intervals covered
+`142/240`, so the latter still fails nominal coverage.  This is a synthetic,
+warm-started, single-chain pipeline check, not a text-performance, equilibrium,
+calibration or promotion result.  Live-encoder parity, known-target recovery,
+four-chain rank-normalized R̂/ESS and the continual stream remain open.
+
+### R13 follow-up measurements (2026-11-22)
+
+**Known-target recovery passes its bulk gate.** `examples/known_target.rs` runs
+the production CN/refresh kernel through `EnergyTarget` on
+`0.75·N(−2,1) + 0.25·N(2,1)`, four chains from `[-6,-3,3,6]`, 50,000 steps,
+10,000 burn, thin 5, 8,000 draws per chain.  Pooled left-basin mass `0.73378`
+(analytic `0.73862`, error `−0.00484`, MCSE `0.01304`), mean `−0.97689`
+(analytic `−1`), central 90% `[−3.50191, +2.87135]`; rank R̂ `1.00344`/`1.00547`
+and bulk ESS `1504.8`/`1148.5` on coordinate/basin indicator.  The binary
+indicator's tail ESS is `NaN`, so only the bulk gate is claimed.
+
+**The four-chain vector gate fails.** Four jitter-separated warm starts
+(`jitter=0.01`), 1,000 steps, 250 burn, 200 draws per chain: at `ρ=0.999` the
+CN acceptance was 82/89/86/102 per ~1,000, rank R̂ `2.69621`, minimum bulk ESS
+`4.7` (tail `9.3`).  At `ρ=0.9999` acceptance was 538/523/564/544, but rank R̂
+`2.74392` and bulk ESS `4.6`.  A 300-step probe of the same starts placed the
+per-chain first-row draw means within ~0.04, indicating slow 57,378-parameter
+mixing rather than distinct modes.  The
+run is too short for the observed integration time and retains too few draws;
+these are reported failures, not a promotion result.
+
+**Gradient-scaling defect (fixed).** The `EnergyTarget` adapter for
+`VectorRegression` returned the energy scaled by `λ·n` but the **unscaled**
+mean-loss gradient, so the CN drift term was `240×` too small at `n = 240`.
+The adapter now scales the gradient identically.  After the fix, single-chain
+300-step probes accepted 261/295 CN moves at `ρ = 0.9999`, 13/290 at
+`ρ = 0.999` and 0/299 at `ρ = 0.99`; before the fix a four-chain `ρ = 0.999`
+run accepted only 82–102 of ~1,000 per chain, so the fixed drift materially
+raises acceptance but does not change the mixing time.
+
+**A longer run confirms a dimension wall, not a length problem.** Two chains of
+5,000 steps (1,250 burn, 3,750 draws each) at `ρ = 0.9999` accepted 4,620 and
+4,608 CN moves but still gave rank R̂ `1.927–2.216` and per-observable bulk ESS
+`2.5–4.9` (tail `10–47`).  At 92% acceptance this is an integrated
+autocorrelation time of a few thousand steps: reaching bulk ESS `400` would
+need roughly `10⁶` gradient evaluations per chain.
+
+A pilot-preconditioned diagonal proposal does not rescue it.  At `ρ = 0.99`
+the kernel's shrunk mean `ρ·θ` moves each coordinate by 1% of its value per
+step, which is orders of magnitude larger than the local posterior step, so
+every proposal is rejected: `0/2,981` in a 34-coordinate pilot-preconditioned
+run at `ρ = 0.99` (pilot 400 steps, `var/prior` p50 `6.2e−3`, inflate `0.5`),
+and `0/1,984` for the first chain of the full-dimension run at `ρ = 0.99`
+(pilot inflate `2.0`) before it was stopped.  With an exact
+posterior covariance the kernel's ESS per step is approximately
+`acc·(1−ρ)/2` with `log acc ≈ −6(1−ρ)d`, whose maximum is about
+`1/(12·e·d)` — `~1e−3` per step at `d = 34` and far smaller at `d = 57,378`.
+The CN/refresh kernel, as specified, cannot reach the four-chain gate at this
+model size in any practical budget.
+
+**Readout-conditional target.** `ReadoutTarget` (and `--readout-only` in the
+example) samples only the last 34 flat coordinates — the `16×2` affine readout
+and its 2 biases — with the 57,344-coordinate backbone frozen at its Adam point
+estimate.  This is an explicitly conditional target, not the full posterior.
+Four chains of 3,000 steps (750 burn, thin 2, 1,125 draws each) at
+`ρ = 0.9999` with a 400-step pilot covariance accepted only 70/2,971, 71/2,966,
+84/2,979 and 83/2,968 CN moves (no prior refreshes), giving rank R̂ max
+`3.53012` and minimum bulk ESS `4.4` (tail `8.3`); the gate still fails.  The
+pilot variance overestimates the stiff-direction posterior width, so the
+proposal remains too wide even at `d = 34`.  Draw-mean test RMSE was `0.099114`,
+parameter 90% coverage `0.0292` (7/240) and predictive coverage `0.6125`
+(147/240), so the intervals are not calibrated.
+
+**Exact readout-conditional posterior.** The readout-conditional target is
+linear-Gaussian: with design `Φ`, noise variance `s²`, prior scale `λ` and prior
+covariance `c`, the precision is `A = (λ/s²)ΦᵀΦ + diag(1/c)` and the posterior
+is `N(m, A⁻¹)`.  `ReadoutTarget::exact_posterior` forms it by Cholesky and
+`--proposal exact` uses it in the CN kernel.  On the fitted Adam backbone the
+gradient at `m` has RMS `8.673e−4` (the Gaussian self-consistency check), and
+the posterior-to-prior variance ratio is `p10 7.719e−2`, `p50 1.852e−1`,
+`p90 3.320e−1`.  The bias coordinates of `m` are `−1.487` and `−0.730` with
+prior standard deviation `0.05`, i.e. the posterior sits ~15–30 prior-σ from the
+origin.
+
+**Prior-referenced CN rejects once the mean is far out.** With reference mean
+zero the proposal is `N(ρθ, (1−ρ²)c)`, which is astronomically far from a
+posterior centred at `m`; a 200-step scan from the exact draw accepted
+`0/199` at `ρ = 0.5` and `ρ = 0.9`, `2/199` at `ρ = 0.99`.  The
+posterior-referenced variant `run_chain_with_posterior_reference` replaces the
+reference with `m` and the prior pull with the full target gradient:
+`mean = m + ρ(θ−m) − ((1−ρ²)/2)·A⁻¹∇U`, proposal covariance `(1−ρ²)A⁻¹`.
+This removes the prior-mean mismatch but the proposal is still under-dispersed:
+from a tail draw it accepted `0–2/199` at `ρ ≤ 0.9` and `102/199` at `ρ = 0.99`.
+A dense-kernel defect found in this work was real and is fixed: the quadratic
+form is `δᵀAδ = ‖Lᵀδ‖²` over the *columns* of the Cholesky factor (`L Lᵀ = A`),
+not `‖Lδ‖²`.
+
+**Warm start at the analytic mean exposes the proposal's ceiling.** Starting
+all chains at `m` (new `--init mean`) with `ρ = 0.5` accepted `1281/2975`,
+`1155/2971`, `1221/2962` and `1180/2970` CN moves (~40%), the rate the
+exact-covariance argument predicts.  But four chains of 3,000 steps still gave
+rank R̂ max `1.02163` and bulk ESS min `254.9` (tail `37.8`); only five of the
+eight observables cleared ESS `400`, and `gate=false`.  Retaining all 2,250
+draws instead of thinning did not raise ESS (e.g. `223.5 → 254.9`), so this is
+the independence-proposal ceiling — rejected tail proposals leave the state
+frozen — not a run-length problem.
+
+**Documented dimension scaling.** `examples/cn_dimension_sweep.rs` samples
+`N(0, I_d)` with a diagonal proposal or the exact covariance `I_d` and reports
+acceptance, ESS and ESS/step.  At `ρ = 0.99`, 4,000 steps:
+
+| `d` | 2 | 6 | 18 | 34 | 66 | 130 | 256 |
+|---|---|---|---|---|---|---|---|
+| exact-proposal ESS/step | 0.466 | 0.402 | 0.267 | 0.197 | 0.131 | 0.069 | 0.019 |
+| exact-proposal acceptance | 0.769 | 0.703 | 0.521 | 0.452 | 0.371 | 0.284 | 0.163 |
+| diagonal best ESS/step | 0.0179 | 0.0101 | 0.0044 | 0.0023 | 0.0017 | 0.0011 | 0.0006 |
+
+Reproduce with `--steps 4000 --dims 2,6,18,34,66,130,256 --rhos 0.99` (add
+`--exact-proposal` for the exact rows; the exact covariance of `N(0, I_d)` is
+`I_d`).  The exact column decays roughly as
+`1/d` in ESS/step, consistent with the `acc·(1−ρ)/2` estimate and with the
+observed `d = 34` gate ceiling.
+
+**HMC with the exact metric passes the four-chain gate.** The diagonal-mass HMC
+collapsed its step size (`eps_frozen ≈ 5e−5`) because the readout posterior is
+strongly correlated across coordinates; dual averaging can tune a step size but
+not a mis-scaled metric.  The exact metric is the posterior precision: in
+whitened coordinates `u = Lᵀ(θ − m)` (`L Lᵀ = A`) the Gaussian target is exactly
+standard normal, so `run_hmc_chain_whitened` uses unit mass, `N(0, I)` momenta
+and the transformed force `Gᵀ∇U` with `G = L⁻ᵀ`, while every MH ratio is still
+computed with the full target in `θ`.  Four chains, `--init mean`,
+`--hmc-mass exact --hmc-leapfrog 4`, 1,000 steps, 250 burn, thin 1: dual
+averaging settled at `ε = 0.587–0.638` with mean acceptance `0.835–0.856`.
+Rank R̂ max `1.00935` (all eight `≤ 1.00935`), minimum bulk ESS `3000.0`
+(capped by four chains × 750 draws = 3,000), minimum tail ESS `906.4`,
+`gate=true`.  Draw-mean test RMSE `0.105302`, parameter 90% coverage `0.1583`
+(38/240), predictive coverage `0.5875` (141/240); coverage is still not nominal.
+The passing target is the **readout-conditional 34-coordinate** posterior with a
+frozen backbone, on fixture embeddings, warm-started at the analytic mean; this
+is an HMC kernel validation, not a full-parameter or calibration result.
+
+**Conclusion.** The measured blocker was the transition kernel's
+high-dimensional scaling, not the regression objective, the teacher, or the
+run length.  The exact-covariance posterior-referenced CN raises acceptance
+but its independence-proposal form saturates below the ESS gate at `d = 34`.
+Gradient-based HMC with the exact posterior metric passes the four-chain gate
+on the conditioned target; a full 57,378-parameter dense-metric HMC and the
+continual stream remain open.
+
+**Live/fixture parity is implemented but unverified here.**
+`scripts/pcnl_ultrabert_adapter.py` now shares the pinned revision, 96-token
+truncation, CLS pooling and L2 normalization between both generators and
+`scripts/pcnl-ultrabert-parity`.  The parity check exits `2` with an explicit
+`SKIP: live encoder unavailable` when torch/transformers/safetensors or pinned
+weights are absent; this environment lacks them, so no parity pass is claimed.
+
+## R12 — historical signed-state application for English text (updated 2026-11-20)
 
 Given English text and a selected draw of the decision head, `predict` returns a
 **normalized real wave-function** in an ordered outcome basis. A second decision
@@ -18,7 +437,7 @@ Start with `--hidden 32,16,16,8`. For four outcomes this gives
 tanh activations. pCNL jointly samples their weights and biases together with
 the angle readout. Count depth within one application of the decision head.
 
-### Current delivery order
+### R12 delivery order at the time of the signed-state experiments
 
 The rotation implementation already prepares a real unit state, composes a sequence
 within each parameter draw, and evaluates the full-prefix Born likelihood. Its
@@ -1078,7 +1497,7 @@ neural convergence, calibration and posterior rates still require their missing 
 Do not compile in this planning wave. No operator/Fock interpretation is a prerequisite
 for the required RLCD training experiment.
 
-## Active programme: theoretical certificates with implementation checks (2026-11-15)
+## R8 programme: theoretical certificates with implementation checks (2026-11-15)
 
 For sampler/theory work, this section supersedes the **forward ordering** of older R0–R7
 tasks while preserving their measured records and stopping decisions. The mathematical counterpart is
@@ -1202,7 +1621,7 @@ does a tractable, explicitly specified posterior improve predictions over a stro
 baseline, and can a sampler approximate that posterior within a measured compute budget?
 Treat target quality, sampler accuracy and decision/readout quality as separate experiments.
 
-The first research bet is **adaptation in a likelihood-informed parameter subspace**,
+The original research bet was **adaptation in a likelihood-informed parameter subspace**,
 followed by a full-target sampler with different proposals inside and outside that subspace.
 Do not start another ambient step-size/temperature ladder as the default next experiment.
 The accumulated negative results make target specification and verification the next gates.
@@ -1214,8 +1633,8 @@ subspace chart and the pCN kernel carry over. R7 is gated on R0's gradient/diagn
 R3's proper-score readout, not on R5–R6, and it is the first target here whose predictive *is*
 the object that gets scored: a distribution rather than a label.
 
-This file is the forward work order for `pcnl`; it supersedes the unexecuted priorities of
-[the original implementation plan](../docs/plan_bayes_ngpt.md) as a reading guide only.
+R13 at the top of this file gives the current work order. Earlier tracks preserve the context of
+[the original implementation plan](../docs/plan_bayes_ngpt.md) and the experiments it motivated.
 That document remains the original design/formalization record.
 [PCNL_STATUS.md](../docs/PCNL_STATUS.md) remains the measured-results ledger.
 The motivating discussion is [ngpt.md](../../test/unfer/ngpt.md), especially §6.5.9,

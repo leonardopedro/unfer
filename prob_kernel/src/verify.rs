@@ -138,6 +138,10 @@ fn verify_at_path(
         pp_output_path: None,
         pp_to_stdout: false,
         num_threads: 1,
+        // nanoda_lib 0.4.32 spawns its checking thread with this stack, and
+        // requires it to be non-zero. The library's own serde default is 32 MiB
+        // (`nanoda_lib::util::default_stack_size_bytes`), so the embedded
+        // verifier keeps the behaviour a default-configured nanoda has.
         stack_size_bytes: 32 * 1024 * 1024,
         print_success_message: false,
         print_axioms: false,
