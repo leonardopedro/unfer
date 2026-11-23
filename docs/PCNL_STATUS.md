@@ -7697,27 +7697,56 @@ binary under `--start-scale legacy` (mode `29.193841` / `1.061627e-1`, pilot
 R̂, ESS). The prior draw is opt-in; `legacy` passes the same `theta_vec` and
 `--init mode` starts from `mode_base`, so nothing downstream can see the flag.
 
-Re-running the recorded full-parameter gates with `--start-scale legacy` gives
-the same verdicts but not the same 3rd digits:
+**Every recorded full-parameter gate reproduces bit-exactly** under
+`--start-scale legacy`, once the full command is supplied (table and commands
+below):
 
-| gate | recorded | re-run |
+| gate | recorded | re-run (this binary, `--start-scale legacy`) |
 |---|---|---|
-| pilot metric, 400×4 | R̂ 2.61047, ESS 4.7, RMSE 0.144261, ε 0.101–0.108, acc 0.858–0.864 | R̂ 2.56781, ESS 5.0, RMSE 0.139388, ε 0.068–0.077, acc 0.848–0.892 |
-| Hessian diag (64 probes), 400×4 | R̂ 2.50388, ESS 4.8, RMSE 0.150189, `clipped_to_prior` 27,622 | R̂ 2.54793, ESS 5.0, RMSE 0.173399, `clipped_to_prior` 27,622 (exact), ε 6.37–6.88e-3 |
+| pilot metric, 400×4 | R̂ 2.61047, ESS 4.7, RMSE 0.144261, ε 0.1017–0.1077, acc 0.858–0.864 | identical: R̂ 2.61047, ESS 4.7, tail 10.0, RMSE 0.144261, coverage 0.7083/0.8333 |
+| Hessian diag (64 probes), 1,000×4 | R̂ 2.50388, ESS 4.8, RMSE 0.150189, `clipped_to_prior` 27,622 | identical: R̂ 2.50388, ESS 4.8, tail 10.1, RMSE 0.150189, ε 6.902e-3, `clipped_to_prior` 27,622 |
+| low-rank 8, 400×4 | R̂ 2.39408, ESS 4.9 | identical: R̂ 2.39408, ESS 4.9, tail 10.3 |
+| low-rank 32, 1,000×4 | R̂ 2.01334, ESS 5.3 | identical: R̂ 2.01334, ESS 5.3, tail 10.1 |
 
-Every deterministic pre-sampling stage reproduces exactly (mode `29.193841`,
-pilot `499/600` & `8.700e-4`, Hessian diagonal `27,622` clipped, `max 2.231e5`).
-The gate endpoints do not, for three recorded reasons: the recorded run's exact
-command line was never written down; `HEAD` predates `--init mode`, so those
-runs came from intermediate uncommitted trees and cannot be rebuilt; and at
-ESS ≈5 the draw-set-dependent summaries are chaotic — holding ε and acceptance
-fixed, `--thin 10 / 5 / 2` moved R̂ between `2.548 / 2.112 / 2.171`.
+The readout-conditional gate reproduces identically too (R̂ 1.00935, ESS 3000.0,
+tail 906.4, RMSE 0.105302, coverage 0.1583/0.5875, ε 0.587–0.638).
 
-So the honest claim is: **verdict, ESS order and R̂ band reproduce; exact RMSE
-and 3rd-digit R̂ do not, and should not be quoted as if they do.** The pilot
-ε gap (0.068–0.077 against the recorded 0.101–0.108) is a configuration
-difference that could not be recovered from the docs, so the recorded command
-lines should be stored with the numbers from now on.
+**How the first reconstruction attempt missed, and why it matters.** A first
+re-run omitted `--pilot-inflate 1` (ε came out `0.068–0.077` against the
+recorded `0.101–0.108`, because the mass scales by `inflate` and ε by
+`1/√inflate`), used 400 Hessian steps instead of the recorded 1,000, and left
+`--thin` at its default. Those are not small cosmetic knobs: `--thin`/`--draws`
+decide which post-burn draws the gate statistics see, and at ESS ≈5 that moves
+R̂ by ±0.5 on an otherwise identical trajectory (holding ε and acceptance
+fixed, `--thin 10 / 5 / 2` gave R̂ `2.548 / 2.112 / 2.171`). The recorded
+numbers were never irreproducible — the reconstruction was incomplete.
+
+Reproduction convention for this section: all commands below run from the repo
+root against `./target/release/examples/vector_regression` (or
+`vector_basins` / `vector_stream`), fixture
+`docs/fixtures/ultrabert_20ng4_embeddings.safetensors`, `teacher_seed=20261122`,
+and print to the named `/tmp` log. `/tmp` is ephemeral: copy a log into the repo
+if it needs to outlive the session.
+
+| gate (recorded numbers) | command | log |
+|---|---|---|
+| readout-conditional exact metric — R̂ 1.00935, ESS 3000.0, RMSE 0.105302 (`gate=true`) | `vector_regression --readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4` | `/tmp/r13-readout-exact.log` (re-verified 2026-11-23) |
+| full-parameter pilot metric — R̂ 2.61047, ESS 4.7, RMSE 0.144261 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300` | `/tmp/r13-legacy-A-exact.log` (re-verified) |
+| Hessian diagonal, 64 probes — R̂ 2.50388, ESS 4.8, RMSE 0.150189 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass hessdiag --hessian-probes 64 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-B-exact.log` (re-verified) |
+| low-rank 8 — R̂ 2.39408, ESS 4.9 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 8 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-C-exact.log` (re-verified) |
+| low-rank 32 — R̂ 2.01334, ESS 5.3 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-D-exact.log` (re-verified) |
+| low-rank 32 + trajectory jitter — R̂ 2.14626, ESS 5.1 | as low-rank 32 plus `--hmc-jitter` | `/tmp/r13-full-hmc-lowrank-jitter.log` |
+| parallel tempering, 4 replicas `0.02/0.0737/0.2714/1` — R̂ 2.44665, ESS 4.8, RMSE 0.168598 | `vector_regression --kernel hmc --temper 4 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-full-temper4.log` |
+| hit-and-run, 400 moves — R̂ 2.39717, ESS 4.9, RMSE 0.087048 | `vector_regression --kernel hitrun --init mode --mode-steps 8000 --moves 400 --width 1 --burn 100 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-hitrun.log` |
+| hit-and-run, 5,000 moves — R̂ 3.03445, ESS 4.5, RMSE 0.121815 | `vector_regression --kernel hitrun --init point --moves 5000 --width 1 --burn 1250 --thin 2 --draws 1875 --chains 4` | `/tmp/r13-gate-hitrun-5k.log` |
+| live-attention q/k gate — R̂ 2.60278, ESS 4.7, RMSE 0.173727 | `vector_regression --kernel hmc --init mode --mode-steps 8000 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-priorinit.log` |
+| multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `/tmp/r13-basins-prior-8000.log` |
+| continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `/tmp/r13-stream-calib.log` |
+| CN exact-dense, 6,000 steps — ESS/accept per chain in log | `vector_regression --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `/tmp/r13-cn-exact-4-long.log` |
+
+The last six rows are reconstructed from their log headers (steps, draws,
+proposal, ladder all echoed there) but were **not** re-executed in this pass;
+treat them as documented parameters, not as today's verified runs.
 
 ### Low-rank-plus-diagonal HMC metric (2026-11-23)
 

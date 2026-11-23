@@ -451,18 +451,25 @@ data Hessian, which a diagonal metric cannot whiten.
 `--start-scale legacy` output byte for byte (mode `29.193841`, pilot `499/600`
 with `var_over_prior p50 8.700e-4`, all chain lines, RMSE, R̂, ESS), so the
 prior draw is strictly opt-in and cannot have shifted the legacy path.
-Re-running the recorded gates under `legacy` keeps the verdict and the ESS band
-but not the 3rd digit: pilot metric R̂ `2.56781` / ESS `5.0` / RMSE `0.139388`
-(recorded `2.61047` / `4.7` / `0.144261`, with ε `0.068–0.077` against the
-recorded `0.101–0.108`), Hessian diagonal R̂ `2.54793` / ESS `5.0` / RMSE
-`0.173399` (recorded `2.50388` / `4.8` / `0.150189`, `clipped_to_prior`
-`27,622` exact). The deterministic stages all match exactly. At ESS ≈5 the
-draw-dependent summaries are chaotic — with ε and acceptance held fixed,
-`--thin 10/5/2` moved R̂ over `2.548/2.112/2.171` — and the recorded commands
-were never stored (and `HEAD` predates `--init mode`, so they cannot be
-rebuilt). Report verdicts and approximate R̂; do not treat the recorded RMSE
-and 3rd-digit R̂ as reproducible, and store the command line with each gate from
-now on.
+
+With the complete command line, every recorded gate reproduces **exactly** under
+`--start-scale legacy`: pilot metric R̂ `2.61047` / ESS `4.7` / RMSE `0.144261`
+(ε `0.1017–0.1077`, coverage `0.7083`/`0.8333`), Hessian diagonal (64 probes)
+R̂ `2.50388` / ESS `4.8` / RMSE `0.150189` with `clipped_to_prior` `27,622`,
+low-rank 8 R̂ `2.39408` / ESS `4.9`, low-rank 32 R̂ `2.01334` / ESS `5.3`, and the
+readout-conditional gate R̂ `1.00935` / ESS `3000.0` / RMSE `0.105302`. The exact
+commands and log paths are tabulated in `docs/PCNL_STATUS.md`
+("Legacy-gate reproducibility after the init change").
+
+A first pass reported these as non-reproducible; that was an incomplete
+reconstruction, not a code drift. The three flags that mattered: `--pilot-inflate
+1` (the mass scales by `inflate`, so ε scales by `1/√inflate` — default 2 gave
+ε `0.068–0.077` against the recorded `0.101–0.108`), the recorded 1,000 Hessian
+steps rather than 400, and `--thin 1 --draws 300/750`. The last is not
+cosmetic: at ESS ≈5 the retained draw set moves R̂ by ±0.5 on an identical
+trajectory (`--thin 10/5/2` → R̂ `2.548/2.112/2.171`), so a gate number is only
+meaningful with its `thin`, `draws` and budget recorded — store the command
+line with every number from now on.
 
 **Low-rank-plus-diagonal metric.** `LowRankCovariance::from_draws` estimates
 `C = diag(v) + W Λ Wᵀ` from the pilot (rank-`k` sample-covariance directions
