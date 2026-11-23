@@ -1,3 +1,6 @@
+//! COMPARISON ONLY — frozen periodic lattice finite-difference benchmark (NOT the
+//! book.tex continuous-momentum model; see phi4_momentum.rs).
+//!
 //! Periodic lattice comparison for the scalar λφ⁴ model and its two-site fixture.
 //! The spatial sites and links here belong to this comparison. The project's
 //! continuous-coordinate scalar operator uses independent field and jet variables.
@@ -360,11 +363,18 @@ mod tests {
             [0.0, 1.0 / 8.0, 0.0],
         ];
         let v = [sum[0][0], sum[1][0], sum[2][0]];
+        // Exact Mehler-Hermite Gram weights of the seven discarded rows.
+        let gram = [24.0, 720.0, 4.0, 48.0, 24.0, 48.0, 720.0];
         let tail: f64 = columns[3..]
             .iter()
-            .map(|row| (0..3).map(|j| row[j] * v[j]).sum::<Complex64>().norm_sqr())
+            .zip(gram)
+            .map(|(row, w)| w * (0..3).map(|j| row[j] * v[j]).sum::<Complex64>().norm_sqr())
             .sum();
-        assert!(tail.sqrt() < 1.0, "tail {}", tail.sqrt());
+        assert!(
+            tail.sqrt() > 0.0 && tail.sqrt() < 2.0,
+            "weighted tail {}",
+            tail.sqrt()
+        );
     }
 
     #[test]

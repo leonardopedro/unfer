@@ -8,6 +8,7 @@ description = "pCNL Bayesian adaptation for a normalized (nGPT-lite) transformer
 [dependencies]
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
+nalgebra = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
 rayon = { workspace = true }

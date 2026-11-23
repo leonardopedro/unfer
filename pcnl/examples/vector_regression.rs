@@ -18,24 +18,31 @@
 //!
 //! `--pilot-steps N` runs a short high-`rho` pilot chain and fixes the
 //! production proposal covariance from that pilot's per-coordinate variance
-//! (`--pilot-inflate`, default 2.0).  The target is unchanged and every
-//! production chain is exact MH for its given covariance.  The pilot does not
-//! remove the CN kernel's dimension wall; see `RESEARCH_PLAN.md`.
+//! (`--pilot-inflate`, default 2.0, at `--pilot-rho`, default 0.9999).  The
+//! target is unchanged and every production chain is exact MH for its given
+//! covariance.  The pilot does not remove the CN kernel's dimension wall; see
+//! `RESEARCH_PLAN.md`.
 //!
 //! The readout conditional is exactly linear-Gaussian, so `--proposal exact`
 //! uses the analytic posterior covariance as the CN proposal and `--init exact`
 //! starts every chain from an exact posterior draw.  `--kernel hmc` switches to
 //! fixed-length HMC with a dual-averaged step size during warmup; with
-//! `--hmc-mass exact` the mass matrix is the analytic posterior variance.
+//! `--hmc-mass exact` the metric is the analytic posterior precision, with
+//! `--hmc-mass pilot|lowrank` it is built from the pilot chain (diagonal
+//! precision, or `diag + rank-k` low-rank); `--hmc-jitter` randomizes the
+//! trajectory length, and `--init mode` starts at a mode of the sampled
+//! potential (which includes the prior that `adam_fit` omits).
 
 use candle_core::{Device, Tensor};
 use pcnl::diag::{ess_bulk, ess_tail, split_rhat_rank};
 use pcnl::text_head::{EmbeddingTable, Split};
 use pcnl::vector_model::{
-    EnergyTarget, ExactPosterior, HmcConfig, ProposalCov, ReadoutTarget, SyntheticTeacher,
-    VectorChain, VectorRegression, VectorSamplerConfig, VectorShapes, adam_fit, init_flat, predict,
-    readout_range, run_chain_with_posterior_reference, run_chain_with_prior,
-    run_chain_with_proposal, run_hmc_chain, run_hmc_chain_whitened,
+    EnergyTarget, ExactPosterior, HitRunConfig, HmcConfig, LowRankCovariance, ProposalCov,
+    ReadoutTarget, SyntheticTeacher, TemperConfig, VectorChain, VectorRegression,
+    VectorSamplerConfig, VectorShapes, adam_fit, adam_fit_energy, hessian_probe, init_flat,
+    init_flat_prior, predict, readout_range, run_chain_with_posterior_reference,
+    run_chain_with_prior, run_chain_with_proposal, run_hit_and_run, run_hmc_chain,
+    run_hmc_chain_low_rank, run_hmc_chain_whitened,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -178,9 +185,18 @@ fn main() {
     let pilot_inflate: f64 = arg(&args, "--pilot-inflate")
         .and_then(|v| v.parse().ok())
         .unwrap_or(2.0);
+    let pilot_rho: f64 = arg(&args, "--pilot-rho")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.9999);
+    let mode_steps: usize = arg(&args, "--mode-steps")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_500);
+    let mode_lr: f64 = arg(&args, "--mode-lr")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2e-3);
     let kernel = arg(&args, "--kernel").unwrap_or_else(|| "cn".into());
-    if kernel != "cn" && kernel != "hmc" {
-        panic!("--kernel must be cn or hmc, got {kernel}");
+    if kernel != "cn" && kernel != "hmc" && kernel != "hitrun" {
+        panic!("--kernel must be cn, hmc or hitrun, got {kernel}");
     }
     let proposal_mode = arg(&args, "--proposal").unwrap_or_else(|| "diagonal".into());
     if proposal_mode != "diagonal" && proposal_mode != "exact" {
@@ -188,8 +204,8 @@ fn main() {
     }
     let exact_proposal = proposal_mode == "exact";
     let init_mode = arg(&args, "--init").unwrap_or_else(|| "point".into());
-    if init_mode != "point" && init_mode != "exact" && init_mode != "mean" {
-        panic!("--init must be point, exact or mean, got {init_mode}");
+    if !matches!(init_mode.as_str(), "point" | "exact" | "mean" | "mode") {
+        panic!("--init must be point, exact, mean or mode, got {init_mode}");
     }
     let init_exact = init_mode == "exact" || init_mode == "mean";
     let hmc_eps: f64 = arg(&args, "--hmc-eps")
@@ -200,10 +216,40 @@ fn main() {
         .unwrap_or(8)
         .max(1);
     let hmc_mass_mode = arg(&args, "--hmc-mass").unwrap_or_else(|| "exact".into());
-    if !matches!(hmc_mass_mode.as_str(), "exact" | "diagonal" | "prior") {
-        panic!("--hmc-mass must be exact, diagonal or prior, got {hmc_mass_mode}");
+    if !matches!(
+        hmc_mass_mode.as_str(),
+        "exact" | "diagonal" | "prior" | "pilot" | "lowrank" | "hessdiag"
+    ) {
+        panic!(
+            "--hmc-mass must be exact, diagonal, prior, pilot, lowrank or hessdiag, got {hmc_mass_mode}"
+        );
     }
+    let lowrank_rank: usize = arg(&args, "--lowrank-rank")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8)
+        .max(1);
     let hmc_fixed_step = args.iter().any(|a| a == "--no-hmc-adapt");
+    let hmc_jitter = args.iter().any(|a| a == "--hmc-jitter");
+    // Parallel tempering: `--temper K` runs K replicas (cold one is the target).
+    let temper_k: usize = arg(&args, "--temper")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let temper_min_beta: f64 = arg(&args, "--temper-min-beta")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.01);
+    let temper_swap: usize = arg(&args, "--temper-swap")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    // Hit-and-run slice move (`--kernel hitrun`).
+    let hr_width: f64 = arg(&args, "--hr-width")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    let hr_max_expand: usize = arg(&args, "--hr-max-expand")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(32);
+    let hr_max_shrink: usize = arg(&args, "--hr-max-shrink")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(32);
 
     let table = EmbeddingTable::load(&fixture).expect("embedding fixture");
     let dim = table.dim();
@@ -239,6 +285,18 @@ fn main() {
     );
 
     let theta_vec = point.to_vec1::<f32>().unwrap();
+    // Start scale for the full-parameter target.  `prior` draws θ at the
+    // prior's own sd; the legacy flat 0.02 is 10× below it and leaves the
+    // attention logits at ≈0, where the q/k gradient is second order and the
+    // prior pins those projections at the uniform-attention fixed point.
+    let start_scale = arg(&args, "--start-scale").unwrap_or_else(|| "prior".into());
+    let init_vec: Vec<f32> = match start_scale.as_str() {
+        "prior" => init_flat_prior(&shapes, prior_sigma, 20261122)
+            .to_vec1::<f32>()
+            .expect("flat init"),
+        "legacy" => theta_vec.clone(),
+        other => panic!("--start-scale must be prior or legacy, got {other}"),
+    };
     let schema: Vec<String> = (0..q).map(|i| format!("coordinate_{i}")).collect();
     let checkpoint = Checkpoint {
         schema: schema.clone(),
@@ -292,7 +350,7 @@ fn main() {
     } else {
         Sampled::Full {
             target: train.clone(),
-            theta: theta_vec.clone(),
+            theta: init_vec.clone(),
         }
     };
     println!(
@@ -348,13 +406,86 @@ fn main() {
             quantile(&ratios, 0.9)
         );
     }
+    let mode_base: Option<Vec<f32>> = if init_mode == "mode" {
+        let (mode, trace) =
+            adam_fit_energy(&sampled, &prior_c, sampled.start(), mode_steps, mode_lr);
+        let (_, grad) = sampled.energy_and_grad(&mode).expect("mode energy");
+        let mut total = 0.0f64;
+        for i in 0..mode.len() {
+            let g = f64::from(grad[i]) + f64::from(mode[i]) / prior_c[i];
+            total += g * g;
+        }
+        println!(
+            "init_mode=mode adam_steps={} lr={mode_lr} final_potential={:.6} mode_grad_rms={:.6e}",
+            trace.len(),
+            trace.last().copied().unwrap_or(f64::NAN),
+            (total / mode.len() as f64).sqrt()
+        );
+        Some(mode)
+    } else {
+        None
+    };
+    // The pilot covariance cannot see directions its short walk never visits.
+    // The potential's Hessian at the mode can: a Hutchinson probe gives a
+    // per-coordinate precision estimate in 2·probes gradient evaluations.
+    let hessian_diag: Option<Vec<f64>> = if hmc_mass_mode == "hessdiag" {
+        let base = mode_base
+            .as_ref()
+            .expect("--hmc-mass hessdiag requires --init mode");
+        let probes: usize = arg(&args, "--hessian-probes")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(48);
+        let hstep: f64 = arg(&args, "--hessian-step")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1e-5);
+        let t0 = std::time::Instant::now();
+        let probe = hessian_probe(&sampled, &prior_c, base, probes, hstep, 20261122 ^ 0x4e55)
+            .expect("hessian probe");
+        // `U` always contains `½Σθ²/c`, so `1/c_i` is a hard lower bound on
+        // every Hessian diagonal entry; estimates below it (or negative, which
+        // a nonconvex mode produces) are not usable as a precision.  The
+        // upper clamp bounds the metric's dynamic range, which otherwise
+        // collapses the adapted step size.
+        let clip: f64 = arg(&args, "--hessian-clip")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1e4);
+        let mut diag = probe.diag;
+        let max = diag.iter().cloned().fold(0.0f64, f64::max);
+        let mut floored = 0usize;
+        let mut capped = 0usize;
+        for (i, v) in diag.iter_mut().enumerate() {
+            let lo = 1.0 / prior_c[i];
+            if !(*v > lo) {
+                *v = lo;
+                floored += 1;
+            } else if *v > clip * lo {
+                *v = clip * lo;
+                capped += 1;
+            }
+        }
+        let mut sorted = diag.clone();
+        sorted.sort_by(f64::total_cmp);
+        println!(
+            "hessian_metric probes={} step={hstep:.1e} diag p10={:.3e} p50={:.3e} p90={:.3e} max={:.3e} clipped_to_prior={floored} clipped_to_{clip:.0}x_prior={capped} secs={:.1}",
+            probes,
+            quantile(&sorted, 0.1),
+            quantile(&sorted, 0.5),
+            quantile(&sorted, 0.9),
+            max,
+            t0.elapsed().as_secs_f64()
+        );
+        Some(diag)
+    } else {
+        None
+    };
     let want_pilot = pilot_steps > 0 && !exact_proposal;
+    let mut pilot_draws: Option<Vec<Vec<f32>>> = None;
     let proposal_c: Option<Vec<f64>> = if want_pilot {
         let pilot_cfg = VectorSamplerConfig {
             steps: pilot_steps,
             burn: pilot_steps / 4,
             thin: 1,
-            rho: 0.9999,
+            rho: pilot_rho,
             refresh: 0.01,
             prior_sigma,
             draws: (pilot_steps - pilot_steps / 4).max(1),
@@ -363,7 +494,7 @@ fn main() {
             &sampled,
             &prior_c,
             pilot_cfg,
-            sampled.start(),
+            mode_base.clone().unwrap_or_else(|| sampled.start()),
             20261122 ^ 0x7c1,
         )
         .expect("pilot chain");
@@ -389,15 +520,17 @@ fn main() {
         let mut ratios: Vec<f64> = var.iter().zip(&prior_c).map(|(v, c)| v / c).collect();
         ratios.sort_by(f64::total_cmp);
         println!(
-            "pilot steps={} draws={} accepted={}/{} rho=0.9999 var_over_prior p10={:.3e} p50={:.3e} p90={:.3e}",
+            "pilot steps={} draws={} accepted={}/{} rho={} var_over_prior p10={:.3e} p50={:.3e} p90={:.3e}",
             pilot_cfg.steps,
             pilot.draws.len(),
             pilot.accepted,
             pilot.proposals,
+            pilot_rho,
             quantile(&ratios, 0.1),
             quantile(&ratios, 0.5),
             quantile(&ratios, 0.9)
         );
+        pilot_draws = Some(pilot.draws);
         Some(
             var.iter()
                 .zip(&prior_c)
@@ -406,6 +539,20 @@ fn main() {
         )
     } else {
         None
+    };
+    let lowrank_cov: Option<LowRankCovariance> = match (&pilot_draws, hmc_mass_mode.as_str()) {
+        (Some(draws), "lowrank") => {
+            let cov = LowRankCovariance::from_draws(draws, lowrank_rank, 1e-6)
+                .expect("low-rank covariance");
+            println!(
+                "lowrank_metric rank={} dim={} pilot_draws={}",
+                cov.rank(),
+                cov.dim(),
+                draws.len()
+            );
+            Some(cov)
+        }
+        _ => None,
     };
     let mut chains = Vec::with_capacity(chain_count);
     for chain_index in 0..chain_count {
@@ -420,9 +567,8 @@ fn main() {
                 post.draw(&mut init_rng)
             }
         } else {
-            sampled
-                .start()
-                .iter()
+            let base: Vec<f32> = mode_base.clone().unwrap_or_else(|| sampled.start());
+            base.iter()
                 .map(|&v| {
                     let z: f64 = rng.sample(StandardNormal);
                     (f64::from(v) + jitter * z) as f32
@@ -450,25 +596,143 @@ fn main() {
                 step_size: hmc_eps,
                 adapt_step_size: !hmc_fixed_step,
                 target_accept: 0.8,
+                jitter_leapfrog: hmc_jitter,
             };
-            let hmc = match (hmc_mass_mode.as_str(), &exact) {
-                ("exact", Some(post)) => {
-                    run_hmc_chain_whitened(&sampled, &prior_c, &post.dense(), hmc_cfg, start, seed)
+            let hmc = if temper_k > 1 {
+                let ladder: Vec<f64> = (0..temper_k)
+                    .map(|i| {
+                        let frac = if temper_k > 1 {
+                            (temper_k - 1 - i) as f64 / (temper_k - 1) as f64
+                        } else {
+                            0.0
+                        };
+                        temper_min_beta.powf(frac)
+                    })
+                    .collect();
+                let mass: Vec<f64> = match hmc_mass_mode.as_str() {
+                    "hessdiag" => hessian_diag
+                        .clone()
+                        .expect("--hmc-mass hessdiag requires --init mode"),
+                    _ => prior_c.iter().map(|c| 1.0 / c).collect(),
+                };
+                let tcfg = TemperConfig {
+                    steps: sample_steps,
+                    burn: sample_steps / 4,
+                    thin,
+                    draws: requested_draws.min(((sample_steps - sample_steps / 4) / thin).max(1)),
+                    leapfrog: hmc_leapfrog,
+                    step_size: hmc_eps,
+                    adapt_step_size: !hmc_fixed_step,
+                    target_accept: 0.8,
+                    ladder,
+                    swap_interval: temper_swap,
+                };
+                let out = pcnl::vector_model::run_parallel_tempering(
+                    &sampled, &prior_c, &mass, tcfg, start, seed,
+                )
+                .expect("parallel tempering");
+                println!(
+                    "chain={chain_index} kernel=tempering replicas={} ladder={:?} swaps={}/{} replica_accept={:?} replica_final_u={:?} eps_cold={:.3e} draws={} accepted={}/{} mean_accept={:.3}",
+                    temper_k,
+                    (0..temper_k)
+                        .map(|i| {
+                            let frac = (temper_k - 1 - i) as f64 / (temper_k - 1) as f64;
+                            (temper_min_beta.powf(frac) * 1e4).round() / 1e4
+                        })
+                        .collect::<Vec<_>>(),
+                    out.swap_accepted,
+                    out.swaps,
+                    out.replica_accept
+                        .iter()
+                        .map(|v| (v * 1e3).round() / 1e3)
+                        .collect::<Vec<_>>(),
+                    out.replica_final_u
+                        .iter()
+                        .map(|v| (v * 1e2).round() / 1e2)
+                        .collect::<Vec<_>>(),
+                    out.cold.step_size,
+                    out.cold.draws.len(),
+                    out.cold.accepted,
+                    out.cold.proposals,
+                    out.cold.mean_accept
+                );
+                out.cold
+            } else {
+                match (hmc_mass_mode.as_str(), &exact) {
+                    ("exact", Some(post)) => run_hmc_chain_whitened(
+                        &sampled,
+                        &prior_c,
+                        &post.dense(),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
+                    // `run_hmc_chain` takes the metric `M` (mass), which must be
+                    // the precision so that `M⁻¹A` has unit scale.
+                    ("diagonal", Some(post)) => run_hmc_chain(
+                        &sampled,
+                        &prior_c,
+                        &post.variance().iter().map(|v| 1.0 / v).collect::<Vec<_>>(),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
+                    ("hessdiag", _) => run_hmc_chain(
+                        &sampled,
+                        &prior_c,
+                        hessian_diag
+                            .as_ref()
+                            .expect("--hmc-mass hessdiag requires --init mode"),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
+                    ("lowrank", _) => run_hmc_chain_low_rank(
+                        &sampled,
+                        &prior_c,
+                        lowrank_cov
+                            .as_ref()
+                            .expect("--hmc-mass lowrank requires --pilot-steps"),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
+                    ("pilot", _) => run_hmc_chain(
+                        &sampled,
+                        &prior_c,
+                        &proposal_c
+                            .as_ref()
+                            .expect("--hmc-mass pilot requires --pilot-steps")
+                            .iter()
+                            .map(|v| 1.0 / v)
+                            .collect::<Vec<_>>(),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
+                    _ => run_hmc_chain(
+                        &sampled,
+                        &prior_c,
+                        &prior_c.iter().map(|v| 1.0 / v).collect::<Vec<_>>(),
+                        hmc_cfg,
+                        start,
+                        seed,
+                    ),
                 }
-                ("diagonal", Some(post)) => {
-                    run_hmc_chain(&sampled, &prior_c, &post.variance(), hmc_cfg, start, seed)
-                }
-                _ => run_hmc_chain(&sampled, &prior_c, &prior_c, hmc_cfg, start, seed),
-            }
-            .expect("hmc chain");
+                .expect("hmc chain")
+            };
             println!(
-                "chain={chain_index} kernel=hmc mass={} leapfrog={} steps={} burn={} eps_initial={} eps_frozen={:.5} draws={} accepted={}/{} mean_accept={:.3} grad_evals={}",
+                "chain={chain_index} kernel=hmc mass={} leapfrog={} jitter={} steps={} burn={} eps_initial={} eps_frozen={:.3e} draws={} accepted={}/{} mean_accept={:.3} grad_evals={}",
                 match (hmc_mass_mode.as_str(), exact.is_some()) {
                     ("exact", true) => "exact_dense",
                     ("diagonal", true) => "exact_diagonal",
+                    ("pilot", _) => "pilot_diagonal",
+                    ("lowrank", _) => "lowrank_plus_diag",
+                    ("hessdiag", _) => "hessian_diagonal",
                     _ => "prior_diagonal",
                 },
                 hmc_cfg.leapfrog,
+                hmc_cfg.jitter_leapfrog,
                 hmc_cfg.steps,
                 hmc_cfg.burn,
                 hmc_cfg.step_size,
@@ -484,6 +748,39 @@ fn main() {
                 draws: hmc.draws,
                 proposals: hmc.proposals,
                 accepted: hmc.accepted,
+                cn_attempts: 0,
+                cn_accepted: 0,
+                refresh_attempts: 0,
+                refresh_accepted: 0,
+            }
+        } else if kernel == "hitrun" {
+            let hr_cfg = HitRunConfig {
+                moves: sample_steps,
+                burn: sample_steps / 4,
+                thin,
+                draws: requested_draws.min(((sample_steps - sample_steps / 4) / thin).max(1)),
+                width: hr_width,
+                max_expand: hr_max_expand,
+                max_shrink: hr_max_shrink,
+            };
+            let hr = run_hit_and_run(&sampled, &prior_c, hr_cfg.clone(), start, seed)
+                .expect("hit-and-run chain");
+            println!(
+                "chain={chain_index} kernel=hitrun moves={} burn={} width={} draws={} moved={}/{} mean_step={:.3} potential_evals={}",
+                hr_cfg.moves,
+                hr_cfg.burn,
+                hr_cfg.width,
+                hr.draws.len(),
+                hr.accepted,
+                hr.proposals,
+                hr.step_size,
+                hr.grad_evals
+            );
+            VectorChain {
+                theta: hr.theta,
+                draws: hr.draws,
+                proposals: hr.proposals,
+                accepted: hr.accepted,
                 cn_attempts: 0,
                 cn_accepted: 0,
                 refresh_attempts: 0,

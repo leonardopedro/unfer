@@ -3387,6 +3387,7 @@ version = "0.1.0"
 dependencies = [
  "candle-core",
  "candle-nn",
+ "nalgebra",
  "rand 0.9.5",
  "rand_distr 0.5.1",
  "rayon",

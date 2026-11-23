@@ -1,12 +1,16 @@
 # Real scalar λφ⁴ — numerical research and validation plan
 
-**First experiment.** Evolve a single outer excitation for the continuous scalar
-and three independent jet coordinates. Use the local inner Hamiltonian
-h = pₛ²/2 + (j₁² + j₂² + j₃²)/2 + λ(s²−v²)²/4. Spatial position remains
-continuous. The integer labels in the code denote Mehler occupations. The number
-of shifted-solve vectors determines the rational Krylov rank. Resolve the effect
-of changing λ on the normalized Gaussian return probability by enclosing the
-full-action error for each trajectory.
+**First experiment.** Evolve a single outer excitation for the continuous-momentum
+λφ⁴ Hamiltonian `h_cont(k, φ) = ½ p_φ² + ½(k₁² + k₂² + k₃²) φ² + (λ/4)(φ² − v²)²`
+on `L²(ℝ³_k × ℝ_φ)` (`book.tex` SIRK / Mehler / nested-Fock framework). Momentum
+`k ∈ ℝ³` and field `φ ∈ ℝ` are **continuous** (never a momentum sum or spatial
+lattice); no spatial-derivative jet constraints are needed because the quadratic
+gradient is diagonal multiplication by `|k|²`. **Only the Krylov subspace and
+Mehler-Hermite occupation window in SIRK are discrete.** Resolve the effect of
+changing `λ` and the continuous momentum wave-packet spread `width_k` on the
+normalized Gaussian return probability by enclosing the full-action error for
+each trajectory.
+[Master cheap-LLM plan](../../timepiece/PHI4_IMPROVEMENT_PLAN.md) ·
 [Operator and Lean targets](../../timepiece/PHI4_FORMALIZATION_PLAN.md) ·
 [Cadabra2 derivation and exact checks](PHI4_ANALYTIC_PLAN.md)
 
@@ -30,65 +34,51 @@ full-action error for each trajectory.
   function. The local mixed-mode interaction needs its own evidence.
   [Pilot](../fock_sirk/examples/sm_finite_mode.rs) · [Reported data](SM_RESEARCH_PLAN.md)
 
-## Experiment sequence
+## Experiment sequence (aligned with `P11`–`P13`)
 
-1. **Implement the continuous-coordinate operator.** Assign one real mode to s and
-   three to j₁, j₂, j₃. Give only s a kinetic term. At unit width and λ = v = 1,
-   check the full action on the normalized product Gaussian. In the unnormalized
-   Hermite polynomial convention its constant coefficient is 17/8, its field
-   degree-two and degree-four coefficients are 7/8 and 1/4, and each pure degree-two
-   jet coefficient is 1/2. Weight the output by the factorial Gram matrix, or
-   convert the coefficients before comparing normalized occupation vectors. The
-   squared residual about the mean is 145/32. Check an occupied jet input as well.
-   Check inner constant shifts by 0, c and 2c in the first three outer sectors.
-2. **Establish a finite reference.** At total inner occupation C apply each full
-   word before projecting the output. On a small Hermite window independently
-   evaluate matrix elements by Gaussian polynomial moments. Compare the projected
-   evolution with the rational result and retain full images for a separate
-   residual bound. For example at C = 0 the fourth power of the compressed field
-   coordinate vanishes while the compression of its fourth power gives 3.
-3. **Run the bounded comparison.** Prepare one outer particle in the unit-width
-   Gaussian inner state ψ. Use the bounded observable O = |ψ⟩⟨ψ| on this sector.
-   Sweep C = 4, 8, 12 and Krylov ranks 2 and 4 at t = 0.05 and 0.1 as initial
-   pilot values. Fix λ = 1 and 1.1 in paired cells with v = 1. Use identical
-   initial states, shifts and windows across each pair. For example use the common
-   shift budget 7t and spacing t, validating each rank with the existing helper.
-   Run λ = 1 against itself as a null control. Record the effect interval and its
-   cost. A changed width requires transporting H, ψ and O together before projection.
-   Record how much of the residual is carried by discarded jet occupations.
-4. **Bound the evolution that was computed.** With window projector P and isometry
-   V, the numerical compression uses B ≈ V†(γI + iPHP)⁻¹V on the window, and
-   G = γI − B⁻¹. Reconstruct V exp(tG)V†ψ. Keep the Ritz matrix V†HV for spectral
-   diagnostics. Compute D = iVG − HV using **full**, unprojected images of every
-   basis column. For a self-adjoint H and an exactly isometric V, bound state error
-   by initial leakage plus the time integral of ‖D exp(sG)V†ψ‖. Bound reduced
-   growth or enclose this integral. Record separately the error against the finite
-   reference and the norms of discarded action. The latter can remain large even
-   when the former is small. Allow for basis nonorthogonality, finite precision,
-   GMRES, inversion, Padé and restarts wherever their effects are not already
-   covered by the returned-map defect. With a state error ε, charge each probability
-   estimate 2ε+ε² and add the two budgets for a response. Require the resulting
-   interval to exclude zero before interpreting its sign. Bind parameters and
-   interval endpoints to a Lean statement for this scalar instance. The SM defect
-   artifact supplies reusable arithmetic and a conditional Duhamel estimate.
-   [Defect implementation](../fock_sirk/src/sm_defect.rs) ·
-   [SM fixture](fixtures/sm_defect_bridge.json)
-5. **Extend the continuous-coordinate study.** For a fixed operator and preparation,
-   compare even and odd channels as the occupation window grows. A mass claim needs
-   bounds on missed states and the appropriate absolute energy or channel splitting.
-   For spatial observables specify the continuous position dependence, test functions
-   and their matrix elements on the common core. Any identification of independent
-   jets with spatial derivatives of a field needs its own proof.
+1. **Implement the continuous-momentum operator (`P11`).**
+   In `nested_fock_algebra/src/phi4_momentum.rs`, build `ScalarMomCont` on the
+   four continuous coordinates `(φ, k₁, k₂, k₃)` using `InnerExpr::{coordinate, momentum}`
+   with `½ p_φ² + ½(k₁² + k₂² + k₃²) φ² + (λ/4)(φ² − v²)²` (retaining `λv⁴/4` and
+   parametrizing continuous Mehler widths `width_phi`, `width_k`). At unit
+   parameters and widths, match all 11×3 `S₃`-symmetric entries of
+   `docs/fixtures/phi4_momentum_mehler.json` (mean `17/8`, full variance `553/32`,
+   outside-3-mode-window squared `9/2`, nonzero `He₂(φ) K₂` coupling `1/2`) to
+   `< 1e-12`, and verify `dΓ(h)Ω = 0`, outer shifts `0, c, 2c`, and `dΓ(B)² ≠ dΓ(B²)`.
+2. **Match the exact rank-2 Hashimoto-SIRK reference (`P12`, test 1).**
+   On the degree-`≤ 2` even Hermite window (`cutoff = 2`) of `ScalarMomCont` at
+   unit parameters, run `solve_joint_sirk` (`JointKrylovMethod::ShiftInvert`)
+   with shifts `[10i, 5i]` at `t = 0.01`, verify `p(0.01) ∈ [319447/320000, 39999/40000]`,
+   and confirm the full unprojected tail norm squared equals `9/2`.
+3. **Run independent Hermite-cutoff, Krylov-rank, coupling, and momentum-spread sweeps (`P12`, tests 2–3).**
+   Prepare one outer particle in the continuous unit-width Gaussian `ψ`, observable
+   `O = |ψ⟩⟨ψ|`. Sweep Hermite cutoff `C ∈ {4, 8, 12}` at fixed Krylov rank `m = 2`,
+   then `m ∈ {2, 4, 6}` at fixed `C = 8`. Run paired cells `λ = 1.0` vs `1.1`
+   (plus null control `1.0` vs `1.0`) and continuous momentum wave-packet spread
+   `width_k = 1.0` vs `1.5` at `v = 1`, `t = 0.05` using identical windows and
+   `hashimoto_unitary_shifts`.
+4. **Bound the computed evolution with full-action defects (`P12`–`P13`).**
+   Use `fock_sirk::sm_defect::{defect_terms, interval_terms}` with full unprojected
+   images `HV`, charge `2ε + ε²` per probability estimate, and require the paired
+   response intervals to exclude zero while the null control contains zero.
+   Check even/odd `ℤ₂` parity conservation (`φ ↦ −φ`) and verify every Ritz
+   eigenvalue obeys the unconditional inner gap `θ₀ ≥ 7/64` (recording the
+   odd-even splitting as an inner excitation splitting, never as the outer vacuum gap).
+5. **Compare against frozen benchmarks (`P12`, test 5).**
+   Contrast continuous `ScalarMomCont` (mean `17/8`, variance `553/32`, nonzero
+   `He₂(φ) K₂` coupling), auxiliary static-jet `jetModel` (mean `17/8`, variance
+   `145/32`, zero coupling), and frozen 2-site lattice `ScalarGrid::two_site`
+   (mean `13/4`, variance `337/16`).
 
-## Existing lattice comparison
+## Existing lattice comparison (frozen)
 
-`ScalarGrid::periodic` and `two_site_mode_hamiltonian` implement a different
-Hamiltonian built from periodic links. Its two-site columns and its three-mode
-compressed evolution have Rust tests. At unit parameters and t = 0.01 its analytic
-Gaussian return interval is [0.99789375, 0.999775]. The three-mode exponential
-test is a finite reference. The rank-two Hashimoto generator comes from a compressed
-resolvent. The site fixture can check operator-ordering and residual routines.
-Its site spacing, Fourier sums and lattice return interval are specific to this example.
+`ScalarGrid::periodic` and `two_site_mode_hamiltonian` implement a separate
+periodic-lattice comparison operator; do not extend it further. Before starting
+the primary `phi4_momentum` suite, fix the unweighted Hermite-tail norm bug in
+`two_site_return_lies_in_analytic_interval` (`P0` in
+`../../timepiece/PHI4_IMPROVEMENT_PLAN.md`). All new Rust code lives in
+`nested_fock_algebra/src/phi4_momentum.rs`, `fock_sirk/tests/phi4_momentum_sirk.rs`,
+and `fock_sirk/examples/phi4_momentum_sirk.rs` (`P11`–`P13`).
 [Comparison builder](../nested_fock_algebra/src/phi4_scalar.rs) ·
 [Exact comparison fixture](fixtures/phi4_mehler.json)
 

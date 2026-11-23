@@ -33,9 +33,11 @@ use crate::model::{LayerSlices, Variant, layer};
 use crate::normalize::NormGrad;
 use crate::target::Potential;
 use candle_core::{DType, Device, Tensor, Var};
+use nalgebra::DMatrix;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rand_distr::StandardNormal;
+use rayon::prelude::*;
 
 /// Shape of the R13 vector head.  `tokens` is the number of ordered feature
 /// vectors extracted from one embedding; the active plan fixes it at four.
@@ -228,6 +230,29 @@ pub fn init_flat(shapes: &VectorShapes, std: f64, seed: u64) -> Tensor {
         .map(|_| {
             let z: f64 = rng.sample(StandardNormal);
             (z * std) as f32
+        })
+        .collect();
+    Tensor::from_vec(v, shapes.flat_size(), &Device::Cpu).expect("cpu tensor")
+}
+
+/// Initial vector drawn at the prior's own scale: coordinate `i` is
+/// `N(0, prior_c[i])` with `prior_c[i] = prior_sigma² · prior_scales[i]²`.
+///
+/// A flat `std` far below the prior sd leaves the attention logits at ≈0.
+/// There `∂logits/∂W_q ∝ W_k x` is second order, so the prior term wins and
+/// pulls `W_q, W_k` toward zero — the fixed point where every logit is 0, the
+/// softmax is exactly uniform, and the q/k gradient is exactly zero.  The
+/// projections then never move and a "four-block" model behaves like a
+/// single-path MLP.  At prior scale the logits are `O(1)` and the q/k gradients
+/// are first order, so all blocks get to use attention.
+pub fn init_flat_prior(shapes: &VectorShapes, prior_sigma: f64, seed: u64) -> Tensor {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let v: Vec<f32> = shapes
+        .prior_scales()
+        .iter()
+        .map(|scale| {
+            let z: f64 = rng.sample(StandardNormal);
+            (z * prior_sigma * scale) as f32
         })
         .collect();
     Tensor::from_vec(v, shapes.flat_size(), &Device::Cpu).expect("cpu tensor")
@@ -548,6 +573,119 @@ pub trait EnergyTarget {
     fn energy_and_grad(&self, theta: &[f32]) -> Option<(f64, Vec<f32>)>;
 }
 
+/// Sampled potential `U(θ) + ½ Σ θ_i² / prior_c_i` and its gradient.  [`adam_fit`]
+/// and the samplers use this same objective, so a mode of it is a stationary
+/// point for the target they actually explore.
+fn potential_energy_and_grad<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    theta: &[f32],
+) -> Option<(f64, Vec<f64>)> {
+    let (u, grad) = target.energy_and_grad(theta)?;
+    let n = theta.len();
+    let mut total_u = u;
+    let mut total_grad = vec![0.0f64; n];
+    for i in 0..n {
+        let th = f64::from(theta[i]);
+        total_u += 0.5 * th * th / prior_c[i];
+        total_grad[i] = f64::from(grad[i]) + th / prior_c[i];
+    }
+    Some((total_u, total_grad))
+}
+
+/// Hutchinson probe of the sampled potential's Hessian at `theta`.
+///
+/// Rademacher vectors `z ∈ {±1}^d` give exact Hessian–vector products by a
+/// central difference of the *gradient* over a step of `step` on every
+/// coordinate, so `(g(θ+hz) − g(θ−hz)) / 2h ≈ Hz`; `E[z ∘ Hz] = diag(H)`.
+/// The returned `columns` are the unscaled `Hz` vectors, usable as a
+/// limited-memory basis.  Cost is `2·probes` gradient evaluations, which is
+/// the only way to see the stiff directions a short pilot walk never visits.
+#[derive(Debug, Clone)]
+pub struct HessianProbe {
+    /// Hutchinson estimate of the Hessian diagonal (the metric's diagonal).
+    pub diag: Vec<f64>,
+    /// `H z_i` for each probe vector `z_i`.
+    pub columns: Vec<Vec<f64>>,
+}
+
+pub fn hessian_probe<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    theta: &[f32],
+    probes: usize,
+    step: f64,
+    seed: u64,
+) -> Option<HessianProbe> {
+    let d = theta.len();
+    assert_eq!(prior_c.len(), d);
+    assert!(probes > 0 && step > 0.0);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut diag = vec![0.0f64; d];
+    let mut columns = Vec::with_capacity(probes);
+    for _ in 0..probes {
+        let z: Vec<f64> = (0..d)
+            .map(|_| {
+                if rng.sample::<f64, _>(StandardNormal) >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            })
+            .collect();
+        let plus: Vec<f32> = (0..d)
+            .map(|i| (f64::from(theta[i]) + step * z[i]) as f32)
+            .collect();
+        let minus: Vec<f32> = (0..d)
+            .map(|i| (f64::from(theta[i]) - step * z[i]) as f32)
+            .collect();
+        let (_, gp) = potential_energy_and_grad(target, prior_c, &plus)?;
+        let (_, gm) = potential_energy_and_grad(target, prior_c, &minus)?;
+        let col: Vec<f64> = (0..d).map(|i| (gp[i] - gm[i]) / (2.0 * step)).collect();
+        for i in 0..d {
+            diag[i] += z[i] * col[i] / probes as f64;
+        }
+        columns.push(col);
+    }
+    Some(HessianProbe { diag, columns })
+}
+
+/// Adam on the sampled potential `U(θ) + ½ Σ θ_i² / prior_c_i`, i.e. a mode of
+/// the target the samplers actually use.  [`adam_fit`] minimizes the mean loss
+/// alone, so with the sampling prior added its optimum is not stationary; on
+/// the full 57,378-coordinate target the residual gradient is large enough to
+/// freeze an HMC step size.  Returns the iterate and the potential trace.
+pub fn adam_fit_energy<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    theta0: Vec<f32>,
+    steps: usize,
+    lr: f64,
+) -> (Vec<f32>, Vec<f64>) {
+    assert_eq!(theta0.len(), target.dim());
+    assert_eq!(prior_c.len(), target.dim());
+    let mut theta = theta0;
+    let n = theta.len();
+    let (mut m, mut v) = (vec![0.0f64; n], vec![0.0f64; n]);
+    let (b1, b2, eps) = (0.9f64, 0.999f64, 1e-8f64);
+    let mut trace = Vec::with_capacity(steps);
+    for t in 1..=steps {
+        let Some((total_u, total_grad)) = potential_energy_and_grad(target, prior_c, &theta) else {
+            break;
+        };
+        trace.push(total_u);
+        let (c1, c2) = (1.0 - b1.powi(t as i32), 1.0 - b2.powi(t as i32));
+        for i in 0..n {
+            let g = total_grad[i];
+            m[i] = b1 * m[i] + (1.0 - b1) * g;
+            v[i] = b2 * v[i] + (1.0 - b2) * g * g;
+            let step = lr * (m[i] / c1) / ((v[i] / c2).sqrt() + eps);
+            theta[i] = (f64::from(theta[i]) - step) as f32;
+        }
+    }
+    (theta, trace)
+}
+
 impl EnergyTarget for VectorRegression {
     fn dim(&self) -> usize {
         self.shapes.flat_size()
@@ -576,7 +714,7 @@ pub fn readout_range(shapes: &VectorShapes) -> std::ops::Range<usize> {
 /// fixed flat parameter vector.
 ///
 /// This is the low-dimensional target for a four-chain diagnostic: at the full
-/// 1538-dimensional R13 size the CN kernel's integrated autocorrelation time is
+/// 57,378-coordinate R13 size the CN kernel's integrated autocorrelation time is
 /// a few thousand steps, so a promotion-grade ESS is out of reach.  Sampling
 /// the 34 readout coordinates conditional on a point-estimated backbone is a
 /// *different, explicitly conditional* target, not the full posterior.
@@ -1320,6 +1458,13 @@ pub struct HmcConfig {
     pub step_size: f64,
     pub adapt_step_size: bool,
     pub target_accept: f64,
+    /// Draw the trajectory length uniformly from `1..=2·leapfrog` for each
+    /// proposal instead of using a fixed `leapfrog`.  Both the forward map and
+    /// its reverse use the same drawn length, so the proposal stays symmetric.
+    /// This breaks leapfrog resonance, where a fixed length returns the
+    /// trajectory near its start and the chain appears frozen while the MH
+    /// acceptance stays high.
+    pub jitter_leapfrog: bool,
 }
 
 impl Default for HmcConfig {
@@ -1333,6 +1478,7 @@ impl Default for HmcConfig {
             step_size: 1.0,
             adapt_step_size: true,
             target_accept: 0.8,
+            jitter_leapfrog: false,
         }
     }
 }
@@ -1412,6 +1558,238 @@ fn total_energy<T: EnergyTarget>(
     })
 }
 
+/// Low-rank-plus-diagonal Gaussian covariance `C = D + W Λ Wᵀ` estimated from
+/// pilot draws, with `D = diag(v)`, unit-norm columns `W` and `k` leading
+/// sample-covariance directions.
+///
+/// It is used as the HMC metric through its inverse (`M = C⁻¹`), applied with
+/// Woodbury's identity, so a leapfrog step costs `O(d·k)` plus one `k × k`
+/// solve.  A diagonal metric cannot whiten the data Hessian's off-diagonal
+/// structure; the low-rank part carries the directions the pilot actually
+/// explored.  As with any pilot estimate, directions the pilot never visited
+/// fall back to the diagonal residual and are not whitened.
+#[derive(Clone, Debug)]
+pub struct LowRankCovariance {
+    dim: usize,
+    rank: usize,
+    v: Vec<f64>,
+    w: Vec<f64>,        // dim × rank, row-major
+    lam: Vec<f64>,      // rank
+    w_over_v: Vec<f64>, // dim × rank, row-major
+    chol: Vec<f64>,     // rank × rank lower factor of Λ⁻¹ + WᵀD⁻¹W
+}
+
+impl LowRankCovariance {
+    /// Estimate `C` from pilot draws.  `rank` leading sample-covariance
+    /// directions are kept; the diagonal residual is floored at
+    /// `floor_frac × max_i var_i` for numerical stability.
+    pub fn from_draws(
+        draws: &[Vec<f32>],
+        rank: usize,
+        floor_frac: f64,
+    ) -> candle_core::Result<Self> {
+        let n = draws.len();
+        if n < 2 || rank == 0 {
+            return Err(candle_core::Error::Msg(
+                "low-rank covariance needs at least 2 draws and rank >= 1".into(),
+            ));
+        }
+        let dim = draws[0].len();
+        if dim == 0 || draws.iter().any(|d| d.len() != dim) {
+            return Err(candle_core::Error::Msg(
+                "pilot draws must share one non-zero dimension".into(),
+            ));
+        }
+        let rank = rank.min(n - 1).min(dim);
+        let nf = n as f64;
+        let dof = (nf - 1.0).max(1.0);
+        let mean: Vec<f64> = (0..dim)
+            .into_par_iter()
+            .map(|k| draws.iter().map(|d| f64::from(d[k])).sum::<f64>() / nf)
+            .collect();
+        let var: Vec<f64> = (0..dim)
+            .into_par_iter()
+            .map(|k| {
+                draws
+                    .iter()
+                    .map(|d| {
+                        let x = f64::from(d[k]) - mean[k];
+                        x * x
+                    })
+                    .sum::<f64>()
+                    / dof
+            })
+            .collect();
+        // Gram of the centered draws: G[i, j] = (x_i − m)·(x_j − m) / dof.
+        let rows: Vec<Vec<f64>> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let di = &draws[i];
+                (0..=i)
+                    .map(|j| {
+                        let dj = &draws[j];
+                        let mut s = 0.0f64;
+                        for k in 0..dim {
+                            s += (f64::from(di[k]) - mean[k]) * (f64::from(dj[k]) - mean[k]);
+                        }
+                        s / dof
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut g = vec![0.0f64; n * n];
+        for i in 0..n {
+            for j in 0..=i {
+                g[i * n + j] = rows[i][j];
+                g[j * n + i] = rows[i][j];
+            }
+        }
+        let eig = DMatrix::from_row_slice(n, n, &g).symmetric_eigen();
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by(|&a, &b| eig.eigenvalues[b].total_cmp(&eig.eigenvalues[a]));
+        let sqrt_dof = dof.sqrt();
+        let mut w = vec![0.0f64; dim * rank];
+        let mut lam = vec![0.0f64; rank];
+        for (slot, &idx) in order.iter().take(rank).enumerate() {
+            if !(eig.eigenvalues[idx] > 0.0) {
+                continue;
+            }
+            let u = eig.eigenvectors.column(idx);
+            let col: Vec<f64> = (0..dim)
+                .into_par_iter()
+                .map(|k| {
+                    let mut s = 0.0f64;
+                    for i in 0..n {
+                        s += (f64::from(draws[i][k]) - mean[k]) * u[i];
+                    }
+                    s / sqrt_dof
+                })
+                .collect();
+            let norm = col.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if !(norm > 0.0) {
+                continue;
+            }
+            lam[slot] = norm * norm;
+            for k in 0..dim {
+                w[k * rank + slot] = col[k] / norm;
+            }
+        }
+        let var_max = var.iter().cloned().fold(0.0f64, f64::max);
+        let floor = (floor_frac * var_max).max(f64::MIN_POSITIVE);
+        let mut v = vec![0.0f64; dim];
+        for k in 0..dim {
+            let mut explained = 0.0f64;
+            for j in 0..rank {
+                let wj = w[k * rank + j];
+                explained += lam[j] * wj * wj;
+            }
+            v[k] = (var[k] - explained).max(floor);
+        }
+        let mut small = vec![0.0f64; rank * rank];
+        for a in 0..rank {
+            for b in 0..=a {
+                let mut acc = 0.0f64;
+                for k in 0..dim {
+                    acc += w[k * rank + a] * w[k * rank + b] / v[k];
+                }
+                if a == b {
+                    acc += 1.0 / lam[a].max(f64::MIN_POSITIVE);
+                }
+                small[a * rank + b] = acc;
+                small[b * rank + a] = acc;
+            }
+        }
+        let (chol, _) = cholesky_lower(&small, rank).ok_or_else(|| {
+            candle_core::Error::Msg("low-rank metric is not positive definite".into())
+        })?;
+        let w_over_v = (0..dim * rank)
+            .map(|i| w[i] / v[i / rank])
+            .collect::<Vec<_>>();
+        Ok(Self {
+            dim,
+            rank,
+            v,
+            w,
+            lam,
+            w_over_v,
+            chol,
+        })
+    }
+
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    pub fn rank(&self) -> usize {
+        self.rank
+    }
+
+    /// `C x = D x + W Λ Wᵀ x`.
+    fn apply_cov(&self, x: &[f64]) -> Vec<f64> {
+        let mut coords = vec![0.0f64; self.rank];
+        for j in 0..self.rank {
+            let mut s = 0.0f64;
+            for k in 0..self.dim {
+                s += self.w[k * self.rank + j] * x[k];
+            }
+            coords[j] = self.lam[j] * s;
+        }
+        (0..self.dim)
+            .map(|k| {
+                let mut y = self.v[k] * x[k];
+                for j in 0..self.rank {
+                    y += self.w[k * self.rank + j] * coords[j];
+                }
+                y
+            })
+            .collect()
+    }
+
+    /// `C⁻¹ x` by Woodbury's identity.
+    fn solve(&self, x: &[f64]) -> Vec<f64> {
+        let t: Vec<f64> = (0..self.dim).map(|k| x[k] / self.v[k]).collect();
+        let mut rhs = vec![0.0f64; self.rank];
+        for j in 0..self.rank {
+            let mut s = 0.0f64;
+            for k in 0..self.dim {
+                s += self.w[k * self.rank + j] * t[k];
+            }
+            rhs[j] = s;
+        }
+        let y = forward_substitute(&self.chol, self.rank, &rhs);
+        let y = back_substitute_transpose(&self.chol, self.rank, &y);
+        (0..self.dim)
+            .map(|k| {
+                let mut out = t[k];
+                for j in 0..self.rank {
+                    out -= self.w_over_v[k * self.rank + j] * y[j];
+                }
+                out
+            })
+            .collect()
+    }
+
+    /// `N(0, C⁻¹)` momentum: solve a `N(0, C)` draw.
+    fn draw(&self, rng: &mut StdRng) -> Vec<f64> {
+        let z: Vec<f64> = (0..self.dim)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
+        let zk: Vec<f64> = (0..self.rank)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
+        let q: Vec<f64> = (0..self.dim)
+            .map(|k| {
+                let mut y = self.v[k].sqrt() * z[k];
+                for j in 0..self.rank {
+                    y += self.w[k * self.rank + j] * self.lam[j].sqrt() * zk[j];
+                }
+                y
+            })
+            .collect();
+        self.solve(&q)
+    }
+}
+
 /// HMC metric: a diagonal `K(p) = ½ Σ p_i²/m_i`, or the exact whitened metric
 /// `u = Lᵀ(θ − m)` with unit mass, where `L Lᵀ` is the posterior precision.
 /// In the whitened coordinates a Gaussian posterior is exactly standard normal,
@@ -1420,6 +1798,7 @@ fn total_energy<T: EnergyTarget>(
 enum HmcMetric<'a> {
     Diagonal(&'a [f64]),
     Whitened { cov: &'a DenseCovariance },
+    LowRank { cov: &'a LowRankCovariance },
 }
 
 impl HmcMetric<'_> {
@@ -1433,6 +1812,7 @@ impl HmcMetric<'_> {
             Self::Whitened { .. } => (0..self.dim())
                 .map(|_| rng.sample::<f64, _>(StandardNormal))
                 .collect(),
+            Self::LowRank { cov } => cov.draw(rng),
         }
     }
 
@@ -1440,6 +1820,7 @@ impl HmcMetric<'_> {
         match self {
             Self::Diagonal(m) => m.len(),
             Self::Whitened { cov } => cov.dim(),
+            Self::LowRank { cov } => cov.dim(),
         }
     }
 
@@ -1448,6 +1829,8 @@ impl HmcMetric<'_> {
         match self {
             Self::Diagonal(m) => p.iter().zip(*m).map(|(pi, mi)| pi / mi).collect(),
             Self::Whitened { cov, .. } => cov.apply_cov_factor(p),
+            // `M = C⁻¹`, so `dθ/dt = M⁻¹p = C p`.
+            Self::LowRank { cov } => cov.apply_cov(p),
         }
     }
 
@@ -1456,6 +1839,7 @@ impl HmcMetric<'_> {
         match self {
             Self::Diagonal(_) => grad.to_vec(),
             Self::Whitened { cov, .. } => cov.apply_cov_factor_transpose(grad),
+            Self::LowRank { .. } => grad.to_vec(),
         }
     }
 
@@ -1463,15 +1847,25 @@ impl HmcMetric<'_> {
         match self {
             Self::Diagonal(m) => 0.5 * p.iter().zip(*m).map(|(pi, mi)| pi * pi / mi).sum::<f64>(),
             Self::Whitened { .. } => 0.5 * p.iter().map(|pi| pi * pi).sum::<f64>(),
+            Self::LowRank { cov } => {
+                0.5 * p
+                    .iter()
+                    .zip(cov.apply_cov(p))
+                    .map(|(a, b)| a * b)
+                    .sum::<f64>()
+            }
         }
     }
 }
 
 /// Fixed-length HMC (leapfrog) with optional dual-averaging step-size
 /// adaptation during warmup.  `mass` is the diagonal metric
-/// `K(p) = ½ Σ p_i²/m_i`; pass the posterior variances for a whitened target.
-/// Every accepted move uses the full `exp(H₀ − H₁)` MH ratio, so a rejected
-/// leapfrog trajectory leaves the state untouched.
+/// `K(p) = ½ Σ p_i²/m_i`, so pass the posterior **precision** (inverse
+/// variance) to whiten a Gaussian target: with `U = ½θᵀAθ` the dynamics are
+/// `θ″ = −M⁻¹Aθ`, which is unit-frequency only for `M = A`.  Passing the
+/// variance instead squares the curvature range and drives the adapted step
+/// size to zero on ill-conditioned targets.  Every accepted move uses the full
+/// `exp(H₀ − H₁)` MH ratio, so a rejected trajectory leaves the state untouched.
 pub fn run_hmc_chain<T: EnergyTarget>(
     target: &T,
     prior_c: &[f64],
@@ -1522,6 +1916,32 @@ pub fn run_hmc_chain_whitened<T: EnergyTarget>(
     )
 }
 
+/// HMC with the low-rank-plus-diagonal metric `M = C⁻¹`, where `C` is a
+/// covariance estimated from pilot draws.  Every MH ratio still uses the full
+/// target in `θ`; the estimate only sets the metric.
+pub fn run_hmc_chain_low_rank<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    cov: &LowRankCovariance,
+    config: HmcConfig,
+    theta0: Vec<f32>,
+    seed: u64,
+) -> candle_core::Result<HmcChain> {
+    if cov.dim() != target.dim() {
+        return Err(candle_core::Error::Msg(
+            "low-rank HMC metric must be target-sized".into(),
+        ));
+    }
+    run_hmc_with_metric(
+        target,
+        prior_c,
+        &HmcMetric::LowRank { cov },
+        config,
+        theta0,
+        seed,
+    )
+}
+
 fn run_hmc_with_metric<T: EnergyTarget>(
     target: &T,
     prior_c: &[f64],
@@ -1564,6 +1984,11 @@ fn run_hmc_with_metric<T: EnergyTarget>(
             eps = log_eps.exp();
         }
         proposals += 1;
+        let leapfrog = if config.jitter_leapfrog && config.leapfrog > 1 {
+            rng.gen_range(1..=2 * config.leapfrog)
+        } else {
+            config.leapfrog
+        };
         let mut p = metric.draw(&mut rng);
         let mut proposed = theta.clone();
         let (init_u, init_k) = (current.u, metric.kinetic(&p));
@@ -1574,7 +1999,7 @@ fn run_hmc_with_metric<T: EnergyTarget>(
         }
         let mut last: Option<TotalEnergy> = None;
         let mut finite = true;
-        for l in 0..config.leapfrog {
+        for l in 0..leapfrog {
             let velocity = metric.velocity(&p);
             for i in 0..dim {
                 proposed[i] = (f64::from(proposed[i]) + eps * velocity[i]) as f32;
@@ -1591,7 +2016,7 @@ fn run_hmc_with_metric<T: EnergyTarget>(
                 }
             }
             force = metric.force(&grad);
-            if l + 1 < config.leapfrog {
+            if l + 1 < leapfrog {
                 for i in 0..dim {
                     p[i] -= eps * force[i];
                 }
@@ -1653,6 +2078,447 @@ fn run_hmc_with_metric<T: EnergyTarget>(
     })
 }
 
+/// One tempered HMC proposal at inverse temperature `beta` with a fixed metric.
+///
+/// `current` holds the *tempered* potential `βU` and gradient `β∇U`, so the
+/// acceptance ratio is the ordinary one and the density is `exp(−βU)`.
+fn tempered_step<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    metric: &HmcMetric,
+    beta: f64,
+    leapfrog: usize,
+    eps: f64,
+    rng: &mut StdRng,
+    theta: &mut Vec<f32>,
+    current: &mut TotalEnergy,
+) -> (bool, f64) {
+    let dim = theta.len();
+    let mut p = metric.draw(rng);
+    let mut proposed = theta.clone();
+    let (init_u, init_k) = (current.u, metric.kinetic(&p));
+    let mut grad = current.grad.clone();
+    let mut force = metric.force(&grad);
+    for i in 0..dim {
+        p[i] -= 0.5 * eps * force[i];
+    }
+    let mut last: Option<TotalEnergy> = None;
+    for l in 0..leapfrog {
+        let velocity = metric.velocity(&p);
+        for i in 0..dim {
+            proposed[i] = (f64::from(proposed[i]) + eps * velocity[i]) as f32;
+        }
+        match total_energy(target, prior_c, &proposed) {
+            Some(ev) => {
+                let scaled = TotalEnergy {
+                    u: beta * ev.u,
+                    grad: ev.grad.iter().map(|g| beta * g).collect(),
+                };
+                grad = scaled.grad.clone();
+                last = Some(scaled);
+            }
+            None => return (false, 0.0),
+        }
+        force = metric.force(&grad);
+        if l + 1 < leapfrog {
+            for i in 0..dim {
+                p[i] -= eps * force[i];
+            }
+        }
+    }
+    let Some(next) = last else {
+        return (false, 0.0);
+    };
+    for i in 0..dim {
+        p[i] -= 0.5 * eps * force[i];
+    }
+    let log_alpha = (init_u + init_k) - (next.u + metric.kinetic(&p));
+    let prob = if log_alpha >= 0.0 {
+        1.0
+    } else {
+        log_alpha.exp()
+    };
+    if prob >= 1.0 || (prob > 0.0 && rng.random::<f64>() < prob) {
+        *theta = proposed;
+        *current = next;
+        (true, prob)
+    } else {
+        (false, prob)
+    }
+}
+
+/// Parallel-tempering (replica-exchange) HMC configuration.
+#[derive(Clone, Debug)]
+pub struct TemperConfig {
+    pub steps: usize,
+    pub burn: usize,
+    pub thin: usize,
+    pub draws: usize,
+    pub leapfrog: usize,
+    pub step_size: f64,
+    pub adapt_step_size: bool,
+    pub target_accept: f64,
+    /// Inverse temperatures, ascending; the last must be `1.0` (the target).
+    pub ladder: Vec<f64>,
+    /// Swap adjacent replicas every this many steps.
+    pub swap_interval: usize,
+}
+
+impl TemperConfig {
+    fn validate(&self) -> candle_core::Result<()> {
+        if self.ladder.is_empty() || *self.ladder.last().unwrap() != 1.0 {
+            return Err(candle_core::Error::Msg(
+                "tempering ladder must end at beta = 1".into(),
+            ));
+        }
+        if self.ladder.windows(2).any(|w| !(w[0] < w[1]))
+            || self.ladder.iter().any(|b| !(*b > 0.0 && *b <= 1.0))
+        {
+            return Err(candle_core::Error::Msg(
+                "tempering ladder must be strictly increasing in (0, 1]".into(),
+            ));
+        }
+        if self.steps == 0 || self.thin == 0 || self.swap_interval == 0 || self.leapfrog == 0 {
+            return Err(candle_core::Error::Msg(
+                "tempering steps/thin/swap_interval/leapfrog must be non-zero".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Cold-replica result of a parallel-tempering run.
+#[derive(Clone, Debug)]
+pub struct TemperChain {
+    /// The `β = 1` replica, shaped like an ordinary HMC chain.
+    pub cold: HmcChain,
+    pub swaps: usize,
+    pub swap_accepted: usize,
+    /// Mean acceptance per replica, hottest first.
+    pub replica_accept: Vec<f64>,
+    /// Untempered potential at each replica's final state, hottest first.
+    pub replica_final_u: Vec<f64>,
+}
+
+/// Parallel tempering over the full parameter vector.
+///
+/// Replicas sample `exp(−β_k U)` with the same metric, and adjacent replicas
+/// swap states with the exact ratio `min(1, exp((β_i − β_j)(U_i − U_j)))`, so the
+/// cold chain's marginal is unchanged.  Draws are recorded from the cold chain
+/// only; the point is to let it cross between basins the single-temperature
+/// chains never leave.  All randomness comes from `seed`-derived streams, so a
+/// run is reproducible.
+#[allow(clippy::too_many_arguments)]
+pub fn run_parallel_tempering<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    mass: &[f64],
+    config: TemperConfig,
+    theta0: Vec<f32>,
+    seed: u64,
+) -> candle_core::Result<TemperChain> {
+    config.validate()?;
+    let dim = target.dim();
+    if mass.len() != dim || mass.iter().any(|m| !m.is_finite() || *m <= 0.0) {
+        return Err(candle_core::Error::Msg(
+            "tempering mass must be finite, positive and target-sized".into(),
+        ));
+    }
+    if theta0.len() != dim {
+        return Err(candle_core::Error::Msg(
+            "tempering theta0 must be target-sized".into(),
+        ));
+    }
+    let metric = HmcMetric::Diagonal(mass);
+    let k = config.ladder.len();
+    let (gamma, t0, kappa) = (0.05f64, 10.0f64, 0.75f64);
+    let mut thetas: Vec<Vec<f32>> = vec![theta0; k];
+    let mut currents: Vec<TotalEnergy> = Vec::with_capacity(k);
+    for theta in &thetas {
+        let ev = total_energy(target, prior_c, theta).ok_or_else(|| {
+            candle_core::Error::Msg("initial vector has no finite objective".into())
+        })?;
+        currents.push(ev);
+    }
+    let mut rngs: Vec<StdRng> = (0..k)
+        .map(|i| StdRng::seed_from_u64(seed ^ (0x7e11 + i as u64 * 7919)))
+        .collect();
+    let mut log_eps = vec![config.step_size.ln(); k];
+    let mut log_eps_bar = log_eps.clone();
+    let mut hbar = vec![0.0f64; k];
+    let mut eps = vec![config.step_size; k];
+    let mut adapting = vec![config.adapt_step_size; k];
+    let mut accept_sum = vec![0.0f64; k];
+    let mut accepted = vec![0usize; k];
+    let mut proposals = vec![0usize; k];
+    let mut grad_evals = 0usize;
+    let mut cold_draws = Vec::with_capacity(config.draws);
+    let (mut swaps, mut swap_accepted) = (0usize, 0usize);
+
+    for step in 0..config.steps {
+        for i in 0..k {
+            if adapting[i] && step == config.burn {
+                eps[i] = log_eps_bar[i].exp();
+                adapting[i] = false;
+            } else if adapting[i] {
+                eps[i] = log_eps[i].exp();
+            }
+            proposals[i] += 1;
+            // tempered_step evaluates `leapfrog + 1` potentials for an accepted
+            // trajectory; count what it actually spends.
+            grad_evals += config.leapfrog + 1;
+            let (ok, prob) = tempered_step(
+                target,
+                prior_c,
+                &metric,
+                config.ladder[i],
+                config.leapfrog,
+                eps[i],
+                &mut rngs[i],
+                &mut thetas[i],
+                &mut currents[i],
+            );
+            if ok {
+                accepted[i] += 1;
+            }
+            accept_sum[i] += prob;
+            if adapting[i] {
+                let m = (step + 1) as f64;
+                let eta = 1.0 / (m + t0);
+                hbar[i] = (1.0 - eta) * hbar[i] + eta * (config.target_accept - prob);
+                log_eps[i] = (10.0 * config.step_size).ln() - (m.sqrt() / gamma) * hbar[i];
+                let w = m.powf(-kappa);
+                log_eps_bar[i] = w * log_eps[i] + (1.0 - w) * log_eps_bar[i];
+            }
+        }
+
+        if step % config.swap_interval == 0 {
+            for i in 0..k - 1 {
+                swaps += 1;
+                let (bi, bj) = (config.ladder[i], config.ladder[i + 1]);
+                let (ui, uj) = (currents[i].u / bi, currents[i + 1].u / bj);
+                let log_alpha = (bi - bj) * (ui - uj);
+                let prob = if log_alpha >= 0.0 {
+                    1.0
+                } else {
+                    log_alpha.exp()
+                };
+                if prob >= 1.0 || (prob > 0.0 && rngs[0].random::<f64>() < prob) {
+                    let (left, right) = thetas.split_at_mut(i + 1);
+                    std::mem::swap(&mut left[i], &mut right[0]);
+                    // Recompute so each replica holds its own β-scaled energy.
+                    for (j, beta) in [(i, bi), (i + 1, bj)] {
+                        if let Some(ev) = total_energy(target, prior_c, &thetas[j]) {
+                            currents[j] = TotalEnergy {
+                                u: beta * ev.u,
+                                grad: ev.grad.iter().map(|g| beta * g).collect(),
+                            };
+                        }
+                    }
+                    grad_evals += 2;
+                    swap_accepted += 1;
+                }
+            }
+        }
+
+        if step >= config.burn
+            && (step - config.burn) % config.thin == 0
+            && cold_draws.len() < config.draws
+        {
+            cold_draws.push(thetas[k - 1].clone());
+        }
+    }
+
+    let cold_eps = if config.adapt_step_size {
+        log_eps_bar[k - 1].exp()
+    } else {
+        config.step_size
+    };
+    Ok(TemperChain {
+        cold: HmcChain {
+            theta: thetas[k - 1].clone(),
+            draws: cold_draws,
+            proposals: proposals[k - 1],
+            accepted: accepted[k - 1],
+            grad_evals,
+            step_size: cold_eps,
+            mean_accept: accept_sum[k - 1] / proposals[k - 1].max(1) as f64,
+        },
+        swaps,
+        swap_accepted,
+        replica_accept: accept_sum
+            .iter()
+            .zip(&proposals)
+            .map(|(s, p)| s / (*p).max(1) as f64)
+            .collect(),
+        replica_final_u: (0..k).map(|i| currents[i].u / config.ladder[i]).collect(),
+    })
+}
+
+/// Hit-and-run slice-sampling configuration.
+#[derive(Clone, Debug)]
+pub struct HitRunConfig {
+    pub moves: usize,
+    pub burn: usize,
+    pub thin: usize,
+    pub draws: usize,
+    /// Initial slice width in prior-sd units along the sampled direction.
+    pub width: f64,
+    /// Cap on stepping-out expansions per side.
+    pub max_expand: usize,
+    /// Cap on shrink steps per move.
+    pub max_shrink: usize,
+}
+
+impl HitRunConfig {
+    fn validate(&self) -> candle_core::Result<()> {
+        if self.moves == 0 || self.thin == 0 || self.width <= 0.0 {
+            return Err(candle_core::Error::Msg(
+                "hit-and-run moves/thin must be non-zero and width positive".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Hit-and-run with slice sampling: a *global* move that does not depend on
+/// gradient scale.
+///
+/// Each move draws a random unit direction in prior-whitened coordinates, so a
+/// step of `t = 1` is one prior sd, and samples the exact conditional of the
+/// target along that ray with Neal's stepping-out/shrinkage slice sampler.  The
+/// move is exact (`π`-invariant), it needs no gradient, and — unlike HMC — a
+/// slice that spans a barrier can cross it in one step, which is what a
+/// multimodal target needs.  The trade-off is that one move costs tens of
+/// potential evaluations instead of `leapfrog + 1`.
+///
+/// Draws are recorded after `burn`; `step_size` reports the mean `|t|` moved and
+/// `grad_evals` the number of potential evaluations spent.
+pub fn run_hit_and_run<T: EnergyTarget>(
+    target: &T,
+    prior_c: &[f64],
+    config: HitRunConfig,
+    theta0: Vec<f32>,
+    seed: u64,
+) -> candle_core::Result<HmcChain> {
+    config.validate()?;
+    let dim = target.dim();
+    if prior_c.len() != dim || prior_c.iter().any(|c| !c.is_finite() || *c <= 0.0) {
+        return Err(candle_core::Error::Msg(
+            "prior covariance must be finite, positive and target-sized".into(),
+        ));
+    }
+    if theta0.len() != dim {
+        return Err(candle_core::Error::Msg(
+            "hit-and-run theta0 must be target-sized".into(),
+        ));
+    }
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut theta = theta0;
+    let mut current = total_energy(target, prior_c, &theta)
+        .ok_or_else(|| candle_core::Error::Msg("initial vector has no finite objective".into()))?;
+    let mut evals = 1usize;
+    let mut draws = Vec::with_capacity(config.draws);
+    let mut moved = 0usize;
+    let mut step_sum = 0.0f64;
+    let sqrt_c: Vec<f64> = prior_c.iter().map(|c| c.sqrt()).collect();
+    let mut point = vec![0.0f32; dim];
+    for move_index in 0..config.moves {
+        // Random direction, unit in prior-whitened coordinates.
+        let mut dir = vec![0.0f64; dim];
+        let mut norm2 = 0.0f64;
+        for (d, sc) in dir.iter_mut().zip(&sqrt_c) {
+            let z = rng.sample::<f64, _>(StandardNormal);
+            *d = sc * z;
+            norm2 += *d * *d;
+        }
+        if !(norm2 > 0.0) {
+            continue;
+        }
+        let inv = 1.0 / norm2.sqrt();
+        for d in dir.iter_mut() {
+            *d *= inv;
+        }
+
+        let eval = |t: f64, point: &mut Vec<f32>, evals: &mut usize| -> Option<f64> {
+            *evals += 1;
+            for i in 0..dim {
+                point[i] = (f64::from(theta[i]) + t * dir[i]) as f32;
+            }
+            total_energy(target, prior_c, point).map(|e| e.u)
+        };
+
+        let log_slice = -current.u + rng.random::<f64>().ln();
+        let width = config.width;
+        let mut left = -width * rng.random::<f64>();
+        let mut right = left + width;
+        let mut expansions = 0;
+        while expansions < config.max_expand {
+            match eval(left, &mut point, &mut evals) {
+                Some(u) if -u > log_slice => left -= width,
+                _ => break,
+            }
+            expansions += 1;
+        }
+        while expansions < config.max_expand {
+            match eval(right, &mut point, &mut evals) {
+                Some(u) if -u > log_slice => right += width,
+                _ => break,
+            }
+            expansions += 1;
+        }
+
+        let mut t = left + (right - left) * rng.random::<f64>();
+        let mut accepted = false;
+        let mut shrinks = 0;
+        loop {
+            let u = eval(t, &mut point, &mut evals);
+            match u {
+                Some(u) if -u >= log_slice => {
+                    let ev = total_energy(target, prior_c, &point)
+                        .expect("the accepted point is finite");
+                    evals += 1;
+                    theta = point.clone();
+                    current = ev;
+                    accepted = true;
+                    break;
+                }
+                _ => {
+                    if t < 0.0 {
+                        left = t;
+                    } else {
+                        right = t;
+                    }
+                    t = left + (right - left) * rng.random::<f64>();
+                    shrinks += 1;
+                    if shrinks >= config.max_shrink {
+                        break;
+                    }
+                }
+            }
+        }
+        if accepted {
+            moved += 1;
+            step_sum += (t / width).abs();
+        }
+        if move_index >= config.burn
+            && (move_index - config.burn) % config.thin == 0
+            && draws.len() < config.draws
+        {
+            draws.push(theta.clone());
+        }
+    }
+    Ok(HmcChain {
+        theta,
+        draws,
+        proposals: config.moves,
+        accepted: moved,
+        grad_evals: evals,
+        step_size: step_sum / moved.max(1) as f64,
+        mean_accept: moved as f64 / config.moves as f64,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1705,6 +2571,240 @@ mod tests {
             let u = 0.5 * x.iter().zip(&grad).map(|(xi, gi)| xi * gi).sum::<f64>();
             Some((u, grad.iter().map(|g| *g as f32).collect()))
         }
+    }
+
+    /// Inverse of a row-major symmetric 3×3 matrix, by cofactors.
+    fn invert3(a: &[f64]) -> Vec<f64> {
+        let c = [
+            a[4] * a[8] - a[5] * a[7],
+            a[5] * a[6] - a[3] * a[8],
+            a[3] * a[7] - a[4] * a[6],
+        ];
+        let det = a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
+        assert!(det.abs() > 1e-12);
+        let d = 1.0 / det;
+        vec![
+            c[0] * d,
+            (a[2] * a[7] - a[1] * a[8]) * d,
+            (a[1] * a[5] - a[2] * a[4]) * d,
+            c[1] * d,
+            (a[0] * a[8] - a[2] * a[6]) * d,
+            (a[2] * a[3] - a[0] * a[5]) * d,
+            c[2] * d,
+            (a[1] * a[6] - a[0] * a[7]) * d,
+            (a[0] * a[4] - a[1] * a[3]) * d,
+        ]
+    }
+
+    #[test]
+    fn adam_fit_energy_finds_the_sampled_potential_mode() {
+        // A zero-mean Gaussian with a diagonal prior: the mode of
+        // U(θ) + ½Σθ²/c is the origin.  `adam_fit` alone would also find it
+        // here, but this checks the prior term is included and the iterate
+        // converges from a distant start.
+        let a = vec![4.0, 1.5, 1.5, 2.0];
+        let target = Quadratic {
+            a: a.clone(),
+            dim: 2,
+        };
+        let prior_c = vec![0.5, 0.25];
+        let (mode, trace) = adam_fit_energy(&target, &prior_c, vec![3.0, -2.0], 4_000, 1e-2);
+        assert!(trace.len() == 4_000);
+        assert!(
+            trace.last().copied().unwrap() < trace[0],
+            "potential did not decrease"
+        );
+        assert!(
+            mode.iter().map(|v| f64::from(*v).abs()).fold(0.0, f64::max) < 1e-2,
+            "mode {mode:?} is not the origin"
+        );
+        // The residual gradient of the sampled potential vanishes there.
+        let (_, grad) = target.energy_and_grad(&mode).unwrap();
+        for i in 0..2 {
+            let total = f64::from(grad[i]) + f64::from(mode[i]) / prior_c[i];
+            assert!(total.abs() < 1e-1, "coordinate {i}: residual {total}");
+        }
+    }
+
+    #[test]
+    fn hit_and_run_recovers_the_gaussian_and_crosses_a_barrier() {
+        let cov = vec![2.0, 1.2, 0.0, 1.2, 1.5, 0.3, 0.0, 0.3, 0.8];
+        let target = Quadratic {
+            a: invert3(&cov),
+            dim: 3,
+        };
+        let cfg = HitRunConfig {
+            moves: 6_000,
+            burn: 1_000,
+            thin: 2,
+            draws: 2_500,
+            width: 1.0,
+            max_expand: 32,
+            max_shrink: 32,
+        };
+        let out = run_hit_and_run(&target, &[1e6; 3], cfg, vec![2.0, 2.0, 2.0], 9).unwrap();
+        assert_eq!(out.draws.len(), 2_500);
+        assert!(
+            out.mean_accept > 0.99,
+            "slice moves always land: {}",
+            out.mean_accept
+        );
+        quadratic_draws_agree(&out.draws, &[0.0; 3], &cov, 0.12);
+    }
+
+    #[test]
+    fn prior_scale_init_keeps_the_attention_projections_trainable() {
+        let shapes = VectorShapes::with_width(64, 2, 8, 16, 2, 3).unwrap();
+        let layout = shapes.layout();
+        let prior_sigma = 0.05;
+        // The prior's own sd, per coordinate.
+        let flat = init_flat_prior(&shapes, prior_sigma, 3)
+            .to_vec1::<f32>()
+            .unwrap();
+        let proj = &flat[layout[0].0..layout[0].0 + layout[0].1];
+        let proj_sd =
+            (proj.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / proj.len() as f64).sqrt();
+        let want = prior_sigma * (shapes.input as f64).sqrt();
+        assert!(
+            (proj_sd - want).abs() < 0.1 * want,
+            "projection sd {proj_sd} vs prior sd {want}"
+        );
+
+        // The point of the scale: q/k gradients are first order, not the
+        // second-order remnant a near-uniform softmax leaves.
+        let teacher = SyntheticTeacher::new(shapes.input, shapes.output, 7);
+        let x: Vec<f32> = (0..128)
+            .map(|i| ((i * 37 % 61) as f32 - 30.0) / 30.0)
+            .collect();
+        let y = teacher.targets(&x, 0.05, 7);
+        let target = VectorRegression::new(shapes, x, y, 0.05, 1.0).unwrap();
+        let (start, len, _) = layout[1]; // block 0, wq
+        let q_rms = |theta: Vec<f32>| {
+            let (_, g) = EnergyTarget::energy_and_grad(&target, &theta).unwrap();
+            (g[start..start + len]
+                .iter()
+                .map(|v| f64::from(*v) * f64::from(*v))
+                .sum::<f64>()
+                / len as f64)
+                .sqrt()
+        };
+        let legacy = q_rms(init_flat(&shapes, 0.02, 3).to_vec1::<f32>().unwrap());
+        let prior = q_rms(flat);
+        assert!(
+            prior > 5.0 * legacy,
+            "prior-scale q gradient {prior:e} vs legacy {legacy:e}"
+        );
+    }
+
+    #[test]
+    fn parallel_tempering_cold_chain_recovers_the_gaussian() {
+        let cov = vec![2.0, 1.2, 0.0, 1.2, 1.5, 0.3, 0.0, 0.3, 0.8];
+        let target = Quadratic {
+            a: invert3(&cov),
+            dim: 3,
+        };
+        let cfg = TemperConfig {
+            steps: 4_000,
+            burn: 1_000,
+            thin: 1,
+            draws: 3_000,
+            leapfrog: 4,
+            step_size: 1.0,
+            adapt_step_size: true,
+            target_accept: 0.8,
+            ladder: vec![0.1, 0.35, 0.7, 1.0],
+            swap_interval: 5,
+        };
+        let out =
+            run_parallel_tempering(&target, &[1e6; 3], &[1.0; 3], cfg, vec![1.0, -1.0, 0.5], 5)
+                .unwrap();
+        let accept = out.cold.accepted as f64 / out.cold.proposals as f64;
+        assert!(accept > 0.3, "cold acceptance {accept}");
+        assert!(out.swap_accepted > 0, "no replica swaps were accepted");
+        assert_eq!(out.replica_accept.len(), 4);
+        assert_eq!(out.replica_final_u.len(), 4);
+        // The cold chain's marginal is the untempered target.
+        quadratic_draws_agree(&out.cold.draws, &[0.0; 3], &cov, 0.12);
+    }
+
+    #[test]
+    fn hessian_probe_recovers_the_analytic_diagonal() {
+        // ½θᵀAθ plus ½Σθ²/c has Hessian A + diag(1/c), so the Hutchinson
+        // diagonal must reproduce that exactly (up to probe noise).
+        let a = vec![4.0, 1.5, 1.5, 2.0];
+        let target = Quadratic {
+            a: a.clone(),
+            dim: 2,
+        };
+        let prior_c = vec![0.5, 0.25];
+        let probe = hessian_probe(&target, &prior_c, &[0.3, -0.2], 2048, 1e-4, 7).expect("probe");
+        let want = [4.0 + 1.0 / 0.5, 2.0 + 1.0 / 0.25];
+        for i in 0..2 {
+            let rel = (probe.diag[i] - want[i]).abs() / want[i];
+            assert!(
+                rel < 2e-2,
+                "coordinate {i}: {} vs {}",
+                probe.diag[i],
+                want[i]
+            );
+        }
+        assert_eq!(probe.columns.len(), 2048);
+        assert_eq!(probe.columns[0].len(), 2, "columns are full-dimension Hz");
+        // Hutchinson is unbiased: a second probe seed must agree on the trace.
+        let again = hessian_probe(&target, &prior_c, &[0.3, -0.2], 2048, 1e-4, 11).expect("probe");
+        let (t1, t2) = (
+            probe.diag.iter().sum::<f64>(),
+            again.diag.iter().sum::<f64>(),
+        );
+        assert!((t1 - t2).abs() < 2e-1, "trace {t1} vs {t2}");
+    }
+
+    #[test]
+    fn low_rank_metric_hmc_recovers_a_correlated_gaussian() {
+        let cov = vec![2.0, 1.2, 0.0, 1.2, 1.5, 0.3, 0.0, 0.3, 0.8];
+        let precision = invert3(&cov);
+        let target = Quadratic {
+            a: precision,
+            dim: 3,
+        };
+        // Reference draws define the pilot-based covariance estimate.
+        let (chol, _) = cholesky_lower(&cov, 3).unwrap();
+        let mut rng = StdRng::seed_from_u64(31);
+        let pilot: Vec<Vec<f32>> = (0..2_000)
+            .map(|_| {
+                let z: Vec<f64> = (0..3)
+                    .map(|_| rng.sample::<f64, _>(StandardNormal))
+                    .collect();
+                let mut x = vec![0.0f64; 3];
+                for i in 0..3 {
+                    for j in 0..=i {
+                        x[i] += chol[i * 3 + j] * z[j];
+                    }
+                }
+                x.iter().map(|v| *v as f32).collect()
+            })
+            .collect();
+        let metric = LowRankCovariance::from_draws(&pilot, 2, 1e-6).unwrap();
+        assert_eq!(metric.dim(), 3);
+        assert_eq!(metric.rank(), 2);
+        let cfg = HmcConfig {
+            steps: 6_000,
+            burn: 1_500,
+            thin: 1,
+            draws: 4_500,
+            leapfrog: 5,
+            step_size: 1.0,
+            adapt_step_size: true,
+            target_accept: 0.8,
+            jitter_leapfrog: false,
+        };
+        let chain =
+            run_hmc_chain_low_rank(&target, &[1e6; 3], &metric, cfg, vec![1.0, -1.0, 0.5], 4)
+                .unwrap();
+        let accept = chain.accepted as f64 / chain.proposals as f64;
+        assert!(accept > 0.4, "low-rank HMC acceptance {accept}");
+        assert!(chain.step_size.is_finite() && chain.step_size > 0.0);
+        quadratic_draws_agree(&chain.draws, &[0.0; 3], &cov, 0.08);
     }
 
     fn quadratic_draws_agree(got: &[Vec<f32>], mean: &[f64], cov: &[f64], tol: f64) {
@@ -1969,9 +3069,13 @@ mod tests {
         let a = vec![4.0, 1.5, 1.5, 2.0];
         let det = 4.0 * 2.0 - 1.5 * 1.5;
         let cov = vec![2.0 / det, -1.5 / det, -1.5 / det, 4.0 / det];
-        let target = Quadratic { a, dim: 2 };
+        let target = Quadratic {
+            a: a.clone(),
+            dim: 2,
+        };
         let prior_c = vec![1e6, 1e6];
-        let mass = vec![cov[0], cov[3]];
+        // The metric is the precision, not the covariance.
+        let mass = vec![a[0], a[3]];
         let cfg = HmcConfig {
             steps: 6_000,
             burn: 1_500,
@@ -1981,10 +3085,41 @@ mod tests {
             step_size: 1.0,
             adapt_step_size: true,
             target_accept: 0.8,
+            jitter_leapfrog: false,
         };
         let chain = run_hmc_chain(&target, &prior_c, &mass, cfg, vec![1.0, -1.0], 4).unwrap();
         let accept = chain.accepted as f64 / chain.proposals as f64;
         assert!(accept > 0.4, "HMC acceptance {accept}");
+        assert!(chain.step_size.is_finite() && chain.step_size > 0.0);
+        quadratic_draws_agree(&chain.draws, &[0.0, 0.0], &cov, 0.08);
+    }
+
+    #[test]
+    fn hmc_with_the_exact_whitened_metric_recovers_the_gaussian() {
+        let a = vec![4.0, 1.5, 1.5, 2.0];
+        let det = 4.0 * 2.0 - 1.5 * 1.5;
+        let cov = vec![2.0 / det, -1.5 / det, -1.5 / det, 4.0 / det];
+        let target = Quadratic {
+            a: a.clone(),
+            dim: 2,
+        };
+        let prior_c = vec![1e6, 1e6];
+        let mass = DenseCovariance::from_precision(&a, 2).unwrap();
+        let cfg = HmcConfig {
+            steps: 6_000,
+            burn: 1_500,
+            thin: 1,
+            draws: 4_500,
+            leapfrog: 5,
+            step_size: 1.0,
+            adapt_step_size: true,
+            target_accept: 0.8,
+            jitter_leapfrog: false,
+        };
+        let chain =
+            run_hmc_chain_whitened(&target, &prior_c, &mass, cfg, vec![1.0, -1.0], 4).unwrap();
+        let accept = chain.accepted as f64 / chain.proposals as f64;
+        assert!(accept > 0.4, "whitened HMC acceptance {accept}");
         assert!(chain.step_size.is_finite() && chain.step_size > 0.0);
         quadratic_draws_agree(&chain.draws, &[0.0, 0.0], &cov, 0.08);
     }

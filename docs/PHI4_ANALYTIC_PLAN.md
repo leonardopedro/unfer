@@ -1,9 +1,18 @@
 # Real scalar λφ⁴ — analytical and Cadabra2 research plan
 
-The primary analytic target is the local scalar operator on continuous field and jet
-coordinates. Existing one- and two-site calculations are periodic lattice comparisons.
-Their return intervals apply to their specified finite-difference operators.
+The primary analytic target is the constraint-free `book.tex` continuous-momentum
+nested-Fock scalar theory: momentum space `k ∈ ℝ³` is **continuous** (integrals
+`∫ d³k`, never discrete momentum sums — only the Krylov/Hermite subspace in SIRK
+is discrete). Spatial-derivative jet constraints are trivially satisfied (and
+avoided) in continuous momentum space; the quadratic gradient `½ ∫ |∇φ|² d³x` is
+the pure diagonal continuous multiplier `½ ∫ |k|² |φ̂(k)|² d³k` (realized on
+`L²(ℝ³_k × ℝ_φ)` as `h_cont(k, φ) = ½ p_φ² + ½ |k|² φ² + (λ/4)(φ² − v²)²`, no
+derivative convolution needed), and the full coordinate-space double well is the
+continuous composite-pair integral `(λ/4) ∫ d³Q |Ψ(Q)|²`. Existing periodic
+lattice calculations in `phi4_mehler.cdb` and the auxiliary static-jet fibre are
+**frozen comparisons only**.
 
+[Master cheap-LLM plan](../../timepiece/PHI4_IMPROVEMENT_PLAN.md) ·
 [Lean contract](../../timepiece/PHI4_FORMALIZATION_PLAN.md) ·
 [Numerical experiments](PHI4_NUMERICAL_PLAN.md)
 
@@ -177,36 +186,39 @@ and deleting the energy constant gave 1/4. The script SHA-256 is
 The formatted fixture SHA-256 is
 `3694921d365de9d7a63a3721079f7f72349078cd19963ceae1fecb855c6ba48f`.
 
-## Next analytical work
+## Next analytical work (100% continuous-momentum `book.tex` formalism)
 
-1. Build the full polynomial columns and shifted-solve reference for the continuous
-   four-coordinate jet model. Check the Gaussian column above and an occupied jet
-   seed, the Gram weights, and the residual outside the retained Hermites. Integrate
-   that residual for the actual reduced orbit before quoting a return interval.
-2. For the periodic comparison, extend the orthogonal-coordinate and character derivations to general periodic grids.
-   Preserve mode reality, oriented link counts and the inner constant. **The two-site
-   rotation is now connected to the polynomial core in Lean**: `twoSite_innerHam`
-   identifies the actual `2×1×1` site operator with the uniform/staggered mode action
-   on every seed, and `twoSite_column_00`/`_20`/`_02` reproduce the three exact fixture
-   columns through degree six (`timepiece/BookProof/Phi4/ChapterScalarTwoSite.lean`).
-   The character substitution itself is already formalized for arbitrary dimension in
-   `BookProof.ChapterQuadraticRotationEsa`: `rotPoly` is the orthogonal change, and
-   `pderiv_rotPoly`, `rotPoly_mulXPoly`, `rotPoly_momPoly` and `inner_pgLp_rotPoly`
-   give the chain rules, canonical-pair transport and Gaussian unitarity. A concrete
-   real Fourier matrix is now implemented as `periodic_fourier_1d` in
-   `unfer/nested_fock_algebra/src/phi4_scalar.rs` and checked orthogonal for several
-   cycle lengths. The Lean quartic-vertex transport and its momentum-conserving
-   selection rules remain open.
-3. For that comparison, read the fixture through the scalar Rust builder and compare exact full columns
-   before varying the occupation cutoff or Krylov rank. At fixed window vary only rank,
-   then at fixed rank vary only window. Report bounds for discarded rows and the reduced
-   generator separately, together with the computed return probability.
-4. For a fixed seed and time interval, integrate the defect on the reduced orbit, enclose
-   arithmetic and compare with the signal produced by varying λ. A uniform bound across
-   scalar model sizes needs an embedding and an observable that survives that change.
+Detailed step-by-step specifications live in
+[../../timepiece/PHI4_IMPROVEMENT_PLAN.md](../../timepiece/PHI4_IMPROVEMENT_PLAN.md) (`P1`–`P3`).
+Do **not** discretize momentum space into sums, do **not** expand the periodic
+lattice derivations, and do **not** build spatial-derivative jet constraints for λφ⁴.
 
-The legacy one-real-component Higgs calculation and the N12 independent-mode pilot
-provide comparisons with different scalar dictionaries. The new exact fixture can
-distinguish a missing mixed vertex or contraction in a future joint solver run.
+1. **Create `docs/phi4_momentum_nested.cdb` and emit `docs/fixtures/phi4_momentum_mehler.json` (`P1`).**
+   Use native Cadabra2 (following `CADABRA2_GOTCHAS.md`, with `(0 = ok): 0`
+   checks and pinned `len(...)` guards) plus exact rational arithmetic to certify:
+   - Continuous quadratic gradient `½(k₁² + k₂² + k₃²) φ²` (no derivative
+     convolution, no jet constraints, no momentum sum), Plancherel gradient
+     integral `∫ |∂_x f|² dx = ∫ (2πk)² |f̂(k)|² dk`, continuous composite-pair
+     quartic integral `∫ (f²)² dx = ∫ |Ψ(Q)|² dQ` on a continuous Gaussian test
+     field, retention of `λv⁴/4`, and unconditional coercivity square completion
+     (`7/64` at `λ = v = 1, α = 1/2`).
+   - Exact 11-mode `S₃`-symmetric unit-width Mehler action of `unitMomCont` on
+     `{1, He₂(φ), K₂}` (Gram `diag(1, 2, 6)`): mean `17/8`, full variance
+     `553/32`, outside-3-mode-window seed squared norm `9/2`, nonzero `He₂(φ) K₂`
+     momentum–field entanglement (`1/2`), odd-seed `He₁(φ)` column, and mutation
+     controls (including contrast with decoupled `jetModel`).
+   - Exact rank-2 Hashimoto-SIRK generator, dissipation `Gᴴ W₂ + W₂ G = −10 Lᴴ W L`,
+     orthogonal inside/outside defect split (`outside[0,0] = 9/2`), and two-sided
+     return interval `[319447/320000, 39999/40000]` at shifts `(10, 5)`, `t = 1/100`.
+   - Outer Quadratic Ordering `dΓ(h)` vacuum, shift (`0, c, 2c`), and cross-particle checks.
+2. **Integrate both modules into `scripts/verify_cdb_modules.sh --strict` (`P2`).**
+   Add `(0 = ok): 0` lines to `phi4_mehler.cdb` (tagged comparison-only) so both
+   `phi4_momentum_nested` and `phi4_mehler` certify as `[PASS]`, never `[NOTE]`.
+3. **Record verification evidence in `docs/VERIFY_PHI4_MOMENTUM.md` (`P3`).**
+   Pin `cadabra2-cli` version, replay command, SHA-256 digests, and mutation outputs.
+
+The legacy one-real-component Higgs calculation, the N12 independent-mode pilot,
+and the frozen `phi4_mehler.cdb` periodic lattice script remain labeled
+comparisons only.
 [Higgs comparison](../fock_sirk/tests/sm_higgs_mechanism_sirk.rs) ·
 [Numerical program](PHI4_NUMERICAL_PLAN.md)

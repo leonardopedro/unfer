@@ -365,31 +365,56 @@ all chains at `m` (new `--init mean`) with `ρ = 0.5` accepted `1281/2975`,
 `1155/2971`, `1221/2962` and `1180/2970` CN moves (~40%), the rate the
 exact-covariance argument predicts.  But four chains of 3,000 steps still gave
 rank R̂ max `1.02163` and bulk ESS min `254.9` (tail `37.8`); only five of the
-eight observables cleared ESS `400`, and `gate=false`.  Retaining all 2,250
-draws instead of thinning did not raise ESS (e.g. `223.5 → 254.9`), so this is
-the independence-proposal ceiling — rejected tail proposals leave the state
-frozen — not a run-length problem.
+eight observables cleared ESS `400`, and `gate=false`.  The measured ESS/step is
+`255/2,250 ≈ 0.11`; retaining 2,250 draws instead of 225 raised ESS only from
+`223.5` to `254.9` because the short-run estimator over-credited the thinned
+chain, not because the kernel has an independence ceiling.  At `0.11` ESS/step
+about 3,600 post-burn draws per chain are needed for bulk ESS `400`.
+
+**The CN then passes at that budget.** Four chains of 6,000 steps (1,500 burn,
+thin 1, 4,500 draws each) accepted `2553/5953`, `2456/5941`, `2467/5935` and
+`2316/5938`, giving rank R̂ max **1.00616**, minimum bulk ESS **620.9** (tail
+201.3) and `gate=true`; draw-mean test RMSE `0.105528`, parameter coverage
+`0.1583` (38/240), predictive `0.5917` (142/240).  So both kernels pass: CN
+needs ~4,500 post-burn draws per chain, HMC needs ~750, which is the practical
+reason to prefer HMC here.
 
 **Documented dimension scaling.** `examples/cn_dimension_sweep.rs` samples
-`N(0, I_d)` with a diagonal proposal or the exact covariance `I_d` and reports
-acceptance, ESS and ESS/step.  At `ρ = 0.99`, 4,000 steps:
+`N(0, I_d)` with the production prior-referenced CN kernel, reporting
+acceptance, lag-1 autocorrelation and ESS/step for one chain of 4,000 steps
+(1,000 burn), seeded by `(d, ρ)`.  With the proposal covariance set to the
+target covariance `I_d` (`--exact-proposal`) at `ρ = 0.99`:
 
 | `d` | 2 | 6 | 18 | 34 | 66 | 130 | 256 |
 |---|---|---|---|---|---|---|---|
-| exact-proposal ESS/step | 0.466 | 0.402 | 0.267 | 0.197 | 0.131 | 0.069 | 0.019 |
-| exact-proposal acceptance | 0.769 | 0.703 | 0.521 | 0.452 | 0.371 | 0.284 | 0.163 |
-| diagonal best ESS/step | 0.0179 | 0.0101 | 0.0044 | 0.0023 | 0.0017 | 0.0011 | 0.0006 |
+| acceptance | 0.9313 | 0.8752 | 0.7802 | 0.7153 | 0.5717 | 0.4265 | 0.3003 |
+| lag-1 autocorrelation | 0.9875 | 0.9887 | 0.9915 | 0.9909 | 0.9930 | 0.9957 | 0.9957 |
+| ESS/step | 0.00630 | 0.00567 | 0.00427 | 0.00456 | 0.00352 | 0.00217 | 0.00214 |
 
-Reproduce with `--steps 4000 --dims 2,6,18,34,66,130,256 --rhos 0.99` (add
-`--exact-proposal` for the exact rows; the exact covariance of `N(0, I_d)` is
-`I_d`).  The exact column decays roughly as
-`1/d` in ESS/step, consistent with the `acc·(1−ρ)/2` estimate and with the
-observed `d = 34` gate ceiling.
+Reproduce with `--steps 4000 --dims 2,6,18,34,66,130,256 --rhos 0.99
+--exact-proposal` (the exact covariance of `N(0, I_d)` is `I_d`).  The default
+`--c 0.1` sweep over `ρ ∈ {0.5, 0.9, 0.99, 0.999, 0.9999}` gives best ESS/step
+`0.0014–0.0179` over the same dimensions with no monotone trend.
 
-**HMC with the exact metric passes the four-chain gate.** The diagonal-mass HMC
-collapsed its step size (`eps_frozen ≈ 5e−5`) because the readout posterior is
-strongly correlated across coordinates; dual averaging can tune a step size but
-not a mis-scaled metric.  The exact metric is the posterior precision: in
+**Reading.** The CN kernel is a random walk, so ESS/step is bounded near
+`(1−ρ)/(1+ρ) = 0.0050` at `ρ = 0.99` regardless of dimension; matching the
+target covariance as the proposal scale raises acceptance (0.93 → 0.30) but
+leaves that ceiling in place, because it does not turn the kernel into an
+independence sampler.  The measured values supersede the earlier
+`1/(12·e·d)` envelope, which under-predicted the `d = 34` rate (0.0046 measured
+vs `~1e−3`) though not the conclusion: 4,000 draws per chain yield ~20
+effective draws, far below 400.  This is the dimension-scaling limit the
+four-chain gate exposed.
+
+**HMC with the exact metric passes the four-chain gate.** The first
+diagonal-mass HMC collapsed its step size (`eps_frozen ≈ 5e−5`). Part of that
+was a real convention defect: with `K(p)=½Σp²/m` and `θ′=θ+εp/m` the dynamics
+are `θ″=−M⁻¹Aθ`, so `m` must be the **precision** (`M=A`), not the variance;
+passing variances squares the curvature range and drives `ε` to zero. The
+diagonal call sites now pass precisions; the readout diagonal run settles at
+`ε ≈ 6e−3` instead of collapsing, but still fails (R̂ `1.70725`, bulk ESS `6.1`
+at 400 steps), so the correlation limit is separate from the inversion. That is
+why the recorded gate uses the exact whitened metric.  The exact metric is the posterior precision: in
 whitened coordinates `u = Lᵀ(θ − m)` (`L Lᵀ = A`) the Gaussian target is exactly
 standard normal, so `run_hmc_chain_whitened` uses unit mass, `N(0, I)` momenta
 and the transformed force `Gᵀ∇U` with `G = L⁻ᵀ`, while every MH ratio is still
@@ -404,13 +429,222 @@ The passing target is the **readout-conditional 34-coordinate** posterior with a
 frozen backbone, on fixture embeddings, warm-started at the analytic mean; this
 is an HMC kernel validation, not a full-parameter or calibration result.
 
+**Full-parameter diagonal HMC, correctly scaled, still fails.** The full
+57,378-coordinate target is prior-dominated: `adam_fit` minimizes the mean loss
+without the sampling prior, so its optimum is not stationary for the sampled
+potential (`start_grad_rms ≈ 152`). The new `--init mode` runs Adam on
+`U(θ)+½Σθ²/c` (3,000 steps, `lr=5e−3`, final potential `29.19`,
+`mode_grad_rms=1.06e−1`) and the new `--hmc-mass pilot` uses the pilot's
+per-coordinate variance as a precision estimate. The pilot needs a narrower
+step at this dimension: `--pilot-rho 0.9999` accepted only `4/400`, while
+`ρ=0.99999` accepted `499/600` (variance ratio p50 `8.7e−4`). Four chains of
+400 steps, leapfrog 4, `--start-jitter 1e−4`: `ε = 0.101–0.108`, acceptance
+`0.858–0.864` (no collapse), but rank R̂ max **2.61047**, bulk ESS min **4.7**
+(tail 10.0), `gate=false`; draw-mean test RMSE `0.144261`, coverage `0.7083`
+parameter and `0.8333` predictive. With the inverted metric the same run gave
+`ε≈3e−6` and ESS 5.5, so the fix repaired the scaling without lifting the
+observable ESS: the remaining problem is the off-diagonal structure of the
+data Hessian, which a diagonal metric cannot whiten.
+
+**Legacy-gate reproducibility (2026-11-23).** A control build with the
+`init_flat_prior` branch removed reproduces the shipped binary's
+`--start-scale legacy` output byte for byte (mode `29.193841`, pilot `499/600`
+with `var_over_prior p50 8.700e-4`, all chain lines, RMSE, R̂, ESS), so the
+prior draw is strictly opt-in and cannot have shifted the legacy path.
+Re-running the recorded gates under `legacy` keeps the verdict and the ESS band
+but not the 3rd digit: pilot metric R̂ `2.56781` / ESS `5.0` / RMSE `0.139388`
+(recorded `2.61047` / `4.7` / `0.144261`, with ε `0.068–0.077` against the
+recorded `0.101–0.108`), Hessian diagonal R̂ `2.54793` / ESS `5.0` / RMSE
+`0.173399` (recorded `2.50388` / `4.8` / `0.150189`, `clipped_to_prior`
+`27,622` exact). The deterministic stages all match exactly. At ESS ≈5 the
+draw-dependent summaries are chaotic — with ε and acceptance held fixed,
+`--thin 10/5/2` moved R̂ over `2.548/2.112/2.171` — and the recorded commands
+were never stored (and `HEAD` predates `--init mode`, so they cannot be
+rebuilt). Report verdicts and approximate R̂; do not treat the recorded RMSE
+and 3rd-digit R̂ as reproducible, and store the command line with each gate from
+now on.
+
+**Low-rank-plus-diagonal metric.** `LowRankCovariance::from_draws` estimates
+`C = diag(v) + W Λ Wᵀ` from the pilot (rank-`k` sample-covariance directions
+via a Gram eigendecomposition, diagonal residual floored at `1e−6 × max var`);
+`--hmc-mass lowrank` uses `M = C⁻¹` through Woodbury (`O(d·k)` per step plus a
+`k × k` solve) and draws `N(0, C⁻¹)` as `C⁻¹q` with `q ~ N(0, C)`. A unit test
+recovers a correlated 3-D Gaussian. On the full target the metric is scaled
+(`ε = 0.052–0.074`, acceptance 0.88–0.91) but mixing does not improve:
+rank 8, 400 steps → R̂ max `2.39408`, bulk ESS `4.9`; rank 32, 1,000 steps →
+R̂ max `2.01334`, bulk ESS `5.3`. ESS also did not grow with run length, so the
+new `--hmc-jitter` (trajectory length drawn from `1..=2·leapfrog`, symmetric
+MH) was tried: R̂ `2.14626`, ESS `5.1` at 1,000 steps, i.e. resonance was not
+the cause. The pilot's covariance is the limit: a 600-step random walk that
+barely moves cannot estimate a 57,378-coordinate posterior width, so the
+metric under-whitens the stiff directions. The four-chain full-parameter gate
+is **not** cleared.
+
+**Hessian-diagonal metric at the mode.** `hessian_probe` forms `Hz` for
+Rademacher `z` by a central difference of the sampled-potential gradient
+(`(g(θ+hz) − g(θ−hz))/2h`, `h = 1e-5`, 2 evaluations per probe) and takes
+`diag(H)` from Hutchinson; it reproduces the analytic diagonal of a
+Gaussian-plus-prior target in a unit test. At full dimension, 64 probes cost
+2.4 s, and the estimate is step-size stable (identical quantiles at `h = 1e-3`
+and `h = 1e-4`), so this is not finite-difference noise. The result is
+diagnostic rather than a fix: **27,622 of 57,378** entries fall below the prior
+bound `1/c_i` (many negative), and the raw diagonal spans `2.2e−7 .. 2.2e5`.
+Using it unclipped freezes `ε` at `1e-6` (R̂ `2.31799`, ESS `4.9`). Clamping to
+`[1/c_i, 1e4/c_i]` restores `ε ≈ 6.3–7.0e-3` and acceptance 0.77–0.82, but
+R̂ `2.50388`, ESS `4.8`, RMSE `0.150189`. The four chains' test predictions
+(`−1.92/−1.61/−1.80/−1.93` on coordinate 0) show they sit in different regions
+of a multimodal posterior: the full-parameter target is not merely
+ill-conditioned, and no metric closes the gap. A Gauss–Newton (PSD) metric
+would remove the negative-curvature entries but cannot remove the multimodality;
+the full-parameter gate needs either a globally well-behaved parameterization
+or a non-reversible kernel.
+
+**Multimodality diagnostic (`examples/vector_basins.rs`).** Four independent
+mode fits (`adam_fit_energy`, 2,000 steps, `init_std=0.02`) give potentials
+`36.39 / 36.54 / 97.91 / 79.31` with test RMSE `0.0737 / 0.0696 / 0.0719 /
+0.0797`. All six parameter pairs sit at relative distance `1.92–2.18` (≈ fully
+uncorrelated vectors) — the basins are genuinely distinct solutions of
+comparable predictive quality, so the sampler's ESS plateau is a property of
+the target, not of the metric. Segment attribution is diffuse: the worst
+segment differs per pair (`readout` 2.28/3.02, `block15` 2.11, `block10`
+2.07/2.24, `block5` 2.14) — no single transformer block is responsible.
+
+**The blocks were not all using attention (fixed 2026-11-23).** The diagnostic
+now labels one segment per transformer block (the six matrix segments were
+mislabeled as `block1…block24`, which is why an earlier reading pointed at
+"layers 1–3"). Measured after the fix: every block's `wq`/`wk` gradient at the
+legacy `init_std=0.02` is `7e-2…2e-1` against `4e1…7e1` for `wv`/`wo`/`w1`/`w2`,
+and those projections stayed bit-identical across independent fits.
+
+Root cause: `0.02` is 10× below the prior sd that the target itself assumes
+(`prior_sigma·√fan_in = 0.2` for a 16×16 matrix). Logits are then ≈0, where
+`∂logits/∂W_q ∝ W_k x` is *second order*; the prior term (`θ/c`, i.e. `0.5` vs
+a data gradient of `0.1`) wins and pulls `W_q, W_k` into the fixed point
+`W_q = W_k = 0`, where every logit is 0, the softmax is exactly uniform, and
+the q/k gradient is exactly zero. The sampler and the optimizer were therefore
+fitting a four-block model in which attention contributed a constant.
+
+Fix: `init_flat_prior` draws θ at the prior's own sd (default `--start-scale
+prior` here, `--init-mode prior` in the diagnostic; `legacy` reproduces the
+recorded runs). Then `∂L/∂W_q` is first order — `3.1e3` vs `0.17` at width 16,
+width 64 — and the projections move. The mode fit needs more steps from a
+prior draw (it starts far from the prior mode): at 2,000 steps it reaches only
+potentials `2.3e3–3.0e3` / RMSE `0.19–0.23`, at **8,000 steps** it reaches
+`28.09 / 38.71` with RMSE `0.0770 / 0.0871`, i.e. comparable to the legacy
+modes, and the four blocks now separate by `1.99–2.21`.
+
+**Live attention does not fix the gate.** Same full-parameter HMC run as
+recorded, with prior-scale init and the 8,000-step mode fit: R̂ `2.60278`, bulk
+ESS `4.7`, tail ESS `9.3`, RMSE `0.173727` — still failing, slightly worse than
+the legacy-init baseline. The dead projections were a real modelling defect but
+not the cause of the ESS plateau.
+
+**Parallel tempering (`run_parallel_tempering`, `--temper K`).** Replicas at
+`β_k` sample `exp(−βU)` with a diagonal metric and swap adjacent states with the
+exact ratio `min(1, exp((β_i−β_j)(U_i−U_j)))`; draws come from the cold replica
+only, and a 3-D Gaussian unit test recovers the target marginal. On the full
+target (4 replicas, ladder `0.02/0.0737/0.2714/1`, swaps every 5 steps, 400
+steps, 4 chains) the cold chain is unchanged — R̂ `2.44665`, ESS `4.8`, RMSE
+`0.168598` — and **0–1 of 240 swaps were accepted per chain**. The exchange
+rate is set by `Δβ·ΔU`: adjacent replicas differ by `ΔU ≈ 6·10^3 − 10^4`
+(`U_cold ≈ 4.8e3`, `U_β=0.27 ≈ 1.1e4`), so a rung spacing near `1e-4` would be
+needed, i.e. tens of thousands of replicas. Parallel tempering at this energy
+scale is therefore not a viable remedy without rescaling the potential.
+
+**Hit-and-run slice moves (`run_hit_and_run`, `--kernel hitrun`).** A global
+move that ignores gradient scale: a random direction, unit in prior-whitened
+coordinates, with the exact conditional along that ray sampled by Neal's
+stepping-out/shrinkage slice sampler. It needs no gradient; a 3-D Gaussian unit
+test recovers the target covariance. On the full target (400 moves per chain,
+burn 100, 4 chains, `--hr-width 1`) every move lands (`400/400`, mean step
+`0.40` prior sd) at ≈2,440 potential evaluations per chain, i.e. the same cost
+as the 400-step HMC runs. Result: R̂ `2.39717`, bulk ESS `4.9`, tail ESS `10.0`
+— the gate is not closed. Predictively it is the best run so far (draw-mean
+test RMSE `0.087048`), but its intervals *under*-cover (`0.3375` at 90%), which
+is the honest signature of a chain that has not equilibrated: the move is exact
+per step but 400 moves of `0.4` prior sd is a short walk.
+
+**12.5× budget does not help (`--steps 5000`, 2026-11-23).** Same target, same
+prior-scale init, same 8,000-step mode, 5,000 moves/chain (burn 1,250, thin 2,
+1,875 draws/chain, ≈34–35k potential evaluations/chain, ≈44 min wall clock):
+every move lands, but the mean step *rises* to `0.85–0.96` prior sd and the gate
+is unchanged — R̂ `3.03445` (per-observable `1.75–3.03`), bulk ESS `4.5`, tail
+ESS `10.0`, `gate=false`. ESS is flat despite 6.25× more draws in the pool
+(`4.9` at 300 draws/chain → `4.5` at 1,875), so the chains are not
+diffusing-and-mixing slowly; they are each confined to a region and the region
+differs by chain. That is a geometry result (narrow, curved ridges), not a
+budget result — more moves at this width would not close it.
+
+The longer run also revises the 400-move picture: draw-mean test RMSE rises to
+`0.121815` and interval coverage becomes credible
+(predictive-90 `0.9333`, parameter-90 `0.8125`). The 0.087 RMSE and 0.34
+coverage of the 400-move run were artefacts of a short, biased walk, so the
+short run's apparently good point prediction should not be quoted as an
+improvement.
+
+**Conclusion for the full-parameter gate:** the target is multimodal with an
+`O(10^4)` energy scale; preconditioning (pilot, low-rank, Hessian), replica
+exchange and prior-scale initialization each fail for a different, now-measured
+reason. Hit-and-run does not close the gate at 400 moves per chain and its own
+intervals advertise the shortfall — and raising the budget 12.5× to 5,000 moves
+per chain leaves ESS flat at `4.5`, which rules out "more moves" as the remedy
+for this kernel width. What the evidence now points to is a target whose
+high-density set is a set of narrow, curved ridges: exact line moves keep each
+chain inside its own ridge, so the sampler needs either a direction distribution
+that follows the ridge (a learned/local metric) or a parameterization in which
+the modes are connected. Neither is implemented; the gate remains open.
+
+**Continual-stream pilot (`examples/vector_stream.rs`).** The 240 training rows
+are cut into four contiguous 60-row blocks (the fixture exposes no document
+ids, so this is a row-order proxy). At each prefix the three arms share the
+objective, optimizer settings and prior: `warm` continues Adam from the
+previous prefix's full vector over all seen rows, `joint` restarts from the
+fixed init on the same rows, `reset` restarts on the new block only. Each
+prediction is the readout-conditional exact posterior mean with the trained
+backbone frozen. Test RMSE by prefix (warm/joint/reset):
+`0.150742/0.150742/0.150742` (identical at prefix 1), then
+`0.106920/0.112642/0.183135`, `0.189312/0.118874/0.213221`,
+`0.079085/0.105293/0.168040`; means `0.131515/0.121888/0.178784`. Retention on
+earlier blocks separates the arms sharply at prefix 3: warm `0.00217/0.00337`,
+joint `0.00429/0.00444`, reset `0.180/0.202`. So the reset arm forgets, joint
+retains, and warm keeps the best retention but is not uniformly better on
+test (worse at prefix 3, best at prefix 4): this is a measured pilot with
+prefix-to-prefix variation, not a promotion result.
+
+The pilot also reports 90% predictive intervals and normalization diagnostics.
+Coverage is *conservative to the point of being uninformative*: `0.983–1.000`
+for every arm at every prefix. The diagnostic that shows why is the normalized
+residual `z = r/√(var + s²)`:
+
+| arm | coverage90 by prefix | mean z² by prefix | calib (50/80/90/95%) |
+|---|---|---|---|
+| warm | 1.000/1.000/0.992/0.983 | 0.032/0.024/0.275/0.356 | 0.938/0.990/0.994/0.994 |
+| joint | 1.000/1.000/1.000/1.000 | 0.032/0.020/0.050/0.068 | 0.990/0.999/1.000/1.000 |
+| reset | 1.000/1.000/0.988/1.000 | 0.032/0.107/0.164/0.055 | 0.954/0.996/0.997/1.000 |
+
+A calibrated Gaussian predictive has mean `z² = 1`; these are `0.02–0.36`, i.e.
+the predictive sd is up to 7× too large, and a nominal 50% interval covers
+94–99%. The interval is therefore honest only as a *conservative* bound. Its
+width is dominated by the bias prior (sd `0.05` → ±`0.05·z`), which is the same
+order as the residual sd `0.07–0.15`, so the model's uncertainty about the
+readout is not the quantity the intervals are dominated by. Reporting coverage
+alone would have hidden this; the calibration curve and `z²` are now the
+reported quantities.
+
 **Conclusion.** The measured blocker was the transition kernel's
 high-dimensional scaling, not the regression objective, the teacher, or the
 run length.  The exact-covariance posterior-referenced CN raises acceptance
-but its independence-proposal form saturates below the ESS gate at `d = 34`.
-Gradient-based HMC with the exact posterior metric passes the four-chain gate
-on the conditioned target; a full 57,378-parameter dense-metric HMC and the
-continual stream remain open.
+but its random-walk form saturates near `(1−ρ)/(1+ρ)` in ESS/step: it fails the
+ESS gate at 3,000 steps and passes at 6,000 (4,500 draws per chain).
+Gradient-based HMC with the exact posterior metric passes the same gate with
+750 draws per chain, a ~6× smaller budget.  On the full 57,378-coordinate
+target a corrected diagonal metric adapts `ε≈0.10` but reaches only bulk ESS
+4.7, and a low-rank-plus-diagonal metric reaches ESS 5.3 at rank 32 over 1,000
+steps, and a Hessian-diagonal metric at the mode (48% of its entries fall below
+the prior bound, so the mode is nonconvex) also stalls at ESS 4.8; the full
+posterior remains open. The
+continual-stream pilot is measured (reset forgets, joint retains, warm keeps
+the best retention) but remains a pilot, not a promotion result.
 
 **Live/fixture parity is implemented but unverified here.**
 `scripts/pcnl_ultrabert_adapter.py` now shares the pinned revision, 96-token
