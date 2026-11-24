@@ -459,7 +459,10 @@ R̂ `2.50388` / ESS `4.8` / RMSE `0.150189` with `clipped_to_prior` `27,622`,
 low-rank 8 R̂ `2.39408` / ESS `4.9`, low-rank 32 R̂ `2.01334` / ESS `5.3`, and the
 readout-conditional gate R̂ `1.00935` / ESS `3000.0` / RMSE `0.105302`. The exact
 commands and log paths are tabulated in `docs/PCNL_STATUS.md`
-("Legacy-gate reproducibility after the init change").
+("Legacy-gate reproducibility after the init change"), which also records the
+two rows that do **not** reproduce: the live-attention q/k gate (recorded R̂
+`2.60278`, re-runs give `1.76–2.13`) and the tempering cold-chain summaries
+(swaps reproduce: `0/240`; R̂/RMSE depend on the mode fit).
 
 A first pass reported these as non-reproducible; that was an incomplete
 reconstruction, not a code drift. The three flags that mattered: `--pilot-inflate

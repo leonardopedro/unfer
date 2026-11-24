@@ -7736,17 +7736,48 @@ if it needs to outlive the session.
 | low-rank 8 — R̂ 2.39408, ESS 4.9 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 8 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-C-exact.log` (re-verified) |
 | low-rank 32 — R̂ 2.01334, ESS 5.3 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-D-exact.log` (re-verified) |
 | low-rank 32 + trajectory jitter — R̂ 2.14626, ESS 5.1 | as low-rank 32 plus `--hmc-jitter` | `/tmp/r13-full-hmc-lowrank-jitter.log` |
-| parallel tempering, 4 replicas `0.02/0.0737/0.2714/1` — R̂ 2.44665, ESS 4.8, RMSE 0.168598 | `vector_regression --kernel hmc --temper 4 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-full-temper4.log` |
-| hit-and-run, 400 moves — R̂ 2.39717, ESS 4.9, RMSE 0.087048 | `vector_regression --kernel hitrun --init mode --mode-steps 8000 --moves 400 --width 1 --burn 100 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-hitrun.log` |
+| parallel tempering, 4 replicas `0.02/0.0737/0.2714/1` — swaps 0–1/240 (**swaps reproduced, summaries not**) | `vector_regression --kernel hmc --temper 4 --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `target/r13-logs/temper.log` (0/240 swaps on all four chains, hot replicas at `7.3e3–1.8e5`; R̂ `2.15397`, ESS `5.1`, RMSE `0.096604` against the recorded `2.44665`/`4.8`/`0.168598`) |
+| hit-and-run, 400 moves — R̂ 2.39717, ESS 4.9, RMSE 0.087048 | `vector_regression --kernel hitrun --init mode --mode-steps 8000 --mode-lr 5e-3 --steps 400 --hr-width 1 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `/tmp/r13-hitrun-verify.log` (re-verified; burn is `steps/4` and is not a flag) |
 | hit-and-run, 5,000 moves — R̂ 3.03445, ESS 4.5, RMSE 0.121815 | `vector_regression --kernel hitrun --init point --moves 5000 --width 1 --burn 1250 --thin 2 --draws 1875 --chains 4` | `/tmp/r13-gate-hitrun-5k.log` |
-| live-attention q/k gate — R̂ 2.60278, ESS 4.7, RMSE 0.173727 | `vector_regression --kernel hmc --init mode --mode-steps 8000 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-priorinit.log` |
-| multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `/tmp/r13-basins-prior-8000.log` |
-| continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `/tmp/r13-stream-calib.log` |
+| live-attention q/k gate — R̂ 2.60278, ESS 4.7, RMSE 0.173727 (**unreproduced**) | not recovered — see note below | `/tmp/r13-gate-priorinit.log` (cleared) |
+| multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `target/r13-logs/basins.log` (re-verified: `28.0901`/`38.7083`, RMSE `0.076978`/`0.087130`) |
+| continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `target/r13-logs/stream.log` (re-verified: warm coverage `1.0/1.0/0.9917/0.9833`, z² `0.032/0.024/0.275/0.356`) |
 | CN exact-dense, 6,000 steps — ESS/accept per chain in log | `vector_regression --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `/tmp/r13-cn-exact-4-long.log` |
 
-The last six rows are reconstructed from their log headers (steps, draws,
-proposal, ladder all echoed there) but were **not** re-executed in this pass;
-treat them as documented parameters, not as today's verified runs.
+The readout, pilot, Hessian, low-rank 8/32, hit-and-run 400, basins and stream
+rows were re-executed and match to the last digit. The remaining rows are
+reconstructed from their log headers (steps, draws, proposal, ladder all echoed
+there), and the reference logs have since been cleared from `/tmp`, so only the
+numbers in this table survive:
+
+- **hit-and-run 400 moves — re-verified** once the command was completed with
+  `--mode-lr 5e-3` (the default `2e-3` leaves the mode at potential `93.87`
+  instead of `33.81`) and `--start-jitter 1e-4`; all four chain lines are
+  byte-identical to the recorded log and R̂/ESS/RMSE match exactly.
+- **live-attention q/k gate — not reproducible.** The documented command
+  (`--init mode --mode-steps 8000`, default `--mode-lr 2e-3`) now gives R̂
+  `2.12514`, ESS `5.2`, RMSE `0.123945`; with `--mode-lr 5e-3` it gives R̂
+  `1.76121`, ESS `5.9`, RMSE `0.137976`. Neither is the recorded
+  `2.60278`/`4.7`/`0.173727`, and the log that would show the missing flag has
+  been cleared, so the recorded row is an invocation not captured here. Treat
+  those three digits as unreproduced rather than as current behaviour.
+- **parallel tempering — swaps reproduced, cold-chain summaries not.** All
+  four chains accept `0/240` swaps with hot replicas ending at
+  `7.3e3–1.8e5`, matching the qualitative claim, but the cold chain gives R̂
+  `2.15397`, ESS `5.1`, RMSE `0.096604` where the recorded row says
+  `2.44665`/`4.8`/`0.168598`. With zero exchanges the cold chain never mixes
+  the ladder, so it remains a function of its own start; the recorded number
+  reflects a different mode fit than the 3,000-step one here and cannot be
+  recovered without the cleared log.
+- **basins and stream — re-verified exactly** (`28.0901`/`38.7083` with RMSE
+  `0.076978`/`0.087130`; coverage `1.0/1.0/0.9917/0.9833` with z²
+  `0.032/0.024/0.275/0.356`).
+- The jitter, hit-and-run 5,000 and CN rows stay documented parameters, not
+  re-executed runs.
+
+Logs for these re-runs are under `target/r13-logs/` (build output, not
+committed). The earlier `/tmp` logs were cleared by the system during this
+session, which is why several rows now cite recorded numbers only.
 
 ### Low-rank-plus-diagonal HMC metric (2026-11-23)
 
