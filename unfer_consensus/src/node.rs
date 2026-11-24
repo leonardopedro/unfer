@@ -1493,13 +1493,13 @@ mod tests {
 
         // H7 acceptance: a job whose fire fails is re-queued (unclaimSlot) and
         // a later claim retries it; markFired only after a successful fire.
-        let mut q = JobQueue::new();
+        let mut q = JobQueue::new("test-deployment");
         q.enqueue("settle-auction");
-        let claim = q.claim_slot("settle-auction").expect("claim");
-        q.unclaim_slot(&claim); // fire failed → re-queue
+        let claim = q.claim("settle-auction", "worker-a").expect("claim");
+        q.release(&claim, "worker-a").unwrap(); // fire failed → re-queue
         assert_eq!(q.state("settle-auction"), Some(JobState::Queued));
-        let retry = q.claim_slot("settle-auction").expect("retry");
-        q.mark_fired(&retry).unwrap(); // fire succeeded
+        let retry = q.claim("settle-auction", "worker-a").expect("retry");
+        q.settle(&retry, "worker-a").unwrap(); // fire succeeded
         assert_eq!(q.state("settle-auction"), Some(JobState::Fired));
     }
 

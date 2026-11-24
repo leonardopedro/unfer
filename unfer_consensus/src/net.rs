@@ -49,6 +49,7 @@ use unfer_protocol::submission::{ReceiptState, Slot, SubmissionId, UnknownReason
 use unfer_protocol::{Code, ConsensusTransaction, Diagnostic, Severity};
 
 use crate::engine::ConsensusEngine;
+use crate::jobs::{JobFence, JobQueue};
 
 /// D10: the schema a replicated ledger submission is read under. A command
 /// under any other schema is refused by name rather than applied as a
@@ -90,6 +91,11 @@ pub struct LedgerSnapshot {
     /// Monotonic pump request counter; survives restarts so request ids never
     /// collide with entries already in a durable submission journal.
     next_request_id: u64,
+    /// D14: the current job fence per resource. It lives in the committed
+    /// snapshot, so the committed state — not a worker — owns which fence is
+    /// current, and a restarted worker cannot re-admit the one it lost.
+    #[serde(default)]
+    jobs: JobQueue,
 }
 
 /// Atomic (`write` + `rename`) JSON persistence for the replicated ledger.
@@ -180,6 +186,7 @@ struct LedgerState {
     bank: Vec<ConsensusTransaction>,
     outbox: BTreeMap<u64, ConsensusTransaction>,
     committed_ids: BTreeMap<u64, u64>,
+    jobs: JobQueue,
 }
 
 impl LedgerState {
@@ -190,6 +197,7 @@ impl LedgerState {
             committed_ids: self.committed_ids.clone(),
             next_id,
             next_request_id,
+            jobs: self.jobs.clone(),
         }
     }
 }
@@ -298,6 +306,7 @@ impl SharedLedger {
                 bank: loaded.bank,
                 outbox: loaded.outbox,
                 committed_ids: loaded.committed_ids,
+                jobs: loaded.jobs,
             })),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
             request_seq: Arc::new(AtomicU64::new(loaded.next_request_id)),
@@ -480,6 +489,28 @@ impl SharedLedger {
 
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.committed_tx.subscribe()
+    }
+
+    /// D14: mutate the committed job fences under the ledger lock and persist
+    /// one coherent snapshot. Every transition (claim, renew, release,
+    /// reclaim, settle, disable) goes through here, so the durable snapshot is
+    /// always a state the cluster actually held — the same rule the bank
+    /// follows.
+    pub fn with_jobs<R>(&self, f: impl FnOnce(&mut JobQueue) -> R) -> Result<R, String> {
+        let mut state = self.state.lock().unwrap();
+        let result = f(&mut state.jobs);
+        self.persist_state(&state)?;
+        Ok(result)
+    }
+
+    /// D14: read the current fence without taking a mutable handle.
+    pub fn current_fence(&self, resource: &str) -> Option<JobFence> {
+        self.state
+            .lock()
+            .unwrap()
+            .jobs
+            .current_fence(resource)
+            .cloned()
     }
 }
 
@@ -1960,39 +1991,61 @@ mod tests {
     /// claim made at a committed slot is refused once a later decision moves
     /// the ledger past it.
     #[test]
-    fn the_job_fence_follows_the_live_committed_watermark() {
-        use crate::jobs::JobQueue;
+    fn the_job_fence_is_owned_and_durably_held_by_the_committed_ledger() {
+        use crate::jobs::JobState;
 
-        let ledger = mem_ledger();
-        let transaction = tx(1);
-        let id = ledger.allocate(transaction.clone()).expect("reserve");
-        ledger
-            .append(vec![encode_ledger_value(id, &transaction).unwrap()])
-            .expect("apply decision");
-        assert_eq!(ledger.committed(), 1, "one ordered decision applied");
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d14-fence-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
 
-        let mut jobs = JobQueue::new();
-        jobs.enqueue("settle-auction");
-        // A single-member deployment: index 0 leads every tick.
-        let claim = jobs
-            .claim_slot_leased("settle-auction", ledger.committed(), 1, 0)
-            .expect("claim at the committed slot");
-        assert_eq!(jobs.tick(), 1, "the fence follows the live watermark");
+        let claim = {
+            let ledger = SharedLedger::open(&dir).expect("open committed state");
+            ledger
+                .with_jobs(|jobs| {
+                    jobs.set_deployment("deploy-1");
+                    jobs.enqueue("settle-auction");
+                })
+                .unwrap();
+            let claim = ledger
+                .with_jobs(|jobs| jobs.claim("settle-auction", "worker-a"))
+                .unwrap()
+                .expect("claim under the ledger lock");
+            assert_eq!(
+                ledger.current_fence("settle-auction").as_ref(),
+                Some(claim.fence()),
+                "the committed state owns the current fence"
+            );
+            claim
+        };
 
-        // A second committed decision advances the ledger's ordered point.
-        let later = tx(2);
-        let later_id = ledger.allocate(later.clone()).expect("reserve");
-        ledger
-            .append(vec![encode_ledger_value(later_id, &later).unwrap()])
-            .expect("apply decision");
-        assert_eq!(ledger.committed(), 2);
-        jobs.advance_tick(ledger.committed())
-            .expect("advance the fence to the new watermark");
-
-        assert!(
-            jobs.mark_fired(&claim).is_err(),
-            "a claim at a superseded committed slot must not fire"
+        // Reopen the committed state: the fence survives, so a restarted
+        // process can take over and the old worker's fence is dead.
+        let reopened = SharedLedger::open(&dir).expect("reopen committed state");
+        assert_eq!(
+            reopened.current_fence("settle-auction").as_ref(),
+            Some(claim.fence()),
+            "the fence is durable, not worker state"
         );
+        reopened
+            .with_jobs(|jobs| jobs.reclaim("settle-auction", "worker-b"))
+            .unwrap()
+            .expect("the restarted process takes over");
+        let stale = reopened
+            .with_jobs(|jobs| jobs.settle(&claim, "worker-a"))
+            .unwrap();
+        assert!(stale.is_err(), "the old fence is stale after the reclaim");
+        let state = reopened
+            .with_jobs(|jobs| jobs.state("settle-auction"))
+            .unwrap();
+        assert_eq!(state, Some(JobState::Claimed), "worker-b still holds it");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The outbox is a local durability device only: it is drained by the

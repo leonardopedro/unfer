@@ -34,7 +34,7 @@ pub use engine::{ConsensusEngine, LocalConsensus};
 pub use escrow::{Escrow, EscrowService, EscrowState};
 pub use idempotency::IdempotencyStore;
 pub use identity::IdentityRegistry;
-pub use jobs::{JobClaim, JobQueue, JobState};
+pub use jobs::{FencedSink, JobClaim, JobFence, JobQueue, JobState};
 pub use lease::LeaderLease;
 pub use mathbond::MathBondLedger;
 pub use mathbond_market::MarketLedger;
