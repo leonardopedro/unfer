@@ -166,8 +166,14 @@ fn a_bounded_exhaustive_search_finds_no_violation() {
 fn a_deep_search_to_depth_five_finds_no_violation() {
     let root = temp_root("explore-deep");
     let alphabet = sim::fixed_alphabet();
+    // Depth 5 is the recorded bound; `UNFER_D12_DEPTH` exists so a deeper run can
+    // be measured instead of guessed at, and it names itself in the trace file.
+    let depth: usize = std::env::var("UNFER_D12_DEPTH")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5);
     let started = std::time::Instant::now();
-    let report = sim::explore(19, &root, &alphabet, 5);
+    let report = sim::explore(19, &root, &alphabet, depth);
     let elapsed = started.elapsed();
     println!(
         "deep search: {} elapsed_ms={}",
@@ -181,7 +187,7 @@ fn a_deep_search_to_depth_five_finds_no_violation() {
     );
     assert!(report.leaves > 0, "the deep search executed no leaf schedule");
     save(
-        "bounded-search-depth5.txt",
+        &format!("bounded-search-depth{depth}.txt"),
         &format!("{}\n", report.render()),
     );
     let _ = std::fs::remove_dir_all(&root);

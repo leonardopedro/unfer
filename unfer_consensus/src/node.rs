@@ -18,9 +18,10 @@ use crate::idempotency::{
     transaction_key, AdmissionBook, AdmittedOutcome, IdempotencyStore, RequestId,
 };
 use crate::identity::IdentityRegistry;
+use crate::jobs::{ClaimState, FencedSink, Fence, JobClaim, JobQueue, JobState};
 use crate::storage::{
-    DedupUpdate, JournalRecord, RecordedOutcome, RequestRecord, StorageError, TransitionLog,
-    TransitionRecord,
+    DedupUpdate, FenceRecord, JournalRecord, RecordedOutcome, RequestRecord, StorageError,
+    TransitionLog, TransitionRecord,
 };
 
 /// What one committed entry did to this node's state (D05/D07).
@@ -78,6 +79,10 @@ pub struct ConsensusNode {
     /// D06: the request a submission was admitted under, so a settled
     /// submission can be reported back to the book.
     request_of: HashMap<u64, RequestId>,
+    /// D14: scheduled jobs and the ordered fences that decide who may settle
+    /// them. The committed state owns the fence, so it lives here and is
+    /// rebuilt from the journal rather than held by a worker.
+    jobs: JobQueue,
     /// D07: one durable log for transitions and request bindings. `None` means
     /// the node is in-memory only, which is stated rather than implied.
     journal: Option<TransitionLog>,
@@ -109,6 +114,7 @@ impl ConsensusNode {
             halted: None,
             admissions: AdmissionBook::default(),
             request_of: HashMap::new(),
+            jobs: JobQueue::new(),
             journal: None,
             replay: Vec::new(),
             replay_next: 0,
@@ -140,13 +146,28 @@ impl ConsensusNode {
                 node.request_of
                     .insert(request.submission.0, request.id.clone());
             }
+            // D14: the last fence record per resource is the current fence. The
+            // table is rebuilt, not trusted from memory, so a worker that
+            // restarted cannot invent a claim it did not durably take.
+            if let JournalRecord::Fence(fence) = record {
+                node.jobs.install_fence(
+                    Fence::new(
+                        fence.deployment.clone(),
+                        fence.resource.clone(),
+                        fence.epoch,
+                        fence.generation,
+                    ),
+                    fence.holder.clone(),
+                    fence.state,
+                );
+            }
         }
         node.replay = recovery
             .records
             .iter()
             .filter_map(|record| match record {
                 JournalRecord::Transition(transition) => Some(transition.clone()),
-                JournalRecord::Request(_) => None,
+                JournalRecord::Request(_) | JournalRecord::Fence(_) => None,
             })
             .collect();
         Ok((node, recovery))
@@ -217,6 +238,165 @@ impl ConsensusNode {
     /// specific authority to mint, or `MintAuthority::None` to disable it.
     pub fn set_mint_authority(&mut self, authority: MintAuthority) {
         self.certs = CertificateLedger::new(authority);
+    }
+
+    // -----------------------------------------------------------------------
+    // D14: ordered job fencing
+    //
+    // Every command below turns into one journal record before it publishes
+    // anything. A transition whose record is not durable is rolled back, so a
+    // node that restarts comes up with the fences it wrote and no others — the
+    // rollback is what makes "the committed state owns the fence" true after a
+    // crash rather than only in memory.
+    //
+    // None of these read a clock. A claim is authorized by being the current
+    // fence, not by being held during an interval, so two workers partitioned
+    // from each other cannot both be right about who leads: only one of their
+    // fences is current, and the other is refused before it reaches a sink or a
+    // journal.
+    // -----------------------------------------------------------------------
+
+    /// The committed job/fence state.
+    pub fn jobs(&self) -> &JobQueue {
+        &self.jobs
+    }
+
+    pub fn job_state(&self, job: &str) -> Option<JobState> {
+        self.jobs.state(job)
+    }
+
+    /// The current fence for a job, if one was ever issued.
+    pub fn job_fence(&self, job: &str) -> Option<&Fence> {
+        self.jobs.fence(job)
+    }
+
+    /// Register a scheduled job. Registration is local state, not a fence
+    /// transition, so it is not journaled: the job's state is `Queued` in every
+    /// replica that registers it, and a claim is what needs a record.
+    pub fn enqueue_job(&mut self, job: &str) {
+        self.jobs.enqueue(job);
+    }
+
+    /// The ordered claim command: `(deployment, resource, epoch, generation)` is
+    /// issued here, by the committed state, and returned to the caller.
+    pub fn claim_job(&mut self, job: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
+        let before = self.jobs.clone();
+        let claim = self.jobs.claim(job, holder)?;
+        if let Err(error) = self.record_fence(&claim, ClaimState::Claimed, Some(holder.to_string())) {
+            self.jobs = before;
+            return Err(error);
+        }
+        Ok(claim)
+    }
+
+    /// Re-arm a claim with a fresh fence (same holder, new generation).
+    pub fn renew_job(&mut self, claim: &JobClaim) -> Result<JobClaim, Diagnostic> {
+        let before = self.jobs.clone();
+        let renewed = self.jobs.renew(claim)?;
+        if let Err(error) = self.record_fence(&renewed, ClaimState::Claimed, None) {
+            self.jobs = before;
+            return Err(error);
+        }
+        Ok(renewed)
+    }
+
+    /// Return a job to the queue after a failed fire, releasing its fence.
+    /// A stale claim is refused and changes nothing.
+    pub fn unclaim_job(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        let before = self.jobs.clone();
+        self.jobs.unclaim(claim)?;
+        if let Err(error) = self.record_fence(claim, ClaimState::Queued, None) {
+            self.jobs = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Mark the job fired. Only the current fence can do this: a stale worker
+    /// may keep computing, but its completion is not a state change here.
+    pub fn mark_job_fired(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        let before = self.jobs.clone();
+        self.jobs.mark_fired(claim)?;
+        if let Err(error) = self.record_fence(claim, ClaimState::Fired, None) {
+            self.jobs = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Disable the job on an authorization failure, releasing its fence.
+    pub fn disable_job(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        let before = self.jobs.clone();
+        self.jobs.disable(claim)?;
+        if let Err(error) = self.record_fence(claim, ClaimState::Disabled, None) {
+            self.jobs = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Fire the job through a sink that enforces order, then commit the settle.
+    ///
+    /// If the sink accepts the effect but the settle cannot be recorded, the
+    /// effect is *applied and unrecorded* — the uncertain outcome D15's outbox
+    /// exists for. It is reported as an error naming that state, never as a
+    /// clean failure, because a caller that retried blindly would repeat it.
+    pub fn settle_job(
+        &mut self,
+        claim: &JobClaim,
+        sink: &mut dyn FencedSink,
+        payload: &str,
+    ) -> Result<(), Diagnostic> {
+        let before = self.jobs.clone();
+        self.jobs.settle(claim, sink, payload)?;
+        if let Err(error) = self.record_fence(claim, ClaimState::Fired, None) {
+            self.jobs = before;
+            return Err(Diagnostic::new(
+                Code::STORAGE_FAILED,
+                format!(
+                    "the effect for job '{}' reached the sink but the settle could not be recorded ({error}); 
+                     the result is applied and unrecorded",
+                    claim.job()
+                ),
+                Severity::Error,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Write one fence transition. Absent a journal the node is in-memory only
+    /// (visible through `is_durable`), which is a property of the node the
+    /// caller chose, not a silent success.
+    fn record_fence(
+        &mut self,
+        claim: &JobClaim,
+        state: ClaimState,
+        holder: Option<String>,
+    ) -> Result<(), Diagnostic> {
+        let fence = claim.fence();
+        let record = FenceRecord {
+            deployment: fence.deployment.clone(),
+            resource: fence.resource.clone(),
+            epoch: fence.epoch,
+            generation: fence.generation,
+            holder,
+            state,
+        };
+        if let Some(journal) = self.journal.as_mut() {
+            journal
+                .append(&JournalRecord::Fence(record))
+                .map_err(|error| {
+                    Diagnostic::new(
+                        Code::STORAGE_FAILED,
+                        format!(
+                            "the fence for job '{}' could not be recorded ({error})",
+                            claim.job()
+                        ),
+                        Severity::Error,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     /// Adapter for callers that only need the receipt id (D05 keeps the local
@@ -1495,10 +1675,10 @@ mod tests {
         // a later claim retries it; markFired only after a successful fire.
         let mut q = JobQueue::new();
         q.enqueue("settle-auction");
-        let claim = q.claim_slot("settle-auction").expect("claim");
-        q.unclaim_slot(&claim); // fire failed → re-queue
+        let claim = q.claim("settle-auction", "worker-0").expect("claim");
+        q.unclaim(&claim).expect("unclaim"); // fire failed → re-queue
         assert_eq!(q.state("settle-auction"), Some(JobState::Queued));
-        let retry = q.claim_slot("settle-auction").expect("retry");
+        let retry = q.claim("settle-auction", "worker-1").expect("retry");
         q.mark_fired(&retry).unwrap(); // fire succeeded
         assert_eq!(q.state("settle-auction"), Some(JobState::Fired));
     }
