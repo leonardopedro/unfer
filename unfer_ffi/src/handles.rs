@@ -200,8 +200,19 @@ pub fn recover_durable() -> Result<(), String> {
             .get("record")
             .and_then(|r| serde_json::from_value::<ActionRecord>(r.clone()).ok())
         {
-            let handle = ring_put_action(record);
-            handle_by_id.insert(id.to_string(), handle);
+            // One action per id: a later record for a known id *replaces* the
+            // earlier one in the ring. Minting a fresh handle per record (as this
+            // did) left every resolved action in the queue twice after a restart —
+            // a pending ghost next to its approved self.
+            match handle_by_id.get(id) {
+                Some(existing) => {
+                    with_action_mut(*existing, |slot| *slot = record.clone());
+                }
+                None => {
+                    let handle = ring_put_action(record);
+                    handle_by_id.insert(id.to_string(), handle);
+                }
+            }
             // A resolved record supersedes any earlier in-flight marker.
             inflight_ids.remove(id);
         }
@@ -214,6 +225,27 @@ pub fn recover_durable() -> Result<(), String> {
             mark_unknown_outcome(*handle);
         } else {
             // No record at all: mint a placeholder so the operator can see it.
+            let record = ActionRecord::new(
+                id.clone(),
+                "kernel",
+                "unknown",
+                serde_json::json!({"unknown_outcome": true}),
+                0,
+                None,
+            );
+            let handle = ring_put_action(record);
+            mark_unknown_outcome(handle);
+        }
+    }
+    // D15: a durable dispatch marker with no recorded outcome means the effect
+    // may have landed. Recovery surfaces it (UK-1010) instead of re-dispatching:
+    // only the sink's own key can tell whether it applied, and a sink that
+    // cannot deduplicate must be reconciled by a human.
+    let actions = store.replay(streams::ACTIONS).map_err(|e| e.to_string())?;
+    for (id, _state) in crate::outbox::unresolved_in(&actions) {
+        if let Some(handle) = handle_by_id.get(&id) {
+            mark_unknown_outcome(*handle);
+        } else {
             let record = ActionRecord::new(
                 id.clone(),
                 "kernel",
@@ -741,6 +773,7 @@ pub fn set_durable_for_tests(store: Option<Arc<dyn DurableStore>>) {
 /// simulate a cold process restart against a fresh on-disk store.
 #[cfg(test)]
 pub fn reset_durable_for_tests() {
+    crate::outbox::reset_kernel();
     *DURABLE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *ACTIONS.lock().unwrap_or_else(|e| e.into_inner()) = None;
     NEXT_ACTION.store(1, Ordering::SeqCst);

@@ -15,6 +15,8 @@
 pub mod durable;
 mod event_log;
 mod handles;
+/// D15: the durable dispatch protocol under the approval queue.
+pub mod outbox;
 #[cfg(feature = "zenodo")]
 pub mod zenodo;
 
@@ -1741,6 +1743,105 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
             .ok_or_else(|| fail_action_not_found(action_handle))?;
         if record.state != ActionState::Pending {
             return Err(action_not_pending(action_handle));
+        }
+        // D15: with a durable store configured, the resolution goes through the
+        // outbox — intent (this record's params) and approval durable before the
+        // sink, a durable dispatch marker before the call, and the sink's
+        // acknowledgment recorded separately from a retryable failure and from
+        // an unknown outcome. Without a store there is nothing to be durable
+        // about, so the inline path below stays; it is the RAM-only kernel.
+        let ctx = handles::current_caller();
+        let class = ctx.effect_kind_of(&record.effect);
+        let dispatched = outbox::with_kernel(|ob| {
+            outbox::apply_action(ob, &record, class, &ctx.tag.principal)
+        })
+        .map_err(|e| Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error))?;
+        if let Some(outcome) = dispatched {
+            let applied = match outcome {
+                Ok(outbox::DispatchOutcome::Applied(v))
+                | Ok(outbox::DispatchOutcome::AlreadyApplied(v)) => v,
+                Ok(outbox::DispatchOutcome::Retryable(error)) => {
+                    handles::owner_log(
+                        "kernel.audit",
+                        &format!(
+                            "action {action_handle} dispatch is retryable ({error}); the effect \
+                             did not apply and the intent is durable"
+                        ),
+                    );
+                    return Err(Diagnostic::new(
+                        Code::STORAGE_FAILED,
+                        format!(
+                            "action {action_handle} was not applied; the sink asked to be \
+                             retried: {error}"
+                        ),
+                        Severity::Error,
+                    ));
+                }
+                Err(outbox::DispatchError::Uncertain(reason)) => {
+                    // A dispatch may have landed. Unknown is the honest answer,
+                    // and the only safe one: re-dispatching could apply twice.
+                    handles::mark_unknown_outcome(action_handle);
+                    handles::owner_log(
+                        "kernel.audit",
+                        &format!(
+                            "action {action_handle} UNKNOWN_OUTCOME (UK-1010): {reason}"
+                        ),
+                    );
+                    return Err(Diagnostic::new(Code::UNKNOWN_OUTCOME, reason, Severity::Error));
+                }
+                Err(e @ outbox::DispatchError::Unrecorded(_)) => {
+                    handles::mark_unknown_outcome(action_handle);
+                    handles::owner_log(
+                        "kernel.audit",
+                        &format!(
+                            "action {action_handle} applied but its acknowledgment is not \
+                             durable; marked UNKNOWN_OUTCOME (UK-1010): {e}"
+                        ),
+                    );
+                    return Err(Diagnostic::new(
+                        Code::UNKNOWN_OUTCOME,
+                        e.to_string(),
+                        Severity::Error,
+                    ));
+                }
+                Err(outbox::DispatchError::Storage(e)) => {
+                    // Refused before the sink: the effect did not happen, and a
+                    // retry is safe once the store is healthy again.
+                    return Err(Diagnostic::new(Code::STORAGE_FAILED, e, Severity::Error));
+                }
+                Err(e) => {
+                    // A stale approval, a revoked principal, a terminal state: no
+                    // effect ran and none will without a new decision.
+                    return Err(Diagnostic::new(
+                        Code::CALL_DENIED,
+                        format!("action {action_handle} was not dispatched: {e}"),
+                        Severity::Error,
+                    ));
+                }
+            };
+            handles::with_action_mut(action_handle, |r| {
+                r.state = ActionState::Approved;
+                r.applied = Some(applied);
+            });
+            // The outbox acknowledgment is the durability point; the resolved
+            // action record is what the queue presents. If that second write
+            // fails the effect is still known-applied, so this is not UK-1010 —
+            // but it must not report plain success either.
+            let resolved = handles::with_action(action_handle, |r| r.clone());
+            if let Some(r) = resolved
+                && let Err(e) = handles::durable_append_action_resolved(&r)
+            {
+                return Err(Diagnostic::new(
+                    Code::STORAGE_FAILED,
+                    format!(
+                        "action {action_handle} applied and acknowledged by the outbox; its \
+                         resolved queue record could not be flushed: {e}"
+                    ),
+                    Severity::Error,
+                ));
+            }
+            push_resolved(action_handle)?;
+            return Ok(0);
         }
         // Durable in-flight marker + checkpoint BEFORE the side effect fires.
         handles::mark_inflight(&record)
@@ -5836,10 +5937,13 @@ mod tests {
         let failing = FlushFailAfterN {
             inner: std::sync::Arc::new(real),
             flushes: std::sync::atomic::AtomicUsize::new(0),
-            // uk_action_apply flushes 3x: checkpoint_diag (1), mark_inflight
-            // (2), resolved record (3). Failing at 3 keeps the in-flight marker
-            // durable but drops the resolved record — the crash window.
-            fail_on: 3,
+            // With a durable store, uk_action_apply flushes through the D15
+            // outbox: checkpoint_diag (1), planned intent (2), dispatch marker
+            // (3), acknowledgment (4), then the resolved queue record (5).
+            // Failing at 4 keeps the dispatch marker durable and drops the
+            // acknowledgment — exactly the crash window that makes the effect's
+            // outcome unknown.
+            fail_on: 4,
         };
         handles::set_durable_for_tests(Some(std::sync::Arc::new(failing)));
 
@@ -5869,6 +5973,91 @@ mod tests {
                 .any(|l| l.contains("UNKNOWN_OUTCOME") && l.contains("action")),
             "owner ring must record the unknown-outcome action, got: {owner:?}"
         );
+
+        handles::reset_durable_for_tests();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── D15: an existing approval path dispatches through the outbox ───────
+
+    /// The end-to-end requirement: `uk_action_apply` — the queue's only real
+    /// apply path — dispatches through the D15 outbox when a durable store is
+    /// configured. The effect's intent and dispatch marker are durable before
+    /// the sink runs and the sink's acknowledgment is recorded, so a restart
+    /// reads a decided action rather than a maybe.
+    #[test]
+    fn approved_action_dispatches_through_the_outbox_end_to_end() {
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _audit_lock = AUDIT_AGENT_TESTS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d15-e2e-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Jsonl)
+            .expect("durable init must succeed");
+
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert!(handle > 0);
+        assert_eq!(action_get(handle)["state"], "pending");
+
+        assert_eq!(uk_action_apply(handle), 0, "the dispatch must succeed");
+        let record = action_get(handle);
+        assert_eq!(record["state"], "approved");
+        assert_eq!(record["applied"]["applied"], true);
+
+        // The durable stream carries the outbox protocol, not just the queue's
+        // before/after records: a planned intent, a dispatch marker, and an
+        // acknowledgment — in that order.
+        let store = handles::durable().expect("durable store");
+        let actions = store
+            .replay(unfer_protocol::durable::streams::ACTIONS)
+            .unwrap();
+        let outbox_kinds: Vec<String> = actions
+            .iter()
+            .filter_map(|raw| serde_json::from_slice::<serde_json::Value>(raw).ok())
+            .filter_map(|v| {
+                v.get("outbox")
+                    .and_then(|o| o.get("kind"))
+                    .and_then(|k| k.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        assert_eq!(
+            outbox_kinds,
+            vec!["planned", "dispatching", "acknowledged"],
+            "got {outbox_kinds:?}"
+        );
+        assert!(
+            outbox::unresolved_in(&actions).is_empty(),
+            "an acknowledged dispatch must not be unresolved"
+        );
+
+        // Restart: the action comes back approved, with the outbox's ack as the
+        // reason the outcome is known, and re-applying does not fire twice.
+        handles::reset_durable_for_tests();
+        handles::init_durable(Some(&dir), handles::DurableBackend::Jsonl)
+            .expect("durable re-init must succeed");
+        handles::recover_durable().expect("recovery must succeed");
+        let recovered = handles::list_actions();
+        assert_eq!(recovered.len(), 1);
+        let (recovered_handle, recovered_record) = &recovered[0];
+        assert_eq!(recovered_record.state, ActionState::Approved);
+        assert!(
+            !handles::is_unknown_outcome(*recovered_handle),
+            "an acknowledged action is not unknown-outcome"
+        );
+        // Approved is not Pending, so the queue refuses a second apply on its
+        // own; the outbox would answer `already applied` if it did not.
+        assert_eq!(uk_action_apply(*recovered_handle), -4005);
 
         handles::reset_durable_for_tests();
         let _ = std::fs::remove_dir_all(&dir);
