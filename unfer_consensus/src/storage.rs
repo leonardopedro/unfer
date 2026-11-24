@@ -198,13 +198,17 @@ pub struct TransitionLog {
     path: PathBuf,
     file: File,
     len: u64,
-    #[cfg(test)]
     fault: Option<FaultPoint>,
 }
 
 /// Fault injection for the crash tests (plan D07 acceptance): each boundary of
 /// the crash protocol can be made to fail.
-#[cfg(test)]
+///
+/// This is a test seam, not a runtime switch: nothing outside a test ever calls
+/// [`TransitionLog::inject`], and an uninjected log takes the same path it always
+/// did. It is compiled unconditionally because the deterministic scheduler
+/// (plan D12) lives in the library and must reach it from an integration test.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultPoint {
     /// Fail before any byte is written.
@@ -238,7 +242,6 @@ impl TransitionLog {
             path,
             file,
             len: 0,
-            #[cfg(test)]
             fault: None,
         };
         let recovery = log.recover()?;
@@ -371,25 +374,22 @@ impl TransitionLog {
         frame.extend_from_slice(&crc32(&payload).to_le_bytes());
         frame.extend_from_slice(&payload);
 
-        #[cfg(test)]
-        {
-            if let Some(fault) = self.fault.take() {
-                match fault {
-                    FaultPoint::BeforeWrite => {
-                        return Err(StorageError::Io("injected: before write".to_string()));
-                    }
-                    FaultPoint::HalfWrite => {
-                        let half = frame.len() / 2;
-                        let _ = self.file.write_all(&frame[..half]);
-                        let _ = self.file.sync_all();
-                        return Err(StorageError::Io("injected: torn write".to_string()));
-                    }
-                    FaultPoint::AfterWrite => {
-                        let _ = self.file.write_all(&frame);
-                        return Err(StorageError::Uncertain(
-                            "injected: sync failed after write".to_string(),
-                        ));
-                    }
+        if let Some(fault) = self.fault.take() {
+            match fault {
+                FaultPoint::BeforeWrite => {
+                    return Err(StorageError::Io("injected: before write".to_string()));
+                }
+                FaultPoint::HalfWrite => {
+                    let half = frame.len() / 2;
+                    let _ = self.file.write_all(&frame[..half]);
+                    let _ = self.file.sync_all();
+                    return Err(StorageError::Io("injected: torn write".to_string()));
+                }
+                FaultPoint::AfterWrite => {
+                    let _ = self.file.write_all(&frame);
+                    return Err(StorageError::Uncertain(
+                        "injected: sync failed after write".to_string(),
+                    ));
                 }
             }
         }
@@ -411,7 +411,7 @@ impl TransitionLog {
     }
 
     /// Inject a failure at the next boundary (tests only).
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn inject(&mut self, fault: FaultPoint) {
         self.fault = Some(fault);
     }

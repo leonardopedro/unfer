@@ -22,6 +22,9 @@ pub mod mathbond_market;
 pub mod net;
 pub mod node;
 pub mod signing;
+/// D12: the deterministic fault scheduler. Test infrastructure, published so an
+/// integration test can drive it; nothing in the runtime depends on it.
+pub mod sim;
 pub mod storage;
 
 pub use attribution::{AttributionLedger, CreditState, badge_id, credit_id};
