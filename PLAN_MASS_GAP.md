@@ -1,5 +1,40 @@
 # PLAN M — the mass-gap pipeline (planner side: everything except Lean4 code)
 
+## Continuous-momentum QYM campaign · 2026-11-24
+
+The next mass-gap campaign targets the full pure Yang–Mills Hamiltonian on continuous
+momentum packets. M1–M9 and the reflected two-mode operator below are reproducible
+comparisons. Their sector labels, exclusion counts and positive finite intervals apply
+to their own operators. Use the current spectral and continuum plans for the precise
+target. [Spectral work order](../timepiece/softmodes.md) ·
+[Bałaban identification](../timepiece/cftproof.md)
+
+1. **Symbolic reference.** Extend the existing Weyl-gauge Legendre derivation with
+   the continuous curl and the nonabelian convolution in the same signed color basis.
+   Evaluate a mixed magnetic packet matrix element in both coordinate and momentum
+   space. Choose distinct centers, colors and polarizations with a nonzero cross term.
+   Check the abelian limit, transfer momentum, derivative normalization, adjoint
+   and the single outer lift. A sign flip or omitted mixed term must change the
+   reference. Store the packet, couplings, smearing, units and complete ordered
+   action with the result. [Existing Cadabra derivation](docs/yang_mills_hamiltonian.cdb)
+2. **Numerical comparison.** Reproduce that entry independently before evolving an
+   occupied packet. Separate the Mehler cutoff, shifted-solve rank, integration
+   accuracy and physical smearing. Compute discarded action before final projection
+   and certify integration tails. For a full-space spectral claim also bound the
+   *unseen* low spectrum in every relevant sector. Small full-column residuals
+   on a handful of vectors still permit a lower missed edge.
+3. **Certificate output.** Record the energy convention, physical space, target edge
+   (absolute inner bottom or excitation above the full ground space), coupling at
+   a named scale, allowable rank/shift schedules and outward-rounded energy bounds.
+   Include separate bounds for inverse compression, off-block leakage, omitted space
+   and arithmetic. Accept a strong-coupling witness only when its mass estimate
+   exceeds the entire rank-independent mass error with a strictly positive margin.
+   For an identified exact zero ground only the nonvacuum edge needs pricing.
+   Report unresolved cells, including soft transverse-packet and Cartan controls.
+   The existing two-mode certificate contract and fixtures keep their original scope.
+
+## October campaign and regeneration record
+
 > **Scope**: everything the mass-gap proof needs from `../unfer` — numerics,
 > certified-band emission, regeneration gates, fixtures, evidence, docs —
 > **except Lean4 code**. All `.lean` work belongs to the LLM-Lean4-specialist

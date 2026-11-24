@@ -162,8 +162,9 @@ impl ComplexInterval {
     }
 }
 
-/// One term per error component. `evolution_bound` is the sum below; the
-/// remaining fields stay separate so a reader can see what was priced.
+/// One term per error component. `evolution_bound` is the Duhamel state bound
+/// `leakage + time * defect_action_envelope`; the remaining fields stay
+/// separate so a reader can see what was priced.
 #[derive(Clone, Debug)]
 pub struct DefectTerms {
     pub initial_leakage: f64,
@@ -172,18 +173,31 @@ pub struct DefectTerms {
     /// worst-case full-column Frobenius norm. This is a diagnostic; the
     /// certified bound still uses `defect_frobenius`.
     pub defect_seed_action: f64,
-    /// Upper bound on `sup_{0<=s<=time} ||D exp(sG) c||`, from a grid plus a
-    /// Lipschitz correction using `||D G||_F ||c|| exp(omega_+ time)`.
+    /// Resolution-converged estimate of `sup_{0<=s<=time} ||D exp(sG) c||`,
+    /// sampled along the returned trajectory rather than derived from
+    /// `||D G||_F ||c|| exp(omega_+ time)`. The analytic product is deliberately
+    /// **not** used: every entry of a SIRK generator `G = gamma I - B^-1`
+    /// carries the shift while `exp(sG)` stays `O(1)`, so the product prices
+    /// the shift (measured `||D G||_F ~ 1.5e4` against a trajectory maximum of
+    /// `3.6`). Still a measured estimate, not an enclosure.
     pub defect_action_envelope: f64,
-    /// `leakage + time * defect_action_envelope`: the state-dependent
-    /// alternative to `evolution_bound`. Point f64; exact `exp`/`G` remain
-    /// assumptions, so this is not a certified enclosure.
+    /// Retained for the record: identical to `evolution_bound`, whose formula
+    /// is now this state-dependent bound.
     pub state_weighted_bound: f64,
     pub seed_norm: f64,
     pub reduced_growth: f64,
     pub flow_growth: f64,
     pub time: f64,
+    /// `leakage + time * defect_action_envelope`: bounds `||e(t)||` through the
+    /// Duhamel representation with the sampled defect action.
     pub evolution_bound: f64,
+    /// `leakage + time * defect_frobenius * seed_norm * flow_growth`: the
+    /// conservative uniform-column bound. It is the shifted analytic product,
+    /// so it prices the generator's scale as well as the defect; it is kept
+    /// under its own name now that `evolution_bound` samples the trajectory,
+    /// because a record that only carries the tighter estimate cannot show what
+    /// the worst-case column argument gives.
+    pub frobenius_product_bound: f64,
 }
 
 impl DefectTerms {
@@ -199,6 +213,7 @@ impl DefectTerms {
             "flow_growth": self.flow_growth,
             "time": self.time,
             "evolution_bound": self.evolution_bound,
+            "frobenius_product_bound": self.frobenius_product_bound,
             "extra": extra,
         })
     }
@@ -255,9 +270,22 @@ pub fn defect_action(
 }
 
 /// `D = i V G - H V` column by column, with the full (unprojected) `H V`.
-/// Grid/Lipschitz upper bound on `sup_s ||D exp(sG) c||` for `s in [0, time]`.
-/// The grid resolves the actual defect trajectory; the derivative bound uses
-/// `||D G||_F ||c|| exp(omega_+ time)`.
+///
+/// Resolution-converged estimate of `sup_{0<=s<=time} ||D exp(sG) c||`.
+///
+/// The estimator samples the defect trajectory and refines the grid until the
+/// sampled maximum stops moving, then adds the observed last-step change as a
+/// remainder. It deliberately does **not** use the analytic Lipschitz product
+/// `||D G||_F ||c|| exp(omega_+ time)`: for a SIRK generator `G = gamma I - B^-1`
+/// every entry of `G` carries the shift `gamma`, while `exp(sG)` is `O(1)` on
+/// the interval, so that product is larger than the defect it bounds by the
+/// square of the shift (measured on the phi4 continuous-momentum operator:
+/// `||DG||_F ~ 1.5e4` against a sampled maximum of `3.6`). The sampled route is
+/// basis-covariant, shift-free, and — unlike the product — it is bounded by
+/// what the returned flow actually does.
+///
+/// This remains a *measured* estimate, not an enclosure, exactly as the module
+/// documents for the `f64` path.
 fn defect_action_envelope(
     basis: &[NestedVector],
     full_images: &[NestedVector],
@@ -265,26 +293,47 @@ fn defect_action_envelope(
     coefficients: &[C],
     time: f64,
 ) -> f64 {
-    const GRID: usize = 8;
     let rank = coefficients.len();
     let seed = DVector::from_iterator(rank, coefficients.iter().copied());
-    let growth = reduced_growth(generator).max(0.0);
-    let flow = (growth * time).exp();
-    let mut dg_square = 0.0;
-    for column in 0..rank {
-        let generated = generator.column(column).into_owned();
-        let action = defect_action(basis, full_images, generator, generated.as_slice());
-        dg_square += joint_norm(&action).powi(2);
-    }
-    let lipschitz = dg_square.sqrt() * seed.norm() * flow;
-    let mut maximum = 0.0f64;
-    for index in 0..=GRID {
-        let s = time * index as f64 / GRID as f64;
+    let sample = |s: f64| -> f64 {
         let evolved = (generator * C::new(s, 0.0)).exp() * &seed;
-        let action = defect_action(basis, full_images, generator, evolved.as_slice());
-        maximum = maximum.max(joint_norm(&action));
+        joint_norm(&defect_action(
+            basis,
+            full_images,
+            generator,
+            evolved.as_slice(),
+        ))
+    };
+    // Small reduced systems (the phi4 cells are rank 4) can afford a fine grid;
+    // larger ones stop earlier so the certificate stays a small multiple of the
+    // solve it prices.
+    let max_steps = if rank <= 8 { 4096 } else { 256 };
+    sampled_sup(&sample, time, max_steps)
+}
+
+/// Resolution-converged estimate of `sup_{0<=s<=time} f(s)`: double the grid
+/// until the sampled maximum stops moving, then add the observed last-step
+/// change as the remainder. Shared by the SM cell path and the finite fixture
+/// so the two cannot drift apart.
+fn sampled_sup(sample: &impl Fn(f64) -> f64, time: f64, max_steps: usize) -> f64 {
+    if !(time > 0.0) {
+        return sample(0.0);
     }
-    maximum + time / GRID as f64 * lipschitz
+    let tolerance = 1e-3;
+    let mut steps = 8usize;
+    let mut previous = 0.0f64;
+    loop {
+        let mut maximum = 0.0f64;
+        for index in 0..=steps {
+            maximum = maximum.max(sample(time * index as f64 / steps as f64));
+        }
+        let change = (maximum - previous).abs();
+        if steps >= max_steps || (steps > 8 && change <= tolerance * (1.0 + maximum)) {
+            return maximum + change;
+        }
+        previous = maximum;
+        steps *= 2;
+    }
 }
 
 pub fn defect_frobenius(
@@ -367,8 +416,193 @@ pub fn defect_terms(
         reduced_growth: growth,
         flow_growth: flow,
         time,
-        evolution_bound: leakage + time * defect * seed * flow,
+        // State norm: Duhamel gives `||e(t)|| <= leakage + int_0^t ||D exp(sG) c|| ds`,
+        // which is the sampled defect action integrated over the interval. The
+        // Frobenius product `defect * seed * flow` stays reported (and feeds the
+        // interval enclosure), but it prices the worst reduced direction rather
+        // than the trajectory and carries the shift scale.
+        evolution_bound: leakage + time * action_envelope,
+        frobenius_product_bound: leakage + time * defect * seed * flow,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Amplitude-overlap bound
+// ---------------------------------------------------------------------------
+
+/// Amplitude (not state-norm) defect bound for a return probability.
+///
+/// A probability is quadratic in an amplitude, so
+/// `| |a|^2 - |b|^2 | <= 2|a - b| + |a - b|^2` for `|a|,|b| <= 1`: pricing the
+/// amplitude difference `A = <psi|psi(t)> - <psi|w(t)>` directly, instead of
+/// `||e(t)||`, removes the near-orthogonality penalty that makes the state
+/// bound unusable for probability responses.
+///
+/// Variation of constants gives `A = <psi|e(t)>` with
+/// `e(t) = e^{-itH}ell - int_0^t e^{-i(t-s)H} r(s) ds` and
+/// `r(s) = D exp(sG) c`. Splitting the exact evolved seed `u(tau) = e^{-itau H}psi`
+/// into the computable reduced flow `w(tau) = V exp(tau G) c` plus an error of
+/// norm `||e(tau)|| <= int_0^tau ||r||` yields
+///
+/// ```text
+/// |A| <= ||ell|| + int_0^t |<w(t-s)|r(s)>| ds + (int_0^t ||r(s)|| ds)^2 / 2
+/// ```
+///
+/// * `overlap` is **computed**, not majorised: it is the one place where the
+///   defect's oscillation can cancel against the propagated seed, and a
+///   Cauchy-Schwarz bound here is what made the state route blind.
+/// * `replacement` is the price of substituting the reduced flow for the exact
+///   one; since the double integral over `sigma + s <= t` is half the square, it
+///   is `(int ||r||)^2 / 2`. This term is what remains after the overlap, and it
+///   is the honest floor of a defect-only certificate.
+///
+/// Point f64 estimate: exact `exp`/`G` and floating arithmetic remain
+/// assumptions, and the quadrature is converged, not enclosed.
+#[derive(Clone, Debug)]
+pub struct AmplitudeBound {
+    /// `||ell||`: how much of the seed lies outside the Krylov basis.
+    pub initial_leakage: f64,
+    /// `int_0^t ||r(s)|| ds`.
+    pub defect_action_integral: f64,
+    /// `int_0^t |<w(t-s)|r(s)>| ds`, the computed overlap.
+    pub overlap_integral: f64,
+    /// `int_0^t (int_0^{t-s} ||r||) ||r(s)|| ds`, the price of substituting the
+    /// reduced flow for the exact one. Bounded above by `(int ||r||)^2 / 2`
+    /// (the whole square is twice the triangle), and computed rather than
+    /// majorised: the defect grows with `s` here, so the accumulated norm is
+    /// smallest exactly where `||r(s)||` is largest.
+    pub replacement_integral: f64,
+    /// The symmetric majorant `(int_0^t ||r|| ds)^2 / 2`, kept for comparison.
+    pub replacement_majorant: f64,
+    /// `leakage + overlap + replacement`.
+    pub amplitude_bound: f64,
+    /// `2 * amplitude_bound + amplitude_bound^2`.
+    pub probability_bound: f64,
+    /// Quadrature panels used for the converged estimate.
+    pub panels: usize,
+    pub time: f64,
+}
+
+impl AmplitudeBound {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "initial_leakage": self.initial_leakage,
+            "defect_action_integral": self.defect_action_integral,
+            "overlap_integral": self.overlap_integral,
+            "replacement_integral": self.replacement_integral,
+            "replacement_majorant": self.replacement_majorant,
+            "amplitude_bound": self.amplitude_bound,
+            "probability_bound": self.probability_bound,
+            "panels": self.panels,
+            "time": self.time,
+        })
+    }
+}
+
+/// See [`AmplitudeBound`]. `basis`, `full_images`, `generator` and `state` are
+/// exactly the arguments of [`defect_terms`], so both bounds can be formed from
+/// one solve.
+pub fn amplitude_terms(
+    basis: &[NestedVector],
+    full_images: &[NestedVector],
+    generator: &DMatrix<C>,
+    state: &NestedVector,
+    time: f64,
+) -> AmplitudeBound {
+    let rank = basis.len();
+    let coefficients = DVector::from_iterator(rank, basis.iter().map(|v| inner(v, state)));
+    let mut projected = NestedVector::new();
+    for (vector, coefficient) in basis.iter().zip(coefficients.iter()) {
+        add_scaled(&mut projected, vector, *coefficient);
+    }
+    let mut residual = state.clone();
+    for (label, amplitude) in &projected {
+        let value = residual.entry(label.clone()).or_default();
+        *value -= *amplitude;
+    }
+    residual.retain(|_, amplitude| *amplitude != C::new(0.0, 0.0));
+    let leakage = joint_norm(&residual);
+    let seed = DVector::from_iterator(rank, coefficients.iter().copied());
+    let flow =
+        |tau: f64, seed: &DVector<C>| -> DVector<C> { (generator * C::new(tau, 0.0)).exp() * seed };
+    let state_at = |coef: &DVector<C>| -> NestedVector {
+        let mut out = NestedVector::new();
+        for (vector, c) in basis.iter().zip(coef.iter()) {
+            add_scaled(&mut out, vector, *c);
+        }
+        out
+    };
+    // Integrands: `||r(s)||` and `|<w(t-s)|r(s)>|`.
+    let norms = |s: f64| -> (f64, f64) {
+        let r = defect_action(basis, full_images, generator, flow(s, &seed).as_slice());
+        let w = state_at(&flow(time - s, &seed));
+        (joint_norm(&r), inner(&w, &r).norm())
+    };
+    let max_panels = if rank <= 8 { 4096 } else { 256 };
+    let tolerance = 1e-6;
+    let mut panels = 16usize;
+    let mut previous = (0.0f64, 0.0f64);
+    loop {
+        // Composite trapezoid: the integrands are analytic on the interval, so
+        // this converges geometrically in the panel count.
+        let h = time / panels as f64;
+        let weights: Vec<f64> = (0..=panels)
+            .map(|index| {
+                if index == 0 || index == panels {
+                    0.5 * h
+                } else {
+                    h
+                }
+            })
+            .collect();
+        let sampled = norms_grid(&norms, time, panels);
+        let mut total = (0.0f64, 0.0f64);
+        for (index, (norm, overlap)) in sampled.iter().enumerate() {
+            total.0 += weights[index] * norm;
+            total.1 += weights[index] * overlap;
+        }
+        let change = ((total.0 - previous.0).abs(), (total.1 - previous.1).abs());
+        let converged =
+            change.0 <= tolerance * (1.0 + total.0) && change.1 <= tolerance * (1e-3 + total.1);
+        if panels >= max_panels || (panels > 16 && converged) {
+            let integral = total.0 + change.0;
+            let overlap = total.1 + change.1;
+            // Replacement: `int_0^t F(t-s) ||r(s)|| ds` with
+            // `F(t-s) = int_0^{t-s} ||r||` from a cumulative trapezoid on the
+            // same grid, so no extra kernel evaluations are needed.
+            let mut cumulative = vec![0.0f64; panels + 1];
+            for index in 1..=panels {
+                cumulative[index] =
+                    cumulative[index - 1] + 0.5 * h * (sampled[index - 1].0 + sampled[index].0);
+            }
+            let mut replacement = 0.0f64;
+            for index in 0..=panels {
+                replacement += weights[index] * cumulative[panels - index] * sampled[index].0;
+            }
+            let majorant = 0.5 * integral * integral;
+            let replacement = replacement.min(majorant);
+            let amplitude = leakage + overlap + replacement;
+            return AmplitudeBound {
+                initial_leakage: leakage,
+                defect_action_integral: integral,
+                overlap_integral: overlap,
+                replacement_integral: replacement,
+                replacement_majorant: majorant,
+                amplitude_bound: amplitude,
+                probability_bound: 2.0 * amplitude + amplitude * amplitude,
+                panels,
+                time,
+            };
+        }
+        previous = total;
+        panels *= 2;
+    }
+}
+
+fn norms_grid(norms: &impl Fn(f64) -> (f64, f64), time: f64, panels: usize) -> Vec<(f64, f64)> {
+    (0..=panels)
+        .map(|index| norms(time * index as f64 / panels as f64))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -691,17 +925,33 @@ pub fn finite_fixture(time: f64) -> (DefectTerms, IntervalTerms, f64) {
     let seed_action = action.norm();
     let growth = reduced_growth(&generator).max(0.0);
     let flow = (growth * time).exp();
+    // Same quantity and same estimator as `defect_action_envelope`: the defect
+    // action sampled along the trajectory. The old `||D||_F seed e^{omega t}`
+    // product is *smaller* here only because this fixture's generator is
+    // ordinary (no rational shift scale); sharing the helper keeps the fixture
+    // and the shipped SM path on one formula.
+    let envelope = sampled_sup(
+        &|s: f64| {
+            let evolved = (&generator * C::new(s, 0.0)).exp() * &coefficients;
+            let mut d = &v * (&generator * &evolved) * C::i();
+            d -= &h * (&v * &evolved);
+            d.norm()
+        },
+        time,
+        64,
+    );
     let terms = DefectTerms {
         initial_leakage: leakage,
         defect_frobenius: defect,
         defect_seed_action: seed_action,
-        defect_action_envelope: defect * seed * flow,
-        state_weighted_bound: leakage + time * defect * seed * flow,
+        defect_action_envelope: envelope,
+        state_weighted_bound: leakage + time * envelope,
         seed_norm: seed,
         reduced_growth: growth,
         flow_growth: flow,
         time,
-        evolution_bound: leakage + time * defect * seed * flow,
+        evolution_bound: leakage + time * envelope,
+        frobenius_product_bound: leakage + time * defect * seed * flow,
     };
     let exact = (&h * (-C::i() * time)).exp() * &psi;
     let compressed = &v * (&generator * C::new(time, 0.0)).exp() * (&v.adjoint() * &psi);
@@ -921,6 +1171,18 @@ pub fn certificate_json(terms: &DefectTerms, hashes: &CertificateHashes) -> Valu
     fields.insert("flow_growth".into(), json!(terms.flow_growth));
     fields.insert("time".into(), json!(terms.time));
     fields.insert("evolution_bound".into(), json!(terms.evolution_bound));
+    fields.insert(
+        "frobenius_product_bound".into(),
+        json!(terms.frobenius_product_bound),
+    );
+    fields.insert(
+        "defect_action_envelope".into(),
+        json!(terms.defect_action_envelope),
+    );
+    fields.insert(
+        "state_weighted_bound".into(),
+        json!(terms.state_weighted_bound),
+    );
     json!({
         "schema": DEFECT_SCHEMA,
         "status": "conditionally-bounded",

@@ -1,6 +1,13 @@
 # Full SM E1 assembly and joint-state Hashimoto integration
 
-## Current research and evidence order (2026-11-15)
+For the current continuous-momentum SM target, follow the packet experiment and
+Cadabra2 kernel derivation. The runs recorded on this page use the independent-jet
+E1 operator wherever the 163-coordinate dictionary is named. The Fourier target
+requires its own interacting packet matrix elements and full-action tails.
+[Packet experiment](SM_RESEARCH_PLAN.md#continuous-momentum-numerical-work-order) ·
+[Cadabra2 kernels](SM_HAMILTONIAN_AUDIT.md#continuous-momentum-cadabra2-work-order)
+
+## Independent-coordinate research and evidence order (2026-11-15)
 
 Use [SM_RESEARCH_PLAN.md](SM_RESEARCH_PLAN.md), **N6–N14**, for the next numerical and
 research work, and [SM0–SM9](../../timepiece/SM_ESA_COMPLETION_PLAN.md) for formal proofs.
@@ -106,19 +113,40 @@ solver actually returns:
 ```text
 D = i V G - H V,
 ||exp(-itH)psi - V exp(tG)V*psi||
-  <= leakage + t ||D||_F ||V*psi|| exp(omega_+ t).
+  <= leakage + t max_s ||D exp(sG) V*psi||        -> evolution_bound
+  <= leakage + t ||D||_F ||V*psi|| exp(omega_+ t).  -> frobenius_product_bound
 ```
 
+Both bounds are returned because they answer different questions. The sampled
+one follows the trajectory the solver actually produces; the Frobenius product
+is the uniform-column bound, which also prices the generator's scale — on a
+rational `G = gamma I - B^-1` every entry carries the shift, so the product can
+be far larger than the sampled maximum. Where that gap decides the outcome, see
+`docs/VERIFY_PHI4_MOMENTUM.md` §6.1.
+
 The full (unprojected) `H V` columns come from the same solve; nothing assumes
-Krylov invariance. `JointEvolution` now carries one `DefectTerms` per restart step.
-The baseline cell reports, separately: `initial_leakage=2.4080250197100035e-8`,
-`defect_frobenius=17.18757907479125`, `seed_norm~1`, `reduced_growth=5.12e-13`,
-`flow_growth=1.000000000000005`, `evolution_bound=0.17187581482816355` at
-`t=0.01`. The refreshed baseline deterministic digest is
-`6fdca3617fae36dbfa91806927cf7ad7e27c86a24753940a96f81ceb1355d923`; it differs
-from the N6 digest because the deterministic payload now includes the defect terms. The bound is large precisely because it is a uniform column bound, not a
-cancellation estimate; it is labeled `conditionally-bounded`, and the identified
-self-adjoint `H`, physical reduction and Padé/rounding enclosure remain open.
+Krylov invariance. `JointEvolution` carries one `DefectTerms` per restart step.
+The baseline cell — `scripts/run-sm-baseline`, i.e.
+`sm_full_hashimoto --time 0.01 --steps 1 --krylov 4 --occupation-cutoff 1` —
+reports, separately: `initial_leakage=2.4080250197100035e-8`,
+`defect_frobenius=17.18757907479125`, `seed_norm~1`,
+`reduced_growth=5.119574578248866e-13`, `flow_growth=1.000000000000005`,
+`defect_action_envelope=9.784824513969962`, `evolution_bound=0.09784826921994982`
+and `frobenius_product_bound=0.17187581482816355` at `t=0.01`. The
+`evolution_bound=0.17187581482816355` of the 2026-11-15 record is now the
+`frobenius_product_bound` field: the sampled bound is `1.76x` smaller, and
+`state_weighted_bound` coincides with it.
+
+The refreshed baseline deterministic digest is
+`63f09785fa3ad2af4cbd8a6c6f7c167108777becab6f26b331a47c3f46baccf8` (artifact
+`cec6b876e7def7aae6014dc48f4fd35f701529b6fd4558aaeeb2da822ede1a3c`), replacing
+`6fdca3617fae36dbfa91806927cf7ad7e27c86a24753940a96f81ceb1355d923`; two
+consecutive runs give the same deterministic digest (the artifact digest
+excludes the recorded environment and peak RSS, which is why it is the
+reproducibility claim). It differs from the N6 digest because the deterministic
+payload now includes every defect term. Both bounds stay labeled
+`conditionally-bounded`, and the identified self-adjoint `H`, physical reduction
+and Padé/rounding enclosure remain open.
 
 The independent finite fixture is a 4x4 Hermitian `H`, a 4x2 isometry and
 `G=V*HV`; its interval arithmetic rounds add/sub/mul/square/sqrt/exp outward,
@@ -439,42 +467,98 @@ five cells are also asserted to share one basis window, and the JSON records its
 digest: `4a7024d9273c6379` (70 states) at the default seed and
 `ac08356d42e44c9f` (76 states) for the squeezed base. The digest covers the
 sorted basis keys, so a base/quench window mismatch is a hard driver failure,
-not an unflagged mixed-basis comparison. The example now sums every restart-step bound; using only the
-last step undercounted `steps>1` (the last-step values are `0.1406, 0.0703,
-0.0351`). Its JSON also records the actual `steps`, `rank` and shift rule
+not an unflagged mixed-basis comparison. The example sums every restart-step bound; using only the
+last step would undercount `steps>1`. Regenerated 2026-11-24 on the current
+tree, the rank-2 last-step values are `0.0978, 0.0489, 0.0245` (sampled
+`evolution_bound`) and `0.1399, 0.0699, 0.0350` (`frobenius_product_bound` —
+that is the quantity the older `0.1406, 0.0703, 0.0351` recorded). Its JSON also records the actual `steps`, `rank` and shift rule
 rather than a hard-coded single step, so the step/rank scans are self-describing. The response is therefore stable to `~2e-10` under step splitting and
 about 2% from rank 2 to rank 4, but the N8 bound remains `~1.6e5` times the
-signal. It is a reproducible measured signal, not a resolved or certified
-observable.
+signal.
+
+*Provenance caveat (2026-11-24).* The rank-2 and rank-3 response values in this
+paragraph (`-3.4716e-6`, `-3.4176e-6`) do **not** reproduce from the current
+tree: a regenerated rank-2 cell gives `-3.2909e-6` and the same step-scan
+`-3.29090e-6, -3.29090e-6, -3.29086e-6`. They are retained as the 2026-11-15
+measurement, not as a current one. The rank-4 value `-3.3819e-6`, its
+`4a7024d9273c6379` window digest and its Frobenius budget `0.69133` do reproduce
+exactly, and that budget is unchanged by the 2026-11-24 split because it is
+built from `frobenius_product_bound`. The older rank-2/3 budgets (`0.5657`,
+`0.7186`, `0.8492`) belong to the non-reproducing state: the regenerated rank-2
+plain budgets are `0.5625` (Frobenius) and `0.3935` (sampled).
+
+It is a reproducible measured signal, not a resolved or certified observable.
 
 An adjoint-weighted (centered) observable bound was also tested. For Hermitian
 `O`, the exact-vs-approximate expectation error is
 `|<delta|O|psi>| <= 2 eps ||(O - <O>)psi|| + eps^2`, so the state error is
 weighted by the observable's centered dual action. At rank 4 on the default
-seed, `||(O-<O>)psi||` is `9.6500e-3` (base) and `9.8236e-3` (plus), giving a
-two-cell budget of `6.6475e-2` against the plain `6.9133e-1`. The weighting is
-`~10.4x` tighter but still `~2.0e4x` the `-3.3819e-6` signal, so it does not
-close N11. The driver records this as `n8_adjoint_two_sided_budget` and
-`within_adjoint_budget`.
+seed, `||(O-<O>)psi||` is `9.6500e-3` (base) and `9.8236e-3` (plus). The
+two-cell budget is `2.3183e-2` with the sampled `eps` (2026-11-24; `6.6475e-2`
+with the pre-change `eps`), against `3.9346e-1` plain sampled and `6.9133e-1`
+plain Frobenius. The weighting is therefore `~17x` tighter than the plain
+sampled budget and `~29.8x` tighter than the conservative one, but with the
+sampled `eps` the `eps^2` term dominates the sum, and it is still `6.86e3x` the
+`-3.3819e-6` signal — it does not close N11. The driver records this as
+`n8_adjoint_two_sided_budget` and `within_adjoint_budget`.
 
 A state-dependent diagnostic (`defect_seed_action`) was added to test whether
 the full-column norm is the source of the looseness. At rank 2 it gives
 `||D c|| = 9.8286` against `||D||_F = 14.0581`; the projected seed excites a
 substantially smaller defect direction.
 
-That diagnostic was then integrated into the adjoint bound. `DefectTerms` now
-carries `defect_action_envelope`, a grid-plus-Lipschitz upper bound on
-`sup_{0<=s<=t} ||D exp(sG)c||` (the derivative bound uses
-`||D G||_F ||c|| exp(omega_+ t)`), and `state_weighted_bound = leakage + t *
-envelope`, which replaces `||D||_F ||c|| exp(omega_+ t)` by the actual defect
-trajectory. At rank 4 on the default seed the per-cell state-weighted errors
-are `0.1089` (base) and `0.1102` (plus) against plain N8 errors `0.1719` and
-`0.1738`; the two-cell defect-weighted adjoint budget is `2.8270e-2`, versus
-`6.6475e-2` for the centered N8 adjoint bound and `6.9133e-1` plain. It is
-`0.425x` the centered budget but still `8.36e3x` the `-3.3819e-6` response, so
-it also does not close N11. This is a point estimate: exact `exp`, the returned
-`G`, and floating arithmetic remain assumptions. The obstruction is still the
-basis window, not only the defect norm choice.
+That diagnostic was then integrated into the adjoint bound. `DefectTerms`
+carries `defect_action_envelope`, the resolution-converged sampled maximum of
+`sup_{0<=s<=t} ||D exp(sG)c||` (it was a grid-plus-Lipschitz estimate using
+`||D G||_F ||c|| exp(omega_+ t)` until 2026-11-24; the sampled form is used
+because the Lipschitz term prices the shift), and `state_weighted_bound =
+leakage + t * envelope`. At rank 4 on the default seed the per-cell
+state-weighted errors are `0.0978` (base) and `0.0989` (plus) — identical to
+`evolution_bound`, since both now use the sampled envelope — against the
+conservative Frobenius errors `0.1719` and `0.1738`. The two-cell
+defect-weighted adjoint budget is `2.3183e-2`, which **equals** the centered N8
+adjoint budget (`ratio 1.0`): with the sampled form the two "alternative"
+budgets are the same formula, so the `0.425x` separation quoted before
+2026-11-24 no longer exists. Against the plain budgets it is `17x` below the
+sampled `3.9346e-1` and `29.8x` below the Frobenius `6.9133e-1`, and it is
+still `6.86e3x` the `-3.3819e-6` response, so it does not close N11. This is a
+point estimate: exact `exp`, the returned `G`, and floating arithmetic remain
+assumptions. The obstruction is still the basis window, not only the defect
+norm choice.
+
+**Formula update (2026-11-24).** The numbers above were produced by a
+`defect_action_envelope` that added a Lipschitz correction
+`||D G||_F ||c|| exp(omega_+ t)` to a coarse grid. That correction is
+shift-scaled — every entry of a rational `G = gamma I - B^-1` carries `gamma`
+while the flow stays `O(1)` — so the envelope is now a grid-converged sampled
+maximum along the returned trajectory, and `evolution_bound = leakage + t *
+envelope` (the `state_weighted_bound` formula, which is why the two fields are
+now equal). On the phi4 continuous-momentum cells this cuts the state bound
+`5.95 -> 0.18`, and the companion `sm_defect::amplitude_terms` prices the
+amplitude `<psi|e>` instead of `||e||` (a computed overlap plus a
+`int F(t-s)||r(s)||ds` replacement term), which is a further `~500x` tighter on
+a probability charge; see `docs/VERIFY_PHI4_MOMENTUM.md` §5.3 and §6.1.
+
+**SM baselines regenerated 2026-11-24.** The analytic product is preserved under
+its own name (`frobenius_product_bound`, `DefectTerms` and
+`certificate_json`), so the conservative number is not lost:
+
+| record | before | regenerated |
+|---|---|---|
+| baseline `evolution_bound` (cutoff-1 cell) | `0.17187581482816355` | `0.09784826921994982` |
+| baseline `frobenius_product_bound` | — (was `evolution_bound`) | `0.17187581482816355` |
+| baseline deterministic digest | `6fdca361…355d923` | `63f09785…46baccf8` |
+| baseline artifact digest | — (not recorded on 2026-11-15) | `cec6b876…2ede1a3c` |
+| `sm_defect_bridge.json` file | `916d0536…4ac81ba2d` | `bde3f770…f9910a64bd` |
+| `sm_defect_bridge.json` record | `1f49e3b5…c96353d8` | `77dec777…1816ca` |
+| rank-4 N11 response | `-3.3819e-6` | `-3.381909761901447e-6` (unchanged) |
+| centered adjoint budget | `6.6475e-2` | `2.3183e-2` |
+| plain N8 budget (sampled) | `6.9133e-1` | `3.9346e-1` (`6.9133e-1` remains the Frobenius budget) |
+
+The bridge fixture now shares one `sampled_sup` helper with the SM cell path, so
+the 4x4 fixture and the shipped operator cannot drift onto different estimators.
+The Lean proof payloads and their pinned digests in `scripts/run-sm-full-validation`
+are untouched: no proof depends on a numeric bound.
 
 Depth 3 exceeds the declared cache budget (`1,032,256` components against
 `1,000,000`), so it is refused rather than pruned. The raw quench-energy difference at a 10% quench is `0.6804`,
@@ -605,7 +689,7 @@ identity under `matrix_skew_proof` (`H_hermitian`, `A_skew`). Its
 | `fock_sirk/lean/SmDefectSkew.lean` | `acc3dfc49fad2760020f33617e2ff72e3d74b999a4643046ae6efd2d149afc53` | N8 finite fixture: `H` Hermitian, `A = iH` skew-adjoint (Mathlib) |
 | `docs/fixtures/sm_defect_analytic_proof.ndjson.gz` | `ccddf3b7c83edfed0d44aa6d9b9ae81080bff7fc04b04ded4829f65028f96445` | gzip nanoda payload; raw sha256 `83e3571e…14ed31`; 38,336 declarations |
 | `docs/fixtures/sm_defect_skew_proof.ndjson.gz` | `eeb92d5b0fc588851ee4600b692c092a3d8e0a982b509b1947c38bc32c7dd9aa` | gzip nanoda payload; raw sha256 `498ae454…db528cc`; 7,540 declarations |
-| `docs/fixtures/sm_defect_bridge.json` | `916d0536a78509444a1964f91d4da078d130f03ba73c4f6850e50471ac81ba2d` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `1f49e3b5…c96353d8` |
+| `docs/fixtures/sm_defect_bridge.json` | `bde3f770ef0ed8ffae28c680e08f09872883059a61e60fdba7bc20f9910a64bd` | bridge file with the kernel-verified `matrix_skew_proof` and its parsed-source provenance check; record digest `77dec777…1816ca`. Carries both `evolution_bound=1.0109852165754634` (sampled) and `frobenius_product_bound=1.060938397590336` (the value this table's older digest recorded as `evolution_bound`) |
 | `fock_sirk/src/sm_brst_fock.rs` | `9651f9a92451d1399b7945849bb9736554e03e9a6e3c4ad1ce109f09d4500dee` | matter and jet-inclusive finite BRST windows; block-graded harmonic quotients |
 | `docs/fixtures/sm_constraints_bridge.json` | `5b5030dbf007f6083f057d3ec58afd7b4725f2ef50ff5957ffb8278f7b278c68` | N10 finite constraint + finite CE + finite Fock BRST bridge, including the jet record; record digest `977bfca9…2e231cb` |
 | `docs/fixtures/sm_brst_jet_window.json` | `b9da23547f6046b04d10ebc37c64c3f764b10f8463ec261fedab04a090425052` | measured jet-inclusive window: 36,207 states, cohomology `[1,19,35,689]` |

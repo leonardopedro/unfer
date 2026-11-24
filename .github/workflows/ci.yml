@@ -117,6 +117,14 @@ jobs:
       # included, because the specialist reads that copy.
       - name: MASS_GAP_SPEC.md §4 rows ↔ suite tests bijection (M4)
         run: bash scripts/check-mass-gap-claims
+      # R13 gate evidence: `docs/PCNL_STATUS.md` cites one committed log per gate
+      # row under `logs/pcnl_r13_gates/`. This is the cheap half of the guard --
+      # manifest ↔ directory in both directions, and each cited log still carries
+      # summary lines. No binary is built and no gate runs, so it belongs here;
+      # the numeric re-run (a gate that stops *matching*, not just existing) is
+      # the scheduled lane in pcnl-gates.yml.
+      - name: R13 gate logs ↔ manifest (X10)
+        run: bash scripts/check-pcnl-gates --check-manifest
 
   # ---------------------------------------------------------------------------
   # X7: cross-repo integration.

@@ -235,9 +235,28 @@ impl FiniteWindowAction {
 }
 
 pub fn joint_inner_product(a: &NestedVector, b: &NestedVector) -> C {
-    a.iter()
-        .filter_map(|(s, x)| b.get(s).map(|y| x.conj() * y))
-        .sum()
+    // Sorted-merge walk. Both maps are ordered by label, so one comparison per
+    // step advances the pair; the previous form binary-searched `b` for every
+    // key of `a` (about ten label comparisons per entry). Products are formed
+    // and accumulated in `a`'s order exactly as before, so the sum is
+    // bit-identical to the filtering version -- this only removes lookups.
+    let mut left = a.iter();
+    let mut right = b.iter();
+    let mut next_left = left.next();
+    let mut next_right = right.next();
+    let mut sum = C::new(0.0, 0.0);
+    while let (Some((label_a, value_a)), Some((label_b, value_b))) = (next_left, next_right) {
+        match label_a.cmp(label_b) {
+            std::cmp::Ordering::Less => next_left = left.next(),
+            std::cmp::Ordering::Greater => next_right = right.next(),
+            std::cmp::Ordering::Equal => {
+                sum += value_a.conj() * value_b;
+                next_left = left.next();
+                next_right = right.next();
+            }
+        }
+    }
+    sum
 }
 pub fn joint_norm(a: &NestedVector) -> f64 {
     // Scaled sum avoids unnecessary overflow/underflow in the norm itself.
@@ -264,19 +283,39 @@ pub fn joint_axpy(
         });
     }
     for (basis, amplitude) in b {
-        let value = a.get(basis).copied().unwrap_or_default() + scale * amplitude;
-        if !value.re.is_finite() || !value.im.is_finite() {
-            return Err(ActionError::NonFiniteAmplitude);
-        }
-        if value == C::new(0.0, 0.0) {
-            a.remove(basis);
-        } else {
-            if !a.contains_key(basis) && a.len() >= limits.max_components {
-                return Err(ActionError::ComponentLimit {
-                    limit: limits.max_components,
-                });
+        // Update through `get_mut` on the borrowed label: the overwhelmingly
+        // common case in a Krylov loop is a label already present in `a`, and
+        // re-inserting it meant cloning a `JointOuterBasis` (several
+        // allocations) plus a fresh node split for every entry. The arithmetic
+        // is unchanged -- `0 + scale * amplitude` for a fresh label, the same
+        // `C` addition in the same order otherwise -- so this is bit-identical.
+        let mut drop_entry = false;
+        if let Some(slot) = a.get_mut(basis) {
+            let value = *slot + scale * amplitude;
+            if !value.re.is_finite() || !value.im.is_finite() {
+                return Err(ActionError::NonFiniteAmplitude);
             }
-            a.insert(basis.clone(), value);
+            if value == C::new(0.0, 0.0) {
+                drop_entry = true;
+            } else {
+                *slot = value;
+            }
+        } else {
+            let value = scale * amplitude;
+            if !value.re.is_finite() || !value.im.is_finite() {
+                return Err(ActionError::NonFiniteAmplitude);
+            }
+            if value != C::new(0.0, 0.0) {
+                if a.len() >= limits.max_components {
+                    return Err(ActionError::ComponentLimit {
+                        limit: limits.max_components,
+                    });
+                }
+                a.insert(basis.clone(), value);
+            }
+        }
+        if drop_entry {
+            a.remove(basis);
         }
     }
     Ok(())
@@ -323,6 +362,13 @@ pub struct JointSirkResult {
     /// this bounds solve error, including occupation-projection error; no
     /// rounding enclosure is claimed. Empty for forward-product diagnostics.
     pub shift_solve_error_bounds: Vec<f64>,
+    /// Arnoldi steps actually taken by each rational shift solve, in the same
+    /// order as `shift_solve_error_bounds`. Empty for forward-product
+    /// diagnostics (those take no solve at all).
+    pub shift_solve_iterations: Vec<usize>,
+    /// Arnoldi steps taken by each solve of the bounded-resolvent compression
+    /// `B = V^dag (gamma+iH)^-1 V`; one per rank direction.
+    pub function_solve_iterations: Vec<usize>,
     pub options: JointSirkOptions,
     pub cached_components: usize,
 }
@@ -330,6 +376,23 @@ pub struct JointSirkResult {
 impl JointSirkResult {
     pub fn rank(&self) -> usize {
         self.h_proj.nrows()
+    }
+    /// Largest Arnoldi step count over the rational basis solves.
+    pub fn max_shift_solve_iterations(&self) -> usize {
+        self.shift_solve_iterations.iter().copied().max().unwrap_or(0)
+    }
+    /// Largest Arnoldi step count over the bounded-resolvent solves.
+    pub fn max_function_solve_iterations(&self) -> usize {
+        self.function_solve_iterations
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+    /// Total Arnoldi steps taken by every shift-invert solve in this result.
+    pub fn total_solve_iterations(&self) -> usize {
+        self.shift_solve_iterations.iter().sum::<usize>()
+            + self.function_solve_iterations.iter().sum::<usize>()
     }
     fn initial_coefficients(&self) -> DVector<C> {
         DVector::from_iterator(
@@ -481,6 +544,7 @@ where
     let mut tails = Vec::new();
     let mut scales = vec![1.0];
     let mut solve_bounds = Vec::new();
+    let mut solve_iterations = Vec::new();
     for (k, &shift) in shifts.iter().enumerate() {
         let image = matvec(&sequence[k])?;
         let mut validated = NestedVector::new();
@@ -503,7 +567,7 @@ where
                 relative_tolerance,
                 max_iterations,
             } => {
-                let (solution, bound) = gmres_shift(
+                let (solution, bound, used) = gmres_shift(
                     &matvec,
                     &projected_matvec,
                     &sequence[k],
@@ -513,6 +577,7 @@ where
                     max_iterations,
                 )?;
                 solve_bounds.push(bound);
+                solve_iterations.push(used);
                 solution
             }
         };
@@ -634,9 +699,10 @@ where
         return Err(JointSirkError::NonHermitian(defect));
     }
     let h_proj = (&reduced + reduced.adjoint()) * C::new(0.5, 0.0);
-    let (projected_resolvent, function_generator, function_bounds) = match options.method {
+    let (projected_resolvent, function_generator, function_bounds, function_iterations) =
+        match options.method {
         JointKrylovMethod::ForwardProducts => {
-            (None, h_proj.clone() * C::new(0.0, -1.0), Vec::new())
+            (None, h_proj.clone() * C::new(0.0, -1.0), Vec::new(), Vec::new())
         }
         JointKrylovMethod::ShiftInvert {
             relative_tolerance,
@@ -651,8 +717,9 @@ where
             let gamma = shift.im;
             let mut bounded = DMatrix::<C>::zeros(rank, rank);
             let mut bounds = Vec::new();
+            let mut iterations_used = Vec::new();
             for j in 0..rank {
-                let (inverse, bound) = gmres_shift(
+                let (inverse, bound, used) = gmres_shift(
                     &matvec,
                     &projected_matvec,
                     &orthonormal[j],
@@ -662,6 +729,7 @@ where
                     max_iterations,
                 )?;
                 bounds.push(bound);
+                iterations_used.push(used);
                 for i in 0..rank {
                     bounded[(i, j)] = -C::i() * joint_inner_product(&orthonormal[i], &inverse);
                 }
@@ -670,7 +738,7 @@ where
                 JointSirkError::Invalid("singular bounded-resolvent compression".into())
             })?;
             let generator = DMatrix::<C>::identity(rank, rank) * C::new(gamma, 0.0) - inverse;
-            (Some(bounded), generator, bounds)
+            (Some(bounded), generator, bounds, iterations_used)
         }
     };
     Ok(JointSirkResult {
@@ -691,6 +759,8 @@ where
         projected_action_tail_norms: tails,
         hermiticity_defect: defect,
         shift_solve_error_bounds: solve_bounds,
+        shift_solve_iterations: solve_iterations,
+        function_solve_iterations: function_iterations,
         options: options.clone(),
         cached_components: 0,
     })
@@ -722,6 +792,46 @@ pub fn hashimoto_unitary_shifts(
         .collect())
 }
 
+/// Per-kernel timing of one GMRES solve, reported when `PHI4_PROFILE` is set.
+/// `axpy` spans the whole modified Gram–Schmidt block, so it contains `dot`;
+/// `matvec` is the projected action only.
+#[derive(Default)]
+struct GmresProfile {
+    enabled: bool,
+    matvec: std::time::Duration,
+    axpy: std::time::Duration,
+    axpy_calls: usize,
+    dot: std::time::Duration,
+    dot_calls: usize,
+    svd: std::time::Duration,
+}
+
+impl GmresProfile {
+    fn new() -> Self {
+        Self {
+            enabled: std::env::var("PHI4_PROFILE").is_ok(),
+            ..Self::default()
+        }
+    }
+
+    fn report(&self, steps: usize) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "PROFILE steps={steps} matvec={:.2}s axpy={:.2}s ({} calls, {:.3} ms/call) dot={:.2}s ({} calls, {:.3} ms/call) svd={:.2}s",
+            self.matvec.as_secs_f64(),
+            self.axpy.as_secs_f64(),
+            self.axpy_calls,
+            self.axpy.as_secs_f64() / self.axpy_calls.max(1) as f64 * 1e3,
+            self.dot.as_secs_f64(),
+            self.dot_calls,
+            self.dot.as_secs_f64() / self.dot_calls.max(1) as f64 * 1e3,
+            self.svd.as_secs_f64()
+        );
+    }
+}
+
 fn gmres_shift<F, P>(
     matvec: &F,
     projected_matvec: &P,
@@ -730,7 +840,7 @@ fn gmres_shift<F, P>(
     options: &JointSirkOptions,
     tolerance: f64,
     iterations: usize,
-) -> Result<(NestedVector, f64), JointSirkError>
+) -> Result<(NestedVector, f64, usize), JointSirkError>
 where
     F: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
     P: Fn(&NestedVector) -> Result<NestedVector, ActionError>,
@@ -747,37 +857,48 @@ where
     }
     let beta = joint_norm(rhs);
     if beta == 0.0 {
-        return Ok((NestedVector::new(), 0.0));
+        return Ok((NestedVector::new(), 0.0, 0));
     }
     let limits = options.action_limits;
+    let mut profile = GmresProfile::new();
     let mut first = NestedVector::new();
     joint_axpy(&mut first, rhs, C::new(1.0 / beta, 0.0), limits)?;
     let mut basis = vec![first];
     let mut h = DMatrix::<C>::zeros(iterations + 1, iterations);
     let mut last_residual = f64::INFINITY;
     for k in 0..iterations {
+        let clock = std::time::Instant::now();
         let image = projected_matvec(&basis[k])?;
+        profile.matvec += clock.elapsed();
         let mut w = NestedVector::new();
+        let clock = std::time::Instant::now();
         joint_axpy(&mut w, &image, C::new(1.0, 0.0), limits)?;
         joint_axpy(&mut w, &basis[k], -shift, limits)?;
         // Two passes of modified Gram-Schmidt, preserving tiny support entries.
         for _ in 0..2 {
             for j in 0..=k {
+                let dot_clock = std::time::Instant::now();
                 let coefficient = joint_inner_product(&basis[j], &w);
+                profile.dot += dot_clock.elapsed();
+                profile.dot_calls += 1;
                 h[(j, k)] += coefficient;
                 joint_axpy(&mut w, &basis[j], -coefficient, limits)?;
+                profile.axpy_calls += 1;
             }
         }
+        profile.axpy += clock.elapsed();
         let next_norm = joint_norm(&w);
         h[(k + 1, k)] = C::new(next_norm, 0.0);
         let small = h.view((0, 0), (k + 2, k + 1)).into_owned();
         let mut target = DVector::<C>::zeros(k + 2);
         target[0] = C::new(beta, 0.0);
+        let clock = std::time::Instant::now();
         let coefficients = small
             .clone()
             .svd(true, true)
             .solve(&target, 1e-14)
             .map_err(|e| JointSirkError::Invalid(format!("GMRES least squares: {e}")))?;
+        profile.svd += clock.elapsed();
         let estimated = (&small * &coefficients - &target).norm() / beta;
         if estimated <= tolerance || k + 1 == iterations || next_norm <= 1e-14 {
             let mut solution = NestedVector::new();
@@ -791,7 +912,8 @@ where
             let compressed = project_joint(&residual, options).0;
             last_residual = joint_norm(&compressed) / beta;
             if last_residual <= tolerance {
-                return Ok((solution, full_norm / shift.im.abs()));
+                profile.report(k + 1);
+                return Ok((solution, full_norm / shift.im.abs(), k + 1));
             }
             if next_norm <= 1e-14 {
                 break;
@@ -804,6 +926,7 @@ where
         joint_axpy(&mut normalized, &w, C::new(1.0 / next_norm, 0.0), limits)?;
         basis.push(normalized);
     }
+    profile.report(iterations);
     Err(JointSirkError::ShiftSolve {
         residual: last_residual,
         iterations,

@@ -29,6 +29,33 @@ use unfer_protocol::{
 const SMT_DEPTH: usize = 8 * std::mem::size_of::<[u8; 32]>();
 const ZERO: [u8; 32] = [0u8; 32];
 
+/// The empty-subtree hash chain for `depth`, computed once per process.
+///
+/// The chain depends on nothing but the depth, and every ledger starts from the
+/// same one, so recomputing it per ledger is pure waste: it is 256 SHA-256
+/// compressions, which measured 3.9–4.9 ms in a debug build and was paid twice
+/// per replica at startup — the dominant cost of opening a node on an empty
+/// journal, and 24 ms of every prefix in the D12 search. The cached chain is
+/// the same sequence of values, so every root it produces is bit-identical.
+fn default_chain(depth: usize) -> Vec<[u8; 32]> {
+    static SMT_DEFAULTS: std::sync::OnceLock<Vec<[u8; 32]>> = std::sync::OnceLock::new();
+    if depth == SMT_DEPTH {
+        SMT_DEFAULTS.get_or_init(|| build_chain(depth)).clone()
+    } else {
+        // `new` is public and takes any depth; an odd depth is not worth a
+        // second cache entry for a caller no ledger uses.
+        build_chain(depth)
+    }
+}
+
+fn build_chain(depth: usize) -> Vec<[u8; 32]> {
+    let mut defaults = vec![ZERO; depth + 1];
+    for d in (0..depth).rev() {
+        defaults[d] = h2(defaults[d + 1], defaults[d + 1]);
+    }
+    defaults
+}
+
 fn h2(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
     let mut ctx = Sha256::new();
     ctx.update(b"unfer:smt");
@@ -60,15 +87,10 @@ fn key_bits(key: &[u8; 32], depth: usize) -> Vec<bool> {
 
 impl SparseMerkle {
     pub fn new(depth: usize) -> Self {
-        let mut defaults = vec![ZERO; depth + 1];
-        defaults[depth] = ZERO;
-        for d in (0..depth).rev() {
-            defaults[d] = h2(defaults[d + 1], defaults[d + 1]);
-        }
         Self {
             depth,
             nodes: HashMap::new(),
-            defaults,
+            defaults: default_chain(depth),
         }
     }
 

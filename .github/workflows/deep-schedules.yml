@@ -1,0 +1,116 @@
+name: deep schedules
+
+# D12: the bounded exhaustive search at a depth the per-push suite cannot afford.
+#
+# ## Why this file exists
+#
+# `a_deep_search_to_depth_five_finds_no_violation` is `#[ignore]`d because it
+# takes minutes: every prefix it executes starts three real replicas with three
+# real journals on disk-backed storage, and each applied transition writes and
+# `sync_data`s a frame. Before the default-chain cache in `certs.rs` it was 325 s;
+# it is 152 s on the measurement host now, and depth 6 is in the same order of
+# magnitude again. That is too much for a per-push job and too little to justify
+# *not* running: an `#[ignore]`d test that nothing runs is reviewed source, not
+# evidence.
+#
+# So this job is the thing that runs it. It writes the bounds the run actually
+# reached into the step summary, so the number reported in
+# `docs/distributed/EXECUTION.md` can be re-derived from a green run object
+# rather than from a transcript.
+#
+# ## What a green run does and does not mean
+#
+# Green means: at this depth, over this alphabet, the search executed every
+# exploration-equivalent prefix, reached leaves, and found no invariant
+# violation. It is **not** an all-run proof — it is bounded at
+# `depth` (default 5) and pruned by `Sim::state_key`, and the document says so.
+# A counterexample would fail the test, and the trace file it leaves is uploaded
+# even on failure, because a red job that discards its schedule is a rumour.
+#
+# ## Why nightly rather than per-push
+#
+# The cost is per prefix and the value is in the *diff* between nights (a new
+# scheduling action, a changed transition core), not in re-running the same
+# finite space on every commit. The bound is a fixed domain, so a per-push run
+# would spend minutes re-deriving one recorded number.
+
+on:
+  schedule:
+    # 04:37 UTC daily. Off the hour on purpose: every scheduled workflow in
+    # every repo fires at :00 and the queue is worst there.
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+    inputs:
+      depth:
+        description: 'search depth (5 is the recorded bound; 6 is ~10x the work)'
+        required: false
+        default: '5'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deep-search:
+    name: D12 bounded search (depth ${{ github.event.inputs.depth || '5' }})
+    runs-on: ubuntu-latest
+    # Depth 5 is ~3 min of work; the margin is for a slower runner and for the
+    # depth-6 dispatch, not for an unbounded run.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+
+      # unfer_consensus path-deps ../../dynamic-arctic; the default checkout puts
+      # the repo at $GITHUB_WORKSPACE, so the sibling must sit one level up.
+      - name: checkout dynamic-arctic as sibling (unfer_consensus path dep)
+        run: git clone --depth 1 --branch main https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+
+      - name: cache cargo registry and target
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: deep-schedules-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      # The bounds are the output of this job, so the run writes them down twice:
+      # the test prints one machine-readable line, and it is copied verbatim into
+      # the step summary where a reviewer can read it without the log.
+      - name: bounded search
+        env:
+          DEPTH: ${{ github.event.inputs.depth || '5' }}
+          UNFER_D12_DEPTH: ${{ github.event.inputs.depth || '5' }}
+          UNFER_D12_TRACES: ${{ github.workspace }}/d12-traces
+        run: |
+          set -o pipefail
+          mkdir -p "$UNFER_D12_TRACES"
+          cargo test -p unfer_consensus --features network \
+            --test distributed_schedules \
+            -- --ignored --nocapture --test-threads=1 \
+            | tee deep-search.log
+
+      - name: write the bounds into the run summary
+        if: always()
+        run: |
+          {
+            echo "### D12 bounded search"
+            echo
+            echo '```'
+            grep -aoE 'deep search: .*' deep-search.log || echo '[gap] the run produced no bounds line'
+            echo '```'
+            echo
+            echo "Requested depth: ${{ github.event.inputs.depth || '5' }}."
+            echo 'The recorded numbers live in `docs/distributed/EXECUTION.md`; see `d12-schedules.log` for the command behind them.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The trace the schedule left behind is the only thing that makes a *failed*
+      # run diagnosable, so it is kept either way.
+      - name: archive traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # actions/upload-artifact@v4
+        with:
+          name: d12-deep-search
+          path: |
+            deep-search.log
+            d12-traces/
+          if-no-files-found: ignore
+          retention-days: 30

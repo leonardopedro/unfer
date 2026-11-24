@@ -19,12 +19,15 @@
         "the finite exponential is approximate; Padé/rounding are not enclosed here"
       ],
       "fields": {
+        "defect_action_envelope": 1.538871850838601,
         "defect_frobenius": 1.9551214796017153,
-        "evolution_bound": 1.060938397590336,
+        "evolution_bound": 1.0109852165754634,
         "flow_growth": 1.2867388901951293,
+        "frobenius_product_bound": 1.060938397590336,
         "initial_leakage": 0.7032108464077431,
         "reduced_growth": 1.2605551275463989,
         "seed_norm": 0.7109813678954643,
+        "state_weighted_bound": 1.0109852165754634,
         "time": 0.2
       },
       "hashes": {
@@ -213,7 +216,7 @@
     },
     "time": 0.2
   },
-  "artifact_sha256": "1f49e3b53eed6cae9061e853b45f9cce7a282d039e61aecc66517183c96353d8",
+  "artifact_sha256": "77dec7770fbaaa29856061807114cdb6289014151d57ae47724cab5ade1816ca",
   "claim_id": "n8_finite_map_defect",
   "endpoint": "N8-finite-map",
   "finite_endpoint_proof": {

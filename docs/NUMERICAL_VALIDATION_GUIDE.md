@@ -2987,12 +2987,12 @@ operators are never presented as standalone full-theory Hamiltonians.
 
 ### 5.24t Full Standard Model through joint rational SIRK — `sm_full_hashimoto.rs`
 
-The standalone scalar uses continuous field and independent jet coordinates. Its
-unit-width Gaussian at λ = v = 1 has analytic mean 17/8 and variance 145/32.
-The separate periodic lattice comparison has a Lean one-site return bound and
-an analytic two-site interval [0.99789375, 0.999775] at t = 0.01. Rust includes
-a three-mode compressed evolution test for that lattice. An error-enclosed rational
-trajectory for the continuous-coordinate scalar remains open.
+The standalone scalar suite evolves one outer excitation of the continuous-momentum
+fibre Hamiltonian. At unit widths and λ = v = 1, its Gaussian has mean 17/8 and
+variance 553/32. The independent-jet comparison has variance 145/32. The exact
+Mehler table and Rust shift-invert sweep cover the fibre operator. The response
+charges in the sweep use sampled integrals. Validated full-action response intervals
+and the spatial quartic coupling distinct momenta are separate research targets.
 [Scalar Cadabra2 derivation](PHI4_ANALYTIC_PLAN.md) ·
 [Scalar Hashimoto experiments](PHI4_NUMERICAL_PLAN.md).
 

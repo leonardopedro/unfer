@@ -306,6 +306,12 @@ fn run(delta_gs: f64, delta_ye: f64, time: f64) -> serde_json::Value {
         "state_weighted_bound": state_weighted_total,
         "defect_action_envelope_total": defect_action_envelope_total,
         "last_step_n8_bound": defect.evolution_bound,
+        "last_step_frobenius_product_bound": defect.frobenius_product_bound,
+        "frobenius_product_bound_total": result
+            .defect_certificates
+            .iter()
+            .map(|terms| terms.frobenius_product_bound)
+            .sum::<f64>(),
         "last_step_state_weighted_bound": defect.state_weighted_bound,
         "defect_frobenius": defect.defect_frobenius,
         "defect_seed_action": defect.defect_seed_action,

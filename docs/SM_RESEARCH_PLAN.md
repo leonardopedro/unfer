@@ -1,6 +1,73 @@
 # Full SM research and numerical evidence in nested Fock/Mehler/SIRK coordinates
 
-Current work order: 2026-11-15. This began as a source-review plan. On 2026-11-15,
+## Continuous-momentum numerical work order
+
+**2026-11-24. First deliverable:** reproduce a nonzero mixed SM matrix element between
+two distinct smooth momentum packets, then use those same kernel conventions for an
+error-controlled one-outer-particle evolution. The full target acts on continuous
+momentum and field variables. A spatial derivative acts on its own momentum leg.
+There are no derivative-jet coordinates or derivative-constraint projectors to add.
+Finite Hermite occupation windows and rational Krylov subspaces approximate states and
+the evolution. An integration rule, if needed, approximates a continuous matrix element.
+Its resolution is independent of both cutoffs.
+[Scalar benchmark](VERIFY_PHI4_MOMENTUM.md) ·
+[Symbolic reference to produce](SM_HAMILTONIAN_AUDIT.md#continuous-momentum-cadabra2-work-order) ·
+[Lean work order](../../timepiece/SM_ESA_COMPLETION_PLAN.md)
+
+1. **Bind an operator and a seed.** Keep the current `sm_full` generator, signed color
+   and electroweak coefficients, chiral spin frame, four Higgs components, complex
+   Yukawa matrices and ordered CAR words as dictionary references. Identify continuous
+   Hermite packet labels, normalization, conjugation, sector, and coupling conventions.
+   Reuse the scalar packet construction and joint CCR/CAR machinery. Implement the
+   transferred-momentum kernels explicitly. The three continuous momentum coordinates
+   in the scalar fibre model suffice for its diagonal gradient. A polynomial in a
+   single packet momentum cannot encode the SM's two-leg convolution.
+   [Scalar action](../nested_fock_algebra/src/phi4_momentum.rs) ·
+   [SM coefficients](../nested_fock_algebra/src/sm_full.rs)
+2. **Check the spatial and interaction terms independently.** Recover the free Dirac
+   symbol and its chiral signs, the transverse free curl energy and the scalar-gradient
+   normalization in the uncoupled Higgs sector. Then use distinct packet centers and
+   polarizations with noncommuting colors for a magnetic cross term, a charged
+   Higgs packet for gauge–Higgs mixing, and occupied chiral matter for a gauge or
+   Yukawa transition. Compare integrated entries, adjoints and full column norms with
+   the independent Cadabra packet reference. Check the abelian and zero-coupling limits,
+   the complete Higgs constant, and shifts $0,c,2c$ on zero, one and two outer quanta.
+   Apply ordered products before the final projection. Measure or bound the omitted
+   image, including continuous tails outside any integration region.
+3. **Run genuine shift-invert evolution.** Assemble the complete inner operator,
+   enclose it once, and use `joint_sirk` on a normalized occupied packet. With an
+   orthonormal rational basis $V$ in Hermite window $P$, use
+   $B=V^\dagger(\gamma I+iPhP)^{-1}V$, $G=\gamma I-B^{-1}$ on the one-particle sector.
+   Check a small window against an independent dense evolution. Vary the occupation
+   cutoff at fixed rank, rank at fixed cutoff, then packet width at fixed physical
+   preparation (or label a change of preparation). Take the Gaussian return projector
+   as a first bounded observable and use a coupling variation plus an identical-run
+   control. Gauge-invariant physical predictions additionally need a physical state
+   and an observable descending to the gauge quotient.
+   [Rational solver](../fock_sirk/src/joint_sirk.rs)
+4. **Report what the run resolves.** Save full images $hV$, initial leakage, the
+   in-window and discarded parts of $iVG-hV$, integration and arithmetic error,
+   Gram conditioning, solve tolerances, shift values and the returned exponential.
+   A sampled maximum of the trajectory defect is a diagnostic. A certified interval
+   requires a bound between samples or an analytic envelope, plus bounds for kernel
+   integration and the numerical map. For two coupling values give the interval for
+   their difference and report its sign only if zero is excluded. Bind each result to
+   the kernel fixture, packet and operator version. A finite-window match is useful
+   evidence for the specified packet. Removing smearing or proving self-adjointness
+   needs independent analytic estimates. [Defect implementation](../fock_sirk/src/sm_defect.rs)
+
+## Independent-coordinate E1 programme and dated evidence
+
+The N6–N14 records below describe the 163-coordinate comparison or their specifically
+named pilots. Its spatial indices include 120 independent jet coordinates. Its
+homogeneous gauge/ghost probes remain valuable for their stated representations.
+The November 24 N11 comparison reports a change near −3.38×10⁻⁶ against a sampled
+two-run budget of about 0.0232. It leaves the response unresolved even for that model.
+The recorded scalar run and E1 run supply different checks of reusable solver code.
+A full SM continuous-kernel run requires the packet and column checks above.
+[Execution ledger](SM_FULL_IMPLEMENTATION.md)
+
+E1 work order of 2026-11-15. This began as a source-review plan. On 2026-11-15,
 N6, N7, N8 and the default `run-sm-full-validation` sweep were actually executed on
 `unfer` `d5123ae` + this dirty tree; see the dated records in
 [SM_FULL_IMPLEMENTATION.md](SM_FULL_IMPLEMENTATION.md). The planning caveat still
@@ -148,10 +215,12 @@ bridges. Fixed-background Higgs, scalar radial, free-field and six-mode models s
 
 ## N8 — certify full-action evolution error for the implemented generator
 
-*Executed 2026-11-15:* `fock_sirk/src/sm_defect.rs` implements the `D=iVG-HV`
-bound on the returned solve and the cutoff-1 cell reports
-`leakage=2.41e-8`, `||D||_F=17.19`, `bound=0.1719` at `t=.01`, labeled
-`conditionally-bounded`. A 4x4 endpoint fixture reports the direct map error and
+*Executed 2026-11-15, bounds renamed 2026-11-24:* `fock_sirk/src/sm_defect.rs`
+implements the `D=iVG-HV` bound on the returned solve and the cutoff-1 cell
+reports `leakage=2.41e-8`, `||D||_F=17.19`, `evolution_bound=0.0978` (sampled
+defect action) and `frobenius_product_bound=0.1719` (the uniform-column product,
+which is the `bound=0.1719` this line recorded before the split) at `t=.01`,
+labeled `conditionally-bounded`. A 4x4 endpoint fixture reports the direct map error and
 the reader rejects invalid/mismatched certificates. Its arithmetic endpoints now
 use directed `f64` rounding (`next_down`/`next_up`), `HV` and `G=V*HV` are
 enclosed from the declared `H` and `V`, and `lambda_max(Re G)` is bounded by
@@ -327,8 +396,9 @@ under their action. The 44-state longitudinal band has `||(I-P)HP|| about .62349
 A large penalty, an electric zero-point floor, or that band's eigenvalues is not a
 physical quotient or a physical spectrum.
 
-Implement the SM4 joint generators including gauge/Higgs/matter terms and the correct
-spatial/jet action, with their nonabelian and ghost contributions. Keep the existing
+For the E1 comparison, test the SM4 joint gauge generators on its gauge, Higgs,
+matter and jet slots. For the momentum target use the gauge action on its smeared
+fields, with the corresponding nonabelian and ghost contributions. Keep the existing
 probe under its old label. Specify ghost creation/annihilation reference, ghost number
 and physical cohomology degree. Test Q², the constraint algebra, `[H,Q]` and physical
 projector/resolvent compatibility on full images. Report algebraic truncation leakage
@@ -410,11 +480,12 @@ unstable channels rather than replace H by a scalar/free surrogate.
 
 ## N12 — explore the actual infinite-mode/continuum endpoint without conflating limits
 
-Separate Hermite occupation and numerical rank from inner matter/spatial resolution,
-UV spacing, physical volume and renormalized coupling trajectory. Use the existing
+For the finite-mode comparison pilot below, distinguish Hermite occupation and rank
+from its mode count, regulator and physical volume. For the primary momentum operator
+vary smearing and packet resolution on continuous momentum space. Use the existing
 continuum smeared CAR as an algebraic input, not a Hamiltonian/domain theorem. Construct
-a finite-mode family with compatible embeddings, physical jets, constraints and smeared
-interactions before interpreting any refinement as a field-theory limit.
+a family of smeared interactions with compatible embeddings, gauge action and
+observables before interpreting refinement as a field-theory limit.
 
 A small numerical pilot can study the graph/form constants and smeared observables along
 that **defined** family. Polynomial-core probes can refute a proposed uniform constant;

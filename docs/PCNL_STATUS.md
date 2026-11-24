@@ -7725,28 +7725,99 @@ Reproduction convention for this section: all commands below run from the repo
 root against `./target/release/examples/vector_regression` (or
 `vector_basins` / `vector_stream`), fixture
 `docs/fixtures/ultrabert_20ng4_embeddings.safetensors`, `teacher_seed=20261122`,
-and print to the named `/tmp` log. `/tmp` is ephemeral: copy a log into the repo
-if it needs to outlive the session.
+and print into `logs/pcnl_r13_gates/`, which is committed together with
+`scripts/check-pcnl-gates` — that script re-runs every one of these commands
+and diffs the summary lines against the committed log, so a stale log or a
+command that has drifted from its log fails loudly instead of silently.
+
+The four full-parameter rows (`pilot`, `hessian-64`, `lowrank-8`,
+`lowrank-32`) carried a flag the first reconstruction of this table dropped:
+`--start-scale legacy`. Under the shipped `prior` start the mode fit and the
+Hessian/low-rank mass land on a different point (`final_potential` is
+`1023.37` either way, but the probe base and the prior clip differ), giving
+RMSE `0.130804` instead of `0.144261` for the pilot row and
+`clipped_to_prior` `26,116` instead of `27,622` for the 64-probe row. The
+`qk` and `hitrun` rows post-date the init change and reproduce without it; the
+`temper` row does not — its cold chain sees the start point directly (below).
 
 | gate (recorded numbers) | command | log |
 |---|---|---|
-| readout-conditional exact metric — R̂ 1.00935, ESS 3000.0, RMSE 0.105302 (`gate=true`) | `vector_regression --readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4` | `/tmp/r13-readout-exact.log` (re-verified 2026-11-23) |
-| full-parameter pilot metric — R̂ 2.61047, ESS 4.7, RMSE 0.144261 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300` | `/tmp/r13-legacy-A-exact.log` (re-verified) |
-| Hessian diagonal, 64 probes — R̂ 2.50388, ESS 4.8, RMSE 0.150189 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass hessdiag --hessian-probes 64 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-B-exact.log` (re-verified) |
-| low-rank 8 — R̂ 2.39408, ESS 4.9 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 8 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-C-exact.log` (re-verified) |
-| low-rank 32 — R̂ 2.01334, ESS 5.3 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `/tmp/r13-legacy-D-exact.log` (re-verified) |
-| low-rank 32 + trajectory jitter — R̂ 2.14626, ESS 5.1 | as low-rank 32 plus `--hmc-jitter` | `/tmp/r13-full-hmc-lowrank-jitter.log` |
-| parallel tempering, 4 replicas `0.02/0.0737/0.2714/1` — R̂ 2.44665, ESS 4.8, RMSE 0.168598 | `vector_regression --kernel hmc --temper 4 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-full-temper4.log` |
-| hit-and-run, 400 moves — R̂ 2.39717, ESS 4.9, RMSE 0.087048 | `vector_regression --kernel hitrun --init mode --mode-steps 8000 --moves 400 --width 1 --burn 100 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-hitrun.log` |
-| hit-and-run, 5,000 moves — R̂ 3.03445, ESS 4.5, RMSE 0.121815 | `vector_regression --kernel hitrun --init point --moves 5000 --width 1 --burn 1250 --thin 2 --draws 1875 --chains 4` | `/tmp/r13-gate-hitrun-5k.log` |
-| live-attention q/k gate — R̂ 2.60278, ESS 4.7, RMSE 0.173727 | `vector_regression --kernel hmc --init mode --mode-steps 8000 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4` | `/tmp/r13-gate-priorinit.log` |
-| multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `/tmp/r13-basins-prior-8000.log` |
-| continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `/tmp/r13-stream-calib.log` |
-| CN exact-dense, 6,000 steps — ESS/accept per chain in log | `vector_regression --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `/tmp/r13-cn-exact-4-long.log` |
+| readout-conditional exact metric — R̂ 1.00935, ESS 3000.0, RMSE 0.105302 (`gate=true`) | `vector_regression --readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4` | `logs/pcnl_r13_gates/readout-exact.log` (re-verified 2026-11-24) |
+| full-parameter pilot metric — R̂ 2.61047, ESS 4.7, RMSE 0.144261 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300` | `logs/pcnl_r13_gates/pilot.log` (re-verified 2026-11-24) |
+| Hessian diagonal, 64 probes — R̂ 2.50388, ESS 4.8, RMSE 0.150189 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass hessdiag --hessian-probes 64 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/hessian-64.log` (re-verified 2026-11-24) |
+| low-rank 8 — R̂ 2.39408, ESS 4.9 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass lowrank --lowrank-rank 8 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/lowrank-8.log` (re-verified 2026-11-24) |
+| low-rank 32 — R̂ 2.01334, ESS 5.3 | `vector_regression --kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/lowrank-32.log` (re-verified 2026-11-24) |
+| low-rank 32 + trajectory jitter — R̂ 2.14626, ESS 5.1 | as low-rank 32 plus `--hmc-jitter` | `logs/pcnl_r13_gates/jitter-lf4.log` (re-verified 2026-11-24) |
+| parallel tempering, 4 replicas — swaps 0/240, R̂ 2.44665, ESS 4.8, RMSE 0.168598 | `vector_regression --kernel hmc --temper 4 --init mode --mode-steps 3000 --mode-lr 5e-3 --start-scale legacy --hmc-mass hessdiag --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/temper-4.log` (re-verified: 0/240 swaps on all four chains; R̂ `2.44665`, ESS `4.8`, tail `10.0`, RMSE `0.168598`) |
+| hit-and-run, 400 moves — R̂ 2.39717, ESS 4.9, RMSE 0.087048 | `vector_regression --kernel hitrun --init mode --mode-steps 8000 --mode-lr 5e-3 --steps 400 --hr-width 1 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/hitrun-400.log` (re-verified; burn is `steps/4` and is not a flag) |
+| hit-and-run, 5,000 moves — R̂ 3.03445, ESS 4.5, RMSE 0.121815 | `vector_regression --kernel hitrun --init point --steps 5000 --hr-width 1 --thin 2 --draws 1875 --chains 4` | `logs/pcnl_r13_gates/hitrun-5000.log` (re-verified) |
+| live-attention q/k gate — R̂ 2.60278, ESS 4.7, tail 9.3, RMSE 0.173727 | `vector_regression --kernel hmc --init mode --mode-steps 8000 --mode-lr 5e-3 --hmc-mass hessdiag --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4` | `logs/pcnl_r13_gates/qk-gate.log` (re-verified) |
+| multimodality basins — RMSE 0.0770/0.0871, potentials 28.09/38.71 | `vector_basins --runs 2 --steps 8000` | `logs/pcnl_r13_gates/basins.log` (re-verified: `28.0901`/`38.7083`, RMSE `0.076978`/`0.087130`) |
+| continual stream — coverage90 0.983–1.000, z² 0.02–0.36 | `vector_stream --prefixes 4 --adam-steps 300 --lr 0.02` | `logs/pcnl_r13_gates/stream.log` (re-verified: warm coverage `1.0/1.0/0.9917/0.9833`, z² `0.032/0.024/0.275/0.356`) |
+| CN exact-dense, 6,000 steps — R̂ 1.00616, ESS 620.9, tail 201.3, RMSE 0.105528 (`gate=true`) | `vector_regression --readout-only --kernel cn --proposal exact --init mean --rho 0.5 --refresh 0.01 --steps 6000 --burn 1500 --thin 1 --draws 4500 --chains 4` | `logs/pcnl_r13_gates/cn-exact-dense.log` (re-verified; readout-conditional, dim 34) |
 
-The last six rows are reconstructed from their log headers (steps, draws,
-proposal, ladder all echoed there) but were **not** re-executed in this pass;
-treat them as documented parameters, not as today's verified runs.
+The readout, pilot, Hessian, low-rank 8/32 (with and without jitter), hit-and-run
+400/5,000, q/k gate, basins and stream rows were re-executed and match to the
+last digit. Two rows are reconstructed from their log headers (steps, draws,
+proposal, ladder all echoed there), and the original `/tmp` logs were cleared by
+the system mid-session, so only the numbers in this table survive for those:
+
+- **hit-and-run 400 moves — re-verified** once the command was completed with
+  `--mode-lr 5e-3` (the default `2e-3` leaves the mode at potential `93.87`
+  instead of `33.81`) and `--start-jitter 1e-4`; all four chain lines are
+  byte-identical to the recorded log and R̂/ESS/RMSE match exactly.
+- **live-attention q/k gate — recovered.** The missing flag was `--hmc-leapfrog
+  4`: with it the run returns R̂ `2.60278`, ESS `4.7`, tail `9.3`, RMSE
+  `0.173727` exactly. At the default leapfrog length the same mode fit gives R̂
+  `1.76121`/ESS `5.9` (`--mode-lr 5e-3`) or `2.12514`/`5.2` (`--mode-lr
+  2e-3`), which is why the earlier reconstruction missed it; both alternates
+  are kept in `logs/pcnl_r13_gates/` as `qk-alt-lf8-lr*.log`.
+- **parallel tempering — recovered, on the same missing flag.** All four chains
+  accept `0/240` swaps with hot replicas ending at `7.3e3–1.8e5`, matching the
+  qualitative claim, and the cold-chain summary missed only because the
+  reconstruction ran under the `prior` start: with
+  `--start-scale legacy --hmc-leapfrog 4` on the recorded 3,000-step `5e-3`
+  mode fit the run returns R̂ `2.44665`, ESS `4.8`, tail `10.0`, RMSE
+  `0.168598` exactly. Under `prior` the identical command gives
+  `2.15397`/`5.1`/`0.096604`. With zero exchanges the cold replica never leaves
+  λ=1, so its summary is a function of its own start — which is precisely why
+  the start flag, not the ladder, decided the row. The legacy run prints ladder
+  `0.01/0.0464/0.2154/1` (the `prior` one printed `0.02/0.0737/0.2714/1`), and
+  the cold-chain numbers are identical either way for that reason; hot replicas
+  end at `1.2e4–2.9e4` against a cold `4.2e3–4.8e3`, so the `ΔU ≈ 6e3–1e4`
+  spacing argument above is unchanged.
+- **basins and stream — re-verified exactly** (`28.0901`/`38.7083` with RMSE
+  `0.076978`/`0.087130`; coverage `1.0/1.0/0.9917/0.9833` with z²
+  `0.032/0.024/0.275/0.356`).
+- **hit-and-run 5,000 moves — re-verified** (R̂ `3.03445`, ESS `4.5`, RMSE
+  `0.121815`) with `--steps 5000 --thin 2 --draws 1875`, i.e. burn `1,250`
+  derived from `steps/4`. Twelve times the moves of the 400-move gate buys ESS
+  `4.5` against `4.9`: the plateau is not a move-count problem.
+- **low-rank 32 + trajectory jitter — recovered**, on the same flag the other
+  legacy rows needed: `--start-scale legacy`. With it the run returns R̂
+  `2.14626`, ESS `5.1`, tail `10.0`, RMSE `0.092472` exactly. Without the flag
+  the identical command gives R̂ `2.48617` (leapfrog 4) or `2.34143` (leapfrog
+  8), which is why four earlier attempts missed it — `--hmc-jitter` draws one
+  extra uniform per proposal, so a different start rescales *every* trajectory.
+  The conclusion the row supports is unchanged: jitter does not close the gate.
+- **CN exact-dense — re-executed and converging.** The reconstruction needed a
+  flag the row omitted: `--proposal exact` with `--init mean` is refused
+  outright without `--readout-only` ("the analytic posterior exists only for the
+  readout conditional"), so the documented command as written is invalid with
+  current code. With `--readout-only` the 6,000-step/1,500-burn run mixes well
+  beyond the gate: R̂ `1.00616`, bulk ESS `620.9`, tail ESS `201.3`, RMSE
+  `0.105528`, acceptance `2,316–2,553` of `6,000` per chain, and a large
+  fraction of non-CN refreshes (`62–65` per chain). Its `sample_space` is
+  `readout_conditional` (dim 34), not the full parameter, so it validates the
+  kernel and the exact-dense proposal rather than the full-parameter gate. The
+  tempering cold-chain summaries no longer stand open (above).
+
+Logs for these re-runs are committed under `logs/pcnl_r13_gates/` (with the
+exact command per file in its `README.md`); `.gitignore` carries the two
+negation lines that keep that directory trackable under `logs/*`.
+`scripts/check-pcnl-gates` re-runs every one of them and diffs the summary
+lines against the committed log, so a log that stops matching (or a command
+that drifts from its log) fails instead of going unnoticed.
 
 ### Low-rank-plus-diagonal HMC metric (2026-11-23)
 

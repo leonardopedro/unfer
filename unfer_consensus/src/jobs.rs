@@ -1,163 +1,440 @@
-//! H7+D14: scheduled jobs under an ordered claim fence.
+//! H7: job queue with `claimSlot`/`unclaimSlot` semantics for scheduled
+//! consensus/auction work, and (D14) the ordered fence that decides which
+//! worker may act.
 //!
 //! Mirrors qm's `cron/scheduler.ts`: a scheduled job is claimed before it
-//! fires, a successful fire settles it, a failed fire releases it (re-queued
-//! and retried), and an authz-fail disables it. The queue is pure state — no
-//! wall-clock, no random — so a replayed schedule converges the same way the
-//! ledgers do.
+//! fires, `mark_fired` only advances it after a *successful* fire, a failed
+//! fire is unclaimed (re-queued and retried), and an authz-fail disables the
+//! job. The queue is pure state — no wall-clock, no random — so a replayed
+//! schedule converges the same way the ledgers do.
 //!
-//! D14 upgrades the claim from a local counter to an *ordered fence*: the
-//! committed state owns one current fence per resource, and a fence is the
-//! tuple `(deployment, resource, epoch, generation)`. Only the current fence
-//! may settle the job or mutate its protected resource, so a worker that is
-//! still computing after its lease ended can finish its work but cannot commit
-//! a stale result. `renew`, `release`, `reclaim` and restart are explicit
-//! transitions rather than inferences from time. Ordering is by
-//! `(epoch, generation)` — no correctness argument depends on synchronized
-//! clocks, and an external sink without an enforcement interface is not fenced
-//! at all ([`FencedSink`] models the ones that do enforce).
+//! ## D14: ordering, not consensus
+//!
+//! A claim used to be a generation counter inside one process, which is enough
+//! for one worker and not enough for two: a worker that lost the job while
+//! partitioned keeps computing, and the counter it holds no longer says
+//! anything about what the *committed* state believes. So the token is now a
+//! [`Fence`] — `(deployment, resource, epoch, generation)` — and the current
+//! fence for a resource lives in [`FenceTable`], which the node owns and
+//! rebuilds from its journal. Only the current fence settles the job or mutates
+//! the resource (`admits`); an older one is refused *before* anything is
+//! written, so a stale worker can keep computing and cannot commit.
+//!
+//! Nothing here reads a clock. `epoch` is the reset point (it changes only when
+//! `generation` would overflow, or when a caller explicitly advances it), and
+//! `generation` advances once per claim transition. Fences are compared
+//! lexicographically on `(epoch, generation)`, so a fence is stale if it is not
+//! the current one — not if it is "old in seconds". A worker whose clock is
+//! wrong is not a case this has to handle, which is the point: leases need
+//! synchronised clocks, fences do not.
+//!
+//! `epoch` is also what a *sink* is told. [`FencedSink`] is the enforcement
+//! interface: a sink that implements it rejects a fence older than the newest
+//! one it has already applied. A sink with no such interface cannot be
+//! protected by a fence, and this module does not pretend otherwise — the plan
+//! says so explicitly, and D15's durable outbox is where an unenforceable sink
+//! is handled by reconciliation rather than by a promise.
+//!
+//! The round-robin leader in [`crate::lease`] stays a scheduling *preference*:
+//! it decides who is likely to claim next, and correctness rests on the fence.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
 use unfer_protocol::{Code, Diagnostic, Severity};
 
 /// Lifecycle of a scheduled job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
-    /// Scheduled, awaiting a claim.
+    /// Scheduled, awaiting a slot claim.
     Queued,
     /// Claimed by a worker; firing in progress.
     Claimed,
-    /// Settled successfully; not scheduled again (unless re-queued).
+    /// Fired successfully; not scheduled again (unless re-queued).
     Fired,
     /// Disabled on authz-fail; never fires again.
     Disabled,
 }
 
-/// The ordered fence for one protected resource.
+/// The disposition a fence transition leaves its job in.
 ///
-/// `(epoch, generation)` orders fences for the same `(deployment, resource)`:
-/// a later epoch means a later leadership incarnation, and a later generation
-/// means a later claim within that incarnation. The committed state stores the
-/// current fence; a claim holds a copy and is valid only while it equals it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct JobFence {
+/// This is what recovery restores: a fence record says *which* claim became
+/// current **and** what the job became, because "released" and "fired" are not
+/// the same thing to a scheduler — one is retried by the next claim, the other
+/// is not retried at all. Recovering only the fence would make a restart
+/// re-fire a job that had already fired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimState {
+    /// Held by `holder` under this fence.
+    Claimed,
+    /// Returned to the queue after a failed fire: the next claim retries it.
+    Queued,
+    /// Fired successfully under this fence; not retried.
+    Fired,
+    /// Disabled on an authorization failure; never fires again.
+    Disabled,
+}
+
+impl ClaimState {
+    fn job_state(self) -> JobState {
+        match self {
+            ClaimState::Claimed => JobState::Claimed,
+            ClaimState::Queued => JobState::Queued,
+            ClaimState::Fired => JobState::Fired,
+            ClaimState::Disabled => JobState::Disabled,
+        }
+    }
+
+    /// Whether the resource is idle under this disposition.
+    fn is_idle(self) -> bool {
+        !matches!(self, ClaimState::Claimed)
+    }
+}
+
+/// D14: the ordered right to act on one protected resource.
+///
+/// `deployment` and `resource` say *what* is protected; `(epoch, generation)`
+/// say *which* claim, and are the only fields that move. The fence is issued by
+/// the committed state, never by the worker that receives it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Fence {
     pub deployment: String,
     pub resource: String,
     pub epoch: u64,
     pub generation: u64,
 }
 
-impl JobFence {
-    /// Whether this fence is strictly newer than `other` for the same
-    /// deployment and resource.
-    pub fn supersedes(&self, other: &JobFence) -> bool {
-        self.deployment == other.deployment
-            && self.resource == other.resource
-            && (self.epoch, self.generation) > (other.epoch, other.generation)
-    }
-
-    /// Whether this fence names the same deployment and resource as `other`.
-    pub fn same_slot_as(&self, other: &JobFence) -> bool {
-        self.deployment == other.deployment && self.resource == other.resource
-    }
-}
-
-/// A held claim: the fence the worker was granted plus the holder it was
-/// granted to. The holder is part of validity, so a fence value that leaks to
-/// another worker is not enough to settle the job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobClaim {
-    fence: JobFence,
-    holder: String,
-}
-
-#[cfg(test)]
-impl JobClaim {
-    /// Build a claim from a known fence, for tests in sibling modules that
-    /// need to present a superseded claim the queue never granted.
-    pub(crate) fn for_test(fence: JobFence, holder: &str) -> Self {
+impl Fence {
+    pub fn new(
+        deployment: impl Into<String>,
+        resource: impl Into<String>,
+        epoch: u64,
+        generation: u64,
+    ) -> Self {
         Self {
-            fence,
-            holder: holder.to_string(),
+            deployment: deployment.into(),
+            resource: resource.into(),
+            epoch,
+            generation,
+        }
+    }
+
+    /// Whether this fence is strictly older than `other` for the same resource.
+    ///
+    /// Comparing fences of different resources (or deployments) is meaningless;
+    /// callers compare `(epoch, generation)` only within one resource, which is
+    /// how the table stores them.
+    pub fn is_older_than(&self, other: &Fence) -> bool {
+        (self.epoch, self.generation) < (other.epoch, other.generation)
+    }
+
+    /// The fence one transition after this one, or `None` when the fence space
+    /// is exhausted.
+    ///
+    /// At `generation == u64::MAX` the epoch advances and the generation restarts
+    /// at 1 — an explicit epoch change, not a wrap. A wrap would hand out a
+    /// fence that sorts *below* the current one and would therefore look stale to
+    /// a sink forever; refusing at the very top instead keeps every issued fence
+    /// strictly increasing.
+    fn successor(&self) -> Option<Fence> {
+        let (epoch, generation) = next_position(self.epoch, self.generation)?;
+        Some(Fence {
+            deployment: self.deployment.clone(),
+            resource: self.resource.clone(),
+            epoch,
+            generation,
+        })
+    }
+}
+
+/// The first position of a fence space, then each strictly increasing position.
+fn next_position(epoch: u64, generation: u64) -> Option<(u64, u64)> {
+    if generation < u64::MAX {
+        Some((epoch, generation + 1))
+    } else if epoch < u64::MAX {
+        Some((epoch + 1, 1))
+    } else {
+        None
+    }
+}
+
+/// The committed fencing state: the current fence and holder per resource.
+///
+/// This is deterministic state — the same transitions in the same order produce
+/// the same table — so a node rebuilds it by replaying its journal rather than
+/// by asking a peer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FenceTable {
+    current: HashMap<String, Fence>,
+    holders: HashMap<String, String>,
+    /// Resources whose current fence was explicitly released. Kept rather than
+    /// deleted so a *stale* release (of a fence that is no longer current) is
+    /// still distinguishable from a release of an idle resource.
+    released: HashSet<String>,
+}
+
+impl FenceTable {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reinstall a fence recovered from the journal.
+    pub fn install(&mut self, fence: Fence, holder: Option<String>, released: bool) {
+        if released {
+            self.released.insert(fence.resource.clone());
+        } else {
+            self.released.remove(&fence.resource);
+        }
+        match holder {
+            Some(holder) => self.holders.insert(fence.resource.clone(), holder),
+            None => self.holders.remove(&fence.resource),
+        };
+        self.current.insert(fence.resource.clone(), fence);
+    }
+
+    pub fn current(&self, resource: &str) -> Option<&Fence> {
+        self.current.get(resource)
+    }
+
+    pub fn holder(&self, resource: &str) -> Option<&str> {
+        self.holders.get(resource).map(String::as_str)
+    }
+
+    pub fn is_released(&self, resource: &str) -> bool {
+        self.released.contains(resource)
+    }
+
+    /// Whether `fence` is the current fence for its resource.
+    ///
+    /// This is the only question a protected mutation asks. It is deliberately
+    /// an identity check and not an ordering comparison: two fences can be
+    /// ordered yet only one of them is the committed one.
+    pub fn admits(&self, fence: &Fence) -> bool {
+        self.current.get(&fence.resource) == Some(fence)
+    }
+
+    /// Issue the first (or next) fence for a resource nobody holds.
+    ///
+    /// Refused while a live claim exists: taking a held resource over is
+    /// [`FenceTable::reclaim`]'s decision, and it requires a release first, so
+    /// "two workers both believe they lead" cannot be resolved by whoever asks
+    /// last.
+    pub fn claim(
+        &mut self,
+        deployment: &str,
+        resource: &str,
+        holder: &str,
+    ) -> Result<Fence, Diagnostic> {
+        if self.current.contains_key(resource) && !self.released.contains(resource) {
+            return Err(stale(
+                "RESOURCE_HELD",
+                format!(
+                    "resource '{resource}' is held by '{}' under fence {}; a claim needs a release first",
+                    self.holders.get(resource).map(String::as_str).unwrap_or("unknown"),
+                    self.render(resource)
+                ),
+            ));
+        }
+        let next = match self.current.get(resource) {
+            None => Fence::new(deployment, resource, 1, 1),
+            Some(current) => current.successor().ok_or_else(|| {
+                stale(
+                    "FENCE_EXHAUSTED",
+                    format!(
+                        "the fence space for '{resource}' is exhausted at {}",
+                        self.render(resource)
+                    ),
+                )
+            })?,
+        };
+        self.install(next.clone(), Some(holder.to_string()), false);
+        Ok(next)
+    }
+
+    /// Extend the current claim: a fresh fence, same holder, same epoch.
+    ///
+    /// A renewal is a *new* fence, so an outstanding order against the old one
+    /// is stale by construction — renewal is how a worker re-arms, not how it
+    /// widens the window in which an old result may still land.
+    pub fn renew(&mut self, fence: &Fence) -> Result<Fence, Diagnostic> {
+        if !self.admits(fence) {
+            return Err(stale(
+                "STALE_FENCE",
+                format!(
+                    "renew refused: {} is not the current fence ({})",
+                    self.describe(fence),
+                    self.render(&fence.resource)
+                ),
+            ));
+        }
+        if self.released.contains(&fence.resource) {
+            return Err(stale(
+                "FENCE_RELEASED",
+                format!("renew refused: '{}' was released", fence.resource),
+            ));
+        }
+        let next = fence.successor().ok_or_else(|| {
+            stale(
+                "FENCE_EXHAUSTED",
+                format!(
+                    "the fence space for '{}' is exhausted at {}",
+                    fence.resource,
+                    self.describe(fence)
+                ),
+            )
+        })?;
+        self.install(next.clone(), self.holders.get(&fence.resource).cloned(), false);
+        Ok(next)
+    }
+
+    /// Give the resource up. Only the current fence may release it, so a stale
+    /// worker cannot knock a newer holder out of its claim.
+    pub fn release(&mut self, fence: &Fence) -> Result<(), Diagnostic> {
+        if !self.admits(fence) {
+            return Err(stale(
+                "STALE_FENCE",
+                format!(
+                    "release refused: {} is not the current fence ({})",
+                    self.describe(fence),
+                    self.render(&fence.resource)
+                ),
+            ));
+        }
+        self.install(fence.clone(), None, true);
+        Ok(())
+    }
+
+    /// Take over a resource whose claim was released (an idle resource), issuing
+    /// a fence that is strictly newer than the released one.
+    ///
+    /// A claim is refused while the resource is held, so reclaim and claim differ
+    /// only in *intent*; the reason both exist is that a takeover of a resource
+    /// that was never released must be a deliberate, reviewable act, not a
+    /// convenient default.
+    pub fn reclaim(
+        &mut self,
+        deployment: &str,
+        resource: &str,
+        holder: &str,
+    ) -> Result<Fence, Diagnostic> {
+        if self.current.contains_key(resource) && !self.released.contains(resource) {
+            return Err(stale(
+                "RESOURCE_HELD",
+                format!(
+                    "reclaim refused: '{resource}' is still held under {}",
+                    self.render(resource)
+                ),
+            ));
+        }
+        self.claim(deployment, resource, holder)
+    }
+
+    fn describe(&self, fence: &Fence) -> String {
+        format!(
+            "({}, {}, epoch {}, generation {})",
+            fence.deployment, fence.resource, fence.epoch, fence.generation
+        )
+    }
+
+    fn render(&self, resource: &str) -> String {
+        match self.current.get(resource) {
+            Some(fence) => self.describe(fence),
+            None => format!("no fence for '{resource}'"),
         }
     }
 }
 
+/// A claim token for one job slot: the job plus the fence that authorizes it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JobClaim {
+    job: String,
+    fence: Fence,
+}
+
 impl JobClaim {
-    pub fn fence(&self) -> &JobFence {
+    pub fn job(&self) -> &str {
+        &self.job
+    }
+
+    pub fn fence(&self) -> &Fence {
         &self.fence
     }
+}
 
-    pub fn holder(&self) -> &str {
-        &self.holder
+/// The enforcement interface for a protected external effect (D14 step 2).
+///
+/// A sink that cannot answer "is this fence newer than the last one I applied?"
+/// cannot be fenced; it needs a durable outbox and reconciliation instead
+/// (D15). Nothing in this module claims protection for such a sink.
+pub trait FencedSink {
+    /// Apply `payload` under `fence`, refusing anything not newer than the last
+    /// fence this sink accepted for the resource.
+    fn apply(&mut self, fence: &Fence, payload: &str) -> Result<(), Diagnostic>;
+}
+
+/// A sink that enforces ordering itself — the mock an external service stands in
+/// for, and the model of one that keeps its applied fence durably.
+#[derive(Debug, Clone, Default)]
+pub struct OrderedMockSink {
+    /// The newest fence this sink has applied, per resource.
+    seen: HashMap<String, Fence>,
+    /// Every applied effect, in order: `(resource, epoch, generation, payload)`.
+    pub applied: Vec<(String, u64, u64, String)>,
+}
+
+impl OrderedMockSink {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn resource(&self) -> &str {
-        &self.fence.resource
+    pub fn applied_count(&self, resource: &str) -> usize {
+        self.applied
+            .iter()
+            .filter(|(name, _, _, _)| name == resource)
+            .count()
     }
 }
 
-/// D14: the schema an ordered job command is read under. Distinct from the
-/// ledger transaction schema, so the apply path can dispatch by schema instead
-/// of guessing from the payload.
-pub const JOB_COMMAND_SCHEMA: u16 = 2;
-
-/// An ordered job command: the unit the deployment agrees on.
-///
-/// Every replica applies the same commands in the same order to its own
-/// [`JobQueue`], so they converge on the same current fence. A command that is
-/// refused (stale fence, wrong holder, not queued) is a deterministic no-op on
-/// every replica — the verdict is stable, so it is not an error and changes no
-/// state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum JobCommand {
-    Claim { resource: String, holder: String },
-    TakeOver {
-        resource: String,
-        epoch: u64,
-        holder: String,
-    },
-    Renew { claim: JobClaim },
-    Release { claim: JobClaim },
-    Reclaim { resource: String, holder: String },
-    Settle { claim: JobClaim },
-    Disable { claim: JobClaim },
-}
-
-/// Deterministic scheduler and owner of the current fence per resource.
-///
-/// Serialized into the ledger snapshot, so the committed state — not a worker
-/// — owns which fence is current.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobQueue {
-    #[serde(default)]
-    deployment: String,
-    #[serde(default)]
-    jobs: HashMap<String, JobState>,
-    #[serde(default)]
-    current: HashMap<String, JobFence>,
-    #[serde(default)]
-    holders: HashMap<String, String>,
-    #[serde(default)]
-    epoch: u64,
-}
-
-impl Default for JobQueue {
-    fn default() -> Self {
-        Self {
-            deployment: String::new(),
-            jobs: HashMap::new(),
-            current: HashMap::new(),
-            holders: HashMap::new(),
-            epoch: 0,
+impl FencedSink for OrderedMockSink {
+    fn apply(&mut self, fence: &Fence, payload: &str) -> Result<(), Diagnostic> {
+        if let Some(seen) = self.seen.get(&fence.resource) {
+            if fence.is_older_than(seen) || fence == seen {
+                return Err(stale(
+                    "STALE_FENCE",
+                    format!(
+                        "sink refused ({}, epoch {}, generation {}): it already applied epoch {}, generation {}",
+                        fence.resource, fence.epoch, fence.generation, seen.epoch, seen.generation
+                    ),
+                ));
+            }
         }
+        self.seen.insert(fence.resource.clone(), fence.clone());
+        self.applied.push((
+            fence.resource.clone(),
+            fence.epoch,
+            fence.generation,
+            payload.to_string(),
+        ));
+        Ok(())
     }
+}
+
+/// Deterministic scheduler for consensus/auction work.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobQueue {
+    jobs: HashMap<String, JobState>,
+    fences: FenceTable,
+    deployment: String,
 }
 
 impl JobQueue {
-    pub fn new(deployment: impl Into<String>) -> Self {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Name the deployment whose fences this queue issues. Fences are scoped by
+    /// it, so two deployments can use the same job name without sharing a fence.
+    pub fn with_deployment(deployment: impl Into<String>) -> Self {
         Self {
             deployment: deployment.into(),
             ..Self::default()
@@ -168,577 +445,259 @@ impl JobQueue {
         &self.deployment
     }
 
-    /// Set the deployment name when a snapshot predates it. The fence value
-    /// from a different deployment is never reused.
-    pub fn set_deployment(&mut self, deployment: impl Into<String>) {
-        let deployment = deployment.into();
-        if self.deployment != deployment {
-            // A renamed deployment invalidates every outstanding fence: the
-            // fences were ordered under the old name.
-            self.current.clear();
-            self.holders.clear();
-            self.deployment = deployment;
-        }
+    pub fn fences(&self) -> &FenceTable {
+        &self.fences
+    }
+
+    /// Reinstall fencing state recovered from the journal: both which claim is
+    /// current and what the job itself became.
+    pub fn install_fence(&mut self, fence: Fence, holder: Option<String>, state: ClaimState) {
+        self.fences.install(fence.clone(), holder, state.is_idle());
+        self.jobs.insert(fence.resource.clone(), state.job_state());
     }
 
     /// Register a scheduled job (idempotent — re-registering a known job keeps
-    /// its state and its current fence).
-    pub fn enqueue(&mut self, resource: &str) {
-        self.jobs
-            .entry(resource.to_string())
-            .or_insert(JobState::Queued);
+    /// its state).
+    pub fn enqueue(&mut self, job: &str) {
+        self.jobs.entry(job.to_string()).or_insert(JobState::Queued);
     }
 
-    pub fn state(&self, resource: &str) -> Option<JobState> {
-        self.jobs.get(resource).copied()
-    }
-
-    /// The current fence the committed state owns for `resource`.
-    pub fn current_fence(&self, resource: &str) -> Option<&JobFence> {
-        self.current.get(resource)
-    }
-
-    pub fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    /// Move to a later leadership incarnation. Strictly monotonic: a replay or
-    /// a regression is refused, so an old epoch cannot be re-admitted.
-    pub fn set_epoch(&mut self, epoch: u64) -> Result<(), Diagnostic> {
-        if epoch <= self.epoch {
-            return Err(diag(
-                Code::DUPLICATE_TRANSACTION,
-                format!("epoch {epoch} does not advance past {}", self.epoch),
-            ));
-        }
-        self.epoch = epoch;
-        Ok(())
-    }
-
-    /// Claim `resource` at the queue's current epoch.
+    /// `claimSlot`: take the job out of `Queued` into `Claimed`, returning the
+    /// fence that authorizes the fire.
     ///
-    /// Replaying the same claim for the same holder is idempotent and returns
-    /// the existing claim (no generation bump). A different holder while the
-    /// resource is already claimed is refused; taking over needs an explicit
-    /// [`JobQueue::reclaim`] or a later epoch via [`JobQueue::take_over`].
-    pub fn claim(&mut self, resource: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
-        match self.jobs.get(resource) {
-            Some(JobState::Queued) => {}
-            Some(JobState::Claimed) => {
-                let same_holder = self.holders.get(resource).map(String::as_str) == Some(holder);
-                let fence = self.current.get(resource).cloned();
-                if same_holder {
-                    // Claim replay: the ordered command is idempotent.
-                    let fence = fence.ok_or_else(|| {
-                        diag(Code::INTERNAL, "claimed resource has no current fence")
-                    })?;
-                    return Ok(JobClaim {
-                        fence,
-                        holder: holder.to_string(),
-                    });
-                }
-                return Err(diag(
-                    Code::DUPLICATE_TRANSACTION,
-                    format!("resource '{resource}' is already claimed"),
-                ));
-            }
-            _ => {
-                return Err(diag(
-                    Code::DUPLICATE_TRANSACTION,
-                    format!("resource '{resource}' is not queued"),
-                ))
-            }
+    /// Refused when the job is not queued (already claimed, fired, disabled, or
+    /// unknown), and when the fence space for the job is exhausted — a claim
+    /// that cannot be ordered is not issued.
+    pub fn claim(&mut self, job: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
+        // The fence is asked first: for a job someone already holds, the honest
+        // answer is "that resource is held", not "this job is not queued" — the
+        // second reads like the caller is late, and the first tells it who owns
+        // the resource. A job that is fired, disabled or unknown fails the state
+        // check below, and the issued fence is rolled back so nothing is
+        // published that no job backs.
+        let before = self.fences.clone();
+        let fence = self.fences.claim(&self.deployment, job, holder)?;
+        if self.jobs.get(job) != Some(&JobState::Queued) {
+            self.fences = before;
+            return Err(stale(
+                "JOB_NOT_QUEUED",
+                format!("job '{job}' is not queued and cannot be claimed"),
+            ));
         }
-        let generation = self.next_generation(resource)?;
-        let fence = self.fence_for(resource, self.epoch, generation);
-        self.current.insert(resource.to_string(), fence.clone());
-        self.holders.insert(resource.to_string(), holder.to_string());
-        self.jobs.insert(resource.to_string(), JobState::Claimed);
+        self.jobs.insert(job.to_string(), JobState::Claimed);
         Ok(JobClaim {
+            job: job.to_string(),
             fence,
-            holder: holder.to_string(),
         })
     }
 
-    /// Ordered claim command at a later epoch: a worker that believes it leads
-    /// a newer incarnation takes the resource over, invalidating the older
-    /// fence even while the old holder is still running.
-    pub fn take_over(
-        &mut self,
-        resource: &str,
-        epoch: u64,
-        holder: &str,
-    ) -> Result<JobClaim, Diagnostic> {
-        if self.jobs.get(resource).is_none() {
-            return Err(diag(
-                Code::INTERNAL,
-                format!("resource '{resource}' is not registered"),
-            ));
+    /// Re-arm the claim: a new fence for the same job and holder.
+    pub fn renew(&mut self, claim: &JobClaim) -> Result<JobClaim, Diagnostic> {
+        if !self.valid_claim(claim) {
+            return Err(self.stale_claim(claim, "renew"));
         }
-        if matches!(
-            self.jobs.get(resource),
-            Some(JobState::Fired) | Some(JobState::Disabled)
-        ) {
-            return Err(diag(
-                Code::DUPLICATE_TRANSACTION,
-                format!("resource '{resource}' is not claimable"),
-            ));
-        }
-        if epoch <= self.epoch {
-            return Err(diag(
-                Code::DUPLICATE_TRANSACTION,
-                format!("epoch {epoch} does not supersede {}", self.epoch),
-            ));
-        }
-        self.epoch = epoch;
-        let generation = self.next_generation(resource)?;
-        let fence = self.fence_for(resource, epoch, generation);
-        self.current.insert(resource.to_string(), fence.clone());
-        self.holders.insert(resource.to_string(), holder.to_string());
-        self.jobs.insert(resource.to_string(), JobState::Claimed);
+        let fence = self.fences.renew(&claim.fence)?;
         Ok(JobClaim {
+            job: claim.job.clone(),
             fence,
-            holder: holder.to_string(),
         })
     }
 
-    /// Renew a held claim: a new generation for the same epoch, invalidating
-    /// the old claim. The holder keeps the resource.
-    pub fn renew(&mut self, claim: &JobClaim, holder: &str) -> Result<JobClaim, Diagnostic> {
-        self.require_current(claim, holder)?;
-        let generation = self.next_generation(claim.resource())?;
-        let fence = self.fence_for(claim.resource(), claim.fence.epoch, generation);
-        self.current.insert(claim.resource().to_string(), fence.clone());
-        self.holders
-            .insert(claim.resource().to_string(), holder.to_string());
-        Ok(JobClaim {
-            fence,
-            holder: holder.to_string(),
-        })
-    }
-
-    /// Release a failed fire: the resource returns to `Queued` and the released
-    /// fence is superseded, so a delayed `settle` with it is refused.
-    pub fn release(&mut self, claim: &JobClaim, holder: &str) -> Result<(), Diagnostic> {
-        self.require_current(claim, holder)?;
-        let generation = self.next_generation(claim.resource())?;
-        let fence = self.fence_for(claim.resource(), claim.fence.epoch, generation);
-        self.current.insert(claim.resource().to_string(), fence);
-        self.holders.remove(claim.resource());
-        self.jobs.insert(claim.resource().to_string(), JobState::Queued);
+    /// `unclaimSlot`: a failed fire returns the job to `Queued` so it is retried
+    /// by a later claim, and releases the fence. A stale/unknown claim is
+    /// refused and changes nothing.
+    pub fn unclaim(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        if !self.valid_claim(claim) {
+            return Err(self.stale_claim(claim, "unclaim"));
+        }
+        self.fences.release(&claim.fence)?;
+        self.jobs.insert(claim.job.clone(), JobState::Queued);
         Ok(())
     }
 
-    /// Restart transition: a new process takes over a resource whose holder is
-    /// gone. The old claim is invalid even if it is presented later.
-    pub fn reclaim(&mut self, resource: &str, holder: &str) -> Result<JobClaim, Diagnostic> {
-        match self.jobs.get(resource) {
-            Some(JobState::Disabled) | Some(JobState::Fired) | None => {
-                return Err(diag(
-                    Code::DUPLICATE_TRANSACTION,
-                    format!("resource '{resource}' cannot be reclaimed"),
-                ))
-            }
-            Some(JobState::Claimed | JobState::Queued) => {}
+    /// `markFired`: only a *successful* fire marks the job fired, and only under
+    /// the current fence — a double-fire of the same slot cannot be recorded
+    /// twice, and a stale worker's completion cannot be recorded at all.
+    pub fn mark_fired(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        if !self.valid_claim(claim) {
+            return Err(self.stale_claim(claim, "mark_fired"));
         }
-        let generation = self.next_generation(resource)?;
-        let fence = self.fence_for(resource, self.epoch, generation);
-        self.current.insert(resource.to_string(), fence.clone());
-        self.holders.insert(resource.to_string(), holder.to_string());
-        self.jobs.insert(resource.to_string(), JobState::Claimed);
-        Ok(JobClaim {
-            fence,
-            holder: holder.to_string(),
-        })
-    }
-
-    /// Only the current fence settles the job.
-    pub fn settle(&mut self, claim: &JobClaim, holder: &str) -> Result<(), Diagnostic> {
-        self.require_current(claim, holder)?;
-        let generation = self.next_generation(claim.resource())?;
-        let fence = self.fence_for(claim.resource(), claim.fence.epoch, generation);
-        self.current.insert(claim.resource().to_string(), fence);
-        self.holders.remove(claim.resource());
-        self.jobs.insert(claim.resource().to_string(), JobState::Fired);
+        self.fences.release(&claim.fence)?;
+        self.jobs.insert(claim.job.clone(), JobState::Fired);
         Ok(())
     }
 
     /// Disable the job on authz-fail: it never fires again.
-    pub fn disable(&mut self, claim: &JobClaim, holder: &str) -> Result<(), Diagnostic> {
-        self.require_current(claim, holder)?;
-        let generation = self.next_generation(claim.resource())?;
-        let fence = self.fence_for(claim.resource(), claim.fence.epoch, generation);
-        self.current.insert(claim.resource().to_string(), fence);
-        self.holders.remove(claim.resource());
-        self.jobs
-            .insert(claim.resource().to_string(), JobState::Disabled);
+    pub fn disable(&mut self, claim: &JobClaim) -> Result<(), Diagnostic> {
+        if !self.valid_claim(claim) {
+            return Err(self.stale_claim(claim, "disable"));
+        }
+        self.fences.release(&claim.fence)?;
+        self.jobs.insert(claim.job.clone(), JobState::Disabled);
         Ok(())
     }
 
-    /// Apply one ordered command. The caller decides what a refusal means; this
-    /// module keeps refusals side-effect free (a refused command leaves the
-    /// queue exactly as it was), which is what makes the verdict replicable.
-    pub fn apply(&mut self, command: &JobCommand) -> Result<(), Diagnostic> {
-        match command {
-            JobCommand::Claim { resource, holder } => self.claim(resource, holder).map(|_| ()),
-            JobCommand::TakeOver {
-                resource,
-                epoch,
-                holder,
-            } => self.take_over(resource, *epoch, holder).map(|_| ()),
-            JobCommand::Renew { claim } => self.renew(claim, claim.holder()).map(|_| ()),
-            JobCommand::Release { claim } => self.release(claim, claim.holder()),
-            JobCommand::Reclaim { resource, holder } => self.reclaim(resource, holder).map(|_| ()),
-            JobCommand::Settle { claim } => self.settle(claim, claim.holder()),
-            JobCommand::Disable { claim } => self.disable(claim, claim.holder()),
+    /// Settle the job through a protected sink: the sink applies the effect and
+    /// the job is marked fired only if the fence is current for *both*.
+    ///
+    /// The order matters. The fence is checked here first so a stale worker
+    /// cannot reach the sink at all; the sink then re-checks, because its
+    /// ordering knowledge is its own and a fence that was current when the
+    /// worker started may not be current when the effect arrives.
+    pub fn settle(&mut self, claim: &JobClaim, sink: &mut dyn FencedSink, payload: &str) -> Result<(), Diagnostic> {
+        if !self.valid_claim(claim) {
+            return Err(self.stale_claim(claim, "settle"));
         }
+        sink.apply(&claim.fence, payload)?;
+        self.mark_fired(claim)
     }
 
-    /// Whether `claim` is the committed state's current fence for its resource.
-    pub fn is_current(&self, claim: &JobClaim) -> bool {
-        self.current.get(claim.resource()) == Some(&claim.fence)
-            && self.holders.get(claim.resource()).map(String::as_str) == Some(&claim.holder)
-            && self.jobs.get(claim.resource()) == Some(&JobState::Claimed)
+    fn valid_claim(&self, claim: &JobClaim) -> bool {
+        self.jobs.get(&claim.job) == Some(&JobState::Claimed) && self.fences.admits(&claim.fence)
     }
 
-    fn require_current(&self, claim: &JobClaim, holder: &str) -> Result<(), Diagnostic> {
-        if holder != claim.holder {
-            return Err(diag(
-                Code::DUPLICATE_TRANSACTION,
-                format!("holder '{holder}' does not own the claim for '{}'", claim.resource()),
-            ));
-        }
-        if !self.is_current(claim) {
-            return Err(diag(
-                Code::DUPLICATE_TRANSACTION,
-                format!(
-                    "stale fence for '{}' (epoch {}, generation {})",
-                    claim.resource(),
-                    claim.fence.epoch,
-                    claim.fence.generation
-                ),
-            ));
-        }
-        Ok(())
+    fn stale_claim(&self, claim: &JobClaim, operation: &str) -> Diagnostic {
+        stale(
+            "STALE_FENCE",
+            format!(
+                "{operation} refused for job '{}': fence (epoch {}, generation {}) is not the current one ({})",
+                claim.job,
+                claim.fence.epoch,
+                claim.fence.generation,
+                match self.fences.current(&claim.job) {
+                    Some(fence) => format!("epoch {}, generation {}", fence.epoch, fence.generation),
+                    None => "no fence".to_string(),
+                }
+            ),
+        )
     }
 
-    fn fence_for(&self, resource: &str, epoch: u64, generation: u64) -> JobFence {
-        JobFence {
-            deployment: self.deployment.clone(),
-            resource: resource.to_string(),
-            epoch,
-            generation,
-        }
+    pub fn state(&self, job: &str) -> Option<JobState> {
+        self.jobs.get(job).copied()
     }
 
-    /// The next generation for a resource. Overflow is refused rather than
-    /// wrapped: a wrapped fence would re-admit an old claim.
-    fn next_generation(&self, resource: &str) -> Result<u64, Diagnostic> {
-        let current = self
-            .current
-            .get(resource)
-            .map(|fence| fence.generation)
-            .unwrap_or(0);
-        current.checked_add(1).ok_or_else(|| {
-            diag(
-                Code::INTERNAL,
-                format!("fence generation overflow for resource '{resource}'"),
-            )
-        })
+    pub fn fence(&self, job: &str) -> Option<&Fence> {
+        self.fences.current(job)
     }
 }
 
-/// A protected external sink with an enforcement interface (D14 step 2).
-///
-/// It remembers the last fence it accepted and refuses anything older, so a
-/// stale worker cannot commit. A sink *without* such an interface cannot be
-/// fenced; this type exists to show the accepting half, not to promise
-/// enforcement for sinks that have none.
-#[derive(Debug, Default)]
-pub struct FencedSink {
-    last: Option<JobFence>,
-    effects: Vec<String>,
-}
-
-impl FencedSink {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Apply `effect` under `fence`. A fence older than the last accepted one
-    /// is refused; re-presenting the current fence is idempotent.
-    pub fn mutate(&mut self, fence: &JobFence, effect: impl Into<String>) -> Result<(), Diagnostic> {
-        if let Some(last) = &self.last {
-            if !last.same_slot_as(fence) {
-                return Err(diag(
-                    Code::INTERNAL,
-                    format!(
-                        "fence for '{}/{}' does not address this sink",
-                        fence.deployment, fence.resource
-                    ),
-                ));
-            }
-            if last.supersedes(fence) {
-                return Err(diag(
-                    Code::DUPLICATE_TRANSACTION,
-                    format!(
-                        "stale fence (epoch {}, generation {}) — current is (epoch {}, generation {})",
-                        fence.epoch, fence.generation, last.epoch, last.generation
-                    ),
-                ));
-            }
-        }
-        self.last = Some(fence.clone());
-        self.effects.push(effect.into());
-        Ok(())
-    }
-
-    pub fn accepted_generation(&self) -> Option<u64> {
-        self.last.as_ref().map(|fence| fence.generation)
-    }
-
-    pub fn effects(&self) -> &[String] {
-        &self.effects
-    }
-}
-
-fn diag(code: Code, msg: impl Into<String>) -> Diagnostic {
-    Diagnostic::new(code, msg, Severity::Error)
+/// A fence that is not current is a conflict the caller may recover from (it can
+/// simply stop), not a duplicate of something it already sent — but it uses the
+/// same code the queue used for a stale slot claim before D14, so a caller that
+/// already treats `DUPLICATE_TRANSACTION` as "your token is no longer valid"
+/// keeps working.
+fn stale(kind: &str, message: String) -> Diagnostic {
+    Diagnostic::new(
+        Code::DUPLICATE_TRANSACTION,
+        format!("{kind}: {message}"),
+        Severity::Error,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const DEPLOY: &str = "deploy-1";
-
-    fn queue() -> JobQueue {
-        let mut q = JobQueue::new(DEPLOY);
-        q.enqueue("auction-settle");
-        q
-    }
-
     #[test]
-    fn claim_settle_roundtrip() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").expect("claimable");
+    fn claim_fire_mark_fired_roundtrip() {
+        let mut q = JobQueue::new();
+        q.enqueue("auction-settle");
+        let claim = q.claim("auction-settle", "worker-0").expect("claimable");
         assert_eq!(q.state("auction-settle"), Some(JobState::Claimed));
-        assert!(q.is_current(&claim));
-        q.settle(&claim, "worker-a").unwrap();
+        q.mark_fired(&claim).unwrap();
         assert_eq!(q.state("auction-settle"), Some(JobState::Fired));
         // A fired job cannot be claimed again.
-        assert!(q.claim("auction-settle", "worker-a").is_err());
+        assert!(q.claim("auction-settle", "worker-0").is_err());
     }
 
     #[test]
-    fn claim_replay_by_the_same_holder_is_idempotent() {
-        let mut q = queue();
-        let first = q.claim("auction-settle", "worker-a").unwrap();
-        let replay = q.claim("auction-settle", "worker-a").unwrap();
-        assert_eq!(first, replay, "a replayed claim command returns the same fence");
-        assert_eq!(
-            q.current_fence("auction-settle").unwrap().generation,
-            first.fence().generation,
-            "no generation bump on replay"
-        );
+    fn failed_fire_is_unqueued_and_retried() {
+        let mut q = JobQueue::new();
+        q.enqueue("settle-cert-ops");
+        let claim = q.claim("settle-cert-ops", "worker-0").unwrap();
+        // Simulate a failed fire: unclaim re-queues; a later claim retries.
+        q.unclaim(&claim).unwrap();
+        assert_eq!(q.state("settle-cert-ops"), Some(JobState::Queued));
+        let retry = q.claim("settle-cert-ops", "worker-1").expect("retry claimable");
+        q.mark_fired(&retry).unwrap();
+        assert_eq!(q.state("settle-cert-ops"), Some(JobState::Fired));
+        // The fences are strictly ordered across the retry.
+        assert!(claim.fence().is_older_than(retry.fence()));
     }
 
     #[test]
-    fn a_second_holder_cannot_claim_what_a_live_holder_owns() {
-        let mut q = queue();
-        let _ = q.claim("auction-settle", "worker-a").unwrap();
-        assert!(q.claim("auction-settle", "worker-b").is_err());
+    fn stale_claim_cannot_mark_fired_twice() {
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        let claim = q.claim("job", "worker-0").unwrap();
+        q.unclaim(&claim).unwrap(); // failed fire re-queued
+        let retry = q.claim("job", "worker-1").unwrap();
+        // The old claim is superseded — marking it fired is refused.
+        assert!(q.mark_fired(&claim).is_err());
+        assert_eq!(q.state("job"), Some(JobState::Claimed));
+        q.mark_fired(&retry).unwrap();
+        assert_eq!(q.state("job"), Some(JobState::Fired));
     }
 
     #[test]
-    fn failed_fire_is_released_and_retried() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        q.release(&claim, "worker-a").unwrap();
-        assert_eq!(q.state("auction-settle"), Some(JobState::Queued));
-        let retry = q.claim("auction-settle", "worker-a").unwrap();
-        q.settle(&retry, "worker-a").unwrap();
-        assert_eq!(q.state("auction-settle"), Some(JobState::Fired));
-    }
-
-    #[test]
-    fn a_released_fence_cannot_settle_late() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        q.release(&claim, "worker-a").unwrap();
-        let retry = q.claim("auction-settle", "worker-a").unwrap();
-        // The old fence is superseded even though the same worker holds both.
-        assert!(q.settle(&claim, "worker-a").is_err());
-        assert_eq!(q.state("auction-settle"), Some(JobState::Claimed));
-        q.settle(&retry, "worker-a").unwrap();
-    }
-
-    #[test]
-    fn renew_invalidates_the_old_claim() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        let renewed = q.renew(&claim, "worker-a").unwrap();
-        assert!(renewed.fence().generation > claim.fence().generation);
-        assert!(!q.is_current(&claim), "the pre-renew fence is stale");
-        assert!(q.settle(&claim, "worker-a").is_err());
-        q.settle(&renewed, "worker-a").unwrap();
-        assert_eq!(q.state("auction-settle"), Some(JobState::Fired));
-    }
-
-    #[test]
-    fn restart_reclaims_the_claimed_job() {
-        let mut q = queue();
-        let old = q.claim("auction-settle", "worker-a").unwrap();
-        // worker-a dies; a restarted process takes the resource over.
-        let restarted = q.reclaim("auction-settle", "worker-b").unwrap();
-        assert!(!q.is_current(&old));
-        assert!(q.settle(&old, "worker-a").is_err(), "the dead holder cannot settle");
-        q.settle(&restarted, "worker-b").unwrap();
-        assert_eq!(q.state("auction-settle"), Some(JobState::Fired));
-    }
-
-    #[test]
-    fn two_partitioned_workers_both_believing_they_lead() {
-        // Commit state: worker-a claims at epoch 1, then the cluster elects a
-        // new leader in epoch 2 and worker-b takes over. Worker-a, partitioned,
-        // does not know; it finishes computing and tries to settle.
-        let mut q = queue();
-        let a = q.claim("auction-settle", "worker-a").unwrap();
-        let b = q.take_over("auction-settle", 2, "worker-b").unwrap();
-        assert!(q.settle(&a, "worker-a").is_err(), "the old leader's result is stale");
+    fn authz_fail_disables_job() {
+        let mut q = JobQueue::new();
+        q.enqueue("sensitive-settle");
+        let claim = q.claim("sensitive-settle", "worker-0").unwrap();
+        q.disable(&claim).unwrap();
+        assert_eq!(q.state("sensitive-settle"), Some(JobState::Disabled));
         assert!(
-            q.settle(&b, "worker-b").is_ok(),
-            "only the current fence settles the job"
+            q.claim("sensitive-settle", "worker-0").is_err(),
+            "disabled job never fires"
         );
     }
 
     #[test]
-    fn stale_release_cannot_release_a_newer_claim() {
-        let mut q = queue();
-        let a = q.claim("auction-settle", "worker-a").unwrap();
-        let b = q.take_over("auction-settle", 3, "worker-b").unwrap();
-        assert!(q.release(&a, "worker-a").is_err());
-        assert_eq!(q.state("auction-settle"), Some(JobState::Claimed));
-        assert!(q.is_current(&b), "worker-b's claim is untouched");
+    fn double_claim_is_refused() {
+        let mut q = JobQueue::new();
+        q.enqueue("job");
+        let _first = q.claim("job", "worker-0").unwrap();
+        assert!(q.claim("job", "worker-1").is_err(), "second claim must be refused");
     }
 
     #[test]
-    fn generation_overflow_is_refused_not_wrapped() {
-        // Drive the committed fence to the last generation. Tests live in this
-        // module, so they may set the committed value directly; no public API
-        // lets a caller do this.
-        let mut q = queue();
-        q.current.insert(
-            "auction-settle".to_string(),
-            JobFence {
-                deployment: DEPLOY.to_string(),
-                resource: "auction-settle".to_string(),
-                epoch: 0,
-                generation: u64::MAX,
-            },
+    fn fences_are_strictly_ordered_per_resource() {
+        let mut table = FenceTable::new();
+        let first = table.claim("dep", "res", "worker-0").unwrap();
+        table.release(&first).unwrap();
+        let second = table.reclaim("dep", "res", "worker-1").unwrap();
+        assert!(first.is_older_than(&second));
+        assert!(table.admits(&second));
+        assert!(!table.admits(&first));
+    }
+
+    #[test]
+    fn generation_overflow_advances_the_epoch_instead_of_wrapping() {
+        let mut table = FenceTable::new();
+        table.install(Fence::new("dep", "res", 2, u64::MAX - 1), Some("w".into()), false);
+        let last = table.current("res").unwrap().clone();
+        let next = table.renew(&last).unwrap();
+        assert_eq!((next.epoch, next.generation), (2, u64::MAX));
+        // At the very top of the space the epoch advances and the generation
+        // restarts, so the new fence is strictly newer rather than wrapped.
+        let advanced = table.renew(&next).unwrap();
+        assert_eq!((advanced.epoch, advanced.generation), (3, 1));
+        assert!(next.is_older_than(&advanced));
+    }
+
+    #[test]
+    fn exhausted_fence_space_is_refused_not_wrapped() {
+        let mut table = FenceTable::new();
+        table.install(
+            Fence::new("dep", "res", u64::MAX, u64::MAX),
+            Some("w".into()),
+            false,
         );
-        let error = q.claim("auction-settle", "worker-a").unwrap_err();
+        let top = table.current("res").unwrap().clone();
         assert!(
-            error.message.contains("generation overflow"),
-            "overflow is an error, not a wrap: {error:?}"
+            table.renew(&top).is_err(),
+            "a fence space with no successor must refuse rather than wrap"
         );
-        assert_eq!(
-            q.current_fence("auction-settle").unwrap().generation,
-            u64::MAX,
-            "the committed fence is unchanged"
-        );
-        assert_eq!(q.state("auction-settle"), Some(JobState::Queued));
-    }
-
-    #[test]
-    fn epoch_only_moves_forward() {
-        let mut q = queue();
-        q.set_epoch(4).unwrap();
-        assert_eq!(q.epoch(), 4);
-        assert!(q.set_epoch(4).is_err());
-        assert!(q.set_epoch(3).is_err());
-        assert_eq!(q.epoch(), 4);
-    }
-
-    #[test]
-    fn authz_fail_disables_the_job() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        q.disable(&claim, "worker-a").unwrap();
-        assert_eq!(q.state("auction-settle"), Some(JobState::Disabled));
-        assert!(q.claim("auction-settle", "worker-a").is_err());
-        assert!(q.reclaim("auction-settle", "worker-b").is_err());
-    }
-
-    #[test]
-    fn a_fence_from_another_deployment_is_not_current() {
-        let mut q = queue();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        q.set_deployment("deploy-2");
-        assert!(!q.is_current(&claim), "fences do not cross deployments");
-        assert!(q.settle(&claim, "worker-a").is_err());
-    }
-
-    #[test]
-    fn sink_rejects_a_stale_fence() {
-        let mut q = queue();
-        let mut sink = FencedSink::new();
-        let first = q.claim("auction-settle", "worker-a").unwrap();
-        sink.mutate(first.fence(), "write-1").unwrap();
-        let second = q.reclaim("auction-settle", "worker-b").unwrap();
-        sink.mutate(second.fence(), "write-2").unwrap();
-        let error = sink.mutate(first.fence(), "write-3").unwrap_err();
-        assert!(error.message.contains("stale fence"), "{error:?}");
-        assert_eq!(sink.effects(), ["write-1", "write-2"]);
-        assert_eq!(sink.accepted_generation(), Some(second.fence().generation));
-    }
-
-    #[test]
-    fn sink_accepts_an_idempotent_retry_of_its_current_fence() {
-        let mut q = queue();
-        let mut sink = FencedSink::new();
-        let claim = q.claim("auction-settle", "worker-a").unwrap();
-        sink.mutate(claim.fence(), "write-1").unwrap();
-        sink.mutate(claim.fence(), "write-1").unwrap();
-        assert_eq!(sink.effects().len(), 2, "the sink applies what it is told");
-    }
-
-    #[test]
-    fn sink_refuses_a_fence_for_a_different_resource() {
-        let mut q = queue();
-        q.enqueue("cert-settle");
-        let mut sink = FencedSink::new();
-        let auction = q.claim("auction-settle", "worker-a").unwrap();
-        sink.mutate(auction.fence(), "write").unwrap();
-        let cert = q.claim("cert-settle", "worker-a").unwrap();
-        assert!(sink.mutate(cert.fence(), "write").is_err());
-    }
-
-    #[test]
-    fn fence_ordering_is_epoch_then_generation() {
-        let base = JobFence {
-            deployment: DEPLOY.to_string(),
-            resource: "r".to_string(),
-            epoch: 1,
-            generation: 9,
-        };
-        let newer_epoch = JobFence {
-            epoch: 2,
-            generation: 1,
-            ..base.clone()
-        };
-        let newer_generation = JobFence {
-            generation: 10,
-            ..base.clone()
-        };
-        assert!(newer_epoch.supersedes(&base));
-        assert!(newer_generation.supersedes(&base));
-        assert!(!base.supersedes(&newer_epoch));
-        assert!(!base.supersedes(&base));
-        let other_resource = JobFence {
-            resource: "s".to_string(),
-            ..newer_epoch.clone()
-        };
-        assert!(!other_resource.supersedes(&base), "resources are ordered separately");
+        assert!(table.admits(&top), "the current fence is still the current one");
     }
 }

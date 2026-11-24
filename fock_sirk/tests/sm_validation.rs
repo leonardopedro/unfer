@@ -18,16 +18,28 @@
 //!
 //! Comparison-layer additions carried on top of this audit inventory:
 //!
-//! - `sm_lagrangian_n_floor` — the Faris–Lavine floor `N_L = h² + E_0 ≥ 1`, the
-//!   relative bound `‖h x‖ ≤ ‖N_L x‖ + ‖x‖`, and the `Π² + Q⁴ + Σq²` quotient
-//!   generator on the 0/1-homogeneous Higgs statics (`docs/faris_lavine_n_sm.cdb`
-//!   CHECK 17, 28–30).
+//! - `sm_lagrangian_n_floor` — NOT COMPILED, see the note above the test. The
+//!   Faris–Lavine floor `N_L = h² + E_0 ≥ 1`, the relative bound
+//!   `‖h x‖ ≤ ‖N_L x‖ + ‖x‖`, and the `Π² + Q⁴ + Σq²` quotient generator on the
+//!   0/1-homogeneous Higgs statics (`docs/faris_lavine_n_sm.cdb` CHECK 17,
+//!   28–30) are covered only by that Cadabra2 file.
 //! - `sm_higgs_vacuum_statics` — the Mexican-hat identity, `V ≥ −μ⁴/(4λ)` with
 //!   equality iff `λv² = μ²`, the vanishing linear term at the vacuum, the
 //!   shifted potential `V(v+h) − V(v)` and the radial mass² (CHECK 31–32).
-//! - `sm_comparison_cdb_decomposition` — the remaining `CHECK 30/33/17`
-//!   decompositions: `(κ−1)v⁴ = v²(κv²−μ²) + μ²v²`, the `N − 1 = (c0−1) +
-//!   [π² + q⁴ + Σq² + Σx²] ≥ 0` certificate and `(C_E E_0 − 1)²`.
+//! - `sm_comparison_cdb_decomposition` — NOT COMPILED, same note. The remaining
+//!   `CHECK 30/33/17` decompositions (`(κ−1)v⁴ = v²(κv²−μ²) + μ²v²`, the
+//!   `N − 1 = (c0−1) + [π² + q⁴ + Σq² + Σx²] ≥ 0` certificate and
+//!   `(C_E E_0 − 1)²`) are covered only by `docs/faris_lavine_n_sm.cdb`.
+//!
+//! Tests 13 and 15 below are retained verbatim behind `#[cfg(any())]`: commit
+//! `ba35576` added them together with a helper layer (`Poly`, `pmul`, `padd`,
+//! `pscale`, `ham`, `k0_poly`, `grad_k0_polys`, `sm_state`, …) that was never
+//! committed, and no definition of it exists in this repository or its history.
+//! They are excluded from compilation rather than deleted or backed by helpers
+//! invented after the fact — a helper written now would make every assertion a
+//! sum-of-squares property that holds for any Hermitian symbol dictionary, i.e.
+//! a test that cannot fail. Re-enable them only together with the helpers and a
+//! re-derivation of the CHECK rows.
 
 use fock_sirk::auto::shifts_for_range;
 use fock_sirk::device::best_device;
@@ -941,101 +953,109 @@ fn sm_weak_boson_polarizations() {
 
 // ── 13. the Faris-Lavine comparison layer of ChapterSmComparisonOperator ──
 
-#[test]
-fn sm_lagrangian_n_floor() {
-    // Mirrors cdb CHECK 17/28-30 on the canonical instance (nu = 1, f =
-    // (0.3, -0.2, 0.1), omega = 1), over the same Phi x Pi x X phase space
-    // as sm_comparison_operator_*.
-    const HSCALE: f64 = 1.0;
-    let h_scale: Poly = vec![(cx(HSCALE, 0.0), vec![0; 11])];
-    let e_poly: Poly = vec![(cx(3.0 * OMEGA / 2.0, 0.0), vec![0; 11])];
-    let n_poly = padd(
-        &padd(
-            &pmul(&h_scale, &h_scale),
-            &pscale(&h_scale, cx(2.0 * HSCALE, 0.0)),
-        ),
-        &e_poly,
-    );
-    let h = ham(h_scale.clone());
-    let n_l = ham(n_poly.clone());
+// NOT COMPILED: the helper layer this test calls was never committed (see the
+// module note at the top of this file). The body is kept verbatim so the
+// intended check stays visible and re-addable.
+#[cfg(any())]
+mod unbacked_n_floor {
+    use super::*;
 
-    let n_max = 2u32;
-    let basis = basis_states(n_max);
-    let probes = vec![
-        sm_state([0; 6]),
-        sm_state([1, 0, 0, 0, 0, 0]),
-        sm_state([0, 1, 1, 0, 0, 0]),
-        sm_state([1, 2, 0, 1, 0, 0]),
-        sm_state([2, 1, 1, 0, 1, 0]),
-    ];
+    #[test]
+    fn sm_lagrangian_n_floor() {
+        // Mirrors cdb CHECK 17/28-30 on the canonical instance (nu = 1, f =
+        // (0.3, -0.2, 0.1), omega = 1), over the same Phi x Pi x X phase space
+        // as sm_comparison_operator_*.
+        const HSCALE: f64 = 1.0;
+        let h_scale: Poly = vec![(cx(HSCALE, 0.0), vec![0; 11])];
+        let e_poly: Poly = vec![(cx(3.0 * OMEGA / 2.0, 0.0), vec![0; 11])];
+        let n_poly = padd(
+            &padd(
+                &pmul(&h_scale, &h_scale),
+                &pscale(&h_scale, cx(2.0 * HSCALE, 0.0)),
+            ),
+            &e_poly,
+        );
+        let h = ham(h_scale.clone());
+        let n_l = ham(n_poly.clone());
 
-    // (a) smComparison_quadForm: N = 1 + [(c0-1) + S] >= 1 with
-    //     c0 - 1 = (C_E E_0 - 1)^2 >= 0 and S a sum of squares (cdb CHECK 17
-    //     returns 0 on the canonical instance).
-    let m = ham_matrix(&n_l, &basis);
-    assert_hermitian(&m, "N_L = h^2 + E_0");
-    let eig = sorted_eigs(&m);
-    assert!(
-        eig[0] >= 1.0 - 1e-8,
-        "smComparison_quadForm: N_L >= 1 violated, lambda_min = {:.9}",
-        eig[0]
-    );
+        let n_max = 2u32;
+        let basis = basis_states(n_max);
+        let probes = vec![
+            sm_state([0; 6]),
+            sm_state([1, 0, 0, 0, 0, 0]),
+            sm_state([0, 1, 1, 0, 0, 0]),
+            sm_state([1, 2, 0, 1, 0, 0]),
+            sm_state([2, 1, 1, 0, 1, 0]),
+        ];
 
-    // (b) smComparison_relBound: ||h x|| <= ||N_L x|| + ||x||.
-    for (k, psi) in probes.iter().enumerate() {
-        let lhs = h.apply(psi).norm();
-        let rhs = n_l.apply(psi).norm() + psi.norm();
+        // (a) smComparison_quadForm: N = 1 + [(c0-1) + S] >= 1 with
+        //     c0 - 1 = (C_E E_0 - 1)^2 >= 0 and S a sum of squares (cdb CHECK 17
+        //     returns 0 on the canonical instance).
+        let m = ham_matrix(&n_l, &basis);
+        assert_hermitian(&m, "N_L = h^2 + E_0");
+        let eig = sorted_eigs(&m);
         assert!(
-            lhs <= rhs + 1e-9,
-            "smComparison_relBound on probe {k}: ||hx|| = {lhs:.9} > ||N_L x|| + ||x|| = {rhs:.9}"
+            eig[0] >= 1.0 - 1e-8,
+            "smComparison_quadForm: N_L >= 1 violated, lambda_min = {:.9}",
+            eig[0]
         );
-    }
 
-    // (c) sm_N_positive on the 0/1-homogeneous Higgs statics: the quotient
-    //     generator is the reference pi^2 + q^4 + sum q_j^2 (cdb CHECK 30):
-    //     h0*(grad K0) = 2 K0 and the Venn diagram shows the quotient
-    //     tangent space is spanned by (q^2, pi, q_j).
-    let k0 = k0_poly();
-    let g0 = grad_k0_polys();
-    let mut lhs: Poly = Vec::new();
-    for m_idx in 0..3u32 {
-        let term = pmul(&x_poly(m_idx), &g0[m_idx as usize].clone());
-        let term = padd(
-            &term,
-            &pmul(&q_poly(m_idx), &g0[3 + m_idx as usize].clone()),
+        // (b) smComparison_relBound: ||h x|| <= ||N_L x|| + ||x||.
+        for (k, psi) in probes.iter().enumerate() {
+            let lhs = h.apply(psi).norm();
+            let rhs = n_l.apply(psi).norm() + psi.norm();
+            assert!(
+                lhs <= rhs + 1e-9,
+                "smComparison_relBound on probe {k}: ||hx|| = {lhs:.9} > ||N_L x|| + ||x|| = {rhs:.9}"
+            );
+        }
+
+        // (c) sm_N_positive on the 0/1-homogeneous Higgs statics: the quotient
+        //     generator is the reference pi^2 + q^4 + sum q_j^2 (cdb CHECK 30):
+        //     h0*(grad K0) = 2 K0 and the Venn diagram shows the quotient
+        //     tangent space is spanned by (q^2, pi, q_j).
+        let k0 = k0_poly();
+        let g0 = grad_k0_polys();
+        let mut lhs: Poly = Vec::new();
+        for m_idx in 0..3u32 {
+            let term = pmul(&x_poly(m_idx), &g0[m_idx as usize].clone());
+            let term = padd(
+                &term,
+                &pmul(&q_poly(m_idx), &g0[3 + m_idx as usize].clone()),
+            );
+            let term = padd(&term, &pmul(&pi_poly(), &g0[6 + m_idx as usize].clone()));
+            lhs = padd(&lhs, &term);
+        }
+        let rhs = pscale(&k0, cx(2.0, 0.0));
+        let mut diff = lhs;
+        diff = padd(&diff, &pscale(&rhs, cx(-1.0, 0.0)));
+        diff.retain(|(c, _)| c.norm() > 1e-14);
+        assert!(
+            diff.is_empty(),
+            "h0.grad K0 = 2 K0 must be exact, got {diff:?}"
         );
-        let term = padd(&term, &pmul(&pi_poly(), &g0[6 + m_idx as usize].clone()));
-        lhs = padd(&lhs, &term);
-    }
-    let rhs = pscale(&k0, cx(2.0, 0.0));
-    let mut diff = lhs;
-    diff = padd(&diff, &pscale(&rhs, cx(-1.0, 0.0)));
-    diff.retain(|(c, _)| c.norm() > 1e-14);
-    assert!(
-        diff.is_empty(),
-        "h0.grad K0 = 2 K0 must be exact, got {diff:?}"
-    );
 
-    let q_ref = padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2());
-    let q_mut = q_ref.clone();
-    let (cq, _) = poly_match_up_to_positive_scale(&q_ref, &q_mut);
-    assert!(
-        cq,
-        "sm_N_positive: quotient generator must be pi^2 + q^4 + sum q_j^2"
-    );
-    let degeneracy = vec![cx(1.0, 0.0), cx(0.0, 0.0), cx(0.0, 0.0)];
-    let (cg, _) = poly_match_up_to_positive_scale(&p4_poly(), &weighted_qp4_poly(&degeneracy));
-    assert!(
-        cg,
-        "sm_N_positive: q^4 reference must dominate a degenerate q_j^4 sum"
-    );
+        let q_ref = padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2());
+        let q_mut = q_ref.clone();
+        let (cq, _) = poly_match_up_to_positive_scale(&q_ref, &q_mut);
+        assert!(
+            cq,
+            "sm_N_positive: quotient generator must be pi^2 + q^4 + sum q_j^2"
+        );
+        let degeneracy = vec![cx(1.0, 0.0), cx(0.0, 0.0), cx(0.0, 0.0)];
+        let (cg, _) = poly_match_up_to_positive_scale(&p4_poly(), &weighted_qp4_poly(&degeneracy));
+        assert!(
+            cg,
+            "sm_N_positive: q^4 reference must dominate a degenerate q_j^4 sum"
+        );
 
-    eprintln!(
-        "sm_lagrangian_n_floor: lambda_min(N_L) = {:.6} (>= 1), relBound holds on {} probes, \
+        eprintln!(
+            "sm_lagrangian_n_floor: lambda_min(N_L) = {:.6} (>= 1), relBound holds on {} probes, \
          quotient generator verified on Higgs statics",
-        eig[0],
-        probes.len()
-    );
+            eig[0],
+            probes.len()
+        );
+    }
 }
 
 // ── 14. the Higgs-vacuum statics (cdb CHECK 31-32) ─────────────────────────
@@ -1106,79 +1126,85 @@ fn sm_higgs_vacuum_statics() {
 
 // ── 15. the remaining Faris-Lavine decompositions (cdb CHECK 17/30/33) ─────
 
-#[test]
-fn sm_comparison_cdb_decomposition() {
-    // (a) CHECK 30: (kappa - 1) v^4 = v^2 (kappa v^2 - mu2) + mu2 v^2 with
-    //     kappa v^2 >= mu2: a positivity-with-gap identity on floats.
-    const MU2: f64 = 0.65;
-    const KAPPA: f64 = 0.8;
-    for i in 1..=40 {
-        let v = 0.25 * (i as f64);
-        if KAPPA * v * v < MU2 {
-            continue;
+// NOT COMPILED, same reason as test 13.
+#[cfg(any())]
+mod unbacked_cdb_decomposition {
+    use super::*;
+
+    #[test]
+    fn sm_comparison_cdb_decomposition() {
+        // (a) CHECK 30: (kappa - 1) v^4 = v^2 (kappa v^2 - mu2) + mu2 v^2 with
+        //     kappa v^2 >= mu2: a positivity-with-gap identity on floats.
+        const MU2: f64 = 0.65;
+        const KAPPA: f64 = 0.8;
+        for i in 1..=40 {
+            let v = 0.25 * (i as f64);
+            if KAPPA * v * v < MU2 {
+                continue;
+            }
+            let lhs = (KAPPA - 1.0) * v * v * v * v;
+            let rhs = v * v * (KAPPA * v * v - MU2) + MU2 * v * v;
+            assert!(
+                (lhs - rhs).abs() < 1e-12,
+                "CHECK 30 (kappa-1)v^4 identity at v = {v}: {lhs} vs {rhs}"
+            );
+            assert!(
+                KAPPA * v * v * v * v >= MU2 * v * v - 1e-12,
+                "CHECK 30 positivity-with-gap at v = {v}"
+            );
         }
-        let lhs = (KAPPA - 1.0) * v * v * v * v;
-        let rhs = v * v * (KAPPA * v * v - MU2) + MU2 * v * v;
-        assert!(
-            (lhs - rhs).abs() < 1e-12,
-            "CHECK 30 (kappa-1)v^4 identity at v = {v}: {lhs} vs {rhs}"
-        );
-        assert!(
-            KAPPA * v * v * v * v >= MU2 * v * v - 1e-12,
-            "CHECK 30 positivity-with-gap at v = {v}"
-        );
-    }
 
-    // (b) CHECK 33: N - 1 = (c0 - 1) + [pi^2 + q^4 + sum q_j^2 + sum x_j^2]
-    //     with (c0 - 1) = (C_E E_0 - 1)^2 >= 0 and the bracket a sum of
-    //     squares: an exact polynomial identity plus a nonnegativity
-    //     certificate on floats.
-    let one: Poly = vec![(cx(1.0, 0.0), vec![0; 11])];
-    let c0 = pscale(&one, cx(C_E * OMEGA * 3.0 / 2.0, 0.0));
-    let c0_m1 = padd(&c0, &pscale(&one, cx(-1.0, 0.0)));
-    let c0_sq = pmul(&c0_m1, &c0_m1);
-    let confining = padd(
-        &padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2()),
-        &xpoly2(),
-    );
-    let mut n_minus_1 = padd(&c0_sq, &confining);
-    n_minus_1.retain(|(c, _)| c.norm() > 1e-14);
-    // N - 1 has no constant term: every monomial is non-constant.
-    assert!(
-        n_minus_1.iter().all(|(_, m)| m.iter().any(|&e| e > 0)),
-        "CHECK 33: N - 1 must have no constant term (its value at 0 is the sum of squares 0)"
-    );
-    // Nonnegativity of the sum-of-squares decomposition on a probe set.
-    for (k, psi) in [
-        sm_state([0; 6]),
-        sm_state([1, 0, 0, 0, 0, 0]),
-        sm_state([0, 1, 1, 0, 0, 0]),
-        sm_state([1, 2, 0, 1, 0, 0]),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let val = QuantumState::inner_product(psi, &ham(n_minus_1.clone()).apply(psi)).re;
-        assert!(
-            val >= -1e-9,
-            "CHECK 33: N - 1 >= 0 violated on probe {k}: {val}"
+        // (b) CHECK 33: N - 1 = (c0 - 1) + [pi^2 + q^4 + sum q_j^2 + sum x_j^2]
+        //     with (c0 - 1) = (C_E E_0 - 1)^2 >= 0 and the bracket a sum of
+        //     squares: an exact polynomial identity plus a nonnegativity
+        //     certificate on floats.
+        let one: Poly = vec![(cx(1.0, 0.0), vec![0; 11])];
+        let c0 = pscale(&one, cx(C_E * OMEGA * 3.0 / 2.0, 0.0));
+        let c0_m1 = padd(&c0, &pscale(&one, cx(-1.0, 0.0)));
+        let c0_sq = pmul(&c0_m1, &c0_m1);
+        let confining = padd(
+            &padd(&padd(&pmul(&pi_poly(), &pi_poly()), &p4_poly()), &qpoly2()),
+            &xpoly2(),
         );
-    }
+        let mut n_minus_1 = padd(&c0_sq, &confining);
+        n_minus_1.retain(|(c, _)| c.norm() > 1e-14);
+        // N - 1 has no constant term: every monomial is non-constant.
+        assert!(
+            n_minus_1.iter().all(|(_, m)| m.iter().any(|&e| e > 0)),
+            "CHECK 33: N - 1 must have no constant term (its value at 0 is the sum of squares 0)"
+        );
+        // Nonnegativity of the sum-of-squares decomposition on a probe set.
+        for (k, psi) in [
+            sm_state([0; 6]),
+            sm_state([1, 0, 0, 0, 0, 0]),
+            sm_state([0, 1, 1, 0, 0, 0]),
+            sm_state([1, 2, 0, 1, 0, 0]),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let val = QuantumState::inner_product(psi, &ham(n_minus_1.clone()).apply(psi)).re;
+            assert!(
+                val >= -1e-9,
+                "CHECK 33: N - 1 >= 0 violated on probe {k}: {val}"
+            );
+        }
 
-    // (c) the c0 - 1 square is exactly the smComparison_sqDecomposition of
-    //     the canonical instance: (C_E E_0 - 1)^2 with E_0 = 3 omega / 2.
-    let target: Poly = vec![(
-        cx((C_E * OMEGA * 3.0 / 2.0 - 1.0).powi(2), 0.0),
-        vec![0; 11],
-    )];
-    let (csq, _) = poly_match_up_to_positive_scale(&c0_sq, &target);
-    assert!(
-        csq,
-        "smComparison_sqDecomposition: (C_E E_0 - 1)^2 must match the target"
-    );
+        // (c) the c0 - 1 square is exactly the smComparison_sqDecomposition of
+        //     the canonical instance: (C_E E_0 - 1)^2 with E_0 = 3 omega / 2.
+        let target: Poly = vec![(
+            cx((C_E * OMEGA * 3.0 / 2.0 - 1.0).powi(2), 0.0),
+            vec![0; 11],
+        )];
+        let (csq, _) = poly_match_up_to_positive_scale(&c0_sq, &target);
+        assert!(
+            csq,
+            "smComparison_sqDecomposition: (C_E E_0 - 1)^2 must match the target"
+        );
 
-    eprintln!(
-        "sm_comparison_cdb_decomposition: CHECK 30 (kappa-1)v^4 gap identity, CHECK 33 \
+        eprintln!(
+            "sm_comparison_cdb_decomposition: CHECK 30 (kappa-1)v^4 gap identity, CHECK 33 \
          N - 1 = (c0-1) + sum-of-squares certificate, and CHECK 17 square verified"
-    );
+        );
+    }
 }

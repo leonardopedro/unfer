@@ -35,7 +35,7 @@ pub use escrow::{Escrow, EscrowService, EscrowState};
 pub use idempotency::IdempotencyStore;
 pub use identity::IdentityRegistry;
 pub use jobs::{
-    FencedSink, JobClaim, JobCommand, JobFence, JobQueue, JobState, JOB_COMMAND_SCHEMA,
+    ClaimState, Fence, FenceTable, FencedSink, JobClaim, JobQueue, JobState, OrderedMockSink,
 };
 pub use lease::LeaderLease;
 pub use mathbond::MathBondLedger;
