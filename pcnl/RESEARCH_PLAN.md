@@ -460,11 +460,14 @@ low-rank 8 R̂ `2.39408` / ESS `4.9`, low-rank 32 R̂ `2.01334` / ESS `5.3`, and
 readout-conditional gate R̂ `1.00935` / ESS `3000.0` / RMSE `0.105302`. The exact
 commands and log paths are tabulated in `docs/PCNL_STATUS.md`
 ("Legacy-gate reproducibility after the init change"), with the raw logs and
-their commands committed under `logs/pcnl_r13_gates/`. Two rows still do not
-reproduce their recorded summaries: the **tempering** cold chain (swaps do:
-`0/240`; R̂/RMSE depend on the unrecorded mode fit) and **low-rank 32 + jitter**
-(recorded R̂ `2.14626`; re-runs give `2.34–2.49`, since `--hmc-jitter` re-rolls
-every trajectory when any flag differs). Both conclusions those rows support —
+their commands committed under `logs/pcnl_r13_gates/`, and
+`scripts/check-pcnl-gates` re-runs all of them and diffs the summaries against
+those logs. Low-rank 32 + jitter is in that same exact list: it needs
+`--start-scale legacy` too (R̂ `2.14626` / ESS `5.1`), which is why four earlier
+attempts without the flag landed at `2.34–2.49` — `--hmc-jitter` re-rolls every
+trajectory when a start-changing flag differs. One row still does not reproduce
+its recorded summary: the **tempering** cold chain (swaps do: `0/240`; R̂/RMSE
+depend on the unrecorded mode fit). The conclusions those rows support —
 tempering is not viable at this energy scale, jitter does not close the gate —
 hold in the re-runs.
 
