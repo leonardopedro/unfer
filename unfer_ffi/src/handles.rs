@@ -272,6 +272,92 @@ pub fn durable_append_action_resolved(record: &ActionRecord) -> Result<(), Strin
     })
 }
 
+// ── D15: durable effect dispatch ────────────────────────────────────────
+
+/// The in-process sink. It performs the effect the kernel's local simulation
+/// already performed, and it honours the dedup contract its `dedups() = true`
+/// promises: a repeated idempotency key reports the earlier result instead of
+/// performing the effect twice.
+#[derive(Debug)]
+struct LocalEffectSink;
+
+static LOCAL_SINK_KEYS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+impl crate::dispatch::EffectSink for LocalEffectSink {
+    fn name(&self) -> &str {
+        "local-inprocess"
+    }
+
+    fn dedups(&self) -> bool {
+        true
+    }
+
+    fn dispatch(
+        &self,
+        key: &str,
+        intent: &crate::dispatch::EffectIntent,
+    ) -> crate::dispatch::SinkOutcome {
+        let mut guard = LOCAL_SINK_KEYS.lock().unwrap_or_else(|e| e.into_inner());
+        let seen = guard.get_or_insert_with(HashSet::new);
+        if !seen.insert(key.to_string()) {
+            return crate::dispatch::SinkOutcome::Applied(serde_json::json!({
+                "deduplicated": true,
+                "action_id": intent.request_id,
+            }));
+        }
+        crate::dispatch::SinkOutcome::Applied(serde_json::json!({
+            "applied": true,
+            "action_id": intent.request_id,
+            "effect": intent.effect,
+        }))
+    }
+}
+
+/// Clear the local sink's dedup memory (QA/reset only; the durable dispatcher
+/// log is the real record).
+pub fn clear_local_sink_for_tests() {
+    *LOCAL_SINK_KEYS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// D15: commit and dispatch one action's effect through the durable dispatcher.
+///
+/// Returns `None` when no durable store is configured: the dispatcher commits
+/// to a durable log before any sink fires, so without a store it must not be
+/// used at all and the caller keeps the in-memory path.
+///
+/// The execution-point policy is the sensitive-forward latch: it is sticky per
+/// principal, so an action that was allowed at submission is refused if the
+/// principal became latched before the effect fires.
+pub fn dispatch_action_effect(
+    record: &ActionRecord,
+) -> Result<Option<crate::dispatch::SinkOutcome>, crate::dispatch::DispatchError> {
+    use crate::dispatch::DispatchError;
+    let Some(store) = durable() else {
+        return Ok(None);
+    };
+    let dispatcher = crate::dispatch::Dispatcher::open(store).map_err(DispatchError::Storage)?;
+    let intent = crate::dispatch::EffectIntent::new(
+        record.id.clone(),
+        record.principal.clone(),
+        record.effect.clone(),
+        record.epoch,
+        record.effect.clone(),
+        record.kind,
+        record.params.clone(),
+    );
+    dispatcher.commit(&intent)?;
+    let policy = |intent: &crate::dispatch::EffectIntent| {
+        if is_sensitive_latched(&intent.principal) {
+            Err("principal is sensitive-forward latched".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    dispatcher
+        .dispatch(&intent.approval(), &LocalEffectSink, &policy)
+        .map(Some)
+}
+
 /// Surface a corrupt-snapshot recovery (if any) in the operator-facing owner
 /// log. Write-through: the audit line is durably appended (so the operator
 /// note survives restarts) and shadowed in the ring. Returns the error for

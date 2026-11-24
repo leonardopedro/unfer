@@ -42,6 +42,10 @@ pub mod streams {
     /// Emitted verification certificates (mass-gap / Ritz bound records from
     /// the T6 pipeline, one `certificate-issued` line per certificate).
     pub const CERTIFICATES: &str = "certificates";
+    /// D15 effect dispatcher: one record per committed intent and per sink
+    /// outcome, so an intent and its result are replayable separately from the
+    /// approval queue that authorised it.
+    pub const DISPATCH: &str = "dispatches";
 }
 
 /// Stream-addressed durable log.

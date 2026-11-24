@@ -5876,6 +5876,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "unfer_consensus",
  "unfer_data",
  "unfer_protocol",

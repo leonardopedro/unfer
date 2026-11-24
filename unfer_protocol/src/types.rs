@@ -503,6 +503,15 @@ pub struct ActionRecord {
     /// The real result once `uk_action_apply` executed the effect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub applied: Option<serde_json::Value>,
+    /// D15: the effect's classification, recorded at submission so approval and
+    /// dispatch reason about the same Observe/Mutate decision.
+    #[serde(default)]
+    pub kind: EffectKind,
+    /// D15: the authority epoch the intent was submitted under. An approval
+    /// binds it, so an approval carried across an epoch change is a different
+    /// authorisation.
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 impl ActionRecord {
@@ -524,6 +533,8 @@ impl ActionRecord {
             created_at,
             provisional,
             applied: None,
+            kind: EffectKind::Mutate,
+            epoch: 0,
         }
     }
 

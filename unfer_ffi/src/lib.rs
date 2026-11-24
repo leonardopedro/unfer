@@ -12,6 +12,7 @@
 //! `scripts/gen_symbol_artifacts`, gated in `scripts/verify-invariants`) —
 //! never a hand-maintained count in prose.
 
+pub mod dispatch;
 pub mod durable;
 mod event_log;
 mod handles;
@@ -1662,6 +1663,9 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
             params: serde_json::Value,
             #[serde(default)]
             provisional: Option<serde_json::Value>,
+            /// D15: the authority epoch; an approval is bound to it.
+            #[serde(default)]
+            epoch: u64,
         }
         let req: ActionSubmitReq = parse_json(req_json, len)?;
         let seq = next_action_seq();
@@ -1689,11 +1693,15 @@ pub extern "C" fn uk_action_submit(req_json: *const u8, len: i64) -> i64 {
         } else {
             CallerTag::gadget(&req.principal)
         });
-        let handle = handles::store_action(record.clone());
         // F20: an observation (or a console-vetted mutation) applies immediately —
         // it never occupies the approval lane. Everything else lands Pending and
         // requires `uk_gate_approve` before it can apply.
         let kind = ctx.effect_kind_of(&req.effect);
+        // D15: record the classification and epoch with the intent, so the
+        // dispatcher reasons about exactly what was approved.
+        record.kind = kind;
+        record.epoch = req.epoch;
+        let handle = handles::store_action(record.clone());
         let vetted = handles::is_vetted(&ctx.tag.principal);
         if kind == EffectKind::Observe || vetted {
             handles::with_action_mut(handle, |r| {
@@ -1745,16 +1753,60 @@ pub extern "C" fn uk_action_apply(action_handle: i64) -> i64 {
         // Durable in-flight marker + checkpoint BEFORE the side effect fires.
         handles::mark_inflight(&record)
             .map_err(|e| Diagnostic::new(Code::UNKNOWN_OUTCOME, e, Severity::Error))?;
+        // D15: with a durable store configured the intent is committed and the
+        // effect dispatched through the dispatcher; its acknowledged result is
+        // the action's applied value. Without a store the in-memory path below
+        // remains (no durable commit is possible, so the dispatcher is not used).
+        let dispatched = handles::dispatch_action_effect(&record).map_err(|error| {
+            // A policy refusal is definite (nothing ran); any other dispatch
+            // error leaves the effect's outcome unknown.
+            let code = match error {
+                crate::dispatch::DispatchError::Refused(_) => Code::INTERNAL,
+                _ => Code::UNKNOWN_OUTCOME,
+            };
+            Diagnostic::new(
+                code,
+                format!("effect dispatch for action {action_handle} did not complete: {error}"),
+                Severity::Error,
+            )
+        })?;
+        let applied_value = match dispatched {
+            Some(crate::dispatch::SinkOutcome::Applied(value)) => Some(value),
+            Some(crate::dispatch::SinkOutcome::Retryable(reason)) => {
+                // Known not to have happened: the action stays Pending and the
+                // same idempotency key may be presented again.
+                return Err(Diagnostic::new(
+                    Code::INTERNAL,
+                    format!(
+                        "effect for action {action_handle} is retryable ({reason}); the effect \
+                         did not run and the action remains pending"
+                    ),
+                    Severity::Error,
+                ));
+            }
+            Some(crate::dispatch::SinkOutcome::Uncertain(reason)) => {
+                handles::mark_unknown_outcome(action_handle);
+                return Err(Diagnostic::new(
+                    Code::UNKNOWN_OUTCOME,
+                    format!("effect for action {action_handle} has an uncertain outcome ({reason})"),
+                    Severity::Error,
+                ));
+            }
+            None => None,
+        };
+        let applied_json = applied_value.unwrap_or_else(|| {
+            serde_json::json!({
+                "applied": true,
+                "action_id": record.id,
+                "effect": record.effect,
+            })
+        });
         let approved = handles::with_action_mut(action_handle, |record| {
             if record.state != ActionState::Pending {
                 return false;
             }
             record.state = ActionState::Approved;
-            record.applied = Some(serde_json::json!({
-                "applied": true,
-                "action_id": record.id,
-                "effect": record.effect,
-            }));
+            record.applied = Some(applied_json.clone());
             true
         });
         match approved {
@@ -5513,6 +5565,106 @@ mod tests {
         assert_eq!(action_get(handle)["state"], "reverted");
     }
 
+    /// D15: with a durable store configured, `uk_action_apply` commits the
+    /// effect intent and dispatches it through the durable dispatcher, so the
+    /// intent and its acknowledgment are on the `dispatches` stream.
+    #[test]
+    fn action_apply_dispatches_through_the_durable_dispatcher() {
+        use unfer_protocol::durable::DurableStore as _;
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        handles::clear_local_sink_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d15-dispatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = std::sync::Arc::new(
+            crate::durable::JsonlDurableStore::open(Some(&dir)).expect("jsonl store open"),
+        );
+        handles::set_durable_for_tests(Some(store.clone()));
+
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert!(handle > 0);
+        assert_eq!(uk_action_apply(handle), 0);
+
+        let records = store
+            .replay(unfer_protocol::durable::streams::DISPATCH)
+            .expect("dispatch stream");
+        let states: Vec<String> = records
+            .iter()
+            .map(|raw| {
+                serde_json::from_slice::<serde_json::Value>(raw).unwrap()["state"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(states.first().map(String::as_str), Some("Committed"));
+        assert_eq!(states.last().map(String::as_str), Some("Acknowledged"));
+
+        // The applied value is what the sink acknowledged, not a re-derived one.
+        let record = action_get(handle);
+        assert_eq!(record["state"], "approved");
+        assert_eq!(record["applied"]["effect"], "send_notification");
+
+        handles::reset_durable_for_tests();
+        handles::clear_local_sink_for_tests();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D15: the sensitive-forward latch is rechecked at the execution point, so
+    /// a principal latched after submission cannot execute its approved effect.
+    #[test]
+    fn a_sensitive_latched_principal_is_refused_at_the_execution_point() {
+        use unfer_protocol::durable::DurableStore as _;
+        let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _durable_lock = DURABLE_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        handles::reset_durable_for_tests();
+        handles::clear_local_sink_for_tests();
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d15-latch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = std::sync::Arc::new(
+            crate::durable::JsonlDurableStore::open(Some(&dir)).expect("jsonl store open"),
+        );
+        handles::set_durable_for_tests(Some(store.clone()));
+
+        let handle = submit_action("send_notification", r#"{"to":"alice"}"#);
+        assert!(handle > 0);
+        handles::set_sensitive_latch("test_module", true);
+        assert_eq!(uk_action_apply(handle), -5000, "a refusal is definite, not unknown");
+        handles::set_sensitive_latch("test_module", false);
+
+        // The action never left Pending, and the refusal is durable.
+        let record = action_get(handle);
+        assert_eq!(record["state"], "pending");
+        let records = store
+            .replay(unfer_protocol::durable::streams::DISPATCH)
+            .expect("dispatch stream");
+        let last: serde_json::Value = serde_json::from_slice(records.last().unwrap()).unwrap();
+        assert_eq!(last["state"], "Refused");
+        assert!(last["detail"]["refused"]
+            .as_str()
+            .unwrap()
+            .contains("sensitive-forward"));
+
+        handles::reset_durable_for_tests();
+        handles::clear_local_sink_for_tests();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn action_unknown_handle_returns_neg4004() {
         let _lock = ACTION_TESTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -5836,10 +5988,12 @@ mod tests {
         let failing = FlushFailAfterN {
             inner: std::sync::Arc::new(real),
             flushes: std::sync::atomic::AtomicUsize::new(0),
-            // uk_action_apply flushes 3x: checkpoint_diag (1), mark_inflight
-            // (2), resolved record (3). Failing at 3 keeps the in-flight marker
-            // durable but drops the resolved record — the crash window.
-            fail_on: 3,
+            // uk_action_apply flushes 5x: checkpoint_diag (1), mark_inflight
+            // (2), D15 dispatcher commit (3), D15 dispatch outcome (4), then
+            // the resolved record (5). Failing at 5 keeps the in-flight marker
+            // and the dispatcher's own records durable but drops the resolved
+            // action record — the crash window this test is about.
+            fail_on: 5,
         };
         handles::set_durable_for_tests(Some(std::sync::Arc::new(failing)));
 
