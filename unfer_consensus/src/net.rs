@@ -96,6 +96,11 @@ pub struct LedgerSnapshot {
     /// current, and a restarted worker cannot re-admit the one it lost.
     #[serde(default)]
     jobs: JobQueue,
+    /// D14: job commands this node accepted and has not yet seen decided. It
+    /// is a local durability device exactly like `outbox` — the command is
+    /// recovered from the decision value, not from this map.
+    #[serde(default)]
+    job_outbox: BTreeMap<u64, JobCommand>,
 }
 
 /// Atomic (`write` + `rename`) JSON persistence for the replicated ledger.
@@ -187,6 +192,7 @@ struct LedgerState {
     outbox: BTreeMap<u64, ConsensusTransaction>,
     committed_ids: BTreeMap<u64, u64>,
     jobs: JobQueue,
+    job_outbox: BTreeMap<u64, JobCommand>,
 }
 
 impl LedgerState {
@@ -198,6 +204,7 @@ impl LedgerState {
             next_id,
             next_request_id,
             jobs: self.jobs.clone(),
+            job_outbox: self.job_outbox.clone(),
         }
     }
 }
@@ -333,6 +340,7 @@ impl SharedLedger {
                 outbox: loaded.outbox,
                 committed_ids: loaded.committed_ids,
                 jobs: loaded.jobs,
+                job_outbox: loaded.job_outbox,
             })),
             next_id: Arc::new(AtomicU64::new(loaded.next_id)),
             request_seq: Arc::new(AtomicU64::new(loaded.next_request_id)),
@@ -354,6 +362,19 @@ impl SharedLedger {
             .collect::<Vec<_>>();
         for (id, tx) in outstanding {
             if let (Some(pump), Ok(value)) = (&ledger.submitted, encode_ledger_value(id, &tx)) {
+                let _ = pump.send((id, value));
+            }
+        }
+        let outstanding_jobs = ledger
+            .state
+            .lock()
+            .unwrap()
+            .job_outbox
+            .iter()
+            .map(|(id, command)| (*id, command.clone()))
+            .collect::<Vec<_>>();
+        for (id, command) in outstanding_jobs {
+            if let (Some(pump), Ok(value)) = (&ledger.submitted, encode_job_value(&command)) {
                 let _ = pump.send((id, value));
             }
         }
@@ -383,6 +404,32 @@ impl SharedLedger {
                 // leaving it in memory would let it commit later, under an id the
                 // caller was told had failed.
                 state.outbox.remove(&id);
+                return Err(error);
+            }
+        }
+        let _ = pump.send((id, value));
+        Ok(id)
+    }
+
+    /// Reserve a unique id for an ordered job command, persist it in this
+    /// node's job outbox, and hand the framed value to the pump. Mirrors
+    /// [`SharedLedger::allocate`]: the outbox entry is the durability device,
+    /// the value is what the cluster applies.
+    pub fn allocate_job(&self, command: JobCommand) -> Result<u64, String> {
+        let Some(pump) = &self.submitted else {
+            return Err(
+                "this ledger has no submission pump; submit the job command through "
+                    .to_owned()
+                    + "the node's TLS endpoint instead of proposing locally",
+            );
+        };
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let value = encode_job_value(&command)?;
+        {
+            let mut state = self.state.lock().unwrap();
+            state.job_outbox.insert(id, command);
+            if let Err(error) = self.persist_state(&state) {
+                state.job_outbox.remove(&id);
                 return Err(error);
             }
         }
@@ -435,6 +482,9 @@ impl SharedLedger {
             // error here. It must still be applied in decision order.
             for command in &job_commands {
                 let _ = state.jobs.apply(command);
+                // Clear this node's pending entry by content: an id issued by a
+                // different replica addresses a different outbox entry.
+                state.job_outbox.retain(|_, pending| pending != command);
             }
             if appended.is_empty() && values.is_empty() {
                 return Ok(());
@@ -2082,6 +2132,64 @@ mod tests {
             .with_jobs(|jobs| jobs.state("settle-auction"))
             .unwrap();
         assert_eq!(state, Some(JobState::Claimed), "worker-b still holds it");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D14: an allocated job command is durable before it is proposed, is
+    /// re-proposed after a restart, and is cleared once the decision applies it.
+    #[test]
+    fn an_allocated_job_command_is_durable_and_cleared_when_decided() {
+        use crate::jobs::{JobCommand, JobState};
+
+        let dir = std::env::temp_dir().join(format!(
+            "unfer-d14-job-outbox-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (pump, mut proposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let ledger = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        ledger
+            .with_jobs(|jobs| {
+                jobs.set_deployment("deploy-1");
+                jobs.enqueue("settle-auction");
+            })
+            .unwrap();
+        let command = JobCommand::Claim {
+            resource: "settle-auction".to_string(),
+            holder: "worker-a".to_string(),
+        };
+        ledger.allocate_job(command.clone()).expect("durable allocation");
+        let (_, proposed_before) = proposed.try_recv().expect("the pump receives the value");
+        drop(ledger);
+
+        // Reopen: the pending command is re-proposed from the durable outbox.
+        let (pump, mut reproposed) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let reopened = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        let (_, proposed_after) = reproposed
+            .try_recv()
+            .expect("a pending job command survives a restart");
+        assert_eq!(proposed_before, proposed_after);
+
+        // Applying the decision settles the fence and drains the pending entry.
+        reopened.append(vec![proposed_after]).unwrap();
+        assert_eq!(
+            reopened.with_jobs(|jobs| jobs.state("settle-auction")).unwrap(),
+            Some(JobState::Claimed)
+        );
+        drop(reopened);
+
+        let (pump, mut nothing) = mpsc::unbounded_channel::<(u64, ReplicatedValue)>();
+        let _quiet = SharedLedger::new(Some(pump), Some(LedgerFile::new(&dir))).unwrap();
+        assert!(
+            nothing.try_recv().is_err(),
+            "a decided command is not re-proposed"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
