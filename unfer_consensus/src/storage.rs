@@ -127,6 +127,25 @@ pub struct RequestRecord {
     pub slot: Option<u64>,
 }
 
+/// D14: one job-fence transition, durable before it is published.
+///
+/// The record names the *resulting* fence rather than the transition that made
+/// it, so recovery is "install the last record per resource" and needs no replay
+/// rules. A claim, a renewal, a release, a fire and a disable are distinguished
+/// by `state`, which is also what the job itself recovers to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FenceRecord {
+    pub deployment: String,
+    pub resource: String,
+    pub epoch: u64,
+    pub generation: u64,
+    pub holder: Option<String>,
+    /// What the transition left the job in. Recovery needs this and not only the
+    /// fence: a released job is retried by the next claim, a fired one is not,
+    /// and the fence alone cannot tell them apart.
+    pub state: crate::jobs::ClaimState,
+}
+
 /// A record in the log. Both kinds are written by the same writer in one order,
 /// so "the request record was durable" and "the transition was durable" have a
 /// well-defined sequence.
@@ -135,6 +154,7 @@ pub struct RequestRecord {
 pub enum JournalRecord {
     Transition(TransitionRecord),
     Request(RequestRecord),
+    Fence(FenceRecord),
 }
 
 /// Why a write to the log failed. The distinction matters: an `Io` failure

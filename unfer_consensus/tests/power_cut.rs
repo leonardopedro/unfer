@@ -190,7 +190,7 @@ fn recovered_slots(records: &[JournalRecord]) -> Vec<u64> {
         .iter()
         .filter_map(|record| match record {
             JournalRecord::Transition(t) => Some(t.slot),
-            JournalRecord::Request(_) => None,
+            JournalRecord::Request(_) | JournalRecord::Fence(_) => None,
         })
         .collect()
 }
