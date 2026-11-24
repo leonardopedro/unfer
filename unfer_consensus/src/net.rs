@@ -1955,6 +1955,46 @@ mod tests {
         assert_eq!(peer.committed(), 1);
     }
 
+    /// D14 step 3: the job fence is sourced from the ledger's live committed
+    /// watermark — the ordered point every replica applies decisions at — so a
+    /// claim made at a committed slot is refused once a later decision moves
+    /// the ledger past it.
+    #[test]
+    fn the_job_fence_follows_the_live_committed_watermark() {
+        use crate::jobs::JobQueue;
+
+        let ledger = mem_ledger();
+        let transaction = tx(1);
+        let id = ledger.allocate(transaction.clone()).expect("reserve");
+        ledger
+            .append(vec![encode_ledger_value(id, &transaction).unwrap()])
+            .expect("apply decision");
+        assert_eq!(ledger.committed(), 1, "one ordered decision applied");
+
+        let mut jobs = JobQueue::new();
+        jobs.enqueue("settle-auction");
+        // A single-member deployment: index 0 leads every tick.
+        let claim = jobs
+            .claim_slot_leased("settle-auction", ledger.committed(), 1, 0)
+            .expect("claim at the committed slot");
+        assert_eq!(jobs.tick(), 1, "the fence follows the live watermark");
+
+        // A second committed decision advances the ledger's ordered point.
+        let later = tx(2);
+        let later_id = ledger.allocate(later.clone()).expect("reserve");
+        ledger
+            .append(vec![encode_ledger_value(later_id, &later).unwrap()])
+            .expect("apply decision");
+        assert_eq!(ledger.committed(), 2);
+        jobs.advance_tick(ledger.committed())
+            .expect("advance the fence to the new watermark");
+
+        assert!(
+            jobs.mark_fired(&claim).is_err(),
+            "a claim at a superseded committed slot must not fire"
+        );
+    }
+
     /// The outbox is a local durability device only: it is drained by the
     /// decision that carries the same id, and never read to apply a value.
     #[test]
