@@ -1,0 +1,93 @@
+# R13 gate re-run lane — the numeric half of the R13 log guard.
+#
+# ci.yml owns the cheap half (`scripts/check-pcnl-gates --check-manifest`):
+# manifest ↔ log directory in both directions, and every cited log still has
+# summary lines. That cannot tell whether a gate still produces the *numbers*
+# in its log, because that needs the release examples built and every gate
+# re-run: ~1.5 h on 12 cores here, well past a per-push budget.
+#
+# So this lane is scheduled instead:
+#   * schedule — weekly (Sundays 05:43 UTC, offset from the 04:17 Monday heavy
+#     lane so two hour-long jobs never share a runner stampede);
+#   * workflow_dispatch — after touching `pcnl/`, the R13 gate flags, or a
+#     committed gate log.
+#
+# A drift here means one of three things, in order of likelihood:
+#   1. a real regression in `pcnl` or its HMC kernels;
+#   2. the flags in `docs/PCNL_STATUS.md` / the script manifest no longer
+#      describe the committed log (someone edited one side only);
+#   3. the runner's floating point differs from the reference machine that
+#      produced the logs (different libm / vector width moves the last printed
+#      digit). Tell (3) from (1) by re-running one drifted gate on the
+#      reference machine: if it reproduces there, the diff is the platform.
+# The diff artifacts uploaded on failure make that call possible without a
+# re-run; do not "fix" a red lane by editing the committed log unless the new
+# numbers are the intended ones.
+#
+# The gate checker keeps its rerun logs in `target/r13-logs/gate-diff-<stamp>/`
+# (`<gate>.expected.txt` vs `<gate>.actual.txt`), which is what gets uploaded.
+
+name: R13 gate re-run
+
+on:
+  schedule:
+    - cron: "43 5 * * 0" # Sundays 05:43 UTC
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "skip the >15 min entries (hit-and-run 5,000)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: re-run every committed R13 gate log
+    runs-on: ubuntu-latest
+    timeout-minutes: 240 # ~1.5 h of gates on 12 cores; runners are slower
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout@v7.0.1
+
+      # Same X7 discipline as ci.yml: named ref, resolved SHA echoed.
+      - name: checkout dynamic-arctic sibling (unfer_consensus path dep)
+        env:
+          DYNAMIC_ARCTIC_REF: main
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$DYNAMIC_ARCTIC_REF" \
+            https://github.com/leonardopedro/dynamic-arctic.git ../dynamic-arctic
+          echo "  ../dynamic-arctic @ $(git -C ../dynamic-arctic rev-parse HEAD)"
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # Swatinem/rust-cache@v2
+
+      - name: build the gate binaries.
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p pcnl \
+            --example vector_regression \
+            --example vector_basins \
+            --example vector_stream
+
+      - name: structure first (manifest ↔ logs)
+        run: bash scripts/check-pcnl-gates --check-manifest
+
+      - name: re-run the gates and diff their summaries
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.quick }}" = "true" ]; then
+            bash scripts/check-pcnl-gates
+          else
+            bash scripts/check-pcnl-gates --all
+          fi
+
+      - name: keep the diffs even when the shell failed
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # actions/upload-artifact@v4.6.2
+        with:
+          name: r13-gate-diff
+          path: target/r13-logs/gate-diff-*/
+          if-no-files-found: warn
+          retention-days: 30

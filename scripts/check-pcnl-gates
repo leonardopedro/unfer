@@ -28,6 +28,13 @@
 #   ./scripts/check-pcnl-gates qk-gate         # one gate (name or log prefix)
 #   ./scripts/check-pcnl-gates --all           # including the slow ones
 #   ./scripts/check-pcnl-gates --alts          # also the documented alternates
+#   ./scripts/check-pcnl-gates --check-manifest # structure only, no numerics
+#
+# `--check-manifest` needs no built binary and no gate run: it asserts that the
+# manifest and the log directory agree in both directions and that every cited
+# log still contains summary lines. That is the shape per-push CI can afford
+# (see `.github/workflows/ci.yml`, job "artifact + corpus drift gates"); the
+# numeric sweep is the scheduled lane in `.github/workflows/pcnl-gates.yml`.
 #
 # `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
 # listed but not run, so the script stays usable as a pre-commit check. Use
@@ -72,12 +79,14 @@ OUT=target/r13-logs/gate-diff-$STAMP
 SEL=()
 RUN_ALL=0
 RUN_ALTS=0
+CHECK_MANIFEST=0
 
 while [ $# -gt 0 ]; do
   case $1 in
     --list)     printf '%s\n' "$MANIFEST" | awk -F'|' '{ printf "%-20s %-5s %5ss  %s\n", $1, $2, $3, $4 }'; exit 0 ;;
     --all)      RUN_ALL=1 ;;
     --alts)     RUN_ALTS=1 ;;
+    --check-manifest) CHECK_MANIFEST=1 ;;
     --skip-slow) RUN_ALL=0 ;;
     --out)      OUT=${2:?--out needs a directory}; shift ;;
     -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
@@ -87,8 +96,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -f "$FIXTURE" ] || { echo "setup: fixture $FIXTURE missing" >&2; exit 2; }
 [ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
+[ "$CHECK_MANIFEST" -eq 1 ] || [ -f "$FIXTURE" ] \
+  || { echo "setup: fixture $FIXTURE missing" >&2; exit 2; }
 
 # --- coverage: manifest <-> directory -------------------------------------
 coverage_problem=0
@@ -101,7 +111,27 @@ done < <(find "$LOG_DIR" -maxdepth 1 -name '*.log' | sort)
 while IFS='|' read -r name _cls _budget log _prog _args; do
   [ -f "$LOG_DIR/$log" ] || { echo "coverage: manifest entry '$name' cites $LOG_DIR/$log, which does not exist" >&2; coverage_problem=1; }
 done <<< "$MANIFEST"
-[ "$coverage_problem" -eq 0 ] || exit 2
+
+# Every cited log must still carry summary lines; an empty extract means either
+# the log was truncated or the program's output format drifted away from the
+# patterns at the top of this file.
+lines_problem=0
+while IFS='|' read -r name _cls _budget log _prog _args; do
+  [ -f "$LOG_DIR/$log" ] || continue   # already reported by the coverage pass
+  n=$(grep -cE '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$LOG_DIR/$log" 2>/dev/null)
+  [ "${n:-0}" -gt 0 ] \
+    || { echo "coverage: $LOG_DIR/$log (entry '$name') has no summary lines" >&2; lines_problem=1; }
+done <<< "$MANIFEST"
+
+if [ "$coverage_problem" -ne 0 ] || [ "$lines_problem" -ne 0 ]; then
+  echo "R13 GATE EVIDENCE BROKEN: manifest, log directory and log contents disagree." >&2
+  exit 2
+fi
+
+if [ "$CHECK_MANIFEST" -eq 1 ]; then
+  printf '%s\n' "$MANIFEST" | awk -F'|' '{ n++ } END { printf "R13 gate evidence ok: %d entries, all logs present with summary lines\n", n }'
+  exit 0
+fi
 
 # --- which entries to run --------------------------------------------------
 selected() { # name class budget
