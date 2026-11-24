@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# Re-run every R13 gate recorded in `logs/pcnl_r13_gates/` and diff the summary
+# lines against the committed log.
+#
+# Why this exists: the R13 gate logs were committed on 2026-11-24 because the
+# originals lived in `/tmp` and were wiped, which is how four rows of
+# `docs/PCNL_STATUS.md` came to be unreproducible for a day. Keeping the logs
+# is only half the job -- nothing noticed that they had stopped matching. This
+# is that check.
+#
+# What counts as "the summary": the deterministic result lines of a gate run,
+# i.e.
+#
+#   posterior ...            draw-mean RMSE + interval coverage
+#   chain_diagnostics ...    rank R-hat / bulk ESS / tail ESS + gate verdict
+#   diag_observable=N ...    per-observable diagnostics
+#   summary ... / run=N ...  `vector_basins` result lines
+#   arm=... / "  arm=..."    `vector_stream` result lines
+#
+# Chain-level noise (start energies, eps, accepted counts) is deliberately not
+# compared: those lines are reproducible too, but they make the failure report
+# unreadable when one number moves. If a drift needs debugging, diff the kept
+# rerun log under `--out` against the committed one directly.
+#
+# Usage:
+#   ./scripts/check-pcnl-gates                 # every gate under ~30 min
+#   ./scripts/check-pcnl-gates --list
+#   ./scripts/check-pcnl-gates qk-gate         # one gate (name or log prefix)
+#   ./scripts/check-pcnl-gates --all           # including the slow ones
+#   ./scripts/check-pcnl-gates --alts          # also the documented alternates
+#
+# `--skip-slow` is the default: entries budgeted above `SLOW_SECS` (900 s) are
+# listed but not run, so the script stays usable as a pre-commit check. Use
+# `--all` (hit-and-run 5,000 is ~45 min) to cover them.
+#
+# Exit status: 0 all compared rungs matched; 1 any mismatch or failed run;
+# 2 setup problem (no binary, no fixture, unknown gate).
+set -uo pipefail
+
+cd "$(dirname "$0")/.." || exit 2
+ROOT=$PWD
+LOG_DIR=logs/pcnl_r13_gates
+BIN_DIR=./target/release/examples
+FIXTURE=docs/fixtures/ultrabert_20ng4_embeddings.safetensors
+SLOW_SECS=900
+
+# name|class|budget_s|log|program|arguments
+# class: gate  = a row of the R13 gate table, run by default
+#        alt   = a documented alternative invocation, run only with --alts
+# Keep this in sync with the directory: the coverage check below fails when a
+# committed log has no entry here or an entry has no log.
+MANIFEST=$(cat <<'EOF'
+readout-exact|gate|180|readout-exact.log|vector_regression|--readout-only --kernel hmc --init mean --hmc-mass exact --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4
+pilot|gate|240|pilot.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass pilot --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --chains 4 --start-jitter 1e-4 --thin 1 --draws 300
+hessian-64|gate|600|hessian-64.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass hessdiag --hessian-probes 64 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
+lowrank-8|gate|240|lowrank-8.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 8 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+lowrank-32|gate|600|lowrank-32.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
+qk-gate|gate|240|qk-gate.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 5e-3 --hmc-mass hessdiag --hmc-leapfrog 4 --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+hitrun-400|gate|180|hitrun-400.log|vector_regression|--kernel hitrun --init mode --mode-steps 8000 --mode-lr 5e-3 --steps 400 --hr-width 1 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+temper-4|gate|300|temper-4.log|vector_regression|--kernel hmc --temper 4 --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+basins|gate|300|basins.log|vector_basins|--runs 2 --steps 8000
+stream|gate|90|stream.log|vector_stream|--prefixes 4 --adam-steps 300 --lr 0.02
+jitter-lf4|gate|600|jitter-lf4.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-leapfrog 4 --hmc-jitter --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
+jitter-lf8|gate|900|jitter-lf8.log|vector_regression|--kernel hmc --init mode --mode-steps 3000 --mode-lr 5e-3 --hmc-mass lowrank --lowrank-rank 32 --pilot-steps 600 --pilot-rho 0.99999 --pilot-inflate 1 --hmc-jitter --steps 1000 --burn 250 --thin 1 --draws 750 --chains 4 --start-jitter 1e-4
+hitrun-5000|gate|3000|hitrun-5000.log|vector_regression|--kernel hitrun --init point --steps 5000 --hr-width 1 --thin 2 --draws 1875 --chains 4
+qk-alt-lf8-lr5e-3|alt|240|qk-alt-lf8-lr5e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 5e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+qk-alt-lf8-lr2e-3|alt|240|qk-alt-lf8-lr2e-3.log|vector_regression|--kernel hmc --init mode --mode-steps 8000 --mode-lr 2e-3 --hmc-mass hessdiag --steps 400 --thin 1 --draws 300 --chains 4 --start-jitter 1e-4
+EOF
+)
+
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+OUT=target/r13-logs/gate-diff-$STAMP
+SEL=()
+RUN_ALL=0
+RUN_ALTS=0
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --list)     printf '%s\n' "$MANIFEST" | awk -F'|' '{ printf "%-20s %-5s %5ss  %s\n", $1, $2, $3, $4 }'; exit 0 ;;
+    --all)      RUN_ALL=1 ;;
+    --alts)     RUN_ALTS=1 ;;
+    --skip-slow) RUN_ALL=0 ;;
+    --out)      OUT=${2:?--out needs a directory}; shift ;;
+    -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
+    -*)         echo "unknown flag: $1" >&2; exit 2 ;;
+    *)          SEL+=("$1") ;;
+  esac
+  shift
+done
+
+[ -f "$FIXTURE" ] || { echo "setup: fixture $FIXTURE missing" >&2; exit 2; }
+[ -d "$LOG_DIR" ] || { echo "setup: $LOG_DIR missing" >&2; exit 2; }
+
+# --- coverage: manifest <-> directory -------------------------------------
+coverage_problem=0
+while IFS= read -r log; do
+  name=$(basename "$log")
+  printf '%s\n' "$MANIFEST" | awk -F'|' -v n="$name" '$4 == n { found = 1 } END { exit !found }' \
+    || { echo "coverage: $LOG_DIR/$name has no manifest entry in $0" >&2; coverage_problem=1; }
+done < <(find "$LOG_DIR" -maxdepth 1 -name '*.log' | sort)
+
+while IFS='|' read -r name _cls _budget log _prog _args; do
+  [ -f "$LOG_DIR/$log" ] || { echo "coverage: manifest entry '$name' cites $LOG_DIR/$log, which does not exist" >&2; coverage_problem=1; }
+done <<< "$MANIFEST"
+[ "$coverage_problem" -eq 0 ] || exit 2
+
+# --- which entries to run --------------------------------------------------
+selected() { # name class budget
+  local name=$1 cls=$2 budget=$3
+  if [ ${#SEL[@]} -gt 0 ]; then
+    local s
+    for s in "${SEL[@]}"; do
+      case $name in *"$s"*) return 0 ;; esac
+      case $4 in *"$s"*) return 0 ;; esac
+    done
+    return 1
+  fi
+  [ "$cls" = alt ] && [ "$RUN_ALTS" -eq 0 ] && return 1
+  [ "$RUN_ALL" -eq 0 ] && [ "$budget" -gt "$SLOW_SECS" ] && return 1
+  return 0
+}
+
+# Summary lines only; see the header for why chain lines are excluded.
+summaries() {
+  grep -E '^(posterior |chain_diagnostics |diag_observable=|summary |run=|arm=|  arm=)' "$1" 2>/dev/null \
+    | sed -e 's/[[:space:]]\+/ /g' -e 's/ *$//'
+}
+
+# Per-field report for two summary lines: key: recorded -> rerun.
+field_diff() {
+  printf '%s\n%s\n' "$1" "$2" | awk '
+    function parse(line,  n, t, i, k, tok, eq) {
+      n = split(line, t, " ")
+      for (i = 1; i <= n; i++) {
+        tok = t[i]
+        if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+          eq = index(tok, "=")
+          k = substr(tok, 1, eq - 1)
+          V[k] = substr(tok, eq + 1)
+          if (!(k in SEEN)) { SEEN[k] = 1; ORDER[++c] = k }
+        } else if (k != "") {
+          V[k] = V[k] " " tok            # continue a value with spaces inside brackets
+        }
+      }
+    }
+    NR == 1 { parse($0); for (k in V) E[k] = V[k]; split("", V); k = ""; next }
+    NR == 2 { parse($0); for (k in V) A[k] = V[k] }
+    END {
+      for (i = 1; i <= c; i++) {
+        k = ORDER[i]
+        if (!(k in A))            printf "      %-22s recorded %s, absent from rerun\n", k, E[k]
+        else if (E[k] != A[k])    printf "      %-22s %s -> %s\n", k, E[k], A[k]
+      }
+    }'
+}
+
+mkdir -p "$OUT"
+fail=0
+ran=0
+skipped=0
+
+echo "R13 gate re-run: $STAMP"
+echo "  rerun logs: $OUT"
+echo
+
+while IFS='|' read -r name cls budget log prog args; do
+  if ! selected "$name" "$cls" "$budget" "$log"; then
+    skipped=$((skipped + 1))
+    continue
+  fi
+  if [ ! -x "$BIN_DIR/$prog" ]; then
+    echo "FAIL $name: $BIN_DIR/$prog not built -- run:" >&2
+    echo "     export PATH=<gcc-wrapper>/bin:\$PATH && cargo build --release --offline --example ${prog#vector_}" >&2
+    echo "     (vector_basins/vector_stream live in the same example set)" >&2
+    exit 2
+  fi
+
+  ran=$((ran + 1))
+  fresh="$OUT/$name.log"
+  start=$(date +%s)
+  # shellcheck disable=SC2086 -- args are a deliberately word-split flag string
+  "$BIN_DIR/$prog" $args > "$fresh" 2>&1
+  status=$?
+  elapsed=$(( $(date +%s) - start ))
+
+  if [ "$status" -ne 0 ] || [ ! -s "$fresh" ]; then
+    echo "FAIL $name: exit $status after ${elapsed}s (log: $fresh)"
+    tail -3 "$fresh" | sed 's/^/      /'
+    fail=1
+    continue
+  fi
+
+  expected="$OUT/$name.expected.txt"
+  actual="$OUT/$name.actual.txt"
+  summaries "$LOG_DIR/$log" > "$expected"
+  summaries "$fresh"        > "$actual"
+
+  if [ ! -s "$expected" ]; then
+    echo "FAIL $name: no summary lines in $LOG_DIR/$log (pattern drift?)"
+    fail=1
+    continue
+  fi
+
+  if cmp -s "$expected" "$actual"; then
+    echo "ok   $name ($(wc -l < "$expected") lines, ${elapsed}s)"
+    continue
+  fi
+
+  fail=1
+  echo "FAIL $name: summary differs (${elapsed}s)"
+  # Walk the two files in parallel; report the first difference per line.
+  mapfile -t expl < "$expected"
+  mapfile -t actl < "$actual"
+  if [ "${#expl[@]}" -ne "${#actl[@]}" ]; then
+    echo "      line count: recorded ${#expl[@]}, rerun ${#actl[@]}"
+  fi
+  for i in "${!expl[@]}"; do
+    e=${expl[$i]}
+    a=${actl[$i]:-<missing>}
+    [ "$e" = "$a" ] && continue
+    echo "      line $((i + 1)):"
+    field_diff "$e" "$a"
+  done
+  echo "      full diff: diff -u $expected $actual"
+done <<< "$MANIFEST"
+
+echo
+if [ "$fail" -ne 0 ]; then
+  echo "R13 GATE DRIFT: at least one summary line moved. Compare the kept logs in"
+  echo "  $OUT against $LOG_DIR, then update the committed log only if the new"
+  echo "  numbers are the intended ones (and the docs table with them)."
+  exit 1
+fi
+echo "R13 gates reproduce: $ran compared, $skipped not selected."
+exit 0

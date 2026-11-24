@@ -1,0 +1,11 @@
+## R13 synthetic vector regression: fixture=docs/fixtures/ultrabert_20ng4_embeddings.safetensors train=240 test=120 dim=768 q=2 shapes=VectorShapes { input: 768, tokens: 4, width: 16, ff: 32, layers: 4, output: 2 } teacher_seed=20261122 noise=0.05
+point adam_steps=300 first_loss=570.259216 last_loss=0.000034 train_rmse=0.000286 test_rmse=0.099276
+checkpoint path=/tmp/pcnl-vector-checkpoint.json schema=["coordinate_0", "coordinate_1"] roundtrip_exact=true prediction=[-1.6128647, -0.82934743]
+sample_space=full_parameter dim=57378
+init_mode=mode adam_steps=3000 lr=0.005 final_potential=1023.373958 mode_grad_rms=3.733619e0
+pilot steps=600 draws=450 accepted=483/600 rho=0.99999 var_over_prior p10=3.348e-4 p50=8.600e-4 p90=2.504e-3
+lowrank_metric rank=32 dim=57378 pilot_draws=450
+chain=0 init=mode start_energy=0.379918 start_grad_rms=3.653104e0
+chain=0 kernel=hmc mass=lowrank_plus_diag leapfrog=4 jitter=false steps=1000 burn=250 eps_initial=1 eps_frozen=5.200e-2 draws=750 accepted=839/1000 mean_accept=0.845 grad_evals=3996
+chain=0 first_test_draw_mean=[-1.5250679275194803, -0.6919023467699686]
+chain=1 init=mode start_energy=0.530526 start_grad_rms=4.840117e0
